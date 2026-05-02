@@ -478,7 +478,49 @@ If Tracy shows:
 
 ### Instrumentation commit reference
 
-See companion commit landed on `claude/nifty-mendeleev` for the Tracy-gated zone additions described in Section 2. Hash will be appended here once landed.
+Commit `c4c4e96` on `claude/nifty-mendeleev` ("recon(objects): slice 2 Recon Zero + MC2_OBJECT_RECON_TRACY accumulators"). Lands `GameOS/gameos/gos_object_recon_tracy.{h,cpp}` and adds Scope wraps to `BldgAppearance::update`, `TreeAppearance::update`, `GenericAppearance::update`, `TG_MultiShape::TransformMultiShape`, and `TG_Shape::MultiTransformShape` (outer + alloc + per-vertex loop + per-face loop + emit sub-stages).
+
+To run:
+
+```
+cd A:/Games/mc2-opengl/mc2-win64-v0.3
+MC2_OBJECT_RECON_TRACY=1 mc2.exe
+```
+
+Output (per-frame when any kernel ran AND env set; 600-frame summary always once data observed; shutdown final):
+
+```
+[OBJECT_RECON v1] frame=N
+  bldg_update={ns:U,calls:U}
+  tree_update={ns:U,calls:U}
+  generic_update={ns:U,calls:U}
+  mShape={ns:U,calls:U}
+  shape={ns:U,calls:U,alloc:U,xform:U,vlight:U,flight:U,emit:U}
+```
+
+Field interpretation:
+- `bldg_update` / `tree_update` / `generic_update`: outer per-population update wall time. Calls count = number of cull-survivor actors. Sum represents the `appearanceUpdate` Tracy zone.
+- `mShape`: time inside `TG_MultiShape::TransformMultiShape` (the per-multishape body that iterates child shapes and calls `TransformShape` on each leaf).
+- `shape`: time inside `TG_Shape::MultiTransformShape` per leaf. Sub-stages:
+  - `alloc`: pool grabs (vertex/color/shadow/triangle/face). Should be small if pools sized appropriately.
+  - `xform`: left zero in this build — per Tracy zone-overhead rule, per-vertex transform isn't split out from lighting (would require per-iteration timer reads = ~100 ns × N_vertices overhead per shape, distorting the data).
+  - `vlight`: per-vertex loop body — combined screen-space transform + per-vertex lighting kernel + fog + highlight. **This is slice 2's primary target.**
+  - `flight`: per-face loop body — per-face lighting + listOfTriangles[] writes + addTriangle queue calls.
+  - `emit`: addRenderShape + GatherLightsParameters + addLightDataStructure block (the modern shader path queue cost).
+
+Expected non-zero data appears within ~5 frames of mission start (smoke harness OK). For tier1 use:
+
+```
+py -3 scripts/run_smoke.py --tier tier1 --duration 20 --fail-fast
+```
+…with `MC2_OBJECT_RECON_TRACY=1` exported in the environment first. The 600-frame summary appears in the smoke artifact log.
+
+The recon prompt's Section 2 verdict branches on:
+- `vlight + flight` ≥ 0.7 × `bldg_update + tree_update + generic_update` → slice 2 strongly justified (target ≥ 1.5 ms recoverable).
+- `vlight + flight` ≈ 0.5 × outer → slice 2 marginally justified, 2-b is right scope.
+- `vlight + flight` ≤ 0.3 × outer → surface to user; slice 2 may not be worth complexity.
+
+Once Tracy data is available, append to this section with measured percentages and final 2-a vs 2-b commitment.
 
 ---
 
