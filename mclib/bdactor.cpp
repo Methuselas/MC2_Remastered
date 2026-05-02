@@ -4011,7 +4011,7 @@ long TreeAppearance::render (long depthFixup)
 	// Mirror BldgAppearance::render: bypass inView under GPU path — the
 	// GPU clipper decides visibility, and the legacy angular cull has a
 	// ~87% false-negative rate at wolfman zoom.
-	if (inView || g_useGpuStaticProps)
+	if (inView || g_useGpuStaticProps || g_useGpuObjects)
 	{
 		long color = SD_BLUE;
 		//unsigned long highLight = 0x007f7f7f;
@@ -4023,8 +4023,27 @@ long TreeAppearance::render (long depthFixup)
 		}
 		//---------------------------------------------
 		// Call Multi-shape render stuff here.
+		// Slice 1 path (g_useGpuObjects). Same shape as BldgAppearance::render.
 		bool submittedToGpu = false;
-		if (g_useGpuStaticProps && treeShape)
+		if (g_useGpuObjects)
+		{
+			GpuStaticPropBatcher::instance().recordEligibleActor(
+				GpuStaticPropPopulation::Tree);
+			if (treeShape)
+			{
+				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
+					treeShape, GpuStaticPropPopulation::Tree);
+			}
+			if (!submittedToGpu)
+			{
+				GpuStaticPropBatcher::instance().recordCpuFallback(
+					GpuStaticPropPopulation::Tree);
+			}
+		}
+		// Legacy bypass-cull path. Mutually exclusive with slice 1 — gated on
+		// !g_useGpuObjects. Tagged Legacy so Gate F's fallback-rate is computed
+		// only over slice-1 populations. See spec R1.
+		if (!submittedToGpu && !g_useGpuObjects && g_useGpuStaticProps && treeShape)
 		{
 			submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
 				treeShape, GpuStaticPropPopulation::Legacy);
