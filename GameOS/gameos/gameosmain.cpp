@@ -303,9 +303,21 @@ static void handle_key_down( SDL_Keysym* keysym ) {
             break;
         case SDLK_0:
             if (alt_debug) {
-                g_useGpuStaticProps = !g_useGpuStaticProps;
-                fprintf(stderr, "GPU Static Props: %s\n",
-                        g_useGpuStaticProps ? "ON" : "OFF");
+                if (g_useGpuObjects) {
+                    // Slice 1 is active — legacy killswitch is mutually
+                    // exclusive (spec R1). Ignore the toggle and log once.
+                    static bool s_loggedBlock = false;
+                    if (!s_loggedBlock) {
+                        fprintf(stderr, "[OBJBATCHER v1] event=legacy_toggle_blocked "
+                                        "reason=g_useGpuObjects_active\n");
+                        fflush(stderr);
+                        s_loggedBlock = true;
+                    }
+                } else {
+                    g_useGpuStaticProps = !g_useGpuStaticProps;
+                    fprintf(stderr, "GPU Static Props: %s\n",
+                            g_useGpuStaticProps ? "ON" : "OFF");
+                }
             }
             break;
         case 'p':
