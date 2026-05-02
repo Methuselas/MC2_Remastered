@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT))
 from scripts.smoke_lib import baselines, manifest, report
 from scripts.smoke_lib.runner import RunConfig, run_one
 
-DEFAULT_EXE = Path(r"A:/Games/mc2-opengl/mc2-win64-v0.2/mc2.exe")
+DEFAULT_EXE = Path(r"A:/Games/mc2-opengl/mc2-win64-v0.3/mc2.exe")
 ARTIFACT_ROOT = ROOT / "tests" / "smoke" / "artifacts"
 MANIFEST_PATH = ROOT / "tests" / "smoke" / "smoke_missions.txt"
 BASELINE_PATH = ROOT / "tests" / "smoke" / "baselines.json"

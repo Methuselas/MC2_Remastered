@@ -1,0 +1,6 @@
+# Object batcher late-registration allowlist.
+# One TG_TypeShape name (or pointer-form) per line. # for comments.
+# Initial state: empty (strict mode). Add entries only after observing
+# in [OBJBATCHER v1] event=late_register output AND confirming via
+# grep that the type is genuinely out-of-scope (e.g., late-spawned
+# artillery from code/artlry.cpp). Do not add speculatively.

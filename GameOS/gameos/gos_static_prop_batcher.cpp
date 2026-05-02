@@ -7,7 +7,11 @@
 #include <GL/glew.h>
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // Global runtime toggle for the GPU static-prop renderer. Defined here
@@ -188,6 +192,156 @@ void ensureRingCapacity(size_t neededInstances, size_t neededColorEntries) {
         std::fprintf(stderr, "[GPUPROPS] persistent map failed; disabling GPU path\n");
         s_fatalRegistrationFailure = true;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Counter state added in Task 6 (Stage 1.D — Gate F + late-registration).
+// ---------------------------------------------------------------------------
+
+// Population indexed by GpuStaticPropPopulation enum value:
+//   0=Building, 1=Tree, 2=Generic, 3=Legacy.
+// Legacy is excluded from Gate F's fallback-rate computation
+// (slice-1 populations only).
+constexpr int kPopCount = 4;
+
+struct ObjBatcherCounters {
+    // Per-frame, indexed by population:
+    uint32_t eligible_actors_by_pop[kPopCount]     = {0};
+    uint32_t submitted_instances_by_pop[kPopCount] = {0};  // success only
+    uint32_t cpu_fallback_by_pop[kPopCount]        = {0};
+    uint32_t submitted_children                    = 0;
+    uint32_t skipped_children                      = 0;
+    // Per-flush:
+    uint32_t gpu_drawn_instances                   = 0;
+    // Monotonic since process start:
+    uint64_t mono_eligible_actors_by_pop[kPopCount]     = {0};
+    uint64_t mono_submitted_instances_by_pop[kPopCount] = {0};
+    uint64_t mono_cpu_fallback_by_pop[kPopCount]        = {0};
+    uint64_t mono_submitted_children                = 0;
+    uint64_t mono_skipped_children                  = 0;
+    uint64_t mono_gpu_drawn_instances               = 0;
+    uint64_t frame_count                            = 0;
+};
+ObjBatcherCounters s_counters;
+bool s_objbatcherTrace     = false;
+bool s_objbatcherTraceInit = false;
+bool s_atexitRegistered    = false;
+
+// Late-registration aggregate per-type accounting + allowlist.
+std::unordered_map<std::string, uint32_t> s_lateRegisterCounts;
+std::unordered_set<std::string> s_lateRegisterAllowlist;
+bool s_lateRegisterAllowlistLoaded = false;
+
+inline int popIndex(GpuStaticPropPopulation pop) {
+    return static_cast<int>(pop);
+}
+
+// Forward declaration; defined below.
+void accumulateMonotonicAndMaybeEmit(bool forceEmit);
+
+void emitFinalSummaryAtExit() {
+    accumulateMonotonicAndMaybeEmit(/*forceEmit=*/true);
+}
+
+inline void initTraceOnce() {
+    if (!s_objbatcherTraceInit) {
+        s_objbatcherTrace     = (getenv("MC2_OBJBATCHER_TRACE") != nullptr);
+        s_objbatcherTraceInit = true;
+    }
+    if (!s_atexitRegistered) {
+        s_atexitRegistered = true;
+        atexit(emitFinalSummaryAtExit);
+    }
+}
+
+void accumulateMonotonicAndMaybeEmit(bool forceEmit) {
+    s_counters.frame_count++;
+    for (int p = 0; p < kPopCount; ++p) {
+        s_counters.mono_eligible_actors_by_pop[p]     += s_counters.eligible_actors_by_pop[p];
+        s_counters.mono_submitted_instances_by_pop[p] += s_counters.submitted_instances_by_pop[p];
+        s_counters.mono_cpu_fallback_by_pop[p]        += s_counters.cpu_fallback_by_pop[p];
+    }
+    s_counters.mono_submitted_children  += s_counters.submitted_children;
+    s_counters.mono_skipped_children    += s_counters.skipped_children;
+    s_counters.mono_gpu_drawn_instances += s_counters.gpu_drawn_instances;
+
+    const bool periodic = (s_counters.frame_count % 600 == 0
+                           && s_counters.frame_count > 0);
+    if (s_objbatcherTrace || periodic || forceEmit) {
+        // Slice-1 fallback rate uses ONLY Building+Tree+Generic
+        // populations (Legacy excluded — it's the prior killswitch path).
+        uint64_t slice1_eligible = 0, slice1_fallback = 0;
+        for (int p = 0; p <= 2; ++p) {  // Building, Tree, Generic
+            slice1_eligible += s_counters.mono_eligible_actors_by_pop[p];
+            slice1_fallback += s_counters.mono_cpu_fallback_by_pop[p];
+        }
+        const double fb_rate = (slice1_eligible > 0)
+            ? (double)slice1_fallback / (double)slice1_eligible
+            : 0.0;
+
+        uint64_t total_submitted = 0;
+        for (int p = 0; p < kPopCount; ++p) {
+            total_submitted += s_counters.mono_submitted_instances_by_pop[p];
+        }
+
+        std::fprintf(stderr,
+               "[OBJBATCHER v1] event=summary frames=%llu "
+               "eligible_actors=%llu submitted_instances=%llu "
+               "submitted_children=%llu skipped_children=%llu "
+               "cpu_fallback=%llu gpu_drawn_instances=%llu "
+               "fallback_rate=%.4f "
+               "submit_buildings=%llu submit_trees=%llu "
+               "submit_generics=%llu submit_legacy=%llu\n",
+               (unsigned long long)s_counters.frame_count,
+               (unsigned long long)slice1_eligible,
+               (unsigned long long)total_submitted,
+               (unsigned long long)s_counters.mono_submitted_children,
+               (unsigned long long)s_counters.mono_skipped_children,
+               (unsigned long long)slice1_fallback,
+               (unsigned long long)s_counters.mono_gpu_drawn_instances,
+               fb_rate,
+               (unsigned long long)s_counters.mono_submitted_instances_by_pop[0],
+               (unsigned long long)s_counters.mono_submitted_instances_by_pop[1],
+               (unsigned long long)s_counters.mono_submitted_instances_by_pop[2],
+               (unsigned long long)s_counters.mono_submitted_instances_by_pop[3]);
+        std::fflush(stderr);
+    }
+
+    // Reset per-frame counters for next frame.
+    for (int p = 0; p < kPopCount; ++p) {
+        s_counters.eligible_actors_by_pop[p]     = 0;
+        s_counters.submitted_instances_by_pop[p] = 0;
+        s_counters.cpu_fallback_by_pop[p]        = 0;
+    }
+    s_counters.submitted_children  = 0;
+    s_counters.skipped_children    = 0;
+    s_counters.gpu_drawn_instances = 0;
+}
+
+void loadLateRegisterAllowlistOnce() {
+    if (s_lateRegisterAllowlistLoaded) return;
+    s_lateRegisterAllowlistLoaded = true;
+    FILE* f = fopen("data/objbatcher_late_register_allowlist.txt", "r");
+    if (!f) return;
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        // Strip the # comment delimiter and the trailing newline.
+        char* p = line;
+        while (*p && *p != '\n' && *p != '\r' && *p != '#') ++p;
+        *p = '\0';
+        // Trim leading whitespace.
+        char* start = line;
+        while (*start == ' ' || *start == '\t') ++start;
+        // Trim trailing whitespace.
+        char* end = start + strlen(start);
+        while (end > start && (end[-1] == ' ' || end[-1] == '\t')) {
+            --end;
+        }
+        *end = '\0';
+        if (*start == '\0') continue;
+        s_lateRegisterAllowlist.insert(start);
+    }
+    fclose(f);
 }
 
 } // namespace
@@ -476,16 +630,18 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
 }
 
 void GpuStaticPropBatcher::recordEligibleActor(GpuStaticPropPopulation pop) {
-    (void)pop;  // body filled in Task 6.
+    initTraceOnce();
+    s_counters.eligible_actors_by_pop[popIndex(pop)]++;
 }
 
 void GpuStaticPropBatcher::recordCpuFallback(GpuStaticPropPopulation pop) {
-    (void)pop;  // body filled in Task 6.
+    s_counters.cpu_fallback_by_pop[popIndex(pop)]++;
 }
 
 bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
                                             GpuStaticPropPopulation pop) {
-    (void)pop;  // consumed by Task 6's counter additions; no-op here.
+    initTraceOnce();
+    // pop consumed by counters below.
     if (!multi || s_fatalRegistrationFailure) return false;
     if (s_programLoadFailed || s_staticPropProgram == 0) return false;
 
@@ -505,7 +661,6 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
     // rest. Only fail the whole multishape if a SHAPE_NODE child has an
     // unregistered type — that's a plumbing problem that invalidates
     // self-consistency.
-    static bool s_warned_unregistered = false;
 
     // First pass: check for unregistered SHAPE_NODE types (fatal for this
     // multishape). All other ineligibility is handled in the submit pass.
@@ -517,13 +672,23 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
         if (child->myType->GetNodeType() != SHAPE_NODE) continue;  // skip helpers
         const TG_TypeShape* ts = static_cast<const TG_TypeShape*>(child->myType);
         if (s_typeIndex.find(ts) == s_typeIndex.end()) {
-            if (!s_warned_unregistered) {
-                std::fprintf(stderr,
-                    "[GPUPROPS] multi=%p child %d: unregistered type %p -- "
-                    "CPU-fallback whole multishape\n",
-                    (void*)multi, i, (void*)ts);
-                s_warned_unregistered = true;
+            loadLateRegisterAllowlistOnce();
+            // Pointer-stringify since TG_TypeShape doesn't expose a name
+            // accessor here. If a real name accessor surfaces later
+            // (e.g., ts->source->name), prefer it.
+            char addrBuf[32];
+            snprintf(addrBuf, sizeof(addrBuf), "%p", (const void*)ts);
+            const std::string typeName = addrBuf;
+            auto& count = s_lateRegisterCounts[typeName];
+            if (count == 0) {
+                const bool allowed =
+                    (s_lateRegisterAllowlist.find(typeName)
+                     != s_lateRegisterAllowlist.end());
+                std::fprintf(stderr, "[OBJBATCHER v1] event=late_register type=%s allowed=%d\n",
+                       typeName.c_str(), allowed ? 1 : 0);
+                std::fflush(stderr);
             }
+            ++count;
             return false;
         }
     }
@@ -532,18 +697,24 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
     // CPU path would also skip (helpers, untransformed, daytime spotlights).
     for (int i = 0; i < n; ++i) {
         TG_ShapeRec& rec = multi->listOfShapes[i];
-        if (!rec.processMe || !rec.node) continue;
+        if (!rec.processMe || !rec.node) { s_counters.skipped_children++; continue; }
         TG_Shape* child = rec.node;
-        if (!child->myType) continue;
+        if (!child->myType) { s_counters.skipped_children++; continue; }
         // Helper/bone nodes (non-SHAPE). CPU Render silently returns because
         // numVertices == 0. Do the same — no instance to emit.
-        if (child->myType->GetNodeType() != SHAPE_NODE) continue;
+        if (child->myType->GetNodeType() != SHAPE_NODE) {
+            s_counters.skipped_children++;
+            continue;
+        }
         // Spotlights during day + other early-outs in TransformShape leave
         // listOfVertices NULL. CPU Render early-outs on the same condition.
         // Also listOfColors NULL: CPU also early-outs. Submit's zero-pad
         // path would render this child black, which is the bug we're
         // avoiding — so skip here.
-        if (!child->listOfVertices || !child->listOfColors) continue;
+        if (!child->listOfVertices || !child->listOfColors) {
+            s_counters.skipped_children++;
+            continue;
+        }
 
         uint32_t flags = 0;
         if (child->lightsOut)   flags |= (1u << 0);
@@ -559,7 +730,9 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
             // to keep the visual self-consistent.
             return false;
         }
+        s_counters.submitted_children++;
     }
+    s_counters.submitted_instances_by_pop[popIndex(pop)]++;
     return true;
 }
 
@@ -678,13 +851,16 @@ bool uploadAllBucketsIfNeeded() {
 //   rc_gbuffer1_legacyDebugSentinelScreenShadowEligible (debug).
 void GpuStaticPropBatcher::flush() {
     ZoneScopedN("GpuStaticProps.Flush");
+    initTraceOnce();
 
     if (!s_geometryFinalized || s_fatalRegistrationFailure) {
         s_bucketsByType.clear();
+        accumulateMonotonicAndMaybeEmit(/*forceEmit=*/false);
         return;
     }
     if (!uploadAllBucketsIfNeeded()) {
         s_bucketsByType.clear();
+        accumulateMonotonicAndMaybeEmit(/*forceEmit=*/false);
         return;
     }
     // Program compile/link latch. submitMultiShape already gates submissions
@@ -693,6 +869,7 @@ void GpuStaticPropBatcher::flush() {
     if (s_programLoadFailed || s_staticPropProgram == 0) {
         s_bucketsByType.clear();
         s_lastUploadedSlot = 0xFFFFFFFFu;
+        accumulateMonotonicAndMaybeEmit(/*forceEmit=*/false);
         return;
     }
 
@@ -775,6 +952,11 @@ void GpuStaticPropBatcher::flush() {
         const GpuStaticPropType& type = s_types[typeID];
         if (r.instanceCount == 0 || type.packetCount == 0) continue;
 
+        // Gate F: count actors that produced ≥1 packet draw this frame.
+        // Per-type increment, not per-packet — we want "actors drawn,"
+        // not "draw-call count."
+        s_counters.gpu_drawn_instances += r.instanceCount;
+
         glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
                           static_cast<GLintptr>(r.instanceByteOffset),
                           static_cast<GLsizeiptr>(r.instanceByteSize));
@@ -843,6 +1025,8 @@ void GpuStaticPropBatcher::flush() {
     if (prevCullFace) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
     glCullFace((GLenum)prevCullMode);
     if (prevBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+
+    accumulateMonotonicAndMaybeEmit(/*forceEmit=*/false);
 
     s_bucketsByType.clear();
     s_lastUploadedSlot = 0xFFFFFFFFu;  // reset for next frame

@@ -1425,7 +1425,8 @@ void MC_TextureManager::renderLists (void)
 		ZoneScopedN("Render.GpuStaticProps");
 		TracyGpuZone("Render.GpuStaticProps");
 		extern bool g_useGpuStaticProps;
-		if (g_useGpuStaticProps) {
+		extern bool g_useGpuObjects;
+		if (g_useGpuStaticProps || g_useGpuObjects) {
 			GpuStaticPropBatcher::instance().flush();
 		}
 	}
