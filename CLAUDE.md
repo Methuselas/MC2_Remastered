@@ -4,7 +4,7 @@ MechCommander 2 OpenGL port with tessellated terrain, PBR splatting, shadow maps
 
 ## Key Paths
 - **Source:** `A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/`
-- **Deploy:** `A:/Games/mc2-opengl/mc2-win64-v0.2/`
+- **Deploy:** `A:/Games/mc2-opengl/mc2-win64-v0.3/`
 - **CMake:** `C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe`
 
 ## Skills (use these!)
@@ -30,6 +30,8 @@ This applies at every stage of the brainstorm → recon → design → plan → 
 - **Review time:** see "Review Discipline" below. Adversarial review by default.
 
 **Don't write prose then verify after.** Verify-then-write is roughly the same wall-clock cost (the grep happens either way) but produces a doc with no fictional content. Verify-after produces a coherent-sounding doc that can pass three rounds of prose-only review while describing code that doesn't exist (indirect-terrain plan v1 origin). The cost asymmetry is brutal: grep-at-write-time is minutes; grep-discovers-fiction-at-execution-time is days.
+
+**Negative claims need opposite-direction grep.** Proving "X is NOT consumed by Y" requires grep'ing **Y** for X reads, not just grep'ing the obvious-named consumer (e.g., `drawWater()`) for X. The verification operation is asymmetric: positive claims about symbols are defended by grep'ing the symbol; negative claims about data flow can only be defended by grep'ing the candidate consumer's code. Five review passes can trust an unverified negative claim as ground truth — only a fresh code-grounded audit catches it. Origin: water-projection-skip Stage 0 M3 audit, 2026-05-02. Full rationale: `memory/feedback_data_flow_audit_asymmetry.md`.
 
 **The carve-out:** when describing intentions ("we will create a new function called X that does Y"), no grep is possible — that symbol doesn't exist yet. That's fine. The rule applies to claims about EXISTING code, not future code.
 
