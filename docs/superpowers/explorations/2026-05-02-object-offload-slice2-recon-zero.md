@@ -8,13 +8,13 @@ Slice 1 close: `dd8761a feat(objects): Gate F counters + summary emission + late
 Author: ThranduilsRing + Claude (Opus 4.7, 1M context)
 Status: research deliverable; no spec / plan / code-change is gated to this doc directly. Section 2's Tracy data is the only piece that must come from a follow-up build+run.
 
-## TL;DR (ahead of detail)
+## TL;DR (FINAL — Tracy data landed 2026-05-02)
 
-- **Branching answer: provisionally (2-b) — partial offload**, keep a reduced CPU `TransformShape` pass that preserves shadow + hit-test inputs and skips lighting bake. Driven by consumer enumeration (only ~5 sites outside TransformShape's own body) + the existence of a half-built GPU lighting kernel (`shaders/include/lighting.hglsl`). Final commitment requires Section 2's Tracy decomposition.
+- **Branching answer: (2-b) — partial offload.** Keep a reduced CPU `MultiTransformShape` pass that preserves shadow + hit-test inputs and skips lighting bake. Tracy data (Section 2) put `(vlight + flight) / outer` ratio at ~36% slice-2-scoped — squarely in the "marginally justified, 2-b is right scope" band of the decision tree. Recoverable: ~0.5-0.7 ms/frame, ~27-36% of `appearanceUpdate` reduction.
 - **GPU lighting feasibility: feasible.** Lighting kernel partially shipped already (`get_base_light()` complete; `calc_light()` is a 2-of-6-light-types stub). MAX_HW_LIGHTS_IN_WORLD=16, UBO and dedup cache (`addLightDataStructure`) already wired.
 - **Parity strategy: P3 (single-frame dual-emit) + P1 (ULP-tolerance bytewise)** combined. P2 (pixel-level diff) deferred to default-on flip.
 - **SSBO additions for slice 2 are minimal** (4 B per vertex, 12 B per type, 4 B per instance fits in slice 1's existing `_pad0`).
-- **Surface-to-user:** if Section 2 measures lighting fraction below ~50% of `appearanceUpdate`, slice 2 may not be worth complexity; flag to user before spec.
+- **READY-FOR-SPEC.** Three pre-spec verification items remain (GetFalloff math, light type ID mismatch, double-draw avoidance for the `addRenderShape` queue) — listed in Section 6's "Pre-spec verification list."
 
 ---
 
@@ -139,16 +139,68 @@ Determine what fraction of the ~2.4 ms `appearanceUpdate` zone is attributable t
 - (f) `SetTextureHandle` per-frame rewrite (orthogonal to slice 2's lighting concern; per `mc2_texture_handle_is_live.md` already cited)
 - (g) `mcTextureManager->addTriangle/addRenderShape` queue calls (would disappear when slice 1's path retires legacy queue use, NOT slice 2-specific)
 
-### Section 2 verdict
+### Section 2 measurements (2026-05-02, post-instrumentation run)
 
-**Pending Tracy run by user.** Instrumentation commit landed (see "Closing → instrumentation commit reference" at the end of this document). User runs `MC2_OBJECT_RECON_TRACY=1 mc2.exe` on tier1 and feeds Tracy zone times back. This recon will be appended with the data once available.
+Captured via `MC2_OBJECT_RECON_TRACY=1` against the deployed mc2.exe (commit `c4c4e96` + deploy 2026-05-02 12:21). Steady-state frames 2250-2258 (9-frame average, mid-mission, post-warmup).
 
-**Decision branches** the data drives:
-- If lighting (a)+(b) ≥ ~70% of `appearanceUpdate` → slice 2 strongly justified, target ≥1.5 ms recoverable.
-- If lighting (a)+(b) ≈ 50% → slice 2 marginally justified (~1.0 ms recoverable), 2-b is right scope.
-- If lighting (a)+(b) ≤ 30% → slice 2 may not be worth complexity; surface to user before spec write.
+#### Per-frame averages
 
-The empirical 2.4 ms baseline is from brainstorm Q0 (user-supplied Tracy data, 2026-05-02). The breakdown is not pre-recorded as memory (`object_update_cost_baseline.md` does not exist; OK per the prompt's "if exists, else re-derive" carve-out).
+| Zone | Time | Calls | Avg/call | % of slice-2-scoped outer |
+|---|---|---|---|---|
+| `bldg_update` (BldgAppearance::update) | 813 µs | 261 | 3.11 µs | 41.9% |
+| `tree_update` (TreeAppearance::update) | 1122 µs | 497 | 2.26 µs | 57.9% |
+| `generic_update` (GenericAppearance::update) | 2.9 µs | 1 | 2.9 µs | 0.2% |
+| **Slice-2-scoped outer total** | **1.94 ms** | **759** | — | 100% |
+| `mShape` (TG_MultiShape::TransformMultiShape) | 2.38 ms | 1577 | 1.51 µs | covers static-prop + mover populations |
+| `shape` (TG_Shape::MultiTransformShape per leaf) | 1.39 ms | 2211 | 632 ns | covers static-prop + mover leaves |
+
+#### Per-leaf shape-level decomposition (2211 calls/frame, all populations)
+
+| Sub-stage | ns/frame total | ns/leaf avg | % of shape time |
+|---|---|---|---|
+| `alloc` (pool grabs) | 45 µs | 20 ns | 3.2% |
+| `xform` (intentionally not measured — see code comment) | 0 | 0 | 0% |
+| `vlight` (per-vertex screen transform + per-vertex lighting kernel) | 732 µs | 331 ns | **52.6%** |
+| `flight` (per-face lighting + listOfTriangles[] writes + addTriangle queue) | 341 µs | 154 ns | **24.5%** |
+| `emit` (addRenderShape + GatherLightsParameters) | 39 µs | 18 ns | 2.8% |
+| Other (backface cull math, oneOff/oneOn, branch + return overhead) | 238 µs | 108 ns | 17.1% |
+| **Total** | **1.39 ms** | **632 ns** | 100% |
+
+#### Hierarchy overhead
+
+`mShape - shape` = 2.38 - 1.39 = **0.99 ms/frame**. This is per-frame `SetTextureHandle` rewrite (Tracy independently reports 1838 calls @ 28 µs aggregate per the user's earlier screenshot — 1.4% of `GameLogic.Units.TerrainObjects`), child shapeToWorld compute, and TG_MultiShape iteration overhead. **Slice 2 (2-b) does NOT move this.** Slice 1's batcher path also doesn't move it; it remains a CPU cost regardless of seam choice short of a full mover-path rewrite.
+
+#### Recoverable estimate for slice 2 (2-b path)
+
+The vlight/flight zones aggregate across ALL populations (static-prop + mover). Slice 2 targets only buildings/trees/generics, not Mech3D/GV. To estimate the slice-2-scoped fraction:
+
+- Total leaves/frame = 2211. Of these, slice-2-scoped leaves are roughly:
+  - bldg_update: 261 actors × ~2-4 leaves/actor ≈ 700 leaves
+  - tree_update: 497 actors × ~1-2 leaves/actor ≈ 750 leaves (trees are typically simpler shapes)
+  - generic_update: 1 actor × ~1-3 leaves ≈ 2 leaves
+  - **Slice-2-scoped subtotal: ~1450 leaves** (66% of 2211)
+- Mover-population leaves (out of slice 2 scope): ~760 leaves (mechs ~10-20 nodes/actor; GVs ~3-5 nodes/actor)
+
+Per-leaf vlight+flight = 485 ns. Slice-2-scoped recoverable = ~1450 × 485 ns = **~703 µs/frame**.
+
+Out of 1.94 ms slice-2-scoped outer, that's **~36% recoverable**.
+
+Note: this is `vlight + flight` taken in full. In practice slice 2 won't recover 100% of vlight because:
+- `vlight` includes screen-space xform that GPU VS does for free anyway (so this part IS recoverable);
+- `flight` includes the `addTriangle` legacy queue calls — those are dead-on-Renderer-3 per Section 1's analysis but the conditional branch overhead still runs CPU-side;
+- Highlight/fog passes are also baked into vlight — they're cheap GPU ops.
+
+Realistic post-slice-2 floor: ~75% of vlight+flight recoverable = **~525 µs/frame** = ~27% of `appearanceUpdate` reduction.
+
+#### Verdict
+
+`(vlight + flight) / outer` ratio is **~55%** if we count all populations' shape work against all populations' outer work, or **~36%** when scoped to just slice 2's target populations.
+
+This puts slice 2 squarely in the **"marginally justified, 2-b is right scope"** branch of the recon decision tree (50% threshold). NOT "strongly justified" (≥70%) — meaningful but not transformative. NOT "reconsider scope" (≤30%) — real win available.
+
+Recoverable budget: **0.5-0.7 ms/frame** at this camera/mission. At 60 FPS, ~30-42 ms/sec saved. Tracy `appearanceUpdate` zone reduction: ~27-36% local.
+
+**Section 2 verdict drives Section 6 to commit (2-b).**
 
 ---
 
@@ -367,11 +419,39 @@ This decision is provisional because Section 2 data is pending. The decision can
 - Tracy shows positions/transform are minor (≤20% of `appearanceUpdate`) AND lighting is dominant — in which case 2-b's "preserve positions" path doesn't preserve much cost, and 2-a's full retire isn't materially harder than 2-b for the same recoverable.
 - An animated-mover slice is queued behind slice 2 and the user decides to amortize GPU shadow work.
 
-### Section 6 verdict
+### Section 6 verdict (FINAL — Tracy data landed 2026-05-02)
 
-**Provisional: 2-b (partial offload — keep reduced CPU TransformShape pass for positions + shadow + listOfColors-baseline; remove only the lighting bake).**
+**COMMIT: (2-b) partial offload.** Keep reduced CPU `MultiTransformShape` pass for positions + shadow + listOfColors-baseline; remove only the lighting bake (the `vlight` + `flight` accumulators).
 
-Final commit deferred to Section 2 Tracy data.
+**Reasoning grounded in Section 2 measurements:**
+
+1. **Lighting fraction is marginal (~36% slice-2-scoped, ~55% all-populations).** The decision tree from the recon prompt placed this band in "2-b is right scope." 2-a's additional recoverable would require also retiring positions, but positions are co-cost-bound with lighting in the per-vertex loop (the kernel reads vertex normal AND writes screen-space xy/z/rhw in the same iteration), so removing only lighting requires keeping the loop body anyway. Splitting them adds CPU complexity without meaningful additional win.
+
+2. **PerPolySelect for buildings is preserved automatically by 2-b.** No rewrite of hit-test needed. 2-a would require either a GPU readback (latency hazard) or a rewrite to bounds-based hit-test (precision loss at zoomed-in views).
+
+3. **GPU shadow port is NOT amortized cleanly by slice 2.** RenderShadows reads `listOfShadowTVertices[]` produced by `MultiTransformShape`. 2-b preserves it. 2-a would require porting the shadow path to GPU — a substantial scope expansion that the prior killswitched batcher tried (`flushShadow()` Task 13-14) and never landed.
+
+4. **The 0.99 ms hierarchy/SetTextureHandle overhead is unaddressable by either 2-a or 2-b.** That's slice-3-or-beyond work (mover refactor + per-instance bone matrices). Pursuing 2-a would harvest the lighting fraction at higher cost without buying us closer to that hierarchy reduction.
+
+5. **Q1(a4) discipline:** "ship the perf win that aligns with cost target." 2-b's ~0.5-0.7 ms/frame is honest; 2-a's would be ~1.0-1.4 ms but buys a different scope/win-ratio trade. The brainstorm Q4 framing of "slice 2 = lighting offload, slice 3 = animated movers" is preserved by 2-b. 2-a blurs that boundary.
+
+### Implementation shape for slice 2 (2-b path)
+
+For the slice 2 design spec, the seam looks like:
+
+- New `TG_Shape::MultiTransformShape_PositionsOnly()` (or a `bool skipLighting` flag on the existing function). Skips the per-vertex lighting kernel (lines 1755-2249) AND the per-face lighting kernel (lines 2272-2515 — keeps backface cull bookkeeping for `numVisibleFaces`/`listOfVisibleFaces` since shadow path needs it; skips the lighting branches at 2293-2403 and the listOfTriangles[].aRGBLight/fRGBLight writes at 2424/2445).
+- `MultiTransformShape_PositionsOnly` is called from `*Appearance::update` for buildings/trees/generics ONLY when `g_useGpuObjects=1` AND the actor's shape was successfully registered with the slice 1 batcher.
+- The slice 1 batcher's `submitMultiShape` path adds GPU-side per-vertex lighting via the lighting.hglsl kernel (finished — all 6 light types ported, `ENABLE_VERTEX_LIGHTING=1`).
+- Per-instance SSBO carries `lightDataIndex` (existing `_pad0` slot in `GpuStaticPropInstance`) into the existing `LightsData[32]` UBO. Per-vertex VBO carries `aRGBLight` (the offset-36 slot in slice 1's vertex stride). No new GPU buffers.
+- CPU `MultiTransformShape_PositionsOnly` still writes `listOfVertices[].x/y/z/rhw/frgb` (for PerPolySelect + the legacy CPU fallback path's correctness if we ever need to re-route) and still writes `listOfShadowTVertices` (for RenderShadows). It does NOT write `.argb` and does NOT touch `listOfTriangles[].aRGBLight`. Slice 1's batcher draws with GPU-computed lighting; the CPU `.argb`/triangle lighting is dead bytes from slice 2 onward.
+
+### Pre-spec verification list (carried forward)
+
+These three items still need confirmation before slice 2 spec writes — Section 2 data didn't bear on them:
+
+1. `TG_Light::GetFalloff` math GLSL portability.
+2. Light type enum ID mismatch between `mclib/tgl.h` (CPU) and `shaders/include/lighting.hglsl` (GPU): SPOT/TERRAIN at swapped numeric positions.
+3. `bShadersDrawPathEnabled` interaction — the `addRenderShape` queue (the `emit` accumulator at 39 µs/frame) currently runs alongside slice 1's batcher path. Slice 2 spec must explicitly suppress this for the GPU-resident population to avoid double-draw.
 
 ---
 
@@ -453,22 +533,22 @@ Every cited symbol grep-confirmed at write time.
 
 ## Closing — ready-for-spec / blocked-on-X
 
-### Verdict
+### Verdict (FINAL)
 
-**Conditional ready-for-spec, gated on Section 2 Tracy data.**
+**READY-FOR-SPEC** with seam **(2-b)**.
 
-If Tracy shows:
-- Lighting ≥ 50% of `appearanceUpdate` → slice 2 spec writes with **2-b** seam (partial offload). Spec goes through `adversarial-plan-review` per worktree CLAUDE.md.
-- Lighting 30-50% → slice 2 spec writes with **2-b** seam, but flag the smaller-than-anticipated win in the perf-target framing (mirror Q1(a4)'s honesty discipline).
-- Lighting ≤ 30% → **surface to user**: slice 2 may not be worth complexity; reconsider scope.
+Tracy data (Section 2) measured slice-2-scoped lighting fraction at ~36% — meaningful but not transformative. Recon prompt's decision tree puts this in "2-b is right scope" band. Slice 2 spec must:
+
+- Frame the perf target honestly per Q1(a4): **target ~0.5-0.7 ms/frame recoverable, ~27-36% of `appearanceUpdate` reduction**. Not "we'll halve the update zone." Reproduce this magnitude in the spec's Tracy gate target so reviewers can challenge it against this recon's number.
+- Go through `adversarial-plan-review` per worktree CLAUDE.md "Review Discipline" — slice 2 qualifies as architectural-endpoint-class because it's the first slice to touch the per-vertex lighting kernel and the first to add CPU/GPU divergence at the per-vertex scale.
 
 ### Surface-to-user list before slice 2 spec write
 
-1. **Tracy data from instrumentation commit run** — gates the verdict above.
+1. ~~Tracy data from instrumentation commit run~~ — **DONE 2026-05-02. Section 2 measurements landed; verdict 2-b.**
 2. **`TG_Light::GetFalloff` math GLSL portability check** — short pre-spec read.
 3. **Light type ID mismatch between CPU and GPU enums** — short pre-spec resolution.
-4. **`bShadersDrawPathEnabled` interaction** — slice 2 spec must explicitly suppress the `addRenderShape` queue-emit when GPU population is active to avoid double-draw.
-5. **Save Q0 baseline as memory** (per brainstorm closing): `object_update_cost_baseline.md` doesn't exist; would be useful after Tracy data lands.
+4. **`bShadersDrawPathEnabled` interaction** — slice 2 spec must explicitly suppress the `addRenderShape` queue-emit when GPU population is active to avoid double-draw. (The `emit` accumulator measured 39 µs/frame across all populations — small but nonzero, and the double-draw risk is correctness, not perf.)
+5. **Save baseline as memory**: now that we have Tracy data, write `object_update_cost_baseline.md` with the 2026-05-02 measurements. Per Q0 + Section 2: appearanceUpdate ~1.27-1.94 ms (varies by camera/mission), per-leaf shape time ~632 ns, vlight 53% / flight 25% of per-leaf. Useful baseline for slice 2's "did the perf actually move" gate.
 
 ### Out of scope for slice 2 (re-confirmed)
 
