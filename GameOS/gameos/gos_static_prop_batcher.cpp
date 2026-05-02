@@ -40,6 +40,15 @@ GLuint s_sharedVbo = 0;
 GLuint s_sharedIbo = 0;
 GLuint s_sharedVao = 0;
 
+// Slice 2 (object-offload) — Stage 2.C.2: per-type hot-color SSBO.
+// Holds {hotPinkRGB, hotYellowRGB, hotGreenRGB} per registered TG_TypeShape,
+// indexed by inst.typeID at draw time. Built once at finalizeGeometry from
+// TG_TypeShape::hotPinkRGB/hotYellowRGB/hotGreenRGB (mclib/tgl.h:575-577) and
+// uploaded as immutable storage. Consumed by static_prop.vert via std430
+// binding 2 to feed get_base_light()'s per-type magic-color parameters.
+// 48 bytes per type × ~50 types ≈ 2.4 KB total.
+GLuint s_perTypeSsbo = 0;
+
 // Per-frame persistent-mapped rings.
 GLuint   s_instanceSsbo = 0;
 GLuint   s_colorSsbo    = 0;
@@ -382,6 +391,9 @@ void GpuStaticPropBatcher::onMapUnload() {
     if (s_sharedVbo) { glDeleteBuffers(1, &s_sharedVbo); s_sharedVbo = 0; }
     if (s_sharedIbo) { glDeleteBuffers(1, &s_sharedIbo); s_sharedIbo = 0; }
     if (s_sharedVao) { glDeleteVertexArrays(1, &s_sharedVao); s_sharedVao = 0; }
+    // Slice 2 (object-offload) — Stage 2.C.2: per-type hot-color SSBO is
+    // also per-map; rebuild on next finalizeGeometry.
+    if (s_perTypeSsbo) { glDeleteBuffers(1, &s_perTypeSsbo); s_perTypeSsbo = 0; }
     // Ring buffers are kept across maps (sized to map's worst case -- grow on demand).
 }
 
@@ -473,7 +485,15 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape) {
                 std::memcpy(vert + 24, &cornerU[c],     4);
                 std::memcpy(vert + 28, &cornerV[c],     4);
                 std::memcpy(vert + 32, &localVertIdx,   4);
-                // bytes 36..39 zero-filled
+                // Slice 2 (object-offload) — Stage 2.C.2: per-vertex aRGBLight
+                // tag at VBO offset 36 (was zero-filled in Stage 2.A's substrate).
+                // Source is TG_TypeVertex::aRGBLight at mclib/tgl.h:54 — the per-
+                // type vertex hot-color tag (e.g. 0xffff00ff = "lit window at
+                // night", 0xffffff00 = "outside building light"). lighting.hglsl
+                // get_base_light() decodes the magic via its expected B,G,R,A
+                // byte order on little-endian x86, matching memory/mc2_argb_packing.md.
+                // Raw DWORD memcpy preserves the exact bit pattern.
+                std::memcpy(vert + 36, &src.aRGBLight,  4);
                 s_stagingVbo.insert(s_stagingVbo.end(), vert, vert + kVertexStride);
 
                 const uint32_t expandedIdx =
@@ -559,8 +579,58 @@ void GpuStaticPropBatcher::finalizeGeometry() {
     glVertexAttribPointer(2, 2, GL_FLOAT,    GL_FALSE, kVertexStride, (void*)24);
     glEnableVertexAttribArray(3);
     glVertexAttribIPointer(3, 1, GL_UNSIGNED_INT,      kVertexStride, (void*)32);
+    // Slice 2 (object-offload) — Stage 2.C.2: per-vertex aRGBLight tag at
+    // offset 36, written by registerType from TG_TypeVertex::aRGBLight.
+    // Consumed by static_prop.vert -> get_base_light() to decode the
+    // hot-color magic and emit per-vertex base lighting before calc_light.
+    glEnableVertexAttribArray(4);
+    glVertexAttribIPointer(4, 1, GL_UNSIGNED_INT,      kVertexStride, (void*)36);
 
     glBindVertexArray(0);
+
+    // Slice 2 (object-offload) — Stage 2.C.2: build per-type hot-color SSBO.
+    // 3 vec4 per type, 48 B per type. Decoded from TG_TypeShape::hotPinkRGB
+    // (DWORD ARGB) into vec3 + 0 padding (std430 vec4 alignment). Indexed
+    // in the shader by inst.typeID — entry 0 corresponds to s_types[0].
+    {
+        struct PerTypeShaderData {
+            float hotPinkRGB[4];
+            float hotYellowRGB[4];
+            float hotGreenRGB[4];
+        };
+        static_assert(sizeof(PerTypeShaderData) == 48, "PerTypeShaderData layout must be 48 bytes (3 × vec4 std430)");
+
+        std::vector<PerTypeShaderData> perTypeBlob(s_types.size());
+        auto unpack = [](DWORD argb, float out[4]) {
+            // Stored as 0xAARRGGBB on the C++ side (matching DWORD convention
+            // in tgl.cpp:1799-1801 where the per-vertex hot-color decode
+            // pulls (argb>>16) & 0xff = R). Match that.
+            out[0] = ((argb >> 16) & 0xFF) / 255.0f;  // R
+            out[1] = ((argb >>  8) & 0xFF) / 255.0f;  // G
+            out[2] = ((argb >>  0) & 0xFF) / 255.0f;  // B
+            out[3] = 0.0f;
+        };
+        for (size_t i = 0; i < s_types.size(); ++i) {
+            const TG_TypeShape* ts = s_types[i].source;
+            DWORD pink = 0, yellow = 0, green = 0;
+            if (ts) {
+                pink   = ts->hotPinkRGB;
+                yellow = ts->hotYellowRGB;
+                green  = ts->hotGreenRGB;
+            }
+            unpack(pink,   perTypeBlob[i].hotPinkRGB);
+            unpack(yellow, perTypeBlob[i].hotYellowRGB);
+            unpack(green,  perTypeBlob[i].hotGreenRGB);
+        }
+
+        glGenBuffers(1, &s_perTypeSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perTypeSsbo);
+        glBufferStorage(GL_SHADER_STORAGE_BUFFER,
+                        static_cast<GLsizeiptr>(perTypeBlob.size() * sizeof(PerTypeShaderData)),
+                        perTypeBlob.data(),
+                        0);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
 
     // Free CPU staging.
     s_stagingVbo.clear(); s_stagingVbo.shrink_to_fit();
@@ -930,7 +1000,9 @@ void GpuStaticPropBatcher::flush() {
     // as if every caller expects state unchanged.
     GLint prevProgram=0, prevVao=0, prevArrayBuf=0, prevElemBuf=0;
     GLint prevActiveTex=0, prevTexUnit0=0;
-    GLint prevSsbo0=0, prevSsbo1=0;
+    // Slice 2 (object-offload) — Stage 2.C.2: also save/restore SSBO slot 2
+    // (per-type hot-color SSBO; bound once for the whole flush, not per-type).
+    GLint prevSsbo0=0, prevSsbo1=0, prevSsbo2=0;
     GLboolean prevDepthTest=GL_FALSE, prevDepthMask=GL_FALSE;
     GLboolean prevCullFace=GL_FALSE, prevBlend=GL_FALSE;
     GLint prevDepthFunc=GL_LESS, prevCullMode=GL_BACK;
@@ -943,6 +1015,7 @@ void GpuStaticPropBatcher::flush() {
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit0);
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 1, &prevSsbo1);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 2, &prevSsbo2);
     prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
     glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
     glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
@@ -992,6 +1065,14 @@ void GpuStaticPropBatcher::flush() {
     // "clear" per shader convention (matches gos_tex_vertex.frag non-overlay
     // convention). Revisit if distance fog needs to attenuate props.
     glUniform1f(glGetUniformLocation(s_staticPropProgram, "u_fogValue"),      1.0f);
+
+    // Slice 2 (object-offload) — Stage 2.C.2: bind per-type hot-color SSBO
+    // once for the whole flush. The data is per-map immutable so a single
+    // bind covers every typeID in the per-type loop below — static_prop.vert
+    // indexes by inst.typeID. Restored at the bottom alongside slots 0+1.
+    if (s_perTypeSsbo) {
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, s_perTypeSsbo);
+    }
 
     // Per-type drawing: bind per-type instance & color SSBO ranges, then
     // issue one instanced draw per packet. gl_InstanceID in the shader
@@ -1060,6 +1141,7 @@ void GpuStaticPropBatcher::flush() {
     // SSBOs
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, (GLuint)prevSsbo1);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)prevSsbo2);
     // Texture binding on unit 0
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit0);
