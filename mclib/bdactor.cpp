@@ -4011,7 +4011,7 @@ long TreeAppearance::render (long depthFixup)
 	// Mirror BldgAppearance::render: bypass inView under GPU path — the
 	// GPU clipper decides visibility, and the legacy angular cull has a
 	// ~87% false-negative rate at wolfman zoom.
-	if (inView || g_useGpuStaticProps || g_useGpuObjects)
+	if (inView || g_useGpuStaticProps)
 	{
 		long color = SD_BLUE;
 		//unsigned long highLight = 0x007f7f7f;
