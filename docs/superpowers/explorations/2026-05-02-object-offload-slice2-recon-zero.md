@@ -709,6 +709,124 @@ Once Tracy data is available, append to this section with measured percentages a
 
 ---
 
+## Section 9 — Pre-spec hardening resolved (2026-05-02)
+
+Five-item checklist from Section 6 resolved via parallel research agents. Findings, with two material corrections to the recon itself:
+
+### Correction A: enum mismatch was a fabricated claim
+
+Recon Section 3 + Section 6 checklist item #2 stated CPU `mclib/tgl.h` and GPU `shaders/include/lighting.hglsl` had different numeric values for SPOT/TERRAIN.
+
+**This is wrong.** Direct grep of both files (`mclib/tgl.h:162-168` and `shaders/include/lighting.hglsl:8-13`) shows byte-identical enum assignments: AMBIENT=0, INFINITE=1, INFINITEWITHFALLOFF=2, POINT=3, SPOT=4, TERRAIN=5. All callers use enum names (no hardcoded numerics). The claim was made without grep verification — exactly the failure mode `feedback_data_flow_audit_asymmetry.md` warns against, and which the recon's own "Documentation Discipline" section called out as load-bearing.
+
+**Resolution**: pre-spec checklist item #2 is RESOLVED-as-non-issue. No code change required. Memory file note: write `enum_mismatch_was_fabricated_claim.md` after slice 2 spec lands so future arcs don't re-discover the false alarm.
+
+### Correction B: per-face lighting kernel is dead code in stock
+
+Recon Section 7 R-arch-1 framed the per-face lighting representation as a real architectural choice (A vs B vs C). The C-default required justification.
+
+**This is too generous.** `useFaceLighting` is initialized `false` at `mclib/terrain.cpp:162` and **never written elsewhere in the source tree** (single grep hit for the assignment). The entire per-face lighting kernel at `mclib/tgl.cpp:2297-2429` is gated by `if (useFaceLighting)` and therefore dead code in stock missions.
+
+When `useFaceLighting==false`, the corner-write loop at `tgl.cpp:2431-2472` adds zero (`redFinal/greenFinal/blueFinal == 0`), so `listOfTriangles[j].aRGBLight[i]` ends up identical to `listOfVertices[Vertices[i]].argb` — only the alpha byte differs.
+
+**Resolution**: per-face additive lighting **is not a feature** in stock. C is the only honest choice; A and B exist only to handle a code path that doesn't fire. Slice 2 ships C with a corrected caveat: "We retire dead CPU work plus the per-face indirection that, in stock, only mirrors the per-vertex value." There is no visual quality drop because there is no per-face contribution to drop.
+
+Important consequence: the ~17-21% recoverable estimate **stands**, but the framing changes. The slice 2 perf gate isn't "we accept smaller win because we drop per-face lighting"; it's "the CPU work being retired is mostly dead code anyway." The narrative is cleaner.
+
+Mod risk: a mod that flips `useFaceLighting=true` would silently differ from CPU, but per `feedback_offload_scope_stock_only.md`, mod renderer breakage is the mod's problem.
+
+### Item 1: TG_Light::GetFalloff GLSL portability — RESOLVED
+
+Function source at `mclib/tgl.h:261-276`. Pure linear interpolation:
+
+```cpp
+bool GetFalloff(float length, float &falloff) {
+    if (length <= closeDistance) { falloff = 1.0f; return true; }
+    if (length >= farDistance)   { return false; }
+    falloff = (farDistance - length) * oneOverDistance;
+    return true;
+}
+```
+
+Trivially GLSL-portable. Three per-light fields (`closeDistance`, `farDistance`, `oneOverDistance`) flow into the per-light SSBO as additional `vec4` packing slots (or fold into existing `light_dir.w` / `light_color.w` if alignment permits). Return-by-reference becomes either `out` parameter or `vec2` return (valid_flag, falloff_value) in the GLSL port.
+
+### Item 2: light type enum mismatch — RESOLVED-as-non-issue (see Correction A)
+
+### Item 3 (R-arch-1): per-face lighting representation — RESOLVED to C
+
+See Correction B. C is the only honest choice. Spec writes C with caveat. A/B are not viable because the code path they would handle is unreachable in stock.
+
+### Item 4 (R-arch-2): CPU fallback eligibility race — RESOLVED via (a) hoist + narrow (b) for late-registration
+
+Layer-B condition matrix (per the agent's audit of `gos_static_prop_batcher.cpp:560-737` and the LOD-swap site at `mclib/bdactor.cpp:1370-1378`):
+
+| Condition | Knowable at update-time? | Hoist cost |
+|---|---|---|
+| `!multi || !multi->listOfShapes` | Yes (same ptr update reads at `bdactor.cpp:2200`) | 2 ptr loads |
+| `!rec.processMe || !rec.node` | Yes (same array) | 1 load/child |
+| `!child->myType` (helper bone) | Yes (immutable) | 1 load |
+| `myType->GetNodeType() != SHAPE_NODE` | Yes (immutable) | 1 vcall |
+| `isSpotlight && !isNight` (daytime spotlight null `listOfVertices`) | Yes (`isSpotlight` from name at `tgl.cpp:242`, `isNight` from eye state) | 2 loads |
+| `!child->listOfColors` | Yes (positions-only allocates, then check) | n/a |
+| Type unregistered (normal) | Yes (registration cache populated by `finalizeGeometry`) | 1 hashmap lookup/child |
+| Late-registration (artillery/bomber) | **NO** — first frame is the registration trigger | needs (b) recovery |
+| LOD swap exposing unregistered LOD | Yes — LOD swap fires inside `recalcBounds` BEFORE `update()` (`bdactor.cpp:1370-1378` then `2191-2200`) | 1 hashmap lookup |
+| `submit()` post-registration failure | Yes — `s_fatalRegistrationFailure` / `s_programLoadFailed` are session-latched | 2 bool loads |
+
+**Design**:
+
+- New method `GpuStaticPropBatcher::isMultiShapeEligibleForGpuObjects(const TG_MultiShape* multi) const`. Mirrors slice 1's render-time per-child gates EXCEPT the late-registration case. ~30 lines.
+- Called from `BldgAppearance::update`, `TreeAppearance::update`, `GenericAppearance::update` BEFORE the `TransformMultiShape` call site (around `bdactor.cpp:2200`).
+- Branch: if `g_useGpuObjects && isMultiShapeEligibleForGpuObjects(bldgShape)`, call new `bldgShape->TransformMultiShape_PositionsOnly(...)`. Else, call existing `bldgShape->TransformMultiShape(...)`.
+- Late-registration recovery (b-narrow): when `submitMultiShape` hits the unregistered-type branch at `gos_static_prop_batcher.cpp:683-693` for the first time, set per-actor flag `bd_needsFullBakeNextFrame`. Render path skips actor that frame (counts in F-gate's `late_register_recovery_skips` to keep fallback rate clean). Next frame's update sees flag, takes the `else` branch (full TransformMultiShape), clears the flag. Frame N+2 onward, normal eligibility hoist applies.
+- 1 bit per actor — packs into existing `appearanceFlags` byte. No struct growth.
+
+**Spec invariants** (must be encoded explicitly):
+- The hoist is for deciding which CPU path runs at update; render-time submit gates remain the authoritative final gate. Both layers must agree on predicates.
+- Eligibility is recomputed every frame (no caching) — `isNight` can change frame-to-frame on day/night transitions.
+- Recovery's "full-bake-next-frame" branch goes through full `TransformMultiShape`, NOT positions-only — re-establishes fresh `.argb` BEFORE any render reads it.
+- F-gate counter: `late_register_recovery_skips` is a NEW counter, separate from `cpu_fallback_by_pop`, so the F-gate ratio isn't polluted by O(2-actor-per-mission) events.
+
+### Item 5 (R-arch-3): GatherGpuObjectLightDataOnly factoring — RESOLVED
+
+**Helper signature**: `uint32_t TG_Shape::GatherGpuObjectLightDataOnly()`. Returns dedup cache index. Member function — has access to existing `lightData_` field at `mclib/tgl.h:715`. Three-line impl:
+
+```cpp
+uint32_t TG_Shape::GatherGpuObjectLightDataOnly() {
+    GatherLightsParameters(&lightData_);                              // pure; mclib/txmmgr.cpp:938-1005
+    return mcTextureManager->addLightDataStructure(&lightData_);      // dedup-add; mclib/txmmgr.cpp:828-851
+}
+```
+
+Declared at `mclib/tgl.h` near `MultiTransformShape` (line 852). Defined at `mclib/tgl.cpp` immediately after `MultiTransformShape`. No `addRenderShape`, no `cur_viewport`/`cur_shape2clip`/`lastTurnTransformed` writes, no flag computation.
+
+**Per-actor (not per-leaf) gather**: agent verified `GatherLightsParameters` reads only `TG_Shape::s_listOfLights` and `s_numLights` (both class statics). All leaves in a multishape produce identical `lightData_`. **One gather per multishape, broadcast index to all leaf instances.** Cheaper than per-leaf and naturally fits slice 1's per-actor instance struct.
+
+Call from `GpuStaticPropBatcher::submitMultiShape` once at the top of the eligible-child loop (around `gos_static_prop_batcher.cpp:698`), before the per-child submit calls. Pass the index into each `submit()` call's per-instance struct via the `lightDataIndex` field (repurposed `_pad0`).
+
+**Legacy non-eligible branch** (mech/GV under `bShadersDrawPathEnabled && !eligibleForGpuObjects`): keeps the existing tangled call at `tgl.cpp:2522`. Add the `!eligibleForGpuObjects` guard to the condition. R1 mutual exclusion (slice 1 spec) guarantees static-prop populations don't reach this branch when GPU path is on, but defensive depth.
+
+**Dedup cache audit**:
+- `addLightDataStructure` is side-effect-free outside cache state (`txmmgr.cpp:828-851`). Writes only `lightData_[]` array + `lightDataStructuresCount`. No GL calls, no draw queueing.
+- Cache resets per-frame (`MC_TextureManager::resetLightData()` at `txmmgr.cpp:854-857`, called from manager's frame-reset alongside `gvManager->reset()`/`rsManager->reset()`).
+- Worst-case memcmp cost: ~1.5 KB per entry × ~6 unique entries per scene × 1500 leaves ≈ 13 MB/frame, well under L1 with first-byte short-circuit. Not a bottleneck.
+
+**Edge case** flagged for spec: there's a SECOND `addLightDataStructure` call inside `TG_Shape::Render` at `tgl.cpp:2817` (per the agent's grep). It re-uses `lightData_` populated by the earlier `MultiTransformShape` call to queue a draw. For GPU-eligible populations, slice 2 short-circuits the legacy `Render` call entirely (slice 1 batcher replaces it), so this site is dead for the GPU population. Spec must verify and explicitly state: "for GPU-eligible populations, `TG_Shape::Render` is not called; the second `addLightDataStructure` site is dead."
+
+### Section 9 verdict — READY-FOR-SPEC
+
+All five hardening items resolved. Two recon corrections noted (enum mismatch fabricated, per-face concern over-stated). The slice 2 spec writes against the corrected understanding:
+
+- Choice C is the only choice (no A/B viability in stock).
+- Eligibility hoist (option a) for almost-everything + narrow late-registration recovery (option b-narrow).
+- `GatherGpuObjectLightDataOnly()` helper, called per-multishape from `submitMultiShape`.
+- GetFalloff trivially portable as linear interp.
+- Enum already aligned; no work needed.
+
+Slice 2 spec write proceeds. See companion design doc `docs/superpowers/specs/2026-05-02-object-offload-slice2-design.md` (this session) for the full spec.
+
+---
+
 ## Adversarial self-review note
 
 Per worktree CLAUDE.md "Review Discipline": this recon is research, not a plan or spec, so the FULL adversarial-plan-review skill does not strictly apply. However, applied the discipline-spirit:
