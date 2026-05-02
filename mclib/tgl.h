@@ -294,7 +294,7 @@ struct TG_HWLightsData {
 		memset(lightDir, 0, sizeof(lightDir));
 		memset(lightColor, 0, sizeof(lightColor));
         pad[0] = pad[1] = pad[2] = 13;
-    } 
+    }
 };
 
 typedef TG_HWLightsData* TG_HWLightsDataPtr;
@@ -850,6 +850,27 @@ class TG_Shape
 		//Function returns 1 is all vertex screen positions are on screen.
 		// NOTE:  THIS IS NOT A RIGOROUS CLIP!!!!!!!!!
 		long MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D *backFacePoint, TG_ShapeRecPtr parentNode, bool isHudElement, BYTE alphaValue, bool isClamped);
+
+		// Slice 2 (object-offload): reduced CPU pass — copy-and-strip variant
+		// of MultiTransformShape that keeps transform / screen-space positions /
+		// shadow-vertex projection / backface cull (listOfVisibleFaces) /
+		// lastTurnTransformed AND retains pool allocations for listOfColors,
+		// listOfTriangles, listOfVisibleShadows (PerPolySelect at tglpp.cpp:14-21
+		// requires these pointers non-null). Strips the per-vertex lighting
+		// kernel, aRGBHighlight additive, per-face lighting, listOfTriangles
+		// aRGBLight/fRGBLight writes, addTriangle queue calls, and the
+		// addRenderShape block. Stage 2.A: declared and defined but unused;
+		// Stage 2.B wires call sites in BldgAppearance/TreeAppearance/
+		// GenericAppearance::update inside their existing cull gates.
+		long MultiTransformShape_PositionsOnly (Stuff::Matrix4D *shapeToClip, Stuff::Point3D *backFacePoint, TG_ShapeRecPtr parentNode, bool isHudElement, BYTE alphaValue, bool isClamped);
+
+		// Slice 2 (object-offload): per-actor light-data gather without the
+		// per-vertex bake side-effects of MultiTransformShape. Calls
+		// GatherLightsParameters and addLightDataStructure once. Returned
+		// index is broadcast into per-leaf GpuStaticPropInstance.lightDataIndex
+		// (Recon Section 9 Item 5: all leaves of one multi-shape see identical
+		// lightData_, so this is per-actor not per-leaf).
+		uint32_t GatherGpuObjectLightDataOnly();
 
 		//This function creates the list of shadows and transforms them in preparation to drawing.
 		//

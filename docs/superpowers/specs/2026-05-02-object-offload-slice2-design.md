@@ -8,11 +8,23 @@ Brainstorm: [`brainstorms/2026-05-02-object-offload-scope.md`](../brainstorms/20
 Recon Zero: [`explorations/2026-05-02-object-offload-slice2-recon-zero.md`](../explorations/2026-05-02-object-offload-slice2-recon-zero.md)
 Slice 1 design: [`specs/2026-05-02-object-offload-slice1-design.md`](2026-05-02-object-offload-slice1-design.md)
 Arc: object offload, slice 2 of a 2-slice arc.
-Status: **approved for implementation pending Step 0 adversarial implementation review** per worktree CLAUDE.md "Review Discipline." Step 0 of the hand-off prompt is the gating review; CRITICAL findings surface to user before any code edit, but the architecture is settled — DO NOT redesign during Step 0 unless review uncovers a blocker.
+Status: **approved for implementation. Step 0 adversarial review applied 2026-05-02 — line citations re-grep'd against current source, fictional cross-references corrected, internal contradictions resolved, architectural decisions locked (see Step 0 Sign-Off Log below). DO NOT redesign during execution.**
+
+### Step 0 Sign-Off Log (2026-05-02)
+
+User-confirmed decisions from adversarial review, locked before Stage 2.A edits:
+
+1. **calc_light() signature change is explicit Stage 2.C deliverable**: `calc_light(int lights_index, vec3 normal, vec3 vertex_world_pos, vec3 base_light)` — adding `vertex_world_pos` is unavoidable for POINT/SPOT/INFINITEWITHFALLOFF distance/falloff. All callers updated lockstep.
+2. **`GatherGpuObjectLightDataOnly()` is per-actor**: hoisted OUT of the per-leaf loop in `submitMultiShape` (call site between ~694 and ~696, BEFORE the `for (int i = 0; i < n; ++i)` at 698). Returned index broadcast into each leaf's per-instance struct inside the loop body.
+3. **Eligibility hoist lives INSIDE the existing cull gate**: at every site (`BldgAppearance::update`, `TreeAppearance::update`, `GenericAppearance::update`), the `g_useGpuObjects`/positions-only branch lives inside the existing `if (inView || g_useGpuStaticProps)` gate. The shadow-shape companion calls (`bldgShadowShape->TransformMultiShape`, `treeShadowShape->TransformMultiShape`) are NOT touched by slice 2.
+4. **Late-registration "≤ 2 events per mission" claim removed**: was sourced from a fictional slice-1 line-86 reference. Replaced with empirical bounding via the new `late_register_recovery_skips` Gate F counter — observed during smoke, widened if higher.
+5. **`needsFullBakeNextFrame` is a NEW `bool` on each appearance class**: NOT a packed bit into a fictional `appearanceFlags` byte. The spec previously implied an existing `appearanceFlags` aggregator; grep returned zero hits, so the spec adds an explicit new `bool needsFullBakeNextFrame` member to `BldgAppearance`, `TreeAppearance`, `GenericAppearance`.
+
+6. **Stage 2.A must not change GPU-visible buffer layouts** (regression-discovered 2026-05-02). The legacy `addRenderShape` path (`bShadersDrawPathEnabled` block at `tgl.cpp:2522`) is active in stock and uploads `TG_HWLightsData` to the `LightsData` UBO declared in `lighting.hglsl:25-28` as `ObjectLights light[32]`. The C++ struct size and the GLSL `ObjectLights` size MUST match byte-for-byte at every stage boundary. Extending `TG_HWLightsData` without the lockstep GLSL change broke per-element stride for `light[i]` with `i>0` and crashed mc2_24 specifically (the airbase has many distinct light setups). **Falloff fields (`closeDistance`/`farDistance`/`oneOverDistance`) belong to Stage 2.C, where the C++ struct, the GLSL `ObjectLights` struct, and the new `calc_light()` reader all change in one commit.** Stage 2.A's `TG_HWLightsData` must remain bit-identical to the pre-slice-2 layout. The same rule applies to any other GPU-visible struct (`GpuStaticPropInstance` is allowed because `_pad0`→`lightDataIndex` is a name-only rename at offset 76; the size and layout do not change).
 
 ## Slice scope (single sentence)
 
-Replace the per-vertex CPU lighting bake (the per-vertex loop body inside `TG_Shape::MultiTransformShape` at `mclib/tgl.cpp:1755-2249`) with GPU vertex-shader lighting for the static-prop populations already wired to slice 1's batcher (buildings + trees + generics under `MC2_GPU_OBJECTS=1`), keeping a reduced CPU pass for screen-space positions, shadow-projection input, and `PerPolySelect` hit-test.
+Replace the per-vertex CPU lighting bake (the lighting subset of the per-vertex loop body inside `TG_Shape::MultiTransformShape`; Tracy zone `vlight` opens at `mclib/tgl.cpp:1726`, the per-vertex `for` loop spans `1728-2272`, with transform code in the early portion of the loop body and lighting/hot-color/highlight code from roughly line 1820 onward) with GPU vertex-shader lighting for the static-prop populations already wired to slice 1's batcher (buildings + trees + generics under `MC2_GPU_OBJECTS=1`), keeping a reduced CPU pass for screen-space positions, shadow-projection input, and `PerPolySelect` hit-test.
 
 ## What slice 2 explicitly does NOT do
 
@@ -38,19 +50,20 @@ Per Recon Zero Section 2 (Tracy data, 2026-05-02):
 
 Slice 2 splits `TG_Shape::MultiTransformShape` into two CPU functions:
 
-1. **`MultiTransformShape_PositionsOnly`** (NEW) — the reduced CPU pass. Runs for GPU-eligible populations under `g_useGpuObjects=1`. Writes:
+1. **`MultiTransformShape_PositionsOnly`** (NEW) — the reduced CPU pass. Runs for GPU-eligible populations under `g_useGpuObjects=1`. Writes (line numbers verified against tgl.cpp 2026-05-02):
    - `listOfVertices[j].x/y/z/rhw/frgb` (screen-space positions for `PerPolySelect` + legacy CPU fallback)
    - `listOfShadowTVertices[]` (shadow projections for legacy CPU shadow path)
-   - `numVisibleFaces`, `listOfVisibleFaces[]` (backface cull bookkeeping)
+   - `numVisibleFaces`, `listOfVisibleFaces[]` (backface cull bookkeeping; the populating loop is at `tgl.cpp:2284-2288` inside the per-face flight scope)
    - `lastTurnTransformed = turn`
-   
-   Skips:
-   - per-vertex lighting kernel (lines 1755-2249) — `.argb` is left whatever-it-was-before
-   - `aRGBHighlight` additive (lines 2227-2249)
-   - per-face lighting (lines 2272-2447) — but KEEPS the backface cull at 2284-2288 because it populates `listOfVisibleFaces`
-   - `listOfTriangles[].aRGBLight[i]` and `.fRGBLight[i]` writes (lines 2424, 2445) — dead code in stock; removed
-   - `addTriangle` queue calls (lines 2466-2483) — dead-on-Renderer-3
-   - `addRenderShape` block (lines 2517-2553) — gated to legacy path only
+   - **Pool allocations for `listOfColors`, `listOfTriangles`, `listOfVisibleShadows` MUST remain non-null** even though their CONTENTS may be stale. `tglpp.cpp:14-21` (PerPolySelect) early-outs unless ALL of `listOfVertices`, `listOfColors`, `listOfShadowTVertices`, `listOfTriangles`, `listOfVisibleFaces`, `listOfVisibleShadows`, `lastTurnTransformed != (turn-1)` are non-null/satisfied. A literal "strip" without guarding allocation can cause silent PerPolySelect early-outs.
+
+   Skips (the lighting/queue subset of the loop bodies; semantic targets, exact micro-ranges to be confirmed at edit-time against current tgl.cpp):
+   - per-vertex lighting kernel — the lighting/hot-color subset of the `vlight` per-vertex loop body, roughly from line ~1820 (first hot-color/lighting branch after parallel-transform setup) through line 2246 (just before the `aRGBHighlight` block). Transform-only code earlier in the loop body MUST stay.
+   - `aRGBHighlight` additive at `tgl.cpp:2247-2270` (the `if (aRGBHighlight)` block)
+   - per-face flight scope at `tgl.cpp:2274-2515` — but KEEPS the backface cull at 2284-2288 because it populates `listOfVisibleFaces`
+   - `listOfTriangles[j].aRGBLight[i]` write at `tgl.cpp:2450` and `listOfTriangles[j].fRGBLight[i]` write at `tgl.cpp:2471` — dead code in stock; removed (note: the surrounding code includes `if (greenSpec > 255)` clamps at 2424 and `if (gFinal > 255)` clamps at 2445; do not confuse those with the writes)
+   - `addTriangle` queue calls at `tgl.cpp:2492, 2496, 2505, 2509` — dead-on-Renderer-3
+   - `addRenderShape` block at `tgl.cpp:2522-2555` (the `bShadersDrawPathEnabled` `if` head opens at 2522, the `addRenderShape` call inside is at 2553, the closing brace is at 2555) — gated to legacy path only
 
 2. **`MultiTransformShape`** (UNCHANGED) — full lighting bake. Continues to run for non-GPU-eligible cases: legacy fallback path, late-registration recovery, mover populations.
 
@@ -59,11 +72,13 @@ Slice 2 splits `TG_Shape::MultiTransformShape` into two CPU functions:
 Finishes the half-built kernel in `shaders/include/lighting.hglsl`:
 
 - `get_base_light()` (lines 32-115) is already complete. No change.
-- `calc_light()` (lines 119-137) is currently a 2-of-6-light-types stub with hardcoded `light[0]=directional`, `light[1]=ambient`. Slice 2 ports the remaining 4 types: INFINITEWITHFALLOFF, POINT, SPOT, TERRAIN. Switch on `light_dir[i].w` (the type field — already populated by `GatherLightsParameters` at `txmmgr.cpp:974`).
-- `GetFalloff` math (linear interpolation per Section 9 Item 1) is added as a GLSL helper. Three new per-light fields in the SSBO: `closeDistance`, `farDistance`, `oneOverDistance`. Pack into `light_color.w` and a new vec4 slot per light, OR extend `TG_HWLightsData` schema (small).
+- `calc_light()` (lines 119-137) is currently a 2-of-6-light-types stub with hardcoded `light[0]=directional`, `light[1]=ambient`, and an early-return `if (numLights.x == 0) return vec3(1)` at line ~127-128. Slice 2 ports the remaining 4 types: INFINITEWITHFALLOFF, POINT, SPOT, TERRAIN. Switch on `light_dir[i].w` (the type field — already populated by `GatherLightsParameters` at `txmmgr.cpp:974` via `lights->lightDir[num_lights][3] = (float)type;`). **The `numLights.x == 0` early-return MUST be preserved** (other shader translation units include this header and may not be on the slice 2 path).
+- **`calc_light()` signature change is an explicit Stage 2.C deliverable**: current signature is `vec3 calc_light(in int lights_index, in vec3 normal, in vec3 base_light)` (3 params). Slice 2 changes it to `vec3 calc_light(in int lights_index, in vec3 normal, in vec3 vertex_world_pos, in vec3 base_light)` (4 params). The new `vertex_world_pos` is required for POINT/SPOT/INFINITEWITHFALLOFF distance/falloff computation. Every existing caller of `calc_light()` (currently only the stub paths in `lighting.hglsl` itself) MUST be updated in lockstep; greps for `calc_light(` pre-edit and post-edit must return identical caller counts (only the signatures differ).
+- **C++/GLSL name divergence at the struct boundary**: the C++ struct is `TG_HWLightsData` (`tgl.h:284-298`) with `lightDir[16][4]` (camelCase). The GLSL struct is `ObjectLights` (`lighting.hglsl:18-23`) with `vec4 light_dir[MAX_LIGHTS_IN_WORLD]` (snake_case). Layouts match byte-for-byte; only the names differ. Spec text uses the GLSL form (`light_dir[i].w`) when discussing shader logic and the C++ form (`lightDir[N][3]`) when discussing CPU-side population.
+- `GetFalloff` math (linear interpolation per Section 9 Item 1; the existing `TG_Light::GetFalloff` at `tgl.h:261-275` is `falloff = (farDistance - length) * oneOverDistance;`) is added as a GLSL helper. Three new per-light fields in the SSBO: `closeDistance`, `farDistance`, `oneOverDistance`. Pack into `light_color.w` and a new vec4 slot per light, OR extend `TG_HWLightsData` schema (small). The source fields `TG_Light::closeDistance/farDistance/oneOverDistance` exist at `tgl.h:193-195`.
 - `ENABLE_VERTEX_LIGHTING` is set to `1` in `lighting.hglsl:3`.
 
-The slice 2 vertex shader (probably extends `shaders/static_prop.vert` or a new `static_prop_lit.vert`) calls `calc_light()` per vertex with the per-instance `lightDataIndex` and per-vertex `aRGBLight` tag (already in the slice 1 vertex VBO at offset 36 per Recon Section 4).
+The slice 2 vertex shader (extends `shaders/static_prop.vert`; current file has no `calc_light()` invocation, pulls per-instance argb from `colors_` SSBO — switching to "consume lit ARGB from VS output" is a one-line varying rewire) calls `calc_light()` per vertex with the per-instance `lightDataIndex` and per-vertex `aRGBLight` tag (slice 1 zero-padded the slot; slice 2 writes it at registerType time per the Per-vertex VBO usage table above).
 
 ### Side-effect-free light-data gather
 
@@ -76,30 +91,55 @@ uint32_t TG_Shape::GatherGpuObjectLightDataOnly() {
 }
 ```
 
-Declared in `mclib/tgl.h` near `MultiTransformShape` (line 852). Defined in `mclib/tgl.cpp` immediately after `MultiTransformShape`. **Per-actor** (not per-leaf) call: invoked once at the top of `GpuStaticPropBatcher::submitMultiShape`'s eligible-child loop (around `gos_static_prop_batcher.cpp:698`), the returned index broadcast into each leaf's per-instance struct.
+Declared in `mclib/tgl.h` near `MultiTransformShape` (line 852). Defined in `mclib/tgl.cpp` immediately after `MultiTransformShape`. **Per-actor** (NOT per-leaf) call: invoked **ONCE per multi-shape, hoisted OUTSIDE the per-leaf submit loop in `submitMultiShape`**. Concrete placement: `submitMultiShape` spans `gos_static_prop_batcher.cpp:641-737` and contains **TWO `for (int i = 0; i < n; ++i) {` loops with identical signatures**:
+- The **first** at line 667 is the registration-check loop (early-out path; if any leaf type is unregistered, sets late-reg flag + returns false).
+- The **second** at line 698 is the per-leaf submit loop where each leaf's per-instance struct is written.
+
+The `GatherGpuObjectLightDataOnly()` call goes BEFORE the **second** loop (between approximately line 694 and line 696, after the registration-check loop has cleared and the eligibility filter has run). The returned `lightDataIndex` is then broadcast into each leaf's per-instance struct INSIDE the second loop's body. (Recon Section 9 Item 5 confirmed all leaves of one multi-shape see identical `lightData_`, which is why per-actor is correct.)
+
+**DO NOT** place this call inside either `for` loop body — placing it inside the registration-check loop at line 667+ would gather lights for unregistered actors that get rejected, and placing it inside the submit loop at line 698+ would make it per-leaf and incur N-fold redundant `GatherLightsParameters` calls per multi-shape per frame. The call sits in the gap BETWEEN the two loops, after registration-check passes.
 
 ### Eligibility hoist
 
-New method `GpuStaticPropBatcher::isMultiShapeEligibleForGpuObjects(const TG_MultiShape* multi) const` per Recon Section 9 Item 4. Mirrors slice 1's render-time per-child gates EXCEPT the late-registration case. Called from `BldgAppearance::update`, `TreeAppearance::update`, `GenericAppearance::update` BEFORE the `TransformMultiShape` call site. Branch:
+New method `GpuStaticPropBatcher::isMultiShapeEligibleForGpuObjects(const TG_MultiShape* multi) const` per Recon Section 9 Item 4. Mirrors slice 1's render-time per-child gates EXCEPT the late-registration case.
+
+**Critical placement rule (load-bearing — preserves cull invariant)**: the eligibility branch lives **INSIDE** the existing `if (inView || g_useGpuStaticProps)` cull gate at each call site, NOT before it. The legacy `TransformMultiShape` call is already inside this gate at:
+
+- `mclib/bdactor.cpp:2200` — `bldgShape->TransformMultiShape` inside `if (inView || g_useGpuStaticProps)` opening at 2191
+- `mclib/bdactor.cpp:4313` — `treeShape->TransformMultiShape` inside `if (inView || g_useGpuStaticProps)` opening at 4300
+- `mclib/genactor.cpp:1189` — `genShape->TransformMultiShape` inside `if (inView || g_useGpuStaticProps)` opening at 1185
+
+Each site also has a parallel shadow-shape call (`bldgShadowShape->TransformMultiShape` at `bdactor.cpp:2206`, `treeShadowShape->TransformMultiShape` at `bdactor.cpp:4321`). **Slice 2 leaves these shadow-shape calls untouched** — shadow path is out of arc.
+
+The branch (logical structure; concrete C++ uses the local `bldgShape`/`treeShape`/`genShape` variable per site):
 
 ```cpp
-if (g_useGpuObjects &&
-    !appearanceFlags_needsFullBakeNextFrame &&  // late-reg recovery clears eligibility for one frame
-    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(bldgShape)) {
-    bldgShape->TransformMultiShape_PositionsOnly(&xlatPosition, &rot);
-} else {
-    bldgShape->TransformMultiShape(&xlatPosition, &rot);
-    appearanceFlags_needsFullBakeNextFrame = false;  // recovery complete
+// Existing cull gate — DO NOT lift the eligibility branch out of this gate.
+if (inView || g_useGpuStaticProps) {
+    if (g_useGpuObjects &&
+        !needsFullBakeNextFrame &&  // NEW bool member; late-reg recovery clears eligibility for one frame
+        GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(bldgShape)) {
+        bldgShape->TransformMultiShape_PositionsOnly(&xlatPosition, &rot);
+    } else {
+        bldgShape->TransformMultiShape(&xlatPosition, &rot);
+        needsFullBakeNextFrame = false;  // recovery complete
+    }
+
+    // Shadow-shape call below is UNCHANGED (out of arc):
+    // bldgShadowShape->TransformMultiShape(...);  // continues to run regardless of eligibility
 }
 ```
 
+`needsFullBakeNextFrame` is a NEW `bool` member added to `BldgAppearance`, `TreeAppearance`, `GenericAppearance` (see Stage 2.A files). It is NOT packed into a fictional `appearanceFlags` byte — those classes have no such aggregator field; they use individual `bool` members.
+
 ### Late-registration recovery
 
-When `submitMultiShape` hits the unregistered-type branch at `gos_static_prop_batcher.cpp:683-693`:
-- Set per-actor flag `appearanceFlags_needsFullBakeNextFrame = true`.
+When `submitMultiShape` hits the unregistered-type branch at `gos_static_prop_batcher.cpp:674-693` (the full branch — `if (s_typeIndex.find(ts) == s_typeIndex.end())` opens at 674; the inner `if (count == 0)` print-allowed block runs 683-692; `++count; return false;` tail at ~692-693):
+
+- Set per-actor flag `needsFullBakeNextFrame = true`. **The flag-set MUST dominate the `return false;` at the tail of the branch** — place it before the inner `if (count == 0)` print block (or on every path that exits via `return false;`), NOT inside the print block.
 - Skip render for that actor this frame. Increment new F-gate counter `late_register_recovery_skips` (separate from `cpu_fallback_by_pop` to keep fallback ratio clean).
 
-Next frame's update sees the flag, takes the `else` branch (full `TransformMultiShape`), clears the flag. Frame N+2 onward, normal eligibility hoist applies. **Maximum visual impact**: one frame of "actor not rendered" per artillery/bomber spawn (≤ 2 events per mission per slice 1 spec line 86).
+Next frame's update sees the flag, takes the `else` branch (full `TransformMultiShape`), clears the flag. Frame N+2 onward, normal eligibility hoist applies. **Visual impact**: one frame of "actor not rendered" per late-registered actor (typically artillery/bomber spawns; slice 1 documents two known types pending allowlist at slice 1 spec lines 489-490, but does NOT establish a per-mission cap). The acceptable rate is bounded empirically via `late_register_recovery_skips` observed during smoke; if observed rate exceeds expectations (>5 per mission), the eligibility-hoist coverage has a gap and the count must be investigated rather than treated as cosmetic.
 
 ### Per-instance SSBO additions
 
@@ -111,9 +151,17 @@ No struct growth (slot already exists).
 
 ### Per-vertex VBO usage
 
-Existing slice 1 vertex layout (gos_static_prop_batcher.cpp:451-461) already includes:
-- offset 12: normal.xyz (used by GPU lighting kernel)
-- offset 36: 4-byte pad slot — **slice 2 uses this for per-vertex `aRGBLight`** (the per-type vertex hot-color tag from `theShape->listOfTypeVertices[j].aRGBLight`).
+Existing slice 1 vertex layout (`gos_static_prop_batcher.cpp:451-461`, stride `kVertexStride = 40`):
+
+| Offset | Bytes | Field | VS attrib (current) |
+|---|---|---|---|
+| 0  | 12 | position.xyz (vec3) | `layout(location = 0)` |
+| 12 | 12 | normal.xyz (vec3 — used by GPU lighting kernel) | `layout(location = 1)` |
+| 24 | 8  | uv (vec2) | `layout(location = 2)` |
+| 32 | 4  | localVertexID (uint) | `layout(location = 3) in uint a_localVertexID` |
+| 36 | 4  | **zero-pad slot** | (none — currently unbound) |
+
+**Slice 2 uses offset 36 for per-vertex `aRGBLight`** (the per-type vertex hot-color tag from `theShape->listOfTypeVertices[j].aRGBLight`). Add `layout(location = 4) in uint a_aRGBLight;` (or `vec4` with `GL_UNSIGNED_BYTE` `GL_TRUE` normalization) to `static_prop.vert`. **Storage encoding**: write the raw DWORD via `memcpy(vert+36, &aRGBLight, 4)` parallel to the rest of the staging writes in `registerType`. On little-endian x86 the bytes land as B,G,R,A in memory, which is what `lighting.hglsl:get_base_light()` already expects (it decodes `b | (g<<8) | (r<<16) | (a<<24)` from `GL_UNSIGNED_BYTE`/`GL_TRUE` swizzled `xyz`). Per `memory/mc2_argb_packing.md` — do NOT write the bytes in any other order.
 
 No vertex stride growth.
 
@@ -128,7 +176,7 @@ Total: 48 bytes per type × ~50 types = ~2.4 KB. Uploaded once at `finalizeGeome
 
 ### `addRenderShape` double-draw avoidance
 
-At `mclib/tgl.cpp:2522` (the `bShadersDrawPathEnabled` block), add the eligibility negation:
+At `mclib/tgl.cpp:2522` (the `bShadersDrawPathEnabled` `if` head; the block closes at line 2555 with the `addRenderShape` call itself at line 2553), add the eligibility negation:
 
 Current:
 ```cpp
@@ -154,13 +202,14 @@ The second `addLightDataStructure`/`addRenderShape` site at `tgl.cpp:2817` is in
 
 ### `shaders/include/lighting.hglsl` — extended
 
-- Set `#define ENABLE_VERTEX_LIGHTING 1` (currently 0 at line 3).
-- Replace `calc_light()` (lines 119-137) with full 6-type dispatch. Pseudocode:
+- Set `#define ENABLE_VERTEX_LIGHTING 1` (currently `0` at `lighting.hglsl:3`).
+- **Signature change** (locked at Step 0 sign-off): replace 3-param `vec3 calc_light(in int lights_index, in vec3 normal, in vec3 base_light)` with 4-param `vec3 calc_light(in int lights_index, in vec3 normal, in vec3 vertex_world_pos, in vec3 base_light)`. `vertex_world_pos` is required for falloff/spot computation. Update every caller in lockstep.
+- Replace `calc_light()` (lines 119-137) body with full 6-type dispatch. Preserve the existing `if (numLights.x == 0) return vec3(1)` early-return. Pseudocode:
 
 ```glsl
 vec3 calc_light(in int lights_index, in vec3 normal, in vec3 vertex_world_pos, in vec3 base_light) {
     ObjectLights ld = light[lights_index];
-    if (ld.numLights.x == 0) return vec3(1);
+    if (ld.numLights.x == 0) return vec3(1);  // PRESERVE — header is included by other shaders
     vec3 final = base_light;
     vec3 ambient = vec3(0);
     for (int i = 0; i < ld.numLights.x && i < MAX_LIGHTS_IN_WORLD; i++) {
@@ -193,7 +242,7 @@ vec3 calc_light(in int lights_index, in vec3 normal, in vec3 vertex_world_pos, i
 
 `vertex_world_pos` is the world-space vertex position — VS computes it from per-vertex shape-local position × per-instance shapeToWorld matrix.
 
-`TG_LIGHT_TERRAIN` is special: CPU path pre-bakes its contribution into `listOfColors[].redSpec/.greenSpec/.blueSpec` only when `useShadows` is true. **For slice 2, the simplest port is to keep the CPU pre-bake** (`MultiTransformShape_PositionsOnly` retains the terrain-light branch at `tgl.cpp:2050-2076` since it writes `listOfColors`, which is consumed by the legacy CPU fallback path). The GPU kernel can either ignore TG_LIGHT_TERRAIN (and accept slight specular under-count for GPU population) or sample the per-vertex specular contribution from a new SSBO. **Default**: ignore on GPU side; surface to spec-review for visual delta judgment.
+`TG_LIGHT_TERRAIN` is special: CPU path pre-bakes its contribution into `listOfColors[].redSpec/.greenSpec/.blueSpec` only when `useShadows` is true. **For slice 2, the simplest port is to keep the CPU pre-bake** (`MultiTransformShape_PositionsOnly` retains the `case TG_LIGHT_TERRAIN:` branch in `MultiTransformShape` at `tgl.cpp:2063-2096`; the `redSpec/greenSpec/blueSpec` writes specifically are at `tgl.cpp:2084-2086`. These writes feed `listOfColors`, which is consumed by the legacy CPU fallback path). The GPU kernel can either ignore TG_LIGHT_TERRAIN (and accept slight specular under-count for GPU population) or sample the per-vertex specular contribution from a new SSBO. **Default**: ignore on GPU side; surface to spec-review for visual delta judgment.
 
 ### Per-instance schema additions
 
@@ -218,13 +267,13 @@ MC2_OBJECT_PARITY_CHECK=1         → enables P3 dual-emit + P1 sampled bytewise
 ### Stage 2.A — Substrate edits (no behavior change under `MC2_GPU_OBJECTS=0`)
 
 Files:
-- `mclib/tgl.h`: declare `MultiTransformShape_PositionsOnly` and `GatherGpuObjectLightDataOnly`.
-- `mclib/tgl.cpp`: define both. `_PositionsOnly` is a copy-and-strip of `MultiTransformShape` — keeps lines 1656-1753 + the per-face backface-cull at 2284-2288 + the listOfShadowTVertices population (which is in `RenderShadows`, separate); strips lines 1755-2249 (per-vertex lighting kernel) and lines 2293-2515 (per-face lighting + listOfTriangles writes + addTriangle queue calls + addRenderShape block).
-- `mclib/tgl.cpp` line 2522: add `!eligibleForGpuObjects(this)` to the `bShadersDrawPathEnabled` condition. Add `eligibleForGpuObjects` as a free function or batcher static.
-- `GameOS/gameos/gos_static_prop_batcher.h`: declare `isMultiShapeEligibleForGpuObjects`. Add `lightDataIndex` to `GpuStaticPropInstance` (repurpose `_pad0`). Update static_assert.
-- `GameOS/gameos/gos_static_prop_batcher.cpp`: define `isMultiShapeEligibleForGpuObjects`. Add per-actor `appearanceFlags_needsFullBakeNextFrame` flag check + late-registration setter at line 683-693 branch.
-- `mclib/bdactor.h`, `mclib/bdactor.cpp`: add `appearanceFlags_needsFullBakeNextFrame` 1-bit flag to BldgAppearance + TreeAppearance. Initialize false. (Or pack into existing `appearanceFlags`.)
-- `mclib/genactor.h`, `mclib/genactor.cpp`: same for GenericAppearance.
+- `mclib/tgl.h`: declare `MultiTransformShape_PositionsOnly` and `GatherGpuObjectLightDataOnly`. (Existing `MultiTransformShape` declaration is at `tgl.h:852`.)
+- `mclib/tgl.cpp`: define both. `_PositionsOnly` is a copy-and-strip of `MultiTransformShape`. Implementation rule: walk `MultiTransformShape` from the top (`tgl.cpp:1657`) and KEEP all transform code (the `vlight` Tracy zone setup at 1726, the per-vertex `for` loop opening at 1728, parallel-transform code in the early portion of the loop body, screen-space writes to `listOfVertices[j].x/y/z/rhw/frgb`); STRIP the lighting/hot-color/highlight subset of the loop body (roughly line ~1820 through 2246 — the per-vertex lighting computation and color packing); KEEP the loop's closing brace at `tgl.cpp:2272`; STRIP the `aRGBHighlight` block at `tgl.cpp:2247-2270`; KEEP the per-face flight scope's backface-cull-only population of `listOfVisibleFaces` at `tgl.cpp:2284-2288`; STRIP the rest of the per-face flight scope at `tgl.cpp:2274-2515` (per-face lighting computation, `listOfTriangles[j].aRGBLight[i]` write at 2450, `listOfTriangles[j].fRGBLight[i]` write at 2471, the four `addTriangle` calls at 2492/2496/2505/2509); STRIP the `addRenderShape` block at `tgl.cpp:2522-2555`. **The exact micro-boundaries inside the per-vertex loop body are to be re-derived against current `tgl.cpp` at edit-time** (the line numbers above are accurate as of 2026-05-02 grep, but the `_PositionsOnly` strip should be done semantically — keep transform, strip lighting — rather than by literal line range, to be robust against further drift). Pool-allocation invariant: `_PositionsOnly` MUST leave `listOfColors`, `listOfTriangles`, `listOfVisibleShadows` pointers non-null (PerPolySelect at `tglpp.cpp:14-21` early-outs unless ALL pointers are non-null), even if their contents are stale.
+- `mclib/tgl.cpp` line 2522: add `!eligibleForGpuObjects(this)` to the `bShadersDrawPathEnabled` condition (the `if` head). Add `eligibleForGpuObjects(TG_Shape*)` as a free function or batcher static.
+- `GameOS/gameos/gos_static_prop_batcher.h`: declare `isMultiShapeEligibleForGpuObjects`. Add `lightDataIndex` to `GpuStaticPropInstance` (repurpose `_pad0` at offset 76; struct currently spans `gos_static_prop_batcher.h:13-21`). Update the `static_assert` at `gos_static_prop_batcher.h:30` (offsetof name and description string).
+- `GameOS/gameos/gos_static_prop_batcher.cpp`: define `isMultiShapeEligibleForGpuObjects`. Wire late-registration setter at the unregistered-type branch `gos_static_prop_batcher.cpp:674-693`: set `needsFullBakeNextFrame=true` on the actor (via the appearance pointer) and increment `late_register_recovery_skips`, BEFORE the `return false;` tail at ~692 (NOT inside the inner `if (count == 0)` print block).
+- `mclib/bdactor.h`, `mclib/bdactor.cpp`: add a NEW `bool needsFullBakeNextFrame;` member to `BldgAppearance` and `TreeAppearance`. Initialize false in the constructor. (Note: these classes do NOT have an `appearanceFlags` aggregator — grep confirmed they use individual `bool` members like `isReversed`, `forceLightsOut`, etc. Add a new `bool` next to those.)
+- `mclib/genactor.h`, `mclib/genactor.cpp`: same — new `bool needsFullBakeNextFrame;` on `GenericAppearance`.
 
 **No call sites are switched to the new path yet.** All actors still go through full `TransformMultiShape`.
 
@@ -233,9 +282,9 @@ Files:
 ### Stage 2.B — Wire eligibility hoist + positions-only into update path
 
 Files:
-- `mclib/bdactor.cpp` `BldgAppearance::update` (line 1957) and `TreeAppearance::update` (line 4209): replace the unconditional `TransformMultiShape` call with the eligibility branch above.
-- `mclib/genactor.cpp` `GenericAppearance::update` (line 1049): same pattern.
-- `GameOS/gameos/gos_static_prop_batcher.cpp` `submitMultiShape`: set `appearanceFlags_needsFullBakeNextFrame=true` on the late-registration branch at line 683-693, increment `late_register_recovery_skips`.
+- `mclib/bdactor.cpp` `BldgAppearance::update` (function start at line 1957; existing `bldgShape->TransformMultiShape` call at line 2200 inside `if (inView || g_useGpuStaticProps)` opening at 2191) and `TreeAppearance::update` (function start at line 4213; existing `treeShape->TransformMultiShape` call at line 4313 inside `if (inView || g_useGpuStaticProps)` opening at 4300): wrap the existing call in the eligibility branch from the "Eligibility hoist" architecture section above. **The branch lives INSIDE the existing cull gate.** The shadow-shape companion calls (`bldgShadowShape->TransformMultiShape` at `bdactor.cpp:2206`, `treeShadowShape->TransformMultiShape` at `bdactor.cpp:4321`) are NOT touched.
+- `mclib/genactor.cpp` `GenericAppearance::update` (function start at line 1049; existing `genShape->TransformMultiShape` call at line 1189 inside `if (inView || g_useGpuStaticProps)` opening at 1185): same pattern.
+- `GameOS/gameos/gos_static_prop_batcher.cpp` `submitMultiShape` (function spans 641-737): set `needsFullBakeNextFrame=true` on the late-registration branch (the `if (s_typeIndex.find(ts) == s_typeIndex.end())` block at lines 674-693), increment `late_register_recovery_skips`. The flag-set must dominate the `return false;` at the tail.
 
 **Visual behavior at this stage**: with `MC2_GPU_OBJECTS=1`, eligible static-prop actors run positions-only at update-time. Their `.argb` is stale or zero. **Slice 1's batcher continues to read `listOfVertices[j].argb` and memcpy it into the per-instance color SSBO** — so it will draw with stale colors. This is intentional: at this stage, the colors are wrong but the kernel split is verified.
 
@@ -254,13 +303,13 @@ Files:
 ### Stage 2.C — Wire GPU vertex lighting (the meat)
 
 Files:
-- `shaders/include/lighting.hglsl`: set `ENABLE_VERTEX_LIGHTING 1`, finish `calc_light()` 6-type dispatch, add `GetFalloff` GLSL helper.
-- `shaders/static_prop.vert` (or new `static_prop_lit.vert`): per-vertex `calc_light()` invocation; output lit ARGB to fragment shader.
-- `shaders/static_prop.frag`: consume lit ARGB from VS output instead of from per-instance color SSBO.
-- `GameOS/gameos/gos_static_prop_batcher.cpp` `submitMultiShape`: at top of eligible-child loop (line ~698), call `multi->listOfShapes[0].node->GatherGpuObjectLightDataOnly()` (or per-actor equivalent), broadcast index into per-leaf `lightDataIndex`. Stop memcpying `listOfVertices[j].argb` (since GPU lights it).
-- `GameOS/gameos/gos_static_prop_batcher.cpp` `registerType`: add per-vertex `aRGBLight` write at offset 36 (currently zero-padded). Source from `typeShape->listOfTypeVertices[localVertIdx].aRGBLight`.
-- `GameOS/gameos/gos_static_prop_batcher.cpp` `finalizeGeometry`: build per-type SSBO with hot-color fields. Bind at draw time.
-- `mclib/tgl.h`: extend `TG_HWLightsData` with `closeDistance`/`farDistance`/`oneOverDistance` per-light fields (or pack into existing `vec4` w-components). `mclib/txmmgr.cpp:938-1005` `GatherLightsParameters` populates them from `s_listOfLights[i]->closeDistance` etc.
+- `shaders/include/lighting.hglsl`: set `ENABLE_VERTEX_LIGHTING 1`, **change `calc_light()` signature from 3-param to 4-param adding `vertex_world_pos` (locked at Step 0 sign-off)**, finish 6-type dispatch, add `GetFalloff` GLSL helper, preserve the `numLights.x == 0` early-return. Update all callers (currently only the stub paths inside `lighting.hglsl`) in lockstep — pre-edit and post-edit grep counts for `calc_light(` must match.
+- `shaders/static_prop.vert`: per-vertex `calc_light()` invocation with the new 4-param signature; compute `vertex_world_pos = (shapeToWorld * vec4(position, 1)).xyz`; add `layout(location = 4) in uint a_aRGBLight;` (or `vec4` with `GL_UNSIGNED_BYTE`/`GL_TRUE`); output lit ARGB as varying. (Existing file currently has no `calc_light()` invocation; pulls per-instance argb from `colors_` SSBO. Extending it is feasible — no need for a new `static_prop_lit.vert`.)
+- `shaders/static_prop.frag`: consume lit ARGB from VS varying instead of from per-instance color SSBO (one-line varying rewire).
+- `GameOS/gameos/gos_static_prop_batcher.cpp` `submitMultiShape` (641-737): **per-actor (NOT per-leaf) call to `GatherGpuObjectLightDataOnly()` hoisted between the TWO per-leaf `for (int i = 0; i < n; ++i)` loops** (the first at line 667 is the registration-check / early-out loop; the second at line 698 is the submit loop). The call site sits between approximately line 694 and 696 — AFTER the registration-check loop has cleared and BEFORE the submit loop begins. The returned `lightDataIndex` is broadcast into each leaf's per-instance struct INSIDE the second loop's body. Stop memcpying `listOfVertices[j].argb` into the per-instance color SSBO (since GPU lights it now). **DO NOT** place the gather call inside either loop body (registration loop at 667+ → wasted work on rejected actors; submit loop at 698+ → per-leaf, N-fold redundant).
+- `GameOS/gameos/gos_static_prop_batcher.cpp` `registerType` (~408-497): add per-vertex `aRGBLight` write at offset 36 (currently zero-padded — see Per-vertex VBO usage table). **Storage encoding: write the raw DWORD via `memcpy(vert+36, &aRGBLight, 4)` parallel to the rest of the staging writes.** On little-endian x86 the bytes land as B,G,R,A in memory, matching `lighting.hglsl:get_base_light()`'s existing `b | (g<<8) | (r<<16) | (a<<24)` decode from `GL_UNSIGNED_BYTE`/`GL_TRUE`. Source value: `typeShape->listOfTypeVertices[localVertIdx].aRGBLight`.
+- `GameOS/gameos/gos_static_prop_batcher.cpp` `finalizeGeometry` (510-558, runs once at map load): build per-type SSBO with hot-color fields (`hotPinkRGB`, `hotYellowRGB`, `hotGreenRGB` — names match the `in vec3` parameters of `get_base_light()` at `lighting.hglsl:35`). Bind at draw time.
+- `mclib/tgl.h`: extend `TG_HWLightsData` (currently at `tgl.h:284-298` with `lightDir[16][4]`, `lightColor[16][4]`, `numLights_`, `pad[3]`) with `closeDistance`/`farDistance`/`oneOverDistance` per-light fields (or pack into existing `vec4` w-components — small schema). `mclib/txmmgr.cpp:938-1005` `GatherLightsParameters` populates them from `s_listOfLights[i]->closeDistance` etc. (source fields exist at `tgl.h:193-195`).
 - New SSBO binding for per-type hot-color buffer.
 
 **Visual behavior at this stage**: with `MC2_GPU_OBJECTS=1`, GPU population renders with GPU-computed lighting. Should be visually equivalent to legacy CPU path (modulo per-face additive, which is dead in stock).
@@ -349,7 +398,7 @@ CPU path pre-bakes terrain-light specular into `listOfColors[]`. GPU kernel curr
 
 ### R3. Late-registration recovery flicker
 
-One frame of "actor not rendered" per artillery/bomber spawn. Slice 1's late-register count caps at "two types per mission" per spec line 86. Worst case: 2 actors flicker for 1 frame each at mission start. Acceptable.
+One frame of "actor not rendered" per late-registered actor (typically artillery/bomber spawns; slice 1 spec lines 489-490 document two known types pending allowlist). The rate is **NOT** bounded by a static per-mission cap — slice 1 establishes no such cap. Acceptability is bounded empirically via the new `late_register_recovery_skips` Gate F counter observed during smoke. If observed rate is low (≤2 per mission across tier1), the visible impact is acceptable — 1-frame flickers at mission start. If observed rate is higher (>5), the eligibility-hoist coverage has a gap and the count must be investigated rather than treated as cosmetic.
 
 ### R4. Mod compatibility (`useFaceLighting=true`)
 
@@ -367,12 +416,12 @@ Slice 1 zero-padded offset 36 (`gos_static_prop_batcher.cpp:461`). Slice 2's Sta
 - New env-gated parity (`MC2_OBJECT_PARITY_CHECK`).
 
 ### Modified
-- `mclib/tgl.h`: declare `MultiTransformShape_PositionsOnly`, `GatherGpuObjectLightDataOnly`. Extend `TG_HWLightsData` with falloff fields.
-- `mclib/tgl.cpp`: define both. Add `eligibleForGpuObjects` helper. Add `addRenderShape` gate at line 2522.
-- `mclib/txmmgr.cpp`: extend `GatherLightsParameters` to populate falloff fields.
-- `mclib/bdactor.cpp` `BldgAppearance::update` + `TreeAppearance::update`: eligibility branch.
-- `mclib/genactor.cpp` `GenericAppearance::update`: same.
-- `mclib/bdactor.h`, `mclib/genactor.h`: per-actor `appearanceFlags_needsFullBakeNextFrame` flag.
+- `mclib/tgl.h`: declare `MultiTransformShape_PositionsOnly`, `GatherGpuObjectLightDataOnly` (Stage 2.A). Extend `TG_HWLightsData` with falloff fields **(Stage 2.C ONLY — must ship in lockstep with the matching `lighting.hglsl ObjectLights` extension and `calc_light()` 4-param rewrite; doing it earlier breaks the C++/GLSL UBO stride and corrupts the legacy shader path, regression-discovered 2026-05-02)**.
+- `mclib/tgl.cpp`: define both new functions. Add `eligibleForGpuObjects` helper. Add `addRenderShape` gate at line 2522 (Stage 2.A).
+- `mclib/txmmgr.cpp`: extend `GatherLightsParameters` to populate falloff fields **(Stage 2.C ONLY — see TG_HWLightsData note above; do not add lightFalloff writes in Stage 2.A)**.
+- `mclib/bdactor.cpp` `BldgAppearance::update` (1957) + `TreeAppearance::update` (4213): eligibility branch INSIDE existing cull gate.
+- `mclib/genactor.cpp` `GenericAppearance::update` (1049): same.
+- `mclib/bdactor.h`, `mclib/genactor.h`: NEW `bool needsFullBakeNextFrame;` member on each appearance class (NOT a packed bit into a fictional `appearanceFlags` byte — those classes have no such aggregator).
 - `GameOS/gameos/gos_static_prop_batcher.{h,cpp}`: add `isMultiShapeEligibleForGpuObjects`, `lightDataIndex` field, late-registration recovery setter, parity check infrastructure (Stage 2.D).
 - `GameOS/gameos/gos_static_prop_batcher.cpp` `registerType`: write per-vertex `aRGBLight` at offset 36.
 - `GameOS/gameos/gos_static_prop_batcher.cpp` `finalizeGeometry`: build per-type hot-color SSBO.

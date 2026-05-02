@@ -232,6 +232,19 @@ std::unordered_map<std::string, uint32_t> s_lateRegisterCounts;
 std::unordered_set<std::string> s_lateRegisterAllowlist;
 bool s_lateRegisterAllowlistLoaded = false;
 
+// Slice 2, Stage 2.A — late-registration recovery signal.
+// Set true inside the late-reg branch of submitMultiShape; cleared to false
+// at the top of every submitMultiShape call. Read by the public method
+// wasLastFailureLateRegistration() so callers (Stage 2.B) can set
+// needsFullBakeNextFrame on the owning actor without adding a return-value
+// channel to submitMultiShape.
+bool s_lastSubmitWasLateReg = false;
+
+// Monotonic counter of times submitMultiShape returned false on the
+// late-registration branch (across all frames since process start).
+// Added to the [OBJBATCHER v1] summary line.
+uint64_t s_late_register_recovery_skips = 0;
+
 inline int popIndex(GpuStaticPropPopulation pop) {
     return static_cast<int>(pop);
 }
@@ -291,7 +304,8 @@ void accumulateMonotonicAndMaybeEmit(bool forceEmit) {
                "cpu_fallback=%llu gpu_drawn_instances=%llu "
                "fallback_rate=%.4f "
                "submit_buildings=%llu submit_trees=%llu "
-               "submit_generics=%llu submit_legacy=%llu\n",
+               "submit_generics=%llu submit_legacy=%llu "
+               "late_register_recovery_skips=%llu\n",
                (unsigned long long)s_counters.frame_count,
                (unsigned long long)slice1_eligible,
                (unsigned long long)total_submitted,
@@ -303,7 +317,8 @@ void accumulateMonotonicAndMaybeEmit(bool forceEmit) {
                (unsigned long long)s_counters.mono_submitted_instances_by_pop[0],
                (unsigned long long)s_counters.mono_submitted_instances_by_pop[1],
                (unsigned long long)s_counters.mono_submitted_instances_by_pop[2],
-               (unsigned long long)s_counters.mono_submitted_instances_by_pop[3]);
+               (unsigned long long)s_counters.mono_submitted_instances_by_pop[3],
+               (unsigned long long)s_late_register_recovery_skips);
         std::fflush(stderr);
     }
 
@@ -641,6 +656,9 @@ void GpuStaticPropBatcher::recordCpuFallback(GpuStaticPropPopulation pop) {
 bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
                                             GpuStaticPropPopulation pop) {
     initTraceOnce();
+    // Clear the late-reg signal at the top of every call so a stale "true"
+    // from a prior submitMultiShape never masquerades as a signal for this one.
+    s_lastSubmitWasLateReg = false;
     // pop consumed by counters below.
     if (!multi || s_fatalRegistrationFailure) return false;
     if (s_programLoadFailed || s_staticPropProgram == 0) return false;
@@ -689,6 +707,12 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
                 std::fflush(stderr);
             }
             ++count;
+            // Stage 2.A: signal the caller that this failure was specifically
+            // a late-registration miss (not a fatal GPU error). Caller (Stage
+            // 2.B) queries wasLastFailureLateRegistration() and sets
+            // needsFullBakeNextFrame=true on the owning actor.
+            s_lastSubmitWasLateReg = true;
+            ++s_late_register_recovery_skips;
             return false;
         }
     }
@@ -1037,6 +1061,62 @@ void GpuStaticPropBatcher::flushShadow() {
 }
 
 void GpuStaticPropBatcher::setDebugAddrMode(int mode) { debugAddrMode_ = mode; }
+
+// ---------------------------------------------------------------------------
+// Slice 2, Stage 2.A — new method and free-function definitions
+// ---------------------------------------------------------------------------
+
+// GpuStaticPropBatcher::wasLastFailureLateRegistration (lines added below)
+// Returns whether the most recent submitMultiShape() call returned false
+// because of a late-registration miss. The flag s_lastSubmitWasLateReg is
+// cleared at the TOP of every submitMultiShape() call (before any checks)
+// so the window of confusion is exactly one submit.
+bool GpuStaticPropBatcher::wasLastFailureLateRegistration() const {
+    return s_lastSubmitWasLateReg;
+}
+
+// GpuStaticPropBatcher::isMultiShapeEligibleForGpuObjects
+// Cheap, side-effect-free eligibility check used by the addRenderShape gate
+// (tgl.cpp:2522 Stage 2.B) and by *Appearance::update (Stage 2.B) before
+// calling submitMultiShape. Returns true iff g_useGpuObjects is enabled AND
+// every SHAPE_NODE leaf under `multi` is registered in s_typeIndex.
+// MUST NOT mutate any batcher state, log, or increment counters.
+bool GpuStaticPropBatcher::isMultiShapeEligibleForGpuObjects(
+        const TG_MultiShape* multi) const {
+    if (!g_useGpuObjects) return false;
+    if (!multi) return false;
+
+    const int n = multi->numTG_Shapes;
+    if (n <= 0 || !multi->listOfShapes) return false;
+
+    for (int i = 0; i < n; ++i) {
+        const TG_ShapeRec& rec = multi->listOfShapes[i];
+        if (!rec.processMe || !rec.node) continue;
+        const TG_Shape* child = rec.node;
+        if (!child->myType) continue;
+        if (child->myType->GetNodeType() != SHAPE_NODE) continue;  // skip helpers/bones
+        const TG_TypeShape* ts = static_cast<const TG_TypeShape*>(child->myType);
+        if (s_typeIndex.find(ts) == s_typeIndex.end()) return false;
+    }
+    return true;
+}
+
+// eligibleForGpuObjects — free function (declared in gos_static_prop_batcher.h)
+// Per-leaf analog of isMultiShapeEligibleForGpuObjects. Called from the
+// addRenderShape gate in tgl.cpp:2522 inside the bShadersDrawPathEnabled block.
+// Returns true iff g_useGpuObjects is enabled AND `shape->myType` is a
+// registered TG_TypeShape in s_typeIndex.
+// Under default g_useGpuObjects=false this returns false unconditionally —
+// the addRenderShape gate stays byte-for-byte equivalent in stock builds.
+// MUST NOT mutate any batcher state.
+bool eligibleForGpuObjects(TG_Shape* shape) {
+    if (!g_useGpuObjects) return false;
+    if (!shape) return false;
+    if (!shape->myType) return false;
+    if (shape->myType->GetNodeType() != SHAPE_NODE) return false;
+    const TG_TypeShape* ts = static_cast<const TG_TypeShape*>(shape->myType);
+    return s_typeIndex.find(ts) != s_typeIndex.end();
+}
 
 void gos_GpuPropsCycleDebugMode() {
     auto& b = GpuStaticPropBatcher::instance();

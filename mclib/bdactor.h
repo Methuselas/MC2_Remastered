@@ -192,7 +192,16 @@ class BldgAppearance : public ObjectAppearance
 		BldgAppearanceType*							appearType;
 		TG_MultiShapePtr							bldgShape;
 		TG_MultiShapePtr							bldgShadowShape;
-		
+
+		// Slice 2 (object-offload): set true by the GPU-object batcher's
+		// late-registration branch when a leaf type is encountered for the
+		// first time. The next BldgAppearance::update sees this flag and
+		// forces a full TransformMultiShape (not _PositionsOnly) so the
+		// per-vertex CPU bake refreshes after type registration. Stage 2.A:
+		// declared and false-init; never mutated. Stage 2.B wires the
+		// late-reg setter and the eligibility-hoist consumer.
+		bool										needsFullBakeNextFrame;
+
 		long										bdAnimationState;
 		float										currentFrame;
 		float										bdFrameRate;
@@ -466,7 +475,10 @@ class TreeAppearance : public ObjectAppearance
 		TreeAppearanceType*							appearType;
 		TG_MultiShapePtr							treeShape;
 		TG_MultiShapePtr							treeShadowShape;
-												
+
+		// Slice 2 (object-offload): see BldgAppearance::needsFullBakeNextFrame.
+		bool										needsFullBakeNextFrame;
+
 		float										hazeFactor;
 		float										pitch;
 		float										yaw;

@@ -15,7 +15,10 @@ struct alignas(16) GpuStaticPropInstance {
     uint32_t typeID;
     uint32_t firstColorOffset;  // into per-frame color SSBO
     uint32_t flags;             // bit 0: lightsOut, bit 1: isWindow, bit 2: isSpotlight
-    uint32_t _pad0;
+    uint32_t lightDataIndex;    // Slice 2: index into the per-frame light-data
+                                // UBO populated by mcTextureManager->addLightDataStructure().
+                                // Stage 2.A repurposes the prior _pad0 slot at offset 76;
+                                // Stage 2.C wires the writer in submitMultiShape.
     float    aRGBHighlight[4];
     float    fogRGB[4];
 };
@@ -27,7 +30,7 @@ static_assert(offsetof(GpuStaticPropInstance, modelMatrix)      ==  0, "modelMat
 static_assert(offsetof(GpuStaticPropInstance, typeID)           == 64, "typeID offset");
 static_assert(offsetof(GpuStaticPropInstance, firstColorOffset) == 68, "firstColorOffset offset");
 static_assert(offsetof(GpuStaticPropInstance, flags)            == 72, "flags offset");
-static_assert(offsetof(GpuStaticPropInstance, _pad0)            == 76, "_pad0 offset");
+static_assert(offsetof(GpuStaticPropInstance, lightDataIndex)   == 76, "lightDataIndex offset");
 static_assert(offsetof(GpuStaticPropInstance, aRGBHighlight)    == 80, "aRGBHighlight offset");
 static_assert(offsetof(GpuStaticPropInstance, fogRGB)           == 96, "fogRGB offset");
 
@@ -45,6 +48,18 @@ struct GpuStaticPropPacket {
 };
 
 constexpr uint32_t STATIC_PROP_FLAG_ALPHA_TEST = 1u << 0;
+
+// Slice 2 (object-offload): free-function form of the eligibility check used
+// by the addRenderShape gate in tgl.cpp:2522 (the bShadersDrawPathEnabled
+// block). Cheap, side-effect-free. Returns true iff `shape` belongs to a
+// registered TG_TypeShape AND g_useGpuObjects is enabled. tgl.cpp gets this
+// via a forward declaration (see tgl.cpp near the gate site) to avoid
+// pulling the rest of batcher.h into the legacy translation unit.
+//
+// Stage 2.A: declared and defined. Under default `MC2_GPU_OBJECTS=0` (i.e.
+// g_useGpuObjects==false) this returns false, so the addRenderShape gate
+// becomes false-equivalent and the legacy path is byte-for-byte unchanged.
+bool eligibleForGpuObjects(class TG_Shape* shape);
 
 // Population tag — passed by caller so the batcher can split per-population
 // counts in the [OBJBATCHER v1] summary. Not stored; consumed inside submit
@@ -114,6 +129,17 @@ public:
     [[nodiscard]] bool submitMultiShape(TG_MultiShape* multi,
                                         GpuStaticPropPopulation pop);
 
+    // Slice 2 (object-offload): cheap, side-effect-free eligibility query.
+    // Returns true iff every leaf SHAPE_NODE under `multi` is currently
+    // registered in the batcher AND g_useGpuObjects is enabled. Mirrors slice
+    // 1's render-time per-child gates EXCEPT the late-registration case
+    // (Recon Section 9 Item 4). Stage 2.A: declared and defined; Stage 2.B
+    // wires it into BldgAppearance/TreeAppearance/GenericAppearance::update
+    // inside their existing cull gates. MUST NOT mutate any batcher state,
+    // emit any logs, or increment any counters — this is a read-only check
+    // used by the addRenderShape gate at tgl.cpp:2522 in the legacy path.
+    bool isMultiShapeEligibleForGpuObjects(const TG_MultiShape* multi) const;
+
     // Per-frame dispatch.
     void flush();         // main color pass
     void flushShadow();   // depth-only into dynamic shadow FBO
@@ -121,6 +147,21 @@ public:
     // Debug: color-address validation mode. 0=off, 1=gradient, 2=hash.
     void setDebugAddrMode(int mode);
     int  getDebugAddrMode() const { return debugAddrMode_; }
+
+    // Slice 2 (Stage 2.A) — late-registration signal for the caller.
+    // Returns true iff the most recent submitMultiShape() call returned false
+    // specifically because a SHAPE_NODE child type was not registered at
+    // submission time (the late-registration branch, not some other failure
+    // such as a fatal GPU error or program-load failure).
+    //
+    // Stage 2.B wires the caller: *Appearance::render queries this after a
+    // false return from submitMultiShape and sets needsFullBakeNextFrame=true
+    // on the owning actor so the map-load registration walk picks it up.
+    //
+    // The flag is cleared (reset to false) at the TOP of every
+    // submitMultiShape() call so a stale "true" from a prior call never
+    // masquerades as a signal for the current call.
+    bool wasLastFailureLateRegistration() const;
 
 private:
     GpuStaticPropBatcher() = default;

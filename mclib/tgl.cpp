@@ -102,6 +102,14 @@ bool silentMode = false;		//Used for automated builds to keep errors from poppin
 // look into gos_tex_vertex_lighted.vert for where offset is defined
 bool bShadersDrawPathEnabled = false;
 
+// Slice 2 (object-offload) — forward declaration from gos_static_prop_batcher.h.
+// Cheap, side-effect-free check used by the addRenderShape gate at the
+// `bShadersDrawPathEnabled` block to prevent double-draw when slice 2's
+// GPU-object path picks up an actor. Under default `MC2_GPU_OBJECTS=0`
+// (g_useGpuObjects==false) returns false unconditionally, so the legacy gate
+// is byte-for-byte unchanged.
+bool eligibleForGpuObjects(class TG_Shape* shape);
+
 //-------------------------------------------------------------------------------
 // Parse Functions
 void GetNumberData (char *rawData, char *result)
@@ -2519,7 +2527,7 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
 	// + addRenderShape — the modern shader path queue cost.
 	::mc2_object_recon::Scope _recon_emit_(
 		&::mc2_object_recon::g_per_frame.shape_emit_ns);
-	if (bShadersDrawPathEnabled && !isSpotlight && !isWindow && !theShape->listOfTextures[theShape->listOfTypeTriangles[0].localTextureHandle].textureAlpha && (alphaValue == 0xff))
+	if (bShadersDrawPathEnabled && !eligibleForGpuObjects(this) && !isSpotlight && !isWindow && !theShape->listOfTextures[theShape->listOfTypeTriangles[0].localTextureHandle].textureAlpha && (alphaValue == 0xff))
 	{
 		DWORD addFlags = 0;
 		if (isHudElement)
@@ -2570,6 +2578,212 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
 	}
 
 	return(-1);
+}
+
+//-------------------------------------------------------------------------------
+// Slice 2 (object-offload) — Stage 2.A
+// MultiTransformShape_PositionsOnly: copy-and-strip variant of MultiTransformShape.
+// KEEPS: pre-loop setup, all 6 pool allocations (PerPolySelect at tglpp.cpp:14-21
+// requires ALL pointers non-null), screen-space transform, lastTurnTransformed,
+// per-vertex loop's transform code (writes to listOfVertices[j].x/y/z/rhw/frgb),
+// memset of listOfColors[j] to keep contents defined, per-face backface cull
+// populating listOfVisibleFaces, oneOff/oneOn return logic.
+// STRIPS: per-vertex lighting kernel (hot-color tags, redFinal/greenFinal/
+// blueFinal accumulation, per-light loop, .argb write, fog-elevation lighting,
+// frgb lighting recomputation, distance-fog), aRGBHighlight additive block,
+// per-face lighting (useFaceLighting=false in stock), listOfTriangles aRGBLight
+// /fRGBLight writes, addTriangle queue calls (dead on Renderer==3), addRenderShape
+// emit block (slice 2's batcher draws the actor instead).
+// Stage 2.A: declared and defined; NO call sites wired (dead code under flag-off).
+// Stage 2.B wires the call sites in BldgAppearance/TreeAppearance/GenericAppearance
+// ::update inside their existing cull gates, behind g_useGpuObjects.
+long TG_Shape::MultiTransformShape_PositionsOnly (Stuff::Matrix4D *shapeToClip, Stuff::Point3D *backFacePoint, TG_ShapeRecPtr parentNode, bool isHudElement, BYTE alphaValue, bool isClamped)
+{
+	// [OBJECT_RECON v1] outer scope. No-op when MC2_OBJECT_RECON_TRACY unset.
+	::mc2_object_recon::Scope _recon_total_(
+		&::mc2_object_recon::g_per_frame.shape_total_ns,
+		&::mc2_object_recon::g_per_frame.shape_calls);
+
+	if (!numVertices)		//WE are the root Shape which may have no shape or a helper shape which defintely has no shape!
+		return(1);
+
+	//-------------------------------------------------
+	// Transform entire list of vertices.
+	// shapeOrigin is ShapeToWorld.
+	// invShapeOrigin is WorldToShape.
+	bool oneOff = false;
+	bool oneOn = false;
+
+	bool isNight = eye->getIsNight();
+	float nightFactor = eye->getNightFactor();
+
+	if (lightsOut)
+	{
+		isNight = false;
+		nightFactor = 0.0f;
+	}
+
+	if (isSpotlight && !isNight)
+	{
+		listOfVertices = NULL;		//Mark this as untransformed!!
+		return(1);
+	}
+
+	TG_TypeShapePtr theShape = (TG_TypeShapePtr)myType;
+
+	{
+		// [OBJECT_RECON v1] alloc sub-stage.
+		::mc2_object_recon::Scope _recon_alloc_(
+			&::mc2_object_recon::g_per_frame.shape_alloc_ns);
+		// Pool allocations preserved verbatim — PerPolySelect at tglpp.cpp:14-21
+		// requires ALL of these pointers to be non-null.
+		listOfVertices       = MC2_TGL_GET_VERTS_FOR_SHAPE(vertexPool, numVertices, this);
+		listOfColors         = MC2_TGL_GET_COLORS(colorPool, numVertices);
+
+		listOfShadowTVertices = MC2_TGL_GET_SHADOW(shadowPool, numVertices);
+
+		listOfTriangles      = MC2_TGL_GET_TRIANGLES(trianglePool, numTriangles);
+
+		listOfVisibleFaces   = MC2_TGL_GET_FACES(facePool, numTriangles);
+		listOfVisibleShadows = MC2_TGL_GET_FACES(facePool, numTriangles);
+	}
+
+	if (!listOfVertices ||
+		!listOfColors ||
+		!listOfShadowTVertices ||
+		!listOfTriangles ||
+		!listOfVisibleFaces ||
+		!listOfVisibleShadows)
+		return(1);
+
+	lastTurnTransformed = turn;
+
+	// [OBJECT_RECON v1] per-vertex loop scope.
+	// _PositionsOnly: transform only; lighting kernel stripped.
+	{
+	::mc2_object_recon::Scope _recon_vlight_(
+		&::mc2_object_recon::g_per_frame.shape_vlight_ns);
+	for (long j=0;j<numVertices;j++)
+	{
+		Stuff::Point3D pos = theShape->listOfTypeVertices[j].position;
+		if (shapeScalar > 0.0f)
+			pos *= shapeScalar;
+
+		Stuff::Vector4D xformCoords;
+		Stuff::Vector4D screen;
+
+		xformCoords.Multiply(pos,*shapeToClip);
+
+		if (eye->usePerspective)
+		{
+			//---------------------------------------
+			// Perspective Transform
+			float rhw = 1.0f;
+			if (xformCoords.w != 0.0f)
+				rhw = 1.0f / xformCoords.w;
+
+			screen.x = (xformCoords.x * rhw) * viewMulX + viewAddX;
+			screen.y = (xformCoords.y * rhw) * viewMulY + viewAddY;
+			screen.z = (xformCoords.z * rhw);
+			screen.w = fabs(rhw);
+		}
+		else
+		{
+			//---------------------------------------
+			// Parallel Transform
+			screen.x = (1.0f - xformCoords.x) * viewMulX + viewAddX;
+			screen.y = (1.0f - xformCoords.y) * viewMulY + viewAddY;
+			screen.z = xformCoords.z;
+			screen.w = 0.000001f;
+		}
+
+		if ((screen.x < 0) || (screen.y < 0) || (screen.x >= viewMulX) || (screen.y >= viewMulY))
+			oneOff = TRUE;
+
+		if ((screen.x >= 0) && (screen.y >= 0) && (screen.x < viewMulX) && (screen.y <= viewMulY))
+			oneOn = TRUE;
+
+		listOfVertices[j].x = screen.x;
+		listOfVertices[j].y = screen.y;
+		listOfVertices[j].z = screen.z;
+		listOfVertices[j].rhw = screen.w;
+		listOfVertices[j].frgb = fogRGB;
+		memset(&listOfColors[j],0,sizeof(listOfColors[j]));
+
+		// Per-vertex lighting kernel STRIPPED (slice 2 _PositionsOnly):
+		// redFinal/greenFinal/blueFinal accumulation, hot-color tag dispatch,
+		// per-light loop, .argb write, fog-elevation recomputation, frgb
+		// lighting update, distance-fog update, aRGBHighlight additive
+		// — all omitted. listOfVertices[j].argb is left "stale or zero" per
+		// spec Stage 2.B note; GPU path lights it via VS in Stage 2.C.
+	}
+	} // [OBJECT_RECON v1] end vlight scope
+
+	numVisibleFaces = 0;			//Reset Visible Faces
+
+	TG_TypeTrianglePtr tri = &(theShape->listOfTypeTriangles[0]);
+	// [OBJECT_RECON v1] per-face loop scope.
+	// _PositionsOnly: backface cull only; per-face lighting, listOfTriangles
+	// writes, and addTriangle queue calls all stripped.
+	{
+	::mc2_object_recon::Scope _recon_flight_(
+		&::mc2_object_recon::g_per_frame.shape_flight_ns);
+	for (unsigned int j=0;j<numTriangles;j++,tri++)
+	{
+		//---------------------------------------
+		// Mark backfacing those that are.
+		float cosine = 0.0;
+		cosine = (*backFacePoint * (tri->faceNormal));
+		if ((cosine > 0.0f) || isSpotlight)
+		{
+			listOfVisibleFaces[numVisibleFaces] = j;
+			numVisibleFaces++;
+
+			// Per-face lighting (useFaceLighting=false in stock per Recon
+			// Section 9 Correction B), listOfTriangles[j].aRGBLight[i] /
+			// .fRGBLight[i] writes, addFlags / addTriangle queue calls
+			// all STRIPPED. addTriangle is dead on Renderer==3 anyway.
+		}
+	}
+	} // [OBJECT_RECON v1] end flight scope
+
+	// addRenderShape block (the bShadersDrawPathEnabled emit branch in
+	// MultiTransformShape) entirely STRIPPED. GPU-eligible populations are
+	// submitted by the slice 1 batcher; this path must not double-draw them.
+	// Note: the addRenderShape gate in MultiTransformShape is also defended
+	// by the !eligibleForGpuObjects(this) term added above; this strip is
+	// belt-and-suspenders for the _PositionsOnly variant.
+
+	gosASSERT(oneOff || oneOn);
+
+	if (oneOff && !oneOn)
+	{
+		return(-1);
+	}
+	else if (oneOff && oneOn)
+	{
+		return(0);
+	}
+	else if (!oneOff && oneOn)
+	{
+		return(1);
+	}
+
+	return(-1);
+}
+
+// Slice 2 (object-offload) — Stage 2.A
+// Per-actor light-data gather without the per-vertex bake side-effects of
+// MultiTransformShape. Calls GatherLightsParameters and addLightDataStructure
+// once. Returned index is broadcast into per-leaf
+// GpuStaticPropInstance.lightDataIndex by Stage 2.C wiring in
+// GpuStaticPropBatcher::submitMultiShape (between the registration-check
+// loop and the per-leaf submit loop). Stage 2.A: declared and defined; no
+// callers wired.
+uint32_t TG_Shape::GatherGpuObjectLightDataOnly()
+{
+	GatherLightsParameters(&lightData_);
+	return mcTextureManager->addLightDataStructure(&lightData_);
 }
 
 #define TERRAIN_DEPTH_FUDGE		(0.000f)

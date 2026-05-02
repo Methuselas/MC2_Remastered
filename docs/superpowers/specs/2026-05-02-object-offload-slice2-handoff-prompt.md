@@ -71,11 +71,13 @@ If review uncovers a blocker, surface to user. Do NOT silently rework the spec.
 
 Per spec section "Stage 2.A — Substrate edits (no behavior change under `MC2_GPU_OBJECTS=0`)":
 
-Files to modify:
-- `mclib/tgl.h` — declare `MultiTransformShape_PositionsOnly`, `GatherGpuObjectLightDataOnly`. Extend `TG_HWLightsData` with `closeDistance`/`farDistance`/`oneOverDistance` per-light fields.
+**LOAD-BEARING SCOPE RULE (regression-discovered 2026-05-02):** Stage 2.A must NOT change GPU-visible buffer layouts. The legacy `addRenderShape` path is active in stock and uploads `TG_HWLightsData` to the `LightsData` UBO declared as `ObjectLights light[32]` in `lighting.hglsl:25-28`. Extending the C++ struct without the lockstep GLSL change breaks per-element stride for `light[i]` with `i>0` and corrupts the legacy shader path (mc2_24 specifically crashes ~17s in due to its airbase's many distinct light setups). **The `closeDistance`/`farDistance`/`oneOverDistance` fields belong to Stage 2.C, where C++ struct + GLSL `ObjectLights` + `calc_light()` 4-param rewrite ship in one commit.** The same rule applies to `GpuStaticPropInstance` — the `_pad0`→`lightDataIndex` rename is allowed because it is name-only at offset 76; size and layout do not change.
+
+Files to modify (Stage 2.A scope ONLY):
+- `mclib/tgl.h` — declare `MultiTransformShape_PositionsOnly`, `GatherGpuObjectLightDataOnly`. **DO NOT extend `TG_HWLightsData`** (deferred to Stage 2.C per the scope rule above).
 - `mclib/tgl.cpp` — define both functions. `_PositionsOnly` is a copy-and-strip of `MultiTransformShape` per spec architecture section. Add `eligibleForGpuObjects(TG_Shape*)` helper. Add `!eligibleForGpuObjects(this)` to the gate at line 2522.
-- `mclib/txmmgr.cpp` `GatherLightsParameters` (line 938-1005) — populate the new falloff fields from `s_listOfLights[i]->closeDistance` etc.
-- `GameOS/gameos/gos_static_prop_batcher.h` — declare `isMultiShapeEligibleForGpuObjects`. Repurpose `_pad0` slot in `GpuStaticPropInstance` as `lightDataIndex`. Update `static_assert` for offsets.
+- `mclib/txmmgr.cpp` — **NO Stage 2.A changes here** (the `GatherLightsParameters` falloff-field writes are Stage 2.C work, deferred).
+- `GameOS/gameos/gos_static_prop_batcher.h` — declare `isMultiShapeEligibleForGpuObjects`. Repurpose `_pad0` slot in `GpuStaticPropInstance` as `lightDataIndex` (offset 76; same size, layout unchanged — rename is safe). Update `static_assert` for offsets.
 - `GameOS/gameos/gos_static_prop_batcher.cpp` — define `isMultiShapeEligibleForGpuObjects` (mirror slice 1's render-time per-child gates except late-registration, per Recon Section 9 Item 4).
 - `mclib/bdactor.h`, `mclib/bdactor.cpp` — add `appearanceFlags_needsFullBakeNextFrame` 1-bit flag (pack into existing `appearanceFlags` byte) to `BldgAppearance` and `TreeAppearance`. Initialize false.
 - `mclib/genactor.h`, `mclib/genactor.cpp` — same for `GenericAppearance`.

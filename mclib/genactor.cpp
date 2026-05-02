@@ -262,7 +262,10 @@ void GenericAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	isLooping = false;
 	setFirstFrame = false;
 	canTransition = true;
-	
+
+	// Slice 2 (object-offload) substrate: never set true in Stage 2.A.
+	needsFullBakeNextFrame = false;
+
 	paintScheme = -1;
 	objectNameId = 30469;
 	hazeFactor = 0.0f;

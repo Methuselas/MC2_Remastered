@@ -156,7 +156,10 @@ class GenericAppearance : public ObjectAppearance
 
 		GenericAppearanceType*						appearType;
 		TG_MultiShapePtr							genShape;
-		
+
+		// Slice 2 (object-offload): see BldgAppearance::needsFullBakeNextFrame.
+		bool										needsFullBakeNextFrame;
+
 		long										genAnimationState;
 		float										currentFrame;
 		float										genFrameRate;
