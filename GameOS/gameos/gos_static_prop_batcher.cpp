@@ -475,7 +475,17 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
     return true;
 }
 
-bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi) {
+void GpuStaticPropBatcher::recordEligibleActor(GpuStaticPropPopulation pop) {
+    (void)pop;  // body filled in Task 6.
+}
+
+void GpuStaticPropBatcher::recordCpuFallback(GpuStaticPropPopulation pop) {
+    (void)pop;  // body filled in Task 6.
+}
+
+bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
+                                            GpuStaticPropPopulation pop) {
+    (void)pop;  // consumed by Task 6's counter additions; no-op here.
     if (!multi || s_fatalRegistrationFailure) return false;
     if (s_programLoadFailed || s_staticPropProgram == 0) return false;
 

@@ -799,7 +799,8 @@ long GenericAppearance::render (long depthFixup)
 			bool submittedToGpu = false;
 			if (g_useGpuStaticProps && genShape && !depthFixup)
 			{
-				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(genShape);
+				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
+					genShape, GpuStaticPropPopulation::Legacy);
 			}
 			if (!submittedToGpu)
 			{

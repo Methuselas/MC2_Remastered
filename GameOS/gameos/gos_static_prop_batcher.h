@@ -46,6 +46,20 @@ struct GpuStaticPropPacket {
 
 constexpr uint32_t STATIC_PROP_FLAG_ALPHA_TEST = 1u << 0;
 
+// Population tag — passed by caller so the batcher can split per-population
+// counts in the [OBJBATCHER v1] summary. Not stored; consumed inside submit
+// only.
+//
+// Legacy is the slice-1 fallback branch (g_useGpuStaticProps && !g_useGpuObjects)
+// in *Appearance::render. Counted separately so Gate F's fallback-rate
+// computation uses only slice-1 populations (Building/Tree/Generic).
+enum class GpuStaticPropPopulation : uint8_t {
+    Building = 0,
+    Tree     = 1,
+    Generic  = 2,
+    Legacy   = 3,
+};
+
 // Per-type descriptor: range of packets + vertex count (for color block sizing).
 struct GpuStaticPropType {
     uint32_t firstPacket;
@@ -90,7 +104,15 @@ public:
     // flags are pulled from the TG_Shape node itself. Returns false if ANY
     // child fails registration — caller MUST CPU-fallback the whole
     // multishape for this frame to keep the visual self-consistent.
-    [[nodiscard]] bool submitMultiShape(TG_MultiShape* multi);
+    // Caller-side accounting. recordEligibleActor() is called by
+    // *Appearance::render BEFORE submit so caller-side bypasses
+    // (e.g., null shape) still count toward eligible_actors.
+    // recordCpuFallback() is called when no submit succeeded.
+    void recordEligibleActor(GpuStaticPropPopulation pop);
+    void recordCpuFallback(GpuStaticPropPopulation pop);
+
+    [[nodiscard]] bool submitMultiShape(TG_MultiShape* multi,
+                                        GpuStaticPropPopulation pop);
 
     // Per-frame dispatch.
     void flush();         // main color pass

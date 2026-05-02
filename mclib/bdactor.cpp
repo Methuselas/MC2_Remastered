@@ -1582,7 +1582,8 @@ long BldgAppearance::render (long depthFixup)
 			// Layer B: if any child type was never registered, submitMultiShape
 			// returns false and we fall the WHOLE multishape back to the CPU
 			// path for this frame so the visual stays self-consistent.
-			submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(bldgShape);
+			submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
+				bldgShape, GpuStaticPropPopulation::Legacy);
 		}
 		if (!submittedToGpu)
 		{
@@ -4001,7 +4002,8 @@ long TreeAppearance::render (long depthFixup)
 		bool submittedToGpu = false;
 		if (g_useGpuStaticProps && treeShape)
 		{
-			submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(treeShape);
+			submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
+				treeShape, GpuStaticPropPopulation::Legacy);
 		}
 		if (!submittedToGpu)
 			treeShape->Render();
