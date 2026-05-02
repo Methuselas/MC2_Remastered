@@ -1576,12 +1576,36 @@ long BldgAppearance::render (long depthFixup)
 		
 		//---------------------------------------------
 		// Call Multi-shape render stuff here.
+		// Slice 1 path (g_useGpuObjects). No cull bypass; submitMultiShape
+		// is per-child Layer-B by construction. Returns false only when
+		// EVERY child is ineligible.
+		//
+		// Caller-side accounting: recordEligibleActor() fires unconditionally
+		// when slice 1 reaches this site (so a null shape or skipped submit
+		// still counts toward eligible_actors). recordCpuFallback() fires
+		// when no submit succeeded.
 		bool submittedToGpu = false;
-		if (g_useGpuStaticProps && bldgShape)
+		if (g_useGpuObjects)
 		{
-			// Layer B: if any child type was never registered, submitMultiShape
-			// returns false and we fall the WHOLE multishape back to the CPU
-			// path for this frame so the visual stays self-consistent.
+			GpuStaticPropBatcher::instance().recordEligibleActor(
+				GpuStaticPropPopulation::Building);
+			if (bldgShape)
+			{
+				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
+					bldgShape, GpuStaticPropPopulation::Building);
+			}
+			if (!submittedToGpu)
+			{
+				GpuStaticPropBatcher::instance().recordCpuFallback(
+					GpuStaticPropPopulation::Building);
+			}
+		}
+		// Legacy bypass-cull path (g_useGpuStaticProps). Mutually exclusive
+		// with slice 1 — gated on !g_useGpuObjects so the two paths cannot
+		// coexist. Tagged Legacy so Gate F's fallback-rate is computed only
+		// over slice-1 populations. See spec R1.
+		if (!submittedToGpu && !g_useGpuObjects && g_useGpuStaticProps && bldgShape)
+		{
 			submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
 				bldgShape, GpuStaticPropPopulation::Legacy);
 		}
