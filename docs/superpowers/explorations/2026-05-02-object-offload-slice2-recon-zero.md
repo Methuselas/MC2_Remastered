@@ -8,13 +8,15 @@ Slice 1 close: `dd8761a feat(objects): Gate F counters + summary emission + late
 Author: ThranduilsRing + Claude (Opus 4.7, 1M context)
 Status: research deliverable; no spec / plan / code-change is gated to this doc directly. Section 2's Tracy data is the only piece that must come from a follow-up build+run.
 
-## TL;DR (FINAL — Tracy data landed 2026-05-02)
+## TL;DR (revised post-advisor 2026-05-02)
 
-- **Branching answer: (2-b) — partial offload.** Keep a reduced CPU `MultiTransformShape` pass that preserves shadow + hit-test inputs and skips lighting bake. Tracy data (Section 2) put `(vlight + flight) / outer` ratio at ~36% slice-2-scoped — squarely in the "marginally justified, 2-b is right scope" band of the decision tree. Recoverable: ~0.5-0.7 ms/frame, ~27-36% of `appearanceUpdate` reduction.
-- **GPU lighting feasibility: feasible.** Lighting kernel partially shipped already (`get_base_light()` complete; `calc_light()` is a 2-of-6-light-types stub). MAX_HW_LIGHTS_IN_WORLD=16, UBO and dedup cache (`addLightDataStructure`) already wired.
-- **Parity strategy: P3 (single-frame dual-emit) + P1 (ULP-tolerance bytewise)** combined. P2 (pixel-level diff) deferred to default-on flip.
-- **SSBO additions for slice 2 are minimal** (4 B per vertex, 12 B per type, 4 B per instance fits in slice 1's existing `_pad0`).
-- **READY-FOR-SPEC.** Three pre-spec verification items remain (GetFalloff math, light type ID mismatch, double-draw avoidance for the `addRenderShape` queue) — listed in Section 6's "Pre-spec verification list."
+- **Branching answer: (2-b) — partial offload, APPROVED.** Keep a reduced CPU `MultiTransformShape` pass that preserves shadow + hit-test inputs and skips lighting bake. Tracy data (Section 2) confirmed slice 2 is in the "marginally justified" band of the decision tree.
+- **NOT ready-for-spec as written.** Adversarial review (2026-05-02, captured in this doc) identified five pre-spec hardening items that must be resolved before spec write. Originally three; now five. See "Pre-spec hardening checklist" below.
+- **Recoverable estimate is REVISED DOWN.** The first-pass 0.5-0.7 ms claim conflated `vlight`'s screen-transform portion (NOT recoverable under 2-b — the reduced CPU pass still does the transform) with `vlight`'s lighting portion (recoverable). Honest re-estimate per advisor: lighting-only recoverable is roughly ~330-490 µs/frame depending on the per-face representation choice — a **~17-25% appearanceUpdate reduction**, not 27-36%.
+- **Per-face lighting is an unresolved spec-time architecture decision.** `listOfTriangles[].aRGBLight[i]` is per-(face, corner) and adjacent triangles sharing a vertex can carry DIFFERENT corner colors due to per-face normal contributions. Slice 1's indexed VBO with shared vertices cannot represent this. Spec must pick one of three options (de-index, side-channel, or drop `flight` from the perf target).
+- **GPU lighting feasibility: still feasible.** Lighting kernel partially shipped already (`get_base_light()` complete; `calc_light()` is a 2-of-6-light-types stub). MAX_HW_LIGHTS_IN_WORLD=16, UBO and dedup cache (`addLightDataStructure`) already wired. Slice 2 finishes a kernel rather than writing one.
+- **Parity strategy: P3 (single-frame dual-emit) + P1 (ULP-tolerance bytewise) on FINAL RENDER-EQUIVALENT COLOR**, not on `listOfVertices[].argb`. The latter misses per-face additive lighting and hides the slice 1 color-drift class. Compare target is `listOfTriangles[].aRGBLight[i]` (or its slice-2 GPU equivalent), not the pre-face-additive vertex stream.
+- **SSBO additions for slice 2 are minimal IF the per-face decision is C (drop)**: 4 B per vertex into existing slice 1 pad slot, 4 B per instance into `_pad0`, 12 B per type. Decisions A or B (de-index or face side-channel) are larger.
 
 ---
 
@@ -170,37 +172,58 @@ Captured via `MC2_OBJECT_RECON_TRACY=1` against the deployed mc2.exe (commit `c4
 
 `mShape - shape` = 2.38 - 1.39 = **0.99 ms/frame**. This is per-frame `SetTextureHandle` rewrite (Tracy independently reports 1838 calls @ 28 µs aggregate per the user's earlier screenshot — 1.4% of `GameLogic.Units.TerrainObjects`), child shapeToWorld compute, and TG_MultiShape iteration overhead. **Slice 2 (2-b) does NOT move this.** Slice 1's batcher path also doesn't move it; it remains a CPU cost regardless of seam choice short of a full mover-path rewrite.
 
-#### Recoverable estimate for slice 2 (2-b path)
+#### Recoverable estimate for slice 2 (2-b path) — FIRST-PASS (later revised down)
 
-The vlight/flight zones aggregate across ALL populations (static-prop + mover). Slice 2 targets only buildings/trees/generics, not Mech3D/GV. To estimate the slice-2-scoped fraction:
+Initial framing aggregated `vlight + flight` and called the slice-2-scoped portion ~703 µs (~36% of outer). **This was wrong** — see "Recoverable revision" below. The flaw was treating `vlight` as fully recoverable when 2-b actually keeps a reduced CPU pass that still does the screen-space transform inside the per-vertex loop. Original computation kept here for traceability; do NOT cite it forward.
 
-- Total leaves/frame = 2211. Of these, slice-2-scoped leaves are roughly:
-  - bldg_update: 261 actors × ~2-4 leaves/actor ≈ 700 leaves
-  - tree_update: 497 actors × ~1-2 leaves/actor ≈ 750 leaves (trees are typically simpler shapes)
-  - generic_update: 1 actor × ~1-3 leaves ≈ 2 leaves
-  - **Slice-2-scoped subtotal: ~1450 leaves** (66% of 2211)
-- Mover-population leaves (out of slice 2 scope): ~760 leaves (mechs ~10-20 nodes/actor; GVs ~3-5 nodes/actor)
+#### Recoverable revision (2026-05-02 post-adversarial review)
 
-Per-leaf vlight+flight = 485 ns. Slice-2-scoped recoverable = ~1450 × 485 ns = **~703 µs/frame**.
+**Key correction**: under 2-b, the CPU `MultiTransformShape_PositionsOnly` still:
+- runs the per-vertex screen-space transform (lines 1714-1753: matrix multiply, perspective divide, viewport scale, write `.x/.y/.z/.rhw/.frgb`) — these writes feed `PerPolySelect` and the legacy CPU fallback path;
+- runs the per-face backface cull bookkeeping (`numVisibleFaces`, `listOfVisibleFaces`) — these feed `RenderShadows`;
+- runs the alloc block (pool grabs).
 
-Out of 1.94 ms slice-2-scoped outer, that's **~36% recoverable**.
+What slice 2 actually removes is:
+- per-vertex lighting kernel inside the per-vertex loop (lines 1755-2249);
+- `aRGBHighlight` additive (lines 2227-2249);
+- per-face lighting inside the per-face loop (lines 2272-2403, conditional on the per-face representation choice — see below);
+- `listOfTriangles[].aRGBLight[i]` writes at line 2424;
+- `listOfTriangles[].fRGBLight[i]` writes at line 2445;
+- `addTriangle` queue calls at lines 2466/2470/2479/2483 (conditional on per-face choice);
+- `addRenderShape` block (lines 2517-2553) under the avoidance discipline that slice 2 spec MUST encode.
 
-Note: this is `vlight + flight` taken in full. In practice slice 2 won't recover 100% of vlight because:
-- `vlight` includes screen-space xform that GPU VS does for free anyway (so this part IS recoverable);
-- `flight` includes the `addTriangle` legacy queue calls — those are dead-on-Renderer-3 per Section 1's analysis but the conditional branch overhead still runs CPU-side;
-- Highlight/fog passes are also baked into vlight — they're cheap GPU ops.
+**Bound on `vlight` recoverable** (we do not have direct measurement; the recon's instrumentation deliberately did not split per-iteration). Op-count estimate of the per-vertex loop body:
 
-Realistic post-slice-2 floor: ~75% of vlight+flight recoverable = **~525 µs/frame** = ~27% of `appearanceUpdate` reduction.
+| Sub-block | Op count per vertex (rough) | Fraction of vlight |
+|---|---|---|
+| Screen-space transform + writes (1714-1753) | ~25 ops + 5 stores | ~25-35% |
+| Lighting kernel (1755-2226) | ~30-50 ops × s_numLights, plus per-vertex hot-color decode and base-color | ~55-65% |
+| Highlight additive (2227-2249) | ~15 ops per vertex when nonzero | ~5-10% |
 
-#### Verdict
+Recoverable from `vlight` ≈ **65-75%** of measured `vlight`, NOT 100%. With `vlight` = 732 µs/frame, recoverable from vlight ≈ **475-549 µs**.
 
-`(vlight + flight) / outer` ratio is **~55%** if we count all populations' shape work against all populations' outer work, or **~36%** when scoped to just slice 2's target populations.
+**Bound on `flight` recoverable** — depends on the per-face representation choice (advisor's options A/B/C; surface-to-spec):
 
-This puts slice 2 squarely in the **"marginally justified, 2-b is right scope"** branch of the recon decision tree (50% threshold). NOT "strongly justified" (≥70%) — meaningful but not transformative. NOT "reconsider scope" (≤30%) — real win available.
+| Choice | What slice 2 does to `flight` | Recoverable from flight |
+|---|---|---|
+| A. De-index VBO (3× vertex count) | Writes per-corner colors directly in shader from per-corner lighting state. CPU `flight` retired entirely except for backface cull. | ~80% of flight (~273 µs) |
+| B. Per-face side channel + per-corner shader compute | Adds face-light SSBO/VBO. CPU `flight` retired except backface cull. | ~80% of flight (~273 µs), at SSBO+code-complexity cost |
+| C. Drop per-face lighting from slice 2 target | CPU `flight` keeps per-face lighting as today; `addTriangle` queue calls retire (dead on Renderer 3) but lighting kernel does not. | ~10-20% of flight (~34-68 µs) |
 
-Recoverable budget: **0.5-0.7 ms/frame** at this camera/mission. At 60 FPS, ~30-42 ms/sec saved. Tracy `appearanceUpdate` zone reduction: ~27-36% local.
+**Slice-2-scoped fraction**: applying ~66% scoping (1450 of 2211 leaves are slice-2-scoped per the per-population estimate) to whichever choice:
 
-**Section 2 verdict drives Section 6 to commit (2-b).**
+| Choice | Recoverable (all populations) | Slice-2-scoped recoverable | % of slice-2 outer (1.94 ms) |
+|---|---|---|---|
+| A or B (full per-face port) | 475-549 + 273 = 748-822 µs | 494-543 µs | **25-28%** |
+| C (drop per-face) | 475-549 + 34-68 = 509-617 µs | 336-407 µs | **17-21%** |
+
+#### Honest verdict (revised)
+
+`(lighting only inside vlight + recoverable fraction of flight) / outer` is **~17-28% recoverable** depending on per-face representation choice. Original 27-36% range was too optimistic.
+
+This still places slice 2 in the **"marginally justified, 2-b is right scope"** band — but at the lower end, not the middle. Slice 2 is NOT a transformative win; it is the substrate for incremental modernization that future arcs (animated movers, hierarchy refactor) will continue.
+
+**Section 2 still drives Section 6 to commit (2-b)** — the architectural reasoning for 2-b vs 2-a is independent of the exact perf number; 2-a's larger recoverable comes with disproportionate scope (GPU shadow port + PerPolySelect rewrite). But the spec's perf framing must reflect the revised number, not the original.
 
 ---
 
@@ -357,13 +380,15 @@ Slice 2 parity surface: per-vertex lit ARGB. ~200 vertices × ~100 actors = 20K 
 - **Pro**: catches the per-vertex divergence class precisely; doesn't need pixel-perfect determinism.
 - **Con**: requires CPU lighting kernel to be instrumented to expose its intermediate per-vertex ARGB at a comparable point (which it ALREADY does — `listOfVertices[].argb` at line 2249).
 
-### Recommendation
+### Recommendation (revised post-advisor)
 
 **P3 + P1**, NOT P2:
 
-- **P3 at mission start** (one frame): bytewise-compare CPU `listOfVertices[j].argb` against GPU output for the GPU population. ULP tolerance ±2 LSB per channel. Mismatch logs `[OBJECT_PARITY v1] event=lighting_mismatch actor=X vert=Y cpu=ARGB gpu=ARGB`. Surface non-zero mismatches before disabling CPU bake.
+- **P3 at mission start** (one frame): bytewise-compare CPU **final render-equivalent color** (i.e., `listOfTriangles[j].aRGBLight[i]` per visible triangle corner — the value `TG_Shape::Render` actually emits via `addVertices`) against GPU output for the GPU population. ULP tolerance ±2 LSB per channel. Mismatch logs `[OBJECT_PARITY v1] event=lighting_mismatch actor=X tri=Y corner=Z cpu=ARGB gpu=ARGB`. Surface non-zero mismatches before disabling CPU bake.
 - **P1 ongoing** (every frame, gated `MC2_OBJECT_PARITY_CHECK=1`): same compare on a sampled subset (say, 1 actor per type per frame, round-robin). Silent on pass; 600-frame summary.
 - **P2 deferred** to default-on flip — same harness as Stage 1.E. If slice 2 default-on flip happens in the same arc as slice 2's flagged merge, P2 lands once for both gates.
+
+**Compare target correction (2026-05-02 advisor)**: the original recommendation said "compare `listOfVertices[j].argb`." That's the pre-face-additive vertex stream — NOT what `TG_Shape::Render` actually emits. The Render kernel overwrites `gVertex[i].argb` from `listOfTriangles[].aRGBLight[i]` at lines 2614/2619/2624 of `mclib/tgl.cpp`. Slice 1's batcher reads `listOfVertices[j].argb` (a separate slice 1 issue — see "Findings that flip prior assumptions" in the adversarial section); slice 2's parity compare must use the FINAL emit target so divergence in per-face lighting is caught. If slice 2's per-face choice is C (drop), the spec must explicitly admit that slice-1 + slice-2 colors are still "vertex-pre-face-additive" and slice-2 parity gate has nothing to do beyond what slice 1's parity already covers.
 
 ### Why P2 is deferred
 
@@ -419,9 +444,9 @@ This decision is provisional because Section 2 data is pending. The decision can
 - Tracy shows positions/transform are minor (≤20% of `appearanceUpdate`) AND lighting is dominant — in which case 2-b's "preserve positions" path doesn't preserve much cost, and 2-a's full retire isn't materially harder than 2-b for the same recoverable.
 - An animated-mover slice is queued behind slice 2 and the user decides to amortize GPU shadow work.
 
-### Section 6 verdict (FINAL — Tracy data landed 2026-05-02)
+### Section 6 verdict (revised post-advisor 2026-05-02)
 
-**COMMIT: (2-b) partial offload.** Keep reduced CPU `MultiTransformShape` pass for positions + shadow + listOfColors-baseline; remove only the lighting bake (the `vlight` + `flight` accumulators).
+**SEAM APPROVED: (2-b) partial offload.** Keep reduced CPU `MultiTransformShape` pass for positions + shadow + listOfColors-baseline; remove only the lighting bake. **Pre-spec hardening required before spec write** — see Section 7's R-arch items.
 
 **Reasoning grounded in Section 2 measurements:**
 
@@ -445,13 +470,24 @@ For the slice 2 design spec, the seam looks like:
 - Per-instance SSBO carries `lightDataIndex` (existing `_pad0` slot in `GpuStaticPropInstance`) into the existing `LightsData[32]` UBO. Per-vertex VBO carries `aRGBLight` (the offset-36 slot in slice 1's vertex stride). No new GPU buffers.
 - CPU `MultiTransformShape_PositionsOnly` still writes `listOfVertices[].x/y/z/rhw/frgb` (for PerPolySelect + the legacy CPU fallback path's correctness if we ever need to re-route) and still writes `listOfShadowTVertices` (for RenderShadows). It does NOT write `.argb` and does NOT touch `listOfTriangles[].aRGBLight`. Slice 1's batcher draws with GPU-computed lighting; the CPU `.argb`/triangle lighting is dead bytes from slice 2 onward.
 
-### Pre-spec verification list (carried forward)
+### Pre-spec hardening checklist (revised post-advisor)
 
-These three items still need confirmation before slice 2 spec writes — Section 2 data didn't bear on them:
+Five items. Two are short verification tasks; three are spec-design decisions that must resolve before writing the slice 2 spec.
 
-1. `TG_Light::GetFalloff` math GLSL portability.
-2. Light type enum ID mismatch between `mclib/tgl.h` (CPU) and `shaders/include/lighting.hglsl` (GPU): SPOT/TERRAIN at swapped numeric positions.
-3. `bShadersDrawPathEnabled` interaction — the `addRenderShape` queue (the `emit` accumulator at 39 µs/frame) currently runs alongside slice 1's batcher path. Slice 2 spec must explicitly suppress this for the GPU-resident population to avoid double-draw.
+**Verification tasks (~minutes each):**
+
+1. `TG_Light::GetFalloff` math GLSL portability — read the function, verify polynomial form (no lookup tables), or design a table-bake if it's not GLSL-portable.
+2. Light type enum ID mismatch between `mclib/tgl.h` (CPU) and `shaders/include/lighting.hglsl` (GPU): SPOT/TERRAIN at swapped numeric positions. Pick a canonical assignment and update both sides.
+
+**Spec-design decisions (~hours each, surface to user):**
+
+3. **R-arch-1: per-face lighting representation.** Pick A (de-index VBO), B (per-face side channel), or C (drop per-face from slice 2 perf target). Recommendation: **C** unless evidence shows per-face additive lighting is materially visible AND `flight`'s lighting fraction is a perf-target driver. C keeps slice 2 tractable; A/B drift into broader lighting refactor.
+4. **R-arch-2: CPU fallback eligibility race.** Choose between (a) hoist eligibility to update-time, OR (b) ban CPU fallback for positions-only children with a 1-frame recovery path. Either is achievable; (b) is simpler.
+5. **R-arch-3: `addRenderShape` double-draw avoidance must be a designed factoring.** Define a `GatherGpuObjectLightDataOnly()` helper that runs the light-data gather + dedup-cache append WITHOUT calling `addRenderShape`. Wire it into the `bShadersDrawPathEnabled && eligibleForGpuObjects` branch. The legacy `bShadersDrawPathEnabled && !eligibleForGpuObjects` branch keeps the existing `addRenderShape` call.
+
+When all five resolve, spec write proceeds with target framing:
+
+> "Partial GPU lighting offload for static-prop children that are guaranteed GPU-rendered, preserving CPU positions/shadows/hit-test, with an honest perf target based only on the lighting work actually removed: ~17-25% appearanceUpdate reduction at the camera/mission this recon measured (slice-2-scoped recoverable ~330-540 µs/frame depending on per-face representation choice)."
 
 ---
 
@@ -482,13 +518,63 @@ Mirroring brainstorm Q8 + slice 2 specifics:
 | **Deferred uniform discipline** | Per `memory/deferred_vs_direct_uniforms.md`: setFloat/setInt before apply(); glUniform* after. Slice 2's per-instance SSBO uploads + apply() happen in `flush()` once per frame; matches slice 1. No new discipline introduced. |
 | **Stock missions only** | Per `feedback_offload_scope_stock_only.md`. Slice 2 validates against tier1 stock only; mod content (Carver5O, Magic, MCO, Wolfman, MC2X) out of scope for parity gates. |
 
-### Section 7 verdict
+### Section 7 verdict (revised post-advisor 2026-05-02)
 
-No new categorical-risk surfaced beyond what the brainstorm Q8 + this recon's mid-section flags called out. Two items need pre-spec verification:
-- `GetFalloff` math GLSL portability (Section 3 surfaced this)
-- Light type enum ID mismatch between CPU `tgl.h` and GPU `lighting.hglsl` (Section 3 surfaced this)
+Five items need pre-spec resolution. Two were minor; three are architectural.
 
-Both are short verification tasks — minutes, not hours.
+**Minor (verification tasks):**
+- `TG_Light::GetFalloff` math GLSL portability (Section 3 surfaced this).
+- Light type enum ID mismatch between CPU `tgl.h` and GPU `lighting.hglsl` SPOT/TERRAIN (Section 3 surfaced this).
+
+**Architectural (design decisions):**
+
+#### R-arch-1: per-face lighting representation
+
+Slice 1's GPU VBO uses **shared, indexed vertices** (one entry per `TG_TypeVertex`, indexed by per-triangle `Vertices[i]`). `listOfTriangles[].aRGBLight[i]` is per-(triangle, corner) — three values per triangle. Adjacent triangles can carry DIFFERENT corner lighting at the same shared vertex due to per-face-normal contributions. The current GPU geometry physically cannot represent this without one of:
+
+- **A. De-index** — emit 3 vertices per triangle (no shared vertices). Geometry size 3× larger; simpler shader. VBO/IBO regenerated per-type at slice 2 land time.
+- **B. Per-face side channel** — keep shared vertices; add a parallel face-light SSBO indexed by `gl_PrimitiveID` (or per-triangle uniform fetch via geometry shader). Compute final corner color = per-vertex-lit + per-face-additive in fragment/vertex shader.
+- **C. Drop per-face lighting from slice 2** — keep CPU `flight` running for shadows only (no `aRGBLight` writes; the per-face lighting result simply isn't carried forward). Slice 2 becomes a per-vertex-lighting-only port. Recovers less of `flight` (only the dead-on-Renderer-3 `addTriangle` queue branches retire).
+
+The recoverable estimate in Section 2 brackets all three.
+
+**Spec must pick one and defend it.** Recommendation: **C (drop)** unless Section 2's measurement shows per-face lighting is a substantial fraction of `flight` AND the visual delta of dropping it is acceptable. Per the brainstorm Q4 framing of "slice 2 = lighting offload, slice 3 = animated movers," choice C keeps the slice tractable; A/B drift into "general lighting refactor" territory.
+
+#### R-arch-2: CPU fallback eligibility race
+
+The implementation shape sketched in Section 6 calls for `MultiTransformShape_PositionsOnly` at update-time when `g_useGpuObjects=1` AND the actor's shape was registered. **But registration alone is not the slice 1 fallback condition.** Per slice 1 spec lines 135-167, per-child Layer-B fallback can fire on:
+
+- helper / spotlight / null-`listOfVertices` / null-`listOfColors` children,
+- runtime LOD swap that exposes an unregistered LOD variant,
+- late-registered types (artillery/bomber spawns).
+
+These conditions are evaluated at render-time inside `submitMultiShape`, **AFTER** update-time. If `MultiTransformShape_PositionsOnly` already ran and skipped lighting writes, and a child then falls back to legacy `Render` for the frame, the legacy path reads stale or zero `.argb` / `listOfTriangles[].aRGBLight`. Visible regression: that child renders dark or with last-frame's lighting.
+
+**Spec must pick one (probably the second):**
+
+- Hoist eligibility decision to update-time. Run eligibility per child BEFORE deciding positions-only-vs-full. Cost: registration cache lookup runs during update phase.
+- Ban CPU fallback for positions-only children. If a child's eligibility fails AT render-time but it ran positions-only at update-time, route to a "this child renders nothing this frame, log + count, then full-CPU-bake on next frame's update" recovery path. Cost: a 1-frame visual flicker on the rare type-instability event; counts as a fallback failure mode that the F-gate would catch.
+
+The first is cleaner; the second is simpler. Spec write decides; both are achievable.
+
+#### R-arch-3: `addRenderShape` double-draw avoidance must be a designed factoring
+
+The current `MultiTransformShape` body at lines 2517-2553 conditionally calls `mcTextureManager->addRenderShape(...)` on the modern shader path, which queues a draw that will fire during `renderLists()`. Slice 1's batcher path also draws (after `renderLists()`). If both fire for the same actor, double-draw — visible as Z-fight / over-bright on translucent layers / depth-test artifacts.
+
+The recon flagged this as a discipline note. **The advisor correction**: it cannot be a note. Specifically:
+
+- The modern shader path's draw enqueue is tangled with light-data gathering at the same site (`GatherLightsParameters(&lightData_); mcTextureManager->addLightDataStructure(&lightData_)` is in the same block as the `addRenderShape` call). Slice 2 needs the light-data gather (for the `lightDataIndex` SSBO field) but NOT the draw enqueue.
+- Spec must factor a `TG_Shape::GatherGpuObjectLightDataOnly()` (or equivalent) that:
+  - calls `GatherLightsParameters` and `addLightDataStructure`;
+  - returns the dedup'd index;
+  - does NOT touch `mcTextureManager->addRenderShape`.
+- The condition `bShadersDrawPathEnabled && eligibleForGpuObjects` short-circuits the existing addRenderShape call. The condition `bShadersDrawPathEnabled && !eligibleForGpuObjects` keeps it (legacy mover path / unregistered types).
+
+Spec must encode this factoring as concrete code edits, not a comment.
+
+### Section 7 verdict (revised)
+
+Five pre-spec items: two minor verification tasks, three architectural decisions. The architectural decisions (R-arch-1, R-arch-2, R-arch-3) require spec design effort, not just grep checks.
 
 ---
 
@@ -531,16 +617,25 @@ Every cited symbol grep-confirmed at write time.
 
 ---
 
-## Closing — ready-for-spec / blocked-on-X
+## Closing — ready-for-spec / blocked-on-X (revised post-advisor)
 
-### Verdict (FINAL)
+### Verdict
 
-**READY-FOR-SPEC** with seam **(2-b)**.
+**SEAM APPROVED: (2-b).** **NOT ready-for-spec as written.** Pre-spec hardening pass required.
 
-Tracy data (Section 2) measured slice-2-scoped lighting fraction at ~36% — meaningful but not transformative. Recon prompt's decision tree puts this in "2-b is right scope" band. Slice 2 spec must:
+Adversarial review (advisor, 2026-05-02) caught three architectural issues the original recon flagged-but-didn't-resolve, plus one perf-estimate flaw. Resolved in this revision:
 
-- Frame the perf target honestly per Q1(a4): **target ~0.5-0.7 ms/frame recoverable, ~27-36% of `appearanceUpdate` reduction**. Not "we'll halve the update zone." Reproduce this magnitude in the spec's Tracy gate target so reviewers can challenge it against this recon's number.
-- Go through `adversarial-plan-review` per worktree CLAUDE.md "Review Discipline" — slice 2 qualifies as architectural-endpoint-class because it's the first slice to touch the per-vertex lighting kernel and the first to add CPU/GPU divergence at the per-vertex scale.
+- Recoverable estimate revised from ~27-36% down to **~17-25% appearanceUpdate reduction** (the original conflated `vlight`'s screen-transform portion with its lighting portion; under 2-b the transform stays CPU-side).
+- Per-face lighting representation surfaced as a **spec-time architecture decision** (advisor's options A/B/C), not a "discipline note." Slice 1's indexed VBO with shared vertices physically cannot represent per-(face, corner) lighting without one of the three options.
+- CPU fallback eligibility race surfaced — slice 1's per-child Layer-B fallback fires at render-time on conditions not visible at update-time. Spec must hoist eligibility OR ban CPU-fallback for positions-only children.
+- `addRenderShape` double-draw avoidance promoted from "discipline note" to "designed factoring" — `GatherGpuObjectLightDataOnly()` helper required.
+- Parity compare target corrected: must use FINAL render-equivalent color (`listOfTriangles[].aRGBLight[i]`), NOT pre-face-additive `listOfVertices[].argb`.
+
+Slice 2 spec must:
+
+- Resolve the five pre-spec hardening items in Section 6's checklist BEFORE writing the spec body.
+- Frame the perf target honestly per Q1(a4): **target ~0.3-0.5 ms/frame slice-2-scoped recoverable, ~17-25% of `appearanceUpdate` reduction**. Reproduce this magnitude in the spec's Tracy gate target so reviewers can challenge it against this recon's revised number.
+- Go through `adversarial-plan-review` per worktree CLAUDE.md "Review Discipline" — slice 2 qualifies as architectural-endpoint-class because it's the first slice to touch the per-vertex lighting kernel, the first to add CPU/GPU divergence at the per-vertex scale, AND it touches the per-face lighting representation question that has visual-correctness implications.
 
 ### Surface-to-user list before slice 2 spec write
 
@@ -622,3 +717,15 @@ Per worktree CLAUDE.md "Review Discipline": this recon is research, not a plan o
 - TG_Shape::Render does NOT directly read `listOfVertices[].argb` — reads it once at line 2607-2609 then overwrites with `tri.aRGBLight[i]` at 2614-2624. The slice 1 batcher's choice of `listOfVertices[].argb` matches the per-vertex value BEFORE per-face additive lighting; for static props with mostly-zero per-face lighting this matches; for shapes with significant per-face additive contribution, slice 1 colors differ from CPU rendered colors. This is an INDEPENDENT slice 1 bug class to flag separately if smoke gates show color drift. **Surface to slice 1 close-out review.**
 - `TransformShape` itself queues `mcTextureManager->addRenderShape(...)` at line 2522 / 2789 during update-time. The "render zone" cost is therefore not purely render-side; some is from update-side queue management. Slice 2's lighting-only retirement does not directly address this; only full retirement of `TransformShape` (option 2-a or beyond) does.
 - The GPU lighting kernel exists but is incomplete (`calc_light()` is a 2-of-6-types stub). Slice 2's lighting work is "finish a half-built kernel" — substantially less than "port from scratch."
+
+**Adversarial revision (2026-05-02):** the advisor verdict caught four issues the original recon either missed or under-stated. Each is now resolved in-doc:
+
+| Advisor finding | Original framing | Revised framing |
+|---|---|---|
+| `vlight` recoverable conflated transform with lighting | "0.5-0.7 ms recoverable, 27-36% reduction" | "0.3-0.5 ms recoverable, 17-25% reduction" — Section 2 revision with op-count bound |
+| Per-face lighting representability | "indexed VBO works for slice 2's purposes" — implicit | Section 7 R-arch-1 surfaces three options (de-index / face side channel / drop), spec must pick |
+| CPU fallback eligibility race | not flagged | Section 7 R-arch-2 surfaces; spec must hoist eligibility or ban fallback for positions-only |
+| `addRenderShape` factoring | "discipline note" | Section 7 R-arch-3 promotes to designed factoring (`GatherGpuObjectLightDataOnly()` helper) |
+| Parity compare target | `listOfVertices[].argb` | `listOfTriangles[].aRGBLight[i]` (final render-equivalent color) |
+
+The recon's strongest content (consumer enumeration, GPU lighting kernel feasibility, branching-direction reasoning, slice-2-vs-slice-2-a scope tradeoff) survives the revision. The recon's weakest content (recoverable claim, parity target, "ready-for-spec" stamp) needed correction.
