@@ -8,7 +8,7 @@ Brainstorm: [`brainstorms/2026-05-02-object-offload-scope.md`](../brainstorms/20
 Recon Zero: [`explorations/2026-05-02-object-offload-slice2-recon-zero.md`](../explorations/2026-05-02-object-offload-slice2-recon-zero.md)
 Slice 1 design: [`specs/2026-05-02-object-offload-slice1-design.md`](2026-05-02-object-offload-slice1-design.md)
 Arc: object offload, slice 2 of a 2-slice arc.
-Status: design draft, awaiting adversarial-plan-review per worktree CLAUDE.md.
+Status: **approved for implementation pending Step 0 adversarial implementation review** per worktree CLAUDE.md "Review Discipline." Step 0 of the hand-off prompt is the gating review; CRITICAL findings surface to user before any code edit, but the architecture is settled — DO NOT redesign during Step 0 unless review uncovers a blocker.
 
 ## Slice scope (single sentence)
 
@@ -239,7 +239,15 @@ Files:
 
 **Visual behavior at this stage**: with `MC2_GPU_OBJECTS=1`, eligible static-prop actors run positions-only at update-time. Their `.argb` is stale or zero. **Slice 1's batcher continues to read `listOfVertices[j].argb` and memcpy it into the per-instance color SSBO** — so it will draw with stale colors. This is intentional: at this stage, the colors are wrong but the kernel split is verified.
 
-**Gate**: tier1 PASS in three configs (unset, `MC2_GPU_OBJECTS=1`, `MC2_GPU_OBJECTS=1` + `MC2_OBJBATCHER_TRACE=1`). +0 destroys delta. Render zone Tracy delta neutral. F-gate `late_register_recovery_skips` may increment for artillery/bomber missions; document expected count.
+**Stage 2.B gate (intentionally narrow)**: Stage 2.B may be visually wrong under `MC2_GPU_OBJECTS=1`. **Do NOT evaluate visual parity, screenshot quality, or color correctness at this stage.** Stage 2.C completes the picture. Gate ONLY on:
+- No crash / no hang in tier1 5/5 PASS (configs: unset / `MC2_GPU_OBJECTS=1` / `MC2_GPU_OBJECTS=1 + MC2_OBJBATCHER_TRACE=1`).
+- +0 destroys delta in every mission per `memory/feedback_pool_peak_compare_same_mission.md`.
+- TGL pool peak unchanged (Gate E proxy).
+- No cull-cascade or lifecycle regression (the safety claim of slice 1+2 — never touch the cull path).
+- F-gate counters healthy: `gpu_drawn_instances > 0` for every static-prop population, `late_register_recovery_skips ≤ 2` per mission for artillery/bomber-bearing missions.
+- Tracy `appearanceUpdate` zone may move slightly (positions-only is a strict subset of the full kernel); render zone neutral. Don't gate on Tracy magnitude at 2.B.
+
+**Anti-pattern to avoid**: someone "fixing" the intentional temporary visual break by undoing positions-only or by re-introducing color writes. The colors come back on at Stage 2.C when GPU lighting comes online; at Stage 2.B they're SUPPOSED to be wrong.
 
 **Note**: this stage will produce visibly wrong colors for the GPU population. Mark in PR description. Stage 2.C completes the picture; Stage 2.B is intentionally a partial-state for clear bisection.
 
@@ -267,7 +275,17 @@ Files:
 - Mismatch logging: `[OBJECT_PARITY v1] event=lighting_mismatch actor=X tri=Y corner=Z cpu=ARGB gpu=ARGB`. ULP tolerance ±2 LSB per channel.
 - 600-frame summary line: counts of compared/passed/mismatched.
 
-**Gate**: zero mismatches across tier1 stock missions with `MC2_OBJECT_PARITY_CHECK=1`. If mismatches exceed threshold, surface to user; do not merge.
+**Compare-target caveat (load-bearing)**: We compare at triangle-corner granularity (`listOfTriangles[].aRGBLight[i]`) — the value `TG_Shape::Render` actually emits — even though slice 2's GPU output is per-vertex-lit. This is intentional belt-and-suspenders. **Because `useFaceLighting=false` permanently in stock** (Recon Section 9 Correction B), the triangle-corner color is expected to equal the per-vertex-lit color modulo alpha-byte and packing. **Any mismatch here indicates packing, fog/highlight, terrain-light, or shader-math divergence — NOT missing per-face lighting.** A reviewer or future implementer who sees this Stage 2.D compare and asks "why corner-granularity if slice 2 is per-vertex?" gets the same answer: in stock, the corner-granularity compare degenerates to per-vertex equivalence + alpha-byte handling, but the comparison shape is more general (catches per-face additive divergence on hypothetical mod content where `useFaceLighting=true`, even though slice 2 doesn't claim parity in that case).
+
+**Gate**: zero mismatches across tier1 stock missions with `MC2_OBJECT_PARITY_CHECK=1`. If mismatches exceed threshold, surface to user.
+
+**Merge policy (slice 2 deliberately splits)**:
+
+- **Stages 2.A-2.C may merge behind `MC2_GPU_OBJECTS=1` flag** if their respective gates pass (no crash, +0 destroys, pool peak unchanged, render-zone Tracy neutral, Stage 2.C visual canary clean + ≥17% appearanceUpdate reduction).
+- **Stage 2.D parity is NOT a merge blocker for the slice 2 PR.** It IS a hard pre-condition for either: (a) declaring slice 2 "validated" / done, OR (b) any default-on flip consideration.
+- **Stage 2.E pinned-camera screenshot diff** is also a pre-default-on blocker, separately.
+
+This split is deliberate. Stage 2.D requires PBO async-readback infrastructure that may not exist in tree (see hand-off prompt Step 4); blocking the perf slice behind tooling-build risks stalling the actual win. The flag-merge-then-validate-then-default-on cadence mirrors slice 1's pattern.
 
 **Note**: the P3 dual-emit at mission start adds a one-frame-of-startup cost; this is acceptable. P1 runs at steady state cost (~one extra `MultiTransformShape` per frame ≈ 1 µs/frame).
 

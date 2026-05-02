@@ -1,5 +1,7 @@
 # Object Offload — Slice 2 — Recon Zero
 
+> **Reader note (advisor v3, 2026-05-02):** **Section 9 supersedes earlier "pre-spec hardening required" / "NOT ready-for-spec" text.** Earlier sections (TL;DR, Section 2 verdict revisions, Section 6 Pre-spec hardening checklist, Closing) preserve the reasoning trail through three review cycles, but contain stale intermediate claims about (a) the enum mismatch (which turned out to be fabricated — both sides are byte-identical), and (b) per-face lighting representation (which turned out to be dead code in stock — option C is the only honest choice, not a "default with A/B alternatives"). For current-state reading, jump to Section 9. Slice 2 design + hand-off prompt at `docs/superpowers/specs/2026-05-02-object-offload-slice2-{design,handoff-prompt}.md`.
+
 Date: 2026-05-02
 Branch: `claude/nifty-mendeleev`
 Worktree: `A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/`
@@ -8,15 +10,17 @@ Slice 1 close: `dd8761a feat(objects): Gate F counters + summary emission + late
 Author: ThranduilsRing + Claude (Opus 4.7, 1M context)
 Status: research deliverable; no spec / plan / code-change is gated to this doc directly. Section 2's Tracy data is the only piece that must come from a follow-up build+run.
 
-## TL;DR (revised post-advisor 2026-05-02)
+## TL;DR (FINAL — synced with Section 9 hardening close-out)
 
 - **Branching answer: (2-b) — partial offload, APPROVED.** Keep a reduced CPU `MultiTransformShape` pass that preserves shadow + hit-test inputs and skips lighting bake. Tracy data (Section 2) confirmed slice 2 is in the "marginally justified" band of the decision tree.
-- **NOT ready-for-spec as written.** Adversarial review (2026-05-02, captured in this doc) identified five pre-spec hardening items that must be resolved before spec write. Originally three; now five. See "Pre-spec hardening checklist" below.
-- **Recoverable estimate is REVISED DOWN.** The first-pass 0.5-0.7 ms claim conflated `vlight`'s screen-transform portion (NOT recoverable under 2-b — the reduced CPU pass still does the transform) with `vlight`'s lighting portion (recoverable). Honest re-estimate: under choice C (default) lighting-only recoverable is **~330-407 µs/frame, a ~17-21% `appearanceUpdate` reduction**. Choices A/B (per-face port) raise the upper bound to ~25-28% but require separate justification per Section 7 R-arch-1.
-- **Per-face lighting is an unresolved spec-time architecture decision.** `listOfTriangles[].aRGBLight[i]` is per-(face, corner) and adjacent triangles sharing a vertex can carry DIFFERENT corner colors due to per-face normal contributions. Slice 1's indexed VBO with shared vertices cannot represent this. Spec must pick one of three options (de-index, side-channel, or drop `flight` from the perf target).
-- **GPU lighting feasibility: still feasible.** Lighting kernel partially shipped already (`get_base_light()` complete; `calc_light()` is a 2-of-6-light-types stub). MAX_HW_LIGHTS_IN_WORLD=16, UBO and dedup cache (`addLightDataStructure`) already wired. Slice 2 finishes a kernel rather than writing one.
-- **Parity strategy: P3 (single-frame dual-emit) + P1 (ULP-tolerance bytewise) on FINAL RENDER-EQUIVALENT COLOR**, not on `listOfVertices[].argb`. The latter misses per-face additive lighting and hides the slice 1 color-drift class. Compare target is `listOfTriangles[].aRGBLight[i]` (or its slice-2 GPU equivalent), not the pre-face-additive vertex stream.
-- **SSBO additions for slice 2 are minimal IF the per-face decision is C (drop)**: 4 B per vertex into existing slice 1 pad slot, 4 B per instance into `_pad0`, 12 B per type. Decisions A or B (de-index or face side-channel) are larger.
+- **READY-FOR-SPEC.** All five pre-spec hardening items resolved (Section 9). Slice 2 design lives at `docs/superpowers/specs/2026-05-02-object-offload-slice2-design.md`; hand-off prompt at `docs/superpowers/specs/2026-05-02-object-offload-slice2-handoff-prompt.md`. Two of the five items turned out to be self-inflicted false alarms (see Section 9 Corrections A and B).
+- **Recoverable estimate**: choice C (which Section 9 confirms is the only honest choice in stock) recovers **~330-407 µs/frame, ~17-21% `appearanceUpdate` reduction**. The original first-pass 0.5-0.7 ms claim was wrong (conflated `vlight`'s screen-transform with its lighting portion).
+- **Per-face lighting is dead code in stock**, not an architectural fork. `useFaceLighting=false` permanently at `mclib/terrain.cpp:162` (no other write site). Slice 2 ships choice C — retire dead CPU work + the per-face indirection that, in stock, only mirrors the per-vertex value. Options A and B exist only on paper.
+- **GPU lighting feasibility: feasible.** Lighting kernel partially shipped already (`get_base_light()` complete; `calc_light()` is a 2-of-6-light-types stub). MAX_HW_LIGHTS_IN_WORLD=16, UBO and dedup cache (`addLightDataStructure`) already wired. Slice 2 finishes a kernel rather than writing one. Light type enum CPU/GPU mismatch was a fabricated claim — both sides are byte-identical (Section 9 Correction A).
+- **Parity strategy: P3 (single-frame dual-emit) + P1 (ULP-tolerance bytewise) on triangle-corner color** (`listOfTriangles[].aRGBLight[i]`). Because `useFaceLighting=false` in stock, this value equals the per-vertex-lit color modulo alpha/packing — any mismatch indicates packing, fog/highlight, terrain-light, or shader-math divergence, NOT missing per-face lighting. P2 (pixel-level diff) deferred to default-on flip, shared with Stage 1.E.
+- **SSBO additions for slice 2 are minimal**: 4 B per vertex into existing slice 1 pad slot (offset 36), 4 B per instance into `_pad0`, ~48 B per type for hot-color fields, plus 3 falloff fields per light packed into existing `TG_HWLightsData` schema (small).
+- **Side-effect-free light-data gather** via `TG_Shape::GatherGpuObjectLightDataOnly()` per Section 9 Item 5. Per-actor (not per-leaf) because `s_listOfLights` is class-static.
+- **Eligibility hoist** per Section 9 Item 4: `GpuStaticPropBatcher::isMultiShapeEligibleForGpuObjects(multi)` at update-time + per-actor `appearanceFlags_needsFullBakeNextFrame` 1-bit flag for the narrow late-registration recovery path.
 
 ---
 

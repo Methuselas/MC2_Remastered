@@ -3,8 +3,12 @@
 > **Role for a fresh session reading this:** You are picking up the
 > object-offload arc at slice 2 implementation. Recon Zero closed
 > 2026-05-02 with all five pre-spec hardening items resolved; design
-> spec is approved (this session). You are executing a 5-stage
-> implementation per the spec. Do NOT redesign — execute.
+> spec is **approved for implementation pending Step 0 adversarial
+> implementation review** (this session). You are executing a 5-stage
+> implementation per the spec. **Step 0 is the mandatory review gate**
+> — execute it before any code edits. After Step 0 passes (or its
+> CRITICAL findings are surfaced and resolved with the user), do NOT
+> redesign — execute.
 
 ---
 
@@ -105,7 +109,16 @@ Files:
 
 **Visual behavior at this stage**: with `MC2_GPU_OBJECTS=1`, eligible static-prop actors run positions-only. Their `.argb` is stale or zero. Slice 1's batcher continues to memcpy `listOfVertices[j].argb` into the per-instance color SSBO and draw with stale colors. **This is intentional** — the kernel split is verified before the GPU lighting kernel comes online in Stage 2.C. PR description must call this out.
 
-**Pass criteria**: tier1 5/5 PASS in three configs (unset, `MC2_GPU_OBJECTS=1`, `MC2_GPU_OBJECTS=1 + MC2_OBJBATCHER_TRACE=1`). +0 destroys. Render zone Tracy delta neutral. F-gate `late_register_recovery_skips` ≤ 2 per mission.
+**Stage 2.B gate (intentionally narrow — do NOT evaluate visual parity here):**
+
+- No crash / no hang in tier1 5/5 PASS in three configs (unset / `MC2_GPU_OBJECTS=1` / `MC2_GPU_OBJECTS=1 + MC2_OBJBATCHER_TRACE=1`).
+- +0 destroys delta in every mission.
+- TGL pool peak unchanged.
+- No cull/lifecycle regression.
+- F-gate counters: `gpu_drawn_instances > 0` per static-prop population, `late_register_recovery_skips ≤ 2` per mission for artillery/bomber-bearing missions.
+- Render zone Tracy delta neutral. Do NOT gate on Tracy magnitude or on visual quality at 2.B; both come at Stage 2.C.
+
+**Anti-pattern to avoid**: do not "fix" the temporary visual break by undoing positions-only or re-introducing color writes. Colors come back at Stage 2.C when GPU lighting goes live.
 
 Commit on green.
 
@@ -145,7 +158,11 @@ If Tracy reduction is below 10%, surface to user — the recon's perf prediction
 
 Per spec section "Stage 2.D":
 
+**Merge policy (decided in spec; do not re-litigate)**: Stages 2.A-2.C may merge behind `MC2_GPU_OBJECTS=1` flag once their respective gates pass. **Stage 2.D parity is NOT a slice 2 PR blocker.** It IS a hard pre-condition for declaring slice 2 "validated" or for any default-on flip. If 2.D's tooling effort threatens to stall 2.C's perf merge, ship 2.A-2.C first and follow up with 2.D in a separate PR. Stage 2.E's pinned-camera diff is similarly pre-default-on, not pre-merge.
+
 **Scope warning**: Stage 2.D requires a GPU→CPU readback harness via PBO that doesn't exist in tree today. Budget accordingly — this is non-trivial: allocate PBO, dispatch async readback after the slice 1 batcher's draw, retain the readback for next-frame compare against fresh CPU recompute. Existing terrain/water arcs may have a similar pattern to crib from; check `GameOS/gameos/gos_terrain_indirect.cpp` and `gos_static_prop_batcher.cpp` for any existing PBO usage. If none exists, Stage 2.D's PBO harness is itself a sub-stage worth ~half the stage's effort.
+
+**Compare-target caveat**: parity compares at triangle-corner granularity (`listOfTriangles[].aRGBLight[i]`) even though GPU output is per-vertex-lit. This is intentional. Because `useFaceLighting=false` in stock, the corner value equals the per-vertex-lit value modulo alpha/packing. Any mismatch in 2.D indicates packing / fog / highlight / terrain-light / shader-math divergence, NOT missing per-face lighting. See spec Stage 2.D for the full caveat.
 
 Files:
 - `GameOS/gameos/gos_static_prop_batcher.cpp` (or a new sidecar `gos_object_parity.cpp`) — implement P3 dual-emit at first frame post-mission-start: run BOTH `MultiTransformShape` and `_PositionsOnly` for all actors, bytewise-compare CPU `listOfTriangles[j].aRGBLight[i]` against GPU output (read back via PBO). Mismatch logs `[OBJECT_PARITY v1] event=lighting_mismatch actor=X tri=Y corner=Z cpu=ARGB gpu=ARGB`. ULP tolerance ±2 LSB per channel.
@@ -219,20 +236,30 @@ MC2_OBJECT_PARITY_CHECK=1 MC2_GPU_OBJECTS=1 py -3 scripts/run_smoke.py --tier ti
 
 ## When you finish
 
-After Stage 2.D lands (Stage 2.E is a separate PR):
+**Merge gate (slice 2 PR)** — Stages 2.A-2.C complete:
 
 1. Run final tier1 smoke in all three configs. Capture artifact.
 2. Run `MC2_OBJECT_RECON_TRACY=1` smoke and capture the `[OBJECT_RECON v1] summary` line. Confirm the per-population reduction matches the spec target (~17-21% on `appearanceUpdate`).
-3. Update memory:
-   - `memory/object_update_cost_baseline.md` — capture the new post-slice-2 numbers (if not already created at recon time).
+3. Surface to user: "slice 2 PR ready (Stages 2.A-2.C). Slice 2 validation pending Stage 2.D parity. Default-on flip blocked on Stage 1.E / 2.E pinned-camera diff."
+
+**Validation gate** — Stage 2.D parity complete (separate PR):
+
+4. Run `MC2_OBJECT_PARITY_CHECK=1` smoke. Confirm zero mismatches.
+5. Update memory:
+   - `memory/object_update_cost_baseline.md` — capture post-slice-2 Tracy numbers.
    - `memory/enum_mismatch_was_fabricated_claim.md` — note the recon-zero error so future arcs don't re-investigate.
-4. Surface to user: "slice 2 ready to merge behind flag. Default-on flip blocked on Stage 1.E / 2.E pinned-camera diff."
+6. Surface to user: "slice 2 validated. Default-on flip blocked only on Stage 1.E / 2.E pinned-camera diff."
+
+**Default-on gate** — Stage 1.E / 2.E pinned-camera diff complete (separate PR):
+
+7. Pixel-diff harness clears. Default-on flip lands as a one-line edit (env-var default).
 
 If a stage gate fails:
 - Do NOT push past the failure with hacks. Fix the root cause or surface the failure to user with the captured evidence.
 - Pool exhaustion or destroys delta != 0: revert and investigate per `memory/cull_gates_are_load_bearing.md` and `memory/tgl_pool_exhaustion_is_silent.md`.
-- Tracy delta < 10%: surface to user; spec's perf claim was wrong.
-- Visual regression: surface to user with screenshots; do not merge.
+- Tracy delta < 10% at Stage 2.C: surface to user; spec's perf claim was wrong.
+- Visual regression at Stage 2.C: surface to user with screenshots; do not merge slice 2 PR.
+- Parity mismatches at Stage 2.D: surface to user; investigate (probably packing / fog / shader-math). Slice 2 PR may already be merged at this point — fix-forward in 2.D PR rather than reverting.
 
 ---
 
