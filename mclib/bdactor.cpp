@@ -1597,6 +1597,22 @@ long BldgAppearance::render (long depthFixup)
 			{
 				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
 					bldgShape, GpuStaticPropPopulation::Building);
+				// Slice 2 (object-offload) — Stage 2.B: late-registration
+				// recovery flag. When submitMultiShape failed because a leaf
+				// type was unregistered, mark the actor for full-bake on the
+				// NEXT update — defensive hygiene that ensures positions-only
+				// is never run on this actor before its type registers.
+				// In stock missions the type is permanently unregistered for
+				// the "two known types" (slice 1 spec lines 489-490); the
+				// flag becomes a no-op since isMultiShapeEligibleForGpuObjects
+				// already returns false for them at update. The actor renders
+				// correctly via legacy Render() below, with fresh .argb from
+				// full-bake at update.
+				if (!submittedToGpu &&
+				    GpuStaticPropBatcher::instance().wasLastFailureLateRegistration())
+				{
+					needsFullBakeNextFrame = true;
+				}
 			}
 			if (!submittedToGpu)
 			{
@@ -2200,8 +2216,33 @@ long BldgAppearance::update (bool animate)
 			bldgShape->SetRecalcShadows(checkShadows);
 
 		bldgShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-		bldgShape->TransformMultiShape (&xlatPosition,&rot);
-		
+		// Slice 2 (object-offload) — Stage 2.B: eligibility hoist.
+		// Branch lives INSIDE the existing inView||g_useGpuStaticProps cull
+		// gate to preserve slice 1's R1 invariant (no cull bypass).
+		// Run positions-only when:
+		//   - g_useGpuObjects is on, AND
+		//   - this actor did not hit a late-registration recovery last frame
+		//     (needsFullBakeNextFrame is a NEW bool from Stage 2.A; set by
+		//     BldgAppearance::render when submitMultiShape returns false with
+		//     wasLastFailureLateRegistration() true), AND
+		//   - the multi-shape's leaves are all registered with the slice 1
+		//     batcher (isMultiShapeEligibleForGpuObjects mirrors slice 1's
+		//     render-time per-child gates EXCEPT late-reg, which is handled
+		//     via the recovery flag above).
+		// Otherwise full bake. The full bake clears the recovery flag —
+		// re-establishing valid .argb before render reads it.
+		if (g_useGpuObjects &&
+		    !needsFullBakeNextFrame &&
+		    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(bldgShape))
+		{
+			bldgShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+		}
+		else
+		{
+			bldgShape->TransformMultiShape (&xlatPosition,&rot);
+			needsFullBakeNextFrame = false;
+		}
+
 		if (bldgShadowShape && useShadows)
 		{
 			bldgShadowShape->SetRecalcShadows(checkShadows);
@@ -4042,6 +4083,13 @@ long TreeAppearance::render (long depthFixup)
 			{
 				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
 					treeShape, GpuStaticPropPopulation::Tree);
+				// Slice 2 (object-offload) — Stage 2.B: see BldgAppearance::render
+				// for full rationale on the late-reg recovery flag.
+				if (!submittedToGpu &&
+				    GpuStaticPropBatcher::instance().wasLastFailureLateRegistration())
+				{
+					needsFullBakeNextFrame = true;
+				}
 			}
 			if (!submittedToGpu)
 			{
@@ -4315,8 +4363,22 @@ long TreeAppearance::update (bool animate)
 		light->active = false;
 
 		treeShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-		treeShape->TransformMultiShape (&xlatPosition,&rot);
-		
+		// Slice 2 (object-offload) — Stage 2.B: eligibility hoist.
+		// See BldgAppearance::update for the full rationale; same shape.
+		// Branch lives INSIDE the existing inView||g_useGpuStaticProps cull
+		// gate to preserve slice 1's R1 invariant.
+		if (g_useGpuObjects &&
+		    !needsFullBakeNextFrame &&
+		    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(treeShape))
+		{
+			treeShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+		}
+		else
+		{
+			treeShape->TransformMultiShape (&xlatPosition,&rot);
+			needsFullBakeNextFrame = false;
+		}
+
 		light->active = true;
 
 		if (treeShadowShape && useShadows)

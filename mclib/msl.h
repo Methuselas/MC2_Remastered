@@ -320,6 +320,19 @@ class TG_MultiShape
 		// NOTE:  THIS IS NOT A RIGOROUS CLIP!!!!!!!!!
 		long TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot);
 
+		// Slice 2 (object-offload) — Stage 2.B: positions-only variant.
+		// Same body as TransformMultiShape (heirarchy animation, shapeToClip
+		// computation, TG_Shape::s_* state setup all run unchanged) but routes
+		// the per-leaf transform call to TG_Shape::MultiTransformShape_PositionsOnly,
+		// which strips the per-vertex / per-face lighting kernels. Slice 1
+		// batcher draws the actor with GPU vertex lighting (Stage 2.C wires
+		// calc_light() in lighting.hglsl). Called from
+		// BldgAppearance/TreeAppearance/GenericAppearance::update inside the
+		// existing inView||g_useGpuStaticProps cull gate, gated on
+		// g_useGpuObjects && !needsFullBakeNextFrame &&
+		// GpuStaticPropBatcher::isMultiShapeEligibleForGpuObjects(this).
+		long TransformMultiShape_PositionsOnly (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot);
+
 		//This function rotates the heirarchy from this node down.  Used for torso twists, arms, etc.
 		// SHould only be called once this way.  This way is DAMNED SLOW!!!  STRICMP!  IT returns the node num
 		// Call that from then on!

@@ -1328,6 +1328,14 @@ __int64 MCTimeAnimationandMatrix	= 0;
 __int64 MCTimePerShapeTransform		= 0;
 #endif
 
+// Slice 2 (object-offload) — Stage 2.B: dispatch flag for the per-leaf
+// MultiTransformShape call inside TransformMultiShape's body. Set true by
+// TransformMultiShape_PositionsOnly, cleared after the inner call returns.
+// File-static so the state is local to the per-frame transform dispatch.
+// Single-threaded by construction (MC2 update is serial; no actor's update
+// runs while another's TransformMultiShape is in flight).
+static bool s_multiShapePositionsOnly = false;
+
 long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot)
 {
 	::mc2_object_recon::Scope _recon_mShape_(
@@ -1686,7 +1694,20 @@ long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuatern
         x=GetCycles();
 #endif
 
-        listOfShapes[i].node->MultiTransformShape(&shapeToClip,&backFacePoint,listOfShapes[i].parentNode,isHudElement,alphaValue,isClamped);
+        // Slice 2 (object-offload) — Stage 2.B: dispatch on the file-static
+        // flag set by TransformMultiShape_PositionsOnly. The positions-only
+        // variant strips the per-vertex / per-face lighting kernels; slice 1
+        // batcher provides GPU vertex lighting via the calc_light() kernel
+        // finished in lighting.hglsl (Stage 2.C). Default branch (flag false)
+        // is the unchanged legacy call.
+        if (s_multiShapePositionsOnly)
+        {
+            listOfShapes[i].node->MultiTransformShape_PositionsOnly(&shapeToClip,&backFacePoint,listOfShapes[i].parentNode,isHudElement,alphaValue,isClamped);
+        }
+        else
+        {
+            listOfShapes[i].node->MultiTransformShape(&shapeToClip,&backFacePoint,listOfShapes[i].parentNode,isHudElement,alphaValue,isClamped);
+        }
 
         if (useShadows && d_useShadows)
         {
@@ -1704,7 +1725,23 @@ long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuatern
     MCTimeTransformandLight = MCTimeAnimationandMatrix + MCTimePerShapeTransform;
 #endif
     return(0);
-}	
+}
+
+//-------------------------------------------------------------------------------
+// Slice 2 (object-offload) — Stage 2.B
+// TransformMultiShape_PositionsOnly: thin wrapper that flips the file-static
+// per-leaf dispatch flag, calls the existing TransformMultiShape (so the
+// heirarchy animation, shapeToClip computation, and TG_Shape::s_* state setup
+// all run unchanged), then clears the flag. The flag is read at the per-leaf
+// MultiTransformShape call site near the bottom of TransformMultiShape's body.
+//-------------------------------------------------------------------------------
+long TG_MultiShape::TransformMultiShape_PositionsOnly (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot)
+{
+    s_multiShapePositionsOnly = true;
+    long result = TransformMultiShape(pos, rot);
+    s_multiShapePositionsOnly = false;
+    return result;
+}
 
 //-------------------------------------------------------------------------------
 //This function takes the current listOfVisibleFaces and draws them using

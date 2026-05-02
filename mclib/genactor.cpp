@@ -808,6 +808,13 @@ long GenericAppearance::render (long depthFixup)
 				{
 					submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
 						genShape, GpuStaticPropPopulation::Generic);
+					// Slice 2 (object-offload) — Stage 2.B: see BldgAppearance::render
+					// for full rationale on the late-reg recovery flag.
+					if (!submittedToGpu &&
+					    GpuStaticPropBatcher::instance().wasLastFailureLateRegistration())
+					{
+						needsFullBakeNextFrame = true;
+					}
 				}
 				if (!submittedToGpu)
 				{
@@ -1189,7 +1196,21 @@ long GenericAppearance::update (bool animate)
 	{
 		genShape->SetIsClamped(true);
 		genShape->SetLightList(NULL,0);
-		genShape->TransformMultiShape (&xlatPosition,&rot);
+		// Slice 2 (object-offload) — Stage 2.B: eligibility hoist.
+		// See BldgAppearance::update for the full rationale; same shape.
+		// Branch lives INSIDE the existing inView||g_useGpuStaticProps cull
+		// gate to preserve slice 1's R1 invariant.
+		if (g_useGpuObjects &&
+		    !needsFullBakeNextFrame &&
+		    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(genShape))
+		{
+			genShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+		}
+		else
+		{
+			genShape->TransformMultiShape (&xlatPosition,&rot);
+			needsFullBakeNextFrame = false;
+		}
 	}
 
 	return TRUE;

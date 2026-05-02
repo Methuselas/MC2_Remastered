@@ -1,14 +1,48 @@
 # Slice 2 (object-offload) — Implementation hand-off prompt
 
 > **Role for a fresh session reading this:** You are picking up the
-> object-offload arc at slice 2 implementation. Recon Zero closed
-> 2026-05-02 with all five pre-spec hardening items resolved; design
-> spec is **approved for implementation pending Step 0 adversarial
-> implementation review** (this session). You are executing a 5-stage
-> implementation per the spec. **Step 0 is the mandatory review gate**
-> — execute it before any code edits. After Step 0 passes (or its
-> CRITICAL findings are surfaced and resolved with the user), do NOT
-> redesign — execute.
+> object-offload arc at slice 2, **Stage 2.B**. Stage 2.A is already
+> complete and committed; do not re-implement it. Step 0 adversarial
+> review has already been applied to the design spec. Your job is to
+> execute Stages 2.B → 2.C → 2.D → 2.E per the corrected spec, with
+> the per-stage gates as written.
+
+---
+
+## Current state (as of 2026-05-02)
+
+**Stage 2.A is COMPLETE and GREEN.** Do not re-implement Stage 2.A.
+Verify the commit is present before starting Stage 2.B.
+
+- **Stage 2.A commit:** `cdcdb7d` on `claude/nifty-mendeleev` —
+  *"feat: object-offload slice 2 stage 2.A — substrate edits (no behavior change)"*.
+  Confirm with `git log --oneline -5` from the worktree.
+- **Stage 2.A green gate (recorded 2026-05-02):**
+  - tier1 5/5 PASS in two configs: unset / `MC2_GPU_OBJECTS=1`.
+  - +0 destroys delta on every mission in both configs.
+  - mc2_24 isolation PASS @ 142 FPS post-revert (the regression below).
+- **Stage 2.A regression resolved:** initial implementation extended
+  `TG_HWLightsData` with a `lightFalloff[16][4]` field on the C++ side
+  WITHOUT the lockstep GLSL `ObjectLights` extension; the legacy
+  `addRenderShape` path uploads to the existing-size UBO so per-element
+  stride for `light[i]` with `i>0` was corrupted, crashing mc2_24
+  silently ~17s in. The C++ field was reverted; falloff fields are
+  now scoped to **Stage 2.C only** where C++/GLSL/`calc_light()` ship
+  in lockstep. This is captured as Sign-Off #6 in the design spec and
+  as the load-bearing scope rule in this handoff at "Step 1".
+- **Step 0 adversarial review log:** initial review found 12 CRITICAL +
+  8 MAJOR + 3 MINOR; correction pass + fresh-subagent delta review
+  reduced to 0 CRITICAL / 0 MAJOR / 6 MINOR (one disambiguation
+  applied: M6 — `submitMultiShape` has TWO loops with the same
+  `for (int i = 0; i < n; ++i)` signature; the per-actor light gather
+  goes BETWEEN them, not inside either). Spec sign-off log items #1-5
+  are locked architectural decisions; do not re-litigate.
+
+**Start at Stage 2.B.** Do not touch Stage 2.A substrate except to
+verify the commit is present and the smoke gate is still green
+on your local checkout. If `git log --oneline | grep "stage 2.A"`
+returns nothing, escalate to user before doing anything — the
+substrate may have been reverted or the worktree may have drifted.
 
 ---
 
@@ -79,35 +113,34 @@ Files to modify (Stage 2.A scope ONLY):
 - `mclib/txmmgr.cpp` — **NO Stage 2.A changes here** (the `GatherLightsParameters` falloff-field writes are Stage 2.C work, deferred).
 - `GameOS/gameos/gos_static_prop_batcher.h` — declare `isMultiShapeEligibleForGpuObjects`. Repurpose `_pad0` slot in `GpuStaticPropInstance` as `lightDataIndex` (offset 76; same size, layout unchanged — rename is safe). Update `static_assert` for offsets.
 - `GameOS/gameos/gos_static_prop_batcher.cpp` — define `isMultiShapeEligibleForGpuObjects` (mirror slice 1's render-time per-child gates except late-registration, per Recon Section 9 Item 4).
-- `mclib/bdactor.h`, `mclib/bdactor.cpp` — add `appearanceFlags_needsFullBakeNextFrame` 1-bit flag (pack into existing `appearanceFlags` byte) to `BldgAppearance` and `TreeAppearance`. Initialize false.
-- `mclib/genactor.h`, `mclib/genactor.cpp` — same for `GenericAppearance`.
+- `mclib/bdactor.h`, `mclib/bdactor.cpp` — add a NEW `bool needsFullBakeNextFrame;` member on `BldgAppearance` and `TreeAppearance`. Initialize false. **DO NOT** name the field `appearanceFlags_needsFullBakeNextFrame` and **DO NOT** "pack into existing `appearanceFlags`" — those classes have NO `appearanceFlags` aggregate byte (grep returns zero hits in `mclib/`). They use individual `bool` members like `isReversed`, `forceLightsOut`, `beenInView`, etc. Add a new `bool` next to those.
+- `mclib/genactor.h`, `mclib/genactor.cpp` — same NEW `bool needsFullBakeNextFrame;` on `GenericAppearance`. Same anti-pattern note: no `appearanceFlags` aggregate exists.
 
 **No call sites are switched.** This stage adds infrastructure; existing code paths unchanged.
 
-**Build**: `cmake --build build64 --config RelWithDebInfo --target mc2`. Per `memory/feedback_subagent_no_cmake_configure.md`: NEVER run `cmake -B build64 -S .` or any configure variant; the prefix paths get clobbered.
+**Status: COMPLETE on commit `cdcdb7d`.** A fresh worker reading this handoff should NOT re-execute Step 1; instead, verify the commit is present (`git log --oneline | grep "stage 2.A"`) and proceed to Step 2 (Stage 2.B). If the commit is missing, escalate to user — do not silently re-implement.
 
-**Deploy**: per-file `cp -f` + `diff -q` to `A:/Games/mc2-opengl/mc2-win64-v0.3/`. NEVER `cp -r`. Files: `mc2.exe`, `mc2.pdb`, any modified shaders.
-
-**Smoke gate**: `py -3 scripts/run_smoke.py --tier tier1 --duration 20 --fail-fast --kill-existing`. Drop `--with-menu-canary` per `memory/feedback_smoke_no_canary.md`.
-
-**Pass criteria**:
-- tier1 5/5 PASS in two configs: unset, `MC2_GPU_OBJECTS=1`.
-- +0 destroys delta (per `memory/feedback_pool_peak_compare_same_mission.md`).
+**For historical reference, the completed Stage 2.A green gate was:**
+- tier1 5/5 PASS in two configs (unset, `MC2_GPU_OBJECTS=1`).
+- +0 destroys delta in every mission in both configs.
 - TGL pool peak unchanged.
 - Tracy `appearanceUpdate` zone unchanged.
-
-Commit Stage 2.A on green. HEREDOC commit message per CLAUDE.md "Critical Rules" / Git section.
 
 ---
 
 ## Step 2 — Stage 2.B: wire eligibility hoist + positions-only
 
-Per spec section "Stage 2.B":
+Per spec section "Stage 2.B" — also see the locked Sign-Off #3 in the design spec ("Eligibility hoist lives INSIDE the existing cull gate"). The eligibility branch must NOT lift the call out of the existing `if (inView || g_useGpuStaticProps)` gates; doing so risks regressing slice 1's R1 cull invariant.
 
-Files:
-- `mclib/bdactor.cpp` `BldgAppearance::update` (line 1957) and `TreeAppearance::update` (line 4209) — replace the unconditional `TransformMultiShape` call with the eligibility branch (spec architecture section).
-- `mclib/genactor.cpp` `GenericAppearance::update` (line 1049) — same pattern.
-- `GameOS/gameos/gos_static_prop_batcher.cpp` `submitMultiShape` — at the late-registration branch (around line 683-693), set `appearanceFlags_needsFullBakeNextFrame=true` on the actor and increment a new `late_register_recovery_skips` counter (separate from `cpu_fallback_by_pop`). Add this counter to the F-gate summary line.
+**Line-drift caveat (added post-Stage-2.A 2026-05-02):** the line numbers below were the spec/handoff's original grep at write-time. Since then commit `c4c4e96` (recon Tracy instrumentation) and commit `cdcdb7d` (Stage 2.A substrate) have shifted `tgl.cpp` / `bdactor.cpp` / `genactor.cpp` cited lines by 3-9. **Locate every edit site by structure, not literal line:** find the existing `if (inView || g_useGpuStaticProps)` cull gate, then the `*Shape->TransformMultiShape (&xlatPosition,&rot)` call inside it. Same rule for the Stage 2.C `submitMultiShape` between-the-two-`for`-loops anchor. The site numbers below are advisory; the structural anchors are authoritative.
+
+Files (line references advisory — re-derive structurally per caveat above):
+- `mclib/bdactor.cpp` `BldgAppearance::update` (function start at line 1957; existing `bldgShape->TransformMultiShape` call at line 2200, INSIDE `if (inView || g_useGpuStaticProps)` opening at line 2191) and `TreeAppearance::update` (function start at line **4213**, NOT 4209; existing `treeShape->TransformMultiShape` call at line 4313, INSIDE `if (inView || g_useGpuStaticProps)` opening at line 4300) — wrap the existing call in the eligibility branch from the spec's "Eligibility hoist" architecture section. **The branch lives INSIDE the existing cull gate.** The shadow-shape companion calls (`bldgShadowShape->TransformMultiShape` at `bdactor.cpp:2206`, `treeShadowShape->TransformMultiShape` at `bdactor.cpp:4321`) are NOT touched by Stage 2.B.
+- `mclib/genactor.cpp` `GenericAppearance::update` (function start at line 1049; existing `genShape->TransformMultiShape` call at line 1189, INSIDE `if (inView || g_useGpuStaticProps)` opening at line 1185) — same pattern: branch INSIDE the cull gate.
+- `mclib/bdactor.cpp` / `mclib/genactor.cpp` post-`submitMultiShape` consumer wiring: when the slice 1 `submitMultiShape` path is exercised in `*Appearance::render` and returns false, query `GpuStaticPropBatcher::instance().wasLastFailureLateRegistration()` (already added in Stage 2.A, see commit `cdcdb7d`). If true, set the actor's NEW `bool needsFullBakeNextFrame = true;` field (also from Stage 2.A). The flag is consumed by the eligibility branch above on the NEXT frame's update — full `TransformMultiShape` runs, flag is cleared.
+- `GameOS/gameos/gos_static_prop_batcher.cpp` `submitMultiShape` — the late-registration setter and `late_register_recovery_skips` counter were already wired in Stage 2.A (commit `cdcdb7d`) at the unregistered-type branch (lines `674-693`, the full `if (s_typeIndex.find(ts) == s_typeIndex.end())` block; the inner `if (count == 0)` print runs ~683-690 and the `++count; return false;` tail is at ~691-692). **DO NOT** re-implement; verify via grep that `s_lastSubmitWasLateReg` and `s_late_register_recovery_skips` are present.
+
+**Field naming reminder:** the actor flag is `bool needsFullBakeNextFrame;` — NOT `appearanceFlags_needsFullBakeNextFrame`. There is no `appearanceFlags` aggregate byte on these classes; do not pack into one.
 
 **Visual behavior at this stage**: with `MC2_GPU_OBJECTS=1`, eligible static-prop actors run positions-only. Their `.argb` is stale or zero. Slice 1's batcher continues to memcpy `listOfVertices[j].argb` into the per-instance color SSBO and draw with stale colors. **This is intentional** — the kernel split is verified before the GPU lighting kernel comes online in Stage 2.C. PR description must call this out.
 
@@ -134,7 +167,7 @@ Files:
 - `shaders/include/lighting.hglsl` — set `ENABLE_VERTEX_LIGHTING 1` (line 3). Finish `calc_light()` (lines 119-137) with full 6-type dispatch: AMBIENT, INFINITE, INFINITEWITHFALLOFF, POINT, SPOT, TERRAIN. Add `GetFalloff` GLSL helper (linear interp per Recon Section 9 Item 1).
 - `shaders/static_prop.vert` (or new `static_prop_lit.vert`) — invoke `calc_light()` per vertex with per-instance `lightDataIndex` and per-vertex `aRGBLight` tag.
 - `shaders/static_prop.frag` — consume VS-produced lit ARGB.
-- `GameOS/gameos/gos_static_prop_batcher.cpp` `submitMultiShape` — at the top of the eligible-child loop (around line 698), call `multi->listOfShapes[0].node->GatherGpuObjectLightDataOnly()` (per-actor, NOT per-leaf — Recon Section 9 Item 5 confirmed all leaves see identical `lightData_`). Broadcast index into per-leaf `lightDataIndex`.
+- `GameOS/gameos/gos_static_prop_batcher.cpp` `submitMultiShape` — call `multi->listOfShapes[0].node->GatherGpuObjectLightDataOnly()` **ONCE per multishape, AFTER the registration/eligibility pass and BEFORE the child submit loop. Do NOT place it inside either `for (int i = 0; i < n; ++i)` loop.** Concrete placement: the function spans ~641-737. There are TWO loops with the identical signature — the first at line 667 is the registration-check / early-out loop; the second at line 698 is the per-leaf submit loop. The gather call sits BETWEEN them, between approximately line 694 (close of loop-1) and line 696 (open of loop-2). The returned `lightDataIndex` is broadcast into each leaf's per-instance struct INSIDE the second loop's body. (Per-actor not per-leaf — Recon Section 9 Item 5 confirmed all leaves see identical `lightData_`. Placing the call inside loop-1 wastes work on rejected actors; placing it inside loop-2 makes it per-leaf and incurs N-fold redundant `GatherLightsParameters` calls per multi-shape per frame. The duplicate-loop signature ambiguity was caught in Step 0 delta review M6.)
 - `GameOS/gameos/gos_static_prop_batcher.cpp` — stop memcpying `listOfVertices[j].argb` into the per-instance color SSBO (now redundant; GPU lights it). **Note in Stage 2.C PR description**: this retires slice 1's color-stream memcpy. The slice 1 substrate code path becomes "memcpy-less" from slice 2 onwards. Does NOT affect slice 1's CPU-only path (which doesn't go through the batcher).
 - `GameOS/gameos/gos_static_prop_batcher.cpp` `registerType` (line 444-468) — write per-vertex `aRGBLight` at offset 36 (currently zero-padded). Source: `typeShape->listOfTypeVertices[localVertIdx].aRGBLight`.
 - `GameOS/gameos/gos_static_prop_batcher.cpp` `finalizeGeometry` — build per-type SSBO with hot-color fields (`hotPinkRGB`, `hotYellowRGB`, `hotGreenRGB`); bind at draw time.
@@ -280,4 +313,4 @@ The slice 2 design spec is your work plan. The recon doc is your reasoning trail
 
 Execute the 5 stages in order. Surface real blockers to user; never paper over them with hacks or skipped tests.
 
-Slice 2 ships when Stages 2.A through 2.D pass their gates. Default-on flip ships when Stage 2.E (or slice 1's Stage 1.E, whichever comes first) clears.
+**Slice 2 PR ships when Stages 2.A–2.C pass their gates** (Stage 2.A is already complete on commit `cdcdb7d`; Stages 2.B and 2.C are this session's work). **Slice 2 is validated when Stage 2.D parity passes** (separate PR; not a 2.C-PR blocker). **Default-on flip happens only when Stage 2.E (or slice 1's Stage 1.E, whichever comes first) — pinned-camera screenshot diff — clears.** This sequence is the merge-policy decision locked at design time; do not re-litigate.
