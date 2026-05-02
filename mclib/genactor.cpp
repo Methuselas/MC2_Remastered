@@ -793,11 +793,30 @@ long GenericAppearance::render (long depthFixup)
 		// Call Multi-shape render stuff here.
 		if (visible)
 		{
+			// Slice 1 path (g_useGpuObjects). Same shape as BldgAppearance::render.
+			bool submittedToGpu = false;
+			if (g_useGpuObjects)
+			{
+				GpuStaticPropBatcher::instance().recordEligibleActor(
+					GpuStaticPropPopulation::Generic);
+				if (genShape)
+				{
+					submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
+						genShape, GpuStaticPropPopulation::Generic);
+				}
+				if (!submittedToGpu)
+				{
+					GpuStaticPropBatcher::instance().recordCpuFallback(
+						GpuStaticPropPopulation::Generic);
+				}
+			}
+			// Legacy bypass-cull path. Mutually exclusive with slice 1 — gated on
+			// !g_useGpuObjects. Tagged Legacy so Gate F's fallback-rate is computed
+			// only over slice-1 populations. See spec R1.
 			// GPU path: skip depthFixup (sky/background push-back). Those
 			// cases use a non-standard z override that doesn't fit the
 			// per-packet instanced draw. Fall back to CPU for depthFixup.
-			bool submittedToGpu = false;
-			if (g_useGpuStaticProps && genShape && !depthFixup)
+			if (!submittedToGpu && !g_useGpuObjects && g_useGpuStaticProps && genShape && !depthFixup)
 			{
 				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
 					genShape, GpuStaticPropPopulation::Legacy);
