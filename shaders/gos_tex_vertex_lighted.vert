@@ -77,7 +77,11 @@ void main(void)
 
 #if ENABLE_VERTEX_LIGHTING
     const int lights_index = int(light_offset_.x);
-    VertexLight = calc_light(lights_index, Normal, base_light);
+    // Slice 2 (object-offload) — Stage 2.C: calc_light() signature changed
+    // to 4-param. Pass WorldPos (Stuff-space world position) as
+    // vertex_world_pos — distances are rotation-invariant so any consistent
+    // world space works; WorldPos is what we already compute above.
+    VertexLight = calc_light(lights_index, Normal, WorldPos, base_light);
 #else
     VertexLight = base_light;
 #endif

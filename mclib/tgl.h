@@ -281,10 +281,31 @@ typedef  TG_Light *TG_LightPtr;
 
 #define MAX_HW_LIGHTS_IN_WORLD	16
 
+// Slice 2 (object-offload) — Stage 2.C: TG_HWLightsData extended with
+// per-light falloff distances. lightFalloff[i] = (closeDistance,
+// farDistance, oneOverDistance, _unused). MUST stay byte-for-byte
+// lockstep with the GLSL `ObjectLights` struct in
+// shaders/include/lighting.hglsl (`vec4 light_falloff[16]`).
+//
+// Layout (std140-equivalent):
+//   lightToWorld[16][16] : offset    0,   1024 B
+//   lightDir[16][4]      : offset 1024,    256 B
+//   lightColor[16][4]    : offset 1280,    256 B
+//   lightFalloff[16][4]  : offset 1536,    256 B   (NEW Stage 2.C)
+//   numLights_           : offset 1792,      4 B
+//   pad[3]               : offset 1796,     12 B
+//   total                                   1808 B per ObjectLights
+//   UBO                                  32 × 1808 = 57856 B (under 64 KB)
+//
+// Schema-version note: the prior 1552-byte layout (without lightFalloff)
+// is the "Stage-2.A scope rule" reference layout; cdcdb7d shipped without
+// extending it. mc2_24 regression 2026-05-02 was caused by extending
+// the C++ side without the matching GLSL change; Stage 2.C lands both.
 struct TG_HWLightsData {
 	float lightToWorld[MAX_HW_LIGHTS_IN_WORLD][16];
 	float lightDir[MAX_HW_LIGHTS_IN_WORLD][4];
 	float lightColor[MAX_HW_LIGHTS_IN_WORLD][4];
+	float lightFalloff[MAX_HW_LIGHTS_IN_WORLD][4];
     int numLights_;
     int pad[3];
 
@@ -293,6 +314,7 @@ struct TG_HWLightsData {
 		memset(lightToWorld, 0, sizeof(lightToWorld));
 		memset(lightDir, 0, sizeof(lightDir));
 		memset(lightColor, 0, sizeof(lightColor));
+		memset(lightFalloff, 0, sizeof(lightFalloff));
         pad[0] = pad[1] = pad[2] = 13;
     }
 };
@@ -787,7 +809,18 @@ class TG_Shape
 
 			listOfVertices = NULL;
 			listOfTriangles = NULL;
+			// Slice 2 (object-offload) — Stage 2.C: keep s_listOfLights and
+			// s_numLights consistent. Pre-Stage-2.C a latent bug here cleared
+			// s_listOfLights but not s_numLights — never fired in practice
+			// because the only GatherLightsParameters call ran inside
+			// MultiTransformShape, immediately after SetLightList. Stage 2.C
+			// adds a render-time reader (GatherGpuObjectLightDataOnly via
+			// submitMultiShape) that can fire when init() ran on a freshly-
+			// constructed TG_Shape between an earlier actor's SetLightList
+			// and this read — null-deref on s_listOfLights[i] in
+			// GatherLightsParameters. Reset both to keep the count truthful.
 			s_listOfLights = NULL;
+			s_numLights = 0;
 			listOfVisibleFaces = NULL;
 
 			listOfShadowVertices = NULL;

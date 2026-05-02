@@ -47,7 +47,11 @@ void main(void)
 	PREC vec3 lighting = VertexLight;
 #else
     const int lights_index = int(light_offset_.x);
-    PREC vec3 lighting = calc_light(lights_index, Normal, VertexLight);
+    // Slice 2 (object-offload) — Stage 2.C: calc_light() signature changed
+    // to 4-param. Pass WorldPos for vertex_world_pos. This branch is only
+    // reachable when ENABLE_VERTEX_LIGHTING is forced off, since
+    // lighting.hglsl globally enables it for slice 2.
+    PREC vec3 lighting = calc_light(lights_index, Normal, WorldPos, VertexLight);
 #endif
 
     // GPU projection path: projected ground overlays (mission markers, nav beacons) are

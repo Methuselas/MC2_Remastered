@@ -980,6 +980,18 @@ void GatherLightsParameters(TG_HWLightsData* lights)
 			lights->lightColor[num_lights][2] = ((startLight) & 0x000000ff) / 255.0f;
 			lights->lightColor[num_lights][3] = 1.0f;
 
+			// Slice 2 (object-offload) — Stage 2.C: per-light falloff fields.
+			// GLSL `GetFalloff` reads .x=closeDistance, .y=farDistance,
+			// .z=oneOverDistance. Source on the CPU side is
+			// TG_Light::{closeDistance,farDistance,oneOverDistance} at
+			// mclib/tgl.h:193-195. AMBIENT lights don't use distance falloff
+			// (the GLSL kernel hits the AMBIENT case before reading falloff),
+			// but populate the fields anyway for cache uniformity.
+			lights->lightFalloff[num_lights][0] = listOfLights[iLight]->closeDistance;
+			lights->lightFalloff[num_lights][1] = listOfLights[iLight]->farDistance;
+			lights->lightFalloff[num_lights][2] = listOfLights[iLight]->oneOverDistance;
+			lights->lightFalloff[num_lights][3] = 0.0f;
+
 			switch (type)
 			{
 			case TG_LIGHT_AMBIENT:

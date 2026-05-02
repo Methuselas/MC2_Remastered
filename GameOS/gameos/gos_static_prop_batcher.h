@@ -108,11 +108,19 @@ public:
     // Returns true if the instance was accepted. Returns false (Layer B
     // safety net) when the type was never registered; in that case the
     // caller MUST render the shape via the old CPU path this frame.
+    //
+    // Slice 2 (object-offload) — Stage 2.C: lightDataIndex parameter is
+    // the dedup-cache index returned by TG_Shape::GatherGpuObjectLightDataOnly()
+    // for the OWNING multishape (per-actor, not per-leaf — Recon Section 9
+    // Item 5 confirmed all leaves see identical lightData_). Caller hoists
+    // the gather call between submitMultiShape's two for-loops and
+    // broadcasts the index into every leaf's submit() in the second loop.
     [[nodiscard]] bool submit(TG_Shape* shape,
                               const Stuff::Matrix4D& shapeToWorld,
                               uint32_t highlightARGB,
                               uint32_t fogARGB,
-                              uint32_t flags);
+                              uint32_t flags,
+                              uint32_t lightDataIndex);
 
     // Iterate a multishape's children and submit each SHAPE_NODE leaf using
     // the child's own listOfShapes[i].shapeToWorld. Per-child highlight/fog/

@@ -576,7 +576,8 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
                                   const Stuff::Matrix4D& shapeToWorld,
                                   uint32_t highlightARGB,
                                   uint32_t fogARGB,
-                                  uint32_t flags) {
+                                  uint32_t flags,
+                                  uint32_t lightDataIndex) {
     if (!shape || s_fatalRegistrationFailure) return false;
     if (s_programLoadFailed) return false;
 
@@ -612,6 +613,10 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
     inst.typeID           = typeID;
     inst.firstColorOffset = firstColorOffset;
     inst.flags            = flags;
+    // Slice 2 (object-offload) — Stage 2.C: per-actor dedup-cache index
+    // into the LightsData[32] UBO. Same value for every leaf of one
+    // multishape (caller hoisted the gather between the two loops).
+    inst.lightDataIndex   = lightDataIndex;
     inst.aRGBHighlight[0] = ((highlightARGB >> 16) & 0xFF) / 255.0f;
     inst.aRGBHighlight[1] = ((highlightARGB >>  8) & 0xFF) / 255.0f;
     inst.aRGBHighlight[2] = ((highlightARGB >>  0) & 0xFF) / 255.0f;
@@ -682,6 +687,12 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
 
     // First pass: check for unregistered SHAPE_NODE types (fatal for this
     // multishape). All other ineligibility is handled in the submit pass.
+    // Slice 2 (object-offload) — Stage 2.C: capture the first valid
+    // SHAPE_NODE leaf as the per-actor anchor for the GatherGpuObjectLightDataOnly
+    // call hoisted between this loop and the second submit loop. Recon
+    // Section 9 Item 5 confirmed all leaves of a multishape see identical
+    // lightData_, so any non-null SHAPE_NODE works as the gather receiver.
+    TG_Shape* firstShapeNodeLeaf = nullptr;
     for (int i = 0; i < n; ++i) {
         const TG_ShapeRec& rec = multi->listOfShapes[i];
         if (!rec.processMe || !rec.node) continue;
@@ -689,6 +700,7 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
         if (!child->myType) continue;
         if (child->myType->GetNodeType() != SHAPE_NODE) continue;  // skip helpers
         const TG_TypeShape* ts = static_cast<const TG_TypeShape*>(child->myType);
+        if (firstShapeNodeLeaf == nullptr) firstShapeNodeLeaf = rec.node;
         if (s_typeIndex.find(ts) == s_typeIndex.end()) {
             loadLateRegisterAllowlistOnce();
             // Pointer-stringify since TG_TypeShape doesn't expose a name
@@ -715,6 +727,20 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
             ++s_late_register_recovery_skips;
             return false;
         }
+    }
+
+    // Slice 2 (object-offload) — Stage 2.C: per-actor light-data gather.
+    // Hoisted BETWEEN the two for-loops per the spec's locked Sign-Off #2:
+    // - inside loop 1 (registration check) it would gather for actors that
+    //   get rejected on a later child — wasted work;
+    // - inside loop 2 (submit) it would be per-leaf, incurring N-fold
+    //   redundant GatherLightsParameters calls per multishape per frame.
+    // Here, after the registration-check loop has cleared. firstShapeNodeLeaf
+    // is non-null because the registration loop accepted at least one
+    // SHAPE_NODE (otherwise we would have early-returned above).
+    uint32_t lightDataIndex = 0;
+    if (firstShapeNodeLeaf != nullptr) {
+        lightDataIndex = firstShapeNodeLeaf->GatherGpuObjectLightDataOnly();
     }
 
     // Second pass: submit each eligible child, silently skipping those the
@@ -748,7 +774,8 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
         // rec.shapeToWorld is LinearMatrix4D; convert to Matrix4D for submit().
         Stuff::Matrix4D xform(rec.shapeToWorld);
         if (!submit(child, xform,
-                    child->aRGBHighlight, child->fogRGB, flags)) {
+                    child->aRGBHighlight, child->fogRGB, flags,
+                    lightDataIndex)) {
             // submit() rejected after we passed the registration gate —
             // typically a buffer-full condition. Fall back for this frame
             // to keep the visual self-consistent.
