@@ -517,23 +517,20 @@ static void addTerrainTriangles(const TerrainRecipe& r)
 
 void TerrainQuad::setupTextures (void)
 {
-	{
-		ZoneScopedN("quadSetupTextures admission / early guards");
 	if (mineTextureHandle == 0xffffffff)
 	{
 		FullPathFileName mineTextureName;
 		mineTextureName.init(texturePath,"defaults" PATH_SEPARATOR "mine_00",".tga");
 		mineTextureHandle = mcTextureManager->loadTexture(mineTextureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink, 0, 0x1);
 	}
-	
+
 	if (blownTextureHandle == 0xffffffff)
 	{
 		FullPathFileName mineTextureName;
 		mineTextureName.init(texturePath,"defaults" PATH_SEPARATOR "minescorch_00",".tga");
 		blownTextureHandle = mcTextureManager->loadTexture(mineTextureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink, 0, 0x1);
 	}
-	}
-	
+
  	if (!Terrain::terrainTextures2)
 	{
 		if (uvMode == BOTTOMRIGHT)
@@ -723,14 +720,10 @@ void TerrainQuad::setupTextures (void)
 			const MapData::WorldQuadTerrainCacheEntry* cachedEntry = Terrain::mapData ? Terrain::mapData->getTerrainFaceCacheEntry(tileR, tileC) : NULL;
 			if (cachedEntry && cachedEntry->isValid())
 			{
-				ZoneScopedN("TerrainQuad::setupTextures cachedVisibleSubmission");
 				Terrain::mapData->ensureTerrainFaceCacheEntryResident(*cachedEntry, false);
 			}
 
 			{
-				ZoneScopedN("TerrainQuad::setupTextures resolveFallback");
-				{
-				ZoneScopedN("quadSetupTextures diagonal branch / triangle selection");
 				TerrainRecipe recipe;
 				TerrainRecipe inlineRecipe;
 
@@ -761,11 +754,9 @@ void TerrainQuad::setupTextures (void)
 					pz_emit_terrain_tris(vertices, uvMode,
 						(uvMode == BOTTOMRIGHT) ? "terrain_quad_cluster_a" : "terrain_quad_cluster_c",
 						__FILE__, __LINE__);
-				}
 			}
 
 			{
-				ZoneScopedN("quadSetupTextures mine/scorch checks");
 				enqueueTerrainMineState(*this);
 			}
 		}
@@ -778,7 +769,6 @@ void TerrainQuad::setupTextures (void)
 		(vertices[2]->pVertex->water & 1) ||
 		(vertices[3]->pVertex->water & 1))
 	{
-		ZoneScopedN("setupTextures water vertex projection");
 		Stuff::Vector3D vertex3D(vertices[0]->vx,vertices[0]->vy,Terrain::waterElevation);
 		Stuff::Vector4D screenPos;
 
@@ -799,15 +789,13 @@ void TerrainQuad::setupTextures (void)
 			{
 				if (vertices[0]->pVertex->water & 128)
 				{
-					vertices[0]->wAlpha = -Terrain::frameCosAlpha;
 					ourCos = negCos;
 				}
 				else if (vertices[0]->pVertex->water & 64)
 				{
-					vertices[0]->wAlpha = Terrain::frameCosAlpha;
 					ourCos = Terrain::frameCos;
 				}
-	
+
 				vertex3D.z = ourCos + Terrain::waterElevation;
 
 				bool clipData = false;
@@ -819,7 +807,6 @@ void TerrainQuad::setupTextures (void)
 				if (!isVisible)
 				{
 					clipData = false;
-					vertices[0]->hazeFactor = 1.0f;
 				}
 
 				if (eye->usePerspective)
@@ -867,15 +854,13 @@ void TerrainQuad::setupTextures (void)
 			{
 				if (vertices[1]->pVertex->water & 128)
 				{
-					vertices[1]->wAlpha = -Terrain::frameCosAlpha;
 					ourCos = negCos;
 				}
 				else if (vertices[1]->pVertex->water & 64)
 				{
-					vertices[1]->wAlpha = Terrain::frameCosAlpha;
 					ourCos = Terrain::frameCos;
 				}
-	
+
 				vertex3D.z = ourCos + Terrain::waterElevation;
 				vertex3D.x = vertices[1]->vx;
 				vertex3D.y = vertices[1]->vy;
@@ -889,7 +874,6 @@ void TerrainQuad::setupTextures (void)
 				if (!isVisible)
 				{
 					clipData = false;
-					vertices[1]->hazeFactor = 1.0f;
 				}
 
 				if (eye->usePerspective)
@@ -937,15 +921,13 @@ void TerrainQuad::setupTextures (void)
 			{
 				if (vertices[2]->pVertex->water & 128)
 				{
-					vertices[2]->wAlpha = -Terrain::frameCosAlpha;
 					ourCos = negCos;
 				}
 				else if (vertices[2]->pVertex->water & 64)
 				{
-					vertices[2]->wAlpha = Terrain::frameCosAlpha;
 					ourCos = Terrain::frameCos;
 				}
-	
+
 				vertex3D.z = ourCos + Terrain::waterElevation;
 				vertex3D.x = vertices[2]->vx;
 				vertex3D.y = vertices[2]->vy;
@@ -959,7 +941,6 @@ void TerrainQuad::setupTextures (void)
 				if (!isVisible)
 				{
 					clipData = false;
-					vertices[2]->hazeFactor = 1.0f;
 				}
 
 				if (eye->usePerspective)
@@ -1007,15 +988,13 @@ void TerrainQuad::setupTextures (void)
 			{
 				if (vertices[3]->pVertex->water & 128)
 				{
-					vertices[3]->wAlpha = -Terrain::frameCosAlpha;
 					ourCos = negCos;
 				}
 				else if (vertices[3]->pVertex->water & 64)
 				{
-					vertices[3]->wAlpha = Terrain::frameCosAlpha;
 					ourCos = Terrain::frameCos;
 				}
-	
+
 				vertex3D.z = ourCos + Terrain::waterElevation;
 				vertex3D.x = vertices[3]->vx;
 				vertex3D.y = vertices[3]->vy;
@@ -1029,7 +1008,6 @@ void TerrainQuad::setupTextures (void)
 				if (!isVisible)
 				{
 					clipData = false;
-					vertices[3]->hazeFactor = 1.0f;
 				}
 
 				if (eye->usePerspective)
