@@ -642,6 +642,11 @@ int main(int argc, char** argv)
         const bool waterPc = (getenv("MC2_RENDER_WATER_PARITY_CHECK") != nullptr);
         const bool vpFast  = (getenv("MC2_VERTEX_PROJECT_FAST")       != nullptr);
         const bool vpPar   = (getenv("MC2_VERTEX_PROJECT_PARITY")     != nullptr);
+        const bool gpuObj  = (getenv("MC2_GPU_OBJECTS")             != nullptr);
+        // Slice 1 invariant: mutually exclusive with legacy killswitch.
+        // Setting g_useGpuObjects at startup here happens before any code
+        // path can read it; legacy g_useGpuStaticProps starts false.
+        if (gpuObj) g_useGpuObjects = true;
         const bool tInd    = gos_terrain_indirect::IsEnabled();
         const bool tIndP   = gos_terrain_indirect::IsParityCheckEnabled();
         const char* build  =
@@ -651,16 +656,21 @@ int main(int argc, char** argv)
             "UNKNOWN"
 #endif
             ;
-        // Grew 384 -> 512 to absorb terrain_indirect{,_parity} fields without
-        // truncation. Sized for the next 1-2 banner extensions too.
-        char _cbbuf[512];
+        // Grew 384 -> 512 -> 640 to absorb terrain_indirect{,_parity}
+        // and gpu_objects fields without truncation.
+        // (water_skip_env field was tentatively added during the closed
+        // water-projection-skip slice attempt; removed when the slice
+        // closed — premise invalidated by Stage 0 M3 audit.)
+        char _cbbuf[640];
         snprintf(_cbbuf, sizeof(_cbbuf),
             "[INSTR v1] enabled: tgl_pool=%d destroy=%d gl_error_print=%d "
             "smoke=%d water_fp=%d water_parity=%d vp_fast=%d vp_parity=%d "
-            "terrain_indirect=%d terrain_indirect_parity=%d build=%s",
+            "terrain_indirect=%d terrain_indirect_parity=%d "
+            "gpu_objects=%d build=%s",
             tgl ? 1 : 0, destr ? 1 : 0, glprint ? 1 : 0, smoke ? 1 : 0,
             waterFp ? 1 : 0, waterPc ? 1 : 0, vpFast ? 1 : 0, vpPar ? 1 : 0,
-            tInd ? 1 : 0, tIndP ? 1 : 0, build);
+            tInd ? 1 : 0, tIndP ? 1 : 0,
+            gpuObj ? 1 : 0, build);
         puts(_cbbuf);
         crashbundle_append(_cbbuf);
         if (g_pzTrace) {

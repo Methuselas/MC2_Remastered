@@ -14,6 +14,7 @@
 // (in the gameos lib) so every consumer — mc2.exe, aseconv, other data
 // tools that link mclib — resolves the symbol.
 bool g_useGpuStaticProps = false;
+bool g_useGpuObjects = false;
 
 namespace {
 

@@ -7,6 +7,11 @@
 // Toggled at runtime via RAlt+0 (see gameosmain.cpp).
 extern bool g_useGpuStaticProps;
 
+// Slice 1 (object-offload arc) flag, env-gated via MC2_GPU_OBJECTS=1.
+// Mutually exclusive with g_useGpuStaticProps at runtime — see spec
+// docs/superpowers/specs/2026-05-02-object-offload-slice1-design.md R1.
+extern bool g_useGpuObjects;
+
 // Resolve a gosTextureHandle (MC2 opaque ID) to the underlying raw GL
 // texture name. Returns 0 if the handle is INVALID_TEXTURE_ID or the
 // underlying gosTexture is gone. Implemented in gameos_graphics.cpp where
