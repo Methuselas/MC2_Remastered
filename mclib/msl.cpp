@@ -19,6 +19,8 @@
 #include"msl.h"
 #endif
 
+#include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
+
 #ifndef CIDENT_H
 #include"cident.h"
 #endif
@@ -1328,6 +1330,9 @@ __int64 MCTimePerShapeTransform		= 0;
 
 long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot)
 {
+	::mc2_object_recon::Scope _recon_mShape_(
+		&::mc2_object_recon::g_per_frame.mShape_total_ns,
+		&::mc2_object_recon::g_per_frame.mShape_calls);
     //Profile T&L so I can break out GameLogic from T&L
 #ifdef LAB_ONLY
     __int64 x;

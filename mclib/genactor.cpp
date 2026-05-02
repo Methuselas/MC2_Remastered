@@ -12,6 +12,8 @@
 #include"genactor.h"
 #endif
 
+#include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
+
 #ifndef CAMERA_H
 #include"camera.h"
 #endif
@@ -1044,8 +1046,11 @@ long GenericAppearance::renderShadows (void)
 }
 
 //-----------------------------------------------------------------------------
-long GenericAppearance::update (bool animate) 
+long GenericAppearance::update (bool animate)
 {
+	::mc2_object_recon::Scope _recon_generic_(
+		&::mc2_object_recon::g_per_frame.generic_update_ns,
+		&::mc2_object_recon::g_per_frame.generic_update_calls);
 	Stuff::Point3D xlatPosition;
 	Stuff::UnitQuaternion rot;
 	Stuff::UnitQuaternion yawAngle;

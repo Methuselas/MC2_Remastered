@@ -109,6 +109,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include <signal.h>
 #include "gos_profiler.h"
 #include "tgl.h"   // drainTglPoolStats / drainTglPoolStatsOnShutdown (Tier-1 instr)
+#include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon zero (env-gated)
 #include "projectz_trace.h"  // projectz_trace_init/frame_tick/shutdown (PROJECTZ v1)
 #include "projectz_overlay.h" // RAlt+P debug overlay (commit 4)
 #include "gos_terrain_indirect.h"  // [INSTR v1] banner: terrain_indirect{,_parity} fields
@@ -659,6 +660,11 @@ int main(int argc, char** argv)
         // Setting g_useGpuObjects at startup here happens before any code
         // path can read it; legacy g_useGpuStaticProps starts false.
         if (gpuObj) g_useGpuObjects = true;
+        // [OBJECT_RECON v1] read MC2_OBJECT_RECON_TRACY here so the gate is
+        // live before any update kernel runs. drainPerFrame() lazy-inits
+        // too, but eager init avoids missing the very-first-frame data.
+        mc2_object_recon::initFromEnv();
+        const bool objRecon = mc2_object_recon::g_enabled;
         const bool tInd    = gos_terrain_indirect::IsEnabled();
         const bool tIndP   = gos_terrain_indirect::IsParityCheckEnabled();
         const char* build  =
@@ -678,11 +684,11 @@ int main(int argc, char** argv)
             "[INSTR v1] enabled: tgl_pool=%d destroy=%d gl_error_print=%d "
             "smoke=%d water_fp=%d water_parity=%d vp_fast=%d vp_parity=%d "
             "terrain_indirect=%d terrain_indirect_parity=%d "
-            "gpu_objects=%d build=%s",
+            "gpu_objects=%d obj_recon_tracy=%d build=%s",
             tgl ? 1 : 0, destr ? 1 : 0, glprint ? 1 : 0, smoke ? 1 : 0,
             waterFp ? 1 : 0, waterPc ? 1 : 0, vpFast ? 1 : 0, vpPar ? 1 : 0,
             tInd ? 1 : 0, tIndP ? 1 : 0,
-            gpuObj ? 1 : 0, build);
+            gpuObj ? 1 : 0, objRecon ? 1 : 0, build);
         puts(_cbbuf);
         crashbundle_append(_cbbuf);
         if (g_pzTrace) {
@@ -885,6 +891,9 @@ int main(int argc, char** argv)
             ZoneScopedN("Frame.DrainTglPoolStats");
             g_mc2FrameCounter++;
             drainTglPoolStats();
+            // [OBJECT_RECON v1] slice-2 recon-zero accumulator drain.
+            // No-op cost (~1 cmp + 1 branch) when env not set.
+            mc2_object_recon::drainPerFrame(g_mc2FrameCounter);
             projectz_frame_tick();
             projectz_overlay_begin_frame();
             drainGLErrors("frame");
@@ -994,6 +1003,7 @@ int main(int argc, char** argv)
     // Tier-1 instrumentation (stability spec §2.5): final monotonic summary
     // before tearing down render/audio. Always emitted regardless of env gate.
     drainTglPoolStatsOnShutdown();
+    mc2_object_recon::drainOnShutdown();
     projectz_shutdown();
 
     Environment.TerminateGameEngine();

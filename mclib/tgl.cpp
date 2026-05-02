@@ -11,6 +11,7 @@
 #ifndef TGL_H
 #include"tgl.h"
 #include "gos_crashbundle.h"
+#include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero accumulators
 #endif
 
 #ifndef CLIP_H
@@ -1655,6 +1656,11 @@ extern float yawRotation;
 
 long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D *backFacePoint, TG_ShapeRecPtr parentNode, bool isHudElement, BYTE alphaValue, bool isClamped)
 {
+	// [OBJECT_RECON v1] outer scope. No-op when MC2_OBJECT_RECON_TRACY unset.
+	::mc2_object_recon::Scope _recon_total_(
+		&::mc2_object_recon::g_per_frame.shape_total_ns,
+		&::mc2_object_recon::g_per_frame.shape_calls);
+
 	if (!numVertices)		//WE are the root Shape which may have no shape or a helper shape which defintely has no shape!
 		return(1);
 		
@@ -1681,18 +1687,23 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
 	}
 		
 	TG_TypeShapePtr theShape = (TG_TypeShapePtr)myType;
-	
-	//At this point, we know we are going to process this shape,
-	// Get memory for its components from the pools!
-	listOfVertices       = MC2_TGL_GET_VERTS_FOR_SHAPE(vertexPool, numVertices, this);
-	listOfColors         = MC2_TGL_GET_COLORS(colorPool, numVertices);
 
-	listOfShadowTVertices = MC2_TGL_GET_SHADOW(shadowPool, numVertices);
+	{
+		// [OBJECT_RECON v1] alloc sub-stage.
+		::mc2_object_recon::Scope _recon_alloc_(
+			&::mc2_object_recon::g_per_frame.shape_alloc_ns);
+		//At this point, we know we are going to process this shape,
+		// Get memory for its components from the pools!
+		listOfVertices       = MC2_TGL_GET_VERTS_FOR_SHAPE(vertexPool, numVertices, this);
+		listOfColors         = MC2_TGL_GET_COLORS(colorPool, numVertices);
 
-	listOfTriangles      = MC2_TGL_GET_TRIANGLES(trianglePool, numTriangles);
+		listOfShadowTVertices = MC2_TGL_GET_SHADOW(shadowPool, numVertices);
 
-	listOfVisibleFaces   = MC2_TGL_GET_FACES(facePool, numTriangles);
-	listOfVisibleShadows = MC2_TGL_GET_FACES(facePool, numTriangles);
+		listOfTriangles      = MC2_TGL_GET_TRIANGLES(trianglePool, numTriangles);
+
+		listOfVisibleFaces   = MC2_TGL_GET_FACES(facePool, numTriangles);
+		listOfVisibleShadows = MC2_TGL_GET_FACES(facePool, numTriangles);
+	}
 
 	if (!listOfVertices ||
 		!listOfColors ||
@@ -1704,7 +1715,16 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
 
 	lastTurnTransformed = turn;
 
-	
+	// [OBJECT_RECON v1] per-vertex loop scope (transform + lighting bake combined).
+	// Splitting xform from vlight per-iteration would add ~100 ns × N_vertices
+	// of timer overhead per shape — comparable to the data we're measuring.
+	// Per recon prompt's Tracy-zone-overhead rule: wrap the whole loop only.
+	// Output field is `vlight` (lighting is the dominant chunk of this loop;
+	// `xform` field is left zero on this build — surface in slice-2 spec if
+	// finer-grained timing becomes necessary).
+	{
+	::mc2_object_recon::Scope _recon_vlight_(
+		&::mc2_object_recon::g_per_frame.shape_vlight_ns);
 	for (long j=0;j<numVertices;j++)
 	{
 		Stuff::Point3D pos = theShape->listOfTypeVertices[j].position;
@@ -2249,10 +2269,16 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
 			listOfVertices[j].argb = argb;
 		}
 	}
+	} // [OBJECT_RECON v1] end vlight scope
 
 	numVisibleFaces = 0;			//Reset Visible Faces
 
 	TG_TypeTrianglePtr tri = &(theShape->listOfTypeTriangles[0]);
+	// [OBJECT_RECON v1] per-face loop scope (face lighting + listOfTriangles
+	// writes + addTriangle queue calls combined).
+	{
+	::mc2_object_recon::Scope _recon_flight_(
+		&::mc2_object_recon::g_per_frame.shape_flight_ns);
 	for (unsigned int j=0;j<numTriangles;j++,tri++)
 	{
 		//---------------------------------------
@@ -2486,8 +2512,13 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
 			}
 		}
 	}
+	} // [OBJECT_RECON v1] end flight scope
 
-	// FIXME: this (listOfTypeTriangles[0]) is not correct if model has more than 1 texture! 
+	// FIXME: this (listOfTypeTriangles[0]) is not correct if model has more than 1 texture!
+	// [OBJECT_RECON v1] emit scope: GatherLightsParameters + addLightDataStructure
+	// + addRenderShape — the modern shader path queue cost.
+	::mc2_object_recon::Scope _recon_emit_(
+		&::mc2_object_recon::g_per_frame.shape_emit_ns);
 	if (bShadersDrawPathEnabled && !isSpotlight && !isWindow && !theShape->listOfTextures[theShape->listOfTypeTriangles[0].localTextureHandle].textureAlpha && (alphaValue == 0xff))
 	{
 		DWORD addFlags = 0;

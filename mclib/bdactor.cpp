@@ -14,6 +14,7 @@
 
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_batcher.h"
+#include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
 
 #ifndef CAMERA_H
 #include"camera.h"
@@ -1954,8 +1955,11 @@ long BldgAppearance::renderShadows (void)
 }
 
 //-----------------------------------------------------------------------------
-long BldgAppearance::update (bool animate) 
+long BldgAppearance::update (bool animate)
 {
+	::mc2_object_recon::Scope _recon_bldg_(
+		&::mc2_object_recon::g_per_frame.bldg_update_ns,
+		&::mc2_object_recon::g_per_frame.bldg_update_calls);
 	Stuff::Point3D xlatPosition;
 	Stuff::UnitQuaternion rot;
 
@@ -4206,8 +4210,11 @@ long TreeAppearance::renderShadows (void)
 }
 
 //-----------------------------------------------------------------------------
-long TreeAppearance::update (bool animate) 
+long TreeAppearance::update (bool animate)
 {
+	::mc2_object_recon::Scope _recon_tree_(
+		&::mc2_object_recon::g_per_frame.tree_update_ns,
+		&::mc2_object_recon::g_per_frame.tree_update_calls);
 	if (rotation > 180)
 		rotation -= 360;
 
