@@ -199,6 +199,15 @@ if(ENABLE_ASSIMP_IMPORTER)
     set(ASSIMP_BUILD_GLTF_IMPORTER            ON  CACHE BOOL "" FORCE)
     set(ASSIMP_WARNINGS_AS_ERRORS             OFF CACHE BOOL "" FORCE)
     set(BUILD_SHARED_LIBS                     OFF CACHE BOOL "" FORCE)
+    # Assimp's Compression.cpp uses Z_TREES (zlib >= 1.2.4); our system zlib
+    # is 1.2.3. Force Assimp to build + use its own bundled zlib.
+    # ASSIMP_BUILD_ZLIB alone isn't enough — Assimp's CMakeLists.txt skips its
+    # own zlib if ZLIB_FOUND is already true, which it is because the root
+    # find_package(ZLIB) ran at line 131. Reset ZLIB_FOUND in this scope so
+    # Assimp's contrib/zlib path (line 586 in vendored CMakeLists.txt) wins.
+    # The engine's own ZLIB::ZLIB target is unaffected (already created).
+    set(ASSIMP_BUILD_ZLIB                     ON  CACHE BOOL "" FORCE)
+    set(ZLIB_FOUND FALSE)
     # EXCLUDE_FROM_ALL: don't build assimp unless mclib actually links it.
     add_subdirectory(3rdparty/assimp out/3rdparty/assimp EXCLUDE_FROM_ALL)
     message(STATUS "ENABLE_ASSIMP_IMPORTER=ON — vendored Assimp at 3rdparty/assimp/ (FBX + GLTF, static)")

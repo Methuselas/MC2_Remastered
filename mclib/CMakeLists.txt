@@ -112,5 +112,17 @@ include_directories(${THIRDPARTY_INCLUDE_DIRS})
 #add_definitions(-DBGR)
 add_library(mclib ${SOURCES})
 
+# Track D — link Assimp + define ENABLE_ASSIMP_IMPORTER for mclib's TUs.
+# Without this block, the #ifdef gates in msl.cpp / assimp_importer.cpp /
+# mech3d.cpp collapse to empty and the whole import path is silently dead.
+if(ENABLE_ASSIMP_IMPORTER)
+    target_link_libraries(mclib PRIVATE assimp::assimp)
+    target_compile_definitions(mclib PRIVATE ENABLE_ASSIMP_IMPORTER)
+    # Assimp's defs.h uses C++17 inline variables. mclib's legacy code is C++14,
+    # but compilers accept newer standards as a superset, so this just unlocks
+    # the language features Assimp needs without breaking the rest of mclib.
+    target_compile_features(mclib PRIVATE cxx_std_17)
+endif()
+
 # cat MCLib.vcproj | grep ".cpp" | perl -pe 's/.+\"(\w+\.cpp)\".+/\1/g' >> CMakeLists.txt
 
