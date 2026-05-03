@@ -254,6 +254,18 @@ class TG_TypeMultiShape
 		void AllocateImportedShapes(int numShapes);
 		void SetImportedTextures(DWORD count, const char* const* names,
 		                         const bool* alphas);
+
+		// Track D — format-probe entry point. Replaces direct
+		// LoadTGMultiShapeFromASE call sites. Probes for {tglPath}{baseName}.glb
+		// (preferred new format); on hit, calls ImportGeometryFromFile and
+		// returns. On miss or failure, falls through to the legacy
+		// LoadTGMultiShapeFromASE({tglPath}{baseName}.ase) — stock install
+		// must remain playable per memory:stock_install_must_remain_playable.
+		//
+		// `baseName` is the asset name without extension (e.g. "madcat").
+		// MVP scope: .glb probe only. .fbx supported by Assimp but
+		// scope-restricted to M2 per advisor verdict D3.
+		long LoadFromFile(const char* baseName);
 };
 
 typedef TG_TypeMultiShape* TG_TypeMultiShapePtr;

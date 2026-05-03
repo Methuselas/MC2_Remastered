@@ -415,6 +415,49 @@ void TG_TypeMultiShape::SetImportedTextures(DWORD count,
 }
 
 //-------------------------------------------------------------------------------
+// Track D — format-probe entry point. See msl.h for full contract.
+//
+// Probes for .glb (preferred) at {tglPath}{baseName}.glb. On hit, runs the
+// Assimp importer; on miss or failure, falls through to LoadTGMultiShapeFromASE
+// at {tglPath}{baseName}.ase. The ASE fallback is the load-bearing guarantee
+// for stock-install playability — without a .glb sidecar we MUST behave
+// identically to a build that never had the importer compiled in.
+#ifdef ENABLE_ASSIMP_IMPORTER
+#include "assimp_importer.h"
+#endif
+
+long TG_TypeMultiShape::LoadFromFile(const char* baseName)
+{
+	if (!baseName || !*baseName)
+		return -1;
+
+#ifdef ENABLE_ASSIMP_IMPORTER
+	{
+		FullPathFileName glbPath;
+		glbPath.init(tglPath, baseName, ".glb");
+		if (fileExists(glbPath, FILE_ON_DISK))
+		{
+			long r = ImportGeometryFromFile(glbPath, this);
+			if (r == 0)
+				return NO_ERR;
+			// Importer ran but failed (validator rejected the asset, or
+			// Assimp ReadFile errored). The importer has already logged the
+			// reason via STOP/PAUSE — fall through to the ASE path so a
+			// broken modder asset can't render the mech un-loadable.
+			// Stock-install playability is paramount per
+			// memory:stock_install_must_remain_playable.
+		}
+	}
+#endif // ENABLE_ASSIMP_IMPORTER
+
+	// Default fallback: legacy ASE path. Behavior is byte-equivalent to the
+	// pre-Track-D build for any baseName whose .glb is absent.
+	FullPathFileName asePath;
+	asePath.init(tglPath, baseName, ".ase");
+	return LoadTGMultiShapeFromASE(asePath);
+}
+
+//-------------------------------------------------------------------------------
 void TG_TypeMultiShape::SaveBinaryCopy (const char *fileName)
 {
 	File binFile;
