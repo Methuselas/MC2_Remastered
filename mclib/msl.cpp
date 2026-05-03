@@ -329,7 +329,7 @@ long TG_TypeMultiShape::LoadBinaryCopy (const char *fileName)
 		float maxBoxLength = maxBox.GetLength();
 		if (minBoxLength > extentRadius)
 			extentRadius = minBoxLength;
-			
+
 		if (maxBoxLength > extentRadius)
 			extentRadius = maxBoxLength;
 	}
@@ -339,7 +339,80 @@ long TG_TypeMultiShape::LoadBinaryCopy (const char *fileName)
 	}
 
 	return 0;
-}	
+}
+
+//-------------------------------------------------------------------------------
+// Track D — narrow construction API (see msl.h for rationale).
+
+void TG_TypeMultiShape::AllocateImportedShapes(int numShapes)
+{
+	gosASSERT(numShapes > 0);
+	gosASSERT(listOfTypeShapes == NULL);  // freshly init()'d multi-shape
+
+	numTG_TypeShapes = numShapes;
+	listOfTypeShapes = (TG_TypeNodePtr *)TG_Shape::tglHeap->Malloc(
+		sizeof(TG_TypeNodePtr) * numTG_TypeShapes);
+	gosASSERT(listOfTypeShapes != NULL);
+	memset(listOfTypeShapes, 0, sizeof(TG_TypeNodePtr) * numTG_TypeShapes);
+
+	// Construct empty TG_TypeShape per slot — caller fills via
+	// listOfTypeShapes[i]->InitFromImportedMesh(...). This mirrors the
+	// LoadBinaryCopy SHAPE_NODE branch (msl.cpp:222-228).
+	for (long i = 0; i < numTG_TypeShapes; i++)
+	{
+		listOfTypeShapes[i] = new TG_TypeShape;
+		listOfTypeShapes[i]->init();
+	}
+}
+
+void TG_TypeMultiShape::SetImportedTextures(DWORD count,
+                                            const char* const* names,
+                                            const bool* alphas)
+{
+	gosASSERT(listOfTextures == NULL);  // freshly init()'d multi-shape
+
+	numTextures = count;
+	if (numTextures == 0)
+	{
+		listOfTextures = NULL;
+		return;
+	}
+
+	listOfTextures = (TG_TexturePtr)TG_Shape::tglHeap->Malloc(
+		sizeof(TG_Texture) * numTextures);
+	gosASSERT(listOfTextures != NULL);
+	memset(listOfTextures, 0, sizeof(TG_Texture) * numTextures);
+
+	for (DWORD i = 0; i < numTextures; i++)
+	{
+		// Texture name: importer hands us a stripped basename without ext;
+		// store as-is. NULLTXM matches ParseASEFile's empty-name fallback.
+		const char* n = (names && names[i]) ? names[i] : "NULLTXM";
+		strncpy(listOfTextures[i].textureName, n,
+		        sizeof(listOfTextures[i].textureName) - 1);
+		listOfTextures[i].textureName[sizeof(listOfTextures[i].textureName) - 1] = '\0';
+		// Sentinel handles per mc2_texture_handle_is_live.md — never cache the
+		// live gosTextureHandle at import time. The engine's texture-resolve
+		// pass (e.g. Mech3DAppearanceType::init via SetTextureHandle) wires
+		// real values once MC_TextureManager has loaded the bitmap.
+		listOfTextures[i].mcTextureNodeIndex = 0xffffffff;
+		listOfTextures[i].gosTextureHandle   = 0xffffffff;
+		listOfTextures[i].textureAlpha       = alphas ? alphas[i] : false;
+	}
+
+	// Wire per-shape TG_TinyTexture linkage by delegating to the existing
+	// virtual method on each TG_TypeShape (mirrors the ASE-path call at
+	// msl.cpp:826). Helper TG_TypeNode entries (TYPE_NODE) skip this — they
+	// have no per-shape texture state.
+	for (long i = 0; i < numTG_TypeShapes; i++)
+	{
+		if (listOfTypeShapes[i] && listOfTypeShapes[i]->GetNodeType() == SHAPE_NODE)
+		{
+			static_cast<TG_TypeShape*>(listOfTypeShapes[i])
+				->CreateListOfTextures(listOfTextures, numTextures);
+		}
+	}
+}
 
 //-------------------------------------------------------------------------------
 void TG_TypeMultiShape::SaveBinaryCopy (const char *fileName)

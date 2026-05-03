@@ -231,6 +231,29 @@ class TG_TypeMultiShape
 
 		long LoadBinaryCopy (const char *fileName);
 		void SaveBinaryCopy (const char *fileName);
+
+		// Track D — narrow construction API for format-agnostic importers
+		// (FBX/GLB via Assimp). Each method is the import-side analog of a
+		// portion of LoadTGMultiShapeFromASE / LoadBinaryCopy:
+		//
+		//   AllocateImportedShapes — allocates listOfTypeShapes[] and
+		//     constructs `numShapes` empty TG_TypeShape instances at slots
+		//     0..numShapes-1. Caller populates each via
+		//     listOfTypeShapes[i]->InitFromImportedMesh(...).
+		//
+		//   SetImportedTextures — populates the multi-shape's TG_Texture
+		//     array (names + alpha + sentinel handles 0xffffffff per
+		//     mc2_texture_handle_is_live.md), then walks listOfTypeShapes
+		//     calling CreateListOfTextures on each TG_TypeShape so the
+		//     per-shape TG_TinyTexture index linkage is wired identically
+		//     to the ASE path.
+		//
+		// Both methods leave maxBox/minBox/extentRadius for the caller to
+		// compute (importer has the vertex iteration anyway). No Assimp
+		// types in either signature.
+		void AllocateImportedShapes(int numShapes);
+		void SetImportedTextures(DWORD count, const char* const* names,
+		                         const bool* alphas);
 };
 
 typedef TG_TypeMultiShape* TG_TypeMultiShapePtr;

@@ -712,7 +712,20 @@ class TG_TypeShape : public TG_TypeNode
 		{
 			return SHAPE_NODE;
 		}
-		
+
+		// Track D — populate this shape from a format-agnostic importer
+		// (FBX/GLB via Assimp). Caller pre-allocates vertexBuf/triangleBuf
+		// from TG_Shape::tglHeap and transfers ownership; this method copies
+		// the count + pointer into class storage and sets nodeId/parentId/
+		// nodeCenter. Texture wiring happens separately via the existing
+		// CreateListOfTextures method (driven from TG_TypeMultiShape).
+		// No Assimp types appear in this signature — header stays clean.
+		void InitFromImportedMesh(const char* nodeIdIn, const char* parentIdIn,
+		                          const Stuff::Point3D& center,
+		                          DWORD numVerts, DWORD numTris,
+		                          TG_TypeVertexPtr vertexBuf,
+		                          TG_TypeTrianglePtr triangleBuf);
+
  		virtual void LoadBinaryCopy (File &binFile);
 		virtual void SaveBinaryCopy (File &binFile);
 };
