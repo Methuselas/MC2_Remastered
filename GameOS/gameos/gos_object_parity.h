@@ -66,10 +66,19 @@ namespace gos_object_parity {
 // IsParityCheckEnabled() and IsDualEmitArmed() are declared in
 // gos_object_parity_query.h (the thin GL-free header included above).
 // ---------------------------------------------------------------------------
-// IsParityCheckEnabled() — in gos_object_parity_query.h
-// IsDualEmitArmed()      — in gos_object_parity_query.h
+// IsParityCheckEnabled()       — in gos_object_parity_query.h
+// IsDualEmitArmedForActor()    — in gos_object_parity_query.h (per-actor; 2.D.3)
 bool IsParityTraceEnabled();   // MC2_OBJECT_PARITY_TRACE — gates
                                 // [OBJECT_PARITY v1] event=... lifecycle prints
+
+// Internal "any-actor" predicate retained for batcher-side queries that need
+// to know "are we in the armed phase at all?" without an actor identity in
+// scope (e.g. submitMultiShape's snapshot/range record gates run inside the
+// per-leaf submit loop after we've already decided to sample). Distinct from
+// IsDualEmitArmedForActor — bootstrap returns true here for any submission,
+// sample-arm returns true here regardless of which actor is being submitted
+// (the per-actor narrowing already happened at the mclib gate sites).
+bool IsDualEmitArmedAnyActor();
 
 // ---------------------------------------------------------------------------
 // Counter Add/Get (used by the static-prop batcher draw site to record what
@@ -116,6 +125,33 @@ void     Counters_AddMismatched(uint64_t n);
 // Per-frame reset for slot_overflows (called from ParityFrameTick alongside
 // the other per-frame resets). Not intended for external callers.
 void Counters_ResetSlotOverflowsThisFrame();
+
+// ---------------------------------------------------------------------------
+// Stage 2.D.3 — late-reg event counters (advisor decision A2).
+//
+// The slice 1 batcher fires a [OBJBATCHER v1] event=late_register log line
+// when submitMultiShape encounters a SHAPE_NODE child whose TG_TypeShape is
+// not in s_typeIndex. Each event has an `allowed=0|1` flag from
+// data/objbatcher_late_register_allowlist.txt. Allowed late-reg actors
+// (skybox Cylinder01, compassplane) NEVER appear in s_typeIndex and so are
+// structurally invisible to the round-robin sampler. To give the operator a
+// positive signal that the exclusion is working, the batcher counts allowed
+// vs disallowed events as separate aggregates and the parity 600-frame
+// summary reads both.
+//
+// Counter contract:
+//   - parity_skipped_allowed_late_reg: cumulative count of allowed=1 events
+//     since process start. Non-zero on any mission with skybox/compass is
+//     EXPECTED. Zero across an entire multi-mission run with skybox visible
+//     means the event-counter wiring is broken — STOP and report.
+//   - parity_unexpected_late_reg: cumulative count of allowed=0 events
+//     since process start. MUST be 0 in a clean run. Non-zero in any
+//     summary line means an unallowlisted late-reg fired during the parity
+//     window — STOP per the dispatch's hardened stop rule.
+//
+// The sidecar reads these via free-function queries on the batcher (added
+// to gos_static_prop_batcher.h). See ParityFrameTick() for the read site.
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Parity-output SSBO lifecycle.
@@ -168,7 +204,6 @@ void   ReleaseParityOutputSSBO();
 // Default-off: all these calls are no-ops when IsParityCheckEnabled()==false.
 // ---------------------------------------------------------------------------
 void OnMissionLoad();
-bool IsDualEmitArmed();
 // Returns true iff the latch is WaitingForReadback AND slotNow matches the
 // ring slot that the Armed frame wrote to. This ensures the compare only runs
 // when the ring has come back to the exact slot whose fence was waited (the
@@ -178,6 +213,40 @@ bool IsDualEmitReadyForSlot(uint32_t slotNow);
 // landed. Stored so IsDualEmitReadyForSlot can match against it.
 void AdvanceDualEmitToWaiting(uint32_t slotUsed);
 void AdvanceDualEmitToDone();
+
+// ---------------------------------------------------------------------------
+// Stage 2.D.3 — round-robin sampler.
+//
+// Sampler operation:
+//   - submitMultiShape() calls ObserveSubmittedShape(multi) for every actor
+//     whose multishape passed the registered-types gate this frame. The
+//     sidecar accumulates these into an "observed-this-frame" vector.
+//   - At the end of flush(), after the dual-emit latch state machine has
+//     advanced (Armed → WaitingForReadback or Done), the batcher calls
+//     PickNextSampleIfReady(). When state == Done AND IsParityCheckEnabled()
+//     AND there is at least one observed shape from this just-finished frame,
+//     the sidecar picks the next actor via round-robin index, sets
+//     s_currentSampledShape to that pointer, and re-arms the latch as
+//     (state=Armed, armMode=SampledOnly). On the NEXT frame's update, only
+//     the picked actor's mclib gate site sees IsDualEmitArmedForActor==true.
+//
+// The "observed-this-frame" accumulator is rotated into the "sample pool"
+// at PickNextSampleIfReady() time and then cleared. The pool is a flat
+// std::vector<const TG_MultiShape*>; bigger missions get bigger pools but
+// the sampler's per-frame cost stays O(1) — pick by `index % pool.size()`.
+//
+// Bootstrap arm (state=Armed + armMode=All) is set by OnMissionLoad and is
+// preserved by 2.D.2's existing flow: first frame's gate fires for every
+// eligible actor, and the bootstrap compare happens RING_FRAMES later. Only
+// after that compare goes through Done does the sampler kick in.
+// ---------------------------------------------------------------------------
+void ObserveSubmittedShape(const TG_MultiShape* shape);
+void PickNextSampleIfReady();
+
+// Sample-coverage counter (number of compares the sampler performed). Bumped
+// once per Done transition by AdvanceDualEmitToDone. Reported in the 600-frame
+// summary as parity_compared_actors=N.
+uint64_t Counters_GetSampledCompares();
 
 // ---------------------------------------------------------------------------
 // Stage 2.D.2 — Per-instance CPU snapshot collection and type-range record.
@@ -202,7 +271,14 @@ void AdvanceDualEmitToDone();
 //   cursorOffset is the byte offset within the slot (same cursor value that
 //   was passed to glBindBufferRange's offset parameter).
 // ---------------------------------------------------------------------------
+// Stage 2.D.3: explicit instanceIdx parameter (the position the just-
+// submitted leaf will occupy in its type's bucket — caller passes the
+// bucket's instances.size() value taken BEFORE the inst push). Required
+// because in SampledOnly arm mode only ONE leaf per type contributes a
+// snapshot, so the implicit submission-order indexing used in 2.D.2 no
+// longer matches the bucket's actual position.
 void RecordInstanceSnapshot(uint32_t typeId,
+                             uint32_t instanceIdx,
                              const uint32_t* perVertexCpuARGB,
                              uint32_t vertexCount);
 

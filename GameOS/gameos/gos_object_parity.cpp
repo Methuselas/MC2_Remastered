@@ -98,18 +98,67 @@ namespace {
 enum class DualEmitState { Armed, WaitingForReadback, Done };
 DualEmitState s_dualEmitState = DualEmitState::Done;
 
+// Stage 2.D.3 — arm mode. Bootstrap (Armed+All) preserves the 2.D.2 first-
+// frame "all eligible actors dual-emit" behavior on mission load. The sampler
+// flips to Armed+SampledOnly for steady-state per-frame round-robin coverage.
+enum class ArmMode { All, SampledOnly };
+ArmMode s_armMode = ArmMode::All;
+
+// Sampler state (Stage 2.D.3).
+//
+// s_currentSampledShape: the per-actor multishape pointer the sampler picked
+//   for THIS frame's update phase. Set by PickNextSampleIfReady() at the
+//   end of flush() (frame N) so the next frame's update gates (frame N+1)
+//   can compare against it. Reset to nullptr in OnMissionLoad().
+//
+// s_observedShapesThisFrame: accumulator. submitMultiShape() pushes here for
+//   every actor whose registered-types gate passed (i.e. EVERY actor that
+//   would have been a candidate for the legacy 2.D.2 dual-emit-everyone
+//   gate). At the end of flush(), if state==Done we rotate this into
+//   s_observedShapesPriorFrame and pick from there.
+//
+// s_observedShapesPriorFrame: pool the sampler picks from. Frozen for the
+//   duration of the next frame so PickNextSampleIfReady can be called while
+//   the next frame's submit accumulator is being built.
+//
+// s_samplerCursor: round-robin index. % pool.size() at pick time.
+// s_sampledComparesTotal: number of compares performed in SampledOnly mode.
+const TG_MultiShape* s_currentSampledShape = nullptr;
+std::vector<const TG_MultiShape*> s_observedShapesThisFrame;
+std::vector<const TG_MultiShape*> s_observedShapesPriorFrame;
+size_t   s_samplerCursor          = 0;
+uint64_t s_sampledComparesTotal   = 0;
+
 // The ring slot (s_frameSlot value) on which the Armed frame wrote its parity
 // data. CompareAndReport should only run when the ring revisits this slot
 // (i.e. when the GPU-complete fence wait clears that slot's writes).
 // RING_FRAMES = 3, so that slot comes back 3 flushes later.
 uint32_t s_dualEmitSlot = 0xFFFFFFFFu;  // invalid sentinel
 
-// Per-type CPU snapshot: flattened [instanceIdx * vertexCount + vertexId] →
-// aRGBLight. Built incrementally by RecordInstanceSnapshot during the Armed
-// frame; consumed by CompareAndReport on the WaitingForReadback frame.
+// Per-type CPU snapshot.
+//
+// Stage 2.D.2 stored a flat cpuARGB vector keyed implicitly by submission
+// order; that worked when ALL eligible actors dual-emitted (every bucket
+// instance had a matching snapshot entry).
+//
+// Stage 2.D.3 SampledOnly mode breaks that 1:1 invariant — only ONE actor
+// per type contributes a snapshot, but the bucket may hold many instances
+// from other actors. To compare correctly the sidecar must remember which
+// instance index in the bucket the snapshot belongs to.
+//
+// Storage: per typeId, a small vector of (instanceIdx, perVertexARGB)
+// pairs. CompareAndReport uses each pair's instanceIdx to compute the
+// offset into the readback bytes. Bootstrap arm (armMode=All) records one
+// entry per submission with instanceIdx==current bucket size — equivalent
+// to the prior implicit-index storage but explicit. SampledOnly arm
+// records one entry per sampled leaf with the matching bucket index.
+struct DualEmitInstanceSnapshot {
+    uint32_t              instanceIdx;
+    std::vector<uint32_t> perVertexARGB;
+};
 struct DualEmitTypeSnapshot {
-    uint32_t              vertexCount;    // type.vertexCount (fixed per type)
-    std::vector<uint32_t> cpuARGB;        // grows by vertexCount per instance
+    uint32_t                              vertexCount;
+    std::vector<DualEmitInstanceSnapshot> instances;
 };
 std::unordered_map<uint32_t, DualEmitTypeSnapshot> s_dualEmitSnapshots;
 
@@ -269,19 +318,40 @@ namespace gos_object_parity {
 
 void OnMissionLoad() {
     if (!IsParityCheckEnabled()) return;
+    // Bootstrap arm: state=Armed + armMode=All preserves 2.D.2's first-frame
+    // "every eligible actor dual-emits" behavior so the bootstrap compare
+    // matches the existing baseline. After that compare goes through Done,
+    // the round-robin sampler kicks in (PickNextSampleIfReady flips armMode
+    // to SampledOnly and picks one actor per cycle).
     s_dualEmitState = DualEmitState::Armed;
+    s_armMode       = ArmMode::All;
+    s_currentSampledShape = nullptr;
+    s_observedShapesThisFrame.clear();
+    s_observedShapesPriorFrame.clear();
+    s_samplerCursor       = 0;
     s_dualEmitSnapshots.clear();
     s_dualEmitRanges.clear();
     if (IsParityTraceEnabled()) {
         std::fprintf(stderr,
-            "[OBJECT_PARITY v1] event=dual_emit_armed\n");
+            "[OBJECT_PARITY v1] event=dual_emit_armed mode=bootstrap\n");
         std::fflush(stderr);
     }
 }
 
-bool IsDualEmitArmed() {
+bool IsDualEmitArmedAnyActor() {
     if (!IsParityCheckEnabled()) return false;
     return s_dualEmitState == DualEmitState::Armed;
+}
+
+bool IsDualEmitArmedForActor(const TG_MultiShape* shape) {
+    if (!IsParityCheckEnabled()) return false;
+    if (s_dualEmitState != DualEmitState::Armed) return false;
+    if (s_armMode == ArmMode::All) return true;     // bootstrap: every actor
+    // SampledOnly: only the picked actor returns true. Pointer equality is
+    // sufficient — the multishape pointer is stable for the lifetime of the
+    // owning actor (allocated at appearance load, freed at unload).
+    if (!shape || !s_currentSampledShape) return false;
+    return shape == s_currentSampledShape;
 }
 
 bool IsDualEmitReadyForSlot(uint32_t slotNow) {
@@ -307,10 +377,79 @@ void AdvanceDualEmitToWaiting(uint32_t slotUsed) {
 
 void AdvanceDualEmitToDone() {
     if (!IsParityCheckEnabled()) return;
+    // Stage 2.D.3: count this compare in the sampler-coverage tally only when
+    // we're advancing OUT of a SampledOnly arm (the bootstrap arm advances
+    // through this same path on the first compare; we count it too because
+    // it's one compare worth of coverage even though the pick wasn't via
+    // round-robin). The summary field name is parity_compared_actors and
+    // includes both the bootstrap compare and the sampled compares.
+    if (s_dualEmitState == DualEmitState::WaitingForReadback) {
+        ++s_sampledComparesTotal;
+    }
     s_dualEmitState = DualEmitState::Done;
     // Free snapshot and range maps — not needed for the rest of this mission.
     s_dualEmitSnapshots.clear();
     s_dualEmitRanges.clear();
+}
+
+void ObserveSubmittedShape(const TG_MultiShape* shape) {
+    // Default-off short-circuit: when MC2_OBJECT_PARITY_CHECK is unset, no
+    // observation is needed (the sampler never runs, and the per-actor gate
+    // returns false for every shape regardless).
+    if (!IsParityCheckEnabled()) return;
+    if (!shape) return;
+    // Append unconditionally; duplicate-multishape submissions per frame are
+    // not expected in stock content (each actor calls submitMultiShape at
+    // most once via *Appearance::render). If a duplicate ever occurred, the
+    // sampler would just pick the same actor twice — harmless coverage cost
+    // but not a correctness issue.
+    s_observedShapesThisFrame.push_back(shape);
+}
+
+void PickNextSampleIfReady() {
+    if (!IsParityCheckEnabled()) return;
+
+    // Rotate this-frame accumulator into prior-frame pool exactly once per
+    // flush cycle. We do this REGARDLESS of state so the pool always reflects
+    // the most recent frame's observations — even if we're not picking this
+    // frame (e.g. WaitingForReadback), the pool stays fresh for when we are.
+    if (!s_observedShapesThisFrame.empty()) {
+        s_observedShapesPriorFrame.swap(s_observedShapesThisFrame);
+        s_observedShapesThisFrame.clear();
+    } else {
+        // No observations this frame — keep the prior pool as-is so we still
+        // have something to pick from on the next Done transition. This is
+        // a defensive choice for ramp-up missions where update→render hasn't
+        // been called yet for some types in the very first few frames.
+    }
+
+    // Only pick when the latch is Done (compare complete and machinery idle).
+    if (s_dualEmitState != DualEmitState::Done) return;
+    if (s_observedShapesPriorFrame.empty()) return;
+
+    // Round-robin pick.
+    const size_t poolSize = s_observedShapesPriorFrame.size();
+    const size_t idx = s_samplerCursor % poolSize;
+    const TG_MultiShape* picked = s_observedShapesPriorFrame[idx];
+    s_samplerCursor = (s_samplerCursor + 1) % poolSize;
+
+    if (!picked) return;  // shouldn't happen — ObserveSubmittedShape rejects null
+
+    s_currentSampledShape = picked;
+    s_armMode             = ArmMode::SampledOnly;
+    s_dualEmitState       = DualEmitState::Armed;
+
+    if (IsParityTraceEnabled()) {
+        std::fprintf(stderr,
+            "[OBJECT_PARITY v1] event=dual_emit_armed mode=sampled "
+            "shape=%p pool_size=%zu cursor=%zu\n",
+            (const void*)picked, poolSize, idx);
+        std::fflush(stderr);
+    }
+}
+
+uint64_t Counters_GetSampledCompares() {
+    return s_sampledComparesTotal;
 }
 
 }  // namespace gos_object_parity
@@ -321,19 +460,21 @@ void AdvanceDualEmitToDone() {
 namespace gos_object_parity {
 
 void RecordInstanceSnapshot(uint32_t typeId,
+                             uint32_t instanceIdx,
                              const uint32_t* perVertexCpuARGB,
                              uint32_t vertexCount) {
-    // Should only be called when Armed; caller gates on IsDualEmitArmed().
+    // Should only be called when Armed; caller gates on IsDualEmitArmedForActor().
     // Double-check defensively.
     if (s_dualEmitState != DualEmitState::Armed) return;
     if (!perVertexCpuARGB || vertexCount == 0) return;
 
     DualEmitTypeSnapshot& snap = s_dualEmitSnapshots[typeId];
     snap.vertexCount = vertexCount;
-    // Append one instance's worth of per-vertex aRGBLight.
-    snap.cpuARGB.insert(snap.cpuARGB.end(),
-                        perVertexCpuARGB,
-                        perVertexCpuARGB + vertexCount);
+    snap.instances.emplace_back();
+    DualEmitInstanceSnapshot& entry = snap.instances.back();
+    entry.instanceIdx = instanceIdx;
+    entry.perVertexARGB.assign(perVertexCpuARGB,
+                               perVertexCpuARGB + vertexCount);
 }
 
 void RecordParityTypeRange(uint32_t typeId,
@@ -436,19 +577,29 @@ void CompareAndReport(const uint8_t* readbackBytes,
             continue;
         }
 
-        // Walk each (instance, vertex) pair.
+        // Walk each (instance, vertex) pair. Stage 2.D.3: iterate the per-
+        // instance snapshot list and use each entry's explicit instanceIdx
+        // to address the GPU readback (matches the bucket position the
+        // shader wrote at). For bootstrap arm (armMode=All), every bucket
+        // instance has a snapshot entry with sequential instanceIdx; for
+        // SampledOnly arm, the list typically has 1 entry per type whose
+        // instanceIdx is wherever the sampled actor's leaf landed.
         const uint32_t* gpuBase = reinterpret_cast<const uint32_t*>(
             readbackBytes + rng.cursorOffset);
 
-        for (uint32_t inst = 0; inst < instCount; ++inst) {
-            // Snapshot CPU data for this instance starts at inst * verts.
-            const uint32_t snapBase = inst * verts;
-            if (snapBase + verts > static_cast<uint32_t>(snap.cpuARGB.size())) {
-                // Snapshot underrun — should not happen; break defensively.
-                break;
+        for (const DualEmitInstanceSnapshot& entry : snap.instances) {
+            const uint32_t inst = entry.instanceIdx;
+            if (inst >= instCount) {
+                // Out of bucket bounds — geometry changed between submit and
+                // draw, or sampled actor never reached the bucket. Skip.
+                continue;
+            }
+            if (entry.perVertexARGB.size() != verts) {
+                // Defensive: per-vertex blob size must match the type's vertex count.
+                continue;
             }
             for (uint32_t v = 0; v < verts; ++v) {
-                const uint32_t cpuARGB = snap.cpuARGB[snapBase + v];
+                const uint32_t cpuARGB = entry.perVertexARGB[v];
                 const uint32_t gpuARGB = gpuBase[inst * verts + v];
                 ++totalCompared;
                 if (channelsWithin2(cpuARGB, gpuARGB)) {
@@ -538,11 +689,27 @@ void ParityFrameTick() {
     Counters_ResetSlotOverflowsThisFrame();
 
     if (s_paritySummaryFrames % 600 == 0) {
-        // Stage 2.D.2: extended summary with compared/passed/mismatched fields.
+        // Stage 2.D.3: extended summary with sampler coverage and late-reg
+        // event accounting.
+        //
+        // - parity_skipped_allowed_late_reg / parity_unexpected_late_reg are
+        //   sourced from the slice 1 batcher (advisor decision A2). The
+        //   sampler iterates registered types only, so allowlisted late-reg
+        //   actors (skybox Cylinder01, compassplane) never appear in the
+        //   sampler pool. The event-counter on the batcher side tells the
+        //   operator the exclusion is functioning.
+        // - parity_compared_actors counts the bootstrap compare + each
+        //   sampled compare (one per Done transition).
+        const uint64_t allowedLateReg =
+            GpuStaticPropBatcher::getAllowedLateRegEventCount();
+        const uint64_t unexpectedLateReg =
+            GpuStaticPropBatcher::getDisallowedLateRegEventCount();
         std::fprintf(stderr,
             "[OBJECT_PARITY v1] event=summary frames=%lld "
             "vertices_written=%llu readback_bytes=%llu mismatches=%lld "
-            "slot_overflows=%llu compared=%llu passed=%llu mismatched=%llu\n",
+            "slot_overflows=%llu compared=%llu passed=%llu mismatched=%llu "
+            "parity_skipped_allowed_late_reg=%llu parity_unexpected_late_reg=%llu "
+            "parity_compared_actors=%llu\n",
             s_paritySummaryFrames,
             static_cast<unsigned long long>(s_vertices_written_total),
             static_cast<unsigned long long>(s_readback_bytes_total),
@@ -550,7 +717,10 @@ void ParityFrameTick() {
             static_cast<unsigned long long>(s_slot_overflows_total),
             static_cast<unsigned long long>(s_compared_total),
             static_cast<unsigned long long>(s_passed_total),
-            static_cast<unsigned long long>(s_mismatched_total));
+            static_cast<unsigned long long>(s_mismatched_total),
+            static_cast<unsigned long long>(allowedLateReg),
+            static_cast<unsigned long long>(unexpectedLateReg),
+            static_cast<unsigned long long>(s_sampledComparesTotal));
         std::fflush(stderr);
     }
 }

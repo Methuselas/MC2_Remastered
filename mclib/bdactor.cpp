@@ -2258,7 +2258,9 @@ long BldgAppearance::update (bool animate)
 			// addTriangle queue is never flushed to hardware — only the GPU
 			// batcher's direct draw is visible. So calling TransformMultiShape
 			// here (for the parity snapshot) does NOT result in double-draw.
-			if (gos_object_parity::IsDualEmitArmed()) {
+			// Stage 2.D.3: per-actor gate. Bootstrap arm returns true for
+			// every shape; sample arm returns true only for the picked actor.
+			if (gos_object_parity::IsDualEmitArmedForActor(bldgShape)) {
 				bldgShape->TransformMultiShape (&xlatPosition,&rot);
 			}
 		}
@@ -4403,7 +4405,8 @@ long TreeAppearance::update (bool animate)
 			treeShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
 			// Stage 2.D.2: dual-emit full bake — same rationale as BldgAppearance
 			// above. Populates listOfTriangles[].aRGBLight for snapshot in submit().
-			if (gos_object_parity::IsDualEmitArmed()) {
+			// Stage 2.D.3: per-actor gate (see BldgAppearance::update above).
+			if (gos_object_parity::IsDualEmitArmedForActor(treeShape)) {
 				treeShape->TransformMultiShape (&xlatPosition,&rot);
 			}
 		}

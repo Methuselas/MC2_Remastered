@@ -13,12 +13,25 @@
 //   mclib/bdactor.cpp  (BldgAppearance::update, TreeAppearance::update)
 //   mclib/genactor.cpp (GenericAppearance::update)
 // needs to know whether to run full TransformMultiShape in addition to
-// TransformMultiShape_PositionsOnly. IsDualEmitArmed() provides this query
-// without pulling in any GL types.
+// TransformMultiShape_PositionsOnly. IsDualEmitArmedForActor() provides
+// this query without pulling in any GL types.
+//
+// Stage 2.D.3: per-actor gating. The zero-arg IsDualEmitArmed() applied
+// uniformly to all eligible actors, which prevented narrowing dual-emit
+// to a single sampled actor per frame. The per-actor variant takes the
+// actor's TG_MultiShape pointer; identity is "the actor whose multishape
+// pointer matches the sampler's pick this frame". Bootstrap arm phase
+// (first frame after OnMissionLoad) returns true for ALL actors so the
+// 2.D.2 baseline behavior is preserved on the first compare; sampled
+// frames after that return true for ONLY the picked actor.
 
 #pragma once
 
 #include <cstdint>
+
+// Forward declaration so callers in mclib/ don't need to pull tgl.h /
+// msl.h transitively just to call IsDualEmitArmedForActor.
+class TG_MultiShape;
 
 namespace gos_object_parity {
 
@@ -26,11 +39,22 @@ namespace gos_object_parity {
 // Boot-time cached; subsequent calls are a single bool load.
 bool IsParityCheckEnabled();
 
-// State query. Returns true when the dual-emit latch is in the Armed state
-// (first eligible frame post-mission-start). Once the dual-emit frame's
-// GPU draw is fenced, the latch advances to WaitingForReadback and
-// IsDualEmitArmed() returns false for the rest of the mission.
-// Returns false unconditionally when IsParityCheckEnabled()==false.
-bool IsDualEmitArmed();
+// Stage 2.D.3 — per-actor dual-emit gate.
+//
+// Returns true iff the parity sidecar wants this specific actor to emit
+// the full TransformMultiShape (CPU lighting bake) on top of the normal
+// TransformMultiShape_PositionsOnly, for this frame, so the snapshot
+// machinery can compare against GPU readback.
+//
+//   - Bootstrap phase (state == Armed && armMode == All): returns true
+//     for every shape pointer (matches the prior 2.D.2 zero-arg gate
+//     behavior on the first frame post-mission-load).
+//   - Sample phase (state == Armed && armMode == SampledOnly): returns
+//     true iff `shape` matches the per-frame sampler pick.
+//   - All other states (WaitingForReadback / Done) and parity OFF:
+//     returns false unconditionally.
+//
+// `shape` may be nullptr; the function returns false in that case.
+bool IsDualEmitArmedForActor(const TG_MultiShape* shape);
 
 }  // namespace gos_object_parity

@@ -187,6 +187,26 @@ public:
     // masquerades as a signal for the current call.
     bool wasLastFailureLateRegistration() const;
 
+    // Slice 2 (Stage 2.D.3) — late-registration event counters.
+    //
+    // Consumed by gos_object_parity::ParityFrameTick() to surface the two
+    // late-reg event aggregates in the [OBJECT_PARITY v1] event=summary
+    // line. Both are monotonic since process start (the parity window in
+    // 2.D.3's reduced contract is "since program start" — see
+    // gos_object_parity.h "late-reg event counters" block for rationale).
+    //
+    //   getAllowedLateRegEventCount():   count of allowed=1 events
+    //                                    (allowlisted nodeId, e.g. skybox)
+    //   getDisallowedLateRegEventCount(): count of allowed=0 events
+    //                                    (unallowlisted; non-zero is a STOP)
+    //
+    // Both increment per occurrence inside submitMultiShape's late-reg
+    // branch (NOT once-per-type — the dedup-print logic stays the same,
+    // but every event ticks the counter so the parity summary surfaces the
+    // true frequency).
+    static uint64_t getAllowedLateRegEventCount();
+    static uint64_t getDisallowedLateRegEventCount();
+
 private:
     GpuStaticPropBatcher() = default;
 

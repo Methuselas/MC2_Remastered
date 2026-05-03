@@ -1220,7 +1220,8 @@ long GenericAppearance::update (bool animate)
 			genShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
 			// Stage 2.D.2: dual-emit full bake — same rationale as BldgAppearance.
 			// Populates listOfTriangles[].aRGBLight for snapshot in submit().
-			if (gos_object_parity::IsDualEmitArmed()) {
+			// Stage 2.D.3: per-actor gate (see BldgAppearance::update).
+			if (gos_object_parity::IsDualEmitArmedForActor(genShape)) {
 				genShape->TransformMultiShape (&xlatPosition,&rot);
 			}
 		}

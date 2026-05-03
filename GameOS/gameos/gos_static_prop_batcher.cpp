@@ -306,6 +306,33 @@ bool s_lastSubmitWasLateReg = false;
 // Added to the [OBJBATCHER v1] summary line.
 uint64_t s_late_register_recovery_skips = 0;
 
+// Slice 2 (Stage 2.D.3) — "currently-submitting multishape" pointer used to
+// gate per-leaf snapshot capture in submit() to only the sampled actor.
+//
+// Set at the top of submitMultiShape (after the registered-types check), used
+// inside submit() to compare against the sampler's current pick, and reset to
+// nullptr at the bottom of submitMultiShape so a stray submit() call from a
+// non-multi path can't leak gating state. In SampledOnly arm mode, only
+// submit() calls whose enclosing multishape == s_currentSampledShape will
+// record an instance snapshot — the GPU parity SSBO still receives writes
+// from every type's draw (those bytes are ignored on compare because the
+// snapshot map only carries entries for the sampled actor's types).
+const TG_MultiShape* s_currentSubmittingMulti = nullptr;
+
+// Slice 2 (Stage 2.D.3) — late-registration EVENT counters split by
+// allowlist disposition. Incremented in the late-reg branch of
+// submitMultiShape() per occurrence (NOT once-per-type — the dedup
+// printf logic is unchanged, but every event ticks one of these so the
+// parity 600-frame summary surfaces actual frequency).
+//
+//   s_lateReg_allowed_events:    nodeId IS in objbatcher_late_register_allowlist.txt
+//   s_lateReg_disallowed_events: nodeId is NOT (or empty)
+//
+// Read by GpuStaticPropBatcher::getAllowedLateRegEventCount() and
+// getDisallowedLateRegEventCount(); consumed by gos_object_parity::ParityFrameTick.
+uint64_t s_lateReg_allowed_events    = 0;
+uint64_t s_lateReg_disallowed_events = 0;
+
 inline int popIndex(GpuStaticPropPopulation pop) {
     return static_cast<int>(pop);
 }
@@ -769,7 +796,16 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
     //   for every vertex (front AND back facing), making it the correct
     //   per-vertex ground truth. Both values are identical for front-facing
     //   vertices when useFaceLighting=false (stock mc2_01 condition).
-    if (gos_object_parity::IsDualEmitArmed() &&
+    // Stage 2.D.3: per-actor narrowing of snapshot capture. The mclib gate
+    // sites only fire the full TransformMultiShape (CPU lighting bake) for
+    // the sampled actor in SampledOnly arm mode — non-sampled actors have
+    // stale listOfVertices[].argb. Capturing their bytes would corrupt the
+    // snapshot map. Use the per-actor gate here too: when the enclosing
+    // multishape (s_currentSubmittingMulti, set by submitMultiShape) doesn't
+    // match the sampler's pick, skip the snapshot. In bootstrap arm (state=
+    // Armed + armMode=All) IsDualEmitArmedForActor returns true for every
+    // shape, so 2.D.2 baseline coverage is preserved.
+    if (gos_object_parity::IsDualEmitArmedForActor(s_currentSubmittingMulti) &&
         shape->listOfVertices &&
         typeShape->listOfTypeTriangles &&
         typeShape->numTypeTriangles > 0) {
@@ -798,7 +834,16 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
                 }
             }
         }
+        // Stage 2.D.3: pass explicit instanceIdx = bucket position this leaf
+        // just took. bucket.instances.push_back ran above, so size()-1 is
+        // the just-pushed entry's index. Required so SampledOnly mode can
+        // address the correct GPU slot in CompareAndReport (the sampled
+        // leaf might not be at instance 0 — there are typically many
+        // unrelated submissions of the same type per frame).
+        const uint32_t instanceIdx =
+            static_cast<uint32_t>(bucket.instances.size() - 1u);
         gos_object_parity::RecordInstanceSnapshot(typeID,
+                                                   instanceIdx,
                                                    perVertexARGB.data(),
                                                    expandedVerts);
     }
@@ -841,12 +886,25 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
     // Clear the late-reg signal at the top of every call so a stale "true"
     // from a prior submitMultiShape never masquerades as a signal for this one.
     s_lastSubmitWasLateReg = false;
+    // Stage 2.D.3: track the currently-submitting multishape so per-leaf
+    // submit() calls can compare against the sampler's pick. Cleared at every
+    // exit path of this function to keep the window tight.
+    s_currentSubmittingMulti = multi;
     // pop consumed by counters below.
-    if (!multi || s_fatalRegistrationFailure) return false;
-    if (s_programLoadFailed || s_staticPropProgram == 0) return false;
+    if (!multi || s_fatalRegistrationFailure) {
+        s_currentSubmittingMulti = nullptr;
+        return false;
+    }
+    if (s_programLoadFailed || s_staticPropProgram == 0) {
+        s_currentSubmittingMulti = nullptr;
+        return false;
+    }
 
     const int n = multi->numTG_Shapes;
-    if (n <= 0 || !multi->listOfShapes) return false;
+    if (n <= 0 || !multi->listOfShapes) {
+        s_currentSubmittingMulti = nullptr;
+        return false;
+    }
 
     // Skip-child-not-fail-multishape policy. The CPU path (TG_Shape::Render
     // in tgl.cpp ~2530) silently returns for any of:
@@ -895,14 +953,21 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
             snprintf(addrBuf, sizeof(addrBuf), "%p", (const void*)ts);
             const std::string typeKey = addrBuf;  // dedup key — pointer-stable within one run
             auto& count = s_lateRegisterCounts[typeKey];
+            // Stage 2.D.3: compute `allowed` for EVERY event so the per-event
+            // counters tick correctly. The PRINT (and registered_dump) below
+            // remain gated by `count == 0` so the log stays one-line-per-type.
+            const char* nodeIdEvt = nullptr;
+            if (ts) {
+                nodeIdEvt = const_cast<TG_TypeShape*>(ts)->getNodeId();
+            }
+            const bool allowedEvt =
+                nodeIdEvt && nodeIdEvt[0] &&
+                (s_lateRegisterAllowlist.find(nodeIdEvt)
+                 != s_lateRegisterAllowlist.end());
+            if (allowedEvt) ++s_lateReg_allowed_events;
+            else            ++s_lateReg_disallowed_events;
             if (count == 0) {
-                const char* nodeId = nullptr;
-                if (ts) {
-                    // TG_TypeNode::getNodeId is non-const; we have a
-                    // const TG_TypeShape* by way of the static_cast above.
-                    // const_cast is the minimal workaround.
-                    nodeId = const_cast<TG_TypeShape*>(ts)->getNodeId();
-                }
+                const char* nodeId = nodeIdEvt;
                 // Allowlist matching uses the nodeId, NOT the pointer-key.
                 // Pointers are not stable across process runs, so a pointer
                 // entry in data/objbatcher_late_register_allowlist.txt is
@@ -913,10 +978,7 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
                 // different vertexCounts; allowlisting "Centipede" matches
                 // the family). Empty-name shapes cannot be allowlisted —
                 // the file would have no useful key for them.
-                const bool allowed =
-                    nodeId && nodeId[0] &&
-                    (s_lateRegisterAllowlist.find(nodeId)
-                     != s_lateRegisterAllowlist.end());
+                const bool allowed = allowedEvt;
                 std::fprintf(stderr,
                        "[OBJBATCHER v1] event=late_register type=%s nodeId=%s caller=%s allowed=%d\n",
                        typeKey.c_str(),
@@ -964,6 +1026,7 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
             // needsFullBakeNextFrame=true on the owning actor.
             s_lastSubmitWasLateReg = true;
             ++s_late_register_recovery_skips;
+            s_currentSubmittingMulti = nullptr;
             return false;
         }
     }
@@ -1029,11 +1092,21 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
             // submit() rejected after we passed the registration gate —
             // typically a buffer-full condition. Fall back for this frame
             // to keep the visual self-consistent.
+            s_currentSubmittingMulti = nullptr;
             return false;
         }
         s_counters.submitted_children++;
     }
     s_counters.submitted_instances_by_pop[popIndex(pop)]++;
+    // Stage 2.D.3 — sampler observation. Record the multishape pointer in
+    // the parity sidecar's per-frame observation list. Default-off short-
+    // circuits internally when MC2_OBJECT_PARITY_CHECK is unset; safe to
+    // call unconditionally. Only successful submissions reach here, so
+    // late-registered actors (skybox/compass) are structurally excluded
+    // from the sampler pool — matching the "registered types only"
+    // contract from the dispatch.
+    gos_object_parity::ObserveSubmittedShape(multi);
+    s_currentSubmittingMulti = nullptr;
     return true;
 }
 
@@ -1337,7 +1410,7 @@ void GpuStaticPropBatcher::flush() {
     // Without this clear, stale uint32 values from RING_FRAMES ago remain in
     // the slot for unwritten (back-facing) positions and cause false mismatches
     // against the CPU's 0x00000000 for those same positions.
-    if (parityBuffer != 0 && gos_object_parity::IsDualEmitArmed()) {
+    if (parityBuffer != 0 && gos_object_parity::IsDualEmitArmedAnyActor()) {
         const GLintptr slotBase =
             static_cast<GLintptr>(s_frameSlot) *
             static_cast<GLintptr>(kParitySlotBytes);
@@ -1445,7 +1518,7 @@ void GpuStaticPropBatcher::flush() {
                 // Stage 2.D.2: record slot-relative cursor + expanded vertex
                 // count so CompareAndReport can decode this type's bytes on
                 // the readback frame. parityVerts (not type.vertexCount) here.
-                if (gos_object_parity::IsDualEmitArmed()) {
+                if (gos_object_parity::IsDualEmitArmedAnyActor()) {
                     gos_object_parity::RecordParityTypeRange(
                         typeID, cursor, r.instanceCount, parityVerts);
                 }
@@ -1504,7 +1577,7 @@ void GpuStaticPropBatcher::flush() {
     // the dual-emit latch from Armed → WaitingForReadback. Pass s_frameSlot
     // so the compare only fires when the ring revisits this exact slot (after
     // glClientWaitSync ensures GPU writes are complete — RING_FRAMES later).
-    if (gos_object_parity::IsDualEmitArmed()) {
+    if (gos_object_parity::IsDualEmitArmedAnyActor()) {
         gos_object_parity::AdvanceDualEmitToWaiting(s_frameSlot);
     }
 
@@ -1538,6 +1611,19 @@ void GpuStaticPropBatcher::flush() {
     // when MC2_OBJECT_PARITY_CHECK is unset.
     gos_object_parity::ParityFrameTick();
 
+    // Stage 2.D.3 — round-robin sampler pick for next frame.
+    //
+    // Called AFTER ParityFrameTick so the summary's parity_compared_actors
+    // sees the just-finalized count, and AFTER AdvanceDualEmitToWaiting so
+    // the state machine has progressed for this frame. PickNextSampleIfReady:
+    //   - rotates this frame's submitMultiShape observation list into the
+    //     prior-frame pool (always),
+    //   - if state == Done AND the pool is non-empty, picks one shape via
+    //     round-robin and re-arms (state=Armed, armMode=SampledOnly,
+    //     s_currentSampledShape=picked).
+    // Default-off inside the sidecar; safe to call unconditionally.
+    gos_object_parity::PickNextSampleIfReady();
+
     s_bucketsByType.clear();
     s_lastUploadedSlot = 0xFFFFFFFFu;  // reset for next frame
 }
@@ -1559,6 +1645,17 @@ void GpuStaticPropBatcher::setDebugAddrMode(int mode) { debugAddrMode_ = mode; }
 // so the window of confusion is exactly one submit.
 bool GpuStaticPropBatcher::wasLastFailureLateRegistration() const {
     return s_lastSubmitWasLateReg;
+}
+
+// Slice 2 (Stage 2.D.3) — late-registration event-counter queries.
+// Static methods so the parity sidecar can call them without a singleton
+// hop. The counters live in the file-static block above; they are
+// monotonic since process start.
+uint64_t GpuStaticPropBatcher::getAllowedLateRegEventCount() {
+    return s_lateReg_allowed_events;
+}
+uint64_t GpuStaticPropBatcher::getDisallowedLateRegEventCount() {
+    return s_lateReg_disallowed_events;
 }
 
 // GpuStaticPropBatcher::isMultiShapeEligibleForGpuObjects
