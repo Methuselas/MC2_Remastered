@@ -106,6 +106,13 @@ Use this output to populate
 `data/objbatcher_late_register_allowlist.txt` with intent or to track
 down the registration walk gap.
 
+**Known late-reg entry (allowlist, do NOT fix registration):**
+`nodeId=Cylinder01 caller=skybox` is the skybox `GenericAppearance`,
+vestigial post the terrain CPU→GPU migration. The actor still goes
+through render every frame but its visible rendering is gone (sky now
+comes from the terrain shader's post-process pipeline). See
+`memory/skybox_actor_vestigial_post_terrain_gpu.md`.
+
 ### Operational warning carried forward
 
 **Clean rebuild required after header/interface changes.** Stale
