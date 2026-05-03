@@ -11,6 +11,73 @@
 
 ---
 
+## Update 2026-05-03 — Stage 2.D.2 substrate bugs found via parity
+
+Six GPU-vs-CPU lighting divergences in the Stage 2.A–2.C substrate were
+discovered when Stage 2.D.2 dual-emit ran. All were fixed in `38ba240`
+(bundled with the dual-emit harness). An adversarial review of `38ba240`
+found 2 CRITICAL + 4 MAJOR + 6 MINOR findings. Corrective commit `014ceb8`
+addressed all CRITICAL and MAJOR findings.
+
+**The 6 substrate bugs (brief):**
+
+1. Normal transform direction: `mat3(M) * a_normal` → `a_normal * mat3(M)`
+   in `shaders/static_prop.vert` (Stuff row-vector convention). ~94% mismatch
+   before fix.
+2. Window node lighting guard: added `kFlagIsWindow` branch in
+   `shaders/static_prop.vert` skipping `calc_light`, mirroring CPU
+   `tgl.cpp:1936`. ~86% mismatch on window building types.
+3. BGR/RGB swizzle in `get_base_light`: `shaders/include/lighting.hglsl:132`
+   changed `startVLight.xyz` → `startVLight.zyx`. Gated behind
+   `#ifdef MC2_STATIC_PROP_LIGHTING` in `014ceb8` to avoid leaking to the
+   legacy `gos_tex_vertex_lighted.vert` path (mechs/vehicles/particles).
+4. VBO baseVertex parity indexing: added `u_parityBaseVertex` uniform in
+   `shaders/static_prop.vert` so `gl_VertexID` (absolute) maps to the
+   type-local [0, parityVertsPerType) range.
+5. Temporal ordering: `TG_MultiShape::cachedGpuLightIndex_` +
+   `CacheGpuLightData()` (declared in `mclib/msl.h:275,327`, implemented in
+   `mclib/msl.cpp:1745`). Called from `bdactor.cpp` and `genactor.cpp`
+   `update()` during each actor's `SetLightList()` window, before
+   `worldLights[0]->aRGB` is overwritten by the next actor. 3799/3811
+   mismatches resolved.
+6. Alpha channel hardcode: `shaders/static_prop.vert` — `v_argb.w = 1.0` and
+   `a8 = 255u`, mirroring CPU `tgl.cpp:2228,2232`. 12/12 remaining
+   mismatches resolved.
+
+The commit `38ba240` also bundled 3 unrelated changes (terrain material palette
+uniform binds in `gameos_graphics.cpp`, focus-lost throttle rework in
+`gameosmain.cpp:860`, `MC2_FRAMECAP_TRACE` logger in `gameosmain.cpp:970`)
+without mentioning them in the commit message. This was the C2 finding; the
+record correction is this document update and the full progress record at:
+
+```
+docs/superpowers/plans/progress/2026-05-03-object-offload-slice2-stage2d-record.md
+```
+
+**Commit chain for Stage 2.D.2:**
+
+- `38ba240` — Stage 2.D.2: dual-emit harness + 6 substrate fixes + 3
+  unrelated changes (see record for full list; commit message described only 2)
+- `014ceb8` — Stage 2.D.2.1: corrective fixes (C1 swizzle gate, M1 genactor
+  call, M2 kFlagIsSpotlight, M3 aRGBHighlight, minor comment fixes)
+- (this commit) — Stage 2.D.2.2: record correction (C2 closure, pure docs)
+
+**Implications for 2.D.3:**
+
+- The substrate (`static_prop.vert`, `lighting.hglsl`, `msl.h/cpp`) is now
+  more rigorously validated than the original Stage 2.C tier1 gate required.
+- The `MC2_STATIC_PROP_LIGHTING` define gates the `lighting.hglsl` swizzle.
+  Do NOT remove it without a separate validation of the legacy
+  `gos_tex_vertex_lighted.vert` path (mechs/vehicles/particles).
+- The `cachedGpuLightIndex_` field in `TG_MultiShape` is part of the per-actor
+  lifecycle. Any 2.D.3 changes that touch `bdactor.cpp` or `genactor.cpp`
+  `update()` paths must preserve the `CacheGpuLightData()` call symmetry.
+- The "stop on mismatch" rule that was bypassed in `38ba240` has been
+  reinforced for Stage 2.D.3: any nonzero mismatch count at the 2.D.3 gate
+  must be surfaced to the user, not fixed inside the same commit.
+
+---
+
 ## Current state (as of 2026-05-02)
 
 **Slice 2 PR-ready checkpoint reached.** Stages 2.A + 2.B + 2.C +
@@ -27,18 +94,23 @@ late-reg instrumentation + allowlist all committed and green:
 - `c82375b` — skybox vestigial note (memory file + cross-ref)
 - `06ac847` — late-reg allowlist matcher fix (nodeId-keyed, was
   pointer-keyed silent-fail) + Cylinder01/compassplane allowlisted
+- `566a0f0` — Stage 2.D.1.1: slot-overflow accounting + harness cleanup
+- `38ba240` — Stage 2.D.2: dual-emit + compare (6 substrate fixes + 3
+  unrelated changes — see 2026-05-03 update above)
+- `014ceb8` — Stage 2.D.2.1: corrective fixes from adversarial review
+- (this commit) — Stage 2.D.2.2: record correction
 
 **Tier1 5/5 PASS** in three configs (unset / `MC2_GPU_OBJECTS=1` /
-`+MC2_OBJBATCHER_TRACE=1`), +0 destroys delta on every mission.
-**Tier2 24/24 PASS** in both configs, +0 destroys delta everywhere.
+`+MC2_OBJECT_PARITY_CHECK=1`), +0 destroys delta on every mission. Parity
+summary for mc2_01 (1200-frame): mismatches=0 compared=5391 mismatched=0.
 
-**Verify these commits before starting Stage 2.D:**
+**Verify these commits before starting Stage 2.D.3:**
 ```bash
 cd A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev
-git log --oneline -10
-# Expect: 06ac847 at HEAD (or HEAD^N)
-git log --oneline | grep -E "stage 2\.[ABC]|allowlist|skybox vestigial" | head -8
-# Expect: all 7 commits above present
+git log --oneline -15
+# Expect: 014ceb8 and 38ba240 near HEAD
+git log --oneline | grep -E "stage 2\.[ABC]|allowlist|skybox vestigial|2\.D\.[12]" | head -12
+# Expect: all commits above present
 ```
 
 If any is missing, escalate to user before doing anything — substrate
