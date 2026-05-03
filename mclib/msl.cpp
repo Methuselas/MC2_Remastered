@@ -432,20 +432,24 @@ long TG_TypeMultiShape::LoadFromFile(const char* baseName)
 		return -1;
 
 #ifdef ENABLE_ASSIMP_IMPORTER
+	// Probe order: .glb (preferred new format, modder gate per advisor D3)
+	// then .fbx (existing community asset format — A:/Games/mc2-opengl/
+	// MC2 Conversions/* ships .FBX). On any importer failure, fall through
+	// to ASE so a broken modder asset can't render the mech un-loadable.
+	// Stock-install playability is paramount per
+	// memory:stock_install_must_remain_playable.
+	static const char* const kImportExts[] = { ".glb", ".fbx" };
+	for (size_t e = 0; e < sizeof(kImportExts) / sizeof(kImportExts[0]); ++e)
 	{
-		FullPathFileName glbPath;
-		glbPath.init(tglPath, baseName, ".glb");
-		if (fileExists(glbPath, FILE_ON_DISK))
+		FullPathFileName probePath;
+		probePath.init(tglPath, baseName, kImportExts[e]);
+		if (fileExists(probePath, FILE_ON_DISK))
 		{
-			long r = ImportGeometryFromFile(glbPath, this);
+			long r = ImportGeometryFromFile(probePath, this);
 			if (r == 0)
 				return NO_ERR;
-			// Importer ran but failed (validator rejected the asset, or
-			// Assimp ReadFile errored). The importer has already logged the
-			// reason via STOP/PAUSE — fall through to the ASE path so a
-			// broken modder asset can't render the mech un-loadable.
-			// Stock-install playability is paramount per
-			// memory:stock_install_must_remain_playable.
+			// Importer logged the reason via STOP/PAUSE; fall through.
+			break;  // don't probe further extensions if one was rejected
 		}
 	}
 #endif // ENABLE_ASSIMP_IMPORTER
