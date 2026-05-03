@@ -33,6 +33,11 @@ namespace {
 constexpr size_t kVertexStride = 40;
 
 constexpr uint32_t RING_FRAMES = 3;
+// Stage 2.D.1.1 (Item 4): STATIC_PROP_RING_FRAMES in the header equals this.
+// Enforce in lock-step so a future edit to either side fails loudly.
+static_assert(RING_FRAMES == STATIC_PROP_RING_FRAMES,
+              "RING_FRAMES and STATIC_PROP_RING_FRAMES must match — "
+              "changing one without the other corrupts the parity SSBO readback");
 constexpr size_t   INITIAL_INSTANCES_PER_FRAME = 4096;
 constexpr size_t   INITIAL_COLORS_PER_FRAME    = 1'000'000;  // uint32 ARGB entries
 
@@ -133,6 +138,15 @@ bool s_fatalRegistrationFailure = false;
 glsl_program* s_staticPropProgramObj = nullptr;
 GLuint        s_staticPropProgram    = 0;
 
+// Stage 2.D.1.1 (Item 2): parity uniform locations cached at link time.
+// Querying glGetUniformLocation every flush was a per-flush driver round-trip;
+// cache once here. The shader is not hot-reloadable (s_programLoadTried latches
+// after first attempt, no in-process relink path), so the cache is valid for
+// the lifetime of the program handle. -1 signals "not found in shader" and is
+// safe to pass to glUniform*i (the spec says glUniform* is a no-op for loc=-1).
+GLint s_loc_u_parityWrite       = -1;
+GLint s_loc_u_parityVertsPerType = -1;
+
 // Latched once a compile/link attempt has failed. We never retry inside a
 // session because shader source can only change between runs. With this
 // latched true, submit() returns false (so callers CPU-fallback), and
@@ -174,8 +188,13 @@ void loadProgramsIfNeeded() {
         return;
     }
     s_staticPropProgram = s_staticPropProgramObj->shp_;
-    std::fprintf(stderr, "[GPUPROPS-DIAG] loadProgramsIfNeeded OK prog=%u\n",
-                 s_staticPropProgram);
+    // Stage 2.D.1.1 (Item 2): cache parity uniform locations once at link time.
+    s_loc_u_parityWrite        = glGetUniformLocation(s_staticPropProgram, "u_parityWrite");
+    s_loc_u_parityVertsPerType = glGetUniformLocation(s_staticPropProgram, "u_parityVertsPerType");
+    std::fprintf(stderr, "[GPUPROPS-DIAG] loadProgramsIfNeeded OK prog=%u "
+                 "loc_parityWrite=%d loc_parityVertsPerType=%d\n",
+                 s_staticPropProgram,
+                 s_loc_u_parityWrite, s_loc_u_parityVertsPerType);
 }
 
 // Layer B fallback: types we failed to register (logged once, fall back to CPU path).
@@ -1222,10 +1241,10 @@ void GpuStaticPropBatcher::flush() {
     // parity-buffer range fits in this slot's remaining byte budget.
     // When MC2_OBJECT_PARITY_CHECK is unset, parityBuffer == 0 and the
     // uniform stays 0 for every draw (no shader writes happen).
-    const GLint locParityWrite =
-        glGetUniformLocation(s_staticPropProgram, "u_parityWrite");
-    const GLint locParityVerts =
-        glGetUniformLocation(s_staticPropProgram, "u_parityVertsPerType");
+    // Stage 2.D.1.1 (Item 2): use link-time cached locations instead of
+    // per-flush glGetUniformLocation (one driver round-trip per flush saved).
+    const GLint locParityWrite = s_loc_u_parityWrite;
+    const GLint locParityVerts = s_loc_u_parityVertsPerType;
     if (locParityWrite >= 0) glUniform1i(locParityWrite, 0);
 
     // Per-type drawing: bind per-type instance & color SSBO ranges, then
@@ -1302,6 +1321,12 @@ void GpuStaticPropBatcher::flush() {
                     static_cast<uint64_t>(r.instanceCount) *
                     static_cast<uint64_t>(type.vertexCount));
                 wroteParityThisDraw = true;
+            } else if (needBytes > 0) {
+                // Stage 2.D.1.1 (Item 1): slot budget exhausted — record it.
+                // u_parityWrite stays 0 so the shader skips the write;
+                // the draw still happens but no parity bytes are produced.
+                gos_object_parity::Counters_AddSlotOverflowThisFrame(
+                    typeID, needBytes, kParitySlotBytes);
             }
         }
 

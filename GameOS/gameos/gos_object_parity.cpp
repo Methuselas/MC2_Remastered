@@ -29,11 +29,16 @@
 
 #include "gos_object_parity.h"
 
+// Stage 2.D.1.1 (Item 4, Option A): include the batcher header so kRingFrames
+// can reference STATIC_PROP_RING_FRAMES directly rather than duplicating the
+// literal 3. No circular dependency: gos_object_parity.h has no batcher.h
+// dependency; the coupling is one-directional (parity .cpp → batcher .h).
+#include "gos_static_prop_batcher.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-#include <GL/glew.h>
+#include <set>
 
 namespace gos_object_parity {
 
@@ -67,6 +72,16 @@ uint64_t s_vertices_written_total = 0;
 uint64_t s_vertices_written_this_frame = 0;
 uint64_t s_readback_bytes_total = 0;
 uint64_t s_readback_bytes_this_frame = 0;
+
+// Stage 2.D.1.1 (Item 1): slot-overflow tracking.
+uint64_t s_slot_overflows_total = 0;
+uint64_t s_slot_overflows_this_frame = 0;
+
+// Once-per-type overflow print guard. Tracks which typeIds have already had
+// their "slot_overflow" line emitted. Grows unboundedly only if there are
+// unbounded unique typeIds, but the type count is fixed at map-load time
+// (bounded by the number of registered TG_TypeShape objects, typically <100).
+std::set<uint32_t> s_overflowedTypes;
 }  // namespace
 
 namespace gos_object_parity {
@@ -79,8 +94,30 @@ void Counters_AddReadbackBytesThisFrame(uint64_t n) {
     s_readback_bytes_this_frame += n;
 }
 
-uint64_t Counters_GetVerticesWrittenTotal() { return s_vertices_written_total; }
-uint64_t Counters_GetReadbackBytesTotal()   { return s_readback_bytes_total; }
+void Counters_AddSlotOverflowThisFrame(uint32_t typeId,
+                                        size_t   needBytes,
+                                        size_t   budgetBytes) {
+    ++s_slot_overflows_this_frame;
+    // Once-per-type printf so a busy scene doesn't spam the log.
+    if (s_overflowedTypes.find(typeId) == s_overflowedTypes.end()) {
+        s_overflowedTypes.insert(typeId);
+        std::fprintf(stderr,
+            "[OBJECT_PARITY v1] event=slot_overflow type=%u "
+            "need=%zu budget=%zu\n",
+            typeId, needBytes, budgetBytes);
+        std::fflush(stderr);
+    }
+}
+
+uint64_t Counters_GetVerticesWrittenTotal()  { return s_vertices_written_total; }
+uint64_t Counters_GetReadbackBytesTotal()    { return s_readback_bytes_total; }
+uint64_t Counters_GetSlotOverflowsTotal()    { return s_slot_overflows_total; }
+
+void Counters_ResetSlotOverflowsThisFrame() {
+    // Called from ParityFrameTick(); not for external use.
+    s_slot_overflows_total     += s_slot_overflows_this_frame;
+    s_slot_overflows_this_frame = 0;
+}
 
 }  // namespace gos_object_parity
 
@@ -97,8 +134,11 @@ uint64_t Counters_GetReadbackBytesTotal()   { return s_readback_bytes_total; }
 // ---------------------------------------------------------------------------
 namespace {
 
-// Match slice 1's RING_FRAMES literally (gos_static_prop_batcher.cpp:34).
-constexpr unsigned kRingFrames = 3;
+// Stage 2.D.1.1 (Item 4, Option A): use STATIC_PROP_RING_FRAMES from the
+// batcher header instead of duplicating the literal. A mismatched ring depth
+// would corrupt the async-readback handshake (the batcher's fence and the
+// parity SSBO ring must advance in lock-step).
+constexpr unsigned kRingFrames = STATIC_PROP_RING_FRAMES;
 
 GLuint   s_paritySSBO  = 0;
 size_t   s_slotBytes   = 0;
@@ -203,19 +243,23 @@ void ParityFrameTick() {
     s_readback_bytes_total   += s_readback_bytes_this_frame;
     s_vertices_written_this_frame = 0;
     s_readback_bytes_this_frame   = 0;
+    // Stage 2.D.1.1 (Item 1): roll per-frame slot-overflow count.
+    Counters_ResetSlotOverflowsThisFrame();
 
     if (s_paritySummaryFrames % 600 == 0) {
         // Stage 2.D.1 minimal summary — enough fields to prove the harness
         // ticks across a tier1 mission and that the readback is producing
-        // bytes. 2.D.2/2.D.3 add compared/passed/mismatched/
-        // skipped_allowed_late_reg.
+        // bytes. 2.D.1.1 adds slot_overflows=N. 2.D.2/2.D.3 add
+        // compared/passed/mismatched/skipped_allowed_late_reg.
         std::fprintf(stderr,
             "[OBJECT_PARITY v1] event=summary frames=%lld "
-            "vertices_written=%llu readback_bytes=%llu mismatches=%lld\n",
+            "vertices_written=%llu readback_bytes=%llu mismatches=%lld "
+            "slot_overflows=%llu\n",
             s_paritySummaryFrames,
             static_cast<unsigned long long>(s_vertices_written_total),
             static_cast<unsigned long long>(s_readback_bytes_total),
-            s_paritySummaryMismatches);
+            s_paritySummaryMismatches,
+            static_cast<unsigned long long>(s_slot_overflows_total));
         std::fflush(stderr);
     }
 }

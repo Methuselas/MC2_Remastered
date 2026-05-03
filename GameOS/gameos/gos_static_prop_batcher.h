@@ -47,6 +47,14 @@ struct GpuStaticPropPacket {
     uint32_t owningTypeID;
 };
 
+// Stage 2.D.1.1: exported so gos_object_parity.cpp can de-duplicate its
+// local kRingFrames constant (Option A — include rather than static_assert).
+// Both the parity SSBO ring and the batcher's s_fence ring share this depth;
+// changing one without the other corrupts the async readback handshake.
+// The .cpp defines its private `RING_FRAMES` separately to keep the hot-path
+// anonymous-namespace TU clean, but MUST match this value.
+constexpr uint32_t STATIC_PROP_RING_FRAMES = 3u;
+
 constexpr uint32_t STATIC_PROP_FLAG_ALPHA_TEST = 1u << 0;
 
 // Slice 2 (object-offload): free-function form of the eligibility check used

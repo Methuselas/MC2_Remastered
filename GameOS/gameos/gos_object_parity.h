@@ -1,22 +1,28 @@
 // GameOS/gameos/gos_object_parity.h
 //
-// Slice 2 (object-offload) — Stage 2.D.1: parity readback harness skeleton.
+// Slice 2 (object-offload) — Stage 2.D: parity readback harness.
 //
 // Purpose: a default-off env-gated path that allocates a writable SSBO,
 // binds it as binding=3 during the static-prop draw, has the shader write
 // per-vertex lit ARGB into it, and reads the bytes back one frame later
 // via the slice 1 batcher's existing fence ring. Stage 2.D.1 DISCARDS the
 // bytes — there is no compare logic yet, no CPU recompute, no actor
-// selection. The acceptance gate is "the pipeline runs without crash or
-// stall under MC2_OBJECT_PARITY_CHECK=1; +0 destroys delta vs unset."
+// selection. Stage 2.D.1.1 adds slot-overflow accounting + harness cleanup.
+// The acceptance gate is "the pipeline runs without crash or stall under
+// MC2_OBJECT_PARITY_CHECK=1; +0 destroys delta vs unset."
 //
 // 2.D.2 (P3 dual-emit) and 2.D.3 (P1 sampled steady state) will plug in
 // the comparison logic and per-actor accounting on top of this skeleton.
 //
 // Sidecar separation rationale: matches the gos_terrain_indirect{,.cpp}
 // precedent — keeps the parity surface area out of the slice 1 batcher
-// hot path. The batcher only calls a handful of small entry points
-// (IsParityCheckEnabled / EnsureParityOutputSSBO / ParityFrameTick).
+// hot path. The batcher only calls:
+//   IsParityCheckEnabled / IsParityTraceEnabled
+//   EnsureParityOutputSSBO / SlotBytes / RingFrames / ReleaseParityOutputSSBO
+//   Counters_AddVerticesWrittenThisFrame / Counters_AddReadbackBytesThisFrame
+//   Counters_AddSlotOverflowThisFrame  (2.D.1.1)
+//   ParityPrintMismatch (skeleton; called in 2.D.2+)
+//   ParityFrameTick
 //
 // Default-off contract (per advisor, load-bearing): when
 // MC2_OBJECT_PARITY_CHECK is unset or "0" — NO SSBO allocation, NO
@@ -39,8 +45,11 @@
 #include <cstddef>
 #include <cstdint>
 
-// GLuint typedef without dragging GL/glew.h into every includer.
-typedef unsigned int GLuint;
+// GL/glew.h must come before any other GL header. Including it here is safe
+// because every TU that includes this sidecar already links against GLEW.
+// (The prior typedef was insufficient once callers needed GL_DYNAMIC_STORAGE_BIT
+// and other GL constants; a bare typedef exposes only the name, not the consts.)
+#include <GL/glew.h>
 
 namespace gos_object_parity {
 
@@ -60,18 +69,33 @@ bool IsParityTraceEnabled();   // MC2_OBJECT_PARITY_TRACE — gates
 // that never tick when the env-gate is off — callers should still gate the
 // Add* calls themselves to avoid dead branches in the hot path.
 //
-// Stage 2.D.1 starts with the minimal counter set:
+// Stage 2.D.1 counter set:
 //   - vertices_written: total uint32 entries the shader was authorized to
 //     write into the parity SSBO this frame (sum of per-draw bound-range
 //     element counts when u_parityWrite=1u).
 //   - readback_bytes: total bytes glGetBufferSubData'd this frame.
+//
+// Stage 2.D.1.1 additions:
+//   - slot_overflows: times a per-type draw was skipped because the parity
+//     slot's byte budget was exhausted (the silent-skip branch). Counter
+//     is per-frame; rolled into the 600-frame summary. Printf fires once
+//     per (typeId) per process — see the "once-per-type" set in the .cpp.
+//
 // 2.D.2 / 2.D.3 will add compared/passed/mismatched/skipped_allowed_late_reg.
 // ---------------------------------------------------------------------------
 void Counters_AddVerticesWrittenThisFrame(uint64_t n);
 void Counters_AddReadbackBytesThisFrame(uint64_t n);
+void Counters_AddSlotOverflowThisFrame(uint32_t typeId,
+                                        size_t   needBytes,
+                                        size_t   budgetBytes);
 
 uint64_t Counters_GetVerticesWrittenTotal();
 uint64_t Counters_GetReadbackBytesTotal();
+uint64_t Counters_GetSlotOverflowsTotal();
+
+// Per-frame reset for slot_overflows (called from ParityFrameTick alongside
+// the other per-frame resets). Not intended for external callers.
+void Counters_ResetSlotOverflowsThisFrame();
 
 // ---------------------------------------------------------------------------
 // Parity-output SSBO lifecycle.
