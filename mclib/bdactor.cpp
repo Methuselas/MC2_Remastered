@@ -1595,8 +1595,12 @@ long BldgAppearance::render (long depthFixup)
 				GpuStaticPropPopulation::Building);
 			if (bldgShape)
 			{
+				// Slice 2 (object-offload) — Stage 2.C+: pass appearType->name
+				// as callerName so [OBJBATCHER v1] event=late_register can
+				// identify which actor class owns the unregistered type.
+				const char* callerName = (appearType ? appearType->name : nullptr);
 				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
-					bldgShape, GpuStaticPropPopulation::Building);
+					bldgShape, GpuStaticPropPopulation::Building, callerName);
 				// Slice 2 (object-offload) — Stage 2.B: late-registration
 				// recovery flag. When submitMultiShape failed because a leaf
 				// type was unregistered, mark the actor for full-bake on the
@@ -4081,8 +4085,10 @@ long TreeAppearance::render (long depthFixup)
 				GpuStaticPropPopulation::Tree);
 			if (treeShape)
 			{
+				// Stage 2.C+: see BldgAppearance::render for callerName intent.
+				const char* callerName = (appearType ? appearType->name : nullptr);
 				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
-					treeShape, GpuStaticPropPopulation::Tree);
+					treeShape, GpuStaticPropPopulation::Tree, callerName);
 				// Slice 2 (object-offload) — Stage 2.B: see BldgAppearance::render
 				// for full rationale on the late-reg recovery flag.
 				if (!submittedToGpu &&

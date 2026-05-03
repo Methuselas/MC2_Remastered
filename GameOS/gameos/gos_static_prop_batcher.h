@@ -134,8 +134,16 @@ public:
     void recordEligibleActor(GpuStaticPropPopulation pop);
     void recordCpuFallback(GpuStaticPropPopulation pop);
 
+    // Slice 2 (object-offload) — Stage 2.C+ instrumentation: optional
+    // callerName (e.g., appearType->name) is included in the
+    // [OBJBATCHER v1] event=late_register log line when a leaf type fails
+    // registration. Pass nullptr if no caller-side name is available
+    // (legacy path); the log will fall back to the bare TG_TypeShape
+    // pointer. Helps identify which actor classes own the unregistered
+    // type so the allowlist / registration walk can be repaired.
     [[nodiscard]] bool submitMultiShape(TG_MultiShape* multi,
-                                        GpuStaticPropPopulation pop);
+                                        GpuStaticPropPopulation pop,
+                                        const char* callerName = nullptr);
 
     // Slice 2 (object-offload): cheap, side-effect-free eligibility query.
     // Returns true iff every leaf SHAPE_NODE under `multi` is currently

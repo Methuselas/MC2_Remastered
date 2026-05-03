@@ -8,7 +8,32 @@ Brainstorm: [`brainstorms/2026-05-02-object-offload-scope.md`](../brainstorms/20
 Recon Zero: [`explorations/2026-05-02-object-offload-slice2-recon-zero.md`](../explorations/2026-05-02-object-offload-slice2-recon-zero.md)
 Slice 1 design: [`specs/2026-05-02-object-offload-slice1-design.md`](2026-05-02-object-offload-slice1-design.md)
 Arc: object offload, slice 2 of a 2-slice arc.
-Status: **approved for implementation. Step 0 adversarial review applied 2026-05-02 — line citations re-grep'd against current source, fictional cross-references corrected, internal contradictions resolved, architectural decisions locked (see Step 0 Sign-Off Log below). DO NOT redesign during execution.**
+Status: **Stages 2.A, 2.B, 2.C COMPLETE behind `MC2_GPU_OBJECTS=1` flag (2026-05-02).** Slice 2 PR-ready checkpoint; Stages 2.D (parity) + 2.E (pinned-camera diff) pending. Step 0 adversarial review applied 2026-05-02 — line citations re-grep'd against current source, fictional cross-references corrected, internal contradictions resolved, architectural decisions locked (see Step 0 Sign-Off Log below). DO NOT redesign during execution.
+
+**Landed commits (in chronological order):**
+- `cdcdb7d` — Stage 2.A: substrate edits (no behavior change)
+- `bd1bd25` — Stage 2.B: eligibility hoist + late-reg recovery wiring (defensive flag-set; falls through to legacy CPU Render — see late-reg correction in handoff prompt)
+- `ad96c1f` — Stage 2.C.1: GLSL kernel + UBO schema lockstep + render-time gather + `TG_Shape::init()` static-state lifecycle fix
+- `eb2a837` — Stage 2.C.2: flip static_prop draw to GPU lighting (per-vertex aRGBLight, per-type hot-color SSBO, calc_light invocation)
+
+**Tier1 5/5 PASS in three configs (unset / `MC2_GPU_OBJECTS=1` / `+MC2_OBJBATCHER_TRACE=1`), +0 destroys delta on every mission.**
+
+**Tracy delta carry-forward (advisor 2026-05-02):** smoke-camera Tracy on
+mc2_01 default position showed **~15.7% `appearanceUpdate` reduction**,
+above the 10% surface-to-user floor (see line 187/188 below) but below the
+17% target. The recon's 17-21% prediction was at a building-heavy camera
+with 759 actors/frame; smoke runs at default camera with ~4 actors visible.
+**Pinned-camera Tracy at the recon-equivalent camera is required for
+apples-to-apples validation** and lives at Stage 2.E's harness work.
+
+**Stage 2.D pre-conditions (advisor 2026-05-02):** the two known
+unregistered types from slice 1 spec lines 489-490 still hit late-reg
+every frame (~3957 events/mission in mc2_01). They render correctly via
+legacy CPU Render() but pollute parity sampling. Resolve via allowlist
+add or registration-site fix BEFORE 2.D, OR Stage 2.D's parity harness
+must explicitly exclude legacy-CPU-fallback actors. Better instrumentation
+shipped post-2.C to make this practical (see handoff prompt
+"Late-reg type identification").
 
 ### Step 0 Sign-Off Log (2026-05-02)
 

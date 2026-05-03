@@ -729,7 +729,8 @@ void GpuStaticPropBatcher::recordCpuFallback(GpuStaticPropPopulation pop) {
 }
 
 bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
-                                            GpuStaticPropPopulation pop) {
+                                            GpuStaticPropPopulation pop,
+                                            const char* callerName) {
     initTraceOnce();
     // Clear the late-reg signal at the top of every call so a stale "true"
     // from a prior submitMultiShape never masquerades as a signal for this one.
@@ -773,20 +774,71 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
         if (firstShapeNodeLeaf == nullptr) firstShapeNodeLeaf = rec.node;
         if (s_typeIndex.find(ts) == s_typeIndex.end()) {
             loadLateRegisterAllowlistOnce();
-            // Pointer-stringify since TG_TypeShape doesn't expose a name
-            // accessor here. If a real name accessor surfaces later
-            // (e.g., ts->source->name), prefer it.
+            // Stage 2.C+ instrumentation: build a richer identifier for the
+            // unregistered type. The dedup key still uses the pointer so the
+            // count-once-per-type logic stays stable across name lookups,
+            // but the human-readable log line includes:
+            //   - caller actor's appearType->name (e.g. "house3.ase")
+            //   - the TG_TypeShape's nodeId (inherited from TG_TypeNode;
+            //     getNodeId() is public, returns char*; const_cast is the
+            //     minimal-touch workaround for the const TG_TypeShape* we
+            //     have here)
+            //   - the bare pointer (still useful for cross-referencing
+            //     across log files / ts identity over a process lifetime)
             char addrBuf[32];
             snprintf(addrBuf, sizeof(addrBuf), "%p", (const void*)ts);
-            const std::string typeName = addrBuf;
-            auto& count = s_lateRegisterCounts[typeName];
+            const std::string typeKey = addrBuf;  // dedup key — pointer-stable
+            auto& count = s_lateRegisterCounts[typeKey];
             if (count == 0) {
                 const bool allowed =
-                    (s_lateRegisterAllowlist.find(typeName)
+                    (s_lateRegisterAllowlist.find(typeKey)
                      != s_lateRegisterAllowlist.end());
-                std::fprintf(stderr, "[OBJBATCHER v1] event=late_register type=%s allowed=%d\n",
-                       typeName.c_str(), allowed ? 1 : 0);
+                const char* nodeId = nullptr;
+                if (ts) {
+                    // TG_TypeNode::getNodeId is non-const; we have a
+                    // const TG_TypeShape* by way of the static_cast above.
+                    // const_cast is the minimal workaround.
+                    nodeId = const_cast<TG_TypeShape*>(ts)->getNodeId();
+                }
+                std::fprintf(stderr,
+                       "[OBJBATCHER v1] event=late_register type=%s nodeId=%s caller=%s allowed=%d\n",
+                       typeKey.c_str(),
+                       (nodeId && nodeId[0]) ? nodeId : "<unnamed>",
+                       (callerName && callerName[0]) ? callerName : "<unknown>",
+                       allowed ? 1 : 0);
                 std::fflush(stderr);
+
+                // Stage 2.C+ instrumentation: one-shot registered-types
+                // dump. Emitted on the FIRST late-register event of the run
+                // only (s_emittedRegisteredDump is file-static, set true
+                // here). Lists the registered TG_TypeShape pointers AND
+                // their nodeIds so an operator can grep this output to find
+                // "is the late-reg one in the same family as registered
+                // ones, just with a different nodeId variant?" or "is the
+                // late-reg type entirely absent from the s_typeIndex, vs.
+                // registered as a peer?". Cap at 30 to keep the log
+                // tractable; if more types are registered, the count is
+                // shown so the truncation is visible.
+                static bool s_emittedRegisteredDump = false;
+                if (!s_emittedRegisteredDump) {
+                    s_emittedRegisteredDump = true;
+                    const size_t total = s_types.size();
+                    const size_t cap = total < 30 ? total : 30;
+                    std::fprintf(stderr,
+                        "[GPUPROPS_REG] event=registered_dump total=%zu shown=%zu\n",
+                        total, cap);
+                    for (size_t k = 0; k < cap; ++k) {
+                        const TG_TypeShape* rt = s_types[k].source;
+                        const char* rnode = nullptr;
+                        if (rt) rnode = const_cast<TG_TypeShape*>(rt)->getNodeId();
+                        std::fprintf(stderr,
+                            "[GPUPROPS_REG] entry typeID=%zu ptr=%p nodeId=%s vertexCount=%u\n",
+                            k, (const void*)rt,
+                            (rnode && rnode[0]) ? rnode : "<unnamed>",
+                            s_types[k].vertexCount);
+                    }
+                    std::fflush(stderr);
+                }
             }
             ++count;
             // Stage 2.A: signal the caller that this failure was specifically

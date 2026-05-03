@@ -806,8 +806,10 @@ long GenericAppearance::render (long depthFixup)
 					GpuStaticPropPopulation::Generic);
 				if (genShape)
 				{
+					// Stage 2.C+: see BldgAppearance::render for callerName intent.
+					const char* callerName = (appearType ? appearType->name : nullptr);
 					submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
-						genShape, GpuStaticPropPopulation::Generic);
+						genShape, GpuStaticPropPopulation::Generic, callerName);
 					// Slice 2 (object-offload) — Stage 2.B: see BldgAppearance::render
 					// for full rationale on the late-reg recovery flag.
 					if (!submittedToGpu &&

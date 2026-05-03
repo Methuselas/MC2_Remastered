@@ -1,18 +1,119 @@
 # Slice 2 (object-offload) — Implementation hand-off prompt
 
 > **Role for a fresh session reading this:** You are picking up the
-> object-offload arc at slice 2, **Stage 2.B**. Stage 2.A is already
-> complete and committed; do not re-implement it. Step 0 adversarial
+> object-offload arc at slice 2. **Stages 2.A, 2.B, and 2.C are already
+> complete and committed; do not re-implement them.** Step 0 adversarial
 > review has already been applied to the design spec. Your job is to
-> execute Stages 2.B → 2.C → 2.D → 2.E per the corrected spec, with
-> the per-stage gates as written.
+> execute Stages 2.D → 2.E per the corrected spec, with the per-stage
+> gates as written. **Read the "Stage 2.D pre-conditions" section below
+> before starting 2.D — there are pending follow-ups from 2.B/2.C that
+> the advisor recommends resolving first.**
 
 ---
 
 ## Current state (as of 2026-05-02)
 
-**Stage 2.A is COMPLETE and GREEN.** Do not re-implement Stage 2.A.
-Verify the commit is present before starting Stage 2.B.
+**Stages 2.A, 2.B, 2.C are COMPLETE and GREEN behind `MC2_GPU_OBJECTS=1`.**
+Do not re-implement them. Verify each commit is present before starting 2.D.
+
+- **Stage 2.A commit:** `cdcdb7d` — substrate edits (positions-only
+  variant + GatherGpuObjectLightDataOnly + eligibility helpers + per-actor
+  needsFullBakeNextFrame).
+- **Stage 2.B commit:** `bd1bd25` — eligibility hoist wired into
+  `BldgAppearance/TreeAppearance/GenericAppearance::update` inside the
+  existing cull gate; late-reg recovery flag wired in `*Appearance::render`
+  (defensive — see late-reg correction below); fixed latent
+  `TG_Shape::init()` access bug via friend declaration in `tgl.h`.
+- **Stage 2.C commits (split into 2 for clean bisection):**
+  - **2.C.1** `ad96c1f` — GLSL kernel + UBO schema lockstep:
+    `ENABLE_VERTEX_LIGHTING=1`, `calc_light()` 4-param 6-type dispatch,
+    `GetFalloff` GLSL helper, `TG_HWLightsData` extended with
+    `lightFalloff[16][4]` byte-for-byte lockstep with `ObjectLights
+    light_falloff[16]`. `submitMultiShape` hoists per-actor
+    `GatherGpuObjectLightDataOnly()` between its two for-loops and
+    broadcasts `lightDataIndex` into per-leaf `submit()`. Also fixes a
+    second latent bug: `TG_Shape::init()` cleared `s_listOfLights = NULL`
+    without clearing `s_numLights` — never fired pre-Stage-2.C, crashed
+    mc2_10 at frame ~2400 once render-time `GatherLightsParameters` was
+    added (see memory `tg_shape_static_state_lifecycle_trap.md`).
+  - **2.C.2** `eb2a837` — flip the static_prop draw-side: per-vertex
+    `aRGBLight` written at VBO offset 36 in `registerType`, per-type
+    hot-color SSBO at slot 2 built in `finalizeGeometry`, `static_prop.vert`
+    invokes `calc_light()` per vertex with `inst.lightDataIndex` and
+    `worldPos`. Per-frame `.argb` memcpy retired from the main draw path
+    (debug modes still see it via `v_argb`).
+- **Slice 2 PR-ready checkpoint (2.A + 2.B + 2.C):** tier1 5/5 PASS in
+  three configs (unset / `MC2_GPU_OBJECTS=1` / `+MC2_OBJBATCHER_TRACE=1`),
+  +0 destroys delta on every mission. Visual restored under
+  `MC2_GPU_OBJECTS=1`. Smoke-camera Tracy showed **~15.7%
+  `appearanceUpdate` reduction**, **above the 10% surface-to-user floor
+  (spec line 187) but below the 17% target (spec line 182)**. This is
+  expected: the recon's 17-21% prediction was at a building-heavy camera
+  with 759 actors/frame; smoke runs at default camera with ~4 actors
+  visible. **Pinned-camera Tracy is required for apples-to-apples
+  validation** and is part of Stage 2.E's harness.
+
+### Stage 2.D pre-conditions (advisor recommendation, do NOT skip)
+
+The advisor (post-Stage-2.C 2026-05-02) recommends NOT starting Stage 2.D
+immediately. Two carry-forward concerns from 2.B/2.C should be addressed
+first, OR Stage 2.D's parity check must explicitly account for them:
+
+1. **Late-reg allowlist / registration cleanup**: the two known unregistered
+   types per slice 1 spec lines 489-490 (artillery/bomber spawns) hit the
+   late-reg branch every frame and produce ~3957 events per mission in
+   mc2_01 with `MC2_GPU_OBJECTS=1`. They render correctly via legacy CPU
+   `Render()` (Stage 2.B's late-reg correction) but they pollute parity
+   sampling. Either resolve via allowlist add to
+   `data/objbatcher_late_register_allowlist.txt` with explicit reasoning,
+   or fix at the registration site so `finalizeGeometry`/`onMapLoad`
+   picks them up. Better instrumentation has shipped (see
+   "Late-reg type identification" below) to make this practical.
+
+2. **`cpu_fallback_rate` is at 3.63%** (improved from 4.97% at 2.B but
+   still bounded by the same two unregistered types). Right at the spec
+   line 466 5% threshold. Do NOT tighten the gate before resolving (1).
+
+If for any reason Stage 2.D must run before (1) is resolved, the parity
+harness MUST explicitly exclude actors that fell back to legacy CPU
+`Render()` due to late-reg — comparing GPU output for an actor that
+didn't go through the GPU path is meaningless and will produce false
+mismatch counts.
+
+### Late-reg correction (committed; do NOT re-introduce skip-render)
+
+An earlier draft of this hand-off implied a `lateRegSkip` short-circuit
+that suppressed legacy `Render()` when `wasLastFailureLateRegistration()`
+was true. **That was wrong** for stock missions: the two known unregistered
+types NEVER get registered, so positions-only never runs for them; legacy
+`Render()` is the only valid draw path and suppressing it makes them
+permanently invisible.
+
+**Correct shape (now in tree):** set `needsFullBakeNextFrame = true`
+(defensive hygiene), then **fall through to legacy `Render()`**. The
+eligibility hoist at update uses the same `s_typeIndex` check, so any
+unregistered actor runs full-bake at update (fresh `.argb`) and legacy
+`Render()` is correct. Confirmed in commit `bd1bd25`.
+
+### Late-reg type identification (Stage 2.C+ instrumentation)
+
+The `[OBJBATCHER v1] event=late_register` log line was extended to print
+the TG_TypeShape's nodeId AND the owning actor's appearType->name (when
+the caller provides it via `submitMultiShape`'s new `callerName`
+parameter). Plus a one-shot `[GPUPROPS_REG] event=registered_dump` line
+on the first late-reg event lists registered nodeIds for cross-reference.
+Use this output to populate
+`data/objbatcher_late_register_allowlist.txt` with intent or to track
+down the registration walk gap.
+
+### Operational warning carried forward
+
+**Clean rebuild required after header/interface changes.** Stale
+`.obj`/binary artifacts can mask access-control violations or
+friend-declaration bugs. Both Stage 2.A's `eligibleForGpuObjects` C2248
+issue (caught only by Stage 2.B's clean rebuild) and Stage 2.C.1's
+latent `init()` bug (caught only when render-time gather was added)
+were undetectable until the dependents recompiled from scratch.
 
 - **Stage 2.A commit:** `cdcdb7d` on `claude/nifty-mendeleev` —
   *"feat: object-offload slice 2 stage 2.A — substrate edits (no behavior change)"*.
