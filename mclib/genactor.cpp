@@ -1207,6 +1207,16 @@ long GenericAppearance::update (bool animate)
 		    !needsFullBakeNextFrame &&
 		    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(genShape))
 		{
+			// Stage 2.D.2.1 (M1): cache GPU light data now, while
+			// worldLights[0]->aRGB is the per-actor terrain-scaled value.
+			// Mirrors bdactor.cpp:2247 and :4398. Without this call,
+			// submitMultiShape() falls back to GatherGpuObjectLightDataOnly()
+			// during renderLists(), which reads the last-written
+			// worldLights[0]->aRGB (the final actor's value) instead of
+			// this actor's value. The resulting safe-by-accident invariant
+			// (GenericAppearance::SetLightList(NULL, 0) zaps s_listOfLights)
+			// is brittle — explicit caching removes the fragility.
+			genShape->CacheGpuLightData();
 			genShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
 			// Stage 2.D.2: dual-emit full bake — same rationale as BldgAppearance.
 			// Populates listOfTriangles[].aRGBLight for snapshot in submit().

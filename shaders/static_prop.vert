@@ -10,6 +10,14 @@
 // gos_tex_vertex_lighted to select VS-side vs FS-side calc_light placement.
 // static_prop.vert ALWAYS does VS-side here — the per-fragment branch in
 // the legacy mover path doesn't apply to the slice 1 batcher's draw shape.
+//
+// Stage 2.D.2.1 (C1): MC2_STATIC_PROP_LIGHTING gates the .zyx swizzle in
+// lighting.hglsl get_base_light(). This shader passes perVertexARGB with
+// layout (.x=B, .y=G, .z=R, .w=A), so .zyx reorders to (R,G,B) for
+// correct RGB-ordered input to calc_light. gos_tex_vertex_lighted.vert does
+// NOT define this symbol and therefore takes the .xyz (legacy) path which
+// preserves its pre-38ba240 behavior. See memory/mc2_argb_packing.md.
+#define MC2_STATIC_PROP_LIGHTING
 #include <include/lighting.hglsl>
 
 layout(location = 0) in vec3  a_position;
@@ -155,6 +163,12 @@ void main() {
     //    Using `mat3(M) * a_normal` (column-vector) applies the INVERSE
     //    rotation and produces wrong lighting for any non-identity rotation.
     //    Proved by Stage 2.D.2 parity: ~94% mismatch before fix, 0% after.
+    //
+    //    Stage 2.D.2.1 (m5) NOTE: ASSUMES no non-uniform scale on static-prop
+    //    shapeToWorld. If non-uniform scale is ever introduced, the correct
+    //    transform for normals is the inverse-transpose of the 3x3 submatrix,
+    //    not `a_normal * mat3(M)` — that fix becomes WRONG under non-uniform
+    //    scale and would silently produce incorrect lighting.
     vec3 worldNormal = a_normal * mat3(inst.modelMatrix);
     vec3 worldPos    = world.xyz;
 
@@ -162,23 +176,41 @@ void main() {
     //    inst.lightDataIndex addresses one ObjectLights entry in the
     //    LightsData[32] UBO populated per-actor by GatherGpuObjectLightDataOnly().
     //
-    //    isWindow (inst.flags bit 1): mirrors CPU tgl.cpp:1900 `!isWindow` guard.
+    //    isWindow (inst.flags bit 1): mirrors CPU tgl.cpp:1929 `!isWindow` guard.
     //    Window nodes (LitWin_* node names) skip ambient + directional lighting
     //    so their hot-color magic (dark-grey daytime, glowing at night) is
     //    unaffected by the sun direction. GPU must match: skip calc_light when
     //    isWindow is set, returning only get_base_light() output.
     //    Stage 2.D.2 parity proved this is the cause of ~86% mismatch on window
     //    building types — GPU was adding lighting where CPU skips it.
+    //
+    //    isSpotlight (inst.flags bit 2): mirrors CPU tgl.cpp:1929 `!isSpotlight`
+    //    guard — same condition as isWindow. Spotlight nodes skip the full
+    //    calc_light loop; base_light only. C++ side populates bit 2 in
+    //    gos_static_prop_batcher.cpp:1022 (`if (child->isSpotlight) flags |= (1u<<2)`).
+    //    Stage 2.D.2.1 (M2): added to GPU shader to close the gap vs CPU gate.
     const uint kFlagIsWindow    = (1u << 1);
+    const uint kFlagIsSpotlight = (1u << 2);
     vec3 lit;
-    if ((inst.flags & kFlagIsWindow) != 0u) {
-        // Window node: hot-color magic only, no sun/ambient lighting.
+    if ((inst.flags & (kFlagIsWindow | kFlagIsSpotlight)) != 0u) {
+        // Window or spotlight node: hot-color magic only, no sun/ambient lighting.
         lit = base_light;
     } else {
         lit = calc_light(int(inst.lightDataIndex), worldNormal, worldPos, base_light);
     }
 
-    // 6. Output. Alpha is always 1.0 — CPU tgl.cpp:2225 hardcodes
+    // 6. aRGBHighlight additive contribution — mirrors CPU tgl.cpp:2313-2335.
+    //    CPU adds R/G/B channels of aRGBHighlight (objective/selection tint)
+    //    to the lit argb, clamping each channel to [0, 255]. Must apply
+    //    BEFORE the parity pack below so the readback includes the highlight.
+    //    inst.aRGBHighlight is stored as (R,G,B,A) float[4] by submit() at
+    //    gos_static_prop_batcher.cpp:745-748 (decode from packed ARGB uint).
+    //    When no highlight is active the CPU passes aRGBHighlight=0 → r/g/b=0
+    //    → no-op add, matching tgl.cpp:2313 `if (aRGBHighlight)` gate.
+    //    Stage 2.D.2.1 (M3): closes the gap vs CPU for highlighted actors.
+    lit = clamp(lit + inst.aRGBHighlight.rgb, 0.0, 1.0);
+
+    // 6b. Output. Alpha is always 1.0 — CPU tgl.cpp:2225 hardcodes
     //    `(0xFF << 24) | r | g | b`; the raw aRGBLight alpha byte is
     //    NEVER propagated into the per-vertex lit argb. GPU must match.
     //    (The alpha in some aRGBLight tags like 0x02FFFFFF or 0xFAxxxxxx
