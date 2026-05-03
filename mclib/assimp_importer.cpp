@@ -25,9 +25,20 @@
 #include <set>
 #include <cstring>
 #include <cmath>
+#include <cstdio>
 
 #include "msl.h"
 #include "tgl.h"
+
+// Track D — env-gated diagnostic trace (default OFF). Set MC2_ASSIMP_TRACE=1
+// to emit per-import checkpoint lines. Convention matches existing
+// [TGL_POOL v1] / [DESTROY v1] env-gated tracers
+// (memory:debug_instrumentation_rule).
+static const bool s_assimpTrace = (getenv("MC2_ASSIMP_TRACE") != NULL);
+#define ASSIMP_TRACE(fmt, ...) \
+    do { if (s_assimpTrace) { \
+        fprintf(stderr, "[ASSIMP_TRACE] " fmt "\n", ##__VA_ARGS__); \
+        fflush(stderr); } } while (0)
 
 namespace {
 
@@ -338,43 +349,64 @@ void ComputeBoundingBox(TG_TypeMultiShape* out) {
 long ImportGeometryFromFile(const char* path, TG_TypeMultiShape* out) {
 	if (!path || !out) return -1;
 
+	ASSIMP_TRACE("ImportGeometryFromFile path='%s'", path);
+
 	Assimp::Importer imp;
+	ASSIMP_TRACE("  calling Assimp::Importer::ReadFile...");
 	const aiScene* scene = imp.ReadFile(path,
 		aiProcess_Triangulate           |
 		aiProcess_GenSmoothNormals      |
 		aiProcess_JoinIdenticalVertices |
 		aiProcess_ValidateDataStructure |
 		aiProcess_SortByPType);
+	ASSIMP_TRACE("  ReadFile returned scene=%p", (const void*)scene);
 
 	if (!scene) {
+		ASSIMP_TRACE("  ERROR: %s", imp.GetErrorString());
 		PAUSE(("[importer] %s: Assimp ReadFile failed: %s",
 		       path, imp.GetErrorString()));
 		return -1;
 	}
 
-	if (ValidateScene(scene, path) != 0)
+	ASSIMP_TRACE("  scene meshes=%u materials=%u animations=%u",
+	             scene->mNumMeshes, scene->mNumMaterials, scene->mNumAnimations);
+
+	if (ValidateScene(scene, path) != 0) {
+		ASSIMP_TRACE("  ValidateScene rejected");
 		return -1;
+	}
 
 	// Allocate the multi-shape's listOfTypeShapes[] and per-slot TG_TypeShape
 	// instances. One Assimp mesh → one TG_TypeShape (MVP; LODs not embedded).
+	ASSIMP_TRACE("  AllocateImportedShapes(%d)", (int)scene->mNumMeshes);
 	out->AllocateImportedShapes((int)scene->mNumMeshes);
 
 	// Build the multi-shape's TG_Texture[] before populating shapes — the
 	// per-shape TG_TinyTexture wiring (CreateListOfTextures) reads from the
 	// multi-shape table.
+	ASSIMP_TRACE("  BuildTextureList...");
 	BuildTextureList(scene, out);
+	ASSIMP_TRACE("  BuildTextureList done");
 
 	// Populate each shape from its mesh.
 	for (unsigned i = 0; i < scene->mNumMeshes; i++) {
+		ASSIMP_TRACE("  ImportShapeFromMesh i=%u verts=%u faces=%u matIdx=%u",
+		             i, scene->mMeshes[i]->mNumVertices, scene->mMeshes[i]->mNumFaces,
+		             scene->mMeshes[i]->mMaterialIndex);
 		TG_TypeNodePtr slot = out->GetTypeNode((long)i);
 		if (!slot || slot->GetNodeType() != SHAPE_NODE)
 			continue;
 		long r = ImportShapeFromMesh(scene, i, static_cast<TG_TypeShape*>(slot));
-		if (r != 0) return r;
+		if (r != 0) {
+			ASSIMP_TRACE("  ImportShapeFromMesh i=%u returned %ld", i, r);
+			return r;
+		}
 	}
 
+	ASSIMP_TRACE("  ComputeBoundingBox...");
 	ComputeBoundingBox(out);
 
+	ASSIMP_TRACE("  SUCCESS");
 	SPEW(("ASSIMP", "%s: %u meshes, %u materials imported",
 	      path, scene->mNumMeshes, scene->mNumMaterials));
 	return 0;

@@ -426,10 +426,21 @@ void TG_TypeMultiShape::SetImportedTextures(DWORD count,
 #include "assimp_importer.h"
 #endif
 
+// Track D — env-gated diagnostic trace. Set MC2_ASSIMP_TRACE=1 in the env to
+// emit per-load probe + import-result lines on stderr. Default off; matches
+// the [TGL_POOL v1] / [DESTROY v1] convention (memory:debug_instrumentation_rule).
+static const bool s_assimpTrace_msl = (getenv("MC2_ASSIMP_TRACE") != NULL);
+#define ASSIMP_TRACE_MSL(fmt, ...) \
+    do { if (s_assimpTrace_msl) { \
+        fprintf(stderr, "[ASSIMP_TRACE] " fmt "\n", ##__VA_ARGS__); \
+        fflush(stderr); } } while (0)
+
 long TG_TypeMultiShape::LoadFromFile(const char* baseName)
 {
 	if (!baseName || !*baseName)
 		return -1;
+
+	ASSIMP_TRACE_MSL("LoadFromFile baseName='%s'", baseName);
 
 #ifdef ENABLE_ASSIMP_IMPORTER
 	// Probe order: .glb (preferred new format, modder gate per advisor D3)
@@ -443,15 +454,21 @@ long TG_TypeMultiShape::LoadFromFile(const char* baseName)
 	{
 		FullPathFileName probePath;
 		probePath.init(tglPath, baseName, kImportExts[e]);
-		if (fileExists(probePath, FILE_ON_DISK))
+		const bool exists = fileExists(probePath, FILE_ON_DISK);
+		ASSIMP_TRACE_MSL("  probe '%s' exists=%d",
+		                  (const char*)probePath, (int)exists);
+		if (exists)
 		{
+			ASSIMP_TRACE_MSL("  calling ImportGeometryFromFile...");
 			long r = ImportGeometryFromFile(probePath, this);
+			ASSIMP_TRACE_MSL("  ImportGeometryFromFile returned %ld", r);
 			if (r == 0)
 				return NO_ERR;
 			// Importer logged the reason via STOP/PAUSE; fall through.
 			break;  // don't probe further extensions if one was rejected
 		}
 	}
+	ASSIMP_TRACE_MSL("  no modern source found, falling through to ASE");
 #endif // ENABLE_ASSIMP_IMPORTER
 
 	// Default fallback: legacy ASE path. Behavior is byte-equivalent to the
