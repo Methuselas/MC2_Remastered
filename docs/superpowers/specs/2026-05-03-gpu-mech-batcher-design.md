@@ -40,7 +40,7 @@ The stable geometry key is `(mechType->mechShape[lod], lod)`, NOT a live per-ins
 
 ```cpp
 struct GpuMechTypeLodRecord {
-    uint32_t firstBoneSlot;    // base index into type's fixed bone-slot range
+    uint32_t firstBoneIndex;   // vertex-local bone index namespace base (normally 0 per type/LOD)
     uint32_t numBones;         // count of TG_Shape nodes (u8 assertion: <= 255)
     uint32_t firstPacket;      // into shared packet table
     uint32_t packetCount;
@@ -113,6 +113,37 @@ struct GpuMechPacket {
 
 Packets are keyed by static geometry/material slot at registration. Live `gosTextureHandle` resolved at flush time only (MC2 mutates handles per frame — `memory/mc2_texture_handle_is_live.md`).
 
+### Per-actor submit descriptor: `GpuMechSubmitDesc`
+
+Carries all live per-actor context the batcher needs at submit/flush time:
+
+```cpp
+struct GpuMechSubmitDesc {
+    TG_MultiShape*              mechShape;        // live per-instance shape (shapeToWorld source)
+    const Mech3DAppearanceType* mechType;         // stable type pointer for packet/bone lookup
+    int                         currentLOD;
+    uint32_t                    lightDataIndex;   // Slice B1; 0 in Slice A
+    uint32_t                    renderFlags;      // bit 0: ALPHA_TEST, bit 1: lightsOut, bit 2: isHighlighted
+    uint32_t                    highlightARGB;
+    uint32_t                    fogARGB;
+    // Texture/paint context: live texture slot indices per packet, resolved at flush.
+    // The batcher reads mechType->mechShape[currentLOD]->listOfTypeShapes[i]->listOfTextures
+    // at flush time; no cached handles stored in desc.
+};
+```
+
+### Fallback reason enum: `GpuMechFallbackReason`
+
+```cpp
+enum class GpuMechFallbackReason : uint8_t {
+    UnregisteredType   = 0,
+    U8BoneOverflow     = 1,
+    RingOverflow       = 2,
+    TglGpuUnsupported  = 3,
+    ShaderInitFailure  = 4,
+};
+```
+
 ### SSBO ring layout
 
 Matches `STATIC_PROP_RING_FRAMES = 3` from `gos_static_prop_batcher.h:56`. Defines a private `constexpr uint32_t MECH_RING_FRAMES = 3u;` with a `static_assert` cross-check against `STATIC_PROP_RING_FRAMES` (Option A from the batcher header).
@@ -125,11 +156,11 @@ Per-ring frame, double-buffered:
 
 ## 3. Registration Flow
 
-`GpuMechBatcher::onMapLoad()` iterates eligible actor types and calls `registerTypeLod(mechType, lod)` for each `mechType × LOD` combination.
+`GpuMechBatcher::onMapLoad()` iterates eligible actor types and calls `registerTypeLod(mechType, lod)` for each `Mech3DAppearanceType* × LOD` combination.
 
 **Registration inputs:**
-- `mechType->mechShape[lod]` — type-level geometry pointer (stable)
-- `TG_MultiShape::listOfTypeShapes` — per-node geometry for this LOD
+- `mechType->mechShape[lod]` — `TG_TypeMultiShape*`, type-level geometry (stable; declared at mech3d.h:109)
+- The multishape's per-node geometry for this LOD
 
 **Registration produces:**
 - VBO append: positions, normals, UVs (from `TG_UVData`), bone indices (node index within this type), bone weights (`(1,0,0,0)` for Slice A), tangent oct (zero-fill for stock), aRGBLight
@@ -326,22 +357,20 @@ public:
     void onMapLoad();
     void onMapUnload();
 
-    void registerTypeLod(TG_TypeShape* typeShape, int lod);
+    void registerTypeLod(const Mech3DAppearanceType* mechType, int lod);
+    // Internally reads mechType->mechShape[lod] (TG_TypeMultiShape*, stable type-level pointer)
     void finalizeGeometry();
 
-    void recordEligibleActor(GpuStaticPropPopulation pop);
-    void recordCpuFallback(GpuStaticPropPopulation pop);
+    void recordEligibleActor();
+    void recordCpuFallback(GpuMechFallbackReason reason);
 
-    [[nodiscard]] bool submitActor(TG_MultiShape* mechShape,
-                                   const TG_TypeShape* mechType,
-                                   int currentLOD,
-                                   uint32_t lightDataIndex,
-                                   uint32_t renderFlags,
-                                   uint32_t highlightARGB,
-                                   uint32_t fogARGB);
+    // GpuMechSubmitDesc carries all live per-actor context needed at flush:
+    //   mechShape (live TG_MultiShape*), mechType (Mech3DAppearanceType*), currentLOD,
+    //   texture/paint context, lightDataIndex, renderFlags, highlightARGB, fogARGB.
+    [[nodiscard]] bool submitActor(const GpuMechSubmitDesc& desc);
 
     void flush();
-    void flushShadow();  // no-op in Slice A; stub for Slice B2+ shadow offload
+    void flushShadow();  // no-op in Slice A/B1/B2; reserved for a future shadow-offload slice
 
     bool wasLastFailureLateRegistration() const;
 
@@ -374,7 +403,7 @@ public:
 
 | Action | File | Notes |
 |---|---|---|
-| Create | `GameOS/gameos/gos_mech_batcher.h` | `GpuMechBatcher` class, `GpuMechInstance`, `GpuMechBone`, `GpuMechTypeLodRecord`, `GpuMechPacket` |
+| Create | `GameOS/gameos/gos_mech_batcher.h` | `GpuMechBatcher` class, `GpuMechInstance`, `GpuMechBone`, `GpuMechTypeLodRecord`, `GpuMechPacket`, `GpuMechSubmitDesc`, `GpuMechFallbackReason` |
 | Create | `GameOS/gameos/gos_mech_batcher.cpp` | Singleton impl, ring-buffer management, registration, flush |
 | Create | `shaders/mech.vert` | Rigid-node vertex shader, 7-attribute ABI, `u_instanceBase` pattern |
 | Create | `shaders/mech.frag` | Fragment shader, varyings from VS, one bound `sampler2D` |
