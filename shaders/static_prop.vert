@@ -47,10 +47,29 @@ struct PerTypeData {
 layout(std430, binding = 0) readonly buffer Instances { Instance     i[]; } instances_;
 layout(std430, binding = 1) readonly buffer Colors    { uint         c[]; } colors_;
 layout(std430, binding = 2) readonly buffer PerType   { PerTypeData  t[]; } perType_;
+// Slice 2 (object-offload) — Stage 2.D.1: parity readback harness output.
+// Bound only when MC2_OBJECT_PARITY_CHECK=1 from the C++ side; the
+// u_parityWrite gate below short-circuits the write when unbound so this
+// declaration is harmless on the default-off path. Index convention:
+//   parityOut[gl_InstanceID * u_parityVertsPerType + gl_VertexID]
+// where u_parityVertsPerType is set per-draw to type.vertexCount (constant
+// inside one glDrawElementsInstancedBaseVertex call). The bound range from
+// glBindBufferRange is sized exactly instanceCount * vertsPerType uint32
+// entries, so writes never overflow.
+layout(std430, binding = 3) buffer ParityOut { uint parityOut[]; } parityOut_;
 
 uniform mat4 u_worldToClip;
 uniform vec4 u_terrainViewport;
 uniform mat4 u_mvp;
+// Slice 2 (object-offload) — Stage 2.D.1: parity write gate.
+// 0 (default) = no write to parityOut_; nonzero = write per-vertex lit ARGB.
+// 'uniform uint' crashes this engine's shader compile (memory/uniform_uint_crash.md)
+// so we use int + a >0 test in GLSL.
+uniform int u_parityWrite;
+// Per-draw vertex count for the type currently being drawn. Constant
+// inside one glDrawElementsInstancedBaseVertex call. Set by the C++ side
+// to the same value as u_maxLocalVertexID + 1.
+uniform int u_parityVertsPerType;
 
 out vec3  v_normal;
 out vec2  v_uv;
@@ -141,6 +160,28 @@ void main() {
     // 6. Output. Alpha from the per-vertex tag (supports alpha-test path
     //    and matches CPU emit's alpha encoding). RGB is the lit color.
     v_argb = vec4(lit, perVertexARGB.w);
+
+    // 7. Slice 2 (object-offload) — Stage 2.D.1: parity readback harness.
+    //    Pack the per-vertex lit ARGB into a single uint matching the
+    //    in-memory B,G,R,A byte order convention used everywhere in this
+    //    engine (see memory/mc2_argb_packing.md and the
+    //    a_aRGBLight decode at lines 107-110 above). The CPU side that
+    //    Stage 2.D.2/2.D.3 will compare against (listOfTriangles[].aRGBLight)
+    //    is also a DWORD-as-BGRA, so this packing keeps the bytewise
+    //    compare arithmetic-free.
+    //
+    //    The bound parity buffer range is sized exactly
+    //    instanceCount * u_parityVertsPerType uint entries on the C++ side,
+    //    so this index is always in-bounds when u_parityWrite > 0.
+    if (u_parityWrite > 0) {
+        uint b8 = uint(clamp(lit.b * 255.0, 0.0, 255.0));
+        uint g8 = uint(clamp(lit.g * 255.0, 0.0, 255.0));
+        uint r8 = uint(clamp(lit.r * 255.0, 0.0, 255.0));
+        uint a8 = uint(clamp(perVertexARGB.w * 255.0, 0.0, 255.0));
+        uint packed = b8 | (g8 << 8) | (r8 << 16) | (a8 << 24);
+        int idx = gl_InstanceID * u_parityVertsPerType + gl_VertexID;
+        parityOut_.parityOut[idx] = packed;
+    }
 
     v_normal     = worldNormal;
     v_uv         = a_uv;

@@ -1,6 +1,7 @@
 #include "gos_static_prop_batcher.h"
 #include "gos_static_prop_killswitch.h"  // gos_GetGLTextureId
 #include "gos_profiler.h"
+#include "gos_object_parity.h"           // Slice 2 Stage 2.D.1 parity harness
 #include "gameos.hpp"
 #include "utils/shader_builder.h"
 #include "tgl.h"  // TG_Shape::s_worldToClip
@@ -58,6 +59,35 @@ GLsync   s_fence[RING_FRAMES] = {0};
 uint32_t s_frameSlot = 0;
 size_t   s_instanceCapacity = 0;
 size_t   s_colorCapacity    = 0;
+
+// Slice 2 (object-offload) — Stage 2.D.1: parity readback harness.
+//
+// The parity SSBO is allocated lazily by gos_object_parity::EnsureParityOutputSSBO()
+// the first time flush() runs with MC2_OBJECT_PARITY_CHECK=1 set. It's sized
+// kParitySlotBytes per slot * RING_FRAMES (matches s_fence ring depth).
+//
+// Stock tier1 missions show on the order of low-thousands of GPU-drawn
+// instances per frame. Worst per-type vertex count is bounded by the
+// largest TG_TypeShape::numTypeVertices in the loaded map (typically
+// 100-500 verts for buildings, less for trees). 4 MB per slot covers
+// ~1M uint32 entries (1M lit-ARGB writes), which is comfortably above
+// the actual draw load (RAlt+0 stress survey ~250-400K verts/frame on
+// tier1's busiest shoppingmall+suburb missions). Sized at a power of two
+// so the per-type byte alignment trim is cheap.
+constexpr size_t kParitySlotBytes = 4 * 1024 * 1024;
+
+// Per-slot byte usage of the parity SSBO. Tracks how much of slot
+// kParitySlotBytes was actually written in the most recent visit to that
+// slot, so the next-visit readback at the top of flush() can scope its
+// glGetBufferSubData to exactly the live range. Indexed by s_frameSlot.
+size_t   s_parityBytesUsedThisFrame = 0;
+size_t   s_parityBytesUsedPerSlot[RING_FRAMES] = {0};
+// Discard buffer for the readback. Sized once on first parity-on visit;
+// std::vector keeps it alive for the lifetime of the process so we don't
+// reallocate per frame. Bytes are read into this and DISCARDED — Stage
+// 2.D.1 does no compare; 2.D.2/2.D.3 will use these bytes against a CPU
+// recompute for the byte-wise compare.
+std::vector<uint8_t> s_parityReadbackScratch;
 
 // Forward decl -- body appears after state block below, so it can reference
 // s_fatalRegistrationFailure which is declared further down in this namespace.
@@ -1045,6 +1075,7 @@ void GpuStaticPropBatcher::flush() {
     if (!uploadAllBucketsIfNeeded()) {
         s_bucketsByType.clear();
         accumulateMonotonicAndMaybeEmit(/*forceEmit=*/false);
+        gos_object_parity::ParityFrameTick();
         return;
     }
     // Program compile/link latch. submitMultiShape already gates submissions
@@ -1054,8 +1085,54 @@ void GpuStaticPropBatcher::flush() {
         s_bucketsByType.clear();
         s_lastUploadedSlot = 0xFFFFFFFFu;
         accumulateMonotonicAndMaybeEmit(/*forceEmit=*/false);
+        gos_object_parity::ParityFrameTick();
         return;
     }
+
+    // Slice 2 (object-offload) — Stage 2.D.1: parity readback handshake.
+    //
+    // uploadAllBucketsIfNeeded() above just glClientWaitSync'd on
+    // s_fence[s_frameSlot] (the fence from RING_FRAMES frames ago). At
+    // this point the parity SSBO writes from that prior cycle are
+    // GPU-complete and safe to read on the CPU.
+    //
+    // 2.D.1 acceptance is "the readback runs without crash or stall" — we
+    // glGetBufferSubData the live byte range from this slot into a discard
+    // scratch buffer and DROP the bytes. 2.D.2/2.D.3 will swap the discard
+    // for a CPU recompute compare.
+    //
+    // Skips entirely when MC2_OBJECT_PARITY_CHECK is unset
+    // (IsParityCheckEnabled() returns false → EnsureParityOutputSSBO()
+    // returns 0 → the bind/uniform/readback all short-circuit). This is
+    // the load-bearing default-off contract per the advisor.
+    GLuint parityBuffer = 0;
+    if (gos_object_parity::IsParityCheckEnabled()) {
+        parityBuffer = gos_object_parity::EnsureParityOutputSSBO(kParitySlotBytes);
+        if (parityBuffer != 0) {
+            const size_t bytesToRead = s_parityBytesUsedPerSlot[s_frameSlot];
+            if (bytesToRead > 0) {
+                if (s_parityReadbackScratch.size() < bytesToRead) {
+                    s_parityReadbackScratch.resize(bytesToRead);
+                }
+                const GLintptr slotBase =
+                    static_cast<GLintptr>(s_frameSlot) *
+                    static_cast<GLintptr>(kParitySlotBytes);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, parityBuffer);
+                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                                   slotBase,
+                                   static_cast<GLsizeiptr>(bytesToRead),
+                                   s_parityReadbackScratch.data());
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+                gos_object_parity::Counters_AddReadbackBytesThisFrame(
+                    static_cast<uint64_t>(bytesToRead));
+                // Bytes intentionally discarded for Stage 2.D.1.
+            }
+        }
+        // Reset this slot's usage; it will be re-populated by the per-type
+        // bind loop below.
+        s_parityBytesUsedPerSlot[s_frameSlot] = 0;
+    }
+    s_parityBytesUsedThisFrame = 0;
 
     // Save ALL GL state we'll mutate so we can restore it at the end.
     // This is the defensive-save approach — the engine's MLR/HUD paths
@@ -1065,7 +1142,9 @@ void GpuStaticPropBatcher::flush() {
     GLint prevActiveTex=0, prevTexUnit0=0;
     // Slice 2 (object-offload) — Stage 2.C.2: also save/restore SSBO slot 2
     // (per-type hot-color SSBO; bound once for the whole flush, not per-type).
-    GLint prevSsbo0=0, prevSsbo1=0, prevSsbo2=0;
+    // Stage 2.D.1: also save/restore SSBO slot 3 (parity readback harness;
+    // bound only when MC2_OBJECT_PARITY_CHECK=1).
+    GLint prevSsbo0=0, prevSsbo1=0, prevSsbo2=0, prevSsbo3=0;
     GLboolean prevDepthTest=GL_FALSE, prevDepthMask=GL_FALSE;
     GLboolean prevCullFace=GL_FALSE, prevBlend=GL_FALSE;
     GLint prevDepthFunc=GL_LESS, prevCullMode=GL_BACK;
@@ -1079,6 +1158,7 @@ void GpuStaticPropBatcher::flush() {
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 1, &prevSsbo1);
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 2, &prevSsbo2);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 3, &prevSsbo3);
     prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
     glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
     glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
@@ -1137,6 +1217,17 @@ void GpuStaticPropBatcher::flush() {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, s_perTypeSsbo);
     }
 
+    // Slice 2 (object-offload) — Stage 2.D.1: parity write defaults OFF.
+    // Per-type loop below flips it to 1 only for draws whose bound
+    // parity-buffer range fits in this slot's remaining byte budget.
+    // When MC2_OBJECT_PARITY_CHECK is unset, parityBuffer == 0 and the
+    // uniform stays 0 for every draw (no shader writes happen).
+    const GLint locParityWrite =
+        glGetUniformLocation(s_staticPropProgram, "u_parityWrite");
+    const GLint locParityVerts =
+        glGetUniformLocation(s_staticPropProgram, "u_parityVertsPerType");
+    if (locParityWrite >= 0) glUniform1i(locParityWrite, 0);
+
     // Per-type drawing: bind per-type instance & color SSBO ranges, then
     // issue one instanced draw per packet. gl_InstanceID in the shader
     // addresses 0..N-1 within the bound range (no gl_BaseInstance needed).
@@ -1167,6 +1258,53 @@ void GpuStaticPropBatcher::flush() {
         const int maxID = (type.vertexCount > 0u) ? (int)(type.vertexCount - 1u) : 0;
         glUniform1i(glGetUniformLocation(s_staticPropProgram, "u_maxLocalVertexID"), maxID);
 
+        // Slice 2 (object-offload) — Stage 2.D.1: per-type parity bind.
+        //
+        // The shader writes parityOut[gl_InstanceID * vertsPerType + gl_VertexID].
+        // We bind a tight glBindBufferRange so that index always lands inside
+        // the bound region. Each per-type draw consumes its bytes from a
+        // monotonic cursor within slot s_frameSlot of the parity SSBO; if
+        // the slot's budget would be exceeded by this draw, we fall back to
+        // u_parityWrite=0 and the shader skips the write (the readback at
+        // top of next visit then doesn't see those vertices — fine for
+        // 2.D.1 acceptance, will be tightened in 2.D.2/2.D.3 if real-world
+        // peak exceeds kParitySlotBytes).
+        bool wroteParityThisDraw = false;
+        if (parityBuffer != 0 && type.vertexCount > 0u) {
+            const size_t needBytes = static_cast<size_t>(r.instanceCount) *
+                                     static_cast<size_t>(type.vertexCount) *
+                                     sizeof(uint32_t);
+            // SSBO offset alignment requirement. Mirrors the per-type
+            // instance/color bind alignment used by uploadAllBucketsIfNeeded
+            // above (its s_ssboAlignment is function-scope, so query once
+            // here too — single static, set on first hit).
+            static GLint s_parityAlignment = 0;
+            if (s_parityAlignment == 0) {
+                glGetIntegerv(GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT,
+                              &s_parityAlignment);
+                if (s_parityAlignment < 16) s_parityAlignment = 256;
+            }
+            const size_t alignMask = static_cast<size_t>(s_parityAlignment) - 1u;
+            const size_t cursor = (s_parityBytesUsedThisFrame + alignMask) & ~alignMask;
+            if (needBytes > 0 && cursor + needBytes <= kParitySlotBytes) {
+                const GLintptr slotBase =
+                    static_cast<GLintptr>(s_frameSlot) *
+                    static_cast<GLintptr>(kParitySlotBytes);
+                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 3, parityBuffer,
+                                  slotBase + static_cast<GLintptr>(cursor),
+                                  static_cast<GLsizeiptr>(needBytes));
+                if (locParityVerts >= 0)
+                    glUniform1i(locParityVerts, (int)type.vertexCount);
+                if (locParityWrite >= 0)
+                    glUniform1i(locParityWrite, 1);
+                s_parityBytesUsedThisFrame = cursor + needBytes;
+                gos_object_parity::Counters_AddVerticesWrittenThisFrame(
+                    static_cast<uint64_t>(r.instanceCount) *
+                    static_cast<uint64_t>(type.vertexCount));
+                wroteParityThisDraw = true;
+            }
+        }
+
         for (uint32_t p = 0; p < type.packetCount; ++p) {
             const GpuStaticPropPacket& pkt = s_packets[type.firstPacket + p];
             // Resolve the texture handle at draw time. MC2 mutates
@@ -1196,15 +1334,26 @@ void GpuStaticPropBatcher::flush() {
                 r.instanceCount,
                 pkt.baseVertex);
         }
+        // Stage 2.D.1: clear u_parityWrite back to 0 so a subsequent type
+        // that gets rejected by the slot-budget check (or has zero
+        // vertices) can't inherit a stale write authorization against this
+        // type's binding range.
+        if (wroteParityThisDraw && locParityWrite >= 0) {
+            glUniform1i(locParityWrite, 0);
+        }
     }
 
     s_fence[s_frameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    // Stage 2.D.1: record this slot's parity-byte usage so the next visit
+    // (RING_FRAMES frames from now) knows exactly how much to glGetBufferSubData.
+    s_parityBytesUsedPerSlot[s_frameSlot] = s_parityBytesUsedThisFrame;
 
     // Restore GL state to EXACTLY what it was at flush start.
     // SSBOs
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, (GLuint)prevSsbo1);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)prevSsbo2);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, (GLuint)prevSsbo3);
     // Texture binding on unit 0
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit0);
@@ -1223,6 +1372,11 @@ void GpuStaticPropBatcher::flush() {
     if (prevBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
 
     accumulateMonotonicAndMaybeEmit(/*forceEmit=*/false);
+
+    // Slice 2 (object-offload) — Stage 2.D.1: tick parity counters and emit
+    // the 600-frame summary line if the cadence is hit. Internally a no-op
+    // when MC2_OBJECT_PARITY_CHECK is unset.
+    gos_object_parity::ParityFrameTick();
 
     s_bucketsByType.clear();
     s_lastUploadedSlot = 0xFFFFFFFFu;  // reset for next frame
