@@ -90,6 +90,13 @@ set(SOURCES ${SOURCES}
     utilities.cpp
     )
 
+# Track D — Assimp-backed FBX/GLB mech importer.
+# Source file always exists; its body is gated on ENABLE_ASSIMP_IMPORTER so
+# it compiles to nothing when off.
+if(ENABLE_ASSIMP_IMPORTER)
+    list(APPEND SOURCES assimp_importer.cpp)
+endif()
+
 include_directories(${COMMON_INCLUDE_DIRS} "./mclib" "../Editor" "../DirectX8/include" "./")
 include_directories(${THIRDPARTY_INCLUDE_DIRS})
 

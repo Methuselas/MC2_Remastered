@@ -140,7 +140,56 @@ The user task says the MadCat .glb is "hand-authored / dropped next to madcat.in
 
 ## Architectural decisions that need user/advisor sign-off before any revision pass
 
-1. **Confirm: defer `TG_AnimateShape::Clone()` until M2.** User task asked for it in MVP "commit 2"; my read is it's anim-coupled and unnecessary for frozen-pose MVP. If user disagrees, I'll land a stub-with-deep-copy now.
-2. **Confirm: friend declaration is the right access mechanism for `assimp_importer`.** Alternative is making the importer a TG_TypeMultiShape member function. Friend keeps the importer code cleanly isolated; member is more conventional. Friend is my default.
-3. **Confirm: deploy target is `mc2-win64-v0.3`** (user confirmed). User task wrote `v0.2` in several places — defer to user message.
-4. **Confirm: test-asset sourcing path** (Options (a)/(b)/(c) above). My default is (a) — convert from existing FBX, since Assimp handles both equivalently and the seam-proof is what matters.
+(Open questions, all answered by advisor below.)
+
+1. ~~Confirm: defer `TG_AnimateShape::Clone()` until M2.~~ → see D1 below.
+2. ~~Confirm: friend declaration is the right access mechanism for `assimp_importer`.~~ → see D2 below.
+3. ~~Confirm: deploy target is `mc2-win64-v0.3`.~~ → see D5 below.
+4. ~~Confirm: test-asset sourcing path.~~ → see D3 below.
+
+---
+
+## Advisor verdict (2026-05-02)
+
+Reviewed by advisor. Verdict: proceed, but tighten scope and commit hygiene. Five binding directives:
+
+### D1 — Defer `TG_AnimateShape::Clone()` to M2 — APPROVED, with explicit scope-change wording.
+Animation is out of geometry-only MVP. Clone is anim-coupled. **Condition:** the MVP checklist + final memory entry must record this as a deliberate scope change so the original "2 gap commits before integration" instruction is not assumed satisfied. `track_d_assimp_mvp_done.md` will list four explicit deferrals: Clone(), `.tglc`/`.aglc` cache, animation, ASE shadow-X texture-doubling. Follow-on M2 work picks them up.
+
+### D2 — Switch `friend` → narrow `TG_TypeShape::InitFromImportedMesh(...)` member API.
+Avoids exposing Assimp types in TG headers and keeps the access surface explicit. Friend was acceptable as MVP compromise but advisor prefers the narrow constructor approach. **Adopting.** Commit 2's plan rewritten:
+- `TG_TypeShape::InitFromImportedMesh(const char* nodeId, const char* parentId, const Stuff::Point3D& center, DWORD numVerts, DWORD numTris, TG_TypeVertexPtr vertexBuf, TG_TypeTrianglePtr triangleBuf)` — copies caller-allocated buffers into class-owned storage (allocated from `TG_Shape::tglHeap`).
+- `TG_TypeMultiShape::AllocateImportedShapes(int numShapes)` — allocates `listOfTypeShapes[]` array and per-slot `TG_TypeShape` instances.
+- `TG_TypeMultiShape::SetImportedTextures(DWORD count, const char* names[], const bool alphas[])` — populates the multi-shape's `TG_Texture[]` with sentinel handles, then calls existing `TG_TypeShape::CreateListOfTextures` per shape to wire `TG_TinyTexture` linkage.
+
+The importer translation unit then only calls these member methods; no friend declaration, no Assimp-type leakage into TG headers.
+
+### D3 — MVP gate is `madcat.glb` (not `.fbx`).
+The user-facing modder gate is GLB. FBX is supported by Assimp but the MVP's value is "modder drops a .glb." **Adopting.** Test-asset acquisition: convert `MC2 Conversions/MadCat/MadCat.FBX` → `madcat.glb` (Blender export, or Assimp CLI `--export-format=glb2` equivalent). Validate the .glb path specifically.
+
+### D4 — Vendor Assimp at `3rdparty/assimp/` instead of FetchContent.
+Deliverable text says vendor; advisor flags silent divergence as the failure mode. **Adopting.** Approach: shallow clone of `v5.3.1` into `3rdparty/assimp/`, `add_subdirectory(3rdparty/assimp out/3rdparty/assimp EXCLUDE_FROM_ALL)`, matches `3rdparty/tracy/` precedent. FetchContent retired before Commit 1 lands.
+
+### D5 — Patch stale `v0.2` deploy references everywhere.
+User task and parts of the plan say `v0.2`; correct deploy is `mc2-win64-v0.3/`. **Adopting.** All v0.2 references in the plan, status doc, and any docs the MVP touches will be updated in a documentation-only commit before the final PR.
+
+### Other advisor notes incorporated
+
+- **Pre-existing slice-2 WIP in `mclib/tgl.h`**: not part of Track D, must not be swept into commits. **Resolution:** working in the new `assimp-testing` worktree branched from `claude/nifty-mendeleev` HEAD `cdcdb7d` — that committed HEAD's `tgl.h` is clean, so commits in this worktree are naturally isolated from anyone else's WIP.
+- **Texture-list divergence vs ASE byte-equivalence:** ASE doubles `numTextures` (Nx base + Nx shadow-X variant `<name>X.tga`); GLB skips the doubling. Spec says "renderer must not distinguish source," but this is a deliberate divergence for geometry-only MVP. Description in the final memo is "runtime-render-equivalent for geometry-only MadCat," not byte-for-byte.
+- **Commit 1 must include the pre-baseline data.** `tests/smoke/baselines/pre-trackd-mvp.json` lands in Commit 1; commit message body cites the 5/5 PASS / FPS 125–142 reference numbers.
+- **Pre-commit gate: build must verify before any commit lands.** Will not stage anything until vendored-Assimp build produces a working `mc2.exe`.
+
+### Updated commit sequence (post-advisor)
+
+| # | Files | Purpose |
+|---|---|---|
+| 1 | `CMakeLists.txt`, `mclib/CMakeLists.txt`, `mclib/assimp_importer.{h,cpp}` (stubs), `3rdparty/assimp/**` (vendored), `tests/smoke/baselines/pre-trackd-mvp.json`, this findings doc | Build plumbing + baseline + advisor-acknowledged MVP scope |
+| 2 | `mclib/tgl.h`, `mclib/msl.h`, `mclib/tgl.cpp`, `mclib/msl.cpp` | `TG_TypeShape::InitFromImportedMesh`, `TG_TypeMultiShape::AllocateImportedShapes`, `SetImportedTextures` |
+| 3 | `mclib/assimp_importer.cpp` | `BuildTextureList` (multi-shape `TG_Texture[]` + per-shape `CreateListOfTextures` delegation) |
+| 4 | `mclib/assimp_importer.cpp` | `ImportGeometryFromFile` body + node validator |
+| 5 | `mclib/msl.h`, `mclib/msl.cpp` | `TG_TypeMultiShape::LoadFromFile` (probe-only, no cache) |
+| 6 | `mclib/mech3d.cpp` | `[Import] Source=` INI parsing |
+| 7 | `mclib/mech3d.cpp` | Wire LOD0 site (line ~286) to `LoadFromFile` |
+| 8 | docs/plan/spec edits | `v0.2`→`v0.3` patch, scope-change record |
+| 9 | `~/.claude/projects/.../memory/track_d_assimp_mvp_done.md` + MEMORY.md index | Final memory write — explicit M2 deferrals list |

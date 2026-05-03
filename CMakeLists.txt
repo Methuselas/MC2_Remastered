@@ -165,6 +165,45 @@ set(THIRDPARTY_INCLUDE_DIRS "${CMAKE_PREFIX_PATH}/include")
 # Tracy headers resolve as <tracy/Tracy.hpp>
 list(APPEND THIRDPARTY_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tracy")
 
+# ---------------------------------------------------------------------------
+# Track D — Assimp-backed FBX/GLB mech importer (vendored).
+#
+# Default ON. When OFF, the importer .cpp body is gated out and mech3d.cpp
+# falls through to the legacy ASE path unconditionally. Stock install must
+# remain playable regardless of this flag.
+#
+# Vendoring rationale: deterministic builds, no network at configure time,
+# matches 3rdparty/tracy precedent. Source lives at 3rdparty/assimp/
+# (master branch tarball; pin to a release tag later once MVP stabilises).
+#
+# Spec: docs/superpowers/specs/2026-04-27-assimp-mech-importer-design.md
+# Plan: docs/superpowers/plans/2026-04-27-assimp-mech-importer.md
+# Findings (advisor review): docs/superpowers/explorations/2026-05-02-track-d-mvp-adversarial-findings.md
+# ---------------------------------------------------------------------------
+option(ENABLE_ASSIMP_IMPORTER "Enable FBX/GLB mech import via Assimp (Track D)" ON)
+
+if(ENABLE_ASSIMP_IMPORTER)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/assimp/CMakeLists.txt")
+        message(FATAL_ERROR
+            "ENABLE_ASSIMP_IMPORTER=ON but 3rdparty/assimp/ is empty. "
+            "Vendor Assimp source there (master branch from "
+            "https://github.com/assimp/assimp), or set -DENABLE_ASSIMP_IMPORTER=OFF.")
+    endif()
+    # Prune Assimp's build surface to the importers we actually need.
+    set(ASSIMP_BUILD_TESTS                    OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ASSIMP_TOOLS             OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_INSTALL                        OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_FBX_IMPORTER             ON  CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_GLTF_IMPORTER            ON  CACHE BOOL "" FORCE)
+    set(ASSIMP_WARNINGS_AS_ERRORS             OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS                     OFF CACHE BOOL "" FORCE)
+    # EXCLUDE_FROM_ALL: don't build assimp unless mclib actually links it.
+    add_subdirectory(3rdparty/assimp out/3rdparty/assimp EXCLUDE_FROM_ALL)
+    message(STATUS "ENABLE_ASSIMP_IMPORTER=ON — vendored Assimp at 3rdparty/assimp/ (FBX + GLTF, static)")
+endif()
+
 add_subdirectory("./mclib/" "./out/mclib")
 add_subdirectory("./RenderCore" "./out/RenderCore")
 add_subdirectory("./RenderWorld" "./out/RenderWorld")
