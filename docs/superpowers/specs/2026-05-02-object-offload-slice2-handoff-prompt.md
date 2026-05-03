@@ -2,12 +2,15 @@
 
 > **Role for a fresh session reading this:** You are picking up the
 > object-offload arc at slice 2. **Stages 2.A, 2.B, and 2.C are already
-> complete and committed; do not re-implement them.** Step 0 adversarial
-> review has already been applied to the design spec. Your job is to
-> execute Stages 2.D → 2.E per the corrected spec, with the per-stage
-> gates as written. **Read the "Stage 2.D pre-conditions" section below
-> before starting 2.D — there are pending follow-ups from 2.B/2.C that
-> the advisor recommends resolving first.**
+> complete and committed; do not re-implement them.** The late-reg
+> allowlist is RESOLVED (commit `06ac847`). Stage 2.D is unblocked.
+>
+> **For Stage 2.D specifically, use the focused handoff at**
+> `docs/superpowers/specs/2026-05-02-object-offload-slice2-stage2d-handoff-prompt.md`
+> **— it's a self-contained fresh-session handoff.** This document
+> remains the authoritative slice-2 status reference (commit history,
+> Stage 2.D pre-conditions resolution, late-reg corrections, operational
+> warnings).
 
 ---
 
