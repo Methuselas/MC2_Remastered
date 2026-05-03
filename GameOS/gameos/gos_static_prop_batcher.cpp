@@ -787,12 +787,9 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
             //     across log files / ts identity over a process lifetime)
             char addrBuf[32];
             snprintf(addrBuf, sizeof(addrBuf), "%p", (const void*)ts);
-            const std::string typeKey = addrBuf;  // dedup key — pointer-stable
+            const std::string typeKey = addrBuf;  // dedup key — pointer-stable within one run
             auto& count = s_lateRegisterCounts[typeKey];
             if (count == 0) {
-                const bool allowed =
-                    (s_lateRegisterAllowlist.find(typeKey)
-                     != s_lateRegisterAllowlist.end());
                 const char* nodeId = nullptr;
                 if (ts) {
                     // TG_TypeNode::getNodeId is non-const; we have a
@@ -800,6 +797,20 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
                     // const_cast is the minimal workaround.
                     nodeId = const_cast<TG_TypeShape*>(ts)->getNodeId();
                 }
+                // Allowlist matching uses the nodeId, NOT the pointer-key.
+                // Pointers are not stable across process runs, so a pointer
+                // entry in data/objbatcher_late_register_allowlist.txt is
+                // useless. nodeId comes from the .ase author and is stable
+                // across runs and across the same nodeId-family of types
+                // (LOD variants of the same shape share a nodeId — e.g.,
+                // multiple TG_TypeShape* with nodeId="Centipede" at
+                // different vertexCounts; allowlisting "Centipede" matches
+                // the family). Empty-name shapes cannot be allowlisted —
+                // the file would have no useful key for them.
+                const bool allowed =
+                    nodeId && nodeId[0] &&
+                    (s_lateRegisterAllowlist.find(nodeId)
+                     != s_lateRegisterAllowlist.end());
                 std::fprintf(stderr,
                        "[OBJBATCHER v1] event=late_register type=%s nodeId=%s caller=%s allowed=%d\n",
                        typeKey.c_str(),

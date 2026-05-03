@@ -1,6 +1,28 @@
 # Object batcher late-registration allowlist.
-# One TG_TypeShape name (or pointer-form) per line. # for comments.
-# Initial state: empty (strict mode). Add entries only after observing
-# in [OBJBATCHER v1] event=late_register output AND confirming via
-# grep that the type is genuinely out-of-scope (e.g., late-spawned
-# artillery from code/artlry.cpp). Do not add speculatively.
+#
+# Format: one TG_TypeShape nodeId per line. # starts a comment.
+# nodeId is the value printed in `nodeId=...` of the
+# [OBJBATCHER v1] event=late_register log line; it comes from the
+# .ase author and is STABLE across process runs (the pointer-form is
+# NOT stable and cannot be allowlisted). LOD variants share a nodeId
+# so allowlisting the name covers the whole family.
+#
+# Add entries only after observing in [OBJBATCHER v1] event=late_register
+# output AND confirming via classification that the type is genuinely
+# outside static-prop offload scope (HUD overlay, vestigial render
+# geometry, late-spawn cinematic prop, etc.). Real buildings/trees/
+# generics that should have been registered must be FIXED at the
+# registration walk site, NOT allowlisted.
+
+# Skybox GenericAppearance — vestigial post terrain CPU→GPU migration.
+# Sky now comes from the terrain shader's post-process pipeline. The
+# actor still goes through *Appearance::render every frame but draws
+# nothing visible. Surfaces in 24/24 campaign missions.
+# See memory/skybox_actor_vestigial_post_terrain_gpu.md.
+Cylinder01
+
+# Compass HUD overlay — GenericAppearance for the in-game compass widget
+# drawn over the play field. HUD element, not world geometry; loaded
+# outside the standard map-load static-prop registration walk by design.
+# Surfaces in 22/24 campaign missions.
+compassplane

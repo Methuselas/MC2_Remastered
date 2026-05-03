@@ -53,32 +53,40 @@ Do not re-implement them. Verify each commit is present before starting 2.D.
   visible. **Pinned-camera Tracy is required for apples-to-apples
   validation** and is part of Stage 2.E's harness.
 
-### Stage 2.D pre-conditions (advisor recommendation, do NOT skip)
+### Stage 2.D pre-conditions — RESOLVED 2026-05-02
 
-The advisor (post-Stage-2.C 2026-05-02) recommends NOT starting Stage 2.D
-immediately. Two carry-forward concerns from 2.B/2.C should be addressed
-first, OR Stage 2.D's parity check must explicitly account for them:
+**Full campaign late-reg inventory found only two unique types, both
+outside static-prop offload scope; no registration-walk fix required.**
 
-1. **Late-reg allowlist / registration cleanup**: the two known unregistered
-   types per slice 1 spec lines 489-490 (artillery/bomber spawns) hit the
-   late-reg branch every frame and produce ~3957 events per mission in
-   mc2_01 with `MC2_GPU_OBJECTS=1`. They render correctly via legacy CPU
-   `Render()` (Stage 2.B's late-reg correction) but they pollute parity
-   sampling. Either resolve via allowlist add to
-   `data/objbatcher_late_register_allowlist.txt` with explicit reasoning,
-   or fix at the registration site so `finalizeGeometry`/`onMapLoad`
-   picks them up. Better instrumentation has shipped (see
-   "Late-reg type identification" below) to make this practical.
+Inventory was captured by direct-tracing all 24 campaign missions
+(tier1 + tier2-only) under `MC2_GPU_OBJECTS=1 MC2_OBJBATCHER_TRACE=1`.
+Every late-reg event reduces to one of two nodeIds:
 
-2. **`cpu_fallback_rate` is at 3.63%** (improved from 4.97% at 2.B but
-   still bounded by the same two unregistered types). Right at the spec
-   line 466 5% threshold. Do NOT tighten the gate before resolving (1).
+| nodeId | caller | Mission count | Decision | Reason |
+|---|---|---|---|---|
+| `Cylinder01` | `skybox` | 24/24 | **allowlist** | Vestigial post terrain CPU→GPU migration; sky comes from terrain shader's post-process. Memory: `skybox_actor_vestigial_post_terrain_gpu.md` |
+| `compassplane` | `compass` | 22/24 | **allowlist** | In-game compass HUD overlay; HUD element, not world geometry; loaded outside the static-prop registration walk by design |
 
-If for any reason Stage 2.D must run before (1) is resolved, the parity
-harness MUST explicitly exclude actors that fell back to legacy CPU
-`Render()` due to late-reg — comparing GPU output for an actor that
-didn't go through the GPU path is meaningless and will produce false
-mismatch counts.
+Both are in `data/objbatcher_late_register_allowlist.txt` with explicit
+reasoning. **Allowlist matching is by nodeId**, not pointer (pointers are
+not stable across runs); the allowlist file header documents this.
+`allowed=1` now appears for these types in
+`[OBJBATCHER v1] event=late_register` log lines.
+
+`allowed=1` is informational only — the actor still falls through to
+legacy CPU `Render()`, which is the correct draw path. The flag exists
+so an operator scanning logs sees "we knew this would happen" rather
+than "real registration walk gap."
+
+**Tier2 24/24 PASS in BOTH configs** (default and `MC2_GPU_OBJECTS=1`),
++0 destroys delta on every mission. Notable per-mission FPS improvements
+under `MC2_GPU_OBJECTS=1` on building/tree-heavy missions
+(mc2_24: 96→141, mc2_02: 112→138, mc2_03: 121→140).
+
+**Stage 2.D parity is unblocked from the late-reg side.** No need for
+the parity harness to special-case late-reg-CPU-fallback actors —
+they are documented, expected, and outside the scope of slice 2's
+GPU lighting comparison.
 
 ### Late-reg correction (committed; do NOT re-introduce skip-render)
 
