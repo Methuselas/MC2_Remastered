@@ -66,6 +66,15 @@ float					TG_Shape::fogFull = 0.0f;
 TG_LightPtr				*TG_Shape::s_listOfLights = NULL;
 DWORD					TG_Shape::s_numLights = 0;
 
+// Stage 2.D.2 diagnostic: one-shot trace for hot-green CPU lighting.
+// Fires once per session when MC2_OBJECT_PARITY_TRACE=1.
+// Prints s_lightDir direction, normal, cosine, contribution per vertex.
+static bool s_hotGreenLightTraceDone = false;
+static bool s_hotGreenLightTraceEnabled = [](){
+	const char* v = getenv("MC2_OBJECT_PARITY_TRACE");
+	return v && v[0] == '1' && v[1] == '\0';
+}();
+
 Stuff::LinearMatrix4D 	TG_Shape::s_lightToShape[MAX_LIGHTS_IN_WORLD];
 Stuff::Vector3D			TG_Shape::s_lightDir[MAX_LIGHTS_IN_WORLD];
 Stuff::Vector3D			TG_Shape::s_rootLightDir[MAX_LIGHTS_IN_WORLD];
@@ -1852,7 +1861,7 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
    				redFinal = (theShape->hotGreenRGB>>16) & 0x000000ff;
    				greenFinal = (theShape->hotGreenRGB>>8) & 0x000000ff;
    				blueFinal = (theShape->hotGreenRGB) & 0x000000ff;
-   				
+
    				redFinal *= nightFactor;
    				blueFinal *= nightFactor;
    				greenFinal *= nightFactor;
@@ -1885,16 +1894,36 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
 			redFinal += ((BaseVertexColor>>16) & 0x000000ff);
 			if (redFinal > 0xff)
 				redFinal = 0xff;
-				
+
 			greenFinal += ((BaseVertexColor>>8) & 0x000000ff);
 			if (greenFinal > 0xff)
 				greenFinal = 0xff;
-				
+
 			blueFinal += (BaseVertexColor & 0x000000ff);
 			if (blueFinal > 0xff)
 				blueFinal = 0xff;
 		}
-			
+
+		// Stage 2.D.2: one-shot hot-green trace flag.
+		// Set on the first daytime hot-green vertex when MC2_OBJECT_PARITY_TRACE=1.
+		// Traces s_lightDir, normal, cosine, and contributions — the CPU side
+		// that should match GatherLightsParameters and the GPU dot product.
+		bool doHotGreenTrace = (s_hotGreenLightTraceEnabled && !s_hotGreenLightTraceDone
+		                        && (startVLight == 0xff00ff00) && !isNight
+		                        && (nightFactor <= Stuff::SMALL));
+		if (doHotGreenTrace) {
+			s_hotGreenLightTraceDone = true;
+			std::fprintf(stderr,
+				"[PARITY_DIAG v2] CPU hot-green vertex=%ld "
+				"normalShape=(%.4f,%.4f,%.4f) s_numLights=%d\n",
+				j,
+				theShape->listOfTypeVertices[j].normal.x,
+				theShape->listOfTypeVertices[j].normal.y,
+				theShape->listOfTypeVertices[j].normal.z,
+				(int)s_numLights);
+			std::fflush(stderr);
+		}
+
 		if (useVertexLighting && (Environment.Renderer != 3))
 		{
 			if (!isSpotlight && !isWindow)
@@ -1911,14 +1940,32 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
 								redAmb = ((startLight>>16) & 0x000000ff);
 								greenAmb = ((startLight>>8) & 0x000000ff);
 								blueAmb = ((startLight) & 0x000000ff);
+								if (doHotGreenTrace) {
+									std::fprintf(stderr,
+										"[PARITY_DIAG v2] CPU light[%ld] AMBIENT "
+										"aRGB=0x%08X ambR=%u ambG=%u ambB=%u\n",
+										i, (unsigned)startLight,
+										redAmb, greenAmb, blueAmb);
+									std::fflush(stderr);
+								}
 							}
 							break;
-	
+
 							case TG_LIGHT_INFINITE:
 							{
 								float cosine = s_lightDir[i].x * theShape->listOfTypeVertices[j].normal.x;
 								cosine += s_lightDir[i].y * theShape->listOfTypeVertices[j].normal.y;
 								cosine += s_lightDir[i].z * theShape->listOfTypeVertices[j].normal.z;
+
+								if (doHotGreenTrace) {
+									std::fprintf(stderr,
+										"[PARITY_DIAG v2] CPU light[%ld] INFINITE "
+										"aRGB=0x%08X lightDir=(%.4f,%.4f,%.4f) cosine=%.4f\n",
+										i, (unsigned)startLight,
+										s_lightDir[i].x, s_lightDir[i].y, s_lightDir[i].z,
+										cosine);
+									std::fflush(stderr);
+								}
 
 								if (cosine < 0.0f)
 								{
@@ -2154,7 +2201,7 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
 				blueFinal += blueAmb;
 				greenFinal += greenAmb;
 			}
-			
+
 			if (redFinal > 255)
 				redFinal = 255;
 
@@ -2163,7 +2210,18 @@ long TG_Shape::MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D
 
 			if (blueFinal > 255)
 				blueFinal = 255;
-					
+
+			// Stage 2.D.2: print final CPU result for traced hot-green vertex.
+			if (doHotGreenTrace) {
+				std::fprintf(stderr,
+					"[PARITY_DIAG v2] CPU hot-green final: "
+					"redFinal=%u greenFinal=%u blueFinal=%u "
+					"(before argb write: 0x%08X)\n",
+					redFinal, greenFinal, blueFinal,
+					(unsigned)((0xff << 24) + (redFinal << 16) + (greenFinal << 8) + blueFinal));
+				std::fflush(stderr);
+			}
+
 			listOfVertices[j].argb = (0xff << 24) + (redFinal << 16) + (greenFinal << 8) + (blueFinal);
 
 			// NEW

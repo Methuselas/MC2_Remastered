@@ -51,6 +51,7 @@
 #include<gameos.hpp>
 #include<mlr/mlr.hpp>
 #include<gosfx/gosfxheaders.hpp>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <utils/gl_utils.h>
@@ -939,6 +940,14 @@ void GatherLightsParameters(TG_HWLightsData* lights)
 {
 	gosASSERT(lights);
 
+	// Stage 2.D.2 diagnostic: dump gathered lights when MC2_OBJECT_PARITY_TRACE=1.
+	// Fired once per session to avoid per-frame spam. Shows what GPU UBO gets.
+	static bool s_lightDumpDone = false;
+	const bool doLightTrace = (!s_lightDumpDone && [](){
+		const char* v = getenv("MC2_OBJECT_PARITY_TRACE");
+		return v && v[0] == '1' && v[1] == '\0';
+	}());
+
 	uint32_t num_lights = 0;
 	const uint32_t max_num_lights = MAX_HW_LIGHTS_IN_WORLD;
 
@@ -1009,8 +1018,32 @@ void GatherLightsParameters(TG_HWLightsData* lights)
 				STOP(("Unknown light type id: %d", type));
 			}
 
+			if (doLightTrace) {
+				std::fprintf(stderr,
+					"[PARITY_DIAG v2] GatherLightsParameters iLight=%u type=%u "
+					"aRGB=0x%08X dir=(%.4f,%.4f,%.4f) color=(%.4f,%.4f,%.4f)\n",
+					num_lights,
+					(unsigned)type,
+					(unsigned)listOfLights[iLight]->GetaRGB(),
+					lights->lightDir[num_lights][0],
+					lights->lightDir[num_lights][1],
+					lights->lightDir[num_lights][2],
+					lights->lightColor[num_lights][0],
+					lights->lightColor[num_lights][1],
+					lights->lightColor[num_lights][2]);
+				std::fflush(stderr);
+			}
+
 			num_lights++;
 		}
+	}
+
+	if (doLightTrace) {
+		std::fprintf(stderr,
+			"[PARITY_DIAG v2] GatherLightsParameters numLights=%u\n",
+			num_lights);
+		std::fflush(stderr);
+		s_lightDumpDone = true;
 	}
 
 	lights->numLights_ = num_lights;

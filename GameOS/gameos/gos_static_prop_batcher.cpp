@@ -144,8 +144,9 @@ GLuint        s_staticPropProgram    = 0;
 // after first attempt, no in-process relink path), so the cache is valid for
 // the lifetime of the program handle. -1 signals "not found in shader" and is
 // safe to pass to glUniform*i (the spec says glUniform* is a no-op for loc=-1).
-GLint s_loc_u_parityWrite       = -1;
+GLint s_loc_u_parityWrite        = -1;
 GLint s_loc_u_parityVertsPerType = -1;
+GLint s_loc_u_parityBaseVertex   = -1;
 
 // Latched once a compile/link attempt has failed. We never retry inside a
 // session because shader source can only change between runs. With this
@@ -191,10 +192,12 @@ void loadProgramsIfNeeded() {
     // Stage 2.D.1.1 (Item 2): cache parity uniform locations once at link time.
     s_loc_u_parityWrite        = glGetUniformLocation(s_staticPropProgram, "u_parityWrite");
     s_loc_u_parityVertsPerType = glGetUniformLocation(s_staticPropProgram, "u_parityVertsPerType");
+    s_loc_u_parityBaseVertex   = glGetUniformLocation(s_staticPropProgram, "u_parityBaseVertex");
     std::fprintf(stderr, "[GPUPROPS-DIAG] loadProgramsIfNeeded OK prog=%u "
-                 "loc_parityWrite=%d loc_parityVertsPerType=%d\n",
+                 "loc_parityWrite=%d loc_parityVertsPerType=%d loc_parityBaseVertex=%d\n",
                  s_staticPropProgram,
-                 s_loc_u_parityWrite, s_loc_u_parityVertsPerType);
+                 s_loc_u_parityWrite, s_loc_u_parityVertsPerType,
+                 s_loc_u_parityBaseVertex);
 }
 
 // Layer B fallback: types we failed to register (logged once, fall back to CPU path).
@@ -434,6 +437,9 @@ void GpuStaticPropBatcher::onMapLoad() {
     s_failedTypes.clear();
     s_geometryFinalized = false;
     s_fatalRegistrationFailure = false;
+    // Stage 2.D.2: re-arm the dual-emit latch for this mission so the first
+    // eligible frame after map load triggers the compare.
+    gos_object_parity::OnMissionLoad();
 }
 
 void GpuStaticPropBatcher::onMapUnload() {
@@ -746,6 +752,57 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
     inst.fogRGB[3] = ((fogARGB >> 24) & 0xFF) / 255.0f;
     bucket.instances.push_back(inst);
 
+    // Stage 2.D.2 — dual-emit snapshot collection.
+    // When the latch is Armed, capture per-vertex lit ARGB in triangle-soup
+    // expanded order (matching gl_VertexID in static_prop.vert). The shader
+    // writes parityOut_[gl_InstanceID * parityVerts + gl_VertexID] where
+    // gl_VertexID is the expanded VBO index (0 .. numTris*3-1). We build the
+    // snapshot in the same order: corner (j,c) → index 3*j+c.
+    // Note: typeShape->numTypeTriangles is the TOTAL triangle count across all
+    // packets (same as the total triangles emitted into the VBO by registerType).
+    //
+    // Source: listOfVertices[typeTriangles[j].Vertices[c]].argb — NOT
+    //   listOfTriangles[j].aRGBLight[c]. The face-loop only writes
+    //   aRGBLight[c] for FRONT-FACING triangles; back-facing positions
+    //   retain stale pool memory from previous frames (not zeroed on alloc).
+    //   listOfVertices[v].argb is always written by the vertex lighting loop
+    //   for every vertex (front AND back facing), making it the correct
+    //   per-vertex ground truth. Both values are identical for front-facing
+    //   vertices when useFaceLighting=false (stock mc2_01 condition).
+    if (gos_object_parity::IsDualEmitArmed() &&
+        shape->listOfVertices &&
+        typeShape->listOfTypeTriangles &&
+        typeShape->numTypeTriangles > 0) {
+        const DWORD numTris = typeShape->numTypeTriangles;
+        const uint32_t expandedVerts = numTris * 3u;
+        std::vector<uint32_t> perVertexARGB(expandedVerts, 0u);
+        // Stage 2.D.2 diagnostic: one-shot dump of original aRGBLight tags vs
+        // computed listOfVertices[vi].argb for first instance of typeID=82.
+        // Controlled by MC2_OBJECT_PARITY_TRACE env var.
+        static bool s_parity82Printed = false;
+        const bool doTrace82 = (typeID == 82 && !s_parity82Printed &&
+                                gos_object_parity::IsParityTraceEnabled());
+        if (doTrace82) s_parity82Printed = true;
+        for (DWORD j = 0; j < numTris; ++j) {
+            for (int c = 0; c < 3; ++c) {
+                const DWORD vi = typeShape->listOfTypeTriangles[j].Vertices[c];
+                perVertexARGB[j * 3u + c] = shape->listOfVertices[vi].argb;
+                if (doTrace82 && (j * 3u + c) < 20u) {
+                    std::fprintf(stderr,
+                        "[PARITY_DIAG v1] typeId=82 inst=first vert=%u "
+                        "aRGBLight_tag=0x%08X computed_argb=0x%08X\n",
+                        (unsigned)(j * 3u + c),
+                        (unsigned)typeShape->listOfTypeVertices[vi].aRGBLight,
+                        (unsigned)shape->listOfVertices[vi].argb);
+                    std::fflush(stderr);
+                }
+            }
+        }
+        gos_object_parity::RecordInstanceSnapshot(typeID,
+                                                   perVertexARGB.data(),
+                                                   expandedVerts);
+    }
+
     // Append this instance's per-vertex ARGB block.
     // IMPORTANT: listOfColors (TG_Vertex: fog+redSpec+greenSpec+blueSpec) is
     // specular-only and is zero for most buildings — reading it produces
@@ -912,16 +969,27 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
     }
 
     // Slice 2 (object-offload) — Stage 2.C: per-actor light-data gather.
-    // Hoisted BETWEEN the two for-loops per the spec's locked Sign-Off #2:
-    // - inside loop 1 (registration check) it would gather for actors that
-    //   get rejected on a later child — wasted work;
-    // - inside loop 2 (submit) it would be per-leaf, incurring N-fold
-    //   redundant GatherLightsParameters calls per multishape per frame.
-    // Here, after the registration-check loop has cleared. firstShapeNodeLeaf
-    // is non-null because the registration loop accepted at least one
-    // SHAPE_NODE (otherwise we would have early-returned above).
+    // Stage 2.D.2 fix: use cachedGpuLightIndex_ if it was pre-gathered during
+    // update() (while worldLights[0]->aRGB was per-actor-correct).
+    // Fallback to GatherGpuObjectLightDataOnly() here only when the cache is
+    // invalid (0xFFFFFFFF sentinel = not yet cached, e.g. first frame).
+    //
+    // Root cause of the timing bug this fixes:
+    //   BldgAppearance::update() sets worldLights[0]->aRGB = terrainLight(pos).
+    //   GatherGpuObjectLightDataOnly() called here (during renderLists()) reads
+    //   worldLights[0]->aRGB AFTER all actors have updated — by then later
+    //   actors have overwritten it with their own terrain-position-scaled values.
+    //   The last-actor's value (often white at high-elevation positions) is what
+    //   the GPU UBO receives, while the CPU vertex loop used the per-building
+    //   terrain-scaled value during its own update(). This causes the hot-green
+    //   (daytime base=0) vertex mismatch: GPU applies white directional light,
+    //   CPU applied the terrain-tinted (~0.88) directional light.
     uint32_t lightDataIndex = 0;
-    if (firstShapeNodeLeaf != nullptr) {
+    if (multi->cachedGpuLightIndex_ != 0xFFFFFFFFu) {
+        // Happy path: lights were gathered at update() time (correct per-actor).
+        lightDataIndex = multi->cachedGpuLightIndex_;
+    } else if (firstShapeNodeLeaf != nullptr) {
+        // Fallback: first frame or non-GPU-object path cached nothing.
         lightDataIndex = firstShapeNodeLeaf->GatherGpuObjectLightDataOnly();
     }
 
@@ -1144,7 +1212,21 @@ void GpuStaticPropBatcher::flush() {
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
                 gos_object_parity::Counters_AddReadbackBytesThisFrame(
                     static_cast<uint64_t>(bytesToRead));
-                // Bytes intentionally discarded for Stage 2.D.1.
+                // Stage 2.D.2: if the latch is WaitingForReadback, compare
+                // the GPU bytes against the CPU snapshot captured on frame N.
+                // After compare, advance latch to Done and free the snapshot.
+                // The fence wait above (glClientWaitSync in
+                // uploadAllBucketsIfNeeded) guarantees GPU writes are complete.
+                // Stage 2.D.2: compare only when the ring has returned to the
+                // exact slot the Armed frame wrote to (IsDualEmitReadyForSlot
+                // checks both state==WaitingForReadback AND slot match).
+                if (gos_object_parity::IsDualEmitReadyForSlot(s_frameSlot)) {
+                    gos_object_parity::CompareAndReport(
+                        s_parityReadbackScratch.data(),
+                        bytesToRead,
+                        static_cast<unsigned>(s_counters.frame_count));
+                    gos_object_parity::AdvanceDualEmitToDone();
+                }
             }
         }
         // Reset this slot's usage; it will be re-populated by the per-type
@@ -1243,9 +1325,30 @@ void GpuStaticPropBatcher::flush() {
     // uniform stays 0 for every draw (no shader writes happen).
     // Stage 2.D.1.1 (Item 2): use link-time cached locations instead of
     // per-flush glGetUniformLocation (one driver round-trip per flush saved).
-    const GLint locParityWrite = s_loc_u_parityWrite;
-    const GLint locParityVerts = s_loc_u_parityVertsPerType;
+    const GLint locParityWrite      = s_loc_u_parityWrite;
+    const GLint locParityVerts      = s_loc_u_parityVertsPerType;
+    const GLint locParityBaseVertex = s_loc_u_parityBaseVertex;
     if (locParityWrite >= 0) glUniform1i(locParityWrite, 0);
+
+    // Stage 2.D.2: zero the Armed frame's parity SSBO slot before drawing so
+    // that back-facing vertices (GPU-culled by GL_CULL_FACE GL_BACK, not
+    // written by the shader) read as zero on the compare frame — matching the
+    // zero-initialized CPU snapshot (vector initialized to 0u in submit()).
+    // Without this clear, stale uint32 values from RING_FRAMES ago remain in
+    // the slot for unwritten (back-facing) positions and cause false mismatches
+    // against the CPU's 0x00000000 for those same positions.
+    if (parityBuffer != 0 && gos_object_parity::IsDualEmitArmed()) {
+        const GLintptr slotBase =
+            static_cast<GLintptr>(s_frameSlot) *
+            static_cast<GLintptr>(kParitySlotBytes);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, parityBuffer);
+        const GLuint zero = 0u;
+        glClearBufferSubData(GL_SHADER_STORAGE_BUFFER, GL_R32UI,
+                             slotBase,
+                             static_cast<GLsizeiptr>(kParitySlotBytes),
+                             GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
 
     // Per-type drawing: bind per-type instance & color SSBO ranges, then
     // issue one instanced draw per packet. gl_InstanceID in the shader
@@ -1288,10 +1391,19 @@ void GpuStaticPropBatcher::flush() {
         // top of next visit then doesn't see those vertices — fine for
         // 2.D.1 acceptance, will be tightened in 2.D.2/2.D.3 if real-world
         // peak exceeds kParitySlotBytes).
+        // Stage 2.D.2: the parity SSBO uses the expanded (triangle-soup) vertex
+        // count so gl_VertexID in static_prop.vert stays in-bounds. gl_VertexID
+        // runs 0..numTris*3-1 (per the VBO layout in registerType), so the
+        // correct u_parityVertsPerType and SSBO range size is numTris*3, not
+        // type.vertexCount (which is numTypeVertices, the shared-vertex count).
+        const uint32_t parityVerts = (type.source && type.source->numTypeTriangles > 0u)
+            ? type.source->numTypeTriangles * 3u
+            : type.vertexCount;
+
         bool wroteParityThisDraw = false;
-        if (parityBuffer != 0 && type.vertexCount > 0u) {
+        if (parityBuffer != 0 && parityVerts > 0u) {
             const size_t needBytes = static_cast<size_t>(r.instanceCount) *
-                                     static_cast<size_t>(type.vertexCount) *
+                                     static_cast<size_t>(parityVerts) *
                                      sizeof(uint32_t);
             // SSBO offset alignment requirement. Mirrors the per-type
             // instance/color bind alignment used by uploadAllBucketsIfNeeded
@@ -1312,15 +1424,31 @@ void GpuStaticPropBatcher::flush() {
                 glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 3, parityBuffer,
                                   slotBase + static_cast<GLintptr>(cursor),
                                   static_cast<GLsizeiptr>(needBytes));
+                // u_parityVertsPerType = expanded (triangle-soup) vertex count.
                 if (locParityVerts >= 0)
-                    glUniform1i(locParityVerts, (int)type.vertexCount);
+                    glUniform1i(locParityVerts, (int)parityVerts);
+                // u_parityBaseVertex = type's VBO baseVertex; shader subtracts
+                // this from gl_VertexID to get the type-local index.
+                if (locParityBaseVertex >= 0) {
+                    const int typeBase = (type.packetCount > 0)
+                        ? s_packets[type.firstPacket].baseVertex
+                        : 0;
+                    glUniform1i(locParityBaseVertex, typeBase);
+                }
                 if (locParityWrite >= 0)
                     glUniform1i(locParityWrite, 1);
                 s_parityBytesUsedThisFrame = cursor + needBytes;
                 gos_object_parity::Counters_AddVerticesWrittenThisFrame(
                     static_cast<uint64_t>(r.instanceCount) *
-                    static_cast<uint64_t>(type.vertexCount));
+                    static_cast<uint64_t>(parityVerts));
                 wroteParityThisDraw = true;
+                // Stage 2.D.2: record slot-relative cursor + expanded vertex
+                // count so CompareAndReport can decode this type's bytes on
+                // the readback frame. parityVerts (not type.vertexCount) here.
+                if (gos_object_parity::IsDualEmitArmed()) {
+                    gos_object_parity::RecordParityTypeRange(
+                        typeID, cursor, r.instanceCount, parityVerts);
+                }
             } else if (needBytes > 0) {
                 // Stage 2.D.1.1 (Item 1): slot budget exhausted — record it.
                 // u_parityWrite stays 0 so the shader skips the write;
@@ -1372,6 +1500,13 @@ void GpuStaticPropBatcher::flush() {
     // Stage 2.D.1: record this slot's parity-byte usage so the next visit
     // (RING_FRAMES frames from now) knows exactly how much to glGetBufferSubData.
     s_parityBytesUsedPerSlot[s_frameSlot] = s_parityBytesUsedThisFrame;
+    // Stage 2.D.2: after the fence is inserted (GPU draw committed), advance
+    // the dual-emit latch from Armed → WaitingForReadback. Pass s_frameSlot
+    // so the compare only fires when the ring revisits this exact slot (after
+    // glClientWaitSync ensures GPU writes are complete — RING_FRAMES later).
+    if (gos_object_parity::IsDualEmitArmed()) {
+        gos_object_parity::AdvanceDualEmitToWaiting(s_frameSlot);
+    }
 
     // Restore GL state to EXACTLY what it was at flush start.
     // SSBOs

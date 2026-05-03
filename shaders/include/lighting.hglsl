@@ -115,7 +115,15 @@ vec3 get_base_light(
     {
         if (!lightsOut)
         {
-            final = startVLight.xyz;
+            // Stage 2.D.2 swizzle fix: startVLight is decoded in static_prop.vert
+            // as (.x=B/255, .y=G/255, .z=R/255) — BGR channel order — because
+            // a_aRGBLight bytes are B,G,R,A in little-endian memory.
+            // Returning .xyz here passes BGR to calc_light as base_light, which
+            // then adds lcolor (RGB-ordered from GatherLightsParameters) — causing
+            // cross-channel contamination: lit.x = B_base + R_light.
+            // Fix: .zyx swizzle reorders to (R,G,B) so both operands in calc_light
+            // are RGB-ordered and the channel arithmetic is correct.
+            final = startVLight.zyx;
         }
     }
     else if (isHudElement)

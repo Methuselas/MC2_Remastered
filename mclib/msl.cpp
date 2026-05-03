@@ -20,6 +20,8 @@
 #endif
 
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
+#include "../GameOS/gameos/gos_static_prop_batcher.h"    // Stage 2.D.2 CacheGpuLightData
+#include "../GameOS/gameos/gos_static_prop_killswitch.h" // g_useGpuObjects extern
 
 #ifndef CIDENT_H
 #include"cident.h"
@@ -1741,6 +1743,45 @@ long TG_MultiShape::TransformMultiShape_PositionsOnly (Stuff::Point3D *pos, Stuf
     long result = TransformMultiShape(pos, rot);
     s_multiShapePositionsOnly = false;
     return result;
+}
+
+//-------------------------------------------------------------------------------
+// Slice 2 (object-offload) — Stage 2.D.2 fix:
+// Cache the GPU light-data index while worldLights[0]->aRGB is correct for
+// THIS actor (during update(), immediately after SetLightList is called).
+// By the time submitMultiShape() runs (during renderLists()), later actors
+// will have overwritten worldLights[0]->aRGB for their own terrain positions.
+// Calling GatherGpuObjectLightDataOnly() there produces the WRONG light color.
+//
+// This method locates the first SHAPE_NODE leaf (same heuristic as
+// submitMultiShape's firstShapeNodeLeaf scan) and calls
+// GatherGpuObjectLightDataOnly() to cache the dedup-cache index in
+// cachedGpuLightIndex_. submitMultiShape then reads cachedGpuLightIndex_
+// instead of calling GatherGpuObjectLightDataOnly() itself.
+//
+// Only active when g_useGpuObjects is true; no-op otherwise so non-GPU
+// paths have zero overhead.
+//-------------------------------------------------------------------------------
+void TG_MultiShape::CacheGpuLightData()
+{
+    if (!g_useGpuObjects)
+        return;
+
+    // Find first SHAPE_NODE leaf — same logic as submitMultiShape.
+    TG_Shape* firstShapeNodeLeaf = nullptr;
+    for (int i = 0; i < numTG_Shapes; ++i) {
+        TG_ShapeRec& rec = listOfShapes[i];
+        if (!rec.processMe || !rec.node) continue;
+        TG_Shape* child = rec.node;
+        if (!child->myType) continue;
+        if (child->myType->GetNodeType() != SHAPE_NODE) continue;
+        firstShapeNodeLeaf = child;
+        break;
+    }
+
+    if (firstShapeNodeLeaf != nullptr) {
+        cachedGpuLightIndex_ = firstShapeNodeLeaf->GatherGpuObjectLightDataOnly();
+    }
 }
 
 //-------------------------------------------------------------------------------

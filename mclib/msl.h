@@ -266,6 +266,14 @@ class TG_MultiShape
 		BYTE					alphaValue;				//To fade shapes in and out
 		bool					isClamped;				//So I can force a shape to clamp its textures
 
+		// Slice 2 (object-offload) — Stage 2.D.2 fix: GPU light-data index
+		// cached at update() time while worldLights[0]->aRGB is per-actor-correct.
+		// Read by submitMultiShape() during renderLists() instead of calling
+		// GatherGpuObjectLightDataOnly() there (at which point worldLights[0]->aRGB
+		// has been overwritten by later actors). UINT32_MAX = not yet cached (first
+		// frame or non-GPU path); submitMultiShape falls back to gather-now if UINT32_MAX.
+		uint32_t				cachedGpuLightIndex_;
+
 	//-----------------
 	//Member Functions
 	protected:
@@ -282,12 +290,14 @@ class TG_MultiShape
 
 			frameNum = 0.0f;
 			d_useShadows = true;
-			
+
 			isHudElement = false;
-			
+
 			alphaValue = 0xff;
-			
+
 			isClamped = false;
+
+			cachedGpuLightIndex_ = 0xFFFFFFFFu;  // sentinel: not yet cached
 		}
 		
 		TG_MultiShape (void)
@@ -307,6 +317,14 @@ class TG_MultiShape
 		//Function returns 0 if lightList entries are all OK.  -1 otherwise.
 		//
 		long SetLightList (TG_LightPtr *lightList, DWORD nLights);
+
+		// Slice 2 (object-offload) — Stage 2.D.2 fix: cache GPU light-data index
+		// while worldLights[0]->aRGB is per-actor-correct (during update()).
+		// Must be called AFTER SetLightList and BEFORE other actors overwrite
+		// worldLights[0]->aRGB. submitMultiShape() reads cachedGpuLightIndex_
+		// instead of calling GatherGpuObjectLightDataOnly() at render time.
+		// Only call when g_useGpuObjects is true (no-op guard inside).
+		void CacheGpuLightData();
 
 		//This function sets the fog values for the shape.  Straight fog right now.
 		void SetFogRGB (DWORD fRGB);

@@ -13,6 +13,7 @@
 #endif
 
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
+#include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
 
 #ifndef CAMERA_H
 #include"camera.h"
@@ -1207,6 +1208,11 @@ long GenericAppearance::update (bool animate)
 		    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(genShape))
 		{
 			genShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+			// Stage 2.D.2: dual-emit full bake — same rationale as BldgAppearance.
+			// Populates listOfTriangles[].aRGBLight for snapshot in submit().
+			if (gos_object_parity::IsDualEmitArmed()) {
+				genShape->TransformMultiShape (&xlatPosition,&rot);
+			}
 		}
 		else
 		{

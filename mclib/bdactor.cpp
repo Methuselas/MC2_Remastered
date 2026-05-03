@@ -14,6 +14,7 @@
 
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_batcher.h"
+#include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
 
 #ifndef CAMERA_H
@@ -2239,7 +2240,23 @@ long BldgAppearance::update (bool animate)
 		    !needsFullBakeNextFrame &&
 		    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(bldgShape))
 		{
+			// Stage 2.D.2 fix: cache GPU light data NOW, while worldLights[0]->aRGB
+			// is the per-actor terrain-scaled value set at line 2144 above.
+			// By the time submitMultiShape() runs (during renderLists()), later
+			// actors have overwritten worldLights[0]->aRGB for their positions.
+			bldgShape->CacheGpuLightData();
 			bldgShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+			// Stage 2.D.2: on the dual-emit frame (latch Armed), also run
+			// the full bake so listOfTriangles[].aRGBLight is populated for
+			// the parity snapshot captured in submit(). This call is a pure
+			// CPU-side data write; it does NOT affect GPU output (the shader
+			// uses a_aRGBLight from the type-level VBO, not listOfVertices.argb).
+			// No addRenderShape: bShadersDrawPathEnabled==false so the
+			// addTriangle reserve stays in the pool; Render() is never called
+			// for GPU-eligible actors, so nothing is double-drawn.
+			if (gos_object_parity::IsDualEmitArmed()) {
+				bldgShape->TransformMultiShape (&xlatPosition,&rot);
+			}
 		}
 		else
 		{
@@ -4377,7 +4394,14 @@ long TreeAppearance::update (bool animate)
 		    !needsFullBakeNextFrame &&
 		    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(treeShape))
 		{
+			// Stage 2.D.2 fix: cache GPU light data while lights are per-actor-correct.
+			treeShape->CacheGpuLightData();
 			treeShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+			// Stage 2.D.2: dual-emit full bake — same rationale as BldgAppearance
+			// above. Populates listOfTriangles[].aRGBLight for snapshot in submit().
+			if (gos_object_parity::IsDualEmitArmed()) {
+				treeShape->TransformMultiShape (&xlatPosition,&rot);
+			}
 		}
 		else
 		{

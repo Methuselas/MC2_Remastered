@@ -153,6 +153,12 @@ extern void gos_DestroyAudio();
 static bool g_exit = false;
 static bool g_focus_lost = false;
 
+// Owned by gos_render.cpp; needed here to query SDL_WINDOW_MINIMIZED so the
+// background-throttle path can distinguish "window invisible" from merely
+// "another window has keyboard focus" (which is normal during gameplay when
+// the user clicks a chat / browser / profiler window).
+extern SDL_Window* g_sdl_window;
+
 // Global runtime toggle for the GPU static-prop renderer.
 // Definition lives in gos_static_prop_batcher.cpp (in the gameos lib) so
 // data-tool executables that link mclib but not gameos_main still resolve
@@ -854,7 +860,19 @@ int main(int argc, char** argv)
 
 		uint64_t start_tick = timing::gettickcount();
 
-        if (g_focus_lost) {
+        // Throttle when the window is actually invisible (minimized / hidden),
+        // NOT merely when it lacks keyboard focus. Plain focus loss happens
+        // constantly during normal play (clicking a chat window, opening
+        // Tracy, Windows shifting focus to a notification) and the loop must
+        // keep running at full speed in those cases. g_focus_lost is still
+        // used as the *input filter* below — different concern, same SDL event
+        // source, but they want different predicates.
+        bool windowInvisible = false;
+        if (g_sdl_window) {
+            Uint32 flags = SDL_GetWindowFlags(g_sdl_window);
+            windowInvisible = (flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN)) != 0;
+        }
+        if (windowInvisible) {
             ZoneScopedN("Frame.BackgroundThrottle");
             timing::sleep(10 * 1000000);
         }
@@ -946,7 +964,16 @@ int main(int argc, char** argv)
         // Skipped when vsync is active (vsync already owns pacing).
         // Uses mission-state-aware cap: 90 FPS in menus, 165 FPS in missions.
         if (!s_vsync_active) {
-            int cap = SmokeMode::missionHasStarted() ? s_fps_cap_mission : s_fps_cap_menu;
+            bool inMission = SmokeMode::missionHasStarted();
+            int cap = inMission ? s_fps_cap_mission : s_fps_cap_menu;
+            static bool s_capTraceLast = !inMission;
+            static const bool s_capTrace = (getenv("MC2_FRAMECAP_TRACE") != nullptr);
+            if (s_capTrace && s_capTraceLast != inMission) {
+                fprintf(stderr, "[FRAMECAP] cap switched: inMission=%d cap=%d\n",
+                        (int)inMission, cap);
+                fflush(stderr);
+                s_capTraceLast = inMission;
+            }
             if (cap > 0) {
                 ZoneScopedN("Frame.FrameCap");
                 uint64_t target_ms = 1000u / (uint64_t)cap;

@@ -35,6 +35,12 @@
 class gosRenderer;
 class gosFont;
 
+// C1 tactical material profile (defined in mclib/terrain.cpp; declared in
+// mclib/terrain.h). Disposable; removed when real material-palette
+// architecture lands. Declared here rather than via `#include "terrain.h"`
+// to avoid pulling in mclib headers gameos_graphics.cpp doesn't already use.
+extern int g_terrainMaterialProfile;
+
 static const DWORD INVALID_TEXTURE_ID = 0;
 
 static gosRenderer* g_gos_renderer = NULL;
@@ -1594,6 +1600,7 @@ class gosRenderer {
             GLint dynamicLightSpaceMatrix = -1, enableDynamicShadows = -1, dynamicShadowMap = -1;
             GLint time = -1;
             GLint mapHalfExtent = -1;
+            GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
             GLuint program = 0;
         } terrainLocs_;
 
@@ -1608,6 +1615,7 @@ class gosRenderer {
             GLint dynamicLightSpaceMatrix = -1, enableDynamicShadows = -1, dynamicShadowMap = -1;
             GLint time = -1, mapHalfExtent = -1;
             GLint ssboRecordBase = -1;
+            GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
             GLuint program = 0;
         } thinTerrainLocs_;
 
@@ -1616,6 +1624,7 @@ class gosRenderer {
             GLint lightSpaceMatrix = -1, tessLevel = -1, tessDistanceRange = -1;
             GLint tessDisplace = -1, cameraPos = -1, mvp = -1;
             GLint matNormal2 = -1, detailNormalTiling = -1, tex1 = -1;
+            GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
             GLuint program = 0;
         } shadowLocs_;
 
@@ -1649,6 +1658,7 @@ class gosRenderer {
             terrainLocs_.dynamicShadowMap = glGetUniformLocation(shp, "dynamicShadowMap");
             terrainLocs_.time = glGetUniformLocation(shp, "time");
             terrainLocs_.mapHalfExtent = glGetUniformLocation(shp, "mapHalfExtent");
+            terrainLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
         }
 
         void cacheThinTerrainUniformLocations(GLuint shp) {
@@ -1680,6 +1690,7 @@ class gosRenderer {
             thinTerrainLocs_.time               = glGetUniformLocation(shp, "time");
             thinTerrainLocs_.mapHalfExtent      = glGetUniformLocation(shp, "mapHalfExtent");
             thinTerrainLocs_.ssboRecordBase     = glGetUniformLocation(shp, "ssboRecordBase");
+            thinTerrainLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
         }
 
         void cacheShadowUniformLocations(GLuint shp) {
@@ -1694,6 +1705,7 @@ class gosRenderer {
             shadowLocs_.matNormal2 = glGetUniformLocation(shp, "matNormal2");
             shadowLocs_.detailNormalTiling = glGetUniformLocation(shp, "detailNormalTiling");
             shadowLocs_.tex1 = glGetUniformLocation(shp, "tex1");
+            shadowLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
         }
 
         // ── World-space overlay batches ────────────────────────────────────────
@@ -3344,6 +3356,9 @@ void gosRenderer::drawShadowBatchTessellated(gos_VERTEX* vertices, int numVerts,
 
     float tiling[4] = { terrain_detail_tiling_, 0.0f, 0.0f, 0.0f };
     if (sl.detailNormalTiling >= 0) glUniform4fv(sl.detailNormalTiling, 1, tiling);
+    // C1 tactical: push mission-gated material profile to the shadow tese
+    // classifier (terrain_common.hglsl). Uniform default is 0 = LEGACY.
+    if (sl.terrainMaterialProfile >= 0) glUniform1i(sl.terrainMaterialProfile, g_terrainMaterialProfile);
 
     // tex1 (colormap) sampler — bound to unit 0 by the gos_SetRenderState texture call
     if (sl.tex1 >= 0) glUniform1i(sl.tex1, 0);
@@ -3562,6 +3577,9 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     float cellP[4]       = { terrain_cell_scale_, terrain_cell_jitter_, terrain_cell_rotation_, 0.0f };
     if (tl.detailNormalTiling >= 0)   glUniform4fv(tl.detailNormalTiling, 1, tiling);
     if (tl.detailNormalStrength >= 0) glUniform4fv(tl.detailNormalStrength, 1, strength);
+    // C1 tactical: push mission-gated material profile to terrain classifier.
+    // Default 0 = LEGACY = exact pre-C1 byte-for-byte rendering.
+    if (tl.terrainMaterialProfile >= 0) glUniform1i(tl.terrainMaterialProfile, g_terrainMaterialProfile);
     if (tl.pomParams >= 0)            glUniform4fv(tl.pomParams, 1, pomP);
     if (tl.terrainWorldScale >= 0)    glUniform4fv(tl.terrainWorldScale, 1, worldScaleV);
     if (tl.cellBombParams >= 0)       glUniform4fv(tl.cellBombParams, 1, cellP);
@@ -3661,6 +3679,9 @@ int gosRenderer::terrainBindThinUniformsForPatchStream()
     float cellP[4]       = { terrain_cell_scale_, terrain_cell_jitter_, terrain_cell_rotation_, 0.0f };
     if (tl.detailNormalTiling >= 0)   glUniform4fv(tl.detailNormalTiling, 1, tiling);
     if (tl.detailNormalStrength >= 0) glUniform4fv(tl.detailNormalStrength, 1, strength);
+    // C1 tactical: push mission-gated material profile to terrain classifier.
+    // Default 0 = LEGACY = exact pre-C1 byte-for-byte rendering.
+    if (tl.terrainMaterialProfile >= 0) glUniform1i(tl.terrainMaterialProfile, g_terrainMaterialProfile);
     if (tl.pomParams >= 0)            glUniform4fv(tl.pomParams, 1, pomP);
     if (tl.terrainWorldScale >= 0)    glUniform4fv(tl.terrainWorldScale, 1, worldScaleV);
     if (tl.cellBombParams >= 0)       glUniform4fv(tl.cellBombParams, 1, cellP);
@@ -3764,6 +3785,9 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
     if (tl.detailNormalTiling >= 0) glUniform4fv(tl.detailNormalTiling, 1, tiling);
     float strength[4] = { terrain_detail_strength_, 0.0f, 0.0f, 0.0f };
     if (tl.detailNormalStrength >= 0) glUniform4fv(tl.detailNormalStrength, 1, strength);
+    // C1 tactical: push mission-gated material profile to terrain classifier.
+    // Default 0 = LEGACY = exact pre-C1 byte-for-byte rendering.
+    if (tl.terrainMaterialProfile >= 0) glUniform1i(tl.terrainMaterialProfile, g_terrainMaterialProfile);
     float pomP[4] = { terrain_pom_scale_, 8.0f, 32.0f, 0.0f };
     if (tl.pomParams >= 0) glUniform4fv(tl.pomParams, 1, pomP);
     float worldScaleV[4] = { terrain_world_scale_, 0.0f, 0.0f, 0.0f };

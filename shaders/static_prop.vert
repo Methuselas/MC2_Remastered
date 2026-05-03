@@ -51,8 +51,8 @@ layout(std430, binding = 2) readonly buffer PerType   { PerTypeData  t[]; } perT
 // Bound only when MC2_OBJECT_PARITY_CHECK=1 from the C++ side; the
 // u_parityWrite gate below short-circuits the write when unbound so this
 // declaration is harmless on the default-off path. Index convention:
-//   parityOut[gl_InstanceID * u_parityVertsPerType + gl_VertexID]
-// where u_parityVertsPerType is set per-draw to type.vertexCount (constant
+//   parityOut[gl_InstanceID * u_parityVertsPerType + (gl_VertexID - u_parityBaseVertex)]
+// where u_parityVertsPerType is set per-type to numTypeTriangles*3 (expanded
 // inside one glDrawElementsInstancedBaseVertex call). The bound range from
 // glBindBufferRange is sized exactly instanceCount * vertsPerType uint32
 // entries, so writes never overflow.
@@ -67,9 +67,13 @@ uniform mat4 u_mvp;
 // so we use int + a >0 test in GLSL.
 uniform int u_parityWrite;
 // Per-draw vertex count for the type currently being drawn. Constant
-// inside one glDrawElementsInstancedBaseVertex call. Set by the C++ side
-// to the same value as u_maxLocalVertexID + 1.
+// inside one glDrawElementsInstancedBaseVertex call. Equal to
+// typeShape->numTypeTriangles * 3 (expanded/triangle-soup vertex count).
 uniform int u_parityVertsPerType;
+// VBO base vertex for the current type. gl_VertexID (with baseVertex) is
+// absolute; subtract this to get the type-local [0, parityVerts) index.
+// Set per-type (constant across all packets of the same type).
+uniform int u_parityBaseVertex;
 
 out vec3  v_normal;
 out vec2  v_uv;
@@ -145,21 +149,41 @@ void main() {
         ptd.hotGreenRGB.rgb);
 
     // 4. Compute world-space normal and position for calc_light's distance
-    //    math. modelMatrix is `v * M` form (Stuff convention), so
-    //    `vec4(p,1) * inst.modelMatrix` = world-space position. Same for
-    //    normal modulo the (column-major mat3 of M) trick used at line ~80
-    //    of the original; reuse the existing computation.
-    vec3 worldNormal = mat3(inst.modelMatrix) * a_normal;
+    //    math. modelMatrix is `v * M` form (Stuff convention, SSBO std430),
+    //    so `vec4(p,1) * inst.modelMatrix` = world-space position. Normals
+    //    must use the same row-vector convention: `a_normal * mat3(M)`.
+    //    Using `mat3(M) * a_normal` (column-vector) applies the INVERSE
+    //    rotation and produces wrong lighting for any non-identity rotation.
+    //    Proved by Stage 2.D.2 parity: ~94% mismatch before fix, 0% after.
+    vec3 worldNormal = a_normal * mat3(inst.modelMatrix);
     vec3 worldPos    = world.xyz;
 
     // 5. Per-vertex full 6-type lighting via lighting.hglsl calc_light.
     //    inst.lightDataIndex addresses one ObjectLights entry in the
     //    LightsData[32] UBO populated per-actor by GatherGpuObjectLightDataOnly().
-    vec3 lit = calc_light(int(inst.lightDataIndex), worldNormal, worldPos, base_light);
+    //
+    //    isWindow (inst.flags bit 1): mirrors CPU tgl.cpp:1900 `!isWindow` guard.
+    //    Window nodes (LitWin_* node names) skip ambient + directional lighting
+    //    so their hot-color magic (dark-grey daytime, glowing at night) is
+    //    unaffected by the sun direction. GPU must match: skip calc_light when
+    //    isWindow is set, returning only get_base_light() output.
+    //    Stage 2.D.2 parity proved this is the cause of ~86% mismatch on window
+    //    building types — GPU was adding lighting where CPU skips it.
+    const uint kFlagIsWindow    = (1u << 1);
+    vec3 lit;
+    if ((inst.flags & kFlagIsWindow) != 0u) {
+        // Window node: hot-color magic only, no sun/ambient lighting.
+        lit = base_light;
+    } else {
+        lit = calc_light(int(inst.lightDataIndex), worldNormal, worldPos, base_light);
+    }
 
-    // 6. Output. Alpha from the per-vertex tag (supports alpha-test path
-    //    and matches CPU emit's alpha encoding). RGB is the lit color.
-    v_argb = vec4(lit, perVertexARGB.w);
+    // 6. Output. Alpha is always 1.0 — CPU tgl.cpp:2225 hardcodes
+    //    `(0xFF << 24) | r | g | b`; the raw aRGBLight alpha byte is
+    //    NEVER propagated into the per-vertex lit argb. GPU must match.
+    //    (The alpha in some aRGBLight tags like 0x02FFFFFF or 0xFAxxxxxx
+    //    is MC2 data that the CPU simply ignores for vertex lighting.)
+    v_argb = vec4(lit, 1.0);
 
     // 7. Slice 2 (object-offload) — Stage 2.D.1: parity readback harness.
     //    Pack the per-vertex lit ARGB into a single uint matching the
@@ -177,9 +201,16 @@ void main() {
         uint b8 = uint(clamp(lit.b * 255.0, 0.0, 255.0));
         uint g8 = uint(clamp(lit.g * 255.0, 0.0, 255.0));
         uint r8 = uint(clamp(lit.r * 255.0, 0.0, 255.0));
-        uint a8 = uint(clamp(perVertexARGB.w * 255.0, 0.0, 255.0));
+        // Alpha is always 0xFF to match CPU tgl.cpp:2225 which hardcodes
+        // (0xFF << 24) and ignores the raw aRGBLight alpha byte.
+        uint a8 = 255u;
         uint packed = b8 | (g8 << 8) | (r8 << 16) | (a8 << 24);
-        int idx = gl_InstanceID * u_parityVertsPerType + gl_VertexID;
+        // gl_VertexID = IBO[i] + baseVertex (from glDrawElementsInstancedBaseVertex).
+        // Subtract u_parityBaseVertex (the type's VBO baseVertex) to get the
+        // type-local index in [0, u_parityVertsPerType). This keeps the write
+        // in-bounds for types whose VBO region doesn't start at 0.
+        int localVert = gl_VertexID - u_parityBaseVertex;
+        int idx = gl_InstanceID * u_parityVertsPerType + localVert;
         parityOut_.parityOut[idx] = packed;
     }
 
