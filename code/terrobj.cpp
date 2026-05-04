@@ -62,6 +62,72 @@
 #endif
 
 #include"objectappearance.h"
+#include "static_update_counters.h"
+
+//---------------------------------------------------------------------------
+// Slice 3 Static-Update Bypass instrumentation (worktree CLAUDE.md
+// §"Tier-1 Instrumentation Env Vars" pattern; mirrors MC2_DESTROY_TRACE in
+// gameobj.cpp:104). Counters defined here because the gate lives in this TU;
+// objmgr.cpp reads them via the accessors declared in static_update_counters.h.
+//---------------------------------------------------------------------------
+extern uint32_t g_mc2FrameCounter;  // defined in mclib/tgl.cpp:3718
+
+// Env bool parser: unset/"0"/"false"/"off"/"no" disable; everything else
+// enables. Do NOT regress to `getenv(...) != nullptr` — that would treat
+// MC2_STATIC_UPDATE_SKIP=0 as ENABLED (this is the GPU_OBJECTS class of bug
+// the user explicitly told us to avoid).
+static bool ParseEnvBool(const char* name) {
+    const char* v = getenv(name);
+    if (!v || !*v) return false;
+    if (v[0]=='0' && !v[1]) return false;
+    if (!_stricmp(v, "false") || !_stricmp(v, "off") || !_stricmp(v, "no")) return false;
+    return true;
+}
+
+static const bool s_staticUpdateTrace = ParseEnvBool("MC2_STATIC_UPDATE_TRACE");
+static const bool s_staticUpdateSkip  = ParseEnvBool("MC2_STATIC_UPDATE_SKIP");
+
+namespace {
+struct StaticUpdateCounters {
+    uint32_t objects_seen;       // TerrainObject::update() entries with appearance && inView
+    uint32_t updates_run;        // appearance->update() actually called
+    uint32_t updates_skipped;    // appearance->update() short-circuited by IsStaticNow()
+    uint32_t dyn_falling;        // appearance class said static, but OBJECT_FLAG_FALLING set
+    uint32_t dyn_other;          // reserved for Stage 3.D building disqualifiers
+};
+StaticUpdateCounters g_staticUpdateCounters = {};
+StaticUpdateCounters g_staticUpdateLastSummary = {};
+uint32_t g_staticUpdateLastSummaryFrame = 0;
+}  // namespace
+
+// External accessors declared in code/static_update_counters.h. Definitions live
+// here because the counter state is file-private to this TU.
+uint32_t g_staticUpdateRunCount()      { return g_staticUpdateCounters.updates_run; }
+uint32_t g_staticUpdateSkipCount()     { return g_staticUpdateCounters.updates_skipped; }
+uint32_t g_staticUpdateSeenCount()     { return g_staticUpdateCounters.objects_seen; }
+uint32_t g_staticUpdateFallingCount()  { return g_staticUpdateCounters.dyn_falling; }
+
+uint32_t g_staticUpdateLastSummaryFrame_get() { return g_staticUpdateLastSummaryFrame; }
+
+void g_staticUpdateEmitSummary(uint32_t frame) {
+    const StaticUpdateCounters& cur  = g_staticUpdateCounters;
+    const StaticUpdateCounters& prev = g_staticUpdateLastSummary;
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+        "[STATIC_UPDATE v1] frame=%u seen=%u run=%u skip=%u "
+        "dyn_falling=%u dyn_other=%u "
+        "delta_seen=%u delta_run=%u delta_skip=%u",
+        frame,
+        cur.objects_seen, cur.updates_run, cur.updates_skipped,
+        cur.dyn_falling, cur.dyn_other,
+        cur.objects_seen   - prev.objects_seen,
+        cur.updates_run    - prev.updates_run,
+        cur.updates_skipped - prev.updates_skipped);
+    puts(buf);
+    fflush(stdout);
+    g_staticUpdateLastSummary = cur;
+    g_staticUpdateLastSummaryFrame = frame;
+}
 
 extern unsigned long NextIdNumber;
 extern float worldUnitsPerMeter;
