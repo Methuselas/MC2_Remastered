@@ -19,6 +19,7 @@ set(SOURCES ${SOURCES}
     gos_object_parity.cpp
     gos_validate.cpp
     gos_screenshot.cpp
+    gos_visual_diff.cpp
     gos_crashbundle.cpp
     gos_smoke.cpp
     gos_font.cpp
