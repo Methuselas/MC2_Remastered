@@ -1,6 +1,7 @@
 // gos_validate.cpp - Validation mode: auto-run, telemetry, screenshot, JSON log
 #include "gos_validate.h"
 #include "gos_crashbundle.h"
+#include "gos_screenshot.h"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -70,34 +71,6 @@ bool validateShouldExit() {
     return s_config.enabled && s_telemetry.framesRendered >= s_config.maxFrames;
 }
 
-static void writeScreenshotTGA(const char* path, int w, int h) {
-    unsigned char* pixels = new unsigned char[w * h * 3];
-    glReadPixels(0, 0, w, h, GL_BGR, GL_UNSIGNED_BYTE, pixels);
-
-    FILE* f = fopen(path, "wb");
-    if (!f) {
-        fprintf(stderr, "VALIDATE: Failed to write screenshot to %s\n", path);
-        delete[] pixels;
-        return;
-    }
-
-    // TGA header: uncompressed true-color
-    unsigned char header[18] = {};
-    header[2] = 2;
-    header[12] = w & 0xFF;
-    header[13] = (w >> 8) & 0xFF;
-    header[14] = h & 0xFF;
-    header[15] = (h >> 8) & 0xFF;
-    header[16] = 24;
-
-    fwrite(header, 1, 18, f);
-    fwrite(pixels, 1, w * h * 3, f);
-    fclose(f);
-    delete[] pixels;
-
-    fprintf(stderr, "VALIDATE: Screenshot saved to %s (%dx%d)\n", path, w, h);
-}
-
 // Escape a string for JSON output (handles backslashes and quotes)
 static void writeJsonString(FILE* f, const char* s) {
     fputc('"', f);
@@ -117,7 +90,7 @@ void validateWriteResults(int viewportW, int viewportH) {
     s_resultsWritten = true;
 
     if (s_config.screenshotPath[0]) {
-        writeScreenshotTGA(s_config.screenshotPath, viewportW, viewportH);
+        gos::screenshot::writeTGA(s_config.screenshotPath, viewportW, viewportH);
     }
 
     // Drain any remaining GL errors
