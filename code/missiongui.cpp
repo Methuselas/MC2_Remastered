@@ -102,6 +102,7 @@
 
 #include"gvehicl.h" // remove
 #include"projectz_trace.h"
+#include "gos_visual_diff.h"  // Stage 2.E: gate edge-scroll when capture enabled
 
 	static const char* terrainStr[NUM_TERRAIN_TYPES] = {
 			"Blue Water",	//MC_BLUEWATER_TYPE
@@ -3327,17 +3328,21 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 			((GameCamera *)eye)->setTarget(target);
 	}
 
-	if (!cameraClicked && !isPaused()) // sebi: only scoll if not paused
+	// Stage 2.E: when MC2_VISUAL_DIFF_CAPTURE=1, skip edge-scroll entirely.
+	// The OS cursor sits wherever the user left it (often a screen corner),
+	// which would drive the camera differently each run and torpedo
+	// same-config visual-diff determinism.
+	if (!cameraClicked && !isPaused() && !VisualDiff::isCaptureEnabled()) // sebi: only scoll if not paused
 	{
 		if ( mouseX <= (screenScrollLeft))
 			scrollLeft();
-		
+
 		if ((mouseX >= (Environment.screenWidth - screenScrollRight)) )
 			scrollRight();
-		
+
 		if ( (mouseY <= (screenScrollUp) && mouseY >= -screenScrollUp ) )
 			scrollUp();
-		
+
 		if ( (mouseY >= (Environment.screenHeight - screenScrollDown) ) )
 			scrollDown();
 	}
