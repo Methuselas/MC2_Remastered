@@ -189,7 +189,6 @@ set(SOURCES
     "code/weaponbolt.cpp"
     "code/ablmc2.cpp"
     "code/gamecam.cpp"
-    "code/visual_diff_camera_bridge.cpp"
     "code/mission.cpp"
     "code/mission2.cpp"
     "code/objective.cpp"

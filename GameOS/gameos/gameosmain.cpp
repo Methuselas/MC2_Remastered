@@ -335,14 +335,6 @@ static void handle_key_down( SDL_Keysym* keysym ) {
             if (alt_debug) {
                 projectz_overlay_advance();
             }
-            // Ctrl+Shift+P (no Alt): Stage 2.E visual-diff record-pose hotkey.
-            // Verified collision-free in round-4 grep (no other site matches
-            // Ctrl+Shift+P without Alt). Else-branch guards against accidental
-            // co-fire when alt_debug is set (Alt+Ctrl+Shift+P is mission.cpp:307).
-            else if ((keysym->mod & KMOD_CTRL) != 0 &&
-                     (keysym->mod & KMOD_SHIFT) != 0) {
-                VisualDiff::onHotkeyRecordPose();
-            }
             break;
         case 'c':
             // RAlt+Shift+C: deliberate crash-bundle smoke test.
