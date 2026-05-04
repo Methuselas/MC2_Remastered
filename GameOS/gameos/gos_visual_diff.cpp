@@ -38,6 +38,21 @@
 #include <cstdlib>
 #include <cstring>
 
+// Forward declaration of the gameplay-layer camera bridge. Implementation at
+// code/visual_diff_camera_bridge.cpp pulls in mclib/camera.h, gamecam.h,
+// terrain.h — none of which the engine layer (this TU) is allowed to include
+// per the gameos_graphics.cpp:38-42 layering convention. Linker connects the
+// call. Hoisted to GLOBAL scope so the symbol matches the bridge's
+// `::VisualDiffCameraBridge::applyPose` rather than getting nested in
+// VisualDiff::anonymous::.
+namespace VisualDiffCameraBridge {
+    bool applyPose(float x, float y,
+                   float cameraRotation,
+                   float cameraRotationWorld,
+                   float cameraTilt,
+                   float fov);
+}
+
 namespace VisualDiff {
 
 namespace {
@@ -469,19 +484,13 @@ const char* envOrEmpty(const char* name) {
     return v ? v : "";
 }
 
-// Step 1.5 will replace this with real Camera::setPosition/setCameraRotation/
-// setFieldOfView/cameraTilt + goal-clearing calls. For Step 1.3 we keep it as
-// a logged placeholder so the state-machine progression is observable in logs
-// without committing to camera APIs ahead of the round-5 plan's pause point.
-void teleportCameraStub(const PoseData& p) {
-    fprintf(stderr,
-            "[VISUAL_DIFF v1] event=teleport_placeholder "
-            "position=[%.2f,%.2f] cameraRotation=%.2f cameraRotationWorld=%.2f "
-            "cameraTilt=%.2f fov=%.2f\n",
-            p.position[0], p.position[1],
-            p.cameraRotation, p.cameraRotationWorld,
-            p.cameraTilt, p.fov);
-    fflush(stderr);
+// Wraps the bridge call so the call site reads naturally with PoseData.
+// The bridge namespace is forward-declared at global scope (top of this file).
+bool teleportCamera(const PoseData& p) {
+    return ::VisualDiffCameraBridge::applyPose(
+        p.position[0], p.position[1],
+        p.cameraRotation, p.cameraRotationWorld,
+        p.cameraTilt, p.fov);
 }
 
 void doCapture(int viewportW, int viewportH) {
@@ -609,14 +618,14 @@ void onFrameTick(int viewportW, int viewportH) {
         exit(4);
     }
 
-    // Teleport phase: at frameN - settle_frames, fire teleport (Step 1.5 stub
-    // for now). Camera APIs are NOT wired in Step 1.3 per the plan's pause
-    // point — Step 1.5 replaces the stub with setPosition / setCameraRotation
-    // / setFieldOfView / cameraTilt + goal-clearing calls.
+    // Teleport phase: at frameN - settle_frames, fire the bridge teleport.
+    // Bridge returns false if eye/land aren't ready; in that case stay in
+    // Waiting and retry next tick (the mission may still be loading).
     if (s_state.phase == Phase::Waiting &&
         framesSinceStart >= s_state.frameN - s_state.settleFrames) {
-        teleportCameraStub(s_state.pose);
-        s_state.phase = Phase::TeleportArmed;
+        if (teleportCamera(s_state.pose)) {
+            s_state.phase = Phase::TeleportArmed;
+        }
     }
 
     // Capture phase: at frameN, capture pre-HUD framebuffer.
