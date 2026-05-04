@@ -11,6 +11,45 @@
 
 ---
 
+## ✅ Update 2026-05-04 — Stage 2.D COMPLETE
+
+**Stage 2.D parity validation is gate-passed.** Final substrate fix
+landed in commit `ee46cc5` "fix(objects): stage 2.C.4 — GPU honor
+CPU's lightsOut suppression at the right place." Total parity-found
+substrate bugs across the arc: ~10 (see `parity_finds_gpu_substrate_bugs_visual_smoke_misses.md`
+in `~/.claude/projects/A--Games-mc2-opengl-src/memory/` for the lesson).
+
+**Final gate summary (ALL configs PASS):**
+- tier1 unset (`unset`): 5/5 PASS, +0 destroys delta on every mission
+  (artifact `2026-05-04T11-33-50`).
+- tier1 `MC2_GPU_OBJECTS=1`: 5/5 PASS, +0 destroys (artifact
+  `2026-05-04T11-12-34`).
+- tier1+tier2 `MC2_GPU_OBJECTS=1 MC2_OBJECT_PARITY_CHECK=1`: 29/29
+  missions PASS, +0 destroys, **zero `[OBJECT_PARITY v1] event=lighting_mismatch`
+  events** (artifacts `2026-05-04T11-12-34` + `2026-05-04T11-14-34`).
+
+**The final fix (`ee46cc5`):**
+- `shaders/include/lighting.hglsl`: `numLights==0` early-return gated by
+  `MC2_STATIC_PROP_LIGHTING` (returns `base_light` instead of `vec3(1)` —
+  legacy `gos_tex_vertex_lighted.vert` keeps the original behavior). N1.
+- `shaders/static_prop.vert`: passes the real `lightsOut` bit as the
+  5th argument of `get_base_light()` instead of hardcoded `false`. The
+  function-internal gate at `lighting.hglsl:116` already handles
+  suppression correctly for the non-magic colored seed; the missing
+  argument was the entire substrate gap. N1.5 revised.
+
+**Trace plumbing reverted from worktree** (Option β per advisor). The
+diagnostic instrumentation was investigation-specific; the durable lesson
+lives in the memory file and the recon docs at
+`docs/superpowers/explorations/2026-05-03-typeId474-cpu-recon.md` and
+`docs/superpowers/explorations/2026-05-03-window-ambient-recon.md`.
+
+**What's next:** Stage 2.E pinned-camera diff is the remaining
+pre-default-on gate (separate PR). Default-on flip of `MC2_GPU_OBJECTS`
+is unblocked from the substrate side.
+
+---
+
 ## Update 2026-05-03 — Stage 2.D.2 substrate bugs found via parity
 
 Six GPU-vs-CPU lighting divergences in the Stage 2.A–2.C substrate were
