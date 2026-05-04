@@ -671,6 +671,9 @@ long TerrainObject::update (void) {
 			windowsVisible = turn;
 			{
 				ZoneScopedN("TerrainObject::update appearanceUpdate");
+				++g_staticUpdateCounters.objects_seen;
+				// Stage 3.A: count only — no skip. Stage 3.B (Task 7) adds the gate.
+				++g_staticUpdateCounters.updates_run;
 				appearance->update();
 			}
 
