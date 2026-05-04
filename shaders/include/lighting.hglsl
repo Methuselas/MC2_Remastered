@@ -193,7 +193,11 @@ vec3 calc_light(in int lights_index, in vec3 normal, in vec3 vertex_world_pos, i
     ObjectLights ld = light[lights_index];
 
     if (0 == ld.numLights.x)
+#ifdef MC2_STATIC_PROP_LIGHTING
+        return base_light;
+#else
         return vec3(1, 1, 1);
+#endif
 
     vec3 final = base_light;
     vec3 ambient = vec3(0.0);

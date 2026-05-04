@@ -82,6 +82,23 @@ uniform int u_parityVertsPerType;
 // absolute; subtract this to get the type-local [0, parityVerts) index.
 // Set per-type (constant across all packets of the same type).
 uniform int u_parityBaseVertex;
+// Diagnostic Addition 3 (Approach A): when non-zero, the shader writes
+// light[inst.lightDataIndex].numLights.x into parityOut_[0] from the
+// (inst=0, vert=0) invocation only.  All other invocations still write
+// their normal lit-ARGB if u_parityWrite>0.  C++ reads slot 0 back and
+// prints [PARITY_DIAG v2] event=shader_observed gpu_numLights=N.
+// Default 0 = disabled.  Set to 1 per-frame for typeId=474 draws when
+// MC2_OBJECT_PARITY_TRACE=1.  'uniform uint' crashes engine compile
+// (memory/uniform_uint_crash.md); use int.
+uniform int u_parityNumLightsDebugMode;
+// Diagnostic Addition 4 (Approach A): when non-zero, the shader writes
+// get_base_light()'s RGB output (packed as B|G<<8|R<<16|0xFF<<24) into
+// parityOut_[0] from the (inst=0, vert=0) invocation only.  C++ reads
+// slot 0 back and prints [PARITY_DIAG v2] event=base_light_observed
+// typeId=84 rgb=R,G,B (packed=0xPACKED).  Default 0 = disabled.
+// Set to 1 per-frame for typeId=84 draws when MC2_OBJECT_PARITY_TRACE=1.
+// 'uniform uint' crashes engine compile (memory/uniform_uint_crash.md).
+uniform int u_parityBaseLightDebugMode;
 
 out vec3  v_normal;
 out vec2  v_uv;
@@ -145,13 +162,33 @@ void main() {
     PerTypeData ptd = perType_.t[inst.typeID];
 
     // 3. Decode base lighting (resolves the hot-color magic tags).
-    //    isNight/nightFactor/lightsOut are stubbed to false/0/false for now —
-    //    the legacy gos_tex_vertex_lighted shader at line 75 does the same
-    //    pending the eye-state UBO wiring. Building "lit windows at night"
-    //    will not light up until that follow-up.
+    //    isNight/nightFactor are stubbed to false/0 for now — the legacy
+    //    gos_tex_vertex_lighted shader at line 75 does the same pending the
+    //    eye-state UBO wiring.
+    //
+    // Stage 2.C.4 N1.5 (revised): pass lightsOut INTO get_base_light() via
+    // its existing 5th parameter rather than short-circuiting at the call
+    // site. The prior short-circuit (if (kFlagIsLightsOut) base_light=vec3(0))
+    // was over-broad: it suppressed ALL aRGBLight values including magic-tag
+    // branches (hot-pink/yellow/green) that CPU handles unconditionally
+    // BEFORE consulting lightsOut. CPU's `if (!lightsOut)` gate at
+    // tgl.cpp:1880 is ONLY inside the `else if (startVLight & 0x00ffffff)`
+    // non-magic colored-seed arm. get_base_light()'s existing gate at
+    // lighting.hglsl:116 is already in the right place — passing the real
+    // lightsOut bit lets the function-internal gate fire for only that arm,
+    // exactly mirroring CPU behavior.
+    //
+    // Example: hot-pink + lightsOut=1 + isWindow=1:
+    //   CPU:  magic-tag arm wins (tgl.cpp:1804-1828, sets 0x2F2F2F); lightsOut
+    //         NOT consulted; window-skip suppresses lighting loop.
+    //   GPU pre-fix: N1.5 short-circuit fires → base_light=vec3(0) → lit=0 → 0x000000 WRONG.
+    //   GPU post-fix: get_base_light runs hot-pink branch → vec3(0x2F/255); window-skip
+    //         passes lit=base_light → 0x2F2F2F. MATCHES CPU.
+    const uint kFlagIsLightsOut = (1u << 0);
+    bool lightsOut = (inst.flags & kFlagIsLightsOut) != 0u;
     vec3 base_light = get_base_light(
         perVertexARGB,
-        false, 0.0, false, false,
+        false, 0.0, false, lightsOut,
         ptd.hotPinkRGB.rgb,
         ptd.hotYellowRGB.rgb,
         ptd.hotGreenRGB.rgb);
@@ -244,6 +281,31 @@ void main() {
         int localVert = gl_VertexID - u_parityBaseVertex;
         int idx = gl_InstanceID * u_parityVertsPerType + localVert;
         parityOut_.parityOut[idx] = packed;
+
+        // Addition 3 (Approach A): diagnostic numLights capture.
+        // When u_parityNumLightsDebugMode==1 and this is the (inst=0, vert=0)
+        // invocation, write the raw numLights.x value into slot 0 of the parity
+        // buffer so C++ can read it back.  This overwrites the lit-ARGB at that
+        // slot; the C++ side skips the normal parity compare for typeId=474 on
+        // this frame and instead prints the numLights value.
+        if (u_parityNumLightsDebugMode > 0 &&
+            gl_InstanceID == 0 && localVert == 0) {
+            ObjectLights ld = light[int(inst.lightDataIndex)];
+            parityOut_.parityOut[0] = uint(ld.numLights.x);
+        }
+        // Addition 4 (Approach A): base_light diagnostic capture for typeId=84.
+        // When u_parityBaseLightDebugMode==1 and this is the (inst=0, vert=0)
+        // invocation, pack get_base_light()'s output (base_light, computed
+        // BEFORE calc_light) as B|G<<8|R<<16|0xFF<<24 into parityOut_[0].
+        // C++ reads slot 0 back and prints event=base_light_observed.
+        // This runs AFTER Addition 3 so typeId=84 never triggers Addition 3.
+        if (u_parityBaseLightDebugMode > 0 &&
+            gl_InstanceID == 0 && localVert == 0) {
+            uint bl_b = uint(clamp(base_light.b * 255.0, 0.0, 255.0));
+            uint bl_g = uint(clamp(base_light.g * 255.0, 0.0, 255.0));
+            uint bl_r = uint(clamp(base_light.r * 255.0, 0.0, 255.0));
+            parityOut_.parityOut[0] = bl_b | (bl_g << 8u) | (bl_r << 16u) | (0xFFu << 24u);
+        }
     }
 
     v_normal     = worldNormal;
