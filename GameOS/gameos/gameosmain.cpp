@@ -112,6 +112,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon zero (env-gated)
 #include "projectz_trace.h"  // projectz_trace_init/frame_tick/shutdown (PROJECTZ v1)
 #include "projectz_overlay.h" // RAlt+P debug overlay (commit 4)
+#include "gos_visual_diff.h"  // Stage 2.E pre-HUD capture + Ctrl+Shift+P record
 #include "gos_terrain_indirect.h"  // [INSTR v1] banner: terrain_indirect{,_parity} fields
 
 // Tier-1 instrumentation (stability spec §5.1): single source of truth for
@@ -334,6 +335,14 @@ static void handle_key_down( SDL_Keysym* keysym ) {
             if (alt_debug) {
                 projectz_overlay_advance();
             }
+            // Ctrl+Shift+P (no Alt): Stage 2.E visual-diff record-pose hotkey.
+            // Verified collision-free in round-4 grep (no other site matches
+            // Ctrl+Shift+P without Alt). Else-branch guards against accidental
+            // co-fire when alt_debug is set (Alt+Ctrl+Shift+P is mission.cpp:307).
+            else if ((keysym->mod & KMOD_CTRL) != 0 &&
+                     (keysym->mod & KMOD_SHIFT) != 0) {
+                VisualDiff::onHotkeyRecordPose();
+            }
             break;
         case 'c':
             // RAlt+Shift+C: deliberate crash-bundle smoke test.
@@ -523,6 +532,12 @@ static void draw_screen( void )
     if (pp) {
         pp->endScene();
     }
+
+    // Stage 2.E visual-diff capture hook. Must fire AFTER pp->endScene() so the
+    // default framebuffer holds scene+post-process, but BEFORE projectz_overlay
+    // and HUD replay so neither leaks into the captured TGA. Default-off
+    // (early-return when MC2_VISUAL_DIFF_CAPTURE is unset).
+    VisualDiff::onFrameTick(Environment.drawableWidth, Environment.drawableHeight);
 
     // ProjectZ debug overlay (RAlt+P): drawn on the default framebuffer
     // AFTER post-process composite and BEFORE HUD replay so it sits over the
