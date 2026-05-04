@@ -668,11 +668,16 @@ int main(int argc, char** argv)
         const bool waterPc = (getenv("MC2_RENDER_WATER_PARITY_CHECK") != nullptr);
         const bool vpFast  = (getenv("MC2_VERTEX_PROJECT_FAST")       != nullptr);
         const bool vpPar   = (getenv("MC2_VERTEX_PROJECT_PARITY")     != nullptr);
-        const bool gpuObj  = (getenv("MC2_GPU_OBJECTS")             != nullptr);
+        // MC2_GPU_OBJECTS env override: "0" disables (opt-out from the
+        // 2026-05-04 default-on flip), any other value (including "1")
+        // enables. Unset leaves the compile-time default (true).
         // Slice 1 invariant: mutually exclusive with legacy killswitch.
         // Setting g_useGpuObjects at startup here happens before any code
         // path can read it; legacy g_useGpuStaticProps starts false.
-        if (gpuObj) g_useGpuObjects = true;
+        const char* gpuObjEnv = getenv("MC2_GPU_OBJECTS");
+        if (gpuObjEnv) {
+            g_useGpuObjects = (gpuObjEnv[0] != '0');
+        }
         // [OBJECT_RECON v1] read MC2_OBJECT_RECON_TRACY here so the gate is
         // live before any update kernel runs. drainPerFrame() lazy-inits
         // too, but eager init avoids missing the very-first-frame data.
