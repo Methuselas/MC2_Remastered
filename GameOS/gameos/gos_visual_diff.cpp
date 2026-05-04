@@ -31,6 +31,8 @@
 //   - numbers parsed via strtod; ints rounded
 //
 #include "gos_visual_diff.h"
+#include "gos_screenshot.h"
+#include "gos_smoke.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -408,6 +410,221 @@ parse_fail:
             L.errDetails,
             jsonPath);
     return PoseLoadResult::ParseError;
+}
+
+// =============================================================================
+// State machine + lifecycle hooks (Phase 1 Step 1.3)
+// =============================================================================
+//
+// Self-contained: VisualDiff owns its own frame counter, independent of
+// SmokeMode::g_frameCount (which only ticks under MC2_SMOKE_MODE=1). The
+// only SmokeMode coupling is reading missionHasStarted() to detect when
+// "frame 0 of the mission" has occurred — that returns false on non-smoke
+// runs too, so capture mode requires smoke mode in practice. Documented
+// in the plan's Phase 1 verification section.
+
+namespace {
+
+// Lazy-cached env reads.
+struct EnvCache {
+    bool captureRead   = false;
+    bool capture       = false;
+    bool recordRead    = false;
+    bool record        = false;
+};
+EnvCache s_env;
+
+// State machine.
+enum class Phase { Waiting, TeleportArmed, Done };
+
+struct State {
+    int   localFrame          = 0;
+    int   missionStartFrame   = -1;
+    bool  missionStartObserved = false;
+    Phase phase               = Phase::Waiting;
+
+    // Pose lookup result is sticky once attempted; -1=untried, 0=ok, 1=missing,
+    // 2=parse-failed. The state machine inspects this to decide whether to
+    // proceed with capture (only on 0).
+    int   poseLookup          = -1;
+    PoseData pose             = {};
+
+    // Resolved per-mission frame parameters (env override or pose JSON or default).
+    int frameN        = 90;
+    int settleFrames  = 3;
+    int maxFrames     = 150;  // frameN + 60 by default; recomputed when frameN known
+};
+State s_state;
+
+// Resolve env-override-or-default for an int.
+int envInt(const char* name, int dflt) {
+    const char* v = getenv(name);
+    if (!v || !v[0]) return dflt;
+    return atoi(v);
+}
+
+// Cached missionPath / missionKey for record-pose flow (Step 1.6 uses them).
+const char* envOrEmpty(const char* name) {
+    const char* v = getenv(name);
+    return v ? v : "";
+}
+
+// Step 1.5 will replace this with real Camera::setPosition/setCameraRotation/
+// setFieldOfView/cameraTilt + goal-clearing calls. For Step 1.3 we keep it as
+// a logged placeholder so the state-machine progression is observable in logs
+// without committing to camera APIs ahead of the round-5 plan's pause point.
+void teleportCameraStub(const PoseData& p) {
+    fprintf(stderr,
+            "[VISUAL_DIFF v1] event=teleport_placeholder "
+            "position=[%.2f,%.2f] cameraRotation=%.2f cameraRotationWorld=%.2f "
+            "cameraTilt=%.2f fov=%.2f\n",
+            p.position[0], p.position[1],
+            p.cameraRotation, p.cameraRotationWorld,
+            p.cameraTilt, p.fov);
+    fflush(stderr);
+}
+
+void doCapture(int viewportW, int viewportH) {
+    const char* outPath = envOrEmpty("MC2_VISUAL_DIFF_OUT");
+    if (!outPath[0]) {
+        fprintf(stderr, "[VISUAL_DIFF v1] event=capture_skipped reason=no_out_path\n");
+        return;
+    }
+    bool ok = gos::screenshot::writeTGA(outPath, viewportW, viewportH);
+    if (ok) {
+        fprintf(stderr, "[VISUAL_DIFF v1] event=capture_done out=%s w=%d h=%d\n",
+                outPath, viewportW, viewportH);
+    } else {
+        fprintf(stderr, "[VISUAL_DIFF v1] event=capture_failed reason=write_tga out=%s\n",
+                outPath);
+    }
+    fflush(stderr);
+}
+
+}  // anonymous namespace
+
+bool isCaptureEnabled() {
+    if (!s_env.captureRead) {
+        const char* v = getenv("MC2_VISUAL_DIFF_CAPTURE");
+        s_env.capture = (v && v[0] && v[0] != '0');
+        s_env.captureRead = true;
+    }
+    return s_env.capture;
+}
+
+bool isRecordEnabled() {
+    if (!s_env.recordRead) {
+        const char* v = getenv("MC2_VISUAL_DIFF_RECORD");
+        s_env.record = (v && v[0] && v[0] != '0');
+        s_env.recordRead = true;
+    }
+    return s_env.record;
+}
+
+void onMissionLoad() {
+    // Reset state for a fresh mission. Currently uncalled from external code;
+    // exposed for future engine-side wiring. Env caches are NOT reset (env
+    // is process-static).
+    s_state = State{};
+}
+
+void onHotkeyRecordPose() {
+    // Step 1.6 implements the record body. Stub for Step 1.3.
+    if (!isRecordEnabled()) return;
+    fprintf(stderr, "[VISUAL_DIFF v1] event=record_pose_stub reason=step_1_3_skeleton\n");
+    fflush(stderr);
+}
+
+void onFrameTick(int viewportW, int viewportH) {
+    if (!isCaptureEnabled()) return;
+    if (s_state.phase == Phase::Done) return;
+
+    s_state.localFrame++;
+
+    // Lazy pose load on first tick after capture enabled.
+    if (s_state.poseLookup < 0) {
+        const char* jsonPath = getenv("MC2_VISUAL_DIFF_POSES");
+        if (!jsonPath || !jsonPath[0]) {
+            jsonPath = "tests/smoke/visual_diff/mission_camera_poses.json";
+        }
+        const char* missionKey = envOrEmpty("MC2_VISUAL_DIFF_MISSION");
+        if (!missionKey[0]) {
+            fprintf(stderr, "[VISUAL_DIFF v1] event=pose_missing reason=no_mission_env\n");
+            s_state.poseLookup = 1;
+            s_state.phase = Phase::Done;
+            return;
+        }
+
+        PoseLoadResult r = loadPose(jsonPath, missionKey, &s_state.pose);
+        switch (r) {
+            case PoseLoadResult::Ok:
+                s_state.poseLookup = 0;
+                // env override takes precedence; otherwise from pose JSON
+                s_state.frameN       = envInt("MC2_VISUAL_DIFF_FRAME_N",       s_state.pose.frameN);
+                s_state.settleFrames = envInt("MC2_VISUAL_DIFF_SETTLE_FRAMES", s_state.pose.settle_frames);
+                s_state.maxFrames    = envInt("MC2_VISUAL_DIFF_MAX_FRAMES",    s_state.frameN + 60);
+                fprintf(stderr,
+                        "[VISUAL_DIFF v1] event=pose_loaded mission=%s "
+                        "frameN=%d settle_frames=%d maxFrames=%d\n",
+                        missionKey, s_state.frameN, s_state.settleFrames, s_state.maxFrames);
+                fflush(stderr);
+                break;
+            case PoseLoadResult::FileNotFound:
+            case PoseLoadResult::MissionNotFound:
+                s_state.poseLookup = 1;
+                s_state.phase = Phase::Done;
+                return;
+            case PoseLoadResult::ParseError:
+                s_state.poseLookup = 2;
+                s_state.phase = Phase::Done;
+                return;
+        }
+    }
+    if (s_state.poseLookup != 0) return;
+
+    // Snapshot mission-start frame on first tick after missionHasStarted() goes true.
+    if (!s_state.missionStartObserved) {
+        if (SmokeMode::missionHasStarted()) {
+            s_state.missionStartObserved = true;
+            s_state.missionStartFrame    = s_state.localFrame;
+            fprintf(stderr,
+                    "[VISUAL_DIFF v1] event=mission_start_observed local_frame=%d\n",
+                    s_state.localFrame);
+            fflush(stderr);
+        }
+        return;
+    }
+
+    int framesSinceStart = s_state.localFrame - s_state.missionStartFrame;
+
+    // Timeout — exit cleanly with code 4 so the Python harness can distinguish.
+    if (framesSinceStart > s_state.maxFrames) {
+        fprintf(stderr,
+                "[VISUAL_DIFF v1] event=capture_timeout frames_since_start=%d max_frames=%d\n",
+                framesSinceStart, s_state.maxFrames);
+        fflush(stderr);
+        fflush(stdout);
+        // Direct exit; engine state at this point is irrecoverable for our
+        // purposes (we've missed the capture window).
+        exit(4);
+    }
+
+    // Teleport phase: at frameN - settle_frames, fire teleport (Step 1.5 stub
+    // for now). Camera APIs are NOT wired in Step 1.3 per the plan's pause
+    // point — Step 1.5 replaces the stub with setPosition / setCameraRotation
+    // / setFieldOfView / cameraTilt + goal-clearing calls.
+    if (s_state.phase == Phase::Waiting &&
+        framesSinceStart >= s_state.frameN - s_state.settleFrames) {
+        teleportCameraStub(s_state.pose);
+        s_state.phase = Phase::TeleportArmed;
+    }
+
+    // Capture phase: at frameN, capture pre-HUD framebuffer.
+    if (s_state.phase == Phase::TeleportArmed &&
+        framesSinceStart >= s_state.frameN) {
+        doCapture(viewportW, viewportH);
+        s_state.phase = Phase::Done;
+    }
 }
 
 }  // namespace VisualDiff

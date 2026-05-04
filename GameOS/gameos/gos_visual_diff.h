@@ -44,4 +44,34 @@ enum class PoseLoadResult {
 // it is written iff the return is Ok.
 PoseLoadResult loadPose(const char* jsonPath, const char* missionKey, PoseData* out);
 
+// --- State machine + lifecycle hooks (Phase 1 Step 1.3) ---
+
+// True iff MC2_VISUAL_DIFF_CAPTURE is set in the environment. Reads env once
+// on first call and caches; all subsequent calls return the cached value.
+bool isCaptureEnabled();
+
+// True iff MC2_VISUAL_DIFF_RECORD is set in the environment. Cached.
+bool isRecordEnabled();
+
+// Per-frame hook. Wired into the gameosmain.cpp render loop at the pre-HUD seam
+// (Step 1.4). When isCaptureEnabled() is false, returns immediately. When true,
+// drives a state machine that:
+//   - Lazy-loads the pose for MC2_VISUAL_DIFF_MISSION on first tick
+//   - Snapshots its own "mission start frame" on the first tick after
+//     SmokeMode::missionHasStarted() returns true
+//   - At framesSinceStart == frameN - settle_frames: calls teleportCamera()
+//     (currently a stub; Step 1.5 wires actual camera APIs)
+//   - At framesSinceStart == frameN: writes a TGA via gos::screenshot::writeTGA
+//     to the path in MC2_VISUAL_DIFF_OUT
+//   - At framesSinceStart > maxFrames: logs capture_timeout and exits process 4
+// viewportW/viewportH come from the caller (Environment.drawableWidth/Height).
+void onFrameTick(int viewportW, int viewportH);
+
+// Hotkey hook for Ctrl+Shift+P (Step 1.6 implements the body). Stub now.
+void onHotkeyRecordPose();
+
+// Mission-load reset hook (currently uncalled from external code; reserved for
+// future engine-side wiring if in-process restart support is needed).
+void onMissionLoad();
+
 }  // namespace VisualDiff
