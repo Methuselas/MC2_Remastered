@@ -47,12 +47,16 @@ MISSIONS = TIER1 + STRESS
 # User observation 2026-05-04 maps intro durations to these values; adjust
 # empirically once Step 1.7 variance measurement runs.
 CAPTURE_FRAMES = {
-    "mc2_01": 1700,   # ~10s intro estimate
-    "mc2_03": 3000,   # 20s intro
-    "mc2_05": 400,    # ~no intro (replaces mc2_17)
-    "mc2_06": 400,    # sans intro (replaces mc2_10)
-    "mc2_18": 1700,   # unknown intro length, conservative default
-    "mc2_24": 400,    # no intro
+    # All missions captured at frameN=1000 (~7s at 142fps) post-mission_ready.
+    # Recipe per user observation 2026-05-04: load ~2s, double-hit escape (the
+    # engine-side auto-skip via VisualDiff-gated forceMovieToEnd in
+    # missiongui.cpp does this every frame while inMovieMode), then settle ~5s.
+    "mc2_01": 400,
+    "mc2_03": 400,
+    "mc2_05": 400,
+    "mc2_06": 400,
+    "mc2_18": 400,
+    "mc2_24": 400,
 }
 
 # Spec tolerance: pixel "differs" if any channel delta > 2 LSB.

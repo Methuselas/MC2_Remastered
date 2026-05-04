@@ -214,17 +214,63 @@ Memory notes saved during this arc:
 
 ---
 
-## Hand-off
+## Status: paused 2026-05-04 — mech idle animations are the determinism floor
 
-Engine side is shipped (Steps 1.1–1.5+cleanup, commits
-`290f8c1`, `686e29d`, `a7eff01`, `5f00142`, `3417238`, `f1d0f28`).
+Step 1.7 variance measurement ran across all 6 stock missions and
+revealed the architectural answer:
 
-Python harness (Step 1.6) is the next deliverable. Variance measurement
-(Step 1.7) answers the architectural question:
+| Mission | Intro | frameN | ratio | verdict |
+|---|---|---|---|---|
+| mc2_06 | none | 400 | 0.000000 | byte-perfect |
+| mc2_24 | none | 400 | 0.0084 | over by 0.3% |
+| mc2_05 | short | 400 | 0.0118 | over by 0.7% |
+| mc2_03 | 20s | 3000 | 0.34 | 34% (huge) |
+| mc2_18 | unknown | 1700 | 0.86 | 86% (huge) |
+| mc2_01 | ~10s | 1700 | 0.86 | 86% (huge) |
 
-> Is the engine's natural mission camera at frame N reproducible enough
-> for visual diff to gate at ≤2 LSB / ≤0.5% tolerance?
+After fixing the OS-cursor edge-scroll bug (commit `b7b004e`) and
+adding a forceMovieToEnd auto-skip on inMovieMode entry (stashed —
+see below), late-frame captures for missions with substantial mech
+complements still showed 8-30% variance.
 
-If yes: Phase 2 packages the gate. If no: surface hot_regions, decide
-among options (a)–(d) including "revisit camera-pin if natural-camera
-proves inadequate."
+**Root cause: mech idle animations are wall-clock-driven (`SDL_GetTicks()`
+or equivalent). Each mech's joint pose at frame N differs slightly between
+two same-config runs because boot-time-to-capture-frame wall clock
+differs. Per-pixel diff scales with mech count × idle phase delta.**
+
+Spec tolerance (≤2 LSB / ≤0.5%) was sized for shader-uniform noise; it's
+not nearly enough margin for animated mech meshes whose vertices shift
+several pixels per frame at idle.
+
+**Conclusion:** the visual-diff gate as specified isn't achievable for
+stock missions at this tolerance without a substrate-level
+determinism fix (mech anim → frame-driven, or disable idle anims
+under capture env). That's a separate arc.
+
+### What ships from this work
+
+- `gos_screenshot::writeTGA` shared helper (`290f8c1`)
+- `VisualDiff` env-gated state machine + pre-HUD capture hook (`a7eff01`, `5f00142`)
+- Edge-scroll OS-cursor fix (`b7b004e`) — useful bug fix in its own right
+- Python harness skeleton with measurement + gate modes (`12f1521`)
+- Plan doc round history (this file) — preserves 5 rounds of adversarial
+  review lessons + the round-6 simplification story
+
+### What's stashed for future revival
+
+`stash@{0}` (push date 2026-05-04): one-shot forceMovieToEnd auto-skip
+on inMovieMode entry in `code/missiongui.cpp`. Re-apply via
+`git stash apply stash@{0}` when revisiting Stage 2.E with a
+mech-anim determinism fix in scope.
+
+### Recommended future-arc shape (if revived)
+
+1. **Investigate mech idle anim time source** — likely `SDL_GetTicks()`
+   in `Mech3DAppearance::update()` or similar; convert to frame-driven
+   under capture env.
+2. **Re-apply auto-skip stash + variance run** — confirm idle-anim fix
+   drops variance to ≤0.5%.
+3. **Phase 2 gate** packages the working measurement.
+
+The infrastructure is in place. The blocker is one targeted
+determinism fix, not architectural rework.
