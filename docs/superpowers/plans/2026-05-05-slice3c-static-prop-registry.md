@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Eliminate per-frame `CacheGpuLightData()` + `TransformMultiShape_PositionsOnly()` + `submitMultiShape()` for tree instances whose world-space lighting and position are stable, by caching `GpuStaticPropInstance` snapshots in a `GpuStaticPropRegistry` and replaying them each frame via a compact live-index list.
+**Goal:** Eliminate per-frame `TransformMultiShape_PositionsOnly()` + `submitMultiShape()` + `submit()` leaf build for tree instances whose world-space position is stable, by caching `GpuStaticPropInstance` snapshots in a `GpuStaticPropRegistry` and replaying them each frame via a compact live-index list. Note: `CacheGpuLightData()` is **retained** — it is called once per visible tree per frame in `TreeAppearance::render()` to refresh the per-frame light-data UBO slot index before `markVisible()`. Only the heavier vertex-transform and per-leaf bucket-build work is eliminated.
 
-**Architecture:** Persistent CPU-side recipe table (`std::vector<GpuStaticPropInstance>`) + per-frame live-instance list populated by `markVisible()` in `TreeAppearance::render()`. Registry `flush()` injects cached instances into the batcher's `PerTypeBucket` queues via `submitCachedInstance()` **before** the batcher's own `flush()`, so all instances (dynamic + static) draw in one combined GPU pass with no extra SSBO. No new SSBO, no shader change, trees-only scope.
+**Architecture:** Persistent CPU-side recipe table (`std::vector<GpuStaticPropInstance>`) + per-frame live-range list (one regIdx per visible tree) populated by `markVisible()` in `TreeAppearance::render()`. Before calling `markVisible()`, render() calls `treeShape->CacheGpuLightData()` to refresh `cachedGpuLightIndex_`; registry `flush()` reads this and patches `lightDataIndex` in a stack copy before injecting into the batcher's `PerTypeBucket` queues via `submitCachedInstance()`. All instances (dynamic + static) draw in one combined GPU pass with no extra SSBO. No new SSBO, no shader change, trees-only scope.
 
 **Tech Stack:** C++14 STL (`<vector>`, `<cstring>`), OpenGL (no new calls), existing `GpuStaticPropBatcher` infrastructure.
 
-**Env gate:** `MC2_STATIC_PROP_REGISTRY=1` (opt-in, default off for initial soak). Full Stage 3.C validation requires both `MC2_STATIC_PROP_REGISTRY=1` **and** `MC2_STATIC_UPDATE_SKIP=1` — the registry eliminates render-side `submitMultiShape()` cost, while the existing Stage 3.B skip gate eliminates update-side `CacheGpuLightData()` + `TransformMultiShape_PositionsOnly()` cost. Running `MC2_STATIC_PROP_REGISTRY=1` alone exercises only the render-side path and will not move the `TerrainObject::update appearanceUpdate` Tracy zone.
+**Env gate:** `MC2_STATIC_PROP_REGISTRY=1` (opt-in, default off for initial soak). Full Stage 3.C validation requires both `MC2_STATIC_PROP_REGISTRY=1` **and** `MC2_STATIC_UPDATE_SKIP=1` — the registry eliminates render-side `submitMultiShape()` cost, while the Stage 3.B skip gate eliminates update-side `TransformMultiShape_PositionsOnly()` cost. Running `MC2_STATIC_PROP_REGISTRY=1` alone exercises only the render-side path and will not move the `TerrainObject::update appearanceUpdate` Tracy zone.
 
 ---
 
@@ -34,7 +34,7 @@ These were raised by adversarial review. Each is resolved by grepping the actual
 
 **Note on aRGBHighlight:** `TG_Shape::aRGBHighlight` is initialized to 0 at shape allocation (tgl.cpp:251, 467) and has no setter call in `TreeAppearance::update()`. It is always 0 for trees = stable. ✓
 
-**C1 — lightDataIndex is per-frame ephemeral (FIXED):** `resetLightData()` (called from MC_TextureManager each frame) clears `lightDataStructuresCount = 0`, invalidating all UBO slot indices. A `lightDataIndex` baked into `s_recipes` at registration time is stale from frame 2 onward. Fix: (a) `touch()` calls `treeShape->CacheGpuLightData()` each frame to refresh `TG_MultiShape::cachedGpuLightIndex_` (`uint32_t`, msl.h:275, `UINT32_MAX` = not yet gathered); (b) `RecipeRange` stores `TG_MultiShape* multi` (same pointer as `treeShape`, lifetime matches the tree); (c) `flush()` reads `multi->getCachedGpuLightIndex()` and patches a copy of each leaf's `inst.lightDataIndex` before `submitCachedInstance()`. New inline getter `getCachedGpuLightIndex()` added to `TG_MultiShape` in msl.h (returns the protected field). The live list changes to store `regIdx` values (renamed `s_liveRangeIndices`) so `flush()` can access the range and its `multi` pointer. ✓
+**C1 — lightDataIndex is per-frame ephemeral (FIXED):** `resetLightData()` (called from MC_TextureManager each frame) clears `lightDataStructuresCount = 0`, invalidating all UBO slot indices. A `lightDataIndex` baked into `s_recipes` at registration time is stale from frame 2 onward. Fix: (a) `TreeAppearance::render()`'s static branch calls `treeShape->CacheGpuLightData()` before `markVisible()` — this refreshes `TG_MultiShape::cachedGpuLightIndex_` (`uint32_t`, msl.h:275, `UINT32_MAX` = not yet gathered) in the render path that actually needs it, avoiding a fragile dependency on update() having run touch() first; (b) `RecipeRange` stores `TG_MultiShape* multi` (same pointer as `treeShape`, lifetime matches the tree, cleared on tombstone); (c) `flush()` reads `multi->getCachedGpuLightIndex()` and patches a stack copy of each leaf's `inst.lightDataIndex` before `submitCachedInstance()`; (d) if `getCachedGpuLightIndex()` returns `UINT32_MAX` at render time, the static path is abandoned: `invalidateStaticRegistration()` is called and the tree falls through to the dynamic submit path. New inline getter `getCachedGpuLightIndex()` added to `TG_MultiShape` in msl.h. The live list stores `regIdx` values (`s_liveRangeIndices`) so `flush()` can access the range and its `multi` pointer. `touch()` remains timestamp-only (`treeShape->Touch()`). ✓
 
 **C2 — wrong file for init/destroy (FIXED):** `GpuStaticPropBatcher::onMapLoad()` is called from `code/mission.cpp:1644`, not from `gameosmain.cpp`. `onMapUnload()` is at `code/mission.cpp:3171`. Task 9 Step 5 is corrected accordingly, with include path `"../GameOS/gameos/gos_static_prop_registry.h"` matching the established relative-include pattern. ✓
 
@@ -494,17 +494,19 @@ void flush() {
         if (rng.count == 0 || !rng.multi) continue;  // tombstone guard
 
         // Patch lightDataIndex from CacheGpuLightData() result gathered
-        // by touch() earlier this frame. resetLightData() clears the UBO
-        // index table each frame, so the baked value in s_recipes is stale;
-        // the getter reads the freshly-gathered per-frame slot.
-        // UINT32_MAX means CacheGpuLightData() hasn't run yet — treat as 0
-        // (no lighting data), matching submitMultiShape's gather-now fallback.
+        // in TreeAppearance::render() just before markVisible() was called.
+        // resetLightData() clears the UBO index table each frame, so the
+        // baked value in s_recipes is stale; the getter reads the fresh slot.
+        // UINT32_MAX must not reach here: render() guards against it by
+        // calling invalidateStaticRegistration() and falling through to the
+        // dynamic submit path, so flush() never receives a regIdx for a tree
+        // whose CacheGpuLightData() returned UINT32_MAX.
         const uint32_t freshLightIdx = rng.multi->getCachedGpuLightIndex();
-        const uint32_t patchedIdx = (freshLightIdx == UINT32_MAX) ? 0u : freshLightIdx;
+        SP_TRACE("flush regIdx=%u lightIdx=%u count=%u", regIdx, freshLightIdx, rng.count);
 
         for (uint32_t i = 0; i < rng.count; ++i) {
             GpuStaticPropInstance inst = s_recipes[rng.first + i]; // stack copy
-            inst.lightDataIndex = patchedIdx;
+            inst.lightDataIndex = freshLightIdx;
             batcher.submitCachedInstance(inst);
         }
     }
@@ -597,14 +599,12 @@ Add after the last existing `TreeAppearance` method implementation:
 
 ```cpp
 void TreeAppearance::touch() {
-    if (treeShape) {
-        treeShape->Touch();             // advance lastTurnTransformed on all leaves
-        treeShape->CacheGpuLightData(); // refresh cachedGpuLightIndex_ for flush()
-    }
+    if (treeShape)
+        treeShape->Touch();  // advance lastTurnTransformed; see TG_Shape::Render staleness guard
 }
 ```
 
-`treeShape->Touch()` calls `TG_MultiShape::Touch()` which iterates `listOfShapes[i].node->Touch()` on each leaf. `treeShape->CacheGpuLightData()` (msl.cpp:1765) sets `cachedGpuLightIndex_` from `GatherGpuObjectLightDataOnly()` — this is the per-frame UBO slot index that `flush()` reads via `getCachedGpuLightIndex()` to patch stale recipe entries. Must be called every frame because `resetLightData()` invalidates all UBO indices each frame.
+`treeShape->Touch()` calls `TG_MultiShape::Touch()` which iterates `listOfShapes[i].node->Touch()` on each leaf. `CacheGpuLightData()` is NOT called here — it runs in `TreeAppearance::render()`'s static branch (Task 7) immediately before `markVisible()`. Calling it in touch() (the update path) would create a fragile dependency: render() assumes update() ran touch() first, but the two paths have separate visibility guards and can run independently.
 
 - [ ] **Step 3: Implement `TreeAppearance::IsStaticNow()`**
 
@@ -637,13 +637,28 @@ void TreeAppearance::invalidateStaticRegistration() {
 }
 ```
 
-- [ ] **Step 5: Build, verify no linker errors**
+- [ ] **Step 5: Update `TreeAppearance::destroy()` to call `invalidateStaticRegistration()`**
 
-- [ ] **Step 6: Commit**
+`RecipeRange::multi` is a raw `TG_MultiShape*` that becomes a dangling pointer if the tree's shape memory is freed before the registry's `destroy()`. Guarantee lifetime safety by invalidating before any memory is released.
+
+Find the existing `TreeAppearance::destroy()` in bdactor.cpp. At the very top of the function body (before any other cleanup), add:
+
+```cpp
+// Stage 3.C: clear static registration so RecipeRange::multi is NULLed
+// before treeShape memory is freed. Must be first in destroy() to prevent
+// flush() from accessing a dangling pointer on the same frame as teardown.
+invalidateStaticRegistration();
+```
+
+Note: `GpuStaticPropRegistry::destroy()` (called from mission.cpp at unload) calls `s_recipeRanges.clear()`, which discards all ranges. The per-object `invalidateStaticRegistration()` in `TreeAppearance::destroy()` covers mid-mission destruction (scripted events, falling trees that complete their death cycle). Both paths are needed.
+
+- [ ] **Step 6: Build, verify no linker errors**
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add mclib/bdactor.cpp
-git commit -m "feat(3c): TreeAppearance::touch/IsStaticNow/invalidateStaticRegistration implementations"
+git commit -m "feat(3c): TreeAppearance::touch/IsStaticNow/invalidateStaticRegistration/destroy implementations"
 ```
 
 ---
@@ -695,16 +710,28 @@ if (g_useGpuObjects)
         GpuStaticPropPopulation::Tree);
 
     // Stage 3.C: static registry fast path. If this tree's instance was
-    // previously registered and lighting/position are still stable, inject
-    // it into the batcher via markVisible() (processed at registry flush)
-    // instead of running the full submitMultiShape() compute path.
-    // Sets submittedToGpu=true to suppress CPU Render() fallback below.
+    // previously registered and position/shape are stable, inject it into
+    // the batcher via markVisible() (processed at registry flush) instead of
+    // running the full submitMultiShape() compute path.
+    // CacheGpuLightData() is called here (not in touch()) so the light-index
+    // refresh is co-located with the render-side emission that needs it.
+    // The UINT32_MAX guard handles the degenerate case where no light data
+    // is available: invalidate and fall through to the dynamic path.
     // Does NOT return early — selection visualization (drawBars/drawBrackets)
     // at lines 4141-4161 must still run if selected is non-zero.
     if (IsStaticNow()) {
-        GpuStaticPropRegistry::markVisible(staticReg.recipeIndex);
-        submittedToGpu = true;
-    } else if (treeShape)
+        treeShape->CacheGpuLightData();  // refresh per-frame light UBO slot index
+        if (treeShape->getCachedGpuLightIndex() == UINT32_MAX) {
+            // Light-data gather failed (degenerate tree, no light nodes).
+            // Invalidate so the dynamic path re-runs and re-registers next frame.
+            invalidateStaticRegistration();
+            // Fall through to the else-if (treeShape) dynamic path below.
+        } else {
+            GpuStaticPropRegistry::markVisible(staticReg.recipeIndex);
+            submittedToGpu = true;
+        }
+    }
+    if (!submittedToGpu && treeShape)
     {
         // Stage 3.C / M1: shape-swap invalidation. IsStaticNow()'s
         // staticReg.shape==treeShape check routes us here when treeShape was
@@ -827,12 +854,12 @@ git commit -m "feat(3c): terrobj.cpp — invalidateStaticRegistration on fall + 
 - Modify: `code/gamecam.cpp` (line ~200, before `land->render()`)
 - Modify: `mclib/txmmgr.cpp` (line ~1474, before `GpuStaticPropBatcher::instance().flush()`)
 
-- [ ] **Step 1: Add `#include "gos_static_prop_registry.h"` to gamecam.cpp**
+- [ ] **Step 1: Add `#include` of `gos_static_prop_registry.h` to gamecam.cpp**
 
-Add near the top of gamecam.cpp include block (after existing `#ifndef GAMECAM_H` etc.):
+gamecam.cpp is in `code/`; the header is in `GameOS/gameos/`. Use the explicit relative include (same convention as txmmgr.cpp and mission.cpp). Add near the top of gamecam.cpp include block (after existing `#ifndef GAMECAM_H` etc.):
 
 ```cpp
-#include "gos_static_prop_registry.h"   // Stage 3.C: frameBegin()
+#include "../GameOS/gameos/gos_static_prop_registry.h"   // Stage 3.C: frameBegin()
 ```
 
 - [ ] **Step 2: Add `GpuStaticPropRegistry::frameBegin()` in gamecam.cpp**
@@ -1012,26 +1039,34 @@ Shoot trees until one falls. Verify:
 
 - [ ] **Step 6: Tracy delta measurement**
 
-Run mc2_01 with Tracy connected, `MC2_STATIC_PROP_REGISTRY=1 MC2_STATIC_UPDATE_SKIP=1` (both required for full Stage 3.C benefit). Measure `TerrainObject::update appearanceUpdate` zone. Compare to baseline (neither env var set). Expected: ~1.2ms reduction. Record actual delta.
+Run mc2_01 with Tracy connected, `MC2_STATIC_PROP_REGISTRY=1 MC2_STATIC_UPDATE_SKIP=1` (both required for full Stage 3.C benefit). Measure `TerrainObject::update appearanceUpdate` zone and `TreeAppearance::render` zone. Compare to baseline (neither env var set). **Record the actual delta — do not assume ~1.2ms.** Stage 3.C eliminates `TransformMultiShape_PositionsOnly()` + `submitMultiShape()` per static tree, but retains `CacheGpuLightData()` (moved to render), so the net saving will be less than the full `appearanceUpdate` zone total. Whatever the actual delta, record it.
 
 **Partial-mode note:** `MC2_STATIC_PROP_REGISTRY=1` alone (without `MC2_STATIC_UPDATE_SKIP=1`) exercises only the render-side cached-submission path and will not move the `TerrainObject::update` Tracy zone, because `TreeAppearance::update()` still runs on every frame for every tree.
 
 Also check: no regression in `Render.GpuStaticProps` GPU zone (static instances draw in the same batcher pass, no extra draw calls).
 
-- [ ] **Step 7: Tier-1 smoke**
+- [ ] **Step 7: Tier-1 smoke — default-off (regression gate)**
 
 ```bash
 py -3 A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/scripts/run_smoke.py --tier tier1
 ```
 
-Expected: 5/5 PASS, `+0 destroys` delta on all missions.
+Expected: 5/5 PASS, `+0 destroys` delta on all missions. Proves no regression in the default (feature-off) path.
 
-- [ ] **Step 8: Commit smoke result**
-
-If all pass, commit the smoke gate record:
+- [ ] **Step 8: Tier-1 smoke — feature-on (registry path gate)**
 
 ```bash
-git commit --allow-empty -m "chore(3c): tier1 smoke PASS (5/5, +0 destroys) — static_prop_registry soak begins"
+set MC2_STATIC_PROP_REGISTRY=1 && set MC2_STATIC_UPDATE_SKIP=1 && py -3 A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/scripts/run_smoke.py --tier tier1
+```
+
+Expected: 5/5 PASS, `+0 destroys` delta on all missions. Proves the registry path and update-skip path survive automated missions. Both default-off AND feature-on must pass before soak can begin.
+
+- [ ] **Step 9: Commit smoke result**
+
+If both smoke runs pass (5/5 each), commit the smoke gate record:
+
+```bash
+git commit --allow-empty -m "chore(3c): tier1 smoke PASS (5/5 default-off + 5/5 feature-on) — static_prop_registry soak begins"
 ```
 
 ---
@@ -1039,17 +1074,17 @@ git commit --allow-empty -m "chore(3c): tier1 smoke PASS (5/5, +0 destroys) — 
 ## Self-review checklist
 
 **Spec coverage:**
-- TGL Touch() layer ✓ (Task 1)
+- TGL Touch() layer + getCachedGpuLightIndex() getter ✓ (Task 1)
 - Appearance base virtuals ✓ (Task 2)
 - Batcher batch capture + submitCachedInstance ✓ (Task 3)
-- Registry implementation ✓ (Task 4)
+- Registry implementation (RecipeRange::multi, registerRecipe, markVisible, flush with lightDataIndex patch) ✓ (Task 4)
 - TreeAppearance declarations ✓ (Task 5)
-- TreeAppearance implementations ✓ (Task 6)
-- render() static branch + registration ✓ (Task 7)
+- TreeAppearance implementations (touch, IsStaticNow, invalidateStaticRegistration, destroy cleanup) ✓ (Task 6)
+- render() static branch (CacheGpuLightData + UINT32_MAX guard + markVisible) + registration block + M1 shape-swap ✓ (Task 7)
 - terrobj.cpp outer-skip changes ✓ (Task 8)
-- Call sites (frameBegin/flush/init/destroy) ✓ (Task 9)
+- Call sites (frameBegin/flush/init/destroy) with correct relative includes ✓ (Task 9)
 - [INSTR v1] banner ✓ (Task 10)
-- Build + smoke gate ✓ (Task 11)
+- Build + smoke gate (default-off + feature-on) ✓ (Task 11)
 
 **Placeholder scan:** none found.
 
@@ -1058,6 +1093,7 @@ git commit --allow-empty -m "chore(3c): tier1 smoke PASS (5/5, +0 destroys) — 
 - `std::vector<GpuStaticPropInstance>` batch type used in Task 3 `getLastBuiltBatch()` and Task 4 `registerRecipe()` ✓
 - `TG_MultiShapePtr` for `staticReg.shape` matches `treeShape` field type ✓
 - `uint32_t` for `getCachedGpuLightIndex()` return and `lightDataIndex` field (both verified against msl.h:275 and gos_static_prop_batcher.h:18) ✓
-- `TG_MultiShape*` (raw pointer) for `RecipeRange::multi` — safe because the registry's `invalidate()` is called by `invalidateStaticRegistration()` before any tree is destroyed; pointer lifetime matches tree lifetime ✓
+- `TG_MultiShape*` (raw pointer) for `RecipeRange::multi` — safe because `TreeAppearance::destroy()` calls `invalidateStaticRegistration()` before treeShape memory is released (Task 6 Step 5), and `GpuStaticPropRegistry::destroy()` clears all ranges at mission unload (Task 9 Step 5) ✓
+- All include paths use explicit relative form `"../GameOS/gameos/..."` in gamecam.cpp, txmmgr.cpp, and mission.cpp ✓
 
-**Blocker resolutions referenced:** B1–B5, MI-1, MI-2, C1, C2, M1 — all addressed in the "Blocker resolutions" section above.
+**Blocker resolutions referenced:** B1–B5, MI-1, MI-2, C1, C2, M1, Major-1 (feature-on smoke), Major-2 (include paths), Major-3 (destroy lifetime) — all addressed above.
