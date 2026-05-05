@@ -4109,8 +4109,39 @@ long TreeAppearance::render (long depthFixup)
 		{
 			GpuStaticPropBatcher::instance().recordEligibleActor(
 				GpuStaticPropPopulation::Tree);
-			if (treeShape)
+
+			// Stage 3.C: static registry fast path. If this tree's instance was
+			// previously registered and position/shape are stable, inject it into
+			// the batcher via markVisible() (processed at registry flush) instead of
+			// running the full submitMultiShape() compute path.
+			// CacheGpuLightData() is called here (not in touch()) so the light-index
+			// refresh is co-located with the render-side emission that needs it.
+			// The UINT32_MAX guard handles the degenerate case where no light data
+			// is available: invalidate and fall through to the dynamic path.
+			// Does NOT return early — selection visualization (drawBars/drawBrackets)
+			// at lines 4141-4161 must still run if selected is non-zero.
+			if (IsStaticNow()) {
+				treeShape->CacheGpuLightData();  // refresh per-frame light UBO slot index
+				if (treeShape->getCachedGpuLightIndex() == UINT32_MAX) {
+					// Light-data gather failed (degenerate tree, no light nodes).
+					// Invalidate so the dynamic path re-runs and re-registers next frame.
+					invalidateStaticRegistration();
+					// Fall through to the if (!submittedToGpu && treeShape) dynamic path below.
+				} else {
+					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex);
+					submittedToGpu = true;
+				}
+			}
+			if (!submittedToGpu && treeShape)
 			{
+				// Stage 3.C / M1: shape-swap invalidation. IsStaticNow()'s
+				// staticReg.shape==treeShape check routes us here when treeShape was
+				// reassigned (LOD swap at bdactor.cpp:3984, damage at ~3596/3626), but
+				// staticReg.registered==true still blocks the registration block below.
+				// Invalidate the stale entry first so the new shape gets registered.
+				if (staticReg.registered && staticReg.shape != treeShape)
+					invalidateStaticRegistration();
+
 				// Stage 2.C+: see BldgAppearance::render for callerName intent.
 				const char* callerName = (appearType ? appearType->name : nullptr);
 				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
@@ -4121,6 +4152,21 @@ long TreeAppearance::render (long depthFixup)
 				    GpuStaticPropBatcher::instance().wasLastFailureLateRegistration())
 				{
 					needsFullBakeNextFrame = true;
+					invalidateStaticRegistration();  // clear stale registration if any
+				}
+				// Stage 3.C: registration block. On the first successful full-bake
+				// submission with no late-reg flag, snapshot the leaf batch into the
+				// registry. Subsequent frames use the static path above.
+				// Pass treeShape as multi so flush() can patch lightDataIndex each frame.
+				if (submittedToGpu && !staticReg.registered
+				        && GpuStaticPropRegistry::isEnabled()
+				        && !needsFullBakeNextFrame) {
+					const auto& batch =
+						GpuStaticPropBatcher::instance().getLastBuiltBatch();
+					staticReg.recipeIndex = GpuStaticPropRegistry::registerRecipe(
+						treeShape, batch);
+					staticReg.registered  = (staticReg.recipeIndex >= 0);
+					staticReg.shape        = treeShape;
 				}
 			}
 			if (!submittedToGpu)
