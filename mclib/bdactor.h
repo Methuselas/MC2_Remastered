@@ -510,6 +510,7 @@ class TreeAppearance : public ObjectAppearance
 		}
 
 		virtual long update (bool animate = true);
+		virtual bool IsStaticNow (void) const override;
 		virtual long render (long depthFixup = 0);
 
 		virtual long renderShadows (void);
