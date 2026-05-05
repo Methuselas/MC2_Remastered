@@ -140,6 +140,16 @@ class Appearance
 			return false;
 		}
 
+		// Stage 3.C: stamp-advance path for static registry. Default no-op.
+		// Override in TreeAppearance calls TG_MultiShape::Touch() without
+		// running the full vertex transform.
+		virtual void touch() {}
+
+		// Stage 3.C: clear static registration when the owner transitions to
+		// dynamic (falling, damage, override). Default no-op. Override in
+		// TreeAppearance calls GpuStaticPropRegistry::invalidate() internally.
+		virtual void invalidateStaticRegistration() {}
+
 		virtual long render (long depthFixup = 0)
 		{
 			//Decide whether or not I can be seen and add me to render list.
