@@ -695,6 +695,11 @@ long TerrainObject::update (void) {
 				// 61f6a66; g_useGpuStaticProps (RAlt+0 killswitch) remains default-off.
 				const bool gpuPath = g_useGpuObjects || g_useGpuStaticProps;
 
+				// Stage 3.C: clear static registration on dynamic transition so the
+				// first post-fall frame gets a full bake and re-registers the final pose.
+				if (ownerForcesDynamic)
+					appearance->invalidateStaticRegistration();
+
 				if (s_staticUpdateSkip && gpuPath && appearanceClaimsStatic && !ownerForcesDynamic) {
 					++g_staticUpdateCounters.updates_skipped;
 					if (s_staticUpdateTrace) {
@@ -702,6 +707,7 @@ long TerrainObject::update (void) {
 							g_mc2FrameCounter, (void*)this);
 						fflush(stdout);
 					}
+					appearance->touch();  // Stage 3.C: advance lastTurnTransformed
 				} else {
 					++g_staticUpdateCounters.updates_run;
 					if (ownerForcesDynamic && appearanceClaimsStatic)
