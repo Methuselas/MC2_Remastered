@@ -26,6 +26,10 @@ bool g_useGpuStaticProps = false;
 // env to opt out.
 bool g_useGpuObjects = true;
 
+static const bool s_alphaTrace = (getenv("MC2_ALPHA_TEST_TRACE") != nullptr);
+#define ALPHA_TRACE(fmt, ...) \
+    do { if (s_alphaTrace) { printf("[ALPHA_TEST] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
+
 namespace {
 
 // Per-vertex stride in the shared VBO. Layout:
@@ -598,6 +602,8 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape) {
         // handle each frame via SetTextureHandle; resolving it at draw
         // time picks up the current value instead of a stale snapshot.
         pkt.textureSlot   = runTextureIdx;
+        // alphaTestOn captures shape-level alpha test (trees, via SetAlphaTest).
+        // textureAlpha per-slot is resolved at draw time (after bdactor.cpp init completes).
         pkt.materialFlags = typeShape->alphaTestOn ? STATIC_PROP_FLAG_ALPHA_TEST : 0;
         pkt.owningTypeID  = newTypeID;
         s_packets.push_back(pkt);
@@ -1356,24 +1362,16 @@ void GpuStaticPropBatcher::flush() {
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
 
-    // Direct uniforms (AMD invariant: direct, GL_FALSE transpose).
-    // worldToClip: TG_Shape::s_worldToClip is set by camera each frame in
-    // mclib/tgl.cpp:1558. Matrix4D is row-major (Stuff layout); upload with
-    // GL_FALSE just like the terrain MVP path.
-    const GLint locWTC = glGetUniformLocation(s_staticPropProgram, "u_worldToClip");
-    const float* wtc = (const float*)&TG_Shape::s_worldToClip.entries[0];
-    // Stuff::Matrix4D is stored column-major with row-vec convention (per
-    // entries[col*4+row]). GL_FALSE treats data as column-major, so GLSL
-    // would see the same matrix — and `M * v` (col-vec math) would
-    // miss the translation in row 3. GL_TRUE transposes on upload: GLSL
-    // then sees the matrix swapped, and `M * v` becomes row-vec math =
-    // correct. This matches what terrain does by explicitly writing its
-    // matrix to memory row-major before upload (gamecam.cpp:169).
-    if (locWTC >= 0) glUniformMatrix4fv(locWTC, 1, GL_TRUE, wtc);
-    // Terrain projection chain — matches shaders/terrain_overlay.vert usage.
-    // TG_Shape outputs are in Stuff/camera world coords; u_worldToClip gives
-    // MC2 D3D-style screen-pixel homogeneous, and we then do divide +
-    // viewport + pixel->NDC with abs(w).
+    // Direct uniforms. Static props use the same CPU-composed terrainMVP as
+    // terrain/terrain_overlay.vert: axisSwap * worldToClip, row-major
+    // rewritten in gamecam.cpp and uploaded GL_FALSE.
+    const GLint locTerrainMVP = glGetUniformLocation(s_staticPropProgram, "terrainMVP");
+    const float* terrainMVP = gos_GetTerrainMVPMat4();
+    if (locTerrainMVP >= 0 && terrainMVP)
+        glUniformMatrix4fv(locTerrainMVP, 1, GL_FALSE, terrainMVP);
+    // Terrain projection chain matches shaders/terrain_overlay.vert usage:
+    // terrainMVP gives D3D-style screen-pixel homogeneous coords, then the
+    // shader does divide + viewport + pixel->NDC with abs(w).
     const GLint locVP  = glGetUniformLocation(s_staticPropProgram, "u_terrainViewport");
     const float* vp = gos_GetTerrainViewportVec4();
     if (locVP >= 0 && vp) glUniform4fv(locVP, 1, vp);
@@ -1551,8 +1549,21 @@ void GpuStaticPropBatcher::flush() {
             const uint32_t glTexId = gos_GetGLTextureId(gosHandle);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, glTexId);
+            // Re-resolve materialFlags at draw time so the textureAlpha flag set during
+            // bdactor.cpp init (after registerType) is captured. Same pattern as gosTextureHandle.
+            // textureAlpha==true means the CPU path routes via MC2_DRAWALPHA; the GPU path
+            // approximates this with shader discard (valid for binary-alpha fence/gate textures).
+            uint32_t effectiveMaterialFlags = pkt.materialFlags;
+            if (src && src->listOfTextures && pkt.textureSlot < src->numTextures &&
+                src->listOfTextures[pkt.textureSlot].textureAlpha) {
+                effectiveMaterialFlags |= STATIC_PROP_FLAG_ALPHA_TEST;
+            }
+            ALPHA_TRACE("draw type=%u pkt=%u slot=%u pktFlags=0x%x effective=0x%x texAlpha=%d",
+                        typeID, p, pkt.textureSlot, pkt.materialFlags, effectiveMaterialFlags,
+                        (src && src->listOfTextures && pkt.textureSlot < src->numTextures)
+                            ? (int)src->listOfTextures[pkt.textureSlot].textureAlpha : -1);
             glUniform1i(glGetUniformLocation(s_staticPropProgram, "u_materialFlags"),
-                        (int)pkt.materialFlags);
+                        (int)effectiveMaterialFlags);
             glUniform1i(glGetUniformLocation(s_staticPropProgram, "u_packetID"),
                         (int)(type.firstPacket + p));
             // Drain any stale GL error first so our check is clean.
