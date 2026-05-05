@@ -678,6 +678,7 @@ int main(int argc, char** argv)
         if (gpuObjEnv) {
             g_useGpuObjects = (gpuObjEnv[0] != '0');
         }
+        const bool gpuObj = g_useGpuObjects;
         // [OBJECT_RECON v1] read MC2_OBJECT_RECON_TRACY here so the gate is
         // live before any update kernel runs. drainPerFrame() lazy-inits
         // too, but eager init avoids missing the very-first-frame data.
@@ -685,6 +686,19 @@ int main(int argc, char** argv)
         const bool objRecon = mc2_object_recon::g_enabled;
         const bool tInd    = gos_terrain_indirect::IsEnabled();
         const bool tIndP   = gos_terrain_indirect::IsParityCheckEnabled();
+        // ParseEnvBool semantics: "0"/"false"/"off"/"no" → false, anything else → true.
+        // Must match the ParseEnvBool logic in code/terrobj.cpp so the banner
+        // accurately reflects the actual gate state (getenv!=nullptr would report
+        // MC2_STATIC_UPDATE_SKIP=0 as enabled, breaking operator trust in the banner).
+        auto suParseBool = [](const char* name) -> bool {
+            const char* v = getenv(name);
+            if (!v || !*v) return false;
+            if (v[0] == '0' && !v[1]) return false;
+            if (!_stricmp(v, "false") || !_stricmp(v, "off") || !_stricmp(v, "no")) return false;
+            return true;
+        };
+        const bool suTrace = suParseBool("MC2_STATIC_UPDATE_TRACE");
+        const bool suSkip  = suParseBool("MC2_STATIC_UPDATE_SKIP");
         const char* build  =
 #ifdef MC2_BUILD_HASH
             MC2_BUILD_HASH
@@ -702,11 +716,13 @@ int main(int argc, char** argv)
             "[INSTR v1] enabled: tgl_pool=%d destroy=%d gl_error_print=%d "
             "smoke=%d water_fp=%d water_parity=%d vp_fast=%d vp_parity=%d "
             "terrain_indirect=%d terrain_indirect_parity=%d "
-            "gpu_objects=%d obj_recon_tracy=%d build=%s",
+            "gpu_objects=%d obj_recon_tracy=%d "
+            "static_update_trace=%d static_update_skip=%d build=%s",
             tgl ? 1 : 0, destr ? 1 : 0, glprint ? 1 : 0, smoke ? 1 : 0,
             waterFp ? 1 : 0, waterPc ? 1 : 0, vpFast ? 1 : 0, vpPar ? 1 : 0,
             tInd ? 1 : 0, tIndP ? 1 : 0,
-            gpuObj ? 1 : 0, objRecon ? 1 : 0, build);
+            gpuObj ? 1 : 0, objRecon ? 1 : 0,
+            suTrace ? 1 : 0, suSkip ? 1 : 0, build);
         puts(_cbbuf);
         crashbundle_append(_cbbuf);
         if (g_pzTrace) {
