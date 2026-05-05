@@ -3420,7 +3420,8 @@ void TreeAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
     // sebi: init so will not be garbage
     status = OBJECT_STATUS_NORMAL;
     forceLightsOut = false;
-    // Slice 2 (object-offload) substrate: never set true in Stage 2.A.
+    // Slice 2 (object-offload) substrate flag; set true by GPU batcher on late
+    // registration to force a full TransformMultiShape next frame.
     needsFullBakeNextFrame = false;
     treeShape = NULL;
     //
@@ -3747,35 +3748,6 @@ void TreeAppearance::setObjectParameters (const Stuff::Vector3D &pos, float Rot,
 void TreeAppearance::setMoverParameters (float pitchAngle, float lArmRot, float rArmRot, bool isAirborne)
 {
 	pitch = pitchAngle;
-}
-
-//----------------------------------------------------------------------------
-// Slice 3 (static-update bypass) predicate.
-//
-// Returns true only when no per-frame GPU recovery or full-bake work is
-// pending. needsFullBakeNextFrame (bdactor.h:480) is set by render() when
-// the actor's shape was not submitted to the GPU batcher this frame (late-
-// registration, unregistered shape node). update() reads it to force a
-// full TransformMultiShape next frame and clears it. Returning
-// !needsFullBakeNextFrame keeps recovery frames dynamic; once GPU
-// submission succeeds the flag is cleared and subsequent frames skip.
-//
-// TreeAppearance has no other appearance-internal dynamism (no animation
-// state, no destructibility hook). The only other dynamism for a tree is
-// OBJECT_FLAG_FALLING on the owning TerrainObject — set EXTERNALLY by
-// collision callbacks at code/terrobj.cpp:352-353. The appearance has no
-// back-pointer to its owner, so the falling check is composed at the call
-// site in TerrainObject::update() (see code/terrobj.cpp).
-//
-// Exception — palm tree billboards: these use the same class and need
-// per-frame camera-facing updates. They are rare in stock content and the
-// feature is default-off (MC2_STATIC_UPDATE_SKIP=1 only), so this is
-// acceptable for Stage 3.B. Stage 3.C/D planning may add a per-instance
-// billboard-type check here.
-//----------------------------------------------------------------------------
-bool TreeAppearance::IsStaticNow (void) const
-{
-	return !needsFullBakeNextFrame;
 }
 
 //-----------------------------------------------------------------------------
