@@ -2851,6 +2851,11 @@ uint32_t TG_Shape::GatherGpuObjectLightDataOnly()
 	return mcTextureManager->addLightDataStructure(&lightData_);
 }
 
+uint32_t TG_Shape::ResubmitCachedLightData()
+{
+	return mcTextureManager->addLightDataStructure(&lightData_);
+}
+
 #define TERRAIN_DEPTH_FUDGE		(0.000f)
 //-------------------------------------------------------------------------------
 //This function takes the current listOfVisibleFaces and draws them using

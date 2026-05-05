@@ -1784,6 +1784,26 @@ void TG_MultiShape::CacheGpuLightData()
     }
 }
 
+void TG_MultiShape::ResubmitCachedGpuLightData()
+{
+    if (!g_useGpuObjects)
+        return;
+
+    TG_Shape* firstShapeNodeLeaf = nullptr;
+    for (int i = 0; i < numTG_Shapes; ++i) {
+        TG_ShapeRec& rec = listOfShapes[i];
+        if (!rec.processMe || !rec.node) continue;
+        TG_Shape* child = rec.node;
+        if (!child->myType) continue;
+        if (child->myType->GetNodeType() != SHAPE_NODE) continue;
+        firstShapeNodeLeaf = child;
+        break;
+    }
+
+    if (firstShapeNodeLeaf != nullptr)
+        cachedGpuLightIndex_ = firstShapeNodeLeaf->ResubmitCachedLightData();
+}
+
 //-------------------------------------------------------------------------------
 //This function takes the current listOfVisibleFaces and draws them using
 //gos_DrawTriangle.

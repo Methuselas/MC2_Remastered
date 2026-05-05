@@ -338,6 +338,13 @@ class TG_MultiShape
 		// Only call when g_useGpuObjects is true (no-op guard inside).
 		void CacheGpuLightData();
 
+		// Stage 3.C: re-submit cached light data each frame on update()-skipped frames.
+		// Finds the first SHAPE_NODE leaf and calls ResubmitCachedLightData() on it,
+		// refreshing cachedGpuLightIndex_ without touching s_listOfLights.
+		// Precondition: at least one update() must have run (lightData_ populated).
+		// IsStaticNow() guarantees this — registration requires a prior full-bake.
+		void ResubmitCachedGpuLightData();
+
 		//This function sets the fog values for the shape.  Straight fog right now.
 		void SetFogRGB (DWORD fRGB);
 

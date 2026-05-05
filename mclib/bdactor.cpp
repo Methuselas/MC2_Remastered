@@ -4121,8 +4121,8 @@ long TreeAppearance::render (long depthFixup)
 			// Does NOT return early — selection visualization (drawBars/drawBrackets)
 			// at lines 4141-4161 must still run if selected is non-zero.
 			if (IsStaticNow()) {
-				// touch() re-ran SetLightList(eye) + CacheGpuLightData() this frame,
-				// mirroring update()'s sequence with this actor's own eye pointer.
+				// touch() called ResubmitCachedGpuLightData() this frame, refreshing
+				// cachedGpuLightIndex_ from the last update()'s lightData_ snapshot.
 				// Just read the already-fresh slot index here.
 				if (treeShape->getCachedGpuLightIndex() == UINT32_MAX) {
 					// Light-data gather failed this frame — invalidate so the dynamic
@@ -4608,13 +4608,25 @@ void TreeAppearance::markLOS (bool clearIt)
 
 //-----------------------------------------------------------------------------
 
+bool TreeAppearance::IsStaticNow() const
+{
+	return staticReg.registered
+		&& staticReg.shape == treeShape
+		&& !needsFullBakeNextFrame;
+}
+
 void TreeAppearance::touch()
 {
-	// Stage 3.C: outer-skip is not currently enabled for TreeAppearance
-	// (IsStaticNow() is not overridden), so this is never called. Kept for
-	// future use if a per-frame-safe skip predicate is defined.
-	if (treeShape)
+	// Stage 3.C: called by the outer-skip gate instead of update() when this
+	// tree is registered and stable. Re-submits the cached lightData_ (set
+	// during the last update() call) to get a fresh UBO slot index for this
+	// frame — no s_listOfLights dependency, no terrain lookup needed.
+	// Touch() advances lastTurnTransformed so TG_Shape::Render()'s staleness
+	// guard doesn't suppress the legacy fallback path.
+	if (treeShape) {
+		treeShape->ResubmitCachedGpuLightData();
 		treeShape->Touch();
+	}
 }
 
 void TreeAppearance::invalidateStaticRegistration()

@@ -918,6 +918,13 @@ class TG_Shape
 		// lightData_, so this is per-actor not per-leaf).
 		uint32_t GatherGpuObjectLightDataOnly();
 
+		// Stage 3.C: re-submit the already-populated lightData_ to get a fresh
+		// UBO slot index for this frame, without re-gathering from s_listOfLights.
+		// Call from touch() on frames where update() is skipped — lightData_ was
+		// set by GatherLightsParameters during the last update() run and is valid
+		// until shape or registration changes (both trigger invalidation).
+		uint32_t ResubmitCachedLightData();
+
 		//This function creates the list of shadows and transforms them in preparation to drawing.
 		//
 		void MultiTransformShadows (Stuff::Point3D *pos, Stuff::LinearMatrix4D *s2w, float rotation);

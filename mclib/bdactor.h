@@ -525,6 +525,7 @@ class TreeAppearance : public ObjectAppearance
 		virtual void destroy (void);
 
 		// Stage 3.C: static-registry overrides
+		virtual bool IsStaticNow() const override;
 		virtual void touch() override;
 		virtual void invalidateStaticRegistration() override;
 
