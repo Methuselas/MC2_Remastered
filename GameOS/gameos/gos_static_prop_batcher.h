@@ -207,6 +207,19 @@ public:
     static uint64_t getAllowedLateRegEventCount();
     static uint64_t getDisallowedLateRegEventCount();
 
+    // Stage 3.C: snapshot of all leaf instances built by the most recent
+    // successful submitMultiShape() call. Valid only until the next
+    // submitMultiShape() call. Used by GpuStaticPropRegistry::registerRecipe()
+    // to snapshot the registration batch immediately after submission.
+    const std::vector<GpuStaticPropInstance>& getLastBuiltBatch() const;
+
+    // Stage 3.C: inject a pre-built instance into the per-type bucket
+    // without running the compute path. Called by GpuStaticPropRegistry::flush()
+    // before batcher flush(). Updates firstColorOffset for this frame's bucket
+    // position; pushes zero-fill colors (debug only; normal render ignores
+    // the Colors SSBO binding 1).
+    void submitCachedInstance(const GpuStaticPropInstance& inst);
+
 private:
     GpuStaticPropBatcher() = default;
 

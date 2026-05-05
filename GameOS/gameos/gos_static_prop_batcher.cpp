@@ -30,6 +30,13 @@ static const bool s_alphaTrace = (getenv("MC2_ALPHA_TEST_TRACE") != nullptr);
 #define ALPHA_TRACE(fmt, ...) \
     do { if (s_alphaTrace) { printf("[ALPHA_TEST] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
 
+// MC2_TEX_HANDOFF_TRACE=1 — logs texture handle resolution at register and draw time.
+// Prints once per unique (multiShape,slot) pair at registration, and once per draw type
+// at flush (first flush only). Use to diagnose the GPU-path upscale-texture miss.
+static const bool s_texHandoffTrace = (getenv("MC2_TEX_HANDOFF_TRACE") != nullptr);
+#define TEX_HANDOFF(fmt, ...) \
+    do { if (s_texHandoffTrace) { printf("[TEX_HANDOFF] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
+
 namespace {
 
 // Per-vertex stride in the shared VBO. Layout:
@@ -118,6 +125,12 @@ struct PerTypeBucket {
     std::vector<uint32_t>              colors;  // concatenated per-instance color blocks
 };
 std::unordered_map<uint32_t, PerTypeBucket> s_bucketsByType;
+
+// Stage 3.C: per-submitMultiShape batch accumulator. Cleared at the start
+// of each submitMultiShape(); populated by submit() per leaf. After
+// submitMultiShape() returns true, getLastBuiltBatch() returns this vector
+// for snapshot registration in GpuStaticPropRegistry.
+std::vector<GpuStaticPropInstance> s_lastBuiltBatch;
 
 // Populated at flush time: per-type contiguous byte offset into the
 // ring-slot SSBO (instance + color), used to bind exactly that range.
@@ -626,11 +639,30 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape) {
 
 void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape) {
     if (!multiShape) return;
-    const long n = multiShape->GetNumShapes();
+    const long n       = multiShape->GetNumShapes();
+    const long numTxms = multiShape->GetNumTextures();
     for (long i = 0; i < n; ++i) {
         TG_TypeNodePtr node = multiShape->GetTypeNode(i);
         if (node && node->GetNodeType() == SHAPE_NODE) {
-            registerType(static_cast<TG_TypeShape*>(node));
+            TG_TypeShape* typeShape = static_cast<TG_TypeShape*>(node);
+            registerType(typeShape);
+            // GPU-offloaded actors bypass TransformMultiShape, so the leaf
+            // TG_TypeShape::listOfTextures[j].gosTextureHandle is never set by
+            // TMS (msl.cpp:1380). Prime it now from the multi-type's
+            // mcTextureNodeIndex — the same value TMS would use. This ensures
+            // flush()'s draw-time resolve picks up the correct (upscaled) handle
+            // instead of the 0xffffffff left by TG_TypeShape::init().
+            for (long j = 0; j < numTxms; ++j) {
+                const DWORD nodeIdx = multiShape->GetTextureHandle(j);
+                typeShape->SetTextureHandle(j, nodeIdx);
+                if (s_texHandoffTrace && j < 4) {
+                    const DWORD gosH = (typeShape->listOfTextures && j < typeShape->numTextures)
+                                       ? typeShape->listOfTextures[j].gosTextureHandle
+                                       : 0xdeadbeef;
+                    TEX_HANDOFF("register multiShape=%p leaf=%p slot=%ld nodeIdx=0x%08x gosHandle=0x%08x",
+                                (void*)multiShape, (void*)typeShape, j, nodeIdx, gosH);
+                }
+            }
         }
     }
 }
@@ -789,6 +821,7 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
     inst.fogRGB[2] = ((fogARGB >>  0) & 0xFF) / 255.0f;
     inst.fogRGB[3] = ((fogARGB >> 24) & 0xFF) / 255.0f;
     bucket.instances.push_back(inst);
+    s_lastBuiltBatch.push_back(inst);  // Stage 3.C: batch accumulator
 
     // Stage 2.D.2 — dual-emit snapshot collection.
     // When the latch is Armed, capture per-vertex lit ARGB in triangle-soup
@@ -894,6 +927,7 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
                                             GpuStaticPropPopulation pop,
                                             const char* callerName) {
     initTraceOnce();
+    s_lastBuiltBatch.clear();  // Stage 3.C: reset per-call accumulator
     // Clear the late-reg signal at the top of every call so a stale "true"
     // from a prior submitMultiShape never masquerades as a signal for this one.
     s_lastSubmitWasLateReg = false;
@@ -1534,6 +1568,11 @@ void GpuStaticPropBatcher::flush() {
             }
         }
 
+        // Per-type draw-time trace: fires once per type per flush call.
+        static thread_local uint32_t s_traceCount = 0;
+        const bool doTypeTrace = s_texHandoffTrace && (s_traceCount < 8);
+        if (doTypeTrace) ++s_traceCount;
+
         for (uint32_t p = 0; p < type.packetCount; ++p) {
             const GpuStaticPropPacket& pkt = s_packets[type.firstPacket + p];
             // Resolve the texture handle at draw time. MC2 mutates
@@ -1547,6 +1586,11 @@ void GpuStaticPropBatcher::flush() {
                 gosHandle = src->listOfTextures[pkt.textureSlot].gosTextureHandle;
             }
             const uint32_t glTexId = gos_GetGLTextureId(gosHandle);
+            if (doTypeTrace && p < 2) {
+                TEX_HANDOFF("flush  typeID=%u pkt=%u slot=%u src=%p gosHandle=0x%08x glTexId=%u numTex=%d",
+                            typeID, p, pkt.textureSlot, (void*)src, gosHandle, glTexId,
+                            src ? src->numTextures : -1);
+            }
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, glTexId);
             // Re-resolve materialFlags at draw time so the textureAlpha flag set during
@@ -1724,4 +1768,27 @@ void gos_GpuPropsCycleDebugMode() {
 }
 int gos_GpuPropsGetDebugMode() {
     return GpuStaticPropBatcher::instance().getDebugAddrMode();
+}
+
+// Stage 3.C ----------------------------------------------------------------
+
+const std::vector<GpuStaticPropInstance>& GpuStaticPropBatcher::getLastBuiltBatch() const {
+    return s_lastBuiltBatch;
+}
+
+void GpuStaticPropBatcher::submitCachedInstance(const GpuStaticPropInstance& inst) {
+    if (inst.typeID >= s_types.size()) return;
+    const GpuStaticPropType& type = s_types[inst.typeID];
+    PerTypeBucket& bucket = s_bucketsByType[inst.typeID];
+
+    // firstColorOffset must be updated to the current bucket color position
+    // so the GPU shader indexes colors correctly for this frame's layout.
+    // Diagnostic counters (submitted_instances_by_pop etc.) are NOT incremented
+    // for registry-injected instances — they measure the dynamic compute path.
+    GpuStaticPropInstance updated = inst;
+    updated.firstColorOffset = static_cast<uint32_t>(bucket.colors.size());
+    bucket.instances.push_back(updated);
+    // Zero-fill colors. Normal render ignores the Colors SSBO (binding 1);
+    // debug addr-mode 4 shows black for static-registry instances.
+    bucket.colors.insert(bucket.colors.end(), type.vertexCount, 0u);
 }
