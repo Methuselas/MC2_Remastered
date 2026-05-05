@@ -98,7 +98,7 @@ bool GameObject::initialize = false;
 //---------------------------------------------------------------------------
 // Tier-1 instrumentation (stability spec §3.1-3.4)
 //---------------------------------------------------------------------------
-// Defined at file scope in GameOS/gameos/gameosmain.cpp:26 (Commit 1).
+// Defined at file scope in mclib/tgl.cpp:3718.
 extern uint32_t g_mc2FrameCounter;
 
 static const bool s_destroyTrace = (getenv("MC2_DESTROY_TRACE") != nullptr);
