@@ -479,6 +479,14 @@ class TreeAppearance : public ObjectAppearance
 		// Slice 2 (object-offload): see BldgAppearance::needsFullBakeNextFrame.
 		bool										needsFullBakeNextFrame;
 
+		// Stage 3.C: per-instance static-registry state.
+		struct StaticRegistration {
+			bool             registered;   // true iff recipeIndex is valid
+			TG_MultiShapePtr shape;        // treeShape at registration time; detects swap
+			int32_t          recipeIndex;  // index into GpuStaticPropRegistry s_recipeRanges
+		};
+		StaticRegistration							staticReg;
+
 		float										hazeFactor;
 		float										pitch;
 		float										yaw;
@@ -515,6 +523,11 @@ class TreeAppearance : public ObjectAppearance
 		virtual long renderShadows (void);
 
 		virtual void destroy (void);
+
+		// Stage 3.C: static-registry overrides
+		virtual void touch() override;
+		virtual bool IsStaticNow() const override;
+		virtual void invalidateStaticRegistration() override;
 
 		~TreeAppearance (void)
 		{
