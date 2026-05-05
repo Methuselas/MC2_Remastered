@@ -4121,8 +4121,8 @@ long TreeAppearance::render (long depthFixup)
 			// Does NOT return early — selection visualization (drawBars/drawBrackets)
 			// at lines 4141-4161 must still run if selected is non-zero.
 			if (IsStaticNow()) {
-				// touch() gathered CacheGpuLightData() this frame (in terrobj.cpp's
-				// skip branch, immediately after SetLightList() for this actor).
+				// touch() re-ran SetLightList(eye) + CacheGpuLightData() this frame,
+				// mirroring update()'s sequence with this actor's own eye pointer.
 				// Just read the already-fresh slot index here.
 				if (treeShape->getCachedGpuLightIndex() == UINT32_MAX) {
 					// Light-data gather failed this frame — invalidate so the dynamic
@@ -4610,26 +4610,11 @@ void TreeAppearance::markLOS (bool clearIt)
 
 void TreeAppearance::touch()
 {
-	if (treeShape) {
+	// Stage 3.C: outer-skip is not currently enabled for TreeAppearance
+	// (IsStaticNow() is not overridden), so this is never called. Kept for
+	// future use if a per-frame-safe skip predicate is defined.
+	if (treeShape)
 		treeShape->Touch();
-		// Gather light data NOW, while SetLightList() has just been called for
-		// this actor in terrobj.cpp (before other actors overwrite s_listOfLights).
-		// render()'s static branch reads getCachedGpuLightIndex() to patch the
-		// batcher's lightDataIndex each frame. See msl.h comment on CacheGpuLightData().
-		treeShape->CacheGpuLightData();
-	}
-}
-
-bool TreeAppearance::IsStaticNow() const
-{
-	return GpuStaticPropRegistry::isEnabled()
-		&& g_useGpuObjects
-		&& gos_IsTerrainTessellationActive()
-		&& !needsFullBakeNextFrame
-		&& staticReg.registered
-		&& staticReg.recipeIndex >= 0
-		&& GpuStaticPropRegistry::isReady(staticReg.recipeIndex)
-		&& staticReg.shape == treeShape;
 }
 
 void TreeAppearance::invalidateStaticRegistration()
