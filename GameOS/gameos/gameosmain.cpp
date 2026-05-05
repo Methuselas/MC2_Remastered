@@ -102,6 +102,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "gos_postprocess.h"
 #include "gos_validate.h"
 #include "gos_static_prop_killswitch.h"
+#include "gos_static_prop_registry.h"  // Stage 3.C: isEnabled() for [INSTR v1]
 #include "asset_scale.h"
 #include "gos_crashbundle.h"
 #include "gos_smoke.h"
@@ -717,12 +718,14 @@ int main(int argc, char** argv)
             "smoke=%d water_fp=%d water_parity=%d vp_fast=%d vp_parity=%d "
             "terrain_indirect=%d terrain_indirect_parity=%d "
             "gpu_objects=%d obj_recon_tracy=%d "
-            "static_update_trace=%d static_update_skip=%d build=%s",
+            "static_update_trace=%d static_update_skip=%d "
+            "static_prop_registry=%d build=%s",
             tgl ? 1 : 0, destr ? 1 : 0, glprint ? 1 : 0, smoke ? 1 : 0,
             waterFp ? 1 : 0, waterPc ? 1 : 0, vpFast ? 1 : 0, vpPar ? 1 : 0,
             tInd ? 1 : 0, tIndP ? 1 : 0,
             gpuObj ? 1 : 0, objRecon ? 1 : 0,
-            suTrace ? 1 : 0, suSkip ? 1 : 0, build);
+            suTrace ? 1 : 0, suSkip ? 1 : 0,
+            GpuStaticPropRegistry::isEnabled() ? 1 : 0, build);
         puts(_cbbuf);
         crashbundle_append(_cbbuf);
         if (g_pzTrace) {
