@@ -672,9 +672,42 @@ long TerrainObject::update (void) {
 			{
 				ZoneScopedN("TerrainObject::update appearanceUpdate");
 				++g_staticUpdateCounters.objects_seen;
-				// Stage 3.A: count only — no skip. Stage 3.B (Task 7) adds the gate.
-				++g_staticUpdateCounters.updates_run;
-				appearance->update();
+
+				// Stage 3.B static-update bypass.
+				//
+				// Composition: appearance->IsStaticNow() (type-time appearance claim)
+				// AND !getFlag(OBJECT_FLAG_FALLING) (owner-side instance state).
+				//
+				// The owner-side check is MANDATORY: OBJECT_FLAG_FALLING is set
+				// externally by collision callbacks (terrobj.cpp:352-353 for trees,
+				// bldng.cpp:1453-1455 for buildings). A predicate-only gate silently
+				// skips the impact frame's fall-animation setup.
+				//
+				// Stage 3.D will extend this with damage/power/effect checks for
+				// BldgAppearance. Keep this composition pattern explicit here.
+				const bool appearanceClaimsStatic = appearance->IsStaticNow();
+				const bool ownerForcesDynamic     = getFlag(OBJECT_FLAG_FALLING);
+				// Renderer-session guard: skip only when a GPU static/object path is
+				// enabled. This does not prove this individual appearance was submitted
+				// successfully; TreeAppearance::IsStaticNow() also checks
+				// needsFullBakeNextFrame so late registration/recovery frames continue
+				// to run update(). Note: g_useGpuObjects defaults ON since commit
+				// 61f6a66; g_useGpuStaticProps (RAlt+0 killswitch) remains default-off.
+				const bool gpuPath = g_useGpuObjects || g_useGpuStaticProps;
+
+				if (s_staticUpdateSkip && gpuPath && appearanceClaimsStatic && !ownerForcesDynamic) {
+					++g_staticUpdateCounters.updates_skipped;
+					if (s_staticUpdateTrace) {
+						printf("[STATIC_UPDATE v1] event=skip frame=%u obj=%p\n",
+							g_mc2FrameCounter, (void*)this);
+						fflush(stdout);
+					}
+				} else {
+					++g_staticUpdateCounters.updates_run;
+					if (ownerForcesDynamic && appearanceClaimsStatic)
+						++g_staticUpdateCounters.dyn_falling;
+					appearance->update();
+				}
 			}
 
 			if (bldgDustPoofEffect && bldgDustPoofEffect->IsExecuted())
