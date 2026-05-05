@@ -19,6 +19,7 @@
 #endif
 
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
+#include "static_update_counters.h"      // g_staticUpdateRunCount/SkipCount/EmitSummary
 
 #ifndef OBJMGR_H
 #include"objmgr.h"
@@ -139,7 +140,8 @@ char WEAPON_LIST_ID[] = "WEAPON";
 //long ObjectQueue::objectsInList = 0;
 
 extern long* usedBlockList;			//Trust ME~~!!!!!!!!!!!!!!!!!!!!!!!!
-extern long* moverBlockList;			//Trust ME~~!!!!!!!!!!!!!!!!!!!!!!!!  AGAIN 
+extern long* moverBlockList;			//Trust ME~~!!!!!!!!!!!!!!!!!!!!!!!!  AGAIN
+extern uint32_t g_mc2FrameCounter;	// defined at mclib/tgl.cpp:3718
 extern bool updateTerrainObjects;
 extern bool	updateObjects;
 extern bool	renderTerrainObjects;
@@ -1787,6 +1789,14 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		TracyPlot("TerrainObjects gates updated", int64_t(gatesUpdated));
 		TracyPlot("TerrainObjects active blocks", int64_t(activeBlocksVisited));
 		TracyPlot("TerrainObjects visible objects updated", int64_t(terrainObjectsUpdated));
+		TracyPlot("TerrainObjects dynamic updates", int64_t(g_staticUpdateRunCount()));
+		TracyPlot("TerrainObjects static skipped",  int64_t(g_staticUpdateSkipCount()));
+
+		const uint32_t curFrame = g_mc2FrameCounter;
+		if (curFrame > 0 && (curFrame % 600) == 0 &&
+		    curFrame != g_staticUpdateLastSummaryFrame_get()) {
+			g_staticUpdateEmitSummary(curFrame);
+		}
 	}
 	
  	if (movers) {
