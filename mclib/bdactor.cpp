@@ -14,6 +14,7 @@
 
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_batcher.h"
+#include "gos_static_prop_registry.h"  // Stage 3.C: static-registry fast path
 #include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
 
@@ -3423,6 +3424,7 @@ void TreeAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
     // Slice 2 (object-offload) substrate flag; set true by GPU batcher on late
     // registration to force a full TransformMultiShape next frame.
     needsFullBakeNextFrame = false;
+    staticReg = {};  // Stage 3.C: zero-init StaticRegistration
     treeShape = NULL;
     //
 
@@ -4558,8 +4560,37 @@ void TreeAppearance::markLOS (bool clearIt)
 
 //-----------------------------------------------------------------------------
 
+void TreeAppearance::touch()
+{
+	if (treeShape)
+		treeShape->Touch();
+}
+
+bool TreeAppearance::IsStaticNow() const
+{
+	return GpuStaticPropRegistry::isEnabled()
+		&& g_useGpuObjects
+		&& gos_IsTerrainTessellationActive()
+		&& !needsFullBakeNextFrame
+		&& staticReg.registered
+		&& staticReg.recipeIndex >= 0
+		&& GpuStaticPropRegistry::isReady(staticReg.recipeIndex)
+		&& staticReg.shape == treeShape;
+}
+
+void TreeAppearance::invalidateStaticRegistration()
+{
+	if (staticReg.registered && staticReg.recipeIndex >= 0)
+		GpuStaticPropRegistry::invalidate(staticReg.recipeIndex);
+	staticReg = {};
+}
+
+//-----------------------------------------------------------------------------
+
 void TreeAppearance::destroy (void)
 {
+	invalidateStaticRegistration(); // Stage 3.C: NULL RecipeRange::multi before treeShape is freed
+
 	if ( treeShape )
 	{
 		delete treeShape;
