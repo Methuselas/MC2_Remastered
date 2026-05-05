@@ -125,7 +125,21 @@ class Appearance
 			//Perform any frame by frame tasks.  Animations, etc.
 			return NO_ERR;
 		}
-		
+
+		// Slice 3 (static-update bypass): return true ONLY when this appearance
+		// has no per-frame work this frame. Default false = always run update().
+		// Per-class overrides supply the actual logic.
+		//
+		// CONTRACT (load-bearing for Stage 3.D): this predicate must NOT inspect
+		// the owning GameObject/TerrainObject — the appearance has no back-pointer.
+		// Owner-side transient state (OBJECT_FLAG_FALLING, damage, power-supply,
+		// active GOSFX) must be composed at the call site in code/terrobj.cpp.
+		// Violating this will silently skip the impact frame for falling trees.
+		virtual bool IsStaticNow (void) const
+		{
+			return false;
+		}
+
 		virtual long render (long depthFixup = 0)
 		{
 			//Decide whether or not I can be seen and add me to render list.
