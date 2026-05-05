@@ -230,6 +230,7 @@ extern PriorityQueuePtr	openList;
 
 #include "gos_profiler.h"
 #include "gos_static_prop_batcher.h"
+#include "gos_static_prop_registry.h"  // Stage 3.C: init()/destroy()
 
 // Phase-timing hooks implemented in GameOS/gameos/gameosmain.cpp.
 extern "C" void mission_phase_begin();
@@ -1642,6 +1643,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// Reset GPU static-prop batcher state at every map boundary, before any
 	// actor registerType() calls happen during actor spawn (Task 6).
 	GpuStaticPropBatcher::instance().onMapLoad();
+	GpuStaticPropRegistry::init();   // Stage 3.C
 
 	neverEndingStory = false;
 	invulnerableON = false;
@@ -3169,6 +3171,7 @@ void Mission::destroy (bool initLogistics)
 	// Release GPU static-prop batcher resources (VBO/IBO/VAO) at mission
 	// shutdown. Safe to call when nothing was registered.
 	GpuStaticPropBatcher::instance().onMapUnload();
+	GpuStaticPropRegistry::destroy(); // Stage 3.C
 
 	//---------------------------------------------------------------
 	// Shutdown the Mission Interface

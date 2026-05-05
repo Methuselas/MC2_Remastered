@@ -41,6 +41,7 @@
 
 #include<mlr/mlr.hpp>
 #include <tracy/Tracy.hpp>
+#include "../GameOS/gameos/gos_static_prop_registry.h"  // Stage 3.C: frameBegin()
 
 //---------------------------------------------------------------------------
 CameraPtr eye = NULL;
@@ -197,6 +198,7 @@ void GameCamera::render (void)
 
 		{
 			ZoneScopedN("GameCamera::render terrain");
+			GpuStaticPropRegistry::frameBegin();  // Stage 3.C: reset live-instance list
 			land->render();								//render the Terrain
 		}
 

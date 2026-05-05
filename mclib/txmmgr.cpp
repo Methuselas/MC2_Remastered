@@ -58,6 +58,7 @@
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
 #include "../GameOS/gameos/gos_static_prop_batcher.h"
+#include "../GameOS/gameos/gos_static_prop_registry.h"  // Stage 3.C: flush()
 #include "../GameOS/gameos/gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "../GameOS/gameos/gos_terrain_patch_stream.h"
 #include "../GameOS/gameos/gos_terrain_indirect.h"
@@ -1472,6 +1473,9 @@ void MC_TextureManager::renderLists (void)
 		extern bool g_useGpuStaticProps;
 		extern bool g_useGpuObjects;
 		if (g_useGpuStaticProps || g_useGpuObjects) {
+			// Stage 3.C: inject static-registry instances into batcher buckets
+			// BEFORE flush(), so they're drawn in the same combined GPU pass.
+			GpuStaticPropRegistry::flush();
 			GpuStaticPropBatcher::instance().flush();
 		}
 	}
