@@ -312,6 +312,18 @@ class TG_MultiShape
 			destroy();
 		}
 
+		// Stage 3.C: propagate Touch() to all shape-node leaves.
+		void Touch();
+
+		// Stage 3.C: expose the per-frame light-data UBO slot index for
+		// GpuStaticPropRegistry::flush() to patch into cached recipe copies.
+		// CacheGpuLightData() (called from TreeAppearance::render() each frame
+		// in the static path) keeps this fresh. Returns UINT32_MAX if
+		// CacheGpuLightData() has not yet been called (first frame or non-GPU
+		// path) — render() guards against emitting a static instance with
+		// UINT32_MAX by falling through to the dynamic submit path.
+		uint32_t getCachedGpuLightIndex() const { return cachedGpuLightIndex_; }
+
 		//This function sets the list of lights used by the TransformShape function
 		//to light the shape.
 		//Function returns 0 if lightList entries are all OK.  -1 otherwise.

@@ -864,6 +864,11 @@ class TG_Shape
 			destroy();
 		}
 
+		// Stage 3.C: advance lastTurnTransformed without running vertex transform.
+		// Prevents TG_Shape::Render's staleness guard from firing when update() is
+		// skipped by the static-registry fast path.
+		void Touch();
+
 		//This function sets up the camera Matrices for this TG_Shape to transform
 		//itself with.  These matrices are static and only need to be set once per
 		//render pass if the camera does not change for that pass.

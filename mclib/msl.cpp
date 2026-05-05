@@ -2671,4 +2671,10 @@ void TG_AnimateShape::SetAnimationState (TG_MultiShapePtr shape)
 	}
 }	
 
+
+void TG_MultiShape::Touch() {
+	for (long i = 0; i < numTG_Shapes; i++)
+		if (listOfShapes[i].node)
+			listOfShapes[i].node->Touch();
+}
 //-------------------------------------------------------------------------------

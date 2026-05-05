@@ -3870,4 +3870,8 @@ void logTglPoolPeaks (const char* context)
 	fflush(stdout);
 }
 
+void TG_Shape::Touch() {
+	lastTurnTransformed = turn;
+}
+
 //-------------------------------------------------------------------------------
