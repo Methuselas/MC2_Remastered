@@ -1851,3 +1851,41 @@ void GpuStaticPropBatcher::submitCachedInstance(const GpuStaticPropInstance& ins
     // debug addr-mode 4 shows black for static-registry instances.
     bucket.colors.insert(bucket.colors.end(), type.vertexCount, 0u);
 }
+
+// Track B -----------------------------------------------------------------
+
+bool GpuStaticPropBatcher::buildRecipeFromShape(
+        TG_Shape* shape,
+        const Stuff::Matrix4D& shapeToWorld,
+        uint32_t highlightARGB,
+        uint32_t fogARGB,
+        uint32_t flags,
+        GpuStaticPropInstance* outRecipe) const {
+    if (!shape || !outRecipe) return false;
+
+    TG_TypeShape* typeShape = static_cast<TG_TypeShape*>(shape->myType);
+    if (!typeShape) return false;
+
+    auto it = s_typeIndex.find(typeShape);
+    if (it == s_typeIndex.end()) return false;
+
+    GpuStaticPropInstance inst{};
+    // Matrix4D is a plain row-major Scalar[16] (see stuff/matrix.hpp). Copy
+    // as-is; shader uploads the worldToClip uniform with GL_FALSE.
+    std::memcpy(inst.modelMatrix, &shapeToWorld, 16 * sizeof(float));
+    inst.typeID           = it->second;
+    inst.firstColorOffset = 0u;          // placeholder; submitCachedInstance patches per-frame
+    inst.flags            = flags;
+    inst.lightDataIndex   = 0xFFFFFFFFu; // sentinel; flush() patches per-frame
+    inst.aRGBHighlight[0] = ((highlightARGB >> 16) & 0xFF) / 255.0f;
+    inst.aRGBHighlight[1] = ((highlightARGB >>  8) & 0xFF) / 255.0f;
+    inst.aRGBHighlight[2] = ((highlightARGB >>  0) & 0xFF) / 255.0f;
+    inst.aRGBHighlight[3] = ((highlightARGB >> 24) & 0xFF) / 255.0f;
+    inst.fogRGB[0] = ((fogARGB >> 16) & 0xFF) / 255.0f;
+    inst.fogRGB[1] = ((fogARGB >>  8) & 0xFF) / 255.0f;
+    inst.fogRGB[2] = ((fogARGB >>  0) & 0xFF) / 255.0f;
+    inst.fogRGB[3] = ((fogARGB >> 24) & 0xFF) / 255.0f;
+
+    *outRecipe = inst;
+    return true;
+}

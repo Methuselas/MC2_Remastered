@@ -222,6 +222,20 @@ public:
     // the Colors SSBO binding 1).
     void submitCachedInstance(const GpuStaticPropInstance& inst);
 
+    // Track B: pure recipe-construction path, side-effect-free.
+    // Builds a GpuStaticPropInstance from static per-shape inputs.
+    // Does NOT touch per-frame state (no bucket/SSBO writes).
+    // Returns false if shape's TG_TypeShape is not registered yet.
+    // firstColorOffset and lightDataIndex are placeholders (0 / 0xFFFFFFFF);
+    // submitCachedInstance patches them per-frame at draw time.
+    [[nodiscard]] bool buildRecipeFromShape(
+            TG_Shape* shape,
+            const Stuff::Matrix4D& shapeToWorld,
+            uint32_t highlightARGB,
+            uint32_t fogARGB,
+            uint32_t flags,
+            GpuStaticPropInstance* outRecipe) const;
+
 private:
     GpuStaticPropBatcher() = default;
 
