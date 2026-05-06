@@ -723,6 +723,8 @@ int main(int argc, char** argv)
         };
         const bool suTrace = suParseBool("MC2_STATIC_UPDATE_TRACE");
         const bool suSkip  = suParseBool("MC2_STATIC_UPDATE_SKIP");
+        bool gpuCullSubstrate = (getenv("MC2_GPU_CULL_SUBSTRATE") != nullptr && getenv("MC2_GPU_CULL_SUBSTRATE")[0] != '0');
+        bool gpuCullParity    = (getenv("MC2_GPU_CULL_AABB_PARITY") != nullptr && getenv("MC2_GPU_CULL_AABB_PARITY")[0] != '0');
         const char* build  =
 #ifdef MC2_BUILD_HASH
             MC2_BUILD_HASH
@@ -732,23 +734,28 @@ int main(int argc, char** argv)
             ;
         // Grew 384 -> 512 -> 640 to absorb terrain_indirect{,_parity}
         // and gpu_objects fields without truncation.
+        // Grew 640 -> 720 to absorb gpu_cull_substrate and gpu_cull_aabb_parity.
         // (water_skip_env field was tentatively added during the closed
         // water-projection-skip slice attempt; removed when the slice
         // closed — premise invalidated by Stage 0 M3 audit.)
-        char _cbbuf[640];
+        char _cbbuf[720];
         snprintf(_cbbuf, sizeof(_cbbuf),
             "[INSTR v1] enabled: tgl_pool=%d destroy=%d gl_error_print=%d "
             "smoke=%d water_fp=%d water_parity=%d vp_fast=%d vp_parity=%d "
             "terrain_indirect=%d terrain_indirect_parity=%d "
             "gpu_objects=%d obj_recon_tracy=%d "
             "static_update_trace=%d static_update_skip=%d "
-            "static_prop_registry=%d build=%s",
+            "static_prop_registry=%d "
+            "gpu_cull_substrate=%d gpu_cull_aabb_parity=%d "
+            "build=%s",
             tgl ? 1 : 0, destr ? 1 : 0, glprint ? 1 : 0, smoke ? 1 : 0,
             waterFp ? 1 : 0, waterPc ? 1 : 0, vpFast ? 1 : 0, vpPar ? 1 : 0,
             tInd ? 1 : 0, tIndP ? 1 : 0,
             gpuObj ? 1 : 0, objRecon ? 1 : 0,
             suTrace ? 1 : 0, suSkip ? 1 : 0,
-            GpuStaticPropRegistry::isEnabled() ? 1 : 0, build);
+            GpuStaticPropRegistry::isEnabled() ? 1 : 0,
+            gpuCullSubstrate ? 1 : 0, gpuCullParity ? 1 : 0,
+            build);
         puts(_cbbuf);
         crashbundle_append(_cbbuf);
 

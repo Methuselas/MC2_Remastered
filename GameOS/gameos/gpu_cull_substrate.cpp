@@ -131,6 +131,12 @@ void substrate_shutdown() {
     }
 
     if (s_instanceSsbo) {
+        if (s_mappedPtr) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_instanceSsbo);
+            glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            s_mappedPtr = nullptr;
+        }
         glDeleteBuffers(1, &s_instanceSsbo);
         s_instanceSsbo = 0;
     }
