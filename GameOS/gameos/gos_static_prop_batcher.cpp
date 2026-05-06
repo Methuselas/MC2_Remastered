@@ -528,7 +528,16 @@ void GpuStaticPropBatcher::onMapUnload() {
 // trivial 0..N*3-1 index buffer. baseVertex points at the start of this
 // type's vertex run in the shared VBO. Packet indexCount = runTris * 3.
 // ---------------------------------------------------------------------------
-void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape) {
+void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape, TG_TypeMultiShape* multiShape) {
+    // multiShape parameter introduced by 5327c4b API cleanup for upcoming
+    // alpha-test self-awareness work (Path 4 — texture-name-based material
+    // classification at register time). Spec:
+    // docs/superpowers/specs/2026-05-06-static-prop-alpha-test-self-awareness.md
+    // The header signature was committed in 5327c4b without the matching .cpp
+    // signature update, leaving the build broken. This commit closes the gap
+    // — multiShape is captured here but not yet consumed; the consumption
+    // logic lands in the follow-up alpha-test self-awareness slice.
+    (void)multiShape;
     if (!typeShape) return;
     if (s_typeIndex.count(typeShape)) return;  // idempotent
     if (s_geometryFinalized) {
@@ -655,7 +664,7 @@ void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape) {
         TG_TypeNodePtr node = multiShape->GetTypeNode(i);
         if (node && node->GetNodeType() == SHAPE_NODE) {
             TG_TypeShape* typeShape = static_cast<TG_TypeShape*>(node);
-            registerType(typeShape);
+            registerType(typeShape, multiShape);
             // GPU-offloaded actors bypass TransformMultiShape, so the leaf
             // TG_TypeShape::listOfTextures[j].gosTextureHandle is never set by
             // TMS (msl.cpp:1380). Prime it now from the multi-type's
