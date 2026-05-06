@@ -174,6 +174,20 @@ Texture create2DTexture(int w, int h, TexFormat fmt, const uint8_t* texdata, boo
 	if (wantMipmaps) {
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		// AF on the mipmap branch only (AF is a mipmap-aware filter; nearest
+		// has nothing to integrate over). 4x matches the terrain/water sampler
+		// cap in gameos_graphics.cpp — visual win at MC2's 30° camera without
+		// the 16x cost. This runs at asset upload time only — DO NOT replicate
+		// in setSamplerParams() (per-bind hot path); a prior attempt at that
+		// site killed FPS via per-draw glGetFloatv readback (commit 6582b46
+		// revert). Buildings/mechs/objects all reach this path via txmmgr
+		// upload.
+		if (GLEW_ARB_texture_filter_anisotropic || GLEW_EXT_texture_filter_anisotropic) {
+			GLfloat maxAniso = 1.0f;
+			glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+			glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,
+			                (maxAniso < 4.0f) ? maxAniso : 4.0f);
+		}
 	} else {
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
