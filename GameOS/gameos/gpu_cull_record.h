@@ -1,7 +1,6 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
-#include <GL/glew.h>
 
 namespace gpu_cull {
 

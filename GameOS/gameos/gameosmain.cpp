@@ -752,12 +752,15 @@ int main(int argc, char** argv)
         puts(_cbbuf);
         crashbundle_append(_cbbuf);
 
-        // GPU cull substrate selftest (C0).
+        // GPU cull record schema selftest.
         {
-            int failures = gpu_cull::gpu_cull_record_selftest();
-            if (failures > 0) {
-                STOP(("GPU_CULL selftest FAILED — see log above (%d failure(s)). "
-                      "Fix GpuActorRecord layout before launch.", failures));
+            int gcFail = gpu_cull::gpu_cull_record_selftest();
+            if (gcFail > 0) {
+                fprintf(stderr, "[GPU_CULL v1] FATAL: selftest failed (%d); "
+                                "GpuActorRecord layout corrupt, see log above.\n", gcFail);
+                fflush(stderr);
+                gosASSERT(false);
+                abort();
             }
         }
 
