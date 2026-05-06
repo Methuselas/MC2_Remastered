@@ -1844,12 +1844,6 @@ void gos_terrain_bridge_beginBucketLoop() {
             glSamplerParameteri(s_terrainBucketSampler, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
             glSamplerParameteri(s_terrainBucketSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glSamplerParameteri(s_terrainBucketSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            if (GLEW_ARB_texture_filter_anisotropic || GLEW_EXT_texture_filter_anisotropic) {
-                GLfloat maxAniso = 1.0f;
-                glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-                glSamplerParameterf(s_terrainBucketSampler, GL_TEXTURE_MAX_ANISOTROPY,
-                                    (maxAniso < 16.0f) ? maxAniso : 16.0f);
-            }
         }
         glBindSampler(0, s_terrainBucketSampler);
     }
@@ -2125,12 +2119,6 @@ void gosRenderer::renderWaterFastPath(
         glSamplerParameteri(s_waterFastSampler, GL_TEXTURE_WRAP_T, GL_REPEAT);
         glSamplerParameteri(s_waterFastSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glSamplerParameteri(s_waterFastSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        if (GLEW_ARB_texture_filter_anisotropic || GLEW_EXT_texture_filter_anisotropic) {
-            GLfloat maxAniso = 1.0f;
-            glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-            glSamplerParameterf(s_waterFastSampler, GL_TEXTURE_MAX_ANISOTROPY,
-                                (maxAniso < 16.0f) ? maxAniso : 16.0f);
-        }
     }
     GLuint savedSampler = 0;
     {
@@ -2308,12 +2296,6 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
         glSamplerParameteri(s_indirectTerrainSampler, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
         glSamplerParameteri(s_indirectTerrainSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glSamplerParameteri(s_indirectTerrainSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        if (GLEW_ARB_texture_filter_anisotropic || GLEW_EXT_texture_filter_anisotropic) {
-            GLfloat maxAniso = 1.0f;
-            glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-            glSamplerParameterf(s_indirectTerrainSampler, GL_TEXTURE_MAX_ANISOTROPY,
-                                (maxAniso < 16.0f) ? maxAniso : 16.0f);
-        }
     }
     glBindSampler(0, s_indirectTerrainSampler);
 
@@ -5637,12 +5619,6 @@ unsigned int gos_CreateTerrainNormalTexture(const unsigned char* rgbaData, int w
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    if (GLEW_ARB_texture_filter_anisotropic || GLEW_EXT_texture_filter_anisotropic) {
-        GLfloat maxAniso = 1.0f;
-        glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,
-                        (maxAniso < 16.0f) ? maxAniso : 16.0f);
-    }
     glBindTexture(GL_TEXTURE_2D, 0);
     printf("[TESS] Created terrain normal texture: id=%u size=%d\n", texId, width);
     return texId;
