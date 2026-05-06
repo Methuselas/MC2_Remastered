@@ -66,7 +66,7 @@ layout(std430, binding = 2) readonly buffer PerType   { PerTypeData  t[]; } perT
 // entries, so writes never overflow.
 layout(std430, binding = 3) buffer ParityOut { uint parityOut[]; } parityOut_;
 
-uniform mat4 u_worldToClip;
+uniform mat4 terrainMVP;
 uniform vec4 u_terrainViewport;
 uniform mat4 u_mvp;
 // Slice 2 (object-offload) — Stage 2.D.1: parity write gate.
@@ -110,15 +110,23 @@ flat out uint v_localVertexID;
 
 void main() {
     Instance inst = instances_.i[gl_InstanceID];
-    // u_worldToClip uploaded GL_TRUE: GLSL sees transpose, so `M * v` ==
-    // row-vec math == Stuff convention.
-    // modelMatrix from SSBO std430 default col-major: GLSL sees same
-    // matrix as memory. For row-vec convention (translation in row 3),
-    // we need `v * M` in GLSL to apply translation correctly.
-    vec4 world = vec4(a_position, 1.0) * inst.modelMatrix;
-    // Apply full D3D->GL projection chain (identical to terrain_overlay.vert).
-    // u_worldToClip outputs screen-pixel-homogeneous coords (D3D style).
-    vec4 clip4 = u_worldToClip * world;
+    // modelMatrix from SSBO std430 default col-major: GLSL sees the same
+    // matrix as memory. For Stuff row-vec convention (translation in row 3),
+    // use `v * M` to apply translation.
+    vec4 world_stuff = vec4(a_position, 1.0) * inst.modelMatrix;
+    // 2026-05-04 fix: inst.modelMatrix is shapeToWorld in Stuff/MLR camera
+    // frame (.x=left, .y=elev, .z=forward). terrainMVP expects MC2 world
+    // (x=east, y=north, z=elev). Apply the documented mapping
+    // (memory/cpu_displacement_done.md):
+    //     terrain.x = -camera.x, terrain.y = camera.z, terrain.z = camera.y
+    // Without this swap, world.y (elev) gets read by terrainMVP as MC2
+    // north and world.z (south distance) as MC2 elev → assets misplaced
+    // along a wrong axis (visible 2026-05-04 as "trees in the sky" pattern).
+    vec3 world_mc2 = vec3(-world_stuff.x, world_stuff.z, world_stuff.y);
+    vec4 world = vec4(world_mc2, 1.0);
+    // Match terrain_overlay.vert exactly: terrainMVP is the CPU-composed
+    // axisSwap * worldToClip matrix uploaded GL_FALSE.
+    vec4 clip4 = terrainMVP * world;
     float rhw  = 1.0 / clip4.w;
     vec3  px;
     px.x = clip4.x * rhw * u_terrainViewport.x + u_terrainViewport.z;
@@ -127,20 +135,6 @@ void main() {
     vec4 ndc = u_mvp * vec4(px, 1.0);
     float absW = abs(clip4.w);
     gl_Position = vec4(ndc.xyz * absW, absW);
-
-    // Behind-camera guard. The D3D-style manual perspective divide
-    // (rhw = 1/clip.w, then px = clip.xy/w, then remap) produces
-    // degenerate positions when clip.w <= 0 (vertex at or behind the
-    // camera plane). Symptom: a triangle where one vertex is behind
-    // the camera projects to spans-the-whole-screen stretched
-    // artifacts at certain camera angles. The CPU path never sees
-    // this because CPU pre-culls out-of-view objects; the GPU path
-    // under the killswitch submits everything, so we have to clip
-    // degenerate vertices here. Push them outside the clip volume so
-    // OpenGL's standard triangle clipping handles it.
-    if (clip4.w < 0.1) {
-        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-    }
 
     // Slice 2 (object-offload) — Stage 2.C.2: GPU vertex lighting.
     //
