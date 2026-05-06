@@ -1,5 +1,6 @@
 #include "gos_static_prop_registry.h"
 #include "../../mclib/txmmgr.h"  // 2026-05-05: peekLightSlotNumLights/getLightStructCount for flush trace
+#include "../../mclib/appear.h"  // Task 6: Appearance* for registerStaticProp()
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -42,6 +43,12 @@ static const bool s_trace               = parseEnvBoolWithDefault("MC2_STATIC_PR
 // Set MC2_STATIC_PROP_MISSION_LOAD_REG=1 to enable.
 static const bool s_missionLoadRegEnabled =
     parseEnvBoolWithDefault("MC2_STATIC_PROP_MISSION_LOAD_REG", false);
+// Task 6 (Track B): opt-in late-spawn registration for actors spawned after
+// mission load (artillery, reinforcements, warrior waypoint markers).
+// Default OFF until verified; Task 9 flips alongside mission-load reg.
+// Set MC2_STATIC_PROP_LATE_SPAWN_REG=1 to enable.
+static const bool s_lateSpawnRegEnabled =
+    parseEnvBoolWithDefault("MC2_STATIC_PROP_LATE_SPAWN_REG", false);
 
 #define SP_TRACE(fmt, ...) \
     do { if (s_trace) { printf("[STATIC_PROP] " fmt "\n", ##__VA_ARGS__); \
@@ -92,6 +99,10 @@ static uint64_t s_totalUnpinCalls    = 0;
 // rejected by the staleness gate. Must read zero after Task 3's cachedFrame_
 // pre-population; non-zero means the pre-population didn't reach flush in time.
 static uint64_t s_firstFrameSkipCount = 0;
+// [STATIC_PROP_REG v1] HC-3 gate signal: counts late-spawn registration
+// attempts where isStaticRegistered() returned false (type unknown or
+// ineligible). Emitted in destroy() for per-mission accounting.
+static uint64_t s_lateSpawnTypeUnknownCount = 0;
 
 // Release every pin held by a single RecipeRange. Idempotent via
 // rng.pinsReleased — invalidate() may run before destroy() does its
@@ -119,8 +130,21 @@ namespace GpuStaticPropRegistry {
 
 bool isEnabled()               { return s_enabled; }
 bool isMissionLoadRegEnabled() { return s_missionLoadRegEnabled; }
+bool isLateSpawnRegEnabled()   { return s_lateSpawnRegEnabled; }
 
-uint64_t getStaticFirstFrameSkipCount() { return s_firstFrameSkipCount; }
+uint64_t getStaticFirstFrameSkipCount()    { return s_firstFrameSkipCount; }
+uint64_t getLateSpawnTypeUnknownCount()    { return s_lateSpawnTypeUnknownCount; }
+
+bool registerStaticProp(Appearance* app) {
+    if (!isLateSpawnRegEnabled()) return false;
+    if (!app) return false;
+    app->registerStatic();
+    const bool ok = app->isStaticRegistered();
+    if (!ok) {
+        ++s_lateSpawnTypeUnknownCount;
+    }
+    return ok;
+}
 
 void init() {
     // Env flags already parsed at file scope. init() reserves memory.
@@ -142,6 +166,15 @@ void destroy() {
         (unsigned long long)s_firstFrameSkipCount);
     fflush(stderr);
     s_firstFrameSkipCount = 0;
+
+    // [STATIC_PROP_REG v1] HC-3 gate signal: late-spawn registration failures.
+    // count=0 means every late-spawn actor was eligible and registered.
+    // count>0 identifies types that fell through to the first-render path.
+    fprintf(stderr,
+        "[STATIC_PROP_REG v1] event=type_unknown_at_late_spawn count=%llu\n",
+        (unsigned long long)s_lateSpawnTypeUnknownCount);
+    fflush(stderr);
+    s_lateSpawnTypeUnknownCount = 0;
 
     // Texture-pin spec: release any unreleased pins (mission-teardown
     // safety net — covers ranges that were never explicitly invalidated).

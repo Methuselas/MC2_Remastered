@@ -4,6 +4,8 @@
 #include "gos_static_prop_batcher.h"
 
 // TG_MultiShape forward-declared via gos_static_prop_batcher.h -> msl.h.
+// Appearance forward-declared for registerStaticProp().
+class Appearance;
 
 namespace GpuStaticPropRegistry {
 
@@ -18,6 +20,21 @@ bool isEnabled();
 // Returns true iff MC2_STATIC_PROP_MISSION_LOAD_REG=1 was set at startup.
 // Gates the mission-load bulk registration walk in GameObjectManager.
 bool isMissionLoadRegEnabled();
+
+// Returns true iff MC2_STATIC_PROP_LATE_SPAWN_REG=1 was set at startup.
+// Gates the late-spawn per-actor registration calls in spawn sites.
+bool isLateSpawnRegEnabled();
+
+// Task 6 (Track B): late-spawn registration API.
+// Calls app->registerStatic() under isLateSpawnRegEnabled() guard.
+// Returns true iff app->isStaticRegistered() after the call.
+// Increments HC-3 counter on failure for gate-signal tracking.
+bool registerStaticProp(Appearance* app);
+
+// HC-3 gate signal: count of late-spawn registration attempts where
+// isStaticRegistered() returned false (type unknown or ineligible).
+// Emitted in destroy() as [STATIC_PROP_REG v1] event=type_unknown_at_late_spawn.
+uint64_t getLateSpawnTypeUnknownCount();
 
 // Called once per frame from gamecam.cpp BEFORE land->render().
 // Clears the per-frame live-range list.

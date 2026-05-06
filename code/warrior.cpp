@@ -107,6 +107,7 @@
 #define	TESTING_WITH_PLAYER	1
 
 #include"platform_windows.h"
+#include "../GameOS/gameos/gos_static_prop_registry.h"  // Task 6: late-spawn registerStaticProp
 
 enum {
 	T_A = 0,
@@ -7585,6 +7586,11 @@ BldgAppearance* MechWarrior::getWayPointMarker( const Stuff::Vector3D& pos, cons
 	appearance->setObjectParameters( (const_cast<Stuff::Vector3D&>(pos)), 0, 1, 0, 0);
 	appearance->recalcBounds();
 	appearance->update();
+
+	// Task 6 (Track B): late-spawn registration. Waypoint marker has position
+	// set and full init completed — eligible for early static-prop registration.
+	// Gated on MC2_STATIC_PROP_LATE_SPAWN_REG; no-op when disabled.
+	GpuStaticPropRegistry::registerStaticProp(appearance);
 
 	return appearance;
 }
