@@ -54,6 +54,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unordered_set>
 #include <utils/gl_utils.h>
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
@@ -75,6 +76,44 @@ int				MC_TextureManager::iBufferRefCount = 0;
 bool MLRVertexLimitReached = false;
 extern bool useFog;
 extern DWORD BaseVertexColor;
+
+// MC2_TEX_LIFECYCLE_TRACE=1 — diagnostic for the static-prop black-billboard bug
+// under MC2_STATIC_UPDATE_SKIP=1. Logs lifecycle event types under a single
+// schema (also emitted by msl.cpp, gos_static_prop_batcher.cpp,
+// gos_static_prop_registry.cpp):
+//   event=evict           — per cacheOut at MC_TextureManager::update / flushCache
+//   event=evict_skipped   — per pinRefCount > 0 block at the four eviction sites
+//   event=update_summary  — per call to MC_TextureManager::update
+//   event=recache_multi   — per call to TG_TypeMultiShape::SetTextureHandle (msl.cpp)
+//   event=draw_black      — per static-prop draw with invalid handle (batcher)
+//   event=pin / event=unpin / event=pin_summary — registry-side pin lifecycle
+// Cross-reference logs by `nodeIdx` to identify nodes that are evicted but never
+// re-cached. See docs/superpowers/specs/2026-05-06-static-prop-texture-pin-fix.md
+static const bool s_texLifecycleTrace =
+    (getenv("MC2_TEX_LIFECYCLE_TRACE") != nullptr);
+#define TEX_LC(fmt, ...) \
+    do { if (s_texLifecycleTrace) { printf("[TEX_LIFECYCLE v1] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
+
+// Shared per-process dedup for event=evict_skipped across the four eviction
+// sites (one in MC_TextureManager::update, three in flushCache). Without
+// dedup, ~thousands of pinned nodes × 60Hz eviction sweeps = unsustainable
+// log volume. Key buckets per ~64-turn window so the same skip emits at
+// most once per minute-ish.
+static inline bool s_evictSkipShouldEmit(long nodeIdx, long curTurn) {
+    if (!s_texLifecycleTrace) return false;
+    static thread_local std::unordered_set<uint64_t> s_dedup;
+    const uint64_t key = (uint64_t(curTurn >> 6) << 32) | uint64_t(uint32_t(nodeIdx));
+    return s_dedup.insert(key).second;
+}
+#define EVICT_SKIPPED(nodeIdx, refcount, site)                                          \
+    do {                                                                                \
+        if (s_evictSkipShouldEmit((long)(nodeIdx), turn)) {                             \
+            printf("[TEX_LIFECYCLE v1] event=evict_skipped reason=pinned "              \
+                   "nodeIdx=%ld pinRefCount=%lu site=%s turn=%ld\n",                    \
+                   (long)(nodeIdx), (unsigned long)(refcount), (site), (long)turn);     \
+            fflush(stdout);                                                             \
+        }                                                                               \
+    } while (0)
 
 // --- Shadow shape collection (file-scope global, no struct layout impact) ---
 struct ShadowShapeEntry {
@@ -546,9 +585,10 @@ bool MC_TextureManager::flushCache (void)
 			if (currentUsedTextures > peakUsedTextures) peakUsedTextures = currentUsedTextures;
 			const bool pinned = (masterTextureNodes[i].neverFLUSH & 1) != 0;
 			const bool unique = masterTextureNodes[i].uniqueInstance != 0;
-			if (pinned) poolPinned++;
+			const bool refPinned = masterTextureNodes[i].pinRefCount > 0;
+			if (pinned || refPinned) poolPinned++;
 			if (unique) poolUnique++;
-			if (!pinned && !unique && masterTextureNodes[i].lastUsed <= (turn - cache_Threshold))
+			if (!pinned && !refPinned && !unique && masterTextureNodes[i].lastUsed <= (turn - cache_Threshold))
 				poolFlushableIdle++;
 		}
 	}
@@ -570,13 +610,17 @@ bool MC_TextureManager::flushCache (void)
 		{
 			if (masterTextureNodes[i].lastUsed <= (turn-cache_Threshold))
 			{
+				if (masterTextureNodes[i].pinRefCount > 0) {
+					EVICT_SKIPPED(i, masterTextureNodes[i].pinRefCount, "flushCache_cacheThreshold");
+					continue;
+				}
 				//----------------------------------------------------------------
 				// Cache this badboy out.  Textures don't change.  Just Destroy!
 				if (masterTextureNodes[i].gosTextureHandle)
 					gos_DestroyTexture(masterTextureNodes[i].gosTextureHandle);
 
 				masterTextureNodes[i].gosTextureHandle = CACHED_OUT_HANDLE;
-				
+
 				currentUsedTextures--;
 				cacheNotFull = true;
 				return cacheNotFull;
@@ -593,13 +637,17 @@ bool MC_TextureManager::flushCache (void)
 		{
 			if (masterTextureNodes[i].lastUsed <= (turn-30))
 			{
+				if (masterTextureNodes[i].pinRefCount > 0) {
+					EVICT_SKIPPED(i, masterTextureNodes[i].pinRefCount, "flushCache_turn30");
+					continue;
+				}
 				//----------------------------------------------------------------
 				// Cache this badboy out.  Textures don't change.  Just Destroy!
 				if (masterTextureNodes[i].gosTextureHandle)
 					gos_DestroyTexture(masterTextureNodes[i].gosTextureHandle);
 
 				masterTextureNodes[i].gosTextureHandle = CACHED_OUT_HANDLE;
-				
+
 				currentUsedTextures--;
 				cacheNotFull = true;
 				return cacheNotFull;
@@ -615,13 +663,17 @@ bool MC_TextureManager::flushCache (void)
 		{
 			if (masterTextureNodes[i].lastUsed <= (turn-1))
 			{
+				if (masterTextureNodes[i].pinRefCount > 0) {
+					EVICT_SKIPPED(i, masterTextureNodes[i].pinRefCount, "flushCache_turn1");
+					continue;
+				}
 				//----------------------------------------------------------------
 				// Cache this badboy out.  Textures don't change.  Just Destroy!
 				if (masterTextureNodes[i].gosTextureHandle)
 					gos_DestroyTexture(masterTextureNodes[i].gosTextureHandle);
 
 				masterTextureNodes[i].gosTextureHandle = CACHED_OUT_HANDLE;
-				
+
 				currentUsedTextures--;
 				cacheNotFull = true;
 				return cacheNotFull;
@@ -2005,6 +2057,36 @@ void MC_TextureManager::renderLists (void)
 }
 
 //----------------------------------------------------------------------
+// Registry-driven texture pinning. See
+// docs/superpowers/specs/2026-05-06-static-prop-texture-pin-fix.md
+//
+// pinNode    asserts the slot is in-range AND has a live texture allocation
+//            (numUsers > 0). Pinning a free slot is a bug — the texture might
+//            be reallocated to a different consumer before unpinNode runs.
+// unpinNode  asserts pinRefCount > 0 before decrement to catch
+//            unpaired-release / double-release.
+// getPinCount is non-mutating; usable from logging paths.
+void MC_TextureManager::pinNode (DWORD nodeIdx)
+{
+	gosASSERT(nodeIdx < (DWORD)MC_MAXTEXTURES);
+	gosASSERT(masterTextureNodes[nodeIdx].numUsers > 0);
+	masterTextureNodes[nodeIdx].pinRefCount++;
+}
+
+void MC_TextureManager::unpinNode (DWORD nodeIdx)
+{
+	gosASSERT(nodeIdx < (DWORD)MC_MAXTEXTURES);
+	gosASSERT(masterTextureNodes[nodeIdx].pinRefCount > 0);
+	masterTextureNodes[nodeIdx].pinRefCount--;
+}
+
+DWORD MC_TextureManager::getPinCount (DWORD nodeIdx) const
+{
+	if (nodeIdx >= (DWORD)MC_MAXTEXTURES) return 0;
+	return masterTextureNodes[nodeIdx].pinRefCount;
+}
+
+//----------------------------------------------------------------------
 DWORD MC_TextureManager::update (void)
 {
 	ZoneScopedN("MC_TextureManager::update");
@@ -2023,16 +2105,24 @@ DWORD MC_TextureManager::update (void)
 			{
 				if (masterTextureNodes[i].lastUsed <= (turn-60))
 				{
-					//----------------------------------------------------------------
-					// Cache this badboy out.  Textures don't change.  Just Destroy!
-					{
-						ZoneScopedN("MC_TextureManager::update cacheOut");
-						if (masterTextureNodes[i].gosTextureHandle)
-							gos_DestroyTexture(masterTextureNodes[i].gosTextureHandle);
-					}
+					if (masterTextureNodes[i].pinRefCount > 0) {
+						EVICT_SKIPPED(i, masterTextureNodes[i].pinRefCount, "update_turn60");
+					} else {
+						//----------------------------------------------------------------
+						// Cache this badboy out.  Textures don't change.  Just Destroy!
+						{
+							ZoneScopedN("MC_TextureManager::update cacheOut");
+							if (masterTextureNodes[i].gosTextureHandle)
+								gos_DestroyTexture(masterTextureNodes[i].gosTextureHandle);
+						}
 
-					masterTextureNodes[i].gosTextureHandle = CACHED_OUT_HANDLE;
-					numTexturesFreed++;
+						TEX_LC("event=evict nodeIdx=%ld turn=%ld lastUsed=%ld gosHandle=0x%08x",
+						       i, turn, masterTextureNodes[i].lastUsed,
+						       masterTextureNodes[i].gosTextureHandle);
+
+						masterTextureNodes[i].gosTextureHandle = CACHED_OUT_HANDLE;
+						numTexturesFreed++;
+					}
 				}
 			}
 
@@ -2046,7 +2136,12 @@ DWORD MC_TextureManager::update (void)
 		}
 		}
 	}
-	
+
+	if (s_texLifecycleTrace) {
+		TEX_LC("event=update_summary turn=%ld evicted=%lu currentUsed=%ld",
+		       turn, (unsigned long)numTexturesFreed, (long)currentUsedTextures);
+	}
+
 	return numTexturesFreed;
 }
 

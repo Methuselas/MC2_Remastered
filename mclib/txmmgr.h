@@ -135,7 +135,9 @@ struct MC_TextureNode
 	public:
 		char 				*nodeName;					//Used for Unique nodes so I can just return the handle!
 		DWORD				uniqueInstance;				//Texture is modifiable.  DO NOT CACHE OUT!!!!!!
-		DWORD				neverFLUSH;					//Textures used by Userinput, etc.  DO NOT CACHE OUT!!!!!! 
+		DWORD				neverFLUSH;					//Textures used by Userinput, etc.  DO NOT CACHE OUT!!!!!!
+		DWORD				pinRefCount;				//Registry-driven pin (refcount).  Excludes node from cacheout when > 0.
+														//See docs/superpowers/specs/2026-05-06-static-prop-texture-pin-fix.md
 		DWORD				numUsers;					//Pushed up for each user using.
 														//Users can "free" a texture which will decrement the number and actually free it if number is 0
 		gos_TextureFormat 	key;						//Used to recreate texture if cached out.
@@ -177,6 +179,7 @@ struct MC_TextureNode
 		width = 0;
 		uniqueInstance = 0x0;
 		neverFLUSH = false;
+		pinRefCount = 0;
 		vertexData = NULL;
 		vertexData2 = NULL;
 		vertexData3 = NULL;
@@ -1258,10 +1261,24 @@ class MC_TextureManager
 		
 		//-----------------------------------------------------------------------
 		// This routine will run through the TXM Cache on a regular basis and free
-		// up GOS Handles which haven't been used in some time.  Some Time TBD 
+		// up GOS Handles which haven't been used in some time.  Some Time TBD
 		// more accurately with time.
 		DWORD update (void);
-		
+
+		//-----------------------------------------------------------------------
+		// Registry-driven texture pinning.  Excludes the master node at nodeIdx
+		// from cacheout while pinRefCount > 0.  Refcounted so multiple registrants
+		// can share the same node (static-prop typeIDs share underlying textures —
+		// confirmed by trace).  See
+		// docs/superpowers/specs/2026-05-06-static-prop-texture-pin-fix.md
+		//
+		// pinNode  asserts nodeIdx < MC_MAXTEXTURES AND numUsers > 0 (orphan-pin
+		//          guard — slot must have a live texture allocation).
+		// unpinNode asserts pinRefCount > 0 before decrement.
+		void  pinNode    (DWORD nodeIdx);
+		void  unpinNode  (DWORD nodeIdx);
+		DWORD getPinCount(DWORD nodeIdx) const;
+
 		bool checkCacheHeap (void)
 		{
 			if (textureCacheHeap->totalCoreLeft() <= (TEXTURE_CACHE_SIZE - MAX_CACHE_SIZE))
