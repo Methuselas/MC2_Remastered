@@ -103,6 +103,7 @@
 #include"gvehicl.h" // remove
 #include"projectz_trace.h"
 #include "gos_visual_diff.h"  // Stage 2.E: gate edge-scroll when capture enabled
+#include "gos_profiler.h"     // diag: MIF.* Tracy zones for 20ms spike bisection
 
 	static const char* terrainStr[NUM_TERRAIN_TYPES] = {
 			"Blue Water",	//MC_BLUEWATER_TYPE
@@ -744,23 +745,32 @@ void MissionInterfaceManager::update (void)
 	int cellR, cellC;
 	bool passable = 1;
 	bool lineOfSight = 0;
-	if ( Terrain::IsGameSelectTerrainPosition( wPos ) )
 	{
-		land->worldToCell(wPos, cellR, cellC);
-		if (Team::home)	   //May go NULL during multiplayer when a player first dies?
-			lineOfSight = Team::home->teamLineOfSight(wPos,0.0f);
-	}	
+		ZoneScopedN("MIF.LOS");
+		if ( Terrain::IsGameSelectTerrainPosition( wPos ) )
+		{
+			land->worldToCell(wPos, cellR, cellC);
+			if (Team::home)	   //May go NULL during multiplayer when a player first dies?
+				lineOfSight = Team::home->teamLineOfSight(wPos,0.0f);
+		}
+	}
 
 
 	// update buttons and stuff, even if not in region, it draws objectives and stuff
-	controlGui.update( isPaused() && !isPausedWithoutMenu(), lineOfSight );
+	{
+		ZoneScopedN("MIF.ControlGui");
+		controlGui.update( isPaused() && !isPausedWithoutMenu(), lineOfSight );
+	}
 
 	bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
 	bool rightClicked = (!userInput->isLeftDrag() && !userInput->wasRightDrag() && userInput->rightMouseReleased());
 	bool bLeftDouble = userInput->isLeftDoubleClick();
 
 
-	updateTarget(bGui);
+	{
+		ZoneScopedN("MIF.UpdateTarget");
+		updateTarget(bGui);
+	}
 
 	//------------------------------------
 	// Attila (Strategic Commander) Next
@@ -842,70 +852,79 @@ void MissionInterfaceManager::update (void)
 
 	}
 	
-	if( useLeftRightMouseProfile ) // using AOE control style
 	{
-		if ( WAYPOINT_KEY == -1 )
-			WAYPOINT_KEY = KEY_LCONTROL;
-
-		commandClicked = rightClicked;
-		selectClicked = !bLeftDouble && !lastUpdateDoubleClick && userInput->leftMouseReleased() && !userInput->getKeyDown( KEY_T) && !isDragging;
-		cameraClicked = gos_GetKeyStatus( KEY_LMENU ) == KEY_HELD;
-		if ( moveCameraAround( lineOfSight, passable, ctrlDn, bGui, moverCount, nonMoverCount ) )
+		ZoneScopedN("MIF.InputStyle");
+		if( useLeftRightMouseProfile ) // using AOE control style
 		{
-			bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
-			bool rightClicked = (!userInput->isLeftDrag() && !userInput->wasRightDrag() && userInput->rightMouseReleased());
+			if ( WAYPOINT_KEY == -1 )
+				WAYPOINT_KEY = KEY_LCONTROL;
 
-			// deal with the hot keys
-			update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight );
-
-			return;
-		}
-
-		updateAOEStyle(shiftDn, altDn, ctrlDn, bGui, lineOfSight, passable, moverCount, nonMoverCount);
-		
-
-	}
-	else // using mc1 style
-	{
-		commandClicked = leftClicked;
-		selectClicked = leftClicked && !lastUpdateDoubleClick;
-		cameraClicked = userInput->isRightDrag();
-
-		if ( WAYPOINT_KEY == -1 )
-			WAYPOINT_KEY = KEY_LCONTROL;
-		if ( moveCameraAround( lineOfSight, passable, ctrlDn, bGui, moverCount, nonMoverCount ) )
-		{
-			bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
-			bool rightClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isRightClick());
-
-			// deal with the hot keys
-			update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight );
-			return;
-		}
-
-		updateOldStyle(shiftDn, altDn, ctrlDn, bGui, lineOfSight, passable, moverCount, nonMoverCount);
-	}
-
-	for (int i = 0; i < Team::home->getRosterSize(); i++ )
-	{
-		Mover* pMover = (Mover*)Team::home->getMover( i );
-		MechWarrior* pilot = pMover->getPilot();
-		if ( pilot && pMover->getCommander()->getId() == Commander::home->getId())
-		{
-			GameObject* pTmpTarget = pilot->getCurrentTarget( );
-			if ( pTmpTarget && (i < MAX_ICONS))	//Must check this because old test maps have more then 16 movers on them!!
+			commandClicked = rightClicked;
+			selectClicked = !bLeftDouble && !lastUpdateDoubleClick && userInput->leftMouseReleased() && !userInput->getKeyDown( KEY_T) && !isDragging;
+			cameraClicked = gos_GetKeyStatus( KEY_LMENU ) == KEY_HELD;
+			if ( moveCameraAround( lineOfSight, passable, ctrlDn, bGui, moverCount, nonMoverCount ) )
 			{
-				pTmpTarget->setDrawBars(true);
-				oldTargets[i] = pTmpTarget;
+				bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
+				bool rightClicked = (!userInput->isLeftDrag() && !userInput->wasRightDrag() && userInput->rightMouseReleased());
+
+				// deal with the hot keys
+				update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight );
+
+				return;
+			}
+
+			updateAOEStyle(shiftDn, altDn, ctrlDn, bGui, lineOfSight, passable, moverCount, nonMoverCount);
+
+
+		}
+		else // using mc1 style
+		{
+			commandClicked = leftClicked;
+			selectClicked = leftClicked && !lastUpdateDoubleClick;
+			cameraClicked = userInput->isRightDrag();
+
+			if ( WAYPOINT_KEY == -1 )
+				WAYPOINT_KEY = KEY_LCONTROL;
+			if ( moveCameraAround( lineOfSight, passable, ctrlDn, bGui, moverCount, nonMoverCount ) )
+			{
+				bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
+				bool rightClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isRightClick());
+
+				// deal with the hot keys
+				update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight );
+				return;
+			}
+
+			updateOldStyle(shiftDn, altDn, ctrlDn, bGui, lineOfSight, passable, moverCount, nonMoverCount);
+		}
+	}
+
+	{
+		ZoneScopedN("MIF.DrawBars");
+		for (int i = 0; i < Team::home->getRosterSize(); i++ )
+		{
+			Mover* pMover = (Mover*)Team::home->getMover( i );
+			MechWarrior* pilot = pMover->getPilot();
+			if ( pilot && pMover->getCommander()->getId() == Commander::home->getId())
+			{
+				GameObject* pTmpTarget = pilot->getCurrentTarget( );
+				if ( pTmpTarget && (i < MAX_ICONS))	//Must check this because old test maps have more then 16 movers on them!!
+				{
+					pTmpTarget->setDrawBars(true);
+					oldTargets[i] = pTmpTarget;
+				}
 			}
 		}
 	}
 
-	if ( !bLeftDouble && !( lastUpdateDoubleClick && 
+	if ( !bLeftDouble && !( lastUpdateDoubleClick &&
 		userInput->getMouseLeftButtonState() == MC2_MOUSE_DOWN ) )// check for the hold )
 		lastUpdateDoubleClick = false;
 
-	updateRollovers();
+	{
+		ZoneScopedN("MIF.Rollovers");
+		updateRollovers();
+	}
 }
 
 void MissionInterfaceManager::updateVTol()
