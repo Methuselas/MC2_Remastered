@@ -99,6 +99,7 @@ struct LegacyProjectionResult {
 // g_projectz_site_cat, projectz_trace_dispatch(), and the PROJECTZ_SITE macro.
 // Must appear after LegacyProjectionResult (trace.h forward-declares it).
 #include "projectz_trace.h"
+#include "object_admission_predicate.h"
 
 //---------------------------------------------------------------------------
 class Camera
@@ -540,17 +541,26 @@ class Camera
 		// Object lifecycle admission — bool feeds windowsVisible → canBeSeen() cull chain.
 		inline bool projectForObjectAdmission (Stuff::Vector3D& point,
 		                                       Stuff::Vector4D& screen) {
+			LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
-			bool accepted = projectZ(point, screen);
+			// projectZ writes screen byte-identically to legacy; we capture rawClip
+			// via the optionalResult sidecar so the modern predicate can see it.
+			bool legacyAccepted = projectZ(point, screen, &result);
 #pragma warning(pop)
 #if defined(MC2_PROJECTZ_FINITE_CHECK)
-			if (accepted) {
+			// Invariant gates on legacy-rect-acceptance (the original semantics),
+			// not on the bool we ultimately return — preserves the policy-split
+			// contract from commit cc83857.
+			if (result.acceptedByLegacyScreenRect) {
 				gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
 				          isfinite(screen.z) && isfinite(screen.w));
 			}
 #endif
-			return accepted;
+			if (objectAdmissionPredicateMode() == ObjectAdmissionPredicateMode::Modern) {
+				return clipSpaceFrustumAdmit(result.rawClip);
+			}
+			return legacyAccepted;
 		}
 
 		// Effect billboard admission — bool gates submission; same wedge-class hazard as terrain.
