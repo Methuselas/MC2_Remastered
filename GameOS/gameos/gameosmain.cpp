@@ -2,6 +2,7 @@
 #include "gos_render.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <cstring>
 #include <time.h>
 
 // sebi 2026-04-22: unhandled-exception filter that symbolizes the stack via
@@ -116,6 +117,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "gos_visual_diff.h"  // Stage 2.E pre-HUD capture + Ctrl+Shift+P record
 #include "gos_terrain_indirect.h"  // [INSTR v1] banner: terrain_indirect{,_parity} fields
 #include "gpu_cull_record.h"       // C0-1: GpuActorRecord schema selftest
+#include "object_admission_predicate.h"  // Track A1: init probe + selftest gate
 
 // Tier-1 instrumentation (stability spec §5.1): single source of truth for
 // the frame=... field used by TGL_POOL, DESTROY, and GL_ERROR log lines.
@@ -660,6 +662,26 @@ int main(int argc, char** argv)
     // Tier-1 instrumentation: one-line banner so every log file is
     // self-describing about which traces are enabled.
     projectz_trace_init();
+    // Track A1: probe object-admission mode; emit [INSTR v1] object_admission_mode= line.
+    objectAdmissionPredicate_init();
+    // Optional startup selftest — hard-fails on any boundary violation so the
+    // operator knows immediately if the predicate body has a regression.
+    if (const char* st = std::getenv("MC2_OBJECT_ADMISSION_SELFTEST")) {
+        if (std::strcmp(st, "1") == 0) {
+            int fails = objectAdmissionPredicate_selftest();
+            std::printf("[OBJECT_ADMISSION v1] event=selftest_summary fails=%d\n", fails);
+            std::fflush(stdout);
+            if (fails != 0) {
+                // Hard fail — selftest is opt-in (env-gated); when an operator
+                // turned it on and a case failed, the predicate body has a real
+                // boundary error and we must NOT continue into rendering.
+                // Failing loudly here surfaces the bug; smoke runner reports
+                // the abort as a failed mission.
+                gosASSERT(false);
+                std::abort();
+            }
+        }
+    }
     {
         const bool tgl     = (getenv("MC2_TGL_POOL_TRACE")       != nullptr);
         const bool destr   = (getenv("MC2_DESTROY_TRACE")        != nullptr);
