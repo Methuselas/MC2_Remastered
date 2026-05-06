@@ -30,6 +30,7 @@
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "gos_terrain_bridge.h"
 #include "gos_terrain_patch_stream.h"
+#include "gos_terrain_indirect.h"
 #include "gos_terrain_water_stream.h"
 
 class gosRenderer;
@@ -2975,6 +2976,7 @@ void gosRenderer::beginFrame()
     num_draw_calls_ = 0;
 
     TerrainPatchStream::beginFrame();
+    gos_terrain_indirect::BeginFrame();
 }
 
 void gosRenderer::endFrame()

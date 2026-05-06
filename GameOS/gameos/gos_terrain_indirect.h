@@ -157,6 +157,7 @@ int  ParityCompareRecipeFrame();
 //                             process exit. Documented recovery = restart with
 //                             MC2_TERRAIN_INDIRECT=0.
 // ---------------------------------------------------------------------------
+void BeginFrame();              // reset armed flag; call unconditionally once per frame
 bool ComputePreflight();
 bool IsFrameSolidArmed();
 bool DrawIndirect();

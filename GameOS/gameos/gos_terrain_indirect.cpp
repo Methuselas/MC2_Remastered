@@ -1412,6 +1412,13 @@ void ForceDisableArmingForProcess() {
     s_processArmingDisabled = true;
 }
 
+void BeginFrame() {
+    // Reset armed flag unconditionally every frame so mech-bay / menu frames
+    // don't inherit the armed state from the last gameplay frame.
+    // ComputePreflight() re-arms when terrain is actually present.
+    s_frameSolidArmed = false;
+}
+
 bool ComputePreflight() {
     ZoneScopedN("Terrain::IndirectPreflight");
     s_frameSolidArmed           = false;
