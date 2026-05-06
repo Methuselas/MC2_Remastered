@@ -108,7 +108,12 @@ Stuff::Vector3D				Terrain::mapTopLeft3d;					//Calced during load.
 
 UserHeapPtr					Terrain::terrainHeap = NULL;			//Setup at load time.
 char *						Terrain::terrainName = NULL;
-char * 						Terrain::colorMapName = NULL;			
+char * 						Terrain::colorMapName = NULL;
+
+// C1 tactical material profile (see terrain.h). Default LEGACY = exact
+// pre-C1 byte-for-byte behavior; only mc2_24 currently flips to a
+// non-LEGACY profile.
+int							g_terrainMaterialProfile = TERRAIN_MAT_PROFILE_LEGACY;
 
 long		   				Terrain::numObjBlocks = 0;
 ObjBlockInfo				*Terrain::objBlockInfo = NULL;
@@ -541,6 +546,20 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 			terrainTextures2->init(colorMapName);
 		else
 			terrainTextures2->init(terrainName);
+	}
+
+	//-----------------------------------------------------------------
+	// C1 tactical material profile selection. Whitelist-only; default
+	// LEGACY preserves byte-for-byte pre-C1 rendering on every other
+	// mission. Profile is read by gos_terrain.frag / terrain_common.hglsl
+	// classifier branches via the `g_terrainMaterialProfile` uniform.
+	{
+		const char *profileKey = colorMapName ? colorMapName
+		                       : terrainName  ? terrainName
+		                                      : "";
+		g_terrainMaterialProfile = TERRAIN_MAT_PROFILE_LEGACY;
+		if (profileKey[0] != '\0' && _stricmp(profileKey, "mc2_24") == 0)
+			g_terrainMaterialProfile = TERRAIN_MAT_PROFILE_SAND_M24;
 	}
 
 	return NO_ERR;

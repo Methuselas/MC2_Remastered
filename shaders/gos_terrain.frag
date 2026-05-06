@@ -101,6 +101,12 @@ uniform PREC vec4 tessDebug;  // x=mode: 0=off, 1=normals, 2=worldPos
 uniform float time;           // elapsed seconds (for cloud shadow animation)
 uniform PREC float mapHalfExtent;  // half side length of playable map (0 = disabled)
 
+// C1 tactical mission-gated material profile (see mclib/terrain.h for the
+// C++ enum). Default 0 = LEGACY = exact pre-C1 classifier behavior.
+// Non-zero values widen specific classifier windows for known-bad missions
+// only. Disposable; removed when real material-palette architecture lands.
+uniform int g_terrainMaterialProfile;
+
 // --- Distance LOD thresholds (tunable, in MC2 world units) ---
 // 1 terrain tile ≈ 128 world units
 const float LOD_NEAR       = 4000.0;   // full quality (covers stock zoom)
@@ -147,7 +153,11 @@ PREC vec3 rgb2hsv(PREC vec3 c) {
     return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
 }
 
-// MC2 terrain palette — tuned from actual screenshot analysis
+// MC2 terrain palette — tuned from actual screenshot analysis.
+// C1 tactical: dirt's saturation gate is profile-aware so mc2_24 sand
+// (which spans s ≈ 0.20–0.40) routes uniformly into slot 2 (dirt) rather
+// than splitting between rock (low-sat) and dirt (high-sat). LEGACY
+// profile keeps the pre-C1 thresholds verbatim.
 PREC vec4 getColorWeights(PREC vec3 color) {
     PREC vec3 hsv = rgb2hsv(color);
     PREC float h = hsv.x;
@@ -156,12 +166,22 @@ PREC vec4 getColorWeights(PREC vec3 color) {
 
     PREC vec4 w = vec4(0.0);
 
+    // Per-profile dirt-saturation window. Legacy ramps 1.0 above s≥0.32.
+    // SAND_M24 ramps to 1.0 by s≥0.20 so washed-out mc2_24 sand pixels
+    // also classify as dirt instead of rock-leftover.
+    PREC float dirtSatLo = 0.10;
+    PREC float dirtSatHi = 0.32;
+    if (g_terrainMaterialProfile == 1) {  // TERRAIN_MAT_PROFILE_SAND_M24
+        dirtSatLo = 0.04;
+        dirtSatHi = 0.20;
+    }
+
     // Green → grass, brown → dirt, everything else → rock.
     // Concrete weight comes only from TerrainType (cement vertices) later in main();
     // never from colormap, so snow/overlay-whitened tiles fall through to rock.
-    w.y = smoothstep(0.10, 0.20, h) * smoothstep(0.10, 0.32, s);   // green
-    w.z = smoothstep(0.17, 0.11, h) * smoothstep(0.10, 0.32, s);   // brown
-    w.x = 1.0 - max(w.y, w.z);                                     // everything else → rock
+    w.y = smoothstep(0.10, 0.20, h) * smoothstep(0.10, 0.32, s);          // green (grass) — unchanged
+    w.z = smoothstep(0.17, 0.11, h) * smoothstep(dirtSatLo, dirtSatHi, s); // brown (dirt) — profile-aware
+    w.x = 1.0 - max(w.y, w.z);                                             // everything else → rock
     w.w = 0.0;
 
     PREC float isWater = smoothstep(0.35, 0.45, h);

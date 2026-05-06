@@ -58,6 +58,19 @@
 #define	MAX_MAP_CELL_WIDTH		720
 #define TACMAP_SIZE				128.f
 
+//---------------------------------------------------------------------------
+// Tactical mission-gated material profile (C1 — disposable).
+// When the real material-palette architecture lands (post-Slice 0 design),
+// this enum + the per-profile shader branches go away in one PR. Until
+// then, mc2_24 sand renders are improved by routing low-saturation sand
+// pixels into slot 2 (dirt) consistently — see notes in
+// shaders/include/terrain_common.hglsl and shaders/gos_terrain.frag.
+enum TerrainMaterialProfile {
+	TERRAIN_MAT_PROFILE_LEGACY   = 0,
+	TERRAIN_MAT_PROFILE_SAND_M24 = 1,
+};
+extern int g_terrainMaterialProfile;
+
 //------------------------------------------------
 // Put back in Move code when Glenn moves it over.
 // 07/28/99 these numbers didn't correspond to clan/IS despite comment, so I chagned 'em.
