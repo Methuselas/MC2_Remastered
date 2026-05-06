@@ -167,15 +167,36 @@ int32_t registerRecipe(TG_MultiShape* multi,
     s_recipeRanges.push_back(rng);
     SP_TRACE("register regIdx=%d first=%u count=%u", regIdx, rng.first, rng.count);
 
-    // Pin every mcTextureNodeIndex referenced by this recipe's multi-shape.
-    // mcTextureManager evicts textures during gameplay (txmmgr.cpp:update);
-    // for actors using touch() instead of update() under MC2_STATIC_UPDATE_SKIP=1
-    // there's no re-cache pathway, so the leaf TG_TypeShape::listOfTextures
-    // gosTextureHandle goes stale and the batcher renders black quads.
-    // Pinning the master node prevents eviction while this range is registered.
-    // Use the public TG_MultiShape::GetNumTextures()/GetTextureHandle(j) API
-    // (msl.h:454-470) — GetTextureHandle(j) returns mcTextureNodeIndex directly.
-    // Do not access TG_TypeMultiShape::numTextures/listOfTextures — protected.
+    // Pin every mcTextureNodeIndex referenced by this recipe's multi-shape AND
+    // refresh the per-leaf gosTextureHandle snapshots in the same pass.
+    //
+    // The fix has two coupled parts:
+    //
+    //   1. Pin: prevents mcTextureManager->update() / flushCache from calling
+    //      gos_DestroyTexture on the master node while this RecipeRange exists.
+    //      Without this, the leaf's stored gosTextureHandle would point at a
+    //      destroyed GOS slot → glTexId=0 → black quad.
+    //
+    //   2. Refresh: the leaf snapshot was taken at registerMultiShape time
+    //      (AppearanceType::init, batcher line ~809: typeShape->SetTextureHandle
+    //      → tgl.cpp:1546-1555 → mcTextureManager->get_gosTextureHandle).
+    //      For actors that don't render until after the first eviction sweep
+    //      (lastUsed > turn-60), eviction has already happened in the gap, the
+    //      master is CACHED_OUT_HANDLE, and the leaf's snapshot is already
+    //      stale.  Re-calling leaf->SetTextureHandle(j, nodeIdx) goes through
+    //      get_gosTextureHandle which re-realizes the texture if CACHED_OUT
+    //      and stores the live handle in the leaf.  With pin now active, the
+    //      refreshed snapshot stays valid for the rest of the mission.
+    //
+    // Refresh is idempotent (get_gosTextureHandle is a no-op when master is
+    // already realized), so multiple recipes of the same type each refresh
+    // harmlessly.
+    //
+    // Use public API only:
+    //   - TG_MultiShape::GetNumTextures / GetTextureHandle(j) (msl.h:454-470)
+    //   - TG_MultiShape::GetMultiType (msl.h:554)
+    //   - TG_TypeMultiShape::GetNumShapes / GetTypeNode (msl.h:159-167)
+    //   - TG_TypeShape::SetTextureHandle (virtual on TG_TypeShape)
     if (mcTextureManager) {
         RecipeRange& storedRng = s_recipeRanges.back();
         const long numTex = multi->GetNumTextures();
@@ -189,6 +210,28 @@ int32_t registerRecipe(TG_MultiShape* multi,
                            (unsigned long)nodeIdx,
                            (unsigned long)mcTextureManager->getPinCount(nodeIdx),
                            regIdx, (void*)multi);
+            }
+        }
+
+        // Refresh leaf gosTextureHandle snapshots for every SHAPE_NODE leaf in
+        // the type-multi.  This re-resolves through get_gosTextureHandle so
+        // evicted/CACHED_OUT_HANDLE masters are re-realized and the leaf gets
+        // the live handle.  Pinning above guarantees the live handle stays
+        // valid for the rest of the mission.
+        TG_TypeMultiShape* typeMulti = multi->GetMultiType();
+        if (typeMulti) {
+            const long numShapes = typeMulti->GetNumShapes();
+            for (long i = 0; i < numShapes; ++i) {
+                TG_TypeNodePtr node = typeMulti->GetTypeNode(i);
+                if (node && node->GetNodeType() == SHAPE_NODE) {
+                    TG_TypeShape* leaf = static_cast<TG_TypeShape*>(node);
+                    for (long j = 0; j < numTex; ++j) {
+                        const DWORD nodeIdx = multi->GetTextureHandle(j);
+                        if (nodeIdx != 0xffffffff) {
+                            leaf->SetTextureHandle(j, nodeIdx);
+                        }
+                    }
+                }
             }
         }
     }
