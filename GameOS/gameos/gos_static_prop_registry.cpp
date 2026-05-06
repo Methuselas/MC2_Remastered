@@ -192,6 +192,10 @@ int32_t registerRecipe(TG_MultiShape* multi,
             }
         }
     }
+    // Track B: structural first-frame fix. Pre-populate cachedFrame_ so the
+    // first flush() after registration passes the staleness gate at flush()
+    // without requiring a prior CacheGpuLightData() call.
+    multi->setCachedFrame(g_mc2FrameCounter);
     return regIdx;
 }
 

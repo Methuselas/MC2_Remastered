@@ -335,6 +335,7 @@ class TG_MultiShape
 		// UINT32_MAX by falling through to the dynamic submit path.
 		uint32_t getCachedGpuLightIndex() const { return cachedGpuLightIndex_; }
 		uint32_t getCachedFrame()        const { return cachedFrame_; }
+		void     setCachedFrame(uint32_t f)    { cachedFrame_ = f; }
 
 		//This function sets the list of lights used by the TransformShape function
 		//to light the shape.
