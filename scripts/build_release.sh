@@ -131,7 +131,8 @@ for kind in art tgl; do
 done
 
 # ---------- mc2-remastered-engine.zip ----------
-# mc2.exe + shaders/ + runtime DLLs at the install root + assets/ (font data).
+# mc2.exe + shaders/ + runtime DLLs at the install root + assets/ (font data)
+# + *.cfg prefs files at the install root.
 # Excludes data/ and FSTs (those live in mc2-gamedata.zip).
 #
 # assets/ carries .d3f + .glyph font data needed by the gos_font.cpp D3F
@@ -139,6 +140,17 @@ done
 # inline, v0.2's per-zip layout dropped them, and v0.3's font sprint
 # requires them again — without these files the engine boots but renders
 # UI text as boxes.
+#
+# *.cfg files are required by the sniffer-bypass path in mechcmd2.cpp:971.
+# On startup the engine checks for options.cfg; if missing, it sets
+# SnifferMode=true and tries CopyFile("minprefs.cfg","options.cfg",...) as
+# a self-heal. Without minprefs.cfg the CopyFile silently fails (return
+# value ignored) and the user is stuck in an infinite loop where every
+# launch shows the IDS_SNIFFER_INIT_MSG dialog ("will now check your
+# computer's hardware") and quits without persisting anything. v0.2's
+# engine zip shipped options.cfg/orgprefs.cfg/system.cfg explicitly; v0.3
+# regressed when this script first codified the packaging recipe and
+# forgot the cfg glob. Issue: ThranduilsRing/mc2-opengl-remastered#22.
 echo "[engine] staging"
 mkdir -p "$STAGE/engine"
 cp "$DEPLOY/mc2.exe" "$STAGE/engine/"
@@ -150,8 +162,23 @@ fi
 for f in "$DEPLOY"/*.dll "$DEPLOY"/run-with-log.bat; do
     [ -e "$f" ] && cp "$f" "$STAGE/engine/"
 done
+# Prefs files at the deploy root. *.cfg glob naturally excludes
+# options.cfg.old (different extension), which is a developer-side backup
+# we don't want to ship.
+for f in "$DEPLOY"/*.cfg; do
+    [ -e "$f" ] && cp "$f" "$STAGE/engine/"
+done
 rm -f "$OUTDIR/mc2-remastered-engine.zip"
 ( cd "$STAGE/engine" && z "$OUTDIR/mc2-remastered-engine.zip" . ) >/dev/null
+# Sanity: engine zip must contain the cfg files that gate the sniffer
+# branch. options.cfg's presence is what makes mc2.exe skip the sniffer
+# dialog on first launch; minprefs.cfg is the fallback source the engine
+# would copy from if options.cfg ever went missing.
+for required_cfg in options.cfg minprefs.cfg orgprefs.cfg system.cfg; do
+    if ! "$SEVENZIP" l "$OUTDIR/mc2-remastered-engine.zip" | grep -q " $required_cfg\$"; then
+        echo "[engine] FAIL — $required_cfg missing from engine.zip (sniffer-loop regression)"; exit 1
+    fi
+done
 echo "[engine] $(ls -lh "$OUTDIR/mc2-remastered-engine.zip" | awk '{print $5}')"
 
 echo
