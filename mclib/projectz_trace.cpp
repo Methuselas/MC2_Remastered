@@ -8,6 +8,7 @@
 //---------------------------------------------------------------------------
 
 #include "projectz_trace.h"
+#include "object_admission_predicate.h"
 
 #ifndef CAMERA_H
 #include "camera.h"   // LegacyProjectionResult, Stuff::Vector3D/Vector4D full defs
@@ -55,10 +56,10 @@ static int cat_index(const char* cat) {
 }
 
 // ── per-predicate global disagreement counters (perspective only) ────────────
-// Indices: 0=legacyRectFinite 1=homogClip 2=rectSignedW 3=rectNearFar 4=rectGuard
-static const int PRED_COUNT = 5;
+// Indices: 0=legacyRectFinite 1=homogClip 2=rectSignedW 3=rectNearFar 4=rectGuard 5=homogClipFull
+static const int PRED_COUNT = 6;
 static const char* const s_predNames[PRED_COUNT] = {
-    "legacyRectFinite", "homogClip", "rectSignedW", "rectNearFar", "rectGuard"
+    "legacyRectFinite", "homogClip", "rectSignedW", "rectNearFar", "rectGuard", "homogClipFull"
 };
 struct PredStat {
     uint32_t agree;
@@ -157,6 +158,12 @@ static ProjectZPredicates compute_predicates(
     float gx = (float)guardPx, gy = (float)guardPx;
     p.rectGuard = (screen.x >= -gx) && (screen.y >= -gy) &&
                   (screen.x <= screenResX + gx) && (screen.y <= screenResY + gy);
+
+    // homogClipFull: full clip-space frustum (w>0, |xy|<=w, 0<=z<=w).
+    // Calls the SAME function the production wrapper uses — trace disagreement
+    // counts are by-construction what production will see when
+    // MC2_OBJECT_ADMISSION_PREDICATE=modern. Drift is impossible.
+    p.homogClipFull = clipSpaceFrustumAdmit(rawClip);
 
     return p;
 }
@@ -277,7 +284,7 @@ void projectz_trace_dispatch(
             " rawClip=(%.4f,%.4f,%.4f,%.4f)\n"
             "  screen=(%.2f,%.2f,%.4f,%.6f) legacyAccepted=%s\n"
             "  predicates: legacyRect=%s legacyRectFinite=%s"
-            " homogClip=%s rectSignedW=%s rectNearFar=%s rectGuard=%s\n"
+            " homogClip=%s rectSignedW=%s rectNearFar=%s rectGuard=%s homogClipFull=%s\n"
             "  consumes_z=%s\n",
             siteId  ? siteId  : "unknown",
             siteCat ? siteCat : "unknown",
@@ -295,6 +302,7 @@ void projectz_trace_dispatch(
             usePerspective ? (preds.rectSignedW ? "T" : "F") : "n/a",
             usePerspective ? (preds.rectNearFar ? "T" : "F") : "n/a",
             preds.rectGuard         ? "T" : "F",
+            usePerspective ? (preds.homogClipFull ? "T" : "F") : "n/a",
             is_consumes_z(siteId)   ? "true" : "false");
     }
 
@@ -309,14 +317,15 @@ void projectz_trace_dispatch(
         if (usePerspective) {
             s_perspCalls++;
 
-            // Global per-predicate disagreement (5 predicates, excluding legacyRect itself)
+            // Global per-predicate disagreement (6 predicates, excluding legacyRect itself)
             bool ref = preds.legacyRect;
             bool pred_vals[PRED_COUNT] = {
                 preds.legacyRectFinite,
                 preds.homogClip,
                 preds.rectSignedW,
                 preds.rectNearFar,
-                preds.rectGuard
+                preds.rectGuard,
+                preds.homogClipFull
             };
             for (int p = 0; p < PRED_COUNT; p++) {
                 if (pred_vals[p] == ref)       s_predStat[p].agree++;
