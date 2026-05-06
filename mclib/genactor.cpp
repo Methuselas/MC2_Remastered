@@ -838,15 +838,10 @@ long GenericAppearance::render (long depthFixup)
 			}
 			if (!submittedToGpu)
 			{
-				// refreshTextures=true: under MC2_STATIC_UPDATE_SKIP=1, the
-				// actor's update() is replaced by touch() so TransformMultiShape
-				// never refreshes the leaf TG_TypeShape::listOfTextures
-				// gosTextureHandle snapshot.  CPU fallback must drive that
-				// refresh itself or it reads stale handles and renders black.
 				if (depthFixup)
-					genShape->Render(true,0.99999f);	//Sky or something like it.  Push to back!
+					genShape->Render(false,0.99999f);	//Sky or something like it.  Push to back!
 				else
-					genShape->Render(true);
+					genShape->Render();
 			}
 		}
 		else

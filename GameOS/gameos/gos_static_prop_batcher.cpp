@@ -5,7 +5,6 @@
 #include "gameos.hpp"
 #include "utils/shader_builder.h"
 #include "tgl.h"  // TG_Shape::s_worldToClip
-#include "../../mclib/txmmgr.h"  // mcTextureManager (draw-time gosHandle resolve)
 #include <GL/glew.h>
 #include <algorithm>
 #include <cstdio>
@@ -31,49 +30,12 @@ static const bool s_alphaTrace = (getenv("MC2_ALPHA_TEST_TRACE") != nullptr);
 #define ALPHA_TRACE(fmt, ...) \
     do { if (s_alphaTrace) { printf("[ALPHA_TEST] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
 
-// [REG_TYPE v2] Static-prop registration tracing for the alpha-test
-// material-classification fix. Three event types under the v2 schema:
-//   event=type  — once per registered type, with summary fields incl.
-//                 typeHasAlphaTextureName.
-//   event=pkt   — once per packet inside the per-pkt loop, with
-//                 alphaByName/flagSource/materialFlags resolved per slot.
-//   event=warn  — once per type when alphaTestOn=0 AND any slot has a_
-//                 prefix (forward-compat trap; printf-only, no assert).
-// Off by default; MC2_REG_TYPE_TRACE=1 enables explicitly,
-// MC2_LIGHT_DEBUG=1 enables umbrella.
-extern uint32_t g_mc2FrameCounter;
-static const bool s_regTypeTrace = (
-    (getenv("MC2_REG_TYPE_TRACE") != nullptr) ||
-    (getenv("MC2_LIGHT_DEBUG") != nullptr));
-
-// [REG_TYPE v2] Path 4 helper: detect the asset-naming convention used at
-// 27 sites across mclib/ to gate gos_Texture_Alpha vs gos_Texture_Solid
-// loading (e.g. mclib/bdactor.cpp:3573, :641; gvactor.cpp; mech3d.cpp).
-// Engine reads the same convention to derive STATIC_PROP_FLAG_ALPHA_TEST
-// at register-time, replacing the implicit dependency on every gameplay-side
-// load path remembering to call SetAlphaTest(true).
-static bool isAlphaTestTextureName(const char* name) {
-    return name &&
-           (name[0] == 'a' || name[0] == 'A') &&
-           name[1] == '_';
-}
-
 // MC2_TEX_HANDOFF_TRACE=1 — logs texture handle resolution at register and draw time.
 // Prints once per unique (multiShape,slot) pair at registration, and once per draw type
 // at flush (first flush only). Use to diagnose the GPU-path upscale-texture miss.
 static const bool s_texHandoffTrace = (getenv("MC2_TEX_HANDOFF_TRACE") != nullptr);
 #define TEX_HANDOFF(fmt, ...) \
     do { if (s_texHandoffTrace) { printf("[TEX_HANDOFF] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
-
-// MC2_TEX_LIFECYCLE_TRACE=1 — see mclib/txmmgr.cpp for full event taxonomy.
-// Filtered to the bug condition only (glTexId==0 OR gosHandle==CACHED_OUT_HANDLE)
-// so a 30s smoke run produces a readable log. Each line names the typeID, packet,
-// slot, source pointer, and resolved gl id — cross-reference with [TEX_LIFECYCLE]
-// event=evict / event=recache_multi to identify the eviction-without-recache path.
-// CACHED_OUT_HANDLE = 0xFFFFFACE (mclib/txmmgr.h:45). Per-type rate-limited to one
-// emit per type per process to avoid 60Hz spam from a steady-state broken type.
-static const bool s_texLifecycleTrace =
-    (getenv("MC2_TEX_LIFECYCLE_TRACE") != nullptr);
 
 // MC2_TREE_DIAG_TRACE=1 — diagnostic 2026-05-05 for the "black billboard square" bug.
 // Prints up to 8 lines from each of submit() (dynamic register/replay path) and
@@ -566,7 +528,7 @@ void GpuStaticPropBatcher::onMapUnload() {
 // trivial 0..N*3-1 index buffer. baseVertex points at the start of this
 // type's vertex run in the shared VBO. Packet indexCount = runTris * 3.
 // ---------------------------------------------------------------------------
-void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape, TG_TypeMultiShape* multiShape) {
+void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape) {
     if (!typeShape) return;
     if (s_typeIndex.count(typeShape)) return;  // idempotent
     if (s_geometryFinalized) {
@@ -596,31 +558,6 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape, TG_TypeMultiSha
 
     const uint32_t baseVertex = static_cast<uint32_t>(s_stagingVbo.size() / kVertexStride);
     const uint32_t newTypeID  = static_cast<uint32_t>(s_types.size());
-
-    // Path 4 (widened, rev 3.3): compute typeHasAlphaTextureName ONCE before the
-    // per-pkt loop. Smoke evidence (run 2026-05-06T10-19-06: 32,581 events with
-    // effectiveSource=none AND 150 event=warn lines) proved the per-pkt
-    // narrowing was leaving the LOD-cutoff "lit→stale→black" path uncovered:
-    // when the post-swap LOD's pkt.textureSlot points at a non-a_ slot while
-    // a sibling slot carries the alpha texture, per-pkt detection misses it.
-    // Per-type widening pre-approved by advisor as the documented fallback
-    // (advisor input 2026-05-06: "Only widen to 'any texture in type' if the
-    // smoke proves the alpha asset lives on a sibling slot..."). Trunk-on-
-    // opaque-slot pkt now gets alpha-test enabled — texture has alpha=1.0
-    // throughout, shader's discard branch never fires, identical rendering.
-    bool typeHasAlphaTextureName = false;
-    if (multiShape) {
-        const long ntx = multiShape->GetNumTextures();
-        char buf[256];
-        for (long s = 0; s < ntx; ++s) {
-            buf[0] = '\0';
-            multiShape->GetTextureName((DWORD)s, buf, (long)sizeof(buf));
-            if (isAlphaTestTextureName(buf)) {
-                typeHasAlphaTextureName = true;
-                break;
-            }
-        }
-    }
 
     // Group triangles with the same localTextureHandle into contiguous packets,
     // preserving authored listOfTypeTriangles order. Each packet emits 3
@@ -688,54 +625,11 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape, TG_TypeMultiSha
         // handle each frame via SetTextureHandle; resolving it at draw
         // time picks up the current value instead of a stale snapshot.
         pkt.textureSlot   = runTextureIdx;
-
-        // Path 4 — register-time material classification. Engine reads the
-        // asset-naming convention (a_-prefixed texture names) directly,
-        // mirroring the existing draw-time textureAlpha rescue but at
-        // register-time, so pkt.materialFlags is correct from the start.
-        // Defends against any load path (tree damage variants, GenericAppearance,
-        // future content) that ships alpha-test assets without calling
-        // SetAlphaTest. Per-pkt.textureSlot — narrow, false-positive-safe.
-        char texNameBuf[256];
-        texNameBuf[0] = '\0';
-        if (multiShape && pkt.textureSlot < (uint32_t)multiShape->GetNumTextures()) {
-            multiShape->GetTextureName(pkt.textureSlot, texNameBuf, (long)sizeof(texNameBuf));
-        }
-        const bool alphaByName = isAlphaTestTextureName(texNameBuf);
-        // Path 4 (rev 3.3): set flag if (a) gameplay-side SetAlphaTest fired,
-        // (b) THIS pkt's slot has a_ prefix, or (c) ANY slot in the type has
-        // a_ prefix (per-type widening — covers the LOD-cutoff "lit→stale→black"
-        // case where pkt.textureSlot points at a non-a_ slot while a sibling
-        // carries the alpha texture).
-        const bool flagWanted = typeShape->alphaTestOn || alphaByName || typeHasAlphaTextureName;
-
-        pkt.materialFlags = 0;
-        const char* flagSource = "none";
-        if      (typeShape->alphaTestOn && alphaByName)        flagSource = "alphaTestOn,textureName";
-        else if (typeShape->alphaTestOn && typeHasAlphaTextureName) flagSource = "alphaTestOn,typeWide";
-        else if (typeShape->alphaTestOn)                       flagSource = "alphaTestOn";
-        else if (alphaByName)                                  flagSource = "textureName";
-        else if (typeHasAlphaTextureName)                      flagSource = "typeWide";
-
-        if (flagWanted) {
-            pkt.materialFlags |= STATIC_PROP_FLAG_ALPHA_TEST;
-        }
-
+        // alphaTestOn captures shape-level alpha test (trees, via SetAlphaTest).
+        // textureAlpha per-slot is resolved at draw time (after bdactor.cpp init completes).
+        pkt.materialFlags = typeShape->alphaTestOn ? STATIC_PROP_FLAG_ALPHA_TEST : 0;
         pkt.owningTypeID  = newTypeID;
         s_packets.push_back(pkt);
-
-        // [REG_TYPE v2] event=pkt — per-packet flag-set evidence, fires inside
-        // the loop. Distinct from the per-type event=type print further below.
-        if (s_regTypeTrace) {
-            printf("[REG_TYPE v2] event=pkt typeID=%u pkt=%u slot=%u "
-                   "alphaTestOn=%d alphaByName=%d flagSource=%s materialFlags=0x%x texName=\"%s\"\n",
-                   newTypeID, (unsigned)packetCountForThisType,
-                   (unsigned)pkt.textureSlot,
-                   (int)typeShape->alphaTestOn, (int)alphaByName, flagSource,
-                   pkt.materialFlags, texNameBuf);
-            fflush(stdout);
-        }
-
         ++packetCountForThisType;
 
         runStart = runEnd;
@@ -751,54 +645,17 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape, TG_TypeMultiSha
 
     s_typeIndex[typeShape] = newTypeID;
     s_types.push_back(type);
-
-    // [REG_TYPE v2] Per-type summary, plus forward-compat audit warn. The
-    // typeHasAlphaTextureName field was computed once before the per-pkt loop
-    // (see Path 4 widening above) — reuse here. Canonical Component-4 audit
-    // signal for "load site missed SetAlphaTest" — independent of which slot
-    // the draw packets target.
-    if (s_regTypeTrace) {
-        printf("[REG_TYPE v2] event=type frame=%u typeShape=%p typeID=%u alphaTestOn=%d "
-               "numTris=%u packets=%u typeHasAlphaTextureName=%d\n",
-               g_mc2FrameCounter, (void*)typeShape, newTypeID,
-               (int)typeShape->alphaTestOn, numTris,
-               (unsigned)packetCountForThisType,
-               (int)typeHasAlphaTextureName);
-        fflush(stdout);
-
-        // Per-type forward-compat trap (printf-only, env-gated, no hard assert
-        // per memory/stock_install_must_remain_playable.md). Fires when any
-        // slot has a_ prefix AND alphaTestOn=0 — i.e., the multi-shape's load
-        // site never called SetAlphaTest(true). Component 4 audit walks these
-        // lines post-soak to identify load sites for explicit migration.
-        // NOTE: per-leaf over-counts on multi-leaf multi-shapes (TG_TypeMultiShape::SetAlphaTest
-        // propagates to all leaves; one missed load site emits N warns). Audit
-        // signal still correct — operator dedupes by owning multi-shape.
-        if (typeShape->alphaTestOn == 0 && typeHasAlphaTextureName) {
-            printf("[REG_TYPE v2] event=warn typeShape=%p typeID=%u "
-                   "reason=type_has_a_prefix_but_no_SetAlphaTest\n",
-                   (void*)typeShape, newTypeID);
-            fflush(stdout);
-        }
-    }
 }
 
 void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape) {
     if (!multiShape) return;
     const long n       = multiShape->GetNumShapes();
     const long numTxms = multiShape->GetNumTextures();
-    // [REG_TYPE v1] Bracket the per-type registrations with a multi-level
-    // marker so we can group typeIDs back to their owning TG_TypeMultiShape.
-    if (s_regTypeTrace) {
-        printf("[REG_MULTI v1] frame=%u multiShape=%p numShapes=%ld numTextures=%ld\n",
-               g_mc2FrameCounter, (void*)multiShape, n, numTxms);
-        fflush(stdout);
-    }
     for (long i = 0; i < n; ++i) {
         TG_TypeNodePtr node = multiShape->GetTypeNode(i);
         if (node && node->GetNodeType() == SHAPE_NODE) {
             TG_TypeShape* typeShape = static_cast<TG_TypeShape*>(node);
-            registerType(typeShape, multiShape);
+            registerType(typeShape);
             // GPU-offloaded actors bypass TransformMultiShape, so the leaf
             // TG_TypeShape::listOfTextures[j].gosTextureHandle is never set by
             // TMS (msl.cpp:1380). Prime it now from the multi-type's
@@ -1127,50 +984,6 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
     if (n <= 0 || !multi->listOfShapes) {
         s_currentSubmittingMulti = nullptr;
         return false;
-    }
-
-    // Refresh per-leaf gosTextureHandle snapshots before building draws.
-    //
-    // The GPU-static-prop dynamic path bypasses TG_MultiShape::TransformMultiShape
-    // (msl.cpp:1346), which is the original engine's per-frame leaf-handle
-    // refresh mechanism (see msl.cpp:1385: leaf->SetTextureHandle(j,
-    // myMultiType->listOfTextures[j].mcTextureNodeIndex)).  Without this,
-    // a leaf TG_TypeShape::listOfTextures[].gosTextureHandle stays frozen at
-    // whatever value was current at registerMultiShape time (AppearanceType::
-    // init), which goes stale after texture-cache eviction.
-    //
-    // The visible symptom: under camera motion, LOD swap invalidates the
-    // current recipe's pin (releasing eviction protection on the just-LOD'd-
-    // away multi) and submitMultiShape fires for the new LOD's multi BEFORE
-    // its registerRecipe pins it.  In that gap, the new multi's leaf snapshots
-    // can be stale and the submit-built draw renders black.  Camera-stationary
-    // frames don't trigger LOD swaps, so the registered-recipe path with the
-    // pin-and-refreshed snapshot serves correctly.
-    //
-    // Refresh here re-resolves leaf->gosTextureHandle through
-    // mcTextureManager->get_gosTextureHandle (tgl.cpp:1546-1555), which
-    // re-realizes a CACHED_OUT master.  This is the exact thing
-    // TransformMultiShape used to do per-frame on the CPU path.
-    //
-    // See docs/superpowers/specs/2026-05-06-static-prop-texture-pin-fix.md
-    {
-        const long numTex = multi->GetNumTextures();
-        TG_TypeMultiShape* typeMulti = multi->GetMultiType();
-        if (typeMulti && numTex > 0) {
-            const long numShapes = typeMulti->GetNumShapes();
-            for (long i = 0; i < numShapes; ++i) {
-                TG_TypeNodePtr node = typeMulti->GetTypeNode(i);
-                if (node && node->GetNodeType() == SHAPE_NODE) {
-                    TG_TypeShape* leaf = static_cast<TG_TypeShape*>(node);
-                    for (long j = 0; j < numTex; ++j) {
-                        const DWORD nodeIdx = multi->GetTextureHandle(j);
-                        if (nodeIdx != 0xffffffff) {
-                            leaf->SetTextureHandle(j, nodeIdx);
-                        }
-                    }
-                }
-            }
-        }
     }
 
     // Skip-child-not-fail-multishape policy. The CPU path (TG_Shape::Render
@@ -1802,46 +1615,16 @@ void GpuStaticPropBatcher::flush() {
             // in TransformMultiShape (msl.cpp:1321 via SetTextureHandle),
             // so capturing the handle at registration time gives stale
             // (usually zero) reads.
-            // Resolve gosHandle at draw time via mcTextureNodeIndex rather
-            // than reading the leaf's cached gosTextureHandle snapshot.  The
-            // snapshot can go stale across the registerMultiShape →
-            // registerRecipe gap, across LOD swaps, and any time the GPU path
-            // bypasses TG_MultiShape::TransformMultiShape's per-frame leaf
-            // refresh (msl.cpp:1385).  mcTextureNodeIndex is the stable slot
-            // identity; mcTextureManager->get_gosTextureHandle() resolves it
-            // to the current GOS handle, re-realizing if CACHED_OUT.  With
-            // the registry pin (commit d03ee3d) holding the master alive,
-            // this is a cheap path lookup, not a re-realization.
             uint32_t gosHandle = 0;
             const TG_TypeShape* src = type.source;
             if (src && src->listOfTextures && pkt.textureSlot < src->numTextures) {
-                const DWORD nodeIdx =
-                    src->listOfTextures[pkt.textureSlot].mcTextureNodeIndex;
-                if (nodeIdx != 0xffffffff && mcTextureManager) {
-                    gosHandle = mcTextureManager->get_gosTextureHandle(nodeIdx);
-                }
+                gosHandle = src->listOfTextures[pkt.textureSlot].gosTextureHandle;
             }
             const uint32_t glTexId = gos_GetGLTextureId(gosHandle);
             if (doTypeTrace && p < 2) {
                 TEX_HANDOFF("flush  typeID=%u pkt=%u slot=%u src=%p gosHandle=0x%08x glTexId=%u numTex=%d",
                             typeID, p, pkt.textureSlot, (void*)src, gosHandle, glTexId,
                             src ? src->numTextures : -1);
-            }
-            // [TEX_LIFECYCLE v1] event=draw_black — bug-condition draw-time emit.
-            // Rate-limited to one emit per (typeID,slot) per process to avoid
-            // steady-state 60Hz spam.  CACHED_OUT_HANDLE = 0xFFFFFACE.
-            if (s_texLifecycleTrace) {
-                const bool isBlackDraw = (glTexId == 0) || (gosHandle == 0xFFFFFACE) || (gosHandle == 0xffffffff);
-                if (isBlackDraw) {
-                    static thread_local std::unordered_set<uint64_t> s_seenBlack;
-                    const uint64_t key = (uint64_t(typeID) << 32) | uint64_t(pkt.textureSlot);
-                    if (s_seenBlack.insert(key).second) {
-                        printf("[TEX_LIFECYCLE v1] event=draw_black typeID=%u pkt=%u slot=%u src=%p gosHandle=0x%08x glTexId=%u numTex=%d\n",
-                               typeID, p, pkt.textureSlot, (void*)src, gosHandle, glTexId,
-                               src ? src->numTextures : -1);
-                        fflush(stdout);
-                    }
-                }
             }
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, glTexId);
@@ -1850,33 +1633,14 @@ void GpuStaticPropBatcher::flush() {
             // textureAlpha==true means the CPU path routes via MC2_DRAWALPHA; the GPU path
             // approximates this with shader discard (valid for binary-alpha fence/gate textures).
             uint32_t effectiveMaterialFlags = pkt.materialFlags;
-            const bool packetHadFlag = (pkt.materialFlags & STATIC_PROP_FLAG_ALPHA_TEST) != 0;
-            bool rescueWouldFire = false;
             if (src && src->listOfTextures && pkt.textureSlot < src->numTextures &&
                 src->listOfTextures[pkt.textureSlot].textureAlpha) {
                 effectiveMaterialFlags |= STATIC_PROP_FLAG_ALPHA_TEST;
-                rescueWouldFire = true;
             }
-
-            // [ALPHA_TEST] effectiveSource — distinguishes which mechanism set
-            // the alpha-test bit at draw time. Track E uses the distribution
-            // among the four values to decide whether the rescue is still
-            // load-bearing post-Path-4:
-            //   "packet+textureAlphaRescue" — both safety nets active (redundant)
-            //   "packet"                    — Path 4 set it; rescue would not have
-            //   "textureAlphaRescue"        — Path 4 missed it; rescue caught it (post-fix: rare)
-            //   "none"                      — neither fired (post-fix: 0 expected)
-            const char* effectiveSource;
-            if (packetHadFlag && rescueWouldFire)         effectiveSource = "packet+textureAlphaRescue";
-            else if (packetHadFlag)                       effectiveSource = "packet";
-            else if (rescueWouldFire)                     effectiveSource = "textureAlphaRescue";
-            else                                          effectiveSource = "none";
-
-            ALPHA_TRACE("draw type=%u pkt=%u slot=%u pktFlags=0x%x effective=0x%x texAlpha=%d effectiveSource=%s",
+            ALPHA_TRACE("draw type=%u pkt=%u slot=%u pktFlags=0x%x effective=0x%x texAlpha=%d",
                         typeID, p, pkt.textureSlot, pkt.materialFlags, effectiveMaterialFlags,
                         (src && src->listOfTextures && pkt.textureSlot < src->numTextures)
-                            ? (int)src->listOfTextures[pkt.textureSlot].textureAlpha : -1,
-                        effectiveSource);
+                            ? (int)src->listOfTextures[pkt.textureSlot].textureAlpha : -1);
             glUniform1i(glGetUniformLocation(s_staticPropProgram, "u_materialFlags"),
                         (int)effectiveMaterialFlags);
             glUniform1i(glGetUniformLocation(s_staticPropProgram, "u_packetID"),
