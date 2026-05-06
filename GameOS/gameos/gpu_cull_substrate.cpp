@@ -1,4 +1,5 @@
 #include "gpu_cull_substrate.h"
+#include "gpu_cull_parity.h"
 #include <GL/glew.h>
 #include <cstdio>
 #include <cstdlib>
@@ -231,6 +232,8 @@ void substrate_flushUpload() {
                s_perFrameCount, s_maxActors, s_frameSlot);
         fflush(stdout);
     }
+
+    gpu_cull::parity_flushSummary();
 
     SUBSTRATE_TRACE("event=flush_upload records=%u slot=%u", s_perFrameCount, s_frameSlot);
 }

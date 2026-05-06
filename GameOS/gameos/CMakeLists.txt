@@ -29,6 +29,7 @@ set(SOURCES ${SOURCES}
     asset_scale.cpp
     gpu_cull_record.cpp
     gpu_cull_substrate.cpp
+    gpu_cull_parity.cpp
 
     utils/stream.cpp
     utils/camera.cpp

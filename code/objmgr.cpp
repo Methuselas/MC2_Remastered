@@ -21,6 +21,7 @@
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
 #include "static_update_counters.h"      // g_staticUpdateRunCount/SkipCount/EmitSummary
 #include "../GameOS/gameos/gpu_cull_substrate.h"  // C0: GPU cull substrate SSBO upload
+#include "../GameOS/gameos/gpu_cull_parity.h"    // C0-4: AABB parity check
 
 #ifndef OBJMGR_H
 #include"objmgr.h"
@@ -115,6 +116,20 @@
 #endif
 
 // ---------------------------------------------------------------------------
+// C0-4: helper — category enum → short name string for parity logging
+// ---------------------------------------------------------------------------
+static const char* catNameForCategory(gpu_cull::GpuActorCategory cat) {
+    switch (cat) {
+        case gpu_cull::Cat_Mech:       return "Mech";
+        case gpu_cull::Cat_GroundVeh:  return "GV";
+        case gpu_cull::Cat_Gate:       return "Gate";
+        case gpu_cull::Cat_Turret:     return "Turret";
+        case gpu_cull::Cat_StaticProp: return "StaticProp";
+        default:                       return "Other";
+    }
+}
+
+// ---------------------------------------------------------------------------
 // C0-3: GPU cull record emitter
 // Called inside GameObjectManager::update() loops, after update() returns,
 // gated on getExists() so the emit is observer-only (no lifecycle effect).
@@ -150,6 +165,9 @@ static void emitGpuCullRecord(GameObjectPtr obj,
     rec.consumerFlags   = consumerFlags;
     rec._pad0           = 0;
 
+    gpu_cull::parity_checkRecord(rec.actorId, catNameForCategory(cat),
+                                 rec.worldCenter,
+                                 obj->position.x, obj->position.y, obj->position.z);
     gpu_cull::substrate_submitDynamicActor(rec);
 }
 
