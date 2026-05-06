@@ -31,6 +31,7 @@ static_assert(offsetof(GpuActorRecord, flags)              == 44, "flags offset"
 static_assert(offsetof(GpuActorRecord, actorId)            == 48, "actorId offset");
 static_assert(offsetof(GpuActorRecord, prevVisibilityBit)  == 52, "prevVisibilityBit offset");
 static_assert(offsetof(GpuActorRecord, consumerFlags)      == 56, "consumerFlags offset");
+static_assert(offsetof(GpuActorRecord, _pad0)              == 60, "_pad0 offset");
 
 // Header at SSBO offset 0 (one per ring slot).
 struct alignas(16) GpuActorRecordHeader {
