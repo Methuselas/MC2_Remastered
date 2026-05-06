@@ -5,6 +5,7 @@
 #include "gameos.hpp"
 #include "utils/shader_builder.h"
 #include "tgl.h"  // TG_Shape::s_worldToClip
+#include "../../mclib/txmmgr.h"  // mcTextureManager (draw-time gosHandle resolve)
 #include <GL/glew.h>
 #include <algorithm>
 #include <cstdio>
@@ -1801,10 +1802,24 @@ void GpuStaticPropBatcher::flush() {
             // in TransformMultiShape (msl.cpp:1321 via SetTextureHandle),
             // so capturing the handle at registration time gives stale
             // (usually zero) reads.
+            // Resolve gosHandle at draw time via mcTextureNodeIndex rather
+            // than reading the leaf's cached gosTextureHandle snapshot.  The
+            // snapshot can go stale across the registerMultiShape →
+            // registerRecipe gap, across LOD swaps, and any time the GPU path
+            // bypasses TG_MultiShape::TransformMultiShape's per-frame leaf
+            // refresh (msl.cpp:1385).  mcTextureNodeIndex is the stable slot
+            // identity; mcTextureManager->get_gosTextureHandle() resolves it
+            // to the current GOS handle, re-realizing if CACHED_OUT.  With
+            // the registry pin (commit d03ee3d) holding the master alive,
+            // this is a cheap path lookup, not a re-realization.
             uint32_t gosHandle = 0;
             const TG_TypeShape* src = type.source;
             if (src && src->listOfTextures && pkt.textureSlot < src->numTextures) {
-                gosHandle = src->listOfTextures[pkt.textureSlot].gosTextureHandle;
+                const DWORD nodeIdx =
+                    src->listOfTextures[pkt.textureSlot].mcTextureNodeIndex;
+                if (nodeIdx != 0xffffffff && mcTextureManager) {
+                    gosHandle = mcTextureManager->get_gosTextureHandle(nodeIdx);
+                }
             }
             const uint32_t glTexId = gos_GetGLTextureId(gosHandle);
             if (doTypeTrace && p < 2) {

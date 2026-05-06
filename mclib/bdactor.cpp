@@ -85,6 +85,15 @@ extern bool		useShadows;
 extern MidLevelRenderer::MLRClipper * theClipper;
 
 extern bool useNonWeaponEffects;
+
+// [LOD_SWAP v1] gate. Logs every TreeAppearance multi-shape destroy-and-recreate
+// (LOD transition or markTerrain force-to-base) so we can correlate with
+// [ALPHA_TEST] data and find Phenomenon B's "lit-then-stale" mechanism.
+// Off by default; enable with MC2_LOD_TRACE=1 (or the umbrella MC2_LIGHT_DEBUG=1).
+extern uint32_t g_mc2FrameCounter;
+static const bool s_lodTrace = (
+    (getenv("MC2_LOD_TRACE") != nullptr) ||
+    (getenv("MC2_LIGHT_DEBUG") != nullptr));
 extern bool useHighObjectDetail;
 extern bool MLRVertexLimitReached;
 
@@ -1679,14 +1688,20 @@ long BldgAppearance::render (long depthFixup)
 		}
 		if (!submittedToGpu)
 		{
+			// refreshTextures=true: under MC2_STATIC_UPDATE_SKIP=1, the actor's
+			// update() is replaced by touch(), so TransformMultiShape never
+			// refreshes the leaf TG_TypeShape::listOfTextures gosTextureHandle
+			// snapshot. CPU fallback must drive that refresh itself or it reads
+			// stale handles and renders black (camera-motion LOD-swap transient
+			// bug, 2026-05-06). msl.cpp:1840-1847 is the refresh loop.
 			if (appearType->spinMe)
-				bldgShape->Render(false,0.00001f);
+				bldgShape->Render(true,0.00001f);
 			else if (!depthFixup)
-				bldgShape->Render();
+				bldgShape->Render(true);
 			else if (depthFixup > 0)
-				bldgShape->Render(false,0.9999999f);
+				bldgShape->Render(true,0.9999999f);
 			else if (depthFixup < 0)
-				bldgShape->Render(false,0.00001f);
+				bldgShape->Render(true,0.00001f);
 		}
 
 		if (selected & DRAW_BARS)
@@ -4093,6 +4108,7 @@ bool TreeAppearance::recalcBounds (void)
 					// we are at this LOD level.
 					if (selectLOD != currentLOD)
 					{
+						const int _prevLOD = currentLOD;
 						currentLOD = selectLOD;
 
 						treeShape->ClearAnimation();
@@ -4100,6 +4116,12 @@ bool TreeAppearance::recalcBounds (void)
 						treeShape = NULL;
 
 						treeShape = appearType->treeShape[currentLOD]->CreateFrom();
+						if (s_lodTrace) {
+							fprintf(stderr,
+								"[LOD_SWAP v1] frame=%u actor=%p reason=lod_change_higher prevLOD=%d newLOD=%d newShape=%p\n",
+								g_mc2FrameCounter, (void*)this, _prevLOD, currentLOD, (void*)treeShape);
+							fflush(stderr);
+						}
 						//-------------------------------------------------
 						// Load the texture and store its handle.
 						for (long j=0;j<treeShape->GetNumTextures();j++)
@@ -4142,13 +4164,20 @@ bool TreeAppearance::recalcBounds (void)
 					if (currentLOD && baseLOD)
 					{
 					// we are at the Base LOD level.
+						const int _prevLOD = currentLOD;
 						currentLOD = 0;
-						
+
 						treeShape->ClearAnimation();
 						delete treeShape;
 						treeShape = NULL;
-						
+
 						treeShape = appearType->treeShape[currentLOD]->CreateFrom();
+						if (s_lodTrace) {
+							fprintf(stderr,
+								"[LOD_SWAP v1] frame=%u actor=%p reason=lod_change_base prevLOD=%d newLOD=%d newShape=%p\n",
+								g_mc2FrameCounter, (void*)this, _prevLOD, currentLOD, (void*)treeShape);
+							fflush(stderr);
+						}
 						
 						//-------------------------------------------------
 						// Load the texture and store its handle.
@@ -4308,7 +4337,7 @@ long TreeAppearance::render (long depthFixup)
 				treeShape, GpuStaticPropPopulation::Legacy);
 		}
 		if (!submittedToGpu)
-			treeShape->Render();
+			treeShape->Render(true);  // refreshTextures=true; see Bldg fallback above
 
 		if (selected & DRAW_BARS)
 		{
@@ -4616,13 +4645,20 @@ void TreeAppearance::markTerrain (_ScenarioMapCellInfo* pInfo, int type, int cou
 	// Tree will reset its LOD on next draw!!
 	if (currentLOD)
 	{
+		const int _prevLOD = currentLOD;
 		currentLOD = 0;
-	
+
 		treeShape->ClearAnimation();
 		delete treeShape;
 		treeShape = NULL;
-	
+
 		treeShape = appearType->treeShape[currentLOD]->CreateFrom();
+		if (s_lodTrace) {
+			fprintf(stderr,
+				"[LOD_SWAP v1] frame=%u actor=%p reason=mark_terrain prevLOD=%d newLOD=%d newShape=%p\n",
+				g_mc2FrameCounter, (void*)this, _prevLOD, currentLOD, (void*)treeShape);
+			fflush(stderr);
+		}
 	}
 
 	//-------------------------------------------------------------
@@ -4670,13 +4706,20 @@ void TreeAppearance::markLOS (bool clearIt)
 	// Building will reset its LOD on next draw!!
 	if (currentLOD)
 	{
+		const int _prevLOD = currentLOD;
 		currentLOD = 0;
-	
+
 		treeShape->ClearAnimation();
 		delete treeShape;
 		treeShape = NULL;
-	
+
 		treeShape = appearType->treeShape[currentLOD]->CreateFrom();
+		if (s_lodTrace) {
+			fprintf(stderr,
+				"[LOD_SWAP v1] frame=%u actor=%p reason=mark_los prevLOD=%d newLOD=%d newShape=%p\n",
+				g_mc2FrameCounter, (void*)this, _prevLOD, currentLOD, (void*)treeShape);
+			fflush(stderr);
+		}
 	}
 
 	//-------------------------------------------------------------
