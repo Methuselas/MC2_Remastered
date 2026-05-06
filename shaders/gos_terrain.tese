@@ -127,10 +127,14 @@ void main()
     vec3 screen;
     screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
     screen.y = clip.y * rhw * terrainViewport.y + terrainViewport.w;
-    // Match legacy CPU emit's TERRAIN_DEPTH_FUDGE=0.001 (mclib/quad.cpp:2004 etc.)
+    // Match legacy CPU emit's TERRAIN_DEPTH_FUDGE=0.002 (mclib/quad.cpp:1707)
     // so decals/GpuStaticProps/water-on-terrain at coincident depth win the
-    // GL_LEQUAL tie. Precedent: gos_terrain_water_fast.vert:332.
-    screen.z = clip.z * rhw + 0.001;
+    // GL_LEQUAL tie. Precedent: gos_terrain_water_fast.vert:350.
+    // Doubled from 0.001→0.002 after glClipControl(ZERO_TO_ONE) adoption
+    // (commit 4c8f9a4) — the old fudge was tuned under [-1,1]→[0,1] remap
+    // where the visible NDC range was halved; under native [0,1] z-fighting
+    // headroom near shoreline shrank and the staircase regressed.
+    screen.z = clip.z * rhw + 0.002;
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
     gl_Position = vec4(ndc.xyz * absW, absW);

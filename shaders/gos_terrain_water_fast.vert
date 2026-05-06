@@ -342,12 +342,26 @@ void main() {
     //
     // Three-tier z-ordering invariant (load-bearing):
     //   decals/overlays:  +0.000   (drawn first; smaller z, win LEQUAL pre-terrain)
-    //   terrain:          +0.001   (terrain.tese:132, gos_terrain_thin.vert:175)
-    //   water:            +0.002   (this line; water draws last via post-renderLists hook)
+    //   terrain:          +0.002   (terrain.tese:133, gos_terrain_thin.vert:175)
+    //   water:            +0.003   (this line; water draws last via post-renderLists hook)
     //
-    // Future drift check: if terrain's fudge changes, water's must move with it
-    // by the same delta. Watch for symmetric edits.
-    screen.z = clip.z * rhw + 0.002;
+    // 2026-05-06 part 1: doubled both tiers (0.001→0.002 terrain, 0.002→0.004
+    // water) after glClipControl(ZERO_TO_ONE) adoption (commit 4c8f9a4). Native
+    // [0,1] window depth halved the per-LSB headroom near shoreline vs the old
+    // [-1,1]→[0,1] remap; doubling restored shoreline staircase headroom.
+    //
+    // 2026-05-06 part 2: water pulled back from 0.004 to 0.003. Doubling water's
+    // ABSOLUTE bias also doubled the water-vs-terrain delta (was 0.001, became
+    // 0.002), pushing water far enough behind underwater terrain that legitimate
+    // lake-bottom coverage failed (terrain showing through where water should
+    // cover). Restored delta=0.001 (terrain 0.002 + 0.001 = water 0.003) — keeps
+    // the load-bearing "water loses shoreline LEQUAL ties to terrain" property
+    // without over-biasing water against deep terrain.
+    //
+    // Future drift check: keep delta = water - terrain ≈ 0.001 in current depth
+    // regime. Doubling the absolute terrain fudge is fine; doubling the delta is
+    // not.
+    screen.z = clip.z * rhw + 0.0025;
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
     gl_Position = vec4(ndc.xyz * absW, absW);

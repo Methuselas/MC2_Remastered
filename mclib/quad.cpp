@@ -1704,21 +1704,22 @@ void TerrainQuad::setupTextures (void)
 	}
 }
 
-#define TERRAIN_DEPTH_FUDGE		0.001f
+// 2026-05-06: doubled 0.001f → 0.002f after glClipControl(ZERO_TO_ONE)
+// adoption (commit 4c8f9a4). Native [0,1] window depth halved the
+// per-LSB headroom near shoreline vs the old [-1,1]→[0,1] remap;
+// doubling restores the bit-equivalent bias. Mirror in shaders:
+// gos_terrain.tese:133, gos_terrain_thin.vert:175,
+// gos_terrain_water_fast.vert:350.
+#define TERRAIN_DEPTH_FUDGE		0.002f
 // Water MUST be biased farther than terrain so it loses LEQUAL ties at the
 // coast (smooth shore — no tile-aligned staircase where terrain crests
-// exactly to waterElevation). Pre-2026-05-01, terrain TES/thin VS emitted
-// screen.z without any fudge, so water at +0.001 sat strictly above terrain
-// at 0.000. Commit ee0a7bc (2026-05-01) added +0.001 to terrain.tese:132 and
-// gos_terrain_thin.vert:175 to fix overlay z-ties (issue #12 power generator
-// glow). That collapsed terrain and water to the SAME bias on the modern
-// terrain path AND on the legacy CPU emit (this file: every solid emit site
-// uses pz + TERRAIN_DEPTH_FUDGE). Result: tile-aligned staircase regression
-// in v0.3, visible at distance (low TES level → uniform per-tile water z →
-// whole-tile snap to water-or-terrain). Fix: bump water to 2× the terrain
-// fudge. Defining as a multiple keeps the two bound — if terrain's fudge
-// ever moves, water's tracks it. Mirror: gos_terrain_water_fast.vert:350.
-#define WATER_DEPTH_FUDGE		(TERRAIN_DEPTH_FUDGE * 2.0f)
+// exactly to waterElevation). The bias is a SMALL DELTA on top of terrain's
+// fudge, not a multiple — doubling water's absolute bias also doubles the
+// delta, which is enough to push water behind legitimate underwater terrain
+// and break lake-bottom coverage (observed 2026-05-06 when water was set to
+// TERRAIN_DEPTH_FUDGE * 2.0f under glClipControl). Mirror: water VS at
+// gos_terrain_water_fast.vert:357.
+#define WATER_DEPTH_FUDGE		(TERRAIN_DEPTH_FUDGE + 0.0005f)
 #define OVERLAY_ELEV_OFFSET		0.15f
 
 // GPU projection: pack MC2 world coords into overlay vertex instead of screen-space
