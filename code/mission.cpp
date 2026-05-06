@@ -123,6 +123,7 @@
 #include "../resource.h"
 
 #include<gameos.hpp>
+#include "../GameOS/gameos/gpu_cull_substrate.h"  // C0-3: GPU cull substrate init/shutdown
 
 //----------------------------------------------------------------------------------
 // Macro Definitions
@@ -2752,6 +2753,13 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	loadProgress = 58.0f;
 	ObjectManager->setNumObjects(numMechs, numVehicles, 0, -1, -1, -1, 100, 50, 0, 130, -1);
 
+	// C0-3: init GPU cull substrate SSBO sized to worst-case per-frame actor count.
+	// getMaxObjects() returns total actor slots; +25% headroom per plan spec.
+	{
+		const uint32_t maxActors = static_cast<uint32_t>(ObjectManager->getMaxObjects());
+		gpu_cull::substrate_init(maxActors + maxActors / 4u);
+	}
+
 	//-------------------------
 	// Load the mech objects...
 	long curMech = 0;
@@ -3167,6 +3175,10 @@ void Mission::initTGLForMission()
 void Mission::destroy (bool initLogistics)
 {
 	gos_SetHudScaleActive(false);  // back to 100% for menus/logistics
+
+	// C0-3: release GPU cull substrate SSBO at mission teardown.
+	// substrate_init() handles re-init on next mission load (calls shutdown internally).
+	gpu_cull::substrate_shutdown();
 
 	// Release GPU static-prop batcher resources (VBO/IBO/VAO) at mission
 	// shutdown. Safe to call when nothing was registered.

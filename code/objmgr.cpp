@@ -20,6 +20,7 @@
 
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
 #include "static_update_counters.h"      // g_staticUpdateRunCount/SkipCount/EmitSummary
+#include "../GameOS/gameos/gpu_cull_substrate.h"  // C0: GPU cull substrate SSBO upload
 
 #ifndef OBJMGR_H
 #include"objmgr.h"
@@ -112,6 +113,45 @@
 #ifndef GOS_PROFILER_H
 #include"gos_profiler.h"
 #endif
+
+// ---------------------------------------------------------------------------
+// C0-3: GPU cull record emitter
+// Called inside GameObjectManager::update() loops, after update() returns,
+// gated on getExists() so the emit is observer-only (no lifecycle effect).
+// Category and consumerFlags are supplied by each call site — no RTTI needed.
+// ---------------------------------------------------------------------------
+static void emitGpuCullRecord(GameObjectPtr obj,
+                               gpu_cull::GpuActorCategory cat,
+                               uint32_t consumerFlags,
+                               float boundingRadius)
+{
+    if (!gpu_cull::substrate_isEnabled()) return;
+    AppearancePtr app = obj->getAppearance();
+    if (!app) return;
+
+    gpu_cull::GpuActorRecord rec{};
+    // MC2 world coords: x=east, y=north, z=elev.
+    // Convert to cameraPos (Stuff/MLR) space: cx=-pos.x, cy=pos.z, cz=pos.y.
+    rec.worldCenter[0] = -obj->position.x;
+    rec.worldCenter[1] =  obj->position.z;
+    rec.worldCenter[2] =  obj->position.y;
+    rec.boundingRadius = boundingRadius;
+    // AABB: center ± radius (C0 placeholder; C0-4 AABB parity validates).
+    rec.worldAabbMin[0] = rec.worldCenter[0] - boundingRadius;
+    rec.worldAabbMin[1] = rec.worldCenter[1] - boundingRadius;
+    rec.worldAabbMin[2] = rec.worldCenter[2] - boundingRadius;
+    rec.worldAabbMax[0] = rec.worldCenter[0] + boundingRadius;
+    rec.worldAabbMax[1] = rec.worldCenter[1] + boundingRadius;
+    rec.worldAabbMax[2] = rec.worldCenter[2] + boundingRadius;
+    rec.category        = static_cast<uint32_t>(cat) & static_cast<uint32_t>(gpu_cull::CategoryMask);
+    rec.flags           = gpu_cull::Flag_None;
+    rec.actorId         = static_cast<uint32_t>(obj->getHandle());
+    rec.prevVisibilityBit = app->inView ? 1u : 0u;
+    rec.consumerFlags   = consumerFlags;
+    rec._pad0           = 0;
+
+    gpu_cull::substrate_submitDynamicActor(rec);
+}
 
 #define BRIDGE_OBJTYPE				448
 #define MINE1						60
@@ -1702,8 +1742,12 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		}
 	}
 
+	// C0-3: begin GPU cull substrate frame (advances ring slot, waits fence if needed).
+	// Called unconditionally — substrate_frameBegin internally checks isEnabled().
+	gpu_cull::substrate_frameBegin();
+
 	updateCaptureList();
-	
+
 	if (terrain && renderObjects)
 	{
 		ZoneScopedN("GameLogic.Units.TerrainObjects");
@@ -1730,6 +1774,11 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 				{
 					specialBuildingsUpdated++;
 				}
+				// C0-3: emit after update() so inView is fresh; gated on getExists()
+				if (specialBuildings[spBuilding] && specialBuildings[spBuilding]->getExists())
+					emitGpuCullRecord(specialBuildings[spBuilding], gpu_cull::Cat_Other,
+					                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate,
+					                  20.0f);
 			}
 		}
 
@@ -1752,6 +1801,11 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 				{
 					gatesUpdated++;
 				}
+				// C0-3: emit after update() so inView is fresh; gated on getExists()
+				if (gates[nGates] && gates[nGates]->getExists())
+					emitGpuCullRecord(gates[nGates], gpu_cull::Cat_Gate,
+					                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate,
+					                  20.0f);
 			}
 		}
 
@@ -1780,6 +1834,11 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 						{
 							terrainObjectsUpdated++;
 						}
+						// C0-3: emit after update() so inView is fresh; gated on getExists()
+						if (objList[objIndex] && objList[objIndex]->getExists())
+							emitGpuCullRecord(objList[objIndex], gpu_cull::Cat_Other,
+							                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate,
+							                  20.0f);
 					}
 				}
 			}
@@ -1817,6 +1876,12 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 						MC2_DESTROY(mover, "update_false");
 					if (mover->getFlag(OBJECT_FLAG_REMOVED))
 						removeList[numRemoved++] = mover;
+					// C0-3: emit after update() so inView is fresh; gated on getExists()
+					if (mover->getExists())
+						emitGpuCullRecord(mover, gpu_cull::Cat_Mech,
+						                  gpu_cull::Consumer_AIGate | gpu_cull::Consumer_WeaponSpawnNode |
+						                  gpu_cull::Consumer_LifecycleGate | gpu_cull::Consumer_RenderGate,
+						                  50.0f);
 				}
 			}
 		}
@@ -1835,6 +1900,12 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 						MC2_DESTROY(mover, "update_false");
 					if (mover->getFlag(OBJECT_FLAG_REMOVED))
 						removeList[numRemoved++] = mover;
+					// C0-3: emit after update() so inView is fresh; gated on getExists()
+					if (mover->getExists())
+						emitGpuCullRecord(mover, gpu_cull::Cat_GroundVeh,
+						                  gpu_cull::Consumer_AIGate | gpu_cull::Consumer_WeaponSpawnNode |
+						                  gpu_cull::Consumer_LifecycleGate | gpu_cull::Consumer_RenderGate,
+						                  50.0f);
 				}
 			}
 		}
@@ -1858,6 +1929,11 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 					turrets[i]->lastUpdateRet = (int32_t)updateRet_instr;
 					if (!updateRet_instr)
 						MC2_DESTROY(turrets[i], "update_false");
+					// C0-3: emit after update() so inView is fresh; gated on getExists()
+					if (turrets[i] && turrets[i]->getExists())
+						emitGpuCullRecord(turrets[i], gpu_cull::Cat_Turret,
+						                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate,
+						                  20.0f);
 				}
 			}
 		}
@@ -1906,6 +1982,10 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 			}
 		}
 	}
+
+	// C0-3: finalize GPU cull substrate SSBO for this frame.
+	// Called unconditionally — substrate_flushUpload internally checks isEnabled().
+	gpu_cull::substrate_flushUpload();
 }
 
 //---------------------------------------------------------------------------
