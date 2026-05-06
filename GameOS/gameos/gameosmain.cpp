@@ -802,6 +802,14 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    if (GLEW_ARB_parallel_shader_compile) {
+        glMaxShaderCompilerThreadsARB(0xFFFFFFFF);
+        printf("[INSTR v1] parallel_shader_compile=enabled\n");
+    } else {
+        printf("[INSTR v1] parallel_shader_compile=unsupported\n");
+    }
+    fflush(stdout);
+
 	// Install GL debug callback only when MC2_GL_DEBUG is set. In shipping
 	// builds this keeps stdout free of harmless driver warnings (esp. the
 	// AMD ~glsl_program double-detach chatter) and saves the sync-debug
