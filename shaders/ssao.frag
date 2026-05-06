@@ -40,7 +40,8 @@ const vec3 ssaoKernel[16] = vec3[](
 vec3 reconstructWorldPos(vec2 uv, float depth)
 {
     vec2 ndc_xy = uv * 2.0 - 1.0;
-    float ndc_z = depth * 2.0 - 1.0;
+    // glClipControl(ZERO_TO_ONE) — see shadow_screen.frag:reconstructWorldPos for rationale.
+    float ndc_z = depth;
     vec4 wp = inverseViewProj * vec4(ndc_xy, ndc_z, 1.0);
     return wp.xyz / wp.w;
 }

@@ -117,7 +117,9 @@ float sampleShadowMap(sampler2DShadow smap, vec3 worldPos, mat4 lsMatrix, int nu
 vec3 reconstructWorldPos(vec2 uv, float depth)
 {
     vec2 ndc_xy = uv * 2.0 - 1.0;
-    float ndc_z = depth * 2.0 - 1.0;
+    // glClipControl(ZERO_TO_ONE) makes window depth and NDC z share [0, 1];
+    // pass through. inverseViewProj inverts the D3D-style matrix natively now.
+    float ndc_z = depth;
     vec4 worldPos4 = inverseViewProj * vec4(ndc_xy, ndc_z, 1.0);
     return worldPos4.xyz / worldPos4.w;
 }

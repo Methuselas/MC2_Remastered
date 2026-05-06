@@ -91,7 +91,8 @@ void main()
                              + bary.y * tcs_WorldPos[1]
                              + bary.z * tcs_WorldPos[2];
     vec4 uclip = terrainMVP * vec4(undisplacedWorldPos, 1.0);
-    UndisplacedDepth = (uclip.z / uclip.w) * 0.5 + 0.5;
+    // glClipControl(ZERO_TO_ONE) makes NDC z native [0, 1]; no remap needed.
+    UndisplacedDepth = uclip.z / uclip.w;
 
     // --- Phong tessellation smoothing ---
     float alpha = tessDisplace.x;  // phongAlpha

@@ -176,5 +176,7 @@ void main() {
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
     gl_Position      = vec4(ndc.xyz * absW, absW);
-    UndisplacedDepth = screen.z * 0.5 + 0.5;
+    // glClipControl(ZERO_TO_ONE) makes screen.z (D3D-style [0, 1]) native;
+    // matches gl_FragCoord.z range without remap.
+    UndisplacedDepth = screen.z;
 }
