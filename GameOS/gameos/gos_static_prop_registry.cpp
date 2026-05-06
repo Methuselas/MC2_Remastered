@@ -64,6 +64,9 @@ struct RecipeRange {
     // Texture pin sibling (texture-pin-fix spec):
     std::vector<DWORD> pinnedTextureNodes;  // mcTextureNodeIndex values pinned for this range
     bool               pinsReleased;        // double-release guard for invalidate→destroy ordering
+    // [STATIC_FIRST_FRAME v1] proof-of-fix fields (Track B Task 4):
+    uint32_t           registeredOnFrame;   // g_mc2FrameCounter at registerRecipe()
+    bool               firstFlushSeen;      // cleared at registerRecipe; set on first successful flush
 };
 
 static std::vector<GpuStaticPropInstance> s_recipes;
@@ -78,8 +81,12 @@ static std::vector<uint32_t>              s_liveRangeIndices;
 // emitted in destroy(). leakedPins = totalPinCalls - totalUnpinCalls;
 // non-zero is a refcount imbalance bug. Reset to 0 in destroy() after
 // summary emit so per-mission accounting is clean across load/unload.
-static uint64_t s_totalPinCalls   = 0;
-static uint64_t s_totalUnpinCalls = 0;
+static uint64_t s_totalPinCalls      = 0;
+static uint64_t s_totalUnpinCalls    = 0;
+// [STATIC_FIRST_FRAME v1]: counts entries whose very first flush() attempt was
+// rejected by the staleness gate. Must read zero after Task 3's cachedFrame_
+// pre-population; non-zero means the pre-population didn't reach flush in time.
+static uint64_t s_firstFrameSkipCount = 0;
 
 // Release every pin held by a single RecipeRange. Idempotent via
 // rng.pinsReleased — invalidate() may run before destroy() does its
@@ -107,6 +114,8 @@ namespace GpuStaticPropRegistry {
 
 bool isEnabled() { return s_enabled; }
 
+uint64_t getStaticFirstFrameSkipCount() { return s_firstFrameSkipCount; }
+
 void init() {
     // Env flags already parsed at file scope. init() reserves memory.
     if (s_enabled) {
@@ -119,11 +128,14 @@ void init() {
 }
 
 void destroy() {
-    // TODO (Track B Step 4.3): emit [STATIC_FIRST_FRAME v1] event=summary
-    //   skip_count=... (and reset s_firstFrameSkipCount) here, BEFORE the
-    //   pin-release loop below.  See
-    //   docs/superpowers/specs/2026-05-06-static-prop-texture-pin-fix.md
-    //   "Combined destroy() body" for the authoritative merged version.
+    // [STATIC_FIRST_FRAME v1] summary — emit BEFORE pin-release loop.
+    // Non-zero skip_count means Task 3's cachedFrame_ pre-population didn't
+    // reach flush in time for at least one registration; escalate if nonzero.
+    fprintf(stderr,
+        "[STATIC_FIRST_FRAME v1] event=summary skip_count=%llu\n",
+        (unsigned long long)s_firstFrameSkipCount);
+    fflush(stderr);
+    s_firstFrameSkipCount = 0;
 
     // Texture-pin spec: release any unreleased pins (mission-teardown
     // safety net — covers ranges that were never explicitly invalidated).
@@ -161,7 +173,9 @@ int32_t registerRecipe(TG_MultiShape* multi,
     rng.first = static_cast<uint32_t>(s_recipes.size());
     rng.count = static_cast<uint32_t>(batch.size());
     rng.multi = multi;
-    rng.pinsReleased = false;
+    rng.pinsReleased      = false;
+    rng.registeredOnFrame = g_mc2FrameCounter;
+    rng.firstFlushSeen    = false;
     s_recipes.insert(s_recipes.end(), batch.begin(), batch.end());
     const int32_t regIdx = static_cast<int32_t>(s_recipeRanges.size());
     s_recipeRanges.push_back(rng);
@@ -229,7 +243,7 @@ void flush() {
     const uint32_t currentFrame = g_mc2FrameCounter;
     GpuStaticPropBatcher& batcher = GpuStaticPropBatcher::instance();
     for (uint32_t regIdx : s_liveRangeIndices) {
-        const RecipeRange& rng = s_recipeRanges[regIdx];
+        RecipeRange& rng = s_recipeRanges[regIdx];
         if (rng.count == 0 || !rng.multi) continue; // tombstone guard
 
         // 2026-05-05: cull-aware static replay. Skip recipes whose multi-shape
@@ -240,7 +254,24 @@ void flush() {
         // Suppressing the draw means the offscreen actor doesn't render this
         // frame; the next frame after it returns to view will refresh the
         // cache and the static path resumes correctly.
-        if (rng.multi->getCachedFrame() != currentFrame) continue;
+        const bool isFirstFlush = !rng.firstFlushSeen;
+        if (rng.multi->getCachedFrame() != currentFrame) {
+            if (isFirstFlush) {
+                ++s_firstFrameSkipCount;
+                static int s_warnPrinted = 0;
+                if (s_warnPrinted < 16) {
+                    ++s_warnPrinted;
+                    fprintf(stderr,
+                        "[STATIC_FIRST_FRAME v1] event=skip_first_flush regIdx=%u "
+                        "registeredOnFrame=%u currentFrame=%u cachedFrame=%u\n",
+                        regIdx, rng.registeredOnFrame, currentFrame,
+                        rng.multi->getCachedFrame());
+                    fflush(stderr);
+                }
+            }
+            continue;
+        }
+        rng.firstFlushSeen = true;
 
         // Patch lightDataIndex from CacheGpuLightData() result gathered in
         // TreeAppearance::render() immediately before markVisible(). The UBO

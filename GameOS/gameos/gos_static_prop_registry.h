@@ -46,4 +46,10 @@ bool isReady(int32_t regIdx);
 // then draws everything in one combined GPU pass.
 void flush();
 
+// [STATIC_FIRST_FRAME v1] proof-of-fix accessor (Track B Task 4).
+// Returns the count of registrations whose VERY FIRST flush() attempt was
+// rejected by the staleness gate. Must read zero after Task 3's cachedFrame_
+// pre-population; non-zero means the pre-population didn't protect the entry.
+uint64_t getStaticFirstFrameSkipCount();
+
 } // namespace GpuStaticPropRegistry
