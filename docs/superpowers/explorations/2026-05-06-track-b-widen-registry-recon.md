@@ -548,3 +548,79 @@ next frame.
 
 - `tests/smoke/artifacts/2026-05-05T15-24-25/mc2_10.log`, `mc2_17.log` — TGL peak measurements
 - Commit `06ac847` (2026-05-02) — late-register inventory across 24/24 missions
+
+---
+
+## Spike outcome (Task 1 — 2026-05-06)
+
+### Chosen approach
+**Hybrid A+B: extract `buildRecipeFromShape` (A) AND drive `TransformMultiShape_PositionsOnly` synchronously at mission-load (B).** Each candidate alone is insufficient; the combination is clean.
+
+### HC-2: firstColorOffset resolution
+**(b) Patch-per-frame at flush — and the patch is already implemented.**
+
+`GpuStaticPropBatcher::submitCachedInstance` already overwrites `firstColorOffset` on every call:
+
+```cpp
+// gos_static_prop_batcher.cpp:1832-1833
+GpuStaticPropInstance updated = inst;
+updated.firstColorOffset = static_cast<uint32_t>(bucket.colors.size());
+```
+
+This is the same per-frame patch pattern the registry uses for `lightDataIndex` (`gos_static_prop_registry.cpp:276`). The recipe's stored `firstColorOffset` is never read by GPU; it's a placeholder. Task 2's `buildRecipeFromShape` can write `firstColorOffset = 0` and it will be overwritten before any draw. No architectural change required (rules out (c)); bake-at-register (a) would be safe but redundant since flush() already patches.
+
+Additionally, `submitCachedInstance:1852` zero-fills the bucket's color block (`bucket.colors.insert(bucket.colors.end(), type.vertexCount, 0u)`) — the static-replay path never reads per-instance vertex colors. This is the keystone fact making A+B viable: the recipe does NOT need to capture `shape->listOfVertices[].argb`, so the listOfVertices==NULL guard at `gos_static_prop_batcher.cpp:1166` is irrelevant for the registration phase.
+
+### Candidate A assessment
+**Viable as a code factoring, NOT viable standalone.**
+
+Recipe-construction in `submit()` (`gos_static_prop_batcher.cpp:797-868`) reads only:
+- `shape->myType` (typeID lookup, line 807-820) — set at TG_Shape::init, valid at mission-load
+- `shapeToWorld` (input arg copied to `inst.modelMatrix`, line 834) — **the load-bearing ambiguity**
+- `child->aRGBHighlight`, `child->fogRGB`, `child->lightsOut`, `child->isWindow`, `child->isSpotlight` — TG_Shape instance fields, valid at init
+- `lightDataIndex` (input arg) — placeholder, patched per-frame at flush
+
+Per-frame state writes (`bucket.instances.push_back`, `s_lastBuiltBatch.push_back`, color-block append at 946-956) are confined to a distinct second phase after `inst{}` is fully built. The block at lines 831-849 IS cleanly separable as a pure function `buildRecipeFromShape(shape, shapeToWorld, highlight, fog, flags) -> GpuStaticPropInstance`.
+
+**The fatal problem with A alone:** `multi->listOfShapes[i].shapeToWorld` is initialized to `Stuff::LinearMatrix4D::Identity` at multishape construction (`msl.cpp:155`) and only gets the actor's world transform when `TransformMultiShape` runs the hierarchy walk (`msl.cpp:1474, 1486, 1538, 1562`). At mission-load registration time — before any `update()` has run — every leaf's `rec.shapeToWorld` is still Identity. A recipe baked from Identity would render every static prop at world origin. `setTerrainPosition` at `objmgr.cpp:1306` populates the actor's `position`/`rotation` fields, not the multishape's per-leaf `shapeToWorld`.
+
+### Candidate B assessment
+**Viable. Cost is acceptable.**
+
+`TG_MultiShape::TransformMultiShape_PositionsOnly` (`msl.cpp:1759-1765`) wraps `TransformMultiShape` with an internal `s_multiShapePositionsOnly` flag (`msl.cpp:1358, 1724`) that swaps `MultiTransformShape` for `MultiTransformShape_PositionsOnly` per leaf. This:
+- Runs the full hierarchy animation walk
+- Computes `shapeToWorld` for every leaf (the data we need)
+- Does NOT touch `listOfVertices` / `listOfColors` / per-vertex lighting
+
+Globals it requires:
+- `TG_Shape::s_cameraOrigin` (`msl.cpp:1386`) — set by camera init before mission start
+- `frameNum`, `turn` — set by mission init before `loadTerrainObjects`
+- `eye`/worldLights are NOT touched by positions-only path
+
+`isStaticEligible` disqualifiers (`bdactor.cpp:2638-2652`) at mission-load:
+- `appearType->spinMe`, `bldgTypeHasAnimations(appearType)` — type-level, correctly stable
+- `drawFlash`, `destructFX`, `activity`, `activity1`, `bdAnimationState != -1` — instance-level, all default to false/-1 at construction; verified per recon Section 3 ("for mission-load actors, none of these are active yet")
+
+`primeAppearanceForMissionLoad` (`code/terrobj.cpp:554-616`) already runs at `mission.cpp:2818` between `loadTerrainObjects` (2817) and `finalizeGeometry` (3052), already calls `setObjectParameters(position, rotation, ...)` (line 606) and `recalcBounds()` (line 613). Track B's mission-load registration walk slots in directly after primeAppearance with all required state populated.
+
+**Cost estimate:** ~3000 actors × (~3-5 leaves × matrix-multiply hierarchy walk) ≈ 15K matrix ops. Well under 1ms on the ~3GHz target CPU. One-shot at mission load — invisible against the seconds-long mission load already in flight.
+
+### Decision rationale
+Candidate A alone fails because Identity matrices break the modelMatrix bake. Candidate B alone (run synthetic `update()` then call existing `submitMultiShape`) fails because `submitMultiShape`'s second pass (`gos_static_prop_batcher.cpp:1166`) skips children with `listOfVertices == NULL` — and `TransformMultiShape_PositionsOnly` deliberately does NOT populate listOfVertices (that's its whole point). Calling FULL `TransformMultiShape` to populate vertices works but pulls in worldLights / lighting setup, doubling cost and dragging in cross-actor `worldLights[0]->aRGB` ordering hazards (the bug `Stage 2.D.2 fix` exists to address — `msl.cpp:1768-1805`).
+
+The hybrid:
+1. Mission-load walk calls `TransformMultiShape_PositionsOnly` per actor (drives shapeToWorld; no vertex/color work).
+2. Walk calls a NEW factor `buildRecipeFromShape(shape, rec.shapeToWorld, highlight, fog, flags)` per leaf, accumulating into a local batch.
+3. Walk calls `GpuStaticPropRegistry::registerRecipe(multi, batch)`.
+
+This keeps the recipe-construction code path identical to what `submit()` does today (preserving any subtle invariants), avoids the listOfVertices NULL trap (because the new factor doesn't touch the bucket color stream), and pays a single `TransformMultiShape_PositionsOnly` cost per actor at load.
+
+The first-render registration path in `BldgAppearance::render` (`bdactor.cpp:1653-1663`) and `TreeAppearance::render` (`bdactor.cpp:4285-4293`) STAYS — it covers gameplay-spawned actors (artillery, vTol) that miss the mission-load walk per recon Section 4.
+
+### Impact on downstream tasks
+
+- **Task 2 (extract `buildRecipeFromShape`):** factor must be a pure function — no bucket writes, no parity snapshot, no `s_lastBuiltBatch` push, no color-block append. Inputs: `TG_Shape*`, `const Stuff::Matrix4D& shapeToWorld`, highlight/fog/flags. Output: `GpuStaticPropInstance` with `firstColorOffset = 0` and `lightDataIndex = 0` (both patched per-frame). It must continue to share the typeID lookup with `submit()` (refactor: extract a private `lookupTypeID` helper, call from both `submit()` and `buildRecipeFromShape`). HC-2 already resolves the `firstColorOffset` placeholder concern.
+- **Task 3 (`cachedFrame_` structural fix):** unchanged. The existing flush() gate at `gos_static_prop_registry.cpp:239` (`rng.multi->getCachedFrame() != currentFrame`) already enforces the cull-aware skip. Mission-load registered actors will silently no-op draw on frame 0 (cachedFrame_==UINT32_MAX sentinel until first update) — Risk Register row "Mission-load registration runs before TransformMultiShape; lightData_ not populated yet" already flags this; visible as a 1-frame pop at most.
+- **Task 5 (mission-load registration walk):** site is `code/objmgr.cpp` after `primeTerrainObjectsForMissionLoad` (i.e., a new pass at `code/mission.cpp:2818-2820`), not at the end of `loadTerrainObjects`. Walk iterates `terrainObjects[]`, `buildings[]`, `turrets[]`, `gates[]` (NOT generics — recon Section 11 Q3). For each: check `IsStaticNow()` would be premature — instead call `isStaticEligible()` directly (the disqualifier subset that doesn't depend on registration state), then drive `TransformMultiShape_PositionsOnly`, then build batch via `buildRecipeFromShape`, then `registerRecipe`. Set `staticReg.recipeIndex = result; staticReg.shape = bldgShape; staticReg.registered = true`.
+- **Task 6 (register-on-spawn API for late types):** unaffected — first-render path stays. The existing `submitMultiShape` + `getLastBuiltBatch` recipe is fine for late types because by the time `render()` runs, `update()` has already populated listOfVertices/listOfColors via TransformMultiShape.
+- **No additional schema changes** — `GpuStaticPropInstance` layout, `RecipeRange` struct, `registerRecipe` signature all stay as-is.

@@ -150,6 +150,13 @@ class Appearance
 		// TreeAppearance calls GpuStaticPropRegistry::invalidate() internally.
 		virtual void invalidateStaticRegistration() {}
 
+		// Task 5 (Track B): mission-load bulk registration. Default no-ops; each
+		// concrete appearance class that participates in the static-prop registry
+		// overrides these and writes directly to its own typed staticReg member
+		// (HC-1: no void* cast, no shared interface).
+		virtual void registerStatic()               {}
+		virtual bool isStaticRegistered()  const    { return false; }
+
 		virtual long render (long depthFixup = 0)
 		{
 			//Decide whether or not I can be seen and add me to render list.

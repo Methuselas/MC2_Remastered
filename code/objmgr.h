@@ -416,6 +416,10 @@ class GameObjectManager {
 
 		void loadTerrainObjects ( PacketFile* pFile, volatile float& progress, float progressRange );
 		void primeTerrainObjectsForMissionLoad (volatile float& progress, float progressRange);
+		// Task 5 (Track B): bulk static-prop registration walk.
+		// Called after primeTerrainObjectsForMissionLoad (positions/rotations set)
+		// and before finalizeGeometry. Guarded by MC2_STATIC_PROP_MISSION_LOAD_REG.
+		void registerStaticPropsForMissionLoad();
 
 		long getSpecificObjects (long objClass, long objSubType, GameObjectPtr* objects, long maxObjects);
 

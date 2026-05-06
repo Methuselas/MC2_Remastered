@@ -1356,6 +1356,9 @@ __int64 MCTimePerShapeTransform		= 0;
 // Single-threaded by construction (MC2 update is serial; no actor's update
 // runs while another's TransformMultiShape is in flight).
 static bool s_multiShapePositionsOnly = false;
+// Track B: when true, TransformMultiShape populates shapeToWorld but skips the
+// pool-allocating MultiTransformShape_* dispatch and the s_cameraOrigin read.
+static bool s_buildRecipeOnly = false;
 
 long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot)
 {
@@ -1383,7 +1386,12 @@ long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuatern
 
     long i=0;
     Stuff::Point3D camPosition;
-    camPosition = *TG_Shape::s_cameraOrigin;
+    // Guard null — s_cameraOrigin is unset during Mission::init (before first Camera::update).
+    // s_buildRecipeOnly skips per-vertex dispatch so camPosition is never used in that mode.
+    if (TG_Shape::s_cameraOrigin)
+        camPosition = *TG_Shape::s_cameraOrigin;
+    else
+        { camPosition.x = camPosition.y = camPosition.z = 0.0f; }
 
     Stuff::Matrix4D  shapeToClip, rootShapeToClip;
     Stuff::Point3D backFacePoint;
@@ -1715,6 +1723,11 @@ long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuatern
         x=GetCycles();
 #endif
 
+        // Track B: recipe-build-only mode — shapeToWorld is now populated above.
+        // Skip pool-allocating per-vertex/per-face dispatch entirely.
+        if (s_buildRecipeOnly)
+            continue;
+
         // Slice 2 (object-offload) — Stage 2.B: dispatch on the file-static
         // flag set by TransformMultiShape_PositionsOnly. The positions-only
         // variant strips the per-vertex / per-face lighting kernels; slice 1
@@ -1761,6 +1774,21 @@ long TG_MultiShape::TransformMultiShape_PositionsOnly (Stuff::Point3D *pos, Stuf
     s_multiShapePositionsOnly = true;
     long result = TransformMultiShape(pos, rot);
     s_multiShapePositionsOnly = false;
+    return result;
+}
+
+//-------------------------------------------------------------------------------
+// Track B (widen registry): recipe-build-only variant.
+// Runs the hierarchy traversal to populate listOfShapes[i].shapeToWorld per
+// leaf without touching TGL vertex/face/color pools and without requiring
+// TG_Shape::s_cameraOrigin to be non-null. Called from BldgAppearance/
+// TreeAppearance::registerStatic during Mission::init before Camera::update.
+//-------------------------------------------------------------------------------
+long TG_MultiShape::TransformMultiShape_BuildRecipe (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot)
+{
+    s_buildRecipeOnly = true;
+    long result = TransformMultiShape(pos, rot);
+    s_buildRecipeOnly = false;
     return result;
 }
 

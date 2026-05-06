@@ -942,11 +942,18 @@ class TG_Shape
 			aRGBHighlight = argb;
 		}
 
+		// Task 5 (Track B): read-only accessors for recipe building outside GpuStaticPropBatcher.
+		DWORD GetARGBHighlight()  const { return aRGBHighlight; }
+		DWORD GetFogRGB()         const { return fogRGB; }
+		bool  GetLightsOut()      const { return lightsOut; }
+		bool  GetIsWindow()       const { return isWindow; }
+		bool  GetIsSpotlight()    const { return isSpotlight; }
+
 		void SetLightsOut (bool lightFlag)
 		{
 			lightsOut = lightFlag;
 		}
-		
+
 		char * getNodeName (void)
 		{
 			return myType->getNodeId();

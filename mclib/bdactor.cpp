@@ -2651,6 +2651,67 @@ bool BldgAppearance::isStaticEligible() const
 	return true;
 }
 
+// Task 5 (Track B): mission-load bulk static-prop registration.
+// Called from GameObjectManager::registerStaticPropsForMissionLoad() after
+// primeTerrainObjectsForMissionLoad() has set position/rotation on every
+// actor. Populates shapeToWorld matrices via TransformMultiShape_PositionsOnly,
+// builds a recipe batch per leaf via buildRecipeFromShape, and registers with
+// GpuStaticPropRegistry. HC-1: writes directly to typed staticReg member.
+void BldgAppearance::registerStatic() {
+	if (staticReg.registered) return;
+	if (!bldgShape)           return;
+	if (!GpuStaticPropRegistry::isEnabled()) return;
+	if (!isStaticEligible())  return;
+
+	// Compute transform — same coordinate convention as BldgAppearance::update().
+	// At mission-load time position.z may not yet hold terrain elevation (set by
+	// bldng.cpp:810 on first update), so use getTerrainElevation() directly.
+	float yaw = rotation * DEGREES_TO_RADS;
+	Stuff::UnitQuaternion rot;
+	rot = Stuff::EulerAngles(0.0f, yaw, 0.0f);
+	Stuff::Point3D xlatPosition;
+	xlatPosition.x = -position.x;
+	xlatPosition.y = land ? land->getTerrainElevation(position) : 0.0f;
+	xlatPosition.z = position.y;
+	bldgShape->TransformMultiShape_BuildRecipe(&xlatPosition, &rot);
+
+	// Build per-leaf recipe batch.
+	// Use public GetNumShapes()/GetShapeRec() — numTG_Shapes/listOfShapes are protected.
+	std::vector<GpuStaticPropInstance> batch;
+	const int numShapes = static_cast<int>(bldgShape->GetNumShapes());
+	batch.reserve(numShapes);
+	for (int i = 0; i < numShapes; ++i) {
+		const TG_ShapeRec* rec = bldgShape->GetShapeRec(i);
+		if (!rec || !rec->processMe || !rec->node) continue;
+		TG_Shape* child = rec->node;
+		uint32_t flags = 0;
+		if (child->GetLightsOut())   flags |= (1u << 0);
+		if (child->GetIsWindow())    flags |= (1u << 1);
+		if (child->GetIsSpotlight()) flags |= (1u << 2);
+		// rec->shapeToWorld is LinearMatrix4D; convert to Matrix4D for buildRecipeFromShape().
+		Stuff::Matrix4D xform(rec->shapeToWorld);
+		GpuStaticPropInstance inst;
+		if (!GpuStaticPropBatcher::instance().buildRecipeFromShape(
+				child, xform,
+				static_cast<uint32_t>(child->GetARGBHighlight()),
+				static_cast<uint32_t>(child->GetFogRGB()),
+				flags, &inst)) {
+			return;  // unregistered type — abort; first-render fallback covers it
+		}
+		batch.push_back(inst);
+	}
+	if (batch.empty()) return;
+
+	const int32_t regIdx = GpuStaticPropRegistry::registerRecipe(bldgShape, batch);
+	if (regIdx >= 0) {
+		staticReg.registered  = true;
+		staticReg.shape       = bldgShape;
+		staticReg.recipeIndex = regIdx;
+	}
+}
+
+bool BldgAppearance::isStaticRegistered() const { return staticReg.registered; }
+
 bool BldgAppearance::IsStaticNow() const
 {
 	return staticReg.registered
@@ -4757,6 +4818,61 @@ void TreeAppearance::invalidateStaticRegistration()
 		GpuStaticPropRegistry::invalidate(staticReg.recipeIndex);
 	staticReg = {};
 }
+
+// Task 5 (Track B): mission-load bulk static-prop registration (mirror of
+// BldgAppearance::registerStatic). HC-1: writes directly to typed staticReg.
+void TreeAppearance::registerStatic() {
+	if (staticReg.registered) return;
+	if (!treeShape)           return;
+	if (!GpuStaticPropRegistry::isEnabled()) return;
+
+	// Compute transform — same coordinate convention as TreeAppearance::update().
+	// yaw includes the per-instance yaw offset (matches first-render path exactly).
+	float yawAngle = (rotation * DEGREES_TO_RADS) + (yaw * DEGREES_TO_RADS);
+	float pitchAngle = (pitch * DEGREES_TO_RADS);
+	Stuff::UnitQuaternion rot;
+	rot = Stuff::EulerAngles(pitchAngle, yawAngle, 0.0f);
+	Stuff::Point3D xlatPosition;
+	xlatPosition.x = -position.x;
+	xlatPosition.y = land ? land->getTerrainElevation(position) : 0.0f;
+	xlatPosition.z = position.y;
+	treeShape->TransformMultiShape_BuildRecipe(&xlatPosition, &rot);
+
+	// Build per-leaf recipe batch.
+	// Use public GetNumShapes()/GetShapeRec() — numTG_Shapes/listOfShapes are protected.
+	std::vector<GpuStaticPropInstance> batch;
+	const int numShapes = static_cast<int>(treeShape->GetNumShapes());
+	batch.reserve(numShapes);
+	for (int i = 0; i < numShapes; ++i) {
+		const TG_ShapeRec* rec = treeShape->GetShapeRec(i);
+		if (!rec || !rec->processMe || !rec->node) continue;
+		TG_Shape* child = rec->node;
+		uint32_t flags = 0;
+		if (child->GetLightsOut())   flags |= (1u << 0);
+		if (child->GetIsWindow())    flags |= (1u << 1);
+		if (child->GetIsSpotlight()) flags |= (1u << 2);
+		Stuff::Matrix4D xform(rec->shapeToWorld);
+		GpuStaticPropInstance inst;
+		if (!GpuStaticPropBatcher::instance().buildRecipeFromShape(
+				child, xform,
+				static_cast<uint32_t>(child->GetARGBHighlight()),
+				static_cast<uint32_t>(child->GetFogRGB()),
+				flags, &inst)) {
+			return;  // unregistered type — abort; first-render fallback covers it
+		}
+		batch.push_back(inst);
+	}
+	if (batch.empty()) return;
+
+	const int32_t regIdx = GpuStaticPropRegistry::registerRecipe(treeShape, batch);
+	if (regIdx >= 0) {
+		staticReg.registered  = true;
+		staticReg.shape       = treeShape;
+		staticReg.recipeIndex = regIdx;
+	}
+}
+
+bool TreeAppearance::isStaticRegistered() const { return staticReg.registered; }
 
 //-----------------------------------------------------------------------------
 

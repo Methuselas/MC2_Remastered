@@ -20,8 +20,9 @@
 
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
 #include "static_update_counters.h"      // g_staticUpdateRunCount/SkipCount/EmitSummary
-#include "../GameOS/gameos/gpu_cull_substrate.h"  // C0: GPU cull substrate SSBO upload
-#include "../GameOS/gameos/gpu_cull_parity.h"    // C0-4: AABB parity check
+#include "../GameOS/gameos/gpu_cull_substrate.h"       // C0: GPU cull substrate SSBO upload
+#include "../GameOS/gameos/gpu_cull_parity.h"         // C0-4: AABB parity check
+#include "../GameOS/gameos/gos_static_prop_registry.h" // Task 5: mission-load bulk registration
 
 #ifndef OBJMGR_H
 #include"objmgr.h"
@@ -1182,6 +1183,44 @@ void GameObjectManager::primeTerrainObjectsForMissionLoad (volatile float& progr
 	}
 
 	TracyPlot("Terrain object appearances warmed during mission load", int64_t(warmedAppearances));
+}
+
+// Task 5 (Track B): bulk static-prop registration at mission load.
+// Walks every Bldg/Tree appearance spawned by addObject AFTER
+// primeTerrainObjectsForMissionLoad (position/rotation set) and BEFORE
+// finalizeGeometry. registerStatic() calls TransformMultiShape_PositionsOnly
+// to populate per-leaf shapeToWorld matrices, then buildRecipeFromShape per
+// leaf, then GpuStaticPropRegistry::registerRecipe.
+// Default-off: MC2_STATIC_PROP_MISSION_LOAD_REG=0 (first-render fallback covers).
+void GameObjectManager::registerStaticPropsForMissionLoad() {
+	ZoneScopedN("GameObjectManager::registerStaticPropsForMissionLoad");
+	if (!GpuStaticPropRegistry::isMissionLoadRegEnabled()) return;
+
+	int totalEnumerated = 0, totalRegistered = 0, totalSkipped = 0;
+
+	auto registerOne = [&](GameObjectPtr obj) {
+		if (!obj) return;
+		++totalEnumerated;
+		AppearancePtr app = obj->getAppearance();
+		if (!app) { ++totalSkipped; return; }
+		app->registerStatic();
+		if (app->isStaticRegistered()) ++totalRegistered;
+		else                            ++totalSkipped;
+	};
+
+	for (long i = 0; i < numTerrainObjects; ++i)
+		registerOne(terrainObjects[i]);
+	for (long i = 0; i < numBuildings; ++i)
+		registerOne(buildings[i]);
+	for (long i = 0; i < numTurrets; ++i)
+		registerOne(turrets[i]);
+	for (long i = 0; i < numGates; ++i)
+		registerOne(gates[i]);
+
+	fprintf(stderr,
+		"[STATIC_PROP_REG v1] event=mission_load enumerated=%d registered=%d skipped=%d\n",
+		totalEnumerated, totalRegistered, totalSkipped);
+	fflush(stderr);
 }
 
 extern GameObjectFootPrint* tempSpecialAreaFootPrints;

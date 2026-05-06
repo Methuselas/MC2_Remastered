@@ -35,8 +35,13 @@ static bool parseEnvBoolWithDefault(const char* name, bool defaultValue) {
 // Set MC2_STATIC_PROP_REGISTRY=0 to disable (e.g., for A/B comparison or
 // when chasing a regression). The MC2_FORCE_DYNAMIC_TREES env in
 // TreeAppearance::render() still works as the per-tree operator escape.
-static const bool s_enabled = parseEnvBoolWithDefault("MC2_STATIC_PROP_REGISTRY", true);
-static const bool s_trace   = parseEnvBoolWithDefault("MC2_STATIC_PROP_TRACE",    false);
+static const bool s_enabled             = parseEnvBoolWithDefault("MC2_STATIC_PROP_REGISTRY",          true);
+static const bool s_trace               = parseEnvBoolWithDefault("MC2_STATIC_PROP_TRACE",              false);
+// Task 5 (Track B): opt-in bulk registration at mission load.
+// Default OFF until verified across all mission + biome variants.
+// Set MC2_STATIC_PROP_MISSION_LOAD_REG=1 to enable.
+static const bool s_missionLoadRegEnabled =
+    parseEnvBoolWithDefault("MC2_STATIC_PROP_MISSION_LOAD_REG", false);
 
 #define SP_TRACE(fmt, ...) \
     do { if (s_trace) { printf("[STATIC_PROP] " fmt "\n", ##__VA_ARGS__); \
@@ -112,7 +117,8 @@ static void releasePinsForRange(RecipeRange& rng) {
 
 namespace GpuStaticPropRegistry {
 
-bool isEnabled() { return s_enabled; }
+bool isEnabled()               { return s_enabled; }
+bool isMissionLoadRegEnabled() { return s_missionLoadRegEnabled; }
 
 uint64_t getStaticFirstFrameSkipCount() { return s_firstFrameSkipCount; }
 

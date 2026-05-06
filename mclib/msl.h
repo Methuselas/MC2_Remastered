@@ -383,6 +383,13 @@ class TG_MultiShape
 		// GpuStaticPropBatcher::isMultiShapeEligibleForGpuObjects(this).
 		long TransformMultiShape_PositionsOnly (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot);
 
+		// Track B (widen registry): recipe-build-only variant.
+		// Runs the hierarchy traversal to populate listOfShapes[i].shapeToWorld
+		// per leaf without allocating from TGL vertex/face/color pools and without
+		// requiring TG_Shape::s_cameraOrigin to be non-null. Safe to call during
+		// Mission::init before the camera is initialized.
+		long TransformMultiShape_BuildRecipe (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot);
+
 		//This function rotates the heirarchy from this node down.  Used for torso twists, arms, etc.
 		// SHould only be called once this way.  This way is DAMNED SLOW!!!  STRICMP!  IT returns the node num
 		// Call that from then on!
@@ -405,6 +412,14 @@ class TG_MultiShape
 		long GetNumShapes (void)
 		{
 			return numTG_Shapes;
+		}
+
+		// Task 5 (Track B): const access to per-leaf shape records for
+		// mission-load bulk registration in BldgAppearance/TreeAppearance.
+		const TG_ShapeRec* GetShapeRec (int i) const
+		{
+			if (i < 0 || i >= numTG_Shapes) return nullptr;
+			return &listOfShapes[i];
 		}
 
 		void ScaleShape (float scaleFactor)
