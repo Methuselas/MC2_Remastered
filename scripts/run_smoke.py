@@ -250,7 +250,13 @@ def main():
                             "MC2_TERRAIN_INDIRECT",
                             "MC2_TERRAIN_INDIRECT_PARITY_CHECK",
                             "MC2_TERRAIN_INDIRECT_TRACE",
-                            "MC2_TERRAIN_COST_SPLIT")},
+                            "MC2_TERRAIN_COST_SPLIT",
+                            # Track A1 — object admission predicate + trace
+                            "MC2_OBJECT_ADMISSION_PREDICATE",
+                            "MC2_PROJECTZ_TRACE",
+                            "MC2_PROJECTZ_HEATMAP",
+                            "MC2_PROJECTZ_SUMMARY",
+                            "MC2_PROJECTZ_GUARD_PX")},
             },
         )
         print(f"[runner] running {e.stem} (tier={tier} duration={duration})",
