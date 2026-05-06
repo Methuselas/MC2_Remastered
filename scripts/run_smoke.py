@@ -256,7 +256,9 @@ def main():
                             "MC2_PROJECTZ_TRACE",
                             "MC2_PROJECTZ_HEATMAP",
                             "MC2_PROJECTZ_SUMMARY",
-                            "MC2_PROJECTZ_GUARD_PX")},
+                            "MC2_PROJECTZ_GUARD_PX",
+                            # Task 7 — cascade-safety DESTROY trace
+                            "MC2_DESTROY_TRACE")},
             },
         )
         print(f"[runner] running {e.stem} (tier={tier} duration={duration})",

@@ -200,3 +200,28 @@ If `gameobj_visibility_admit` appears in the outlier list (non-zero disagreement
 classify by disagree_perm vs disagree_restr and compare against the candidate classes
 above. Counts below 100 are likely noise from edge-case camera angles. Counts above 1000
 require root-cause analysis before merging.
+
+## DESTROY parity (Task 7 capture, 2026-05-06)
+
+Captured from mc2_01 15s (legacy and modern mode). MC2_DESTROY_TRACE=1.
+
+| Mission | Legacy DESTROYs | Modern DESTROYs | Count? | Identity? |
+|---------|-----------------|-----------------|--------|-----------|
+| mc2_01  | 256             | 256             | ✓      | ✓         |
+
+Identity comparison: kind+reason+gate-state-snapshot tuple after pointer/frame
+normalization. Format limitation: [DESTROY v1] uses `%p` (Windows omits 0x
+prefix) not `0x%p`; normalization regex must be `obj=[0-9A-Fa-f]*` not
+`obj=0x[0-9a-fA-F]*`. Sorted-stream diff is zero after correct normalization.
+If a future commit adds seq=<id>, update the normalization.
+
+All 256 DESTROYs are `pool_unused` cleanup at mission-start (objmgr.cpp:411
+and :427, exists_was=0, double-destroy no-ops during pool initialization).
+Zero live-game lifecycle destructions observed in either mode during the 15s
+mc2_01 capture window.
+
+Source (legacy run):  `tests/smoke/artifacts/2026-05-06T16-22-05/`
+Source (modern run):  `tests/smoke/artifacts/2026-05-06T16-22-48/`
+
+DESTROY parity is the load-bearing cascade-safety check (per cull_gates_are_load_bearing).
+Re-run on any Track A1-touching change.
