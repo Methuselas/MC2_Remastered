@@ -42,6 +42,18 @@ static const bool s_trace   = parseEnvBoolWithDefault("MC2_STATIC_PROP_TRACE",  
     do { if (s_trace) { printf("[STATIC_PROP] " fmt "\n", ##__VA_ARGS__); \
          fflush(stdout); } } while (0)
 
+// MC2_TEX_LIFECYCLE_TRACE=1 — same env flag used by mclib/txmmgr.cpp,
+// mclib/msl.cpp, GameOS/gameos/gos_static_prop_batcher.cpp so all
+// [TEX_LIFECYCLE v1] events stream together under one invocation.
+// See docs/superpowers/specs/2026-05-06-static-prop-texture-pin-fix.md
+static const bool s_texPinTrace =
+    (getenv("MC2_TEX_LIFECYCLE_TRACE") != nullptr);
+#define TEX_LC_PIN(fmt, ...)                                            \
+    do { if (s_texPinTrace) {                                           \
+        printf("[TEX_LIFECYCLE v1] " fmt "\n", ##__VA_ARGS__);          \
+        fflush(stdout);                                                 \
+    } } while (0)
+
 namespace {
 
 struct RecipeRange {
@@ -49,6 +61,9 @@ struct RecipeRange {
     uint32_t       count;   // 0 = invalidated (tombstone)
     TG_MultiShape* multi;   // for per-frame lightDataIndex patch via
                             // getCachedGpuLightIndex(); NULL when count==0
+    // Texture pin sibling (texture-pin-fix spec):
+    std::vector<DWORD> pinnedTextureNodes;  // mcTextureNodeIndex values pinned for this range
+    bool               pinsReleased;        // double-release guard for invalidate→destroy ordering
 };
 
 static std::vector<GpuStaticPropInstance> s_recipes;
@@ -58,6 +73,33 @@ static std::vector<RecipeRange>           s_recipeRanges;
 // markVisible() appends one regIdx per tree; flush() expands to leaves
 // and patches lightDataIndex from the live TG_MultiShape.
 static std::vector<uint32_t>              s_liveRangeIndices;
+
+// Pin-call accounting for the [TEX_LIFECYCLE v1] event=pin_summary line
+// emitted in destroy(). leakedPins = totalPinCalls - totalUnpinCalls;
+// non-zero is a refcount imbalance bug. Reset to 0 in destroy() after
+// summary emit so per-mission accounting is clean across load/unload.
+static uint64_t s_totalPinCalls   = 0;
+static uint64_t s_totalUnpinCalls = 0;
+
+// Release every pin held by a single RecipeRange. Idempotent via
+// rng.pinsReleased — invalidate() may run before destroy() does its
+// safety-net sweep, and we don't want to unpinNode the same node twice.
+// No shrink_to_fit() — parent s_recipeRanges is also cleared on destroy(),
+// and the per-range vector destructor handles deallocation.
+static void releasePinsForRange(RecipeRange& rng) {
+    if (rng.pinsReleased) return;
+    if (mcTextureManager) {
+        for (DWORD nodeIdx : rng.pinnedTextureNodes) {
+            mcTextureManager->unpinNode(nodeIdx);
+            ++s_totalUnpinCalls;
+            TEX_LC_PIN("event=unpin nodeIdx=%lu refcount=%lu",
+                       (unsigned long)nodeIdx,
+                       (unsigned long)mcTextureManager->getPinCount(nodeIdx));
+        }
+    }
+    rng.pinnedTextureNodes.clear();
+    rng.pinsReleased = true;
+}
 
 } // namespace
 
@@ -77,6 +119,31 @@ void init() {
 }
 
 void destroy() {
+    // TODO (Track B Step 4.3): emit [STATIC_FIRST_FRAME v1] event=summary
+    //   skip_count=... (and reset s_firstFrameSkipCount) here, BEFORE the
+    //   pin-release loop below.  See
+    //   docs/superpowers/specs/2026-05-06-static-prop-texture-pin-fix.md
+    //   "Combined destroy() body" for the authoritative merged version.
+
+    // Texture-pin spec: release any unreleased pins (mission-teardown
+    // safety net — covers ranges that were never explicitly invalidated).
+    for (auto& rng : s_recipeRanges) {
+        releasePinsForRange(rng);
+    }
+
+    // Texture-pin spec: pin-call accounting summary.  leakedPins != 0 is a
+    // bug signal (refcount imbalance between registerRecipe and invalidate).
+    if (s_texPinTrace) {
+        printf("[TEX_LIFECYCLE v1] event=pin_summary mission_end "
+               "totalPinCalls=%llu totalUnpinCalls=%llu leakedPins=%lld\n",
+               (unsigned long long)s_totalPinCalls,
+               (unsigned long long)s_totalUnpinCalls,
+               (long long)((int64_t)s_totalPinCalls - (int64_t)s_totalUnpinCalls));
+        fflush(stdout);
+    }
+    s_totalPinCalls   = 0;
+    s_totalUnpinCalls = 0;
+
     s_recipes.clear();          s_recipes.shrink_to_fit();
     s_recipeRanges.clear();     s_recipeRanges.shrink_to_fit();
     s_liveRangeIndices.clear(); s_liveRangeIndices.shrink_to_fit();
@@ -94,10 +161,37 @@ int32_t registerRecipe(TG_MultiShape* multi,
     rng.first = static_cast<uint32_t>(s_recipes.size());
     rng.count = static_cast<uint32_t>(batch.size());
     rng.multi = multi;
+    rng.pinsReleased = false;
     s_recipes.insert(s_recipes.end(), batch.begin(), batch.end());
     const int32_t regIdx = static_cast<int32_t>(s_recipeRanges.size());
     s_recipeRanges.push_back(rng);
     SP_TRACE("register regIdx=%d first=%u count=%u", regIdx, rng.first, rng.count);
+
+    // Pin every mcTextureNodeIndex referenced by this recipe's multi-shape.
+    // mcTextureManager evicts textures during gameplay (txmmgr.cpp:update);
+    // for actors using touch() instead of update() under MC2_STATIC_UPDATE_SKIP=1
+    // there's no re-cache pathway, so the leaf TG_TypeShape::listOfTextures
+    // gosTextureHandle goes stale and the batcher renders black quads.
+    // Pinning the master node prevents eviction while this range is registered.
+    // Use the public TG_MultiShape::GetNumTextures()/GetTextureHandle(j) API
+    // (msl.h:454-470) — GetTextureHandle(j) returns mcTextureNodeIndex directly.
+    // Do not access TG_TypeMultiShape::numTextures/listOfTextures — protected.
+    if (mcTextureManager) {
+        RecipeRange& storedRng = s_recipeRanges.back();
+        const long numTex = multi->GetNumTextures();
+        for (long j = 0; j < numTex; ++j) {
+            const DWORD nodeIdx = multi->GetTextureHandle(j);
+            if (nodeIdx != 0xffffffff) {
+                mcTextureManager->pinNode(nodeIdx);
+                storedRng.pinnedTextureNodes.push_back(nodeIdx);
+                ++s_totalPinCalls;
+                TEX_LC_PIN("event=pin nodeIdx=%lu refcount=%lu regIdx=%d multi=%p",
+                           (unsigned long)nodeIdx,
+                           (unsigned long)mcTextureManager->getPinCount(nodeIdx),
+                           regIdx, (void*)multi);
+            }
+        }
+    }
     return regIdx;
 }
 
@@ -112,6 +206,7 @@ void invalidate(int32_t regIdx) {
     if (!s_enabled) return;
     if (regIdx < 0 || static_cast<uint32_t>(regIdx) >= s_recipeRanges.size()) return;
     RecipeRange& rng = s_recipeRanges[static_cast<uint32_t>(regIdx)];
+    releasePinsForRange(rng);
     for (uint32_t i = 0; i < rng.count; ++i)
         s_recipes[rng.first + i] = GpuStaticPropInstance{};
     SP_TRACE("invalidate regIdx=%d (was count=%u)", regIdx, rng.count);
