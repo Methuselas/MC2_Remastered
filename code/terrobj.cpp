@@ -98,6 +98,20 @@ struct StaticUpdateCounters {
 StaticUpdateCounters g_staticUpdateCounters = {};
 StaticUpdateCounters g_staticUpdateLastSummary = {};
 uint32_t g_staticUpdateLastSummaryFrame = 0;
+
+// [APPEAR_ROUTE v1] Per-appearance-class routing coverage map.
+// Bucketed by AppearanceType::getAppearanceClass() (high byte of appearanceNum).
+// Tracks how many touch (skip) vs update (full) events each class accumulates.
+// Use case: under MC2_STATIC_UPDATE_SKIP=1 + MC2_FORCE_DYNAMIC_TREES=1 +
+// MC2_FORCE_DYNAMIC_BUILDINGS=1, this map shows whether the FORCE_DYNAMIC envs
+// actually bypassed those classes, AND which OTHER classes are still hitting
+// the touch path (potential sources of "still black" symptoms).
+// Class IDs: see mclib/daprtype.h (BLDG_TYPE=0x0e, BUILDING_APPR_TYPE=0x10,
+// TREE_APPR_TYPE=0x11, GENERIC_APPR_TYPE=0x14, etc.).
+// Always-on (cheap: two array increments per gate event); summary emitted by
+// g_staticUpdateEmitSummary every 600 frames.
+uint64_t g_routeTouchByClass[256]  = {0};
+uint64_t g_routeUpdateByClass[256] = {0};
 }  // namespace
 
 // External accessors declared in code/static_update_counters.h. Definitions live
@@ -125,6 +139,21 @@ void g_staticUpdateEmitSummary(uint32_t frame) {
         cur.updates_skipped - prev.updates_skipped);
     puts(buf);
     fflush(stdout);
+
+    // [APPEAR_ROUTE v1] Per-class coverage map. One line per non-zero class.
+    // class=0x0e (BLDG_TYPE), 0x10 (BUILDING_APPR_TYPE), 0x11 (TREE_APPR_TYPE),
+    // 0x12 (VEHICLE_APPR_TYPE), 0x13 (MECH_APPR_TYPE), 0x14 (GENERIC_APPR_TYPE),
+    // 0x05 (GV_TYPE), 0x0d (MECH_TYPE), 0xFF (no AppearanceType resolved).
+    for (int c = 0; c < 256; ++c) {
+        if (g_routeTouchByClass[c] || g_routeUpdateByClass[c]) {
+            printf("[APPEAR_ROUTE v1] frame=%u class=0x%02x touch=%llu update=%llu\n",
+                frame, c,
+                (unsigned long long)g_routeTouchByClass[c],
+                (unsigned long long)g_routeUpdateByClass[c]);
+        }
+    }
+    fflush(stdout);
+
     g_staticUpdateLastSummary = cur;
     g_staticUpdateLastSummaryFrame = frame;
 }
@@ -700,16 +729,26 @@ long TerrainObject::update (void) {
 				if (ownerForcesDynamic)
 					appearance->invalidateStaticRegistration();
 
+				// [APPEAR_ROUTE v1] resolve appearance class once per gate event.
+				// 0xFF means "no AppearanceType" (shouldn't happen, but harmless).
+				unsigned long _apprClass = 0xFF;
+				{
+					AppearanceTypePtr _aType = appearance->getAppearanceType();
+					if (_aType) _apprClass = _aType->getAppearanceClass() & 0xFF;
+				}
+
 				if (s_staticUpdateSkip && gpuPath && appearanceClaimsStatic && !ownerForcesDynamic) {
 					++g_staticUpdateCounters.updates_skipped;
+					++g_routeTouchByClass[_apprClass];
 					if (s_staticUpdateTrace) {
-						printf("[STATIC_UPDATE v1] event=skip frame=%u obj=%p\n",
-							g_mc2FrameCounter, (void*)this);
+						printf("[STATIC_UPDATE v1] event=skip frame=%u obj=%p class=0x%02lx\n",
+							g_mc2FrameCounter, (void*)this, _apprClass);
 						fflush(stdout);
 					}
 					appearance->touch();  // Stage 3.C: advance lastTurnTransformed
 				} else {
 					++g_staticUpdateCounters.updates_run;
+					++g_routeUpdateByClass[_apprClass];
 					if (ownerForcesDynamic && appearanceClaimsStatic)
 						++g_staticUpdateCounters.dyn_falling;
 					appearance->update();
