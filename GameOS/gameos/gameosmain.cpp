@@ -115,6 +115,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "projectz_overlay.h" // RAlt+P debug overlay (commit 4)
 #include "gos_visual_diff.h"  // Stage 2.E pre-HUD capture + Ctrl+Shift+P record
 #include "gos_terrain_indirect.h"  // [INSTR v1] banner: terrain_indirect{,_parity} fields
+#include "gpu_cull_record.h"       // C0-1: GpuActorRecord schema selftest
 
 // Tier-1 instrumentation (stability spec §5.1): single source of truth for
 // the frame=... field used by TGL_POOL, DESTROY, and GL_ERROR log lines.
@@ -728,6 +729,16 @@ int main(int argc, char** argv)
             GpuStaticPropRegistry::isEnabled() ? 1 : 0, build);
         puts(_cbbuf);
         crashbundle_append(_cbbuf);
+
+        // GPU cull substrate selftest (C0).
+        {
+            int failures = gpu_cull::gpu_cull_record_selftest();
+            if (failures > 0) {
+                STOP(("GPU_CULL selftest FAILED — see log above (%d failure(s)). "
+                      "Fix GpuActorRecord layout before launch.", failures));
+            }
+        }
+
         if (g_pzTrace) {
             char _pzbuf[256];
             snprintf(_pzbuf, sizeof(_pzbuf),
