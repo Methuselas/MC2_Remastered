@@ -962,8 +962,9 @@ void ControlGui::update( bool bPaused, bool bLOS )
 
 	
 	// also going to initialize buttons here
+	{ ZoneScopedN("CGui.ButtonHover");
 	for ( int i = LAST_COMMAND - 1; i > -1; i-- )
-	{		
+	{
 		if ( buttons[i].location[0].x <= mouseX && mouseX <= buttons[i].location[2].x
 				&& mouseY >= buttons[i].location[0].y && mouseY <= buttons[i].location[1].y  )
 		{
@@ -991,8 +992,9 @@ void ControlGui::update( bool bPaused, bool bLOS )
 				}
 			}
 		}
-	}	
-	
+	}
+	} // CGui.ButtonHover
+
 	if ((buttonToPress != -1) && getButton(buttonToPress))
 	{
 		getButton(buttonToPress)->press(true);
@@ -1018,7 +1020,8 @@ void ControlGui::update( bool bPaused, bool bLOS )
 
 	Mover* pSelectedMover = 0;
 	int holdPositionCount = 0;
-	
+
+	{ ZoneScopedN("CGui.RosterScan");
 	for (int i = 0; i < pTeam->getRosterSize(); ++i )
 	{
 		Mover* pMover = (Mover*)pTeam->getMover( i );
@@ -1063,6 +1066,7 @@ void ControlGui::update( bool bPaused, bool bLOS )
 
 		}
 	}
+	} // CGui.RosterScan
 
 	if ( !holdPositionCount )
 	{
@@ -1195,6 +1199,7 @@ void ControlGui::update( bool bPaused, bool bLOS )
 	
 	if ( getButton( TACMAP_TAB )->state & ControlButton::PRESSED )
 	{
+		ZoneScopedN("CGui.TacMap");
 		tacMap.update();
 		if ( bMouseInsideTacArea )
 		{
@@ -1204,6 +1209,7 @@ void ControlGui::update( bool bPaused, bool bLOS )
 	}
 	else if ( getButton( INFO_TAB )->state & ControlButton::PRESSED )
 	{
+		ZoneScopedN("CGui.InfoWnd");
 		infoWnd->update();
 		if ( bMouseInsideTacArea )
 		{
@@ -1217,16 +1223,16 @@ void ControlGui::update( bool bPaused, bool bLOS )
 		helpTextID = IDS_VEHICLE_TAB_DESC;
 	}
 
-	updateVehicleTab( mouseX, mouseY, bLOS );
+	{ ZoneScopedN("CGui.VehicleTab");  updateVehicleTab( mouseX, mouseY, bLOS ); }
 
 
 
 	if ( renderObjectives )
 		getButton( OBJECTIVES_COMMAND )->press( true );
-	else 
+	else
 		getButton( OBJECTIVES_COMMAND )->press( false );
 
-	forceGroupBar.update();
+	{ ZoneScopedN("CGui.ForceGroupBar"); forceGroupBar.update(); }
 
 	getButton( DEFAULT_RANGE )->hide(true);
 	getButton( SHORT_RANGE )->hide(true);
