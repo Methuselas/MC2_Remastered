@@ -5,6 +5,7 @@ set(SOURCES ${SOURCES}
     gameos.cpp
     gameos_graphics.cpp
     gameos_res.cpp
+    MC2Strings.cpp
     gameos_fileio.cpp
     gameos_input.cpp
     gameos_debugging.cpp

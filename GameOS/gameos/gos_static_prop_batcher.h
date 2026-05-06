@@ -102,7 +102,9 @@ public:
     // Register one TG_TypeShape (idempotent). Builds packet table entries
     // and appends geometry to the in-progress VBO/IBO staging.
     // Called during onMapLoad for every static-prop type + its damage variants.
-    void registerType(TG_TypeShape* typeShape);
+    // multiShape is the parent type-multi-shape, used to look up texture
+    // names for register-time alpha-test material classification (Path 4).
+    void registerType(TG_TypeShape* typeShape, TG_TypeMultiShape* multiShape);
 
     // Convenience wrapper: iterate a multishape's listOfTypeShapes and call
     // registerType on each SHAPE_NODE leaf. Safe to call with NULL (no-op).

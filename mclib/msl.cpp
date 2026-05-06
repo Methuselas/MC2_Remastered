@@ -986,6 +986,13 @@ long TG_TypeMultiShape::GetTextureName (DWORD textureNum, char *tName, long name
 //Function returns 0 if OK.  -1 if textureNum is out of range of numTextures.
 // Assigns a MCTextureNodeIndex to this NOT a GOS handle anymore.  Must go through
 // cache in case of too many handles.
+// MC2_TEX_LIFECYCLE_TRACE=1 — see mclib/txmmgr.cpp for full event taxonomy.
+// Logs every TG_TypeMultiShape::SetTextureHandle call (the bdactor.cpp/genactor.cpp
+// "actor.update() → re-cache" pathway). Absence of these logs for a given multiType
+// during gameplay = appearance->touch() ran instead of update() (UPDATE_SKIP=1 path).
+static const bool s_msl_texLifecycleTrace =
+    (getenv("MC2_TEX_LIFECYCLE_TRACE") != nullptr);
+
 long TG_TypeMultiShape::SetTextureHandle (DWORD textureNum, DWORD gosTextureHandle)
 {
 	if (textureNum >= numTextures)
@@ -994,8 +1001,15 @@ long TG_TypeMultiShape::SetTextureHandle (DWORD textureNum, DWORD gosTextureHand
 	listOfTextures[textureNum].mcTextureNodeIndex = gosTextureHandle;
 	listOfTextures[textureNum].gosTextureHandle = 0xffffffff;
 
+	if (s_msl_texLifecycleTrace) {
+		printf("[TEX_LIFECYCLE v1] event=recache_multi multiType=%p texNum=%lu nodeIdx=0x%08lx numTex=%ld\n",
+		       (void*)this, (unsigned long)textureNum,
+		       (unsigned long)gosTextureHandle, (long)numTextures);
+		fflush(stdout);
+	}
+
 	return(0);
-}	
+}
 
 //-------------------------------------------------------------------------------
 //Function returns 0 if OK.  -1 if textureNum is out of range of numTextures.

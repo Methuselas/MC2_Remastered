@@ -19,6 +19,7 @@ CMakeFiles/
 *.tga
 Editor
 data
+!/data/defs/
 unpacked_data
 unpacked_data--
 data-orig
