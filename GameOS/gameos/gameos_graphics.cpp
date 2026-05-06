@@ -1848,7 +1848,7 @@ void gos_terrain_bridge_beginBucketLoop() {
                 GLfloat maxAniso = 1.0f;
                 glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
                 glSamplerParameterf(s_terrainBucketSampler, GL_TEXTURE_MAX_ANISOTROPY,
-                                    (maxAniso < 16.0f) ? maxAniso : 16.0f);
+                                    (maxAniso < 4.0f) ? maxAniso : 4.0f);
             }
         }
         glBindSampler(0, s_terrainBucketSampler);
@@ -2129,7 +2129,7 @@ void gosRenderer::renderWaterFastPath(
             GLfloat maxAniso = 1.0f;
             glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
             glSamplerParameterf(s_waterFastSampler, GL_TEXTURE_MAX_ANISOTROPY,
-                                (maxAniso < 16.0f) ? maxAniso : 16.0f);
+                                (maxAniso < 4.0f) ? maxAniso : 4.0f);
         }
     }
     GLuint savedSampler = 0;
@@ -2312,7 +2312,7 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
             GLfloat maxAniso = 1.0f;
             glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
             glSamplerParameterf(s_indirectTerrainSampler, GL_TEXTURE_MAX_ANISOTROPY,
-                                (maxAniso < 16.0f) ? maxAniso : 16.0f);
+                                (maxAniso < 4.0f) ? maxAniso : 4.0f);
         }
     }
     glBindSampler(0, s_indirectTerrainSampler);
@@ -5641,7 +5641,7 @@ unsigned int gos_CreateTerrainNormalTexture(const unsigned char* rgbaData, int w
         GLfloat maxAniso = 1.0f;
         glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,
-                        (maxAniso < 16.0f) ? maxAniso : 16.0f);
+                        (maxAniso < 4.0f) ? maxAniso : 4.0f);
     }
     glBindTexture(GL_TEXTURE_2D, 0);
     printf("[TESS] Created terrain normal texture: id=%u size=%d\n", texId, width);
