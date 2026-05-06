@@ -23,6 +23,11 @@
 #include "../GameOS/gameos/gos_static_prop_batcher.h"    // Stage 2.D.2 CacheGpuLightData
 #include "../GameOS/gameos/gos_static_prop_killswitch.h" // g_useGpuObjects extern
 
+// 2026-05-05: frame-stamp the cache so registry::flush() can skip stale entries
+// (actors whose update() was culled this frame; their cached UBO slot index now
+// points to a slot whose content was filled by a different actor).
+extern uint32_t g_mc2FrameCounter;
+
 #ifndef CIDENT_H
 #include"cident.h"
 #endif
@@ -1781,6 +1786,7 @@ void TG_MultiShape::CacheGpuLightData()
 
     if (firstShapeNodeLeaf != nullptr) {
         cachedGpuLightIndex_ = firstShapeNodeLeaf->GatherGpuObjectLightDataOnly();
+        cachedFrame_         = g_mc2FrameCounter;
     }
 }
 
@@ -1800,8 +1806,10 @@ void TG_MultiShape::ResubmitCachedGpuLightData()
         break;
     }
 
-    if (firstShapeNodeLeaf != nullptr)
+    if (firstShapeNodeLeaf != nullptr) {
         cachedGpuLightIndex_ = firstShapeNodeLeaf->ResubmitCachedLightData();
+        cachedFrame_         = g_mc2FrameCounter;
+    }
 }
 
 //-------------------------------------------------------------------------------

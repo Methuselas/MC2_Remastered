@@ -274,6 +274,16 @@ class TG_MultiShape
 		// frame or non-GPU path); submitMultiShape falls back to gather-now if UINT32_MAX.
 		uint32_t				cachedGpuLightIndex_;
 
+		// 2026-05-05: frame-stamp for cull-aware static replay.
+		// Set in CacheGpuLightData() / ResubmitCachedGpuLightData() to the
+		// current g_mc2FrameCounter value. Registry flush() compares this
+		// against the current frame and SKIPS the markVisible draw when stale
+		// — this happens when the actor went offscreen, the cull skipped its
+		// update(), and its cachedGpuLightIndex_ is now pointing into a slot
+		// whose content was filled by a different actor this frame.
+		// Sentinel UINT32_MAX = never cached.
+		uint32_t				cachedFrame_;
+
 	//-----------------
 	//Member Functions
 	protected:
@@ -298,6 +308,7 @@ class TG_MultiShape
 			isClamped = false;
 
 			cachedGpuLightIndex_ = 0xFFFFFFFFu;  // sentinel: not yet cached
+			cachedFrame_         = 0xFFFFFFFFu;  // sentinel: never refreshed
 		}
 		
 		TG_MultiShape (void)
@@ -323,6 +334,7 @@ class TG_MultiShape
 		// path) — render() guards against emitting a static instance with
 		// UINT32_MAX by falling through to the dynamic submit path.
 		uint32_t getCachedGpuLightIndex() const { return cachedGpuLightIndex_; }
+		uint32_t getCachedFrame()        const { return cachedFrame_; }
 
 		//This function sets the list of lights used by the TransformShape function
 		//to light the shape.

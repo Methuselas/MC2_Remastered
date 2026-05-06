@@ -525,6 +525,23 @@ class MC_TextureManager
 		
         void resetLightData();
 
+        // Diagnostic accessors for the static-prop registry's flush trace
+        // (2026-05-05 black-billboard investigation). Read-only views of the
+        // per-frame light dedup table. Bodies in txmmgr.cpp because
+        // TG_HWLightsData is fwd-declared here (full type lives in tgl.h).
+        // LightSlotPeek includes the first light's type (lightDir[0].w) and
+        // color (lightColor[0].rgb) so registry::flush() can identify the
+        // H2 hypothesis: slot has numLights=1 but lightColor=(0,0,0) → black.
+        struct LightSlotPeek {
+            int   numLights;    // -1 if out of range
+            int   firstType;    // -1 if numLights==0; else int(lightDir[0].w)
+            float firstColorR;
+            float firstColorG;
+            float firstColorB;
+        };
+        uint32_t getLightStructCount() const { return lightDataStructuresCount; }
+        LightSlotPeek peekLightSlot(uint32_t idx) const;
+
  		//-----------------------------------------------------------------
 		// Gets gosTextureHandle for Node ID.  Does all caching necessary.
 		DWORD get_gosTextureHandle (DWORD nodeId)

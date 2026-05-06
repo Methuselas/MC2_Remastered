@@ -858,6 +858,25 @@ void MC_TextureManager::resetLightData()
     lightDataStructuresCount = 0;
 }
 
+// Diagnostic body — declaration in txmmgr.h. See header for rationale.
+MC_TextureManager::LightSlotPeek MC_TextureManager::peekLightSlot(uint32_t idx) const
+{
+    LightSlotPeek p = {-1, -1, 0.0f, 0.0f, 0.0f};
+    if (idx >= lightDataStructuresCount || !lightData_) return p;
+    const TG_HWLightsData& d = lightData_[idx];
+    p.numLights = d.numLights_;
+    if (d.numLights_ > 0) {
+        // light_dir[i].w carries the light type (TG_LIGHT_AMBIENT=0, INFINITE=1,
+        // INFINITEWITHFALLOFF=2, POINT=3, SPOT=4, TERRAIN=5). Mirrors GLSL
+        // ObjectLights.light_dir[i].w in shaders/include/lighting.hglsl.
+        p.firstType   = static_cast<int>(d.lightDir[0][3]);
+        p.firstColorR = d.lightColor[0][0];
+        p.firstColorG = d.lightColor[0][1];
+        p.firstColorB = d.lightColor[0][2];
+    }
+    return p;
+}
+
 mat4 gos2my(Stuff::Matrix4D& m)
 {
 	mat4 m2(

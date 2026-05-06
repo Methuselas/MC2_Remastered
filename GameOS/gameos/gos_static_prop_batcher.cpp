@@ -37,6 +37,16 @@ static const bool s_texHandoffTrace = (getenv("MC2_TEX_HANDOFF_TRACE") != nullpt
 #define TEX_HANDOFF(fmt, ...) \
     do { if (s_texHandoffTrace) { printf("[TEX_HANDOFF] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
 
+// MC2_TREE_DIAG_TRACE=1 — diagnostic 2026-05-05 for the "black billboard square" bug.
+// Prints up to 8 lines from each of submit() (dynamic register/replay path) and
+// submitCachedInstance() (static recipe replay path), with all GpuStaticPropInstance
+// fields formatted identically so a side-by-side grep diff pinpoints which baked
+// field is stale on the static replay. Counters are function-local statics so they
+// reset per process lifetime; format matches both call sites verbatim.
+static const bool s_treeDiagTrace = (getenv("MC2_TREE_DIAG_TRACE") != nullptr);
+#define TREE_DIAG(fmt, ...) \
+    do { if (s_treeDiagTrace) { fprintf(stderr, "[TREE_DIAG] " fmt "\n", ##__VA_ARGS__); fflush(stderr); } } while (0)
+
 namespace {
 
 // Per-vertex stride in the shared VBO. Layout:
@@ -655,12 +665,20 @@ void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape) {
             for (long j = 0; j < numTxms; ++j) {
                 const DWORD nodeIdx = multiShape->GetTextureHandle(j);
                 typeShape->SetTextureHandle(j, nodeIdx);
-                if (s_texHandoffTrace && j < 4) {
+                // Session-wide cap on registration-time TEX_HANDOFF prints. Without
+                // this cap the trace fires ~10K times during map load (one per
+                // multiShape × numTxms<4) which floods stdout and can mask later
+                // diagnostics. Matches the flush-time per-type cap of 8 at line
+                // ~1573 (`s_traceCount < 8`). Counter is function-local static
+                // so it resets per process lifetime.
+                static int s_texHandoffRegPrinted = 0;
+                if (s_texHandoffTrace && j < 4 && s_texHandoffRegPrinted < 8) {
                     const DWORD gosH = (typeShape->listOfTextures && j < typeShape->numTextures)
                                        ? typeShape->listOfTextures[j].gosTextureHandle
                                        : 0xdeadbeef;
                     TEX_HANDOFF("register multiShape=%p leaf=%p slot=%ld nodeIdx=0x%08x gosHandle=0x%08x",
                                 (void*)multiShape, (void*)typeShape, j, nodeIdx, gosH);
+                    ++s_texHandoffRegPrinted;
                 }
             }
         }
@@ -820,6 +838,23 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
     inst.fogRGB[1] = ((fogARGB >>  8) & 0xFF) / 255.0f;
     inst.fogRGB[2] = ((fogARGB >>  0) & 0xFF) / 255.0f;
     inst.fogRGB[3] = ((fogARGB >> 24) & 0xFF) / 255.0f;
+    {
+        // MC2_TREE_DIAG_TRACE diagnostic. See macro definition near line ~50.
+        static int s_dynPrinted = 0;
+        if (s_treeDiagTrace && s_dynPrinted < 8) {
+            ++s_dynPrinted;
+            TREE_DIAG("path=dyn typeID=%u flags=0x%x lightIdx=%u colOff=%u tx=%.2f ty=%.2f tz=%.2f fog=%.3f,%.3f,%.3f,%.3f hi=%.3f,%.3f,%.3f,%.3f bucketInsts=%zu",
+                inst.typeID, inst.flags, inst.lightDataIndex, inst.firstColorOffset,
+                // Stuff::Matrix4D translation lives at (3,0)/(3,1)/(3,2) which the
+                // operator()(row,col) maps to entries[(col<<2)+row] = [3]/[7]/[11].
+                // The W-column is at [12]/[13]/[14] which is always (0,0,0) for
+                // affine matrices — wrong field. Verified via mclib/stuff/matrix.cpp:214 BuildTranslation.
+                inst.modelMatrix[3], inst.modelMatrix[7], inst.modelMatrix[11],
+                inst.fogRGB[0], inst.fogRGB[1], inst.fogRGB[2], inst.fogRGB[3],
+                inst.aRGBHighlight[0], inst.aRGBHighlight[1], inst.aRGBHighlight[2], inst.aRGBHighlight[3],
+                bucket.instances.size());
+        }
+    }
     bucket.instances.push_back(inst);
     s_lastBuiltBatch.push_back(inst);  // Stage 3.C: batch accumulator
 
@@ -1787,6 +1822,21 @@ void GpuStaticPropBatcher::submitCachedInstance(const GpuStaticPropInstance& ins
     // for registry-injected instances — they measure the dynamic compute path.
     GpuStaticPropInstance updated = inst;
     updated.firstColorOffset = static_cast<uint32_t>(bucket.colors.size());
+    {
+        // MC2_TREE_DIAG_TRACE diagnostic. Same format as submit() so a grep
+        // diff (`grep "[TREE_DIAG]" log | sort`) lines up dyn-vs-static fields.
+        static int s_staticPrinted = 0;
+        if (s_treeDiagTrace && s_staticPrinted < 8) {
+            ++s_staticPrinted;
+            TREE_DIAG("path=stat typeID=%u flags=0x%x lightIdx=%u colOff=%u tx=%.2f ty=%.2f tz=%.2f fog=%.3f,%.3f,%.3f,%.3f hi=%.3f,%.3f,%.3f,%.3f bucketInsts=%zu",
+                updated.typeID, updated.flags, updated.lightDataIndex, updated.firstColorOffset,
+                // Same offset fix as submit() — translation at [3]/[7]/[11], not [12..14].
+                updated.modelMatrix[3], updated.modelMatrix[7], updated.modelMatrix[11],
+                updated.fogRGB[0], updated.fogRGB[1], updated.fogRGB[2], updated.fogRGB[3],
+                updated.aRGBHighlight[0], updated.aRGBHighlight[1], updated.aRGBHighlight[2], updated.aRGBHighlight[3],
+                bucket.instances.size());
+        }
+    }
     bucket.instances.push_back(updated);
     // Zero-fill colors. Normal render ignores the Colors SSBO (binding 1);
     // debug addr-mode 4 shows black for static-registry instances.

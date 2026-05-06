@@ -566,6 +566,9 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	// Slice 2 (object-offload) substrate: never set true in Stage 2.A.
 	needsFullBakeNextFrame = false;
 
+	// Stage 3.D: zero-init static-registry state (mirror of TreeAppearance::init).
+	staticReg = {};
+
 	paintScheme = -1;
 	objectNameId = 30469;
 	hazeFactor = 0.0f;
@@ -1595,8 +1598,36 @@ long BldgAppearance::render (long depthFixup)
 		{
 			GpuStaticPropBatcher::instance().recordEligibleActor(
 				GpuStaticPropPopulation::Building);
-			if (bldgShape)
+
+			// Stage 3.D: static registry fast path (mirror of TreeAppearance
+			// at bdactor.cpp:4123). Set MC2_FORCE_DYNAMIC_BUILDINGS=1 to force
+			// fallback to dynamic submitMultiShape for boundary diagnosis.
+			if (IsStaticNow()) {
+				static const bool s_forceDynamicBldgs =
+				    (getenv("MC2_FORCE_DYNAMIC_BUILDINGS") != nullptr);
+				if (s_forceDynamicBldgs) {
+					invalidateStaticRegistration();
+					// Fall through to the dynamic path below.
+				} else if (bldgShape && bldgShape->getCachedGpuLightIndex() == UINT32_MAX) {
+					// Light gather failed this frame — invalidate so dynamic
+					// path re-runs and re-registers next frame.
+					invalidateStaticRegistration();
+				} else {
+					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex);
+					submittedToGpu = true;
+				}
+			}
+
+			if (!submittedToGpu && bldgShape)
 			{
+				// Stage 3.D: shape-swap invalidation. IsStaticNow's
+				// staticReg.shape==bldgShape check routed us here when
+				// bldgShape was reassigned (LOD swap, damage→bldgDmgShape),
+				// but staticReg.registered=true still blocks the registration
+				// block below. Invalidate the stale entry first.
+				if (staticReg.registered && staticReg.shape != bldgShape)
+					invalidateStaticRegistration();
+
 				// Slice 2 (object-offload) — Stage 2.C+: pass appearType->name
 				// as callerName so [OBJBATCHER v1] event=late_register can
 				// identify which actor class owns the unregistered type.
@@ -1608,16 +1639,27 @@ long BldgAppearance::render (long depthFixup)
 				// type was unregistered, mark the actor for full-bake on the
 				// NEXT update — defensive hygiene that ensures positions-only
 				// is never run on this actor before its type registers.
-				// In stock missions the type is permanently unregistered for
-				// the "two known types" (slice 1 spec lines 489-490); the
-				// flag becomes a no-op since isMultiShapeEligibleForGpuObjects
-				// already returns false for them at update. The actor renders
-				// correctly via legacy Render() below, with fresh .argb from
-				// full-bake at update.
 				if (!submittedToGpu &&
 				    GpuStaticPropBatcher::instance().wasLastFailureLateRegistration())
 				{
 					needsFullBakeNextFrame = true;
+					invalidateStaticRegistration();  // clear any stale registration
+				}
+
+				// Stage 3.D: registration block. On the first successful full-bake
+				// submission with no late-reg flag AND with this instance currently
+				// static-eligible, snapshot the leaf batch into the registry.
+				// Subsequent frames use the static path above.
+				if (submittedToGpu && !staticReg.registered
+				        && GpuStaticPropRegistry::isEnabled()
+				        && !needsFullBakeNextFrame
+				        && isStaticEligible()) {
+					const auto& batch =
+						GpuStaticPropBatcher::instance().getLastBuiltBatch();
+					staticReg.recipeIndex = GpuStaticPropRegistry::registerRecipe(
+						bldgShape, batch);
+					staticReg.registered  = (staticReg.recipeIndex >= 0);
+					staticReg.shape       = bldgShape;
 				}
 			}
 			if (!submittedToGpu)
@@ -2571,8 +2613,80 @@ void BldgAppearance::flashBuilding (float dur, float fDuration, DWORD color)
 }
 
 //-----------------------------------------------------------------------------
+// Stage 3.D: BldgAppearance static-registry path. Mirror of TreeAppearance's
+// IsStaticNow / touch / invalidateStaticRegistration / isStaticEligible.
+// Registry-replay eligibility for buildings is stricter than for trees because
+// buildings have many dynamic states (animation, spin, flash, destruct FX).
+// memory/bldg_animation_lod_swap_unsafe.md is the load-bearing reason: animated
+// types share LOD-0 node-index state across instances, so replaying a recipe
+// for an animated building drives the wrong node when LOD swaps.
+
+namespace {
+	// Type-level "any animation defined for this building type". Even if the
+	// current instance isn't actively animating, an animated TYPE is excluded
+	// from the static path because LOD swap could surface the animation later
+	// and break the cached recipe.
+	bool bldgTypeHasAnimations(const BldgAppearanceType* t) {
+		if (!t) return false;
+		for (long i = 0; i < MAX_BD_ANIMATIONS; ++i) {
+			if (t->bdAnimData[i] != nullptr) return true;
+		}
+		return false;
+	}
+} // anon namespace
+
+bool BldgAppearance::isStaticEligible() const
+{
+	// Type-level disqualifiers: this building TYPE is dynamic by design.
+	if (!appearType)                          return false;
+	if (appearType->spinMe)                   return false;
+	if (bldgTypeHasAnimations(appearType))    return false;
+	// Instance-level disqualifiers: this PARTICULAR building is currently
+	// mutating in a way the cached recipe can't reflect.
+	if (drawFlash)                            return false;
+	if (destructFX)                           return false;
+	if (activity)                             return false;
+	if (activity1)                            return false;
+	if (bdAnimationState != -1)               return false;  // currently animating
+	return true;
+}
+
+bool BldgAppearance::IsStaticNow() const
+{
+	return staticReg.registered
+		&& staticReg.shape == bldgShape
+		&& !needsFullBakeNextFrame
+		&& isStaticEligible();
+}
+
+void BldgAppearance::touch()
+{
+	// Only fires when MC2_STATIC_UPDATE_SKIP=1; default config keeps update()
+	// running every frame and CacheGpuLightData() at bdactor.cpp:2248 refreshes
+	// the cached UBO slot index. ResubmitCachedGpuLightData re-submits this
+	// actor's already-populated lightData_ via the dedup-cache — no
+	// s_listOfLights dependency. Touch() advances lastTurnTransformed so any
+	// legacy fallback path's staleness guard passes.
+	if (bldgShape) {
+		bldgShape->ResubmitCachedGpuLightData();
+		bldgShape->Touch();
+	}
+}
+
+void BldgAppearance::invalidateStaticRegistration()
+{
+	if (staticReg.registered && staticReg.recipeIndex >= 0)
+		GpuStaticPropRegistry::invalidate(staticReg.recipeIndex);
+	staticReg = {};
+}
+
+//-----------------------------------------------------------------------------
 void BldgAppearance::destroy (void)
 {
+	// Stage 3.D: NULL the registry's RecipeRange::multi pointer before
+	// bldgShape is freed below. Mirrors TreeAppearance::destroy ordering.
+	invalidateStaticRegistration();
+
 	if ( bldgShape )
 	{
 		delete bldgShape;
@@ -4121,10 +4235,18 @@ long TreeAppearance::render (long depthFixup)
 			// Does NOT return early — selection visualization (drawBars/drawBrackets)
 			// at lines 4141-4161 must still run if selected is non-zero.
 			if (IsStaticNow()) {
-				// touch() called ResubmitCachedGpuLightData() this frame, refreshing
-				// cachedGpuLightIndex_ from the last update()'s lightData_ snapshot.
-				// Just read the already-fresh slot index here.
-				if (treeShape->getCachedGpuLightIndex() == UINT32_MAX) {
+				// Diagnostic 2026-05-05 (advisor-recommended boundary test): set
+				// MC2_FORCE_DYNAMIC_TREES=1 to force the static path to fall back
+				// to dynamic submitMultiShape. If "black billboard square" trees
+				// disappear with the env var set, the static replay path is the
+				// failing boundary. If they remain, shared draw/material/global
+				// state is guilty. Revert by unsetting the env var (no rebuild).
+				static const bool s_forceDynamicTrees =
+				    (getenv("MC2_FORCE_DYNAMIC_TREES") != nullptr);
+				if (s_forceDynamicTrees) {
+					invalidateStaticRegistration();
+					// Fall through to the dynamic path below.
+				} else if (treeShape->getCachedGpuLightIndex() == UINT32_MAX) {
 					// Light-data gather failed this frame — invalidate so the dynamic
 					// path re-runs and re-registers next frame with correct lights.
 					invalidateStaticRegistration();

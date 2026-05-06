@@ -202,6 +202,17 @@ class BldgAppearance : public ObjectAppearance
 		// late-reg setter and the eligibility-hoist consumer.
 		bool										needsFullBakeNextFrame;
 
+		// Stage 3.D: per-instance static-registry state. Mirrors the struct
+		// inside TreeAppearance — same fields, same semantics. Set when
+		// render() successfully baked + registered a recipe; cleared by
+		// invalidateStaticRegistration() on shape swap, fall, or destroy.
+		struct StaticRegistration {
+			bool             registered;   // true iff recipeIndex is valid
+			TG_MultiShapePtr shape;        // bldgShape at registration time; detects swap
+			int32_t          recipeIndex;  // index into GpuStaticPropRegistry s_recipeRanges
+		};
+		StaticRegistration							staticReg;
+
 		long										bdAnimationState;
 		float										currentFrame;
 		float										bdFrameRate;
@@ -272,6 +283,15 @@ class BldgAppearance : public ObjectAppearance
 		virtual long renderShadows (void);
 
 		virtual void destroy (void);
+
+		// Stage 3.D: static-registry overrides (mirror of TreeAppearance).
+		virtual bool IsStaticNow() const override;
+		virtual void touch() override;
+		virtual void invalidateStaticRegistration() override;
+		// Eligibility split out from IsStaticNow so the registration block
+		// can pre-filter at submit time (don't bake a recipe for an animated
+		// or actively-fx'd building — it would never enter the static path).
+		bool isStaticEligible() const;
 
 		~BldgAppearance (void)
 		{
