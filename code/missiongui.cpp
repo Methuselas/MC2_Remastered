@@ -772,6 +772,7 @@ void MissionInterfaceManager::update (void)
 		updateTarget(bGui);
 	}
 
+	{ ZoneScopedN("MIF.PostTarget");
 	//------------------------------------
 	// Attila (Strategic Commander) Next
 	attilaXAxis 	= userInput->getAttilaXAxis();  
@@ -916,6 +917,8 @@ void MissionInterfaceManager::update (void)
 			}
 		}
 	}
+
+	} // MIF.PostTarget
 
 	if ( !bLeftDouble && !( lastUpdateDoubleClick &&
 		userInput->getMouseLeftButtonState() == MC2_MOUSE_DOWN ) )// check for the hold )
