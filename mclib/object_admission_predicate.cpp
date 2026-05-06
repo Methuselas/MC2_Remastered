@@ -19,10 +19,10 @@ const char* modeLabel(ObjectAdmissionPredicateMode m) {
 void objectAdmissionPredicate_init() {
     if (s_initialized) return;
     const char* env = std::getenv("MC2_OBJECT_ADMISSION_PREDICATE");
-    if (env && std::strcmp(env, "modern") == 0) {
-        s_mode = ObjectAdmissionPredicateMode::Modern;
-    } else {
+    if (env && std::strcmp(env, "legacy") == 0) {
         s_mode = ObjectAdmissionPredicateMode::Legacy;
+    } else {
+        s_mode = ObjectAdmissionPredicateMode::Modern;  // default
     }
     s_initialized = true;
     std::printf("[INSTR v1] object_admission_mode=%s\n", modeLabel(s_mode));
