@@ -932,13 +932,14 @@ void ControlGui::update( bool bPaused, bool bLOS )
 	mouseInVehicleStopButton = 0;
 	bool bMouseInButton = 0;
 
-	showServerMissing();
+	{ ZoneScopedN("CGui.ServerMissing"); showServerMissing(); }
 
 	if ( bPaused )
-		pauseWnd->update();
+	{ ZoneScopedN("CGui.PauseWnd"); pauseWnd->update(); }
 
 	if (moviePlaying && bMovie)
 	{
+		ZoneScopedN("CGui.Movie");
 		bool result = bMovie->update();
 		if (result)
 		{
@@ -956,7 +957,7 @@ void ControlGui::update( bool bPaused, bool bLOS )
 	{
 		getButton( idToUnPress )->press( false );
 	}
-	
+
 	float mouseX = userInput->getMouseX();
 	float mouseY = userInput->getMouseY();
 
@@ -1067,6 +1068,8 @@ void ControlGui::update( bool bPaused, bool bLOS )
 		}
 	}
 	} // CGui.RosterScan
+
+	{ ZoneScopedN("CGui.MoverState");
 
 	if ( !holdPositionCount )
 	{
@@ -1186,6 +1189,8 @@ void ControlGui::update( bool bPaused, bool bLOS )
 		getButton( FIRE_FROM_CURRENT_POS )->press( true );
 	else
 		getButton( FIRE_FROM_CURRENT_POS )->press( false );
+
+	} // CGui.MoverState
 
 	bool bMouseInsideTacArea = 0;
 
