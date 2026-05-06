@@ -60,7 +60,7 @@ bool substrate_isEnabled() {
 // ---------------------------------------------------------------------------
 
 GLuint substrate_getInstanceSsboName() {
-    return s_instanceSsbo;
+    return s_initialized ? s_instanceSsbo : 0;
 }
 
 uint32_t substrate_getInstanceSsboBindingPoint() {
@@ -175,6 +175,7 @@ void substrate_frameBegin() {
 
 void substrate_submitDynamicActor(const GpuActorRecord& rec) {
     if (!substrate_isEnabled() || !s_initialized) return;
+    if (!s_mappedPtr) return;
 
     if (s_perFrameCount >= s_maxActors) {
         // Overflow: clamp and log (once per overflow event).
