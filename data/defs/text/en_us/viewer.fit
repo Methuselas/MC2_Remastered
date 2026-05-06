@@ -1,0 +1,46 @@
+/***************************************************************
+ * FILENAME: viewer.fit
+ * DESCRIPTION: Viewer localized text definitions from source-string migration.
+ *
+ * AUTHOR: Microsoft / FASA source data
+ * CREATED: Unknown
+ *
+ * UPDATED BY: Methuselas
+ * UPDATED: 2026-05-05
+ *
+ * CHANGES:
+ * - Built collapsed exact-text source string candidates; existing text keys reused when exact text already exists.
+ ***************************************************************/
+
+// Generated for MC2R data/defs master FIT set.
+// Exact duplicate visible text is collapsed to one String key.
+// Legacy/resource/menu/control identity is preserved in alias/binding FITs.
+
+String {
+    key = "viewer.source.fst"
+    text = ".fst"
+    source = "source_audit"
+    migrationState = "candidate_collapsed_v1"
+    textHash = "4b145b2d3a81"
+    occurrenceCount = 1
+    activeOccurrenceCount = 1
+    sourceAreas = "Viewer"
+    categories = "visible_review_candidate"
+    firstSourceFile = "Viewer/View.cpp"
+    firstLine = 534
+}
+
+String {
+    key = "viewer.source.mechcommander_2_encyclopedia"
+    text = "MechCommander 2 Encyclopedia"
+    source = "source_audit"
+    migrationState = "candidate_collapsed_v1"
+    textHash = "6ffdf478efb8"
+    occurrenceCount = 1
+    activeOccurrenceCount = 1
+    sourceAreas = "Viewer"
+    categories = "visible_review_candidate"
+    firstSourceFile = "Viewer/View.cpp"
+    firstLine = 702
+}
+
