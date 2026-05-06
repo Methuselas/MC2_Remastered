@@ -174,16 +174,9 @@ Texture create2DTexture(int w, int h, TexFormat fmt, const uint8_t* texdata, boo
 	if (wantMipmaps) {
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-		if (GLEW_ARB_texture_filter_anisotropic || GLEW_EXT_texture_filter_anisotropic) {
-			GLfloat maxAniso = 1.0f;
-			glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-			glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,
-			                (maxAniso < 16.0f) ? maxAniso : 16.0f);
-		}
 	} else {
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		// GL_NEAREST: AF is a no-op, skip.
 	}
 
 	glTexImage2D(GL_TEXTURE_2D, 0, textureInternalFormats[fmt],
@@ -312,17 +305,6 @@ void setSamplerParams(TexType tt, TexAddressMode address_mode, TexFilterMode fil
 
 	glTexParameteri(tex_type, GL_TEXTURE_MAG_FILTER, tfm);
 	glTexParameteri(tex_type, GL_TEXTURE_MIN_FILTER, tfm);
-
-	// Add AF to bilinear-or-better paths.  GL_NEAREST textures (font/UI/HUD)
-	// get no benefit from AF and are left at the driver default of 1x.
-	if (filter != TFM_NEAREST) {
-		if (GLEW_ARB_texture_filter_anisotropic || GLEW_EXT_texture_filter_anisotropic) {
-			GLfloat maxAniso = 1.0f;
-			glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-			glTexParameterf(tex_type, GL_TEXTURE_MAX_ANISOTROPY,
-			                (maxAniso < 16.0f) ? maxAniso : 16.0f);
-		}
-	}
 
 }
 

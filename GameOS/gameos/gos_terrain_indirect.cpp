@@ -658,12 +658,6 @@ void BuildCementCatalogAtlas() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    if (GLEW_ARB_texture_filter_anisotropic || GLEW_EXT_texture_filter_anisotropic) {
-        GLfloat maxAniso = 1.0f;
-        glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,
-                        (maxAniso < 16.0f) ? maxAniso : 16.0f);
-    }
 
     // Restore state (V24).
     glPixelStorei(GL_PACK_ALIGNMENT, savedPackAlign);
@@ -1061,10 +1055,9 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
 
 // Include TERRAIN_DEPTH_FUDGE for the per-tri pz check.
 // Defined in quad.cpp as a local constant, re-stated here.
-// sync: quad.cpp:1707 uses FUDGE=0.002f (doubled 2026-05-06 after
-// glClipControl(ZERO_TO_ONE) adoption — see quad.cpp comment).
+// sync: quad.cpp:1832 uses `vertices[c]->pz + TERRAIN_DEPTH_FUDGE` with FUDGE=0.001f
 #ifndef TERRAIN_DEPTH_FUDGE
-static constexpr float TERRAIN_DEPTH_FUDGE = 0.002f;
+static constexpr float TERRAIN_DEPTH_FUDGE = 0.001f;
 #endif
 
 namespace {
