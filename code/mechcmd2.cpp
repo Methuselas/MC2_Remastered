@@ -2232,14 +2232,20 @@ void __stdcall DoGameLogic()
 			{
 				long result = mission->update();
 
-				// Smoke-mode gameplay-ready marker (Task 6b). Fires exactly once
-				// per process when Mission::active becomes true (set in Mission::start()).
+				// Gameplay-ready marker. Fires exactly once per process when
+				// Mission::active becomes true (set in Mission::start()).
+				// Drives both smoke-mode timing AND the in-mission frame cap
+				// selection in gameosmain.cpp; must run regardless of smoke mode.
 				{
 					static bool s_missionReadyMarked = false;
-					if (SmokeMode::state().enabled && !s_missionReadyMarked &&
+					if (!s_missionReadyMarked &&
 						mission && mission->isActive()) {
 						SmokeMode::markMissionReady();
 						s_missionReadyMarked = true;
+						if (getenv("MC2_FRAMECAP_TRACE")) {
+							fprintf(stderr, "[FRAMECAP] markMissionReady fired (mission active)\n");
+							fflush(stderr);
+						}
 					}
 				}
 
