@@ -38,17 +38,14 @@ static bool parseEnvBoolWithDefault(const char* name, bool defaultValue) {
 // TreeAppearance::render() still works as the per-tree operator escape.
 static const bool s_enabled             = parseEnvBoolWithDefault("MC2_STATIC_PROP_REGISTRY",          true);
 static const bool s_trace               = parseEnvBoolWithDefault("MC2_STATIC_PROP_TRACE",              false);
-// Task 5 (Track B): opt-in bulk registration at mission load.
-// Default OFF until verified across all mission + biome variants.
-// Set MC2_STATIC_PROP_MISSION_LOAD_REG=1 to enable.
+// Task 9 (Track B): mission-load + late-spawn registration ON by default.
+// Soak started 2026-05-06; all Task 8 parity gates passed.
+// Set MC2_STATIC_PROP_MISSION_LOAD_REG=0 to opt out.
 static const bool s_missionLoadRegEnabled =
-    parseEnvBoolWithDefault("MC2_STATIC_PROP_MISSION_LOAD_REG", false);
-// Task 6 (Track B): opt-in late-spawn registration for actors spawned after
-// mission load (artillery, reinforcements, warrior waypoint markers).
-// Default OFF until verified; Task 9 flips alongside mission-load reg.
-// Set MC2_STATIC_PROP_LATE_SPAWN_REG=1 to enable.
+    parseEnvBoolWithDefault("MC2_STATIC_PROP_MISSION_LOAD_REG", true);
+// Set MC2_STATIC_PROP_LATE_SPAWN_REG=0 to opt out.
 static const bool s_lateSpawnRegEnabled =
-    parseEnvBoolWithDefault("MC2_STATIC_PROP_LATE_SPAWN_REG", false);
+    parseEnvBoolWithDefault("MC2_STATIC_PROP_LATE_SPAWN_REG", true);
 
 #define SP_TRACE(fmt, ...) \
     do { if (s_trace) { printf("[STATIC_PROP] " fmt "\n", ##__VA_ARGS__); \
