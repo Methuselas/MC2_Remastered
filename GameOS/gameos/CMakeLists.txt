@@ -28,6 +28,7 @@ set(SOURCES ${SOURCES}
     gos_input.cpp
     asset_scale.cpp
     gpu_cull_record.cpp
+    gpu_cull_substrate.cpp
 
     utils/stream.cpp
     utils/camera.cpp
