@@ -124,6 +124,7 @@
 
 #include<gameos.hpp>
 #include "../GameOS/gameos/gpu_cull_substrate.h"  // C0-3: GPU cull substrate init/shutdown
+#include "../GameOS/gameos/gpu_cull_compute.h"   // C1a: GPU visibility compute dispatch
 
 //----------------------------------------------------------------------------------
 // Macro Definitions
@@ -504,6 +505,14 @@ long Mission::update (void)
 			ObjectManager->updateAppearancesOnly( true, true, true );
 		else
 			ObjectManager->update(true, true, true);
+
+		// C1a: GPU visibility mirror dispatch. Runs after substrate_flushUpload()
+		// (which is called at the end of ObjectManager->update()). Skips silently
+		// if MC2_GPU_CULL is not set or if terrain MVP is not yet available.
+		if (gpu_cull::compute_isEnabled()) {
+			gpu_cull::compute_dispatch();
+			gpu_cull::compute_emitParitySummary();
+		}
 
 		{ ZoneScopedN("GameLogic.Mission.Craters"); craterManager->update(); }
 		
@@ -2759,6 +2768,9 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 		const uint32_t maxActors = static_cast<uint32_t>(ObjectManager->getMaxObjects());
 		gpu_cull::substrate_init(maxActors + maxActors / 4u);
 	}
+	// C1a: init GPU visibility compute pipeline (shadow/diagnostic mode).
+	// No-op if MC2_GPU_CULL env var is not set (default off).
+	gpu_cull::compute_init();
 
 	//-------------------------
 	// Load the mech objects...
@@ -3177,6 +3189,8 @@ void Mission::destroy (bool initLogistics)
 {
 	gos_SetHudScaleActive(false);  // back to 100% for menus/logistics
 
+	// C1a: release GPU compute resources at mission teardown.
+	gpu_cull::compute_shutdown();
 	// C0-3: release GPU cull substrate SSBO at mission teardown.
 	// substrate_init() handles re-init on next mission load (calls shutdown internally).
 	gpu_cull::substrate_shutdown();

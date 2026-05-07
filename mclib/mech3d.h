@@ -473,6 +473,13 @@ class Mech3DAppearance: public ObjectAppearance
 			return mechType;
 		}
 
+		// C1a: expose OBBRadius via the base-class virtual so emitGpuCullRecord
+		// can call app->getRadius() uniformly without reaching into protected state.
+		virtual float getRadius (void)
+		{
+			return OBBRadius > 0.0f ? OBBRadius : 0.0f;
+		}
+
 		virtual long update (bool animate = true);
 		virtual long render (long depthFixup = 0);
 		virtual long renderShadows (void);

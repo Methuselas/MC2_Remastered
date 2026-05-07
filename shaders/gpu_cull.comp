@@ -1,0 +1,120 @@
+// gpu_cull.comp — Track C slice C1a: GPU visibility mirror (diagnostic / shadow mode).
+//
+// Runs every frame alongside the CPU render path. CPU still renders normally —
+// zero change to rendering output. This shader only fills the debug SSBO at
+// binding 9 so that compute_emitParitySummary() can compare GPU vs CPU inView.
+//
+// C1a is NOT C1b: this shader does NOT write DrawElementsIndirectCommand structs.
+// DO NOT add indirect-draw output until C1b is explicitly greenlit.
+//
+// #version 430 is injected by makeComputeProgram() — do NOT add it here.
+
+layout(local_size_x = 64) in;
+
+// ---------------------------------------------------------------------------
+// GpuActorRecord: mirror of gpu_cull_record.h (std430, 64 B per element).
+// LOCKSTEP: field order and types must match the C++ struct exactly.
+// ---------------------------------------------------------------------------
+struct GpuActorRecord {
+    vec3     worldCenter;      // offset 0  (12 B)
+    float    boundingRadius;   // offset 12 (4 B)
+    vec3     worldAabbMin;     // offset 16 (12 B)
+    uint     category;         // offset 28 (4 B)
+    vec3     worldAabbMax;     // offset 32 (12 B)
+    uint     flags;            // offset 44 (4 B)
+    uint     actorId;          // offset 48 (4 B)
+    uint     prevVisibilityBit;// offset 52 (4 B)
+    uint     consumerFlags;    // offset 56 (4 B)
+    uint     _pad0;            // offset 60 (4 B)
+};
+
+struct GpuActorRecordHeader {
+    uint recordCount;    // set by CPU at flushUpload()
+    uint recordCapacity; // mission-load constant
+    uint visibleCount;   // written by compute (C1+); C1a writes debug SSBO, not this
+    uint _pad0;
+};
+
+// ---------------------------------------------------------------------------
+// Binding 8: input from C0 substrate (persistent-mapped triple-buffered SSBO).
+// Same binding point as SUBSTRATE_SSBO_BINDING in gpu_cull_substrate.cpp.
+// ---------------------------------------------------------------------------
+layout(std430, binding = 8) readonly buffer RecordsBuf {
+    GpuActorRecordHeader hdr;
+    GpuActorRecord recs[];
+};
+
+// ---------------------------------------------------------------------------
+// Binding 9: debug output (C1a only).
+// Layout: [gpuVisibleCount: uint][gpuCulledCount: uint][visibilityResults: uint[]]
+// visibilityResults[i] = 1 if GPU admits actor i, 0 if culled.
+// ---------------------------------------------------------------------------
+layout(std430, binding = 9) buffer DebugOut {
+    uint gpuVisibleCount;    // total actors GPU admits (this frame)
+    uint gpuCulledCount;     // total actors GPU rejects (this frame)
+    uint visibilityResults[];// per-actor: 1=visible, 0=culled
+};
+
+// ---------------------------------------------------------------------------
+// Binding 2: frustum UBO — view-projection matrix + ring-slot info.
+// gos_GetTerrainMVPMat4() returns a 16-float row-major matrix; uploaded GL_FALSE.
+// In GLSL, viewProj * vec4(center, 1.0) implements the row-vector convention
+// and gives the correct clip-space result.
+//
+// slotRecordStart: index (in GpuActorRecord units) of the first record in the
+//   current ring slot. Because the substrate is triple-buffered, recs[] in the
+//   full SSBO contains RING_FRAMES * capacity records. We index into the active
+//   slot as recs[slotRecordStart + i].
+// slotRecordCount: number of valid records in the active slot (= hdr.recordCount
+//   for the slot; redundant with hdr but avoids reading the slot-0 header when
+//   the active slot is 1 or 2).
+// ---------------------------------------------------------------------------
+layout(std140, binding = 2) uniform CullUBO {
+    mat4 viewProj;
+    uint slotRecordStart;  // index in recs[] of the active slot's first record
+    uint slotRecordCount;  // number of valid records in the active slot
+    uint _pad0;
+    uint _pad1;
+};
+
+// ---------------------------------------------------------------------------
+// Lockstep port of mclib/object_admission_predicate.cpp clipSpaceFrustumAdmit().
+// See shaders/gpu_cull_predicate.glsl for the canonical definition.
+// Both files must change together in the same commit (cross-slice lockstep rule).
+// ---------------------------------------------------------------------------
+#include <gpu_cull_predicate.glsl>
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+
+    // Bounds check using the active slot's record count from the UBO.
+    // We use slotRecordCount (from the UBO) rather than hdr.recordCount because
+    // hdr is always the header of the FIRST ring slot (offset 0), whereas the
+    // active slot may be slot 1 or slot 2. The UBO field is set correctly by
+    // compute_dispatch() for whichever slot was just flushed.
+    if (i >= slotRecordCount) return;
+
+    // Index into the active ring slot using slotRecordStart offset.
+    GpuActorRecord rec = recs[slotRecordStart + i];
+
+    // Transform world-space center to clip space.
+    vec4 clip = viewProj * vec4(rec.worldCenter, 1.0);
+
+    // Frustum cull (lockstep mirror of C++ clipSpaceFrustumAdmit).
+    bool visible = clipSpaceFrustumAdmit(clip);
+
+    // Flag_AlwaysVisible (bit 0) overrides cull — same as CPU path.
+    if ((rec.flags & 0x1u) != 0u) visible = true;
+
+    // Write per-actor result.
+    visibilityResults[i] = visible ? 1u : 0u;
+
+    // Accumulate totals via atomic operations (safe across the workgroup).
+    if (visible)
+        atomicAdd(gpuVisibleCount, 1u);
+    else
+        atomicAdd(gpuCulledCount, 1u);
+}

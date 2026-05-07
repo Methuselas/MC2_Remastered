@@ -246,6 +246,13 @@ class GVAppearance : public ObjectAppearance
 			return appearType;
 		}
 
+		// C1a: expose OBBRadius via the base-class virtual so emitGpuCullRecord
+		// can call app->getRadius() uniformly.
+		virtual float getRadius (void)
+		{
+			return OBBRadius > 0.0f ? OBBRadius : 0.0f;
+		}
+
 		GVAppearance (void)
 		{
 			init();

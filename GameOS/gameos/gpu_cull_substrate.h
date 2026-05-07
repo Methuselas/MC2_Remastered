@@ -34,4 +34,17 @@ uint32_t substrate_getInstanceSsboBindingPoint();
 // Lazy env probe — safe to call at any time.
 bool substrate_isEnabled();
 
+// Returns the number of records with prevVisibilityBit==1 from the most recently
+// flushed frame. Updated at flushUpload() time. Used by C1a parity summary.
+uint32_t substrate_getCpuVisibleCount();
+
+// Returns the byte offset of the most recently flushed ring slot within the
+// substrate SSBO. Use with glBindBufferRange() so the compute shader reads the
+// correct slot (C1a). Returns 0 if not initialized.
+GLintptr substrate_getCurrentSlotOffset();
+
+// Returns the byte size of one ring slot (header + records).
+// Use with glBindBufferRange() to bound the binding range. Returns 0 if not init.
+GLsizeiptr substrate_getSlotBytes();
+
 } // namespace gpu_cull

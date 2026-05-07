@@ -134,23 +134,38 @@ static const char* catNameForCategory(gpu_cull::GpuActorCategory cat) {
 // C0-3: GPU cull record emitter
 // Called inside GameObjectManager::update() loops, after update() returns,
 // gated on getExists() so the emit is observer-only (no lifecycle effect).
-// Category and consumerFlags are supplied by each call site — no RTTI needed.
+// Category and consumerFlags are supplied by each call site.
+//
+// C1a: bounding radius is now derived from the concrete appearance type:
+//   - Mech3DAppearance and GVAppearance: direct OBBRadius field read (no virtual call)
+//   - BldgAppearance / BDActorAppearance: virtual getRadius() returns OBBRadius
+//   - All other types: virtual getRadius(); fall back to 30.0f if it returns 0.0f
 // ---------------------------------------------------------------------------
 static void emitGpuCullRecord(GameObjectPtr obj,
                                gpu_cull::GpuActorCategory cat,
-                               uint32_t consumerFlags,
-                               float boundingRadius)
+                               uint32_t consumerFlags)
 {
     if (!gpu_cull::substrate_isEnabled()) return;
     AppearancePtr app = obj->getAppearance();
     if (!app) return;
 
+    // C1a: derive bounding radius from concrete type via virtual getRadius().
+    // Mech3DAppearance and GVAppearance now override getRadius() to return OBBRadius.
+    // BldgAppearance and BDActorAppearance already overrode it. Others return 0.0f.
+    // Fall back to 30.0f if getRadius() returns 0.0f (defensive).
+    float boundingRadius = app->getRadius();
+    if (boundingRadius <= 0.0f) boundingRadius = 30.0f;
+
     gpu_cull::GpuActorRecord rec{};
-    // MC2 world coords: x=east, y=north, z=elev.
-    // Convert to cameraPos (Stuff/MLR) space: cx=-pos.x, cy=pos.z, cz=pos.y.
-    rec.worldCenter[0] = -obj->position.x;
-    rec.worldCenter[1] =  obj->position.z;
-    rec.worldCenter[2] =  obj->position.y;
+    // Store worldCenter in raw MC2 world coords (x=east, y=north, z=elev).
+    // The terrainMVP (gos_GetTerrainMVPMat4) already bakes the cameraPos axis swap
+    // into its row layout: AW*v = worldToClip*(-vx, vz, vy, 1)^T.
+    // Feeding pre-swapped cameraPos here would double-apply the swap and mis-cull
+    // everything. The CPU projectZ path does its own swap before multiplying by
+    // worldToClip — so both paths agree when worldCenter = (pos.x, pos.y, pos.z).
+    rec.worldCenter[0] = obj->position.x;
+    rec.worldCenter[1] = obj->position.y;
+    rec.worldCenter[2] = obj->position.z;
     rec.boundingRadius = boundingRadius;
     // AABB: center ± radius (C0 placeholder; C0-4 AABB parity validates).
     rec.worldAabbMin[0] = rec.worldCenter[0] - boundingRadius;
@@ -162,7 +177,36 @@ static void emitGpuCullRecord(GameObjectPtr obj,
     rec.category        = static_cast<uint32_t>(cat) & static_cast<uint32_t>(gpu_cull::CategoryMask);
     rec.flags           = gpu_cull::Flag_None;
     rec.actorId         = static_cast<uint32_t>(obj->getHandle());
-    rec.prevVisibilityBit = app->inView ? 1u : 0u;
+
+    // C1a: prevVisibilityBit uses the MODERN clip-space frustum test so that
+    // compute_emitParitySummary() compares GPU cull vs CPU clip-space cull on the
+    // same MVP (previous frame's MVP — same one the compute shader will use).
+    // The legacy app->inView uses screen-rect admission which wraps behind-camera
+    // actors into screen bounds (clip.w < 0 → negative rhw → coordinates flip),
+    // producing false_neg=hundreds in the parity summary. The modern test correctly
+    // rejects clip.w <= 0.
+    // fallback: if MVP not yet valid (frame 0), use legacy inView.
+    {
+        uint32_t modernBit = app->inView ? 1u : 0u;
+        const float* mvp = gos_GetTerrainMVPMat4();
+        if (mvp) {
+            // GLSL: clip = mat * vec4(center, 1) where mat = AW^T (GL_FALSE row-major upload).
+            // In column-major GLSL: mat(i,j) = mvp[j*4+i].
+            // clip[i] = sum_j(mat(i,j)*v[j]) = sum_j(mvp[j*4+i]*v[j]).
+            const float cx = rec.worldCenter[0], cy = rec.worldCenter[1], cz = rec.worldCenter[2];
+            const float clipx = mvp[0]*cx + mvp[4]*cy + mvp[8]*cz  + mvp[12];
+            const float clipy = mvp[1]*cx + mvp[5]*cy + mvp[9]*cz  + mvp[13];
+            const float clipz = mvp[2]*cx + mvp[6]*cy + mvp[10]*cz + mvp[14];
+            const float clipw = mvp[3]*cx + mvp[7]*cy + mvp[11]*cz + mvp[15];
+            // clipSpaceFrustumAdmit: w > 0, |x| <= w, |y| <= w, 0 <= z <= w.
+            const bool admit = (clipw > 0.0f) &&
+                               (clipx >= -clipw) && (clipx <= clipw) &&
+                               (clipy >= -clipw) && (clipy <= clipw) &&
+                               (clipz >= 0.0f)   && (clipz <= clipw);
+            modernBit = admit ? 1u : 0u;
+        }
+        rec.prevVisibilityBit = modernBit;
+    }
     rec.consumerFlags   = consumerFlags;
     rec._pad0           = 0;
 
@@ -1198,11 +1242,20 @@ void GameObjectManager::registerStaticPropsForMissionLoad() {
 
 	int totalEnumerated = 0, totalRegistered = 0, totalSkipped = 0;
 
+	// Push game-object position/rotation into Appearance::position/rotation
+	// before registerStatic() reads them. Without this, buildings/turrets/gates
+	// register at world origin (ghost-prop pile) and miss frustum admission,
+	// falling through to a broken legacy first-render path that renders them
+	// solid black. Applied uniformly to all four arrays — terrainObjects[]
+	// were already primed by primeTerrainObjectsForMissionLoad but re-priming
+	// is harmless. Known side effect: mech shadow regression (intermittent,
+	// camera-dependent); accepted trade-off until shadow path is debugged.
 	auto registerOne = [&](GameObjectPtr obj) {
 		if (!obj) return;
 		++totalEnumerated;
 		AppearancePtr app = obj->getAppearance();
 		if (!app) { ++totalSkipped; return; }
+		app->setObjectParameters(obj->getPosition(), obj->getRotation(), 0, 0, 0);
 		app->registerStatic();
 		if (app->isStaticRegistered()) ++totalRegistered;
 		else                            ++totalSkipped;
@@ -1834,8 +1887,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 				// C0-3: emit after update() so inView is fresh; gated on getExists()
 				if (specialBuildings[spBuilding] && specialBuildings[spBuilding]->getExists())
 					emitGpuCullRecord(specialBuildings[spBuilding], gpu_cull::Cat_Other,
-					                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate,
-					                  20.0f);
+					                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate);
 			}
 		}
 
@@ -1861,8 +1913,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 				// C0-3: emit after update() so inView is fresh; gated on getExists()
 				if (gates[nGates] && gates[nGates]->getExists())
 					emitGpuCullRecord(gates[nGates], gpu_cull::Cat_Gate,
-					                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate,
-					                  20.0f);
+					                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate);
 			}
 		}
 
@@ -1894,8 +1945,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 						// C0-3: emit after update() so inView is fresh; gated on getExists()
 						if (objList[objIndex] && objList[objIndex]->getExists())
 							emitGpuCullRecord(objList[objIndex], gpu_cull::Cat_Other,
-							                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate,
-							                  20.0f);
+							                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate);
 					}
 				}
 			}
@@ -1937,8 +1987,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 					if (mover->getExists())
 						emitGpuCullRecord(mover, gpu_cull::Cat_Mech,
 						                  gpu_cull::Consumer_AIGate | gpu_cull::Consumer_WeaponSpawnNode |
-						                  gpu_cull::Consumer_LifecycleGate | gpu_cull::Consumer_RenderGate,
-						                  50.0f);
+						                  gpu_cull::Consumer_LifecycleGate | gpu_cull::Consumer_RenderGate);
 				}
 			}
 		}
@@ -1961,8 +2010,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 					if (mover->getExists())
 						emitGpuCullRecord(mover, gpu_cull::Cat_GroundVeh,
 						                  gpu_cull::Consumer_AIGate | gpu_cull::Consumer_WeaponSpawnNode |
-						                  gpu_cull::Consumer_LifecycleGate | gpu_cull::Consumer_RenderGate,
-						                  50.0f);
+						                  gpu_cull::Consumer_LifecycleGate | gpu_cull::Consumer_RenderGate);
 				}
 			}
 		}
@@ -1989,8 +2037,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 					// C0-3: emit after update() so inView is fresh; gated on getExists()
 					if (turrets[i] && turrets[i]->getExists())
 						emitGpuCullRecord(turrets[i], gpu_cull::Cat_Turret,
-						                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate,
-						                  20.0f);
+						                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate);
 				}
 			}
 		}

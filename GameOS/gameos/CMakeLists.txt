@@ -30,6 +30,7 @@ set(SOURCES ${SOURCES}
     gpu_cull_record.cpp
     gpu_cull_substrate.cpp
     gpu_cull_parity.cpp
+    gpu_cull_compute.cpp
 
     utils/stream.cpp
     utils/camera.cpp

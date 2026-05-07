@@ -28,10 +28,11 @@ void parity_checkRecord(uint32_t actorId, const char* catName,
     if (!parity_isEnabled()) return;
     ++s_totalChecked;
 
-    // Convert MC2 world coords → cameraPos: cx=-pos.x, cy=pos.z, cz=pos.y
-    float expCx = -posX;
-    float expCy =  posZ;
-    float expCz =  posY;
+    // worldCenter is in raw MC2 world coords (x=east, y=north, z=elev).
+    // The terrainMVP bakes the cameraPos axis swap internally — do NOT pre-swap here.
+    float expCx = posX;
+    float expCy = posY;
+    float expCz = posZ;
 
     float dx = recCenter[0] - expCx;
     float dy = recCenter[1] - expCy;

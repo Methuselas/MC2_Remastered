@@ -258,7 +258,13 @@ def main():
                             "MC2_PROJECTZ_SUMMARY",
                             "MC2_PROJECTZ_GUARD_PX",
                             # Task 7 — cascade-safety DESTROY trace
-                            "MC2_DESTROY_TRACE")},
+                            "MC2_DESTROY_TRACE",
+                            # Track C0/C1a — GPU cull substrate + AABB parity + compute dispatch
+                            "MC2_GPU_CULL_SUBSTRATE",
+                            "MC2_GPU_CULL_AABB_PARITY",
+                            "MC2_GPU_CULL_SUBSTRATE_TRACE",
+                            "MC2_GPU_CULL",
+                            "MC2_GPU_CULL_COMPUTE_TRACE")},
             },
         )
         print(f"[runner] running {e.stem} (tier={tier} duration={duration})",

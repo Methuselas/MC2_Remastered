@@ -9,8 +9,8 @@ namespace gpu_cull {
 // Parameters:
 //   actorId   — actor handle (for log)
 //   catName   — short string: "Mech", "GV", "Gate", "Turret", "Other"
-//   recCenter — worldCenter[3] from the GpuActorRecord about to be submitted
-//   posX, posY, posZ — actor's position (MC2 world coords, pre-conversion)
+//   recCenter — worldCenter[3] from the GpuActorRecord (raw MC2 world coords)
+//   posX, posY, posZ — actor's position (MC2 world coords, same space as recCenter)
 void parity_checkRecord(uint32_t actorId, const char* catName,
                         const float recCenter[3],
                         float posX, float posY, float posZ);

@@ -7,7 +7,7 @@ namespace gpu_cull {
 // std430 layout. 16-byte aligned for SSBO array stride safety.
 // Total size: 64 bytes.
 struct alignas(16) GpuActorRecord {
-    float       worldCenter[3];      // offset 0   (12 B)
+    float       worldCenter[3];      // offset 0   (12 B) — raw MC2 world coords (x=east, y=north, z=elev)
     float       boundingRadius;      // offset 12  (4 B)
     float       worldAabbMin[3];     // offset 16  (12 B)
     uint32_t    category;            // offset 28  (4 B)

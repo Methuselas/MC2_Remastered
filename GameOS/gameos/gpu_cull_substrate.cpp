@@ -39,6 +39,9 @@ static bool      s_initialized    = false;
 static uint32_t  s_flushCount     = 0;
 static bool      s_firstFlushDone = false;
 
+// C1a: CPU-visible count from last flushUpload() — count of prevVisibilityBit==1 records.
+static uint32_t  s_cpuVisibleCount = 0;
+
 // Byte size of one ring slot: header + record array.
 static size_t    s_slotBytes      = 0;
 
@@ -66,6 +69,20 @@ GLuint substrate_getInstanceSsboName() {
 
 uint32_t substrate_getInstanceSsboBindingPoint() {
     return SUBSTRATE_SSBO_BINDING;
+}
+
+uint32_t substrate_getCpuVisibleCount() {
+    return s_cpuVisibleCount;
+}
+
+GLintptr substrate_getCurrentSlotOffset() {
+    if (!s_initialized) return 0;
+    return static_cast<GLintptr>(s_frameSlot * s_slotBytes);
+}
+
+GLsizeiptr substrate_getSlotBytes() {
+    if (!s_initialized) return 0;
+    return static_cast<GLsizeiptr>(s_slotBytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +233,17 @@ void substrate_flushUpload() {
     GpuActorRecordHeader* hdr =
         reinterpret_cast<GpuActorRecordHeader*>(
             static_cast<char*>(s_mappedPtr) + slotOffset);
+
+    // C1a: count CPU-visible records (prevVisibilityBit==1) for parity summary.
+    {
+        uint32_t cpuVis = 0;
+        const GpuActorRecord* recs = reinterpret_cast<const GpuActorRecord*>(
+            static_cast<const char*>(s_mappedPtr) + slotOffset + sizeof(GpuActorRecordHeader));
+        for (uint32_t i = 0; i < s_perFrameCount; ++i) {
+            if (recs[i].prevVisibilityBit) ++cpuVis;
+        }
+        s_cpuVisibleCount = cpuVis;
+    }
 
     hdr->recordCount    = s_perFrameCount;
     hdr->recordCapacity = s_maxActors;
