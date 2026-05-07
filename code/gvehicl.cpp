@@ -112,6 +112,11 @@
 #endif
 
 #include "../resource.h"
+#include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
+
+// C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
+// MC2_GPU_CULL_LIFECYCLE=1 routes AI canBeSeen() combat gates to GPU-lagged visibility.
+static const bool s_gpuCullLifecycle = (getenv("MC2_GPU_CULL_LIFECYCLE") != nullptr);
 
 extern unsigned long		NextIdNumber;
 
@@ -3925,15 +3930,23 @@ void GroundVehicle::render (void)
 				else
 					resourceID = IDS_SENSOR_HEAVY_VEHICLE;
 					
-				if ( appearance->canBeSeen() )
+				// C3: route canBeSeen() to GPU-lagged visibility; 1-frame HUD lag: accepted.
+				const bool gvInViewQ3 = s_gpuCullLifecycle
+					? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+					: appearance->canBeSeen();
+				if ( gvInViewQ3 )
 					drawSensorTextHelp (appearance->getScreenPos().x, appearance->getScreenPos().y+20.0f, resourceID,SD_RED,false);
 			}
 			else if (cStat == CONTACT_SENSOR_QUALITY_4)
 			{
 				appearance->setBarColor(SB_RED);
 				appearance->render();
-	
-				if ( appearance->canBeSeen() )
+
+				// C3: route canBeSeen() to GPU-lagged visibility; 1-frame HUD lag: accepted.
+				const bool gvInViewQ4 = s_gpuCullLifecycle
+					? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+					: appearance->canBeSeen();
+				if ( gvInViewQ4 )
 					drawSensorTextHelp (appearance->getScreenPos().x, appearance->getScreenPos().y+20.0f,descID,SD_RED,false);
 			}
 			else if (alphaValue != 0x0)	//What if we are out of LOS and NOT on sensors!!!  Let 'em fade out.
