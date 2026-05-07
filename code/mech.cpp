@@ -127,6 +127,11 @@
 #endif
 
 #include "../resource.h"
+#include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
+
+// C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
+// MC2_GPU_CULL_LIFECYCLE=1 routes AI canBeSeen() combat gates to GPU-lagged visibility.
+static const bool s_gpuCullLifecycle = (getenv("MC2_GPU_CULL_LIFECYCLE") != nullptr);
 
 //--------
 // DEFINES
@@ -6445,7 +6450,11 @@ void BattleMech::render (void)
 				appearance->setVisibility(true,true);
 				appearance->render();
 	
-				if ( appearance->canBeSeen() )
+				// C3: route canBeSeen() to GPU-lagged visibility; 1-frame HUD lag: accepted.
+				const bool mechInViewQ3 = s_gpuCullLifecycle
+					? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+					: appearance->canBeSeen();
+				if ( mechInViewQ3 )
 				{
 					if (tonnage < 40)
 						drawSensorTextHelp (appearance->getScreenPos().x, appearance->getScreenPos().y+20.0f, IDS_SENSOR_LIGHT_MECH,SD_RED,false);
@@ -6462,8 +6471,12 @@ void BattleMech::render (void)
 				appearance->setBarColor(SB_RED);
 				appearance->setVisibility(true,true);
 				appearance->render();
-	
-				if ( appearance->canBeSeen() )
+
+				// C3: route canBeSeen() to GPU-lagged visibility; 1-frame HUD lag: accepted.
+				const bool mechInViewQ4 = s_gpuCullLifecycle
+					? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+					: appearance->canBeSeen();
+				if ( mechInViewQ4 )
 					drawSensorTextHelp (appearance->getScreenPos().x, appearance->getScreenPos().y+20.0f,descID,SD_RED,false);
 			}
 		}
@@ -6472,7 +6485,7 @@ void BattleMech::render (void)
 			if (isOnGui)
 			{
 				float barStatus = getTotalEffectiveness();
-				
+
 				DWORD color = 0x0000ff00;
 				if (getTeamId() == Team::home->getId())
 				{
@@ -6480,21 +6493,25 @@ void BattleMech::render (void)
 					// If we do, we are on the same "team", if not we are ALLIES!!!
 					if (getCommanderId() != Commander::home->getId())
 					{
-						color = 0x000000ff; 
+						color = 0x000000ff;
 					}
 				}
 				else
 				{
-					color = 0x00ff0000; 
+					color = 0x00ff0000;
 				}
-					
+
 				appearance->setBarColor(color);
 				appearance->setBarStatus(barStatus);
 				appearance->setObjectNameId(descID);
 				appearance->setVisibility(true,true);
 				appearance->setSensorLevel(0);
 				appearance->render();
-				if ( attackRange == FIRERANGE_CURRENT && !isDisabled() && appearance->canBeSeen() )
+				// C3: route canBeSeen() to GPU-lagged visibility; 1-frame fire-icon lag: accepted.
+				const bool mechInViewFire = s_gpuCullLifecycle
+					? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+					: appearance->canBeSeen();
+				if ( attackRange == FIRERANGE_CURRENT && !isDisabled() && mechInViewFire )
 					appearance->drawIcon( holdFireIconHandle, 5, 5, color | 0xff000000 );
 			}
 		}
