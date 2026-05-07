@@ -687,6 +687,14 @@ DWORD startTime;
 DWORD endTime;
 
 //---------------------------------------------------------------------------
+// C3: Track C3-B plan called for "Camera::UpdateRenderers stub" here.
+// Recon finding: the per-actor recalcBounds() calls the plan expected to collapse
+// live inside each Mech/GV update() (mech.cpp, gvehicl.cpp), NOT in this function.
+// This function dispatches mission/logistics/UI rendering — it cannot be stubbed.
+// The Camera.UpdateRenderers Tracy zone wraps this call from gameosmain.cpp:520.
+// No changes needed here; the C3-B perf win comes from the node-position early-outs
+// in mech3d.cpp and gvactor.cpp, and the render/shadow gates in those files.
+//---------------------------------------------------------------------------
 void __stdcall UpdateRenderers()
 {
 	ZoneScopedN("UpdateRenderers");
