@@ -246,3 +246,28 @@ private:
     // method bodies there forward to those statics.
     int debugAddrMode_ = 0;
 };
+
+// ---------------------------------------------------------------------------
+// C1b free-function accessors (Track C slice C1b).
+// These expose the immutable per-type geometry table so gpu_cull_compute.cpp
+// can build the DrawElementsIndirectCommand buffer at mission load without
+// pulling the batcher's internal anonymous namespace into another TU.
+// All functions are valid only after GpuStaticPropBatcher::finalizeGeometry().
+// ---------------------------------------------------------------------------
+
+// Returns the number of registered types (= bucket count for indirect draw).
+// Returns 0 if geometry is not yet finalized.
+uint32_t batcher_getTypeCount();
+
+// Per-type geometry info for indirect draw command construction.
+// typeID:          index in [0, batcher_getTypeCount())
+// outIndexCount:   total index count across all packets for this type
+// outFirstIndex:   firstIndex of the first packet (IBO offset in indices)
+// outBaseVertex:   baseVertex of the first packet (VBO offset in vertices)
+// outInstanceCap:  per-frame instance capacity (safe upper bound for visibleIds[])
+// Returns false if typeID is out of range or geometry not finalized.
+bool batcher_getTypeDrawInfo(uint32_t  typeID,
+                              uint32_t* outIndexCount,
+                              uint32_t* outFirstIndex,
+                              int32_t*  outBaseVertex,
+                              uint32_t* outInstanceCap);

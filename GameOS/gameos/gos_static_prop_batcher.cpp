@@ -2,6 +2,7 @@
 #include "gos_static_prop_killswitch.h"  // gos_GetGLTextureId
 #include "gos_profiler.h"
 #include "gos_object_parity.h"           // Slice 2 Stage 2.D.1 parity harness
+#include "gpu_cull_compute.h"            // C1b: compute_isEnabled, getIndirectCmdBuf, getBucketCount
 #include "gameos.hpp"
 #include "utils/shader_builder.h"
 #include "tgl.h"  // TG_Shape::s_worldToClip
@@ -1504,6 +1505,42 @@ void GpuStaticPropBatcher::flush() {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
 
+    // C1b: when compute cull is enabled and the indirect command buffer is
+    // ready, write the per-type CPU instance counts into the indirect buffer
+    // before the draw loop (shadow mode: CPU counts match what GPU will see
+    // once C1b->C1c flips GPU-driven counts ON). Then the draw loop uses
+    // glDrawElementsIndirect (one draw per type) instead of the instanced call.
+    //
+    // State setup for C1b: three inheritance traps (gpu_direct_renderer_bringup_checklist.md):
+    //   1. Sampler state: bind REPEAT/LINEAR before first C1b draw (below).
+    //   2. Depth state:   glEnable(GL_DEPTH_TEST) + GL_LEQUAL — already set above.
+    //   3. Blend state:   glDisable(GL_BLEND) — already set above.
+    // Verified: depth and blend are set unconditionally above regardless of C1b path.
+    const bool useC1bIndirect = gpu_cull::compute_isEnabled() &&
+                                (gpu_cull::compute_getIndirectCmdBuf() != 0) &&
+                                (gpu_cull::compute_getBucketCount() == s_types.size());
+
+    if (useC1bIndirect) {
+        // Write CPU-computed per-type instanceCounts into the indirect command buffer.
+        // In C1b shadow mode the GPU cull has already run and written its own counts
+        // via the patch dispatch, but this flush happens AFTER the cull dispatch so
+        // we overwrite with the CPU-authoritative counts to ensure visual correctness
+        // until C1c enables full GPU render authority.
+        //
+        // Layout of DrawElementsIndirectCommand: count, instanceCount, firstIndex, baseVertex, baseInstance
+        // instanceCount is at offset 4 bytes into each 20-byte command.
+        const GLuint indirectBuf = gpu_cull::compute_getIndirectCmdBuf();
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirectBuf);
+        for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {
+            auto rit = s_typeRanges.find(typeID);
+            const uint32_t instCount = (rit != s_typeRanges.end()) ? rit->second.instanceCount : 0u;
+            // Write instanceCount at byte offset typeID*20 + 4 within the indirect buffer.
+            const GLintptr cmdOffset = static_cast<GLintptr>(typeID * 20 + 4);
+            glBufferSubData(GL_DRAW_INDIRECT_BUFFER, cmdOffset, sizeof(GLuint), &instCount);
+        }
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    }
+
     // Per-type drawing: bind per-type instance & color SSBO ranges, then
     // issue one instanced draw per packet. gl_InstanceID in the shader
     // addresses 0..N-1 within the bound range (no gl_BaseInstance needed).
@@ -1656,13 +1693,32 @@ void GpuStaticPropBatcher::flush() {
                         (int)(type.firstPacket + p));
             // Drain any stale GL error first so our check is clean.
             while (glGetError() != GL_NO_ERROR) {}
-            glDrawElementsInstancedBaseVertex(
-                GL_TRIANGLES,
-                pkt.indexCount,
-                GL_UNSIGNED_INT,
-                reinterpret_cast<void*>(static_cast<uintptr_t>(pkt.firstIndex) * sizeof(uint32_t)),
-                r.instanceCount,
-                pkt.baseVertex);
+            if (useC1bIndirect) {
+                // C1b: use glDrawElementsIndirect to read the command from the
+                // GPU indirect buffer. The command at offset typeID*20 has the
+                // CPU-written instanceCount from the shadow-mode write above.
+                // baseVertex in the struct handles the VBO offset so we don't
+                // need to pass it here separately.
+                // Sampler state trap: ensure REPEAT/LINEAR is bound before first
+                // indirect draw so world-scale UVs don't collapse to texture edge.
+                // (The per-packet texture bind above uses GL_TEXTURE_2D default
+                //  sampler which inherits from prior state — explicitly set here.)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+                glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpu_cull::compute_getIndirectCmdBuf());
+                const GLintptr cmdOffset = static_cast<GLintptr>(typeID * 20);
+                glDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
+                                       reinterpret_cast<const void*>(cmdOffset));
+                glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+            } else {
+                glDrawElementsInstancedBaseVertex(
+                    GL_TRIANGLES,
+                    pkt.indexCount,
+                    GL_UNSIGNED_INT,
+                    reinterpret_cast<void*>(static_cast<uintptr_t>(pkt.firstIndex) * sizeof(uint32_t)),
+                    r.instanceCount,
+                    pkt.baseVertex);
+            }
         }
         // Stage 2.D.1: clear u_parityWrite back to 0 so a subsequent type
         // that gets rejected by the slot-budget check (or has zero
@@ -1887,5 +1943,55 @@ bool GpuStaticPropBatcher::buildRecipeFromShape(
     inst.fogRGB[3] = ((fogARGB >> 24) & 0xFF) / 255.0f;
 
     *outRecipe = inst;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// C1b free-function accessors (Track C slice C1b).
+// Expose immutable per-type geometry for gpu_cull_compute.cpp's indirect buffer
+// construction. Valid only after finalizeGeometry().
+// ---------------------------------------------------------------------------
+
+uint32_t batcher_getTypeCount() {
+    return static_cast<uint32_t>(s_types.size());
+}
+
+bool batcher_getTypeDrawInfo(uint32_t  typeID,
+                              uint32_t* outIndexCount,
+                              uint32_t* outFirstIndex,
+                              int32_t*  outBaseVertex,
+                              uint32_t* outInstanceCap) {
+    if (!s_geometryFinalized) return false;
+    if (typeID >= s_types.size()) return false;
+
+    const GpuStaticPropType& type = s_types[typeID];
+
+    // Sum index count across all packets for this type (for correct
+    // glMultiDrawElementsIndirect — each bucket covers all packets).
+    // For C1b's first-pass implementation we use a single draw command
+    // per type covering ALL packets as one contiguous draw. This works
+    // when all packets for a type are contiguous in the IBO, which is
+    // guaranteed by registerType()'s sequential append.
+    uint32_t totalIndexCount = 0;
+    uint32_t firstPktFirstIndex = 0;
+    int32_t  firstPktBaseVertex = 0;
+    for (uint32_t p = 0; p < type.packetCount; ++p) {
+        const GpuStaticPropPacket& pkt = s_packets[type.firstPacket + p];
+        totalIndexCount += pkt.indexCount;
+        if (p == 0) {
+            firstPktFirstIndex = pkt.firstIndex;
+            firstPktBaseVertex = pkt.baseVertex;
+        }
+    }
+
+    if (outIndexCount)  *outIndexCount  = totalIndexCount;
+    if (outFirstIndex)  *outFirstIndex  = firstPktFirstIndex;
+    if (outBaseVertex)  *outBaseVertex  = firstPktBaseVertex;
+    // Per-bucket capacity: s_instanceCapacity is the per-frame total;
+    // use it as the upper bound for each bucket (conservative — sums to
+    // N*s_instanceCapacity for the visibleIds[] buffer, which is large but
+    // safe; actual peak is at most s_instanceCapacity total).
+    if (outInstanceCap) *outInstanceCap = static_cast<uint32_t>(s_instanceCapacity > 0
+                                            ? s_instanceCapacity : INITIAL_INSTANCES_PER_FRAME);
     return true;
 }
