@@ -413,7 +413,11 @@ class Mech3DAppearance: public ObjectAppearance
 		bool						isHelicopter;
 		
 		float						OBBRadius;
-		
+
+		// C3: cached GameObjectHandle from init(obj), used by GPU-cull lifecycle gates
+		// in node-position functions. Initialized to -1 (invalid/no owner).
+		long						actorHandle_;
+
 		DWORD						localTextureHandle;
 		float						baseRootNodeHeight;
 

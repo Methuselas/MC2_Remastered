@@ -15,6 +15,11 @@
 #endif
 
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
+#include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
+
+// C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
+// MC2_GPU_CULL_LIFECYCLE=1 enables GPU visibility-based node-position early-outs.
+static const bool s_gpuCullLifecycle = (getenv("MC2_GPU_CULL_LIFECYCLE") != nullptr);
 
 #ifndef CAMERA_H
 #include"camera.h"
@@ -717,9 +722,16 @@ Stuff::Vector3D Mech3DAppearance::getWeaponNodePosition (long nodeId)
 	Stuff::Vector3D result = position;
 	if ((nodeId < mechType->numSmokeNodes) || (nodeId >= (mechType->numSmokeNodes+mechType->numWeaponNodes)))
 		return result;
-	
-	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	// 1-frame weapon-spawn-root artifact on visibility transition: accepted by design.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
 	//We already know we are using this node.  Do NOT increment recycle or nodeUsed!
 		
@@ -755,9 +767,15 @@ Stuff::Vector3D Mech3DAppearance::getWeaponNodePosition (long nodeId)
 Stuff::Vector3D Mech3DAppearance::getNodeNamePosition (const char *nodeName)
 {
 	Stuff::Vector3D result = position;
-	
-	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
    	//-------------------------------------------
    	// Create Matrix to conform to.
@@ -791,9 +809,15 @@ Stuff::Vector3D Mech3DAppearance::getNodeNamePosition (const char *nodeName)
 Stuff::Vector3D Mech3DAppearance::getNodeIdPosition (long nodeId)
 {
 	Stuff::Vector3D result = position;
-	
-	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
    	//-------------------------------------------
    	// Create Matrix to conform to.
@@ -829,9 +853,15 @@ Stuff::Vector3D Mech3DAppearance::getNodePosition (long nodeId)
 	Stuff::Vector3D result = position;
 	if ((nodeId < 0) || (nodeId >= mechType->getTotalNodes()))
 		return result;
-	
-	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
    	//-------------------------------------------
    	// Create Matrix to conform to.
@@ -1006,6 +1036,9 @@ void Mech3DAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 {
 	Appearance::init(tree,obj);
 	mechType = (Mech3DAppearanceType *)tree;
+
+	// C3: cache owner handle for GPU-cull node-position early-outs.
+	actorHandle_ = (obj != nullptr) ? obj->getHandle() : -1;
 
 	mechName[0] = 0;
 
@@ -2374,7 +2407,12 @@ long Mech3DAppearance::render (long depthFixup)
 	if (leftArm)
 		leftArm->SetTextureHandle(0,localTextureHandle);
 
-	if (inView || g_useGpuStaticProps)
+	// C3: render gate — GPU-lagged visibility when killswitch is enabled.
+	// Preserve the g_useGpuStaticProps fallback for static-prop path.
+	const bool mechShouldRender = s_gpuCullLifecycle
+		? (gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)) || g_useGpuStaticProps)
+		: (inView || g_useGpuStaticProps);
+	if (mechShouldRender)
 	{
 		if (visible)
 		{
@@ -2878,7 +2916,11 @@ long Mech3DAppearance::renderShadows (void)
 
 	mechShape->SetTextureHandle(0,localTextureHandle);
 
-	if (inView && visible)
+	// C3: route renderShadows gate to GPU-lagged visibility when killswitch is enabled.
+	const bool mechShadowVisible = s_gpuCullLifecycle
+		? (gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)) && visible)
+		: (inView && visible);
+	if (mechShadowVisible)
 	{
 		//---------------------------------------------
 		// Call Multi-shape render stuff here.
@@ -4180,8 +4222,15 @@ long Mech3DAppearance::update (bool animate)
 	// broken cull (inView) thinks the mech is off-screen. Without this,
 	// TG_Shape::Render silently returns on stale listOfVertices and the
 	// mech geometry disappears (health bar still drawn via screenPos).
-	if ((turn < 3) || inView || (currentGestureId == GestureJump) || g_useGpuStaticProps)
-		updateGeometry();
+	// C3: route inView input to GPU-lagged visibility when killswitch is enabled.
+	// PRESERVE cascade gate structure: turn<3 and GestureJump conditions are unchanged.
+	{
+		const bool gpuVis = s_gpuCullLifecycle
+			? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_))
+			: inView;
+		if ((turn < 3) || gpuVis || (currentGestureId == GestureJump) || g_useGpuStaticProps)
+			updateGeometry();
+	}
 
 	//----------------------------------------------------------------------
 	// If currentGestureId is 2 and baseRootNodeHeight is not set, set it!!
@@ -5096,34 +5145,40 @@ Stuff::Vector3D Mech3DAppearance::getHitNodeLeft (void)
 		hitLeftNodeIndex = mechShape->GetNodeNameId("hit_left");
 
 	Stuff::Vector3D result = position;
-	if (!inView)
-		return result;
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
    	//-------------------------------------------
    	// Create Matrix to conform to.
    	Stuff::UnitQuaternion qRotation;
    	float yaw = rotation * DEGREES_TO_RADS;
    	qRotation = Stuff::EulerAngles(0.0f, yaw, 0.0f);
-   
+
    	Stuff::Point3D xlatPosition;
    	xlatPosition.x = -position.x;
    	xlatPosition.y = position.z;
    	xlatPosition.z = position.y;
-   
+
    	Stuff::UnitQuaternion torsoRot;
    	torsoRot = Stuff::EulerAngles(0.0f,(torsoRotation * DEGREES_TO_RADS),0.0f);
 	if (rotationalNodeIndex == -1)
 	   	rotationalNodeIndex = mechShape->SetNodeRotation("joint_torso",&torsoRot);
 
 	mechShape->SetNodeRotation(rotationalNodeIndex,&torsoRot);
-   
+
 	result = mechShape->GetTransformedNodePosition(&xlatPosition,&qRotation,hitLeftNodeIndex);
 
 	if ((result.x == 0.0f) &&
-		(result.y == 0.0f) && 
+		(result.y == 0.0f) &&
 		(result.z == 0.0f))
 		result = position;
-	
+
 	return result;
 }
 
@@ -5133,8 +5188,14 @@ Stuff::Vector3D Mech3DAppearance::getHitNodeRight (void)
 		hitRightNodeIndex = mechShape->GetNodeNameId("hit_right");
 
 	Stuff::Vector3D result = position;
-	if (!inView)
-		return result;
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
    	//-------------------------------------------
    	// Create Matrix to conform to.
