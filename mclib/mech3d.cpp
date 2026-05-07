@@ -22,6 +22,13 @@
 // MC2_GPU_CULL_LIFECYCLE=1 enables GPU visibility-based node-position early-outs.
 static const bool s_gpuCullLifecycle = (getenv("MC2_GPU_CULL_LIFECYCLE") != nullptr);
 
+// MC2_GPU_CULL_LIFECYCLE_TRACE=1: verbose per-actor lifecycle boundary prints.
+// Default off (too noisy for production). Fires at: init, first GPU-cull skip per actor.
+static const bool s_lcTrace = (getenv("MC2_GPU_CULL_LIFECYCLE_TRACE") != nullptr);
+static uint32_t s_lcSkipCount3d = 0u;
+#define LC3D_TRACE(fmt, ...) \
+    do { if (s_lcTrace) { printf("[GPU_CULL_LIFECYCLE v1] mech3d " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while(0)
+
 #ifndef CAMERA_H
 #include"camera.h"
 #endif
@@ -727,8 +734,12 @@ Stuff::Vector3D Mech3DAppearance::getWeaponNodePosition (long nodeId)
 	// C3: route to GPU-lagged visibility when killswitch is enabled.
 	// 1-frame weapon-spawn-root artifact on visibility transition: accepted by design.
 	if (s_gpuCullLifecycle) {
-		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_))) {
+			++s_lcSkipCount3d;
+			if (s_lcSkipCount3d == 1u || (s_lcSkipCount3d % 600u) == 0u)
+				LC3D_TRACE("event=node_skip actorHandle=%ld total=%u", actorHandle_, s_lcSkipCount3d);
 			return result;
+		}
 	} else {
 		if (!inView)
 			return result;
@@ -1040,6 +1051,7 @@ void Mech3DAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 
 	// C3: cache owner handle for GPU-cull node-position early-outs.
 	actorHandle_ = (obj != nullptr) ? obj->getHandle() : -1;
+	LC3D_TRACE("event=init actorHandle=%ld lifecycle=%d", actorHandle_, (int)s_gpuCullLifecycle);
 
 	mechName[0] = 0;
 
@@ -2307,7 +2319,7 @@ bool Mech3DAppearance::recalcBounds (void)
 					: false;
 				if (cpuScreenRect || rbVisible)
 				{
-					inView = cpuScreenRect;
+					inView = cpuScreenRect || rbVisible;
 					
 					if (status != OBJECT_STATUS_DESTROYED)
 					{

@@ -77,6 +77,12 @@
 // MC2_GPU_CULL_LIFECYCLE=1 enables GPU visibility-based node-position early-outs.
 static const bool s_gpuCullLifecycle = (getenv("MC2_GPU_CULL_LIFECYCLE") != nullptr);
 
+// MC2_GPU_CULL_LIFECYCLE_TRACE=1: verbose per-actor lifecycle boundary prints.
+static const bool s_lcTraceGV = (getenv("MC2_GPU_CULL_LIFECYCLE_TRACE") != nullptr);
+static uint32_t s_lcSkipCountGV = 0u;
+#define LCGV_TRACE(fmt, ...) \
+    do { if (s_lcTraceGV) { printf("[GPU_CULL_LIFECYCLE v1] gvactor " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while(0)
+
 //******************************************************************************************
 extern float	worldUnitsPerMeter;
 extern bool 	drawTerrainGrid;
@@ -457,8 +463,12 @@ Stuff::Vector3D GVAppearance::getWeaponNodePosition (long nodeId)
 	// C3: route to GPU-lagged visibility when killswitch is enabled.
 	// 1-frame weapon-spawn-root artifact on visibility transition: accepted by design.
 	if (s_gpuCullLifecycle) {
-		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_))) {
+			++s_lcSkipCountGV;
+			if (s_lcSkipCountGV == 1u || (s_lcSkipCountGV % 600u) == 0u)
+				LCGV_TRACE("event=node_skip actorHandle=%ld total=%u", actorHandle_, s_lcSkipCountGV);
 			return result;
+		}
 	} else {
 		if (!inView)
 			return result;
@@ -710,6 +720,7 @@ void GVAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 
 	// C3: cache owner handle for GPU-cull node-position early-outs.
 	actorHandle_ = (obj != nullptr) ? obj->getHandle() : -1;
+	LCGV_TRACE("event=init actorHandle=%ld lifecycle=%d", actorHandle_, (int)s_gpuCullLifecycle);
 
 	shapeMin.x = shapeMin.y = -25;
 	shapeMax.x = shapeMax.y = 50;
