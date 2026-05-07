@@ -705,7 +705,7 @@ void TerrainPatchStream::appendQuad(
     const gos_VERTEX* vColor1, const gos_TERRAIN_EXTRA* vExtra1, bool tri1Valid,
     const gos_VERTEX* vColor2, const gos_TERRAIN_EXTRA* vExtra2, bool tri2Valid)
 {
-    ZoneScopedN("PatchStream.AppendQuad");
+    // PERF 2026-05-07: stripped hot Tracy zone PatchStream.AppendQuad.
     if (!s_initOk || !s_killswitch) return;
     if (s_overflow) return;
     // Thin-record path replaces expanded vertices — skip staging entirely.
@@ -963,7 +963,7 @@ bool TerrainPatchStream::flush()
     cursor = 0;
     s_drawBucketCount = 0;
     {
-    ZoneScopedN("PatchStream.Consolidate");
+    // PERF 2026-05-07: stripped PatchStream.Consolidate and child copy zones.
     for (uint32_t i = 0; i < s_stagingCount; ++i) {
         const BucketSortEntry&    se = sortBuf[i];
         const PatchStagingBucket& sb = s_staging[se.stagingIdx];
@@ -971,11 +971,9 @@ bool TerrainPatchStream::flush()
         const uint32_t n = (uint32_t)sb.color.size();  // == sb.extras.size()
 
         {
-        ZoneScopedN("PatchStream.Consolidate.CopyColor");
         memcpy(colorSlot  + cursor, sb.color.data(),  n * sizeof(gos_VERTEX));
         }
         {
-        ZoneScopedN("PatchStream.Consolidate.CopyExtras");
         memcpy(extrasSlot + cursor, sb.extras.data(), n * sizeof(gos_TERRAIN_EXTRA));
         }
 

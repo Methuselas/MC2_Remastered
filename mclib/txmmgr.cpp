@@ -2726,7 +2726,8 @@ DWORD MC_TextureManager::copyTexture( DWORD texNodeID )
 // MC_TextureNode
 DWORD MC_TextureNode::get_gosTextureHandle (void)	//If texture is not in VidRAM, cache a texture out and cache this one in.
 {
-	ZoneScopedN("MC_TextureNode::get_gosTextureHandle");
+	// PERF 2026-05-07: stripped MC_TextureNode::get_gosTextureHandle Tracy
+	// scopes/plots from this hot accessor; cache-miss work remains unchanged.
 	if (gosTextureHandle == 0xffffffff)
 	{
 		//Somehow this texture is bad.  Probably we are using a handle which got purged between missions.
@@ -2745,7 +2746,6 @@ DWORD MC_TextureNode::get_gosTextureHandle (void)	//If texture is not in VidRAM,
 		if ((mcTextureManager->currentUsedTextures >= MAX_MC2_GOS_TEXTURES) && !mcTextureManager->flushCache())
 		{
 			PAUSE(("txmmgr: Out of texture handles!"));
-			TracyMessageL("txmmgr: Out of texture handles!");
 			return 0x0;		//No texture!
 		}
 	   
@@ -2782,7 +2782,6 @@ DWORD MC_TextureNode::get_gosTextureHandle (void)	//If texture is not in VidRAM,
 					// Badboys are now LZ Compressed in texture cache.
 					long origSize;
 					{
-						ZoneScopedN("MC_TextureNode::get_gosTextureHandle LZDecomp");
 						origSize = LZDecomp(MC_TextureManager::lzBuffer2,(MemoryPtr)textureData,lzCompSize,MAX_LZ_BUFFER_SIZE);
 					}
 					if (origSize != originalSize)
@@ -2801,27 +2800,22 @@ DWORD MC_TextureNode::get_gosTextureHandle (void)	//If texture is not in VidRAM,
 			if (cacheFormat == MC_TEXCACHE_MEM_RAW)
 			{
 				{
-					ZoneScopedN("MC_TextureNode::get_gosTextureHandle gos_NewEmptyTexture");
 					gosTextureHandle = gos_NewEmptyTexture(key,nodeName,logicalWidth ? logicalWidth : width,hints);
 				}
 				TEXTUREPTR pTextureData;
 				{
-					ZoneScopedN("MC_TextureNode::get_gosTextureHandle gos_LockTexture");
 					gos_LockTexture(gosTextureHandle, 0, 0, &pTextureData);
 				}
 				{
-					ZoneScopedN("MC_TextureNode::get_gosTextureHandle textureMemcpy");
 					memcpy(pTextureData.pTexture, textureBytes, originalSize);
 				}
 				{
-					ZoneScopedN("MC_TextureNode::get_gosTextureHandle gos_UnLockTexture");
 					gos_UnLockTexture(gosTextureHandle);
 				}
 			}
 			else
 			{
 				{
-					ZoneScopedN("MC_TextureNode::get_gosTextureHandle gos_NewTextureFromMemory");
 					gosTextureHandle = gos_NewTextureFromMemory(key,nodeName,textureBytes,originalSize,hints);
 				}
 			}
@@ -2829,7 +2823,6 @@ DWORD MC_TextureNode::get_gosTextureHandle (void)	//If texture is not in VidRAM,
 			if (mcTextureManager->currentUsedTextures > mcTextureManager->peakUsedTextures)
 				mcTextureManager->peakUsedTextures = mcTextureManager->currentUsedTextures;
 			++gTxmRealizedTotal;
-			TracyPlot("Txm realized total", gTxmRealizedTotal);
 			lastUsed = turn;
 
 			return gosTextureHandle;
@@ -2837,20 +2830,17 @@ DWORD MC_TextureNode::get_gosTextureHandle (void)	//If texture is not in VidRAM,
 		else
 		{
 			{
-				ZoneScopedN("MC_TextureNode::get_gosTextureHandle gos_NewEmptyTexture");
 				gosTextureHandle = gos_NewEmptyTexture(key,nodeName,width,hints);
 			}
 			mcTextureManager->currentUsedTextures++;
 			if (mcTextureManager->currentUsedTextures > mcTextureManager->peakUsedTextures)
 				mcTextureManager->peakUsedTextures = mcTextureManager->currentUsedTextures;
 			++gTxmRealizedTotal;
-			TracyPlot("Txm realized total", gTxmRealizedTotal);
-			
+
 			//------------------------------------------
 			// Cache this badboy IN.
 			TEXTUREPTR pTextureData;
 			{
-				ZoneScopedN("MC_TextureNode::get_gosTextureHandle gos_LockTexture");
 				gos_LockTexture(gosTextureHandle, 0, 0, &pTextureData);
 			}
 		 
@@ -2858,20 +2848,17 @@ DWORD MC_TextureNode::get_gosTextureHandle (void)	//If texture is not in VidRAM,
 			// Create a block of cache memory to hold this texture.
 			DWORD txmSize = pTextureData.Height * pTextureData.Height * sizeof(DWORD);
 			gosASSERT(textureData);
-			
+
 			{
-				ZoneScopedN("MC_TextureNode::get_gosTextureHandle LZDecomp");
 				LZDecomp(MC_TextureManager::lzBuffer2,(MemoryPtr)textureData,lzCompSize,MAX_LZ_BUFFER_SIZE);
 			}
 			{
-				ZoneScopedN("MC_TextureNode::get_gosTextureHandle textureMemcpy");
 				memcpy(pTextureData.pTexture,MC_TextureManager::lzBuffer2,txmSize);
 			}
-			 
+
 			//------------------------
 			// Unlock the texture
 			{
-				ZoneScopedN("MC_TextureNode::get_gosTextureHandle gos_UnLockTexture");
 				gos_UnLockTexture(gosTextureHandle);
 			}
 			 

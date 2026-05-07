@@ -1631,7 +1631,6 @@ long BldgAppearance::render (long depthFixup)
 				// (intact → dmg shape) but typically no LOD swap; this rate
 				// should be much lower than the tree counterpart.
 				if (staticReg.registered && staticReg.shape != bldgShape) {
-					ZoneScopedN("BldgAppr shape_swap_reregister");
 					invalidateStaticRegistration();
 				}
 
@@ -2292,7 +2291,6 @@ long BldgAppearance::update (bool animate)
 		// (or remove) once the regression is identified.
 		bool gpuEligible;
 		{
-			ZoneScopedN("BldgAppr eligibility");
 			gpuEligible = g_useGpuObjects &&
 			              !needsFullBakeNextFrame &&
 			              GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(bldgShape);
@@ -2305,11 +2303,9 @@ long BldgAppearance::update (bool animate)
 			// By the time submitMultiShape() runs (during renderLists()), later
 			// actors have overwritten worldLights[0]->aRGB for their positions.
 			{
-				ZoneScopedN("BldgAppr CacheGpuLightData");
 				bldgShape->CacheGpuLightData();
 			}
 			{
-				ZoneScopedN("BldgAppr TMS_PositionsOnly");
 				bldgShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
 			}
 			// Stage 2.D.2: on the dual-emit frame (latch Armed), also run
@@ -2327,13 +2323,11 @@ long BldgAppearance::update (bool animate)
 			// Stage 2.D.3: per-actor gate. Bootstrap arm returns true for
 			// every shape; sample arm returns true only for the picked actor.
 			if (gos_object_parity::IsDualEmitArmedForActor(bldgShape)) {
-				ZoneScopedN("BldgAppr TMS_dualEmit");
 				bldgShape->TransformMultiShape (&xlatPosition,&rot);
 			}
 		}
 		else
 		{
-			ZoneScopedN("BldgAppr TMS_full");
 			bldgShape->TransformMultiShape (&xlatPosition,&rot);
 			needsFullBakeNextFrame = false;
 		}
@@ -2346,7 +2340,6 @@ long BldgAppearance::update (bool animate)
 		// building per frame (~3 µs of pure waste).
 		if (bldgShadowShape && useShadows && !gos_IsTerrainTessellationActive())
 		{
-			ZoneScopedN("BldgAppr ShadowTMS");
 			bldgShadowShape->SetRecalcShadows(checkShadows);
 			bldgShadowShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
 			bldgShadowShape->TransformMultiShape (&xlatPosition,&rot);
@@ -4373,7 +4366,6 @@ long TreeAppearance::render (long depthFixup)
 				// running tens of times per frame, leaking recipe slots and
 				// pin-count churn. Tracy zone makes the rate visible per-frame.
 				if (staticReg.registered && staticReg.shape != treeShape) {
-					ZoneScopedN("TreeAppr LOD_swap_reregister");
 					invalidateStaticRegistration();
 				}
 
@@ -4684,7 +4676,6 @@ long TreeAppearance::update (bool animate)
 		// for the same instrumentation set. Same theories under investigation.
 		bool gpuEligible;
 		{
-			ZoneScopedN("TreeAppr eligibility");
 			gpuEligible = g_useGpuObjects &&
 			              !needsFullBakeNextFrame &&
 			              GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(treeShape);
@@ -4694,24 +4685,20 @@ long TreeAppearance::update (bool animate)
 		{
 			// Stage 2.D.2 fix: cache GPU light data while lights are per-actor-correct.
 			{
-				ZoneScopedN("TreeAppr CacheGpuLightData");
 				treeShape->CacheGpuLightData();
 			}
 			{
-				ZoneScopedN("TreeAppr TMS_PositionsOnly");
 				treeShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
 			}
 			// Stage 2.D.2: dual-emit full bake — same rationale as BldgAppearance
 			// above. Populates listOfTriangles[].aRGBLight for snapshot in submit().
 			// Stage 2.D.3: per-actor gate (see BldgAppearance::update above).
 			if (gos_object_parity::IsDualEmitArmedForActor(treeShape)) {
-				ZoneScopedN("TreeAppr TMS_dualEmit");
 				treeShape->TransformMultiShape (&xlatPosition,&rot);
 			}
 		}
 		else
 		{
-			ZoneScopedN("TreeAppr TMS_full");
 			treeShape->TransformMultiShape (&xlatPosition,&rot);
 			needsFullBakeNextFrame = false;
 		}
@@ -4724,7 +4711,6 @@ long TreeAppearance::update (bool animate)
 		// condition; treeShadowShape's transformed state is never consumed.
 		if (treeShadowShape && useShadows && !gos_IsTerrainTessellationActive())
 		{
-			ZoneScopedN("TreeAppr ShadowTMS");
 			treeShadowShape->SetRecalcShadows(checkShadows);
 			treeShadowShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
 			treeShadowShape->TransformMultiShape (&xlatPosition,&rot);

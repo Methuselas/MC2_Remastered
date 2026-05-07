@@ -553,10 +553,11 @@ static long terrainObjectHomeRelation (long teamId)
 
 void TerrainObject::primeAppearanceForMissionLoad (void)
 {
-	ZoneScopedN("TerrainObject::primeAppearanceForMissionLoad");
-	if (getFlag(OBJECT_FLAG_JUSTCREATED)) 
+	// PERF 2026-05-07: stripped high-frequency Tracy zones from TerrainObject:
+	// primeAppearanceForMissionLoad, justCreated, appearanceSetup, recalcBounds;
+	// update, justCreated, appearanceSetup, recalcBounds, appearanceUpdate, dustEffect.
+	if (getFlag(OBJECT_FLAG_JUSTCREATED))
 	{
-		ZoneScopedN("TerrainObject::primeAppearanceForMissionLoad justCreated");
 		setFlag(OBJECT_FLAG_JUSTCREATED, false);
 		setFlag(OBJECT_FLAG_TILECHANGED, false);
 
@@ -602,14 +603,12 @@ void TerrainObject::primeAppearanceForMissionLoad (void)
 		return;
 
 	{
-		ZoneScopedN("TerrainObject::primeAppearanceForMissionLoad appearanceSetup");
 		appearance->setObjectParameters(position,rotation,FALSE,getTeamId(),terrainObjectHomeRelation(getTeamId()));
 		appearance->setMoverParameters(pitchAngle);
 	}
 
 	bool inView = false;
 	{
-		ZoneScopedN("TerrainObject::primeAppearanceForMissionLoad recalcBounds");
 		inView = appearance->recalcBounds();
 	}
 	appearance->setInView(inView);
@@ -617,10 +616,8 @@ void TerrainObject::primeAppearanceForMissionLoad (void)
 
 long TerrainObject::update (void) {
 
-	ZoneScopedN("TerrainObject::update");
-	if (getFlag(OBJECT_FLAG_JUSTCREATED)) 
+	if (getFlag(OBJECT_FLAG_JUSTCREATED))
 	{
-		ZoneScopedN("TerrainObject::update justCreated");
 		setFlag(OBJECT_FLAG_JUSTCREATED, false);
 		setFlag(OBJECT_FLAG_TILECHANGED, false);
 
@@ -685,13 +682,11 @@ long TerrainObject::update (void) {
 		}
 
 		{
-			ZoneScopedN("TerrainObject::update appearanceSetup");
 			appearance->setObjectParameters(position,rotation,FALSE,getTeamId(),terrainObjectHomeRelation(getTeamId()));
 			appearance->setMoverParameters(pitchAngle);
 		}
 		bool inView = false;
 		{
-			ZoneScopedN("TerrainObject::update recalcBounds");
 			inView = appearance->recalcBounds();
 		}
 
@@ -699,7 +694,6 @@ long TerrainObject::update (void) {
 		{
 			windowsVisible = turn;
 			{
-				ZoneScopedN("TerrainObject::update appearanceUpdate");
 				++g_staticUpdateCounters.objects_seen;
 
 				// Stage 3.B static-update bypass.
@@ -757,7 +751,6 @@ long TerrainObject::update (void) {
 
 			if (bldgDustPoofEffect && bldgDustPoofEffect->IsExecuted())
 			{
-				ZoneScopedN("TerrainObject::update dustEffect");
 				Stuff::Point3D			actualPosition;
 				Stuff::LinearMatrix4D 	shapeOrigin;
 				Stuff::LinearMatrix4D 	localToWorld;

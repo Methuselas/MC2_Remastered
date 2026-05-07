@@ -966,14 +966,13 @@ void Terrain::render (void)
 		Terrain::cloudLayer->render();
 	
 	//-----------------------------------
-	// Draw resulting terrain quads. Loop split into 3 passes (draw / drawMine /
-	// debugOverlays) so each gets its own Tracy zone — one zone per pass instead
-	// of ~14K per-quad zones.
+	// Draw resulting terrain quads. PERF 2026-05-07 stripped
+	// Terrain::render drawPass; the body is too small and hot to carry a
+	// per-frame Tracy zone while profiling terrain quad submission.
 	DWORD fogColor = eye->fogColor;
 
 	if (drawTerrainTiles)
 	{
-		ZoneScopedN("Terrain::render drawPass");
 		TerrainQuadPtr currentQuad = quadList;
 		for (long i = 0; i < numberQuads; i++)
 		{

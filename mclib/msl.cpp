@@ -1827,14 +1827,14 @@ long TG_MultiShape::TransformMultiShape_BuildRecipe (Stuff::Point3D *pos, Stuff:
 //-------------------------------------------------------------------------------
 void TG_MultiShape::CacheGpuLightData()
 {
-    ZoneScopedN("CacheGpuLightData");
+    // PERF 2026-05-07: stripped hot Tracy zones CacheGpuLightData,
+    // CacheGpuLightData findLeaf, and CacheGpuLightData GatherGpuObjectLightDataOnly.
     if (!g_useGpuObjects)
         return;
 
     // Find first SHAPE_NODE leaf — same logic as submitMultiShape.
     TG_Shape* firstShapeNodeLeaf = nullptr;
     {
-        ZoneScopedN("CacheGpuLightData findLeaf");
         for (int i = 0; i < numTG_Shapes; ++i) {
             TG_ShapeRec& rec = listOfShapes[i];
             if (!rec.processMe || !rec.node) continue;
@@ -1847,7 +1847,6 @@ void TG_MultiShape::CacheGpuLightData()
     }
 
     if (firstShapeNodeLeaf != nullptr) {
-        ZoneScopedN("CacheGpuLightData GatherGpuObjectLightDataOnly");
         cachedGpuLightIndex_ = firstShapeNodeLeaf->GatherGpuObjectLightDataOnly();
         cachedFrame_         = g_mc2FrameCounter;
     }
