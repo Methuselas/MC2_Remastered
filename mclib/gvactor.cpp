@@ -70,6 +70,11 @@
 
 #include "gos_static_prop_batcher.h"
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
+#include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
+
+// C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
+// MC2_GPU_CULL_LIFECYCLE=1 enables GPU visibility-based node-position early-outs.
+static const bool s_gpuCullLifecycle = (getenv("MC2_GPU_CULL_LIFECYCLE") != nullptr);
 
 //******************************************************************************************
 extern float	worldUnitsPerMeter;
@@ -447,9 +452,16 @@ Stuff::Vector3D GVAppearance::getWeaponNodePosition (long nodeId)
 	Stuff::Vector3D result = position;
 	if ((nodeId < appearType->numSmokeNodes) || (nodeId >= (appearType->numSmokeNodes+appearType->numWeaponNodes)))
 		return result;
-	
-	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	// 1-frame weapon-spawn-root artifact on visibility transition: accepted by design.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
 	//We already know we are using this node.  Do NOT increment recycle or nodeUsed!
 	
@@ -496,9 +508,15 @@ Stuff::Vector3D GVAppearance::getSmokeNodePosition (long nodeId)
 	Stuff::Vector3D result = position;
 	if ((nodeId < 0) || (nodeId >= appearType->numSmokeNodes))
 		return result;
-	
- 	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
 	//-------------------------------------------
    	// Create Matrix to conform to.
@@ -529,9 +547,15 @@ Stuff::Vector3D GVAppearance::getDustNodePosition (long nodeId)
 	Stuff::Vector3D result = position;
 	if ((nodeId < 0) || (nodeId >= appearType->numFootNodes))
 		return result;
-	
-	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
    	//-------------------------------------------
    	// Create Matrix to conform to.
@@ -682,6 +706,9 @@ void GVAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 {
 	Appearance::init(tree,obj);
 	appearType = (GVAppearanceType *)tree;
+
+	// C3: cache owner handle for GPU-cull node-position early-outs.
+	actorHandle_ = (obj != nullptr) ? obj->getHandle() : -1;
 
 	shapeMin.x = shapeMin.y = -25;
 	shapeMax.x = shapeMax.y = 50;
@@ -1942,9 +1969,15 @@ bool GVAppearance::playDestruction (void)
 Stuff::Vector3D GVAppearance::getNodeNamePosition (const char *nodeName)
 {
 	Stuff::Vector3D result = position;
-	
-	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
    	//-------------------------------------------
    	// Create Matrix to conform to.
@@ -1978,9 +2011,15 @@ Stuff::Vector3D GVAppearance::getNodeNamePosition (const char *nodeName)
 Stuff::Vector3D GVAppearance::getNodeIdPosition (long nodeId)
 {
 	Stuff::Vector3D result = position;
-	
-	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
    	//-------------------------------------------
    	// Create Matrix to conform to.
@@ -2019,7 +2058,11 @@ long GVAppearance::renderShadows (void)
 
 	gvShape->SetTextureHandle(0,localTextureHandle);
 	
-	if (inView && visible)
+	// C3: route renderShadows gate to GPU-lagged visibility when killswitch is enabled.
+	const bool gvShadowVisible = s_gpuCullLifecycle
+		? (gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)) && visible)
+		: (inView && visible);
+	if (gvShadowVisible)
 	{
 		//---------------------------------------------
 		// Call Multi-shape render stuff here.
@@ -2036,7 +2079,12 @@ long GVAppearance::render (long depthFixup)
 {
 	gvShape->SetTextureHandle(0,localTextureHandle);
 
-	if (inView || g_useGpuStaticProps)
+	// C3: render gate — GPU-lagged visibility when killswitch is enabled.
+	// Preserve g_useGpuStaticProps fallback for static-prop path.
+	const bool gvShouldRender = s_gpuCullLifecycle
+		? (gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)) || g_useGpuStaticProps)
+		: (inView || g_useGpuStaticProps);
+	if (gvShouldRender)
 	{
 		uint32_t color = SD_BLUE;
 		uint32_t highLight = 0x007f7f7f;
@@ -2708,8 +2756,15 @@ long GVAppearance::update (bool animate)
 	// screen. Without this, TG_Shape::Render silently returns on
 	// stale listOfVertices and the vehicle geometry disappears while
 	// its bar/UI keeps drawing.
-	if ((turn < 3) || inView || g_useGpuStaticProps)
-		updateGeometry();
+	// C3: route inView input to GPU-lagged visibility when killswitch is enabled.
+	// PRESERVE cascade gate structure: turn<3 condition is unchanged.
+	{
+		const bool gpuVis = s_gpuCullLifecycle
+			? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_))
+			: inView;
+		if ((turn < 3) || gpuVis || g_useGpuStaticProps)
+			updateGeometry();
+	}
 		
 	return TRUE;
 }

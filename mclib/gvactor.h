@@ -204,7 +204,11 @@ class GVAppearance : public ObjectAppearance
 		bool										dustCloudStart;
 		
 		float										OBBRadius;
-		
+
+		// C3: cached GameObjectHandle from init(obj), used by GPU-cull lifecycle gates
+		// in node-position functions. Initialized to -1 (invalid/no owner).
+		long										actorHandle_;
+
 		long										gvAnimationState;
 		float										currentFrame;
 		float										gvFrameRate;
