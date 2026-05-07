@@ -80,7 +80,14 @@ void main() {
         return;
     }
 
-    vec4 c = tex_color * v_argb;
+    vec3 litRgb = v_argb.rgb;
+    if ((u_materialFlags & ALPHA_TEST_BIT) != 0) {
+        // Tree cards/leaves read too black on the light-facing falloff side.
+        // Keep their lighting variation, but cap the darkest side at ~50%.
+        litRgb = max(litRgb, vec3(0.5));
+    }
+
+    vec4 c = tex_color * vec4(litRgb, v_argb.a);
     c.rgb += v_highlight.rgb * v_highlight.a;
     c.rgb = mix(v_fog.rgb, c.rgb, u_fogValue);
 
