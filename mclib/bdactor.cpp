@@ -1666,6 +1666,14 @@ long BldgAppearance::render (long depthFixup)
 						bldgShape, batch);
 					staticReg.registered  = (staticReg.recipeIndex >= 0);
 					staticReg.shape       = bldgShape;
+					if (staticReg.registered) {
+						// H4 follow-up (2026-05-07): per-frame re-registration
+						// after damage/shape swap has the same lightData_ gap as
+						// mission-load registerStatic(). Force one full update()
+						// so touch() cannot resubmit default-zero lightData_.
+						// Spec: docs/superpowers/specs/2026-05-07-lod-swap-static-registry-churn.md
+						needsFullBakeNextFrame = true;
+					}
 				}
 			}
 			if (!submittedToGpu)
@@ -4394,6 +4402,14 @@ long TreeAppearance::render (long depthFixup)
 						treeShape, batch);
 					staticReg.registered  = (staticReg.recipeIndex >= 0);
 					staticReg.shape        = treeShape;
+					if (staticReg.registered) {
+						// H4 follow-up (2026-05-07): per-frame re-registration
+						// after LOD/shape swap has the same lightData_ gap as
+						// mission-load registerStatic(). Force one full update()
+						// so touch() cannot resubmit default-zero lightData_.
+						// Spec: docs/superpowers/specs/2026-05-07-lod-swap-static-registry-churn.md
+						needsFullBakeNextFrame = true;
+					}
 				}
 			}
 			if (!submittedToGpu)
