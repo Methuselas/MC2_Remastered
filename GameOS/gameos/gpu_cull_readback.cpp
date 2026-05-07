@@ -140,6 +140,8 @@ bool readback_init(uint32_t maxActors) {
     s_lastGoodVisibleCount = UINT32_MAX;
     s_consumeCount = 0;
     s_firstConsumeDone = false;
+    s_snapshotCallCount = 0u;
+    s_snapshotFirstDone = false;
 
     // Per-slot layout: [ReadbackHeader][uint32_t * maxActors]
     // Align slot size to GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT.
@@ -255,6 +257,8 @@ void readback_shutdown() {
     s_lastGoodVisibleCount = UINT32_MAX;
     s_initialized  = false;
     s_firstConsumeDone = false;
+    s_snapshotCallCount = 0u;
+    s_snapshotFirstDone = false;
 
     printf("[GPU_CULL v1] event=readback_shutdown\n");
     fflush(stdout);
@@ -508,7 +512,10 @@ static uint8_t s_actorVis[MAX_ACTOR_HANDLE];  // 0=invisible, 1=visible
 static uint32_t s_snapshotCallCount = 0u;
 static bool     s_snapshotFirstDone = false;
 
-void readback_buildActorVisSnapshot(uint32_t /*maxActorHandle*/) {
+void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
+    // Clamp caller's bound to the fixed array size; memset always covers the full array
+    // so entries above the caller's bound remain fail-open (visible).
+    const uint32_t cap = (maxActorHandle < MAX_ACTOR_HANDLE) ? maxActorHandle : MAX_ACTOR_HANDLE;
     // Default: all visible (fail-open for T3 / disabled / no valid slot).
     memset(s_actorVis, 1, sizeof(s_actorVis));
 
@@ -564,7 +571,7 @@ void readback_buildActorVisSnapshot(uint32_t /*maxActorHandle*/) {
     uint32_t nInvisible = 0u;
     for (uint32_t i = 0u; i < recCount; ++i) {
         const uint32_t id = recs[i].actorId;
-        if (id == 0u || id >= MAX_ACTOR_HANDLE) continue;  // out-of-range: skip (stays visible)
+        if (id == 0u || id >= cap) continue;  // out-of-range or above caller bound: skip (stays visible)
         const uint8_t vis = (rbVis[i] != 0u) ? 1u : 0u;
         s_actorVis[id] = vis;
         if (vis) ++nVisible; else ++nInvisible;
