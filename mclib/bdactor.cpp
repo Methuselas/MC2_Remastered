@@ -17,6 +17,7 @@
 #include "gos_static_prop_registry.h"  // Stage 3.C: static-registry fast path
 #include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
+#include "gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for per-update breakdown
 
 #ifndef CAMERA_H
 #include"camera.h"
@@ -1625,8 +1626,14 @@ long BldgAppearance::render (long depthFixup)
 				// bldgShape was reassigned (LOD swap, damage→bldgDmgShape),
 				// but staticReg.registered=true still blocks the registration
 				// block below. Invalidate the stale entry first.
-				if (staticReg.registered && staticReg.shape != bldgShape)
+				// PERF DIAGNOSTIC 2026-05-07: see TreeAppearance::render for the
+				// per-frame churn analysis. Buildings have damage-state swaps
+				// (intact → dmg shape) but typically no LOD swap; this rate
+				// should be much lower than the tree counterpart.
+				if (staticReg.registered && staticReg.shape != bldgShape) {
+					ZoneScopedN("BldgAppr shape_swap_reregister");
 					invalidateStaticRegistration();
+				}
 
 				// Slice 2 (object-offload) — Stage 2.C+: pass appearType->name
 				// as callerName so [OBJBATCHER v1] event=late_register can
@@ -2279,16 +2286,32 @@ long BldgAppearance::update (bool animate)
 		//     via the recovery flag above).
 		// Otherwise full bake. The full bake clears the recovery flag —
 		// re-establishing valid .argb before render reads it.
-		if (g_useGpuObjects &&
-		    !needsFullBakeNextFrame &&
-		    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(bldgShape))
+		// PERF DIAGNOSTIC 2026-05-06: Tracy zones to attribute the 9.52 µs/call
+		// observed in TerrainObject::update appearanceUpdate. Six theories under
+		// investigation; these zones discriminate between them. Demote to silent
+		// (or remove) once the regression is identified.
+		bool gpuEligible;
+		{
+			ZoneScopedN("BldgAppr eligibility");
+			gpuEligible = g_useGpuObjects &&
+			              !needsFullBakeNextFrame &&
+			              GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(bldgShape);
+		}
+
+		if (gpuEligible)
 		{
 			// Stage 2.D.2 fix: cache GPU light data NOW, while worldLights[0]->aRGB
 			// is the per-actor terrain-scaled value set at line 2144 above.
 			// By the time submitMultiShape() runs (during renderLists()), later
 			// actors have overwritten worldLights[0]->aRGB for their positions.
-			bldgShape->CacheGpuLightData();
-			bldgShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+			{
+				ZoneScopedN("BldgAppr CacheGpuLightData");
+				bldgShape->CacheGpuLightData();
+			}
+			{
+				ZoneScopedN("BldgAppr TMS_PositionsOnly");
+				bldgShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+			}
 			// Stage 2.D.2: on the dual-emit frame (latch Armed), also run
 			// the full bake so listOfTriangles[].aRGBLight is populated for
 			// the parity snapshot captured in submit(). This call is a pure
@@ -2304,17 +2327,26 @@ long BldgAppearance::update (bool animate)
 			// Stage 2.D.3: per-actor gate. Bootstrap arm returns true for
 			// every shape; sample arm returns true only for the picked actor.
 			if (gos_object_parity::IsDualEmitArmedForActor(bldgShape)) {
+				ZoneScopedN("BldgAppr TMS_dualEmit");
 				bldgShape->TransformMultiShape (&xlatPosition,&rot);
 			}
 		}
 		else
 		{
+			ZoneScopedN("BldgAppr TMS_full");
 			bldgShape->TransformMultiShape (&xlatPosition,&rot);
 			needsFullBakeNextFrame = false;
 		}
 
-		if (bldgShadowShape && useShadows)
+		// Skip the legacy-blob-shadow per-frame transform when shadow maps are
+		// active. BldgAppearance::renderShadows() at line 2010 already early-
+		// returns under the same condition (gos_IsTerrainTessellationActive),
+		// meaning bldgShadowShape's transformed state is never consumed in this
+		// pipeline. Per-actor saving = 1 TransformMultiShape call per visible
+		// building per frame (~3 µs of pure waste).
+		if (bldgShadowShape && useShadows && !gos_IsTerrainTessellationActive())
 		{
+			ZoneScopedN("BldgAppr ShadowTMS");
 			bldgShadowShape->SetRecalcShadows(checkShadows);
 			bldgShadowShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
 			bldgShadowShape->TransformMultiShape (&xlatPosition,&rot);
@@ -2707,6 +2739,18 @@ void BldgAppearance::registerStatic() {
 		staticReg.registered  = true;
 		staticReg.shape       = bldgShape;
 		staticReg.recipeIndex = regIdx;
+		// H4 fix (2026-05-06): registerStatic only ran TransformMultiShape_BuildRecipe
+		// (positions only); leaf TG_Shape::lightData_ is still default/zero. Without
+		// this flag, IsStaticNow() returns true on the very next frame, UPDATE_SKIP
+		// fires, touch() re-submits the empty lightData_ via addLightDataStructure
+		// → all-zero lighting slot → black actor. Setting needsFullBakeNextFrame
+		// uses the existing late-reg recovery mechanism: IsStaticNow() returns
+		// false until the next update() runs a full TransformMultiShape and clears
+		// the flag (bdactor.cpp:2313). One-time cost of one extra update() per
+		// mission-load-registered actor; recovers the UPDATE_SKIP perf win
+		// every frame thereafter. Spec:
+		// docs/superpowers/specs/2026-05-06-update-skip-touch-residual-debug-strategy.md
+		needsFullBakeNextFrame = true;
 	}
 }
 
@@ -4324,8 +4368,14 @@ long TreeAppearance::render (long depthFixup)
 				// reassigned (LOD swap at bdactor.cpp:3984, damage at ~3596/3626), but
 				// staticReg.registered==true still blocks the registration block below.
 				// Invalidate the stale entry first so the new shape gets registered.
-				if (staticReg.registered && staticReg.shape != treeShape)
+				// PERF DIAGNOSTIC 2026-05-07: count this branch — per capture 3
+				// analysis, LOD-swap-driven invalidate+re-register on trees was
+				// running tens of times per frame, leaking recipe slots and
+				// pin-count churn. Tracy zone makes the rate visible per-frame.
+				if (staticReg.registered && staticReg.shape != treeShape) {
+					ZoneScopedN("TreeAppr LOD_swap_reregister");
 					invalidateStaticRegistration();
+				}
 
 				// Stage 2.C+: see BldgAppearance::render for callerName intent.
 				const char* callerName = (appearType ? appearType->name : nullptr);
@@ -4630,30 +4680,51 @@ long TreeAppearance::update (bool animate)
 		// See BldgAppearance::update for the full rationale; same shape.
 		// Branch lives INSIDE the existing inView||g_useGpuStaticProps cull
 		// gate to preserve slice 1's R1 invariant.
-		if (g_useGpuObjects &&
-		    !needsFullBakeNextFrame &&
-		    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(treeShape))
+		// PERF DIAGNOSTIC 2026-05-06: Tracy zones — see BldgAppearance::update
+		// for the same instrumentation set. Same theories under investigation.
+		bool gpuEligible;
+		{
+			ZoneScopedN("TreeAppr eligibility");
+			gpuEligible = g_useGpuObjects &&
+			              !needsFullBakeNextFrame &&
+			              GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(treeShape);
+		}
+
+		if (gpuEligible)
 		{
 			// Stage 2.D.2 fix: cache GPU light data while lights are per-actor-correct.
-			treeShape->CacheGpuLightData();
-			treeShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+			{
+				ZoneScopedN("TreeAppr CacheGpuLightData");
+				treeShape->CacheGpuLightData();
+			}
+			{
+				ZoneScopedN("TreeAppr TMS_PositionsOnly");
+				treeShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+			}
 			// Stage 2.D.2: dual-emit full bake — same rationale as BldgAppearance
 			// above. Populates listOfTriangles[].aRGBLight for snapshot in submit().
 			// Stage 2.D.3: per-actor gate (see BldgAppearance::update above).
 			if (gos_object_parity::IsDualEmitArmedForActor(treeShape)) {
+				ZoneScopedN("TreeAppr TMS_dualEmit");
 				treeShape->TransformMultiShape (&xlatPosition,&rot);
 			}
 		}
 		else
 		{
+			ZoneScopedN("TreeAppr TMS_full");
 			treeShape->TransformMultiShape (&xlatPosition,&rot);
 			needsFullBakeNextFrame = false;
 		}
 
 		light->active = true;
 
-		if (treeShadowShape && useShadows)
+		// Skip the legacy-blob-shadow per-frame transform when shadow maps are
+		// active — same rationale as BldgAppearance::update. TreeAppearance::
+		// renderShadows() at line 4544 already early-returns under the same
+		// condition; treeShadowShape's transformed state is never consumed.
+		if (treeShadowShape && useShadows && !gos_IsTerrainTessellationActive())
 		{
+			ZoneScopedN("TreeAppr ShadowTMS");
 			treeShadowShape->SetRecalcShadows(checkShadows);
 			treeShadowShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
 			treeShadowShape->TransformMultiShape (&xlatPosition,&rot);
@@ -4869,6 +4940,14 @@ void TreeAppearance::registerStatic() {
 		staticReg.registered  = true;
 		staticReg.shape       = treeShape;
 		staticReg.recipeIndex = regIdx;
+		// H4 fix (2026-05-06): see BldgAppearance::registerStatic for full
+		// rationale. registerStatic only ran TransformMultiShape_BuildRecipe
+		// (positions only); leaf TG_Shape::lightData_ is still default/zero.
+		// needsFullBakeNextFrame = true forces the first post-registration
+		// frame through full update() (populating lightData_); subsequent
+		// frames proceed via UPDATE_SKIP / static-replay with valid cached data.
+		// Spec: docs/superpowers/specs/2026-05-06-update-skip-touch-residual-debug-strategy.md
+		needsFullBakeNextFrame = true;
 	}
 }
 

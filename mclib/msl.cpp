@@ -22,6 +22,7 @@
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
 #include "../GameOS/gameos/gos_static_prop_batcher.h"    // Stage 2.D.2 CacheGpuLightData
 #include "../GameOS/gameos/gos_static_prop_killswitch.h" // g_useGpuObjects extern
+#include "../GameOS/gameos/gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for CacheGpuLightData breakdown
 
 // 2026-05-05: frame-stamp the cache so registry::flush() can skip stale entries
 // (actors whose update() was culled this frame; their cached UBO slot index now
@@ -1001,11 +1002,26 @@ long TG_TypeMultiShape::SetTextureHandle (DWORD textureNum, DWORD gosTextureHand
 	listOfTextures[textureNum].mcTextureNodeIndex = gosTextureHandle;
 	listOfTextures[textureNum].gosTextureHandle = 0xffffffff;
 
+	// PERF DIAGNOSTIC 2026-05-07: per-frame call rate makes the unfiltered
+	// log unusable for diagnosis (see capture 3 — console flooding tanks
+	// frame rate). Rate-limit to: (a) first 32 events per session, then
+	// (b) 1-in-256 sampling, plus (c) periodic summary every 1024 events.
+	// Set MC2_TEX_LIFECYCLE_TRACE_VERBOSE=1 to restore unfiltered output
+	// for narrow-window debugging where flood is acceptable.
 	if (s_msl_texLifecycleTrace) {
-		printf("[TEX_LIFECYCLE v1] event=recache_multi multiType=%p texNum=%lu nodeIdx=0x%08lx numTex=%ld\n",
-		       (void*)this, (unsigned long)textureNum,
-		       (unsigned long)gosTextureHandle, (long)numTextures);
-		fflush(stdout);
+		static uint32_t s_eventCount = 0;
+		static const bool s_verbose =
+		    (getenv("MC2_TEX_LIFECYCLE_TRACE_VERBOSE") != nullptr);
+		const bool firstWindow = (s_eventCount < 32);
+		const bool sample = ((s_eventCount & 0xFF) == 0);  // 1/256
+		if (s_verbose || firstWindow || sample) {
+			printf("[TEX_LIFECYCLE v1] event=recache_multi multiType=%p texNum=%lu nodeIdx=0x%08lx numTex=%ld total=%u\n",
+			       (void*)this, (unsigned long)textureNum,
+			       (unsigned long)gosTextureHandle, (long)numTextures,
+			       s_eventCount);
+			fflush(stdout);
+		}
+		++s_eventCount;
 	}
 
 	return(0);
@@ -1811,22 +1827,27 @@ long TG_MultiShape::TransformMultiShape_BuildRecipe (Stuff::Point3D *pos, Stuff:
 //-------------------------------------------------------------------------------
 void TG_MultiShape::CacheGpuLightData()
 {
+    ZoneScopedN("CacheGpuLightData");
     if (!g_useGpuObjects)
         return;
 
     // Find first SHAPE_NODE leaf — same logic as submitMultiShape.
     TG_Shape* firstShapeNodeLeaf = nullptr;
-    for (int i = 0; i < numTG_Shapes; ++i) {
-        TG_ShapeRec& rec = listOfShapes[i];
-        if (!rec.processMe || !rec.node) continue;
-        TG_Shape* child = rec.node;
-        if (!child->myType) continue;
-        if (child->myType->GetNodeType() != SHAPE_NODE) continue;
-        firstShapeNodeLeaf = child;
-        break;
+    {
+        ZoneScopedN("CacheGpuLightData findLeaf");
+        for (int i = 0; i < numTG_Shapes; ++i) {
+            TG_ShapeRec& rec = listOfShapes[i];
+            if (!rec.processMe || !rec.node) continue;
+            TG_Shape* child = rec.node;
+            if (!child->myType) continue;
+            if (child->myType->GetNodeType() != SHAPE_NODE) continue;
+            firstShapeNodeLeaf = child;
+            break;
+        }
     }
 
     if (firstShapeNodeLeaf != nullptr) {
+        ZoneScopedN("CacheGpuLightData GatherGpuObjectLightDataOnly");
         cachedGpuLightIndex_ = firstShapeNodeLeaf->GatherGpuObjectLightDataOnly();
         cachedFrame_         = g_mc2FrameCounter;
     }
