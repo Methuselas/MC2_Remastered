@@ -1198,7 +1198,12 @@ void GameObjectManager::registerStaticPropsForMissionLoad() {
 
 	int totalEnumerated = 0, totalRegistered = 0, totalSkipped = 0;
 
-	auto registerOne = [&](GameObjectPtr obj) {
+	// terrainObjects[] are already primed by primeTerrainObjectsForMissionLoad()
+	// (which calls setObjectParameters with correct teamId/homeTeamRelationship).
+	// Re-calling setObjectParameters here would overwrite those with zeroes and
+	// is the cause of the mech shadow regression introduced when the fix was
+	// applied uniformly across all four arrays.
+	auto registerOnePrimed = [&](GameObjectPtr obj) {
 		if (!obj) return;
 		++totalEnumerated;
 		AppearancePtr app = obj->getAppearance();
@@ -1208,14 +1213,28 @@ void GameObjectManager::registerStaticPropsForMissionLoad() {
 		else                            ++totalSkipped;
 	};
 
+	// buildings[], turrets[], gates[] are NOT walked by primeTerrainObjectsForMissionLoad.
+	// Appearance::position stays zero until setObjectParameters() is called, which
+	// would place every prop at world origin (ghost pile over the lake).
+	auto registerOneUnprimed = [&](GameObjectPtr obj) {
+		if (!obj) return;
+		++totalEnumerated;
+		AppearancePtr app = obj->getAppearance();
+		if (!app) { ++totalSkipped; return; }
+		app->setObjectParameters(obj->getPosition(), obj->getRotation(), 0, 0, 0);
+		app->registerStatic();
+		if (app->isStaticRegistered()) ++totalRegistered;
+		else                            ++totalSkipped;
+	};
+
 	for (long i = 0; i < numTerrainObjects; ++i)
-		registerOne(terrainObjects[i]);
+		registerOnePrimed(terrainObjects[i]);
 	for (long i = 0; i < numBuildings; ++i)
-		registerOne(buildings[i]);
+		registerOneUnprimed(buildings[i]);
 	for (long i = 0; i < numTurrets; ++i)
-		registerOne(turrets[i]);
+		registerOneUnprimed(turrets[i]);
 	for (long i = 0; i < numGates; ++i)
-		registerOne(gates[i]);
+		registerOneUnprimed(gates[i]);
 
 	fprintf(stderr,
 		"[STATIC_PROP_REG v1] event=mission_load enumerated=%d registered=%d skipped=%d\n",
