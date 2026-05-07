@@ -1,6 +1,8 @@
 #include "gos_static_prop_registry.h"
 #include "../../mclib/txmmgr.h"  // 2026-05-05: peekLightSlotNumLights/getLightStructCount for flush trace
 #include "../../mclib/appear.h"  // Task 6: Appearance* for registerStaticProp()
+#include "gpu_cull_substrate.h"  // C1b GPU authority flip: substrate_appendStaticPropRecord
+#include "gpu_cull_record.h"     // C1b: GpuActorRecord, Cat_StaticProp, CategoryMask
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -346,9 +348,55 @@ void flush() {
             GpuStaticPropInstance inst = s_recipes[rng.first + i]; // stack copy
             inst.lightDataIndex = freshLightIdx;
             batcher.submitCachedInstance(inst);
+
+            // C1b GPU authority flip: emit one GpuActorRecord per submitted static prop
+            // instance so the compute cull shader can scatter it into the correct bucket
+            // (typeID). This appends to the already-flushed substrate slot; compute_dispatch()
+            // runs AFTER this loop (moved from mission.cpp to txmmgr.cpp) and picks up the
+            // updated hdr->recordCount.
+            //
+            // category encoding: low 4 bits = Cat_StaticProp (5), upper 28 bits = typeID.
+            // Shader: uint cat = rec.category & CATEGORY_MASK; if cat == CAT_STATIC_PROP,
+            //         uint bucket = rec.category >> 4;  →  correct bucket scatter.
+            //
+            // Flag_AlwaysVisible NOT set: the GPU frustum test runs (using worldCenter +
+            // boundingRadius). This can conservatively cull props near the frustum edge;
+            // acceptable because the CPU-side markVisible() already gates which recipes
+            // reach this loop (CPU visibility IS the admission gate for registry path).
+            // Any GPU-culled prop that the CPU admitted will just fall back to 0-count
+            // draw — invisible for that frame, restored next frame as it re-enters frustum.
+            if (gpu_cull::substrate_isEnabled()) {
+                gpu_cull::GpuActorRecord gpuRec{};
+                // World position: modelMatrix is row-major (Stuff::Matrix4D convention).
+                // Translation column = entries [3], [7], [11] (col 3, rows 0-2).
+                gpuRec.worldCenter[0] = inst.modelMatrix[3];
+                gpuRec.worldCenter[1] = inst.modelMatrix[7];
+                gpuRec.worldCenter[2] = inst.modelMatrix[11];
+                // Bounding radius: conservative 50.0f covers most MC2 buildings/trees.
+                // Over-admission at frustum edge is safe (CPU-side markVisible already
+                // gates visibility; GPU is an additional conservative cull, never stricter).
+                gpuRec.boundingRadius = 50.0f;
+                gpuRec.worldAabbMin[0] = gpuRec.worldCenter[0] - gpuRec.boundingRadius;
+                gpuRec.worldAabbMin[1] = gpuRec.worldCenter[1] - gpuRec.boundingRadius;
+                gpuRec.worldAabbMin[2] = gpuRec.worldCenter[2] - gpuRec.boundingRadius;
+                gpuRec.worldAabbMax[0] = gpuRec.worldCenter[0] + gpuRec.boundingRadius;
+                gpuRec.worldAabbMax[1] = gpuRec.worldCenter[1] + gpuRec.boundingRadius;
+                gpuRec.worldAabbMax[2] = gpuRec.worldCenter[2] + gpuRec.boundingRadius;
+                // Category: typeID in upper 28 bits + Cat_StaticProp (5) in lower 4 bits.
+                gpuRec.category = (static_cast<uint32_t>(inst.typeID) << 4)
+                                | static_cast<uint32_t>(gpu_cull::Cat_StaticProp);
+                gpuRec.flags          = gpu_cull::Flag_None;
+                gpuRec.actorId        = 0u;   // static props have no actor handle
+                gpuRec.prevVisibilityBit = 1u; // CPU admitted this prop this frame
+                gpuRec.consumerFlags  = 0u;
+                gpuRec.blockIdx       = 0u;
+                gpu_cull::substrate_appendStaticPropRecord(gpuRec);
+            }
         }
     }
-    // batcher.flush() is called by txmmgr.cpp immediately after this returns.
+    // compute_dispatch() runs after this (moved to txmmgr.cpp between registry flush
+    // and batcher flush) so it sees the appended static prop records.
+    // batcher.flush() is called by txmmgr.cpp immediately after compute_dispatch().
 }
 
 } // namespace GpuStaticPropRegistry

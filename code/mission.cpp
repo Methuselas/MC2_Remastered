@@ -506,11 +506,13 @@ long Mission::update (void)
 		else
 			ObjectManager->update(true, true, true);
 
-		// C1a: GPU visibility mirror dispatch. Runs after substrate_flushUpload()
-		// (which is called at the end of ObjectManager->update()). Skips silently
-		// if MC2_GPU_CULL is not set or if terrain MVP is not yet available.
+		// C1b GPU authority flip: compute_dispatch() has been MOVED to txmmgr.cpp
+		// (between GpuStaticPropRegistry::flush() and GpuStaticPropBatcher::flush())
+		// so that static prop substrate records appended during registry flush are
+		// visible to the cull shader. compute_emitParitySummary() still runs here
+		// (no static-prop records yet in the substrate; summary is for dynamic actors
+		// from substrate_flushUpload earlier this frame — timing is acceptable).
 		if (gpu_cull::compute_isEnabled()) {
-			gpu_cull::compute_dispatch();
 			gpu_cull::compute_emitParitySummary();
 		}
 
@@ -2762,11 +2764,16 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	loadProgress = 58.0f;
 	ObjectManager->setNumObjects(numMechs, numVehicles, 0, -1, -1, -1, 100, 50, 0, 130, -1);
 
-	// C0-3: init GPU cull substrate SSBO sized to worst-case per-frame actor count.
-	// getMaxObjects() returns total actor slots; +25% headroom per plan spec.
+	// C0-3 + C1b GPU authority flip: init GPU cull substrate SSBO sized to
+	// worst-case per-frame record count. Now includes BOTH dynamic actors
+	// (getMaxObjects() + 25% headroom) AND static prop instances (appended by
+	// GpuStaticPropRegistry::flush() before compute_dispatch()). Static props
+	// at wolfman zoom can reach ~4096+ visible instances; add a flat 8192
+	// record headroom beyond the dynamic actor count to cover them safely.
 	{
 		const uint32_t maxActors = static_cast<uint32_t>(ObjectManager->getMaxObjects());
-		gpu_cull::substrate_init(maxActors + maxActors / 4u);
+		const uint32_t staticPropHeadroom = 8192u;  // visible static props at wolfman zoom
+		gpu_cull::substrate_init(maxActors + maxActors / 4u + staticPropHeadroom);
 	}
 	// C1a: init GPU visibility compute pipeline (shadow/diagnostic mode).
 	// No-op if MC2_GPU_CULL env var is not set (default off).

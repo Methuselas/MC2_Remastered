@@ -47,4 +47,23 @@ GLintptr substrate_getCurrentSlotOffset();
 // Use with glBindBufferRange() to bound the binding range. Returns 0 if not init.
 GLsizeiptr substrate_getSlotBytes();
 
+// C1b GPU authority flip: append additional records AFTER substrate_flushUpload().
+//
+// Called from GpuStaticPropRegistry::flush() (render phase, after objmgr::update's
+// substrate_flushUpload()) to inject static prop records into the already-flushed slot
+// before compute_dispatch() runs. Appends records to the persistent-mapped buffer and
+// updates hdr->recordCount in-place (coherent write, visible to GPU immediately).
+//
+// Contract: call ONLY after substrate_flushUpload() and BEFORE compute_dispatch().
+// compute_dispatch() re-reads hdr->recordCount from the mapped buffer at copy time
+// (via glCopyBufferSubData then glGetBufferSubData on the staging SSBO), so it picks
+// up the updated count. Safe because the fence placed by flushUpload() only gates
+// GPU reads from the PREVIOUS ring-slot visit; CPU writes to the persistent-mapped
+// buffer are always immediately coherent regardless of fence state.
+void substrate_appendStaticPropRecord(const GpuActorRecord& rec);
+
+// Returns the current record count for the active slot (after any appends).
+// Used by compute_dispatch() to get the post-append count before dispatching.
+uint32_t substrate_getCurrentRecordCount();
+
 } // namespace gpu_cull

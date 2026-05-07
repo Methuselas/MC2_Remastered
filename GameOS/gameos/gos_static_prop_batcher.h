@@ -271,3 +271,4 @@ bool batcher_getTypeDrawInfo(uint32_t  typeID,
                               uint32_t* outFirstIndex,
                               int32_t*  outBaseVertex,
                               uint32_t* outInstanceCap);
+

@@ -272,4 +272,61 @@ void substrate_flushUpload() {
     SUBSTRATE_TRACE("event=flush_upload records=%u slot=%u", s_perFrameCount, s_frameSlot);
 }
 
+// ---------------------------------------------------------------------------
+// substrate_appendStaticPropRecord (C1b GPU authority flip)
+// ---------------------------------------------------------------------------
+//
+// Appends one static prop record to the ALREADY-FLUSHED current ring slot and
+// updates hdr->recordCount in-place. Called from GpuStaticPropRegistry::flush()
+// between substrate_flushUpload() and compute_dispatch() so the compute shader
+// sees both dynamic actors AND static prop records in the same dispatch.
+//
+// Safety: the fence placed by substrate_flushUpload() gates GPU reads from the
+// PREVIOUS visit to this ring slot, not the current CPU-write session. Writes to
+// the persistent-mapped coherent buffer are immediately visible to the GPU so
+// compute_dispatch() (glCopyBufferSubData) will copy the updated header + records.
+
+void substrate_appendStaticPropRecord(const GpuActorRecord& rec) {
+    if (!substrate_isEnabled() || !s_initialized) return;
+    if (!s_mappedPtr) return;
+
+    if (s_perFrameCount >= s_maxActors) {
+        // Overflow: same behavior as submitDynamicActor (once-per-event log).
+        if (s_perFrameCount == s_maxActors) {
+            printf("[GPU_CULL v1] event=static_prop_overflow at=%u cap=%u\n",
+                   s_perFrameCount, s_maxActors);
+            fflush(stdout);
+        }
+        return;
+    }
+
+    const size_t slotOffset = s_frameSlot * s_slotBytes;
+
+    // Write the record at the next available position.
+    char* dest = static_cast<char*>(s_mappedPtr)
+                 + slotOffset
+                 + sizeof(GpuActorRecordHeader)
+                 + s_perFrameCount * sizeof(GpuActorRecord);
+    memcpy(dest, &rec, sizeof(GpuActorRecord));
+    ++s_perFrameCount;
+
+    // Update hdr->recordCount in-place so compute_dispatch's glCopyBufferSubData
+    // copies the updated count. Buffer is GL_MAP_COHERENT_BIT — no explicit flush.
+    GpuActorRecordHeader* hdr =
+        reinterpret_cast<GpuActorRecordHeader*>(
+            static_cast<char*>(s_mappedPtr) + slotOffset);
+    hdr->recordCount = s_perFrameCount;
+
+    SUBSTRATE_TRACE("event=append_static type=%u count=%u",
+                    (rec.category >> 4), s_perFrameCount);
+}
+
+// ---------------------------------------------------------------------------
+// substrate_getCurrentRecordCount
+// ---------------------------------------------------------------------------
+
+uint32_t substrate_getCurrentRecordCount() {
+    return s_perFrameCount;
+}
+
 } // namespace gpu_cull

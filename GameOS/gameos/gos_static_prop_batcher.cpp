@@ -1520,26 +1520,21 @@ void GpuStaticPropBatcher::flush() {
                                 (gpu_cull::compute_getIndirectCmdBuf() != 0) &&
                                 (gpu_cull::compute_getBucketCount() == s_types.size());
 
-    if (useC1bIndirect) {
-        // Write CPU-computed per-type instanceCounts into the indirect command buffer.
-        // In C1b shadow mode the GPU cull has already run and written its own counts
-        // via the patch dispatch, but this flush happens AFTER the cull dispatch so
-        // we overwrite with the CPU-authoritative counts to ensure visual correctness
-        // until C1c enables full GPU render authority.
-        //
-        // Layout of DrawElementsIndirectCommand: count, instanceCount, firstIndex, baseVertex, baseInstance
-        // instanceCount is at offset 4 bytes into each 20-byte command.
-        const GLuint indirectBuf = gpu_cull::compute_getIndirectCmdBuf();
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirectBuf);
-        for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {
-            auto rit = s_typeRanges.find(typeID);
-            const uint32_t instCount = (rit != s_typeRanges.end()) ? rit->second.instanceCount : 0u;
-            // Write instanceCount at byte offset typeID*20 + 4 within the indirect buffer.
-            const GLintptr cmdOffset = static_cast<GLintptr>(typeID * 20 + 4);
-            glBufferSubData(GL_DRAW_INDIRECT_BUFFER, cmdOffset, sizeof(GLuint), &instCount);
-        }
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-    }
+    // C1b GPU authority flip: compute_dispatch() now runs BEFORE flush() and writes
+    // GPU-computed per-type instanceCounts via the patch shader. The CPU overwrite
+    // below is REMOVED — glMultiDrawElementsIndirect reads GPU-authoritative counts.
+    //
+    // Shadow mode is no longer needed: static prop substrate records are emitted by
+    // GpuStaticPropRegistry::flush() with category = Cat_StaticProp | (typeID<<4),
+    // so the cull shader correctly scatters each instance into its typeID bucket.
+    //
+    // Invariant: compute_dispatch() → GL_COMMAND_BARRIER_BIT → flush() ordering is
+    // guaranteed by txmmgr.cpp (registry::flush → compute_dispatch → batcher::flush).
+    // The barrier in compute_dispatch() after the patch shader covers GL_COMMAND_BARRIER_BIT.
+    //
+    // The CPU-overwrite block (shadow mode) is intentionally REMOVED here.
+    // If visual corruption occurs, re-enable by reverting this comment block to the
+    // original glBufferSubData loop (see git history for the shadow mode code).
 
     // Per-type drawing: bind per-type instance & color SSBO ranges, then
     // issue one instanced draw per packet. gl_InstanceID in the shader
@@ -1694,11 +1689,10 @@ void GpuStaticPropBatcher::flush() {
             // Drain any stale GL error first so our check is clean.
             while (glGetError() != GL_NO_ERROR) {}
             if (useC1bIndirect) {
-                // C1b: use glDrawElementsIndirect to read the command from the
-                // GPU indirect buffer. The command at offset typeID*20 has the
-                // CPU-written instanceCount from the shadow-mode write above.
-                // baseVertex in the struct handles the VBO offset so we don't
-                // need to pass it here separately.
+                // C1b GPU authority flip: glDrawElementsIndirect reads the command
+                // at offset typeID*20 from the GPU indirect buffer. instanceCount
+                // was written by the patch shader (compute_dispatch ran before flush).
+                // baseVertex in the struct handles the VBO offset — no separate pass.
                 // Sampler state trap: ensure REPEAT/LINEAR is bound before first
                 // indirect draw so world-scale UVs don't collapse to texture edge.
                 // (The per-packet texture bind above uses GL_TEXTURE_2D default
@@ -1955,6 +1949,7 @@ bool GpuStaticPropBatcher::buildRecipeFromShape(
 uint32_t batcher_getTypeCount() {
     return static_cast<uint32_t>(s_types.size());
 }
+
 
 bool batcher_getTypeDrawInfo(uint32_t  typeID,
                               uint32_t* outIndexCount,

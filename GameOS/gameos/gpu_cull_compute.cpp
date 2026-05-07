@@ -335,7 +335,23 @@ bool compute_init() {
     }
 
     // --- Debug SSBO for C1a mode (binding 9) ---
-    s_maxActors = 4096u;
+    // C1b GPU authority flip: static prop records are now appended to the substrate
+    // before compute_dispatch(). Size the staging SSBO to match the substrate slot
+    // (which includes both dynamic actors AND static prop instances). Use
+    // substrate_getSlotBytes() if the substrate is initialized; fall back to 8192
+    // records for safety (handles ~100 dynamic + ~8000 static props at wolfman zoom).
+    {
+        const GLsizeiptr substrateSlotBytes = substrate_getSlotBytes();
+        if (substrateSlotBytes > 0) {
+            // Derive max actors from slot size: (slotBytes - headerBytes) / recordBytes
+            const size_t recordAreaBytes =
+                static_cast<size_t>(substrateSlotBytes) - sizeof(GpuActorRecordHeader);
+            s_maxActors = static_cast<uint32_t>(recordAreaBytes / sizeof(GpuActorRecord));
+        } else {
+            // Substrate not yet initialized (C1a init order edge case); use generous default.
+            s_maxActors = 8192u;
+        }
+    }
     const GLsizeiptr debugSsboBytes =
         static_cast<GLsizeiptr>(2 * sizeof(uint32_t) + s_maxActors * sizeof(uint32_t));
     glGenBuffers(1, &s_debugSsbo);

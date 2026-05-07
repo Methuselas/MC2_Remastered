@@ -64,6 +64,7 @@
 #include "../GameOS/gameos/gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "../GameOS/gameos/gos_terrain_patch_stream.h"
 #include "../GameOS/gameos/gos_terrain_indirect.h"
+#include "../GameOS/gameos/gpu_cull_compute.h"  // C1b: compute_dispatch() moved here from mission.cpp
 
 //---------------------------------------------------------------------------
 // static globals
@@ -1746,7 +1747,22 @@ void MC_TextureManager::renderLists (void)
 		if (g_useGpuStaticProps || g_useGpuObjects) {
 			// Stage 3.C: inject static-registry instances into batcher buckets
 			// BEFORE flush(), so they're drawn in the same combined GPU pass.
+			// C1b GPU authority flip: registry flush ALSO appends static prop
+			// substrate records (category = Cat_StaticProp | typeID<<4) so the
+			// cull shader can scatter them into the correct per-type bucket.
 			GpuStaticPropRegistry::flush();
+
+			// C1b GPU authority flip: compute_dispatch() is now called HERE
+			// (moved from mission.cpp) so it processes BOTH dynamic actor records
+			// (from substrate_flushUpload in objmgr::update) AND the static prop
+			// records appended by GpuStaticPropRegistry::flush() above.
+			// The patch shader then writes GPU-computed instanceCounts into the
+			// indirect command buffer. GpuStaticPropBatcher::flush() below uses
+			// glMultiDrawElementsIndirect which reads those GPU-authoritative counts.
+			if (gpu_cull::compute_isEnabled()) {
+				gpu_cull::compute_dispatch();
+			}
+
 			GpuStaticPropBatcher::instance().flush();
 		}
 	}
