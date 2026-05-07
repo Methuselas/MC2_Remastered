@@ -35,6 +35,36 @@ ObjectAdmissionPredicateMode objectAdmissionPredicateMode() {
     return s_mode;
 }
 
+namespace {
+
+bool                         s_effectInitialized = false;
+EffectAdmissionPredicateMode s_effectMode = EffectAdmissionPredicateMode::Legacy;
+
+const char* effectModeLabel(EffectAdmissionPredicateMode m) {
+    return (m == EffectAdmissionPredicateMode::Modern) ? "modern" : "legacy";
+}
+
+} // namespace
+
+void effectAdmissionPredicate_init() {
+    if (s_effectInitialized) return;
+    const char* env = std::getenv("MC2_EFFECT_ADMISSION_PREDICATE");
+    if (env && std::strcmp(env, "legacy") == 0) {
+        s_effectMode = EffectAdmissionPredicateMode::Legacy;
+    } else {
+        s_effectMode = EffectAdmissionPredicateMode::Modern;  // default
+    }
+    s_effectInitialized = true;
+    std::printf("[INSTR v1] effect_admission_mode=%s\n", effectModeLabel(s_effectMode));
+    std::fflush(stdout);
+}
+
+EffectAdmissionPredicateMode effectAdmissionPredicateMode() {
+    // Lazy init - startup ordering is non-load-bearing.
+    effectAdmissionPredicate_init();
+    return s_effectMode;
+}
+
 bool clipSpaceFrustumAdmit(const Stuff::Vector4D& rawClip) {
     // w must be in front of camera. Behind-camera vertices have rawClip.w <= 0
     // and the canonical clip-space tests below become meaningless.

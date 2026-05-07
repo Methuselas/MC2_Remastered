@@ -44,3 +44,20 @@ bool clipSpaceFrustumAdmit(const Stuff::Vector4D& rawClip);
 // per case. Returns the number of failures (0 = all pass). Caller is
 // expected to fail loudly on non-zero return — see Task 4.
 int objectAdmissionPredicate_selftest();
+
+//---------------------------------------------------------------------------
+// Track A2 - effect admission mode (sibling of the Track A1 object mode).
+// Same clipSpaceFrustumAdmit predicate; separate env flag so the two slices
+// can be flipped on independently during soak.
+//---------------------------------------------------------------------------
+
+enum class EffectAdmissionPredicateMode {
+    Legacy,    // default: bool comes from projectZ's screen-rect test
+    Modern,    // bool comes from clipSpaceFrustumAdmit(rawClip)
+};
+
+// One-time probe. Idempotent. Called lazily from effectAdmissionPredicateMode().
+void effectAdmissionPredicate_init();
+
+// Read the active mode. Lazy-initializes; startup ordering is non-load-bearing.
+EffectAdmissionPredicateMode effectAdmissionPredicateMode();

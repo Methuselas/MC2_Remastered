@@ -664,6 +664,8 @@ int main(int argc, char** argv)
     projectz_trace_init();
     // Track A1: probe object-admission mode; emit [INSTR v1] object_admission_mode= line.
     objectAdmissionPredicate_init();
+    // Track A2: probe effect-admission mode; emit [INSTR v1] effect_admission_mode= line.
+    effectAdmissionPredicate_init();
     // Optional startup selftest — hard-fails on any boundary violation so the
     // operator knows immediately if the predicate body has a regression.
     if (const char* st = std::getenv("MC2_OBJECT_ADMISSION_SELFTEST")) {

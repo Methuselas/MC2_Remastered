@@ -566,17 +566,25 @@ class Camera
 		// Effect billboard admission — bool gates submission; same wedge-class hazard as terrain.
 		inline bool projectForEffectAdmission (Stuff::Vector3D& point,
 		                                       Stuff::Vector4D& screen) {
+			LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
-			bool accepted = projectZ(point, screen);
+			// projectZ writes screen byte-identically to legacy; we capture rawClip
+			// via the optionalResult sidecar so the modern predicate can see it.
+			bool legacyAccepted = projectZ(point, screen, &result);
 #pragma warning(pop)
 #if defined(MC2_PROJECTZ_FINITE_CHECK)
-			if (accepted) {
+			// Invariant gates on legacy-rect-acceptance (the original semantics),
+			// not on the bool we ultimately return. Same as Track A1's object wrapper.
+			if (result.acceptedByLegacyScreenRect) {
 				gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
 				          isfinite(screen.z) && isfinite(screen.w));
 			}
 #endif
-			return accepted;
+			if (effectAdmissionPredicateMode() == EffectAdmissionPredicateMode::Modern) {
+				return clipSpaceFrustumAdmit(result.rawClip);
+			}
+			return legacyAccepted;
 		}
 
 		// Lighting / shadow activation — bool gates light->active; screen discarded.
