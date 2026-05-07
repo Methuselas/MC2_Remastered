@@ -1,8 +1,13 @@
-// gpu_cull_compute.cpp — Track C slice C1a: GPU visibility mirror (diagnostic mode).
+// gpu_cull_compute.cpp — Track C: GPU cull compute pipeline.
 //
-// Runs the GPU cull compute shader every frame alongside the CPU path.
-// CPU still renders normally — zero change to rendering output.
-// Parity summary: [GPU_CULL v1] event=parity_summary every 600 frames.
+// C1a (shadow mode): compute shader runs every frame alongside CPU path.
+//   CPU still renders normally — zero change to rendering output.
+//   Parity summary: [GPU_CULL v1] event=parity_summary every 600 frames.
+//
+// C1b (GPU render authority): extends C1a with indirect draw infrastructure.
+//   buildIndirectBuffer() called at mission load after static prop registration.
+//   compute_dispatch() runs three kernels: cull, patch, rollup.
+//   GpuStaticPropBatcher::flush() uses glMultiDrawElementsIndirect.
 //
 // Killswitch: MC2_GPU_CULL=0 (default) — nothing happens.
 // Enable:     MC2_GPU_CULL=1 + MC2_GPU_CULL_SUBSTRATE=1
@@ -11,6 +16,7 @@
 #include "gpu_cull_substrate.h"
 #include "gpu_cull_record.h"
 #include "gos_static_prop_killswitch.h"   // gos_GetTerrainMVPMat4()
+#include "gos_static_prop_batcher.h"      // batcher_getTypeCount(), batcher_getTypeDrawInfo()
 
 #include <GL/glew.h>
 #include <gameos.hpp>                     // STOP()
@@ -31,36 +37,56 @@ static const bool s_computeTrace = (getenv("MC2_GPU_CULL_COMPUTE_TRACE") != null
 namespace gpu_cull {
 
 // ---------------------------------------------------------------------------
-// Debug SSBO layout constants (binding 9)
-// Layout: [uint gpuVisibleCount][uint gpuCulledCount][uint visibilityResults[maxActors]]
+// SSBO binding constants
 // ---------------------------------------------------------------------------
-static constexpr uint32_t DEBUG_SSBO_BINDING    = 9u;
-static constexpr uint32_t CULL_UBO_BINDING      = 2u;
+static constexpr uint32_t DEBUG_SSBO_BINDING      = 9u;   // C1a debug / C1b visibleIds
+static constexpr uint32_t BUCKET_COUNTS_BINDING   = 10u;  // C1b perBucketCount + overflow
+static constexpr uint32_t BUCKET_CAPS_BINDING     = 11u;  // C1b read-only bucketCapacity + bucketBase
+static constexpr uint32_t ACTOR_VIS_BINDING       = 12u;  // C1b per-actor visibility bits
+static constexpr uint32_t BLOCK_VIS_BINDING       = 13u;  // C1b per-block visibility bits
+static constexpr uint32_t INDIRECT_CMD_BINDING    = 11u;  // patch shader writes indirect cmds (same slot OK — different shader)
+static constexpr uint32_t CULL_UBO_BINDING        = 2u;
 
 // ---------------------------------------------------------------------------
-// Module state
+// Module state — C1a
 // ---------------------------------------------------------------------------
-static GLuint    s_computeProgram    = 0;
-static GLuint    s_debugSsbo         = 0;
+static GLuint    s_computeProgram    = 0;  // C1a cull shader
+static GLuint    s_debugSsbo         = 0;  // C1a debug SSBO
 static GLuint    s_frustumUbo        = 0;
-static GLuint    s_stagingSsbo       = 0;  // single-slot copy of current ring slot
+static GLuint    s_stagingSsbo       = 0;  // staging copy of current ring slot
 static uint32_t  s_maxActors         = 0;
-static size_t    s_stagingBytes      = 0;  // size of one substrate ring slot
+static size_t    s_stagingBytes      = 0;
 static bool      s_initialized       = false;
 
-// GL timer query for dispatch_us measurement.
+// GL timer query.
 static GLuint    s_timerQuery        = 0;
 static bool      s_timerPending      = false;
 static uint64_t  s_lastDispatchNs    = 0;
 
-// 600-frame summary counter.
+// 600-frame summary state (C1a).
 static uint32_t  s_summaryCount      = 0;
 static bool      s_firstSummaryDone  = false;
-
-// Accumulated false_neg / false_pos between summary emissions.
 static uint64_t  s_accFalseNeg       = 0;
 static uint64_t  s_accFalsePos       = 0;
 static uint32_t  s_dispatchFrames    = 0;
+
+// ---------------------------------------------------------------------------
+// Module state — C1b
+// ---------------------------------------------------------------------------
+static GLuint    s_c1bCullProgram    = 0;  // cull shader with GPU_CULL_C1B_INDIRECT define
+static GLuint    s_patchProgram      = 0;  // patch dispatch
+static GLuint    s_rollupProgram     = 0;  // block-active rollup
+
+static GLuint    s_indirectCmdBuf    = 0;  // GL_DRAW_INDIRECT_BUFFER
+static GLuint    s_visibleIdsBuf     = 0;  // visibleIds[] SSBO (binding 9 in C1b)
+static GLuint    s_bucketCountsBuf   = 0;  // perBucketCount[] + overflowCount (binding 10)
+static GLuint    s_bucketCapsBuf     = 0;  // bucketCapacity[] + bucketBase[] (binding 11)
+static GLuint    s_actorVisBuf       = 0;  // per-actor vis bits (binding 12)
+static GLuint    s_blockVisBuf       = 0;  // per-block vis bits (binding 13)
+
+static uint32_t  s_bucketCount       = 0;  // = typeCount at mission load
+static uint32_t  s_blockCount        = 0;  // = Terrain::blocksMapSide^2
+static bool      s_c1bInitialized    = false;
 
 // ---------------------------------------------------------------------------
 // Lazy env probe
@@ -79,7 +105,6 @@ bool compute_isEnabled() {
 // Helpers: load + compile a compute shader from file
 // ---------------------------------------------------------------------------
 
-// Read a text file into a heap-allocated buffer. Caller must delete[].
 static char* load_text_file(const char* fname) {
     FILE* f = fopen(fname, "rb");
     if (!f) return nullptr;
@@ -96,8 +121,6 @@ static char* load_text_file(const char* fname) {
     return buf;
 }
 
-// Compile a GL_COMPUTE_SHADER from source strings.
-// Returns 0 on failure (error printed to stdout).
 static GLuint compile_compute_shader(const char** strings, int count) {
     GLuint sh = glCreateShader(GL_COMPUTE_SHADER);
     if (!sh) return 0;
@@ -123,8 +146,6 @@ static GLuint compile_compute_shader(const char** strings, int count) {
     return sh;
 }
 
-// Link a program from a compiled compute shader.
-// Returns 0 on failure.
 static GLuint link_compute_program(GLuint shader) {
     GLuint prog = glCreateProgram();
     if (!prog) return 0;
@@ -147,6 +168,96 @@ static GLuint link_compute_program(GLuint shader) {
         glDeleteProgram(prog);
         return 0;
     }
+    return prog;
+}
+
+// Build a compute program from a source file with optional preamble strings.
+// preambles are prepended BEFORE the file content.
+static GLuint build_compute_program_from_file(
+        const char* fname,
+        const std::string* preambles, int nPreambles,
+        const char* debugName)
+{
+    char* fileSrc = load_text_file(fname);
+    if (!fileSrc) {
+        printf("[GPU_CULL v1] %s source not found: %s\n", debugName, fname);
+        fflush(stdout);
+        return 0;
+    }
+
+    // Build source string array: version prefix + preambles + file.
+    const char* kVersionPrefix = "#version 430\n";
+    std::vector<const char*> srcStrs;
+    srcStrs.push_back(kVersionPrefix);
+    for (int j = 0; j < nPreambles; ++j)
+        srcStrs.push_back(preambles[j].c_str());
+    srcStrs.push_back(fileSrc);
+
+    GLuint sh = compile_compute_shader(srcStrs.data(), (int)srcStrs.size());
+    delete[] fileSrc;
+    if (!sh) {
+        printf("[GPU_CULL v1] %s compile failed\n", debugName);
+        fflush(stdout);
+        return 0;
+    }
+    GLuint prog = link_compute_program(sh);
+    glDeleteShader(sh);
+    if (!prog) {
+        printf("[GPU_CULL v1] %s link failed\n", debugName);
+        fflush(stdout);
+    }
+    return prog;
+}
+
+// ---------------------------------------------------------------------------
+// Build the gpu_cull.comp program with inline #include substitution.
+// preambles are prepended after the version string.
+// ---------------------------------------------------------------------------
+static GLuint build_cull_program(const std::string* preambles, int nPreambles,
+                                  const char* debugName)
+{
+    const char* kPrefix = "#version 430\n";
+    char* predicateSrc  = load_text_file("shaders/gpu_cull_predicate.glsl");
+    char* computeSrc    = load_text_file("shaders/gpu_cull.comp");
+    if (!predicateSrc || !computeSrc) {
+        printf("[GPU_CULL v1] %s source not found (predicate=%s, comp=%s)\n",
+               debugName,
+               predicateSrc ? "ok" : "MISSING",
+               computeSrc   ? "ok" : "MISSING");
+        fflush(stdout);
+        delete[] predicateSrc;
+        delete[] computeSrc;
+        return 0;
+    }
+
+    // Inline the predicate include.
+    static const char* kIncludeLine = "#include <gpu_cull_predicate.glsl>";
+    char* incPos = strstr(computeSrc, kIncludeLine);
+    std::string fullSrc;
+    if (incPos) {
+        fullSrc.append(computeSrc, incPos - computeSrc);
+        fullSrc += "\n// --- begin gpu_cull_predicate.glsl ---\n";
+        fullSrc += predicateSrc;
+        fullSrc += "\n// --- end gpu_cull_predicate.glsl ---\n";
+        const char* afterInc = incPos + strlen(kIncludeLine);
+        fullSrc += afterInc;
+    } else {
+        fullSrc = computeSrc;
+    }
+    delete[] predicateSrc;
+    delete[] computeSrc;
+
+    // Build source list: version + preambles + full source.
+    std::vector<const char*> srcStrs;
+    srcStrs.push_back(kPrefix);
+    for (int j = 0; j < nPreambles; ++j)
+        srcStrs.push_back(preambles[j].c_str());
+    srcStrs.push_back(fullSrc.c_str());
+
+    GLuint sh = compile_compute_shader(srcStrs.data(), (int)srcStrs.size());
+    if (!sh) { return 0; }
+    GLuint prog = link_compute_program(sh);
+    glDeleteShader(sh);
     return prog;
 }
 
@@ -178,62 +289,52 @@ bool compute_init() {
         return false;
     }
 
-    // --- Load and compile the compute shader ---
-    // The predicate GLSL file is inlined by the include preprocessor in shader_builder,
-    // but since we're doing raw GL here, we load both files and concatenate manually.
-    const char* kPrefix      = "#version 430\n";
-    char* predicateSrc = load_text_file("shaders/gpu_cull_predicate.glsl");
-    char* computeSrc   = load_text_file("shaders/gpu_cull.comp");
-    if (!predicateSrc || !computeSrc) {
-        printf("[GPU_CULL v1] compute shader source not found (predicate=%s, comp=%s)\n",
-               predicateSrc ? "ok" : "MISSING",
-               computeSrc   ? "ok" : "MISSING");
-        fflush(stdout);
-        delete[] predicateSrc;
-        delete[] computeSrc;
-        STOP(("[GPU_CULL] compute shader source files not found"));
-        return false;
+    // --- C1a cull shader (no C1b define) ---
+    {
+        std::string noPreamble;
+        GLuint prog = build_cull_program(nullptr, 0, "cull_C1a");
+        if (!prog) {
+            STOP(("[GPU_CULL] C1a cull compile failed; see log above"));
+            return false;
+        }
+        s_computeProgram = prog;
     }
 
-    // Replace the '#include <gpu_cull_predicate.glsl>' directive in the compute
-    // shader with the actual predicate source. This mirrors what the glsl_program
-    // include preprocessor does for VS/FS programs.
-    // We do a simple text substitution: find the #include line and splice in.
-    static const char* kIncludeLine = "#include <gpu_cull_predicate.glsl>";
-    char* incPos = strstr(computeSrc, kIncludeLine);
-    std::string fullSrc;
-    if (incPos) {
-        fullSrc.append(computeSrc, incPos - computeSrc);
-        fullSrc += "\n// --- begin gpu_cull_predicate.glsl ---\n";
-        fullSrc += predicateSrc;
-        fullSrc += "\n// --- end gpu_cull_predicate.glsl ---\n";
-        const char* afterInc = incPos + strlen(kIncludeLine);
-        fullSrc += afterInc;
-    } else {
-        // No include directive found — use as-is (predicate already inlined).
-        fullSrc = computeSrc;
+    // --- C1b cull shader (with GPU_CULL_C1B_INDIRECT define) ---
+    {
+        std::string c1bDefine = "#define GPU_CULL_C1B_INDIRECT 1\n";
+        GLuint prog = build_cull_program(&c1bDefine, 1, "cull_C1b");
+        if (!prog) {
+            printf("[GPU_CULL v1] event=c1b_cull_compile_fail — C1b indirect draw disabled\n");
+            fflush(stdout);
+            // Non-fatal: fall back to C1a shadow mode.
+        }
+        s_c1bCullProgram = prog;
     }
-    delete[] predicateSrc;
-    delete[] computeSrc;
 
-    const char* shaderStrings[] = { kPrefix, fullSrc.c_str() };
-    GLuint sh = compile_compute_shader(shaderStrings, 2);
-    if (!sh) {
-        STOP(("[GPU_CULL] compute compile failed; see log above"));
-        return false;
+    // --- Patch shader (gpu_cull_patch.comp) ---
+    {
+        GLuint prog = build_compute_program_from_file("shaders/gpu_cull_patch.comp",
+                                                       nullptr, 0, "patch");
+        if (!prog) {
+            printf("[GPU_CULL v1] event=patch_compile_fail — C1b patch disabled\n");
+            fflush(stdout);
+        }
+        s_patchProgram = prog;
     }
-    GLuint prog = link_compute_program(sh);
-    glDeleteShader(sh);
-    if (!prog) {
-        STOP(("[GPU_CULL] compute link failed; see log above"));
-        return false;
-    }
-    s_computeProgram = prog;
 
-    // --- Debug SSBO (binding 9) ---
-    // maxActors from substrate: read from substrate SSBO header would require a
-    // roundtrip, so we use a safe upper bound. Use 4096 actors (generous for MC2).
-    // Per-spec: size = sizeof(uint)*2 + sizeof(uint)*maxActors.
+    // --- Rollup shader (gpu_cull_block_rollup.comp) ---
+    {
+        GLuint prog = build_compute_program_from_file("shaders/gpu_cull_block_rollup.comp",
+                                                       nullptr, 0, "rollup");
+        if (!prog) {
+            printf("[GPU_CULL v1] event=rollup_compile_fail — C1-RB disabled\n");
+            fflush(stdout);
+        }
+        s_rollupProgram = prog;
+    }
+
+    // --- Debug SSBO for C1a mode (binding 9) ---
     s_maxActors = 4096u;
     const GLsizeiptr debugSsboBytes =
         static_cast<GLsizeiptr>(2 * sizeof(uint32_t) + s_maxActors * sizeof(uint32_t));
@@ -242,16 +343,7 @@ bool compute_init() {
     glBufferStorage(GL_SHADER_STORAGE_BUFFER, debugSsboBytes, nullptr, GL_DYNAMIC_STORAGE_BIT);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-    // --- Staging SSBO (binding 8, replaces direct substrate bind) ---
-    // The substrate is triple-buffered; each ring slot starts at a non-power-of-two
-    // byte offset that doesn't satisfy GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT.
-    // glBindBufferRange with a misaligned offset fails silently (GPU reads garbage).
-    // Solution: per-frame, copy the active ring slot to a single-slot staging SSBO
-    // at offset 0 via glCopyBufferSubData. The compute shader always reads binding 8
-    // at offset 0, so no alignment problem.
-    // Staging size = one substrate slot = header + capacity * record.
-    // We don't know capacity yet (substrate not init'd?), but the substrate reports
-    // slotBytes after init. Use a generous maximum: 4096 actors * 64B + 16B header.
+    // --- Staging SSBO ---
     s_stagingBytes = sizeof(GpuActorRecordHeader) + s_maxActors * sizeof(GpuActorRecord);
     glGenBuffers(1, &s_stagingSsbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_stagingSsbo);
@@ -260,14 +352,10 @@ bool compute_init() {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     // --- Frustum UBO (binding 2) ---
-    // Layout: [mat4 viewProj (64B)][uint slotRecordStart (4B)][uint slotRecordCount (4B)][pad pad (8B)]
-    // Total: 80 bytes.
     glGenBuffers(1, &s_frustumUbo);
     glBindBuffer(GL_UNIFORM_BUFFER, s_frustumUbo);
     glBufferStorage(GL_UNIFORM_BUFFER, 80, nullptr, GL_DYNAMIC_STORAGE_BIT);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
-
-    // Bind UBO to the binding point declared in the shader.
     glBindBufferBase(GL_UNIFORM_BUFFER, CULL_UBO_BINDING, s_frustumUbo);
 
     // --- GL timer query ---
@@ -293,9 +381,23 @@ bool compute_init() {
 void compute_shutdown() {
     if (!compute_isEnabled()) return;
 
+    // --- C1b buffers ---
+    if (s_indirectCmdBuf) { glDeleteBuffers(1, &s_indirectCmdBuf); s_indirectCmdBuf = 0; }
+    if (s_visibleIdsBuf)  { glDeleteBuffers(1, &s_visibleIdsBuf);  s_visibleIdsBuf  = 0; }
+    if (s_bucketCountsBuf){ glDeleteBuffers(1, &s_bucketCountsBuf);s_bucketCountsBuf= 0; }
+    if (s_bucketCapsBuf)  { glDeleteBuffers(1, &s_bucketCapsBuf);  s_bucketCapsBuf  = 0; }
+    if (s_actorVisBuf)    { glDeleteBuffers(1, &s_actorVisBuf);    s_actorVisBuf    = 0; }
+    if (s_blockVisBuf)    { glDeleteBuffers(1, &s_blockVisBuf);    s_blockVisBuf    = 0; }
+    if (s_c1bCullProgram) { glDeleteProgram(s_c1bCullProgram);     s_c1bCullProgram = 0; }
+    if (s_patchProgram)   { glDeleteProgram(s_patchProgram);       s_patchProgram   = 0; }
+    if (s_rollupProgram)  { glDeleteProgram(s_rollupProgram);      s_rollupProgram  = 0; }
+    s_bucketCount      = 0;
+    s_blockCount       = 0;
+    s_c1bInitialized   = false;
+
+    // --- C1a resources ---
     if (s_timerQuery) {
         if (s_timerPending) {
-            // Drain pending query to avoid GL errors.
             GLuint64 dummy = 0;
             glGetQueryObjectui64v(s_timerQuery, GL_QUERY_RESULT, &dummy);
         }
@@ -318,33 +420,180 @@ void compute_shutdown() {
 }
 
 // ---------------------------------------------------------------------------
+// compute_buildIndirectBuffer (C1b)
+// ---------------------------------------------------------------------------
+bool compute_buildIndirectBuffer(uint32_t typeCount) {
+    if (!compute_isEnabled() || !s_initialized) return false;
+    if (!s_c1bCullProgram || !s_patchProgram) {
+        printf("[GPU_CULL v1] event=c1b_build_skip reason=shaders_missing\n");
+        fflush(stdout);
+        return false;
+    }
+    if (typeCount == 0) {
+        printf("[GPU_CULL v1] event=c1b_build_skip reason=no_types\n");
+        fflush(stdout);
+        return true;  // not an error — mission has no static props
+    }
+
+    // Free any previous allocation (e.g., from a previous mission).
+    if (s_indirectCmdBuf) { glDeleteBuffers(1, &s_indirectCmdBuf); s_indirectCmdBuf = 0; }
+    if (s_visibleIdsBuf)  { glDeleteBuffers(1, &s_visibleIdsBuf);  s_visibleIdsBuf  = 0; }
+    if (s_bucketCountsBuf){ glDeleteBuffers(1, &s_bucketCountsBuf);s_bucketCountsBuf= 0; }
+    if (s_bucketCapsBuf)  { glDeleteBuffers(1, &s_bucketCapsBuf);  s_bucketCapsBuf  = 0; }
+    if (s_actorVisBuf)    { glDeleteBuffers(1, &s_actorVisBuf);    s_actorVisBuf    = 0; }
+    if (s_blockVisBuf)    { glDeleteBuffers(1, &s_blockVisBuf);    s_blockVisBuf    = 0; }
+
+    s_bucketCount = typeCount;
+
+    // --- DrawElementsIndirectCommand struct (20 bytes) ---
+    // count, instanceCount, firstIndex, baseVertex, baseInstance
+    struct DrawCmd {
+        GLuint count;
+        GLuint instanceCount;  // GPU writes this each frame via patch dispatch
+        GLuint firstIndex;
+        GLint  baseVertex;
+        GLuint baseInstance;   // cumulative base into visibleIds[] for this bucket
+    };
+    static_assert(sizeof(DrawCmd) == 20, "DrawElementsIndirectCommand must be 20 bytes");
+
+    std::vector<DrawCmd> cmds(typeCount);
+    std::vector<uint32_t> bucketCaps(typeCount);
+    std::vector<uint32_t> bucketBases(typeCount);  // packed into second half of bucketCapsBuf
+
+    // Per-type geometry lookup.
+    uint32_t cumBase = 0;
+    for (uint32_t t = 0; t < typeCount; ++t) {
+        uint32_t indexCount = 0, firstIndex = 0, instanceCap = 0;
+        int32_t  baseVertex = 0;
+        if (!batcher_getTypeDrawInfo(t, &indexCount, &firstIndex, &baseVertex, &instanceCap)) {
+            // Type has no geometry (empty type registered). Fill zeros.
+            cmds[t]       = {0, 0, 0, 0, cumBase};
+            bucketCaps[t] = 0;
+            bucketBases[t]= cumBase;
+            COMPUTE_TRACE("c1b_build type=%u EMPTY", t);
+            continue;
+        }
+        cmds[t].count         = indexCount;
+        cmds[t].instanceCount = 0;        // GPU writes per-frame
+        cmds[t].firstIndex    = firstIndex;
+        cmds[t].baseVertex    = baseVertex;
+        cmds[t].baseInstance  = cumBase;  // base offset into visibleIds[]
+
+        bucketCaps[t]  = instanceCap;
+        bucketBases[t] = cumBase;
+        cumBase       += instanceCap;
+
+        COMPUTE_TRACE("c1b_build type=%u idxCount=%u firstIdx=%u baseVtx=%d instCap=%u visBase=%u",
+                      t, indexCount, firstIndex, baseVertex, instanceCap, cmds[t].baseInstance);
+    }
+
+    const uint32_t totalVisibleSlots = cumBase;  // sum of all per-type instance caps
+
+    // --- Indirect command buffer (GL_DRAW_INDIRECT_BUFFER, GL_DYNAMIC_DRAW) ---
+    // instanceCount is overwritten every frame by the patch dispatch.
+    const GLsizeiptr indirectBytes = static_cast<GLsizeiptr>(typeCount * sizeof(DrawCmd));
+    glGenBuffers(1, &s_indirectCmdBuf);
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_indirectCmdBuf);
+    glBufferData(GL_DRAW_INDIRECT_BUFFER, indirectBytes, cmds.data(), GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+
+    // --- VisibleIds SSBO (binding 9 in C1b cull shader) ---
+    // Sized: sum of all per-type instance caps × sizeof(uint32_t).
+    // Cleared per-frame before cull dispatch.
+    const GLsizeiptr visIdsBytes = static_cast<GLsizeiptr>(
+        (totalVisibleSlots > 0 ? totalVisibleSlots : 1) * sizeof(uint32_t));
+    glGenBuffers(1, &s_visibleIdsBuf);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_visibleIdsBuf);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, visIdsBytes, nullptr, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // --- BucketCounts SSBO (binding 10) ---
+    // Layout: [perBucketCount[0..N-1], overflowCount]  (N+1 uints)
+    const GLsizeiptr countsBytes = static_cast<GLsizeiptr>((typeCount + 1) * sizeof(uint32_t));
+    glGenBuffers(1, &s_bucketCountsBuf);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_bucketCountsBuf);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, countsBytes, nullptr, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // --- BucketCaps SSBO (binding 11 in C1b cull shader, readonly) ---
+    // Layout: [bucketCapacity[0..N-1], bucketBase[0..N-1]]  (2*N uints)
+    // Combined into one buffer; the shader addresses the second half via
+    // the declared layout (see gpu_cull.comp BucketCaps block).
+    std::vector<uint32_t> capsAndBases(typeCount * 2);
+    for (uint32_t t = 0; t < typeCount; ++t) {
+        capsAndBases[t]            = bucketCaps[t];
+        capsAndBases[typeCount + t]= bucketBases[t];
+    }
+    const GLsizeiptr capsBytes = static_cast<GLsizeiptr>(typeCount * 2 * sizeof(uint32_t));
+    glGenBuffers(1, &s_bucketCapsBuf);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_bucketCapsBuf);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, capsBytes, capsAndBases.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // --- ActorVis SSBO (binding 12) ---
+    // Per-actor visibility bit written by cull shader.
+    const GLsizeiptr actorVisBytes = static_cast<GLsizeiptr>(s_maxActors * sizeof(uint32_t));
+    glGenBuffers(1, &s_actorVisBuf);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_actorVisBuf);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, actorVisBytes, nullptr, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // --- BlockVis SSBO (binding 13) ---
+    // One uint per terrain block. Sized conservatively; Terrain::blocksMapSide
+    // is set at mission load. For typical MC2 maps blocksMapSide=10 → 100 blocks.
+    // Allocate for the worst-case 128×128 blocks (same headroom as s_maxActors).
+    s_blockCount = 128u * 128u;
+    const GLsizeiptr blockVisBytes = static_cast<GLsizeiptr>(s_blockCount * sizeof(uint32_t));
+    glGenBuffers(1, &s_blockVisBuf);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_blockVisBuf);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, blockVisBytes, nullptr, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    s_c1bInitialized = true;
+
+    printf("[GPU_CULL v1] event=c1b_build_ok"
+           " typeCount=%u totalVisSlots=%u"
+           " indirectBytes=%lld visIdsBytes=%lld\n",
+           typeCount, totalVisibleSlots,
+           (long long)indirectBytes, (long long)visIdsBytes);
+    fflush(stdout);
+    return true;
+}
+
+GLuint compute_getIndirectCmdBuf() {
+    return s_indirectCmdBuf;
+}
+
+uint32_t compute_getBucketCount() {
+    return s_bucketCount;
+}
+
+bool compute_getTypeBucketInfo(uint32_t typeID,
+                                uint32_t* outIndexCount,
+                                uint32_t* outFirstIndex,
+                                int32_t*  outBaseVertex,
+                                uint32_t* outInstanceCap) {
+    return batcher_getTypeDrawInfo(typeID, outIndexCount, outFirstIndex, outBaseVertex, outInstanceCap);
+}
+
+// ---------------------------------------------------------------------------
 // compute_dispatch
 // ---------------------------------------------------------------------------
 void compute_dispatch() {
     if (!compute_isEnabled() || !s_initialized) return;
 
-    // The terrain MVP is only valid after the first terrain render.
     const float* mvp = gos_GetTerrainMVPMat4();
     if (!mvp) {
         COMPUTE_TRACE("event=dispatch_skip reason=mvp_null");
         return;
     }
 
-    // Upload view-projection matrix + slot info to the frustum UBO.
-    // UBO layout (std140): [mat4 viewProj (64B)][uint slotRecordStart (4B)][uint slotRecordCount (4B)][_pad0][_pad1]
-    // Since we use a staging SSBO (always at offset 0), slotRecordStart = 0.
-    // slotRecordCount is filled in after we know recordCount (below), but we
-    // upload the matrix now and the counts just before dispatch.
+    // Upload view-projection matrix to frustum UBO.
     glBindBuffer(GL_UNIFORM_BUFFER, s_frustumUbo);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, 16 * sizeof(float), mvp);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
-    // Copy the active ring slot to the staging SSBO (binding 8).
-    // The substrate is triple-buffered; each ring slot in the main SSBO starts at
-    // a non-power-of-two byte offset that may not satisfy
-    // GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT. glBindBufferRange with a
-    // misaligned offset silently fails — the shader reads the wrong data.
-    // Fix: copy the active slot to a dedicated single-slot staging SSBO at offset 0.
+    // Copy active ring slot to staging SSBO (offset 0).
     GLuint substrateSsbo = substrate_getInstanceSsboName();
     if (!substrateSsbo || !s_stagingSsbo) {
         COMPUTE_TRACE("event=dispatch_skip reason=ssbo_not_ready");
@@ -359,7 +608,6 @@ void compute_dispatch() {
     const GLsizeiptr copyBytes =
         (slotBytes <= (GLsizeiptr)s_stagingBytes) ? slotBytes : (GLsizeiptr)s_stagingBytes;
 
-    // Copy substrate slot → staging at offset 0.
     glBindBuffer(GL_COPY_READ_BUFFER,  substrateSsbo);
     glBindBuffer(GL_COPY_WRITE_BUFFER, s_stagingSsbo);
     glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER,
@@ -367,7 +615,7 @@ void compute_dispatch() {
     glBindBuffer(GL_COPY_READ_BUFFER,  0);
     glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
 
-    // Read record count from the staging SSBO header (now at offset 0).
+    // Read record count from staging header.
     GpuActorRecordHeader hdrCopy{};
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_stagingSsbo);
     glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(GpuActorRecordHeader), &hdrCopy);
@@ -378,72 +626,156 @@ void compute_dispatch() {
         return;
     }
 
-    // Bind the staging SSBO at binding 8 (the shader always reads from offset 0).
+    // Bind staging SSBO at binding 8.
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER,
                      substrate_getInstanceSsboBindingPoint(), s_stagingSsbo);
 
-    // Clamp debug SSBO to our allocated maxActors.
-    const uint32_t effectiveCount = (recordCount <= s_maxActors) ? recordCount : s_maxActors;
-
-    // Zero the debug SSBO (counts + per-actor array for effectiveCount actors).
-    const GLsizeiptr clearBytes =
-        static_cast<GLsizeiptr>(2 * sizeof(uint32_t) + effectiveCount * sizeof(uint32_t));
-    glClearNamedBufferSubData(s_debugSsbo, GL_R32UI, 0, clearBytes, GL_RED_INTEGER, GL_UNSIGNED_INT, nullptr);
-
-    // Bind debug SSBO (binding 9).
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, DEBUG_SSBO_BINDING, s_debugSsbo);
-
-    // Upload slot record count to UBO.
-    // UBO slot-info is at byte offset 64 (after the 16×4 = 64-byte mat4).
-    // std140 layout: each uint is 4 bytes, aligned to 4.
+    // Bind frustum UBO.
     {
         uint32_t slotInfo[4] = { 0u, recordCount, 0u, 0u };
         glBindBuffer(GL_UNIFORM_BUFFER, s_frustumUbo);
         glBufferSubData(GL_UNIFORM_BUFFER, 64, sizeof(slotInfo), slotInfo);
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
-
-    // Bind frustum UBO to binding 2.
     glBindBufferBase(GL_UNIFORM_BUFFER, CULL_UBO_BINDING, s_frustumUbo);
 
     // Begin GL timer query.
     if (s_timerPending) {
-        // Collect previous frame's result before starting a new query.
         glGetQueryObjectui64v(s_timerQuery, GL_QUERY_RESULT, &s_lastDispatchNs);
         s_timerPending = false;
     }
     glBeginQuery(GL_TIME_ELAPSED, s_timerQuery);
 
-    // Dispatch the compute shader.
-    glUseProgram(s_computeProgram);
-    const uint32_t groups = (recordCount + 63u) / 64u;
-    glDispatchCompute(groups, 1, 1);
-    glUseProgram(0);
+    const uint32_t cullGroups = (recordCount + 63u) / 64u;
 
-    glEndQuery(GL_TIME_ELAPSED);
-    s_timerPending = true;
+    if (s_c1bInitialized && s_c1bCullProgram && s_patchProgram) {
+        // ========================================================
+        // C1b path: full indirect draw authority
+        // ========================================================
 
-    // Memory barrier: ensure shader writes are visible before CPU reads back counts.
-    // GL_SHADER_STORAGE_BARRIER_BIT covers SSBO writes.
-    // NOT GL_ATOMIC_COUNTER_BARRIER_BIT (no ACBOs).
-    // NOT GL_COMMAND_BARRIER_BIT (no indirect draws in C1a).
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        // 1. Reset per-bucket counters (perBucketCount[] + overflowCount) + actorVisBits[].
+        {
+            const GLuint zero = 0u;
+            const uint32_t effectiveCount = recordCount <= s_maxActors ? recordCount : s_maxActors;
+            glClearNamedBufferSubData(s_bucketCountsBuf, GL_R32UI, 0,
+                                      static_cast<GLsizeiptr>((s_bucketCount + 1) * sizeof(GLuint)),
+                                      GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+            glClearNamedBufferSubData(s_actorVisBuf, GL_R32UI, 0,
+                                      static_cast<GLsizeiptr>(effectiveCount * sizeof(GLuint)),
+                                      GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+            glClearNamedBufferSubData(s_blockVisBuf, GL_R32UI, 0,
+                                      static_cast<GLsizeiptr>(s_blockCount * sizeof(GLuint)),
+                                      GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+        }
 
-    ++s_dispatchFrames;
-    COMPUTE_TRACE("event=dispatch recordCount=%u groups=%u", recordCount, groups);
+        // 2. Bind C1b SSBOs and cull dispatch.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, DEBUG_SSBO_BINDING,    s_visibleIdsBuf);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUCKET_COUNTS_BINDING, s_bucketCountsBuf);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUCKET_CAPS_BINDING,   s_bucketCapsBuf);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ACTOR_VIS_BINDING,     s_actorVisBuf);
+
+        glUseProgram(s_c1bCullProgram);
+        {
+            const GLint locNB = glGetUniformLocation(s_c1bCullProgram, "u_nBuckets");
+            if (locNB >= 0)
+                glUniform1i(locNB, (int)s_bucketCount);
+        }
+        glDispatchCompute(cullGroups, 1, 1);
+        glUseProgram(0);
+
+        // 3. Barrier: SSBO writes (visibleIds, perBucketCount, actorVisBits) ready.
+        // DO NOT add GL_ATOMIC_COUNTER_BARRIER_BIT — no ACBOs (Q12 contract).
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+        // 4. Patch dispatch: perBucketCount[] → cmds[].instanceCount
+        {
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUCKET_COUNTS_BINDING, s_bucketCountsBuf);
+            // Bind indirect cmd buf as SSBO for patch shader (binding 11).
+            // The patch shader writes via binding 11; the draw later uses
+            // GL_DRAW_INDIRECT_BUFFER binding. Both can alias the same buffer.
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, INDIRECT_CMD_BINDING, s_indirectCmdBuf);
+
+            glUseProgram(s_patchProgram);
+            const GLint locNBuckets = glGetUniformLocation(s_patchProgram, "u_nBuckets");
+            if (locNBuckets >= 0)
+                glUniform1i(locNBuckets, (int)s_bucketCount);
+            const uint32_t patchGroups = (s_bucketCount + 63u) / 64u;
+            glDispatchCompute(patchGroups, 1, 1);
+            glUseProgram(0);
+        }
+
+        // 5. Barrier: indirect command buffer ready for draw + SSBO writes visible.
+        // GL_COMMAND_BARRIER_BIT: ensures cmds[].instanceCount writes are visible to
+        // glMultiDrawElementsIndirect (Q12: first GL_COMMAND_BARRIER_BIT in engine).
+        // DO NOT add GL_ATOMIC_COUNTER_BARRIER_BIT (Q12 contract).
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
+
+        // 6. Block-active rollup (C1-RB).
+        if (s_rollupProgram) {
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, substrate_getInstanceSsboBindingPoint(), s_stagingSsbo);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ACTOR_VIS_BINDING,  s_actorVisBuf);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BLOCK_VIS_BINDING,  s_blockVisBuf);
+
+            glUseProgram(s_rollupProgram);
+            const GLint locRC = glGetUniformLocation(s_rollupProgram, "u_recordCount");
+            if (locRC >= 0)
+                glUniform1i(locRC, (int)recordCount);
+            glDispatchCompute(cullGroups, 1, 1);
+            glUseProgram(0);
+
+            // Barrier: blockVisBits[] ready for C3 consumers.
+            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        }
+
+        // 7. Overflow check (async — read overflow counter without stalling).
+        // Non-blocking: will be checked next frame. Flag checked in emitParitySummary.
+        // For immediate detection, log synchronously every 600 frames.
+        ++s_dispatchFrames;
+
+        glEndQuery(GL_TIME_ELAPSED);
+        s_timerPending = true;
+
+        // Overflow logging (async readback, deferred to emitParitySummary).
+        COMPUTE_TRACE("event=dispatch_ok mode=c1b dispatched=%u buckets=%u", recordCount, s_bucketCount);
+
+    } else {
+        // ========================================================
+        // C1a path: shadow/diagnostic mode
+        // ========================================================
+        const uint32_t effectiveCount = (recordCount <= s_maxActors) ? recordCount : s_maxActors;
+        const GLsizeiptr clearBytes =
+            static_cast<GLsizeiptr>(2 * sizeof(uint32_t) + effectiveCount * sizeof(uint32_t));
+        glClearNamedBufferSubData(s_debugSsbo, GL_R32UI, 0, clearBytes, GL_RED_INTEGER, GL_UNSIGNED_INT, nullptr);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, DEBUG_SSBO_BINDING, s_debugSsbo);
+
+        glUseProgram(s_computeProgram);
+        glDispatchCompute(cullGroups, 1, 1);
+        glUseProgram(0);
+
+        // Barrier: SSBO writes visible before CPU readback.
+        // NOT GL_ATOMIC_COUNTER_BARRIER_BIT — no ACBOs.
+        // NOT GL_COMMAND_BARRIER_BIT — no indirect draws in C1a.
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+        ++s_dispatchFrames;
+
+        glEndQuery(GL_TIME_ELAPSED);
+        s_timerPending = true;
+
+        COMPUTE_TRACE("event=dispatch recordCount=%u groups=%u", recordCount, cullGroups);
+    }
 }
 
 // ---------------------------------------------------------------------------
-// compute_emitParitySummary
+// compute_emitParitySummary (C1a mode; no-op in C1b)
 // ---------------------------------------------------------------------------
 void compute_emitParitySummary() {
     if (!compute_isEnabled() || !s_initialized) return;
     if (s_dispatchFrames == 0) return;
 
-    // Collect timer result (may be from previous frame if query is still pending).
+    // Collect timer result.
     uint64_t dispatchNs = s_lastDispatchNs;
     if (s_timerPending) {
-        // Try a non-blocking check first.
         GLint available = 0;
         glGetQueryObjectiv(s_timerQuery, GL_QUERY_RESULT_AVAILABLE, &available);
         if (available) {
@@ -451,11 +783,40 @@ void compute_emitParitySummary() {
             s_lastDispatchNs = dispatchNs;
             s_timerPending = false;
         }
-        // If not available yet, use last known value.
     }
     const uint32_t dispatchUs = (uint32_t)(dispatchNs / 1000u);
 
-    // Read back gpu visible/culled counts from debug SSBO.
+    if (s_c1bInitialized) {
+        // C1b mode: emit indirect draw summary + check overflow.
+        ++s_summaryCount;
+        const bool doEmit = !s_firstSummaryDone || ((s_summaryCount % 600) == 0);
+        if (doEmit) {
+            s_firstSummaryDone = true;
+
+            // Async read overflow counter (non-blocking readback from bucketCountsBuf).
+            uint32_t overflow = 0;
+            if (s_bucketCountsBuf) {
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_bucketCountsBuf);
+                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                                   static_cast<GLintptr>(s_bucketCount * sizeof(uint32_t)),
+                                   sizeof(uint32_t), &overflow);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            }
+
+            if (overflow > 0) {
+                printf("[GPU_CULL v1] event=overflow bucket=all count=%u\n", overflow);
+                fflush(stdout);
+            }
+
+            printf("[GPU_CULL v1] event=indirect_draw buckets=%u overflow=%u elapsed_us=%u flush=%u\n",
+                   s_bucketCount, overflow, dispatchUs, s_dispatchFrames);
+            fflush(stdout);
+            s_dispatchFrames = 0;
+        }
+        return;
+    }
+
+    // C1a mode: full parity readback.
     uint32_t gpuVis = 0, gpuCull = 0;
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_debugSsbo);
     glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(uint32_t), &gpuVis);
@@ -463,13 +824,10 @@ void compute_emitParitySummary() {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     const uint32_t cpuVis = substrate_getCpuVisibleCount();
-
-    // --- Per-actor false_neg / false_pos via full readback ---
-    // This is acceptable in shadow/diagnostic mode (C1a); not done in hot paths.
     const uint32_t totalActors = gpuVis + gpuCull;
     uint32_t falseNeg = 0, falsePos = 0;
+
     if (totalActors > 0 && totalActors <= s_maxActors) {
-        // Read per-actor visibility bits from the debug SSBO.
         const uint32_t visResultOffset = 2 * sizeof(uint32_t);
         std::vector<uint32_t> gpuBits(totalActors);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_debugSsbo);
@@ -479,11 +837,8 @@ void compute_emitParitySummary() {
                            gpuBits.data());
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-        // Read per-actor prevVisibilityBit from the staging SSBO.
-        // The staging SSBO always holds the active ring slot at offset 0.
         if (s_stagingSsbo) {
             std::vector<uint32_t> cpuBits(totalActors);
-            // GpuActorRecord: prevVisibilityBit at offset 52, stride 64, header 16B.
             static const size_t kRecordStride     = 64u;
             static const size_t kPrevVisBitOffset = 52u;
             static const size_t kHeaderBytes      = sizeof(GpuActorRecordHeader);
@@ -510,7 +865,6 @@ void compute_emitParitySummary() {
     s_accFalsePos += falsePos;
     ++s_summaryCount;
 
-    // Emit every 600 frames and on first summary.
     const bool doEmit = !s_firstSummaryDone || ((s_summaryCount % 600) == 0);
     if (doEmit) {
         s_firstSummaryDone = true;
@@ -524,7 +878,6 @@ void compute_emitParitySummary() {
                falseNeg, falsePos,
                dispatchUs, s_dispatchFrames);
         fflush(stdout);
-        // Reset accumulators.
         s_accFalseNeg    = 0;
         s_accFalsePos    = 0;
         s_dispatchFrames = 0;
