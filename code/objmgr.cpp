@@ -1961,6 +1961,14 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 			}
 		}
 
+		// C3: terrain block inner-loop GPU-visibility gate — deferred from C3-A.
+		// Adding a readback_isActorVisibleLagged() inner gate here would skip update()
+		// for objects in active blocks that happen to be GPU-invisible. That is UNSAFE:
+		// buildings and turrets in active AI blocks need update() even when offscreen
+		// (gate logic, turret tracking, power supply). The FPS win from this loop is
+		// small compared to mech/GV render paths (most mission time is at wolfman zoom
+		// with few active terrain blocks visible). The cascade structure is preserved
+		// unchanged as required by cull_gates_are_load_bearing.md.
 		for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
 		{
 			if (Terrain::objBlockInfo[terrainBlock].active)
