@@ -1,13 +1,22 @@
-// gpu_cull.comp — Track C slice C1a: GPU visibility mirror (diagnostic / shadow mode).
+// gpu_cull.comp — Track C: GPU visibility compute shader.
 //
-// Runs every frame alongside the CPU render path. CPU still renders normally —
-// zero change to rendering output. This shader only fills the debug SSBO at
-// binding 9 so that compute_emitParitySummary() can compare GPU vs CPU inView.
+// C1a mode (default): shadow/diagnostic only — fills debug SSBO (binding 9)
+//   so compute_emitParitySummary() can compare GPU vs CPU inView.
+//   CPU still renders normally; zero change to rendering output.
 //
-// C1a is NOT C1b: this shader does NOT write DrawElementsIndirectCommand structs.
-// DO NOT add indirect-draw output until C1b is explicitly greenlit.
+// C1b mode (GPU_CULL_C1B_INDIRECT defined): indirect draw authority for
+//   static props. Additionally writes:
+//   - visibleIds[] (binding 9)  — per-bucket instance ID list for indirect draw
+//   - perBucketCount[] (binding 10) — per-bucket visible counts (patch dispatch copies
+//     these into cmds[].instanceCount via gpu_cull_patch.comp)
+//   - actorVisBits[] (binding 12) — per-actor 0/1 visibility for rollup kernel
 //
-// #version 430 is injected by makeComputeProgram() — do NOT add it here.
+// Q12 contracts (C1b):
+//   - GL_SHADER_STORAGE_BARRIER_BIT after this dispatch before patch dispatch
+//   - GL_COMMAND_BARRIER_BIT after patch dispatch before glMultiDrawElementsIndirect
+//   - DO NOT add GL_ATOMIC_COUNTER_BARRIER_BIT (no ACBOs used)
+//
+// #version 430 is injected by the C++ loader — do NOT add it here.
 
 layout(local_size_x = 64) in;
 
@@ -25,7 +34,7 @@ struct GpuActorRecord {
     uint     actorId;          // offset 48 (4 B)
     uint     prevVisibilityBit;// offset 52 (4 B)
     uint     consumerFlags;    // offset 56 (4 B)
-    uint     _pad0;            // offset 60 (4 B)
+    uint     blockIdx;         // offset 60 (4 B) — terrain block index for C1-RB rollup
 };
 
 struct GpuActorRecordHeader {
@@ -45,15 +54,71 @@ layout(std430, binding = 8) readonly buffer RecordsBuf {
 };
 
 // ---------------------------------------------------------------------------
-// Binding 9: debug output (C1a only).
-// Layout: [gpuVisibleCount: uint][gpuCulledCount: uint][visibilityResults: uint[]]
-// visibilityResults[i] = 1 if GPU admits actor i, 0 if culled.
+// Binding 9:
+//   C1a mode: debug output — [gpuVisibleCount][gpuCulledCount][visibilityResults[]]
+//   C1b mode: visibleIds[] — per-bucket compact visible instance ID list
+//             (indexed as visibleIds[bucketBase[bucket] + atomicSlot])
+//
+// In C1b the old debug totals are no longer written here; use perBucketCount
+// overflow sentinel for summary logging.
 // ---------------------------------------------------------------------------
+#ifdef GPU_CULL_C1B_INDIRECT
+
+// C1b bindings -----------------------------------------------------------------
+
+// Binding 9: visible instance IDs, concatenated per-bucket.
+// Layout: visibleIds[bucketBase[b] + slot] = local instance index for bucket b.
+// baseInstance in the indirect command is bucketBase[b] so gl_BaseInstance
+// addresses the correct range in the vertex shader.
+layout(std430, binding = 9) coherent buffer VisibleIds {
+    uint visibleIds[];
+};
+
+// Binding 10: per-bucket accumulated counts + overflow sentinel.
+// Layout: [perBucketCount[0] .. perBucketCount[N-1], overflowCount(at [N_BUCKETS])]
+// Addressed as a flat uint array; overflowCount is at index u_nBuckets.
+// Cleared per-frame by glClearNamedBufferSubData before dispatch.
+layout(std430, binding = 10) coherent buffer BucketCounts {
+    uint bucketCountData[];  // [0..N_BUCKETS-1]=perBucketCount, [N_BUCKETS]=overflowCount
+};
+// Access helpers:
+// bucketCountData[b]           = perBucketCount for bucket b
+// bucketCountData[u_nBuckets]  = overflow sentinel
+
+// Binding 11: per-bucket capacity + base (immutable per-mission, set at mission load).
+// Layout: [bucketCapacity[0..N-1], bucketBase[0..N-1]] — flat array of 2*N uints.
+// Index as: capacity[b] = capsData[b], base[b] = capsData[u_nBuckets + b].
+layout(std430, binding = 11) readonly buffer BucketCaps {
+    uint capsData[];  // [0..N-1]=capacity, [N..2N-1]=base offsets into visibleIds[]
+};
+
+// Binding 12: per-actor visibility bits for the block rollup kernel.
+// 1 = admitted by this frame's cull, 0 = culled. Reset per-frame by C++.
+layout(std430, binding = 12) coherent buffer ActorVis {
+    uint actorVisBits[];
+};
+
+// Number of buckets (= type count, set at mission load). Used to address
+// bucketCountData[] and capsData[] second half.
+// 'uniform uint' crashes this engine's compile (memory/uniform_uint_crash.md);
+// use int + cast.
+uniform int u_nBuckets;
+
+// CategoryMask lower 4 bits; upper bits hold the bucket (typeID) for static props.
+// Cat_StaticProp = 5u (see gpu_cull_record.h). Dynamic actors (cat != StaticProp)
+// go into the actorVisBits path only; they have no bucket in the indirect system.
+const uint CAT_STATIC_PROP = 5u;
+const uint CATEGORY_MASK   = 0xFu;
+
+#else  // C1a mode -------------------------------------------------------------
+
 layout(std430, binding = 9) buffer DebugOut {
     uint gpuVisibleCount;    // total actors GPU admits (this frame)
     uint gpuCulledCount;     // total actors GPU rejects (this frame)
     uint visibilityResults[];// per-actor: 1=visible, 0=culled
 };
+
+#endif  // GPU_CULL_C1B_INDIRECT
 
 // ---------------------------------------------------------------------------
 // Binding 2: frustum UBO — view-projection matrix + ring-slot info.
@@ -109,7 +174,32 @@ void main() {
     // Flag_AlwaysVisible (bit 0) overrides cull — same as CPU path.
     if ((rec.flags & 0x1u) != 0u) visible = true;
 
-    // Write per-actor result.
+#ifdef GPU_CULL_C1B_INDIRECT
+    // C1b path: write per-actor visibility bit (used by block-rollup kernel).
+    actorVisBits[i] = visible ? 1u : 0u;
+
+    if (visible) {
+        // Only static props participate in the indirect bucket system.
+        // Dynamic actors (mechs, GVs, etc.) go to actorVisBits only.
+        uint cat = rec.category & CATEGORY_MASK;
+        if (cat == CAT_STATIC_PROP) {
+            // The bucket (typeID) is packed in the upper 28 bits of category.
+            uint bucket = rec.category >> 4;
+            uint cap    = capsData[bucket];                   // bucketCapacity[b]
+            uint base   = capsData[uint(u_nBuckets) + bucket];// bucketBase[b]
+            uint slot   = atomicAdd(bucketCountData[bucket], 1u);
+            if (slot >= cap) {
+                atomicAdd(bucketCountData[uint(u_nBuckets)], 1u);  // overflowCount
+            } else {
+                // Store the local instance slot index (= i within the record
+                // array). The vertex shader reads visibleIds[base + inst] to
+                // get the per-instance SSBO index for this invocation.
+                visibleIds[base + slot] = i;
+            }
+        }
+    }
+#else
+    // C1a debug path: write per-actor visibility result.
     visibilityResults[i] = visible ? 1u : 0u;
 
     // Accumulate totals via atomic operations (safe across the workgroup).
@@ -117,4 +207,5 @@ void main() {
         atomicAdd(gpuVisibleCount, 1u);
     else
         atomicAdd(gpuCulledCount, 1u);
+#endif  // GPU_CULL_C1B_INDIRECT
 }

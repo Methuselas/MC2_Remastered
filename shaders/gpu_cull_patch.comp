@@ -1,0 +1,56 @@
+// gpu_cull_patch.comp — Track C slice C1b: patch indirect draw command buffer.
+//
+// One invocation per bucket (typeID). Copies perBucketCount[b] into
+// cmds[b].instanceCount so the indirect draw commands reflect GPU cull results.
+//
+// This second dispatch avoids per-dispatch ordering issues: the barrier after
+// the cull dispatch makes perBucketCount[] coherent, then this patch dispatch
+// copies counts into the DrawElementsIndirectCommand array before the draw.
+//
+// Q12 sync contracts:
+//   - Caller issues GL_SHADER_STORAGE_BARRIER_BIT after cull dispatch before
+//     this patch dispatch.
+//   - Caller issues GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT
+//     after this patch dispatch before glMultiDrawElementsIndirect.
+//   - DO NOT add GL_ATOMIC_COUNTER_BARRIER_BIT — no ACBOs used.
+//
+// #version 430 is injected by the C++ loader — do NOT add it here.
+
+layout(local_size_x = 64) in;
+
+// ---------------------------------------------------------------------------
+// DrawElementsIndirectCommand layout (std430, matches C++ struct).
+// ---------------------------------------------------------------------------
+struct DrawElementsIndirectCommand {
+    uint count;          // index count (immutable — set at mission load)
+    uint instanceCount;  // GPU-written: set to perBucketCount[b] each frame
+    uint firstIndex;     // byte offset / sizeof(index) into IBO
+    int  baseVertex;     // offset into VBO
+    uint baseInstance;   // base offset into visibleIds[] for this bucket
+};
+
+// Binding 10: per-bucket instance count accumulators written by cull dispatch.
+// Layout: [bucketCountData[0..N-1]=perBucketCount, bucketCountData[N]=overflowCount]
+// Same flat-array layout as used in gpu_cull.comp BucketCounts block.
+layout(std430, binding = 10) readonly buffer BucketCounts {
+    uint bucketCountData[];
+};
+
+// Binding 11: indirect draw command array (GL_DRAW_INDIRECT_BUFFER content).
+layout(std430, binding = 11) writeonly buffer IndirectCmds {
+    DrawElementsIndirectCommand cmds[];
+};
+
+// Uniform: total number of buckets (= type count at mission load).
+// 'uniform uint' crashes this engine's shader compile (memory/uniform_uint_crash.md);
+// use int + cast.
+uniform int u_nBuckets;
+
+void main() {
+    uint b = gl_GlobalInvocationID.x;
+    if (b >= uint(u_nBuckets)) return;
+    // Copy the GPU-accumulated per-bucket count into the draw command.
+    // All other fields (count, firstIndex, baseVertex, baseInstance) were
+    // set by C++ at mission load and are never overwritten by compute.
+    cmds[b].instanceCount = bucketCountData[b];
+}
