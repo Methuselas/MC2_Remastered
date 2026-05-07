@@ -281,6 +281,9 @@ ReadbackTier readback_tryConsume() {
     if (isFenceReady(n1Slot)) {
         glDeleteSync(s_readbackFence[n1Slot]);
         s_readbackFence[n1Slot] = nullptr;
+        glInvalidateBufferSubData(s_stagingBuf,
+            static_cast<GLintptr>(n1Slot * s_slotBytes),
+            static_cast<GLsizeiptr>(s_slotBytes));
 
         s_lastGoodSlot = n1Slot;
 
@@ -319,6 +322,9 @@ ReadbackTier readback_tryConsume() {
     if (isFenceReady(n2Slot)) {
         glDeleteSync(s_readbackFence[n2Slot]);
         s_readbackFence[n2Slot] = nullptr;
+        glInvalidateBufferSubData(s_stagingBuf,
+            static_cast<GLintptr>(n2Slot * s_slotBytes),
+            static_cast<GLsizeiptr>(s_slotBytes));
 
         s_lastGoodSlot = n2Slot;
 
