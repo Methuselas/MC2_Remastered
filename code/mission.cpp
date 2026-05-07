@@ -3063,6 +3063,13 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// mission. Safe here: GL context is live (textures/shadow FBOs already
 	// exist by this point) and this is the unconditional tail of map-load.
 	GpuStaticPropBatcher::instance().finalizeGeometry();
+
+	// C1b: build the DrawElementsIndirectCommand buffer now that all static prop
+	// types are registered and geometry is finalized. No-op if MC2_GPU_CULL is
+	// not set or if there are no static prop types in this mission.
+	if (gpu_cull::compute_isEnabled()) {
+		gpu_cull::compute_buildIndirectBuffer(batcher_getTypeCount());
+	}
 }
 
 //----------------------------------------------------------------------------------
