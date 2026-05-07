@@ -4176,26 +4176,12 @@ bool TreeAppearance::recalcBounds (void)
 					//Set LOD of Model here because we have the distance and we KNOW we can see it!
 					bool baseLOD = true;
 					DWORD selectLOD = 0;
-					if (useHighObjectDetail)
-					{
-						for (long i=1;i<MAX_LODS;i++)
-						{
-							if (appearType->treeShape[i] && (distanceToEye > appearType->lodDistance[i]))
-							{
-								baseLOD = false;
-								selectLOD = i;
-							}
-						}
-					}
-					else	//We always want to use the lowest LOD!!
-					{
-						if (appearType->treeShape[1])
-						{
-							baseLOD = false;
-							selectLOD = 1;
-						}
-					}
-					
+					// Trees use low-LOD crossed cards that light per-plane, which
+					// creates visible bright/dark self-intersections once valid
+					// lightData_ is restored under UPDATE_SKIP. Keep visible trees
+					// at LOD 0; tree GPU cost is negligible after renderer offload
+					// and these assets are expected to be replaced later.
+
 					// we are at this LOD level.
 					if (selectLOD != currentLOD)
 					{
