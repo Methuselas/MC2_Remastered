@@ -37,8 +37,7 @@ namespace gpu_cull {
 // Constants
 // ---------------------------------------------------------------------------
 constexpr uint32_t RING_FRAMES           = 3u;
-// Binding 14: avoids conflict with C1a (9=DebugOut) and C1b (9=VisibleIds).
-constexpr uint32_t READBACK_SSBO_BINDING = 14u;
+// READBACK_SSBO_BINDING is exported from gpu_cull_readback.h (single source of truth).
 
 // ---------------------------------------------------------------------------
 // ReadbackHeader: 16 bytes, std430-aligned.
@@ -169,16 +168,18 @@ bool readback_init(uint32_t maxActors) {
     }
 
     // --- CPU staging buffer (CPU reads from here via persistent map) ---
-    // MAP_READ_BIT + MAP_PERSISTENT_BIT + MAP_COHERENT_BIT: persistent coherent read-only map.
+    // MAP_READ|WRITE + MAP_PERSISTENT + MAP_COHERENT: read-write persistent map.
     // GPU writes to s_gpuSsbo, then glCopyBufferSubData copies to this staging buffer.
+    // WRITE_BIT is required because readback_frameEnd() also writes hdr->frameIndex
+    // into the staging buffer (CPU side). Writing to a READ_BIT-only map is spec-UB.
     // On AMD RDNA3 this pattern works reliably because:
     //   - s_gpuSsbo lives in pure VRAM (compute atomics work correctly)
     //   - s_stagingBuf lives in CPU-visible BAR memory (CPU reads work correctly)
     //   - glCopyBufferSubData crosses the VRAM→BAR boundary explicitly
-    const GLbitfield stageStorageFlags = GL_MAP_READ_BIT
+    const GLbitfield stageStorageFlags = GL_MAP_READ_BIT | GL_MAP_WRITE_BIT
                                        | GL_MAP_PERSISTENT_BIT
                                        | GL_MAP_COHERENT_BIT;
-    const GLbitfield stageMapFlags     = GL_MAP_READ_BIT
+    const GLbitfield stageMapFlags     = GL_MAP_READ_BIT | GL_MAP_WRITE_BIT
                                        | GL_MAP_PERSISTENT_BIT
                                        | GL_MAP_COHERENT_BIT;
 

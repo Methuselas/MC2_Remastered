@@ -13,6 +13,10 @@
 
 namespace gpu_cull {
 
+// Binding point for the readback GPU SSBO. Exported so compute.cpp and the
+// cull shader use the same value — a single source of truth.
+constexpr uint32_t READBACK_SSBO_BINDING = 14u;
+
 // Init: call at mission load after compute_init() and after maxActors is known.
 // maxActors: same value passed to substrate_init().
 bool readback_init(uint32_t maxActors);

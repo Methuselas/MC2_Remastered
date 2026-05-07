@@ -703,11 +703,10 @@ void compute_dispatch() {
     glBindBufferBase(GL_UNIFORM_BUFFER, CULL_UBO_BINDING, s_frustumUbo);
 
     // C2: bind readback SSBO at binding 14 (ranged, per-slot).
-    // Binding 14 is free of all existing paths (9=DebugOut/VisibleIds, 10-13 used by C1b).
+    // Binding READBACK_SSBO_BINDING (defined in gpu_cull_readback.h) — single source of truth.
     // Zero the rb_visibleCount in the mapped header before dispatch so the shader's
     // atomicAdd accumulates from 0 each frame. The buffer is GL_MAP_COHERENT_BIT so
     // the write is immediately visible to the GPU.
-    static constexpr uint32_t kReadbackBinding = 14u;
     if (readback_isEnabled()) {
         const GLuint     rbBuf    = readback_getSsboBuf();
         const GLintptr   rbOff    = readback_getCurrentSlotOffset();
@@ -722,7 +721,7 @@ void compute_dispatch() {
             glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
             // Drain any prior GL errors so the check below is clean.
             while (glGetError() != GL_NO_ERROR) {}
-            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, kReadbackBinding,
+            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, gpu_cull::READBACK_SSBO_BINDING,
                               rbBuf, rbOff, rbSz);
             // Check for GL_INVALID_VALUE (misalignment, out-of-range, etc).
             const GLenum bindErr = glGetError();
@@ -732,7 +731,7 @@ void compute_dispatch() {
                 fflush(stdout);
             }
             COMPUTE_TRACE("event=c2_bind rbBuf=%u rbOff=%lld rbSz=%lld binding=%u bindErr=0x%X",
-                           rbBuf, (long long)rbOff, (long long)rbSz, kReadbackBinding, bindErr);
+                           rbBuf, (long long)rbOff, (long long)rbSz, gpu_cull::READBACK_SSBO_BINDING, bindErr);
         }
     }
 
@@ -867,7 +866,8 @@ void compute_dispatch() {
         const uint32_t effectiveCount = (recordCount <= s_maxActors) ? recordCount : s_maxActors;
         const GLsizeiptr clearBytes =
             static_cast<GLsizeiptr>(2 * sizeof(uint32_t) + effectiveCount * sizeof(uint32_t));
-        glClearNamedBufferSubData(s_debugSsbo, GL_R32UI, 0, clearBytes, GL_RED_INTEGER, GL_UNSIGNED_INT, nullptr);
+        const GLuint clearZero = 0u;
+        glClearNamedBufferSubData(s_debugSsbo, GL_R32UI, 0, clearBytes, GL_RED_INTEGER, GL_UNSIGNED_INT, &clearZero);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, DEBUG_SSBO_BINDING, s_debugSsbo);
 
         glUseProgram(s_computeProgram);
