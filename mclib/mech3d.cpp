@@ -2297,11 +2297,17 @@ bool Mech3DAppearance::recalcBounds (void)
 				lowerRight.x = maxX;
 				lowerRight.y = maxY;
 				
-				if ((lowerRight.x >= 0) && (lowerRight.y >= 0) &&
+				// C3: when GPU cull is active, a GPU-visible actor must run LOD-swap
+				// even if the CPU screen-rect test disagrees (N-1 lag can diverge).
+				const bool cpuScreenRect = (lowerRight.x >= 0) && (lowerRight.y >= 0) &&
 					(upperLeft.x <= eye->getScreenResX()) &&
-					(upperLeft.y <= eye->getScreenResY()))
+					(upperLeft.y <= eye->getScreenResY());
+				const bool rbVisible = s_gpuCullLifecycle
+					? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_))
+					: false;
+				if (cpuScreenRect || rbVisible)
 				{
-					inView = true;
+					inView = cpuScreenRect;
 					
 					if (status != OBJECT_STATUS_DESTROYED)
 					{
@@ -3780,7 +3786,10 @@ bool Mech3DAppearance::leftArmRecalc (void)
 		// If inside farClip plane, check if behind camera.
 		// Find angle between lookVector of Camera and vector from camPos
 		// to Target.  If angle is less then halfFOV, object is visible.
-		if (inView)
+		const bool armParentVisL = s_gpuCullLifecycle
+			? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_))
+			: inView;
+		if (armParentVisL)
 		{
 			Distance.Normalize(Distance);
 
@@ -3837,7 +3846,10 @@ bool Mech3DAppearance::rightArmRecalc (void)
 		// If inside farClip plane, check if behind camera.
 		// Find angle between lookVector of Camera and vector from camPos
 		// to Target.  If angle is less then halfFOV, object is visible.
-		if (inView)
+		const bool armParentVisR = s_gpuCullLifecycle
+			? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_))
+			: inView;
+		if (armParentVisR)
 		{
 			Distance.Normalize(Distance);
 
