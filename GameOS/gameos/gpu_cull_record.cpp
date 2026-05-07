@@ -22,14 +22,14 @@ int gpu_cull_record_selftest() {
         { "actorId",          48,  offsetof(GpuActorRecord, actorId)           },
         { "prevVisibilityBit",52,  offsetof(GpuActorRecord, prevVisibilityBit) },
         { "consumerFlags",    56,  offsetof(GpuActorRecord, consumerFlags)     },
-        { "_pad0",            60,  offsetof(GpuActorRecord, _pad0)          },
+        { "blockIdx",         60,  offsetof(GpuActorRecord, blockIdx)       },
     };
     for (auto& c : checks) {
         bool ok = (c.expected == c.actual);
         if (!ok) {
             failures++;
             printf("[GPU_CULL v1] event=selftest_fail case=record_offsets field=%s expected=%zu got=%zu\n",
-                   c.name, c.expected, c.actual);
+                   c.name, c.expected, c.actual);  // NOLINT: format string has 3 %
             fflush(stdout);
         }
     }

@@ -177,6 +177,14 @@ static void emitGpuCullRecord(GameObjectPtr obj,
     rec.category        = static_cast<uint32_t>(cat) & static_cast<uint32_t>(gpu_cull::CategoryMask);
     rec.flags           = gpu_cull::Flag_None;
     rec.actorId         = static_cast<uint32_t>(obj->getHandle());
+    // C1b: populate blockIdx for the block-active rollup (C1-RB).
+    // getBlockAndVertexNumber() is side-effect-free; blockNum is the index
+    // into Terrain::objBlockInfo[]. Stored in rec.blockIdx (was _pad0).
+    {
+        int blockNum = 0, vertexNum = 0;
+        obj->getBlockAndVertexNumber(blockNum, vertexNum);
+        rec.blockIdx = static_cast<uint32_t>(blockNum);
+    }
 
     // C1a: prevVisibilityBit uses the MODERN clip-space frustum test so that
     // compute_emitParitySummary() compares GPU cull vs CPU clip-space cull on the
@@ -208,7 +216,7 @@ static void emitGpuCullRecord(GameObjectPtr obj,
         rec.prevVisibilityBit = modernBit;
     }
     rec.consumerFlags   = consumerFlags;
-    rec._pad0           = 0;
+    // blockIdx is set above in the getBlockAndVertexNumber() block.
 
     gpu_cull::parity_checkRecord(rec.actorId, catNameForCategory(cat),
                                  rec.worldCenter,

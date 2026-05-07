@@ -16,7 +16,7 @@ struct alignas(16) GpuActorRecord {
     uint32_t    actorId;             // offset 48  (4 B)
     uint32_t    prevVisibilityBit;   // offset 52  (4 B)
     uint32_t    consumerFlags;       // offset 56  (4 B)
-    uint32_t    _pad0;               // offset 60  (4 B)
+    uint32_t    blockIdx;           // offset 60  (4 B) — actor's terrain block index for C1-RB rollup
 };
 
 static_assert(sizeof(GpuActorRecord) == 64,
@@ -30,7 +30,7 @@ static_assert(offsetof(GpuActorRecord, flags)              == 44, "flags offset"
 static_assert(offsetof(GpuActorRecord, actorId)            == 48, "actorId offset");
 static_assert(offsetof(GpuActorRecord, prevVisibilityBit)  == 52, "prevVisibilityBit offset");
 static_assert(offsetof(GpuActorRecord, consumerFlags)      == 56, "consumerFlags offset");
-static_assert(offsetof(GpuActorRecord, _pad0)              == 60, "_pad0 offset");
+static_assert(offsetof(GpuActorRecord, blockIdx)           == 60, "blockIdx offset");
 
 // Header at SSBO offset 0 (one per ring slot).
 struct alignas(16) GpuActorRecordHeader {
