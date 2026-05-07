@@ -910,10 +910,10 @@ class TG_Shape
 		// GenericAppearance::update inside their existing cull gates.
 		long MultiTransformShape_PositionsOnly (Stuff::Matrix4D *shapeToClip, Stuff::Point3D *backFacePoint, TG_ShapeRecPtr parentNode, bool isHudElement, BYTE alphaValue, bool isClamped);
 
-		// Slice 2 (object-offload): per-actor light-data gather without the
-		// per-vertex bake side-effects of MultiTransformShape. Calls
-		// GatherLightsParameters and addLightDataStructure once. Returned
-		// index is broadcast into per-leaf GpuStaticPropInstance.lightDataIndex
+		// Slice 2 (object-offload): per-actor light-data cache without the
+		// per-vertex bake side-effects of MultiTransformShape. Uses the
+		// texture manager's scene-template path, then broadcasts the returned
+		// index into per-leaf GpuStaticPropInstance.lightDataIndex
 		// (Recon Section 9 Item 5: all leaves of one multi-shape see identical
 		// lightData_, so this is per-actor not per-leaf).
 		uint32_t GatherGpuObjectLightDataOnly();

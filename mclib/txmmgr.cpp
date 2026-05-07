@@ -77,6 +77,7 @@ int				MC_TextureManager::iBufferRefCount = 0;
 bool MLRVertexLimitReached = false;
 extern bool useFog;
 extern DWORD BaseVertexColor;
+extern uint32_t g_mc2FrameCounter;
 
 // MC2_TEX_LIFECYCLE_TRACE=1 — diagnostic for the static-prop black-billboard bug
 // under MC2_STATIC_UPDATE_SKIP=1. Logs lifecycle event types under a single
@@ -897,6 +898,23 @@ void MC_TextureManager::addRenderShape(DWORD nodeId, TG_RenderShape* render_shap
 namespace {
     static std::unordered_map<uint64_t, uint32_t> s_lightDataDedupMap;
 
+    struct CachedSceneLightTemplate {
+        TG_HWLightsData data;
+        uint32_t actorLightSlot;
+    };
+
+    static std::unordered_map<uint64_t, CachedSceneLightTemplate> s_sceneLightTemplateMap;
+    static uint32_t s_sceneLightTemplateFrame = 0xFFFFFFFFu;
+
+    static inline uint64_t fnv1a_64_bytes(uint64_t h, const void* data, size_t bytes) {
+        const uint8_t* p = static_cast<const uint8_t*>(data);
+        for (size_t i = 0; i < bytes; ++i) {
+            h ^= p[i];
+            h *= 0x100000001b3ULL;
+        }
+        return h;
+    }
+
     static inline uint64_t fnv1a_64_struct(const void* data, size_t bytes) {
         // FNV-1a 64-bit. Walk in uint64_t chunks for fewer iterations
         // (~110 iters for ~900 bytes vs ~900 iters byte-at-a-time).
@@ -915,6 +933,87 @@ namespace {
                 h *= 0x100000001b3ULL;
             }
         }
+        return h;
+    }
+
+    static inline uint64_t fnv1a_64_u32(uint64_t h, uint32_t v) {
+        return fnv1a_64_bytes(h, &v, sizeof(v));
+    }
+
+    static inline uint64_t fnv1a_64_bool(uint64_t h, bool v) {
+        const uint8_t b = v ? 1 : 0;
+        return fnv1a_64_bytes(h, &b, sizeof(b));
+    }
+
+    static inline uint32_t decomposeFirstActiveLightColor(TG_HWLightsData* lights) {
+        const TG_LightPtr* listOfLights = TG_Shape::s_listOfLights;
+        const DWORD numLights = TG_Shape::s_numLights;
+
+        for (DWORD iLight = 0; iLight < numLights; ++iLight) {
+            if ((listOfLights[iLight] != NULL) && listOfLights[iLight]->active) {
+                const DWORD startLight = listOfLights[iLight]->GetaRGB();
+                lights->lightColor[0][0] = ((startLight >> 16) & 0x000000ff) / 255.0f;
+                lights->lightColor[0][1] = ((startLight >> 8) & 0x000000ff) / 255.0f;
+                lights->lightColor[0][2] = ((startLight) & 0x000000ff) / 255.0f;
+                lights->lightColor[0][3] = 1.0f;
+                return 0;
+            }
+        }
+
+        return 0xFFFFFFFFu;
+    }
+
+    static inline uint32_t firstActiveLightSourceIndex() {
+        const TG_LightPtr* listOfLights = TG_Shape::s_listOfLights;
+        const DWORD numLights = TG_Shape::s_numLights;
+
+        if (!listOfLights)
+            return 0xFFFFFFFFu;
+
+        for (DWORD iLight = 0; iLight < numLights; ++iLight) {
+            if ((listOfLights[iLight] != NULL) && listOfLights[iLight]->active)
+                return iLight;
+        }
+        return 0xFFFFFFFFu;
+    }
+
+    static uint64_t sceneLightTemplateKey(uint32_t actorLightSourceIndex) {
+        const TG_LightPtr* listOfLights = TG_Shape::s_listOfLights;
+        const DWORD numLights = TG_Shape::s_numLights;
+
+        uint64_t h = 0xcbf29ce484222325ULL;
+        h = fnv1a_64_u32(h, g_mc2FrameCounter);
+        h = fnv1a_64_u32(h, numLights);
+
+        const uintptr_t listPtr = reinterpret_cast<uintptr_t>(listOfLights);
+        h = fnv1a_64_bytes(h, &listPtr, sizeof(listPtr));
+
+        for (DWORD iLight = 0; iLight < numLights; ++iLight) {
+            const TG_LightPtr light = listOfLights ? listOfLights[iLight] : NULL;
+            h = fnv1a_64_bool(h, light != NULL);
+            if (!light)
+                continue;
+
+            h = fnv1a_64_bool(h, light->active);
+            if (!light->active)
+                continue;
+
+            h = fnv1a_64_u32(h, light->lightType);
+            h = fnv1a_64_bytes(h, &light->lightToWorld, sizeof(light->lightToWorld));
+            h = fnv1a_64_bytes(h, &light->closeDistance, sizeof(light->closeDistance));
+            h = fnv1a_64_bytes(h, &light->farDistance, sizeof(light->farDistance));
+            h = fnv1a_64_bytes(h, &light->oneOverDistance, sizeof(light->oneOverDistance));
+
+            // Per-actor terrain scaling mutates the first active light color
+            // before CacheGpuLightData(). Other active light colors remain part
+            // of the scene key. If future gameplay makes more colors per-actor,
+            // widen this patch/key rule instead of reusing the template.
+            if (iLight != actorLightSourceIndex) {
+                const DWORD argb = light->GetaRGB();
+                h = fnv1a_64_u32(h, argb);
+            }
+        }
+
         return h;
     }
 }
@@ -969,6 +1068,37 @@ uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
     return rv;
 }
 
+uint32_t MC_TextureManager::addLightDataStructureWithPerActorColor(TG_HWLightsData* light_data)
+{
+    gosASSERT(light_data);
+
+    if (s_sceneLightTemplateFrame != g_mc2FrameCounter) {
+        s_sceneLightTemplateMap.clear();
+        s_sceneLightTemplateFrame = g_mc2FrameCounter;
+    }
+
+    const uint32_t actorLightSource = firstActiveLightSourceIndex();
+    if (actorLightSource == 0xFFFFFFFFu) {
+        GatherLightsParameters(light_data);
+        return addLightDataStructure(light_data);
+    }
+
+    const uint64_t key = sceneLightTemplateKey(actorLightSource);
+    auto it = s_sceneLightTemplateMap.find(key);
+    if (it == s_sceneLightTemplateMap.end()) {
+        CachedSceneLightTemplate entry;
+        GatherLightsParameters(&entry.data);
+        entry.actorLightSlot = decomposeFirstActiveLightColor(&entry.data);
+        it = s_sceneLightTemplateMap.emplace(key, entry).first;
+    }
+
+    *light_data = it->second.data;
+    if (it->second.actorLightSlot != 0xFFFFFFFFu)
+        decomposeFirstActiveLightColor(light_data);
+
+    return addLightDataStructure(light_data);
+}
+
 void MC_TextureManager::resetLightData()
 {
     lightDataStructuresCount = 0;
@@ -976,6 +1106,8 @@ void MC_TextureManager::resetLightData()
     // Both must reset together — slot indices restart from 0 each frame, so
     // any stale hash→slot entries from the prior frame are invalid.
     s_lightDataDedupMap.clear();
+    s_sceneLightTemplateMap.clear();
+    s_sceneLightTemplateFrame = 0xFFFFFFFFu;
 }
 
 // Diagnostic body — declaration in txmmgr.h. See header for rationale.

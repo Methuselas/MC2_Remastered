@@ -1204,6 +1204,7 @@ class MC_TextureManager
         // returns index at which this light structure was added
         // ( if same one was found, then that index is returned and nothing is added)
         uint32_t addLightDataStructure(TG_HWLightsData* lightData);
+        uint32_t addLightDataStructureWithPerActorColor(TG_HWLightsData* lightData);
 
 		void clearArrays (void)
 		{

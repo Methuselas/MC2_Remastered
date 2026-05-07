@@ -2839,16 +2839,16 @@ long TG_Shape::MultiTransformShape_PositionsOnly (Stuff::Matrix4D *shapeToClip, 
 
 // Slice 2 (object-offload) — Stage 2.A
 // Per-actor light-data gather without the per-vertex bake side-effects of
-// MultiTransformShape. Calls GatherLightsParameters and addLightDataStructure
-// once. Returned index is broadcast into per-leaf
+// MultiTransformShape. Uses the texture manager's per-frame scene template
+// cache, then patches the current actor's terrain-scaled light color and
+// submits through addLightDataStructure. Returned index is broadcast into per-leaf
 // GpuStaticPropInstance.lightDataIndex by Stage 2.C wiring in
 // GpuStaticPropBatcher::submitMultiShape (between the registration-check
 // loop and the per-leaf submit loop). Stage 2.A: declared and defined; no
 // callers wired.
 uint32_t TG_Shape::GatherGpuObjectLightDataOnly()
 {
-	GatherLightsParameters(&lightData_);
-	return mcTextureManager->addLightDataStructure(&lightData_);
+	return mcTextureManager->addLightDataStructureWithPerActorColor(&lightData_);
 }
 
 uint32_t TG_Shape::ResubmitCachedLightData()
