@@ -1078,9 +1078,19 @@ void Terrain::renderWater (void)
 
 	const bool collect = s_waterDebugOn && (s_framesPrinted < 5)
 	                     && (s_frameCounter >= kWaterWarmupHoldoffFrames);
+	uint32_t traceTotal = 0;
+	uint32_t traceHandleValid = 0;
+	uint32_t traceDetailEligible = 0;
 
 	for (long i=0;i<numberQuads;i++)
 	{
+		++traceTotal;
+		if (currentQuad->waterHandle != 0xffffffff)
+		{
+			++traceHandleValid;
+			if (currentQuad->waterDetailHandle != 0xffffffff)
+				++traceDetailEligible;
+		}
 		if (collect)
 		{
 			++s_total;
@@ -1096,6 +1106,24 @@ void Terrain::renderWater (void)
 			currentQuad->drawWater();
 
 		currentQuad++;
+	}
+
+	{
+		static bool s_haveLast = false;
+		static uint32_t s_lastHandleValid = 0;
+		const bool disappeared = (s_haveLast && s_lastHandleValid > 0 && traceHandleValid == 0);
+		const bool recovered = (s_haveLast && s_lastHandleValid == 0 && traceHandleValid > 0);
+		if (disappeared || recovered || !s_haveLast) {
+			fprintf(stderr,
+			        "[WATER_LEGACY v1] event=population total=%u handle_valid=%u "
+			        "detail_eligible=%u state=%s prev_handle_valid=%u\n",
+			        traceTotal, traceHandleValid, traceDetailEligible,
+			        disappeared ? "disappeared" : (recovered ? "recovered" : "initial"),
+			        s_lastHandleValid);
+			fflush(stderr);
+		}
+		s_haveLast = true;
+		s_lastHandleValid = traceHandleValid;
 	}
 
 	if (s_waterDebugOn)

@@ -307,6 +307,9 @@ uint32_t UploadAndBindThinRecords() {
     g_thinStaging.reserve((size_t)total);
 
     uint32_t pzValidCount = 0;
+    uint32_t waterHandleCount = 0;
+    uint32_t recipeMissCount = 0;
+    uint32_t pzDropCount = 0;
     for (long i = 0; i < total; ++i) {
         const TerrainQuad& q = quads[i];
         if (!q.vertices[0] || !q.vertices[1] ||
@@ -322,10 +325,14 @@ uint32_t UploadAndBindThinRecords() {
         // Outer gate: legacy water emit at quad.cpp:2742. Skip non-water quads
         // and quads where setupTextures decided no water emission this frame.
         if (q.waterHandle == 0xffffffffu) continue;
+        ++waterHandleCount;
 
         const uint32_t topLeftVN = (uint32_t)q.vertices[0]->vertexNum;
         auto it = g_vertexNumToRecipe.find(topLeftVN);
-        if (it == g_vertexNumToRecipe.end()) continue;
+        if (it == g_vertexNumToRecipe.end()) {
+            ++recipeMissCount;
+            continue;
+        }
 
         // Per-triangle pz validity. For each triangle (BOTTOMRIGHT or
         // BOTTOMLEFT diagonal) check that ALL THREE corners' wz ∈ [0,1).
@@ -354,7 +361,10 @@ uint32_t UploadAndBindThinRecords() {
             pzTri1 = ok0 && ok1 && ok3;
             pzTri2 = ok1 && ok2 && ok3;
         }
-        if (!pzTri1 && !pzTri2) continue;  // entire quad fails — drop record
+        if (!pzTri1 && !pzTri2) {
+            ++pzDropCount;
+            continue;  // entire quad fails - drop record
+        }
 
         WaterThinRecord tr{};
         tr.recipeIdx = it->second;
@@ -383,6 +393,29 @@ uint32_t UploadAndBindThinRecords() {
         tr.fogRGB2   = (q.vertices[2]->fogRGB & 0xFFFFFF00u) | m2;
         tr.fogRGB3   = (q.vertices[3]->fogRGB & 0xFFFFFF00u) | m3;
         g_thinStaging.push_back(tr);
+    }
+
+    {
+        static bool s_haveLast = false;
+        static uint32_t s_lastThin = 0;
+        static uint32_t s_lastWaterHandles = 0;
+        const uint32_t thinCountNow = (uint32_t)g_thinStaging.size();
+        const bool disappeared = (waterHandleCount > 0 && thinCountNow == 0);
+        const bool recovered = (s_haveLast && s_lastThin == 0 && thinCountNow > 0);
+        if (disappeared || recovered || !s_haveLast) {
+            fprintf(stderr,
+                    "[WATER_STREAM v1] event=thin_summary total_quads=%ld "
+                    "water_handles=%u thin=%u pz_valid=%u recipe_miss=%u "
+                    "pz_drop=%u state=%s prev_water_handles=%u prev_thin=%u\n",
+                    total, waterHandleCount, thinCountNow, pzValidCount,
+                    recipeMissCount, pzDropCount,
+                    disappeared ? "disappeared" : (recovered ? "recovered" : "initial"),
+                    s_lastWaterHandles, s_lastThin);
+            fflush(stderr);
+        }
+        s_haveLast = true;
+        s_lastThin = thinCountNow;
+        s_lastWaterHandles = waterHandleCount;
     }
 
     const uint32_t thinCount = (uint32_t)g_thinStaging.size();
