@@ -1858,6 +1858,14 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 	//----------------------------
 	// Now, update game objects...
 
+	// C3: build per-actor GPU visibility snapshot from N-1 readback FIRST,
+	// so the framesSinceActive sweep below reads a freshly-built snapshot.
+	// No-op when MC2_GPU_CULL_LIFECYCLE is not set or no valid readback is available.
+	if (s_gpuCullLifecycle) {
+		// Max handle is bounded by maxObjects + slack; 4096 is safe for MC2 (~2000 max).
+		gpu_cull::readback_buildActorVisSnapshot(4096u);
+	}
+
 	// Tier-1 instrumentation (stability spec §3.3): single source of truth for
 	// framesSinceActive. One sweep over objList covers every GameObject this
 	// manager owns. Uses the three virtual accessors added on GameObject base.
@@ -1886,15 +1894,6 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 				obj->framesSinceActive++;
 			}
 		}
-	}
-
-	// C3: build per-actor GPU visibility snapshot from N-1 readback.
-	// No-op when MC2_GPU_CULL_LIFECYCLE is not set or no valid readback is available.
-	// Must be called BEFORE substrate_frameBegin() so the snapshot uses the previous
-	// frame's readback data while the substrate ring advances to the new slot.
-	if (s_gpuCullLifecycle) {
-		// Max handle is bounded by maxObjects + slack; 4096 is safe for MC2 (~2000 max).
-		gpu_cull::readback_buildActorVisSnapshot(4096u);
 	}
 
 	// C0-3: begin GPU cull substrate frame (advances ring slot, waits fence if needed).
