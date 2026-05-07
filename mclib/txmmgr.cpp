@@ -54,6 +54,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unordered_map>
 #include <unordered_set>
 #include <utils/gl_utils.h>
 #include "gos_postprocess.h"
@@ -879,35 +880,102 @@ void MC_TextureManager::addRenderShape(DWORD nodeId, TG_RenderShape* render_shap
 	}
 }
 
+// PERF FIX 2026-05-07: hash-based dedup map. The previous linear-scan
+// implementation walked all existing entries doing 900-byte memcmp per
+// comparison. Tracy capture (728 trees, default config) showed 8.5 ms
+// total per frame — every actor scanning every prior actor's terrain-
+// light-scaled struct, all unique due to per-actor aRGB. Hash-first
+// approach: O(1) average lookup; memcmp only on hash match (collision
+// verify). Map is reset by resetLightData() at frame start to mirror
+// lightDataStructuresCount=0 reset.
+//
+// Hash collisions: 64-bit FNV-1a over ~1KB struct. Birthday-paradox
+// probability ~10⁻⁷ per 728-actor frame; even on collision, memcmp
+// fails-safe by falling through to the append path. Logical duplicates
+// from collisions are correct (same-data → same-result), just waste a
+// UBO slot. Acceptable.
+namespace {
+    static std::unordered_map<uint64_t, uint32_t> s_lightDataDedupMap;
+
+    static inline uint64_t fnv1a_64_struct(const void* data, size_t bytes) {
+        // FNV-1a 64-bit. Walk in uint64_t chunks for fewer iterations
+        // (~110 iters for ~900 bytes vs ~900 iters byte-at-a-time).
+        const uint64_t* p64 = static_cast<const uint64_t*>(data);
+        const size_t chunks = bytes / sizeof(uint64_t);
+        const size_t tail   = bytes % sizeof(uint64_t);
+        uint64_t h = 0xcbf29ce484222325ULL;  // FNV offset basis
+        for (size_t i = 0; i < chunks; ++i) {
+            h ^= p64[i];
+            h *= 0x100000001b3ULL;            // FNV prime
+        }
+        if (tail) {
+            const uint8_t* tailp = reinterpret_cast<const uint8_t*>(&p64[chunks]);
+            for (size_t i = 0; i < tail; ++i) {
+                h ^= tailp[i];
+                h *= 0x100000001b3ULL;
+            }
+        }
+        return h;
+    }
+}
+
 uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
 {
-    for(uint32_t i = 0; i < lightDataStructuresCount; ++i)
-    {
-        if(0 == memcmp(lightData_ + i, light_data, sizeof(TG_HWLightsData)))
-        {
-            return i;
+    // Tracy zone retained — formerly named "scan", now wraps the whole
+    // function so old captures remain comparable. Should drop from
+    // ~12 µs/call (linear scan) to ~200-300 ns/call (hash + map ops).
+    ZoneScopedN("addLightDataStructure scan");
+
+    const uint64_t hash = fnv1a_64_struct(light_data, sizeof(TG_HWLightsData));
+    auto it = s_lightDataDedupMap.find(hash);
+    if (it != s_lightDataDedupMap.end()) {
+        const uint32_t slot = it->second;
+        // Verify with memcmp on hash match (collision safety).
+        if (slot < lightDataStructuresCount &&
+            0 == memcmp(lightData_ + slot, light_data, sizeof(TG_HWLightsData))) {
+            return slot;
         }
+        // Hash collision (vanishingly rare) — fall through to append.
+        // We don't update the map; future lookups of the colliding hash
+        // will continue to find the existing slot via memcmp-verify.
     }
 
     // unique data passed, so add it
-
     if(lightDataStructuresCount + 1 >= lightDataStructuresCapacity)
     {
         TG_HWLightsData* new_lights_data = new TG_HWLightsData[lightDataStructuresCapacity + 128];
         memcpy(new_lights_data, lightData_, sizeof(TG_HWLightsData)*lightDataStructuresCount);
         delete[] lightData_;
         lightData_ = new_lights_data;
+        lightDataStructuresCapacity += 128;
     }
 
     lightData_[lightDataStructuresCount] = *light_data;
-	uint32_t rv = lightDataStructuresCount;
-	lightDataStructuresCount++;
+    uint32_t rv = lightDataStructuresCount;
+    lightDataStructuresCount++;
+    s_lightDataDedupMap.emplace(hash, rv);  // O(1) avg insert
+
+    // PERF DIAGNOSTIC 2026-05-06: log table growth periodically. 1 line per
+    // 256 new entries — silent until table actually grows that fast.
+    // Always-on (no env gate) so the regression is visible without setup.
+    // Demote to env-gate once the regression is closed.
+    if ((lightDataStructuresCount & 0xFF) == 0) {
+        printf("[LIGHT_DEDUP v1] count=%u capacity=%u memcmp_per_call_bytes_max=%zu\n",
+               lightDataStructuresCount,
+               lightDataStructuresCapacity,
+               (size_t)lightDataStructuresCount * sizeof(TG_HWLightsData));
+        fflush(stdout);
+    }
     return rv;
 }
 
 void MC_TextureManager::resetLightData()
 {
     lightDataStructuresCount = 0;
+    // PERF FIX 2026-05-07: clear the dedup map alongside the count reset.
+    // Both must reset together — slot indices restart from 0 each frame, so
+    // any stale hash→slot entries from the prior frame are invalid.
+    s_lightDataDedupMap.clear();
 }
 
 // Diagnostic body — declaration in txmmgr.h. See header for rationale.
