@@ -84,6 +84,11 @@ static bool       s_initialized               = false;
 static uint32_t   s_consumeCount              = 0;
 static bool       s_firstConsumeDone          = false;
 
+// 600-call counter for lifecycle_snapshot log line (readback_buildActorVisSnapshot).
+// Defined here so readback_init/readback_shutdown can reset them without forward-ref.
+static uint32_t   s_snapshotCallCount         = 0u;
+static bool       s_snapshotFirstDone         = false;
+
 // ---------------------------------------------------------------------------
 // Accessors
 // ---------------------------------------------------------------------------
@@ -507,10 +512,6 @@ void readback_selftest() {
 // MAX_ACTOR_HANDLE must exceed any valid actorId; MC2 maximum is ~2000 objects.
 constexpr uint32_t MAX_ACTOR_HANDLE = 4096u;
 static uint8_t s_actorVis[MAX_ACTOR_HANDLE];  // 0=invisible, 1=visible
-
-// 600-call counter for lifecycle_snapshot log line.
-static uint32_t s_snapshotCallCount = 0u;
-static bool     s_snapshotFirstDone = false;
 
 void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
     // Clamp caller's bound to the fixed array size; memset always covers the full array

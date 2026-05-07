@@ -16,6 +16,7 @@
 
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
 #include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
+#include "../code/gameobj.h"  // C3: full GameObject definition for obj->getHandle() in init()
 
 // C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
 // MC2_GPU_CULL_LIFECYCLE=1 enables GPU visibility-based node-position early-outs.
