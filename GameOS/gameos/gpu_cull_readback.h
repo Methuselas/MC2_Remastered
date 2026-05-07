@@ -64,4 +64,21 @@ void readback_zeroCurrentSlotVisibleCount();
 // Startup selftest. Hard-fails via STOP() if any tier path is broken.
 void readback_selftest();
 
+// C3: per-actor GPU visibility snapshot.
+// Call once per frame (at the start of objmgr::update, before the block loop).
+// Walks the last-good readback slot + matching substrate records to build
+// a flat visible[] array indexed by actorId (GameObjectHandle).
+// maxActorHandle: upper bound on actorId values (sizeof the flat array).
+// After this call, use readback_isActorVisibleLagged() for O(1) queries.
+// No-op if readback is disabled or no good slot available (leaves snapshot
+// in "all visible" state so downstream logic is never erroneously blocked).
+void readback_buildActorVisSnapshot(uint32_t maxActorHandle);
+
+// C3: O(1) per-actor GPU visibility query.
+// Returns true if the GPU says this actor is visible (or if no valid readback:
+// tier-3 conservative = fail-open = treat as visible).
+// actorId: value from obj->getHandle() (== GpuActorRecord::actorId).
+// ALWAYS returns true when readback is disabled or snapshot not yet built.
+bool readback_isActorVisibleLagged(uint32_t actorId);
+
 } // namespace gpu_cull

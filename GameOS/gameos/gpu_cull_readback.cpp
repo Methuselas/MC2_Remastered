@@ -17,7 +17,8 @@
 // glClientWaitSync timeout is ALWAYS 0 (zero) — never GL_TIMEOUT_IGNORED on hot path.
 
 #include "gpu_cull_readback.h"
-#include "gpu_cull_substrate.h"  // substrate_getCpuVisibleCount()
+#include "gpu_cull_substrate.h"  // substrate_getCpuVisibleCount(), substrate_getSlotRecords()
+#include "gpu_cull_record.h"     // GpuActorRecord
 #include "gos_profiler.h"        // Tracy.hpp + TracyPlot
 #include <gameos.hpp>            // STOP()
 
@@ -490,6 +491,102 @@ void readback_selftest() {
         STOP(("[GPU_CULL] readback_selftest failed %d/%d tiers — tier logic is broken",
               fail, pass + fail));
     }
+}
+
+// ---------------------------------------------------------------------------
+// C3: per-actor GPU visibility snapshot
+// ---------------------------------------------------------------------------
+//
+// Flat array indexed by actorId (== GameObjectHandle == objList index, 1-based).
+// Default (all 1) = fail-open: actors not in last-good substrate slot stay visible.
+// Only actors explicitly in the last-good readback slot can be marked invisible (0).
+// MAX_ACTOR_HANDLE must exceed any valid actorId; MC2 maximum is ~2000 objects.
+constexpr uint32_t MAX_ACTOR_HANDLE = 4096u;
+static uint8_t s_actorVis[MAX_ACTOR_HANDLE];  // 0=invisible, 1=visible
+
+// 600-call counter for lifecycle_snapshot log line.
+static uint32_t s_snapshotCallCount = 0u;
+static bool     s_snapshotFirstDone = false;
+
+void readback_buildActorVisSnapshot(uint32_t /*maxActorHandle*/) {
+    // Default: all visible (fail-open for T3 / disabled / no valid slot).
+    memset(s_actorVis, 1, sizeof(s_actorVis));
+
+    // T3 sentinel: UINT32_MAX means no valid readback yet (or T3 conservative).
+    if (!readback_isEnabled() || s_lastGoodSlot == UINT32_MAX) {
+        // Log on first call and every 600 calls so the operator can see the state.
+        ++s_snapshotCallCount;
+        const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
+        if (doLog) {
+            s_snapshotFirstDone = true;
+            printf("[GPU_CULL v1] event=lifecycle_snapshot slot=none visible=0 invisible=0 conservative=1\n");
+            fflush(stdout);
+        }
+        return;
+    }
+
+    // Also treat T3 (UINT32_MAX visible count) as all-visible.
+    if (s_lastGoodVisibleCount == UINT32_MAX) {
+        ++s_snapshotCallCount;
+        const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
+        if (doLog) {
+            s_snapshotFirstDone = true;
+            printf("[GPU_CULL v1] event=lifecycle_snapshot slot=%u visible=0 invisible=0 conservative=1\n",
+                   s_lastGoodSlot);
+            fflush(stdout);
+        }
+        return;
+    }
+
+    // Get staging buffer slice for the last-good slot.
+    // Layout: [ReadbackHeader (16 B)][uint32_t rb_actorVisible[maxActors]]
+    const char* slotBase = static_cast<const char*>(s_stagingMapped)
+                         + s_lastGoodSlot * s_slotBytes;
+    const uint32_t* rbVis = reinterpret_cast<const uint32_t*>(slotBase + sizeof(ReadbackHeader));
+
+    // Get substrate records for the same slot (readback slot K == substrate slot K).
+    uint32_t recCount = 0u;
+    const GpuActorRecord* recs = substrate_getSlotRecords(s_lastGoodSlot, &recCount);
+    if (!recs || recCount == 0u) {
+        ++s_snapshotCallCount;
+        const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
+        if (doLog) {
+            s_snapshotFirstDone = true;
+            printf("[GPU_CULL v1] event=lifecycle_snapshot slot=%u visible=0 invisible=0 conservative=1\n",
+                   s_lastGoodSlot);
+            fflush(stdout);
+        }
+        return;
+    }
+
+    // Walk records: memset defaulted all to visible, so only write 0 for invisible.
+    uint32_t nVisible = 0u;
+    uint32_t nInvisible = 0u;
+    for (uint32_t i = 0u; i < recCount; ++i) {
+        const uint32_t id = recs[i].actorId;
+        if (id == 0u || id >= MAX_ACTOR_HANDLE) continue;  // out-of-range: skip (stays visible)
+        const uint8_t vis = (rbVis[i] != 0u) ? 1u : 0u;
+        s_actorVis[id] = vis;
+        if (vis) ++nVisible; else ++nInvisible;
+    }
+
+    // Log every 600 calls (and once on first call).
+    ++s_snapshotCallCount;
+    const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
+    if (doLog) {
+        s_snapshotFirstDone = true;
+        printf("[GPU_CULL v1] event=lifecycle_snapshot slot=%u visible=%u invisible=%u conservative=0\n",
+               s_lastGoodSlot, nVisible, nInvisible);
+        fflush(stdout);
+    }
+}
+
+bool readback_isActorVisibleLagged(uint32_t actorId) {
+    // Fail-open: if readback is disabled, no valid slot, or out-of-range handle → visible.
+    if (!readback_isEnabled() || s_lastGoodSlot == UINT32_MAX) return true;
+    if (s_lastGoodVisibleCount == UINT32_MAX) return true;
+    if (actorId == 0u || actorId >= MAX_ACTOR_HANDLE) return true;
+    return s_actorVis[actorId] != 0u;
 }
 
 } // namespace gpu_cull

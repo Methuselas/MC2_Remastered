@@ -329,4 +329,39 @@ uint32_t substrate_getCurrentRecordCount() {
     return s_perFrameCount;
 }
 
+// ---------------------------------------------------------------------------
+// substrate_getSlotRecords (C3)
+// ---------------------------------------------------------------------------
+//
+// Returns the GpuActorRecord array for the given ring slot. The returned
+// pointer points directly into the persistent-mapped SSBO; it is valid as
+// long as the substrate is initialized. The CPU may safely read this range
+// after the matching fence for that slot has been consumed (i.e. the GPU has
+// finished reading it and signalled the fence). Because readback slot K ==
+// substrate slot K, callers should only query a slot that the readback ring
+// has confirmed is no longer in flight on the GPU.
+//
+// outCount is set to hdr->recordCount for the slot (may be 0 if no frame has
+// been flushed yet, or if the substrate was just reset).
+
+const GpuActorRecord* substrate_getSlotRecords(uint32_t slot, uint32_t* outCount) {
+    if (!s_initialized || !s_mappedPtr) {
+        if (outCount) *outCount = 0u;
+        return nullptr;
+    }
+    if (slot >= RING_FRAMES) {
+        if (outCount) *outCount = 0u;
+        return nullptr;
+    }
+
+    const size_t slotOffset = slot * s_slotBytes;
+    const char* slotBase = static_cast<const char*>(s_mappedPtr) + slotOffset;
+
+    const GpuActorRecordHeader* hdr =
+        reinterpret_cast<const GpuActorRecordHeader*>(slotBase);
+    if (outCount) *outCount = hdr->recordCount;
+
+    return reinterpret_cast<const GpuActorRecord*>(slotBase + sizeof(GpuActorRecordHeader));
+}
+
 } // namespace gpu_cull

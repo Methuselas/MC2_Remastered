@@ -66,4 +66,12 @@ void substrate_appendStaticPropRecord(const GpuActorRecord& rec);
 // Used by compute_dispatch() to get the post-append count before dispatching.
 uint32_t substrate_getCurrentRecordCount();
 
+// C3: return the GpuActorRecord array for a given ring slot.
+// slot: ring slot index (0..RING_FRAMES-1)
+// outCount: populated with the record count for this slot (may be 0)
+// Returns a pointer into the persistent-mapped SSBO (read-only on CPU).
+// Safe to call after substrate_flushUpload() and while the ring is live.
+// Returns nullptr if substrate is not initialized.
+const GpuActorRecord* substrate_getSlotRecords(uint32_t slot, uint32_t* outCount);
+
 } // namespace gpu_cull
