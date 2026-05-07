@@ -18,6 +18,7 @@
 #include"dobjmgr.h"
 #endif
 
+#include <cmath>   // std::abs for clip.w sign-safe frustum test
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
 #include "static_update_counters.h"      // g_staticUpdateRunCount/SkipCount/EmitSummary
 #include "../GameOS/gameos/gpu_cull_substrate.h"       // C0: GPU cull substrate SSBO upload
@@ -206,11 +207,20 @@ static void emitGpuCullRecord(GameObjectPtr obj,
             const float clipy = mvp[1]*cx + mvp[5]*cy + mvp[9]*cz  + mvp[13];
             const float clipz = mvp[2]*cx + mvp[6]*cy + mvp[10]*cz + mvp[14];
             const float clipw = mvp[3]*cx + mvp[7]*cy + mvp[11]*cz + mvp[15];
-            // clipSpaceFrustumAdmit: w > 0, |x| <= w, |y| <= w, 0 <= z <= w.
-            const bool admit = (clipw > 0.0f) &&
-                               (clipx >= -clipw) && (clipx <= clipw) &&
-                               (clipy >= -clipw) && (clipy <= clipw) &&
-                               (clipz >= 0.0f)   && (clipz <= clipw);
+            // MC2 clip.w sign: Stuff matrix gives either sign for visible objects.
+            // Sign-normalize so w > 0 before applying standard frustum tests,
+            // mirroring what the GPU clipper does implicitly.
+            // (see clip_w_sign_trap.md, terrain_tes_projection.md)
+            // Lockstep with: shaders/gpu_cull_predicate.glsl, mclib/object_admission_predicate.cpp
+            const float s   = (clipw < 0.0f) ? -1.0f : 1.0f;
+            const float ncx = clipx * s;
+            const float ncy = clipy * s;
+            const float ncz = clipz * s;
+            const float ncw = clipw * s;  // always >= 0
+            const bool admit = (ncw > 1e-5f) &&
+                               (ncx >= -ncw) && (ncx <= ncw) &&
+                               (ncy >= -ncw) && (ncy <= ncw) &&
+                               (ncz >= 0.0f) && (ncz <= ncw);
             modernBit = admit ? 1u : 0u;
         }
         rec.prevVisibilityBit = modernBit;

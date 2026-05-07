@@ -1,6 +1,7 @@
 // mclib/object_admission_predicate.cpp
 #include "object_admission_predicate.h"
 #include "stuff/stuff.hpp"   // Stuff::Vector4D
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -66,15 +67,29 @@ EffectAdmissionPredicateMode effectAdmissionPredicateMode() {
 }
 
 bool clipSpaceFrustumAdmit(const Stuff::Vector4D& rawClip) {
-    // w must be in front of camera. Behind-camera vertices have rawClip.w <= 0
-    // and the canonical clip-space tests below become meaningless.
-    if (rawClip.w <= 0.0f) return false;
-    const float w = rawClip.w;
-    if (rawClip.x < -w || rawClip.x > w) return false;
-    if (rawClip.y < -w || rawClip.y > w) return false;
-    // MC2 uses D3D-style [0, w] depth range (matches existing `rectNearFar`
-    // candidate at projectz_trace.cpp:154: `rawClip.z >= 0 && rawClip.z <= rawClip.w`).
-    if (rawClip.z < 0.0f || rawClip.z > w) return false;
+    // IMPORTANT — MC2 clip.w sign convention (see memory/clip_w_sign_trap.md):
+    // MC2's Stuff worldToClip matrix produces clip.w of EITHER sign for visible
+    // vertices. The TES uses abs(clip.w) for this reason (terrain_tes_projection.md).
+    // clip.w <= 0 does NOT mean "behind camera" — do not use sign(clip.w) as a
+    // front-test.
+    //
+    // We normalize the clip vector so w > 0 before applying the standard frustum test
+    // (the GPU's homogeneous clipper does this implicitly). Multiplying by sign(w) flips
+    // the inequalities consistently for all components.
+    //
+    // Lockstep GLSL version: shaders/gpu_cull_predicate.glsl.
+    const float s  = (rawClip.w < 0.0f) ? -1.0f : 1.0f;
+    const float cx = rawClip.x * s;
+    const float cy = rawClip.y * s;
+    const float cz = rawClip.z * s;
+    const float cw = rawClip.w * s;  // always >= 0 after this
+    // Degenerate point (clip.w == 0) cannot be projected.
+    if (cw < 1e-5f) return false;
+    // Test x, y: NDC x/w ∈ [-1, 1].
+    if (cx < -cw || cx > cw) return false;
+    if (cy < -cw || cy > cw) return false;
+    // D3D-style [0, w] depth range: NDC z/w ∈ [0, 1].
+    if (cz < 0.0f || cz > cw) return false;
     return true;
 }
 
@@ -96,11 +111,18 @@ int objectAdmissionPredicate_selftest() {
     clip.x =  0.0f; clip.y =  0.0f; clip.z = 0.5f; clip.w = 1.0f;
     runCase("center_inside", clip, true);
 
-    // Behind camera: w negative.
-    clip.x =  0.0f; clip.y =  0.0f; clip.z = 0.5f; clip.w = -1.0f;
-    runCase("behind_camera", clip, false);
+    // MC2 clip.w sign convention: clip.w may be negative for visible objects
+    // (see clip_w_sign_trap.md, terrain_tes_projection.md). With sign-normalization
+    // a point at the center of the frustum with w=-1 must have z=-0.5 (so NDC z =
+    // z/w = -0.5/-1 = 0.5, inside D3D [0,1] range). After flipping: cz=0.5, cw=1 → admit.
+    clip.x =  0.0f; clip.y =  0.0f; clip.z = -0.5f; clip.w = -1.0f;
+    runCase("neg_w_center_inside", clip, true);
 
-    // Beyond left clip plane.
+    // Point outside frustum with negative w: after flip x=1.5 > cw=1 → rejected.
+    clip.x = -1.5f; clip.y = 0.0f; clip.z = -0.5f; clip.w = -1.0f;
+    runCase("neg_w_left_outside", clip, false);
+
+    // Beyond left clip plane (positive w).
     clip.x = -1.5f; clip.y = 0.0f; clip.z = 0.5f; clip.w = 1.0f;
     runCase("left_outside", clip, false);
 

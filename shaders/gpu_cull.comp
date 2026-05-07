@@ -121,6 +121,22 @@ layout(std430, binding = 9) buffer DebugOut {
 #endif  // GPU_CULL_C1B_INDIRECT
 
 // ---------------------------------------------------------------------------
+// Binding 14 (C2 readback path, secondary write — does NOT affect existing paths):
+// Binding 9 is already used by C1a (DebugOut) and C1b (VisibleIds), so C2 uses
+// binding 14 to avoid any GLSL layout conflict when all three defines are active.
+// The C++ side binds the readback SSBO at READBACK_SSBO_BINDING=14.
+// ---------------------------------------------------------------------------
+#ifdef GPU_CULL_C2_READBACK
+layout(std430, binding = 14) coherent buffer ReadbackBuf {
+    uint rb_visibleCount;   // header[0] — atomicAdd per admitted actor
+    uint rb_frameIndex;     // header[1] — set by CPU before dispatch
+    uint rb_pad0;
+    uint rb_pad1;
+    uint rb_actorVisible[]; // per-actor: 1=visible, 0=culled
+};
+#endif  // GPU_CULL_C2_READBACK
+
+// ---------------------------------------------------------------------------
 // Binding 2: frustum UBO — view-projection matrix + ring-slot info.
 // gos_GetTerrainMVPMat4() returns a 16-float row-major matrix; uploaded GL_FALSE.
 // In GLSL, viewProj * vec4(center, 1.0) implements the row-vector convention
@@ -173,6 +189,14 @@ void main() {
 
     // Flag_AlwaysVisible (bit 0) overrides cull — same as CPU path.
     if ((rec.flags & 0x1u) != 0u) visible = true;
+
+#ifdef GPU_CULL_C2_READBACK
+    // C2 secondary write: per-actor visibility flag + global visible count.
+    // ReadbackBuf is at binding 14 (separate from C1a/C1b binding-9 usage).
+    rb_actorVisible[i] = visible ? 1u : 0u;
+    if (visible) atomicAdd(rb_visibleCount, 1u);
+    if (i == 0u) rb_frameIndex = 0xDEADu;
+#endif  // GPU_CULL_C2_READBACK
 
 #ifdef GPU_CULL_C1B_INDIRECT
     // C1b path: write per-actor visibility bit (used by block-rollup kernel).

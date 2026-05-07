@@ -15,6 +15,7 @@
 #include "gpu_cull_compute.h"
 #include "gpu_cull_substrate.h"
 #include "gpu_cull_record.h"
+#include "gpu_cull_readback.h"
 #include "gos_static_prop_killswitch.h"   // gos_GetTerrainMVPMat4()
 #include "gos_static_prop_batcher.h"      // batcher_getTypeCount(), batcher_getTypeDrawInfo()
 
@@ -256,6 +257,20 @@ static GLuint build_cull_program(const std::string* preambles, int nPreambles,
 
     GLuint sh = compile_compute_shader(srcStrs.data(), (int)srcStrs.size());
     if (!sh) { return 0; }
+
+    // Debug: dump concatenated source to file for inspection.
+    if (getenv("MC2_GPU_CULL_DUMP_SHADER")) {
+        char fname[64];
+        snprintf(fname, sizeof(fname), "shader_dump_%s.glsl", debugName ? debugName : "unknown");
+        if (FILE* dumpf = fopen(fname, "w")) {
+            for (int k = 0; k < (int)srcStrs.size(); ++k)
+                fputs(srcStrs[k], dumpf);
+            fclose(dumpf);
+            printf("[GPU_CULL v1] shader dumped to %s\n", fname);
+            fflush(stdout);
+        }
+    }
+
     GLuint prog = link_compute_program(sh);
     glDeleteShader(sh);
     return prog;
@@ -290,9 +305,18 @@ bool compute_init() {
     }
 
     // --- C1a cull shader (no C1b define) ---
+    // When readback is enabled, also define GPU_CULL_C2_READBACK so the
+    // shader writes the readback SSBO in C1a (shadow/diagnostic) mode too.
     {
-        std::string noPreamble;
-        GLuint prog = build_cull_program(nullptr, 0, "cull_C1a");
+        std::string c1aPreamble;
+        int nC1aPreambles = 0;
+        if (readback_isEnabled()) {
+            c1aPreamble = "#define GPU_CULL_C2_READBACK 1\n";
+            nC1aPreambles = 1;
+        }
+        GLuint prog = build_cull_program(
+            nC1aPreambles > 0 ? &c1aPreamble : nullptr,
+            nC1aPreambles, "cull_C1a");
         if (!prog) {
             STOP(("[GPU_CULL] C1a cull compile failed; see log above"));
             return false;
@@ -301,13 +325,24 @@ bool compute_init() {
     }
 
     // --- C1b cull shader (with GPU_CULL_C1B_INDIRECT define) ---
+    // When readback is also enabled, add GPU_CULL_C2_READBACK so the shader
+    // writes the secondary readback SSBO at binding 9 (ranged).
     {
-        std::string c1bDefine = "#define GPU_CULL_C1B_INDIRECT 1\n";
-        GLuint prog = build_cull_program(&c1bDefine, 1, "cull_C1b");
+        std::string preambles[2];
+        int nPreambles = 0;
+        preambles[nPreambles++] = "#define GPU_CULL_C1B_INDIRECT 1\n";
+        if (readback_isEnabled()) {
+            preambles[nPreambles++] = "#define GPU_CULL_C2_READBACK 1\n";
+        }
+        GLuint prog = build_cull_program(preambles, nPreambles, "cull_C1b");
         if (!prog) {
             printf("[GPU_CULL v1] event=c1b_cull_compile_fail — C1b indirect draw disabled\n");
             fflush(stdout);
             // Non-fatal: fall back to C1a shadow mode.
+        } else {
+            printf("[GPU_CULL v1] event=c1b_cull_ok c2_readback=%d\n",
+                   (int)(nPreambles >= 2));
+            fflush(stdout);
         }
         s_c1bCullProgram = prog;
     }
@@ -598,6 +633,15 @@ bool compute_getTypeBucketInfo(uint32_t typeID,
 void compute_dispatch() {
     if (!compute_isEnabled() || !s_initialized) return;
 
+    // C2 frame begin: non-blocking tryConsume of last frame's readback.
+    // Must be called BEFORE the compute shader is dispatched.
+    if (readback_isEnabled()) {
+        readback_tryConsume();
+    }
+
+    // C2: static frame counter for readback_frameEnd().
+    static uint32_t s_readbackFrameCounter = 0u;
+
     const float* mvp = gos_GetTerrainMVPMat4();
     if (!mvp) {
         COMPUTE_TRACE("event=dispatch_skip reason=mvp_null");
@@ -608,6 +652,9 @@ void compute_dispatch() {
     glBindBuffer(GL_UNIFORM_BUFFER, s_frustumUbo);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, 16 * sizeof(float), mvp);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+    COMPUTE_TRACE("mvp row3=(%.4f,%.4f,%.4f,%.4f)",
+                  mvp[3],mvp[7],mvp[11],mvp[15]);
 
     // Copy active ring slot to staging SSBO (offset 0).
     GLuint substrateSsbo = substrate_getInstanceSsboName();
@@ -654,6 +701,40 @@ void compute_dispatch() {
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
     glBindBufferBase(GL_UNIFORM_BUFFER, CULL_UBO_BINDING, s_frustumUbo);
+
+    // C2: bind readback SSBO at binding 14 (ranged, per-slot).
+    // Binding 14 is free of all existing paths (9=DebugOut/VisibleIds, 10-13 used by C1b).
+    // Zero the rb_visibleCount in the mapped header before dispatch so the shader's
+    // atomicAdd accumulates from 0 each frame. The buffer is GL_MAP_COHERENT_BIT so
+    // the write is immediately visible to the GPU.
+    static constexpr uint32_t kReadbackBinding = 14u;
+    if (readback_isEnabled()) {
+        const GLuint     rbBuf    = readback_getSsboBuf();
+        const GLintptr   rbOff    = readback_getCurrentSlotOffset();
+        const GLsizeiptr rbSz     = readback_getSlotBytes();
+        if (rbBuf && rbSz > 0) {
+            // Zero rb_visibleCount in the GPU SSBO via glClearNamedBufferSubData.
+            readback_zeroCurrentSlotVisibleCount();
+            // GL_SHADER_STORAGE_BARRIER_BIT: ensure the glClear write is visible
+            // to the compute shader before it dispatches. Without this barrier,
+            // on AMD the clear and dispatch may be re-ordered such that atomicAdd
+            // sees the un-cleared (garbage) value or the write is discarded.
+            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+            // Drain any prior GL errors so the check below is clean.
+            while (glGetError() != GL_NO_ERROR) {}
+            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, kReadbackBinding,
+                              rbBuf, rbOff, rbSz);
+            // Check for GL_INVALID_VALUE (misalignment, out-of-range, etc).
+            const GLenum bindErr = glGetError();
+            if (bindErr != GL_NO_ERROR) {
+                printf("[GPU_CULL v1] WARN: glBindBufferRange binding=14 error=0x%X rbOff=%lld rbSz=%lld\n",
+                       bindErr, (long long)rbOff, (long long)rbSz);
+                fflush(stdout);
+            }
+            COMPUTE_TRACE("event=c2_bind rbBuf=%u rbOff=%lld rbSz=%lld binding=%u bindErr=0x%X",
+                           rbBuf, (long long)rbOff, (long long)rbSz, kReadbackBinding, bindErr);
+        }
+    }
 
     // Begin GL timer query.
     if (s_timerPending) {
@@ -726,6 +807,31 @@ void compute_dispatch() {
         // DO NOT add GL_ATOMIC_COUNTER_BARRIER_BIT (Q12 contract).
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
 
+        // C2 immediate post-dispatch diagnostic (C1b path) — env-gated.
+        // Reads from GPU SSBO directly (after SHADER_STORAGE barrier above).
+        if (s_computeTrace && readback_isEnabled()) {
+            const GLuint rbGpu = readback_getSsboBuf();
+            const GLintptr rbOff = readback_getCurrentSlotOffset();
+            if (rbGpu) {
+                uint32_t rbVisGpu = 0xAAAAu;
+                uint32_t rbMarker = 0xAAAAu;
+                glGetNamedBufferSubData(rbGpu, rbOff,                      sizeof(uint32_t), &rbVisGpu);
+                glGetNamedBufferSubData(rbGpu, rbOff +   sizeof(uint32_t), sizeof(uint32_t), &rbMarker);
+                GLint bound14 = 0;
+                glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 14, &bound14);
+
+                // Also read bucket0 count to see if C1b cull found any visible actors.
+                uint32_t bucket0Count = 0xAAAAu;
+                if (s_bucketCountsBuf)
+                    glGetNamedBufferSubData(s_bucketCountsBuf, 0, sizeof(uint32_t), &bucket0Count);
+
+                printf("[GPU_CULL v1] C2_DIAG(c1b) gpuBuf=%u rbOff=%lld bound14=%d rb_vis=%u rb_marker=0x%X bucket0=%u recordCount=%u\n",
+                       rbGpu, (long long)rbOff, bound14, rbVisGpu, rbMarker,
+                       bucket0Count, recordCount);
+                fflush(stdout);
+            }
+        }
+
         // 6. Block-active rollup (C1-RB).
         if (s_rollupProgram) {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, substrate_getInstanceSsboBindingPoint(), s_stagingSsbo);
@@ -773,6 +879,22 @@ void compute_dispatch() {
         // NOT GL_COMMAND_BARRIER_BIT — no indirect draws in C1a.
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
+        // C2 immediate post-dispatch diagnostic (C1a path): read rb_visibleCount
+        // from the GPU SSBO directly (after SHADER_STORAGE_BARRIER_BIT).
+        if (s_computeTrace && readback_isEnabled()) {
+            const GLuint rbGpu = readback_getSsboBuf();
+            const GLintptr rbOff = readback_getCurrentSlotOffset();
+            if (rbGpu) {
+                uint32_t rbVisGpu = 0xDEADU;
+                glGetNamedBufferSubData(rbGpu, rbOff, sizeof(uint32_t), &rbVisGpu);
+                GLint bound14 = 0;
+                glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 14, &bound14);
+                printf("[GPU_CULL v1] C2_DIAG(c1a) gpuBuf=%u rbOff=%lld bound14=%d rbVisGpu=%u recordCount=%u\n",
+                       rbGpu, (long long)rbOff, bound14, rbVisGpu, recordCount);
+                fflush(stdout);
+            }
+        }
+
         ++s_dispatchFrames;
 
         glEndQuery(GL_TIME_ELAPSED);
@@ -780,6 +902,13 @@ void compute_dispatch() {
 
         COMPUTE_TRACE("event=dispatch recordCount=%u groups=%u", recordCount, cullGroups);
     }
+
+    // C2 frame end: place GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT + glFenceSync for
+    // this frame's readback slot. Called AFTER all GPU commands are issued.
+    if (readback_isEnabled()) {
+        readback_frameEnd(s_readbackFrameCounter);
+    }
+    ++s_readbackFrameCounter;
 }
 
 // ---------------------------------------------------------------------------
