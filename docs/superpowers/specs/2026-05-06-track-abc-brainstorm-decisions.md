@@ -469,34 +469,30 @@ choice, not just the code change.
 
 ### Q17 — Track C block-active rollup
 
-**Resolved:** per-actor visibility does NOT automatically answer
-per-block visibility. Track C needs an explicit actor → block rollup
-between the per-actor cull pass (C1) and the lifecycle gate handoff
-(C3). Two implementation paths; pick at C1 plan-time:
+**Resolved:** GPU compute aggregation pass. ✅ Closed 2026-05-07.
 
-- **GPU compute aggregation pass.** A small kernel that scans the
-  visibility bitmask and emits a per-block `OR` reduction to a
-  per-block visibility buffer. One additional dispatch + one additional
-  barrier. Stays on GPU; consistent with the C-arc "GPU is the source
-  of truth" frame.
-- **CPU-side conservative rollup.** When CPU reads the per-actor
-  visibility bitmask in C2's async readback, also walk
-  `objBlockInfo[].firstHandle..firstHandle+numObjects` and OR the
-  per-actor bits into per-block bits. Simpler, no extra GPU dispatch,
-  but adds CPU work proportional to block count × per-block actor
-  count.
+`objmgr::update` gates at block granularity (`objBlockInfo[].active`),
+not actor granularity. A small aggregation kernel scans the per-actor
+visibility bitmask produced by C1 and emits a per-block `OR` reduction
+to a separate per-block visibility SSBO. One additional dispatch +
+`GL_SHADER_STORAGE_BARRIER_BIT` after the cull pass.
 
-**Why this is brainstorm-worthy:** `objmgr::update` (C3 gate target)
-gates at block granularity (`objBlockInfo[].active`), not actor
-granularity. Q11's bucket key is per-actor for draw purposes; the
-visibility-feedback path needs an additional aggregation step nobody
-called out at brainstorm time. Without it, C3's gate handoff is
-incomplete.
+**Why chosen over CPU-side walk:** Stays on GPU — consistent with
+"GPU is the source of truth" from `mc3_modernization_philosophy.md`.
+The per-block buffer is then available for C2 async-readback (same ring
+infrastructure) and C3's lifecycle gate handoff. CPU-side walk was
+rejected because it adds CPU proportional work and splits the
+visibility authority between GPU and CPU during the readback window.
 
-**How to apply:** C1 plan must enumerate which path is being taken and
-include the rollup kernel/CPU-walk in its sync-contract list (additional
-dispatch in path 1 needs its own barrier; CPU-walk in path 2 needs to
-happen before any C3-routed gate consumer reads).
+**How to apply:** C1 plan includes a second compute dispatch (cull
+dispatch → aggregation dispatch) with an intervening
+`GL_SHADER_STORAGE_BARRIER_BIT`. Per-block SSBO layout: `uint[MAX_OBJ_BLOCKS]`,
+one bit per block set to 1 if any actor in the block was visible this
+frame. C1b barrier sequence:
+1. Cull dispatch
+2. `glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT)` — actor visibility SSBO ready
+3. Aggregation dispatch
+4. `glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT)` — per-block buffer + indirect commands ready
 
 ### Q19 — DSA adoption arc (Track F candidate)
 

@@ -17,7 +17,7 @@ You are executing **Track C** of the MC3 rendering modernization arc — the arc
 1. `CLAUDE.md` — worktree rules. ⚠️ "Load-Bearing Cull Infrastructure" section is mandatory.
 2. `docs/superpowers/plans/2026-05-06-track-c-compute-cull.md` — **this is your plan.** ~738 lines covering all four slices. C0 is fully implementable, C1 condensed, C2/C3 detailed sketches.
 3. `docs/superpowers/specs/2026-05-06-track-abc-brainstorm-decisions.md` — Q7 (accept 1-frame AI artifact), Q8 (combined dispatch), Q9 (visible-ID list), Q10 (C0 dynamic actor records), Q11 (mesh-range bucket key), **Q12 (sync contracts — SSBO atomics + GL_SHADER_STORAGE_BARRIER_BIT + GL_COMMAND_BARRIER_BIT, NO GL_ATOMIC_COUNTER_BARRIER_BIT)**, Q13 (GL 4.6 OR ARB extensions), Q14 (split into 4 slices), **Q15 (sequential-with-overlap soak)**, Q17 (block-active rollup at C1), Q18 (lights preflight at C3).
-4. `docs/superpowers/explorations/2026-05-06-track-c-compute-cull-recon.md` — recon. **Critical finding: Track C1 ships the FIRST compute path AND the first cull→indirect-draw barrier in the engine. Zero precedent to mirror; Q12 contracts are normative.**
+4. `docs/superpowers/explorations/2026-05-06-track-c-compute-cull-recon.md` — recon. **Critical finding: C1 is split into two sub-slices (see C1 section below): C1a ships the FIRST compute path in the engine (visibility mirror only, CPU still renders); C1b ships the first cull→indirect-draw barrier. Zero precedent to mirror; Q12 contracts are normative and apply starting at C1b.**
 5. `memory/cull_gates_are_load_bearing.md` — cascade hazard.
 6. `memory/gpu_direct_renderer_bringup_checklist.md` — 9 traps every new fast path hits.
 7. `docs/amd-driver-rules.md` — AMD RX 7900 XTX driver quirks.
@@ -31,7 +31,10 @@ You are executing **Track C** of the MC3 rendering modernization arc — the arc
 
 **C0 is independent** (substrate-only, no compute, no readback, no gate handoff). Can start any time once HEAD builds clean. **Run C0 first.**
 
-**C1 is GATED on:**
+**C1a (visibility mirror) is GATED on:** C0 only. No Track B dependency, no Q16/Q17. C1a runs compute alongside CPU, compares visible counts, collects parity histogram. CPU still renders normally. This sub-slice is the diagnostic that characterizes the `projectZ` vs `clipSpaceFrustumAdmit` delta before any indirect-draw integration.
+
+**C1b (compute writes indirect counts) is GATED on:**
+- C1a parity histogram showing near-zero false-negatives (GPU culls actor that CPU kept visible) across tier1 missions. Non-zero false-negative rate requires investigation before proceeding.
 - Track B substrate ready in tier1 default-on (or at minimum, B's persistent-instance buffer shipped + Q16 `firstColorOffset` decision committed).
 - Q16 closed (committed in HEAD's brainstorm-decisions doc).
 - Q17 closed — block-active rollup path chosen (GPU compute aggregation OR CPU-side conservative walk). Picked at C1 plan-time per Task C1-RB.
@@ -40,7 +43,7 @@ You are executing **Track C** of the MC3 rendering modernization arc — the arc
 
 **C3 is GATED on:** C1+C2 ship + soak + **Q18 lights preflight** (Task C3-0 grep for `lightAppearance->inView` consumers; lights join C3 routing if any lifecycle gate reads them).
 
-If C1's prerequisites aren't met: ship C0 alone, hand back to user, wait for B + Q16/Q17 to clear.
+If C1b's prerequisites aren't met (B not ready, or Q16/Q17 open, or C1a false-negative rate non-trivial): ship C0 + C1a, hand back to user, wait for B + Q16/Q17 to clear and parity to confirm.
 
 ## Scope summary
 
@@ -52,11 +55,17 @@ Schema is **LOCKED** at the plan level — see plan §"C0 schema (LOCKED)" for b
 
 Exit: substrate buffer fills each frame, AABB parity 0 mismatches, tier1 5/5 PASS, AMD canary clean.
 
-### C1 — Compute cull for render only (~1 week, gated on B + Q16/Q17)
+### C1 — Compute cull for render only (~1 week total; C1a gated on C0 only; C1b gated on B + Q16/Q17 + C1a parity)
 
-Single combined compute dispatch over Track B static records + C0 dynamic records. Bucket-keyed scatter-write via SSBO `atomicAdd` (NOT ACBOs, per Q12). Indirect draw consumes via `gl_BaseInstance`. **GPU→GPU only — no CPU readback in C1; CPU lifecycle gates still use legacy `inView`.**
+**Goal: stop the CPU from being the render visibility authority.** C1 is not "add compute" or "modernize OpenGL." It is: remove same-frame CPU visibility from the render hot path. The mechanism is compute; the deliverable is `Camera::UpdateRenderers` no longer deciding what renders.
 
-**Q12 sync contracts mandatory:**
+C1 splits into two sub-slices:
+
+**C1a — visibility mirror (CPU still renders):** Compute runs every frame alongside CPU path. Reads C0 dynamic records + Track B static records. Writes `visibleIDs[]` and per-bucket counts to a debug SSBO. CPU renders normally. Output: `[GPU_CULL v1] event=parity_summary` with GPU visible count, CPU visible count, false-negative count (GPU culled what CPU kept), false-positive count (GPU kept what CPU culled), dispatch time. This is the `projectZ` diagnostic — see "projectZ scope" note below. C1a exit: dispatch runs every frame, parity summary emits, false-negative count near-zero across tier1.
+
+**C1b — compute writes indirect counts (GPU render authority):** Single combined compute dispatch over Track B static records + C0 dynamic records. Bucket-keyed scatter-write via SSBO `atomicAdd` (NOT ACBOs, per Q12). Compute sets `instanceCount` per bucket in the pre-built `DrawElementsIndirectCommand` array. Indirect draw consumes via `gl_BaseInstance`. **GPU→GPU only — no CPU readback in C1b; CPU lifecycle gates still use legacy `inView`.**
+
+**Q12 sync contracts mandatory (C1b only — C1a has no indirect-draw barrier):**
 - Counter representation: SSBO `uint` + shader `atomicAdd`.
 - Counter reset: `glClearNamedBufferSubData`.
 - Capacity overflow: `[GPU_CULL v1] event=overflow` log; never silent drop.
@@ -65,7 +74,8 @@ Single combined compute dispatch over Track B static records + C0 dynamic record
 
 Bucket key per Q11: mesh-range + shader + texture-set + VAO + index-type. NOT material-only.
 
-Exit: indirect draw output visually matches legacy CPU-cull at all zooms, `[GPU_CULL v1] overflow=0` across tier1, `[DESTROY v1]` parity (gates untouched at C1), AMD canary verifies barriers (this is THE first such verification in the engine — RenderDoc/apitrace pre/post barrier capture).
+Exit C1a: dispatch runs cleanly every frame, parity summary emits, false-negative rate near-zero across tier1, dispatch time ≤50µs on AMD canary.
+Exit C1b: indirect draw output visually matches legacy CPU-cull at all zooms, `[GPU_CULL v1] overflow=0` across tier1, `[DESTROY v1]` parity (gates untouched at C1b), AMD canary verifies barriers (this is THE first cull→indirect-draw barrier in the engine — RenderDoc/apitrace pre/post barrier capture).
 
 ### C2 — Async readback into non-lifecycle consumers (~3-5 days)
 
@@ -100,13 +110,16 @@ Exit: `Camera::UpdateRenderers` is a stub, FPS gate ≥30% improvement at wolfma
 - **Per-task build:** clean.
 - **Per-slice exit gates:** plan documents each slice's hard exit criteria explicitly. Read those.
 - **Cross-slice:** Q15 sequential-with-overlap soak — each slice soaks under "previous-slice-default-on" config.
-- **AMD canary** at C1 is load-bearing (no engine precedent; Q12 contracts are normative).
+- **AMD canary** at C1b is load-bearing (first cull→indirect-draw barrier in the engine; Q12 contracts are normative). C1a AMD canary is dispatch-time only (no barrier to verify).
+- **`projectZ` scope:** `Camera::projectZ()` (screen-rect test with destroyed W-sign) is load-bearing **only for terrain quad admission** (`makeLists()` → tessellation control-point validity). It does NOT gate dynamic actor render or lifecycle after C1b/C3 respectively. For dynamic actors (mechs, GVs, props, gates), the GPU compute shader's `clipSpaceFrustumAdmit` IS the replacement camera predicate — the MC2 axis-convention complexity is already baked into the `worldToClip` matrix. Do not let the terrain-admission problem block the actor GPU-cull path. The C1a parity histogram quantifies the predicate delta before C1b commits to indirect draw.
 
 ## When blocked
 
-- **Track B not ready and you want to start C1:** STOP. C1's compute reads from B's persistent instance buffer; without B, C1's reads are undefined. Run C0 instead, hand back.
-- **Q16/Q17/Q18 not closed:** flagged in plan; STOP for the affected slice. C0 is unaffected.
-- **AMD barrier verification fails at C1:** investigate via RenderDoc/apitrace capture. The Q12 contract is correct (verified at brainstorm + advisor pass) — failure is likely a code bug, not a contract bug. Cite the failed capture in handback.
+- **Track B not ready and you want to start C1b:** STOP. C1b's compute reads from B's persistent instance buffer; without B, C1b's reads are undefined. Run C0 + C1a instead (both are independent of B), hand back.
+- **Track B not ready and you want to start C1a:** C1a only reads C0 dynamic records, not B's static-prop SSBO. C1a CAN proceed without B. Just skip the static-prop portion of the dispatch until B lands.
+- **Q16/Q17/Q18 not closed:** flagged in plan; STOP for C1b and affected slices. C0 and C1a are unaffected.
+- **C1a parity shows non-trivial false-negative rate:** Do not proceed to C1b. False negatives (GPU culls actor that CPU kept visible) will cause objects to pop out of rendered frames. Investigate whether the mismatch is behind-camera actors (W ≤ 0 case — expected to be near-zero at wolfman zoom altitude ~6000 because `MaxClipDistance` distance-culls them first) or legitimate frustum-boundary disagreement. Document and hand back.
+- **AMD barrier verification fails at C1b:** investigate via RenderDoc/apitrace capture. The Q12 contract is correct (verified at brainstorm + advisor pass) — failure is likely a code bug, not a contract bug. Cite the failed capture in handback. Note: barrier verification only applies at C1b+; C1a has no indirect-draw barrier.
 - **Q18 lights preflight finds lifecycle consumers** (light visibility feeding into a non-light lifecycle gate): scope expansion. Add lights to C3 routing list, document, proceed.
 - **C3 visual canaries show observable AI 1-frame artifact** that's gameplay-affecting (not just visible — actually hurting play): per Q7 reversibility hedge, add `gpu_cull::isVisibleSync(actorId)` API as a separate engine-side primitive that DOES block on the fence at specific call sites. Pay the cost only there as content-layer concern. Document and ship.
 - **`Camera::UpdateRenderers` Tracy zone fails to drop to ≤0.3ms after C3 stub** (plan target: ~6ms → ≤0.3ms): incomplete routing. Some legacy `inView` consumer wasn't rewired. Re-grep, find the holdout, route it.
