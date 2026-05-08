@@ -6,6 +6,14 @@
 // transpose of the original Stuff matrix. boneT * v == row-vec v * M_original.
 // Do NOT "fix" the transpose — it is intentional and load-bearing.
 
+// Slice B1: define MC2_STATIC_PROP_LIGHTING before lighting.hglsl so
+// calc_light's no-lights early-return preserves base_light (our ambient
+// floor) instead of returning vec3(1). The macro name is unfortunate
+// (we're not a static prop) but behaviorally correct — the BGR/RGB
+// swizzle path it gates inside get_base_light() is irrelevant because
+// mech.vert never calls get_base_light(). See lighting.hglsl:131,196.
+#define MC2_STATIC_PROP_LIGHTING
+
 #include <include/lighting.hglsl>
 
 // Vertex attributes — 48-byte skinning-ready ABI, locked for Slice A+.
@@ -48,6 +56,11 @@ uniform int  u_materialFlags;
 uniform mat4 terrainMVP;
 uniform vec4 u_terrainViewport;  // (vmx, vmy, vax, vay) for D3D->GL projection chain
 uniform mat4 u_mvp;              // px->NDC (upload GL_TRUE)
+// Slice B1: 0 = Slice A passthrough (baseLight=vec3(1.0)),
+// 1 = VS-side calc_light per-vertex. Driven by MC2_GPU_MECH_LIGHTING.
+// 'uniform uint' crashes the engine's shader compile (see
+// memory/uniform_uint_crash.md); use int.
+uniform int u_lightingMode;
 
 // Varyings — FS does NOT read the SSBO; all per-instance data forwarded here.
 out vec2 v_uv;
@@ -91,28 +104,33 @@ void main() {
     // static_prop.vert correctly omits the guard. The plan template
     // included it and made all mech vertices end up at (2,2,2,1).
 
-    // Slice A: mech vertices have aRGBLight = 0 (no pre-baked static
-    // lighting — the legacy CPU mech path computes lighting per-frame via
-    // calc_light from listOfShapes[i].worldLights). Decoding a_aRGBLight
-    // here gives 0 for all mech vertices, and the unselected actor's
-    // highlightColor is also 0, so v_litColor would be (0,0,0) and the
-    // mech would render fully black even when textures sample correctly.
+    // Slice B1: per-vertex GPU lighting via calc_light from lighting.hglsl.
+    // u_lightingMode=0 keeps Slice A's flat-white passthrough (used as a
+    // fast bisect lever during soak); =1 enables calc_light. The
+    // LightsData UBO at LIGHT_DATA_ATTACHMENT_SLOT=0 is bound once at
+    // session start by MC_TextureManager (mclib/txmmgr.cpp:318); no
+    // per-frame rebind needed. inst.lightDataIndex selects this actor's
+    // ObjectLights entry, populated per-actor by
+    // mechShape->CacheGpuLightData() in Mech3DAppearance::update().
     //
-    // Default-on baseLight to white in Slice A so the texture passes
-    // through unmodified. Slice B1 replaces this with the real
-    // calc_light(inst.lightDataIndex) once the LightsData UBO is wired
-    // for mech actors.
-    vec3 baseLight = vec3(1.0);
-    // Highlight is still added (selected mechs glow). Highlight alpha=0 by
-    // default makes this a no-op for unselected actors.
-    baseLight = clamp(baseLight + inst.aRGBHighlight.rgb * inst.aRGBHighlight.a, 0.0, 1.0);
-    // Reference of dead-code aRGBLight decode for Slice B1: it would unpack
-    // the BGRA-packed uint into per-channel light, e.g.
-    //     baseLight.x = float((a_aRGBLight >> 16) & 0xFFu) / 255.0;
-    //     baseLight.y = float((a_aRGBLight >>  8) & 0xFFu) / 255.0;
-    //     baseLight.z = float((a_aRGBLight >>  0) & 0xFFu) / 255.0;
-    // but mech aRGBLight is 0 in stock data, so this is replaced by
-    // calc_light(inst.lightDataIndex) when Slice B1 wires the UBO.
+    // Ambient floor 0.35 prevents shadowed mechs from going pure black
+    // (CPU mech path has implicit ambient via its lighting model).
+    // Tunable post-soak.
+    const float kAmbientFloor = 0.35;
+    vec3 baseLight;
+    if (u_lightingMode != 0) {
+        vec3 base = vec3(kAmbientFloor);
+        vec3 litRGB = calc_light(int(inst.lightDataIndex),
+                                 worldNormal,
+                                 worldMC2,
+                                 base);
+        baseLight = clamp(litRGB + inst.aRGBHighlight.rgb * inst.aRGBHighlight.a,
+                          0.0, 1.0);
+    } else {
+        // Slice A passthrough: flat white + highlight.
+        baseLight = clamp(vec3(1.0) + inst.aRGBHighlight.rgb * inst.aRGBHighlight.a,
+                          0.0, 1.0);
+    }
 
     v_uv             = a_uv;
     v_litColor       = vec4(baseLight, 1.0);
