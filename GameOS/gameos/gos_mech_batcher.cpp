@@ -100,6 +100,9 @@ static std::vector<PendingSubmit> s_pendingSubmits;
 // Counters.
 static bool     s_mechBatcherTrace     = false;
 static bool     s_mechBatcherTraceInit = false;
+static bool     s_mechLightTrace       = false;
+static bool     s_mechLightTraceInit   = false;
+static uint32_t s_lightCacheFullFrames = 0;  // monotonic; emitted on first overflow per frame
 static uint32_t s_eligibleActorsThisFrame = 0;
 static uint32_t s_fallbacksThisFrame[5]   = {};  // indexed by GpuMechFallbackReason
 static uint64_t s_allowedLateRegEvents    = 0;
@@ -556,6 +559,29 @@ void GpuMechBatcher::flush() {
     if (!s_mechBatcherTraceInit) {
         s_mechBatcherTrace     = (getenv("MC2_MECH_BATCHER_STATS") != nullptr);
         s_mechBatcherTraceInit = true;
+    }
+    if (!s_mechLightTraceInit) {
+        s_mechLightTrace     = (getenv("MC2_MECH_LIGHT_TRACE") != nullptr);
+        s_mechLightTraceInit = true;
+    }
+    if (s_mechLightTrace) {
+        // LightsData UBO holds 32 ObjectLights entries (lighting.hglsl).
+        // Any submit with lightDataIndex >= 32 reads OOB; AMD typically
+        // returns zero → flat-black mech. Surface the event so soak ops
+        // can raise the cap. Recipe to fix when fired: bump
+        // lightDataStructuresCapacity in mclib/txmmgr.cpp + the
+        // LightsData[N] array in shaders/include/lighting.hglsl in
+        // lockstep per memory/cpp_glsl_ubo_struct_lockstep.md.
+        bool overCap = false;
+        for (const auto& ps : s_pendingSubmits) {
+            if (ps.desc.lightDataIndex >= 32u) { overCap = true; break; }
+        }
+        if (overCap) {
+            ++s_lightCacheFullFrames;
+            std::fprintf(stderr,
+                "[MECHLIGHT v1] event=cache_full frames=%u submitted=%zu\n",
+                s_lightCacheFullFrames, s_pendingSubmits.size());
+        }
     }
 
     if (!g_useGpuMechs || !s_geometryFinalized || s_programLoadFailed ||
