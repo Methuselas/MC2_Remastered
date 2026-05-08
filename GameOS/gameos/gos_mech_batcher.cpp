@@ -516,6 +516,237 @@ bool GpuMechBatcher::submitActor(const GpuMechSubmitDesc& desc) {
 }
 
 // ---------------------------------------------------------------------------
-// Stub — replaced in Task 7. Present so the project links cleanly.
+// flush (Task 7) — bucket-sorted compaction + draw loop
 // ---------------------------------------------------------------------------
-void GpuMechBatcher::flush() {}
+void GpuMechBatcher::flush() {
+    if (!s_mechBatcherTraceInit) {
+        s_mechBatcherTrace     = (getenv("MC2_MECH_BATCHER_STATS") != nullptr);
+        s_mechBatcherTraceInit = true;
+    }
+
+    if (!g_useGpuMechs || !s_geometryFinalized || s_programLoadFailed ||
+        s_pendingSubmits.empty()) {
+        s_pendingSubmits.clear();
+        s_eligibleActorsThisFrame = 0;
+        std::memset(s_fallbacksThisFrame, 0, sizeof(s_fallbacksThisFrame));
+        return;
+    }
+
+    // Step 1: Count total bones (one block per actor).
+    size_t totalBones = 0;
+    for (const auto& ps : s_pendingSubmits) totalBones += ps.bones.size();
+
+    // Step 2: Build draw buckets.
+    // Key: (typeLodIdx, globalPacketIdx, texHandle, materialFlags).
+    // Each actor × packet produces one entry in the matching bucket.
+    // Different per-actor paint schemes for the same packet -> different buckets.
+    struct BucketKey {
+        uint32_t typeLodIdx;
+        uint32_t globalPacketIdx;
+        uint32_t texHandle;
+        uint32_t materialFlags;
+        bool operator<(const BucketKey& o) const {
+            if (typeLodIdx      != o.typeLodIdx)      return typeLodIdx      < o.typeLodIdx;
+            if (globalPacketIdx != o.globalPacketIdx) return globalPacketIdx < o.globalPacketIdx;
+            if (texHandle       != o.texHandle)       return texHandle       < o.texHandle;
+            return materialFlags < o.materialFlags;
+        }
+    };
+
+    std::map<BucketKey, std::vector<uint32_t>> buckets;  // key -> [submitIdx list]
+
+    for (uint32_t si = 0; si < (uint32_t)s_pendingSubmits.size(); ++si) {
+        const PendingSubmit& ps = s_pendingSubmits[si];
+        const GpuMechTypeLodRecord& rec = s_typeLodRecords[ps.typeLodIdx];
+        for (uint32_t p = 0; p < rec.packetCount; ++p) {
+            const GpuMechPacket& pkt = s_packets[rec.firstPacket + p];
+            BucketKey key;
+            key.typeLodIdx       = ps.typeLodIdx;
+            key.globalPacketIdx  = rec.firstPacket + p;
+            key.texHandle        = ps.packetTexHandles[p];
+            key.materialFlags    = pkt.materialFlags;
+            buckets[key].push_back(si);
+        }
+    }
+
+    size_t totalInstances = 0;
+    for (const auto& kv : buckets) totalInstances += kv.second.size();
+
+    ensureRingCapacity(totalInstances, totalBones);
+    if (!s_instanceMap || !s_boneMap) {
+        s_pendingSubmits.clear();
+        return;
+    }
+
+    // Step 3: Advance ring slot and wait for oldest fence.
+    s_frameSlot = (s_frameSlot + 1) % MECH_RING_FRAMES;
+    if (s_fence[s_frameSlot]) {
+        glClientWaitSync(s_fence[s_frameSlot], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+        glDeleteSync(s_fence[s_frameSlot]);
+        s_fence[s_frameSlot] = 0;
+    }
+
+    GpuMechInstance* instDst = (GpuMechInstance*)s_instanceMap + s_frameSlot * s_instanceCapacity;
+    GpuMechBone*     boneDst = (GpuMechBone*)    s_boneMap     + s_frameSlot * s_boneCapacity;
+
+    // Step 4: Write bone SSBO once per actor; record each actor's boneBase offset.
+    std::vector<uint32_t> actorBoneBase(s_pendingSubmits.size());
+    uint32_t boneHead = 0;
+    for (uint32_t si = 0; si < (uint32_t)s_pendingSubmits.size(); ++si) {
+        actorBoneBase[si] = boneHead;
+        for (const auto& b : s_pendingSubmits[si].bones)
+            boneDst[boneHead++] = b;
+    }
+
+    // Step 5: Write instance SSBO in bucket order; collect draw calls.
+    struct DrawCall {
+        uint32_t globalPacketIdx;
+        uint32_t texHandle;
+        uint32_t materialFlags;
+        uint32_t instanceBase;
+        uint32_t instanceCount;
+    };
+    std::vector<DrawCall> drawCalls;
+    drawCalls.reserve(buckets.size());
+
+    auto unpack = [](uint32_t argb, float out[4]) {
+        out[0] = ((argb >> 16) & 0xFF) / 255.f;  // r
+        out[1] = ((argb >>  8) & 0xFF) / 255.f;  // g
+        out[2] = ((argb >>  0) & 0xFF) / 255.f;  // b
+        out[3] = ((argb >> 24) & 0xFF) / 255.f;  // a
+    };
+
+    uint32_t instHead = 0;
+    for (const auto& kv : buckets) {
+        const BucketKey& key              = kv.first;
+        const std::vector<uint32_t>& subs = kv.second;
+
+        DrawCall dc;
+        dc.globalPacketIdx = key.globalPacketIdx;
+        dc.texHandle       = key.texHandle;
+        dc.materialFlags   = key.materialFlags;
+        dc.instanceBase    = instHead;
+        dc.instanceCount   = (uint32_t)subs.size();
+
+        for (uint32_t si : subs) {
+            const PendingSubmit& ps   = s_pendingSubmits[si];
+            const GpuMechSubmitDesc& d = ps.desc;
+            GpuMechInstance inst{};
+            inst.typeLodRecordIndex = ps.typeLodIdx;
+            inst.baseBoneOffset     = actorBoneBase[si];
+            inst.lightDataIndex     = d.lightDataIndex;
+            inst.renderFlags        = d.renderFlags;
+            unpack(d.highlightARGB, inst.aRGBHighlight);
+            unpack(d.fogARGB,       inst.fogRGB);
+            instDst[instHead++]     = inst;
+        }
+        drawCalls.push_back(dc);
+    }
+
+    // Step 6: Bind SSBOs (whole per-frame slices; shader indexes via u_instanceBase).
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
+        (GLintptr) (s_frameSlot * s_instanceCapacity * sizeof(GpuMechInstance)),
+        (GLsizeiptr)(totalInstances * sizeof(GpuMechInstance)));
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, s_boneSsbo,
+        (GLintptr) (s_frameSlot * s_boneCapacity * sizeof(GpuMechBone)),
+        (GLsizeiptr)(totalBones * sizeof(GpuMechBone)));
+
+    glUseProgram(s_mechProgram);
+    glBindVertexArray(s_sharedVao);
+
+    // Save prior state; set explicit mech-render state.
+    GLint     prevDepthFunc; glGetIntegerv(GL_DEPTH_FUNC,      &prevDepthFunc);
+    GLboolean prevBlend;     glGetBooleanv(GL_BLEND,            &prevBlend);
+    GLboolean prevCull;      glGetBooleanv(GL_CULL_FACE,        &prevCull);
+    GLint     prevCullMode;  glGetIntegerv(GL_CULL_FACE_MODE,  &prevCullMode);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+
+    // Bind sampler to unit 0: prevents CLAMP_TO_EDGE / NEAREST inheritance.
+    GLint prevSampler = 0;
+    glGetIntegeri_v(GL_SAMPLER_BINDING, 0, &prevSampler);
+    glBindSampler(0, s_sampler);
+
+    // Static uniforms.
+    glUniform1i(s_loc_u_tex,      0);
+    glUniform1f(s_loc_u_fogValue, 1.0f);
+
+    // Projection uniforms (same sources as static_prop batcher).
+    const float* wtc = (const float*)&TG_Shape::s_worldToClip.entries[0];
+    if (s_loc_u_worldToClip >= 0)
+        glUniformMatrix4fv(s_loc_u_worldToClip, 1, GL_TRUE, wtc);
+    const float* vp = gos_GetTerrainViewportVec4();
+    if (s_loc_u_terrainViewport >= 0 && vp)
+        glUniform4fv(s_loc_u_terrainViewport, 1, vp);
+    const float* mm = gos_GetProj2ScreenMat4();
+    if (s_loc_u_mvp >= 0 && mm)
+        glUniformMatrix4fv(s_loc_u_mvp, 1, GL_TRUE, mm);
+
+    // Step 7: Issue one draw call per bucket.
+    uint32_t drawnCalls = 0;
+    for (const DrawCall& dc : drawCalls) {
+        const GpuMechPacket& pkt = s_packets[dc.globalPacketIdx];
+
+        if (s_loc_u_instanceBase >= 0)
+            glUniform1i(s_loc_u_instanceBase, (int)dc.instanceBase);
+        if (s_loc_u_materialFlags >= 0)
+            glUniform1i(s_loc_u_materialFlags, (int)dc.materialFlags);
+
+        const uint32_t glTexId = gos_GetGLTextureId(dc.texHandle);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, glTexId);
+
+        glDrawElementsInstancedBaseVertex(
+            GL_TRIANGLES,
+            (GLsizei)pkt.indexCount,
+            GL_UNSIGNED_INT,
+            (void*)(uintptr_t)(pkt.firstIndex * sizeof(uint32_t)),
+            (GLsizei)dc.instanceCount,
+            pkt.baseVertex);
+
+        ++drawnCalls;
+    }
+
+    // Restore state.
+    glDepthFunc((GLenum)prevDepthFunc);
+    if (prevBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    if (prevCull)  { glEnable(GL_CULL_FACE); glCullFace((GLenum)prevCullMode); }
+    else             glDisable(GL_CULL_FACE);
+    glBindSampler(0, (GLuint)prevSampler);
+    glBindVertexArray(0);
+    glUseProgram(0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, 0);
+
+    s_fence[s_frameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+
+    // Per-reason stats output (MC2_MECH_BATCHER_STATS=1).
+    if (s_mechBatcherTrace) {
+        static const char* const kFallbackNames[] = {
+            "UnregisteredType", "U8BoneOverflow", "RingOverflow",
+            "TglGpuUnsupported", "ShaderInitFailure"
+        };
+        uint32_t fallbackTotal = 0;
+        for (int i = 0; i < 5; ++i) fallbackTotal += s_fallbacksThisFrame[i];
+        std::fprintf(stderr,
+            "[MECHBATCHER v1] event=summary eligible=%u submitted=%zu "
+            "buckets=%zu draw_calls=%u fallback_total=%u\n",
+            s_eligibleActorsThisFrame, s_pendingSubmits.size(),
+            buckets.size(), drawnCalls, fallbackTotal);
+        for (int i = 0; i < 5; ++i) {
+            if (s_fallbacksThisFrame[i] > 0) {
+                std::fprintf(stderr,
+                    "[MECHBATCHER v1] event=fallback reason=%s count=%u\n",
+                    kFallbackNames[i], s_fallbacksThisFrame[i]);
+            }
+        }
+    }
+
+    s_pendingSubmits.clear();
+    s_eligibleActorsThisFrame = 0;
+    std::memset(s_fallbacksThisFrame, 0, sizeof(s_fallbacksThisFrame));
+}
