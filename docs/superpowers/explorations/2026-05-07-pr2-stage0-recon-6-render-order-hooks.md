@@ -159,14 +159,28 @@ MC2_DRAWALPHA`). This is the LIVE drain.
 - Parity gate visible only on mc2_24 in tier1 (per brainstorm Q3
   detail-before-overlay-before-mine sequencing rationale).
 
-**PR2c is BLOCKED on a visual-order audit before any port begins.**
-Not a spec-time decision — a prerequisite recon item.
+**PR2c reframed 2026-05-08: static-bake, NOT per-frame indirect-draw.**
 
-> **Note 2026-05-08:** the previously cited mine-bearing tier1
-> mission (mc2_24) was user-corrected as having no mines. The
-> mine-bearing mission identity itself is now a blocking recon
-> prerequisite for the audit. See
-> `2026-05-08-pr2c-mine-zone-audit-scope.md`.
+User direction 2026-05-08: mines are sparse (2-3 missions max, small
+overlay each), state changes only on gameplay events, and *really
+only need to be drawn once* — not iterated per frame. Legacy
+`enqueueTerrainMineState` + `drawMine` cost ~157 µs/frame
+unconditionally (even on mine-free missions). The brainstorm's
+per-frame indirect-draw architecture was over-engineered.
+
+**Replaced by:** `2026-05-08-pr2c-mine-static-bake-design.md`. Static
+VBO built at mission init, invalidated only on `MissionMap::setMine`
+chokepoint. Per-frame work: one `glDrawArrays` (or zero if no mines).
+
+The audit-scope doc previously here (`2026-05-08-pr2c-mine-zone-audit-scope.md`)
+is **deleted as obsolete**. The render-order placement question
+collapses under static-bake: recommended placement is between
+`Render.TerrainOverlays` and `Render.Decals`, validated at
+spec-execution time by visual canary on a chain-explosion test.
+
+The mine-bearing mission identity (mc2_24 was user-corrected as
+incorrect) is no longer a blocking prerequisite — it becomes a
+Stage 0c output of the spec via cost-split counter telemetry.
 
 The mine emit's flag set (`MC2_DRAWALPHA` only) routes it through the
 non-terrain alpha drain at zone #12. This may be load-bearing for
@@ -218,13 +232,10 @@ Render.TerrainSolid     ← PR1 SOLID (no change)
                           (PR2a deletes dead M2c queue path; no new zone)
 Render.GpuStaticProps
 Render.TerrainOverlays  ← PR2b hook (indirect overlay)
+Render.TerrainMines     ← PR2c hook (static-bake; one glDrawArrays/frame)
 Render.Decals
 Render.Overlays         ← water-only (unchanged)
 ...
-(unnamed non-terrain alpha) ← PR2c hook IF audit lands here
-[Render.TerrainMines]   ← PR2c hook IF audit lands here (between
-                          TerrainOverlays and Decals); blocked on
-                          visual-order audit
 ```
 
 ---
@@ -297,5 +308,7 @@ PR2a is a **delete slice**:
 PR2b (overlay) proceeds per brainstorm Q4/Q6/Q7, simplified per recon
 item 4 (UVs are constants).
 
-PR2c (mine) is **blocked** on the visual-order audit. Spec session
-should not write PR2c stages until the audit lands.
+PR2c (mine) is now scoped as a static-bake spec per
+`2026-05-08-pr2c-mine-static-bake-design.md` (replaces the per-frame
+indirect-draw framing the brainstorm assumed). 3-stage spec, target
+~157 µs/frame retirement.
