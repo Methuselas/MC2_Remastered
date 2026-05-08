@@ -447,7 +447,75 @@ void GpuMechBatcher::finalizeGeometry() {
 }
 
 // ---------------------------------------------------------------------------
-// Stubs — replaced in Tasks 6, 7. Present so the project links cleanly.
+// submitActor (Task 6) — bone staging + texture capture
 // ---------------------------------------------------------------------------
-bool GpuMechBatcher::submitActor(const GpuMechSubmitDesc&) { return false; }
+bool GpuMechBatcher::submitActor(const GpuMechSubmitDesc& desc) {
+    s_lastFailWasLateReg = false;
+
+    if (!g_useGpuMechs || !s_geometryFinalized || s_programLoadFailed) return false;
+    if (!desc.mechShape || !desc.mechType) return false;
+
+    const TypeLodKey key{desc.mechType, desc.currentLOD};
+    auto it = s_typeLodIndex.find(key);
+    if (it == s_typeLodIndex.end()) {
+        s_lastFailWasLateReg = true;
+        ++s_disallowedLateRegEvents;
+        return false;
+    }
+    const uint32_t typeLodIdx = it->second;
+    const GpuMechTypeLodRecord& rec = s_typeLodRecords[typeLodIdx];
+
+    PendingSubmit ps;
+    ps.desc       = desc;
+    ps.typeLodIdx = typeLodIdx;
+    ps.bones.reserve(rec.numBones);
+
+    // Stage bone matrices from live shapeToWorld (set by TransformMultiShape).
+    // listOfShapes[i].shapeToWorld is a Stuff::LinearMatrix4D with entries[12]
+    // stored column-major: entries[(col<<2)+row], 3 explicit cols + implicit col3=[0,0,0,1].
+    // Row k extraction: [entries[k], entries[4+k], entries[8+k], w] where w=1 for row3 only.
+    const int numShapes = desc.mechShape->GetNumShapes();
+    for (int i = 0; i < numShapes && i < (int)rec.numBones; ++i) {
+        const TG_ShapeRec& sr = desc.mechShape->listOfShapes[i];
+        const float* e = (const float*)sr.shapeToWorld.entries;
+        GpuMechBone bone;
+        bone.row0[0]=e[0]; bone.row0[1]=e[4]; bone.row0[2]=e[ 8]; bone.row0[3]=0.0f;
+        bone.row1[0]=e[1]; bone.row1[1]=e[5]; bone.row1[2]=e[ 9]; bone.row1[3]=0.0f;
+        bone.row2[0]=e[2]; bone.row2[1]=e[6]; bone.row2[2]=e[10]; bone.row2[3]=0.0f;
+        bone.row3[0]=e[3]; bone.row3[1]=e[7]; bone.row3[2]=e[11]; bone.row3[3]=1.0f;
+        ps.bones.push_back(bone);
+    }
+    while ((int)ps.bones.size() < (int)rec.numBones) {
+        GpuMechBone id{};
+        id.row0[0]=1.f; id.row1[1]=1.f; id.row2[2]=1.f; id.row3[3]=1.f;
+        ps.bones.push_back(id);
+    }
+
+    // Capture live per-actor texture handle for each packet.
+    //
+    // SLOT 0 is per-actor (paint scheme / team color). TG_TypeShape::listOfTextures
+    // is a shared type-level cache mutated by TransformMultiShape — by render time
+    // it reflects the LAST actor through, not the current one. Use desc.slot0TexHandle
+    // (the raw gos handle passed by the caller) directly for slot 0.
+    //
+    // SLOTS 1+ are type-stable; reading from owningTypeShape is correct.
+    ps.packetTexHandles.resize(rec.packetCount, 0);
+    for (uint32_t p = 0; p < rec.packetCount; ++p) {
+        const GpuMechPacket& pkt = s_packets[rec.firstPacket + p];
+        if (pkt.textureSlot == 0) {
+            ps.packetTexHandles[p] = desc.slot0TexHandle;
+        } else if (pkt.owningTypeShape && pkt.owningTypeShape->listOfTextures &&
+                   pkt.textureSlot < (uint32_t)pkt.owningTypeShape->numTextures) {
+            ps.packetTexHandles[p] =
+                pkt.owningTypeShape->listOfTextures[pkt.textureSlot].gosTextureHandle;
+        }
+    }
+
+    s_pendingSubmits.push_back(std::move(ps));
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Stub — replaced in Task 7. Present so the project links cleanly.
+// ---------------------------------------------------------------------------
 void GpuMechBatcher::flush() {}
