@@ -89,8 +89,13 @@ struct GpuMechSubmitDesc {
     TG_MultiShape*              mechShape;      // live per-instance shape (shapeToWorld only)
     const Mech3DAppearanceType* mechType;       // stable type pointer
     int                         currentLOD;
-    uint32_t                    slot0TexHandle; // gos handle for texture slot 0 (per-actor paint
-                                               // scheme; mech3d.cpp:2369 localTextureHandle).
+    uint32_t                    slot0TexHandle; // mcTextureManager SLOT INDEX (NOT a gos handle)
+                                               // for texture slot 0 (per-actor paint scheme;
+                                               // localTextureHandle from Mech3DAppearance, set
+                                               // by mcTextureManager->loadTexture). Resolved to
+                                               // a live gos handle at flush time via
+                                               // mcTextureManager->get_gosTextureHandle(slot)
+                                               // per memory/mc2_texture_handle_is_live.md.
                                                // TG_TypeShape::listOfTextures is a shared type-
                                                // level cache mutated by TransformMultiShape across
                                                // all actors — do NOT read it for slot 0.

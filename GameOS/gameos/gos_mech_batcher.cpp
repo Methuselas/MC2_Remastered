@@ -19,8 +19,9 @@
 static_assert(MECH_RING_FRAMES == STATIC_PROP_RING_FRAMES,
               "MECH_RING_FRAMES must match STATIC_PROP_RING_FRAMES");
 
-// Enabled by env-var MC2_GPU_MECHS=1 at process start.
-// Can also be toggled at runtime via RAlt+M in gameosmain.cpp hotkey handler.
+// Enabled by env-var MC2_GPU_MECHS=1 at process start. Slice A is opt-in;
+// runtime hotkey toggle (RAlt+M) is deferred — wire alongside the default-on
+// flip if it becomes useful.
 bool g_useGpuMechs = (getenv("MC2_GPU_MECHS") != nullptr);
 
 // ---------------------------------------------------------------------------
@@ -814,13 +815,12 @@ void GpuMechBatcher::flush() {
             std::fprintf(stderr,
                 "[MECHBATCHER v1] event=tex_probe glTex=%u w=%d h=%d fmt=0x%x texMin=0x%x texMag=0x%x boundSampler=%d sampMin=0x%x sampMag=0x%x sampWrapS=0x%x\n",
                 glTexId, tw, th, tfmt, tMin, tMag, boundSampler, sampMin, sampMag, sampWrapS);
-            // Hypothesis 2: read back actual pixel bytes from level 0.
-            // glGetTexImage requires a buffer sized for the WHOLE level —
-            // 128*128*4 = 64KB for our textures. Use the matching texture
-            // internal format (GL_RGB) since the texture is GL_RGB8 — asking
-            // for RGBA on RGB8 caused an earlier silent crash. Heap-allocate
-            // because stack frame is small.
-            if (tw > 0 && th > 0 && tw <= 4096 && th <= 4096) {
+            // Pixel-readback diagnostic — gated on its own env var
+            // (NOT MC2_MECH_BATCHER_STATS) because glGetTexImage is a
+            // synchronous GPU stall that pollutes any perf measurement.
+            // Only enable when actively diagnosing texture-content bugs.
+            static const bool s_pixelReadback = (getenv("MC2_MECH_TEX_READBACK") != nullptr);
+            if (s_pixelReadback && tw > 0 && th > 0 && tw <= 4096 && th <= 4096) {
                 std::vector<uint8_t> pixels((size_t)tw * th * 3, 0);
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
                 int nonZero = 0;
@@ -838,29 +838,14 @@ void GpuMechBatcher::flush() {
         }
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, glTexId);
-        // Set sampler params on the texture object directly, mirroring what
-        // applyRenderStates does for each tex unit (gameos_graphics.cpp:3213).
-        // Without this, the mech texture inherits whatever MIN_FILTER /
-        // MAG_FILTER / WRAP it was last left in by an earlier pass — typically
-        // a mip-requiring filter that returns zero samples for paint textures
-        // when our fast path runs without mip state set up. GL_LINEAR is safe
-        // whether or not the texture has mipmaps generated.
-        if (glTexId != 0) {
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,     GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,     GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            // gosTexture may have only mip level 0 uploaded (mips not yet
-            // generated when our flush runs). With default GL_TEXTURE_MAX_LEVEL=1000,
-            // GL considers the texture "incomplete" and samples to zero. Cap the
-            // mip range at level 0 so the texture is always complete for our
-            // sampling. NOTE: this leaves persistent state on the texture object
-            // and is undone by gos_InvalidateRenderStateCache + applyRenderStates
-            // resetting MAX_LEVEL elsewhere — diagnostic for now, will revisit if
-            // it breaks shader paths that DO want mips.
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  0);
-        }
+        // The actual texture-black fix in Slice A is mech.frag's
+        // textureLod(u_tex, v_uv, 0.0) — see memory/amd_auto_lod_strict_fail.md.
+        // Sampler-state inheritance is defended by the glBindSampler(0,
+        // s_sampler) above (REPEAT/LINEAR), which OVERRIDES texture-object
+        // params anyway. So no per-texture glTexParameteri here. Keeping the
+        // texture object's persistent state untouched avoids leaking mech-
+        // specific filter/wrap onto a gosTexture handle that another renderer
+        // may want to sample with auto-LOD or CLAMP later.
 
         glDrawElementsInstancedBaseVertex(
             GL_TRIANGLES,

@@ -2512,7 +2512,15 @@ long Mech3DAppearance::render (long depthFixup)
 				desc.fogARGB        = 0;       // Slice B2 wires this
 
 				gpuMechSubmitted = GpuMechBatcher::instance().submitActor(desc);
-				if (!gpuMechSubmitted) {
+				// Only count as a fallback if the GPU path was nominally
+				// enabled at this point. submitActor returns false on
+				// (killswitch off || !finalized || shader fail || late
+				// registration). Killswitch-off and not-yet-finalized are
+				// not "fallbacks" — they're "GPU path not active." Without
+				// this gate, every actor in MC2_GPU_MECHS=0 mode is logged
+				// as ShaderInitFailure, making the [MECHBATCHER v1]
+				// event=summary fallback counters useless.
+				if (!gpuMechSubmitted && g_useGpuMechs) {
 					GpuMechBatcher::instance().recordCpuFallback(
 						GpuMechBatcher::instance().wasLastFailureLateRegistration()
 							? GpuMechFallbackReason::UnregisteredType
