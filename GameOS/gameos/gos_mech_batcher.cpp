@@ -132,9 +132,57 @@ static void loadProgramsIfNeeded() {
 }
 
 // ---------------------------------------------------------------------------
-// Ring SSBO management (Task 5 replaces this stub)
+// Ring SSBO management
 // ---------------------------------------------------------------------------
-static void ensureRingCapacity(size_t, size_t) {}  // STUB — Task 5
+static void ensureRingCapacity(size_t neededInstances, size_t neededBones) {
+    const bool needGrow =
+        s_instanceSsbo == 0 ||
+        neededInstances > s_instanceCapacity ||
+        neededBones     > s_boneCapacity;
+    if (!needGrow) return;
+
+    for (uint32_t i = 0; i < MECH_RING_FRAMES; ++i) {
+        if (s_fence[i]) {
+            glClientWaitSync(s_fence[i], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+            glDeleteSync(s_fence[i]);
+            s_fence[i] = 0;
+        }
+    }
+    if (s_instanceSsbo) { glDeleteBuffers(1, &s_instanceSsbo); s_instanceSsbo = 0; s_instanceMap = nullptr; }
+    if (s_boneSsbo)     { glDeleteBuffers(1, &s_boneSsbo);     s_boneSsbo     = 0; s_boneMap     = nullptr; }
+
+    s_instanceCapacity = std::max(neededInstances,
+        s_instanceCapacity ? s_instanceCapacity * 2 : kInitialInstancesPerFrame);
+    s_boneCapacity = std::max(neededBones,
+        s_boneCapacity ? s_boneCapacity * 2 : kInitialBonesPerFrame);
+
+    const GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+
+    glGenBuffers(1, &s_instanceSsbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_instanceSsbo);
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER,
+        (GLsizeiptr)(MECH_RING_FRAMES * s_instanceCapacity * sizeof(GpuMechInstance)),
+        nullptr, flags);
+    s_instanceMap = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
+        (GLsizeiptr)(MECH_RING_FRAMES * s_instanceCapacity * sizeof(GpuMechInstance)), flags);
+
+    glGenBuffers(1, &s_boneSsbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_boneSsbo);
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER,
+        (GLsizeiptr)(MECH_RING_FRAMES * s_boneCapacity * sizeof(GpuMechBone)),
+        nullptr, flags);
+    s_boneMap = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
+        (GLsizeiptr)(MECH_RING_FRAMES * s_boneCapacity * sizeof(GpuMechBone)), flags);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    if (!s_instanceMap || !s_boneMap) {
+        std::fprintf(stderr, "[MECHBATCHER v1] event=persistent_map_fail\n");
+    }
+    std::fprintf(stderr,
+        "[MECHBATCHER v1] event=ring_alloc instances=%zu bones=%zu\n",
+        s_instanceCapacity, s_boneCapacity);
+}
 
 // ---------------------------------------------------------------------------
 // Singleton
