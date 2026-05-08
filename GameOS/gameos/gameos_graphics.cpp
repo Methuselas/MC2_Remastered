@@ -1446,6 +1446,23 @@ class gosRenderer {
         void drawDecals();
 
         // RENDER_STATES v1: external invalidation hook (public).
+        //
+        // LOAD-BEARING CONTRACT — DO NOT REMOVE INVALIDATION CALLS.
+        // Any code path that mutates GL state outside applyRenderStates'
+        // tracked-slot set (program/depth/blend/cull/sampler/texture-bind,
+        // including per-texture-object wrap/filter via glTexParameteri) MUST
+        // call this hook AT THE END of the path so the next applyRenderStates
+        // re-applies fully. Cache is consulted on the next call without
+        // further bookkeeping; missed invalidation = silent visual corruption.
+        // Origin: MAJOR-3 from 2026-05-08 adversarial review of the cache;
+        // CRITICAL-1 was caller-side coverage gap of this exact contract.
+        // Current invalidation sites (grep gos_InvalidateRenderStateCache /
+        // invalidateRenderStateCache): gos_terrain_bridge_drawSingleBucket,
+        // renderWaterFastPath, gos_terrain_bridge_drawIndirect,
+        // endShadowPrePass, endDynamicShadowPass, gosPostProcess::endScene,
+        // GpuStaticPropBatcher::flush, drawTerrainOverlays, drawDecals,
+        // gos_ForceApplyRenderStates, gosRenderer::beginFrame (defensive).
+        // When adding a new fast path: invalidate or break the cache contract.
         void invalidateRenderStateCache() { stateCacheValid_ = false; }
 
     private:
@@ -3094,6 +3111,13 @@ void gosRenderer::applyRenderStates() {
 
 void gosRenderer::beginFrame()
 {
+    // RENDER_STATES v1: defensive cache invalidate at frame start. SDL window
+    // swap, ImGui (if added), or any external GL hook between frames could
+    // disturb GL state without the cache knowing. Cost is one redundant full
+    // apply per frame at startup; the [RENDER_STATES v1] summary surfaces any
+    // unexpected impact. MINOR-1 from the 2026-05-08 adversarial review.
+    invalidateRenderStateCache();
+
     // Frame-boundary hygiene: IsHUD must be cleared by every callsite before the frame ends.
     // If it is still set here, a callsite leaked the bit across the frame boundary.
     if (renderStates_[gos_State_IsHUD] != 0) {
