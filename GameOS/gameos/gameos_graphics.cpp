@@ -1445,6 +1445,9 @@ class gosRenderer {
         void drawTerrainOverlays();
         void drawDecals();
 
+        // RENDER_STATES v1: external invalidation hook (public).
+        void invalidateRenderStateCache() { stateCacheValid_ = false; }
+
     private:
 
         bool beforeDrawCall();
@@ -1482,6 +1485,21 @@ class gosRenderer {
         // states data
         RenderState curStates_;
         RenderState renderStates_;
+
+        // RENDER_STATES v1: state-equality early-out cache for applyRenderStates().
+        // stateCacheValid_=false forces a full apply on the next call (used after
+        // any external GL state disturbance — bridges, post-process, shadow draws).
+        // cachedResolvedTexId_[u] tracks the resolved GL texture id we last bound
+        // on unit u; texture handles mutate per-frame (see memory note
+        // mc2_texture_handle_is_live.md), so an unchanged gos_State_TextureN
+        // does NOT imply the underlying GL texture is the same.
+        bool stateCacheValid_ = false;
+        uint32_t cachedResolvedTexId_[3] = {0u, 0u, 0u};
+        // 600-frame summary counters
+        uint32_t rsCalls_ = 0;
+        uint32_t rsSkipped_ = 0;
+        uint32_t rsApplied_ = 0;
+        uint32_t rsFrames_ = 0;
 
         static const int RENDER_STATES_STACK_SIZE = 16;
         int renderStatesStackPointer;
@@ -1867,6 +1885,10 @@ void gos_terrain_bridge_drawSingleBucket(
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, glTex); // binding 0 is valid; matches standard path behavior
         glDrawArrays(GL_PATCHES, (GLint)firstVertex, (GLsizei)vertexCount);
+        // RENDER_STATES v1: direct-bind path bypasses applyRenderStates; cache is
+        // stale wrt unit-0 binding. Invalidate so the next applyRenderStates
+        // (called by endBucketLoop, or by the next renderer) re-binds fully.
+        g_gos_renderer->invalidateRenderStateCache();
     } else {
         // Standard path: full state machine flush.
         g_gos_renderer->setRenderState(gos_State_Texture, (int)gosHandle);
@@ -2212,6 +2234,10 @@ void gosRenderer::renderWaterFastPath(
     glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
     glUseProgram((GLuint)savedProgram);
     glBindVertexArray((GLuint)savedVAO);
+
+    // RENDER_STATES v1: water fast path bound textures directly on unit 0; the
+    // applyRenderStates cache is now stale. Force a full re-apply on next call.
+    invalidateRenderStateCache();
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2461,6 +2487,10 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
     glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
     glBindVertexArray((GLuint)savedVAO);
     glUseProgram((GLuint)savedProgram);
+
+    // RENDER_STATES v1: indirect terrain bound textures on units 0 and 3 directly;
+    // the applyRenderStates cache is now stale. Force a full re-apply on next call.
+    if (g_gos_renderer) g_gos_renderer->invalidateRenderStateCache();
     return true;
 }
 
@@ -2770,6 +2800,13 @@ void gosRenderer::destroy() {
 }
 
 void gosRenderer::initRenderStates() {
+    // RENDER_STATES v1: zero-init the entire arrays so the equality check has
+    // a defined comparison for states that initRenderStates does not assign
+    // explicitly (Terrain, Water, Overlay, IsHUD, Texture3). Without this,
+    // uninitialized members at non-explicit indices could differ between
+    // curStates_ and renderStates_ on every call and defeat the early-out.
+    memset(&curStates_, 0, sizeof(curStates_));
+    memset(&renderStates_, 0, sizeof(renderStates_));
 
 	renderStates_[gos_State_Texture] = INVALID_TEXTURE_ID;
 	renderStates_[gos_State_Texture2] = INVALID_TEXTURE_ID;
@@ -2831,8 +2868,87 @@ void gosRenderer::popRenderStates()
     renderStatesStackPointer--;
 }
 
+// RENDER_STATES v1: kill-switch (default-off → short-circuit path runs).
+// MC2_RENDERSTATES_LEGACY=1 forces unconditional apply behavior.
+static bool gos_renderStatesLegacyEnabled() {
+    static const bool s = []() {
+        const char* v = getenv("MC2_RENDERSTATES_LEGACY");
+        return v && v[0] == '1' && v[1] == '\0';
+    }();
+    return s;
+}
+
 void gosRenderer::applyRenderStates() {
     ZoneScopedN("ApplyRenderStates");
+
+    rsCalls_++;
+
+    // RENDER_STATES v1: state-equality early-out.
+    // Auto-reset of Terrain/Water flags must run every call regardless (these are
+    // single-frame "intent" bits cleared after read). gos_State_Overlay is copied,
+    // not auto-reset — managed by renderLists. We therefore split the auto-reset
+    // out so it always runs, then test the rest of state for equality.
+    const bool legacy = gos_renderStatesLegacyEnabled();
+    if (!legacy && stateCacheValid_) {
+        bool equal = true;
+        int mismatchK = -1;
+        uint32_t mismatchCur = 0, mismatchRen = 0;
+        // Iterate valid enum values [gos_State_Texture .. gos_MaxState). Index 0
+        // is not a valid enum (gos_State_Texture==1) and is never written by
+        // initRenderStates(), so its value is indeterminate and may differ
+        // between curStates_ / renderStates_ — skip it.
+        for (int k = gos_State_Texture; k < gos_MaxState; ++k) {
+            if (k == gos_State_Texture || k == gos_State_Texture2 || k == gos_State_Texture3) {
+                continue; // texture handles mutate per-frame; checked separately below
+            }
+            // Terrain/Water are auto-reset bits — renderStates_[k] is cleared after
+            // each apply, so curStates_[k] will diverge if a caller set it; that is
+            // exactly the signal we want to force a full apply through.
+            if (curStates_[k] != renderStates_[k]) {
+                equal = false;
+                mismatchK = k;
+                mismatchCur = curStates_[k];
+                mismatchRen = renderStates_[k];
+                break;
+            }
+        }
+        // Optional diagnostic: print the first 8 mismatch reasons. Env-gated,
+        // off by default per Debug Instrumentation Rule (keep, demote, don't
+        // delete). MC2_RENDERSTATES_TRACE=1 to enable.
+        static const bool s_rsTrace = (getenv("MC2_RENDERSTATES_TRACE") != nullptr);
+        static int s_mismatchPrints = 0;
+        if (s_rsTrace && !equal && s_mismatchPrints < 8) {
+            s_mismatchPrints++;
+            printf("[RENDER_STATES v1] event=mismatch_first idx=%d cur=%u ren=%u\n",
+                   mismatchK, mismatchCur, mismatchRen);
+            fflush(stdout);
+        }
+        if (equal) {
+            // Resolved-handle parity: check the underlying GL texture id, not the
+            // gos handle slot (handles mutate per-frame via tex_resolve).
+            uint32_t tex_states[] = { gos_State_Texture, gos_State_Texture2, gos_State_Texture3 };
+            for (int i = 0; i < 3 && equal; ++i) {
+                DWORD h = renderStates_[tex_states[i]];
+                gosTexture* tex = (h == INVALID_TEXTURE_ID) ? nullptr : this->getTexture(h);
+                uint32_t glId = tex ? (uint32_t)tex->getTextureId() : 0u;
+                if (glId != cachedResolvedTexId_[i]) { equal = false; break; }
+                if (curStates_[tex_states[i]] != h) { equal = false; break; }
+            }
+            if (equal) {
+                // Skip GL work. Still run auto-reset bookkeeping so Terrain/Water
+                // intent bits don't bleed into the next frame.
+                curStates_[gos_State_Terrain] = renderStates_[gos_State_Terrain];
+                renderStates_[gos_State_Terrain] = 0;
+                curStates_[gos_State_Water]   = renderStates_[gos_State_Water];
+                renderStates_[gos_State_Water]   = 0;
+                curStates_[gos_State_Overlay] = renderStates_[gos_State_Overlay];
+                rsSkipped_++;
+                return;
+            }
+        }
+    }
+
+    rsApplied_++;
 
 	////////////////////////////////////////////////////////////////////////////////
 	switch (renderStates_[gos_State_Culling]) {
@@ -2935,8 +3051,10 @@ void gosRenderer::applyRenderStates() {
 
        gosTexture* tex = gosTextureHandle == INVALID_TEXTURE_ID ? 0 : this->getTexture(gosTextureHandle);
        if(tex) {
-           glBindTexture(GL_TEXTURE_2D, tex->getTextureId());
+           const uint32_t glId = (uint32_t)tex->getTextureId();
+           glBindTexture(GL_TEXTURE_2D, glId);
            setSamplerParams(tex->getTextureType(), address_mode, filter);
+           cachedResolvedTexId_[i] = glId;
 
            gosTextureInfo texinfo;
            tex->getTextureInfo(&texinfo);
@@ -2947,19 +3065,31 @@ void gosRenderer::applyRenderStates() {
 
        } else {
            glBindTexture(GL_TEXTURE_2D, 0);
+           cachedResolvedTexId_[i] = 0u;
        }
        curStates_[tex_states[i]] = gosTextureHandle;
    }
 
    ////////////////////////////////////////////////////////////////////////////////
-   // Terrain tessellation flag — copy then auto-reset to prevent bleed to non-terrain draws
-   curStates_[gos_State_Terrain] = renderStates_[gos_State_Terrain];
-   renderStates_[gos_State_Terrain] = 0;
-   curStates_[gos_State_Water] = renderStates_[gos_State_Water];
-   renderStates_[gos_State_Water] = 0;
-   // Overlay GPU projection — copy, no auto-reset (managed by renderLists loop)
-   curStates_[gos_State_Overlay] = renderStates_[gos_State_Overlay];
+   // RENDER_STATES v1: snapshot the full renderStates_ array into curStates_ so
+   // the equality check has a coherent "last applied" reference for ALL state
+   // dimensions. Many states (Perspective, Specular, ShadeMode, TextureMapBlend,
+   // ...) aren't applied to GL at all (commented "now in shaders") but are still
+   // mutated by callers per-shape — without this snapshot they'd never match
+   // and the early-out would always fail.
+   memcpy(&curStates_, &renderStates_, sizeof(curStates_));
 
+   // Terrain tessellation flag — auto-reset to prevent bleed to non-terrain
+   // draws. The snapshot above already copied the true value; clear renderStates_
+   // AFTER so the next call sees curStates_[Terrain]=value, renderStates_=0 and
+   // forces a full apply if a caller re-sets Terrain.
+   renderStates_[gos_State_Terrain] = 0;
+   renderStates_[gos_State_Water]   = 0;
+   // Overlay is NOT auto-reset — managed by renderLists loop. Snapshot above
+   // already mirrored its value.
+
+   // RENDER_STATES v1: full-apply complete — cache is now coherent with GL.
+   stateCacheValid_ = true;
 }
 
 void gosRenderer::beginFrame()
@@ -2979,8 +3109,38 @@ void gosRenderer::beginFrame()
     gos_terrain_indirect::BeginFrame();
 }
 
+// Lazy-eval gate for the dev-only shader hot-reload sweep. Default OFF in
+// shipping; set MC2_SHADER_HOT_RELOAD=1 to opt in for shader iteration.
+// Pattern matches gos_terrain_indirect::IsEnabled() — static-init-order safe.
+// Diagnostic 2026-05-07: the unconditional sweep showed 1.82 ms self-time
+// inside Camera.UpdateRenderers/gos_RendererEndFrame in Tracy because
+// last_check_time was never updated, so once 500 ms elapsed checkReload()
+// ran every frame over materialList_.
+static bool gos_ShaderHotReloadEnabled() {
+    static const bool s = []() {
+        const char* v = getenv("MC2_SHADER_HOT_RELOAD");
+        return v && v[0] == '1' && v[1] == '\0';
+    }();
+    return s;
+}
+
 void gosRenderer::endFrame()
 {
+    // RENDER_STATES v1: 600-frame summary line. Always-on counter; gated print.
+    rsFrames_++;
+    if (rsFrames_ >= 600) {
+        printf("[RENDER_STATES v1] event=summary frames=%u calls=%u skipped_count=%u applied_count=%u\n",
+               rsFrames_, rsCalls_, rsSkipped_, rsApplied_);
+        fflush(stdout);
+        rsFrames_ = 0;
+        rsCalls_ = 0;
+        rsSkipped_ = 0;
+        rsApplied_ = 0;
+    }
+
+    if (!gos_ShaderHotReloadEnabled())
+        return;
+
     // check for file changes every half second
     static uint64_t last_check_time = timing::get_wall_time_ms();
     if(timing::get_wall_time_ms() - last_check_time > 500)
@@ -3472,6 +3632,10 @@ void gosRenderer::endShadowPrePass() {
     active_light_space_matrix_ = nullptr;
     shadow_prepass_active_ = false;
 
+    // RENDER_STATES v1: shadow prepass disturbed program/depth/buffers via direct
+    // GL calls. Invalidate cache so next applyRenderStates does a full re-apply.
+    invalidateRenderStateCache();
+
     drainGLErrors("shadow_static");
 }
 
@@ -3531,6 +3695,9 @@ void gosRenderer::endDynamicShadowPass() {
 
     active_light_space_matrix_ = nullptr;
     shadow_prepass_active_ = false;
+
+    // RENDER_STATES v1: dynamic shadow pass disturbed program/depth/buffers.
+    invalidateRenderStateCache();
 
     drainGLErrors("shadow_dynamic");
 }
@@ -5443,8 +5610,10 @@ void __stdcall gos_SetCommonMaterialParameters(HGOSRENDERMATERIAL material)
 
 void __stdcall gos_ForceApplyRenderStates() {
     // Force-apply by directly setting GL state to match the requested render states.
-    // applyRenderStates() may skip if curStates_ == renderStates_, so bypass it.
+    // applyRenderStates() short-circuits if curStates_ == renderStates_ (RENDER_STATES v1),
+    // so invalidate the cache first to force the full body to run.
     if (!g_gos_renderer) return;
+    g_gos_renderer->invalidateRenderStateCache();
     // Just set GL directly for the critical states that renderLists() dirties
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_TRUE);
@@ -5453,6 +5622,15 @@ void __stdcall gos_ForceApplyRenderStates() {
     glBlendFunc(GL_ONE, GL_ZERO);
     // Then sync applyRenderStates tracking
     g_gos_renderer->applyRenderStates();
+}
+
+// RENDER_STATES v1: invalidation hook for fast paths that disturb GL state outside
+// of applyRenderStates() (terrain bridges, water fast path, post-process composite,
+// shadow direct draws, indirect terrain). Callers MUST call this AFTER finishing
+// their direct-GL work so the next applyRenderStates() does a full re-apply.
+void __stdcall gos_InvalidateRenderStateCache() {
+    if (!g_gos_renderer) return;
+    g_gos_renderer->invalidateRenderStateCache();
 }
 
 // Terrain tessellation API

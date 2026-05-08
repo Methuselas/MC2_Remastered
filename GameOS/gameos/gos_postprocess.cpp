@@ -3,6 +3,7 @@
 #include "utils/gl_utils.h"
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
+#include "gameos.hpp"      // gos_InvalidateRenderStateCache (RENDER_STATES v1)
 
 #include <cassert>
 #include <cstdio>
@@ -973,6 +974,12 @@ void gosPostProcess::endScene()
     // Re-enable depth test
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
+
+    // RENDER_STATES v1: post-process disturbed program, depth, blend, sampler,
+    // and unit-0/1 texture bindings outside applyRenderStates. Invalidate the
+    // applyRenderStates cache so the next renderer (e.g. HUD/debug overlay)
+    // gets a full state re-apply, not a stale-cache short-circuit.
+    gos_InvalidateRenderStateCache();
 
     drainGLErrors("post_process");
 }

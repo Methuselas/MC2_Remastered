@@ -767,6 +767,7 @@ long Mission::getStatus (void) {
 
 long Mission::render (void)
 {
+	ZoneScopedN("Camera.UpdateRenderers Mission.render");
 	if (active)
 	{
 		unsigned char tempAmbientLight[3];
@@ -778,9 +779,9 @@ long Mission::render (void)
 			eye->ambientGreen = 0xFF;
 			eye->ambientBlue = 0xFF;
 		}
-		eye->render();
-		GameMap->clearCellDebugs(0);
-	
+		{ ZoneScopedN("Camera.UpdateRenderers eye.render"); eye->render(); }
+		{ ZoneScopedN("Camera.UpdateRenderers clearCellDebugs"); GameMap->clearCellDebugs(0); }
+
 		//-----------------------------------------------------
 		// FOG time.  Set Render state to FOG on!
 		DWORD fogColor = eye->fogColor;
@@ -792,30 +793,36 @@ long Mission::render (void)
 		{
 			gos_SetRenderState( gos_State_Fog, 0);
 		}
-		
+
 		gos_SetRenderState( gos_State_Fog, 0);
-		
-		FloatHelp::renderAll();
-	
+
+		{ ZoneScopedN("Camera.UpdateRenderers FloatHelp.renderAll"); FloatHelp::renderAll(); }
+
 		currentFloatHelp = 0;
-	
+
 		if (missionInterface)
+		{
+			ZoneScopedN("Camera.UpdateRenderers missionInterface.render");
 			missionInterface->render();
+		}
 
 		if (KillAmbientLight) {
 			eye->ambientRed = tempAmbientLight[0];
 			eye->ambientGreen = tempAmbientLight[1];
 			eye->ambientBlue = tempAmbientLight[2];
 		}
-		
+
 		//reset the TGL RAM pools.
-		colorPool->reset();
-		vertexPool->reset();
-		facePool->reset();
-		shadowPool->reset();
-		trianglePool->reset();
+		{
+			ZoneScopedN("Camera.UpdateRenderers tglPools.reset");
+			colorPool->reset();
+			vertexPool->reset();
+			facePool->reset();
+			shadowPool->reset();
+			trianglePool->reset();
+		}
 	}
-		
+
 	return scenarioResult;
 }
 

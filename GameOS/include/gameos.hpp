@@ -2275,6 +2275,7 @@ void __stdcall gos_SetRenderViewport(float x, float y, float w, float h);
 void __stdcall gos_GetRenderViewport(float* x, float* y, float* w, float* h); //sebi
 
 void __stdcall gos_ForceApplyRenderStates();
+void __stdcall gos_InvalidateRenderStateCache();
 
 // Terrain tessellation API
 void __stdcall gos_SetTerrainTessParams(float level, float near_dist, float far_dist);

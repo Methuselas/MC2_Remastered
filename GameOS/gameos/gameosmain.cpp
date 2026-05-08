@@ -518,9 +518,9 @@ static void draw_screen( void )
 
     {
         ZoneScopedN("Camera.UpdateRenderers");
-        gos_RendererBeginFrame();
+        { ZoneScopedN("Camera.UpdateRenderers gos_RendererBeginFrame"); gos_RendererBeginFrame(); }
         Environment.UpdateRenderers();
-        gos_RendererEndFrame();
+        { ZoneScopedN("Camera.UpdateRenderers gos_RendererEndFrame"); gos_RendererEndFrame(); }
     }
 
     glUseProgram(0);
@@ -728,6 +728,7 @@ int main(int argc, char** argv)
         const bool suSkip  = suParseBool("MC2_STATIC_UPDATE_SKIP");
         bool gpuCullSubstrate = (getenv("MC2_GPU_CULL_SUBSTRATE") != nullptr && getenv("MC2_GPU_CULL_SUBSTRATE")[0] != '0');
         bool gpuCullParity    = (getenv("MC2_GPU_CULL_AABB_PARITY") != nullptr && getenv("MC2_GPU_CULL_AABB_PARITY")[0] != '0');
+        const bool shrHR      = (getenv("MC2_SHADER_HOT_RELOAD")    != nullptr);
         const char* build  =
 #ifdef MC2_BUILD_HASH
             MC2_BUILD_HASH
@@ -750,6 +751,7 @@ int main(int argc, char** argv)
             "static_update_trace=%d static_update_skip=%d "
             "static_prop_registry=%d "
             "gpu_cull_substrate=%d gpu_cull_aabb_parity=%d "
+            "shader_hot_reload=%d "
             "build=%s",
             tgl ? 1 : 0, destr ? 1 : 0, glprint ? 1 : 0, smoke ? 1 : 0,
             waterFp ? 1 : 0, waterPc ? 1 : 0, vpFast ? 1 : 0, vpPar ? 1 : 0,
@@ -758,6 +760,7 @@ int main(int argc, char** argv)
             suTrace ? 1 : 0, suSkip ? 1 : 0,
             GpuStaticPropRegistry::isEnabled() ? 1 : 0,
             gpuCullSubstrate ? 1 : 0, gpuCullParity ? 1 : 0,
+            shrHR ? 1 : 0,
             build);
         puts(_cbbuf);
         crashbundle_append(_cbbuf);
