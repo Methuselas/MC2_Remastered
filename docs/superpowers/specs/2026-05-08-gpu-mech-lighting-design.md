@@ -129,7 +129,7 @@ Three independent switches give bisect granularity:
 ## Out of scope for B1
 
 - **Per-pixel (FS) calc_light** — quality bump, but per-vertex matches static_prop's gold-standard and is cheap. Revisit if banding observed at smooth-shaded normals.
-- **`lightsOut` / `isWindow` propagation** — mechs don't expose these; no regression vs CPU path expected.
+- **`lightsOut` / `isWindow` propagation** — explicitly deferred to B+. NOTE: shutdown/powerup mech states are a real gameplay feature in MC2 (mechs can be powered down via Shutdown command, restored via Startup). The CPU mech rendering path's relationship to those states isn't carried into B1's GPU calc_light path — mechs in shutdown won't render dark in B1. B+ wires this through `GpuMechSubmitDesc::renderFlags` bit 1 once a per-actor `lightsOut`-equivalent signal is sourced from `Mech3DAppearance` (likely `pilotState`/`status` or a powerdown-specific flag). Do not regard B1 as a faithful shutdown-state visual until that follow-up.
 - **Skinning** — vertex format already skinning-ready; actual bone weighting is Slice C.
 - **Real shadow casting from mech bodies** — current shadow path is CPU-driven; out of scope.
 - **`MC2_MECH_GPU_PARITY` dual-FBO gate** — explicitly deferred per Slice A's advisor sign-off; required before any default-on flip.
