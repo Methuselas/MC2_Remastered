@@ -1,6 +1,11 @@
 // shaders/mech.frag — GPU mech batcher, Slice A substrate.
 // NOTE: no #version directive — makeProgram() prepends "#version 430\n".
 
+// render_contract.hglsl uses PREC macro for portability; the includer must
+// define it. Same convention as static_prop.frag (memory: PREC defaults to
+// highp in this engine).
+#define PREC highp
+
 #include <include/render_contract.hglsl>
 
 // [RENDER_CONTRACT]
