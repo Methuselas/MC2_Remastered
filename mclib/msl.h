@@ -253,6 +253,7 @@ class TG_MultiShape
 	friend class TG_TypeShape;
 	friend class TG_AnimateShape;
 	friend class GpuStaticPropBatcher;
+	friend class GpuMechBatcher;
 	
 	//-------------
 	//Data Members
