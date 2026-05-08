@@ -6008,6 +6008,11 @@ void gosRenderer::drawTerrainOverlays()
 
     terrainOverlayBatch_.verts.clear();
     terrainOverlayBatch_.draws.clear();
+
+    // RENDER_STATES v1: this path leaves depth-func at GL_LESS and the
+    // unit-0 texture binding mutated, neither tracked by applyRenderStates'
+    // cache. MAJOR-1 from the 2026-05-08 adversarial review.
+    gos_InvalidateRenderStateCache();
 }
 
 // Draw the decal batch (bomb craters + mech footprints).
@@ -6063,6 +6068,11 @@ void gosRenderer::drawDecals()
 
     decalBatch_.verts.clear();
     decalBatch_.draws.clear();
+
+    // RENDER_STATES v1: same trap class as drawTerrainOverlays — depth-func
+    // and unit-0 texture binding mutated outside applyRenderStates' tracking.
+    // MAJOR-2 from the 2026-05-08 adversarial review.
+    gos_InvalidateRenderStateCache();
 }
 
 // ── Thin exported wrappers ────────────────────────────────────────────────────

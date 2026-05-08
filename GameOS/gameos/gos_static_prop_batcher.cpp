@@ -1780,6 +1780,15 @@ void GpuStaticPropBatcher::flush() {
 
     s_bucketsByType.clear();
     s_lastUploadedSlot = 0xFFFFFFFFu;  // reset for next frame
+
+    // RENDER_STATES v1: this path mutates GL_TEXTURE_WRAP_S/T (lines 1700-1701
+    // above) on the bound texture object — persistent state that survives
+    // function exit and is not tracked by applyRenderStates' cache. Without
+    // invalidation, a subsequent applyRenderStates call would early-out on
+    // matching tracked-slot values while wrap stays at REPEAT even when
+    // gos_State_TextureAddress=Clamp was requested. CRITICAL-1 from the
+    // 2026-05-08 adversarial review of the state-equality early-out.
+    gos_InvalidateRenderStateCache();
 }
 
 void GpuStaticPropBatcher::flushShadow() {
