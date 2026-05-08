@@ -3167,12 +3167,18 @@ void gosRenderer::endFrame()
 
     // check for file changes every half second
     static uint64_t last_check_time = timing::get_wall_time_ms();
-    if(timing::get_wall_time_ms() - last_check_time > 500)
+    const uint64_t now = timing::get_wall_time_ms();
+    if(now - last_check_time > 500)
     {
         for(int i=0; i< materialList_.size(); ++i)
         {
             materialList_[i]->checkReload();
         }
+        // Originally absent: without reassigning last_check_time the
+        // condition stayed true every frame after the first 500 ms,
+        // turning a 2 Hz cadence into a per-frame O(materialList_.size())
+        // sweep. Diagnosed via [RENDER_STATES v1] / Tracy 2026-05-07.
+        last_check_time = now;
     }
 }
 
