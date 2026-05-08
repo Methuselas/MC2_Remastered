@@ -125,6 +125,7 @@
 #include<gameos.hpp>
 #include "../GameOS/gameos/gpu_cull_substrate.h"  // C0-3: GPU cull substrate init/shutdown
 #include "../GameOS/gameos/gpu_cull_compute.h"   // C1a: GPU visibility compute dispatch
+#include "../GameOS/gameos/gpu_cull_readback.h"  // C2: async readback ring buffer
 
 //----------------------------------------------------------------------------------
 // Macro Definitions
@@ -2778,6 +2779,14 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// C1a: init GPU visibility compute pipeline (shadow/diagnostic mode).
 	// No-op if MC2_GPU_CULL env var is not set (default off).
 	gpu_cull::compute_init();
+	// C2: init async readback ring buffer.
+	// Same maxActors sizing as substrate_init — readback slot must hold one flag per actor.
+	// No-op if MC2_GPU_CULL_READBACK env var is not set (default off).
+	{
+		const uint32_t maxActors = static_cast<uint32_t>(ObjectManager->getMaxObjects());
+		const uint32_t staticPropHeadroom = 8192u;
+		gpu_cull::readback_init(maxActors + maxActors / 4u + staticPropHeadroom);
+	}
 
 	//-------------------------
 	// Load the mech objects...
@@ -3203,6 +3212,8 @@ void Mission::destroy (bool initLogistics)
 {
 	gos_SetHudScaleActive(false);  // back to 100% for menus/logistics
 
+	// C2: release async readback ring buffer at mission teardown.
+	gpu_cull::readback_shutdown();
 	// C1a: release GPU compute resources at mission teardown.
 	gpu_cull::compute_shutdown();
 	// C0-3: release GPU cull substrate SSBO at mission teardown.

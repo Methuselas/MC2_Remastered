@@ -2314,7 +2314,11 @@ bool Mech3DAppearance::recalcBounds (void)
 				const bool cpuScreenRect = (lowerRight.x >= 0) && (lowerRight.y >= 0) &&
 					(upperLeft.x <= eye->getScreenResX()) &&
 					(upperLeft.y <= eye->getScreenResY());
-				const bool rbVisible = s_gpuCullLifecycle
+				// Only consult GPU visibility when readback is actually enabled.
+				// LIFECYCLE=1 without READBACK=1 makes readback_isActorVisibleLagged fail-open
+				// (returns true for every actor), which would unconditionally widen the LOD-swap
+				// block and cause a perf regression instead of a win.
+				const bool rbVisible = (s_gpuCullLifecycle && gpu_cull::readback_isEnabled())
 					? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_))
 					: false;
 				if (cpuScreenRect || rbVisible)

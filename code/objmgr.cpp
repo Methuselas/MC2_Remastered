@@ -1875,10 +1875,11 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 			GameObjectPtr obj = objList[i];
 			if (!obj) continue;
 			bool activeThisFrame_instr;
-			if (s_gpuCullLifecycle) {
-				// C3: GPU visibility is the primary source; block-active is a supplemental gate
-				// for objects that are off-screen but still need lifecycle updates (e.g., turrets
-				// in active AI blocks). Fail-open: GPU invisible but block-active stays active.
+			if (s_gpuCullLifecycle && gpu_cull::readback_isEnabled()) {
+				// C3: GPU visibility gates the lifecycle accumulator.
+				// block-active is a supplemental gate for off-screen AI-active objects.
+				// Requires READBACK to be enabled — without it, readback_isActorVisibleLagged
+				// fail-opens (returns true for every actor), making the accumulator useless.
 				activeThisFrame_instr =
 				    gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(obj->getHandle()))
 				 || obj->blockActive_instr();

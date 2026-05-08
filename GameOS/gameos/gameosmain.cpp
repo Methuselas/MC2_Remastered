@@ -117,6 +117,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "gos_visual_diff.h"  // Stage 2.E pre-HUD capture + Ctrl+Shift+P record
 #include "gos_terrain_indirect.h"  // [INSTR v1] banner: terrain_indirect{,_parity} fields
 #include "gpu_cull_record.h"       // C0-1: GpuActorRecord schema selftest
+#include "gpu_cull_readback.h"    // C2: async readback ring buffer selftest
 #include "object_admission_predicate.h"  // Track A1: init probe + selftest gate
 
 // Tier-1 instrumentation (stability spec §5.1): single source of truth for
@@ -772,6 +773,13 @@ int main(int argc, char** argv)
                 abort();
             }
         }
+
+        // C2: readback ring buffer three-tier selftest is called from within
+        // readback_init() (at mission load) — not here. readback_init() requires GL
+        // context + a valid maxActors count, so it cannot run at engine startup.
+        // The selftest emits [GPU_CULL v1] event=readback_selftest pass=3 fail=0
+        // to the mission log when MC2_GPU_CULL_READBACK=1 is set.
+        // (No call needed here — readback_selftest() in readback.cpp is self-contained.)
 
         if (getenv("MC2_STATIC_PROP_BAKE_SELFTEST")) {
             // Stub: full self-test wired in Task 5 after buildRecipeFromShape

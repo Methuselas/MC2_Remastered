@@ -264,7 +264,11 @@ def main():
                             "MC2_GPU_CULL_AABB_PARITY",
                             "MC2_GPU_CULL_SUBSTRATE_TRACE",
                             "MC2_GPU_CULL",
-                            "MC2_GPU_CULL_COMPUTE_TRACE")},
+                            "MC2_GPU_CULL_COMPUTE_TRACE",
+                            # Track C2 — async readback ring buffer
+                            "MC2_GPU_CULL_READBACK",
+                            "MC2_GPU_CULL_FORCE_FENCE_NOT_READY",
+                            "MC2_GPU_CULL_READBACK_TRACE")},
             },
         )
         print(f"[runner] running {e.stem} (tier={tier} duration={duration})",
