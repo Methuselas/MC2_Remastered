@@ -13,5 +13,6 @@ extern bool g_useGpuMechs;
 uint32_t gos_GetGLTextureId(uint32_t gosHandle);
 
 // Terrain projection chain uniforms — same as gos_static_prop_killswitch.h.
-const float* gos_GetTerrainViewportVec4();
-const float* gos_GetProj2ScreenMat4();
+const float* gos_GetTerrainViewportVec4();   // (vmx, vmy, vax, vay)
+const float* gos_GetProj2ScreenMat4();       // screen-pixel -> NDC (upload GL_TRUE)
+const float* gos_GetTerrainMVPMat4();        // axisSwap * worldToClip (upload GL_FALSE)

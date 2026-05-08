@@ -23,6 +23,10 @@ in vec3 v_normal;
 uniform sampler2D u_tex;
 uniform int u_materialFlags;  // bit 0: ALPHA_TEST
 uniform float u_fogValue;     // 1.0 = clear (per static_prop convention)
+// Slice A debug: 0=normal, 1=solid magenta, 2=texture only, 3=light only,
+// 4=normal-as-color. Wired through MC2_MECH_FRAG_DEBUG env var on the C++
+// side via a uniform write at flush time.
+uniform int u_debugMode;
 
 layout(location=0) out vec4 FragColor;
 layout(location=1) out vec4 GBuffer1;
@@ -39,6 +43,12 @@ void main() {
     vec4 c = tex_color * v_litColor;
     c.rgb += v_highlightColor.rgb * v_highlightColor.a;
     c.rgb  = mix(v_fogRGB, c.rgb, u_fogValue);
+
+    // Debug overrides (MC2_MECH_FRAG_DEBUG=N).
+    if      (u_debugMode == 1) c = vec4(1.0, 0.0, 1.0, 1.0);                    // solid magenta
+    else if (u_debugMode == 2) c = vec4(tex_color.rgb, 1.0);                    // texture only
+    else if (u_debugMode == 3) c = vec4(v_litColor.rgb, 1.0);                   // light only
+    else if (u_debugMode == 4) c = vec4(normalize(v_normal) * 0.5 + 0.5, 1.0);  // normal-as-color
 
     FragColor = c;
     GBuffer1  = rc_gbuffer1_screenShadowEligible(normalize(v_normal));

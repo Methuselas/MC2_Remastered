@@ -2,6 +2,7 @@
 #include "gos_mech_batcher.h"
 #include "gos_mech_killswitch.h"
 #include "gos_static_prop_batcher.h"  // for STATIC_PROP_RING_FRAMES cross-check
+#include "gameos.hpp"                 // gos_InvalidateRenderStateCache
 #include "utils/shader_builder.h"
 #include <GL/glew.h>
 #include <cstdio>
@@ -32,11 +33,12 @@ static glsl_program* s_mechProgramObj = nullptr;
 // Cached uniform locations (set at program link time).
 static GLint s_loc_u_instanceBase    = -1;
 static GLint s_loc_u_materialFlags   = -1;
-static GLint s_loc_u_worldToClip     = -1;
+static GLint s_loc_terrainMVP     = -1;
 static GLint s_loc_u_terrainViewport = -1;
 static GLint s_loc_u_mvp             = -1;
 static GLint s_loc_u_tex             = -1;
 static GLint s_loc_u_fogValue        = -1;
+static GLint s_loc_u_debugMode       = -1;
 
 // Geometry (immutable after finalizeGeometry).
 static GLuint s_sharedVao = 0;
@@ -122,11 +124,12 @@ static void loadProgramsIfNeeded() {
     };
     s_loc_u_instanceBase    = loc("u_instanceBase");
     s_loc_u_materialFlags   = loc("u_materialFlags");
-    s_loc_u_worldToClip     = loc("u_worldToClip");
+    s_loc_terrainMVP     = loc("terrainMVP");
     s_loc_u_terrainViewport = loc("u_terrainViewport");
     s_loc_u_mvp             = loc("u_mvp");
     s_loc_u_tex             = loc("u_tex");
     s_loc_u_fogValue        = loc("u_fogValue");
+    s_loc_u_debugMode       = loc("u_debugMode");
 
     std::fprintf(stderr, "[MECHBATCHER v1] event=shader_ok prog=%u\n", s_mechProgram);
 }
@@ -651,14 +654,35 @@ void GpuMechBatcher::flush() {
         (GLintptr) (s_frameSlot * s_boneCapacity * sizeof(GpuMechBone)),
         (GLsizeiptr)(totalBones * sizeof(GpuMechBone)));
 
+    // Save prior GL state. The mech flush bypasses applyRenderStates'
+    // tracked slot set, so the engine's render-state cache becomes
+    // out-of-sync after we mutate state directly. We save EVERYTHING the
+    // static_prop batcher saves (mirror its pattern), restore at end, and
+    // call gos_InvalidateRenderStateCache() to force the next
+    // applyRenderStates to re-issue. Skipping invalidate has been observed
+    // to make subsequent draws (water, mechs themselves on later frames)
+    // disappear after a few frames as the cache thinks GL is in state X
+    // while reality is state Y.
+    GLint     prevDepthFunc;   glGetIntegerv(GL_DEPTH_FUNC,      &prevDepthFunc);
+    GLboolean prevDepthTest;   glGetBooleanv(GL_DEPTH_TEST,      &prevDepthTest);
+    GLboolean prevDepthMask;   glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
+    GLboolean prevBlend;       glGetBooleanv(GL_BLEND,            &prevBlend);
+    GLboolean prevCull;        glGetBooleanv(GL_CULL_FACE,        &prevCull);
+    GLint     prevCullMode;    glGetIntegerv(GL_CULL_FACE_MODE,  &prevCullMode);
+    GLint     prevProgram;     glGetIntegerv(GL_CURRENT_PROGRAM,  &prevProgram);
+    GLint     prevVao;         glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+    GLint     prevArrayBuf;    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prevArrayBuf);
+    GLint     prevElemBuf;     glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &prevElemBuf);
+    GLint     prevActiveTex;   glGetIntegerv(GL_ACTIVE_TEXTURE,   &prevActiveTex);
+    GLint     prevSampler   = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 0, &prevSampler);
+    GLint     prevSsbo0     = 0; glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
+    GLint     prevSsbo1     = 0; glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 1, &prevSsbo1);
+    glActiveTexture(GL_TEXTURE0);
+    GLint     prevTexUnit0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit0);
+
     glUseProgram(s_mechProgram);
     glBindVertexArray(s_sharedVao);
 
-    // Save prior state; set explicit mech-render state.
-    GLint     prevDepthFunc; glGetIntegerv(GL_DEPTH_FUNC,      &prevDepthFunc);
-    GLboolean prevBlend;     glGetBooleanv(GL_BLEND,            &prevBlend);
-    GLboolean prevCull;      glGetBooleanv(GL_CULL_FACE,        &prevCull);
-    GLint     prevCullMode;  glGetIntegerv(GL_CULL_FACE_MODE,  &prevCullMode);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_TRUE);
@@ -667,18 +691,29 @@ void GpuMechBatcher::flush() {
     glCullFace(GL_BACK);
 
     // Bind sampler to unit 0: prevents CLAMP_TO_EDGE / NEAREST inheritance.
-    GLint prevSampler = 0;
-    glGetIntegeri_v(GL_SAMPLER_BINDING, 0, &prevSampler);
     glBindSampler(0, s_sampler);
 
     // Static uniforms.
     glUniform1i(s_loc_u_tex,      0);
     glUniform1f(s_loc_u_fogValue, 1.0f);
+    {
+        // MC2_MECH_FRAG_DEBUG=N: 0=normal, 1=magenta, 2=texOnly, 3=lightOnly, 4=normal.
+        const char* dbg = std::getenv("MC2_MECH_FRAG_DEBUG");
+        const int dbgMode = dbg ? std::atoi(dbg) : 0;
+        if (s_loc_u_debugMode >= 0)
+            glUniform1i(s_loc_u_debugMode, dbgMode);
+    }
 
-    // Projection uniforms (same sources as static_prop batcher).
-    const float* wtc = (const float*)&TG_Shape::s_worldToClip.entries[0];
-    if (s_loc_u_worldToClip >= 0)
-        glUniformMatrix4fv(s_loc_u_worldToClip, 1, GL_TRUE, wtc);
+    // Projection uniforms — match static_prop batcher and the
+    // terrain_overlay.vert convention: terrainMVP = CPU-composed
+    // axisSwap * worldToClip, row-major, uploaded with GL_FALSE.
+    // Plan template said "TG_Shape::s_worldToClip with GL_TRUE" — that's
+    // wrong; it skips the axis swap, mech ends up off-screen. Caught
+    // 2026-05-08 by operator visual smoke (mechs invisible after PREC fix
+    // re-enabled the GPU path).
+    const float* terrainMVP = gos_GetTerrainMVPMat4();
+    if (s_loc_terrainMVP >= 0 && terrainMVP)
+        glUniformMatrix4fv(s_loc_terrainMVP, 1, GL_FALSE, terrainMVP);
     const float* vp = gos_GetTerrainViewportVec4();
     if (s_loc_u_terrainViewport >= 0 && vp)
         glUniform4fv(s_loc_u_terrainViewport, 1, vp);
@@ -711,18 +746,33 @@ void GpuMechBatcher::flush() {
         ++drawnCalls;
     }
 
-    // Restore state.
+    // Restore prior state in reverse order of save.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, (GLuint)prevSsbo1);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit0);
+    glActiveTexture((GLenum)prevActiveTex);
+    glBindSampler(0, (GLuint)prevSampler);
+    glBindVertexArray((GLuint)prevVao);
+    glBindBuffer(GL_ARRAY_BUFFER, (GLuint)prevArrayBuf);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf);
+    glUseProgram((GLuint)prevProgram);
+    if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    glDepthMask(prevDepthMask);
     glDepthFunc((GLenum)prevDepthFunc);
-    if (prevBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
     if (prevCull)  { glEnable(GL_CULL_FACE); glCullFace((GLenum)prevCullMode); }
     else             glDisable(GL_CULL_FACE);
-    glBindSampler(0, (GLuint)prevSampler);
-    glBindVertexArray(0);
-    glUseProgram(0);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, 0);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, 0);
+    if (prevBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
 
     s_fence[s_frameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+
+    // RENDER_STATES v1: even with the explicit save/restore above, the
+    // engine's applyRenderStates cache mirrors a separate (slot,value)
+    // table — it does NOT re-read GL state. Without invalidate, a
+    // subsequent applyRenderStates call early-outs on matching cached
+    // values while the actual texture binding / sampler / depth bits we
+    // touched go unrechecked. Mirrors gos_static_prop_batcher.cpp:1791.
+    gos_InvalidateRenderStateCache();
 
     // Per-reason stats output (MC2_MECH_BATCHER_STATS=1).
     if (s_mechBatcherTrace) {

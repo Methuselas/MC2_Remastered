@@ -40,7 +40,12 @@ layout(std430, binding=1) readonly buffer BoneBuffer {
 // 'uniform uint' crashes this engine's shader compiler — use int + cast.
 uniform int  u_instanceBase;
 uniform int  u_materialFlags;
-uniform mat4 u_worldToClip;      // upload GL_TRUE (Stuff Matrix4D col-major -> GLSL transpose)
+// terrainMVP is the CPU-composed axisSwap * worldToClip matrix (row-major,
+// upload GL_FALSE). Same uniform name + upload convention as
+// static_prop.vert / terrain_overlay.vert, sourced from
+// gos_GetTerrainMVPMat4(). Using raw TG_Shape::s_worldToClip would skip
+// the axis swap and place mech vertices off-screen.
+uniform mat4 terrainMVP;
 uniform vec4 u_terrainViewport;  // (vmx, vmy, vax, vay) for D3D->GL projection chain
 uniform mat4 u_mvp;              // px->NDC (upload GL_TRUE)
 
@@ -56,15 +61,23 @@ void main() {
     GpuMechInstance inst = instances[instIdx];
 
     // Bone transform: boneT is the transpose of the Stuff LinearMatrix4D.
+    // boneT * vec4(pos,1) yields the world position in the Stuff/MLR camera
+    // frame (.x=left, .y=elev, .z=forward).
     GpuMechBone b = bones[a_boneIndices.x + inst.baseBoneOffset];
     mat4 boneT = mat4(b.row0, b.row1, b.row2, b.row3);
-    vec4 worldPos = boneT * vec4(a_position, 1.0);
+    vec4 worldStuff = boneT * vec4(a_position, 1.0);
 
-    // World-space normal via 3x3 rotation block of boneT.
-    vec3 worldNormal = normalize(mat3(boneT) * a_normal);
+    // MC2/Stuff axis swap: terrainMVP is composed in MC2 world coords
+    // (x=east, y=north, z=elev). Without this swap world.y (elev) gets
+    // read as MC2 north and world.z (forward) as MC2 elev — mech ends up
+    // in the sky / off-screen. Same swap as static_prop.vert (after
+    // 2026-05-04 trees-in-the-sky fix).
+    vec3 worldMC2 = vec3(-worldStuff.x, worldStuff.z, worldStuff.y);
+    vec3 normalStuff = mat3(boneT) * a_normal;
+    vec3 worldNormal = normalize(vec3(-normalStuff.x, normalStuff.z, normalStuff.y));
 
     // D3D pixel-homogeneous projection chain (identical to static_prop.vert).
-    vec4 clip4 = u_worldToClip * worldPos;
+    vec4 clip4 = terrainMVP * vec4(worldMC2, 1.0);
     float rhw  = 1.0 / clip4.w;
     vec3  px;
     px.x = clip4.x * rhw * u_terrainViewport.x + u_terrainViewport.z;
@@ -73,10 +86,10 @@ void main() {
     vec4 ndc   = u_mvp * vec4(px, 1.0);
     float absW = abs(clip4.w);
     gl_Position = vec4(ndc.xyz * absW, absW);
-
-    if (clip4.w < 0.1) {
-        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-    }
+    // No "clip4.w < 0.1 -> push offscreen" clause: MC2 clip.w sign is NOT
+    // front/back per memory/clip_w_sign_trap.md; never sign-test clip.w.
+    // static_prop.vert correctly omits the guard. The plan template
+    // included it and made all mech vertices end up at (2,2,2,1).
 
     // Slice A: decode a_aRGBLight (BGRA packed uint) as base vertex color.
     // Slice B1: replace with calc_light() using inst.lightDataIndex.
