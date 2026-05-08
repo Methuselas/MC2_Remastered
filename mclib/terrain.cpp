@@ -630,6 +630,18 @@ void Terrain::primeMissionTerrainCache (volatile float& progress, float progress
 		gos_terrain_indirect::ResetDenseRecipe();
 		gos_terrain_indirect::BuildDenseRecipe();
 	}
+
+	// PR2c Stage 1c — mine static-bake lifecycle.
+	// CPU-clear only; do NOT build here. Build is deferred to first
+	// MissionMap::setMine event (typically the per-cell init loop at
+	// move.cpp:991) followed by a paint-cycle invocation of
+	// RebuildMineStaticVBOIfDirty from the Stage 2c bridge. This avoids
+	// the R7 timing trap (mineTextureHandle/blownTextureHandle are still
+	// 0xffffffff at primeMissionTerrainCache time — they lazy-load only
+	// when TerrainQuad::setupTextures fires per-quad in the first paint
+	// cycle).
+	gos_terrain_indirect::ResetMineStaticVBO();
+	gos_terrain_indirect::ResetMineTextureArray();
 }
 
 //---------------------------------------------------------------------------
@@ -697,6 +709,11 @@ void Terrain::destroy (void)
 	    gos_terrain_indirect::IsParityCheckEnabled()) {
 		gos_terrain_indirect::ResetDenseRecipe();
 	}
+
+	// PR2c Stage 1c — mine static-bake teardown. CPU-clear; keep GL buffer
+	// + texture-array allocations for next-mission reuse.
+	gos_terrain_indirect::ResetMineStaticVBO();
+	gos_terrain_indirect::ResetMineTextureArray();
 
 	if (terrainTextures)
 	{
