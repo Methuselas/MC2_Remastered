@@ -61,6 +61,7 @@
 #include "gos_profiler.h"
 #include "../GameOS/gameos/gos_static_prop_batcher.h"
 #include "../GameOS/gameos/gos_static_prop_registry.h"  // Stage 3.C: flush()
+#include "../GameOS/gameos/gos_mech_batcher.h"
 #include "../GameOS/gameos/gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "../GameOS/gameos/gos_terrain_patch_stream.h"
 #include "../GameOS/gameos/gos_terrain_indirect.h"
@@ -1764,6 +1765,17 @@ void MC_TextureManager::renderLists (void)
 			}
 
 			GpuStaticPropBatcher::instance().flush();
+		}
+
+		// GPU mech batcher Slice A flush — runs after static-prop flush,
+		// inside renderLists() so terrain has already been emitted by the
+		// patch stream and the depth state is set up. Independent of
+		// g_useGpuStaticProps; gated on its own MC2_GPU_MECHS env var
+		// inside the flush itself.
+		{
+			ZoneScopedN("Render.GpuMechs");
+			TracyGpuZone("Render.GpuMechs");
+			GpuMechBatcher::instance().flush();
 		}
 	}
 

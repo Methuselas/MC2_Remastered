@@ -318,8 +318,16 @@ void Mech3DAppearanceType::init (const char * fileName)
 		// Base shape.  In stand Pose by default.
 		mechShape[0] = new TG_TypeMultiShape;
 		gosASSERT(mechShape[0] != NULL);
-	
+
 		mechShape[0]->LoadTGMultiShapeFromASE(mechName);
+	}
+
+	// Register all loaded LODs with the GPU mech batcher (idempotent).
+	// Pre-finalize at this point — finalizeGeometry() runs at end of map load.
+	for (int lod = 0; lod < MAX_LODS; ++lod) {
+		if (mechShape[lod]) {
+			GpuMechBatcher::instance().registerTypeLod(this, lod);
+		}
 	}
 
 	result = mechFile.readIdString("ShadowName",aseFileName,511);
@@ -2474,8 +2482,48 @@ long Mech3DAppearance::render (long depthFixup)
 			}
 			//---------------------------------------------
 			// Call Multi-shape render stuff here.
-			mechShape->Render(true);
-			
+			//
+			// GPU mech batcher Slice A: try GPU submit first; fall back to CPU
+			// path if registration / capacity / shader-init says so. Counter
+			// recorded BEFORE registration check so eligible-actor totals are
+			// accurate even when the actor opts out for unrelated reasons.
+			GpuMechBatcher::instance().recordEligibleActor();
+
+			bool gpuMechSubmitted = false;
+			if (g_useGpuMechs) {
+				// Replicate the highlight selection from the CPU SetARGBHighLight
+				// branches above so the GPU path sees the same color choice.
+				uint32_t gpuHighlightARGB = highLight;
+				if (selected & DRAW_COLORED && duration <= 0)
+					gpuHighlightARGB = highLight;
+				else
+					gpuHighlightARGB = (uint32_t)highlightColor;
+				if (drawFlash)
+					gpuHighlightARGB = (uint32_t)flashColor;
+
+				GpuMechSubmitDesc desc{};
+				desc.mechShape      = mechShape;
+				desc.mechType       = mechType;
+				desc.currentLOD     = (int)currentLOD;
+				desc.slot0TexHandle = (uint32_t)localTextureHandle;
+				desc.lightDataIndex = 0;       // Slice B1 wires this
+				desc.renderFlags    = 0;
+				desc.highlightARGB  = gpuHighlightARGB;
+				desc.fogARGB        = 0;       // Slice B2 wires this
+
+				gpuMechSubmitted = GpuMechBatcher::instance().submitActor(desc);
+				if (!gpuMechSubmitted) {
+					GpuMechBatcher::instance().recordCpuFallback(
+						GpuMechBatcher::instance().wasLastFailureLateRegistration()
+							? GpuMechFallbackReason::UnregisteredType
+							: GpuMechFallbackReason::ShaderInitFailure);
+				}
+			}
+
+			if (!gpuMechSubmitted) {
+				mechShape->Render(true);  // CPU path — unchanged
+			}
+
 			if (selected & DRAW_BARS)
 			{
 				drawBars();
