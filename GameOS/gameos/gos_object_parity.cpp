@@ -38,6 +38,7 @@
 // literal 3. No circular dependency: gos_object_parity.h has no batcher.h
 // dependency; the coupling is one-directional (parity .cpp → batcher .h).
 #include "gos_static_prop_batcher.h"
+#include "gos_mech_batcher.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -721,6 +722,14 @@ void ParityFrameTick() {
             static_cast<unsigned long long>(allowedLateReg),
             static_cast<unsigned long long>(unexpectedLateReg),
             static_cast<unsigned long long>(s_sampledComparesTotal));
+
+        // GPU mech batcher late-registration counter (Slice A).
+        const uint64_t mechDisallowed = GpuMechBatcher::getDisallowedLateRegEventCount();
+        if (mechDisallowed > 0) {
+            std::fprintf(stderr,
+                "[OBJECT_PARITY v1] event=mech_late_reg_disallowed count=%llu\n",
+                static_cast<unsigned long long>(mechDisallowed));
+        }
         std::fflush(stderr);
     }
 }
