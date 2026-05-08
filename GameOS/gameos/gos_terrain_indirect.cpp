@@ -99,6 +99,8 @@ long long s_legacy_detail_overlay_quads  = 0;
 long long s_legacy_mine_enqueue_quads    = 0;
 long long s_legacy_mine_draw_quads       = 0;
 long long s_indirect_mine_drawn_cells    = 0;
+// PR2a Stage 0a — M2c detail-emit counter (drops to zero post Stage 1a).
+long long s_m2c_detail_emit_quads        = 0;
 }  // namespace
 
 namespace gos_terrain_indirect {
@@ -116,6 +118,9 @@ long long Counters_GetLegacyDetailOverlayQuads() { return s_legacy_detail_overla
 long long Counters_GetLegacyMineEnqueueQuads()   { return s_legacy_mine_enqueue_quads; }
 long long Counters_GetLegacyMineDrawQuads()      { return s_legacy_mine_draw_quads; }
 long long Counters_GetIndirectMineDrawnCells()   { return s_indirect_mine_drawn_cells; }
+// PR2a Stage 0a — M2c detail-emit counter.
+void      Counters_AddM2cDetailEmitQuad()        { ++s_m2c_detail_emit_quads; }
+long long Counters_GetM2cDetailEmitQuads()       { return s_m2c_detail_emit_quads; }
 
 // PR2c Stage 0c — env-gate readers. Default-OFF until Stage 4 default-on flip.
 bool IsMineEnabled() {
@@ -227,6 +232,7 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     "legacy_mine_enqueue_quads=%lld "
                     "legacy_mine_draw_quads=%lld "
                     "indirect_mine_drawn_cells=%lld "
+                    "m2c_detail_emit_quads=%lld "
                     "solid_branch_ns_per_frame=%lld "
                     "detail_overlay_branch_ns_per_frame=%lld "
                     "mine_enqueue_ns_per_frame=%lld "
@@ -241,6 +247,7 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     Counters_GetLegacyMineEnqueueQuads(),
                     Counters_GetLegacyMineDrawQuads(),
                     Counters_GetIndirectMineDrawnCells(),
+                    Counters_GetM2cDetailEmitQuads(),
                     csSolidPerFrame,
                     csDetailPerFrame,
                     csMineEnqPerFrame,
@@ -255,7 +262,8 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     "legacy_detail_overlay_quads=%lld "
                     "legacy_mine_enqueue_quads=%lld "
                     "legacy_mine_draw_quads=%lld "
-                    "indirect_mine_drawn_cells=%lld\n",
+                    "indirect_mine_drawn_cells=%lld "
+                    "m2c_detail_emit_quads=%lld\n",
                     s_paritySummaryFrames,
                     s_paritySummaryQuads,
                     s_paritySummaryMismatches,
@@ -264,7 +272,8 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     Counters_GetLegacyDetailOverlayQuads(),
                     Counters_GetLegacyMineEnqueueQuads(),
                     Counters_GetLegacyMineDrawQuads(),
-                    Counters_GetIndirectMineDrawnCells());
+                    Counters_GetIndirectMineDrawnCells(),
+                    Counters_GetM2cDetailEmitQuads());
         }
         fflush(stderr);
     }

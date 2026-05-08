@@ -130,6 +130,17 @@ long long Counters_GetLegacyMineEnqueueQuads();
 long long Counters_GetLegacyMineDrawQuads();
 long long Counters_GetIndirectMineDrawnCells();
 
+// PR2a Stage 0a — M2c detail-emit counter. Confidence guard for the
+// upcoming Stage 1a delete: pre-delete this should be non-zero on
+// water-interest tiles (~5800/frame on mc2_01 normal zoom per
+// m2_thin_record_cpu_reduction_results.md). Post-Stage-1a it MUST be
+// zero (the call site is deleted along with the M2c block at
+// quad.cpp:2001-2070). Counter declaration STAYS post-delete per the
+// "demote, don't delete" debug-instrumentation rule (worktree
+// CLAUDE.md "Debug Instrumentation Rule"); body becomes orphan no-op.
+void      Counters_AddM2cDetailEmitQuad();
+long long Counters_GetM2cDetailEmitQuads();
+
 // PR2c Stage 0c — env gate readers.
 //   IsMineEnabled()       — MC2_TERRAIN_INDIRECT_MINE (default OFF until Stage 4
 //                           default-on flip after Stage 2c soak).

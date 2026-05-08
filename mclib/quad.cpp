@@ -2006,6 +2006,12 @@ void TerrainQuad::draw (void)
 		    // vertices[c]->lightRGB (NO `selected` override on detail tiles, by design).
 		    if (useWaterInterestTexture && terrainDetailHandle != 0xffffffff)
 		    {
+		        // PR2a Stage 0a — confidence counter. Pre-Stage-1a-delete, this
+		        // increments on every quad that enters the (dead-pixel) M2c
+		        // emit. Confirms the upcoming delete actually retires real
+		        // CPU work, not phantom work.
+		        gos_terrain_indirect::Counters_AddM2cDetailEmitQuad();
+
 		        const float tilingFactor = Terrain::terrainTextures2
 		            ? Terrain::terrainTextures2->getDetailTilingFactor()
 		            : Terrain::terrainTextures->getDetailTilingFactor(1);
