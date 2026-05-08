@@ -38,7 +38,20 @@ struct ObjectLights {
 
 layout (binding = LIGHT_DATA_ATTACHMENT_SLOT, std140) uniform LightsData
 {
-    ObjectLights light[32];
+    // Slice B1 (2026-05-08): raised from 32 → 64. mc2_17's combined
+    // mech + static_prop population observed at maxIdx=57 with 21 mechs
+    // submitted; 64 gives a comfortable margin for denser missions.
+    // C++ side (mclib/txmmgr.cpp: lightDataStructuresCapacity=128
+    // initial, +128 chunks) already supports the larger count; this just
+    // enlarges the shader-side window. Each ObjectLights ≈ 1.8KB std140;
+    // 64 entries ≈ 113KB. AMD RX 7900 XTX MAX_UNIFORM_BLOCK_SIZE is
+    // reportedly higher; if a future GPU rejects this size, fallback is
+    // converting LightsData from UBO to SSBO (binding semantics shift,
+    // larger storage). MUST stay in lockstep with the C++
+    // TG_HWLightsData struct (mclib/tgl.h:304) per
+    // memory/cpp_glsl_ubo_struct_lockstep.md and the audit trace
+    // [MECHLIGHT v1] event=cache_full in gos_mech_batcher.cpp.
+    ObjectLights light[64];
 };
 
 //================================================================================ 

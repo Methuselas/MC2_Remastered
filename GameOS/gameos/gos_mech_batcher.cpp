@@ -565,22 +565,25 @@ void GpuMechBatcher::flush() {
         s_mechLightTraceInit = true;
     }
     if (s_mechLightTrace) {
-        // LightsData UBO holds 32 ObjectLights entries (lighting.hglsl).
-        // Any submit with lightDataIndex >= 32 reads OOB; AMD typically
-        // returns zero → flat-black mech. Surface the event so soak ops
-        // can raise the cap. Recipe to fix when fired: bump
-        // lightDataStructuresCapacity in mclib/txmmgr.cpp + the
-        // LightsData[N] array in shaders/include/lighting.hglsl in
-        // lockstep per memory/cpp_glsl_ubo_struct_lockstep.md.
+        // LightsData UBO holds 48 ObjectLights entries (lighting.hglsl:41,
+        // raised from 32 in B1 after mc2_17 hit the cap). Must stay in
+        // lockstep with the GLSL declaration per
+        // memory/cpp_glsl_ubo_struct_lockstep.md. AMD typically returns
+        // zero on OOB UBO reads → flat-black mech; surface the event so
+        // soak ops know to raise the cap further if a denser mission
+        // fires this.
+        const uint32_t kUboLightSlotCap = 64u;  // matches lighting.hglsl LightsData[64]
+        uint32_t maxIdx = 0;
         bool overCap = false;
         for (const auto& ps : s_pendingSubmits) {
-            if (ps.desc.lightDataIndex >= 32u) { overCap = true; break; }
+            if (ps.desc.lightDataIndex > maxIdx) maxIdx = ps.desc.lightDataIndex;
+            if (ps.desc.lightDataIndex >= kUboLightSlotCap) overCap = true;
         }
         if (overCap) {
             ++s_lightCacheFullFrames;
             std::fprintf(stderr,
-                "[MECHLIGHT v1] event=cache_full frames=%u submitted=%zu\n",
-                s_lightCacheFullFrames, s_pendingSubmits.size());
+                "[MECHLIGHT v1] event=cache_full frames=%u submitted=%zu cap=%u maxIdx=%u\n",
+                s_lightCacheFullFrames, s_pendingSubmits.size(), kUboLightSlotCap, maxIdx);
         }
     }
 
