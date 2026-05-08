@@ -17,6 +17,11 @@
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
 #include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
 #include "../code/gameobj.h"  // C3: full GameObject definition for obj->getHandle() in init()
+#include "../GameOS/gameos/gos_mech_batcher.h"
+#include "../GameOS/gameos/gos_mech_killswitch.h"
+
+// MC2_MECH_LOD_TRACE=1: per-actor LOD-swap boundary print.
+static const bool s_mechLodTrace = (getenv("MC2_MECH_LOD_TRACE") != nullptr);
 
 // C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
 // MC2_GPU_CULL_LIFECYCLE=1 enables GPU visibility-based node-position early-outs.
@@ -2354,6 +2359,11 @@ bool Mech3DAppearance::recalcBounds (void)
 						// we are at this LOD level.
 						if (selectLOD != currentLOD)
 						{
+							if (s_mechLodTrace) {
+								std::fprintf(stderr,
+									"[MECHLOD v1] event=lod_swap actor=%p old_lod=%lu new_lod=%lu\n",
+									(void*)this, (unsigned long)currentLOD, (unsigned long)selectLOD);
+							}
 							currentLOD = selectLOD;
 
 							BYTE alphaValue = mechShape->GetAlphaValue();
