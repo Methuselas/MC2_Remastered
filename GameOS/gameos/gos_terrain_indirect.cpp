@@ -133,11 +133,16 @@ long long Counters_GetM2dOverlayEmitQuads()      { return s_m2d_overlay_emit_qua
 long long Counters_GetIndirectOverlayPackedQuads(){ return s_indirect_overlay_packed_quads; }
 long long Counters_GetGosPushOverlayCalls()      { return s_gos_push_overlay_calls; }
 
-// PR2c Stage 0c — env-gate readers. Default-OFF until Stage 4 default-on flip.
+// PR2c — Stage 4 default-on flip 2026-05-08.
+// Static-bake mine path retires ~932 µs/frame (mc2_01 baseline:
+// enqueueTerrainMineState ~54 µs + drawMine ~886 µs → 0). Tier1 5/5 PASS
+// with arming verified across PR2c Stages 0c/1c/2c. Literal "0" opts out
+// for bisection; any other value (including unset) opts in.
 bool IsMineEnabled() {
     static const bool s = []() {
         const char* v = getenv("MC2_TERRAIN_INDIRECT_MINE");
-        return v && v[0] == '1' && v[1] == '\0';
+        if (v && v[0] == '0' && v[1] == '\0') return false;
+        return true;
     }();
     return s;
 }
