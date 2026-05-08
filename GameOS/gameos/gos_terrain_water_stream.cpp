@@ -16,6 +16,8 @@
 
 #include "gos_terrain_water_stream.h"
 
+#include "gos_profiler.h"
+
 #include <vector>
 #include <unordered_map>
 #include <cstdio>
@@ -49,6 +51,27 @@ GLuint   g_thinBuffer = 0;
 uint32_t g_thinSlot = 0;
 uint32_t g_thinSlotCapacity = 0;
 std::vector<WaterThinRecord> g_thinStaging;
+
+// Narrow-walk candidate vector. Populated by AppendNarrowCandidate during
+// the per-frame setupTextures loop; consumed by UploadAndBindThinRecords.
+// Default-on; env-gated `MC2_WATER_UPLOAD_NARROW=0` falls back to full walk.
+std::vector<TerrainQuadPtr> g_narrowQuadsThisFrame;
+uint32_t g_narrowMaxSeen = 0;
+bool s_narrowEnabledKnown = false;
+bool s_narrowEnabled = true;
+inline bool NarrowEnabledImpl() {
+    if (!s_narrowEnabledKnown) {
+        const char* v = getenv("MC2_WATER_UPLOAD_NARROW");
+        s_narrowEnabled = !(v && v[0] == '0' && v[1] == '\0');
+        s_narrowEnabledKnown = true;
+    }
+    return s_narrowEnabled;
+}
+// Per-600-frame upload summary (so the user can confirm the narrow path
+// actually fires and the volume drop is real).
+uint32_t g_uploadSummaryFrames = 0;
+uint64_t g_uploadSummaryNarrowQuads = 0;
+uint64_t g_uploadSummaryFullWalkQuads = 0;
 
 bool s_debugEnabledKnown = false;
 bool s_debugEnabled = false;
@@ -84,6 +107,34 @@ void Reset() {
     g_vertexNumToRecipe.clear();
     g_ready = false;
     g_recipeBufferUploadedCount = 0;
+    g_narrowQuadsThisFrame.clear();
+    g_narrowQuadsThisFrame.shrink_to_fit();
+    g_narrowMaxSeen = 0;
+}
+
+bool NarrowEnabled() {
+    return NarrowEnabledImpl();
+}
+
+void BeginFrameNarrow() {
+    if (!NarrowEnabledImpl()) return;
+    // Reserve last-frame max + 10% slack, capped at recipe count (the hard
+    // upper bound — every map water quad simultaneously). vector::clear is
+    // O(n) destructor-call here but TerrainQuadPtr is a trivial pointer, so
+    // it's effectively a size reset. No allocation in the hot loop.
+    const size_t reserve = (size_t)(g_narrowMaxSeen + (g_narrowMaxSeen / 10) + 64);
+    if (g_narrowQuadsThisFrame.capacity() < reserve)
+        g_narrowQuadsThisFrame.reserve(reserve);
+    g_narrowQuadsThisFrame.clear();
+}
+
+void AppendNarrowCandidate(const void* quadPtr) {
+    // Caller asserts the quad already passed the same predicate
+    // UploadAndBindThinRecords applies (corners non-null, vertexNum >= 0,
+    // waterHandle != 0xffffffff). The Upload loop re-checks defensively.
+    g_narrowQuadsThisFrame.push_back((TerrainQuadPtr)quadPtr);
+    if (g_narrowQuadsThisFrame.size() > g_narrowMaxSeen)
+        g_narrowMaxSeen = (uint32_t)g_narrowQuadsThisFrame.size();
 }
 
 void Build() {
@@ -292,6 +343,7 @@ unsigned int EnsureRecipeBufferUploaded() {
 }
 
 uint32_t UploadAndBindThinRecords() {
+    ZoneScopedN("WaterFast.UploadThin");
     if (!g_ready || g_recipes.empty())
         return 0;
 
@@ -300,18 +352,50 @@ uint32_t UploadAndBindThinRecords() {
     const long total = terrainPtr ? terrainPtr->getNumQuads() : 0;
     if (!quads || total <= 0) return 0;
 
-    // Walk the live (camera-windowed) quadList. For each water-bearing quad,
-    // look up its stable recipe by top-left-vertex `vertexNum` and emit a
-    // thin record carrying live light/fog/pzValid.
+    // Candidate selection: narrow vector (default) vs full quadList walk
+    // (env-opt-out). Narrow vector was populated during the engine's existing
+    // per-frame setupTextures loop with the SAME corner-validity + waterHandle
+    // gate this loop applies — so iterating it covers every quad the legacy
+    // walk would have admitted, but typically with 100x fewer iterations.
+    const bool narrow = NarrowEnabledImpl();
+    const TerrainQuadPtr* narrowArr = narrow && !g_narrowQuadsThisFrame.empty()
+        ? g_narrowQuadsThisFrame.data() : nullptr;
+    const size_t narrowN = narrow ? g_narrowQuadsThisFrame.size() : 0;
+    const long iterCount = narrow ? (long)narrowN : total;
+
+    // Per-frame upload-summary accounting (per 600 frames).
+    g_uploadSummaryNarrowQuads   += narrow ? narrowN : 0;
+    g_uploadSummaryFullWalkQuads += narrow ? 0 : (uint64_t)total;
+    if (++g_uploadSummaryFrames >= 600) {
+        fprintf(stderr,
+                "[WATER_FAST v1] event=upload_summary frames=%u "
+                "narrowed=%llu full_walk=%llu narrow_enabled=%d\n",
+                g_uploadSummaryFrames,
+                (unsigned long long)g_uploadSummaryNarrowQuads,
+                (unsigned long long)g_uploadSummaryFullWalkQuads,
+                narrow ? 1 : 0);
+        fflush(stderr);
+        g_uploadSummaryFrames = 0;
+        g_uploadSummaryNarrowQuads = 0;
+        g_uploadSummaryFullWalkQuads = 0;
+    }
+
+    // Walk candidates. For each water-bearing quad, look up its stable
+    // recipe by top-left-vertex `vertexNum` and emit a thin record carrying
+    // live light/fog/pzValid.
     g_thinStaging.clear();
-    g_thinStaging.reserve((size_t)total);
+    g_thinStaging.reserve((size_t)iterCount);
 
     uint32_t pzValidCount = 0;
     uint32_t waterHandleCount = 0;
     uint32_t recipeMissCount = 0;
     uint32_t pzDropCount = 0;
-    for (long i = 0; i < total; ++i) {
-        const TerrainQuad& q = quads[i];
+    for (long i = 0; i < iterCount; ++i) {
+        const TerrainQuad& q = narrowArr ? *narrowArr[i] : quads[i];
+        // Re-check the eligibility gate even on the narrow path. The narrow
+        // appender uses the SAME predicate, so this is a no-op there; the
+        // legacy walk needs it. Cost is two compares + a load on the narrow
+        // path (negligible) and keeps the walk semantically identical.
         if (!q.vertices[0] || !q.vertices[1] ||
             !q.vertices[2] || !q.vertices[3]) continue;
         // Skip quads where ANY corner is the map-edge blankVertex (vertexNum < 0).

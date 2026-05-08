@@ -963,16 +963,25 @@ void Terrain::render (void)
 	//-----------------------------------
 	// render the cloud layer
 	if (Terrain::cloudLayer)
+	{
+		ZoneScopedN("Terrain::render cloudLayer");
 		Terrain::cloudLayer->render();
-	
+	}
+
 	//-----------------------------------
-	// Draw resulting terrain quads. PERF 2026-05-07 stripped
-	// Terrain::render drawPass; the body is too small and hot to carry a
-	// per-frame Tracy zone while profiling terrain quad submission.
+	// Draw resulting terrain quads. The drawPass zone wraps the WHOLE loop
+	// (one zone per frame, not per-quad). Per-quad zones were stripped on
+	// 2026-05-07 because zone overhead dominated; a single zone wrapping the
+	// ~14-40K iteration loop attributes the 2.02 ms drawPass cost without
+	// re-introducing the per-call overhead. PatchStream sub-zones (Flush,
+	// MemoryBarrier, BucketSort, etc.) live inside this and break out the
+	// ~290 us PatchStream slice; the residual ~1.7 ms is non-PatchStream
+	// per-quad CPU work that stays attributed to drawPass at coarse level.
 	DWORD fogColor = eye->fogColor;
 
 	if (drawTerrainTiles)
 	{
+		ZoneScopedN("Terrain::render drawPass");
 		TerrainQuadPtr currentQuad = quadList;
 		for (long i = 0; i < numberQuads; i++)
 		{
@@ -1251,6 +1260,7 @@ void Terrain::renderWaterFastPath (void)
 	// `gos_terrain_water_stream.h` "Stage 3 parity check" doc-comment for
 	// scope and field-level granularity.
 	{
+		ZoneScopedN("WaterFast.Parity");
 		WaterStream::ParityFrameUniforms pu;
 		pu.waterElevation             = Terrain::waterElevation;
 		pu.alphaDepth                 = MapData::alphaDepth;
@@ -1751,9 +1761,28 @@ void Terrain::geometry (void)
 		// On un-armed frames (recipe not ready, disabled, etc.) this returns
 		// false with zero side-effects; setupTextures runs as normal.
 		gos_terrain_indirect::ComputePreflight();
+		// Water-fast-path narrow walk: reset the candidate vector once per
+		// frame, then append every quad that passes UploadThin's eligibility
+		// gate immediately after setupTextures() establishes waterHandle.
+		// Predicate MUST match UploadThin's exactly — see
+		// gos_terrain_water_stream.cpp:UploadAndBindThinRecords.
+		WaterStream::BeginFrameNarrow();
+		const bool s_waterNarrowOn = WaterStream::NarrowEnabled();
 		for (i=0;i<numberQuads;i++)
 		{
 			currentQuad->setupTextures();
+			if (s_waterNarrowOn) {
+				const TerrainQuad& q = *currentQuad;
+				if (q.vertices[0] && q.vertices[1] &&
+				    q.vertices[2] && q.vertices[3] &&
+				    q.vertices[0]->vertexNum >= 0 &&
+				    q.vertices[1]->vertexNum >= 0 &&
+				    q.vertices[2]->vertexNum >= 0 &&
+				    q.vertices[3]->vertexNum >= 0 &&
+				    q.waterHandle != 0xffffffffu) {
+					WaterStream::AppendNarrowCandidate(currentQuad);
+				}
+			}
 			currentQuad++;
 		}
 		// Stage 1 cost-split: roll per-frame nanosecond accumulators (no-op

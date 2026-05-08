@@ -119,6 +119,31 @@ unsigned int EnsureRecipeBufferUploaded();
 // records emitted (i.e., the per-frame draw instance count).
 uint32_t UploadAndBindThinRecords();
 
+// --- Narrow-walk fast path -------------------------------------------------
+//
+// Default-on (env-gate `MC2_WATER_UPLOAD_NARROW=0` to opt out and fall back
+// to the legacy full-quadList walk). The narrow walk lets the caller append
+// candidates during the same `setupTextures()` loop the engine already runs,
+// reducing UploadAndBindThinRecords' iteration count from `numberQuads`
+// (camera window, ~14K-40K) to only the water-bearing subset (typically
+// hundreds). Eligibility test must match UploadThin's exactly.
+//
+// Contract:
+//   1. BeginFrameNarrow() at the top of the per-frame setupTextures loop —
+//      clears the candidate vector, reserves prior-frame max + 10% slack.
+//   2. AppendNarrowCandidate(&q) immediately after `q.setupTextures()` for
+//      every quad whose corners + waterHandle pass the same predicate
+//      UploadAndBindThinRecords applies. O(1), no allocation in the hot
+//      path after the BeginFrameNarrow reserve.
+//   3. UploadAndBindThinRecords reads the candidate vector if narrow mode
+//      is on; otherwise falls back to the full quadList walk.
+bool NarrowEnabled();
+void BeginFrameNarrow();
+struct NarrowCandidate {
+    const void* quadPtr; // TerrainQuadPtr — opaque to keep the header lean
+};
+void AppendNarrowCandidate(const void* quadPtr);
+
 // Tear down GL buffers (mission unload, app shutdown).
 void ReleaseGlResources();
 
