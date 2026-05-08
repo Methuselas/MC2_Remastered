@@ -52,8 +52,10 @@ The flow:
 **Exception:** mechanical follow-up slices (e.g., "delete dead code after soak"), slices that mirror a shipped pattern with predetermined stages, or single-population slices with one clear parity gate get prose review by default. The skill's own "When to use" section governs the stratification — read it.
 
 ## Critical Rules
+- **No wall-clock time projections.** Never write "X hours/days/weeks," "multi-session," "multi-week effort," "this will take...," or any duration estimate for work scope. Agent SDK execution rates don't track human-engineering estimates — work that traditionally took weeks ships in hours; work that traditionally took an afternoon may take longer if the parity surface is wide. If asked about effort, describe complexity in code dimensions: subsystems touched, files modified, parity gates, soak windows. Not time.
 - **Stock install must remain playable.** Architectural rule for ALL renderer modernization: any new renderer data must either be generated from stock assets at runtime/cache time or loaded as an optional sidecar. Missing modern data must degrade gracefully to stock-compatible generation, never fail. No stock campaign file is rewritten as part of modernization. No savegame depends on generated render caches. No modern visual sidecar is required for gameplay correctness. Full rationale and how-to-apply: `memory/stock_install_must_remain_playable.md`.
 - **Build:** ALWAYS `--config RelWithDebInfo`. Release crashes with GL_INVALID_ENUM.
+- **Full relink before deploy:** CMake's incremental build can leak stale object linkage when headers change inline functions, templates, or static state. Before any deploy that touches a load-bearing function (renderer core, batcher, state-cache, draw-path), force a full relink: delete `build64/RelWithDebInfo/mc2.exe` (and the changed file's `.obj`) before `cmake --build`, OR pass `--clean-first` to clean+rebuild. Skipping this has burned us before — silent stale-linkage means the deployed binary doesn't match the source you read. Cheap insurance.
 - **Deploy:** NEVER `cp -r`. ALWAYS `cp -f` per file + `diff -q`. `cp -r` silently fails on Windows/MSYS2.
 - **Git:** NEVER push to alariq/mc2 origin. All work is local.
 - **Shader #version:** Never in shader files. Pass `"#version 430\n"` as prefix to `makeProgram()` (matches the 4.3 context we require for SSBO / std430).
@@ -112,6 +114,7 @@ path as working without re-reading the above references first.
 - **GPU zones** on shadow passes, terrain draw, 3D objects, post-process. Uses GL timer queries.
 - **AMD RGP** works externally via Radeon Developer Panel for shader-level analysis.
 - Include `gos_profiler.h` to add new zones. Use `ZoneScopedN("Name")` for CPU, add `TracyGpuZone("Name")` for GPU-heavy code.
+- **100 ns floor:** never instrument a region whose work is <100 ns. Tracy zone overhead is ~20–50 ns; sub-100 ns work measures the instrumentation, not the function. Per-element / per-quad / per-vertex / per-call zones in hot loops are forbidden — `gos_getTextureHandle` (~20 ns) is the canonical example. Coarse per-pass zones (one zone wrapping a phase that runs once per frame) are correct. Origin: commit `fdc47bc perf(tracy): strip sub-100ns hot-path zones` 2026-05-07.
 
 ## Known Issues
 - Post-processing (bloom, FXAA) applies to HUD -- FIXED (gos_State_IsHUD buffering, Apr 2026)
