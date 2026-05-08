@@ -2506,7 +2506,14 @@ long Mech3DAppearance::render (long depthFixup)
 				desc.mechType       = mechType;
 				desc.currentLOD     = (int)currentLOD;
 				desc.slot0TexHandle = (uint32_t)localTextureHandle;
-				desc.lightDataIndex = 0;       // Slice B1 wires this
+				// Slice B1: use the dedup-cache slot populated by
+				// CacheGpuLightData() in update(). 0xFFFFFFFFu sentinel
+				// means "not yet cached" — fall back to 0, which the
+				// shader interprets as "use the engine's default ambient
+				// slot" (visually equivalent to Slice A flat-white minus
+				// the ambient term; safe).
+				const uint32_t cachedLI = mechShape->getCachedGpuLightIndex();
+				desc.lightDataIndex = (cachedLI == 0xFFFFFFFFu) ? 0u : cachedLI;
 				desc.renderFlags    = 0;
 				desc.highlightARGB  = gpuHighlightARGB;
 				desc.fogARGB        = 0;       // Slice B2 wires this
@@ -4325,6 +4332,14 @@ long Mech3DAppearance::update (bool animate)
 			: inView;
 		if ((turn < 3) || gpuVis || (currentGestureId == GestureJump) || g_useGpuStaticProps)
 			updateGeometry();
+
+		// Slice B1: refresh per-actor LightsData UBO slot index for the
+		// GPU mech batcher path. Mirrors bdactor.cpp:2314 pattern. No-op
+		// when killswitch is off; cheap (one hash lookup + dedup-cache
+		// slot write) when on. Source: msl.cpp:1828.
+		if (g_useGpuMechs && mechShape) {
+			mechShape->CacheGpuLightData();
+		}
 	}
 
 	//----------------------------------------------------------------------
