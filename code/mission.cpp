@@ -234,6 +234,7 @@ extern PriorityQueuePtr	openList;
 #include "gos_profiler.h"
 #include "gos_static_prop_batcher.h"
 #include "gos_static_prop_registry.h"  // Stage 3.C: init()/destroy()
+#include "gos_mech_batcher.h"
 
 // Phase-timing hooks implemented in GameOS/gameos/gameosmain.cpp.
 extern "C" void mission_phase_begin();
@@ -1663,6 +1664,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// Reset GPU static-prop batcher state at every map boundary, before any
 	// actor registerType() calls happen during actor spawn (Task 6).
 	GpuStaticPropBatcher::instance().onMapLoad();
+	GpuMechBatcher::instance().onMapLoad();
 	GpuStaticPropRegistry::init();   // Stage 3.C
 
 	neverEndingStory = false;
@@ -3086,6 +3088,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// mission. Safe here: GL context is live (textures/shadow FBOs already
 	// exist by this point) and this is the unconditional tail of map-load.
 	GpuStaticPropBatcher::instance().finalizeGeometry();
+	GpuMechBatcher::instance().finalizeGeometry();
 
 	// C1b: build the DrawElementsIndirectCommand buffer now that all static prop
 	// types are registered and geometry is finalized. No-op if MC2_GPU_CULL is
@@ -3230,6 +3233,7 @@ void Mission::destroy (bool initLogistics)
 	// Release GPU static-prop batcher resources (VBO/IBO/VAO) at mission
 	// shutdown. Safe to call when nothing was registered.
 	GpuStaticPropBatcher::instance().onMapUnload();
+	GpuMechBatcher::instance().onMapUnload();
 	GpuStaticPropRegistry::destroy(); // Stage 3.C
 
 	//---------------------------------------------------------------
