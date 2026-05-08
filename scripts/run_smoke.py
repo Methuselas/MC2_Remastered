@@ -251,6 +251,8 @@ def main():
                             "MC2_TERRAIN_INDIRECT_PARITY_CHECK",
                             "MC2_TERRAIN_INDIRECT_TRACE",
                             "MC2_TERRAIN_INDIRECT_MINE",
+                            "MC2_TERRAIN_INDIRECT_OVERLAY",
+                            "MC2_TERRAIN_INDIRECT_OVERLAY_PARITY_CHECK",
                             "MC2_TERRAIN_COST_SPLIT",
                             # Track A1 — object admission predicate + trace
                             "MC2_OBJECT_ADMISSION_PREDICATE",

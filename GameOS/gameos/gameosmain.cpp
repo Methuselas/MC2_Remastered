@@ -714,6 +714,8 @@ int main(int argc, char** argv)
         const bool tInd    = gos_terrain_indirect::IsEnabled();
         const bool tIndP   = gos_terrain_indirect::IsParityCheckEnabled();
         const bool tIndM   = gos_terrain_indirect::IsMineEnabled();   // PR2c
+        const bool tIndO   = gos_terrain_indirect::IsOverlayEnabled();  // PR2b
+        const bool tIndOP  = gos_terrain_indirect::IsOverlayParityCheckEnabled();  // PR2b
         // ParseEnvBool semantics: "0"/"false"/"off"/"no" → false, anything else → true.
         // Must match the ParseEnvBool logic in code/terrobj.cpp so the banner
         // accurately reflects the actual gate state (getenv!=nullptr would report
@@ -741,14 +743,16 @@ int main(int argc, char** argv)
         // and gpu_objects fields without truncation.
         // Grew 640 -> 720 to absorb gpu_cull_substrate and gpu_cull_aabb_parity.
         // Grew 720 -> 768 to absorb terrain_indirect_mine (PR2c Stage 0c).
+        // Grew 768 -> 832 to absorb terrain_indirect_overlay{,_parity} (PR2b).
         // (water_skip_env field was tentatively added during the closed
         // water-projection-skip slice attempt; removed when the slice
         // closed — premise invalidated by Stage 0 M3 audit.)
-        char _cbbuf[768];
+        char _cbbuf[832];
         snprintf(_cbbuf, sizeof(_cbbuf),
             "[INSTR v1] enabled: tgl_pool=%d destroy=%d gl_error_print=%d "
             "smoke=%d water_fp=%d water_parity=%d vp_fast=%d vp_parity=%d "
             "terrain_indirect=%d terrain_indirect_parity=%d terrain_indirect_mine=%d "
+            "terrain_indirect_overlay=%d terrain_indirect_overlay_parity=%d "
             "gpu_objects=%d obj_recon_tracy=%d "
             "static_update_trace=%d static_update_skip=%d "
             "static_prop_registry=%d "
@@ -759,6 +763,7 @@ int main(int argc, char** argv)
             tgl ? 1 : 0, destr ? 1 : 0, glprint ? 1 : 0, smoke ? 1 : 0,
             waterFp ? 1 : 0, waterPc ? 1 : 0, vpFast ? 1 : 0, vpPar ? 1 : 0,
             tInd ? 1 : 0, tIndP ? 1 : 0, tIndM ? 1 : 0,
+            tIndO ? 1 : 0, tIndOP ? 1 : 0,
             gpuObj ? 1 : 0, objRecon ? 1 : 0,
             suTrace ? 1 : 0, suSkip ? 1 : 0,
             GpuStaticPropRegistry::isEnabled() ? 1 : 0,

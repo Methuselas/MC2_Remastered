@@ -127,6 +127,26 @@ struct CostSplitMineDrawScope {
             std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
     }
 };
+// PR2b Stage 0b — overlay-specific RAII timer. Brackets the M2d fast-path
+// block at quad.cpp:2035-2083 (the
+// `if (useOverlayTexture && overlayHandle != 0xffffffff)`). Pre-existing
+// CostSplitDetailOverlayScope brackets only the legacy Shape-C fallback
+// at :485-503 which fires ~0 in tier1 steady state, so this timer is the
+// load-bearing measurement for PR2b's retirement target.
+struct CostSplitOverlayScope {
+    std::chrono::steady_clock::time_point t0;
+    bool active;
+    CostSplitOverlayScope()
+        : active(gos_terrain_indirect::IsCostSplitEnabled()) {
+        if (active) t0 = std::chrono::steady_clock::now();
+    }
+    ~CostSplitOverlayScope() {
+        if (!active) return;
+        const auto dt = std::chrono::steady_clock::now() - t0;
+        gos_terrain_indirect::CostSplit_AddOverlayNanos(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
+    }
+};
 
 // Stage 3 SOLID gate-off helpers.
 // When indirect SOLID is armed for this frame, BeginLegacySolidCluster()
@@ -2034,6 +2054,14 @@ void TerrainQuad::draw (void)
 		    // only; legacy overlay block also uses raw lightRGB).
 		    if (useOverlayTexture && overlayHandle != 0xffffffff)
 		    {
+		        // PR2b Stage 0b — bracket the M2d fast-path block + counter.
+		        // Counter increments once per quad that enters M2d (whether or
+		        // not the overlay actually emits — overlayTexId==0 short-circuits
+		        // below, but the per-quad scaffolding cost is real). Drops to
+		        // zero post Stage 3b legacy gate-off.
+		        CostSplitOverlayScope _csOverlay;
+		        gos_terrain_indirect::Counters_AddM2dOverlayEmitQuad();
+
 		        const DWORD overlayTexId = tex_resolve(overlayHandle);
 		        if (overlayTexId != 0)
 		        {

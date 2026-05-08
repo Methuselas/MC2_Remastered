@@ -101,6 +101,9 @@ long long s_legacy_mine_draw_quads       = 0;
 long long s_indirect_mine_drawn_cells    = 0;
 // PR2a Stage 0a — M2c detail-emit counter (drops to zero post Stage 1a).
 long long s_m2c_detail_emit_quads        = 0;
+// PR2b Stage 0b — overlay counters (drop to zero post Stage 3b gate-off).
+long long s_m2d_overlay_emit_quads       = 0;
+long long s_indirect_overlay_packed_quads = 0;
 }  // namespace
 
 namespace gos_terrain_indirect {
@@ -121,6 +124,11 @@ long long Counters_GetIndirectMineDrawnCells()   { return s_indirect_mine_drawn_
 // PR2a Stage 0a — M2c detail-emit counter.
 void      Counters_AddM2cDetailEmitQuad()        { ++s_m2c_detail_emit_quads; }
 long long Counters_GetM2cDetailEmitQuads()       { return s_m2c_detail_emit_quads; }
+// PR2b Stage 0b — overlay counters.
+void      Counters_AddM2dOverlayEmitQuad()       { ++s_m2d_overlay_emit_quads; }
+void      Counters_AddIndirectOverlayPackedQuad(){ ++s_indirect_overlay_packed_quads; }
+long long Counters_GetM2dOverlayEmitQuads()      { return s_m2d_overlay_emit_quads; }
+long long Counters_GetIndirectOverlayPackedQuads(){ return s_indirect_overlay_packed_quads; }
 
 // PR2c Stage 0c — env-gate readers. Default-OFF until Stage 4 default-on flip.
 bool IsMineEnabled() {
@@ -130,6 +138,27 @@ bool IsMineEnabled() {
     }();
     return s;
 }
+
+// PR2b Stage 0b — env-gate readers.
+bool IsOverlayEnabled() {
+    static const bool s = []() {
+        const char* v = getenv("MC2_TERRAIN_INDIRECT_OVERLAY");
+        return v && v[0] == '1' && v[1] == '\0';
+    }();
+    return s;
+}
+
+bool IsOverlayParityCheckEnabled() {
+    static const bool s = []() {
+        const char* v = getenv("MC2_TERRAIN_INDIRECT_OVERLAY_PARITY_CHECK");
+        return v && v[0] == '1' && v[1] == '\0';
+    }();
+    return s;
+}
+
+// Stage 3b wires the real preflight latch; Stage 0b/1b/2b stub always-false
+// so gate-off sites compile and stay dormant until Stage 3b lands the draw.
+bool IsFrameOverlayArmed() { return false; }
 
 // IsFrameMineArmed is defined further down (after Stage 1c's
 // g_mineTextureArrayReady storage). Forward decl is in the header.
@@ -144,10 +173,12 @@ long long s_solidBranchNanosThisFrame   = 0;
 long long s_detailOverlayNanosThisFrame = 0;
 long long s_mineEnqueueNanosThisFrame   = 0;  // PR2c Stage 0c
 long long s_mineDrawNanosThisFrame      = 0;  // PR2c Stage 0c
+long long s_overlayNanosThisFrame       = 0;  // PR2b Stage 0b
 long long s_solidBranchNanosTotal       = 0;
 long long s_detailOverlayNanosTotal     = 0;
 long long s_mineEnqueueNanosTotal       = 0;  // PR2c Stage 0c
 long long s_mineDrawNanosTotal          = 0;  // PR2c Stage 0c
+long long s_overlayNanosTotal           = 0;  // PR2b Stage 0b
 int       s_costSplitFramesObserved     = 0;
 }  // namespace
 
@@ -157,6 +188,7 @@ void CostSplit_AddSolidNanos(long long n)         { s_solidBranchNanosThisFrame 
 void CostSplit_AddDetailOverlayNanos(long long n) { s_detailOverlayNanosThisFrame += n; }
 void CostSplit_AddMineEnqueueNanos(long long n)   { s_mineEnqueueNanosThisFrame  += n; }
 void CostSplit_AddMineDrawNanos(long long n)      { s_mineDrawNanosThisFrame     += n; }
+void CostSplit_AddOverlayNanos(long long n)       { s_overlayNanosThisFrame      += n; }
 
 void CostSplit_RollFrame() {
     if (!IsCostSplitEnabled()) return;
@@ -164,17 +196,20 @@ void CostSplit_RollFrame() {
     s_detailOverlayNanosTotal     += s_detailOverlayNanosThisFrame;
     s_mineEnqueueNanosTotal       += s_mineEnqueueNanosThisFrame;
     s_mineDrawNanosTotal          += s_mineDrawNanosThisFrame;
+    s_overlayNanosTotal           += s_overlayNanosThisFrame;
     ++s_costSplitFramesObserved;
     s_solidBranchNanosThisFrame   = 0;
     s_detailOverlayNanosThisFrame = 0;
     s_mineEnqueueNanosThisFrame   = 0;
     s_mineDrawNanosThisFrame      = 0;
+    s_overlayNanosThisFrame       = 0;
 }
 
 long long CostSplit_GetSolidNanosTotal()         { return s_solidBranchNanosTotal; }
 long long CostSplit_GetDetailOverlayNanosTotal() { return s_detailOverlayNanosTotal; }
 long long CostSplit_GetMineEnqueueNanosTotal()   { return s_mineEnqueueNanosTotal; }
 long long CostSplit_GetMineDrawNanosTotal()      { return s_mineDrawNanosTotal; }
+long long CostSplit_GetOverlayNanosTotal()       { return s_overlayNanosTotal; }
 int       CostSplit_GetFramesObserved()          { return s_costSplitFramesObserved; }
 
 }  // namespace gos_terrain_indirect
@@ -218,10 +253,12 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
         const long long csDetailNs  = csOn ? CostSplit_GetDetailOverlayNanosTotal() : 0;
         const long long csMineEnqNs = csOn ? CostSplit_GetMineEnqueueNanosTotal()   : 0;
         const long long csMineDrwNs = csOn ? CostSplit_GetMineDrawNanosTotal()      : 0;
+        const long long csOverlayNs = csOn ? CostSplit_GetOverlayNanosTotal()       : 0;
         const long long csSolidPerFrame    = csOn ? csSolidNs   / csFrames : 0;
         const long long csDetailPerFrame   = csOn ? csDetailNs  / csFrames : 0;
         const long long csMineEnqPerFrame  = csOn ? csMineEnqNs / csFrames : 0;
         const long long csMineDrwPerFrame  = csOn ? csMineDrwNs / csFrames : 0;
+        const long long csOverlayPerFrame  = csOn ? csOverlayNs / csFrames : 0;
         if (csOn) {
             fprintf(stderr,
                     "[TERRAIN_INDIRECT_PARITY v1] event=summary frames=%lld "
@@ -233,10 +270,13 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     "legacy_mine_draw_quads=%lld "
                     "indirect_mine_drawn_cells=%lld "
                     "m2c_detail_emit_quads=%lld "
+                    "legacy_m2d_overlay_emit_quads=%lld "
+                    "indirect_overlay_packed_quads=%lld "
                     "solid_branch_ns_per_frame=%lld "
                     "detail_overlay_branch_ns_per_frame=%lld "
                     "mine_enqueue_ns_per_frame=%lld "
                     "mine_draw_ns_per_frame=%lld "
+                    "overlay_ns_per_frame=%lld "
                     "frames_observed=%d\n",
                     s_paritySummaryFrames,
                     s_paritySummaryQuads,
@@ -248,10 +288,13 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     Counters_GetLegacyMineDrawQuads(),
                     Counters_GetIndirectMineDrawnCells(),
                     Counters_GetM2cDetailEmitQuads(),
+                    Counters_GetM2dOverlayEmitQuads(),
+                    Counters_GetIndirectOverlayPackedQuads(),
                     csSolidPerFrame,
                     csDetailPerFrame,
                     csMineEnqPerFrame,
                     csMineDrwPerFrame,
+                    csOverlayPerFrame,
                     csFrames);
         } else {
             fprintf(stderr,
@@ -263,7 +306,9 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     "legacy_mine_enqueue_quads=%lld "
                     "legacy_mine_draw_quads=%lld "
                     "indirect_mine_drawn_cells=%lld "
-                    "m2c_detail_emit_quads=%lld\n",
+                    "m2c_detail_emit_quads=%lld "
+                    "legacy_m2d_overlay_emit_quads=%lld "
+                    "indirect_overlay_packed_quads=%lld\n",
                     s_paritySummaryFrames,
                     s_paritySummaryQuads,
                     s_paritySummaryMismatches,
@@ -273,7 +318,9 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     Counters_GetLegacyMineEnqueueQuads(),
                     Counters_GetLegacyMineDrawQuads(),
                     Counters_GetIndirectMineDrawnCells(),
-                    Counters_GetM2cDetailEmitQuads());
+                    Counters_GetM2cDetailEmitQuads(),
+                    Counters_GetM2dOverlayEmitQuads(),
+                    Counters_GetIndirectOverlayPackedQuads());
         }
         fflush(stderr);
     }

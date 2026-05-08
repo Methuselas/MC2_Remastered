@@ -84,6 +84,11 @@ void      CostSplit_AddDetailOverlayNanos(long long n);
 // detail-overlay buckets; same RollFrame cadence.
 void      CostSplit_AddMineEnqueueNanos(long long n);
 void      CostSplit_AddMineDrawNanos(long long n);
+// PR2b Stage 0b — overlay-specific accumulator. Brackets ONLY the M2d
+// fast-path block (CostSplitDetailOverlayScope brackets the legacy
+// Shape-C fallback at quad.cpp:485-503 which fires ~0 times in tier1
+// steady-state). Same RollFrame cadence.
+void      CostSplit_AddOverlayNanos(long long n);
 // Call once per frame at the close of the per-quad setupTextures loop
 // (terrain.cpp:1684 boundary). Internally gated on IsCostSplitEnabled() —
 // safe to call unconditionally.
@@ -92,6 +97,7 @@ long long CostSplit_GetSolidNanosTotal();
 long long CostSplit_GetDetailOverlayNanosTotal();
 long long CostSplit_GetMineEnqueueNanosTotal();
 long long CostSplit_GetMineDrawNanosTotal();
+long long CostSplit_GetOverlayNanosTotal();
 int       CostSplit_GetFramesObserved();
 
 // ---------------------------------------------------------------------------
@@ -141,6 +147,18 @@ long long Counters_GetIndirectMineDrawnCells();
 void      Counters_AddM2cDetailEmitQuad();
 long long Counters_GetM2cDetailEmitQuads();
 
+// PR2b Stage 0b — overlay-specific counters.
+//   legacy_m2d_overlay_emit_quads — incremented once per call to the M2d
+//     overlay block at quad.cpp:2035-2083 (the
+//     `if (useOverlayTexture && overlayHandle != 0xffffffff)`).
+//     Drops to zero post Stage 3b legacy gate-off.
+//   indirect_overlay_packed_quads — Stage 2b wires per-frame thin-record
+//     packer; placeholder here.
+void      Counters_AddM2dOverlayEmitQuad();
+void      Counters_AddIndirectOverlayPackedQuad();
+long long Counters_GetM2dOverlayEmitQuads();
+long long Counters_GetIndirectOverlayPackedQuads();
+
 // PR2c Stage 0c — env gate readers.
 //   IsMineEnabled()       — MC2_TERRAIN_INDIRECT_MINE (default OFF until Stage 4
 //                           default-on flip after Stage 2c soak).
@@ -149,6 +167,16 @@ long long Counters_GetM2cDetailEmitQuads();
 //                           and the gate-off sites can be staged ahead of arming.
 bool IsMineEnabled();
 bool IsFrameMineArmed();
+
+// PR2b Stage 0b — env gate readers.
+//   IsOverlayEnabled()        — MC2_TERRAIN_INDIRECT_OVERLAY (default OFF).
+//   IsOverlayParityCheckEnabled() — MC2_TERRAIN_INDIRECT_OVERLAY_PARITY_CHECK.
+//   IsFrameOverlayArmed()     — Stage 3b wires the real predicate; Stage 0b
+//                               stub returns false so gate-off sites can be
+//                               staged ahead of the live draw.
+bool IsOverlayEnabled();
+bool IsOverlayParityCheckEnabled();
+bool IsFrameOverlayArmed();
 
 // ---------------------------------------------------------------------------
 // PR2c Stage 1c — mine static-bake infrastructure.
