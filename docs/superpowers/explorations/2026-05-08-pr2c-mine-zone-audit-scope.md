@@ -62,8 +62,20 @@ the audit means either:
 
 ### Setup
 
-1. **Mission:** mc2_24 (only mine-bearing tier1 mission per recon
-   item 5 / brainstorm Q3).
+1. **Mission: TBD — identify a tier1 (or tier2 if needed) mission
+   with mines actually visible on screen during normal gameplay.**
+   The previous recon docs (and `m2_thin_record_cpu_reduction_results.md`)
+   cited mc2_24 sourced from brainstorm Q3 line 274; user correction
+   2026-05-08 confirmed mc2_24 has no mines. The brainstorm cite was
+   never verified at write-time — discipline failure caught at
+   audit-scope review. Identifying the actual mine-bearing mission is
+   a blocking prerequisite for this audit; either:
+   - Spelunk stock mission `.pak` files for `MapCell.mine != 0`
+     pre-placed mines (`mclib/move.cpp:991` is the load path), OR
+   - Run each tier1 mission and observe mine sprites during normal
+     gameplay (mid-mission gameplay-laid mines are also valid for the
+     audit), OR
+   - Use a tier2 mission if no tier1 mission exhibits mines.
 2. **Camera angles:**
    - Active mines, normal zoom, mid-mission with mech adjacent to mines.
    - Active mines, full zoom out (per parallel-session telemetry
@@ -76,7 +88,8 @@ the audit means either:
 ### Two passes
 
 **Pass 1 — baseline at current zone (A).** No code changes. Build,
-run mc2_24, capture screenshots at the four camera setups.
+run the identified mine-bearing mission, capture screenshots at the
+four camera setups.
 
 **Pass 2 — prototype at zone (B).** Patch `mclib/txmmgr.cpp`'s
 non-terrain alpha drain at `:2017-2023` to skip mine-textured nodes
@@ -137,9 +150,9 @@ keyed by `vertexNum × 16 + cellIdx`).
   [recon-1](2026-05-07-pr2-stage0-recon-1-perf-rebaseline-handoff.md).
 - Texture-array build for mines. Audit uses legacy texture-bind path;
   texture-array shape is locked by recon-2.
-- Non-mc2_24 missions. Mine-bearing missions outside tier1 may exist
-  in stock content but tier1 is the validation surface per
-  `feedback_offload_scope_stock_only.md`.
+- Confirming PR2c parity-gate scope across multiple missions. Audit
+  is single-mission visual verification; multi-mission parity is
+  PR2c's spec-stage concern.
 
 ---
 
@@ -164,6 +177,6 @@ fictional struct fields before executor session ran.
 | 3 | `Render.TerrainOverlays` zone first line | [`mclib/txmmgr.cpp:1777`](../../../mclib/txmmgr.cpp) (per recon-6 #4 verified 2026-05-07) | M |
 | 4 | `Render.Decals` zone first line | [`mclib/txmmgr.cpp:1782`](../../../mclib/txmmgr.cpp) (per recon-6 #5) | M |
 | 5 | `drawMine()` emit sites | [`mclib/quad.cpp:4240`](../../../mclib/quad.cpp) function def; emits at `:4373, :4374, :4378, :4379` (per recon-6 #14, re-grep'd 2026-05-08) | M |
-| 6 | mc2_24 is the only mine-bearing tier1 mission | recon-5 finding + `m2_thin_record_cpu_reduction_results.md` campaign-wide ~97% mine-free claim | M (memory-trusted) |
+| 6 | mine-bearing tier1 mission identity — TBD | brainstorm Q3 / `m2_thin_record_cpu_reduction_results.md` cited mc2_24; user-correction 2026-05-08 confirmed mc2_24 has no mines. Memory cite was never write-time-verified. | NF (BLOCKING — must resolve before running audit) |
 
-**Status summary:** 6 entries, all M.
+**Status summary:** 6 entries; 5 M, 1 NF (mine-bearing-mission identity is a blocking recon prerequisite for the audit).

@@ -107,7 +107,7 @@ legacy detail draw rather than try to elevate it.
 
 **Today's path:** M2d inline emit at `quad.cpp:2035-2083` calls
 `gos_PushTerrainOverlay(w, overlayTexId)`. Producer is implemented at
-[`gameos_graphics.cpp:5892`](../../../GameOS/gameos/gameos_graphics.cpp).
+[`gameos_graphics.cpp:6104`](../../../GameOS/gameos/gameos_graphics.cpp) (re-grep'd 2026-05-08; was :5892, drifted +212 lines).
 Drain: `gos_DrawTerrainOverlays()` at `gameos_graphics.cpp:5900`,
 called from zone #7 `Render.TerrainOverlays` at
 [`txmmgr.cpp:1779`](../../../mclib/txmmgr.cpp). Path is live and pixels
@@ -161,6 +161,12 @@ MC2_DRAWALPHA`). This is the LIVE drain.
 
 **PR2c is BLOCKED on a visual-order audit before any port begins.**
 Not a spec-time decision — a prerequisite recon item.
+
+> **Note 2026-05-08:** the previously cited mine-bearing tier1
+> mission (mc2_24) was user-corrected as having no mines. The
+> mine-bearing mission identity itself is now a blocking recon
+> prerequisite for the audit. See
+> `2026-05-08-pr2c-mine-zone-audit-scope.md`.
 
 The mine emit's flag set (`MC2_DRAWALPHA` only) routes it through the
 non-terrain alpha drain at zone #12. This may be load-bearing for
@@ -260,8 +266,8 @@ Render.Overlays         ← water-only (unchanged)
 | 8 | Suppress block introduced in `521d83a` | `git log -S "dark striped under-pattern" -- mclib/txmmgr.cpp` returns single match `521d83a 2026-04-16` | M |
 | 9 | M2c detail emit flags = `MC2_ISTERRAIN \| MC2_DRAWALPHA` (no water) | [`mclib/quad.cpp:2001`](../../../mclib/quad.cpp), `:2007`, `:2015`, `:2021` | M |
 | 10 | M2d overlay emit calls `gos_PushTerrainOverlay` (4 LIVE sites) | [`mclib/quad.cpp:2056`](../../../mclib/quad.cpp), `:2063`, `:2072`, `:2079` (M2d block). NOTE: there are also 4 dead Shape-C fallback sites at `:2190, :2333, :2603, :2744` (per `m2_thin_record_cpu_reduction_results.md` "Legacy quads/frame: 0"); 8 sites total in `quad.cpp`, 4 active. PR2b retires the live 4. | M |
-| 11 | `gos_PushTerrainOverlay` definition | [`gameos_graphics.cpp:5892`](../../../GameOS/gameos/gameos_graphics.cpp) | M |
-| 12 | `gos_DrawTerrainOverlays()` definition | [`gameos_graphics.cpp:5900`](../../../GameOS/gameos/gameos_graphics.cpp) | M |
+| 11 | `gos_PushTerrainOverlay` definition | [`gameos_graphics.cpp:6104`](../../../GameOS/gameos/gameos_graphics.cpp) (re-grep'd 2026-05-08; was :5892, drifted +212 lines) | M |
+| 12 | `gos_DrawTerrainOverlays()` definition | [`gameos_graphics.cpp:6112`](../../../GameOS/gameos/gameos_graphics.cpp) (re-grep'd 2026-05-08; was :5900, drifted +212 lines) | M |
 | 13 | Mine emit flags = `MC2_DRAWALPHA` only | [`mclib/quad.cpp:282`](../../../mclib/quad.cpp), `:290` (`addTriangleBulk(..., MC2_DRAWALPHA, 2)`) | M |
 | 14 | `drawMine()` emit sites (re-grep'd 2026-05-08) | `void TerrainQuad::drawMine (void)` defined at [`mclib/quad.cpp:4240`](../../../mclib/quad.cpp); 4 emit sites at [`:4373, :4374, :4378, :4379`](../../../mclib/quad.cpp) (`addVertices(blown/mineTextureHandle, gVertex/sVertex, MC2_DRAWALPHA)`). Brainstorm cited `:4379, :4380, :4384, :4385` (drift -1 to -6) | M (re-grep'd; brainstorm cite stale by ~6 lines) |
 | 15 | No path ORs `MC2_ISWATER` into a detail-textured node | grep `flags\|=.*MC2_ISWATER` / `MC2_ISWATER\\b` across `mclib/` and `GameOS/gameos/` returns no producer matches; only consumer at `txmmgr.cpp:1818,1826` | M (negative claim defended via opposite-direction grep per worktree CLAUDE.md "Negative claims need opposite-direction grep") |

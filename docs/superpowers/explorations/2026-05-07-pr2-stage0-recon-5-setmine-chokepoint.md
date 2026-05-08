@@ -144,6 +144,14 @@ Mine state's per-cell granularity (16 cells per quad,
 operate per-quad. PR2c's recipe shape is therefore parallel rather than
 recipe-extension per brainstorm Q4 / Q6.
 
+> **Note 2026-05-08:** the brainstorm Q3 line 274 claim that mc2_24 is
+> the only mine-bearing tier1 mission was user-corrected as incorrect;
+> mc2_24 has no mines. The brainstorm-cited "campaign-wide ~97%
+> mine-free" memory entry was not write-time-verified. Identification
+> of the actual mine-bearing tier1 (or fallback tier2) mission is a
+> blocking prerequisite for PR2c's visual audit; see
+> `2026-05-08-pr2c-mine-zone-audit-scope.md`.
+
 `mineResult.setMine(cellPos, data)` ([`quad.h:45`](../../../mclib/quad.h))
 is the **per-quad rendering cache** populated from `MissionMap`'s
 authoritative state during `setupTextures()`. Callers:
