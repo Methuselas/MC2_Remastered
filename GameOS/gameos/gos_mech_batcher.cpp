@@ -291,6 +291,25 @@ void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int l
         TG_TypeShape* typeShape = static_cast<TG_TypeShape*>(tnode);
         if (nodeIdx == 0) rec.sourceNode0 = typeShape;
 
+        // Skip spotlight leaves: TG_Shape::isSpotlight is set on the
+        // per-instance shape from "SpotLight_*" node name prefix at
+        // tgl.cpp:259/475. The CPU mech path's per-leaf rendering
+        // path skips spotlights based on per-actor lightsOut state;
+        // Slice A doesn't carry per-actor lightsOut, so skipping
+        // spotlight geometry entirely is the safe move. Mirrors what
+        // gos_static_prop_batcher.cpp does via its renderFlags
+        // (bit 2: isSpotlight). Slice B+ can re-enable with a
+        // per-actor lightsOut/spotlight flag.
+        const char* nodeName = tnode->getNodeId();
+        if (nodeName && S_strnicmp(nodeName, "SpotLight_", 10) == 0) {
+            if (s_nodeTrace) {
+                std::fprintf(stderr,
+                    "[MECHREG v1] event=skip_spotlight type=%p lod=%d nodeIdx=%d name=%s\n",
+                    (void*)mechType, lod, nodeIdx, nodeName);
+            }
+            continue;
+        }
+
         if (!typeShape->numTypeTriangles || !typeShape->listOfTypeTriangles ||
             !typeShape->listOfTypeVertices) continue;
 
