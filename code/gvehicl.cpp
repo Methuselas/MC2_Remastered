@@ -113,6 +113,7 @@
 
 #include "../resource.h"
 #include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
+#include "../GameOS/gameos/gos_profiler.h"  // Tracy sub-zones for vehicles update
 
 // C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
 // MC2_GPU_CULL_LIFECYCLE=1 routes AI canBeSeen() combat gates to GPU-lagged visibility.
@@ -3434,8 +3435,11 @@ long GroundVehicle::update (void)
 	}
 	
 	((ObjectAppearance*)appearance)->pilotNameID = IDS_NOPILOT;
-	control.update(this);
-	
+	{
+		ZoneScopedN("GameLogic.Units.Vehicles AI");
+		control.update(this);
+	}
+
 	#ifdef MC_PROFILE
 	QueryPerformanceCounter(endCk);
 	srCtrlUpd += (endCk.LowPart - startCk.LowPart);
@@ -3446,8 +3450,10 @@ long GroundVehicle::update (void)
 	#endif
 
 	bool emergencyStop = false;
-	if (!isDisabled())
-		emergencyStop = crashAvoidanceSystem();
+	{
+		ZoneScopedN("GameLogic.Units.Vehicles Mover");
+		if (!isDisabled())
+			emergencyStop = crashAvoidanceSystem();
 
 	#ifdef MC_PROFILE
 	QueryPerformanceCounter(endCk);
@@ -3677,9 +3683,11 @@ long GroundVehicle::update (void)
 	position.z = zPos;
 	if ((moveLevel == 1) && (zPos < MapData::waterDepth))
 		position.z = MapData::waterDepth;
- 
+	}  // end GameLogic.Units.Vehicles Mover
+
 	if (!isDestroyed() || (timeLeft > 0.0))
 	{
+		ZoneScopedN("GameLogic.Units.Vehicles AppearanceUpdate");
 		if (appearance)
 		{
 			updateAnimations();
@@ -3825,15 +3833,18 @@ long GroundVehicle::update (void)
 
 	//-------------------------------------------------------------------------------
 	// Let the moverBlockList know which block the Mech is in for Collision Purposes
-	float xCoord = position.x - Terrain::mapTopLeft3d.x;
-	float yCoord = Terrain::mapTopLeft3d.y + position.y ;
+	{
+		ZoneScopedN("GameLogic.Units.Vehicles Collisions");
+		float xCoord = position.x - Terrain::mapTopLeft3d.x;
+		float yCoord = Terrain::mapTopLeft3d.y + position.y ;
 
-	float divisor = (Terrain::verticesBlockSide * Terrain::worldUnitsPerVertex);
-	xCoord /= divisor;
-	yCoord /= divisor;
+		float divisor = (Terrain::verticesBlockSide * Terrain::worldUnitsPerVertex);
+		xCoord /= divisor;
+		yCoord /= divisor;
 
-	long blockNumber = float2long(xCoord) + (float2long(yCoord) * Terrain::blocksMapSide);
-	addMoverToList(blockNumber);
+		long blockNumber = float2long(xCoord) + (float2long(yCoord) * Terrain::blocksMapSide);
+		addMoverToList(blockNumber);
+	}
 
 		#ifdef MC_PROFILE
 		QueryPerformanceCounter(endCk);
