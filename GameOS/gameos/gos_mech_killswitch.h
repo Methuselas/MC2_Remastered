@@ -7,6 +7,12 @@
 // Can also be toggled at runtime via RAlt+M (wire in gameosmain.cpp hotkey handler).
 extern bool g_useGpuMechs;
 
+// Slice B1: gates VS-side calc_light() in mech.vert. Independent of
+// g_useGpuMechs so an operator can keep GPU mech rendering on while
+// flipping lighting off if a B1 regression surfaces. No effect when
+// g_useGpuMechs is off (the entire batcher path skips).
+extern bool g_useGpuMechLighting;
+
 // Resolve a gosTextureHandle to the underlying raw GL texture name.
 // Returns 0 if handle is INVALID_TEXTURE_ID or gosTexture is gone.
 // Implemented in gameos_graphics.cpp (same as gos_static_prop_killswitch.h).

@@ -24,6 +24,10 @@ static_assert(MECH_RING_FRAMES == STATIC_PROP_RING_FRAMES,
 // flip if it becomes useful.
 bool g_useGpuMechs = (getenv("MC2_GPU_MECHS") != nullptr);
 
+// Slice B1: enables calc_light() in mech.vert. Requires g_useGpuMechs=true
+// to take effect (the calc_light branch is inside the GPU mech draw path).
+bool g_useGpuMechLighting = (getenv("MC2_GPU_MECH_LIGHTING") != nullptr);
+
 // ---------------------------------------------------------------------------
 // File-static state
 // ---------------------------------------------------------------------------
@@ -41,6 +45,7 @@ static GLint s_loc_u_mvp             = -1;
 static GLint s_loc_u_tex             = -1;
 static GLint s_loc_u_fogValue        = -1;
 static GLint s_loc_u_debugMode       = -1;
+static GLint s_loc_u_lightingMode    = -1;
 
 // Geometry (immutable after finalizeGeometry).
 static GLuint s_sharedVao = 0;
@@ -132,6 +137,7 @@ static void loadProgramsIfNeeded() {
     s_loc_u_tex             = loc("u_tex");
     s_loc_u_fogValue        = loc("u_fogValue");
     s_loc_u_debugMode       = loc("u_debugMode");
+    s_loc_u_lightingMode    = loc("u_lightingMode");
 
     std::fprintf(stderr, "[MECHBATCHER v1] event=shader_ok prog=%u\n", s_mechProgram);
 }
@@ -730,6 +736,10 @@ void GpuMechBatcher::flush() {
     // Static uniforms.
     glUniform1i(s_loc_u_tex,      0);
     glUniform1f(s_loc_u_fogValue, 1.0f);
+    // Slice B1: lighting mode 0 = Slice A flat-white passthrough,
+    // 1 = calc_light() per-vertex. Set per-flush from killswitch.
+    if (s_loc_u_lightingMode >= 0)
+        glUniform1i(s_loc_u_lightingMode, g_useGpuMechLighting ? 1 : 0);
     if (s_mechBatcherTrace) {
         static int s_uniDiagPrinted = 0;
         if (s_uniDiagPrinted < 2) {
