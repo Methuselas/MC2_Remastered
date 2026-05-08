@@ -172,7 +172,7 @@ in the same PR.
 | 1 | `MissionMap::setMine` definition | [`mclib/move.h:634-646`](../../../mclib/move.h) | M |
 | 2 | `tileMineCount` maintained in `setMine` | [`move.h:641-645`](../../../mclib/move.h) — `if (tileMineCount && ((oldMine == 0) != (mine == 0))) { ... }` | M |
 | 3 | `tileHasMines` fast-skip read | [`move.h:652-657`](../../../mclib/move.h) | M |
-| 4 | `rebuildTileMineCounts` for packet bypass | [`move.h:659-661`](../../../mclib/move.h), defined at [`move.cpp:876+`](../../../mclib/move.cpp) | M |
+| 4 | `rebuildTileMineCounts` for packet bypass | declared at [`move.h:659-661`](../../../mclib/move.h), defined at [`move.cpp:875`](../../../mclib/move.cpp) (re-grep'd 2026-05-08) | M |
 | 5 | 20 GameMap->setMine callsites (drift +1 vs slice 2b's 19) | grep `GameMap->setMine` returns 20 lines across code/{carnage,artlry,mech,gvehicl,weaponbolt}.cpp | M (drift: count) |
 | 6 | 2 internal MissionMap setMine calls | [`mclib/move.cpp:991`](../../../mclib/move.cpp) (init load), [`:1032`](../../../mclib/move.cpp) (mine destroy) | M |
 | 7 | `mineResult.setMine` per-quad cache (DIFFERENT API) | [`mclib/quad.h:45`](../../../mclib/quad.h) — `void setMine (DWORD pos, unsigned char data)` on TerrainQuad's `mineResult` | M |

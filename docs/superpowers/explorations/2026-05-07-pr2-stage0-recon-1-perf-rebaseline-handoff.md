@@ -1,6 +1,6 @@
 # PR2 Stage 0 recon — item 1: perf re-baseline handoff
 
-**Date:** 2026-05-07
+**Date:** 2026-05-07 (multi-zoom insight added 2026-05-08)
 **Status:** Recon — **handoff doc only.** Tracy sub-zone instrumentation
 lands in a different session per user direction (2026-05-07). This doc
 specifies what that session must add, what data to capture, and why the
@@ -62,8 +62,8 @@ the `vertexProjectLoop` fast path:
 
 These two branches collectively contain:
 
-- 4 `addVertices(terrainDetailHandle, ...)` sites (M2c, BOTTOMLEFT/RIGHT × tri1/tri2)
-- 4 `gos_PushTerrainOverlay(w, overlayTexId)` sites (M2d, BOTTOMLEFT/RIGHT × tri1/tri2)
+- 4 LIVE `addVertices(terrainDetailHandle, ...)` sites (M2c, BOTTOMLEFT/RIGHT × tri1/tri2). 4 additional dead Shape-C fallback sites at `:2247, :2390, :2562, :2703` exist but fire ~0 times in tier1 steady-state.
+- 4 LIVE `gos_PushTerrainOverlay(w, overlayTexId)` sites (M2d, BOTTOMLEFT/RIGHT × tri1/tri2). 4 dead Shape-C fallback sites also exist (`:2190, :2333, :2603, :2744`).
 - Per-corner `gos_VERTEX corner[4]` build (4 multiply-adds, 4 ARGB
   fetches, 4 fogRGB fetches per quad)
 - Per-corner `WorldOverlayVert wov_corner[4]` build (similar cost)
@@ -122,6 +122,19 @@ py -3 .claude/worktrees/nifty-mendeleev/scripts/run_smoke.py \
 
 with env: `MC2_TERRAIN_INDIRECT=1 MC2_TERRAIN_COST_SPLIT=1`
 (both already on by default; explicit for clarity).
+
+**Capture at MULTIPLE zoom levels — not just the smoke camera.**
+Telemetry from a parallel session 2026-05-08 found
+`legacy_detail_overlay_quads` jumps from ~1,521/frame at normal zoom
+to ~8,000/frame at full zoom out (mc2_01) — a ~5× scaling. PR2's
+retirement target is therefore zoom-sensitive: perf-gate sizing on
+the smoke camera alone underweights the win at full zoom out (and
+overweights it for normal-zoom users). Spec session must size perf
+gates against both zooms or pick a representative weighted target.
+
+This also bears on PR2c (mine emits): mc2_24 mine-cell counts are
+zoom-dependent in the same way; capture both zooms for that mission
+specifically.
 
 Capture per mission (mc2_01, mc2_03, mc2_10, mc2_17, mc2_24):
 
@@ -195,7 +208,7 @@ claim from grep:
 | 3 | M2c detail emit unbracketed | [`mclib/quad.cpp:1961-2024`](../../../mclib/quad.cpp) — no `ZoneScopedN` or `CostSplit*Scope` declarations within the block | M |
 | 4 | M2d overlay emit unbracketed | [`mclib/quad.cpp:2035-2083`](../../../mclib/quad.cpp) — same; verified by grep `ZoneScopedN\|CostSplit` against the line range | M |
 | 5 | `Counters_Add*` API at indirect TU | [`GameOS/gameos/gos_terrain_indirect.cpp:86-90`](../../../GameOS/gameos/gos_terrain_indirect.cpp) | M |
-| 6 | `legacy_detail_overlay_quads` counter exists | brainstorm appendix #26 + [`gos_terrain_indirect.cpp`](../../../GameOS/gameos/gos_terrain_indirect.cpp) (cite per brainstorm; not re-grep'd here) | M (brainstorm-trusted) |
+| 6 | `legacy_detail_overlay_quads` counter exists | brainstorm appendix #26 cite for [`gos_terrain_indirect.cpp`](../../../GameOS/gameos/gos_terrain_indirect.cpp); not re-grep'd at write-time (this is a handoff doc, not an executor plan — but flag for spec session to re-verify) | NF (re-verify at spec time per worktree CLAUDE.md "grep at write-time" rule) |
 | 7 | M2 fast path covers ~100% in tier1 steady state | [`memory/m2_thin_record_cpu_reduction_results.md`](C:/Users/Joe/.claude/projects/A--Games-mc2-opengl-src/memory/m2_thin_record_cpu_reduction_results.md) line 26: "Legacy quads/frame: 0" | M |
 | 8 | Mine setup/draw emit unbracketed | recon item 5: `enqueueTerrainMineState` ([`mclib/quad.cpp:282,290`](../../../mclib/quad.cpp)), `drawMine()` ([`:4246+`](../../../mclib/quad.cpp)) — neither has `CostSplit*Scope` | M |
 

@@ -221,12 +221,22 @@ inheriting linear filtering from PR2a/b.
 
 ### `GL_MAX_ARRAY_TEXTURE_LAYERS`
 
-Per GL 4.3 core spec, minimum guaranteed value is 2048 layers. RX 7900
-XTX advertises 2048. All three buckets fit comfortably:
+Per GL 4.3 core spec, **minimum guaranteed** value is 2048 layers.
+The codebase does **not** currently `glGetIntegerv` this limit (verified
+2026-05-08 adversarial review — zero hits in the worktree). The
+"2048" figure for RX 7900 XTX is therefore the spec floor, not a
+runtime-verified hardware advertised value. All three buckets fit
+comfortably under the spec minimum:
 
 - Detail: ≤ 4 layers
 - Overlay: ≤ 475 layers (worst-case full catalog) / ≤ 100 (per-mission)
 - Mine: 2 layers
+
+**Spec-session action item:** add a `glGetIntegerv(GL_MAX_ARRAY_TEXTURE_LAYERS, &n)`
+runtime guard at overlay-array build time, asserting `n >= 512`. Mirrors
+the discipline this codebase uses for other GL limits and protects
+against future ports to lower-spec hardware. The cement-atlas at PR1
+also lacks this check — existing debt to revisit.
 
 ### `GL_MAX_TEXTURE_SIZE`
 
@@ -298,6 +308,7 @@ silent sampler artifacts.
 | 14 | `MC_MAX_TERRAIN_TXMS` ~3000 (mentioned in PR1 memory) | grep search: not found in `mclib/`, terminology used in `gos_terrain_indirect.cpp` per PR1 memory; cross-check reference, not a load-bearing claim for this recon | NF (deferred — not load-bearing for this recon's conclusion) |
 | 15 | Cement classes in overlay catalog: `numTextures > 9` heuristic | [`mclib/terrtxm.cpp:745`](../../../mclib/terrtxm.cpp) — `if (overlays[i].numTextures > 9)` | M |
 | 16 | Negative claim — no per-size-class fallback needed | All three buckets uniform-dim within bucket: 128² (det), 64² (ovl), 16² (mine). Verified by 100% match on stock disk content | M |
+| 17 | `GL_MAX_ARRAY_TEXTURE_LAYERS = 2048` — SPEC MINIMUM, not runtime-queried | GL 4.3 core spec minimum guaranteed = 2048; codebase has zero `glGetIntegerv(GL_MAX_ARRAY_TEXTURE_LAYERS)` callers (verified 2026-05-08 adversarial review). RX 7900 XTX presumed at-or-above spec but unmeasured. | M (spec minimum guaranteed; hardware value unqueried) |
 
 **Status summary:** 16 entries; 15 M, 0 D, 1 NF (`MC_MAX_TERRAIN_TXMS`
 exact value — not load-bearing for the texture-array sizing
