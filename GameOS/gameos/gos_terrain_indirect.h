@@ -154,10 +154,17 @@ long long Counters_GetM2cDetailEmitQuads();
 //     Drops to zero post Stage 3b legacy gate-off.
 //   indirect_overlay_packed_quads — Stage 2b wires per-frame thin-record
 //     packer; placeholder here.
+//   gos_push_overlay_calls — incremented once per call to
+//     gos_PushTerrainOverlay regardless of which producer (M2d fast-path
+//     OR Shape-C fallback). Diagnostic probe: confirms whether the
+//     overlay-producer pipeline is live anywhere on this mission. If
+//     zero across tier1, PR2b reframes from indirect-draw to delete-slice.
 void      Counters_AddM2dOverlayEmitQuad();
 void      Counters_AddIndirectOverlayPackedQuad();
+void      Counters_AddGosPushOverlayCall();
 long long Counters_GetM2dOverlayEmitQuads();
 long long Counters_GetIndirectOverlayPackedQuads();
+long long Counters_GetGosPushOverlayCalls();
 
 // PR2c Stage 0c — env gate readers.
 //   IsMineEnabled()       — MC2_TERRAIN_INDIRECT_MINE (default OFF until Stage 4

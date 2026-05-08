@@ -6248,6 +6248,10 @@ void gosRenderer::drawDecals()
 // ── Thin exported wrappers ────────────────────────────────────────────────────
 
 void __stdcall gos_PushTerrainOverlay(const WorldOverlayVert* verts3, unsigned int texHandle) {
+    // PR2b Stage 0b probe — counts every entry into the producer regardless
+    // of which call site invoked. Diagnoses whether the overlay-via-quad-walk
+    // pipeline is live anywhere in tier1.
+    gos_terrain_indirect::Counters_AddGosPushOverlayCall();
     if (g_gos_renderer && verts3) g_gos_renderer->pushTerrainOverlayTri(verts3, texHandle);
 }
 

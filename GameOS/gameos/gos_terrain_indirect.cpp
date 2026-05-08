@@ -104,6 +104,7 @@ long long s_m2c_detail_emit_quads        = 0;
 // PR2b Stage 0b — overlay counters (drop to zero post Stage 3b gate-off).
 long long s_m2d_overlay_emit_quads       = 0;
 long long s_indirect_overlay_packed_quads = 0;
+long long s_gos_push_overlay_calls       = 0;  // probe at producer body
 }  // namespace
 
 namespace gos_terrain_indirect {
@@ -127,8 +128,10 @@ long long Counters_GetM2cDetailEmitQuads()       { return s_m2c_detail_emit_quad
 // PR2b Stage 0b — overlay counters.
 void      Counters_AddM2dOverlayEmitQuad()       { ++s_m2d_overlay_emit_quads; }
 void      Counters_AddIndirectOverlayPackedQuad(){ ++s_indirect_overlay_packed_quads; }
+void      Counters_AddGosPushOverlayCall()       { ++s_gos_push_overlay_calls; }
 long long Counters_GetM2dOverlayEmitQuads()      { return s_m2d_overlay_emit_quads; }
 long long Counters_GetIndirectOverlayPackedQuads(){ return s_indirect_overlay_packed_quads; }
+long long Counters_GetGosPushOverlayCalls()      { return s_gos_push_overlay_calls; }
 
 // PR2c Stage 0c — env-gate readers. Default-OFF until Stage 4 default-on flip.
 bool IsMineEnabled() {
@@ -272,6 +275,7 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     "m2c_detail_emit_quads=%lld "
                     "legacy_m2d_overlay_emit_quads=%lld "
                     "indirect_overlay_packed_quads=%lld "
+                    "gos_push_overlay_calls=%lld "
                     "solid_branch_ns_per_frame=%lld "
                     "detail_overlay_branch_ns_per_frame=%lld "
                     "mine_enqueue_ns_per_frame=%lld "
@@ -290,6 +294,7 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     Counters_GetM2cDetailEmitQuads(),
                     Counters_GetM2dOverlayEmitQuads(),
                     Counters_GetIndirectOverlayPackedQuads(),
+                    Counters_GetGosPushOverlayCalls(),
                     csSolidPerFrame,
                     csDetailPerFrame,
                     csMineEnqPerFrame,
@@ -308,7 +313,8 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     "indirect_mine_drawn_cells=%lld "
                     "m2c_detail_emit_quads=%lld "
                     "legacy_m2d_overlay_emit_quads=%lld "
-                    "indirect_overlay_packed_quads=%lld\n",
+                    "indirect_overlay_packed_quads=%lld "
+                    "gos_push_overlay_calls=%lld\n",
                     s_paritySummaryFrames,
                     s_paritySummaryQuads,
                     s_paritySummaryMismatches,
@@ -320,7 +326,8 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     Counters_GetIndirectMineDrawnCells(),
                     Counters_GetM2cDetailEmitQuads(),
                     Counters_GetM2dOverlayEmitQuads(),
-                    Counters_GetIndirectOverlayPackedQuads());
+                    Counters_GetIndirectOverlayPackedQuads(),
+                    Counters_GetGosPushOverlayCalls());
         }
         fflush(stderr);
     }
