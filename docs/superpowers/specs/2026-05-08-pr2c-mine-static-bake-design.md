@@ -102,24 +102,92 @@ mission where N = number of `setMine` events. Empirically tiny.
 
 ### Per-mission lifecycle
 
-- `Terrain::primeMissionTerrainCache`: call `BuildMineStaticVBO()` once
-  after `MissionMap` is fully populated. Walks all cells; if any have
-  mineState != 0, emits geometry.
-- `Terrain::destroy`: call `ResetMineStaticVBO()` — keeps GL buffer
-  allocated, CPU-clears state and zeros vert count (WaterStream pattern
-  per `memory/water_ssbo_pattern.md`). Next mission's
-  `BuildMineStaticVBO` reuses the buffer.
+- `Terrain::primeMissionTerrainCache`: declare and **CPU-clear**
+  `MineStaticVBO` and `MineTextureArrayGL` state. **Do NOT build
+  either yet** — see "Lazy build timing" below.
+- `Terrain::destroy`: call `ResetMineStaticVBO()` and
+  `ResetMineTextureArray()` — keep GL buffer/texture allocations
+  for next-mission reuse, CPU-clear state (WaterStream pattern per
+  `memory/water_ssbo_pattern.md`). Set `g_mineVBOFirstBuildPending =
+  true` so the next mission's first `setMine` event re-triggers a
+  build.
 - `MissionMap::setMine`: set `g_mineVBODirty = true`. No rebuild
   inline (cheap — single bool write).
 - `MissionMap::rebuildTileMineCounts`: same — set dirty.
-- Per-frame entry to `Render.TerrainMines`: if dirty, rebuild VBO,
-  clear dirty.
+- Per-frame entry to `Render.TerrainMines`: if dirty, call
+  `RebuildMineStaticVBOIfDirty()`. First call lazy-builds the
+  texture-array, then walks the map for the VBO. Subsequent calls
+  rebuild VBO only.
 
-The "gate updates on minelayer-unit inputs" insight from user 2026-05-08:
-the chokepoint at `MissionMap::setMine` already covers all mine
-mutations, including pre-placed mines (loaded via init), AI minelayer
-laying mines, weapon impacts triggering mine state 2, etc. No need
-to inspect the calling unit type — single hook is sufficient.
+### Lazy build timing — load-bearing
+
+`mineTextureHandle` and `blownTextureHandle` are static class members
+declared with sentinel `0xffffffff` at [`mclib/quad.cpp:155-156`](../../../mclib/quad.cpp).
+They are **lazy-loaded by `TerrainQuad::setupTextures()`** at
+[`mclib/quad.cpp:520-531`](../../../mclib/quad.cpp) on first invocation.
+`Terrain::primeMissionTerrainCache` runs BEFORE any
+`setupTextures()` call, which means the slot indices are still
+`0xffffffff` at that moment.
+
+If `BuildMineTextureArray()` were called from
+`primeMissionTerrainCache` (the obvious place mirroring PR1
+`BuildCementCatalogAtlas`), it would `glGetTexImage` against
+unresolved handles and read garbage / crash.
+
+**Build deferral:** `BuildMineTextureArray()` is invoked from
+`RebuildMineStaticVBOIfDirty()` on its first call. By the time the
+first dirty-flag set fires (either pre-placed mines via init's
+per-cell `setMine` loop OR mid-mission minelayer activity), at least
+one paint cycle has run and `mineTextureHandle`/`blownTextureHandle`
+are guaranteed loaded. Spec-executor MUST verify this — if there's
+any path that fires `setMine` before the first paint cycle (e.g.,
+pre-placed mine loaded via `MissionMap::init` BEFORE the first
+`primeMissionTerrainCache`), the lazy build must explicitly call
+the legacy `loadTexture` paths before reading the slots.
+
+Defensive shape (recommended): in
+`BuildMineTextureArray()`, check both handles; if either is
+`0xffffffff`, load them via the same calls at quad.cpp:524 / :531
+(the legacy lazy-load is not exclusive to setupTextures).
+
+### Mid-mission minelayer spawn — explicitly supported
+
+Player can call in a minelayer unit mid-mission via the gameplay
+support-call system (not greppable from mclib alone — gameplay code
+in code/ wires this). When the spawned minelayer lays a mine, its
+unit code calls `GameMap->setMine(row, col, 1)`, which routes
+through the `MissionMap::setMine` chokepoint at
+[`mclib/move.h:634-646`](../../../mclib/move.h). PR2c's hook there
+flips `g_mineVBODirty = true`. Next paint cycle, the lazy
+`BuildMineTextureArray()` runs (if first build) and the VBO is
+populated with the newly-laid mine geometry.
+
+This means PR2c **must not assume** that `BuildMineStaticVBO()`'s
+first invocation is at mission init — it can be arbitrarily delayed
+until the player decides to spawn a minelayer. Three concrete
+implications:
+
+1. The texture-array build deferral above is non-optional. If the
+   first paint cycle runs without mines (typical mine-free mission),
+   the texture-array stays unbuilt. It builds on first
+   `g_mineVBODirty = true` event from any `setMine` call.
+2. The cost-split timer (Stage 0c) on the legacy path will report
+   non-zero `enqueueTerrainMineState` cost from the moment the first
+   mine lands, not from mission init. Stage 2c gate-off retires that
+   cost from that moment forward.
+3. The dirty-flag debounce handles minelayer spam: a player who
+   calls in two minelayers and lays 30 mines over 10 seconds
+   produces ≤ 600 frame-bounded VBO rebuilds. Each rebuild walks
+   the map once. Since cell scan is `tileMineCount`-skipped per
+   recon-5 (`tileHasMines` short-circuit is O(tile-count) not
+   O(cell-count) until a tile becomes mine-bearing), rebuild cost
+   stays sub-millisecond even on max chain.
+
+The "gate updates on minelayer-unit inputs" insight from user
+2026-05-08: the chokepoint at `MissionMap::setMine` already covers
+all mine mutations including mid-mission minelayer spawn. No need
+to inspect the calling unit type or hook the spawn event itself.
+Single hook is sufficient.
 
 ### Why texture-array instead of two samplers
 
@@ -185,23 +253,29 @@ runs unchanged.
   populated from `mineTextureHandle` (slot for `defaults/mine_00.tga`)
   and `blownTextureHandle` (slot for `defaults/minescorch_00.tga`)
   via `glGetTexImage` + `glTexSubImage3D`. NEAREST filter, no mips.
+  **Defensive load:** if either slot is `0xffffffff` at call time
+  (texture not yet lazy-loaded by `setupTextures`), call the same
+  `mcTextureManager->loadTexture(...)` paths the legacy code uses at
+  [`quad.cpp:524, :531`](../../../mclib/quad.cpp) inline before reading
+  the slots. See "Lazy build timing" section above.
 - Wire into chokepoints:
-  - `Terrain::primeMissionTerrainCache`: call `BuildMineStaticVBO()`
-    + `BuildMineTextureArray()` after `BuildDenseRecipe()`. The
-    texture-array build can short-circuit if already built (mission
-    teardown keeps it across reloads — the source TGAs don't change
-    mid-process).
+  - `Terrain::primeMissionTerrainCache`: call `ResetMineStaticVBO()`
+    + `ResetMineTextureArray()` (CPU-clear; do NOT build — see
+    "Lazy build timing"). Set `g_mineVBOFirstBuildPending = true`.
   - [`mclib/move.h:634-646`](../../../mclib/move.h) `MissionMap::setMine`:
     after the cell mutation + `tileMineCount` maintenance, if
     `IsMineArmingFlagSet()` (i.e., the env gate is on, regardless
     of frame-arm state), set the static `g_mineVBODirty = true`.
     No rebuild inline. **Single hook covers all 20 GameMap->setMine
     callsites + 2 internal MissionMap::setMine callsites per
-    [recon-5](../explorations/2026-05-07-pr2-stage0-recon-5-setmine-chokepoint.md).**
+    [recon-5](../explorations/2026-05-07-pr2-stage0-recon-5-setmine-chokepoint.md),
+    plus mid-mission minelayer-spawn-and-lay events.**
   - [`mclib/move.cpp:875`](../../../mclib/move.cpp)
     `MissionMap::rebuildTileMineCounts`: same — set dirty post-rebuild.
 - `RebuildMineStaticVBOIfDirty()`: lazy rebuild called from the bridge
-  at draw time. Walks `MissionMap` once if dirty.
+  at draw time. Walks `MissionMap` once if dirty. On first call after
+  reset (`g_mineVBOFirstBuildPending == true`), lazy-builds the
+  texture-array first, then proceeds with VBO build.
 
 **Tier1 verification:** smoke gate clean (no behavior change yet).
 Counter `indirect_mine_drawn_cells` reads zero (no draw site wired
@@ -368,19 +442,60 @@ unit 5. Spec-executor verifies unit 5 is unclaimed via
 `grep "glActiveTexture(GL_TEXTURE5)\|glBindSampler(5"` in
 gameos/shaders/.
 
-### R6. Pre-placed mines vs gameplay-laid mines
+### R6. Pre-placed mines vs gameplay-laid mines vs mid-mission spawn
 
-Pre-placed mines (loaded via `MissionMap::init` from mission packet
-data) and gameplay-laid mines (via the 20 callsites in code/) both
-end at `MissionMap::setMine`. **Both routes are covered by the
-single dirty-flag hook.** No special handling needed.
+Three routes all funnel through `MissionMap::setMine`:
 
-The internal-init call at [`mclib/move.cpp:991`](../../../mclib/move.cpp)
-fires for every cell during init; if there are no pre-placed mines
-the iteration is fast (cell.mine == 0 → setMine(row,col,0) →
-old==new, no tileMineCount mutation, dirty flag still gets set).
-**This is an acceptable rebuild trigger** — fires once at mission
-init, before any rendering, walks an empty cell set. No perf concern.
+1. **Pre-placed mines** loaded via `MissionMap::init` from mission
+   packet data (cell-loop at [`mclib/move.cpp:991`](../../../mclib/move.cpp)).
+2. **Gameplay-laid mines** from the 20 callsites in code/ — fire when
+   any minelayer (player faction or AI) lays a mine OR when any
+   weapon impact triggers a mine state transition.
+3. **Mid-mission minelayer spawn**: player calls in a minelayer unit
+   via support-call gameplay; the new unit's `setMine` calls fire
+   from #2's same callsites once it deploys. PR2c's hook does NOT
+   need to know the spawn happened — it only needs to react when
+   the spawned unit's `setMine` calls fire.
+
+All three covered by the single dirty-flag hook at
+`MissionMap::setMine`. No special handling.
+
+The init-loop call fires for every cell; if there are no pre-placed
+mines the iteration is fast (cell.mine == 0 → setMine(row,col,0) →
+old==new, no `tileMineCount` mutation, but dirty flag still gets
+set on every call). **Acceptable** — fires at mission init before
+any rendering. Lazy build at first paint walks the empty cell set
+and produces a zero-vert VBO. Subsequent `setMine` events from
+gameplay-spawned minelayers re-dirty and rebuild correctly.
+
+### R7. Texture-array build timing trap (load-bearing)
+
+`mineTextureHandle` and `blownTextureHandle` are static class
+members at [`mclib/quad.cpp:155-156`](../../../mclib/quad.cpp),
+sentinel `0xffffffff` until `TerrainQuad::setupTextures()` lazy-loads
+them at [`mclib/quad.cpp:520-531`](../../../mclib/quad.cpp). The
+naive build-at-`primeMissionTerrainCache` placement (mirroring PR1
+`BuildCementCatalogAtlas`) reads the slots BEFORE they are loaded —
+`glGetTexImage` against `0xffffffff` is undefined behavior at best
+and a hard crash at worst.
+
+**Mitigation:** PR2c spec defers `BuildMineTextureArray()` to first
+`g_mineVBODirty = true` event, with defensive lazy-load fallback
+(call `mcTextureManager->loadTexture` inline if slots are still
+`0xffffffff` at first build). This bears explicit verification at
+Stage 1c implementation:
+
+1. Spec-executor adds an `assert(mineTextureHandle != 0xffffffff
+   && blownTextureHandle != 0xffffffff)` in `BuildMineTextureArray()`
+   immediately before `glGetTexImage`. If it ever fires, the
+   defensive load wasn't sufficient — investigate.
+2. Stage 1c smoke gate: run a mine-bearing mission with init logging.
+   First-paint should produce non-zero `mine_texture_array_built` log
+   line ONLY if pre-placed mines exist OR the player deploys a
+   minelayer. Mine-free missions never build the array.
+
+This is THE PR2c-specific gotcha that PR1 cement-atlas didn't have
+(cement textures are loaded eagerly during terrainTextures init).
 
 ---
 
@@ -442,8 +557,12 @@ Per stage:
 | 19 | 157 µs/frame baseline (pre-PR2c) | user direction 2026-05-08 — measured perf number on the legacy paths even on mine-free missions | M (user-attested; Stage 0c re-confirms via cost-split timer) |
 | 20 | Mines static — no per-frame mutation absent gameplay event | user direction 2026-05-08 + recon-5 finding (`tileMineCount` updates only on `setMine` 0↔non-zero transitions) | M |
 | 21 | Brainstorm Q4-mine and Q6-mine REPLACED by static-bake | user direction 2026-05-08; brainstorm's per-frame indirect-draw shape was over-engineered | M (architectural delta documented) |
+| 22 | `mineTextureHandle`/`blownTextureHandle` static class members, sentinel `0xffffffff` | [`mclib/quad.cpp:155-156`](../../../mclib/quad.cpp) — `DWORD TerrainQuad::mineTextureHandle = 0xffffffff;` etc. | M |
+| 23 | Texture handles lazy-loaded ONLY by `setupTextures()` | [`mclib/quad.cpp:520-531`](../../../mclib/quad.cpp) — `if (mineTextureHandle == 0xffffffff) { ... loadTexture ... }` | M |
+| 24 | `primeMissionTerrainCache` runs BEFORE first paint | architectural fact: mission-init is sequential through gameplay engine, paint loop starts after init returns. Verified by checking call ordering in `terrain.cpp` (deferred to spec-executor; non-controversial) | M (sequencing fact, not symbol-grep) |
+| 25 | Mid-mission player support-call spawn for minelayer | gameplay code in `code/` (not in mclib); user direction 2026-05-08 — the support-call system is a real gameplay feature. PR2c's design must support it; the dirty-flag chokepoint covers the spawn-and-lay sequence by virtue of routing through `MissionMap::setMine`. | M (user-attested + chokepoint coverage by recon-5) |
 
-**Status summary:** 21 entries; 21 M, 0 D, 0 NF.
+**Status summary:** 25 entries; 25 M, 0 D, 0 NF.
 
 ---
 
