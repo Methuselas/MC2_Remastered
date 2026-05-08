@@ -80,12 +80,18 @@ bool IsCostSplitEnabled();     // MC2_TERRAIN_COST_SPLIT — gates Stage 1
 // ---------------------------------------------------------------------------
 void      CostSplit_AddSolidNanos(long long n);
 void      CostSplit_AddDetailOverlayNanos(long long n);
+// PR2c Stage 0c — mine-specific accumulators. Independent of solid /
+// detail-overlay buckets; same RollFrame cadence.
+void      CostSplit_AddMineEnqueueNanos(long long n);
+void      CostSplit_AddMineDrawNanos(long long n);
 // Call once per frame at the close of the per-quad setupTextures loop
 // (terrain.cpp:1684 boundary). Internally gated on IsCostSplitEnabled() —
 // safe to call unconditionally.
 void      CostSplit_RollFrame();
 long long CostSplit_GetSolidNanosTotal();
 long long CostSplit_GetDetailOverlayNanosTotal();
+long long CostSplit_GetMineEnqueueNanosTotal();
+long long CostSplit_GetMineDrawNanosTotal();
 int       CostSplit_GetFramesObserved();
 
 // ---------------------------------------------------------------------------
@@ -109,6 +115,29 @@ void Counters_AddLegacyDetailOverlayQuad();   // legacy DRAWALPHA / detail / min
 long long Counters_GetLegacySolidSetupQuads();
 long long Counters_GetIndirectSolidPackedQuads();
 long long Counters_GetLegacyDetailOverlayQuads();
+
+// PR2c Stage 0c — mine-specific counters (independent of legacy_detail_overlay).
+//   legacy_mine_enqueue_quads — incremented once per call to
+//     enqueueTerrainMineState (mclib/quad.cpp:251). Drops to zero post Stage 2c
+//     gate-off.
+//   legacy_mine_draw_quads    — incremented once per call to TerrainQuad::drawMine
+//     (mclib/quad.cpp:4240). Drops to zero post Stage 2c gate-off.
+//   indirect_mine_drawn_cells — Stage 2c wires; placeholder here.
+void      Counters_AddLegacyMineEnqueueQuad();
+void      Counters_AddLegacyMineDrawQuad();
+void      Counters_AddIndirectMineDrawnCells(long long n);
+long long Counters_GetLegacyMineEnqueueQuads();
+long long Counters_GetLegacyMineDrawQuads();
+long long Counters_GetIndirectMineDrawnCells();
+
+// PR2c Stage 0c — env gate readers.
+//   IsMineEnabled()       — MC2_TERRAIN_INDIRECT_MINE (default OFF until Stage 4
+//                           default-on flip after Stage 2c soak).
+//   IsFrameMineArmed()    — Stage 2c will wire to a real preflight latch; Stage 0c
+//                           stub returns false unconditionally so callers compile
+//                           and the gate-off sites can be staged ahead of arming.
+bool IsMineEnabled();
+bool IsFrameMineArmed();
 
 // ---------------------------------------------------------------------------
 // Stage 2: dense recipe SSBO build / lifecycle / per-entry invalidation.

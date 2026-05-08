@@ -94,6 +94,10 @@ namespace {
 long long s_legacy_solid_setup_quads     = 0;
 long long s_indirect_solid_packed_quads  = 0;
 long long s_legacy_detail_overlay_quads  = 0;
+// PR2c Stage 0c — independent mine counters.
+long long s_legacy_mine_enqueue_quads    = 0;
+long long s_legacy_mine_draw_quads       = 0;
+long long s_indirect_mine_drawn_cells    = 0;
 }  // namespace
 
 namespace gos_terrain_indirect {
@@ -101,10 +105,29 @@ namespace gos_terrain_indirect {
 void Counters_AddLegacySolidSetupQuad()      { ++s_legacy_solid_setup_quads; }
 void Counters_AddIndirectSolidPackedQuad()   { ++s_indirect_solid_packed_quads; }
 void Counters_AddLegacyDetailOverlayQuad()   { ++s_legacy_detail_overlay_quads; }
+void Counters_AddLegacyMineEnqueueQuad()     { ++s_legacy_mine_enqueue_quads; }
+void Counters_AddLegacyMineDrawQuad()        { ++s_legacy_mine_draw_quads; }
+void Counters_AddIndirectMineDrawnCells(long long n) { s_indirect_mine_drawn_cells += n; }
 
 long long Counters_GetLegacySolidSetupQuads()    { return s_legacy_solid_setup_quads; }
 long long Counters_GetIndirectSolidPackedQuads() { return s_indirect_solid_packed_quads; }
 long long Counters_GetLegacyDetailOverlayQuads() { return s_legacy_detail_overlay_quads; }
+long long Counters_GetLegacyMineEnqueueQuads()   { return s_legacy_mine_enqueue_quads; }
+long long Counters_GetLegacyMineDrawQuads()      { return s_legacy_mine_draw_quads; }
+long long Counters_GetIndirectMineDrawnCells()   { return s_indirect_mine_drawn_cells; }
+
+// PR2c Stage 0c — env-gate readers. Default-OFF until Stage 4 default-on flip.
+bool IsMineEnabled() {
+    static const bool s = []() {
+        const char* v = getenv("MC2_TERRAIN_INDIRECT_MINE");
+        return v && v[0] == '1' && v[1] == '\0';
+    }();
+    return s;
+}
+
+// Stage 2c wires the real preflight latch; Stage 0c/1c stub always-false so
+// gate-off sites compile and stay dormant until arming lands.
+bool IsFrameMineArmed() { return false; }
 
 }  // namespace gos_terrain_indirect
 
@@ -114,8 +137,12 @@ long long Counters_GetLegacyDetailOverlayQuads() { return s_legacy_detail_overla
 namespace {
 long long s_solidBranchNanosThisFrame   = 0;
 long long s_detailOverlayNanosThisFrame = 0;
+long long s_mineEnqueueNanosThisFrame   = 0;  // PR2c Stage 0c
+long long s_mineDrawNanosThisFrame      = 0;  // PR2c Stage 0c
 long long s_solidBranchNanosTotal       = 0;
 long long s_detailOverlayNanosTotal     = 0;
+long long s_mineEnqueueNanosTotal       = 0;  // PR2c Stage 0c
+long long s_mineDrawNanosTotal          = 0;  // PR2c Stage 0c
 int       s_costSplitFramesObserved     = 0;
 }  // namespace
 
@@ -123,18 +150,26 @@ namespace gos_terrain_indirect {
 
 void CostSplit_AddSolidNanos(long long n)         { s_solidBranchNanosThisFrame  += n; }
 void CostSplit_AddDetailOverlayNanos(long long n) { s_detailOverlayNanosThisFrame += n; }
+void CostSplit_AddMineEnqueueNanos(long long n)   { s_mineEnqueueNanosThisFrame  += n; }
+void CostSplit_AddMineDrawNanos(long long n)      { s_mineDrawNanosThisFrame     += n; }
 
 void CostSplit_RollFrame() {
     if (!IsCostSplitEnabled()) return;
     s_solidBranchNanosTotal       += s_solidBranchNanosThisFrame;
     s_detailOverlayNanosTotal     += s_detailOverlayNanosThisFrame;
+    s_mineEnqueueNanosTotal       += s_mineEnqueueNanosThisFrame;
+    s_mineDrawNanosTotal          += s_mineDrawNanosThisFrame;
     ++s_costSplitFramesObserved;
     s_solidBranchNanosThisFrame   = 0;
     s_detailOverlayNanosThisFrame = 0;
+    s_mineEnqueueNanosThisFrame   = 0;
+    s_mineDrawNanosThisFrame      = 0;
 }
 
 long long CostSplit_GetSolidNanosTotal()         { return s_solidBranchNanosTotal; }
 long long CostSplit_GetDetailOverlayNanosTotal() { return s_detailOverlayNanosTotal; }
+long long CostSplit_GetMineEnqueueNanosTotal()   { return s_mineEnqueueNanosTotal; }
+long long CostSplit_GetMineDrawNanosTotal()      { return s_mineDrawNanosTotal; }
 int       CostSplit_GetFramesObserved()          { return s_costSplitFramesObserved; }
 
 }  // namespace gos_terrain_indirect
@@ -174,10 +209,14 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
         // is set — otherwise the all-zero noise confuses readers.
         const int    csFrames = CostSplit_GetFramesObserved();
         const bool   csOn     = (csFrames > 0);
-        const long long csSolidNs  = csOn ? CostSplit_GetSolidNanosTotal()         : 0;
-        const long long csDetailNs = csOn ? CostSplit_GetDetailOverlayNanosTotal() : 0;
-        const long long csSolidPerFrame  = csOn ? csSolidNs  / csFrames : 0;
-        const long long csDetailPerFrame = csOn ? csDetailNs / csFrames : 0;
+        const long long csSolidNs   = csOn ? CostSplit_GetSolidNanosTotal()         : 0;
+        const long long csDetailNs  = csOn ? CostSplit_GetDetailOverlayNanosTotal() : 0;
+        const long long csMineEnqNs = csOn ? CostSplit_GetMineEnqueueNanosTotal()   : 0;
+        const long long csMineDrwNs = csOn ? CostSplit_GetMineDrawNanosTotal()      : 0;
+        const long long csSolidPerFrame    = csOn ? csSolidNs   / csFrames : 0;
+        const long long csDetailPerFrame   = csOn ? csDetailNs  / csFrames : 0;
+        const long long csMineEnqPerFrame  = csOn ? csMineEnqNs / csFrames : 0;
+        const long long csMineDrwPerFrame  = csOn ? csMineDrwNs / csFrames : 0;
         if (csOn) {
             fprintf(stderr,
                     "[TERRAIN_INDIRECT_PARITY v1] event=summary frames=%lld "
@@ -185,8 +224,13 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     "legacy_solid_setup_quads=%lld "
                     "indirect_solid_packed_quads=%lld "
                     "legacy_detail_overlay_quads=%lld "
+                    "legacy_mine_enqueue_quads=%lld "
+                    "legacy_mine_draw_quads=%lld "
+                    "indirect_mine_drawn_cells=%lld "
                     "solid_branch_ns_per_frame=%lld "
                     "detail_overlay_branch_ns_per_frame=%lld "
+                    "mine_enqueue_ns_per_frame=%lld "
+                    "mine_draw_ns_per_frame=%lld "
                     "frames_observed=%d\n",
                     s_paritySummaryFrames,
                     s_paritySummaryQuads,
@@ -194,8 +238,13 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     Counters_GetLegacySolidSetupQuads(),
                     Counters_GetIndirectSolidPackedQuads(),
                     Counters_GetLegacyDetailOverlayQuads(),
+                    Counters_GetLegacyMineEnqueueQuads(),
+                    Counters_GetLegacyMineDrawQuads(),
+                    Counters_GetIndirectMineDrawnCells(),
                     csSolidPerFrame,
                     csDetailPerFrame,
+                    csMineEnqPerFrame,
+                    csMineDrwPerFrame,
                     csFrames);
         } else {
             fprintf(stderr,
@@ -203,13 +252,19 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     "quads_checked=%lld total_mismatches=%lld "
                     "legacy_solid_setup_quads=%lld "
                     "indirect_solid_packed_quads=%lld "
-                    "legacy_detail_overlay_quads=%lld\n",
+                    "legacy_detail_overlay_quads=%lld "
+                    "legacy_mine_enqueue_quads=%lld "
+                    "legacy_mine_draw_quads=%lld "
+                    "indirect_mine_drawn_cells=%lld\n",
                     s_paritySummaryFrames,
                     s_paritySummaryQuads,
                     s_paritySummaryMismatches,
                     Counters_GetLegacySolidSetupQuads(),
                     Counters_GetIndirectSolidPackedQuads(),
-                    Counters_GetLegacyDetailOverlayQuads());
+                    Counters_GetLegacyDetailOverlayQuads(),
+                    Counters_GetLegacyMineEnqueueQuads(),
+                    Counters_GetLegacyMineDrawQuads(),
+                    Counters_GetIndirectMineDrawnCells());
         }
         fflush(stderr);
     }

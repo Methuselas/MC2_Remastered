@@ -93,6 +93,40 @@ struct CostSplitDetailOverlayScope {
             std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
     }
 };
+// PR2c Stage 0c — mine-specific RAII timers. Independent of detail/overlay
+// bucket so the ~157µs/frame baseline (user-attested 2026-05-08) shows up
+// cleanly in the summary line. Pre-existing CostSplitDetailOverlayScope
+// brackets at lines 282/290 stay (preserved semantics) — both buckets
+// will see mine-cell addTriangleBulk work, but the new buckets give
+// PR2c the dedicated number it needs.
+struct CostSplitMineEnqueueScope {
+    std::chrono::steady_clock::time_point t0;
+    bool active;
+    CostSplitMineEnqueueScope()
+        : active(gos_terrain_indirect::IsCostSplitEnabled()) {
+        if (active) t0 = std::chrono::steady_clock::now();
+    }
+    ~CostSplitMineEnqueueScope() {
+        if (!active) return;
+        const auto dt = std::chrono::steady_clock::now() - t0;
+        gos_terrain_indirect::CostSplit_AddMineEnqueueNanos(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
+    }
+};
+struct CostSplitMineDrawScope {
+    std::chrono::steady_clock::time_point t0;
+    bool active;
+    CostSplitMineDrawScope()
+        : active(gos_terrain_indirect::IsCostSplitEnabled()) {
+        if (active) t0 = std::chrono::steady_clock::now();
+    }
+    ~CostSplitMineDrawScope() {
+        if (!active) return;
+        const auto dt = std::chrono::steady_clock::now() - t0;
+        gos_terrain_indirect::CostSplit_AddMineDrawNanos(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
+    }
+};
 
 // Stage 3 SOLID gate-off helpers.
 // When indirect SOLID is armed for this frame, BeginLegacySolidCluster()
@@ -250,6 +284,13 @@ static bool isTerrainQuadVisible(const TerrainQuad& quad)
 
 static void enqueueTerrainMineState(TerrainQuad& quad)
 {
+	// PR2c Stage 0c — bracket the entire function for the dedicated mine bucket.
+	// Counter increments once per call (per-quad). User-attested 2026-05-08
+	// baseline ~157 µs/frame across all per-frame calls; the cost-split timer
+	// confirms.
+	CostSplitMineEnqueueScope _csMineEnq;
+	gos_terrain_indirect::Counters_AddLegacyMineEnqueueQuad();
+
 	long rowCol = quad.vertices[0]->posTile;
 	long tileR = rowCol>>16;
 	long tileC = rowCol & 0x0000ffff;
@@ -4239,6 +4280,10 @@ void TerrainQuad::drawDebugCellLine (void)
 //---------------------------------------------------------------------------
 void TerrainQuad::drawMine (void)
 {
+	// PR2c Stage 0c — bracket entire function. Counter once per call (per-quad).
+	CostSplitMineDrawScope _csMineDraw;
+	gos_terrain_indirect::Counters_AddLegacyMineDrawQuad();
+
 	long clipped1 = vertices[0]->clipInfo + vertices[1]->clipInfo + vertices[2]->clipInfo;
 	long clipped2 = vertices[0]->clipInfo + vertices[2]->clipInfo + vertices[3]->clipInfo;
 
