@@ -138,6 +138,20 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount,
                                      unsigned int thinRecordSSBO,
                                      unsigned int indirectCmdBuffer);
 
+// PR2c Stage 2c — mine static-bake draw bridge.
+//
+// Called by gos_terrain_indirect::DrawMineStatic from the Render.TerrainMines
+// zone in txmmgr.cpp. Issues ONE glDrawArrays against the mission-static
+// MineStaticVBO, with the 2-layer mine sprite array bound at unit 5.
+// Per-frame work: zero CPU iteration, single draw call dispatch.
+//
+// Returns false if the mine_static program is not loaded or input is empty.
+// vertCount = total vertices to draw (6 per mine cell). vboGL = the
+// GL_ARRAY_BUFFER name. textureArrayGL = GL_TEXTURE_2D_ARRAY name (2 layers).
+bool gos_terrain_bridge_drawMineStatic(int          vertCount,
+                                       unsigned int vboGL,
+                                       unsigned int textureArrayGL);
+
 void gos_terrain_bridge_renderWaterFast(
     unsigned int recordCount,
     unsigned int waterGosHandle,

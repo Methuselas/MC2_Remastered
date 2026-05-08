@@ -191,6 +191,14 @@ int          GetMineVertCount();
 unsigned int GetMineTextureArrayGL();
 bool         IsMineTextureArrayReady();
 
+// Stage 2c — Render.TerrainMines hook calls this. Internally:
+//   1. RebuildMineStaticVBOIfDirty (lazy first-build of texture-array + VBO).
+//   2. If vert count > 0, calls gos_terrain_bridge_drawMineStatic.
+//   3. Bumps Counters_AddIndirectMineDrawnCells(vertCount/6).
+// Returns false on bridge failure (program not loaded etc.); does NOT return
+// false when mission has no mines (that's a successful zero-emit frame).
+bool DrawMineStatic();
+
 // ---------------------------------------------------------------------------
 // Stage 2: dense recipe SSBO build / lifecycle / per-entry invalidation.
 //

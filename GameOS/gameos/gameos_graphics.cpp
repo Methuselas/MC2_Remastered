@@ -1299,6 +1299,7 @@ class gosRenderer {
         // Returns the glsl_program for the thin terrain shader. Used by bridge exports.
         glsl_program* getThinTerrainProgram() const { return thin_terrain_prog_; }
         glsl_program* getWaterFastProgram()   const { return water_fast_prog_;   }
+        glsl_program* getMineStaticProgram()  const { return mine_static_prog_;  }  // PR2c Stage 2c
 
         // Water fast path (Stage 2 of renderWater architectural slice).
         // Issues 1-2 instanced draws against the WaterRecipe + WaterFrame SSBOs.
@@ -1602,6 +1603,7 @@ class gosRenderer {
         gosRenderMaterial* terrain_material_ = nullptr;
         glsl_program* thin_terrain_prog_ = nullptr;  // gos_terrain_thin.vert + gos_terrain.frag
         glsl_program* water_fast_prog_   = nullptr;  // gos_terrain_water_fast.vert + gos_tex_vertex.frag
+        glsl_program* mine_static_prog_  = nullptr;  // PR2c Stage 2c — gos_terrain_mine_static.vert + .frag
 
         // Shadow mode
         gosRenderMaterial* shadow_terrain_material_ = nullptr;
@@ -2512,6 +2514,126 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// PR2c Stage 2c — Mine static-bake bridge.
+//
+// Issues ONE glDrawArrays(GL_TRIANGLES) against the mission-static MineStaticVBO,
+// with the 2-layer mine sprite array bound at unit 5. State save/restore mirrors
+// gos_terrain_bridge_drawIndirect (Program, Blend, Depth, ColorMask, VAO,
+// sampler unit 5, texture binding on unit 5, vertex attrib state). Per-frame
+// CPU work is dominated by this state churn — the actual draw is one dispatch
+// over a few hundred verts max (mines are sparse: 2-3 missions x small
+// overlay each per user direction 2026-05-08).
+// ──────────────────────────────────────────────────────────────────────────
+bool gos_terrain_bridge_drawMineStatic(int          vertCount,
+                                       unsigned int vboGL,
+                                       unsigned int textureArrayGL)
+{
+    ZoneScopedN("Terrain::MineStaticDraw");
+    if (!g_gos_renderer) return false;
+    if (vertCount <= 0 || vboGL == 0 || textureArrayGL == 0) return false;
+    glsl_program* p = g_gos_renderer->getMineStaticProgram();
+    if (!p || !p->shp_) return false;
+
+    const GLuint prog = p->shp_;
+
+    // ---- Save state ---------------------------------------------------------
+    GLint     savedProgram   = 0; glGetIntegerv(GL_CURRENT_PROGRAM,         &savedProgram);
+    GLboolean savedBlend     = glIsEnabled(GL_BLEND);
+    GLint     savedSrcRGB    = 0; glGetIntegerv(GL_BLEND_SRC_RGB,           &savedSrcRGB);
+    GLint     savedDstRGB    = 0; glGetIntegerv(GL_BLEND_DST_RGB,           &savedDstRGB);
+    GLint     savedDepthMask = 0; glGetIntegerv(GL_DEPTH_WRITEMASK,         &savedDepthMask);
+    GLboolean savedDepthTest = glIsEnabled(GL_DEPTH_TEST);
+    GLint     savedDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC,              &savedDepthFunc);
+    GLint     savedVAO       = 0; glGetIntegerv(GL_VERTEX_ARRAY_BINDING,    &savedVAO);
+    GLint     savedActiveTex = GL_TEXTURE0; glGetIntegerv(GL_ACTIVE_TEXTURE, &savedActiveTex);
+    GLboolean savedColorMask[4]; glGetBooleanv(GL_COLOR_WRITEMASK,           savedColorMask);
+    GLint     savedArrayBuf  = 0; glGetIntegerv(GL_ARRAY_BUFFER_BINDING,    &savedArrayBuf);
+    GLint     savedTex5Bind  = 0;
+    GLuint    savedTex5Sampler = 0;
+    glActiveTexture(GL_TEXTURE5);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &savedTex5Bind);
+    { GLint q = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 5, &q); savedTex5Sampler = (GLuint)q; }
+
+    // ---- VAO rebind (AMD VAO-0 trap) ---------------------------------------
+    extern void gos_RendererRebindVAO();
+    gos_RendererRebindVAO();
+
+    // ---- Program -----------------------------------------------------------
+    glUseProgram(prog);
+
+    // terrainMVP (mirrors PR1 thin-VS upload — GL_FALSE + row-major per
+    // terrain_mvp_gl_false.md).
+    {
+        const GLint loc = glGetUniformLocation(prog, "terrainMVP");
+        if (loc >= 0)
+            glUniformMatrix4fv(loc, 1, GL_FALSE,
+                               (const float*)&g_gos_renderer->getTerrainMVP());
+    }
+
+    // mineSpriteArray uniform → unit 5
+    {
+        const GLint loc = glGetUniformLocation(prog, "mineSpriteArray");
+        if (loc >= 0) glUniform1i(loc, 5);
+    }
+
+    // ---- Vertex attrib setup (GL_ARRAY_BUFFER + 3 attrs at locations 0/1/2)
+    // Vertex format must match MineVert in gos_terrain_indirect.cpp:
+    //   offset  0: vec3 pos    (location 0)
+    //   offset 12: vec2 uv     (location 1)
+    //   offset 20: uint layer  (location 2)
+    glBindBuffer(GL_ARRAY_BUFFER, (GLuint)vboGL);
+    constexpr GLsizei kStride = 24;  // sizeof(MineVert)
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer (0, 3, GL_FLOAT, GL_FALSE, kStride, (const void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, kStride, (const void*)12);
+    glEnableVertexAttribArray(2);
+    glVertexAttribIPointer(2, 1, GL_UNSIGNED_INT,    kStride, (const void*)20);
+
+    // ---- Bind texture-array at unit 5 + clear sampler-object override ------
+    glActiveTexture(GL_TEXTURE5);
+    glBindSampler(5, 0);  // use the texture's own params (NEAREST/CLAMP_TO_EDGE)
+    glBindTexture(GL_TEXTURE_2D_ARRAY, (GLuint)textureArrayGL);
+    glActiveTexture(GL_TEXTURE0);
+
+    // ---- Depth + blend + color state ---------------------------------------
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_TRUE);
+    // M5: undo any prior shadow-pass glColorMask(FALSE,...) leakage.
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    // Mine sprite uses alpha-test discard (in FS); no blend needed.
+    glDisable(GL_BLEND);
+
+    // ---- Draw --------------------------------------------------------------
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertCount);
+
+    // ---- Restore state -----------------------------------------------------
+    glDisableVertexAttribArray(2);
+    glDisableVertexAttribArray(1);
+    // Leave attr-0 enabled — AMD attribute-0 trap (other paths assume it on).
+
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, (GLuint)savedTex5Bind);
+    glBindSampler(5, savedTex5Sampler);
+    glActiveTexture((GLenum)savedActiveTex);
+
+    glBindBuffer(GL_ARRAY_BUFFER, (GLuint)savedArrayBuf);
+    glColorMask(savedColorMask[0], savedColorMask[1], savedColorMask[2], savedColorMask[3]);
+    glDepthFunc((GLenum)savedDepthFunc);
+    glDepthMask((GLboolean)savedDepthMask);
+    if (savedDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (savedBlend)     glEnable(GL_BLEND);      else glDisable(GL_BLEND);
+    glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+    glBindVertexArray((GLuint)savedVAO);
+    glUseProgram((GLuint)savedProgram);
+
+    // RENDER_STATES v1: invalidate cache since we touched units + state.
+    if (g_gos_renderer) g_gos_renderer->invalidateRenderStateCache();
+    return true;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 
 static GLuint gVAO = 0;
 static float  s_hud_scale = 0.85f;  // default while iterating; RAlt+5 cycles
@@ -2683,6 +2805,24 @@ void gosRenderer::init() {
         else
             printf("[THIN_TERRAIN] Thin terrain shader loaded: prog=%u\n",
                    (unsigned)thin_terrain_prog_->shp_);
+        fflush(stdout);
+    }
+
+    // PR2c Stage 2c — load mine static-bake program.
+    {
+        ZoneScopedN("gosRenderer::init mineStaticProg");
+        static const char* kMinePrefix = "#version 430\n";
+        mine_static_prog_ = glsl_program::makeProgram(
+            "gos_terrain_mine_static",
+            "shaders/gos_terrain_mine_static.vert",
+            "shaders/gos_terrain_mine_static.frag",
+            kMinePrefix);
+        if (!mine_static_prog_ || !mine_static_prog_->shp_)
+            fprintf(stderr, "[MINE_STATIC] WARNING: failed to compile mine static-bake shader"
+                            " — MC2_TERRAIN_INDIRECT_MINE=1 will be a no-op\n");
+        else
+            printf("[MINE_STATIC] Mine static-bake shader loaded: prog=%u\n",
+                   (unsigned)mine_static_prog_->shp_);
         fflush(stdout);
     }
 

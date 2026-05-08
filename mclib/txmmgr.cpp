@@ -1778,6 +1778,18 @@ void MC_TextureManager::renderLists (void)
 		TracyGpuZone("Render.TerrainOverlays");
 		gos_DrawTerrainOverlays();
 	}
+	// PR2c Stage 2c — mine static-bake draw. Hooks between TerrainOverlays
+	// and Decals so mines composite ABOVE cement/road overlays and BENEATH
+	// crater decals (state=2 blown-mine sprites coexist with crater decals).
+	// Default-off: IsFrameMineArmed() returns false unless
+	// MC2_TERRAIN_INDIRECT_MINE=1 AND the texture-array has been built.
+	{
+		ZoneScopedN("Render.TerrainMines");
+		TracyGpuZone("Render.TerrainMines");
+		if (gos_terrain_indirect::IsFrameMineArmed()) {
+			gos_terrain_indirect::DrawMineStatic();
+		}
+	}
 	{
 		ZoneScopedN("Render.Decals");
 		TracyGpuZone("Render.Decals");

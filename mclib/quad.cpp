@@ -798,7 +798,12 @@ void TerrainQuad::setupTextures (void)
 			}
 
 			{
-				enqueueTerrainMineState(*this);
+				// PR2c Stage 2c — gate off legacy enqueueTerrainMineState when
+				// the static-bake path is armed. Indirect path owns mine state
+				// for this frame; legacy reservation is unnecessary work.
+				if (!gos_terrain_indirect::IsFrameMineArmed()) {
+					enqueueTerrainMineState(*this);
+				}
 			}
 		}
 	}

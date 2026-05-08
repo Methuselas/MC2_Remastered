@@ -1022,11 +1022,19 @@ void Terrain::render (void)
 	if (drawTerrainTiles)
 	{
 		ZoneScopedN("Terrain::render minePass");
-		TerrainQuadPtr currentQuad = quadList;
-		for (long i = 0; i < numberQuads; i++)
-		{
-			currentQuad->drawMine();
-			currentQuad++;
+		// PR2c Stage 2c — when armed, the indirect path owns mine drawing for
+		// this frame (Render.TerrainMines zone in txmmgr.cpp). Skip the entire
+		// per-quad drawMine loop here. This is the bulk of the ~1.83ms minePass
+		// retirement (the loop fires drawMine on ALL ~14K visible quads, not
+		// just the few mine-bearing ones, due to drawMine's early-return
+		// pattern at quad.cpp:4242-4243).
+		if (!gos_terrain_indirect::IsFrameMineArmed()) {
+			TerrainQuadPtr currentQuad = quadList;
+			for (long i = 0; i < numberQuads; i++)
+			{
+				currentQuad->drawMine();
+				currentQuad++;
+			}
 		}
 	}
 

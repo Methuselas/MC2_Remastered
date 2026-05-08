@@ -126,9 +126,8 @@ bool IsMineEnabled() {
     return s;
 }
 
-// Stage 2c wires the real preflight latch; Stage 0c/1c stub always-false so
-// gate-off sites compile and stay dormant until arming lands.
-bool IsFrameMineArmed() { return false; }
+// IsFrameMineArmed is defined further down (after Stage 1c's
+// g_mineTextureArrayReady storage). Forward decl is in the header.
 
 }  // namespace gos_terrain_indirect
 
@@ -1809,6 +1808,53 @@ unsigned int GetMineStaticVBO_GL()      { return g_mineStaticVBO_GL; }
 int          GetMineVertCount()         { return g_mineVertCount; }
 unsigned int GetMineTextureArrayGL()    { return g_mineTextureArrayGL; }
 bool         IsMineTextureArrayReady()  { return g_mineTextureArrayReady; }
+
+// PR2c Stage 2c — armed iff MC2_TERRAIN_INDIRECT_MINE=1 (env gate).
+//
+// We do NOT gate on g_mineTextureArrayReady here — that creates a bootstrap
+// circular dependency: the texture-array can only be built inside
+// BuildMineTextureArray, which is only called from RebuildMineStaticVBOIfDirty,
+// which is only called from DrawMineStatic, which is only called from the
+// Render.TerrainMines zone IF IsFrameMineArmed() returns true. Gating on
+// readiness here means the first build never happens.
+//
+// Instead: arming = env on. DrawMineStatic handles the texture-not-ready
+// case internally (returns true no-op until the next dirty event lazy-builds).
+// First paint cycle after mission load: gate-offs fire, legacy paths skipped,
+// DrawMineStatic invokes Rebuild* which lazy-builds the texture-array on
+// first call (handles loaded by setupTextures on the SAME frame's earlier
+// per-quad loop — R7 timing trap mitigated by paint-order: setupTextures
+// runs before Render.TerrainMines).
+bool IsFrameMineArmed() {
+    return IsMineEnabled();
+}
+
+// PR2c Stage 2c — invoked from txmmgr.cpp's Render.TerrainMines zone. Lazy-builds
+// VBO + texture-array on first dirty event; issues one glDrawArrays via the
+// bridge if there's anything to draw.
+bool DrawMineStatic() {
+    RebuildMineStaticVBOIfDirty();
+    if (g_mineVertCount <= 0) {
+        // Successful zero-emit frame (mission has no mines yet). Legacy paths
+        // are still gated off — that's the whole point.
+        return true;
+    }
+    if (!g_mineTextureArrayReady) {
+        // Build retry pending; the texture-array build couldn't complete (e.g.,
+        // handles still 0xffffffff at first call). Treat as no-op until next
+        // dirty event re-attempts.
+        return true;
+    }
+    const bool ok = gos_terrain_bridge_drawMineStatic(
+        g_mineVertCount,
+        g_mineStaticVBO_GL,
+        g_mineTextureArrayGL);
+    if (ok) {
+        // 6 verts per cell (2 tris * 3 verts).
+        Counters_AddIndirectMineDrawnCells((long long)(g_mineVertCount / 6));
+    }
+    return ok;
+}
 
 }  // namespace gos_terrain_indirect
 
