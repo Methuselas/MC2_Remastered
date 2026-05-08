@@ -1998,82 +1998,30 @@ void TerrainQuad::draw (void)
 		    }
 		    fp_detail_only:;
 
-		    // M2c: water-interest detail emit. Replaces the legacy detail-draw blocks
-		    // at quad.cpp:1972/2115/2288/2429 — same output, but builds sVertex straight
-		    // from vertices[c] instead of memcpy'ing gVertex and overriding most fields.
-		    // Skipped for non-water-interest quads (the && short-circuits).
-		    // ARGB matches legacy Option A: terrainTextures2 → 0xFFFFFFFFu, else
-		    // vertices[c]->lightRGB (NO `selected` override on detail tiles, by design).
-		    if (useWaterInterestTexture && terrainDetailHandle != 0xffffffff)
-		    {
-		        // PR2a Stage 0a — confidence counter. Pre-Stage-1a-delete, this
-		        // increments on every quad that enters the (dead-pixel) M2c
-		        // emit. Confirms the upcoming delete actually retires real
-		        // CPU work, not phantom work.
-		        gos_terrain_indirect::Counters_AddM2cDetailEmitQuad();
-
-		        const float tilingFactor = Terrain::terrainTextures2
-		            ? Terrain::terrainTextures2->getDetailTilingFactor()
-		            : Terrain::terrainTextures->getDetailTilingFactor(1);
-		        const float oneOverTf = tilingFactor / Terrain::worldUnitsMapSide;
-		        const bool whitenArgb = (Terrain::terrainTextures2 != nullptr);
-
-		        gos_VERTEX corner[4];
-		        for (int c = 0; c < 4; c++) {
-		            corner[c].x    = vertices[c]->px;
-		            corner[c].y    = vertices[c]->py;
-		            corner[c].z    = vertices[c]->pz + TERRAIN_DEPTH_FUDGE;
-		            corner[c].rhw  = vertices[c]->pw;
-		            corner[c].u    = (vertices[c]->vx - Terrain::mapTopLeft3d.x) * oneOverTf;
-		            corner[c].v    = (Terrain::mapTopLeft3d.y - vertices[c]->vy) * oneOverTf;
-		            corner[c].argb = whitenArgb ? 0xFFFFFFFFu : (DWORD)vertices[c]->lightRGB;
-		            corner[c].frgb = (vertices[c]->fogRGB & 0xFFFFFF00u)
-		                           | terrainTypeToMaterial(vertices[c]->pVertex->terrainType);
-		        }
-
-		        auto clampUVs = [](gos_VERTEX* tri) {
-		            if (tri[0].u > MaxMinUV || tri[0].v > MaxMinUV ||
-		                tri[1].u > MaxMinUV || tri[1].v > MaxMinUV ||
-		                tri[2].u > MaxMinUV || tri[2].v > MaxMinUV) {
-		                float maxU = fmax(tri[0].u, fmax(tri[1].u, tri[2].u));
-		                maxU = floor(maxU - (MaxMinUV - 1.0f));
-		                float maxV = fmax(tri[0].v, fmax(tri[1].v, tri[2].v));
-		                maxV = floor(maxV - (MaxMinUV - 1.0f));
-		                tri[0].u -= maxU; tri[1].u -= maxU; tri[2].u -= maxU;
-		                tri[0].v -= maxV; tri[1].v -= maxV; tri[2].v -= maxV;
-		            }
-		        };
-
-		        // Triangle assembly mirrors the thin-record uvMode/pzTri rules.
-		        if (uvMode == BOTTOMLEFT) {
-		            if (pzTri1) {
-		                gos_VERTEX tri[3] = { corner[0], corner[1], corner[3] };
-		                clampUVs(tri);
-		                mcTextureManager->addVertices(terrainDetailHandle, tri,
-		                                              MC2_ISTERRAIN | MC2_DRAWALPHA);
-		            }
-		            if (pzTri2) {
-		                gos_VERTEX tri[3] = { corner[1], corner[2], corner[3] };
-		                clampUVs(tri);
-		                mcTextureManager->addVertices(terrainDetailHandle, tri,
-		                                              MC2_ISTERRAIN | MC2_DRAWALPHA);
-		            }
-		        } else {
-		            // BOTTOMRIGHT (= TOPRIGHT diagonal)
-		            if (pzTri1) {
-		                gos_VERTEX tri[3] = { corner[0], corner[1], corner[2] };
-		                clampUVs(tri);
-		                mcTextureManager->addVertices(terrainDetailHandle, tri,
-		                                              MC2_ISTERRAIN | MC2_DRAWALPHA);
-		            }
-		            if (pzTri2) {
-		                gos_VERTEX tri[3] = { corner[0], corner[2], corner[3] };
-		                clampUVs(tri);
-		                mcTextureManager->addVertices(terrainDetailHandle, tri,
-		                                              MC2_ISTERRAIN | MC2_DRAWALPHA);
-		            }
-		        }
-		    }
+		    // PR2a Stage 1a — M2c detail emit DELETED 2026-05-08.
+		    //
+		    // Was: an `if (useWaterInterestTexture && terrainDetailHandle != 0xffffffff)`
+		    // block (~64 lines) that built per-corner gos_VERTEX arrays + per-tri
+		    // clampUVs lambda + per-tri addVertices calls into the masterVertexNodes
+		    // queue with flags `MC2_ISTERRAIN | MC2_DRAWALPHA`.
+		    //
+		    // Two reasons it was retired:
+		    //   1. ZERO PIXEL OUTPUT since 521d83a (2026-04-16, "Fix terrain underlayer
+		    //      artifact"). Render.Overlays at txmmgr.cpp:1818-1822 unconditionally
+		    //      resets-and-skips any non-water alpha+terrain node — detail nodes
+		    //      have flags MC2_ISTERRAIN|MC2_DRAWALPHA (no water flag) so they hit
+		    //      the suppress predicate. The flat-plane detail layer was suppressed
+		    //      because tessellated terrain elevation made it visible as a "dark
+		    //      striped under-pattern."
+		    //   2. ZERO CPU EXECUTION across tier1 (verified 2026-05-08 Stage 0a,
+		    //      m2c_detail_emit_quads=0 on mc2_01/03/10/17). Code drift since the
+		    //      M2 thin-record landing eliminated the runtime path even though
+		    //      the brainstorm cited m2_thin_record_cpu_reduction_results.md's
+		    //      "~5,800 quads/frame on mc2_01" — that perf number is stale.
+		    //
+		    // Future "tessellation-aware detail layer" feature is independent scope
+		    // (see recon-6 "Open follow-ups" #4); brainstorm separately if/when it
+		    // ships. Don't resurrect this block.
 
 		    // M2d: per-quad base-texture overlay emit. Replaces the four legacy
 		    // gos_PushTerrainOverlay sites further down in this function (TOPRIGHT tri1+tri2,

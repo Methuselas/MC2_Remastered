@@ -484,6 +484,14 @@ void parse_uniforms(GLuint pprogram, glsl_program::UniArr_t* puniforms, glsl_pro
         glGetActiveUniform(pprogram, i, max_name_len+1, &len, &size, &type, buf);
         if(-1 == i) continue; // gl_ variable or does not correspond to an active uniform variable name in program
 
+		// PR2c Stage 2c — additive fix: GL_SAMPLER_2D_ARRAY (0x8DC1) lives
+		// outside the contiguous GL_SAMPLER_1D..GL_SAMPLER_2D_SHADOW range,
+		// so mine_static.frag's `uniform sampler2DArray mineSpriteArray`
+		// previously fell through to the default constant-uniform path and
+		// produced a garbage type_ index → typeNames[] OOB read → crash in
+		// logmsg. Treat it as a sampler with the synthetic SAMPLER_2D type
+		// (engine binds via glActiveTexture+glBindTexture either way; the
+		// type_ field is only used for the log line below).
 		if(type >=GL_SAMPLER_1D && type<= GL_SAMPLER_2D_SHADOW)
 		{
 			glsl_sampler* psampler = new glsl_sampler;
@@ -498,9 +506,19 @@ void parse_uniforms(GLuint pprogram, glsl_program::UniArr_t* puniforms, glsl_pro
 			};
 
 			log_info("name: %s type: %s\n", buf, typeNames[psampler->type_]);
-	
+
 			psamplers->insert(std::make_pair(psampler->name_, psampler));
 
+			continue;
+		}
+		if(type == GL_SAMPLER_2D_ARRAY)
+		{
+			glsl_sampler* psampler = new glsl_sampler;
+			psampler->index_ = glGetUniformLocation(pprogram, buf);
+			psampler->name_ = buf;
+			psampler->type_ = SAMPLER_2D;  // synthetic; bind path is identical to 2D
+			log_info("name: %s type: sampler_2d_array\n", buf);
+			psamplers->insert(std::make_pair(psampler->name_, psampler));
 			continue;
 		}
 
