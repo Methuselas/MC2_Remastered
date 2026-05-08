@@ -34,7 +34,18 @@ layout(location=1) out vec4 GBuffer1;
 const int ALPHA_TEST_BIT = 1;
 
 void main() {
-    vec4 tex_color = texture(u_tex, v_uv);
+    // textureLod(.., 0.0) instead of texture(): AMD RX 7900 XTX
+    // strict-fails auto-LOD sampling on mech paint-scheme textures even
+    // with MIN_FILTER=GL_LINEAR — hardware appears to access mip 1+
+    // (which is undefined / empty) and returns black. Constant UV (zero
+    // derivatives) clamps LOD to base level and works; varying UV
+    // doesn't. textureLod forces level 0 explicitly. Diagnosed
+    // 2026-05-08 via debug-mode 7 vs 8 contrast.
+    // Static_prop.frag escapes this trap because its textures have
+    // a complete mip pyramid by the time it samples; mech textures
+    // load with the paint-scheme cycle that doesn't always leave all
+    // mip levels populated when the GPU mech batcher's flush runs.
+    vec4 tex_color = textureLod(u_tex, v_uv, 0.0);
 
     if ((u_materialFlags & ALPHA_TEST_BIT) != 0 && tex_color.a < 0.5) {
         discard;
@@ -51,6 +62,8 @@ void main() {
     else if (u_debugMode == 4) c = vec4(normalize(v_normal) * 0.5 + 0.5, 1.0);  // normal-as-color
     else if (u_debugMode == 5) c = vec4(fract(v_uv.x), fract(v_uv.y), 0.0, 1.0); // UV visualizer
     else if (u_debugMode == 6) c = vec4(tex_color.aaa, 1.0);                    // texture alpha as grey
+    else if (u_debugMode == 7) c = vec4(texture(u_tex, vec2(0.5, 0.5)).rgb, 1.0); // sample at hardcoded UV
+    else if (u_debugMode == 8) c = vec4(textureLod(u_tex, v_uv, 0.0).rgb, 1.0);  // explicit LOD 0 sample
 
     FragColor = c;
     GBuffer1  = rc_gbuffer1_screenShadowEligible(normalize(v_normal));

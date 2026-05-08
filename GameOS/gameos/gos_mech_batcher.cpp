@@ -695,16 +695,17 @@ void GpuMechBatcher::flush() {
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
 
-    // Sampler binding strategy: do NOT bind a custom sampler object.
-    // gos textures have their own per-object sampler state set at creation
-    // (gosCreateTexture configures min/mag/wrap on the texture object).
-    // Binding a custom sampler overrides that and was producing all-zero
-    // samples for mech textures on AMD even with GL_LINEAR/GL_REPEAT.
-    // Static_prop does the same — sets glTexParameter on the bound texture
-    // object instead of using a sampler object. We zero the sampler binding
-    // to ensure no STALE sampler from a prior pass leaks in.
-    glBindSampler(0, 0);
-    (void)s_sampler;  // kept allocated for now; future passes may need it
+    // Bind our REPEAT/LINEAR sampler. Per
+    // memory/sampler_state_inheritance_in_fast_paths.md: when a prior pass
+    // (e.g. patch_stream) leaves a CLAMP_TO_EDGE sampler bound on unit 0,
+    // mech UVs that fall outside [0,1] (legitimate for tiled mech body
+    // textures) all clamp to the texture edge — which for many mech
+    // textures is a black border, producing the all-black mech symptom.
+    // Sampler-object state OVERRIDES the texture object's glTexParameter
+    // values, so setting them on the texture object alone is insufficient.
+    // Identified via debug=7 (hardcoded UV (0.5, 0.5) showed yellow paint
+    // while debug=2 with v_uv showed black).
+    glBindSampler(0, s_sampler);
 
     // Static uniforms.
     glUniform1i(s_loc_u_tex,      0);
@@ -781,9 +782,40 @@ void GpuMechBatcher::flush() {
             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, &sG);
             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, &sB);
             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, &sA);
+            // Probe the actually-effective sampler state (sampler-object
+            // overrides texture-object params silently per brainstorm #1).
+            GLint boundSampler = -1;
+            glGetIntegeri_v(GL_SAMPLER_BINDING, 0, &boundSampler);
+            GLint sampMin = -1, sampMag = -1, sampWrapS = -1;
+            if (boundSampler != 0) {
+                glGetSamplerParameteriv((GLuint)boundSampler, GL_TEXTURE_MIN_FILTER, &sampMin);
+                glGetSamplerParameteriv((GLuint)boundSampler, GL_TEXTURE_MAG_FILTER, &sampMag);
+                glGetSamplerParameteriv((GLuint)boundSampler, GL_TEXTURE_WRAP_S,     &sampWrapS);
+            }
             std::fprintf(stderr,
-                "[MECHBATCHER v1] event=tex_probe glTex=%u w=%d h=%d fmt=0x%x min=0x%x mag=0x%x swz=R0x%x,G0x%x,B0x%x,A0x%x\n",
-                glTexId, tw, th, tfmt, tMin, tMag, sR, sG, sB, sA);
+                "[MECHBATCHER v1] event=tex_probe glTex=%u w=%d h=%d fmt=0x%x texMin=0x%x texMag=0x%x boundSampler=%d sampMin=0x%x sampMag=0x%x sampWrapS=0x%x\n",
+                glTexId, tw, th, tfmt, tMin, tMag, boundSampler, sampMin, sampMag, sampWrapS);
+            // Hypothesis 2: read back actual pixel bytes from level 0.
+            // glGetTexImage requires a buffer sized for the WHOLE level —
+            // 128*128*4 = 64KB for our textures. Use the matching texture
+            // internal format (GL_RGB) since the texture is GL_RGB8 — asking
+            // for RGBA on RGB8 caused an earlier silent crash. Heap-allocate
+            // because stack frame is small.
+            if (tw > 0 && th > 0 && tw <= 4096 && th <= 4096) {
+                std::vector<uint8_t> pixels((size_t)tw * th * 3, 0);
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+                int nonZero = 0;
+                for (uint8_t b : pixels) if (b != 0) { nonZero = 1; break; }
+                std::fprintf(stderr,
+                    "[MECHBATCHER v1] event=tex_pixels glTex=%u bytes=%zu nonZero=%d first15="
+                    "%02x%02x%02x %02x%02x%02x %02x%02x%02x %02x%02x%02x %02x%02x%02x\n",
+                    glTexId, pixels.size(), nonZero,
+                    pixels[ 0], pixels[ 1], pixels[ 2],
+                    pixels[ 3], pixels[ 4], pixels[ 5],
+                    pixels[ 6], pixels[ 7], pixels[ 8],
+                    pixels[ 9], pixels[10], pixels[11],
+                    pixels[12], pixels[13], pixels[14]);
+            }
         }
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, glTexId);

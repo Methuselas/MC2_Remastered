@@ -91,13 +91,28 @@ void main() {
     // static_prop.vert correctly omits the guard. The plan template
     // included it and made all mech vertices end up at (2,2,2,1).
 
-    // Slice A: decode a_aRGBLight (BGRA packed uint) as base vertex color.
-    // Slice B1: replace with calc_light() using inst.lightDataIndex.
-    vec3 baseLight;
-    baseLight.x = float((a_aRGBLight >> 16) & 0xFFu) / 255.0;  // r
-    baseLight.y = float((a_aRGBLight >>  8) & 0xFFu) / 255.0;  // g
-    baseLight.z = float((a_aRGBLight >>  0) & 0xFFu) / 255.0;  // b
-    baseLight = clamp(baseLight + inst.aRGBHighlight.rgb, 0.0, 1.0);
+    // Slice A: mech vertices have aRGBLight = 0 (no pre-baked static
+    // lighting — the legacy CPU mech path computes lighting per-frame via
+    // calc_light from listOfShapes[i].worldLights). Decoding a_aRGBLight
+    // here gives 0 for all mech vertices, and the unselected actor's
+    // highlightColor is also 0, so v_litColor would be (0,0,0) and the
+    // mech would render fully black even when textures sample correctly.
+    //
+    // Default-on baseLight to white in Slice A so the texture passes
+    // through unmodified. Slice B1 replaces this with the real
+    // calc_light(inst.lightDataIndex) once the LightsData UBO is wired
+    // for mech actors.
+    vec3 baseLight = vec3(1.0);
+    // Highlight is still added (selected mechs glow). Highlight alpha=0 by
+    // default makes this a no-op for unselected actors.
+    baseLight = clamp(baseLight + inst.aRGBHighlight.rgb * inst.aRGBHighlight.a, 0.0, 1.0);
+    // Reference of dead-code aRGBLight decode for Slice B1: it would unpack
+    // the BGRA-packed uint into per-channel light, e.g.
+    //     baseLight.x = float((a_aRGBLight >> 16) & 0xFFu) / 255.0;
+    //     baseLight.y = float((a_aRGBLight >>  8) & 0xFFu) / 255.0;
+    //     baseLight.z = float((a_aRGBLight >>  0) & 0xFFu) / 255.0;
+    // but mech aRGBLight is 0 in stock data, so this is replaced by
+    // calc_light(inst.lightDataIndex) when Slice B1 wires the UBO.
 
     v_uv             = a_uv;
     v_litColor       = vec4(baseLight, 1.0);
