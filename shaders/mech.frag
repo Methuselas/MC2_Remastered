@@ -49,6 +49,8 @@ void main() {
     else if (u_debugMode == 2) c = vec4(tex_color.rgb, 1.0);                    // texture only
     else if (u_debugMode == 3) c = vec4(v_litColor.rgb, 1.0);                   // light only
     else if (u_debugMode == 4) c = vec4(normalize(v_normal) * 0.5 + 0.5, 1.0);  // normal-as-color
+    else if (u_debugMode == 5) c = vec4(fract(v_uv.x), fract(v_uv.y), 0.0, 1.0); // UV visualizer
+    else if (u_debugMode == 6) c = vec4(tex_color.aaa, 1.0);                    // texture alpha as grey
 
     FragColor = c;
     GBuffer1  = rc_gbuffer1_screenShadowEligible(normalize(v_normal));

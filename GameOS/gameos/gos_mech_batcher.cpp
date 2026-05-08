@@ -4,6 +4,7 @@
 #include "gos_static_prop_batcher.h"  // for STATIC_PROP_RING_FRAMES cross-check
 #include "gameos.hpp"                 // gos_InvalidateRenderStateCache
 #include "utils/shader_builder.h"
+#include "../../mclib/txmmgr.h"       // mcTextureManager->get_gosTextureHandle (live resolve)
 #include <GL/glew.h>
 #include <cstdio>
 #include <cstring>
@@ -433,11 +434,15 @@ void GpuMechBatcher::finalizeGeometry() {
 
     glBindVertexArray(0);
 
-    // Session-lifetime sampler: GL_REPEAT / LINEAR_MIPMAP_LINEAR.
+    // Session-lifetime sampler: GL_REPEAT / GL_LINEAR.
+    // GL_LINEAR (not GL_LINEAR_MIPMAP_LINEAR) because mech textures may not
+    // have mipmaps generated — sampling a mipmap chain that doesn't exist
+    // is undefined behavior on AMD, often black. Slice A+ can revisit if
+    // mech textures get mipmaps from the upscaler pipeline.
     glGenSamplers(1, &s_sampler);
     glSamplerParameteri(s_sampler, GL_TEXTURE_WRAP_S,     GL_REPEAT);
     glSamplerParameteri(s_sampler, GL_TEXTURE_WRAP_T,     GL_REPEAT);
-    glSamplerParameteri(s_sampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glSamplerParameteri(s_sampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glSamplerParameteri(s_sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     s_stagingVbo.clear(); s_stagingVbo.shrink_to_fit();
@@ -690,12 +695,32 @@ void GpuMechBatcher::flush() {
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
 
-    // Bind sampler to unit 0: prevents CLAMP_TO_EDGE / NEAREST inheritance.
-    glBindSampler(0, s_sampler);
+    // Sampler binding strategy: do NOT bind a custom sampler object.
+    // gos textures have their own per-object sampler state set at creation
+    // (gosCreateTexture configures min/mag/wrap on the texture object).
+    // Binding a custom sampler overrides that and was producing all-zero
+    // samples for mech textures on AMD even with GL_LINEAR/GL_REPEAT.
+    // Static_prop does the same — sets glTexParameter on the bound texture
+    // object instead of using a sampler object. We zero the sampler binding
+    // to ensure no STALE sampler from a prior pass leaks in.
+    glBindSampler(0, 0);
+    (void)s_sampler;  // kept allocated for now; future passes may need it
 
     // Static uniforms.
     glUniform1i(s_loc_u_tex,      0);
     glUniform1f(s_loc_u_fogValue, 1.0f);
+    if (s_mechBatcherTrace) {
+        static int s_uniDiagPrinted = 0;
+        if (s_uniDiagPrinted < 2) {
+            ++s_uniDiagPrinted;
+            GLint utexVal = -99;
+            if (s_loc_u_tex >= 0)
+                glGetUniformiv(s_mechProgram, s_loc_u_tex, &utexVal);
+            std::fprintf(stderr,
+                "[MECHBATCHER v1] event=uni_probe loc_u_tex=%d u_tex_val=%d s_loc_terrainMVP=%d s_loc_u_mvp=%d s_loc_u_terrainViewport=%d\n",
+                s_loc_u_tex, utexVal, s_loc_terrainMVP, s_loc_u_mvp, s_loc_u_terrainViewport);
+        }
+    }
     {
         // MC2_MECH_FRAG_DEBUG=N: 0=normal, 1=magenta, 2=texOnly, 3=lightOnly, 4=normal.
         const char* dbg = std::getenv("MC2_MECH_FRAG_DEBUG");
@@ -723,6 +748,7 @@ void GpuMechBatcher::flush() {
 
     // Step 7: Issue one draw call per bucket.
     uint32_t drawnCalls = 0;
+    static int s_texDiagPrinted = 0;
     for (const DrawCall& dc : drawCalls) {
         const GpuMechPacket& pkt = s_packets[dc.globalPacketIdx];
 
@@ -731,9 +757,59 @@ void GpuMechBatcher::flush() {
         if (s_loc_u_materialFlags >= 0)
             glUniform1i(s_loc_u_materialFlags, (int)dc.materialFlags);
 
-        const uint32_t glTexId = gos_GetGLTextureId(dc.texHandle);
+        // dc.texHandle is the mcTextureManager slot index, NOT a gos
+        // handle (TG_TinyTexture::gosTextureHandle is a misnamed slot
+        // index per memory/mc2_texture_handle_is_live.md). Resolve to the
+        // live gos handle THIS FRAME, then to GL texture id.
+        const DWORD liveGosHandle = (dc.texHandle != 0xFFFFFFFFu && mcTextureManager)
+            ? mcTextureManager->get_gosTextureHandle(dc.texHandle)
+            : 0u;
+        const uint32_t glTexId = gos_GetGLTextureId((uint32_t)liveGosHandle);
+        if (s_mechBatcherTrace && s_texDiagPrinted < 16) {
+            ++s_texDiagPrinted;
+            // Probe what the bound texture object actually contains.
+            GLint tw = 0, th = 0, tfmt = 0, tMin = 0, tMag = 0;
+            GLint sR = 0, sG = 0, sB = 0, sA = 0;
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, glTexId);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH,           &tw);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT,          &th);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &tfmt);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &tMin);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, &tMag);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, &sR);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, &sG);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, &sB);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, &sA);
+            std::fprintf(stderr,
+                "[MECHBATCHER v1] event=tex_probe glTex=%u w=%d h=%d fmt=0x%x min=0x%x mag=0x%x swz=R0x%x,G0x%x,B0x%x,A0x%x\n",
+                glTexId, tw, th, tfmt, tMin, tMag, sR, sG, sB, sA);
+        }
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, glTexId);
+        // Set sampler params on the texture object directly, mirroring what
+        // applyRenderStates does for each tex unit (gameos_graphics.cpp:3213).
+        // Without this, the mech texture inherits whatever MIN_FILTER /
+        // MAG_FILTER / WRAP it was last left in by an earlier pass — typically
+        // a mip-requiring filter that returns zero samples for paint textures
+        // when our fast path runs without mip state set up. GL_LINEAR is safe
+        // whether or not the texture has mipmaps generated.
+        if (glTexId != 0) {
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,     GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,     GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            // gosTexture may have only mip level 0 uploaded (mips not yet
+            // generated when our flush runs). With default GL_TEXTURE_MAX_LEVEL=1000,
+            // GL considers the texture "incomplete" and samples to zero. Cap the
+            // mip range at level 0 so the texture is always complete for our
+            // sampling. NOTE: this leaves persistent state on the texture object
+            // and is undone by gos_InvalidateRenderStateCache + applyRenderStates
+            // resetting MAX_LEVEL elsewhere — diagnostic for now, will revisit if
+            // it breaks shader paths that DO want mips.
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  0);
+        }
 
         glDrawElementsInstancedBaseVertex(
             GL_TRIANGLES,
