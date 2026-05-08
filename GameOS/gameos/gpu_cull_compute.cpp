@@ -248,9 +248,15 @@ static GLuint build_cull_program(const std::string* preambles, int nPreambles,
     delete[] predicateSrc;
     delete[] computeSrc;
 
-    // Build source list: version + preambles + full source.
+    // Inject binding constant so shader uses the same value as the C++ side.
+    // Single source of truth: gpu_cull_readback.h::READBACK_SSBO_BINDING.
+    std::string bindingDef = "#define READBACK_SSBO_BINDING " +
+                             std::to_string(gpu_cull::READBACK_SSBO_BINDING) + "\n";
+
+    // Build source list: version + binding-constant + preambles + full source.
     std::vector<const char*> srcStrs;
     srcStrs.push_back(kPrefix);
+    srcStrs.push_back(bindingDef.c_str());
     for (int j = 0; j < nPreambles; ++j)
         srcStrs.push_back(preambles[j].c_str());
     srcStrs.push_back(fullSrc.c_str());

@@ -84,6 +84,12 @@ static bool       s_initialized               = false;
 static uint32_t   s_consumeCount              = 0;
 static bool       s_firstConsumeDone          = false;
 
+// M-4: stale-slot protection. When both readback fences miss (T3) for this many
+// consecutive frames, reset s_lastGoodSlot to UINT32_MAX (conservative) so callers
+// stop using data that is arbitrarily old (GPU stall / driver freeze scenario).
+static constexpr uint32_t MAX_STALE_FRAMES    = 10u;
+static uint32_t   s_staleFrameCount           = 0u;
+
 // 600-call counter for lifecycle_snapshot log line (readback_buildActorVisSnapshot).
 // Defined here so readback_init/readback_shutdown can reset them without forward-ref.
 static uint32_t   s_snapshotCallCount         = 0u;
@@ -147,6 +153,7 @@ bool readback_init(uint32_t maxActors) {
     s_firstConsumeDone = false;
     s_snapshotCallCount = 0u;
     s_snapshotFirstDone = false;
+    s_staleFrameCount = 0u;
 
     // Per-slot layout: [ReadbackHeader][uint32_t * maxActors]
     // Align slot size to GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT.
@@ -260,6 +267,7 @@ void readback_shutdown() {
     s_currentSlot  = 0;
     s_lastGoodSlot = UINT32_MAX;
     s_lastGoodVisibleCount = UINT32_MAX;
+    s_staleFrameCount = 0u;
     s_initialized  = false;
     s_firstConsumeDone = false;
     s_snapshotCallCount = 0u;
@@ -316,6 +324,7 @@ ReadbackTier readback_tryConsume() {
             TracyPlot("GPU.VisibleCount.CPU", (int64_t)cpuVis);
         }
 
+        s_staleFrameCount = 0u;  // M-4: fence ready — staleness cleared
         ++s_consumeCount;
         const bool doLog = !s_firstConsumeDone || ((s_consumeCount % 600u) == 0u);
         if (doLog) {
@@ -350,6 +359,7 @@ ReadbackTier readback_tryConsume() {
             TracyPlot("GPU.VisibleCount.CPU", (int64_t)cpuVis);
         }
 
+        s_staleFrameCount = 0u;  // M-4: fence ready — staleness cleared
         printf("[GPU_CULL v1] event=readback_fallback_n2 slot=%u stale_frames=2\n",
                n2Slot);
         fflush(stdout);
@@ -359,10 +369,21 @@ ReadbackTier readback_tryConsume() {
     }
 
     // --- Tier 3: conservative (both fences not ready) ---
-    printf("[GPU_CULL v1] event=readback_fallback_conservative\n");
+    // M-4: track consecutive T3 misses; after MAX_STALE_FRAMES, abandon s_lastGoodSlot
+    // so downstream callers revert to conservative (all-visible) rather than using
+    // data that is arbitrarily stale (covers GPU stall / driver-freeze scenarios).
+    ++s_staleFrameCount;
+    if (s_staleFrameCount >= MAX_STALE_FRAMES && s_lastGoodSlot != UINT32_MAX) {
+        printf("[GPU_CULL v1] event=readback_stale_reset stale_frames=%u — clearing last-good slot\n",
+               s_staleFrameCount);
+        fflush(stdout);
+        s_lastGoodSlot = UINT32_MAX;
+        s_lastGoodVisibleCount = UINT32_MAX;
+    }
+    printf("[GPU_CULL v1] event=readback_fallback_conservative stale=%u\n", s_staleFrameCount);
     fflush(stdout);
 
-    RB_TRACE("event=consume_tier3_conservative");
+    RB_TRACE("event=consume_tier3_conservative stale=%u", s_staleFrameCount);
     return ReadbackTier::Tier3_Conservative;
 }
 
@@ -422,6 +443,12 @@ void readback_frameEnd(uint32_t frameIndex) {
 // ---------------------------------------------------------------------------
 void readback_selftest() {
     if (!readback_isEnabled()) return;
+
+    // m-1: save persistent state that tryConsume mutates, restore after selftest
+    // so test probes don't corrupt the production ring-buffer state.
+    const uint32_t savedLastGoodSlot         = s_lastGoodSlot;
+    const uint32_t savedLastGoodVisibleCount = s_lastGoodVisibleCount;
+    const uint32_t savedStaleFrameCount      = s_staleFrameCount;
 
     int pass = 0;
     int fail = 0;
@@ -492,6 +519,11 @@ void readback_selftest() {
 
         s_readbackFence[n1Slot] = savedN1;
     }
+
+    // m-1: restore state that tryConsume side-effected during the test probes.
+    s_lastGoodSlot         = savedLastGoodSlot;
+    s_lastGoodVisibleCount = savedLastGoodVisibleCount;
+    s_staleFrameCount      = savedStaleFrameCount;
 
     printf("[GPU_CULL v1] event=readback_selftest pass=%d fail=%d\n", pass, fail);
     fflush(stdout);
@@ -577,7 +609,13 @@ void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
     uint32_t nInvisible = 0u;
     for (uint32_t i = 0u; i < recCount; ++i) {
         const uint32_t id = recs[i].actorId;
-        if (id == 0u || id >= cap) continue;  // out-of-range or above caller bound: skip (stays visible)
+        if (id == 0u) continue;
+        // M-3: actorId >= MAX_ACTOR_HANDLE means the substrate was given more actors
+        // than the fixed visibility array can track — hard error, not silent fail-open.
+        if (id >= MAX_ACTOR_HANDLE) {
+            STOP(("[GPU_CULL] readback actor overflow: id=%u cap=%u; raise MAX_ACTOR_HANDLE", id, MAX_ACTOR_HANDLE));
+        }
+        if (id >= cap) continue;  // above caller's narrower bound: stays visible (benign)
         const uint8_t vis = (rbVis[i] != 0u) ? 1u : 0u;
         s_actorVis[id] = vis;
         if (vis) ++nVisible; else ++nInvisible;

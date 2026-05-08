@@ -268,7 +268,13 @@ def main():
                             # Track C2 — async readback ring buffer
                             "MC2_GPU_CULL_READBACK",
                             "MC2_GPU_CULL_FORCE_FENCE_NOT_READY",
-                            "MC2_GPU_CULL_READBACK_TRACE")},
+                            "MC2_GPU_CULL_READBACK_TRACE",
+                            # Track C3 — lifecycle gates (mech3d/gvactor/objmgr routing)
+                            # m-4: missing permutation: LIFECYCLE=1+READBACK=1 and
+                            # LIFECYCLE=1+READBACK=0 (fail-open regression) smoke runs.
+                            # Both require --with-env overrides; not automated yet.
+                            "MC2_GPU_CULL_LIFECYCLE",
+                            "MC2_GPU_CULL_LIFECYCLE_TRACE")},
             },
         )
         print(f"[runner] running {e.stem} (tier={tier} duration={duration})",

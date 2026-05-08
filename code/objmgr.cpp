@@ -231,6 +231,13 @@ static void emitGpuCullRecord(GameObjectPtr obj,
                                (ncz >= 0.0f) && (ncz <= ncw);
             modernBit = admit ? 1u : 0u;
         }
+        // m-2: prevVisibilityBit reflects CPU clip-space admission, not GPU readback.
+        // After C1b GPU authority flip the GPU is the authoritative visibility source;
+        // this field drifts for off-screen actors that were admitted by the CPU predicates
+        // but culled by the GPU frustum. The field is unused by the compute shader
+        // (struct-layout only, never read in gpu_cull.comp); it drives only the
+        // substrate_getCpuVisibleCount() parity summary. Wire to readback_isActorVisibleLagged
+        // when C3 default-on flip happens (C3-9), so the summary reflects GPU state.
         rec.prevVisibilityBit = modernBit;
     }
     rec.consumerFlags   = consumerFlags;
