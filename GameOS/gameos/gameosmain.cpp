@@ -752,6 +752,7 @@ int main(int argc, char** argv)
             "static_prop_registry=%d "
             "gpu_cull_substrate=%d gpu_cull_aabb_parity=%d "
             "shader_hot_reload=%d "
+            "camera_motion=1 "
             "build=%s",
             tgl ? 1 : 0, destr ? 1 : 0, glprint ? 1 : 0, smoke ? 1 : 0,
             waterFp ? 1 : 0, waterPc ? 1 : 0, vpFast ? 1 : 0, vpPar ? 1 : 0,

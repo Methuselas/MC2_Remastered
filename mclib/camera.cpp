@@ -44,6 +44,12 @@
 #include"userinput.h"
 #endif
 
+// [CAMERA_MOTION v1] recon-only motion-fraction tracking — gates whether
+// Lifecycle Option C (camera-motion-gated fail-open) is shippable. See
+// docs/superpowers/explorations/2026-05-07-lifecycle-normal-zoom-design.md.
+#include"../GameOS/gameos/gos_profiler.h"
+#include <math.h>
+
 extern void AG_ellipse_draw(PANE *pane, LONG xc, LONG yc, LONG width, LONG height, LONG color);
 extern void AG_ellipse_fill(PANE *pane, LONG xc, LONG yc, LONG width, LONG height, LONG color);
 extern void AG_StatusBar( PANE *pane, int X0, int Y0, int X1, int Y1, int Color, int Width );
@@ -1665,8 +1671,70 @@ long Camera::update (void)
 	TG_Shape::SetFog(fogColor,fogStart,fogFull);
 
 	active = true;
-	
+
 	terrainLightCalc = false;
+
+	// [CAMERA_MOTION v1] recon: measure stationary-camera fraction.
+	// Gates Lifecycle Option C (camera-motion-gated fail-open).
+	// Stationary thresholds:
+	//   rotation < 0.5 deg/frame: smaller than typical operator-pan rate
+	//     (RTS pans typically 30-60 deg/sec at 60fps = 0.5-1.0 deg/frame);
+	//     0.5 deg/frame is the floor below which the operator is not
+	//     actively rotating.
+	//   position < 1.0 unit/frame: world units (terrain.x/y in MC2 worldspace);
+	//     a stationary camera still drifts sub-pixel from float math but
+	//     should not exceed ~1 unit between frames at any sane FPS.
+	// Both thresholds must hold for "stationary" — translation OR rotation
+	// counts as motion, since either invalidates lagged-visibility data.
+	{
+		ZoneScopedN("Camera.MotionTracking");
+		static bool   s_motionInit       = false;
+		static float  s_prevRotation     = 0.0f;
+		static Stuff::Vector3D s_prevPosition;  // default-ctor zeroed; actual prev seeded on first call
+		static uint32_t s_motionFrames     = 0;
+		static uint32_t s_motionStationary = 0;
+		static uint32_t s_motionMoving     = 0;
+		constexpr float STATIONARY_ROT_DEG = 0.5f;
+		constexpr float STATIONARY_POS_UNI = 1.0f;
+		constexpr uint32_t SUMMARY_PERIOD  = 600u;
+
+		if (!s_motionInit) {
+			s_prevRotation = cameraRotation;
+			s_prevPosition = position;
+			s_motionInit = true;
+		} else {
+			float dRot = cameraRotation - s_prevRotation;
+			if (dRot < 0.0f) dRot = -dRot;
+			// wrap-around: rotation is in degrees, fold to [0,180]
+			if (dRot > 180.0f) dRot = 360.0f - dRot;
+
+			float dx = position.x - s_prevPosition.x;
+			float dy = position.y - s_prevPosition.y;
+			float dz = position.z - s_prevPosition.z;
+			float dPos = sqrtf(dx*dx + dy*dy + dz*dz);
+
+			s_motionFrames++;
+			if (dRot < STATIONARY_ROT_DEG && dPos < STATIONARY_POS_UNI) {
+				s_motionStationary++;
+			} else {
+				s_motionMoving++;
+			}
+
+			s_prevRotation = cameraRotation;
+			s_prevPosition = position;
+
+			if ((s_motionFrames % SUMMARY_PERIOD) == 0u) {
+				printf("[CAMERA_MOTION v1] event=summary frames=%u stationary=%u moving=%u "
+				       "stationary_pct=%.1f threshold_deg=%.2f threshold_pos=%.2f\n",
+				       s_motionFrames, s_motionStationary, s_motionMoving,
+				       (s_motionFrames > 0u)
+				           ? (100.0f * (float)s_motionStationary / (float)s_motionFrames)
+				           : 0.0f,
+				       STATIONARY_ROT_DEG, STATIONARY_POS_UNI);
+				fflush(stdout);
+			}
+		}
+	}
 
 	return NO_ERR;
 }
