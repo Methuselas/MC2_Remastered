@@ -36,3 +36,23 @@ bool clipSpaceFrustumAdmit(vec4 clip) {
     if (cz < 0.0 || cz > cw) return false;
     return true;
 }
+
+// Dilated variant: expand each clip-plane bound by (1 + d) on the half-extent.
+// d=0 reproduces the strict test exactly; d=0.08 admits actors within ~8% of
+// the frustum edge ("about to enter"). Hides readback staleness during camera
+// motion. See gpu_cull_compute.cpp for CPU-side env wiring.
+bool clipSpaceFrustumAdmitDilated(vec4 clip, float d) {
+    float s = (clip.w < 0.0) ? -1.0 : 1.0;
+    float cx = clip.x * s;
+    float cy = clip.y * s;
+    float cz = clip.z * s;
+    float cw = clip.w * s;
+    if (cw < 1e-5) return false;
+    float bound = cw * (1.0 + d);
+    if (cx < -bound || cx > bound) return false;
+    if (cy < -bound || cy > bound) return false;
+    // Depth: extend on both ends. Near plane: cz >= -d*cw (small negative slack).
+    // Far plane: cz <= (1+d)*cw.
+    if (cz < -d * cw || cz > bound) return false;
+    return true;
+}

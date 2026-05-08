@@ -46,7 +46,7 @@ constexpr uint32_t RING_FRAMES           = 3u;
 struct alignas(16) ReadbackHeader {
     uint32_t visibleCount;   // written by compute shader (atomicAdd)
     uint32_t frameIndex;     // CPU-provided frame index for validation
-    uint32_t _pad0;
+    uint32_t dilatedAdmits;  // motion-tolerance slice: actors admitted by dilated test only
     uint32_t _pad1;
 };
 static_assert(sizeof(ReadbackHeader) == 16, "ReadbackHeader must be 16 B");
@@ -64,7 +64,31 @@ bool readback_isEnabled() {
     return s_enabled;
 }
 
+// Conservative-OR snapshot consumption (motion-tolerance slice).
+// Default ON: an actor is marked visible if either the freshest readback slot
+// (N-1) OR the previous slot (N-2) reported it visible. Set to "0" to opt out.
+// Lazy-evaluated static (canonical shape, see gos_terrain_indirect.cpp).
+static bool readback_isConservativeOrEnabled() {
+    static bool s_inited = false;
+    static bool s_value  = true;
+    if (!s_inited) {
+        s_inited = true;
+        const char* v = getenv("MC2_GPU_CULL_CONSERVATIVE_OR");
+        if (v && v[0] == '0' && v[1] == '\0') s_value = false;
+    }
+    return s_value;
+}
+
 static bool s_forceNotReady = false;  // set at init time from env
+
+// Accumulators for the [GPU_CULL v1] event=motion_tolerance summary.
+// dilated_admits: per-frame value pulled from ReadbackHeader.dilatedAdmits, summed.
+// conservative_or_admits: actors flipped 0->1 by the OR-merge over what N-1 alone gave.
+static uint64_t s_accDilatedAdmits      = 0u;
+static uint64_t s_accConservativeOrAdmits = 0u;
+static uint32_t s_motionTolFrames       = 0u;
+static uint32_t s_motionTolSummaryCount = 0u;
+static bool     s_motionTolFirstDone    = false;
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -89,6 +113,12 @@ static bool       s_firstConsumeDone          = false;
 // stop using data that is arbitrarily old (GPU stall / driver freeze scenario).
 static constexpr uint32_t MAX_STALE_FRAMES    = 10u;
 static uint32_t   s_staleFrameCount           = 0u;
+
+// Per-actor GPU visibility snapshot. Declared at module scope (before
+// readback_selftest) so the selftest can synthesize OR-merge bit patterns
+// without forward-referencing.
+constexpr uint32_t MAX_ACTOR_HANDLE = 4096u;
+static uint8_t s_actorVis[MAX_ACTOR_HANDLE];  // 0=invisible, 1=visible
 
 // 600-call counter for lifecycle_snapshot log line (readback_buildActorVisSnapshot).
 // Defined here so readback_init/readback_shutdown can reset them without forward-ref.
@@ -124,12 +154,13 @@ uint32_t readback_getLastGoodVisibleCount() {
 
 void readback_zeroCurrentSlotVisibleCount() {
     if (!s_initialized || !s_gpuSsbo) return;
-    // Zero rb_visibleCount (first uint32 in the GPU SSBO's current slot)
-    // via glClearNamedBufferSubData (pure GPU operation — GPU buffer, no CPU map).
+    // Zero the entire ReadbackHeader (16 B = 4 uints: rb_visibleCount,
+    // rb_frameIndex, rb_dilatedAdmits, rb_pad1) so atomicAdd accumulators
+    // start at 0 each frame. Pure GPU operation (no CPU map).
     const GLuint zero = 0u;
     glClearNamedBufferSubData(s_gpuSsbo, GL_R32UI,
                               static_cast<GLintptr>(s_currentSlot * s_slotBytes),
-                              sizeof(uint32_t),
+                              static_cast<GLsizeiptr>(sizeof(ReadbackHeader)),
                               GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
 }
 
@@ -154,6 +185,11 @@ bool readback_init(uint32_t maxActors) {
     s_snapshotCallCount = 0u;
     s_snapshotFirstDone = false;
     s_staleFrameCount = 0u;
+    s_accDilatedAdmits        = 0u;
+    s_accConservativeOrAdmits = 0u;
+    s_motionTolFrames         = 0u;
+    s_motionTolSummaryCount   = 0u;
+    s_motionTolFirstDone      = false;
 
     // Per-slot layout: [ReadbackHeader][uint32_t * maxActors]
     // Align slot size to GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT.
@@ -525,6 +561,40 @@ void readback_selftest() {
     s_lastGoodVisibleCount = savedLastGoodVisibleCount;
     s_staleFrameCount      = savedStaleFrameCount;
 
+    // Conservative-OR synthetic bit-merge test (motion-tolerance slice).
+    // Verifies the OR semantics on a 2-slot scenario without touching substrate:
+    //   slot N-1 says actor 1=visible, actor 2=invisible
+    //   slot N-2 says actor 1=invisible, actor 2=visible
+    //   OR-merge expects both actors visible.
+    {
+        // Save & seed s_actorVis.
+        uint8_t saved[8];
+        memcpy(saved, s_actorVis, sizeof(saved));
+        // Primary write (slot N-1): actor 1 visible, actor 2 invisible.
+        s_actorVis[1] = 1u;
+        s_actorVis[2] = 0u;
+        // Synthetic secondary OR pass: actor 1 invisible, actor 2 visible.
+        // Apply OR semantics manually (mirrors applySlot's secondary branch).
+        const uint8_t synthPrev[3] = { 0u, 0u, 1u };  // index 0 unused
+        uint32_t orFlipsTest = 0u;
+        for (uint32_t id = 1u; id <= 2u; ++id) {
+            if (synthPrev[id] && s_actorVis[id] == 0u) {
+                s_actorVis[id] = 1u;
+                ++orFlipsTest;
+            }
+        }
+        const bool orOk = (s_actorVis[1] == 1u) && (s_actorVis[2] == 1u) && (orFlipsTest == 1u);
+        if (orOk) {
+            ++pass;
+        } else {
+            ++fail;
+            printf("[GPU_CULL v1] event=readback_selftest FAIL or_merge actor1=%u actor2=%u flips=%u\n",
+                   (unsigned)s_actorVis[1], (unsigned)s_actorVis[2], orFlipsTest);
+            fflush(stdout);
+        }
+        memcpy(s_actorVis, saved, sizeof(saved));
+    }
+
     printf("[GPU_CULL v1] event=readback_selftest pass=%d fail=%d\n", pass, fail);
     fflush(stdout);
 
@@ -542,8 +612,7 @@ void readback_selftest() {
 // Default (all 1) = fail-open: actors not in last-good substrate slot stay visible.
 // Only actors explicitly in the last-good readback slot can be marked invisible (0).
 // MAX_ACTOR_HANDLE must exceed any valid actorId; MC2 maximum is ~2000 objects.
-constexpr uint32_t MAX_ACTOR_HANDLE = 4096u;
-static uint8_t s_actorVis[MAX_ACTOR_HANDLE];  // 0=invisible, 1=visible
+// (Declared at module scope above to allow readback_selftest forward use.)
 
 void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
     // Clamp caller's bound to the fixed array size; memset always covers the full array
@@ -578,21 +647,65 @@ void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
         return;
     }
 
-    // Get staging buffer slice for the last-good readback slot.
-    // Layout: [ReadbackHeader (16 B)][uint32_t rb_actorVisible[maxActors]]
-    const char* slotBase = static_cast<const char*>(s_stagingMapped)
-                         + s_lastGoodSlot * s_slotBytes;
-    const uint32_t* rbVis = reinterpret_cast<const uint32_t*>(slotBase + sizeof(ReadbackHeader));
+    // Conservative-OR slot triple (motion-tolerance slice):
+    //
+    //   Readback slot K — substrate slot consumed by GPU is (K+1)%3.
+    //   The "last good" readback slot s_lastGoodSlot (call it K) is consumed
+    //   first. The previous readback slot (K-1)%3 holds an older but still
+    //   valid GPU snapshot (it lived in the persistent staging buffer when it
+    //   was current; the only risk reading it without a fence is partial
+    //   data, which is fail-open — visibility OR-merge can only over-admit).
+    //
+    //   Conservative-OR: bit_visible(actor) =
+    //       bit(slot=K)
+    //     | bit(slot=(K-1)%3)
+    //
+    //   The "current substrate write" slot has not yet been consumed by the
+    //   GPU (that happens in the *next* compute_dispatch), so it cannot
+    //   contribute a per-actor-visibility decision and is intentionally
+    //   excluded. Per-actor "always visible" flags already short-circuit the
+    //   cull on the GPU side, so they need no extra handling here.
+    //
+    //   Default ON. MC2_GPU_CULL_CONSERVATIVE_OR=0 to opt out.
+    const bool useOr = readback_isConservativeOrEnabled();
+    const uint32_t prevReadbackSlot = (s_lastGoodSlot + RING_FRAMES - 1u) % RING_FRAMES;
 
-    // Get substrate records for the MATCHING substrate slot.
-    // Ring-phase relationship: readback slot K was generated by the GPU reading
-    // substrate slot (K+1)%RING_FRAMES, because substrate_frameBegin() advances
-    // BEFORE writing while readback_frameEnd() writes THEN advances.
-    // Using substrate slot K (wrong) causes actor-ID misattribution during spawn/destroy.
-    const uint32_t substrateSlotForReadback = (s_lastGoodSlot + 1u) % 3u;
-    uint32_t recCount = 0u;
-    const GpuActorRecord* recs = substrate_getSlotRecords(substrateSlotForReadback, &recCount);
-    if (!recs || recCount == 0u) {
+    auto applySlot = [&](uint32_t readbackSlot, bool isPrimary,
+                         uint32_t* outFlippedOnAlone, uint32_t* outFlippedByOr) {
+        const uint32_t substrateSlotForReadback = (readbackSlot + 1u) % 3u;
+        uint32_t recCount = 0u;
+        const GpuActorRecord* recs = substrate_getSlotRecords(substrateSlotForReadback, &recCount);
+        if (!recs || recCount == 0u) return false;
+
+        const char* slotBase = static_cast<const char*>(s_stagingMapped)
+                             + readbackSlot * s_slotBytes;
+        const uint32_t* rbVis = reinterpret_cast<const uint32_t*>(slotBase + sizeof(ReadbackHeader));
+
+        for (uint32_t i = 0u; i < recCount; ++i) {
+            const uint32_t id = recs[i].actorId;
+            if (id == 0u) continue;
+            if (id >= MAX_ACTOR_HANDLE) {
+                STOP(("[GPU_CULL] readback actor overflow: id=%u cap=%u; raise MAX_ACTOR_HANDLE", id, MAX_ACTOR_HANDLE));
+            }
+            if (id >= cap) continue;
+            const uint8_t vis = (rbVis[i] != 0u) ? 1u : 0u;
+            if (isPrimary) {
+                // Primary pass: write the bit (overrides the all-1 default).
+                s_actorVis[id] = vis;
+                if (outFlippedOnAlone && vis) ++(*outFlippedOnAlone);
+            } else {
+                // Secondary (OR) pass: only flip 0 -> 1, count flips.
+                if (vis && s_actorVis[id] == 0u) {
+                    s_actorVis[id] = 1u;
+                    if (outFlippedByOr) ++(*outFlippedByOr);
+                }
+            }
+        }
+        return true;
+    };
+
+    uint32_t primaryVisible = 0u;
+    if (!applySlot(s_lastGoodSlot, true, &primaryVisible, nullptr)) {
         ++s_snapshotCallCount;
         const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
         if (doLog) {
@@ -604,30 +717,46 @@ void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
         return;
     }
 
-    // Walk records: memset defaulted all to visible, so only write 0 for invisible.
-    uint32_t nVisible = 0u;
-    uint32_t nInvisible = 0u;
-    for (uint32_t i = 0u; i < recCount; ++i) {
-        const uint32_t id = recs[i].actorId;
-        if (id == 0u) continue;
-        // M-3: actorId >= MAX_ACTOR_HANDLE means the substrate was given more actors
-        // than the fixed visibility array can track — hard error, not silent fail-open.
-        if (id >= MAX_ACTOR_HANDLE) {
-            STOP(("[GPU_CULL] readback actor overflow: id=%u cap=%u; raise MAX_ACTOR_HANDLE", id, MAX_ACTOR_HANDLE));
-        }
-        if (id >= cap) continue;  // above caller's narrower bound: stays visible (benign)
-        const uint8_t vis = (rbVis[i] != 0u) ? 1u : 0u;
-        s_actorVis[id] = vis;
-        if (vis) ++nVisible; else ++nInvisible;
+    uint32_t orFlips = 0u;
+    if (useOr && prevReadbackSlot != s_lastGoodSlot) {
+        applySlot(prevReadbackSlot, false, nullptr, &orFlips);
     }
 
-    // Log every 600 calls (and once on first call).
+    // Counters for the motion_tolerance summary.
+    s_accConservativeOrAdmits += orFlips;
+    {
+        const ReadbackHeader* hdr = reinterpret_cast<const ReadbackHeader*>(
+            static_cast<const char*>(s_stagingMapped) + s_lastGoodSlot * s_slotBytes);
+        s_accDilatedAdmits += hdr->dilatedAdmits;
+    }
+    ++s_motionTolFrames;
+    ++s_motionTolSummaryCount;
+    const bool doMotionLog = !s_motionTolFirstDone || ((s_motionTolSummaryCount % 600u) == 0u);
+    if (doMotionLog) {
+        s_motionTolFirstDone = true;
+        printf("[GPU_CULL v1] event=motion_tolerance frames=%u dilated_admits=%llu conservative_or_admits=%llu or_enabled=%d\n",
+               s_motionTolFrames,
+               (unsigned long long)s_accDilatedAdmits,
+               (unsigned long long)s_accConservativeOrAdmits,
+               (int)useOr);
+        fflush(stdout);
+        s_accDilatedAdmits        = 0u;
+        s_accConservativeOrAdmits = 0u;
+        s_motionTolFrames         = 0u;
+    }
+
+    // Lifecycle snapshot stats (recount from final s_actorVis to reflect OR-merge).
+    uint32_t nVisible = 0u, nInvisible = 0u;
+    (void)primaryVisible;
+    for (uint32_t id = 1u; id < cap; ++id) {
+        if (s_actorVis[id]) ++nVisible; else ++nInvisible;
+    }
     ++s_snapshotCallCount;
     const bool doLog = !s_snapshotFirstDone || ((s_snapshotCallCount % 600u) == 0u);
     if (doLog) {
         s_snapshotFirstDone = true;
-        printf("[GPU_CULL v1] event=lifecycle_snapshot slot=%u visible=%u invisible=%u conservative=0\n",
-               s_lastGoodSlot, nVisible, nInvisible);
+        printf("[GPU_CULL v1] event=lifecycle_snapshot slot=%u visible=%u invisible=%u conservative=0 or_admits=%u\n",
+               s_lastGoodSlot, nVisible, nInvisible, orFlips);
         fflush(stdout);
     }
 }

@@ -102,6 +102,24 @@ bool compute_isEnabled() {
     return s_enabled;
 }
 
+// Frustum dilation knob (motion-tolerance slice).
+// Default 0.08 (8% per-plane half-extent inflation). MC2_GPU_CULL_FRUSTUM_DILATION=0
+// reproduces the strict legacy cull. Lazy-evaluated static (canonical shape, see
+// gos_terrain_indirect.cpp env wiring).
+static float compute_getFrustumDilation() {
+    static bool  s_inited = false;
+    static float s_value  = 0.08f;
+    if (!s_inited) {
+        s_inited = true;
+        const char* v = getenv("MC2_GPU_CULL_FRUSTUM_DILATION");
+        if (v) {
+            float parsed = (float)atof(v);
+            if (parsed >= 0.0f && parsed < 1.0f) s_value = parsed;
+        }
+    }
+    return s_value;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers: load + compile a compute shader from file
 // ---------------------------------------------------------------------------
@@ -409,11 +427,20 @@ bool compute_init() {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     // --- Frustum UBO (binding 2) ---
+    // Layout (std140): mat4 viewProj (64 B) + 4× uint slot info (16 B) +
+    //                  4× float dilation block (16 B) = 96 B total.
     glGenBuffers(1, &s_frustumUbo);
     glBindBuffer(GL_UNIFORM_BUFFER, s_frustumUbo);
-    glBufferStorage(GL_UNIFORM_BUFFER, 80, nullptr, GL_DYNAMIC_STORAGE_BIT);
+    glBufferStorage(GL_UNIFORM_BUFFER, 96, nullptr, GL_DYNAMIC_STORAGE_BIT);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
     glBindBufferBase(GL_UNIFORM_BUFFER, CULL_UBO_BINDING, s_frustumUbo);
+
+    // Log dilation setting once at init.
+    {
+        const float d = compute_getFrustumDilation();
+        printf("[GPU_CULL v1] event=frustum_dilation_init value=%.4f\n", d);
+        fflush(stdout);
+    }
 
     // --- GL timer query ---
     glGenQueries(1, &s_timerQuery);
@@ -702,8 +729,11 @@ void compute_dispatch() {
     // Bind frustum UBO.
     {
         uint32_t slotInfo[4] = { 0u, recordCount, 0u, 0u };
+        const float dilation = compute_getFrustumDilation();
+        const float dilationBlock[4] = { dilation, 0.0f, 0.0f, 0.0f };
         glBindBuffer(GL_UNIFORM_BUFFER, s_frustumUbo);
-        glBufferSubData(GL_UNIFORM_BUFFER, 64, sizeof(slotInfo), slotInfo);
+        glBufferSubData(GL_UNIFORM_BUFFER, 64, sizeof(slotInfo),     slotInfo);
+        glBufferSubData(GL_UNIFORM_BUFFER, 80, sizeof(dilationBlock),dilationBlock);
         glBindBuffer(GL_UNIFORM_BUFFER, 0);
     }
     glBindBufferBase(GL_UNIFORM_BUFFER, CULL_UBO_BINDING, s_frustumUbo);

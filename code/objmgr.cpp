@@ -1867,8 +1867,11 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 
 	// C3: build per-actor GPU visibility snapshot from N-1 readback FIRST,
 	// so the framesSinceActive sweep below reads a freshly-built snapshot.
-	// No-op when MC2_GPU_CULL_LIFECYCLE is not set or no valid readback is available.
-	if (s_gpuCullLifecycle) {
+	// Motion-tolerance slice: also build when READBACK alone is enabled so
+	// the [GPU_CULL v1] event=motion_tolerance summary (dilated_admits +
+	// conservative_or_admits counters) fires even without LIFECYCLE wired.
+	// readback_buildActorVisSnapshot is no-op-cheap when no good slot exists.
+	if (s_gpuCullLifecycle || gpu_cull::readback_isEnabled()) {
 		// Max handle is bounded by maxObjects + slack; 4096 is safe for MC2 (~2000 max).
 		gpu_cull::readback_buildActorVisSnapshot(4096u);
 	}

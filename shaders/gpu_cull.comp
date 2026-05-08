@@ -130,9 +130,9 @@ layout(std430, binding = 9) buffer DebugOut {
 layout(std430, binding = READBACK_SSBO_BINDING) coherent buffer ReadbackBuf {
     uint rb_visibleCount;   // header[0] — atomicAdd per admitted actor
     uint rb_frameIndex;     // header[1] — set by CPU before dispatch
-    uint rb_pad0;
-    uint rb_pad1;
-    uint rb_actorVisible[]; // per-actor: 1=visible, 0=culled
+    uint rb_dilatedAdmits;  // header[2] — actors admitted by dilation but not strict cull
+    uint rb_pad1;           // header[3]
+    uint rb_actorVisible[]; // per-actor: 1=visible, 0=culled (after dilation)
 };
 #endif  // GPU_CULL_C2_READBACK
 
@@ -156,6 +156,12 @@ layout(std140, binding = 2) uniform CullUBO {
     uint slotRecordCount;  // number of valid records in the active slot
     uint _pad0;
     uint _pad1;
+    // Dilation slice: frustum half-extent inflation factor (default 0.08).
+    // 0.0 reproduces strict legacy cull. See gpu_cull_compute.cpp env wiring.
+    float frustumDilation;
+    float _pad2;
+    float _pad3;
+    float _pad4;
 };
 
 // ---------------------------------------------------------------------------
@@ -184,17 +190,30 @@ void main() {
     // Transform world-space center to clip space.
     vec4 clip = viewProj * vec4(rec.worldCenter, 1.0);
 
-    // Frustum cull (lockstep mirror of C++ clipSpaceFrustumAdmit).
-    bool visible = clipSpaceFrustumAdmit(clip);
+    // Frustum cull. Dilation slice: when frustumDilation > 0, the dilated
+    // predicate replaces the strict one for the visibility decision and the
+    // strict result is computed only for the diagnostic delta counter.
+    bool visibleStrict  = clipSpaceFrustumAdmit(clip);
+    bool visibleDilated = (frustumDilation > 0.0)
+                            ? clipSpaceFrustumAdmitDilated(clip, frustumDilation)
+                            : visibleStrict;
+    bool visible = visibleDilated;
 
     // Flag_AlwaysVisible (bit 0) overrides cull — same as CPU path.
-    if ((rec.flags & 0x1u) != 0u) visible = true;
+    if ((rec.flags & 0x1u) != 0u) {
+        visible        = true;
+        visibleStrict  = true;
+        visibleDilated = true;
+    }
 
 #ifdef GPU_CULL_C2_READBACK
     // C2 secondary write: per-actor visibility flag + global visible count.
     // ReadbackBuf is at binding 14 (separate from C1a/C1b binding-9 usage).
     rb_actorVisible[i] = visible ? 1u : 0u;
     if (visible) atomicAdd(rb_visibleCount, 1u);
+    // Dilation diagnostic: count actors that the dilated test admits but
+    // the strict test would have rejected. Reset per-frame by CPU.
+    if (visibleDilated && !visibleStrict) atomicAdd(rb_dilatedAdmits, 1u);
     if (i == 0u) rb_frameIndex = 0xDEADu;
 #endif  // GPU_CULL_C2_READBACK
 
