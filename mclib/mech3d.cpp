@@ -3374,7 +3374,20 @@ void Mech3DAppearance::updateGeometry (void)
 
  			mechShadowShape->SetNodeRotation("joint_torso",&torsoRot);
 			mechShadowShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-			mechShadowShape->TransformMultiShape (&xlatPosition,&qRotation);
+			// Slice C3-shadow: when GPU mech path is on AND shadow fast-
+			// transform killswitch is on, use _PositionsOnly to skip the
+			// per-vertex CPU lighting kernel for the shadow shape.
+			// RenderShadows (tgl.cpp:3577) hardcodes gVertex.argb to
+			// 0x3f000000 and reads listOfShadowTVertices populated by
+			// MultiTransformShadows (which still dispatches at msl.cpp:1765
+			// in both branches). The per-vertex bake's .argb writes have
+			// no consumer in the shadow render path. See spec §Recon for
+			// the full grep-verified consumer enumeration.
+			if (g_useGpuMechs && g_useGpuMechShadowFastTransform) {
+				mechShadowShape->TransformMultiShape_PositionsOnly(&xlatPosition, &qRotation);
+			} else {
+				mechShadowShape->TransformMultiShape(&xlatPosition, &qRotation);
+			}
 		}
 
 		mechShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
