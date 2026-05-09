@@ -2,9 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Wire `TG_MultiShape::TransformMultiShape_PositionsOnly` for the GPU mech body + arms when `MC2_GPU_MECH_FAST_TRANSFORM=1`, bypassing the per-vertex CPU lighting kernel that consumes ~65µs/mech in `Mech3DAppearance::updateGeometry`. Pixel-equivalent output guaranteed when `MC2_GPU_MECH_LIGHTING=1`.
+**Goal:** Wire `TG_MultiShape::TransformMultiShape_PositionsOnly` for the GPU mech body when `MC2_GPU_MECH_FAST_TRANSFORM=1`, bypassing the per-vertex CPU lighting kernel that consumes a substantial portion of `Mech3DAppearance::updateGeometry`. Pixel-equivalent output guaranteed when `MC2_GPU_MECH_LIGHTING=1`.
 
-**Architecture:** Three call-site conditional swaps in `mech3d.cpp` (`:3381` body, `:4459` left arm, `:4543` right arm). One new env-var-driven extern. No shader changes. Shadow callsite (`:3377`) explicitly out of scope.
+**Architecture:** ONE call-site conditional swap in `mech3d.cpp` (`:3381` body). One new env-var-driven extern. No shader changes. Arm callsites (`:4459`, `:4543`) explicitly out of scope (their `Render(true)` runs unconditionally — stripping the lighting bake would render garbage; needs separate slice). Shadow callsite (`:3377`) and sensor callsites (`:3579`, `:3585`) also out of scope.
+
+**Plan-time adversarial review verdict (pre-execution):** STOP-THE-LINE on original arm-included scope; the body-only scope below addresses CRIT-1 from that review.
 
 **Tech Stack:** Existing `TG_MultiShape::TransformMultiShape_PositionsOnly` at `mclib/msl.cpp:1789`, existing GPU mech batcher killswitch infrastructure at `GameOS/gameos/gos_mech_killswitch.h`.
 
@@ -18,7 +20,7 @@
 |---|---|---|
 | Modify | `GameOS/gameos/gos_mech_killswitch.h` | Add `extern bool g_useGpuMechFastTransform` decl |
 | Modify | `GameOS/gameos/gos_mech_batcher.cpp` | Define globally from `MC2_GPU_MECH_FAST_TRANSFORM` env var |
-| Modify | `mclib/mech3d.cpp` | Three conditional swaps at body + left arm + right arm callsites |
+| Modify | `mclib/mech3d.cpp` | ONE conditional swap at body callsite (:3381). Arms and shadow stay full per spec. |
 
 ---
 
@@ -130,81 +132,27 @@ git commit -m "feat(slice-c3-revised): conditional swap to TransformMultiShape_P
 
 ---
 
-## Task 3: Conditional swaps at arm sub-actor callsites
+## Task 3: Verify body-only swap (no arm changes)
 
 **Files:**
-- Modify: `mclib/mech3d.cpp`
+- Read-only verification
 
-- [ ] **Step 3.1: Confirm arm callsites**
-
-```bash
-grep -n "leftArm->TransformMultiShape\|rightArm->TransformMultiShape" mclib/mech3d.cpp
-```
-
-Expected: matches at lines 4459 (left arm) and 4543 (right arm) — both inside the blown-off-arm rendering blocks.
-
-- [ ] **Step 3.2: Apply conditional swap at left arm callsite**
-
-In `mclib/mech3d.cpp`, find the line:
-
-```cpp
-		leftArm->TransformMultiShape(&xlatPosition,&qRotation);
-```
-
-Replace with:
-
-```cpp
-		// Slice C3-revised: same _PositionsOnly conditional as the body
-		// callsite. Sub-actor blown-off arms render through the same GPU
-		// mech batcher path as the body.
-		if (g_useGpuMechs && g_useGpuMechFastTransform) {
-			leftArm->TransformMultiShape_PositionsOnly(&xlatPosition, &qRotation);
-		} else {
-			leftArm->TransformMultiShape(&xlatPosition, &qRotation);
-		}
-```
-
-- [ ] **Step 3.3: Apply conditional swap at right arm callsite**
-
-In `mclib/mech3d.cpp`, find the line:
-
-```cpp
-		rightArm->TransformMultiShape(&xlatPosition,&qRotation);
-```
-
-Replace with:
-
-```cpp
-		// Slice C3-revised: same _PositionsOnly conditional as the body callsite.
-		if (g_useGpuMechs && g_useGpuMechFastTransform) {
-			rightArm->TransformMultiShape_PositionsOnly(&xlatPosition, &qRotation);
-		} else {
-			rightArm->TransformMultiShape(&xlatPosition, &qRotation);
-		}
-```
-
-- [ ] **Step 3.4: Verify sensor / HUD callsites unchanged**
+- [ ] **Step 3.1: Confirm only body callsite is swapped**
 
 ```bash
 grep -n "TransformMultiShape\b" mclib/mech3d.cpp | grep -v "_PositionsOnly\|_BuildRecipe"
 ```
 
-Expected: lines 3377 (shadow — full, intentional), 3579 (sensorTriangleShape — full, intentional), 3585 (sensorSquareShape — full, intentional). Body + arms now go through the conditional. NO other naked `TransformMultiShape` calls in mech3d.cpp.
+Expected: lines 3377 (shadow — full, intentional), 4459 (leftArm — full, intentional, OUT OF SCOPE per CRIT-1), 4543 (rightArm — full, OUT OF SCOPE per CRIT-1), 3579 (sensorTriangleShape — full, intentional), 3585 (sensorSquareShape — full, intentional). Body goes through the conditional at the swap site (now reads `TransformMultiShape_PositionsOnly` inside the if-branch and `TransformMultiShape` inside the else — no longer matches the `TransformMultiShape\b` pattern at the swapped site).
 
-- [ ] **Step 3.5: Build clean**
-
-```
-/mc2-build
-```
-
-Expected: clean build.
-
-- [ ] **Step 3.6: Commit**
+- [ ] **Step 3.2: Confirm arm callsites still naked**
 
 ```bash
-git add mclib/mech3d.cpp
-git commit -m "feat(slice-c3-revised): conditional swap to _PositionsOnly at left+right arm callsites (mech3d.cpp:4459, :4543)"
+sed -n '4455,4465p' mclib/mech3d.cpp
+sed -n '4540,4548p' mclib/mech3d.cpp
 ```
+
+Expected: both arm callsites still read `leftArm->TransformMultiShape(&xlatPosition,&qRotation);` and `rightArm->TransformMultiShape(&xlatPosition,&qRotation);` — NO conditional. This is intentional per the spec's arm-out-of-scope decision.
 
 ---
 
@@ -284,12 +232,12 @@ Mechs must look pixel-identical to operator-visual confidence in B vs A. Any vis
 
 - [ ] **Step 5.2: Tracy comparison**
 
-User attaches Tracy GUI in both runs, captures `mech3d.updateGeometry` zone average. Expected:
+User attaches Tracy GUI in both runs, captures `GameLogic.Mech3D.UpdateGeometry` zone average (verified zone name at `mclib/mech3d.cpp:3184`). The zone wraps the WHOLE function — body + shadow + arms (when blown off) + sensors (when selected). Body-only swap retires only ~half of the zone's cost. Expected:
   - **A** (fast transform OFF): ~71µs/call (matches the original observation).
-  - **B** (fast transform ON): ≤10µs/call (just hierarchy walk + light cache gather).
-  - **Frame time delta:** ~1.0–1.2ms reduction on mc2_10's ~19 mech actors per frame.
+  - **B** (fast transform ON): **≥30µs/call delta**, i.e. zone average drops to ~40µs or less.
+  - **Frame time delta:** **≥0.5ms reduction** on mc2_10's ~19 mech actors per frame. (The ~1.0–1.2ms estimate from the spec's first draft assumed body+arms; arms were de-scoped at adversarial review per CRIT-1.)
 
-If the tracy delta is smaller than expected (<0.5ms), the lighting kernel may not be the dominant cost — flag for follow-up profiling pass before declaring the slice's perf claim met.
+If the tracy delta is smaller than expected (<0.3ms total or <20µs/call), shadow callsite may be dominating the zone cost. Flag for follow-up profiling pass with finer-grained Tracy zones (`mech3d.updateGeometry.body` vs `.shadow` sub-zones) before declaring the perf gate met.
 
 - [ ] **Step 5.3: No commit step** — validation only.
 
@@ -375,22 +323,22 @@ Memory dir is outside the worktree; commit in its own location if it's a git rep
 
 ---
 
-## Spec Coverage Check
+## Spec Coverage Check (post-revision)
 
 | Spec section | Covered by task |
 |---|---|
-| Architecture: 3 callsite swap-conditional, shadow callsite untouched | Tasks 2, 3 (with verification step in 3.4) |
+| Architecture: body-only swap, arms+shadow untouched | Task 2 (swap), Task 3 (read-only verification) |
 | New killswitch `g_useGpuMechFastTransform` | Task 1 |
 | Pixel-equivalence reasoning | Validated by Task 5.1 operator A/B |
-| Failure modes covered | Verified by review (Task 6.1) |
-| Verification gate (tier1 + tracy + visual) | Tasks 4, 5 |
+| Failure modes covered (incl. arm hazard caught at plan review) | Verified by review (Task 6.1) |
+| Verification gate (tier1 + tracy ≥30µs + visual) | Tasks 4, 5 |
 
 ## Type / Symbol Consistency
 
 - `g_useGpuMechFastTransform` — declared Task 1.1, defined Task 1.2, read Tasks 2.2, 3.2, 3.3 ✓
 - `MC2_GPU_MECH_FAST_TRANSFORM` env — defined only in Task 1.2 ✓
 - `mechShape->TransformMultiShape_PositionsOnly` — already exists at `mclib/msl.cpp:1789` (verified pre-spec); called at Task 2.2 ✓
-- `leftArm->TransformMultiShape_PositionsOnly` / `rightArm->TransformMultiShape_PositionsOnly` — same parent class as `mechShape` (`TG_MultiShape`); same method ✓
+- Arm `_PositionsOnly` calls — explicitly NOT used in this slice per spec arm-out-of-scope decision (CRIT-1) ✓
 
 ## Placeholder Scan
 

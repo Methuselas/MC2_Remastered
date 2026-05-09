@@ -19,13 +19,13 @@ Wire `TransformMultiShape_PositionsOnly` for the GPU mech batcher path, gated by
 
 ## Architecture
 
-### Three call sites swap-conditional, one stays
+### Body-only swap, all other callsites stay full
 
 | File:line | Symbol | Decision | Rationale |
 |---|---|---|---|
-| `mech3d.cpp:3381` | `mechShape->TransformMultiShape` | **Swap** to `_PositionsOnly` when both env flags are on | Mech body — the dominant cost, produces vertices only consumed by CPU `Render(true)` which Slice A skips |
-| `mech3d.cpp:4459` | `leftArm->TransformMultiShape` | **Swap** to `_PositionsOnly` | Sub-actor for blown-off left arm; same consumer pattern |
-| `mech3d.cpp:4543` | `rightArm->TransformMultiShape` | **Swap** to `_PositionsOnly` | Same |
+| `mech3d.cpp:3381` | `mechShape->TransformMultiShape` | **Swap** to `_PositionsOnly` when both env flags are on | Mech body. Slice A's `mechShape->Render(true)` bypass at mech3d.cpp:2582 is gated by `(!gpuMechSubmitted && !mechGpuCullSkip)` — when GPU mech path is on, the legacy `Render(true)` does NOT run for the body, so `listOfVertices[*].argb` has no consumer in that frame. Safe to strip. |
+| `mech3d.cpp:4459` | `leftArm->TransformMultiShape` | **Leave as full** | **CRITICAL: arms `leftArm->Render(true)` at mech3d.cpp:3009 runs unconditionally — NOT gated by g_useGpuMechs.** Stripping the arm lighting bake would leave `listOfVertices[*].argb` unwritten and `Render(true)` would read pool-stale garbage. Out of scope for this slice; needs a separate slice that adds an arm GPU draw path or an arm `Render(true)` skip-when-stripped guard. |
+| `mech3d.cpp:4543` | `rightArm->TransformMultiShape` | **Leave as full** | Same as left arm: `rightArm->Render(true)` at mech3d.cpp:2967 runs unconditionally; out of scope. |
 | `mech3d.cpp:3377` | `mechShadowShape->TransformMultiShape` | **Leave as full** | Shadow path: `MultiTransformShadows` is dispatched alongside `MultiTransformShape` (`msl.cpp:1763-1766`); whether `_PositionsOnly` preserves shadow caster registration needs separate recon — out of scope for this slice |
 | `mech3d.cpp:3579, 3585` | `sensorTriangleShape`, `sensorSquareShape->TransformMultiShape` | **Leave as full** | HUD overlays for selected mechs; small geometry, not on the perf hot path; no benefit to stripping their lighting |
 
@@ -66,8 +66,13 @@ When `MC2_GPU_MECHS=0` (legacy CPU path), the killswitch gate on this slice's co
 
 ## Failure modes
 
-- **Shadow caster registration if shadow callsite is accidentally swapped:** explicitly out-of-scope for this slice; the conditional is wired at the body+arm sites only. Shadow callsite `3377` left alone with full `TransformMultiShape`.
-- **Other consumers of `listOfVertices[j].argb`:** searched — `tgl.cpp` reads it in `Render`, `RenderShadows`, and a few legacy-debug paths. None of those run when `mechShape->Render(true)` is bypassed. Verified by grep before sign-off.
+- **Shadow caster registration if shadow callsite is accidentally swapped:** explicitly out-of-scope for this slice; the conditional is wired at the body site only. Shadow callsite `3377` left alone with full `TransformMultiShape`.
+- **Arm rendering with stripped lighting bake (CRITICAL hazard caught at plan review):** `leftArm->Render(true)` (`mech3d.cpp:3009`) and `rightArm->Render(true)` (`mech3d.cpp:2967`) run UNCONDITIONALLY — they are NOT inside the `(!gpuMechSubmitted && !mechGpuCullSkip)` guard that gates `mechShape->Render(true)` for the body. Therefore the arm `Render` always reads `listOfVertices[*].argb`. If we stripped the arm lighting bake, those reads would return pool-stale garbage. **Mitigation:** arms stay on full `TransformMultiShape` in this slice. Future slice that adds an arm GPU draw path OR an arm `Render(true)` skip-when-stripped guard can revisit.
+- **Consumers of `listOfVertices[j].argb` (full enumeration via grep):**
+  - `tgl.cpp:2506` — inside `MultiTransformShape` per-leaf path itself. Bypassed by construction when `_PositionsOnly` is used (the per-leaf dispatch picks `_PositionsOnly` instead, which does not enter this path).
+  - `tgl.cpp:Render`, `RenderShadows`, legacy-debug paths — only runs via `mechShape->Render(true)` which Slice A bypasses for the body.
+  - `gos_static_prop_batcher.cpp:914` — runs only for static-prop actors (buildings/trees) when `g_useGpuObjects` is set; mechs do NOT route through static_prop_batcher, so no interference.
+  - No other reads exist in the worktree (verified by `grep -rn 'listOfVertices\[.*\]\.argb' --include="*.cpp" --include="*.h"`).
 - **Bounds / cull data dependencies:** `TransformMultiShape_PositionsOnly` writes `shapeToWorld` and the cached lastTransformed turn (`tgl.cpp:2724`); bounds extraction at `recalcBounds` reads `shapeToWorld`, not `listOfVertices`. Cull preserved.
 - **TGL pool allocation:** the per-leaf `MultiTransformShape` path calls into `TG_VertexPool::getVerticesFromPool` for the rendered output. `_PositionsOnly` skips this — TGL pool consumption drops by per-mech-vertex-count. Net positive (already-tight pool budget gets relief).
 - **Hierarchy walk static flag race (`s_multiShapePositionsOnly`):** `msl.cpp:1370-1376` documents the flag is single-threaded-safe (no static reentrancy possible because TransformMultiShape is called serially per actor in the update loop). Reviewer-confirmed.
@@ -77,7 +82,8 @@ When `MC2_GPU_MECHS=0` (legacy CPU path), the killswitch gate on this slice's co
 This slice's smoke gate is stricter than B1's because the cure deliberately changes a load-bearing path's per-vertex behavior, and the user has already noted Slice B's verification was incomplete.
 
 1. **Tier1 5/5 PASS** at `MC2_GPU_MECHS=1 MC2_GPU_MECH_LIGHTING=1 MC2_GPU_MECH_FAST_TRANSFORM=1` — +0 destroys, fallback_total=0.
-2. **Tracy comparison:** before-vs-after `mech3d.updateGeometry` zone average. Expect drop from ~71µs/call to ≤10µs/call (just the bone walk + light cache gather). Mainloop frame time should drop ~1.0–1.2ms on mc2_10 / mc2_17.
+2. **Tracy comparison:** before-vs-after `GameLogic.Mech3D.UpdateGeometry` zone average (verified zone name at `mech3d.cpp:3184`). The zone wraps the WHOLE function — body + shadow + arms (if blown) + sensors (if selected). Body-only swap retires only ~half of the zone's cost.
+   - **Acceptance:** Tracy zone delta ≥30µs/call (body's per-vertex lighting bake removed). Mainloop frame time drop ≥0.5ms on mc2_10's ~19 mechs. **Original ~1.0–1.2ms estimate was for a body+arms slice that was de-scoped at plan review per the CRITICAL arm hazard.**
 3. **Operator visual A/B:** `MC2_GPU_MECH_FAST_TRANSFORM=0` vs `=1` with the rest of the bore identical, both at `MC2_GPU_MECH_LIGHTING=1`. Mechs must look pixel-identical to operator-visual confidence (any drift signals a missed `listOfVertices[j].argb` consumer).
 4. **mc2_24 stress test:** different mech mix, larger active population. Confirm tier1 PASS at full bore; tracy delta visible.
 5. **Killswitch=0 regression sentinel:** `MC2_GPU_MECHS=0` (CPU baseline) must remain bit-for-bit identical to pre-slice — i.e. when `g_useGpuMechs=false` the conditional at the three callsites takes the else branch and the slice's gate change is a no-op.
@@ -93,13 +99,14 @@ This slice's smoke gate is stricter than B1's because the cure deliberately chan
 |---|---|---|
 | Modify | `GameOS/gameos/gos_mech_killswitch.h` | extern bool `g_useGpuMechFastTransform` decl |
 | Modify | `GameOS/gameos/gos_mech_batcher.cpp` | env-var def `MC2_GPU_MECH_FAST_TRANSFORM` |
-| Modify | `mclib/mech3d.cpp` | conditional swap at 3381, 4459, 4543 (NOT 3377, 3579, 3585) |
+| Modify | `mclib/mech3d.cpp` | conditional swap at 3381 ONLY (NOT 3377, 3579, 3585, 4459, 4543) |
 
 No shader changes. No new files. Smallest possible patch.
 
 ## Out of scope
 
 - Shadow path (`mech3d.cpp:3377`) — defer to its own slice once `_PositionsOnly` impact on `MultiTransformShadows` dispatch is recon'd.
+- Arm sub-actors (`mech3d.cpp:4459, :4543`) — defer to its own slice. Arms `Render(true)` runs unconditionally (mech3d.cpp:2967, 3009), so stripping the arm lighting bake would render garbage. Arm fast-transform requires either an arm GPU draw path through the GpuMechBatcher or an arm `Render(true)` skip-when-stripped guard.
 - Sensor / HUD shapes — leave as full; not on the hot path.
 - GPU bone-hierarchy compute (the originally-deferred Slice C3) — still deferred; the bone walk is ~5µs/mech and not worth the complexity.
 - Animation pose interpolation — separate slice.
