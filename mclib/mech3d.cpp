@@ -3191,7 +3191,21 @@ void Mech3DAppearance::updateGeometry (void)
 	if (leftArm)
 		leftArm->SetTextureHandle(0,localTextureHandle);
 
-	if ((status == OBJECT_STATUS_DESTROYED) || 
+	// Slice D-shadow-state-strip: when GPU mech path + state-strip
+	// killswitch + tessellation are all active, skip ALL per-frame state
+	// setters on mechShadowShape. Recon (D-shadow-skip §Q1-Q4 + D-shadow-
+	// state-strip §Q1-Q4) proved no consumer of these setters' effects
+	// exists in this configuration: instance-state setters feed only
+	// TransformMultiShape (already retired by D-shadow-skip), and the
+	// global-static side effect (SetLightList writing s_listOfLights) is
+	// overwritten by mechShape's identical call at mech3d.cpp:3407 before
+	// any consumer reads it.
+	const bool stripShadowState =
+		g_useGpuMechs &&
+		g_useGpuMechShadowStateStrip &&
+		gos_IsTerrainTessellationActive();
+
+	if ((status == OBJECT_STATUS_DESTROYED) ||
 		(status == OBJECT_STATUS_DISABLED) || 
 		(status == OBJECT_STATUS_SHUTDOWN))
 	{
@@ -3348,7 +3362,7 @@ void Mech3DAppearance::updateGeometry (void)
 			mechType->setAnimation(mechShape,currentGestureId);
 			mechShape->SetFrameNum(currentFrame);
 
-			if (mechShadowShape)
+			if (mechShadowShape && !stripShadowState)
 			{
 				mechType->setAnimation(mechShadowShape,currentGestureId);
 				mechShadowShape->SetFrameNum(currentFrame);
@@ -3365,7 +3379,7 @@ void Mech3DAppearance::updateGeometry (void)
 		if (mechShadowShape)
 			mechShape->SetUseShadow(false);
 			
-		if (mechShadowShape && useShadows)
+		if (mechShadowShape && useShadows && !stripShadowState)
 		{
 			if (rotationalNodeIndex == -1)
 	   			rotationalNodeIndex = mechShadowShape->SetNodeRotation("joint_torso",&torsoRot);
