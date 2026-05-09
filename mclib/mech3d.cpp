@@ -3374,16 +3374,30 @@ void Mech3DAppearance::updateGeometry (void)
 
  			mechShadowShape->SetNodeRotation("joint_torso",&torsoRot);
 			mechShadowShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-			// Slice C3-shadow: when GPU mech path is on AND shadow fast-
-			// transform killswitch is on, use _PositionsOnly to skip the
-			// per-vertex CPU lighting kernel for the shadow shape.
-			// RenderShadows (tgl.cpp:3577) hardcodes gVertex.argb to
-			// 0x3f000000 and reads listOfShadowTVertices populated by
-			// MultiTransformShadows (which still dispatches at msl.cpp:1765
-			// in both branches). The per-vertex bake's .argb writes have
-			// no consumer in the shadow render path. See spec §Recon for
-			// the full grep-verified consumer enumeration.
-			if (g_useGpuMechs && g_useGpuMechShadowFastTransform) {
+			// Slice D-shadow-skip: when GPU mech path is on AND skip
+			// killswitch is on AND tessellation is active (modern shadow
+			// path engaged), omit the call entirely. Mech3DAppearance::
+			// renderShadows early-returns on tessellation (mech3d.cpp:3054),
+			// so no consumer of TransformMultiShape's outputs exists in
+			// this configuration. Modern dynamic shadows use g_shadowShapes[]
+			// (txmmgr.cpp:130, 1589-1620), a separate data path that does
+			// NOT consume mechShadowShape state. See D-shadow-skip spec
+			// §Recon for full grep-verified consumer enumeration including
+			// opposite-direction grep on addShadowShape.
+			//
+			// Tessellation gate is belt-and-suspenders: if a user disables
+			// tessellation, the legacy RenderShadows path becomes reachable
+			// and would need TransformMultiShape outputs.
+			//
+			// Slice C3-shadow (FAST_TRANSFORM): when SKIP is off but
+			// FAST_TRANSFORM is on, use _PositionsOnly to skip the per-
+			// vertex CPU lighting kernel only. RenderShadows (tgl.cpp:3577)
+			// hardcodes gVertex.argb to 0x3f000000 and reads
+			// listOfShadowTVertices populated by MultiTransformShadows
+			// (which still dispatches at msl.cpp:1765 in that branch).
+			if (g_useGpuMechs && g_useGpuMechShadowSkip && gos_IsTerrainTessellationActive()) {
+				// Skip — modern engine has no consumer.
+			} else if (g_useGpuMechs && g_useGpuMechShadowFastTransform) {
 				mechShadowShape->TransformMultiShape_PositionsOnly(&xlatPosition, &qRotation);
 			} else {
 				mechShadowShape->TransformMultiShape(&xlatPosition, &qRotation);
