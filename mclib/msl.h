@@ -391,6 +391,16 @@ class TG_MultiShape
 		// Mission::init before the camera is initialized.
 		long TransformMultiShape_BuildRecipe (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot);
 
+		// Slice D-body-shadow-skip (2026-05-09): composes _PositionsOnly with
+		// skipping the unconditional MultiTransformShadows dispatch (msl.cpp:1763).
+		// The body's MultiTransformShadows outputs are consumed only by RenderShadows,
+		// which is unreachable on tessellation (mech3d.cpp:3054 early-return).
+		// PerPolySelect's contract is preserved by the underlying _PositionsOnly
+		// mechanism: per-leaf pool alloc + per-vertex screen projection + per-face
+		// cull + lastTurnTransformed bump all still run; only per-light × per-vertex
+		// shadow CONTENT writes are skipped. NOT compatible with MC2_MECH_GPU_PARITY=1.
+		long TransformMultiShape_PositionsOnlyNoShadowProj (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot);
+
 		//This function rotates the heirarchy from this node down.  Used for torso twists, arms, etc.
 		// SHould only be called once this way.  This way is DAMNED SLOW!!!  STRICMP!  IT returns the node num
 		// Call that from then on!
