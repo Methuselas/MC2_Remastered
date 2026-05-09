@@ -1827,6 +1827,23 @@ long TG_MultiShape::TransformMultiShape_BuildRecipe (Stuff::Point3D *pos, Stuff:
 }
 
 //-------------------------------------------------------------------------------
+// Slice D-leaf-skip-v2 (2026-05-09): thin runtime wrapper that reuses the
+// s_buildRecipeOnly mechanism for the GPU mech body callsite. Skip per-leaf
+// dispatch + MultiTransformShadows; preserve hierarchy walk. Recon proved
+// per-leaf state on mechShape has zero practical consumer in modern + GPU
+// mech mode (Slice A bypasses Render(true); RenderShadows unreachable on
+// tessellation; PerPolySelect-on-mechs theoretical via fallback findObjectByMouse
+// but findMoverByMouse rect-only test catches all real mech selection).
+//-------------------------------------------------------------------------------
+long TG_MultiShape::TransformMultiShape_HierarchyOnly (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot)
+{
+    s_buildRecipeOnly = true;
+    long result = TransformMultiShape(pos, rot);
+    s_buildRecipeOnly = false;
+    return result;
+}
+
+//-------------------------------------------------------------------------------
 // Slice 2 (object-offload) — Stage 2.D.2 fix:
 // Cache the GPU light-data index while worldLights[0]->aRGB is correct for
 // THIS actor (during update(), immediately after SetLightList is called).

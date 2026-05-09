@@ -46,6 +46,9 @@ bool g_useGpuMechShadowSkip = (getenv("MC2_GPU_MECH_SHADOW_SKIP") != nullptr);
 // Slice D-shadow-state-strip: see gos_mech_killswitch.h.
 bool g_useGpuMechShadowStateStrip = (getenv("MC2_GPU_MECH_SHADOW_STATE_STRIP") != nullptr);
 
+// Slice D-leaf-skip-v2: see gos_mech_killswitch.h.
+bool g_useGpuMechLeafSkip = (getenv("MC2_GPU_MECH_LEAF_SKIP") != nullptr);
+
 // ---------------------------------------------------------------------------
 // File-static state
 // ---------------------------------------------------------------------------

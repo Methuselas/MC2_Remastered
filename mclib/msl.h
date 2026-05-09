@@ -391,6 +391,15 @@ class TG_MultiShape
 		// Mission::init before the camera is initialized.
 		long TransformMultiShape_BuildRecipe (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot);
 
+		// Slice D-leaf-skip-v2 (2026-05-09): runtime alias of _BuildRecipe for the
+		// GPU mech body callsite. Reuses s_buildRecipeOnly mechanism to skip
+		// per-leaf dispatch + MultiTransformShadows; preserves the OUTER
+		// hierarchy walk that populates listOfShapes[i].shapeToWorld (which
+		// the GPU mech batcher's submitActor and getNodePosition read).
+		// Aliased rather than reusing _BuildRecipe directly for self-documenting
+		// use at the mech runtime callsite vs the static-prop registry init use.
+		long TransformMultiShape_HierarchyOnly (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot);
+
 		//This function rotates the heirarchy from this node down.  Used for torso twists, arms, etc.
 		// SHould only be called once this way.  This way is DAMNED SLOW!!!  STRICMP!  IT returns the node num
 		// Call that from then on!

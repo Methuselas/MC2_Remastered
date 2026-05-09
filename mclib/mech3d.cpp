@@ -3437,7 +3437,16 @@ void Mech3DAppearance::updateGeometry (void)
 		// BODY ONLY — arms (4459, 4543) and shadow (3377) explicitly
 		// stay full TransformMultiShape; their Render(true) callers
 		// still depend on the lighting bake.
-		if (g_useGpuMechs && g_useGpuMechFastTransform) {
+		// Slice D-leaf-skip-v2: when GPU mech path is on AND leaf-skip
+		// killswitch is on AND tessellation is active, use HierarchyOnly
+		// to additionally skip per-leaf dispatch + MultiTransformShadows.
+		// Recon proved zero practical consumer in this configuration
+		// (mechShape->Render(true) bypassed by Slice A; RenderShadows
+		// unreachable on tessellation; findMoverByMouse rect-only — see
+		// killswitch comment in gos_mech_killswitch.h).
+		if (g_useGpuMechs && g_useGpuMechLeafSkip && gos_IsTerrainTessellationActive()) {
+			mechShape->TransformMultiShape_HierarchyOnly(&xlatPosition, &qRotation);
+		} else if (g_useGpuMechs && g_useGpuMechFastTransform) {
 			mechShape->TransformMultiShape_PositionsOnly(&xlatPosition, &qRotation);
 		} else {
 			mechShape->TransformMultiShape(&xlatPosition, &qRotation);

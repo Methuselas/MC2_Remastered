@@ -72,6 +72,24 @@ extern bool g_useGpuMechShadowSkip;
 // gos_IsTerrainTessellationActive() to take effect (mirrors D-shadow-skip).
 extern bool g_useGpuMechShadowStateStrip;
 
+// Slice D-leaf-skip-v2 (2026-05-09): strip per-leaf body of mechShape->
+// TransformMultiShape* (per-leaf pool alloc + per-vertex screen-space
+// projection + per-face backface cull + MultiTransformShadows dispatch)
+// when modern engine + GPU mech path is engaged. Recon proved every
+// per-leaf field on mechShape has zero practical consumer in this
+// configuration: Slice A bypasses mechShape->Render(true); RenderShadows
+// unreachable on tessellation; PerPolySelect-on-mechs is theoretical via
+// fallback findObjectByMouse but findMoverByMouse rect-only test catches
+// all real mech selection (objmgr.cpp:2506 "// Movers are NOT per poly!!").
+// submitActor + getNodePosition read only listOfShapes[i].shapeToWorld
+// (hierarchy-level), preserved by leaf-skip.
+//
+// Independent of g_useGpuMechs / fast-transform / shadow-skip / state-strip
+// flags for bisect granularity. Requires g_useGpuMechs=true AND
+// gos_IsTerrainTessellationActive() to take effect. NOT compatible with
+// MC2_MECH_GPU_PARITY=1 — disable LEAF_SKIP if running parity diagnostic.
+extern bool g_useGpuMechLeafSkip;
+
 // Resolve a gosTextureHandle to the underlying raw GL texture name.
 // Returns 0 if handle is INVALID_TEXTURE_ID or gosTexture is gone.
 // Implemented in gameos_graphics.cpp (same as gos_static_prop_killswitch.h).
