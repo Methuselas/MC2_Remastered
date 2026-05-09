@@ -3378,7 +3378,19 @@ void Mech3DAppearance::updateGeometry (void)
 		}
 
 		mechShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-		mechShape->TransformMultiShape (&xlatPosition,&qRotation);
+		// Slice C3-revised: when GPU mech path is on AND fast-transform
+		// killswitch is on, use _PositionsOnly to skip the per-vertex
+		// CPU lighting kernel. Output of that kernel (listOfVertices[j].argb)
+		// is only consumed by mechShape->Render(true) which Slice A
+		// bypasses; GPU shader does its own lighting via calc_light().
+		// BODY ONLY — arms (4459, 4543) and shadow (3377) explicitly
+		// stay full TransformMultiShape; their Render(true) callers
+		// still depend on the lighting bake.
+		if (g_useGpuMechs && g_useGpuMechFastTransform) {
+			mechShape->TransformMultiShape_PositionsOnly(&xlatPosition, &qRotation);
+		} else {
+			mechShape->TransformMultiShape(&xlatPosition, &qRotation);
+		}
 	}
 	  
 	if (visible && (sensorLevel > 4) && !InEditor && useNonWeaponEffects)

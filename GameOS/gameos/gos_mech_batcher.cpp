@@ -34,6 +34,9 @@ bool g_useGpuMechCull     = (getenv("MC2_GPU_MECH_CULL") != nullptr);
 // Slice C2: weighted multi-bone skinning. Requires g_useGpuMechs=true.
 bool g_useGpuMechSkin     = (getenv("MC2_GPU_MECH_SKIN") != nullptr);
 
+// Slice C3-revised: see gos_mech_killswitch.h. Body-only fast transform.
+bool g_useGpuMechFastTransform = (getenv("MC2_GPU_MECH_FAST_TRANSFORM") != nullptr);
+
 // ---------------------------------------------------------------------------
 // File-static state
 // ---------------------------------------------------------------------------

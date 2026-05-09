@@ -26,6 +26,18 @@ extern bool g_useGpuMechCull;
 // the difference is only meaningful for imported meshes.
 extern bool g_useGpuMechSkin;
 
+// Slice C3-revised (2026-05-09): wire TransformMultiShape_PositionsOnly
+// for the GPU mech body. Skips the per-vertex CPU lighting kernel that
+// consumes ~65µs/mech and whose output (listOfVertices[j].argb) is only
+// consumed by the legacy CPU Render(true) path that Slice A bypasses.
+// Independent of g_useGpuMechs / g_useGpuMechLighting for bisect
+// granularity. Requires g_useGpuMechs=true to take effect (when GPU
+// mech path is off, the legacy path NEEDS the lighting bake's output).
+// BODY-ONLY: arms (mech3d.cpp:4459, :4543) and shadow (mech3d.cpp:3377)
+// stay full TransformMultiShape; their Render(true) callers still need
+// listOfVertices[*].argb populated.
+extern bool g_useGpuMechFastTransform;
+
 // Resolve a gosTextureHandle to the underlying raw GL texture name.
 // Returns 0 if handle is INVALID_TEXTURE_ID or gosTexture is gone.
 // Implemented in gameos_graphics.cpp (same as gos_static_prop_killswitch.h).
