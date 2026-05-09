@@ -3419,15 +3419,28 @@ void Mech3DAppearance::updateGeometry (void)
 		}
 
 		mechShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-		// Slice C3-revised: when GPU mech path is on AND fast-transform
-		// killswitch is on, use _PositionsOnly to skip the per-vertex
+		// Slice D-body-shadow-skip: when GPU mech path is on AND body-shadow-skip
+		// killswitch is on AND tessellation is active, use
+		// _PositionsOnlyNoShadowProj to additionally skip the MultiTransformShadows
+		// per-light × per-vertex shadow projection on the body shape. Recon
+		// proved zero consumer in this configuration: mechShape->RenderShadows
+		// is unreachable on tessellation (mech3d.cpp:3054 early-return). The
+		// underlying _PositionsOnly mechanism preserves PerPolySelect's mouse-
+		// pick contract: per-leaf pool alloc + per-vertex screen projection +
+		// per-face cull + lastTurnTransformed bump all still run; only per-
+		// light × per-vertex shadow CONTENT writes are skipped.
+		//
+		// Slice C3-revised (FAST_TRANSFORM): when BODY_SHADOW_SKIP is off but
+		// FAST_TRANSFORM is on, use _PositionsOnly to skip only the per-vertex
 		// CPU lighting kernel. Output of that kernel (listOfVertices[j].argb)
-		// is only consumed by mechShape->Render(true) which Slice A
-		// bypasses; GPU shader does its own lighting via calc_light().
-		// BODY ONLY — arms (4459, 4543) and shadow (3377) explicitly
-		// stay full TransformMultiShape; their Render(true) callers
-		// still depend on the lighting bake.
-		if (g_useGpuMechs && g_useGpuMechFastTransform) {
+		// is only consumed by mechShape->Render(true) which Slice A bypasses;
+		// GPU shader does its own lighting via calc_light().
+		//
+		// BODY ONLY — arms (4498, 4582) and shadow (gated by the prior
+		// conditional at :3398) stay on their existing paths.
+		if (g_useGpuMechs && g_useGpuMechBodyShadowSkip && gos_IsTerrainTessellationActive()) {
+			mechShape->TransformMultiShape_PositionsOnlyNoShadowProj(&xlatPosition, &qRotation);
+		} else if (g_useGpuMechs && g_useGpuMechFastTransform) {
 			mechShape->TransformMultiShape_PositionsOnly(&xlatPosition, &qRotation);
 		} else {
 			mechShape->TransformMultiShape(&xlatPosition, &qRotation);
