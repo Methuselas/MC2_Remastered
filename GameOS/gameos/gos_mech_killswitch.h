@@ -59,6 +59,19 @@ extern bool g_useGpuMechShadowFastTransform;
 // g_useGpuMechs=true AND gos_IsTerrainTessellationActive() to take effect.
 extern bool g_useGpuMechShadowSkip;
 
+// Slice D-shadow-state-strip (2026-05-09): skip the four state setters on
+// mechShadowShape (setAnimation/SetFrameNum/SetNodeRotation/SetLightList
+// at mech3d.cpp:3351-3355 and :3368-3376) when modern engine + GPU mech
+// path is engaged. Recon proved no consumer of these setters' effects
+// exists in this configuration: instance-state setters feed only
+// TransformMultiShape (already retired by D-shadow-skip), and SetLightList's
+// global-static side effect (s_listOfLights) is overwritten by mechShape's
+// identical call at mech3d.cpp:3407 before any consumer reads it.
+// Independent of g_useGpuMechs / fast-transform / shadow-skip flags for
+// bisect granularity. Requires g_useGpuMechs=true AND
+// gos_IsTerrainTessellationActive() to take effect (mirrors D-shadow-skip).
+extern bool g_useGpuMechShadowStateStrip;
+
 // Resolve a gosTextureHandle to the underlying raw GL texture name.
 // Returns 0 if handle is INVALID_TEXTURE_ID or gosTexture is gone.
 // Implemented in gameos_graphics.cpp (same as gos_static_prop_killswitch.h).
