@@ -72,6 +72,24 @@ extern bool g_useGpuMechShadowSkip;
 // gos_IsTerrainTessellationActive() to take effect (mirrors D-shadow-skip).
 extern bool g_useGpuMechShadowStateStrip;
 
+// Slice D-body-shadow-skip (2026-05-09): skip the MultiTransformShadows
+// dispatch on the BODY shape (mechShape) when modern engine + GPU mech path
+// is engaged. Recon proved mechShape's MultiTransformShadows outputs
+// (listOfShadowTVertices etc.) are consumed only by RenderShadows, which
+// is unreachable on tessellation (mech3d.cpp:3054 early-return). Preserves
+// PerPolySelect's contract by keeping the per-leaf _PositionsOnly work
+// (pool alloc + per-vertex projection + per-face cull + lastTurnTransformed).
+//
+// DISTINCT from MC2_GPU_MECH_SHADOW_SKIP: that flag (D-shadow-skip) skips
+// mechShadowShape->TransformMultiShape* entirely (the dedicated shadow
+// caster shape). THIS flag skips only mechShape's per-light × per-vertex
+// shadow projection. Different shapes, different code paths.
+//
+// Independent of g_useGpuMechs / fast-transform / shadow-skip / state-strip
+// flags for bisect granularity. Requires g_useGpuMechs=true AND
+// gos_IsTerrainTessellationActive(). NOT compatible with MC2_MECH_GPU_PARITY=1.
+extern bool g_useGpuMechBodyShadowSkip;
+
 // Resolve a gosTextureHandle to the underlying raw GL texture name.
 // Returns 0 if handle is INVALID_TEXTURE_ID or gosTexture is gone.
 // Implemented in gameos_graphics.cpp (same as gos_static_prop_killswitch.h).
