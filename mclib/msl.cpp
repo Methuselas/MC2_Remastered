@@ -1376,12 +1376,6 @@ static bool s_multiShapePositionsOnly = false;
 // Track B: when true, TransformMultiShape populates shapeToWorld but skips the
 // pool-allocating MultiTransformShape_* dispatch and the s_cameraOrigin read.
 static bool s_buildRecipeOnly = false;
-// Slice D-body-shadow-skip (2026-05-09): gates the unconditional
-// MultiTransformShadows dispatch in TransformMultiShape's per-shape loop
-// (msl.cpp:1763) so the body shape's per-light × per-vertex shadow projection
-// can be skipped when no consumer exists (modern + GPU mech mode). Set/cleared
-// inside the _PositionsOnlyNoShadowProj wrapper. Single-threaded.
-static bool s_skipMultiTransformShadows = false;
 
 long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot)
 {
@@ -1766,7 +1760,7 @@ long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuatern
             listOfShapes[i].node->MultiTransformShape(&shapeToClip,&backFacePoint,listOfShapes[i].parentNode,isHudElement,alphaValue,isClamped);
         }
 
-        if (useShadows && d_useShadows && !s_skipMultiTransformShadows)
+        if (useShadows && d_useShadows)
         {
             listOfShapes[i].node->MultiTransformShadows(pos, &(listOfShapes[i].shapeToWorld),yawRotation);
         }
@@ -1812,27 +1806,6 @@ long TG_MultiShape::TransformMultiShape_BuildRecipe (Stuff::Point3D *pos, Stuff:
     s_buildRecipeOnly = true;
     long result = TransformMultiShape(pos, rot);
     s_buildRecipeOnly = false;
-    return result;
-}
-
-//-------------------------------------------------------------------------------
-// Slice D-body-shadow-skip (2026-05-09): composes _PositionsOnly with skipping
-// the unconditional MultiTransformShadows dispatch. The body's MultiTransformShadows
-// outputs (listOfShadowTVertices etc.) are consumed only by RenderShadows, which
-// is unreachable on tessellation (mech3d.cpp:3054 early-return). PerPolySelect's
-// contract (per-leaf pool alloc + per-vertex screen projection + per-face cull +
-// lastTurnTransformed bump) is preserved by the underlying _PositionsOnly mechanism
-// — pool allocations at tgl.cpp:2705-2713 still run, only per-light × per-vertex
-// shadow CONTENT writes are skipped. Single-threaded; flags cleared in reverse
-// order on exit.
-//-------------------------------------------------------------------------------
-long TG_MultiShape::TransformMultiShape_PositionsOnlyNoShadowProj (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot)
-{
-    s_multiShapePositionsOnly   = true;
-    s_skipMultiTransformShadows = true;
-    long result = TransformMultiShape(pos, rot);
-    s_skipMultiTransformShadows = false;
-    s_multiShapePositionsOnly   = false;
     return result;
 }
 
