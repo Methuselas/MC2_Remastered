@@ -40,6 +40,9 @@ bool g_useGpuMechFastTransform = (getenv("MC2_GPU_MECH_FAST_TRANSFORM") != nullp
 // Slice C3-shadow: see gos_mech_killswitch.h. Shadow callsite fast transform.
 bool g_useGpuMechShadowFastTransform = (getenv("MC2_GPU_MECH_SHADOW_FAST_TRANSFORM") != nullptr);
 
+// Slice D-shadow-skip: see gos_mech_killswitch.h. Skip mechShadowShape transform.
+bool g_useGpuMechShadowSkip = (getenv("MC2_GPU_MECH_SHADOW_SKIP") != nullptr);
+
 // ---------------------------------------------------------------------------
 // File-static state
 // ---------------------------------------------------------------------------

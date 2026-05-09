@@ -49,6 +49,16 @@ extern bool g_useGpuMechFastTransform;
 // slice gating discipline).
 extern bool g_useGpuMechShadowFastTransform;
 
+// Slice D-shadow-skip (2026-05-09): skip mechShadowShape->TransformMultiShape*
+// entirely when modern engine has terrain tessellation active. Recon proved
+// every byte produced by that call has zero consumer in modern + GPU mech
+// path: Mech3DAppearance::renderShadows early-returns on tessellation
+// (mech3d.cpp:3054), and modern dynamic shadows use g_shadowShapes[]
+// (txmmgr.cpp:130, 1589-1620), a separate data path. Independent of
+// g_useGpuMechs / fast-transform flags for bisect granularity. Requires
+// g_useGpuMechs=true AND gos_IsTerrainTessellationActive() to take effect.
+extern bool g_useGpuMechShadowSkip;
+
 // Resolve a gosTextureHandle to the underlying raw GL texture name.
 // Returns 0 if handle is INVALID_TEXTURE_ID or gosTexture is gone.
 // Implemented in gameos_graphics.cpp (same as gos_static_prop_killswitch.h).
