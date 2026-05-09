@@ -61,6 +61,13 @@ uniform mat4 u_mvp;              // px->NDC (upload GL_TRUE)
 // 'uniform uint' crashes the engine's shader compile (see
 // memory/uniform_uint_crash.md); use int.
 uniform int u_lightingMode;
+// Slice C2: 0 = rigid per-bone (Slice A behavior, single boneIndices.x
+// lookup), 1 = weighted multi-bone blend across all 4 bone slots. Stock
+// data has boneWeights = (1,0,0,0) so the two paths are byte-identical
+// for stock; the weighted path matters for imported meshes (Track D
+// Assimp pipeline) that ship multi-bone weights in the existing 48B
+// vertex format.
+uniform int u_skinningMode;
 
 // Varyings — FS does NOT read the SSBO; all per-instance data forwarded here.
 out vec2 v_uv;
@@ -80,8 +87,25 @@ void main() {
     // Bone transform: boneT is the transpose of the Stuff LinearMatrix4D.
     // boneT * vec4(pos,1) yields the world position in the Stuff/MLR camera
     // frame (.x=left, .y=elev, .z=forward).
-    GpuMechBone b = bones[a_boneIndices.x + inst.baseBoneOffset];
-    mat4 boneT = mat4(b.row0, b.row1, b.row2, b.row3);
+    // Slice C2 weighted skinning branch. Stock data: weights=(1,0,0,0),
+    // weighted-sum collapses to mat4(bones[idx0]) — byte-identical to
+    // the rigid path. Imported meshes (Track D Assimp) can ship
+    // multi-bone weights in the existing 48B vertex format.
+    mat4 boneT;
+    if (u_skinningMode != 0) {
+        boneT = mat4(0.0);
+        for (int bi = 0; bi < 4; ++bi) {
+            float w = a_boneWeights[bi];
+            if (w > 0.0) {
+                GpuMechBone bn = bones[a_boneIndices[bi] + inst.baseBoneOffset];
+                boneT += w * mat4(bn.row0, bn.row1, bn.row2, bn.row3);
+            }
+        }
+    } else {
+        // Slice A rigid-per-bone path (single bone lookup).
+        GpuMechBone b = bones[a_boneIndices.x + inst.baseBoneOffset];
+        boneT = mat4(b.row0, b.row1, b.row2, b.row3);
+    }
     vec4 worldStuff = boneT * vec4(a_position, 1.0);
 
     // MC2/Stuff axis swap: terrainMVP is composed in MC2 world coords

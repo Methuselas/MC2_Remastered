@@ -13,6 +13,19 @@ extern bool g_useGpuMechs;
 // g_useGpuMechs is off (the entire batcher path skips).
 extern bool g_useGpuMechLighting;
 
+// Slice C1: render-side mech cull. Skips submitActor for mechs the
+// GPU frustum/visibility shader marks invisible. RENDER-ONLY — does
+// NOT cascade into update/AI/lifecycle. No effect when g_useGpuMechs
+// is off. Independent of MC2_GPU_CULL_LIFECYCLE.
+extern bool g_useGpuMechCull;
+
+// Slice C2: weighted multi-bone skinning in mech.vert. Off = rigid
+// per-bone (single boneIndices.x lookup, Slice A behavior). On =
+// weighted blend across all 4 bone slots. Stock data is byte-
+// identical between the two modes (boneWeights = 1,0,0,0 collapses);
+// the difference is only meaningful for imported meshes.
+extern bool g_useGpuMechSkin;
+
 // Resolve a gosTextureHandle to the underlying raw GL texture name.
 // Returns 0 if handle is INVALID_TEXTURE_ID or gosTexture is gone.
 // Implemented in gameos_graphics.cpp (same as gos_static_prop_killswitch.h).

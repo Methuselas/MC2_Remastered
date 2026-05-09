@@ -2489,8 +2489,28 @@ long Mech3DAppearance::render (long depthFixup)
 			// accurate even when the actor opts out for unrelated reasons.
 			GpuMechBatcher::instance().recordEligibleActor();
 
+			// Slice C1: render-only mech GPU cull. If MC2_GPU_MECH_CULL is on
+			// AND the GPU lagged-readback says this actor was invisible last
+			// frame, skip the GPU mech submit. We DO NOT bypass mechShape->Render
+			// (CPU fallback) because the actor still ran updateGeometry/AI/etc;
+			// we just skip writing its geometry into the GPU mech bucket. update()
+			// has already run by the time render() is called, so AI/lifecycle/
+			// damage all proceed normally for offscreen actors. Independent of
+			// MC2_GPU_CULL_LIFECYCLE which gates a separate concern.
+			//
+			// Stale readback semantics: returns true (visible) for actors with
+			// no readback record yet (newly spawned), so this is fail-open in
+			// uncertainty. One frame of stale "invisible" → one frame of
+			// missing render, recovered next frame at 60Hz.
+			bool mechGpuCullSkip = false;
+			if (g_useGpuMechs && g_useGpuMechCull) {
+				if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_))) {
+					mechGpuCullSkip = true;
+				}
+			}
+
 			bool gpuMechSubmitted = false;
-			if (g_useGpuMechs) {
+			if (g_useGpuMechs && !mechGpuCullSkip) {
 				// Replicate the highlight selection from the CPU SetARGBHighLight
 				// branches above so the GPU path sees the same color choice.
 				uint32_t gpuHighlightARGB = highLight;
@@ -2555,7 +2575,11 @@ long Mech3DAppearance::render (long depthFixup)
 				}
 			}
 
-			if (!gpuMechSubmitted) {
+			// Slice C1: if GPU mech cull says invisible, skip BOTH the GPU
+			// submit AND the CPU fallback. This is the whole point of the
+			// cull — render nothing for this actor this frame. CPU update
+			// (AI, position, animation, damage) has already run.
+			if (!gpuMechSubmitted && !mechGpuCullSkip) {
 				mechShape->Render(true);  // CPU path — unchanged
 			}
 
