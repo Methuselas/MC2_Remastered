@@ -37,6 +37,9 @@ bool g_useGpuMechSkin     = (getenv("MC2_GPU_MECH_SKIN") != nullptr);
 // Slice C3-revised: see gos_mech_killswitch.h. Body-only fast transform.
 bool g_useGpuMechFastTransform = (getenv("MC2_GPU_MECH_FAST_TRANSFORM") != nullptr);
 
+// Slice C3-shadow: see gos_mech_killswitch.h. Shadow callsite fast transform.
+bool g_useGpuMechShadowFastTransform = (getenv("MC2_GPU_MECH_SHADOW_FAST_TRANSFORM") != nullptr);
+
 // ---------------------------------------------------------------------------
 // File-static state
 // ---------------------------------------------------------------------------

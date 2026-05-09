@@ -38,6 +38,17 @@ extern bool g_useGpuMechSkin;
 // listOfVertices[*].argb populated.
 extern bool g_useGpuMechFastTransform;
 
+// Slice C3-shadow (2026-05-09): wire TransformMultiShape_PositionsOnly
+// for the mech SHADOW shape callsite (mech3d.cpp:3377). Recon proved
+// RenderShadows hardcodes gVertex.argb (tgl.cpp:3636/3645/3654) and uses
+// listOfShadowTVertices populated by MultiTransformShadows (which still
+// dispatches at msl.cpp:1765 in both branches); the per-vertex CPU
+// lighting bake's output is unused by the shadow render path. Independent
+// of g_useGpuMechs / g_useGpuMechFastTransform for bisect granularity.
+// Requires g_useGpuMechs=true to take effect (mirrors C3-revised body
+// slice gating discipline).
+extern bool g_useGpuMechShadowFastTransform;
+
 // Resolve a gosTextureHandle to the underlying raw GL texture name.
 // Returns 0 if handle is INVALID_TEXTURE_ID or gosTexture is gone.
 // Implemented in gameos_graphics.cpp (same as gos_static_prop_killswitch.h).
