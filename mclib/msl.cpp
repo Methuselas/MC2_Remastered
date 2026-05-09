@@ -22,6 +22,7 @@
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
 #include "../GameOS/gameos/gos_static_prop_batcher.h"    // Stage 2.D.2 CacheGpuLightData
 #include "../GameOS/gameos/gos_static_prop_killswitch.h" // g_useGpuObjects extern
+#include "../GameOS/gameos/gos_mech_killswitch.h"        // g_useGpuMechs extern (Slice B1)
 #include "../GameOS/gameos/gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for CacheGpuLightData breakdown
 
 // 2026-05-05: frame-stamp the cache so registry::flush() can skip stale entries
@@ -1829,7 +1830,11 @@ void TG_MultiShape::CacheGpuLightData()
 {
     // PERF 2026-05-07: stripped hot Tracy zones CacheGpuLightData,
     // CacheGpuLightData findLeaf, and CacheGpuLightData GatherGpuObjectLightDataOnly.
-    if (!g_useGpuObjects)
+    //
+    // Slice B1 (2026-05-09): also honor g_useGpuMechs so an operator
+    // running MC2_GPU_OBJECTS=0 MC2_GPU_MECHS=1 still gets the cache
+    // refresh for mechs. Adversarial review MAJOR-1.
+    if (!g_useGpuObjects && !g_useGpuMechs)
         return;
 
     // Find first SHAPE_NODE leaf — same logic as submitMultiShape.
@@ -1854,7 +1859,8 @@ void TG_MultiShape::CacheGpuLightData()
 
 void TG_MultiShape::ResubmitCachedGpuLightData()
 {
-    if (!g_useGpuObjects)
+    // Slice B1 (2026-05-09): see CacheGpuLightData rationale.
+    if (!g_useGpuObjects && !g_useGpuMechs)
         return;
 
     TG_Shape* firstShapeNodeLeaf = nullptr;

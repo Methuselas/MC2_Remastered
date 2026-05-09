@@ -64,7 +64,7 @@ void main() {
     else if (u_debugMode == 6) c = vec4(tex_color.aaa, 1.0);                    // texture alpha as grey
     else if (u_debugMode == 7) c = vec4(texture(u_tex, vec2(0.5, 0.5)).rgb, 1.0); // sample at hardcoded UV
     else if (u_debugMode == 8) c = vec4(textureLod(u_tex, v_uv, 0.0).rgb, 1.0);  // explicit LOD 0 sample
-    else if (u_debugMode == 9) c = vec4(v_litColor.rgb / max(textureLod(u_tex, v_uv, 0.0).rgb, vec3(0.001)), 1.0); // lighting-only (lit / texture)
+    else if (u_debugMode == 9) c = vec4(v_litColor.rgb / max(textureLod(u_tex, v_uv, 0.0).rgb, vec3(0.001)), 1.0); // lighting / texture (texture-inversion overlay)
 
     FragColor = c;
     GBuffer1  = rc_gbuffer1_screenShadowEligible(normalize(v_normal));

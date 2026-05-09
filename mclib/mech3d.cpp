@@ -2508,10 +2508,14 @@ long Mech3DAppearance::render (long depthFixup)
 				desc.slot0TexHandle = (uint32_t)localTextureHandle;
 				// Slice B1: use the dedup-cache slot populated by
 				// CacheGpuLightData() in update(). 0xFFFFFFFFu sentinel
-				// means "not yet cached" — fall back to 0, which the
-				// shader interprets as "use the engine's default ambient
-				// slot" (visually equivalent to Slice A flat-white minus
-				// the ambient term; safe).
+				// means "not yet cached" (e.g. spawn-frame before the
+				// first update() runs) — fall back to slot 0. Visual
+				// effect for that one frame: either inherits another
+				// actor's lighting (slot 0 contents at that moment) or,
+				// if slot 0 has numLights==0, calc_light returns the
+				// ambient floor (kAmbientFloor=0.35 grey) thanks to
+				// MC2_STATIC_PROP_LIGHTING. Either case is imperceptible
+				// at 60 Hz.
 				const uint32_t cachedLI = mechShape->getCachedGpuLightIndex();
 				desc.lightDataIndex = (cachedLI == 0xFFFFFFFFu) ? 0u : cachedLI;
 				desc.renderFlags    = 0;

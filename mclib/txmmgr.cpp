@@ -1383,7 +1383,15 @@ void MC_TextureManager::renderLists (void)
     // copy global list of light data into GPU buffer
     
 	const uint32_t gpu_buf_size = gos_GetBufferSizeBytes(lightDataBuffer_);
-    const uint32_t cpu_buf_size = lightDataStructuresCount*sizeof(TG_HWLightsData);
+    // Slice B1 (2026-05-09): floor the buffer size to the GLSL UBO window
+    // (LightsData[64] in shaders/include/lighting.hglsl). Without this floor,
+    // the bound buffer can be smaller than the shader's declared window
+    // when actor count < 64; UBO reads past the bound buffer are GL-undefined
+    // (AMD returns zero, others may crash). Adversarial review MAJOR-2.
+    constexpr uint32_t kGlslUboMinBytes = 64u * sizeof(TG_HWLightsData);
+    const uint32_t cpu_buf_size = std::max<uint32_t>(
+        lightDataStructuresCount * sizeof(TG_HWLightsData),
+        kGlslUboMinBytes);
     if(gpu_buf_size < cpu_buf_size) {
         gos_DestroyBuffer(lightDataBuffer_);
         lightDataBuffer_ = gos_CreateBuffer(gosBUFFER_TYPE::UNIFORM, gosBUFFER_USAGE::STATIC_DRAW, cpu_buf_size, 1, lightData_);

@@ -129,6 +129,30 @@ static void loadProgramsIfNeeded() {
     }
     s_mechProgram = s_mechProgramObj->shp_;
 
+    // Slice B1 (2026-05-09): MAJOR-3 from adversarial review.
+    // shaders/include/lighting.hglsl declares LightsData[64] (~113 KB
+    // std140). GL spec mandates only 16 KB minimum support; many
+    // older drivers / iGPUs cap at 64 KB. If the host GPU can't fit
+    // the UBO, force g_useGpuMechLighting off so the shader's
+    // u_lightingMode=0 branch (Slice A flat-white) runs and the
+    // app doesn't fail compilation or read garbage.
+    {
+        constexpr GLint kRequiredUboBytes = 64 * 1808;  // matches lighting.hglsl
+        GLint maxUbo = 0;
+        glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE, &maxUbo);
+        if (maxUbo > 0 && maxUbo < kRequiredUboBytes) {
+            std::fprintf(stderr,
+                "[MECHLIGHT v1] event=ubo_cap_too_small caps=%d required=%d "
+                "fallback=flat_white\n",
+                maxUbo, kRequiredUboBytes);
+            g_useGpuMechLighting = false;
+        } else {
+            std::fprintf(stderr,
+                "[MECHLIGHT v1] event=ubo_cap_check caps=%d required=%d ok\n",
+                maxUbo, kRequiredUboBytes);
+        }
+    }
+
     auto loc = [&](const char* name) {
         return glGetUniformLocation(s_mechProgram, name);
     };
@@ -565,7 +589,7 @@ void GpuMechBatcher::flush() {
         s_mechLightTraceInit = true;
     }
     if (s_mechLightTrace) {
-        // LightsData UBO holds 48 ObjectLights entries (lighting.hglsl:41,
+        // LightsData UBO holds 64 ObjectLights entries (lighting.hglsl,
         // raised from 32 in B1 after mc2_17 hit the cap). Must stay in
         // lockstep with the GLSL declaration per
         // memory/cpp_glsl_ubo_struct_lockstep.md. AMD typically returns
