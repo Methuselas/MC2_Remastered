@@ -3352,6 +3352,11 @@ void Mech3DAppearance::updateGeometry (void)
 			}
 		}
 
+		// D-gpu-pose-instrument: AnimPose stage — animation pose state setters
+		// (setAnimation, SetFrameNum, SetNodeRotation × N) on body + shadow
+		// shapes, plus the shadow-shape transform conditional. Per-stage
+		// attribution for the trimodal Mech3D.UpdateGeometry histogram.
+		{ ZoneScopedN("Mech3D.UpdateGeometry.AnimPose");
 		//----------------------------------------------------
 		// Set Animation State Here.
 		// ONLY ONE case now:
@@ -3417,7 +3422,12 @@ void Mech3DAppearance::updateGeometry (void)
 				mechShadowShape->TransformMultiShape(&xlatPosition, &qRotation);
 			}
 		}
+		} // end AnimPose zone
 
+		// D-gpu-pose-instrument: BodyXform stage — body's SetLightList +
+		// TransformMultiShape* dispatch. The dominant per-mech work; will be
+		// further broken down by zones inside TransformMultiShape itself.
+		{ ZoneScopedN("Mech3D.UpdateGeometry.BodyXform");
 		mechShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
 		// Slice C3-revised: when GPU mech path is on AND fast-transform
 		// killswitch is on, use _PositionsOnly to skip the per-vertex
@@ -3432,10 +3442,15 @@ void Mech3DAppearance::updateGeometry (void)
 		} else {
 			mechShape->TransformMultiShape(&xlatPosition, &qRotation);
 		}
+		} // end BodyXform zone
 	}
-	  
+
+	// D-gpu-pose-instrument: Effects stage — foot poofs, jump fx, weapon
+	// node positions. getNodePosition callers live here; potential cost
+	// contributor.
 	if (visible && (sensorLevel > 4) && !InEditor && useNonWeaponEffects)
 	{
+		ZoneScopedN("Mech3D.UpdateGeometry.Effects");
 		//--------------------------------------------------------------
 		// Having already transformed the mech, the foot poofs go here.
 		Stuff::Vector3D rFootPos, lFootPos;
@@ -3610,6 +3625,10 @@ void Mech3DAppearance::updateGeometry (void)
 		}
 	}
 	
+	// D-gpu-pose-instrument: Sensors stage — sensorTriangleShape +
+	// sensorSquareShape transforms. Per user: ALL mechs have sensors;
+	// need attribution.
+	{ ZoneScopedN("Mech3D.UpdateGeometry.Sensors");
 	Stuff::UnitQuaternion totalRotation;
 	sensorSpin += SPIN_RATE * frameLength;
 	if (sensorSpin > 180)
@@ -3630,12 +3649,13 @@ void Mech3DAppearance::updateGeometry (void)
 	sensorTriangleShape->SetFogRGB(0xffffffff);
 	sensorTriangleShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
 	sensorTriangleShape->TransformMultiShape(&xlatPosition,&totalRotation);
-	
+
 	//----------------------------------------------
 	// Do geometry here to draw sensor contact
 	sensorSquareShape->SetFogRGB(0xffffffff);
 	sensorSquareShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
 	sensorSquareShape->TransformMultiShape(&xlatPosition,&totalRotation);
+	} // end Sensors zone
 	
 	//-----------------------------------------
 	// Create Jump FX Here.
@@ -4452,6 +4472,12 @@ long Mech3DAppearance::update (bool animate)
 		inView = oldInView;
 	}
 
+	// D-gpu-pose-instrument: Arms stage — leftArm/rightArm dynamics +
+	// transform when blown off. Per user: arms attached by default;
+	// these `*ArmOff && *Arm && *ArmRecalc()` paths only fire for
+	// blown-arm mechs. Tracy zone fires unconditionally so we can
+	// confirm typical mechs have ~0 mass here.
+	{ ZoneScopedN("Mech3D.UpdateGeometry.Arms");
 	//------------------------------------------------
 	// If arms are off, process their geometry here!
 	// MUST do every frame.  We don't know where the arms are!!!
@@ -4624,7 +4650,8 @@ long Mech3DAppearance::update (bool animate)
 			}
 		}
 	}
-	
+	} // end Arms zone
+
  	nextStep = prevStep = false;
 	
 	return TRUE;

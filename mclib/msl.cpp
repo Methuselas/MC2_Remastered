@@ -1415,6 +1415,12 @@ long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuatern
 
     TG_ShapeRecPtr childChain[MAX_NODES];
 
+    // D-gpu-pose-instrument: PerShapeLoop wraps the per-shape iteration.
+    // Per-mech-per-call (fires once per TransformMultiShape invocation),
+    // not per-leaf-iteration. Captures the WHOLE loop including hierarchy
+    // walk + per-leaf dispatch + MultiTransformShadows. Future GPU-compute
+    // target.
+    { ZoneScopedN("TG.MultiShape.PerShapeLoop");
     for (i=0;i<numTG_Shapes;i++)
     {
         //----------------------------------------------
@@ -1751,6 +1757,11 @@ long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuatern
         // batcher provides GPU vertex lighting via the calc_light() kernel
         // finished in lighting.hglsl (Stage 2.C). Default branch (flag false)
         // is the unchanged legacy call.
+        // D-gpu-pose-instrument: PerLeaf zone wraps the per-shape dispatch.
+        // Per-leaf-iteration (fires N times per loop). Per-leaf work is
+        // ~500ns (pool alloc + per-vertex projection + per-face cull),
+        // above the 100ns floor; aggregate Tracy overhead <1% frame budget.
+        { ZoneScopedN("TG.MultiShape.PerLeaf");
         if (s_multiShapePositionsOnly)
         {
             listOfShapes[i].node->MultiTransformShape_PositionsOnly(&shapeToClip,&backFacePoint,listOfShapes[i].parentNode,isHudElement,alphaValue,isClamped);
@@ -1759,9 +1770,14 @@ long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuatern
         {
             listOfShapes[i].node->MultiTransformShape(&shapeToClip,&backFacePoint,listOfShapes[i].parentNode,isHudElement,alphaValue,isClamped);
         }
+        } // end PerLeaf zone
 
+        // D-gpu-pose-instrument: ShadowProj wraps the MultiTransformShadows
+        // dispatch (per-light × per-vertex shadow projection). Per-leaf-
+        // iteration; only fires when useShadows && d_useShadows.
         if (useShadows && d_useShadows)
         {
+            ZoneScopedN("TG.MultiShape.ShadowProj");
             listOfShapes[i].node->MultiTransformShadows(pos, &(listOfShapes[i].shapeToWorld),yawRotation);
         }
 
@@ -1771,6 +1787,7 @@ long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuatern
         x=GetCycles();
 #endif
     }
+    } // end PerShapeLoop zone
 
 #ifdef LAB_ONLY
     MCTimeTransformandLight = MCTimeAnimationandMatrix + MCTimePerShapeTransform;
