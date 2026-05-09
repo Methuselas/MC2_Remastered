@@ -66,7 +66,11 @@ uniform int u_lightingMode;
 out vec2 v_uv;
 out vec4 v_litColor;
 out vec4 v_highlightColor;
-out vec3 v_fogRGB;
+// Slice B2: vec4 — .rgb = fog color (engine global from g_scene.fogColor),
+// .a = per-actor haze factor (0=clear, 1=fully fogged) sourced from
+// inst.fogRGB.a (mech3d.cpp packs Mech3DAppearance::hazeFactor into the
+// alpha byte of desc.fogARGB).
+out vec4 v_fogRGB;
 out vec3 v_normal;   // world-space for GBuffer1
 
 void main() {
@@ -117,24 +121,45 @@ void main() {
     // (CPU mech path has implicit ambient via its lighting model).
     // Tunable post-soak.
     const float kAmbientFloor = 0.35;
+    // Slice B+ (2026-05-09): per-actor lightsOut from inst.renderFlags
+    // bit 1. Set by mech3d.cpp from OBJECT_STATUS_DESTROYED / DISABLED
+    // / SHUTDOWN. Skip per-light contributions and use ambient floor
+    // only — visually similar to the CPU path's
+    // mechShape->SetLightsOut(true) effect.
+    const uint kRenderFlagLightsOut = 0x2u;
+    bool lightsOut = (inst.renderFlags & kRenderFlagLightsOut) != 0u;
+
     vec3 baseLight;
     if (u_lightingMode != 0) {
-        vec3 base = vec3(kAmbientFloor);
-        vec3 litRGB = calc_light(int(inst.lightDataIndex),
-                                 worldNormal,
-                                 worldMC2,
-                                 base);
-        baseLight = clamp(litRGB + inst.aRGBHighlight.rgb * inst.aRGBHighlight.a,
-                          0.0, 1.0);
+        if (lightsOut) {
+            baseLight = vec3(kAmbientFloor);
+        } else {
+            vec3 base = vec3(kAmbientFloor);
+            vec3 litRGB = calc_light(int(inst.lightDataIndex),
+                                     worldNormal,
+                                     worldMC2,
+                                     base);
+            baseLight = clamp(litRGB + inst.aRGBHighlight.rgb * inst.aRGBHighlight.a,
+                              0.0, 1.0);
+        }
     } else {
-        // Slice A passthrough: flat white + highlight.
-        baseLight = clamp(vec3(1.0) + inst.aRGBHighlight.rgb * inst.aRGBHighlight.a,
-                          0.0, 1.0);
+        // Slice A passthrough: flat white + highlight (lightsOut still
+        // dims via the ambient floor for parity with the CPU path).
+        if (lightsOut) {
+            baseLight = vec3(kAmbientFloor);
+        } else {
+            baseLight = clamp(vec3(1.0) + inst.aRGBHighlight.rgb * inst.aRGBHighlight.a,
+                              0.0, 1.0);
+        }
     }
 
     v_uv             = a_uv;
     v_litColor       = vec4(baseLight, 1.0);
     v_highlightColor = inst.aRGBHighlight;
-    v_fogRGB         = inst.fogRGB.rgb;
+    // Slice B2: combine engine-global fog COLOR with per-actor haze
+    // FACTOR. g_scene is from scene.hglsl (included transitively via
+    // lighting.hglsl). inst.fogRGB.a carries hazeFactor packed by
+    // mech3d.cpp; .rgb of inst.fogRGB is unused for mechs.
+    v_fogRGB         = vec4(g_scene.fogColor.rgb, inst.fogRGB.a);
     v_normal         = worldNormal;
 }

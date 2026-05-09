@@ -17,12 +17,17 @@
 in vec2 v_uv;
 in vec4 v_litColor;
 in vec4 v_highlightColor;
-in vec3 v_fogRGB;
+in vec4 v_fogRGB;  // .rgb = engine fog color, .a = per-actor haze factor (B2)
 in vec3 v_normal;
 
 uniform sampler2D u_tex;
 uniform int u_materialFlags;  // bit 0: ALPHA_TEST
-uniform float u_fogValue;     // 1.0 = clear (per static_prop convention)
+// Slice B2: u_fogValue retained for backward compat / parity with
+// static_prop convention but no longer drives the mix — per-actor
+// haze is in v_fogRGB.a now. The CPU side stops uploading the
+// uniform (location -1 = silent no-op for glUniform1f) but keeping
+// the declaration leaves room for a global haze override later.
+uniform float u_fogValue;
 // Slice A debug: 0=normal, 1=solid magenta, 2=texture only, 3=light only,
 // 4=normal-as-color. Wired through MC2_MECH_FRAG_DEBUG env var on the C++
 // side via a uniform write at flush time.
@@ -53,7 +58,8 @@ void main() {
 
     vec4 c = tex_color * v_litColor;
     c.rgb += v_highlightColor.rgb * v_highlightColor.a;
-    c.rgb  = mix(v_fogRGB, c.rgb, u_fogValue);
+    // Slice B2: per-actor haze. v_fogRGB.a=0 → clear, =1 → fully fogged.
+    c.rgb  = mix(c.rgb, v_fogRGB.rgb, v_fogRGB.a);
 
     // Debug overrides (MC2_MECH_FRAG_DEBUG=N).
     if      (u_debugMode == 1) c = vec4(1.0, 0.0, 1.0, 1.0);                    // solid magenta

@@ -2518,9 +2518,25 @@ long Mech3DAppearance::render (long depthFixup)
 				// at 60 Hz.
 				const uint32_t cachedLI = mechShape->getCachedGpuLightIndex();
 				desc.lightDataIndex = (cachedLI == 0xFFFFFFFFu) ? 0u : cachedLI;
-				desc.renderFlags    = 0;
+				// Slice B+ (2026-05-09): per-actor lightsOut from object
+				// status. CPU path at mech3d.cpp:3154 sets
+				// mechShape->SetLightsOut(true) for these states; GPU path
+				// reads bit 1 of inst.renderFlags in mech.vert and skips
+				// per-light contributions, leaving only the ambient floor.
+				const bool lightsOut =
+					(status == OBJECT_STATUS_DESTROYED) ||
+					(status == OBJECT_STATUS_DISABLED) ||
+					(status == OBJECT_STATUS_SHUTDOWN);
+				desc.renderFlags    = lightsOut ? 0x2u : 0x0u;  // bit 1
 				desc.highlightARGB  = gpuHighlightARGB;
-				desc.fogARGB        = 0;       // Slice B2 wires this
+				// Slice B2: pack actor hazeFactor [0,1] into the alpha
+				// byte of fogARGB. mech.vert combines it with
+				// g_scene.fogColor.rgb to drive per-actor fog mix in
+				// mech.frag. RGB of fogARGB is unused (the engine fog
+				// color is global; per-actor color tinting deferred).
+				const float hazeClamped = (hazeFactor < 0.0f) ? 0.0f : (hazeFactor > 1.0f ? 1.0f : hazeFactor);
+				const uint8_t hazeByte  = (uint8_t)(hazeClamped * 255.0f + 0.5f);
+				desc.fogARGB        = (uint32_t)hazeByte << 24;
 
 				gpuMechSubmitted = GpuMechBatcher::instance().submitActor(desc);
 				// Only count as a fallback if the GPU path was nominally
