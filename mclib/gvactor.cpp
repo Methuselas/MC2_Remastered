@@ -83,6 +83,29 @@ static uint32_t s_lcSkipCountGV = 0u;
 #define LCGV_TRACE(fmt, ...) \
     do { if (s_lcTraceGV) { printf("[GPU_CULL_LIFECYCLE v1] gvactor " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while(0)
 
+// Slice GV-shadow-skip (2026-05-09): skip gvShadowShape->TransformMultiShape
+// when modern engine has terrain tessellation active. Mirrors mech D-shadow-skip
+// (mech3d.cpp:3398-3404). Recon: every byte produced by that call has zero
+// consumer in modern + tessellation path:
+//   - GVAppearance::renderShadows early-returns on tessellation (gvactor.cpp:2068),
+//     making gvShadowShape->RenderShadows(true) at gvactor.cpp:2082 unreachable.
+//   - GpuStaticPropBatcher::registerMultiShape(appearType->gvShadowShape) at
+//     gvactor.cpp:1068 is TYPE-level template registration only; per-actor
+//     instance state mutated by TransformMultiShape is NOT fed into the batcher
+//     (verified at gos_static_prop_batcher.cpp:660-689 — registers leaf
+//     TG_TypeShape templates and primes texture handles, no per-frame state).
+// Default-on per the post-mech-flip convention. Opt out: MC2_GPU_GV_SHADOW_SKIP=0.
+// Tessellation gate is belt-and-suspenders: if a user disables tessellation,
+// the legacy RenderShadows path becomes reachable and would need
+// TransformMultiShape outputs.
+static bool gvEnvFlagDefaultOn(const char* name) {
+    const char* v = getenv(name);
+    if (v == nullptr) return true;                  // unset → on (new default)
+    if (v[0] == '0' && v[1] == '\0') return false;  // exactly "0" → off
+    return true;                                     // any other value → on
+}
+static const bool g_useGpuGVShadowSkip = gvEnvFlagDefaultOn("MC2_GPU_GV_SHADOW_SKIP");
+
 //******************************************************************************************
 extern float	worldUnitsPerMeter;
 extern bool 	drawTerrainGrid;
@@ -2486,7 +2509,13 @@ void GVAppearance::updateGeometry (void)
 		if (gvShadowShape && useShadows)
 		{
 			gvShadowShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-			gvShadowShape->TransformMultiShape (&xlatPosition,&rot);
+			// Slice GV-shadow-skip: when modern engine has tessellation active,
+			// downstream gvShadowShape->RenderShadows(true) (gvactor.cpp:2082) is
+			// unreachable so the transform's outputs go unused. See block comment
+			// at top of file for full consumer enumeration.
+			const bool skipShadowXform = g_useGpuGVShadowSkip && gos_IsTerrainTessellationActive();
+			if (!skipShadowXform)
+				gvShadowShape->TransformMultiShape (&xlatPosition,&rot);
 		}
 		
 //		Camera::HazeFactor = hazeFactor;
