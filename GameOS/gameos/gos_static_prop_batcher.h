@@ -360,11 +360,21 @@ bool batcher_isCoalesceArmed();
 // mission load. Slice-1 NOT consumed (foundation for slice 2 GPU-emit).
 uint32_t batcher_getPerTypePeakCount(uint32_t typeID);
 
-// true when MC2_STATIC_PROP_GLOBAL_POOL_LEGACY=1 — keeps legacy per-type-cap
-// layout. Consumed by patch dispatch to set u_legacyBaseInstance uniform.
+// true when MC2_STATIC_PROP_GLOBAL_POOL_LEGACY=1 — keeps legacy per-type-cap layout.
 bool batcher_isGlobalPoolLegacy();
-
 // Per-ring-frame instance capacity for the global pool (slice 1).
-// Override via MC2_STATIC_PROP_GLOBAL_CAP; default STATIC_PROP_GLOBAL_CAP_DEFAULT.
 uint32_t batcher_getGlobalInstanceCap();
+// Current coalesce ring frame slot (diagnostic only; NOT the legacy s_frameSlot).
+uint32_t batcher_getCoalesceFrameSlot();
+
+// Bind/unbind the base-instance SSBO at slot BASE_INSTANCE_SSBO_BINDING (16) for the
+// patch shader. Both are no-ops under legacy mode.
+void batcher_bindBaseInstanceByCmdSsboForPatch();
+void batcher_unbindBaseInstanceByCmdSsboForPatch();
+
+// Called from txmmgr.cpp between GpuStaticPropRegistry::flush() and compute_dispatch().
+// Non-legacy mode: advances s_coalesceFrameSlot, waits prior-frame fence, computes
+// per-cmd baseInstance prefix-sum, writes to s_baseInstanceByCmdSsbo.
+// Legacy mode: returns immediately (s_coalesceFrameSlot mirrors s_frameSlot at :2644).
+void batcher_prepareBaseInstanceTable();
 

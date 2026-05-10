@@ -1752,6 +1752,11 @@ void MC_TextureManager::renderLists (void)
 			// cull shader can scatter them into the correct per-type bucket.
 			GpuStaticPropRegistry::flush();
 
+			// Step 4.6 (global-pool slice 1): compute per-cmd baseInstance prefix-sum
+			// and advance the coalesce ring slot BEFORE compute_dispatch() so the
+			// patch shader can read baseInstanceByCmd[] in the same dispatch.
+			batcher_prepareBaseInstanceTable();
+
 			// C1b GPU authority flip: compute_dispatch() is now called HERE
 			// (moved from mission.cpp) so it processes BOTH dynamic actor records
 			// (from substrate_flushUpload in objmgr::update) AND the static prop

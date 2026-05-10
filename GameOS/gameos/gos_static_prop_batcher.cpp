@@ -1540,6 +1540,13 @@ void GpuStaticPropBatcher::finalizeGeometry() {
     }
     s_coalescePerFrameInstanceBytes =
         s_offGroupTotalBytes + s_onGroupTotalBytes;
+    // Step 4.0 — override with global-pool size under non-legacy mode.
+    // s_coalescePerFrameInstanceBytes now drives both the alloc (Step 5.9) and
+    // batcher_getCoalescePerFrameInstanceBytes() (legacy returns off+on sum).
+    if (!s_globalPoolLegacy) {
+        s_coalescePerFrameInstanceBytes =
+            static_cast<size_t>(s_globalInstanceCap) * sizeof(GpuStaticPropInstance);
+    }
 
     // Step 5.8 — alignment asserts (§3.Z). The std430 stride is 112 bytes
     // for GpuStaticPropInstance (compile-time static_assert in the header),
@@ -2642,6 +2649,12 @@ bool uploadAllBucketsIfNeeded() {
     if (s_fatalRegistrationFailure) return false;
 
     s_frameSlot = (s_frameSlot + 1) % RING_FRAMES;
+    // Step 4.4 — legacy mode: coalesce ring mirrors legacy ring slot.
+    // Non-legacy mode: s_coalesceFrameSlot is advanced inside
+    // batcher_prepareBaseInstanceTable() (called from txmmgr.cpp).
+    if (s_globalPoolLegacy) {
+        s_coalesceFrameSlot = s_frameSlot;
+    }
     if (s_fence[s_frameSlot]) {
         glClientWaitSync(s_fence[s_frameSlot], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
         glDeleteSync(s_fence[s_frameSlot]);
@@ -2947,64 +2960,46 @@ void GpuStaticPropBatcher::flush() {
     // objects leak until onMapUnload (or longer). Per Step 11.1
     // first-flush latch: do NOT set s_coalesceFirstFlushDone here — the
     // latch is for first ARMED flush (placed in Step 11.7.k).
-    if (s_coalesceFence[s_frameSlot]) {
-        glClientWaitSync(s_coalesceFence[s_frameSlot],
+    // Step 4.4 — legacy mode only: wait on coalesce fence here.
+    // Non-legacy mode: prepare-table already waited and cleared this fence;
+    // skip to avoid a double-wait on the same sync object.
+    if (s_globalPoolLegacy && s_coalesceFence[s_coalesceFrameSlot]) {
+        glClientWaitSync(s_coalesceFence[s_coalesceFrameSlot],
                          GL_SYNC_FLUSH_COMMANDS_BIT,
                          GL_TIMEOUT_IGNORED);
-        glDeleteSync(s_coalesceFence[s_frameSlot]);
-        s_coalesceFence[s_frameSlot] = nullptr;
+        glDeleteSync(s_coalesceFence[s_coalesceFrameSlot]);
+        s_coalesceFence[s_coalesceFrameSlot] = nullptr;
     }
 
-    // Steps 11.2 / 11.3 / 11.4 / 11.5 — coalesce per-frame CPU write loop
-    // with overflow + eviction-detect runtime disarms.
+    // Steps 11.2 / 11.3 / 11.4 / 11.5 — coalesce per-frame CPU write loop.
+    // Step 4.7 — split into global-pool (sorted prefix-sum) and legacy (per-type-cap) branches.
     const auto _btf_t_writeStart = std::chrono::steady_clock::now();
-    if (IsCoalesceEnabled()) {
+    if (IsCoalesceEnabled() && !s_globalPoolLegacy) {
+        // Global-pool path: iterate s_sortedTypeOrder (same order as
+        // batcher_prepareBaseInstanceTable) and write instances tightly packed.
+        // Uses s_coalesceFrameSlot — the coalesce ring, advanced in prepare-table.
         const size_t fr_off_bytes =
-            static_cast<size_t>(s_frameSlot) * batcher_getCoalescePerFrameInstanceBytes();
+            static_cast<size_t>(s_coalesceFrameSlot) * batcher_getCoalescePerFrameInstanceBytes();
         uint8_t* coalesceMapBase =
             static_cast<uint8_t*>(s_coalesceInstanceMap) + fr_off_bytes;
 
-        for (auto& kv : s_bucketsByType) {
-            const uint32_t typeID = kv.first;
-            const PerTypeBucket& bucket = kv.second;
+        std::array<uint32_t, 2> groupCursor = {0u, 0u};
+        for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
+            const uint32_t typeID = s_sortedTypeOrder[i];
             if (typeID >= s_types.size()) continue;
+            auto kvIt = s_bucketsByType.find(typeID);
+            if (kvIt == s_bucketsByType.end()) continue;
+            const PerTypeBucket& bucket = kvIt->second;
             GpuStaticPropType& type = s_types[typeID];
 
-            // Step 1 (global-pool slice) — peak tracker. Updated
-            // unconditionally (both legacy and non-legacy modes) so
-            // slice-2 GPU-emit can read peak[t] for slot allocation.
+            // Peak tracker — runs unconditionally so slice-2 GPU-emit can read peak[t].
             if (typeID >= s_perTypePeak.size()) s_perTypePeak.resize(typeID + 1, 0u);
             const uint32_t cnt = static_cast<uint32_t>(bucket.instances.size());
             if (cnt > s_perTypePeak[typeID]) s_perTypePeak[typeID] = cnt;
 
-            // Step 11.3 — per-type overflow guard. Memory-safety: cap
-            // check on bucket.instances.size() (the count of bytes the
-            // CPU is about to write), NOT the patched GPU
-            // instanceCount (which is the count the GPU will RENDER and
-            // may be smaller after cull). Out-CRIT-4 in spec §5.1.
-            if (bucket.instances.size() > type.instanceCap) {
-                std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=type_overflow "
-                             "type=%u count=%zu cap=%u\n",
-                             typeID, bucket.instances.size(), type.instanceCap);
-                s_coalesceArmed = false;
-                // Flag-only disarm; do NOT rebuild the indirect buffer
-                // mid-frame (the v3.4 → v3.5 mid-frame-rebuild blackout
-                // lesson). Legacy fallback may render with stale
-                // sorted-layout cmd.baseInstance values until next
-                // mission load — accepted limitation per plan front
-                // matter "Runtime disarm fallback limitation."
-                break;
-            }
+            // Overflow gate is dead under global-pool mode: detected in prepare-table.
 
-            // Step 11.4 — eviction-detect.
-            // v3.8: skip the check for types whose lastSeenGosHandle is the
-            // 0xFFFFFFFF sentinel — those types had no MC node at finalize
-            // time (Step 5.10 skip_type path) and would always trigger a
-            // false-positive eviction on the first frame their texture
-            // gets cached in. They're excluded from the coalesce draw via
-            // layerForType=-1 (Step 5.11 emits zero-cmd entry) so the
-            // "evicted" texture is never sampled by the coalesce shader
-            // anyway.
+            // Eviction-detect (adapted from legacy loop — same logic, loop-local var names).
             const TG_TypeShape* src = type.source;
             if (src && src->listOfTextures && type.packetCount > 0u &&
                 type.lastSeenGosHandle != 0xFFFFFFFFu) {
@@ -3023,7 +3018,63 @@ void GpuStaticPropBatcher::flush() {
                 }
             }
 
-            // Step 11.5 — memcpy into the type's group-relative slot.
+            // Prefix-sum write: all types of each group are packed contiguously.
+            const uint32_t group = type.alphaClass;
+            const uint32_t typeBaseInstance = groupCursor[group]
+                                            + (group == 1u ? s_offGroupCountThisFrame : 0u);
+            uint8_t* dst = coalesceMapBase + typeBaseInstance * sizeof(GpuStaticPropInstance);
+            std::memcpy(dst, bucket.instances.data(),
+                        bucket.instances.size() * sizeof(GpuStaticPropInstance));
+            groupCursor[group] += static_cast<uint32_t>(bucket.instances.size());
+        }
+    } else if (IsCoalesceEnabled() && s_globalPoolLegacy) {
+        // Legacy per-type-cap path (unchanged from substrate-coalesce). Uses s_coalesceFrameSlot
+        // (which mirrors s_frameSlot under legacy mode — set at the :2644 advance site).
+        const size_t fr_off_bytes =
+            static_cast<size_t>(s_coalesceFrameSlot) * batcher_getCoalescePerFrameInstanceBytes();
+        uint8_t* coalesceMapBase =
+            static_cast<uint8_t*>(s_coalesceInstanceMap) + fr_off_bytes;
+
+        for (auto& kv : s_bucketsByType) {
+            const uint32_t typeID = kv.first;
+            const PerTypeBucket& bucket = kv.second;
+            if (typeID >= s_types.size()) continue;
+            GpuStaticPropType& type = s_types[typeID];
+
+            // Peak tracker.
+            if (typeID >= s_perTypePeak.size()) s_perTypePeak.resize(typeID + 1, 0u);
+            const uint32_t cnt = static_cast<uint32_t>(bucket.instances.size());
+            if (cnt > s_perTypePeak[typeID]) s_perTypePeak[typeID] = cnt;
+
+            // Per-type overflow guard.
+            if (bucket.instances.size() > type.instanceCap) {
+                std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=type_overflow "
+                             "type=%u count=%zu cap=%u\n",
+                             typeID, bucket.instances.size(), type.instanceCap);
+                s_coalesceArmed = false;
+                break;
+            }
+
+            // Eviction-detect.
+            const TG_TypeShape* src = type.source;
+            if (src && src->listOfTextures && type.packetCount > 0u &&
+                type.lastSeenGosHandle != 0xFFFFFFFFu) {
+                const auto& firstPkt = s_packets[type.firstPacket];
+                if (firstPkt.textureSlot < src->numTextures) {
+                    const DWORD now = src->listOfTextures[firstPkt.textureSlot].gosTextureHandle;
+                    if (now != type.lastSeenGosHandle) {
+                        std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=tex_evicted "
+                                     "type=%u old_handle=%lu new_handle=%lu\n",
+                                     typeID,
+                                     (unsigned long)type.lastSeenGosHandle,
+                                     (unsigned long)now);
+                        s_coalesceArmed = false;
+                        break;
+                    }
+                }
+            }
+
+            // Per-type-cap memcpy into group-relative slot.
             const size_t groupBase_bytes =
                 (type.alphaClass == 1u) ? s_offGroupTotalBytes : 0u;
             uint8_t* dst = coalesceMapBase
@@ -3101,12 +3152,17 @@ void GpuStaticPropBatcher::flush() {
             }
         }
         // ---- Step 11.7 coalesce draw branch ----
-        // Shared group-size locals (used by 11.7.g/h glBindBufferRange).
+        // Step 4.8 — use s_coalesceFrameSlot (coalesce ring slot).
         const size_t fr_off_bytes_d =
-            static_cast<size_t>(s_frameSlot) * batcher_getCoalescePerFrameInstanceBytes();
-        const size_t off_total_bytes = s_offGroupTotalBytes;
-        const size_t on_total_bytes  =
-            batcher_getCoalescePerFrameInstanceBytes() - s_offGroupTotalBytes;
+            static_cast<size_t>(s_coalesceFrameSlot) * batcher_getCoalescePerFrameInstanceBytes();
+        // Legacy mode: separate off/on group byte boundaries.
+        // Global-pool mode: single contiguous range covering both groups.
+        const size_t off_total_bytes = s_globalPoolLegacy
+            ? s_offGroupTotalBytes
+            : s_offGroupBytesThisFrame;
+        const size_t on_total_bytes  = s_globalPoolLegacy
+            ? (batcher_getCoalescePerFrameInstanceBytes() - s_offGroupTotalBytes)
+            : s_onGroupBytesThisFrame;
 
         // 11.7.a — save SSBO slot 4 + unit-0 GL_TEXTURE_BINDING_2D_ARRAY.
         // Active texture is already GL_TEXTURE0 (set by prologue at line
@@ -3151,12 +3207,21 @@ void GpuStaticPropBatcher::flush() {
         // counts (s_alphaOffCmdCount / s_alphaOnCmdCount). The PerDrawEntry
         // SSBO is also per-packet, indexed by gl_DrawID = sorted-packet slot.
         // 11.7.g — alpha-OFF group draw.
+        // Step 4.8: under global-pool mode bind once covering both groups; under legacy bind per-group.
         if (s_alphaOffCmdCount > 0u) {
             if (s_locsCoalesce.drawIDBase >= 0)
                 glUniform1i(s_locsCoalesce.drawIDBase, 0);
-            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
-                              static_cast<GLintptr>(fr_off_bytes_d + 0u),
-                              static_cast<GLsizeiptr>(off_total_bytes));
+            if (s_globalPoolLegacy) {
+                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
+                                  static_cast<GLintptr>(fr_off_bytes_d + 0u),
+                                  static_cast<GLsizeiptr>(off_total_bytes));
+            } else {
+                // Single bind covering both alpha groups (contiguous global pool).
+                const size_t totalUsed = s_totalUsedBytesThisFrame;
+                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
+                                  static_cast<GLintptr>(fr_off_bytes_d),
+                                  static_cast<GLsizeiptr>(totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)));
+            }
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
             glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpu_cull::compute_getIndirectCmdBuf());
@@ -3170,9 +3235,12 @@ void GpuStaticPropBatcher::flush() {
         if (s_alphaOnCmdCount > 0u) {
             if (s_locsCoalesce.drawIDBase >= 0)
                 glUniform1i(s_locsCoalesce.drawIDBase, static_cast<GLint>(s_alphaOffCmdCount));
-            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
-                              static_cast<GLintptr>(fr_off_bytes_d + off_total_bytes),
-                              static_cast<GLsizeiptr>(on_total_bytes));
+            if (s_globalPoolLegacy) {
+                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
+                                  static_cast<GLintptr>(fr_off_bytes_d + off_total_bytes),
+                                  static_cast<GLsizeiptr>(on_total_bytes));
+            }
+            // else: single bind from alpha-OFF draw still covers alpha-ON (same range).
             glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn);
             // First-time bind of indirect buffer if alpha-OFF skipped.
             glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpu_cull::compute_getIndirectCmdBuf());
@@ -3399,7 +3467,8 @@ void GpuStaticPropBatcher::flush() {
     // ring-slot lifecycle so the next visit (RING_FRAMES frames from now)
     // can wait on this fence before overwriting the slot's CPU writes.
     if (IsCoalesceEnabled()) {
-        s_coalesceFence[s_frameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        // Step 4.4 — use s_coalesceFrameSlot (coalesce ring), not s_frameSlot (legacy ring).
+        s_coalesceFence[s_coalesceFrameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     }
     // Stage 2.D.1: record this slot's parity-byte usage so the next visit
     // (RING_FRAMES frames from now) knows exactly how much to glGetBufferSubData.
@@ -3769,7 +3838,10 @@ GLuint batcher_getTexArrayOn()           { return s_texArrayOn;           }
 GLuint batcher_getPermutationSsbo()      { return s_permutationSsbo;      }
 
 size_t batcher_getCoalescePerFrameInstanceBytes() {
-    return s_coalescePerFrameInstanceBytes;
+    if (!s_globalPoolLegacy) {
+        return static_cast<size_t>(s_globalInstanceCap) * sizeof(GpuStaticPropInstance);
+    }
+    return s_offGroupTotalBytes + s_onGroupTotalBytes;
 }
 
 bool batcher_isCoalesceLayoutReady() { return s_coalesceLayoutReady; }
@@ -3781,3 +3853,124 @@ uint32_t batcher_getPerTypePeakCount(uint32_t typeID) {
 
 bool batcher_isGlobalPoolLegacy() { return s_globalPoolLegacy; }
 uint32_t batcher_getGlobalInstanceCap() { return s_globalInstanceCap; }
+uint32_t batcher_getCoalesceFrameSlot() { return s_coalesceFrameSlot; }  // diagnostic
+
+// Saved slot-16 GL buffer object. Slot 16 is reserved to this feature.
+static GLint s_savedSsbo16 = 0;
+
+void batcher_bindBaseInstanceByCmdSsboForPatch() {
+    if (s_globalPoolLegacy || !s_baseInstanceByCmdSsbo) return;
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, BASE_INSTANCE_SSBO_BINDING, &s_savedSsbo16);
+    const GLintptr off = static_cast<GLintptr>(
+        s_coalesceFrameSlot * s_baseInstanceByCmdBytesPerFrame);
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, BASE_INSTANCE_SSBO_BINDING,
+                      s_baseInstanceByCmdSsbo, off,
+                      static_cast<GLsizeiptr>(s_baseInstanceByCmdBytesPerFrame));
+}
+void batcher_unbindBaseInstanceByCmdSsboForPatch() {
+    if (s_globalPoolLegacy || !s_baseInstanceByCmdSsbo) return;
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BASE_INSTANCE_SSBO_BINDING, (GLuint)s_savedSsbo16);
+    s_savedSsbo16 = 0;
+}
+
+// Env probe for GPU-vs-CPU count diagnostic (Step 4.11).
+static const bool s_coalesceGpuVsCpuTrace =
+    (getenv("MC2_COALESCE_GPU_VS_CPU_COUNT_TRACE") != nullptr);
+
+void batcher_prepareBaseInstanceTable() {
+    // Legacy mode: coalesce ring mirrors legacy ring (s_coalesceFrameSlot = s_frameSlot
+    // at the :2644 advance site). Nothing to do here.
+    if (s_globalPoolLegacy) return;
+
+    // CRIT-2 v2 fix: advance coalesce ring slot BEFORE any guards so flush()'s
+    // memcpy + draw always read a fresh, well-defined slot.
+    s_coalesceFrameSlot = (s_coalesceFrameSlot + 1) % RING_FRAMES;
+
+    // Wait on the fence for the slot we just took (from RING_FRAMES frames ago).
+    if (s_coalesceFence[s_coalesceFrameSlot]) {
+        glClientWaitSync(s_coalesceFence[s_coalesceFrameSlot],
+                         GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+        glDeleteSync(s_coalesceFence[s_coalesceFrameSlot]);
+        s_coalesceFence[s_coalesceFrameSlot] = nullptr;
+    }
+
+    // Step 4.11 — GPU-vs-CPU count diagnostic (env-gated). Must be after fence
+    // wait (prior frame's compute is now complete — fence covered patch dispatch).
+    if (s_coalesceGpuVsCpuTrace) {
+        static std::vector<uint32_t> s_priorFrameCpuCount;
+        const GLuint bucketsBuf = gpu_cull::compute_getBucketCountsBuf();
+        if (bucketsBuf && !s_types.empty()) {
+            std::vector<uint32_t> bucketCountGpu(s_types.size() + 1, 0u);
+            glGetNamedBufferSubData(bucketsBuf, 0,
+                static_cast<GLsizeiptr>((s_types.size() + 1) * sizeof(uint32_t)),
+                bucketCountGpu.data());
+            const size_t cmpN = std::min(s_priorFrameCpuCount.size(), bucketCountGpu.size() - 1);
+            for (uint32_t t = 0; t < (uint32_t)cmpN; ++t) {
+                if (bucketCountGpu[t] > s_priorFrameCpuCount[t]) {
+                    std::fprintf(stderr,
+                        "[COALESCE v1] event=gpu_count_exceeds_cpu type=%u gpu=%u cpu=%u\n",
+                        t, bucketCountGpu[t], s_priorFrameCpuCount[t]);
+                    std::fflush(stderr);
+                }
+            }
+        }
+        // Stash this frame's CPU bucket sizes for comparison RING_FRAMES frames from now.
+        s_priorFrameCpuCount.assign(s_types.size(), 0u);
+        for (auto& kv : s_bucketsByType) {
+            if (kv.first < s_priorFrameCpuCount.size())
+                s_priorFrameCpuCount[kv.first] = static_cast<uint32_t>(kv.second.instances.size());
+        }
+    }
+
+    if (!s_baseInstanceByCmdMap) return;
+    if (!batcher_isCoalesceArmed()) return;
+
+    // Prefix-sum: compute baseInstance for each type in sorted order.
+    std::array<uint32_t, 2> groupCursor = {0u, 0u};
+    static std::vector<uint32_t> baseInstanceForType;
+    baseInstanceForType.assign(s_types.size(), 0u);
+    for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
+        const uint32_t typeID = s_sortedTypeOrder[i];
+        if (typeID >= s_types.size()) continue;
+        auto kvIt = s_bucketsByType.find(typeID);
+        if (kvIt == s_bucketsByType.end()) continue;
+        const uint32_t group = s_types[typeID].alphaClass;
+        baseInstanceForType[typeID] = groupCursor[group];
+        groupCursor[group] += static_cast<uint32_t>(kvIt->second.instances.size());
+    }
+    const uint32_t offGroupCount = groupCursor[0];
+    const uint32_t totalCount    = offGroupCount + groupCursor[1];
+
+    if (totalCount > s_globalInstanceCap) {
+        std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=global_pool_overflow "
+                     "used=%u cap=%u\n", totalCount, s_globalInstanceCap);
+        std::fflush(stderr);
+        s_coalesceArmed = false;
+        return;
+    }
+
+    // Offset alpha-ON types by alpha-OFF group total.
+    for (uint32_t typeID : s_sortedTypeOrder) {
+        if (typeID >= s_types.size()) continue;
+        if (s_types[typeID].alphaClass == 1u) {
+            baseInstanceForType[typeID] += offGroupCount;
+        }
+    }
+
+    // Write baseInstanceByCmd[c] for each cmd.
+    const uint32_t pktCount = static_cast<uint32_t>(s_sortedPacketOrder.size());
+    const size_t fr_off = s_coalesceFrameSlot * s_baseInstanceByCmdBytesPerFrame;
+    uint32_t* dst = reinterpret_cast<uint32_t*>(
+        static_cast<uint8_t*>(s_baseInstanceByCmdMap) + fr_off);
+    for (uint32_t i = 0; i < pktCount; ++i) {
+        const uint32_t globalPktIdx = s_sortedPacketOrder[i];
+        const uint32_t typeID       = s_packets[globalPktIdx].owningTypeID;
+        dst[i] = (typeID < baseInstanceForType.size()) ? baseInstanceForType[typeID] : 0u;
+    }
+
+    // Stash group byte/count boundaries for flush() memcpy and draw path.
+    s_offGroupCountThisFrame  = offGroupCount;
+    s_offGroupBytesThisFrame  = offGroupCount * sizeof(GpuStaticPropInstance);
+    s_onGroupBytesThisFrame   = (totalCount - offGroupCount) * sizeof(GpuStaticPropInstance);
+    s_totalUsedBytesThisFrame = totalCount * sizeof(GpuStaticPropInstance);
+}

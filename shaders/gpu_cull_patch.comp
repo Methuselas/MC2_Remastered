@@ -29,6 +29,17 @@ struct DrawElementsIndirectCommand {
     uint baseInstance;   // base offset into visibleIds[] for this bucket
 };
 
+// Binding 16: per-cmd base instance values written by batcher_prepareBaseInstanceTable()
+// CPU-side each frame. One uint32 per sorted draw command. Read when u_legacyBaseInstance==0.
+// Slot reserved to this feature (verified: no other shader uses binding 16).
+layout(std430, binding = 16) readonly buffer BaseInstanceByCmd {
+    uint baseInstanceByCmd[];
+};
+
+// 0 = global-pool path (write cmds[c].baseInstance from SSBO; safe DCE default).
+// 1 = legacy per-type-cap path (baseInstance set at build time; skip write here).
+uniform int u_legacyBaseInstance;
+
 // Binding 10: per-bucket instance count accumulators written by cull dispatch.
 // Layout: [bucketCountData[0..N-1]=perBucketCount, bucketCountData[N]=overflowCount]
 // Same flat-array layout as used in gpu_cull.comp BucketCounts block.
@@ -82,6 +93,10 @@ void main() {
         uint n = (bucketID < uint(u_nBuckets)) ? bucketCountData[bucketID] : 0u;
         if (cmds[c].count == 0u) { n = 0u; }
         cmds[c].instanceCount = n;
+        // Global-pool path: write per-cmd baseInstance from CPU prefix-sum table.
+        if (u_legacyBaseInstance == 0) {
+            cmds[c].baseInstance = baseInstanceByCmd[c];
+        }
     } else {
         // Legacy per-type: invocation index = bucket = typeID.
         if (c >= uint(u_nBuckets)) return;

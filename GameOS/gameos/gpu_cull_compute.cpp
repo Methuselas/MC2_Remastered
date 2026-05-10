@@ -112,11 +112,12 @@ static float compute_getFrustumDilation() {
     if (!s_inited) {
         s_inited = true;
         const char* v = getenv("MC2_GPU_CULL_FRUSTUM_DILATION");
-        if (v) {
-            float parsed = (float)atof(v);
-            if (parsed >= 0.0f && parsed < 1.0f) s_value = parsed;
-        }
+        if (v) { float p = (float)atof(v); if (p >= 0.0f && p < 1.0f) s_value = p; }
     }
+    // Step 4.10 — dilation gate: while coalesce is ARMED, force dilation=0 to
+    // bound the GPU-admitted set to exactly the CPU-submitted set. Design v4 §6.1.
+    // Re-enable in slice 2 alongside GPU-emit when CPU and GPU sets converge.
+    if (batcher_isCoalesceArmed()) return 0.0f;
     return s_value;
 }
 
@@ -571,10 +572,10 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
         const uint32_t* sortedPackets = batcher_getSortedPacketOrder();
         const uint32_t  N_offCmds     = batcher_getAlphaOffCmdCount();
 
-        // Per-type group-relative baseInstance (precomputed once — all
-        // packets of type t share baseInstanceForType[t]).
+        // Per-type group-relative baseInstance (Step 4.9: only computed under legacy;
+        // under global-pool the patch shader writes baseInstance per-frame).
         std::vector<uint32_t> baseInstanceForType(typeCount, 0u);
-        {
+        if (batcher_isGlobalPoolLegacy()) {
             const uint32_t* sortedTypes = batcher_getSortedTypeOrder();
             const uint32_t  N_offTypes  = batcher_getAlphaOffCount();
             uint32_t cumCapOff = 0, cumCapOn = 0;
@@ -591,9 +592,9 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
                 }
             }
         }
+        // else: baseInstanceForType stays 0 — patched per-frame by patch shader via slot 16.
 
-        // Build per-type bucket layout for the cull stage (still NATURAL
-        // typeID indexing — visibleIds is cull-side and unchanged).
+        // Build per-type bucket layout for the cull stage.
         for (uint32_t t = 0; t < typeCount; ++t) {
             uint32_t indexCountSum = 0, firstIdx0 = 0;
             int32_t  baseVtx0 = 0;
@@ -607,9 +608,15 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
                 bucketBases[t] = cumBase;
                 continue;
             }
-            bucketCaps[t]  = legacyVisibleIdsCap;
+            // Step 4.9 — global-pool mode: all buckets get globalInstanceCap so
+            // visibleIds[] can hold up to globalCap IDs per type.
+            if (!batcher_isGlobalPoolLegacy()) {
+                bucketCaps[t] = batcher_getGlobalInstanceCap();
+            } else {
+                bucketCaps[t] = legacyVisibleIdsCap;
+            }
             bucketBases[t] = cumBase;
-            cumBase       += legacyVisibleIdsCap;
+            cumBase       += bucketCaps[t];
         }
 
         // Build per-packet cmds.
@@ -632,8 +639,10 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
             cmd.instanceCount = 0;       // GPU patches per-frame
             cmd.firstIndex    = pktFirstIdx;
             cmd.baseVertex    = pktBaseVtx;
-            cmd.baseInstance  = (owningTypeID < typeCount)
-                                  ? baseInstanceForType[owningTypeID]
+            // Step 4.9: under global-pool mode, baseInstance is 0 at build time
+            // and patched per-frame by the patch shader via baseInstanceByCmd[].
+            cmd.baseInstance  = batcher_isGlobalPoolLegacy()
+                                  ? ((owningTypeID < typeCount) ? baseInstanceForType[owningTypeID] : 0u)
                                   : 0u;
             COMPUTE_TRACE("c1b_build pkt sortedSlot=%u type=%u globalPkt=%u "
                           "idxCount=%u firstIdx=%u baseVtx=%d baseInst=%u group=%s",
@@ -980,6 +989,10 @@ void compute_dispatch() {
                 glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, cmdToBucketSsbo);
             }
 
+            // Step 4.2 — bind base-instance SSBO at slot 16 BEFORE glUseProgram
+            // (buffer bind is program-independent; uniform must be after).
+            batcher_bindBaseInstanceByCmdSsboForPatch();
+
             glUseProgram(s_patchProgram);
             const GLint locNBuckets        = glGetUniformLocation(s_patchProgram, "u_nBuckets");
             const GLint locNCmds           = glGetUniformLocation(s_patchProgram, "u_nCmds");
@@ -990,11 +1003,21 @@ void compute_dispatch() {
                 glUniform1i(locNCmds, (int)(perPacketPatch ? pktCmdCount : s_bucketCount));
             if (locUseCmdToBucket >= 0)
                 glUniform1i(locUseCmdToBucket, perPacketPatch ? 1 : 0);
+            // Step 4.2 — u_legacyBaseInstance MUST be after glUseProgram (operates on bound program).
+            {
+                const GLint locLegacy = glGetUniformLocation(s_patchProgram, "u_legacyBaseInstance");
+                const bool  isLegacy  = batcher_isGlobalPoolLegacy();
+                if (locLegacy >= 0) {
+                    glUniform1i(locLegacy, isLegacy ? 1 : 0);
+                }
+            }
             const uint32_t patchInvocations =
                 perPacketPatch ? pktCmdCount : s_bucketCount;
             const uint32_t patchGroups = (patchInvocations + 63u) / 64u;
             glDispatchCompute(patchGroups, 1, 1);
             glUseProgram(0);
+
+            batcher_unbindBaseInstanceByCmdSsboForPatch();  // restore slot 16
 
             if (perPacketPatch) {
                 glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, (GLuint)prevSsbo7);
