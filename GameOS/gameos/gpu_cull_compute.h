@@ -4,8 +4,7 @@
 // C1a (shadow mode): compute shader runs every frame alongside CPU path.
 //   CPU still renders normally — zero change to rendering output.
 //   Parity summary: [GPU_CULL v1] event=parity_summary every 600 frames.
-//   Killswitch: MC2_GPU_CULL=0 (default) — nothing happens.
-//   Enable:     MC2_GPU_CULL=1 + MC2_GPU_CULL_SUBSTRATE=1
+//   Default ON. Opt-out: MC2_GPU_CULL=0.
 //
 // C1b (GPU render authority): extends C1a to drive static prop indirect draw.
 //   The cull dispatch writes visibleIds[] + perBucketCount[], the patch dispatch
@@ -13,7 +12,7 @@
 //   rollup ORs per-actor visibility into per-block flags.
 //   GpuStaticPropBatcher::flush() replaces its per-type loop with
 //   glMultiDrawElementsIndirect when compute_isEnabled().
-//   Killswitch: MC2_GPU_CULL=0 (default until C3).
+//   Opt-out: MC2_GPU_CULL=0 and/or MC2_GPU_CULL_SUBSTRATE=0.
 
 #include <cstdint>
 #include <GL/glew.h>

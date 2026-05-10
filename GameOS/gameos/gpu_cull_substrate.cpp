@@ -57,7 +57,7 @@ static size_t    s_slotBytes      = 0;
 
 static bool substrate_isEnabled_impl() {
     const char* v = getenv("MC2_GPU_CULL_SUBSTRATE");
-    return v != nullptr && v[0] != '0';
+    return (v == nullptr || v[0] != '0');
 }
 
 bool substrate_isEnabled() {

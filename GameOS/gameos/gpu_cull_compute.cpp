@@ -9,8 +9,8 @@
 //   compute_dispatch() runs three kernels: cull, patch, rollup.
 //   GpuStaticPropBatcher::flush() uses glMultiDrawElementsIndirect.
 //
-// Killswitch: MC2_GPU_CULL=0 (default) — nothing happens.
-// Enable:     MC2_GPU_CULL=1 + MC2_GPU_CULL_SUBSTRATE=1
+// Default ON. Killswitch: MC2_GPU_CULL=0 disables compute cull.
+// Opt-out:    MC2_GPU_CULL=0 and/or MC2_GPU_CULL_SUBSTRATE=0
 
 #include "gpu_cull_compute.h"
 #include "gpu_cull_substrate.h"
@@ -97,7 +97,8 @@ bool compute_isEnabled() {
     static bool s_enabled = false;
     if (!s_initialized_flag) {
         s_initialized_flag = true;
-        s_enabled = (getenv("MC2_GPU_CULL") != nullptr);
+        const char* v = getenv("MC2_GPU_CULL");
+        s_enabled = (v == nullptr || v[0] != '0');
     }
     return s_enabled;
 }

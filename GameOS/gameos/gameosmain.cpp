@@ -730,7 +730,9 @@ int main(int argc, char** argv)
         const bool suTrace = suParseBool("MC2_STATIC_UPDATE_TRACE");
         // 2026-05-11: MC2_STATIC_UPDATE_SKIP defaults ON; mirror in terrobj.cpp:88.
         const bool suSkip  = suParseBool("MC2_STATIC_UPDATE_SKIP", true);
-        bool gpuCullSubstrate = (getenv("MC2_GPU_CULL_SUBSTRATE") != nullptr && getenv("MC2_GPU_CULL_SUBSTRATE")[0] != '0');
+        // Default ON; MC2_GPU_CULL_SUBSTRATE=0 opts out.
+        const char* _gcs = getenv("MC2_GPU_CULL_SUBSTRATE");
+        bool gpuCullSubstrate = (_gcs == nullptr || _gcs[0] != '0');
         bool gpuCullParity    = (getenv("MC2_GPU_CULL_AABB_PARITY") != nullptr && getenv("MC2_GPU_CULL_AABB_PARITY")[0] != '0');
         const bool shrHR      = (getenv("MC2_SHADER_HOT_RELOAD")    != nullptr);
         const char* build  =
