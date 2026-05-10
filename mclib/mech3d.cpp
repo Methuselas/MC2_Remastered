@@ -3637,7 +3637,19 @@ void Mech3DAppearance::updateGeometry (void)
 	// D-gpu-pose-instrument: Sensors stage — sensorTriangleShape +
 	// sensorSquareShape transforms. Per user: ALL mechs have sensors;
 	// need attribution.
+	//
+	// Slice D-sensor-skip: when GPU mech path on AND sensor-skip killswitch
+	// on AND sensorLevel ∈ {0, 5}, skip the entire sensor block. Sensor
+	// SHAPES only render when sensorLevel ∈ [1,4] (mech3d.cpp:2948-2960);
+	// for player mechs (sensorLevel=5) and undetected enemies (sensorLevel=0)
+	// the transform work has no consumer. Skip gate is exact INVERSE of
+	// Render gate — strict no-op semantics. sensorSpin animation drift
+	// while skipped is imperceptible (a continuously-rotating marker that
+	// pops in at any angle is indistinguishable).
 	{ ZoneScopedN("Mech3D.UpdateGeometry.Sensors");
+	const bool skipSensors = g_useGpuMechs && g_useGpuMechSensorSkip &&
+		(sensorLevel == 0 || sensorLevel >= 5);
+	if (!skipSensors) {
 	Stuff::UnitQuaternion totalRotation;
 	sensorSpin += SPIN_RATE * frameLength;
 	if (sensorSpin > 180)
@@ -3664,6 +3676,7 @@ void Mech3DAppearance::updateGeometry (void)
 	sensorSquareShape->SetFogRGB(0xffffffff);
 	sensorSquareShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
 	sensorSquareShape->TransformMultiShape(&xlatPosition,&totalRotation);
+	} // end !skipSensors
 	} // end Sensors zone
 	
 	//-----------------------------------------

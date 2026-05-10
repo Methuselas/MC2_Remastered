@@ -90,6 +90,20 @@ extern bool g_useGpuMechShadowStateStrip;
 // MC2_MECH_GPU_PARITY=1 — disable LEAF_SKIP if running parity diagnostic.
 extern bool g_useGpuMechLeafSkip;
 
+// Slice D-sensor-skip (2026-05-09): skip the sensor block in
+// Mech3DAppearance::updateGeometry (sensorTriangleShape + sensorSquareShape
+// SetFogRGB + SetLightList + TransformMultiShape, plus sensorSpin animation
+// update) when sensorLevel ∈ {0, 5}. Sensor SHAPES render only when
+// sensorLevel ∈ [1,4] (mech3d.cpp:2948-2960); for player mechs (sensorLevel=5)
+// and undetected enemies (sensorLevel=0) the transform work has no consumer.
+// Skip gate is exact INVERSE of Render gate — strict no-op semantics.
+//
+// Independent of all other mech killswitches for bisect granularity.
+// Requires g_useGpuMechs=true to take effect (consistent with prior slices'
+// gating discipline; no tessellation gate needed since sensor render path
+// is legacy CPU regardless).
+extern bool g_useGpuMechSensorSkip;
+
 // Resolve a gosTextureHandle to the underlying raw GL texture name.
 // Returns 0 if handle is INVALID_TEXTURE_ID or gosTexture is gone.
 // Implemented in gameos_graphics.cpp (same as gos_static_prop_killswitch.h).
