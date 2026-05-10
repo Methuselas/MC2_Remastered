@@ -59,29 +59,35 @@ layout(std430, binding = 15) readonly buffer PermutationBuf {
     uint permutation[];
 };
 
-// Uniform: total number of buckets (= type count at mission load).
-// 'uniform uint' crashes this engine's shader compile (memory/uniform_uint_crash.md);
-// use int + cast.
+// 2026-05-11 per-packet rework. Cmd → bucket (typeID) lookup, one uint
+// per cmd. Drives the per-packet layout where multi-packet types emit
+// multiple cmds but share one bucket count. Used when u_useCmdToBucket=1.
+layout(std430, binding = 7) readonly buffer CmdToBucket {
+    uint cmdToBucket[];
+};
+
 uniform int u_nBuckets;
+uniform int u_nCmds;          // total indirect cmds (per-packet count when armed)
+uniform int u_useCmdToBucket; // 1 = per-packet path; 0 = legacy per-type
 
 void main() {
-    uint b = gl_GlobalInvocationID.x;
-    if (b >= uint(u_nBuckets)) return;
+    uint c = gl_GlobalInvocationID.x;
 
-    // Plan v3.8 Step 10.2 — write through permutation with a zero-geometry
-    // clamp. permutation[b] is the sorted slot when armed, b itself when
-    // disarmed (identity loaded by Step 5.4).
-    uint sortedSlot = permutation[b];
-    uint n          = bucketCountData[b];
-
-    // Defensive zero-geometry guard: glMultiDrawElementsIndirect with
-    // {count=0, instanceCount>0} is driver-defined per OpenGL 4.6 §10.5
-    // (AMD typically no-ops, some drivers crash). Force instanceCount=0
-    // when the draw command's index count is 0. Centralizes the rule at
-    // the only point that writes instanceCount per frame; works in both
-    // armed (sorted) and disarmed (identity) modes.
-    if (cmds[sortedSlot].count == 0u) {
-        n = 0u;
+    if (u_useCmdToBucket != 0) {
+        // Per-packet path: dispatch per-cmd. Look up the cmd's bucket
+        // (typeID) via cmdToBucket[c], write that bucket's instanceCount.
+        // All packet-cmds of one type get the same count.
+        if (c >= uint(u_nCmds)) return;
+        uint bucketID = cmdToBucket[c];
+        uint n = (bucketID < uint(u_nBuckets)) ? bucketCountData[bucketID] : 0u;
+        if (cmds[c].count == 0u) { n = 0u; }
+        cmds[c].instanceCount = n;
+    } else {
+        // Legacy per-type: invocation index = bucket = typeID.
+        if (c >= uint(u_nBuckets)) return;
+        uint sortedSlot = permutation[c];
+        uint n = bucketCountData[c];
+        if (cmds[sortedSlot].count == 0u) { n = 0u; }
+        cmds[sortedSlot].instanceCount = n;
     }
-    cmds[sortedSlot].instanceCount = n;
 }

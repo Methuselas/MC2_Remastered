@@ -540,93 +540,106 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
     };
     static_assert(sizeof(DrawCmd) == 20, "DrawElementsIndirectCommand must be 20 bytes");
 
-    std::vector<DrawCmd> cmds(typeCount);
+    // 2026-05-11 per-packet rework: in the SORTED (coalesce) branch, cmds[]
+    // holds one entry per PACKET (not per type). cmd count = sum of all
+    // types' packetCount. In the NATURAL branch, cmds[] still holds one
+    // per type. Allocate up-front using the coalesce-layout's packet count
+    // when available; the natural branch resizes back to typeCount below.
+    uint32_t cmdCount = typeCount;
+    if (batcher_isCoalesceLayoutReady()) {
+        const uint32_t pktCount = batcher_getSortedPacketCount();
+        if (pktCount > 0u) cmdCount = pktCount;
+    }
+    std::vector<DrawCmd> cmds(cmdCount);
     std::vector<uint32_t> bucketCaps(typeCount);
     std::vector<uint32_t> bucketBases(typeCount);  // packed into second half of bucketCapsBuf
 
     // Plan v3.8 Step 9.1 — function-scope cumBase. BOTH the sorted (coalesce)
     // and natural (legacy) branches accumulate into the SAME counter so the
     // visibleIds[] allocation at totalVisibleSlots below is correct under
-    // either layout. Hoisting was the v3.3 → v3.4 fix: an inner-scope
-    // declaration in the natural branch shadows this and silently leaves
-    // cumBase = 0 for the sorted branch → 4-byte allocation → cull writes
-    // hundreds of MB OOB. Per the v3.4 review fix, do NOT redeclare cumBase
-    // inside either branch.
+    // either layout.
     uint32_t cumBase = 0;
 
-    // Plan v3.8 Step 9.1 — branch on the batcher's coalesce layout-ready
-    // state. The sorted (coalesce) branch indexes cmds[] by SORTED slot
-    // and uses §3.Z group-relative baseInstance values; the natural
-    // branch indexes by typeID with the legacy visibleIds-slot
-    // baseInstance. visibleIds[] cull-side layout (bucketCaps /
-    // bucketBases) stays keyed by NATURAL typeID in BOTH branches per
-    // §5.6a — see comments below.
     if (batcher_isCoalesceLayoutReady()) {
-        // ---- SORTED (coalesce) branch — Step 9.2 ----
-        const uint32_t* sortedOrder = batcher_getSortedTypeOrder();
-        const uint32_t  N_off       = batcher_getAlphaOffCount();
-        // baseInstance accumulators are GROUP-RELATIVE per §3.Z. Each is
-        // an instance-count cursor into the per-group slice of
-        // s_coalesceInstanceSsbo: alpha-OFF starts at byte 0, alpha-ON
-        // starts at s_offGroupTotalBytes; the vertex shader's
-        // gl_BaseInstanceARB lookup is also group-relative because
-        // glBindBufferRange shifts the SSBO base per group at flush time
-        // (Step 11.7.g/h).
-        uint32_t cumCapOff = 0;
-        uint32_t cumCapOn  = 0;
+        // ---- SORTED (coalesce) branch — per-packet rework ----
+        // One DrawCmd per packet in s_sortedPacketOrder. All packets of one
+        // type share the same baseInstance (group-relative cap accumulator),
+        // since they read from the same per-frame instance range. The patch
+        // shader writes per-type instanceCount into all packet-cmds of that
+        // type via the cmd_to_bucket lookup (built CPU-side here, used by
+        // gpu_cull_patch.comp at GPU dispatch).
+        const uint32_t* sortedPackets = batcher_getSortedPacketOrder();
+        const uint32_t  N_offCmds     = batcher_getAlphaOffCmdCount();
 
-        for (uint32_t i = 0; i < typeCount; ++i) {
-            const uint32_t typeID = sortedOrder ? sortedOrder[i] : i;
+        // Per-type group-relative baseInstance (precomputed once — all
+        // packets of type t share baseInstanceForType[t]).
+        std::vector<uint32_t> baseInstanceForType(typeCount, 0u);
+        {
+            const uint32_t* sortedTypes = batcher_getSortedTypeOrder();
+            const uint32_t  N_offTypes  = batcher_getAlphaOffCount();
+            uint32_t cumCapOff = 0, cumCapOn = 0;
+            for (uint32_t i = 0; i < typeCount; ++i) {
+                const uint32_t typeID = sortedTypes ? sortedTypes[i] : i;
+                if (typeID >= typeCount) continue;
+                const uint32_t coalesceInstanceCap = batcher_getInstanceCap(typeID);
+                if (i < N_offTypes) {
+                    baseInstanceForType[typeID] = cumCapOff;
+                    cumCapOff += coalesceInstanceCap;
+                } else {
+                    baseInstanceForType[typeID] = cumCapOn;
+                    cumCapOn += coalesceInstanceCap;
+                }
+            }
+        }
 
-            uint32_t indexCount = 0, firstIndex = 0;
-            int32_t  baseVertex = 0;
+        // Build per-type bucket layout for the cull stage (still NATURAL
+        // typeID indexing — visibleIds is cull-side and unchanged).
+        for (uint32_t t = 0; t < typeCount; ++t) {
+            uint32_t indexCountSum = 0, firstIdx0 = 0;
+            int32_t  baseVtx0 = 0;
             uint32_t legacyVisibleIdsCap = 0;
-            // §5.6a naming: legacyVisibleIdsCap is the cull-side slot stride
-            // (= s_instanceCapacity for ALL valid types regardless of
-            // packetCount); coalesceInstanceCap is the per-type
-            // capacity-based slot in s_coalesceInstanceSsbo. Bare
-            // `instanceCap` is forbidden in this file post-v3.8.
-            const bool ok = batcher_getTypeDrawInfo(typeID, &indexCount,
-                                                    &firstIndex, &baseVertex,
+            const bool ok = batcher_getTypeDrawInfo(t, &indexCountSum,
+                                                    &firstIdx0, &baseVtx0,
                                                     &legacyVisibleIdsCap);
-            const uint32_t coalesceInstanceCap = batcher_getInstanceCap(typeID);
-
-            // Cull-visibleIds layout (NATURAL typeID indexing). Even the
-            // sorted draw branch needs the cull shader to write into a
-            // non-zero per-bucket slice; without this, capsData[bucket]
-            // is 0 and `slot >= cap` fires for every static prop.
+            (void)indexCountSum; (void)firstIdx0; (void)baseVtx0;
             if (!ok) {
-                // Out-of-range / not-finalized — leaves a no-op draw
-                // command in this sorted slot AND a zero bucket.
-                cmds[i]              = {0, 0, 0, 0, 0};
-                bucketCaps[typeID]   = 0;
-                bucketBases[typeID]  = cumBase;
-                COMPUTE_TRACE("c1b_build sortedSlot=%u typeID=%u EMPTY (sorted)", i, typeID);
+                bucketCaps[t]  = 0;
+                bucketBases[t] = cumBase;
                 continue;
             }
-            bucketCaps[typeID]   = legacyVisibleIdsCap;
-            bucketBases[typeID]  = cumBase;
-            cumBase             += legacyVisibleIdsCap;
+            bucketCaps[t]  = legacyVisibleIdsCap;
+            bucketBases[t] = cumBase;
+            cumBase       += legacyVisibleIdsCap;
+        }
 
-            // Draw-command layout (SORTED slot indexing). baseInstance is
-            // the group-relative coalesce-instance cursor — the patch
-            // shader writes instanceCount per-frame.
+        // Build per-packet cmds.
+        const uint32_t pktCount = batcher_getSortedPacketCount();
+        for (uint32_t i = 0; i < pktCount; ++i) {
+            const uint32_t globalPktIdx = sortedPackets ? sortedPackets[i] : i;
+            uint32_t pktIdxCount = 0, pktFirstIdx = 0, owningTypeID = 0;
+            int32_t  pktBaseVtx = 0;
+            const bool pkOk = batcher_getPacketDrawInfo(globalPktIdx,
+                                                        &pktIdxCount,
+                                                        &pktFirstIdx,
+                                                        &pktBaseVtx,
+                                                        &owningTypeID);
             DrawCmd& cmd = cmds[i];
-            cmd.count         = indexCount;
-            cmd.instanceCount = 0;
-            cmd.firstIndex    = firstIndex;
-            cmd.baseVertex    = baseVertex;
-            cmd.baseInstance  = (i < N_off) ? cumCapOff : cumCapOn;
-
-            // Advance the matching group's coalesce-cap accumulator.
-            if (i < N_off) cumCapOff += coalesceInstanceCap;
-            else           cumCapOn  += coalesceInstanceCap;
-
-            COMPUTE_TRACE("c1b_build sortedSlot=%u typeID=%u idx=%u first=%u "
-                          "baseVtx=%d legacyCap=%u coalesceCap=%u baseInst=%u visBase=%u",
-                          i, typeID, indexCount, firstIndex, baseVertex,
-                          legacyVisibleIdsCap, coalesceInstanceCap,
-                          cmd.baseInstance, bucketBases[typeID]);
+            if (!pkOk) {
+                cmd = {0, 0, 0, 0, 0};
+                continue;
+            }
+            cmd.count         = pktIdxCount;
+            cmd.instanceCount = 0;       // GPU patches per-frame
+            cmd.firstIndex    = pktFirstIdx;
+            cmd.baseVertex    = pktBaseVtx;
+            cmd.baseInstance  = (owningTypeID < typeCount)
+                                  ? baseInstanceForType[owningTypeID]
+                                  : 0u;
+            COMPUTE_TRACE("c1b_build pkt sortedSlot=%u type=%u globalPkt=%u "
+                          "idxCount=%u firstIdx=%u baseVtx=%d baseInst=%u group=%s",
+                          i, owningTypeID, globalPktIdx,
+                          cmd.count, cmd.firstIndex, cmd.baseVertex,
+                          cmd.baseInstance, i < N_offCmds ? "off" : "on");
         }
     } else {
         // ---- NATURAL (legacy / coalesce-disabled) branch — Step 9.3 ----
@@ -666,7 +679,9 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
 
     // --- Indirect command buffer (GL_DRAW_INDIRECT_BUFFER, GL_DYNAMIC_DRAW) ---
     // instanceCount is overwritten every frame by the patch dispatch.
-    const GLsizeiptr indirectBytes = static_cast<GLsizeiptr>(typeCount * sizeof(DrawCmd));
+    // 2026-05-11: cmds.size() is now per-packet under coalesce-armed (per-type
+    // under coalesce-disarmed/natural). Use cmds.size() instead of typeCount.
+    const GLsizeiptr indirectBytes = static_cast<GLsizeiptr>(cmds.size() * sizeof(DrawCmd));
     glGenBuffers(1, &s_indirectCmdBuf);
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_indirectCmdBuf);
     glBufferData(GL_DRAW_INDIRECT_BUFFER, indirectBytes, cmds.data(), GL_DYNAMIC_DRAW);
@@ -806,12 +821,15 @@ void compute_dispatch() {
     glBindBuffer(GL_COPY_READ_BUFFER,  0);
     glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
 
-    // Read record count from staging header.
-    GpuActorRecordHeader hdrCopy{};
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_stagingSsbo);
-    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(GpuActorRecordHeader), &hdrCopy);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    const uint32_t recordCount = hdrCopy.recordCount;
+    // Record count: read the CPU-side counter directly. The value was just
+    // copied from substrate's persistent-mapped buffer (where it lives in
+    // hdr->recordCount, written from CPU by substrate_appendStaticPropRecord
+    // each leaf). Reading via glGetBufferSubData here forced a full GPU sync
+    // because the just-issued glCopyBufferSubData hadn't completed — that's a
+    // ~6 ms/frame stall on a busy substrate-coalesce frame (mc2_10 substrate=ON
+    // dropped ~135 fps → ~62 fps before this fix; 2026-05-11). The header is
+    // 4 bytes on both sides; CPU side is authoritative.
+    const uint32_t recordCount = substrate_getCurrentRecordCount();
     if (recordCount == 0) {
         COMPUTE_TRACE("event=dispatch_skip reason=record_count_zero");
         return;
@@ -949,14 +967,38 @@ void compute_dispatch() {
             glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 15, &prevSsbo15);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 15, batcher_getPermutationSsbo());
 
+            // 2026-05-11 per-packet rework: bind cmd_to_bucket SSBO at
+            // binding 7 and run patch in per-packet mode when batcher's
+            // packet-layout is built. Falls back to legacy per-type when
+            // unavailable (coalesce-disarmed flow).
+            GLint prevSsbo7 = 0;
+            glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 7, &prevSsbo7);
+            const GLuint cmdToBucketSsbo = batcher_getCmdToBucketSsbo();
+            const uint32_t pktCmdCount   = batcher_getSortedPacketCount();
+            const bool perPacketPatch    = (cmdToBucketSsbo != 0u && pktCmdCount > 0u);
+            if (perPacketPatch) {
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, cmdToBucketSsbo);
+            }
+
             glUseProgram(s_patchProgram);
-            const GLint locNBuckets = glGetUniformLocation(s_patchProgram, "u_nBuckets");
+            const GLint locNBuckets        = glGetUniformLocation(s_patchProgram, "u_nBuckets");
+            const GLint locNCmds           = glGetUniformLocation(s_patchProgram, "u_nCmds");
+            const GLint locUseCmdToBucket  = glGetUniformLocation(s_patchProgram, "u_useCmdToBucket");
             if (locNBuckets >= 0)
                 glUniform1i(locNBuckets, (int)s_bucketCount);
-            const uint32_t patchGroups = (s_bucketCount + 63u) / 64u;
+            if (locNCmds >= 0)
+                glUniform1i(locNCmds, (int)(perPacketPatch ? pktCmdCount : s_bucketCount));
+            if (locUseCmdToBucket >= 0)
+                glUniform1i(locUseCmdToBucket, perPacketPatch ? 1 : 0);
+            const uint32_t patchInvocations =
+                perPacketPatch ? pktCmdCount : s_bucketCount;
+            const uint32_t patchGroups = (patchInvocations + 63u) / 64u;
             glDispatchCompute(patchGroups, 1, 1);
             glUseProgram(0);
 
+            if (perPacketPatch) {
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, (GLuint)prevSsbo7);
+            }
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 15, (GLuint)prevSsbo15);
         }
 

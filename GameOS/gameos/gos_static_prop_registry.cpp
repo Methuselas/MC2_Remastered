@@ -8,6 +8,7 @@
 #include <cstring>
 #include <climits>
 #include <array>
+#include <chrono>
 #include <set>
 
 // MC_TextureManager singleton, defined in mclib/txmmgr.cpp.
@@ -289,6 +290,8 @@ void flush() {
     static uint64_t s_diag_ranges_stale_frame = 0;
     static uint64_t s_diag_ranges_drawn = 0;
     static uint64_t s_diag_leaves_appended = 0;
+    static uint64_t s_diag_total_ns = 0;
+    const auto _flush_t0 = std::chrono::steady_clock::now();
     ++s_diag_flush_calls;
     for (uint32_t regIdx : s_liveRangeIndices) {
         RecipeRange& rng = s_recipeRanges[regIdx];
@@ -370,6 +373,24 @@ void flush() {
             }
         }
 
+        // 2026-05-10 actor-center fix: every leaf of one multishape must share
+        // the SAME substrate worldCenter (= the parent actor's position), so
+        // the GPU frustum cull accepts/rejects all leaves of an actor as a
+        // group. Without this, high-elevation leaves (LitWin_LookoutTower
+        // ~60u up, S_admin roof tiles, watchtower platform tops) get
+        // independently rejected by the sphere-vs-frustum test while the
+        // base leaf passes — visually: base renders, all detail vanishes.
+        // The first recipe in the range is the first SHAPE_NODE leaf
+        // captured by registerStatic (typically the root/base mesh whose
+        // local-to-actor transform is identity), so its modelMatrix
+        // translation IS the actor's xlatPosition.
+        const float* rootMtx = s_recipes[rng.first].modelMatrix;
+        const float actorWorldCenter[3] = {
+            -rootMtx[3],   // raw.x = -stuff.x
+             rootMtx[11],  // raw.y =  stuff.z
+             rootMtx[7],   // raw.z =  stuff.y (elev)
+        };
+
         for (uint32_t i = 0; i < rng.count; ++i) {
             GpuStaticPropInstance inst = s_recipes[rng.first + i]; // stack copy
             inst.lightDataIndex = freshLightIdx;
@@ -421,9 +442,16 @@ void flush() {
                 //   raw.z =  stuff.y  =   entries[7]   (elev)
                 // Mirrors the per-vertex swap in static_prop.vert at
                 // `world_mc2 = vec3(-world_stuff.x, world_stuff.z, world_stuff.y)`.
-                gpuRec.worldCenter[0] = -inst.modelMatrix[3];
-                gpuRec.worldCenter[1] =  inst.modelMatrix[11];
-                gpuRec.worldCenter[2] =  inst.modelMatrix[7];
+                // 2026-05-10 actor-center fix: use the parent multishape's
+                // root translation (computed once per range above) for EVERY
+                // leaf's substrate record. Cull treats the actor as a single
+                // visibility unit; all (typeID, leaf) records of one actor
+                // accept-or-reject as a group. Per-leaf inst.modelMatrix
+                // remains correct in the per-frame instance SSBO for shader
+                // placement — only the cull-side worldCenter is unified.
+                gpuRec.worldCenter[0] = actorWorldCenter[0];
+                gpuRec.worldCenter[1] = actorWorldCenter[1];
+                gpuRec.worldCenter[2] = actorWorldCenter[2];
                 // Bounding radius: 200.0f covers stock MC2 buildings (largest are
                 // ~150 units across, e.g. warehouse footprint). Trees/fences are
                 // smaller but over-admission at the frustum edge is harmless —
@@ -477,18 +505,26 @@ void flush() {
             }
         }
     }
+    s_diag_total_ns += static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - _flush_t0).count());
     static const bool s_regflushTrace = (getenv("MC2_REGFLUSH_DIAG_TRACE") != nullptr);
     if (s_regflushTrace && (s_diag_flush_calls % 600) == 0) {
+        const double mean_us = (s_diag_flush_calls > 0)
+            ? (static_cast<double>(s_diag_total_ns) /
+               static_cast<double>(s_diag_flush_calls)) / 1000.0
+            : 0.0;
         fprintf(stderr,
             "[REGFLUSH_DIAG v1] event=summary calls=%llu ranges_seen=%llu "
-            "tombstone=%llu stale_frame=%llu drawn=%llu leaves_appended=%llu liveSize=%zu\n",
+            "tombstone=%llu stale_frame=%llu drawn=%llu leaves_appended=%llu liveSize=%zu "
+            "mean_us=%.2f\n",
             (unsigned long long)s_diag_flush_calls,
             (unsigned long long)s_diag_ranges_total,
             (unsigned long long)s_diag_ranges_tombstone,
             (unsigned long long)s_diag_ranges_stale_frame,
             (unsigned long long)s_diag_ranges_drawn,
             (unsigned long long)s_diag_leaves_appended,
-            s_liveRangeIndices.size());
+            s_liveRangeIndices.size(), mean_us);
         fflush(stderr);
     }
     // compute_dispatch() runs after this (moved to txmmgr.cpp between registry flush

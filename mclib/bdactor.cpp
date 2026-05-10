@@ -242,6 +242,56 @@ void BldgAppearanceType::init (const char * fileName)
 			delete bldgDmgShape;
 			bldgDmgShape = NULL;
 		}
+		else
+		{
+			// 2026-05-11 force-load damage-shape textures at appearType init.
+			// LoadTGMultiShapeFromASE only sets texture NAMES, not handles —
+			// the per-instance texture-load loop in setObjStatus only fires
+			// when destruction happens at runtime. That's too late for
+			// GpuStaticPropBatcher::finalizeGeometry, which builds its
+			// per-packet texture array at mission-load. Without this loop,
+			// damage-shape packets get layerForPacket=-1 and either render
+			// with the wrong texture (orange-rectangle ghost) or get culled
+			// from the multidraw, leaving destroyed buildings invisible.
+			// Mirror the per-instance loop (bdactor.cpp:618-653) at the
+			// type-level: load textures into mcTextureManager, set the
+			// handles + alpha bits on the shared TG_TypeMultiShape so
+			// every per-instance clone via CreateFrom inherits them.
+			for (long i = 0; i < bldgDmgShape->GetNumTextures(); i++)
+			{
+				char txmName[1024];
+				bldgDmgShape->GetTextureName(i, txmName, 256);
+				char texturePath[1024];
+				sprintf(texturePath, "%s%d" PATH_SEPARATOR, tglPath, ObjectTextureSize);
+				FullPathFileName textureName;
+				textureName.init(texturePath, txmName, "");
+				if (fileExists(textureName))
+				{
+					if (S_strnicmp(txmName, "a_", 2) == 0)
+					{
+						DWORD gosHandle = mcTextureManager->loadTexture(
+							textureName, gos_Texture_Alpha,
+							gosHint_DisableMipmap | gosHint_DontShrink);
+						gosASSERT(gosHandle != 0xffffffff);
+						bldgDmgShape->SetTextureHandle(i, gosHandle);
+						bldgDmgShape->SetTextureAlpha(i, true);
+					}
+					else
+					{
+						DWORD gosHandle = mcTextureManager->loadTexture(
+							textureName, gos_Texture_Solid,
+							gosHint_DisableMipmap | gosHint_DontShrink);
+						gosASSERT(gosHandle != 0xffffffff);
+						bldgDmgShape->SetTextureHandle(i, gosHandle);
+						bldgDmgShape->SetTextureAlpha(i, false);
+					}
+				}
+				else
+				{
+					bldgDmgShape->SetTextureHandle(i, 0xffffffff);
+				}
+			}
+		}
 		
 		//Shadow for destroyed state.
 		result = iniFile.readIdString("ShadowName",aseFileName,511);

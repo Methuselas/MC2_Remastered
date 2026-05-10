@@ -10,6 +10,7 @@
 #include "tgl.h"  // TG_Shape::s_worldToClip
 #include <GL/glew.h>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -222,6 +223,24 @@ uint32_t s_alphaOnCount  = 0;
 size_t   s_offGroupTotalBytes = 0;
 size_t   s_onGroupTotalBytes  = 0;
 size_t   s_coalescePerFrameInstanceBytes = 0;  // populated in Step 5.7
+
+// 2026-05-11 per-packet rework (multi-packet correctness fix). Each indirect
+// draw command corresponds to ONE packet (not one type). Multi-packet types
+// in stock content (S_admin_Core has 44 packets, fences/doors with separate
+// alpha-mesh and frame packets) need per-packet textures and per-packet
+// alpha-test bits — the previous per-type architecture collapsed all packets
+// to the first packet's texture, dropping detail and alpha. See
+// memory/substrate_coalesce_armed_multi_packet_limitation.md.
+//
+// Sorted-packet order: alpha-OFF packets first, alpha-ON packets second.
+// A packet's alpha-class group comes from its TYPE's alphaClass (OR-reduce
+// of its packets' alpha-test bits) — all packets of one type render in the
+// same group so they can read instance data from the same per-group SSBO
+// range; the fragment's per-packet materialFlags then drives discard.
+std::vector<uint32_t> s_sortedPacketOrder;     // global packet indices in [OFF | ON] order
+uint32_t s_alphaOffCmdCount = 0;               // number of packets in alpha-OFF group
+uint32_t s_alphaOnCmdCount  = 0;               // number of packets in alpha-ON group
+GLuint   s_cmdToBucketSsbo  = 0;               // uint typeID per cmd (binding 7, patch shader)
 
 // Step 2.1 — pin tracker (refcount-aware unpin in Step 4.1).
 std::vector<DWORD> s_coalescePinnedNodes;
@@ -663,6 +682,19 @@ uint64_t s_late_register_recovery_skips = 0;
 // snapshot map only carries entries for the sampled actor's types).
 const TG_MultiShape* s_currentSubmittingMulti = nullptr;
 
+// 2026-05-10 actor-center fix: parent multishape's world position captured
+// at the top of submitMultiShape and read by submit() when populating the
+// substrate-record worldCenter. Every leaf of one multishape shares the same
+// cull-side center so the GPU frustum sphere-test accepts/rejects all leaves
+// together (matches the original one-record-per-actor model). Reset to zero
+// at every entry to submitMultiShape.
+//
+// Coordinate convention: stored in raw MC2 world coords already unswapped
+// from Stuff/MLR (.x=east, .y=north, .z=elev), so the consumer in submit()
+// can copy directly into rec.worldCenter without re-unswapping.
+float s_currentSubmittingActorCenter[3] = {0.0f, 0.0f, 0.0f};
+bool  s_currentSubmittingActorCenterValid = false;
+
 // Slice 2 (Stage 2.D.3) — late-registration EVENT counters split by
 // allowlist disposition. Incremented in the late-reg branch of
 // submitMultiShape() per occurrence (NOT once-per-type — the dedup
@@ -676,6 +708,63 @@ const TG_MultiShape* s_currentSubmittingMulti = nullptr;
 // getDisallowedLateRegEventCount(); consumed by gos_object_parity::ParityFrameTick.
 uint64_t s_lateReg_allowed_events    = 0;
 uint64_t s_lateReg_disallowed_events = 0;
+
+// 2026-05-10 diag: per-typeID submit() histogram. MC2_SUBMIT_TYPEHIST=1 to
+// enable. Answers H1 from
+// docs/superpowers/plans/2026-05-10-substrate-coalesce-detail-and-perf-followup.md:
+// "do detail-leaf typeIDs (Litwin_*, Door*, roof tiles) actually reach the
+// per-leaf submit() under coalesce, or does the eligibility filter at
+// submitMultiShape:2212-2231 strip them first?". Cross-reference the dump's
+// non-zero typeIDs against the typeID→name table emitted by [STATIC_PROP_REG]
+// at mission_load_byarr. Mirrors the [REGFLUSH_TYPEHIST v1] pattern.
+bool                       s_submitTypeHistEnabled = false;
+bool                       s_submitTypeHistInit    = false;
+std::array<uint64_t, 1024> s_submitTypeHist{};
+uint64_t                   s_submitTypeHistCalls   = 0;
+
+void emitSubmitTypeHistDump(const char* trigger) {
+    if (!s_submitTypeHistEnabled) return;
+    // Build a typeID → name lookup by walking s_typeIndex once. n is ≤ a few
+    // hundred types; quadratic walk is trivial for a 3-dump cadence.
+    std::fprintf(stderr,
+        "[SUBMIT_TYPEHIST v1] trigger=%s calls=%llu non-zero buckets:\n",
+        trigger, (unsigned long long)s_submitTypeHistCalls);
+    for (size_t t = 0; t < s_submitTypeHist.size(); ++t) {
+        if (s_submitTypeHist[t] > 0) {
+            const char* name = "<unknown>";
+            for (const auto& kv : s_typeIndex) {
+                if (kv.second == t && kv.first) {
+                    // const_cast: getNodeId is non-const in tgl.h but returns
+                    // a pointer to a char[TG_NODE_ID] field — we only read it.
+                    name = const_cast<TG_TypeShape*>(kv.first)->getNodeId();
+                    break;
+                }
+            }
+            // alphaClass tells us which coalesce group this type lives in.
+            // packets / indices: if a type has 0 packets or 0 indices, its
+            // glMultiDrawElementsIndirect command has cmd.count=0 → no
+            // triangles drawn even when instanceCount>0 (H3 of plan 2026-05-10).
+            uint32_t aClass = 0xFFu, packets = 0u, indices = 0u, vertCount = 0u;
+            if (t < s_types.size()) {
+                const auto& ty = s_types[t];
+                aClass    = ty.alphaClass;
+                packets   = ty.packetCount;
+                vertCount = ty.vertexCount;
+                for (uint32_t p = 0; p < ty.packetCount; ++p) {
+                    indices += s_packets[ty.firstPacket + p].indexCount;
+                }
+            }
+            std::fprintf(stderr,
+                "[SUBMIT_TYPEHIST v1] typeID=%zu name=%s count=%llu alphaClass=%u packets=%u verts=%u indices=%u\n",
+                t, (name && *name) ? name : "<empty>",
+                (unsigned long long)s_submitTypeHist[t],
+                aClass, packets, vertCount, indices);
+        }
+    }
+    std::fflush(stderr);
+}
+
+void emitSubmitTypeHistAtExit() { emitSubmitTypeHistDump("atexit"); }
 
 inline int popIndex(GpuStaticPropPopulation pop) {
     return static_cast<int>(pop);
@@ -880,8 +969,13 @@ void GpuStaticPropBatcher::onMapUnload() {
     // 4.4 — delete remaining coalesce GL resources (only if non-zero).
     if (s_texArrayOff)     { glDeleteTextures(1, &s_texArrayOff);     s_texArrayOff     = 0; }
     if (s_texArrayOn)      { glDeleteTextures(1, &s_texArrayOn);      s_texArrayOn      = 0; }
-    if (s_perDrawSsbo)     { glDeleteBuffers(1,  &s_perDrawSsbo);     s_perDrawSsbo     = 0; }
-    if (s_permutationSsbo) { glDeleteBuffers(1,  &s_permutationSsbo); s_permutationSsbo = 0; }
+    if (s_perDrawSsbo)      { glDeleteBuffers(1,  &s_perDrawSsbo);      s_perDrawSsbo      = 0; }
+    if (s_permutationSsbo)  { glDeleteBuffers(1,  &s_permutationSsbo);  s_permutationSsbo  = 0; }
+    if (s_cmdToBucketSsbo)  { glDeleteBuffers(1,  &s_cmdToBucketSsbo);  s_cmdToBucketSsbo  = 0; }
+    s_sortedPacketOrder.clear();
+    s_sortedPacketOrder.shrink_to_fit();
+    s_alphaOffCmdCount = 0;
+    s_alphaOnCmdCount  = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1329,14 +1423,14 @@ void GpuStaticPropBatcher::finalizeGeometry() {
     //   MIN_PER_TYPE_CAP; globalCap = max(s_instanceCapacity,
     //   INITIAL_INSTANCES_PER_FRAME); cap = max(MIN, (globalCap*2)/typeCount).
     //
-    // v3.8: spec §5.1 specifies MIN_PER_TYPE_CAP=32, but mc2_10 smoke
-    // showed type=80 submitting 40 instances → type_overflow disarm
-    // mid-mission. Stock content has skewed distributions where a
-    // handful of "hot" types (heavy tree clusters in particular) push
-    // well above 32. Bumping to 256 covers stock peaks with comfortable
-    // margin (memory cost: 256 * 112B * 548 types * 3 ring frames ≈
-    // 47MB; acceptable on the 1GB+ GPU we target). Spec deviation
-    // documented in plan v3.8 self-review.
+    // 2026-05-11 NOTE: per-type cap is a known band-aid. Wolfman zoom can
+    // still hit `event=disarmed reason=type_overflow` on tree-heavy stock
+    // content (observed type=280 count=259 cap=256 in mc2_10), and on
+    // future denser maps any fixed cap will break. The durable fix is a
+    // single global instance pool replacing per-type slot allocation.
+    // See `docs/superpowers/plans/2026-05-11-global-instance-pool.md`.
+    // Until that ships, callers can fall back to MC2_SUBSTRATE_COALESCE_LEGACY=1
+    // for wolfman-zoom-correct rendering.
     constexpr uint32_t MIN_PER_TYPE_CAP = 256;
     const uint32_t globalCap = std::max<uint32_t>(
         static_cast<uint32_t>(s_instanceCapacity),
@@ -1492,11 +1586,16 @@ void GpuStaticPropBatcher::finalizeGeometry() {
     // Shader applies `fract(v_uv) * uvScale` before sampling so
     // GL_REPEAT semantics work for tiling textures.
     std::vector<int32_t> layerForType(typeCount, -1);
-    // Per-type uv scale (sub-region size / array size). Default 1.0 for
-    // types whose layer fills the array OR for skipped types (no draw
-    // entry → values unread).
-    std::vector<float>   uvScaleXByType(typeCount, 1.0f);
-    std::vector<float>   uvScaleYByType(typeCount, 1.0f);
+    // 2026-05-11 per-packet rework: layerForPacket[globalPacketIdx] gives the
+    // group-relative texture-array layer for that packet. The previous
+    // per-type layerForType is kept for backward-compat but now records the
+    // FIRST packet's layer (used only by zero-packet guards in stale call
+    // sites). Multi-packet types had their detail collapsed under per-type
+    // layering — see memory/substrate_coalesce_armed_multi_packet_limitation.md.
+    std::vector<int32_t> layerForPacket(s_packets.size(), -1);
+    // Per-packet uv scale (sub-region size / array size). Default 1.0.
+    std::vector<float>   uvScaleXByPacket(s_packets.size(), 1.0f);
+    std::vector<float>   uvScaleYByPacket(s_packets.size(), 1.0f);
 
     struct UniqueTex {
         GLuint glTexId;
@@ -1510,12 +1609,13 @@ void GpuStaticPropBatcher::finalizeGeometry() {
 
         std::vector<UniqueTex> uniques;             // unique textures in this group
         std::unordered_map<GLuint, int32_t> glTexIdToLayer;
-        std::vector<uint32_t> typesUsingLayer;      // typeID for each layer (for uvScale assignment)
-        std::vector<int32_t>  typesUsingLayerCount; // count of types per layer (for ranges)
-        // Per-type → layer mapping is in layerForType[typeID]; uvScale
-        // is computed in a second pass after maxW/maxH are known.
+        // Track packets that landed in this group, for the second-pass uvScale
+        // assignment. Each entry: { globalPacketIdx, layer }.
+        std::vector<std::pair<uint32_t, int32_t>> packetsInGroup;
 
-        // 5.10.a — walk types in sorted order belonging to this group.
+        // 5.10.a — walk types in sorted order belonging to this group; for
+        // each type, walk ALL its packets. Each packet gets its own layer
+        // (deduped by glTexId) — this is the per-packet rework's core change.
         for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
             const uint32_t typeID = s_sortedTypeOrder[i];
             auto& type = s_types[typeID];
@@ -1527,52 +1627,51 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 continue;
             }
 
-            const auto& firstPkt = s_packets[type.firstPacket];
-            const TG_TypeShape* src = type.source;
-            if (!src || !src->listOfTextures ||
-                firstPkt.textureSlot >= src->numTextures) {
-                std::fprintf(stderr, "[COALESCE v1] event=disarmed "
-                             "reason=malformed_type type=%u group=%s\n",
-                             typeID, group == 0u ? "off" : "on");
-                coalesceRollbackTexBuild(newlyPinnedThisBuild);
-                s_coalesceLayoutReady = false;
-                s_coalesceEnabled     = false;
-                s_coalesceArmed       = false;
-                return;
-            }
+            for (uint32_t pIdx = 0; pIdx < type.packetCount; ++pIdx) {
+                const uint32_t globalPktIdx = type.firstPacket + pIdx;
+                const auto& pkt = s_packets[globalPktIdx];
+                const TG_TypeShape* src = type.source;
+                if (!src || !src->listOfTextures ||
+                    pkt.textureSlot >= src->numTextures) {
+                    std::fprintf(stderr, "[COALESCE v1] event=disarmed "
+                                 "reason=malformed_type type=%u pkt=%u group=%s\n",
+                                 typeID, pIdx, group == 0u ? "off" : "on");
+                    coalesceRollbackTexBuild(newlyPinnedThisBuild);
+                    s_coalesceLayoutReady = false;
+                    s_coalesceEnabled     = false;
+                    s_coalesceArmed       = false;
+                    return;
+                }
 
-            const DWORD nodeIdx =
-                src->listOfTextures[firstPkt.textureSlot].mcTextureNodeIndex;
-            if (mcTextureManager && nodeIdx != 0xFFFFFFFFu) {
-                mcTextureManager->pinNode(nodeIdx);
-                newlyPinnedThisBuild.push_back(nodeIdx);
-            }
+                const DWORD nodeIdx =
+                    src->listOfTextures[pkt.textureSlot].mcTextureNodeIndex;
+                if (mcTextureManager && nodeIdx != 0xFFFFFFFFu) {
+                    mcTextureManager->pinNode(nodeIdx);
+                    newlyPinnedThisBuild.push_back(nodeIdx);
+                }
 
-            // v3.8 force-cache: at finalize-time, src->listOfTextures
-            // gosTextureHandle may be CACHED_OUT_HANDLE (texture cached
-            // out to system RAM) or 0 (never loaded). Both produce empty
-            // GL state and Step 5.10.e's glGetTexImage would read zeros
-            // → texture array filled with zero pixels → invisible draws.
-            // mcTextureManager->get_gosTextureHandle(nodeIdx) forces a
-            // cache-in if needed and returns the live handle; comment at
-            // txmmgr.h:549 says "Does all caching necessary." pinNode
-            // above prevents eviction between this call and the blit.
-            DWORD gosHandle = (mcTextureManager && nodeIdx != 0xFFFFFFFFu)
-                ? mcTextureManager->get_gosTextureHandle(nodeIdx)
-                : src->listOfTextures[firstPkt.textureSlot].gosTextureHandle;
-            // Snapshot for the runtime eviction-detect (Step 11.4). If a
-            // future frame sees a different handle for the same slot,
-            // the cache evicted-and-reloaded — disarm.
-            type.lastSeenGosHandle = gosHandle;
+                DWORD gosHandle = (mcTextureManager && nodeIdx != 0xFFFFFFFFu)
+                    ? mcTextureManager->get_gosTextureHandle(nodeIdx)
+                    : src->listOfTextures[pkt.textureSlot].gosTextureHandle;
+                // Snapshot first-packet handle for the runtime eviction
+                // detect (Step 11.4 still per-type). Multi-packet types use
+                // their first packet as the canary — sufficient for the
+                // mid-mission cache-evict guard (multi-textured types
+                // typically share underlying texture lifetime).
+                if (pIdx == 0) {
+                    type.lastSeenGosHandle = gosHandle;
+                }
 
-            const GLuint glTexId = static_cast<GLuint>(gos_GetGLTextureId(gosHandle));
+                const GLuint glTexId = static_cast<GLuint>(gos_GetGLTextureId(gosHandle));
 
-            // 5.10.b — dedupe per glTexId; assign group-relative layer.
-            auto it = glTexIdToLayer.find(glTexId);
-            if (it != glTexIdToLayer.end()) {
-                layerForType[typeID] = it->second;
-                continue;
-            }
+                // 5.10.b — dedupe per glTexId; assign group-relative layer.
+                auto it = glTexIdToLayer.find(glTexId);
+                if (it != glTexIdToLayer.end()) {
+                    layerForPacket[globalPktIdx] = it->second;
+                    if (pIdx == 0) layerForType[typeID] = it->second;
+                    packetsInGroup.emplace_back(globalPktIdx, it->second);
+                    continue;
+                }
 
             // v3.8 dimension fetch: use mcTextureManager metadata first
             // (avoids the lazy-GL-upload trap where glGetTexLevelParameteriv
@@ -1591,25 +1690,19 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             }
             // If both metadata AND GL fail, the texture is genuinely
             // unavailable at finalize-time (no MC node, never cached,
-            // and no GL upload). Skip this type via layer=-1 sentinel
+            // and no GL upload). Skip this packet via layer=-1 sentinel
             // rather than disarming the whole coalesce build — graceful
-            // degradation: other valid types still arm.
+            // degradation: other valid packets still arm.
             if (W <= 0 || H <= 0) {
-                COALESCE_TRACE("skip_type type=%u group=%s reason=no_dims "
+                COALESCE_TRACE("skip_packet type=%u pkt=%u group=%s reason=no_dims "
                                "nodeIdx=%lu gosHandle=%lu glTexId=%u",
-                               typeID, group == 0u ? "off" : "on",
+                               typeID, pIdx, group == 0u ? "off" : "on",
                                (unsigned long)nodeIdx,
                                (unsigned long)gosHandle, glTexId);
                 continue;
             }
 
             // Plan v3.8 Step 12B.5 — size_mismatch forced-disarm hook.
-            // Fires on the SECOND unique of the alpha-OFF group so the
-            // rollback has a real partial state to unwind. Calls the
-            // same coalesceRollbackTexBuild helper as the natural
-            // failure path. With v3.8 mixed-size handling, organic
-            // size_mismatch no longer disarms; this hook still fires
-            // for the forced-disarm smoke matrix.
             if (s_coalesceForceDisarm == CoalesceForceDisarm::SizeMismatch &&
                 group == 0u && uniques.size() == 1u) {
                 std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=size_mismatch "
@@ -1628,7 +1721,10 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             const int32_t layer = static_cast<int32_t>(uniques.size());
             uniques.push_back({glTexId, W, H});
             glTexIdToLayer[glTexId] = layer;
-            layerForType[typeID] = layer;
+            layerForPacket[globalPktIdx] = layer;
+            if (pIdx == 0) layerForType[typeID] = layer;
+            packetsInGroup.emplace_back(globalPktIdx, layer);
+            } // end per-packet loop
         }
 
         if (uniques.empty()) {
@@ -1712,19 +1808,17 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
         glBindTexture(GL_TEXTURE_2D, 0);
 
-        // v3.8 — record per-type uvScale = unique W,H / max W,H.
-        // Walk types again to find which layer each uses, then look up
-        // the unique's actual dimensions to compute scale.
+        // 2026-05-11 per-packet rework: uvScale is per-PACKET, derived from
+        // each packet's unique texture dimensions vs the array max dims.
         const float invMaxW = 1.0f / static_cast<float>(maxW);
         const float invMaxH = 1.0f / static_cast<float>(maxH);
-        for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
-            const uint32_t tID = s_sortedTypeOrder[i];
-            if (s_types[tID].alphaClass != group) continue;
-            const int32_t layer = layerForType[tID];
+        for (const auto& kv : packetsInGroup) {
+            const uint32_t globalPktIdx = kv.first;
+            const int32_t layer = kv.second;
             if (layer < 0) continue;
             const auto& u = uniques[static_cast<size_t>(layer)];
-            uvScaleXByType[tID] = static_cast<float>(u.w) * invMaxW;
-            uvScaleYByType[tID] = static_cast<float>(u.h) * invMaxH;
+            uvScaleXByPacket[globalPktIdx] = static_cast<float>(u.w) * invMaxW;
+            uvScaleYByPacket[globalPktIdx] = static_cast<float>(u.h) * invMaxH;
         }
 
         COALESCE_TRACE("group_built group=%s uniques=%zu maxDims=%dx%d",
@@ -1737,25 +1831,72 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                                       newlyPinnedThisBuild.end());
     }
 
-    // Step 5.11 — build s_perDrawSsbo (PerDrawEntry per type IN SORTED
-    // ORDER). Fragment shader will read entries[v_drawID + u_drawIDBase];
-    // u_drawIDBase = 0 for alpha-OFF group, s_alphaOffCount for alpha-ON.
+    // 2026-05-11 per-packet rework: build s_sortedPacketOrder, s_alphaOff/OnCmdCount,
+    // s_perDrawSsbo (one entry per packet in sorted order), and s_cmdToBucketSsbo
+    // (one uint typeID per cmd). Fragment shader reads
+    // entries[v_drawID + u_drawIDBase] where v_drawID = gl_DrawID = sorted packet
+    // slot, u_drawIDBase = 0 for alpha-OFF group, s_alphaOffCmdCount for alpha-ON.
+    s_sortedPacketOrder.clear();
+    s_alphaOffCmdCount = 0;
+    s_alphaOnCmdCount  = 0;
     {
-        std::vector<PerDrawEntry> entries(typeCount);
-        for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
-            const uint32_t typeID = s_sortedTypeOrder[i];
+        // 2026-05-11 packet-skip rule: only enroll packets whose texture-
+        // array layer was successfully assigned. Damage-shape leaves
+        // (bldgDmgShape) typically have nodeIdx=0xFFFFFFFF at finalize
+        // because their textures are loaded only at destruction time per-
+        // instance — they end up with layerForPacket=-1. Without skipping,
+        // the indirect cmd still emits, the fragment samples layer 0 of
+        // the array, and a wrong-texture (orange-rectangle) ghost renders
+        // at the prop's location. Skipping leaves their geometry out of
+        // the multidraw entirely.
+        for (uint8_t group = 0; group <= 1; ++group) {
+            for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
+                const uint32_t typeID = s_sortedTypeOrder[i];
+                const auto& type = s_types[typeID];
+                if (type.alphaClass != group) continue;
+                for (uint32_t pIdx = 0; pIdx < type.packetCount; ++pIdx) {
+                    const uint32_t globalPktIdx = type.firstPacket + pIdx;
+                    if (layerForPacket[globalPktIdx] < 0) continue; // texture unavailable; skip
+                    s_sortedPacketOrder.push_back(globalPktIdx);
+                }
+            }
+            if (group == 0u) {
+                s_alphaOffCmdCount = static_cast<uint32_t>(s_sortedPacketOrder.size());
+            } else {
+                s_alphaOnCmdCount = static_cast<uint32_t>(s_sortedPacketOrder.size())
+                                  - s_alphaOffCmdCount;
+            }
+        }
+
+        std::vector<PerDrawEntry> entries(s_sortedPacketOrder.size());
+        std::vector<uint32_t> cmdToBucket(s_sortedPacketOrder.size());
+        for (uint32_t i = 0; i < s_sortedPacketOrder.size(); ++i) {
+            const uint32_t globalPktIdx = s_sortedPacketOrder[i];
+            const auto& pkt = s_packets[globalPktIdx];
+            const uint32_t typeID = pkt.owningTypeID;
+            cmdToBucket[i] = typeID;
             const auto& type = s_types[typeID];
-            PerDrawEntry e{};  // zero-init = sentinel for zero-packet types
-            if (type.packetCount > 0u && layerForType[typeID] >= 0) {
-                e.packetID         = static_cast<int32_t>(type.firstPacket);
-                e.materialFlags    = (type.alphaClass != 0u)
+            PerDrawEntry e{};
+            if (layerForPacket[globalPktIdx] >= 0) {
+                e.packetID = static_cast<int32_t>(globalPktIdx);
+                // Per-packet alpha-test bit: use the packet's own
+                // materialFlags from registerType. This is the load-bearing
+                // fix for fence-fall / multi-textured buildings — each
+                // packet's own alpha bit drives the fragment-shader discard.
+                bool packetAlpha =
+                    (pkt.materialFlags & STATIC_PROP_FLAG_ALPHA_TEST) != 0;
+                if (!packetAlpha && type.source && type.source->listOfTextures &&
+                    pkt.textureSlot < type.source->numTextures &&
+                    type.source->listOfTextures[pkt.textureSlot].textureAlpha) {
+                    packetAlpha = true;
+                }
+                e.materialFlags    = packetAlpha
                     ? static_cast<int32_t>(STATIC_PROP_FLAG_ALPHA_TEST) : 0;
                 e.maxLocalVertexID = (type.vertexCount > 0u)
                     ? static_cast<int32_t>(type.vertexCount - 1u) : 0;
-                e.texArrayLayer    = layerForType[typeID];
-                e.uvScaleX         = uvScaleXByType[typeID];
-                e.uvScaleY         = uvScaleYByType[typeID];
-                // _pad0 / _pad1 already zero from value-init.
+                e.texArrayLayer    = layerForPacket[globalPktIdx];
+                e.uvScaleX         = uvScaleXByPacket[globalPktIdx];
+                e.uvScaleY         = uvScaleYByPacket[globalPktIdx];
             }
             entries[i] = e;
         }
@@ -1764,6 +1905,19 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         glBufferData(GL_SHADER_STORAGE_BUFFER,
                      static_cast<GLsizeiptr>(entries.size() * sizeof(PerDrawEntry)),
                      entries.data(),
+                     GL_STATIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        // Cmd-to-bucket SSBO (binding 7 in patch shader): each cmd index
+        // maps to its parent typeID so the patch shader can write the
+        // type's instanceCount into all cmds (= all packets) of that type.
+        if (s_cmdToBucketSsbo == 0) {
+            glGenBuffers(1, &s_cmdToBucketSsbo);
+        }
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_cmdToBucketSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     static_cast<GLsizeiptr>(cmdToBucket.size() * sizeof(uint32_t)),
+                     cmdToBucket.data(),
                      GL_STATIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
@@ -1845,6 +1999,31 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
     const GpuStaticPropType& type = s_types[typeID];
     PerTypeBucket& bucket = s_bucketsByType[typeID];
 
+    // 2026-05-10 diag: per-typeID submit() histogram (H1 of substrate-coalesce
+    // detail-pass plan). Init-once env probe + atexit registration; tally on
+    // every leaf that reached this point with a registered typeID; dump once
+    // after a useful sample window AND at process exit (whichever fires first).
+    if (!s_submitTypeHistInit) {
+        s_submitTypeHistInit    = true;
+        s_submitTypeHistEnabled = (getenv("MC2_SUBMIT_TYPEHIST") != nullptr);
+        if (s_submitTypeHistEnabled) atexit(emitSubmitTypeHistAtExit);
+    }
+    if (s_submitTypeHistEnabled) {
+        if (typeID < s_submitTypeHist.size()) ++s_submitTypeHist[typeID];
+        ++s_submitTypeHistCalls;
+        // Empirically (mc2_10 substrate=ON sweep 2026-05-10):
+        // submitted_children≈40/frame avg → ~24K calls/600 frames. The full
+        // 30s 360° orbit is ~1800 frames ≈ 72K calls; we sample in three
+        // windows so coverage growth across the orbit is visible (different
+        // buildings revealed at different camera angles). atexit is suppressed
+        // by quick_sweep's `taskkill /F`, so threshold dumps are load-bearing.
+        if (s_submitTypeHistCalls == 20000  ||
+            s_submitTypeHistCalls == 50000  ||
+            s_submitTypeHistCalls == 100000) {
+            emitSubmitTypeHistDump("threshold");
+        }
+    }
+
     // firstColorOffset is the index into the bucket's color array:
     // instance K's colors start at K * type.vertexCount (= bucket.colors.size()
     // BEFORE this push). The shader binds the bucket's color range, so this
@@ -1908,9 +2087,24 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
     // and dynamic-submit paths now produce equivalent substrate records.
     if (gpu_cull::substrate_isEnabled()) {
         gpu_cull::GpuActorRecord rec{};
-        rec.worldCenter[0]  = -inst.modelMatrix[3];
-        rec.worldCenter[1]  =  inst.modelMatrix[11];
-        rec.worldCenter[2]  =  inst.modelMatrix[7];
+        // 2026-05-10 actor-center fix: every leaf of one multishape shares
+        // the SAME substrate worldCenter so the GPU frustum sphere-test
+        // accepts/rejects all leaves together (one cull unit per actor).
+        // The first submit() call in a submitMultiShape pass captures the
+        // current leaf's translation as the actor center; subsequent calls
+        // reuse it. This matches registry::flush's per-range parent-center
+        // (the first leaf's modelMatrix is the actor's xlatPosition because
+        // the root leaf's local-to-actor transform is identity for stock
+        // ASE buildings, trees, and animated buildings alike).
+        if (!s_currentSubmittingActorCenterValid) {
+            s_currentSubmittingActorCenter[0] = -inst.modelMatrix[3];   // raw.x = -stuff.x
+            s_currentSubmittingActorCenter[1] =  inst.modelMatrix[11];  // raw.y =  stuff.z
+            s_currentSubmittingActorCenter[2] =  inst.modelMatrix[7];   // raw.z =  stuff.y (elev)
+            s_currentSubmittingActorCenterValid = true;
+        }
+        rec.worldCenter[0]  = s_currentSubmittingActorCenter[0];
+        rec.worldCenter[1]  = s_currentSubmittingActorCenter[1];
+        rec.worldCenter[2]  = s_currentSubmittingActorCenter[2];
         rec.boundingRadius  = 200.0f;
         rec.worldAabbMin[0] = rec.worldCenter[0] - rec.boundingRadius;
         rec.worldAabbMin[1] = rec.worldCenter[1] - rec.boundingRadius;
@@ -1920,7 +2114,16 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
         rec.worldAabbMax[2] = rec.worldCenter[2] + rec.boundingRadius;
         rec.category        = (static_cast<uint32_t>(typeID) << 4)
                             | static_cast<uint32_t>(gpu_cull::Cat_StaticProp);
-        rec.flags           = gpu_cull::Flag_None;
+        // 2026-05-10 diag: MC2_STATIC_FORCE_ADMIT mirrors registry::flush
+        // behavior so the env-var A/B (cull-bypassed vs cull-active) covers
+        // BOTH substrate-record producers — otherwise dynamic-path leaves
+        // (GenericAppearance buildings post-b2fb1cc) stay subject to cull
+        // even when FORCE_ADMIT is on, masking the diagnostic signal.
+        static const bool s_diag_forceAdmit =
+            (getenv("MC2_STATIC_FORCE_ADMIT") != nullptr);
+        rec.flags           = s_diag_forceAdmit
+                              ? static_cast<uint32_t>(gpu_cull::Flag_AlwaysVisible)
+                              : gpu_cull::Flag_None;
         rec.actorId         = 0u;
         rec.prevVisibilityBit = 1u;
         rec.consumerFlags   = 0u;
@@ -2040,6 +2243,13 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
     // submit() calls can compare against the sampler's pick. Cleared at every
     // exit path of this function to keep the window tight.
     s_currentSubmittingMulti = multi;
+    // 2026-05-10 actor-center fix: cleared per-call so a stale value from a
+    // prior submitMultiShape can't leak into a multishape that has zero valid
+    // SHAPE_NODE leaves. Populated below when firstShapeNodeLeaf is captured.
+    s_currentSubmittingActorCenterValid = false;
+    s_currentSubmittingActorCenter[0]   = 0.0f;
+    s_currentSubmittingActorCenter[1]   = 0.0f;
+    s_currentSubmittingActorCenter[2]   = 0.0f;
     // pop consumed by counters below.
     if (!multi || s_fatalRegistrationFailure) {
         s_currentSubmittingMulti = nullptr;
@@ -2377,6 +2587,14 @@ bool uploadAllBucketsIfNeeded() {
 void GpuStaticPropBatcher::flush() {
     ZoneScopedN("GpuStaticProps.Flush");
     initTraceOnce();
+    // 2026-05-11 perf diag: wall-clock timer for substrate-coalesce perf hunt.
+    // Mean us reported every 600 calls when MC2_BATCHER_FLUSH_TIMING=1.
+    static uint64_t s_btf_calls = 0;
+    static uint64_t s_btf_ns_total = 0;
+    static uint64_t s_btf_ns_coalesce_write = 0;
+    static uint64_t s_btf_ns_coalesce_draw = 0;
+    static const bool s_btf_enabled = (getenv("MC2_BATCHER_FLUSH_TIMING") != nullptr);
+    const auto _btf_t0 = std::chrono::steady_clock::now();
 
     if (!s_geometryFinalized || s_fatalRegistrationFailure) {
         s_bucketsByType.clear();
@@ -2625,6 +2843,7 @@ void GpuStaticPropBatcher::flush() {
 
     // Steps 11.2 / 11.3 / 11.4 / 11.5 — coalesce per-frame CPU write loop
     // with overflow + eviction-detect runtime disarms.
+    const auto _btf_t_writeStart = std::chrono::steady_clock::now();
     if (IsCoalesceEnabled()) {
         const size_t fr_off_bytes =
             static_cast<size_t>(s_frameSlot) * batcher_getCoalescePerFrameInstanceBytes();
@@ -2698,6 +2917,10 @@ void GpuStaticPropBatcher::flush() {
     // uploadAllBucketsIfNeeded() above (which filled s_instanceSsbo). No
     // gating on IsCoalesceEnabled() — that lets a runtime-disarm transition
     // mid-frame still draw legally via the legacy loop below.
+    const auto _btf_t_drawStart = std::chrono::steady_clock::now();
+    s_btf_ns_coalesce_write += static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            _btf_t_drawStart - _btf_t_writeStart).count());
 
     // Per-type drawing: bind per-type instance & color SSBO ranges, then
     // issue one instanced draw per packet. gl_InstanceID in the shader
@@ -2706,6 +2929,56 @@ void GpuStaticPropBatcher::flush() {
     // Plan v3.8 Step 11.7 / 11.8 — coalesce branch first; on disarm,
     // fall through to the legacy per-type loop with no other state change.
     if (IsCoalesceEnabled()) {
+        // 2026-05-11 per-packet alpha-test re-resolve. s_perDrawSsbo's
+        // materialFlags is baked at finalizeGeometry time. Damage-shape
+        // textures aren't loaded until the moment of destruction (bdactor
+        // setObjStatus runs the texture-load + SetTextureAlpha(true) loop
+        // on demand) — so at finalize, leaf-level `textureAlpha` is false
+        // and the bake leaves materialFlags=0 → no alpha-test discard.
+        // After destruction, the leaf-propagation fix in
+        // TG_TypeMultiShape::SetTextureAlpha (msl.cpp) updates every leaf
+        // TG_TypeShape's TG_TinyTexture; this loop refreshes the SSBO so
+        // the shader sees the live bit. Cost: ~packet count entries × OR-
+        // reduce + glBufferSubData when changed (~10 µs/frame in mc2_10).
+        {
+            static std::vector<int32_t> s_lastSeenMaterialFlags;
+            const size_t pktCount = s_sortedPacketOrder.size();
+            if (s_lastSeenMaterialFlags.size() != pktCount) {
+                s_lastSeenMaterialFlags.assign(pktCount, -1);
+            }
+            bool anyChanged = false;
+            for (size_t i = 0; i < pktCount; ++i) {
+                const uint32_t globalPktIdx = s_sortedPacketOrder[i];
+                if (globalPktIdx >= s_packets.size()) continue;
+                const auto& pkt = s_packets[globalPktIdx];
+                int32_t flags = (pkt.materialFlags & STATIC_PROP_FLAG_ALPHA_TEST)
+                                ? STATIC_PROP_FLAG_ALPHA_TEST : 0;
+                if (flags == 0 && pkt.owningTypeID < s_types.size()) {
+                    const TG_TypeShape* src = s_types[pkt.owningTypeID].source;
+                    if (src && src->listOfTextures &&
+                        pkt.textureSlot < src->numTextures &&
+                        src->listOfTextures[pkt.textureSlot].textureAlpha) {
+                        flags = STATIC_PROP_FLAG_ALPHA_TEST;
+                    }
+                }
+                if (s_lastSeenMaterialFlags[i] != flags) {
+                    s_lastSeenMaterialFlags[i] = flags;
+                    anyChanged = true;
+                }
+            }
+            if (anyChanged && s_perDrawSsbo) {
+                const size_t entryStride = sizeof(PerDrawEntry);
+                const size_t flagOffset  = offsetof(PerDrawEntry, materialFlags);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perDrawSsbo);
+                for (size_t i = 0; i < pktCount; ++i) {
+                    const int32_t f = s_lastSeenMaterialFlags[i];
+                    glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                                    static_cast<GLintptr>(i * entryStride + flagOffset),
+                                    sizeof(int32_t), &f);
+                }
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            }
+        }
         // ---- Step 11.7 coalesce draw branch ----
         // Shared group-size locals (used by 11.7.g/h glBindBufferRange).
         const size_t fr_off_bytes_d =
@@ -2752,8 +3025,12 @@ void GpuStaticPropBatcher::flush() {
         // 11.7.f — bind slot 4 (PerDraw SSBO).
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, s_perDrawSsbo);
 
+        // 2026-05-11 per-packet rework: each indirect cmd is per-PACKET, so
+        // the multidraw counts and the alpha-ON byte offset use per-PACKET
+        // counts (s_alphaOffCmdCount / s_alphaOnCmdCount). The PerDrawEntry
+        // SSBO is also per-packet, indexed by gl_DrawID = sorted-packet slot.
         // 11.7.g — alpha-OFF group draw.
-        if (s_alphaOffCount > 0u) {
+        if (s_alphaOffCmdCount > 0u) {
             if (s_locsCoalesce.drawIDBase >= 0)
                 glUniform1i(s_locsCoalesce.drawIDBase, 0);
             glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
@@ -2764,14 +3041,14 @@ void GpuStaticPropBatcher::flush() {
             glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpu_cull::compute_getIndirectCmdBuf());
             glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
                 reinterpret_cast<const void*>(static_cast<uintptr_t>(0)),
-                static_cast<GLsizei>(s_alphaOffCount),
+                static_cast<GLsizei>(s_alphaOffCmdCount),
                 0);
         }
 
         // 11.7.h — alpha-ON group draw.
-        if (s_alphaOnCount > 0u) {
+        if (s_alphaOnCmdCount > 0u) {
             if (s_locsCoalesce.drawIDBase >= 0)
-                glUniform1i(s_locsCoalesce.drawIDBase, static_cast<GLint>(s_alphaOffCount));
+                glUniform1i(s_locsCoalesce.drawIDBase, static_cast<GLint>(s_alphaOffCmdCount));
             glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
                               static_cast<GLintptr>(fr_off_bytes_d + off_total_bytes),
                               static_cast<GLsizeiptr>(on_total_bytes));
@@ -2779,11 +3056,11 @@ void GpuStaticPropBatcher::flush() {
             // First-time bind of indirect buffer if alpha-OFF skipped.
             glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpu_cull::compute_getIndirectCmdBuf());
             const uintptr_t alphaOnOffset =
-                static_cast<uintptr_t>(s_alphaOffCount) *
+                static_cast<uintptr_t>(s_alphaOffCmdCount) *
                 static_cast<uintptr_t>(gpu_cull::kDrawElementsIndirectCommandSize);
             glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
                 reinterpret_cast<const void*>(alphaOnOffset),
-                static_cast<GLsizei>(s_alphaOnCount),
+                static_cast<GLsizei>(s_alphaOnCmdCount),
                 0);
         }
 
@@ -2801,8 +3078,11 @@ void GpuStaticPropBatcher::flush() {
         // we want a separate ready signal that confirms the GPU actually
         // accepted the coalesce draw without disarm.
         if (!s_coalesceFirstFlushDone) {
-            std::fprintf(stderr, "[COALESCE v1] event=ready buckets_off=%u buckets_on=%u\n",
-                         s_alphaOffCount, s_alphaOnCount);
+            std::fprintf(stderr,
+                "[COALESCE v1] event=ready buckets_off=%u buckets_on=%u "
+                "cmds_off=%u cmds_on=%u\n",
+                s_alphaOffCount, s_alphaOnCount,
+                s_alphaOffCmdCount, s_alphaOnCmdCount);
             s_coalesceFirstFlushDone = true;
         }
     } else {
@@ -3065,6 +3345,33 @@ void GpuStaticPropBatcher::flush() {
     // gos_State_TextureAddress=Clamp was requested. CRITICAL-1 from the
     // 2026-05-08 adversarial review of the state-equality early-out.
     gos_InvalidateRenderStateCache();
+
+    // 2026-05-11 perf diag: flush() total + coalesce sub-stage timings.
+    {
+        const auto _btf_tEnd = std::chrono::steady_clock::now();
+        const uint64_t total_ns = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                _btf_tEnd - _btf_t0).count());
+        s_btf_ns_total += total_ns;
+        s_btf_ns_coalesce_draw += static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                _btf_tEnd - _btf_t_drawStart).count());
+        ++s_btf_calls;
+        if (s_btf_enabled && (s_btf_calls % 600) == 0) {
+            const double mean_total_us =
+                static_cast<double>(s_btf_ns_total) / s_btf_calls / 1000.0;
+            const double mean_write_us =
+                static_cast<double>(s_btf_ns_coalesce_write) / s_btf_calls / 1000.0;
+            const double mean_draw_us =
+                static_cast<double>(s_btf_ns_coalesce_draw) / s_btf_calls / 1000.0;
+            std::fprintf(stderr,
+                "[BTF_TIMING v1] calls=%llu mean_total_us=%.2f "
+                "mean_coalesce_write_us=%.2f mean_drawpath_us=%.2f\n",
+                (unsigned long long)s_btf_calls,
+                mean_total_us, mean_write_us, mean_draw_us);
+            std::fflush(stderr);
+        }
+    }
 }
 
 void GpuStaticPropBatcher::flushShadow() {
@@ -3301,6 +3608,33 @@ const uint32_t* batcher_getSortedTypeOrder() {
 
 uint32_t batcher_getAlphaOffCount() { return s_alphaOffCount; }
 uint32_t batcher_getAlphaOnCount()  { return s_alphaOnCount;  }
+
+const uint32_t* batcher_getSortedPacketOrder() {
+    return (s_geometryFinalized && !s_sortedPacketOrder.empty())
+           ? s_sortedPacketOrder.data()
+           : nullptr;
+}
+uint32_t batcher_getSortedPacketCount() {
+    return static_cast<uint32_t>(s_sortedPacketOrder.size());
+}
+uint32_t batcher_getAlphaOffCmdCount() { return s_alphaOffCmdCount; }
+uint32_t batcher_getAlphaOnCmdCount()  { return s_alphaOnCmdCount;  }
+GLuint   batcher_getCmdToBucketSsbo()  { return s_cmdToBucketSsbo;  }
+
+bool batcher_getPacketDrawInfo(uint32_t globalPacketIdx,
+                                uint32_t* outIndexCount,
+                                uint32_t* outFirstIndex,
+                                int32_t*  outBaseVertex,
+                                uint32_t* outOwningTypeID) {
+    if (!s_geometryFinalized) return false;
+    if (globalPacketIdx >= s_packets.size()) return false;
+    const auto& pkt = s_packets[globalPacketIdx];
+    if (outIndexCount)   *outIndexCount   = pkt.indexCount;
+    if (outFirstIndex)   *outFirstIndex   = pkt.firstIndex;
+    if (outBaseVertex)   *outBaseVertex   = pkt.baseVertex;
+    if (outOwningTypeID) *outOwningTypeID = pkt.owningTypeID;
+    return true;
+}
 
 uint32_t batcher_getInstanceCap(uint32_t typeID) {
     if (!s_geometryFinalized || typeID >= s_types.size()) return 0;

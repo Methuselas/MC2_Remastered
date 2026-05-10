@@ -1002,6 +1002,19 @@ long TG_TypeMultiShape::SetTextureHandle (DWORD textureNum, DWORD gosTextureHand
 	listOfTextures[textureNum].mcTextureNodeIndex = gosTextureHandle;
 	listOfTextures[textureNum].gosTextureHandle = 0xffffffff;
 
+	// 2026-05-11 leaf propagation. Mirror the multi-level write into every
+	// leaf TG_TypeShape's TG_TinyTexture so consumers reading at leaf level
+	// (GpuStaticPropBatcher::finalizeGeometry's texture-array build reads
+	// `src->listOfTextures[slot].mcTextureNodeIndex`, where src is a leaf
+	// TG_TypeShape) see the live nodeIdx. Without this, damage-shape leaves
+	// permanently report 0xFFFFFFFF (the CreateListOfTextures default) and
+	// the per-packet texture-array build skips them with layer=-1.
+	for (long i = 0; i < numTG_TypeShapes; ++i) {
+		if (listOfTypeShapes[i]) {
+			listOfTypeShapes[i]->SetTextureHandle(textureNum, gosTextureHandle);
+		}
+	}
+
 	// PERF DIAGNOSTIC 2026-05-07: per-frame call rate makes the unfiltered
 	// log unusable for diagnosis (see capture 3 — console flooding tanks
 	// frame rate). Rate-limit to: (a) first 32 events per session, then
@@ -1038,8 +1051,24 @@ long TG_TypeMultiShape::SetTextureAlpha (DWORD textureNum, bool alphaFlag)
 
 	listOfTextures[textureNum].textureAlpha = alphaFlag;
 
+	// 2026-05-11 leaf propagation: TG_TypeShape leaves carry their own
+	// listOfTextures (TG_TinyTexture array) which is COPIED from this
+	// multi-type at ASE-load time via CreateListOfTextures (msl.cpp:834)
+	// and NEVER refreshed by this setter. Consumers reading at leaf level
+	// (GpuStaticPropBatcher reads `type.source->listOfTextures[slot].textureAlpha`,
+	// where type.source is a TG_TypeShape leaf) saw stale `false` values
+	// for damage-shape textures even after bdactor's setObjStatus loop
+	// called SetTextureAlpha(true) on the multi-shape. That produced the
+	// destroyed-prop opaque-rectangle alpha bug. Mirror the multi-level
+	// write down to every leaf so leaf-reads pick up the live value.
+	for (long i = 0; i < numTG_TypeShapes; ++i) {
+		if (listOfTypeShapes[i]) {
+			listOfTypeShapes[i]->SetTextureAlpha(textureNum, alphaFlag);
+		}
+	}
+
 	return(0);
-}	
+}
 
 //-------------------------------------------------------------------------------
 //This function rotates the heirarchy from this node down.  Used for torso twists, arms, etc.

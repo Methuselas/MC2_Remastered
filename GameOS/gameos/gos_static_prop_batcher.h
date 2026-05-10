@@ -323,6 +323,20 @@ const uint32_t* batcher_getSortedTypeOrder();
 uint32_t batcher_getAlphaOffCount();
 uint32_t batcher_getAlphaOnCount();
 
+// 2026-05-11 per-packet rework. Sorted-packet order: global packet indices
+// in [alpha-OFF | alpha-ON] order. Length = batcher_getSortedPacketCount().
+const uint32_t* batcher_getSortedPacketOrder();
+uint32_t batcher_getSortedPacketCount();
+uint32_t batcher_getAlphaOffCmdCount();   // packet count in alpha-OFF group
+uint32_t batcher_getAlphaOnCmdCount();    // packet count in alpha-ON group
+GLuint   batcher_getCmdToBucketSsbo();    // uint typeID per cmd (binding 7)
+// Per-packet draw info (for the per-packet indirect cmd build).
+bool batcher_getPacketDrawInfo(uint32_t globalPacketIdx,
+                                uint32_t* outIndexCount,
+                                uint32_t* outFirstIndex,
+                                int32_t*  outBaseVertex,
+                                uint32_t* outOwningTypeID);
+
 // Per-type instance capacity (§5.1 formula). 0 if typeID out of range.
 uint32_t batcher_getInstanceCap(uint32_t typeID);
 
