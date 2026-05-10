@@ -37,6 +37,46 @@ bool clipSpaceFrustumAdmit(vec4 clip) {
     return true;
 }
 
+// Sphere-aware variant: admit when ANY part of a world-space sphere of the
+// given radius reaches inside the frustum. Required for static props whose
+// centroid is offset from their visible silhouette (large buildings — a
+// 100-unit footprint rejects on its centroid even when 80% is on screen).
+//
+// Approximation: scale the world radius by a per-vertex factor that converts
+// world distance to clip-space half-extent. For perspective projection,
+// `radius * (cw / nearPlaneDist)` would be exact; we use `radius` directly as
+// a conservative tolerance in NDC-aligned clip units, which over-admits at
+// far distances and under-admits at very close range. Both are acceptable —
+// over-admit at edge wastes a tiny bit of fragment work; under-admit at
+// near-camera is masked because near-camera buildings already pass the
+// strict test (centroid in frustum).
+//
+// The world-radius-to-clip-tolerance approximation is the same shape as the
+// terrain TES uses for sphere-vs-frustum culling (terrain_tes_projection.md).
+bool clipSpaceFrustumAdmitSphere(vec4 clip, float worldRadius) {
+    float s = (clip.w < 0.0) ? -1.0 : 1.0;
+    float cx = clip.x * s;
+    float cy = clip.y * s;
+    float cz = clip.z * s;
+    float cw = clip.w * s;
+    if (cw < 1e-5) {
+        // Centroid behind/on camera plane. Conservative: admit if the prop
+        // has any extent (radius > 0). Cheap, prevents losing a building
+        // whose centroid is just behind the near plane while its front
+        // half is visible.
+        return worldRadius > 0.0;
+    }
+    // Tolerance: world radius interpreted as a clip-space half-extent.
+    // For MC2's perspective projection (~1 unit near, ~12000 unit far,
+    // ~60° vertical FOV), this gives a tolerance proportional to apparent
+    // on-screen size for centroids in the typical zoom range.
+    float tol = worldRadius;
+    if (cx < -cw - tol || cx > cw + tol) return false;
+    if (cy < -cw - tol || cy > cw + tol) return false;
+    if (cz < -tol      || cz > cw + tol) return false;
+    return true;
+}
+
 // Dilated variant: expand each clip-plane bound by (1 + d) on the half-extent.
 // d=0 reproduces the strict test exactly; d=0.08 admits actors within ~8% of
 // the frustum edge ("about to enter"). Hides readback staleness during camera

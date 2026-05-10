@@ -93,6 +93,26 @@ bool clipSpaceFrustumAdmit(const Stuff::Vector4D& rawClip) {
     return true;
 }
 
+// 2026-05-10 — sphere-aware admit. Lockstep with shaders/gpu_cull_predicate.glsl
+// `clipSpaceFrustumAdmitSphere`. See that file for the rationale and tolerance
+// approximation. Used for static-prop records whose centroid is offset from the
+// visible silhouette (large building footprints).
+bool clipSpaceFrustumAdmitSphere(const Stuff::Vector4D& rawClip, float worldRadius) {
+    const float s  = (rawClip.w < 0.0f) ? -1.0f : 1.0f;
+    const float cx = rawClip.x * s;
+    const float cy = rawClip.y * s;
+    const float cz = rawClip.z * s;
+    const float cw = rawClip.w * s;
+    if (cw < 1e-5f) {
+        return worldRadius > 0.0f;
+    }
+    const float tol = worldRadius;
+    if (cx < -cw - tol || cx > cw + tol) return false;
+    if (cy < -cw - tol || cy > cw + tol) return false;
+    if (cz < -tol      || cz > cw + tol) return false;
+    return true;
+}
+
 int objectAdmissionPredicate_selftest() {
     int fails = 0;
 

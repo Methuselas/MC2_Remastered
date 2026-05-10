@@ -193,11 +193,24 @@ void main() {
     // Frustum cull. Dilation slice: when frustumDilation > 0, the dilated
     // predicate replaces the strict one for the visibility decision and the
     // strict result is computed only for the diagnostic delta counter.
-    bool visibleStrict  = clipSpaceFrustumAdmit(clip);
+    //
+    // 2026-05-10: sphere-aware admit for records that supply a non-zero
+    // boundingRadius (static props from gos_static_prop_registry). The
+    // strict point-in-frustum test rejects buildings whose centroid is
+    // offset from the visible silhouette — a 100-unit warehouse with
+    // its centroid 50 units off-axis vanishes when the camera angles
+    // away even though most of it is on screen. Dynamic actors continue
+    // to use the point test (boundingRadius==0 → tol=0 → identical math).
+    bool visibleStrict;
+    if (rec.boundingRadius > 0.0) {
+        visibleStrict = clipSpaceFrustumAdmitSphere(clip, rec.boundingRadius);
+    } else {
+        visibleStrict = clipSpaceFrustumAdmit(clip);
+    }
     bool visibleDilated = (frustumDilation > 0.0)
                             ? clipSpaceFrustumAdmitDilated(clip, frustumDilation)
                             : visibleStrict;
-    bool visible = visibleDilated;
+    bool visible = visibleStrict || visibleDilated;
 
     // Flag_AlwaysVisible (bit 0) overrides cull — same as CPU path.
     if ((rec.flags & 0x1u) != 0u) {

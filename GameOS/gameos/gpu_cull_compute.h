@@ -20,6 +20,15 @@
 
 namespace gpu_cull {
 
+// Stride of one DrawElementsIndirectCommand (5 GLuint/GLint fields = 20 bytes).
+// The matching std430 GLSL struct is in shaders/gpu_cull_patch.comp:24–30.
+// The C++ struct is defined inside compute_buildIndirectBuffer at
+// gpu_cull_compute.cpp:534–540 with a static_assert(sizeof(DrawCmd) == 20)
+// at :541. This constant is the link site for batcher.cpp's multi-draw
+// offsets and any future slice that needs the stride at a TU boundary.
+// Plan v3.8 Step 1.4.
+static constexpr GLsizei kDrawElementsIndirectCommandSize = 20;
+
 // Initialise the compute pipeline: GL version probe, shader compile, SSBO alloc.
 // Call once at mission load, after substrate_init() and after GL context is up.
 // Hard-fails via STOP() if shader compile or SSBO allocation fails.
@@ -55,6 +64,11 @@ bool   compute_buildIndirectBuffer(uint32_t typeCount);
 // C1b: Returns the GL buffer name for the DrawElementsIndirectCommand buffer.
 // Valid only after compute_buildIndirectBuffer() succeeds. Returns 0 otherwise.
 GLuint compute_getIndirectCmdBuf();
+
+// Diag: returns the GL buffer name for bucketCountData (binding 10 SSBO).
+// Used by the substrate-coalesce empty-render investigation. Returns 0
+// if not yet allocated.
+GLuint compute_getBucketCountsBuf();
 
 // C1b: Returns the number of indirect draw buckets (= typeCount at build time).
 uint32_t compute_getBucketCount();

@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <vector>
 #include <unordered_map>
+#include <GL/glew.h>
 #include "Stuff/Stuff.hpp"
 #include "tgl.h"
 #include "msl.h"
@@ -33,6 +35,33 @@ static_assert(offsetof(GpuStaticPropInstance, flags)            == 72, "flags of
 static_assert(offsetof(GpuStaticPropInstance, lightDataIndex)   == 76, "lightDataIndex offset");
 static_assert(offsetof(GpuStaticPropInstance, aRGBHighlight)    == 80, "aRGBHighlight offset");
 static_assert(offsetof(GpuStaticPropInstance, fogRGB)           == 96, "fogRGB offset");
+
+// Substrate-coalesce per-draw entry (plan v3.8 Step 2.5).
+// Layout mirror of the GLSL std430 struct in the coalesce static_prop variant.
+// One PerDrawEntry per registered type, ordered by sortedTypeOrder; consumed
+// by the coalesce fragment shader via slot 4 (PerDrawData block, §5.3).
+// CHANGING THIS STRUCT REQUIRES CHANGING THE SHADER IN LOCKSTEP
+// (cpp_glsl_ubo_struct_lockstep.md — extending one side without the other
+// corrupts per-element stride for arr[i>0]).
+struct PerDrawEntry {
+    int32_t packetID;          //  0 — index into s_packets[]
+    int32_t materialFlags;     //  4 — 0 or STATIC_PROP_FLAG_ALPHA_TEST
+    int32_t maxLocalVertexID;  //  8 — type.vertexCount - 1
+    int32_t texArrayLayer;     // 12 — group-relative layer in s_texArrayOff/On
+    float   uvScaleX;          // 16 — 1.0f for Stage A
+    float   uvScaleY;          // 20 — 1.0f for Stage A
+    int32_t _pad0;             // 24 — std430 alignment + size = 32
+    int32_t _pad1;             // 28
+};
+static_assert(sizeof(PerDrawEntry) == 32, "PerDrawEntry std430 size");
+static_assert(offsetof(PerDrawEntry, packetID)         ==  0, "packetID offset");
+static_assert(offsetof(PerDrawEntry, materialFlags)    ==  4, "materialFlags offset");
+static_assert(offsetof(PerDrawEntry, maxLocalVertexID) ==  8, "maxLocalVertexID offset");
+static_assert(offsetof(PerDrawEntry, texArrayLayer)    == 12, "texArrayLayer offset");
+static_assert(offsetof(PerDrawEntry, uvScaleX)         == 16, "uvScaleX offset");
+static_assert(offsetof(PerDrawEntry, uvScaleY)         == 20, "uvScaleY offset");
+static_assert(offsetof(PerDrawEntry, _pad0)            == 24, "_pad0 offset");
+static_assert(offsetof(PerDrawEntry, _pad1)            == 28, "_pad1 offset");
 
 // Packet descriptor (CPU-side only -- not uploaded as an SSBO).
 struct GpuStaticPropPacket {
@@ -84,11 +113,19 @@ enum class GpuStaticPropPopulation : uint8_t {
 };
 
 // Per-type descriptor: range of packets + vertex count (for color block sizing).
+//
+// Substrate-coalesce fields (instanceCap, coalesceByteOffsetWithinGroup,
+// lastSeenGosHandle, alphaClass) are populated by finalizeGeometry() and
+// are UNDEFINED before then. Step group 1.1 of plan v3.8.
 struct GpuStaticPropType {
     uint32_t firstPacket;
     uint32_t packetCount;
     uint32_t vertexCount;    // number of vertices in the owning TG_TypeShape
     const TG_TypeShape* source;
+    uint32_t instanceCap;                    // §5.1 per-type capacity (2× avg)
+    uint32_t coalesceByteOffsetWithinGroup;  // §5.1b group-relative byte offset
+    uint32_t lastSeenGosHandle;              // §5.4 eviction-detect snapshot
+    uint8_t  alphaClass;                     // §CRITICAL-C 0=alpha-OFF, 1=alpha-ON
 };
 
 class GpuStaticPropBatcher {
@@ -271,4 +308,37 @@ bool batcher_getTypeDrawInfo(uint32_t  typeID,
                               uint32_t* outFirstIndex,
                               int32_t*  outBaseVertex,
                               uint32_t* outInstanceCap);
+
+// ---------------------------------------------------------------------------
+// §5.6b accessors — substrate-coalesce path (plan v3.8 Step 1.2).
+// All return safe sentinels (0 / nullptr / false) before
+// GpuStaticPropBatcher::finalizeGeometry() runs.
+// ---------------------------------------------------------------------------
+
+// Sorted type-order array (alpha-OFF group first, alpha-ON second).
+// Length = batcher_getTypeCount(); valid until onMapUnload().
+const uint32_t* batcher_getSortedTypeOrder();
+
+// Counts per alpha group. Sum = batcher_getTypeCount().
+uint32_t batcher_getAlphaOffCount();
+uint32_t batcher_getAlphaOnCount();
+
+// Per-type instance capacity (§5.1 formula). 0 if typeID out of range.
+uint32_t batcher_getInstanceCap(uint32_t typeID);
+
+// GL handles for the coalesce-path SSBOs and texture arrays. 0 before
+// finalize, or if coalesce is disabled/disarmed.
+GLuint batcher_getCoalesceInstanceSsbo();   // ring-buffered, persistent-mapped
+GLuint batcher_getPerDrawSsbo();            // one PerDrawEntry per type, sorted
+GLuint batcher_getTexArrayOff();            // alpha-OFF group GL_TEXTURE_2D_ARRAY
+GLuint batcher_getTexArrayOn();             // alpha-ON  group GL_TEXTURE_2D_ARRAY
+GLuint batcher_getPermutationSsbo();        // sortedSlot[typeID] mapping (slot 15)
+
+// Total instance bytes for ONE ring frame (off-group + on-group). size_t so
+// sub-4GB ring totals carry without truncation.
+size_t batcher_getCoalescePerFrameInstanceBytes();
+
+// State-machine flags (§7).
+bool batcher_isCoalesceLayoutReady();
+bool batcher_isCoalesceArmed();
 

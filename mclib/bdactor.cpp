@@ -2337,6 +2337,20 @@ long BldgAppearance::update (bool animate)
 		else
 		{
 			bldgShape->TransformMultiShape (&xlatPosition,&rot);
+			// 2026-05-10: also seed cachedGpuLightIndex_ in the full-bake
+			// branch. Without this, the first-frame transition out of the
+			// H4 latch (set by registerStatic at :2754) leaves the index
+			// at UINT32_MAX, and the static-path render gate at :1612
+			// (`getCachedGpuLightIndex() == UINT32_MAX → invalidate`)
+			// invalidates the registration on the very next render —
+			// markVisible() never fires, registry::flush() short-circuits,
+			// substrate gets no static-prop records, and the cull writes
+			// 0 to all bucketCountData. The fix mirrors the gpuEligible
+			// branch's CacheGpuLightData call at :2314 so any path
+			// through update() seeds the light index. Cheap: same call
+			// already runs unconditionally in submitMultiShape; here we
+			// just hoist its effect to be visible to render() this frame.
+			bldgShape->CacheGpuLightData();
 			needsFullBakeNextFrame = false;
 		}
 
@@ -4702,6 +4716,11 @@ long TreeAppearance::update (bool animate)
 		else
 		{
 			treeShape->TransformMultiShape (&xlatPosition,&rot);
+			// 2026-05-10: mirror of the BldgAppearance fix at :2339-2341.
+			// Seed cachedGpuLightIndex_ in the full-bake branch so the
+			// next render() doesn't fail the UINT32_MAX gate at :4341
+			// and invalidate the freshly-set staticReg.
+			treeShape->CacheGpuLightData();
 			needsFullBakeNextFrame = false;
 		}
 

@@ -367,15 +367,52 @@ void flush() {
             // draw — invisible for that frame, restored next frame as it re-enters frustum.
             if (gpu_cull::substrate_isEnabled()) {
                 gpu_cull::GpuActorRecord gpuRec{};
-                // World position: modelMatrix is row-major (Stuff::Matrix4D convention).
-                // Translation column = entries [3], [7], [11] (col 3, rows 0-2).
-                gpuRec.worldCenter[0] = inst.modelMatrix[3];
-                gpuRec.worldCenter[1] = inst.modelMatrix[7];
-                gpuRec.worldCenter[2] = inst.modelMatrix[11];
-                // Bounding radius: conservative 50.0f covers most MC2 buildings/trees.
-                // Over-admission at frustum edge is safe (CPU-side markVisible already
-                // gates visibility; GPU is an additional conservative cull, never stricter).
-                gpuRec.boundingRadius = 50.0f;
+                // World position: modelMatrix is COLUMN-MAJOR storage
+                // (mclib/stuff/matrix.hpp:133 — `entries[(column<<2)+row]`).
+                // For an affine transform with translation at column 3:
+                //   entries[12] = m03 = translation x  (column 3, row 0)
+                //   entries[13] = m13 = translation y  (column 3, row 1)
+                //   entries[14] = m23 = translation z  (column 3, row 2)
+                //   entries[15] = m33 = 1
+                // The shader's `vec4(p,1) * inst.modelMatrix` picks up
+                // m[3] = vec4(entries[12..15]) as the translation.
+                //
+                // Earlier a comment in this file claimed translation was at
+                // entries[3]/[7]/[11] (those are the BOTTOM ROW of columns
+                // 0-2, which equal 0 for affine transforms). Reading those
+                // produces worldCenter≈(0,0,0) for every static prop — the
+                // cull then projects every prop to the world origin, which
+                // is outside the frustum on all stock missions, so it
+                // rejects all and bucketCountData stays 0 across all 548
+                // buckets. This is the bug that hid the static_prop_registry
+                // regression that track_c_substrate_regression.md describes
+                // as "substrate stays OFF" — the real symptom was empty
+                // render, not just slow.
+                //
+                // Coord-space note: the translation IS in Stuff/MLR camera
+                // frame (.x=-rawX, .y=elev, .z=rawY) per
+                // BldgAppearance/TreeAppearance::registerStatic at
+                // mclib/bdactor.cpp:2705-2708 / 4894-4897. gos_GetTerrainMVPMat4
+                // (axisSwap * worldToClip) expects raw MC2 world coords
+                // (x=east, y=north, z=elev) and bakes the swap. Un-swap:
+                //   raw.x = -stuff.x  =  -entries[12]
+                //   raw.y =  stuff.z  =   entries[14]
+                //   raw.z =  stuff.y  =   entries[13]   (elev)
+                // Mirror of static_prop.vert:125 which does the same swap on
+                // the per-vertex world position.
+                gpuRec.worldCenter[0] = -inst.modelMatrix[12];
+                gpuRec.worldCenter[1] =  inst.modelMatrix[14];
+                gpuRec.worldCenter[2] =  inst.modelMatrix[13];
+                // Bounding radius: 200.0f covers stock MC2 buildings (largest are
+                // ~150 units across, e.g. warehouse footprint). Trees/fences are
+                // smaller but over-admission at the frustum edge is harmless —
+                // CPU-side markVisible already gates which actors reach this code,
+                // and the cull is sphere-aware via clipSpaceFrustumAdmitSphere
+                // (gpu_cull_predicate.glsl). 50.0f (pre-2026-05-10) was too small:
+                // building centroids offset from the visible silhouette failed the
+                // strict point-in-frustum test even when most of the building was
+                // on screen — empty-render symptom under substrate=ON.
+                gpuRec.boundingRadius = 200.0f;
                 gpuRec.worldAabbMin[0] = gpuRec.worldCenter[0] - gpuRec.boundingRadius;
                 gpuRec.worldAabbMin[1] = gpuRec.worldCenter[1] - gpuRec.boundingRadius;
                 gpuRec.worldAabbMin[2] = gpuRec.worldCenter[2] - gpuRec.boundingRadius;

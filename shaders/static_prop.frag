@@ -25,13 +25,38 @@ in vec4  v_highlight;
 in vec4  v_fog;
 in vec4  v_argb;
 flat in uint v_localVertexID;
+flat in uint v_drawID;          // plan v3.8 Step 8.3: forwarded from VS as
+                                // uint(gl_DrawIDARB) under MC2_COALESCE,
+                                // else 0u (vertex shader sets per branch).
 
+#ifdef MC2_COALESCE
+// Plan v3.8 Step 8.3 — coalesce-only: per-draw indirection via gl_DrawIDARB.
+// `int u_drawIDBase` per uniform_uint_crash.md (uniform uint crashes
+// shader_builder); cast to uint at index time.
+uniform int u_drawIDBase;
+struct PerDrawEntry {
+    int   packetID;
+    int   materialFlags;
+    int   maxLocalVertexID;
+    int   texArrayLayer;
+    float uvScaleX;
+    float uvScaleY;
+    int   _pad0;
+    int   _pad1;
+};
+layout(std430, binding = 4) readonly buffer PerDrawData {
+    PerDrawEntry entries[];
+} perDraw_;
+uniform sampler2DArray u_texArr;
+#else
 uniform sampler2D u_tex;
-uniform int   u_materialFlags;   // bit 0: ALPHA_TEST
+uniform int       u_materialFlags;   // bit 0: ALPHA_TEST
+uniform int       u_maxLocalVertexID;
+uniform int       u_packetID;
+#endif
+
 uniform float u_fogValue;        // 1.0 = clear, 0.0 = fully fogged
 uniform int   u_debugAddrMode;   // 0 normal, 1 gradient, 2 hash, 3 white, 4 argb-only, 5 tex-only, 6 highlight-only, 7 tex+highlight
-uniform int   u_maxLocalVertexID;
-uniform int   u_packetID;
 
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 GBuffer1;
@@ -46,20 +71,47 @@ uint hash_u(uint x) {
 }
 
 void main() {
+    // Plan v3.8 Step 8.5 — resolve the three per-draw values to locals so
+    // the rest of main() reads them identically in legacy and coalesce
+    // modes. Under MC2_COALESCE these come from PerDrawData.entries[] at
+    // (v_drawID + u_drawIDBase); under legacy from per-packet/per-type
+    // uniforms (uploaded by flush() at :1567/:1685/:1687).
+#ifdef MC2_COALESCE
+    int materialFlags    = perDraw_.entries[v_drawID + uint(u_drawIDBase)].materialFlags;
+    int packetID         = perDraw_.entries[v_drawID + uint(u_drawIDBase)].packetID;
+    int maxLocalVertexID = perDraw_.entries[v_drawID + uint(u_drawIDBase)].maxLocalVertexID;
+    int texArrayLayer    = perDraw_.entries[v_drawID + uint(u_drawIDBase)].texArrayLayer;
+    // v3.8 mixed-size handling: the texture array is allocated at the
+    // group's max(W,H). Each layer's actual texture occupies the
+    // upper-left sub-region (0..uvScaleX, 0..uvScaleY). uvScale=1.0 →
+    // texture fills layer (no remap). uvScale<1 → fract(v_uv) restores
+    // GL_REPEAT semantics on the original texture's [0,1] domain, then
+    // multiply by uvScale crops to the sub-region. Sampler is set to
+    // GL_CLAMP_TO_EDGE so accidental over-shoot doesn't bleed into
+    // adjacent (zero-padded) area at the edge.
+    float uvScaleX = perDraw_.entries[v_drawID + uint(u_drawIDBase)].uvScaleX;
+    float uvScaleY = perDraw_.entries[v_drawID + uint(u_drawIDBase)].uvScaleY;
+    vec2  uvSampled = fract(v_uv) * vec2(uvScaleX, uvScaleY);
+    vec4 tex_color = texture(u_texArr, vec3(uvSampled, float(texArrayLayer)));
+#else
+    int materialFlags    = u_materialFlags;
+    int packetID         = u_packetID;
+    int maxLocalVertexID = u_maxLocalVertexID;
     vec4 tex_color = texture(u_tex, v_uv);
+#endif
 
-    if ((u_materialFlags & ALPHA_TEST_BIT) != 0 && tex_color.a < 0.5) {
+    if ((materialFlags & ALPHA_TEST_BIT) != 0 && tex_color.a < 0.5) {
         discard;
     }
 
     if (u_debugAddrMode == 1) {
-        float t = float(v_localVertexID) / max(float(u_maxLocalVertexID), 1.0);
+        float t = float(v_localVertexID) / max(float(maxLocalVertexID), 1.0);
         FragColor = vec4(t, t, t, 1.0);
         GBuffer1  = rc_gbuffer1_legacyDebugSentinelScreenShadowEligible();
         return;
     }
     if (u_debugAddrMode == 2) {
-        uint h = hash_u(uint(u_packetID) * 2654435761u + v_localVertexID);
+        uint h = hash_u(uint(packetID) * 2654435761u + v_localVertexID);
         FragColor = vec4(
             float((h >>  0) & 0xFFu) / 255.0,
             float((h >>  8) & 0xFFu) / 255.0,
@@ -81,7 +133,7 @@ void main() {
     }
 
     vec3 litRgb = v_argb.rgb;
-    if ((u_materialFlags & ALPHA_TEST_BIT) != 0) {
+    if ((materialFlags & ALPHA_TEST_BIT) != 0) {
         // Tree cards/leaves read too black on the light-facing falloff side.
         // Keep their lighting variation, but cap the darkest side at ~50%.
         litRgb = max(litRgb, vec3(0.5));

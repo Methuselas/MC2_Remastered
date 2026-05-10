@@ -37,8 +37,26 @@ layout(std430, binding = 10) readonly buffer BucketCounts {
 };
 
 // Binding 11: indirect draw command array (GL_DRAW_INDIRECT_BUFFER content).
-layout(std430, binding = 11) writeonly buffer IndirectCmds {
+// Plan v3.8 Step 10.1 — `writeonly` removed. Step 10.2 below reads
+// cmds[sortedSlot].count to gate the instanceCount write for zero-packet
+// types. Default (read+write) layout is required.
+layout(std430, binding = 11) buffer IndirectCmds {
     DrawElementsIndirectCommand cmds[];
+};
+
+// Plan v3.8 Step 10.1 — natural-typeID → sorted-slot remap.
+// permutation[typeID] == sortedSlot when coalesce is armed; identity
+// (permutation[t] == t) when coalesce is disarmed (Step 5.4 guarantee).
+// Either way the patch shader writes through this indirection so the
+// armed and disarmed code paths share the same dispatch body.
+//
+// Binding 15: history is 13 (collided with BlockVis at
+// gpu_cull_block_rollup.comp:58) → 14 (collided with diagnostic readback
+// at gpu_cull_compute.cpp:855) → 15 (verified free against shaders/ AND
+// C++ binding readbacks). C++ binds via Step 10.3 envelope around the
+// dispatch in compute_dispatch().
+layout(std430, binding = 15) readonly buffer PermutationBuf {
+    uint permutation[];
 };
 
 // Uniform: total number of buckets (= type count at mission load).
@@ -49,8 +67,21 @@ uniform int u_nBuckets;
 void main() {
     uint b = gl_GlobalInvocationID.x;
     if (b >= uint(u_nBuckets)) return;
-    // Copy the GPU-accumulated per-bucket count into the draw command.
-    // All other fields (count, firstIndex, baseVertex, baseInstance) were
-    // set by C++ at mission load and are never overwritten by compute.
-    cmds[b].instanceCount = bucketCountData[b];
+
+    // Plan v3.8 Step 10.2 — write through permutation with a zero-geometry
+    // clamp. permutation[b] is the sorted slot when armed, b itself when
+    // disarmed (identity loaded by Step 5.4).
+    uint sortedSlot = permutation[b];
+    uint n          = bucketCountData[b];
+
+    // Defensive zero-geometry guard: glMultiDrawElementsIndirect with
+    // {count=0, instanceCount>0} is driver-defined per OpenGL 4.6 §10.5
+    // (AMD typically no-ops, some drivers crash). Force instanceCount=0
+    // when the draw command's index count is 0. Centralizes the rule at
+    // the only point that writes instanceCount per frame; works in both
+    // armed (sorted) and disarmed (identity) modes.
+    if (cmds[sortedSlot].count == 0u) {
+        n = 0u;
+    }
+    cmds[sortedSlot].instanceCount = n;
 }

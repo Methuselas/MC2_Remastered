@@ -8,6 +8,7 @@
 #include "tgl.h"  // TG_Shape::s_worldToClip
 #include <GL/glew.h>
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -189,6 +190,182 @@ GLint s_loc_u_parityBaseVertex   = -1;
 bool s_programLoadTried  = false;
 bool s_programLoadFailed = false;
 
+// ===========================================================================
+// Substrate Multi-Draw Coalesce — file-scope state (plan v3.8 Step group 2).
+// All state below is the coalesce path's; it is INDEPENDENT of the legacy
+// per-type/per-packet path which remains the authoritative draw method.
+// Coalesce is a side-attempt: failures disarm coalesce only, never legacy.
+// ===========================================================================
+
+// Step 2.3 — forward decl so coalesce_resetEnvOnce / IsCoalesceEnabled can
+// reference each other across the helpers below.
+static bool IsCoalesceEnabled();
+
+// --- Step 2.1: GL handles for coalesce SSBOs and texture arrays ---
+GLuint s_coalesceInstanceSsbo      = 0;  // ring-buffered, persistent-mapped
+GLuint s_perDrawSsbo               = 0;  // PerDrawEntry per type, sorted (binding 4)
+GLuint s_texArrayOff               = 0;  // alpha-OFF group GL_TEXTURE_2D_ARRAY
+GLuint s_texArrayOn                = 0;  // alpha-ON  group GL_TEXTURE_2D_ARRAY
+GLuint s_permutationSsbo           = 0;  // sortedSlot[typeID] mapping (binding 15)
+GLuint s_staticPropProgramCoalesce = 0;  // coalesce variant (Step 7.5)
+
+// Step 2.1 — persistent map pointer + fence ring.
+void*  s_coalesceInstanceMap = nullptr;
+GLsync s_coalesceFence[RING_FRAMES] = {};
+
+// Step 2.1 — sort vectors / counts (populated in Step 5.7).
+std::vector<uint32_t> s_sortedTypeOrder;
+uint32_t s_alphaOffCount = 0;
+uint32_t s_alphaOnCount  = 0;
+size_t   s_offGroupTotalBytes = 0;
+size_t   s_onGroupTotalBytes  = 0;
+size_t   s_coalescePerFrameInstanceBytes = 0;  // populated in Step 5.7
+
+// Step 2.1 — pin tracker (refcount-aware unpin in Step 4.1).
+std::vector<DWORD> s_coalescePinnedNodes;
+
+// Step 2.1 — state-machine flags (§7).
+bool s_coalesceLayoutReady = false;
+bool s_coalesceEnabled     = false;
+bool s_coalesceArmed       = false;
+
+// Step 2.1 — per-mission ready latch (reset in onMapLoad, set in 11.7.k).
+bool s_coalesceFirstFlushDone = false;
+
+// Step 2.1 — env-resolved-once + extension-probe-persisting flags.
+// Set inside coalesce_resetEnvOnce() / loadProgramsIfNeeded(), never cleared
+// across mission loads (process-lifetime values).
+bool s_coalesceEnvDisabled = false;
+bool s_hasShaderDrawParams = false;
+
+// Step 12B.1 — forced-disarm test hook env state. Plan v3.8: process-once,
+// resolved by coalesce_resetEnvOnce() from MC2_COALESCE_FORCE_DISARM.
+// Default None means hooks are inert; any other value forces a specific
+// disarm path so smoke can verify each disarm's legacy-fallback works
+// without contriving real failure inputs.
+enum class CoalesceForceDisarm : uint8_t {
+    None = 0,
+    MixedAlpha,
+    SizeMismatch,
+    NoExtension,
+    AllocFailed,
+};
+static CoalesceForceDisarm s_coalesceForceDisarm = CoalesceForceDisarm::None;
+
+// Step 12.1 — trace gate for noisy non-lifecycle COALESCE diagnostics.
+// Lifecycle events (armed/disarmed/ready/permutation_state when forced)
+// are always-on; future per-frame diagnostics gated behind this env.
+static const bool s_coalesceTrace =
+    (getenv("MC2_SUBSTRATE_COALESCE_TRACE") != nullptr);
+#define COALESCE_TRACE(fmt, ...) \
+    do { if (s_coalesceTrace) { \
+        std::fprintf(stderr, "[COALESCE v1] " fmt "\n", ##__VA_ARGS__); \
+        std::fflush(stderr); \
+    } } while (0)
+
+// --- Step 2.2: ProgramLocs uniform-location cache (§6.X). ---
+// One instance per program. -1 in any field means glGetUniformLocation
+// reported "uniform absent" — treat as skip-upload. Default-initialize
+// every field to -1 so an uncached program still skips cleanly.
+struct ProgramLocs {
+    // Shared (both programs).
+    GLint terrainMVP       = -1;
+    GLint terrainViewport  = -1;
+    GLint mvp              = -1;
+    GLint fogValue         = -1;
+    GLint debugAddrMode    = -1;
+    // Legacy-only.
+    GLint maxLocalVertexID = -1;
+    GLint materialFlags    = -1;
+    GLint packetID         = -1;
+    // Coalesce-only.
+    GLint drawIDBase       = -1;
+    GLint texArr           = -1;
+};
+static ProgramLocs s_locsLegacy;
+static ProgramLocs s_locsCoalesce;
+
+// --- Step 2.4: env-once helper (spec §7). ---
+// Resolve the kill-switch ONCE per process. Idempotent guard via a function-
+// local static. Called at the top of loadProgramsIfNeeded() (primary site —
+// runs before the s_programLoadTried latch) and also as a no-op guard from
+// IsCoalesceEnabled() so legacy callers that bypass loadProgramsIfNeeded
+// still get a defined env-flag value. Step 12B.1 will extend this body to
+// also parse MC2_COALESCE_FORCE_DISARM.
+inline void coalesce_resetEnvOnce() {
+    static bool s_done = false;
+    if (s_done) return;
+    s_coalesceEnvDisabled = (getenv("MC2_SUBSTRATE_COALESCE_LEGACY") != nullptr);
+
+    // Step 12B.1 — exact, case-sensitive string match on the four valid
+    // values; anything else (including unset) leaves None. Process-once.
+    if (const char* fd = getenv("MC2_COALESCE_FORCE_DISARM")) {
+        if      (!strcmp(fd, "mixed_alpha"))   s_coalesceForceDisarm = CoalesceForceDisarm::MixedAlpha;
+        else if (!strcmp(fd, "size_mismatch")) s_coalesceForceDisarm = CoalesceForceDisarm::SizeMismatch;
+        else if (!strcmp(fd, "no_extension"))  s_coalesceForceDisarm = CoalesceForceDisarm::NoExtension;
+        else if (!strcmp(fd, "alloc_failed"))  s_coalesceForceDisarm = CoalesceForceDisarm::AllocFailed;
+        // Unrecognized values silently leave None — guards against typos
+        // accidentally activating a hook with an unintended disarm path.
+    }
+    s_done = true;
+}
+
+// --- Step 2.6: identity-permutation alloc helper (plan v3.8). ---
+// Called UNCONDITIONALLY by Step 5.4 before the Step 5.5 early-return so
+// that even disarmed missions have a non-zero s_permutationSsbo with
+// identity contents. Step 10.3 binds slot 15 every patch dispatch
+// regardless of armed state; an identity permutation makes legacy fallback
+// behave as if no remapping happened.
+//
+// Lifecycle: GL_STATIC_DRAW (matches spec §9 lifecycle table). The buffer
+// is finalize-uploaded; Step 5.12 may overwrite it once via glBufferSubData
+// in the same finalize pass, then it is read-only thereafter.
+static void allocPermutationSsboAsIdentity(uint32_t typeCount) {
+    if (typeCount == 0) return;
+    std::vector<uint32_t> identity(typeCount);
+    for (uint32_t i = 0; i < typeCount; ++i) identity[i] = i;
+    if (s_permutationSsbo == 0) glGenBuffers(1, &s_permutationSsbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_permutationSsbo);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 typeCount * sizeof(uint32_t),
+                 identity.data(),
+                 GL_STATIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+// --- Step 5.10.c rollback helper (plan v3.7). ---
+// Factored out of finalizeGeometry()'s per-group texture-array build so
+// Step 12B.5's forced-`size_mismatch` test hook reuses the same code.
+// One rollback site, two callers (natural failure + forced disarm).
+//
+// Per v2r15 out3-MIN-F rollback contract: delete BOTH texture arrays if
+// either is non-zero (the OFF group may have succeeded before the ON
+// group fails — the half-built array still leaks if not deleted), then
+// unpin only the CURRENT group's temp pins. Do NOT touch the other
+// group's already-promoted pins in s_coalescePinnedNodes — those release
+// at onMapUnload().
+//
+// Caller responsibility: set s_coalesceLayoutReady / s_coalesceEnabled /
+// s_coalesceArmed to false AFTER calling the helper, then return. The
+// helper deliberately does NOT mutate the flags so Step 12B.5 (which
+// logs a different "(forced)" reason string before invoking the
+// rollback) keeps logging-vs-state-change ordering symmetric with the
+// natural failure path.
+static void coalesceRollbackTexBuild(std::vector<DWORD>& tempPins) {
+    if (s_texArrayOff) { glDeleteTextures(1, &s_texArrayOff); s_texArrayOff = 0; }
+    if (s_texArrayOn)  { glDeleteTextures(1, &s_texArrayOn);  s_texArrayOn  = 0; }
+    if (mcTextureManager) {
+        for (DWORD nodeIdx : tempPins) {
+            mcTextureManager->unpinNode(nodeIdx);
+        }
+    }
+    tempPins.clear();
+}
+
+// ===========================================================================
+// (end substrate-coalesce file-scope state)
+// ===========================================================================
+
 void loadProgramsIfNeeded() {
     if (s_programLoadTried) return;
     std::fprintf(stderr, "[GPUPROPS-DIAG] loadProgramsIfNeeded ENTER\n");
@@ -200,17 +377,47 @@ void loadProgramsIfNeeded() {
                  glslv ? glslv : "(null)");
     s_programLoadTried = true;
 
+    // Plan v3.8 Step 7.2 — env decision + extension probe MUST land between
+    // the latch flip and the legacy makeProgram call. If they ran later
+    // (e.g. inside finalizeGeometry's Step 5.3), the latch would already
+    // have prevented the coalesce program from compiling and the second
+    // makeProgram below would never fire. Pattern verified at
+    // gameosmain.cpp:930.
+    coalesce_resetEnvOnce();
+    s_hasShaderDrawParams = (glewIsSupported("GL_ARB_shader_draw_parameters") != 0);
+    // Step 12B.2 — forced-no_extension hook. After the probe but BEFORE any
+    // downstream code reads s_hasShaderDrawParams, force the flag false
+    // when MC2_COALESCE_FORCE_DISARM=no_extension is set. finalizeGeometry's
+    // Step 5.5 then naturally routes through `event=disarmed reason=no_extension`.
+    if (s_coalesceForceDisarm == CoalesceForceDisarm::NoExtension) {
+        s_hasShaderDrawParams = false;
+    }
+    std::fprintf(stderr, "[GPUPROPS-DIAG] coalesceEnvDisabled=%d hasShaderDrawParams=%d "
+                 "forceDisarm=%d\n",
+                 (int)s_coalesceEnvDisabled, (int)s_hasShaderDrawParams,
+                 (int)s_coalesceForceDisarm);
+
     // makeProgram() is the project's shader loader (see gos_postprocess.cpp
     // for existing usage). Pass the "#version 430\n" prefix explicitly — the
     // shader files must NOT contain a #version directive.
     // GLSL 430 required for std430 SSBO. gos_render.cpp now requests a GL
     // 4.3 core context (bumped from 4.0) to match.
-    static const char* kShaderPrefix = "#version 430\n";
+    //
+    // Plan v3.8 Step 7.1 — two prefixes. Coalesce variant requires
+    // GL_ARB_shader_draw_parameters (gl_DrawIDARB / gl_BaseInstanceARB)
+    // and gates legacy-only uniforms out via #define MC2_COALESCE 1.
+    static const char* kShaderPrefixLegacy   = "#version 430\n";
+    static const char* kShaderPrefixCoalesce =
+        "#version 430\n"
+        "#extension GL_ARB_shader_draw_parameters : require\n"
+        "#define MC2_COALESCE 1\n";
+
+    // Step 7.3 — legacy program (unchanged identity / no rename).
     s_staticPropProgramObj = glsl_program::makeProgram(
         "static_prop",
         "shaders/static_prop.vert",
         "shaders/static_prop.frag",
-        kShaderPrefix);
+        kShaderPrefixLegacy);
     if (!s_staticPropProgramObj || !s_staticPropProgramObj->is_valid()) {
         std::fprintf(stderr,
             "[GPUPROPS] failed to compile/link static_prop shader pair — "
@@ -231,6 +438,108 @@ void loadProgramsIfNeeded() {
                  s_staticPropProgram,
                  s_loc_u_parityWrite, s_loc_u_parityVertsPerType,
                  s_loc_u_parityBaseVertex);
+
+    // Plan v3.8 Step 7.4 — populate s_locsLegacy. GLSL string literals are
+    // mixed-prefix (terrainMVP has NO u_ prefix; the rest do); reproduce
+    // them exactly — verified against existing flush() upload sites
+    // (terrainMVP at static_prop.vert:69; u_terrainViewport, u_mvp,
+    // u_fogValue, u_debugAddrMode, u_maxLocalVertexID, u_materialFlags,
+    // u_packetID at the corresponding upload sites in flush()).
+    // The existing flush() upload sites still call glGetUniformLocation
+    // inline; this cache is a forward-compat addition for the coalesce
+    // branch's per-frame upload path. Step 7's "Legacy path keeps working"
+    // guardrail: do NOT redirect the existing legacy uploads to read from
+    // s_locsLegacy here — that's a follow-up cleanup, not a Step 7 edit.
+    s_locsLegacy.terrainMVP        = glGetUniformLocation(s_staticPropProgram, "terrainMVP");
+    s_locsLegacy.terrainViewport   = glGetUniformLocation(s_staticPropProgram, "u_terrainViewport");
+    s_locsLegacy.mvp               = glGetUniformLocation(s_staticPropProgram, "u_mvp");
+    s_locsLegacy.fogValue          = glGetUniformLocation(s_staticPropProgram, "u_fogValue");
+    s_locsLegacy.debugAddrMode     = glGetUniformLocation(s_staticPropProgram, "u_debugAddrMode");
+    s_locsLegacy.maxLocalVertexID  = glGetUniformLocation(s_staticPropProgram, "u_maxLocalVertexID");
+    s_locsLegacy.materialFlags     = glGetUniformLocation(s_staticPropProgram, "u_materialFlags");
+    s_locsLegacy.packetID          = glGetUniformLocation(s_staticPropProgram, "u_packetID");
+    // s_locsLegacy.drawIDBase / texArr stay -1 (coalesce-only; legacy
+    // shader has no such uniforms).
+
+    // Plan v3.8 Step 7.5 — second program, gated on extension + env. Link
+    // failure of the coalesce program does NOT poison the legacy path:
+    // s_staticPropProgramCoalesce stays 0; IsCoalesceEnabled() catches
+    // it via the (s_staticPropProgramCoalesce == 0) check.
+    if (s_hasShaderDrawParams && !s_coalesceEnvDisabled) {
+        // Distinct program name — shader_builder.cpp:611-614 cache rejects
+        // duplicate names across calls.
+        glsl_program* coalesceObj = glsl_program::makeProgram(
+            "static_prop_coalesce",
+            "shaders/static_prop.vert",
+            "shaders/static_prop.frag",
+            kShaderPrefixCoalesce);
+        if (coalesceObj && coalesceObj->is_valid()) {
+            s_staticPropProgramCoalesce = coalesceObj->shp_;
+
+            // Step 7.6 — populate s_locsCoalesce. Legacy-only uniforms
+            // (u_materialFlags / u_maxLocalVertexID / u_packetID) are
+            // removed by the MC2_COALESCE preprocessor branch in
+            // static_prop.frag (Step 8.5); glGetUniformLocation returns
+            // -1 for them, ProgramLocs default-init keeps them -1, and
+            // Step 11.7.d's upload helper skips -1 locations.
+            s_locsCoalesce.terrainMVP        = glGetUniformLocation(s_staticPropProgramCoalesce, "terrainMVP");
+            s_locsCoalesce.terrainViewport   = glGetUniformLocation(s_staticPropProgramCoalesce, "u_terrainViewport");
+            s_locsCoalesce.mvp               = glGetUniformLocation(s_staticPropProgramCoalesce, "u_mvp");
+            s_locsCoalesce.fogValue          = glGetUniformLocation(s_staticPropProgramCoalesce, "u_fogValue");
+            s_locsCoalesce.debugAddrMode     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_debugAddrMode");
+            s_locsCoalesce.drawIDBase        = glGetUniformLocation(s_staticPropProgramCoalesce, "u_drawIDBase");
+            s_locsCoalesce.texArr            = glGetUniformLocation(s_staticPropProgramCoalesce, "u_texArr");
+            // s_locsCoalesce.materialFlags / maxLocalVertexID / packetID
+            // stay -1 (legacy-only; removed under MC2_COALESCE).
+
+            // Step 7.6 (out-MAJ-5 / spec §6 sampler hygiene) — bind
+            // sampler2DArray uniform u_texArr to texture unit 0 once
+            // here so the per-frame draw branch only needs to bind the
+            // texture handle, not re-issue glUniform1i.
+            if (s_locsCoalesce.texArr >= 0) {
+                glUseProgram(s_staticPropProgramCoalesce);
+                glUniform1i(s_locsCoalesce.texArr, 0);
+                glUseProgram(0);
+            }
+            std::fprintf(stderr, "[GPUPROPS-DIAG] static_prop_coalesce program=%u "
+                         "loc_drawIDBase=%d loc_texArr=%d\n",
+                         s_staticPropProgramCoalesce,
+                         s_locsCoalesce.drawIDBase, s_locsCoalesce.texArr);
+        } else {
+            // Compile/link failure — leave handle zero. Legacy path is
+            // unaffected; finalizeGeometry's Step 5.5 will see
+            // !s_hasShaderDrawParams resolve via IsCoalesceEnabled()
+            // instead, but the simpler check here is that
+            // s_staticPropProgramCoalesce stays 0 and IsCoalesceEnabled
+            // catches it on every frame.
+            std::fprintf(stderr, "[GPUPROPS] failed to compile/link "
+                         "static_prop_coalesce — coalesce path disabled "
+                         "for this session; legacy path unaffected\n");
+            s_staticPropProgramCoalesce = 0;
+        }
+    }
+}
+
+// --- Step 7.7: strengthened IsCoalesceEnabled() body (plan v3.8). ---
+// Returns true only when EVERY precondition for the coalesce draw branch
+// is satisfied. False on any precondition lets flush()'s gate fall back
+// to the legacy per-type/per-packet loop with no other state change.
+// Cheap (all field reads + a few comparisons); safe to call per-frame.
+static bool IsCoalesceEnabled() {
+    coalesce_resetEnvOnce();  // idempotent — primary call is in loadProgramsIfNeeded
+    if (s_coalesceEnvDisabled)              return false;
+    if (!s_hasShaderDrawParams)             return false;
+    if (!s_geometryFinalized)               return false;
+    if (!s_coalesceLayoutReady)             return false;
+    if (!s_coalesceEnabled)                 return false;
+    if (!s_coalesceArmed)                   return false;
+    if (s_staticPropProgramCoalesce == 0)   return false;
+    if (s_coalesceInstanceSsbo == 0)        return false;
+    if (s_perDrawSsbo == 0)                 return false;
+    if (s_permutationSsbo == 0)             return false;
+    if (s_alphaOffCount == 0 && s_alphaOnCount == 0) return false;
+    if (gos_object_parity::IsParityCheckEnabled())   return false;
+    return true;
 }
 
 // Layer B fallback: types we failed to register (logged once, fall back to CPU path).
@@ -497,6 +806,25 @@ void GpuStaticPropBatcher::onMapLoad() {
     s_failedTypes.clear();
     s_geometryFinalized = false;
     s_fatalRegistrationFailure = false;
+
+    // Substrate-coalesce per-mission resets (plan v3.8 Step 3.1). Cleared
+    // here so finalizeGeometry() can repopulate fresh; do NOT clear
+    // s_coalesceEnvDisabled / s_hasShaderDrawParams (process-lifetime
+    // values resolved once per process via coalesce_resetEnvOnce / the
+    // GLEW probe inside loadProgramsIfNeeded). Do NOT clear
+    // s_coalescePinnedNodes — that vector is owned by onMapUnload's
+    // refcount-aware unpin loop (Step 4.1).
+    s_sortedTypeOrder.clear();
+    s_alphaOffCount = 0;
+    s_alphaOnCount  = 0;
+    s_offGroupTotalBytes = 0;
+    s_onGroupTotalBytes  = 0;
+    s_coalescePerFrameInstanceBytes = 0;
+    s_coalesceLayoutReady    = false;
+    s_coalesceEnabled        = false;
+    s_coalesceArmed          = false;
+    s_coalesceFirstFlushDone = false;
+
     // Stage 2.D.2: re-arm the dual-emit latch for this mission so the first
     // eligible frame after map load triggers the compare.
     gos_object_parity::OnMissionLoad();
@@ -510,6 +838,48 @@ void GpuStaticPropBatcher::onMapUnload() {
     // also per-map; rebuild on next finalizeGeometry.
     if (s_perTypeSsbo) { glDeleteBuffers(1, &s_perTypeSsbo); s_perTypeSsbo = 0; }
     // Ring buffers are kept across maps (sized to map's worst case -- grow on demand).
+
+    // Substrate-coalesce per-mission cleanup (plan v3.8 Step group 4).
+    //
+    // 4.1 — refcount-aware unpin loop. Pattern matches
+    // gos_static_prop_registry.cpp:111-124 (releasePinsForRange).
+    // Idempotent via vector clear — rebuild populates fresh on next finalize.
+    if (mcTextureManager) {
+        for (DWORD nodeIdx : s_coalescePinnedNodes) {
+            mcTextureManager->unpinNode(nodeIdx);
+        }
+    }
+    s_coalescePinnedNodes.clear();
+
+    // 4.2 — unconditional fence cleanup. Coalesce fences are independent
+    // of legacy s_fence[]; drain both rings on map unload.
+    for (uint32_t i = 0; i < RING_FRAMES; ++i) {
+        if (s_coalesceFence[i]) {
+            glDeleteSync(s_coalesceFence[i]);
+            s_coalesceFence[i] = nullptr;
+        }
+    }
+
+    // 4.3 — unmap and delete the persistent-mapped instance SSBO.
+    // Handle the partial-failure case where alloc succeeded but mapping
+    // failed (Step 5.9 leaves s_coalesceInstanceSsbo non-zero with
+    // s_coalesceInstanceMap nullptr in that path).
+    if (s_coalesceInstanceSsbo) {
+        if (s_coalesceInstanceMap) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_coalesceInstanceSsbo);
+            glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            s_coalesceInstanceMap = nullptr;
+        }
+        glDeleteBuffers(1, &s_coalesceInstanceSsbo);
+        s_coalesceInstanceSsbo = 0;
+    }
+
+    // 4.4 — delete remaining coalesce GL resources (only if non-zero).
+    if (s_texArrayOff)     { glDeleteTextures(1, &s_texArrayOff);     s_texArrayOff     = 0; }
+    if (s_texArrayOn)      { glDeleteTextures(1, &s_texArrayOn);      s_texArrayOn      = 0; }
+    if (s_perDrawSsbo)     { glDeleteBuffers(1,  &s_perDrawSsbo);     s_perDrawSsbo     = 0; }
+    if (s_permutationSsbo) { glDeleteBuffers(1,  &s_permutationSsbo); s_permutationSsbo = 0; }
 }
 
 // ---------------------------------------------------------------------------
@@ -793,6 +1163,657 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                  s_types.size(), s_packets.size());
 
     s_geometryFinalized = true;
+
+    // =======================================================================
+    // Substrate Multi-Draw Coalesce — finalizeGeometry extension.
+    // Plan v3.8 Step group 5 (CORE EDIT, §5.0 ordering).
+    //
+    // Step 5.1 — §CRITICAL-C invariant (pure documentation):
+    //
+    // From this point on, EVERY return path must leave:
+    //   * s_geometryFinalized == true (guaranteed: legacy already wrote it).
+    //   * s_permutationSsbo != 0 (identity OR sorted) — Step 10.3 binds
+    //     slot 15 every patch dispatch unconditionally; a zero handle
+    //     unbinds slot 15 → AMD-specific UB → invisible static props on
+    //     legacy fallback. Step 5.4 alloc is UNCONDITIONAL before any
+    //     Step 5.5 early-return.
+    //   * Three coalesce flags ALL true (success) or ALL false (any
+    //     failure path) — no half-armed state.
+    //
+    // Failure rollback contract (out3-MIN-F): tex-array build's temp
+    // pins are released via coalesceRollbackTexBuild before return; the
+    // OFF/ON group already-promoted pins in s_coalescePinnedNodes stay
+    // until onMapUnload(). Legacy state (s_sharedVbo/Ibo/Vao,
+    // s_perTypeSsbo, s_staticPropProgram, s_geometryFinalized) is NEVER
+    // touched — that's the whole point of §5.0's "legacy first" rule.
+    // =======================================================================
+
+    const auto coalesceStart = std::chrono::steady_clock::now();
+
+    // Step 5.3 — env decision (defensive idempotent guard; loadProgramsIfNeeded
+    // already called this once before the latch — Step 7.2 wires that).
+    coalesce_resetEnvOnce();
+    const bool coalesceWanted =
+        !s_coalesceEnvDisabled && s_hasShaderDrawParams;
+
+    // Step 5.4 — ALWAYS alloc identity permutation FIRST, before any
+    // not-wanted return. Patch shader (Step 10.3) binds slot 15 every
+    // dispatch regardless of armed state.
+    allocPermutationSsboAsIdentity(static_cast<uint32_t>(s_types.size()));
+
+    // Step 12.5 — readback the identity permutation when forced-disarm is
+    // active so smoke can verify the slot-15 buffer holds [0,1,2,3,...]
+    // even after the disarm path runs. Bounded to 16 bytes per mission
+    // load when forced; zero cost when env unset.
+    if (s_coalesceForceDisarm != CoalesceForceDisarm::None) {
+        uint32_t first4[4] = { 0xAAAAAAAAu, 0xAAAAAAAAu, 0xAAAAAAAAu, 0xAAAAAAAAu };
+        const uint32_t want = std::min<uint32_t>(4u, static_cast<uint32_t>(s_types.size()));
+        if (s_permutationSsbo && want > 0u) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_permutationSsbo);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                               static_cast<GLsizeiptr>(want * sizeof(uint32_t)),
+                               first4);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        }
+        std::fprintf(stderr, "[COALESCE v1] event=permutation_state ssbo=%u "
+                     "typeCount=%zu first4=%u,%u,%u,%u\n",
+                     s_permutationSsbo, s_types.size(),
+                     first4[0], first4[1], first4[2], first4[3]);
+        std::fflush(stderr);
+    }
+
+    // Step 5.5 — coalesce-not-wanted early return.
+    if (!coalesceWanted) {
+        s_coalesceLayoutReady = false;
+        s_coalesceEnabled     = false;
+        s_coalesceArmed       = false;
+        const char* reason = s_coalesceEnvDisabled ? "env_killswitch"
+                                                   : "no_extension";
+        // Plan v3.8 12B.2 — distinguish forced vs organic in smoke logs.
+        // env_killswitch is never forced (MC2_SUBSTRATE_COALESCE_LEGACY is
+        // user-driven, not a force-disarm value); only no_extension can be
+        // forced via MC2_COALESCE_FORCE_DISARM=no_extension.
+        const bool forced = (s_coalesceForceDisarm == CoalesceForceDisarm::NoExtension)
+                            && !s_coalesceEnvDisabled;
+        std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=%s%s\n",
+                     reason, forced ? " (forced)" : "");
+        return;
+    }
+
+    const uint32_t typeCount = static_cast<uint32_t>(s_types.size());
+    if (typeCount == 0) {
+        // No types registered — nothing to coalesce; legacy will draw
+        // nothing either. Leave flags false; permutation is empty (5.4
+        // helper no-ops on typeCount==0). Treat as silent disarm.
+        s_coalesceLayoutReady = false;
+        s_coalesceEnabled     = false;
+        s_coalesceArmed       = false;
+        return;
+    }
+
+    // Step 5.6 — alpha-class compute per type (§CRITICAL-C). Mirrors the
+    // legacy guard at flush() :1849-1851 so a malformed type doesn't crash
+    // finalize. OR-reduce per-type; mixed_alpha fires only when packets
+    // within ONE type genuinely disagree after slot resolution. A type
+    // whose source/listOfTextures is null OR whose firstPkt.textureSlot is
+    // OOB cannot be safely classified or have its texture array layer
+    // resolved — disarm with reason=malformed_type (legacy stays valid).
+    // Plan v3.8 Step 12B.4 — mixed_alpha forced-disarm hook. Fires once at
+    // the start of the alpha-class walk (before any per-type processing).
+    // Simulates a type whose packets disagree post-slot-resolution. Exits
+    // the function in the same shape as the natural mixed_alpha return —
+    // legacy is already finalized; coalesce side-attempt only.
+    if (s_coalesceForceDisarm == CoalesceForceDisarm::MixedAlpha &&
+        typeCount > 0u) {
+        std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=mixed_alpha "
+                             "type=0 (forced)\n");
+        s_coalesceLayoutReady = false;
+        s_coalesceEnabled     = false;
+        s_coalesceArmed       = false;
+        return;
+    }
+
+    // Plan v3.8 (post-smoke 2 + visual canary): OR-reduce per spec §5.2 /
+    // §CRITICAL-C pseudocode. Mixed-alpha types (one packet alpha-on,
+    // another off after slot-resolution) are PROMOTED to alpha-ON instead
+    // of disarming. Justification:
+    //   - alpha-test discard fires only for tex_color.a < 0.5; opaque
+    //     packets in a mixed-alpha type have tex.a == 1.0, so the discard
+    //     never fires for their pixels. Same rendered fragments as legacy.
+    //   - Without promotion, stock content's type=92 (and likely others)
+    //     disarms coalesce on every mc2_NN mission. With substrate=ON
+    //     (smoke harness default), the disarm path falls back to the
+    //     broken substrate renderer (track_c_substrate_regression.md →
+    //     "no buildings/trees" empty terrain). Promoting is the only way
+    //     to make the slice ship a working render under substrate=ON.
+    //   - Visual canary (Step 17) compares coalesce-armed vs substrate-OFF
+    //     baseline; alpha-test on opaque packets is provably zero pixel
+    //     delta.
+    //   - The malformed-type disarm is preserved (src/listOfTextures null
+    //     OR pkt.textureSlot OOB → genuine bad data, not architectural
+    //     mixed-alpha classification).
+    for (uint32_t typeID = 0; typeID < typeCount; ++typeID) {
+        auto& type = s_types[typeID];
+        bool typeAlpha = false;
+        bool malformed = false;
+        for (uint32_t p = 0; p < type.packetCount; ++p) {
+            const auto& pkt = s_packets[type.firstPacket + p];
+            const TG_TypeShape* src = type.source;
+            if (!src || !src->listOfTextures) {
+                malformed = true;
+                break;
+            }
+            bool pktAlpha = (pkt.materialFlags & STATIC_PROP_FLAG_ALPHA_TEST) != 0;
+            if (pkt.textureSlot < src->numTextures &&
+                src->listOfTextures[pkt.textureSlot].textureAlpha) {
+                pktAlpha = true;
+            }
+            // OR-reduce: any alpha-on packet promotes the whole type.
+            typeAlpha = typeAlpha || pktAlpha;
+        }
+        if (malformed) {
+            std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=malformed_type type=%u\n",
+                         typeID);
+            s_coalesceLayoutReady = false;
+            s_coalesceEnabled     = false;
+            s_coalesceArmed       = false;
+            return;
+        }
+        type.alphaClass = typeAlpha ? 1u : 0u;
+    }
+
+    // Step 5.7 — sort + per-type caps + group totals + per-type byte offsets.
+    // Capacity formula per spec §5.1 (verbatim — no ceiling, no grow path):
+    //   MIN_PER_TYPE_CAP; globalCap = max(s_instanceCapacity,
+    //   INITIAL_INSTANCES_PER_FRAME); cap = max(MIN, (globalCap*2)/typeCount).
+    //
+    // v3.8: spec §5.1 specifies MIN_PER_TYPE_CAP=32, but mc2_10 smoke
+    // showed type=80 submitting 40 instances → type_overflow disarm
+    // mid-mission. Stock content has skewed distributions where a
+    // handful of "hot" types (heavy tree clusters in particular) push
+    // well above 32. Bumping to 256 covers stock peaks with comfortable
+    // margin (memory cost: 256 * 112B * 548 types * 3 ring frames ≈
+    // 47MB; acceptable on the 1GB+ GPU we target). Spec deviation
+    // documented in plan v3.8 self-review.
+    constexpr uint32_t MIN_PER_TYPE_CAP = 256;
+    const uint32_t globalCap = std::max<uint32_t>(
+        static_cast<uint32_t>(s_instanceCapacity),
+        static_cast<uint32_t>(INITIAL_INSTANCES_PER_FRAME));
+    const uint32_t avg2x = (globalCap * 2u) / std::max<uint32_t>(1, typeCount);
+    const uint32_t perTypeCap = std::max(MIN_PER_TYPE_CAP, avg2x);
+    for (auto& t : s_types) {
+        t.instanceCap = perTypeCap;
+    }
+
+    s_sortedTypeOrder.clear();
+    s_sortedTypeOrder.reserve(typeCount);
+    for (uint32_t t = 0; t < typeCount; ++t) {
+        if (s_types[t].alphaClass == 0u) s_sortedTypeOrder.push_back(t);
+    }
+    s_alphaOffCount = static_cast<uint32_t>(s_sortedTypeOrder.size());
+    for (uint32_t t = 0; t < typeCount; ++t) {
+        if (s_types[t].alphaClass == 1u) s_sortedTypeOrder.push_back(t);
+    }
+    s_alphaOnCount = static_cast<uint32_t>(s_sortedTypeOrder.size())
+                   - s_alphaOffCount;
+
+    {
+        size_t offByteCursor = 0;
+        size_t onByteCursor  = 0;
+        for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
+            const uint32_t typeID = s_sortedTypeOrder[i];
+            auto& t = s_types[typeID];
+            const size_t typeBytes =
+                static_cast<size_t>(t.instanceCap) * sizeof(GpuStaticPropInstance);
+            if (t.alphaClass == 0u) {
+                t.coalesceByteOffsetWithinGroup =
+                    static_cast<uint32_t>(offByteCursor);
+                offByteCursor += typeBytes;
+            } else {
+                t.coalesceByteOffsetWithinGroup =
+                    static_cast<uint32_t>(onByteCursor);
+                onByteCursor += typeBytes;
+            }
+        }
+        s_offGroupTotalBytes = offByteCursor;
+        s_onGroupTotalBytes  = onByteCursor;
+    }
+    s_coalescePerFrameInstanceBytes =
+        s_offGroupTotalBytes + s_onGroupTotalBytes;
+
+    // Step 5.8 — alignment asserts (§3.Z). The std430 stride is 112 bytes
+    // for GpuStaticPropInstance (compile-time static_assert in the header),
+    // which is a multiple of 16 on every driver we target. The runtime
+    // glBindBufferRange offset alignment can be stricter — query and
+    // disarm if our group-base alignment is insufficient.
+    {
+        GLint ssboAlign = 0;
+        glGetIntegerv(GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT, &ssboAlign);
+        if (ssboAlign <= 0) ssboAlign = 16;  // safety floor
+        const auto isAligned = [&](size_t v) {
+            return (v % static_cast<size_t>(ssboAlign)) == 0;
+        };
+        if (!isAligned(sizeof(GpuStaticPropInstance)) ||
+            !isAligned(s_offGroupTotalBytes) ||
+            !isAligned(s_coalescePerFrameInstanceBytes)) {
+            std::fprintf(stderr,
+                "[COALESCE v1] event=disarmed reason=alloc_failed "
+                "(alignment: ssboAlign=%d sizeofInst=%zu offTotal=%zu perFrame=%zu)\n",
+                ssboAlign,
+                sizeof(GpuStaticPropInstance),
+                s_offGroupTotalBytes,
+                s_coalescePerFrameInstanceBytes);
+            s_coalesceLayoutReady = false;
+            s_coalesceEnabled     = false;
+            s_coalesceArmed       = false;
+            return;
+        }
+    }
+
+    // Step 5.9 — allocate s_coalesceInstanceSsbo ring + persistent map.
+    {
+        const size_t totalBytes =
+            static_cast<size_t>(RING_FRAMES) * s_coalescePerFrameInstanceBytes;
+        glGenBuffers(1, &s_coalesceInstanceSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_coalesceInstanceSsbo);
+        const GLbitfield mapFlags =
+            GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+        // Drain any pre-existing GL error so our check is clean.
+        while (glGetError() != GL_NO_ERROR) {}
+        glBufferStorage(GL_SHADER_STORAGE_BUFFER, totalBytes, nullptr, mapFlags);
+        const GLenum storageErr = glGetError();
+        if (storageErr != GL_NO_ERROR) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            glDeleteBuffers(1, &s_coalesceInstanceSsbo);
+            s_coalesceInstanceSsbo = 0;
+            std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=alloc_failed "
+                                 "(glBufferStorage err=0x%04x bytes=%zu)\n",
+                         storageErr, totalBytes);
+            s_coalesceLayoutReady = false;
+            s_coalesceEnabled     = false;
+            s_coalesceArmed       = false;
+            return;
+        }
+        s_coalesceInstanceMap = glMapBufferRange(
+            GL_SHADER_STORAGE_BUFFER, 0, totalBytes, mapFlags);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        if (!s_coalesceInstanceMap) {
+            // Step 4.3 handles "buffer alloc'd, map failed" via inner null
+            // check on s_coalesceInstanceMap; leave the buffer for unload
+            // to release.
+            std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=alloc_failed "
+                                 "(glMapBufferRange returned null)\n");
+            s_coalesceLayoutReady = false;
+            s_coalesceEnabled     = false;
+            s_coalesceArmed       = false;
+            return;
+        }
+
+        // Plan v3.8 Step 12B.3 — alloc_failed forced-disarm hook. Fires
+        // AFTER the real alloc completes successfully, then simulates the
+        // failure by tearing down the resources we just allocated. Mirrors
+        // the partial-failure cleanup path in Step 4.3 / above.
+        if (s_coalesceForceDisarm == CoalesceForceDisarm::AllocFailed) {
+            if (s_coalesceInstanceMap) {
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_coalesceInstanceSsbo);
+                glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+                s_coalesceInstanceMap = nullptr;
+            }
+            if (s_coalesceInstanceSsbo) {
+                glDeleteBuffers(1, &s_coalesceInstanceSsbo);
+                s_coalesceInstanceSsbo = 0;
+            }
+            std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=alloc_failed (forced)\n");
+            s_coalesceLayoutReady = false;
+            s_coalesceEnabled     = false;
+            s_coalesceArmed       = false;
+            return;
+        }
+    }
+
+    s_coalesceLayoutReady = true;
+
+    // Step 5.10 — build per-group GL_TEXTURE_2D_ARRAY (§5.4).
+    // layerForType[typeID] = group-relative layer in {s_texArrayOff,
+    // s_texArrayOn}; -1 sentinel for zero-packet / no-dim types
+    // (Step 5.11 emits a no-op draw entry but keeps array indexing
+    // aligned).
+    //
+    // v3.8 mixed-size handling: stock content has both 32x32 and 64x64
+    // textures in the same alpha group. Strict same-size assertion
+    // would disarm coalesce on every mc2_NN mission. Instead, allocate
+    // the array at MAX dimensions across the group's uniques and blit
+    // each smaller texture into the upper-left sub-region (0,0,W,H) of
+    // its layer. Per-type uvScaleX/Y in PerDrawEntry (§5.4) maps
+    // [0,1] UV → the actual texture sub-region in the larger layer.
+    // Shader applies `fract(v_uv) * uvScale` before sampling so
+    // GL_REPEAT semantics work for tiling textures.
+    std::vector<int32_t> layerForType(typeCount, -1);
+    // Per-type uv scale (sub-region size / array size). Default 1.0 for
+    // types whose layer fills the array OR for skipped types (no draw
+    // entry → values unread).
+    std::vector<float>   uvScaleXByType(typeCount, 1.0f);
+    std::vector<float>   uvScaleYByType(typeCount, 1.0f);
+
+    struct UniqueTex {
+        GLuint glTexId;
+        GLint  w;
+        GLint  h;
+    };
+
+    for (uint8_t group = 0; group <= 1; ++group) {
+        std::vector<DWORD> newlyPinnedThisBuild;
+        GLuint& outArray = (group == 0u) ? s_texArrayOff : s_texArrayOn;
+
+        std::vector<UniqueTex> uniques;             // unique textures in this group
+        std::unordered_map<GLuint, int32_t> glTexIdToLayer;
+        std::vector<uint32_t> typesUsingLayer;      // typeID for each layer (for uvScale assignment)
+        std::vector<int32_t>  typesUsingLayerCount; // count of types per layer (for ranges)
+        // Per-type → layer mapping is in layerForType[typeID]; uvScale
+        // is computed in a second pass after maxW/maxH are known.
+
+        // 5.10.a — walk types in sorted order belonging to this group.
+        for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
+            const uint32_t typeID = s_sortedTypeOrder[i];
+            auto& type = s_types[typeID];
+            if (type.alphaClass != group) continue;
+
+            // Zero-packet guard mirrors batcher_getTypeDrawInfo pattern;
+            // leave layer = -1 (already initialized) and continue.
+            if (type.packetCount == 0u) {
+                continue;
+            }
+
+            const auto& firstPkt = s_packets[type.firstPacket];
+            const TG_TypeShape* src = type.source;
+            if (!src || !src->listOfTextures ||
+                firstPkt.textureSlot >= src->numTextures) {
+                std::fprintf(stderr, "[COALESCE v1] event=disarmed "
+                             "reason=malformed_type type=%u group=%s\n",
+                             typeID, group == 0u ? "off" : "on");
+                coalesceRollbackTexBuild(newlyPinnedThisBuild);
+                s_coalesceLayoutReady = false;
+                s_coalesceEnabled     = false;
+                s_coalesceArmed       = false;
+                return;
+            }
+
+            const DWORD nodeIdx =
+                src->listOfTextures[firstPkt.textureSlot].mcTextureNodeIndex;
+            if (mcTextureManager && nodeIdx != 0xFFFFFFFFu) {
+                mcTextureManager->pinNode(nodeIdx);
+                newlyPinnedThisBuild.push_back(nodeIdx);
+            }
+
+            // v3.8 force-cache: at finalize-time, src->listOfTextures
+            // gosTextureHandle may be CACHED_OUT_HANDLE (texture cached
+            // out to system RAM) or 0 (never loaded). Both produce empty
+            // GL state and Step 5.10.e's glGetTexImage would read zeros
+            // → texture array filled with zero pixels → invisible draws.
+            // mcTextureManager->get_gosTextureHandle(nodeIdx) forces a
+            // cache-in if needed and returns the live handle; comment at
+            // txmmgr.h:549 says "Does all caching necessary." pinNode
+            // above prevents eviction between this call and the blit.
+            DWORD gosHandle = (mcTextureManager && nodeIdx != 0xFFFFFFFFu)
+                ? mcTextureManager->get_gosTextureHandle(nodeIdx)
+                : src->listOfTextures[firstPkt.textureSlot].gosTextureHandle;
+            // Snapshot for the runtime eviction-detect (Step 11.4). If a
+            // future frame sees a different handle for the same slot,
+            // the cache evicted-and-reloaded — disarm.
+            type.lastSeenGosHandle = gosHandle;
+
+            const GLuint glTexId = static_cast<GLuint>(gos_GetGLTextureId(gosHandle));
+
+            // 5.10.b — dedupe per glTexId; assign group-relative layer.
+            auto it = glTexIdToLayer.find(glTexId);
+            if (it != glTexIdToLayer.end()) {
+                layerForType[typeID] = it->second;
+                continue;
+            }
+
+            // v3.8 dimension fetch: use mcTextureManager metadata first
+            // (avoids the lazy-GL-upload trap where glGetTexLevelParameteriv
+            // returns 0x0 for textures that have a handle but haven't been
+            // glTexImage2D'd yet). MC2 textures are square (only a single
+            // `width` field exists in MC_TextureNode). Fall back to GL if
+            // metadata is unavailable.
+            GLint W = (mcTextureManager && nodeIdx != 0xFFFFFFFFu)
+                ? static_cast<GLint>(mcTextureManager->getWidth(nodeIdx))
+                : 0;
+            GLint H = W;
+            if (W <= 0) {
+                glBindTexture(GL_TEXTURE_2D, glTexId);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH,  &W);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &H);
+            }
+            // If both metadata AND GL fail, the texture is genuinely
+            // unavailable at finalize-time (no MC node, never cached,
+            // and no GL upload). Skip this type via layer=-1 sentinel
+            // rather than disarming the whole coalesce build — graceful
+            // degradation: other valid types still arm.
+            if (W <= 0 || H <= 0) {
+                COALESCE_TRACE("skip_type type=%u group=%s reason=no_dims "
+                               "nodeIdx=%lu gosHandle=%lu glTexId=%u",
+                               typeID, group == 0u ? "off" : "on",
+                               (unsigned long)nodeIdx,
+                               (unsigned long)gosHandle, glTexId);
+                continue;
+            }
+
+            // Plan v3.8 Step 12B.5 — size_mismatch forced-disarm hook.
+            // Fires on the SECOND unique of the alpha-OFF group so the
+            // rollback has a real partial state to unwind. Calls the
+            // same coalesceRollbackTexBuild helper as the natural
+            // failure path. With v3.8 mixed-size handling, organic
+            // size_mismatch no longer disarms; this hook still fires
+            // for the forced-disarm smoke matrix.
+            if (s_coalesceForceDisarm == CoalesceForceDisarm::SizeMismatch &&
+                group == 0u && uniques.size() == 1u) {
+                std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=size_mismatch "
+                             "group=off expected=%dx%d got=%dx%d (forced)\n",
+                             uniques[0].w, uniques[0].h,
+                             uniques[0].w + 1, uniques[0].h + 1);
+                coalesceRollbackTexBuild(newlyPinnedThisBuild);
+                s_coalesceLayoutReady = false;
+                s_coalesceEnabled     = false;
+                s_coalesceArmed       = false;
+                return;
+            }
+
+            // v3.8 mixed-size: append unique with its actual W,H.
+            // Array allocation uses max(W,H) across all uniques.
+            const int32_t layer = static_cast<int32_t>(uniques.size());
+            uniques.push_back({glTexId, W, H});
+            glTexIdToLayer[glTexId] = layer;
+            layerForType[typeID] = layer;
+        }
+
+        if (uniques.empty()) {
+            // Empty group — Step 11.7.g/h skip the bind+draw pair when
+            // count == 0 (out-CRIT-5). No array allocated; no pins to
+            // promote (newlyPinnedThisBuild is empty).
+            continue;
+        }
+
+        // 5.10.d — find max dimensions across the group's uniques.
+        // The texture array is allocated at maxW × maxH; smaller
+        // textures get blitted into upper-left sub-region of their
+        // layer; per-type uvScale maps [0,1] UV → sub-region.
+        GLint maxW = 0, maxH = 0;
+        for (const auto& u : uniques) {
+            if (u.w > maxW) maxW = u.w;
+            if (u.h > maxH) maxH = u.h;
+        }
+        if (maxW <= 0 || maxH <= 0) {
+            // Defensive — shouldn't happen because skip-path filtered W/H<=0.
+            std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=alloc_failed "
+                         "(group=%s maxDims=%dx%d after skip-no-dims pass)\n",
+                         group == 0u ? "off" : "on", maxW, maxH);
+            coalesceRollbackTexBuild(newlyPinnedThisBuild);
+            s_coalesceLayoutReady = false;
+            s_coalesceEnabled     = false;
+            s_coalesceArmed       = false;
+            return;
+        }
+
+        // 5.10.d — allocate the array at max dims.
+        glGenTextures(1, &outArray);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, outArray);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8,
+                     maxW, maxH,
+                     static_cast<GLsizei>(uniques.size()),
+                     0, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
+
+        // 5.10.e — per-unique blit. Each unique blits at sub-region
+        // (0,0,W,H) of its layer; the unused (W..maxW, H..maxH) area
+        // is left at the glTexImage3D-zeroed state. Shader uvScale
+        // ensures sampling never reaches that area for the type's UVs.
+        size_t maxBytes = static_cast<size_t>(maxW) *
+                          static_cast<size_t>(maxH) * 4u;
+        std::vector<uint8_t> pixelBuf(maxBytes);
+        for (size_t k = 0; k < uniques.size(); ++k) {
+            const auto& u = uniques[k];
+            glBindTexture(GL_TEXTURE_2D, u.glTexId);
+            const size_t need = static_cast<size_t>(u.w) *
+                                static_cast<size_t>(u.h) * 4u;
+            if (pixelBuf.size() < need) pixelBuf.resize(need);
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, pixelBuf.data());
+            glBindTexture(GL_TEXTURE_2D_ARRAY, outArray);
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0,
+                            0, 0, static_cast<GLint>(k),
+                            u.w, u.h, 1,
+                            GL_BGRA, GL_UNSIGNED_BYTE, pixelBuf.data());
+        }
+
+        // 5.10.f — mipmap + sampler params (forestall AMD strict-fail).
+        // GL_CLAMP_TO_EDGE on the array (was GL_REPEAT pre-v3.8) so
+        // sub-region textures don't bleed into the unused area at the
+        // edge. Tiling textures rely on the shader's `fract(v_uv) *
+        // uvScale` to keep sampling within the sub-region.
+        glBindTexture(GL_TEXTURE_2D_ARRAY, outArray);
+        glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+        GLint maxLevel = 0;
+        {
+            GLint w = maxW, h = maxH;
+            while (w > 1 || h > 1) {
+                ++maxLevel;
+                if (w > 1) w >>= 1;
+                if (h > 1) h >>= 1;
+            }
+        }
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,  maxLevel);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S,     GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T,     GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        // v3.8 — record per-type uvScale = unique W,H / max W,H.
+        // Walk types again to find which layer each uses, then look up
+        // the unique's actual dimensions to compute scale.
+        const float invMaxW = 1.0f / static_cast<float>(maxW);
+        const float invMaxH = 1.0f / static_cast<float>(maxH);
+        for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
+            const uint32_t tID = s_sortedTypeOrder[i];
+            if (s_types[tID].alphaClass != group) continue;
+            const int32_t layer = layerForType[tID];
+            if (layer < 0) continue;
+            const auto& u = uniques[static_cast<size_t>(layer)];
+            uvScaleXByType[tID] = static_cast<float>(u.w) * invMaxW;
+            uvScaleYByType[tID] = static_cast<float>(u.h) * invMaxH;
+        }
+
+        COALESCE_TRACE("group_built group=%s uniques=%zu maxDims=%dx%d",
+                       group == 0u ? "off" : "on",
+                       uniques.size(), maxW, maxH);
+
+        // 5.10.g — promote temp pins.
+        s_coalescePinnedNodes.insert(s_coalescePinnedNodes.end(),
+                                      newlyPinnedThisBuild.begin(),
+                                      newlyPinnedThisBuild.end());
+    }
+
+    // Step 5.11 — build s_perDrawSsbo (PerDrawEntry per type IN SORTED
+    // ORDER). Fragment shader will read entries[v_drawID + u_drawIDBase];
+    // u_drawIDBase = 0 for alpha-OFF group, s_alphaOffCount for alpha-ON.
+    {
+        std::vector<PerDrawEntry> entries(typeCount);
+        for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
+            const uint32_t typeID = s_sortedTypeOrder[i];
+            const auto& type = s_types[typeID];
+            PerDrawEntry e{};  // zero-init = sentinel for zero-packet types
+            if (type.packetCount > 0u && layerForType[typeID] >= 0) {
+                e.packetID         = static_cast<int32_t>(type.firstPacket);
+                e.materialFlags    = (type.alphaClass != 0u)
+                    ? static_cast<int32_t>(STATIC_PROP_FLAG_ALPHA_TEST) : 0;
+                e.maxLocalVertexID = (type.vertexCount > 0u)
+                    ? static_cast<int32_t>(type.vertexCount - 1u) : 0;
+                e.texArrayLayer    = layerForType[typeID];
+                e.uvScaleX         = uvScaleXByType[typeID];
+                e.uvScaleY         = uvScaleYByType[typeID];
+                // _pad0 / _pad1 already zero from value-init.
+            }
+            entries[i] = e;
+        }
+        glGenBuffers(1, &s_perDrawSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perDrawSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     static_cast<GLsizeiptr>(entries.size() * sizeof(PerDrawEntry)),
+                     entries.data(),
+                     GL_STATIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // Step 5.12 — sort permutation overwrite (LAST step on success). The
+    // identity from Step 5.4 stays if any earlier step returned.
+    {
+        std::vector<uint32_t> permutation(typeCount, 0u);
+        for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
+            const uint32_t typeID = s_sortedTypeOrder[i];
+            permutation[typeID] = i;  // typeID → sortedSlot
+        }
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_permutationSsbo);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                        static_cast<GLsizeiptr>(permutation.size() * sizeof(uint32_t)),
+                        permutation.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // Step 5.13 — set armed flags + log event=armed with elapsed_ms.
+    s_coalesceEnabled = true;
+    s_coalesceArmed   = true;
+    {
+        const auto coalesceEnd = std::chrono::steady_clock::now();
+        const long long elapsedMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                coalesceEnd - coalesceStart).count();
+        // unique_tex_off / unique_tex_on counts: peak texture-array layer
+        // count per group (≤ count of types in that group; equal when
+        // every type has a unique texture). Computed by scanning
+        // layerForType against s_sortedTypeOrder.
+        uint32_t uniqueTexOff = 0, uniqueTexOn = 0;
+        for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
+            const uint32_t typeID = s_sortedTypeOrder[i];
+            const auto& t = s_types[typeID];
+            if (layerForType[typeID] < 0) continue;
+            const uint32_t layer = static_cast<uint32_t>(layerForType[typeID]);
+            if (t.alphaClass == 0u) {
+                if (layer + 1u > uniqueTexOff) uniqueTexOff = layer + 1u;
+            } else {
+                if (layer + 1u > uniqueTexOn)  uniqueTexOn  = layer + 1u;
+            }
+        }
+        std::fprintf(stderr, "[COALESCE v1] event=armed types=%u "
+                     "off_types=%u on_types=%u unique_tex_off=%u unique_tex_on=%u "
+                     "per_frame_inst_bytes=%zu elapsed_ms=%lld\n",
+                     typeCount,
+                     s_alphaOffCount, s_alphaOnCount,
+                     uniqueTexOff, uniqueTexOn,
+                     s_coalescePerFrameInstanceBytes,
+                     elapsedMs);
+    }
 }
 
 bool GpuStaticPropBatcher::submit(TG_Shape* shape,
@@ -1536,9 +2557,216 @@ void GpuStaticPropBatcher::flush() {
     // If visual corruption occurs, re-enable by reverting this comment block to the
     // original glBufferSubData loop (see git history for the shadow mode code).
 
+    // =======================================================================
+    // Substrate Multi-Draw Coalesce — flush() extensions (plan v3.8 Step 11).
+    //
+    // The CPU write loop below (11.2) and the draw branch later (11.7) form
+    // the runtime side of the coalesce path. Per-frame write happens
+    // unconditionally if coalesce is armed (legacy s_instanceSsbo write
+    // already happened above via uploadAllBucketsIfNeeded — both buffers
+    // get filled so a runtime-disarm transition leaves legacy with valid
+    // data). The legacy DRAW loop below is gated on !IsCoalesceEnabled()
+    // by Step 11.7 (coalesce armed) vs Step 11.8 (coalesce off).
+    // =======================================================================
+
+    // Step 11.1 — unconditional coalesce fence cleanup. Runs whether or
+    // not coalesce is currently armed: out-MAJ-2 ensures fences from
+    // disarmed-mid-mission frames drain. Otherwise outstanding GLsync
+    // objects leak until onMapUnload (or longer). Per Step 11.1
+    // first-flush latch: do NOT set s_coalesceFirstFlushDone here — the
+    // latch is for first ARMED flush (placed in Step 11.7.k).
+    if (s_coalesceFence[s_frameSlot]) {
+        glClientWaitSync(s_coalesceFence[s_frameSlot],
+                         GL_SYNC_FLUSH_COMMANDS_BIT,
+                         GL_TIMEOUT_IGNORED);
+        glDeleteSync(s_coalesceFence[s_frameSlot]);
+        s_coalesceFence[s_frameSlot] = nullptr;
+    }
+
+    // Steps 11.2 / 11.3 / 11.4 / 11.5 — coalesce per-frame CPU write loop
+    // with overflow + eviction-detect runtime disarms.
+    if (IsCoalesceEnabled()) {
+        const size_t fr_off_bytes =
+            static_cast<size_t>(s_frameSlot) * batcher_getCoalescePerFrameInstanceBytes();
+        uint8_t* coalesceMapBase =
+            static_cast<uint8_t*>(s_coalesceInstanceMap) + fr_off_bytes;
+
+        for (auto& kv : s_bucketsByType) {
+            const uint32_t typeID = kv.first;
+            const PerTypeBucket& bucket = kv.second;
+            if (typeID >= s_types.size()) continue;
+            GpuStaticPropType& type = s_types[typeID];
+
+            // Step 11.3 — per-type overflow guard. Memory-safety: cap
+            // check on bucket.instances.size() (the count of bytes the
+            // CPU is about to write), NOT the patched GPU
+            // instanceCount (which is the count the GPU will RENDER and
+            // may be smaller after cull). Out-CRIT-4 in spec §5.1.
+            if (bucket.instances.size() > type.instanceCap) {
+                std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=type_overflow "
+                             "type=%u count=%zu cap=%u\n",
+                             typeID, bucket.instances.size(), type.instanceCap);
+                s_coalesceArmed = false;
+                // Flag-only disarm; do NOT rebuild the indirect buffer
+                // mid-frame (the v3.4 → v3.5 mid-frame-rebuild blackout
+                // lesson). Legacy fallback may render with stale
+                // sorted-layout cmd.baseInstance values until next
+                // mission load — accepted limitation per plan front
+                // matter "Runtime disarm fallback limitation."
+                break;
+            }
+
+            // Step 11.4 — eviction-detect.
+            // v3.8: skip the check for types whose lastSeenGosHandle is the
+            // 0xFFFFFFFF sentinel — those types had no MC node at finalize
+            // time (Step 5.10 skip_type path) and would always trigger a
+            // false-positive eviction on the first frame their texture
+            // gets cached in. They're excluded from the coalesce draw via
+            // layerForType=-1 (Step 5.11 emits zero-cmd entry) so the
+            // "evicted" texture is never sampled by the coalesce shader
+            // anyway.
+            const TG_TypeShape* src = type.source;
+            if (src && src->listOfTextures && type.packetCount > 0u &&
+                type.lastSeenGosHandle != 0xFFFFFFFFu) {
+                const auto& firstPkt = s_packets[type.firstPacket];
+                if (firstPkt.textureSlot < src->numTextures) {
+                    const DWORD now = src->listOfTextures[firstPkt.textureSlot].gosTextureHandle;
+                    if (now != type.lastSeenGosHandle) {
+                        std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=tex_evicted "
+                                     "type=%u old_handle=%lu new_handle=%lu\n",
+                                     typeID,
+                                     (unsigned long)type.lastSeenGosHandle,
+                                     (unsigned long)now);
+                        s_coalesceArmed = false;
+                        break;
+                    }
+                }
+            }
+
+            // Step 11.5 — memcpy into the type's group-relative slot.
+            const size_t groupBase_bytes =
+                (type.alphaClass == 1u) ? s_offGroupTotalBytes : 0u;
+            uint8_t* dst = coalesceMapBase
+                         + groupBase_bytes
+                         + type.coalesceByteOffsetWithinGroup;
+            std::memcpy(dst,
+                        bucket.instances.data(),
+                        bucket.instances.size() * sizeof(GpuStaticPropInstance));
+        }
+    }
+    // Step 11.6 — legacy CPU write path is unchanged: it already ran via
+    // uploadAllBucketsIfNeeded() above (which filled s_instanceSsbo). No
+    // gating on IsCoalesceEnabled() — that lets a runtime-disarm transition
+    // mid-frame still draw legally via the legacy loop below.
+
     // Per-type drawing: bind per-type instance & color SSBO ranges, then
     // issue one instanced draw per packet. gl_InstanceID in the shader
     // addresses 0..N-1 within the bound range (no gl_BaseInstance needed).
+    //
+    // Plan v3.8 Step 11.7 / 11.8 — coalesce branch first; on disarm,
+    // fall through to the legacy per-type loop with no other state change.
+    if (IsCoalesceEnabled()) {
+        // ---- Step 11.7 coalesce draw branch ----
+        // Shared group-size locals (used by 11.7.g/h glBindBufferRange).
+        const size_t fr_off_bytes_d =
+            static_cast<size_t>(s_frameSlot) * batcher_getCoalescePerFrameInstanceBytes();
+        const size_t off_total_bytes = s_offGroupTotalBytes;
+        const size_t on_total_bytes  =
+            batcher_getCoalescePerFrameInstanceBytes() - s_offGroupTotalBytes;
+
+        // 11.7.a — save SSBO slot 4 + unit-0 GL_TEXTURE_BINDING_2D_ARRAY.
+        // Active texture is already GL_TEXTURE0 (set by prologue at line
+        // ~2192). Slot 15 is NOT saved here: the draw branch never binds
+        // it; Step 10.3 envelope in compute_dispatch() honors the spec
+        // §3.X / §9 binding-hygiene contract for slot 15.
+        GLint prevSsbo4       = 0;
+        GLint prevTex2DArray  = 0;
+        glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 4, &prevSsbo4);
+        glGetIntegerv  (GL_TEXTURE_BINDING_2D_ARRAY,         &prevTex2DArray);
+
+        // 11.7.b — legacy prologue at lines ~2192-2247 ran unconditionally
+        // (slot 2 perTypeSsbo bind inherited). Verified by inspection.
+
+        // 11.7.c — switch to coalesce program.
+        glUseProgram(s_staticPropProgramCoalesce);
+
+        // 11.7.d — upload shared uniforms to the coalesce program. Source
+        // values match the existing legacy upload sites; -1 cached
+        // locations are skipped (legacy-only uniforms removed under
+        // MC2_COALESCE).
+        if (s_locsCoalesce.terrainMVP      >= 0)
+            glUniformMatrix4fv(s_locsCoalesce.terrainMVP,    1, GL_FALSE, gos_GetTerrainMVPMat4());
+        if (s_locsCoalesce.terrainViewport >= 0)
+            glUniform4fv      (s_locsCoalesce.terrainViewport, 1, gos_GetTerrainViewportVec4());
+        if (s_locsCoalesce.mvp             >= 0)
+            glUniformMatrix4fv(s_locsCoalesce.mvp,           1, GL_TRUE,  gos_GetProj2ScreenMat4());
+        if (s_locsCoalesce.fogValue        >= 0)
+            glUniform1f       (s_locsCoalesce.fogValue,      1.0f);
+        if (s_locsCoalesce.debugAddrMode   >= 0)
+            glUniform1i       (s_locsCoalesce.debugAddrMode, debugAddrMode_);
+
+        // 11.7.e — slot 1 is NOT bound (per v2r18 §3.X.1: colors_.c[]
+        // unread in any live shader path; coalesce branch does not bind
+        // it, and the legacy bind site at the per-type loop is dead state).
+
+        // 11.7.f — bind slot 4 (PerDraw SSBO).
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, s_perDrawSsbo);
+
+        // 11.7.g — alpha-OFF group draw.
+        if (s_alphaOffCount > 0u) {
+            if (s_locsCoalesce.drawIDBase >= 0)
+                glUniform1i(s_locsCoalesce.drawIDBase, 0);
+            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
+                              static_cast<GLintptr>(fr_off_bytes_d + 0u),
+                              static_cast<GLsizeiptr>(off_total_bytes));
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
+            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpu_cull::compute_getIndirectCmdBuf());
+            glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
+                reinterpret_cast<const void*>(static_cast<uintptr_t>(0)),
+                static_cast<GLsizei>(s_alphaOffCount),
+                0);
+        }
+
+        // 11.7.h — alpha-ON group draw.
+        if (s_alphaOnCount > 0u) {
+            if (s_locsCoalesce.drawIDBase >= 0)
+                glUniform1i(s_locsCoalesce.drawIDBase, static_cast<GLint>(s_alphaOffCount));
+            glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
+                              static_cast<GLintptr>(fr_off_bytes_d + off_total_bytes),
+                              static_cast<GLsizeiptr>(on_total_bytes));
+            glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn);
+            // First-time bind of indirect buffer if alpha-OFF skipped.
+            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpu_cull::compute_getIndirectCmdBuf());
+            const uintptr_t alphaOnOffset =
+                static_cast<uintptr_t>(s_alphaOffCount) *
+                static_cast<uintptr_t>(gpu_cull::kDrawElementsIndirectCommandSize);
+            glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
+                reinterpret_cast<const void*>(alphaOnOffset),
+                static_cast<GLsizei>(s_alphaOnCount),
+                0);
+        }
+
+        // 11.7.i — restore indirect-buffer binding.
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+
+        // 11.7.j — restore slot 4 + unit-0 GL_TEXTURE_BINDING_2D_ARRAY.
+        // Active texture stays GL_TEXTURE0 (epilogue restores). Slot 15
+        // restore lives at the Step 10.3 envelope in compute_dispatch().
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, (GLuint)prevSsbo4);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, (GLuint)prevTex2DArray);
+
+        // 11.7.k — first-flush latch (per-mission). event=ready is logged
+        // here, not at finalize, because finalize emits event=armed and
+        // we want a separate ready signal that confirms the GPU actually
+        // accepted the coalesce draw without disarm.
+        if (!s_coalesceFirstFlushDone) {
+            std::fprintf(stderr, "[COALESCE v1] event=ready buckets_off=%u buckets_on=%u\n",
+                         s_alphaOffCount, s_alphaOnCount);
+            s_coalesceFirstFlushDone = true;
+        }
+    } else {
+        // ---- Step 11.8 legacy per-type/per-packet draw loop (unchanged) ----
     for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {
         auto rit = s_typeRanges.find(typeID);
         if (rit == s_typeRanges.end()) continue;
@@ -1722,8 +2950,16 @@ void GpuStaticPropBatcher::flush() {
             glUniform1i(locParityWrite, 0);
         }
     }
+    } // end Step 11.8 else (!IsCoalesceEnabled() legacy draw loop)
 
     s_fence[s_frameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    // Plan v3.8 Step 11.9 — coalesce fence insert after all draws issued.
+    // Independent of legacy s_fence[]: tracks s_coalesceInstanceSsbo's
+    // ring-slot lifecycle so the next visit (RING_FRAMES frames from now)
+    // can wait on this fence before overwriting the slot's CPU writes.
+    if (IsCoalesceEnabled()) {
+        s_coalesceFence[s_frameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    }
     // Stage 2.D.1: record this slot's parity-byte usage so the next visit
     // (RING_FRAMES frames from now) knows exactly how much to glGetBufferSubData.
     s_parityBytesUsedPerSlot[s_frameSlot] = s_parityBytesUsedThisFrame;
@@ -1793,6 +3029,15 @@ void GpuStaticPropBatcher::flush() {
 
 void GpuStaticPropBatcher::flushShadow() {
     // Filled in Task 13.
+    //
+    // Plan v3.8 Step 7.8 / spec §6.Y forward-compat note: IsCoalesceEnabled()
+    // is irrelevant for the shadow path. The future Task 13 implementation
+    // MUST use the legacy/shadow program path (s_staticPropProgram or a
+    // dedicated shadow program), NOT s_staticPropProgramCoalesce — the
+    // coalesce program's vertex shader uses gl_DrawIDARB / gl_BaseInstanceARB
+    // to drive per-draw indirection, which is not available to a
+    // shadow-pass that does its own per-draw uniform uploads. See spec §6.Y
+    // for the rationale; no behavioral change here.
 }
 
 void GpuStaticPropBatcher::setDebugAddrMode(int mode) { debugAddrMode_ = mode; }
@@ -1999,3 +3244,38 @@ bool batcher_getTypeDrawInfo(uint32_t  typeID,
                                             ? s_instanceCapacity : INITIAL_INSTANCES_PER_FRAME);
     return true;
 }
+
+// ---------------------------------------------------------------------------
+// §5.6b accessor bodies (plan v3.8 Step 1.2a — deferred from Step group 1
+// because the bodies reference Step 2.1 file-scope statics).
+// All return safe sentinels (0 / nullptr / empty / false) before
+// finalizeGeometry() runs so a caller-side null-deref or stale-handle bind
+// is impossible during init ordering.
+// ---------------------------------------------------------------------------
+
+const uint32_t* batcher_getSortedTypeOrder() {
+    return (s_geometryFinalized && !s_sortedTypeOrder.empty())
+           ? s_sortedTypeOrder.data()
+           : nullptr;
+}
+
+uint32_t batcher_getAlphaOffCount() { return s_alphaOffCount; }
+uint32_t batcher_getAlphaOnCount()  { return s_alphaOnCount;  }
+
+uint32_t batcher_getInstanceCap(uint32_t typeID) {
+    if (!s_geometryFinalized || typeID >= s_types.size()) return 0;
+    return s_types[typeID].instanceCap;
+}
+
+GLuint batcher_getCoalesceInstanceSsbo() { return s_coalesceInstanceSsbo; }
+GLuint batcher_getPerDrawSsbo()          { return s_perDrawSsbo;          }
+GLuint batcher_getTexArrayOff()          { return s_texArrayOff;          }
+GLuint batcher_getTexArrayOn()           { return s_texArrayOn;           }
+GLuint batcher_getPermutationSsbo()      { return s_permutationSsbo;      }
+
+size_t batcher_getCoalescePerFrameInstanceBytes() {
+    return s_coalescePerFrameInstanceBytes;
+}
+
+bool batcher_isCoalesceLayoutReady() { return s_coalesceLayoutReady; }
+bool batcher_isCoalesceArmed()       { return s_coalesceArmed;       }

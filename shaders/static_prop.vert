@@ -107,9 +107,28 @@ out vec4  v_highlight;
 out vec4  v_fog;
 out vec4  v_argb;
 flat out uint v_localVertexID;
+flat out uint v_drawID;          // plan v3.8 Step 8.2: forwarded to FS as
+                                 // uint(gl_DrawIDARB) under MC2_COALESCE,
+                                 // else 0u (fragment shader's MC2_COALESCE
+                                 // branch indexes perDraw_.entries[] by it).
 
 void main() {
+    // Plan v3.8 Step 8.1 — coalesce variant indexes by
+    // (gl_BaseInstanceARB + gl_InstanceID): the multi-draw issues N
+    // instances starting at gl_BaseInstanceARB, and gl_InstanceID
+    // restarts at 0 each draw call. Legacy single-draw uses bare
+    // gl_InstanceID.  ARB-suffixed builtins are mandatory under
+    // #version 430 + GL_ARB_shader_draw_parameters; the unsuffixed
+    // gl_BaseInstance / gl_DrawID are the GL 4.6 core promotion names
+    // and are NOT defined under the extension.
+    // Plan v3.8 Step 8.2 — v_drawID forwarding to fragment.
+#ifdef MC2_COALESCE
+    Instance inst = instances_.i[gl_BaseInstanceARB + gl_InstanceID];
+    v_drawID      = uint(gl_DrawIDARB);
+#else
     Instance inst = instances_.i[gl_InstanceID];
+    v_drawID      = 0u;
+#endif
     // modelMatrix from SSBO std430 default col-major: GLSL sees the same
     // matrix as memory. For Stuff row-vec convention (translation in row 3),
     // use `v * M` to apply translation.

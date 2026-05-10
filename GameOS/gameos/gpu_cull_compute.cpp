@@ -544,34 +544,125 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
     std::vector<uint32_t> bucketCaps(typeCount);
     std::vector<uint32_t> bucketBases(typeCount);  // packed into second half of bucketCapsBuf
 
-    // Per-type geometry lookup.
+    // Plan v3.8 Step 9.1 — function-scope cumBase. BOTH the sorted (coalesce)
+    // and natural (legacy) branches accumulate into the SAME counter so the
+    // visibleIds[] allocation at totalVisibleSlots below is correct under
+    // either layout. Hoisting was the v3.3 → v3.4 fix: an inner-scope
+    // declaration in the natural branch shadows this and silently leaves
+    // cumBase = 0 for the sorted branch → 4-byte allocation → cull writes
+    // hundreds of MB OOB. Per the v3.4 review fix, do NOT redeclare cumBase
+    // inside either branch.
     uint32_t cumBase = 0;
-    for (uint32_t t = 0; t < typeCount; ++t) {
-        uint32_t indexCount = 0, firstIndex = 0, instanceCap = 0;
-        int32_t  baseVertex = 0;
-        if (!batcher_getTypeDrawInfo(t, &indexCount, &firstIndex, &baseVertex, &instanceCap)) {
-            // Type has no geometry (empty type registered). Fill zeros.
-            cmds[t]       = {0, 0, 0, 0, cumBase};
-            bucketCaps[t] = 0;
-            bucketBases[t]= cumBase;
-            COMPUTE_TRACE("c1b_build type=%u EMPTY", t);
-            continue;
+
+    // Plan v3.8 Step 9.1 — branch on the batcher's coalesce layout-ready
+    // state. The sorted (coalesce) branch indexes cmds[] by SORTED slot
+    // and uses §3.Z group-relative baseInstance values; the natural
+    // branch indexes by typeID with the legacy visibleIds-slot
+    // baseInstance. visibleIds[] cull-side layout (bucketCaps /
+    // bucketBases) stays keyed by NATURAL typeID in BOTH branches per
+    // §5.6a — see comments below.
+    if (batcher_isCoalesceLayoutReady()) {
+        // ---- SORTED (coalesce) branch — Step 9.2 ----
+        const uint32_t* sortedOrder = batcher_getSortedTypeOrder();
+        const uint32_t  N_off       = batcher_getAlphaOffCount();
+        // baseInstance accumulators are GROUP-RELATIVE per §3.Z. Each is
+        // an instance-count cursor into the per-group slice of
+        // s_coalesceInstanceSsbo: alpha-OFF starts at byte 0, alpha-ON
+        // starts at s_offGroupTotalBytes; the vertex shader's
+        // gl_BaseInstanceARB lookup is also group-relative because
+        // glBindBufferRange shifts the SSBO base per group at flush time
+        // (Step 11.7.g/h).
+        uint32_t cumCapOff = 0;
+        uint32_t cumCapOn  = 0;
+
+        for (uint32_t i = 0; i < typeCount; ++i) {
+            const uint32_t typeID = sortedOrder ? sortedOrder[i] : i;
+
+            uint32_t indexCount = 0, firstIndex = 0;
+            int32_t  baseVertex = 0;
+            uint32_t legacyVisibleIdsCap = 0;
+            // §5.6a naming: legacyVisibleIdsCap is the cull-side slot stride
+            // (= s_instanceCapacity for ALL valid types regardless of
+            // packetCount); coalesceInstanceCap is the per-type
+            // capacity-based slot in s_coalesceInstanceSsbo. Bare
+            // `instanceCap` is forbidden in this file post-v3.8.
+            const bool ok = batcher_getTypeDrawInfo(typeID, &indexCount,
+                                                    &firstIndex, &baseVertex,
+                                                    &legacyVisibleIdsCap);
+            const uint32_t coalesceInstanceCap = batcher_getInstanceCap(typeID);
+
+            // Cull-visibleIds layout (NATURAL typeID indexing). Even the
+            // sorted draw branch needs the cull shader to write into a
+            // non-zero per-bucket slice; without this, capsData[bucket]
+            // is 0 and `slot >= cap` fires for every static prop.
+            if (!ok) {
+                // Out-of-range / not-finalized — leaves a no-op draw
+                // command in this sorted slot AND a zero bucket.
+                cmds[i]              = {0, 0, 0, 0, 0};
+                bucketCaps[typeID]   = 0;
+                bucketBases[typeID]  = cumBase;
+                COMPUTE_TRACE("c1b_build sortedSlot=%u typeID=%u EMPTY (sorted)", i, typeID);
+                continue;
+            }
+            bucketCaps[typeID]   = legacyVisibleIdsCap;
+            bucketBases[typeID]  = cumBase;
+            cumBase             += legacyVisibleIdsCap;
+
+            // Draw-command layout (SORTED slot indexing). baseInstance is
+            // the group-relative coalesce-instance cursor — the patch
+            // shader writes instanceCount per-frame.
+            DrawCmd& cmd = cmds[i];
+            cmd.count         = indexCount;
+            cmd.instanceCount = 0;
+            cmd.firstIndex    = firstIndex;
+            cmd.baseVertex    = baseVertex;
+            cmd.baseInstance  = (i < N_off) ? cumCapOff : cumCapOn;
+
+            // Advance the matching group's coalesce-cap accumulator.
+            if (i < N_off) cumCapOff += coalesceInstanceCap;
+            else           cumCapOn  += coalesceInstanceCap;
+
+            COMPUTE_TRACE("c1b_build sortedSlot=%u typeID=%u idx=%u first=%u "
+                          "baseVtx=%d legacyCap=%u coalesceCap=%u baseInst=%u visBase=%u",
+                          i, typeID, indexCount, firstIndex, baseVertex,
+                          legacyVisibleIdsCap, coalesceInstanceCap,
+                          cmd.baseInstance, bucketBases[typeID]);
         }
-        cmds[t].count         = indexCount;
-        cmds[t].instanceCount = 0;        // GPU writes per-frame
-        cmds[t].firstIndex    = firstIndex;
-        cmds[t].baseVertex    = baseVertex;
-        cmds[t].baseInstance  = cumBase;  // base offset into visibleIds[]
+    } else {
+        // ---- NATURAL (legacy / coalesce-disabled) branch — Step 9.3 ----
+        // Semantically preserved from prior `:548-572`. Local rename
+        // `instanceCap` → `legacyVisibleIdsCap` per §5.6a.
+        for (uint32_t t = 0; t < typeCount; ++t) {
+            uint32_t indexCount = 0, firstIndex = 0;
+            uint32_t legacyVisibleIdsCap = 0;
+            int32_t  baseVertex = 0;
+            if (!batcher_getTypeDrawInfo(t, &indexCount, &firstIndex,
+                                         &baseVertex, &legacyVisibleIdsCap)) {
+                // Type has no geometry (empty type registered). Fill zeros.
+                cmds[t]       = {0, 0, 0, 0, cumBase};
+                bucketCaps[t] = 0;
+                bucketBases[t]= cumBase;
+                COMPUTE_TRACE("c1b_build type=%u EMPTY (natural)", t);
+                continue;
+            }
+            cmds[t].count         = indexCount;
+            cmds[t].instanceCount = 0;        // GPU writes per-frame
+            cmds[t].firstIndex    = firstIndex;
+            cmds[t].baseVertex    = baseVertex;
+            cmds[t].baseInstance  = cumBase;  // base offset into visibleIds[]
 
-        bucketCaps[t]  = instanceCap;
-        bucketBases[t] = cumBase;
-        cumBase       += instanceCap;
+            bucketCaps[t]  = legacyVisibleIdsCap;
+            bucketBases[t] = cumBase;
+            cumBase       += legacyVisibleIdsCap;
 
-        COMPUTE_TRACE("c1b_build type=%u idxCount=%u firstIdx=%u baseVtx=%d instCap=%u visBase=%u",
-                      t, indexCount, firstIndex, baseVertex, instanceCap, cmds[t].baseInstance);
+            COMPUTE_TRACE("c1b_build type=%u idxCount=%u firstIdx=%u baseVtx=%d "
+                          "legacyCap=%u visBase=%u (natural)",
+                          t, indexCount, firstIndex, baseVertex,
+                          legacyVisibleIdsCap, cmds[t].baseInstance);
+        }
     }
 
-    const uint32_t totalVisibleSlots = cumBase;  // sum of all per-type instance caps
+    const uint32_t totalVisibleSlots = cumBase;  // sum of all per-type visibleIds caps
 
     // --- Indirect command buffer (GL_DRAW_INDIRECT_BUFFER, GL_DYNAMIC_DRAW) ---
     // instanceCount is overwritten every frame by the patch dispatch.
@@ -646,6 +737,10 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
 
 GLuint compute_getIndirectCmdBuf() {
     return s_indirectCmdBuf;
+}
+
+GLuint compute_getBucketCountsBuf() {
+    return s_bucketCountsBuf;
 }
 
 uint32_t compute_getBucketCount() {
@@ -827,6 +922,33 @@ void compute_dispatch() {
             // GL_DRAW_INDIRECT_BUFFER binding. Both can alias the same buffer.
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, INDIRECT_CMD_BINDING, s_indirectCmdBuf);
 
+            // ---- Plan v3.8 Step 10.3: slot-15 save → bind → dispatch → restore ----
+            // Slot 15 history: 13 collided with BlockVis at
+            // gpu_cull_block_rollup.comp:58; 14 collided with the
+            // diagnostic readback at :855 (READBACK_SSBO_BINDING). Slot
+            // 15 is private to gpu_cull_patch.comp; this rebind is
+            // mandatory for legacy-fallback correctness (patch shader
+            // writes through permutation[] in both armed and disarmed
+            // modes, so the permutation SSBO must be bound every patch
+            // dispatch). The save/restore envelope honors spec §3.X /
+            // §9 binding hygiene at the slot-15 mutation site — the
+            // draw branch in flush() does NOT bind slot 15, so its
+            // 11.7.a/j envelope covers slot 4 + 2D_ARRAY only.
+            //
+            // No per-frame barrier needed for the permutation SSBO:
+            // s_permutationSsbo is finalize-uploaded by Step 2.6's
+            // glBufferData (and at most overwritten once by Step 5.12's
+            // glBufferSubData in the same finalize pass) and is read-only
+            // thereafter. GL ordering guarantees the upload is visible to
+            // all subsequent dispatches without an explicit
+            // glMemoryBarrier. The cull→patch barrier above (line 848) and
+            // the post-patch barrier below cover bucketCountData[] /
+            // cmds[].instanceCount cross-dispatch ordering; do not add a
+            // GL_BUFFER_UPDATE_BARRIER_BIT for permutation.
+            GLint prevSsbo15 = 0;
+            glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 15, &prevSsbo15);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 15, batcher_getPermutationSsbo());
+
             glUseProgram(s_patchProgram);
             const GLint locNBuckets = glGetUniformLocation(s_patchProgram, "u_nBuckets");
             if (locNBuckets >= 0)
@@ -834,6 +956,8 @@ void compute_dispatch() {
             const uint32_t patchGroups = (s_bucketCount + 63u) / 64u;
             glDispatchCompute(patchGroups, 1, 1);
             glUseProgram(0);
+
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 15, (GLuint)prevSsbo15);
         }
 
         // 5. Barrier: indirect command buffer ready for draw + SSBO writes visible.
