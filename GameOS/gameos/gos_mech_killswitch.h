@@ -2,8 +2,28 @@
 #pragma once
 #include <cstdint>
 
-// Runtime toggle for the GPU mech renderer.
-// Default: enabled by env-var MC2_GPU_MECHS=1 at process start.
+// =============================================================================
+// DEFAULT-ON FLIP (2026-05-09)
+// =============================================================================
+// All GPU mech killswitches in this header now default to ON. The historical
+// `(getenv("X") != nullptr)` opt-in pattern was replaced by `default-on, "0"
+// opts out` after the slice campaign accumulated empirical soak (tier1 5/5,
+// 90s mc2_10 Tracy clean, mouse-pick + sensor canaries verified, combined
+// Mech3D.UpdateGeometry stack -80%).
+//
+// To OPT OUT of any individual flag: set the env var to literal "0".
+//   e.g.  MC2_GPU_MECHS=0  →  legacy CPU mech path
+//
+// Any other value (including unset) keeps the new default-on behavior.
+// See `envFlagDefaultOn` in gos_mech_batcher.cpp for the canonical pattern.
+//
+// Inter-flag dependencies still apply — most downstream flags only take
+// effect when MC2_GPU_MECHS=1 (now default). Opting out of MC2_GPU_MECHS
+// effectively opts out of the entire GPU mech path.
+// =============================================================================
+
+// Runtime toggle for the GPU mech renderer. DEFAULT-ON.
+// Opt-out: MC2_GPU_MECHS=0 → legacy CPU mech path.
 // Can also be toggled at runtime via RAlt+M (wire in gameosmain.cpp hotkey handler).
 extern bool g_useGpuMechs;
 

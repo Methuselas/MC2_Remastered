@@ -19,38 +19,66 @@
 static_assert(MECH_RING_FRAMES == STATIC_PROP_RING_FRAMES,
               "MECH_RING_FRAMES must match STATIC_PROP_RING_FRAMES");
 
-// Enabled by env-var MC2_GPU_MECHS=1 at process start. Slice A is opt-in;
-// runtime hotkey toggle (RAlt+M) is deferred — wire alongside the default-on
-// flip if it becomes useful.
-bool g_useGpuMechs = (getenv("MC2_GPU_MECHS") != nullptr);
+// Default-on flip (2026-05-09): all GPU mech killswitches now default to ON.
+// Helper returns true unless the env var is explicitly set to "0". Operators
+// can opt out per-flag via MC2_GPU_MECH_<FLAG>=0. Pre-flip pattern was
+// `(getenv("X") != nullptr)` (default-off opt-in); post-flip is `default-on,
+// "0" opts out`. Each individual slice's killswitch comments in
+// gos_mech_killswitch.h document the inverted semantics.
+//
+// Why default-on shipped 2026-05-09: full slice campaign accumulated
+// substantial empirical soak — tier1 5/5 PASS at full bore, multiple 90s
+// mc2_10 Tracy captures clean, mouse-pick + sensor-diamond visual canaries
+// passed, combined stack delivers Mech3D.UpdateGeometry mean 71→14.08µs/call
+// (-80%). User explicitly signed off on B1's "needs more verification"
+// constraint based on this evidence.
+static bool envFlagDefaultOn(const char* name) {
+    const char* v = getenv(name);
+    if (v == nullptr) return true;                  // unset → on (new default)
+    if (v[0] == '0' && v[1] == '\0') return false;  // exactly "0" → off
+    return true;                                     // any other value → on
+}
+
+// Slice A: GPU mech batcher. Foundation for the entire stack.
+// Opt-out: MC2_GPU_MECHS=0
+bool g_useGpuMechs = envFlagDefaultOn("MC2_GPU_MECHS");
 
 // Slice B1: enables calc_light() in mech.vert. Requires g_useGpuMechs=true
 // to take effect (the calc_light branch is inside the GPU mech draw path).
-bool g_useGpuMechLighting = (getenv("MC2_GPU_MECH_LIGHTING") != nullptr);
+// Opt-out: MC2_GPU_MECH_LIGHTING=0
+bool g_useGpuMechLighting = envFlagDefaultOn("MC2_GPU_MECH_LIGHTING");
 
 // Slice C1: render-only mech GPU cull. Requires g_useGpuMechs=true.
-bool g_useGpuMechCull     = (getenv("MC2_GPU_MECH_CULL") != nullptr);
+// Opt-out: MC2_GPU_MECH_CULL=0
+bool g_useGpuMechCull = envFlagDefaultOn("MC2_GPU_MECH_CULL");
 
 // Slice C2: weighted multi-bone skinning. Requires g_useGpuMechs=true.
-bool g_useGpuMechSkin     = (getenv("MC2_GPU_MECH_SKIN") != nullptr);
+// Opt-out: MC2_GPU_MECH_SKIN=0
+bool g_useGpuMechSkin = envFlagDefaultOn("MC2_GPU_MECH_SKIN");
 
 // Slice C3-revised: see gos_mech_killswitch.h. Body-only fast transform.
-bool g_useGpuMechFastTransform = (getenv("MC2_GPU_MECH_FAST_TRANSFORM") != nullptr);
+// Opt-out: MC2_GPU_MECH_FAST_TRANSFORM=0
+bool g_useGpuMechFastTransform = envFlagDefaultOn("MC2_GPU_MECH_FAST_TRANSFORM");
 
 // Slice C3-shadow: see gos_mech_killswitch.h. Shadow callsite fast transform.
-bool g_useGpuMechShadowFastTransform = (getenv("MC2_GPU_MECH_SHADOW_FAST_TRANSFORM") != nullptr);
+// Opt-out: MC2_GPU_MECH_SHADOW_FAST_TRANSFORM=0
+bool g_useGpuMechShadowFastTransform = envFlagDefaultOn("MC2_GPU_MECH_SHADOW_FAST_TRANSFORM");
 
 // Slice D-shadow-skip: see gos_mech_killswitch.h. Skip mechShadowShape transform.
-bool g_useGpuMechShadowSkip = (getenv("MC2_GPU_MECH_SHADOW_SKIP") != nullptr);
+// Opt-out: MC2_GPU_MECH_SHADOW_SKIP=0
+bool g_useGpuMechShadowSkip = envFlagDefaultOn("MC2_GPU_MECH_SHADOW_SKIP");
 
 // Slice D-shadow-state-strip: see gos_mech_killswitch.h.
-bool g_useGpuMechShadowStateStrip = (getenv("MC2_GPU_MECH_SHADOW_STATE_STRIP") != nullptr);
+// Opt-out: MC2_GPU_MECH_SHADOW_STATE_STRIP=0
+bool g_useGpuMechShadowStateStrip = envFlagDefaultOn("MC2_GPU_MECH_SHADOW_STATE_STRIP");
 
 // Slice D-leaf-skip-v2: see gos_mech_killswitch.h.
-bool g_useGpuMechLeafSkip = (getenv("MC2_GPU_MECH_LEAF_SKIP") != nullptr);
+// Opt-out: MC2_GPU_MECH_LEAF_SKIP=0
+bool g_useGpuMechLeafSkip = envFlagDefaultOn("MC2_GPU_MECH_LEAF_SKIP");
 
 // Slice D-sensor-skip: see gos_mech_killswitch.h.
-bool g_useGpuMechSensorSkip = (getenv("MC2_GPU_MECH_SENSOR_SKIP") != nullptr);
+// Opt-out: MC2_GPU_MECH_SENSOR_SKIP=0
+bool g_useGpuMechSensorSkip = envFlagDefaultOn("MC2_GPU_MECH_SENSOR_SKIP");
 
 // ---------------------------------------------------------------------------
 // File-static state
