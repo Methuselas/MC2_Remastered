@@ -34,6 +34,12 @@ static uint32_t  s_frameSlot      = 0;
 static uint32_t  s_maxActors      = 0;   // set at init, immutable after
 static uint32_t  s_perFrameCount  = 0;   // records submitted this frame
 static bool      s_initialized    = false;
+// 2026-05-11: once-per-frame latch for overflow log. The s_perFrameCount==cap
+// check alone doesn't gate repeats: the overflow branch returns before
+// incrementing, so every excess submit re-fires the print. Pause cycles
+// hammer this with hundreds of submits → console lag → input stuck. Latch
+// resets in substrate_frameBegin().
+static bool      s_overflowLoggedThisFrame = false;
 
 // 600-frame summary counter.
 static uint32_t  s_flushCount     = 0;
@@ -189,6 +195,7 @@ void substrate_frameBegin() {
 
     // Reset the per-frame record count for this slot.
     s_perFrameCount = 0;
+    s_overflowLoggedThisFrame = false;  // 2026-05-11 reset overflow log latch
 
     SUBSTRATE_TRACE("event=frame_begin slot=%u", s_frameSlot);
 }
@@ -202,8 +209,10 @@ void substrate_submitDynamicActor(const GpuActorRecord& rec) {
     if (!s_mappedPtr) return;
 
     if (s_perFrameCount >= s_maxActors) {
-        // Overflow: clamp and log (once per overflow event).
-        if (s_perFrameCount == s_maxActors) {
+        // Overflow: clamp and log once per frame. Same latch fix as
+        // substrate_appendStaticPropRecord (2026-05-11).
+        if (!s_overflowLoggedThisFrame) {
+            s_overflowLoggedThisFrame = true;
             printf("[GPU_CULL v1] event=substrate_overflow at=%u cap=%u\n",
                    s_perFrameCount, s_maxActors);
             fflush(stdout);
@@ -291,8 +300,13 @@ void substrate_appendStaticPropRecord(const GpuActorRecord& rec) {
     if (!s_mappedPtr) return;
 
     if (s_perFrameCount >= s_maxActors) {
-        // Overflow: same behavior as submitDynamicActor (once-per-event log).
-        if (s_perFrameCount == s_maxActors) {
+        // Overflow: log once per frame (latch resets in substrate_frameBegin).
+        // 2026-05-11: prior implementation tested s_perFrameCount==s_maxActors
+        // but never incremented past cap in the overflow branch, so every excess
+        // submit re-fired the print. On pause this produced hundreds of prints
+        // per frame and visibly stalled the game.
+        if (!s_overflowLoggedThisFrame) {
+            s_overflowLoggedThisFrame = true;
             printf("[GPU_CULL v1] event=static_prop_overflow at=%u cap=%u\n",
                    s_perFrameCount, s_maxActors);
             fflush(stdout);
