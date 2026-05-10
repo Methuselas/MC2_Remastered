@@ -72,20 +72,24 @@
 //---------------------------------------------------------------------------
 extern uint32_t g_mc2FrameCounter;  // defined in mclib/tgl.cpp:3718
 
-// Env bool parser: unset/"0"/"false"/"off"/"no" disable; everything else
-// enables. Do NOT regress to `getenv(...) != nullptr` — that would treat
-// MC2_STATIC_UPDATE_SKIP=0 as ENABLED (this is the GPU_OBJECTS class of bug
-// the user explicitly told us to avoid).
-static bool ParseEnvBool(const char* name) {
+// Env bool parser: unset returns `def`; "0"/"false"/"off"/"no" disable;
+// everything else enables. Do NOT regress to `getenv(...) != nullptr` —
+// that would treat MC2_STATIC_UPDATE_SKIP=0 as ENABLED (this is the
+// GPU_OBJECTS class of bug the user explicitly told us to avoid).
+static bool ParseEnvBool(const char* name, bool def = false) {
     const char* v = getenv(name);
-    if (!v || !*v) return false;
+    if (!v || !*v) return def;
     if (v[0]=='0' && !v[1]) return false;
     if (!_stricmp(v, "false") || !_stricmp(v, "off") || !_stricmp(v, "no")) return false;
     return true;
 }
 
 static const bool s_staticUpdateTrace = ParseEnvBool("MC2_STATIC_UPDATE_TRACE");
-static const bool s_staticUpdateSkip  = ParseEnvBool("MC2_STATIC_UPDATE_SKIP");
+// 2026-05-11: default-on after the per-instance lightDataIndex fix
+// (commit e568985) retired the wrong-RGB-during-motion residual under
+// UPDATE_SKIP=1. Set MC2_STATIC_UPDATE_SKIP=0 to opt back into the
+// historical full-update path.
+static const bool s_staticUpdateSkip  = ParseEnvBool("MC2_STATIC_UPDATE_SKIP", true);
 
 namespace {
 struct StaticUpdateCounters {

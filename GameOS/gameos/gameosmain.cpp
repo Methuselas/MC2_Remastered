@@ -720,15 +720,16 @@ int main(int argc, char** argv)
         // Must match the ParseEnvBool logic in code/terrobj.cpp so the banner
         // accurately reflects the actual gate state (getenv!=nullptr would report
         // MC2_STATIC_UPDATE_SKIP=0 as enabled, breaking operator trust in the banner).
-        auto suParseBool = [](const char* name) -> bool {
+        auto suParseBool = [](const char* name, bool def = false) -> bool {
             const char* v = getenv(name);
-            if (!v || !*v) return false;
+            if (!v || !*v) return def;
             if (v[0] == '0' && !v[1]) return false;
             if (!_stricmp(v, "false") || !_stricmp(v, "off") || !_stricmp(v, "no")) return false;
             return true;
         };
         const bool suTrace = suParseBool("MC2_STATIC_UPDATE_TRACE");
-        const bool suSkip  = suParseBool("MC2_STATIC_UPDATE_SKIP");
+        // 2026-05-11: MC2_STATIC_UPDATE_SKIP defaults ON; mirror in terrobj.cpp:88.
+        const bool suSkip  = suParseBool("MC2_STATIC_UPDATE_SKIP", true);
         bool gpuCullSubstrate = (getenv("MC2_GPU_CULL_SUBSTRATE") != nullptr && getenv("MC2_GPU_CULL_SUBSTRATE")[0] != '0');
         bool gpuCullParity    = (getenv("MC2_GPU_CULL_AABB_PARITY") != nullptr && getenv("MC2_GPU_CULL_AABB_PARITY")[0] != '0');
         const bool shrHR      = (getenv("MC2_SHADER_HOT_RELOAD")    != nullptr);
