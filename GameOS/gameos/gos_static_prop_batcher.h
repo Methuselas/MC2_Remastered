@@ -360,3 +360,7 @@ bool batcher_isCoalesceArmed();
 // mission load. Slice-1 NOT consumed (foundation for slice 2 GPU-emit).
 uint32_t batcher_getPerTypePeakCount(uint32_t typeID);
 
+// true when MC2_STATIC_PROP_GLOBAL_POOL_LEGACY=1 — keeps legacy per-type-cap
+// layout. Consumed by patch dispatch to set u_legacyBaseInstance uniform.
+bool batcher_isGlobalPoolLegacy();
+

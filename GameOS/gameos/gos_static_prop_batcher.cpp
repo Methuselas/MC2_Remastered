@@ -49,6 +49,14 @@ static const bool s_texHandoffTrace = (getenv("MC2_TEX_HANDOFF_TRACE") != nullpt
 // field is stale on the static replay. Counters are function-local statics so they
 // reset per process lifetime; format matches both call sites verbatim.
 static const bool s_treeDiagTrace = (getenv("MC2_TREE_DIAG_TRACE") != nullptr);
+
+// MC2_STATIC_PROP_GLOBAL_POOL_LEGACY=1 — forces the legacy per-type-cap
+// coalesce layout (keeps existing path; new global-pool path is disabled).
+// Env-read once at process start; survives until soak completes.
+static const bool s_globalPoolLegacy = []() {
+    const char* v = getenv("MC2_STATIC_PROP_GLOBAL_POOL_LEGACY");
+    return v != nullptr && v[0] != '0';
+}();
 #define TREE_DIAG(fmt, ...) \
     do { if (s_treeDiagTrace) { fprintf(stderr, "[TREE_DIAG] " fmt "\n", ##__VA_ARGS__); fflush(stderr); } } while (0)
 
@@ -3677,3 +3685,5 @@ bool batcher_isCoalesceArmed()       { return s_coalesceArmed;       }
 uint32_t batcher_getPerTypePeakCount(uint32_t typeID) {
     return typeID < s_perTypePeak.size() ? s_perTypePeak[typeID] : 0u;
 }
+
+bool batcher_isGlobalPoolLegacy() { return s_globalPoolLegacy; }
