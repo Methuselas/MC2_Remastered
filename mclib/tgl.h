@@ -948,6 +948,12 @@ class TG_Shape
 		bool  GetLightsOut()      const { return lightsOut; }
 		bool  GetIsWindow()       const { return isWindow; }
 		bool  GetIsSpotlight()    const { return isSpotlight; }
+		// 2026-05-10: SHAPE_NODE filter accessor for non-friend callers
+		// (BldgAppearance/TreeAppearance::registerStatic). Mirrors the
+		// guard used by submitMultiShape at gos_static_prop_batcher.cpp:2047.
+		// Returns true only when myType is non-null AND its node-type is
+		// SHAPE_NODE (the only kind that has TG_TypeShape geometry).
+		bool  IsShapeNode()       const;
 
 		void SetLightsOut (bool lightFlag)
 		{

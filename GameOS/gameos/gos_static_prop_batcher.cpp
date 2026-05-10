@@ -3,6 +3,8 @@
 #include "gos_profiler.h"
 #include "gos_object_parity.h"           // Slice 2 Stage 2.D.1 parity harness
 #include "gpu_cull_compute.h"            // C1b: compute_isEnabled, getIndirectCmdBuf, getBucketCount
+#include "gpu_cull_substrate.h"          // 2026-05-10: substrate_appendStaticPropRecord
+#include "gpu_cull_record.h"             // 2026-05-10: GpuActorRecord, Cat_StaticProp
 #include "gameos.hpp"
 #include "utils/shader_builder.h"
 #include "tgl.h"  // TG_Shape::s_worldToClip
@@ -1889,6 +1891,43 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
     bucket.instances.push_back(inst);
     s_lastBuiltBatch.push_back(inst);  // Stage 3.C: batch accumulator
 
+    // 2026-05-10: dynamic-path substrate sync. Without this, an actor whose
+    // appearance class lacks a registerStatic override (notably
+    // GenericAppearance — warehouses, S_admin, watchtowers, control buildings)
+    // populates bucket.instances every frame via submitMultiShape but never
+    // appears in the substrate's GpuActorRecord stream. The compute cull then
+    // writes 0 to bucketCountData[typeID] for those types, and the coalesce
+    // multi-draw uses that GPU-authoritative count → renders zero instances of
+    // those types even though the bucket has CPU data. The legacy per-bucket
+    // draw branch (substrate killswitch) is unaffected because it draws
+    // bucket.instances.size() directly and does not consult bucketCountData.
+    //
+    // Mirrors GpuStaticPropRegistry::flush()'s substrate append: same
+    // worldCenter (Stuff/MLR → raw MC2 axis swap), same boundingRadius=200,
+    // same category encoding (Cat_StaticProp + typeID<<4). Static-registry
+    // and dynamic-submit paths now produce equivalent substrate records.
+    if (gpu_cull::substrate_isEnabled()) {
+        gpu_cull::GpuActorRecord rec{};
+        rec.worldCenter[0]  = -inst.modelMatrix[3];
+        rec.worldCenter[1]  =  inst.modelMatrix[11];
+        rec.worldCenter[2]  =  inst.modelMatrix[7];
+        rec.boundingRadius  = 200.0f;
+        rec.worldAabbMin[0] = rec.worldCenter[0] - rec.boundingRadius;
+        rec.worldAabbMin[1] = rec.worldCenter[1] - rec.boundingRadius;
+        rec.worldAabbMin[2] = rec.worldCenter[2] - rec.boundingRadius;
+        rec.worldAabbMax[0] = rec.worldCenter[0] + rec.boundingRadius;
+        rec.worldAabbMax[1] = rec.worldCenter[1] + rec.boundingRadius;
+        rec.worldAabbMax[2] = rec.worldCenter[2] + rec.boundingRadius;
+        rec.category        = (static_cast<uint32_t>(typeID) << 4)
+                            | static_cast<uint32_t>(gpu_cull::Cat_StaticProp);
+        rec.flags           = gpu_cull::Flag_None;
+        rec.actorId         = 0u;
+        rec.prevVisibilityBit = 1u;
+        rec.consumerFlags   = 0u;
+        rec.blockIdx        = 0u;
+        gpu_cull::substrate_appendStaticPropRecord(rec);
+    }
+
     // Stage 2.D.2 — dual-emit snapshot collection.
     // When the latch is Armed, capture per-vertex lit ARGB in triangle-soup
     // expanded order (matching gl_VertexID in static_prop.vert). The shader
@@ -2113,7 +2152,8 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
                 if (!s_emittedRegisteredDump) {
                     s_emittedRegisteredDump = true;
                     const size_t total = s_types.size();
-                    const size_t cap = total < 30 ? total : 30;
+                    // 2026-05-10 diag: bumped 30 -> 600 to surface buildings.
+                    const size_t cap = total < 600 ? total : 600;
                     std::fprintf(stderr,
                         "[GPUPROPS_REG] event=registered_dump total=%zu shown=%zu\n",
                         total, cap);

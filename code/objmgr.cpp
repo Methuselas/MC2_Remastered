@@ -1274,6 +1274,12 @@ void GameObjectManager::registerStaticPropsForMissionLoad() {
 	if (!GpuStaticPropRegistry::isMissionLoadRegEnabled()) return;
 
 	int totalEnumerated = 0, totalRegistered = 0, totalSkipped = 0;
+	// 2026-05-10 diag: per-array breakdown to localise the buildings-don't-render bug.
+	int byArr_enum[4] = {0,0,0,0}; // 0=terrainObjects 1=buildings 2=turrets 3=gates
+	int byArr_reg[4]  = {0,0,0,0};
+	int byArr_skip[4] = {0,0,0,0};
+	int byArr_noapp[4]= {0,0,0,0};
+	int currentArr = 0;
 
 	// Push game-object position/rotation into Appearance::position/rotation
 	// before registerStatic() reads them. Without this, buildings/turrets/gates
@@ -1286,26 +1292,41 @@ void GameObjectManager::registerStaticPropsForMissionLoad() {
 	auto registerOne = [&](GameObjectPtr obj) {
 		if (!obj) return;
 		++totalEnumerated;
+		++byArr_enum[currentArr];
 		AppearancePtr app = obj->getAppearance();
-		if (!app) { ++totalSkipped; return; }
+		if (!app) { ++totalSkipped; ++byArr_skip[currentArr]; ++byArr_noapp[currentArr]; return; }
 		app->setObjectParameters(obj->getPosition(), obj->getRotation(), 0, 0, 0);
 		app->registerStatic();
-		if (app->isStaticRegistered()) ++totalRegistered;
-		else                            ++totalSkipped;
+		if (app->isStaticRegistered()) { ++totalRegistered; ++byArr_reg[currentArr]; }
+		else                           { ++totalSkipped;    ++byArr_skip[currentArr]; }
 	};
 
+	currentArr = 0;
 	for (long i = 0; i < numTerrainObjects; ++i)
 		registerOne(terrainObjects[i]);
+	currentArr = 1;
 	for (long i = 0; i < numBuildings; ++i)
 		registerOne(buildings[i]);
+	currentArr = 2;
 	for (long i = 0; i < numTurrets; ++i)
 		registerOne(turrets[i]);
+	currentArr = 3;
 	for (long i = 0; i < numGates; ++i)
 		registerOne(gates[i]);
 
 	fprintf(stderr,
 		"[STATIC_PROP_REG v1] event=mission_load enumerated=%d registered=%d skipped=%d\n",
 		totalEnumerated, totalRegistered, totalSkipped);
+	fprintf(stderr,
+		"[STATIC_PROP_REG v1] event=mission_load_byarr "
+		"terrainObjects=%d/%d (skip=%d noapp=%d) "
+		"buildings=%d/%d (skip=%d noapp=%d) "
+		"turrets=%d/%d (skip=%d noapp=%d) "
+		"gates=%d/%d (skip=%d noapp=%d)\n",
+		byArr_reg[0], byArr_enum[0], byArr_skip[0], byArr_noapp[0],
+		byArr_reg[1], byArr_enum[1], byArr_skip[1], byArr_noapp[1],
+		byArr_reg[2], byArr_enum[2], byArr_skip[2], byArr_noapp[2],
+		byArr_reg[3], byArr_enum[3], byArr_skip[3], byArr_noapp[3]);
 	fflush(stderr);
 }
 

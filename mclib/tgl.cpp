@@ -685,6 +685,15 @@ void TG_TypeShape::destroy (void)
 }	
 
 //-------------------------------------------------------------------------------
+// 2026-05-10: out-of-line so myType (protected) stays inside the class.
+// SHAPE_NODE accessor for non-friend callers — see tgl.h declaration.
+bool TG_Shape::IsShapeNode() const
+{
+	if (!myType) return false;
+	return const_cast<TG_TypeNodePtr>(myType)->GetNodeType() == SHAPE_NODE;
+}
+
+//-------------------------------------------------------------------------------
 //Frees memory and resets locals to defaults.
 void TG_Shape::destroy (void)
 {

@@ -1603,7 +1603,25 @@ long BldgAppearance::render (long depthFixup)
 			// Stage 3.D: static registry fast path (mirror of TreeAppearance
 			// at bdactor.cpp:4123). Set MC2_FORCE_DYNAMIC_BUILDINGS=1 to force
 			// fallback to dynamic submitMultiShape for boundary diagnosis.
-			if (IsStaticNow()) {
+			// 2026-05-10 diag: per-frame counters to localise buildings-don't-
+			// render bug (substrate=ON misses buildings; killswitch shows them).
+			static uint64_t s_diag_render_calls = 0;
+			static uint64_t s_diag_static_now_true = 0;
+			static uint64_t s_diag_lightidx_uintmax = 0;
+			static uint64_t s_diag_markVisible = 0;
+			static uint64_t s_diag_static_now_false_reg = 0;
+			static uint64_t s_diag_static_now_false_eligible = 0;
+			static uint64_t s_diag_static_now_false_other = 0;
+			static uint64_t s_diag_dyn_submit = 0;
+			++s_diag_render_calls;
+			const bool isnow = IsStaticNow();
+			if (isnow) ++s_diag_static_now_true;
+			else {
+				if (!staticReg.registered) ++s_diag_static_now_false_reg;
+				else if (!isStaticEligible()) ++s_diag_static_now_false_eligible;
+				else ++s_diag_static_now_false_other;
+			}
+			if (isnow) {
 				static const bool s_forceDynamicBldgs =
 				    (getenv("MC2_FORCE_DYNAMIC_BUILDINGS") != nullptr);
 				if (s_forceDynamicBldgs) {
@@ -1612,12 +1630,30 @@ long BldgAppearance::render (long depthFixup)
 				} else if (bldgShape && bldgShape->getCachedGpuLightIndex() == UINT32_MAX) {
 					// Light gather failed this frame — invalidate so dynamic
 					// path re-runs and re-registers next frame.
+					++s_diag_lightidx_uintmax;
 					invalidateStaticRegistration();
 				} else {
 					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex);
+					++s_diag_markVisible;
 					submittedToGpu = true;
 				}
 			}
+			static const bool s_bldgDiagTrace = (getenv("MC2_BLDG_DIAG_TRACE") != nullptr);
+			if (s_bldgDiagTrace && (s_diag_render_calls % 600) == 0) {
+				fprintf(stderr,
+					"[BLDG_DIAG v1] event=summary calls=%llu staticNow=%llu "
+					"notreg=%llu notelig=%llu other=%llu lightidxUM=%llu markVis=%llu dynSubmit=%llu\n",
+					(unsigned long long)s_diag_render_calls,
+					(unsigned long long)s_diag_static_now_true,
+					(unsigned long long)s_diag_static_now_false_reg,
+					(unsigned long long)s_diag_static_now_false_eligible,
+					(unsigned long long)s_diag_static_now_false_other,
+					(unsigned long long)s_diag_lightidx_uintmax,
+					(unsigned long long)s_diag_markVisible,
+					(unsigned long long)s_diag_dyn_submit);
+				fflush(stderr);
+			}
+			(void)s_diag_dyn_submit;  // updated below if we go to the dyn path
 
 			if (!submittedToGpu && bldgShape)
 			{
@@ -1640,6 +1676,7 @@ long BldgAppearance::render (long depthFixup)
 				const char* callerName = (appearType ? appearType->name : nullptr);
 				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
 					bldgShape, GpuStaticPropPopulation::Building, callerName);
+				if (submittedToGpu) ++s_diag_dyn_submit;
 				// Slice 2 (object-offload) — Stage 2.B: late-registration
 				// recovery flag. When submitMultiShape failed because a leaf
 				// type was unregistered, mark the actor for full-bake on the
@@ -2727,10 +2764,23 @@ void BldgAppearance::registerStatic() {
 	std::vector<GpuStaticPropInstance> batch;
 	const int numShapes = static_cast<int>(bldgShape->GetNumShapes());
 	batch.reserve(numShapes);
+	// 2026-05-10 diag: count outcomes for buildings to see why so few reach count>1.
+	int diag_total = 0, diag_skip_processMe = 0, diag_skip_helper = 0,
+	    diag_skip_unreg = 0, diag_added = 0;
 	for (int i = 0; i < numShapes; ++i) {
+		++diag_total;
 		const TG_ShapeRec* rec = bldgShape->GetShapeRec(i);
-		if (!rec || !rec->processMe || !rec->node) continue;
+		if (!rec || !rec->processMe || !rec->node) { ++diag_skip_processMe; continue; }
 		TG_Shape* child = rec->node;
+		// 2026-05-10 fix: skip non-SHAPE_NODE children (helpers, spotlight
+		// emitters, animation roots) — mirrors GpuStaticPropBatcher::submitMultiShape
+		// at gos_static_prop_batcher.cpp:2047. Without this, the loop hits a
+		// helper, buildRecipeFromShape's static_cast<TG_TypeShape*>(myType)
+		// produces a pointer that isn't in s_typeIndex, returns false, and
+		// the entire building registration aborts on its FIRST helper. This
+		// is why mc2_10 buildings (warehouses, S_admin, control) previously
+		// failed registerStatic and never reached the substrate.
+		if (!child->IsShapeNode()) { ++diag_skip_helper; continue; }
 		uint32_t flags = 0;
 		if (child->GetLightsOut())   flags |= (1u << 0);
 		if (child->GetIsWindow())    flags |= (1u << 1);
@@ -2743,9 +2793,28 @@ void BldgAppearance::registerStatic() {
 				static_cast<uint32_t>(child->GetARGBHighlight()),
 				static_cast<uint32_t>(child->GetFogRGB()),
 				flags, &inst)) {
+			++diag_skip_unreg;
 			return;  // unregistered type — abort; first-render fallback covers it
 		}
 		batch.push_back(inst);
+		++diag_added;
+	}
+	// 2026-05-10 diag: env-gated per-building outcome. MC2_BLDG_REG_TRACE=1.
+	{
+		static const bool s_trace = (getenv("MC2_BLDG_REG_TRACE") != nullptr);
+		static int s_loggedCount = 0;
+		if (s_trace && s_loggedCount < 80) {
+			++s_loggedCount;
+			fprintf(stderr,
+				"[BLDG_REG_DIAG v1] appearType=%s numShapes=%d total=%d processMe_skip=%d "
+				"helper_skip=%d unreg_skip=%d added=%d\n",
+				(appearType ? appearType->name : "<null>"),
+				numShapes, diag_total, diag_skip_processMe, diag_skip_helper,
+				diag_skip_unreg, diag_added);
+			fflush(stderr);
+		}
+		(void)diag_total; (void)diag_skip_processMe; (void)diag_skip_helper;
+		(void)diag_skip_unreg; (void)diag_added;
 	}
 	if (batch.empty()) return;
 
@@ -4921,10 +4990,15 @@ void TreeAppearance::registerStatic() {
 	std::vector<GpuStaticPropInstance> batch;
 	const int numShapes = static_cast<int>(treeShape->GetNumShapes());
 	batch.reserve(numShapes);
+	int t_diag_total=0,t_diag_skip_pm=0,t_diag_skip_h=0,t_diag_skip_unreg=0,t_diag_added=0;
 	for (int i = 0; i < numShapes; ++i) {
+		++t_diag_total;
 		const TG_ShapeRec* rec = treeShape->GetShapeRec(i);
-		if (!rec || !rec->processMe || !rec->node) continue;
+		if (!rec || !rec->processMe || !rec->node) { ++t_diag_skip_pm; continue; }
 		TG_Shape* child = rec->node;
+		// 2026-05-10 fix: skip non-SHAPE_NODE helpers (mirror of submitMultiShape's
+		// filter) — see BldgAppearance::registerStatic for full rationale.
+		if (!child->IsShapeNode()) { ++t_diag_skip_h; continue; }
 		uint32_t flags = 0;
 		if (child->GetLightsOut())   flags |= (1u << 0);
 		if (child->GetIsWindow())    flags |= (1u << 1);
@@ -4936,9 +5010,27 @@ void TreeAppearance::registerStatic() {
 				static_cast<uint32_t>(child->GetARGBHighlight()),
 				static_cast<uint32_t>(child->GetFogRGB()),
 				flags, &inst)) {
+			++t_diag_skip_unreg;
 			return;  // unregistered type — abort; first-render fallback covers it
 		}
 		batch.push_back(inst);
+		++t_diag_added;
+	}
+	{
+		static const bool s_trace = (getenv("MC2_TREE_REG_TRACE") != nullptr);
+		static int s_treeRegLogged = 0;
+		if (s_trace && s_treeRegLogged < 80) {
+			++s_treeRegLogged;
+			fprintf(stderr,
+				"[TREE_REG_DIAG v1] appearType=%s numShapes=%d total=%d pm_skip=%d "
+				"h_skip=%d unreg_skip=%d added=%d\n",
+				(appearType ? appearType->name : "<null>"),
+				numShapes, t_diag_total, t_diag_skip_pm, t_diag_skip_h,
+				t_diag_skip_unreg, t_diag_added);
+			fflush(stderr);
+		}
+		(void)t_diag_total; (void)t_diag_skip_pm; (void)t_diag_skip_h;
+		(void)t_diag_skip_unreg; (void)t_diag_added;
 	}
 	if (batch.empty()) return;
 

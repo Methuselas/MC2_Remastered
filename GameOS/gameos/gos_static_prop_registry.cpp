@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <climits>
+#include <array>
+#include <set>
 
 // MC_TextureManager singleton, defined in mclib/txmmgr.cpp.
 extern MC_TextureManager* mcTextureManager;
@@ -280,9 +282,18 @@ void flush() {
     if (!s_enabled || s_liveRangeIndices.empty()) return;
     const uint32_t currentFrame = g_mc2FrameCounter;
     GpuStaticPropBatcher& batcher = GpuStaticPropBatcher::instance();
+    // 2026-05-10 diag: per-frame outcome counters across all ranges.
+    static uint64_t s_diag_flush_calls = 0;
+    static uint64_t s_diag_ranges_total = 0;
+    static uint64_t s_diag_ranges_tombstone = 0;
+    static uint64_t s_diag_ranges_stale_frame = 0;
+    static uint64_t s_diag_ranges_drawn = 0;
+    static uint64_t s_diag_leaves_appended = 0;
+    ++s_diag_flush_calls;
     for (uint32_t regIdx : s_liveRangeIndices) {
         RecipeRange& rng = s_recipeRanges[regIdx];
-        if (rng.count == 0 || !rng.multi) continue; // tombstone guard
+        ++s_diag_ranges_total;
+        if (rng.count == 0 || !rng.multi) { ++s_diag_ranges_tombstone; continue; } // tombstone guard
 
         // 2026-05-05: cull-aware static replay. Skip recipes whose multi-shape
         // cache wasn't refreshed this frame (offscreen actor whose update()
@@ -307,9 +318,24 @@ void flush() {
                     fflush(stderr);
                 }
             }
+            ++s_diag_ranges_stale_frame;
             continue;
         }
         rng.firstFlushSeen = true;
+        ++s_diag_ranges_drawn;
+        // 2026-05-10 diag: env-gated dump of multi-leaf ranges (MC2_REGFLUSH_MULTI=1).
+        {
+            static const bool s_traceMulti = (getenv("MC2_REGFLUSH_MULTI") != nullptr);
+            static std::set<uint32_t> s_seenMulti;
+            if (s_traceMulti && rng.count > 1 && s_seenMulti.size() < 100 &&
+                s_seenMulti.find(regIdx) == s_seenMulti.end()) {
+                s_seenMulti.insert(regIdx);
+                uint32_t firstTid = s_recipes[rng.first].typeID;
+                fprintf(stderr, "[REGFLUSH_MULTI v1] regIdx=%u count=%u firstTypeID=%u multi=%p\n",
+                    regIdx, rng.count, firstTid, (void*)rng.multi);
+                fflush(stderr);
+            }
+        }
 
         // Patch lightDataIndex from CacheGpuLightData() result gathered in
         // TreeAppearance::render() immediately before markVisible(). The UBO
@@ -367,42 +393,37 @@ void flush() {
             // draw — invisible for that frame, restored next frame as it re-enters frustum.
             if (gpu_cull::substrate_isEnabled()) {
                 gpu_cull::GpuActorRecord gpuRec{};
-                // World position: modelMatrix is COLUMN-MAJOR storage
+                // World position: inst.modelMatrix is Stuff row-vector
+                // convention stored in column-major array order
                 // (mclib/stuff/matrix.hpp:133 — `entries[(column<<2)+row]`).
-                // For an affine transform with translation at column 3:
-                //   entries[12] = m03 = translation x  (column 3, row 0)
-                //   entries[13] = m13 = translation y  (column 3, row 1)
-                //   entries[14] = m23 = translation z  (column 3, row 2)
-                //   entries[15] = m33 = 1
-                // The shader's `vec4(p,1) * inst.modelMatrix` picks up
-                // m[3] = vec4(entries[12..15]) as the translation.
+                // Translation lives at row 3, columns 0..2. With column-
+                // major storage, M(row,col) = entries[(col<<2)+row], so:
+                //   M(3,0) = entries[(0<<2)+3] = entries[3]   (tx)
+                //   M(3,1) = entries[(1<<2)+3] = entries[7]   (ty)
+                //   M(3,2) = entries[(2<<2)+3] = entries[11]  (tz)
+                // entries[12]/[13]/[14] are the BOTTOM ROW of columns 0..2
+                // (always 0 for affine transforms). Reading those produces
+                // worldCenter≈(0,0,0) for every static prop — the cull then
+                // projects every prop to the world origin, so all admit/
+                // reject together as the camera rotates (1° flip = all on/
+                // all off). Verified against Matrix4D::BuildTranslation at
+                // mclib/stuff/matrix.cpp:214 and the existing diagnostic at
+                // gos_static_prop_batcher.cpp:1879-1882.
                 //
-                // Earlier a comment in this file claimed translation was at
-                // entries[3]/[7]/[11] (those are the BOTTOM ROW of columns
-                // 0-2, which equal 0 for affine transforms). Reading those
-                // produces worldCenter≈(0,0,0) for every static prop — the
-                // cull then projects every prop to the world origin, which
-                // is outside the frustum on all stock missions, so it
-                // rejects all and bucketCountData stays 0 across all 548
-                // buckets. This is the bug that hid the static_prop_registry
-                // regression that track_c_substrate_regression.md describes
-                // as "substrate stays OFF" — the real symptom was empty
-                // render, not just slow.
-                //
-                // Coord-space note: the translation IS in Stuff/MLR camera
-                // frame (.x=-rawX, .y=elev, .z=rawY) per
-                // BldgAppearance/TreeAppearance::registerStatic at
-                // mclib/bdactor.cpp:2705-2708 / 4894-4897. gos_GetTerrainMVPMat4
-                // (axisSwap * worldToClip) expects raw MC2 world coords
-                // (x=east, y=north, z=elev) and bakes the swap. Un-swap:
-                //   raw.x = -stuff.x  =  -entries[12]
-                //   raw.y =  stuff.z  =   entries[14]
-                //   raw.z =  stuff.y  =   entries[13]   (elev)
-                // Mirror of static_prop.vert:125 which does the same swap on
-                // the per-vertex world position.
-                gpuRec.worldCenter[0] = -inst.modelMatrix[12];
-                gpuRec.worldCenter[1] =  inst.modelMatrix[14];
-                gpuRec.worldCenter[2] =  inst.modelMatrix[13];
+                // Coord-space: the translation is in Stuff/MLR camera frame
+                // (.x=-rawX, .y=elev, .z=rawY) per BldgAppearance and
+                // TreeAppearance::registerStatic in mclib/bdactor.cpp.
+                // gos_GetTerrainMVPMat4 (axisSwap * worldToClip) expects raw
+                // MC2 world coords (x=east, y=north, z=elev) and bakes the
+                // swap, so unswap here:
+                //   raw.x = -stuff.x  =  -entries[3]
+                //   raw.y =  stuff.z  =   entries[11]
+                //   raw.z =  stuff.y  =   entries[7]   (elev)
+                // Mirrors the per-vertex swap in static_prop.vert at
+                // `world_mc2 = vec3(-world_stuff.x, world_stuff.z, world_stuff.y)`.
+                gpuRec.worldCenter[0] = -inst.modelMatrix[3];
+                gpuRec.worldCenter[1] =  inst.modelMatrix[11];
+                gpuRec.worldCenter[2] =  inst.modelMatrix[7];
                 // Bounding radius: 200.0f covers stock MC2 buildings (largest are
                 // ~150 units across, e.g. warehouse footprint). Trees/fences are
                 // smaller but over-admission at the frustum edge is harmless —
@@ -422,14 +443,53 @@ void flush() {
                 // Category: typeID in upper 28 bits + Cat_StaticProp (5) in lower 4 bits.
                 gpuRec.category = (static_cast<uint32_t>(inst.typeID) << 4)
                                 | static_cast<uint32_t>(gpu_cull::Cat_StaticProp);
-                gpuRec.flags          = gpu_cull::Flag_None;
+                // 2026-05-10 diag: temp force always-visible to A/B-test whether
+                // the cull is rejecting buildings.
+                static const bool s_diag_forceAdmit =
+                    (getenv("MC2_STATIC_FORCE_ADMIT") != nullptr);
+                gpuRec.flags          = s_diag_forceAdmit
+                                          ? static_cast<uint32_t>(gpu_cull::Flag_AlwaysVisible)
+                                          : gpu_cull::Flag_None;
                 gpuRec.actorId        = 0u;   // static props have no actor handle
                 gpuRec.prevVisibilityBit = 1u; // CPU admitted this prop this frame
                 gpuRec.consumerFlags  = 0u;
                 gpuRec.blockIdx       = 0u;
                 gpu_cull::substrate_appendStaticPropRecord(gpuRec);
+                ++s_diag_leaves_appended;
+                // 2026-05-10 diag: typeID histogram. MC2_REGFLUSH_TYPEHIST=1 to enable.
+                {
+                    static const bool s_th = (getenv("MC2_REGFLUSH_TYPEHIST") != nullptr);
+                    static std::array<uint64_t, 1024> s_typeHist{};
+                    if (s_th) {
+                        if (inst.typeID < s_typeHist.size()) ++s_typeHist[inst.typeID];
+                        if (s_diag_flush_calls == 600 && i == 0) {
+                            fprintf(stderr, "[REGFLUSH_TYPEHIST v1] non-zero buckets:\n");
+                            for (size_t t = 0; t < s_typeHist.size(); ++t) {
+                                if (s_typeHist[t] > 0) {
+                                    fprintf(stderr, "[REGFLUSH_TYPEHIST v1] typeID=%zu count=%llu\n",
+                                        t, (unsigned long long)s_typeHist[t]);
+                                }
+                            }
+                            fflush(stderr);
+                        }
+                    }
+                }
             }
         }
+    }
+    static const bool s_regflushTrace = (getenv("MC2_REGFLUSH_DIAG_TRACE") != nullptr);
+    if (s_regflushTrace && (s_diag_flush_calls % 600) == 0) {
+        fprintf(stderr,
+            "[REGFLUSH_DIAG v1] event=summary calls=%llu ranges_seen=%llu "
+            "tombstone=%llu stale_frame=%llu drawn=%llu leaves_appended=%llu liveSize=%zu\n",
+            (unsigned long long)s_diag_flush_calls,
+            (unsigned long long)s_diag_ranges_total,
+            (unsigned long long)s_diag_ranges_tombstone,
+            (unsigned long long)s_diag_ranges_stale_frame,
+            (unsigned long long)s_diag_ranges_drawn,
+            (unsigned long long)s_diag_leaves_appended,
+            s_liveRangeIndices.size());
+        fflush(stderr);
     }
     // compute_dispatch() runs after this (moved to txmmgr.cpp between registry flush
     // and batcher flush) so it sees the appended static prop records.
