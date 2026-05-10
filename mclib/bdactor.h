@@ -210,6 +210,13 @@ class BldgAppearance : public ObjectAppearance
 			bool             registered;   // true iff recipeIndex is valid
 			TG_MultiShapePtr shape;        // bldgShape at registration time; detects swap
 			int32_t          recipeIndex;  // index into GpuStaticPropRegistry s_recipeRanges
+			// 2026-05-11: captured at update/touch time, immediately after
+			// CacheGpuLightData / ResubmitCachedGpuLightData write multi's
+			// per-type cachedGpuLightIndex_ — before sibling instances of the
+			// same multi-type overwrite it. Ferried into RecipeRange via
+			// markVisible() at render time. UINT32_MAX = uncaptured; flush
+			// falls back to multi cache when sentinel is seen.
+			uint32_t         lightDataIndex = 0xFFFFFFFFu;
 		};
 		StaticRegistration							staticReg;
 
@@ -507,6 +514,8 @@ class TreeAppearance : public ObjectAppearance
 			bool             registered;   // true iff recipeIndex is valid
 			TG_MultiShapePtr shape;        // treeShape at registration time; detects swap
 			int32_t          recipeIndex;  // index into GpuStaticPropRegistry s_recipeRanges
+			// 2026-05-11: see BldgAppearance::StaticRegistration::lightDataIndex.
+			uint32_t         lightDataIndex = 0xFFFFFFFFu;
 		};
 		StaticRegistration							staticReg;
 

@@ -1683,7 +1683,12 @@ long BldgAppearance::render (long depthFixup)
 					++s_diag_lightidx_uintmax;
 					invalidateStaticRegistration();
 				} else {
-					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex);
+					// 2026-05-11: pass per-actor captured lightDataIndex so
+					// flush() can read it (when MC2_STATIC_PER_INSTANCE_LIGHT=1)
+					// instead of multi->getCachedGpuLightIndex() — the per-multi
+					// scratch slot is last-writer-wins across sibling instances.
+					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex,
+					                                  staticReg.lightDataIndex);
 					++s_diag_markVisible;
 					submittedToGpu = true;
 				}
@@ -2399,6 +2404,10 @@ long BldgAppearance::update (bool animate)
 			// actors have overwritten worldLights[0]->aRGB for their positions.
 			{
 				bldgShape->CacheGpuLightData();
+				// 2026-05-11 per-instance capture: snapshot the multi's just-written
+				// cache slot for THIS actor before sibling actors of the same
+				// multi-type overwrite it. Ferried to RecipeRange via markVisible().
+				staticReg.lightDataIndex = bldgShape->getCachedGpuLightIndex();
 			}
 			{
 				bldgShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
@@ -2438,6 +2447,8 @@ long BldgAppearance::update (bool animate)
 			// already runs unconditionally in submitMultiShape; here we
 			// just hoist its effect to be visible to render() this frame.
 			bldgShape->CacheGpuLightData();
+			// 2026-05-11 per-instance capture: see gpuEligible branch above.
+			staticReg.lightDataIndex = bldgShape->getCachedGpuLightIndex();
 			needsFullBakeNextFrame = false;
 		}
 
@@ -2908,6 +2919,10 @@ void BldgAppearance::touch()
 	// legacy fallback path's staleness guard passes.
 	if (bldgShape) {
 		bldgShape->ResubmitCachedGpuLightData();
+		// 2026-05-11 per-instance capture: snapshot the just-resubmitted slot
+		// for THIS actor before sibling instances of the same multi-type
+		// overwrite multi->cachedGpuLightIndex_ in the same update phase.
+		staticReg.lightDataIndex = bldgShape->getCachedGpuLightIndex();
 		bldgShape->Touch();
 	}
 }
@@ -4477,7 +4492,9 @@ long TreeAppearance::render (long depthFixup)
 					invalidateStaticRegistration();
 					// Fall through to the if (!submittedToGpu && treeShape) dynamic path below.
 				} else {
-					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex);
+					// 2026-05-11: see BldgAppearance::render markVisible site.
+					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex,
+					                                  staticReg.lightDataIndex);
 					submittedToGpu = true;
 				}
 			}
@@ -4821,6 +4838,8 @@ long TreeAppearance::update (bool animate)
 			// Stage 2.D.2 fix: cache GPU light data while lights are per-actor-correct.
 			{
 				treeShape->CacheGpuLightData();
+				// 2026-05-11 per-instance capture (mirror of BldgAppearance::update).
+				staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
 			}
 			{
 				treeShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
@@ -4840,6 +4859,8 @@ long TreeAppearance::update (bool animate)
 			// next render() doesn't fail the UINT32_MAX gate at :4341
 			// and invalidate the freshly-set staticReg.
 			treeShape->CacheGpuLightData();
+			// 2026-05-11 per-instance capture (mirror of gpuEligible branch).
+			staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
 			needsFullBakeNextFrame = false;
 		}
 
@@ -5005,6 +5026,8 @@ void TreeAppearance::touch()
 	// guard doesn't suppress the legacy fallback path.
 	if (treeShape) {
 		treeShape->ResubmitCachedGpuLightData();
+		// 2026-05-11 per-instance capture: see BldgAppearance::touch.
+		staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
 		treeShape->Touch();
 	}
 }

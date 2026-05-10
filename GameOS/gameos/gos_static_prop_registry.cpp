@@ -52,6 +52,21 @@ static const bool s_missionLoadRegEnabled =
 static const bool s_lateSpawnRegEnabled =
     parseEnvBoolWithDefault("MC2_STATIC_PROP_LATE_SPAWN_REG", true);
 
+// 2026-05-11 per-instance light-idx capture. flush() consumes the value
+// stored in RecipeRange.lightDataIndex by markVisible() when this is on;
+// otherwise flush() reads the multi's shared cachedGpuLightIndex_ (the
+// historical last-writer-wins behavior — buggy under MC2_STATIC_UPDATE_SKIP=1
+// because multiple actors of the same multi-type write to the same per-multi
+// scratch slot).
+//
+// 2026-05-11 default-on after user soak: interactive mc2_01 run with
+// MC2_STATIC_UPDATE_SKIP=1 confirmed widespread wrong-RGB symptom retired,
+// 1 residual instance correlated with substrate-cap edge case (separate
+// follow-up). Set MC2_STATIC_PER_INSTANCE_LIGHT=0 to opt back into the
+// historical multi-cache path.
+static const bool s_perInstanceLight =
+    parseEnvBoolWithDefault("MC2_STATIC_PER_INSTANCE_LIGHT", true);
+
 #define SP_TRACE(fmt, ...) \
     do { if (s_trace) { printf("[STATIC_PROP] " fmt "\n", ##__VA_ARGS__); \
          fflush(stdout); } } while (0)
@@ -81,6 +96,11 @@ struct RecipeRange {
     // [STATIC_FIRST_FRAME v1] proof-of-fix fields (Track B Task 4):
     uint32_t           registeredOnFrame;   // g_mc2FrameCounter at registerRecipe()
     bool               firstFlushSeen;      // cleared at registerRecipe; set on first successful flush
+    // 2026-05-11 per-instance light-idx capture (MC2_STATIC_PER_INSTANCE_LIGHT):
+    // populated by markVisible() with the slot the actor's update/touch wrote
+    // into multi->cachedGpuLightIndex_ before sibling actors overwrote it.
+    // UINT32_MAX = uncaptured (flush falls back to multi->getCachedGpuLightIndex()).
+    uint32_t           lightDataIndex;
 };
 
 static std::vector<GpuStaticPropInstance> s_recipes;
@@ -217,6 +237,7 @@ int32_t registerRecipe(TG_MultiShape* multi,
     rng.pinsReleased      = false;
     rng.registeredOnFrame = g_mc2FrameCounter;
     rng.firstFlushSeen    = false;
+    rng.lightDataIndex    = 0xFFFFFFFFu;  // 2026-05-11 per-instance capture sentinel
     s_recipes.insert(s_recipes.end(), batch.begin(), batch.end());
     const int32_t regIdx = static_cast<int32_t>(s_recipeRanges.size());
     s_recipeRanges.push_back(rng);
@@ -254,10 +275,16 @@ int32_t registerRecipe(TG_MultiShape* multi,
     return regIdx;
 }
 
-void markVisible(int32_t regIdx) {
+void markVisible(int32_t regIdx, uint32_t lightDataIndex) {
     if (!s_enabled) return;
     if (regIdx < 0 || static_cast<uint32_t>(regIdx) >= s_recipeRanges.size()) return;
-    if (s_recipeRanges[static_cast<uint32_t>(regIdx)].count == 0) return; // tombstone
+    RecipeRange& rng = s_recipeRanges[static_cast<uint32_t>(regIdx)];
+    if (rng.count == 0) return; // tombstone
+    // 2026-05-11: capture per-actor lightDataIndex (the multi's cachedGpuLightIndex_
+    // at the moment THIS actor's update/touch wrote it, before sibling actors of
+    // the same multi-type overwrote it). flush() consumes this when
+    // MC2_STATIC_PER_INSTANCE_LIGHT=1 is set; otherwise flush ignores it.
+    rng.lightDataIndex = lightDataIndex;
     s_liveRangeIndices.push_back(static_cast<uint32_t>(regIdx));
 }
 
@@ -271,6 +298,7 @@ void invalidate(int32_t regIdx) {
     SP_TRACE("invalidate regIdx=%d (was count=%u)", regIdx, rng.count);
     rng.count = 0;
     rng.multi  = nullptr;
+    rng.lightDataIndex = 0xFFFFFFFFu;  // 2026-05-11 reset capture on invalidate
 }
 
 bool isReady(int32_t regIdx) {
@@ -348,7 +376,21 @@ void flush() {
         // a static instance when getCachedGpuLightIndex() == UINT32_MAX by
         // calling invalidateStaticRegistration() and falling through to the
         // dynamic submit path instead.
-        const uint32_t freshLightIdx = rng.multi->getCachedGpuLightIndex();
+        //
+        // 2026-05-11 per-instance light source-of-truth: when
+        // MC2_STATIC_PER_INSTANCE_LIGHT=1 is set AND markVisible() captured a
+        // non-sentinel value into rng.lightDataIndex, prefer it over the
+        // multi's per-type cache. This retires the last-writer-wins aliasing
+        // that produced the MC2_STATIC_UPDATE_SKIP=1 wrong-RGB residual:
+        // multiple actor instances sharing one multi-shape were all reading
+        // the same multi->cachedGpuLightIndex_ at flush time, getting whichever
+        // sibling's update/touch ran last. Per-actor capture decouples them.
+        // Without the env flag, behavior is byte-identical to the historical
+        // path.
+        const uint32_t freshLightIdx =
+            (s_perInstanceLight && rng.lightDataIndex != 0xFFFFFFFFu)
+                ? rng.lightDataIndex
+                : rng.multi->getCachedGpuLightIndex();
         // 2026-05-05 black-billboard diagnostic: report numLights at the cached
         // slot. If numLights==0 here, calc_light returns base_light only — for
         // tree leaves with aRGBLight=0xFF000000 + BaseVertexColor=0, that's black.

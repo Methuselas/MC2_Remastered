@@ -50,7 +50,15 @@ int32_t registerRecipe(TG_MultiShape* multi,
 // Called from TreeAppearance::render() when IsStaticNow() is true (and
 // getCachedGpuLightIndex() is valid). Appends regIdx to the per-frame live
 // list; flush() does leaf expansion + lightDataIndex patch.
-void markVisible(int32_t regIdx);
+//
+// 2026-05-11: lightDataIndex is the slot value captured at this actor's
+// update()/touch() time (when the multi's cache was THIS actor's slot
+// before sibling actors of the same multi-type overwrote it). flush()
+// uses this per-instance value when MC2_STATIC_PER_INSTANCE_LIGHT=1;
+// without the flag, flush() ignores it and reads the multi's cache (the
+// historical last-writer-wins behavior). Default arg keeps source-compat
+// for callers that haven't been updated.
+void markVisible(int32_t regIdx, uint32_t lightDataIndex = 0xFFFFFFFFu);
 
 // Called when static registration must be cleared (fall, late-reg recovery,
 // shape-pointer change, UINT32_MAX light index). Sets recipe range to
