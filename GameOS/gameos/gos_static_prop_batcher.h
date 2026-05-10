@@ -364,3 +364,7 @@ uint32_t batcher_getPerTypePeakCount(uint32_t typeID);
 // layout. Consumed by patch dispatch to set u_legacyBaseInstance uniform.
 bool batcher_isGlobalPoolLegacy();
 
+// Per-ring-frame instance capacity for the global pool (slice 1).
+// Override via MC2_STATIC_PROP_GLOBAL_CAP; default STATIC_PROP_GLOBAL_CAP_DEFAULT.
+uint32_t batcher_getGlobalInstanceCap();
+

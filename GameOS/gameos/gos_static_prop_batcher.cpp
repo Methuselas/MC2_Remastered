@@ -80,6 +80,10 @@ static_assert(RING_FRAMES == STATIC_PROP_RING_FRAMES,
 constexpr size_t   INITIAL_INSTANCES_PER_FRAME = 4096;
 constexpr size_t   INITIAL_COLORS_PER_FRAME    = 1'000'000;  // uint32 ARGB entries
 
+// Slice 1 (global instance pool). Default global cap and base-instance SSBO binding.
+constexpr uint32_t STATIC_PROP_GLOBAL_CAP_DEFAULT = 131072u;
+constexpr uint32_t BASE_INSTANCE_SSBO_BINDING     = 16u;
+
 // Immutable per-map geometry.
 GLuint s_sharedVbo = 0;
 GLuint s_sharedIbo = 0;
@@ -302,6 +306,32 @@ static const bool s_coalesceTrace =
         std::fprintf(stderr, "[COALESCE v1] " fmt "\n", ##__VA_ARGS__); \
         std::fflush(stderr); \
     } } while (0)
+
+// --- Global instance pool (slice 1, plan v3.8 step group 3). ---
+// s_globalInstanceCap: per-ring-frame instance capacity for the global pool.
+// Override via MC2_STATIC_PROP_GLOBAL_CAP env; defaults to STATIC_PROP_GLOBAL_CAP_DEFAULT.
+// s_baseInstanceByCmdSsbo: persistent-mapped SSBO, one uint32_t baseInstance per
+// draw command per ring frame. Binding BASE_INSTANCE_SSBO_BINDING (16).
+// Allocated inside finalizeGeometry under !s_globalPoolLegacy after the per-packet
+// sort builds s_alphaOffCmdCount + s_alphaOnCmdCount.
+static const uint32_t s_globalInstanceCap = []() {
+    const char* v = getenv("MC2_STATIC_PROP_GLOBAL_CAP");
+    if (v && v[0] != '\0') {
+        const uint32_t cap = static_cast<uint32_t>(std::atoi(v));
+        if (cap > 0) return cap;
+    }
+    return STATIC_PROP_GLOBAL_CAP_DEFAULT;
+}();
+
+GLuint   s_baseInstanceByCmdSsbo          = 0;
+void*    s_baseInstanceByCmdMap           = nullptr;
+size_t   s_baseInstanceByCmdBytesPerFrame = 0;
+
+// Per-frame accumulators — zeroed by batcher_prepareBaseInstanceTable() each frame (step 4).
+uint32_t s_offGroupCountThisFrame  = 0;
+size_t   s_offGroupBytesThisFrame  = 0;
+size_t   s_onGroupBytesThisFrame   = 0;
+size_t   s_totalUsedBytesThisFrame = 0;
 
 // --- Step 2.2: ProgramLocs uniform-location cache (§6.X). ---
 // One instance per program. -1 in any field means glGetUniformLocation
@@ -970,6 +1000,19 @@ void GpuStaticPropBatcher::onMapUnload() {
             glDeleteSync(s_coalesceFence[i]);
             s_coalesceFence[i] = nullptr;
         }
+    }
+
+    // Slice 1 step group 3 — teardown base-instance table SSBO before legacy ring.
+    if (s_baseInstanceByCmdSsbo) {
+        if (s_baseInstanceByCmdMap) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_baseInstanceByCmdSsbo);
+            glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            s_baseInstanceByCmdMap = nullptr;
+        }
+        glDeleteBuffers(1, &s_baseInstanceByCmdSsbo);
+        s_baseInstanceByCmdSsbo             = 0;
+        s_baseInstanceByCmdBytesPerFrame    = 0;
     }
 
     // 4.3 — unmap and delete the persistent-mapped instance SSBO.
@@ -1941,6 +1984,56 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                      cmdToBucket.data(),
                      GL_STATIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // Slice 1 step group 3 — allocate base-instance table under !s_globalPoolLegacy.
+    // Must come after the per-packet sort (lines above) so s_alphaOffCmdCount /
+    // s_alphaOnCmdCount are valid. One uint32_t per draw command per ring frame.
+    if (!s_globalPoolLegacy) {
+        const uint32_t totalCmds = s_alphaOffCmdCount + s_alphaOnCmdCount;
+        s_baseInstanceByCmdBytesPerFrame =
+            static_cast<size_t>(totalCmds) * sizeof(uint32_t);
+        const size_t totalBytes =
+            static_cast<size_t>(RING_FRAMES) * s_baseInstanceByCmdBytesPerFrame;
+        if (totalBytes > 0) {
+            glGenBuffers(1, &s_baseInstanceByCmdSsbo);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_baseInstanceByCmdSsbo);
+            const GLbitfield mapFlags =
+                GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+            while (glGetError() != GL_NO_ERROR) {}
+            glBufferStorage(GL_SHADER_STORAGE_BUFFER, totalBytes, nullptr, mapFlags);
+            const GLenum storageErr = glGetError();
+            if (storageErr != GL_NO_ERROR) {
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+                glDeleteBuffers(1, &s_baseInstanceByCmdSsbo);
+                s_baseInstanceByCmdSsbo          = 0;
+                s_baseInstanceByCmdBytesPerFrame = 0;
+                std::fprintf(stderr,
+                    "[COALESCE v1] event=disarmed reason=alloc_failed "
+                    "(baseInstanceByCmdSsbo glBufferStorage err=0x%04x bytes=%zu)\n",
+                    storageErr, totalBytes);
+                s_coalesceLayoutReady = false;
+                s_coalesceEnabled     = false;
+                s_coalesceArmed       = false;
+                return;
+            }
+            s_baseInstanceByCmdMap = glMapBufferRange(
+                GL_SHADER_STORAGE_BUFFER, 0, totalBytes, mapFlags);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            if (!s_baseInstanceByCmdMap) {
+                std::fprintf(stderr,
+                    "[COALESCE v1] event=disarmed reason=alloc_failed "
+                    "(baseInstanceByCmdSsbo glMapBufferRange returned null)\n");
+                s_coalesceLayoutReady = false;
+                s_coalesceEnabled     = false;
+                s_coalesceArmed       = false;
+                return;
+            }
+            std::fprintf(stderr,
+                "[COALESCE v1] event=baseInstance_buffer_ok cmds=%u "
+                "bytes_per_frame=%zu total_bytes=%zu\n",
+                totalCmds, s_baseInstanceByCmdBytesPerFrame, totalBytes);
+        }
     }
 
     // Step 5.12 — sort permutation overwrite (LAST step on success). The
@@ -3687,3 +3780,4 @@ uint32_t batcher_getPerTypePeakCount(uint32_t typeID) {
 }
 
 bool batcher_isGlobalPoolLegacy() { return s_globalPoolLegacy; }
+uint32_t batcher_getGlobalInstanceCap() { return s_globalInstanceCap; }
