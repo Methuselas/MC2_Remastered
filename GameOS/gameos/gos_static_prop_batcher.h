@@ -356,3 +356,7 @@ size_t batcher_getCoalescePerFrameInstanceBytes();
 bool batcher_isCoalesceLayoutReady();
 bool batcher_isCoalesceArmed();
 
+// Returns the highest admitted instance count ever seen for typeID since
+// mission load. Slice-1 NOT consumed (foundation for slice 2 GPU-emit).
+uint32_t batcher_getPerTypePeakCount(uint32_t typeID);
+

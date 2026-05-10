@@ -162,6 +162,17 @@ std::vector<GpuStaticPropPacket>                   s_packets;
 std::vector<GpuStaticPropType>                     s_types;
 std::unordered_map<const TG_TypeShape*, uint32_t>  s_typeIndex;
 
+// Peak instance count per typeID since mission load; resized lazily in the
+// per-frame flush loop. Slice-1: tracked but not consumed (foundation for
+// slice-2 GPU-emit, where peak[t] drives slot allocation).
+static std::vector<uint32_t> s_perTypePeak;
+
+// Coalesce ring frame slot — separate from legacy s_frameSlot (line ~:95).
+// Advanced inside batcher_prepareBaseInstanceTable() each frame under
+// non-legacy mode; mirrors s_frameSlot under legacy mode. Reset per-mission
+// in onMapLoad() for hygiene.
+static uint32_t s_coalesceFrameSlot = 0;
+
 // CPU-side staging during registration (cleared after finalizeGeometry).
 std::vector<uint8_t>  s_stagingVbo;
 std::vector<uint32_t> s_stagingIbo;
@@ -891,6 +902,8 @@ void GpuStaticPropBatcher::onMapLoad() {
     // Reset everything; called at every map boundary.
     s_packets.clear();
     s_types.clear();
+    s_perTypePeak.clear();
+    s_coalesceFrameSlot = 0;  // reset coalesce ring slot per-mission for hygiene
     s_typeIndex.clear();
     s_stagingVbo.clear();
     s_stagingIbo.clear();
@@ -2856,6 +2869,13 @@ void GpuStaticPropBatcher::flush() {
             if (typeID >= s_types.size()) continue;
             GpuStaticPropType& type = s_types[typeID];
 
+            // Step 1 (global-pool slice) — peak tracker. Updated
+            // unconditionally (both legacy and non-legacy modes) so
+            // slice-2 GPU-emit can read peak[t] for slot allocation.
+            if (typeID >= s_perTypePeak.size()) s_perTypePeak.resize(typeID + 1, 0u);
+            const uint32_t cnt = static_cast<uint32_t>(bucket.instances.size());
+            if (cnt > s_perTypePeak[typeID]) s_perTypePeak[typeID] = cnt;
+
             // Step 11.3 — per-type overflow guard. Memory-safety: cap
             // check on bucket.instances.size() (the count of bytes the
             // CPU is about to write), NOT the patched GPU
@@ -3653,3 +3673,7 @@ size_t batcher_getCoalescePerFrameInstanceBytes() {
 
 bool batcher_isCoalesceLayoutReady() { return s_coalesceLayoutReady; }
 bool batcher_isCoalesceArmed()       { return s_coalesceArmed;       }
+
+uint32_t batcher_getPerTypePeakCount(uint32_t typeID) {
+    return typeID < s_perTypePeak.size() ? s_perTypePeak[typeID] : 0u;
+}
