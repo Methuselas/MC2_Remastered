@@ -9,6 +9,7 @@
 #include "../../mclib/quad.h"
 #include "../../mclib/vertex.h"
 #include "../../mclib/tex_resolve_table.h"
+#include "../../mclib/terrain.h"  // Terrain::waterElevation, Terrain::frameCos
 
 #include <vector>
 #include <algorithm>
@@ -344,7 +345,71 @@ bool DrawMaskSolid() {
 }
 
 bool DrawMaskWater() {
-    return false;
+    if (!s_readyThisFrame) return false;
+
+    // Per-bucket killswitch (allows armed-solid-only configurations)
+    const char* armV = getenv("MC2_TERRAIN_MASK_DISPATCH_WATER");
+    if (armV && armV[0] == '0' && armV[1] == '\0') return false;
+
+    const uint32_t waterMaskSSBO = s_waterMaskSSBO;
+    const uint32_t recipeSSBO    = (uint32_t)WaterStream::EnsureRecipeBufferUploaded();
+    const uint32_t lightSSBO     = (uint32_t)gos_terrain_lighting_getOutputSSBO();
+    const int      recipeCount   = (int)WaterStream::GetRecipeCount();
+
+    if (waterMaskSSBO == 0 || recipeSSBO == 0 || recipeCount <= 0) return false;
+
+    const float wElev = Terrain::waterElevation;
+    const float fCos  = Terrain::frameCos;
+
+    const bool ok = gos_terrain_bridge_drawMaskWater(
+        waterMaskSSBO, recipeSSBO, lightSSBO, recipeCount, wElev, fCos);
+
+    if (s_traceOn) {
+        printf("[MASK_DISPATCH v1] event=draw_water ok=%d recipeCount=%d\n",
+               (int)ok, recipeCount);
+        fflush(stdout);
+    }
+
+    // ---- Water parity comparator (MC2_TERRAIN_MASK_DISPATCH_PARITY=1) -------
+    const char* parityV = getenv("MC2_TERRAIN_MASK_DISPATCH_PARITY");
+    if (parityV && parityV[0] != '0' && parityV[1] == '\0') {
+        int packWords = 0;
+        const uint32_t* packMask = WaterStream::GetWaterParityMask(&packWords);
+        const int cmpWords = (int)std::min((int)s_waterMask.size(), packWords);
+
+        static int s_frameCount = 0;
+        static int s_totalMismatches = 0;
+        int frameThrottled = 0;
+        ++s_frameCount;
+
+        for (int w = 0; w < cmpWords; ++w) {
+            uint32_t diff = s_waterMask[w] ^ packMask[w];
+            while (diff) {
+                if (frameThrottled < 16) {
+                    const int bit = mc2_ctz_u32(diff);
+                    const int vn  = w * 32 + bit;
+                    const uint32_t maskBit = (s_waterMask[w] >> bit) & 1u;
+                    const uint32_t packBit = (packMask[w]    >> bit) & 1u;
+                    printf("[TERRAIN_INDIRECT_PARITY v1] event=mismatch bucket=water"
+                           " vn=%d mask_set=%u pack_set=%u\n",
+                           vn, maskBit, packBit);
+                    fflush(stdout);
+                    ++frameThrottled;
+                }
+                ++s_totalMismatches;
+                diff &= diff - 1;
+            }
+        }
+
+        if ((s_frameCount % 600) == 0) {
+            printf("[TERRAIN_INDIRECT_PARITY v1] event=summary bucket=water"
+                   " frames=%d total_mismatches=%d\n",
+                   s_frameCount, s_totalMismatches);
+            fflush(stdout);
+        }
+    }
+
+    return ok;
 }
 
 uint32_t GetSolidMaskSSBO() {

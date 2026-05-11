@@ -222,6 +222,11 @@ void Build();
 // Reset to empty state (mission unload).
 void Reset();
 
+// Returns the water parity mask for this frame (indexed by corner-0 vertexNum,
+// same format as gos_terrain_mask_dispatch's s_waterMask). Built during
+// UploadAndBindThinRecords — only valid after that call. outWords = 450.
+const uint32_t* GetWaterParityMask(int* outWords);
+
 // Read-only access to the recipe array. Pointer is stable across the
 // mission lifetime (vector capacity is fixed after Build).
 const WaterRecipe* GetRecipes();

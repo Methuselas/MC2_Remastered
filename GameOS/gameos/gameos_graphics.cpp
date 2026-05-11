@@ -1304,6 +1304,7 @@ class gosRenderer {
         glsl_program* getWaterFastProgram()   const { return water_fast_prog_;   }
         glsl_program* getMineStaticProgram()  const { return mine_static_prog_;  }  // PR2c Stage 2c
         glsl_program* getMaskSolidProgram()   const { return mask_solid_prog_;   }  // B4 Stage 1b — mask-SOLID draw
+        glsl_program* getMaskWaterProgram()   const { return mask_water_prog_;   }  // B4 Stage 1c — mask-water draw
 
         // Water fast path (Stage 2 of renderWater architectural slice).
         // Issues 1-2 instanced draws against the WaterRecipe + WaterFrame SSBOs.
@@ -1609,6 +1610,7 @@ class gosRenderer {
         glsl_program* water_fast_prog_   = nullptr;  // gos_terrain_water_fast.vert + gos_tex_vertex.frag
         glsl_program* mine_static_prog_  = nullptr;  // PR2c Stage 2c — gos_terrain_mine_static.vert + .frag
         glsl_program* mask_solid_prog_   = nullptr;  // B4 Stage 1b — gos_terrain_mask_solid.vert + gos_terrain.frag
+        glsl_program* mask_water_prog_   = nullptr;  // B4 Stage 1c — gos_terrain_mask_water.vert + gos_tex_vertex.frag
 
         // Shadow mode
         gosRenderMaterial* shadow_terrain_material_ = nullptr;
@@ -2714,6 +2716,143 @@ bool gos_terrain_bridge_drawMaskSolid(uint32_t solidMaskSSBO,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// B4 Slice Stage 1c — Mask-water dual-run draw bridge.
+//
+// Called by gos_terrain_mask_dispatch::DrawMaskWater() from
+// Render.TerrainMask.Water. Reads the per-frame water mask SSBO at binding 18,
+// the WaterRecipe SSBO at binding 5, and the per-vertex lighting SSBO at
+// binding 2. Issues ONE glDrawArraysIndirect covering all recipeCount*6 vertices;
+// the VS emits degenerate triangles for quads outside the mask.
+// State save/restore mirrors gos_terrain_bridge_drawMaskSolid.
+// ──────────────────────────────────────────────────────────────────────────
+bool gos_terrain_bridge_drawMaskWater(uint32_t waterMaskSSBO,
+                                      uint32_t recipeSSBO,
+                                      uint32_t lightingSSBO,
+                                      int      recipeCount,
+                                      float    waterElevation,
+                                      float    frameCos)
+{
+    ZoneScopedN("Terrain::MaskWaterDraw");
+    if (!g_gos_renderer) return false;
+    glsl_program* p = g_gos_renderer->getMaskWaterProgram();
+    if (!p || !p->shp_) return false;
+    if (waterMaskSSBO == 0 || recipeSSBO == 0 || recipeCount <= 0) return false;
+
+    const GLuint prog = p->shp_;
+
+    // ---- Save state --------------------------------------------------------
+    GLint     savedProgram   = 0; glGetIntegerv(GL_CURRENT_PROGRAM,      &savedProgram);
+    GLboolean savedBlend     = glIsEnabled(GL_BLEND);
+    GLint     savedSrcRGB    = 0; glGetIntegerv(GL_BLEND_SRC_RGB,        &savedSrcRGB);
+    GLint     savedDstRGB    = 0; glGetIntegerv(GL_BLEND_DST_RGB,        &savedDstRGB);
+    GLint     savedDepthMask = 0; glGetIntegerv(GL_DEPTH_WRITEMASK,      &savedDepthMask);
+    GLboolean savedDepthTest = glIsEnabled(GL_DEPTH_TEST);
+    GLint     savedDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC,           &savedDepthFunc);
+    GLint     savedVAO       = 0; glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &savedVAO);
+    GLboolean savedColorMask[4]; glGetBooleanv(GL_COLOR_WRITEMASK, savedColorMask);
+    GLuint    savedSampler   = 0;
+    { GLint q = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 0, &q); savedSampler = (GLuint)q; }
+
+    // ---- AMD VAO-0 + attr-0 traps ------------------------------------------
+    extern void gos_RendererRebindVAO();
+    gos_RendererRebindVAO();
+    glEnableVertexAttribArray(0);
+
+    // ---- Program + uniforms ------------------------------------------------
+    // terrainBindThinUniformsForPatchStream sets terrainMVP, mvp, terrainViewport,
+    // and other terrain-shared uniforms (same uniform names as thin/mask-solid).
+    g_gos_renderer->terrainBindThinUniformsForPatchStream(p);
+
+    // waterElevation and frameCos are not set by terrainBindThinUniformsForPatchStream.
+    {
+        const GLint locWE = glGetUniformLocation(prog, "waterElevation");
+        const GLint locFC = glGetUniformLocation(prog, "frameCos");
+        if (locWE >= 0) glUniform1f(locWE, waterElevation);
+        if (locFC >= 0) glUniform1f(locFC, frameCos);
+    }
+
+    // ---- Depth + color state -----------------------------------------------
+    // Stage 1c dual-run soak: suppress all framebuffer writes so the mask draw
+    // validates the pipeline without z-fighting the concurrent water fast path.
+    // Water is translucent so depth writes are off anyway; keep depth test for
+    // correct mask geometry.
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    // Blend on (water is semi-transparent); blend func matches water fast path.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // ---- Sampler unit 0 ----------------------------------------------------
+    static GLuint s_maskWaterSampler = 0;
+    if (s_maskWaterSampler == 0) {
+        glGenSamplers(1, &s_maskWaterSampler);
+        glSamplerParameteri(s_maskWaterSampler, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glSamplerParameteri(s_maskWaterSampler, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glSamplerParameteri(s_maskWaterSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glSamplerParameteri(s_maskWaterSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    glBindSampler(0, s_maskWaterSampler);
+
+    // ---- Bind a valid texture at unit 0 (terrain atlas) to prevent undefined sampling.
+    // glColorMask(GL_FALSE) suppresses output, but we still bind something safe.
+    extern GLuint gos_terrain_indirect_getAtlasGLTex();
+    GLint savedTex0Binding = 0;
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex0Binding);
+    glBindTexture(GL_TEXTURE_2D, gos_terrain_indirect_getAtlasGLTex());
+
+    // ---- SSBO bindings -----------------------------------------------------
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 18, (GLuint)waterMaskSSBO);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,  5, (GLuint)recipeSSBO);
+    if (lightingSSBO != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)lightingSSBO);
+
+    // ---- Build and issue one DrawArraysIndirect ----------------------------
+    struct DrawArraysIndirectCommand {
+        uint32_t count;
+        uint32_t instanceCount;
+        uint32_t first;
+        uint32_t baseInstance;
+    };
+    static GLuint s_waterIndirectCmdBuf = 0;
+    if (s_waterIndirectCmdBuf == 0) {
+        glGenBuffers(1, &s_waterIndirectCmdBuf);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_waterIndirectCmdBuf);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER, sizeof(DrawArraysIndirectCommand),
+                     nullptr, GL_DYNAMIC_DRAW);
+    }
+    DrawArraysIndirectCommand cmd = { uint32_t(recipeCount * 6), 1u, 0u, 0u };
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_waterIndirectCmdBuf);
+    glBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0, sizeof(cmd), &cmd);
+    glDrawArraysIndirect(GL_TRIANGLES, nullptr);
+
+    // ---- Restore -----------------------------------------------------------
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 18, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,  5, 0);
+    if (lightingSSBO != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, 0);
+
+    glBindSampler(0, savedSampler);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex0Binding);
+    glColorMask(savedColorMask[0], savedColorMask[1], savedColorMask[2], savedColorMask[3]);
+    glDepthMask((GLboolean)savedDepthMask);
+    glDepthFunc((GLenum)savedDepthFunc);
+    if (savedDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (savedBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+    glBindVertexArray((GLuint)savedVAO);
+    glUseProgram((GLuint)savedProgram);
+
+    // Mark render-state cache stale since we bound textures + program directly.
+    if (g_gos_renderer) g_gos_renderer->invalidateRenderStateCache();
+    return true;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PR2c Stage 2c — Mine static-bake bridge.
 //
 // Issues ONE glDrawArrays(GL_TRIANGLES) against the mission-static MineStaticVBO,
@@ -3043,6 +3182,26 @@ void gosRenderer::init() {
         else
             printf("[MASK_SOLID] Mask-SOLID shader loaded: prog=%u\n",
                    (unsigned)mask_solid_prog_->shp_);
+        fflush(stdout);
+    }
+
+    // B4 Slice Stage 1c — load mask-water program.
+    // Pairs the mask-water VS (reads water mask + WaterRecipe) with
+    // gos_tex_vertex.frag (same frag as the water fast path).
+    {
+        ZoneScopedN("gosRenderer::init maskWaterProg");
+        static const char* kMaskWaterPrefix = "#version 430\n";
+        mask_water_prog_ = glsl_program::makeProgram(
+            "gos_terrain_mask_water",
+            "shaders/gos_terrain_mask_water.vert",
+            "shaders/gos_tex_vertex.frag",
+            kMaskWaterPrefix);
+        if (!mask_water_prog_ || !mask_water_prog_->shp_)
+            fprintf(stderr, "[MASK_WATER] WARNING: failed to compile mask-water shader"
+                            " — MC2_TERRAIN_MASK_DISPATCH=1 water draw disabled\n");
+        else
+            printf("[MASK_WATER] Mask-water shader loaded: prog=%u\n",
+                   (unsigned)mask_water_prog_->shp_);
         fflush(stdout);
     }
 
