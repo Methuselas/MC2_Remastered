@@ -9,7 +9,8 @@
 //   CPU lighting block in quad.cpp:1266-1891 gated off via s_lightingGpuAuth.
 //   CostSplitLightingScope bracket retained as retirement telemetry (~0 us post-flip).
 //   Parity mode: CopyResultsToVertexPool returns early; CPU body still authoritative.
-//   MC2_TERRAIN_LIGHTING_GPU=1 to enable GPU path; =0 (or unset) for legacy CPU.
+//   MC2_TERRAIN_LIGHTING_GPU=0 to force legacy CPU path (default-on as of
+//   Stage 5 flip 2026-05-11; any other value, including unset, opts in).
 //
 // 3-slot ring pattern mirrors gpu_cull_readback.cpp (RING_FRAMES=3, dual-buffer,
 // glCopyBufferSubData VRAM→BAR, timeout=0 always on hot path).
@@ -52,9 +53,32 @@ static const bool s_trace = (getenv("MC2_TERRAIN_LIGHTING_GPU_TRACE") != nullptr
 // ---------------------------------------------------------------------------
 namespace gos_terrain_lighting {
 
-// Whether the feature is enabled (default off at Stage 1/2).
+// Phase 1 Stage 5 — DEFAULT-ON flip (2026-05-11).
+//
+// Bisection guide for future lighting issues:
+//   - Set MC2_TERRAIN_LIGHTING_GPU=0 in env to force the legacy CPU lighting
+//     path (quad.cpp:1267-1890 runs; GPU pipeline dormant).
+//   - Set MC2_TERRAIN_LIGHTING_PARITY=1 to force dual-run mode: CPU body
+//     authoritative + GPU compute compared per-vertex; mismatches print to
+//     stderr as [TERRAIN_LIGHTING_PARITY v1] event=mismatch ...
+//   - Killswitch-off (env="0") was bit-identical to pre-Phase-1 at flip time;
+//     any visual regression that disappears with env="0" is THIS slice.
+//   - Killswitch-off that still shows the regression is unrelated.
+//
+// Stage 4 soak was skipped at user's direction (Tracy delta empirically
+// validated: 7.24 ms → 1.87 ms mean on quadSetupTextures at mc2_10 wolfman,
+// 4.2× σ compression, 0 parity mismatches across 64M vertex comparisons,
+// tier1 5/5 PASS both env states — strong enough perf+parity evidence to
+// flip without the 7-day burn-in window).
+//
+// Phase 1 commit chain for bisection: 4fa7a9a (recon) → 594add9 (Stage 1
+// scaffold) → eda2431 (Stage 2 parity-clean math) → ff8de07 (Stage 3
+// consumer flip) → THIS COMMIT (Stage 5 default-on).
 bool IsEnabled() {
-    static const bool s_enabled = (getenv("MC2_TERRAIN_LIGHTING_GPU") != nullptr);
+    static const bool s_enabled = [] {
+        const char* env = getenv("MC2_TERRAIN_LIGHTING_GPU");
+        return (env == nullptr) || (env[0] != '0');
+    }();
     return s_enabled;
 }
 
