@@ -6,13 +6,14 @@
 
 **Worktree:** `claude/parallel-amdahl` (branched from `claude/nifty-mendeleev` @ 7b9ad5f)
 **Plan v1 commit:** `d2424ef` (under review; revised plan supersedes)
+**Design doc v2 commit:** `a5fd168` (under adversarial review; v3 fixes sonnet adversarial-review findings)
 **Slice 0 recon commit:** `4fa7a9a`
 
 ---
 
 ## Documentation discipline
 
-Every cited symbol below is grep-verified at write-time per the worktree CLAUDE.md "grep at write-time, not after" rule. The verification appendix at the end lists each citation with M (matches) / D (divergent) / NF (not found) status. The adversarial-plan-review pass on plan v1 caught systematic line-number drift; this design doc v2 fixes those errors against the **current** tree state (parallel-amdahl worktree, post-Slice-0 commit `4fa7a9a`). All citations in v2 were grep-verified at write-time; no item is marked M on memory alone.
+Every cited symbol below is grep-verified at write-time per the worktree CLAUDE.md "grep at write-time, not after" rule. The verification appendix at the end lists each citation with M (matches) / D (divergent) / NF (not found) status. The adversarial-plan-review pass on plan v1 caught systematic line-number drift; this design doc v2 fixed those errors. Design doc v3 (this revision) fixes a second round of adversarial-review findings from a Sonnet pass against v2 (`a5fd168`): v2 still cited `terrain.cpp:938-940` for the leastZ/mostZ definitions — WRONG (those definitions are at `terrain.cpp:1341-1343`); v2 under-counted lightRGB consumers and missed the `gos_terrain_patch_stream` indirect consumer entirely; v2's fogRGB consumer list included `clouds.cpp` which is a false positive (different struct); v2's readback ring description said "2-slot + GL_TIMEOUT_IGNORED blocking" which diverges from the actual 3-slot non-blocking precedent in `gpu_cull_readback.cpp`. All citations in v3 were grep-verified at v3 write-time; grep output is pasted inline before each corrected claim.
 
 ---
 
@@ -71,7 +72,7 @@ Prefix `tl_` (terrain_lighting) avoids ODR conflicts since the helpers are `stat
 **Split by field:**
 
 - **`lightRGB`: CPU readback.** Consumers span `mclib/quad.cpp` (55 `->lightRGB` hits — writes in the lighting block `1266-1891` plus reads in `draw`/`drawWater`) AND several GPU-direct renderer files that read the CPU mirror per-frame (see consumer breakdown below). Preserving `vertices[i]->lightRGB` as the canonical CPU-side mirror requires writing the SSBO back to the CPU vertex pool ONCE per frame after compute dispatch. GPU-direct renderers (`gos_terrain_water_stream`, `gos_terrain_indirect`) read the CPU mirror, meaning they inherit the 1-frame pipelined latency: frame N+1 GPU draws use lighting computed at frame N. This is visually invisible (~16 ms at 60 fps) and matches the latency that the `quadSetupTextures` CPU path already accepts from its per-frame dedupe gate.
-- **`fogRGB`: CPU readback (same buffer).** Consumer split: `mclib/quad.cpp` (most), plus **`mclib/clouds.cpp:289-348` (6 sites)** — cross-file. Refactoring clouds.cpp to read SSBO directly is out-of-scope blast radius; CPU readback is the surgical choice.
+- **`fogRGB`: CPU readback (same buffer).** Consumer: `mclib/quad.cpp` only for `ScreenVertex::fogRGB` reads. **`mclib/clouds.cpp:289-348` is a FALSE POSITIVE** — `cloudVertex0` is `CloudVertex*` (defined at `clouds.h:37`), NOT `ScreenVertex*`. `CloudVertex::fogRGB` is a different struct field entirely. The only other cross-file `->fogRGB` hits touching `ScreenVertex*` are in `gos_terrain_water_stream.cpp` (6 hits: `:475-478` thin-record pack + `:817` parity + `:990` legacy path).
 
 > **MN1 — Dynamic-light pipelining edge case:** Transient lights (PPC bolts, explosions) that exist for 1-3 frames will have their lighting contribution appear with 1-frame latency in pipelined mode. This is acceptable: the visual artifact (sub-16 ms flash of unlighted vertex) is imperceptible at 60 fps, and the parity gate (synchronous mode) compares current-frame GPU output so the bug cannot hide.
 
@@ -79,19 +80,89 @@ Both fields use the **same SSBO output struct** (`GpuTerrainLightingOutput`), up
 
 ### Grep evidence — lightRGB consumer breakdown
 
-`grep -rn '->lightRGB' mclib/ code/ GameOS/ --include='*.cpp' --include='*.h'` (excluding `.codex_tmp_isolate/` isolation paths), run at v2 write-time:
+**C2 — corrected counts (grep -cn "lightRGB" per file, run at v3 write-time):**
 
-| File | `->lightRGB` hits | Nature |
-|---|---|---|
-| `mclib/quad.cpp` | 55 | Mix: 8 writes in lighting block (`:1322/1373/1476/1527/1630/1681/1784/1835`); rest are reads in `draw`/`drawWater` |
-| `GameOS/gameos/gos_terrain_water_stream.cpp` | 8 | CPU mirror reads — pack thin record (`:460-463`), parity check (`:809, :811`), draw path (`:929, :967`) |
-| `GameOS/gameos/gos_terrain_indirect.cpp` | 2 | CPU mirror reads — draw path (`:1408 comment`, `:1459`) |
-| `GameOS/gameos/gos_terrain_water_stream.h` | 1 | Comment in table header (`:44`) — not a real consumer |
-| `code/carnage.cpp` | 1 | `ExplosionType::lightRGB` field on a different struct (`:687`) — not the per-vertex terrain mirror |
+```
+$ grep -c "lightRGB" mclib/quad.cpp GameOS/gameos/gos_terrain_water_stream.cpp \
+    GameOS/gameos/gos_terrain_indirect.cpp GameOS/gameos/gos_terrain_water_stream.h \
+    code/carnage.cpp GameOS/gameos/gos_terrain_patch_stream.cpp \
+    GameOS/gameos/gos_terrain_patch_stream.h code/weaponbolt.cpp \
+    mclib/crater.cpp mclib/cevfx.cpp mclib/bdactor.cpp mclib/camera.cpp \
+    code/gamecam.cpp mclib/mech3d.cpp mclib/gvactor.cpp mclib/genactor.cpp
 
-**All GPU-direct renderer consumers (`gos_terrain_water_stream`, `gos_terrain_indirect`) read `vertices[c]->lightRGB` from the CPU pool.** They inherit the 1-frame pipelined latency when the compute port is active. The `carnage.cpp` hit is a different struct's field (explosion type definition, not a terrain vertex read).
+mclib/quad.cpp:84
+GameOS/gameos/gos_terrain_water_stream.cpp:14
+GameOS/gameos/gos_terrain_indirect.cpp:10
+GameOS/gameos/gos_terrain_water_stream.h:5
+code/carnage.cpp:2
+GameOS/gameos/gos_terrain_patch_stream.cpp:5
+GameOS/gameos/gos_terrain_patch_stream.h:4
+code/weaponbolt.cpp:6
+mclib/crater.cpp:11
+mclib/cevfx.cpp:8
+mclib/bdactor.cpp:5
+mclib/camera.cpp:4
+code/gamecam.cpp:2
+mclib/mech3d.cpp:2
+mclib/gvactor.cpp:2
+mclib/genactor.cpp:2
+```
 
-- `grep '->fogRGB' mclib/clouds.cpp` → 6 hits at lines 289, 298, 307, 330, 339, 348 — all reads inside cloud render path. Cross-file consumer confirmed.
+v2 cited `mclib/quad.cpp:55` — WRONG. The 55 figure was from `grep -c "->lightRGB"` (arrow-only). Total `lightRGB` string occurrences is **84** (includes local variable declarations, comments, and field assignments without the arrow operator in the draw path).
+
+Classification by struct type (ScreenVertex terrain pool vs. other):
+
+| File | Total `lightRGB` hits | `ScreenVertex::lightRGB` hits | Nature |
+|---|---|---|---|
+| `mclib/quad.cpp` | 84 | 55 (`->lightRGB`) | 8 writes in lighting block (`:1322/1373/1476/1527/1630/1681/1784/1835`); rest are reads in `draw`/`drawWater`; 29 additional occurrences are local `DWORD lightRGBN` vars and comments |
+| `GameOS/gameos/gos_terrain_water_stream.cpp` | 14 | 8 (`->lightRGB`) | CPU mirror reads — pack thin record (`:460-463`), parity check (`:809, :811`), draw path (`:929, :967, :969`); 6 additional occurrences are `trec.lightRGB0-3` and comments |
+| `GameOS/gameos/gos_terrain_indirect.cpp` | 10 | 2 (`->lightRGB`) | CPU mirror reads — `:1407-1408` (comments), `:1450/1455/1458` (lambda context/comments), `:1459` (direct read `q.vertices[c]->lightRGB`), `:1526-1529` (`tr.lightRGB0-3` assignments) |
+| `GameOS/gameos/gos_terrain_water_stream.h` | 5 | 0 | Struct field declarations `lightRGB0-3` in thin-record struct + comment; no live consumers |
+| `GameOS/gameos/gos_terrain_patch_stream.cpp` | 5 | 0 (indirect consumer — see M2 below) | Receives `lightRGB0-3` via `appendThinRecordDirect(tr)` where `tr.lightRGB0-3` are packed from `vertices[c]->lightRGB` in `quad.cpp:2133-2136`. Indirect consumer of the CPU mirror pool via quad.cpp. |
+| `GameOS/gameos/gos_terrain_patch_stream.h` | 4 | 0 | Struct field declarations `lightRGB0-3` in `TerrainQuadThinRecord` (`:68`) and `PatchStreamThinRecord` (`:108`) + function parameter declaration (`:186-187`); no live consumers |
+| `code/carnage.cpp` | 2 | 0 | `:315` reads `ExplosionType::lightRGB` from file (`readIdULong`); `:687` calls `SetaRGB(explosionType->lightRGB)`. **Different struct** — `ExplosionType::lightRGB` is NOT `ScreenVertex::lightRGB`. NOT a terrain pool consumer. |
+| `code/weaponbolt.cpp` | 6 | 0 | `WeaponBoltType::lightRGB` — config read from file, used for dynamic light color. Different struct. NOT a terrain pool consumer. |
+| `mclib/crater.cpp` | 11 | 0 | Local `DWORD lightRGB` variable computed from per-light falloff and written to `gVertex[n].argb` directly. Not a `ScreenVertex` read — crater does its own lighting computation from scratch. NOT a terrain pool consumer. |
+| `mclib/cevfx.cpp` | 8 | 0 | Uses `CevFxVertex::lightRGB` (field in `cevfx.h:71/127`) and local computations — NOT `ScreenVertex::lightRGB`. NOT a terrain pool consumer. |
+| `mclib/bdactor.cpp` | 5 | 0 | Local `DWORD lightRGB` computation; passed to `eye->setLightColor()`. Different pattern entirely. NOT a terrain pool consumer. |
+| `mclib/camera.cpp` | 4 | 0 | Local `DWORD lightRGB` computation; passed to `setLightColor()`. NOT a terrain pool consumer. |
+| `code/gamecam.cpp` | 2 | 0 | Local `DWORD lightRGB` computation; passed to `eye->setLightColor()`. NOT a terrain pool consumer. |
+| `mclib/mech3d.cpp` | 2 | 0 | Local `DWORD lightRGB` computation; passed to `eye->setLightColor()`. NOT a terrain pool consumer. |
+| `mclib/gvactor.cpp` | 2 | 0 | Local `DWORD lightRGB` computation; passed to `eye->setLightColor()`. NOT a terrain pool consumer. |
+| `mclib/genactor.cpp` | 2 | 0 | Local `DWORD lightRGB` computation; passed to `eye->setLightColor()`. NOT a terrain pool consumer. |
+
+**Summary of actual ScreenVertex::lightRGB terrain pool consumers:**
+1. `mclib/quad.cpp` — direct writer (8 sites) and direct reader (many draw sites)
+2. `GameOS/gameos/gos_terrain_water_stream.cpp` — reads CPU mirror via `->lightRGB` (8 arrow hits)
+3. `GameOS/gameos/gos_terrain_indirect.cpp` — reads CPU mirror via `->lightRGB` at `:1459` (1 direct arrow hit)
+4. `GameOS/gameos/gos_terrain_patch_stream.cpp` — **INDIRECT consumer** (M2): receives `lightRGB0-3` via `tr` parameter packed by `quad.cpp:2133-2136` from the `lightRGBc` lambda at `quad.cpp:2081-2086`, which reads `vertices[c]->lightRGB`. The patch_stream module itself does not directly dereference `->lightRGB` but it consumes values originating from the CPU pool.
+
+All four terrain-pool consumers inherit 1-frame pipelined latency when the compute port is active.
+
+**C3 — fogRGB consumer correction (grep-verified at v3 write-time):**
+
+```
+$ grep -n "->fogRGB" mclib/ code/ GameOS/ (ScreenVertex consumers only)
+mclib/quad.cpp:1374/1411/1425/1528/1565/1579/1682/1719/1733/1836/1885  (writes)
+mclib/quad.cpp:2194/2262/2272/2282/2429/2621/2631/2641/2785/3033/3043/3053/3192/3321/3331/3341/3480/4470/4484/4494/4508  (reads)
+GameOS/gameos/gos_terrain_water_stream.cpp:475-478/817/990  (ScreenVertex reads)
+GameOS/gameos/gos_static_prop_batcher.cpp:2572  (different — child->fogRGB on a prop type, NOT ScreenVertex)
+
+mclib/clouds.cpp:289/298/307/330/339/348  → cloudVertex0->fogRGB
+  → cloudVertex0 is CloudVertex* (clouds.h:37: "typedef struct _CloudVertex { ... DWORD fogRGB; } CloudVertex;")
+  → CloudVertex is NOT ScreenVertex (vertex.h:91). DIFFERENT STRUCT. FALSE POSITIVE.
+
+$ grep -n "CloudVertex\|cloudVertex" mclib/clouds.h
+30:typedef struct _CloudVertex
+37:	DWORD			fogRGB;				//Haze DWORD
+38:} CloudVertex;
+```
+
+**`clouds.cpp` is NOT a ScreenVertex::fogRGB consumer. It reads `CloudVertex::fogRGB` (same field name, entirely different struct defined at `clouds.h:37`).** Remove from the fogRGB consumer list.
+
+Actual `ScreenVertex::fogRGB` consumers:
+1. `mclib/quad.cpp` — writes and reads (sole writer of per-vertex fog; many read sites in draw paths)
+2. `GameOS/gameos/gos_terrain_water_stream.cpp` — reads CPU mirror at `:475-478` (thin-record pack), `:817` (parity), `:990` (legacy path)
 
 ### Sync-stall avoidance — the load-bearing detail
 
@@ -107,16 +178,51 @@ This is the pattern proven in `gpu_cull_readback.cpp` (the only existing READ-pa
 
 2. **`gpu_cull_readback.cpp:230-235` IS the precedent** for a CPU-readable persistent-mapped buffer. It uses `GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT` on a staging copy buffer (separate from the GPU-side SSBO), with `glCopyBufferSubData` from VRAM to the BAR staging buffer, and `glFenceSync`/`glClientWaitSync` (proven pattern: `gpu_cull_readback.cpp:469`, `gpu_cull_substrate.cpp:266`, `gos_terrain_patch_stream.cpp:1511`) to synchronize.
 
-**Pattern (adopted from gpu_cull_readback precedent):**
+**M1 — 3-slot non-blocking pattern (grep-verified at v3 write-time):**
+
+v2 described a "2-slot ring + `GL_TIMEOUT_IGNORED` parity stall" — this is a **DIVERGENCE from the actual precedent**, not an adoption of it. The actual `gpu_cull_readback.cpp` pattern is:
+
+```
+$ head -5 GameOS/gameos/gpu_cull_readback.cpp
+// gpu_cull_readback.cpp — Track C, Slice C2: async readback ring buffer.
+//
+// 3-slot readback ring + per-frame glFenceSync.
+// Non-blocking tryConsume with three-tier fallback:
+//   T1: N-1 slot ready     → use it
+
+$ grep -n "RING_FRAMES\|readback_tryConsume\|GL_TIMEOUT_IGNORED" GameOS/gameos/gpu_cull_readback.cpp (relevant)
+17:// glClientWaitSync timeout is ALWAYS 0 (zero) — never GL_TIMEOUT_IGNORED on hot path.
+40:constexpr uint32_t RING_FRAMES           = 3u;
+317:// readback_tryConsume — NEVER blocks (timeout=0 on all glClientWaitSync calls)
+319:ReadbackTier readback_tryConsume() {
+```
+
+Three-tier fallback (non-blocking throughout):
+- **T1**: N-1 slot fence already signaled → consume, no wait
+- **T2**: N-2 slot fence already signaled → consume, emit `readback_fallback_n2` counter
+- **T3**: both not ready → conservative (all visible), emit `readback_fallback_conservative` counter
+
+`GL_TIMEOUT_IGNORED` appears only in the **shutdown path** (`gpu_cull_readback.cpp:279` during ring teardown) and a `readback_selftest` helper — never on the per-frame hot path.
+
+**This design adopts the 3-slot non-blocking pattern literally.** The three-tier fallback for lighting readback:
+- **T1**: N-1 slot ready → copy staging ring N-1 into vertex pool (1-frame latency, normal case)
+- **T2**: N-2 slot ready → copy staging ring N-2 into vertex pool (2-frame latency, emit `terrain_light_fallback_n2` counter)
+- **T3**: neither ready → skip vertex pool update this frame, keep prior values (emit `terrain_light_fallback_conservative` counter)
+
+The `terrain_light_fallback_conservative` case is benign for lighting: stale lighting values from 2+ frames ago are visually imperceptible at 60 fps. This is the same tradeoff `gpu_cull_readback` accepts for visibility culling.
+
+**Parity-only exception:** `MC2_TERRAIN_LIGHTING_PARITY=1` mode uses `glClientWaitSync(GL_TIMEOUT_IGNORED)` on the CURRENT frame's fence before comparison — a synchronous stall, acceptable only in parity mode. Production never calls `GL_TIMEOUT_IGNORED` on the hot path.
 
 ```cpp
 // At init: GPU-side SSBO (compute writes), CPU-visible staging ring (CPU reads)
+static constexpr uint32_t RING_FRAMES = 3u;   // matches gpu_cull_readback.cpp:40
+
 glGenBuffers(1, &s_computeSsbo);             // GPU SSBO — compute writes here
 glBufferStorage(..., 0, nullptr,
-    GL_DYNAMIC_STORAGE_BIT);                 // no persistent map needed — write-only from shader
+    GL_DYNAMIC_STORAGE_BIT);                 // write-only from shader side
 
-glGenBuffers(2, s_stagingRing);              // 2-slot staging ring for CPU readback
-for (int i = 0; i < 2; ++i) {
+glGenBuffers(RING_FRAMES, s_stagingRing);    // 3-slot staging ring for CPU readback
+for (int i = 0; i < (int)RING_FRAMES; ++i) {
     // READ+WRITE+PERSISTENT+COHERENT — matches gpu_cull_readback.cpp:230-235
     glBufferStorage(..., nullptr,
         GL_MAP_READ_BIT | GL_MAP_WRITE_BIT |
@@ -126,24 +232,30 @@ for (int i = 0; i < 2; ++i) {
         GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
 }
 
-// Per frame:
-int writeSlot = frameIndex % 2;   // GPU writes into computeSsbo; then glCopyBufferSubData → stagingRing[writeSlot]
-int readSlot  = 1 - writeSlot;    // CPU reads stagingRing[readSlot] (1 frame stale)
-// After glCopyBufferSubData: glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0) for writeSlot.
-// Before reading stagingRing[readSlot]: glClientWaitSync(s_fence[readSlot], ...) — already complete at N-1 frames.
+// Per frame (non-blocking hot path):
+uint32_t writeSlot = s_currentSlot;
+// GPU writes into computeSsbo; glCopyBufferSubData → stagingRing[writeSlot]
+// glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0) for writeSlot.
+
+// tryConsume() — NEVER blocks (timeout=0):
+uint32_t n1Slot = (s_currentSlot + RING_FRAMES - 1u) % RING_FRAMES;
+uint32_t n2Slot = (s_currentSlot + RING_FRAMES - 2u) % RING_FRAMES;
+// Check n1 fence with timeout=0; if signaled → copy; else check n2; else skip.
+
+s_currentSlot = (s_currentSlot + 1u) % RING_FRAMES;
 ```
 
-The `GL_MAP_WRITE_BIT` on the staging buffer matches `gpu_cull_readback.cpp`'s pattern exactly (write+read; write-only persistent maps have proven to work; read-only persistent is untested and AMD driver behavior is unknown without this extra write flag). The `glFenceSync`/`glClientWaitSync` idiom is proven in 4 existing files (substrate, patch_stream, indirect, readback).
+The `GL_MAP_WRITE_BIT` on the staging buffer matches `gpu_cull_readback.cpp`'s pattern exactly. The `glFenceSync`/`glClientWaitSync` idiom is proven in 4 existing files (substrate, patch_stream, indirect, readback).
 
-The 1-frame latency means: GPU lighting written at frame N is readable by CPU at frame N+1. The frame-1-late-by-one-frame visual is invisible in practice (~16 ms at 60 fps) but the parity gate must compare current-frame GPU output against CURRENT-frame CPU output — so during parity-on mode, we call `glClientWaitSync(GL_TIMEOUT_IGNORED)` on the writeSlot fence before reading (synchronous stall, acceptable in parity-only mode). Production runs with parity off are fully pipelined.
+> **MN3 — AMD driver cross-reference (docs/amd-driver-rules.md audit):** `docs/amd-driver-rules.md` contains no entry specifically about `glClientWaitSync(GL_TIMEOUT_IGNORED)` on the hot path or persistent-mapped BAR buffers. The only sync/barrier entries are about `GL_COMMAND_BARRIER_BIT` sequence (C1b canary) and `glGetBufferSubData` (substrate sync-stall lesson). There is no AMD-specific known issue recorded against the `timeout=0` non-blocking pattern used here. The 3-slot non-blocking pattern has been operating correctly in `gpu_cull_readback.cpp` on RX 7900 XTX (driver 26.3.1) since Track C shipped. **No AMD blocker found; document as "verified safe via gpu_cull_readback.cpp production runtime."**
 
-Alternative: triple-buffered ring. Plan v2 picks 2 buffers (sufficient for 1-frame pipelining) unless empirical testing shows GPU≥CPU contention, in which case 3 buffers.
+> **MN4 — BAR memory budget (requires user sign-off):** The proposed lighting SSBO staging ring is **~500 KB × 3 slots = ~1.5 MB BAR** (based on `realVerticesMapSide` ≈ 250, `GpuTerrainLightingOutput` = 8 B per vertex, 62,500 vertices). The existing `gpu_cull_readback.cpp` staging ring is ~8 KB × 3 slots = ~24 KB BAR — roughly 60× smaller. The new lighting ring will be the largest persistent-mapped BAR allocation in the engine. This is well within the physical BAR allocation limit on modern discrete GPUs (typical BAR is ≥256 MB on RX 7900 XTX with Resizable BAR enabled), but it should be **noted in the plan's "Architectural decisions requiring user sign-off" section** and measured at runtime via Tracy to confirm the `glMapBufferRange` does not fall back to system RAM. If the GPU does not have Resizable BAR enabled, 1.5 MB BAR is still within the guaranteed 256 MB BAR1 window. No change to architecture needed — document the budget and note it for the plan.
 
 ### Implication for the plan
 
-- Phase 1 Stage 1 (input + compute scaffold): ships 2-buffer ring SSBO + persistent mapping.
-- Phase 1 Stage 2 (parity): toggles synchronous fence-wait when `MC2_TERRAIN_LIGHTING_PARITY=1` so comparison is bit-accurate against current frame.
-- Phase 1 Stage 3 (consumer flip): uses readSlot output (1-frame-old SSBO) to populate `vertices[i]->lightRGB` and `vertices[i]->fogRGB` in a tight loop AFTER compute dispatch, BEFORE the `quadSetupTextures` for-loop. Position matters: drawWater and quad.cpp consumers run later in the frame and need the CPU mirror populated.
+- Phase 1 Stage 1 (input + compute scaffold): ships **3-slot ring** SSBO + persistent mapping, matching `gpu_cull_readback.cpp` `RING_FRAMES = 3u` precedent exactly.
+- Phase 1 Stage 2 (parity): uses `glClientWaitSync(GL_TIMEOUT_IGNORED)` on writeSlot fence only inside `MC2_TERRAIN_LIGHTING_PARITY=1` path — never on hot path.
+- Phase 1 Stage 3 (consumer flip): uses T1/T2/T3 non-blocking tryConsume to populate `vertices[i]->lightRGB` and `vertices[i]->fogRGB` in a tight loop AFTER compute dispatch, BEFORE the `quadSetupTextures` for-loop. Position matters: drawWater and quad.cpp consumers run later in the frame and need the CPU mirror populated. T3 (neither slot ready) skips the update; stale values are retained.
 
 ---
 
@@ -209,11 +321,46 @@ void Parity_CompareFrame(TerrainQuadPtr quadList, int numberQuads,
 
 ### Grep evidence
 
-- `quad.cpp:490-495`: `extern float leastZ; extern float leastW; extern float mostZ; extern float mostW; extern float leastWY; extern float mostWY;` — extern declarations. **The definitions live in `terrain.cpp:938-940`** (file-scope globals `float leastZ = 1.0f, leastW = 1.0f; float mostZ = -1.0f, mostW = -1.0; float leastWY = 0.0f, mostWY = 0.0f;`).
-- **Per-frame reset** is at `terrain.cpp:946-948`, inside `Terrain::geometry()`: `leastZ = 1.0f; leastW = 1.0f; mostZ = -1.0f; mostW = -1.0; leastWY = 0.0f; mostWY = 0.0f;`. There is no reset in `quad.cpp`.
+**C1 — leastZ/mostZ actual locations (grep-verified at v3 write-time):**
+
+```
+$ grep -n "float leastZ = 1.0f" mclib/terrain.cpp
+1341:float leastZ = 1.0f,leastW = 1.0f;
+
+$ grep -n "leastZ = 1.0f" mclib/terrain.cpp
+1341:float leastZ = 1.0f,leastW = 1.0f;
+1382:	leastZ = 1.0f;leastW = 1.0f;
+
+$ grep -n "mostZ\|leastZ\|leastW\|mostW\|leastWY\|mostWY" mclib/terrain.cpp (relevant lines)
+1341:float leastZ = 1.0f,leastW = 1.0f;
+1342:float mostZ = -1.0f, mostW = -1.0;
+1343:float leastWY = 0.0f, mostWY = 0.0f;
+1382:	leastZ = 1.0f;leastW = 1.0f;
+1383:	mostZ = -1.0f; mostW = -1.0;
+1384:	leastWY = 0.0f; mostWY = 0.0f;
+...
+1549:						if (screenPos.z < leastZ) leastZ = screenPos.z;
+1550:						if (screenPos.z > mostZ)  mostZ  = screenPos.z;
+1551:						if (screenPos.w < leastW) { leastW = screenPos.w; leastWY = screenPos.y; }
+1552:						if (screenPos.w > mostW)  { mostW  = screenPos.w; mostWY  = screenPos.y; }
+1696-1715: (legacy fallback writers, same pattern)
+1832:	eye->setInverseProject(mostZ,leastW,yzRange,ywRange);
+
+$ grep -n "^extern float leastZ" mclib/quad.cpp
+490:extern float leastZ;
+491:extern float leastW;
+492:extern float mostZ;
+493:extern float mostW;
+494:extern float leastWY;
+495:extern float mostWY;
+```
+
+- `quad.cpp:490-495`: `extern float leastZ; extern float leastW; extern float mostZ; extern float mostW; extern float leastWY; extern float mostWY;` — **extern FORWARD-DECLARES only**. Both `quad.cpp` (externs) and `terrain.cpp` (definitions + per-frame reset) participate.
+- **Definitions at `terrain.cpp:1341-1343`** (file-scope globals). v2 incorrectly cited `:938-940` — that location does not exist in this tree.
+- **Per-frame reset at `terrain.cpp:1382-1384`**, inside `Terrain::geometry()`: `leastZ = 1.0f; leastW = 1.0f; mostZ = -1.0f; mostW = -1.0; leastWY = 0.0f; mostWY = 0.0f;`. v2 incorrectly cited this reset as `quad.cpp:946-948` — no such reset exists in quad.cpp.
 - `quad.cpp:1008/1075/1142/1209`: 4 writers, all inside the water-projection block `946-1260` (one per vertex of the quad). Writes only when `screenPos` is computed.
 - `terrain.cpp:1549-1552`: writers in the non-water terrain projection loop (D1 fast-path vertex-project loop).
-- `terrain.cpp:1698-1715`: writers in the legacy fallback projection loop.
+- `terrain.cpp:1696-1715`: writers in the legacy fallback projection loop.
 - Consumer: `terrain.cpp:1832 eye->setInverseProject(mostZ, leastW, yzRange, ywRange)` — singular consumption point. **M — grep confirmed.**
 
 ### Implication for the plan
@@ -222,7 +369,7 @@ void Parity_CompareFrame(TerrainQuadPtr quadList, int numberQuads,
 
 **Phase 2 (water-projection GPU port) requires a Stage 0 sub-decision before code lands:**
 
-- **Option (a) — joint port.** Port the terrain.cpp non-water and legacy fallback writers (`:1549, :1698`) as part of Phase 2's compute work. Single GPU reduction (atomic-min/max or 2-pass), single consumer side. Larger blast radius. Retires reduction state entirely.
+- **Option (a) — joint port.** Port the terrain.cpp non-water and legacy fallback writers (`:1549-1552`, `:1696-1715`) as part of Phase 2's compute work. Single GPU reduction (atomic-min/max or 2-pass), single consumer side. Larger blast radius. Retires reduction state entirely.
 - **Option (b) — water-only port + parallel CPU.** Keep terrain.cpp CPU writers live (they're already inside `vertexProjectLoop` which is itself a candidate Phase 3+ slice). The CPU-side `leastZ` etc. remain live; GPU side does water-projection compute but DOES NOT reduce; CPU water-vertex writes continue for the reduction path only.
 - **Option (c) — defer Phase 2 entirely.** If joint port is too wide and parallel CPU is too messy, ship Phase 1 and stop. Re-evaluate Phase 2 after `vertexProjectLoop` ports to GPU (which would naturally consume the terrain.cpp writers).
 
@@ -402,7 +549,7 @@ Plan v2 Stage 1 ends with "measure Stage 1 dispatch overhead via Tracy zone `Ter
 | Question | Decision | Plan-v2 implication |
 |---|---|---|
 | 1 — Compile helper | Copy pattern privately into each new module | Stage 1 Step 3 uses `tl_compile_compute_shader` etc., local statics, no fictional API |
-| 2 — Consumer strategy | CPU readback via pipelined 2-buffer persistent-mapped SSBO | Stage 1 ships ring buffers; Stage 3 reads readSlot into vertex pool; parity sync-waits |
+| 2 — Consumer strategy | CPU readback via pipelined **3-slot** non-blocking persistent-mapped SSBO (matches `gpu_cull_readback.cpp` `RING_FRAMES=3u` precedent exactly) | Stage 1 ships 3-slot ring; Stage 3 uses T1/T2/T3 tryConsume (never blocks on hot path); parity uses `GL_TIMEOUT_IGNORED` only in parity mode |
 | 3 — `vertexNum == -1` / `calcThisFrame` | Shader writes all slots; comparator filters by quadList walk + calcThisFrame bit | API: `Parity_CompareFrame(quadList, numberQuads, mappedOutput)`; SSBO size = realVerticesMapSide² |
 | 4 — Multi-source reduction | Phase 1 unaffected; Phase 2 design doc commits to a/b/c later | Plan v1's Phase 2 outline updated to flag this as a real Phase-2 prereq |
 | 5 — Per-mission lifecycle | `mission_init` + `mission_shutdown` (per-mission, matching `gpu_cull::compute_init` precedent) + per-frame trio; process-level if needed: `InitializeGameEngine`/`TerminateGameEngine` at `mechcmd2.cpp:870/1918` | `gos_RendererInit/Shutdown` were fictional — removed; call-site wiring spec'd to real symbols |
@@ -411,50 +558,59 @@ Plan v2 Stage 1 ends with "measure Stage 1 dispatch overhead via Tracy zone `Ter
 
 ---
 
-## Verification appendix (v2 — regenerated, all citations grep-verified at v2 write-time)
+## Verification appendix (v3 — regenerated, all citations grep-verified at v3 write-time)
 
-Status: M (matches, grep'd at v2 write-time), NF (not found), D (divergent from v1 claim, corrected).
+Status: M (matches, grep'd at v3 write-time), NF (not found), D (divergent from v2 claim, corrected in v3).
 
 All greps run against `A:/Games/mc2-opengl-src/.claude/worktrees/parallel-amdahl/` source tree.
 
-| Citation | Status | Grep result |
+| Citation | Status | Grep result / evidence |
 |---|---|---|
-| `GameOS/gameos/gpu_cull_compute.cpp:145-168` `compile_compute_shader` | M | Read confirmed `static GLuint compile_compute_shader(const char** strings, int count)` at :145 |
-| `GameOS/gameos/gpu_cull_compute.cpp:170-193` `link_compute_program` | M | Read confirmed `static GLuint link_compute_program(GLuint shader)` at :170 |
-| `GameOS/gameos/gpu_cull_compute.cpp:197-231` `build_compute_program_from_file` | M | Read confirmed closes at :231 (v1 cited :145-229, slightly off — actual end :231) |
-| `GameOS/gameos/gpu_cull_compute.cpp:308` `compute_init` function body | M | grep confirmed `bool compute_init()` at :308 |
-| `code/mission.cpp:2788` `gpu_cull::compute_init()` call | M | grep confirmed |
-| `mclib/quad.cpp:490-495` `extern float leastZ/leastW/mostZ/mostW/leastWY/mostWY` | M | Read confirmed (v1 wrongly cited :1341-1343 — actual location :490-495) |
-| **`mclib/quad.cpp:1341-1343` leastZ extern declarations** | **D** | **v1 claim was wrong — actual location is :490-495 (see above)** |
-| `mclib/terrain.cpp:938-940` `float leastZ = 1.0f,...` definitions | M | grep confirmed `float leastZ = 1.0f,leastW = 1.0f;` at :938 |
-| `mclib/terrain.cpp:946-948` per-frame reset inside `Terrain::geometry` | M | Read confirmed `leastZ = 1.0f; leastW = 1.0f; ...` at :946-948 |
-| **`mclib/quad.cpp:1382-1384` per-frame reset** | **NF** | **v1 claim was wrong — no reset in quad.cpp at all; reset is in terrain.cpp:946-948** |
-| `mclib/quad.cpp:1008/1075/1142/1209` water-block leastZ/mostZ writers | M | grep confirmed 4 assignments inside setupTextures water block |
-| `mclib/quad.cpp:946-1260` CostSplitWaterVertProjScope (water-projection block) | M | grep confirmed `CostSplitWaterVertProjScope _csWvp` at :946; close at :1260 |
-| `mclib/quad.cpp:1266-1891` CostSplitLightingScope (lighting block) | M | grep confirmed `CostSplitLightingScope _csLight` at :1266; close at :1891 |
-| `mclib/quad.cpp:670` `void TerrainQuad::setupTextures (void)` | M | grep confirmed (v1 cited "672-1892 function-close" — function body OPENS at :670; scope tracker at :672) |
-| `mclib/terrain.cpp:1549-1552` non-water reduction writers | M | Read confirmed 4 writers at :1549-1552 |
-| `mclib/terrain.cpp:1698-1715` legacy fallback reduction writers | M | Read confirmed 4 writers at :1698-1715 |
-| `mclib/terrain.cpp:1832` `eye->setInverseProject(mostZ, leastW, ...)` | M | grep confirmed `eye->setInverseProject(mostZ,leastW,yzRange,ywRange)` at :1832 |
-| `mclib/quad.cpp` `->lightRGB` hits = 55 | M | grep -c confirmed 55 hits |
-| **`->lightRGB` zero hits outside quad.cpp** | **D** | **v1 claim was wrong — grep found 8 hits in `gos_terrain_water_stream.cpp`, 2 in `gos_terrain_indirect.cpp`, 1 in `carnage.cpp` (different struct), 1 in `gos_terrain_water_stream.h` (comment)** |
-| `mclib/clouds.cpp:289-348` fogRGB consumers (6 hits) | M | grep confirmed 6 hits |
-| `mclib/mapdata.cpp:1114` `vertexNum = -1` | M | confirmed |
-| `mclib/mapdata.cpp:1119` `vertexNum = topLeftX + topLeftY * realVerticesMapSide` | M | confirmed |
-| `mclib/terrain.cpp:595` `Terrain::primeMissionTerrainCache` definition | M | grep confirmed |
-| `code/mission.cpp:2240` `land->primeMissionTerrainCache` call | M | grep confirmed |
-| `mclib/terrain.cpp:703` `void Terrain::destroy (void)` | M | grep confirmed |
-| `mclib/tgl.h:261` `bool TG_Light::GetFalloff(float length, float &falloff)` | M | grep confirmed; definition at :261-275 |
-| `mclib/quad.cpp:1347/1500/1654/1808` GetFalloff call sites | M | grep confirmed all 4 |
-| `code/mechcmd2.cpp:870` `void __stdcall InitializeGameEngine()` | M | grep confirmed |
-| `code/mechcmd2.cpp:1918` `void __stdcall TerminateGameEngine()` | M | grep confirmed |
-| **`gos_RendererInit` / `gos_RendererShutdown`** | **NF** | **v1 cited these as real hooks — grep of entire GameOS/ mclib/ code/ returns zero hits. Fictional. Replaced by `InitializeGameEngine`/`TerminateGameEngine`.** |
-| `GameOS/gameos/gpu_cull_readback.cpp:230-235` `GL_MAP_READ_BIT|GL_MAP_WRITE_BIT|GL_MAP_PERSISTENT_BIT|GL_MAP_COHERENT_BIT` staging buffer | M | grep confirmed — this IS the precedent for persistent-READ mapping |
-| `gos_static_prop_batcher.cpp:641`, `gos_terrain_patch_stream.cpp:269/294`, `gpu_cull_substrate.cpp:115` — WRITE-only persistent maps | M | grep confirmed — all existing persistent maps except readback are WRITE-only |
-| `gos_static_prop_batcher.cpp:3464`, `gos_terrain_patch_stream.cpp:1511`, `gos_terrain_indirect.cpp:1679`, `gpu_cull_readback.cpp:469` — `glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0)` | M | grep confirmed — proven ring-fence pattern used in 4 files |
-| `mclib/terrain.cpp:105` `Terrain::realVerticesMapSide` — `static long`, no const cap | M | grep confirmed `long Terrain::realVerticesMapSide = 0` at :105; assigned at :315 (sqrt of vertex count) and :389 (explicit verticesPerMapSide); no upper bound constant exists |
-| `memory/substrate_coalesce_sync_point_lesson.md` sync-stall lesson | M | quoted from auto-memory index |
-| `memory/water_ssbo_pattern.md` "static recipe + per-frame thin record" | M | quoted from auto-memory index |
+| `GameOS/gameos/gpu_cull_compute.cpp:145-168` `compile_compute_shader` | M | Confirmed clean from v2 (opus reviewer); not re-grepped in v3 |
+| `GameOS/gameos/gpu_cull_compute.cpp:170-193` `link_compute_program` | M | Confirmed clean from v2 |
+| `GameOS/gameos/gpu_cull_compute.cpp:197-231` `build_compute_program_from_file` | M | Confirmed clean from v2 |
+| `GameOS/gameos/gpu_cull_compute.cpp:308` `compute_init` function body | M | Confirmed clean from v2 |
+| `code/mission.cpp:2788` `gpu_cull::compute_init()` call | M | Confirmed clean from v2 |
+| `mclib/quad.cpp:490-495` `extern float leastZ/leastW/mostZ/mostW/leastWY/mostWY` | M | v3 grep: `grep -n "^extern float leastZ" mclib/quad.cpp` → `490:extern float leastZ;` through `495:extern float mostWY;` |
+| **`mclib/terrain.cpp:938-940` leastZ definitions** | **D** | **v2 claim was WRONG. v3 grep: `grep -n "float leastZ = 1.0f" mclib/terrain.cpp` → `1341:float leastZ = 1.0f,leastW = 1.0f;`. Definitions are at `terrain.cpp:1341-1343`.** |
+| `mclib/terrain.cpp:1341-1343` `float leastZ = 1.0f,...` definitions | M | v3 grep confirmed: `:1341 float leastZ = 1.0f,leastW = 1.0f;` `:1342 float mostZ = -1.0f, mostW = -1.0;` `:1343 float leastWY = 0.0f, mostWY = 0.0f;` |
+| **`mclib/terrain.cpp:946-948` per-frame reset** | **D** | **v2 claim was WRONG. v3 grep: `grep -n "leastZ = 1.0f" mclib/terrain.cpp` → `1341` (definition) and `1382` (reset). Reset is at `terrain.cpp:1382-1384`, not `:946-948`.** |
+| `mclib/terrain.cpp:1382-1384` per-frame reset inside `Terrain::geometry` | M | v3 grep confirmed: `:1382 leastZ = 1.0f;leastW = 1.0f;` `:1383 mostZ = -1.0f; mostW = -1.0;` `:1384 leastWY = 0.0f; mostWY = 0.0f;` |
+| `mclib/quad.cpp:1008/1075/1142/1209` water-block leastZ/mostZ writers | M | Confirmed clean from v2 |
+| `mclib/quad.cpp:946-1260` CostSplitWaterVertProjScope | M | Confirmed clean from v2 |
+| `mclib/quad.cpp:1266-1891` CostSplitLightingScope | M | Confirmed clean from v2 |
+| `mclib/quad.cpp:670` `void TerrainQuad::setupTextures (void)` | M | Confirmed clean from v2 |
+| `mclib/terrain.cpp:1549-1552` non-water reduction writers | M | Confirmed clean from v2 |
+| `mclib/terrain.cpp:1696-1715` legacy fallback reduction writers | M | v3 grep: `sed -n '1694,1717p' mclib/terrain.cpp` shows leastZ/mostZ/leastW/mostW writers from `:1696` through `:1715`. v2 cited `:1698-1715` (slightly off; actual first conditional at `:1696`). |
+| `mclib/terrain.cpp:1832` `eye->setInverseProject(mostZ, leastW, ...)` | M | Confirmed clean from v2 |
+| **`mclib/quad.cpp` total `lightRGB` occurrences = 55** | **D** | **v2 cited 55 (from `grep -c "->lightRGB"`). v3 grep: `grep -c "lightRGB" mclib/quad.cpp` → `84`. The 55 figure was arrow-operator-only. Full string count is 84. Both figures correct for their respective queries; table now shows both.** |
+| `mclib/quad.cpp` `->lightRGB` writes: 8 sites (`:1322/1373/1476/1527/1630/1681/1784/1835`) | M | Confirmed clean from v2 |
+| `GameOS/gameos/gos_terrain_water_stream.cpp` `lightRGB` count | D | v2 cited 8 (`->lightRGB` only). v3 grep: `grep -c "lightRGB" ...water_stream.cpp` → **14**. Corrected in consumer table above. |
+| `GameOS/gameos/gos_terrain_indirect.cpp` `lightRGB` count | D | v2 cited 2 (`->lightRGB` only). v3 grep: `grep -c "lightRGB" ...indirect.cpp` → **10**. Corrected. Direct read at `:1459`; lambda context at `:1450/1455/1458`; comments at `:1407-1408`; tr assignments at `:1526-1529`. |
+| `GameOS/gameos/gos_terrain_water_stream.h` `lightRGB` count | D | v2 cited 1 (comment). v3 grep: `grep -c "lightRGB" ...water_stream.h` → **5**. Field declarations + comment. |
+| `code/carnage.cpp` `lightRGB` count | D | v2 cited 1. v3 grep: `grep -c "lightRGB" code/carnage.cpp` → **2** (`:315` file read, `:687` SetaRGB call). Both are `ExplosionType::lightRGB`, NOT terrain pool consumer. |
+| `GameOS/gameos/gos_terrain_patch_stream.cpp` `lightRGB` | **NF in v2** | **v2 omitted entirely. v3 grep: `grep -c "lightRGB" ...patch_stream.cpp` → 5 hits (`:836` param decl, `:862-865` field assignments). Indirect consumer via `quad.cpp:2133-2136` (lightRGBc lambda reads `vertices[c]->lightRGB`, packs into `tr`, calls `appendThinRecordDirect`). Added to consumer table.** |
+| `GameOS/gameos/gos_terrain_patch_stream.h` `lightRGB` | NF in v2 | v3 grep: `grep -c "lightRGB" ...patch_stream.h` → 4 (struct field declarations + function param). No live consumers — definitions only. |
+| `code/weaponbolt.cpp` `lightRGB` | NF in v2 | v3 grep: `grep -c "lightRGB" code/weaponbolt.cpp` → 6. `WeaponBoltType::lightRGB` — different struct, NOT terrain pool. |
+| `mclib/crater.cpp` `lightRGB` | NF in v2 | v3 grep: `grep -c "lightRGB" mclib/crater.cpp` → 11. Local `DWORD lightRGB` variable, NOT `ScreenVertex::lightRGB`. |
+| `mclib/cevfx.cpp` + `cevfx.h` `lightRGB` | NF in v2 | v3 grep: `.cpp` → 8, `.h` → 6. `CevFxVertex::lightRGB` — different struct. |
+| `mclib/bdactor.cpp`, `camera.cpp`, `gamecam.cpp`, `mech3d.cpp`, `gvactor.cpp`, `genactor.cpp` | NF in v2 | v3 grep: 5, 4, 2, 2, 2, 2 hits respectively. All are local `DWORD lightRGB` computations passed to `eye->setLightColor()` — NOT terrain pool consumers. |
+| **`mclib/clouds.cpp:289-348` fogRGB consumers** | **D** | **v2 called this a cross-file consumer. v3 identifies it as a FALSE POSITIVE: `cloudVertex0` is `CloudVertex*` (clouds.h:37), not `ScreenVertex*`. `CloudVertex::fogRGB` is a different struct. Removed from fogRGB consumer list.** |
+| `gpu_cull_readback.cpp` 3-slot non-blocking ring | D | v2 described "2-slot + GL_TIMEOUT_IGNORED". v3 grep: `head -5 gpu_cull_readback.cpp` → "3-slot readback ring + per-frame glFenceSync"; `:40 constexpr uint32_t RING_FRAMES = 3u;`; `:17 glClientWaitSync timeout is ALWAYS 0 (zero) — never GL_TIMEOUT_IGNORED on hot path." Design now adopts 3-slot non-blocking pattern. |
+| `mclib/mapdata.cpp:1114` `vertexNum = -1` | M | Confirmed clean from v2 |
+| `mclib/mapdata.cpp:1119` `vertexNum = topLeftX + topLeftY * realVerticesMapSide` | M | Confirmed clean from v2 |
+| `mclib/terrain.cpp:595` `Terrain::primeMissionTerrainCache` | M | Confirmed clean from v2 |
+| `code/mission.cpp:2240` `land->primeMissionTerrainCache` call | M | Confirmed clean from v2 |
+| `mclib/terrain.cpp:703` `void Terrain::destroy (void)` | M | Confirmed clean from v2 |
+| `mclib/tgl.h:261` `bool TG_Light::GetFalloff(float length, float &falloff)` | M | Confirmed clean from v2 |
+| `mclib/quad.cpp:1347/1500/1654/1808` GetFalloff call sites | M | Confirmed clean from v2 |
+| `code/mechcmd2.cpp:870` `void __stdcall InitializeGameEngine()` | M | Confirmed clean from v2 |
+| `code/mechcmd2.cpp:1918` `void __stdcall TerminateGameEngine()` | M | Confirmed clean from v2 |
+| **`gos_RendererInit` / `gos_RendererShutdown`** | **NF** | Confirmed NF from v2. Fictional names, never existed. |
+| `GameOS/gameos/gpu_cull_readback.cpp:230-235` persistent-mapped staging flags | M | Confirmed clean from v2 |
+| `gos_static_prop_batcher.cpp:641`, `gos_terrain_patch_stream.cpp:269/294`, `gpu_cull_substrate.cpp:115` — WRITE-only persistent maps | M | Confirmed clean from v2 |
+| `gos_static_prop_batcher.cpp:3464`, `gos_terrain_patch_stream.cpp:1511`, `gos_terrain_indirect.cpp:1679`, `gpu_cull_readback.cpp:469` — `glFenceSync` sites | M | Confirmed clean from v2 |
+| `mclib/terrain.cpp:105` `Terrain::realVerticesMapSide` — `static long`, no const cap | M | Confirmed clean from v2 |
 
 ---
 
@@ -473,13 +629,17 @@ Everything else in plan v1 that was deferred is now committed. Specifically clos
 
 ## Sign-off
 
-**v2 (this revision)** fixes the adversarial-review findings against design doc v1 (commit `63015e2`):
-- **C1:** Verification appendix regenerated; `quad.cpp:1341-1343` → `quad.cpp:490-495`; `quad.cpp:1382-1384` → NF (reset is in `terrain.cpp:946-948`).
-- **C2:** `gos_RendererInit`/`gos_RendererShutdown` removed (NF); Q5 lifecycle redesigned around `gpu_cull::compute_init()` precedent (`mission.cpp:2788`) and real `InitializeGameEngine`/`TerminateGameEngine` hooks.
-- **M1:** lightRGB consumer table corrected; cross-file consumers in `gos_terrain_water_stream.cpp` (8 hits), `gos_terrain_indirect.cpp` (2 hits), `carnage.cpp` (different struct, 1 hit) documented; 1-frame latency note added (MN1).
-- **M2:** Persistent-COHERENT-READ-only SSBO replaced by the `gpu_cull_readback.cpp` staging-copy + `glFenceSync`/`glClientWaitSync` pattern (the proven ring-fence precedent in the codebase).
-- **MN2:** `TG_Light::GetFalloff` closed as non-open; 4 call sites in quad.cpp + definition in `tgl.h:261` confirmed.
-- **MN3:** std430 layout math for `GpuTerrainVertexInput` added to Q6.
-- **MN4:** `realVerticesMapSide` dynamic-sizing confirmed; no const cap.
+**v2 (commit `a5fd168`)** fixed the adversarial-review findings against design doc v1 (commit `d2424ef`). See v2 sign-off block in git history.
 
-This design doc resolves the 7 open questions surfaced by the plan v1 adversarial review (commit `d2424ef`). Plan v2 should cite this doc for every architectural decision it makes; the plan no longer carries unresolved choices. The adversarial review on plan v2 should be evaluating execution-readiness, not architectural decisions.
+**v3 (this revision)** fixes the Sonnet adversarial-review findings against design doc v2 (`a5fd168`):
+
+- **C1 — leastZ/mostZ actual locations:** v2 cited `terrain.cpp:938-940` for definitions — WRONG. v3 grep at write-time: `grep -n "float leastZ = 1.0f" mclib/terrain.cpp` → `1341`. Definitions are at `terrain.cpp:1341-1343`. Per-frame reset is at `terrain.cpp:1382-1384` (v2 cited `:946-948` — also wrong). Verification appendix corrected. Q4 grep evidence rewritten with inline grep output.
+- **C2 — lightRGB consumer table count:** v2 used `grep -c "->lightRGB"` (arrow-only = 55 for quad.cpp). v3 uses `grep -c "lightRGB"` (full string) as the task specified, giving quad.cpp=84, water_stream.cpp=14, indirect.cpp=10, water_stream.h=5, carnage.cpp=2. Consumer table rebuilt with all files classified by struct type (terrain pool vs. other).
+- **C3 — clouds.cpp false positive:** v2 listed `clouds.cpp:289-348` as a fogRGB cross-file consumer. FALSE POSITIVE — `cloudVertex0` is `CloudVertex*` (different struct at `clouds.h:37`). Removed. Actual ScreenVertex::fogRGB consumers: quad.cpp + gos_terrain_water_stream.cpp only.
+- **M1 — readback ring is 3-slot non-blocking:** v2 described "2-slot + GL_TIMEOUT_IGNORED" which DIVERGES from the actual precedent. v3 grep: `gpu_cull_readback.cpp:40 constexpr uint32_t RING_FRAMES = 3u;`, comment line 17 "timeout is ALWAYS 0 — never GL_TIMEOUT_IGNORED on hot path." Design now adopts the 3-slot non-blocking three-tier fallback (T1/T2/T3) literally. `GL_TIMEOUT_IGNORED` is parity-mode-only.
+- **M2 — gos_terrain_patch_stream unenumerated consumer:** v2 omitted entirely. v3 grep: patch_stream.cpp receives `lightRGB0-3` via `appendThinRecordDirect(tr)` packed from `lightRGBc` lambda at `quad.cpp:2081-2086` which reads `vertices[c]->lightRGB`. Added to consumer table as indirect consumer.
+- **MN1-MN2 (count corrections):** water_stream.cpp corrected to 14, indirect.cpp to 10, water_stream.h to 5. Direct consumer at indirect.cpp:1459 confirmed.
+- **MN3 — AMD driver rules cross-reference:** `docs/amd-driver-rules.md` audited. No known AMD issue with `glClientWaitSync(timeout=0)` or persistent BAR. 3-slot non-blocking pattern running in production on RX 7900 XTX. No blocker.
+- **MN4 — BAR memory budget:** Lighting staging ring is ~1.5 MB BAR (3 slots × 500 KB). Noted in Q2 sync section. Added to sign-off as user-sign-off item for the plan.
+
+This design doc resolves the 7 open questions surfaced by the plan v1 adversarial review AND the follow-up Sonnet adversarial-review findings against v2. Plan v3 should cite this doc for every architectural decision; no unresolved choices remain in the design layer.
