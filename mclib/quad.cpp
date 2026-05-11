@@ -147,6 +147,97 @@ struct CostSplitOverlayScope {
             std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
     }
 };
+// 1A-alt Slice 0 — recon RAII timers for the unmeasured sub-tasks inside
+// TerrainQuad::setupTextures. Same MC2_TERRAIN_COST_SPLIT gating; zero-cost
+// when disabled. See gos_terrain_indirect.h CostSplit_Add{WaterVertProj,
+// Lighting,RecipeCache}Nanos for the bucket contract.
+struct CostSplitWaterVertProjScope {
+    std::chrono::steady_clock::time_point t0;
+    bool active;
+    CostSplitWaterVertProjScope()
+        : active(gos_terrain_indirect::IsCostSplitEnabled()) {
+        if (active) t0 = std::chrono::steady_clock::now();
+    }
+    ~CostSplitWaterVertProjScope() {
+        if (!active) return;
+        const auto dt = std::chrono::steady_clock::now() - t0;
+        gos_terrain_indirect::CostSplit_AddWaterVertProjNanos(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
+    }
+};
+struct CostSplitLightingScope {
+    std::chrono::steady_clock::time_point t0;
+    bool active;
+    CostSplitLightingScope()
+        : active(gos_terrain_indirect::IsCostSplitEnabled()) {
+        if (active) t0 = std::chrono::steady_clock::now();
+    }
+    ~CostSplitLightingScope() {
+        if (!active) return;
+        const auto dt = std::chrono::steady_clock::now() - t0;
+        gos_terrain_indirect::CostSplit_AddLightingNanos(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
+    }
+};
+struct CostSplitRecipeCacheScope {
+    std::chrono::steady_clock::time_point t0;
+    bool active;
+    CostSplitRecipeCacheScope()
+        : active(gos_terrain_indirect::IsCostSplitEnabled()) {
+        if (active) t0 = std::chrono::steady_clock::now();
+    }
+    ~CostSplitRecipeCacheScope() {
+        if (!active) return;
+        const auto dt = std::chrono::steady_clock::now() - t0;
+        gos_terrain_indirect::CostSplit_AddRecipeCacheNanos(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
+    }
+};
+// 1A-alt Slice 0 follow-up — outer + cache-resident buckets to close the
+// "missing 8ms" gap discovered when Tracy outer-zone (~11ms mean) exceeded
+// sum of named buckets (~3.5ms).
+struct CostSplitSetupTotalScope {
+    std::chrono::steady_clock::time_point t0;
+    bool active;
+    CostSplitSetupTotalScope()
+        : active(gos_terrain_indirect::IsCostSplitEnabled()) {
+        if (active) t0 = std::chrono::steady_clock::now();
+    }
+    ~CostSplitSetupTotalScope() {
+        if (!active) return;
+        const auto dt = std::chrono::steady_clock::now() - t0;
+        gos_terrain_indirect::CostSplit_AddSetupTotalNanos(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
+    }
+};
+struct CostSplitCacheResidentScope {
+    std::chrono::steady_clock::time_point t0;
+    bool active;
+    CostSplitCacheResidentScope()
+        : active(gos_terrain_indirect::IsCostSplitEnabled()) {
+        if (active) t0 = std::chrono::steady_clock::now();
+    }
+    ~CostSplitCacheResidentScope() {
+        if (!active) return;
+        const auto dt = std::chrono::steady_clock::now() - t0;
+        gos_terrain_indirect::CostSplit_AddCacheResidentNanos(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
+    }
+};
+struct CostSplitVisibilityCheckScope {
+    std::chrono::steady_clock::time_point t0;
+    bool active;
+    CostSplitVisibilityCheckScope()
+        : active(gos_terrain_indirect::IsCostSplitEnabled()) {
+        if (active) t0 = std::chrono::steady_clock::now();
+    }
+    ~CostSplitVisibilityCheckScope() {
+        if (!active) return;
+        const auto dt = std::chrono::steady_clock::now() - t0;
+        gos_terrain_indirect::CostSplit_AddVisibilityCheckNanos(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
+    }
+};
 
 // Stage 3 SOLID gate-off helpers.
 // When indirect SOLID is armed for this frame, BeginLegacySolidCluster()
@@ -578,6 +669,7 @@ static void addTerrainTriangles(const TerrainRecipe& r)
 
 void TerrainQuad::setupTextures (void)
 {
+	CostSplitSetupTotalScope _csSetup; // 1A-alt Slice 0 follow-up — full-function bucket
 	if (mineTextureHandle == 0xffffffff)
 	{
 		FullPathFileName mineTextureName;
@@ -765,7 +857,15 @@ void TerrainQuad::setupTextures (void)
 	}
 	else		//New single bitmap on the terrain.
 	{
-		if (!isTerrainQuadVisible(*this))
+		// 1A-alt Slice 0 follow-up #2 — measure isTerrainQuadVisible call cost.
+		// At wolfman zoom counter inference suggests ~6K quads/frame take the
+		// invisible branch — if the check is even ~500ns, that's 3ms/frame.
+		bool quadVisible;
+		{
+			CostSplitVisibilityCheckScope _csVis;
+			quadVisible = isTerrainQuadVisible(*this);
+		}
+		if (!quadVisible)
 		{
 			overlayHandle = 0xffffffff;
 			terrainHandle = 0xffffffff; 
@@ -775,16 +875,24 @@ void TerrainQuad::setupTextures (void)
 		}
 		else
 		{
+			// 1A-alt Slice 0 follow-up — bracket the cache-fetch + residency
+			// check. Prime suspect for the missing ~8ms between Tracy outer
+			// zone and sum of (recipe + water + lighting) buckets.
 			long rowCol = vertices[0]->posTile;
 			long tileR = rowCol >> 16;
 			long tileC = rowCol & 0x0000ffff;
-			const MapData::WorldQuadTerrainCacheEntry* cachedEntry = Terrain::mapData ? Terrain::mapData->getTerrainFaceCacheEntry(tileR, tileC) : NULL;
-			if (cachedEntry && cachedEntry->isValid())
+			const MapData::WorldQuadTerrainCacheEntry* cachedEntry = NULL;
 			{
-				Terrain::mapData->ensureTerrainFaceCacheEntryResident(*cachedEntry, false);
+				CostSplitCacheResidentScope _csRes;
+				cachedEntry = Terrain::mapData ? Terrain::mapData->getTerrainFaceCacheEntry(tileR, tileC) : NULL;
+				if (cachedEntry && cachedEntry->isValid())
+				{
+					Terrain::mapData->ensureTerrainFaceCacheEntryResident(*cachedEntry, false);
+				}
 			}
 
 			{
+				CostSplitRecipeCacheScope _csRec; // 1A-alt Slice 0 — Shape-C recipe lookup + member assigns + addTerrainTriangles bucket
 				TerrainRecipe recipe;
 				TerrainRecipe inlineRecipe;
 
@@ -830,6 +938,12 @@ void TerrainQuad::setupTextures (void)
 
 	//-----------------------------------------
 	// NEW(tm) water texture code here.
+	// 1A-alt Slice 0 — bracket the entire water-elevation projection + water-handle
+	// resolution + addTriangleBulk(water/waterDetail) chain. Times both the
+	// if-path (per-vertex projectForTerrainAdmission ×4 + reductions) and the
+	// else-path (handle reset). Closing brace at end of else clause below.
+	{
+	CostSplitWaterVertProjScope _csWvp;
 	if ((vertices[0]->pVertex->water & 1) ||
 		(vertices[1]->pVertex->water & 1) ||
 		(vertices[2]->pVertex->water & 1) ||
@@ -1143,7 +1257,13 @@ void TerrainQuad::setupTextures (void)
 		waterHandle = 0xffffffff;
 		waterDetailHandle = 0xffffffff;
 	}
+	} // close CostSplitWaterVertProjScope (1A-alt Slice 0)
 
+	// 1A-alt Slice 0 — bracket the per-vertex lighting block (4 vertices ×
+	// numTerrainLights × falloff + RGB accumulation + lightRGB pack + fogRGB).
+	// Expected dominant at wolfman zoom on lit missions.
+	{
+	CostSplitLightingScope _csLight;
 	if (terrainHandle != 0xffffffff)
 	{
 		//-----------------------------------------------------
@@ -1768,6 +1888,7 @@ void TerrainQuad::setupTextures (void)
 			vertices[3]->calcThisFrame |= 1;
 		}
 	}
+	} // close CostSplitLightingScope (1A-alt Slice 0)
 }
 
 // 2026-05-06: doubled 0.001f → 0.002f after glClipControl(ZERO_TO_ONE)

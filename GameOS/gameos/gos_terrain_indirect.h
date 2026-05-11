@@ -89,6 +89,44 @@ void      CostSplit_AddMineDrawNanos(long long n);
 // Shape-C fallback at quad.cpp:485-503 which fires ~0 times in tier1
 // steady-state). Same RollFrame cadence.
 void      CostSplit_AddOverlayNanos(long long n);
+// 1A-alt Slice 0 — recon buckets for the unmeasured sub-tasks inside
+// TerrainQuad::setupTextures. Path 2 onion-peel uses these to identify
+// which sub-task to port to GPU compute first. Same RollFrame cadence.
+//   WaterVertProj — water-elevation vertex projection block at
+//     quad.cpp:833-1140 (4 per-vertex projectForTerrainAdmission calls
+//     + per-vertex leastZ/mostZ reductions + waterHandle resolution +
+//     addTriangleBulk water/waterDetail). Expected hot at wolfman zoom
+//     on water-heavy missions (mc2_10).
+//   Lighting — per-vertex lighting block at quad.cpp:1147-1771
+//     (4 vertices × numTerrainLights × falloff + RGB accumulation +
+//     lightRGB pack). Expected hot at wolfman zoom on lit missions.
+//   RecipeCache — Shape-C recipe lookup + member assignments +
+//     addTerrainTriangles at quad.cpp:781-818. Expected small post
+//     Shape-C cache flip; instrumented to confirm.
+void      CostSplit_AddWaterVertProjNanos(long long n);
+void      CostSplit_AddLightingNanos(long long n);
+void      CostSplit_AddRecipeCacheNanos(long long n);
+// 1A-alt Slice 0 follow-up — close the "missing 8ms" gap between Tracy
+// outer-zone (~11ms) and sum of named sub-buckets (~3.5ms).
+//   SetupTotal     — brackets the entire TerrainQuad::setupTextures body.
+//                    sum_setup_total - (recipe + water + lighting + cache_resident)
+//                    = unmeasured residual inside setupTextures (function-entry
+//                    preamble, isTerrainQuadVisible, dispatch, mine state gate).
+//   CacheResident  — brackets the cache-fetch + residency check between
+//                    cold-path tex loads and the recipe-cache RAII block
+//                    (rowCol math + getTerrainFaceCacheEntry +
+//                    ensureTerrainFaceCacheEntryResident).
+//   tracy_zone - sum_setup_total = outer for-loop overhead + per-frame setup
+//   (ComputePreflight, BeginFrameNarrow, AppendNarrowCandidate gate, etc.)
+void      CostSplit_AddSetupTotalNanos(long long n);
+void      CostSplit_AddCacheResidentNanos(long long n);
+// 1A-alt Slice 0 follow-up #2 — VisibilityCheck wraps isTerrainQuadVisible(*this)
+// + the invisible-quad-handle-reset branch. Prime suspect for the remaining
+// ~3ms inside setup_total that's unaccounted for by recipe + water + lighting +
+// cache_resident. At wolfman zoom ~14K quads are iterated and ~8K are visible
+// per frame counter inference, so ~6K quads pay this cost without entering
+// any other measured block.
+void      CostSplit_AddVisibilityCheckNanos(long long n);
 // Call once per frame at the close of the per-quad setupTextures loop
 // (terrain.cpp:1684 boundary). Internally gated on IsCostSplitEnabled() —
 // safe to call unconditionally.
@@ -98,6 +136,12 @@ long long CostSplit_GetDetailOverlayNanosTotal();
 long long CostSplit_GetMineEnqueueNanosTotal();
 long long CostSplit_GetMineDrawNanosTotal();
 long long CostSplit_GetOverlayNanosTotal();
+long long CostSplit_GetWaterVertProjNanosTotal();
+long long CostSplit_GetLightingNanosTotal();
+long long CostSplit_GetRecipeCacheNanosTotal();
+long long CostSplit_GetSetupTotalNanosTotal();
+long long CostSplit_GetCacheResidentNanosTotal();
+long long CostSplit_GetVisibilityCheckNanosTotal();
 int       CostSplit_GetFramesObserved();
 
 // ---------------------------------------------------------------------------
