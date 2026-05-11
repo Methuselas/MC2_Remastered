@@ -412,7 +412,7 @@ MC2_TERRAIN_LIGHTING_GPU=1 MC2_TERRAIN_LIGHTING_PARITY=1 ^
   py -3 scripts/run_smoke.py --tier tier1 --duration 90 --kill-existing --keep-logs
 ```
 
-Target: zero mismatches across 5 missions × 90 s ≈ 27,000 frames × ~62,500 verts ≈ ~1.7B field comparisons.
+Target: zero mismatches across 5 missions × 90 s ≈ 27,000 frames × ~14,400 verts (stock `realVerticesMapSide=120` max) ≈ ~388M field comparisons.
 
 - [ ] **Step 4: Commit Stage 2.**
 
@@ -448,14 +448,15 @@ void CopyResultsToVertexPool(TerrainQuad* quadList, int numberQuads) {
 }
 ```
 
-BAR budget note (design doc Q2 MN4): staging ring is ~1.5 MB BAR (3 × 500 KB at 62,500 vertices × 8 B). This is the largest persistent-mapped allocation in the engine but well within Resizable BAR limits on RX 7900 XTX. Monitor `glMapBufferRange` latency via Tracy to confirm no fallback to system RAM.
+BAR budget note (design doc Q2 MN4): stock `realVerticesMapSide` is capped to {120,100,80,60} at `mclib/terrain.cpp:317-323` — max stock vertex count is 120² = 14,400. Staging ring is **~345 KB BAR (3 × ~115 KB at 14,400 vertices × 8 B)**. (The design doc's 62,500/500KB figure was a wolfman-zoom `visibleVerticesPerSide` confusion — corrected here per opus reviewer MIN-1.) Well within any Resizable BAR window. Monitor `glMapBufferRange` latency via Tracy to confirm no fallback to system RAM regardless.
 
 - [ ] **Step 2: Gate CPU lighting block in `mclib/quad.cpp:1266-1891` (design doc Q5).**
 
 ```cpp
 // Gate: authoritative when GPU enabled AND parity not forcing dual-run.
-const bool s_lightingGpuAuth = gos_terrain_lighting::IsEnabled()
-                                && !gos_terrain_lighting::IsParityCheckEnabled();
+// Cached once per process to avoid 14K env-lookups/frame (Stage 5 IsEnabled pattern).
+static const bool s_lightingGpuAuth = gos_terrain_lighting::IsEnabled()
+                                       && !gos_terrain_lighting::IsParityCheckEnabled();
 {
     CostSplitLightingScope _csLight;
     if (!s_lightingGpuAuth && terrainHandle != 0xffffffff) {
@@ -466,9 +467,14 @@ const bool s_lightingGpuAuth = gos_terrain_lighting::IsEnabled()
 // close CostSplitLightingScope (1A-alt Slice 0)  — quad.cpp:1891
 ```
 
+**`CopyResultsToVertexPool` behavior under parity mode (opus MIN-2):** Under parity (`IsParityCheckEnabled()==true`), `CopyResultsToVertexPool` returns early — the comparator reads GPU values from the mapped ring slot directly, the CPU body runs and is authoritative for `vertices[i]->lightRGB`. Avoids the CPU-overwrites-GPU dataflow ambiguity.
+
 The `CostSplitLightingScope` bracket STAYS — it becomes retirement telemetry. Post-flip it must read ~0 µs.
 
-- [ ] **Step 3: Build, deploy, run mc2_10 under authoritative gate.**
+- [ ] **Step 3: Build + deploy via `/mc2-deploy` skill, run mc2_10 under authoritative gate.**
+
+Per CLAUDE.md Critical Rules: this is a load-bearing change (renderer state, lighting consumers). Use `/mc2-build-deploy` skill which handles `--config RelWithDebInfo`, `--clean-first` full relink (per "Full relink before deploy" rule), and per-file `cp -f` + `diff -q` (NEVER `cp -r`).
+
 
 ```
 MC2_TERRAIN_LIGHTING_GPU=1 ^
@@ -549,7 +555,10 @@ bool IsEnabled() {
 }
 ```
 
-- [ ] **Step 2: Build, deploy, tier1 5/5 + menu canary + mc2_10 90s smoke clean under default-on.**
+- [ ] **Step 2: Build + deploy via `/mc2-build-deploy` skill, tier1 5/5 + menu canary + mc2_10 90s smoke clean under default-on.**
+
+Skill handles `--config RelWithDebInfo` + `--clean-first` full relink + per-file `cp -f` + `diff -q` per CLAUDE.md Critical Rules.
+
 
 - [ ] **Step 3: Commit Stage 5 + update soak memory file.**
 
