@@ -64,12 +64,13 @@ layout(std430, binding = 1) writeonly buffer Cmds   { DrawArraysIndirectCommand 
 // ---------------------------------------------------------------------------
 uniform int u_vertsPerElement;
 uniform int u_cmdCount;
+uniform int u_maxThinRecords;
 
 // ---------------------------------------------------------------------------
 // main — single invocation; patches all cmd slots with the cull result.
 // ---------------------------------------------------------------------------
 void main() {
-    uint vis    = hdr.visibleCount;
+    uint vis    = min(hdr.visibleCount, uint(u_maxThinRecords));
     uint verts  = vis * uint(u_vertsPerElement);
     uint nCmds  = uint(u_cmdCount);
 
