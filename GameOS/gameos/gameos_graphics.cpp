@@ -32,6 +32,7 @@
 #include "gos_terrain_patch_stream.h"
 #include "gos_terrain_indirect.h"
 #include "gos_terrain_water_stream.h"
+#include "gpu_driven_common.h"
 
 class gosRenderer;
 class gosFont;
@@ -1962,6 +1963,20 @@ unsigned int gos_terrain_bridge_getWaterFastShaderProgram() {
     return (p && p->shp_) ? (unsigned int)p->shp_ : 0u;
 }
 
+// WaterPerCmd — per-draw data for glMultiDrawArraysIndirect, indexed by gl_DrawID.
+// 32 B std430-aligned; lockstep with gos_terrain_water_fast_mdi.vert binding 7.
+struct WaterPerCmd {
+    uint32_t textureSlot;   // 0 = unit 0 (base), 1 = unit 1 (detail)
+    int32_t  isWater;       // 1 = base, 2 = detail (matches legacy isWater uniform)
+    int32_t  detailMode;    // 0 = base, 1 = detail
+    float    uvScale;
+    float    uvOffsetX;
+    float    uvOffsetY;
+    uint32_t pad0_;
+    uint32_t pad1_;
+};
+static_assert(sizeof(WaterPerCmd) == 32, "WaterPerCmd must be 32 B");
+
 void gos_terrain_bridge_renderWaterFast(
     unsigned int recordCount,
     unsigned int waterGosHandle,
@@ -2020,6 +2035,35 @@ void gosRenderer::renderWaterFastPath(
     ZoneScopedN("renderWaterFastPath");
     if (!water_fast_prog_ || !water_fast_prog_->shp_ || recordCount == 0) return;
     GLuint prog = water_fast_prog_->shp_;
+
+    // Lazy-compile the MDI variant program (MDI VS + MDI FS) the first time it's needed.
+    static GLuint s_waterMdiProg = 0;
+    static GLuint s_perCmdSsbo   = 0;
+    if (s_waterMdiProg == 0 && gpu_driven::IsWaterEnabled()) {
+        static const char* kWaterFastPrefix = "#version 430\n";
+        glsl_program* mdi = glsl_program::makeProgram(
+            "gos_terrain_water_mdi",
+            "shaders/gos_terrain_water_fast_mdi.vert",
+            "shaders/gos_terrain_water_mdi.frag",
+            kWaterFastPrefix);
+        if (mdi && mdi->shp_) {
+            s_waterMdiProg = mdi->shp_;
+            printf("[WATER_MDI v1] event=prog_compiled prog=%u\n", (unsigned)s_waterMdiProg);
+            fflush(stdout);
+        } else {
+            // Permanently disable MDI path so we don't attempt re-compile every frame.
+            // Use a sentinel GLuint of UINT_MAX (not a valid GL object name).
+            s_waterMdiProg = (GLuint)~0u;
+            fprintf(stderr, "[WATER_MDI v1] event=prog_compile_fail — MDI path disabled\n");
+            fflush(stderr);
+        }
+    }
+    if (s_perCmdSsbo == 0 && gpu_driven::IsWaterEnabled()) {
+        glGenBuffers(1, &s_perCmdSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perCmdSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, 2 * (GLsizeiptr)sizeof(WaterPerCmd), nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
 
     // Save state for restore. Water is alpha-blended overlay; we set blend +
     // depth-mask off temporarily.
@@ -2106,22 +2150,14 @@ void gosRenderer::renderWaterFastPath(
     setF   ("time", (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
     setVec4("fog_color", (const float*)&fog_color_);
 
-    // SSBO bindings (recipe at 5, thin record at 6).
-    //   Recipe  = static, uploaded once per mission (idempotent guard inside).
-    //   Thin    = per-frame ring; one entry per in-window water quad.
-    //             UploadAndBindThinRecords binds at slot 6 internally and
-    //             returns the actual record count (= our draw instance count).
+    // GPU-driven path: dispatch compute cull/pack + cmd-patch if enabled.
+    // This MUST happen before EnsureRecipeBufferUploaded so the thin records
+    // are ready and slot 6 is correctly restored to thin data (M2 fix).
+    const bool gpuArmed = WaterStream::ComputeDispatchAndBindThinRecords();
+
+    // Ensure the recipe buffer is uploaded (idempotent, mission-static).
     GLuint recipeBuf = (GLuint)WaterStream::EnsureRecipeBufferUploaded();
     if (recipeBuf == 0) {
-        glDepthMask(savedDepthMask);
-        if (!savedBlend) glDisable(GL_BLEND);
-        glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
-        glUseProgram((GLuint)savedProgram);
-        return;
-    }
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, recipeBuf);
-    const uint32_t thinCount = WaterStream::UploadAndBindThinRecords();
-    if (thinCount == 0) {
         glDepthMask(savedDepthMask);
         if (!savedBlend) glDisable(GL_BLEND);
         glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
@@ -2174,85 +2210,206 @@ void gosRenderer::renderWaterFastPath(
                        ? (GLuint)gos_terrain_bridge_glTextureForGosHandle(waterDetailGosHandle)
                        : 0u;
 
-    // One-time diagnostic for the fast path.
-    static bool s_fastDiagPrinted = false;
-    if (!s_fastDiagPrinted) {
-        s_fastDiagPrinted = true;
-        // Drain any pending GL errors first so we only catch ours.
-        while (glGetError() != GL_NO_ERROR) {}
-        GLint curVAO=0, curFBO=0, curVP[4]={0};
-        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &curVAO);
-        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &curFBO);
-        glGetIntegerv(GL_VIEWPORT, curVP);
-        GLboolean depthTest = glIsEnabled(GL_DEPTH_TEST);
-        GLboolean cullFace  = glIsEnabled(GL_CULL_FACE);
-        GLint curDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC, &curDepthFunc);
-        fprintf(stderr,
-                "[WATER_FAST v1] event=first_draw prog=%u recipeBuf=%u "
-                "thin=%u baseGosH=%u baseGLTex=%u detailGosH=%u detailGLTex=%u "
-                "VAO=%d FBO=%d viewport=[%d,%d,%d,%d] depthTest=%d cullFace=%d depthFunc=0x%x\n",
-                (unsigned)prog, (unsigned)recipeBuf,
-                (unsigned)thinCount,
-                (unsigned)waterGosHandle, (unsigned)baseTex,
-                (unsigned)waterDetailGosHandle, (unsigned)detailTex,
-                curVAO, curFBO, curVP[0], curVP[1], curVP[2], curVP[3],
-                depthTest, cullFace, (unsigned)curDepthFunc);
-        fflush(stderr);
-    }
+    // Determine whether MDI path is fully operational.
+    const bool mdiValid = gpuArmed
+                          && s_waterMdiProg != 0 && s_waterMdiProg != (GLuint)~0u
+                          && s_perCmdSsbo  != 0
+                          && baseTex       != 0;
 
-    const GLsizei drawVerts = (GLsizei)(thinCount * 6u);
+    if (mdiValid) {
+        // ─────────────────────────────────────────────────────────────
+        // GPU-driven MDI path
+        // Thin records: already cull-packed by compute + bound to slot 6
+        // by ComputeDispatchAndBindThinRecords() (M2 fix).
+        // ─────────────────────────────────────────────────────────────
 
-    // --- Base water layer ---
-    if (baseTex != 0) {
+        // Upload per-draw data (base + detail).
+        WaterPerCmd cmds[2];
+        cmds[0] = { 0u, 1, 0, oneOverTF,      cloudOffsetX, cloudOffsetY, 0u, 0u };
+        cmds[1] = { 1u, 2, 1, oneOverWaterTF, sprayOffsetX, sprayOffsetY, 0u, 0u };
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perCmdSsbo);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)sizeof(cmds), cmds);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        // Switch to MDI program.
+        glUseProgram(s_waterMdiProg);
+
+        // Re-define lambdas that target s_waterMdiProg.
+        auto setMF = [&](const char* name, float a) {
+            GLint loc = glGetUniformLocation(s_waterMdiProg, name);
+            if (loc >= 0) glUniform1f(loc, a);
+        };
+        auto setMI = [&](const char* name, int a) {
+            GLint loc = glGetUniformLocation(s_waterMdiProg, name);
+            if (loc >= 0) glUniform1i(loc, a);
+        };
+        auto setMMat4Direct = [&](const char* name, const float* v) {
+            GLint loc = glGetUniformLocation(s_waterMdiProg, name);
+            if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, v);
+        };
+        auto setMMat4Std = [&](const char* name, const float* v) {
+            GLint loc = glGetUniformLocation(s_waterMdiProg, name);
+            if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_TRUE, v);
+        };
+        auto setMVec4 = [&](const char* name, const float* v) {
+            GLint loc = glGetUniformLocation(s_waterMdiProg, name);
+            if (loc >= 0) glUniform4fv(loc, 1, v);
+        };
+        auto setMVec2 = [&](const char* name, float a, float b) {
+            GLint loc = glGetUniformLocation(s_waterMdiProg, name);
+            if (loc >= 0) glUniform2f(loc, a, b);
+        };
+
+        setMMat4Direct("terrainMVP",      (const float*)&terrain_mvp_);
+        setMMat4Std   ("mvp",             (const float*)&projection_);
+        setMVec4      ("terrainViewport", (const float*)&terrain_viewport_);
+        setMI         ("debugMode",       s_debugMode);
+        setMF         ("waterElevation",  waterElevation);
+        setMF         ("alphaDepth",      alphaDepth);
+        setMI         ("alphaEdgeByte",   (int)alphaEdgeByte);
+        setMI         ("alphaMiddleByte", (int)alphaMiddleByte);
+        setMI         ("alphaDeepByte",   (int)alphaDeepByte);
+        setMVec2      ("mapTopLeft",      mapTopLeftX, mapTopLeftY);
+        setMF         ("frameCos",        frameCos);
+        setMF         ("frameCosAlpha",   frameCosAlpha);
+        setMF         ("maxMinUV",        maxMinUV);
+        setMF         ("time",  (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
+        setMVec4      ("fog_color", (const float*)&fog_color_);
+        setMI         ("tex1",  0);
+        setMI         ("tex2",  1);
+
+        // Bind SSBOs.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, recipeBuf);
+        // Slot 6 (thin records) was already bound by ComputeDispatchAndBindThinRecords.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, s_perCmdSsbo);
+
+        // Bind textures: base to unit 0, detail (or base) to unit 1.
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, baseTex);
+        glActiveTexture(GL_TEXTURE1);
+        GLuint detailOrBase = (detailTex != 0) ? detailTex : baseTex;
+        glBindTexture(GL_TEXTURE_2D, detailOrBase);
+        glActiveTexture(GL_TEXTURE0);
 
-        setI("isWater",    1);
-        setI("detailMode", 0);
-        setF("uvScale",    oneOverTF);
-        setVec2("uvOffset", cloudOffsetX, cloudOffsetY);
+        // MDI: 2 draws (base + detail); 1 if detail not present.
+        const GLsizei drawCount = (detailTex != 0) ? 2 : 1;
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, WaterStream::GetIndirectCmdBuffer());
+        glMultiDrawArraysIndirect(GL_TRIANGLES, nullptr, drawCount, 0);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
 
-        glDrawArrays(GL_TRIANGLES, 0, drawVerts);
-        // GL error diagnostic (silent on success — base_draw_ok was confirmed
-        // during Stage 2 bring-up; only print on actual error from here on).
-        {
-            GLenum err = glGetError();
-            if (err != GL_NO_ERROR) {
-                static bool s_errPrinted = false;
-                if (!s_errPrinted) {
-                    s_errPrinted = true;
-                    fprintf(stderr, "[WATER_FAST v1] event=base_draw_gl_err err=0x%x verts=%d\n",
-                            (unsigned)err, (int)drawVerts);
-                    fflush(stderr);
+        // Restore unit 1 — don't leave a texture bound on unit 1 for the legacy path.
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
+
+        // Restore GL state.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, 0);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, 0);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, 0);
+        glBindSampler(0, savedSampler);
+        glDepthMask(savedDepthMask);
+        glDepthFunc((GLenum)savedDepthFunc);
+        if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
+        if (!savedBlend) glDisable(GL_BLEND);
+        glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+        glUseProgram((GLuint)savedProgram);
+        glBindVertexArray((GLuint)savedVAO);
+    } else {
+        // ─────────────────────────────────────────────────────────────
+        // Legacy CPU-pack path (unchanged)
+        // ─────────────────────────────────────────────────────────────
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, recipeBuf);
+        const uint32_t thinCount = WaterStream::UploadAndBindThinRecords();
+        if (thinCount == 0) {
+            glBindSampler(0, savedSampler);
+            glDepthMask(savedDepthMask);
+            glDepthFunc((GLenum)savedDepthFunc);
+            if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
+            if (!savedBlend) glDisable(GL_BLEND);
+            glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+            glUseProgram((GLuint)savedProgram);
+            glBindVertexArray((GLuint)savedVAO);
+            return;
+        }
+
+        // One-time diagnostic for the fast path.
+        static bool s_fastDiagPrinted = false;
+        if (!s_fastDiagPrinted) {
+            s_fastDiagPrinted = true;
+            while (glGetError() != GL_NO_ERROR) {}
+            GLint curVAO=0, curFBO=0, curVP[4]={0};
+            glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &curVAO);
+            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &curFBO);
+            glGetIntegerv(GL_VIEWPORT, curVP);
+            GLboolean depthTest = glIsEnabled(GL_DEPTH_TEST);
+            GLboolean cullFace  = glIsEnabled(GL_CULL_FACE);
+            GLint curDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC, &curDepthFunc);
+            fprintf(stderr,
+                    "[WATER_FAST v1] event=first_draw prog=%u recipeBuf=%u "
+                    "thin=%u baseGosH=%u baseGLTex=%u detailGosH=%u detailGLTex=%u "
+                    "VAO=%d FBO=%d viewport=[%d,%d,%d,%d] depthTest=%d cullFace=%d depthFunc=0x%x\n",
+                    (unsigned)prog, (unsigned)recipeBuf,
+                    (unsigned)thinCount,
+                    (unsigned)waterGosHandle, (unsigned)baseTex,
+                    (unsigned)waterDetailGosHandle, (unsigned)detailTex,
+                    curVAO, curFBO, curVP[0], curVP[1], curVP[2], curVP[3],
+                    depthTest, cullFace, (unsigned)curDepthFunc);
+            fflush(stderr);
+        }
+
+        const GLsizei drawVerts = (GLsizei)(thinCount * 6u);
+
+        // --- Base water layer ---
+        if (baseTex != 0) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, baseTex);
+
+            setI("isWater",    1);
+            setI("detailMode", 0);
+            setF("uvScale",    oneOverTF);
+            setVec2("uvOffset", cloudOffsetX, cloudOffsetY);
+
+            glDrawArrays(GL_TRIANGLES, 0, drawVerts);
+            // GL error diagnostic.
+            {
+                GLenum err = glGetError();
+                if (err != GL_NO_ERROR) {
+                    static bool s_errPrinted = false;
+                    if (!s_errPrinted) {
+                        s_errPrinted = true;
+                        fprintf(stderr, "[WATER_FAST v1] event=base_draw_gl_err err=0x%x verts=%d\n",
+                                (unsigned)err, (int)drawVerts);
+                        fflush(stderr);
+                    }
                 }
             }
         }
+
+        // --- Detail/spray layer ---
+        if (detailTex != 0) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, detailTex);
+
+            setI("isWater",    2);
+            setI("detailMode", 1);
+            setF("uvScale",    oneOverWaterTF);
+            setVec2("uvOffset", sprayOffsetX, sprayOffsetY);
+
+            glDrawArrays(GL_TRIANGLES, 0, drawVerts);
+        }
+
+        // Restore GL state.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, 0);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, 0);
+        glBindSampler(0, savedSampler);
+        glDepthMask(savedDepthMask);
+        glDepthFunc((GLenum)savedDepthFunc);
+        if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
+        if (!savedBlend) glDisable(GL_BLEND);
+        glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+        glUseProgram((GLuint)savedProgram);
+        glBindVertexArray((GLuint)savedVAO);
     }
-
-    // --- Detail/spray layer ---
-    if (detailTex != 0) {
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, detailTex);
-
-        setI("isWater",    2);
-        setI("detailMode", 1);
-        setF("uvScale",    oneOverWaterTF);
-        setVec2("uvOffset", sprayOffsetX, sprayOffsetY);
-
-        glDrawArrays(GL_TRIANGLES, 0, drawVerts);
-    }
-
-    // Restore GL state to what it was before this function ran.
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, 0);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, 0);
-    glBindSampler(0, savedSampler);
-    glDepthMask(savedDepthMask);
-    glDepthFunc((GLenum)savedDepthFunc);
-    if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
-    if (!savedBlend) glDisable(GL_BLEND);
-    glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
-    glUseProgram((GLuint)savedProgram);
-    glBindVertexArray((GLuint)savedVAO);
 
     // RENDER_STATES v1: water fast path bound textures directly on unit 0; the
     // applyRenderStates cache is now stale. Force a full re-apply on next call.
