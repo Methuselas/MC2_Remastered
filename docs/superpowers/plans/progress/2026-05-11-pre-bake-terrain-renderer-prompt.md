@@ -4,15 +4,15 @@
 
 > **Required sub-skills:** `superpowers:using-git-worktrees`, `superpowers:writing-plans`, `adversarial-plan-review` (this slice qualifies — touches terrain rendering pipeline, retires the per-frame quadList walk in `Terrain::render`, introduces map-stable SSBO that survives camera motion).
 
-> **PREREQUISITE: Phase A (bindless textures) must ship default-on before this slice opens.** Phase B's static SSBO records bindless handles, not legacy slot indices. Without Phase A, this slice has to either (a) bake legacy slot indices and re-bake when bindless ships (wasted work) or (b) wait for Phase A.
+> **Phase A (bindless textures) is DEFERRED** (see `2026-05-11-bindless-textures-prompt.md` for the rationale: driver support too uneven for portable distribution). Phase B's static SSBO records existing `uint32` texture slot indices via the established `gosTextureHandle` API — no bindless dependency.
 >
-> **Sibling slice** (independent, can run in parallel post-Phase-A): Phase C at `2026-05-11-gpu-driven-rendering-prompt.md`. Phase B and Phase C operate on mostly-orthogonal data: B = static bake of terrain mesh + textures; C = dynamic per-frame indirect-cmd generation. Coordination point: both write into the terrain indirect-cmd SSBO. Stage 0 must decide whether C's per-frame writes layer on top of B's bake (B writes templates, C fills in per-frame deltas) or whether C supplants B for the dynamic portion.
+> **Sibling slice** (independent, can run in parallel): Phase C at `2026-05-11-gpu-driven-rendering-prompt.md`. Phase B and Phase C operate on mostly-orthogonal data: B = static bake of terrain mesh + textures; C = dynamic per-frame indirect-cmd generation. Coordination point: both write into the terrain indirect-cmd SSBO. Stage 0 must decide whether C's per-frame writes layer on top of B's bake (B writes templates, C fills in per-frame deltas) or whether C supplants B for the dynamic portion.
 
 ---
 
 ## Worktree
 
-Create a fresh worktree off post-Phase-A main (likely `claude/nifty-mendeleev` after Phase A merges). Verify Phase A's commit chain is in the base before branching.
+Create a fresh worktree off `claude/nifty-mendeleev` HEAD (currently `93d3cbd` — the post-Phase-1-merge state).
 
 ```
 .claude/worktrees/pre-bake-terrain/  → branch claude/pre-bake-terrain
@@ -20,7 +20,7 @@ Create a fresh worktree off post-Phase-A main (likely `claude/nifty-mendeleev` a
 
 ## Roadmap reference
 
-Phase B of the renderer modernization tri-slice arc (bindless → pre-bake terrain || GPU-driven rendering).
+Phase B of the renderer modernization arc. Originally scoped as the second of three slices (bindless → pre-bake terrain || GPU-driven rendering); bindless is deferred so the arc is now just (pre-bake terrain || GPU-driven rendering).
 
 Parent arc: `docs/superpowers/cpu-to-gpu-offload-orchestrator.md`.
 
@@ -46,7 +46,7 @@ The win does NOT depend on camera stationarity (RTS camera motion preserved). Pe
 6. **`memory/track_b_widen_static_prop_registry.md`** — analogous mission-load static-bake pattern for props.
 7. **`GameOS/gameos/gos_terrain_indirect.{h,cpp}`** — current SOLID-PR1 implementation. Phase B extends to detail/overlay/mine paths too.
 8. **`code/mission.cpp` `Mission::init`** + **`mclib/terrain.cpp:595 Terrain::primeMissionTerrainCache`** — mission-load chokepoints where the bake fires.
-9. **Phase A's bindless-handle ABI** — committed memory file `bindless_handle_abi.md`. Phase B's static SSBO records bindless handles.
+9. **`memory/mc2_texture_handle_is_live.md`** — the existing `gosTextureHandle` uint32 slot-index API that Phase B's static SSBO records. Handles mutate per-frame; resolve at bake time, store the resolved slot index, never cache the raw handle.
 10. **Sibling Phase C prompt + design doc** — coordination point on terrain indirect-cmd SSBO writes.
 
 ## Scope
@@ -66,7 +66,7 @@ The win does NOT depend on camera stationarity (RTS camera motion preserved). Pe
 
 ## Plan shape (suggested — spec session owns final)
 
-1. Stage 0: spec + design doc. Define the static-SSBO struct layout (uses Phase A bindless handles). Define cache-invalidation contract. Adversarial review gate.
+1. Stage 0: spec + design doc. Define the static-SSBO struct layout (records `uint32` texture slot indices per `gosTextureHandle` semantics; bindless deferred). Define cache-invalidation contract. Adversarial review gate.
 2. Stage 1: Build the per-mission baker (no consumer wired). `MC2_TERRAIN_PREBAKE_TRACE=1` prints bake stats at mission load.
 3. Stage 2: Wire a parity-mode consumer — per-frame baked path runs ALONGSIDE legacy walk, comparator checks indirect-cmd output equality. Iterate until zero mismatches.
 4. Stage 3: Consumer flip — baked path becomes authoritative when `MC2_TERRAIN_PREBAKE=1`. Legacy walk runs only under killswitch or parity mode.
@@ -94,7 +94,7 @@ The win does NOT depend on camera stationarity (RTS camera motion preserved). Pe
 - **`memory/cull_gates_are_load_bearing.md`**: `objBlockInfo[].active` and `objVertexActive[]` writes are made by `vertexProjectLoop`. Phase B can't bake "the visible set" — that's per-frame. Phase B bakes only the per-vertex render-state mapping; visibility comes from elsewhere (CPU or Phase C GPU).
 - **`memory/cpp_glsl_ubo_struct_lockstep.md`**: static SSBO struct definition must be in a shared header.
 - **`memory/stock_install_must_remain_playable.md`**: bake must succeed from stock terrain data. No bake step that requires modern sidecar data.
-- **Phase A bindless-handle ABI**: static SSBO records bindless `uvec2` handles, not legacy slot indices. Re-grep `bindless_handle_abi.md` at write-time.
+- **`memory/mc2_texture_handle_is_live.md`**: texture handles mutate per-frame. The static SSBO records the SLOT INDEX (stable after resolve), not the raw handle. Bake-time resolution preserves the live-handle invariant. Bindless texture handles (uint64) are NOT used — that's the deferred Phase A.
 - **`memory/patchstream_shape_c.md`**: existing Shape C cache invalidates whole array on `setTerrain()`. Phase B's cache layer must match this invalidation semantics or document divergence.
 
 ## Adversarial review gate (mandatory)
@@ -126,7 +126,7 @@ Dispatch prompt MUST include "use the adversarial-plan-review skill in `.claude/
 This slice:
 - Defines the per-mission vs per-frame data boundary for terrain — architectural decision.
 - Cache invalidation contract is cross-cutting with `patchstream_shape_c.md` and Track C compute cull.
-- Phase A and Phase C coordination points need careful design.
+- Phase C coordination point needs careful design (Phase A deferred).
 - Static SSBO struct layout is locked in by this slice for future slices to consume.
 
 Opus for spec + adversarial review. Sonnet for Stage 1-3 mechanical implementation.

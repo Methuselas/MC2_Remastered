@@ -4,15 +4,15 @@
 
 > **Required sub-skills:** `superpowers:using-git-worktrees`, `superpowers:writing-plans`, `adversarial-plan-review` (this slice qualifies — moves load-bearing draw list construction to GPU compute, introduces new compute shaders + SSBO schemas, retires the per-frame CPU per-bucket indirect-cmd build).
 
-> **PREREQUISITE: Phase A (bindless textures) must ship default-on before this slice opens.** Phase C's GPU compute generates indirect cmds that reference texture handles directly. Without bindless, CPU still has to bind textures between MDI calls — the win shrinks ~50%.
+> **Phase A (bindless textures) is DEFERRED** (see `2026-05-11-bindless-textures-prompt.md` for the rationale: driver support too uneven for portable distribution). Phase C's compute shaders write `uint32` texture slot indices into per-bucket indirect-cmd metadata; the CPU MDI loop binds the bucket's texture once via `glBindTexture(slot)` before issuing `glMultiDrawArraysIndirect`. That's one bind per pipeline-bucket (not one per draw), so the cost is small but non-zero. The main Phase C win — eliminating per-frame CPU cmd-build work — is independent of bindless.
 >
-> **Sibling slice** (independent, can run in parallel post-Phase-A): Phase B at `2026-05-11-pre-bake-terrain-renderer-prompt.md`. Phase B = static bake of map-stable data; Phase C = dynamic per-frame indirect-cmd generation. Both touch the terrain indirect-cmd SSBO — coordination point: Phase B writes templates at mission load, Phase C compute shader fills in per-frame deltas (visibility + cull) using bake as input. If Phase B doesn't ship, Phase C reads the per-frame CPU-built recipe data (slower but works).
+> **Sibling slice** (independent, can run in parallel): Phase B at `2026-05-11-pre-bake-terrain-renderer-prompt.md`. Phase B = static bake of map-stable data; Phase C = dynamic per-frame indirect-cmd generation. Both touch the terrain indirect-cmd SSBO — coordination point: Phase B writes templates at mission load, Phase C compute shader fills in per-frame deltas (visibility + cull) using bake as input. If Phase B doesn't ship, Phase C reads the per-frame CPU-built recipe data (slower but works).
 
 ---
 
 ## Worktree
 
-Create a fresh worktree off post-Phase-A main.
+Create a fresh worktree off `claude/nifty-mendeleev` HEAD (currently `93d3cbd` — the post-Phase-1-merge state).
 
 ```
 .claude/worktrees/gpu-driven-rendering/  → branch claude/gpu-driven-rendering
@@ -20,7 +20,7 @@ Create a fresh worktree off post-Phase-A main.
 
 ## Roadmap reference
 
-Phase C of the renderer modernization tri-slice arc (bindless → pre-bake terrain || GPU-driven rendering).
+Phase C of the renderer modernization arc. Originally scoped as the third of three slices (bindless → pre-bake terrain || GPU-driven rendering); bindless is deferred so the arc is now just (pre-bake terrain || GPU-driven rendering).
 
 Parent arc: `docs/superpowers/cpu-to-gpu-offload-orchestrator.md`.
 
@@ -34,7 +34,7 @@ Replace per-frame CPU construction of indirect commands with GPU compute shader 
 
 Expected cut: ~1.5-3 ms/frame in the combined `render terrain` + `render textureManager` + `render objects` + `render water` zones — wherever CPU currently builds indirect cmds. Win does NOT depend on camera stationarity (works under RTS panning).
 
-The compounding architectural win: combined with Phase A (bindless) + Phase B (static bake), the CPU draw pipeline becomes: "submit one compute dispatch, submit one MDI per pipeline, done." Total per-frame draw prep on CPU drops toward sub-millisecond.
+The compounding architectural win: combined with Phase B (static bake), the CPU draw pipeline becomes: "submit one compute dispatch, bind per-bucket texture, submit one MDI per pipeline, done." Total per-frame draw prep on CPU drops toward sub-millisecond. (Phase A would have eliminated the per-bucket texture bind too — deferred for portability reasons, see Phase A prompt.)
 
 ## What to read first (in order)
 
@@ -44,7 +44,7 @@ The compounding architectural win: combined with Phase A (bindless) + Phase B (s
 4. **`memory/substrate_coalesce_sync_point_lesson.md`** — sync stall pattern to AVOID. Phase C's GPU-CPU coordination must use fences not readback.
 5. **`GameOS/gameos/gpu_cull_compute.cpp`** — compute shader compile + dispatch pattern. Phase C reuses.
 6. **`GameOS/gameos/gpu_cull_readback.cpp`** — 3-slot non-blocking ring pattern. Phase C may use for any CPU-side telemetry from the GPU pass.
-7. **Phase A's bindless-handle ABI** — committed memory file `bindless_handle_abi.md`. Phase C compute shaders read these handles.
+7. **`memory/mc2_texture_handle_is_live.md`** — the existing `gosTextureHandle` uint32 slot-index API. Phase C compute shaders write slot indices into per-bucket indirect-cmd metadata; CPU MDI loop binds the bucket's texture before issuing the multidraw.
 8. **Phase B's static SSBO struct** (if Phase B has shipped at execution time) — `terrain_prebake.md`. Phase C compute reads as input.
 9. **`code/objmgr.cpp:1939-2050`** — per-object update loop. Phase C considers whether to move parts of this loop's emit work (cull-record writes) to GPU side.
 10. **Phase 1 design doc**: `docs/superpowers/specs/2026-05-10-quadsetuptextures-gpu-compute-port-design.md` — pattern reference for compute-shader design discipline.
@@ -64,7 +64,7 @@ The compounding architectural win: combined with Phase A (bindless) + Phase B (s
 - Cost-split bucket retirement for whatever zones the win lives in (e.g. `render textureManager` cmd-build portion).
 
 **Out:**
-- Bindless textures (Phase A; prerequisite).
+- Bindless textures (Phase A; deferred indefinitely — driver support concerns).
 - Pre-bake terrain (Phase B; can ship before, after, or in parallel).
 - Per-vertex skinning compute (already done on gpu-mech branch).
 - Particle simulation on GPU (could be a follow-on slice).
@@ -102,7 +102,7 @@ The compounding architectural win: combined with Phase A (bindless) + Phase B (s
 - **GL 4.3 single-context constraint** (`2026-05-08-job-system-parallel-for-scope.md` Q5): all GL calls (compute dispatch + MDI + barriers) on render thread.
 - **`memory/substrate_coalesce_sync_point_lesson.md`**: no `glGetBufferSubData` / `glMapBuffer(GL_MAP_READ_BIT)` on hot path. Use fence-sync ring (gpu_cull_readback.cpp pattern) if any CPU-side telemetry needed.
 - **`memory/cpp_glsl_ubo_struct_lockstep.md`**: indirect-cmd struct + per-element state structs in shared headers.
-- **Phase A bindless handles**: compute shader reads bindless handles directly. Re-grep `bindless_handle_abi.md` at write-time.
+- **`memory/mc2_texture_handle_is_live.md`**: compute shader writes `uint32` texture slot indices (NOT bindless `uvec2`). CPU MDI loop binds the bucket's texture once via `glBindTexture(slot)` before each multidraw call. Bindless deferred (see Phase A prompt).
 - **Atomicity**: `atomicAdd` on per-bucket draw count; correct std430 alignment on the counter slot.
 - **`memory/track_c_compute_cull.md`** lifecycle gates: Phase C must respect the same arming/disarming gate pattern (e.g. `IsFrameArmed()`-style preflight) so dispatches only fire when input data is ready.
 - **`GL_COMMAND_BARRIER_BIT` ordering**: after compute writes indirect-cmd SSBO, the barrier MUST sync compute→MDI. Wrong barrier flag = MDI reads stale data.
@@ -112,7 +112,7 @@ The compounding architectural win: combined with Phase A (bindless) + Phase B (s
 Run `adversarial-plan-review` skill against Stage 0 design doc before code lands. Triggers:
 - Multiple new compute shaders + SSBO schemas.
 - Retires CPU per-frame cmd-build infrastructure across multiple draw paths.
-- Cross-cutting with Phase A (bindless) and Phase B (static SSBO).
+- Cross-cutting with Phase B (static SSBO); Phase A bindless deferred.
 - Sync-pattern hazards (the substrate-coalesce lesson is the precedent that almost caught us before).
 - Perf gate ≥1.5 ms.
 

@@ -1,5 +1,13 @@
-# Renderer Modernization — Phase A: Bindless Textures
+# Renderer Modernization — Phase A: Bindless Textures **[DEFERRED]**
 
+> **STATUS (2026-05-11): DEFERRED indefinitely.** User decision after external research: ARB_bindless_texture driver support is uneven across vendors (NVIDIA solid, AMD historically problematic on Windows, Intel/mobile sparse) and the extension's residency/lifetime semantics aren't robust enough to bet a portable game distribution on. Conflicts with the project's "fast and portable" guiding principle.
+>
+> Phases B (pre-bake terrain) and C (GPU-driven rendering) DO NOT depend on Phase A — both ship using existing `uint32` texture slot indices through the established `gosTextureHandle` API. Phase C's win shrinks marginally (MDI consumers still pay ~1 `glBindTexture` per pipeline-bucket, but that's one bind per N draws, not N binds per N draws). Phase B's win is unchanged.
+>
+> This document is retained as a historical decision record. Re-open if: (a) AMD ships robust `ARB_bindless_texture` support across all targeted Windows drivers, (b) the project drops AMD/Intel portability concerns, or (c) a Vulkan/D3D12 migration brings descriptor-table abstractions that supplant bindless.
+>
+> ---
+>
 > **Model: opus.** Reason: foundational ABI change that touches every draw path (terrain, water, static props, mechs, particles, UI). Architectural decisions made here ripple into Phase B (pre-bake terrain) and Phase C (GPU-driven rendering). The texture-handle representation locked in by Phase A becomes the lingua franca for both follow-ons + the gpu-mech branch's eventual merge. Opus for spec + adversarial review; sonnet for mechanical execution stages after the design ships.
 
 > **Required sub-skills:** `superpowers:using-git-worktrees`, `superpowers:writing-plans`, `adversarial-plan-review` (this slice qualifies — touches every draw path, introduces new SSBO schemas, retires the per-draw `glBindTexture` path that every shader currently depends on).
