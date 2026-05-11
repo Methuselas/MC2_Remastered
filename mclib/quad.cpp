@@ -685,6 +685,14 @@ void TerrainQuad::setupTextures (void)
 		blownTextureHandle = mcTextureManager->loadTexture(mineTextureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink, 0, 0x1);
 	}
 
+	// Stage N: skip solid/recipe CPU work when GPU-driven SOLID is armed.
+	// The water-projection block below is NOT guarded — it must run every
+	// frame so that vertices[i]->wz stays fresh for WaterStream pz-validity
+	// and leastZ/mostZ stays correct for eye->setInverseProject().
+	// clipInfo values used by the water block are set by the terrain geometry
+	// projection loop that runs before setupTextures, not by this block.
+	if (!gos_terrain_indirect::IsFrameSolidArmed()) {
+
  	if (!Terrain::terrainTextures2)
 	{
 		if (uvMode == BOTTOMRIGHT)
@@ -936,6 +944,8 @@ void TerrainQuad::setupTextures (void)
 			}
 		}
 	}
+
+	} // end IsFrameSolidArmed guard
 
 	//-----------------------------------------
 	// NEW(tm) water texture code here.

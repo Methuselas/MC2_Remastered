@@ -4,7 +4,7 @@ MechCommander 2 OpenGL port with tessellated terrain, PBR splatting, shadow maps
 
 ## Key Paths
 - **Source:** `A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/`
-- **Deploy:** `A:/Games/mc2-opengl/mc2-win64-v0.3/`
+- **Deploy:** `A:/Games/mc2-opengl/mc2-win64-v0.4/`
 - **CMake:** `C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe`
 
 ## Skills (use these!)
@@ -206,25 +206,23 @@ Exit 0 = no raw source-atlas width arithmetic (blit stride) outside `AssetScale`
 Default regression gate for changes touching render/init/cull/asset paths:
 
 ```bash
-py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --with-menu-canary --kill-existing
+py -3 A:\Games\mc2-opengl-src\.claude\worktrees\gpu-driven-rendering\scripts\run_smoke.py --tier tier1 --duration 30 --kill-existing
 ```
 
 What it covers:
 - `tier1` direct-start passive smoke on 5 stable hand-picked missions covering different biomes/content classes (`mc2_01`, `mc2_03`, `mc2_10`, `mc2_17`, `mc2_24`). Tier1 runs isolated and is the canonical regression-detection reference.
-- one separate menu canary (`boot -> main menu/logistics path -> clean exit`)
+- 30 seconds per mission is sufficient for regression detection.
+
+**DO NOT add `--with-menu-canary` to the default gate.** The menu canary is desktop-bound and screen-coordinate-bound; it is not reliable in automated contexts. Run it manually with `--menu-canary` only when explicitly testing menu/logistics flows.
 
 Important: tier1 perf numbers and tier2 perf numbers are NOT directly comparable -- tier1 measures isolated/clean conditions, tier2 measures sequenced/stress conditions; same mission produces very different numbers. See "Measurement semantics" in `tests/smoke/README.md`.
 
 Interpretation:
-- exit `0` = menu canary clean + all tier1 smoke missions passed
+- exit `0` = all tier1 smoke missions passed
 - exit nonzero = inspect `tests/smoke/artifacts/<timestamp>/`
 
 Useful variants:
-- fast local loop: add `--duration 8 --fail-fast`
-- matrix only: drop `--with-menu-canary`
-- menu canary only: `--menu-canary`
-
-Important limitation:
-- the menu canary is desktop-bound and screen-coordinate-bound to the recording environment; do not treat it as headless/CI-safe or display-independent.
+- faster loop: add `--fail-fast`
+- menu canary (manual only): `--menu-canary` (do NOT include in default gate)
 
 See `tests/smoke/README.md` for tiers, fail buckets, baseline update rules, and canary limitations.
