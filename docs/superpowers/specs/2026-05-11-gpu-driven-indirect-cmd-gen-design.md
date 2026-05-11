@@ -22,7 +22,8 @@ The framing-correction below is the most consequential write-time correction: th
 
 ## Status
 
-- Stage 0 (this design): **v3** — addresses targeted-review findings from v2 commit (`802aca4`) against the 5 new v2-introduced claims (questions A–E). v3 fixes: (D-CRITICAL) `gos_terrain_lighting::GetOutputSsbo()` accessor does not exist in Phase 1's public API — v3 commits to Phase 1 publishing it as a one-line getter (the only Phase-1-source touch Phase C v1 requires); (E-MAJOR) Phase C SOLID compute dispatch placement corrected — lives inside `ComputePreflight()` at `gos_terrain_indirect.cpp:1605` invoked from `terrain.cpp:1792` (Tracy zone `Terrain::geometry quadSetupTextures`), not `gamecam.cpp`; (C-MAJOR) Phase 1 parity coupling decided as option (a) — smoke-runner sets both `MC2_GPU_DRIVEN_PARITY=1` AND `MC2_TERRAIN_LIGHTING_PARITY=1` (Phase 1's `IsParityCheckEnabled()` caches the env in a `static const bool` so runtime toggle is structurally impossible). Questions A and B passed clean (verdict from v2 reviewer).
+- Stage 0 (this design): **v4** — addresses Sonnet narrow-review findings against v3 (`e462c7e`). v4 fixes: (CRITICAL) v3's barrier-ordering diagram wrongly placed Phase 1 dispatch at `mission.cpp:527`; actually at `terrain.cpp:1798`, same Tracy zone as `ComputePreflight()` (`Terrain::geometry quadSetupTextures` at `:1787`), and AFTER it. v3's Phase C compute placement at `ComputePreflight()` would have read the previous frame's lighting SSBO. v4 splits the existing `ComputePreflight()` into arming-only (unchanged, at `:1792`) + a new `ComputeDispatch()` step inserted at `terrain.cpp:1800` (after `CopyResultsToVertexPool`); compute dispatch now runs AFTER Phase 1's dispatch + barrier, achieving fresh same-frame lighting reads. (MAJOR) `MC2_GPU_DRIVEN_PARITY` and per-bucket env vars added to Stage 1 deliverables as required `scripts/run_smoke.py` env-var passthrough additions. (3 MINOR) exit criteria stale MINE reference fixed; K-6 line citation corrected to `:99`; D-1 status note closed.
+- v3 history (preserved for traceability): addresses targeted-review findings from v2 commit (`802aca4`) against the 5 new v2-introduced claims (questions A–E). v3 fixes: (D-CRITICAL) `gos_terrain_lighting::GetOutputSsbo()` accessor does not exist in Phase 1's public API — v3 commits to Phase 1 publishing it as a one-line getter (the only Phase-1-source touch Phase C v1 requires); (E-MAJOR) Phase C SOLID compute dispatch placement file corrected (terrain.cpp, not gamecam.cpp); (C-MAJOR) Phase 1 parity coupling decided as option (a) — smoke-runner sets both env vars (Phase 1's `IsParityCheckEnabled()` caches the env in a `static const bool` so runtime toggle is structurally impossible). Questions A and B passed clean (verdict from v2 reviewer).
 - v2 history (preserved for traceability): addressed adversarial-review findings from v1 commit (`13a0c06`) substance + boundary pass — (a) fictional "256-entry / 99% hit rate" `addLightDataStructure` claim, (b) `g_waterRecipeSSBO` symbol misname (actual: `g_recipeBuffer`), (c) MINE Stage 2c boundary-table contradiction (Stage 2c IS shipped on baseline), (d) MINE has no per-frame thin-record pack (uses `glDrawArrays` and a dirty-flag lazy rebuild, not MDI), (e) OVERLAY three-way scope contradiction, (f) binding-point collision in proposed SOLID compute program, (g) water's actual draw shape is 2× `glDrawArrays` not 1, (h) `s_frameSolidArmed` flow has no spec under GPU-driven, (i) Phase 1 lighting frame-pipelined latency breaks the byte-equality parity claim, (j) ring-slot semantics under GPU-driven SOLID not addressed. Cross-session merge: Phase B session edited three additional stale prose spots (intro, decision #1, ordering paragraph) that v2's MINE-removal edits missed; merged into the current state along with a Stage 4→3 OVERLAY renumbering cleanup (commit `802aca4`).
 - Scope locked per user direction: Phase C targets the **combined** zones `GameCamera::render textureManagerRenderLists` (1.35 ms) + `GameCamera::render water` (814 µs at the wrapping zone — actual cost lives in `render waterFastPath` when armed) + `GameCamera::render objects` (533 µs) = ~2.7 ms current → ~500 µs target = ~2.2 ms saved at wolfman-mc2_10. **Frame is CPU-bound by ~15 ms** at this baseline, so CPU savings translate directly to frame time.
 - Stage 1+: planned, blocked on this v2 design's adversarial-review re-pass clearance.
@@ -478,46 +479,66 @@ Phase 1's existing per-frame sequence (per `gos_terrain_lighting.cpp:613-633`):
 
 Phase C compute reads `s_computeOutputSsbo` directly. The barrier at step 2 already makes the buffer visible to subsequent compute reads. Phase C dispatch must occur AFTER step 2 (no additional barrier needed before Phase C dispatch — the post-Phase-1 barrier covers it) and BEFORE Phase 1's NEXT frame's dispatch (trivially true because Phase C runs in the same frame as the Phase 1 dispatch that produced the data).
 
-The per-frame ordering under v3 (call-sites grep-verified):
+The per-frame ordering under v4 (call-sites grep-verified at HEAD `e462c7e`):
 
 ```
-Phase 1 dispatch (mission.cpp:527 — Tracy zone Mission.TextureManager
-                   wraps mcTextureManager->update() which invokes Phase 1
-                   under the hood)
-  ↓ glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT)        ← Phase 1 emits this at gos_terrain_lighting.cpp:621
-  ↓ glCopyBufferSubData (stays — Track C cull readback uses the staging ring)
-  ↓ glMemoryBarrier(GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT)  ← Phase 1 emits this at :633
+Tracy zone: Terrain::geometry quadSetupTextures  (terrain.cpp:1787)
+  ↓
+  terrain.cpp:1792  gos_terrain_indirect::ComputePreflight()   ← ARMING ONLY in v4
+                    (checks IsDenseRecipeReady, ResourcesReady,
+                     InMissionTransition, killswitch latch;
+                     uploads QuadListWindow SSBO; sets s_frameSolidArmed)
+                    NO compute dispatch here — moved (see below)
+  ↓
+  terrain.cpp:1797  gos_terrain_lighting::BeginFrame()         ← advances ring slot
+  ↓
+  terrain.cpp:1798  gos_terrain_lighting::PackAndDispatch()    ← Phase 1 dispatch
+                      writes s_computeOutputSsbo
+                      ↓ glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT) at lighting.cpp:621
+                      ↓ glCopyBufferSubData (staging ring)
+                      ↓ glMemoryBarrier(GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT) at :633
+  ↓
+  terrain.cpp:1799  gos_terrain_lighting::CopyResultsToVertexPool(quadList, numQuads)
+  ↓
+  NEW Phase C hook (v4)  gos_terrain_indirect::ComputeDispatch()  ← Phase C dispatch
+                         ONLY fires when s_frameSolidArmed (set by ComputePreflight above).
+                         Reads slot 1 = s_computeOutputSsbo via
+                           gos_terrain_lighting::GetOutputSsbo()  ← FRESH SAME-FRAME DATA
+                           (Phase 1's post-dispatch barrier at :621 already published it)
+                         Writes slot 3 = SolidThinRecordSSBO,
+                                slot 4 = SolidIndirectCmdSSBO,
+                                slot 5 = SolidBucketHeader
+                         ↓ glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT)
+                         Phase C patch dispatch (1 invocation)
+                           reads slot 5; writes slot 4 (cmd.count = visibleCount * 6)
+                         ↓ glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT)
+  ↓
+  ... per-quad setupTextures loop runs (terrain.cpp:1807+, unchanged) ...
+  ↓
+End of Terrain::geometry quadSetupTextures zone
 
-... CPU work, other dispatches ...
+... CPU work between zones; no GL state changes that invalidate
+    Phase C's dispatched compute output ...
 
-Phase C SOLID compute dispatch — placed inside ComputePreflight() at
-                                  gos_terrain_indirect.cpp:1605, invoked from
-                                  terrain.cpp:1792 inside Tracy zone
-                                  Terrain::geometry quadSetupTextures
-  reads slot 1 = s_computeOutputSsbo (via gos_terrain_lighting::GetOutputSsbo())
-  writes slot 3 = SolidThinRecordSSBO, slot 4 = SolidIndirectCmdSSBO, slot 5 = SolidBucketHeader
-  ↓ glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT)        ← Phase C emits between cull/pack and patch
-Phase C patch dispatch (1 invocation, same site — still inside ComputePreflight)
-  reads slot 5 (BucketHeader)
-  writes slot 4 (IndirectCmdSSBO[0].count)
-  ↓ glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT)
-
-... CPU work between Terrain::geometry quadSetupTextures zone and
-    Render.TerrainSolid zone — no GL state changes that invalidate
-    the dispatched compute output ...
-
-glMultiDrawArraysIndirect (Stage 2 SOLID) — DrawIndirect() at
-                                            gos_terrain_indirect.cpp:1639,
-                                            invoked from txmmgr.cpp:1664
-                                            inside Tracy zone Render.TerrainSolid
-                                            (zone defined at txmmgr.cpp:1626)
+Tracy zone: Render.TerrainSolid  (txmmgr.cpp:1626)
+  ↓
+  txmmgr.cpp:1664  gos_terrain_indirect::DrawIndirect()
+                   ↓ glMultiDrawArraysIndirect (gameos_graphics.cpp:2468)
+                     (reads slot 4 = SolidIndirectCmdSSBO, the count Phase C wrote)
 ```
 
-No new barrier is required between Phase 1's dispatch and Phase C's dispatch — Phase 1's existing post-dispatch barrier already publishes the SSBO.
+**v4 correction (resolves Sonnet adversarial review CRITICAL).** v3's diagram placed Phase 1 dispatch in `mission.cpp:527`. Grep-verified — that was wrong. Phase 1 dispatch is at `terrain.cpp:1798`, in the SAME Tracy zone as `ComputePreflight()` (`Terrain::geometry quadSetupTextures` at `:1787`), and AFTER `ComputePreflight()` (`:1792`). v3 would have read the previous frame's lighting SSBO at the `ComputePreflight()` hook site — breaking the "same-frame lighting" headline win that the parity-gate reframe section relies on.
 
-**Why the compute dispatch placement is inside `ComputePreflight()` (the existing arming hook), NOT inside `Render.TerrainSolid`:** the dispatch must complete before MDI; the patch dispatch + final `GL_COMMAND_BARRIER_BIT` make this so regardless of which Tracy zone the dispatch is wrapped in. Placing the dispatch inside `ComputePreflight()` reuses the existing arming-gate site at `:1605-1637` (which already gates on `IsDenseRecipeReady`, `ResourcesReady`, `InMissionTransition`, and the killswitch latch) and adds zero new call-site plumbing. The dispatched work executes asynchronously on the GPU between the two Tracy zones; the `GL_COMMAND_BARRIER_BIT` at the end of the dispatch sequence is the load-bearing synchronization, not the Tracy zone boundary.
+**v4 fix:** split the existing `ComputePreflight()` step into two hooks:
 
-This corrects v2's prose, which conflated the file (it said `gamecam.cpp`; the SOLID indirect-draw path lives in `mclib/txmmgr.cpp` for the MDI side and `mclib/terrain.cpp` for the preflight side).
+- `ComputePreflight()` at `terrain.cpp:1792` (UNCHANGED) — does arming gates only. Sets `s_frameSolidArmed`. No GPU dispatch.
+- **NEW** `ComputeDispatch()` called at `terrain.cpp:1800` (NEW, between `:1799` `CopyResultsToVertexPool` and the existing `WaterStream::BeginFrameNarrow()` at `:1805`) — does the actual compute dispatch + patch + barrier sequence. Only fires when `s_frameSolidArmed`. Reads `gos_terrain_lighting::GetOutputSsbo()` after Phase 1's post-dispatch barrier has made it visible.
+
+This is a 5-line insertion in `terrain.cpp` + a new `ComputeDispatch()` symbol in `gos_terrain_indirect.h/.cpp`. The arming-gate site at `:1605-1637` (the body of `ComputePreflight`) is unchanged; only the dispatch step moves.
+
+**Why this site and not e.g. inside `Render.TerrainSolid`:** the dispatched work must complete before MDI (the `GL_COMMAND_BARRIER_BIT` at the end of the patch sequence handles this regardless of zone). Placing the dispatch at `terrain.cpp:1800` keeps it inside `Terrain::geometry quadSetupTextures` (same zone as Phase 1 dispatch) which is consistent with the rest of the terrain-prep work. An alternative was to place `ComputeDispatch()` inside `Render.TerrainSolid` directly, but that requires more plumbing (cross-file state visibility for `s_frameSolidArmed`) and offers no win.
+
+v4 also corrects v3's incorrect mention of `Mission.TextureManager` (`mission.cpp:527`). That zone wraps `mcTextureManager->update()` which is unrelated to Phase 1 dispatch.
 
 ### Parity-gate reframe for Phase 1 frame-pipelined latency (resolves substance M-2)
 
@@ -784,6 +805,8 @@ Adversarial-review gate runs before Stage 1 ships.
 - `shaders/gpu_driven_cmd_patch.comp` (new, shared across buckets) — single-invocation cmd writer
 - `gos_terrain_water_stream.cpp` — `UploadAndBindThinRecords` early-returns when `MC2_GPU_DRIVEN_WATER=1`; new `ComputeDispatchAndBindThinRecords` dispatches Beta-pattern compute.
 - Bridge wires existing `renderWaterFastPath()` hook to call MDI when armed.
+- **`scripts/run_smoke.py` env-var passthrough — REQUIRED deliverable** (resolves Sonnet adversarial review MAJOR finding B-3). Add the following to the existing env-var passthrough list at `run_smoke.py:230-290` (alongside the existing `MC2_TERRAIN_LIGHTING_PARITY` at `:259` and `MC2_GPU_CULL*` family at `:270-284`): `MC2_GPU_DRIVEN`, `MC2_GPU_DRIVEN_WATER`, `MC2_GPU_DRIVEN_TERRAIN_SOLID`, `MC2_GPU_DRIVEN_OVERLAY` (if Stage 3 ships), `MC2_GPU_DRIVEN_PARITY`, `MC2_GPU_DRIVEN_TRACE`. Without this, `MC2_GPU_DRIVEN_PARITY=1` cannot be exercised by the tier1 5/5 smoke gate, and the parity contract is unenforced.
+- **Phase 1 API extension — REQUIRED prerequisite or co-landing.** Phase 1 publishes `gos_terrain_lighting::GetOutputSsbo()` per the "Required Phase 1 API extension" subsection above. Can land standalone before Stage 1 or co-land in the same commit; either works.
 
 **Parity gate:** `MC2_GPU_DRIVEN_PARITY=1` runs BOTH paths, compares thin-record SSBO byte-equality at `(thin_record_count * sizeof(WaterThinRecord))` precision. Same parity-check shape as the renderWater Stage 3 parity infrastructure (silent-on-pass, 600-frame summary).
 
@@ -918,7 +941,7 @@ Adversarial review is expected to find:
 
 ## Exit criteria (Phase C v1)
 
-- All Parity / Soak gates pass for each bucket that ships in v1 (water, SOLID, MINE, OVERLAY).
+- All Parity / Soak gates pass for each bucket that ships in v1 (water, SOLID, OVERLAY if Stage 3 ships).
 - `MC2_GPU_DRIVEN=0` reproduces pre-slice tier1 behavior bit-for-bit per-bucket.
 - Memory file `gpu_driven_indirect_cmds.md` captures the compute-shader pattern + per-bucket invalidation contract + sync-stall avoidance pattern.
 - Phase B (if it ships after Phase C) can layer its static SSBO under the compute shader's input read by changing the binding for R0 only.
@@ -994,9 +1017,9 @@ Run all greps at write-time against `claude/gpu-driven-rendering` worktree HEAD 
 | K-3 (v3) | `mclib/txmmgr.cpp:1626` `ZoneScopedN("Render.TerrainSolid")` | M | grep-verified the SOLID Tracy zone lives in `mclib/txmmgr.cpp`, not `gamecam.cpp`. Zone ends at `txmmgr.cpp:1743`. |
 | K-4 (v3) | `mclib/txmmgr.cpp:1664` `gos_terrain_indirect::DrawIndirect()` call site | M | grep-verified `DrawIndirect()` invoked inside `Render.TerrainSolid` zone. This is the MDI call site, AFTER Phase C's compute dispatch must have completed. |
 | K-5 (v3) | `mclib/terrain.cpp:1792` `gos_terrain_indirect::ComputePreflight()` call site | M | grep-verified `ComputePreflight()` invoked from `Terrain::geometry quadSetupTextures` Tracy zone at `terrain.cpp:1787`. This is where v3 places Phase C SOLID compute dispatch — same hook the existing arming flow uses. |
-| K-6 (v3) | `gos_terrain_lighting.h:97-99` namespaced parity API style | M | grep-verified existing public API uses namespaced `gos_terrain_lighting::FnName()` style. v3's `GetOutputSsbo()` follows this convention. |
+| K-6 (v3, line-corrected v4) | `gos_terrain_lighting.h:99` `GetMappedOutputForParity()` declaration — namespaced API style | M | grep-verified existing public API uses namespaced `gos_terrain_lighting::FnName()` style at the declaration site (line 99; lines 97-98 are doc comments). v3's `GetOutputSsbo()` follows this convention. |
 
-**Status note on D-1:** the prompt cites `code/objmgr.cpp:1939-2050` for "per-object update loop." This citation came from an older commit and was not verified against current HEAD at this design doc's write-time. **Action:** the adversarial-review pass MUST re-grep this range and either confirm or update the citation. Phase C does NOT depend on this range (the per-object update loop is Track-D scope), so this is informational drift, not a design hazard.
+**Status note on D-1:** the prompt cites `code/objmgr.cpp:1939-2050` for "per-object update loop." This citation came from an older commit and was not verified against current HEAD at this design doc's write-time. **CLOSED v4** — v3 substance-reviewer pass (commit `802aca4` review) and Sonnet v3 adversarial review (this review pass against `e462c7e`) both grep-confirmed `code/objmgr.cpp:1939` opens `ZoneScopedN("GameLogic.Units.TerrainObjects")` matching the cited range. No further action; Phase C does not depend on this range.
 
 **Status note on F-2:** the binding-point table is the most likely site of an adversarial-review CRITICAL finding. Phase C MUST re-grep `binding = N` against the worktree at Stage 1 plan-write time and produce a no-collision proof. The shape of the table — one block per bucket — is the load-bearing architectural decision; the specific numbers are mechanical.
 
