@@ -90,12 +90,13 @@ bool DebugOn() {
 // ---------------------------------------------------------------------------
 // Phase C Stage 1 compute resources
 // ---------------------------------------------------------------------------
-GLuint g_waterComputeProgram    = 0;
-GLuint g_cmdPatchProgram        = 0;
-GLuint g_quadWindowSsbo         = 0;   // per-frame: recipe indices in quadList window
-GLuint g_waterBucketHeaderSsbo  = 0;   // GpuDrivenBucketHeader (16 B)
-GLuint g_waterIndirectCmdBuffer = 0;   // 2 × DrawArraysIndirectCommand (32 B)
-bool   g_waterGpuDrivenArmed    = false;
+GLuint   g_waterComputeProgram    = 0;
+GLuint   g_cmdPatchProgram        = 0;
+GLuint   g_quadWindowSsbo         = 0;   // per-frame: recipe indices in quadList window
+uint32_t g_quadWindowSsboCapacity = 0;   // CPU-side mirror of g_quadWindowSsbo allocated size (bytes)
+GLuint   g_waterBucketHeaderSsbo  = 0;   // GpuDrivenBucketHeader (16 B)
+GLuint   g_waterIndirectCmdBuffer = 0;   // 2 × DrawArraysIndirectCommand (32 B)
+bool     g_waterGpuDrivenArmed    = false;
 
 // CPU staging array for BuildQuadWindowSSBO. Persists across frames to avoid
 // per-frame allocation. Capacity grows to the high-water-mark and stays there.
@@ -1098,16 +1099,13 @@ static uint32_t BuildQuadWindowSSBO() {
 
     // Grow g_quadWindowSsbo lazily if capacity is too small.
     // Capacity is sized to the recipe count (all water quads simultaneously).
-    if (g_quadWindowSsbo != 0) {
-        // Check if the current buffer is large enough.
-        GLint curSize = 0;
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_quadWindowSsbo);
-        glGetBufferParameteriv(GL_SHADER_STORAGE_BUFFER, GL_BUFFER_SIZE, &curSize);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        if ((uint32_t)curSize < windowCount * sizeof(uint32_t)) {
-            glDeleteBuffers(1, &g_quadWindowSsbo);
-            g_quadWindowSsbo = 0;
-        }
+    // Use the CPU-side g_quadWindowSsboCapacity mirror to avoid a
+    // glGetBufferParameteriv GPU round-trip every frame.
+    if (g_quadWindowSsbo != 0 &&
+        g_quadWindowSsboCapacity < windowCount * (uint32_t)sizeof(uint32_t)) {
+        glDeleteBuffers(1, &g_quadWindowSsbo);
+        g_quadWindowSsbo = 0;
+        g_quadWindowSsboCapacity = 0;
     }
     if (g_quadWindowSsbo == 0) {
         const uint32_t cap = (uint32_t)(g_recipes.size() * sizeof(uint32_t));
@@ -1115,6 +1113,7 @@ static uint32_t BuildQuadWindowSSBO() {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_quadWindowSsbo);
         glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)cap, nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        g_quadWindowSsboCapacity = cap;
     }
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_quadWindowSsbo);
@@ -1178,13 +1177,15 @@ bool ComputeDispatchAndBindThinRecords() {
         g_thinSlotCapacity = (uint32_t)thinSlotBytes;
         g_thinSlot = 0;
     }
-    // Advance ring slot so GPU write doesn't stomp a slot the GPU is still consuming.
-    g_thinSlot = (g_thinSlot + 1) % kThinRingSlots;
-    const GLintptr thinSlotOffset = (GLintptr)(g_thinSlot * g_thinSlotCapacity);
-
     // Build and upload per-frame quad window SSBO.
     const uint32_t windowCount = BuildQuadWindowSSBO();
     if (windowCount == 0) return false;
+
+    // Advance ring slot so GPU write doesn't stomp a slot the GPU is still consuming.
+    // Must happen AFTER the windowCount==0 early-return so we don't burn a slot
+    // on frames where no water quads are visible (stale-data draw on the next frame).
+    g_thinSlot = (g_thinSlot + 1) % kThinRingSlots;
+    const GLintptr thinSlotOffset = (GLintptr)(g_thinSlot * g_thinSlotCapacity);
 
     // Zero the bucket header (reset visibleCount to 0) before each dispatch.
     {
@@ -1230,13 +1231,23 @@ bool ComputeDispatchAndBindThinRecords() {
     if (locMaxThin     >= 0) glUniform1i(locMaxThin, (int)maxThinRecords);
     if (locWaterElev   >= 0) glUniform1f(locWaterElev, Terrain::waterElevation);
     if (locMapSide     >= 0) glUniform1i(locMapSide, (int)Terrain::realVerticesMapSide);
-    if (locMVP >= 0) {
+    if (locMVP < 0) {
+        // Uniform not found in shader — dispatching with a zeroed MVP would
+        // produce a fully-culled or garbage cull pass. Abort instead.
+        fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_terrainMVP_not_found\n");
+        fflush(stderr);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);  // unbind stale thin slot
+        glUseProgram(0);
+        return false;
+    }
+    {
         const float* mvp = gos_GetTerrainMVPMat4();
         if (mvp) {
             // GL_FALSE: row-major upload. See memory/terrain_mvp_gl_false.md.
             glUniformMatrix4fv(locMVP, 1, GL_FALSE, mvp);
         } else {
             // MVP not available this frame (terrain not yet rendered). Bail out.
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);  // unbind stale thin slot
             glUseProgram(0);
             return false;
         }
@@ -1307,6 +1318,7 @@ void ReleaseGlResources() {
     if (g_quadWindowSsbo != 0) {
         glDeleteBuffers(1, &g_quadWindowSsbo);
         g_quadWindowSsbo = 0;
+        g_quadWindowSsboCapacity = 0;
     }
     if (g_waterBucketHeaderSsbo != 0) {
         glDeleteBuffers(1, &g_waterBucketHeaderSsbo);

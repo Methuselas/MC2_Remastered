@@ -111,8 +111,8 @@ static GLuint gpu_driven_compile_compute_shader(const char** strings, int count)
         if (logLen > 0) {
             char* log = new char[logLen];
             glGetShaderInfoLog(sh, logLen, nullptr, log);
-            printf("[GPU_DRIVEN v1] compute shader compile error:\n%s\n", log);
-            fflush(stdout);
+            fprintf(stderr, "[GPU_DRIVEN v1] compute shader compile error:\n%s\n", log);
+            fflush(stderr);
             delete[] log;
         }
         glDeleteShader(sh);
@@ -134,8 +134,8 @@ static GLuint gpu_driven_link_compute_program(GLuint shader) {
         if (logLen > 0) {
             char* log = new char[logLen];
             glGetProgramInfoLog(prog, logLen, nullptr, log);
-            printf("[GPU_DRIVEN v1] compute program link error:\n%s\n", log);
-            fflush(stdout);
+            fprintf(stderr, "[GPU_DRIVEN v1] compute program link error:\n%s\n", log);
+            fflush(stderr);
             delete[] log;
         }
         glDeleteProgram(prog);
@@ -153,8 +153,8 @@ GLuint gpu_driven::BuildComputeProgramFromFile(
 {
     char* fileSrc = gpu_driven_load_text_file(fname);
     if (!fileSrc) {
-        printf("[GPU_DRIVEN v1] %s source not found: %s\n", debugName, fname);
-        fflush(stdout);
+        fprintf(stderr, "[GPU_DRIVEN v1] %s source not found: %s\n", debugName, fname);
+        fflush(stderr);
         return 0;
     }
 
@@ -168,15 +168,15 @@ GLuint gpu_driven::BuildComputeProgramFromFile(
     GLuint sh = gpu_driven_compile_compute_shader(srcStrs.data(), (int)srcStrs.size());
     delete[] fileSrc;
     if (!sh) {
-        printf("[GPU_DRIVEN v1] %s compile failed\n", debugName);
-        fflush(stdout);
+        fprintf(stderr, "[GPU_DRIVEN v1] %s compile failed\n", debugName);
+        fflush(stderr);
         return 0;
     }
     GLuint prog = gpu_driven_link_compute_program(sh);
     glDeleteShader(sh);
     if (!prog) {
-        printf("[GPU_DRIVEN v1] %s link failed\n", debugName);
-        fflush(stdout);
+        fprintf(stderr, "[GPU_DRIVEN v1] %s link failed\n", debugName);
+        fflush(stderr);
     }
     return prog;
 }
