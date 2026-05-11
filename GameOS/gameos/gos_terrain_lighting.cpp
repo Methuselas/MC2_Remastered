@@ -311,6 +311,10 @@ static GLuint tl_build_terrain_lighting_program(const char* compFname,
 // ---------------------------------------------------------------------------
 namespace gos_terrain_lighting {
 
+GLuint GetOutputSsbo() {
+    return s_computeOutputSsbo;
+}
+
 // ---------------------------------------------------------------------------
 // mission_init — per-mission, called alongside gpu_cull::compute_init()
 // ---------------------------------------------------------------------------

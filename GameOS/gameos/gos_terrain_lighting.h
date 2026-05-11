@@ -9,6 +9,7 @@
 // Stage 3: consumer switch (GPU authoritative, CPU block gated off).
 
 #include <cstdint>
+#include <GL/glew.h>
 
 // Forward-declare TerrainQuad (full definition in mclib/quad.h:59).
 class TerrainQuad;
@@ -97,5 +98,13 @@ void Parity_CompareFrame(TerrainQuad* quadList, int numberQuads,
 // ONLY valid in parity mode (MC2_TERRAIN_LIGHTING_PARITY=1).
 // Never call this on the production hot path — GL_TIMEOUT_IGNORED blocks.
 const GpuTerrainLightingOutput* GetMappedOutputForParity();
+
+// Returns the GL buffer name of the per-vertex lighting output SSBO
+// (lightRGB/fogRGB) written by the per-frame compute dispatch. Phase C
+// compute shaders bind this at their input slot 1 to read lighting bytes
+// directly, eliminating the CPU-mirror bounce that legacy pack loops
+// require. Returns 0 if Phase 1 is disabled or not yet initialized;
+// glBindBufferBase with buffer 0 unbinds the slot (well-defined per GL spec).
+GLuint GetOutputSsbo();
 
 } // namespace gos_terrain_lighting
