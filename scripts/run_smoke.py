@@ -87,7 +87,10 @@ def _run_menu_canary(exe: Path, script_path: Path, artifact_dir: Path,
 
     game_alive = proc.poll() is None
     if game_alive:
-        proc.wait(timeout=max(1, settle_s))
+        try:
+            proc.wait(timeout=max(1, settle_s))
+        except subprocess.TimeoutExpired:
+            proc.kill()
     try:
         stdout, _ = proc.communicate(timeout=5)
     except subprocess.TimeoutExpired:
