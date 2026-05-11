@@ -29,6 +29,7 @@ set(SOURCES ${SOURCES}
     gos_font.cpp
     gos_input.cpp
     asset_scale.cpp
+    gpu_driven_common.cpp
     gpu_cull_record.cpp
     gpu_cull_substrate.cpp
     gpu_cull_parity.cpp
