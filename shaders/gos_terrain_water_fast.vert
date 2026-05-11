@@ -361,7 +361,7 @@ void main() {
     // Future drift check: keep delta = water - terrain ≈ 0.001 in current depth
     // regime. Doubling the absolute terrain fudge is fine; doubling the delta is
     // not.
-    screen.z = clip.z * rhw + 0.0025;
+    screen.z = clip.z * rhw + 0.003;
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
     gl_Position = vec4(ndc.xyz * absW, absW);
