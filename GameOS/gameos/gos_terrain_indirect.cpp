@@ -1316,6 +1316,11 @@ static std::vector<SolidQuadWindowEntry> g_solidWindowStaging;
 // Flag: whether ComputeDispatch() ran the GPU path this frame.
 static bool s_solidGpuDispatchRanThisFrame = false;
 
+// Phase C Stage 2 parity counters — gated by gpu_driven::IsParityEnabled().
+static uint64_t s_solidParityFrames     = 0;
+static uint64_t s_solidParityQuads      = 0;
+static uint64_t s_solidParityMismatches = 0;
+
 // ---------------------------------------------------------------------------
 // ResourcesReady() — lazy-allocate thin-record SSBO + indirect buffer.
 // Called from ComputePreflight; returns true once both are allocated.
@@ -1943,6 +1948,167 @@ bool DrawIndirect() {
     g_thinRingFences[g_thinRingSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// ComputeDispatchParity_Check() — gated by MC2_GPU_DRIVEN_PARITY.
+//
+// Dual-run pattern (mirrors gos_terrain_water_stream.cpp:1364):
+//   1. Read GPU thin records from g_thinRecordSSBO at the ring slot that
+//      ComputeDispatch() wrote to.
+//   2. Re-run PackThinRecordsForFrame() into the NEXT ring slot (CPU path).
+//   3. Sort both sets by recipeIdx (atomicAdd order is non-deterministic).
+//   4. Compare field-by-field: terrainHandle, flags, cementWord, lightRGB0..3.
+//
+// Call site: txmmgr.cpp immediately after DrawIndirect() (before GL state
+// restore), so the compute output is already barrier-complete.
+// ---------------------------------------------------------------------------
+void ComputeDispatchParity_Check() {
+    if (!gpu_driven::IsParityEnabled()) return;
+    if (!s_solidGpuDispatchRanThisFrame) return;
+    if (!g_thinRecordSSBO || !g_solidBucketHeaderSsbo) return;
+
+    ++s_solidParityFrames;
+
+    // Need GL_BUFFER_UPDATE_BARRIER_BIT in addition to the SSB barrier that
+    // ComputeDispatch already issued, so glGetBufferSubData sees the writes.
+    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+
+    // 1. GPU visible count from the bucket header.
+    const int gpuRingSlot = g_thinRingSlot;
+    gpu_driven::GpuDrivenBucketHeader hdr{};
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
+    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                       (GLsizeiptr)sizeof(hdr), &hdr);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    const uint32_t gpuCount = std::min(hdr.visibleCount, (uint32_t)kMaxThinRecords);
+
+    // 2. Read GPU thin records from the slot compute wrote.
+    std::vector<TerrainQuadThinRecord> gpuRecs(gpuCount);
+    if (gpuCount > 0) {
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinRecordSSBO);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                           (GLintptr)((size_t)gpuRingSlot * kThinRecordBytes),
+                           (GLsizeiptr)(gpuCount * sizeof(TerrainQuadThinRecord)),
+                           gpuRecs.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // 3. CPU thin-record pack advances the ring to the NEXT slot.
+    //    GPU output at gpuRingSlot remains intact (no fence wait for that slot here).
+    const int cpuThinCount = PackThinRecordsForFrame();
+    const int cpuRingSlot  = g_thinRingSlot;
+
+    // 4. Read CPU thin records.
+    std::vector<TerrainQuadThinRecord> cpuRecs;
+    if (cpuThinCount > 0) {
+        cpuRecs.resize((size_t)cpuThinCount);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinRecordSSBO);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                           (GLintptr)((size_t)cpuRingSlot * kThinRecordBytes),
+                           (GLsizeiptr)((size_t)cpuThinCount * sizeof(TerrainQuadThinRecord)),
+                           cpuRecs.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+    const uint32_t cpuCount = (uint32_t)cpuRecs.size();
+
+    // 5. Sort by recipeIdx — GPU atomicAdd output order is non-deterministic.
+    auto byRecipeIdx = [](const TerrainQuadThinRecord& a, const TerrainQuadThinRecord& b) {
+        return a.recipeIdx < b.recipeIdx;
+    };
+    std::sort(gpuRecs.begin(), gpuRecs.end(), byRecipeIdx);
+    std::sort(cpuRecs.begin(), cpuRecs.end(), byRecipeIdx);
+
+    // 6. Walk merged sorted lists and compare field-by-field.
+    constexpr uint32_t kMaxPrintsPerFrame = 16;
+    uint32_t printed = 0;
+    uint32_t quadsChecked = 0;
+    uint32_t frameMismatches = 0;
+    uint32_t gi = 0, ci = 0;
+
+    while (gi < gpuCount || ci < cpuCount) {
+        const uint32_t gpuIdx = (gi < gpuCount) ? gpuRecs[gi].recipeIdx : UINT32_MAX;
+        const uint32_t cpuIdx = (ci < cpuCount) ? cpuRecs[ci].recipeIdx : UINT32_MAX;
+
+        if (gpuIdx < cpuIdx) {
+            ++frameMismatches;
+            if (printed < kMaxPrintsPerFrame) {
+                ++printed;
+                fprintf(stderr,
+                        "[GPU_DRIVEN_SOLID_PARITY v1] event=mismatch "
+                        "frame=%llu recipe=%u gpu_only=1\n",
+                        (unsigned long long)s_solidParityFrames, (unsigned)gpuIdx);
+                fflush(stderr);
+            }
+            ++gi;
+        } else if (cpuIdx < gpuIdx) {
+            ++frameMismatches;
+            if (printed < kMaxPrintsPerFrame) {
+                ++printed;
+                fprintf(stderr,
+                        "[GPU_DRIVEN_SOLID_PARITY v1] event=mismatch "
+                        "frame=%llu recipe=%u cpu_only=1\n",
+                        (unsigned long long)s_solidParityFrames, (unsigned)cpuIdx);
+                fflush(stderr);
+            }
+            ++ci;
+        } else {
+            const TerrainQuadThinRecord& g = gpuRecs[gi];
+            const TerrainQuadThinRecord& c = cpuRecs[ci];
+            ++quadsChecked;
+
+#define SOLID_PARITY_FIELD1(field) \
+    if (g.field != c.field) { \
+        ++frameMismatches; \
+        if (printed < kMaxPrintsPerFrame) { \
+            ++printed; \
+            fprintf(stderr, \
+                    "[GPU_DRIVEN_SOLID_PARITY v1] event=mismatch " \
+                    "frame=%llu recipe=%u field=" #field " gpu=0x%x cpu=0x%x\n", \
+                    (unsigned long long)s_solidParityFrames, (unsigned)gpuIdx, \
+                    (unsigned)g.field, (unsigned)c.field); \
+            fflush(stderr); \
+        } \
+    }
+
+            SOLID_PARITY_FIELD1(terrainHandle)
+            SOLID_PARITY_FIELD1(flags)
+            SOLID_PARITY_FIELD1(_pad0)  // cementWord in GLSL; _pad0 in C++ struct
+#undef SOLID_PARITY_FIELD1
+
+            if (g.lightRGB0 != c.lightRGB0 || g.lightRGB1 != c.lightRGB1 ||
+                g.lightRGB2 != c.lightRGB2 || g.lightRGB3 != c.lightRGB3) {
+                ++frameMismatches;
+                if (printed < kMaxPrintsPerFrame) {
+                    ++printed;
+                    fprintf(stderr,
+                            "[GPU_DRIVEN_SOLID_PARITY v1] event=mismatch "
+                            "frame=%llu recipe=%u field=lightRGB "
+                            "gpu=[0x%x,0x%x,0x%x,0x%x] cpu=[0x%x,0x%x,0x%x,0x%x]\n",
+                            (unsigned long long)s_solidParityFrames, (unsigned)gpuIdx,
+                            (unsigned)g.lightRGB0, (unsigned)g.lightRGB1,
+                            (unsigned)g.lightRGB2, (unsigned)g.lightRGB3,
+                            (unsigned)c.lightRGB0, (unsigned)c.lightRGB1,
+                            (unsigned)c.lightRGB2, (unsigned)c.lightRGB3);
+                    fflush(stderr);
+                }
+            }
+            ++gi; ++ci;
+        }
+    }
+
+    s_solidParityQuads      += quadsChecked;
+    s_solidParityMismatches += frameMismatches;
+
+    if (s_solidParityFrames % 600 == 0) {
+        fprintf(stderr,
+                "[GPU_DRIVEN_SOLID_PARITY v1] event=summary "
+                "frames=%llu quads_checked=%llu total_mismatches=%llu\n",
+                (unsigned long long)s_solidParityFrames,
+                (unsigned long long)s_solidParityQuads,
+                (unsigned long long)s_solidParityMismatches);
+        fflush(stderr);
+    }
 }
 
 }  // namespace gos_terrain_indirect  // Stage 3 block

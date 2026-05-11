@@ -1662,6 +1662,9 @@ void MC_TextureManager::renderLists (void)
 			// stop-the-line #1). A false return is a hard failure: logged, arming
 			// disabled process-wide; operator advice in event=hard_failure line.
 			modernHandled = gos_terrain_indirect::DrawIndirect();
+			// Parity check: when MC2_GPU_DRIVEN_PARITY=1, re-runs CPU pack and
+			// compares against GPU compute output. No-op when disabled.
+			gos_terrain_indirect::ComputeDispatchParity_Check();
 		} else if (TerrainPatchStream::isReady() && !TerrainPatchStream::isOverflowed()) {
 			// Un-armed frame: gate-off did not fire, legacy admits filled
 			// TerrainPatchStream normally. M2 thin-record-direct draw runs SOLID.
