@@ -177,7 +177,7 @@ struct GpuTerrainLightingOutput { uint lightRGB; uint fogRGB; };
 #pragma once
 #include <cstdint>
 
-struct TerrainQuad; // forward-decl; full def in mapdata.h
+class TerrainQuad; // forward-decl; full def in mclib/quad.h:59
 
 namespace gos_terrain_lighting {
 
@@ -220,7 +220,7 @@ void Parity_CompareFrame(TerrainQuad* quadList, int numberQuads,
 
 - [ ] **Step 3: Create `gos_terrain_lighting.cpp` — `tl_*` compile helpers + lifecycle.**
 
-Per design doc Q1: copy the `gpu_cull_compute.cpp:145-229` private-static compile pattern into this module as `tl_compile_compute_shader` / `tl_link_compute_program` / `tl_build_compute_program_from_file`. Prefix `tl_` (terrain_lighting) avoids ODR collisions since helpers are `static`. Do NOT create a shared header — factoring is deferred until a third compute module appears (design doc Q1 rationale).
+Per design doc Q1: copy the `gpu_cull_compute.cpp:145-231` private-static compile pattern into this module as `tl_compile_compute_shader` / `tl_link_compute_program` / `tl_build_compute_program_from_file`. Prefix `tl_` (terrain_lighting) avoids ODR collisions since helpers are `static`. Do NOT create a shared header — factoring is deferred until a third compute module appears (design doc Q1 rationale).
 
 3-slot ring matching `gpu_cull_readback.cpp:40` (`RING_FRAMES = 3u`, `GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT` on staging buffers — design doc Q2):
 
@@ -287,8 +287,12 @@ The shader body is deliberately skeletal here — Stage 2 (parity gate) is the g
 
 In `code/mission.cpp:2788` (alongside `gpu_cull::compute_init()`):
 ```cpp
+// CRITICAL: at mission.cpp:2788, land->getNumVertices() returns 0 — numberVertices
+// is not set until Terrain::update() runs each frame (terrain.cpp:893). Use the
+// map-stable dense bound instead. Terrain::realVerticesMapSide (terrain.h:135,
+// static long) is set during land->init() at mission.cpp:2222 — before line 2788.
 gos_terrain_lighting::mission_init(
-    (uint32_t)land->getNumVertices(),   // realVerticesMapSide²
+    (uint32_t)(Terrain::realVerticesMapSide * Terrain::realVerticesMapSide),
     64u);                               // maxLights — tune after diagnostic
 ```
 
@@ -352,7 +356,7 @@ feat(terrain_lighting): Phase 1 Stage 1 — SSBO scaffold + 3-slot ring
 - gos_terrain_lighting.{h,cpp}: mission_init/shutdown + 3-slot non-blocking
   ring (RING_FRAMES=3, matches gpu_cull_readback.cpp:40 precedent).
 - tl_compile_compute_shader/tl_link_compute_program/tl_build_compute_program_from_file
-  copied privately from gpu_cull_compute.cpp:145-229 (design doc Q1).
+  copied privately from gpu_cull_compute.cpp:145-231 (design doc Q1).
 - Compute shader shaders/gos_terrain_lighting.comp: local_size_x=64,
   binding 0/1/2, skeletal math (Stage 2 iterates to parity).
 - Per-frame trio wired at terrain.cpp:1788 (after ComputePreflight);
@@ -479,7 +483,7 @@ Measure with `MC2_TERRAIN_COST_SPLIT=1 MC2_TERRAIN_LIGHTING_GPU=1` at mc2_10 wol
 
 **Gate 1 (retirement):** `lighting_ns_per_frame` ≤ **50 µs/frame**. Proves CPU body retired.
 
-**Gate 2 (net Tracy cut):** Tracy zone `Terrain::geometry quadSetupTextures` mean ≥ **3.0 ms** cut vs pre-Phase-1 baseline (pre-Phase-1: 11.3 ms mean → post-Phase-1 target: ≤8.3 ms mean). Below 3.0 ms cut → STOP and surface to user.
+**Gate 2 (net Tracy cut):** Tracy zone `Terrain::geometry quadSetupTextures` mean ≥ **3.0 ms** cut vs pre-Phase-1 baseline (pre-Phase-1: 11.9 ms (11,871 µs) setup_total from Slice 0 commit `4fa7a9a` → post-Phase-1 target: ≤8.9 ms setup_total). Below 3.0 ms cut → STOP and surface to user.
 
 Record both measurements in the commit message.
 
@@ -596,7 +600,7 @@ Outline only — full spec and design doc written after Phase 1 ships.
 | Stage 1 dispatch overhead | ≤500 µs/frame | Tracy zone `Terrain::TerrainLightingDispatch` (NEW) at mc2_10 wolfman |
 | Stage 2 parity | zero mismatches | tier1 5/5 × 90 s ≈ 1.7B field comparisons |
 | Stage 3 retirement | `lighting_ns_per_frame` ≤50 µs/frame | `MC2_TERRAIN_COST_SPLIT=1` summary |
-| Stage 3 net Tracy cut | ≥3.0 ms vs 11.3 ms pre-Phase-1 baseline | Tracy `Terrain::geometry quadSetupTextures` mean |
+| Stage 3 net Tracy cut | ≥3.0 ms vs 11.9 ms pre-Phase-1 baseline (`4fa7a9a` Slice 0 setup_total) | Tracy `Terrain::geometry quadSetupTextures` mean |
 | Stage 4 soak | 7 days, no abort criteria fired | User's gameplay sessions |
 
 ---
@@ -650,5 +654,5 @@ New citations introduced in plan v2 (not already in design doc verification appe
 | `mclib/terrain.cpp:1832` `eye->setInverseProject` | confirmed via design doc v3 appendix (M) |
 | `quad.cpp:490-495` extern leastZ/etc. | confirmed via design doc v3 appendix (M) |
 | `gpu_cull_readback.cpp:40` `RING_FRAMES = 3u` | confirmed via design doc v3 appendix (M) |
-| `GameOS/gameos/gpu_cull_compute.cpp:145-229` compile-helper trio | confirmed via design doc v3 appendix (M) |
+| `GameOS/gameos/gpu_cull_compute.cpp:145-231` compile-helper trio | confirmed via design doc v3 appendix (M) |
 | `gos_static_prop_batcher.cpp:641` write-only persistent map | `grep -n "GL_MAP_WRITE_BIT\|MAP_PERSISTENT" GameOS/gameos/gos_static_prop_batcher.cpp` → `:641` confirmed |
