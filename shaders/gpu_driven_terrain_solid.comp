@@ -17,22 +17,26 @@
 //   TerrainQuadThinRecord   — gos_terrain_patch_stream.h:103-11 ( 32 B, alignas(16))
 //   GpuTerrainLightingOutput— gos_terrain_lighting.h:56-59      (  8 B, alignas(4))
 //
-// Recipe pad fields (baked by BuildDenseRecipe at mission start — all mission-stable):
-//   pos1.w (_wp1) — low bit: uvMode (0=TOPRIGHT/BOTTOMRIGHT, 1=BOTTOMLEFT)
-//   pos2.w (_wp2) — terrain handle slot (stable uint, bit-cast via floatBitsToUint)
-//   pos3.w (_wp3) — cement word (kCementLayerValidBit | idx, or 0)
+// Window SSBO layout (binding 2 — per-frame, CPU-built from quadList):
+//   Per-entry struct SolidQuadWindow (16 B, 4 uints):
+//     vn0:        top-left corner vertexNum (= recipeIdx in dense SSBO)
+//     thSlot:     resolved terrain texture slot (tex_resolve result; stable/mission)
+//     cementWord: cement layer encoding (kCementLayerValidBit | idx, or 0)
+//     pad_:       reserved
+//   uvMode is derived on GPU from vn0 parity: ((vn0 % mapSide) & 1) != ((vn0 / mapSide) & 1)
+//   → matches worldQuadUVMode(tileR=my, tileC=mx) in mapdata.cpp:115-118.
 //
 // #version 430 is prepended by host-side BuildComputeProgramFromFile — do NOT add here.
 //
 // Bindings:
 //   0 — TerrainQuadRecipe[]        (input, mission-static per-quad recipe)
 //   1 — GpuTerrainLightingOutput[] (input, Phase 1 per-vertex lightRGB; same-frame)
-//   2 — uint[]                     (input, per-frame quadList window: top-left vn values)
+//   2 — SolidQuadWindow[]          (input, per-frame quadList window)
 //   3 — TerrainQuadThinRecord[]    (output, packed thin records)
 //   6 — GpuDrivenBucketHeader      (coherent, atomicAdd on visibleCount)
 //
 // Uniforms:
-//   u_windowCount      — number of entries in windowIdx[]
+//   u_windowCount      — number of entries in windowEntries[]
 //   u_maxThinRecords   — capacity of thin[] output array (overflow guard)
 //   u_mapSide          — realVerticesMapSide (int); used to compute adjacent-row vNums
 //   u_alphaOverride    — 1 when Terrain::terrainTextures2 != nullptr; forces lightRGB=0xFFFFFFFF
@@ -108,13 +112,24 @@ struct GpuTerrainLightingOutput {
 };
 
 // ---------------------------------------------------------------------------
+// SolidQuadWindow — per-frame window entry (16 B, CPU-built from quadList).
+// Lockstep with SolidQuadWindowEntry in gos_terrain_indirect.cpp.
+// ---------------------------------------------------------------------------
+struct SolidQuadWindow {
+    uint vn0;        // top-left corner vertexNum = recipeIdx
+    uint thSlot;     // resolved terrain handle slot
+    uint cementWord; // cement layer encoding (bit31=valid, bits15:0=layer idx)
+    uint pad_;
+};
+
+// ---------------------------------------------------------------------------
 // SSBO bindings
 // ---------------------------------------------------------------------------
-layout(std430, binding = 0) readonly  buffer Recipes  { TerrainQuadRecipe        recipes[];  };
-layout(std430, binding = 1) readonly  buffer Lighting  { GpuTerrainLightingOutput lighting[]; };
-layout(std430, binding = 2) readonly  buffer Window    { uint                     windowIdx[]; };
-layout(std430, binding = 3) writeonly buffer Thin      { TerrainQuadThinRecord    thin[];      };
-layout(std430, binding = 6) coherent  buffer Header    { GpuDrivenBucketHeader    hdr;         };
+layout(std430, binding = 0) readonly  buffer Recipes  { TerrainQuadRecipe        recipes[];       };
+layout(std430, binding = 1) readonly  buffer Lighting  { GpuTerrainLightingOutput lighting[];      };
+layout(std430, binding = 2) readonly  buffer Window    { SolidQuadWindow          windowEntries[]; };
+layout(std430, binding = 3) writeonly buffer Thin      { TerrainQuadThinRecord    thin[];          };
+layout(std430, binding = 6) coherent  buffer Header    { GpuDrivenBucketHeader    hdr;             };
 
 // ---------------------------------------------------------------------------
 // Uniforms.
@@ -161,10 +176,10 @@ void main() {
     uint id = uint(gl_GlobalInvocationID.x);
     if (id >= uint(u_windowCount)) return;
 
-    // windowIdx[] holds top-left corner vertexNums (= recipeIdx in the dense
-    // recipe SSBO, per Option A dense indexing). CPU host builds this window
-    // from the quadList, filtering pointer guards + vertexNum < 0 + no recipe.
-    uint vn0 = windowIdx[id];
+    // windowEntries[] holds per-quad CPU-filtered data. CPU walks quadList,
+    // applying the same skip-set as PackThinRecordsForFrame. GPU handles pz/lightRGB.
+    SolidQuadWindow we = windowEntries[id];
+    uint vn0 = we.vn0;
     TerrainQuadRecipe r = recipes[vn0];
 
     // -----------------------------------------------------------------------
@@ -185,11 +200,15 @@ void main() {
     bool ok2 = pzOk(pz2);
     bool ok3 = pzOk(pz3);
 
-    // uvMode from recipe _wp1 low bit — baked by BuildDenseRecipe.
-    // 0 = TOPRIGHT diagonal (corner[0]-[2]), 1 = BOTTOMLEFT diagonal (corner[1]-[3]).
-    // Matches PackThinRecordsForFrame:1439-1448.
-    uint uvModeWord = floatBitsToUint(r.pos1.w);
-    bool isBottomLeft = (uvModeWord & 1u) != 0u;
+    // uvMode derived from (mx, my) parity — matches worldQuadUVMode() mapdata.cpp:117:
+    //   ((tileR & 1) == (tileC & 1)) ? BOTTOMRIGHT : BOTTOMLEFT
+    // With tileR=my=vn0/mapSide, tileC=mx=vn0%mapSide:
+    //   isBottomLeft = ((mx & 1) != (my & 1))
+    // Same convention as PackThinRecordsForFrame:1439 uvMode = q.uvMode.
+    uint ms_  = uint(u_mapSide);
+    uint mx_  = vn0 % ms_;
+    uint my_  = vn0 / ms_;
+    bool isBottomLeft = ((mx_ & 1u) != (my_ & 1u));
 
     bool pzTri1, pzTri2;
     if (!isBottomLeft) {
@@ -209,10 +228,9 @@ void main() {
     // Compute corner vertexNums for Phase 1 lighting SSBO lookup.
     // Same formula as gpu_driven_water.comp (terrain grid = water grid layout).
     // -----------------------------------------------------------------------
-    uint ms  = uint(u_mapSide);
     uint vn1 = vn0 + 1u;
-    uint vn2 = vn0 + ms + 1u;
-    uint vn3 = vn0 + ms;
+    uint vn2 = vn0 + ms_ + 1u;
+    uint vn3 = vn0 + ms_;
 
     // -----------------------------------------------------------------------
     // Allocate output slot via atomicAdd on the coherent bucket header.
@@ -224,11 +242,10 @@ void main() {
     // Build thin record fields from recipe and lighting SSBO.
     // -----------------------------------------------------------------------
 
-    // terrainHandle slot — baked into _wp2 by BuildDenseRecipe.
-    uint thSlot = floatBitsToUint(r.pos2.w);
-
-    // cementWord — baked into _wp3 by BuildDenseRecipe.
-    uint cementWord = floatBitsToUint(r.pos3.w);
+    // terrainHandle slot and cementWord come from the CPU-built window entry.
+    // CPU computes them via tex_resolve() and g_cementLayerIndexBySlot[] per frame.
+    uint thSlot     = we.thSlot;
+    uint cementWord = we.cementWord;
 
     // flags: bit0=uvMode, bit1=pzTri1Valid, bit2=pzTri2Valid
     uint thinFlags = (isBottomLeft ? kThinFlagUvMode : 0u)
