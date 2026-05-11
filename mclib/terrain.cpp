@@ -35,6 +35,7 @@
 #include"../GameOS/gameos/gos_terrain_water_stream.h"
 #include"../GameOS/gameos/gos_terrain_indirect.h"
 #include"../GameOS/gameos/gos_terrain_bridge.h"
+#include"../GameOS/gameos/gos_terrain_lighting.h"
 
 #include <vector>
 #include <cstdint>
@@ -709,6 +710,9 @@ void Terrain::destroy (void)
 	    gos_terrain_indirect::IsParityCheckEnabled()) {
 		gos_terrain_indirect::ResetDenseRecipe();
 	}
+
+	// Phase 1: terrain lighting GPU compute shutdown (per-mission teardown).
+	gos_terrain_lighting::mission_shutdown();
 
 	// PR2c Stage 1c — mine static-bake teardown. CPU-clear; keep GL buffer
 	// + texture-array allocations for next-mission reuse.
@@ -1786,6 +1790,12 @@ void Terrain::geometry (void)
 		// On un-armed frames (recipe not ready, disabled, etc.) this returns
 		// false with zero side-effects; setupTextures runs as normal.
 		gos_terrain_indirect::ComputePreflight();
+		// Phase 1: terrain lighting GPU compute — per-frame trio (design doc Q5).
+		// BeginFrame advances ring slot; PackAndDispatch packs + dispatches;
+		// CopyResultsToVertexPool is a no-op stub at Stage 1 (output unused).
+		gos_terrain_lighting::BeginFrame();
+		gos_terrain_lighting::PackAndDispatch();
+		gos_terrain_lighting::CopyResultsToVertexPool(quadList, numberQuads);
 		// Water-fast-path narrow walk: reset the candidate vector once per
 		// frame, then append every quad that passes UploadThin's eligibility
 		// gate immediately after setupTextures() establishes waterHandle.

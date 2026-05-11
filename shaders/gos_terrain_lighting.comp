@@ -1,0 +1,53 @@
+// gos_terrain_lighting.comp — Phase 1 Stage 1: terrain lighting GPU compute scaffold.
+//
+// Stage 1: skeleton that reads from input SSBOs and writes a non-trivial
+// placeholder value to output SSBO (so dispatch is observable via trace).
+// Stage 2 will iterate shader math to parity with the CPU lighting block
+// (quad.cpp:1266-1891).
+//
+// #version 430 is injected by the C++ loader — do NOT add it here.
+// Bindings:
+//   0 — GpuTerrainVertexInput[]  (input, per-vertex geometry + flags)
+//   1 — GpuTerrainLight[]        (input, per-frame light list)
+//   2 — GpuTerrainLightingOutput[] (output, lightRGB + fogRGB per vertex)
+//
+// Uniforms:
+//   location 0 — uint  u_numVertices
+//   location 1 — uint  u_numLights
+//   location 2 — vec3  u_sunLightDir
+//   location 3 — vec3  u_baseVertexColor
+//   location 4 — float u_rainLightLevel
+//   location 5 — uint  u_lighteningLevel
+//   location 6 — float u_fogStart
+//   location 7 — float u_fogFull
+
+// --- begin terrain_lighting_shared.hglsl ---
+// (inlined by tl_build_terrain_lighting_program)
+// --- end terrain_lighting_shared.hglsl ---
+
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) readonly  buffer VertexInputs  { GpuTerrainVertexInput vertices[]; };
+layout(std430, binding = 1) readonly  buffer LightInputs   { GpuTerrainLight lights[];         };
+layout(std430, binding = 2) writeonly buffer LightOutputs  { GpuTerrainLightingOutput outputs[]; };
+
+layout(location = 0) uniform uint  u_numVertices;
+layout(location = 1) uniform uint  u_numLights;
+layout(location = 2) uniform vec3  u_sunLightDir;
+layout(location = 3) uniform vec3  u_baseVertexColor;
+layout(location = 4) uniform float u_rainLightLevel;
+layout(location = 5) uniform uint  u_lighteningLevel;
+layout(location = 6) uniform float u_fogStart;
+layout(location = 7) uniform float u_fogFull;
+
+void main() {
+    uint vn = gl_GlobalInvocationID.x;
+    if (vn >= u_numVertices) return;
+
+    // Stage 1 scaffold: write a deterministic-but-recognizable placeholder
+    // so the dispatch is observable (tooling/trace can confirm GPU writes).
+    // Stage 2 replaces this with the actual lighting math from quad.cpp:1266-1891.
+    // Pack lightRGB/fogRGB BGRA per memory/mc2_argb_packing.md.
+    outputs[vn].lightRGB = 0xDEADBE00u | (vn & 0xFFu);
+    outputs[vn].fogRGB   = 0u;
+}

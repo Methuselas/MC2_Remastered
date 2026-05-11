@@ -1,0 +1,24 @@
+#ifndef TERRAIN_LIGHTING_SHARED_HGLSL
+#define TERRAIN_LIGHTING_SHARED_HGLSL
+// Keep in lockstep with gos_terrain_lighting.h — any extension here must
+// extend the C++ struct too (memory/cpp_glsl_ubo_struct_lockstep.md).
+// #version 430 is injected by the C++ loader — do NOT add it here.
+
+struct GpuTerrainVertexInput { vec2 xy; float elevation; float _pad0; vec3 normal; uint flags; };
+struct GpuTerrainLight       { vec3 position; uint lightType; vec3 color; float falloffParam; };
+struct GpuTerrainLightingOutput { uint lightRGB; uint fogRGB; };
+
+#define TG_LIGHT_POINT_GPU   1u
+#define TG_LIGHT_SPOT_GPU    2u
+#define TG_LIGHT_TERRAIN_GPU 3u
+
+// Flag bits (bits 0-3 Phase 1, bits 4-7 Phase 2 — design doc Q6)
+#define GPU_VERT_SHADOW          0x00000001u
+#define GPU_VERT_CALCFRAME_LIGHT 0x00000002u
+#define GPU_VERT_BASE_COLOR_LIT  0x00000004u
+#define GPU_VERT_RAIN_DAMPEN     0x00000008u
+#define GPU_VERT_WATER           0x00000010u
+#define GPU_VERT_WATER_ANIM_NEG  0x00000020u
+#define GPU_VERT_WATER_ANIM_POS  0x00000040u
+#define GPU_VERT_CALCFRAME_WATER 0x00000080u
+#endif
