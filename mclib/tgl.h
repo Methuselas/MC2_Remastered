@@ -560,6 +560,7 @@ class TG_TypeShape : public TG_TypeNode
 	friend class TG_MultiShape;
 	friend class TG_Shape;
 	friend class GpuStaticPropBatcher;
+	friend class GpuMechBatcher;
 
 	//-------------
 	//Data Members

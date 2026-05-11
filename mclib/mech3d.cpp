@@ -17,6 +17,11 @@
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
 #include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
 #include "../code/gameobj.h"  // C3: full GameObject definition for obj->getHandle() in init()
+#include "../GameOS/gameos/gos_mech_batcher.h"
+#include "../GameOS/gameos/gos_mech_killswitch.h"
+
+// MC2_MECH_LOD_TRACE=1: per-actor LOD-swap boundary print.
+static const bool s_mechLodTrace = (getenv("MC2_MECH_LOD_TRACE") != nullptr);
 
 // C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
 // MC2_GPU_CULL_LIFECYCLE=1 enables GPU visibility-based node-position early-outs.
@@ -313,8 +318,16 @@ void Mech3DAppearanceType::init (const char * fileName)
 		// Base shape.  In stand Pose by default.
 		mechShape[0] = new TG_TypeMultiShape;
 		gosASSERT(mechShape[0] != NULL);
-	
+
 		mechShape[0]->LoadTGMultiShapeFromASE(mechName);
+	}
+
+	// Register all loaded LODs with the GPU mech batcher (idempotent).
+	// Pre-finalize at this point — finalizeGeometry() runs at end of map load.
+	for (int lod = 0; lod < MAX_LODS; ++lod) {
+		if (mechShape[lod]) {
+			GpuMechBatcher::instance().registerTypeLod(this, lod);
+		}
 	}
 
 	result = mechFile.readIdString("ShadowName",aseFileName,511);
@@ -2354,6 +2367,11 @@ bool Mech3DAppearance::recalcBounds (void)
 						// we are at this LOD level.
 						if (selectLOD != currentLOD)
 						{
+							if (s_mechLodTrace) {
+								std::fprintf(stderr,
+									"[MECHLOD v1] event=lod_swap actor=%p old_lod=%lu new_lod=%lu\n",
+									(void*)this, (unsigned long)currentLOD, (unsigned long)selectLOD);
+							}
 							currentLOD = selectLOD;
 
 							BYTE alphaValue = mechShape->GetAlphaValue();
@@ -2464,8 +2482,107 @@ long Mech3DAppearance::render (long depthFixup)
 			}
 			//---------------------------------------------
 			// Call Multi-shape render stuff here.
-			mechShape->Render(true);
-			
+			//
+			// GPU mech batcher Slice A: try GPU submit first; fall back to CPU
+			// path if registration / capacity / shader-init says so. Counter
+			// recorded BEFORE registration check so eligible-actor totals are
+			// accurate even when the actor opts out for unrelated reasons.
+			GpuMechBatcher::instance().recordEligibleActor();
+
+			// Slice C1: render-only mech GPU cull. If MC2_GPU_MECH_CULL is on
+			// AND the GPU lagged-readback says this actor was invisible last
+			// frame, skip the GPU mech submit. We DO NOT bypass mechShape->Render
+			// (CPU fallback) because the actor still ran updateGeometry/AI/etc;
+			// we just skip writing its geometry into the GPU mech bucket. update()
+			// has already run by the time render() is called, so AI/lifecycle/
+			// damage all proceed normally for offscreen actors. Independent of
+			// MC2_GPU_CULL_LIFECYCLE which gates a separate concern.
+			//
+			// Stale readback semantics: returns true (visible) for actors with
+			// no readback record yet (newly spawned), so this is fail-open in
+			// uncertainty. One frame of stale "invisible" → one frame of
+			// missing render, recovered next frame at 60Hz.
+			bool mechGpuCullSkip = false;
+			if (g_useGpuMechs && g_useGpuMechCull) {
+				if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_))) {
+					mechGpuCullSkip = true;
+				}
+			}
+
+			bool gpuMechSubmitted = false;
+			if (g_useGpuMechs && !mechGpuCullSkip) {
+				// Replicate the highlight selection from the CPU SetARGBHighLight
+				// branches above so the GPU path sees the same color choice.
+				uint32_t gpuHighlightARGB = highLight;
+				if (selected & DRAW_COLORED && duration <= 0)
+					gpuHighlightARGB = highLight;
+				else
+					gpuHighlightARGB = (uint32_t)highlightColor;
+				if (drawFlash)
+					gpuHighlightARGB = (uint32_t)flashColor;
+
+				GpuMechSubmitDesc desc{};
+				desc.mechShape      = mechShape;
+				desc.mechType       = mechType;
+				desc.currentLOD     = (int)currentLOD;
+				desc.slot0TexHandle = (uint32_t)localTextureHandle;
+				// Slice B1: use the dedup-cache slot populated by
+				// CacheGpuLightData() in update(). 0xFFFFFFFFu sentinel
+				// means "not yet cached" (e.g. spawn-frame before the
+				// first update() runs) — fall back to slot 0. Visual
+				// effect for that one frame: either inherits another
+				// actor's lighting (slot 0 contents at that moment) or,
+				// if slot 0 has numLights==0, calc_light returns the
+				// ambient floor (kAmbientFloor=0.35 grey) thanks to
+				// MC2_STATIC_PROP_LIGHTING. Either case is imperceptible
+				// at 60 Hz.
+				const uint32_t cachedLI = mechShape->getCachedGpuLightIndex();
+				desc.lightDataIndex = (cachedLI == 0xFFFFFFFFu) ? 0u : cachedLI;
+				// Slice B+ (2026-05-09): per-actor lightsOut from object
+				// status. CPU path at mech3d.cpp:3154 sets
+				// mechShape->SetLightsOut(true) for these states; GPU path
+				// reads bit 1 of inst.renderFlags in mech.vert and skips
+				// per-light contributions, leaving only the ambient floor.
+				const bool lightsOut =
+					(status == OBJECT_STATUS_DESTROYED) ||
+					(status == OBJECT_STATUS_DISABLED) ||
+					(status == OBJECT_STATUS_SHUTDOWN);
+				desc.renderFlags    = lightsOut ? 0x2u : 0x0u;  // bit 1
+				desc.highlightARGB  = gpuHighlightARGB;
+				// Slice B2: pack actor hazeFactor [0,1] into the alpha
+				// byte of fogARGB. mech.vert combines it with
+				// g_scene.fogColor.rgb to drive per-actor fog mix in
+				// mech.frag. RGB of fogARGB is unused (the engine fog
+				// color is global; per-actor color tinting deferred).
+				const float hazeClamped = (hazeFactor < 0.0f) ? 0.0f : (hazeFactor > 1.0f ? 1.0f : hazeFactor);
+				const uint8_t hazeByte  = (uint8_t)(hazeClamped * 255.0f + 0.5f);
+				desc.fogARGB        = (uint32_t)hazeByte << 24;
+
+				gpuMechSubmitted = GpuMechBatcher::instance().submitActor(desc);
+				// Only count as a fallback if the GPU path was nominally
+				// enabled at this point. submitActor returns false on
+				// (killswitch off || !finalized || shader fail || late
+				// registration). Killswitch-off and not-yet-finalized are
+				// not "fallbacks" — they're "GPU path not active." Without
+				// this gate, every actor in MC2_GPU_MECHS=0 mode is logged
+				// as ShaderInitFailure, making the [MECHBATCHER v1]
+				// event=summary fallback counters useless.
+				if (!gpuMechSubmitted && g_useGpuMechs) {
+					GpuMechBatcher::instance().recordCpuFallback(
+						GpuMechBatcher::instance().wasLastFailureLateRegistration()
+							? GpuMechFallbackReason::UnregisteredType
+							: GpuMechFallbackReason::ShaderInitFailure);
+				}
+			}
+
+			// Slice C1: if GPU mech cull says invisible, skip BOTH the GPU
+			// submit AND the CPU fallback. This is the whole point of the
+			// cull — render nothing for this actor this frame. CPU update
+			// (AI, position, animation, damage) has already run.
+			if (!gpuMechSubmitted && !mechGpuCullSkip) {
+				mechShape->Render(true);  // CPU path — unchanged
+			}
+
 			if (selected & DRAW_BARS)
 			{
 				drawBars();
@@ -3074,7 +3191,21 @@ void Mech3DAppearance::updateGeometry (void)
 	if (leftArm)
 		leftArm->SetTextureHandle(0,localTextureHandle);
 
-	if ((status == OBJECT_STATUS_DESTROYED) || 
+	// Slice D-shadow-state-strip: when GPU mech path + state-strip
+	// killswitch + tessellation are all active, skip ALL per-frame state
+	// setters on mechShadowShape. Recon (D-shadow-skip §Q1-Q4 + D-shadow-
+	// state-strip §Q1-Q4) proved no consumer of these setters' effects
+	// exists in this configuration: instance-state setters feed only
+	// TransformMultiShape (already retired by D-shadow-skip), and the
+	// global-static side effect (SetLightList writing s_listOfLights) is
+	// overwritten by mechShape's identical call at mech3d.cpp:3407 before
+	// any consumer reads it.
+	const bool stripShadowState =
+		g_useGpuMechs &&
+		g_useGpuMechShadowStateStrip &&
+		gos_IsTerrainTessellationActive();
+
+	if ((status == OBJECT_STATUS_DESTROYED) ||
 		(status == OBJECT_STATUS_DISABLED) || 
 		(status == OBJECT_STATUS_SHUTDOWN))
 	{
@@ -3221,6 +3352,11 @@ void Mech3DAppearance::updateGeometry (void)
 			}
 		}
 
+		// D-gpu-pose-instrument: AnimPose stage — animation pose state setters
+		// (setAnimation, SetFrameNum, SetNodeRotation × N) on body + shadow
+		// shapes, plus the shadow-shape transform conditional. Per-stage
+		// attribution for the trimodal Mech3D.UpdateGeometry histogram.
+		{ ZoneScopedN("Mech3D.UpdateGeometry.AnimPose");
 		//----------------------------------------------------
 		// Set Animation State Here.
 		// ONLY ONE case now:
@@ -3231,7 +3367,7 @@ void Mech3DAppearance::updateGeometry (void)
 			mechType->setAnimation(mechShape,currentGestureId);
 			mechShape->SetFrameNum(currentFrame);
 
-			if (mechShadowShape)
+			if (mechShadowShape && !stripShadowState)
 			{
 				mechType->setAnimation(mechShadowShape,currentGestureId);
 				mechShadowShape->SetFrameNum(currentFrame);
@@ -3248,7 +3384,7 @@ void Mech3DAppearance::updateGeometry (void)
 		if (mechShadowShape)
 			mechShape->SetUseShadow(false);
 			
-		if (mechShadowShape && useShadows)
+		if (mechShadowShape && useShadows && !stripShadowState)
 		{
 			if (rotationalNodeIndex == -1)
 	   			rotationalNodeIndex = mechShadowShape->SetNodeRotation("joint_torso",&torsoRot);
@@ -3257,15 +3393,73 @@ void Mech3DAppearance::updateGeometry (void)
 
  			mechShadowShape->SetNodeRotation("joint_torso",&torsoRot);
 			mechShadowShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-			mechShadowShape->TransformMultiShape (&xlatPosition,&qRotation);
+			// Slice D-shadow-skip: when GPU mech path is on AND skip
+			// killswitch is on AND tessellation is active (modern shadow
+			// path engaged), omit the call entirely. Mech3DAppearance::
+			// renderShadows early-returns on tessellation (mech3d.cpp:3054),
+			// so no consumer of TransformMultiShape's outputs exists in
+			// this configuration. Modern dynamic shadows use g_shadowShapes[]
+			// (txmmgr.cpp:130, 1589-1620), a separate data path that does
+			// NOT consume mechShadowShape state. See D-shadow-skip spec
+			// §Recon for full grep-verified consumer enumeration including
+			// opposite-direction grep on addShadowShape.
+			//
+			// Tessellation gate is belt-and-suspenders: if a user disables
+			// tessellation, the legacy RenderShadows path becomes reachable
+			// and would need TransformMultiShape outputs.
+			//
+			// Slice C3-shadow (FAST_TRANSFORM): when SKIP is off but
+			// FAST_TRANSFORM is on, use _PositionsOnly to skip the per-
+			// vertex CPU lighting kernel only. RenderShadows (tgl.cpp:3577)
+			// hardcodes gVertex.argb to 0x3f000000 and reads
+			// listOfShadowTVertices populated by MultiTransformShadows
+			// (which still dispatches at msl.cpp:1765 in that branch).
+			if (g_useGpuMechs && g_useGpuMechShadowSkip && gos_IsTerrainTessellationActive()) {
+				// Skip — modern engine has no consumer.
+			} else if (g_useGpuMechs && g_useGpuMechShadowFastTransform) {
+				mechShadowShape->TransformMultiShape_PositionsOnly(&xlatPosition, &qRotation);
+			} else {
+				mechShadowShape->TransformMultiShape(&xlatPosition, &qRotation);
+			}
 		}
+		} // end AnimPose zone
 
+		// D-gpu-pose-instrument: BodyXform stage — body's SetLightList +
+		// TransformMultiShape* dispatch. The dominant per-mech work; will be
+		// further broken down by zones inside TransformMultiShape itself.
+		{ ZoneScopedN("Mech3D.UpdateGeometry.BodyXform");
 		mechShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-		mechShape->TransformMultiShape (&xlatPosition,&qRotation);
+		// Slice C3-revised: when GPU mech path is on AND fast-transform
+		// killswitch is on, use _PositionsOnly to skip the per-vertex
+		// CPU lighting kernel. Output of that kernel (listOfVertices[j].argb)
+		// is only consumed by mechShape->Render(true) which Slice A
+		// bypasses; GPU shader does its own lighting via calc_light().
+		// BODY ONLY — arms (4459, 4543) and shadow (3377) explicitly
+		// stay full TransformMultiShape; their Render(true) callers
+		// still depend on the lighting bake.
+		// Slice D-leaf-skip-v2: when GPU mech path is on AND leaf-skip
+		// killswitch is on AND tessellation is active, use HierarchyOnly
+		// to additionally skip per-leaf dispatch + MultiTransformShadows.
+		// Recon proved zero practical consumer in this configuration
+		// (mechShape->Render(true) bypassed by Slice A; RenderShadows
+		// unreachable on tessellation; findMoverByMouse rect-only — see
+		// killswitch comment in gos_mech_killswitch.h).
+		if (g_useGpuMechs && g_useGpuMechLeafSkip && gos_IsTerrainTessellationActive()) {
+			mechShape->TransformMultiShape_HierarchyOnly(&xlatPosition, &qRotation);
+		} else if (g_useGpuMechs && g_useGpuMechFastTransform) {
+			mechShape->TransformMultiShape_PositionsOnly(&xlatPosition, &qRotation);
+		} else {
+			mechShape->TransformMultiShape(&xlatPosition, &qRotation);
+		}
+		} // end BodyXform zone
 	}
-	  
+
+	// D-gpu-pose-instrument: Effects stage — foot poofs, jump fx, weapon
+	// node positions. getNodePosition callers live here; potential cost
+	// contributor.
 	if (visible && (sensorLevel > 4) && !InEditor && useNonWeaponEffects)
 	{
+		ZoneScopedN("Mech3D.UpdateGeometry.Effects");
 		//--------------------------------------------------------------
 		// Having already transformed the mech, the foot poofs go here.
 		Stuff::Vector3D rFootPos, lFootPos;
@@ -3440,6 +3634,22 @@ void Mech3DAppearance::updateGeometry (void)
 		}
 	}
 	
+	// D-gpu-pose-instrument: Sensors stage — sensorTriangleShape +
+	// sensorSquareShape transforms. Per user: ALL mechs have sensors;
+	// need attribution.
+	//
+	// Slice D-sensor-skip: when GPU mech path on AND sensor-skip killswitch
+	// on AND sensorLevel ∈ {0, 5}, skip the entire sensor block. Sensor
+	// SHAPES only render when sensorLevel ∈ [1,4] (mech3d.cpp:2948-2960);
+	// for player mechs (sensorLevel=5) and undetected enemies (sensorLevel=0)
+	// the transform work has no consumer. Skip gate is exact INVERSE of
+	// Render gate — strict no-op semantics. sensorSpin animation drift
+	// while skipped is imperceptible (a continuously-rotating marker that
+	// pops in at any angle is indistinguishable).
+	{ ZoneScopedN("Mech3D.UpdateGeometry.Sensors");
+	const bool skipSensors = g_useGpuMechs && g_useGpuMechSensorSkip &&
+		(sensorLevel == 0 || sensorLevel >= 5);
+	if (!skipSensors) {
 	Stuff::UnitQuaternion totalRotation;
 	sensorSpin += SPIN_RATE * frameLength;
 	if (sensorSpin > 180)
@@ -3460,12 +3670,14 @@ void Mech3DAppearance::updateGeometry (void)
 	sensorTriangleShape->SetFogRGB(0xffffffff);
 	sensorTriangleShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
 	sensorTriangleShape->TransformMultiShape(&xlatPosition,&totalRotation);
-	
+
 	//----------------------------------------------
 	// Do geometry here to draw sensor contact
 	sensorSquareShape->SetFogRGB(0xffffffff);
 	sensorSquareShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
 	sensorSquareShape->TransformMultiShape(&xlatPosition,&totalRotation);
+	} // end !skipSensors
+	} // end Sensors zone
 	
 	//-----------------------------------------
 	// Create Jump FX Here.
@@ -4259,6 +4471,14 @@ long Mech3DAppearance::update (bool animate)
 			: inView;
 		if ((turn < 3) || gpuVis || (currentGestureId == GestureJump) || g_useGpuStaticProps)
 			updateGeometry();
+
+		// Slice B1: refresh per-actor LightsData UBO slot index for the
+		// GPU mech batcher path. Mirrors bdactor.cpp:2314 pattern. No-op
+		// when killswitch is off; cheap (one hash lookup + dedup-cache
+		// slot write) when on. Source: msl.cpp:1828.
+		if (g_useGpuMechs && mechShape) {
+			mechShape->CacheGpuLightData();
+		}
 	}
 
 	//----------------------------------------------------------------------
@@ -4274,6 +4494,12 @@ long Mech3DAppearance::update (bool animate)
 		inView = oldInView;
 	}
 
+	// D-gpu-pose-instrument: Arms stage — leftArm/rightArm dynamics +
+	// transform when blown off. Per user: arms attached by default;
+	// these `*ArmOff && *Arm && *ArmRecalc()` paths only fire for
+	// blown-arm mechs. Tracy zone fires unconditionally so we can
+	// confirm typical mechs have ~0 mass here.
+	{ ZoneScopedN("Mech3D.UpdateGeometry.Arms");
 	//------------------------------------------------
 	// If arms are off, process their geometry here!
 	// MUST do every frame.  We don't know where the arms are!!!
@@ -4446,7 +4672,8 @@ long Mech3DAppearance::update (bool animate)
 			}
 		}
 	}
-	
+	} // end Arms zone
+
  	nextStep = prevStep = false;
 	
 	return TRUE;
