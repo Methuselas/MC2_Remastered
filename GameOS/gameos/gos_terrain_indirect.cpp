@@ -530,8 +530,14 @@ void buildRecipeSlot(int32_t vn, TerrainQuadRecipe& out) {
                 maxU = entry->uvData.maxU;
                 maxV = entry->uvData.maxV;
             }
+            // Bake terrain texture nodeId into _wp2 for GPU-direct dispatch.
+            // _wp3 (cementWord) is baked in PopulateRecipeCementWords() after
+            // BuildCementCatalogAtlas() because g_cementLayerIndexBySlot isn't
+            // ready yet at buildRecipeSlot() time.
+            const uint32_t nodeId = (uint32_t)entry->terrainHandle;
+            memcpy(&out._wp2, &nodeId, 4);
         }
-        // If entry is NULL or !isValid(): normal after setTerrain; use defaults.
+        // If entry is NULL or !isValid(): _wp2 remains 0 → GPU skips quad.
     }
 
     out.minU = minU; out.minV = minV; out.maxU = maxU; out.maxV = maxV;
@@ -547,6 +553,7 @@ void buildRecipeSlot(int32_t vn, TerrainQuadRecipe& out) {
         memcpy(&out._wp0, &tpacked, 4);
     }
 }
+
 
 }  // anonymous namespace
 
@@ -610,6 +617,63 @@ static uint16_t g_cementLayerIndexByNodeIdx[MC_MAXTEXTURES];
 // Sized MC_MAX_TERRAIN_TXMS = 3000 (terrtxm.h:34) — the textures[] cap.
 // 0xFFFF = "not cement / not in atlas".
 static uint16_t g_cementLayerIndexBySlot[MC_MAX_TERRAIN_TXMS];
+
+// ---------------------------------------------------------------------------
+// PopulateRecipeCementWords — bake cementWord into recipe._wp3 for every slot.
+// Must be called AFTER BuildCementCatalogAtlas() because g_cementLayerIndexBySlot
+// is not populated until that function runs.
+// Marks all modified slots dirty so FlushDirtyRecipeSlotsToGPU uploads them.
+// ---------------------------------------------------------------------------
+static void PopulateRecipeCementWords() {
+    if (!Terrain::mapData) return;
+    const long mapSide = Terrain::realVerticesMapSide;
+    if (mapSide <= 0) return;
+    const size_t N = g_denseRecipes.size();
+    constexpr uint32_t kCementLayerValidBit = 0x80000000u;
+
+    for (size_t vn = 0; vn < N; ++vn) {
+        const long mx = (long)vn % mapSide;
+        const long my = (long)vn / mapSide;
+        if (mx >= mapSide - 1 || my >= mapSide - 1) continue;
+
+        uint32_t cementWord = 0u;
+        if (g_cementLayerMapReady) {
+            const DWORD texData = Terrain::mapData->getTexture(my, mx);
+            const DWORD slot    = texData & 0xFFFFu;
+            if (slot < (DWORD)MC_MAX_TERRAIN_TXMS) {
+                const uint16_t idx = g_cementLayerIndexBySlot[slot];
+                if (idx != 0xFFFFu)
+                    cementWord = kCementLayerValidBit | ((uint32_t)idx & 0xFFFFu);
+            }
+        }
+        memcpy(&g_denseRecipes[vn]._wp3, &cementWord, 4);
+        g_denseRecipeDirty[vn]  = true;
+    }
+    g_denseRecipeAnyDirty = true;
+}
+
+// ---------------------------------------------------------------------------
+// CollectUniqueNodeIds — build list of unique terrain texture nodeIds from
+// the baked _wp2 fields. Called once per mission after recipes are fully
+// populated. Used by UploadTerrainHandleLUT() to resolve handles per frame
+// without iterating the full quadList.
+// ---------------------------------------------------------------------------
+static std::vector<uint32_t> g_uniqueTerrainNodeIds;
+
+static void CollectUniqueNodeIds() {
+    g_uniqueTerrainNodeIds.clear();
+    static bool seen[MC_MAXTEXTURES];
+    memset(seen, 0, sizeof(seen));
+    for (const TerrainQuadRecipe& rec : g_denseRecipes) {
+        uint32_t nodeId;
+        memcpy(&nodeId, &rec._wp2, 4);
+        if (nodeId == 0 || nodeId >= (uint32_t)MC_MAXTEXTURES) continue;
+        if (!seen[nodeId]) {
+            seen[nodeId] = true;
+            g_uniqueTerrainNodeIds.push_back(nodeId);
+        }
+    }
+}
 
 // Per-frame counter — incremented when the packer sees a quad whose
 // q.terrainHandle is non-zero AND maps to no cement layer.  A non-zero count
@@ -936,6 +1000,12 @@ void BuildDenseRecipe() {
     // Build cement catalog atlas via GPU readback (textureData[0] is NULL in
     // stock gameplay; see plan v2.1 §C1/B1).
     BuildCementCatalogAtlas();
+
+    // Bake cementWord into _wp3 now that g_cementLayerIndexBySlot is ready.
+    PopulateRecipeCementWords();
+
+    // Collect unique terrain texture nodeIds for per-frame LUT upload.
+    CollectUniqueNodeIds();
 }
 
 void ResetDenseRecipe() {
@@ -1298,20 +1368,17 @@ static bool  s_resourcesReady     = false;
 static GLuint  g_solidComputeProgram    = 0;
 static GLuint  g_solidCmdPatchProgram   = 0;
 static GLuint  g_solidBucketHeaderSsbo  = 0;
-static GLuint  g_solidQuadWindowSsbo    = 0;
-static uint32_t g_solidQuadWindowCapacity = 0;
+static GLuint  g_terrainHandleLutSSBO   = 0;
 
-// Per-frame CPU-built window: one entry per quadList quad that passes skip-set.
-// Matches SolidQuadWindow struct in gpu_driven_terrain_solid.comp.
-struct SolidQuadWindowEntry {
-    uint32_t vn0;        // top-left corner vertexNum (= recipeIdx)
-    uint32_t thSlot;     // resolved terrain handle slot (tex_resolve result)
-    uint32_t cementWord; // cement layer encoding (kCementLayerValidBit | idx, or 0)
-    uint32_t pad_;
-};
-static_assert(sizeof(SolidQuadWindowEntry) == 16,
-    "SolidQuadWindowEntry must be 16 B to match GLSL std430 SolidQuadWindow");
-static std::vector<SolidQuadWindowEntry> g_solidWindowStaging;
+// Cached uniform locations — populated once when programs are compiled.
+// Per-frame varying uniforms (u_windowCount, u_terrainMVP, u_alphaOverride)
+// are still uploaded every frame; only the locations themselves are cached.
+static GLint g_locSolidWC  = -1;   // u_windowCount   (per-frame)
+static GLint g_locSolidAO  = -1;   // u_alphaOverride (per-frame, may be absent)
+static GLint g_locSolidMVP = -1;   // u_terrainMVP    (per-frame)
+static GLint g_locCmdVPE   = -1;   // u_vertsPerElement (constant, uploaded once)
+static GLint g_locCmdCC    = -1;   // u_cmdCount        (constant, uploaded once)
+
 
 // Flag: whether ComputeDispatch() ran the GPU path this frame.
 static bool s_solidGpuDispatchRanThisFrame = false;
@@ -1613,73 +1680,39 @@ static int BuildIndirectCommands(int thinCount) {
 }
 
 // ---------------------------------------------------------------------------
-// BuildSolidQuadWindowSSBO — Phase C Stage 2.
-// Walks the current quadList and emits one SolidQuadWindowEntry per quad that
-// passes the same skip-set as PackThinRecordsForFrame (pointer guards, vn >= 0,
-// recipe exists, terrainHandle valid). The pz-valid test is omitted — GPU's job.
-// Returns count of window entries written; 0 if no visible quads.
+// UploadTerrainHandleLUT — Phase C Stage 2 (GPU-direct replacement for
+// BuildSolidQuadWindowSSBO). Builds a uint[MC_MAXTEXTURES] LUT mapping
+// nodeId → resolved gosHandle (tex_resolve result), then uploads it as a
+// 16KB SSBO on binding 2. The GPU shader reads nodeId from recipe._wp2 and
+// indexes into this LUT — eliminating the per-frame quadList CPU walk.
+// Returns g_denseRecipes.size() as the GPU dispatch count (full recipe range).
 // ---------------------------------------------------------------------------
-static uint32_t BuildSolidQuadWindowSSBO() {
-    if (!land) return 0;
-    const TerrainQuadPtr quads = land->getQuadList();
-    const long total           = land->getNumQuads();
-    if (!quads || total <= 0) return 0;
+static uint32_t UploadTerrainHandleLUT() {
+    constexpr GLsizeiptr kLutBytes = MC_MAXTEXTURES * sizeof(uint32_t);
 
-    constexpr uint32_t kCementLayerValidBit = 0x80000000u;
-
-    g_solidWindowStaging.clear();
-    g_solidWindowStaging.reserve((size_t)total);
-
-    for (long qi = 0; qi < total; ++qi) {
-        const TerrainQuad& q = quads[qi];
-        if (!q.vertices[0] || !q.vertices[1] ||
-            !q.vertices[2] || !q.vertices[3]) continue;
-        const int32_t vn0 = q.vertices[0]->vertexNum;
-        if (vn0 < 0 ||
-            q.vertices[1]->vertexNum < 0 ||
-            q.vertices[2]->vertexNum < 0 ||
-            q.vertices[3]->vertexNum < 0) continue;
-        if (!gos_terrain_indirect::RecipeForVertexNum(vn0)) continue;
-
-        const uint32_t th = static_cast<uint32_t>(tex_resolve((DWORD)q.terrainHandle));
-        if (th == 0 || th == 0xffffffffu) continue;
-
-        uint32_t cementWord = 0u;
-        if (g_cementLayerMapReady && q.vertices[0]->pVertex) {
-            const DWORD slot = q.vertices[0]->pVertex->textureData & 0xFFFFu;
-            if (slot < (DWORD)MC_MAX_TERRAIN_TXMS) {
-                const uint16_t idx = g_cementLayerIndexBySlot[slot];
-                if (idx != 0xFFFFu)
-                    cementWord = kCementLayerValidBit | ((uint32_t)idx & 0xFFFFu);
-            }
-        }
-
-        g_solidWindowStaging.push_back({(uint32_t)vn0, th, cementWord, 0u});
-    }
-
-    const uint32_t count = (uint32_t)g_solidWindowStaging.size();
-    if (count == 0) return 0;
-
-    const uint32_t bytesNeeded = count * (uint32_t)sizeof(SolidQuadWindowEntry);
-    if (g_solidQuadWindowSsbo != 0 && g_solidQuadWindowCapacity < bytesNeeded) {
-        glDeleteBuffers(1, &g_solidQuadWindowSsbo);
-        g_solidQuadWindowSsbo    = 0;
-        g_solidQuadWindowCapacity = 0;
-    }
-    if (g_solidQuadWindowSsbo == 0) {
-        const uint32_t cap = (uint32_t)(kMaxThinRecords * sizeof(SolidQuadWindowEntry));
-        glGenBuffers(1, &g_solidQuadWindowSsbo);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidQuadWindowSsbo);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)cap, nullptr, GL_DYNAMIC_DRAW);
+    if (g_terrainHandleLutSSBO == 0) {
+        glGenBuffers(1, &g_terrainHandleLutSSBO);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_terrainHandleLutSSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, kLutBytes, nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        g_solidQuadWindowCapacity = cap;
     }
 
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidQuadWindowSsbo);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                    (GLsizeiptr)bytesNeeded, g_solidWindowStaging.data());
+    // Resolve unique nodeIds from the mission-static set — typically 20-50
+    // entries regardless of camera position. O(uniqueTextures), not O(quads).
+    static uint32_t lut[MC_MAXTEXTURES];
+    memset(lut, 0, sizeof(lut));
+    for (uint32_t nodeId : g_uniqueTerrainNodeIds) {
+        if (nodeId > 0u && nodeId < (uint32_t)MC_MAXTEXTURES) {
+            const uint32_t th = static_cast<uint32_t>(tex_resolve((DWORD)nodeId));
+            lut[nodeId] = (th == 0u || th == 0xffffffffu) ? 0u : th;
+        }
+    }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_terrainHandleLutSSBO);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, kLutBytes, lut);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    return count;
+
+    return (uint32_t)g_denseRecipes.size();
 }
 
 }  // anonymous namespace (Stage 3 helpers)
@@ -1702,6 +1735,14 @@ void BeginFrame() {
     // Reset armed flag unconditionally every frame so mech-bay / menu frames
     // don't inherit the armed state from the last gameplay frame.
     // ComputePreflight() re-arms when terrain is actually present.
+    static int s_beginFrameCount = 0;
+    ++s_beginFrameCount;
+    if (s_solidGpuDispatchRanThisFrame && !s_frameSolidArmed) {
+        // Dispatch ran this frame but arming is already false — double BeginFrame call.
+        fprintf(stderr, "[TERRAIN_INDIRECT v1] event=double_beginframe count=%d\n",
+                s_beginFrameCount);
+        fflush(stderr);
+    }
     s_frameSolidArmed = false;
 }
 
@@ -1772,7 +1813,7 @@ void ComputeDispatch() {
         return;
     }
 
-    // Lazy-build compute programs.
+    // Lazy-build compute programs and cache uniform locations + constant uniforms.
     if (g_solidComputeProgram == 0) {
         g_solidComputeProgram = gpu_driven::BuildComputeProgramFromFile(
             "shaders/gpu_driven_terrain_solid.comp", nullptr, 0, "gpu_driven_terrain_solid");
@@ -1782,6 +1823,16 @@ void ComputeDispatch() {
             ForceDisableArmingForProcess();
             return;
         }
+        g_locSolidWC  = glGetUniformLocation(g_solidComputeProgram, "u_windowCount");
+        g_locSolidAO  = glGetUniformLocation(g_solidComputeProgram, "u_alphaOverride");
+        g_locSolidMVP = glGetUniformLocation(g_solidComputeProgram, "u_terrainMVP");
+        // Upload constants once — these never change across frames.
+        glUseProgram(g_solidComputeProgram);
+        const GLint locMTR = glGetUniformLocation(g_solidComputeProgram, "u_maxThinRecords");
+        const GLint locMS  = glGetUniformLocation(g_solidComputeProgram, "u_mapSide");
+        if (locMTR >= 0) glUniform1i(locMTR, (int)kMaxThinRecords);
+        if (locMS  >= 0) glUniform1i(locMS,  (int)Terrain::realVerticesMapSide);
+        glUseProgram(0);
     }
     if (g_solidCmdPatchProgram == 0) {
         g_solidCmdPatchProgram = gpu_driven::BuildComputeProgramFromFile(
@@ -1792,6 +1843,15 @@ void ComputeDispatch() {
             ForceDisableArmingForProcess();
             return;
         }
+        g_locCmdVPE = glGetUniformLocation(g_solidCmdPatchProgram, "u_vertsPerElement");
+        g_locCmdCC  = glGetUniformLocation(g_solidCmdPatchProgram, "u_cmdCount");
+        // Upload constants once — 6 verts/element and 1 indirect cmd never change.
+        glUseProgram(g_solidCmdPatchProgram);
+        if (g_locCmdVPE >= 0) glUniform1i(g_locCmdVPE, 6);
+        if (g_locCmdCC  >= 0) glUniform1i(g_locCmdCC,  1);
+        const GLint locMT2 = glGetUniformLocation(g_solidCmdPatchProgram, "u_maxThinRecords");
+        if (locMT2 >= 0) glUniform1i(locMT2, (int)kMaxThinRecords);
+        glUseProgram(0);
     }
     // Lazy-allocate bucket header SSBO (16 B GpuDrivenBucketHeader).
     if (g_solidBucketHeaderSsbo == 0) {
@@ -1801,8 +1861,9 @@ void ComputeDispatch() {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
 
-    // Build per-frame quad window on CPU (skip-set matches PackThinRecordsForFrame).
-    const uint32_t windowCount = BuildSolidQuadWindowSSBO();
+    // Upload per-frame terrain handle LUT (nodeId → gosHandle, ~20-50 entries).
+    // GPU dispatches over full recipe range and culls edge/invalid quads itself.
+    const uint32_t windowCount = UploadTerrainHandleLUT();
     if (windowCount == 0) {
         // Zero visible quads this frame; leave armed — DrawIndirect fires with
         // cmd.count=0 (after bucket-clear + cmd-patch). No visual artifact.
@@ -1830,45 +1891,37 @@ void ComputeDispatch() {
 
     // ------------------------------------------------------------------
     // DISPATCH 1: cull/pack (gpu_driven_terrain_solid.comp)
-    // Bindings: 0=recipe, 1=lighting, 2=quadWindow, 3=thin, 6=header
+    // Bindings: 0=recipe, 1=lighting, 2=terrainHandleLut, 3=thin, 6=header
     // ------------------------------------------------------------------
     glUseProgram(g_solidComputeProgram);
 
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, g_recipeSSBO);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, lightSsbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2,
-                     g_solidQuadWindowSsbo ? g_solidQuadWindowSsbo : 0);
+                     g_terrainHandleLutSSBO ? g_terrainHandleLutSSBO : 0);
     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 3,
                       g_thinRecordSSBO, thinSlotOffset, (GLsizeiptr)kThinRecordBytes);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, g_solidBucketHeaderSsbo);
 
-    const GLint locWC  = glGetUniformLocation(g_solidComputeProgram, "u_windowCount");
-    const GLint locMTR = glGetUniformLocation(g_solidComputeProgram, "u_maxThinRecords");
-    const GLint locMS  = glGetUniformLocation(g_solidComputeProgram, "u_mapSide");
-    const GLint locAO  = glGetUniformLocation(g_solidComputeProgram, "u_alphaOverride");
-    const GLint locMVP = glGetUniformLocation(g_solidComputeProgram, "u_terrainMVP");
-
-    if (locWC < 0 || locMTR < 0 || locMS < 0 || locMVP < 0) {
+    if (g_locSolidWC < 0 || g_locSolidMVP < 0) {
         fprintf(stderr,
             "[TERRAIN_INDIRECT v1] event=error msg=solid_compute_missing_uniform "
-            "u_windowCount=%d u_maxThinRecords=%d u_mapSide=%d u_terrainMVP=%d\n",
-            locWC, locMTR, locMS, locMVP);
+            "u_windowCount=%d u_terrainMVP=%d\n",
+            g_locSolidWC, g_locSolidMVP);
         fflush(stderr);
         glUseProgram(0);
         ForceDisableArmingForProcess();
         return;
     }
 
-    glUniform1i(locWC,  (int)windowCount);
-    glUniform1i(locMTR, (int)kMaxThinRecords);
-    glUniform1i(locMS,  (int)Terrain::realVerticesMapSide);
-    if (locAO >= 0)
-        glUniform1i(locAO, Terrain::terrainTextures2 != nullptr ? 1 : 0);
+    glUniform1i(g_locSolidWC, (int)windowCount);
+    if (g_locSolidAO >= 0)
+        glUniform1i(g_locSolidAO, Terrain::terrainTextures2 != nullptr ? 1 : 0);
 
     {
         const float* mvp = gos_GetTerrainMVPMat4();
         if (!mvp) { glUseProgram(0); return; }
-        glUniformMatrix4fv(locMVP, 1, GL_FALSE, mvp);
+        glUniformMatrix4fv(g_locSolidMVP, 1, GL_FALSE, mvp);
     }
 
     const uint32_t groups = (windowCount + 63u) / 64u;
@@ -1878,17 +1931,13 @@ void ComputeDispatch() {
     // ------------------------------------------------------------------
     // DISPATCH 2: cmd-patch (gpu_driven_cmd_patch.comp)
     // Reads visibleCount from header → writes cmd.count to g_indirectCmdBuffer.
+    // Constants (u_vertsPerElement, u_cmdCount, u_maxThinRecords) were uploaded
+    // once at compile time and are not re-sent here.
     // ------------------------------------------------------------------
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, g_solidBucketHeaderSsbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, g_indirectCmdBuffer);
 
     glUseProgram(g_solidCmdPatchProgram);
-    const GLint locVPE = glGetUniformLocation(g_solidCmdPatchProgram, "u_vertsPerElement");
-    const GLint locCC  = glGetUniformLocation(g_solidCmdPatchProgram, "u_cmdCount");
-    const GLint locMT2 = glGetUniformLocation(g_solidCmdPatchProgram, "u_maxThinRecords");
-    if (locVPE >= 0) glUniform1i(locVPE, 6);
-    if (locCC  >= 0) glUniform1i(locCC,  1);  // PR1: 1 indirect draw command
-    if (locMT2 >= 0) glUniform1i(locMT2, (int)kMaxThinRecords);
     glDispatchCompute(1, 1, 1);
 
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
@@ -1906,7 +1955,19 @@ void ComputeDispatch() {
 }
 
 bool DrawIndirect() {
-    if (!IsFrameSolidArmed()) return false;
+    if (!IsFrameSolidArmed()) {
+        static bool s_warnedOnce = false;
+        if (!s_warnedOnce) {
+            s_warnedOnce = true;
+            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=draw_indirect_skip "
+                   "armed=%d process_disabled=%d\n",
+                   (int)s_frameSolidArmed, (int)s_processArmingDisabled);
+            fflush(stderr);
+        }
+        return false;
+    }
+    ZoneScopedN("Terrain::SolidDrawIndirect");
+    TracyGpuZone("Terrain::SolidDrawIndirect");
 
     const bool ok = gos_terrain_bridge_drawIndirect(
         s_frameSolidCmdCount,
