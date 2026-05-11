@@ -163,13 +163,16 @@ float waveOurCos(uint vWaterBits) {
 // Mirrors quad.cpp:953-1201 water projection in setupTextures, including the
 // frameCos wave Z-lift applied before projection (quad.cpp:689-700).
 // vWaterBits is the per-vertex byte from WaterRecipe.waterBits.
-// Returns a value < 0.0 for behind-camera vertices (clip.w ≤ 0).
+// Matches CPU projectZ exactly: rhw = (w != 0) ? 1/w : 1, screen.z = clip.z * rhw.
+// No guard on clip.w <= 0 — at map boundaries both clip.z and clip.w can be negative,
+// giving a positive screen.z that CPU pzOk [0,1) accepts. The old early-return caused
+// cpu_only=1 mismatches for these degenerate near-plane quads (see clip_w_sign_trap.md).
 // ---------------------------------------------------------------------------
 float projectWaterZ(float wx, float wy, uint vWaterBits) {
     float elev = u_waterElevation + waveOurCos(vWaterBits);
     vec4 clip = u_terrainMVP * vec4(wx, wy, elev, 1.0);
-    if (clip.w <= 0.0) return -1.0;
-    return clip.z / clip.w;
+    float rhw = (clip.w != 0.0) ? 1.0 / clip.w : 1.0;
+    return clip.z * rhw;
 }
 
 // ---------------------------------------------------------------------------
