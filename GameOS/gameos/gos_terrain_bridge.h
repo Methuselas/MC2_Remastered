@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <cstdint>  // uint32_t — used by B4 mask-SOLID bridge signature.
+
 // Forward decls for opaque pointer types used in signatures.
 class gosRenderMaterial;
 
@@ -151,6 +153,19 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount,
 bool gos_terrain_bridge_drawMineStatic(int          vertCount,
                                        unsigned int vboGL,
                                        unsigned int textureArrayGL);
+
+// B4 Slice Stage 1b — mask-SOLID MDI draw bridge.
+// Called by gos_terrain_mask_dispatch::DrawMaskSolid() from Render.TerrainMask.Solid.
+// solidMaskSSBO: SSBO at binding 17 (per-frame bitset, one bit per quad vertexNum).
+// recipeSSBO: dense recipe SSBO at binding 19.
+// lightingSSBO: GpuTerrainLightingOutput SSBO at binding 2 (0 = skip light binding).
+// quadCount: total dense recipe slots (mapSide*mapSide). mapSide: terrain map side.
+// Returns true if the indirect draw was issued.
+bool gos_terrain_bridge_drawMaskSolid(uint32_t solidMaskSSBO,
+                                      uint32_t recipeSSBO,
+                                      uint32_t lightingSSBO,
+                                      int      quadCount,
+                                      int      mapSide);
 
 void gos_terrain_bridge_renderWaterFast(
     unsigned int recordCount,

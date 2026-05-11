@@ -5,6 +5,7 @@
 #include "gos_terrain_mask_dispatch.h"
 #include "gos_terrain_indirect.h"
 #include "gos_terrain_water_stream.h"
+#include "gos_terrain_bridge.h"
 #include "../../mclib/quad.h"
 #include "../../mclib/vertex.h"
 #include "../../mclib/tex_resolve_table.h"
@@ -16,6 +17,25 @@
 #include <cstring>
 
 #include <GL/glew.h>
+
+#if defined(_MSC_VER)
+#  include <intrin.h>
+#  pragma intrinsic(_BitScanForward)
+static inline int mc2_ctz_u32(uint32_t v) {
+    unsigned long idx = 0;
+    _BitScanForward(&idx, v);
+    return (int)idx;
+}
+#else
+static inline int mc2_ctz_u32(uint32_t v) { return __builtin_ctz(v); }
+#endif
+
+// Slice B4 Stage 1b — accessors implemented elsewhere.
+extern "C" unsigned int    gos_terrain_indirect_getRecipeSSBO();
+extern "C" int             gos_terrain_indirect_getRecipeMapSide();
+extern "C" int             gos_terrain_indirect_getRecipeQuadCount();
+extern "C" const uint32_t* gos_terrain_indirect_getPackParityMask(int* outWords);
+extern "C" GLuint          gos_terrain_lighting_getOutputSSBO();
 
 // TERRAIN_DEPTH_FUDGE: not in a shared header; mirrors gos_terrain_indirect.cpp:1243
 // which itself mirrors quad.cpp:1911. Use the same value so the SOLID mask predicate
@@ -255,7 +275,72 @@ void BuildAndUploadMasksForFrame(const TerrainQuadPtr quadList, long numQuads) {
 // ---------------------------------------------------------------------------
 
 bool DrawMaskSolid() {
-    return false;
+    if (!s_readyThisFrame) return false;
+
+    // Per-bucket killswitch (allows armed-water-only configurations)
+    const char* armV = getenv("MC2_TERRAIN_MASK_DISPATCH_SOLID");
+    if (armV && armV[0] == '0' && armV[1] == '\0') return false;
+
+    const uint32_t solidSSBO  = s_solidMaskSSBO;
+    const uint32_t recipeSSBO = (uint32_t)gos_terrain_indirect_getRecipeSSBO();
+    const uint32_t lightSSBO  = (uint32_t)gos_terrain_lighting_getOutputSSBO();
+    const int      quadCount  = gos_terrain_indirect_getRecipeQuadCount();
+    const int      mapSide    = gos_terrain_indirect_getRecipeMapSide();
+
+    if (solidSSBO == 0 || recipeSSBO == 0 || quadCount <= 0 || mapSide <= 0)
+        return false;
+
+    const bool ok = gos_terrain_bridge_drawMaskSolid(
+        solidSSBO, recipeSSBO, lightSSBO, quadCount, mapSide);
+
+    if (s_traceOn) {
+        printf("[MASK_DISPATCH v1] event=draw_solid ok=%d quadCount=%d mapSide=%d\n",
+               (int)ok, quadCount, mapSide);
+        fflush(stdout);
+    }
+
+    // ---- Parity comparator (MC2_TERRAIN_MASK_DISPATCH_PARITY=1) ------------
+    // Compare s_solidMask (this frame's mask) against the pack parity mask
+    // set by PackThinRecordsForFrame; the two encode the same 5-gate predicate.
+    const char* parityV = getenv("MC2_TERRAIN_MASK_DISPATCH_PARITY");
+    if (parityV && parityV[0] != '0' && parityV[1] == '\0') {
+        int packWords = 0;
+        const uint32_t* packMask = gos_terrain_indirect_getPackParityMask(&packWords);
+        const int cmpWords = (int)std::min((int)s_solidMask.size(), packWords);
+
+        static int s_frameCount = 0;
+        static int s_totalMismatches = 0;
+        int frameThrottled = 0;
+        ++s_frameCount;
+
+        for (int w = 0; w < cmpWords; ++w) {
+            uint32_t diff = s_solidMask[w] ^ packMask[w];
+            while (diff) {
+                if (frameThrottled < 16) {
+                    const int bit = mc2_ctz_u32(diff);
+                    const int vn  = w * 32 + bit;
+                    const uint32_t maskBit = (s_solidMask[w] >> bit) & 1u;
+                    const uint32_t packBit = (packMask[w]    >> bit) & 1u;
+                    printf("[TERRAIN_INDIRECT_PARITY v1] event=mismatch bucket=solid"
+                           " vn=%d mask_set=%u pack_set=%u\n",
+                           vn, maskBit, packBit);
+                    fflush(stdout);
+                    ++frameThrottled;
+                }
+                ++s_totalMismatches;
+                diff &= diff - 1;
+            }
+        }
+
+        if ((s_frameCount % 600) == 0) {
+            printf("[TERRAIN_INDIRECT_PARITY v1] event=summary bucket=solid"
+                   " frames=%d total_mismatches=%d\n",
+                   s_frameCount, s_totalMismatches);
+            fflush(stdout);
+        }
+    }
+
+    return ok;
 }
 
 bool DrawMaskWater() {
