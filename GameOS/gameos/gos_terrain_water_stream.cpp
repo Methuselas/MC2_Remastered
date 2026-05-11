@@ -1311,9 +1311,10 @@ bool ComputeDispatchAndBindThinRecords() {
     glUseProgram(0);
 
     // M2 fix: restore kWaterThinSsboBinding (6) to thin records for the VS draw.
-    // Compute setup overwrote slot 6 with the bucket header (g_waterBucketHeaderSsbo)
-    // at the glBindBufferBase call above; the vertex shader reads thin records
-    // from slot 6.  thinSlotOffset/thinSlotBytes are still in scope here.
+    // Dispatch 1 (cull/pack setup) overwrote slot 6 with g_waterBucketHeaderSsbo to
+    // satisfy the compute shader's binding-6 header read. The VS reads thin records
+    // from slot 6, so we must restore the correct binding after both dispatches
+    // and barriers complete.
     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, kWaterThinSsboBinding,
                       g_thinBuffer, thinSlotOffset, thinSlotBytes);
 

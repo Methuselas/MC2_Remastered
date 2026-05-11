@@ -39,7 +39,7 @@ const uint kPzTri2ValidBit = 0x2u;
 
 // --- Per-draw cmd SSBO (binding 7) — 32 B std430, lockstep with WaterPerCmd C++ ---
 struct WaterPerCmd {
-    uint  textureSlot;   // 0 = unit 0 (base), 1 = unit 1 (detail)
+    uint  textureSlot;   // reserved; texture unit selection is driven by o_isWater in FS
     int   isWater;       // 1 = base, 2 = detail (matches legacy isWater uniform)
     int   detailMode;    // 0 = base, 1 = detail
     float uvScale;

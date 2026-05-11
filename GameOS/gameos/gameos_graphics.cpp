@@ -1966,7 +1966,7 @@ unsigned int gos_terrain_bridge_getWaterFastShaderProgram() {
 // WaterPerCmd — per-draw data for glMultiDrawArraysIndirect, indexed by gl_DrawID.
 // 32 B std430-aligned; lockstep with gos_terrain_water_fast_mdi.vert binding 7.
 struct WaterPerCmd {
-    uint32_t textureSlot;   // 0 = unit 0 (base), 1 = unit 1 (detail)
+    uint32_t textureSlot;   // reserved; texture unit selection driven by o_isWater in FS
     int32_t  isWater;       // 1 = base, 2 = detail (matches legacy isWater uniform)
     int32_t  detailMode;    // 0 = base, 1 = detail
     float    uvScale;
@@ -2284,6 +2284,17 @@ void gosRenderer::renderWaterFastPath(
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, s_perCmdSsbo);
 
         // Bind textures: base to unit 0, detail (or base) to unit 1.
+        // Save+restore the unit-1 sampler: prior passes (e.g. patch-stream bucket)
+        // may have left CLAMP_TO_EDGE on unit 1. The detail UV range (0..MaxMinUV ≈
+        // 0..8) would collapse to edge-texel smear under CLAMP. Bind s_waterFastSampler
+        // (REPEAT/LINEAR) for the duration of the MDI draw, then restore.
+        GLuint savedSampler1 = 0;
+        {
+            GLint q = 0;
+            glGetIntegeri_v(GL_SAMPLER_BINDING, 1, &q);
+            savedSampler1 = (GLuint)q;
+        }
+        glBindSampler(1, s_waterFastSampler);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, baseTex);
         glActiveTexture(GL_TEXTURE1);
@@ -2301,6 +2312,7 @@ void gosRenderer::renderWaterFastPath(
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, 0);
         glActiveTexture(GL_TEXTURE0);
+        glBindSampler(1, savedSampler1);
 
         // Restore GL state.
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, 0);
