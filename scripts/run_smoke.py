@@ -254,6 +254,10 @@ def main():
                             "MC2_TERRAIN_INDIRECT_OVERLAY",
                             "MC2_TERRAIN_INDIRECT_OVERLAY_PARITY_CHECK",
                             "MC2_TERRAIN_COST_SPLIT",
+                            # Phase 1 — terrain lighting GPU compute
+                            "MC2_TERRAIN_LIGHTING_GPU",
+                            "MC2_TERRAIN_LIGHTING_PARITY",
+                            "MC2_TERRAIN_LIGHTING_GPU_TRACE",
                             # Track A1 — object admission predicate + trace
                             "MC2_OBJECT_ADMISSION_PREDICATE",
                             "MC2_PROJECTZ_TRACE",

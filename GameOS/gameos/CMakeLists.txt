@@ -19,6 +19,7 @@ set(SOURCES ${SOURCES}
     gos_terrain_patch_stream.cpp
     gos_terrain_water_stream.cpp
     gos_terrain_indirect.cpp
+    gos_terrain_lighting.cpp
     gos_object_parity.cpp
     gos_validate.cpp
     gos_screenshot.cpp

@@ -35,6 +35,7 @@
 #include"../GameOS/gameos/gos_terrain_water_stream.h"
 #include"../GameOS/gameos/gos_terrain_indirect.h"
 #include"../GameOS/gameos/gos_terrain_bridge.h"
+#include"../GameOS/gameos/gos_terrain_lighting.h"
 
 #include <vector>
 #include <cstdint>
@@ -709,6 +710,9 @@ void Terrain::destroy (void)
 	    gos_terrain_indirect::IsParityCheckEnabled()) {
 		gos_terrain_indirect::ResetDenseRecipe();
 	}
+
+	// Phase 1: terrain lighting GPU compute shutdown (per-mission teardown).
+	gos_terrain_lighting::mission_shutdown();
 
 	// PR2c Stage 1c — mine static-bake teardown. CPU-clear; keep GL buffer
 	// + texture-array allocations for next-mission reuse.
@@ -1786,6 +1790,13 @@ void Terrain::geometry (void)
 		// On un-armed frames (recipe not ready, disabled, etc.) this returns
 		// false with zero side-effects; setupTextures runs as normal.
 		gos_terrain_indirect::ComputePreflight();
+		// Phase 1: terrain lighting GPU compute — per-frame trio (design doc Q5).
+		// BeginFrame advances ring slot; PackAndDispatch packs + dispatches;
+		// CopyResultsToVertexPool (Stage 3): T1/T2/T3 non-blocking tryConsume
+		// writes GPU lightRGB/fogRGB into vertices[i] BEFORE the setupTextures loop.
+		gos_terrain_lighting::BeginFrame();
+		gos_terrain_lighting::PackAndDispatch();
+		gos_terrain_lighting::CopyResultsToVertexPool(quadList, numberQuads);
 		// Water-fast-path narrow walk: reset the candidate vector once per
 		// frame, then append every quad that passes UploadThin's eligibility
 		// gate immediately after setupTextures() establishes waterHandle.
@@ -1813,6 +1824,15 @@ void Terrain::geometry (void)
 		// Stage 1 cost-split: roll per-frame nanosecond accumulators (no-op
 		// when MC2_TERRAIN_COST_SPLIT unset). ParityFrameTick advances the
 		// summary cadence; Stage 2 passes the actual quads-checked count.
+		// Stage 2: terrain lighting parity check — AFTER the setupTextures loop
+		// so CPU has written all lightRGB/fogRGB for this frame.
+		// GetMappedOutputForParity() synchronously waits on current-frame fence
+		// (parity mode only — production path skips this entirely).
+		if (gos_terrain_lighting::IsParityCheckEnabled()) {
+			const gos_terrain_lighting::GpuTerrainLightingOutput* mappedOut =
+				gos_terrain_lighting::GetMappedOutputForParity();
+			gos_terrain_lighting::Parity_CompareFrame(quadList, numberQuads, mappedOut);
+		}
 		gos_terrain_indirect::CostSplit_RollFrame();
 		{
 			int quadsChecked = 0;

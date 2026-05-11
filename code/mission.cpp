@@ -126,6 +126,7 @@
 #include "../GameOS/gameos/gpu_cull_substrate.h"  // C0-3: GPU cull substrate init/shutdown
 #include "../GameOS/gameos/gpu_cull_compute.h"   // C1a: GPU visibility compute dispatch
 #include "../GameOS/gameos/gpu_cull_readback.h"  // C2: async readback ring buffer
+#include "../GameOS/gameos/gos_terrain_lighting.h"  // Phase 1: terrain lighting GPU compute
 
 //----------------------------------------------------------------------------------
 // Macro Definitions
@@ -2788,6 +2789,14 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// C1a: init GPU visibility compute pipeline (shadow/diagnostic mode).
 	// No-op if MC2_GPU_CULL env var is not set (default off).
 	gpu_cull::compute_init();
+	// Phase 1: terrain lighting GPU compute — per-mission init alongside gpu_cull.
+	// CRITICAL: use realVerticesMapSide * realVerticesMapSide, NOT getNumVertices()
+	// (getNumVertices() returns 0 at this point — set per-frame by makeLists).
+	// Terrain::realVerticesMapSide set during land->init() at mission.cpp:2222, before here.
+	// No-op if MC2_TERRAIN_LIGHTING_GPU env var is not set (default off at Stage 1).
+	gos_terrain_lighting::mission_init(
+		static_cast<uint32_t>(Terrain::realVerticesMapSide * Terrain::realVerticesMapSide),
+		64u);
 	// C2: init async readback ring buffer.
 	// Same maxActors sizing as substrate_init — readback slot must hold one flag per actor.
 	// No-op if MC2_GPU_CULL_READBACK env var is not set (default off).

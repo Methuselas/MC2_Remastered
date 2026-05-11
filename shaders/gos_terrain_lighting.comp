@@ -1,0 +1,289 @@
+// gos_terrain_lighting.comp — Phase 1 Stage 2: terrain lighting GPU compute.
+//
+// Stage 2: full lighting math matching CPU quad.cpp:1266-1891 per-vertex block.
+// Output is written to outputs[] and compared via Parity_CompareFrame — CPU path
+// remains authoritative for visual rendering until Stage 3.
+//
+// #version 430 is injected by the C++ loader — do NOT add it here.
+// Bindings:
+//   0 — GpuTerrainVertexInput[]    (input, per-vertex geometry + flags + hazeFactor)
+//   1 — GpuTerrainLight[]          (input, per-frame terrain light list, index >= 2)
+//   2 — GpuTerrainLightingOutput[] (output, lightRGB + fogRGB per vertex)
+//
+// Uniforms:
+//   location 0  — uint  u_numVertices
+//   location 1  — uint  u_numLights       (lights[] count, matching eye->getNumTerrainLights())
+//   location 2  — vec3  u_sunLightDir     (eye->lightDirection — already normalized)
+//   location 3  — uint  u_lightRed        (eye->lightRed   as uint 0-255)
+//   location 4  — uint  u_lightGreen      (eye->lightGreen as uint 0-255)
+//   location 5  — uint  u_lightBlue       (eye->lightBlue  as uint 0-255)
+//   location 6  — uint  u_ambientRed      (eye->ambientRed   as uint 0-255)
+//   location 7  — uint  u_ambientGreen    (eye->ambientGreen as uint 0-255)
+//   location 8  — uint  u_ambientBlue     (eye->ambientBlue  as uint 0-255)
+//   location 9  — uint  u_baseVertexColorR (BaseVertexColor >> 16 & 0xff)
+//   location 10 — uint  u_baseVertexColorG (BaseVertexColor >>  8 & 0xff)
+//   location 11 — uint  u_baseVertexColorB (BaseVertexColor       & 0xff)
+//   location 12 — float u_rainLightLevel  (TerrainQuad::rainLightLevel)
+//   location 13 — uint  u_lighteningLevel (TerrainQuad::lighteningLevel)
+//   location 14 — float u_fogStart        (eye->fogStart)
+//   location 15 — float u_fogFull         (eye->fogFull)
+//   location 16 — uint  u_useFog          (useFog ? 1u : 0u)
+//   location 17 — uint  u_rendererSW      (Environment.Renderer == 3 ? 1u : 0u)
+
+// --- begin terrain_lighting_shared.hglsl ---
+// (inlined by tl_build_terrain_lighting_program)
+// --- end terrain_lighting_shared.hglsl ---
+
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) readonly  buffer VertexInputs  { GpuTerrainVertexInput vertices[]; };
+layout(std430, binding = 1) readonly  buffer LightInputs   { GpuTerrainLight lights[];         };
+layout(std430, binding = 2) writeonly buffer LightOutputs  { GpuTerrainLightingOutput outputs[]; };
+
+layout(location = 0)  uniform uint  u_numVertices;
+layout(location = 1)  uniform uint  u_numLights;
+layout(location = 2)  uniform vec3  u_sunLightDir;
+layout(location = 3)  uniform uint  u_lightRed;
+layout(location = 4)  uniform uint  u_lightGreen;
+layout(location = 5)  uniform uint  u_lightBlue;
+layout(location = 6)  uniform uint  u_ambientRed;
+layout(location = 7)  uniform uint  u_ambientGreen;
+layout(location = 8)  uniform uint  u_ambientBlue;
+layout(location = 9)  uniform uint  u_baseVertexColorR;
+layout(location = 10) uniform uint  u_baseVertexColorG;
+layout(location = 11) uniform uint  u_baseVertexColorB;
+layout(location = 12) uniform float u_rainLightLevel;
+layout(location = 13) uniform uint  u_lighteningLevel;
+layout(location = 14) uniform float u_fogStart;
+layout(location = 15) uniform float u_fogFull;
+layout(location = 16) uniform uint  u_useFog;
+layout(location = 17) uniform uint  u_rendererSW;
+
+// getLightChannel mirrors Camera::getLightRed/Green/Blue (camera.cpp:3065-3110).
+// Formula: if (intensity > 0) result = clamp(int(lightChan * intensity + ambientChan), 0, 255)
+//          else result = ambientChan
+// All inputs are uint 0-255 as packed by PackAndDispatch.
+uint getLightChannel(float intensity, uint lightChan, uint ambientChan) {
+    if (intensity > 0.0) {
+        int r = int(float(lightChan) * intensity + float(ambientChan));
+        if (r >= 255) return 255u;
+        if (r < 0)    return 0u;
+        return uint(r);
+    }
+    return ambientChan;
+}
+
+// GetFalloff mirrors TG_Light::GetFalloff (mclib/tgl.h:261-275).
+// Returns true (falloff in range) and writes falloff; false = out of range.
+// falloffParam on GpuTerrainLight carries closeDistance.
+// lights[i] carries farDistance and oneOverDistance indirectly via a second
+// param slot — but GpuTerrainLight only has one falloffParam field.
+// RESOLUTION: lights[i].falloffParam = closeDistance.
+// farDistance and oneOverDistance are uploaded in lights[i].color.w (not
+// available) — actually we upload all three in the light struct's second
+// falloffParam. See gos_terrain_lighting.cpp for the extended struct approach.
+//
+// ACTUAL APPROACH: GpuTerrainLight has falloffParam (scalar) and color (vec3).
+// We pack: falloffParam = closeDistance, color.x/y/z = R/G/B as 0..1 float.
+// farDistance and oneOverDistance are NOT in the struct.
+// SOLUTION: pack farDistance as a second value via lights[] extended fields
+// using the existing 32B struct layout:
+//   position[3], lightType(uint), color[3], falloffParam(float)
+//   = 12 + 4 + 12 + 4 = 32B
+// We need farDistance and oneOverDistance too. Since we only have one float
+// left (falloffParam), we pack:
+//   falloffParam = closeDistance (already)
+// And add a separate "falloff range" SSBO? No — we extend the light struct.
+//
+// DESIGN DECISION: extend GpuTerrainLight with farDistance + oneOverDistance
+// packed into the color[] fields differently is not possible (color[] is R/G/B).
+//
+// REAL SOLUTION: the falloffParam is closeDistance. We pass farDistance and
+// oneOverDistance via a SEPARATE uniform array or by extending the struct.
+// Since struct extension requires lockstep changes (memory/cpp_glsl_ubo_struct_lockstep.md),
+// we extend GpuTerrainLight to include farDistance and oneOverDistance:
+//   REVISED struct (48B):
+//     position[3] + lightType = 16B
+//     color[3] + falloffParam = 16B (falloffParam = closeDistance)
+//     farDistance + oneOverDistance + pad[2] = 16B
+// This requires struct extension in both C++ and GLSL.
+//
+// BUT: for Stage 2 parity we want minimal struct churn. Alternative: encode
+// falloffParam = farDistance - closeDistance (i.e., the range), and pass
+// closeDistance as second param.
+//
+// SIMPLEST CORRECT APPROACH for Stage 2:
+// Pack the full TG_Light data by reusing the existing 32B struct differently:
+//   lights[i].position = world position of light
+//   lights[i].lightType = GPU light type
+//   lights[i].color = R/G/B float (normalized 0..1)
+//   lights[i].falloffParam = closeDistance  <-- already there
+// Missing: farDistance, oneOverDistance.
+//
+// SOLUTION: extend GpuTerrainLight to 48B (add farDistance + oneOverDistance).
+// This is a lockstep change. We do it now.
+// The GLSL struct below matches the extended C++ struct in gos_terrain_lighting.h.
+
+// The extended struct (now 48B) is declared in terrain_lighting_shared.hglsl
+// which is inlined above. The inlined version must match.
+
+// NOTE: The GLSL struct GpuTerrainLight is declared in the inlined shared header.
+// If it already has farDistance + oneOverDistance, use them directly.
+// If not (Stage 1 compat), we use falloffParam only and skip out-of-range check.
+// For Stage 2 correctness, we MUST have farDistance.
+
+// ACTUAL Stage 2 approach (since we're extending the struct):
+// GpuTerrainLight (Stage 2 extended, 48B):
+//   vec3 position; uint lightType;       // 16B
+//   vec3 color; float closeDistance;     // 16B (falloffParam renamed to closeDistance)
+//   float farDistance; float oneOverDistance; float _pad1; float _pad2;  // 16B
+
+// GetFalloff — implemented with full TG_Light fields from the extended struct.
+bool GetFalloff(uint lightIdx, float length, out float falloff) {
+    float closeDistance   = lights[lightIdx].closeDistance;
+    float farDistance     = lights[lightIdx].farDistance;
+    float oneOverDistance = lights[lightIdx].oneOverDistance;
+
+    if (length <= closeDistance) {
+        falloff = 1.0;
+        return true;
+    }
+    if (length >= farDistance) {
+        return false;
+    }
+    falloff = (farDistance - length) * oneOverDistance;
+    return true;
+}
+
+// GetApproximateLength mirrors Stuff::Point3D::GetApproximateLength (vector3d.hpp:414):
+// In non-ASM builds: SqrtApproximate = sqrt (scalar.hpp:109).
+// So GetApproximateLength = sqrt(x*x + y*y + z*z).
+float GetApproximateLength(vec3 v) {
+    return sqrt(dot(v, v));
+}
+
+// float2long mirrors mathfunc.h:115: long(val) = truncation toward zero.
+uint float2long_u(float v) {
+    return uint(int(v));
+}
+
+void main() {
+    uint vn = gl_GlobalInvocationID.x;
+    if (vn >= u_numVertices) return;
+
+    GpuTerrainVertexInput v = vertices[vn];
+
+    // Mirror quad.cpp:1280: if (Environment.Renderer != 3) — software renderer skip
+    // When u_rendererSW == 1, use defaults: lightRGB = white (0xFFFFFFFF), fogRGB defaults.
+    uint lightr = 255u, lightg = 255u, lightb = 255u;
+    uint specR  = 0u,   specG  = 0u,   specB  = 0u;
+
+    if (u_rendererSW == 0u) {
+        // --- Sun lighting ---
+        // quad.cpp:1283: lightIntensity = vertices[0]->pVertex->vertexNormal * eye->lightDirection
+        float lightIntensity = dot(v.normal, u_sunLightDir);
+
+        // quad.cpp:1285-1289: shadow clamp
+        bool hasShadow = (v.flags & GPU_VERT_SHADOW) != 0u;
+        if (hasShadow && lightIntensity > 0.2) {
+            lightIntensity = 0.2;
+        }
+
+        // quad.cpp:1291-1293: getLightR/G/B (camera.cpp:3065-3110)
+        lightr = getLightChannel(lightIntensity, u_lightRed,   u_ambientRed);
+        lightg = getLightChannel(lightIntensity, u_lightGreen, u_ambientGreen);
+        lightb = getLightChannel(lightIntensity, u_lightBlue,  u_ambientBlue);
+
+        // quad.cpp:1295-1308: BaseVertexColor add-and-clamp
+        if (u_baseVertexColorR != 0u || u_baseVertexColorG != 0u || u_baseVertexColorB != 0u) {
+            lightr = min(lightr + u_baseVertexColorR, 255u);
+            lightg = min(lightg + u_baseVertexColorG, 255u);
+            lightb = min(lightb + u_baseVertexColorB, 255u);
+        }
+
+        // quad.cpp:1310-1315: rainLightLevel dampen
+        if (u_rainLightLevel < 1.0) {
+            lightr = uint(float(lightr) * u_rainLightLevel);
+            lightb = uint(float(lightb) * u_rainLightLevel);
+            lightg = uint(float(lightg) * u_rainLightLevel);
+        }
+
+        // quad.cpp:1317-1320: lightning
+        if (u_lighteningLevel > 0u) {
+            specR = specG = specB = u_lighteningLevel;
+        }
+
+        // quad.cpp:1325-1370: per-light loop (lights indexed from 2, matching "first two factored in")
+        // Shader receives only lights >= 2 from CPU packing (PackAndDispatch skips lights 0 and 1).
+        for (uint i = 0u; i < u_numLights; i++) {
+            uint lt = lights[i].lightType;
+            if (lt == TG_LIGHT_POINT_GPU || lt == TG_LIGHT_SPOT_GPU || lt == TG_LIGHT_TERRAIN_GPU) {
+                // quad.cpp:1338-1342: vertexToLight = vertex.xyz - light.position
+                vec3 vertexPos = vec3(v.xy.x, v.xy.y, v.elevation);
+                vec3 vtl = vertexPos - lights[i].position;
+                float length = GetApproximateLength(vtl);
+                float falloff = 1.0;
+
+                if (GetFalloff(i, length, falloff)) {
+                    // quad.cpp:1349-1353: color * falloff
+                    float red   = lights[i].color.r * 255.0 * falloff;
+                    float green = lights[i].color.g * 255.0 * falloff;
+                    float blue  = lights[i].color.b * 255.0 * falloff;
+
+                    specR = min(specR + uint(red),   255u);
+                    specG = min(specG + uint(green),  255u);
+                    specB = min(specB + uint(blue),   255u);
+                }
+            }
+        }
+    }
+
+    // quad.cpp:1373: lightRGB = lightb + (lightr<<16) + (lightg<<8) + (0xff<<24)
+    // BGRA in memory (mc2_argb_packing.md): stored as 0xAABBGGRR in uint
+    // BUT the CPU writes: lightb + (lightr<<16) + (lightg<<8) + (0xff<<24)
+    // = (0xff<<24) | (lightr<<16) | (lightg<<8) | lightb
+    // = 0xAARRGGBB in hex — alpha=0xff, red=lightr, green=lightg, blue=lightb
+    uint lightRGB_out = (0xFFu << 24) | (lightr << 16) | (lightg << 8) | lightb;
+    outputs[vn].lightRGB = lightRGB_out;
+
+    // quad.cpp:1374: fogRGB = (0xff<<24) + (specR<<16) + (specG<<8) + specB  (default, before fog)
+    uint fogRGB_out = (0xFFu << 24) | (specR << 16) | (specG << 8) | specB;
+
+    // --- Fog (quad.cpp:1376-1426) ---
+    uint fogResult = 0xFFu;
+
+    if (u_rendererSW == 0u && u_useFog != 0u) {
+        float elev = v.elevation;
+        if (elev < u_fogStart) {
+            float fogFactor = u_fogStart - elev;
+            if (fogFactor < 0.0 || (u_fogStart == u_fogFull)) {
+                fogResult = 0xFFu;
+            } else {
+                fogFactor /= (u_fogStart - u_fogFull);
+                if (fogFactor <= 1.0) {
+                    fogFactor = fogFactor * fogFactor;
+                    fogFactor = 1.0 - fogFactor;
+                    fogFactor *= 256.0;
+                } else {
+                    fogFactor = 256.0;
+                }
+                // float2long = truncation (long(val))
+                fogResult = uint(int(fogFactor));
+            }
+        }
+        // else fogResult stays 0xff
+        fogRGB_out = (fogResult << 24) | (specR << 16) | (specG << 8) | specB;
+    }
+
+    // Distance fog (quad.cpp:1417-1426): hazeFactor from vertex projection
+    if (v.hazeFactor != 0.0) {
+        float fogFactor = 1.0 - v.hazeFactor;
+        uint distFog = uint(int(fogFactor * 255.0));
+        if (distFog < fogResult) {
+            fogResult = distFog;
+        }
+        fogRGB_out = (fogResult << 24) | (specR << 16) | (specG << 8) | specB;
+    }
+
+    outputs[vn].fogRGB = fogRGB_out;
+}
