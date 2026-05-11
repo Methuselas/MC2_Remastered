@@ -41,6 +41,7 @@
 #include"../GameOS/gameos/gos_profiler.h"
 #include"../GameOS/gameos/gos_terrain_patch_stream.h"
 #include"../GameOS/gameos/gos_terrain_indirect.h"
+#include"../GameOS/gameos/gos_terrain_lighting.h"
 #include"projectz_trace.h"
 #include"projectz_overlay.h"
 #include"tex_resolve_table.h"
@@ -1262,9 +1263,19 @@ void TerrainQuad::setupTextures (void)
 	// 1A-alt Slice 0 — bracket the per-vertex lighting block (4 vertices ×
 	// numTerrainLights × falloff + RGB accumulation + lightRGB pack + fogRGB).
 	// Expected dominant at wolfman zoom on lit missions.
+	// Stage 3 gate: GPU authoritative when enabled AND parity not forcing dual-run.
+	// Cached once per process; eliminates 14K env-lookup calls/frame.
+	// CostSplitLightingScope bracket stays as retirement telemetry — post-flip
+	// it reads ~0 us (scope overhead only, body skipped).
+	// GPU CopyResultsToVertexPool has already written vertices[i]->lightRGB/fogRGB
+	// before this loop ran.
 	{
 	CostSplitLightingScope _csLight;
-	if (terrainHandle != 0xffffffff)
+	// Cached once per process to avoid per-quad IsEnabled()/IsParityCheckEnabled()
+	// calls (14K quads × 2 env-lookups each would be ~28K calls/frame).
+	static const bool s_lightingGpuAuth = gos_terrain_lighting::IsEnabled()
+	                                      && !gos_terrain_lighting::IsParityCheckEnabled();
+	if (!s_lightingGpuAuth && terrainHandle != 0xffffffff)
 	{
 		//-----------------------------------------------------
 		// FOG time.

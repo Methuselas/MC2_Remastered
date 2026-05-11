@@ -81,8 +81,8 @@ void BeginFrame();
 void PackAndDispatch();
 
 // Per-frame: tryConsume ring (non-blocking T1/T2/T3), copy staging → vertices[i]->lightRGB.
-// Stage 1: no-op stub (output unused; CPU lighting still runs unmodified).
-// Stage 3: wired to copy ring data into vertex pool.
+// Stage 3: wired. Under parity mode: returns early (CPU body remains authoritative).
+// Under authoritative mode: copies GPU output into vertex pool before setupTextures loop.
 void CopyResultsToVertexPool(TerrainQuad* quadList, int numberQuads);
 
 bool IsEnabled();

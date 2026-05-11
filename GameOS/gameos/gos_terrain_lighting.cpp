@@ -1,13 +1,15 @@
-// gos_terrain_lighting.cpp — Phase 1 Stage 2: terrain lighting GPU compute.
+// gos_terrain_lighting.cpp — Phase 1 Stage 3: terrain lighting GPU compute — GPU authoritative.
 //
 // Design doc: docs/superpowers/specs/2026-05-10-quadsetuptextures-gpu-compute-port-design.md (ac7c492)
 // Plan:       docs/superpowers/plans/2026-05-10-quadsetuptextures-gpu-compute-port.md (2a5ba54)
 //
-// Stage 2: full lighting shader math + Parity_CompareFrame.
-//   PackAndDispatch packs dense vertexNum-indexed SSBO + uploads all uniforms.
-//   Parity_CompareFrame walks quadList + filters calcThisFrame&1 + compares GPU vs CPU.
-//   Legacy CPU lighting still runs unmodified (visual rendering unchanged).
-//   MC2_TERRAIN_LIGHTING_GPU=1 MC2_TERRAIN_LIGHTING_PARITY=1 to enable parity.
+// Stage 3: GPU path authoritative.
+//   CopyResultsToVertexPool: 3-slot T1/T2/T3 non-blocking tryConsume; copies
+//     GPU lightRGB/fogRGB into vertices[i] before setupTextures loop.
+//   CPU lighting block in quad.cpp:1266-1891 gated off via s_lightingGpuAuth.
+//   CostSplitLightingScope bracket retained as retirement telemetry (~0 us post-flip).
+//   Parity mode: CopyResultsToVertexPool returns early; CPU body still authoritative.
+//   MC2_TERRAIN_LIGHTING_GPU=1 to enable GPU path; =0 (or unset) for legacy CPU.
 //
 // 3-slot ring pattern mirrors gpu_cull_readback.cpp (RING_FRAMES=3, dual-buffer,
 // glCopyBufferSubData VRAM→BAR, timeout=0 always on hot path).
@@ -121,6 +123,13 @@ static size_t   s_outputSlotBytes = 0;
 
 static uint64_t s_frameIndex = 0;
 
+// Stage 3: tryConsume fallback telemetry counters (mirrors readback_fallback_n2 /
+// readback_fallback_conservative pattern from gpu_cull_readback.cpp)
+static uint64_t s_lightingFallbackN1          = 0;  // consumed N-1 (production path)
+static uint64_t s_lightingFallbackN2          = 0;  // used N-2 fallback
+static uint64_t s_lightingFallbackConservative = 0; // skipped update (both not ready)
+static uint64_t s_fallbackSummaryFrames        = 0; // frames since last summary
+
 // Parity state
 static int       s_parityMismatchesThisFrame = 0;
 static long long s_paritySummaryFrames       = 0;
@@ -131,6 +140,14 @@ static long long s_paritySummaryMismatches   = 0;
 static std::vector<gos_terrain_lighting::GpuTerrainVertexInput> s_packBuf;
 // Light pack buffer
 static std::vector<gos_terrain_lighting::GpuTerrainLight> s_lightBuf;
+
+// DRAM-side shadow copy of the last-consumed staging ring slot.
+// BAR memory (s_stagingMapped) is WC (write-combining) — reads from it bypass
+// CPU caches and go over PCIe, which is ~100-1000× slower than DRAM reads for
+// random-access patterns. Reading 14K entries indexed by vertexNum from BAR
+// causes severe perf regression. Fix: memcpy the entire staging slot from BAR
+// to DRAM once per frame (sequential, WC-read-friendly), then index from DRAM.
+static std::vector<gos_terrain_lighting::GpuTerrainLightingOutput> s_dramShadow;
 
 // ---------------------------------------------------------------------------
 // Private shader-compile helpers (tl_ prefix — mirrors gpu_cull_compute.cpp:145-231
@@ -305,6 +322,10 @@ void mission_init(uint32_t numVertices, uint32_t maxLights) {
     // Pre-size pack buffers
     s_packBuf.assign(numVertices, GpuTerrainVertexInput{});
     s_lightBuf.resize(s_maxLights);
+    // DRAM shadow of staging ring: initialized to all-white (lightRGB/fogRGB=0xFFFFFFFF)
+    // so that T3 (conservative, no update) leaves existing vertex colors unchanged on
+    // first-frame startup (vertex pool already initialized to 0xFFFFFFFF at vertex.h:122).
+    s_dramShadow.assign(numVertices, GpuTerrainLightingOutput{0xFFFFFFFFu, 0xFFFFFFFFu});
 
     // --- Vertex input SSBO (GPU-write from CPU pack; no persistent map) ---
     glGenBuffers(1, &s_vertexInputSsbo);
@@ -399,6 +420,7 @@ void mission_shutdown() {
     s_currentSlot     = 0;
     s_frameIndex      = 0;
     s_initialized     = false;
+    s_dramShadow.clear();
 
     printf("[TERRAIN_LIGHTING_GPU v1] event=mission_shutdown\n");
     fflush(stdout);
@@ -595,16 +617,115 @@ void PackAndDispatch() {
 }
 
 // ---------------------------------------------------------------------------
-// CopyResultsToVertexPool — Stage 1: no-op stub
-// Stage 3: 3-slot T1/T2/T3 non-blocking tryConsume + copy into vertex pool.
+// CopyResultsToVertexPool — Stage 3: 3-slot T1/T2/T3 non-blocking tryConsume.
+// Copies GPU staging ring → vertices[i]->lightRGB / ->fogRGB.
+//
+// Under parity mode (IsParityCheckEnabled()==true): returns early.
+//   The comparator (Parity_CompareFrame) reads GPU values from the mapped ring
+//   slot directly via GetMappedOutputForParity() with GL_TIMEOUT_IGNORED.
+//   CPU body runs authoritative for vertices[i] in parity mode.
+//   (plan v2 MIN-2 fold — avoid CPU-overwrites-GPU dataflow ambiguity.)
+//
+// Under authoritative mode (IsEnabled() && !IsParityCheckEnabled()):
+//   Non-blocking tryConsume with three-tier fallback (design doc Q2):
+//     T1: N-1 fence signaled → copy (1-frame latency, normal case).
+//     T2: N-2 fence signaled → copy (2-frame latency, emit N2 counter).
+//     T3: neither ready → skip (retain prior-frame values, emit conservative counter).
+//   glClientWaitSync timeout is ALWAYS 0 on hot path. Never GL_TIMEOUT_IGNORED.
 // ---------------------------------------------------------------------------
-void CopyResultsToVertexPool(TerrainQuad* /*quadList*/, int /*numberQuads*/) {
-    // Stage 1/2 no-op. Stage 3 implements tryConsume.
-    // Under parity mode: Parity_CompareFrame reads the mapped ring directly
-    // (with GL_TIMEOUT_IGNORED synchronous wait); CopyResultsToVertexPool must
-    // NOT copy GPU output into vertex pool in parity mode (would corrupt the
-    // CPU-authoritative lightRGB that parity reads as "legacy").
-    (void)0;
+void CopyResultsToVertexPool(TerrainQuad* quadList, int numberQuads) {
+    if (!IsEnabled() || !s_initialized || s_shaderBad) return;
+
+    // Under parity mode: do NOT write GPU output into vertex pool.
+    // Parity_CompareFrame reads the mapped ring directly.
+    if (IsParityCheckEnabled()) return;
+
+    // ---------------------------------------------------------------------------
+    // Non-blocking tryConsume (T1/T2/T3) — timeout=0 always.
+    // Mirrors readback_tryConsume() pattern in gpu_cull_readback.cpp:317-424.
+    // ---------------------------------------------------------------------------
+    const uint32_t n1Slot = (s_currentSlot + RING_FRAMES - 1u) % RING_FRAMES;
+    const uint32_t n2Slot = (s_currentSlot + RING_FRAMES - 2u) % RING_FRAMES;
+
+    // Helper: non-blocking fence check (timeout=0).
+    auto isFenceReady = [](uint32_t slot) -> bool {
+        if (!s_stagingFence[slot]) return false;
+        GLenum result = glClientWaitSync(s_stagingFence[slot], 0, 0);
+        return (result == GL_ALREADY_SIGNALED || result == GL_CONDITION_SATISFIED);
+    };
+
+    uint32_t readSlot = RING_FRAMES;  // sentinel: no slot selected
+    bool     isN2     = false;
+
+    if (isFenceReady(n1Slot)) {
+        glDeleteSync(s_stagingFence[n1Slot]);
+        s_stagingFence[n1Slot] = nullptr;
+        readSlot = n1Slot;
+        isN2     = false;
+    } else if (isFenceReady(n2Slot)) {
+        glDeleteSync(s_stagingFence[n2Slot]);
+        s_stagingFence[n2Slot] = nullptr;
+        readSlot = n2Slot;
+        isN2     = true;
+    }
+
+    ++s_fallbackSummaryFrames;
+
+    if (readSlot == RING_FRAMES) {
+        // T3: neither slot ready — retain prior DRAM shadow, vertex pool not updated.
+        ++s_lightingFallbackConservative;
+        TL_TRACE("event=copy_fallback_conservative frame=%llu", (unsigned long long)s_frameIndex);
+    } else {
+        // T1 or T2: memcpy BAR staging slot → DRAM shadow (sequential WC read, fast),
+        // then scatter DRAM shadow values into vertex pool (DRAM→DRAM, cached, fast).
+        //
+        // WHY: BAR persistent-mapped memory is WC (write-combining) on x86/AMD.
+        // Random-indexed reads from WC memory bypass CPU caches and cause PCIe
+        // round-trips. At 14K quad × 4 vertices × indexed reads = ~56K random WC reads
+        // → massive perf regression. Sequential memcpy from WC is stream-friendly (WC
+        // read coalesces naturally at 64B cache-line granularity) and is 100-1000× faster
+        // than random indexed WC reads. After memcpy, all indexing is in DRAM.
+        const GpuTerrainLightingOutput* barSrc =
+            static_cast<const GpuTerrainLightingOutput*>(s_stagingMapped[readSlot]);
+
+        if (barSrc && !s_dramShadow.empty()) {
+            // Step 1: sequential BAR → DRAM copy (stream-friendly WC read).
+            memcpy(s_dramShadow.data(), barSrc, s_numVertices * sizeof(GpuTerrainLightingOutput));
+
+            // Step 2: scatter DRAM shadow into vertex pool (DRAM→DRAM, cached).
+            const GpuTerrainLightingOutput* src = s_dramShadow.data();
+            for (int q = 0; q < numberQuads; ++q) {
+                const TerrainQuad& quad = quadList[q];
+                for (int vi = 0; vi < 4; ++vi) {
+                    Vertex* v = quad.vertices[vi];
+                    if (!v) continue;
+                    if (v->vertexNum < 0 || static_cast<uint32_t>(v->vertexNum) >= s_numVertices) continue;
+                    const GpuTerrainLightingOutput& out = src[v->vertexNum];
+                    v->lightRGB = out.lightRGB;
+                    v->fogRGB   = out.fogRGB;
+                }
+            }
+        }
+
+        if (isN2) {
+            ++s_lightingFallbackN2;
+            TL_TRACE("event=copy_fallback_n2 frame=%llu slot=%u", (unsigned long long)s_frameIndex, readSlot);
+        } else {
+            ++s_lightingFallbackN1;
+            TL_TRACE("event=copy_n1 frame=%llu slot=%u", (unsigned long long)s_frameIndex, readSlot);
+        }
+    }
+
+    // 600-frame fallback summary (mirrors gos_terrain_indirect.cpp:291 cadence).
+    if (s_fallbackSummaryFrames % 600 == 0) {
+        printf("[TERRAIN_LIGHTING_GPU v1] event=fallback_summary frames=%llu "
+               "n1=%llu n2=%llu conservative=%llu\n",
+               (unsigned long long)s_fallbackSummaryFrames,
+               (unsigned long long)s_lightingFallbackN1,
+               (unsigned long long)s_lightingFallbackN2,
+               (unsigned long long)s_lightingFallbackConservative);
+        fflush(stdout);
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -1792,7 +1792,8 @@ void Terrain::geometry (void)
 		gos_terrain_indirect::ComputePreflight();
 		// Phase 1: terrain lighting GPU compute — per-frame trio (design doc Q5).
 		// BeginFrame advances ring slot; PackAndDispatch packs + dispatches;
-		// CopyResultsToVertexPool is a no-op stub at Stage 1 (output unused).
+		// CopyResultsToVertexPool (Stage 3): T1/T2/T3 non-blocking tryConsume
+		// writes GPU lightRGB/fogRGB into vertices[i] BEFORE the setupTextures loop.
 		gos_terrain_lighting::BeginFrame();
 		gos_terrain_lighting::PackAndDispatch();
 		gos_terrain_lighting::CopyResultsToVertexPool(quadList, numberQuads);
