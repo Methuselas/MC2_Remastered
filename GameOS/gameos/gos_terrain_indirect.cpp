@@ -14,6 +14,7 @@
 
 #include "gos_terrain_indirect.h"
 #include "gos_terrain_patch_stream.h"  // TerrainQuadRecipe
+#include "gpu_driven_common.h"         // gpu_driven::IsTerrainSolidEnabled
 
 #include <vector>
 #include <cstdio>
@@ -1634,6 +1635,15 @@ bool ComputePreflight() {
     s_frameSolidCmdCount        = cmdCount;
     s_frameSolidArmed           = true;
     return true;
+}
+
+void ComputeDispatch() {
+    // Phase C Stage 2 hook. Called AFTER gos_terrain_lighting::PackAndDispatch()
+    // so the Phase 1 lighting SSBO contains same-frame data. Task 2.3 fills
+    // the Beta two-dispatch body; this stub is the insertion-point scaffold.
+    if (!s_frameSolidArmed)                          return;
+    if (!gpu_driven::IsTerrainSolidEnabled())        return;
+    // TODO(Task 2.3): GPU compute cull/pack + cmd-patch dispatch.
 }
 
 bool DrawIndirect() {

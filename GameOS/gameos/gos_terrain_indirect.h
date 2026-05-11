@@ -338,6 +338,11 @@ int  ParityCompareRecipeFrame();
 // ---------------------------------------------------------------------------
 void BeginFrame();              // reset armed flag; call unconditionally once per frame
 bool ComputePreflight();
+// v4 split: ComputePreflight() does arming gates only. ComputeDispatch()
+// runs after Phase 1's PackAndDispatch at terrain.cpp so it can read
+// gos_terrain_lighting::GetOutputSsbo() with same-frame data.
+// No-op when MC2_GPU_DRIVEN_TERRAIN_SOLID is unset or 0, or when not armed.
+void ComputeDispatch();
 bool IsFrameSolidArmed();
 bool DrawIndirect();
 void ForceDisableArmingForProcess();

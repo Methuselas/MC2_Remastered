@@ -1801,6 +1801,9 @@ void Terrain::geometry (void)
 		gos_terrain_lighting::BeginFrame();
 		gos_terrain_lighting::PackAndDispatch();
 		gos_terrain_lighting::CopyResultsToVertexPool(quadList, numberQuads);
+		// Phase C: SOLID compute dispatch. MUST be AFTER PackAndDispatch above
+		// so Phase 1's post-dispatch barrier has published the lighting SSBO.
+		gos_terrain_indirect::ComputeDispatch();
 		// Water-fast-path narrow walk: reset the candidate vector once per
 		// frame, then append every quad that passes UploadThin's eligibility
 		// gate immediately after setupTextures() establishes waterHandle.
