@@ -33,6 +33,7 @@
 
 #include"../GameOS/gameos/gos_profiler.h"
 #include"../GameOS/gameos/gos_terrain_water_stream.h"
+#include"../GameOS/gameos/gpu_driven_common.h"
 #include"../GameOS/gameos/gos_terrain_indirect.h"
 #include"../GameOS/gameos/gos_terrain_bridge.h"
 #include"../GameOS/gameos/gos_terrain_lighting.h"
@@ -1199,8 +1200,11 @@ void Terrain::renderWater (void)
 // hasn't drawn yet and overwrites our water.
 void Terrain::renderWaterFastPath (void)
 {
+	// MC2_RENDER_WATER_FASTPATH: legacy fast-path gate. MC2_GPU_DRIVEN_WATER
+	// also enables the fast-path entry (the MDI branch inside the bridge).
 	static const bool s_fastPath =
-	    (getenv("MC2_RENDER_WATER_FASTPATH") != nullptr);
+	    (getenv("MC2_RENDER_WATER_FASTPATH") != nullptr) ||
+	    gpu_driven::IsWaterEnabled();
 	if (!s_fastPath) return;
 	if (!WaterStream::IsReady()) return;
 	if (WaterStream::GetRecipeCount() == 0) return;

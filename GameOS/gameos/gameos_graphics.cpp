@@ -2040,12 +2040,16 @@ void gosRenderer::renderWaterFastPath(
     static GLuint s_waterMdiProg = 0;
     static GLuint s_perCmdSsbo   = 0;
     if (s_waterMdiProg == 0 && gpu_driven::IsWaterEnabled()) {
-        static const char* kWaterFastPrefix = "#version 430\n";
+        // ARB_shader_draw_parameters in prefix (same pattern as static_prop batcher).
+        // gl_DrawIDARB is used in the VS; the unsuffixed gl_DrawID is core only in 4.6.
+        static const char* kWaterMdiPrefix =
+            "#version 430\n"
+            "#extension GL_ARB_shader_draw_parameters : require\n";
         glsl_program* mdi = glsl_program::makeProgram(
             "gos_terrain_water_mdi",
             "shaders/gos_terrain_water_fast_mdi.vert",
             "shaders/gos_terrain_water_mdi.frag",
-            kWaterFastPrefix);
+            kWaterMdiPrefix);
         if (mdi && mdi->shp_) {
             s_waterMdiProg = mdi->shp_;
             printf("[WATER_MDI v1] event=prog_compiled prog=%u\n", (unsigned)s_waterMdiProg);

@@ -260,10 +260,10 @@ void main() {
     //   tr.fogRGB0 = (q.vertices[0]->fogRGB & 0xFFFFFF00u) | m0;
     // terrainTypes field packs per-vertex terrainType in bytes (v0 in lowest byte).
     // -----------------------------------------------------------------------
-    uint mat0 = terrainTypeToMaterial((r.terrainTypes      ) & 0xFFu);
-    uint mat1 = terrainTypeToMaterial((r.terrainTypes >>  8) & 0xFFu);
-    uint mat2 = terrainTypeToMaterial((r.terrainTypes >> 16) & 0xFFu);
-    uint mat3 = terrainTypeToMaterial((r.terrainTypes >> 24) & 0xFFu);
+    uint mtl0 = terrainTypeToMaterial((r.terrainTypes      ) & 0xFFu);
+    uint mtl1 = terrainTypeToMaterial((r.terrainTypes >>  8) & 0xFFu);
+    uint mtl2 = terrainTypeToMaterial((r.terrainTypes >> 16) & 0xFFu);
+    uint mtl3 = terrainTypeToMaterial((r.terrainTypes >> 24) & 0xFFu);
 
     // -----------------------------------------------------------------------
     // Pack and write the thin record.
@@ -293,10 +293,10 @@ void main() {
     tr.lightRGB2 = lighting[vn2].lightRGB;
     tr.lightRGB3 = lighting[vn3].lightRGB;
 
-    tr.fogRGB0 = (lighting[vn0].fogRGB & 0xFFFFFF00u) | mat0;
-    tr.fogRGB1 = (lighting[vn1].fogRGB & 0xFFFFFF00u) | mat1;
-    tr.fogRGB2 = (lighting[vn2].fogRGB & 0xFFFFFF00u) | mat2;
-    tr.fogRGB3 = (lighting[vn3].fogRGB & 0xFFFFFF00u) | mat3;
+    tr.fogRGB0 = (lighting[vn0].fogRGB & 0xFFFFFF00u) | mtl0;
+    tr.fogRGB1 = (lighting[vn1].fogRGB & 0xFFFFFF00u) | mtl1;
+    tr.fogRGB2 = (lighting[vn2].fogRGB & 0xFFFFFF00u) | mtl2;
+    tr.fogRGB3 = (lighting[vn3].fogRGB & 0xFFFFFF00u) | mtl3;
 
     thin[outSlot] = tr;
 }

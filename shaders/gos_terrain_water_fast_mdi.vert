@@ -1,4 +1,7 @@
 //#version 430 (provided by makeProgram prefix)
+// GL_ARB_shader_draw_parameters extension + #define MC2_WATER_MDI 1
+// are prepended by the host via the makeProgram preamble (not declared here).
+// gl_DrawIDARB is used below (ARB-suffixed name for 4.3 compat).
 //
 // MDI variant of gos_terrain_water_fast.vert for Task 1.5 (Stage 1 GPU-driven water).
 // Replaces per-pass uniforms (uvScale, uvOffset, detailMode, isWater) with a
@@ -135,8 +138,9 @@ uint elevAlphaBandByte(float elev) {
 }
 
 void main() {
-    // Pull per-draw data from the WaterPerCmd SSBO using gl_DrawID.
-    WaterPerCmd cmd       = perCmd[gl_DrawID];
+    // Pull per-draw data from the WaterPerCmd SSBO using gl_DrawIDARB
+    // (ARB-suffixed name; gl_DrawID is core only in GLSL 4.6).
+    WaterPerCmd cmd       = perCmd[gl_DrawIDARB];
     float       uvScale   = cmd.uvScale;
     vec2        uvOffset  = vec2(cmd.uvOffsetX, cmd.uvOffsetY);
     int         detailMode = cmd.detailMode;
