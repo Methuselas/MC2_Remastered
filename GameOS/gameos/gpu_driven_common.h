@@ -6,12 +6,12 @@
 namespace gpu_driven {
 
 // 16-byte std430-aligned per-bucket header. visibleCount is an atomicAdd
-// target in the compute shader. _pad slots reserved for future telemetry.
+// target in the compute shader. pad slots reserved for future telemetry.
 struct GpuDrivenBucketHeader {
     uint32_t visibleCount;
-    uint32_t _pad0;
-    uint32_t _pad1;
-    uint32_t _pad2;
+    uint32_t pad0_;
+    uint32_t pad1_;
+    uint32_t pad2_;
 };
 static_assert(sizeof(GpuDrivenBucketHeader) == 16,
               "GpuDrivenBucketHeader must be 16 B");
