@@ -2583,10 +2583,14 @@ bool gos_terrain_bridge_drawMaskSolid(uint32_t solidMaskSSBO,
     extern float  gos_terrain_indirect_getWorldUnitsPerVertex();
 
     // ---- Depth + color state -----------------------------------------------
+    // Stage 1b dual-run soak: suppress all framebuffer writes so the mask draw
+    // validates the pipeline (mask culling, shader compile/run, GL errors) without
+    // z-fighting the concurrent PR1 indirect draw. Stage 1d flips this when PR1
+    // is retired and the mask draw becomes the sole SOLID path.
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
-    glDepthMask(GL_TRUE);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_FALSE);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     glDisable(GL_BLEND);
 
     // ---- Sampler unit 0: CLAMP_TO_EDGE / LINEAR (matches drawIndirect) -----
