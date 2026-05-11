@@ -17,6 +17,7 @@
 #include "gos_terrain_water_stream.h"
 
 #include "gos_profiler.h"
+#include <cassert>
 
 #include <vector>
 #include <unordered_map>
@@ -317,6 +318,7 @@ const WaterRecipe* RecipeForVertexNum(int32_t vn) {
     if (vn < 0) return nullptr;
     auto it = g_vertexNumToRecipe.find(static_cast<uint32_t>(vn));
     if (it == g_vertexNumToRecipe.end()) return nullptr;
+    assert(it->second < (uint32_t)g_recipes.size()); // invariant: Build populates both atomically
     return &g_recipes[it->second];
 }
 

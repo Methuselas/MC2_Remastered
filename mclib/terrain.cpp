@@ -714,8 +714,11 @@ void Terrain::destroy (void)
 	if (gos_terrain_indirect::IsEnabled() ||
 	    gos_terrain_indirect::IsParityCheckEnabled()) {
 		gos_terrain_indirect::ResetDenseRecipe();
-		gos_terrain_mask_dispatch::Reset();
 	}
+	// Unconditional — mirrors Init() placement (not gated on IsEnabled/IsParityCheck).
+	// Stage 1b/1c may add per-mission state inside Reset(); guarding it here would
+	// silently skip teardown when MC2_TERRAIN_MASK_DISPATCH=1 but MC2_TERRAIN_INDIRECT=0.
+	gos_terrain_mask_dispatch::Reset();
 
 	// Phase 1: terrain lighting GPU compute shutdown (per-mission teardown).
 	gos_terrain_lighting::mission_shutdown();

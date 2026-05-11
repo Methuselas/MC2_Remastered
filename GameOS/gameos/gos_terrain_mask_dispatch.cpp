@@ -211,6 +211,8 @@ void BuildAndUploadMasksForFrame(const TerrainQuadPtr quadList, long numQuads) {
                 const uint32_t th = static_cast<uint32_t>(
                     tex_resolve(static_cast<DWORD>(q.terrainHandle)));
                 if (th != 0 && th != 0xffffffffu) {
+                    // Bit index = vn0 (corner-0 vertexNum = mapY*W+mapX).
+                    // Stage 1b shader must read by vertexNum, NOT quadList slot.
                     s_solidMask[vn0 >> 5] |= (1u << (vn0 & 31));
                     ++solidSet;
                 }
