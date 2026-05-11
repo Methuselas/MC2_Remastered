@@ -8,7 +8,7 @@
 > Stage 0 deliverable: enumerate the **GPU-share-vs-CPU-share for each shipped bucket**, identify the specific CPU residual that Phase C eliminates per bucket, define the compute-shader input/output contracts and sync pattern. The implementation plan (per-bucket stages) is authored against this design.
 
 **Worktree:** `claude/gpu-driven-rendering` (branched from `claude/nifty-mendeleev` @ `5667023`).
-**Sibling Phase B:** `claude/pre-bake-terrain` @ `5667023` — **partially shipped per-bucket** (see "Phase B / Phase C boundary" section below). The unified Phase B umbrella slice is in flight; the per-bucket static recipe SSBOs that Phase C consumes have shipped piecemeal under prior slices (PR1 for SOLID, water-recipe for water, PR2c for MINE), with Mine wire-up Stage 2c + Overlay recipe + (optional) static lighting bake still pending in the sibling worktree.
+**Sibling Phase B:** `claude/pre-bake-terrain` @ `5667023` — **mostly shipped per-bucket** (see "Phase B / Phase C boundary" section below). Per-bucket static recipe SSBOs that Phase C consumes have shipped piecemeal: PR1 for SOLID, water-recipe for water, **PR2c for MINE — all stages incl. 2c shipped 2026-05-08** (commits `619f49f` + `6d4a6f7`), PR2a M2c-emit DELETED 2026-05-08 (commit `7c3a382`). The **only Phase B work still pending** is Overlay recipe (Slice B2) + mask+dispatch infrastructure (Slice B4, Phase B headline). Cross-worktree ping received from Phase B session 2026-05-11: their Stage 0 adversarial review dropped Slices B1 (mine) and B3 (M2c) as already-shipped. See Phase B design at `A:\Games\mc2-opengl-src\.claude\worktrees\pre-bake-terrain\docs\superpowers\specs\2026-05-11-pre-bake-terrain-design.md` for the locked 2-slice arc.
 
 ---
 
@@ -104,7 +104,7 @@ The renderer-modernization arc currently runs **two parallel slices**: Phase B (
 | **Water main-emit** | ✅ Recipe shipped (renderWater Stage 1+2+3, 2026-04-30) | Phase C Stage 1 reads existing water recipe SSBO. No Phase B work needed for Phase C Stage 1 to ship. |
 | **Terrain SOLID main-emit** | ✅ Recipe shipped (PR1, commit `e22fa3a`, default-on 2026-05-01) — `g_recipeSSBO` in `gos_terrain_indirect.cpp` | Phase C Stage 2 reads existing PR1 recipe SSBO. No Phase B work needed for Phase C Stage 2 to ship. |
 | **Mine (PR2c)** | ✅ Stages 0c/1c/2c **all shipped** on baseline (commit `6d4a6f7`, default-on). Per `gos_terrain_indirect.cpp:139` `IsMineEnabled()` comment: "Tier1 5/5 PASS with arming verified across PR2c Stages 0c/1c/2c." | **Not a Phase C bucket.** MINE has no per-frame thin-record pack — it's a static-bake VBO + `glDrawArrays` with dirty-flag-gated rebuild. There is no per-frame CPU residual for Phase C to attack. v1 design's "Stage 3 Mine" entry is **removed**. |
-| **Overlay (PR2b)** | ⬜ No recipe (sibling session may or may not build one) | Phase C Stage 4 is **conditional**: if Phase B ships an overlay recipe in the same window, Phase C Stage 4 reads it. If not, **Phase C Stage 4 defers** — building a minimal in-line recipe in Phase C would violate the boundary (static-bake work in the per-frame compute session). |
+| **Overlay (PR2b)** | ⬜ No recipe (sibling Phase B Slice B2 may publish one) | Phase C Stage 3 is **conditional**: if Phase B ships an overlay recipe in the same window, Phase C Stage 3 reads it. If not, **Phase C Stage 3 defers** — building a minimal in-line recipe in Phase C would violate the boundary (static-bake work in the per-frame compute session). |
 | **Detail (M2c / PR2a)** | ⬜ Candidate delete (sibling session may retire it) | Not a Phase C bucket. Dead path. |
 | **Lighting** | ⬜ Static lighting bake possible (sibling-decided) | Phase C reads Phase 1's per-frame compute lighting SSBO. Whether Phase 1 (the *dynamic* GPU compute lighting; merge commit `93d3cbd` with stages `594add9 / eda2431 / ff8de07 / ff35f03`) is treated as "shipped" or "foundational-but-not-yet-shipped" affects Phase C's "eliminate lighting CPU bounce" headline win — but does not block Phase C from shipping; the binding for Phase 1's output is the seam, and a CPU-fallback path is the obvious degradation. |
 | **Vertex projection** | n/a (camera-dependent — not a static bake) | Per `vertex_project_loop_d1_asymptotic.md` D1 hoist closed asymptotic (compiler ceiling reached). SIMD / GPU port deferred. Phase C does NOT subsume vertex projection in v1; the per-bucket compute shader does its own per-quad MVP transform, but it does not consume `vertexProjectLoop`'s output. |
@@ -112,8 +112,8 @@ The renderer-modernization arc currently runs **two parallel slices**: Phase B (
 
 ### The three coordination decisions
 
-1. **Mine — Phase C does not block on Phase B Stage 2c.** Stage 3 of Phase C reads PR2c's existing MINE recipe. When Phase B Stage 2c lands, Phase C does a binding swap (no schema change expected). If Phase B Stage 2c changes the recipe layout, Phase C re-syncs after Phase B ships.
-2. **Overlay — Phase C blocks on Phase B Overlay recipe.** This is the one place Phase C is gated on Phase B. If the sibling session decides not to build an overlay recipe, Phase C Stage 4 falls out of the v1 scope and OVERLAY remains scaffold-only.
+1. **Mine — fully shipped on baseline; not a Phase C bucket.** PR2c Stages 0c/1c/2c all shipped 2026-05-08 (commits `619f49f` + `6d4a6f7`). MINE has no per-frame thin-record pack (uses `glDrawArrays` + dirty-flag lazy rebuild); no per-frame CPU residual for Phase C to attack. v1 design's "Stage 3 Mine" entry is **removed in v2** — confirmed by Phase B Stage 0 adversarial review 2026-05-11 dropping Phase B Slice B1 for the same reason.
+2. **Overlay — Phase C Stage 3 blocks on Phase B Overlay recipe (Slice B2).** This is the one place Phase C is gated on Phase B. If the sibling session decides not to build an overlay recipe, Phase C Stage 3 falls out of v1 and OVERLAY remains scaffold-only.
 3. **Lighting — Phase C reads Phase 1's existing SSBO; static lighting bake is sibling-decided and orthogonal to Phase C.** If the sibling session adds a *static* lighting bake under Phase B, Phase C can be re-pointed at it post-v1 (same binding-swap seam). It does not change v1.
 
 ### What Phase B should NOT do that would surprise Phase C
@@ -132,7 +132,7 @@ The renderer-modernization arc currently runs **two parallel slices**: Phase B (
 
 ### Stage ordering (cross-slice)
 
-Either slice can ship first; they're independent. If Phase B ships first, Phase C v1 simply has more Phase B output to consume (Mine Stage 2c, Overlay recipe, possible static lighting bake). If Phase C ships first, Phase B integrates against an already-running compute path and Phase C swaps bindings post-v1. **The only ordering constraint is:** if Phase B ships an overlay recipe and Phase C wants OVERLAY in v1, Phase B's overlay recipe must land before Phase C Stage 4.
+Either slice can ship first; they're independent. If Phase B ships first, Phase C v1 has Overlay recipe available (Mine and lighting are independent of either slice — mine is fully shipped on baseline; Phase 1 lighting compute is the GPU-resident SSBO Phase C reads directly). If Phase C ships first, Phase B integrates against an already-running compute path and Phase C swaps bindings post-v1. **The only ordering constraint is:** if Phase B ships an overlay recipe and Phase C wants OVERLAY in v1, Phase B's overlay recipe must land before Phase C Stage 3.
 
 ---
 
@@ -716,7 +716,7 @@ The compute program's slot 1 = Phase 1's lighting SSBO is bound RANGE-BOUND READ
 Three rules govern every stage below:
 
 1. **No new SSBO struct layouts** except the tiny new `GpuDrivenBucketHeader` (4 GLuints). The thin-record layouts that exist today (`WaterThinRecord`, `TerrainQuadThinRecord`, and the PR2c MINE variant) are byte-stable across Phase C. The compute shader's pack body must produce byte-identical output to the legacy CPU pack body. This is enforced by the per-bucket parity check and is the load-bearing safety mechanism — if the compute shader's output ever diverges from CPU pack, the parity check fails before the bucket flips default-on.
-2. **No new draw consumers** except the OVERLAY exception (Stage 4). Each bucket's MDI consumer is already in place (or, for water, becomes an MDI with one struct's worth of additional setup — see Stage 1 note). Phase C does not invent new render-state pipelines, new shaders for VS/FS, new sampler conventions, new depth-state. It just changes who writes the thin-record SSBO.
+2. **No new draw consumers** except the OVERLAY exception (Stage 3, conditional). Each bucket's MDI consumer is already in place (or, for water, becomes an MDI with one struct's worth of additional setup — see Stage 1 note). Phase C does not invent new render-state pipelines, new shaders for VS/FS, new sampler conventions, new depth-state. It just changes who writes the thin-record SSBO.
 3. **No CPU pack loop is deleted in v1.** Each one is gated off via `MC2_GPU_DRIVEN_<BUCKET>=0` and left in the tree per CLAUDE.md's "demote-don't-delete" rule. A separate post-soak slice physically removes them after the per-bucket flips have stuck for the soak window.
 
 ### Stage 0 — Spec + design doc (THIS DOCUMENT)
@@ -918,7 +918,7 @@ Run all greps at write-time against `claude/gpu-driven-rendering` worktree HEAD 
 | F-1 | indirect-cmd schema unchanged from PR1 (load-bearing) | M | `DrawArraysIndirectCommand` is GL-spec-mandated 16 B / 4 GLuints; no Phase C field needed |
 | F-2 | binding-point allocations in §"Per-bucket binding-point allocation" | **M (resolved v2)** | v1 table was symbolic ("(existing X binding)") and concealed within-program collisions in newly-proposed compute programs. v2 replaces with concrete per-program tables using slots 0–7 internally per compute program. Each GL program has its own binding namespace, so cross-program reuse of `binding=2` (Phase 1 lighting output AND existing thin-record SSBO) does NOT collide at runtime — they live in different programs. Adversarial-review confirmed: no shipped code uses slots 17–27 (entirely free), but the v1 table's design issue was structural (within-program collision in proposed compute programs), not numerical. v2 fixes the structural issue. |
 | G-1 | `pr2_detail_overlay_mine_stage0_recon.md` PR2a-dead claim | M | memory present, references commit 521d83a |
-| G-2 | `indirect_terrain_solid_endpoint.md` PR2b scaffold-only (`IsFrameOverlayArmed()` returns false) | M | memory present, 2026-05-01; needs Stage 4 fresh grep before forward-construction code |
+| G-2 | `indirect_terrain_solid_endpoint.md` PR2b scaffold-only (`IsFrameOverlayArmed()` returns false) | M | memory present, 2026-05-01; needs Stage 3 fresh grep before forward-construction code |
 | H-1 | `mech_vehicle_gpu_pull_in.md` Track D merged 2026-05-10 commit `0d5ce93` | M | matches git log "merge: pull in Track D GPU mech+vehicle batcher from claude/gpu-mech-batcher" |
 | I-1 | `code/gamecam.cpp:244` Tracy zone `"GameCamera::render textureManagerRenderLists"` | M | exact label at line 244; wraps `mcTextureManager->renderLists()` at :245 and `endFrameTexResolve()` at :246 (range :244–:248) |
 | I-2 | `code/gamecam.cpp:217` Tracy zone `"GameCamera::render water"` | M | exact label at line 217; wraps `land->renderWater()` at :218. When `MC2_RENDER_WATER_FASTPATH` armed (default-on), legacy `renderWater` early-returns; live cost is in the next entry. |
@@ -947,7 +947,7 @@ Run all greps at write-time against `claude/gpu-driven-rendering` worktree HEAD 
 ## What this design doc does NOT decide
 
 - **The exact compute shader pack-loop body per bucket.** That's Stage 1 plan-write work. The pack body is constrained to byte-match the legacy CPU pack body's output; the parity check enforces this mechanically.
-- **The exact texture-binding sequence for OVERLAY (Stage 4).** Forward-construction, no CPU baseline. Stage 4's plan will derive this from PR2b's existing design doc (`2026-05-08-pr2b-overlay-indirect-design.md`) and from Stage 2's MDI bridge.
+- **The exact texture-binding sequence for OVERLAY (Stage 3, conditional).** Forward-construction, no CPU baseline. Stage 3's plan will derive this from PR2b's existing design doc (`2026-05-08-pr2b-overlay-indirect-design.md`) and from Stage 2's MDI bridge.
 - **Whether Phase C's compute should also subsume the projectZ pre-cull for the water bucket's static-prop-passing surfaces.** Out of scope for v1; the water compute shader does its own per-quad projectZ.
 - **Track D's eventual integration.** Deferred to Phase C v2 per the inventory above.
 
