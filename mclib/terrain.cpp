@@ -1823,6 +1823,15 @@ void Terrain::geometry (void)
 		// Stage 1 cost-split: roll per-frame nanosecond accumulators (no-op
 		// when MC2_TERRAIN_COST_SPLIT unset). ParityFrameTick advances the
 		// summary cadence; Stage 2 passes the actual quads-checked count.
+		// Stage 2: terrain lighting parity check — AFTER the setupTextures loop
+		// so CPU has written all lightRGB/fogRGB for this frame.
+		// GetMappedOutputForParity() synchronously waits on current-frame fence
+		// (parity mode only — production path skips this entirely).
+		if (gos_terrain_lighting::IsParityCheckEnabled()) {
+			const gos_terrain_lighting::GpuTerrainLightingOutput* mappedOut =
+				gos_terrain_lighting::GetMappedOutputForParity();
+			gos_terrain_lighting::Parity_CompareFrame(quadList, numberQuads, mappedOut);
+		}
 		gos_terrain_indirect::CostSplit_RollFrame();
 		{
 			int quadsChecked = 0;

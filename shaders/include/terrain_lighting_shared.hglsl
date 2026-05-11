@@ -4,8 +4,19 @@
 // extend the C++ struct too (memory/cpp_glsl_ubo_struct_lockstep.md).
 // #version 430 is injected by the C++ loader — do NOT add it here.
 
-struct GpuTerrainVertexInput { vec2 xy; float elevation; float _pad0; vec3 normal; uint flags; };
-struct GpuTerrainLight       { vec3 position; uint lightType; vec3 color; float falloffParam; };
+struct GpuTerrainVertexInput { vec2 xy; float elevation; float hazeFactor; vec3 normal; uint flags; };
+// Stage 2 extended (48B std430): added farDistance + oneOverDistance for GetFalloff.
+// Keep lockstep with GpuTerrainLight in gos_terrain_lighting.h.
+struct GpuTerrainLight {
+    vec3  position;       // offset 0
+    uint  lightType;      // offset 12
+    vec3  color;          // offset 16  (R/G/B normalized 0..1)
+    float closeDistance;  // offset 28
+    float farDistance;    // offset 32
+    float oneOverDistance;// offset 36
+    float _pad1;          // offset 40
+    float _pad2;          // offset 44
+};
 struct GpuTerrainLightingOutput { uint lightRGB; uint fogRGB; };
 
 #define TG_LIGHT_POINT_GPU   1u

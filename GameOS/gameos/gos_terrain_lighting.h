@@ -34,19 +34,23 @@ namespace gos_terrain_lighting {
 struct alignas(16) GpuTerrainVertexInput {   // 32 B std430
     float    xy[2];          // 8 B @ offset 0
     float    elevation;      // 4 B @ offset 8
-    float    _pad0;          // 4 B @ offset 12  (pads normal to 16-byte boundary)
+    float    hazeFactor;     // 4 B @ offset 12  (Vertex::hazeFactor — distance fog; replaces Stage-1 _pad0)
     float    normal[3];      // 12 B @ offset 16
     uint32_t flags;          // 4 B @ offset 28
 };
 static_assert(sizeof(GpuTerrainVertexInput) == 32, "GpuTerrainVertexInput must be 32 B std430");
 
-struct alignas(16) GpuTerrainLight {         // 32 B std430
+struct alignas(16) GpuTerrainLight {         // 48 B std430 (Stage 2 extended)
     float    position[3];    // 12 B @ offset 0
     uint32_t lightType;      // 4 B @ offset 12
-    float    color[3];       // 12 B @ offset 16
-    float    falloffParam;   // 4 B @ offset 28
+    float    color[3];       // 12 B @ offset 16  (R/G/B normalized 0..1)
+    float    closeDistance;  // 4 B @ offset 28   (TG_Light::closeDistance)
+    float    farDistance;    // 4 B @ offset 32   (TG_Light::farDistance)
+    float    oneOverDistance;// 4 B @ offset 36   (TG_Light::oneOverDistance)
+    float    _pad1;          // 4 B @ offset 40
+    float    _pad2;          // 4 B @ offset 44
 };
-static_assert(sizeof(GpuTerrainLight) == 32, "GpuTerrainLight must be 32 B std430");
+static_assert(sizeof(GpuTerrainLight) == 48, "GpuTerrainLight must be 48 B std430");
 
 struct alignas(4) GpuTerrainLightingOutput { //  8 B std430
     uint32_t lightRGB;       // packed BGRA per memory/mc2_argb_packing.md
@@ -88,5 +92,10 @@ bool IsParityCheckEnabled();
 // Comparator walks quadList, filters by calcThisFrame & 1, indexes outputs[vertexNum].
 void Parity_CompareFrame(TerrainQuad* quadList, int numberQuads,
                          const GpuTerrainLightingOutput* mappedOutput);
+
+// Synchronously wait on current-frame fence and return mapped GPU output.
+// ONLY valid in parity mode (MC2_TERRAIN_LIGHTING_PARITY=1).
+// Never call this on the production hot path — GL_TIMEOUT_IGNORED blocks.
+const GpuTerrainLightingOutput* GetMappedOutputForParity();
 
 } // namespace gos_terrain_lighting
