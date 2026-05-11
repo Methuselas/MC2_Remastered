@@ -34,6 +34,7 @@
 #include"../GameOS/gameos/gos_profiler.h"
 #include"../GameOS/gameos/gos_terrain_water_stream.h"
 #include"../GameOS/gameos/gos_terrain_indirect.h"
+#include"../GameOS/gameos/gos_terrain_mask_dispatch.h"
 #include"../GameOS/gameos/gos_terrain_bridge.h"
 #include"../GameOS/gameos/gos_terrain_lighting.h"
 
@@ -632,6 +633,10 @@ void Terrain::primeMissionTerrainCache (volatile float& progress, float progress
 		gos_terrain_indirect::BuildDenseRecipe();
 	}
 
+	// Slice B4 Stage 1a — mask-dispatch lifecycle. Same call site as
+	// BuildDenseRecipe (no-op when MC2_TERRAIN_MASK_DISPATCH unset).
+	gos_terrain_mask_dispatch::Init(realVerticesMapSide);
+
 	// PR2c Stage 1c — mine static-bake lifecycle.
 	// CPU-clear only; do NOT build here. Build is deferred to first
 	// MissionMap::setMine event (typically the per-cell init loop at
@@ -709,6 +714,7 @@ void Terrain::destroy (void)
 	if (gos_terrain_indirect::IsEnabled() ||
 	    gos_terrain_indirect::IsParityCheckEnabled()) {
 		gos_terrain_indirect::ResetDenseRecipe();
+		gos_terrain_mask_dispatch::Reset();
 	}
 
 	// Phase 1: terrain lighting GPU compute shutdown (per-mission teardown).
@@ -999,6 +1005,15 @@ void Terrain::render (void)
 	// ~290 us PatchStream slice; the residual ~1.7 ms is non-PatchStream
 	// per-quad CPU work that stays attributed to drawPass at coarse level.
 	DWORD fogColor = eye->fogColor;
+
+	// Slice B4 Stage 1a — mask-dispatch build runs alongside the legacy
+	// drawPass (does NOT replace it). IsMaskDispatchEnabled() gates on
+	// MC2_TERRAIN_MASK_DISPATCH + dense recipe ready + Init() success.
+	gos_terrain_mask_dispatch::BeginFrame();
+	if (drawTerrainTiles && gos_terrain_mask_dispatch::IsMaskDispatchEnabled()) {
+		ZoneScopedN("Terrain::render maskBuild");
+		gos_terrain_mask_dispatch::BuildAndUploadMasksForFrame(quadList, numberQuads);
+	}
 
 	if (drawTerrainTiles)
 	{

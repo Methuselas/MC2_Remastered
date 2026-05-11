@@ -313,6 +313,13 @@ bool IsReady() {
     return g_ready;
 }
 
+const WaterRecipe* RecipeForVertexNum(int32_t vn) {
+    if (vn < 0) return nullptr;
+    auto it = g_vertexNumToRecipe.find(static_cast<uint32_t>(vn));
+    if (it == g_vertexNumToRecipe.end()) return nullptr;
+    return &g_recipes[it->second];
+}
+
 unsigned int EnsureRecipeBufferUploaded() {
     if (!g_ready || g_recipes.empty())
         return 0;

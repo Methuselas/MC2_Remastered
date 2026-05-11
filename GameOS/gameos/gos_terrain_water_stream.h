@@ -230,4 +230,9 @@ uint32_t GetRecipeCount();
 // True after Build has succeeded; false after Reset or before first Build.
 bool IsReady();
 
+// Returns the WaterRecipe for a quad whose corner-0 vertexNum is vn.
+// Returns nullptr if vn has no water recipe (pure-land quad or vn < 0).
+// Only valid after IsReady() returns true.
+const WaterRecipe* RecipeForVertexNum(int32_t vn);
+
 } // namespace WaterStream
