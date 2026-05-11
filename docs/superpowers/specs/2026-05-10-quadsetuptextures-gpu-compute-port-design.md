@@ -115,7 +115,7 @@ Classification by struct type (ScreenVertex terrain pool vs. other):
 | File | Total `lightRGB` hits | `ScreenVertex::lightRGB` hits | Nature |
 |---|---|---|---|
 | `mclib/quad.cpp` | 84 | 55 (`->lightRGB`) | 8 writes in lighting block (`:1322/1373/1476/1527/1630/1681/1784/1835`); rest are reads in `draw`/`drawWater`; 29 additional occurrences are local `DWORD lightRGBN` vars and comments |
-| `GameOS/gameos/gos_terrain_water_stream.cpp` | 14 | 8 (`->lightRGB`) | CPU mirror reads — pack thin record (`:460-463`), parity check (`:809, :811`), draw path (`:929, :967, :969`); 6 additional occurrences are `trec.lightRGB0-3` and comments |
+| `GameOS/gameos/gos_terrain_water_stream.cpp` | 14 | 8 (`->lightRGB`) | CPU mirror reads — pack thin record (`:460-463`), parity check (`:809, :811`), draw path (`:929, :967`); 6 additional occurrences are `trec.lightRGB0-3` and comments |
 | `GameOS/gameos/gos_terrain_indirect.cpp` | 10 | 2 (`->lightRGB`) | CPU mirror reads — `:1407-1408` (comments), `:1450/1455/1458` (lambda context/comments), `:1459` (direct read `q.vertices[c]->lightRGB`), `:1526-1529` (`tr.lightRGB0-3` assignments) |
 | `GameOS/gameos/gos_terrain_water_stream.h` | 5 | 0 | Struct field declarations `lightRGB0-3` in thin-record struct + comment; no live consumers |
 | `GameOS/gameos/gos_terrain_patch_stream.cpp` | 5 | 0 (indirect consumer — see M2 below) | Receives `lightRGB0-3` via `appendThinRecordDirect(tr)` where `tr.lightRGB0-3` are packed from `vertices[c]->lightRGB` in `quad.cpp:2133-2136`. Indirect consumer of the CPU mirror pool via quad.cpp. |
