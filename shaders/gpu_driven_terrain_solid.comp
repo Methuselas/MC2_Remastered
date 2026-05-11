@@ -1,0 +1,267 @@
+// shaders/gpu_driven_terrain_solid.comp — Phase C Stage 2
+//
+// Cull/pack pass for terrain SOLID quads. One invocation per entry in the
+// per-frame quadList window (u_windowCount entries in windowIdx[]).
+//
+// For each quad:
+//   1. Fetch the mission-static TerrainQuadRecipe from binding 0.
+//   2. Project all 4 world-space corners through u_terrainMVP to get pz.
+//   3. Apply the per-triangle pz-valid gate (pz + FUDGE ∈ [0,1)) — mirrors
+//      PackThinRecordsForFrame in gos_terrain_indirect.cpp:1431-1448.
+//   4. Read per-vertex lightRGB from Phase 1's lighting SSBO at binding 1.
+//   5. Allocate an output slot via atomicAdd on GpuDrivenBucketHeader.visibleCount.
+//   6. Pack a TerrainQuadThinRecord byte-identical to the CPU pack loop.
+//
+// Struct layouts are LOCKSTEP with C++ counterparts (verified by grep at write-time):
+//   TerrainQuadRecipe       — gos_terrain_patch_stream.h:87-97  (144 B, alignas(16))
+//   TerrainQuadThinRecord   — gos_terrain_patch_stream.h:103-11 ( 32 B, alignas(16))
+//   GpuTerrainLightingOutput— gos_terrain_lighting.h:56-59      (  8 B, alignas(4))
+//
+// Recipe pad fields (baked by BuildDenseRecipe at mission start — all mission-stable):
+//   pos1.w (_wp1) — low bit: uvMode (0=TOPRIGHT/BOTTOMRIGHT, 1=BOTTOMLEFT)
+//   pos2.w (_wp2) — terrain handle slot (stable uint, bit-cast via floatBitsToUint)
+//   pos3.w (_wp3) — cement word (kCementLayerValidBit | idx, or 0)
+//
+// #version 430 is prepended by host-side BuildComputeProgramFromFile — do NOT add here.
+//
+// Bindings:
+//   0 — TerrainQuadRecipe[]        (input, mission-static per-quad recipe)
+//   1 — GpuTerrainLightingOutput[] (input, Phase 1 per-vertex lightRGB; same-frame)
+//   2 — uint[]                     (input, per-frame quadList window: top-left vn values)
+//   3 — TerrainQuadThinRecord[]    (output, packed thin records)
+//   6 — GpuDrivenBucketHeader      (coherent, atomicAdd on visibleCount)
+//
+// Uniforms:
+//   u_windowCount      — number of entries in windowIdx[]
+//   u_maxThinRecords   — capacity of thin[] output array (overflow guard)
+//   u_mapSide          — realVerticesMapSide (int); used to compute adjacent-row vNums
+//   u_alphaOverride    — 1 when Terrain::terrainTextures2 != nullptr; forces lightRGB=0xFFFFFFFF
+//   u_terrainMVP       — row-major 4×4 terrain MVP (uploaded GL_FALSE).
+//                        See memory/terrain_mvp_gl_false.md.
+
+layout(local_size_x = 64) in;
+
+// ---------------------------------------------------------------------------
+// TerrainQuadRecipe — lockstep with gos_terrain_patch_stream.h:87-97 (144 B)
+//
+// 9 vec4s in std430 layout (row-order in the struct, column-order in SSBO):
+//   pos0  = (wx0, wy0, wz0, _wp0)  — _wp0: 4-corner material types packed as bytes
+//   pos1  = (wx1, wy1, wz1, _wp1)  — _wp1 low bit: uvMode (baked at mission start)
+//   pos2  = (wx2, wy2, wz2, _wp2)  — _wp2: terrain handle slot (bit-cast uint)
+//   pos3  = (wx3, wy3, wz3, _wp3)  — _wp3: cement word (bit-cast uint)
+//   norm0 = (nx0, ny0, nz0, _np0)  — not read by this shader
+//   norm1 = (nx1, ny1, nz1, _np1)
+//   norm2 = (nx2, ny2, nz2, _np2)
+//   norm3 = (nx3, ny3, nz3, _np3)
+//   uvExt = (minU, minV, maxU, maxV)
+// ---------------------------------------------------------------------------
+struct TerrainQuadRecipe {
+    vec4 pos0, pos1, pos2, pos3;
+    vec4 norm0, norm1, norm2, norm3;
+    vec4 uvExt;
+};
+
+// ---------------------------------------------------------------------------
+// TerrainQuadThinRecord — lockstep with gos_terrain_patch_stream.h:103-111 (32 B)
+//
+//   uint recipeIdx;     // offset  0 — top-left vertexNum (= windowIdx entry)
+//   uint terrainHandle; // offset  4 — terrain texture slot
+//   uint flags;         // offset  8 — bit0=uvMode, bit1=pzTri1Valid, bit2=pzTri2Valid
+//   uint cementWord;    // offset 12 — was _pad0; cement layer encoding
+//   uint lightRGB0;     // offset 16
+//   uint lightRGB1;     // offset 20
+//   uint lightRGB2;     // offset 24
+//   uint lightRGB3;     // offset 28
+// ---------------------------------------------------------------------------
+struct TerrainQuadThinRecord {
+    uint recipeIdx;
+    uint terrainHandle;
+    uint flags;
+    uint cementWord;
+    uint lightRGB0, lightRGB1, lightRGB2, lightRGB3;
+};
+
+// Flag bit encoding — matches PackThinRecordsForFrame() gos_terrain_indirect.cpp:1470-1472.
+const uint kThinFlagUvMode     = 0x1u;  // bit 0: uvMode (0=TOPRIGHT, 1=BOTTOMLEFT)
+const uint kThinFlagPzTri1     = 0x2u;  // bit 1: pzTri1Valid
+const uint kThinFlagPzTri2     = 0x4u;  // bit 2: pzTri2Valid
+
+// ---------------------------------------------------------------------------
+// GpuDrivenBucketHeader — 16 B std430.
+// ---------------------------------------------------------------------------
+struct GpuDrivenBucketHeader {
+    uint visibleCount;
+    uint pad0_;
+    uint pad1_;
+    uint pad2_;
+};
+
+// ---------------------------------------------------------------------------
+// GpuTerrainLightingOutput — lockstep with gos_terrain_lighting.h:56-59 (8 B).
+//   uint lightRGB;  // offset 0 — BGRA-packed per memory/mc2_argb_packing.md
+//   uint fogRGB;    // offset 4 — not written to SOLID thin record (no fogRGB field)
+// One entry per terrain vertex, indexed by vertexNum = mapY*mapSide + mapX.
+// ---------------------------------------------------------------------------
+struct GpuTerrainLightingOutput {
+    uint lightRGB;
+    uint fogRGB;
+};
+
+// ---------------------------------------------------------------------------
+// SSBO bindings
+// ---------------------------------------------------------------------------
+layout(std430, binding = 0) readonly  buffer Recipes  { TerrainQuadRecipe        recipes[];  };
+layout(std430, binding = 1) readonly  buffer Lighting  { GpuTerrainLightingOutput lighting[]; };
+layout(std430, binding = 2) readonly  buffer Window    { uint                     windowIdx[]; };
+layout(std430, binding = 3) writeonly buffer Thin      { TerrainQuadThinRecord    thin[];      };
+layout(std430, binding = 6) coherent  buffer Header    { GpuDrivenBucketHeader    hdr;         };
+
+// ---------------------------------------------------------------------------
+// Uniforms.
+// 'uniform uint' crashes this engine's shader compile (memory/uniform_uint_crash.md);
+// use int + cast where the value is passed from C++ as GLint.
+// ---------------------------------------------------------------------------
+uniform int  u_windowCount;
+uniform int  u_maxThinRecords;
+uniform int  u_mapSide;          // realVerticesMapSide
+uniform int  u_alphaOverride;    // 1 when Terrain::terrainTextures2 != nullptr
+uniform mat4 u_terrainMVP;
+
+// ---------------------------------------------------------------------------
+// Depth fudge — matches TERRAIN_DEPTH_FUDGE at gos_terrain_indirect.cpp:1244.
+// Mirrors PackThinRecordsForFrame:1435: pz_adj = pz + TERRAIN_DEPTH_FUDGE.
+// Gate is pz_adj ∈ [0,1), equivalent to pz ∈ [-FUDGE, 1-FUDGE).
+// ---------------------------------------------------------------------------
+const float kTerrainDepthFudge = 0.001;
+
+// ---------------------------------------------------------------------------
+// projectZ — project world-space position through u_terrainMVP and return
+// the perspective-divided z (NDC depth). Matches CPU projectZ / vertexProjectLoop.
+// See memory/terrain_mvp_gl_false.md for the row-major / GL_FALSE convention.
+// No guard on clip.w <= 0 — both z and w can be negative at map boundaries
+// (oblique camera convention, see memory/clip_w_sign_trap.md). clip.z*rhw
+// with negative w gives a value the CPU pzOk gate also sees; no early return.
+// ---------------------------------------------------------------------------
+float projectZ(float wx, float wy, float wz) {
+    vec4 clip = u_terrainMVP * vec4(wx, wy, wz, 1.0);
+    float rhw = (clip.w != 0.0) ? 1.0 / clip.w : 1.0;
+    return clip.z * rhw;
+}
+
+// pzOk — with TERRAIN_DEPTH_FUDGE applied. Mirrors packer:1435-1436.
+bool pzOk(float pz) {
+    float adj = pz + kTerrainDepthFudge;
+    return adj >= 0.0 && adj < 1.0;
+}
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+void main() {
+    uint id = uint(gl_GlobalInvocationID.x);
+    if (id >= uint(u_windowCount)) return;
+
+    // windowIdx[] holds top-left corner vertexNums (= recipeIdx in the dense
+    // recipe SSBO, per Option A dense indexing). CPU host builds this window
+    // from the quadList, filtering pointer guards + vertexNum < 0 + no recipe.
+    uint vn0 = windowIdx[id];
+    TerrainQuadRecipe r = recipes[vn0];
+
+    // -----------------------------------------------------------------------
+    // Project all 4 world corners through terrainMVP to get per-vertex pz.
+    // Corner ordering matches gos_terrain_patch_stream.h + PackThinRecordsForFrame:
+    //   corner 0 = (wx0,wy0,wz0) — top-left  vn = vn0
+    //   corner 1 = (wx1,wy1,wz1) — top-right vn = vn0+1
+    //   corner 2 = (wx2,wy2,wz2) — bot-right vn = vn0+ms+1
+    //   corner 3 = (wx3,wy3,wz3) — bot-left  vn = vn0+ms
+    // -----------------------------------------------------------------------
+    float pz0 = projectZ(r.pos0.x, r.pos0.y, r.pos0.z);
+    float pz1 = projectZ(r.pos1.x, r.pos1.y, r.pos1.z);
+    float pz2 = projectZ(r.pos2.x, r.pos2.y, r.pos2.z);
+    float pz3 = projectZ(r.pos3.x, r.pos3.y, r.pos3.z);
+
+    bool ok0 = pzOk(pz0);
+    bool ok1 = pzOk(pz1);
+    bool ok2 = pzOk(pz2);
+    bool ok3 = pzOk(pz3);
+
+    // uvMode from recipe _wp1 low bit — baked by BuildDenseRecipe.
+    // 0 = TOPRIGHT diagonal (corner[0]-[2]), 1 = BOTTOMLEFT diagonal (corner[1]-[3]).
+    // Matches PackThinRecordsForFrame:1439-1448.
+    uint uvModeWord = floatBitsToUint(r.pos1.w);
+    bool isBottomLeft = (uvModeWord & 1u) != 0u;
+
+    bool pzTri1, pzTri2;
+    if (!isBottomLeft) {
+        // TOPRIGHT (uvMode=0): tri1 = corners (0,1,2), tri2 = corners (0,2,3)
+        pzTri1 = ok0 && ok1 && ok2;
+        pzTri2 = ok0 && ok2 && ok3;
+    } else {
+        // BOTTOMLEFT (uvMode=1): tri1 = corners (0,1,3), tri2 = corners (1,2,3)
+        pzTri1 = ok0 && ok1 && ok3;
+        pzTri2 = ok1 && ok2 && ok3;
+    }
+
+    // Drop if both triangles cull — matches PackThinRecordsForFrame:1449.
+    if (!pzTri1 && !pzTri2) return;
+
+    // -----------------------------------------------------------------------
+    // Compute corner vertexNums for Phase 1 lighting SSBO lookup.
+    // Same formula as gpu_driven_water.comp (terrain grid = water grid layout).
+    // -----------------------------------------------------------------------
+    uint ms  = uint(u_mapSide);
+    uint vn1 = vn0 + 1u;
+    uint vn2 = vn0 + ms + 1u;
+    uint vn3 = vn0 + ms;
+
+    // -----------------------------------------------------------------------
+    // Allocate output slot via atomicAdd on the coherent bucket header.
+    // -----------------------------------------------------------------------
+    uint outSlot = atomicAdd(hdr.visibleCount, 1u);
+    if (outSlot >= uint(u_maxThinRecords)) return;
+
+    // -----------------------------------------------------------------------
+    // Build thin record fields from recipe and lighting SSBO.
+    // -----------------------------------------------------------------------
+
+    // terrainHandle slot — baked into _wp2 by BuildDenseRecipe.
+    uint thSlot = floatBitsToUint(r.pos2.w);
+
+    // cementWord — baked into _wp3 by BuildDenseRecipe.
+    uint cementWord = floatBitsToUint(r.pos3.w);
+
+    // flags: bit0=uvMode, bit1=pzTri1Valid, bit2=pzTri2Valid
+    uint thinFlags = (isBottomLeft ? kThinFlagUvMode : 0u)
+                   | (pzTri1       ? kThinFlagPzTri1  : 0u)
+                   | (pzTri2       ? kThinFlagPzTri2  : 0u);
+
+    // lightRGB per corner from Phase 1 SSBO (same-frame, after PackAndDispatch barrier).
+    // alphaOverride: when terrainTextures2 is active, whitens all lighting.
+    // Matches PackThinRecordsForFrame:1458-1465.
+    // Note: pVertex->selected check (→ 0xffff7fffu) is skipped here; parity
+    // will flag selection events as minor mismatches (rare gameplay condition).
+    uint lrgb0, lrgb1, lrgb2, lrgb3;
+    if (u_alphaOverride != 0) {
+        lrgb0 = lrgb1 = lrgb2 = lrgb3 = 0xFFFFFFFFu;
+    } else {
+        lrgb0 = lighting[vn0].lightRGB;
+        lrgb1 = lighting[vn1].lightRGB;
+        lrgb2 = lighting[vn2].lightRGB;
+        lrgb3 = lighting[vn3].lightRGB;
+    }
+
+    // -----------------------------------------------------------------------
+    // Write thin record — byte-identical to PackThinRecordsForFrame output
+    // when recipe pads are correctly baked. Verified by ComputeDispatchParity_Check.
+    // -----------------------------------------------------------------------
+    TerrainQuadThinRecord tr;
+    tr.recipeIdx     = vn0;
+    tr.terrainHandle = thSlot;
+    tr.flags         = thinFlags;
+    tr.cementWord    = cementWord;
+    tr.lightRGB0     = lrgb0;
+    tr.lightRGB1     = lrgb1;
+    tr.lightRGB2     = lrgb2;
+    tr.lightRGB3     = lrgb3;
+    thin[outSlot]    = tr;
+}
