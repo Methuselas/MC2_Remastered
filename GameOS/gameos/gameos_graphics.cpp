@@ -2314,6 +2314,10 @@ void gosRenderer::renderWaterFastPath(
         glActiveTexture(GL_TEXTURE0);
         glBindSampler(1, savedSampler1);
 
+        // Parity check: when MC2_GPU_DRIVEN_PARITY=1, runs CPU pack and compares
+        // against the GPU compute output byte-for-byte. No-op when disabled.
+        WaterStream::ComputeDispatchParity_Check();
+
         // Restore GL state.
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, 0);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, 0);

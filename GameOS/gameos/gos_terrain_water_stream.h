@@ -166,6 +166,11 @@ bool IsGpuDrivenArmed();
 // Valid only when IsGpuDrivenArmed() is true.
 GLuint GetIndirectCmdBuffer();
 
+// When MC2_GPU_DRIVEN_PARITY=1: runs both CPU and GPU thin-record paths,
+// reads both back from SSBOs, and byte-compares by recipeIdx. Emits
+// [GPU_DRIVEN_WATER_PARITY v1] summary every 600 frames.
+void ComputeDispatchParity_Check();
+
 // Tear down GL buffers (mission unload, app shutdown).
 void ReleaseGlResources();
 

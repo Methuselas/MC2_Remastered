@@ -584,6 +584,11 @@ uint64_t s_parityFrameCounter   = 0;
 uint64_t s_parityQuadsChecked   = 0;
 uint64_t s_parityMismatchTotal  = 0;
 
+// GPU-driven parity counters — gated by gpu_driven::IsParityEnabled()
+static uint64_t s_gpuParityFrames    = 0;
+static uint64_t s_gpuParityQuads     = 0;
+static uint64_t s_gpuParityMismatches = 0;
+
 constexpr uint32_t kMaxMismatchPrintsPerFrame = 16;
 constexpr uint64_t kSummaryEveryFrames        = 600;
 
@@ -1324,6 +1329,179 @@ bool ComputeDispatchAndBindThinRecords() {
 
 bool IsGpuDrivenArmed() {
     return g_waterGpuDrivenArmed;
+}
+
+void ComputeDispatchParity_Check() {
+    if (!gpu_driven::IsParityEnabled()) return;
+    if (!g_waterGpuDrivenArmed) return;
+    if (!g_waterBucketHeaderSsbo || !g_thinBuffer || g_thinSlotCapacity == 0) return;
+    if (g_recipes.empty()) return;
+
+    ++s_gpuParityFrames;
+
+    // Flush GPU thin-record writes to client-visible memory before readback.
+    // ComputeDispatch already issued GL_SHADER_STORAGE_BARRIER_BIT; here we
+    // also need GL_BUFFER_UPDATE_BARRIER_BIT so glGetBufferSubData sees the writes.
+    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+
+    // -----------------------------------------------------------------------
+    // 1. Read back GPU visible count from the bucket header.
+    // -----------------------------------------------------------------------
+    const uint32_t gpuSlot = g_thinSlot;  // the ring slot compute wrote to
+
+    gpu_driven::GpuDrivenBucketHeader hdr{};
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_waterBucketHeaderSsbo);
+    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)sizeof(hdr), &hdr);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    const uint32_t gpuCount = std::min(hdr.visibleCount, (uint32_t)g_recipes.size());
+
+    // -----------------------------------------------------------------------
+    // 2. Read back GPU thin records from the ring slot compute used.
+    // -----------------------------------------------------------------------
+    std::vector<WaterThinRecord> gpuRecs(gpuCount);
+    if (gpuCount > 0) {
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinBuffer);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                           (GLintptr)(gpuSlot * (GLintptr)g_thinSlotCapacity),
+                           (GLsizeiptr)(gpuCount * sizeof(WaterThinRecord)),
+                           gpuRecs.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // 3. Run the CPU thin-record pack (UploadAndBindThinRecords advances the
+    //    ring to a new slot; GPU output is left intact at gpuSlot).
+    // -----------------------------------------------------------------------
+    const uint32_t cpuCount = UploadAndBindThinRecords();
+    const uint32_t cpuSlot  = g_thinSlot;  // UploadAndBind advanced this
+
+    // -----------------------------------------------------------------------
+    // 4. Read back CPU thin records from the slot UploadAndBind wrote to.
+    // -----------------------------------------------------------------------
+    std::vector<WaterThinRecord> cpuRecs(cpuCount);
+    if (cpuCount > 0) {
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinBuffer);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                           (GLintptr)(cpuSlot * (GLintptr)g_thinSlotCapacity),
+                           (GLsizeiptr)(cpuCount * sizeof(WaterThinRecord)),
+                           cpuRecs.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. Sort both by recipeIdx for order-agnostic comparison (GPU atomicAdd
+    //    output order is non-deterministic; CPU pack order follows quadList).
+    // -----------------------------------------------------------------------
+    auto byRecipeIdx = [](const WaterThinRecord& a, const WaterThinRecord& b) {
+        return a.recipeIdx < b.recipeIdx;
+    };
+    std::sort(gpuRecs.begin(), gpuRecs.end(), byRecipeIdx);
+    std::sort(cpuRecs.begin(), cpuRecs.end(), byRecipeIdx);
+
+    // -----------------------------------------------------------------------
+    // 6. Walk merged sorted lists and compare field-by-field.
+    // -----------------------------------------------------------------------
+    MismatchPrintBudget budget;
+    uint32_t quadsChecked = 0;
+    uint32_t frameMismatches = 0;
+    uint32_t gi = 0, ci = 0;
+
+    while (gi < gpuCount || ci < cpuCount) {
+        const uint32_t gpuIdx = (gi < gpuCount) ? gpuRecs[gi].recipeIdx : UINT32_MAX;
+        const uint32_t cpuIdx = (ci < cpuCount) ? cpuRecs[ci].recipeIdx : UINT32_MAX;
+
+        if (gpuIdx < cpuIdx) {
+            // GPU record not in CPU output
+            if (budget.canPrint()) {
+                budget.note();
+                fprintf(stderr,
+                        "[GPU_DRIVEN_WATER_PARITY v1] event=mismatch "
+                        "frame=%llu recipe=%u gpu_only=1\n",
+                        (unsigned long long)s_gpuParityFrames, (unsigned)gpuIdx);
+                fflush(stderr);
+            }
+            ++frameMismatches;
+            ++gi;
+        } else if (cpuIdx < gpuIdx) {
+            // CPU record not in GPU output
+            if (budget.canPrint()) {
+                budget.note();
+                fprintf(stderr,
+                        "[GPU_DRIVEN_WATER_PARITY v1] event=mismatch "
+                        "frame=%llu recipe=%u cpu_only=1\n",
+                        (unsigned long long)s_gpuParityFrames, (unsigned)cpuIdx);
+                fflush(stderr);
+            }
+            ++frameMismatches;
+            ++ci;
+        } else {
+            // Same recipeIdx — compare field by field.
+            const WaterThinRecord& g = gpuRecs[gi];
+            const WaterThinRecord& c = cpuRecs[ci];
+            ++quadsChecked;
+
+            if (g.flags != c.flags) {
+                ++frameMismatches;
+                if (budget.canPrint()) {
+                    budget.note();
+                    fprintf(stderr,
+                            "[GPU_DRIVEN_WATER_PARITY v1] event=mismatch "
+                            "frame=%llu recipe=%u field=flags gpu=0x%x cpu=0x%x\n",
+                            (unsigned long long)s_gpuParityFrames,
+                            (unsigned)gpuIdx, (unsigned)g.flags, (unsigned)c.flags);
+                    fflush(stderr);
+                }
+            }
+            if (g.lightRGB0 != c.lightRGB0 || g.lightRGB1 != c.lightRGB1 ||
+                g.lightRGB2 != c.lightRGB2 || g.lightRGB3 != c.lightRGB3) {
+                ++frameMismatches;
+                if (budget.canPrint()) {
+                    budget.note();
+                    fprintf(stderr,
+                            "[GPU_DRIVEN_WATER_PARITY v1] event=mismatch "
+                            "frame=%llu recipe=%u field=lightRGB "
+                            "gpu=[0x%x,0x%x,0x%x,0x%x] cpu=[0x%x,0x%x,0x%x,0x%x]\n",
+                            (unsigned long long)s_gpuParityFrames, (unsigned)gpuIdx,
+                            (unsigned)g.lightRGB0, (unsigned)g.lightRGB1,
+                            (unsigned)g.lightRGB2, (unsigned)g.lightRGB3,
+                            (unsigned)c.lightRGB0, (unsigned)c.lightRGB1,
+                            (unsigned)c.lightRGB2, (unsigned)c.lightRGB3);
+                    fflush(stderr);
+                }
+            }
+            if (g.fogRGB0 != c.fogRGB0 || g.fogRGB1 != c.fogRGB1 ||
+                g.fogRGB2 != c.fogRGB2 || g.fogRGB3 != c.fogRGB3) {
+                ++frameMismatches;
+                if (budget.canPrint()) {
+                    budget.note();
+                    fprintf(stderr,
+                            "[GPU_DRIVEN_WATER_PARITY v1] event=mismatch "
+                            "frame=%llu recipe=%u field=fogRGB "
+                            "gpu=[0x%x,0x%x,0x%x,0x%x] cpu=[0x%x,0x%x,0x%x,0x%x]\n",
+                            (unsigned long long)s_gpuParityFrames, (unsigned)gpuIdx,
+                            (unsigned)g.fogRGB0, (unsigned)g.fogRGB1,
+                            (unsigned)g.fogRGB2, (unsigned)g.fogRGB3,
+                            (unsigned)c.fogRGB0, (unsigned)c.fogRGB1,
+                            (unsigned)c.fogRGB2, (unsigned)c.fogRGB3);
+                    fflush(stderr);
+                }
+            }
+            ++gi; ++ci;
+        }
+    }
+
+    s_gpuParityQuads      += quadsChecked;
+    s_gpuParityMismatches += frameMismatches;
+
+    if (s_gpuParityFrames % kSummaryEveryFrames == 0) {
+        fprintf(stderr,
+                "[GPU_DRIVEN_WATER_PARITY v1] event=summary "
+                "frames=%llu quads_checked=%llu total_mismatches=%llu\n",
+                (unsigned long long)s_gpuParityFrames,
+                (unsigned long long)s_gpuParityQuads,
+                (unsigned long long)s_gpuParityMismatches);
+        fflush(stderr);
+    }
 }
 
 GLuint GetIndirectCmdBuffer() {
