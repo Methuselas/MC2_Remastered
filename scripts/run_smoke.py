@@ -281,7 +281,13 @@ def main():
                             # LIFECYCLE=1+READBACK=0 (fail-open regression) smoke runs.
                             # Both require --with-env overrides; not automated yet.
                             "MC2_GPU_CULL_LIFECYCLE",
-                            "MC2_GPU_CULL_LIFECYCLE_TRACE")},
+                            "MC2_GPU_CULL_LIFECYCLE_TRACE",
+                            # Slice B4 — mask dispatch
+                            "MC2_TERRAIN_MASK_DISPATCH",
+                            "MC2_TERRAIN_MASK_DISPATCH_SOLID",
+                            "MC2_TERRAIN_MASK_DISPATCH_WATER",
+                            "MC2_TERRAIN_MASK_DISPATCH_PARITY",
+                            "MC2_TERRAIN_MASK_DISPATCH_TRACE")},
             },
         )
         print(f"[runner] running {e.stem} (tier={tier} duration={duration})",
