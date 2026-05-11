@@ -2153,7 +2153,7 @@ void gosRenderer::renderWaterFastPath(
     // GPU-driven path: dispatch compute cull/pack + cmd-patch if enabled.
     // This MUST happen before EnsureRecipeBufferUploaded so the thin records
     // are ready and slot 6 is correctly restored to thin data (M2 fix).
-    const bool gpuArmed = WaterStream::ComputeDispatchAndBindThinRecords();
+    const bool gpuArmed = WaterStream::ComputeDispatchAndBindThinRecords(frameCos);
 
     // Ensure the recipe buffer is uploaded (idempotent, mission-static).
     GLuint recipeBuf = (GLuint)WaterStream::EnsureRecipeBufferUploaded();

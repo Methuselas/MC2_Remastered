@@ -157,7 +157,7 @@ void AppendNarrowCandidate(const void* quadPtr);
 // Returns true on success (g_waterGpuDrivenArmed set true).
 // Returns false if killswitch is off, recipe not ready, or window is empty.
 // The MDI bridge (Task 1.5) calls IsGpuDrivenArmed() to decide the draw path.
-bool ComputeDispatchAndBindThinRecords();
+bool ComputeDispatchAndBindThinRecords(float frameCos);
 
 // True if ComputeDispatchAndBindThinRecords() succeeded this frame.
 bool IsGpuDrivenArmed();

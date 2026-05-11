@@ -1130,7 +1130,7 @@ static uint32_t BuildQuadWindowSSBO() {
     return windowCount;
 }
 
-bool ComputeDispatchAndBindThinRecords() {
+bool ComputeDispatchAndBindThinRecords(float frameCos) {
     g_waterGpuDrivenArmed = false;
 
     if (!gpu_driven::IsWaterEnabled()) return false;
@@ -1246,6 +1246,7 @@ bool ComputeDispatchAndBindThinRecords() {
     const GLint locWindowCount = glGetUniformLocation(g_waterComputeProgram, "u_windowCount");
     const GLint locMaxThin     = glGetUniformLocation(g_waterComputeProgram, "u_maxThinRecords");
     const GLint locWaterElev   = glGetUniformLocation(g_waterComputeProgram, "u_waterElevation");
+    const GLint locFrameCos    = glGetUniformLocation(g_waterComputeProgram, "u_frameCos");
     const GLint locMapSide     = glGetUniformLocation(g_waterComputeProgram, "u_mapSide");
     const GLint locMVP         = glGetUniformLocation(g_waterComputeProgram, "u_terrainMVP");
 
@@ -1275,6 +1276,11 @@ bool ComputeDispatchAndBindThinRecords() {
         return false;
     }
     glUniform1f(locWaterElev, Terrain::waterElevation);
+
+    // u_frameCos: per-vertex wave Z-lift for pz gate. Not required to abort if
+    // missing — shader defaults to 0, degrading to the old approximation rather
+    // than producing a wrong cull pass.
+    if (locFrameCos >= 0) glUniform1f(locFrameCos, frameCos);
 
     if (locMapSide < 0) {
         fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_mapSide_not_found\n");

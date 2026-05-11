@@ -6,8 +6,8 @@
 // For each quad:
 //   1. Fetch the static WaterRecipe from binding 0.
 //   2. Fetch per-vertex lightRGB/fogRGB from Phase 1's lighting SSBO at binding 1.
-//   3. Reproject the water surface (world XY at u_waterElevation) through u_terrainMVP
-//      to obtain per-vertex screen-space z — mirrors quad.cpp:953-1201 wz computation.
+//   3. Reproject the water surface (world XY at u_waterElevation + waveOurCos lift) through
+//      u_terrainMVP to obtain per-vertex screen-space z — mirrors quad.cpp:953-1201 wz.
 //   4. Apply the per-triangle pz-valid gate (wz ∈ [0,1)) — mirrors the gate in
 //      WaterStream::UploadAndBindThinRecords (gos_terrain_water_stream.cpp:427-451).
 //   5. Allocate an output slot via atomicAdd on GpuDrivenBucketHeader.visibleCount.
@@ -31,6 +31,7 @@
 //   u_windowCount    — number of entries in windowIdx[]
 //   u_maxThinRecords — capacity of thin[] output array (overflow guard)
 //   u_waterElevation — Terrain::waterElevation (float)
+//   u_frameCos       — Terrain::frameCos; per-vertex wave Z-lift for exact pz parity
 //   u_mapSide        — realVerticesMapSide (uint); used to compute adjacent-row vNums
 //   u_terrainMVP     — row-major 4×4 terrain MVP (uploaded GL_FALSE).
 //                      See memory/terrain_mvp_gl_false.md: GL_FALSE + row-major +
@@ -127,6 +128,7 @@ layout(std430, binding = 6) coherent  buffer Header    { GpuDrivenBucketHeader  
 // use int + cast where the value is passed from C++ as GLint.
 // ---------------------------------------------------------------------------
 uniform float u_waterElevation;
+uniform float u_frameCos;          // Terrain::frameCos — per-vertex wave Z-lift for pz gate
 uniform int   u_windowCount;
 uniform int   u_maxThinRecords;
 uniform int   u_mapSide;           // Terrain::realVerticesMapSide
@@ -147,16 +149,25 @@ uint terrainTypeToMaterial(uint tt) {
 }
 
 // ---------------------------------------------------------------------------
-// projectWaterZ — project world-space (wx, wy, u_waterElevation) through
+// waveOurCos — per-vertex frameCos sign, mirroring legacyWaveOurCos() in
+// gos_terrain_water_stream.cpp. waterBits bit 7 of each byte selects sign:
+//   bit7 set → -frameCos, clear → +frameCos  (quad.cpp:689-700)
+// ---------------------------------------------------------------------------
+float waveOurCos(uint vWaterBits) {
+    return ((vWaterBits & 0x80u) != 0u) ? -u_frameCos : u_frameCos;
+}
+
+// ---------------------------------------------------------------------------
+// projectWaterZ — project world-space (wx, wy, waterElev + waveZ) through
 // u_terrainMVP and return the perspective-divided z (NDC depth).
-// Mirrors quad.cpp:953-1201 water projection in setupTextures.
-// Wave displacement (frameCos-based) is omitted for the pz gate: the
-// amplitude is far smaller than the depth range [0,1) so it cannot change
-// whether a vertex is in-frustum or not (safe approximation for the cull gate).
+// Mirrors quad.cpp:953-1201 water projection in setupTextures, including the
+// frameCos wave Z-lift applied before projection (quad.cpp:689-700).
+// vWaterBits is the per-vertex byte from WaterRecipe.waterBits.
 // Returns a value < 0.0 for behind-camera vertices (clip.w ≤ 0).
 // ---------------------------------------------------------------------------
-float projectWaterZ(float wx, float wy) {
-    vec4 clip = u_terrainMVP * vec4(wx, wy, u_waterElevation, 1.0);
+float projectWaterZ(float wx, float wy, uint vWaterBits) {
+    float elev = u_waterElevation + waveOurCos(vWaterBits);
+    vec4 clip = u_terrainMVP * vec4(wx, wy, elev, 1.0);
     if (clip.w <= 0.0) return -1.0;
     return clip.z / clip.w;
 }
@@ -186,10 +197,16 @@ void main() {
     // Per-vertex water-surface projection and pz-valid check.
     // Mirrors UploadAndBindThinRecords (gos_terrain_water_stream.cpp:427-451).
     // -----------------------------------------------------------------------
-    float wz0 = projectWaterZ(r.v0x, r.v0y);
-    float wz1 = projectWaterZ(r.v1x, r.v1y);
-    float wz2 = projectWaterZ(r.v2x, r.v2y);
-    float wz3 = projectWaterZ(r.v3x, r.v3y);
+    // Extract per-vertex waterBits bytes (v0 in lowest byte, mirroring terrainTypes packing).
+    uint wb0 = (r.waterBits      ) & 0xFFu;
+    uint wb1 = (r.waterBits >>  8) & 0xFFu;
+    uint wb2 = (r.waterBits >> 16) & 0xFFu;
+    uint wb3 = (r.waterBits >> 24) & 0xFFu;
+
+    float wz0 = projectWaterZ(r.v0x, r.v0y, wb0);
+    float wz1 = projectWaterZ(r.v1x, r.v1y, wb1);
+    float wz2 = projectWaterZ(r.v2x, r.v2y, wb2);
+    float wz3 = projectWaterZ(r.v3x, r.v3y, wb3);
 
     bool ok0 = pzOk(wz0);
     bool ok1 = pzOk(wz1);
