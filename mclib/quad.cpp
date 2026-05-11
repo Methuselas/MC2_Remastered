@@ -686,11 +686,11 @@ void TerrainQuad::setupTextures (void)
 	}
 
 	// Stage N: skip solid/recipe CPU work when GPU-driven SOLID is armed.
-	// The water-projection block below is NOT guarded — it must run every
-	// frame so that vertices[i]->wz stays fresh for WaterStream pz-validity
-	// and leastZ/mostZ stays correct for eye->setInverseProject().
-	// clipInfo values used by the water block are set by the terrain geometry
-	// projection loop that runs before setupTextures, not by this block.
+	// Phase C Stage 1 (GPU water thin-record compute) is armed when SOLID is;
+	// BuildQuadWindowSSBO feeds all recipe indices to the compute shader so
+	// waterHandle is no longer needed. wz is computed on-GPU in gpu_driven_water.comp
+	// (projectWaterZ). leastZ/mostZ from the terrain geometry loop (terrain.cpp:1554)
+	// covers the scene depth range; water does not write to the depth buffer.
 	if (!gos_terrain_indirect::IsFrameSolidArmed()) {
 
  	if (!Terrain::terrainTextures2)
@@ -944,8 +944,6 @@ void TerrainQuad::setupTextures (void)
 			}
 		}
 	}
-
-	} // end IsFrameSolidArmed guard
 
 	//-----------------------------------------
 	// NEW(tm) water texture code here.
@@ -1269,6 +1267,8 @@ void TerrainQuad::setupTextures (void)
 		waterDetailHandle = 0xffffffff;
 	}
 	} // close CostSplitWaterVertProjScope (1A-alt Slice 0)
+
+	} // end IsFrameSolidArmed guard (solid + water CPU work)
 
 	// 1A-alt Slice 0 — bracket the per-vertex lighting block (4 vertices ×
 	// numTerrainLights × falloff + RGB accumulation + lightRGB pack + fogRGB).

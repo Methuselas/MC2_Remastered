@@ -20,6 +20,7 @@
 #include "gpu_driven_common.h"
 #include "gos_terrain_lighting.h"
 #include "gos_static_prop_killswitch.h"  // gos_GetTerrainMVPMat4()
+#include "gos_terrain_indirect.h"        // IsFrameSolidArmed()
 
 #include <vector>
 #include <unordered_map>
@@ -1062,41 +1063,56 @@ void CheckParityFrame(const ParityFrameUniforms& u) {
 // Phase C Stage 1 implementation
 // ---------------------------------------------------------------------------
 
-// BuildQuadWindowSSBO — walk the current water candidate list (narrow or full),
-// collect recipe indices for quads that have a valid waterHandle, upload them to
-// g_quadWindowSsbo. Matches the quad-selection filter of UploadAndBindThinRecords
-// (same gate: corners non-null, no blankVertex, waterHandle != 0xffffffff).
-// The pz-valid test is intentionally omitted — that's the GPU's job.
+// BuildQuadWindowSSBO — populate per-frame recipe-index window for the GPU compute dispatch.
+//
+// When SOLID is armed (IsFrameSolidArmed() == true): setupTextures is gated off,
+// so waterHandle is never set on CPU quads. Feed ALL recipe indices to the GPU
+// directly — the compute shader's own pz gate (gpu_driven_water.comp:236) culls
+// off-screen quads via per-vertex water-surface reprojection from the recipe's
+// world positions. No TerrainQuad pointer walk or waterHandle check needed.
+//
+// When SOLID is NOT armed (legacy path): use the per-frame narrow walk filtered by
+// waterHandle, matching UploadAndBindThinRecords' gate exactly.
+//
 // Returns the count of window entries written (0 if none).
 static uint32_t BuildQuadWindowSSBO() {
     if (!g_ready || g_recipes.empty()) return 0;
 
-    const TerrainPtr terrainPtr = land;
-    const TerrainQuadPtr quads  = terrainPtr ? terrainPtr->getQuadList()  : nullptr;
-    const long total            = terrainPtr ? terrainPtr->getNumQuads()  : 0;
-    if (!quads || total <= 0) return 0;
-
-    const bool narrow   = NarrowEnabledImpl();
-    const TerrainQuadPtr* narrowArr = narrow && !g_narrowQuadsThisFrame.empty()
-                                      ? g_narrowQuadsThisFrame.data() : nullptr;
-    const long iterCount = narrow ? (long)g_narrowQuadsThisFrame.size() : total;
-
     g_quadWindowStaging.clear();
-    g_quadWindowStaging.reserve((size_t)iterCount);
 
-    for (long i = 0; i < iterCount; ++i) {
-        const TerrainQuad& q = narrowArr ? *narrowArr[i] : quads[i];
-        if (!q.vertices[0] || !q.vertices[1] ||
-            !q.vertices[2] || !q.vertices[3]) continue;
-        if (q.vertices[0]->vertexNum < 0 || q.vertices[1]->vertexNum < 0 ||
-            q.vertices[2]->vertexNum < 0 || q.vertices[3]->vertexNum < 0) continue;
-        if (q.waterHandle == 0xffffffffu) continue;
+    if (gos_terrain_indirect::IsFrameSolidArmed()) {
+        // GPU-direct path: setupTextures is gated; waterHandle is stale/unset.
+        // Include all recipes — GPU pz gate handles visibility culling.
+        g_quadWindowStaging.reserve(g_recipes.size());
+        for (uint32_t i = 0; i < (uint32_t)g_recipes.size(); ++i)
+            g_quadWindowStaging.push_back(i);
+    } else {
+        const TerrainPtr terrainPtr = land;
+        const TerrainQuadPtr quads  = terrainPtr ? terrainPtr->getQuadList()  : nullptr;
+        const long total            = terrainPtr ? terrainPtr->getNumQuads()  : 0;
+        if (!quads || total <= 0) return 0;
 
-        const uint32_t topLeftVN = (uint32_t)q.vertices[0]->vertexNum;
-        auto it = g_vertexNumToRecipe.find(topLeftVN);
-        if (it == g_vertexNumToRecipe.end()) continue;
+        const bool narrow   = NarrowEnabledImpl();
+        const TerrainQuadPtr* narrowArr = narrow && !g_narrowQuadsThisFrame.empty()
+                                          ? g_narrowQuadsThisFrame.data() : nullptr;
+        const long iterCount = narrow ? (long)g_narrowQuadsThisFrame.size() : total;
 
-        g_quadWindowStaging.push_back(it->second);
+        g_quadWindowStaging.reserve((size_t)iterCount);
+
+        for (long i = 0; i < iterCount; ++i) {
+            const TerrainQuad& q = narrowArr ? *narrowArr[i] : quads[i];
+            if (!q.vertices[0] || !q.vertices[1] ||
+                !q.vertices[2] || !q.vertices[3]) continue;
+            if (q.vertices[0]->vertexNum < 0 || q.vertices[1]->vertexNum < 0 ||
+                q.vertices[2]->vertexNum < 0 || q.vertices[3]->vertexNum < 0) continue;
+            if (q.waterHandle == 0xffffffffu) continue;
+
+            const uint32_t topLeftVN = (uint32_t)q.vertices[0]->vertexNum;
+            auto it = g_vertexNumToRecipe.find(topLeftVN);
+            if (it == g_vertexNumToRecipe.end()) continue;
+
+            g_quadWindowStaging.push_back(it->second);
+        }
     }
 
     const uint32_t windowCount = (uint32_t)g_quadWindowStaging.size();
