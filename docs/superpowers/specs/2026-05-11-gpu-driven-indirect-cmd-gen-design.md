@@ -22,8 +22,9 @@ The framing-correction below is the most consequential write-time correction: th
 
 ## Status
 
-- Stage 0 (this design): IN REVIEW. Adversarial review gate per the prompt's "Adversarial review gate (mandatory)" section runs against this doc before any code lands.
-- Stage 1+: planned, blocked on Stage 0 sign-off + adversarial-review clearance.
+- Stage 0 (this design): **v2** — addresses adversarial-review findings from the v1 commit (`13a0c06`) substance + boundary pass. v1 caught: (a) fictional "256-entry / 99% hit rate" `addLightDataStructure` claim, (b) `g_waterRecipeSSBO` symbol misname (actual: `g_recipeBuffer`), (c) MINE Stage 2c boundary-table contradiction (Stage 2c IS shipped on baseline), (d) MINE has no per-frame thin-record pack (uses `glDrawArrays` and a dirty-flag lazy rebuild, not MDI), (e) OVERLAY three-way scope contradiction, (f) binding-point collision in proposed SOLID compute program, (g) water's actual draw shape is 2× `glDrawArrays` not 1, (h) `s_frameSolidArmed` flow has no spec under GPU-driven, (i) Phase 1 lighting frame-pipelined latency breaks the byte-equality parity claim, (j) ring-slot semantics under GPU-driven SOLID not addressed. All addressed in v2.
+- Scope locked per user direction: Phase C targets the **combined** zones `GameCamera::render textureManagerRenderLists` (1.35 ms) + `GameCamera::render water` (814 µs at the wrapping zone — actual cost lives in `render waterFastPath` when armed) + `GameCamera::render objects` (533 µs) = ~2.7 ms current → ~500 µs target = ~2.2 ms saved at wolfman-mc2_10. **Frame is CPU-bound by ~15 ms** at this baseline, so CPU savings translate directly to frame time.
+- Stage 1+: planned, blocked on this v2 design's adversarial-review re-pass clearance.
 
 ---
 
@@ -49,7 +50,7 @@ The 1.35 ms / 814 µs / 533 µs numbers below were captured on **mc2_10 at full 
 
 | Zone | Tracy label | Source | Current cost | Phase C scope inside this zone |
 |------|-------------|--------|--------------|--------------------------------|
-| **Z1** | `GameCamera::render textureManagerRenderLists` | `code/gamecam.cpp:244-248` wraps `mcTextureManager->renderLists()` at `:245` + `endFrameTexResolve()` at `:246` | **1.35 ms mean** (22.97% of render activeScene) | Per-bucket CPU thin-record packing for terrain SOLID + MINE + OVERLAY; `addLightDataStructure()` dedup walk at `mclib/txmmgr.cpp:1023` (Tracy zone `"addLightDataStructure scan"` at `:1028`, ~99% hit rate on a 256-entry hash-dedup map); per-frame texture-handle resolution cache; per-bucket batch list aggregation |
+| **Z1** | `GameCamera::render textureManagerRenderLists` | `code/gamecam.cpp:244-248` wraps `mcTextureManager->renderLists()` at `:245` + `endFrameTexResolve()` at `:246` | **1.35 ms mean** (22.97% of render activeScene). Within Z1, `PatchStream.Flush` (one of several sub-zones consumed by Phase C) measures mean 662 µs / median 626 µs / P99 938 µs per its histogram. Z1's 1.35 ms is the combined wall-clock of ALL per-bucket flush + dispatch CPU work, not any single sub-zone. | Per-bucket CPU work that runs per-frame inside `renderLists()`: thin-record packing for terrain SOLID + OVERLAY (when armed); per-corner `lightRGB`/`fogRGB` copy from CPU `ScreenVertex` mirror into thin-record SSBO (the dominant per-quad work term); `addLightDataStructure()` lookups at `mclib/txmmgr.cpp:1023` (function-zone `"addLightDataStructure scan"` at `:1028` — already hash-deduplicated, per-call cost is small, but it's invoked many times per frame); per-frame texture-handle resolution cache; per-bucket batch list aggregation. **Note:** the v1 design cited a "256-entry / 99% hit rate" property of the dedup map. That was fictional — the map is an unbounded `std::unordered_map<uint64_t, uint32_t>` at `mclib/txmmgr.cpp:901` with initial capacity 128. The Z1 ≥1.0 ms target rests on the combined wall-clock measurement, NOT on attributing the savings to dedup-walk elimination specifically. |
 | **Z2** | `GameCamera::render water` | `code/gamecam.cpp:217` wraps `land->renderWater()` at `:218` | **814 µs mean** (13.80% of render activeScene) — note: when `MC2_RENDER_WATER_FASTPATH` is armed (default-on per `renderwater_fastpath_stage2.md`), the legacy zone at `:217` early-returns and a separate `GameCamera::render waterFastPath` zone at `:255-256` (wrapping `land->renderWaterFastPath()`) carries the live cost. Phase C's water-thin-record pack work lives in the fast-path zone, NOT the legacy zone. | `gos_terrain_water_stream.cpp` `UploadAndBindThinRecords` thin-record pack; per-frame water animation state (`Terrain::frameCos` tick) — animation state stays CPU per the design doc's "no new compute scope" rule; water MDI cmd prep |
 | **Z3** | `GameCamera::render objects` | `code/gamecam.cpp:212` wraps `ObjectManager->render(true, true, true)` at `:213` | **533 µs mean** (9.03% of render activeScene) | Coordination point with `gpu_static_prop_batcher` (already partially GPU-driven via Track B). Per-mech / per-vehicle dispatch chain (`TG_Shape::Render` virtual chain) is **OUT** — gpu-mech-branch territory. Per-object visibility check + state setup is a Track-D / object-offload question; Phase C v1 does NOT subsume it. |
 
@@ -102,7 +103,7 @@ The renderer-modernization arc currently runs **two parallel slices**: Phase B (
 |--------|-------------------------|--------------------|
 | **Water main-emit** | ✅ Recipe shipped (renderWater Stage 1+2+3, 2026-04-30) | Phase C Stage 1 reads existing water recipe SSBO. No Phase B work needed for Phase C Stage 1 to ship. |
 | **Terrain SOLID main-emit** | ✅ Recipe shipped (PR1, commit `e22fa3a`, default-on 2026-05-01) — `g_recipeSSBO` in `gos_terrain_indirect.cpp` | Phase C Stage 2 reads existing PR1 recipe SSBO. No Phase B work needed for Phase C Stage 2 to ship. |
-| **Mine (PR2c)** | 🟡 Stage 1c infrastructure shipped; **Stage 2c wire-up pending in Phase B session** | Phase C Stage 3 has a choice: (a) wait for Phase B Stage 2c wire-up and consume the unified mine recipe; or (b) target the existing PR2c MINE recipe and do a binding swap when Stage 2c lands. **Default: option (b)** — Phase C Stage 3 doesn't block on Phase B. |
+| **Mine (PR2c)** | ✅ Stages 0c/1c/2c **all shipped** on baseline (commit `6d4a6f7`, default-on). Per `gos_terrain_indirect.cpp:139` `IsMineEnabled()` comment: "Tier1 5/5 PASS with arming verified across PR2c Stages 0c/1c/2c." | **Not a Phase C bucket.** MINE has no per-frame thin-record pack — it's a static-bake VBO + `glDrawArrays` with dirty-flag-gated rebuild. There is no per-frame CPU residual for Phase C to attack. v1 design's "Stage 3 Mine" entry is **removed**. |
 | **Overlay (PR2b)** | ⬜ No recipe (sibling session may or may not build one) | Phase C Stage 4 is **conditional**: if Phase B ships an overlay recipe in the same window, Phase C Stage 4 reads it. If not, **Phase C Stage 4 defers** — building a minimal in-line recipe in Phase C would violate the boundary (static-bake work in the per-frame compute session). |
 | **Detail (M2c / PR2a)** | ⬜ Candidate delete (sibling session may retire it) | Not a Phase C bucket. Dead path. |
 | **Lighting** | ⬜ Static lighting bake possible (sibling-decided) | Phase C reads Phase 1's per-frame compute lighting SSBO. Whether Phase 1 (the *dynamic* GPU compute lighting; merge commit `93d3cbd` with stages `594add9 / eda2431 / ff8de07 / ff35f03`) is treated as "shipped" or "foundational-but-not-yet-shipped" affects Phase C's "eliminate lighting CPU bounce" headline win — but does not block Phase C from shipping; the binding for Phase 1's output is the seam, and a CPU-fallback path is the obvious degradation. |
@@ -143,7 +144,7 @@ The buckets in scope are not greenfield. Each one already has a substantial GPU 
 |--------|--------------------------|-------------------------------------------|--------------|
 | **Water** | Single GPU draw of pre-packed thin records (`renderWaterFastPath`, default-on); recipe SSBO mission-static; VS expands to 6 verts/quad; FS unchanged from legacy | `UploadAndBindThinRecords` per-quad pack loop at `gos_terrain_water_stream.cpp:345-...:478` (walks quadList, projectZ-gates each quad, copies per-corner lightRGB/fogRGB from CPU vertex pool into thin record). Single `glDrawArrays(thinCount*6)` — NOT indirect today. | renderWater Stage 1+2+3 (2026-04-30) |
 | **Terrain SOLID** | Recipe SSBO mission-static (`g_recipeSSBO`); MDI draw via `glMultiDrawArraysIndirect` (default-on); colormap atlas; cement multi-sampler at unit 3; PR1's frag-side SSBO fetch via flat RecordIdx varying | `PackThinRecordsForFrame` at `gos_terrain_indirect.cpp:1377` (stages up to 65536 records into stack-local shadow per frame, walks quadList, recipe lookup by `vertexNum`, per-corner mutable-state copy) + trivial 16 B `BuildIndirectCommands` at `:1566` | PR1 (commit `e22fa3a`, default-on 2026-05-01) |
-| **Terrain MINE (PR2c)** | Recipe SSBO + MDI path shared with SOLID; default-on commit `6d4a6f7` | Same `PackThinRecordsForFrame`-shape pack loop with mine-specific recipe fields | PR2c |
+| **Terrain MINE (PR2c)** | Static-bake VBO (mission-load + dirty-flag lazy rebuild via `RebuildMineStaticVBOIfDirty` at `gos_terrain_indirect.cpp:1923`); single `glDrawArrays` at `gameos_graphics.cpp:2609`; default-on commit `6d4a6f7`. Lives in its own Tracy zone `Render.TerrainMines` at `mclib/txmmgr.cpp:1812`, NOT inside `textureManagerRenderLists`/Z1. | **No per-frame thin-record pack.** CPU residual is dirty-flag-gated rebuild (cold path on terrain-state mutation, not every frame) + the one `glDrawArrays` call. There is no per-frame CPU work for Phase C to GPU-ify here. | PR2c |
 | **Terrain DETAIL (PR2a)** | n/a — path is dead | n/a | dead since commit `521d83a` |
 | **Terrain OVERLAY (PR2b)** | Designed (`2026-05-08-pr2b-overlay-indirect-design.md`), scaffold-only at `gos_terrain_indirect.cpp` (`IsFrameOverlayArmed()` returns `false`) | The full draw path. This is the only exception to the "completion" framing — for OVERLAY there is no CPU baseline to complete *from*; we ship it as GPU-driven from inception. | not yet shipped |
 | **Phase 1 terrain lighting** | Compute shader writes lightRGB/fogRGB to SSBO; 3-slot ring; default-on (commit `ff35f03`) | CPU readback of the SSBO back into `ScreenVertex::lightRGB`/`fogRGB` mirror (1-frame pipelined latency), THEN re-pack into thin records on the next CPU pack pass. The mirror's only purpose is to feed the four buckets above. | Phase 1 (parallel-amdahl, 2026-05-10) |
@@ -222,21 +223,22 @@ This is the "what to finish" table, paired with the half-ported inventory above.
 | # | Bucket | CPU per-frame site | Current MDI consumer | Shipped state | Phase C decision |
 |---|--------|--------------------|----------------------|---------------|------------------|
 | 1 | **Terrain SOLID (PR1)** | `gos_terrain_indirect.cpp:1377 PackThinRecordsForFrame()` + `:1566 BuildIndirectCommands()` | `gameos_graphics.cpp:2468 glMultiDrawArraysIndirect` | default-on (`MC2_TERRAIN_INDIRECT=1`, commit `e22fa3a`) | **Stage 2** (largest single CPU saver) |
-| 2 | **Terrain MINE (PR2c)** | shares `PackThinRecordsForFrame()` machinery | shares PR1 MDI call | default-on (commit `6d4a6f7`) | **Stage 3** (mechanical extension of Stage 2) |
+| 2 | **Terrain MINE (PR2c)** | n/a — no per-frame thin-record pack. `RebuildMineStaticVBOIfDirty` at `gos_terrain_indirect.cpp:1923` is dirty-flag gated and cold-path | `glDrawArrays` at `gameos_graphics.cpp:2609` (single bucket, not indirect) — in its own Tracy zone `Render.TerrainMines` at `mclib/txmmgr.cpp:1812` | default-on (commit `6d4a6f7`) | **OUT** — no per-frame CPU residual to GPU-ify. v2 removes the prior "Stage 3 Mine" entry; the v1 design assumed MINE shared SOLID's machinery, which is wrong. |
 | 3 | **Terrain DETAIL (PR2a)** | dead since `521d83a` per `pr2_detail_overlay_mine_stage0_recon.md` | n/a | dead | **OUT** (delete slice, not Phase C) |
-| 4 | **Terrain OVERLAY (PR2b)** | not yet built (CPU path stays legacy) | `IsFrameOverlayArmed()` returns `false` unconditionally per `indirect_terrain_solid_endpoint.md` | scaffold-only | **Stage 4** (ship directly as GPU-driven; skip the CPU intermediate) |
+| 4 | **Terrain OVERLAY (PR2b)** | not yet built (CPU path stays legacy) | `IsFrameOverlayArmed()` returns `false` unconditionally per `gos_terrain_indirect.cpp:169` | scaffold-only | **Stage 3 — CONDITIONAL.** Phase C does NOT construct OVERLAY's recipe (that would be a static-bake = Phase B scope). Phase C Stage 3 ships only if/when Phase B publishes an overlay recipe SSBO; the compute shader then consumes it. If Phase B doesn't ship an overlay recipe in this window, Stage 3 falls out of v1 and OVERLAY remains scaffold-only. |
 | 5 | **Water** | `gos_terrain_water_stream.cpp:345 UploadAndBindThinRecords()` + `:453 WaterThinRecord` pack | non-indirect `glDrawArrays(thinCount*6)` — see Stage 1 conversion note | default-on (water fast path shipped 2026-04-30) | **Stage 1** (simplest, smallest, has full parity infrastructure already) |
 | 6 | **Static-prop substrate** | `gos_static_prop_batcher.cpp` builds DEIC array at **mission load** (not per-frame); `gpu_cull_compute.cpp` compute shader patches `instanceCount` per-frame | `gos_static_prop_batcher.cpp:3228/3250/3441` `glMultiDrawElementsIndirect` / `glDrawElementsIndirect` | default-on (`MC2_GPU_CULL_SUBSTRATE=1`, commit `7b9ad5f`) | **OUT** — already GPU-authoritative for the per-frame field (`instanceCount`). Per-packet layout rebuild is mission-load-amortized, not per-frame. Phase C would have no win here. |
 | 7 | **Mech/GV (Track D gpu-mech-batcher)** | merged 2026-05-10 (`0d5ce93`) | various per `mech_vehicle_gpu_pull_in.md` | merged, in soak | **DEFER to Phase C v2** — needs its own soak settle before a port slice. Track D's CacheGpuLightData guard conflict (msl.cpp) is one canary that the substrate is still settling. |
 | 8 | **Substrate-coalesce per-packet cmds** | per-packet DEIC cmds rebuilt when packet layout changes (mission load + bucket-touch events) | shared with row 6 | armed default-on 2026-05-11 (commit `7b9ad5f`) | **OUT** — same reasoning as row 6: not per-frame work. |
 
-### Per-stage Phase C scope (v1 of slice)
+### Per-stage Phase C scope (v1 of slice, v2 design)
 
-- **Stage 1 — Water** (precedent proof).
-- **Stage 2 — Terrain SOLID** (largest CPU saver).
-- **Stage 3 — Terrain MINE** (mechanical extension).
-- **Stage 4 — Terrain OVERLAY** (the missing-but-designed bucket; ship as GPU-driven from inception).
-- **Stages 5/6/7** per the prompt: soak window, default-on flip per-bucket, demote legacy CPU paths.
+- **Stage 1 — Water** (precedent proof; Z2 anchor).
+- **Stage 2 — Terrain SOLID** (largest CPU saver; primary contributor to Z1 reduction).
+- **Stage 3 — Terrain OVERLAY** (CONDITIONAL — consumes Phase B's overlay recipe if/when the sibling slice ships one; otherwise OVERLAY stays scaffold-only and Stage 3 falls out of v1).
+- **Stages 4/5/6** per the prompt: soak window, default-on flip per-bucket, demote legacy CPU paths.
+
+**MINE has been removed** from the Phase C v1 scope per the inventory above. The v1 design treated MINE as a mechanical extension of SOLID; that was wrong — MINE has no per-frame thin-record pack today and lives in a different Tracy zone (`Render.TerrainMines`, not Z1's `textureManagerRenderLists`). No CPU residual to attack.
 
 Phase C v1 (this slice) intentionally does NOT include Track D mechs/vehicles. The prompt's "Stage 4: extend to static-prop bucket" is reinterpreted in light of the inventory above: static-prop's per-frame indirect-cmd work is already on the GPU (Track C C1b). The remaining "static-prop work" is one of two things, both deferred:
 1. Move the per-frame substrate record emission (`emitGpuCullRecord` in `code/objmgr.cpp`, 6 iteration sites) onto compute — this is a Track-D / cull-arc question, not a thin-record question.
@@ -257,8 +259,11 @@ Per-bucket compute shader contract:
 ```
 INPUT  (SSBOs, all read-only from compute's perspective):
   binding R0: <bucket>RecipeSSBO       — mission-static per-element state
-                                         (terrain: PR1's g_recipeSSBO, etc.;
-                                          water: g_waterRecipeSSBO)
+                                         (terrain SOLID: PR1's `g_recipeSSBO`;
+                                          water: `g_recipeBuffer` at
+                                            `gos_terrain_water_stream.cpp:45`;
+                                          OVERLAY: Phase B's overlay recipe SSBO
+                                            when shipped)
   binding R1: gpu_terrain_lighting     — Phase 1's per-vertex lightRGB/fogRGB output SSBO
                                          (compute can read DIRECTLY; no CPU bounce)
   binding R2: <bucket>QuadListSSBO     — per-frame quadList index window
@@ -381,6 +386,181 @@ glMultiDrawArraysIndirect(GL_TRIANGLES, nullptr, /*drawcount=*/1, /*stride=*/0);
 
 Replaces a 1–3 ms CPU thin-record build. Win: 1–3 ms minus 30 µs per shipped bucket.
 
+### Stage 1 water draw shape (resolves substance C-2)
+
+Current water fast path issues **two** sequential `glDrawArrays` calls over the same vertex range with different uniforms + texture:
+
+- Base layer at `gameos_graphics.cpp:2215`: `isWater=1, detailMode=0, uvScale=oneOverTF`, `baseTex`.
+- Detail/spray layer at `:2242`: `isWater=2, detailMode=1, uvScale=oneOverWaterTF`, `detailTex`.
+
+A single `glMultiDrawArraysIndirect` with `drawcount=1` covers only the base layer. v2 resolves this with **2-cmd MDI + per-cmd uniforms via SSBO indexed by `gl_DrawID`**.
+
+The `WaterPerCmdSSBO` (slot 5 in the water compute program above) holds two elements:
+
+```cpp
+struct WaterPerCmd {
+    uint32_t textureSlot;   // 0 = baseTex's slot, 1 = detailTex's slot (per mc2_texture_handle_is_live.md)
+    uint32_t isWater;       // 1 or 2 (matches existing CPU uniform)
+    uint32_t detailMode;    // 0 or 1
+    float    uvScale;       // oneOverTF or oneOverWaterTF
+    vec2     uvOffset;      // cloudOffset (base) or sprayOffset (detail)
+    uint32_t _pad0, _pad1;  // std430 16-byte alignment
+};
+static_assert(sizeof(WaterPerCmd) == 32);
+```
+
+VS + FS read `WaterPerCmd[gl_DrawID]` from slot 5 via a `flat varying uint cmdId = gl_DrawID;` pattern, identical to the existing pattern that PR2 uses for `runTextureIdx` (per `cement-multi-sampler-plan-v2.md`).
+
+The CPU MDI bridge:
+
+```cpp
+// One bind per draw call's primary texture (per Phase A deferral rule):
+glActiveTexture(GL_TEXTURE0);
+glBindTexture(GL_TEXTURE_2D, gos_GetGLTextureId(perCmd[0].textureSlot resolved via list));
+// (above pattern still requires per-cmd glBindTexture today; Phase A bindless
+// would collapse to a single bindless-handle-array read by gl_DrawID.)
+// For 2-cmd water this is 2 binds, no extra cost vs today.
+
+glMultiDrawArraysIndirect(GL_TRIANGLES, nullptr, /*drawcount=*/2, /*stride=*/0);
+```
+
+Tradeoff: the FS branch on `isWater`/`detailMode` becomes a flat-uniform-lookup instead of a per-draw uniform read. Equivalent GPU cost; the parity check enforces visual identity. The 2 separate texture binds preserved is the only "ugly" residual — Phase A bindless would collapse it.
+
+Alternative considered: merge base + detail into a single shader pass (single draw, branchless). Rejected because (a) parity-risky, (b) requires re-deriving the existing `gos_water_fast.frag` for the merged path, and (c) the 2-cmd approach has zero new shader logic — same FS, just consumes per-cmd state from `gl_DrawID`-indexed SSBO instead of uniforms.
+
+### Stage 2 SOLID arming flow under GPU-driven (resolves substance C-3)
+
+Current arming chain in `gos_terrain_indirect.cpp:1605-1637`:
+
+1. `PackThinRecordsForFrame()` returns CPU-computed `thinCount`.
+2. If `thinCount == 0`, set `s_frameSolidArmed = false`, return `false` (preflight_skip).
+3. Otherwise `BuildIndirectCommands(thinCount)` returns `cmdCount`.
+4. Store both counts in `s_frameSolidPackedThinCount` / `s_frameSolidCmdCount`.
+5. `DrawIndirect()` passes `s_frameSolidCmdCount` to `gos_terrain_bridge_drawIndirect`.
+
+Under GPU-driven SOLID, neither count is known on CPU at preflight time. Per `substrate_coalesce_sync_point_lesson.md`, we MUST NOT `glGetBufferSubData` to read GPU-computed `visibleCount` back on the hot path.
+
+**Decision:** always-arm-when-mission-running + tolerate count=0 MDI.
+
+```cpp
+bool ComputePreflight() {  // v2 GPU-driven SOLID path
+    s_frameSolidArmed = false;
+    if (s_processArmingDisabled) return false;
+    if (!IsEnabled())            return false;
+    if (!IsDenseRecipeReady())   return false;
+    if (!ResourcesReady())       return false;
+    if (InMissionTransition())   return false;
+
+    FlushDirtyRecipeSlotsToGPU();          // unchanged
+    UploadQuadListWindowSSBO();            // new — per-frame index list of in-window quads
+
+    s_frameSolidArmed   = true;
+    s_frameSolidCmdCount = 1;              // always 1 for SOLID (single bucket)
+    return true;
+}
+```
+
+`DrawIndirect()` always invokes the compute dispatch + barrier + MDI sequence when `s_frameSolidArmed`. If the compute shader determines zero quads pass cull this frame, the indirect cmd it writes has `count=0` and the MDI executes as a no-op (well-defined per GL spec: "If count is zero, no triangles are drawn").
+
+**Mech-bay / menu protection:** `s_processArmingDisabled` and `IsDenseRecipeReady()` already gate mech-bay/menu frames per `gos_terrain_indirect.cpp:1590-1614` — both still apply. The removed `thinCount == 0` early-return was a redundant performance optimization (skip the bind + dispatch when nothing would draw); the cost of issuing a count=0 MDI is microseconds (one bind + one dispatch invocation that no-ops on cull-zero); the mech-bay/menu protection comes from the recipe-not-ready / process-disabled gates, not from `thinCount`.
+
+The CPU loses visibility into per-frame quad counts. For debug diagnostics (`MC2_GPU_DRIVEN_TRACE=1`), the visible-count is fence-ring-lagged via the existing `gpu_cull_readback.cpp` 3-slot pattern (read N-2 frames late). Not on hot path.
+
+### Phase 1 lighting same-frame barrier ordering (resolves substance M-5)
+
+Phase 1's existing per-frame sequence (per `gos_terrain_lighting.cpp:613-633`):
+
+1. `glDispatchCompute(numGroups, 1, 1)` — writes `s_computeOutputSsbo`.
+2. `glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT)` at `:621`.
+3. `glCopyBufferSubData(s_computeOutputSsbo → s_stagingRing[currentSlot])` at `:628`.
+4. `glMemoryBarrier(GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT)` at `:633`.
+
+Phase C compute reads `s_computeOutputSsbo` directly. The barrier at step 2 already makes the buffer visible to subsequent compute reads. Phase C dispatch must occur AFTER step 2 (no additional barrier needed before Phase C dispatch — the post-Phase-1 barrier covers it) and BEFORE Phase 1's NEXT frame's dispatch (trivially true because Phase C runs in the same frame as the Phase 1 dispatch that produced the data).
+
+The per-frame ordering under v2:
+
+```
+Phase 1 dispatch (mission.cpp:527 inside Mission.TextureManager)
+  ↓ glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT)        ← Phase 1 emits this
+  ↓ glCopyBufferSubData (stays — Track C cull readback uses it)
+  ↓ glMemoryBarrier(GL_CLIENT_MAPPED_BUFFER_BARRIER_BIT)  ← Phase 1 emits this
+
+... CPU work, other dispatches ...
+
+Phase C SOLID dispatch (inside gamecam.cpp Render.TerrainSolid)
+  reads slot 1 = s_computeOutputSsbo
+  writes slot 3 = SolidThinRecordSSBO, slot 4 = SolidIndirectCmdSSBO, slot 5 = SolidBucketHeader
+  ↓ glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT)        ← Phase C emits between cull/pack and patch
+Phase C patch dispatch (1 invocation)
+  reads slot 5 (BucketHeader)
+  writes slot 4 (IndirectCmdSSBO[0].count)
+  ↓ glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT)
+glMultiDrawArraysIndirect (Stage 2 SOLID)
+```
+
+No new barrier is required between Phase 1's dispatch and Phase C's dispatch — Phase 1's existing post-dispatch barrier already publishes the SSBO.
+
+### Parity-gate reframe for Phase 1 frame-pipelined latency (resolves substance M-2)
+
+Phase 1 uses a 3-slot staging-ring with non-blocking `tryConsume` (`gos_terrain_lighting.cpp:644-`). Lighting bytes are visible to CPU readback at frame N+1 (T1, normal case), N+2 (T2 fallback), or N+3 (T3 stale-frame fallback).
+
+Under legacy CPU pack:
+- `vertices[i]->lightRGB` is the CPU mirror, populated from Phase 1's frame-N output during the readback pass, consumed by `PackThinRecordsForFrame` at frame N+1.
+
+Under Phase C compute:
+- Phase C compute reads `s_computeOutputSsbo` directly — frame N's output is consumed at frame N (same frame!).
+
+**Byte-equal parity is therefore impossible** during any frame where lighting state mutates (sun rotation, dynamic lights, mech engine glow ticks), because the two paths read lighting from different frame indices.
+
+**Decision:** parity mode forces Phase 1 into **non-pipelined synchronous mode** for the parity window. Specifically, `MC2_GPU_DRIVEN_PARITY=1` implies (sets at preflight time) Phase 1's parity-mode env (`MC2_TERRAIN_LIGHTING_PARITY=1` per Phase 1's existing parity infrastructure — see `2026-05-10-quadsetuptextures-gpu-compute-port-design.md` parity-mode section, where Phase 1's `IsParityCheckEnabled()` forces same-frame CPU re-run authoritative).
+
+In that mode:
+- Phase 1 dispatches and waits (sync stall accepted ONLY in parity windows, not in soak / steady-state).
+- CPU readback ring is consumed at frame N, NOT frame N+1.
+- `vertices[i]->lightRGB` and `s_computeOutputSsbo` reflect the SAME frame N values.
+- Phase C compute reads `s_computeOutputSsbo` at frame N; legacy CPU pack reads `vertices[i]->lightRGB` at frame N (now same-frame, not lagged).
+- Byte-equality is achievable.
+
+Steady-state (parity off) keeps Phase 1's frame-pipelined behavior. Phase C compute is then 1 frame "ahead" of the legacy CPU pack would be — i.e., it sees fresher lighting. That's a visible improvement, not a regression.
+
+**Documentation contract:** the parity-gate is REQUIRED to pass under `MC2_GPU_DRIVEN_PARITY=1` BEFORE Stage 2's default-on flip. It is NOT required to pass in steady-state (without parity env set), because steady-state is not byte-equal by design — it's `frame N` lighting in Phase C vs `frame N-1` lighting in the would-be legacy CPU pack, and the byte difference is a visible improvement.
+
+### Ring-slot persistence under GPU-driven SOLID (resolves substance M-3)
+
+PR1's existing thin-record SSBO is multi-slot ring-buffered via `glBindBufferRange` per-frame offset arithmetic (host-side; the compute shader doesn't see the ring). Under GPU-driven SOLID, the compute shader must write into the same per-frame ring slot the MDI consumer subsequently reads from.
+
+**Decision:** keep the ring. The compute shader's slot 3 (SolidThinRecordSSBO) is bound via `glBindBufferRange` at the per-frame ring-slot offset BEFORE the compute dispatch. The MDI consumer's existing slot-2 bind at `gameos_graphics.cpp:2458-2464` (per the C-1-flagged binding) is unchanged — same offset arithmetic, same buffer.
+
+```cpp
+const uint32_t slot = gos_terrain_indirect_getRingSlot();   // existing
+const GLintptr offset = slot * kMaxRecs * kRecordSz;
+const GLsizeiptr size  = kMaxRecs * kRecordSz;
+
+// Compute dispatch bind:
+glBindBufferRange(GL_SHADER_STORAGE_BUFFER, /*compute slot 3*/ 3,
+                  g_thinRecordSSBO, offset, size);
+glDispatchCompute(...);
+
+// MDI consumer bind (existing path, unchanged):
+glBindBufferRange(GL_SHADER_STORAGE_BUFFER, /*VS slot 2*/ 2,
+                  g_thinRecordSSBO, offset, size);
+glMultiDrawArraysIndirect(...);
+```
+
+No collapse to single-slot. Rationale: the ring's per-frame isolation protects against (a) recipe dirty-flush interactions at `gos_terrain_indirect.cpp:1617` that flush mid-frame, (b) future async-compute experiments that might overlap frame N+1's compute with frame N's MDI. Keeping the existing ring topology means Phase C doesn't perturb any current invariant.
+
+### Phase B recipe-layout-frozen contract (resolves substance M-7 Q4)
+
+The Phase C compute shaders read recipe SSBOs by struct member. Field reordering, type changes, or size changes in any Phase B recipe SSBO are SHADER-source-breaking changes for Phase C, not host-side binding swaps.
+
+**Explicit contract** (added to "What Phase B should NOT do that would surprise Phase C" in the boundary section above):
+
+- Phase B MUST NOT change field layout, order, type, or size in any recipe SSBO that Phase C v1 consumes (`g_recipeSSBO` for SOLID; `g_recipeBuffer` for water; the future overlay recipe SSBO if Stage 3 ships) without a lockstep Phase C compute-shader commit AND a content-diverse tier1 smoke (per `cpp_glsl_ubo_struct_lockstep.md`, mc2_24's mc2_17/mc2_24 distinct-light-setup canary catches mid-array drift).
+- Phase B MAY add new recipe SSBOs (fresh symbol names, fresh bindings, no Phase C consumer yet). Phase C will adopt them in a follow-up slice.
+- Phase B MAY change the SOURCE that populates a recipe (the build function) without Phase C lockstep — Phase C reads the buffer, not the build site.
+
+This is more restrictive than the v1 "compatible by construction" framing. v1 was wrong: there is no construction-level invariant; both sides could index by `vertexNum` and still have incompatible byte layouts.
+
 ### Texture binding (Phase A deferred — see prompt)
 
 Per `mc2_texture_handle_is_live.md` and the prompt's "Phase A is DEFERRED" section:
@@ -457,18 +637,75 @@ std430 4-byte alignment is sufficient; `atomicAdd` on `visibleCount` is the only
 
 ## Per-bucket binding-point allocation
 
-The codebase already has heavy binding-point pressure (Track C uses 0–16; Phase 1 lighting adds more). Phase C bindings are allocated in a per-bucket non-overlapping range:
+### Per-program namespace clarification (load-bearing)
 
-| Bucket | Recipe (R0) | Lighting (R1) | QuadList window (R2) | ThinRecord (W0) | IndirectCmd (W1) | VisibleCount (W2) |
-|--------|-------------|---------------|----------------------|------------------|--------------------|--------------------|
-| Water  | 17          | (Phase 1's existing binding, read-only) | 18 | (existing water thin SSBO binding) | 19 | 20 |
-| SOLID  | (existing g_recipeSSBO binding) | (Phase 1's binding) | 21 | (existing thin SSBO binding) | 22 | 23 |
-| MINE   | (PR2c recipe binding) | (Phase 1's binding) | 21 (shared windowing) | (PR2c thin SSBO) | 24 | 25 |
-| OVERLAY | (new — PR2b's eventual recipe SSBO) | (Phase 1's binding) | 21 (shared windowing) | (new — PR2b's thin SSBO) | 26 | 27 |
+GL binding points are PER-PROGRAM-NAMESPACE — `layout(std430, binding = 2)` in Phase 1's `gos_terrain_lighting.comp` and `layout(std430, binding = 2)` in `shaders/gos_terrain_thin.vert` do NOT collide at runtime because they are different programs with independent binding tables. The reviewer-flagged "binding=2 collision" (substance C-1) is real only **within a single new Phase C compute program** where Phase 1's lighting output and the bucket's thin-record SSBO need distinct slots at the same time.
 
-The "shared windowing" SSBO for SOLID/MINE/OVERLAY exploits the fact that all three iterate the SAME `quadList` per frame. Building it once at the start of the terrain frame is one of Phase C's CPU-side simplifications (today each bucket's pack loop independently iterates `quadList`).
+This v2 table therefore allocates explicit numbers per Phase C compute program. Each program independently picks any 0–N for its slots; consumers (the bridge MDI loop) re-bind as needed.
 
-Verification Appendix item B-1 confirms the exact binding-point numbers currently in use; if any collision is found at adversarial-review time, the table reshuffles. The shape — one block of bindings per bucket — is the load-bearing structure.
+### Phase C compute program binding table (concrete numbers)
+
+The shipped binding pressure across DIFFERENT programs is concentrated at slots 0–16 (Track C / Phase 1 / static-prop / patch shaders all use slots in this range). Phase C compute programs use 0–7 internally and remap on the host side.
+
+**`shaders/gpu_driven_water.comp` (Stage 1):**
+
+| Slot | Direction | SSBO | GL handle source |
+|------|-----------|------|------------------|
+| 0    | R  | WaterRecipeSSBO       | `g_recipeBuffer` (`gos_terrain_water_stream.cpp:45`) |
+| 1    | R  | PhaseOneLightingSSBO  | `s_computeOutputSsbo` (`gos_terrain_lighting.cpp:572`, Phase 1's `TL_OUTPUT_BINDING`) |
+| 2    | R  | WaterQuadListWindow   | new per-frame SSBO (CPU-uploaded list of recipe indices in this frame's window) |
+| 3    | W  | WaterThinRecordSSBO   | the existing water thin SSBO at `gos_terrain_water_stream.cpp` (currently CPU-written, now compute-written; same buffer) |
+| 4    | W  | WaterIndirectCmdSSBO  | new — aliased as both `GL_SHADER_STORAGE_BUFFER` (compute writes) and `GL_DRAW_INDIRECT_BUFFER` (MDI reads) |
+| 5    | W  | WaterPerCmdSSBO       | new — per-cmd uniforms indexed by `gl_DrawID`, see "Stage 1 water draw shape" below |
+| 6    | RW | WaterBucketHeader     | new — `GpuDrivenBucketHeader{visibleCount, …}`, `atomicAdd` counter slot |
+| 7    |    | (reserved)            | |
+
+UBO 0 = TerrainMVP / camera (existing). UBO 1 = per-frame bucketParams (alpha-band uniforms etc.; new).
+
+**`shaders/gpu_driven_terrain_solid.comp` (Stage 2):**
+
+| Slot | Direction | SSBO | GL handle source |
+|------|-----------|------|------------------|
+| 0    | R  | SolidRecipeSSBO       | PR1's `g_recipeSSBO` (existing static recipe, mission-load built at `gos_terrain_indirect.cpp`) |
+| 1    | R  | PhaseOneLightingSSBO  | same as water — Phase 1's `s_computeOutputSsbo` |
+| 2    | R  | SolidQuadListWindow   | new per-frame SSBO (same shape as water's; potentially shared if OVERLAY ships and iterates same `quadList`) |
+| 3    | W  | SolidThinRecordSSBO   | existing PR1 thin-record SSBO at `gos_terrain_indirect.cpp:1300` (currently CPU-written via `PackThinRecordsForFrame`, now compute-written; same buffer) |
+| 4    | W  | SolidIndirectCmdSSBO  | existing PR1 `g_indirectCmdBuffer` at `gos_terrain_indirect.cpp:1272` — aliased as both bind targets |
+| 5    | RW | SolidBucketHeader     | new — same shape as water's `GpuDrivenBucketHeader` |
+| 6–7  |    | (reserved)            | |
+
+**`shaders/gpu_driven_terrain_overlay.comp` (Stage 3, conditional):**
+
+Defined if Stage 3 ships under outcome (1) of the OVERLAY contingency. Binding layout mirrors SOLID's with `OverlayRecipeSSBO` from Phase B and a new `OverlayIndirectCmdSSBO`.
+
+**`shaders/gpu_driven_cmd_patch.comp` (shared across buckets):**
+
+| Slot | Direction | SSBO |
+|------|-----------|------|
+| 0    | R  | `BucketHeader` (the bucket whose cmd is being patched) |
+| 1    | W  | `IndirectCmdSSBO` (one cmd to patch, count = visibleCount × VERTS_PER_ELEMENT) |
+
+Each invocation of the patch program is a 1-thread dispatch; the bucket's BucketHeader + IndirectCmdSSBO are bound at slots 0/1 before each `glDispatchCompute(1, 1, 1)`.
+
+### Host-side binding for Phase C compute dispatch (water Stage 1 example)
+
+```cpp
+// Bind for water compute:
+glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, g_recipeBuffer);                       // SLOT 0
+glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, gos_terrain_lighting_getOutputSsbo()); // SLOT 1
+glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, g_waterQuadListWindowSSBO);            // SLOT 2
+glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, g_waterThinRecordSSBO);                // SLOT 3
+glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, g_waterIndirectCmdBuffer);             // SLOT 4
+glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, g_waterPerCmdSSBO);                    // SLOT 5
+glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, g_waterBucketHeaderSSBO);              // SLOT 6
+glUseProgram(g_gpuDrivenWaterProgram);
+glDispatchCompute(/*…*/);
+// Slot rebinding for MDI is separate — the host-side bridge restores
+// the prior MDI bindings (slot 2 = water thin SSBO at the consumer side,
+// per existing water fast-path bind order at gameos_graphics.cpp:2197+).
+```
+
+The compute program's slot 1 = Phase 1's lighting SSBO is bound RANGE-BOUND READ-ONLY. The pre-existing Phase 1 binding at `TL_OUTPUT_BINDING=2` in Phase 1's own program is **not affected** — that's a different program's binding table.
 
 ---
 
@@ -502,7 +739,7 @@ Adversarial-review gate runs before Stage 1 ships.
 
 ### Stage 2 — Terrain SOLID (largest CPU saver, targets Z1)
 
-Tracy anchor: `GameCamera::render textureManagerRenderLists` at `gamecam.cpp:244-248`. Stages 2+3+4 collectively must drop ≥1.0 ms from Z1's current 1.35 ms mean. Stage 2 SOLID is expected to carry the bulk of that drop because SOLID has the highest per-frame thin-record count and the heaviest dedup churn (per `addLightDataStructure` at `txmmgr.cpp:1023` — 99% hit-rate dedup walk that Phase C bypasses by reading Phase 1's lighting SSBO directly).
+Tracy anchor: `GameCamera::render textureManagerRenderLists` at `gamecam.cpp:244-248`. Stage 2 SOLID (plus Stage 3 OVERLAY if it ships) must drop Z1 by ≥1.0 ms from current 1.35 ms mean. Stage 2 SOLID carries the bulk of the drop because SOLID has the highest per-frame thin-record count, and the dominant per-quad CPU term is the per-corner `lightRGB`/`fogRGB` copy from `ScreenVertex` mirror into the thin record. Phase C's compute shader reads Phase 1's lighting SSBO directly (eliminating that copy entirely) and writes the thin record on GPU — collapsing the per-quad CPU work in `PackThinRecordsForFrame` to a single `glDispatchCompute` per bucket.
 
 **Deliverables:**
 - `shaders/gpu_driven_terrain_solid.comp` (new) — cull/pack
@@ -511,28 +748,30 @@ Tracy anchor: `GameCamera::render textureManagerRenderLists` at `gamecam.cpp:244
 
 **Parity gate:** byte-equality of thin-record SSBO + DAIC struct across tier1 5/5.
 
-### Stage 3 — Terrain MINE (mechanical extension)
+### Stage 3 — Terrain OVERLAY (CONDITIONAL — gated on Phase B)
 
-PR2c MINE shares enough of SOLID's structure that this stage is largely "extend Stage 2's compute shader with mine-specific recipe fields." Recipe layout is mine-specific but the cull/pack shape is identical.
+PR2b OVERLAY's `IsFrameOverlayArmed()` returns `false` unconditionally today at `gos_terrain_indirect.cpp:169`. Phase C does NOT construct OVERLAY's static recipe — recipe-building is Phase B's scope per the Phase B/C boundary section.
 
-### Stage 4 — Terrain OVERLAY
+**Two outcomes possible for v1:**
 
-PR2b OVERLAY's `IsFrameOverlayArmed()` returns `false` unconditionally today (per `indirect_terrain_solid_endpoint.md`). Phase C ships it directly as GPU-driven, skipping the CPU intermediate that exists in design (`2026-05-08-pr2b-overlay-indirect-design.md`) but never shipped.
+1. **Phase B ships an overlay recipe in this window** → Phase C Stage 3 wires a compute shader against it (same Beta two-dispatch shape as Stages 1+2; new `shaders/gpu_driven_terrain_overlay.comp`), and flips `IsFrameOverlayArmed()` to true under `MC2_GPU_DRIVEN_OVERLAY=1`.
+2. **Phase B does NOT ship an overlay recipe in this window** → Phase C Stage 3 falls out of v1. OVERLAY remains scaffold-only. A follow-up slice picks it up when Phase B's recipe lands.
 
-This is the **forward-construction** stage — there is no CPU baseline to parity against. The gate becomes:
-- Visual canary at fixed seed/camera (no parity SSBO comparison possible)
-- Tier1 5/5 visual identity vs current (`IsFrameOverlayArmed()=false` baseline, no overlay draws)
-- Then a separate `MC2_GPU_DRIVEN_OVERLAY=1` flag flips it on
+Outcome (2) is the default planning assumption — Phase C does not block on Phase B and ships Stage 1+2 as v1; Stage 3 is opportunistic.
 
-### Stage 5 — Soak window
+When Stage 3 does ship (under outcome 1), the gate becomes:
+- No legacy CPU baseline to parity against (the path was scaffold-only) → parity check is degenerate; visual canary at fixed seed/camera is the substitute.
+- Tier1 5/5 visual identity check: WITH `MC2_GPU_DRIVEN_OVERLAY=0` (matches current `IsFrameOverlayArmed()=false` baseline, no overlay drawn) AND with `MC2_GPU_DRIVEN_OVERLAY=1` (overlay drawn — visual canary inspection only).
 
-7 days per Track B precedent. All four buckets soak with `_PARITY=1` running silently every Nth frame.
+### Stage 4 — Soak window
 
-### Stage 6 — Per-bucket default-on flips (rolling)
+7 days per Track B precedent. All shipped buckets (water + SOLID; OVERLAY if Stage 3 shipped) soak with `_PARITY=1` running silently every Nth frame.
 
-Each bucket flips independently as it passes parity + soak. Order: water (lowest risk) → SOLID → MINE → OVERLAY.
+### Stage 5 — Per-bucket default-on flips (rolling)
 
-### Stage 7 — Demote legacy CPU paths
+Each bucket flips independently as it passes parity + soak. Order: water (lowest risk) → SOLID → OVERLAY (if shipped).
+
+### Stage 6 — Demote legacy CPU paths
 
 Per-bucket CPU pack loops gated off (`MC2_GPU_DRIVEN_<BUCKET>=0`), NOT deleted. Deletion is a separate post-soak slice.
 
@@ -542,8 +781,8 @@ Per-bucket CPU pack loops gated off (`MC2_GPU_DRIVEN_<BUCKET>=0`), NOT deleted. 
 
 Mirroring the prompt's "Killswitch + env vars" section, exact names:
 
-- `MC2_GPU_DRIVEN=0` — global off, falls back to per-bucket CPU pack loops. Default-on after Stage 6 per-bucket flips clear.
-- `MC2_GPU_DRIVEN_WATER=0`, `MC2_GPU_DRIVEN_TERRAIN_SOLID=0`, `MC2_GPU_DRIVEN_TERRAIN_MINE=0`, `MC2_GPU_DRIVEN_OVERLAY=0` — per-bucket killswitches. Allow bisection.
+- `MC2_GPU_DRIVEN=0` — global off, falls back to per-bucket CPU pack loops. Default-on after Stage 5 per-bucket flips clear.
+- `MC2_GPU_DRIVEN_WATER=0`, `MC2_GPU_DRIVEN_TERRAIN_SOLID=0`, `MC2_GPU_DRIVEN_OVERLAY=0` (only if Stage 3 ships) — per-bucket killswitches. Allow bisection. (No `MC2_GPU_DRIVEN_TERRAIN_MINE` — MINE is not a Phase C bucket per v2 design.)
 - `MC2_GPU_DRIVEN_PARITY=1` — runs both paths, comparator on. Default off.
 - `MC2_GPU_DRIVEN_TRACE=1` — per-bucket dispatch counters + draw-count diagnostic. Default off.
 
@@ -668,7 +907,7 @@ Run all greps at write-time against `claude/gpu-driven-rendering` worktree HEAD 
 | B-7 | `shaders/gpu_cull_patch.comp` `DrawElementsIndirectCommand` mirror | M | std430 binding 2 |
 | C-1 | `gos_terrain_water_stream.cpp:345` `UploadAndBindThinRecords` | M | exact line per grep |
 | C-2 | `gos_terrain_water_stream.cpp:453` `WaterThinRecord tr{}` (pack body) | M | exact line per grep |
-| D-1 | `code/objmgr.cpp:1939-2050` per-object update loop (prompt's reference) | D | needs re-grep at adversarial-review time — prompt cites range from an older commit, not verified at write-time |
+| D-1 | `code/objmgr.cpp:1939-2050` per-object update loop (prompt's reference) | **M (resolved v2)** | adversarial-review pass grep-confirmed `:1939` opens `ZoneScopedN("GameLogic.Units.TerrainObjects")`; range :1939–:2050 covers the terrain-objects update sub-block (specialBuildings, gates, terrain-block iteration, TracyPlot summary). Citation matches; v1 caveat was over-cautious. |
 | D-2 | sibling worktree `pre-bake-terrain` HEAD | M | `5667023` matches `nifty-mendeleev` — Phase B not yet shipped |
 | D-3 | Phase 1 (terrain lighting) shipped commits `594add9 / eda2431 / ff8de07 / ff35f03` | M | git log shows all four, last is "DEFAULT-ON flip" |
 | E-1 | `quadlist_is_camera_windowed.md` constraint | M | memory present, dated 2026-04-30 |
@@ -677,7 +916,7 @@ Run all greps at write-time against `claude/gpu-driven-rendering` worktree HEAD 
 | E-4 | `cpp_glsl_ubo_struct_lockstep.md` rule | M | memory present, 8 days old; mc2_24 crash 2026-05-02 origin |
 | E-5 | `substrate_coalesce_sync_point_lesson.md` rule | M | most recent (today, 2026-05-11) — origin commit mc2_10 62→128 fps |
 | F-1 | indirect-cmd schema unchanged from PR1 (load-bearing) | M | `DrawArraysIndirectCommand` is GL-spec-mandated 16 B / 4 GLuints; no Phase C field needed |
-| F-2 | binding-point allocations in §"Per-bucket binding-point allocation" | D | TENTATIVE table values 17-27; **MUST be re-grepped against shipped code at Stage 1 plan-write time** before any code lands; collisions resolved at adversarial-review |
+| F-2 | binding-point allocations in §"Per-bucket binding-point allocation" | **M (resolved v2)** | v1 table was symbolic ("(existing X binding)") and concealed within-program collisions in newly-proposed compute programs. v2 replaces with concrete per-program tables using slots 0–7 internally per compute program. Each GL program has its own binding namespace, so cross-program reuse of `binding=2` (Phase 1 lighting output AND existing thin-record SSBO) does NOT collide at runtime — they live in different programs. Adversarial-review confirmed: no shipped code uses slots 17–27 (entirely free), but the v1 table's design issue was structural (within-program collision in proposed compute programs), not numerical. v2 fixes the structural issue. |
 | G-1 | `pr2_detail_overlay_mine_stage0_recon.md` PR2a-dead claim | M | memory present, references commit 521d83a |
 | G-2 | `indirect_terrain_solid_endpoint.md` PR2b scaffold-only (`IsFrameOverlayArmed()` returns false) | M | memory present, 2026-05-01; needs Stage 4 fresh grep before forward-construction code |
 | H-1 | `mech_vehicle_gpu_pull_in.md` Track D merged 2026-05-10 commit `0d5ce93` | M | matches git log "merge: pull in Track D GPU mech+vehicle batcher from claude/gpu-mech-batcher" |
@@ -686,7 +925,18 @@ Run all greps at write-time against `claude/gpu-driven-rendering` worktree HEAD 
 | I-3 | `code/gamecam.cpp:255-256` Tracy zone `"GameCamera::render waterFastPath"` | M | wraps `land->renderWaterFastPath()` at :256; this is the active water cost when fast-path is armed |
 | I-4 | `code/gamecam.cpp:212` Tracy zone `"GameCamera::render objects"` | M | exact label at line 212; wraps `ObjectManager->render(true, true, true)` at :213 |
 | I-5 | `code/mission.cpp:527` Tracy zone `"GameLogic.Mission.TextureManager"` wrapping `mcTextureManager->update()` | D | user-cited `:526` is the guarding `if (!isPaused() \|\| MPlayer)`; the actual Tracy zone + call are at `:527`. Pause-guard at :526 is load-bearing per `pause_unpause_diagnostic_for_static_render_bugs.md`. |
-| I-6 | `mclib/txmmgr.cpp:1023` `addLightDataStructure(...)` function declaration | D | user-cited `:1022` is the closing brace of the prior helper; function declaration is at `:1023`. Tracy zone `"addLightDataStructure scan"` is at `:1028`. The 99% hit-rate hash-dedup walk on a 256-entry map is the load-bearing sub-zone within Z1. |
+| I-6 | `mclib/txmmgr.cpp:1023` `addLightDataStructure(...)` function declaration | **M (corrected v2)** | grep-verified function declaration at `:1023`; Tracy zone `"addLightDataStructure scan"` at `:1028`. **v2 strikes the v1 "256-entry / 99% hit rate" claim** — the dedup map is `std::unordered_map<uint64_t, uint32_t>` at `:901`, unbounded, initial capacity 128. The fictional sub-zone characterization is removed; the Z1 ≥1.0 ms target rests on combined-zone wall-clock measurement, not on attributing savings to dedup-walk elimination. |
+| J-1 (v2) | `gameos_graphics.cpp:2215` water base `glDrawArrays` + `:2242` detail/spray `glDrawArrays` | M | grep-verified — base layer uses `isWater=1, detailMode=0, baseTex`; detail layer uses `isWater=2, detailMode=1, detailTex`; same `drawVerts`. v2's Stage 1 water draw-shape section commits to 2-cmd MDI with `gl_DrawID`-indexed per-cmd SSBO. |
+| J-2 (v2) | `gameos_graphics.cpp:2609` MINE single `glDrawArrays` (NOT MDI) | M | grep-verified inside the MINE bridge function; called from `gos_terrain_indirect::DrawMineStatic()` at `gos_terrain_indirect.cpp:1963`, which is invoked once per frame in `Render.TerrainMines` Tracy zone at `mclib/txmmgr.cpp:1812-1817`. v2 removes MINE from Phase C scope (no per-frame thin-record pack to GPU-ify). |
+| J-3 (v2) | `gos_terrain_water_stream.cpp:45` `GLuint g_recipeBuffer = 0` | M | grep-verified — this is the water recipe SSBO symbol. v1's fictional `g_waterRecipeSSBO` replaced throughout v2. |
+| J-4 (v2) | `gos_terrain_lighting.cpp:102` `TL_OUTPUT_BINDING = 2u`; `:572` `glBindBufferBase(..., TL_OUTPUT_BINDING, s_computeOutputSsbo)` | M | grep-verified Phase 1's output SSBO is bound at slot 2 in Phase 1's OWN program. Phase C compute programs bind it at their own internal slot 1 (per the v2 binding tables) — different programs, different binding namespaces, no collision. |
+| J-5 (v2) | `shaders/gos_terrain_thin.vert:9` `layout(std430, binding = 2) readonly buffer ThinRecordBuf` | M | grep-verified existing thin-record SSBO consumer at slot 2 in the thin VS. Confirms cross-program binding-namespace independence — the same numeric binding `=2` is used in three different programs (Phase 1 compute, thin VS, future Phase C compute) without runtime conflict because each program has its own binding table. |
+| J-6 (v2) | `gos_terrain_indirect.cpp:139` `IsMineEnabled()` comment "Tier1 5/5 PASS with arming verified across PR2c Stages 0c/1c/2c" | M | grep-verified Stage 2c is shipped on baseline — resolves boundary-reviewer C-1 contradiction. v2 corrects boundary table + half-ported inventory. |
+| J-7 (v2) | `gos_terrain_indirect.cpp:1923` `RebuildMineStaticVBOIfDirty()` (dirty-flag lazy mission-load) | M | grep-verified MINE's per-frame work is dirty-flag-gated lazy rebuild, NOT a per-frame thin-record pack. Confirms v2's removal of MINE from Phase C scope. |
+| J-8 (v2) | `mclib/txmmgr.cpp:1812-1817` `Render.TerrainMines` Tracy zone wrapping `gos_terrain_indirect::DrawMineStatic()` | M | grep-verified MINE has its OWN Tracy zone, separate from Z1's `textureManagerRenderLists`. MINE is not inside the Phase C target zones. |
+| J-9 (v2) | `gos_terrain_indirect.cpp:169` `IsFrameOverlayArmed()` returns `false` unconditionally | M | grep-verified OVERLAY is scaffold-only. Resolves the v2 OVERLAY contingency framing — Stage 3 ships only under outcome (1) (Phase B publishes overlay recipe). |
+| J-10 (v2) | `gos_terrain_lighting.cpp:613-633` Phase 1 dispatch + barrier + copy + barrier sequence | M | grep-verified Phase 1 emits `GL_SHADER_STORAGE_BARRIER_BIT` post-dispatch at `:621`. Phase C compute can read `s_computeOutputSsbo` directly after that barrier — no additional barrier required between Phase 1 dispatch and Phase C dispatch. |
+| J-11 (v2) | `gos_terrain_lighting.cpp:644-` 3-slot non-blocking `tryConsume` ring | M | grep-verified Phase 1 is frame-pipelined (lighting bytes lag by ≥1 frame in steady-state). v2's parity-gate reframe section commits to forcing Phase 1 into non-pipelined synchronous mode during `MC2_GPU_DRIVEN_PARITY=1` windows only. |
 
 **Status note on D-1:** the prompt cites `code/objmgr.cpp:1939-2050` for "per-object update loop." This citation came from an older commit and was not verified against current HEAD at this design doc's write-time. **Action:** the adversarial-review pass MUST re-grep this range and either confirm or update the citation. Phase C does NOT depend on this range (the per-object update loop is Track-D scope), so this is informational drift, not a design hazard.
 
@@ -703,11 +953,25 @@ Run all greps at write-time against `claude/gpu-driven-rendering` worktree HEAD 
 
 ---
 
-## Open questions for adversarial review
+## Open questions — v2 status
 
-These are the specific spots where the design doc is least confident, surfaced explicitly so adversarial review can hit them first:
+The v1 adversarial-review pass (`13a0c06` substance + boundary reviewers) resolved most of these. Status:
 
-1. **Beta-pattern second-dispatch overhead.** The "1-invocation patch dispatch" pays a `glDispatchCompute(1, 1, 1)` cost (~5 µs) per bucket. Is there a single-dispatch alternative that produces the same result via a deterministic last-workgroup pattern? Decision in this doc says no (no global barrier in GL 4.3 compute), but the AMD driver may permit specific patterns that work in practice.
-2. **Per-bucket vs shared compute program.** Should there be one compute program per bucket (4 programs in v1), or one program with a per-dispatch uniform selecting the bucket's recipe binding? This doc assumes per-bucket (simpler debugging, no uniform-branch GPU cost). Reviewer should challenge if the shared-program path saves enough binding-point pressure to be worth it.
-3. **Indirect-cmd struct write timing.** The Beta-pattern says "second dispatch writes the cmd." An alternative is to have every invocation write `count = visibleCount * 6` to `cmds[0]` (read-modify-write race resolved by atomicMax). Decision in this doc says single-invocation write is cleaner; reviewer should challenge the cleanliness vs simplicity tradeoff.
-4. **Phase B coordination contract.** When Phase B ships its static-recipe SSBO, Phase C's compute shader changes binding R0 from "today's per-bucket recipe SSBO" to "Phase B's pre-bake SSBO." Is the layout guaranteed compatible? This doc says yes by construction (both are mission-static per-element data indexed by `vertexNum`), but Phase B's design doc may force a layout that requires a Phase C schema bump.
+1. **Beta-pattern second-dispatch overhead** — **RESOLVED.** Reviewer M-7 Q1 confirmed: GL 4.3 has no global compute barrier across workgroups; single-dispatch "last-workgroup writes cmd" relies on driver scheduling order not guaranteed by spec (same trap class as the substrate sync stall). Beta two-dispatch is the right call. Cost ~5 µs/bucket; well within budget.
+2. **Per-bucket vs shared compute program** — **RESOLVED.** Reviewer M-7 Q2 confirmed per-bucket is correct: bucket recipe layouts differ; uniform-branch in a shared program would introduce GPU-side divergence across buckets; per-bucket helps driver shader-cache utilization. Binding-pressure concern was unfounded (slots 0–7 used internally per program).
+3. **Indirect-cmd struct write timing** — **RESOLVED.** Reviewer M-7 Q3 confirmed single-invocation patch is correct: atomicMax-from-every-invocation creates hot-spot SSBO write traffic on `cmds[0]`; single-invocation patch is easier to reason about for parity synthesis; the Beta two-dispatch already pays the second-dispatch cost, no win from collapsing.
+4. **Phase B coordination contract** — **RESOLVED (v2 makes explicit).** Reviewer M-7 Q4 correctly flagged "compatible by construction" as wrong. v2's "Phase B recipe-layout-frozen contract" subsection states the explicit restriction: Phase B MUST NOT change field layout/order/type/size in any recipe SSBO Phase C v1 consumes without lockstep Phase C commit.
+
+### Newly surfaced v2 questions for the next review pass
+
+The v2 revisions introduce a few new spots the next adversarial-review pass should target:
+
+A. **Stage 1 water 2-cmd MDI: `WaterPerCmd` SSBO layout.** v2 commits to a 32-byte struct with `textureSlot, isWater, detailMode, uvScale, uvOffset, _pad0, _pad1`. Layout is sketched but not grep-validated against the existing FS's uniform-read points (`gameos_graphics.cpp:2210-2243`). Reviewer should grep those uniform writes and confirm the per-cmd SSBO layout captures every uniform the current 2-draw path sets per layer.
+
+B. **SOLID arming under always-arm + count=0 MDI: existing `IsFrameSolidArmed()` consumers.** v2 commits to "always-arm-when-mission-running"; the existing armed-flag is consumed by `DrawIndirect()` and by bridge functions. Reviewer should grep `IsFrameSolidArmed` and `s_frameSolidArmed` and confirm no consumer assumes `armed → thinCount > 0` (and therefore wouldn't tolerate a count=0 MDI).
+
+C. **Parity-gate "force Phase 1 non-pipelined" coupling.** v2 commits to `MC2_GPU_DRIVEN_PARITY=1` implying Phase 1's existing parity-mode env. Reviewer should verify Phase 1 actually has a parity-mode env (`MC2_TERRAIN_LIGHTING_PARITY` per the v2 reference to Phase 1's design doc), and that forcing it from Phase C is a clean coupling and not a layering violation.
+
+D. **`gos_terrain_lighting_getOutputSsbo()` accessor.** v2 assumes this accessor exists for Phase C to bind Phase 1's output SSBO at compute slot 1. It may not. Reviewer should grep — if the accessor doesn't exist, Phase 1 needs to publish one (a single getter, no behavior change), which is a Phase-1-source touch by Phase C v1.
+
+E. **Phase C dispatch site location.** v2 places SOLID compute dispatch "inside `gamecam.cpp` Render.TerrainSolid" (the GPU-zone-wrapped block). Reviewer should grep the actual location of the SOLID indirect-draw site today (likely inside `mclib/txmmgr.cpp` `renderLists()` for SOLID, NOT in `gamecam.cpp`) and confirm v2's dispatch-site placement is right or correct it.
