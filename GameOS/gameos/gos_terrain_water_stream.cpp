@@ -1227,10 +1227,42 @@ bool ComputeDispatchAndBindThinRecords() {
     const GLint locMapSide     = glGetUniformLocation(g_waterComputeProgram, "u_mapSide");
     const GLint locMVP         = glGetUniformLocation(g_waterComputeProgram, "u_terrainMVP");
 
-    if (locWindowCount >= 0) glUniform1i(locWindowCount, (int)windowCount);
-    if (locMaxThin     >= 0) glUniform1i(locMaxThin, (int)maxThinRecords);
-    if (locWaterElev   >= 0) glUniform1f(locWaterElev, Terrain::waterElevation);
-    if (locMapSide     >= 0) glUniform1i(locMapSide, (int)Terrain::realVerticesMapSide);
+    if (locWindowCount < 0) {
+        fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_windowCount_not_found\n");
+        fflush(stderr);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
+        glUseProgram(0);
+        return false;
+    }
+    glUniform1i(locWindowCount, (int)windowCount);
+
+    if (locMaxThin < 0) {
+        fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_maxThinRecords_not_found\n");
+        fflush(stderr);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
+        glUseProgram(0);
+        return false;
+    }
+    glUniform1i(locMaxThin, (int)maxThinRecords);
+
+    if (locWaterElev < 0) {
+        fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_waterElevation_not_found\n");
+        fflush(stderr);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
+        glUseProgram(0);
+        return false;
+    }
+    glUniform1f(locWaterElev, Terrain::waterElevation);
+
+    if (locMapSide < 0) {
+        fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_mapSide_not_found\n");
+        fflush(stderr);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
+        glUseProgram(0);
+        return false;
+    }
+    glUniform1i(locMapSide, (int)Terrain::realVerticesMapSide);
+
     if (locMVP < 0) {
         // Uniform not found in shader — dispatching with a zeroed MVP would
         // produce a fully-culled or garbage cull pass. Abort instead.
