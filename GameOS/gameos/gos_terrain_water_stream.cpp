@@ -1171,6 +1171,24 @@ bool ComputeDispatchAndBindThinRecords() {
     const uint32_t maxThinRecords = (uint32_t)g_recipes.size();
     if (maxThinRecords == 0) return false;
 
+    // M1 guard: lighting SSBO must be ready before water compute reads it (binding 1).
+    // GetOutputSsbo() returns 0 until the lighting compute has run (mission_init path).
+    // Binding GL name 0 → reads return driver-defined values, usually zero → black water
+    // with correct geometry — a silent-wrong-render that passes smoke gates.
+    {
+        static bool s_warnedLightSsbo = false;
+        const GLuint lightSsbo = gos_terrain_lighting::GetOutputSsbo();
+        if (lightSsbo == 0) {
+            if (!s_warnedLightSsbo) {
+                printf("[GPU_DRIVEN_WATER v1] event=warn msg=lighting_ssbo_not_ready frame=deferred_to_cpu\n");
+                fflush(stdout);
+                s_warnedLightSsbo = true;
+            }
+            return false;
+        }
+        s_warnedLightSsbo = false; // reset so it re-warns if SSBO goes away again
+    }
+
     const GLsizeiptr thinSlotBytes = (GLsizeiptr)(maxThinRecords * sizeof(WaterThinRecord));
     if (g_thinBuffer == 0) {
         glGenBuffers(1, &g_thinBuffer);
@@ -1214,13 +1232,12 @@ bool ComputeDispatchAndBindThinRecords() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, g_recipeBuffer);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, gos_terrain_lighting::GetOutputSsbo());
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, g_quadWindowSsbo);
-    // Slot 3 (thin output): already bound via glBindBufferRange above; the
-    // binding point 3 needs to match — note kWaterThinSsboBinding = 6 (from the
-    // header), but the shader uses binding 3 for thin output.
-    // The header constant kWaterThinSsboBinding (= 6) is the legacy CPU path's
-    // binding used in UploadAndBindThinRecords. The compute shader uses binding 3.
-    // Use the shader's binding 3 for compute output; the MDI bridge (Task 1.5)
-    // must bind the same range at slot 3.
+    // Slot 3 (thin output, compute-only): the compute shader writes thin records
+    // here. kWaterThinSsboBinding (= 6) is the DRAW-phase binding where the VS
+    // reads thin records; they are different slots. The compute shader ALSO uses
+    // binding 6 for the bucket header (coherent buffer Header). After both
+    // dispatches finish, binding 6 must be restored to the thin-record range for
+    // the VS draw (see re-bind after final glMemoryBarrier below).
     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 3,
                       g_thinBuffer, thinSlotOffset, thinSlotBytes);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, g_waterBucketHeaderSsbo);
@@ -1322,6 +1339,13 @@ bool ComputeDispatchAndBindThinRecords() {
     // and barriers complete.
     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, kWaterThinSsboBinding,
                       g_thinBuffer, thinSlotOffset, thinSlotBytes);
+
+    // Unbind compute-only slots (0=recipe, 1=lighting, 2=window, 3=thin-write)
+    // so Stage 2 compute subsystems don't inherit stale bindings on entry.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
 
     g_waterGpuDrivenArmed = true;
     return true;
