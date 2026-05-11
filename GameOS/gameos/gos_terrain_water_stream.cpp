@@ -17,6 +17,9 @@
 #include "gos_terrain_water_stream.h"
 
 #include "gos_profiler.h"
+#include "gpu_driven_common.h"
+#include "gos_terrain_lighting.h"
+#include "gos_static_prop_killswitch.h"  // gos_GetTerrainMVPMat4()
 
 #include <vector>
 #include <unordered_map>
@@ -24,6 +27,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <string>
 
 #include <GL/glew.h>
 
@@ -82,6 +86,20 @@ bool DebugOn() {
     }
     return s_debugEnabled;
 }
+
+// ---------------------------------------------------------------------------
+// Phase C Stage 1 compute resources
+// ---------------------------------------------------------------------------
+GLuint g_waterComputeProgram    = 0;
+GLuint g_cmdPatchProgram        = 0;
+GLuint g_quadWindowSsbo         = 0;   // per-frame: recipe indices in quadList window
+GLuint g_waterBucketHeaderSsbo  = 0;   // GpuDrivenBucketHeader (16 B)
+GLuint g_waterIndirectCmdBuffer = 0;   // 2 × DrawArraysIndirectCommand (32 B)
+bool   g_waterGpuDrivenArmed    = false;
+
+// CPU staging array for BuildQuadWindowSSBO. Persists across frames to avoid
+// per-frame allocation. Capacity grows to the high-water-mark and stays there.
+std::vector<uint32_t> g_quadWindowStaging;
 
 // Mirrors the file-static `terrainTypeToMaterial` in mclib/quad.cpp.
 // Kept here as a duplicate (~3 lookups) so neither this file nor the parity
@@ -1034,6 +1052,232 @@ void CheckParityFrame(const ParityFrameUniforms& u) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase C Stage 1 implementation
+// ---------------------------------------------------------------------------
+
+// BuildQuadWindowSSBO — walk the current water candidate list (narrow or full),
+// collect recipe indices for quads that have a valid waterHandle, upload them to
+// g_quadWindowSsbo. Matches the quad-selection filter of UploadAndBindThinRecords
+// (same gate: corners non-null, no blankVertex, waterHandle != 0xffffffff).
+// The pz-valid test is intentionally omitted — that's the GPU's job.
+// Returns the count of window entries written (0 if none).
+static uint32_t BuildQuadWindowSSBO() {
+    if (!g_ready || g_recipes.empty()) return 0;
+
+    const TerrainPtr terrainPtr = land;
+    const TerrainQuadPtr quads  = terrainPtr ? terrainPtr->getQuadList()  : nullptr;
+    const long total            = terrainPtr ? terrainPtr->getNumQuads()  : 0;
+    if (!quads || total <= 0) return 0;
+
+    const bool narrow   = NarrowEnabledImpl();
+    const TerrainQuadPtr* narrowArr = narrow && !g_narrowQuadsThisFrame.empty()
+                                      ? g_narrowQuadsThisFrame.data() : nullptr;
+    const long iterCount = narrow ? (long)g_narrowQuadsThisFrame.size() : total;
+
+    g_quadWindowStaging.clear();
+    g_quadWindowStaging.reserve((size_t)iterCount);
+
+    for (long i = 0; i < iterCount; ++i) {
+        const TerrainQuad& q = narrowArr ? *narrowArr[i] : quads[i];
+        if (!q.vertices[0] || !q.vertices[1] ||
+            !q.vertices[2] || !q.vertices[3]) continue;
+        if (q.vertices[0]->vertexNum < 0 || q.vertices[1]->vertexNum < 0 ||
+            q.vertices[2]->vertexNum < 0 || q.vertices[3]->vertexNum < 0) continue;
+        if (q.waterHandle == 0xffffffffu) continue;
+
+        const uint32_t topLeftVN = (uint32_t)q.vertices[0]->vertexNum;
+        auto it = g_vertexNumToRecipe.find(topLeftVN);
+        if (it == g_vertexNumToRecipe.end()) continue;
+
+        g_quadWindowStaging.push_back(it->second);
+    }
+
+    const uint32_t windowCount = (uint32_t)g_quadWindowStaging.size();
+    if (windowCount == 0) return 0;
+
+    // Grow g_quadWindowSsbo lazily if capacity is too small.
+    // Capacity is sized to the recipe count (all water quads simultaneously).
+    if (g_quadWindowSsbo != 0) {
+        // Check if the current buffer is large enough.
+        GLint curSize = 0;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_quadWindowSsbo);
+        glGetBufferParameteriv(GL_SHADER_STORAGE_BUFFER, GL_BUFFER_SIZE, &curSize);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        if ((uint32_t)curSize < windowCount * sizeof(uint32_t)) {
+            glDeleteBuffers(1, &g_quadWindowSsbo);
+            g_quadWindowSsbo = 0;
+        }
+    }
+    if (g_quadWindowSsbo == 0) {
+        const uint32_t cap = (uint32_t)(g_recipes.size() * sizeof(uint32_t));
+        glGenBuffers(1, &g_quadWindowSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_quadWindowSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)cap, nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_quadWindowSsbo);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                    (GLsizeiptr)(windowCount * sizeof(uint32_t)),
+                    g_quadWindowStaging.data());
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    return windowCount;
+}
+
+bool ComputeDispatchAndBindThinRecords() {
+    g_waterGpuDrivenArmed = false;
+
+    if (!gpu_driven::IsWaterEnabled()) return false;
+
+    // Lazy-build compute programs and GPU resources on first call.
+    if (g_waterComputeProgram == 0) {
+        g_waterComputeProgram = gpu_driven::BuildComputeProgramFromFile(
+            "shaders/gpu_driven_water.comp", nullptr, 0, "gpu_driven_water");
+        g_cmdPatchProgram = gpu_driven::BuildComputeProgramFromFile(
+            "shaders/gpu_driven_cmd_patch.comp", nullptr, 0, "gpu_driven_cmd_patch");
+        if (!g_waterComputeProgram || !g_cmdPatchProgram) {
+            // Don't leave partial state.
+            if (g_waterComputeProgram) { glDeleteProgram(g_waterComputeProgram); g_waterComputeProgram = 0; }
+            if (g_cmdPatchProgram)     { glDeleteProgram(g_cmdPatchProgram);     g_cmdPatchProgram = 0; }
+            return false;
+        }
+
+        // Bucket header: 16 B GpuDrivenBucketHeader (visibleCount + 3 pads).
+        glGenBuffers(1, &g_waterBucketHeaderSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_waterBucketHeaderSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        // Indirect cmd buffer: 2 × DrawArraysIndirectCommand = 2 × 16 B = 32 B.
+        glGenBuffers(1, &g_waterIndirectCmdBuffer);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_waterIndirectCmdBuffer);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER, 32, nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    }
+
+    // Ensure recipe SSBO is ready.
+    if (!EnsureRecipeBufferUploaded()) return false;
+    if (g_recipeBuffer == 0) return false;
+
+    // Ensure thin-record SSBO is allocated (UploadAndBindThinRecords creates it lazily;
+    // on the GPU path we may skip that function, so we ensure the buffer exists here).
+    // The thin buffer must have at least one slot large enough for g_recipes.size() records.
+    const uint32_t maxThinRecords = (uint32_t)g_recipes.size();
+    if (maxThinRecords == 0) return false;
+
+    const GLsizeiptr thinSlotBytes = (GLsizeiptr)(maxThinRecords * sizeof(WaterThinRecord));
+    if (g_thinBuffer == 0) {
+        glGenBuffers(1, &g_thinBuffer);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinBuffer);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     thinSlotBytes * (GLsizeiptr)kThinRingSlots,
+                     nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        g_thinSlotCapacity = (uint32_t)thinSlotBytes;
+        g_thinSlot = 0;
+    }
+    // Advance ring slot so GPU write doesn't stomp a slot the GPU is still consuming.
+    g_thinSlot = (g_thinSlot + 1) % kThinRingSlots;
+    const GLintptr thinSlotOffset = (GLintptr)(g_thinSlot * g_thinSlotCapacity);
+
+    // Build and upload per-frame quad window SSBO.
+    const uint32_t windowCount = BuildQuadWindowSSBO();
+    if (windowCount == 0) return false;
+
+    // Zero the bucket header (reset visibleCount to 0) before each dispatch.
+    {
+        const uint32_t zero = 0u;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_waterBucketHeaderSsbo);
+        glClearBufferSubData(GL_SHADER_STORAGE_BUFFER, GL_R32UI, 0, 16,
+                             GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // Bind the thin-record ring slot for GPU output.
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, kWaterThinSsboBinding,
+                      g_thinBuffer, thinSlotOffset, thinSlotBytes);
+
+    // ------------------------------------------------------------------
+    // DISPATCH 1: cull/pack (gpu_driven_water.comp)
+    // Bindings: 0=recipe, 1=lighting, 2=quadWindow, 3=thin, 6=header
+    // ------------------------------------------------------------------
+    glUseProgram(g_waterComputeProgram);
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, g_recipeBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, gos_terrain_lighting::GetOutputSsbo());
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, g_quadWindowSsbo);
+    // Slot 3 (thin output): already bound via glBindBufferRange above; the
+    // binding point 3 needs to match — note kWaterThinSsboBinding = 6 (from the
+    // header), but the shader uses binding 3 for thin output.
+    // The header constant kWaterThinSsboBinding (= 6) is the legacy CPU path's
+    // binding used in UploadAndBindThinRecords. The compute shader uses binding 3.
+    // Use the shader's binding 3 for compute output; the MDI bridge (Task 1.5)
+    // must bind the same range at slot 3.
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 3,
+                      g_thinBuffer, thinSlotOffset, thinSlotBytes);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, g_waterBucketHeaderSsbo);
+
+    // Uniforms for gpu_driven_water.comp.
+    const GLint locWindowCount = glGetUniformLocation(g_waterComputeProgram, "u_windowCount");
+    const GLint locMaxThin     = glGetUniformLocation(g_waterComputeProgram, "u_maxThinRecords");
+    const GLint locWaterElev   = glGetUniformLocation(g_waterComputeProgram, "u_waterElevation");
+    const GLint locMapSide     = glGetUniformLocation(g_waterComputeProgram, "u_mapSide");
+    const GLint locMVP         = glGetUniformLocation(g_waterComputeProgram, "u_terrainMVP");
+
+    if (locWindowCount >= 0) glUniform1i(locWindowCount, (int)windowCount);
+    if (locMaxThin     >= 0) glUniform1i(locMaxThin, (int)maxThinRecords);
+    if (locWaterElev   >= 0) glUniform1f(locWaterElev, Terrain::waterElevation);
+    if (locMapSide     >= 0) glUniform1i(locMapSide, (int)Terrain::realVerticesMapSide);
+    if (locMVP >= 0) {
+        const float* mvp = gos_GetTerrainMVPMat4();
+        if (mvp) {
+            // GL_FALSE: row-major upload. See memory/terrain_mvp_gl_false.md.
+            glUniformMatrix4fv(locMVP, 1, GL_FALSE, mvp);
+        } else {
+            // MVP not available this frame (terrain not yet rendered). Bail out.
+            glUseProgram(0);
+            return false;
+        }
+    }
+
+    const uint32_t groups = (windowCount + 63u) / 64u;
+    glDispatchCompute(groups, 1, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    // ------------------------------------------------------------------
+    // DISPATCH 2: cmd-patch (gpu_driven_cmd_patch.comp)
+    // Bindings: 0=header, 1=indirectCmd
+    // ------------------------------------------------------------------
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, g_waterBucketHeaderSsbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, g_waterIndirectCmdBuffer);
+
+    glUseProgram(g_cmdPatchProgram);
+    const GLint locVertsPerElem = glGetUniformLocation(g_cmdPatchProgram, "u_vertsPerElement");
+    const GLint locCmdCount     = glGetUniformLocation(g_cmdPatchProgram, "u_cmdCount");
+    const GLint locMaxThin2     = glGetUniformLocation(g_cmdPatchProgram, "u_maxThinRecords");
+    if (locVertsPerElem >= 0) glUniform1i(locVertsPerElem, 6);
+    if (locCmdCount     >= 0) glUniform1i(locCmdCount, 2);
+    if (locMaxThin2     >= 0) glUniform1i(locMaxThin2, (int)maxThinRecords);
+    glDispatchCompute(1, 1, 1);
+
+    // Final barrier: SSBO writes visible + indirect cmd ready for MDI draw.
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
+
+    glUseProgram(0);
+    g_waterGpuDrivenArmed = true;
+    return true;
+}
+
+bool IsGpuDrivenArmed() {
+    return g_waterGpuDrivenArmed;
+}
+
+GLuint GetIndirectCmdBuffer() {
+    return g_waterIndirectCmdBuffer;
+}
+
 // ----------------------------------------------------------------------------
 
 void ReleaseGlResources() {
@@ -1050,6 +1294,31 @@ void ReleaseGlResources() {
     g_thinSlot = 0;
     g_thinStaging.clear();
     g_thinStaging.shrink_to_fit();
+
+    // Phase C Stage 1 resources.
+    if (g_waterComputeProgram != 0) {
+        glDeleteProgram(g_waterComputeProgram);
+        g_waterComputeProgram = 0;
+    }
+    if (g_cmdPatchProgram != 0) {
+        glDeleteProgram(g_cmdPatchProgram);
+        g_cmdPatchProgram = 0;
+    }
+    if (g_quadWindowSsbo != 0) {
+        glDeleteBuffers(1, &g_quadWindowSsbo);
+        g_quadWindowSsbo = 0;
+    }
+    if (g_waterBucketHeaderSsbo != 0) {
+        glDeleteBuffers(1, &g_waterBucketHeaderSsbo);
+        g_waterBucketHeaderSsbo = 0;
+    }
+    if (g_waterIndirectCmdBuffer != 0) {
+        glDeleteBuffers(1, &g_waterIndirectCmdBuffer);
+        g_waterIndirectCmdBuffer = 0;
+    }
+    g_waterGpuDrivenArmed = false;
+    g_quadWindowStaging.clear();
+    g_quadWindowStaging.shrink_to_fit();
 
     if (s_parityEnabled) {
         fprintf(stderr,
