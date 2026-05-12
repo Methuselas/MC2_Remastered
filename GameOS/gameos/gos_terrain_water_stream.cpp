@@ -1066,10 +1066,11 @@ void CheckParityFrame(const ParityFrameUniforms& u) {
 // BuildQuadWindowSSBO — populate per-frame recipe-index window for the GPU compute dispatch.
 //
 // When SOLID is armed (IsFrameSolidArmed() == true): setupTextures is gated off,
-// so waterHandle is never set on CPU quads. Feed ALL recipe indices to the GPU
-// directly — the compute shader's own pz gate (gpu_driven_water.comp:236) culls
-// off-screen quads via per-vertex water-surface reprojection from the recipe's
-// world positions. No TerrainQuad pointer walk or waterHandle check needed.
+// so waterHandle is never set. terrain.cpp populates g_narrowQuadsThisFrame using
+// the clipped1||clipped2 clipInfo gate (same predicate as the legacy waterHandle
+// assignment in setupTextures, quad.cpp:963). Walk the narrow list here exactly
+// as the legacy path does, but without the waterHandle check (GPU pz gate handles
+// remaining culling).
 //
 // When SOLID is NOT armed (legacy path): use the per-frame narrow walk filtered by
 // waterHandle, matching UploadAndBindThinRecords' gate exactly.
@@ -1081,11 +1082,18 @@ static uint32_t BuildQuadWindowSSBO() {
     g_quadWindowStaging.clear();
 
     if (gos_terrain_indirect::IsFrameSolidArmed()) {
-        // GPU-direct path: setupTextures is gated; waterHandle is stale/unset.
-        // Include all recipes — GPU pz gate handles visibility culling.
-        g_quadWindowStaging.reserve(g_recipes.size());
-        for (uint32_t i = 0; i < (uint32_t)g_recipes.size(); ++i)
-            g_quadWindowStaging.push_back(i);
+        // Armed path: narrow list populated by terrain.cpp via clipInfo gate.
+        // No waterHandle check — GPU pz gate (gpu_driven_water.comp:236) handles it.
+        const long iterCount = (long)g_narrowQuadsThisFrame.size();
+        g_quadWindowStaging.reserve((size_t)iterCount);
+        for (long i = 0; i < iterCount; ++i) {
+            const TerrainQuad& q = *g_narrowQuadsThisFrame[(size_t)i];
+            if (!q.vertices[0] || q.vertices[0]->vertexNum < 0) continue;
+            const uint32_t topLeftVN = (uint32_t)q.vertices[0]->vertexNum;
+            auto it = g_vertexNumToRecipe.find(topLeftVN);
+            if (it == g_vertexNumToRecipe.end()) continue;
+            g_quadWindowStaging.push_back(it->second);
+        }
     } else {
         const TerrainPtr terrainPtr = land;
         const TerrainQuadPtr quads  = terrainPtr ? terrainPtr->getQuadList()  : nullptr;

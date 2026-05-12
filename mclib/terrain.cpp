@@ -1821,9 +1821,25 @@ void Terrain::geometry (void)
 				    q.vertices[0]->vertexNum >= 0 &&
 				    q.vertices[1]->vertexNum >= 0 &&
 				    q.vertices[2]->vertexNum >= 0 &&
-				    q.vertices[3]->vertexNum >= 0 &&
-				    q.waterHandle != 0xffffffffu) {
-					WaterStream::AppendNarrowCandidate(currentQuad);
+				    q.vertices[3]->vertexNum >= 0) {
+					bool append;
+					if (gos_terrain_indirect::IsFrameSolidArmed()) {
+						// Armed: setupTextures() gated, waterHandle never set.
+						// Replicate the clipped1||clipped2 gate from
+						// setupTextures() (quad.cpp:963) using the clipInfo
+						// values written by the geometry loop (not gated).
+						const long c1 = q.vertices[0]->clipInfo
+						              + q.vertices[1]->clipInfo
+						              + q.vertices[2]->clipInfo;
+						const long c2 = q.vertices[0]->clipInfo
+						              + q.vertices[2]->clipInfo
+						              + q.vertices[3]->clipInfo;
+						append = (c1 || c2);
+					} else {
+						append = (q.waterHandle != 0xffffffffu);
+					}
+					if (append)
+						WaterStream::AppendNarrowCandidate(currentQuad);
 				}
 			}
 			currentQuad++;
