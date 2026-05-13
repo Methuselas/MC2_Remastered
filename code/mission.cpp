@@ -504,6 +504,21 @@ long Mission::update (void)
 
 		{ ZoneScopedN("GameLogic.Mission.TerrainGeometry"); land->geometry(); }
 
+		// 2026-05-13: begin GPU cull substrate frame BEFORE the pause-branch.
+		// Was inside GameObjectManager::update (objmgr.cpp), which is
+		// pause-gated.  Render-time submits (BldgAppearance/TreeAppearance::
+		// render and GpuStaticPropRegistry::flush) keep appending substrate
+		// records every frame regardless of pause, so this reset must also
+		// run every frame to keep the ring slot and per-frame counter in
+		// sync.  Calling without isEnabled gating is safe — substrate_frameBegin
+		// internally checks isEnabled() and is a no-op when disabled.
+		// Fixes the pause-smear bug where paused frames accumulated
+		// substrate records across the un-reset ring slot, inflating
+		// per-bucket instanceCount in compute cull and causing coalesce
+		// multi-draw to render copies of other types' geometry at every
+		// prop's origin.
+		gpu_cull::substrate_frameBegin();
+
 		if ( missionInterface->isPaused() && !MPlayer )
 			ObjectManager->updateAppearancesOnly( true, true, true );
 		else

@@ -1928,9 +1928,22 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		}
 	}
 
-	// C0-3: begin GPU cull substrate frame (advances ring slot, waits fence if needed).
-	// Called unconditionally — substrate_frameBegin internally checks isEnabled().
-	gpu_cull::substrate_frameBegin();
+	// 2026-05-13: substrate_frameBegin() was MOVED to Mission::update
+	// (code/mission.cpp, immediately before the
+	//   if (isPaused) updateAppearancesOnly(); else update();
+	// branch).  Reason: this function is pause-gated externally — when
+	// the mission is paused, GameObjectManager::update is skipped and
+	// updateAppearancesOnly runs instead, so a frameBegin call here
+	// never fires during pause.  Meanwhile render-time submits via
+	// BldgAppearance/TreeAppearance::render and GpuStaticPropRegistry::
+	// flush continue to append substrate records every frame.  Without
+	// a per-frame reset the substrate ring slot accumulates records
+	// across pause frames; compute cull then writes inflated
+	// bucketCountData, coalesce multi-draw overruns each bucket's
+	// instance range, and the user sees "every prop's location
+	// layered with copies of other props at the same origin" pause
+	// smearing.  See the LODBUG/pause-smear investigation 2026-05-13
+	// and pause_unpause_diagnostic_for_static_render_bugs.md.
 
 	updateCaptureList();
 
