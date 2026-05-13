@@ -15,6 +15,7 @@
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_batcher.h"
 #include "gos_static_prop_registry.h"  // Stage 3.C: static-registry fast path
+#include <unordered_map>  // LODBUG probe: tracks per-actor previous bldgShape*
 #include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
 #include "gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for per-update breakdown
@@ -1385,49 +1386,50 @@ bool BldgAppearance::recalcBounds (void)
 						//Set LOD of Model here because we have the distance and we KNOW we can see it!
 						bool baseLOD = true;
 						DWORD selectLOD = 0;
-						// Animated buildings (turrets, gates, dropships) must stay at LOD 0.
-						// TG_AnimateShape caches node-name -> shape-index after first
-						// SetAnimationState (msl.cpp:2559) and writes the index into shared
-						// per-type state. The animation data is loaded against LOD 0 only
-						// (bdactor.cpp:322), so an LOD swap drives the retract animation
-						// against LOD 1's possibly-different sub-shape ordering -- the
-						// turret body never lowers. Suppressing LOD swap costs a few
-						// extra vertices per animated building (small set per map).
-						bool hasAnimations = false;
-						for (long ai = 0; ai < MAX_BD_ANIMATIONS; ++ai)
-						{
-							if (appearType->bdAnimData[ai])
-							{
-								hasAnimations = true;
-								break;
-							}
-						}
-						if (!hasAnimations)
-						{
-							if (useHighObjectDetail)
-							{
-								for (long i=1;i<MAX_LODS;i++)
-								{
-									if (appearType->bldgShape[i] && (distanceToEye > appearType->lodDistance[i]))
-									{
-										baseLOD = false;
-										selectLOD = i;
-									}
-								}
-							}
-							else	//We always want to use the lowest LOD!!
-							{
-								if (appearType->bldgShape[1])
-								{
-									baseLOD = false;
-									selectLOD = 1;
-								}
-							}
-						}
+						// 2026-05-12 TEMP WORKAROUND: pin every BldgAppearance-class actor
+						// (buildings, fences, small props, beacons, sandbags, etc.) to LOD 0.
+						// The original LOD-selection logic that lived here (animation skip
+						// + useHighObjectDetail distance check + lowest-LOD fallback) was
+						// observed to render LOD-1+ actors as fully invisible: post-swap
+						// submitMultiShape returns true and the instance lands in
+						// bucket.instances, but the actor produces zero fragments. The bug
+						// is downstream of submit() acceptance; root cause not yet isolated
+						// (MC2_STATIC_FORCE_ADMIT and MC2_FORCE_DYNAMIC_BUILDINGS both
+						// failed to recover visibility, ruling out substrate-cull rejection
+						// and the static-replay/recipe path). LODBUG investigation probes
+						// remain in this file (env-gated MC2_LODBUG_TRACE) and in
+						// gos_static_prop_batcher.cpp / static_prop.frag (mode 8) so the
+						// investigation can resume — see also the sibling
+						// memory/bldg_animation_lod_swap_unsafe.md which already documents
+						// LOD-swap unsafety for animated buildings and predates this
+						// broader pinning.
+						//
+						// Cost: a few extra vertices per static prop at distance. On modern
+						// hardware (the engine targets >=2010 GL 4.3) this is negligible —
+						// stock missions cap ~300 static prop instances per type per frame.
+						// Trees use TreeAppearance (a separate class) and are NOT pinned
+						// here; they get a sibling treatment / proper LOD fix as a follow-up.
+						//
+						// Restore the original logic by reverting this hunk once the LOD-1
+						// invisibility root cause is fixed.
+						(void)useHighObjectDetail;
 						
 						// we are at this LOD level.
 						if (selectLOD != currentLOD)
 						{
+							// LODBUG probe: capture the pre-swap LOD so the
+							// trace line below can log the transition.  Env-
+							// gated MC2_LODBUG_TRACE.  Hypothesis under
+							// investigation: appearType->bldgShape[1+]'s leaves
+							// (different TG_TypeShape* pointers than LOD-0's)
+							// were never registered by the static-prop batcher
+							// at type-init time, so on the very first LOD swap
+							// for a building, submit() rejects every leaf and
+							// the actor renders nothing under GPU mode.  See
+							// memory/bldg_animation_lod_swap_unsafe.md for the
+							// sibling per-type-state trap.
+							const DWORD oldLOD_lodbug = currentLOD;
+
 							currentLOD = selectLOD;
 
 							bldgShape->ClearAnimation();
@@ -1437,6 +1439,46 @@ bool BldgAppearance::recalcBounds (void)
 							bldgShape = appearType->bldgShape[currentLOD]->CreateFrom();
 							if (bdAnimationState != -1)
 								appearType->setAnimation(bldgShape,bdAnimationState);
+
+							// LODBUG trace point.  One line per swap event +
+							// one per leaf.  User correlates leaf typeNode
+							// pointers here against the batcher's once-per-
+							// type "[GPUPROPS] unregistered type" prints in
+							// stderr — match by pointer to confirm whether the
+							// new LOD's leaves were registered.
+							static const bool s_lodBugTrace =
+								(getenv("MC2_LODBUG_TRACE") != nullptr);
+							if (s_lodBugTrace) {
+								const long nLeaves = bldgShape ? bldgShape->GetNumShapes() : -1;
+								printf("[LODBUG v1] event=lod_swap actor=%p "
+								       "oldLOD=%u newLOD=%u appearType=%p "
+								       "newShape=%p dist=%.1f numLeaves=%ld\n",
+								       (void*)this,
+								       (unsigned)oldLOD_lodbug,
+								       (unsigned)currentLOD,
+								       (void*)appearType,
+								       (void*)bldgShape,
+								       (float)distanceToEye,
+								       nLeaves);
+								for (long li = 0; li < nLeaves; ++li) {
+									const TG_ShapeRec* rec = bldgShape->GetShapeRec((int)li);
+									if (!rec || !rec->node) continue;
+									// rec->node->getNodeName() is the type's
+									// nodeId (public passthrough at tgl.h:964).
+									// User correlates the `shape=` pointer
+									// printed below against the batcher's
+									// "[GPUPROPS] unregistered type 0x.. for
+									// shape 0x.." stderr lines.
+									const char* name = rec->node->getNodeName();
+									printf("[LODBUG v1] event=lod_swap_leaf "
+									       "actor=%p leaf=%ld shape=%p "
+									       "node=\"%s\"\n",
+									       (void*)this, li,
+									       (void*)rec->node,
+									       name ? name : "(null)");
+								}
+								fflush(stdout);
+							}
 
 							//-------------------------------------------------
 							// Load the texture and store its handle.
@@ -1793,6 +1835,36 @@ long BldgAppearance::render (long depthFixup)
 				bldgShape->Render(false,0.9999999f);
 			else if (depthFixup < 0)
 				bldgShape->Render(false,0.00001f);
+		}
+
+		// LODBUG probe — post-swap submit observation.  When the actor's
+		// bldgShape pointer changed since the last render() call for this
+		// actor, log the submit outcome.  Almost all shape-pointer changes
+		// are LOD swaps (recalcBounds:1437/1450 reassigns bldgShape via
+		// CreateFrom); damage swaps would also trigger but are rare during
+		// 30s passive smoke.  Off by default — env-gated.  Tracks state via
+		// a static unordered_map keyed on the actor pointer so we don't
+		// touch the BldgAppearance class layout.
+		{
+			static const bool s_lodBugTrace =
+				(getenv("MC2_LODBUG_TRACE") != nullptr);
+			if (s_lodBugTrace) {
+				static std::unordered_map<BldgAppearance*, TG_MultiShape*>
+					s_prevShape;
+				auto it = s_prevShape.find(this);
+				TG_MultiShape* prev =
+					(it != s_prevShape.end()) ? it->second : nullptr;
+				if (prev && prev != bldgShape) {
+					printf("[LODBUG v1] event=post_swap_render actor=%p "
+					       "prevShape=%p newShape=%p currentLOD=%u "
+					       "inView=%d submittedToGpu=%d\n",
+					       (void*)this, (void*)prev, (void*)bldgShape,
+					       (unsigned)currentLOD, (int)inView,
+					       (int)submittedToGpu);
+					fflush(stdout);
+				}
+				s_prevShape[this] = bldgShape;
+			}
 		}
 
 		if (selected & DRAW_BARS)

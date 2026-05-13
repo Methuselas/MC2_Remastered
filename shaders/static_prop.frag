@@ -100,7 +100,14 @@ void main() {
     vec4 tex_color = texture(u_tex, v_uv);
 #endif
 
-    if ((materialFlags & ALPHA_TEST_BIT) != 0 && tex_color.a < 0.5) {
+    // LODBUG probe (debug-mode 8) bypasses alpha-test discard so it reports
+    // "draw call landed here" for materials whose texture coverage is empty
+    // (e.g. an unregistered LOD-1 typeShape that took a CPU-fallback path
+    // emitting no geometry would simply produce zero fragments — mode 8 lets
+    // the user verify that *no* fragment is being emitted, vs. "drawn but
+    // transparent"). All other debug modes (1..7) retain the discard so
+    // existing tree-card / alpha-test diagnostics are unchanged.
+    if (u_debugAddrMode != 8 && (materialFlags & ALPHA_TEST_BIT) != 0 && tex_color.a < 0.5) {
         discard;
     }
 
@@ -129,6 +136,15 @@ void main() {
         vec3 rgb = tex_color.rgb + v_highlight.rgb * v_highlight.a;
         FragColor = vec4(rgb, 1.0);
         GBuffer1 = rc_gbuffer1_legacyDebugSentinelScreenShadowEligible();
+        return;
+    }
+    // LODBUG probe (mode 8): solid magenta, alpha-test bypassed above. Every
+    // fragment emitted by any draw call lands here as bright pink so the user
+    // can answer "did this building get drawn at all post LOD swap?" without
+    // ambiguity from texture sampling, lighting, fog, or highlight math.
+    if (u_debugAddrMode == 8) {
+        FragColor = vec4(1.0, 0.0, 1.0, 1.0);
+        GBuffer1  = rc_gbuffer1_legacyDebugSentinelScreenShadowEligible();
         return;
     }
 

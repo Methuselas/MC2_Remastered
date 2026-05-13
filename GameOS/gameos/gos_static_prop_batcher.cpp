@@ -2714,6 +2714,28 @@ bool uploadAllBucketsIfNeeded() {
 void GpuStaticPropBatcher::flush() {
     ZoneScopedN("GpuStaticProps.Flush");
     initTraceOnce();
+    // LODBUG probe: env-var override for debugAddrMode_.  RAlt+9 cycling is
+    // unreliable on some hosts; set MC2_GPU_PROPS_DEBUG_MODE=8 to force the
+    // magenta "did this draw call land?" mode at startup.  Applied once
+    // per process; the env value wins over any subsequent RAlt+9 cycling
+    // for the FIRST flush only, after which the cycler is authoritative
+    // again (so the user can still cycle if they want).
+    {
+        static bool s_dbgEnvInit = false;
+        if (!s_dbgEnvInit) {
+            s_dbgEnvInit = true;
+            const char* dbgEnv = getenv("MC2_GPU_PROPS_DEBUG_MODE");
+            if (dbgEnv && dbgEnv[0]) {
+                const int m = atoi(dbgEnv);
+                if (m >= 0 && m <= 8) {
+                    debugAddrMode_ = m;
+                    std::fprintf(stderr,
+                        "[LODBUG v1] event=debug_mode_env_override mode=%d\n", m);
+                    std::fflush(stderr);
+                }
+            }
+        }
+    }
     // 2026-05-11 perf diag: wall-clock timer for substrate-coalesce perf hunt.
     // Mean us reported every 600 calls when MC2_BATCHER_FLUSH_TIMING=1.
     static uint64_t s_btf_calls = 0;
@@ -3648,7 +3670,9 @@ bool eligibleForGpuObjects(TG_Shape* shape) {
 
 void gos_GpuPropsCycleDebugMode() {
     auto& b = GpuStaticPropBatcher::instance();
-    int next = (b.getDebugAddrMode() + 1) % 8;
+    // 0..7 are the legacy bisection modes; 8 is the LODBUG probe (solid
+    // magenta with alpha-test discard bypassed — see static_prop.frag).
+    int next = (b.getDebugAddrMode() + 1) % 9;
     b.setDebugAddrMode(next);
 }
 int gos_GpuPropsGetDebugMode() {
