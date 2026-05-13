@@ -8,7 +8,6 @@
 #include "gameos.hpp"
 #include "utils/shader_builder.h"
 #include "tgl.h"  // TG_Shape::s_worldToClip
-#include "platform_str.h"  // S_strnicmp for SpotLight_ node-name match
 #include <GL/glew.h>
 #include <algorithm>
 #include <array>
@@ -35,16 +34,6 @@ bool g_useGpuObjects = true;
 static const bool s_alphaTrace = (getenv("MC2_ALPHA_TEST_TRACE") != nullptr);
 #define ALPHA_TRACE(fmt, ...) \
     do { if (s_alphaTrace) { printf("[ALPHA_TEST] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
-
-// MC2_SPOTLIGHT_TRACE=1 — Phase 1 probe for "spotlight billboards render
-// solid instead of transparent." Confirms Path A (building spotlights flow
-// through this batcher's flush() with blend=Opaque per the render contract).
-// First-hit always-on so a fresh operator sees confirmation with no env;
-// per-frame summary cadence gated on the env var, fires every 600 flushes.
-static const bool s_spotlightTrace = (getenv("MC2_SPOTLIGHT_TRACE") != nullptr);
-static uint64_t s_spotlight_static_prop_emits        = 0;  // monotonic, total
-static uint64_t s_spotlight_static_prop_emits_window = 0;  // per-summary window
-static bool     s_spotlight_static_prop_first_hit    = false;
 
 // MC2_TEX_HANDOFF_TRACE=1 — logs texture handle resolution at register and draw time.
 // Prints once per unique (multiShape,slot) pair at registration, and once per draw type
@@ -1179,17 +1168,6 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape, TG_TypeMultiSha
         // alphaTestOn captures shape-level alpha test (trees, via SetAlphaTest).
         // textureAlpha per-slot is resolved at draw time (after bdactor.cpp init completes).
         pkt.materialFlags = typeShape->alphaTestOn ? STATIC_PROP_FLAG_ALPHA_TEST : 0;
-        // SpotLight_-prefixed nodes (case-insensitive) get a blended sub-pass.
-        // Node-name match mirrors the rule used by tgl.cpp:259/475 to set
-        // TG_Shape::isSpotlight at TypeShape construction; deriving the flag
-        // here keeps registerType self-contained. See memory file
-        // spotlight_billboards_static_prop_opaque_bug.md.
-        {
-            const char* tsName = typeShape->getNodeId();
-            if (tsName && S_strnicmp(tsName, "SpotLight_", 10) == 0) {
-                pkt.materialFlags |= STATIC_PROP_FLAG_ALPHA_BLEND;
-            }
-        }
         pkt.owningTypeID  = newTypeID;
         s_packets.push_back(pkt);
         ++packetCountForThisType;
@@ -1950,12 +1928,6 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 for (uint32_t pIdx = 0; pIdx < type.packetCount; ++pIdx) {
                     const uint32_t globalPktIdx = type.firstPacket + pIdx;
                     if (layerForPacket[globalPktIdx] < 0) continue; // texture unavailable; skip
-                    // Spotlight billboards: skip from coalesce multidraw because
-                    // the multidraw runs under blend=Opaque state. They render
-                    // in a dedicated blended sub-pass at the bottom of flush()
-                    // with src-alpha and depth-write off. See memory file
-                    // spotlight_billboards_static_prop_opaque_bug.md.
-                    if (s_packets[globalPktIdx].materialFlags & STATIC_PROP_FLAG_ALPHA_BLEND) continue;
                     s_sortedPacketOrder.push_back(globalPktIdx);
                 }
             }
@@ -2594,20 +2566,6 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
         if (child->isWindow)    flags |= (1u << 1);
         if (child->isSpotlight) flags |= (1u << 2);
 
-        // [SPOTLIGHT_TRACE v1] Path A confirmation.
-        if (child->isSpotlight) {
-            ++s_spotlight_static_prop_emits;
-            ++s_spotlight_static_prop_emits_window;
-            if (!s_spotlight_static_prop_first_hit) {
-                s_spotlight_static_prop_first_hit = true;
-                std::fprintf(stderr,
-                    "[SPOTLIGHT_TRACE v1] event=first_hit path=static_prop "
-                    "nodeName=%s\n",
-                    child->getNodeName() ? child->getNodeName() : "(null)");
-                std::fflush(stderr);
-            }
-        }
-
         // rec.shapeToWorld is LinearMatrix4D; convert to Matrix4D for submit().
         Stuff::Matrix4D xform(rec.shapeToWorld);
         if (!submit(child, xform,
@@ -2756,23 +2714,6 @@ bool uploadAllBucketsIfNeeded() {
 void GpuStaticPropBatcher::flush() {
     ZoneScopedN("GpuStaticProps.Flush");
     initTraceOnce();
-    // [SPOTLIGHT_TRACE v1] periodic summary, gated on env. Cadence 600
-    // matches the [INSTR v1] family. Reports per-window emit count so the
-    // operator can correlate with their on-screen view of mc2_05 at night.
-    if (s_spotlightTrace) {
-        static uint64_t s_flushCalls = 0;
-        ++s_flushCalls;
-        if (s_flushCalls % 600 == 0) {
-            std::fprintf(stderr,
-                "[SPOTLIGHT_TRACE v1] event=summary path=static_prop "
-                "flushes=%llu window_emits=%llu total_emits=%llu\n",
-                (unsigned long long)s_flushCalls,
-                (unsigned long long)s_spotlight_static_prop_emits_window,
-                (unsigned long long)s_spotlight_static_prop_emits);
-            std::fflush(stderr);
-            s_spotlight_static_prop_emits_window = 0;
-        }
-    }
     // LODBUG probe: env-var override for debugAddrMode_.  RAlt+9 cycling is
     // unreliable on some hosts; set MC2_GPU_PROPS_DEBUG_MODE=8 to force the
     // magenta "did this draw call land?" mode at startup.  Applied once
@@ -3496,8 +3437,6 @@ void GpuStaticPropBatcher::flush() {
                 src->listOfTextures[pkt.textureSlot].textureAlpha) {
                 effectiveMaterialFlags |= STATIC_PROP_FLAG_ALPHA_TEST;
             }
-            // Blended packets render in a dedicated sub-pass after this loop.
-            if (effectiveMaterialFlags & STATIC_PROP_FLAG_ALPHA_BLEND) continue;
             ALPHA_TRACE("draw type=%u pkt=%u slot=%u pktFlags=0x%x effective=0x%x texAlpha=%d",
                         typeID, p, pkt.textureSlot, pkt.materialFlags, effectiveMaterialFlags,
                         (src && src->listOfTextures && pkt.textureSlot < src->numTextures)
@@ -3543,98 +3482,6 @@ void GpuStaticPropBatcher::flush() {
         }
     }
     } // end Step 11.8 else (!IsCoalesceEnabled() legacy draw loop)
-
-    // ---- Spotlight blended sub-pass (2026-05-13) ----
-    // Renders packets flagged STATIC_PROP_FLAG_ALPHA_BLEND with src-alpha
-    // blend and depth-write off. Runs AFTER both coalesce and legacy main
-    // draw paths so painter's-algorithm ordering is correct (opaque writes
-    // depth first; blended draws on top with src-alpha respecting authored
-    // texture-alpha falloff). Uses legacy uniform-based program because
-    // coalesce's per-draw SSBO path filters these packets out at sort time
-    // (see s_sortedPacketOrder construction); sub-pass needs per-packet
-    // uniform control so the fragment shader can suppress gbuffer1 writes
-    // for blended pixels. See memory file
-    // spotlight_billboards_static_prop_opaque_bug.md.
-    {
-        bool anyBlended = false;
-        for (const auto& pkt : s_packets) {
-            if (pkt.materialFlags & STATIC_PROP_FLAG_ALPHA_BLEND) { anyBlended = true; break; }
-        }
-        if (anyBlended) {
-            // Use legacy uniform-based program (the coalesce program's per-draw
-            // SSBO entries do not exist for the filtered-out blended packets).
-            glUseProgram(s_staticPropProgram);
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glDepthMask(GL_FALSE);
-
-            for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {
-                auto rit = s_typeRanges.find(typeID);
-                if (rit == s_typeRanges.end()) continue;
-                const TypeRangeSsbo& r = rit->second;
-                const GpuStaticPropType& type = s_types[typeID];
-                if (r.instanceCount == 0 || type.packetCount == 0) continue;
-
-                // Skip types with no blended packets to avoid SSBO rebinds.
-                bool typeHasBlended = false;
-                for (uint32_t p = 0; p < type.packetCount; ++p) {
-                    if (s_packets[type.firstPacket + p].materialFlags & STATIC_PROP_FLAG_ALPHA_BLEND) {
-                        typeHasBlended = true; break;
-                    }
-                }
-                if (!typeHasBlended) continue;
-
-                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
-                                  static_cast<GLintptr>(r.instanceByteOffset),
-                                  static_cast<GLsizeiptr>(r.instanceByteSize));
-                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, s_colorSsbo,
-                                  static_cast<GLintptr>(r.colorByteOffset),
-                                  static_cast<GLsizeiptr>(r.colorByteSize));
-                const int maxID = (type.vertexCount > 0u)
-                    ? static_cast<int>(type.vertexCount - 1u) : 0;
-                glUniform1i(glGetUniformLocation(s_staticPropProgram, "u_maxLocalVertexID"),
-                            maxID);
-
-                for (uint32_t p = 0; p < type.packetCount; ++p) {
-                    const GpuStaticPropPacket& pkt = s_packets[type.firstPacket + p];
-                    if (!(pkt.materialFlags & STATIC_PROP_FLAG_ALPHA_BLEND)) continue;
-
-                    uint32_t gosHandle = 0;
-                    const TG_TypeShape* src = type.source;
-                    if (src && src->listOfTextures && pkt.textureSlot < src->numTextures) {
-                        gosHandle = src->listOfTextures[pkt.textureSlot].gosTextureHandle;
-                    }
-                    const uint32_t glTexId = gos_GetGLTextureId(gosHandle);
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, glTexId);
-
-                    uint32_t effectiveMaterialFlags = pkt.materialFlags;
-                    if (src && src->listOfTextures && pkt.textureSlot < src->numTextures &&
-                        src->listOfTextures[pkt.textureSlot].textureAlpha) {
-                        effectiveMaterialFlags |= STATIC_PROP_FLAG_ALPHA_TEST;
-                    }
-                    glUniform1i(glGetUniformLocation(s_staticPropProgram, "u_materialFlags"),
-                                static_cast<int>(effectiveMaterialFlags));
-                    glUniform1i(glGetUniformLocation(s_staticPropProgram, "u_packetID"),
-                                static_cast<int>(type.firstPacket + p));
-                    glDrawElementsInstancedBaseVertex(
-                        GL_TRIANGLES,
-                        pkt.indexCount,
-                        GL_UNSIGNED_INT,
-                        reinterpret_cast<void*>(
-                            static_cast<uintptr_t>(pkt.firstIndex) * sizeof(uint32_t)),
-                        r.instanceCount,
-                        pkt.baseVertex);
-                }
-            }
-
-            // Restore opaque defaults so downstream passes (shadow, post)
-            // don't inherit blended state. Depth-state inheritance lesson:
-            // memory/gpu_direct_depth_state_inheritance.md.
-            glDepthMask(GL_TRUE);
-            glDisable(GL_BLEND);
-        }
-    }
 
     s_fence[s_frameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     // Plan v3.8 Step 11.9 — coalesce fence insert after all draws issued.

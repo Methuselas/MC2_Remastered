@@ -2169,41 +2169,12 @@ void MC_TextureManager::renderLists (void)
 	}
 	
 	gos_SetRenderState(	gos_State_ZWrite, 1);
-
-	// [SPOTLIGHT_TRACE v1] Phase 1 probe — Path B (legacy CPU spotlight queue).
-	// Counts per-call vertex totals across all MC2_ISSPOTLGT texture nodes.
-	// If this fires with verts > 0 on mc2_05 night, mech spotlights ARE
-	// reaching the screen via this loop; if it stays zero, a third path
-	// is responsible and the recon is incomplete. First-hit always-on;
-	// summary cadence gated on MC2_SPOTLIGHT_TRACE=1, fires every 600 calls.
-	static const bool s_spotlightTrace_txm = (getenv("MC2_SPOTLIGHT_TRACE") != nullptr);
-	static bool     s_spotTxmFirstHit = false;
-	static uint64_t s_spotTxmCalls         = 0;
-	static uint64_t s_spotTxmVertsWindow   = 0;
-	static uint64_t s_spotTxmVertsTotal    = 0;
-	static uint64_t s_spotTxmNodesWindow   = 0;
-	++s_spotTxmCalls;
-	uint64_t _spotTxmVertsThisCall = 0;
-	uint64_t _spotTxmNodesThisCall = 0;
-
+	
 	for (int i=0;i<nextAvailableVertexNode;i++)
 	{
 		if ((masterVertexNodes[i].flags & MC2_ISSPOTLGT) &&
 			(masterVertexNodes[i].vertices))
 		{
-			// Probe accounting.
-			{
-				DWORD _probeVerts = masterVertexNodes[i].numVertices;
-				if (masterVertexNodes[i].currentVertex !=
-					(masterVertexNodes[i].vertices + masterVertexNodes[i].numVertices))
-				{
-					_probeVerts = (DWORD)(masterVertexNodes[i].currentVertex - masterVertexNodes[i].vertices);
-				}
-				if (_probeVerts > 0) {
-					_spotTxmVertsThisCall += _probeVerts;
-					++_spotTxmNodesThisCall;
-				}
-			}
 			DWORD totalVertices = masterVertexNodes[i].numVertices;
 			if (masterVertexNodes[i].currentVertex != (masterVertexNodes[i].vertices + masterVertexNodes[i].numVertices))
 			{
@@ -2240,34 +2211,7 @@ void MC_TextureManager::renderLists (void)
 			masterVertexNodes[i].currentVertex = masterVertexNodes[i].vertices;
 		}
 	}
-
-	// [SPOTLIGHT_TRACE v1] post-loop probe accounting and summary.
-	s_spotTxmVertsTotal  += _spotTxmVertsThisCall;
-	s_spotTxmVertsWindow += _spotTxmVertsThisCall;
-	s_spotTxmNodesWindow += _spotTxmNodesThisCall;
-	if (!s_spotTxmFirstHit && _spotTxmVertsThisCall > 0) {
-		s_spotTxmFirstHit = true;
-		fprintf(stderr,
-			"[SPOTLIGHT_TRACE v1] event=first_hit path=legacy_txmmgr "
-			"call=%llu verts=%llu nodes=%llu\n",
-			(unsigned long long)s_spotTxmCalls,
-			(unsigned long long)_spotTxmVertsThisCall,
-			(unsigned long long)_spotTxmNodesThisCall);
-		fflush(stderr);
-	}
-	if (s_spotlightTrace_txm && (s_spotTxmCalls % 600 == 0)) {
-		fprintf(stderr,
-			"[SPOTLIGHT_TRACE v1] event=summary path=legacy_txmmgr "
-			"calls=%llu window_verts=%llu window_nodes=%llu total_verts=%llu\n",
-			(unsigned long long)s_spotTxmCalls,
-			(unsigned long long)s_spotTxmVertsWindow,
-			(unsigned long long)s_spotTxmNodesWindow,
-			(unsigned long long)s_spotTxmVertsTotal);
-		fflush(stderr);
-		s_spotTxmVertsWindow = 0;
-		s_spotTxmNodesWindow = 0;
-	}
-
+	
 	gos_SetRenderState( gos_State_ZWrite, 0);
 	gos_SetRenderState( gos_State_ZCompare, 0);
 	gos_SetRenderState( gos_State_Perspective, 1);
