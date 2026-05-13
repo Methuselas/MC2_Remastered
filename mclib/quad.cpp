@@ -685,13 +685,32 @@ void TerrainQuad::setupTextures (void)
 		blownTextureHandle = mcTextureManager->loadTexture(mineTextureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink, 0, 0x1);
 	}
 
-	// Stage N: skip solid/recipe CPU work when GPU-driven SOLID is armed.
-	// Phase C Stage 1 (GPU water thin-record compute) is armed when SOLID is;
-	// BuildQuadWindowSSBO feeds all recipe indices to the compute shader so
-	// waterHandle is no longer needed. wz is computed on-GPU in gpu_driven_water.comp
-	// (projectWaterZ). leastZ/mostZ from the terrain geometry loop (terrain.cpp:1554)
-	// covers the scene depth range; water does not write to the depth buffer.
-	if (!gos_terrain_indirect::IsFrameSolidArmed()) {
+	// quadList is allocated via Malloc+memset(0), not C++ new, so TerrainQuad's
+	// constructor and init() are never called. Reset render handles to their
+	// sentinel values (0xffffffff = "no texture") so draw() exits at its first
+	// guard rather than emitting tris with handle=0 when the GPU path is armed.
+	terrainHandle       = 0xffffffff;
+	terrainDetailHandle = 0xffffffff;
+	waterHandle         = 0xffffffff;
+	waterDetailHandle   = 0xffffffff;
+	overlayHandle       = 0xffffffff;
+	isCement            = false;
+
+	// HISTORICAL NOTE: an earlier commit (9964d5a "perf: skip solid/recipe CPU work
+	// when GPU SOLID is armed") wrapped this body in
+	//   if (!gos_terrain_indirect::IsFrameSolidArmed()) { ... }
+	// on the rationale that solid triangles + recipe build are wasted when GPU SOLID
+	// handles drawing. The author noted "detail-overlay triangles are thrown away in
+	// txmmgr" — true of the OLD addTerrainTriangles overlay path, but NOT of the NEW
+	// world-space `gos_PushTerrainOverlay` → `gos_DrawTerrainOverlays` batch path,
+	// which is the live producer of cement-transition tiles, runway/road decals, and
+	// other on-terrain overlays. The gate caused those decals to vanish silently
+	// (gos_push_overlay_calls dropped to 0 on the indirect path).
+	//
+	// Reverted to unconditional execution. A future perf slice can split the body
+	// surgically: keep the recipe-cache lookup + member field assignments (which
+	// populate overlayHandle / isCement for TerrainQuad::draw to consume), gate only
+	// addTerrainTriangles + pz_emit_terrain_tris.
 
  	if (!Terrain::terrainTextures2)
 	{
@@ -1268,7 +1287,7 @@ void TerrainQuad::setupTextures (void)
 	}
 	} // close CostSplitWaterVertProjScope (1A-alt Slice 0)
 
-	} // end IsFrameSolidArmed guard (solid + water CPU work)
+	// (former close of IsFrameSolidArmed guard — gate removed, see opening note ~line 699)
 
 	// 1A-alt Slice 0 — bracket the per-vertex lighting block (4 vertices ×
 	// numTerrainLights × falloff + RGB accumulation + lightRGB pack + fogRGB).
