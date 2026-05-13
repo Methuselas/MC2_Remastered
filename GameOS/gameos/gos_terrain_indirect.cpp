@@ -552,6 +552,15 @@ void buildRecipeSlot(int32_t vn, TerrainQuadRecipe& out) {
         const uint32_t tpacked = m0 | (m1 << 8) | (m2 << 16) | (m3 << 24);
         memcpy(&out._wp0, &tpacked, 4);
     }
+
+    // NOTE: _wp3 (cement word) is NOT baked here.  Reasons:
+    //   * First-init from BuildDenseRecipe: g_cementLayerIndexBySlot is empty
+    //     (BuildCementCatalogAtlas hasn't run yet) — PopulateRecipeCementWords
+    //     bakes it post-atlas-build.
+    //   * Later callers (InvalidateRecipeForVertexNum / InvalidateAllRecipes):
+    //     they MUST re-bake cement after calling buildRecipeSlot, otherwise
+    //     out._wp3 = 0.f above silently wipes the cement layer for every
+    //     subsequent FlushDirtyRecipeSlotsToGPU upload.
 }
 
 
@@ -631,6 +640,7 @@ static void PopulateRecipeCementWords() {
     const size_t N = g_denseRecipes.size();
     constexpr uint32_t kCementLayerValidBit = 0x80000000u;
 
+    long cementQuadCount = 0;
     for (size_t vn = 0; vn < N; ++vn) {
         const long mx = (long)vn % mapSide;
         const long my = (long)vn / mapSide;
@@ -642,14 +652,19 @@ static void PopulateRecipeCementWords() {
             const DWORD slot    = texData & 0xFFFFu;
             if (slot < (DWORD)MC_MAX_TERRAIN_TXMS) {
                 const uint16_t idx = g_cementLayerIndexBySlot[slot];
-                if (idx != 0xFFFFu)
+                if (idx != 0xFFFFu) {
                     cementWord = kCementLayerValidBit | ((uint32_t)idx & 0xFFFFu);
+                    ++cementQuadCount;
+                }
             }
         }
         memcpy(&g_denseRecipes[vn]._wp3, &cementWord, 4);
         g_denseRecipeDirty[vn]  = true;
     }
     g_denseRecipeAnyDirty = true;
+    printf("[CEMENT_ATLAS v1] event=cement_words_baked cement_quads=%ld total_vn=%zu\n",
+           cementQuadCount, N);
+    fflush(stdout);
 }
 
 // ---------------------------------------------------------------------------
@@ -830,18 +845,11 @@ void BuildCementCatalogAtlas() {
         fflush(stdout);
     }
 
-    // Memory blowup guard: if true cement count > 1024, skip atlas alloc
-    // entirely (diag-only run).  Tier1 expected <300 per plan; this is
-    // a safety net while the diag is in tree.
-    if (diagTotal > 1024) {
-        if (traceOn()) {
-            printf("[CEMENT_DIAG] atlas_alloc_skipped diagTotal=%ld exceeds 1024 cap\n", diagTotal);
-            fflush(stdout);
-        }
-        return;
-    }
-
     const int N = (int)cementNodeIndices.size();
+    // Always-on summary — not trace-gated so the count is visible without MC2_TERRAIN_INDIRECT_TRACE.
+    printf("[CEMENT_ATLAS v1] event=build_result N=%d diagTotal=%ld mission=%s\n",
+           N, diagTotal, (::missionName[0] ? ::missionName : "unknown"));
+    fflush(stdout);
     if (N == 0) {
         if (traceOn()) printf("[TERRAIN_INDIRECT v1] event=cement_atlas_skip reason=no_cement_tiles count=0\n");
         return;
@@ -974,14 +982,58 @@ void BuildDenseRecipe() {
         buildRecipeSlot(vn, g_denseRecipes[vn]);
     }
 
-    // Full GPU upload on mission load.
+    // Upload the merged colormap atlas for the indirect draw bridge.
+    // Must run after recipe build so terrainTextures2 is ready.
+    BuildColormapAtlas();
+
+    // Build cement catalog atlas via GPU readback — populates g_cementLayerIndexBySlot.
+    BuildCementCatalogAtlas();
+
+    // Bake cementWord into _wp3 now that g_cementLayerIndexBySlot is ready.
+    // Must run BEFORE glBufferData so the cement words are included in the initial
+    // GPU upload and don't require a FlushDirtyRecipeSlotsToGPU on frame 1.
+    PopulateRecipeCementWords();
+
+    // Full GPU upload on mission load — includes _wp3 cement words from above.
     if (g_recipeSSBO == 0) glGenBuffers(1, &g_recipeSSBO);
+    // Pre-upload audit: dumps how many recipes have a non-zero _wp3 (i.e.,
+    // valid cement word) in the CPU memory glBufferData is about to upload.
+    // Gated on MC2_TERRAIN_INDIRECT_TRACE; left in-tree as a tripwire because
+    // a mismatch between this count and the subsequent `cement_words_baked`
+    // count (also gated) is the canary for cement-bake regressions like the
+    // InvalidateAllRecipes bug that motivated this audit.
+    if (traceOn()) {
+        long preUploadNonzero = 0;
+        uint32_t firstNonzeroWp3 = 0;
+        size_t firstNonzeroVn = (size_t)-1;
+        for (size_t vn = 0; vn < N; ++vn) {
+            uint32_t w;
+            memcpy(&w, &g_denseRecipes[vn]._wp3, 4);
+            if (w != 0u) {
+                ++preUploadNonzero;
+                if (firstNonzeroVn == (size_t)-1) {
+                    firstNonzeroVn = vn;
+                    firstNonzeroWp3 = w;
+                }
+            }
+        }
+        printf("[CEMENT_DIAG] event=pre_upload_wp3_audit "
+               "nonzero=%ld firstVn=%lld firstWp3=0x%08x sizeof_recipe=%zu wp3_offset=%zu\n",
+               preUploadNonzero, (long long)firstNonzeroVn, firstNonzeroWp3,
+               sizeof(TerrainQuadRecipe),
+               (size_t)((const char*)&g_denseRecipes[0]._wp3 - (const char*)&g_denseRecipes[0]));
+        fflush(stdout);
+    }
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_recipeSSBO);
     glBufferData(GL_SHADER_STORAGE_BUFFER,
                  (GLsizeiptr)(N * sizeof(TerrainQuadRecipe)),
                  g_denseRecipes.data(),
                  GL_DYNAMIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // Clear dirty flags — data already in GPU from glBufferData above.
+    g_denseRecipeDirty.assign(N, false);
+    g_denseRecipeAnyDirty = false;
 
     g_recipeReady = true;
 
@@ -992,17 +1044,6 @@ void BuildDenseRecipe() {
                (unsigned)g_recipeSSBO);
         fflush(stdout);
     }
-
-    // Upload the merged colormap atlas for the indirect draw bridge.
-    // Must run after recipe build so terrainTextures2 is ready.
-    BuildColormapAtlas();
-
-    // Build cement catalog atlas via GPU readback (textureData[0] is NULL in
-    // stock gameplay; see plan v2.1 §C1/B1).
-    BuildCementCatalogAtlas();
-
-    // Bake cementWord into _wp3 now that g_cementLayerIndexBySlot is ready.
-    PopulateRecipeCementWords();
 
     // Collect unique terrain texture nodeIds for per-frame LUT upload.
     CollectUniqueNodeIds();
@@ -1036,6 +1077,8 @@ void ResetDenseRecipe() {
     g_atlasMapTopLeftX       = 0.f;
     g_atlasMapTopLeftY       = 0.f;
     g_atlasOneOverWorldUnits = 0.f;
+    // Clear stale nodeIds so the GPU path guard doesn't fire from a prior mission.
+    g_uniqueTerrainNodeIds.clear();
 
     // Cement catalog atlas teardown — mirror g_atlasGLTex pattern.
     if (g_cementAtlasGLTex != 0) {
@@ -1071,6 +1114,12 @@ void InvalidateRecipeForVertexNum(int32_t vn) {
     if (g_denseRecipes.empty()) return;
     if (vn < 0 || static_cast<size_t>(vn) >= g_denseRecipes.size()) return;
     buildRecipeSlot(vn, g_denseRecipes[vn]);
+    // buildRecipeSlot zeroes _wp3.  Re-bake cement words from the layer map
+    // so the next FlushDirtyRecipeSlotsToGPU doesn't upload a zeroed _wp3
+    // and nuke this quad's cement render.  PopulateRecipeCementWords is
+    // whole-grid; cheap (~10k simple iterations) and only fires on the rare
+    // invalidate events (shadow recalc, light-dir change, normal recompute).
+    PopulateRecipeCementWords();
     g_denseRecipeDirty[vn] = true;
     g_denseRecipeAnyDirty  = true;
     if (traceOn()) {
@@ -1087,6 +1136,11 @@ void InvalidateAllRecipes() {
         buildRecipeSlot((int32_t)vn, g_denseRecipes[vn]);
         g_denseRecipeDirty[vn] = true;
     }
+    // Re-bake cement words: buildRecipeSlot zeroed _wp3 on every slot above.
+    // Without this, FlushDirtyRecipeSlotsToGPU uploads zeroed _wp3 for all
+    // cement quads and the GPU compute shader's read of r.pos3.w returns 0,
+    // making cement pads render as bare colormap (the original cement bug).
+    PopulateRecipeCementWords();
     g_denseRecipeAnyDirty = true;
     if (traceOn()) {
         printf("[TERRAIN_INDIRECT v1] event=invalidate_all entries=%zu\n", N);
@@ -1311,9 +1365,10 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
 
 // Include TERRAIN_DEPTH_FUDGE for the per-tri pz check.
 // Defined in quad.cpp as a local constant, re-stated here.
-// sync: quad.cpp:1832 uses `vertices[c]->pz + TERRAIN_DEPTH_FUDGE` with FUDGE=0.001f
+// sync: quad.cpp:1921 uses FUDGE=0.002f (doubled post glClipControl ZERO_TO_ONE).
+// gos_terrain_thin.vert:176 also uses 0.002. Keep all three in lockstep.
 #ifndef TERRAIN_DEPTH_FUDGE
-static constexpr float TERRAIN_DEPTH_FUDGE = 0.001f;
+static constexpr float TERRAIN_DEPTH_FUDGE = 0.002f;
 #endif
 
 namespace {
@@ -1393,7 +1448,17 @@ static uint64_t s_solidParityMismatches = 0;
 // Called from ComputePreflight; returns true once both are allocated.
 // ---------------------------------------------------------------------------
 static bool ResourcesReady() {
-    if (s_resourcesReady) return true;
+    if (s_resourcesReady) {
+        // Between-mission check: atlas is deleted by ResetDenseRecipe but
+        // s_resourcesReady isn't visible from that public function. Re-arm
+        // the lazy setup path so the atlas guard re-runs next mission.
+        if (g_atlasGLTex == 0) {
+            s_resourcesReady     = false;
+            s_resourcesAllocated = false;
+        } else {
+            return true;
+        }
+    }
     if (s_resourcesAllocated) return false;  // already tried and failed
 
     // Thin-record SSBO: triple-buffered, GL_STREAM_DRAW.
@@ -1712,6 +1777,21 @@ static uint32_t UploadTerrainHandleLUT() {
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, kLutBytes, lut);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
+    {
+        static bool s_lutFirstPrinted = false;
+        if (!s_lutFirstPrinted) {
+            s_lutFirstPrinted = true;
+            int nonZero = 0;
+            for (uint32_t nodeId : g_uniqueTerrainNodeIds) {
+                if (nodeId > 0u && nodeId < (uint32_t)MC_MAXTEXTURES && lut[nodeId] != 0u)
+                    ++nonZero;
+            }
+            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=lut_upload unique=%d nonzero=%d\n",
+                    (int)g_uniqueTerrainNodeIds.size(), nonZero);
+            fflush(stderr);
+        }
+    }
+
     return (uint32_t)g_denseRecipes.size();
 }
 
@@ -1728,6 +1808,10 @@ bool IsFrameSolidArmed() {
 }
 
 void ForceDisableArmingForProcess() {
+    if (!s_processArmingDisabled) {
+        fprintf(stderr, "[TERRAIN_INDIRECT v1] event=arming_disabled_process_sticky\n");
+        fflush(stderr);
+    }
     s_processArmingDisabled = true;
 }
 
@@ -1753,22 +1837,59 @@ bool ComputePreflight() {
     s_frameSolidCmdCount             = 0;
     s_solidGpuDispatchRanThisFrame   = false;
 
-    if (s_processArmingDisabled) return false;
-    if (!IsEnabled())             return false;
-    if (!IsDenseRecipeReady())    return false;
-    if (!ResourcesReady())        return false;
+    if (s_processArmingDisabled) return false;  // ForceDisableArmingForProcess already printed
+    if (!IsEnabled()) {
+        static bool s_warnedEnabled = false;
+        if (!s_warnedEnabled) {
+            s_warnedEnabled = true;
+            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=preflight_fail reason=not_enabled\n");
+            fflush(stderr);
+        }
+        return false;
+    }
+    if (!IsDenseRecipeReady()) {
+        static bool s_warnedRecipe = false;
+        if (!s_warnedRecipe) {
+            s_warnedRecipe = true;
+            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=preflight_fail reason=recipe_not_ready\n");
+            fflush(stderr);
+        }
+        return false;
+    }
+    if (!ResourcesReady()) {
+        static bool s_warnedResources = false;
+        if (!s_warnedResources) {
+            s_warnedResources = true;
+            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=preflight_fail reason=resources_not_ready\n");
+            fflush(stderr);
+        }
+        return false;
+    }
     if (InMissionTransition())    return false;
 
     FlushDirtyRecipeSlotsToGPU();
 
-    if (gpu_driven::IsTerrainSolidEnabled()) {
+    if (gpu_driven::IsTerrainSolidEnabled() && !g_uniqueTerrainNodeIds.empty()) {
         // GPU path: arm immediately. ComputeDispatch() (called after Phase 1
         // PackAndDispatch) will build the window SSBO and issue the two-dispatch
         // sequence. cmd-patch shader writes the actual vert count into the indirect
         // cmd buffer; DrawIndirect() fires glMultiDrawArraysIndirect with cmdCount=1.
+        // Guard: g_uniqueTerrainNodeIds populated only when terrainTextures2 is active
+        // (recipe._wp2 baked in buildRecipeSlot). Legacy terrainTextures path leaves
+        // _wp2=0 → empty node list → zero-LUT → GPU skips all quads → black terrain.
+        // Fall through to CPU thin-record path in that case.
         s_frameSolidPackedThinCount = -1;   // sentinel: GPU path (logged only)
         s_frameSolidCmdCount        = 1;    // PR1: always 1 indirect draw command
         s_frameSolidArmed           = true;
+        {
+            static bool s_firstArm = false;
+            if (!s_firstArm) {
+                s_firstArm = true;
+                fprintf(stderr, "[TERRAIN_INDIRECT v1] event=first_arm path=gpu nodeIds=%zu\n",
+                        g_uniqueTerrainNodeIds.size());
+                fflush(stderr);
+            }
+        }
         return true;
     }
 
@@ -1790,6 +1911,15 @@ bool ComputePreflight() {
     s_frameSolidPackedThinCount = thinCount;
     s_frameSolidCmdCount        = cmdCount;
     s_frameSolidArmed           = true;
+    {
+        static bool s_firstArm = false;
+        if (!s_firstArm) {
+            s_firstArm = true;
+            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=first_arm path=cpu thin=%d cmd=%d\n",
+                    thinCount, cmdCount);
+            fflush(stderr);
+        }
+    }
     return true;
 }
 
@@ -1994,12 +2124,12 @@ bool DrawIndirect() {
     // first_draw lifecycle print — once per mission via the mission-latch.
     // s_firstDrawPrintedThisMission is declared in the Stage 2 anonymous ns;
     // it's reset by ResetDenseRecipe() at mission teardown.
-    if (!s_firstDrawPrintedThisMission && traceOn()) {
+    if (!s_firstDrawPrintedThisMission) {
         s_firstDrawPrintedThisMission = true;
-        printf("[TERRAIN_INDIRECT v1] event=first_draw "
+        fprintf(stderr, "[TERRAIN_INDIRECT v1] event=first_draw "
                "thin_count=%d cmd_count=%d ring_slot=%d\n",
                s_frameSolidPackedThinCount, s_frameSolidCmdCount, g_thinRingSlot);
-        fflush(stdout);
+        fflush(stderr);
     }
 
     // Ring fence for the slot just drawn.

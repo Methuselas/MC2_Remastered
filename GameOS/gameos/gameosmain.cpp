@@ -228,6 +228,20 @@ static void handle_key_down( SDL_Keysym* keysym ) {
                 fprintf(stderr, "Terrain Draw: %s\n", !cur ? "ON" : "OFF");
             }
             break;
+        case SDLK_1:
+            if (alt_debug) {
+                // Toggle cement-word diagnostic visualization (terrain frag
+                // mode 8).  R = CEMENT_LAYER_VALID bit, G = layer index low
+                // byte, B = useCementAtlas == 0.  See gos_terrain.frag.
+                float cur = gos_GetTerrainDebugMode();
+                float next = (cur > 7.5f) ? 0.0f : 8.0f;
+                gos_SetTerrainDebugMode(next);
+                fprintf(stderr, "Surface Debug: %s\n",
+                    (next > 7.5f)
+                        ? "CEMENT-WORD VIZ (R=valid, G=layer&0xFF, B=!useCementAtlas)"
+                        : "OFF");
+            }
+            break;
         case SDLK_4:
             if (alt_debug) {
                 gosPostProcess* pp = getGosPostProcess();

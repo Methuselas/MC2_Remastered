@@ -1655,6 +1655,7 @@ class gosRenderer {
             GLint time = -1, mapHalfExtent = -1;
             GLint ssboRecordBase = -1;
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
+            GLint tessDebug = -1;               // shader debug-viz mode (frag mode 1..8)
             GLuint program = 0;
         } thinTerrainLocs_;
 
@@ -1730,6 +1731,7 @@ class gosRenderer {
             thinTerrainLocs_.mapHalfExtent      = glGetUniformLocation(shp, "mapHalfExtent");
             thinTerrainLocs_.ssboRecordBase     = glGetUniformLocation(shp, "ssboRecordBase");
             thinTerrainLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
+            thinTerrainLocs_.tessDebug          = glGetUniformLocation(shp, "tessDebug");
         }
 
         void cacheShadowUniformLocations(GLuint shp) {
@@ -3447,7 +3449,7 @@ void gosRenderer::beginFrame()
     num_draw_calls_ = 0;
 
     TerrainPatchStream::beginFrame();
-    gos_terrain_indirect::BeginFrame();
+    // gos_terrain_indirect::BeginFrame() moved to endFrame() — see comment there.
 }
 
 // Lazy-eval gate for the dev-only shader hot-reload sweep. Default OFF in
@@ -3467,6 +3469,15 @@ static bool gos_ShaderHotReloadEnabled() {
 
 void gosRenderer::endFrame()
 {
+    // Clear the GPU-terrain arm AFTER renderLists() has consumed it this frame.
+    // Must be end-of-frame, not begin-of-frame: DoGameLogic() (which calls
+    // Terrain::geometry() → ComputePreflight() → arm) runs BEFORE draw_screen()
+    // (which calls beginFrame() then renderLists()). Placing the reset in
+    // beginFrame() wiped the arm before renderLists() could see it, causing
+    // permanent black terrain. Menu / mech-bay frames never call ComputePreflight(),
+    // so they never set the arm; the end-of-frame clear is a no-op for them.
+    gos_terrain_indirect::BeginFrame();
+
     // RENDER_STATES v1: 600-frame summary line. Always-on counter; gated print.
     rsFrames_++;
     if (rsFrames_ >= 600) {
@@ -4183,6 +4194,19 @@ int gosRenderer::terrainBindThinUniformsForPatchStream()
     // FS uniforms (same as terrainBindUniformsForPatchStream, minus tess-only params)
     if (tl.cameraPos >= 0)        glUniform4fv(tl.cameraPos, 1, (const float*)&terrain_camera_pos_);
     if (tl.terrainLightDir >= 0)  glUniform4fv(tl.terrainLightDir, 1, (const float*)&terrain_light_dir_);
+    // tessDebug: matches non-thin path (line ~4080). The thin path historically
+    // omitted this — debug-viz modes 1..8 in gos_terrain.frag therefore could
+    // not fire on the indirect/substrate draw, which silently broke the entire
+    // shader-debug channel for the path that needs it most.  Env override
+    // mirrors the tessellated path so MC2_TERRAIN_DEBUG_MODE works uniformly.
+    {
+        float debugMode = terrain_debug_mode_;
+        if (const char* envDebug = getenv("MC2_TERRAIN_DEBUG_MODE")) {
+            debugMode = (float)atof(envDebug);
+        }
+        float tessDebugVec[4] = { debugMode, 0.0f, 0.0f, 0.0f };
+        if (tl.tessDebug >= 0) glUniform4fv(tl.tessDebug, 1, tessDebugVec);
+    }
     if (tl.mapHalfExtent >= 0) {
         gosPostProcess* pp = getGosPostProcess();
         float halfExt = pp ? pp->getMapHalfExtent() : 0.0f;

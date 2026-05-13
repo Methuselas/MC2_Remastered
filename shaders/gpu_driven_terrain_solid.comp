@@ -130,11 +130,12 @@ uniform int  u_alphaOverride;    // 1 when Terrain::terrainTextures2 != nullptr
 uniform mat4 u_terrainMVP;
 
 // ---------------------------------------------------------------------------
-// Depth fudge — matches TERRAIN_DEPTH_FUDGE at gos_terrain_indirect.cpp:1244.
-// Mirrors PackThinRecordsForFrame:1435: pz_adj = pz + TERRAIN_DEPTH_FUDGE.
+// Depth fudge — matches TERRAIN_DEPTH_FUDGE at gos_terrain_indirect.cpp.
+// Mirrors PackThinRecordsForFrame and gos_terrain_thin.vert:176.
+// Doubled 0.001→0.002 post glClipControl(ZERO_TO_ONE); see quad.cpp:1921.
 // Gate is pz_adj ∈ [0,1), equivalent to pz ∈ [-FUDGE, 1-FUDGE).
 // ---------------------------------------------------------------------------
-const float kTerrainDepthFudge = 0.001;
+const float kTerrainDepthFudge = 0.002;
 
 // ---------------------------------------------------------------------------
 // projectZ — project world-space position through u_terrainMVP and return
@@ -173,15 +174,30 @@ void main() {
     uint vn0 = id;
     TerrainQuadRecipe r = recipes[vn0];
 
-    // Resolve terrain handle via LUT: nodeId baked into recipe._wp2 at mission load.
-    // LUT value 0 means the nodeId was not resolved — skip quad.
-    uint nodeId = floatBitsToUint(r.pos2.w);
-    if (nodeId == 0u || nodeId >= uint(terrainHandleLut.length())) return;
-    uint thSlot = terrainHandleLut[nodeId];
-    if (thSlot == 0u || thSlot == 0xFFFFFFFFu) return;
-
-    // cementWord baked into recipe._wp3 by PopulateRecipeCementWords() at mission load.
+    // cementWord read before the thSlot gate: cement quads use the cement atlas
+    // (tex3) in the fragment shader and must not be gated on thSlot.
+    // peekTextureHandle() in the C++ cache builder returns 0xffffffff for cement
+    // textures whose gos node was never explicitly resolved — those quads have
+    // nodeId == 0xffffffff, which would otherwise cause an unconditional skip.
+    // The fragment shader does not read thSlot for cement quads (control.y is
+    // declared but never used in the frag body for atlas-path quads).
     uint cementWord = floatBitsToUint(r.pos3.w);
+    bool cementQuad = (cementWord & 0x80000000u) != 0u;
+
+    // Resolve terrain handle via LUT: nodeId baked into recipe._wp2 at mission load.
+    // Non-cement quads: skip when nodeId is invalid or unresolved (no colormap tile).
+    // Cement quads: allow through even with invalid/evicted nodeId — atlas rendering
+    // uses cementWord + WorldPos, not thSlot.
+    uint nodeId = floatBitsToUint(r.pos2.w);
+    uint thSlot;
+    if (nodeId == 0u || nodeId >= uint(terrainHandleLut.length())) {
+        if (!cementQuad) return;
+        thSlot = 1u;  // dummy: frag shader ignores thSlot for cement-atlas quads
+    } else {
+        thSlot = terrainHandleLut[nodeId];
+        if ((thSlot == 0u || thSlot == 0xFFFFFFFFu) && !cementQuad) return;
+        if (thSlot == 0u || thSlot == 0xFFFFFFFFu) thSlot = 1u;  // cement with evicted handle
+    }
 
     // -----------------------------------------------------------------------
     // Project all 4 world corners through terrainMVP to get per-vertex pz.
