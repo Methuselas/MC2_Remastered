@@ -84,7 +84,15 @@ struct GpuStaticPropPacket {
 // anonymous-namespace TU clean, but MUST match this value.
 constexpr uint32_t STATIC_PROP_RING_FRAMES = 3u;
 
-constexpr uint32_t STATIC_PROP_FLAG_ALPHA_TEST = 1u << 0;
+constexpr uint32_t STATIC_PROP_FLAG_ALPHA_TEST  = 1u << 0;
+// Spotlight billboard sub-pass — packets whose TG_TypeShape::isSpotlight is
+// true get this bit at registerType. flush() draws blended packets in a
+// second walk with src-alpha blend, depth-write off, after all opaque
+// packets. Fragment shader suppresses gbuffer1 writes for these draws so
+// spotlight glow is not counted as screen-shadow-eligible geometry.
+// 2026-05-13: fixes "spotlight triangles render solid" — see memory file
+// spotlight_billboards_static_prop_opaque_bug.md.
+constexpr uint32_t STATIC_PROP_FLAG_ALPHA_BLEND = 1u << 1;
 
 // Slice 2 (object-offload): free-function form of the eligibility check used
 // by the addRenderShape gate in tgl.cpp:2522 (the bShadersDrawPathEnabled

@@ -10,12 +10,18 @@
 
 // [RENDER_CONTRACT]
 //   Pass:           StaticProp
-//   Color0:         RGBA, opaque (alpha-test for ALPHA_TEST_BIT materials)
-//   GBuffer1:       rc_gbuffer1_screenShadowEligible (production path)
+//   Color0:         RGBA, opaque (alpha-test for ALPHA_TEST_BIT materials);
+//                   src-alpha blended for ALPHA_BLEND_BIT materials in the
+//                   spotlight sub-pass at end of GpuStaticPropBatcher::flush()
+//   GBuffer1:       rc_gbuffer1_screenShadowEligible (production opaque path)
 //                   rc_gbuffer1_legacyDebugSentinelScreenShadowEligible (debug)
+//                   vec4(0.0) when ALPHA_BLEND_BIT is set (sub-pass writes
+//                   color only; glow does not cast or receive screen shadow)
 //   ShadowContract: castsStatic=true, castsDynamic=true,
 //                   skipsPostScreenShadow=false (post-shadow applies)
-//   StateContract:  depthTest=true, depthWrite=true, blend=Opaque,
+//   StateContract:  depthTest=true; depthWrite=true (opaque),
+//                   depthWrite=false (ALPHA_BLEND_BIT sub-pass);
+//                   blend=Opaque (opaque) | SrcAlpha,OneMinusSrcAlpha (sub-pass);
 //                   requiresMRT=true
 
 in vec3  v_normal;
@@ -61,7 +67,13 @@ uniform int   u_debugAddrMode;   // 0 normal, 1 gradient, 2 hash, 3 white, 4 arg
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 GBuffer1;
 
-const int ALPHA_TEST_BIT = 1;
+const int ALPHA_TEST_BIT  = 1;
+// Spotlight blended sub-pass marker. CPU side at registerType (see
+// gos_static_prop_batcher.h::STATIC_PROP_FLAG_ALPHA_BLEND) sets this for
+// SpotLight_-prefixed nodes. Drawn under src-alpha blend with depth-write
+// off. Fragment shader uses it to skip gbuffer1 writes so spotlight glow
+// is not counted as screen-shadow-eligible geometry.
+const int ALPHA_BLEND_BIT = 2;
 
 uint hash_u(uint x) {
     x ^= x >> 16; x *= 0x7feb352du;
@@ -160,5 +172,13 @@ void main() {
     c.rgb = mix(v_fog.rgb, c.rgb, u_fogValue);
 
     FragColor = c;
-    GBuffer1  = rc_gbuffer1_screenShadowEligible(normalize(v_normal));
+    // Spotlight blended sub-pass: emit zero into gbuffer1 so the
+    // screen-shadow accumulation buffer is not contaminated by translucent
+    // light-cone fragments (they emit color but should neither cast nor
+    // receive screen-space shadow).
+    if ((materialFlags & ALPHA_BLEND_BIT) != 0) {
+        GBuffer1 = vec4(0.0);
+    } else {
+        GBuffer1 = rc_gbuffer1_screenShadowEligible(normalize(v_normal));
+    }
 }
