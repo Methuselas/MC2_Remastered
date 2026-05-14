@@ -1438,6 +1438,9 @@ static GLuint  g_thinCanarySSBO         = 0;   // probe 6: separate buffer, neve
 // Probe 8: MVP fingerprint at compute dispatch time, read by bridge at draw time.
 static uint32_t g_dispatchMvpFp      = 0;
 static uint64_t g_dispatchMvpFrameIdx = 0;
+// Probe 8b: verification — also stash first 4 floats from compute-time MVP.
+// Bridge logs both sets on mismatch so we can see byte-level difference.
+static float    g_dispatchMvpFloats[4] = { 0, 0, 0, 0 };
 
 // Cached uniform locations — populated once when programs are compiled.
 // Per-frame varying uniforms (u_windowCount, u_terrainMVP, u_alphaOverride)
@@ -2414,6 +2417,11 @@ void ComputeDispatch() {
         }
         g_dispatchMvpFp       = fp;
         g_dispatchMvpFrameIdx = ringFrameIdx;
+        // Probe 8b: stash first 4 floats so bridge can log byte-level delta.
+        g_dispatchMvpFloats[0] = mvp[0];
+        g_dispatchMvpFloats[1] = mvp[1];
+        g_dispatchMvpFloats[2] = mvp[2];
+        g_dispatchMvpFloats[3] = mvp[3];
     }
 
     const uint32_t groups = (windowCount + 63u) / 64u;
@@ -2746,6 +2754,13 @@ uint32_t gos_terrain_indirect_getDispatchMvpFp() {
 
 uint64_t gos_terrain_indirect_getDispatchMvpFrameIdx() {
     return g_dispatchMvpFrameIdx;
+}
+
+void gos_terrain_indirect_getDispatchMvpFloats4(float out[4]) {
+    out[0] = g_dispatchMvpFloats[0];
+    out[1] = g_dispatchMvpFloats[1];
+    out[2] = g_dispatchMvpFloats[2];
+    out[3] = g_dispatchMvpFloats[3];
 }
 
 }  // extern "C"

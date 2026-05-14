@@ -2449,6 +2449,7 @@ void gosRenderer::renderWaterFastPath(
 // gos_terrain_indirect.cpp inside its extern "C" block).
 extern "C" uint32_t gos_terrain_indirect_getDispatchMvpFp();
 extern "C" uint64_t gos_terrain_indirect_getDispatchMvpFrameIdx();
+extern "C" void     gos_terrain_indirect_getDispatchMvpFloats4(float out[4]);
 extern const float* gos_GetTerrainMVPMat4();
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2679,12 +2680,25 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
                 static uint32_t s_mvpMismatchCount = 0;
                 ++s_mvpMismatchCount;
                 if (s_mvpMismatchCount == 1 || s_mvpMismatchCount % 100 == 0) {
-                    fprintf(stderr, "[RING_MVP_DELTA v1] dispatch_frame=%llu dispatch_fp=0x%08x draw_fp=0x%08x count=%u\n",
-                        (unsigned long long)dispatchFrame, dispatchFp, drawFp, s_mvpMismatchCount);
+                    // Probe 8b: read back compute-time matrix bytes for byte-level verification.
+                    float dispatchFloats[4] = { 0, 0, 0, 0 };
+                    gos_terrain_indirect_getDispatchMvpFloats4(dispatchFloats);
+                    fprintf(stderr,
+                        "[RING_MVP_DELTA v1] dispatch_frame=%llu dispatch_fp=0x%08x draw_fp=0x%08x count=%u "
+                        "disp_mvp[0..3]=[%.6f,%.6f,%.6f,%.6f] "
+                        "draw_mvp[0..3]=[%.6f,%.6f,%.6f,%.6f]\n",
+                        (unsigned long long)dispatchFrame, dispatchFp, drawFp, s_mvpMismatchCount,
+                        dispatchFloats[0], dispatchFloats[1], dispatchFloats[2], dispatchFloats[3],
+                        drawMvp[0], drawMvp[1], drawMvp[2], drawMvp[3]);
                     fflush(stderr);
                     if (s_probeSink2) {
-                        fprintf(s_probeSink2, "[RING_MVP_DELTA v1] dispatch_frame=%llu dispatch_fp=0x%08x draw_fp=0x%08x count=%u\n",
-                            (unsigned long long)dispatchFrame, dispatchFp, drawFp, s_mvpMismatchCount);
+                        fprintf(s_probeSink2,
+                            "[RING_MVP_DELTA v1] dispatch_frame=%llu dispatch_fp=0x%08x draw_fp=0x%08x count=%u "
+                            "disp_mvp[0..3]=[%.6f,%.6f,%.6f,%.6f] "
+                            "draw_mvp[0..3]=[%.6f,%.6f,%.6f,%.6f]\n",
+                            (unsigned long long)dispatchFrame, dispatchFp, drawFp, s_mvpMismatchCount,
+                            dispatchFloats[0], dispatchFloats[1], dispatchFloats[2], dispatchFloats[3],
+                            drawMvp[0], drawMvp[1], drawMvp[2], drawMvp[3]);
                         fflush(s_probeSink2);
                     }
                 }
