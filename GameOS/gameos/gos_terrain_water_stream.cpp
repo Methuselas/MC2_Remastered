@@ -21,6 +21,7 @@
 #include "gos_terrain_lighting.h"
 #include "gos_static_prop_killswitch.h"  // gos_GetTerrainMVPMat4()
 #include "gos_terrain_indirect.h"        // IsFrameSolidArmed()
+#include <cassert>
 
 #include <vector>
 #include <unordered_map>
@@ -78,6 +79,14 @@ uint32_t g_uploadSummaryFrames = 0;
 uint64_t g_uploadSummaryNarrowQuads = 0;
 uint64_t g_uploadSummaryFullWalkQuads = 0;
 
+// B4 Stage 1c — water parity mask.
+// One bit per corner-0 vertexNum. Set for every quad that UploadAndBindThinRecords
+// emits a thin record for (= quads the legacy water path draws this frame).
+// Reset at the top of UploadAndBindThinRecords and in Reset().
+// Indexed and sized identically to gos_terrain_mask_dispatch's s_waterMask.
+static constexpr int32_t kWaterParityMaskWords = 450;  // ceil(14400/32)
+static uint32_t s_waterParityMask[kWaterParityMaskWords];
+
 bool s_debugEnabledKnown = false;
 bool s_debugEnabled = false;
 bool DebugOn() {
@@ -130,6 +139,7 @@ void Reset() {
     g_narrowQuadsThisFrame.clear();
     g_narrowQuadsThisFrame.shrink_to_fit();
     g_narrowMaxSeen = 0;
+    memset(s_waterParityMask, 0, sizeof(s_waterParityMask));
 }
 
 bool NarrowEnabled() {
@@ -333,6 +343,20 @@ bool IsReady() {
     return g_ready;
 }
 
+// B4 Stage 1c — water parity mask accessor.
+const uint32_t* GetWaterParityMask(int* outWords) {
+    if (outWords) *outWords = kWaterParityMaskWords;
+    return s_waterParityMask;
+}
+
+const WaterRecipe* RecipeForVertexNum(int32_t vn) {
+    if (vn < 0) return nullptr;
+    auto it = g_vertexNumToRecipe.find(static_cast<uint32_t>(vn));
+    if (it == g_vertexNumToRecipe.end()) return nullptr;
+    assert(it->second < (uint32_t)g_recipes.size()); // invariant: Build populates both atomically
+    return &g_recipes[it->second];
+}
+
 unsigned int EnsureRecipeBufferUploaded() {
     if (!g_ready || g_recipes.empty())
         return 0;
@@ -405,6 +429,9 @@ uint32_t UploadAndBindThinRecords() {
     // live light/fog/pzValid.
     g_thinStaging.clear();
     g_thinStaging.reserve((size_t)iterCount);
+
+    // B4 Stage 1c: zero parity mask before rebuilding it this frame.
+    memset(s_waterParityMask, 0, sizeof(s_waterParityMask));
 
     uint32_t pzValidCount = 0;
     uint32_t waterHandleCount = 0;
@@ -497,6 +524,10 @@ uint32_t UploadAndBindThinRecords() {
         tr.fogRGB2   = (q.vertices[2]->fogRGB & 0xFFFFFF00u) | m2;
         tr.fogRGB3   = (q.vertices[3]->fogRGB & 0xFFFFFF00u) | m3;
         g_thinStaging.push_back(tr);
+
+        // B4 Stage 1c: set parity mask bit (topLeftVN is the corner-0 vertexNum).
+        if (topLeftVN < (uint32_t)(kWaterParityMaskWords * 32))
+            s_waterParityMask[topLeftVN >> 5] |= (1u << (topLeftVN & 31u));
     }
 
     {

@@ -420,6 +420,14 @@ GLuint                         g_recipeSSBO          = 0;
 int32_t                        g_recipeMapSide       = 0;
 bool                           g_recipeReady         = false;
 
+// Slice B4 Stage 1b — parity shadow mask. Set by PackThinRecordsForFrame() each
+// time a quad is successfully packed (bit index = vn0 = corner-0 vertexNum).
+// Read by gos_terrain_mask_dispatch::DrawMaskSolid() comparator.
+// Sized at worst-case 120×120 = 14,400 quads → ceil(14400/32) = 450 uint32s,
+// matching gos_terrain_mask_dispatch::kMaskWords.
+static constexpr int32_t kParityMaskWords = 450;
+static uint32_t s_packParityMask[kParityMaskWords] = {0};
+
 // Mission-latch for trace reset
 static bool s_firstDrawPrintedThisMission = false;
 
@@ -1549,6 +1557,9 @@ static int PackThinRecordsForFrame() {
     g_cementMappedThisFrame       = 0;
     g_concreteAllCornersThisFrame = 0;
 
+    // Slice B4 Stage 1b — clear parity mask for this frame.
+    memset(s_packParityMask, 0, sizeof(s_packParityMask));
+
     if (!land) return 0;
     const long total          = land->getNumQuads();
     const TerrainQuadPtr quads = land->getQuadList();
@@ -1698,6 +1709,12 @@ static int PackThinRecordsForFrame() {
 
         gos_terrain_indirect::Counters_AddIndirectSolidPackedQuad();
         ++packed;
+
+        // Slice B4 Stage 1b — record this quad's vn0 in the parity mask so
+        // gos_terrain_mask_dispatch can compare against the SOLID mask.
+        if (vn0 < (kParityMaskWords * 32)) {
+            s_packParityMask[vn0 >> 5] |= (1u << (vn0 & 31));
+        }
     }
 
     if (packed == 0) return 0;
@@ -2646,6 +2663,29 @@ void ComputeDispatchParity_Check() {
 int gos_terrain_indirect_getRingSlot() {
     return g_thinRingSlot;
 }
+
+// Slice B4 Stage 1b — C-linkage accessors used by gos_terrain_mask_dispatch::DrawMaskSolid.
+extern "C" {
+
+unsigned int gos_terrain_indirect_getRecipeSSBO() {
+    return (unsigned int)g_recipeSSBO;
+}
+
+int gos_terrain_indirect_getRecipeMapSide() {
+    return (int)g_recipeMapSide;
+}
+
+int gos_terrain_indirect_getRecipeQuadCount() {
+    // The dense recipe is indexed by vertexNum = mx + my*mapSide, sized mapSide^2.
+    return (int)g_recipeMapSide * (int)g_recipeMapSide;
+}
+
+const uint32_t* gos_terrain_indirect_getPackParityMask(int* outWords) {
+    if (outWords) *outWords = (int)kParityMaskWords;
+    return s_packParityMask;
+}
+
+}  // extern "C"
 
 // ---------------------------------------------------------------------------
 // PR2c Stage 1c — mine static-bake infrastructure.

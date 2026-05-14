@@ -841,3 +841,12 @@ const GpuTerrainLightingOutput* GetMappedOutputForParity()
 }
 
 } // namespace gos_terrain_lighting
+
+// Slice B4 Stage 1b — C-linkage accessor for the per-vertex lighting output SSBO.
+// Used by gos_terrain_mask_dispatch::DrawMaskSolid() to bind at binding=2.
+// Defined in the same TU as s_computeOutputSsbo (which has internal linkage
+// via the anonymous namespace); the implicit using-directive makes the name
+// visible by unqualified lookup at file scope.
+extern "C" GLuint gos_terrain_lighting_getOutputSSBO() {
+    return s_computeOutputSsbo;
+}
