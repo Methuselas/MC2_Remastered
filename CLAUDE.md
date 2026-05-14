@@ -115,6 +115,19 @@ Pre-commit invariant scripts (run if you touched the relevant area):
 - Object lifecycle: `sh scripts/check-destroy-invariant.sh`
 - UI icon atlas / `code/mechicon.cpp`: `sh scripts/check-asset-scale-callers.sh`
 
+## Smoke sessions are USER-DRIVEN (load-bearing)
+
+**The user can see and control every smoke session.** `run_smoke.py` launches mc2.exe in a real game window the user is watching live. They can drive the camera (mouse/keyboard), observe visual bugs (triangles, flicker, missing geometry), and terminate early. Smoke feedback like "I saw the triangle," "still doing it," "the second smoke had it" is **first-hand visual observation**, not their reading of a log.
+
+**Anti-patterns the agent must NOT do:**
+- DO NOT tell the user "please run mc2.exe manually and reproduce." They are *already* doing that during the smoke command you just ran.
+- DO NOT ask "can you confirm by re-running with X env var." The user is the visual observer; each smoke run is the user-driven repro.
+- DO NOT say "the smoke isn't reproducing the bug for me" when the user reports it IS happening. Their visual evidence outranks any silent probe.
+
+**What to do instead:**
+- After every smoke the user reports a bug in: read `tests/smoke/artifacts/<latest>/{mission}.ring_trace.log` for that run's probe events. The runner snapshots the file-sink per mission.
+- When the user says "still doing it" they mean the most recent smoke. Find the latest artifact dir, analyze its ring_trace.log.
+
 ## Smoke gate ("did I break it")
 
 Default regression gate for render / init / cull / asset changes:
