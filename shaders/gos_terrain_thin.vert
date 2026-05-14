@@ -1,5 +1,21 @@
 //#version 430 (version provided by material prefix)
 
+// AMD RX 7900 XTX attribute-0 mitigation (per docs/amd-driver-rules.md:5 and
+// the amd-shader-reviewer agent).  Every other VS in this codebase has a
+// layout(location=0) input that's actually read; this VS is purely
+// SSBO-fetch via gl_VertexID and was the only attribute-less VS until now.
+// Without a shader-side layout(location=0) input, the bridge's
+// glEnableVertexAttribArray(0) is necessary but not sufficient — AMD's
+// driver may still treat attribute 0 as inactive and emit either silent
+// skips or silently-corrupt vertices on rasterization.  Suspected as one
+// cause of the "huge garbage terrain triangle under fast camera rotation"
+// bug (2026-05-14 investigation, raster-triangle-probe-state.md).
+// The bridge enables the array but binds no VBO, so this attribute reads
+// the generic vertex attribute value (defaults to vec4(0,0,0,1)).  We
+// read .x once into a sink term that gets multiplied by 0.0 so it never
+// affects gl_Position — only its presence in the shader matters.
+layout(location = 0) in vec4 _amdAttr0Dummy;
+
 // --- SSBO bindings (must match TerrainQuadThinRecord / TerrainQuadRecipe in gos_terrain_patch_stream.h) ---
 struct TerrainQuadThinRecord {
     uvec4 control;    // x=recipeIdx, y=terrainHandle, z=flags(bit0=uvMode,bit1=pzTri1,bit2=pzTri2), w=_pad0
@@ -176,7 +192,10 @@ void main() {
     screen.z = clip.z * rhw + 0.002;
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
-    gl_Position      = vec4(ndc.xyz * absW, absW);
+    // AMD attribute-0 sink: forces the compiler to keep _amdAttr0Dummy as a
+    // live input.  Multiplied by 0.0 so the actual position is unchanged.
+    float _amdAttr0Sink = _amdAttr0Dummy.x * 0.0;
+    gl_Position      = vec4(ndc.xyz * absW + vec3(_amdAttr0Sink), absW);
     // glClipControl(ZERO_TO_ONE) makes screen.z (D3D-style [0, 1]) native;
     // matches gl_FragCoord.z range without remap.
     UndisplacedDepth = screen.z;
