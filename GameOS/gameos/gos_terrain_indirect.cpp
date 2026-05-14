@@ -1960,10 +1960,12 @@ void ComputeDispatch() {
         g_locSolidMVP = glGetUniformLocation(g_solidComputeProgram, "u_terrainMVP");
         // Upload constants once — these never change across frames.
         glUseProgram(g_solidComputeProgram);
-        const GLint locMTR = glGetUniformLocation(g_solidComputeProgram, "u_maxThinRecords");
-        const GLint locMS  = glGetUniformLocation(g_solidComputeProgram, "u_mapSide");
-        if (locMTR >= 0) glUniform1i(locMTR, (int)kMaxThinRecords);
-        if (locMS  >= 0) glUniform1i(locMS,  (int)Terrain::realVerticesMapSide);
+        const GLint locMTR  = glGetUniformLocation(g_solidComputeProgram, "u_maxThinRecords");
+        const GLint locMS   = glGetUniformLocation(g_solidComputeProgram, "u_mapSide");
+        const GLint locWUPV = glGetUniformLocation(g_solidComputeProgram, "u_worldUnitsPerVertex");
+        if (locMTR  >= 0) glUniform1i(locMTR, (int)kMaxThinRecords);
+        if (locMS   >= 0) glUniform1i(locMS,  (int)Terrain::realVerticesMapSide);
+        if (locWUPV >= 0) glUniform1f(locWUPV, Terrain::worldUnitsPerVertex);
         glUseProgram(0);
     }
     if (g_solidCmdPatchProgram == 0) {
@@ -2110,15 +2112,17 @@ void ComputeDispatch() {
     // all prior GPU commands are complete, so glGetBufferSubData is stall-
     // free here on AMD/NV (driver fast-path for already-signaled buffers).
     if (g_solidBucketHeaderSsbo != 0 && ringFrameIdx > 1) {
-        // Read first 12 bytes of GpuDrivenBucketHeader:
-        //   [0]=visibleCount, [1]=pad0_ (unused), [2]=pad1_ (near-zero clip.w count, probe 4).
-        uint32_t hdr3[3] = { 0, 0, 0 };
+        // Read all 16 bytes of GpuDrivenBucketHeader:
+        //   [0]=visibleCount, [1]=pad0_ (unused), [2]=pad1_ (near-zero clip.w count,
+        //   probe 4), [3]=pad2_ (recipe-spread corruption count, probe 5).
+        uint32_t hdr4[4] = { 0, 0, 0, 0 };
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
         glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                           (GLsizeiptr)sizeof(hdr3), hdr3);
+                           (GLsizeiptr)sizeof(hdr4), hdr4);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        const uint32_t prevVisible = hdr3[0];
-        const uint32_t prevNearW   = hdr3[2];
+        const uint32_t prevVisible = hdr4[0];
+        const uint32_t prevNearW   = hdr4[2];
+        const uint32_t prevSpread  = hdr4[3];
 
         static uint32_t s_peakVisible    = 0;
         static uint32_t s_overshootCount = 0;
@@ -2137,6 +2141,29 @@ void ComputeDispatch() {
                 (unsigned long long)ringFrameIdx, (unsigned)prevVisible,
                 kMaxThinRecords, (unsigned)s_overshootCount,
                 (unsigned)s_peakVisible, (unsigned)mvpFp);
+        }
+        // Probe 5 tripwire: any frame where pad2_ > 0 means at least one
+        // RECIPE entry has worldPos corners spanning more than 2.5 cells —
+        // ground-truth evidence that the recipe SSBO is corrupt.  If this
+        // fires AND the bug is visible, recipe data is the root cause.
+        // If silent AND bug visible, recipe is fine — corruption is in the
+        // VS or downstream.
+        if (prevSpread > 0) {
+            static uint32_t s_spreadFrames = 0;
+            static uint32_t s_peakSpread   = 0;
+            static uint32_t s_nextSpreadReportAt = 1;
+            ++s_spreadFrames;
+            if (prevSpread > s_peakSpread) s_peakSpread = prevSpread;
+            if (s_spreadFrames == s_nextSpreadReportAt) {
+                PROBE_LOG(
+                    "[RING_SPREAD v1] frame=%llu spread_count=%u spread_frames=%u "
+                    "peak_spread=%u prev_visible=%u mvpFp=0x%08x\n",
+                    (unsigned long long)ringFrameIdx, (unsigned)prevSpread,
+                    (unsigned)s_spreadFrames, (unsigned)s_peakSpread,
+                    (unsigned)prevVisible, (unsigned)mvpFp);
+                s_nextSpreadReportAt = s_nextSpreadReportAt < 100 ? (s_nextSpreadReportAt + 1)
+                                     : (s_nextSpreadReportAt * 10);
+            }
         }
         // Probe 4 tripwire: any frame where pad1_ > 0 means at least one quad
         // passed the pzOk gate while having a corner with |clip.w| < 0.05.

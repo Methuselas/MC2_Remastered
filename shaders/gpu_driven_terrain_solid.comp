@@ -128,6 +128,7 @@ uniform int  u_maxThinRecords;
 uniform int  u_mapSide;          // realVerticesMapSide
 uniform int  u_alphaOverride;    // 1 when Terrain::terrainTextures2 != nullptr
 uniform mat4 u_terrainMVP;
+uniform float u_worldUnitsPerVertex;  // Terrain::worldUnitsPerVertex; probe-5 spread check
 
 // ---------------------------------------------------------------------------
 // Depth fudge — matches TERRAIN_DEPTH_FUDGE at gos_terrain_indirect.cpp.
@@ -182,6 +183,28 @@ void main() {
 
     uint vn0 = id;
     TerrainQuadRecipe r = recipes[vn0];
+
+    // ─── Probe 5 (recipe corner-spread sanity check, 2026-05-14) ─────────
+    // Recipe corners (worldPos0..3) should span at most ONE cell width in
+    // each axis — they're the 4 corners of a single map quad whose
+    // top-left vertex is at vn0.  If any axis spread exceeds a generous
+    // 2.5× worldUnitsPerVertex, the recipe entry is CORRUPT (its corners
+    // are pointing somewhere else on the map).  Such a recipe would, if
+    // it passes the cull gate, draw a giant triangle stretching across
+    // the world — exactly matching the symptom we're chasing.  Count
+    // such corrupt recipes per frame via pad2_.  Read back on C++ side.
+    {
+        float minX = min(min(r.pos0.x, r.pos1.x), min(r.pos2.x, r.pos3.x));
+        float maxX = max(max(r.pos0.x, r.pos1.x), max(r.pos2.x, r.pos3.x));
+        float minY = min(min(r.pos0.y, r.pos1.y), min(r.pos2.y, r.pos3.y));
+        float maxY = max(max(r.pos0.y, r.pos1.y), max(r.pos2.y, r.pos3.y));
+        float spreadX = maxX - minX;
+        float spreadY = maxY - minY;
+        float kLimit = 2.5 * u_worldUnitsPerVertex;
+        if (spreadX > kLimit || spreadY > kLimit) {
+            atomicAdd(hdr.pad2_, 1u);
+        }
+    }
 
     // cementWord read before the thSlot gate: cement quads use the cement atlas
     // (tex3) in the fragment shader and must not be gated on thSlot.
