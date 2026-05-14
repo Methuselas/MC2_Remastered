@@ -296,6 +296,16 @@ def main():
                             "MC2_GPU_DRIVEN_TRACE")},
             },
         )
+        # Clear the file-sink probe log next to mc2.exe before each mission
+        # so each run captures its own probe events.  See gos_terrain_indirect
+        # PROBE_LOG / RING_SINK in the engine: ring-buffer / cmd-patch /
+        # overshoot / near-clip-w / recipe-spread tripwires.
+        ring_sink_path = Path(cfg.exe[0]).resolve().parent / "ring_trace.log"
+        try:
+            ring_sink_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
         print(f"[runner] running {e.stem} (tier={tier} duration={duration})",
               file=sys.stderr)
         result = run_one(cfg)
@@ -308,6 +318,15 @@ def main():
 
         if not result.verdict.passed or args.keep_logs:
             (artifact_dir / f"{e.stem}.log").write_text(result.stdout_text, encoding="utf-8", errors="replace")
+            # Snapshot the probe file-sink alongside the regular log.  Survives
+            # across runs (the per-mission unlink above resets it for next).
+            try:
+                if ring_sink_path.exists():
+                    (artifact_dir / f"{e.stem}.ring_trace.log").write_text(
+                        ring_sink_path.read_text(encoding="utf-8", errors="replace"),
+                        encoding="utf-8", errors="replace")
+            except Exception as exc:
+                print(f"[runner] could not snapshot ring_trace.log: {exc}", file=sys.stderr)
         if args.baseline_update and result.verdict.passed:
             baseline_data.setdefault(key, {})["destroys"] = {
                 "mean": result.summary.destroys, "stddev": 0, "samples": 1,
