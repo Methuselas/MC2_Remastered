@@ -2675,6 +2675,8 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
             }
             const uint32_t dispatchFp     = gos_terrain_indirect_getDispatchMvpFp();
             const uint64_t dispatchFrame  = gos_terrain_indirect_getDispatchMvpFrameIdx();
+            static uint64_t s_bridgeFrame = 0;
+            ++s_bridgeFrame;
             if (drawFp != dispatchFp) {
                 static FILE* s_probeSink2 = []{ FILE* f = fopen("ring_trace.log", "a"); return f; }();
                 static uint32_t s_mvpMismatchCount = 0;
@@ -2684,18 +2686,20 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
                     float dispatchFloats[4] = { 0, 0, 0, 0 };
                     gos_terrain_indirect_getDispatchMvpFloats4(dispatchFloats);
                     fprintf(stderr,
-                        "[RING_MVP_DELTA v1] dispatch_frame=%llu dispatch_fp=0x%08x draw_fp=0x%08x count=%u "
+                        "[RING_MVP_DELTA v1] bridge_frame=%llu dispatch_frame=%llu dispatch_fp=0x%08x draw_fp=0x%08x count=%u "
                         "disp_mvp[0..3]=[%.6f,%.6f,%.6f,%.6f] "
                         "draw_mvp[0..3]=[%.6f,%.6f,%.6f,%.6f]\n",
+                        (unsigned long long)s_bridgeFrame,
                         (unsigned long long)dispatchFrame, dispatchFp, drawFp, s_mvpMismatchCount,
                         dispatchFloats[0], dispatchFloats[1], dispatchFloats[2], dispatchFloats[3],
                         drawMvp[0], drawMvp[1], drawMvp[2], drawMvp[3]);
                     fflush(stderr);
                     if (s_probeSink2) {
                         fprintf(s_probeSink2,
-                            "[RING_MVP_DELTA v1] dispatch_frame=%llu dispatch_fp=0x%08x draw_fp=0x%08x count=%u "
+                            "[RING_MVP_DELTA v1] bridge_frame=%llu dispatch_frame=%llu dispatch_fp=0x%08x draw_fp=0x%08x count=%u "
                             "disp_mvp[0..3]=[%.6f,%.6f,%.6f,%.6f] "
                             "draw_mvp[0..3]=[%.6f,%.6f,%.6f,%.6f]\n",
+                            (unsigned long long)s_bridgeFrame,
                             (unsigned long long)dispatchFrame, dispatchFp, drawFp, s_mvpMismatchCount,
                             dispatchFloats[0], dispatchFloats[1], dispatchFloats[2], dispatchFloats[3],
                             drawMvp[0], drawMvp[1], drawMvp[2], drawMvp[3]);
