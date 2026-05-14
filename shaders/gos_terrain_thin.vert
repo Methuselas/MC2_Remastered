@@ -115,20 +115,23 @@ void main() {
     // Corner index table — same convention as gos_terrain.tesc thin path.
     // TOPRIGHT  (uvMode=0): tri0=corners[0,1,2], tri1=corners[0,2,3]
     // BOTTOMLEFT(uvMode=1): tri0=corners[0,1,3], tri1=corners[1,2,3]
-    uint cornerIdx;
-    if (uvMode == 0u) {
-        if (triIdx == 0u) {
-            cornerIdx = (id == 0u) ? 0u : (id == 1u) ? 1u : 2u;
-        } else {
-            cornerIdx = (id == 0u) ? 0u : (id == 1u) ? 2u : 3u;
-        }
-    } else {
-        if (triIdx == 0u) {
-            cornerIdx = (id == 0u) ? 0u : (id == 1u) ? 1u : 3u;
-        } else {
-            cornerIdx = (id == 0u) ? 1u : (id == 1u) ? 2u : 3u;
-        }
-    }
+    //
+    // AMD RDNA3 mis-lower hazard (mc2-terrain-indirect-expert, 2026-05-14):
+    // the previous fix (commit 53cd157) replaced the wpsArr[cornerIdx]
+    // CONSUMER with array indexing, but left the cornerIdx PRODUCER as a
+    // nested ternary chain — which is the very pattern the comment below
+    // warns against.  If RDNA3 mis-picks cornerIdx the array lookup
+    // faithfully fetches the wrong corner — identical symptom to before.
+    // Fix: full constant-table lookup keyed by (uvMode, triIdx, id).
+    // Flat 12-entry form is friendliest to AMD's SPIR-V lowering — fewer
+    // levels of array indirection than uint[2][2][3].
+    const uint kCornerTable[12] = uint[12](
+        0u, 1u, 2u,  // uvMode=0, triIdx=0  (TOPRIGHT tri0)
+        0u, 2u, 3u,  // uvMode=0, triIdx=1  (TOPRIGHT tri1)
+        0u, 1u, 3u,  // uvMode=1, triIdx=0  (BOTTOMLEFT tri0)
+        1u, 2u, 3u   // uvMode=1, triIdx=1  (BOTTOMLEFT tri1)
+    );
+    uint cornerIdx = kCornerTable[uvMode * 6u + triIdx * 3u + id];
 
     // World position and normal from recipe corners.
     // AMD RDNA3 mis-lower hazard (amd-shader-reviewer 2026-05-14): the
