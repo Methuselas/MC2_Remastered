@@ -86,11 +86,14 @@ vec4 unpackARGB(uint packed) {
 }
 
 // Get uvec4 component by index 0-3.
+// AMD RDNA3 GLSL compilers have been observed to mis-lower the chained-if
+// pattern when inlined into per-vertex hot paths (amd-shader-reviewer
+// finding, 2026-05-14).  Use an explicit array-init form: the compiler is
+// required to produce table-lookup or branchless select, never speculative
+// scalarization that could pick the wrong component.
 uint uvec4Idx(uvec4 v, uint idx) {
-    if (idx == 0u) return v.x;
-    if (idx == 1u) return v.y;
-    if (idx == 2u) return v.z;
-    return v.w;
+    uint comps[4] = uint[4](v.x, v.y, v.z, v.w);
+    return comps[idx];
 }
 
 void main() {
@@ -144,14 +147,19 @@ void main() {
     }
 
     // World position and normal from recipe corners.
-    vec4 wp = (cornerIdx == 0u) ? rec.worldPos0
-             :(cornerIdx == 1u) ? rec.worldPos1
-             :(cornerIdx == 2u) ? rec.worldPos2
-             :                    rec.worldPos3;
-    vec4 wn = (cornerIdx == 0u) ? rec.worldNorm0
-             :(cornerIdx == 1u) ? rec.worldNorm1
-             :(cornerIdx == 2u) ? rec.worldNorm2
-             :                    rec.worldNorm3;
+    // AMD RDNA3 mis-lower hazard (amd-shader-reviewer 2026-05-14): the
+    // chained-ternary form against a runtime cornerIdx is the documented
+    // pattern most likely to cause one VS invocation to select a worldPos
+    // belonging to a *different* corner than its siblings, producing a
+    // triangle with one corner positioned wildly away from the others.
+    // Symptom match: giant grey-banded terrain triangle under fast camera
+    // rotation (worldPos varies across atlas tiles in a single tri).
+    // Fix: pack into local arrays and index — compiler emits table lookup
+    // or branchless select, never speculative scalarization.
+    vec4 wpsArr[4] = vec4[4](rec.worldPos0, rec.worldPos1, rec.worldPos2, rec.worldPos3);
+    vec4 wnsArr[4] = vec4[4](rec.worldNorm0, rec.worldNorm1, rec.worldNorm2, rec.worldNorm3);
+    vec4 wp = wpsArr[cornerIdx];
+    vec4 wn = wnsArr[cornerIdx];
     vec3 worldPos  = wp.xyz;
     vec3 worldNorm = normalize(wn.xyz);
 
