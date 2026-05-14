@@ -6,7 +6,16 @@ struct TerrainQuadThinRecord {
     uvec4 lightRGBs;  // corners 0-3, packed ARGB
     // fogRGBs removed — TerrainType now in recipe._wp0, FogValue was dead
 };
-layout(std430, binding = 2) readonly buffer ThinRecordBuf {
+// AMD L1-coherency fix (mc2-cpu-gpu-offload-expert, 2026-05-14): see paired
+// `coherent` qualifier on the compute writer at gpu_driven_terrain_solid.comp:118.
+// Without `coherent` on BOTH ends, AMD VS lane prefetches can return stale
+// thin-record bytes (specifically tr.control.z = flags) under heavy compute
+// throughput, even after glMemoryBarrier and glFinish.  The race is per-lane
+// L1-prefetch vs the writer's cache-line invalidation, not a frame-level
+// barrier issue.  Without coherent, kCornerTable[uvMode*6+...] can select a
+// wrong corner-table half for ONE invocation per frame, producing the giant
+// terrain triangle whose worldPos varies frame-to-frame (skybox / mid / water).
+layout(std430, binding = 2) coherent readonly buffer ThinRecordBuf {
     TerrainQuadThinRecord thinRecs[];
 };
 

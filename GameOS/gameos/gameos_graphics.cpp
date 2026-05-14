@@ -2445,6 +2445,12 @@ void gosRenderer::renderWaterFastPath(
     invalidateRenderStateCache();
 }
 
+// Probe 8: forward decls for cross-TU MVP fingerprint accessors (defined in
+// gos_terrain_indirect.cpp inside its extern "C" block).
+extern "C" uint32_t gos_terrain_indirect_getDispatchMvpFp();
+extern "C" uint64_t gos_terrain_indirect_getDispatchMvpFrameIdx();
+extern const float* gos_GetTerrainMVPMat4();
+
 // ──────────────────────────────────────────────────────────────────────────
 // Terrain indirect draw bridge (Stage 3 of indirect-terrain SOLID PR1)
 //
@@ -2649,6 +2655,66 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
         const GLsizeiptr sz     = (GLsizeiptr)(kMaxRecs * kRecordSz);
         glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)thinRecordSSBO, offset, sz);
     }
+
+    // ── Probe 8: compare draw-time MVP fingerprint vs compute-time fingerprint.
+    // Both compute and the thin VS use gos_GetTerrainMVPMat4().  If the matrix
+    // has been mutated between those two read points (in the same frame), the
+    // compute's pzOk gate decisions disagree with the VS's projection — quads
+    // that compute marked as visible may project to wild screen positions.
+    // Hypothesis after probes 1-7a all silent + bug persists: MVP delta is the
+    // last data-source candidate we haven't tested.
+    {
+        const float* drawMvp = gos_GetTerrainMVPMat4();
+        if (drawMvp) {
+            uint32_t drawFp = 2166136261u;
+            for (int k = 0; k < 12; ++k) {
+                uint32_t bits = 0;
+                memcpy(&bits, &drawMvp[k], sizeof(bits));
+                drawFp ^= bits; drawFp *= 16777619u;
+            }
+            const uint32_t dispatchFp     = gos_terrain_indirect_getDispatchMvpFp();
+            const uint64_t dispatchFrame  = gos_terrain_indirect_getDispatchMvpFrameIdx();
+            if (drawFp != dispatchFp) {
+                static FILE* s_probeSink2 = []{ FILE* f = fopen("ring_trace.log", "a"); return f; }();
+                static uint32_t s_mvpMismatchCount = 0;
+                ++s_mvpMismatchCount;
+                if (s_mvpMismatchCount == 1 || s_mvpMismatchCount % 100 == 0) {
+                    fprintf(stderr, "[RING_MVP_DELTA v1] dispatch_frame=%llu dispatch_fp=0x%08x draw_fp=0x%08x count=%u\n",
+                        (unsigned long long)dispatchFrame, dispatchFp, drawFp, s_mvpMismatchCount);
+                    fflush(stderr);
+                    if (s_probeSink2) {
+                        fprintf(s_probeSink2, "[RING_MVP_DELTA v1] dispatch_frame=%llu dispatch_fp=0x%08x draw_fp=0x%08x count=%u\n",
+                            (unsigned long long)dispatchFrame, dispatchFp, drawFp, s_mvpMismatchCount);
+                        fflush(s_probeSink2);
+                    }
+                }
+            }
+        }
+
+        // Also dump cmd block (terrain-indirect-expert's probe 8 secondary):
+        // check cmd.first and cmd.baseInstance fields are zero.  cmd-patch
+        // shader sets them to 0 explicitly; non-zero indicates a race or wrong
+        // upload.
+        uint32_t cmdBlock[4] = {0,0,0,0};
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, (GLuint)indirectCmdBuffer);
+        glGetBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0, sizeof(cmdBlock), cmdBlock);
+        if (cmdBlock[2] != 0u || cmdBlock[3] != 0u) {
+            static FILE* s_probeSink3 = []{ FILE* f = fopen("ring_trace.log", "a"); return f; }();
+            static uint32_t s_cmdFieldsBad = 0;
+            ++s_cmdFieldsBad;
+            if (s_cmdFieldsBad == 1 || s_cmdFieldsBad % 50 == 0) {
+                fprintf(stderr, "[RING_CMDFIELDS v1] count=%u inst=%u first=%u base=%u bad_count=%u\n",
+                    cmdBlock[0], cmdBlock[1], cmdBlock[2], cmdBlock[3], s_cmdFieldsBad);
+                fflush(stderr);
+                if (s_probeSink3) {
+                    fprintf(s_probeSink3, "[RING_CMDFIELDS v1] count=%u inst=%u first=%u base=%u bad_count=%u\n",
+                        cmdBlock[0], cmdBlock[1], cmdBlock[2], cmdBlock[3], s_cmdFieldsBad);
+                    fflush(s_probeSink3);
+                }
+            }
+        }
+    }
+    // ── end probe 8 ────────────────────────────────────────────────────────
 
     // ---- Draw --------------------------------------------------------------
     glMultiDrawArraysIndirect(GL_TRIANGLES, nullptr, (GLsizei)cmdCount, 0);

@@ -115,15 +115,25 @@ struct GpuTerrainLightingOutput {
 layout(std430, binding = 0) readonly  buffer Recipes  { TerrainQuadRecipe        recipes[];          };
 layout(std430, binding = 1) readonly  buffer Lighting  { GpuTerrainLightingOutput lighting[];         };
 layout(std430, binding = 2) readonly  buffer HandleLut { uint                     terrainHandleLut[]; };
-layout(std430, binding = 3) writeonly buffer Thin      { TerrainQuadThinRecord    thin[];             };
+// AMD L1-coherency fix (mc2-cpu-gpu-offload-expert, 2026-05-14):
+// On AMD RDNA1/2/3, cross-stage SSBO writes-then-reads in the same frame can
+// expose stale L1 vector cache lines to the reader (VS) even after the
+// explicit glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT).  The qualifier
+// `coherent` forces the compiler to emit cache-bypass loads/stores, and the
+// reader-side `coherent` invalidates the relevant cache lines on read.  The
+// project applies this consistently in gpu_cull.comp / gpu_cull_block_rollup.comp
+// and on the bucket header below, but the thin record stream was inconsistent.
+// Suspected root cause of the giant-grey-triangle-under-fast-rotation bug
+// (probe trail: docs/superpowers/progress/2026-05-13-raster-triangle-probe-state.md).
+layout(std430, binding = 3) coherent  writeonly buffer Thin      { TerrainQuadThinRecord    thin[];             };
 layout(std430, binding = 6) coherent  buffer Header    { GpuDrivenBucketHeader    hdr;                };
-// Probe 6: canary buffer.  Compute writes the same recipeIdx (vn0) here
-// AT THE SAME outSlot it writes the thin record.  The bridge never binds
-// this buffer, so nothing else in the GL pipeline can touch it.  If on
-// the C++ side canaryRecipeIdx[i] != thin[i].recipeIdx for some i, then
-// the thin SSBO is being clobbered between compute write and VS read by
-// SOMETHING OUTSIDE the compute shader.
-layout(std430, binding = 7) writeonly buffer Canary    { uint                     canaryRecipeIdx[];  };
+// Probe 6 + 7a: canary buffer.  Stride is 2 uints per record: [recipeIdx, flags].
+// Bridge never binds this buffer, so nothing else in the GL pipeline can touch
+// it.  If thin[i].recipeIdx != canary[2*i] OR thin[i].flags != canary[2*i+1]
+// on C++-side comparison, the thin SSBO has been clobbered between compute
+// write and our readback — and we can identify WHICH field was hit.
+// flags field is the prime suspect post-coherent-qualifier falsification.
+layout(std430, binding = 7) coherent  writeonly buffer Canary    { uint                     canaryWord[];       };
 
 // ---------------------------------------------------------------------------
 // Uniforms.
@@ -352,8 +362,10 @@ void main() {
     tr.lightRGB3     = lrgb3;
     thin[outSlot]    = tr;
 
-    // Probe 6: canary write, same outSlot, separate buffer the bridge
-    // never binds.  If thin[outSlot].recipeIdx ever != canaryRecipeIdx[outSlot]
-    // when sampled after barrier, the thin SSBO is being clobbered.
-    canaryRecipeIdx[outSlot] = vn0;
+    // Probe 6 + 7a: canary writes — recipeIdx at 2*outSlot, flags at 2*outSlot+1.
+    // If thin[outSlot].recipeIdx ever != canaryWord[2*outSlot] OR
+    // thin[outSlot].flags ever != canaryWord[2*outSlot+1] when sampled after
+    // barrier, the thin SSBO is being clobbered.  Identifies WHICH field hit.
+    canaryWord[2u * outSlot]      = vn0;
+    canaryWord[2u * outSlot + 1u] = thinFlags;
 }

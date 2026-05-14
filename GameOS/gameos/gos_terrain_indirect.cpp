@@ -1435,6 +1435,9 @@ static GLuint  g_solidCmdPatchProgram   = 0;
 static GLuint  g_solidBucketHeaderSsbo  = 0;
 static GLuint  g_terrainHandleLutSSBO   = 0;
 static GLuint  g_thinCanarySSBO         = 0;   // probe 6: separate buffer, never bound by bridge
+// Probe 8: MVP fingerprint at compute dispatch time, read by bridge at draw time.
+static uint32_t g_dispatchMvpFp      = 0;
+static uint64_t g_dispatchMvpFrameIdx = 0;
 
 // Cached uniform locations — populated once when programs are compiled.
 // Per-frame varying uniforms (u_windowCount, u_terrainMVP, u_alphaOverride)
@@ -2013,16 +2016,13 @@ void ComputeDispatch() {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
 
-    // Probe 6: lazy-allocate canary SSBO — kMaxThinRecords uints, never bound
-    // by the bridge.  Compute writes canaryRecipeIdx[outSlot] = vn0 alongside
-    // the thin record.  If thin[i].recipeIdx and canary[i] disagree on the
-    // C++ readback, the thin SSBO is being clobbered between compute write
-    // and our sample point.
+    // Probe 6 + 7a: lazy-allocate canary SSBO — 2*kMaxThinRecords uints,
+    // never bound by the bridge.  Compute writes [recipeIdx, flags] per record.
     if (g_thinCanarySSBO == 0) {
         glGenBuffers(1, &g_thinCanarySSBO);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinCanarySSBO);
         glBufferData(GL_SHADER_STORAGE_BUFFER,
-                     (GLsizeiptr)(kMaxThinRecords * sizeof(uint32_t)),
+                     (GLsizeiptr)(2u * kMaxThinRecords * sizeof(uint32_t)),
                      nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
@@ -2174,85 +2174,116 @@ void ComputeDispatch() {
                 kMaxThinRecords, (unsigned)s_overshootCount,
                 (unsigned)s_peakVisible, (unsigned)mvpFp);
         }
-        // Probe 6: sample-compare thin SSBO recipeIdx vs canary recipeIdx.
-        // Compute writes both at the same outSlot in the SAME dispatch.  The
-        // canary buffer is never bound by the bridge (only binding 7 in this
-        // compute), so it can ONLY be modified by this compute shader.  If
-        // thin[i].recipeIdx differs from canary[i] when read here (next frame,
-        // after fence wait → prev frame's GPU work done), the thin SSBO has
-        // been clobbered by something between compute write and our readback.
-        // Sample 5 well-spaced indices to keep readback cost bounded.
+        // Probe 6 (FULL COVERAGE): compare thin[i].recipeIdx vs canary[i]
+        // for EVERY i in [0, visibleCount).  Compute writes both at the same
+        // outSlot in the SAME dispatch; canary buffer is never bound by the
+        // bridge.  If for any i the two disagree, the thin SSBO has been
+        // clobbered between compute write and our readback.
+        //
+        // User-reported symptom: giant grey-banded triangle that appears in
+        // varied screen locations (skybox / mid-screen / behind terrain at
+        // water level) frame-to-frame.  Only mechanism that explains location
+        // variance is ONE thin record per frame having a corrupt recipeIdx
+        // pointing to different recipes each occurrence.  Sample-based probe
+        // (5 indices) almost certainly missed it; full coverage will catch it.
+        //
+        // Cost: visibleCount * 4 bytes for canary + visibleCount * 4 bytes for
+        // thin.recipeIdx = ~80KB/frame at peak visibleCount=10000. PCIe stall
+        // possible but acceptable for diagnostic.
         if (g_thinCanarySSBO != 0 && g_thinRecordSSBO != 0 && prevVisible > 0) {
             const uint32_t vis = prevVisible < (uint32_t)kMaxThinRecords
                                 ? prevVisible : (uint32_t)kMaxThinRecords;
-            const uint32_t sampleIdx[5] = {
-                0u,
-                vis > 1 ? vis / 4u : 0u,
-                vis > 1 ? vis / 2u : 0u,
-                vis > 1 ? (3u * vis) / 4u : 0u,
-                vis > 0 ? vis - 1u : 0u,
-            };
-            // The thin SSBO ring slot is *previous* frame's, which is
-            // (g_thinRingSlot + kThinRingFrames - 1) % kThinRingFrames AT
-            // THE TIME of last compute.  But after the advance at line 2005
-            // we ALREADY moved to the new slot.  So the slot we just waited
-            // on (and that holds the canary-checked thin data) IS the slot
-            // the compute most recently wrote to before this frame — which
-            // is g_thinRingSlot one cycle ago.  Since we read canary as a
-            // single non-ringed buffer (overwritten each frame by compute),
-            // the canary indices map directly to the compute's just-written
-            // outSlot ordering — but the corresponding thin records are at
-            // the PRIOR ring slot.  Compute the prior slot:
             const int priorSlot = (g_thinRingSlot + kThinRingFrames - 1) % kThinRingFrames;
             const GLintptr thinSlotByteOffset = (GLintptr)(priorSlot * kThinRecordBytes);
-            uint32_t canarySamples[5] = {0,0,0,0,0};
-            uint32_t thinRecipeIdxSamples[5] = {0,0,0,0,0};
+
+            // Reuse heap buffers across frames to avoid alloc churn.
+            static std::vector<uint32_t> s_canaryBuf;
+            static std::vector<uint32_t> s_thinBlock;
+            if (s_canaryBuf.size() < (size_t)vis * 2u) s_canaryBuf.resize((size_t)vis * 2u);
+            const size_t thinDwords = (size_t)vis * 8u;
+            if (s_thinBlock.size() < thinDwords) s_thinBlock.resize(thinDwords);
+
+            // 1) Bulk-read canary[0..2*vis-1] (single readback, vis*8 bytes).
+            //    Layout: [recipeIdx_0, flags_0, recipeIdx_1, flags_1, ...]
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinCanarySSBO);
-            for (int k = 0; k < 5; ++k) {
-                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                                   (GLintptr)(sampleIdx[k] * sizeof(uint32_t)),
-                                   (GLsizeiptr)sizeof(uint32_t),
-                                   &canarySamples[k]);
-            }
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                               (GLsizeiptr)(vis * 2u * sizeof(uint32_t)),
+                               s_canaryBuf.data());
+
+            // 2) Read full thin records as packed block (vis * 32 bytes).
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinRecordSSBO);
-            for (int k = 0; k < 5; ++k) {
-                // recipeIdx is the FIRST uint of TerrainQuadThinRecord (offset 0)
-                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                                   thinSlotByteOffset
-                                       + (GLintptr)(sampleIdx[k] * 32u /*record size*/),
-                                   (GLsizeiptr)sizeof(uint32_t),
-                                   &thinRecipeIdxSamples[k]);
-            }
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, thinSlotByteOffset,
+                               (GLsizeiptr)(vis * 32u),
+                               s_thinBlock.data());
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-            static uint32_t s_canaryMismatchFrames = 0;
-            static uint32_t s_canaryMismatchTotal  = 0;
-            static uint32_t s_nextCanaryReportAt   = 1;
-            bool anyMismatch = false;
-            for (int k = 0; k < 5; ++k) {
-                if (canarySamples[k] != thinRecipeIdxSamples[k]) {
-                    anyMismatch = true;
-                    ++s_canaryMismatchTotal;
+            // 3) Compare BOTH recipeIdx AND flags.
+            //    Thin record layout: dword 0=recipeIdx, dword 1=terrainHandle,
+            //    dword 2=flags, dword 3=cementWord, dwords 4..7=lightRGB0..3.
+            //    Canary layout: word 0=recipeIdx, word 1=flags (paired per record).
+            static uint32_t s_recipeIdxMismatchFrames = 0;
+            static uint64_t s_recipeIdxMismatchTotal  = 0;
+            static uint32_t s_flagsMismatchFrames     = 0;
+            static uint64_t s_flagsMismatchTotal      = 0;
+            static uint32_t s_nextRecipeReportAt      = 1;
+            static uint32_t s_nextFlagsReportAt       = 1;
+            uint32_t recipeMismatchInFrame = 0, flagsMismatchInFrame = 0;
+            uint32_t firstBadIdxR = 0, firstBadCanaryR = 0, firstBadThinR = 0;
+            uint32_t firstBadIdxF = 0, firstBadCanaryF = 0, firstBadThinF = 0;
+            for (uint32_t i = 0; i < vis; ++i) {
+                const uint32_t canaryR = s_canaryBuf[i * 2u];
+                const uint32_t canaryF = s_canaryBuf[i * 2u + 1u];
+                const uint32_t thinR   = s_thinBlock[i * 8u];        // recipeIdx
+                const uint32_t thinF   = s_thinBlock[i * 8u + 2u];   // flags
+                if (canaryR != thinR) {
+                    if (recipeMismatchInFrame == 0) {
+                        firstBadIdxR    = i;
+                        firstBadCanaryR = canaryR;
+                        firstBadThinR   = thinR;
+                    }
+                    ++recipeMismatchInFrame; ++s_recipeIdxMismatchTotal;
+                }
+                if (canaryF != thinF) {
+                    if (flagsMismatchInFrame == 0) {
+                        firstBadIdxF    = i;
+                        firstBadCanaryF = canaryF;
+                        firstBadThinF   = thinF;
+                    }
+                    ++flagsMismatchInFrame; ++s_flagsMismatchTotal;
                 }
             }
-            if (anyMismatch) {
-                ++s_canaryMismatchFrames;
-                if (s_canaryMismatchFrames == s_nextCanaryReportAt) {
+            if (recipeMismatchInFrame > 0) {
+                ++s_recipeIdxMismatchFrames;
+                if (s_recipeIdxMismatchFrames == s_nextRecipeReportAt) {
                     PROBE_LOG(
-                        "[RING_CANARY v1] frame=%llu visible=%u prior_slot=%d "
-                        "canary=[%u,%u,%u,%u,%u] thin=[%u,%u,%u,%u,%u] "
-                        "mismatch_frames=%u mismatch_total=%u mvpFp=0x%08x\n",
+                        "[RING_CANARY_RECIPE v1] frame=%llu visible=%u prior_slot=%d "
+                        "mismatch_in_frame=%u first_bad_idx=%u "
+                        "first_bad_canary=%u first_bad_thin=%u "
+                        "frames=%u total=%llu mvpFp=0x%08x\n",
                         (unsigned long long)ringFrameIdx, (unsigned)vis, priorSlot,
-                        (unsigned)canarySamples[0], (unsigned)canarySamples[1],
-                        (unsigned)canarySamples[2], (unsigned)canarySamples[3],
-                        (unsigned)canarySamples[4],
-                        (unsigned)thinRecipeIdxSamples[0], (unsigned)thinRecipeIdxSamples[1],
-                        (unsigned)thinRecipeIdxSamples[2], (unsigned)thinRecipeIdxSamples[3],
-                        (unsigned)thinRecipeIdxSamples[4],
-                        (unsigned)s_canaryMismatchFrames,
-                        (unsigned)s_canaryMismatchTotal, (unsigned)mvpFp);
-                    s_nextCanaryReportAt = s_nextCanaryReportAt < 100
-                        ? (s_nextCanaryReportAt + 1) : (s_nextCanaryReportAt * 10);
+                        (unsigned)recipeMismatchInFrame, (unsigned)firstBadIdxR,
+                        (unsigned)firstBadCanaryR, (unsigned)firstBadThinR,
+                        (unsigned)s_recipeIdxMismatchFrames,
+                        (unsigned long long)s_recipeIdxMismatchTotal, (unsigned)mvpFp);
+                    s_nextRecipeReportAt = s_nextRecipeReportAt < 100
+                        ? (s_nextRecipeReportAt + 1) : (s_nextRecipeReportAt * 10);
+                }
+            }
+            if (flagsMismatchInFrame > 0) {
+                ++s_flagsMismatchFrames;
+                if (s_flagsMismatchFrames == s_nextFlagsReportAt) {
+                    PROBE_LOG(
+                        "[RING_CANARY_FLAGS v1] frame=%llu visible=%u prior_slot=%d "
+                        "mismatch_in_frame=%u first_bad_idx=%u "
+                        "first_bad_canary=0x%x first_bad_thin=0x%x "
+                        "frames=%u total=%llu mvpFp=0x%08x\n",
+                        (unsigned long long)ringFrameIdx, (unsigned)vis, priorSlot,
+                        (unsigned)flagsMismatchInFrame, (unsigned)firstBadIdxF,
+                        (unsigned)firstBadCanaryF, (unsigned)firstBadThinF,
+                        (unsigned)s_flagsMismatchFrames,
+                        (unsigned long long)s_flagsMismatchTotal, (unsigned)mvpFp);
+                    s_nextFlagsReportAt = s_nextFlagsReportAt < 100
+                        ? (s_nextFlagsReportAt + 1) : (s_nextFlagsReportAt * 10);
                 }
             }
         }
@@ -2372,6 +2403,17 @@ void ComputeDispatch() {
         const float* mvp = gos_GetTerrainMVPMat4();
         if (!mvp) { glUseProgram(0); return; }
         glUniformMatrix4fv(g_locSolidMVP, 1, GL_FALSE, mvp);
+        // Probe 8: fingerprint the MVP the COMPUTE uploaded (FNV-1a over rotation
+        // + translation rows = first 12 floats).  Bridge compares against MVP
+        // at draw time via gos_terrain_indirect_getDispatchMvpFp().
+        uint32_t fp = 2166136261u;
+        for (int k = 0; k < 12; ++k) {
+            uint32_t bits = 0;
+            memcpy(&bits, &mvp[k], sizeof(bits));
+            fp ^= bits; fp *= 16777619u;
+        }
+        g_dispatchMvpFp       = fp;
+        g_dispatchMvpFrameIdx = ringFrameIdx;
     }
 
     const uint32_t groups = (windowCount + 63u) / 64u;
@@ -2391,6 +2433,18 @@ void ComputeDispatch() {
     glDispatchCompute(1, 1, 1);
 
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
+
+    // ── Probe 7 (MC2_RING_FORCE_FINISH) — directed barrier-hypothesis test ──
+    // Forces full GPU pipeline drain after the compute dispatches.
+    // If the giant-triangle bug DISAPPEARS with this on, the barrier is
+    // insufficient on AMD — VS reads stale thin records via L1$ even though
+    // CPU readback sees correct data in VRAM (probe 6 full coverage silent).
+    // Severe perf cost (every-frame stall); diagnostic-only, default OFF.
+    static const bool s_ringForceFinish = (getenv("MC2_RING_FORCE_FINISH") != nullptr);
+    if (s_ringForceFinish) {
+        glFinish();
+    }
+    // ── end probe 7 ────────────────────────────────────────────────────────
 
     // ── Probe 3 (MC2_RING_TRACE) — read back the indirect cmd's count after patch ──
     // If a cmd-patch race is occurring under fast rotation, cmd.count may not equal
@@ -2665,6 +2719,7 @@ int gos_terrain_indirect_getRingSlot() {
 }
 
 // Slice B4 Stage 1b — C-linkage accessors used by gos_terrain_mask_dispatch::DrawMaskSolid.
+// Probe 8: MVP fingerprint accessors also live here (C linkage for cross-TU call from bridge).
 extern "C" {
 
 unsigned int gos_terrain_indirect_getRecipeSSBO() {
@@ -2683,6 +2738,14 @@ int gos_terrain_indirect_getRecipeQuadCount() {
 const uint32_t* gos_terrain_indirect_getPackParityMask(int* outWords) {
     if (outWords) *outWords = (int)kParityMaskWords;
     return s_packParityMask;
+}
+
+uint32_t gos_terrain_indirect_getDispatchMvpFp() {
+    return g_dispatchMvpFp;
+}
+
+uint64_t gos_terrain_indirect_getDispatchMvpFrameIdx() {
+    return g_dispatchMvpFrameIdx;
 }
 
 }  // extern "C"

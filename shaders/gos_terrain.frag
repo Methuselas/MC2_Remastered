@@ -87,7 +87,11 @@ struct TerrainQuadThinRecord_Frag {
     uvec4 control;    // x=recipeIdx, y=terrainHandle, z=flags, w=_pad0(cement word)
     uvec4 lightRGBs;
 };
-layout(std430, binding = 2) readonly buffer ThinRecordBufFrag {
+// AMD L1-coherency: mirror the coherent qualifier on the compute writer
+// (gpu_driven_terrain_solid.comp:118) and VS reader (gos_terrain_thin.vert:9).
+// The frag reads `_pad0` (cement layer index) which lives in bytes 12-15 of
+// the thin record; coherent here keeps the read symmetric with VS.
+layout(std430, binding = 2) coherent readonly buffer ThinRecordBufFrag {
     TerrainQuadThinRecord_Frag thinRecsFrag[];
 };
 
