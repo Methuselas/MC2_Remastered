@@ -222,6 +222,11 @@ void Build();
 // Reset to empty state (mission unload).
 void Reset();
 
+// Returns the water parity mask for this frame (indexed by corner-0 vertexNum,
+// same format as gos_terrain_mask_dispatch's s_waterMask). Built during
+// UploadAndBindThinRecords — only valid after that call. outWords = 450.
+const uint32_t* GetWaterParityMask(int* outWords);
+
 // Read-only access to the recipe array. Pointer is stable across the
 // mission lifetime (vector capacity is fixed after Build).
 const WaterRecipe* GetRecipes();
@@ -229,5 +234,10 @@ uint32_t GetRecipeCount();
 
 // True after Build has succeeded; false after Reset or before first Build.
 bool IsReady();
+
+// Returns the WaterRecipe for a quad whose corner-0 vertexNum is vn.
+// Returns nullptr if vn has no water recipe (pure-land quad or vn < 0).
+// Only valid after IsReady() returns true.
+const WaterRecipe* RecipeForVertexNum(int32_t vn);
 
 } // namespace WaterStream
