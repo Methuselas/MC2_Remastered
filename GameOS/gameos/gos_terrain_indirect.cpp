@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>  // memcpy
+#include <cmath>    // std::abs (clipPos ULP-bounded parity comparator)
 #include <chrono>   // MC2_RING_TRACE wait-time measurement (probe-only)
 #include <ctime>    // RING_SINK timestamp on probe-sink open
 
@@ -1729,11 +1730,43 @@ static int PackThinRecordsForFrame() {
         //     const uint16_t idx2 = g_cementLayerIndexByNodeIdx[nodeIdx];
         //     ...
         // }
-        tr._pad0         = cementWord;
+        tr.cementWord    = cementWord;
         tr.lightRGB0     = lightRGBc(0);
         tr.lightRGB1     = lightRGBc(1);
         tr.lightRGB2     = lightRGBc(2);
         tr.lightRGB3     = lightRGBc(3);
+
+        // Fix B 2026-05-14: per-corner clip-space positions from the recipe's
+        // worldPos0..3 multiplied by the current terrainMVP.  Mirrors the
+        // compute shader's projectClip() at gpu_driven_terrain_solid.comp:174.
+        //
+        // Matrix convention (memory/terrain_mvp_gl_false.md): terrain_mvp_ is
+        // stored row-major on CPU and uploaded with GL_FALSE.  GLSL interprets
+        // bytes as column-major, so GPU's `m * v` reads as a dot of v with the
+        // i-th *column* of our row-major storage — i.e. out[i] = sum_j m[j*4+i]
+        // * v[j].  CPU mirror uses the same formula so values match modulo
+        // FMA-fusion / rounding-mode drift (parity comparator allows ~4 ULP).
+        const float* mvp = gos_GetTerrainMVPMat4();
+        if (mvp) {
+            const float* wp[4] = {
+                &rec->wx0, &rec->wx1, &rec->wx2, &rec->wx3
+            };
+            for (int c = 0; c < 4; ++c) {
+                const float vx = wp[c][0], vy = wp[c][1], vz = wp[c][2];
+                for (int i = 0; i < 4; ++i) {
+                    tr.clipPos[c * 4 + i] =
+                        mvp[0 * 4 + i] * vx +
+                        mvp[1 * 4 + i] * vy +
+                        mvp[2 * 4 + i] * vz +
+                        mvp[3 * 4 + i];
+                }
+            }
+        } else {
+            // No MVP this frame (impossible during normal play, defensive).
+            // Zero clipPos so VS produces a degenerate triangle behind near
+            // clip — same fail-safe shape as the pzOk culled path in the VS.
+            for (int k = 0; k < 16; ++k) tr.clipPos[k] = 0.0f;
+        }
 
         gos_terrain_indirect::Counters_AddIndirectSolidPackedQuad();
         ++packed;
@@ -2708,8 +2741,58 @@ void ComputeDispatchParity_Check() {
 
             SOLID_PARITY_FIELD1(terrainHandle)
             SOLID_PARITY_FIELD1(flags)
-            SOLID_PARITY_FIELD1(_pad0)  // cementWord in GLSL; _pad0 in C++ struct
+            SOLID_PARITY_FIELD1(cementWord)  // Fix B rename (was _pad0 in C++)
 #undef SOLID_PARITY_FIELD1
+
+            // Fix B 2026-05-14: clipPos ULP-bounded compare.  CPU and GPU
+            // mat4*vec4 are not bit-equal in general (FMA fusion, rounding
+            // mode, reassociation freedom in GLSL).  4 ULP per lane is
+            // generous enough to suppress false positives while still
+            // catching the kind of byte-level corruption that probe 8 caught
+            // pre-Fix-A.  Any drift > visible threshold (sub-pixel) will
+            // also exceed 4 ULP, so this isn't a "silent visual regression"
+            // tolerance — it's a "compiler nondeterminism" tolerance.
+            {
+                constexpr uint32_t kClipUlpTolerance = 4u;
+                bool clipMismatch = false;
+                for (int k = 0; k < 16; ++k) {
+                    uint32_t gb, cb;
+                    std::memcpy(&gb, &g.clipPos[k], sizeof(gb));
+                    std::memcpy(&cb, &c.clipPos[k], sizeof(cb));
+                    // ULP distance for like-signed finite floats is the
+                    // absolute difference of the bit patterns (IEEE-754
+                    // monotonic ordering).  Opposite-sign values near zero
+                    // are caught by the magnitude check below.
+                    uint32_t ulp = (gb > cb) ? (gb - cb) : (cb - gb);
+                    bool likeSign = ((gb ^ cb) & 0x80000000u) == 0u;
+                    if (likeSign && ulp <= kClipUlpTolerance) continue;
+                    if (!likeSign) {
+                        // Near-zero crossing tolerance: both values must be
+                        // tiny in absolute terms (< 1e-5 in clip space, the
+                        // sub-fudge regime where pzOk decides via the flag).
+                        float gf, cf;
+                        std::memcpy(&gf, &gb, sizeof(gf));
+                        std::memcpy(&cf, &cb, sizeof(cf));
+                        if (std::abs(gf) < 1e-5f && std::abs(cf) < 1e-5f) continue;
+                    }
+                    clipMismatch = true;
+                    break;
+                }
+                if (clipMismatch) {
+                    ++frameMismatches;
+                    if (printed < kMaxPrintsPerFrame) {
+                        ++printed;
+                        fprintf(stderr,
+                                "[GPU_DRIVEN_SOLID_PARITY v1] event=mismatch "
+                                "frame=%llu recipe=%u field=clipPos "
+                                "gpu_c0=[%.6f,%.6f,%.6f,%.6f] cpu_c0=[%.6f,%.6f,%.6f,%.6f]\n",
+                                (unsigned long long)s_solidParityFrames, (unsigned)gpuIdx,
+                                g.clipPos[0], g.clipPos[1], g.clipPos[2], g.clipPos[3],
+                                c.clipPos[0], c.clipPos[1], c.clipPos[2], c.clipPos[3]);
+                        fflush(stderr);
+                    }
+                }
+            }
 
             if (g.lightRGB0 != c.lightRGB0 || g.lightRGB1 != c.lightRGB1 ||
                 g.lightRGB2 != c.lightRGB2 || g.lightRGB3 != c.lightRGB3) {

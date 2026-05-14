@@ -81,6 +81,13 @@ struct TerrainQuadThinRecord {
     uint flags;
     uint cementWord;
     uint lightRGB0, lightRGB1, lightRGB2, lightRGB3;
+    // Fix B 2026-05-14: per-corner clip-space positions, written here
+    // (alongside pzOk gate computation) so the VS skips terrainMVP entirely
+    // — eliminates the temporal MVP misalignment root cause at its source.
+    // Std430 vec4[4] = 64 B, 16-aligned, contiguous. Total record: 96 B.
+    // LOCKSTEP with C++ struct in gos_terrain_patch_stream.h + VS reader
+    // in gos_terrain_thin.vert + frag mirror in gos_terrain.frag.
+    vec4 clipPos[4];
 };
 
 // Flag bit encoding — matches PackThinRecordsForFrame() gos_terrain_indirect.cpp:1470-1472.
@@ -167,6 +174,16 @@ float projectZ(float wx, float wy, float wz) {
     vec4 clip = u_terrainMVP * vec4(wx, wy, wz, 1.0);
     float rhw = (clip.w != 0.0) ? 1.0 / clip.w : 1.0;
     return clip.z * rhw;
+}
+
+// Fix B helper: return the full clip-space vec4 for storage in the thin
+// record's clipPos[c] field.  Same math as projectZ() but without the
+// rhw divide — the writer keeps raw clip and the VS does its own 1/w.
+// Keeping projectZ() separate (rather than refactoring it to return vec4
+// and computing rhw at every call site) preserves the pzOk gate's exact
+// existing math, removing one axis of risk for the schema change.
+vec4 projectClip(float wx, float wy, float wz) {
+    return u_terrainMVP * vec4(wx, wy, wz, 1.0);
 }
 
 // Probe-4 helper: return |clip.w| for the same projection.  Used by the
@@ -260,6 +277,17 @@ void main() {
     float pz1 = projectZ(r.pos1.x, r.pos1.y, r.pos1.z);
     float pz2 = projectZ(r.pos2.x, r.pos2.y, r.pos2.z);
     float pz3 = projectZ(r.pos3.x, r.pos3.y, r.pos3.z);
+
+    // Fix B 2026-05-14: capture per-corner clip-space vec4 alongside the pz
+    // computation above.  These are stored in tr.clipPos[c] below; the VS
+    // reads them directly and bypasses terrainMVP * worldPos projection.
+    // Same matrix (u_terrainMVP), same lane, same dispatch — so the pzOk
+    // gate and clipPos cannot disagree about which projection-frame the
+    // record describes.
+    vec4 clip0 = projectClip(r.pos0.x, r.pos0.y, r.pos0.z);
+    vec4 clip1 = projectClip(r.pos1.x, r.pos1.y, r.pos1.z);
+    vec4 clip2 = projectClip(r.pos2.x, r.pos2.y, r.pos2.z);
+    vec4 clip3 = projectClip(r.pos3.x, r.pos3.y, r.pos3.z);
 
     bool ok0 = pzOk(pz0);
     bool ok1 = pzOk(pz1);
@@ -360,6 +388,11 @@ void main() {
     tr.lightRGB1     = lrgb1;
     tr.lightRGB2     = lrgb2;
     tr.lightRGB3     = lrgb3;
+    // Fix B 2026-05-14: per-corner clip vec4s (computed at pz time above).
+    tr.clipPos[0]    = clip0;
+    tr.clipPos[1]    = clip1;
+    tr.clipPos[2]    = clip2;
+    tr.clipPos[3]    = clip3;
     thin[outSlot]    = tr;
 
     // Probe 6 + 7a: canary writes — recipeIdx at 2*outSlot, flags at 2*outSlot+1.

@@ -2659,17 +2659,14 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
     // the sub-range at that offset so index 0 in the shader == our first record.
     // Re-bind as a range binding to point ssboRecordBase=0 to the current slot.
     {
-        // Ring slot offset in bytes. kThinRecordBytes = kMaxThinRecords * 32.
-        // This is a compile-time constant so we compute it portably.
-        // g_thinRingSlot is in the anonymous namespace of gos_terrain_indirect.cpp;
-        // we need it here. Use the cmdCount and the fact that each ring-slot is
-        // exactly (65536 * 32) bytes from the previous.
-        // Simpler: the ring slot is 0-based.  We share it via a bridge accessor.
-        // Judgment call: use glBindBufferRange to point slot 2 at only the
-        // current ring-slot's region, keeping ssboRecordBase=0.
+        // Ring slot offset in bytes.  Each slot holds kMaxRecs records of
+        // sizeof(TerrainQuadThinRecord) each — post Fix B (2026-05-14) the
+        // record size is 96 B (was 32 B), so this offset would silently
+        // diverge from gos_terrain_indirect.cpp's kThinRecordBytes if the
+        // multiplier were left hardcoded.  Source the size from the struct.
         extern int gos_terrain_indirect_getRingSlot();
         const int    slot       = gos_terrain_indirect_getRingSlot();
-        const size_t kRecordSz  = 32u;
+        const size_t kRecordSz  = sizeof(TerrainQuadThinRecord);
         const size_t kMaxRecs   = 65536u;
         const GLintptr offset   = (GLintptr)(slot * kMaxRecs * kRecordSz);
         const GLsizeiptr sz     = (GLsizeiptr)(kMaxRecs * kRecordSz);

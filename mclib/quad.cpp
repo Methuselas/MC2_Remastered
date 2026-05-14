@@ -2169,11 +2169,15 @@ void TerrainQuad::draw (void)
 		            tr.flags         = (uvMode == BOTTOMLEFT ? 1u : 0u)
 		                             | (pzTri1 ? 2u : 0u)
 		                             | (pzTri2 ? 4u : 0u);
-		            tr._pad0         = 0u;
+		            tr.cementWord    = 0u;  // Fix B rename (was _pad0).  Patch-stream
+		                                    // path doesn't carry cement bits.
 		            tr.lightRGB0     = lightRGBc(0);
 		            tr.lightRGB1     = lightRGBc(1);
 		            tr.lightRGB2     = lightRGBc(2);
 		            tr.lightRGB3     = lightRGBc(3);
+		            // Fix B 2026-05-14: clipPos zeroed (patch-stream uses its own VS,
+		            // not the indirect thin VS that consumes clipPos).
+		            for (int k = 0; k < 16; ++k) tr.clipPos[k] = 0.0f;
 		            TerrainPatchStream::appendThinRecordDirect(tr);
 		        }
 		    }

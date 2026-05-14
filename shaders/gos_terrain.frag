@@ -84,8 +84,14 @@ uniform float atlasCementWorldUnitsPerTile;  // = Terrain::worldUnitsPerVertex (
 flat in uint RecordIdx;
 
 struct TerrainQuadThinRecord_Frag {
-    uvec4 control;    // x=recipeIdx, y=terrainHandle, z=flags, w=_pad0(cement word)
+    uvec4 control;       // x=recipeIdx, y=terrainHandle, z=flags, w=cementWord
     uvec4 lightRGBs;
+    // Fix B 2026-05-14: clipPos[4] declared here PURELY for std430 stride
+    // lockstep with the four declarations of this struct.  The frag does
+    // NOT read clipPos — that's the VS's job — but the struct size must
+    // match or thinRecsFrag[i > 0] will read the wrong bytes for cement
+    // layer-index decoding.  Silent-break risk #1 per adversarial review.
+    vec4  clipPos[4];
 };
 // AMD L1-coherency: mirror the coherent qualifier on the compute writer
 // (gpu_driven_terrain_solid.comp:118) and VS reader (gos_terrain_thin.vert:9).

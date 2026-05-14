@@ -1,10 +1,14 @@
 //#version 430 (version provided by material prefix)
 
 // --- SSBO bindings (must match TerrainQuadThinRecord / TerrainQuadRecipe in gos_terrain_patch_stream.h) ---
+// Fix B 2026-05-14: clipPos[4] added — VS reads pre-projected clip-space
+// positions from the writer instead of doing terrainMVP*worldPos itself.
+// Eliminates the temporal MVP misalignment root cause at its source.
+// LOCKSTEP across four declarations per memory/cpp_glsl_ubo_struct_lockstep.md.
 struct TerrainQuadThinRecord {
-    uvec4 control;    // x=recipeIdx, y=terrainHandle, z=flags(bit0=uvMode,bit1=pzTri1,bit2=pzTri2), w=_pad0
-    uvec4 lightRGBs;  // corners 0-3, packed ARGB
-    // fogRGBs removed — TerrainType now in recipe._wp0, FogValue was dead
+    uvec4 control;       // x=recipeIdx, y=terrainHandle, z=flags(bit0=uvMode,bit1=pzTri1,bit2=pzTri2), w=cementWord
+    uvec4 lightRGBs;     // corners 0-3, packed ARGB
+    vec4  clipPos[4];    // per-corner clip-space positions (writer-emitted)
 };
 // AMD L1-coherency fix (mc2-cpu-gpu-offload-expert, 2026-05-14): see paired
 // `coherent` qualifier on the compute writer at gpu_driven_terrain_solid.comp:118.
@@ -49,7 +53,12 @@ flat out uint RecordIdx;  // index into thinRecs[] — frag reads thinRecs[Recor
 
 // Uniforms used by this shader
 uniform int  ssboRecordBase;     // global record index offset for this draw call
-uniform mat4 terrainMVP;         // axisSwap * worldToClip
+// Fix B 2026-05-14: terrainMVP uniform REMOVED from the thin VS — projection
+// now comes from tr.clipPos[cornerIdx] written by the producer.
+// gosRenderer::terrainBindThinUniformsForPatchStream still uploads it for
+// other thin programs (water-fast/mask/etc.); the upload silently no-ops
+// here because glGetUniformLocation returns -1 for an absent declaration.
+// Fix A's terrainOverrideThinMVP path is similarly inert (cached loc -1).
 uniform vec4 terrainViewport;    // (vmx, vmy, vax, vay) for perspective projection
 uniform mat4 mvp;                // projection_: screen pixels -> NDC
 
@@ -182,9 +191,17 @@ void main() {
     WorldNorm   = worldNorm;
     WorldPos    = worldPos;
 
-    // Double-projection — identical to TES, minus displacement (thin path skips it).
-    // No displacement => UndisplacedDepth == actual depth.
-    vec4 clip = terrainMVP * vec4(worldPos, 1.0);
+    // Fix B 2026-05-14: clip-space position is now READ from the thin record
+    // (writer pre-projected via the same u_terrainMVP it used for pzOk gates,
+    // so by construction the projection and the gate agree).  The VS no
+    // longer touches terrainMVP at all — eliminating the temporal MVP
+    // misalignment that Fix A patched at the binder, by fixing it at the
+    // source.  See docs/superpowers/progress/2026-05-14-raster-triangle-handoff.md
+    // and memory/ring_slot_state_must_travel_with_slot.md for context.
+    // Same array-form indexing pattern as wpsArr[cornerIdx] above (AMD RDNA3
+    // mis-lower mitigation — kCornerTable produces cornerIdx; array indexing
+    // produces table-lookup or branchless select, never speculative scalarization).
+    vec4 clip = tr.clipPos[cornerIdx];
     float rhw = 1.0 / clip.w;
     vec3 screen;
     screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
