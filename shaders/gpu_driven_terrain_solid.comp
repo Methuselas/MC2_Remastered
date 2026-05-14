@@ -117,6 +117,13 @@ layout(std430, binding = 1) readonly  buffer Lighting  { GpuTerrainLightingOutpu
 layout(std430, binding = 2) readonly  buffer HandleLut { uint                     terrainHandleLut[]; };
 layout(std430, binding = 3) writeonly buffer Thin      { TerrainQuadThinRecord    thin[];             };
 layout(std430, binding = 6) coherent  buffer Header    { GpuDrivenBucketHeader    hdr;                };
+// Probe 6: canary buffer.  Compute writes the same recipeIdx (vn0) here
+// AT THE SAME outSlot it writes the thin record.  The bridge never binds
+// this buffer, so nothing else in the GL pipeline can touch it.  If on
+// the C++ side canaryRecipeIdx[i] != thin[i].recipeIdx for some i, then
+// the thin SSBO is being clobbered between compute write and VS read by
+// SOMETHING OUTSIDE the compute shader.
+layout(std430, binding = 7) writeonly buffer Canary    { uint                     canaryRecipeIdx[];  };
 
 // ---------------------------------------------------------------------------
 // Uniforms.
@@ -344,4 +351,9 @@ void main() {
     tr.lightRGB2     = lrgb2;
     tr.lightRGB3     = lrgb3;
     thin[outSlot]    = tr;
+
+    // Probe 6: canary write, same outSlot, separate buffer the bridge
+    // never binds.  If thin[outSlot].recipeIdx ever != canaryRecipeIdx[outSlot]
+    // when sampled after barrier, the thin SSBO is being clobbered.
+    canaryRecipeIdx[outSlot] = vn0;
 }

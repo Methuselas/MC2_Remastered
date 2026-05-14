@@ -1426,6 +1426,7 @@ static GLuint  g_solidComputeProgram    = 0;
 static GLuint  g_solidCmdPatchProgram   = 0;
 static GLuint  g_solidBucketHeaderSsbo  = 0;
 static GLuint  g_terrainHandleLutSSBO   = 0;
+static GLuint  g_thinCanarySSBO         = 0;   // probe 6: separate buffer, never bound by bridge
 
 // Cached uniform locations — populated once when programs are compiled.
 // Per-frame varying uniforms (u_windowCount, u_terrainMVP, u_alphaOverride)
@@ -1995,6 +1996,20 @@ void ComputeDispatch() {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     }
 
+    // Probe 6: lazy-allocate canary SSBO — kMaxThinRecords uints, never bound
+    // by the bridge.  Compute writes canaryRecipeIdx[outSlot] = vn0 alongside
+    // the thin record.  If thin[i].recipeIdx and canary[i] disagree on the
+    // C++ readback, the thin SSBO is being clobbered between compute write
+    // and our sample point.
+    if (g_thinCanarySSBO == 0) {
+        glGenBuffers(1, &g_thinCanarySSBO);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinCanarySSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     (GLsizeiptr)(kMaxThinRecords * sizeof(uint32_t)),
+                     nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
     // Upload per-frame terrain handle LUT (nodeId → gosHandle, ~20-50 entries).
     // GPU dispatches over full recipe range and culls edge/invalid quads itself.
     const uint32_t windowCount = UploadTerrainHandleLUT();
@@ -2142,6 +2157,89 @@ void ComputeDispatch() {
                 kMaxThinRecords, (unsigned)s_overshootCount,
                 (unsigned)s_peakVisible, (unsigned)mvpFp);
         }
+        // Probe 6: sample-compare thin SSBO recipeIdx vs canary recipeIdx.
+        // Compute writes both at the same outSlot in the SAME dispatch.  The
+        // canary buffer is never bound by the bridge (only binding 7 in this
+        // compute), so it can ONLY be modified by this compute shader.  If
+        // thin[i].recipeIdx differs from canary[i] when read here (next frame,
+        // after fence wait → prev frame's GPU work done), the thin SSBO has
+        // been clobbered by something between compute write and our readback.
+        // Sample 5 well-spaced indices to keep readback cost bounded.
+        if (g_thinCanarySSBO != 0 && g_thinRecordSSBO != 0 && prevVisible > 0) {
+            const uint32_t vis = prevVisible < (uint32_t)kMaxThinRecords
+                                ? prevVisible : (uint32_t)kMaxThinRecords;
+            const uint32_t sampleIdx[5] = {
+                0u,
+                vis > 1 ? vis / 4u : 0u,
+                vis > 1 ? vis / 2u : 0u,
+                vis > 1 ? (3u * vis) / 4u : 0u,
+                vis > 0 ? vis - 1u : 0u,
+            };
+            // The thin SSBO ring slot is *previous* frame's, which is
+            // (g_thinRingSlot + kThinRingFrames - 1) % kThinRingFrames AT
+            // THE TIME of last compute.  But after the advance at line 2005
+            // we ALREADY moved to the new slot.  So the slot we just waited
+            // on (and that holds the canary-checked thin data) IS the slot
+            // the compute most recently wrote to before this frame — which
+            // is g_thinRingSlot one cycle ago.  Since we read canary as a
+            // single non-ringed buffer (overwritten each frame by compute),
+            // the canary indices map directly to the compute's just-written
+            // outSlot ordering — but the corresponding thin records are at
+            // the PRIOR ring slot.  Compute the prior slot:
+            const int priorSlot = (g_thinRingSlot + kThinRingFrames - 1) % kThinRingFrames;
+            const GLintptr thinSlotByteOffset = (GLintptr)(priorSlot * kThinRecordBytes);
+            uint32_t canarySamples[5] = {0,0,0,0,0};
+            uint32_t thinRecipeIdxSamples[5] = {0,0,0,0,0};
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinCanarySSBO);
+            for (int k = 0; k < 5; ++k) {
+                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                                   (GLintptr)(sampleIdx[k] * sizeof(uint32_t)),
+                                   (GLsizeiptr)sizeof(uint32_t),
+                                   &canarySamples[k]);
+            }
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinRecordSSBO);
+            for (int k = 0; k < 5; ++k) {
+                // recipeIdx is the FIRST uint of TerrainQuadThinRecord (offset 0)
+                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                                   thinSlotByteOffset
+                                       + (GLintptr)(sampleIdx[k] * 32u /*record size*/),
+                                   (GLsizeiptr)sizeof(uint32_t),
+                                   &thinRecipeIdxSamples[k]);
+            }
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+            static uint32_t s_canaryMismatchFrames = 0;
+            static uint32_t s_canaryMismatchTotal  = 0;
+            static uint32_t s_nextCanaryReportAt   = 1;
+            bool anyMismatch = false;
+            for (int k = 0; k < 5; ++k) {
+                if (canarySamples[k] != thinRecipeIdxSamples[k]) {
+                    anyMismatch = true;
+                    ++s_canaryMismatchTotal;
+                }
+            }
+            if (anyMismatch) {
+                ++s_canaryMismatchFrames;
+                if (s_canaryMismatchFrames == s_nextCanaryReportAt) {
+                    PROBE_LOG(
+                        "[RING_CANARY v1] frame=%llu visible=%u prior_slot=%d "
+                        "canary=[%u,%u,%u,%u,%u] thin=[%u,%u,%u,%u,%u] "
+                        "mismatch_frames=%u mismatch_total=%u mvpFp=0x%08x\n",
+                        (unsigned long long)ringFrameIdx, (unsigned)vis, priorSlot,
+                        (unsigned)canarySamples[0], (unsigned)canarySamples[1],
+                        (unsigned)canarySamples[2], (unsigned)canarySamples[3],
+                        (unsigned)canarySamples[4],
+                        (unsigned)thinRecipeIdxSamples[0], (unsigned)thinRecipeIdxSamples[1],
+                        (unsigned)thinRecipeIdxSamples[2], (unsigned)thinRecipeIdxSamples[3],
+                        (unsigned)thinRecipeIdxSamples[4],
+                        (unsigned)s_canaryMismatchFrames,
+                        (unsigned)s_canaryMismatchTotal, (unsigned)mvpFp);
+                    s_nextCanaryReportAt = s_nextCanaryReportAt < 100
+                        ? (s_nextCanaryReportAt + 1) : (s_nextCanaryReportAt * 10);
+                }
+            }
+        }
+
         // Probe 5 tripwire: any frame where pad2_ > 0 means at least one
         // RECIPE entry has worldPos corners spanning more than 2.5 cells —
         // ground-truth evidence that the recipe SSBO is corrupt.  If this
@@ -2236,6 +2334,7 @@ void ComputeDispatch() {
     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 3,
                       g_thinRecordSSBO, thinSlotOffset, (GLsizeiptr)kThinRecordBytes);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, g_solidBucketHeaderSsbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, g_thinCanarySSBO);  // probe 6
 
     if (g_locSolidWC < 0 || g_locSolidMVP < 0) {
         fprintf(stderr,
