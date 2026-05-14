@@ -151,6 +151,15 @@ float projectZ(float wx, float wy, float wz) {
     return clip.z * rhw;
 }
 
+// Probe-4 helper: return |clip.w| for the same projection.  Used by the
+// near-zero-clip.w detector to count quads that pass pzOk with one or more
+// corners straddling the camera plane (where clip.w ~ 0 produces wild VS
+// projection — see memory/clip_w_sign_trap.md).
+float absClipW(float wx, float wy, float wz) {
+    vec4 clip = u_terrainMVP * vec4(wx, wy, wz, 1.0);
+    return abs(clip.w);
+}
+
 // pzOk — with TERRAIN_DEPTH_FUDGE applied. Mirrors packer:1435-1436.
 bool pzOk(float pz) {
     float adj = pz + kTerrainDepthFudge;
@@ -245,6 +254,26 @@ void main() {
     uint vn1 = vn0 + 1u;
     uint vn2 = vn0 + ms_ + 1u;
     uint vn3 = vn0 + ms_;
+
+    // ─── Probe 4 (raster-triangle hypothesis: near-zero |clip.w|) ────────
+    // Count quads that passed pzOk where ANY corner has |clip.w| below
+    // kClipWWarn — these corners produce wild VS screen positions because
+    // rhw = 1/clip.w explodes.  The VS gracefully handles abs(clip.w) but
+    // pinning gl_Position to an NDC-corner via the absW rescaling can still
+    // produce screen-spanning triangles.  Threshold chosen empirically as
+    // ~1% of typical clip.w under oblique camera; tune via [RING_NEARW] data.
+    {
+        const float kClipWWarn = 0.05;
+        float aw0 = absClipW(r.pos0.x, r.pos0.y, r.pos0.z);
+        float aw1 = absClipW(r.pos1.x, r.pos1.y, r.pos1.z);
+        float aw2 = absClipW(r.pos2.x, r.pos2.y, r.pos2.z);
+        float aw3 = absClipW(r.pos3.x, r.pos3.y, r.pos3.z);
+        float minAw = min(min(aw0, aw1), min(aw2, aw3));
+        if (minAw < kClipWWarn) {
+            // pad1_ = count of pzOk-passed quads with one or more "thin" corners
+            atomicAdd(hdr.pad1_, 1u);
+        }
+    }
 
     // -----------------------------------------------------------------------
     // Allocate output slot via atomicAdd on the coherent bucket header.

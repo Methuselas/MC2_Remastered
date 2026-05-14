@@ -2110,16 +2110,24 @@ void ComputeDispatch() {
     // all prior GPU commands are complete, so glGetBufferSubData is stall-
     // free here on AMD/NV (driver fast-path for already-signaled buffers).
     if (g_solidBucketHeaderSsbo != 0 && ringFrameIdx > 1) {
-        uint32_t prevVisible = 0;
+        // Read first 12 bytes of GpuDrivenBucketHeader:
+        //   [0]=visibleCount, [1]=pad0_ (unused), [2]=pad1_ (near-zero clip.w count, probe 4).
+        uint32_t hdr3[3] = { 0, 0, 0 };
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
         glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                           (GLsizeiptr)sizeof(uint32_t), &prevVisible);
+                           (GLsizeiptr)sizeof(hdr3), hdr3);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        const uint32_t prevVisible = hdr3[0];
+        const uint32_t prevNearW   = hdr3[2];
 
         static uint32_t s_peakVisible    = 0;
         static uint32_t s_overshootCount = 0;
+        static uint32_t s_peakNearW      = 0;
+        static uint32_t s_nearWFrames    = 0;
         static uint64_t s_lastSummary    = 0;
         if (prevVisible > s_peakVisible) s_peakVisible = prevVisible;
+        if (prevNearW   > s_peakNearW  ) s_peakNearW   = prevNearW;
+        if (prevNearW > 0) ++s_nearWFrames;
         const bool overshot = (prevVisible >= (uint32_t)kMaxThinRecords);
         if (overshot) {
             ++s_overshootCount;
@@ -2130,12 +2138,32 @@ void ComputeDispatch() {
                 kMaxThinRecords, (unsigned)s_overshootCount,
                 (unsigned)s_peakVisible, (unsigned)mvpFp);
         }
+        // Probe 4 tripwire: any frame where pad1_ > 0 means at least one quad
+        // passed the pzOk gate while having a corner with |clip.w| < 0.05.
+        // Strong candidate for the "huge garbage triangle" bug per
+        // memory/clip_w_sign_trap.md.  Rate-limit by printing only on first
+        // event AND on every 100x increase in s_nearWFrames so we don't
+        // flood the log when the bug is continuous.
+        if (prevNearW > 0) {
+            static uint32_t s_nextNearWReportAt = 1;
+            if (s_nearWFrames == s_nextNearWReportAt) {
+                PROBE_LOG(
+                    "[RING_NEARW v1] frame=%llu near_w_count=%u total_near_w_frames=%u "
+                    "peak_near_w=%u prev_visible=%u mvpFp=0x%08x\n",
+                    (unsigned long long)ringFrameIdx, (unsigned)prevNearW,
+                    (unsigned)s_nearWFrames, (unsigned)s_peakNearW,
+                    (unsigned)prevVisible, (unsigned)mvpFp);
+                s_nextNearWReportAt = s_nextNearWReportAt < 100 ? (s_nextNearWReportAt + 1)
+                                    : (s_nextNearWReportAt * 10);
+            }
+        }
         if (s_ringTrace) {
             printf("[RING v1] frame=%llu slot=%d fence=%d wait=0x%x wait_us=%llu "
-                   "prev_visible=%u peak=%u mvpFp=0x%08x\n",
+                   "prev_visible=%u near_w=%u peak=%u peakNearW=%u mvpFp=0x%08x\n",
                 (unsigned long long)ringFrameIdx, probedSlot, (int)fencePresent,
                 (unsigned)waitResult, (unsigned long long)waitUs,
-                (unsigned)prevVisible, (unsigned)s_peakVisible, (unsigned)mvpFp);
+                (unsigned)prevVisible, (unsigned)prevNearW,
+                (unsigned)s_peakVisible, (unsigned)s_peakNearW, (unsigned)mvpFp);
             fflush(stdout);
         }
         // Periodic peak summary even when MC2_RING_TRACE is off so manual
@@ -2144,9 +2172,10 @@ void ComputeDispatch() {
             s_lastSummary = ringFrameIdx;
             PROBE_LOG(
                 "[RING_PEAK v1] frame=%llu peak_visible=%u cap=%zu "
-                "overshootCount=%u\n",
+                "overshootCount=%u peak_near_w=%u near_w_frames=%u\n",
                 (unsigned long long)ringFrameIdx, (unsigned)s_peakVisible,
-                kMaxThinRecords, (unsigned)s_overshootCount);
+                kMaxThinRecords, (unsigned)s_overshootCount,
+                (unsigned)s_peakNearW, (unsigned)s_nearWFrames);
         }
     } else if (s_ringTrace) {
         printf("[RING v1] frame=%llu slot=%d fence=%d wait=0x%x wait_us=%llu mvpFp=0x%08x\n",
