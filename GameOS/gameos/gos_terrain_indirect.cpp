@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>  // memcpy
+#include <chrono>   // MC2_RING_TRACE wait-time measurement (probe-only)
 
 #include <GL/glew.h>
 
@@ -2002,12 +2003,140 @@ void ComputeDispatch() {
 
     // Advance the thin-record ring slot (same ring as CPU path).
     g_thinRingSlot = (g_thinRingSlot + 1) % kThinRingFrames;
-    if (g_thinRingFences[g_thinRingSlot]) {
-        glClientWaitSync(g_thinRingFences[g_thinRingSlot],
-                         GL_SYNC_FLUSH_COMMANDS_BIT, 10000000u /*10ms*/);
-        glDeleteSync(g_thinRingFences[g_thinRingSlot]);
-        g_thinRingFences[g_thinRingSlot] = 0;
+
+    // ── Ring-hazard probe (MC2_RING_TRACE) ────────────────────────────────
+    // Default-off per-frame trace; ALWAYS-on tripwire when the wait actually
+    // times out or the fence is missing on a non-warmup frame. Either signal
+    // proves the ring discipline is broken — the CPU is about to write a
+    // thin-record slot whose prior GPU consumer may still be reading it.
+    // Symptom we are chasing: huge raster triangles under fast camera
+    // rotation; the bug is masked when the camera is still because the
+    // thin-record content is frame-to-frame identical (atomicAdd reorder
+    // notwithstanding) and the race produces the same bytes either way.
+    // Fingerprint of the camera MVP rotation rows lets offline analysis
+    // correlate fence misses with rotation magnitude.
+    static const bool s_ringTrace        = (getenv("MC2_RING_TRACE") != nullptr);
+    static uint64_t   s_ringTraceFrameIdx = 0;
+    const uint64_t  ringFrameIdx = ++s_ringTraceFrameIdx;
+    const int       probedSlot   = g_thinRingSlot;
+    const bool      fencePresent = (g_thinRingFences[probedSlot] != 0);
+
+    uint32_t mvpFp = 0u;
+    if (s_ringTrace) {
+        const float* mvpProbe = gos_GetTerrainMVPMat4();
+        if (mvpProbe) {
+            // FNV-1a over rotation/translation rows (skip projection row mvp[12..15])
+            // — gives a stable fingerprint that changes proportionally to camera
+            // rotation rate but is insensitive to projection-only mutation.
+            mvpFp = 2166136261u;
+            for (int k = 0; k < 12; ++k) {
+                uint32_t bits = 0;
+                memcpy(&bits, &mvpProbe[k], sizeof(bits));
+                mvpFp ^= bits;
+                mvpFp *= 16777619u;
+            }
+        }
     }
+
+    GLenum waitResult = GL_ALREADY_SIGNALED;
+    uint64_t waitUs   = 0;
+    if (g_thinRingFences[probedSlot]) {
+        const auto t0 = std::chrono::steady_clock::now();
+        waitResult = glClientWaitSync(g_thinRingFences[probedSlot],
+                         GL_SYNC_FLUSH_COMMANDS_BIT, 10000000u /*10ms*/);
+        const auto t1 = std::chrono::steady_clock::now();
+        waitUs = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        glDeleteSync(g_thinRingFences[probedSlot]);
+        g_thinRingFences[probedSlot] = 0;
+    }
+
+    // Tripwire #1: missing fence past warmup OR fence timeout.
+    // Warmup window = 2*kThinRingFrames frames; first slot 1 wrap can miss
+    // a fence if frame-1's DrawIndirect didn't issue (recipe not ready /
+    // MVP not yet valid).  This is benign startup, not a bug.
+    {
+        const bool fenceMissedAfterWarmup =
+            (!fencePresent) && (ringFrameIdx > (uint64_t)(2 * kThinRingFrames));
+        const bool timeoutFired =
+            (waitResult == GL_TIMEOUT_EXPIRED || waitResult == GL_WAIT_FAILED);
+        if (fenceMissedAfterWarmup || timeoutFired) {
+            static uint32_t s_tripwireMissCount    = 0;
+            static uint32_t s_tripwireTimeoutCount = 0;
+            uint32_t totalMiss    = (fenceMissedAfterWarmup ? ++s_tripwireMissCount    : s_tripwireMissCount);
+            uint32_t totalTimeout = (timeoutFired           ? ++s_tripwireTimeoutCount : s_tripwireTimeoutCount);
+            fprintf(stderr,
+                "[RING_TRIPWIRE v1] frame=%llu slot=%d fence=%d wait=0x%x wait_us=%llu "
+                "totalMiss=%u totalTimeout=%u mvpFp=0x%08x\n",
+                (unsigned long long)ringFrameIdx, probedSlot, (int)fencePresent,
+                (unsigned)waitResult, (unsigned long long)waitUs,
+                (unsigned)totalMiss, (unsigned)totalTimeout, (unsigned)mvpFp);
+            fflush(stderr);
+        }
+    }
+
+    // Tripwire #2: prev-frame visibleCount overshoot.
+    // The cull compute shader does atomicAdd(visibleCount, 1) unconditionally,
+    // then early-returns if outSlot >= kMaxThinRecords.  So visibleCount can
+    // climb past the cap; in that case the records that ran the atomicAdd
+    // LAST get dropped — atomicAdd ordering is race-dependent → different
+    // frames drop different records → thin-SSBO content varies between
+    // compute write and VS read EVEN AT THE SAME RING SLOT.  This is the
+    // candidate root cause for the "huge garbage triangle on fast rotation"
+    // signature: cmd-patch clamps the count to 65536*6 but the records past
+    // the kept records are race-dependent.
+    //
+    // Cost: one 4-byte readback per frame.  The fence wait above guarantees
+    // all prior GPU commands are complete, so glGetBufferSubData is stall-
+    // free here on AMD/NV (driver fast-path for already-signaled buffers).
+    if (g_solidBucketHeaderSsbo != 0 && ringFrameIdx > 1) {
+        uint32_t prevVisible = 0;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                           (GLsizeiptr)sizeof(uint32_t), &prevVisible);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        static uint32_t s_peakVisible    = 0;
+        static uint32_t s_overshootCount = 0;
+        static uint64_t s_lastSummary    = 0;
+        if (prevVisible > s_peakVisible) s_peakVisible = prevVisible;
+        const bool overshot = (prevVisible >= (uint32_t)kMaxThinRecords);
+        if (overshot) {
+            ++s_overshootCount;
+            fprintf(stderr,
+                "[RING_OVERSHOOT v1] frame=%llu prev_visible=%u cap=%zu "
+                "overshootCount=%u peak=%u mvpFp=0x%08x\n",
+                (unsigned long long)ringFrameIdx, (unsigned)prevVisible,
+                kMaxThinRecords, (unsigned)s_overshootCount,
+                (unsigned)s_peakVisible, (unsigned)mvpFp);
+            fflush(stderr);
+        }
+        if (s_ringTrace) {
+            printf("[RING v1] frame=%llu slot=%d fence=%d wait=0x%x wait_us=%llu "
+                   "prev_visible=%u peak=%u mvpFp=0x%08x\n",
+                (unsigned long long)ringFrameIdx, probedSlot, (int)fencePresent,
+                (unsigned)waitResult, (unsigned long long)waitUs,
+                (unsigned)prevVisible, (unsigned)s_peakVisible, (unsigned)mvpFp);
+            fflush(stdout);
+        }
+        // Periodic peak summary even when MC2_RING_TRACE is off so manual
+        // runs without env-var still surface the peak visible count.
+        if (ringFrameIdx - s_lastSummary >= 600) {
+            s_lastSummary = ringFrameIdx;
+            fprintf(stderr,
+                "[RING_PEAK v1] frame=%llu peak_visible=%u cap=%zu "
+                "overshootCount=%u\n",
+                (unsigned long long)ringFrameIdx, (unsigned)s_peakVisible,
+                kMaxThinRecords, (unsigned)s_overshootCount);
+            fflush(stderr);
+        }
+    } else if (s_ringTrace) {
+        printf("[RING v1] frame=%llu slot=%d fence=%d wait=0x%x wait_us=%llu mvpFp=0x%08x\n",
+            (unsigned long long)ringFrameIdx, probedSlot, (int)fencePresent,
+            (unsigned)waitResult, (unsigned long long)waitUs, (unsigned)mvpFp);
+        fflush(stdout);
+    }
+    // ── end probe ─────────────────────────────────────────────────────────
+
     const GLintptr thinSlotOffset = (GLintptr)(g_thinRingSlot * kThinRecordBytes);
 
     // Zero bucket header visibleCount before dispatch.
@@ -2071,6 +2200,41 @@ void ComputeDispatch() {
     glDispatchCompute(1, 1, 1);
 
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
+
+    // ── Probe 3 (MC2_RING_TRACE) — read back the indirect cmd's count after patch ──
+    // If a cmd-patch race is occurring under fast rotation, cmd.count may not equal
+    // min(visibleCount, kMaxThinRecords) * 6.  Reading it here after the
+    // GL_COMMAND_BARRIER_BIT means the GPU has finished cmd-patch; no stall.
+    // Cost: one 16-byte readback per frame (one DrawArraysIndirectCommand).
+    if (s_ringTrace && g_indirectCmdBuffer != 0) {
+        uint32_t cmdQuad[4] = { 0, 0, 0, 0 };
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_indirectCmdBuffer);
+        glGetBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0, (GLsizeiptr)sizeof(cmdQuad), cmdQuad);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+        // cmdQuad[0] = count, [1] = instanceCount, [2] = first, [3] = baseInstance.
+        // Tripwire: count > expected. Expected = min(visibleCount, kMaxThinRecords) * 6.
+        // visibleCount here is THIS frame's post-cull value; bucket header is bound.
+        uint32_t vis = 0;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)sizeof(vis), &vis);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        const uint32_t expectedCount =
+            (vis < (uint32_t)kMaxThinRecords ? vis : (uint32_t)kMaxThinRecords) * 6u;
+        if (cmdQuad[0] != expectedCount) {
+            static uint32_t s_cmdMismatchCount = 0;
+            ++s_cmdMismatchCount;
+            fprintf(stderr,
+                "[RING_CMDPATCH v1] frame=%llu cmd_count=%u expected=%u "
+                "visible=%u inst=%u first=%u base=%u mismatchCount=%u\n",
+                (unsigned long long)ringFrameIdx, (unsigned)cmdQuad[0],
+                (unsigned)expectedCount, (unsigned)vis,
+                (unsigned)cmdQuad[1], (unsigned)cmdQuad[2], (unsigned)cmdQuad[3],
+                (unsigned)s_cmdMismatchCount);
+            fflush(stderr);
+        }
+    }
+    // ── end probe 3 ─────────────────────────────────────────────────────────
+
     glUseProgram(0);
 
     // Restore compute-only slots to clean state.
