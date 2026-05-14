@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <cstring>  // memcpy
 #include <chrono>   // MC2_RING_TRACE wait-time measurement (probe-only)
+#include <ctime>    // RING_SINK timestamp on probe-sink open
 
 #include <GL/glew.h>
 
@@ -2004,6 +2005,27 @@ void ComputeDispatch() {
     // Advance the thin-record ring slot (same ring as CPU path).
     g_thinRingSlot = (g_thinRingSlot + 1) % kThinRingFrames;
 
+    // ── Probe sink — writes tripwires to a file next to mc2.exe regardless of
+    // how the process was launched.  Solves the "stderr disappears under
+    // double-click on Windows" problem so raw user repros are captured.
+    // Append-mode; line-buffered via fflush after each write.  Opened once,
+    // never closed (process-lifetime).  Stderr writes are kept too — the
+    // file is additive, not a redirect.
+    static FILE* s_probeSink = []{
+        FILE* f = fopen("ring_trace.log", "a");
+        if (f) {
+            fprintf(f, "\n[RING_SINK v1] event=open time=%lld\n",
+                    (long long)time(nullptr));
+            fflush(f);
+        }
+        return f;
+    }();
+#define PROBE_LOG(fmt, ...) do { \
+        fprintf(stderr, fmt, ##__VA_ARGS__); \
+        fflush(stderr); \
+        if (s_probeSink) { fprintf(s_probeSink, fmt, ##__VA_ARGS__); fflush(s_probeSink); } \
+    } while (0)
+
     // ── Ring-hazard probe (MC2_RING_TRACE) ────────────────────────────────
     // Default-off per-frame trace; ALWAYS-on tripwire when the wait actually
     // times out or the fence is missing on a non-warmup frame. Either signal
@@ -2064,13 +2086,12 @@ void ComputeDispatch() {
             static uint32_t s_tripwireTimeoutCount = 0;
             uint32_t totalMiss    = (fenceMissedAfterWarmup ? ++s_tripwireMissCount    : s_tripwireMissCount);
             uint32_t totalTimeout = (timeoutFired           ? ++s_tripwireTimeoutCount : s_tripwireTimeoutCount);
-            fprintf(stderr,
+            PROBE_LOG(
                 "[RING_TRIPWIRE v1] frame=%llu slot=%d fence=%d wait=0x%x wait_us=%llu "
                 "totalMiss=%u totalTimeout=%u mvpFp=0x%08x\n",
                 (unsigned long long)ringFrameIdx, probedSlot, (int)fencePresent,
                 (unsigned)waitResult, (unsigned long long)waitUs,
                 (unsigned)totalMiss, (unsigned)totalTimeout, (unsigned)mvpFp);
-            fflush(stderr);
         }
     }
 
@@ -2102,13 +2123,12 @@ void ComputeDispatch() {
         const bool overshot = (prevVisible >= (uint32_t)kMaxThinRecords);
         if (overshot) {
             ++s_overshootCount;
-            fprintf(stderr,
+            PROBE_LOG(
                 "[RING_OVERSHOOT v1] frame=%llu prev_visible=%u cap=%zu "
                 "overshootCount=%u peak=%u mvpFp=0x%08x\n",
                 (unsigned long long)ringFrameIdx, (unsigned)prevVisible,
                 kMaxThinRecords, (unsigned)s_overshootCount,
                 (unsigned)s_peakVisible, (unsigned)mvpFp);
-            fflush(stderr);
         }
         if (s_ringTrace) {
             printf("[RING v1] frame=%llu slot=%d fence=%d wait=0x%x wait_us=%llu "
@@ -2122,12 +2142,11 @@ void ComputeDispatch() {
         // runs without env-var still surface the peak visible count.
         if (ringFrameIdx - s_lastSummary >= 600) {
             s_lastSummary = ringFrameIdx;
-            fprintf(stderr,
+            PROBE_LOG(
                 "[RING_PEAK v1] frame=%llu peak_visible=%u cap=%zu "
                 "overshootCount=%u\n",
                 (unsigned long long)ringFrameIdx, (unsigned)s_peakVisible,
                 kMaxThinRecords, (unsigned)s_overshootCount);
-            fflush(stderr);
         }
     } else if (s_ringTrace) {
         printf("[RING v1] frame=%llu slot=%d fence=%d wait=0x%x wait_us=%llu mvpFp=0x%08x\n",
@@ -2223,14 +2242,13 @@ void ComputeDispatch() {
         if (cmdQuad[0] != expectedCount) {
             static uint32_t s_cmdMismatchCount = 0;
             ++s_cmdMismatchCount;
-            fprintf(stderr,
+            PROBE_LOG(
                 "[RING_CMDPATCH v1] frame=%llu cmd_count=%u expected=%u "
                 "visible=%u inst=%u first=%u base=%u mismatchCount=%u\n",
                 (unsigned long long)ringFrameIdx, (unsigned)cmdQuad[0],
                 (unsigned)expectedCount, (unsigned)vis,
                 (unsigned)cmdQuad[1], (unsigned)cmdQuad[2], (unsigned)cmdQuad[3],
                 (unsigned)s_cmdMismatchCount);
-            fflush(stderr);
         }
     }
     // ── end probe 3 ─────────────────────────────────────────────────────────
