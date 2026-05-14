@@ -1300,6 +1300,14 @@ class gosRenderer {
         // (B4 Stage 1b: mask-SOLID shader shares all uniform names with thin
         // shader so this is safe).
         int terrainBindThinUniformsForPatchStream(glsl_program* overrideProg = nullptr);
+        // Fix A (2026-05-14): re-upload an externally-provided terrainMVP over
+        // the one just bound by terrainBindThinUniformsForPatchStream.  Used by
+        // the indirect bridge to align the VS projection MVP with the MVP that
+        // compute used when writing the thin records being drawn this frame.
+        // Uses the already-cached thinTerrainLocs_.terrainMVP — no extra
+        // glGetUniformLocation.  Must be called AFTER terrainBindThinUniformsForPatchStream
+        // (which caches the location) and while the thin program is bound.
+        void terrainOverrideThinMVP(const float* mvp4x4);
         // Returns the glsl_program for the thin terrain shader. Used by bridge exports.
         glsl_program* getThinTerrainProgram() const { return thin_terrain_prog_; }
         glsl_program* getWaterFastProgram()   const { return water_fast_prog_;   }
@@ -2513,6 +2521,17 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
         g_gos_renderer->terrainBindThinUniformsForPatchStream();
     if (ssboRecordBaseLoc >= 0)
         glUniform1i(ssboRecordBaseLoc, 0);
+
+    // Fix A (2026-05-14): override the just-uploaded terrainMVP with the
+    // per-ring-slot snapshot captured at compute-dispatch time.  Compute
+    // wrote pzOk gates into the thin records using that MVP; the VS must
+    // project them with the same MVP or fast-rotation frames produce the
+    // giant grey-banded terrain triangle.  See
+    // docs/superpowers/progress/2026-05-14-raster-triangle-handoff.md.
+    extern const float* gos_terrain_indirect_getRingSlotMvp();
+    if (const float* slotMvp = gos_terrain_indirect_getRingSlotMvp()) {
+        g_gos_renderer->terrainOverrideThinMVP(slotMvp);
+    }
 
     // ---- Depth + color state for opaque terrain ----------------------------
     glEnable(GL_DEPTH_TEST);
@@ -4735,6 +4754,16 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
     }
 
     return tl.ssboRecordBase;
+}
+
+void gosRenderer::terrainOverrideThinMVP(const float* mvp4x4)
+{
+    if (!mvp4x4) return;
+    const auto& tl = thinTerrainLocs_;
+    if (tl.terrainMVP < 0) return;
+    // GL_FALSE is correct for terrainMVP (memory/terrain_mvp_gl_false.md) —
+    // matches the upload at terrainBindThinUniformsForPatchStream above.
+    glUniformMatrix4fv(tl.terrainMVP, 1, GL_FALSE, mvp4x4);
 }
 
 void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh* mesh) {

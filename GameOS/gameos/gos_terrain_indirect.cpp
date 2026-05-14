@@ -1442,6 +1442,18 @@ static uint64_t g_dispatchMvpFrameIdx = 0;
 // Bridge logs both sets on mismatch so we can see byte-level difference.
 static float    g_dispatchMvpFloats[4] = { 0, 0, 0, 0 };
 
+// Fix A (2026-05-14): per-ring-slot MVP stash for the intentional 1-frame
+// compute->bridge lag.  Compute writes thin records to slot S using MVP_X;
+// the bridge consumes slot S one frame later when terrain_mvp_ has rotated
+// to MVP_Y.  Without this snapshot the VS projects records with MVP_Y while
+// their pzOk gates assume MVP_X — producing the giant grey-banded terrain
+// triangle under fast camera rotation documented in
+// docs/superpowers/progress/2026-05-14-raster-triangle-handoff.md.
+// Both the GPU path (ComputeDispatch) and the CPU path (PackThinRecordsForFrame)
+// stash here for invariant uniformity, even though the CPU path is not lagged.
+static float    g_thinSlotMVP[kThinRingFrames][16] = { { 0 } };
+static bool     g_thinSlotMVPValid[kThinRingFrames] = { false, false, false };
+
 // Cached uniform locations — populated once when programs are compiled.
 // Per-frame varying uniforms (u_windowCount, u_terrainMVP, u_alphaOverride)
 // are still uploaded every frame; only the locations themselves are cached.
@@ -1578,6 +1590,16 @@ static int PackThinRecordsForFrame() {
                          GL_SYNC_FLUSH_COMMANDS_BIT, 10000000u /* 10ms */);
         glDeleteSync(g_thinRingFences[g_thinRingSlot]);
         g_thinRingFences[g_thinRingSlot] = 0;
+    }
+
+    // Fix A: snapshot current MVP for this slot.  The CPU pack path is not
+    // frame-lagged (records are produced and drawn in the same frame), so this
+    // stash equals the bridge's terrain_mvp_ at draw time — the override is a
+    // no-op for CPU-packed slots.  Stash anyway to keep the "every slot has
+    // a valid MVP" invariant uniform across CPU and GPU paths.
+    if (const float* curMvp = gos_GetTerrainMVPMat4()) {
+        memcpy(g_thinSlotMVP[g_thinRingSlot], curMvp, sizeof(float) * 16);
+        g_thinSlotMVPValid[g_thinRingSlot] = true;
     }
 
     // Stage area: up to kMaxThinRecords records into a stack-local shadow.
@@ -2422,6 +2444,12 @@ void ComputeDispatch() {
         g_dispatchMvpFloats[1] = mvp[1];
         g_dispatchMvpFloats[2] = mvp[2];
         g_dispatchMvpFloats[3] = mvp[3];
+        // Fix A: full 16-float snapshot for the bridge to re-upload at draw
+        // time.  Indexed by the current ring slot — compute is about to write
+        // thin records to g_thinRingSlot using this MVP, so the bridge must
+        // project them with the same MVP one frame later.
+        memcpy(g_thinSlotMVP[g_thinRingSlot], mvp, sizeof(float) * 16);
+        g_thinSlotMVPValid[g_thinRingSlot] = true;
     }
 
     const uint32_t groups = (windowCount + 63u) / 64u;
@@ -2724,6 +2752,17 @@ void ComputeDispatchParity_Check() {
 // gos_terrain_bridge_drawIndirect to compute glBindBufferRange offset).
 int gos_terrain_indirect_getRingSlot() {
     return g_thinRingSlot;
+}
+
+// Fix A: returns the per-slot MVP snapshot for the current ring slot, or
+// nullptr if no MVP has been stashed yet (early frames before any pack /
+// dispatch).  Bridge re-uploads this over terrain_mvp_ so the thin VS
+// projects records with the MVP they were culled by.
+const float* gos_terrain_indirect_getRingSlotMvp() {
+    const int slot = g_thinRingSlot;
+    if (slot < 0 || slot >= kThinRingFrames) return nullptr;
+    if (!g_thinSlotMVPValid[slot]) return nullptr;
+    return g_thinSlotMVP[slot];
 }
 
 // Slice B4 Stage 1b — C-linkage accessors used by gos_terrain_mask_dispatch::DrawMaskSolid.
