@@ -1558,6 +1558,37 @@ void Terrain::geometry (void)
 				setObjVertexActive(rv->vertexNum,true);
 			}
 
+			// VPL Step 8b re-home: Step 8b (12ad8dc) deleted the per-vertex
+			// px/py/pz/pw writes on the premise the GPU-driven indirect path
+			// made them dead. They are NOT dead for the LEGACY immediate
+			// raster terrain path (quad.cpp TerrainQuad::draw() reads
+			// vertices[c]->px/py/pz/pw to build gVertex[]); that path runs on
+			// frames where the indirect fast path is UNARMED -- the mission
+			// deployment / unit-select screen never calls ComputePreflight()
+			// so IsFrameSolidArmed() is false there. tier1 smoke is always
+			// armed in-mission so it never exercised this consumer. Re-home
+			// (not re-derive) the EXACT pre-8b semantics: gate on onScreenR
+			// (== legacy `onScreen` byte-for-byte, NOT clipR/clipInfo --
+			// faithful in the Renderer!=3 branch too), source the accepted
+			// write from the already-computed sp (same projectForTerrain-
+			// Admission output the old VPL body baked in), and reproduce the
+			// off-screen sentinel verbatim. Placed BEFORE the reduction gate
+			// below so off-rect-but-onscreen quads the raster path still
+			// draws are not skipped (cull_gates_are_load_bearing.md).
+			if (onScreenR)
+			{
+				rv->px = sp.x;
+				rv->py = sp.y;
+				rv->pz = sp.z;
+				rv->pw = sp.w;
+			}
+			else
+			{
+				rv->px = rv->py = 10000.0f;
+				rv->pz = -0.5f;
+				rv->pw = 0.5f;
+			}
+
 			// --- reduction-admission gate (decoupled from the cull write
 			// above; the reduction may legitimately use the tighter set,
 			// the cull MUST use the loose {onScreen} set per CRIT-1) ---
