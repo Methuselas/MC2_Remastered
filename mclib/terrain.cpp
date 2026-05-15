@@ -1843,16 +1843,14 @@ void Terrain::geometry (void)
 					bool append;
 					if (gos_terrain_indirect::IsFrameSolidArmed()) {
 						// Armed: setupTextures() gated, waterHandle never set.
-						// Replicate the clipped1||clipped2 gate from
-						// setupTextures() (quad.cpp:963) using the clipInfo
-						// values written by the geometry loop (not gated).
-						const long c1 = q.vertices[0]->clipInfo
-						              + q.vertices[1]->clipInfo
-						              + q.vertices[2]->clipInfo;
-						const long c2 = q.vertices[0]->clipInfo
-						              + q.vertices[2]->clipInfo
-						              + q.vertices[3]->clipInfo;
-						append = (c1 || c2);
+						// Replicate the PRIMARY water gate from quad.cpp:956-959:
+						// any vertex on a water tile (pVertex->water & 1).
+						// The GPU compute shader's pzOk gate (gpu_driven_water.comp:236)
+						// handles the secondary clip test.
+						append = (q.vertices[0]->pVertex->water & 1) ||
+						         (q.vertices[1]->pVertex->water & 1) ||
+						         (q.vertices[2]->pVertex->water & 1) ||
+						         (q.vertices[3]->pVertex->water & 1);
 					} else {
 						append = (q.waterHandle != 0xffffffffu);
 					}
