@@ -564,49 +564,12 @@ void Camera::destroy (void)
 	}
 }
 
-//---------------------------------------------------------------------------
-void Camera::getClosestVertex (Stuff::Vector2DOf<long> &screenPos, long &row, long &col)
-{
-	//--------------------------------------------------------
-	// New method.  Use the terrain window to figure out
-	// where we are by finding the vertex closest to the clicked 
-	// position and returning its 3d pos.
-	VertexPtr topVertex = land->getVertexList();
-	unsigned long numVertices = land->getNumVertices();
-	VertexPtr closestVertex = NULL;
-	long whichVertex = 0;
-
-//
-// Redone all using integers and no square root.
-//
-	long i=0,tvx=screenPos.x,tvy=screenPos.y;
-	float dx,dy,cd=1e38f,dist;
-	for (i=0;i<(long)numVertices;i++)
-	{
-		dx = ( tvx - topVertex->px);
-		dy = ( tvy - topVertex->py);
-		dist = dx * dx + dy * dy;
-		if (dist < cd)
-		{
-			cd = dist;
-			closestVertex = topVertex;
-			whichVertex = i;
-		}
-		topVertex++;
-	}
-
-	long block = closestVertex->blockVertex >> 16;
-	long vertex = closestVertex->blockVertex & 0x0000ffff;
-
-	long blockX = block % Terrain::blocksMapSide;
-	long blockY = block / Terrain::blocksMapSide;
-
-	long vertexX = vertex % Terrain::verticesBlockSide;
-	long vertexY = vertex / Terrain::verticesBlockSide;
-
-	col = blockX * Terrain::verticesBlockSide + vertexX;
-	row = blockY * Terrain::verticesBlockSide + vertexY;
-}	
+// VPL Step 8b: Camera::getClosestVertex deleted (dead code, ZERO callers
+// across mclib/ + code/ + GameOS/ — grep-verified). It read topVertex->px/py
+// which Step 8b just made per-frame-stale; a dead function reading soon-stale
+// state is the additive-debt reactivation trap
+// (mc_texture_manager_dual_queue_legacy_retirement_debt.md). Deleted with the
+// VPL px/py/pz/pw writes per Step 8 review SS3 (MAJOR) + plan v3.5 MAJOR(a).
 
 //---------------------------------------------------------------------------
 

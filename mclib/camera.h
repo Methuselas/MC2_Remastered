@@ -658,7 +658,8 @@ class Camera
 
 		unsigned long inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff::Vector3D &point);
 
-		void getClosestVertex (Stuff::Vector2DOf<long> &screenPos, long &row, long &col);
+		// VPL Step 8b: getClosestVertex declaration deleted (dead code, zero
+		// callers; def removed from camera.cpp). See Step 8 review SS3.
 		
 		void setOrthogonal(void);
 		virtual void setCameraOrigin (void);

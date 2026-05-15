@@ -1595,11 +1595,17 @@ void Terrain::geometry (void)
 			else
 			{
 				// Live writes (cull cascade + accumulators).
+				// VPL Step 8b: the per-vertex cv->px/py/pz/pw writes are
+				// deleted here. All consumers were retired in earlier steps
+				// (Steps 1/1b/3/4); the overlay-pz v2 precursor re-projects
+				// independently and is bit-identity-proven (c3ac10a). The
+				// pxL/pyL/pzL/pwL locals + the projection call + the Step 6
+				// slim reduction + the MC2_VPL_CULL/REDUCE probes are KEPT
+				// (8c owns the loop-body / projection-call deletion). The
+				// cv->clipInfo write and the cull-cascade writes below stay:
+				// clipInfo's sole pre-quad.cpp-overwrite consumer is the
+				// in-loop cull cascade itself (Step 8 review SS4).
 				cv->hazeFactor = hazeL;
-				cv->px = pxL;
-				cv->py = pyL;
-				cv->pz = pzL;
-				cv->pw = pwL;
 				cv->clipInfo = clipInfoFinal;
 
 				if (clipInfoFinal)
@@ -1732,24 +1738,23 @@ void Terrain::geometry (void)
 			// [PROJECTZ:BoolAdmission id=terrain_cpu_vert_admit]
 			PROJECTZ_SITE("terrain_cpu_vert_admit", "BoolAdmission");
 			inView = eye->projectForTerrainAdmission(vertex3D,screenPos);
-		
-			currentVertex->px = screenPos.x;
-			currentVertex->py = screenPos.y;
-			currentVertex->pz = screenPos.z;
-			currentVertex->pw = screenPos.w;
-			
+
+			// VPL Step 8b: the per-vertex currentVertex->px/py/pz/pw writes
+			// (and the off-screen px/py=10000, pz=-0.5, pw=0.5 fallback
+			// below) are deleted. Consumers retired in earlier steps; the
+			// projection call above stays (8c owns it; screenPos still feeds
+			// inView and the legacy MC2_VPL_REDUCE shadow accumulators).
+			// hazeFactor, clipInfo, and the cull cascade stay.
+
 			//----------------------------------------------------------------------------------
-			//We must transform these but should NOT draw any face where all three are fogged. 
-//			if (currentVertex->hazeFactor == 1.0f)		
+			//We must transform these but should NOT draw any face where all three are fogged.
+//			if (currentVertex->hazeFactor == 1.0f)
 //				onScreen = false;
 		}
 		else
 		{
-			currentVertex->px = currentVertex->py = 10000.0f;
-			currentVertex->pz = -0.5f;
-			currentVertex->pw = 0.5f;
 			currentVertex->hazeFactor = 0.0f;
-		}	
+		}
 		
 		//------------------------------------------------------------
 		// Fix clip.  Vertices can all be off screen and triangle
