@@ -109,15 +109,38 @@ Each step is one commit unless noted. Each commit lands with:
 
 ### Step 3: Mouse picking + tacmap repoint (Camera::inverseProject + tacmap viewport)
 
-**Files / consumers (per `mc2-cpu-gpu-offload-expert` advisor walk):**
-- (a) `Camera::inverseProject` at `mclib/camera.cpp:749-832` reads BOTH `pz` AND `clipInfo`. Both must be replaced. The per-quad walk at `:768-789` iterates `numTiles == land->getNumQuads()` (~64k-256k tiles per mission), testing `clipInfo` for tile admission and `pz` for closest-tile selection.
-- (b) Tacmap viewport unprojection at `code/gametacmap.cpp:225/232/239/246` — four callsites calling `inverseProjectForPicking` on viewport corners. Already use the wrapper; zero-cost to keep working. **Requirement:** the wrapper's underlying state (`startZInverse`, `zPerPixel`, etc., set by `setInverseProject` at `terrain.cpp:1891`) must continue to be populated. This couples to Step 6 (shared reductions), which feeds `setInverseProject`. The cross-step dependency is load-bearing — Step 6's slim CPU min/max pass exists in part to keep this wrapper alive.
+**Scope correction (B1 — cpu-gpu-offload advisor 2026-05-14, escalation):** v2/v3 framing said Step 3 repoints "BOTH `pz` AND `clipInfo`". That is **under-specified**. `Camera::inverseProject` (`mclib/camera.cpp:749`, body runs to just before `:968`) has **THREE** VPL dependencies, not two (all grep-verified at HEAD `63c9ee7`):
 
-**Change for (a):** replace the per-quad walk with a CPU frustum cull over tile AABBs (same math as Step 5 — both steps share the camera-frustum × quad-AABB intersection primitive; build the shared helper once and call from both sites) + the existing `inverseProjectForPicking` wrapper (`mclib/camera.h:634-637`, NOT the `:422-622` forward-projection range cited in v1) for the per-cursor screen-to-world ray. Tile lookup after the unprojected world point lands.
+1. `vertices[c]->clipInfo` — tile admission, `camera.cpp:770-773`.
+2. `vertices[c]->pz` — closest-tile selection, `camera.cpp:797-822`.
+3. `vertices[c]->px` / `->py` — point-in-screen-triangle test inside `overThisTile()` (`camera.cpp:633-640`), called from the tile walk at `camera.cpp:775`.
+
+Missing the `px/py` dependency is the escalation: Step 8b retires `px`/`py`/`pz`/`clipInfo` VPL writes, so **leaving any of the three reads live makes Step 8b silently break picking** (no compile error — `overThisTile` would read stale per-frame `px/py`). The `px/py` dependency (not just `pz`/`clipInfo`) MUST be covered by Step 3.
+
+**Change for (a):** the repoint must replace the **ENTIRE tile-walk + `overThisTile` + closest-pz block as one unit** — `camera.cpp:759-831` (grep-verified: `:760` `numTiles = land->getNumQuads()`, `:768` walk loop, `:770-773` clipInfo admission, `:775` `overThisTile` call, `:797-822` closest-pz selection, block closes at the `else if (currentClosest)` at `:827-831`; the `closestTile`-resolve tail at `:833+` consumes the walk's output and is repointed to the new world-point lookup). Replace with a CPU frustum cull over tile AABBs (same math as Step 5 — both share the camera-frustum × quad-AABB primitive; see "Shared frustum-AABB helper" below) + the existing `inverseProjectForPicking` wrapper (`mclib/camera.h:634-637`, NOT the `:422-622` forward-projection range cited in v1) for the per-cursor screen-to-world ray, then a tile lookup after the unprojected world point lands. **Delete `overThisTile`** — grep-confirmed its only caller is the tile walk at `camera.cpp:775` (sole reference; `camera.cpp:628` is the definition), so it has no surviving caller after the block is replaced.
+
+- (b) Tacmap viewport unprojection at `code/gametacmap.cpp:225/232/239/246` — four callsites calling `inverseProjectForPicking` on viewport corners. Already use the wrapper; zero-cost to keep working. **Requirement:** the wrapper's underlying state (`startZInverse`, `zPerPixel`, etc., set by `setInverseProject` at `terrain.cpp:1891`) must continue to be populated. This couples to Step 6 (shared reductions), which feeds `setInverseProject`. The cross-step dependency is load-bearing — Step 6's slim CPU min/max pass exists in part to keep this wrapper alive.
 
 **Per-click cost:** ~50 µs (one projection, one tile lookup) vs the current per-frame walk over ~64k-256k tiles.
 
-**Verification:** tier1 smoke `--tier tier1 --duration 30 --kill-existing` + manual UAT on cursor placement, marquee drag-select, mech selection by click, build-menu placement preview, salvage placement, AND tacmap F-key viewport rendering on `mc2_01`, `mc2_10`, `mc2_17`. Per advisor: confirm that drag-select / marquee code paths call `inverseProject` once per drag-operation, not once per frame (the edge case where amortized per-frame projection was historically cheaper than on-demand).
+**Per-frame caller correction (B2 — cpu-gpu-offload advisor 2026-05-14):** v2/v3 verification said "confirm drag-select / marquee calls `inverseProject` once per drag-operation, not once per frame." Grep disproves the premise: the only production `Camera::inverseProject` caller is `code/missiongui.cpp:742` (`eye->inverseProject(mouseXY, wPos);`) inside `MissionInterfaceManager::update(void)` (`missiongui.cpp:423`) — that runs **PER FRAME**, not per drag-operation. Consequently the per-frame delta-cache is **MANDATORY infrastructure**, not an optional optimization: cache `(prevMouseX, prevMouseY, cachedWPos)` and invalidate on a camera `worldToClip` change; the on-demand projection only re-fires when the cursor moved or the camera moved. **Caller inventory (grep-verified):** the sole `Camera::inverseProject` production caller is per-frame `missiongui.cpp:742`; tacmap (`gametacmap.cpp:225/232/239/246`) uses `inverseProjectForPicking`, which under `usePerspective == true` does NOT enter `Camera::inverseProject` (it routes through `inverseProjectZ`'s perspective branch) and reads no vertex VPL field.
+
+**Shared frustum-AABB helper (B3 — defined by Step 3, referenced by Step 5B).** Step 3 (`Camera::inverseProject` repoint) and Step 5B (slim cull-cascade pass) both need a CPU camera-frustum × quad-AABB intersection. Specify it once as two `Camera` members:
+
+- `Camera::extractFrustumPlanes(float planes[6][4]) const` — Gribb-Hartmann 6-plane extraction from `Camera::worldToClip` (grep-verified: `worldToClip` is a `Stuff::Matrix4D` member at `mclib/camera.h:138`). Pure CPU, no GL.
+- `Camera::quadAabbInFrustum(const float planes[6][4], const Stuff::Vector3D& mn, const Stuff::Vector3D& mx) const` — conservative AABB-vs-frustum test (negative-rejection safe; never false-negative). Pure CPU, no GL.
+
+**Location:** inline decls in `mclib/camera.h` near the projection wrappers; bodies in `mclib/camera.cpp` near `inverseProject`. Members of `Camera` so Step 3 (camera.cpp) and Step 5B (terrain.cpp, via the `eye` / `Camera*` already in scope) share one implementation. Co-located, no new translation unit.
+
+**Ownership pin (merge-conflict avoidance):** **Step 3 commit 3a DEFINES the helper; Step 5B REFERENCES it.** Step 5 must NOT re-add it. Per current plan numbering Step 3 lands first and owns the definition. (Mirror note in Step 5 — see B5 cross-link there.)
+
+**Step 3 commit shape (B4):** two commits.
+- **3a:** shared frustum-AABB helper (`extractFrustumPlanes` + `quadAabbInFrustum`) + `Camera::inverseProject` repoint (replace `camera.cpp:759-831`, delete `overThisTile`) + env-gated `[VPL_PICK v1]` lifecycle print per the worktree CLAUDE.md debug-instrumentation rule.
+- **3b:** the per-frame caller delta-cache at `missiongui.cpp:742` (per B2 — mandatory infra).
+
+**MANDATORY pre-flight gate (B4 — `usePerspective` recursion):** before relying on `inverseProjectForPicking`, the implementer MUST grep-confirm `usePerspective` is unconditionally true on the in-game (non-editor) path. Rationale: `inverseProjectForPicking` → `inverseProjectZ`, and `inverseProjectZ`'s `!usePerspective` branch at `camera.cpp:1884-1892` recurses into `inverseProject` — the function being retired. If any in-game mode can be orthogonal, the repoint MUST break that recursion or explicitly exclude the editor path. **Escalate to orchestrator + `mc2-render-expert` if ambiguous.** Cross-ref `memory/camera_model_oblique_cinematic.md` (MC2 camera is perspective oblique-cinematic, so this should resolve clean) — but it MUST be grep-verified, not assumed.
+
+**Verification:** tier1 smoke `--tier tier1 --duration 30 --kill-existing` + manual UAT on `mc2_01` / `mc2_10` / `mc2_17`: cursor placement (move-marker exactly under cursor), marquee drag-select (exact selection set), salvage/build placement ghost cell-accurate, AND tacmap F-key viewport trapezoid unchanged vs baseline (negative control proving Step 3 did NOT touch the tacmap path).
 
 **Soak:** 7 days. Picking regressions are subtle (off-by-one cursor positioning) and may only show on specific mission layouts. Runs concurrently with Step 5 + Step 8c soaks per §"Soak window parallelization" below.
 
@@ -157,7 +180,9 @@ The min/max reduction work falls naturally into the same loop (see Step 6 — `l
 
 **Path C eliminated.** The wrap-and-reduce framing eliminates the need for the v1 "Path C" (dirty-flag skip with object-list generation tracking) entirely. The reduced pass is cheap enough at full frequency that we don't need a skip path.
 
-**Co-location requirement.** The reduced pass MUST stay co-located with the rest of `Terrain::geometry`. Do not factor into a separate function in this step — that's a refactor for step 10 cleanup.
+**Shared frustum-AABB helper — REFERENCE, do not re-add (B5).** The 8-plane frustum test against quad AABBs uses `Camera::quadAabbInFrustum` / `Camera::extractFrustumPlanes`. These are **DEFINED by Step 3 commit 3a** (see Step 3 "Shared frustum-AABB helper"). Step 5B **references** them via the `Camera*` (`eye`) already in scope; it MUST NOT re-declare or re-define them (merge-conflict / double-add avoidance). Per current plan numbering Step 3 lands first and owns the definition; only if Step 5 somehow lands before Step 3 would the ownership invert (then Step 5 defines, Step 3 references) — but the plan ships Step 3 first, so Step 3 owns it.
+
+**Co-location requirement.** The reduced pass MUST stay co-located with the rest of `Terrain::geometry`. Do not factor into a separate function in this step — that's a refactor for step 10 cleanup. (The shared helper is a `Camera` member per B3/B5, separate from this co-location rule.)
 
 **Sensitivity consult:** the `mc2-render-perf-expert` advisor should confirm before commit that the 9 `objBlockInfo[].active` consumers in `code/objmgr.cpp` are insensitive to over-inclusion (objects whose owning quad-AABB intersects the frustum but whose actual on-screen footprint is empty). Expected answer: insensitive — the consumers do their own per-object visibility refinement downstream.
 
