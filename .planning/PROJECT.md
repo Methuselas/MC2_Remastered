@@ -48,6 +48,8 @@ This principle MAKES the structure axis (north star 3) achievable. Declaring "we
 
 Read together they shape every architectural decision. The canonical example: the black-tree-bug (resolved 2026-05-05) lived in the unnamed gap between `update()` and `render()`; once the producer/consumer contract was named (the `cachedFrame_` stamp), the bug couldn't recur.
 
+**Change discipline (the WHEN governor, not a 4th axis):** the triad defines WHAT "modern" means; `memory/minimal_touch_modern_when_touched.md` defines WHEN to apply it - at the forced-touch moment, not preemptively, not never. Don't touch what you don't have to (every touch has blast radius); when you must touch, bring it to the modern standard. Aggressive in direction, minimal in footprint-per-change. Standalone "cleanup" slices require a blocking or non-linear-debt justification (e.g. the dual-queue retirement).
+
 ## Architectural endpoint
 
 The three north stars converge on one direction:
