@@ -22,6 +22,11 @@
 //   u_fogStart/Full    — float (eye->fogStart / eye->fogFull)
 //   u_useFog           — int   (useFog ? 1 : 0)
 //   u_rendererSW       — int   (Environment.Renderer == 3 ? 1 : 0)
+//   g_playAreaBounds   — vec4  ((-m,-m,m,m); m = worldUnitsMapSide/2 - worldUnitsPerVertex*2)
+//   u_cameraWorldPos   — vec3  (swizzled camera origin; matches terrain.cpp:1417-1419)
+//   g_minHazeDistance  — float (Camera::MinHazeDistance)
+//   g_maxClipDistance  — float (Camera::MaxClipDistance)
+//   g_distanceFactor   — float (Camera::DistanceFactor)
 //
 // Note: 'uniform uint' + glUniform1ui crashes the project's shader_builder on this
 // driver (uniform reflection table). All integer uniforms use 'uniform int' + glUniform1i.
@@ -56,6 +61,14 @@ uniform float u_fogStart;
 uniform float u_fogFull;
 uniform int   u_useFog;
 uniform int   u_rendererSW;
+// Step 7 (VPL retirement): inline-worldPos hazeFactor. Plain uniforms, no
+// layout qualifier (matches refactor 05e73ab AMD-safe glGetUniformLocation
+// convention); all float/vec per memory/uniform_uint_crash.md (no uniform uint).
+uniform vec4  g_playAreaBounds;
+uniform vec3  u_cameraWorldPos;
+uniform float g_minHazeDistance;
+uniform float g_maxClipDistance;
+uniform float g_distanceFactor;
 
 // getLightChannel mirrors Camera::getLightRed/Green/Blue (camera.cpp:3065-3110).
 // Formula: if (intensity > 0) result = clamp(int(lightChan * intensity + ambientChan), 0, 255)
@@ -273,9 +286,26 @@ void main() {
         fogRGB_out = (fogResult << 24) | (specR << 16) | (specG << 8) | specB;
     }
 
-    // Distance fog (quad.cpp:1417-1426): hazeFactor from vertex projection
-    if (v.hazeFactor != 0.0) {
-        float fogFactor = 1.0 - v.hazeFactor;
+    // Step 7 (VPL retirement): hazeFactor inline from worldPos. Replaces SSBO
+    // v.hazeFactor (VPL CPU write retired in Step 8c). CPU used GetApproximateLength
+    // post length-preserving camera-frame xform; exact length() is the parity-correct
+    // upgrade (binary clamp identical when MinHaze==MaxClip stock).
+    // outsidePlayArea with bounds (-m,-m,m,m) == CPU !IsGameSelectTerrainPosition
+    // (terrain.cpp:687-700) exactly. CPU ||drawTerrainGrid debug bypass intentionally
+    // dropped (debug-only path, no production effect).
+    vec3 hpos = vec3(v.xy.x, v.xy.y, v.elevation);
+    float hazeFactor;
+    bool outsidePlayArea = (hpos.x <= g_playAreaBounds.x) || (hpos.x >= g_playAreaBounds.z) ||
+                           (hpos.y <= g_playAreaBounds.y) || (hpos.y >= g_playAreaBounds.w);
+    if (outsidePlayArea) { hazeFactor = 1.0; }
+    else {
+        float distanceToEye = length(hpos - u_cameraWorldPos);
+        if      (distanceToEye > g_maxClipDistance) hazeFactor = 1.0;
+        else if (distanceToEye > g_minHazeDistance) hazeFactor = (distanceToEye - g_minHazeDistance) * g_distanceFactor;
+        else                                        hazeFactor = 0.0;
+    }
+    if (hazeFactor != 0.0) {
+        float fogFactor = 1.0 - hazeFactor;
         uint distFog = uint(int(fogFactor * 255.0));
         if (distFog < fogResult) {
             fogResult = distFog;

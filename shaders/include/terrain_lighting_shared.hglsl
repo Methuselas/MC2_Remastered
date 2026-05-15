@@ -4,6 +4,9 @@
 // extend the C++ struct too (memory/cpp_glsl_ubo_struct_lockstep.md).
 // #version 430 is injected by the C++ loader — do NOT add it here.
 
+// hazeFactor: DEAD post-Step-7 (computed inline in gos_terrain_lighting.comp from
+// worldPos; populate write neutralized to 0.0f). Field RETAINED for std430 stride
+// lockstep; removal deferred to Step 10 cleanup (cpp_glsl_ubo_struct_lockstep.md).
 struct GpuTerrainVertexInput { vec2 xy; float elevation; float hazeFactor; vec3 normal; uint flags; };
 // Stage 2 extended (48B std430): added farDistance + oneOverDistance for GetFalloff.
 // Keep lockstep with GpuTerrainLight in gos_terrain_lighting.h.

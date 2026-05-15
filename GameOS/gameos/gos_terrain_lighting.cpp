@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -47,6 +48,18 @@ extern bool  useFog;           // defined in mclib/terrain.cpp
 static const bool s_trace = (getenv("MC2_TERRAIN_LIGHTING_GPU_TRACE") != nullptr);
 #define TL_TRACE(fmt, ...) \
     do { if (s_trace) { printf("[TERRAIN_LIGHTING_GPU v1] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
+
+// Step 7 (VPL retirement): MC2_HAZE_PARITY probe — env-gated default-off.
+// Compares the inline-worldPos hazeFactor formula (CPU-recomputed from
+// v.vx/v.vy/v.elevation + swizzled camera pos + Camera:: constants) against the
+// still-live VPL-written v.hazeFactor (Step 7 KEEPS the VPL writes; deletion is
+// Step 8c). Deltas ~0 stock: binary clamp (MinHaze==MaxClip==50000) on both
+// sides; GetApproximateLength->length() only diverges if setFarClipDistance
+// reshapes the haze band. Retire in Step 8c.
+static const bool s_hazeParity = (getenv("MC2_HAZE_PARITY") != nullptr);
+static double  s_hazeParityMaxAbsDelta = 0.0;
+static uint64_t s_hazeParityViolations = 0;
+static uint64_t s_hazeParitySummaryFrames = 0;
 
 // ---------------------------------------------------------------------------
 // Internal state
@@ -123,7 +136,13 @@ static constexpr int TL_UNI_FOG_START       = 14;
 static constexpr int TL_UNI_FOG_FULL        = 15;
 static constexpr int TL_UNI_USE_FOG         = 16;
 static constexpr int TL_UNI_RENDERER_SW     = 17;
-static constexpr int TL_UNI_COUNT           = 18;
+// Step 7 (VPL retirement): inline-worldPos hazeFactor uniforms.
+static constexpr int TL_UNI_PLAY_AREA       = 18;
+static constexpr int TL_UNI_CAM_WORLD_POS   = 19;
+static constexpr int TL_UNI_MIN_HAZE        = 20;
+static constexpr int TL_UNI_MAX_CLIP        = 21;
+static constexpr int TL_UNI_DIST_FACTOR     = 22;
+static constexpr int TL_UNI_COUNT           = 23;
 
 // Runtime-resolved uniform locations (populated once after shader compile).
 static GLint s_uniformLocs[TL_UNI_COUNT];
@@ -360,6 +379,12 @@ void mission_init(uint32_t numVertices, uint32_t maxLights) {
         s_uniformLocs[TL_UNI_FOG_FULL]        = glGetUniformLocation(s_program, "u_fogFull");
         s_uniformLocs[TL_UNI_USE_FOG]         = glGetUniformLocation(s_program, "u_useFog");
         s_uniformLocs[TL_UNI_RENDERER_SW]     = glGetUniformLocation(s_program, "u_rendererSW");
+        // Step 7 (VPL retirement): inline-worldPos hazeFactor uniforms.
+        s_uniformLocs[TL_UNI_PLAY_AREA]       = glGetUniformLocation(s_program, "g_playAreaBounds");
+        s_uniformLocs[TL_UNI_CAM_WORLD_POS]   = glGetUniformLocation(s_program, "u_cameraWorldPos");
+        s_uniformLocs[TL_UNI_MIN_HAZE]        = glGetUniformLocation(s_program, "g_minHazeDistance");
+        s_uniformLocs[TL_UNI_MAX_CLIP]        = glGetUniformLocation(s_program, "g_maxClipDistance");
+        s_uniformLocs[TL_UNI_DIST_FACTOR]     = glGetUniformLocation(s_program, "g_distanceFactor");
         // Always-on diagnostic: print all resolved locations so black-terrain debug
         // can immediately see which (if any) came back -1 (uniform not found).
         printf("[TERRAIN_LIGHTING_GPU v1] event=uniform_locs "
@@ -368,7 +393,8 @@ void mission_init(uint32_t numVertices, uint32_t maxLights) {
                "ambR=%d ambG=%d ambB=%d "
                "baseR=%d baseG=%d baseB=%d "
                "rain=%d lightning=%d fogStart=%d fogFull=%d "
-               "useFog=%d rendSW=%d\n",
+               "useFog=%d rendSW=%d "
+               "playArea=%d camWorldPos=%d minHaze=%d maxClip=%d distFactor=%d\n",
                s_uniformLocs[TL_UNI_NUM_VERTICES],
                s_uniformLocs[TL_UNI_NUM_LIGHTS],
                s_uniformLocs[TL_UNI_SUN_LIGHT_DIR],
@@ -386,7 +412,12 @@ void mission_init(uint32_t numVertices, uint32_t maxLights) {
                s_uniformLocs[TL_UNI_FOG_START],
                s_uniformLocs[TL_UNI_FOG_FULL],
                s_uniformLocs[TL_UNI_USE_FOG],
-               s_uniformLocs[TL_UNI_RENDERER_SW]);
+               s_uniformLocs[TL_UNI_RENDERER_SW],
+               s_uniformLocs[TL_UNI_PLAY_AREA],
+               s_uniformLocs[TL_UNI_CAM_WORLD_POS],
+               s_uniformLocs[TL_UNI_MIN_HAZE],
+               s_uniformLocs[TL_UNI_MAX_CLIP],
+               s_uniformLocs[TL_UNI_DIST_FACTOR]);
         fflush(stdout);
     }
     if (s_shaderBad) return;
@@ -542,6 +573,15 @@ void PackAndDispatch() {
         // entries; at 14400 × 32B = ~450KB, a memset is fast (~200µs worst case).
         memset(s_packBuf.data(), 0, s_numVertices * sizeof(GpuTerrainVertexInput));
 
+        // Step 7: MC2_HAZE_PARITY — per-frame accumulators (first ~256 verts).
+        int    hpProbed = 0;
+        double hpFrameMaxAbs = 0.0;
+        uint64_t hpFrameViol = 0;
+        const float hpM    = Terrain::worldUnitsMapSide / 2.0f - Terrain::worldUnitsPerVertex * 2.0f;
+        const float hpCamX = eye ? -eye->getCameraOrigin().x : 0.0f;
+        const float hpCamY = eye ?  eye->getCameraOrigin().z : 0.0f;
+        const float hpCamZ = eye ?  eye->getCameraOrigin().y : 0.0f;
+
         for (int i = 0; i < nv; ++i) {
             const Vertex& v = vlist[i];
             if (v.vertexNum < 0 || static_cast<uint32_t>(v.vertexNum) >= s_numVertices) continue;
@@ -550,7 +590,33 @@ void PackAndDispatch() {
             vi.xy[0]      = v.vx;
             vi.xy[1]      = v.vy;
             vi.elevation  = v.pVertex ? v.pVertex->elevation : 0.0f;
-            vi.hazeFactor = v.hazeFactor;  // Stage 2: carry distance fog factor
+            vi.hazeFactor = 0.0f; // Step 7: computed inline in compute; SSBO field dead, retained for std430 stride (alignas(16) stride-neutral; removal deferred to Step 10 cleanup, cpp_glsl_ubo_struct_lockstep.md)
+
+            // Step 7: MC2_HAZE_PARITY probe — CPU-recompute the inline formula and
+            // compare to the still-live VPL-written v.hazeFactor (first ~256 verts).
+            if (s_hazeParity && hpProbed < 256) {
+                ++hpProbed;
+                const float hx = v.vx;
+                const float hy = v.vy;
+                const float he = v.pVertex ? v.pVertex->elevation : 0.0f;
+                float hf;
+                const bool outside = (hx <= -hpM) || (hx >= hpM) ||
+                                     (hy <= -hpM) || (hy >= hpM);
+                if (outside) {
+                    hf = 1.0f;
+                } else {
+                    const float dx = hx - hpCamX;
+                    const float dy = hy - hpCamY;
+                    const float dz = he - hpCamZ;
+                    const float d  = sqrtf(dx * dx + dy * dy + dz * dz);
+                    if      (d > Camera::MaxClipDistance) hf = 1.0f;
+                    else if (d > Camera::MinHazeDistance) hf = (d - Camera::MinHazeDistance) * Camera::DistanceFactor;
+                    else                                  hf = 0.0f;
+                }
+                const double delta = fabs(static_cast<double>(hf) - static_cast<double>(v.hazeFactor));
+                if (delta > hpFrameMaxAbs) hpFrameMaxAbs = delta;
+                if (delta > 1e-4) ++hpFrameViol;
+            }
 
             if (v.pVertex) {
                 vi.normal[0] = v.pVertex->vertexNormal.x;
@@ -572,6 +638,21 @@ void PackAndDispatch() {
                 if (v.calcThisFrame & 2)      flags |= GPU_VERT_CALCFRAME_WATER;
             }
             vi.flags = flags;
+        }
+
+        // Step 7: MC2_HAZE_PARITY — fold this frame into running totals, emit a
+        // summary every 600 frames (matches the file's 600-frame cadence).
+        if (s_hazeParity) {
+            if (hpFrameMaxAbs > s_hazeParityMaxAbsDelta) s_hazeParityMaxAbsDelta = hpFrameMaxAbs;
+            s_hazeParityViolations += hpFrameViol;
+            ++s_hazeParitySummaryFrames;
+            if (s_hazeParitySummaryFrames % 600 == 0) {
+                printf("[HAZE_PARITY v1] event=summary frames=%llu max_abs_delta=%g violations=%llu\n",
+                       (unsigned long long)s_hazeParitySummaryFrames,
+                       s_hazeParityMaxAbsDelta,
+                       (unsigned long long)s_hazeParityViolations);
+                fflush(stdout);
+            }
         }
 
         // Upload full dense pack to GPU
@@ -666,6 +747,24 @@ void PackAndDispatch() {
 
     // Environment.Renderer == 3 => software renderer (skip lighting)
     glUniform1i(s_uniformLocs[TL_UNI_RENDERER_SW], (Environment.Renderer == 3) ? 1 : 0);
+
+    // Step 7 (VPL retirement): inline-worldPos hazeFactor uniforms.
+    // Play-area bounds == Terrain::IsGameSelectTerrainPosition (terrain.cpp:687-700).
+    // Camera world pos swizzle matches terrain.cpp:1417-1419 exactly:
+    //   cameraPos.x = -getCameraOrigin().x; .y = getCameraOrigin().z; .z = getCameraOrigin().y
+    {
+        const float m = Terrain::worldUnitsMapSide / 2.0f - Terrain::worldUnitsPerVertex * 2.0f;
+        glUniform4f(s_uniformLocs[TL_UNI_PLAY_AREA], -m, -m, m, m);
+        if (eye) {
+            glUniform3f(s_uniformLocs[TL_UNI_CAM_WORLD_POS],
+                        -eye->getCameraOrigin().x,
+                         eye->getCameraOrigin().z,
+                         eye->getCameraOrigin().y);
+        }
+        glUniform1f(s_uniformLocs[TL_UNI_MIN_HAZE],    Camera::MinHazeDistance);
+        glUniform1f(s_uniformLocs[TL_UNI_MAX_CLIP],    Camera::MaxClipDistance);
+        glUniform1f(s_uniformLocs[TL_UNI_DIST_FACTOR], Camera::DistanceFactor);
+    }
 
     // Dispatch: ceil(numVertices / 64) workgroups
     const uint32_t numGroups = (s_numVertices + 63u) / 64u;

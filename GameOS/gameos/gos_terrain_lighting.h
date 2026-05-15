@@ -35,7 +35,11 @@ namespace gos_terrain_lighting {
 struct alignas(16) GpuTerrainVertexInput {   // 32 B std430
     float    xy[2];          // 8 B @ offset 0
     float    elevation;      // 4 B @ offset 8
-    float    hazeFactor;     // 4 B @ offset 12  (Vertex::hazeFactor — distance fog; replaces Stage-1 _pad0)
+    float    hazeFactor;     // 4 B @ offset 12  DEAD post-Step-7 (haze computed inline in
+                             //   gos_terrain_lighting.comp from worldPos; populate write
+                             //   neutralized to 0.0f). RETAINED for std430 stride lockstep;
+                             //   alignas(16) pads this 4 B regardless so static_assert(==32)
+                             //   stays valid. Removal deferred to Step 10 (cpp_glsl_ubo_struct_lockstep.md).
     float    normal[3];      // 12 B @ offset 16
     uint32_t flags;          // 4 B @ offset 28
 };
