@@ -343,10 +343,9 @@ bool ComputePreflight();
 // gos_terrain_lighting::GetOutputSsbo() with same-frame data.
 // No-op when MC2_GPU_DRIVEN_TERRAIN_SOLID is unset or 0, or when not armed.
 void ComputeDispatch();
-// Phase C parity: dual-run GPU+CPU pack then sort+compare by recipeIdx.
-// Gated by MC2_GPU_DRIVEN_PARITY. Call after DrawIndirect() in txmmgr.cpp.
-// Schema: [GPU_DRIVEN_SOLID_PARITY v1] event=mismatch|summary ...
-void ComputeDispatchParity_Check();
+// VPL parity-infra retirement (cpu-pack-retirement plan §7 OQ-2): the
+// gos_terrain_indirect:: ComputeDispatchParity_Check declaration is removed
+// (zero consumers post Step 4 2e11617; txmmgr caller removed same commit).
 bool IsFrameSolidArmed();
 bool DrawIndirect();
 void ForceDisableArmingForProcess();

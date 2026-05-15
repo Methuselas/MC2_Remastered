@@ -421,13 +421,11 @@ GLuint                         g_recipeSSBO          = 0;
 int32_t                        g_recipeMapSide       = 0;
 bool                           g_recipeReady         = false;
 
-// Slice B4 Stage 1b — parity shadow mask. Set by PackThinRecordsForFrame() each
-// time a quad is successfully packed (bit index = vn0 = corner-0 vertexNum).
-// Read by gos_terrain_mask_dispatch::DrawMaskSolid() comparator.
-// Sized at worst-case 120×120 = 14,400 quads → ceil(14400/32) = 450 uint32s,
-// matching gos_terrain_mask_dispatch::kMaskWords.
-static constexpr int32_t kParityMaskWords = 450;
-static uint32_t s_packParityMask[kParityMaskWords] = {0};
+// VPL parity-infra retirement (cpu-pack-retirement plan §7 OQ-2, full
+// delete): s_packParityMask / kParityMaskWords removed. The last consumer
+// (gos_terrain_mask_dispatch accessor read) was retired in Step 4 (2e11617);
+// the txmmgr ComputeDispatchParity_Check caller is removed in this same
+// commit. See memory/mc_texture_manager_dual_queue_legacy_retirement_debt.md.
 
 // Mission-latch for trace reset
 static bool s_firstDrawPrintedThisMission = false;
@@ -1475,11 +1473,6 @@ static GLint g_locSolidBHT = -1;   // u_bucketHeaderTrace (per-frame int gate)
 // Flag: whether ComputeDispatch() ran the GPU path this frame.
 static bool s_solidGpuDispatchRanThisFrame = false;
 
-// Phase C Stage 2 parity counters — gated by gpu_driven::IsParityEnabled().
-static uint64_t s_solidParityFrames     = 0;
-static uint64_t s_solidParityQuads      = 0;
-static uint64_t s_solidParityMismatches = 0;
-
 // ---------------------------------------------------------------------------
 // ResourcesReady() — lazy-allocate thin-record SSBO + indirect buffer.
 // Called from ComputePreflight; returns true once both are allocated.
@@ -1617,9 +1610,6 @@ static int PackThinRecordsForFrame() {
     // Diagnostic Test 1 — reset per-frame cement classification counters.
     g_cementMappedThisFrame       = 0;
     g_concreteAllCornersThisFrame = 0;
-
-    // Slice B4 Stage 1b — clear parity mask for this frame.
-    memset(s_packParityMask, 0, sizeof(s_packParityMask));
 
     if (!land) return 0;
     const long total          = land->getNumQuads();
@@ -1812,12 +1802,6 @@ static int PackThinRecordsForFrame() {
 
         gos_terrain_indirect::Counters_AddIndirectSolidPackedQuad();
         ++packed;
-
-        // Slice B4 Stage 1b — record this quad's vn0 in the parity mask so
-        // gos_terrain_mask_dispatch can compare against the SOLID mask.
-        if (vn0 < (kParityMaskWords * 32)) {
-            s_packParityMask[vn0 >> 5] |= (1u << (vn0 & 31));
-        }
     }
 
     if (packed == 0) return 0;
@@ -1955,6 +1939,20 @@ void BeginFrame() {
 
 bool ComputePreflight() {
     ZoneScopedN("Terrain::IndirectPreflight");
+    {
+        // VPL parity-infra retirement lifecycle marker (Debug-instrumentation
+        // rule): one-shot, grep-visible in smoke artifacts. s_packParityMask /
+        // kParityMaskWords / gos_terrain_indirect_getPackParityMask /
+        // ComputeDispatchParity_Check fully removed; txmmgr call removed.
+        static bool s_loggedParityRetired = false;
+        if (!s_loggedParityRetired) {
+            s_loggedParityRetired = true;
+            printf("[TERRAIN_INDIRECT v1] event=parity_infra_retired "
+                   "path=gos_terrain_indirect scope=full "
+                   "removed=s_packParityMask,ComputeDispatchParity_Check,getPackParityMask,txmmgr_call\n");
+            fflush(stdout);
+        }
+    }
     s_frameSolidArmed                = false;
     s_frameSolidPackedThinCount      = 0;
     s_frameSolidCmdCount             = 0;
@@ -2701,249 +2699,13 @@ bool DrawIndirect() {
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// ComputeDispatchParity_Check() — gated by MC2_GPU_DRIVEN_PARITY.
-//
-// Dual-run pattern (mirrors gos_terrain_water_stream.cpp:1364):
-//   1. Read GPU thin records from g_thinRecordSSBO at the ring slot that
-//      ComputeDispatch() wrote to.
-//   2. Re-run PackThinRecordsForFrame() into the NEXT ring slot (CPU path).
-//   3. Sort both sets by recipeIdx (atomicAdd order is non-deterministic).
-//   4. Compare field-by-field: terrainHandle, flags, cementWord, lightRGB0..3.
-//
-// Call site: txmmgr.cpp immediately after DrawIndirect() (before GL state
-// restore), so the compute output is already barrier-complete.
-// ---------------------------------------------------------------------------
-void ComputeDispatchParity_Check() {
-    // Step 1b-2 (cpu-pack-retirement plan §3 "Step 1b commit breakdown"):
-    // the gos_terrain_indirect:: parity infrastructure (s_packParityMask,
-    // gos_terrain_indirect_getPackParityMask, this ComputeDispatchParity_Check)
-    // is DEMOTED, not deleted. It self-gates (MC2_GPU_DRIVEN_PARITY via
-    // gpu_driven::IsParityEnabled, default-off) so it costs nothing in stock
-    // play; full delete is deferred to VPL-plan Step 4 (mask-dispatch
-    // retire/repoint) because gos_terrain_mask_dispatch.cpp:309 holds a real
-    // env-gated dependency on the accessor (OQ-2 resolution). One-shot
-    // lifecycle log so the demotion is grep-visible in smoke artifacts.
-    //
-    // PRE-EXISTING MED (documented per plan §3): since commit 18a4c36
-    // demoted PackThinRecordsForFrame behind MC2_TERRAIN_INDIRECT_CPU_FALLBACK
-    // (default-off), the CPU pack no longer runs under default env, so
-    // s_packParityMask is stale-zero. Running MC2_TERRAIN_MASK_DISPATCH_PARITY=1
-    // WITHOUT also setting MC2_TERRAIN_INDIRECT_CPU_FALLBACK=1 will therefore
-    // report a phantom 100% mismatch -- that is the demoted CPU pack not
-    // producing parity data, NOT a real GPU/CPU divergence regression. Set
-    // MC2_TERRAIN_INDIRECT_CPU_FALLBACK=1 alongside the parity gate to get a
-    // meaningful comparison.
-    //
-    // NOTE: WaterStream::ComputeDispatchParity_Check (gos_terrain_water_stream
-    // .cpp) is a SEPARATE namespace/symbol and is out of scope here.
-    {
-        static bool s_loggedParityDemoted = false;
-        if (!s_loggedParityDemoted) {
-            s_loggedParityDemoted = true;
-            printf("[TERRAIN_INDIRECT v1] event=parity_infra_demoted "
-                   "path=gos_terrain_indirect gate=MC2_GPU_DRIVEN_PARITY "
-                   "med=s_packParityMask_stale_zero_since_18a4c36 "
-                   "note=set_MC2_TERRAIN_INDIRECT_CPU_FALLBACK_1_for_real_parity\n");
-            fflush(stdout);
-        }
-    }
-    if (!gpu_driven::IsParityEnabled()) return;
-    if (!s_solidGpuDispatchRanThisFrame) return;
-    if (!g_thinRecordSSBO || !g_solidBucketHeaderSsbo) return;
-
-    ++s_solidParityFrames;
-
-    // Need GL_BUFFER_UPDATE_BARRIER_BIT in addition to the SSB barrier that
-    // ComputeDispatch already issued, so glGetBufferSubData sees the writes.
-    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
-
-    // 1. GPU visible count from the bucket header.
-    const int gpuRingSlot = g_thinRingSlot;
-    gpu_driven::GpuDrivenBucketHeader hdr{};
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
-    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                       (GLsizeiptr)sizeof(hdr), &hdr);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    const uint32_t gpuCount = std::min(hdr.visibleCount, (uint32_t)kMaxThinRecords);
-
-    // 2. Read GPU thin records from the slot compute wrote.
-    std::vector<TerrainQuadThinRecord> gpuRecs(gpuCount);
-    if (gpuCount > 0) {
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinRecordSSBO);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                           (GLintptr)((size_t)gpuRingSlot * kThinRecordBytes),
-                           (GLsizeiptr)(gpuCount * sizeof(TerrainQuadThinRecord)),
-                           gpuRecs.data());
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    }
-
-    // 3. CPU thin-record pack advances the ring to the NEXT slot.
-    //    GPU output at gpuRingSlot remains intact (no fence wait for that slot here).
-    const int cpuThinCount = PackThinRecordsForFrame();
-    const int cpuRingSlot  = g_thinRingSlot;
-
-    // 4. Read CPU thin records.
-    std::vector<TerrainQuadThinRecord> cpuRecs;
-    if (cpuThinCount > 0) {
-        cpuRecs.resize((size_t)cpuThinCount);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinRecordSSBO);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                           (GLintptr)((size_t)cpuRingSlot * kThinRecordBytes),
-                           (GLsizeiptr)((size_t)cpuThinCount * sizeof(TerrainQuadThinRecord)),
-                           cpuRecs.data());
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    }
-    const uint32_t cpuCount = (uint32_t)cpuRecs.size();
-
-    // 5. Sort by recipeIdx — GPU atomicAdd output order is non-deterministic.
-    auto byRecipeIdx = [](const TerrainQuadThinRecord& a, const TerrainQuadThinRecord& b) {
-        return a.recipeIdx < b.recipeIdx;
-    };
-    std::sort(gpuRecs.begin(), gpuRecs.end(), byRecipeIdx);
-    std::sort(cpuRecs.begin(), cpuRecs.end(), byRecipeIdx);
-
-    // 6. Walk merged sorted lists and compare field-by-field.
-    constexpr uint32_t kMaxPrintsPerFrame = 16;
-    uint32_t printed = 0;
-    uint32_t quadsChecked = 0;
-    uint32_t frameMismatches = 0;
-    uint32_t gi = 0, ci = 0;
-
-    while (gi < gpuCount || ci < cpuCount) {
-        const uint32_t gpuIdx = (gi < gpuCount) ? gpuRecs[gi].recipeIdx : UINT32_MAX;
-        const uint32_t cpuIdx = (ci < cpuCount) ? cpuRecs[ci].recipeIdx : UINT32_MAX;
-
-        if (gpuIdx < cpuIdx) {
-            ++frameMismatches;
-            if (printed < kMaxPrintsPerFrame) {
-                ++printed;
-                fprintf(stderr,
-                        "[GPU_DRIVEN_SOLID_PARITY v1] event=mismatch "
-                        "frame=%llu recipe=%u gpu_only=1\n",
-                        (unsigned long long)s_solidParityFrames, (unsigned)gpuIdx);
-                fflush(stderr);
-            }
-            ++gi;
-        } else if (cpuIdx < gpuIdx) {
-            ++frameMismatches;
-            if (printed < kMaxPrintsPerFrame) {
-                ++printed;
-                fprintf(stderr,
-                        "[GPU_DRIVEN_SOLID_PARITY v1] event=mismatch "
-                        "frame=%llu recipe=%u cpu_only=1\n",
-                        (unsigned long long)s_solidParityFrames, (unsigned)cpuIdx);
-                fflush(stderr);
-            }
-            ++ci;
-        } else {
-            const TerrainQuadThinRecord& g = gpuRecs[gi];
-            const TerrainQuadThinRecord& c = cpuRecs[ci];
-            ++quadsChecked;
-
-#define SOLID_PARITY_FIELD1(field) \
-    if (g.field != c.field) { \
-        ++frameMismatches; \
-        if (printed < kMaxPrintsPerFrame) { \
-            ++printed; \
-            fprintf(stderr, \
-                    "[GPU_DRIVEN_SOLID_PARITY v1] event=mismatch " \
-                    "frame=%llu recipe=%u field=" #field " gpu=0x%x cpu=0x%x\n", \
-                    (unsigned long long)s_solidParityFrames, (unsigned)gpuIdx, \
-                    (unsigned)g.field, (unsigned)c.field); \
-            fflush(stderr); \
-        } \
-    }
-
-            SOLID_PARITY_FIELD1(terrainHandle)
-            SOLID_PARITY_FIELD1(flags)
-            SOLID_PARITY_FIELD1(cementWord)  // Fix B rename (was _pad0 in C++)
-#undef SOLID_PARITY_FIELD1
-
-            // Fix B 2026-05-14: clipPos ULP-bounded compare.  CPU and GPU
-            // mat4*vec4 are not bit-equal in general (FMA fusion, rounding
-            // mode, reassociation freedom in GLSL).  4 ULP per lane is
-            // generous enough to suppress false positives while still
-            // catching the kind of byte-level corruption that probe 8 caught
-            // pre-Fix-A.  Any drift > visible threshold (sub-pixel) will
-            // also exceed 4 ULP, so this isn't a "silent visual regression"
-            // tolerance — it's a "compiler nondeterminism" tolerance.
-            {
-                constexpr uint32_t kClipUlpTolerance = 4u;
-                bool clipMismatch = false;
-                for (int k = 0; k < 16; ++k) {
-                    uint32_t gb, cb;
-                    std::memcpy(&gb, &g.clipPos[k], sizeof(gb));
-                    std::memcpy(&cb, &c.clipPos[k], sizeof(cb));
-                    // ULP distance for like-signed finite floats is the
-                    // absolute difference of the bit patterns (IEEE-754
-                    // monotonic ordering).  Opposite-sign values near zero
-                    // are caught by the magnitude check below.
-                    uint32_t ulp = (gb > cb) ? (gb - cb) : (cb - gb);
-                    bool likeSign = ((gb ^ cb) & 0x80000000u) == 0u;
-                    if (likeSign && ulp <= kClipUlpTolerance) continue;
-                    if (!likeSign) {
-                        // Near-zero crossing tolerance: both values must be
-                        // tiny in absolute terms (< 1e-5 in clip space, the
-                        // sub-fudge regime where pzOk decides via the flag).
-                        float gf, cf;
-                        std::memcpy(&gf, &gb, sizeof(gf));
-                        std::memcpy(&cf, &cb, sizeof(cf));
-                        if (std::abs(gf) < 1e-5f && std::abs(cf) < 1e-5f) continue;
-                    }
-                    clipMismatch = true;
-                    break;
-                }
-                if (clipMismatch) {
-                    ++frameMismatches;
-                    if (printed < kMaxPrintsPerFrame) {
-                        ++printed;
-                        fprintf(stderr,
-                                "[GPU_DRIVEN_SOLID_PARITY v1] event=mismatch "
-                                "frame=%llu recipe=%u field=clipPos "
-                                "gpu_c0=[%.6f,%.6f,%.6f,%.6f] cpu_c0=[%.6f,%.6f,%.6f,%.6f]\n",
-                                (unsigned long long)s_solidParityFrames, (unsigned)gpuIdx,
-                                g.clipPos[0], g.clipPos[1], g.clipPos[2], g.clipPos[3],
-                                c.clipPos[0], c.clipPos[1], c.clipPos[2], c.clipPos[3]);
-                        fflush(stderr);
-                    }
-                }
-            }
-
-            if (g.lightRGB0 != c.lightRGB0 || g.lightRGB1 != c.lightRGB1 ||
-                g.lightRGB2 != c.lightRGB2 || g.lightRGB3 != c.lightRGB3) {
-                ++frameMismatches;
-                if (printed < kMaxPrintsPerFrame) {
-                    ++printed;
-                    fprintf(stderr,
-                            "[GPU_DRIVEN_SOLID_PARITY v1] event=mismatch "
-                            "frame=%llu recipe=%u field=lightRGB "
-                            "gpu=[0x%x,0x%x,0x%x,0x%x] cpu=[0x%x,0x%x,0x%x,0x%x]\n",
-                            (unsigned long long)s_solidParityFrames, (unsigned)gpuIdx,
-                            (unsigned)g.lightRGB0, (unsigned)g.lightRGB1,
-                            (unsigned)g.lightRGB2, (unsigned)g.lightRGB3,
-                            (unsigned)c.lightRGB0, (unsigned)c.lightRGB1,
-                            (unsigned)c.lightRGB2, (unsigned)c.lightRGB3);
-                    fflush(stderr);
-                }
-            }
-            ++gi; ++ci;
-        }
-    }
-
-    s_solidParityQuads      += quadsChecked;
-    s_solidParityMismatches += frameMismatches;
-
-    if (s_solidParityFrames % 600 == 0) {
-        fprintf(stderr,
-                "[GPU_DRIVEN_SOLID_PARITY v1] event=summary "
-                "frames=%llu quads_checked=%llu total_mismatches=%llu\n",
-                (unsigned long long)s_solidParityFrames,
-                (unsigned long long)s_solidParityQuads,
-                (unsigned long long)s_solidParityMismatches);
-        fflush(stderr);
-    }
-}
+// VPL parity-infra retirement (cpu-pack-retirement plan §7 OQ-2, full
+// delete): gos_terrain_indirect::ComputeDispatchParity_Check() removed.
+// Both retirement gates clear (Step 4 2e11617 retired the last accessor
+// consumer; soak-waiver) and the txmmgr coupling is resolved by removing
+// that call in this same commit. WaterStream::ComputeDispatchParity_Check
+// (gos_terrain_water_stream.cpp) is a SEPARATE symbol and is unaffected.
+// See memory/mc_texture_manager_dual_queue_legacy_retirement_debt.md.
 
 }  // namespace gos_terrain_indirect  // Stage 3 block
 
@@ -2979,11 +2741,6 @@ int gos_terrain_indirect_getRecipeMapSide() {
 int gos_terrain_indirect_getRecipeQuadCount() {
     // The dense recipe is indexed by vertexNum = mx + my*mapSide, sized mapSide^2.
     return (int)g_recipeMapSide * (int)g_recipeMapSide;
-}
-
-const uint32_t* gos_terrain_indirect_getPackParityMask(int* outWords) {
-    if (outWords) *outWords = (int)kParityMaskWords;
-    return s_packParityMask;
 }
 
 uint32_t gos_terrain_indirect_getDispatchMvpFp() {
