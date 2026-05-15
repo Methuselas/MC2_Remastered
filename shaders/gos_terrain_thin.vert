@@ -58,7 +58,12 @@ uniform int  ssboRecordBase;     // global record index offset for this draw cal
 // gosRenderer::terrainBindThinUniformsForPatchStream still uploads it for
 // other thin programs (water-fast/mask/etc.); the upload silently no-ops
 // here because glGetUniformLocation returns -1 for an absent declaration.
-// Fix A's terrainOverrideThinMVP path is similarly inert (cached loc -1).
+// Fix A scaffolding demoted behind MC2_RING_TRACE=1 env-gate for regression
+// probing (VPL retirement step 9, 2026-05-15); default-off. The vertex shader
+// has no terrainMVP uniform; clipPos in the thin record is the sole
+// projection authority (Fix B). Fix A's terrainOverrideThinMVP path is inert
+// regardless (cached loc -1); the per-slot MVP snapshot that fed it is no
+// longer populated unless MC2_RING_TRACE is set.
 uniform vec4 terrainViewport;    // (vmx, vmy, vax, vay) for perspective projection
 uniform mat4 mvp;                // projection_: screen pixels -> NDC
 

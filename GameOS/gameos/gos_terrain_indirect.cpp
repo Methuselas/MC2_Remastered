@@ -1454,6 +1454,23 @@ static float    g_dispatchMvpFloats[4] = { 0, 0, 0, 0 };
 // docs/superpowers/progress/2026-05-14-raster-triangle-handoff.md.
 // Both the GPU path (ComputeDispatch) and the CPU path (PackThinRecordsForFrame)
 // stash here for invariant uniformity, even though the CPU path is not lagged.
+//
+// VPL retirement step 9 (2026-05-15): DEMOTED behind MC2_RING_TRACE.  The VPL
+// body was deleted in step 8c-2 (commit 63c023f) and Fix B re-homed projection
+// into tr.clipPos[] (the thin VS no longer declares a terrainMVP uniform —
+// shaders/gos_terrain_thin.vert:56-61), so this per-slot MVP snapshot is no
+// longer load-bearing defense-in-depth.  Per the Debug-instrumentation rule
+// (demote-not-silently-delete; memory/debug_instrumentation_rule.md) the array
+// + the Probe 8 [RING_MVP_DELTA v1] snapshot/compare path are KEPT but gated:
+// when g_envRingTrace is false the writers below are skipped and the
+// gos_terrain_indirect_getRingSlotMvp() accessor returns nullptr, so the
+// snapshot does zero per-frame work.  Net cost when off: ~192 bytes of static
+// state.  Re-armable for any future temporal-misalignment regression via
+// MC2_RING_TRACE=1.  See docs/superpowers/plans/
+// 2026-05-14-vertex-project-loop-retirement.md §"Step 9" and
+// memory/ring_slot_state_must_travel_with_slot.md (Fix B is the surviving
+// instance of that rule; Fix A's snapshot is the retired mechanism).
+static const bool g_envRingTrace = (getenv("MC2_RING_TRACE") != nullptr);
 static float    g_thinSlotMVP[kThinRingFrames][16] = { { 0 } };
 static bool     g_thinSlotMVPValid[kThinRingFrames] = { false, false, false };
 
@@ -1630,9 +1647,12 @@ static int PackThinRecordsForFrame() {
     // stash equals the bridge's terrain_mvp_ at draw time — the override is a
     // no-op for CPU-packed slots.  Stash anyway to keep the "every slot has
     // a valid MVP" invariant uniform across CPU and GPU paths.
-    if (const float* curMvp = gos_GetTerrainMVPMat4()) {
-        memcpy(g_thinSlotMVP[g_thinRingSlot], curMvp, sizeof(float) * 16);
-        g_thinSlotMVPValid[g_thinRingSlot] = true;
+    // Step 9 (2026-05-15): demoted behind MC2_RING_TRACE — skipped by default.
+    if (g_envRingTrace) {
+        if (const float* curMvp = gos_GetTerrainMVPMat4()) {
+            memcpy(g_thinSlotMVP[g_thinRingSlot], curMvp, sizeof(float) * 16);
+            g_thinSlotMVPValid[g_thinRingSlot] = true;
+        }
     }
 
     // Stage area: up to kMaxThinRecords records into a stack-local shadow.
@@ -2547,8 +2567,22 @@ void ComputeDispatch() {
         // time.  Indexed by the current ring slot — compute is about to write
         // thin records to g_thinRingSlot using this MVP, so the bridge must
         // project them with the same MVP one frame later.
-        memcpy(g_thinSlotMVP[g_thinRingSlot], mvp, sizeof(float) * 16);
-        g_thinSlotMVPValid[g_thinRingSlot] = true;
+        // Step 9 (2026-05-15): demoted behind MC2_RING_TRACE.  Default-off ⇒
+        // the snapshot is not written; gos_terrain_indirect_getRingSlotMvp()
+        // returns nullptr and the (already inert post-Fix-B) bridge override
+        // is skipped.  One-shot lifecycle line per the Debug-instrumentation
+        // rule, matching the step 8c-2 event=retired one-shots.
+        if (g_envRingTrace) {
+            memcpy(g_thinSlotMVP[g_thinRingSlot], mvp, sizeof(float) * 16);
+            g_thinSlotMVPValid[g_thinRingSlot] = true;
+        } else {
+            static bool s_loggedFixADemote = false;
+            if (!s_loggedFixADemote) {
+                s_loggedFixADemote = true;
+                printf("[RING_MVP v1] event=fixA_demoted gate=MC2_RING_TRACE\n");
+                fflush(stdout);
+            }
+        }
     }
 
     const uint32_t groups = (windowCount + 63u) / 64u;
@@ -2719,7 +2753,15 @@ int gos_terrain_indirect_getRingSlot() {
 // nullptr if no MVP has been stashed yet (early frames before any pack /
 // dispatch).  Bridge re-uploads this over terrain_mvp_ so the thin VS
 // projects records with the MVP they were culled by.
+// Step 9 (2026-05-15): demoted behind MC2_RING_TRACE.  When off (default) the
+// writers above never populate g_thinSlotMVPValid[], so this would return
+// nullptr regardless; the explicit early-out makes the demote contract
+// self-documenting and guarantees zero snapshot work on the default render
+// path (the gameos_graphics.cpp:2532 caller handles nullptr by skipping the
+// terrainOverrideThinMVP override — itself a no-op post-Fix-B since the thin
+// VS declares no terrainMVP uniform; see gos_terrain_thin.vert:56-61).
 const float* gos_terrain_indirect_getRingSlotMvp() {
+    if (!g_envRingTrace) return nullptr;
     const int slot = g_thinRingSlot;
     if (slot < 0 || slot >= kThinRingFrames) return nullptr;
     if (!g_thinSlotMVPValid[slot]) return nullptr;
