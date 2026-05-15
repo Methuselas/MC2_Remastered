@@ -1694,6 +1694,12 @@ void GameObjectManager::render (bool terrain, bool movers, bool other) {
 	{
 		for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
 		{
+			// Cull-cascade consumer (object render). Post-8c source of truth for
+			// objBlockInfo[].active / objVertexActive[] is the cull-merged Step 6
+			// slim reduction loop in mclib/terrain.cpp (8c-part-1 merges the
+			// per-vertex cull writes into that loop) — NOT the deleted VPL body,
+			// NOT a "Step 5 / 5B slim pass" (that producer never existed; v3.2
+			// deleted it). See VPL-retirement plan v3.5 note (CRIT-0).
 			if (Terrain::objBlockInfo[terrainBlock].active)
 			{
 				long numObjs = Terrain::objBlockInfo[terrainBlock].numObjects;
@@ -1821,18 +1827,24 @@ void GameObjectManager::renderShadows (bool terrain, bool movers, bool other) {
 		gos_SetRenderState(	gos_State_ZWrite, 1);
 	}
 
-	if (terrain && renderObjects) 
+	if (terrain && renderObjects)
 	{
-		for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++) 
+		for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
 		{
-			if (Terrain::objBlockInfo[terrainBlock].active) 
+			// Cull-cascade consumer (shadow render). Post-8c source of truth for
+			// objBlockInfo[].active / objVertexActive[] is the cull-merged Step 6
+			// slim reduction loop in mclib/terrain.cpp (8c-part-1 merges the
+			// per-vertex cull writes into that loop) — NOT the deleted VPL body,
+			// NOT a "Step 5 / 5B slim pass" (that producer never existed; v3.2
+			// deleted it). See VPL-retirement plan v3.5 note (CRIT-0).
+			if (Terrain::objBlockInfo[terrainBlock].active)
 			{
 				long numObjs = Terrain::objBlockInfo[terrainBlock].numObjects;
 				long objIndex = Terrain::objBlockInfo[terrainBlock].firstHandle;
-				for (long terrainObj = 0; terrainObj < numObjs; terrainObj++, objIndex++) 
+				for (long terrainObj = 0; terrainObj < numObjs; terrainObj++, objIndex++)
 				{
 					if (objList[objIndex] &&
-						Terrain::objVertexActive[objList[objIndex]->getVertexNum()]) 
+						Terrain::objVertexActive[objList[objIndex]->getVertexNum()])
 					{
 						objList[objIndex]->renderShadows();
 						if (MaxObjectsDrawn) {
@@ -2016,6 +2028,12 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		// unchanged as required by cull_gates_are_load_bearing.md.
 		for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
 		{
+			// Cull-cascade consumer (object update). Post-8c source of truth for
+			// objBlockInfo[].active / objVertexActive[] is the cull-merged Step 6
+			// slim reduction loop in mclib/terrain.cpp (8c-part-1 merges the
+			// per-vertex cull writes into that loop) — NOT the deleted VPL body,
+			// NOT a "Step 5 / 5B slim pass" (that producer never existed; v3.2
+			// deleted it). See VPL-retirement plan v3.5 note (CRIT-0).
 			if (Terrain::objBlockInfo[terrainBlock].active)
 			{
 				activeBlocksVisited++;
@@ -2605,9 +2623,15 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 														   long mouseY,
 														   bool skipDisabled) 
 {
-	for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++) 
+	for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
 	{
-		if (Terrain::objBlockInfo[terrainBlock].active) 
+		// Cull-cascade consumer (mouse pick). Post-8c source of truth for
+		// objBlockInfo[].active / objVertexActive[] is the cull-merged Step 6
+		// slim reduction loop in mclib/terrain.cpp (8c-part-1 merges the
+		// per-vertex cull writes into that loop) — NOT the deleted VPL body,
+		// NOT a "Step 5 / 5B slim pass" (that producer never existed; v3.2
+		// deleted it). See VPL-retirement plan v3.5 note (CRIT-0).
+		if (Terrain::objBlockInfo[terrainBlock].active)
 		{
 			long numObjs = Terrain::objBlockInfo[terrainBlock].numObjects;
 			long objIndex = Terrain::objBlockInfo[terrainBlock].firstHandle;
@@ -3053,18 +3077,24 @@ ArtilleryPtr GameObjectManager::createArtillery (long artilleryType, Stuff::Vect
 void GameObjectManager::updateAppearancesOnly( bool terrain, bool movers, bool other)
 {
 
-	if (terrain && renderObjects) 
+	if (terrain && renderObjects)
 	{
-		for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++) 
+		for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
 		{
-			if (Terrain::objBlockInfo[terrainBlock].active) 
+			// Cull-cascade consumer (object collect). Post-8c source of truth for
+			// objBlockInfo[].active / objVertexActive[] is the cull-merged Step 6
+			// slim reduction loop in mclib/terrain.cpp (8c-part-1 merges the
+			// per-vertex cull writes into that loop) — NOT the deleted VPL body,
+			// NOT a "Step 5 / 5B slim pass" (that producer never existed; v3.2
+			// deleted it). See VPL-retirement plan v3.5 note (CRIT-0).
+			if (Terrain::objBlockInfo[terrainBlock].active)
 			{
 				long numObjs = Terrain::objBlockInfo[terrainBlock].numObjects;
 				long objIndex = Terrain::objBlockInfo[terrainBlock].firstHandle;
-				for (long terrainObj = 0; terrainObj < numObjs; terrainObj++, objIndex++) 
+				for (long terrainObj = 0; terrainObj < numObjs; terrainObj++, objIndex++)
 				{
-					if (objList[objIndex] && 
-						Terrain::objVertexActive[objList[objIndex]->getVertexNum()] && 
+					if (objList[objIndex] &&
+						Terrain::objVertexActive[objList[objIndex]->getVertexNum()] &&
 						objList[objIndex]->getExists())
 					{
 						if (objList[objIndex]->getAppearance()->recalcBounds()) 
