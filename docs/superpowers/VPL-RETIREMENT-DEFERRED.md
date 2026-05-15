@@ -1,0 +1,209 @@
+# VPL Retirement - Consolidated Deferred Follow-ups
+
+The VertexProjectLoop (VPL) retirement is complete end-to-end (Steps 1-9 +
+overlay-pz precursor + parity-infra deletion + legacy-lighting both-env
+retirement, plan `docs/superpowers/plans/2026-05-14-vertex-project-loop-retirement.md`,
+landed through HEAD `96642cc`). This file consolidates every post-retirement
+follow-up that was deliberately deferred so nothing is lost to the closeout.
+
+Each item: what + why-deferred + where-documented. All file:line anchors
+grep-verified at HEAD `96642cc` (2026-05-15). Symbols are authoritative;
+line numbers drift - re-grep before acting on any anchor.
+
+None of these are blockers. The retirement shipped without them by design.
+
+---
+
+## 1. SSBO `GpuTerrainVertexInput.hazeFactor` field removal
+
+**What:** Remove the now-dead `float hazeFactor;` field from the
+`GpuTerrainVertexInput` std430 struct - lockstep across GLSL + C++ + the
+`static_assert(sizeof==32)`, as ONE commit per
+`memory/cpp_glsl_ubo_struct_lockstep.md`.
+
+**Why deferred:** Step 7 used keep-field-stop-reading (smallest blast
+radius). The populate write is neutralized to `0.0f` at
+`GameOS/gameos/gos_terrain_lighting.cpp:593`
+(`vi.hazeFactor = 0.0f;`); the field is retained in both
+`GameOS/gameos/gos_terrain_lighting.h:38` (`float hazeFactor;`, commented
+`DEAD post-Step-7`) and `shaders/include/terrain_lighting_shared.hglsl:10`
+(`struct GpuTerrainVertexInput { vec2 xy; float elevation; float hazeFactor; ... }`,
+commented dead at `:7`). The field is 4 padded bytes under `alignas(16)`;
+`static_assert(sizeof(GpuTerrainVertexInput) == 32, ...)` at
+`gos_terrain_lighting.h:46` holds whether the field is present or removed,
+so removal is stride-neutral. Deferred to a dedicated cleanup after the
+Step 8c soak so the lockstep edit is its own auditable commit.
+
+**Documented:** plan v3.3 lockstep paragraph (plan `:351`), plan deferred
+list (plan `:576`).
+
+## 2. `.codex_tmp_isolate/*` scratch-file removal
+
+**What:** `git rm` the three tracked scratch files
+`.codex_tmp_isolate/quad_desired.cpp`, `.codex_tmp_isolate/quad_desired.patch`,
+`.codex_tmp_isolate/quad_head.cpp` (confirmed tracked via `git ls-files` at
+HEAD `96642cc`).
+
+**Why deferred:** Non-build orphans (working scratch from the overlay-pz
+redesign) that pollute repo-wide greps for `quad`/`projectForTerrainAdmission`
+with stale duplicate hits. Removing them is a trivial hygiene commit kept
+out of the retirement landing commits to keep those diffs scoped to the
+architectural change.
+
+**Documented:** this tracker (no prior plan anchor; surfaced during the
+Step 10 grep-drift audit).
+
+## 3. `quad.cpp` fastpath probe-placement pattern (recurring)
+
+**What:** The `MC2_M2D_PZ_PARITY` probe in `mclib/quad.cpp` went silent
+twice during the overlay-pz redesign because the probe was placed where
+its comparison input was vacuous (the v1 unconditional-reprojection
+regression, then a scoping mismatch). The probe-placement *pattern* needs
+a fix-or-retire decision, not the probe itself.
+
+**Why deferred:** Bit-identity of the production overlay-pz gate
+(`mclib/quad.cpp:2159-2189`: `vertices[c]->clipInfo == 0` sentinel +
+on-site `eye->projectForTerrainAdmission(ov3D, osp)` at `:2176`, NEVER
+reading `vertices[c]->pz`) is proven BY CONSTRUCTION in
+`docs/superpowers/reviews/2026-05-15-overlay-pz-v2-bit-identity-proof.md`.
+The probe (`mclib/quad.cpp:2191-2247`, the only `vertices[c]->pz` read at
+`:2213`, probe-only local) is demoted/belt-and-suspenders, so its
+silent-twice history is non-blocking. The recurring placement bug pattern
+is a methodology cleanup, not a correctness gap.
+
+**Documented:** `docs/superpowers/reviews/2026-05-15-overlay-pz-scoped-redesign-rereview.md`
+(Finding 1, Finding 5); bit-identity proof
+`docs/superpowers/reviews/2026-05-15-overlay-pz-v2-bit-identity-proof.md`.
+
+## 4. `[RING_MVP_DELTA v1]` FNV-compute residual (Step 9 leftover)
+
+**What:** Gate or remove the per-frame FNV fingerprint compute at
+`GameOS/gameos/gameos_graphics.cpp:2683-2724`. It computes `drawFp`
+(FNV over 12 floats) and reads `dispatchFp`/`dispatchFrame` EVERY frame,
+UNGATED - unlike the Step 9 writers in
+`GameOS/gameos/gos_terrain_indirect.cpp:1651` which are guarded by
+`g_envRingTrace` (`MC2_RING_TRACE`, `gos_terrain_indirect.cpp:1473`).
+
+**Why deferred:** Step 9 demoted the Fix A path (the per-slot MVP snapshot
+that fed `terrainOverrideThinMVP`) behind `MC2_RING_TRACE=1` (default-off);
+`terrainOverrideThinMVP`'s cached uniform loc is `-1` so the override is
+inert regardless. The FNV residual is inert (the only effect is the
+`fprintf` inside `if (drawFp != dispatchFp)` at `:2696`, and the comparison
+itself has no load-bearing consumer post-Fix-B). Not load-bearing, not a
+regression - just a per-frame compute that should be folded behind the
+same env gate as the rest of the Step 9 demotion. Cleanup, not a blocker.
+
+**Documented:** plan Step 9 / Fix A demote (plan `:545`); this tracker.
+
+## 5. Tracy `~475 µs` CPU-recovery measurement (the plan's perf gate)
+
+**What:** Quantify the actual CPU recovery from the VPL retirement with a
+Tracy capture (Wolfman-zoom worst-case, before/after).
+
+**Why deferred:** The `vertexProjectLoop` Tracy zone is confirmed GONE
+(zero `ZoneScopedN` matches for any VPL-body zone in `mclib/terrain.cpp`
+at HEAD; the surviving zone is `ZoneScopedN("Terrain::geometry slimReduce")`
+at `terrain.cpp:1466`). Because the zone no longer exists, the precise
+CPU delta is unmeasured. The plan's headline `~475 µs` figure is the
+plan's PRE-retirement estimate of the loop cost, not a post-retirement
+measurement. Steady-state fps is flat (~141) - this is the
+RE-HOME-NOT-ELIMINATE reality: the per-vertex `projectForTerrainAdmission`
+projection still runs in the slim loop (`terrain.cpp:1544`); the loop was
+not eliminated, only its dead per-vertex `px/py/pz/pw` writes and the
+duplicate cull/reduction passes were. Flat fps is NOT a regression; the
+actual win is the deleted dead writes + the collapsed double-iteration,
+which is sub-frame and needs a Tracy capture to isolate.
+
+**Documented:** plan Step 8c verification (plan `:554`,
+"Wolfman zoom CPU time drops by the measured loop cost (~475 µs)").
+
+## 6. Step 3 interactive picking UAT (honest gap)
+
+**What:** Manual user-driven UAT of cursor tracking, mech click-select,
+marquee drag-select, build-menu placement, salvage placement, and tacmap
+F-key viewport - at `mc2_01`, `mc2_10` (substrate-heavy), `mc2_17`
+(water-heavy).
+
+**Why deferred:** Step 3 re-homed picking onto its own CPU camera-frustum
+x quad-AABB primitive (`mclib/camera.cpp:593` `Camera` member,
+`mclib/camera.cpp:741` recursion-free tile selection). Bit-identity +
+the frustum self-test passed, but passive smoke CANNOT open the tacmap or
+drive the cursor/marquee - the runner has no input injection. This is an
+honest interactive-coverage gap, not a known defect. Requires a
+user-driven smoke session.
+
+**Documented:** plan Step 3 per-step gate (plan `:550`); plan Step 6
+tacmap note (plan `:552`, "passive smoke cannot open the tacmap (honest
+gap)").
+
+## 7. Overlay-decal GPU port (deferred sibling slice)
+
+**What:** The dedicated typed world-space overlay/decal batch path that
+the render contract's Bucket A3 / D2 / Priority-2 describe as the target
+end state for alpha-cement / craters / footprints / terrain decals.
+
+**Why deferred:** A separate slice, not part of VPL retirement. VPL
+retirement only re-homed the overlay-pz VISIBILITY GATE
+(`mclib/quad.cpp:2159-2189`) off `vertices[c]->pz`; the overlay still
+submits through the M2d `gos_PushTerrainOverlay` decal producer. The full
+GPU port is the deferred sibling.
+
+**Documented:** stub at
+`docs/superpowers/specs/2026-05-15-overlay-decal-gpu-port-slice-stub.md`
+(confirmed present at HEAD).
+
+## 8. Dedicated-water-path edge-clamp
+
+**What:** Add the `outsidePlayArea` world-edge `hazeFactor=1.0` clamp to
+the dedicated water draw path (`shaders/gos_terrain_water_mdi.frag` +
+`shaders/gpu_driven_water.comp`) IF that path bypasses the lighting
+compute's `fogRGB` output.
+
+**Why deferred:** Step 7's inline-worldPos `outsidePlayArea` clamp fixed
+out-of-bounds fog only for water that consumes the lighting compute's
+`fogRGB` (terrain-lit water). Whether the dedicated water draw path
+consumes that output is UNVERIFIED - a post-Step-7 slice must grep-confirm
+the data flow before deciding if the clamp is needed there too. Tracked
+follow-up, not a Step 7 blocker.
+
+**Documented:** plan deferred list (plan `:574`, v3.3,
+`mc2-shader-expert`).
+
+## 9. `GetApproximateLength` -> `length()` precision under non-stock fog
+
+**What:** A characterized ~10% per-vertex distance delta between VPL's old
+CPU `distanceToEye` (`GetApproximateLength`, octagonal approx - the slim
+loop preserves this exactly at `mclib/terrain.cpp:1484`
+`objectCenter.GetApproximateLength()`) and the inline shader's exact
+`length()` (`shaders/gos_terrain_lighting.comp:302`).
+
+**Why deferred:** Fully MASKED in the stock config: stock
+`Camera::MinHazeDistance == MaxClipDistance`, so the fog-ramp branch is
+never taken and `hazeFactor` is binary 0.0/1.0 (an approx-vs-exact delta
+cannot change a binary clamp). It becomes a visible fog-band shift only
+the moment a mission/mod ships `MinHazeDistance != MaxClipDistance` (a
+live ramp). NOT a regression for stock; tracked so a future non-default-fog
+author recognizes the shift as this characterized, accepted re-derivation
+rather than a new defect.
+
+**Documented:** plan deferred list (plan `:575`, v3.4); cite
+`memory/parity_probe_100pct_can_be_correct_redesign_report.md`.
+
+---
+
+## Status summary
+
+| # | Item | Class | Blocker? |
+|---|------|-------|----------|
+| 1 | hazeFactor SSBO field removal | lockstep cleanup | no |
+| 2 | `.codex_tmp_isolate/*` git rm | repo hygiene | no |
+| 3 | quad.cpp probe-placement pattern | methodology | no |
+| 4 | `[RING_MVP_DELTA v1]` FNV residual | inert-cleanup | no |
+| 5 | Tracy ~475 us measurement | perf-quantify | no |
+| 6 | Step 3 interactive picking UAT | honest gap | no |
+| 7 | overlay-decal GPU port | sibling slice | no |
+| 8 | dedicated-water-path edge-clamp | follow-up | no |
+| 9 | GetApproximateLength precision | characterized | no |
+
+All 9 are non-blocking. The VPL retirement is architecturally complete;
+these are the cleanup/measurement/coverage tail.
