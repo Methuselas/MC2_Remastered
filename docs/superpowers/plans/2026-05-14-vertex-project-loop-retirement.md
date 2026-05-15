@@ -156,7 +156,88 @@ Missing the `px/py` dependency is the escalation: Step 8b retires `px`/`py`/`pz`
 
 **Pre-commit grep:** confirm mask-dispatch's actual reachability. If it's reached only under env-gated paths (`MC2_TERRAIN_MASK_DISPATCH=1`?), document and either gate-default-off → unreachable, or include the retirement.
 
-### Step 5: Swap the cull-cascade decision to a slim per-vertex frustum pass (option 5B committed; projection+reduction KEPT alive)
+### Step 5: Ship the `MC2_VPL_CULL` projection-independence regression-guard probe (instrumentation-only; no production change)
+
+> **v3.2 CORRECTION (2026-05-15) — SUPERSEDES the 5B slim-frustum-pass design below.**
+> The prior 5B "swap the cull-cascade decision to a slim per-vertex frustum
+> pass" design (preserved verbatim from §"Reframe" through §"Soak" for the
+> amendment trail) was BLOCKED by the adversarial review
+> `docs/superpowers/reviews/2026-05-15-step5-cull-cascade-adversarial-review.md`
+> (review artifact owned by a sibling review step; orchestrator reconciles
+> its presence — it is not committed in this Step 5 isolation worktree at
+> base `cb221b8`), and a follow-up focused data-flow verification then
+> proved its core premise FALSE. The corrected reality:
+>
+> **(a) Step 5 is instrumentation-only. `clipInfo` is proven
+> projection-independent.** The only stock-reachable production branch is
+> `if (eye->usePerspective && Environment.Renderer != 3)` (`terrain.cpp:~1725`),
+> which writes `currentVertex->clipInfo = onScreen;`. `Environment.Renderer`
+> is ONLY ever assigned `0` (grep: `code/logmain.cpp:786`,
+> `code/mechcmd2.cpp:2815`) — never `3` — so this branch is always taken in
+> stock/smoke config and the `else` branch (`clipInfo = inView`, which IS
+> projection-dependent) is dead. `onScreen` is computed entirely
+> non-projectively at `terrain.cpp:~1594-1676` (from `cameraPos`,
+> `Camera::cameraFrame.trans_to_frame`, `verticalSphereClipConstant` /
+> `horizontalSphereClipConstant`, `CLIP_THRESHOLD_DISTANCE=768`,
+> `VERTEX_EXTENT_RADIUS=384`, `IsGameSelectTerrainPosition`, and the vertex
+> `vx/vy/elevation`). The projection call
+> `eye->projectForTerrainAdmission(...)` at `terrain.cpp:~1685` runs AFTER
+> `clipInfo` is finalized and writes ONLY `inView` (local) plus
+> `px/py/pz/pw`, which feed the `inView`-gated `leastZ/mostZ/leastW/mostW`
+> reduction. Conclusion: the projection cannot affect the cull-cascade
+> admission decision; Step 5 changes NO production behavior.
+>
+> **(b) The prior 5B frustum-AABB design was wrong.** The old `onScreen`
+> is NOT an approximation of a true frustum test that can be "tightened"
+> into a strict frustum-AABB pass. It is a deliberately-LOOSE CONTRACT:
+> 768u proximity admit OR 384u-dilated cone OR out-of-play force-admit
+> (`!IsGameSelectTerrainPosition` → `onScreen = true`). A true-frustum
+> test is a strict SUBSET of this contract and would DROP objects /
+> terrain quads that the loose contract admits — exactly the
+> false-negative failure mode that orphans the ~9 `objmgr.cpp`
+> cull-cascade consumers (CRIT-1 in the adversarial review). Additionally
+> `isTerrainQuadVisible` at `quad.cpp:~397` (sums `quad.vertices[*]->clipInfo`
+> at `quad.cpp:~401-407`) is an undocumented `clipInfo` consumer the 5B
+> design never accounted for (CRIT-2). Tightening the
+> contract is therefore unsafe and is NOT what Step 5 does.
+>
+> **(c) Step 5 ships ONLY the `MC2_VPL_CULL` regression-guard probe.**
+> Env-gated (`getenv("MC2_VPL_CULL")`), default-off, zero cost when off,
+> demote-don't-delete per the worktree Debug instrumentation rule. The
+> probe sits immediately after the production `clipInfo` write (after the
+> projection call has already run) and asserts
+> `(DWORD)onScreen == currentVertex->clipInfo` per vertex, with a
+> rate-limited (first 16) `[VPL_CULL v1] event=parity_violation` stderr
+> line on mismatch and a 600-frame `[VPL_CULL v1] event=summary` cadence
+> matching `MC2_TGL_POOL_TRACE` (`mclib/tgl.cpp:~3781`,
+> `g_mc2FrameCounter % 600`). The probe is NOT a Step 5 behavior change —
+> it is defense-in-depth for Step 8c: if anything ever secretly feeds
+> `clipInfo` through the projection, this probe (kept alive THROUGH 8c)
+> fires loudly when 8c deletes the projection loop. The actual
+> projection retirement is entirely Step 6 (reductions) + Step 8c (delete
+> the projection loop).
+>
+> **(d) STANDING CAVEAT for Step 8c.** Step 8c may delete the per-vertex
+> projection loop, but it MUST NOT remove the `px/py/pz/pw` writes nor the
+> `inView`-gated `leastZ/mostZ/leastW/mostW/leastWY/mostWY` reduction
+> (`terrain.cpp:~1685` + `~1737-1759`). Those ARE projection-fed and are
+> consumed by the reductions / `setInverseProject`. ONLY the `clipInfo`
+> derivation is projection-independent. Step 8c keeps the projection's
+> reduction outputs alive until Step 6 replaces that dependency.
+>
+> **(e) Sequencing reaffirmed: Step 5 → Step 6 → Step 8c.** Step 6
+> strictly precedes Step 8c (Step 6 removes the reduction's projection
+> dependency; Step 8c cannot delete the projection until then). Step 5,
+> now instrumentation-only, lands first and gates 8c with the probe.
+>
+> Memory cross-refs (corrected): `memory/cull_gates_are_load_bearing.md`
+> (the loose contract is load-bearing — do not tighten),
+> `memory/cull_cascade_wrap_and_reduce_pattern.md` (the wrap-and-reduce
+> framing applies to Step 6's reductions, NOT to a Step 5 cull rewrite).
+>
+> Everything from §"Reframe" through §"Soak" below is the SUPERSEDED v3
+> 5B design, retained unedited as the amendment trail. Do NOT implement
+> it. The shipped Step 5 is the probe described in (c) above.
 
 **Reframe (replaces v1's audit-and-retire blocker):** do NOT retire the cull-cascade side-effects (`objBlockInfo[].active` + `objVertexActive[]` updates). Per advisor + reviewer, those writes have ~9 live consumers in `code/objmgr.cpp:1697/1704/1828/1835/2019/2027/2610/3060/3067` (production object-iteration loops) and MUST keep firing. Instead, keep the side-effect writes alive in a slimmed-down CPU pass while retiring the per-vertex projection math that surrounds them.
 

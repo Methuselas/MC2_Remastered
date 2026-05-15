@@ -1424,6 +1424,23 @@ void Terrain::geometry (void)
 	// vertexProjectLoop fast-path (D1) — see file-scope namespace block above.
 	static const bool s_vpFast   = (getenv("MC2_VERTEX_PROJECT_FAST")   != nullptr);
 	static const bool s_vpParity = (getenv("MC2_VERTEX_PROJECT_PARITY") != nullptr);
+
+	// VPL retirement Step 5 regression-guard probe (no-op; default-off).
+	// clipInfo is proven projection-independent: the production path
+	// (eye->usePerspective && Environment.Renderer != 3, always true in
+	// stock — Environment.Renderer is only ever assigned 0) writes
+	// clipInfo = onScreen, and onScreen is computed non-projectively above
+	// (cameraPos / cameraFrame / sphere clip constants / proximity +
+	// dilated-cone thresholds). The projection call (projectForTerrainAdmission)
+	// runs AFTER clipInfo is finalized and feeds only the inView-gated
+	// leastZ/mostZ/leastW/mostW reduction + px/py/pz/pw. This probe asserts
+	// that invariant per-vertex so that when Step 8c deletes the projection
+	// loop, any hidden projection->clipInfo coupling fires here loudly.
+	// Defense-in-depth for the deletion, NOT a Step 5 behavior change.
+	static const bool s_vplCull = (getenv("MC2_VPL_CULL") != nullptr);
+	static uint64_t   s_vplParityViolations = 0;
+	static uint32_t   s_vplLastSummaryFrame = 0;
+	extern uint32_t   g_mc2FrameCounter;  // defined in mclib/tgl.cpp:3718
 	static uint32_t   s_vpFrame  = 0;
 	static uint64_t   s_vpVertsChecked  = 0;
 	static uint64_t   s_vpVertsMismatch = 0;
@@ -1711,7 +1728,33 @@ void Terrain::geometry (void)
 		}
 		else
 			currentVertex->clipInfo = inView;
-		
+
+		// VPL Step 5 regression-guard probe (env-gated MC2_VPL_CULL, default-off,
+		// zero cost when off). At this point clipInfo is finalized and the
+		// projection call at projectForTerrainAdmission(...) has already run.
+		// In the only stock-reachable branch (usePerspective && Renderer != 3)
+		// clipInfo == onScreen, which was derived non-projectively. Assert that
+		// the projection did NOT secretly mutate the admission decision. When
+		// Step 8c deletes the projection loop this probe (kept alive through 8c)
+		// is the tripwire for any hidden projection->clipInfo coupling.
+		if (s_vplCull)
+		{
+			if ((DWORD)onScreen != currentVertex->clipInfo)
+			{
+				++s_vplParityViolations;
+				if (s_vplParityViolations <= 16)
+				{
+					fprintf(stderr,
+						"[VPL_CULL v1] event=parity_violation vert=%ld block=%ld onScreen=%d clipInfo=%u\n",
+						i,
+						(long)currentVertex->getBlockNumber(),
+						(int)onScreen,
+						(unsigned)currentVertex->clipInfo);
+					fflush(stderr);
+				}
+			}
+		}
+
 		if (currentVertex->clipInfo)				//ONLY set TRUE ones.  Otherwise we just reset the FLAG each vertex!
 		{
 			setObjBlockActive(currentVertex->getBlockNumber(), true);
@@ -1745,6 +1788,21 @@ void Terrain::geometry (void)
 
 			currentVertex++;
 		}
+	}
+
+	// VPL Step 5 regression-guard per-run summary. Matches the canonical
+	// MC2_TGL_POOL_TRACE cadence (g_mc2FrameCounter % 600, see mclib/tgl.cpp:3781).
+	// s_vplLastSummaryFrame de-dupes the multiple Terrain::geometry calls that
+	// can land on the same frame. Zero parity_violations is the invariant.
+	if (s_vplCull && g_mc2FrameCounter > 0 &&
+	    (g_mc2FrameCounter % 600) == 0 && g_mc2FrameCounter != s_vplLastSummaryFrame)
+	{
+		s_vplLastSummaryFrame = g_mc2FrameCounter;
+		fprintf(stderr,
+			"[VPL_CULL v1] event=summary frames=%u parity_violations=%llu\n",
+			(unsigned)g_mc2FrameCounter,
+			(unsigned long long)s_vplParityViolations);
+		fflush(stderr);
 	}
 
 	// vertexProjectLoop parity compare. Field-level mismatch printer
