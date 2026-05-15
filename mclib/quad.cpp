@@ -260,6 +260,20 @@ static inline void NoteLegacyDetailOverlayCluster() {
 }  // namespace
 
 static const bool s_shapeCParityCheck = (getenv("MC2_SHAPE_C_PARITY_CHECK") != nullptr);
+
+// Step 1b-1 (cpu-pack-retirement plan §2 A1): the M2 thin-record emit scope is
+// orphaned by Fix B (commit 005ebc7) — the GPU compute shader
+// gpu_driven_terrain_solid.comp re-derives the thin record + the pzTri flag
+// bits for every quad it admits and overwrites the CPU-written record. When
+// gos_terrain_indirect::IsFrameSolidArmed() is true (default-armed under
+// MC2_GPU_DRIVEN_TERRAIN_SOLID=1) the CPU thin-emit is dead work. Only the
+// thin-emit is gated; pz/pzTri compute, the both-culled cull, and the M2d
+// gos_PushTerrainOverlay decal producer stay UNCONDITIONAL (the live
+// cement-transition/runway/road decal path — §2 WARNING, 9964d5a regression
+// class). MC2_TERRAIN_INDIRECT_THINEMIT_TRACE=1 emits a one-shot lifecycle
+// line so smoke artifacts capture the gate state.
+static const bool s_thinEmitTrace =
+    (getenv("MC2_TERRAIN_INDIRECT_THINEMIT_TRACE") != nullptr);
 static const bool s_shapeCEnabled = ([] {
 	// Default ON post Slice-1 flip (2026-04-29). Tier1 parity validated:
 	// 19.7M field-equality checks across 5 missions, zero mismatches.
@@ -2111,7 +2125,33 @@ void TerrainQuad::draw (void)
 		    // Detail-only quads (terrainHandle == 0 + has detail) skip this entire block
 		    // and go straight to the M2c detail emit below. The thin record is a base-
 		    // texture submission; quads without a base texture have nothing to put in it.
-		    if (terrainHandle != 0)
+		    //
+		    // Step 1b-1 gate-split: skip the entire thin-emit scope (recipe
+		    // peek/build via ensureRecipeForQuad + the TerrainQuadThinRecord
+		    // build + appendThinRecordDirect) when GPU SOLID is armed. Post
+		    // Fix-B the compute shader is the sole projection authority and
+		    // re-derives this record (incl. the pzTri1/pzTri2 flag bits) for
+		    // every admitted quad, so the CPU emit is dead work whose output
+		    // the GPU overwrites. NOTE: pz/pzTri compute, the
+		    // `if (!pzTri1 && !pzTri2) return;` cull, and the M2d
+		    // gos_PushTerrainOverlay block below stay UNCONDITIONAL — they
+		    // feed the live decal producer (§2 WARNING, 9964d5a
+		    // conflated-overlay regression class). The `goto fp_detail_only`
+		    // inside this block jumps to a label AFTER it, so gating the
+		    // block leaves the SSBO-full detail fallthrough intact.
+		    const bool thinEmitArmed = gos_terrain_indirect::IsFrameSolidArmed();
+		    if (s_thinEmitTrace) {
+		        static bool s_loggedThinEmit = false;
+		        if (!s_loggedThinEmit) {
+		            s_loggedThinEmit = true;
+		            printf("[TERRAIN_INDIRECT v1] event=cpu_thinemit_demoted "
+		                   "path=quad_m2 armed=%d gate=IsFrameSolidArmed "
+		                   "note=overlay_producer_unconditional\n",
+		                   thinEmitArmed ? 1 : 0);
+		            fflush(stdout);
+		        }
+		    }
+		    if (terrainHandle != 0 && !thinEmitArmed)
 		    {
 		        const bool isCement = Terrain::terrainTextures->isCement(vertices[0]->pVertex->textureData & 0x0000ffff);
 		        const bool isAlpha  = Terrain::terrainTextures->isAlpha(vertices[0]->pVertex->textureData & 0x0000ffff);
