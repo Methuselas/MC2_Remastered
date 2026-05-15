@@ -36,6 +36,7 @@ MechCommander 2 OpenGL port: tessellated terrain, PBR splatting, shadow maps, po
 - **Uniform API:** `setFloat` / `setInt` BEFORE `apply()`, not after. `apply()` flushes dirty uniforms.
 - **GL_FALSE for terrainMVP:** direct-uploaded row-major matrices use `GL_FALSE`. Material cache uses `GL_TRUE`. The `gamecam.cpp` comment claiming `GL_TRUE` is wrong; do not "fix" it.
 - **Shader hot-reload fails silently:** bad compile = old shader stays active. Always check console after editing.
+- **Vulkan-prep (forward-compat):** new GPU-resource code uses explicit device-mediated binding (`device.bindVertexBuffer(vb)`, NOT `vb.bind()`); assume zero implicit cross-call GL state. Do not regress the already-Vulkan-friendly patterns (enqueue/flush, std430 lockstep, [0,1] depth). PREP not a port - no full RHI ahead of need. Full rule set: `memory/vulkan_prep_explicit_device_discipline.md`.
 
 ## Load-bearing memory pointers (read before touching the area)
 

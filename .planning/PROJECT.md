@@ -23,6 +23,7 @@ The engine targets GL 4.3 Core today. Modernization continues toward SSBO/comput
 - **Measurable in:** retired-legacy-paths count, SSBO/compute/indirect-draw usage breadth, bindless adoption rate.
 - **Direction:** keep up with the GL spec; retire legacy paths rather than letting them coexist forever. The canonical legacy debt is documented in `memory/mc_texture_manager_dual_queue_legacy_retirement_debt.md` - both `masterVertexNodes` (legacy `gos_VERTEX` stream) and `masterHardwareVertexNodes` (modern `TG_RenderShape` queue) coexist today; the legacy queue should retire.
 - **Constraint:** never break stock-install playability. Modern paths MUST degrade to stock-compatible generation, never fail. Full rationale: `memory/stock_install_must_remain_playable.md`. This is the architectural ceiling on modernization.
+- **Forward-compat (Vulkan-prep):** new GPU-resource code uses explicit device-mediated binding (`device.bindVertexBuffer(vb)`, not `vb.bind()`) and assumes zero implicit cross-call GL state. Protect the already-Vulkan-friendly patterns (deferred enqueue/flush, std430 lockstep, `gl_ClipControl` [0,1] depth) from regression. PREP, not a port - no full RHI ahead of need. Full rule set: `memory/vulkan_prep_explicit_device_discipline.md`.
 
 ### 3. Engine/data separation - everything as API
 
