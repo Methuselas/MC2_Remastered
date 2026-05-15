@@ -1442,6 +1442,30 @@ void Terrain::geometry (void)
 	static uint32_t   s_vplLastSummaryFrame = 0;
 	extern uint32_t   g_mc2FrameCounter;  // defined in mclib/tgl.cpp:3718
 
+	// VPL retirement Step 8c-part-1: the cull cascade (clipInfo /
+	// setObjBlockActive / setObjVertexActive) is MERGED into the slim
+	// reduce loop below so it becomes the post-8c sole producer (the VPL
+	// body's own cull writes stay this commit for co-production; 8c-part-2
+	// removes the body). The relocated MC2_VPL_CULL probe (reusing
+	// s_vplCull) is RE-PURPOSED to a NON-TAUTOLOGICAL slim-vs-legacy
+	// superset assertion: during the 8c-part-1 co-production window the
+	// VPL body runs first and writes the legacy onScreen-derived clipInfo
+	// into every Vertex; the slim loop then reads that still-live legacy
+	// value (nothing overwrites Vertex::clipInfo between the VPL body and
+	// the slim loop — the quad.cpp setupTextures overwrite runs strictly
+	// AFTER the slim loop) and asserts slim >= legacy per vertex
+	// (!(legacyActive && !slimActive)), the exact CRIT-1 invariant. This
+	// catches the catastrophic subset bug (objects/mechs vanish if the
+	// slim active-set is a strict subset of the loose legacy {onScreen}
+	// set). It is slim-vs-VPL-body, NOT slim-vs-self (a self-comparison
+	// would be a pure tautology). At 8c-part-2 the VPL body is gone, no
+	// independent producer remains, and this probe is retired/demoted.
+	// See docs/superpowers/reviews/2026-05-15-step8-vpl-body-deletion-
+	// adversarial-review.md CRIT-1/§6, the v3.5 plan amendment, and
+	// memory/cull_gates_are_load_bearing.md.
+	static uint64_t   s_vplCullSupersetViolations = 0;
+	static uint32_t   s_vplCullSupersetLastSummaryFrame = 0;
+
 	// VPL retirement Step 6 regression-guard probe (no-op; default-off,
 	// demote-don't-delete per the worktree Debug instrumentation rule).
 	// Step 6 RE-HOMES (does not eliminate) the reduction's per-vertex
@@ -1986,15 +2010,71 @@ void Terrain::geometry (void)
 				onScreenR = true;
 			}
 
-			if (!onScreenR)
-				continue;
-
+			// VPL Step 8c-part-1 (CRIT-1, catastrophic axis): the
+			// cull-cascade write below MUST be emitted on the
+			// onScreenR/clipR decision and BEFORE the reduction-admission
+			// `if (!clipR || !inViewR) continue;` gate. The legacy
+			// `if (!onScreenR) continue;` early-out is therefore REMOVED:
+			// the projection now runs for every vertex so the cull write
+			// is reached unconditionally. clipR uses the IDENTICAL formula
+			// to the legacy VPL `clipInfo` write (terrain.cpp `eye->
+			// usePerspective && Environment.Renderer != 3 ? onScreenR :
+			// inViewR`); since onScreenR == legacy onScreen byte-for-byte
+			// and Environment.Renderer is only ever 0, clipR == legacy
+			// clipInfo. Placing the cull write AFTER this gate (or gating
+			// it on inViewR) makes the slim active-set a STRICT SUBSET of
+			// the loose 768u/384u-dilated legacy {onScreen} cull contract
+			// and edge/off-rect objects and mechs VANISH (cull_gates_are
+			// _load_bearing.md; mechs iterate last = canary).
 			Stuff::Vector3D vertex3D(rv->vx,rv->vy,rv->pVertex->elevation);
 			Stuff::Vector4D sp(-10000.0f,-10000.0f,-10000.0f,-10000.0f);
 			bool inViewR = eye->projectForTerrainAdmission(vertex3D,sp);
 
 			bool clipR = (eye->usePerspective && Environment.Renderer != 3) ? onScreenR : inViewR;
 
+			// --- cull-cascade write (CRIT-1: BEFORE the reduction gate) ---
+			// Replicates the legacy VPL semantic verbatim: clipInfo =
+			// clipR (== legacy onScreen-derived clipInfo in stock); the
+			// active-set write fires `if (clipInfo)` exactly as the legacy
+			// `if (currentVertex->clipInfo)` site, NOT gated on inViewR.
+			//
+			// Relocated MC2_VPL_CULL probe (non-tautological, CRIT-1/§6):
+			// capture the still-live VPL-body-written legacy clipInfo
+			// BEFORE the slim overwrite and assert slim >= legacy per
+			// vertex. legacyActive=(prior clipInfo != 0); slimActive=clipR.
+			// A violation (legacyActive && !slimActive) is the exact
+			// subset bug the catastrophic axis must never produce.
+			if (s_vplCull)
+			{
+				bool legacyActive = (rv->clipInfo != 0);
+				bool slimActive   = clipR;
+				if (legacyActive && !slimActive)
+				{
+					++s_vplCullSupersetViolations;
+					if (s_vplCullSupersetViolations <= 16)
+					{
+						fprintf(stderr,
+							"[VPL_CULL v1] event=superset_violation vert=%ld block=%ld legacyActive=%d slimActive=%d\n",
+							ri,
+							(long)rv->getBlockNumber(),
+							(int)legacyActive,
+							(int)slimActive);
+						fflush(stderr);
+					}
+				}
+			}
+
+			rv->clipInfo = clipR;
+
+			if (rv->clipInfo)				//ONLY set TRUE ones.  Otherwise we just reset the FLAG each vertex!
+			{
+				setObjBlockActive(rv->getBlockNumber(), true);
+				setObjVertexActive(rv->vertexNum,true);
+			}
+
+			// --- reduction-admission gate (decoupled from the cull write
+			// above; the reduction may legitimately use the tighter set,
+			// the cull MUST use the loose {onScreen} set per CRIT-1) ---
 			if (!clipR || !inViewR)
 				continue;
 
@@ -2072,6 +2152,25 @@ void Terrain::geometry (void)
 			"[VPL_REDUCE v1] event=summary frames=%u parity_violations=%llu\n",
 			(unsigned)g_mc2FrameCounter,
 			(unsigned long long)s_vplReduceViolations);
+		fflush(stderr);
+	}
+
+	// VPL Step 8c-part-1 relocated MC2_VPL_CULL per-run summary
+	// (slim-vs-legacy superset assertion; non-tautological per CRIT-1/§6).
+	// Same 600-frame / g_mc2FrameCounter cadence + de-dup as the legacy
+	// VPL_CULL and VPL_REDUCE summaries. superset_violations == 0 is the
+	// invariant: zero means the slim cull active-set is a superset of the
+	// still-live VPL-body legacy {onScreen} set (no objects/mechs vanish).
+	// Exercise with CAMERA MOTION (CRIT-2): the divergence lives in the
+	// 768u/384u off-rect band a static camera never reaches.
+	if (s_vplCull && g_mc2FrameCounter > 0 &&
+	    (g_mc2FrameCounter % 600) == 0 && g_mc2FrameCounter != s_vplCullSupersetLastSummaryFrame)
+	{
+		s_vplCullSupersetLastSummaryFrame = g_mc2FrameCounter;
+		fprintf(stderr,
+			"[VPL_CULL v1] event=summary frames=%u superset_violations=%llu\n",
+			(unsigned)g_mc2FrameCounter,
+			(unsigned long long)s_vplCullSupersetViolations);
 		fflush(stderr);
 	}
 
