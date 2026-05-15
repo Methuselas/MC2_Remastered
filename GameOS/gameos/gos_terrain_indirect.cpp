@@ -2715,6 +2715,39 @@ bool DrawIndirect() {
 // restore), so the compute output is already barrier-complete.
 // ---------------------------------------------------------------------------
 void ComputeDispatchParity_Check() {
+    // Step 1b-2 (cpu-pack-retirement plan §3 "Step 1b commit breakdown"):
+    // the gos_terrain_indirect:: parity infrastructure (s_packParityMask,
+    // gos_terrain_indirect_getPackParityMask, this ComputeDispatchParity_Check)
+    // is DEMOTED, not deleted. It self-gates (MC2_GPU_DRIVEN_PARITY via
+    // gpu_driven::IsParityEnabled, default-off) so it costs nothing in stock
+    // play; full delete is deferred to VPL-plan Step 4 (mask-dispatch
+    // retire/repoint) because gos_terrain_mask_dispatch.cpp:309 holds a real
+    // env-gated dependency on the accessor (OQ-2 resolution). One-shot
+    // lifecycle log so the demotion is grep-visible in smoke artifacts.
+    //
+    // PRE-EXISTING MED (documented per plan §3): since commit 18a4c36
+    // demoted PackThinRecordsForFrame behind MC2_TERRAIN_INDIRECT_CPU_FALLBACK
+    // (default-off), the CPU pack no longer runs under default env, so
+    // s_packParityMask is stale-zero. Running MC2_TERRAIN_MASK_DISPATCH_PARITY=1
+    // WITHOUT also setting MC2_TERRAIN_INDIRECT_CPU_FALLBACK=1 will therefore
+    // report a phantom 100% mismatch -- that is the demoted CPU pack not
+    // producing parity data, NOT a real GPU/CPU divergence regression. Set
+    // MC2_TERRAIN_INDIRECT_CPU_FALLBACK=1 alongside the parity gate to get a
+    // meaningful comparison.
+    //
+    // NOTE: WaterStream::ComputeDispatchParity_Check (gos_terrain_water_stream
+    // .cpp) is a SEPARATE namespace/symbol and is out of scope here.
+    {
+        static bool s_loggedParityDemoted = false;
+        if (!s_loggedParityDemoted) {
+            s_loggedParityDemoted = true;
+            printf("[TERRAIN_INDIRECT v1] event=parity_infra_demoted "
+                   "path=gos_terrain_indirect gate=MC2_GPU_DRIVEN_PARITY "
+                   "med=s_packParityMask_stale_zero_since_18a4c36 "
+                   "note=set_MC2_TERRAIN_INDIRECT_CPU_FALLBACK_1_for_real_parity\n");
+            fflush(stdout);
+        }
+    }
     if (!gpu_driven::IsParityEnabled()) return;
     if (!s_solidGpuDispatchRanThisFrame) return;
     if (!g_thinRecordSSBO || !g_solidBucketHeaderSsbo) return;
