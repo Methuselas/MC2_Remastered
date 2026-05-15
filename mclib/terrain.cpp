@@ -1441,6 +1441,31 @@ void Terrain::geometry (void)
 	static uint64_t   s_vplParityViolations = 0;
 	static uint32_t   s_vplLastSummaryFrame = 0;
 	extern uint32_t   g_mc2FrameCounter;  // defined in mclib/tgl.cpp:3718
+
+	// VPL retirement Step 6 regression-guard probe (no-op; default-off,
+	// demote-don't-delete per the worktree Debug instrumentation rule).
+	// Step 6 RE-HOMES (does not eliminate) the reduction's per-vertex
+	// projection into the self-contained slim min/max-only pass below: that
+	// pass is now the SOLE producer of the production accumulators
+	// (leastZ/mostZ/leastW/mostW/leastWY/mostWY -> eye->setInverseProject).
+	// When MC2_VPL_REDUCE is set, the OLD inline reduction is re-run inside
+	// the projection loops into the SHADOW accumulators below, and the six
+	// production vs shadow values are asserted bit-identical immediately
+	// before setInverseProject. The slim loop and the old inline path call
+	// the SAME projectForTerrainAdmission, so any mismatch is a real
+	// iteration-order / gate bug, not FP drift (exact ==, not epsilon).
+	// Defense-in-depth for Step 8c, same shape as Step 5's MC2_VPL_CULL.
+	static const bool s_vplReduce = (getenv("MC2_VPL_REDUCE") != nullptr);
+	static uint64_t   s_vplReduceViolations = 0;
+	static uint32_t   s_vplReduceLastSummaryFrame = 0;
+	// Shadow accumulators: written ONLY by the gated old inline path; the
+	// production accumulators are written ONLY by the slim loop. No
+	// double-counting (production never sees the old path, shadow never sees
+	// the slim loop). Reset here per frame, mirroring the production reset
+	// at the top of Terrain::geometry.
+	float oldLeastZ = 1.0f, oldLeastW = 1.0f;
+	float oldMostZ = -1.0f, oldMostW = -1.0f;
+	float oldLeastWY = 0.0f, oldMostWY = 0.0f;
 	static uint32_t   s_vpFrame  = 0;
 	static uint64_t   s_vpVertsChecked  = 0;
 	static uint64_t   s_vpVertsMismatch = 0;
@@ -1587,12 +1612,19 @@ void Terrain::geometry (void)
 					if ((vertNum >= 0) && (vertNum < vp_numActiveVerts))
 						objVertexActive[vertNum] = true;
 
-					if (inView)
+					// VPL Step 6: the production leastZ/mostZ/leastW/mostW/
+					// leastWY/mostWY reduction is RE-HOMED into the slim
+					// min/max-only pass below; this old inline accumulation
+					// is deleted. Under MC2_VPL_REDUCE only, it is re-run
+					// into the SHADOW accumulators for the bit-identical
+					// parity guard (production accumulators are untouched
+					// here — no double-count).
+					if (s_vplReduce && inView)
 					{
-						if (screenPos.z < leastZ) leastZ = screenPos.z;
-						if (screenPos.z > mostZ)  mostZ  = screenPos.z;
-						if (screenPos.w < leastW) { leastW = screenPos.w; leastWY = screenPos.y; }
-						if (screenPos.w > mostW)  { mostW  = screenPos.w; mostWY  = screenPos.y; }
+						if (screenPos.z < oldLeastZ) oldLeastZ = screenPos.z;
+						if (screenPos.z > oldMostZ)  oldMostZ  = screenPos.z;
+						if (screenPos.w < oldLeastW) { oldLeastW = screenPos.w; oldLeastWY = screenPos.y; }
+						if (screenPos.w > oldMostW)  { oldMostW  = screenPos.w; oldMostWY  = screenPos.y; }
 					}
 				}
 			}
@@ -1759,29 +1791,41 @@ void Terrain::geometry (void)
 		{
 			setObjBlockActive(currentVertex->getBlockNumber(), true);
 			setObjVertexActive(currentVertex->vertexNum,true);
-			
-			if (inView)
+
+			// VPL Step 6: the production leastZ/mostZ/leastW/mostW/leastWY/
+			// mostWY reduction is RE-HOMED into the self-contained slim
+			// min/max-only pass below (after the projection loops, before
+			// the yzRange/ywRange derivation). This old inline accumulation
+			// is deleted from the projection loop. Under MC2_VPL_REDUCE
+			// only, it is re-run here into the SHADOW accumulators for the
+			// bit-identical parity guard; the production accumulators are
+			// NOT touched here (slim loop is their sole producer — no
+			// double-count). The surrounding cull-cascade writes
+			// (clipInfo / setObjBlockActive / setObjVertexActive) and the
+			// projectForTerrainAdmission call above are INTACT (Step 8c,
+			// not Step 6, owns the projection-call deletion).
+			if (s_vplReduce && inView)
 			{
-				if (screenPos.z < leastZ)
+				if (screenPos.z < oldLeastZ)
 				{
-					leastZ = screenPos.z;
+					oldLeastZ = screenPos.z;
 				}
-				
-				if (screenPos.z > mostZ)
+
+				if (screenPos.z > oldMostZ)
 				{
-					mostZ = screenPos.z;
+					oldMostZ = screenPos.z;
 				}
-				
-				if (screenPos.w < leastW)
+
+				if (screenPos.w < oldLeastW)
 				{
-					leastW = screenPos.w;
-					leastWY = screenPos.y;
+					oldLeastW = screenPos.w;
+					oldLeastWY = screenPos.y;
 				}
-				
-				if (screenPos.w > mostW)
+
+				if (screenPos.w > oldMostW)
 				{
-					mostW = screenPos.w;
-					mostWY = screenPos.y;
+					oldMostW = screenPos.w;
+					oldMostWY = screenPos.y;
 				}
 			}
 		}
@@ -1857,6 +1901,173 @@ void Terrain::geometry (void)
 				(unsigned long long)s_vpVertsMismatch);
 			fflush(stderr);
 		}
+	}
+
+	// VPL retirement Step 6: self-contained slim min/max-only reduction
+	// pass. RE-HOMES (does NOT eliminate) the per-vertex projection that
+	// feeds the leastZ/mostZ/leastW/mostW/leastWY/mostWY reduction ->
+	// eye->setInverseProject. The extremes of projected screenPos.z/.w/.y
+	// over the in-rect-visible vertex set are provably NOT derivable from
+	// world-AABB bounds under the oblique cinematic camera (perspective
+	// divide does not preserve ordering), so the projection must stay;
+	// this loop owns it in a form decoupled from the cull cascade so it
+	// SURVIVES Step 8c (which deletes the VPL body but NOT this loop).
+	// The onScreen derivation below is copied byte-for-byte from the
+	// legacy projection loop's onScreen block (the `eye->usePerspective`
+	// branch above) MINUS the currentVertex->hazeFactor writes, which do
+	// not feed the onScreen decision and are owned by the projection
+	// loops / Step 7. Step 6 strictly precedes Step 7; whichever lands
+	// second re-verifies this copy in lockstep. No GPU readback: this is
+	// pure CPU projectForTerrainAdmission feeding CPU setInverseProject
+	// (cf. memory/substrate_coalesce_sync_point_lesson.md).
+	{
+		ZoneScopedN("Terrain::geometry slimReduce");
+		VertexPtr rv = vertexList;
+		for (long ri = 0; ri < numberVertices; ++ri, ++rv)
+		{
+			bool onScreenR = false;
+
+			if (eye->usePerspective)
+			{
+				onScreenR = true;
+
+				Stuff::Vector3D vPosition;
+				vPosition.x = rv->vx;
+				vPosition.y = rv->vy;
+				vPosition.z = rv->pVertex->elevation;
+
+				Stuff::Vector3D objectCenter;
+				objectCenter.Subtract(vPosition,cameraPos);
+				Camera::cameraFrame.trans_to_frame(objectCenter);
+				float distanceToEye = objectCenter.GetApproximateLength();
+
+				Stuff::Vector3D clipVector = objectCenter;
+				clipVector.z = 0.0f;
+				float distanceToClip = clipVector.GetApproximateLength();
+				float clip_distance = fabs(1.0f / objectCenter.y);
+
+				if (distanceToClip > CLIP_THRESHOLD_DISTANCE)
+				{
+					float object_angle = fabs(objectCenter.z) * clip_distance;
+					float extent_angle = VERTEX_EXTENT_RADIUS / distanceToEye;
+					if (object_angle > (vClipConstant + extent_angle))
+					{
+						onScreenR = false;
+					}
+					else
+					{
+						object_angle = fabs(objectCenter.x) * clip_distance;
+						if (object_angle > (hClipConstant + extent_angle))
+						{
+							onScreenR = false;
+						}
+					}
+				}
+
+				if (onScreenR)
+				{
+					//---------------------------------------
+					// Vertex is at edge of world or beyond.
+					Stuff::Vector3D vPos(rv->vx,rv->vy,rv->pVertex->elevation);
+					bool isVisible = Terrain::IsGameSelectTerrainPosition(vPos) || drawTerrainGrid;
+					if (!isVisible)
+					{
+						onScreenR = true;
+					}
+				}
+			}
+			else
+			{
+				onScreenR = true;
+			}
+
+			if (!onScreenR)
+				continue;
+
+			Stuff::Vector3D vertex3D(rv->vx,rv->vy,rv->pVertex->elevation);
+			Stuff::Vector4D sp(-10000.0f,-10000.0f,-10000.0f,-10000.0f);
+			bool inViewR = eye->projectForTerrainAdmission(vertex3D,sp);
+
+			bool clipR = (eye->usePerspective && Environment.Renderer != 3) ? onScreenR : inViewR;
+
+			if (!clipR || !inViewR)
+				continue;
+
+			if (sp.z < leastZ)
+			{
+				leastZ = sp.z;
+			}
+
+			if (sp.z > mostZ)
+			{
+				mostZ = sp.z;
+			}
+
+			if (sp.w < leastW)
+			{
+				leastW = sp.w;
+				leastWY = sp.y;
+			}
+
+			if (sp.w > mostW)
+			{
+				mostW = sp.w;
+				mostWY = sp.y;
+			}
+		}
+	}
+
+	// VPL Step 6 MC2_VPL_REDUCE parity guard. Exact == (not epsilon): the
+	// slim loop and the gated old inline path call the SAME
+	// projectForTerrainAdmission over the SAME admission gate, so the six
+	// reduction outputs must be bit-identical. Any mismatch is a real
+	// iteration-order / gate divergence and a Step 8c hazard. Rate-limited
+	// first-16 violation prints + 600-frame summary (matches the
+	// MC2_VPL_CULL cadence). Zero violations over a tier1 30s run = pass.
+	if (s_vplReduce)
+	{
+		const bool reduceMatch =
+			(leastZ  == oldLeastZ) &&
+			(mostZ   == oldMostZ)  &&
+			(leastW  == oldLeastW) &&
+			(mostW   == oldMostW)  &&
+			(leastWY == oldLeastWY) &&
+			(mostWY  == oldMostWY);
+		if (!reduceMatch)
+		{
+			++s_vplReduceViolations;
+			if (s_vplReduceViolations <= 16)
+			{
+				fprintf(stderr,
+					"[VPL_REDUCE v1] event=parity_violation frame=%u "
+					"lZ=%a/%a mZ=%a/%a lW=%a/%a mW=%a/%a "
+					"lWY=%a/%a mWY=%a/%a\n",
+					(unsigned)g_mc2FrameCounter,
+					leastZ,  oldLeastZ,
+					mostZ,   oldMostZ,
+					leastW,  oldLeastW,
+					mostW,   oldMostW,
+					leastWY, oldLeastWY,
+					mostWY,  oldMostWY);
+				fflush(stderr);
+			}
+		}
+	}
+
+	// VPL Step 6 regression-guard per-run summary. Matches the
+	// MC2_VPL_CULL / MC2_TGL_POOL_TRACE cadence (g_mc2FrameCounter % 600).
+	// s_vplReduceLastSummaryFrame de-dupes the multiple Terrain::geometry
+	// calls that can land on the same frame. Zero violations is the
+	// invariant.
+	if (s_vplReduce && g_mc2FrameCounter > 0 &&
+	    (g_mc2FrameCounter % 600) == 0 && g_mc2FrameCounter != s_vplReduceLastSummaryFrame)
+	{
+		s_vplReduceLastSummaryFrame = g_mc2FrameCounter;
+		fprintf(stderr,
+			"[VPL_REDUCE v1] event=summary frames=%u parity_violations=%llu\n",
+			(unsigned)g_mc2FrameCounter,
+			(unsigned long long)s_vplReduceViolations);
+		fflush(stderr);
 	}
 
 	//-----------------------------------
