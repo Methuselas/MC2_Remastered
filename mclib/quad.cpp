@@ -282,29 +282,6 @@ static const bool s_shapeCEnabled = ([] {
 	return (env == nullptr) || (env[0] != '0');
 })();
 
-// VPL retirement Step 8b precursor — M2d overlay-pz-gate repoint parity probe.
-// The M2d decal producer's pz validity gate used to read VPL-written
-// vertices[c]->pz; it is repointed to an on-site re-projection over the
-// identical (vx,vy,pVertex->elevation) triple via the same pure
-// projectForTerrainAdmission (Step 6 precedent). Default-off env-gated
-// probe (Debug-instrumentation rule, demote-don't-delete): when
-// MC2_M2D_PZ_PARITY is set, the pzc loop in TerrainQuad::draw computes
-// pzTri1/pzTri2 BOTH the new way (clipInfo guard + re-projection) AND the
-// old way (still-live vertices[c]->pz, pre Step-8b cv->pz deletion) and
-// bit-compares. Expected zero violations: the clipInfo==0 guard reproduces
-// VPL's pz=-0.5 off-screen sentinel path bit-for-bit (terrain.cpp co-decides
-// the sentinel and clipInfo from the same onScreen bit). Rate-limited
-// first-16 violation prints + 600-frame summary — matches the MC2_VPL_REDUCE
-// cadence (terrain.cpp:2057-2071, g_mc2FrameCounter % 600). The probe is
-// armed only for the production renderer (Environment.Renderer != 3); the
-// re-projection-parity contract holds only on that path. s_m2dPzReprojections
-// is an always-on cheap counter (overlay-quad re-projection sparsity) the
-// pre-land cost gate's smoke reads from the summary line.
-static const bool s_m2dPzParity = (getenv("MC2_M2D_PZ_PARITY") != nullptr);
-static uint64_t   s_m2dPzParityViolations = 0;
-static uint32_t   s_m2dPzParityLastSummaryFrame = 0;
-static uint64_t   s_m2dPzReprojections = 0;
-
 #define SELECTION_COLOR 0xffff7fff
 #define HIGHLIGHT_COLOR	0xff00ff00
 
@@ -2123,82 +2100,12 @@ void TerrainQuad::draw (void)
 
 		if (fastPathEligible)
 		{
-		    // VPL retirement Step 8b precursor: pz validity gate, repointed from
-		    // VPL-written vertices[c]->pz to an on-site re-projection over the
-		    // identical (vx,vy,pVertex->elevation) triple via the same pure
-		    // projectForTerrainAdmission the terrain admission loop uses
-		    // (Step 6 precedent; no GPU readback — substrate_coalesce_sync_point
-		    // lesson does not apply, this is pure CPU projection). This unblocks
-		    // the later deletion of terrain.cpp's cv->pz write; that write must
-		    // remain live now so MC2_M2D_PZ_PARITY can bit-compare both sources.
-		    //
-		    // MANDATORY clipInfo==0 guard FIRST (adversarial review Finding 1,
-		    // CRITICAL): VPL co-decides the pz=-0.5f off-screen sentinel AND
-		    // clipInfo from the same onScreen bit (terrain.cpp:1577+:1603 /
-		    // :1749+:1759). Guarding on clipInfo!=0 reproduces VPL's sentinel
-		    // path bit-for-bit. The broken angular sphere-clip
-		    // (memory/clip_w_sign_trap.md — ~87% over-reject at steep oblique
-		    // pitch) makes onScreen==false with a true osp.z in [0,1) routine,
-		    // so this guard is load-bearing, not a corner case. Range [0,1) is
-		    // in-clip (boundary inclusive-zero, exclusive-one) — byte-identical
-		    // to the old pz formula modulo the pz source swap + the guard.
+		    // pz validity — vertices[c]->pz is pre-projected by the camera transform pass.
+		    // Range [0,1) is in-clip; outside is behind-camera or far-clipped.
 		    bool pzc[4];
 		    for (int c = 0; c < 4; c++) {
-		        if (vertices[c]->clipInfo == 0) { pzc[c] = false; continue; }
-		        Stuff::Vector3D ov3D(vertices[c]->vx, vertices[c]->vy, vertices[c]->pVertex->elevation);
-		        Stuff::Vector4D osp(-10000.0f,-10000.0f,-10000.0f,-10000.0f);
-		        eye->projectForTerrainAdmission(ov3D, osp);
-		        float pz_adj = osp.z + TERRAIN_DEPTH_FUDGE;
+		        float pz_adj = vertices[c]->pz + TERRAIN_DEPTH_FUDGE;
 		        pzc[c] = (pz_adj >= 0.0f) && (pz_adj < 1.0f);
-		        ++s_m2dPzReprojections;
-		    }
-
-		    // MC2_M2D_PZ_PARITY probe (default-off; Debug-instrumentation rule,
-		    // demote-don't-delete). Recompute pzc the OLD way (still-live
-		    // vertices[c]->pz, pre Step-8b cv->pz deletion) and bit-compare the
-		    // resulting pzTri1/pzTri2. Expected zero: the clipInfo guard makes
-		    // new == old bit-for-bit including the sentinel path. Armed only for
-		    // the production renderer (Environment.Renderer != 3) — the
-		    // re-projection-parity contract holds only on that path. Rate-limited
-		    // first-16 + 600-frame summary mirrors the MC2_VPL_REDUCE cadence
-		    // (terrain.cpp:2057-2071).
-		    if (s_m2dPzParity && Environment.Renderer != 3) {
-		        extern uint32_t g_mc2FrameCounter;  // defined in mclib/tgl.cpp
-		        bool oldPzc[4];
-		        for (int c = 0; c < 4; c++) {
-		            float old_adj = vertices[c]->pz + TERRAIN_DEPTH_FUDGE;
-		            oldPzc[c] = (old_adj >= 0.0f) && (old_adj < 1.0f);
-		        }
-		        bool nT1, nT2, oT1, oT2;
-		        if (uvMode == BOTTOMLEFT) {
-		            nT1 = pzc[0] && pzc[1] && pzc[3];   nT2 = pzc[1] && pzc[2] && pzc[3];
-		            oT1 = oldPzc[0] && oldPzc[1] && oldPzc[3]; oT2 = oldPzc[1] && oldPzc[2] && oldPzc[3];
-		        } else {
-		            nT1 = pzc[0] && pzc[1] && pzc[2];   nT2 = pzc[0] && pzc[2] && pzc[3];
-		            oT1 = oldPzc[0] && oldPzc[1] && oldPzc[2]; oT2 = oldPzc[0] && oldPzc[2] && oldPzc[3];
-		        }
-		        if (nT1 != oT1 || nT2 != oT2) {
-		            ++s_m2dPzParityViolations;
-		            if (s_m2dPzParityViolations <= 16) {
-		                fprintf(stderr,
-		                    "[M2D_PZ_PARITY v1] event=parity_violation frame=%u "
-		                    "nT1=%d/oT1=%d nT2=%d/oT2=%d\n",
-		                    (unsigned)g_mc2FrameCounter,
-		                    nT1 ? 1 : 0, oT1 ? 1 : 0, nT2 ? 1 : 0, oT2 ? 1 : 0);
-		                fflush(stderr);
-		            }
-		        }
-		        if (g_mc2FrameCounter > 0 && (g_mc2FrameCounter % 600) == 0 &&
-		            g_mc2FrameCounter != s_m2dPzParityLastSummaryFrame) {
-		            s_m2dPzParityLastSummaryFrame = g_mc2FrameCounter;
-		            fprintf(stderr,
-		                "[M2D_PZ_PARITY v1] event=summary frames=%u parity_violations=%llu "
-		                "reprojections=%llu\n",
-		                (unsigned)g_mc2FrameCounter,
-		                (unsigned long long)s_m2dPzParityViolations,
-		                (unsigned long long)s_m2dPzReprojections);
-		            fflush(stderr);
-		        }
 		    }
 
 		    bool pzTri1, pzTri2;
