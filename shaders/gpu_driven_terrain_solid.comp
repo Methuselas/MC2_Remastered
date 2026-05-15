@@ -106,6 +106,22 @@ struct GpuDrivenBucketHeader {
 };
 
 // ---------------------------------------------------------------------------
+// DrawArraysIndirectCommand — 16 B std430.
+// Layout LOCKSTEP with gpu_driven_cmd_patch.comp:47-52 and the C++ host-side
+// type at gos_terrain_indirect.cpp DrawArraysIndirectCommand (16 B, 4 GLuints).
+// Step 2 of VPL retirement: primary compute writes cmds[0].count directly via
+// atomicAdd, replacing the cmd-patch dispatch that translates visibleCount→count.
+// Bound at slot 8 when MC2_SOLID_CMD_PATCH_RETIRE=1 (parity arm in commit 2a;
+// default-on after flip in commit 2b).
+// ---------------------------------------------------------------------------
+struct DrawArraysIndirectCommand {
+    uint count;
+    uint instanceCount;
+    uint first;
+    uint baseInstance;
+};
+
+// ---------------------------------------------------------------------------
 // GpuTerrainLightingOutput — lockstep with gos_terrain_lighting.h:56-59 (8 B).
 //   uint lightRGB;  // offset 0 — BGRA-packed per memory/mc2_argb_packing.md
 //   uint fogRGB;    // offset 4 — not written to SOLID thin record (no fogRGB field)
@@ -141,6 +157,12 @@ layout(std430, binding = 6) coherent  buffer Header    { GpuDrivenBucketHeader  
 // write and our readback — and we can identify WHICH field was hit.
 // flags field is the prime suspect post-coherent-qualifier falsification.
 layout(std430, binding = 7) coherent  writeonly buffer Canary    { uint                     canaryWord[];       };
+// Step 2a (VPL retirement): direct write of indirect-draw cmd.count by the
+// primary dispatch when u_cmdPatchRetire != 0.  Coherent + buffer (not
+// writeonly) because we atomicAdd into cmds[0].count; the cmd-patch shader
+// still also writes this slot in commit 2a (dual-path parity), so coherent is
+// load-bearing.  Binding 8 chosen to not collide with bindings 0..7 above.
+layout(std430, binding = 8) coherent  buffer CmdBuf   { DrawArraysIndirectCommand cmds[];             };
 
 // ---------------------------------------------------------------------------
 // Uniforms.
@@ -151,6 +173,11 @@ uniform int  u_windowCount;
 uniform int  u_maxThinRecords;
 uniform int  u_mapSide;          // realVerticesMapSide
 uniform int  u_alphaOverride;    // 1 when Terrain::terrainTextures2 != nullptr
+// Step 2a (VPL retirement): when non-zero, the primary compute directly
+// atomicAdds kVertsPerElement (6u) into cmds[0].count per admitted record.
+// Env-gated via MC2_SOLID_CMD_PATCH_RETIRE; default-off in commit 2a
+// (parity-arm), default-on in commit 2b (cmd-patch dispatch deleted).
+uniform int  u_cmdPatchRetire;
 uniform mat4 u_terrainMVP;
 uniform float u_worldUnitsPerVertex;  // Terrain::worldUnitsPerVertex; probe-5 spread check
 
@@ -347,7 +374,23 @@ void main() {
     // Allocate output slot via atomicAdd on the coherent bucket header.
     // -----------------------------------------------------------------------
     uint outSlot = atomicAdd(hdr.visibleCount, 1u);
+    // Overflow bound check happens BEFORE the cmd.count atomicAdd so that
+    // overflow records (slot >= cap) do not contribute to the indirect draw
+    // count (C3 in the cmd-patch retirement plan).  cmd-patch today clamps
+    // via min(visibleCount, kMaxThinRecords) at write time; the direct path
+    // achieves the same by gating the atomicAdd on the slot's admission.
     if (outSlot >= uint(u_maxThinRecords)) return;
+
+    // Step 2a (VPL retirement, parity-arm): direct atomicAdd of 6u (verts per
+    // emitted quad — two triangles, three verts each = kVertsPerElement) into
+    // the indirect-draw cmd.count.  Gated by u_cmdPatchRetire so the cmd-patch
+    // dispatch stays authoritative until commit 2b deletes it.  When both
+    // paths are armed (env=1), the cmd-patch dispatch will overwrite cmds[0]
+    // entirely; the parity probe on the C++ side reads cmds[0] BEFORE
+    // cmd-patch runs to verify the two values agree.
+    if (u_cmdPatchRetire != 0) {
+        atomicAdd(cmds[0].count, 6u);
+    }
 
     // -----------------------------------------------------------------------
     // Build thin record fields from recipe and lighting SSBO.
