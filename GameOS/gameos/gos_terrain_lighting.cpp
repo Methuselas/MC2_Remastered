@@ -101,25 +101,32 @@ static constexpr uint32_t TL_VERTEX_INPUT_BINDING = 0u;
 static constexpr uint32_t TL_LIGHT_INPUT_BINDING  = 1u;
 static constexpr uint32_t TL_OUTPUT_BINDING        = 2u;
 
-// Uniform locations (must match layout(location=N) in shader)
-static constexpr GLint TL_UNI_NUM_VERTICES    = 0;
-static constexpr GLint TL_UNI_NUM_LIGHTS      = 1;
-static constexpr GLint TL_UNI_SUN_LIGHT_DIR   = 2;
-static constexpr GLint TL_UNI_LIGHT_RED       = 3;
-static constexpr GLint TL_UNI_LIGHT_GREEN     = 4;
-static constexpr GLint TL_UNI_LIGHT_BLUE      = 5;
-static constexpr GLint TL_UNI_AMBIENT_RED     = 6;
-static constexpr GLint TL_UNI_AMBIENT_GREEN   = 7;
-static constexpr GLint TL_UNI_AMBIENT_BLUE    = 8;
-static constexpr GLint TL_UNI_BASE_COLOR_R    = 9;
-static constexpr GLint TL_UNI_BASE_COLOR_G    = 10;
-static constexpr GLint TL_UNI_BASE_COLOR_B    = 11;
-static constexpr GLint TL_UNI_RAIN_LEVEL      = 12;
-static constexpr GLint TL_UNI_LIGHTNING_LEVEL = 13;
-static constexpr GLint TL_UNI_FOG_START       = 14;
-static constexpr GLint TL_UNI_FOG_FULL        = 15;
-static constexpr GLint TL_UNI_USE_FOG         = 16;
-static constexpr GLint TL_UNI_RENDERER_SW     = 17;
+// Uniform slot indices — used to index s_uniformLocs[].
+// Resolved at shader-compile time via glGetUniformLocation (NOT layout qualifiers —
+// explicit layout(location=N) on compute uniforms is unreliable on AMD RX 7900 XTX;
+// all other compute shaders in this codebase use glGetUniformLocation exclusively).
+static constexpr int TL_UNI_NUM_VERTICES    = 0;
+static constexpr int TL_UNI_NUM_LIGHTS      = 1;
+static constexpr int TL_UNI_SUN_LIGHT_DIR   = 2;
+static constexpr int TL_UNI_LIGHT_RED       = 3;
+static constexpr int TL_UNI_LIGHT_GREEN     = 4;
+static constexpr int TL_UNI_LIGHT_BLUE      = 5;
+static constexpr int TL_UNI_AMBIENT_RED     = 6;
+static constexpr int TL_UNI_AMBIENT_GREEN   = 7;
+static constexpr int TL_UNI_AMBIENT_BLUE    = 8;
+static constexpr int TL_UNI_BASE_COLOR_R    = 9;
+static constexpr int TL_UNI_BASE_COLOR_G    = 10;
+static constexpr int TL_UNI_BASE_COLOR_B    = 11;
+static constexpr int TL_UNI_RAIN_LEVEL      = 12;
+static constexpr int TL_UNI_LIGHTNING_LEVEL = 13;
+static constexpr int TL_UNI_FOG_START       = 14;
+static constexpr int TL_UNI_FOG_FULL        = 15;
+static constexpr int TL_UNI_USE_FOG         = 16;
+static constexpr int TL_UNI_RENDERER_SW     = 17;
+static constexpr int TL_UNI_COUNT           = 18;
+
+// Runtime-resolved uniform locations (populated once after shader compile).
+static GLint s_uniformLocs[TL_UNI_COUNT];
 
 // ---------------------------------------------------------------------------
 // Private GL state
@@ -333,6 +340,54 @@ void mission_init(uint32_t numVertices, uint32_t maxLights) {
             fflush(stdout);
             return;
         }
+        // Resolve all uniform locations once — no explicit layout qualifiers in shader
+        // (AMD RX 7900 XTX doesn't honor layout(location=N) for compute uniforms reliably).
+        s_uniformLocs[TL_UNI_NUM_VERTICES]    = glGetUniformLocation(s_program, "u_numVertices");
+        s_uniformLocs[TL_UNI_NUM_LIGHTS]      = glGetUniformLocation(s_program, "u_numLights");
+        s_uniformLocs[TL_UNI_SUN_LIGHT_DIR]   = glGetUniformLocation(s_program, "u_sunLightDir");
+        s_uniformLocs[TL_UNI_LIGHT_RED]       = glGetUniformLocation(s_program, "u_lightRed");
+        s_uniformLocs[TL_UNI_LIGHT_GREEN]     = glGetUniformLocation(s_program, "u_lightGreen");
+        s_uniformLocs[TL_UNI_LIGHT_BLUE]      = glGetUniformLocation(s_program, "u_lightBlue");
+        s_uniformLocs[TL_UNI_AMBIENT_RED]     = glGetUniformLocation(s_program, "u_ambientRed");
+        s_uniformLocs[TL_UNI_AMBIENT_GREEN]   = glGetUniformLocation(s_program, "u_ambientGreen");
+        s_uniformLocs[TL_UNI_AMBIENT_BLUE]    = glGetUniformLocation(s_program, "u_ambientBlue");
+        s_uniformLocs[TL_UNI_BASE_COLOR_R]    = glGetUniformLocation(s_program, "u_baseVertexColorR");
+        s_uniformLocs[TL_UNI_BASE_COLOR_G]    = glGetUniformLocation(s_program, "u_baseVertexColorG");
+        s_uniformLocs[TL_UNI_BASE_COLOR_B]    = glGetUniformLocation(s_program, "u_baseVertexColorB");
+        s_uniformLocs[TL_UNI_RAIN_LEVEL]      = glGetUniformLocation(s_program, "u_rainLightLevel");
+        s_uniformLocs[TL_UNI_LIGHTNING_LEVEL] = glGetUniformLocation(s_program, "u_lighteningLevel");
+        s_uniformLocs[TL_UNI_FOG_START]       = glGetUniformLocation(s_program, "u_fogStart");
+        s_uniformLocs[TL_UNI_FOG_FULL]        = glGetUniformLocation(s_program, "u_fogFull");
+        s_uniformLocs[TL_UNI_USE_FOG]         = glGetUniformLocation(s_program, "u_useFog");
+        s_uniformLocs[TL_UNI_RENDERER_SW]     = glGetUniformLocation(s_program, "u_rendererSW");
+        // Always-on diagnostic: print all resolved locations so black-terrain debug
+        // can immediately see which (if any) came back -1 (uniform not found).
+        printf("[TERRAIN_LIGHTING_GPU v1] event=uniform_locs "
+               "numVerts=%d numLights=%d sunDir=%d "
+               "lightR=%d lightG=%d lightB=%d "
+               "ambR=%d ambG=%d ambB=%d "
+               "baseR=%d baseG=%d baseB=%d "
+               "rain=%d lightning=%d fogStart=%d fogFull=%d "
+               "useFog=%d rendSW=%d\n",
+               s_uniformLocs[TL_UNI_NUM_VERTICES],
+               s_uniformLocs[TL_UNI_NUM_LIGHTS],
+               s_uniformLocs[TL_UNI_SUN_LIGHT_DIR],
+               s_uniformLocs[TL_UNI_LIGHT_RED],
+               s_uniformLocs[TL_UNI_LIGHT_GREEN],
+               s_uniformLocs[TL_UNI_LIGHT_BLUE],
+               s_uniformLocs[TL_UNI_AMBIENT_RED],
+               s_uniformLocs[TL_UNI_AMBIENT_GREEN],
+               s_uniformLocs[TL_UNI_AMBIENT_BLUE],
+               s_uniformLocs[TL_UNI_BASE_COLOR_R],
+               s_uniformLocs[TL_UNI_BASE_COLOR_G],
+               s_uniformLocs[TL_UNI_BASE_COLOR_B],
+               s_uniformLocs[TL_UNI_RAIN_LEVEL],
+               s_uniformLocs[TL_UNI_LIGHTNING_LEVEL],
+               s_uniformLocs[TL_UNI_FOG_START],
+               s_uniformLocs[TL_UNI_FOG_FULL],
+               s_uniformLocs[TL_UNI_USE_FOG],
+               s_uniformLocs[TL_UNI_RENDERER_SW]);
+        fflush(stdout);
     }
     if (s_shaderBad) return;
 
@@ -575,42 +630,42 @@ void PackAndDispatch() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TL_LIGHT_INPUT_BINDING,  s_lightInputSsbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, TL_OUTPUT_BINDING,        s_computeOutputSsbo);
 
-    // Set per-frame uniforms
-    glUniform1ui(TL_UNI_NUM_VERTICES, s_numVertices);
-    glUniform1ui(TL_UNI_NUM_LIGHTS,   numLights);
+    // Set per-frame uniforms via runtime-resolved locations.
+    glUniform1i(s_uniformLocs[TL_UNI_NUM_VERTICES], static_cast<GLint>(s_numVertices));
+    glUniform1i(s_uniformLocs[TL_UNI_NUM_LIGHTS],   static_cast<GLint>(numLights));
 
     if (eye) {
         // Sun direction (eye->lightDirection — already computed by camera each frame)
-        glUniform3f(TL_UNI_SUN_LIGHT_DIR,
+        glUniform3f(s_uniformLocs[TL_UNI_SUN_LIGHT_DIR],
                     eye->lightDirection.x,
                     eye->lightDirection.y,
                     eye->lightDirection.z);
         // getLightRed/Green/Blue channels (unsigned char, 0-255)
-        glUniform1ui(TL_UNI_LIGHT_RED,    static_cast<GLuint>(eye->lightRed));
-        glUniform1ui(TL_UNI_LIGHT_GREEN,  static_cast<GLuint>(eye->lightGreen));
-        glUniform1ui(TL_UNI_LIGHT_BLUE,   static_cast<GLuint>(eye->lightBlue));
-        glUniform1ui(TL_UNI_AMBIENT_RED,  static_cast<GLuint>(eye->ambientRed));
-        glUniform1ui(TL_UNI_AMBIENT_GREEN,static_cast<GLuint>(eye->ambientGreen));
-        glUniform1ui(TL_UNI_AMBIENT_BLUE, static_cast<GLuint>(eye->ambientBlue));
+        glUniform1i(s_uniformLocs[TL_UNI_LIGHT_RED],    static_cast<GLint>(eye->lightRed));
+        glUniform1i(s_uniformLocs[TL_UNI_LIGHT_GREEN],  static_cast<GLint>(eye->lightGreen));
+        glUniform1i(s_uniformLocs[TL_UNI_LIGHT_BLUE],   static_cast<GLint>(eye->lightBlue));
+        glUniform1i(s_uniformLocs[TL_UNI_AMBIENT_RED],  static_cast<GLint>(eye->ambientRed));
+        glUniform1i(s_uniformLocs[TL_UNI_AMBIENT_GREEN],static_cast<GLint>(eye->ambientGreen));
+        glUniform1i(s_uniformLocs[TL_UNI_AMBIENT_BLUE], static_cast<GLint>(eye->ambientBlue));
         // Fog parameters
-        glUniform1f(TL_UNI_FOG_START, eye->fogStart);
-        glUniform1f(TL_UNI_FOG_FULL,  eye->fogFull);
+        glUniform1f(s_uniformLocs[TL_UNI_FOG_START], eye->fogStart);
+        glUniform1f(s_uniformLocs[TL_UNI_FOG_FULL],  eye->fogFull);
     }
 
     // BaseVertexColor (DWORD 0xAARRGGBB)
-    glUniform1ui(TL_UNI_BASE_COLOR_R, static_cast<GLuint>((BaseVertexColor >> 16) & 0xFFu));
-    glUniform1ui(TL_UNI_BASE_COLOR_G, static_cast<GLuint>((BaseVertexColor >>  8) & 0xFFu));
-    glUniform1ui(TL_UNI_BASE_COLOR_B, static_cast<GLuint>( BaseVertexColor        & 0xFFu));
+    glUniform1i(s_uniformLocs[TL_UNI_BASE_COLOR_R], static_cast<GLint>((BaseVertexColor >> 16) & 0xFFu));
+    glUniform1i(s_uniformLocs[TL_UNI_BASE_COLOR_G], static_cast<GLint>((BaseVertexColor >>  8) & 0xFFu));
+    glUniform1i(s_uniformLocs[TL_UNI_BASE_COLOR_B], static_cast<GLint>( BaseVertexColor        & 0xFFu));
 
     // rainLightLevel + lighteningLevel (TerrainQuad statics)
-    glUniform1f(TL_UNI_RAIN_LEVEL,      TerrainQuad::rainLightLevel);
-    glUniform1ui(TL_UNI_LIGHTNING_LEVEL, static_cast<GLuint>(TerrainQuad::lighteningLevel));
+    glUniform1f(s_uniformLocs[TL_UNI_RAIN_LEVEL],      TerrainQuad::rainLightLevel);
+    glUniform1i(s_uniformLocs[TL_UNI_LIGHTNING_LEVEL], static_cast<GLint>(TerrainQuad::lighteningLevel));
 
     // useFog (terrain.cpp global)
-    glUniform1ui(TL_UNI_USE_FOG, useFog ? 1u : 0u);
+    glUniform1i(s_uniformLocs[TL_UNI_USE_FOG], useFog ? 1 : 0);
 
     // Environment.Renderer == 3 => software renderer (skip lighting)
-    glUniform1ui(TL_UNI_RENDERER_SW, (Environment.Renderer == 3) ? 1u : 0u);
+    glUniform1i(s_uniformLocs[TL_UNI_RENDERER_SW], (Environment.Renderer == 3) ? 1 : 0);
 
     // Dispatch: ceil(numVertices / 64) workgroups
     const uint32_t numGroups = (s_numVertices + 63u) / 64u;
@@ -620,6 +675,22 @@ void PackAndDispatch() {
 
     TL_TRACE("event=dispatch frame=%llu verts=%u lights=%u groups=%u",
              (unsigned long long)s_frameIndex, s_numVertices, numLights, numGroups);
+    // First-frame always-on diagnostic — prints once per process to confirm
+    // ambient/light values are non-zero and numVerts > 0.
+    if (s_frameIndex <= 1) {
+        printf("[TERRAIN_LIGHTING_GPU v1] event=first_dispatch "
+               "frame=%llu numVerts=%u numGroups=%u "
+               "eye=%s ambR=%d ambG=%d ambB=%d lightR=%d lightG=%d lightB=%d\n",
+               (unsigned long long)s_frameIndex, s_numVertices, numGroups,
+               eye ? "ok" : "NULL",
+               eye ? (int)eye->ambientRed   : -1,
+               eye ? (int)eye->ambientGreen : -1,
+               eye ? (int)eye->ambientBlue  : -1,
+               eye ? (int)eye->lightRed     : -1,
+               eye ? (int)eye->lightGreen   : -1,
+               eye ? (int)eye->lightBlue    : -1);
+        fflush(stdout);
+    }
 
     // --- Memory barrier: ensure compute shader writes complete ---
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
