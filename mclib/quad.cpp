@@ -274,6 +274,25 @@ static const bool s_shapeCParityCheck = (getenv("MC2_SHAPE_C_PARITY_CHECK") != n
 // line so smoke artifacts capture the gate state.
 static const bool s_thinEmitTrace =
     (getenv("MC2_TERRAIN_INDIRECT_THINEMIT_TRACE") != nullptr);
+
+// MC2_M2D_PZ_PARITY probe (VPL Step 8b precursor validator). Re-authored per
+// docs/superpowers/reviews/2026-05-15-overlay-pz-scoped-redesign-rereview.md
+// Finding 5. Arming is a static file-scope getenv read (NOT a Renderer!=3
+// arm-guard — that guard sat in the dead legacy arm; the modern fast path is
+// the perspective GL renderer, Environment.Renderer != 3). When armed, the
+// M2d pzc/pzTri block bit-compares pzc_new (the corrected reprojection +
+// clipInfo==0 sentinel guard) against pzc_old (the literal vertices[c]->pz
+// formula, legal probe-only because terrain.cpp still writes cv->pz pre-Step-8b
+// and the read is confined to a probe-local). First-N mismatches are emitted
+// unconditionally (NOT frame-modulo); a per-mission summary line asserts
+// checked > 0 (the v1 failure mode was checked == 0 = probe never fired).
+// Demote-don't-delete after green per the Debug-instrumentation rule.
+static const bool s_m2dPzParity = (getenv("MC2_M2D_PZ_PARITY") != nullptr);
+static int  s_m2dPzParityChecked = 0;       // quads the probe actually compared
+static int  s_m2dPzParityMismatch = 0;      // quads with any pzc/pzTri divergence
+static int  s_m2dPzParityEmitted = 0;       // first-N detail lines emitted so far
+static bool s_m2dPzParityArmLogged = false; // one-shot arm/scope-assertion line
+static const int s_m2dPzParityEmitCap = 32; // first-N detail-line cap
 static const bool s_shapeCEnabled = ([] {
 	// Default ON post Slice-1 flip (2026-04-29). Tier1 parity validated:
 	// 19.7M field-equality checks across 5 missions, zero mismatches.
@@ -2100,23 +2119,111 @@ void TerrainQuad::draw (void)
 
 		if (fastPathEligible)
 		{
-		    // pz validity — vertices[c]->pz is pre-projected by the camera transform pass.
-		    // Range [0,1) is in-clip; outside is behind-camera or far-clipped.
-		    bool pzc[4];
-		    for (int c = 0; c < 4; c++) {
-		        float pz_adj = vertices[c]->pz + TERRAIN_DEPTH_FUDGE;
-		        pzc[c] = (pz_adj >= 0.0f) && (pz_adj < 1.0f);
+		    // pz-validity gate. v2-scoping: only the M2d overlay (live-when-armed)
+		    // and the not-armed thin-emit consume pzc/pzTri; gate the (re-)compute
+		    // behind the union of their producer predicates so the cost is bounded
+		    // to the sparse overlay-quad set (NOT every terrain quad — the v1
+		    // 146->42 regression was unconditional re-projection here).
+		    // v1-mechanism: re-project on-site from the SAME (vx,vy,elevation)
+		    // triple VPL used, and reproduce VPL's pz=-0.5 off-screen sentinel via
+		    // the clipInfo==0 short-circuit (v1 Finding 1, proven bit-exact). This
+		    // makes the gate INDEPENDENT of vertices[c]->pz so Step 8b can delete
+		    // the VPL cv->pz write (terrain.cpp:1601 / :1738).
+		    // Source of truth: docs/superpowers/reviews/
+		    //   2026-05-15-overlay-pz-scoped-redesign-rereview.md Finding 1
+		    //   §Corrected edit.
+		    bool pzc[4] = { false, false, false, false };
+		    const bool pzNeeded =
+		        (useOverlayTexture && overlayHandle != 0xffffffff)
+		        || (terrainHandle != 0 && !gos_terrain_indirect::IsFrameSolidArmed());
+		    if (pzNeeded)
+		    {
+		        for (int c = 0; c < 4; c++) {
+		            // VPL writes pz=-0.5 (sentinel) iff clipInfo==0 (onScreen==false)
+		            // for the perspective renderer (terrain.cpp:1577/1601/1603,
+		            // :1749/1759). Reproduce that co-decision; do NOT re-project the
+		            // sentinel corners (re-projection of an off-cone corner whose true
+		            // projectZ z is still in [0,1) would flip pzc false->true — the
+		            // divergence v1 Finding 1 closes).
+		            if (vertices[c]->clipInfo == 0) { pzc[c] = false; continue; }
+		            Stuff::Vector3D ov3D(vertices[c]->vx, vertices[c]->vy,
+		                                 vertices[c]->pVertex->elevation);
+		            Stuff::Vector4D osp;
+		            eye->projectForTerrainAdmission(ov3D, osp);
+		            float pz_adj = osp.z + TERRAIN_DEPTH_FUDGE;
+		            pzc[c] = (pz_adj >= 0.0f) && (pz_adj < 1.0f);
+		        }
 		    }
 
 		    bool pzTri1, pzTri2;
 		    if (uvMode == BOTTOMLEFT) {
-		        // tri1 = corners [0,1,3], tri2 = corners [1,2,3]
 		        pzTri1 = pzc[0] && pzc[1] && pzc[3];
 		        pzTri2 = pzc[1] && pzc[2] && pzc[3];
 		    } else {
-		        // BOTTOMRIGHT (= TOPRIGHT diagonal): tri1 = [0,1,2], tri2 = [0,2,3]
 		        pzTri1 = pzc[0] && pzc[1] && pzc[2];
 		        pzTri2 = pzc[0] && pzc[2] && pzc[3];
+		    }
+
+		    // MC2_M2D_PZ_PARITY probe (Step 8b precursor validator, demote-don't-
+		    // delete). Bit-compares the corrected reprojection+sentinel result
+		    // above against the literal vertices[c]->pz formula in a PROBE-ONLY
+		    // local (legal because terrain.cpp still writes cv->pz pre-Step-8b).
+		    // Per 2026-05-15-overlay-pz-scoped-redesign-rereview.md Finding 5:
+		    // static getenv arm (NO Renderer!=3 arm-guard), one-shot Renderer!=3
+		    // scope-assertion log, first-N unconditional mismatch emit, running
+		    // summary with checked>0 (vacuous-probe guard). pzc_old does NOT feed
+		    // the production path; it exists solely for this comparison.
+		    if (s_m2dPzParity)
+		    {
+		        if (!s_m2dPzParityArmLogged) {
+		            s_m2dPzParityArmLogged = true;
+		            fprintf(stderr,
+		                "[M2D_PZ_PARITY v1] event=armed mechanism=reproject+clipInfo_guard "
+		                "scope_assert=Renderer!=3 Environment.Renderer=%d emit_cap=%d "
+		                "note=probe_only_cv_pz_read_pre_step8b\n",
+		                (int)Environment.Renderer, s_m2dPzParityEmitCap);
+		            fflush(stderr);
+		        }
+		        bool pzc_old[4];
+		        for (int c = 0; c < 4; c++) {
+		            float pz_adj_old = vertices[c]->pz + TERRAIN_DEPTH_FUDGE;
+		            pzc_old[c] = (pz_adj_old >= 0.0f) && (pz_adj_old < 1.0f);
+		        }
+		        bool pzTri1_old, pzTri2_old;
+		        if (uvMode == BOTTOMLEFT) {
+		            pzTri1_old = pzc_old[0] && pzc_old[1] && pzc_old[3];
+		            pzTri2_old = pzc_old[1] && pzc_old[2] && pzc_old[3];
+		        } else {
+		            pzTri1_old = pzc_old[0] && pzc_old[1] && pzc_old[2];
+		            pzTri2_old = pzc_old[0] && pzc_old[2] && pzc_old[3];
+		        }
+		        ++s_m2dPzParityChecked;
+		        const bool mism =
+		            (pzc[0] != pzc_old[0]) || (pzc[1] != pzc_old[1]) ||
+		            (pzc[2] != pzc_old[2]) || (pzc[3] != pzc_old[3]) ||
+		            (pzTri1 != pzTri1_old) || (pzTri2 != pzTri2_old);
+		        if (mism) {
+		            ++s_m2dPzParityMismatch;
+		            if (s_m2dPzParityEmitted < s_m2dPzParityEmitCap) {
+		                ++s_m2dPzParityEmitted;
+		                fprintf(stderr,
+		                    "[M2D_PZ_PARITY v1] event=mismatch n=%d "
+		                    "pzc_new=%d%d%d%d pzc_old=%d%d%d%d "
+		                    "pzTri_new=%d%d pzTri_old=%d%d pzNeeded=%d uvMode=%d\n",
+		                    s_m2dPzParityEmitted,
+		                    pzc[0], pzc[1], pzc[2], pzc[3],
+		                    pzc_old[0], pzc_old[1], pzc_old[2], pzc_old[3],
+		                    pzTri1, pzTri2, pzTri1_old, pzTri2_old,
+		                    pzNeeded ? 1 : 0, (int)uvMode);
+		                fflush(stderr);
+		            }
+		        }
+		        if ((s_m2dPzParityChecked % 14000) == 0) {
+		            fprintf(stderr,
+		                "[M2D_PZ_PARITY v1] event=summary checked=%d mismatches=%d\n",
+		                s_m2dPzParityChecked, s_m2dPzParityMismatch);
+		            fflush(stderr);
+		        }
 		    }
 
 		    if (!pzTri1 && !pzTri2) return;  // both culled — skip entirely
