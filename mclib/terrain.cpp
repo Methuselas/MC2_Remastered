@@ -1370,25 +1370,6 @@ float leastWY = 0.0f, mostWY = 0.0f;
 extern bool InEditor;
 
 //---------------------------------------------------------------------------
-// vertexProjectLoop fast-path (D1: CPU loop hoist + skip PROJECTZ_SITE +
-// direct cull-cascade array writes). See:
-//   docs/superpowers/cpu-to-gpu-offload-orchestrator.md (Status Board)
-//   memory/cull_gates_are_load_bearing.md (why side effects can't move)
-//
-// MC2_VERTEX_PROJECT_FAST=1   — enables fast path (default off).
-// MC2_VERTEX_PROJECT_PARITY=1 — runs legacy in parallel and byte-compares
-//                               per-vertex outputs. Silent on pass; field-
-//                               level mismatch printer (16/frame throttle)
-//                               + 600-frame summary.
-//---------------------------------------------------------------------------
-namespace {
-struct VPParitySnap {
-	bool  clipInfo;
-	float px, py, pz, pw;
-	float hazeFactor;
-};
-}
-//---------------------------------------------------------------------------
 void Terrain::geometry (void)
 {
 	ZoneScopedN("Terrain::geometry");
@@ -1410,8 +1391,6 @@ void Terrain::geometry (void)
 	leastWY = 0.0f; mostWY = 0.0f;
 
 	//-----------------------------------
-	// Transform entire list of vertices
-	VertexPtr currentVertex = vertexList;
 
 	Stuff::Vector3D cameraPos;
 	cameraPos.x = -eye->getCameraOrigin().x;
@@ -1421,516 +1400,17 @@ void Terrain::geometry (void)
 	float vClipConstant = eye->verticalSphereClipConstant;
 	float hClipConstant = eye->horizontalSphereClipConstant; 
 	
-	// vertexProjectLoop fast-path (D1) — see file-scope namespace block above.
-	static const bool s_vpFast   = (getenv("MC2_VERTEX_PROJECT_FAST")   != nullptr);
-	static const bool s_vpParity = (getenv("MC2_VERTEX_PROJECT_PARITY") != nullptr);
 
-	// VPL retirement Step 5 regression-guard probe (no-op; default-off).
-	// clipInfo is proven projection-independent: the production path
-	// (eye->usePerspective && Environment.Renderer != 3, always true in
-	// stock — Environment.Renderer is only ever assigned 0) writes
-	// clipInfo = onScreen, and onScreen is computed non-projectively above
-	// (cameraPos / cameraFrame / sphere clip constants / proximity +
-	// dilated-cone thresholds). The projection call (projectForTerrainAdmission)
-	// runs AFTER clipInfo is finalized and feeds only the inView-gated
-	// leastZ/mostZ/leastW/mostW reduction + px/py/pz/pw. This probe asserts
-	// that invariant per-vertex so that when Step 8c deletes the projection
-	// loop, any hidden projection->clipInfo coupling fires here loudly.
-	// Defense-in-depth for the deletion, NOT a Step 5 behavior change.
+	// VPL retirement: the MC2_VPL_CULL / MC2_VPL_REDUCE getenv reads are
+	// KEPT solely to gate the one-shot event=retired lifecycle lines
+	// emitted just before the slim reduce loop below (8c-part-2: the VPL
+	// body those probes compared against is deleted, so any relocated
+	// self-comparison would be tautological/false-alarm; demote-not-
+	// silently-delete per the worktree Debug-instrumentation rule).
 	static const bool s_vplCull = (getenv("MC2_VPL_CULL") != nullptr);
-	static uint64_t   s_vplParityViolations = 0;
-	static uint32_t   s_vplLastSummaryFrame = 0;
-	extern uint32_t   g_mc2FrameCounter;  // defined in mclib/tgl.cpp:3718
-
-	// VPL retirement Step 8c-part-1: the cull cascade (clipInfo /
-	// setObjBlockActive / setObjVertexActive) is MERGED into the slim
-	// reduce loop below so it becomes the post-8c sole producer (the VPL
-	// body's own cull writes stay this commit for co-production; 8c-part-2
-	// removes the body). The relocated MC2_VPL_CULL probe (reusing
-	// s_vplCull) is RE-PURPOSED to a NON-TAUTOLOGICAL slim-vs-legacy
-	// superset assertion: during the 8c-part-1 co-production window the
-	// VPL body runs first and writes the legacy onScreen-derived clipInfo
-	// into every Vertex; the slim loop then reads that still-live legacy
-	// value (nothing overwrites Vertex::clipInfo between the VPL body and
-	// the slim loop — the quad.cpp setupTextures overwrite runs strictly
-	// AFTER the slim loop) and asserts slim >= legacy per vertex
-	// (!(legacyActive && !slimActive)), the exact CRIT-1 invariant. This
-	// catches the catastrophic subset bug (objects/mechs vanish if the
-	// slim active-set is a strict subset of the loose legacy {onScreen}
-	// set). It is slim-vs-VPL-body, NOT slim-vs-self (a self-comparison
-	// would be a pure tautology). At 8c-part-2 the VPL body is gone, no
-	// independent producer remains, and this probe is retired/demoted.
-	// See docs/superpowers/reviews/2026-05-15-step8-vpl-body-deletion-
-	// adversarial-review.md CRIT-1/§6, the v3.5 plan amendment, and
-	// memory/cull_gates_are_load_bearing.md.
-	static uint64_t   s_vplCullSupersetViolations = 0;
-	static uint32_t   s_vplCullSupersetLastSummaryFrame = 0;
-
-	// VPL retirement Step 6 regression-guard probe (no-op; default-off,
-	// demote-don't-delete per the worktree Debug instrumentation rule).
-	// Step 6 RE-HOMES (does not eliminate) the reduction's per-vertex
-	// projection into the self-contained slim min/max-only pass below: that
-	// pass is now the SOLE producer of the production accumulators
-	// (leastZ/mostZ/leastW/mostW/leastWY/mostWY -> eye->setInverseProject).
-	// When MC2_VPL_REDUCE is set, the OLD inline reduction is re-run inside
-	// the projection loops into the SHADOW accumulators below, and the six
-	// production vs shadow values are asserted bit-identical immediately
-	// before setInverseProject. The slim loop and the old inline path call
-	// the SAME projectForTerrainAdmission, so any mismatch is a real
-	// iteration-order / gate bug, not FP drift (exact ==, not epsilon).
-	// Defense-in-depth for Step 8c, same shape as Step 5's MC2_VPL_CULL.
 	static const bool s_vplReduce = (getenv("MC2_VPL_REDUCE") != nullptr);
-	static uint64_t   s_vplReduceViolations = 0;
-	static uint32_t   s_vplReduceLastSummaryFrame = 0;
-	// Shadow accumulators: written ONLY by the gated old inline path; the
-	// production accumulators are written ONLY by the slim loop. No
-	// double-counting (production never sees the old path, shadow never sees
-	// the slim loop). Reset here per frame, mirroring the production reset
-	// at the top of Terrain::geometry.
-	float oldLeastZ = 1.0f, oldLeastW = 1.0f;
-	float oldMostZ = -1.0f, oldMostW = -1.0f;
-	float oldLeastWY = 0.0f, oldMostWY = 0.0f;
-	static uint32_t   s_vpFrame  = 0;
-	static uint64_t   s_vpVertsChecked  = 0;
-	static uint64_t   s_vpVertsMismatch = 0;
-
-	std::vector<VPParitySnap> vpFastSnap;
-	if (s_vpFast && s_vpParity)
-		vpFastSnap.resize(numberVertices);
-
-	if (s_vpFast)
-	{
-		// Hoist invariants out of the hot loop.
-		const bool  vp_usePersp        = eye->usePerspective;
-		const bool  vp_isPerspRenderer = vp_usePersp && (Environment.Renderer != 3);
-		const bool  vp_drawGrid        = drawTerrainGrid;
-		const float vp_maxClipD        = Camera::MaxClipDistance;
-		const float vp_minHazeD        = Camera::MinHazeDistance;
-		const float vp_distFact        = Camera::DistanceFactor;
-		const long  vp_numObjB         = numObjBlocks;
-		const long  vp_numActiveVerts  = realVerticesMapSide * realVerticesMapSide;
-
-		ZoneScopedN("Terrain::geometry vertexProjectLoop");
-		VertexPtr cv = vertexList;
-		for (long vi = 0; vi < numberVertices; ++vi, ++cv)
-		{
-			// Math byte-identical to legacy block at terrain.cpp:1298-1450.
-			// Differences from legacy: PROJECTZ_SITE() is omitted (g_pzTrace is
-			// debug-only); cull-cascade setters are inlined as direct array
-			// writes so the compiler doesn't gamble on inlining setObjBlockActive.
-			bool onScreen = false;
-			float hazeFactor = 0.0f;
-
-			if (vp_usePersp)
-			{
-				onScreen = true;
-
-				Stuff::Vector3D vPosition;
-				vPosition.x = cv->vx;
-				vPosition.y = cv->vy;
-				vPosition.z = cv->pVertex->elevation;
-
-				Stuff::Vector3D objectCenter;
-				objectCenter.Subtract(vPosition, cameraPos);
-				Camera::cameraFrame.trans_to_frame(objectCenter);
-				float distanceToEye = objectCenter.GetApproximateLength();
-
-				Stuff::Vector3D clipVector = objectCenter;
-				clipVector.z = 0.0f;
-				float distanceToClip = clipVector.GetApproximateLength();
-				float clip_distance = fabs(1.0f / objectCenter.y);
-
-				if (distanceToClip > CLIP_THRESHOLD_DISTANCE)
-				{
-					float object_angle = fabs(objectCenter.z) * clip_distance;
-					float extent_angle = VERTEX_EXTENT_RADIUS / distanceToEye;
-					if (object_angle > (vClipConstant + extent_angle))
-					{
-						onScreen = false;
-					}
-					else
-					{
-						object_angle = fabs(objectCenter.x) * clip_distance;
-						if (object_angle > (hClipConstant + extent_angle))
-							onScreen = false;
-					}
-				}
-
-				if (onScreen)
-				{
-					if (distanceToEye > vp_maxClipD)      hazeFactor = 1.0f;
-					else if (distanceToEye > vp_minHazeD) hazeFactor = (distanceToEye - vp_minHazeD) * vp_distFact;
-					else                                  hazeFactor = 0.0f;
-
-					Stuff::Vector3D vPos(cv->vx, cv->vy, cv->pVertex->elevation);
-					bool isVisible = Terrain::IsGameSelectTerrainPosition(vPos) || vp_drawGrid;
-					if (!isVisible)
-					{
-						hazeFactor = 1.0f;
-						onScreen = true;
-					}
-				}
-				else
-				{
-					hazeFactor = 1.0f;
-				}
-			}
-			else
-			{
-				hazeFactor = 0.0f;
-				onScreen = true;
-			}
-
-			bool inView = false;
-			Stuff::Vector4D screenPos(-10000.0f, -10000.0f, -10000.0f, -10000.0f);
-			float pxL, pyL, pzL, pwL;
-			float hazeL = hazeFactor;
-
-			if (onScreen)
-			{
-				Stuff::Vector3D vertex3D(cv->vx, cv->vy, cv->pVertex->elevation);
-				inView = eye->projectForTerrainAdmission(vertex3D, screenPos);
-				pxL = screenPos.x;
-				pyL = screenPos.y;
-				pzL = screenPos.z;
-				pwL = screenPos.w;
-			}
-			else
-			{
-				pxL = pyL = 10000.0f;
-				pzL = -0.5f;
-				pwL = 0.5f;
-				hazeL = 0.0f;
-			}
-
-			const bool clipInfoFinal = vp_isPerspRenderer ? onScreen : inView;
-
-			if (s_vpParity)
-			{
-				// Snapshot only — legacy will write live state below.
-				VPParitySnap& s = vpFastSnap[vi];
-				s.clipInfo   = clipInfoFinal;
-				s.px         = pxL;
-				s.py         = pyL;
-				s.pz         = pzL;
-				s.pw         = pwL;
-				s.hazeFactor = hazeL;
-			}
-			else
-			{
-				// Live writes (cull cascade + accumulators).
-				// VPL Step 8b: the per-vertex cv->px/py/pz/pw writes are
-				// deleted here. All consumers were retired in earlier steps
-				// (Steps 1/1b/3/4); the overlay-pz v2 precursor re-projects
-				// independently and is bit-identity-proven (c3ac10a). The
-				// pxL/pyL/pzL/pwL locals + the projection call + the Step 6
-				// slim reduction + the MC2_VPL_CULL/REDUCE probes are KEPT
-				// (8c owns the loop-body / projection-call deletion). The
-				// cv->clipInfo write and the cull-cascade writes below stay:
-				// clipInfo's sole pre-quad.cpp-overwrite consumer is the
-				// in-loop cull cascade itself (Step 8 review SS4).
-				cv->hazeFactor = hazeL;
-				cv->clipInfo = clipInfoFinal;
-
-				if (clipInfoFinal)
-				{
-					const long blockNum = cv->getBlockNumber();
-					if ((blockNum >= 0) && (blockNum < vp_numObjB))
-						objBlockInfo[blockNum].active = true;
-
-					const long vertNum = cv->vertexNum;
-					if ((vertNum >= 0) && (vertNum < vp_numActiveVerts))
-						objVertexActive[vertNum] = true;
-
-					// VPL Step 6: the production leastZ/mostZ/leastW/mostW/
-					// leastWY/mostWY reduction is RE-HOMED into the slim
-					// min/max-only pass below; this old inline accumulation
-					// is deleted. Under MC2_VPL_REDUCE only, it is re-run
-					// into the SHADOW accumulators for the bit-identical
-					// parity guard (production accumulators are untouched
-					// here — no double-count).
-					if (s_vplReduce && inView)
-					{
-						if (screenPos.z < oldLeastZ) oldLeastZ = screenPos.z;
-						if (screenPos.z > oldMostZ)  oldMostZ  = screenPos.z;
-						if (screenPos.w < oldLeastW) { oldLeastW = screenPos.w; oldLeastWY = screenPos.y; }
-						if (screenPos.w > oldMostW)  { oldMostW  = screenPos.w; oldMostWY  = screenPos.y; }
-					}
-				}
-			}
-		}
-	}
 
 	long i=0;
-	if (!s_vpFast || s_vpParity)
-	{
-		ZoneScopedN("Terrain::geometry vertexProjectLoop");
-		for (i=0;i<numberVertices;i++)
-	{
-		//----------------------------------------------------------------------------------------
-		// Figure out if we are in front of camera or not.  Should be faster then actual project!
-		// Should weed out VAST overwhelming majority of vertices!
-		bool onScreen = false;
-	
-		//-----------------------------------------------------------------
-		// Find angle between lookVector of Camera and vector from camPos
-		// to Target.  If angle is less then halfFOV, object is visible.
-		if (eye->usePerspective)
-		{
-			//-------------------------------------------------------------------
-			//NEW METHOD from the WAY BACK Days
-			onScreen = true;
-			
-			Stuff::Vector3D vPosition;
-			vPosition.x = currentVertex->vx;
-			vPosition.y = currentVertex->vy;
-			vPosition.z = currentVertex->pVertex->elevation;
-  
-			Stuff::Vector3D objectCenter;
-			objectCenter.Subtract(vPosition,cameraPos);
-			Camera::cameraFrame.trans_to_frame(objectCenter);
-			float distanceToEye = objectCenter.GetApproximateLength();
-
-			Stuff::Vector3D clipVector = objectCenter;
-			clipVector.z = 0.0f;
-			float distanceToClip = clipVector.GetApproximateLength();
-			float clip_distance = fabs(1.0f / objectCenter.y);
-			
-			if (distanceToClip > CLIP_THRESHOLD_DISTANCE)
-			{
-				//Is vertex on Screen OR close enough to screen that its triangle MAY be visible?
-				// WE have removed the atans here by simply taking the tan of the angle we want above.
-				float object_angle = fabs(objectCenter.z) * clip_distance;
-				float extent_angle = VERTEX_EXTENT_RADIUS / distanceToEye;
-				if (object_angle > (vClipConstant + extent_angle))
-				{
-					//In theory, we would return here.  Object is NOT on screen.
-					onScreen = false;
-				}
-				else
-				{
-					object_angle = fabs(objectCenter.x) * clip_distance;
-					if (object_angle > (hClipConstant + extent_angle))
-					{
-						//In theory, we would return here.  Object is NOT on screen.
-						onScreen = false;
-					}
-				}
-			}
-			
-			if (onScreen)
-			{
-				if (distanceToEye > Camera::MaxClipDistance)
-				{
-					currentVertex->hazeFactor = 1.0f;
-				}
-				else if (distanceToEye > Camera::MinHazeDistance)
-				{
-					currentVertex->hazeFactor = (distanceToEye - Camera::MinHazeDistance) * Camera::DistanceFactor;
-				}
-				else
-				{
-					currentVertex->hazeFactor = 0.0f;
-				}
-				
-				//---------------------------------------
-				// Vertex is at edge of world or beyond.
-				Stuff::Vector3D vPos(currentVertex->vx,currentVertex->vy,currentVertex->pVertex->elevation);
-				bool isVisible = Terrain::IsGameSelectTerrainPosition(vPos) || drawTerrainGrid;
-				if (!isVisible)
-				{
-					currentVertex->hazeFactor = 1.0f;
-					onScreen = true;
-				}
-			}
-			else
-			{
-				currentVertex->hazeFactor = 1.0f;
-			}
-		}
-		else
-		{
-			currentVertex->hazeFactor = 0.0f;
-			onScreen = true;
-		}
-
-		bool inView = false;
-		Stuff::Vector4D screenPos(-10000.0f,-10000.0f,-10000.0f,-10000.0f);
-		if (onScreen)
-		{
-			Stuff::Vector3D vertex3D(currentVertex->vx,currentVertex->vy,currentVertex->pVertex->elevation);
-			// [PROJECTZ:BoolAdmission id=terrain_cpu_vert_admit]
-			PROJECTZ_SITE("terrain_cpu_vert_admit", "BoolAdmission");
-			inView = eye->projectForTerrainAdmission(vertex3D,screenPos);
-
-			// VPL Step 8b: the per-vertex currentVertex->px/py/pz/pw writes
-			// (and the off-screen px/py=10000, pz=-0.5, pw=0.5 fallback
-			// below) are deleted. Consumers retired in earlier steps; the
-			// projection call above stays (8c owns it; screenPos still feeds
-			// inView and the legacy MC2_VPL_REDUCE shadow accumulators).
-			// hazeFactor, clipInfo, and the cull cascade stay.
-
-			//----------------------------------------------------------------------------------
-			//We must transform these but should NOT draw any face where all three are fogged.
-//			if (currentVertex->hazeFactor == 1.0f)
-//				onScreen = false;
-		}
-		else
-		{
-			currentVertex->hazeFactor = 0.0f;
-		}
-		
-		//------------------------------------------------------------
-		// Fix clip.  Vertices can all be off screen and triangle
-		// still needs to be drawn!
-		if (eye->usePerspective && Environment.Renderer != 3)
-		{
-			currentVertex->clipInfo = onScreen;
-		}
-		else
-			currentVertex->clipInfo = inView;
-
-		// VPL Step 5 regression-guard probe (env-gated MC2_VPL_CULL, default-off,
-		// zero cost when off). At this point clipInfo is finalized and the
-		// projection call at projectForTerrainAdmission(...) has already run.
-		// In the only stock-reachable branch (usePerspective && Renderer != 3)
-		// clipInfo == onScreen, which was derived non-projectively. Assert that
-		// the projection did NOT secretly mutate the admission decision. When
-		// Step 8c deletes the projection loop this probe (kept alive through 8c)
-		// is the tripwire for any hidden projection->clipInfo coupling.
-		if (s_vplCull)
-		{
-			if ((DWORD)onScreen != currentVertex->clipInfo)
-			{
-				++s_vplParityViolations;
-				if (s_vplParityViolations <= 16)
-				{
-					fprintf(stderr,
-						"[VPL_CULL v1] event=parity_violation vert=%ld block=%ld onScreen=%d clipInfo=%u\n",
-						i,
-						(long)currentVertex->getBlockNumber(),
-						(int)onScreen,
-						(unsigned)currentVertex->clipInfo);
-					fflush(stderr);
-				}
-			}
-		}
-
-		if (currentVertex->clipInfo)				//ONLY set TRUE ones.  Otherwise we just reset the FLAG each vertex!
-		{
-			setObjBlockActive(currentVertex->getBlockNumber(), true);
-			setObjVertexActive(currentVertex->vertexNum,true);
-
-			// VPL Step 6: the production leastZ/mostZ/leastW/mostW/leastWY/
-			// mostWY reduction is RE-HOMED into the self-contained slim
-			// min/max-only pass below (after the projection loops, before
-			// the yzRange/ywRange derivation). This old inline accumulation
-			// is deleted from the projection loop. Under MC2_VPL_REDUCE
-			// only, it is re-run here into the SHADOW accumulators for the
-			// bit-identical parity guard; the production accumulators are
-			// NOT touched here (slim loop is their sole producer — no
-			// double-count). The surrounding cull-cascade writes
-			// (clipInfo / setObjBlockActive / setObjVertexActive) and the
-			// projectForTerrainAdmission call above are INTACT (Step 8c,
-			// not Step 6, owns the projection-call deletion).
-			if (s_vplReduce && inView)
-			{
-				if (screenPos.z < oldLeastZ)
-				{
-					oldLeastZ = screenPos.z;
-				}
-
-				if (screenPos.z > oldMostZ)
-				{
-					oldMostZ = screenPos.z;
-				}
-
-				if (screenPos.w < oldLeastW)
-				{
-					oldLeastW = screenPos.w;
-					oldLeastWY = screenPos.y;
-				}
-
-				if (screenPos.w > oldMostW)
-				{
-					oldMostW = screenPos.w;
-					oldMostWY = screenPos.y;
-				}
-			}
-		}
-
-			currentVertex++;
-		}
-	}
-
-	// VPL Step 5 regression-guard per-run summary. Matches the canonical
-	// MC2_TGL_POOL_TRACE cadence (g_mc2FrameCounter % 600, see mclib/tgl.cpp:3781).
-	// s_vplLastSummaryFrame de-dupes the multiple Terrain::geometry calls that
-	// can land on the same frame. Zero parity_violations is the invariant.
-	if (s_vplCull && g_mc2FrameCounter > 0 &&
-	    (g_mc2FrameCounter % 600) == 0 && g_mc2FrameCounter != s_vplLastSummaryFrame)
-	{
-		s_vplLastSummaryFrame = g_mc2FrameCounter;
-		fprintf(stderr,
-			"[VPL_CULL v1] event=summary frames=%u parity_violations=%llu\n",
-			(unsigned)g_mc2FrameCounter,
-			(unsigned long long)s_vplParityViolations);
-		fflush(stderr);
-	}
-
-	// vertexProjectLoop parity compare. Field-level mismatch printer
-	// (16/frame throttle) + 600-frame summary. Silent on pass.
-	// Comparison is on raw per-vertex output bytes — same CPU math both sides,
-	// so any mismatch is a real bug, not FP drift.
-	if (s_vpFast && s_vpParity)
-	{
-		++s_vpFrame;
-		const int kMaxPrints = 16;
-		int printsThisFrame = 0;
-		VertexPtr cv = vertexList;
-		for (long vi = 0; vi < numberVertices; ++vi, ++cv)
-		{
-			++s_vpVertsChecked;
-			const VPParitySnap& s = vpFastSnap[vi];
-			const bool match =
-				((DWORD)s.clipInfo == cv->clipInfo) &&
-				(s.px         == cv->px) &&
-				(s.py         == cv->py) &&
-				(s.pz         == cv->pz) &&
-				(s.pw         == cv->pw) &&
-				(s.hazeFactor == cv->hazeFactor);
-			if (!match)
-			{
-				++s_vpVertsMismatch;
-				if (printsThisFrame < kMaxPrints)
-				{
-					fprintf(stderr,
-						"[VERTEX_PROJECT_PARITY v1] event=mismatch frame=%u vert=%ld "
-						"clipInfo=(fast=%d/legacy=%d) "
-						"px=(%a/%a) py=(%a/%a) pz=(%a/%a) pw=(%a/%a) haze=(%a/%a)\n",
-						s_vpFrame, vi,
-						(int)s.clipInfo, (int)cv->clipInfo,
-						s.px, cv->px,
-						s.py, cv->py,
-						s.pz, cv->pz,
-						s.pw, cv->pw,
-						s.hazeFactor, cv->hazeFactor);
-					fflush(stderr);
-					++printsThisFrame;
-				}
-			}
-		}
-		if ((s_vpFrame % 600) == 0)
-		{
-			fprintf(stderr,
-				"[VERTEX_PROJECT_PARITY v1] event=summary frames=%u "
-				"verts_checked=%llu total_mismatches=%llu\n",
-				s_vpFrame,
-				(unsigned long long)s_vpVertsChecked,
-				(unsigned long long)s_vpVertsMismatch);
-			fflush(stderr);
-		}
-	}
 
 	// VPL retirement Step 6: self-contained slim min/max-only reduction
 	// pass. RE-HOMES (does NOT eliminate) the per-vertex projection that
@@ -1949,6 +1429,39 @@ void Terrain::geometry (void)
 	// second re-verifies this copy in lockstep. No GPU readback: this is
 	// pure CPU projectForTerrainAdmission feeding CPU setInverseProject
 	// (cf. memory/substrate_coalesce_sync_point_lesson.md).
+	// VPL retirement Step 8c-part-2: the VertexProjectLoop body (fast +
+	// legacy-twin) is DELETED here â the slim reduce loop below is the
+	// proven sole producer of BOTH the cull cascade and the
+	// leastZ/mostZ/... reduction (8c-part-1 static + camera-swept
+	// superset_violations=0 + bit-identity proof). The legacy-reference
+	// sources the MC2_VPL_CULL and MC2_VPL_REDUCE probes compared against
+	// died with the body, so a relocated self-comparison would be a pure
+	// tautology / false-alarm; both probes are RETIRED (demote-not-
+	// silently-delete per the worktree Debug-instrumentation rule + plan
+	// v3.3:467 + v3.5:530) to a one-shot lifecycle line, env-gated by the
+	// surviving getenv so it only prints when someone had the probe on.
+	// See docs/superpowers/reviews/2026-05-15-step8-vpl-body-deletion-
+	// adversarial-review.md CRIT-1/Â§6 + the v3.5 plan amendment.
+	if (s_vplCull)
+	{
+		static bool s_vplCullRetiredLogged = false;
+		if (!s_vplCullRetiredLogged) {
+			s_vplCullRetiredLogged = true;
+			fprintf(stderr,
+				"[VPL_CULL v1] event=retired reason=vpl_body_deleted_slim_is_sole_producer\n");
+			fflush(stderr);
+		}
+	}
+	if (s_vplReduce)
+	{
+		static bool s_vplReduceRetiredLogged = false;
+		if (!s_vplReduceRetiredLogged) {
+			s_vplReduceRetiredLogged = true;
+			fprintf(stderr,
+				"[VPL_REDUCE v1] event=retired reason=vpl_body_deleted_slim_is_sole_reduction_producer\n");
+			fflush(stderr);
+		}
+	}
 	{
 		ZoneScopedN("Terrain::geometry slimReduce");
 		VertexPtr rv = vertexList;
@@ -2037,33 +1550,6 @@ void Terrain::geometry (void)
 			// clipR (== legacy onScreen-derived clipInfo in stock); the
 			// active-set write fires `if (clipInfo)` exactly as the legacy
 			// `if (currentVertex->clipInfo)` site, NOT gated on inViewR.
-			//
-			// Relocated MC2_VPL_CULL probe (non-tautological, CRIT-1/§6):
-			// capture the still-live VPL-body-written legacy clipInfo
-			// BEFORE the slim overwrite and assert slim >= legacy per
-			// vertex. legacyActive=(prior clipInfo != 0); slimActive=clipR.
-			// A violation (legacyActive && !slimActive) is the exact
-			// subset bug the catastrophic axis must never produce.
-			if (s_vplCull)
-			{
-				bool legacyActive = (rv->clipInfo != 0);
-				bool slimActive   = clipR;
-				if (legacyActive && !slimActive)
-				{
-					++s_vplCullSupersetViolations;
-					if (s_vplCullSupersetViolations <= 16)
-					{
-						fprintf(stderr,
-							"[VPL_CULL v1] event=superset_violation vert=%ld block=%ld legacyActive=%d slimActive=%d\n",
-							ri,
-							(long)rv->getBlockNumber(),
-							(int)legacyActive,
-							(int)slimActive);
-						fflush(stderr);
-					}
-				}
-			}
-
 			rv->clipInfo = clipR;
 
 			if (rv->clipInfo)				//ONLY set TRUE ones.  Otherwise we just reset the FLAG each vertex!
@@ -2100,78 +1586,6 @@ void Terrain::geometry (void)
 				mostWY = sp.y;
 			}
 		}
-	}
-
-	// VPL Step 6 MC2_VPL_REDUCE parity guard. Exact == (not epsilon): the
-	// slim loop and the gated old inline path call the SAME
-	// projectForTerrainAdmission over the SAME admission gate, so the six
-	// reduction outputs must be bit-identical. Any mismatch is a real
-	// iteration-order / gate divergence and a Step 8c hazard. Rate-limited
-	// first-16 violation prints + 600-frame summary (matches the
-	// MC2_VPL_CULL cadence). Zero violations over a tier1 30s run = pass.
-	if (s_vplReduce)
-	{
-		const bool reduceMatch =
-			(leastZ  == oldLeastZ) &&
-			(mostZ   == oldMostZ)  &&
-			(leastW  == oldLeastW) &&
-			(mostW   == oldMostW)  &&
-			(leastWY == oldLeastWY) &&
-			(mostWY  == oldMostWY);
-		if (!reduceMatch)
-		{
-			++s_vplReduceViolations;
-			if (s_vplReduceViolations <= 16)
-			{
-				fprintf(stderr,
-					"[VPL_REDUCE v1] event=parity_violation frame=%u "
-					"lZ=%a/%a mZ=%a/%a lW=%a/%a mW=%a/%a "
-					"lWY=%a/%a mWY=%a/%a\n",
-					(unsigned)g_mc2FrameCounter,
-					leastZ,  oldLeastZ,
-					mostZ,   oldMostZ,
-					leastW,  oldLeastW,
-					mostW,   oldMostW,
-					leastWY, oldLeastWY,
-					mostWY,  oldMostWY);
-				fflush(stderr);
-			}
-		}
-	}
-
-	// VPL Step 6 regression-guard per-run summary. Matches the
-	// MC2_VPL_CULL / MC2_TGL_POOL_TRACE cadence (g_mc2FrameCounter % 600).
-	// s_vplReduceLastSummaryFrame de-dupes the multiple Terrain::geometry
-	// calls that can land on the same frame. Zero violations is the
-	// invariant.
-	if (s_vplReduce && g_mc2FrameCounter > 0 &&
-	    (g_mc2FrameCounter % 600) == 0 && g_mc2FrameCounter != s_vplReduceLastSummaryFrame)
-	{
-		s_vplReduceLastSummaryFrame = g_mc2FrameCounter;
-		fprintf(stderr,
-			"[VPL_REDUCE v1] event=summary frames=%u parity_violations=%llu\n",
-			(unsigned)g_mc2FrameCounter,
-			(unsigned long long)s_vplReduceViolations);
-		fflush(stderr);
-	}
-
-	// VPL Step 8c-part-1 relocated MC2_VPL_CULL per-run summary
-	// (slim-vs-legacy superset assertion; non-tautological per CRIT-1/§6).
-	// Same 600-frame / g_mc2FrameCounter cadence + de-dup as the legacy
-	// VPL_CULL and VPL_REDUCE summaries. superset_violations == 0 is the
-	// invariant: zero means the slim cull active-set is a superset of the
-	// still-live VPL-body legacy {onScreen} set (no objects/mechs vanish).
-	// Exercise with CAMERA MOTION (CRIT-2): the divergence lives in the
-	// 768u/384u off-rect band a static camera never reaches.
-	if (s_vplCull && g_mc2FrameCounter > 0 &&
-	    (g_mc2FrameCounter % 600) == 0 && g_mc2FrameCounter != s_vplCullSupersetLastSummaryFrame)
-	{
-		s_vplCullSupersetLastSummaryFrame = g_mc2FrameCounter;
-		fprintf(stderr,
-			"[VPL_CULL v1] event=summary frames=%u superset_violations=%llu\n",
-			(unsigned)g_mc2FrameCounter,
-			(unsigned long long)s_vplCullSupersetViolations);
-		fflush(stderr);
 	}
 
 	//-----------------------------------

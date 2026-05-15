@@ -1333,10 +1333,34 @@ void TerrainQuad::setupTextures (void)
 	// before this loop ran.
 	{
 	CostSplitLightingScope _csLight;
-	// Cached once per process to avoid per-quad IsEnabled()/IsParityCheckEnabled()
-	// calls (14K quads × 2 env-lookups each would be ~28K calls/frame).
-	static const bool s_lightingGpuAuth = gos_terrain_lighting::IsEnabled()
-	                                      && !gos_terrain_lighting::IsParityCheckEnabled();
+	// VPL retirement Step 8c-part-2: the legacy CPU terrain-lighting path
+	// reads vertices[N]->hazeFactor (terrain Vertex::hazeFactor) which the
+	// deleted VertexProjectLoop body was the SOLE writer of. Post-8c that
+	// field has no writer and only a defensive mapdata zero-init, so the
+	// !s_lightingGpuAuth block below MUST be unreachable under BOTH legacy
+	// entries (MC2_TERRAIN_LIGHTING_GPU=0 -> IsEnabled()==false AND
+	// MC2_TERRAIN_LIGHTING_PARITY=1 -> IsParityCheckEnabled()==true), per
+	// the v3.5 plan amendment (MAJOR-c, both-env) +
+	// memory/stock_install_must_remain_playable.md (degrade, never render
+	// wrong). The legacy opt-out + parity entry are HARD-RETIRED here by
+	// forcing GPU authority; a one-shot lifecycle line tells anyone who
+	// set either env that the legacy CPU lighting path is gone.
+	static const bool s_lightingGpuAuth = true;
+	{
+		static bool s_legacyCpuLightingRetiredLogged = false;
+		if (!s_legacyCpuLightingRetiredLogged) {
+			s_legacyCpuLightingRetiredLogged = true;
+			const bool legacyEnvRequested =
+				!gos_terrain_lighting::IsEnabled() ||
+				 gos_terrain_lighting::IsParityCheckEnabled();
+			if (legacyEnvRequested) {
+				fprintf(stderr,
+					"[TERRAIN_LIGHTING v1] event=legacy_cpu_path_retired "
+					"reason=vpl_hazeFactor_writer_deleted_gpu_now_authoritative\n");
+				fflush(stderr);
+			}
+		}
+	}
 	if (!s_lightingGpuAuth && terrainHandle != 0xffffffff)
 	{
 		//-----------------------------------------------------

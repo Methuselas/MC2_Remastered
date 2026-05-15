@@ -1146,6 +1146,12 @@ void MapData::makeLists (VertexPtr vertexList, long &numVerts, TerrainQuadPtr qu
 			currentVertex->calcThisFrame = 0;
 			currentVertex->px = currentVertex->py = -99999.0f;
 			currentVertex->clipInfo = false;
+			// VPL retirement Step 8c-part-2: the deleted VertexProjectLoop
+			// body was the SOLE writer of terrain Vertex::hazeFactor.
+			// Defensive zero-init so any stray surviving reader degrades to
+			// "no fog" (stock-playable), never stale/garbage. v3.5 plan
+			// amendment MAJOR-c + memory/stock_install_must_remain_playable.md.
+			currentVertex->hazeFactor = 0.0f;
 
 			currentVertex++;
 			numVerts++;
