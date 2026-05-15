@@ -1432,7 +1432,11 @@ static bool  s_resourcesReady     = false;
 // Lazy-allocated on first ComputeDispatch(); destroyed on ResetDenseRecipe.
 // ---------------------------------------------------------------------------
 static GLuint  g_solidComputeProgram    = 0;
-static GLuint  g_solidCmdPatchProgram   = 0;
+// Step 2b (VPL retirement): cmd-patch program retired.  Primary compute is
+// the sole writer of cmds[0].count via atomicAdd.  Bucket-header SSBO is
+// demoted behind MC2_BUCKET_HEADER_TRACE=1 (default-off) per plan
+// amendment C1; when off the SSBO is not allocated, not bound, not cleared,
+// and no diagnostic atomicAdds run in the shader.
 static GLuint  g_solidBucketHeaderSsbo  = 0;
 static GLuint  g_terrainHandleLutSSBO   = 0;
 static GLuint  g_thinCanarySSBO         = 0;   // probe 6: separate buffer, never bound by bridge
@@ -1461,13 +1465,11 @@ static bool     g_thinSlotMVPValid[kThinRingFrames] = { false, false, false };
 static GLint g_locSolidWC  = -1;   // u_windowCount   (per-frame)
 static GLint g_locSolidAO  = -1;   // u_alphaOverride (per-frame, may be absent)
 static GLint g_locSolidMVP = -1;   // u_terrainMVP    (per-frame)
-static GLint g_locCmdVPE   = -1;   // u_vertsPerElement (constant, uploaded once)
-static GLint g_locCmdCC    = -1;   // u_cmdCount        (constant, uploaded once)
-// Step 2a (VPL retirement): MC2_SOLID_CMD_PATCH_RETIRE arms the direct
-// atomicAdd path in the primary compute shader.  Default-off in commit 2a
-// (parity-arm); commit 2b deletes cmd-patch and the gate.  Cached at first
-// dispatch so the env-var lookup runs once per process.
-static GLint g_locSolidCPR = -1;   // u_cmdPatchRetire  (per-frame int gate)
+// Step 2b (VPL retirement): cmd-patch uniform-location caches retired
+// (g_locCmdVPE, g_locCmdCC removed) — cmd-patch program is no longer compiled.
+// u_bucketHeaderTrace gates the demoted bucket-header SSBO writes in the
+// primary compute shader (MC2_BUCKET_HEADER_TRACE).
+static GLint g_locSolidBHT = -1;   // u_bucketHeaderTrace (per-frame int gate)
 
 
 // Flag: whether ComputeDispatch() ran the GPU path this frame.
@@ -1518,14 +1520,12 @@ static bool ResourcesReady() {
     if (g_indirectCmdBuffer == 0) {
         glGenBuffers(1, &g_indirectCmdBuffer);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_indirectCmdBuffer);
-        // Step 2a (VPL retirement, C2): pre-initialize {count=0,
+        // Step 2b (VPL retirement, C2): pre-initialize {count=0,
         // instanceCount=1, first=0, baseInstance=0} once at allocation.
-        // Under MC2_SOLID_CMD_PATCH_RETIRE=0 this is a no-op behavioral
-        // change because cmd-patch overwrites all four fields every frame;
-        // under env=1 (and in commit 2b after cmd-patch dies) the primary
-        // compute touches only cmds[0].count and the other three fields
-        // must already be correct.  Per-frame count clear comes later via
-        // glClearBufferSubData of the 4-byte count slot.
+        // The primary compute touches only cmds[0].count (via atomicAdd) so
+        // the other three fields must be correct at allocation.  Per-frame
+        // count clear is done in ComputeDispatch via glClearBufferSubData of
+        // the 4-byte count slot before the primary dispatch fires.
         DrawArraysIndirectCommand initCmd[16];
         for (size_t i = 0; i < 16; ++i) {
             initCmd[i].count         = 0;
@@ -1994,9 +1994,11 @@ bool ComputePreflight() {
 
     if (gpu_driven::IsTerrainSolidEnabled() && !g_uniqueTerrainNodeIds.empty()) {
         // GPU path: arm immediately. ComputeDispatch() (called after Phase 1
-        // PackAndDispatch) will build the window SSBO and issue the two-dispatch
-        // sequence. cmd-patch shader writes the actual vert count into the indirect
-        // cmd buffer; DrawIndirect() fires glMultiDrawArraysIndirect with cmdCount=1.
+        // PackAndDispatch) will build the window SSBO and issue the primary
+        // cull/pack compute dispatch.  Per VPL step 2 (commit 2b), the primary
+        // dispatch is the sole writer of cmds[0].count (atomicAdd of 6u per
+        // admitted record); the cmd-patch shader dispatch is retired.
+        // DrawIndirect() fires glMultiDrawArraysIndirect with cmdCount=1.
         // Guard: g_uniqueTerrainNodeIds populated only when terrainTextures2 is active
         // (recipe._wp2 baked in buildRecipeSlot). Legacy terrainTextures path leaves
         // _wp2=0 → empty node list → zero-LUT → GPU skips all quads → black terrain.
@@ -2079,8 +2081,9 @@ void ComputeDispatch() {
         g_locSolidWC  = glGetUniformLocation(g_solidComputeProgram, "u_windowCount");
         g_locSolidAO  = glGetUniformLocation(g_solidComputeProgram, "u_alphaOverride");
         g_locSolidMVP = glGetUniformLocation(g_solidComputeProgram, "u_terrainMVP");
-        // Step 2a: u_cmdPatchRetire — int gate for direct cmd.count atomicAdd.
-        g_locSolidCPR = glGetUniformLocation(g_solidComputeProgram, "u_cmdPatchRetire");
+        // Step 2b: u_bucketHeaderTrace — gate for hdr.{visibleCount,pad1_,pad2_}
+        // writes in the primary compute shader.
+        g_locSolidBHT = glGetUniformLocation(g_solidComputeProgram, "u_bucketHeaderTrace");
         // Upload constants once — these never change across frames.
         glUseProgram(g_solidComputeProgram);
         const GLint locMTR  = glGetUniformLocation(g_solidComputeProgram, "u_maxThinRecords");
@@ -2091,27 +2094,17 @@ void ComputeDispatch() {
         if (locWUPV >= 0) glUniform1f(locWUPV, Terrain::worldUnitsPerVertex);
         glUseProgram(0);
     }
-    if (g_solidCmdPatchProgram == 0) {
-        g_solidCmdPatchProgram = gpu_driven::BuildComputeProgramFromFile(
-            "shaders/gpu_driven_cmd_patch.comp", nullptr, 0, "gpu_driven_cmd_patch_solid");
-        if (g_solidCmdPatchProgram == 0) {
-            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=error msg=solid_cmd_patch_compile_failed\n");
-            fflush(stderr);
-            ForceDisableArmingForProcess();
-            return;
-        }
-        g_locCmdVPE = glGetUniformLocation(g_solidCmdPatchProgram, "u_vertsPerElement");
-        g_locCmdCC  = glGetUniformLocation(g_solidCmdPatchProgram, "u_cmdCount");
-        // Upload constants once — 6 verts/element and 1 indirect cmd never change.
-        glUseProgram(g_solidCmdPatchProgram);
-        if (g_locCmdVPE >= 0) glUniform1i(g_locCmdVPE, 6);
-        if (g_locCmdCC  >= 0) glUniform1i(g_locCmdCC,  1);
-        const GLint locMT2 = glGetUniformLocation(g_solidCmdPatchProgram, "u_maxThinRecords");
-        if (locMT2 >= 0) glUniform1i(locMT2, (int)kMaxThinRecords);
-        glUseProgram(0);
-    }
-    // Lazy-allocate bucket header SSBO (16 B GpuDrivenBucketHeader).
-    if (g_solidBucketHeaderSsbo == 0) {
+    // Step 2b (VPL retirement): cmd-patch program compile retired -- the
+    // primary compute writes cmds[0].count directly via atomicAdd.
+
+    // Step 2b: bucket-header SSBO demoted behind MC2_BUCKET_HEADER_TRACE.
+    // Cached env lookup, used at alloc / bind / clear / readback / teardown.
+    static const bool s_bucketHeaderTrace =
+        (getenv("MC2_BUCKET_HEADER_TRACE") != nullptr);
+    // Lazy-allocate bucket header SSBO (16 B GpuDrivenBucketHeader) ONLY when
+    // diagnostic tracing is requested.  Default-off: zero allocation, zero
+    // per-frame work, zero binding.
+    if (s_bucketHeaderTrace && g_solidBucketHeaderSsbo == 0) {
         glGenBuffers(1, &g_solidBucketHeaderSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
         glBufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_DRAW);
@@ -2462,8 +2455,22 @@ void ComputeDispatch() {
 
     const GLintptr thinSlotOffset = (GLintptr)(g_thinRingSlot * kThinRecordBytes);
 
-    // Zero bucket header visibleCount before dispatch.
+    // Step 2b: zero the indirect-cmd buffer's count slot (offset 0, 4 bytes)
+    // every frame before the primary dispatch.  instanceCount / first /
+    // baseInstance were initialized to {1,0,0} at allocation and are never
+    // re-written (cmd-patch dispatch retired).
     {
+        const uint32_t zero = 0u;
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_indirectCmdBuffer);
+        glClearBufferSubData(GL_DRAW_INDIRECT_BUFFER, GL_R32UI, 0, 4,
+                             GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    }
+
+    // Step 2b: bucket-header SSBO (when traced) gets the same per-frame clear
+    // it always had.  No-op when MC2_BUCKET_HEADER_TRACE is unset because
+    // g_solidBucketHeaderSsbo is 0.
+    if (g_solidBucketHeaderSsbo != 0) {
         const uint32_t zero = 0u;
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
         glClearBufferSubData(GL_SHADER_STORAGE_BUFFER, GL_R32UI, 0, 16,
@@ -2483,14 +2490,19 @@ void ComputeDispatch() {
                      g_terrainHandleLutSSBO ? g_terrainHandleLutSSBO : 0);
     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 3,
                       g_thinRecordSSBO, thinSlotOffset, (GLsizeiptr)kThinRecordBytes);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, g_solidBucketHeaderSsbo);
+    // Step 2b: bucket-header SSBO only bound when MC2_BUCKET_HEADER_TRACE
+    // armed.  When unbound, the shader sees u_bucketHeaderTrace=0 and skips
+    // all hdr.* writes (including the slot-counter atomicAdd on visibleCount).
+    if (g_solidBucketHeaderSsbo != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, g_solidBucketHeaderSsbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, g_thinCanarySSBO);  // probe 6
-    // Step 2a (VPL retirement): bind the indirect-cmd buffer as SSBO at slot 8
-    // so the primary compute can atomicAdd into cmds[0].count when armed.
-    // Buffer is double-bound (GL_DRAW_INDIRECT_BUFFER for the eventual draw,
-    // GL_SHADER_STORAGE_BUFFER for the compute write).  Spec allows; AMD
-    // driver verified via OQ-2 in the plan.  Coherent qualifier on the
-    // shader-side buffer covers the cross-target visibility within a frame.
+    // Step 2b: bind the indirect-cmd buffer as SSBO at slot 8.  The primary
+    // compute atomicAdds 6u into cmds[0].count per admitted record and uses
+    // the returned-before-increment value as the thin-record slot index when
+    // the bucket-header trace path is off.  Buffer is double-bound
+    // (GL_DRAW_INDIRECT_BUFFER for the draw, GL_SHADER_STORAGE_BUFFER for
+    // the atomicAdd).  Coherent qualifier on the shader-side declaration
+    // covers cross-target visibility within the frame.
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, g_indirectCmdBuffer);
 
     if (g_locSolidWC < 0 || g_locSolidMVP < 0) {
@@ -2507,27 +2519,11 @@ void ComputeDispatch() {
     glUniform1i(g_locSolidWC, (int)windowCount);
     if (g_locSolidAO >= 0)
         glUniform1i(g_locSolidAO, Terrain::terrainTextures2 != nullptr ? 1 : 0);
-    // Step 2a (VPL retirement): u_cmdPatchRetire env-gate.  Default-off; when
-    // MC2_SOLID_CMD_PATCH_RETIRE=1 the primary compute writes cmds[0].count
-    // directly via atomicAdd and the cmd-patch dispatch below overwrites it
-    // (parity).  Cached so the env lookup runs once per process; the value
-    // is uploaded every frame because the uniform is per-program-state and
-    // resets across glUseProgram cycles on some drivers.
-    static const int s_solidCmdPatchRetire =
-        (getenv("MC2_SOLID_CMD_PATCH_RETIRE") != nullptr) ? 1 : 0;
-    if (g_locSolidCPR >= 0)
-        glUniform1i(g_locSolidCPR, s_solidCmdPatchRetire);
-    // Step 2a parity prep: when armed, clear cmds[0].count to 0 BEFORE
-    // dispatch so the atomicAdd starts from zero.  Under env=0 this clear is
-    // benign (cmd-patch overwrites the field unconditionally in DISPATCH 2).
-    if (s_solidCmdPatchRetire) {
-        const uint32_t zero = 0u;
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_indirectCmdBuffer);
-        // count is offset 0 of DrawArraysIndirectCommand[0].
-        glClearBufferSubData(GL_DRAW_INDIRECT_BUFFER, GL_R32UI, 0, 4,
-                             GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-    }
+    // Step 2b: upload u_bucketHeaderTrace gate every frame.  Uniform values
+    // reset across glUseProgram cycles on some drivers, so per-frame upload
+    // is safer than once-at-compile.
+    if (g_locSolidBHT >= 0)
+        glUniform1i(g_locSolidBHT, s_bucketHeaderTrace ? 1 : 0);
 
     {
         const float* mvp = gos_GetTerrainMVPMat4();
@@ -2559,42 +2555,15 @@ void ComputeDispatch() {
 
     const uint32_t groups = (windowCount + 63u) / 64u;
     if (groups > 0) glDispatchCompute(groups, 1, 1);
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-
-    // ── Step 2a parity probe (MC2_SOLID_CMD_PATCH_RETIRE) ───────────────
-    // When armed AND parity is also requested, read cmds[0].count after the
-    // primary's STORAGE barrier and BEFORE cmd-patch overwrites it.  Stash
-    // for comparison against the post-cmd-patch read further down.  This is
-    // the byte-compare safety net documented in the cmd-patch retirement
-    // plan §"Parity gate (commit 1)".  Uses an extra GL_BUFFER_UPDATE_BARRIER
-    // so glGetBufferSubData sees the atomicAdd writes; the surviving
-    // SHADER_STORAGE barrier covers VS reads but not host readback.
-    static const bool s_cmdPatchParity =
-        (getenv("MC2_SOLID_CMD_PATCH_PARITY") != nullptr);
-    uint32_t prePatchCmdCount = 0;
-    const bool armedAndParity = (s_solidCmdPatchRetire != 0) && s_cmdPatchParity;
-    if (armedAndParity && g_indirectCmdBuffer != 0) {
-        glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_indirectCmdBuffer);
-        glGetBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0,
-                           (GLsizeiptr)sizeof(prePatchCmdCount),
-                           &prePatchCmdCount);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-    }
-    // ── end step 2a parity probe ───────────────────────────────────────
-
-    // ------------------------------------------------------------------
-    // DISPATCH 2: cmd-patch (gpu_driven_cmd_patch.comp)
-    // Reads visibleCount from header → writes cmd.count to g_indirectCmdBuffer.
-    // Constants (u_vertsPerElement, u_cmdCount, u_maxThinRecords) were uploaded
-    // once at compile time and are not re-sent here.
-    // ------------------------------------------------------------------
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, g_solidBucketHeaderSsbo);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, g_indirectCmdBuffer);
-
-    glUseProgram(g_solidCmdPatchProgram);
-    glDispatchCompute(1, 1, 1);
-
+    // Step 2b (VPL retirement): single barrier replaces the prior pair.  Both
+    // bits are required:
+    //   - GL_SHADER_STORAGE_BARRIER_BIT: fences thin[] + (when traced) hdr[]
+    //     writes against the VS that reads thin[] at draw time.
+    //   - GL_COMMAND_BARRIER_BIT: fences cmds[0].count atomicAdd writes
+    //     against the subsequent glMultiDrawElementsIndirect's read of the
+    //     indirect-cmd buffer.  Without this bit, AMD drivers can re-order
+    //     the indirect-cmd fetch ahead of the compute write (NVIDIA tolerant,
+    //     AMD failing per plan §"Load-bearing constraints").
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
 
     // ── Probe 7 (MC2_RING_FORCE_FINISH) — directed barrier-hypothesis test ──
@@ -2619,16 +2588,22 @@ void ComputeDispatch() {
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_indirectCmdBuffer);
         glGetBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0, (GLsizeiptr)sizeof(cmdQuad), cmdQuad);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-        // cmdQuad[0] = count, [1] = instanceCount, [2] = first, [3] = baseInstance.
-        // Tripwire: count > expected. Expected = min(visibleCount, kMaxThinRecords) * 6.
-        // visibleCount here is THIS frame's post-cull value; bucket header is bound.
+        // Step 2b: with cmd-patch retired the [RING_CMDPATCH] tripwire can no
+        // longer recompute expected from hdr.visibleCount unless the bucket-
+        // header SSBO is also armed (MC2_BUCKET_HEADER_TRACE).  When it is
+        // off, cmdQuad[0] IS the authoritative count (primary's atomicAdd
+        // accounting) so there is nothing to cross-check; we still surface
+        // the raw cmd values via the existing RING_PEAK summary.
         uint32_t vis = 0;
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)sizeof(vis), &vis);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        const uint32_t expectedCount =
-            (vis < (uint32_t)kMaxThinRecords ? vis : (uint32_t)kMaxThinRecords) * 6u;
-        if (cmdQuad[0] != expectedCount) {
+        uint32_t expectedCount = cmdQuad[0];
+        if (g_solidBucketHeaderSsbo != 0) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)sizeof(vis), &vis);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            expectedCount =
+                (vis < (uint32_t)kMaxThinRecords ? vis : (uint32_t)kMaxThinRecords) * 6u;
+        }
+        if (g_solidBucketHeaderSsbo != 0 && cmdQuad[0] != expectedCount) {
             static uint32_t s_cmdMismatchCount = 0;
             ++s_cmdMismatchCount;
             PROBE_LOG(
@@ -2642,39 +2617,12 @@ void ComputeDispatch() {
     }
     // ── end probe 3 ─────────────────────────────────────────────────────────
 
-    // ── Step 2a parity comparison (MC2_SOLID_CMD_PATCH_PARITY) ────────────
-    // After the post-cmd-patch barrier (STORAGE | COMMAND), read cmds[0].count
-    // again and compare to the pre-cmd-patch snapshot.  Under env=1 the
-    // primary's atomicAdd wrote count to its final value before cmd-patch
-    // ran; cmd-patch then overwrote with the same value (visibleCount * 6,
-    // clamped).  Any divergence is the safety net for commit 2b.
-    if (armedAndParity && g_indirectCmdBuffer != 0) {
-        uint32_t postPatchCmdCount = 0;
-        glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_indirectCmdBuffer);
-        glGetBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0,
-                           (GLsizeiptr)sizeof(postPatchCmdCount),
-                           &postPatchCmdCount);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-        if (prePatchCmdCount != postPatchCmdCount) {
-            static uint64_t s_parityMismatchFrames = 0;
-            static uint64_t s_parityNextReport = 1;
-            ++s_parityMismatchFrames;
-            if (s_parityMismatchFrames == s_parityNextReport) {
-                fprintf(stderr,
-                    "[CMD_PATCH_PARITY v1] event=mismatch frame=%llu "
-                    "pre=%u post=%u mismatchFrames=%llu\n",
-                    (unsigned long long)ringFrameIdx,
-                    (unsigned)prePatchCmdCount,
-                    (unsigned)postPatchCmdCount,
-                    (unsigned long long)s_parityMismatchFrames);
-                fflush(stderr);
-                s_parityNextReport = s_parityNextReport < 100
-                    ? (s_parityNextReport + 1) : (s_parityNextReport * 10);
-            }
-        }
-    }
-    // ── end step 2a parity comparison ────────────────────────────────────
+    // Step 2b: parity probe retired with cmd-patch (commit 2a's safety net no
+    // longer needed once cmd-patch is gone -- there is nothing to compare
+    // against).  The surviving MC2_RING_TRACE probe below still reads
+    // cmds[0].count for the [RING_CMDPATCH] tripwire; its expected-value
+    // calculation now derives from the primary's atomicAdd accounting
+    // (see comment in that block).
 
     glUseProgram(0);
 
@@ -2682,10 +2630,13 @@ void ComputeDispatch() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, 0);
-    // Step 2a: unbind the indirect-cmd SSBO at slot 8 to keep the SSBO
+    // Step 2b: unbind the indirect-cmd SSBO at slot 8 to keep the SSBO
     // bind-points clean for the next compute pipeline (water-stream cmd-patch
     // uses different bindings but symmetry helps debug).
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, 0);
+    // Step 2b: unbind slot 6 only if we bound it (bucket-header SSBO trace path).
+    if (g_solidBucketHeaderSsbo != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, 0);
     // Leave slot 3 as the thin-record range (DrawIndirect's bridge reads it via
     // gos_terrain_bridge_drawIndirect which re-binds by recipeSSBO/thinRecordSSBO
     // arguments — no leak risk).

@@ -173,11 +173,12 @@ uniform int  u_windowCount;
 uniform int  u_maxThinRecords;
 uniform int  u_mapSide;          // realVerticesMapSide
 uniform int  u_alphaOverride;    // 1 when Terrain::terrainTextures2 != nullptr
-// Step 2a (VPL retirement): when non-zero, the primary compute directly
-// atomicAdds kVertsPerElement (6u) into cmds[0].count per admitted record.
-// Env-gated via MC2_SOLID_CMD_PATCH_RETIRE; default-off in commit 2a
-// (parity-arm), default-on in commit 2b (cmd-patch dispatch deleted).
-uniform int  u_cmdPatchRetire;
+// Step 2b (VPL retirement): bucket-header SSBO (binding 6) and the pad1_ /
+// pad2_ diagnostic atomicAdd writes are demoted behind
+// MC2_BUCKET_HEADER_TRACE.  When 0 the binding is unbound on the C++ side
+// and the in-shader writes are skipped.  Reads must still be guarded so we
+// do not touch an unbound slot.
+uniform int  u_bucketHeaderTrace;
 uniform mat4 u_terrainMVP;
 uniform float u_worldUnitsPerVertex;  // Terrain::worldUnitsPerVertex; probe-5 spread check
 
@@ -262,7 +263,7 @@ void main() {
         float spreadX = maxX - minX;
         float spreadY = maxY - minY;
         float kLimit = 2.5 * u_worldUnitsPerVertex;
-        if (spreadX > kLimit || spreadY > kLimit) {
+        if ((spreadX > kLimit || spreadY > kLimit) && u_bucketHeaderTrace != 0) {
             atomicAdd(hdr.pad2_, 1u);
         }
     }
@@ -364,7 +365,7 @@ void main() {
         float aw2 = absClipW(r.pos2.x, r.pos2.y, r.pos2.z);
         float aw3 = absClipW(r.pos3.x, r.pos3.y, r.pos3.z);
         float minAw = min(min(aw0, aw1), min(aw2, aw3));
-        if (minAw < kClipWWarn) {
+        if (minAw < kClipWWarn && u_bucketHeaderTrace != 0) {
             // pad1_ = count of pzOk-passed quads with one or more "thin" corners
             atomicAdd(hdr.pad1_, 1u);
         }
@@ -373,23 +374,39 @@ void main() {
     // -----------------------------------------------------------------------
     // Allocate output slot via atomicAdd on the coherent bucket header.
     // -----------------------------------------------------------------------
-    uint outSlot = atomicAdd(hdr.visibleCount, 1u);
-    // Overflow bound check happens BEFORE the cmd.count atomicAdd so that
-    // overflow records (slot >= cap) do not contribute to the indirect draw
-    // count (C3 in the cmd-patch retirement plan).  cmd-patch today clamps
-    // via min(visibleCount, kMaxThinRecords) at write time; the direct path
-    // achieves the same by gating the atomicAdd on the slot's admission.
-    if (outSlot >= uint(u_maxThinRecords)) return;
-
-    // Step 2a (VPL retirement, parity-arm): direct atomicAdd of 6u (verts per
-    // emitted quad — two triangles, three verts each = kVertsPerElement) into
-    // the indirect-draw cmd.count.  Gated by u_cmdPatchRetire so the cmd-patch
-    // dispatch stays authoritative until commit 2b deletes it.  When both
-    // paths are armed (env=1), the cmd-patch dispatch will overwrite cmds[0]
-    // entirely; the parity probe on the C++ side reads cmds[0] BEFORE
-    // cmd-patch runs to verify the two values agree.
-    if (u_cmdPatchRetire != 0) {
+    // Step 2b (VPL retirement): the primary cull/pack dispatch is the sole
+    // writer of cmds[0].count.  The cmd-patch dispatch is retired.  Slot
+    // admission uses a local per-thread atomicAdd on hdr.visibleCount when
+    // the diagnostic bucket-header SSBO is bound (MC2_BUCKET_HEADER_TRACE=1)
+    // -- and otherwise on cmds[0].count itself, which doubles as the
+    // monotonically-increasing slot counter (cmd-count = admittedRecords * 6,
+    // so admittedRecords = (atomicAdd return value before this record) / 6).
+    //
+    // C3: bound check fires BEFORE we contribute to cmds[0].count so overflow
+    // records do not advance the indirect-draw count.
+    uint outSlot;
+    if (u_bucketHeaderTrace != 0) {
+        outSlot = atomicAdd(hdr.visibleCount, 1u);
+        if (outSlot >= uint(u_maxThinRecords)) return;
         atomicAdd(cmds[0].count, 6u);
+    } else {
+        // Derive the slot from cmds[0].count: each admitted record bumps the
+        // counter by 6u, so the (atomic returned value) / 6u is this record's
+        // slot.  atomicAdd returns the value BEFORE the increment, matching
+        // the prior atomicAdd(hdr.visibleCount, 1u) semantics.
+        uint prev = atomicAdd(cmds[0].count, 6u);
+        outSlot = prev / 6u;
+        if (outSlot >= uint(u_maxThinRecords)) {
+            // Roll back: subtract the 6u we just contributed so cmd.count
+            // does not overshoot kMaxThinRecords * 6 in steady state.
+            // atomicAdd of (0xFFFFFFFFu - 5u) == -6 mod 2^32 (two's complement).
+            // Benign race: multiple workgroups can roll back; cmd.count
+            // oscillates near the cap.  outSlot uniqueness is preserved
+            // because atomicAdd returns a unique pre-increment value per call
+            // regardless of subsequent rollbacks.
+            atomicAdd(cmds[0].count, 0xFFFFFFFAu);
+            return;
+        }
     }
 
     // -----------------------------------------------------------------------
