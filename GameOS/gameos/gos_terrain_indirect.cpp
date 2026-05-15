@@ -1570,6 +1570,28 @@ static inline bool InMissionTransition() { return false; }
 //   4. Per-tri pz check (drives flags bits 1, 2)
 // ---------------------------------------------------------------------------
 static int PackThinRecordsForFrame() {
+    // VPL retirement step 1 (2026-05-14): CPU thin-record pack demoted behind
+    // MC2_TERRAIN_INDIRECT_CPU_FALLBACK. Default-off — the GPU compute path in
+    // shaders/gpu_driven_terrain_solid.comp is the sole projection authority
+    // post Fix-B (commit 005ebc7). The CPU body is retained as the GPU-arm-
+    // failure safety net per memory/stock_install_must_remain_playable.md;
+    // future plan retires the declaration itself once telemetry confirms the
+    // env-gate is never set in production. See
+    // docs/superpowers/plans/2026-05-14-cpu-pack-retirement.md §3.
+    static const bool s_cpuFallback =
+        (getenv("MC2_TERRAIN_INDIRECT_CPU_FALLBACK") != nullptr);
+    if (!s_cpuFallback) {
+        // One-shot demotion log so smoke artifacts capture the gate state.
+        static bool s_loggedDemote = false;
+        if (!s_loggedDemote) {
+            s_loggedDemote = true;
+            printf("[TERRAIN_INDIRECT v1] event=cpu_pack_demoted "
+                   "path=stock_solid gate=MC2_TERRAIN_INDIRECT_CPU_FALLBACK\n");
+            fflush(stdout);
+        }
+        return 0;  // no records this frame — indirect pipeline disarms
+    }
+
     ZoneScopedN("Terrain::ThinRecordPack");
 
     // Diagnostic Test 1 — reset per-frame cement classification counters.
