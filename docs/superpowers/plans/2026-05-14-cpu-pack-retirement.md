@@ -198,3 +198,23 @@ NOTE: there is a SEPARATE `WaterStream::ComputeDispatchParity_Check()` (`gos_ter
 ---
 
 **End of plan v2.** Next action: implement the demotion commit per §3. The adversarial-review pass on v1 has been incorporated (amendment B1 from orchestrator's Wave-0 decision). The deferred declaration-deletion commit ships in a follow-up plan once production telemetry proves `MC2_TERRAIN_INDIRECT_CPU_FALLBACK` is never set.
+
+---
+
+## §8 Amendment — 2026-05-15: parity-infra FULLY RETIRED (supersedes §7 OQ-2 demote-don't-delete)
+
+**Status change.** §7 OQ-2 closed with **demote-don't-delete** because two conditions blocked full deletion: (a) `gos_terrain_mask_dispatch.cpp:309` held an env-gated read of `gos_terrain_indirect_getPackParityMask`, and (b) the `txmmgr.cpp:1668` call site was link-live. **Both are now resolved**, so the orchestrator ruled **full retirement** (scope expanded to also remove the txmmgr call):
+
+- **Gate (a) cleared:** VPL-plan **Step 4 (commit `2e11617`)** retired/repointed the mask-dispatch consumer. Grep-verified 2026-05-15: `gos_terrain_mask_dispatch.cpp` has **zero** references to `getPackParityMask` / `s_packParityMask` / `kParityMaskWords` / `ComputeDispatchParity_Check`.
+- **Gate (b) cleared:** the orchestrator expanded scope to remove the single `txmmgr.cpp:1668` parity call directly. The enclosing `if (gos_terrain_indirect::IsFrameSolidArmed())` branch is **preserved** (its load-bearing statement `modernHandled = gos_terrain_indirect::DrawIndirect();` survives); only the parity call + its 2-line comment were removed (3-line deletion, byte-exact elsewhere).
+- **Soak-waiver:** the demote-don't-delete soak window for the `gos_terrain_indirect::` parity symbols is waived under the orchestrator full-retirement ruling (the symbols are dev-only, default-off, with zero remaining consumers post Step 4).
+
+**What was deleted (commit `refactor(terrain-indirect): full parity-infra retirement`):** `s_packParityMask`, `kParityMaskWords`, their memset reset + per-quad write sites, the `s_solidParity{Frames,Quads,Mismatches}` counters, the `gos_terrain_indirect_getPackParityMask` C-linkage accessor, the entire `ComputeDispatchParity_Check()` function, and its `gos_terrain_indirect.h` declaration. Opposite-direction grep across all built `*.cpp`/`*.h` confirms zero remaining live consumers. A one-shot `[TERRAIN_INDIRECT v1] event=parity_infra_retired` lifecycle log was added at `ComputePreflight` entry per the Debug-instrumentation rule (replaces the `event=parity_infra_demoted` log, which lived inside the now-deleted function).
+
+**Untouched / preserved:**
+- `gpu_driven::IsParityEnabled` (`gpu_driven_common.cpp:36`) + `MC2_GPU_DRIVEN_PARITY` env: KEPT — live non-parity consumer `WaterStream::ComputeDispatchParity_Check` (`gos_terrain_water_stream.cpp:1420`) still uses it. That is a SEPARATE namespace/symbol; not conflated, not touched.
+- `PackThinRecordsForFrame()` body + its CPU-fallback caller in `ComputePreflight` (now `gos_terrain_indirect.cpp:2020`, was `:2022` at HEAD): UNTOUCHED and reachable. The stock-install GPU-arm-failure fallback survives per `memory/stock_install_must_remain_playable.md`. Full `PackThinRecordsForFrame` declaration removal remains the deferred follow-up of §3 "Future commit (deferred)".
+
+**`gos_terrain_indirect.cpp:1684` disposition (record).** That CPU-pack site is **dead-when-armed** via the commit `18a4c36` `MC2_TERRAIN_INDIRECT_CPU_FALLBACK` env-gate (default-off, so the CPU pack does not run under stock env). The fallback **body is RETAINED** per `memory/stock_install_must_remain_playable.md` (no edit made to it) — it is **operationally retired but not source-deleted**; source deletion stays the deferred §3 follow-up.
+
+**Step 8b blocker (record — does NOT block this slice; blocks the separate Step 8b "delete cv->pz write").** `quad.cpp:2107` is the **M2d `gos_PushTerrainOverlay` producer's per-tri `pz` visibility gate** — it is NOT a thin-emit consumer. The prior Step 8 audit **misclassified** it as a thin-emit consumer. `cv->pz` therefore has a **PERMANENT live reader** (the M2d overlay producer). Step 8b ("delete the `cv->pz` write") is **BLOCKED** until a GPU-side M2d-overlay-pz-gate repoint precursor lands (render-expert domain; same `9964d5a` decal-vanish regression class as the §2 WARNING). No `cv->pz` / `quad.cpp` edit was made in this slice.
