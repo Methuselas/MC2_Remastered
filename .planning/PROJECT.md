@@ -23,6 +23,7 @@ The engine targets GL 4.3 Core today. Modernization continues toward SSBO/comput
 - **Measurable in:** retired-legacy-paths count, SSBO/compute/indirect-draw usage breadth, bindless adoption rate.
 - **Direction:** keep up with the GL spec; retire legacy paths rather than letting them coexist forever. The canonical legacy debt is documented in `memory/mc_texture_manager_dual_queue_legacy_retirement_debt.md` - both `masterVertexNodes` (legacy `gos_VERTEX` stream) and `masterHardwareVertexNodes` (modern `TG_RenderShape` queue) coexist today; the legacy queue should retire.
 - **Constraint:** never break stock-install playability. Modern paths MUST degrade to stock-compatible generation, never fail. Full rationale: `memory/stock_install_must_remain_playable.md`. This is the architectural ceiling on modernization.
+- **Forward-compat (Vulkan-prep):** new GPU-resource code uses explicit device-mediated binding (`device.bindVertexBuffer(vb)`, not `vb.bind()`) and assumes zero implicit cross-call GL state. Protect the already-Vulkan-friendly patterns (deferred enqueue/flush, std430 lockstep, `gl_ClipControl` [0,1] depth) from regression. PREP, not a port - no full RHI ahead of need. Full rule set: `memory/vulkan_prep_explicit_device_discipline.md`.
 
 ### 3. Engine/data separation - everything as API
 
@@ -46,6 +47,8 @@ This principle MAKES the structure axis (north star 3) achievable. Declaring "we
 - `memory/named_contracts_at_intersections.md` (INTERFACE axis) - every intersection becomes a named contract; the mechanism by which structure becomes real
 
 Read together they shape every architectural decision. The canonical example: the black-tree-bug (resolved 2026-05-05) lived in the unnamed gap between `update()` and `render()`; once the producer/consumer contract was named (the `cachedFrame_` stamp), the bug couldn't recur.
+
+**Change discipline (the WHEN governor, not a 4th axis):** the triad defines WHAT "modern" means; `memory/minimal_touch_modern_when_touched.md` defines WHEN to apply it - at the forced-touch moment, not preemptively, not never. Don't touch what you don't have to (every touch has blast radius); when you must touch, bring it to the modern standard. Aggressive in direction, minimal in footprint-per-change. Standalone "cleanup" slices require a blocking or non-linear-debt justification (e.g. the dual-queue retirement).
 
 ## Architectural endpoint
 
