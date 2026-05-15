@@ -639,6 +639,11 @@ class Camera
 		
 		void projectCamera (Stuff::Vector3D &point);
 
+		// Read-only view of the world->clip matrix. Used by the per-frame
+		// inverseProject delta-cache (VPL-retirement Step 3 3b) to detect a
+		// camera-matrix change via memcmp without re-projecting every frame.
+		const Stuff::Matrix4D& getWorldToClip (void) const { return worldToClip; }
+
 		// Shared CPU camera-frustum x quad-AABB primitive (VPL-retirement Step 3 3a
 		// OWNS the definition; Step 5B references it). Pure CPU, no GL, no readback.
 		// extractFrustumPlanes: Gribb-Hartmann 6-plane extraction from worldToClip,
