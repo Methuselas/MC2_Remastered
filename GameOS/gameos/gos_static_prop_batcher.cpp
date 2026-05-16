@@ -3603,6 +3603,15 @@ void GpuStaticPropBatcher::flushShadow() {
     // the coalesce program uses gl_DrawIDARB / gl_BaseInstanceARB which
     // is not available here. Always use the legacy non-indirect path.
 
+    // Geometry-readiness guard, mirroring the color flush() path (:2749).
+    // The new txmmgr shadow region calls this from frame ~1; before
+    // finalizeGeometry() s_sharedVao==0 and s_packets is empty while
+    // s_typeRanges/type.packetCount can already be non-zero, so the
+    // per-packet loop below would index an empty s_packets and fault in
+    // glDrawElementsInstancedBaseVertex. flush() bails on the same
+    // condition; flushShadow() must honor the identical precondition.
+    if (!s_geometryFinalized || s_fatalRegistrationFailure) return;
+
     if (!uploadAllBucketsIfNeeded()) return;
 
     // Resolve shadow_static_prop program via the global program registry.
@@ -3646,7 +3655,9 @@ void GpuStaticPropBatcher::flushShadow() {
 
         // Per-packet draw -- mirrors the legacy non-indirect branch of flush().
         for (uint32_t p = 0; p < type.packetCount; ++p) {
-            const GpuStaticPropPacket& pkt = s_packets[type.firstPacket + p];
+            const uint32_t pktIdx = type.firstPacket + p;
+            if (pktIdx >= s_packets.size()) break;  // defense-in-depth: stale range
+            const GpuStaticPropPacket& pkt = s_packets[pktIdx];
             glDrawElementsInstancedBaseVertex(
                 GL_TRIANGLES,
                 static_cast<GLsizei>(pkt.indexCount),

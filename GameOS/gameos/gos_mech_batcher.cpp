@@ -381,6 +381,12 @@ void GpuMechBatcher::flushShadow() {
     // persist it to s_lastDrawCalls / s_lastTotalInstances / s_lastTotalBones
     // at the end of flush() and consume those statics here.
 
+    // Geometry-readiness guard, mirroring the color flush() path (:867).
+    // The new txmmgr shadow region calls this from frame ~1 and across
+    // mid-mission finalizePending() rebuilds; without this, a not-yet-
+    // finalized or rebuilt s_packets is indexed by stale persisted
+    // s_lastDrawCalls entries and faults in the draw below.
+    if (!g_useGpuMechs || !s_geometryFinalized || s_programLoadFailed) return;
     if (s_lastDrawCalls.empty()) return;
     if (!s_instanceSsbo || !s_boneSsbo) return;
 
@@ -422,6 +428,7 @@ void GpuMechBatcher::flushShadow() {
         if (baseLoc >= 0)
             glUniform1i(baseLoc, (int)dc.instanceBase);
 
+        if (dc.globalPacketIdx >= s_packets.size()) break;  // defense-in-depth: stale persisted index post-rebuild
         const GpuMechPacket& pkt = s_packets[dc.globalPacketIdx];
         glDrawElementsInstancedBaseVertex(
             GL_TRIANGLES,
@@ -744,6 +751,15 @@ void GpuMechBatcher::finalizePending() {
     s_pendingLateTypes  = false;
     s_geometryFinalized = false;   // re-open the guard so finalizeGeometry runs
     finalizeGeometry();            // rebuilds VBO/IBO/VAO from full retained staging
+
+    // The rebuild above repopulates s_packets with new indices/order, so
+    // the persisted shadow draw list (pre-rebuild globalPacketIdx values)
+    // is now stale. Clear it (mirrors onMapLoad); the next flush() will
+    // repopulate it consistently with the rebuilt s_packets. flushShadow()
+    // early-returns on empty s_lastDrawCalls until then.
+    s_lastDrawCalls.clear();
+    s_lastTotalInstances = 0;
+    s_lastTotalBones     = 0;
 
     // Restore the bindings finalizeGeometry left dirty (it ends on
     // glBindVertexArray(0) with GL_ARRAY_BUFFER still = the new s_sharedVbo).
