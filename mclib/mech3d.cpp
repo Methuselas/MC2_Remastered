@@ -2583,6 +2583,27 @@ long Mech3DAppearance::render (long depthFixup)
 				mechShape->Render(true);  // CPU path — unchanged
 			}
 
+			// [MECHRESTORE v1] per-actor submit discriminator. Gated +
+			// globally throttled (one load needs only the first frames;
+			// per-actor-per-frame in this hot path would flood). The
+			// invisible-from-savegame signature is gpuMechSubmitted=0
+			// cullSkip=0 finalized=0 for every actor of one type.
+			{
+				static const bool s_mechRestoreTrace =
+					(getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
+				static int s_mechRestoreEmits = 0;
+				if (s_mechRestoreTrace && s_mechRestoreEmits < 2000) {
+					++s_mechRestoreEmits;
+					std::fprintf(stderr,
+						"[MECHRESTORE v1] event=submit actor=%lu type=%p lod=%d "
+						"submitted=%d cullSkip=%d lateReg=%d finalized=%d status=%d\n",
+						(unsigned long)actorHandle_, (void*)mechType, (int)currentLOD,
+						gpuMechSubmitted ? 1 : 0, mechGpuCullSkip ? 1 : 0,
+						GpuMechBatcher::instance().wasLastFailureLateRegistration() ? 1 : 0,
+						GpuMechBatcher::instance().isFinalized() ? 1 : 0, (int)status);
+				}
+			}
+
 			if (selected & DRAW_BARS)
 			{
 				drawBars();
@@ -5384,6 +5405,20 @@ void Mech3DAppearance::copyFrom (MechAppearanceData *data)
 	baseRootNodeHeight = data->baseRootNodeHeight;
 	jumpDestination = 	data->jumpDestination;
 	jumpVelocity = 		data->jumpVelocity;
+
+	// [MECHRESTORE v1] restore boundary. status is deliberately NOT
+	// copied (see :5327) — emit the post-restore value + type/LOD so a
+	// single savegame load correlates each mech's restored type against
+	// its later submit/register events.
+	{
+		static const bool s_mechRestoreTrace =
+			(getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
+		if (s_mechRestoreTrace)
+			std::fprintf(stderr,
+				"[MECHRESTORE v1] event=copyfrom type=%p restored_lod=%d "
+				"status_restored=0 status_now=%d\n",
+				(void*)mechType, (int)currentLOD, (int)status);
+	}
 }
 
 void Mech3DAppearance::flashBuilding (float dur, float fDuration, DWORD color)

@@ -106,8 +106,19 @@ static GLuint s_sharedVbo = 0;
 static GLuint s_sharedIbo = 0;
 static GLuint s_sampler   = 0;    // session-lifetime; GL_REPEAT / LINEAR
 static bool   s_geometryFinalized = false;
+// VPL-#11 (SP-logistics late roster): set by registerTypeLod when a type
+// registers AFTER finalizeGeometry (campaign .fit resume spawns the
+// player force-group post-Mission::init-finalize). finalizePending()
+// consumes it to rebuild the shared VBO/IBO from the (retained) staging.
+static bool   s_pendingLateTypes = false;
+static uint32_t s_lateStagedCount = 0;  // late (type,lod) regs since last finalizePending
 
-// Staging buffers (cleared after finalizeGeometry).
+// Staging buffers. RETAINED for the whole mission (NOT freed at
+// finalizeGeometry) so finalizePending() can append a late-registered
+// type and rebuild the immutable shared VBO/IBO from the full
+// original+late staging (VPL-#11 SP-logistics fix; the alternative of
+// re-deriving geometry from TG type shapes is fragile). Cleared only at
+// onMapLoad(). Memory cost is MB-scale and intentionally not optimized.
 static std::vector<uint8_t>   s_stagingVbo;
 static std::vector<uint32_t>  s_stagingIbo;
 
@@ -323,6 +334,7 @@ void GpuMechBatcher::onMapUnload() {
 bool GpuMechBatcher::wasLastFailureLateRegistration() const { return s_lastFailWasLateReg; }
 uint64_t GpuMechBatcher::getAllowedLateRegEventCount()      { return s_allowedLateRegEvents; }
 uint64_t GpuMechBatcher::getDisallowedLateRegEventCount()  { return s_disallowedLateRegEvents; }
+bool GpuMechBatcher::isFinalized() const                    { return s_geometryFinalized; }
 
 void GpuMechBatcher::recordEligibleActor()                         { ++s_eligibleActorsThisFrame; }
 void GpuMechBatcher::recordCpuFallback(GpuMechFallbackReason r)   { ++s_fallbacksThisFrame[(int)r]; }
@@ -335,12 +347,27 @@ void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int l
     if (!mechType) return;
     const TypeLodKey key{mechType, lod};
     if (s_typeLodIndex.count(key)) return;  // idempotent
+    static const bool s_mechRestoreTrace = (getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
     if (s_geometryFinalized) {
+        // Late registration (post-finalizeGeometry). DO NOT drop: stage
+        // the type into the retained s_stagingVbo/Ibo (fall through to
+        // the body below) and mark pending so finalizePending() rebuilds
+        // the shared buffers. Caller MUST invoke finalizePending() once
+        // its late-spawn batch completes (VPL-#11: logistics.cpp SP
+        // force-group loop). Until then submitActor still fast-rejects
+        // this type (s_typeLodIndex has the entry but the GL buffers
+        // predate it) -- harmless because no frame renders between the
+        // late registers and the finalizePending() call on that path.
         std::fprintf(stderr,
-            "[MECHBATCHER v1] event=late_register type=%p lod=%d\n",
+            "[MECHBATCHER v1] event=late_register type=%p lod=%d (staged_pending)\n",
             (void*)mechType, lod);
-        ++s_disallowedLateRegEvents;
-        return;
+        if (s_mechRestoreTrace)
+            std::fprintf(stderr,
+                "[MECHRESTORE v1] event=register type=%p lod=%d result=staged_pending finalized=1\n",
+                (void*)mechType, lod);
+        s_pendingLateTypes = true;
+        ++s_lateStagedCount;
+        // fall through -- stage like a normal pre-finalize registration
     }
 
     TG_TypeMultiShape* typeMulti = mechType->mechShape[lod];
@@ -364,6 +391,10 @@ void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int l
 
     const uint32_t typeLodIdx = (uint32_t)s_typeLodRecords.size();
     s_typeLodIndex[key] = typeLodIdx;
+    if (s_mechRestoreTrace)
+        std::fprintf(stderr,
+            "[MECHRESTORE v1] event=register type=%p lod=%d result=registered finalized=0 numBones=%d\n",
+            (void*)mechType, lod, numNodes);
 
     GpuMechTypeLodRecord rec{};
     rec.firstBoneIndex = 0;
@@ -552,13 +583,79 @@ void GpuMechBatcher::finalizeGeometry() {
     glSamplerParameteri(s_sampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glSamplerParameteri(s_sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-    s_stagingVbo.clear(); s_stagingVbo.shrink_to_fit();
-    s_stagingIbo.clear(); s_stagingIbo.shrink_to_fit();
+    // Staging RETAINED (not cleared/shrunk) so finalizePending() can
+    // append a late type and rebuild from the full original+late
+    // staging. See s_stagingVbo declaration. Cleared only at onMapLoad().
 
     s_geometryFinalized = true;
     std::fprintf(stderr,
         "[MECHBATCHER v1] event=finalize_ok types=%zu packets=%zu\n",
         s_typeLodRecords.size(), s_packets.size());
+}
+
+// VPL-#11 SP-logistics fix. Rebuild the immutable shared VBO/IBO/VAO so
+// types registered AFTER a prior finalizeGeometry() (campaign .fit
+// resume spawns the player force-group post-Mission::init-finalize, via
+// logistics.cpp addMover) become drawable. No-op unless a late type was
+// staged. SAFE because: (a) no frame renders between the late registers
+// and this call on the SP path (adversarial-review grep-closed:
+// GpuMechBatcher::flush only via renderLists from the frame loop, after
+// logistics.cpp mission->update()); (b) glBufferStorage buffers are
+// immutable so they MUST be deleted before recreate; (c) s_typeLodIndex
+// /s_typeLodRecords/s_packets are append-only and preserved here, so the
+// ~pre-finalize types keep stable indices and the retained staging holds
+// their original-offset vertices + the appended late ones.
+void GpuMechBatcher::finalizePending() {
+    if (!s_pendingLateTypes) return;
+
+    // VPL-#11 shadow-regression hardening (2026-05-16): finalizePending
+    // runs mid-mission-setup; save EVERY GL binding it perturbs and
+    // restore on exit so it is provably state-neutral to the rest of the
+    // frame (vulkan_prep_explicit_device_discipline). The mech advisor
+    // ruled GL-state OUT as the half-map-shadow cause (left-bound buffer
+    // is overwritten before first render), but this removes it as a
+    // variable definitively and is correct discipline regardless.
+    GLint prevVao = 0, prevArr = 0, prevElem = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING,        &prevVao);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING,        &prevArr);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING,&prevElem);
+
+    // Drain ring fences before deleting GL objects (defensive; mirrors
+    // onMapUnload). No draw can be in flight here per (a), so this is
+    // belt-and-suspenders, not load-bearing.
+    for (uint32_t i = 0; i < MECH_RING_FRAMES; ++i) {
+        if (s_fence[i]) {
+            glClientWaitSync(s_fence[i], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+            glDeleteSync(s_fence[i]);
+            s_fence[i] = 0;
+        }
+    }
+    // Delete the immutable shared geometry objects finalizeGeometry()
+    // glGen'd; it will recreate all four from the retained staging.
+    if (s_sharedVao) { glDeleteVertexArrays(1, &s_sharedVao); s_sharedVao = 0; }
+    if (s_sharedVbo) { glDeleteBuffers(1, &s_sharedVbo);      s_sharedVbo = 0; }
+    if (s_sharedIbo) { glDeleteBuffers(1, &s_sharedIbo);      s_sharedIbo = 0; }
+    if (s_sampler)   { glDeleteSamplers(1, &s_sampler);       s_sampler   = 0; }
+
+    const uint32_t lateAdded = s_lateStagedCount;
+    s_lateStagedCount   = 0;
+    s_pendingLateTypes  = false;
+    s_geometryFinalized = false;   // re-open the guard so finalizeGeometry runs
+    finalizeGeometry();            // rebuilds VBO/IBO/VAO from full retained staging
+
+    // Restore the bindings finalizeGeometry left dirty (it ends on
+    // glBindVertexArray(0) with GL_ARRAY_BUFFER still = the new s_sharedVbo).
+    glBindVertexArray((GLuint)prevVao);
+    glBindBuffer(GL_ARRAY_BUFFER,         (GLuint)prevArr);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElem);
+
+    std::fprintf(stderr,
+        "[MECHBATCHER v1] event=finalize_pending types=%zu lateAdded=%u rebuilt=%d\n",
+        s_typeLodRecords.size(), lateAdded, s_geometryFinalized ? 1 : 0);
+    if (getenv("MC2_MECH_RESTORE_TRACE") != nullptr)
+        std::fprintf(stderr,
+            "[MECHRESTORE v1] event=finalize_pending types=%zu lateAdded=%u rebuilt=%d\n",
+            s_typeLodRecords.size(), lateAdded, s_geometryFinalized ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------

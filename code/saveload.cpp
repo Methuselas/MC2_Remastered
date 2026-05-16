@@ -112,6 +112,14 @@
 
 #include "../resource.h"
 #include<gameos.hpp>
+
+// VPL-deferred item 11 fix: the in-mission-save load path (Mission::load)
+// bypasses Mission::init and must mirror its finalizeGeometry() tail, or
+// every mech of any type re-registered on restore stays invisible
+// (submitActor fast-rejects while !s_geometryFinalized).
+#include "gos_static_prop_batcher.h"
+#include "gos_mech_batcher.h"
+#include "apprtype.h"
 #ifndef LINUX_BUILD
 #include<ddraw.h>
 #else
@@ -685,6 +693,38 @@ void Mission::load (const char *loadFileName)
 
 	//Used to call this before the version check.  Wow.
 	destroy();
+
+	{
+		static const bool s_mechRestoreTrace =
+			(getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
+		if (s_mechRestoreTrace)
+			fprintf(stderr,
+				"[MECHRESTORE v1] event=saveload_phase phase=post_destroy "
+				"mechFinalized=%d appearanceListNull=%d\n",
+				GpuMechBatcher::instance().isFinalized() ? 1 : 0,
+				(appearanceTypeList == NULL) ? 1 : 0);
+	}
+
+	// VPL-deferred item 11 FIX (pre-spawn half — completes the tail-side
+	// finalizeGeometry() below). destroy() above ran Mission::destroy ->
+	// GpuMechBatcher::onMapUnload() (mission.cpp:3260), which frees GL
+	// buffers + clears s_geometryFinalized but does NOT clear the CPU
+	// s_typeLodIndex / s_typeLodRecords / staging (only onMapLoad()
+	// does). destroy() also UNCONDITIONALLY deletes appearanceTypeList
+	// (mission.cpp:3438-3443). The mechs respawned below via
+	// ObjectManager->Load heap-reuse freed Mech3DAppearanceType
+	// addresses; registerTypeLod()'s idempotent guard
+	// (gos_mech_batcher.cpp:337, key = {Mech3DAppearanceType*, lod})
+	// then false-hits the stale entry and SILENTLY SKIPS registering the
+	// reused-address type -> that type's mechs are invisible from a
+	// savegame. Mission::init avoids this by calling onMapLoad() BEFORE
+	// any spawn (mission.cpp:1682-1683); Mission::load is a parallel
+	// path that skipped it. Mirror Init's pre-spawn reset exactly here
+	// (after destroy(), before any ::Load respawn) so registration
+	// rebuilds into a clean index; the finalizeGeometry() tail below is
+	// Init's matching post-spawn half.
+	GpuStaticPropBatcher::instance().onMapLoad();
+	GpuMechBatcher::instance().onMapLoad();
 
 	loadProgress = 1.0f;
 
@@ -1350,6 +1390,17 @@ void Mission::load (const char *loadFileName)
 	//
 	currentPacket = ObjectManager->Load( &loadFile, currentPacket );
 
+	{
+		static const bool s_mechRestoreTrace =
+			(getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
+		if (s_mechRestoreTrace)
+			fprintf(stderr,
+				"[MECHRESTORE v1] event=saveload_phase phase=post_objmgr_load "
+				"mechFinalized=%d appearanceListNull=%d\n",
+				GpuMechBatcher::instance().isFinalized() ? 1 : 0,
+				(appearanceTypeList == NULL) ? 1 : 0);
+	}
+
 	ObjectManager->buildMoverLists();
 
 	//----------------------------------------------
@@ -1515,6 +1566,32 @@ void Mission::load (const char *loadFileName)
 	loadProgress = 100.f;
 
 	DebugGameObject[0] = DebugGameObject[1] = DebugGameObject[2] = NULL;
+
+	// VPL-deferred item 11 FIX (a): Mission::load is a parallel mission-
+	// setup path that never routes through Mission::init, so it skips
+	// Init's unconditional finalizeGeometry() tail (mission.cpp:3114-3115).
+	// Mission::destroy() above ran onMapUnload() (s_geometryFinalized=
+	// false, s_typeLodIndex cleared); the mechs respawned via
+	// ObjectManager->Load re-ran registerTypeLod() while !finalized (OK),
+	// but without this call s_geometryFinalized stays false and
+	// GpuMechBatcher::submitActor() fast-rejects every actor -> mechs
+	// invisible from a savegame. Mirror Init's known-good tail exactly
+	// (both batchers; finalizeGeometry() is idempotent / early-returns if
+	// already finalized). GL context is live here (camera + mission
+	// interface already initialized above), same precondition as
+	// mission.cpp:3112-3115.
+	GpuStaticPropBatcher::instance().finalizeGeometry();
+	GpuMechBatcher::instance().finalizeGeometry();
+	{
+		static const bool s_mechRestoreTrace =
+			(getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
+		if (s_mechRestoreTrace)
+			fprintf(stderr,
+				"[MECHRESTORE v1] event=saveload_phase phase=post_finalize "
+				"mechFinalized=%d appearanceListNull=%d\n",
+				GpuMechBatcher::instance().isFinalized() ? 1 : 0,
+				(appearanceTypeList == NULL) ? 1 : 0);
+	}
 
 	//YIKES!!  We could be checking the if before the null and executing after!!  Block the thread!
 	//Wait for thread to finish.
