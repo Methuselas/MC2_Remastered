@@ -1,10 +1,53 @@
-# GPU-Driven Dynamic Sun Shadow (Frustum-Fit) - Design (rev 2)
+# GPU-Driven Dynamic Sun Shadow (Frustum-Fit) - Design (rev 3)
 
 Date: 2026-05-16
-Status: DESIGN (pre-plan), rev 2 after two mandated adversarial passes
-(opus BLOCK + sonnet PROCEED-WITH-CHANGES, convergent). Slice for
-VPL-#10 artifact B and the mech/building shadow-feed gap.
+Status: DESIGN (plan-stage gates closed), rev 3. Slice for VPL-#10
+artifact B and the mech/building shadow-feed gap.
 Branch: claude/gpu-driven-rendering
+
+## rev 3 plan-stage gate resolution (supersedes conflicting rev-2 text)
+
+- GATE 1 (off-frustum casters) = PRE-WINDOWED for BOTH batchers
+  (grep-proven: mech submit gated `inView`+`mechGpuCullSkip`
+  `mech3d.cpp:2453/2505`; building gated `objBlockInfo/objVertexActive`
+  `objmgr.cpp:1703` + `inView` `bdactor.cpp:1648`; buckets cleared+rebuilt
+  per frame from camera-admitted submissions only). The GPU 0.08
+  frustum dilation is DOWNSTREAM + default-off (`MC2_GPU_CULL_LIFECYCLE`
+  unset), does NOT widen the caster buckets. No low-blast-radius lever
+  exists. **RESOLUTION (user): PHASED.** This slice is **Phase 1** =
+  flushShadow over the camera-visible (`inView`) caster set + frustum-
+  fit. Off-screen-caster shadows at low sun are a REAL documented gap
+  (a +10deg-sun 100u building throws ~570u of shadow that can enter
+  view from just off-screen). **Phase 2** = light-volume caster cull
+  that admits casters whose shadow volume intersects the view WITHOUT
+  touching the load-bearing `inView` cull cascade - a genuine,
+  non-deferrable follow-up tracked separately, NOT an edge-case note.
+- `Camera::clipToWorld` yields **Stuff space, not raw-MC2** (canonical
+  `camera.cpp:1982-1984` applies `(-x, z, y)` AFTER). Component 1 MUST
+  apply the `vec3(-s.x, s.z, s.y)` swizzle post-`clipToWorld` (same
+  swizzle as `shadow_object.vert:14`) or it re-introduces artifact B.
+  Multiply is row-vector: `xform.Multiply(ndcCoords, eye->clipToWorld)`,
+  divide by `xform.w` (negate-if-w<0 per `camera.cpp:1979-1980`), then
+  swizzle. `eye->clipToWorld` is a public `Stuff::Matrix4D` member
+  directly readable at the `txmmgr.cpp` site.
+- Mech ring-slot arithmetic: advance at `gos_mech_batcher.cpp:820`,
+  write at `:827`, fence at `:1097`. At the new-region time (before
+  this frame's mech `flush()`), `s_frameSlot` holds last frame's
+  post-advance value and last frame's fenced data is at `s_frameSlot`
+  itself. The rev-2 `(s_frameSlot-1+N)%N` formula is OFF; the correct
+  read slot is `s_frameSlot` (re-derive + assert at execute, this is a
+  plan-stage precision item, not an assumption).
+- Elevation slab: no global terrain min/max constant exists; use a
+  fixed conservative slab `[-512, 4096]` + caster margin `+512` world
+  units; the REAL safety net is the map-bounds clamp `r =
+  mapHalfExtent*sqrt(2)*1.05` (`gos_postprocess.cpp:1207`).
+- No `gos_ShadowsEnabled()` wrapper: rely on `gos_BeginDynamicShadowPass()`
+  internal `!pp->shadowsEnabled_` early-return (existing precedent,
+  lower blast radius) rather than adding an accessor.
+- New SSBO-reading shadow shaders use the `glsl_program::makeProgram`
+  + explicit `"#version 430\n"` prefix path (like the color batcher
+  programs), NOT `gosRenderMaterial::load` (exact loader confirmed
+  with mc2-shader-expert at task time).
 
 Symbols are authoritative; every file:line is a starting point to
 re-grep at plan/execute time (Rule 0). Line numbers drift.
@@ -150,16 +193,16 @@ per both passes). Concrete contract:
   shadow-cull rule). Reuse the existing instance SSBO upload
   (`s_lastUploadedSlot`/`uploadAllBucketsIfNeeded` ~:2600-2607 already
   fence-safe).
-- **Shadow-cull rule (CRITICAL):** shadow casters can lie outside the
-  camera frustum. flushShadow MUST NOT use camera-frustum `VisibleIds`;
-  draw all batched instances of the type set. **Plan-stage gate
-  (mandatory, both passes M1/MAJOR-4):** grep-prove the batcher instance
-  buffers actually CONTAIN off-camera-frustum casters (mech:
-  `s_pendingSubmits` producer; static-prop: per-type SSBO range
-  population) and were not pre-windowed by upstream cull
-  (`cull_gates_are_load_bearing`). If upstream cull windows them,
-  ESCALATE: a sun-frustum caster set is a scope change to surface before
-  coding.
+- **Shadow-cull rule (rev 3, gate-1 resolved = PHASED):** the batcher
+  buckets ARE the camera-visible (`inView`) set (pre-windowed; proven).
+  Phase 1 flushShadow draws that existing batched set as-is - it must
+  still NOT use the camera-frustum `compute_getIndirectCmdBuf()` counts
+  (that is a further GPU-cull narrowing of the already-windowed set and
+  the static-prop indirect path; use the non-indirect full per-type
+  bucket ranges so Phase 1 covers the whole camera-visible set, not the
+  GPU-cull-narrowed subset). Off-screen casters are NOT in the buckets;
+  their low-sun shadows are the documented Phase-1 gap. Phase 2
+  (separate slice) adds a light-volume caster set.
 - FBO/state: flushShadow uses `gos_BeginDynamicShadowPass()` for FBO
   bind + the load-bearing AMD feedback-loop/comparison/viewport/
   depth-state setup (`gameos_graphics.cpp` ~:4488-4512), then switches
