@@ -1,4 +1,5 @@
 //#version 430 (version provided by material prefix)
+#include <include/terrain_depth_bias.hglsl>  // single-source TERRAIN/WATER_DEPTH_FUDGE
 
 // --- SSBO bindings (must match TerrainQuadThinRecord / TerrainQuadRecipe in gos_terrain_patch_stream.h) ---
 // Fix B 2026-05-14: clipPos[4] added — VS reads pre-projected clip-space
@@ -215,7 +216,7 @@ void main() {
     // so decals/GpuStaticProps/water-on-terrain at coincident depth win the
     // GL_LEQUAL tie. Precedent: gos_terrain_water_fast.vert:350.
     // Doubled 0.001→0.002 post glClipControl(ZERO_TO_ONE); see gos_terrain.tese:133.
-    screen.z = clip.z * rhw + 0.002;
+    screen.z = clip.z * rhw + TERRAIN_DEPTH_FUDGE;  // single-sourced; see terrain_depth_bias.hglsl
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
     gl_Position      = vec4(ndc.xyz * absW, absW);

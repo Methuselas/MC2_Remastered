@@ -1988,22 +1988,20 @@ void TerrainQuad::setupTextures (void)
 	} // close CostSplitLightingScope (1A-alt Slice 0)
 }
 
-// 2026-05-06: doubled 0.001f → 0.002f after glClipControl(ZERO_TO_ONE)
-// adoption (commit 4c8f9a4). Native [0,1] window depth halved the
-// per-LSB headroom near shoreline vs the old [-1,1]→[0,1] remap;
-// doubling restores the bit-equivalent bias. Mirror in shaders:
-// gos_terrain.tese:133, gos_terrain_thin.vert:175,
-// gos_terrain_water_fast.vert:350.
-#define TERRAIN_DEPTH_FUDGE		0.002f
-// Water MUST be biased farther than terrain so it loses LEQUAL ties at the
-// coast (smooth shore — no tile-aligned staircase where terrain crests
-// exactly to waterElevation). The bias is a SMALL DELTA on top of terrain's
-// fudge, not a multiple — doubling water's absolute bias also doubles the
-// delta, which is enough to push water behind legitimate underwater terrain
-// and break lake-bottom coverage (observed 2026-05-06 when water was set to
-// TERRAIN_DEPTH_FUDGE * 2.0f under glClipControl). Mirror: water VS at
-// gos_terrain_water_fast.vert:357.
-#define WATER_DEPTH_FUDGE		(TERRAIN_DEPTH_FUDGE + 0.0005f)
+// Terrain/water NDC depth bias: SINGLE SOURCE OF TRUTH is now
+// mclib/terrain_depth_bias.h (+ its lockstep GLSL sibling). These legacy
+// CPU raster consumers are the RASTER water regime: WATER_DEPTH_FUDGE
+// resolves (via the header's back-compat alias) to WATER_DEPTH_FUDGE_RASTER
+// = terrain + 0.0005 = 0.0025. Water has TWO LEGITIMATE REGIMES (RASTER
+// here / CPU raster + mask-water; FAST = the GPU water VS at 0.003) -- they
+// are deliberately NOT unified to one value; a single constant regressed
+// the map edges (TES tiles through water). Do NOT "collapse the deltas":
+// see the two-regime rationale + git 89d7c4f-vs-6ff6c5c reconciliation in
+// terrain_depth_bias.h. Consumers below use TERRAIN_DEPTH_FUDGE /
+// WATER_DEPTH_FUDGE (== RASTER) unqualified.
+#include "terrain_depth_bias.h"
+using mc2depth::TERRAIN_DEPTH_FUDGE;
+using mc2depth::WATER_DEPTH_FUDGE;
 #define OVERLAY_ELEV_OFFSET		0.15f
 
 // GPU projection: pack MC2 world coords into overlay vertex instead of screen-space
@@ -2471,6 +2469,53 @@ void TerrainQuad::draw (void)
 			gVertex[0].y		= vertices[0]->py;
 			gVertex[0].z		= vertices[0]->pz + TERRAIN_DEPTH_FUDGE;
 			gVertex[0].rhw		= vertices[0]->pw;
+			// [DEPTHBIAS_CALIB] VPL-#10 distance-proportional grounding
+			// probe (env MC2_DEPTHBIAS_CALIB, INERT log-only). pw == |1/clip.w|;
+			// clip.w == 1/pw. One mc2_17 zoom-sweep (in/default/out) gives
+			// W0 (default-zoom clip.w) + the real min/max clip.w to ground
+			// the 6 CRITICAL assumptions in the distance-proportional spec.
+			{
+				static const bool s_dbc = (getenv("MC2_DEPTHBIAS_CALIB") != nullptr);
+				if (s_dbc) {
+					// Filter to VALID on-screen post-admission terrain verts
+					// ONLY: pz in [0,1) (the [0,1] glClipControl NDC-z the
+					// depth buffer actually sees -- excludes off-screen /
+					// pre-gate / pz=-0.5 sentinel), pw finite & positive in a
+					// sane camera range (excludes the pw=0.5 sentinel and the
+					// pw=512 / pw=5.4e-5 behind-camera/degenerate outliers
+					// that wrecked the first capture). clip.w == 1/pw.
+					const float pz = vertices[0]->pz;
+					const float pw = vertices[0]->pw;
+					const bool  valid =
+						(pz >= 0.0f && pz < 1.0f) &&
+						(pw > 1.0e-5f && pw < 0.2f);   // clip.w in (5, 100000)
+					if (valid) {
+						const float cw = 1.0f / pw;
+						// WINDOWED stats, RESET each summary so the user's
+						// distinct zoom pauses (full-in / default / full-out)
+						// read as distinct consecutive summary lines.
+						static int   s_w = 0;
+						static float s_cwMin = 1e30f, s_cwMax = -1e30f, s_cwSum = 0.0f;
+						static int   s_first = 0;
+						if (cw < s_cwMin) s_cwMin = cw;
+						if (cw > s_cwMax) s_cwMax = cw;
+						s_cwSum += cw;
+						if (s_first < 12) {
+							++s_first;
+							fprintf(stderr,
+								"[DEPTHBIAS_CALIB v2] event=sample pz=%.6f clipw=%.3f\n",
+								pz, cw);
+						}
+						if ((++s_w % 4000) == 0) {
+							fprintf(stderr,
+								"[DEPTHBIAS_CALIB v2] event=window validN=%d "
+								"clipwMin=%.2f clipwAvg=%.2f clipwMax=%.2f\n",
+								s_w, s_cwMin, s_cwSum / (float)s_w, s_cwMax);
+							s_cwMin = 1e30f; s_cwMax = -1e30f; s_cwSum = 0.0f; s_w = 0;
+						}
+					}
+				}
+			}
 			gVertex[0].u		= minU;
 			gVertex[0].v		= minV;
 			gVertex[0].argb		= lightRGB0;

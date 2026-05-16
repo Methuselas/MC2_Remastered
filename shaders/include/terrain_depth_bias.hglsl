@@ -1,0 +1,13 @@
+// GLSL sibling of mclib/terrain_depth_bias.h -- keep LOCKSTEP (byte-equal
+// values, same commit). Full rationale + the two-water-regime explanation
+// (FAST vs RASTER; why a single constant cannot unify them; VPL-#10
+// 2026-05-16 correction) lives in that C++ header.
+//   TERRAIN            = 0.002
+//   WATER_FUDGE_FAST   = 0.003   (gos_terrain_water_fast.vert / _mdi.vert)
+//   WATER_FUDGE_RASTER = 0.0025  (gos_terrain_mask_water.vert; CPU raster)
+#ifndef TERRAIN_DEPTH_BIAS_HGLSL
+#define TERRAIN_DEPTH_BIAS_HGLSL
+const float TERRAIN_DEPTH_FUDGE      = 0.002;
+const float WATER_DEPTH_FUDGE_FAST   = 0.003;   // TERRAIN + 0.001
+const float WATER_DEPTH_FUDGE_RASTER = 0.0025;  // TERRAIN + 0.0005
+#endif

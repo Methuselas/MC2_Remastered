@@ -1,4 +1,5 @@
 //#version 430 (provided by makeProgram prefix)
+#include <include/terrain_depth_bias.hglsl>  // single-source TERRAIN/WATER_DEPTH_FUDGE
 //
 // Stage 1c — Mask-water dual-run VS.
 //
@@ -120,16 +121,23 @@ void main() {
     Texcoord = vec2(0.5);
     FogValue = 0.0;
 
-    // Double projection chain — identical to gos_terrain_water_fast.vert.
-    // Three-tier z-ordering invariant:
-    //   terrain: +0.002 (terrain.tese / gos_terrain_thin.vert)
-    //   water:   +0.0025 (this line — matches gos_terrain_water_fast.vert:364)
+    // Double projection chain. z-bias is single-sourced
+    // (terrain_depth_bias.hglsl). This is the mask-water VS: its REAL peer
+    // is the legacy CPU raster water (RASTER regime, delta 0.0005 = 0.0025),
+    // NOT the GPU fast-VS (FAST regime 0.003). The genuine #10 desync was
+    // this site's old comment FALSELY claiming it matched the fast VS while
+    // emitting 0.0025; fixed by pointing it at the correct shared constant
+    // (WATER_DEPTH_FUDGE_RASTER, value unchanged at 0.0025). A 1-constant
+    // unification to 0.003 here over-biased water behind low-LOD terrain
+    // (TES tiles breaking through at map edges); see header + git 89d7c4f.
+    //   terrain: TERRAIN_DEPTH_FUDGE       = 0.002
+    //   water:   WATER_DEPTH_FUDGE_RASTER  = 0.0025 (TERRAIN + 0.0005)
     vec4 clip = terrainMVP * vec4(worldPos, 1.0);
     float rhw = 1.0 / clip.w;
     vec3 screen;
     screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
     screen.y = clip.y * rhw * terrainViewport.y + terrainViewport.w;
-    screen.z = clip.z * rhw + 0.0025;
+    screen.z = clip.z * rhw + WATER_DEPTH_FUDGE_RASTER;  // RASTER regime 0.0025 (its real peer = CPU raster)
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
     gl_Position = vec4(ndc.xyz * absW, absW);

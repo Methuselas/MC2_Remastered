@@ -37,12 +37,12 @@ extern "C" int             gos_terrain_indirect_getRecipeMapSide();
 extern "C" int             gos_terrain_indirect_getRecipeQuadCount();
 extern "C" GLuint          gos_terrain_lighting_getOutputSSBO();
 
-// TERRAIN_DEPTH_FUDGE: not in a shared header; mirrors gos_terrain_indirect.cpp:1243
-// which itself mirrors quad.cpp:1911. Use the same value so the SOLID mask predicate
-// has bit-identical threshold to PackThinRecordsForFrame (parity requirement).
-#ifndef TERRAIN_DEPTH_FUDGE
-static constexpr float TERRAIN_DEPTH_FUDGE = 0.001f;
-#endif
+// (Removed dead TERRAIN_DEPTH_FUDGE define 2026-05-16: stale 0.001f with
+// zero consumers since the pz-cull predicate was retired in the VPL Step 4
+// pz-write retirement (pzVisible=true). It was also DESYNCED (0.001 vs the
+// 0.002 everyone else used) and its comment was doubly stale -- a latent
+// trap if a pz-cull were ever re-introduced here. Depth bias is now
+// single-sourced in mclib/terrain_depth_bias.h. VPL-deferred item 10.)
 
 using WaterStream::WaterRecipe;
 

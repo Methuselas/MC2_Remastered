@@ -1,4 +1,5 @@
 //#version 430 (provided by makeProgram prefix)
+#include <include/terrain_depth_bias.hglsl>  // single-source TERRAIN/WATER_DEPTH_FUDGE
 // GL_ARB_shader_draw_parameters extension + #define MC2_WATER_MDI 1
 // are prepended by the host via the makeProgram preamble (not declared here).
 // gl_DrawIDARB is used below (ARB-suffixed name for 4.3 compat).
@@ -274,7 +275,7 @@ void main() {
     // Three-tier z-ordering: terrain=+0.002, water=+0.003 (delta 0.001 so water
     // loses GL_LEQUAL to already-drawn terrain at shorelines; wins on open water).
     // Full change history and drift rationale: gos_terrain_water_fast.vert lines 327-363.
-    screen.z = clip.z * rhw + 0.003;
+    screen.z = clip.z * rhw + WATER_DEPTH_FUDGE_FAST;  // FAST regime 0.003; see terrain_depth_bias.hglsl
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
     gl_Position = vec4(ndc.xyz * absW, absW);

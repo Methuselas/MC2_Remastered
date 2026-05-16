@@ -1,4 +1,5 @@
 //#version 430 (provided by makeProgram prefix)
+#include <include/terrain_depth_bias.hglsl>  // single-source TERRAIN/WATER_DEPTH_FUDGE
 //
 // Stage 2 of the renderWater architectural slice. Pairs with gos_tex_vertex.frag
 // (the existing water FS) — this VS produces the same Color/Texcoord/FogValue
@@ -361,7 +362,7 @@ void main() {
     // Future drift check: keep delta = water - terrain ≈ 0.001 in current depth
     // regime. Doubling the absolute terrain fudge is fine; doubling the delta is
     // not.
-    screen.z = clip.z * rhw + 0.003;
+    screen.z = clip.z * rhw + WATER_DEPTH_FUDGE_FAST;  // FAST regime 0.003; see terrain_depth_bias.hglsl
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
     gl_Position = vec4(ndc.xyz * absW, absW);

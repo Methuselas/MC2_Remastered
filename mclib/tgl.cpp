@@ -2865,7 +2865,10 @@ uint32_t TG_Shape::ResubmitCachedLightData()
 	return mcTextureManager->addLightDataStructure(&lightData_);
 }
 
-#define TERRAIN_DEPTH_FUDGE		(0.000f)
+// (Removed dead #define TERRAIN_DEPTH_FUDGE (0.000f) 2026-05-16: zero
+// consumers in this TU; a translation-unit-local trap if any future
+// quad-style emit were added here. Bias single-sourced in
+// mclib/terrain_depth_bias.h. VPL-deferred item 10.)
 //-------------------------------------------------------------------------------
 //This function takes the current listOfVisibleFaces and draws them using
 //gos_DrawTriangle.

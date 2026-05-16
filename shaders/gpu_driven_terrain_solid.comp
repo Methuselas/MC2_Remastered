@@ -1,4 +1,5 @@
 // shaders/gpu_driven_terrain_solid.comp — Phase C Stage 2 (GPU-direct)
+#include <include/terrain_depth_bias.hglsl>  // single-source TERRAIN_DEPTH_FUDGE (gate-only here)
 //
 // Cull/pack pass for terrain SOLID quads. One invocation per recipe slot
 // (u_windowCount = g_denseRecipes.size() = realVerticesMapSide²).
@@ -194,12 +195,12 @@ uniform mat4 u_terrainMVP;
 uniform float u_worldUnitsPerVertex;  // Terrain::worldUnitsPerVertex; probe-5 spread check
 
 // ---------------------------------------------------------------------------
-// Depth fudge — matches TERRAIN_DEPTH_FUDGE at gos_terrain_indirect.cpp.
-// Mirrors PackThinRecordsForFrame and gos_terrain_thin.vert:176.
-// Doubled 0.001→0.002 post glClipControl(ZERO_TO_ONE); see quad.cpp:1921.
-// Gate is pz_adj ∈ [0,1), equivalent to pz ∈ [-FUDGE, 1-FUDGE).
+// Depth fudge — GATE ONLY (pz_adj ∈ [0,1) cull threshold, equivalent to
+// pz ∈ [-FUDGE, 1-FUDGE)); the indirect terrain DRAW depth is emitted by
+// gos_terrain_thin.vert. Value single-sourced from terrain_depth_bias.hglsl
+// (was a hand-mirrored 0.002 literal; 2026-05-16 VPL-#10 single-source).
 // ---------------------------------------------------------------------------
-const float kTerrainDepthFudge = 0.002;
+const float kTerrainDepthFudge = TERRAIN_DEPTH_FUDGE;
 
 // ---------------------------------------------------------------------------
 // projectZ — project world-space position through u_terrainMVP and return

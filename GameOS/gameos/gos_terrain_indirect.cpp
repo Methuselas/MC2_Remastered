@@ -1424,13 +1424,12 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
 // tex_resolve — lazy per-frame memoization. Header includes txmmgr.h.
 #include "../../mclib/tex_resolve_table.h"
 
-// Include TERRAIN_DEPTH_FUDGE for the per-tri pz check.
-// Defined in quad.cpp as a local constant, re-stated here.
-// sync: quad.cpp:1921 uses FUDGE=0.002f (doubled post glClipControl ZERO_TO_ONE).
-// gos_terrain_thin.vert:176 also uses 0.002. Keep all three in lockstep.
-#ifndef TERRAIN_DEPTH_FUDGE
-static constexpr float TERRAIN_DEPTH_FUDGE = 0.002f;
-#endif
+// TERRAIN_DEPTH_FUDGE for the per-tri pz check: single source of truth is
+// mclib/terrain_depth_bias.h (was a re-stated local constexpr; the old
+// #ifndef guard defended against a quad.cpp MACRO collision that the
+// constexpr header eliminates). Consumer below uses it unqualified.
+#include "../../mclib/terrain_depth_bias.h"
+using mc2depth::TERRAIN_DEPTH_FUDGE;
 
 namespace {
 
