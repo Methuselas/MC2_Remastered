@@ -52,12 +52,12 @@ uniform vec4  terrainViewport;
 uniform float waterElevation;
 uniform float frameCos;
 
-vec4 unpackARGB(uint packed) {
+vec4 unpackARGB(uint bits) {
     return vec4(
-        float((packed >> 16u) & 0xFFu) / 255.0,
-        float((packed >>  8u) & 0xFFu) / 255.0,
-        float((packed       ) & 0xFFu) / 255.0,
-        float((packed >> 24u) & 0xFFu) / 255.0
+        float((bits >> 16u) & 0xFFu) / 255.0,
+        float((bits >>  8u) & 0xFFu) / 255.0,
+        float((bits       ) & 0xFFu) / 255.0,
+        float((bits >> 24u) & 0xFFu) / 255.0
     );
 }
 

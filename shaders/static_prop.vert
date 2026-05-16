@@ -286,14 +286,14 @@ void main() {
         // Alpha is always 0xFF to match CPU tgl.cpp:2225 which hardcodes
         // (0xFF << 24) and ignores the raw aRGBLight alpha byte.
         uint a8 = 255u;
-        uint packed = b8 | (g8 << 8) | (r8 << 16) | (a8 << 24);
+        uint bits = b8 | (g8 << 8) | (r8 << 16) | (a8 << 24);
         // gl_VertexID = IBO[i] + baseVertex (from glDrawElementsInstancedBaseVertex).
         // Subtract u_parityBaseVertex (the type's VBO baseVertex) to get the
         // type-local index in [0, u_parityVertsPerType). This keeps the write
         // in-bounds for types whose VBO region doesn't start at 0.
         int localVert = gl_VertexID - u_parityBaseVertex;
         int idx = gl_InstanceID * u_parityVertsPerType + localVert;
-        parityOut_.parityOut[idx] = packed;
+        parityOut_.parityOut[idx] = bits;
 
         // Addition 3 (Approach A): diagnostic numLights capture.
         // When u_parityNumLightsDebugMode==1 and this is the (inst=0, vert=0)
