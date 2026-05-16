@@ -255,6 +255,13 @@ def main():
                             "MC2_TERRAIN_INDIRECT_TRACE",
                             # Ring-buffer hazard probe (raster-triangle bug)
                             "MC2_RING_TRACE",
+                            # Probe 7: force glFinish() between compute and draw
+                            "MC2_RING_FORCE_FINISH",
+                            # GPU object batcher gate (bisect partner for terrain bug)
+                            "MC2_GPU_OBJECTS",
+                            # Mask-dispatch (pre-bake-terrain merge)
+                            "MC2_TERRAIN_MASK_DISPATCH",
+                            "MC2_TERRAIN_MASK_DISPATCH_PARITY",
                             "MC2_TERRAIN_INDIRECT_MINE",
                             "MC2_TERRAIN_INDIRECT_OVERLAY",
                             "MC2_TERRAIN_INDIRECT_OVERLAY_PARITY_CHECK",
