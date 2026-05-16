@@ -1233,13 +1233,17 @@ void gosPostProcess::buildStaticLightMatrix(float sunDirX, float sunDirY, float 
         1
     };
 
-    // Ortho covers full map; near/far envelope the full elevation range
+    // Ortho covers full map; near/far envelope the full elevation range.
+    // Z-row emits clip-z in [0,1] (near->0, far->1) to match the engine-global
+    // glClipControl(GL_ZERO_TO_ONE) set in gameosmain.cpp. Mirrors the scene
+    // ortho precedent camera.cpp:2032/2037; the classic [-1,1] form clipped the
+    // near half of the light frustum away (wedge atlas / half-map shadow).
     float nearP = 1.0f, farP = 2.0f * r;
     float ortho[16] = {
         1.0f/r, 0, 0, 0,
         0, 1.0f/r, 0, 0,
-        0, 0, -2.0f/(farP - nearP), 0,
-        0, 0, -(farP + nearP)/(farP - nearP), 1
+        0, 0, -1.0f/(farP - nearP), 0,
+        0, 0, -nearP/(farP - nearP), 1
     };
 
     for (int col = 0; col < 4; col++) {
@@ -1252,6 +1256,52 @@ void gosPostProcess::buildStaticLightMatrix(float sunDirX, float sunDirY, float 
     }
 
     fprintf(stderr, "gosPostProcess: rendering static shadows (map half-extent=%.0f)\n", mapHalfExtent);
+
+    // [SHADOWFRUSTUM v1] VPL-#shadow: prove the static-shadow CLIPPER is
+    // correct (user suspected light/clipper; render-expert grep says it's
+    // feed-scope, not the matrix). INERT, env MC2_DEBUG_SHADOW_FRUSTUM,
+    // one-shot (function early-returns on staticLightMatrixBuilt_ latch).
+    // Input scalars only -- NO staticLightSpaceMatrix_[] slot reads (the
+    // matrix-index discipline lesson). If orthoHalf == mapHalfExtent*1.485
+    // and the map's real half-size, the clipper covers the FULL map ->
+    // the bug is definitively the FEED (camera-windowed terrain), not the
+    // light/clipper. buildCount>1 would mean the latch resets (rebuild).
+    if (getenv("MC2_DEBUG_SHADOW_FRUSTUM") != nullptr) {
+        static int s_buildCount = 0;
+        ++s_buildCount;
+        fprintf(stderr,
+            "[SHADOWFRUSTUM v1] event=build n=%d sunDirIn=(%.4f,%.4f,%.4f) "
+            "sunDirNorm=(%.4f,%.4f,%.4f) mapHalfExtent=%.1f orthoHalf(r)=%.1f "
+            "near=%.2f far=%.2f coversWorldXY=[-%.1f,%.1f]\n",
+            s_buildCount, sunDirX, sunDirY, sunDirZ, fx, fy, fz,
+            mapHalfExtent, r, nearP, farP, r, r);
+    }
+
+    // [SHADOWZRANGE v1] VPL-#10: prove the [0,1] ZERO_TO_ONE conversion is
+    // correct. Transform map center + 4 corners (z=0) through the COMPOSITE
+    // staticLightSpaceMatrix_ (column-major: [col*4+row]); every clip.z/clip.w
+    // MUST land in [0,1]. A sign error in the ortho z-row shows here as an
+    // out-of-range value BEFORE any GPU round-trip. Unconditional env-gated
+    // fprintf (assert is a no-op under RelWithDebInfo); one-shot via the
+    // staticLightMatrixBuilt_ latch.
+    if (getenv("MC2_DEBUG_SHADOW_ZRANGE") != nullptr) {
+        const float* M = staticLightSpaceMatrix_;
+        const float pts[5][3] = {
+            { 0.0f, 0.0f, 0.0f },
+            {  0.95f*r,  0.95f*r, 0.0f }, { -0.95f*r,  0.95f*r, 0.0f },
+            {  0.95f*r, -0.95f*r, 0.0f }, { -0.95f*r, -0.95f*r, 0.0f }
+        };
+        for (int i = 0; i < 5; i++) {
+            float px = pts[i][0], py = pts[i][1], pz = pts[i][2];
+            float cz = M[0*4+2]*px + M[1*4+2]*py + M[2*4+2]*pz + M[3*4+2];
+            float cw = M[0*4+3]*px + M[1*4+3]*py + M[2*4+3]*pz + M[3*4+3];
+            float ndc = (cw != 0.0f) ? cz / cw : 0.0f;
+            fprintf(stderr,
+                "[SHADOWZRANGE v1] event=static pt=%d world=(%.0f,%.0f,%.0f) "
+                "clipZ=%.5f clipW=%.5f ndcZ=%.5f inRange=%d\n",
+                i, px, py, pz, cz, cw, ndc, (ndc >= 0.0f && ndc <= 1.0f) ? 1 : 0);
+        }
+    }
 }
 
 void gosPostProcess::initDynamicShadows()
@@ -1361,12 +1411,15 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
         1
     };
 
+    // Z-row emits clip-z in [0,1] (near->0, far->1) for glClipControl
+    // (GL_ZERO_TO_ONE), lockstep with buildStaticLightMatrix above and the
+    // .xy-only sampler remap in shadow.hglsl / shadow_screen.frag.
     float nearP = 1.0f, farP = 2.0f * depthDist;
     float ortho[16] = {
         1.0f/xyRadius, 0, 0, 0,
         0, 1.0f/xyRadius, 0, 0,
-        0, 0, -2.0f/(farP - nearP), 0,
-        0, 0, -(farP + nearP)/(farP - nearP), 1
+        0, 0, -1.0f/(farP - nearP), 0,
+        0, 0, -nearP/(farP - nearP), 1
     };
 
     for (int col = 0; col < 4; col++) {
@@ -1375,6 +1428,32 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
             for (int k = 0; k < 4; k++)
                 sum += ortho[k * 4 + row] * view[col * 4 + k];
             dynamicLightSpaceMatrix_[col * 4 + row] = sum;
+        }
+    }
+
+    // [SHADOWZRANGE v1] VPL-#10: dynamic-path [0,1] verification. Rebuilds
+    // per frame -> one-shot via static counter. Transforms the snapped camera
+    // center + offsets through dynamicLightSpaceMatrix_; clip.z/clip.w MUST be
+    // in [0,1] (lockstep with the static probe + the .xy-only sampler remap).
+    if (getenv("MC2_DEBUG_SHADOW_ZRANGE") != nullptr) {
+        static int s_dynN = 0;
+        if (++s_dynN <= 1) {
+            const float* M = dynamicLightSpaceMatrix_;
+            const float pts[3][3] = {
+                { camX, camY, camZ },
+                { camX + 0.95f*xyRadius, camY + 0.95f*xyRadius, camZ },
+                { camX - 0.95f*xyRadius, camY - 0.95f*xyRadius, camZ }
+            };
+            for (int i = 0; i < 3; i++) {
+                float px = pts[i][0], py = pts[i][1], pz = pts[i][2];
+                float cz = M[0*4+2]*px + M[1*4+2]*py + M[2*4+2]*pz + M[3*4+2];
+                float cw = M[0*4+3]*px + M[1*4+3]*py + M[2*4+3]*pz + M[3*4+3];
+                float ndc = (cw != 0.0f) ? cz / cw : 0.0f;
+                fprintf(stderr,
+                    "[SHADOWZRANGE v1] event=dynamic pt=%d world=(%.0f,%.0f,%.0f) "
+                    "clipZ=%.5f clipW=%.5f ndcZ=%.5f inRange=%d\n",
+                    i, px, py, pz, cz, cw, ndc, (ndc >= 0.0f && ndc <= 1.0f) ? 1 : 0);
+            }
         }
     }
 
