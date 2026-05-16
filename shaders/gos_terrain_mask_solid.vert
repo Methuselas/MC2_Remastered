@@ -55,12 +55,12 @@ uniform float atlasOneOverWorldUnits;
 
 // Unpack ARGB uint to vec4. Stored byte-layout is BGRA in memory (= ARGB in
 // uint LE), matching legacy lightRGB packing.
-vec4 unpackARGB(uint packed) {
+vec4 unpackARGB(uint bits) {
     return vec4(
-        float((packed >> 16u) & 0xFFu) / 255.0,  // R
-        float((packed >>  8u) & 0xFFu) / 255.0,  // G
-        float((packed       ) & 0xFFu) / 255.0,  // B
-        float((packed >> 24u) & 0xFFu) / 255.0   // A
+        float((bits >> 16u) & 0xFFu) / 255.0,  // R
+        float((bits >>  8u) & 0xFFu) / 255.0,  // G
+        float((bits       ) & 0xFFu) / 255.0,  // B
+        float((bits >> 24u) & 0xFFu) / 255.0   // A
     );
 }
 
