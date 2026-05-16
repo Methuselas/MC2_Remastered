@@ -1462,6 +1462,15 @@ void Terrain::geometry (void)
 			fflush(stderr);
 		}
 	}
+	// Approach A (lag-free): reset the per-frame camera-windowed solid
+	// recipe-index window IMMEDIATELY before the slim loop that fills it.
+	// The slim loop runs BEFORE gos_terrain_indirect::ComputeDispatch()
+	// (called later in geometry()), so the window collected here is consumed
+	// by THIS frame's dispatch — same-frame, no 1-frame lag.  The append
+	// (inside the `if (rv->clipInfo)` block below) rides the existing slim
+	// iteration; NO new per-frame walk is introduced.
+	gos_terrain_indirect::BeginFrameSolidWindow();
+	const bool s_solidNarrowOn = gos_terrain_indirect::SolidWindowEnabled();
 	{
 		ZoneScopedN("Terrain::geometry slimReduce");
 		VertexPtr rv = vertexList;
@@ -1575,6 +1584,19 @@ void Terrain::geometry (void)
 			{
 				setObjBlockActive(rv->getBlockNumber(), true);
 				setObjVertexActive(rv->vertexNum,true);
+				// Approach A (lag-free collect): rv->vertexNum is the same
+				// map-stable vertexNum space as the recipe index / RecipeFor-
+				// VertexNum.  Appending every cull-active vertexNum is a
+				// correct SUPERSET — a non-corner/edge vn dispatches one
+				// thread that edge-skips/no-ops; it cannot drop a visible
+				// quad.  Gated on the recipe being live so window entries are
+				// always resolvable; NO corner/edge filter (correctness over
+				// thread-count optimization).
+				if (s_solidNarrowOn) {
+					const int32_t svn = (int32_t)rv->vertexNum;
+					if (gos_terrain_indirect::RecipeForVertexNum(svn))
+						gos_terrain_indirect::AppendSolidWindowCandidate(svn);
+				}
 			}
 
 			// VPL Step 8b re-home: Step 8b (12ad8dc) deleted the per-vertex

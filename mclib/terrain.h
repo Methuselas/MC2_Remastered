@@ -335,7 +335,18 @@ class Terrain
 		}
 		
 		void setObjVertexActive (long vertexNum, bool active);
-		
+
+		// Public read accessor for the cull active-set (Approach A: the slim
+		// loop's dilated visible-cull superset).  Static because both
+		// objVertexActive and realVerticesMapSide are class statics; bounds-
+		// checked so an out-of-range vn is a clean false, never an OOB read.
+		static bool getObjVertexActive (long vertexNum)
+		{
+			return (vertexNum >= 0 &&
+			        vertexNum < (realVerticesMapSide * realVerticesMapSide))
+			       ? objVertexActive[vertexNum] : false;
+		}
+
 		void clearObjVerticesActive (void);
 
 		void resetVisibleVertices(long maxVisibleVertices);

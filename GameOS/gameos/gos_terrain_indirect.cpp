@@ -84,6 +84,31 @@ bool IsTraceEnabled() {
     return s;
 }
 
+// Camera-windowed solid dispatch gate.  Default-ON (Approach A re-introduction
+// after 08bd3b2 hard-wired the dispatch to the FULL recipe range every frame,
+// camera-independent -> Terrain::IndirectDraw ~7.8ms zoomed-out on big maps).
+// Same idiom as IsEnabled() above: literal "0" => OFF == current HEAD
+// full-range behavior (the safety escape hatch); absent or anything else => ON.
+bool SolidWindowEnabled() {
+    static const bool s = []() {
+        const char* v = getenv("MC2_TERRAIN_SOLID_NARROW");
+        if (v && v[0] == '0' && v[1] == '\0') return false;
+        return true;
+    }();
+    return s;
+}
+
+// Parity-probe gate for the windowed dispatch (catastrophic-axis: a visible
+// quad dropped from the window).  Default-OFF; literal "1" arms it.  When off
+// the probe path does ZERO per-frame work (no ref build, no assert).
+bool IsSolidWindowParityEnabled() {
+    static const bool s = []() {
+        const char* v = getenv("MC2_TERRAIN_SOLID_WINDOW_PARITY");
+        return v && v[0] == '1' && v[1] == '\0';
+    }();
+    return s;
+}
+
 bool IsCostSplitEnabled() {
     static const bool s = []() {
         const char* v = getenv("MC2_TERRAIN_COST_SPLIT");
@@ -416,6 +441,26 @@ namespace {
 // Sized mapSide² when built; cleared on ResetDenseRecipe.
 std::vector<TerrainQuadRecipe> g_denseRecipes;
 std::vector<bool>              g_denseRecipeDirty;
+
+// ---------------------------------------------------------------------------
+// Camera-windowed solid dispatch (Approach A: GPU windowed-index buffer).
+// Structural twin of WaterStream's narrow path (gos_terrain_water_stream.cpp
+// BuildQuadWindowSSBO / g_quadWindowSsbo / g_quadWindowSsboCapacity).  std430
+// plain uint[] (4 B stride): each entry is a recipe index (= top-left
+// vertexNum).
+//
+// LIFECYCLE (LAG-FREE): terrain.cpp calls BeginFrameSolidWindow() then fills
+// g_solidWindowStaging in the SLIM LOOP (Terrain::geometry slimReduce), which
+// runs BEFORE gos_terrain_indirect::ComputeDispatch() consumes it later in
+// the SAME geometry() call.  Frame N's dispatch consumes frame N's window —
+// no 1-frame lag, so a moving camera cannot transiently vanish edge terrain.
+// Declared here (not with the other Stage-3 GLuint state) so the per-mission
+// ResetDenseRecipe() below can clear the staging + high-water mark (MAJOR-1).
+std::vector<uint32_t> g_solidWindowStaging;
+GLuint   g_solidQuadWindowSsbo     = 0;   // per-frame: recipe indices in camera window
+uint32_t g_solidQuadWindowCapacity = 0;   // CPU-side mirror of allocated size (bytes); NO readback
+uint32_t g_solidWindowMaxSeen      = 0;   // high-water mark for reserve sizing
+
 bool                           g_denseRecipeAnyDirty = false;
 GLuint                         g_recipeSSBO          = 0;
 int32_t                        g_recipeMapSide       = 0;
@@ -1069,6 +1114,13 @@ void ResetDenseRecipe() {
 
     g_denseRecipes.clear();
     g_denseRecipeDirty.clear();
+    // MAJOR-1 (Approach A): the camera-window staging + its monotonic high-
+    // water mark are per-mission state — clear them here alongside the recipe
+    // reset.  Without this, g_solidWindowMaxSeen carries a previous (larger)
+    // map's mark into a smaller map's reserve, and stale staging contents
+    // could be uploaded on the first frame before the slim loop runs.
+    g_solidWindowStaging.clear();
+    g_solidWindowMaxSeen         = 0;
     g_denseRecipeAnyDirty        = false;
     g_recipeMapSide              = 0;
     g_recipeReady                = false;
@@ -1437,6 +1489,9 @@ static GLuint  g_solidComputeProgram    = 0;
 // and no diagnostic atomicAdds run in the shader.
 static GLuint  g_solidBucketHeaderSsbo  = 0;
 static GLuint  g_terrainHandleLutSSBO   = 0;
+// Camera-windowed solid dispatch (Approach A) state — DECLARED EARLY (next to
+// g_denseRecipes) so the per-mission reset in ResetDenseRecipe() can clear it
+// (MAJOR-1).  Definitions live near g_denseRecipes; see the comment there.
 static GLuint  g_thinCanarySSBO         = 0;   // probe 6: separate buffer, never bound by bridge
 // Probe 8: MVP fingerprint at compute dispatch time, read by bridge at draw time.
 static uint32_t g_dispatchMvpFp      = 0;
@@ -1485,6 +1540,7 @@ static GLint g_locSolidMVP = -1;   // u_terrainMVP    (per-frame)
 // u_bucketHeaderTrace gates the demoted bucket-header SSBO writes in the
 // primary compute shader (MC2_BUCKET_HEADER_TRACE).
 static GLint g_locSolidBHT = -1;   // u_bucketHeaderTrace (per-frame int gate)
+static GLint g_locSolidUW  = -1;   // u_useWindow (per-frame: 1=windowed, 0=full-range identity)
 
 
 // Flag: whether ComputeDispatch() ran the GPU path this frame.
@@ -1922,6 +1978,191 @@ static uint32_t UploadTerrainHandleLUT() {
     return (uint32_t)g_denseRecipes.size();
 }
 
+// ---------------------------------------------------------------------------
+// BuildSolidQuadWindowSSBO — Approach A.  Structural twin of WaterStream's
+// BuildQuadWindowSSBO (gos_terrain_water_stream.cpp:1109).  Uploads the
+// per-frame camera-windowed list of recipe indices collected by
+// AppendSolidWindowCandidate() into a std430 plain-uint[] SSBO (4 B stride,
+// NOT the old 16 B SolidQuadWindowEntry — no struct, no static_assert
+// lockstep; the GPU re-derives thSlot/cementWord/uvMode from the recipe).
+//
+// Lazy-grow capped at kMaxThinRecords using the CPU-side capacity mirror
+// (g_solidQuadWindowCapacity) — NO glGetBufferSubData / glMapBuffer.
+//
+// Return value == GPU dispatch count:
+//   * narrow ON  && staging non-empty: window count; *outUseWindow = 1.
+//   * narrow OFF || staging empty:     full g_denseRecipes.size() fallback;
+//     *outUseWindow = 0 (shader uses identity vn0 = id == current HEAD path).
+// The empty-on-armed-frame case (e.g. the 1-frame lag's very first armed
+// frame, before the loop has run once) falls back to full-range so terrain
+// is never blank.
+static uint32_t BuildSolidQuadWindowSSBO(int* outUseWindow) {
+    const bool narrowOn = gos_terrain_indirect::SolidWindowEnabled();
+
+    if (!narrowOn || g_solidWindowStaging.empty()) {
+        if (outUseWindow) *outUseWindow = 0;
+        return (uint32_t)g_denseRecipes.size();
+    }
+
+    // Cap the window at the thin-record capacity — the GPU output array is
+    // kMaxThinRecords entries; dispatching more invocations than that cannot
+    // admit more records, and over-large windows waste GPU threads.
+    uint32_t windowCount = (uint32_t)g_solidWindowStaging.size();
+    if (windowCount > (uint32_t)kMaxThinRecords)
+        windowCount = (uint32_t)kMaxThinRecords;
+    if (windowCount == 0) {
+        if (outUseWindow) *outUseWindow = 0;
+        return (uint32_t)g_denseRecipes.size();
+    }
+
+    const uint32_t bytesNeeded = windowCount * (uint32_t)sizeof(uint32_t);
+
+    // Lazy-grow via the CPU-side capacity mirror (no GPU round-trip).  Cap the
+    // allocation at kMaxThinRecords entries (the hard upper bound).
+    if (g_solidQuadWindowSsbo != 0 && g_solidQuadWindowCapacity < bytesNeeded) {
+        glDeleteBuffers(1, &g_solidQuadWindowSsbo);
+        g_solidQuadWindowSsbo     = 0;
+        g_solidQuadWindowCapacity = 0;
+    }
+    if (g_solidQuadWindowSsbo == 0) {
+        const uint32_t cap =
+            (uint32_t)(kMaxThinRecords * sizeof(uint32_t));
+        glGenBuffers(1, &g_solidQuadWindowSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidQuadWindowSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)cap, nullptr,
+                     GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        g_solidQuadWindowCapacity = cap;
+    }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidQuadWindowSsbo);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)bytesNeeded,
+                    g_solidWindowStaging.data());
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // -----------------------------------------------------------------------
+    // PARITY PROBE (catastrophic-axis).  Active ONLY under
+    // MC2_TERRAIN_SOLID_WINDOW_PARITY=1 — zero hot cost when off.
+    //
+    // Non-tautological by construction: `win` is built from
+    // g_solidWindowStaging (produced by terrain.cpp's slim-loop predicate:
+    // clipInfo cull-active + RecipeForVertexNum).  `ref` is built by an
+    // INDEPENDENT producer here — iterating g_denseRecipes indices and
+    // applying: Terrain::getObjVertexActive(vn) (the slim loop's dilated
+    // visible-cull superset, the SAME source-of-truth the corrected collector
+    // rides) AND the GPU shader keep predicate MINUS pz (edge-skip +
+    // recipe-resolvable + _wp2!=0 + LUT-resolvable-or-cement).  Two different
+    // producers (g_denseRecipes/objVertexActive vs g_solidWindowStaging), two
+    // different data sources — ref does NOT read g_solidWindowStaging.
+    //
+    // Catastrophic direction only: a recipe that is cull-active AND the GPU
+    // WOULD keep (ref-member) AND that is a live drawable quad
+    // (RecipeForVertexNum non-null) but is ABSENT from `win` == a dropped
+    // visible quad == terrain-vanish.  With identical source-of-truth and
+    // same-frame consumption, dropped MUST be 0 steady-state AND under camera
+    // motion; any nonzero is logged (gated stderr, NOT assert — assert is a
+    // no-op under RelWithDebInfo's /DNDEBUG).
+    if (gos_terrain_indirect::IsSolidWindowParityEnabled()) {
+        const long mapSide = Terrain::realVerticesMapSide;
+        const size_t N = g_denseRecipes.size();
+
+        // win membership set (recipe idx -> present this frame's window).
+        static std::vector<uint8_t> winSet;
+        winSet.assign(N, 0u);
+        for (uint32_t i = 0; i < windowCount; ++i) {
+            const uint32_t v = g_solidWindowStaging[i];
+            if (v < (uint32_t)N) winSet[v] = 1u;
+        }
+
+        uint64_t refVisible = 0;
+        uint64_t dropped    = 0;
+        if (mapSide > 0) {
+            for (size_t vn = 0; vn < N; ++vn) {
+                const long mx = (long)vn % mapSide;
+                const long my = (long)vn / mapSide;
+                // GPU edge-skip (gpu_driven_terrain_solid.comp:244).
+                if (mx >= mapSide - 1 || my >= mapSide - 1) continue;
+
+                // MAJOR-2: ref must add the cull-active term so it matches the
+                // corrected (slim-loop / dilated-cull) collector's source-of-
+                // truth.  Without this the probe would false-alarm on every
+                // off-window-but-GPU-keepable recipe.  This is the SAME
+                // objVertexActive[] the slim loop writes via
+                // setObjVertexActive(rv->vertexNum,true) — read independently
+                // here, NOT via g_solidWindowStaging.
+                if (!Terrain::getObjVertexActive((long)vn)) continue;
+
+                const TerrainQuadRecipe& rec = g_denseRecipes[vn];
+                uint32_t nodeId = 0u, cementWord = 0u;
+                memcpy(&nodeId,     &rec._wp2, 4);
+                memcpy(&cementWord, &rec._wp3, 4);
+                const bool cementQuad = (cementWord & 0x80000000u) != 0u;
+
+                // GPU thSlot gate (comp:285-294): non-cement quads need a
+                // resolvable nodeId; cement quads pass regardless.
+                bool gpuKeep;
+                if (nodeId == 0u || nodeId >= (uint32_t)MC_MAXTEXTURES) {
+                    gpuKeep = cementQuad;
+                } else {
+                    const uint32_t th =
+                        static_cast<uint32_t>(tex_resolve((DWORD)nodeId));
+                    const bool resolvable =
+                        (th != 0u && th != 0xffffffffu);
+                    gpuKeep = resolvable || cementQuad;
+                }
+                if (!gpuKeep) continue;
+
+                // Restrict to quads that are actually live drawables this
+                // frame (a recipe slot with no current quad cannot vanish).
+                if (!gos_terrain_indirect::RecipeForVertexNum((int32_t)vn)) continue;
+
+                ++refVisible;
+                if (vn < N && winSet[vn] == 0u) ++dropped;
+            }
+        }
+
+        static int      s_parityFrame    = 0;
+        static uint32_t s_parityMaxWin   = 0;
+        static uint64_t s_parityTotDrop  = 0;
+        const int frame = s_parityFrame++;
+        if (windowCount > s_parityMaxWin) s_parityMaxWin = windowCount;
+        s_parityTotDrop += dropped;
+
+        if (frame < 64) {
+            fprintf(stderr,
+                "[TERRAIN_SOLID_WINDOW v1] event=frame frame=%d window=%u "
+                "ref_visible=%u dropped=%u\n",
+                frame, windowCount, (unsigned)refVisible,
+                (unsigned)dropped);
+            fflush(stderr);
+        }
+        if (frame > 0 && (frame % 600) == 0) {
+            fprintf(stderr,
+                "[TERRAIN_SOLID_WINDOW v1] event=summary frames=%u "
+                "max_window=%u total_dropped=%llu\n",
+                (unsigned)frame, s_parityMaxWin,
+                (unsigned long long)s_parityTotDrop);
+            fflush(stderr);
+        }
+        // CRITICAL-1: catastrophic-axis tripwire — gated unconditional stderr,
+        // NOT assert.  The project mandates --config RelWithDebInfo, under
+        // which MSVC injects /DNDEBUG (CMakeLists does not strip it), so
+        // assert() compiles to a no-op and a dropped visible quad would pass
+        // silently.  fprintf always fires regardless of NDEBUG.
+        if (dropped) {
+            fprintf(stderr,
+                "[TERRAIN_SOLID_WINDOW v1] event=catastrophic dropped=%llu "
+                "frame=%d\n",
+                (unsigned long long)dropped, frame);
+            fflush(stderr);
+        }
+        (void)dropped;
+    }
+
+    if (outUseWindow) *outUseWindow = 1;
+    return windowCount;
+}
+
 }  // anonymous namespace (Stage 3 helpers)
 
 namespace gos_terrain_indirect {
@@ -1955,6 +2196,36 @@ void BeginFrame() {
         fflush(stderr);
     }
     s_frameSolidArmed = false;
+}
+
+// ---------------------------------------------------------------------------
+// BeginFrameSolidWindow / AppendSolidWindowCandidate — camera-windowed solid
+// dispatch collector.  Structural twin of WaterStream::BeginFrameNarrow /
+// AppendNarrowCandidate (gos_terrain_water_stream.cpp:149/161).  Called from
+// terrain.cpp's existing setupTextures loop; NO new walk is introduced.
+// ---------------------------------------------------------------------------
+void BeginFrameSolidWindow() {
+    if (!SolidWindowEnabled()) return;
+    // Reserve last-frame max + 10% slack + 64, mirroring water :149-158.
+    // vector::clear on a trivially-destructible uint32_t is a size reset; no
+    // allocation occurs in the hot loop once the high-water mark is reached.
+    const size_t reserve =
+        (size_t)(g_solidWindowMaxSeen + (g_solidWindowMaxSeen / 10) + 64);
+    if (g_solidWindowStaging.capacity() < reserve)
+        g_solidWindowStaging.reserve(reserve);
+    g_solidWindowStaging.clear();
+}
+
+void AppendSolidWindowCandidate(int32_t vn0) {
+    // Caller (terrain.cpp) asserts the quad already passed a predicate that is
+    // STRICTLY LOOSER than the GPU keep-set: corners non-null, vertexNum >= 0,
+    // and RecipeForVertexNum(vn0) != nullptr.  It applies NO pz, NO
+    // terrainHandle, NO _wp2 filter — the GPU shader still does all of those
+    // per-thread.  Looseness == guaranteed superset == no terrain-vanish.
+    if (vn0 < 0) return;
+    g_solidWindowStaging.push_back((uint32_t)vn0);
+    if (g_solidWindowStaging.size() > g_solidWindowMaxSeen)
+        g_solidWindowMaxSeen = (uint32_t)g_solidWindowStaging.size();
 }
 
 bool ComputePreflight() {
@@ -2102,6 +2373,8 @@ void ComputeDispatch() {
         // Step 2b: u_bucketHeaderTrace — gate for hdr.{visibleCount,pad1_,pad2_}
         // writes in the primary compute shader.
         g_locSolidBHT = glGetUniformLocation(g_solidComputeProgram, "u_bucketHeaderTrace");
+        // Approach A: window-vs-identity gate for the solid index buffer.
+        g_locSolidUW  = glGetUniformLocation(g_solidComputeProgram, "u_useWindow");
         // Upload constants once — these never change across frames.
         glUseProgram(g_solidComputeProgram);
         const GLint locMTR  = glGetUniformLocation(g_solidComputeProgram, "u_maxThinRecords");
@@ -2141,8 +2414,19 @@ void ComputeDispatch() {
     }
 
     // Upload per-frame terrain handle LUT (nodeId → gosHandle, ~20-50 entries).
-    // GPU dispatches over full recipe range and culls edge/invalid quads itself.
-    const uint32_t windowCount = UploadTerrainHandleLUT();
+    // KEPT from 08bd3b2: the shader still resolves thSlot via LUT[nodeId] from
+    // recipe._wp2 and cementWord from _wp3 regardless of windowing.  The LUT
+    // upload is O(uniqueTextures); its return value (full recipe count) is
+    // discarded — the dispatch count now comes from the camera window.
+    (void)UploadTerrainHandleLUT();
+
+    // Approach A: build the per-frame camera-windowed recipe-index SSBO from
+    // the list collected by AppendSolidWindowCandidate() during terrain.cpp's
+    // setupTextures loop (NO new walk).  s_solidUseWindow=1 when the window is
+    // active; 0 == fall back to full-range identity (current HEAD behavior /
+    // safety escape hatch / first armed frame before the loop has run).
+    int s_solidUseWindow = 0;
+    const uint32_t windowCount = BuildSolidQuadWindowSSBO(&s_solidUseWindow);
     if (windowCount == 0) {
         // Zero visible quads this frame; leave armed — DrawIndirect fires with
         // cmd.count=0 (after bucket-clear + cmd-patch). No visual artifact.
@@ -2498,7 +2782,13 @@ void ComputeDispatch() {
 
     // ------------------------------------------------------------------
     // DISPATCH 1: cull/pack (gpu_driven_terrain_solid.comp)
-    // Bindings: 0=recipe, 1=lighting, 2=terrainHandleLut, 3=thin, 6=header
+    // Bindings: 0=recipe, 1=lighting, 2=terrainHandleLut, 3=thin, 6=header,
+    //           7=canary, 8=cmdbuf, 9=solid window (Approach A).
+    // NOTE: the plan named binding 7 for the window SSBO, but on this branch
+    // bindings 7 (canary) and 8 (cmdbuf) are already occupied (post-VPL
+    // retirement additions that did not exist when 08bd3b2 freed binding 2).
+    // Binding 9 is the first free slot — chosen to avoid the collision the
+    // plan explicitly warned against.
     // ------------------------------------------------------------------
     glUseProgram(g_solidComputeProgram);
 
@@ -2522,6 +2812,12 @@ void ComputeDispatch() {
     // the atomicAdd).  Coherent qualifier on the shader-side declaration
     // covers cross-target visibility within the frame.
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, g_indirectCmdBuffer);
+    // Approach A: camera-windowed recipe-index buffer.  Only meaningful when
+    // s_solidUseWindow==1; bound unconditionally (when allocated) so the
+    // shader's solidWin[] declaration always resolves.  When the window is
+    // inactive the shader uses identity (vn0 = id) and never reads solidWin[].
+    if (g_solidQuadWindowSsbo != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, g_solidQuadWindowSsbo);
 
     if (g_locSolidWC < 0 || g_locSolidMVP < 0) {
         fprintf(stderr,
@@ -2542,6 +2838,11 @@ void ComputeDispatch() {
     // is safer than once-at-compile.
     if (g_locSolidBHT >= 0)
         glUniform1i(g_locSolidBHT, s_bucketHeaderTrace ? 1 : 0);
+    // Approach A: 1 == read vn0 from solidWin[id]; 0 == identity vn0 = id
+    // (full-range fallback == current HEAD behavior).  CPU-side value, no
+    // GPU readback.
+    if (g_locSolidUW >= 0)
+        glUniform1i(g_locSolidUW, s_solidUseWindow);
 
     {
         const float* mvp = gos_GetTerrainMVPMat4();

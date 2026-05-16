@@ -163,6 +163,14 @@ layout(std430, binding = 7) coherent  writeonly buffer Canary    { uint         
 // still also writes this slot in commit 2a (dual-path parity), so coherent is
 // load-bearing.  Binding 8 chosen to not collide with bindings 0..7 above.
 layout(std430, binding = 8) coherent  buffer CmdBuf   { DrawArraysIndirectCommand cmds[];             };
+// Approach A (camera-windowed dispatch).  Per-frame uint[] of recipe indices
+// (= top-left vertexNums) for the camera window collected on the CPU from the
+// existing setupTextures loop.  Only read when u_useWindow != 0.  Plain uint
+// (4 B std430 stride) — no struct, no lockstep static_assert; thSlot /
+// cementWord / uvMode are re-derived per-thread from the recipe + LUT below.
+// Binding 9: bindings 0..8 are occupied on this branch (see C++ comment in
+// ComputeDispatch — the plan's binding 7 collides with the canary SSBO).
+layout(std430, binding = 9) readonly  buffer SolidWin { uint                     solidWin[];         };
 
 // ---------------------------------------------------------------------------
 // Uniforms.
@@ -179,6 +187,9 @@ uniform int  u_alphaOverride;    // 1 when Terrain::terrainTextures2 != nullptr
 // and the in-shader writes are skipped.  Reads must still be guarded so we
 // do not touch an unbound slot.
 uniform int  u_bucketHeaderTrace;
+// Approach A: 1 == vn0 = solidWin[id] (camera-windowed dispatch); 0 == vn0 = id
+// (full-range identity == 08bd3b2 HEAD behavior / safety fallback).
+uniform int  u_useWindow;
 uniform mat4 u_terrainMVP;
 uniform float u_worldUnitsPerVertex;  // Terrain::worldUnitsPerVertex; probe-5 spread check
 
@@ -236,14 +247,21 @@ void main() {
     uint id = uint(gl_GlobalInvocationID.x);
     if (id >= uint(u_windowCount)) return;
 
-    // id is the recipe index (= top-left vertexNum vn0 in the dense recipe array).
-    // Skip edge quads — no right or bottom neighbor exists.
+    // Approach A: when u_useWindow != 0, id indexes the per-frame camera
+    // window (solidWin[]) whose entries are recipe indices; otherwise id IS
+    // the recipe index (full-range identity == the 08bd3b2 HEAD behavior).
+    // ALL downstream logic operates on vn0 (the recipe index) unchanged.
+    uint vn0 = (u_useWindow != 0) ? solidWin[id] : id;
+
+    // Skip edge quads — no right or bottom neighbor exists.  mx_/my_ are
+    // derived from vn0 (the recipe index), NOT id: under windowing id is a
+    // dense window slot, so id%ms_ would be meaningless.  Under identity
+    // vn0==id so this is byte-identical to the prior code.
     uint ms_  = uint(u_mapSide);
-    uint mx_  = id % ms_;
-    uint my_  = id / ms_;
+    uint mx_  = vn0 % ms_;
+    uint my_  = vn0 / ms_;
     if (mx_ >= ms_ - 1u || my_ >= ms_ - 1u) return;
 
-    uint vn0 = id;
     TerrainQuadRecipe r = recipes[vn0];
 
     // ─── Probe 5 (recipe corner-spread sanity check, 2026-05-14) ─────────

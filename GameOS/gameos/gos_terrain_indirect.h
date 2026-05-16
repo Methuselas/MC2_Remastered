@@ -60,6 +60,11 @@ bool IsEnabled();              // MC2_TERRAIN_INDIRECT
 bool IsParityCheckEnabled();   // MC2_TERRAIN_INDIRECT_PARITY_CHECK
 bool IsTraceEnabled();         // MC2_TERRAIN_INDIRECT_TRACE — gates
                                 // [TERRAIN_INDIRECT v1] event=... lifecycle prints
+bool SolidWindowEnabled();        // MC2_TERRAIN_SOLID_NARROW — default-ON;
+                                  // literal "0" => OFF = full-range HEAD path
+                                  // (the safety escape hatch).  Approach A.
+bool IsSolidWindowParityEnabled();// MC2_TERRAIN_SOLID_WINDOW_PARITY — default
+                                  // OFF; "1" arms the catastrophic-axis probe.
 bool IsCostSplitEnabled();     // MC2_TERRAIN_COST_SPLIT — gates Stage 1
                                 // per-frame steady_clock accumulators in quad.cpp.
                                 // When unset, the RAII timer scopes are zero-cost
@@ -337,6 +342,14 @@ int  ParityCompareRecipeFrame();
 //                             MC2_TERRAIN_INDIRECT=0.
 // ---------------------------------------------------------------------------
 void BeginFrame();              // reset armed flag; call unconditionally once per frame
+// Approach A: camera-windowed solid dispatch collector.  Structural twin of
+// WaterStream::BeginFrameNarrow / AppendNarrowCandidate.  BeginFrameSolidWindow
+// resets the per-frame recipe-index window (no-op when MC2_TERRAIN_SOLID_NARROW
+// =0); AppendSolidWindowCandidate is called from terrain.cpp's existing
+// setupTextures loop with vn0 = quad.vertices[0]->vertexNum (caller guarantees
+// the loose superset predicate — see terrain.cpp).  NO new walk.
+void BeginFrameSolidWindow();
+void AppendSolidWindowCandidate(int32_t vn0);
 bool ComputePreflight();
 // v4 split: ComputePreflight() does arming gates only. ComputeDispatch()
 // runs after Phase 1's PackAndDispatch at terrain.cpp so it can read
