@@ -224,24 +224,39 @@ one header constant + apply decal/water bias as distance-proportional /
 `glPolygonOffset`-equivalent rather than a constant NDC offset. Own slice
 (has a design fork: polygon-offset vs distance-scaled bias).
 
-## 11. Invisible mechs on mc2_05/07 (NOT VPL fallout - orthogonal)
+## 11. Invisible mechs on mc2_04/05 FROM A SAVEGAME (pre-existing, NOT VPL)
 
-**What:** Some mechs render invisible on campaign missions mc2_05 and
-mc2_07 (others unconfirmed). Reported 2026-05-15.
+**What:** Some mechs render invisible on campaign missions mc2_04 and
+mc2_05 **only when the mission is loaded from a savegame**; fresh mission
+start is clean. Reported 2026-05-15.
 
-**Why deferred / why NOT a VPL regression:** The slim-loop terrain cull
-producer is BYTE-IDENTICAL to the pre-8c production fast path (advisor
-verified `clipInfo`/`setObjBlockActive`/`setObjVertexActive` against
-`0c8e06b^`), 250ab4a/6c9d4b5 are additive/cull-bit-identical, and the
-cull consumers (`objmgr.cpp`/`mech3d.cpp`/`gameobj.cpp`) have zero commits
-in the retirement range. Mechs render-gate on `getExists()`, NOT the
-terrain cull cascade - a cull defect would drop static terrain objects
-(trees/buildings) first, not movers. Traced mc2_05/07 smoke clean: +0
-destroys, TGL pool `mono_total` all zero (no exhaustion). Conclusion:
-pre-existing, orthogonal to the VPL retirement - a mech
-appearance/lifecycle/asset issue needing a dedicated debug with the
-user's visual repro (mech-runtime advisor), NOT a terrain hot-patch and
-NOT to be bundled into the retirement trail.
+**Why NOT a VPL regression (data-flow proof, not just commit-range):**
+The savegame-restore path is the SAME mech path as fresh start
+(`GameObjectManager::Load` objmgr.cpp:3691 -> `new BattleMech` ->
+`init(true,objType)` builds the appearance identically (mech.cpp:1256/
+1309/1315) -> `BattleMech::Load` -> `Mech3DAppearance::copyFrom`
+mech3d.cpp:5306, which restores only pose/animation scalars and
+deliberately does NOT restore `status`, mech3d.cpp:5327). Grep-verified
+ZERO references to `px/py/pz/pw`, `objVertexActive`, or `objBlockInfo`
+in mech.cpp/mech3d.cpp -- mech appearance/visibility has NO data
+dependency on any state the VPL retirement touched. Mechs render-gate on
+`getExists()`, not the terrain cull cascade. Zero commits to mover/
+objmgr/mech3d/warrior/mission/save-load in the VPL range; 250ab4a/6c9d4b5
+cull-bit-identical by construction. `copyFrom` is a known PARTIAL restore
+(`status` intentionally dropped) -- savegame-only mech bugs are a latent
+class in the deserialization path, no smoke exercises it.
+
+**Decisive user bisection (if confirmation wanted):** build `12ad8dc~1`
+(parent of the first behavior-changing VPL commit), load the SAME
+mc2_04/05 saves. Mechs still invisible -> pre-existing CONFIRMED, VPL
+ruled out. (Evidence already strongly supports pre-existing without this.)
+
+**Own slice:** dedicated savegame-deserialization debug -- focus
+`Mech3DAppearance::copyFrom` (mech3d.cpp:5306, esp. status-not-restored
+:5327), `Mover::Load`, `MechWarrior::Load`, and per-save pilot/team/
+gesture state specific to mc2_04/05. NOT a terrain patch, NOT bundled
+into the retirement trail. Use the mech-runtime advisor + user visual
+repro (USER-DRIVEN: savegame load cannot be automated in smoke).
 
 ---
 
@@ -259,7 +274,7 @@ NOT to be bundled into the retirement trail.
 | 8 | dedicated-water-path edge-clamp | follow-up | no |
 | 9 | GetApproximateLength precision | characterized | no |
 | 10 | zoom-only terrain/decal/water z-fight | pre-existing, NOT VPL | no |
-| 11 | invisible mechs mc2_05/07 | pre-existing, NOT VPL, orthogonal | no |
+| 11 | invisible mechs mc2_04/05 FROM SAVE | pre-existing, NOT VPL (data-flow proven) | no |
 
 Items 1-9 are the VPL cleanup/measurement/coverage tail (non-blocking;
 retirement architecturally complete). Items 10-11 are pre-existing bugs
