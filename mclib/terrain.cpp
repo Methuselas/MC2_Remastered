@@ -709,6 +709,15 @@ void Terrain::purgeTransitions (void)
 //---------------------------------------------------------------------------
 void Terrain::destroy (void)
 {
+	// VPL-#shadow C-1 (CRITICAL): re-arm the one-shot full-map static
+	// terrain shadow so the NEXT mission rebuilds it against fresh
+	// blocks[]. Without this, the build-once latch stays set process-
+	// lifetime and mission 2+ would project mission 1's frozen shadow
+	// over mission 2's terrain (strictly worse than the original bug).
+	// Must pair with the Phase-1 camera-accumulate retirement (same
+	// commit). blocks[] is one-shot repopulated at next MapData::newInit.
+	gos_ResetStaticLightMatrix();
+
 	// Per-mission dense recipe teardown (Stage 2 indirect-terrain PR1).
 	// Called from Mission::destroy → land->destroy() once per mission exit.
 	// CPU-clears state; GL buffer is kept for reuse by next mission's Build.

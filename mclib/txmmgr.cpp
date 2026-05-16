@@ -44,6 +44,8 @@
 
 #include"../GameOS/gameos/gos_profiler.h"
 
+#include"terrain.h"   // VPL-#shadow Phase 1+2: Terrain::mapData for the full-map static-shadow build
+
 #ifndef PATHS_H
 #include"paths.h"
 #endif
@@ -1502,90 +1504,47 @@ void MC_TextureManager::renderLists (void)
 	// restore viewport
 	gos_SetRenderViewport(0, 0, Environment.drawableWidth, Environment.drawableHeight);
 
-	// Phase 4a: on the first frame that submits real terrain into
-	// masterVertexNodes[], force one static shadow pass regardless of camera
-	// position history. This guarantees the initial camera view is shadowed
-	// from frame 1 instead of waiting for a >100-unit camera move.
-	{
-		static bool s_terrainShadowPrimed = false;
-		if (!s_terrainShadowPrimed) {
-			for (long si = 0; si < nextAvailableVertexNode; si++) {
-				if ((masterVertexNodes[si].flags & MC2_DRAWSOLID) &&
-					(masterVertexNodes[si].flags & MC2_ISTERRAIN) &&
-					masterVertexNodes[si].vertices &&
-					masterVertexNodes[si].currentVertex != masterVertexNodes[si].vertices) {
-					gos_RequestFullShadowRebuild();
-					s_terrainShadowPrimed = true;
-					break;
-				}
-			}
-		}
-	}
+	// VPL-#shadow Phase 1+2 (arch-doc docs/plans/static-terrain-shadow-
+	// architecture.md): build the static terrain shadow from the FULL map
+	// ONCE. Was: a prime + a camera-windowed accumulate behind a >100u
+	// camera-move gate -> the shadow FBO was fed only the ~110 visible
+	// terrain nodes and never cleared -> a near-empty depth atlas ->
+	// soft half-map shadow wash. Root cause is feed-scope and was
+	// probe-proven: the world-fixed ortho light matrix is correct and
+	// built-once ([SHADOWFRUSTUM v1] n=1 mapHalfExtent=6400
+	// orthoHalf=9503.5; build & sample share getLightSpaceMatrix()).
+	// Phase 1 retires the prime block, the camera-motion gate, and the
+	// gos_*ShadowRebuild* API (this was their only caller). The build is
+	// gated solely by the gos_StaticLightMatrixBuilt() latch, which
+	// Terrain::destroy re-arms per mission (C-1) so mission 2+ rebuilds
+	// against fresh blocks[]. The MapData full-map feed is stock-safe
+	// (no-ops if blocks[] unallocated -> shadow simply absent, never a
+	// crash, never worse than a missing shadow).
+	if (gos_IsTerrainTessellationActive() && !gos_StaticLightMatrixBuilt() &&
+	    Terrain::mapData) {
+		ZoneScopedN("Shadow.StaticFullMapBuild");
+		TracyGpuZone("Shadow.StaticFullMapBuild");
 
-	// Static shadow pass: accumulate terrain into shadow map over multiple frames.
-	// World-fixed ortho projection covers entire map. First frame clears + builds matrix,
-	// subsequent frames accumulate new terrain as camera reveals new areas.
-	// Skip re-render when camera hasn't moved (same terrain already in shadow map).
-	{
-		static float lastShadowCamX = 1e9f, lastShadowCamY = 1e9f, lastShadowCamZ = 1e9f;
-		float sdx = cp.x - lastShadowCamX;
-		float sdy = cp.y - lastShadowCamY;
-		float sdz = cp.z - lastShadowCamZ;
-		float shadowCamDist = sdx*sdx + sdy*sdy + sdz*sdz;
-		float shadowCacheThreshold = 100.0f;  // re-render when camera moves >100 units
+		gos_BuildStaticLightMatrix();   // world-fixed, camera-independent
+		gos_MarkStaticLightMatrixBuilt();
 
-	bool shadowRebuildForced = gos_ShadowRebuildPending();
-	if (gos_IsTerrainTessellationActive() &&
-		(shadowRebuildForced || shadowCamDist > shadowCacheThreshold * shadowCacheThreshold)) {
-		ZoneScopedN("Shadow.StaticAccum");
-		TracyGpuZone("Shadow.StaticAccum");
-
-		// Forced passes must NOT advance the camera tracker — a subsequent
-		// genuine >100-unit move must still trigger a normal accumulation update.
-		if (!shadowRebuildForced) {
-			lastShadowCamX = cp.x; lastShadowCamY = cp.y; lastShadowCamZ = cp.z;
-		}
-
-		bool firstFrame = !gos_StaticLightMatrixBuilt();
-		if (firstFrame) {
-			gos_BuildStaticLightMatrix();  // builds world-fixed light matrix (once)
-			gos_MarkStaticLightMatrixBuilt();
-		}
-
-		gos_BeginShadowPrePass(firstFrame);  // clear only on first frame
+		// Any valid terrain colormap: the shadow prepass is depth-only
+		// (shadow_terrain.tese = plain lightSpaceMatrix*worldPos, not
+		// sampled for depth), so the exact texture is irrelevant -- bind
+		// the first terrain node's, else the solid default (idx 0).
+		unsigned long shTex = masterTextureNodes[0].get_gosTextureHandle();
 		for (long si = 0; si < nextAvailableVertexNode; si++) {
 			if ((masterVertexNodes[si].flags & MC2_DRAWSOLID) &&
-				(masterVertexNodes[si].flags & MC2_ISTERRAIN) &&
-				masterVertexNodes[si].vertices &&
-				masterVertexNodes[si].extras) {
-
-				DWORD totalVerts = masterVertexNodes[si].numVertices;
-				if (masterVertexNodes[si].currentVertex !=
-					(masterVertexNodes[si].vertices + masterVertexNodes[si].numVertices)) {
-					totalVerts = masterVertexNodes[si].currentVertex - masterVertexNodes[si].vertices;
-				}
-
-				int extraCount = masterVertexNodes[si].currentExtra
-					? (int)(masterVertexNodes[si].currentExtra - masterVertexNodes[si].extras)
-					: 0;
-
-				if (totalVerts > 0 && extraCount > 0) {
-					gos_SetRenderState(gos_State_Texture, masterTextureNodes[masterVertexNodes[si].textureIndex].get_gosTextureHandle());
-
-					gos_DrawShadowBatchTessellated(
-						masterVertexNodes[si].vertices, totalVerts,
-						indexArray, totalVerts,
-						masterVertexNodes[si].extras, extraCount);
-				}
+				(masterVertexNodes[si].flags & MC2_ISTERRAIN)) {
+				shTex = masterTextureNodes[masterVertexNodes[si].textureIndex].get_gosTextureHandle();
+				break;
 			}
 		}
-		gos_EndShadowPrePass();
 
-		if (shadowRebuildForced) {
-			gos_ClearShadowRebuildPending();
-		}
+		gos_BeginShadowPrePass(true);   // one-shot clear (no accumulate)
+		Terrain::mapData->renderStaticTerrainShadowFullMap(indexArray, shTex);
+		gos_EndShadowPrePass();
 	}
-	} // end shadow cache scope
 	// Dynamic object shadow pass: render g_shadowShapes[] every frame
 	if (gos_IsTerrainTessellationActive() && g_numShadowShapes > 0) {
 		ZoneScopedN("Shadow.DynPass");
