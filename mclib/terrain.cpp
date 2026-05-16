@@ -1541,9 +1541,28 @@ void Terrain::geometry (void)
 			// _load_bearing.md; mechs iterate last = canary).
 			Stuff::Vector3D vertex3D(rv->vx,rv->vy,rv->pVertex->elevation);
 			Stuff::Vector4D sp(-10000.0f,-10000.0f,-10000.0f,-10000.0f);
-			bool inViewR = eye->projectForTerrainAdmission(vertex3D,sp);
+			// Cost restoration (slimReduce was structurally heavier than the
+			// VPL it replaced): the pre-8c production fast path projected
+			// ONLY onScreen vertices (0c8e06b^ terrain.cpp:1589-1604 `if
+			// (onScreen) { inView = projectForTerrainAdmission(...); ... }
+			// else { sentinel }`). The slim loop made the projection
+			// UNCONDITIONAL, which is the regression. Restore the gate: in
+			// stock (usePerspective && Renderer!=3) clipR == onScreenR and
+			// is computed WITHOUT the projection, the re-home writes the
+			// sentinel (not sp) for !onScreenR, and the reduction continues
+			// on !clipR -- so projecting !onScreenR verts is pure waste. In
+			// the Renderer!=3 / ortho branch clipR == inViewR which DOES
+			// need the projection for every vertex, so it must still run
+			// there. The cull-cascade write below is TEXTUALLY UNCHANGED
+			// and clipR is computed identically to before in both branches
+			// -> the cull superset is bit-identical by construction (the
+			// catastrophic-axis invariant; cull_gates_are_load_bearing.md).
+			bool inViewR = false;
+			const bool clipUsesOnScreen = (eye->usePerspective && Environment.Renderer != 3);
+			if (onScreenR || !clipUsesOnScreen)
+				inViewR = eye->projectForTerrainAdmission(vertex3D,sp);
 
-			bool clipR = (eye->usePerspective && Environment.Renderer != 3) ? onScreenR : inViewR;
+			bool clipR = clipUsesOnScreen ? onScreenR : inViewR;
 
 			// --- cull-cascade write (CRIT-1: BEFORE the reduction gate) ---
 			// Replicates the legacy VPL semantic verbatim: clipInfo =
