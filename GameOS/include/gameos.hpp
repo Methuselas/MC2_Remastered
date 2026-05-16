@@ -2297,19 +2297,17 @@ void gos_SetMapHalfExtent(float halfExtent);
 bool gos_StaticLightMatrixBuilt();
 void gos_BuildStaticLightMatrix();  // builds matrix once (idempotent)
 void gos_MarkStaticLightMatrixBuilt();
+// VPL-#shadow C-1: per-mission re-arm of the one-shot full-map static
+// shadow (Terrain::destroy -> rebuild next mission vs frozen prior one).
+void gos_ResetStaticLightMatrix();
 void gos_BeginShadowPrePass(bool clearDepth = true);
 void gos_DrawShadowBatchTessellated(gos_VERTEX* vertices, int numVerts,
     WORD* indices, int numIndices,
     const gos_TERRAIN_EXTRA* extras, int extraCount);
 void gos_EndShadowPrePass();
-
-// Phase 4a: force the static terrain shadow pass to run on the next
-// renderLists() call regardless of camera movement. Latched automatically
-// inside renderLists() on the first frame that submits real terrain
-// geometry; can also be called externally if needed.
-void gos_RequestFullShadowRebuild();
-bool gos_ShadowRebuildPending();
-void gos_ClearShadowRebuildPending();
+// VPL-#shadow Phase 1: gos_RequestFullShadowRebuild / gos_ShadowRebuildPending
+// / gos_ClearShadowRebuildPending RETIRED (camera-windowed-accumulate
+// machinery; only caller was the deleted txmmgr prime block).
 void gos_DrawShadowObjectBatch(HGOSBUFFER vb, HGOSBUFFER ib,
     HGOSVERTEXDECLARATION vdecl, const float* worldMatrix4x4);
 

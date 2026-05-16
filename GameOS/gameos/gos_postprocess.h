@@ -57,6 +57,10 @@ public:
                                 float mapHalfExtent);
     bool staticLightMatrixBuilt() const { return staticLightMatrixBuilt_; }
     void markStaticLightMatrixBuilt() { staticLightMatrixBuilt_ = true; }
+    // VPL-#shadow C-1: per-mission re-arm so the one-shot full-map static
+    // shadow rebuilds on the next mission (against fresh blocks[]) instead
+    // of freezing the previous mission's shadow. Called from Terrain::destroy.
+    void resetStaticLightMatrix() { staticLightMatrixBuilt_ = false; }
     void setMapHalfExtent(float extent) { mapHalfExtent_ = extent; }
     float getMapHalfExtent() const { return mapHalfExtent_; }
 
