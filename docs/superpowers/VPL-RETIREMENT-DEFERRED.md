@@ -258,6 +258,48 @@ gesture state specific to mc2_04/05. NOT a terrain patch, NOT bundled
 into the retirement trail. Use the mech-runtime advisor + user visual
 repro (USER-DRIVEN: savegame load cannot be automated in smoke).
 
+## 12. Zoomed-out big-map `Terrain::IndirectDraw` cost (regression, but PRE-VPL: commit 08bd3b2)
+
+**What:** On a big map zoomed out all the way, `Terrain::IndirectDraw`
+(GameOS/gameos/gameos_graphics.cpp:~2480) is ~7.8 ms mean / 18 ms p99
+every frame; total frame ~25 ms. Reported 2026-05-15.
+
+**Root cause (advisor git-bisected):** commit `08bd3b2` (2026-05-11,
+"retire BuildSolidQuadWindowSSBO") - 4 days BEFORE the VPL retirement
+(8b `12ad8dc` / 8c `0c8e06b`, 2026-05-15). Pre-08bd3b2 the indirect
+compute dispatched over the camera-windowed `quadList` (rebuilt per
+frame by `makeLists()`, terrain.cpp:907 - small/bounded). 08bd3b2
+deleted that windowed walk and hard-wired the dispatch to
+`g_denseRecipes.size()` (`gos_terrain_indirect.cpp:1922/2145/2588`) =
+the ENTIRE MAP every frame, camera-independent (the compute only
+edge/invalid-skips, no frustum/distance/LOD). Zoomed out on a big map
+= whole map drawn every frame. NOT a VPL-retirement regression
+(250ab4a/6c9d4b5 exonerated: indirect clipPos packed by
+PackThinRecordsForFrame/ComputeDispatch, not slim-loop sp; 8b/8c land
+after 08bd3b2). `Render.GpuStaticProps` is INDEPENDENT (Track C
+frustum cull, no terrain-recipe coupling) - its zoom-out cost is
+pre-existing expected prop-count, not coupled to this.
+
+**Decisive check:** `git show 08bd3b2 -- GameOS/gameos/gos_terrain_indirect.cpp`
+(windowed `BuildSolidQuadWindowSSBO()` -> `g_denseRecipes.size()`).
+A/B: build `08bd3b2^`, same big map zoomed out, compare IndirectDraw ms.
+
+**Own slice (design fork - needs decision):** decouple the indirect
+DRAW set from the full recipe range; restore a tighter in-view /
+frustum / distance-LOD bound for DRAW while keeping the recipe SSBO
+map-stable for storage (the draw-vs-storage split the slim loop
+already applies for reduction-vs-cull). Constraint: must NOT
+reintroduce the per-frame CPU recipe walk 08bd3b2 removed, and must
+NOT add `glGetBufferSubData`/CPU readback to bound the dispatch
+(Track C substrate sync; see memory/track_c_substrate_regression.md /
+substrate_coalesce_sync_point_lesson.md). Candidate approaches:
+(A) windowed-index buffer (GPU-built visible-quad index list,
+dispatch over that, index into stable recipe SSBO);
+(B) in-compute-shader frustum/distance reject (dispatch full but
+early-out non-visible threads - cuts draw, not dispatch threads);
+(C) hybrid GPU compaction. Catastrophic-axis-adjacent (compute
+dispatch + substrate intersection) - warrants adversarial review.
+
 ---
 
 ## Status summary
@@ -275,6 +317,7 @@ repro (USER-DRIVEN: savegame load cannot be automated in smoke).
 | 9 | GetApproximateLength precision | characterized | no |
 | 10 | zoom-only terrain/decal/water z-fight | pre-existing, NOT VPL | no |
 | 11 | invisible mechs mc2_04/05 FROM SAVE | pre-existing, NOT VPL (data-flow proven) | no |
+| 12 | zoomed-out big-map IndirectDraw cost | regression, PRE-VPL (08bd3b2) | no |
 
 Items 1-9 are the VPL cleanup/measurement/coverage tail (non-blocking;
 retirement architecturally complete). Items 10-11 are pre-existing bugs
