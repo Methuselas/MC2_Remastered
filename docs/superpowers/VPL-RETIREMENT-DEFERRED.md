@@ -352,14 +352,23 @@ memory/substrate_off_renders_no_static_props.md). 22.88ms -> ~0 with
 substrate off == confirmed prop workload. Or RenderDoc one frame:
 the two glMultiDrawElementsIndirect primitive/instance counts.
 
-**Own slice (design fork):** the cull/LOD MUST bound the zoomed-out
-worst case (neither currently does). (A) fix the underlying LOD-1+
-"zero fragments after bldgShape swap" bug, restore distance LOD,
-remove the pin -- cleanest but unblocks an unsolved bug. (B) add a
-distance / screen-size term to the GPU cull predicate so far props
-are rejected or routed to a coarse/lowest bucket, independent of the
-LOD-1 bug -- lower blast radius, bounds the worst case like 08bd3b2/
-deferred-12 did for terrain. (B) recommended as the first slice.
+**DESIGN DECISION (user, 2026-05-15):** Fork B, the ROUTE-TO-COARSER
+variant -- a GPU-side distance->LOD SELECTOR. HARD CONSTRAINT: distant
+buildings MUST still render, at a LOWER LOD; they must NEVER be
+distance-culled/hidden (MC2 has long sightlines on big maps; hiding
+far buildings is a gameplay/visual regression). So the fix replaces
+the a2a6058 LOD-0 pin (`bdactor.cpp:1386-1415`) with a GPU-computed
+distance/screen-size -> LOD-bucket selection; the frustum cull stays
+(props leave only when truly off-frustum, not by distance).
+
+**Dependency / long-pole:** "render distant at LOWER LOD" requires the
+underlying LOD-1+ "zero fragments after bldgShape swap" invisibility
+bug (the reason a2a6058 pinned to LOD-0) to be FIXED or routed around
+GPU-side -- otherwise selecting any LOD>0 reproduces the original
+invisible-buildings bug. That bug is the real blocker and is being
+investigated as prep. The decisive root-cause check
+(MC2_GPU_CULL_SUBSTRATE=0 vs =1 Tracy, user-driven) is pending before
+implementation.
 
 ---
 
