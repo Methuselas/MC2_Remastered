@@ -224,6 +224,253 @@ one header constant + apply decal/water bias as distance-proportional /
 `glPolygonOffset`-equivalent rather than a constant NDC offset. Own slice
 (has a design fork: polygon-offset vs distance-scaled bias).
 
+**SCOPE UPDATE 2026-05-16 (user first-hand visual, supersedes the
+terrain-indirect advisor's PARTIAL/water-seam recommendation):** the
+advisor predicted a residual ANIMATED shoreline shimmer (water `wz`
+from `ourCos+waterElevation` vs static terrain `elevation`) requiring a
+separate "water-depth-projection-unification" seam. User observed the
+shoreline z-fight DOES NOT MOVE in-mission at all -> the animated
+component is imperceptible/not the defect. Per CLAUDE.md (user visual
+outranks grep hypothesis): the **water-depth-projection-unification
+seam is DROPPED** (solves a non-problem). The shoreline is a static
+mistuned constant -- the undocumented `WATER_DEPTH_FUDGE =
+TERRAIN_DEPTH_FUDGE + 0.0005f` (`mclib/quad.cpp:2006`) "is just off"
+(user). #10/Seam 2 -- header-unify the macro family (only
+`quad.cpp:1997` 0.002f is LIVE; `tgl.cpp:2868` 0.000f is a DEAD define
+no consumer; `.codex_tmp_isolate` copies git-tracked = item 2) +
+carry/CORRECT the `WATER = TERRAIN + delta` relationship + the decided
+vertex-stage distance-proportional clip-z bias -- is now the COMPLETE
+shoreline fix, not partial. No water seam follow-up.
+
+**STATE 2026-05-16 (constant approach EXHAUSTED -> distance-proportional
+is now the active fix; user decision).** Sequence of record:
+(1) Single-constant unification (water all 0.003) shipped, REGRESSED
+map edges -- TES low-LOD tiles broke through water (the 89d7c4f
+over-bias failure mode). (2) Corrected to a TWO-REGIME constant interim
+(Deploy A, in v0.4): `WATER_DEPTH_FUDGE_FAST=0.003`
+(gos_terrain_water_fast.vert/_mdi.vert) vs
+`WATER_DEPTH_FUDGE_RASTER=0.0025` (quad.cpp CPU raster +
+gos_terrain_mask_water.vert); `TERRAIN_DEPTH_FUDGE=0.002` all terrain;
+genuine desync (mask_water's false-peer comment) fixed; dead defines
+`tgl.cpp:2868` + `gos_terrain_mask_dispatch.cpp:44` deleted;
+single-source header `mclib/terrain_depth_bias.h` +
+`shaders/include/terrain_depth_bias.hglsl` (lockstep) is the SEAM.
+Two adversarial reviews PROCEED/PROCEED-WITH-CHANGES. (3) git history
+89d7c4f-vs-6ff6c5c + the regression proved NO constant satisfies both
+regimes at all zooms; user decided to retire the constant and implement
+the DEFERRED distance-proportional clip-z bias as the PERMANENT fix.
+Shader-expert spec: bias = `B * rhw` (clip-space constant / clip.w)
+makes the NDC offset scale ~`1/z_eye`, flattening the zoom dependence
+to first order and SUBSUMING the FAST/RASTER split into one
+`TERRAIN_CLIP_BIAS` + `WATER_CLIP_DELTA` (header collapses; FAST/RASTER
+retired). 6 CRITICAL numeric assumptions (calibration `W0` =
+default-zoom clip.w; min/max clip.w for far-underflow + near-zoom
+lake-bottom bound) require MEASURED values, not grep -- gamecam zoom
+range is dynamic (camera.cpp:2407+). Grounding via env-gated
+`[DEPTHBIAS_CALIB v1]` probe (quad.cpp terrain emit, logs pw=|1/clip.w|
++ min/max; INERT) shipped in v0.4 on the Deploy-A baseline. NEXT: one
+mc2_17 zoom-sweep -> measured W0+range -> mandated adversarial review
+grep-closing the 6 CRITICALs with real numbers -> implement on the
+header seam -> multi-zoom user visual + CPU/GPU parity probe.
+
+**HALF-MAP-SHADOW ROOT CAUSE CORRECTED 2026-05-16 (prior dynamic-caster
+theory INVALIDATED -- it was a probe artifact + wrong subsystem):** the
+earlier line "VPL-#11 late-lance activates a drop-zone static prop with
+Identity transform into g_shadowShapes (tgl.cpp:3064), render-expert
+root-caused, Deploy-B caster-gate" is WRONG and was reverted. Two
+independent invalidations: (a) mandated adversarial review grep-proved
+the `shadow_caster_register` probe + the Deploy-B gate read DEAD matrix
+indices -- Stuff `Matrix4D` is COLUMN-major (translation at
+`entries[3]/[7]/[11]` per `msl.cpp:1207-1209`; `operator=(AffineMatrix4D)`
+hard-zeros `entries[12..14]`), so the probe's "2054/2054
+isIdentityXlate=1 persistent origin shape" was an artifact of reading
+the always-zero projective column; Deploy-B default-on would have
+suppressed 100% of dynamic object shadows scene-wide. The render-expert
+spec had cited `entries[12/13/14]`; only the review's matrix.cpp grep
+caught it. (b) User first-hand reframe (authoritative): the half-map
+shadow is SOFT/gaussian + "computes once from camera, never updates,
+shifts on pause" = the STATIC terrain shadow map, NOT the (sharp)
+dynamic object-caster path. Dynamic-caster code fully reverted.
+**ACTUAL root cause (render-expert, code-grounded):** the static
+terrain shadow FBO is fed the CAMERA-WINDOWED terrain quadList and its
+depth is cleared ONLY on frame 1 then GL_LESS-accumulated forever
+(`gos_postprocess.cpp:1160` "NO glClear -- accumulate"); the >100u
+camera-move re-render gate (`txmmgr.cpp:1538`) misfires on mc2_17
+(sub-100u settling) so the map freezes to the build-time camera's
+terrain -- a soft half-map wash. Light-space matrix is correct
+(world-fixed, build-once). **Meta fix = arch doc
+`docs/plans/static-terrain-shadow-architecture.md` Phase 1 (delete the
+camera-motion accumulation trigger) + Phase 2 (build the full-map
+static terrain shadow once at mission init; Phase 2's real work is the
+full-map terrain feed, parallel to terrain-contract cleanup).**
+Confirm-probe-first: `[SHADOWSTATIC v1]` (env `MC2_DEBUG_SHADOW_STATIC`,
+INERT) ships in v0.4 -- gate-decision (`txmmgr.cpp:1538`) +
+feed-volume (post `gos_EndShadowPrePass`); one mc2_17 pan/zoom/pause
+session proves decision=reused-forever + camera-windowed feed, THEN
+Phase 1/2 implemented under mandated review. SEPARATE deferred defect
+(filed, do NOT couple): `GpuMechBatcher::flushShadow()` is a literal
+no-op (`gos_mech_batcher.cpp:341`) -> GPU-batched mechs never populate
+`g_shadowShapes` -> mechs cast no dynamic shadow (broken several
+builds); its own slice after the static meta fix. NOT a depth-bias
+issue; do not couple to #10.
+
+**EXECUTABLE IMPLEMENTATION SPEC 2026-05-16 (plan LOCKED: probe-proven
+root cause + terrain-indirect plan + mandated review PROCEED-WITH-CHANGES
++ shader-expert resolved; M-1 de-risked to trivial). Implement as ONE
+coherent commit (catastrophic-axis):**
+
+ROOT CAUSE (settled): static shadow ortho is correct & built-once
+(`[SHADOWFRUSTUM v1] n=1 mapHalfExtent=6400 orthoHalf=9503.5`); build &
+sample share `pp->getLightSpaceMatrix()`. Bug = shadow FBO fed only the
+camera-windowed `masterVertexNodes` subset (`txmmgr.cpp` ~1585-1612),
+never the full map -> near-empty depth atlas -> soft half-map wash.
+
+1. FULL-MAP FEED (replace the camera-windowed loop on the first-frame
+   latch only): iterate absolute tiles `absY,absX in [0,
+   Terrain::realVerticesMapSide-1)`; 4 corners from
+   `&blocks[absX+absY*realVerticesMapSide]`; world pos
+   `vx=(absX-halfVerticesMapSide)*worldUnitsPerVertex`,
+   `vy=(halfVerticesMapSide-absY)*worldUnitsPerVertex` (mapdata.cpp:1138-9);
+   `gos_TERRAIN_EXTRA` per vert exactly as `fillTerrainExtra`
+   (quad.cpp:~341: wx=vx,wy=vy,wz=pVertex->elevation,n=vertexNormal),
+   `gos_VERTEX` triple per the TerrainQuad per-uvMode 2-tri emission
+   (read quad.cpp:2557/2700 vs 2915/3056 for exact order); submit via
+   the SAME `gos_DrawShadowBatchTessellated`+`gos_SetRenderState`
+   path (reuses `shadow_terrain.tesc/.tese` unchanged).
+   M-1 SOLVED BY CONSTRUCTION: `uvMode` = makeLists if/else
+   (mapdata.cpp:1210-1243) with `xby2=absX&1, yby2=absY&1`. Since
+   `(topLeftX+x)&1 == (topLeftX&1)^(x&1)`, makeLists'
+   `(x&1)^(topLeftX&1)` IS absolute-tile parity -> full-map absolute
+   loop = byte-identical per-tile diagonals to the scene at ANY camera.
+   M-2: chunk per texture node AND hard-split any chunk nearing 60000
+   verts / 65535 idx (indexed_tris_ cap ~gameos_graphics.cpp:3285;
+   addVertices SILENTLY drops on overflow); probe emits per-chunk max.
+   Tess uniforms: reuse LIVE `terrain_tess_level_`/`_displace_scale_`/
+   `_detail_tiling_` as the current shadow prepass block
+   (gameos_graphics.cpp:~4336-4360); cameraPos/tessDistanceRange dead
+   in both terrain tesc -> leave; NO depth-bias change (prepass has
+   zero TERRAIN_DEPTH_FUDGE; decoupled from #10).
+2. C-1 (CRITICAL, ship in THIS commit): latch
+   (`staticLightMatrixBuilt_` reset only at gos_postprocess.cpp:1120
+   FBO-init; `s_terrainShadowPrimed` txmmgr static) has NO per-mission
+   reset -> after Phase-1 deletes camera-accumulation, mission 2+
+   freezes mission-1 shadows. Add per-mission RE-ARM in
+   `Terrain::destroy` (terrain.cpp:710, once per mission exit): reset
+   `s_terrainShadowPrimed` (new `gos_ResetStaticShadowState()`
+   accessor) + `gosPostProcess::staticLightMatrixBuilt_=false` (new
+   public reset). `blocks` is one-shot populated at load
+   (mapdata.cpp:204 newInit, review-confirmed not camera-lazy).
+3. PHASE-1 RETIRE (order: add fn dead-code -> swap firstFrame feed
+   clear=true -> delete gate -> delete prime+rebuild API): camera gate
+   (`lastShadowCamX/Y/Z`,`shadowCamDist`,`shadowCacheThreshold`,
+   condition txmmgr ~1530-1568), prime block (~1509-1523),
+   `gos_ShadowRebuildPending`/`gos_RequestFullShadowRebuild`/
+   `gos_ClearShadowRebuildPending`/`s_shadowRebuildPending`
+   (gameos_graphics.cpp ~6589-6592 + gameos.hpp + txmmgr callsites;
+   review-confirmed only-caller is the prime block, safe), the
+   `[SHADOWSTATIC v1] event=gate` probe. KEEP+repurpose the feed-volume
+   probe -> `event=fullmap_build builds=N nodes/verts/tris bbox vs
+   ±mapHalfExtent perChunkMax`. Stock fallback: blocks null /
+   realVerticesMapSide==0 -> existing camera-windowed walk (no crash).
+4. VERIFY: mandated re-review of the diff -> build/deploy v0.4 ->
+   user mc2_01 (Alt+3 FULL-map atlas; cast shadow correct & STABLE on
+   pan/zoom) + a 2nd mission (reload not frozen = C-1 proof).
+
+Status: spec LOCKED & de-risked; NOT yet implemented (deliberately not
+rushed at session tail on catastrophic-axis code). Self-contained
+execution contract — resume here.
+
+================================================================
+RESOLVED 2026-05-16 (static giant A) -- commit `0c421d1`, user-visual-
+confirmed. Supersedes the handoff below for artifact (A):
+================================================================
+Root cause of the giant NE-axis half-map STATIC shadow was NOT feed
+scope and NOT the sample-side matrix source -- it was a DEPTH-CONVENTION
+mismatch. The engine sets `glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE)`
+globally (`GameOS/gameos/gameosmain.cpp`) and the scene ortho was
+already [0,1] (`mclib/camera.cpp:2032/2037`), but `buildStaticLightMatrix`
+AND `buildDynamicLightMatrix` (`gos_postprocess.cpp`) still emitted
+classic GL [-1,1] clip-z. Under ZERO_TO_ONE the near half of each light
+frustum (clip-z < 0) was hardware-clipped pre-rasterization -> wedge
+atlas (user Alt+F2 screenshot: triangular built region) -> hard half-map
+boundary. Fixed lockstep in ONE commit (mandated adversarial review
+BLOCK'd a static-only scope: `shadow_screen.frag` `sampleShadowMap` is a
+shared helper called with BOTH matrices -> user chose symmetric scope):
+both ortho z-rows -> `-1/(far-near)` / `-near/(far-near)`; `.xy`-only
+remap in `shadow.hglsl` (calcShadow + calcDynamicShadow) and
+`shadow_screen.frag`; same-commit env-gated `[SHADOWZRANGE v1]` probe
+(`MC2_DEBUG_SHADOW_ZRANGE`). User confirmed: static atlas now full, NE
+half-map boundary GONE. Feed-scope Phase 1+2 stays (sound, orthogonal).
+
+STILL OPEN (artifact B, separate slice -- NOT this fix's scope): the
+dynamic shadow map's wrong PROJECTION/FOCUS (camera-following grid).
+The depth-convention fix removed the dynamic path's wedge too but did
+NOT (and was not expected to) correct the dynamic focus matrix. That is
+the dynamic-shadow-projection slice; the handoff disambiguation below
+(A vs B) still applies for it.
+
+UNRELATED defect filed 2026-05-16 (do NOT couple to shadows): GPU-driven
+compute shaders `#include` fails -- `gpu_driven::BuildComputeProgramFromFile`
+(`gpu_driven_common.cpp:149`) bypasses the engine include preprocessor.
+Spun off as its own task.
+
+================================================================
+FRESH-SESSION HANDOFF 2026-05-16 (read this FIRST; supersedes the
+"implemented/PROCEED" optimism above for the VISIBLE artifact):
+================================================================
+The static Phase 1+2 full-map-feed fix WAS implemented (7 files),
+built clean, mandated-review PROCEED, deployed v0.4 (exe
+`ff12a33038ae`). **USER-VERIFIED ON mc2_01: IT DID NOT FIX THE VISIBLE
+SHADOW.** => feed-scope was NOT the (whole) root cause of the visible
+static artifact, OR a second dominant static-path bug exists. The
+full-map feed is sound engineering and should stay (the camera-windowed
+feed WAS wrong), but the giant shadow persists -> **static-path root
+cause is STILL OPEN.** Do NOT assume Phase 1+2 solved it.
+
+CRITICAL DISAMBIGUATION (user authoritative, the thing this whole arc
+kept conflating): there are TWO SEPARATE shadow defects, not one
+"half-map shadow":
+  (A) GIANT HALF-SCREEN SHADOW = the STATIC path. STILL BROKEN after
+      Phase 1+2. Root cause unconfirmed. Probe-proven facts that still
+      hold: ortho light matrix correct & built-once
+      (`[SHADOWFRUSTUM v1] n=1 mapHalfExtent=6400 orthoHalf=9503.5`),
+      build & sample share `pp->getLightSpaceMatrix()`. Since the feed
+      is now full-map yet the giant shadow persists, the next suspect
+      is the SAMPLE-side projection / depth-compare (how the scene
+      shader projects worldPos into static-shadow space and tests it),
+      NOT the feed. Re-investigate sample-side `calcShadow` /
+      `shadow.hglsl` / the lightSpaceMatrix actually bound at scene
+      draw vs at the build, and the static shadow depth/compare.
+  (B) THE SOFT DARK "BLOB" in the latest screenshots = the DYNAMIC
+      shadow path, which the user ENABLED to investigate. Its
+      PROJECTION IS WRONG (user first-hand diagnosis). Distinct from
+      (A). May or may not be the same as the filed
+      `GpuMechBatcher::flushShadow()` no-op — fresh session must
+      clarify. The dynamic path is a camera-following fixed-size grid
+      that must NOT project cross-map; "projection is wrong" =
+      investigate the dynamic light-space/focus matrix + the
+      dynamic-shadow sample projection.
+
+DISCIPLINE NOTE for the fresh session: BEFORE any root-causing, use the
+in-game debug overlays (Alt+3 static map; the dynamic-shadow overlay)
+to pin WHICH visible artifact maps to WHICH subsystem (static vs
+dynamic) — this arc burned enormous cycles because "the half-map
+shadow" silently conflated two subsystems' overlapping artifacts and
+advisor theories chased the wrong one repeatedly; the user's
+debug-overlay observations were each authoritative and each overrode
+theory. Disambiguate-by-overlay FIRST, then probe-confirm, then fix.
+
+State of probes in v0.4 (all inert/env-gated): `[SHADOWSTATIC v1]
+event=fullmap_build` (MC2_DEBUG_SHADOW_STATIC), `[SHADOWFRUSTUM v1]`
+(MC2_DEBUG_SHADOW_FRUSTUM), `[DEPTHBIAS_CALIB v2]`
+(MC2_DEBUG_SHADOW... wait MC2_DEPTHBIAS_CALIB). #10 ships the
+two-constant interim (FAST 0.003 / RASTER 0.0025). PARKED: #10
+distance-proportional (single-W0 premise invalidated by real clip.w
+distribution ~137-14550/frame; needs shader-expert rework, NOT a
+scalar W0). The Phase-1 retired camera-accum machinery + C-1 reset are
+implemented and review-clean — keep them; they are correct regardless
+of the (A) root cause.
+
 ## 11. Invisible mechs on mc2_04/05 FROM A SAVEGAME (pre-existing, NOT VPL)
 
 **What:** Some mechs render invisible on campaign missions mc2_04 and
@@ -257,6 +504,181 @@ ruled out. (Evidence already strongly supports pre-existing without this.)
 gesture state specific to mc2_04/05. NOT a terrain patch, NOT bundled
 into the retirement trail. Use the mech-runtime advisor + user visual
 repro (USER-DRIVEN: savegame load cannot be automated in smoke).
+
+**CORRECTION 2026-05-15 (mech-update-geometry advisor + user RenderDoc
+`mechHalfwayBuilt.html` frame 2088 EID 3931):** the `status`-not-restored
+lead above is **data-flow-DISPROVEN as the invisibility cause**. `status`
+(copyFrom-dropped at `mech3d.cpp:5327`) feeds ONLY `lightsOut` /
+ambient-only shading (`mech3d.cpp:2546-2550`), never a submit/visibility
+gate -- a defaulted `status` yields a fully-lit mech, not an absent one.
+Real mechanism (grep-verified): Track D batches per mech TYPE via
+`TypeLodKey{mechType,currentLOD}` (`gos_mech_batcher.cpp:573`); a type
+whose `registerTypeLod` is skipped or runs AFTER
+`GpuMechBatcher::finalizeGeometry()` (`mission.cpp:3115`) fails the
+`s_typeLodIndex` lookup for every instance (`gos_mech_batcher.cpp:575-579`,
+late-reg), and `mechGpuCullSkip` suppresses the CPU fallback
+(`mech3d.cpp:2582`) -> the whole type emits ZERO draws. User RenderDoc
+confirms: the 4 visible mechs (one type) = EID 3931 `(36 idx,4 inst)`;
+the 5 invisible (a different single type) have NO draw anywhere in the
+frame -- a missing per-type batch, not degenerate instances. The
+remaining open question is the TRIGGER: why the invisible type's
+registration is missed/late ONLY on the savegame load path -- a
+load-ORDER question deferred to `mc2-mission-data-expert` (Load
+sequence: `BattleMech::Load`/`Mover::Load`/`MechWarrior::Load` vs the
+`finalizeGeometry()` boundary). Settle empirically via the
+`[MECHRESTORE v1]` / `MC2_MECH_RESTORE_TRACE` probe (3 emit sites:
+`registerTypeLod` success+late-skip `gos_mech_batcher.cpp:334/338-344`,
+post-`submitActor` discriminator `mech3d.cpp:2561`, `copyFrom` tail
+`mech3d.cpp:5306`) -- converts the un-smokeable savegame repro into a
+one-load log read. Full analysis: observations note
+`docs/observations/2026-05-15-render-vpl-deferred-retirement-topology.md`
+sibling + this session's advisor report.
+
+**ROOT CAUSE 2026-05-15 (mc2-mission-data-expert, grep-verified):** the
+in-mission-save load path `Mission::load` (`saveload.cpp:627`, invoked
+from `mechcmd2.cpp:2389` `loadInMissionSave`) is a PARALLEL mission-setup
+implementation that does NOT route through `Mission::init`.
+`GpuMechBatcher::finalizeGeometry()` has exactly ONE callsite in the
+codebase -- `mission.cpp:3115`, the unconditional tail of
+`Mission::init`. The save path calls `Mission::destroy()`
+(`saveload.cpp:687`) -> `GpuMechBatcher::onMapUnload()`
+(`mission.cpp:3260`, resets `s_geometryFinalized=false`, clears
+`s_typeLodIndex`), then re-spawns all mechs via `ObjectManager->Load`
+(`saveload.cpp:1351` -> `objmgr.cpp:3698-3710`) with lazy
+`getAppearance`->`registerTypeLod`, but NEVER calls `finalizeGeometry()`
+afterward. `s_geometryFinalized` stays false -> `submitActor`
+fast-rejects at `gos_mech_batcher.cpp:570` (`!s_geometryFinalized`).
+The per-type "5 of one type gone, 4 of another fine" expression is
+governed by the `appearanceTypeList` `numUsers++` dedup early-return
+(`apprtype.cpp:235-238`, surviving types skip re-`init()`/re-register)
+interacting with the `onMapUnload` `s_typeLodIndex` clear and the
+conditional `appearanceTypeList->destroy()` (`mission.cpp:3440`,
+`initLogistics` branch only): a type whose `Mech3DAppearanceType*` +
+`s_typeLodIndex` entry survived the original `Mission::init` still
+renders; a re-created or save-only type re-registered post-`onMapUnload`
+with no finalize does not. One open runtime detail (which
+`Mission::destroy` overload at `saveload.cpp:687`; whether
+`appearanceTypeList` is torn down) is answered directly by the probe's
+`appearanceListNull` field. **FIX FORK (deferred to
+mc2-mech-update-geometry / a debug slice -- NOT yet decided):** (a)
+`Mission::load` calls `GpuMechBatcher::finalizeGeometry()` at its tail
+(after `saveload.cpp:1351`, mirroring `mission.cpp:3115`) -- minimal,
+mirrors the known-good path; (b) batcher supports post-finalize
+incremental type registration + VBO append -- general, larger blast
+radius. Probe adds a save-path emit in `Mission::load` after
+`destroy()` (`saveload.cpp:687`) and after `ObjectManager->Load`
+(`saveload.cpp:1351`): `[MECHRESTORE v1] event=saveload_phase
+phase={post_destroy|post_objmgr_load} mechFinalized=<isFinalized()>
+appearanceListNull=<appearanceTypeList==NULL>` (needs a 2-line
+`GpuMechBatcher::isFinalized()` accessor). Catastrophic-axis (silent
+invisible units = gameplay-breaking); fix slice warrants mandated
+adversarial review per the soak-waiver+probes+reviews discipline.
+
+**PROBE-CONFIRMED REDIRECT 2026-05-16 (the mc2_10 repro is a DIFFERENT
+path; supersedes the Mission::load attribution as THIS repro's cause):**
+The user's mc2_10 "load from save" produced `[MECHRESTORE v1]` with ZERO
+`event=saveload_phase` and ZERO `event=copyfrom` lines -> `Mission::load`
+/ `Mech3DAppearance::copyFrom` are NOT executed for a campaign `.fit`
+save resume. That path is `LogisticsData::load` -> `Logistics::
+beginMission` -> `mission->init(... MISSION_LOAD_SP_LOGISTICS)` whose
+tail finalizes the batcher at `mission.cpp:3115`; THEN the SP_LOGISTICS
+branch instantiates the player force-group lance via
+`mission->addMover()` at `logistics.cpp:780/785` -- AFTER finalize -->
+`registerTypeLod` (`mech3d.cpp:329`) hits `s_geometryFinalized==true`
+-> `[MECHBATCHER v1] event=late_register` -> probe `result=late_skip` ->
+those actors `event=submit submitted=0 lateReg=1` -> CPU fallback also
+suppressed -> invisible. Probe-verified: invisible type
+`0000019351C43BD0` (player lance) late; visible type `000001939B70D880`
+(mission-script units) registered pre-finalize. Fresh start routes the
+player lance pre-finalize; campaign save-resume routes it post-finalize
+-> "only from savegame". TWO ORTHOGONAL FIXES, do not collapse:
+(1) the `Mission::load` two-half change (`onMapLoad`+`finalizeGeometry`)
+already implemented -- KEEP, it is correct coverage for the genuine
+`.ims` in-mission-quicksave path (Ctrl+Alt+Shift+Z mission.cpp:297 /
+pause-window pausewindow.cpp:391, via `copyFrom`), just not this repro;
+(2) THE mc2_10 FIX: a `GpuMechBatcher::finalizePending()` re-finalize at
+`logistics.cpp:789` (after the SP force-group loop, before
+`initMechs()` ~:803). Batcher spec (mech-update-geometry advisor):
+`registerTypeLod` (`gos_mech_batcher.cpp:340-350`) must STAGE-not-drop
+when finalized + set `s_pendingLateTypes`; new `finalizePending()`
+fence-waits + deletes `s_sharedVao/Vbo/Ibo` (glBufferStorage IMMUTABLE
+-- must delete before recreate) + `s_geometryFinalized=false` + re-runs
+`finalizeGeometry()` from the regrown staging, NEVER clearing
+`s_typeLodIndex/s_typeLodRecords/s_packets` (append-only -> existing
+indices stable). No render occurs between `mission.cpp:3115` and
+`logistics.cpp:789` (first `mission->update()` logistics.cpp:808) so no
+draw consumes a half-built index -- this no-render-in-gap invariant is
+load-bearing and fragile. MANDATED adversarial review must grep-close 3
+items before implementation: (a) zero `GpuMechBatcher::flush`/
+`renderLists` between mission.cpp:3115 and logistics.cpp:808 INCLUDING
+`mission->start()` (logistics.cpp:807) ordering vs :789; (b)
+glBufferStorage delete-recreate fully fence-drained vs persistent-mapped
+ring SSBOs / `s_fence[MECH_RING_FRAMES]`; (c) `GpuStaticPropBatcher`
+truly needs no parallel `finalizePending` (SP roster is movers-only --
+verify). Probe extensions to land same-commit (env `MC2_MECH_RESTORE_
+TRACE`): `result=staged_pending`, `event=finalize_pending types=N
+lateAdded=M rebuilt=1`, `event=late_type_visible type=%p`.
+
+**ADVERSARIAL REVIEW: BLOCK 2026-05-16 (C1 -- the staging-source
+premise above is FALSE).** `finalizeGeometry` does
+`s_stagingVbo.clear(); shrink_to_fit()` (+ IBO) at
+`gos_mech_batcher.cpp:565-566`, so after Init's finalize
+(`mission.cpp:3115`) staging is EMPTY. A re-stage-then-re-finalize
+rebuilds the shared VBO from LATE-TYPE-ONLY data at `baseVertex=0`
+while the ~13 visible types' `s_packets` keep ABSOLUTE offsets into the
+old layout (`:481-489`) -> all 13 currently-visible types render
+garbage/vanish. The "regrown staging containing original + late"
+premise is wrong; do NOT implement as specced. Review grep-CLOSED the
+other two: (a) no render between `mission.cpp:3115` and
+`logistics.cpp:789` (`flush` only via `renderLists` from frame loop;
+`mission->start()`/`update()` after :789) -- the seam+timing are SOUND;
+(b) fence/immutable-buffer concern moot given (a); (c) SP path is
+movers-only, no `GpuStaticPropBatcher` parallel needed. Only the
+STAGING SOURCE is broken. STAGING-SOURCE FORK (needs decision before
+implementation): (i) do NOT clear staging at first finalize (drop
+`:565-566`; keep `s_stagingVbo/Ibo` resident whole-mission so late
+append truly regrows original+late) -- smallest code, costs bounded
+persistent CPU RAM for the full mech VBO, contradicts the `:110`
+"staging cleared after finalize" design comment; (ii) `finalizePending`
+rebuilds staging by re-walking all `s_typeLodRecords` from
+`rec.sourceNode0`/`owningTypeShape` (`:384/:488`) -- no persistent RAM,
+but depends on those `TG_TypeShape*` still alive post-init + re-runs
+triangle-soup extraction (more code/failure surface); (iii) append-only
+SECOND VBO for late types + per-packet buffer-id (true incremental, no
+rebuild/fence concern, but biggest change in the hot `flush` draw
+path). Tracker premise corrected to reflect this BLOCK.
+
+**FIXED 2026-05-16 (option (i) implemented, user-confirmed).** User
+chose fork (i). Implemented: `gos_mech_batcher.cpp` -- removed the
+`s_stagingVbo/Ibo.clear()+shrink_to_fit()` at the old `:565-566`
+(staging now RETAINED whole-mission, cleared only at `onMapLoad()`;
+`:110`/declaration comments updated); `registerTypeLod` post-finalize
+branch now STAGES-not-drops (falls through to the staging body, sets
+`s_pendingLateTypes`, `++s_lateStagedCount`, probe `result=staged_
+pending`, no longer `++s_disallowedLateRegEvents`); new
+`GpuMechBatcher::finalizePending()` (header + impl) fence-drains,
+deletes `s_sharedVao/Vbo/Ibo/s_sampler`, sets `s_geometryFinalized=
+false`, calls `finalizeGeometry()` (rebuilds from full retained
+staging; `s_typeLodIndex/records/packets` untouched -> stable indices),
+emits `[MECHBATCHER v1] event=finalize_pending` + `[MECHRESTORE v1]
+event=finalize_pending types=N lateAdded=M rebuilt=1`. Call seam:
+`GpuMechBatcher::instance().finalizePending();` in
+`code/logistics.cpp` immediately before `mission->missionInterface->
+initMechs()` (after the SP force-group `addMover` waves, before
+`mission->start()`/`update()` -> inside the review-proven no-render
+gap); no-op on non-late paths. Built RelWithDebInfo clean (exit 0,
+forced relink), deployed `mc2-win64-v0.4` (md5-verified
+`1b042499...`). **User loaded the mc2_10 save FROM THE MENU (campaign
+SP_LOGISTICS resume, NOT `.ims` quicksave -- confirms the path) and
+visually confirmed the previously-invisible mechs now render.** The
+`Mission::load` two-half change remains in `code/saveload.cpp` as
+orthogonal `.ims`/`copyFrom` quicksave-path coverage (KEEP, per both
+advisors). Probe `[MECHRESTORE v1]` stays gated-off
+(`MC2_MECH_RESTORE_TRACE`). CAVEAT: the tier1 automated regression
+smoke for this build did NOT complete (user killed it to run the save
+test); the catastrophic-axis change is empirically confirmed for #11
+itself but the normal-render-path regression sweep is OUTSTANDING --
+re-run `run_smoke.py --tier tier1` opportunistically.
 
 ## 12. Zoomed-out big-map `Terrain::IndirectDraw` cost (regression, PRE-VPL: 08bd3b2) -- FIXED 073dba4
 
