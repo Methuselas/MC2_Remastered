@@ -1372,20 +1372,16 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     if (len < 0.001f) return;
     float fx = sunDirX/len, fy = sunDirY/len, fz = sunDirZ/len;
 
-    // --- Frustum-fit XY extent in raw-MC2 (corners supplied by caller) ---
-    // Fixed conservative elevation slab + caster margin (no global terrain
-    // min/max constant exists; the real safety net is the map-bounds clamp).
-    const float kSlabMinZ = -512.0f - 512.0f;
-    const float kSlabMaxZ = 4096.0f + 512.0f;
+    // --- Frustum-fit XY extent in raw-MC2 (corners supplied by caller).
+    // The map-bounds clamp below (r, mirrors the static path) is the
+    // footprint safety net that bounds the low-sun "frustum misses ground"
+    // case; no separate elevation slab is needed for an XY ortho fit.
     float minX =  1e30f, maxX = -1e30f, minY = 1e30f, maxY = -1e30f;
     for (int c = 0; c < 8; ++c) {
         float x = camFitCornersMC2[c][0];
         float y = camFitCornersMC2[c][1];
-        float z = camFitCornersMC2[c][2];
-        if (z < kSlabMinZ) z = kSlabMinZ; else if (z > kSlabMaxZ) z = kSlabMaxZ;
         if (x < minX) minX = x; if (x > maxX) maxX = x;
         if (y < minY) minY = y; if (y > maxY) maxY = y;
-        (void)z;
     }
     float r = mapHalfExtent_ * sqrtf(2.0f) * 1.05f;   // mirror static path's r
     if (minX < -r) minX = -r; if (maxX > r) maxX = r;
