@@ -117,6 +117,17 @@ which is sub-frame and needs a Tracy capture to isolate.
 **Documented:** plan Step 8c verification (plan `:554`,
 "Wolfman zoom CPU time drops by the measured loop cost (~475 µs)").
 
+**Update 2026-05-15 (commit `6c9d4b5`):** user Tracy capture quantified
+`slimReduce` at mean 662 µs / median 638 µs / p99 1.05 ms. Root cause of
+the heaviness: the slim loop called `projectForTerrainAdmission`
+UNCONDITIONALLY per vertex, where pre-8c production projected only
+`onScreen` vertices. Restored the pre-8c gate (project iff `onScreenR ||
+!clipUsesOnScreen`); cull superset bit-identical by construction (cull
+write textually unchanged, `clipR` identical). This removes the
+slim-loop-introduced over-projection. The headline `~475 µs` before/after
+A/B is still unmeasured (VPL zone deleted with the body); user should
+re-capture the `slimReduce` zone post-`6c9d4b5` to see the new cost.
+
 ## 6. Step 3 interactive picking UAT (honest gap)
 
 **What:** Manual user-driven UAT of cursor tracking, mech click-select,
@@ -189,6 +200,49 @@ rather than a new defect.
 **Documented:** plan deferred list (plan `:575`, v3.4); cite
 `memory/parity_probe_100pct_can_be_correct_redesign_report.md`.
 
+## 10. Zoom-only terrain/decal + terrain/water z-fighting (NOT VPL fallout)
+
+**What:** Z-fighting between terrain and decals, and terrain and water,
+ONLY when the camera zooms (pan/rotate clean). Reported 2026-05-15.
+
+**Why deferred / why NOT a VPL regression:** Structural and pre-existing.
+Two independent causes (terrain-indirect-expert + render-expert verified):
+(a) THREE conflicting `#define TERRAIN_DEPTH_FUDGE` translation-unit-local
+values compiled simultaneously - `quad.cpp:1997` `0.002f`, `tgl.cpp:2868`
+`0.000f` (stale `.codex_tmp_isolate` copy `0.001f`, not compiled). A
+constant added to post-divide NDC z is the textbook zoom-failure: NDC
+depth is nonlinear in camera distance, so a constant bias tuned at default
+zoom no longer separates surfaces at other zooms; pan/rotate hold camera
+distance fixed so it stays hidden. (b) Water depth `wz`
+(`gos_terrain_water_stream.cpp:475`) is projected from `ourCos +
+Terrain::waterElevation` (animated wave plane) while terrain `pz` projects
+true heightfield `elevation` - two different world-Z through the same
+camera diverge nonlinearly with zoom. 250ab4a/6c9d4b5 did not introduce
+this; `MC2_TERRAIN_INDIRECT=0` is predicted NOT to clear it (structural,
+not indirect-pipeline). **Fix direction:** unify `TERRAIN_DEPTH_FUDGE` to
+one header constant + apply decal/water bias as distance-proportional /
+`glPolygonOffset`-equivalent rather than a constant NDC offset. Own slice
+(has a design fork: polygon-offset vs distance-scaled bias).
+
+## 11. Invisible mechs on mc2_05/07 (NOT VPL fallout - orthogonal)
+
+**What:** Some mechs render invisible on campaign missions mc2_05 and
+mc2_07 (others unconfirmed). Reported 2026-05-15.
+
+**Why deferred / why NOT a VPL regression:** The slim-loop terrain cull
+producer is BYTE-IDENTICAL to the pre-8c production fast path (advisor
+verified `clipInfo`/`setObjBlockActive`/`setObjVertexActive` against
+`0c8e06b^`), 250ab4a/6c9d4b5 are additive/cull-bit-identical, and the
+cull consumers (`objmgr.cpp`/`mech3d.cpp`/`gameobj.cpp`) have zero commits
+in the retirement range. Mechs render-gate on `getExists()`, NOT the
+terrain cull cascade - a cull defect would drop static terrain objects
+(trees/buildings) first, not movers. Traced mc2_05/07 smoke clean: +0
+destroys, TGL pool `mono_total` all zero (no exhaustion). Conclusion:
+pre-existing, orthogonal to the VPL retirement - a mech
+appearance/lifecycle/asset issue needing a dedicated debug with the
+user's visual repro (mech-runtime advisor), NOT a terrain hot-patch and
+NOT to be bundled into the retirement trail.
+
 ---
 
 ## Status summary
@@ -199,11 +253,16 @@ rather than a new defect.
 | 2 | `.codex_tmp_isolate/*` git rm | repo hygiene | no |
 | 3 | quad.cpp probe-placement pattern | methodology | no |
 | 4 | `[RING_MVP_DELTA v1]` FNV residual | inert-cleanup | no |
-| 5 | Tracy ~475 us measurement | perf-quantify | no |
+| 5 | Tracy ~475 us measurement (slimReduce gated `6c9d4b5`) | perf-quantify | no |
 | 6 | Step 3 interactive picking UAT | honest gap | no |
 | 7 | overlay-decal GPU port | sibling slice | no |
 | 8 | dedicated-water-path edge-clamp | follow-up | no |
 | 9 | GetApproximateLength precision | characterized | no |
+| 10 | zoom-only terrain/decal/water z-fight | pre-existing, NOT VPL | no |
+| 11 | invisible mechs mc2_05/07 | pre-existing, NOT VPL, orthogonal | no |
 
-All 9 are non-blocking. The VPL retirement is architecturally complete;
-these are the cleanup/measurement/coverage tail.
+Items 1-9 are the VPL cleanup/measurement/coverage tail (non-blocking;
+retirement architecturally complete). Items 10-11 are pre-existing bugs
+surfaced during post-retirement testing, explicitly NOT caused by the
+retirement (cull producer byte-identical; depth divergence structural) -
+tracked here so they are not lost, to be handled as their own slices.
