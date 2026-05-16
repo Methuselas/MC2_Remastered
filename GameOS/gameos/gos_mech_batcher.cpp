@@ -325,6 +325,12 @@ void GpuMechBatcher::onMapLoad() {
     s_pendingSubmits.clear();
     s_eligibleActorsThisFrame = 0;
     std::memset(s_fallbacksThisFrame, 0, sizeof(s_fallbacksThisFrame));
+    // Clear persisted shadow state so flushShadow() finds no stale entries
+    // that index into the now-cleared s_packets.  Order-independent vs the
+    // !s_instanceSsbo guard in flushShadow().
+    s_lastDrawCalls.clear();
+    s_lastTotalInstances = 0;
+    s_lastTotalBones     = 0;
     std::fprintf(stderr, "[MECHBATCHER v1] event=map_load\n");
 }
 
@@ -362,9 +368,9 @@ void GpuMechBatcher::flushShadow() {
     // BEFORE this frame's flush().
     //
     // Ring-slot reasoning (verified against flush() line numbers):
-    //   flush():820  s_frameSlot = (s_frameSlot+1) % MECH_RING_FRAMES  -- advance
-    //   flush():827  SSBO written to new s_frameSlot                    -- write
-    //   flush():1097 s_fence[s_frameSlot] = glFenceSync(...)            -- fence
+    //   flush():913  s_frameSlot = (s_frameSlot+1) % MECH_RING_FRAMES  -- advance
+    //   flush():920  SSBO written to new s_frameSlot                    -- write
+    //   flush():1190 s_fence[s_frameSlot] = glFenceSync(...)            -- fence
     // flushShadow() runs before this frame's flush(), so s_frameSlot still
     // holds the PREVIOUS frame's post-advance value.  The previous frame's
     // data lives at s_frameSlot and was already fenced by the previous
@@ -431,6 +437,9 @@ void GpuMechBatcher::flushShadow() {
 
     s_shadowTypesDrawn = typesDrawn;
     s_shadowInstDrawn  = instDrawn;
+    // GL state (program/VAO/SSBO bindings) intentionally left set;
+    // endDynamicShadowPass() invalidates the render-state cache
+    // (matches GpuStaticPropBatcher::flushShadow).
 }
 
 // ---------------------------------------------------------------------------

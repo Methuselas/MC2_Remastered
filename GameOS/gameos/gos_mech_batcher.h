@@ -155,7 +155,9 @@ public:
 
     // Post-renderLists() draw flush.
     void flush();
-    void flushShadow();  // no-op in Slice A/B1/B2; reserved for future shadow-offload slice
+    // Phase 1: draws the previous-frame (already-fenced) mech instance set into the dynamic
+    // shadow FBO depth-only.  Called from txmmgr's GPU shadow region before flush().
+    void flushShadow();
 
     bool wasLastFailureLateRegistration() const;
 
