@@ -23,6 +23,8 @@
 
 #include <GL/glew.h>
 
+#include "utils/shader_builder.h"  // load_shader — engine #include resolver
+
 namespace gpu_driven {
 
 bool IsGlobalEnabled() {
@@ -82,22 +84,6 @@ bool IsOverlayEnabled() {
 
 namespace {
 
-static char* gpu_driven_load_text_file(const char* fname) {
-    FILE* f = fopen(fname, "rb");
-    if (!f) return nullptr;
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (sz <= 0) { fclose(f); return nullptr; }
-    char* buf = new char[sz + 1];
-    if ((long)fread(buf, 1, sz, f) != sz) {
-        fclose(f); delete[] buf; return nullptr;
-    }
-    buf[sz] = '\0';
-    fclose(f);
-    return buf;
-}
-
 static GLuint gpu_driven_compile_compute_shader(const char** strings, int count) {
     GLuint sh = glCreateShader(GL_COMPUTE_SHADER);
     if (!sh) return 0;
@@ -151,9 +137,15 @@ GLuint gpu_driven::BuildComputeProgramFromFile(
         const std::string* preambles, int nPreambles,
         const char* debugName)
 {
-    char* fileSrc = gpu_driven_load_text_file(fname);
-    if (!fileSrc) {
-        fprintf(stderr, "[GPU_DRIVEN v1] %s source not found: %s\n", debugName, fname);
+    // Resolve #include directives through the engine's own recursive
+    // preprocessor (the makeProgram path), NOT the GL driver — neither
+    // GL_ARB_shading_language_include nor GL_GOOGLE_include_directive is
+    // requested, so an unresolved #include is a hard compile error.
+    // resolvedSource must outlive the glShaderSource call below.
+    std::string resolvedSource;
+    std::vector<std::string> includes;
+    if (!load_shader(fname, resolvedSource, includes)) {
+        fprintf(stderr, "[GPU_DRIVEN v1] %s source load/parse failed: %s\n", debugName, fname);
         fflush(stderr);
         return 0;
     }
@@ -163,10 +155,9 @@ GLuint gpu_driven::BuildComputeProgramFromFile(
     srcStrs.push_back(kVersionPrefix);
     for (int j = 0; j < nPreambles; ++j)
         srcStrs.push_back(preambles[j].c_str());
-    srcStrs.push_back(fileSrc);
+    srcStrs.push_back(resolvedSource.c_str());
 
     GLuint sh = gpu_driven_compile_compute_shader(srcStrs.data(), (int)srcStrs.size());
-    delete[] fileSrc;
     if (!sh) {
         fprintf(stderr, "[GPU_DRIVEN v1] %s compile failed\n", debugName);
         fflush(stderr);
