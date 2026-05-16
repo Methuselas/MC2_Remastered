@@ -1,4 +1,5 @@
 #include "gos_static_prop_batcher.h"
+#include "gos_postprocess.h"             // getGosPostProcess, getDynamicLightSpaceMatrix
 #include "gos_static_prop_killswitch.h"  // gos_GetGLTextureId
 #include "gos_profiler.h"
 #include "gos_object_parity.h"           // Slice 2 Stage 2.D.1 parity harness
@@ -3586,17 +3587,81 @@ void GpuStaticPropBatcher::flush() {
     }
 }
 
+// File-scope counters written by flushShadow() and read by Task 6 probe.
+static int s_shadowTypesDrawn = 0;
+static int s_shadowInstDrawn  = 0;
+
 void GpuStaticPropBatcher::flushShadow() {
-    // Filled in Task 13.
+    // Non-indirect, full-range, depth-only draw for GPU static props.
+    // Uses the shadow_static_prop program (Task 1) and the same per-frame
+    // SSBO upload as flush() (shared via uploadAllBucketsIfNeeded /
+    // s_lastUploadedSlot). Never uses compute_getIndirectCmdBuf() --
+    // the indirect buffer carries camera-cull-narrowed counts and must
+    // not be used for a shadow pass that needs all instances.
     //
-    // Plan v3.8 Step 7.8 / spec §6.Y forward-compat note: IsCoalesceEnabled()
-    // is irrelevant for the shadow path. The future Task 13 implementation
-    // MUST use the legacy/shadow program path (s_staticPropProgram or a
-    // dedicated shadow program), NOT s_staticPropProgramCoalesce — the
-    // coalesce program's vertex shader uses gl_DrawIDARB / gl_BaseInstanceARB
-    // to drive per-draw indirection, which is not available to a
-    // shadow-pass that does its own per-draw uniform uploads. See spec §6.Y
-    // for the rationale; no behavioral change here.
+    // Spec §6.Y: IsCoalesceEnabled() is irrelevant for the shadow path;
+    // the coalesce program uses gl_DrawIDARB / gl_BaseInstanceARB which
+    // is not available here. Always use the legacy non-indirect path.
+
+    if (!uploadAllBucketsIfNeeded()) return;
+
+    // Resolve shadow_static_prop program via the global program registry.
+    // glsl_program::s_programs is populated by makeProgram() at init; the
+    // key is the name string passed to makeProgram (gosRenderer::init uses
+    // "shadow_static_prop").
+    auto pit = glsl_program::s_programs.find("shadow_static_prop");
+    if (pit == glsl_program::s_programs.end() || !pit->second || !pit->second->shp_)
+        return;
+    const GLuint shadowProg = pit->second->shp_;
+
+    if (s_typeRanges.empty()) return;
+
+    gosPostProcess* pp = getGosPostProcess();
+    if (!pp) return;
+
+    glUseProgram(shadowProg);
+
+    // Upload the dynamic (per-frame) light-space matrix.
+    const GLint lsLoc = glGetUniformLocation(shadowProg, "lightSpaceMatrix");
+    if (lsLoc >= 0)
+        glUniformMatrix4fv(lsLoc, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
+
+    glBindVertexArray(s_sharedVao);
+
+    int typesDrawn = 0;
+    int instDrawn  = 0;
+
+    for (uint32_t typeID = 0; typeID < static_cast<uint32_t>(s_types.size()); ++typeID) {
+        auto rit = s_typeRanges.find(typeID);
+        if (rit == s_typeRanges.end()) continue;
+        const TypeRangeSsbo& r = rit->second;
+        const GpuStaticPropType& type = s_types[typeID];
+        if (r.instanceCount == 0 || type.packetCount == 0) continue;
+
+        // Bind the per-type instance SSBO range (binding 0 = Instances block
+        // in shadow_static_prop.vert, indexed by gl_InstanceID).
+        glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
+                          static_cast<GLintptr>(r.instanceByteOffset),
+                          static_cast<GLsizeiptr>(r.instanceByteSize));
+
+        // Per-packet draw -- mirrors the legacy non-indirect branch of flush().
+        for (uint32_t p = 0; p < type.packetCount; ++p) {
+            const GpuStaticPropPacket& pkt = s_packets[type.firstPacket + p];
+            glDrawElementsInstancedBaseVertex(
+                GL_TRIANGLES,
+                static_cast<GLsizei>(pkt.indexCount),
+                GL_UNSIGNED_INT,
+                reinterpret_cast<void*>(static_cast<uintptr_t>(pkt.firstIndex) * sizeof(uint32_t)),
+                static_cast<GLsizei>(r.instanceCount),
+                pkt.baseVertex);
+        }
+
+        ++typesDrawn;
+        instDrawn += static_cast<int>(r.instanceCount);
+    }
+
+    s_shadowTypesDrawn = typesDrawn;
+    s_shadowInstDrawn  = instDrawn;
 }
 
 void GpuStaticPropBatcher::setDebugAddrMode(int mode) { debugAddrMode_ = mode; }
