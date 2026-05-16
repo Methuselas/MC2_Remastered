@@ -1098,10 +1098,9 @@ void CheckParityFrame(const ParityFrameUniforms& u) {
 //
 // When SOLID is armed (IsFrameSolidArmed() == true): setupTextures is gated off,
 // so waterHandle is never set. terrain.cpp populates g_narrowQuadsThisFrame using
-// the clipped1||clipped2 clipInfo gate (same predicate as the legacy waterHandle
-// assignment in setupTextures, quad.cpp:963). Walk the narrow list here exactly
-// as the legacy path does, but without the waterHandle check (GPU pz gate handles
-// remaining culling).
+// the pVertex->water & 1 primary gate (same predicate as quad.cpp:956-959 water block
+// entry). The GPU compute shader's pzOk gate (gpu_driven_water.comp:236) handles the
+// secondary clip-range check, replacing the clipped1||clipped2 gate in setupTextures.
 //
 // When SOLID is NOT armed (legacy path): use the per-frame narrow walk filtered by
 // waterHandle, matching UploadAndBindThinRecords' gate exactly.

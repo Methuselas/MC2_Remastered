@@ -659,6 +659,9 @@ SECOND VBO for late types + per-packet buffer-id (true incremental, no
 rebuild/fence concern, but biggest change in the hot `flush` draw
 path). Tracker premise corrected to reflect this BLOCK.
 
+**COMMITTED 2026-05-16 (`63bd655`).** Was deployed in v0.4 and
+user-confirmed but uncommitted until this history-hygiene pass.
+
 **FIXED 2026-05-16 (option (i) implemented, user-confirmed).** User
 chose fork (i). Implemented: `gos_mech_batcher.cpp` -- removed the
 `s_stagingVbo/Ibo.clear()+shrink_to_fit()` at the old `:565-566`
@@ -875,8 +878,8 @@ reference to repair separately (non-blocking).
 | 7 | overlay-decal GPU port | sibling slice | no |
 | 8 | dedicated-water-path edge-clamp | follow-up | no |
 | 9 | GetApproximateLength precision | characterized | no |
-| 10 | zoom-only terrain/decal/water z-fight | pre-existing, NOT VPL | no |
-| 11 | invisible mechs mc2_04/05 FROM SAVE | pre-existing, NOT VPL (data-flow proven) | no |
+| 10 | zoom-only terrain/decal/water z-fight | two-regime interim COMMITTED 4c57d1e; perm distance-prop PARKED | no |
+| 11 | invisible mechs mc2_04/05 FROM SAVE | FIXED+COMMITTED 63bd655 (fork i) | no |
 | 12 | zoomed-out big-map IndirectDraw cost | FIXED 073dba4 (Approach A) | no |
 | 13 | GpuStaticProps 22.88ms zoomed-out | attribution DISPUTED (likely pre-existing tree volume, NOT a2a6058) | no |
 
