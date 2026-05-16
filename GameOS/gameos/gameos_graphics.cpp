@@ -2680,7 +2680,11 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
     // that compute marked as visible may project to wild screen positions.
     // Hypothesis after probes 1-7a all silent + bug persists: MVP delta is the
     // last data-source candidate we haven't tested.
-    {
+    // VPL retirement deferred #4 (2026-05-16): inert post-Fix-B (no
+    // load-bearing consumer); gated behind MC2_RING_TRACE like the rest of
+    // the Step 9 demotion so the per-frame FNV + glGetBufferSubData on the
+    // indirect buffer cost nothing in the default config.
+    { static const bool s_ringMvpProbe = (getenv("MC2_RING_TRACE") != nullptr); if (s_ringMvpProbe) {
         const float* drawMvp = gos_GetTerrainMVPMat4();
         if (drawMvp) {
             uint32_t drawFp = 2166136261u;
@@ -2747,7 +2751,7 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
                 }
             }
         }
-    }
+    } }
     // ── end probe 8 ────────────────────────────────────────────────────────
 
     // ---- Draw --------------------------------------------------------------
