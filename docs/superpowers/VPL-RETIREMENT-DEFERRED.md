@@ -361,14 +361,43 @@ the a2a6058 LOD-0 pin (`bdactor.cpp:1386-1415`) with a GPU-computed
 distance/screen-size -> LOD-bucket selection; the frustum cull stays
 (props leave only when truly off-frustum, not by distance).
 
-**Dependency / long-pole:** "render distant at LOWER LOD" requires the
-underlying LOD-1+ "zero fragments after bldgShape swap" invisibility
-bug (the reason a2a6058 pinned to LOD-0) to be FIXED or routed around
-GPU-side -- otherwise selecting any LOD>0 reproduces the original
-invisible-buildings bug. That bug is the real blocker and is being
-investigated as prep. The decisive root-cause check
-(MC2_GPU_CULL_SUBSTRATE=0 vs =1 Tracy, user-driven) is pending before
-implementation.
+**Dependency / long-pole -- RESOLVED by prep (2026-05-15, advisor):**
+the LOD-1+ "zero fragments" bug is SPECIFIC to the runtime CPU
+`bldgShape = bldgShape[lod]->CreateFrom()` swap (NULL per-instance
+listOfVertices/listOfColors colliding with the cull-gated update()
+pass -- a cull_gates_are_load_bearing cascade; gos_static_prop_
+batcher.cpp:2559 skip). It is NOT in the GPU draw. ALL LOD typeIDs are
+already registered (`bdactor.cpp:830`) + baked into the immutable VBO
+(`mission.cpp:3114`). VERDICT: the fix is FEASIBLE via sequencing (ii)
+-- a GPU-side per-instance distance->LOD typeID selector that NEVER
+does the CPU bldgShape swap. The a2a6058 LOD-0 CPU pin STAYS; only the
+draw picks a coarser registered typeID for distant instances. This
+sidesteps the invisibility bug by construction; sequencing (i) (fix
+the CPU swap first) is strictly worse (deep cull-desync, the cascade
+a2a6058 fled). NOT a blocker anymore.
+
+**Scope:** bdactor.cpp render/registerStatic (emit per-instance
+LOD-set, no swap), gos_static_prop_batcher.{h,cpp} (per-instance LOD
+index / per-type LOD-typeID table), gpu_cull compute +
+gpu_cull_predicate.glsl (distance->LOD-bucket term; frustum cull
+stays; NEVER distance-reject), GpuStaticPropRegistry recipe. Asset
+constraint: not every prop type has LOD-1+ -> GPU selector MUST clamp
+the LOD index to the type's registered-LOD count (LOD-0 always
+exists). Catastrophic-axis (mandated independent review required):
+std430 lockstep for the per-instance LOD index
+(cpp_glsl_ubo_struct_lockstep, one-commit), wrong-LOD-everywhere
+(parity probe vs pinned LOD-0 at default zoom = byte-identical),
+missing-LOD clamp, indirect/cull-count desync (item-12 class).
+
+**Pending before implementation:** user-driven MC2_GPU_CULL_SUBSTRATE
+=0 vs =1 Tracy check to confirm honest-overdraw root cause (the
+22.88ms collapses to ~0 with substrate off). Then plan -> mandated
+independent adversarial review -> parity probe -> smoke matrix (the
+#12 / 073dba4 discipline).
+
+**Housekeeping:** commit a2a6058 cites `memory/bldg_animation_lod_
+swap_unsafe.md` which is NOT present on disk -- a stale memory
+reference to repair separately (non-blocking).
 
 ---
 
