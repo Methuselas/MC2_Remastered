@@ -1309,11 +1309,14 @@ class gosRenderer {
         // (which caches the location) and while the thin program is bound.
         void terrainOverrideThinMVP(const float* mvp4x4);
         // Returns the glsl_program for the thin terrain shader. Used by bridge exports.
-        glsl_program* getThinTerrainProgram() const { return thin_terrain_prog_; }
-        glsl_program* getWaterFastProgram()   const { return water_fast_prog_;   }
-        glsl_program* getMineStaticProgram()  const { return mine_static_prog_;  }  // PR2c Stage 2c
-        glsl_program* getMaskSolidProgram()   const { return mask_solid_prog_;   }  // B4 Stage 1b — mask-SOLID draw
-        glsl_program* getMaskWaterProgram()   const { return mask_water_prog_;   }  // B4 Stage 1c — mask-water draw
+        glsl_program* getThinTerrainProgram()      const { return thin_terrain_prog_;        }
+        glsl_program* getWaterFastProgram()        const { return water_fast_prog_;           }
+        glsl_program* getMineStaticProgram()       const { return mine_static_prog_;          }  // PR2c Stage 2c
+        glsl_program* getMaskSolidProgram()        const { return mask_solid_prog_;           }  // B4 Stage 1b — mask-SOLID draw
+        glsl_program* getMaskWaterProgram()        const { return mask_water_prog_;           }  // B4 Stage 1c — mask-water draw
+        // GPU-driven dynamic sun shadow -- Phase 1 getters.
+        glsl_program* getShadowMechProg()          const { return shadow_mech_prog_;          }
+        glsl_program* getShadowStaticPropProg()    const { return shadow_static_prop_prog_;   }
 
         // Water fast path (Stage 2 of renderWater architectural slice).
         // Issues 1-2 instanced draws against the WaterRecipe + WaterFrame SSBOs.
@@ -1624,6 +1627,11 @@ class gosRenderer {
         // Shadow mode
         gosRenderMaterial* shadow_terrain_material_ = nullptr;
         gosRenderMaterial* shadow_object_material_ = nullptr;
+        // GPU-driven dynamic sun shadow -- depth-only instanced programs (Phase 1).
+        // Registered at init; called by Tasks 3+ to draw GPU-batched mechs/buildings
+        // into the dynamic shadow FBO.
+        glsl_program* shadow_mech_prog_        = nullptr;  // shadow_mech.vert + shadow_instanced.frag
+        glsl_program* shadow_static_prop_prog_ = nullptr;  // shadow_static_prop.vert + shadow_instanced.frag
         bool shadow_mode_ = false;
         bool shadow_prepass_active_ = false;
         float terrain_shadow_softness_ = 0.9f;  // tuned for gradient-adaptive PCF + 4096² maps
@@ -3409,6 +3417,46 @@ void gosRenderer::init() {
         if (shadow_object_material_) {
             materialList_.push_back(shadow_object_material_);
         }
+    }
+
+    // GPU-driven dynamic sun shadow Phase 1 -- depth-only instanced programs.
+    // shadow_mech.vert: skinned mech instances (SSBOs binding0=InstanceBuffer,
+    //   binding1=BoneBuffer). Mirrors mech.vert position-only path.
+    // shadow_static_prop.vert: static-prop instances (SSBO binding0=Instances).
+    //   Mirrors static_prop.vert legacy non-coalesce path (gl_InstanceID bare;
+    //   caller binds per-type SSBO range via glBindBufferRange).
+    // Nothing calls these yet -- registration only (Task 1).
+    {
+        ZoneScopedN("gosRenderer::init shadowMechProg");
+        static const char* kShadowInstPrefix = "#version 430\n";
+        shadow_mech_prog_ = glsl_program::makeProgram(
+            "shadow_mech",
+            "shaders/shadow_mech.vert",
+            "shaders/shadow_instanced.frag",
+            kShadowInstPrefix);
+        if (!shadow_mech_prog_ || !shadow_mech_prog_->shp_)
+            fprintf(stderr, "[SHADOW_MECH] WARNING: failed to compile shadow_mech shader"
+                            " -- GPU-driven mech shadow draw disabled\n");
+        else
+            printf("[SHADOW_MECH] Shadow mech shader loaded: prog=%u\n",
+                   (unsigned)shadow_mech_prog_->shp_);
+        fflush(stdout);
+    }
+    {
+        ZoneScopedN("gosRenderer::init shadowStaticPropProg");
+        static const char* kShadowStaticPropPrefix = "#version 430\n";
+        shadow_static_prop_prog_ = glsl_program::makeProgram(
+            "shadow_static_prop",
+            "shaders/shadow_static_prop.vert",
+            "shaders/shadow_instanced.frag",
+            kShadowStaticPropPrefix);
+        if (!shadow_static_prop_prog_ || !shadow_static_prop_prog_->shp_)
+            fprintf(stderr, "[SHADOW_STATIC_PROP] WARNING: failed to compile shadow_static_prop shader"
+                            " -- GPU-driven static-prop shadow draw disabled\n");
+        else
+            printf("[SHADOW_STATIC_PROP] Shadow static-prop shader loaded: prog=%u\n",
+                   (unsigned)shadow_static_prop_prog_->shp_);
+        fflush(stdout);
     }
 
     // Load thin-record terrain program (gos_terrain_thin.vert + gos_terrain.frag, no tess).
@@ -6587,13 +6635,18 @@ void gos_BeginShadowPrePass(bool clearDepth) {
 void gos_EndShadowPrePass() {
     if (g_gos_renderer) g_gos_renderer->endShadowPrePass();
 }
-// Phase 4a: file-static one-shot flag. Set when external code (or the
-// txmmgr.cpp first-terrain-frame latch) wants to force the static shadow
-// pass to run regardless of the camera-motion cache threshold.
-static bool s_shadowRebuildPending = false;
-void gos_RequestFullShadowRebuild() { s_shadowRebuildPending = true; }
-bool gos_ShadowRebuildPending() { return s_shadowRebuildPending; }
-void gos_ClearShadowRebuildPending() { s_shadowRebuildPending = false; }
+// VPL-#shadow C-1: per-mission re-arm of the one-shot full-map static
+// shadow build (called from Terrain::destroy so mission 2+ rebuilds
+// against fresh blocks[] instead of freezing mission 1's shadow).
+void gos_ResetStaticLightMatrix() {
+    gosPostProcess* pp = getGosPostProcess();
+    if (pp) pp->resetStaticLightMatrix();
+}
+// VPL-#shadow Phase 1: the gos_*ShadowRebuild* one-shot-flag API
+// (s_shadowRebuildPending + Request/Pending/Clear) is RETIRED. Its only
+// caller was the txmmgr camera-windowed-accumulate prime block, deleted
+// with the move to the build-once full-map static shadow. Do not
+// reintroduce a camera-motion shadow trigger.
 void gos_DrawShadowBatchTessellated(gos_VERTEX* vertices, int numVerts,
     WORD* indices, int numIndices,
     const gos_TERRAIN_EXTRA* extras, int extraCount) {
