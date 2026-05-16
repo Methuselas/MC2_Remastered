@@ -413,6 +413,11 @@ void GpuMechBatcher::flushShadow() {
         glUniform1i(smLoc, g_useGpuMechSkin ? 1 : 0);
 
     glBindVertexArray(s_sharedVao);
+    // Same root cause as GpuStaticPropBatcher::flushShadow: do not rely on
+    // s_sharedVao carrying the IBO (other GPU paths clobber its VAO-resident
+    // GL_ELEMENT_ARRAY_BUFFER binding); bind s_sharedIbo explicitly so the
+    // indexed draw never treats firstIndex*4 as a client pointer.
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
 
     // Read the already-fenced previous-frame SSBO slot.
     const uint32_t slot = s_frameSlot;

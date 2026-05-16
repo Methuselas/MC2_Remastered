@@ -3636,6 +3636,28 @@ void GpuStaticPropBatcher::flushShadow() {
         glUniformMatrix4fv(lsLoc, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
 
     glBindVertexArray(s_sharedVao);
+    // Root cause of the frame-2 0x2A18 crash: the GPU-cull/indirect flush()
+    // path runs between this frame's and last frame's flushShadow and leaves
+    // s_sharedVao's VAO-resident GL_ELEMENT_ARRAY_BUFFER binding at 0. An
+    // indexed draw with no element buffer treats firstIndex*4 as a client
+    // pointer (2694*4 == 0x2A18) and faults. Do NOT rely on the VAO carrying
+    // the IBO; bind s_sharedIbo explicitly (also repairs the VAO binding).
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
+
+    const bool s_shDiag = (getenv("MC2_SHADOW_DIAG") != nullptr);
+    if (s_shDiag) {
+        GLint elemBuf = -1, linkOk = -1;
+        glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &elemBuf);
+        glGetProgramiv(shadowProg, GL_LINK_STATUS, &linkOk);
+        GLenum ePre = glGetError();
+        fprintf(stderr,
+            "[SHADOW_DIAG] sp finalized=%d vao=%u isVao=%d ssbo=%u isBuf=%d "
+            "elemBind=%d prog=%u link=%d errPre=0x%x typeRanges=%zu types=%zu packets=%zu\n",
+            (int)s_geometryFinalized, s_sharedVao, (int)glIsVertexArray(s_sharedVao),
+            s_instanceSsbo, (int)glIsBuffer(s_instanceSsbo), elemBuf, shadowProg,
+            linkOk, (unsigned)ePre, s_typeRanges.size(), s_types.size(), s_packets.size());
+        fflush(stderr);
+    }
 
     int typesDrawn = 0;
     int instDrawn  = 0;
@@ -3658,6 +3680,17 @@ void GpuStaticPropBatcher::flushShadow() {
             const uint32_t pktIdx = type.firstPacket + p;
             if (pktIdx >= s_packets.size()) break;  // defense-in-depth: stale range
             const GpuStaticPropPacket& pkt = s_packets[pktIdx];
+            if (s_shDiag) {
+                fprintf(stderr,
+                    "[SHADOW_DIAG] sp draw type=%u byteOff=%llu byteSize=%llu instCnt=%u "
+                    "firstPkt=%u pktCnt=%u pktIdx=%u idxCnt=%u firstIdx=%u baseV=%d errPre=0x%x\n",
+                    typeID, (unsigned long long)r.instanceByteOffset,
+                    (unsigned long long)r.instanceByteSize, r.instanceCount,
+                    type.firstPacket, type.packetCount, pktIdx,
+                    pkt.indexCount, pkt.firstIndex, pkt.baseVertex,
+                    (unsigned)glGetError());
+                fflush(stderr);
+            }
             glDrawElementsInstancedBaseVertex(
                 GL_TRIANGLES,
                 static_cast<GLsizei>(pkt.indexCount),
