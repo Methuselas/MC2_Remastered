@@ -3612,6 +3612,16 @@ void GpuStaticPropBatcher::flushShadow() {
     // condition; flushShadow() must honor the identical precondition.
     if (!s_geometryFinalized || s_fatalRegistrationFailure) return;
 
+    // DEFAULT-OFF pending the dedicated-VAO redesign. flushShadow sharing
+    // s_sharedVao is architecturally broken: GL_ELEMENT_ARRAY_BUFFER is
+    // VAO state, so any element-binding mutation here corrupts the main
+    // flush() indexed draws (crash signature: firstIndex*4 as a client
+    // pointer, e.g. 0x2A18 / 0x17AC). The correct fix is a private shadow
+    // VAO that never touches s_sharedVao; until that lands this path is
+    // opt-in only via MC2_SHADOW_ENABLE. See the architecture handoff doc.
+    static const bool s_shadowEnabled = (getenv("MC2_SHADOW_ENABLE") != nullptr);
+    if (!s_shadowEnabled) return;
+
     if (!uploadAllBucketsIfNeeded()) return;
 
     // Resolve shadow_static_prop program via the global program registry.
@@ -3627,6 +3637,20 @@ void GpuStaticPropBatcher::flushShadow() {
 
     gosPostProcess* pp = getGosPostProcess();
     if (!pp) return;
+
+    // Save/restore the GL state this pass perturbs, mirroring flush()'s
+    // bracket (:2844-2854 / :3509-3521). flushShadow runs BEFORE
+    // gpu_cull::compute_dispatch() and the main flush(); leaking the
+    // program / VAO / element-buffer / SSBO binding-0 here poisons the
+    // cull dispatch and the indirect draw -> the entire prop+mech render
+    // is suppressed (the invisible-casters regression). All early returns
+    // above are before any GL mutation, so a single capture here + restore
+    // at the one exit is correct.
+    GLint prevProgram = 0, prevVao = 0, prevElemBuf = 0, prevSsbo0 = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &prevElemBuf);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
 
     glUseProgram(shadowProg);
 
@@ -3706,6 +3730,13 @@ void GpuStaticPropBatcher::flushShadow() {
 
     s_shadowTypesDrawn = typesDrawn;
     s_shadowInstDrawn  = instDrawn;
+
+    // Restore exactly what we changed so compute_dispatch()/flush() see
+    // the GL state they expect (mirrors flush()'s restore bracket).
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf);
+    glBindVertexArray((GLuint)prevVao);
+    glUseProgram((GLuint)prevProgram);
 }
 
 void GpuStaticPropBatcher::setDebugAddrMode(int mode) { debugAddrMode_ = mode; }

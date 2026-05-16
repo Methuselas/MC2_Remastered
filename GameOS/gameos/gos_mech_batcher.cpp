@@ -381,6 +381,13 @@ void GpuMechBatcher::flushShadow() {
     // persist it to s_lastDrawCalls / s_lastTotalInstances / s_lastTotalBones
     // at the end of flush() and consume those statics here.
 
+    // DEFAULT-OFF pending the dedicated-VAO redesign (same reason as
+    // GpuStaticPropBatcher::flushShadow): sharing s_sharedVao corrupts the
+    // main flush() element binding (GL_ELEMENT_ARRAY_BUFFER is VAO state).
+    // Opt-in only via MC2_SHADOW_ENABLE until the private-VAO fix lands.
+    static const bool s_shadowEnabled = (getenv("MC2_SHADOW_ENABLE") != nullptr);
+    if (!s_shadowEnabled) return;
+
     // Geometry-readiness guard, mirroring the color flush() path (:867).
     // The new txmmgr shadow region calls this from frame ~1 and across
     // mid-mission finalizePending() rebuilds; without this, a not-yet-
@@ -399,6 +406,18 @@ void GpuMechBatcher::flushShadow() {
 
     gosPostProcess* pp = getGosPostProcess();
     if (!pp) return;
+
+    // Save/restore the GL state this pass perturbs, mirroring flush()'s
+    // bracket (:1036-1043 / :1209-1218). Leaking program/VAO/element-
+    // buffer/SSBO bindings 0+1 here poisons gpu_cull::compute_dispatch()
+    // and the indirect flush() that run after -> invisible mechs+props.
+    // All early returns above precede any GL mutation.
+    GLint prevProgram = 0, prevVao = 0, prevElemBuf = 0, prevSsbo0 = 0, prevSsbo1 = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &prevElemBuf);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 1, &prevSsbo1);
 
     glUseProgram(shadowProg);
 
@@ -449,9 +468,14 @@ void GpuMechBatcher::flushShadow() {
 
     s_shadowTypesDrawn = typesDrawn;
     s_shadowInstDrawn  = instDrawn;
-    // GL state (program/VAO/SSBO bindings) intentionally left set;
-    // endDynamicShadowPass() invalidates the render-state cache
-    // (matches GpuStaticPropBatcher::flushShadow).
+
+    // Restore exactly what we changed (mirrors flush()'s restore bracket)
+    // so the cull dispatch + indirect flush() that follow are not poisoned.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, (GLuint)prevSsbo1);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf);
+    glBindVertexArray((GLuint)prevVao);
+    glUseProgram((GLuint)prevProgram);
 }
 
 // ---------------------------------------------------------------------------
