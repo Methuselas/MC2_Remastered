@@ -389,11 +389,39 @@ std430 lockstep for the per-instance LOD index
 (parity probe vs pinned LOD-0 at default zoom = byte-identical),
 missing-LOD clamp, indirect/cull-count desync (item-12 class).
 
-**Pending before implementation:** user-driven MC2_GPU_CULL_SUBSTRATE
-=0 vs =1 Tracy check to confirm honest-overdraw root cause (the
-22.88ms collapses to ~0 with substrate off). Then plan -> mandated
+**ROOT CAUSE DISPUTED (user domain knowledge, 2026-05-15) -- do NOT
+accept the a2a6058 attribution verbatim:** the advisor blamed the
+a2a6058 building LOD-0 pin, but the user (who knows the content)
+states: trees were ALREADY full-LOD pre-a2a6058 (a2a6058 changed ONLY
+buildings), and the affected maps have FEW buildings. So "buildings
+pinned to LOD-0" is unlikely to drive 22.88ms. Most probable actual
+cause: PRE-EXISTING full-LOD TREE prop volume (lots of tree static
+props, never LOD'd, unrelated to a2a6058) -- i.e. GpuStaticProps cost
+is largely pre-existing and NOT an a2a6058 regression. The
+substrate=0/=1 check shows TOTAL static-prop cost, not a tree-vs-
+building split, so it cannot by itself settle this; a per-category
+(tree vs bldg) instance/primitive count (RenderDoc on one zoomed-out
+frame, or a category-split probe) is what would actually settle it.
+The GPU distance->LOD selector still helps regardless (it LODs trees
+too, the dominant volume), but the headline "regression / a2a6058"
+framing is downgraded to "likely pre-existing tree volume, attribution
+unconfirmed".
+
+**Measurement note (2026-05-15):** a user run showed Terrain::
+IndirectDraw ~1ms (down from 7.8-9ms) -- consistent with the #12
+(073dba4) windowing win, BUT that run was on a remote-desktop session
+with different monitor scaling/resolution (a large fragment-bound GPU
+confounder, bigger than the camera-input confounder in
+smoke_autonomous_run_pattern.md s4). NOT a clean #12 validation; a
+same-resolution non-remote MC2_TERRAIN_SOLID_NARROW=0-vs-default A/B
+is still needed for the real #12 number. NO #13 cull/LOD code change
+has been made (verified git: last code commit is 073dba4 / #12).
+
+**Pending before implementation (deferred -- session wrap):** settle
+the tree-vs-building attribution first (per-category count), THEN if a
+GPU distance->LOD selector is still wanted: plan -> mandated
 independent adversarial review -> parity probe -> smoke matrix (the
-#12 / 073dba4 discipline).
+#12 / 073dba4 discipline). Not started; tracked, non-blocking.
 
 **Housekeeping:** commit a2a6058 cites `memory/bldg_animation_lod_
 swap_unsafe.md` which is NOT present on disk -- a stale memory
@@ -417,7 +445,7 @@ reference to repair separately (non-blocking).
 | 10 | zoom-only terrain/decal/water z-fight | pre-existing, NOT VPL | no |
 | 11 | invisible mechs mc2_04/05 FROM SAVE | pre-existing, NOT VPL (data-flow proven) | no |
 | 12 | zoomed-out big-map IndirectDraw cost | FIXED 073dba4 (Approach A) | no |
-| 13 | GpuStaticProps 22.88ms zoomed-out | regression, PRE-VPL (a2a6058) | no |
+| 13 | GpuStaticProps 22.88ms zoomed-out | attribution DISPUTED (likely pre-existing tree volume, NOT a2a6058) | no |
 
 Items 1-9 are the VPL cleanup/measurement/coverage tail (non-blocking;
 retirement architecturally complete). Items 10-11 are pre-existing bugs
