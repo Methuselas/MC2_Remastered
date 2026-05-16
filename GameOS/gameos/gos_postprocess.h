@@ -67,8 +67,10 @@ public:
     // Dynamic object shadows: camera-centered, re-rendered every frame
     void initDynamicShadows();
     void destroyDynamicShadows();
+    // camFitCornersMC2 = 8 raw-MC2 frustum corners (clipToWorld-unprojected
+    // + Stuff->MC2 swizzled by the caller). Builder clamps + fits the ortho.
     void buildDynamicLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
-                                 float camX, float camY, float camZ);
+                                 const float camFitCornersMC2[8][3]);
     GLuint getDynamicShadowTexture() const { return dynShadowDepthTex_; }
     GLuint getDynamicShadowFBO() const { return dynShadowFBO_; }
     const float* getDynamicLightSpaceMatrix() const { return dynamicLightSpaceMatrix_; }

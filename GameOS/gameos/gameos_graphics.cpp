@@ -6666,9 +6666,9 @@ void gos_EndDynamicShadowPass() {
     if (g_gos_renderer) g_gos_renderer->endDynamicShadowPass();
 }
 void gos_BuildDynamicLightMatrix(float sx, float sy, float sz,
-                                  float cx, float cy, float cz) {
+                                  const float camFitCornersMC2[8][3]) {
     gosPostProcess* pp = getGosPostProcess();
-    if (pp) pp->buildDynamicLightMatrix(sx, sy, sz, cx, cy, cz);
+    if (pp) pp->buildDynamicLightMatrix(sx, sy, sz, camFitCornersMC2);
 }
 
 void gos_GetTerrainLightDir(float* x, float* y, float* z) {

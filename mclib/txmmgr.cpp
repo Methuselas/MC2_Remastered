@@ -1545,39 +1545,8 @@ void MC_TextureManager::renderLists (void)
 		Terrain::mapData->renderStaticTerrainShadowFullMap(indexArray, shTex);
 		gos_EndShadowPrePass();
 	}
-	// Dynamic object shadow pass: render g_shadowShapes[] every frame
-	if (gos_IsTerrainTessellationActive() && g_numShadowShapes > 0) {
-		ZoneScopedN("Shadow.DynPass");
-		TracyGpuZone("Shadow.DynPass");
-		float lx = 0, ly = 0, lz = 0;
-		gos_GetTerrainLightDir(&lx, &ly, &lz);
-
-		// Ray-ground intersection to find where camera is actually looking.
-		// Camera is in Stuff space (x=left, y=elevation, z=forward).
-		// Ground plane is y=0 in Stuff space (z=0 in MC2 space).
-		// Ray: P = cp + t * lookVector. Solve for cp.y + t * lv.y = 0.
-		Stuff::Vector3D lv = eye->getLookVector();
-		float focusX, focusZ;  // MC2 space: x=east, y=north
-		if (fabsf(lv.y) > 0.001f) {
-			float t = -cp.y / lv.y;
-			// Pull center 20% back toward camera so bottom-of-screen mechs
-			// aren't clipped. t=1.0 = exact screen center, t=0.0 = camera feet.
-			t *= 0.80f;
-			// Stuff hit point → MC2: MC2.x = -Stuff.x, MC2.y = Stuff.z
-			focusX = -(cp.x + t * lv.x);
-			focusZ = cp.z + t * lv.z;
-		} else {
-			// Camera looking horizontally — fall back to ground projection
-			focusX = -cp.x;
-			focusZ = cp.z;
-		}
-		gos_BuildDynamicLightMatrix(-lx, -ly, -lz, focusX, focusZ, 0.0f);
-		gos_BeginDynamicShadowPass();
-		for (int si = 0; si < g_numShadowShapes; si++)
-			gos_DrawShadowObjectBatch(g_shadowShapes[si].vb, g_shadowShapes[si].ib,
-				g_shadowShapes[si].vdecl, g_shadowShapes[si].worldMatrix);
-		gos_EndDynamicShadowPass();
-	}
+	// Dynamic object shadow pass: caller (Task 5) will supply frustum corners
+	// and invoke gos_BuildDynamicLightMatrix + gos_BeginDynamicShadowPass here.
 	g_numShadowShapes = 0;
 
 	// No special depth state for DRAWSOLID terrain

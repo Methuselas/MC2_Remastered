@@ -1362,7 +1362,7 @@ void gosPostProcess::destroyDynamicShadows()
 }
 
 void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
-                                              float camX, float camY, float camZ)
+                                              const float camFitCornersMC2[8][3])
 {
     if (!shadowsEnabled_ || !dynShadowFBO_) return;
 
@@ -1372,17 +1372,39 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     if (len < 0.001f) return;
     float fx = sunDirX/len, fy = sunDirY/len, fz = sunDirZ/len;
 
-    float xyRadius = 2400.0f;  // half-extent of the dynamic shadow ortho. Covers the
-                                // zoomed-out camera view plus enough margin for
-                                // off-screen casters. At 4096² map, texel density is
-                                // (2*xyRadius)/4096 units/texel. 2400 → ~1.17 u/tex.
-    float depthDist = 5000.0f;              // large depth to envelope all elevations
-
-    // Texel snapping: quantize camera position to shadow texel grid
+    // --- Frustum-fit XY extent in raw-MC2 (corners supplied by caller) ---
+    // Fixed conservative elevation slab + caster margin (no global terrain
+    // min/max constant exists; the real safety net is the map-bounds clamp).
+    const float kSlabMinZ = -512.0f - 512.0f;
+    const float kSlabMaxZ = 4096.0f + 512.0f;
+    float minX =  1e30f, maxX = -1e30f, minY = 1e30f, maxY = -1e30f;
+    for (int c = 0; c < 8; ++c) {
+        float x = camFitCornersMC2[c][0];
+        float y = camFitCornersMC2[c][1];
+        float z = camFitCornersMC2[c][2];
+        if (z < kSlabMinZ) z = kSlabMinZ; else if (z > kSlabMaxZ) z = kSlabMaxZ;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        (void)z;
+    }
+    float r = mapHalfExtent_ * sqrtf(2.0f) * 1.05f;   // mirror static path's r
+    if (minX < -r) minX = -r; if (maxX > r) maxX = r;
+    if (minY < -r) minY = -r; if (maxY > r) maxY = r;
+    float cx = 0.5f * (minX + maxX);
+    float cy = 0.5f * (minY + maxY);
+    float halfX = 0.5f * (maxX - minX);
+    float halfY = 0.5f * (maxY - minY);
+    float fitRadius = (halfX > halfY ? halfX : halfY);
+    if (fitRadius < 64.0f) fitRadius = 64.0f;
+    if (fitRadius > r)     fitRadius = r;
+    float xyRadius = 64.0f;
+    while (xyRadius < fitRadius) xyRadius *= 2.0f;     // pow2 anti-shimmer
+    if (xyRadius > r) xyRadius = r;
     float worldUnitsPerTexel = (2.0f * xyRadius) / (float)dynShadowMapSize_;
-    camX = floorf(camX / worldUnitsPerTexel) * worldUnitsPerTexel;
-    camY = floorf(camY / worldUnitsPerTexel) * worldUnitsPerTexel;
-    // Don't clamp Z — keep true camera elevation for depth centering
+    float camX = floorf(cx / worldUnitsPerTexel) * worldUnitsPerTexel;
+    float camY = floorf(cy / worldUnitsPerTexel) * worldUnitsPerTexel;
+    float camZ = 0.0f;
+    float depthDist = 5000.0f;
 
     float lightPosX = camX - fx * depthDist;
     float lightPosY = camY - fy * depthDist;

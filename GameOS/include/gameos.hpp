@@ -2315,7 +2315,7 @@ void gos_DrawShadowObjectBatch(HGOSBUFFER vb, HGOSBUFFER ib,
 void gos_BeginDynamicShadowPass();
 void gos_EndDynamicShadowPass();
 void gos_BuildDynamicLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
-                                  float camX, float camY, float camZ);
+                                  const float camFitCornersMC2[8][3]);
 void __stdcall gos_SetTerrainMVP(const float* matrix16);
 void __stdcall gos_SetTerrainViewport(float vmx, float vmy, float vax, float vay);
 void __stdcall gos_SetTerrainCameraPos(float x, float y, float z);
