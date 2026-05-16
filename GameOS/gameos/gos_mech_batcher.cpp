@@ -4,6 +4,7 @@
 #include "gos_static_prop_batcher.h"  // for STATIC_PROP_RING_FRAMES cross-check
 #include "gameos.hpp"                 // gos_InvalidateRenderStateCache
 #include "utils/shader_builder.h"
+#include "gos_postprocess.h"           // getGosPostProcess()->getDynamicLightSpaceMatrix()
 #include "../../mclib/txmmgr.h"       // mcTextureManager->get_gosTextureHandle (live resolve)
 #include <GL/glew.h>
 #include <cstdio>
@@ -160,6 +161,23 @@ struct PendingSubmit {
     uint32_t                 typeLodIdx;
 };
 static std::vector<PendingSubmit> s_pendingSubmits;
+
+// Per-frame draw-call snapshot persisted at the END of flush() for use by
+// flushShadow() on the NEXT frame.  flushShadow() runs before this frame's
+// flush(), so it reads last frame's already-fenced SSBO slot (s_frameSlot)
+// together with the drawCalls that were built for that same slot.
+struct ShadowDrawEntry {
+    uint32_t globalPacketIdx;
+    uint32_t instanceBase;
+    uint32_t instanceCount;
+};
+static std::vector<ShadowDrawEntry> s_lastDrawCalls;
+static size_t                       s_lastTotalInstances = 0;
+static size_t                       s_lastTotalBones     = 0;
+
+// File-scope counters written by flushShadow() and read by Task 6 probe.
+static int s_shadowTypesDrawn = 0;
+static int s_shadowInstDrawn  = 0;
 
 // Counters.
 static bool     s_mechBatcherTrace     = false;
@@ -338,7 +356,82 @@ bool GpuMechBatcher::isFinalized() const                    { return s_geometryF
 
 void GpuMechBatcher::recordEligibleActor()                         { ++s_eligibleActorsThisFrame; }
 void GpuMechBatcher::recordCpuFallback(GpuMechFallbackReason r)   { ++s_fallbacksThisFrame[(int)r]; }
-void GpuMechBatcher::flushShadow() {}  // no-op in Slice A/B1/B2
+void GpuMechBatcher::flushShadow() {
+    // Depth-only draw of the previous frame's mech instances into the dynamic
+    // shadow FBO.  Called from Task-5's gos_BeginDynamicShadowPass region,
+    // BEFORE this frame's flush().
+    //
+    // Ring-slot reasoning (verified against flush() line numbers):
+    //   flush():820  s_frameSlot = (s_frameSlot+1) % MECH_RING_FRAMES  -- advance
+    //   flush():827  SSBO written to new s_frameSlot                    -- write
+    //   flush():1097 s_fence[s_frameSlot] = glFenceSync(...)            -- fence
+    // flushShadow() runs before this frame's flush(), so s_frameSlot still
+    // holds the PREVIOUS frame's post-advance value.  The previous frame's
+    // data lives at s_frameSlot and was already fenced by the previous
+    // flush():1097.  Read slot = s_frameSlot.  No advance / write / fence here.
+    //
+    // Bucket-reuse: Option B (persisted drawCalls).  flush()'s local DrawCall
+    // vector is entangled with the ring write inside the same function, so we
+    // persist it to s_lastDrawCalls / s_lastTotalInstances / s_lastTotalBones
+    // at the end of flush() and consume those statics here.
+
+    if (s_lastDrawCalls.empty()) return;
+    if (!s_instanceSsbo || !s_boneSsbo) return;
+
+    // Resolve shadow_mech program via the global registry (Task 1 registered
+    // it under this key via makeProgram("shadow_mech", ...)).
+    auto pit = glsl_program::s_programs.find("shadow_mech");
+    if (pit == glsl_program::s_programs.end() || !pit->second || !pit->second->shp_)
+        return;
+    const GLuint shadowProg = pit->second->shp_;
+
+    gosPostProcess* pp = getGosPostProcess();
+    if (!pp) return;
+
+    glUseProgram(shadowProg);
+
+    const GLint lsLoc = glGetUniformLocation(shadowProg, "lightSpaceMatrix");
+    if (lsLoc >= 0)
+        glUniformMatrix4fv(lsLoc, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
+
+    const GLint smLoc   = glGetUniformLocation(shadowProg, "u_skinningMode");
+    const GLint baseLoc = glGetUniformLocation(shadowProg, "u_instanceBase");
+
+    if (smLoc >= 0)
+        glUniform1i(smLoc, g_useGpuMechSkin ? 1 : 0);
+
+    glBindVertexArray(s_sharedVao);
+
+    // Read the already-fenced previous-frame SSBO slot.
+    const uint32_t slot = s_frameSlot;
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
+        (GLintptr) (slot * s_instanceCapacity * sizeof(GpuMechInstance)),
+        (GLsizeiptr)(s_lastTotalInstances * sizeof(GpuMechInstance)));
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, s_boneSsbo,
+        (GLintptr) (slot * s_boneCapacity * sizeof(GpuMechBone)),
+        (GLsizeiptr)(s_lastTotalBones * sizeof(GpuMechBone)));
+
+    int typesDrawn = 0, instDrawn = 0;
+    for (const ShadowDrawEntry& dc : s_lastDrawCalls) {
+        if (baseLoc >= 0)
+            glUniform1i(baseLoc, (int)dc.instanceBase);
+
+        const GpuMechPacket& pkt = s_packets[dc.globalPacketIdx];
+        glDrawElementsInstancedBaseVertex(
+            GL_TRIANGLES,
+            (GLsizei)pkt.indexCount,
+            GL_UNSIGNED_INT,
+            (void*)(uintptr_t)(pkt.firstIndex * sizeof(uint32_t)),
+            (GLsizei)dc.instanceCount,
+            pkt.baseVertex);
+
+        ++typesDrawn;
+        instDrawn += (int)dc.instanceCount;
+    }
+
+    s_shadowTypesDrawn = typesDrawn;
+    s_shadowInstDrawn  = instDrawn;
+}
 
 // ---------------------------------------------------------------------------
 // Registration (Task 4)
@@ -1125,6 +1218,20 @@ void GpuMechBatcher::flush() {
             }
         }
     }
+
+    // Persist this frame's draw-call list and SSBO sizes for flushShadow()
+    // to consume on the NEXT frame (Option B: persisted drawCalls).
+    s_lastDrawCalls.clear();
+    s_lastDrawCalls.reserve(drawCalls.size());
+    for (const DrawCall& dc : drawCalls) {
+        ShadowDrawEntry e;
+        e.globalPacketIdx = dc.globalPacketIdx;
+        e.instanceBase    = dc.instanceBase;
+        e.instanceCount   = dc.instanceCount;
+        s_lastDrawCalls.push_back(e);
+    }
+    s_lastTotalInstances = totalInstances;
+    s_lastTotalBones     = totalBones;
 
     s_pendingSubmits.clear();
     s_eligibleActorsThisFrame = 0;
