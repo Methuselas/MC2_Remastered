@@ -39,6 +39,9 @@ list (plan `:576`).
 
 ## 2. `.codex_tmp_isolate/*` scratch-file removal
 
+**DONE 2026-05-16 (commit `521e092`).** `git rm` of all three files
+(7387 lines), isolated hygiene commit.
+
 **What:** `git rm` the three tracked scratch files
 `.codex_tmp_isolate/quad_desired.cpp`, `.codex_tmp_isolate/quad_desired.patch`,
 `.codex_tmp_isolate/quad_head.cpp` (confirmed tracked via `git ls-files` at
@@ -76,6 +79,14 @@ is a methodology cleanup, not a correctness gap.
 `docs/superpowers/reviews/2026-05-15-overlay-pz-v2-bit-identity-proof.md`.
 
 ## 4. `[RING_MVP_DELTA v1]` FNV-compute residual (Step 9 leftover)
+
+**DONE 2026-05-16 (commit `c6b2888`).** Whole probe-8 block (FNV
+compute AND the per-frame `glGetBufferSubData` on the indirect cmd
+buffer) wrapped in `static const bool s_ringMvpProbe = getenv(
+"MC2_RING_TRACE")` -- same gate as the Step 9 writers. No behavior
+change in the default config (gate unset). NOTE: compile/smoke NOT run
+-- the worktree carries unrelated uncommitted shadow WIP in the same
+file; validate on the next build of that WIP.
 
 **What:** Gate or remove the per-frame FNV fingerprint compute at
 `GameOS/gameos/gameos_graphics.cpp:2683-2724`. It computes `drawFp`
@@ -856,9 +867,9 @@ reference to repair separately (non-blocking).
 | # | Item | Class | Blocker? |
 |---|------|-------|----------|
 | 1 | hazeFactor SSBO field removal | lockstep cleanup | no |
-| 2 | `.codex_tmp_isolate/*` git rm | repo hygiene | no |
+| 2 | `.codex_tmp_isolate/*` git rm | FIXED 521e092 | no |
 | 3 | quad.cpp probe-placement pattern | methodology | no |
-| 4 | `[RING_MVP_DELTA v1]` FNV residual | inert-cleanup | no |
+| 4 | `[RING_MVP_DELTA v1]` FNV residual | FIXED c6b2888 (compile pending) | no |
 | 5 | Tracy ~475 us measurement (slimReduce gated `6c9d4b5`) | perf-quantify | no |
 | 6 | Step 3 interactive picking UAT | honest gap | no |
 | 7 | overlay-decal GPU port | sibling slice | no |
