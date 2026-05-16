@@ -258,7 +258,24 @@ gesture state specific to mc2_04/05. NOT a terrain patch, NOT bundled
 into the retirement trail. Use the mech-runtime advisor + user visual
 repro (USER-DRIVEN: savegame load cannot be automated in smoke).
 
-## 12. Zoomed-out big-map `Terrain::IndirectDraw` cost (regression, but PRE-VPL: commit 08bd3b2)
+## 12. Zoomed-out big-map `Terrain::IndirectDraw` cost (regression, PRE-VPL: 08bd3b2) -- FIXED 073dba4
+
+**FIXED 2026-05-15 (commit `073dba4`, Approach A):** camera-windowed
+solid dispatch restored (per-frame `solidWin` window SSBO binding 9 +
+`u_useWindow`), window sourced lag-free from the slim loop's cull
+production, `MC2_TERRAIN_SOLID_NARROW=0` escape hatch == HEAD. Mandated
+independent adversarial review caught 2 CRITICAL (dead `assert` tripwire
+under `/DNDEBUG`; 1-frame-lag terrain-vanish) + 2 MAJOR pre-commit; all
+resolved. Validated tier1 5/5 PASS, `MC2_TERRAIN_SOLID_WINDOW_PARITY=1`
+every `total_dropped=0` / zero `event=catastrophic`, escape hatch ==
+HEAD. REMAINING (user-driven, not blocking): big-map zoomed-out Tracy
+before/after to quantify the win, and parity `total_dropped=0`
+confirmation through a camera-motion segment (headless smoke is
+default-camera). The armed stderr tripwire will catch any drop live.
+
+Original analysis below (retained for context):
+
+
 
 **What:** On a big map zoomed out all the way, `Terrain::IndirectDraw`
 (GameOS/gameos/gameos_graphics.cpp:~2480) is ~7.8 ms mean / 18 ms p99
@@ -317,7 +334,7 @@ dispatch + substrate intersection) - warrants adversarial review.
 | 9 | GetApproximateLength precision | characterized | no |
 | 10 | zoom-only terrain/decal/water z-fight | pre-existing, NOT VPL | no |
 | 11 | invisible mechs mc2_04/05 FROM SAVE | pre-existing, NOT VPL (data-flow proven) | no |
-| 12 | zoomed-out big-map IndirectDraw cost | regression, PRE-VPL (08bd3b2) | no |
+| 12 | zoomed-out big-map IndirectDraw cost | FIXED 073dba4 (Approach A) | no |
 
 Items 1-9 are the VPL cleanup/measurement/coverage tail (non-blocking;
 retirement architecturally complete). Items 10-11 are pre-existing bugs
