@@ -317,6 +317,50 @@ early-out non-visible threads - cuts draw, not dispatch threads);
 (C) hybrid GPU compaction. Catastrophic-axis-adjacent (compute
 dispatch + substrate intersection) - warrants adversarial review.
 
+## 13. `Render.GpuStaticProps` 22.88ms GPU-self zoomed-out (regression, PRE-VPL: a2a6058)
+
+**What:** On a big map zoomed all the way out, `Render.GpuStaticProps`
+(mclib/txmmgr.cpp:~1753-1782) = 23.35ms GPU exec / 22.88ms GPU-self
+(97.97%), CPU setup 529us -- ~the entire frame in one zone. Dominates
+`Terrain::IndirectDraw`. Reported 2026-05-15.
+
+**Root cause (render-perf + gameos advisor): HONEST OVERDRAW, NOT a
+stall.** Commit `a2a6058` (2026-05-12, "fix(bldg): pin BldgAppearance
+to LOD 0") replaced distance-based LOD selection with a hard LOD-0 pin
+for ALL static props (`mclib/bdactor.cpp:1386-1415`), as a workaround
+for an unrelated LOD-1+ invisibility bug. Combined with a frustum-ONLY
+GPU cull (no distance/LOD/screen-size term -- `shaders/gpu_cull_
+predicate.glsl:84 clipSpaceFrustumAdmitDilated`, far bound only the
+~12000u far plane) and a deliberate GPU-path `inView` bypass
+(`bdactor.cpp:1648-1654`, `:1211`), zoomed-out-big-map = every prop on
+the map x full LOD-0 geometry x every frame, via 2x
+`glMultiDrawElementsIndirect` (`gos_static_prop_batcher.cpp:3250/3272`).
+The `glClientWaitSync` ring-fence (`:2659`) only AMPLIFIES (GPU falls
+>RING_FRAMES behind), it is not the cause. The historic substrate
+`glGetBufferSubData` stall was already fixed (gpu_cull_compute.cpp:
+834-842 reads a CPU-side counter; remaining readback is 600-frame
+parity-only). NOT a VPL regression (a2a6058 predates 8b/8c; same
+bug-class as 08bd3b2/the LOD pin -- fine at default camera, never
+stress-tested zoomed-out). Pre-existing frustum-only cull is older;
+a2a6058 is what turned "distant props cheap (low LOD)" into "every
+distant prop full geometry".
+
+**Cheapest decisive check (user-driven, no rebuild):** Tracy two
+captures same max-zoom big-map camera, `MC2_GPU_CULL_SUBSTRATE=0` vs
+`=1` (substrate=0 renders ZERO static props per
+memory/substrate_off_renders_no_static_props.md). 22.88ms -> ~0 with
+substrate off == confirmed prop workload. Or RenderDoc one frame:
+the two glMultiDrawElementsIndirect primitive/instance counts.
+
+**Own slice (design fork):** the cull/LOD MUST bound the zoomed-out
+worst case (neither currently does). (A) fix the underlying LOD-1+
+"zero fragments after bldgShape swap" bug, restore distance LOD,
+remove the pin -- cleanest but unblocks an unsolved bug. (B) add a
+distance / screen-size term to the GPU cull predicate so far props
+are rejected or routed to a coarse/lowest bucket, independent of the
+LOD-1 bug -- lower blast radius, bounds the worst case like 08bd3b2/
+deferred-12 did for terrain. (B) recommended as the first slice.
+
 ---
 
 ## Status summary
@@ -335,6 +379,7 @@ dispatch + substrate intersection) - warrants adversarial review.
 | 10 | zoom-only terrain/decal/water z-fight | pre-existing, NOT VPL | no |
 | 11 | invisible mechs mc2_04/05 FROM SAVE | pre-existing, NOT VPL (data-flow proven) | no |
 | 12 | zoomed-out big-map IndirectDraw cost | FIXED 073dba4 (Approach A) | no |
+| 13 | GpuStaticProps 22.88ms zoomed-out | regression, PRE-VPL (a2a6058) | no |
 
 Items 1-9 are the VPL cleanup/measurement/coverage tail (non-blocking;
 retirement architecturally complete). Items 10-11 are pre-existing bugs
