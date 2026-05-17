@@ -149,6 +149,26 @@ long long CostSplit_GetCacheResidentNanosTotal();
 long long CostSplit_GetVisibilityCheckNanosTotal();
 int       CostSplit_GetFramesObserved();
 
+// --- [LIGHT_COST_SPLIT v1] -------------------------------------------------
+// Separate gate from MC2_TERRAIN_COST_SPLIT (that gate's chrono scopes are
+// observer-effect-dominated and the terrain-CPU campaign is terminal --
+// memory/cost_split_instrumentation_is_observer_effect_dominated.md).
+// These buckets use __rdtsc() and a distinct env var so they can run on a
+// legacy-object mission without the falsified terrain scopes attached.
+// Three buckets isolate the three addLightDataStructure callsites the Tracy
+// "addLightDataStructure scan" zone conflates:
+//   C2-direct  : mclib/tgl.cpp  (!eligibleForGpuObjects legacy leaf)
+//   C6-resubmit: mclib/tgl.cpp  (TG_Shape::ResubmitCachedLightData)
+//   C5-peractor: mclib/tgl.cpp  (TG_Shape::GatherGpuObjectLightDataOnly)
+bool IsLightCostSplitEnabled();              // MC2_LIGHT_COST_SPLIT
+void LightCostSplit_AddC2DirectCycles(unsigned long long c);
+void LightCostSplit_AddC6ResubmitCycles(unsigned long long c);
+void LightCostSplit_AddC5PerActorCycles(unsigned long long c);
+void LightCostSplit_AddC2DirectCall();
+void LightCostSplit_AddC6ResubmitCall();
+void LightCostSplit_AddC5PerActorCall();
+void LightCostSplit_RollFrameAndMaybeEmit();  // call from CostSplit_RollFrame()
+
 // ---------------------------------------------------------------------------
 // N1 counters — units = per-quad (per cluster), NOT per-triangle.
 //
