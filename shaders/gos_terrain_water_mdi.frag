@@ -36,30 +36,52 @@ const vec3  SHALLOW_COLOR      = vec3(0.22, 0.45, 0.38);  // user-approved teal 
 const vec3  DEEP_COLOR         = vec3(0.03, 0.13, 0.20);  // dark blue, NOT black
 const float ABSORPTION_DENSITY = 0.022;  // 1/world-units (Beer-Lambert k; ~45u e-fold over 0..150)
 const float SHORE_BLEND_DEPTH  = 3.0;    // world-units to full opacity
-const float NORMAL_STRENGTH = 0.18;   // wave normal tilt (was 0.0 v1-flat). Low: camera-stable.
-const float WAVE_FREQ       = 0.012;  // 1/world-u; ~520 wavelength (~4 terrain quads): macro swell
-const float WAVE_SPEED      = 0.6;    // world phase units/sec (calm drift)
-const float SPEC_SCALE      = 0.5;    // specular intensity, decoupled from NORMAL_STRENGTH
-const float WAVE_FADE_NEAR  = 1500.0; // world-u: full wave life nearer than this
-const float WAVE_FADE_FAR   = 6000.0; // world-u: fully flat (v1 calm) beyond this
-const float FRESNEL_F0         = 0.02;
-const float SUN_INTENSITY      = 1.0;
-const vec3  SKY_TINT           = vec3(0.42, 0.55, 0.68);  // fog-INDEPENDENT sky (B-fix: no camera->black)
-const float SKY_AMBIENT        = 0.18;   // floor: deep water + dim light never reach black
-const float FRESNEL_SKY_MAX    = 0.12;   // low: no real reflection in v1, keep water camera-stable
+const float SKY_AMBIENT        = 0.18;   // brightness floor (camera-independent)
+// --- camera-INDEPENDENT procedural water detail (BAR-style: 2 fBm layers,
+//     OPPOSITE scroll dirs -> organic churn, no grid). f(WorldPos,time) only. ---
+const float WAVE_FREQ   = 0.055;   // 1/world-u; lower = bigger features (tree-scale tuned)
+const float WAVE_SPEED  = 6.0;     // world-u/sec domain scroll
+const float RIPPLE_GAIN  = 0.22;   // crest BRIGHTEN amount - mild, low color variance
+const vec3  GLINT_TINT   = vec3(0.82, 0.88, 0.94);  // near-WHITE wave-cap (slightly cool)
+const float GLINT_GAIN   = 0.22;   // additive camera-INDEPENDENT white crest shimmer
+const float GLINT_THRESH = 0.40;   // a bit more crest area shows white caps
+const float WAVE_FADE_NEAR = 4000.0;  // full detail nearer than this (world-u)
+const float WAVE_FADE_FAR  = 12000.0; // fully calm beyond (extreme zoom-out anti-alias only)
+
+// Precision-safe (fract-early) hash -> stable for large MC2 world coords;
+// value-noise + 3-octave fBm. No texture, no seam (continuous WorldPos).
+PREC float h21(PREC vec2 ip){
+    PREC vec3 q = fract(vec3(ip.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+}
+PREC float vnoise(PREC vec2 uv){
+    PREC vec2 i = floor(uv), f = fract(uv);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(h21(i),               h21(i + vec2(1.0, 0.0)), f.x),
+               mix(h21(i + vec2(0.0,1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+PREC float fbm3(PREC vec2 uv){
+    PREC float s = 0.0, a = 0.5;
+    for (int k = 0; k < 3; ++k){ s += a * vnoise(uv); uv = uv * 2.03 + 11.7; a *= 0.5; }
+    return s;   // ~0 .. 0.875, mean ~0.4375
+}
 
 void main(void)
 {
     if (o_isWater == 1) {
         // ---- water-v1 stylized base layer ----
+        // viewVec used ONLY for distance (waveLOD anti-alias) - NOT angle.
         PREC vec3  viewVec = cameraPos.xyz - WorldPos;
-        PREC vec3  viewDir = viewVec / max(length(viewVec), 1e-4);  // guard: camera-at-surface => no NaN
-        // WorldPos.xy is global continuous MC2-world (no MaxMinUV wrap) -> seam-free.
         PREC float waveLOD = 1.0 - smoothstep(WAVE_FADE_NEAR, WAVE_FADE_FAR, length(viewVec));
-        PREC vec2  p  = WorldPos.xy * WAVE_FREQ;
-        PREC vec2  w  = vec2(sin(p.y       + time*WAVE_SPEED)      + 0.5*sin(p.y*2.17 - time*WAVE_SPEED*0.7),
-                             sin(p.x*1.13  - time*WAVE_SPEED*0.85) + 0.5*sin(p.x*2.31 + time*WAVE_SPEED*0.6));
-        PREC vec3  wN = normalize(vec3(w * (NORMAL_STRENGTH * waveLOD), 1.0));
+
+        // BAR-style: TWO fBm layers scrolling in OPPOSITE directions -> organic
+        // churn, no grid/lattice. Continuous WorldPos = seam-free; fract-early
+        // hash = precision-safe at large MC2 coords. Camera-INDEPENDENT.
+        PREC float sc = time * WAVE_SPEED * WAVE_FREQ;
+        PREC vec2  q0 = WorldPos.xy * WAVE_FREQ        + vec2( 1.00,  0.60) * sc;
+        PREC vec2  q1 = WorldPos.xy * WAVE_FREQ * 1.70 + vec2(-0.80, -1.10) * sc;
+        PREC float nz = (fbm3(q0) + fbm3(q1)) - 0.875;   // ~zero-mean organic detail
 
         PREC float trans    = exp(-WaterThickness * ABSORPTION_DENSITY);  // 1 at shore -> 0 deep
         PREC vec3  waterCol = mix(DEEP_COLOR, SHALLOW_COLOR, trans);
@@ -67,20 +89,18 @@ void main(void)
         PREC float shore = smoothstep(0.0, SHORE_BLEND_DEPTH, WaterThickness);
         if (shore <= 0.0) discard;            // kill invisible land-quad overdraw
 
-        PREC float ct      = max(dot(wN, viewDir), 0.0);
-        PREC float fres    = FRESNEL_F0 + (1.0 - FRESNEL_F0) * pow(1.0 - ct, 5.0);
-
-        PREC vec3  reflCol = SKY_TINT;   // fog-independent sky; camera angle can no longer -> black
-
-        PREC vec3  lightDir = normalize(vec3(0.3, 0.2, 1.0));  // existing FS constant light
-        PREC vec3  halfV    = normalize(viewDir + lightDir);
-        PREC float spec     = pow(max(dot(wN, halfV), 0.0), 64.0) * fres;
-        spec *= SPEC_SCALE * waveLOD;   // S1: decoupled intensity + distance fade (anti-firefly)
-
-        PREC vec3  vertexLightRGB = Color.bgra.rgb;  // VS packs .bgra (~241); un-swizzle here
-        PREC vec3  col = mix(waterCol, reflCol, fres * FRESNEL_SKY_MAX);
-        col = col * max(vertexLightRGB, vec3(SKY_AMBIENT)) + waterCol * SKY_AMBIENT * 0.5;
-        col += SUN_INTENSITY * spec;
+        PREC vec3  vertexLightRGB = Color.bgra.rgb;  // VS packs .bgra; un-swizzle (camera-indep)
+        PREC vec3  col = waterCol * max(vertexLightRGB, vec3(SKY_AMBIENT))
+                       + waterCol * SKY_AMBIENT * 0.5;
+        // Camera-INDEPENDENT granular wave detail (dual counter-scroll fBm).
+        // BRIGHTEN-only (no darkening) + sharpened reflective crest shimmer ->
+        // reads as light catching the ripples. No Fresnel/specular: MC2 has no
+        // sun "for now"; the ONLY camera-dependent term will be S3 terrain
+        // planar reflection (deferred).
+        PREC float crest = max(nz, 0.0);                       // troughs stay at base
+        col *= 1.0 + RIPPLE_GAIN * waveLOD * crest;            // brighten only
+        PREC float glint = smoothstep(GLINT_THRESH, 0.80, nz); // sharp crest sparkle
+        col += glint * GLINT_GAIN * waveLOD * GLINT_TINT;      // camera-INDEPENDENT shimmer
         if (fog_color.x > 0.0 || fog_color.y > 0.0 || fog_color.z > 0.0 || fog_color.w > 0.0)
             col = mix(fog_color.rgb, col, FogValue);
 
