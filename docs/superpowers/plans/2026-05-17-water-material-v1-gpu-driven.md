@@ -17,7 +17,10 @@
 **Isolation (cross-session — load-bearing):** This work runs in a DEDICATED worktree with a DEDICATED build + deploy, so the shared-branch build/PDB/deploy/shader-lockstep hazard cannot occur. A separate concurrent session holds priority on the shared smoke harness/GPU.
 - **Worktree (source + own `build64/`):** `A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1/` (branch `claude/water-material-v1`, forked from `claude/gpu-driven-rendering`). All Task commands run here. Never build or deploy from `.claude/worktrees/gpu-driven-rendering/`.
 - **Dedicated deploy dir:** `A:/Games/mc2-opengl/mc2-win64-water/` (independent 4.9G mirror of `mc2-win64-v0.4`). NEVER deploy into `mc2-win64-v0.4/` — the other session smokes it live; clobbering it mid-run is the exact hazard this isolation exists to remove.
-- **Smoke-kill protocol:** the other session can kill any water smoke at any moment. **Do not trust the smoke exit code** — a killed run frequently exits `0`. Gate ONLY on the positive markers in the artifact log (Task 5 Step 4-5). If a run shows no `[SMOKE v1] event=summary result=pass` for `mc2_01` AND the run was far shorter than the duration, treat it as KILLED (not fail): wait ~3-5 minutes, then re-run. Do not escalate a kill as a regression. Re-run up to a few times; only a run that completed AND missed the positive markers is a real failure.
+- **Smoke-kill protocol (marker-based, exit-code-agnostic):** the other session can kill any water smoke at any moment. **The exit code is not authoritative either way** (an external kill of mc2.exe makes the harness exit nonzero; other kill paths can exit 0 — do not reason from the exit code at all). All smoke commands pass `--keep-logs` so the per-mission engine log is written even on a clean pass (without it the harness writes the log ONLY on failure, and the marker gate could never see a passing run). Decide solely from the `mc2_01` engine log:
+  - **Log file absent entirely** = launch/harness failure (not a kill) — investigate, do not blindly re-run.
+  - **`[SMOKE v1] event=summary result=pass` present** = the run completed. Now require `[WATER_MAT v1] ... thickness_max>0`. Present+positive = PASS. `result=pass` but `[WATER_MAT v1]` absent or `thickness_max==0` = real FAIL (elevation path dead) — diagnose, do not re-run-spam.
+  - **`result=fail reason=early_exit` / no `event=summary` line, AND wall-time far under 30s** = KILLED by the priority session: wait ~3-5 minutes, re-run the exact command. Re-run up to ~3 times. Never escalate a kill as a regression.
 - **Smoke scope while sharing:** `mc2_01` only, `--duration 30`. `mc2_01` is the heavy water map (the relevant stress for this change); full tier1 is deferred until the harness is free.
 
 ---
@@ -356,15 +359,18 @@ git commit -m "feat(water-v1): [WATER_MAT v1] CPU thickness probe (distinct env)
 
 **Files:** none modified. This is the regression gate for all of Tasks 1-4. Read the header "Isolation (cross-session)" block first - every path below is the dedicated water worktree / deploy, NEVER the shared `gpu-driven-rendering` worktree or `mc2-win64-v0.4`.
 
-- [ ] **Step 1: Full-relink build in the DEDICATED build64**
+- [ ] **Step 1: Configure (fresh worktree has NO build64) then full build**
+
+This worktree was created fresh - `build64/` does not exist yet, so `cmake --build` alone fails ("does not contain CMakeCache.txt"). Configure first. The generator/platform below match the project's existing worktree cache exactly (`Visual Studio 17 2022` / `x64`); `LINUX_BUILD` is handled inside the project CMakeLists, no vcpkg toolchain var. If configure errors on missing deps/flags, that is a build-system question - stop and route to `mc2-build-system-expert` (do NOT guess additional flags).
 
 ```bash
 cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
-rm -f build64/RelWithDebInfo/mc2.exe
-"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build64 --config RelWithDebInfo
+CMAKE="C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+"$CMAKE" -S . -B build64 -G "Visual Studio 17 2022" -A x64
+"$CMAKE" --build build64 --config RelWithDebInfo --target mc2
 ```
 
-This `build64/` belongs only to this worktree - it cannot collide with the other session's build/PDB. Expected: build succeeds; `build64/RelWithDebInfo/mc2.exe` newly timestamped. Build fails: fix before deploying; do not deploy a stale exe.
+This `build64/` belongs only to this worktree - it cannot collide with the other session's build/PDB. A fresh configure means this is necessarily a full build (the plan's intent - no incremental-stale risk). Expected: build succeeds; `build64/RelWithDebInfo/mc2.exe` exists. Build fails: fix before deploying; do not deploy a stale exe.
 
 - [ ] **Step 2: Deploy per-file into the DEDICATED water deploy dir (never `mc2-win64-v0.4`, never cp -r)**
 
@@ -382,40 +388,40 @@ Expected: every `diff -q` prints nothing (identical). Difference = re-copy that 
 
 - [ ] **Step 3: Run mc2_01 only (heavy water map), pointed at the water exe, probe on**
 
-`MC2_SMOKE_MODE=1` is required for `--mission` to be honored; `--exe` points the harness at the isolated deploy. mc2_01 only, 30s, per the cross-session scope.
+`--exe` points the harness at the isolated deploy. `--keep-logs` is REQUIRED: without it the harness writes the per-mission engine log ONLY on failure, so a clean pass would leave the marker gate (Step 4) with nothing to read and the run would be misclassified as a kill forever. (`MC2_SMOKE_MODE=1` is set unconditionally by the runner per mission; the prefix below is belt-and-suspenders, harmless.) mc2_01 only, 30s.
 
 ```bash
 cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
-MC2_SMOKE_MODE=1 MC2_WATER_MATERIAL_PROBE=1 py -3 A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1/scripts/run_smoke.py --mission mc2_01 --duration 30 --kill-existing --exe A:/Games/mc2-opengl/mc2-win64-water/mc2.exe
+MC2_SMOKE_MODE=1 MC2_WATER_MATERIAL_PROBE=1 py -3 A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1/scripts/run_smoke.py --mission mc2_01 --duration 30 --kill-existing --keep-logs --exe A:/Games/mc2-opengl/mc2-win64-water/mc2.exe
 ```
 
-**Do NOT judge by exit code.** A run killed by the priority session frequently exits `0`. Judge only by the markers in Step 4. If the run wall-time was far under ~30s OR Step 4 finds no `[SMOKE v1] event=summary result=pass`, the run was almost certainly KILLED, not failed: wait ~3-5 minutes for the other session's GPU/harness to free, then re-run this exact command. Re-run up to ~3 times. Only a run that demonstrably completed (`[SMOKE v1] event=summary result=pass` present for mc2_01) AND is missing the Step 4 thickness marker is a real failure.
+Judge the outcome ONLY via Step 4 against the engine log, per the header "Smoke-kill protocol" - never from the exit code.
 
-- [ ] **Step 4: Gate on positive markers (not exit code)**
+- [ ] **Step 4: Decide from the engine log (header Smoke-kill protocol)**
 
 ```bash
 cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
 LATEST=$(ls -1dt tests/smoke/artifacts/*/ | head -1); echo "artifact dir: $LATEST"
+ls -la "$LATEST"mc2_01*.log 2>/dev/null || echo "NO LOG => launch/harness failure (not a kill) - investigate, do not re-run-spam"
 grep -h "\[SMOKE v1\] event=summary" "$LATEST"mc2_01*.log 2>/dev/null | tail -3
 grep -h "\[WATER_MAT v1\]"           "$LATEST"mc2_01*.log 2>/dev/null | tail -5
 ```
 
-PASS requires BOTH, in the latest artifact dir, for mc2_01:
-1. `[SMOKE v1] event=summary result=pass` (the run actually completed - if absent: KILLED, re-run per Step 3, do not call it a failure).
-2. `[WATER_MAT v1] event=summary recipes=<N> thickness_min=... thickness_max=<M> ...` with `thickness_max` strictly > 0 and `recipes` > 0.
-
-`thickness_max == 0` (or the WATER_MAT marker absent while SMOKE result=pass IS present) = the elevation path is dead (flat/unbound read) - real FAIL; diagnose, do not claim success.
+Apply the header decision tree exactly:
+- Log absent => launch/harness failure (not a kill). Investigate.
+- `[SMOKE v1] event=summary result=pass` present => run completed. PASS iff also `[WATER_MAT v1] event=summary recipes=<N> ... thickness_max=<M>` with `thickness_max` strictly > 0 and `recipes` > 0. `result=pass` but `[WATER_MAT v1]` absent or `thickness_max==0` => real FAIL (elevation path dead): diagnose, do NOT re-run-spam.
+- `result=fail reason=early_exit` / no `event=summary`, AND wall-time far under 30s => KILLED by the priority session: wait ~3-5 min, re-run Step 3 (up to ~3x). Never escalate a kill as a regression.
 
 - [ ] **Step 5: Verify the retained MVP instrument is undisturbed (mc2_01)**
 
 ```bash
 cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
-MC2_SMOKE_MODE=1 MC2_WATER_DEPTHPROBE=1 py -3 A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1/scripts/run_smoke.py --mission mc2_01 --duration 30 --kill-existing --exe A:/Games/mc2-opengl/mc2-win64-water/mc2.exe
+MC2_SMOKE_MODE=1 MC2_WATER_DEPTHPROBE=1 py -3 A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1/scripts/run_smoke.py --mission mc2_01 --duration 30 --kill-existing --keep-logs --exe A:/Games/mc2-opengl/mc2-win64-water/mc2.exe
 LATEST=$(ls -1dt tests/smoke/artifacts/*/ | head -1)
 grep -h "\[WATER_DEPTHPROBE v2\]" "$LATEST"mc2_01*.log 2>/dev/null | tail -5
 ```
 
-Same kill protocol as Step 3 (re-run on kill). Expected once a run completes: `[WATER_DEPTHPROBE v2]` lines present and reporting MVP equal on motion frames - the instrument behaves exactly as before this change (a separate env from our `MC2_WATER_MATERIAL_PROBE`, confirming non-interference).
+`--keep-logs` required (same reason as Step 3). Same kill protocol as the header (re-run on kill). Expected once a run completes: `[WATER_DEPTHPROBE v2]` lines present and reporting MVP equal on motion frames - the instrument behaves exactly as before this change (a separate env from our `MC2_WATER_MATERIAL_PROBE`, confirming non-interference).
 
 - [ ] **Step 6: Manual visual checklist (marker PASS is necessary, not sufficient)**
 
