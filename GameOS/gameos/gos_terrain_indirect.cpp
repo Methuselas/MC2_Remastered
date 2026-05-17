@@ -1518,6 +1518,16 @@ static uint64_t g_dispatchMvpFrameIdx = 0;
 // Probe 8b: verification — also stash first 4 floats from compute-time MVP.
 // Bridge logs both sets on mismatch so we can see byte-level difference.
 static float    g_dispatchMvpFloats[4] = { 0, 0, 0, 0 };
+// Water-consistency fix (2026-05-17): full 16-float snapshot of the MVP
+// terrain-solid baked its Fix-B clipPos with THIS frame. The water compute
+// reads this (via gos_terrain_indirect_getDispatchMvp16) so the drawn water
+// is bit-consistent with the drawn terrain. [WATER_DEPTHPROBE v1] proved an
+// exact 1-frame divergence (terrain-solid stale vs water fresh) was the
+// shoreline recede/flicker/vanish root cause. ring_slot_state_must_travel_
+// with_slot.md. Unconditional 64 B/frame; written only when ComputeDispatch
+// actually runs (terrain-solid armed), so a consumer that gates on
+// IsFrameSolidArmed() always sees this-frame-fresh data.
+static float    g_dispatchMvp16[16] = { 0 };
 
 // Fix A (2026-05-14): per-ring-slot MVP stash for the intentional 1-frame
 // compute->bridge lag.  Compute writes thin records to slot S using MVP_X;
@@ -2878,6 +2888,9 @@ void ComputeDispatch() {
         }
         g_dispatchMvpFp       = fp;
         g_dispatchMvpFrameIdx = ringFrameIdx;
+        // Water-consistency fix: full MVP snapshot (see decl). This is the
+        // exact matrix terrain-solid's Fix-B clipPos bake uses this frame.
+        memcpy(g_dispatchMvp16, mvp, sizeof(float) * 16);
         // Probe 8b: stash first 4 floats so bridge can log byte-level delta.
         g_dispatchMvpFloats[0] = mvp[0];
         g_dispatchMvpFloats[1] = mvp[1];
@@ -3107,6 +3120,13 @@ int gos_terrain_indirect_getRecipeQuadCount() {
 
 uint32_t gos_terrain_indirect_getDispatchMvpFp() {
     return g_dispatchMvpFp;
+}
+
+// Water-consistency fix (2026-05-17): the full MVP terrain-solid baked its
+// Fix-B clipPos with this frame. Callers MUST gate on IsFrameSolidArmed()
+// (only then did ComputeDispatch run + refresh this); otherwise it is stale.
+const float* gos_terrain_indirect_getDispatchMvp16() {
+    return g_dispatchMvp16;
 }
 
 uint64_t gos_terrain_indirect_getDispatchMvpFrameIdx() {

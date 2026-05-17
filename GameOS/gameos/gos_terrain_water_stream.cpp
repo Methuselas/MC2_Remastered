@@ -38,6 +38,17 @@
 #include "../../mclib/vertex.h"
 #include "../../mclib/mapdata.h"
 
+// [WATER_DEPTHPROBE v1] cross-TU Probe-8 fingerprint accessors (terrain-solid
+// side). Paired per-frame against the water-upload MVP fingerprint to
+// discriminate a RUNTIME temporal MVP divergence (fps differ under camera
+// motion) from a static depth-derivation/fudge mismatch (fps stay equal).
+extern "C" uint32_t gos_terrain_indirect_getDispatchMvpFp();
+extern "C" uint64_t gos_terrain_indirect_getDispatchMvpFrameIdx();
+// Water-consistency fix (2026-05-17): full MVP terrain-solid baked its Fix-B
+// clipPos with this frame. Used only when IsFrameSolidArmed() (then it is
+// this-frame-fresh) so the drawn water matches the drawn terrain exactly.
+extern "C" const float* gos_terrain_indirect_getDispatchMvp16();
+
 namespace WaterStream {
 
 namespace {
@@ -1355,10 +1366,103 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
         return false;
     }
     {
-        const float* mvp = gos_GetTerrainMVPMat4();
+        // Water-consistency fix (2026-05-17): when SOLID is armed the drawn
+        // terrain is terrain-solid's Fix-B clipPos, baked EARLIER this frame
+        // with terrain-solid's dispatch MVP. terrain_mvp_ is updated between
+        // that bake point and here, so gos_GetTerrainMVPMat4() returns a
+        // one-frame-newer matrix -> water projects a frame ahead of terrain ->
+        // shoreline recede/flicker/vanish under zoom/elevation/motion
+        // ([WATER_DEPTHPROBE v1] proved the exact 1-frame lag; static was
+        // already bit-identical). Project water with the SAME dispatch MVP so
+        // water is bit-consistent with the drawn terrain (both share terrain's
+        // long-standing, accepted ~1-frame dispatch lag). Unarmed: terrain is
+        // NOT the clipPos path, so the legacy live MVP is correct (pre-fix
+        // behavior). ring_slot_state_must_travel_with_slot.md.
+        const float* mvp =
+            gos_terrain_indirect::IsFrameSolidArmed()
+                ? gos_terrain_indirect_getDispatchMvp16()
+                : gos_GetTerrainMVPMat4();
+        if (!mvp) mvp = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
         if (mvp) {
             // GL_FALSE: row-major upload. See memory/terrain_mvp_gl_false.md.
             glUniformMatrix4fv(locMVP, 1, GL_FALSE, mvp);
+            // [WATER_DEPTHPROBE v1] RETAINED verification instrument (env-gated
+            // MC2_WATER_DEPTHPROBE, silent by default; demote-not-delete per
+            // the debug-instrumentation rule). It diagnosed the water/terrain
+            // 1-frame MVP divergence (terrain_solid_fp[N]==water_fp[N-1] under
+            // motion) that caused the shoreline recede/flicker/intro-pan-vanish;
+            // the 2026-05-17 water-consistency fix (water reads terrain-solid's
+            // dispatch MVP via gos_terrain_indirect_getDispatchMvp16) closed it.
+            // INVARIANT this now proves: with the fix in place equal==1 on
+            // EVERY frame incl. camera motion. A regression here (equal==0 on
+            // moved frames) means the MVP-consistency contract broke again.
+            // FNV-1a over the water-uploaded MVP's first 12 floats, byte-
+            // identical to gos_terrain_indirect.cpp Probe 8.
+            static const bool s_waterDepthProbe =
+                (getenv("MC2_WATER_DEPTHPROBE") != nullptr);
+            if (s_waterDepthProbe) {
+                uint32_t wfp = 2166136261u;
+                for (int k = 0; k < 12; ++k) {
+                    uint32_t bits = 0;
+                    memcpy(&bits, &mvp[k], sizeof(bits));
+                    wfp ^= bits; wfp *= 16777619u;
+                }
+                const uint32_t tfp =
+                    gos_terrain_indirect_getDispatchMvpFp();
+                const uint64_t tfi =
+                    gos_terrain_indirect_getDispatchMvpFrameIdx();
+                // v2: un-armed intro-pan coverage + cause discriminator.
+                // The v1 `f > 120` warmup SKIPPED the intro pan entirely (it
+                // is the early frames) — that is why we had zero intro-pan
+                // data. v2 always prints in the un-armed phase. Extra fields
+                // separate the two possible un-armed causes:
+                //  - wstream_ready==0 || recipe_count==0  => water simply NOT
+                //    produced yet (WaterStream not built during early intro);
+                //    a readiness issue, NOT an MVP problem — no MVP fix helps.
+                //  - ready==1 && recipe>0 && armed==0      => water IS produced
+                //    un-armed; livecam_fp vs water_fp + moved shows whether the
+                //    un-armed projection is itself frame-divergent.
+                const bool armed =
+                    gos_terrain_indirect::IsFrameSolidArmed();
+                const bool wready = IsReady();
+                const uint32_t rc = GetRecipeCount();
+                uint32_t lcfp = 2166136261u;
+                if (const float* lc = gos_GetTerrainMVPMat4()) {
+                    for (int k = 0; k < 12; ++k) {
+                        uint32_t b = 0;
+                        memcpy(&b, &lc[k], sizeof(b));
+                        lcfp ^= b; lcfp *= 16777619u;
+                    }
+                } else {
+                    lcfp = 0u;
+                }
+                static uint64_t s_wframe  = 0;
+                static uint32_t s_prevWfp = 0;
+                const uint64_t f = ++s_wframe;
+                const bool moved = (s_prevWfp != 0 && wfp != s_prevWfp);
+                // Cadence: ALWAYS print while un-armed (the intro/deployment
+                // pan — the regime under investigation, no warmup gate), PLUS
+                // the armed regime's post-warmup first-8 / moved / 240-static
+                // baseline. Demote-not-delete; silent unless env set.
+                const bool emit =
+                    !armed
+                    || (f > 120 && (f <= 128 || moved || (f % 240 == 0)));
+                if (emit) {
+                    printf("[WATER_DEPTHPROBE v2] event=mvp_pair wframe=%llu "
+                           "armed=%d wstream_ready=%d recipe_count=%u "
+                           "water_fp=%08x terrain_solid_fp=%08x "
+                           "livecam_fp=%08x equal=%d w_eq_livecam=%d "
+                           "moved=%d terrain_solid_frameidx=%llu "
+                           "w_mvp0=%.6f\n",
+                           (unsigned long long)f, armed ? 1 : 0,
+                           wready ? 1 : 0, (unsigned)rc, wfp, tfp, lcfp,
+                           (wfp == tfp) ? 1 : 0, (wfp == lcfp) ? 1 : 0,
+                           moved ? 1 : 0, (unsigned long long)tfi,
+                           (double)mvp[0]);
+                    fflush(stdout);
+                }
+                s_prevWfp = wfp;
+            }
         } else {
             // MVP not available this frame (terrain not yet rendered). Bail out.
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);  // unbind stale thin slot
