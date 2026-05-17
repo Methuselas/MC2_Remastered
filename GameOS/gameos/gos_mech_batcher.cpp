@@ -218,21 +218,20 @@ static void loadProgramsIfNeeded() {
     // the UBO, force g_useGpuMechLighting off so the shader's
     // u_lightingMode=0 branch (Slice A flat-white) runs and the
     // app doesn't fail compilation or read garbage.
+    // [LIGHTSSBO v1] RF4: LightsData is no longer a UBO — it is an
+    // unbounded std430 SSBO (binding 20). The old GL_MAX_UNIFORM_BLOCK_SIZE
+    // gate (which forced g_useGpuMechLighting=false on GPUs whose max UBO
+    // block < ~113KB) is now SPURIOUS: SSBO storage is bounded by
+    // GL_MAX_SHADER_STORAGE_BLOCK_SIZE (typically >=128MB, never the
+    // constraint) and there is no fixed 64-entry window. Disabling mech
+    // lighting on the UBO basis would defeat the ceiling-removal this
+    // conversion delivers. Gate removed.
     {
-        constexpr GLint kRequiredUboBytes = 64 * 1808;  // matches lighting.hglsl
-        GLint maxUbo = 0;
-        glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE, &maxUbo);
-        if (maxUbo > 0 && maxUbo < kRequiredUboBytes) {
-            std::fprintf(stderr,
-                "[MECHLIGHT v1] event=ubo_cap_too_small caps=%d required=%d "
-                "fallback=flat_white\n",
-                maxUbo, kRequiredUboBytes);
-            g_useGpuMechLighting = false;
-        } else {
-            std::fprintf(stderr,
-                "[MECHLIGHT v1] event=ubo_cap_check caps=%d required=%d ok\n",
-                maxUbo, kRequiredUboBytes);
-        }
+        GLint maxSsbo = 0;
+        glGetIntegerv(GL_MAX_SHADER_STORAGE_BLOCK_SIZE, &maxSsbo);
+        std::fprintf(stderr,
+            "[LIGHTSSBO v1] event=mech_ssbo_check max_ssbo_block=%d (no 64-slot cap)\n",
+            maxSsbo);
     }
 
     auto loc = [&](const char* name) {
@@ -887,26 +886,18 @@ void GpuMechBatcher::flush() {
         s_mechLightTraceInit = true;
     }
     if (s_mechLightTrace) {
-        // LightsData UBO holds 64 ObjectLights entries (lighting.hglsl,
-        // raised from 32 in B1 after mc2_17 hit the cap). Must stay in
-        // lockstep with the GLSL declaration per
-        // memory/cpp_glsl_ubo_struct_lockstep.md. AMD typically returns
-        // zero on OOB UBO reads → flat-black mech; surface the event so
-        // soak ops know to raise the cap further if a denser mission
-        // fires this.
-        const uint32_t kUboLightSlotCap = 64u;  // matches lighting.hglsl LightsData[64]
+        // [LIGHTSSBO v1] RF4: LightsData is an unbounded SSBO now — there
+        // is NO 64-slot cap, so the old event=cache_full overflow alarm
+        // would false-fire on exactly the dense missions this conversion
+        // enables. Repurposed to a pure maxIdx observation (no cap, no
+        // disable). s_lightCacheFullFrames retired.
         uint32_t maxIdx = 0;
-        bool overCap = false;
         for (const auto& ps : s_pendingSubmits) {
             if (ps.desc.lightDataIndex > maxIdx) maxIdx = ps.desc.lightDataIndex;
-            if (ps.desc.lightDataIndex >= kUboLightSlotCap) overCap = true;
         }
-        if (overCap) {
-            ++s_lightCacheFullFrames;
-            std::fprintf(stderr,
-                "[MECHLIGHT v1] event=cache_full frames=%u submitted=%zu cap=%u maxIdx=%u\n",
-                s_lightCacheFullFrames, s_pendingSubmits.size(), kUboLightSlotCap, maxIdx);
-        }
+        std::fprintf(stderr,
+            "[LIGHTSSBO v1] event=mech_lightidx_max submitted=%zu maxIdx=%u (unbounded SSBO)\n",
+            s_pendingSubmits.size(), maxIdx);
     }
 
     if (!g_useGpuMechs || !s_geometryFinalized || s_programLoadFailed ||

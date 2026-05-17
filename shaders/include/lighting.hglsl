@@ -9,6 +9,10 @@
 
 // should be in sync with C++ code
 #define     LIGHT_DATA_ATTACHMENT_SLOT      0
+// [LIGHTSSBO v1] LightsData converted UBO->SSBO to remove the 64-slot
+// ceiling. SSBO binding 20 (0-19 fully allocated; verified free). MUST
+// stay in lockstep with GameOS/include/gameos.hpp LIGHT_DATA_SSBO_BINDING.
+#define     LIGHT_DATA_SSBO_BINDING         20
 
 #define 	TG_LIGHT_AMBIENT				0
 #define		TG_LIGHT_INFINITE				1
@@ -36,22 +40,19 @@ struct ObjectLights {
     ivec4 numLights;
 };
 
-layout (binding = LIGHT_DATA_ATTACHMENT_SLOT, std140) uniform LightsData
+// [LIGHTSSBO v1] 2026-05-17: was `std140 uniform { ObjectLights
+// light[64]; }` at binding LIGHT_DATA_ATTACHMENT_SLOT(0). Converted to a
+// std430 SSBO with an UNBOUNDED array to remove the 64-slot ceiling
+// (mc2_17 was already 57/64 combined mech+static — one dense mission from
+// silent corruption). std430==std140 byte-layout for ObjectLights because
+// every member is mat4/vec4-array + ivec4 tail (no scalar/vec2/vec3) —
+// bit-identical, pure qualifier change; this holds ONLY if the
+// ObjectLights/TG_HWLightsData struct is NOT edited in the same change
+// (cpp_glsl_ubo_struct_lockstep.md). Binding 20 (UBO/SSBO namespaces are
+// separate; slot 0 is the instance SSBO in static_prop/mech .vert).
+layout (binding = LIGHT_DATA_SSBO_BINDING, std430) buffer LightsData
 {
-    // Slice B1 (2026-05-08): raised from 32 → 64. mc2_17's combined
-    // mech + static_prop population observed at maxIdx=57 with 21 mechs
-    // submitted; 64 gives a comfortable margin for denser missions.
-    // C++ side (mclib/txmmgr.cpp: lightDataStructuresCapacity=128
-    // initial, +128 chunks) already supports the larger count; this just
-    // enlarges the shader-side window. Each ObjectLights ≈ 1.8KB std140;
-    // 64 entries ≈ 113KB. AMD RX 7900 XTX MAX_UNIFORM_BLOCK_SIZE is
-    // reportedly higher; if a future GPU rejects this size, fallback is
-    // converting LightsData from UBO to SSBO (binding semantics shift,
-    // larger storage). MUST stay in lockstep with the C++
-    // TG_HWLightsData struct (mclib/tgl.h:304) per
-    // memory/cpp_glsl_ubo_struct_lockstep.md and the audit trace
-    // [MECHLIGHT v1] event=cache_full in gos_mech_batcher.cpp.
-    ObjectLights light[64];
+    ObjectLights light[];
 };
 
 //================================================================================ 

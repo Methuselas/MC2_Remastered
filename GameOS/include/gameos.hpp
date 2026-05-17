@@ -2685,6 +2685,12 @@ void __stdcall gos_SetRenderMaterialUniformBlockBindingPoint(HGOSRENDERMATERIAL 
 void __stdcall gos_SetCommonMaterialParameters(HGOSRENDERMATERIAL material);
 // Bind shadow map textures + uniforms to an already-applied material (for GPU-projected objects)
 void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material);
+// [LIGHTSSBO v1] LightsData SSBO (was UBO). Upload = create/grow + rebind
+// buffer to LIGHT_DATA_SSBO_BINDING; Destroy = teardown; BindStorageBlock
+// = per-draw program block->binding for the legacy lit materials.
+void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes);
+void __stdcall gos_LightDataSsbo_Destroy();
+void __stdcall gos_BindLightDataStorageBlock(HGOSRENDERMATERIAL material);
 
 
 
@@ -2784,6 +2790,10 @@ void __stdcall gos_DestroyVertexDeclaration(HGOSVERTEXDECLARATION buffer);
 // Uniform buffers attachment slots (indices)
 // 
 #define LIGHT_DATA_ATTACHMENT_SLOT	0
+// [LIGHTSSBO v1] LightsData is now an SSBO at this binding (was UBO at
+// LIGHT_DATA_ATTACHMENT_SLOT). Lockstep with shaders/include/lighting.hglsl
+// LIGHT_DATA_SSBO_BINDING. SSBO bindings 0-19 are allocated elsewhere.
+#define LIGHT_DATA_SSBO_BINDING		20
 #define SCENE_DATA_ATTACHMENT_SLOT	1
 
 

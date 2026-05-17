@@ -5117,6 +5117,11 @@ void gosRenderer::drawIndexedTris(HGOSBUFFER ib, HGOSBUFFER vb, HGOSVERTEXDECLAR
     mat->setTransform(transform);
     //mat->setFogColor(fog_color_);
 
+	// [LIGHTSSBO v1] FORK-2: this legacy lit material's LightsData is now
+	// an SSBO; UBO reflection no longer binds it. Bind the storage block
+	// for this program (idempotent, per-draw, hot-reload-safe).
+	gos_BindLightDataStorageBlock(mat);
+
 	gosMesh::drawIndexed(ib, vb, vdecl, mat);
 
     afterDrawCall();
@@ -6446,6 +6451,86 @@ void __stdcall gos_SetRenderMaterialParameterInt(HGOSRENDERMATERIAL material, co
 {
 	gosASSERT(material);
 	material->getShader()->setInt(name, v);
+}
+
+// ===================================================================
+// [LIGHTSSBO v1] LightsData SSBO. Was a std140 UBO (ObjectLights
+// light[64]) at LIGHT_DATA_ATTACHMENT_SLOT; converted to an unbounded
+// std430 SSBO at LIGHT_DATA_SSBO_BINDING to remove the 64-slot ceiling
+// (mc2_17 was 57/64 combined mech+static — one dense mission from silent
+// corruption). The gos buffer API has no STORAGE type, so this is raw
+// GL, mirroring the s_perCmdSsbo pattern. Named device-mediated helper
+// (vulkan-prep): callers do NOT touch GL directly.
+// See docs/superpowers/plans/2026-05-17-lightsdata-ubo-to-ssbo.md
+// ===================================================================
+static GLuint     s_lightDataSsbo      = 0;
+static GLsizeiptr s_lightDataSsboBytes = 0;
+static const bool s_lightSsboTrace =
+	(getenv("MC2_LIGHTSSBO_TRACE") != nullptr);
+
+void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes)
+{
+	if (bytes == 0) return;
+	if (s_lightDataSsbo == 0) {
+		glGenBuffers(1, &s_lightDataSsbo);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
+		glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)bytes, data, GL_DYNAMIC_DRAW);
+		s_lightDataSsboBytes = (GLsizeiptr)bytes;
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+		if (s_lightSsboTrace) {
+			std::fprintf(stderr, "[LIGHTSSBO v1] event=enabled binding=%d bytes=%zu\n",
+			             LIGHT_DATA_SSBO_BINDING, bytes);
+			std::fflush(stderr);
+		}
+		return;
+	}
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
+	if ((GLsizeiptr)bytes > s_lightDataSsboBytes) {
+		// Grow: reallocate storage. RF2 — the buffer->binding-point
+		// (glBindBufferBase below) is CONTEXT state and must follow the
+		// new storage; the program block->binding
+		// (glShaderStorageBlockBinding, gos_BindLightDataStorageBlock) is
+		// PROGRAM state and is UNAFFECTED by buffer reallocation — do NOT
+		// re-issue it here.
+		glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)bytes, data, GL_DYNAMIC_DRAW);
+		if (s_lightSsboTrace) {
+			std::fprintf(stderr, "[LIGHTSSBO v1] event=buffer_grow old=%td new=%zu\n",
+			             (ptrdiff_t)s_lightDataSsboBytes, bytes);
+			std::fflush(stderr);
+		}
+		s_lightDataSsboBytes = (GLsizeiptr)bytes;
+	} else {
+		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)bytes, data);
+	}
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+void __stdcall gos_LightDataSsbo_Destroy()
+{
+	if (s_lightDataSsbo) {
+		glDeleteBuffers(1, &s_lightDataSsbo);
+		s_lightDataSsbo      = 0;
+		s_lightDataSsboBytes = 0;
+	}
+}
+
+// RF1: bind the LightsData SSBO block for a lit material's program.
+// Unconditional per-draw (idempotent, ~free, and immune to the CLAUDE.md
+// shader-hot-reload relink which resets program block bindings to 0 — a
+// cached guard would silently revert). Called from BOTH the legacy lit
+// paths (ShapeRenderer::render in txmmgr.cpp, gosRenderer::drawIndexedTris
+// here). Replaces the now-silent UBO-reflection
+// gos_SetRenderMaterialUniformBlockBindingPoint(mat,"LightsData",...).
+void __stdcall gos_BindLightDataStorageBlock(HGOSRENDERMATERIAL material)
+{
+	if (!material || !material->getShader() || !material->getShader()->shp_)
+		return;
+	GLuint shp = material->getShader()->shp_;
+	GLuint idx = glGetProgramResourceIndex(shp, GL_SHADER_STORAGE_BLOCK, "LightsData");
+	if (idx != GL_INVALID_INDEX)
+		glShaderStorageBlockBinding(shp, idx, LIGHT_DATA_SSBO_BINDING);
 }
 
 void __stdcall gos_SetRenderMaterialUniformBlockBindingPoint(HGOSRENDERMATERIAL material, const char* name, uint32_t slot)

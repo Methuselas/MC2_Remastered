@@ -395,7 +395,8 @@ class MC_TextureManager
         TG_HWLightsData*                lightData_;
         uint32_t                        lightDataStructuresCapacity;
         uint32_t                        lightDataStructuresCount;
-		gosBuffer						*lightDataBuffer_;
+		// [LIGHTSSBO v1] lightDataBuffer_ removed: LightsData is now an
+		// SSBO owned by gameos_graphics.cpp (gos_LightDataSsbo_*).
         TG_HWSceneData*                 sceneData_;
 		gosBuffer						*sceneDataBuffer_;
 		
@@ -427,7 +428,6 @@ class MC_TextureManager
 			hardwareVertexData = hardwareVertexData2 = hardwareVertexData3 = hardwareVertexData4 = hardwareVertexData5 = NULL;
 
 			lightData_ = nullptr;
-            lightDataBuffer_ = nullptr;
             lightDataStructuresCapacity = 0;
             lightDataStructuresCount = 0;
 

@@ -318,8 +318,17 @@ void MC_TextureManager::start (void)
     lightDataStructuresCapacity = 128;
     lightDataStructuresCount = 0;
     lightData_ = new TG_HWLightsData[lightDataStructuresCapacity];
-	lightDataBuffer_ = gos_CreateBuffer(gosBUFFER_TYPE::UNIFORM, gosBUFFER_USAGE::STATIC_DRAW, sizeof(TG_HWLightsData) * lightDataStructuresCapacity, 1, NULL);
-	gos_BindBufferBase(lightDataBuffer_, LIGHT_DATA_ATTACHMENT_SLOT);
+	// [LIGHTSSBO v1] EAGER create+bind here (not lazy). The old UBO was
+	// created in this constructor so SSBO/UBO binding always had a valid
+	// buffer for EVERY consumer regardless of frame phase — notably the
+	// GPU static-prop/mech batcher, which reads LightsData via explicit
+	// layout(binding=20) and runs in a different phase than the txmmgr
+	// per-frame upload site. Lazy-create broke that lifetime invariant
+	// (batcher drew before first upload -> binding 20 empty -> black
+	// props). Allocate-once/update-many is the correct lifetime model.
+	gos_LightDataSsbo_Upload(
+		lightData_,
+		(size_t)lightDataStructuresCapacity * sizeof(TG_HWLightsData));
 
     sceneData_ = new TG_HWSceneData;
 	sceneDataBuffer_ = gos_CreateBuffer(gosBUFFER_TYPE::UNIFORM, gosBUFFER_USAGE::STATIC_DRAW, sizeof(TG_HWSceneData), 1, NULL);
@@ -383,9 +392,7 @@ void MC_TextureManager::destroy (void)
 	delete textureStringHeap;
 	textureStringHeap = NULL;
 
-	if(lightDataBuffer_)
-		gos_DestroyBuffer(lightDataBuffer_);
-	lightDataBuffer_ = nullptr;
+	gos_LightDataSsbo_Destroy();  // [LIGHTSSBO v1]
 
     delete[] lightData_;
     lightData_ = nullptr;
@@ -1361,10 +1368,15 @@ public:
 		// GPU projection via terrainMVP (skip for HUD elements which need legacy viewport projection)
 		gos_SetRenderMaterialParameterInt(mat, "gpuProjection", isHudElement ? 0 : 1);
 
-		gos_SetRenderMaterialUniformBlockBindingPoint(mat, "LightsData", LIGHT_DATA_ATTACHMENT_SLOT);
+		// [LIGHTSSBO v1] FORK-2: LightsData is now an SSBO; the UBO-
+		// reflection bind below would silently no-op (SSBO blocks are not
+		// in GL_ACTIVE_UNIFORM_BLOCKS) -> legacy lit meshes would render
+		// garbage lighting. Bind the storage block explicitly instead.
+		// SceneData stays a UBO.
 		gos_SetRenderMaterialUniformBlockBindingPoint(mat, "SceneData", SCENE_DATA_ATTACHMENT_SLOT);
 
 		gos_ApplyRenderMaterial(mat);
+		gos_BindLightDataStorageBlock(mat);
 
 		// Bind shadow maps + terrainMVP after apply() (requires active program)
 		if (!isHudElement) {
@@ -1549,25 +1561,21 @@ void MC_TextureManager::renderLists (void)
 
     // copy global list of light data into GPU buffer
     
-	const uint32_t gpu_buf_size = gos_GetBufferSizeBytes(lightDataBuffer_);
-    // Slice B1 (2026-05-09): floor the buffer size to the GLSL UBO window
-    // (LightsData[64] in shaders/include/lighting.hglsl). Without this floor,
-    // the bound buffer can be smaller than the shader's declared window
-    // when actor count < 64; UBO reads past the bound buffer are GL-undefined
-    // (AMD returns zero, others may crash). Adversarial review MAJOR-2.
-    constexpr uint32_t kGlslUboMinBytes = 64u * sizeof(TG_HWLightsData);
-    const uint32_t cpu_buf_size = std::max<uint32_t>(
-        lightDataStructuresCount * sizeof(TG_HWLightsData),
-        kGlslUboMinBytes);
-    if(gpu_buf_size < cpu_buf_size) {
-        gos_DestroyBuffer(lightDataBuffer_);
-        lightDataBuffer_ = gos_CreateBuffer(gosBUFFER_TYPE::UNIFORM, gosBUFFER_USAGE::STATIC_DRAW, cpu_buf_size, 1, lightData_);
-	    gos_BindBufferBase(lightDataBuffer_, LIGHT_DATA_ATTACHMENT_SLOT);
-    }
-    else {
-        gos_UpdateBuffer(lightDataBuffer_, lightData_, 0, cpu_buf_size);
-	    gos_BindBufferBase(lightDataBuffer_, LIGHT_DATA_ATTACHMENT_SLOT);
-    }
+    // [LIGHTSSBO v1] Upload-size FLOOR retained (NOT a removable UBO-window
+    // artifact — falsified 2026-05-17). The engine deliberately tolerates
+    // transient over-count lightDataIndex for cull-stale actors whose
+    // update() was skipped offscreen (see gos_static_prop_registry.cpp
+    // comment "...points at a slot ... beyond the upload count"). The
+    // floor guarantees those indices still read valid backing memory
+    // instead of past-end (-> zero -> black props). std::max keeps the
+    // old max(count, 64) semantics; lightData_ is capacity(128)-sized so
+    // sourcing 64 entries is in-bounds.
+    constexpr uint32_t kLightUploadFloor = 64u;
+    const size_t lightUploadCount =
+        std::max<uint32_t>(lightDataStructuresCount, kLightUploadFloor);
+    gos_LightDataSsbo_Upload(
+        lightData_,
+        lightUploadCount * sizeof(TG_HWLightsData));
     //
     
     // update scene data uniform buffer
@@ -1590,7 +1598,6 @@ void MC_TextureManager::renderLists (void)
         sceneData_->baseVertexColor = uint32_to_vec4(BaseVertexColor).zyxw();
         gos_UpdateBuffer(sceneDataBuffer_, sceneData_, 0, sizeof(TG_HWSceneData));
     }
-    //gos_BindBufferBase(lightDataBuffer_, LIGHT_DATA_ATTACHMENT_SLOT);
     
     
 
