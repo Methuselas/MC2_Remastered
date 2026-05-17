@@ -2312,6 +2312,7 @@ void gosRenderer::renderWaterFastPath(
         setMF         ("maxMinUV",        maxMinUV);
         setMF         ("time",  (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
         setMVec4      ("fog_color", (const float*)&fog_color_);
+        setMVec4      ("cameraPos", (const float*)&terrain_camera_pos_);  // water-v1 Fresnel
         setMI         ("tex1",  0);
         setMI         ("tex2",  1);
 
