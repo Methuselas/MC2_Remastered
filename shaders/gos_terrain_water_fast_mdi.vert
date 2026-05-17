@@ -166,10 +166,12 @@ void main() {
                    ? (thinFlags & kPzTri1ValidBit)
                    : (thinFlags & kPzTri2ValidBit);
     if (pzValid == 0u) {
-        gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
-        Color       = vec4(0.0);
-        Texcoord    = vec2(0.0);
-        FogValue    = 0.0;
+        gl_Position    = vec4(0.0, 0.0, -2.0, 1.0);
+        Color          = vec4(0.0);
+        Texcoord       = vec2(0.0);
+        FogValue       = 0.0;
+        WaterThickness = 0.0;
+        WorldPos       = vec3(0.0);
         return;
     }
 
