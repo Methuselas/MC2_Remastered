@@ -36,11 +36,15 @@ const vec3  SHALLOW_COLOR      = vec3(0.22, 0.45, 0.38);  // user-approved teal 
 const vec3  DEEP_COLOR         = vec3(0.03, 0.13, 0.20);  // dark blue, NOT black
 const float ABSORPTION_DENSITY = 0.022;  // 1/world-units (Beer-Lambert k; ~45u e-fold over 0..150)
 const float SHORE_BLEND_DEPTH  = 3.0;    // world-units to full opacity
-const float NORMAL_STRENGTH    = 0.30;
+const float NORMAL_STRENGTH    = 0.0;    // v1: flat wN (calm water). >0 bands on the
+                                         // wrap-corrected Texcoord (UV-loop seams);
+                                         // TODO(water-v2): reactivate via continuous
+                                         // WorldPos.xy-derived normal, NOT Texcoord.
 const float FRESNEL_F0         = 0.02;
 const float SUN_INTENSITY      = 1.0;
 const vec3  SKY_TINT           = vec3(0.42, 0.55, 0.68);  // fog-INDEPENDENT sky (B-fix: no camera->black)
 const float SKY_AMBIENT        = 0.18;   // floor: deep water + dim light never reach black
+const float FRESNEL_SKY_MAX    = 0.12;   // low: no real reflection in v1, keep water camera-stable
 
 void main(void)
 {
@@ -69,7 +73,7 @@ void main(void)
         PREC float spec     = pow(max(dot(wN, halfV), 0.0), 64.0) * fres;
 
         PREC vec3  vertexLightRGB = Color.bgra.rgb;  // VS packs .bgra (~241); un-swizzle here
-        PREC vec3  col = mix(waterCol, reflCol, fres);
+        PREC vec3  col = mix(waterCol, reflCol, fres * FRESNEL_SKY_MAX);
         col = col * max(vertexLightRGB, vec3(SKY_AMBIENT)) + waterCol * SKY_AMBIENT * 0.5;
         col += SUN_INTENSITY * spec;
         if (fog_color.x > 0.0 || fog_color.y > 0.0 || fog_color.z > 0.0 || fog_color.w > 0.0)
@@ -79,6 +83,11 @@ void main(void)
         GBuffer1  = rc_gbuffer1_screenShadowEligible(vec3(0.0, 0.0, 1.0));
         return;
     }
+
+    // water-v1: suppress the legacy detail/spray layer (o_isWater==2). Its tiled
+    // tex2 + UV-wrap "loop catch" looks bad against the new base; proper animated
+    // detail is deferred to water-v2. Verbatim legacy path kept (dead) below.
+    if (o_isWater == 2) discard;
 
     PREC vec4 c = Color.bgra;
     PREC vec4 tex_color = (o_isWater <= 1) ? texture(tex1, Texcoord) : texture(tex2, Texcoord);
