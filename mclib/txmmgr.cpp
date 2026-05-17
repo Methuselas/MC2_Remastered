@@ -1152,13 +1152,17 @@ namespace {
     // Shape-C precedent: recompute dies, the O(1) per-frame slot WRITE
     // stays. Post-SSBO this is the full design (no window/partition --
     // see docs/superpowers/plans/2026-05-17-static-lighting-bake-SIMPLIFIED.md).
-    // s_bakedStaticLight = mission-scoped struct SOURCE (NOT a slot map;
-    // per-frame resetLightData is irrelevant to it; cleared on mission
-    // unload + per-recipe on invalidate). s_bakedSlotByRecipe = per-frame
-    // recipeIndex->slot, cleared in resetLightData (fresh resolution each
-    // frame -> Option-C-safe, no retained cross-frame index).
+    // s_bakedStaticLight = mission-scoped struct SOURCE (recipeIndex ->
+    // baked TG_HWLightsData; cleared on mission unload + per-recipe on
+    // invalidate; NOT per-frame). [LIGHTBAKE v2] persistent static table:
+    // each static recipe owns a PERMANENT lightData_ slot == recipeIndex
+    // in [0..s_staticLightHighWater); written ONCE at bake (CPU mirror),
+    // re-shipped idempotently by the unchanged per-frame whole-buffer
+    // upload (no per-frame addLightDataStructure / FNV / memcmp). S =
+    // max(recipeIndex)+1; resetLightData rebases the dynamic count to S
+    // so dynamic appends never collide into [0..S).
     static std::unordered_map<int32_t, TG_HWLightsData> s_bakedStaticLight;
-    static std::unordered_map<int32_t, uint32_t>        s_bakedSlotByRecipe;
+    static uint32_t                                      s_staticLightHighWater = 0;
     static bool s_bakeInit = false;
     static bool s_bakeEnabled = true;          // default ON
     static bool s_bakeFirstLogged = false;
@@ -1223,25 +1227,25 @@ void mc2EraseBakedStaticLight(int32_t recipeIndex)
 // would alias a different actor. Drop the whole mission-scoped map.
 void mc2ClearAllBakedStaticLight()
 {
+    // Co-located with GpuStaticPropRegistry::destroy s_recipeRanges.clear()
+    // (gos_static_prop_registry.cpp) via mission.cpp -> next mission's
+    // recipeIndex restarts at 0 against a fresh prefix.
     s_bakedStaticLight.clear();
-    s_bakedSlotByRecipe.clear();
+    s_staticLightHighWater = 0;
 }
 
-// Per-frame O(1) slot for the baked constant. M1-pinned: recipeIndex
-// keyed per-frame map cleared every resetLightData -> a FRESH slot
-// resolution each frame (never a retained cross-frame index, Option-C
-// -safe). First call/frame/recipe pays one addLightDataStructure (the
-// legitimate Shape-C O(1) consumer that stays); subsequent same-frame
-// calls are a map hit.
-uint32_t mc2SubmitBakedLightSlot(int32_t recipeIndex, const TG_HWLightsData& baked)
+// [LIGHTBAKE v2] Persistent static slot write. Replaces the retired
+// per-frame mc2SubmitBakedLightSlot (which re-ran addLightDataStructure
+// -> 1792B FNV + 1792B memcmp every frame per recipe). Called ONCE per
+// recipe at bake (and again only on invalidate re-bake): mirror the
+// constant into the permanent CPU slot lightData_[recipeIndex] and
+// advance S. The unchanged per-frame whole-buffer upload then ships it
+// to the GPU every frame idempotently (resetLightData never memsets
+// lightData_ contents). No GL call, no FNV, no memcmp.
+void mc2WriteStaticLightSlot(int32_t recipeIndex, const TG_HWLightsData& baked)
 {
-    auto it = s_bakedSlotByRecipe.find(recipeIndex);
-    if (it != s_bakedSlotByRecipe.end())
-        return it->second;
-    TG_HWLightsData tmp = baked;  // addLightDataStructure takes non-const ptr
-    const uint32_t slot = mcTextureManager->addLightDataStructure(&tmp);
-    s_bakedSlotByRecipe[recipeIndex] = slot;
-    return slot;
+    if (recipeIndex < 0 || !mcTextureManager) return;
+    mcTextureManager->bakeStaticLightSlot(recipeIndex, baked);
 }
 
 uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
@@ -1375,15 +1379,61 @@ void MC_TextureManager::resetLightData()
     // C5/C6 populate sizing (same boundary the dedup-map reset relies on).
     lbDrainPerFrame(g_mc2FrameCounter);
 
-    lightDataStructuresCount = 0;
+    // [LIGHTBAKE v2] Rebase the DYNAMIC allocator base to S (the static
+    // prefix high-water) when the bake is on, so dynamic appends start
+    // above [0..S) and addLightDataStructure never returns a slot < S
+    // (rv = count, count never < S -> the dedup maps below stay
+    // dynamic-only by construction, exactly as before but rebased). With
+    // MC2_LIGHTBAKE=0 the persistent table is off -> base 0 (else the
+    // dynamic allocator would collide into a non-rebased prefix).
+    lightDataStructuresCount = mc2LightBakeEnabled() ? s_staticLightHighWater : 0;
     // PERF FIX 2026-05-07: clear the dedup map alongside the count reset.
-    // Both must reset together — slot indices restart from 0 each frame, so
-    // any stale hash→slot entries from the prior frame are invalid.
+    // Both must reset together — dynamic slot indices restart from the
+    // base (S or 0) each frame, so any stale hash→slot entries from the
+    // prior frame are invalid. (Static [0..S) is NEVER cleared here:
+    // s_bakedStaticLight + lightData_[0..S) persist across frames; that
+    // is the whole point — resetLightData does not memset lightData_.)
     s_lightDataDedupMap.clear();
     s_sceneLightTemplateMap.clear();
     s_lightSlotByActorKey.clear();  // [LIGHTBRIDGE v1] per-frame slot cache
-    s_bakedSlotByRecipe.clear();    // [LIGHTBAKE v1] per-frame baked-slot map (NOT s_bakedStaticLight)
     s_sceneLightTemplateFrame = 0xFFFFFFFFu;
+}
+
+// [LIGHTBAKE v2] Persistent static slot writer (member: needs private
+// lightData_/capacity access). Grow lightData_ so [recipeIndex] is
+// addressable (preserving ALL existing contents -- static prefix AND any
+// transient dynamic entries -- via the same realloc+memcpy pattern as
+// the addLightDataStructure grow), mirror the baked constant into the
+// permanent slot, advance S. Called once per recipe at bake / invalidate
+// re-bake -- NOT per frame.
+void MC_TextureManager::bakeStaticLightSlot(int32_t recipeIndex, const TG_HWLightsData& baked)
+{
+    if (recipeIndex < 0) return;
+    const uint32_t ri = static_cast<uint32_t>(recipeIndex);
+    if (ri + 1 >= lightDataStructuresCapacity)
+    {
+        uint32_t newCap = lightDataStructuresCapacity;
+        while (ri + 1 >= newCap) newCap += 128;            // +128 chunks, like the dynamic grow
+        TG_HWLightsData* grown = new TG_HWLightsData[newCap];
+        // Preserve the FULL old array (static prefix is in [0..S); copying
+        // only `count` would drop persisted static slots).
+        memcpy(grown, lightData_, sizeof(TG_HWLightsData) * lightDataStructuresCapacity);
+        delete[] lightData_;
+        lightData_ = grown;
+        lightDataStructuresCapacity = newCap;
+    }
+    lightData_[ri] = baked;                                 // CPU mirror (persists)
+    if (ri + 1 > s_staticLightHighWater) s_staticLightHighWater = ri + 1;
+    // CRITICAL: the frame a recipe FIRST bakes, this-frame's count was
+    // set to the OLD (smaller) S at frame-start resetLightData. Without
+    // this bump, a later dynamic addLightDataStructure append THIS frame
+    // could land on slot `ri` and clobber the just-written permanent
+    // static slot (wrong-light, never re-baked). Raising the live count
+    // to S keeps same-frame dynamic appends strictly above [0..S). Only
+    // skips some low dynamic slots that frame (harmless -- dynamic is
+    // per-frame ephemeral, rebuilt from S next resetLightData).
+    if (lightDataStructuresCount < s_staticLightHighWater)
+        lightDataStructuresCount = s_staticLightHighWater;
 }
 
 // Diagnostic body — declaration in txmmgr.h. See header for rationale.

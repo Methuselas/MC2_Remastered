@@ -2220,6 +2220,7 @@ static void mc2CacheOrBakeStaticGpuLight(TG_MultiShape* shape,
 	extern bool mc2LightBakeEnabled();
 	extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
 	extern void mc2SetBakedStaticLight(int32_t, const TG_HWLightsData&);
+	extern void mc2WriteStaticLightSlot(int32_t, const TG_HWLightsData&);  // [LIGHTBAKE v2]
 	if (!shape) return;
 	if (!mc2LightBakeEnabled() || !registered || recipeIndex < 0) {
 		shape->CacheGpuLightData();                  // unchanged D2/legacy path
@@ -2238,8 +2239,16 @@ static void mc2CacheOrBakeStaticGpuLight(TG_MultiShape* shape,
 		// uncached so it retries next frame; never persist a no-op
 		// snapshot (would poison s_bakedStaticLight until invalidate).
 		const TG_HWLightsData* leaf = shape->peekCachedLeafLightData();
-		if (leaf && shape->getCachedGpuLightIndex() != 0xFFFFFFFFu)
-			mc2SetBakedStaticLight(recipeIndex, *leaf);      // snapshot post-decompose constant
+		if (leaf && shape->getCachedGpuLightIndex() != 0xFFFFFFFFu) {
+			mc2SetBakedStaticLight(recipeIndex, *leaf);      // mission source-of-truth (re-bake/invalidate)
+			// [LIGHTBAKE v2] write the PERMANENT static slot once
+			// (lightData_[recipeIndex] CPU mirror + advance S), then
+			// point this multi at it -- identical end-state to the HIT
+			// path, so from this frame on there is NO per-frame
+			// addLightDataStructure for this recipe.
+			mc2WriteStaticLightSlot(recipeIndex, *leaf);
+			shape->EmitBakedGpuLightData(recipeIndex, *leaf);
+		}
 	}
 }
 

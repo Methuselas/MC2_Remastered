@@ -1952,8 +1952,16 @@ const TG_HWLightsData* TG_MultiShape::peekCachedLeafLightData()
 // read are unchanged.
 void TG_MultiShape::EmitBakedGpuLightData(int32_t recipeIndex, const TG_HWLightsData& baked)
 {
-    extern uint32_t mc2SubmitBakedLightSlot(int32_t, const TG_HWLightsData&);
-    cachedGpuLightIndex_ = mc2SubmitBakedLightSlot(recipeIndex, baked);
+    // [LIGHTBAKE v2] THE substitutive edit (adversarial-review C1 locus):
+    // the static recipe's permanent light slot IS recipeIndex (the CPU
+    // mirror lives at lightData_[recipeIndex], written once by
+    // mc2WriteStaticLightSlot, re-shipped every frame by the unchanged
+    // whole-buffer upload). So this is a pure pointer assignment -- NO
+    // mc2SubmitBakedLightSlot, NO addLightDataStructure, NO 1792B FNV,
+    // NO 1792B memcmp. This is what takes `addLightDataStructure scan`
+    // -> ~0 for the static class (the ~1840 calls/~1ms/frame survivor).
+    (void)baked;  // identity is recipeIndex; the struct already persists in the slot
+    cachedGpuLightIndex_ = static_cast<uint32_t>(recipeIndex);
     cachedFrame_         = g_mc2FrameCounter;
 }
 
