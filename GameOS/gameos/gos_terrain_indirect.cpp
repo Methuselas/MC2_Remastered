@@ -26,6 +26,8 @@
 #include <chrono>   // MC2_RING_TRACE wait-time measurement (probe-only)
 #include <ctime>    // RING_SINK timestamp on probe-sink open
 
+#include <intrin.h>   // __rdtsc -- [LIGHT_COST_SPLIT v1]
+
 #include <GL/glew.h>
 
 // MC2 types — resolve relative path from GameOS/gameos/
@@ -253,6 +255,53 @@ long long s_visibilityCheckNanosTotal   = 0;  // 1A-alt Slice 0 follow-up #2
 int       s_costSplitFramesObserved     = 0;
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// [LIGHT_COST_SPLIT v1] -- RDTSC, distinct gate. See header rationale.
+// ---------------------------------------------------------------------------
+namespace {
+    bool                g_lcsInit   = false;
+    bool                g_lcsOn     = false;
+    unsigned long long  g_lcsC2Cyc  = 0, g_lcsC6Cyc = 0, g_lcsC5Cyc = 0;
+    unsigned long long  g_lcsC2Call = 0, g_lcsC6Call = 0, g_lcsC5Call = 0;
+    unsigned long long  g_lcsFrames = 0;
+}  // namespace
+
+namespace gos_terrain_indirect {
+
+bool IsLightCostSplitEnabled() {
+    if (!g_lcsInit) {                       // cache once -- getenv per-call is slow
+        g_lcsOn   = (getenv("MC2_LIGHT_COST_SPLIT") != nullptr);
+        g_lcsInit = true;
+    }
+    return g_lcsOn;
+}
+
+void LightCostSplit_AddC2DirectCycles(unsigned long long c)  { g_lcsC2Cyc  += c; }
+void LightCostSplit_AddC6ResubmitCycles(unsigned long long c){ g_lcsC6Cyc  += c; }
+void LightCostSplit_AddC5PerActorCycles(unsigned long long c){ g_lcsC5Cyc  += c; }
+void LightCostSplit_AddC2DirectCall()                        { ++g_lcsC2Call; }
+void LightCostSplit_AddC6ResubmitCall()                      { ++g_lcsC6Call; }
+void LightCostSplit_AddC5PerActorCall()                      { ++g_lcsC5Call; }
+
+void LightCostSplit_RollFrameAndMaybeEmit() {
+    if (!IsLightCostSplitEnabled()) return;
+    ++g_lcsFrames;
+    if (g_lcsFrames % 600ULL != 0ULL) return;
+    const double f = (double)600.0;
+    fprintf(stderr,
+        "[LIGHT_COST_SPLIT v1] event=summary frames=600 "
+        "c2_cyc_per_frame=%.0f c2_calls_per_frame=%.1f "
+        "c6_cyc_per_frame=%.0f c6_calls_per_frame=%.1f "
+        "c5_cyc_per_frame=%.0f c5_calls_per_frame=%.1f\n",
+        (double)g_lcsC2Cyc/f, (double)g_lcsC2Call/f,
+        (double)g_lcsC6Cyc/f, (double)g_lcsC6Call/f,
+        (double)g_lcsC5Cyc/f, (double)g_lcsC5Call/f);
+    g_lcsC2Cyc=g_lcsC6Cyc=g_lcsC5Cyc=0;
+    g_lcsC2Call=g_lcsC6Call=g_lcsC5Call=0;
+}
+
+}  // namespace gos_terrain_indirect
+
 namespace gos_terrain_indirect {
 
 void CostSplit_AddSolidNanos(long long n)         { s_solidBranchNanosThisFrame  += n; }
@@ -268,7 +317,9 @@ void CostSplit_AddCacheResidentNanos(long long n) { s_cacheResidentNanosThisFram
 void CostSplit_AddVisibilityCheckNanos(long long n) { s_visibilityCheckNanosThisFrame += n; }
 
 void CostSplit_RollFrame() {
-    if (!IsCostSplitEnabled()) return;
+    LightCostSplit_RollFrameAndMaybeEmit();   // [LIGHT_COST_SPLIT v1] -- MUST be
+                                              // above the next line; self-gates.
+    if (!IsCostSplitEnabled()) return;        // existing MC2_TERRAIN_COST_SPLIT gate
     s_solidBranchNanosTotal       += s_solidBranchNanosThisFrame;
     s_detailOverlayNanosTotal     += s_detailOverlayNanosThisFrame;
     s_mineEnqueueNanosTotal       += s_mineEnqueueNanosThisFrame;
