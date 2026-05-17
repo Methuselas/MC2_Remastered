@@ -147,6 +147,7 @@ py -3 A:\Games\mc2-opengl-src\.claude\worktrees\gpu-driven-rendering\scripts\run
 ## Known issues (current)
 
 - Shadow re-render stutter when camera moves >500 units. Fix: static world-fixed shadow map (design ready).
+- **Water shoreline z-fight on zoom/elevation-change (NOT pan); water sits slightly low (pre-existing).** Interim fast-path fixes shipped 2026-05-17 (gate-asymmetry +538us, un-armed legacy guard, MVP 1-frame-lag consistency verified 926/0 — recede/flicker/intro-vanish resolved). Residual z-fight = constant screen-z depth-fudge distance-nonlinearity (ruling-compliant clip-z fix pending); water-low is a separate pre-existing baseline issue. Water is slated full-GPU; that rewrite inherits both. Full state: `memory/water_fastpath_interim_fixes_and_residuals.md`.
 - Shadow banding shifts with camera rotation (view-dependent terrain geometry).
 - **First-launch black terrain intermittency** - tier1 first mission occasionally renders black; second mission normal. Suspected: GPU/shader state dirty from previous mission teardown or first-frame ordering. Repro: tier1 with `--fail-fast`.
 - **Options menu writes bad ResolutionX / Y to options.cfg** - opening options dialog may re-save non-800x600 res (observed 4096x2160 on 4K). Engine UI canvas is 800x600 and self-scales; other values break HUD scale + video positioning. Diagnostic and fix candidates: `memory/options_cfg_resolution_drift.md`.
