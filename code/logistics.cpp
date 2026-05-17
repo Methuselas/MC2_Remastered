@@ -596,6 +596,7 @@ int _stdcall Logistics::beginMission(void*, int, void*[])
 	}
 
 	mission->init((char*)(const char*)LogisticsData::instance->getCurrentMission(), missionLoadType, dropZoneID, dropZoneList, commandersToLoad, numMoversPerCommander[numPlayers - 1]);
+	extern int g_lightProbeSetupPath; g_lightProbeSetupPath = 3; // [GPUPROPS v1] post mission->init
 
 	LogisticsData::instance->rpJustAdded = 0;
 

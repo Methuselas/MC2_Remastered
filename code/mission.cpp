@@ -1674,6 +1674,7 @@ bool IsGateOpen (int objectWID) {
 //----------------------------------------------------------------------------
 void Mission::init (const char *missionName, long loadType, long dropZoneID, Stuff::Vector3D* dropZoneList, char commandersToLoad[8][3], long numMoversPerCommander)
 {
+	extern int g_lightProbeSetupPath; g_lightProbeSetupPath = 1; // [GPUPROPS v1]
 	ZoneScopedN("Mission::init");
 	mission_phase_begin();
 

@@ -61,6 +61,11 @@ static const bool s_globalPoolLegacy = []() {
 #define TREE_DIAG(fmt, ...) \
     do { if (s_treeDiagTrace) { fprintf(stderr, "[TREE_DIAG] " fmt "\n", ##__VA_ARGS__); fflush(stderr); } } while (0)
 
+// [GPUPROPS v1] setup-path attribution for registerType calls.
+// 0=unknown 1=mission_init_firstload 2=ims_objmgr_load 3=sp_logistics_postinit
+// Declared extern in gos_static_prop_batcher.h; set by mission.cpp / saveload.cpp / logistics.cpp.
+int g_lightProbeSetupPath = 0;
+
 namespace {
 
 // Per-vertex stride in the shared VBO. Layout:
@@ -174,6 +179,14 @@ struct TypeRangeSsbo {
 std::vector<GpuStaticPropPacket>                   s_packets;
 std::vector<GpuStaticPropType>                     s_types;
 std::unordered_map<const TG_TypeShape*, uint32_t>  s_typeIndex;
+
+// [GPUPROPS v1] setup-path instrumentation (internal; path tag lives at file scope).
+static bool s_gpuPropsTrace = (getenv("MC2_GPUPROPS_TRACE") != nullptr);
+// g_regCall counts EVERY registerType invocation after the null guard and
+// BEFORE the idempotent s_typeIndex.count early-return, so 0 for a path means
+// registerType was genuinely never invoked on it.
+static unsigned g_regCall[4]     = {0,0,0,0};
+static unsigned g_regLateDrop[4] = {0,0,0,0};
 
 // Peak instance count per typeID since mission load; resized lazily in the
 // per-frame flush loop. Slice-1: tracked but not consumed (foundation for
@@ -1071,6 +1084,7 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape, TG_TypeMultiSha
     // logic lands in the follow-up alpha-test self-awareness slice.
     (void)multiShape;
     if (!typeShape) return;
+    if (s_gpuPropsTrace) ++g_regCall[g_lightProbeSetupPath & 3];   // [GPUPROPS v1]
     if (s_typeIndex.count(typeShape)) return;  // idempotent
     if (s_geometryFinalized) {
         // Layer B: register-after-finalize is a bug in the map-load walk.
@@ -1079,6 +1093,7 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape, TG_TypeMultiSha
                          "CPU-fallback for this type\n", (void*)typeShape);
             s_failedTypes[typeShape] = true;
         }
+        if (s_gpuPropsTrace) ++g_regLateDrop[g_lightProbeSetupPath & 3];
         return;
     }
 
@@ -1322,6 +1337,18 @@ void GpuStaticPropBatcher::finalizeGeometry() {
 
     std::fprintf(stderr, "[GPUPROPS] finalize: %zu types, %zu packets\n",
                  s_types.size(), s_packets.size());
+
+    if (s_gpuPropsTrace) {
+        std::fprintf(stderr,
+            "[GPUPROPS v1] event=register_summary path=%d "
+            "regCalls[init=%u ims=%u splog=%u unk=%u] "
+            "lateDrops[init=%u ims=%u splog=%u unk=%u] "
+            "typeIndexSize=%zu\n",
+            g_lightProbeSetupPath,
+            g_regCall[1], g_regCall[2], g_regCall[3], g_regCall[0],
+            g_regLateDrop[1], g_regLateDrop[2], g_regLateDrop[3], g_regLateDrop[0],
+            s_typeIndex.size());
+    }
 
     s_geometryFinalized = true;
 

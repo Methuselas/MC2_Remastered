@@ -634,6 +634,7 @@ void Part::Load (FitIniFilePtr file, long partNum)
 
 void Mission::load (const char *loadFileName)
 {
+	extern int g_lightProbeSetupPath; g_lightProbeSetupPath = 2; // [GPUPROPS v1]
 	userInput->mouseOff();
 	loadProgress = 0.0f;
 
