@@ -119,6 +119,25 @@ bool bShadersDrawPathEnabled = false;
 // is byte-for-byte unchanged.
 bool eligibleForGpuObjects(class TG_Shape* shape);
 
+#include <intrin.h>
+#include "../GameOS/gameos/gos_terrain_indirect.h"  // LightCostSplit_* ([LIGHT_COST_SPLIT v1])
+namespace {
+// [LIGHT_COST_SPLIT v1] RAII cycle bracket. Cached-bool early-out; no Tracy
+// zone by design (per-leaf hot loop -- a Tracy zone would bust the 100ns floor).
+struct LcsBucket { enum E { C2, C6, C5 }; };
+template<int K> struct LcsScope {
+    bool on; unsigned long long t0;
+    LcsScope(): on(gos_terrain_indirect::IsLightCostSplitEnabled()) { if (on) t0 = __rdtsc(); }
+    ~LcsScope() {
+        if (!on) return;
+        unsigned long long d = __rdtsc() - t0;
+        if (K==LcsBucket::C2){ gos_terrain_indirect::LightCostSplit_AddC2DirectCycles(d);   gos_terrain_indirect::LightCostSplit_AddC2DirectCall(); }
+        if (K==LcsBucket::C6){ gos_terrain_indirect::LightCostSplit_AddC6ResubmitCycles(d); gos_terrain_indirect::LightCostSplit_AddC6ResubmitCall(); }
+        if (K==LcsBucket::C5){ gos_terrain_indirect::LightCostSplit_AddC5PerActorCycles(d); gos_terrain_indirect::LightCostSplit_AddC5PerActorCall(); }
+    }
+};
+} // namespace
+
 //-------------------------------------------------------------------------------
 // Parse Functions
 void GetNumberData (char *rawData, char *result)
@@ -2857,11 +2876,13 @@ long TG_Shape::MultiTransformShape_PositionsOnly (Stuff::Matrix4D *shapeToClip, 
 // callers wired.
 uint32_t TG_Shape::GatherGpuObjectLightDataOnly()
 {
+	LcsScope<LcsBucket::C5> _lcs;
 	return mcTextureManager->addLightDataStructureWithPerActorColor(&lightData_);
 }
 
 uint32_t TG_Shape::ResubmitCachedLightData()
 {
+	LcsScope<LcsBucket::C6> _lcs;
 	return mcTextureManager->addLightDataStructure(&lightData_);
 }
 
@@ -3110,7 +3131,10 @@ void TG_Shape::Render (float forceZ, bool isHudElement, BYTE alphaValue, bool is
 			rs.mvp_ = mvp;
 			rs.mw_ = *shapeToWorld;
 			memcpy(rs.viewport_, cur_viewport, 4 * sizeof(float));
-            rs.light_data_buffer_index_ = mcTextureManager->addLightDataStructure(&lightData_);
+			{
+				LcsScope<LcsBucket::C2> _lcs;
+				rs.light_data_buffer_index_ = mcTextureManager->addLightDataStructure(&lightData_);
+			}
             rs.isHudElement_ = isHudElement;
 
 			mcTextureManager->addRenderShape(
