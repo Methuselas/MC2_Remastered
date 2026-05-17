@@ -1,274 +1,256 @@
-# Water Material v1 - GPU-Driven Design
+# Water Material v1 - GPU-Driven Design (terrain-side thickness)
 
 **Date:** 2026-05-17
 **Branch:** `claude/gpu-driven-rendering` (worktree `.claude/worktrees/gpu-driven-rendering/`)
-**Status:** READY FOR ADVERSARIAL REVIEW
+**Status:** READY FOR ADVERSARIAL RE-REVIEW (rev 2 - depth-buffer mechanic replaced)
 **Supersedes (for this branch):** `docs/superpowers/specs/2026-05-17-water-material-v1-design.md`
-(written for the nifty-mendeleev single-program water path; invalid here - see "Why this supersedes")
-**North star:** eliminate per-frame CPU work; bake to UBO/SSBO; 100% GPU-resident draw
+**North star:** eliminate per-frame CPU work; bake to UBO; 100% GPU-resident draw
 
 ---
 
 ## 1. Goal and non-goals
 
 **Goal.** Replace flat textured water on the armed MDI path with a stylized
-material: Beer-Lambert depth absorption, Fresnel rim, procedural sine-wave
-normals driving specular and normal variation. Depth-faded shoreline alpha
-replacing the per-vertex elevation-band staircase. **Zero new per-frame CPU
-work and zero new per-frame GPU ops beyond the water shader itself.**
+material: depth-tinted absorption color, Fresnel rim, procedural sine-wave
+normals (specular + normal variation), and a continuous depth-faded shoreline
+replacing the 3-band per-vertex alpha staircase. Water thickness is derived
+**entirely from terrain-side elevation data already GPU-resident**, not from
+the depth buffer.
 
-**Non-goals (deferred to later GPU-driven slices, not this spec):**
-- Screen-space refraction (the only feature that would force a per-frame
-  scene-color copy / FBO feedback-loop mitigation - cut by design).
-- Planar reflection (the spec predecessor's `renderWaterReflectionPass()` was a
-  per-frame CPU re-render of terrain - cut entirely; v1 uses a sky/fog-color
-  approximation for the reflective term).
-- Flow-map / sampled normal maps (procedural normals only in v1).
-- Per-biome / mod-configurable water style (UBO is single global in v1; the UBO
-  boundary makes per-biome a clean later extension).
+**Non-goals (deferred; not this spec):** screen-space refraction; planar
+reflection (v1 uses a sky/fog-color approximation for the reflective term);
+flow-map / sampled normal maps; per-biome / mod-configurable water style.
 
-## 2. Why this supersedes the predecessor spec on this branch
+## 2. Why rev 2 (the depth-buffer mechanic was killed in review)
 
-A code-grounded audit of the predecessor spec against this worktree
-(`@5bffaf3`) found two CRITICAL invalidations:
+Two independent code-grounded adversarial reviews BLOCKED rev 1's
+depth-buffer thickness mechanic with convergent CRITICALs:
 
-1. **Dual-program water path.** `renderWaterFastPath()` lazily compiles a second
-   MDI program (`s_waterMdiProg` from `shaders/gos_terrain_water_fast_mdi.vert`
-   + `shaders/gos_terrain_water_mdi.frag`, built in `gameos_graphics.cpp`
-   around lines 2081-2085). When `gpuArmed && mdiValid` (around lines
-   2251-2254) the MDI program is bound and issues the draw via
-   `glMultiDrawArraysIndirect` (around line 2345). `water_fast_prog_`
-   (`gos_terrain_water_fast.vert` + `gos_tex_vertex.frag`, built around line
-   3566) is only the un-armed / unsupported-GPU fallback. The predecessor spec
-   swapped the FS on `water_fast_prog_`, which would not touch the live armed
-   water at all. **v1 targets the MDI shaders only.**
+- The armed MDI water VS carries a screen-space-z double-projection + a
+  constant `WATER_DEPTH_FUDGE_FAST = +0.003` (`gos_terrain_water_fast_mdi.vert`
+  around lines 270-281). The opaque terrain that writes `sceneDepthTex` does
+  not project depth through that same chain, so `gl_FragCoord.z(water)` vs
+  `sceneDepthTex.r(terrain)` mixed two non-linear encodings - `depthDelta` was
+  not a valid open-water thickness.
+- Sampling `sceneDepthTex` (a depth attachment of the live `sceneFBO_`) while
+  it is bound for depth-test is contradicted by the in-repo shadow-unbind
+  precedent in `docs/amd-driver-rules.md` (requires unbind, not just
+  depth-write-off).
 
-2. **No `near_plane_` / `far_plane_`; non-perspective double-projection.**
-   No such members exist on `gosRenderer`. `Camera::setOrthogonal()`
-   (`mclib/camera.cpp` around line 1995) builds a custom `cameraToClip`, and
-   the water VS uses a double-projection chain (`terrainMVP -> screen -> mvp`,
-   `gos_terrain_water_fast.vert` around lines 323-368), so the predecessor's
-   `(n*f)/(f - raw*(f-n))` linearization has no valid `(near,far)` and cannot
-   be ported. **v1 uses a depth-delta mechanic that needs neither (Section 4).**
+Rev 2 removes the depth-buffer entirely. Both CRITICALs are **designed out**:
+no `sceneDepthTex` sample exists, so neither the projection mismatch nor the
+feedback hazard can occur.
 
-(Audit also confirmed, in this worktree's favor: scene depth/color/normal
-textures already exist with class accessors - `gos_postprocess.h` around lines
-30-32, `getSceneDepthTexture()` etc.; `glClipControl(GL_LOWER_LEFT,
-GL_ZERO_TO_ONE)` is active - `gameosmain.cpp` around line 930; the
-post-renderLists hook is at `gamecam.cpp` around line 256.)
+## 3. The mechanic: terrain-side thickness (grounded)
 
-All cited line numbers are starting points - grep the symbol to find the
-current line at implementation time (Rule 0).
+All symbols below are grep-verified on this worktree; line numbers are
+starting points (Rule 0 - grep the symbol at implementation time).
 
-## 3. What does NOT change (load-bearing - do not regress)
+- **Terrain-floor elevation under each water corner:** `velev =
+  cornerElev(rec, cornerIdx)` (`gos_terrain_water_fast_mdi.vert` ~line 191),
+  selecting one of `WaterRecipe.elev.{x,y,z,w}` (struct ~line 25, SSBO binding
+  5 `WaterRecipeBuf`). Populated **once at mission load** in `WaterStream::Build`
+  (`GameOS/gameos/gos_terrain_water_stream.cpp` ~lines 285-288, `r.v0e =
+  p0.elevation` etc. from the terrain heightmap `PostcompVertex::elevation`).
+  Mission-static SSBO - zero per-frame CPU.
+- **Water-plane surface elevation:** `uniform float waterElevation`
+  (`gos_terrain_water_fast_mdi.vert` ~line 67), sourced from
+  `Terrain::waterElevation = mapData->waterDepth` (`mclib/terrain.cpp` ~lines
+  131, 2072), already pushed to `s_waterMdiProg` (`gameos_graphics.cpp` ~line
+  2304 `setMF("waterElevation", ...)`). Mission-static value.
 
-- **MDI water draw structure:** `WaterStream::ComputeDispatchAndBindThinRecords`
-  arming, `s_waterMdiProg` bind, `glMultiDrawArraysIndirect`, the per-cmd SSBO
-  (`WaterPerCmd`, including its `detailMode` field used for base/detail/spray -
-  this is an SSBO field, NOT a uniform).
-- **Z-bias invariant:** terrain `+0.002`, water `WATER_DEPTH_FUDGE_FAST =
-  +0.003` (`shaders/include/terrain_depth_bias.hglsl`). The load-bearing rule
-  is delta = water - terrain = `0.001`. Do NOT "fix" to `0.0025` (that is
-  `WATER_DEPTH_FUDGE_RASTER`, the mask/CPU-raster regime).
-- **`[WATER_DEPTHPROBE v2]`** retention instrument in
-  `gos_terrain_water_stream.cpp` (env `MC2_WATER_DEPTHPROBE`) - untouched.
-- **MVP-consistency:** armed water continues to project with the terrain-solid
-  dispatch MVP via the existing `WaterStream` path - untouched.
-- **Un-armed fallback:** `water_fast_prog_` + `gos_terrain_water_fast.vert` +
-  `gos_tex_vertex.frag` - untouched. Un-armed / unsupported-GPU users keep
-  current flat textured water (acceptable; armed is the default and the
-  GPU-driven north-star path).
-- **Existing `time` uniform** already pushed for the current water path -
-  reused, not re-pushed.
+**Continuous thickness (computed in the VS, emitted as one new varying):**
 
-## 4. Depth mechanic (resolves CRITICAL-2 with no near/far, no inversion)
-
-The water surface's own post-projection depth is `gl_FragCoord.z` - already
-interpolated, free, no custom varying. The opaque floor depth is
-`sceneDepthTex` sampled at `gl_FragCoord.xy / vec2(textureSize(sceneDepthTex,
-0))` - screen size from `textureSize`, so **no `inverseScreenSize` uniform
-exists**.
-
-Both values live in the same `ZERO_TO_ONE`, non-reversed, non-linear depth
-space produced by the same projection (water and terrain differ only by the
-known `0.001` z-bias delta). Therefore:
-
-```
-float waterDepth  = gl_FragCoord.z;
-float sceneDepth  = texture(sceneDepthTex, gl_FragCoord.xy /
-                            vec2(textureSize(sceneDepthTex, 0))).r;
-float depthDelta  = max(0.0, sceneDepth - waterDepth);   // monotonic in true depth
+```glsl
+// VS, alongside the existing worldPos / velev computation:
+float waterThickness = max(0.0, waterElevation - velev);  // world units, >=0
+out float WaterThickness;   // new varying (see Section 6 for the full out list)
+...
+WaterThickness = waterThickness;
 ```
 
-`depthDelta` is monotonic in true distance but not linear. v1 deliberately
-folds the non-linearity into artist-tuned UBO constants (consistent with the
-pre-existing per-vertex alpha bands, which were already non-physical):
+This is the SAME `velev` the existing `elevAlphaBandByte(velev)`
+(`gos_terrain_water_fast_mdi.vert` ~lines 132-139) consumes - we replace the
+3-band staircase with this continuous value. No depth buffer, no projection,
+no near/far, no feedback loop. Physically: vertical water column at that
+corner. The wave-bob term (`waveOurCos(...)`) is intentionally excluded from
+thickness (thickness tracks the static plane, not the surface ripple) -
+documented so it is not "fixed" later.
 
-```
-float thick   = clamp(depthDelta * absorptionDensityClip, 0.0, 1.0);
-vec3  waterCol = mix(shallowColor, deepColor, thick);          // Beer-Lambert-ish
-float shore    = smoothstep(0.0, shoreBlendDepthClip, depthDelta);
-```
+**Land-quad guard (real residual, not a blocker):** the recipe SSBO includes
+land quads where `velev > waterElevation` (`gos_terrain_water_stream.cpp`
+~lines 243-264). `max(0.0, ...)` clamps thickness to 0 there; the existing
+per-triangle pz-gate (`WaterThinRecord.flags`,
+`gos_terrain_water_stream.h` ~lines 93-104) already culls non-visible water at
+draw time. v1 relies on both; no new cull logic.
 
-This needs no near/far, no inversion of the double-projection, no CPU. At the
-shoreline `depthDelta -> 0` so `shore -> 0` fades the edge out, eliminating the
-tile-aligned staircase and making residual waterline z-fighting invisible
-(pixels fade rather than flicker) without touching the z-bias invariant.
+## 4. Shading (FS: gos_terrain_water_mdi.frag)
 
-**Plan-stage open item (close with `mc2-shader-expert`):** exact values of
-`absorptionDensityClip` and `shoreBlendDepthClip` in this compressed clip-depth
-space (the useful `depthDelta` range is small and non-linear; constants will be
-tuned, not guessed), and confirmation that the water base pass runs with
-**depth-writes disabled** (required for the `sceneDepthTex` sample to be the
-benign half of the AMD feedback rule - see Section 7).
+`t = clamp(WaterThickness * absorptionDensity, 0.0, 1.0)` (world-unit
+thickness scaled by a tuned UBO constant - now in real world units, so the
+constant is physically interpretable, unlike rev 1's clip-depth fudge).
 
-## 5. Shading
+- **Absorption color:** `waterCol = mix(shallowColor, deepColor, t)`.
+- **Shoreline alpha:** `shore = smoothstep(0.0, shoreBlendDepth,
+  WaterThickness)`. This REPLACES the elevation-band staircase as the sole
+  alpha driver (see Section 5 for the composite - the staircase is removed,
+  not multiplied in).
+- **Procedural normals:** two summed sine waves ->
+  `wN = normalize(vec3(w * normalStrength, 1.0))` driven by `time` (already
+  pushed per-frame for this program - reuse, do not remove).
+- **Fresnel:** `viewDir = normalize(cameraPos - WorldPos);
+  fres = fresnelF0 + (1-fresnelF0)*pow(1 - max(dot(wN,viewDir),0), 5)`.
+  `WorldPos` is a new VS->FS varying (the VS already computes `worldPos =
+  vec3(vxy, wz)`); `cameraPos` is NOT currently visible to the water MDI
+  program (confirmed: no shared SceneData UBO bound to `s_waterMdiProg`) - it
+  is added as ONE new per-frame `setMVec4` (Section 7). Light direction stays
+  the FS's existing constant for v1 specular (zero new cost; physical
+  sun-color deferred).
+- **Reflective term:** `reflCol = fog_color.rgb * 1.4` (sky/fog approx;
+  `fog_color` already available). No reflection pass in v1.
+- **Specular:** `pow(max(dot(wN, halfV),0),64) * fres`.
 
-**Procedural normals** (zero asset dependency; later upgrade path = sampled
-flow-map normals):
+## 5. Composite (corrected per review CRITICAL-2)
 
-```
-vec2 waveN(vec2 uv, float f, float s) {
-    return vec2(sin(uv.y*f + time*s), sin(uv.x*f + time*s*0.71));
-}
-vec3 waveNormal(vec2 uv) {
-    vec2 w = waveN(uv,3.0,0.5) + waveN(uv*0.4,7.0,0.3);
-    return normalize(vec3(w * normalStrength, 1.0));
+Rev 1 multiplied the absorption color by the tile diffuse (undoing the
+stylized look) and multiplied the smooth shore by the staircase alpha
+(preserving the artifact). Corrected:
+
+```glsl
+// detail/spray pass is discriminated by the EXISTING flat varying o_isWater
+// (1 = base water, 2 = detail/spray; gos_terrain_water_fast_mdi.vert ~line 150
+//  from WaterPerCmd.isWater). It is NOT WaterPerCmd.detailMode - that SSBO
+// field is not visible to the FS. Detail/spray keeps its current path:
+if (o_isWater == 2) { /* unchanged existing detail/spray branch */ }
+else {
+    vec3  col = mix(waterCol, reflCol, fres);   // absorption, NOT * tile diffuse
+    col      *= vertexLightRGB;                  // VS light tint (decode from Color.rgb)
+    col      += sunIntensity * spec;
+    col       = mix(fog_color.rgb, col, FogValue);   // exact existing fog order
+    FragColor = vec4(col, shore);                // shore is the SOLE alpha; staircase removed
 }
 ```
 
-**Fresnel** (needs world position -> the one new VS varying):
+The per-vertex `elevAlphaBandByte` path and the `alphaEdge/Middle/DeepByte`
+uniforms become dead for the base layer and are removed in the same commit
+(no half-retired state). `vertexLightRGB` is the existing per-corner light
+already packed into the `Color` varying - decoded, not a new input.
+
+## 6. VS/FS interface change
+
+Current MDI pair varyings (exact, grep-verified): VS `out vec4 Color; out
+vec2 Texcoord; out float FogValue; flat out int o_isWater;` <-> FS matching
+`in`. Rev 2 adds exactly two, in BOTH shaders in one atomic edit (hot-reload
+fails silently if only one side reloads - relink and check console):
 
 ```
-vec3  viewDir = normalize(cameraPos - WorldPos);
-float ct      = max(dot(wN, viewDir), 0.0);
-float fres    = fresnelF0 + (1.0 - fresnelF0) * pow(1.0 - ct, 5.0);
+out float WaterThickness;  /  in PREC float WaterThickness;
+out vec3  WorldPos;         /  in PREC vec3  WorldPos;
 ```
 
-`cameraPos` and the light direction are read from the data **already
-GPU-resident for the terrain MDI program** (same source the terrain MDI
-shaders use - no new per-frame `setVec4`). At MC2's oblique ~30 deg camera
-`ct ~ 0.5-0.7` (Fresnel ~0.05-0.25); cinematic low angles `ct ~ 0.1-0.2`
-(Fresnel ~0.5-0.7) - the large visual win at cinematic angles.
-
-**Reflective term (no reflection pass in v1):** `reflCol = fog_color.rgb *
-1.4` (sky/fog approximation; `fog_color` already available on the water path).
-
-**Specular:** `pow(max(dot(wN, halfV),0.0), 64.0) * fres`, `halfV =
-normalize(viewDir + lightDir)`.
-
-**Composite:**
+## 7. Files changed
 
 ```
-vec3 col = mix(waterCol, reflCol, fres);
-col     *= existingDiffuseSample.rgb * vertexLightTint;   // preserve current tint
-col     += sunIntensity * spec;
-col      = applyFog(col);                                  // existing fog path
-float a  = shore * existingVertexAlpha;                    // shore now primary
+MODIFIED  shaders/gos_terrain_water_fast_mdi.vert  -- compute WaterThickness; emit WaterThickness + WorldPos;
+                                                      remove elevAlphaBandByte band logic from base path
+MODIFIED  shaders/gos_terrain_water_mdi.frag       -- material/composite (Section 4-5);
+                                                      o_isWater==2 detail branch preserved verbatim
+MODIFIED  GameOS/gameos/gameos_graphics.cpp        -- WaterStyle UBO (write-once) bound to s_waterMdiProg;
+                                                      one new per-frame setMVec4("cameraPos", terrain_camera_pos_)
+                                                      in the existing MDI lambda block; drop now-dead
+                                                      alphaEdge/Middle/Deep uniform pushes for the base path
 ```
 
-The detail/spray pass (`WaterPerCmd.detailMode == 1`, SSBO field) keeps its
-current lightweight path via an early-out at the top of the FS - it does NOT
-run the depth/absorption math.
+No new files. No depth-texture binding. Legacy `water_fast_prog_` /
+`gos_terrain_water_fast.vert` / `gos_tex_vertex.frag` untouched (un-armed
+users keep current flat water).
 
-## 6. Files changed
+## 8. WaterStyle UBO (the "bake" target)
 
-```
-MODIFIED  shaders/gos_terrain_water_fast_mdi.vert  -- add: out vec3 WorldPos (set from existing world pos)
-MODIFIED  shaders/gos_terrain_water_mdi.frag       -- material logic; detailMode early-out preserved
-MODIFIED  GameOS/gameos/gameos_graphics.cpp        -- WaterStyle UBO (write-once) + bind to MDI prog;
-                                                      bind getSceneDepthTexture() on a unit for MDI prog;
-                                                      delete predecessor per-frame material/cameraPos/
-                                                      inverseScreenSize/reflection uniform block
-```
+std140, single global, populated **once** at init (not per frame), bound to
+`s_waterMdiProg`:
 
-No new files. No accessor additions (existing
-`getGosPostProcess()->getSceneDepthTexture()` is used). Legacy
-`gos_terrain_water_fast.vert` / `gos_tex_vertex.frag` / `water_fast_prog_`
-untouched.
-
-## 7. WaterStyle UBO
-
-std140, single global, populated **once** at init (or on explicit style
-change - not per frame), bound to `s_waterMdiProg` at a fixed binding point
-alongside the program's existing UBO/SSBO bindings:
-
-```
+```glsl
 layout(std140) uniform WaterStyle {
-    vec3  shallowColor;          // ~ (0.22, 0.45, 0.38)
-    float absorptionDensityClip; // tuned in clip-depth space (plan-stage)
-    vec3  deepColor;             // ~ (0.02, 0.08, 0.10)
-    float shoreBlendDepthClip;   // tuned in clip-depth space (plan-stage)
-    float normalStrength;        // ~ 0.30
-    float fresnelF0;             // ~ 0.02
+    vec3  shallowColor;      float absorptionDensity;  // 16B slot
+    vec3  deepColor;         float shoreBlendDepth;     // 16B slot (world units)
+    float normalStrength;    float fresnelF0;
+    float sunIntensity;      float _pad;
 };
 ```
 
-(std140 layout to be finalized with `mc2-shader-expert` for correct vec3/float
-packing; values above are starting points, tuned in the plan.)
+The vec3+float interleave is a valid std140 16-byte packing; the C++ struct
+MUST be built from `float[3]+float` (not `glm::vec3`) to match offsets - a
+lockstep note for the plan. Binding-point index is assigned at plan stage to
+avoid collision with the water program's existing SSBO bindings 5/6/7 and
+UBO binding 1 (`SceneData`); routed to `mc2-terrain-indirect-expert`
+(Section 12).
 
-## 8. Per-frame budget (the point of this spec)
+## 9. Per-frame budget
 
-| Item | Predecessor (per frame) | v1 |
+| Item | Rev 1 claim | Rev 2 actual |
 |---|---|---|
-| Material constants | ~7 `setF`/`setVec3` | UBO, write-once |
-| `cameraPos` / light dir | 2 `setVec4` | reuse GPU-resident terrain MDI data |
-| `inverseScreenSize` | 1 `setVec2` | none (`textureSize` in FS) |
-| Reflection MVP + toggle | 1 `setMat4` + 1 `setI` | cut (no reflection in v1) |
-| Reflection terrain re-render | full CPU pass | cut |
-| Scene-color feedback blit | 1 `glBlitFramebuffer` | none (no refraction) |
-| **Net new per-frame CPU/GPU** | several | **zero** |
+| Material constants | UBO write-once | UBO write-once |
+| Thickness input | `sceneDepthTex` fetch/frag | static recipe SSBO (already bound) |
+| `cameraPos` (Fresnel) | "reuse" (was false) | 1 new `setMVec4`/frame (honest) |
+| light dir | - | FS constant (zero cost, v1) |
+| `inverseScreenSize` | textureSize | none (no screen-space term at all) |
+| reflection / refraction | cut | cut |
+| **Net new per-frame CPU** | claimed zero | **one `glUniform4fv`** |
+| **Net new per-frame GPU ops** | 1 depth fetch/frag | **zero** (no new texture fetch) |
 
-## 9. AMD / Vulkan-prep constraints
+The single `glUniform4fv("cameraPos")` is the honest, irreducible
+per-frame cost of a view-dependent Fresnel; it is one uniform write, no CPU
+compute, no bake-able alternative without baking the camera (impossible). The
+north-star intent (no per-frame CPU *work* / no re-derivation / bake what is
+static) is met; this is acknowledged explicitly rather than hidden.
 
-- **Feedback rule:** the water draw must NOT sample `sceneColorTex` (it does
-  not - no refraction). It DOES sample `sceneDepthTex`, which is an attachment
-  of the bound scene FBO; this is defined/benign **only with depth-writes off
-  on the water base pass**. The plan MUST verify and, if necessary, explicitly
-  set the water base pass depth-mask to GL_FALSE (water is alpha-blended; this
-  is almost certainly already its state, but it is load-bearing - confirm, do
-  not assume).
-- **No `glTextureBarrier`** (GL 4.5; context is 4.3) - not needed given the
-  above.
-- **Vulkan-prep:** UBO is explicit device-mediated binding; no implicit
-  cross-call GL state assumed. Reuse of GPU-resident camera/light data must go
-  through the same explicit binding the terrain MDI program uses, not a hidden
-  global.
-- **Shader `#version`:** never in the shader file; `"#version 430\n"` prefix
-  via the existing `makeProgram` path.
-- **Hot-reload fails silent:** check console after editing the MDI shaders (bad
-  compile = old shader stays active).
+## 10. Load-bearing constraints (do not regress)
 
-## 10. Smoke and visual gates
+- Z-bias invariant: water `WATER_DEPTH_FUDGE_FAST = +0.003`, terrain `+0.002`,
+  delta `0.001` (`shaders/include/terrain_depth_bias.hglsl`). Untouched (rev 2
+  does not read or alter depth).
+- `[WATER_DEPTHPROBE v2]` (`MC2_WATER_DEPTHPROBE`) - untouched.
+- MVP-consistency / un-armed guard / two-draw structure - untouched.
+- `o_isWater` discriminator (1 base / 2 detail) - the detail/spray branch is
+  preserved verbatim; only the base branch composite changes.
+- Recipe SSBO C++/GLSL std430 lockstep (`WaterRecipe` static_assert 64 B,
+  `gos_terrain_water_stream.h` ~line 73) - not modified, but any field add is
+  forbidden in v1 (we only READ existing `.elev`).
+
+## 11. Gates
+
+Build `--config RelWithDebInfo`, full relink (gameos_graphics.cpp changes),
+deploy per-file `cp -f` + `diff -q`, then:
 
 ```
-py -3 .claude/worktrees/gpu-driven-rendering/scripts/run_smoke.py \
-   --tier tier1 --duration 30 --kill-existing
+py -3 A:\Games\mc2-opengl-src\.claude\worktrees\gpu-driven-rendering\scripts\run_smoke.py --tier tier1 --duration 30 --kill-existing
 ```
 
-(Run against the rebuilt-and-deployed exe - a smoke PASS on a stale deployed
-exe does not verify a shader change. Full relink before deploy since
-`gameos_graphics.cpp` changes.)
+Absolute path (CLAUDE.md). Smoke PASS alone does not verify a shader change
+(silent-fallback rule): require BOTH the run on the freshly-deployed exe AND
+a positive marker. Add an env-gated `[WATER v1]` probe logging the
+per-session `WaterThickness` min/max once (gated on `MC2_WATER_DEPTHPROBE`,
+reusing the existing instrument's env); a PASS requires `max > 0` (proves the
+recipe elevation path is live, not a flat unbound read).
 
-Manual visual checks (tier1 necessary, not sufficient):
-- Deep water visibly darker (absorption) vs shallow near-shore.
-- Shoreline: smooth depth fade, no tile-aligned staircase, no waterline
-  flicker under camera motion.
-- Cinematic low angle: Fresnel rim visibly brighter at grazing incidence.
-- Detail/spray pass still renders (detailMode SSBO early-out preserved).
-- Un-armed intro pan: legacy flat water still draws (no fallback regression).
-- `MC2_WATER_DEPTHPROBE=1`: equal=1 on all motion frames (MVP-consistency
-  intact).
-- Zoomed-out big-map: no perf regression (depth sample is one texture fetch;
-  no new draw / cull / LOD change - structurally cannot regress draw volume,
-  but verify per the zoomed-out stress-path rule).
+Manual visual (tier1 necessary, not sufficient):
+- Continuous shoreline fade, no 3-band staircase, no waterline flicker.
+- Deep water darker than shallow (absorption over real thickness).
+- Cinematic low angle: Fresnel rim brighter at grazing incidence.
+- Detail/spray (`o_isWater==2`) visually unchanged.
+- Un-armed intro pan: legacy flat water unchanged.
+- `MC2_WATER_DEPTHPROBE=1`: equal=1 on motion frames (MVP-consistency).
+- Zoomed-out big-map (known blind stress path): Tracy GPU water-zone cost
+  not > 2x current MDI water FS; no draw/cull/LOD change so draw volume
+  structurally cannot regress, but the FS is heavier per fragment - measure,
+  do not assume.
 
-## 11. Plan-stage advisor routing (per project advisor discipline)
+## 12. Plan-stage advisor routing
 
-- `mc2-shader-expert`: std140 packing; `absorptionDensityClip` /
-  `shoreBlendDepthClip` tuning in clip-depth space; depth-write state of the
-  water base pass; reuse mechanism for GPU-resident camera/light in the MDI
-  program.
-- `mc2-terrain-indirect-expert` (cross): confirm the MDI water program's
-  binding-point layout so the WaterStyle UBO binding does not collide with
-  existing terrain-indirect UBO/SSBO bindings.
+- `mc2-shader-expert`: WaterStyle std140 packing + C++ lockstep struct;
+  `absorptionDensity` / `shoreBlendDepth` tuning in world units; `vertexLightRGB`
+  decode from the existing `Color` varying; confirm removing the base-path
+  band uniforms does not break the `o_isWater==2` detail branch.
+- `mc2-terrain-indirect-expert` (cross): WaterStyle UBO binding-point index
+  vs. the water MDI program's existing SSBO 5/6/7 + UBO 1 bindings.
