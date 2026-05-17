@@ -58,6 +58,7 @@
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
+#include <chrono>   // [LIGHTBRIDGE v1] coarse per-frame populate sizing
 #include <utils/gl_utils.h>
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
@@ -1021,6 +1022,89 @@ namespace {
 
         return h;
     }
+
+    // [LIGHTBRIDGE v1] C5/C6 populate sizing recon (env-gated, measure-only,
+    // demote-not-delete). The handoff's prescribed shape_emit_ns counter was
+    // grep-proven to wrap only the C1 legacy leaf (tgl.cpp:2602 scope, gated
+    // !eligibleForGpuObjects) which is structurally dead for the GPU-batched
+    // population this slice targets; the C5/C6 path
+    // (addLightDataStructureWithPerActorColor, the sole caller route from
+    // GatherGpuObjectLightDataOnly) had NO armed-path attribution. This is
+    // that attribution: ONE std::chrono pair per call (NOT a per-call Tracy
+    // zone / not nested -> ~30-50ns/call observer effect, << the claimed
+    // multi-ms lever; the 6-nested-scope cost-split apparatus that inflated
+    // terrain numbers is the anti-pattern this deliberately avoids), summed
+    // per-frame, drained at resetLightData() (frame-start). Gated on the SAME
+    // MC2_OBJECT_RECON_TRACY the handoff capture protocol already sets, so the
+    // protocol is unchanged. tmpl_hit counts the template-cache-hit calls
+    // whose trailing FNV+memcmp is the redundancy the slice retires.
+    static bool     s_lbInit = false;
+    static bool     s_lbEnabled = false;
+    static uint64_t s_lbFrameNs = 0,    s_lbMonoNs = 0;
+    static uint64_t s_lbFrameCalls = 0, s_lbMonoCalls = 0;
+    static uint64_t s_lbFrameHit = 0,   s_lbMonoHit = 0;
+    static uint64_t s_lbFrameMiss = 0,  s_lbMonoMiss = 0;
+    static uint64_t s_lbFrameNo = 0,    s_lbMonoNo = 0;
+    static uint32_t s_lbFirstDataFrame = 0;
+
+    static inline void lbInitFromEnv() {
+        if (s_lbInit) return;
+        s_lbInit = true;
+        const char* e = std::getenv("MC2_OBJECT_RECON_TRACY");
+        s_lbEnabled = (e != nullptr && e[0] != '\0' && e[0] != '0');
+        if (s_lbEnabled) {
+            std::puts("[LIGHTBRIDGE v1] event=enabled note=c5c6_populate_sizing_active");
+            std::fflush(stdout);
+        }
+    }
+
+    struct LbScope {
+        std::chrono::steady_clock::time_point t0;
+        LbScope() : t0(std::chrono::steady_clock::now()) {}
+        ~LbScope() {
+            s_lbFrameNs += (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+            ++s_lbFrameCalls;
+        }
+    };
+
+    static void lbDrainPerFrame(uint32_t frame) {
+        if (!s_lbInit) lbInitFromEnv();
+        const bool hadData = (s_lbFrameCalls != 0);
+        if (hadData && s_lbFirstDataFrame == 0) s_lbFirstDataFrame = frame;
+
+        if (s_lbEnabled && hadData) {
+            char buf[512];
+            std::snprintf(buf, sizeof(buf),
+                "[LIGHTBRIDGE v1] frame=%u populate={ns:%llu,calls:%llu,"
+                "tmpl_hit:%llu,tmpl_miss:%llu,no_actor_light:%llu}",
+                (unsigned)frame,
+                (unsigned long long)s_lbFrameNs,  (unsigned long long)s_lbFrameCalls,
+                (unsigned long long)s_lbFrameHit, (unsigned long long)s_lbFrameMiss,
+                (unsigned long long)s_lbFrameNo);
+            std::puts(buf); crashbundle_append(buf); std::fflush(stdout);
+        }
+
+        s_lbMonoNs   += s_lbFrameNs;   s_lbMonoCalls += s_lbFrameCalls;
+        s_lbMonoHit  += s_lbFrameHit;  s_lbMonoMiss  += s_lbFrameMiss;
+        s_lbMonoNo   += s_lbFrameNo;
+        s_lbFrameNs = s_lbFrameCalls = s_lbFrameHit = s_lbFrameMiss = s_lbFrameNo = 0;
+
+        if (frame > 0 && (frame % 600) == 0 && s_lbMonoCalls != 0) {
+            char buf[512];
+            std::snprintf(buf, sizeof(buf),
+                "[LIGHTBRIDGE v1] summary=%u populate={ns:%llu,calls:%llu,"
+                "tmpl_hit:%llu,tmpl_miss:%llu,no_actor_light:%llu} "
+                "ns_per_call=%llu first_data_frame=%u",
+                (unsigned)frame,
+                (unsigned long long)s_lbMonoNs,  (unsigned long long)s_lbMonoCalls,
+                (unsigned long long)s_lbMonoHit, (unsigned long long)s_lbMonoMiss,
+                (unsigned long long)s_lbMonoNo,
+                (unsigned long long)(s_lbMonoCalls ? s_lbMonoNs / s_lbMonoCalls : 0),
+                (unsigned)s_lbFirstDataFrame);
+            std::puts(buf); crashbundle_append(buf); std::fflush(stdout);
+        }
+    }
 }
 
 uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
@@ -1076,6 +1160,7 @@ uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
 uint32_t MC_TextureManager::addLightDataStructureWithPerActorColor(TG_HWLightsData* light_data)
 {
     gosASSERT(light_data);
+    LbScope _lb_;  // [LIGHTBRIDGE v1] C5/C6 populate sizing (RAII, all return paths)
 
     if (s_sceneLightTemplateFrame != g_mc2FrameCounter) {
         s_sceneLightTemplateMap.clear();
@@ -1084,6 +1169,7 @@ uint32_t MC_TextureManager::addLightDataStructureWithPerActorColor(TG_HWLightsDa
 
     const uint32_t actorLightSource = firstActiveLightSourceIndex();
     if (actorLightSource == 0xFFFFFFFFu) {
+        ++s_lbFrameNo;  // [LIGHTBRIDGE v1] no per-actor light (direct passthrough)
         GatherLightsParameters(light_data);
         return addLightDataStructure(light_data);
     }
@@ -1091,10 +1177,13 @@ uint32_t MC_TextureManager::addLightDataStructureWithPerActorColor(TG_HWLightsDa
     const uint64_t key = sceneLightTemplateKey(actorLightSource);
     auto it = s_sceneLightTemplateMap.find(key);
     if (it == s_sceneLightTemplateMap.end()) {
+        ++s_lbFrameMiss;  // [LIGHTBRIDGE v1] template miss (GatherLightsParameters runs)
         CachedSceneLightTemplate entry;
         GatherLightsParameters(&entry.data);
         entry.actorLightSlot = decomposeFirstActiveLightColor(&entry.data);
         it = s_sceneLightTemplateMap.emplace(key, entry).first;
+    } else {
+        ++s_lbFrameHit;  // [LIGHTBRIDGE v1] template hit (trailing FNV+memcmp = retirable redundancy)
     }
 
     *light_data = it->second.data;
@@ -1106,6 +1195,10 @@ uint32_t MC_TextureManager::addLightDataStructureWithPerActorColor(TG_HWLightsDa
 
 void MC_TextureManager::resetLightData()
 {
+    // [LIGHTBRIDGE v1] frame-start boundary: flush the just-completed frame's
+    // C5/C6 populate sizing (same boundary the dedup-map reset relies on).
+    lbDrainPerFrame(g_mc2FrameCounter);
+
     lightDataStructuresCount = 0;
     // PERF FIX 2026-05-07: clear the dedup map alongside the count reset.
     // Both must reset together — slot indices restart from 0 each frame, so
@@ -1545,8 +1638,56 @@ void MC_TextureManager::renderLists (void)
 		Terrain::mapData->renderStaticTerrainShadowFullMap(indexArray, shTex);
 		gos_EndShadowPrePass();
 	}
-	// Dynamic object shadow pass: caller (Task 5) will supply frustum corners
-	// and invoke gos_BuildDynamicLightMatrix + gos_BeginDynamicShadowPass here.
+	// GPU-driven dynamic sun shadow (Phase 1): frustum-fit + flushShadow.
+	// Runs BEFORE gpu_cull::compute_dispatch so the static-prop shadow uses the
+	// full camera-visible per-type ranges (not the cull-narrowed indirect).
+	// Casters = the camera-visible (inView) batched set (Phase 1 scope; the
+	// off-screen-caster low-sun shadow is the documented Phase-2 gap).
+	{
+		extern bool g_useGpuObjects;
+		extern bool g_useGpuMechs;
+		if (gos_IsTerrainTessellationActive() && (g_useGpuObjects || g_useGpuMechs)) {
+			// Unproject 8 NDC corners through clipToWorld (-> STUFF space), then
+			// swizzle Stuff->MC2 (-x, z, y) EXACTLY as Camera::inverseProjectZ does.
+			// inverseProjectZ convention: Multiply(in, clipToWorld), then if
+			// xformCoords.w < 0 call Negate (negates all 4 components), then
+			// perspective-divide x/y/z by w, then swizzle (-x, z, y).
+			// For raw NDC input (w=1) the perspective divide is required (unlike
+			// inverseProjectZ which pre-bakes 1/screen.w into coords.w).
+			static const float ndc[8][3] = {
+				{-1.0f,-1.0f, 0.0f},{ 1.0f,-1.0f, 0.0f},
+				{-1.0f, 1.0f, 0.0f},{ 1.0f, 1.0f, 0.0f},
+				{-1.0f,-1.0f, 1.0f},{ 1.0f,-1.0f, 1.0f},
+				{-1.0f, 1.0f, 1.0f},{ 1.0f, 1.0f, 1.0f}
+			};
+			float cornersMC2[8][3];
+			// clipToWorld is protected; derive it from the public getWorldToClip().
+			// Invert(src) stores the inverse of src into *this (matrix.hpp:584).
+			Stuff::Matrix4D clipToWorld;
+			clipToWorld.Invert(eye->getWorldToClip());
+			for (int c = 0; c < 8; ++c) {
+				Stuff::Vector4D in, out;
+				in.x = ndc[c][0]; in.y = ndc[c][1]; in.z = ndc[c][2]; in.w = 1.0f;
+				out.Multiply(in, clipToWorld);        // row-vector * matrix, arg order per camera.cpp:1977
+				if (out.w < 0.0f)
+					out.Negate(out);                  // mirrors inverseProjectZ:1979-1980
+				float inv = (fabsf(out.w) > 1e-6f) ? (1.0f / out.w) : 0.0f;
+				float sx = out.x * inv;
+				float sy = out.y * inv;
+				float sz = out.z * inv;
+				cornersMC2[c][0] = -sx;               // Stuff->MC2: (-x, z, y) per camera.cpp:1982-1984
+				cornersMC2[c][1] =  sz;
+				cornersMC2[c][2] =  sy;
+			}
+			float lx, ly, lz;
+			gos_GetTerrainLightDir(&lx, &ly, &lz);   // same accessor used by old shim
+			gos_BuildDynamicLightMatrix(-lx, -ly, -lz, cornersMC2);  // sign matches old shim
+			gos_BeginDynamicShadowPass();             // no-op if shadowsEnabled_ false
+			GpuStaticPropBatcher::instance().flushShadow();
+			GpuMechBatcher::instance().flushShadow();
+			gos_EndDynamicShadowPass();
+		}
+	}
 	g_numShadowShapes = 0;
 
 	// No special depth state for DRAWSOLID terrain
