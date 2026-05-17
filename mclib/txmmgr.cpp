@@ -1746,6 +1746,21 @@ void MC_TextureManager::renderLists (void)
 		TracyGpuZone("Render.TerrainOverlays");
 		gos_DrawTerrainOverlays();
 	}
+	// Slice A — cement-overlay static-bake draw. Mirrors the Render.Terrain
+	// Mines hook below EXACTLY: gated on IsFrameOverlayArmed() (default OFF
+	// unless MC2_TERRAIN_INDIRECT_OVERLAY=1). When armed, the per-quad M2d
+	// gos_PushTerrainOverlay producer is skipped (quad.cpp gate-off) and
+	// gos_DrawTerrainOverlays above flushes an empty batch (early-return);
+	// DrawDecalStatic draws the persistent static bake instead. Placed right
+	// after Render.TerrainOverlays so the static cement composites in the
+	// same slot the per-frame batch used (before mines/decals/old overlays).
+	{
+		ZoneScopedN("Render.TerrainOverlaysStatic");
+		TracyGpuZone("Render.TerrainOverlaysStatic");
+		if (gos_terrain_indirect::IsFrameOverlayArmed()) {
+			gos_terrain_indirect::DrawDecalStatic();
+		}
+	}
 	// PR2c Stage 2c — mine static-bake draw. Hooks between TerrainOverlays
 	// and Decals so mines composite ABOVE cement/road overlays and BENEATH
 	// crater decals (state=2 blown-mine sprites coexist with crater decals).
