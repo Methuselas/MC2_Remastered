@@ -363,10 +363,21 @@ git commit -m "feat(water-v1): [WATER_MAT v1] CPU thickness probe (distinct env)
 
 This worktree was created fresh - `build64/` does not exist yet, so `cmake --build` alone fails ("does not contain CMakeCache.txt"). Configure first. The generator/platform below match the project's existing worktree cache exactly (`Visual Studio 17 2022` / `x64`); `LINUX_BUILD` is handled inside the project CMakeLists, no vcpkg toolchain var. If configure errors on missing deps/flags, that is a build-system question - stop and route to `mc2-build-system-expert` (do NOT guess additional flags).
 
+Dependency vars below are copied verbatim from the existing working worktree's CMakeCache (`CMAKE_PREFIX_PATH` + the three `SDL2*_DIR` point at the SHARED repo-root `3rdparty/3rdparty` prebuilt libs - shared read-only, build64 stays per-worktree so isolation holds). These are the proven config, not guesses.
+
 ```bash
 cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
 CMAKE="C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
-"$CMAKE" -S . -B build64 -G "Visual Studio 17 2022" -A x64
+TP="A:/Games/mc2-opengl-src/3rdparty/3rdparty"
+"$CMAKE" -S . -B build64 -G "Visual Studio 17 2022" -A x64 \
+  -DCMAKE_PREFIX_PATH="$TP" -DSDL2_DIR="$TP/cmake" \
+  -DSDL2_mixer_DIR="$TP/cmake" -DSDL2_ttf_DIR="$TP/cmake" \
+  -DGLEW_INCLUDE_DIR="$TP/include" \
+  -DGLEW_SHARED_LIBRARY_RELEASE="$TP/lib/x64/glew32.lib" \
+  -DGLEW_STATIC_LIBRARY_RELEASE="$TP/lib/x64/glew32s.lib" \
+  -DZLIB_INCLUDE_DIR="$TP/include" \
+  -DZLIB_LIBRARY="$TP/lib/x64/zlib.lib" \
+  -DZLIB_LIBRARY_RELEASE="$TP/lib/x64/zlib.lib"
 "$CMAKE" --build build64 --config RelWithDebInfo --target mc2
 ```
 
