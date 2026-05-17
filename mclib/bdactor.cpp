@@ -2200,6 +2200,50 @@ long BldgAppearance::renderShadows (void)
 }
 
 //-----------------------------------------------------------------------------
+// [LIGHTBAKE v1] Static-actor lighting mission-load bake gate. Replaces
+// the raw shape->CacheGpuLightData() at the 4 static (bldg/tree) call
+// sites. The trailing staticReg.lightDataIndex =
+// shape->getCachedGpuLightIndex() per-instance capture is UNCHANGED
+// (both CacheGpuLightData and EmitBakedGpuLightData set
+// cachedGpuLightIndex_). Key = monotonic-never-reused registry
+// recipeIndex; invalidate (destruction/LOD swap) routes through
+// invalidateStaticRegistration -> GpuStaticPropRegistry::invalidate ->
+// mc2EraseBakedStaticLight -> lazy re-bake of the same position-derived
+// constant. Kill-switch MC2_LIGHTBAKE (=0 -> unchanged D2 path
+// bit-for-bit). Mechs never reach this (mech3d.cpp calls
+// CacheGpuLightData directly); generic props take the no-actor-light
+// path. C++-only. See docs/superpowers/plans/
+// 2026-05-17-static-lighting-bake-SIMPLIFIED.md
+static void mc2CacheOrBakeStaticGpuLight(TG_MultiShape* shape,
+                                         bool registered, int32_t recipeIndex)
+{
+	extern bool mc2LightBakeEnabled();
+	extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
+	extern void mc2SetBakedStaticLight(int32_t, const TG_HWLightsData&);
+	if (!shape) return;
+	if (!mc2LightBakeEnabled() || !registered || recipeIndex < 0) {
+		shape->CacheGpuLightData();                  // unchanged D2/legacy path
+		return;
+	}
+	TG_HWLightsData baked;
+	if (mc2GetBakedStaticLight(recipeIndex, baked)) {
+		shape->EmitBakedGpuLightData(recipeIndex, baked);    // HIT: recompute retired
+	} else {
+		shape->CacheGpuLightData();                          // MISS: real gather (frame 1 / post-invalidate)
+		// C1 (adversarial review): CacheGpuLightData early-returns when
+		// !g_useGpuObjects && !g_useGpuMechs (supported MC2_GPU_OBJECTS=0
+		// operator config), leaving cachedGpuLightIndex_ at the
+		// 0xFFFFFFFF sentinel and leaf->lightData_ stale. Only persist
+		// the bake if the gather actually ran (valid index) -- else leave
+		// uncached so it retries next frame; never persist a no-op
+		// snapshot (would poison s_bakedStaticLight until invalidate).
+		const TG_HWLightsData* leaf = shape->peekCachedLeafLightData();
+		if (leaf && shape->getCachedGpuLightIndex() != 0xFFFFFFFFu)
+			mc2SetBakedStaticLight(recipeIndex, *leaf);      // snapshot post-decompose constant
+	}
+}
+
+//-----------------------------------------------------------------------------
 long BldgAppearance::update (bool animate)
 {
 	::mc2_object_recon::Scope _recon_bldg_(
@@ -2475,7 +2519,7 @@ long BldgAppearance::update (bool animate)
 			// By the time submitMultiShape() runs (during renderLists()), later
 			// actors have overwritten worldLights[0]->aRGB for their positions.
 			{
-				bldgShape->CacheGpuLightData();
+				mc2CacheOrBakeStaticGpuLight(bldgShape, staticReg.registered, staticReg.recipeIndex);
 				// 2026-05-11 per-instance capture: snapshot the multi's just-written
 				// cache slot for THIS actor before sibling actors of the same
 				// multi-type overwrite it. Ferried to RecipeRange via markVisible().
@@ -2518,7 +2562,7 @@ long BldgAppearance::update (bool animate)
 			// through update() seeds the light index. Cheap: same call
 			// already runs unconditionally in submitMultiShape; here we
 			// just hoist its effect to be visible to render() this frame.
-			bldgShape->CacheGpuLightData();
+			mc2CacheOrBakeStaticGpuLight(bldgShape, staticReg.registered, staticReg.recipeIndex);
 			// 2026-05-11 per-instance capture: see gpuEligible branch above.
 			staticReg.lightDataIndex = bldgShape->getCachedGpuLightIndex();
 			needsFullBakeNextFrame = false;
@@ -4909,7 +4953,7 @@ long TreeAppearance::update (bool animate)
 		{
 			// Stage 2.D.2 fix: cache GPU light data while lights are per-actor-correct.
 			{
-				treeShape->CacheGpuLightData();
+				mc2CacheOrBakeStaticGpuLight(treeShape, staticReg.registered, staticReg.recipeIndex);
 				// 2026-05-11 per-instance capture (mirror of BldgAppearance::update).
 				staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
 			}
@@ -4930,7 +4974,7 @@ long TreeAppearance::update (bool animate)
 			// Seed cachedGpuLightIndex_ in the full-bake branch so the
 			// next render() doesn't fail the UINT32_MAX gate at :4341
 			// and invalidate the freshly-set staticReg.
-			treeShape->CacheGpuLightData();
+			mc2CacheOrBakeStaticGpuLight(treeShape, staticReg.registered, staticReg.recipeIndex);
 			// 2026-05-11 per-instance capture (mirror of gpuEligible branch).
 			staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
 			needsFullBakeNextFrame = false;

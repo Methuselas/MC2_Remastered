@@ -148,6 +148,12 @@ static void releasePinsForRange(RecipeRange& rng) {
 
 } // namespace
 
+// [LIGHTBAKE v1] free fns defined in mclib/txmmgr.cpp. Declared at FILE
+// scope (NOT inside namespace GpuStaticPropRegistry, else the linker
+// looks for GpuStaticPropRegistry::mc2... -> LNK2019).
+extern void mc2EraseBakedStaticLight(int32_t);
+extern void mc2ClearAllBakedStaticLight();
+
 namespace GpuStaticPropRegistry {
 
 bool isEnabled()               { return s_enabled; }
@@ -220,6 +226,9 @@ void destroy() {
     s_recipes.clear();          s_recipes.shrink_to_fit();
     s_recipeRanges.clear();     s_recipeRanges.shrink_to_fit();
     s_liveRangeIndices.clear(); s_liveRangeIndices.shrink_to_fit();
+    // [LIGHTBAKE v1] recipeIndex restarts next mission -> stale baked
+    // entries would alias a different actor. Drop the mission-scoped map.
+    ::mc2ClearAllBakedStaticLight();
 }
 
 void frameBegin() {
@@ -299,6 +308,9 @@ void invalidate(int32_t regIdx) {
     rng.count = 0;
     rng.multi  = nullptr;
     rng.lightDataIndex = 0xFFFFFFFFu;  // 2026-05-11 reset capture on invalidate
+    // [LIGHTBAKE v1] drop the baked static-light entry so destruction/LOD
+    // multi-swap lazily re-bakes the same position-derived constant.
+    ::mc2EraseBakedStaticLight(regIdx);
 }
 
 bool isReady(int32_t regIdx) {

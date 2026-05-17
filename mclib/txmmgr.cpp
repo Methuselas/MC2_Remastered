@@ -1140,6 +1140,38 @@ namespace {
                     s_lbRepointEnabled ? "repoint" : "legacy");
         std::fflush(stdout);
     }
+
+    // ---- [LIGHTBAKE v1] static-actor mission-load lighting bake --------
+    // Static bdactor bldg/tree actors have a mission-constant per-actor
+    // light (position-derived getTerrainLight + frozen sun/nightFactor;
+    // no dynamic emitters -- lighting_is_mission_load_static_no_dynamic_
+    // emitters.md). Lazily bake the post-decompose TG_HWLightsData once
+    // (keyed by monotonic-never-reused registry recipeIndex) then re-emit
+    // the constant into a per-frame slot WITHOUT the per-frame
+    // GatherLights+decompose+template recompute (the retired CPU zone).
+    // Shape-C precedent: recompute dies, the O(1) per-frame slot WRITE
+    // stays. Post-SSBO this is the full design (no window/partition --
+    // see docs/superpowers/plans/2026-05-17-static-lighting-bake-SIMPLIFIED.md).
+    // s_bakedStaticLight = mission-scoped struct SOURCE (NOT a slot map;
+    // per-frame resetLightData is irrelevant to it; cleared on mission
+    // unload + per-recipe on invalidate). s_bakedSlotByRecipe = per-frame
+    // recipeIndex->slot, cleared in resetLightData (fresh resolution each
+    // frame -> Option-C-safe, no retained cross-frame index).
+    static std::unordered_map<int32_t, TG_HWLightsData> s_bakedStaticLight;
+    static std::unordered_map<int32_t, uint32_t>        s_bakedSlotByRecipe;
+    static bool s_bakeInit = false;
+    static bool s_bakeEnabled = true;          // default ON
+    static bool s_bakeFirstLogged = false;
+
+    static inline void bakeInitFromEnv() {
+        if (s_bakeInit) return;
+        s_bakeInit = true;
+        const char* e = std::getenv("MC2_LIGHTBAKE");
+        s_bakeEnabled = !(e != nullptr && e[0] == '0' && e[1] == '\0');
+        std::printf("[LIGHTBAKE v1] event=enabled mode=%s\n",
+                    s_bakeEnabled ? "bake" : "passthrough");
+        std::fflush(stdout);
+    }
 }
 
 // Cross-TU kill-switch view (C6 repoint lives in msl.cpp). Free function
@@ -1148,6 +1180,68 @@ bool mc2LightBridgeRepointEnabled()
 {
     lbRepointInitFromEnv();
     return s_lbRepointEnabled;
+}
+
+// ---- [LIGHTBAKE v1] cross-TU free fns (bdactor/msl/registry call these;
+// free fns avoid pulling txmmgr.h into those TUs) ----
+bool mc2LightBakeEnabled()
+{
+    bakeInitFromEnv();
+    return s_bakeEnabled;
+}
+
+bool mc2GetBakedStaticLight(int32_t recipeIndex, TG_HWLightsData& out)
+{
+    if (recipeIndex < 0) return false;
+    auto it = s_bakedStaticLight.find(recipeIndex);
+    if (it == s_bakedStaticLight.end()) return false;
+    out = it->second;
+    return true;
+}
+
+void mc2SetBakedStaticLight(int32_t recipeIndex, const TG_HWLightsData& in)
+{
+    if (recipeIndex < 0) return;
+    s_bakedStaticLight[recipeIndex] = in;
+    if (!s_bakeFirstLogged) {
+        s_bakeFirstLogged = true;
+        std::printf("[LIGHTBAKE v1] event=first_bake recipe=%d\n", recipeIndex);
+        std::fflush(stdout);
+    }
+}
+
+// Erased on destruction/LOD multi-swap (via invalidateStaticRegistration
+// -> GpuStaticPropRegistry::invalidate) so the next CacheGpuLightData
+// lazily re-bakes the same position-derived constant for the new multi.
+void mc2EraseBakedStaticLight(int32_t recipeIndex)
+{
+    if (recipeIndex < 0) return;
+    s_bakedStaticLight.erase(recipeIndex);
+}
+
+// Mission unload: recipeIndex restarts per mission -> a stale entry
+// would alias a different actor. Drop the whole mission-scoped map.
+void mc2ClearAllBakedStaticLight()
+{
+    s_bakedStaticLight.clear();
+    s_bakedSlotByRecipe.clear();
+}
+
+// Per-frame O(1) slot for the baked constant. M1-pinned: recipeIndex
+// keyed per-frame map cleared every resetLightData -> a FRESH slot
+// resolution each frame (never a retained cross-frame index, Option-C
+// -safe). First call/frame/recipe pays one addLightDataStructure (the
+// legitimate Shape-C O(1) consumer that stays); subsequent same-frame
+// calls are a map hit.
+uint32_t mc2SubmitBakedLightSlot(int32_t recipeIndex, const TG_HWLightsData& baked)
+{
+    auto it = s_bakedSlotByRecipe.find(recipeIndex);
+    if (it != s_bakedSlotByRecipe.end())
+        return it->second;
+    TG_HWLightsData tmp = baked;  // addLightDataStructure takes non-const ptr
+    const uint32_t slot = mcTextureManager->addLightDataStructure(&tmp);
+    s_bakedSlotByRecipe[recipeIndex] = slot;
+    return slot;
 }
 
 uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
@@ -1283,6 +1377,7 @@ void MC_TextureManager::resetLightData()
     s_lightDataDedupMap.clear();
     s_sceneLightTemplateMap.clear();
     s_lightSlotByActorKey.clear();  // [LIGHTBRIDGE v1] per-frame slot cache
+    s_bakedSlotByRecipe.clear();    // [LIGHTBAKE v1] per-frame baked-slot map (NOT s_bakedStaticLight)
     s_sceneLightTemplateFrame = 0xFFFFFFFFu;
 }
 

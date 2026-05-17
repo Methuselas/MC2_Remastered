@@ -1920,6 +1920,43 @@ void TG_MultiShape::CacheGpuLightData()
     }
 }
 
+// [LIGHTBAKE v1] First SHAPE_NODE leaf's durable post-decompose
+// lightData_ (TG_Shape member; TG_MultiShape is friend of TG_Shape).
+// Call AFTER CacheGpuLightData() has run this frame:
+// GatherGpuObjectLightDataOnly -> addLightDataStructureWithPerActorColor
+// wrote the post-template-copy + in-place decomposeFirstActiveLightColor
+// struct into leaf->lightData_, which resetLightData does NOT touch
+// (unlike the per-frame scratch slot). Same leaf scan as
+// CacheGpuLightData for identity.
+const TG_HWLightsData* TG_MultiShape::peekCachedLeafLightData()
+{
+    TG_Shape* firstShapeNodeLeaf = nullptr;
+    for (int i = 0; i < numTG_Shapes; ++i) {
+        TG_ShapeRec& rec = listOfShapes[i];
+        if (!rec.processMe || !rec.node) continue;
+        TG_Shape* child = rec.node;
+        if (!child->myType) continue;
+        if (child->myType->GetNodeType() != SHAPE_NODE) continue;
+        firstShapeNodeLeaf = child;
+        break;
+    }
+    if (firstShapeNodeLeaf == nullptr) return nullptr;
+    return &firstShapeNodeLeaf->lightData_;
+}
+
+// [LIGHTBAKE v1] Re-emit a mission-load-baked constant into a per-frame
+// slot WITHOUT GatherLights/decompose/template recompute. Per-frame slot
+// WRITE stays (Shape-C O(1) consumer); the RECOMPUTE is what dies. Sets
+// cachedGpuLightIndex_/cachedFrame_ so the existing
+// staticReg.lightDataIndex = getCachedGpuLightIndex() capture + batcher
+// read are unchanged.
+void TG_MultiShape::EmitBakedGpuLightData(int32_t recipeIndex, const TG_HWLightsData& baked)
+{
+    extern uint32_t mc2SubmitBakedLightSlot(int32_t, const TG_HWLightsData&);
+    cachedGpuLightIndex_ = mc2SubmitBakedLightSlot(recipeIndex, baked);
+    cachedFrame_         = g_mc2FrameCounter;
+}
+
 void TG_MultiShape::ResubmitCachedGpuLightData()
 {
     // Slice B1 (2026-05-09): see CacheGpuLightData rationale.
