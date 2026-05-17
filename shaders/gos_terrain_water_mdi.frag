@@ -52,8 +52,10 @@ void main(void)
 {
     if (o_isWater == 1) {
         // ---- water-v1 stylized base layer ----
+        PREC vec3  viewVec = cameraPos.xyz - WorldPos;
+        PREC vec3  viewDir = viewVec / max(length(viewVec), 1e-4);  // guard: camera-at-surface => no NaN
         // WorldPos.xy is global continuous MC2-world (no MaxMinUV wrap) -> seam-free.
-        PREC float waveLOD = 1.0 - smoothstep(WAVE_FADE_NEAR, WAVE_FADE_FAR, length(cameraPos.xyz - WorldPos));
+        PREC float waveLOD = 1.0 - smoothstep(WAVE_FADE_NEAR, WAVE_FADE_FAR, length(viewVec));
         PREC vec2  p  = WorldPos.xy * WAVE_FREQ;
         PREC vec2  w  = vec2(sin(p.y       + time*WAVE_SPEED)      + 0.5*sin(p.y*2.17 - time*WAVE_SPEED*0.7),
                              sin(p.x*1.13  - time*WAVE_SPEED*0.85) + 0.5*sin(p.x*2.31 + time*WAVE_SPEED*0.6));
@@ -65,8 +67,6 @@ void main(void)
         PREC float shore = smoothstep(0.0, SHORE_BLEND_DEPTH, WaterThickness);
         if (shore <= 0.0) discard;            // kill invisible land-quad overdraw
 
-        PREC vec3  viewVec = cameraPos.xyz - WorldPos;
-        PREC vec3  viewDir = viewVec / max(length(viewVec), 1e-4);  // guard: camera-at-surface => no NaN
         PREC float ct      = max(dot(wN, viewDir), 0.0);
         PREC float fres    = FRESNEL_F0 + (1.0 - FRESNEL_F0) * pow(1.0 - ct, 5.0);
 
