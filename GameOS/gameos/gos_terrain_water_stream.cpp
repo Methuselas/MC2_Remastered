@@ -313,6 +313,34 @@ void Build() {
 
     g_ready = true;
 
+    // [WATER_MAT v1] positive-marker probe (env MC2_WATER_MATERIAL_PROBE; SEPARATE
+    // from the retained [WATER_DEPTHPROBE v2] MVP instrument - do not share its env).
+    // Recomputes the VS thickness formula CPU-side over the populated recipes so a
+    // smoke can assert the elevation path is live (max > 0), not a flat unbound read.
+    {
+        static const bool s_waterMatProbe =
+            (getenv("MC2_WATER_MATERIAL_PROBE") != nullptr);
+        if (s_waterMatProbe && !g_recipes.empty()) {
+            float tmin = 1e30f, tmax = -1e30f;
+            for (const WaterRecipe& r : g_recipes) {
+                float floorMin = r.v0e;
+                floorMin = (r.v1e < floorMin) ? r.v1e : floorMin;
+                floorMin = (r.v2e < floorMin) ? r.v2e : floorMin;
+                floorMin = (r.v3e < floorMin) ? r.v3e : floorMin;
+                float thick = (float)Terrain::waterElevation - floorMin;
+                if (thick < 0.0f) thick = 0.0f;
+                if (thick < tmin) tmin = thick;
+                if (thick > tmax) tmax = thick;
+            }
+            fprintf(stderr,
+                    "[WATER_MAT v1] event=summary recipes=%zu thickness_min=%.3f "
+                    "thickness_max=%.3f waterElevation=%.3f\n",
+                    g_recipes.size(), (double)tmin, (double)tmax,
+                    (double)Terrain::waterElevation);
+            fflush(stderr);
+        }
+    }
+
     if (DebugOn()) {
         fprintf(stderr,
                 "[WATER_STREAM v1] event=build_done recipes=%zu "
