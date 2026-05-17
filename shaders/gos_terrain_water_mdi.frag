@@ -32,13 +32,15 @@ uniform PREC vec4 cameraPos;      // water-v1: MC2 world-space camera (Fresnel)
 
 // water-v1 baked style constants (compile-time; tune via shader hot-reload;
 // promote to a UBO only at per-biome per spec Section 8 TODO(water-v2)).
-const vec3  SHALLOW_COLOR      = vec3(0.22, 0.45, 0.38);
-const vec3  DEEP_COLOR         = vec3(0.02, 0.08, 0.10);
-const float ABSORPTION_DENSITY = 0.15;   // 1/world-units
+const vec3  SHALLOW_COLOR      = vec3(0.22, 0.45, 0.38);  // user-approved teal (keep)
+const vec3  DEEP_COLOR         = vec3(0.03, 0.13, 0.20);  // dark blue, NOT black
+const float ABSORPTION_DENSITY = 0.022;  // 1/world-units (Beer-Lambert k; ~45u e-fold over 0..150)
 const float SHORE_BLEND_DEPTH  = 3.0;    // world-units to full opacity
 const float NORMAL_STRENGTH    = 0.30;
 const float FRESNEL_F0         = 0.02;
 const float SUN_INTENSITY      = 1.0;
+const vec3  SKY_TINT           = vec3(0.42, 0.55, 0.68);  // fog-INDEPENDENT sky (B-fix: no camera->black)
+const float SKY_AMBIENT        = 0.18;   // floor: deep water + dim light never reach black
 
 void main(void)
 {
@@ -49,8 +51,8 @@ void main(void)
                            sin(wuv.x * 3.0 + time * 0.355) + sin(wuv.x * 1.2 + time * 0.50));
         PREC vec3 wN = normalize(vec3(w * NORMAL_STRENGTH, 1.0));
 
-        PREC float t        = clamp(WaterThickness * ABSORPTION_DENSITY, 0.0, 1.0);
-        PREC vec3  waterCol = mix(SHALLOW_COLOR, DEEP_COLOR, t);
+        PREC float trans    = exp(-WaterThickness * ABSORPTION_DENSITY);  // 1 at shore -> 0 deep
+        PREC vec3  waterCol = mix(DEEP_COLOR, SHALLOW_COLOR, trans);
 
         PREC float shore = smoothstep(0.0, SHORE_BLEND_DEPTH, WaterThickness);
         if (shore <= 0.0) discard;            // kill invisible land-quad overdraw
@@ -60,7 +62,7 @@ void main(void)
         PREC float ct      = max(dot(wN, viewDir), 0.0);
         PREC float fres    = FRESNEL_F0 + (1.0 - FRESNEL_F0) * pow(1.0 - ct, 5.0);
 
-        PREC vec3  reflCol = fog_color.rgb * 1.4;   // sky/fog approx (no reflection pass v1)
+        PREC vec3  reflCol = SKY_TINT;   // fog-independent sky; camera angle can no longer -> black
 
         PREC vec3  lightDir = normalize(vec3(0.3, 0.2, 1.0));  // existing FS constant light
         PREC vec3  halfV    = normalize(viewDir + lightDir);
@@ -68,7 +70,7 @@ void main(void)
 
         PREC vec3  vertexLightRGB = Color.bgra.rgb;  // VS packs .bgra (~241); un-swizzle here
         PREC vec3  col = mix(waterCol, reflCol, fres);
-        col *= vertexLightRGB;
+        col = col * max(vertexLightRGB, vec3(SKY_AMBIENT)) + waterCol * SKY_AMBIENT * 0.5;
         col += SUN_INTENSITY * spec;
         if (fog_color.x > 0.0 || fog_color.y > 0.0 || fog_color.z > 0.0 || fog_color.w > 0.0)
             col = mix(fog_color.rgb, col, FogValue);
