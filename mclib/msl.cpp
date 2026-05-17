@@ -1926,6 +1926,26 @@ void TG_MultiShape::ResubmitCachedGpuLightData()
     if (!g_useGpuObjects && !g_useGpuMechs)
         return;
 
+    // [LIGHTBRIDGE v1] C6 repoint: if this multi already populated a VALID
+    // slot THIS frame, that slot is still live (per-frame reset by
+    // resetLightData/clearArrays at frame start) — return it and skip the
+    // direct addLightDataStructure 1792B FNV + 1792B memcmp entirely. The
+    // cachedGpuLightIndex_ != sentinel guard is load-bearing: the
+    // registration path (gos_static_prop_registry.cpp) sets cachedFrame_
+    // without a valid index. Kill-switch OFF -> legacy resubmit bit-for-bit.
+    extern bool mc2LightBridgeRepointEnabled();
+    if (mc2LightBridgeRepointEnabled() &&
+        cachedFrame_ == g_mc2FrameCounter &&
+        cachedGpuLightIndex_ != 0xFFFFFFFFu) {
+        static bool s_c6Logged = false;
+        if (!s_c6Logged) {
+            s_c6Logged = true;
+            printf("[LIGHTBRIDGE v1] event=c6_fastpath_hit\n");
+            fflush(stdout);
+        }
+        return;
+    }
+
     TG_Shape* firstShapeNodeLeaf = nullptr;
     for (int i = 0; i < numTG_Shapes; ++i) {
         TG_ShapeRec& rec = listOfShapes[i];

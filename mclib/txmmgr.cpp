@@ -1105,6 +1105,42 @@ namespace {
             std::puts(buf); crashbundle_append(buf); std::fflush(stdout);
         }
     }
+
+    // ---- [LIGHTBRIDGE v1] SUBSTITUTIVE REPOINT (slice, not recon) ----------
+    // Retires the per-call 1792B fnv1a_64_struct + 1792B memcmp for the
+    // C5/C6/C7 GPU-object populate. On the 99.3% template-cache-hit common
+    // path the slot is resolved by a tiny (templateKey + per-actor-aRGB)
+    // key instead. See docs/superpowers/plans/
+    // 2026-05-17-addlightdatastructure-bridge-retirement.md. Kill-switch
+    // MC2_LIGHTBRIDGE (default ON; =0 restores legacy FNV/memcmp bit-for-
+    // bit). Slot cache is per-frame, cleared in resetLightData alongside
+    // s_lightDataDedupMap (same frame-start slot-reset invariant).
+    struct LightSlotEntry { uint64_t tmpl; uint32_t actorARGB; uint32_t slot; };
+    static std::unordered_map<uint64_t, LightSlotEntry> s_lightSlotByActorKey;
+
+    static bool s_lbRepointInit = false;
+    static bool s_lbRepointEnabled = true;          // default ON
+    static bool s_lbFirstPopulateLogged = false;
+    static bool s_lbC6FastpathLogged = false;
+
+    static inline void lbRepointInitFromEnv() {
+        if (s_lbRepointInit) return;
+        s_lbRepointInit = true;
+        const char* e = std::getenv("MC2_LIGHTBRIDGE");
+        // OFF only on explicit "0"; any other value (or unset) = ON.
+        s_lbRepointEnabled = !(e != nullptr && e[0] == '0' && e[1] == '\0');
+        std::printf("[LIGHTBRIDGE v1] event=enabled mode=%s\n",
+                    s_lbRepointEnabled ? "repoint" : "legacy");
+        std::fflush(stdout);
+    }
+}
+
+// Cross-TU kill-switch view (C6 repoint lives in msl.cpp). Free function
+// to avoid pulling txmmgr.h into msl.cpp. Lazy-inits the env read.
+bool mc2LightBridgeRepointEnabled()
+{
+    lbRepointInitFromEnv();
+    return s_lbRepointEnabled;
 }
 
 uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
@@ -1187,8 +1223,42 @@ uint32_t MC_TextureManager::addLightDataStructureWithPerActorColor(TG_HWLightsDa
     }
 
     *light_data = it->second.data;
-    if (it->second.actorLightSlot != 0xFFFFFFFFu)
+    const bool perActor = (it->second.actorLightSlot != 0xFFFFFFFFu);
+    if (perActor)
         decomposeFirstActiveLightColor(light_data);
+
+    // [LIGHTBRIDGE v1] substitutive repoint: on the (template + per-actor-
+    // color) cache hit, return the resolved slot directly and SKIP the
+    // 1792B fnv1a_64_struct + 1792B memcmp in addLightDataStructure.
+    // Symmetry invariant (load-bearing — do not break without re-deriving
+    // the key): actorLightSource == firstActiveLightSourceIndex() is the
+    // SAME light decompose mutates into lightColor[0][0..3] AND the SAME
+    // light sceneLightTemplateKey deliberately excludes from the template
+    // key (txmmgr.cpp ~:1017-1020). actorARGB closes exactly that excluded
+    // gap. perActor==false => no decompose => template key alone suffices
+    // (actorARGB folds to 0, combined == key).
+    if (!s_lbRepointInit) lbRepointInitFromEnv();
+    if (s_lbRepointEnabled) {
+        const uint32_t actorARGB = perActor
+            ? (uint32_t)TG_Shape::s_listOfLights[actorLightSource]->GetaRGB()
+            : 0u;
+        const uint64_t combined =
+            key ^ ((uint64_t)actorARGB * 0x9E3779B97F4A7C15ULL);
+        auto sit = s_lightSlotByActorKey.find(combined);
+        if (sit != s_lightSlotByActorKey.end() &&
+            sit->second.tmpl == key && sit->second.actorARGB == actorARGB) {
+            return sit->second.slot;   // retired: no FNV, no memcmp
+        }
+        const uint32_t slot = addLightDataStructure(light_data);
+        s_lightSlotByActorKey[combined] =
+            LightSlotEntry{ key, actorARGB, slot };
+        if (!s_lbFirstPopulateLogged) {
+            s_lbFirstPopulateLogged = true;
+            std::puts("[LIGHTBRIDGE v1] event=first_populate");
+            std::fflush(stdout);
+        }
+        return slot;
+    }
 
     return addLightDataStructure(light_data);
 }
@@ -1205,6 +1275,7 @@ void MC_TextureManager::resetLightData()
     // any stale hash→slot entries from the prior frame are invalid.
     s_lightDataDedupMap.clear();
     s_sceneLightTemplateMap.clear();
+    s_lightSlotByActorKey.clear();  // [LIGHTBRIDGE v1] per-frame slot cache
     s_sceneLightTemplateFrame = 0xFFFFFFFFu;
 }
 
