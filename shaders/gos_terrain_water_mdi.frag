@@ -55,7 +55,8 @@ void main(void)
         PREC float shore = smoothstep(0.0, SHORE_BLEND_DEPTH, WaterThickness);
         if (shore <= 0.0) discard;            // kill invisible land-quad overdraw
 
-        PREC vec3  viewDir = normalize(cameraPos.xyz - WorldPos);
+        PREC vec3  viewVec = cameraPos.xyz - WorldPos;
+        PREC vec3  viewDir = viewVec / max(length(viewVec), 1e-4);  // guard: camera-at-surface => no NaN
         PREC float ct      = max(dot(wN, viewDir), 0.0);
         PREC float fres    = FRESNEL_F0 + (1.0 - FRESNEL_F0) * pow(1.0 - ct, 5.0);
 
