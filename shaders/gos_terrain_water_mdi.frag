@@ -36,10 +36,12 @@ const vec3  SHALLOW_COLOR      = vec3(0.22, 0.45, 0.38);  // user-approved teal 
 const vec3  DEEP_COLOR         = vec3(0.03, 0.13, 0.20);  // dark blue, NOT black
 const float ABSORPTION_DENSITY = 0.022;  // 1/world-units (Beer-Lambert k; ~45u e-fold over 0..150)
 const float SHORE_BLEND_DEPTH  = 3.0;    // world-units to full opacity
-const float NORMAL_STRENGTH    = 0.0;    // v1: flat wN (calm water). >0 bands on the
-                                         // wrap-corrected Texcoord (UV-loop seams);
-                                         // TODO(water-v2): reactivate via continuous
-                                         // WorldPos.xy-derived normal, NOT Texcoord.
+const float NORMAL_STRENGTH = 0.18;   // wave normal tilt (was 0.0 v1-flat). Low: camera-stable.
+const float WAVE_FREQ       = 0.012;  // 1/world-u; ~520 wavelength (~4 terrain quads): macro swell
+const float WAVE_SPEED      = 0.6;    // world phase units/sec (calm drift)
+const float SPEC_SCALE      = 0.5;    // specular intensity, decoupled from NORMAL_STRENGTH
+const float WAVE_FADE_NEAR  = 1500.0; // world-u: full wave life nearer than this
+const float WAVE_FADE_FAR   = 6000.0; // world-u: fully flat (v1 calm) beyond this
 const float FRESNEL_F0         = 0.02;
 const float SUN_INTENSITY      = 1.0;
 const vec3  SKY_TINT           = vec3(0.42, 0.55, 0.68);  // fog-INDEPENDENT sky (B-fix: no camera->black)
@@ -50,10 +52,12 @@ void main(void)
 {
     if (o_isWater == 1) {
         // ---- water-v1 stylized base layer ----
-        PREC vec2 wuv = Texcoord * 6.2831853;
-        PREC vec2 w = vec2(sin(wuv.y * 3.0 + time * 0.50) + sin(wuv.y * 1.2 + time * 0.355),
-                           sin(wuv.x * 3.0 + time * 0.355) + sin(wuv.x * 1.2 + time * 0.50));
-        PREC vec3 wN = normalize(vec3(w * NORMAL_STRENGTH, 1.0));
+        // WorldPos.xy is global continuous MC2-world (no MaxMinUV wrap) -> seam-free.
+        PREC float waveLOD = 1.0 - smoothstep(WAVE_FADE_NEAR, WAVE_FADE_FAR, length(cameraPos.xyz - WorldPos));
+        PREC vec2  p  = WorldPos.xy * WAVE_FREQ;
+        PREC vec2  w  = vec2(sin(p.y       + time*WAVE_SPEED)      + 0.5*sin(p.y*2.17 - time*WAVE_SPEED*0.7),
+                             sin(p.x*1.13  - time*WAVE_SPEED*0.85) + 0.5*sin(p.x*2.31 + time*WAVE_SPEED*0.6));
+        PREC vec3  wN = normalize(vec3(w * (NORMAL_STRENGTH * waveLOD), 1.0));
 
         PREC float trans    = exp(-WaterThickness * ABSORPTION_DENSITY);  // 1 at shore -> 0 deep
         PREC vec3  waterCol = mix(DEEP_COLOR, SHALLOW_COLOR, trans);
@@ -71,6 +75,7 @@ void main(void)
         PREC vec3  lightDir = normalize(vec3(0.3, 0.2, 1.0));  // existing FS constant light
         PREC vec3  halfV    = normalize(viewDir + lightDir);
         PREC float spec     = pow(max(dot(wN, halfV), 0.0), 64.0) * fres;
+        spec *= SPEC_SCALE * waveLOD;   // S1: decoupled intensity + distance fade (anti-firefly)
 
         PREC vec3  vertexLightRGB = Color.bgra.rgb;  // VS packs .bgra (~241); un-swizzle here
         PREC vec3  col = mix(waterCol, reflCol, fres * FRESNEL_SKY_MAX);
