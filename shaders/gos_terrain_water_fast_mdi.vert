@@ -59,6 +59,8 @@ out vec4  Color;
 out vec2  Texcoord;
 out float FogValue;
 flat out int o_isWater;
+out float WaterThickness;   // water-v1: world-unit column (max(0, waterElevation - terrain floor))
+out vec3  WorldPos;         // water-v1: wave-displaced surface position (Fresnel view vector ONLY)
 
 // Uniforms — set by Terrain::renderWaterFastPath C++ code.
 uniform mat4  terrainMVP;        // axisSwap * worldToClip
@@ -194,6 +196,13 @@ void main() {
     float wz = waveOurCos(waterBits) + waterElevation;
     vec3 worldPos = vec3(vxy, wz);
 
+    // water-v1 LOAD-BEARING Z INVARIANT: thickness uses velev (terrain FLOOR);
+    // WorldPos carries the wave-displaced SURFACE and is for the Fresnel view
+    // vector ONLY. The two Z values are intentionally different - do not unify,
+    // do not derive thickness from worldPos.z (this is the rev-1 trap class).
+    WaterThickness = max(0.0, waterElevation - velev);
+    WorldPos       = worldPos;
+
     float u = (vxy.x - mapTopLeft.x) * uvScale + uvOffset.x;
     float v = (mapTopLeft.y - vxy.y) * uvScale + uvOffset.y;
 
@@ -226,13 +235,15 @@ void main() {
         }
     }
 
-    uint elevAlphaByte = elevAlphaBandByte(velev);
+    uint elevAlphaByte = elevAlphaBandByte(velev);   // KEPT: detail branch still consumes it
     uint argb;
     if (detailMode == 0) {
         uint lrgb = cornerLightRGB(trec, cornerIdx);
-        argb = (lrgb & 0x00FFFFFFu) | (elevAlphaByte << 24);
+        // water-v1: base-layer alpha is now owned by the FS shore term, not the
+        // elevation-band staircase. Opaque sentinel; FS writes the real alpha.
+        argb = (lrgb & 0x00FFFFFFu) | 0xFF000000u;
     } else {
-        argb = (elevAlphaByte << 24) | 0x00FFFFFFu;
+        argb = (elevAlphaByte << 24) | 0x00FFFFFFu;  // DETAIL/SPRAY: UNCHANGED
     }
 
     uint frgb = cornerFogRGB(trec, cornerIdx);
