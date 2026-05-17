@@ -253,6 +253,8 @@ def main():
                             "MC2_TERRAIN_INDIRECT",
                             "MC2_TERRAIN_INDIRECT_PARITY_CHECK",
                             "MC2_TERRAIN_INDIRECT_TRACE",
+                            # Decal static-bake (drawPass-retirement Slice A) kill-switch
+                            "MC2_TERRAIN_INDIRECT_OVERLAY",
                             # Ring-buffer hazard probe (raster-triangle bug)
                             "MC2_RING_TRACE",
                             # Probe 7: force glFinish() between compute and draw

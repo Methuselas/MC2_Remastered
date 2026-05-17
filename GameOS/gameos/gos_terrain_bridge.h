@@ -154,6 +154,29 @@ bool gos_terrain_bridge_drawMineStatic(int          vertCount,
                                        unsigned int vboGL,
                                        unsigned int textureArrayGL);
 
+// Slice A — cement-overlay (decal) static-bake draw bridge.
+//
+// Called by gos_terrain_indirect::DrawDecalStatic from the
+// Render.TerrainOverlaysStatic zone in txmmgr.cpp. Reproduces the EXACT
+// drawTerrainOverlays() state block + overlay shader/uniforms/VAO, but
+// draws the mission-static decal VBO with per-overlayTexId draw ranges
+// instead of the per-frame M2d batch, and does NOT clear it (mirrors
+// DrawMineStatic semantics).
+//
+// One draw range = { texHandle, firstVert, vertCount } (mirror of
+// gameos_graphics.cpp OverlayBatchEntry_). draws points at an array of
+// drawCount such PODs; vboGL is the GL_ARRAY_BUFFER name holding
+// WorldOverlayVert verts (28-byte stride). Returns false if the overlay
+// program is not loaded or input is empty.
+struct GosDecalStaticDraw {
+    unsigned int texHandle;
+    unsigned int firstVert;
+    unsigned int vertCount;
+};
+bool gos_terrain_bridge_drawDecalStatic(unsigned int               vboGL,
+                                        const GosDecalStaticDraw*  draws,
+                                        int                        drawCount);
+
 // B4 Slice Stage 1c — mask-water draw bridge.
 // Called by gos_terrain_mask_dispatch::DrawMaskWater() from Render.TerrainMask.Water.
 // waterMaskSSBO: SSBO at binding 18 (per-frame bitset, one bit per quad vertexNum).

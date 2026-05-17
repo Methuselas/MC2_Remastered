@@ -1462,6 +1462,14 @@ class gosRenderer {
         void pushDecalTri(const WorldOverlayVert* verts3, unsigned int texHandle);
         void drawTerrainOverlays();
         void drawDecals();
+        // Slice A — draw the mission-static cement-overlay bake. Reproduces
+        // drawTerrainOverlays()'s exact state/shader/uniforms/VAO but draws
+        // the passed static VBO with per-overlayTexId ranges and does NOT
+        // clear (mirrors DrawMineStatic). draws/drawCount are forwarded from
+        // gos_terrain_indirect::DrawDecalStatic via the bridge.
+        bool drawDecalStaticBatch(unsigned int vboGL,
+                                  const struct GosDecalStaticDraw* draws,
+                                  int drawCount);
 
         // RENDER_STATES v1: external invalidation hook (public).
         //
@@ -3261,6 +3269,19 @@ bool gos_terrain_bridge_drawMineStatic(int          vertCount,
     // RENDER_STATES v1: invalidate cache since we touched units + state.
     if (g_gos_renderer) g_gos_renderer->invalidateRenderStateCache();
     return true;
+}
+
+// Slice A — cement-overlay static-bake draw bridge. Thin forwarder to the
+// gosRenderer member (which owns the private overlay program/locs/texture
+// list), mirroring how gos_DrawTerrainOverlays forwards to drawTerrainOverlays
+// and how gos_terrain_bridge_drawMineStatic gates on g_gos_renderer.
+bool gos_terrain_bridge_drawDecalStatic(unsigned int               vboGL,
+                                        const GosDecalStaticDraw*  draws,
+                                        int                        drawCount)
+{
+    ZoneScopedN("Terrain::DecalStaticDraw");
+    if (!g_gos_renderer) return false;
+    return g_gos_renderer->drawDecalStaticBatch(vboGL, draws, drawCount);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -6931,6 +6952,121 @@ void gosRenderer::drawTerrainOverlays()
     // unit-0 texture binding mutated, neither tracked by applyRenderStates'
     // cache. MAJOR-1 from the 2026-05-08 adversarial review.
     gos_InvalidateRenderStateCache();
+}
+
+// Slice A — draw the mission-static cement-overlay bake.
+//
+// Byte-for-byte mirror of gosRenderer::drawTerrainOverlays()'s render-state
+// block + program + uniform upload + per-draw texture bind + glDrawArrays,
+// EXCEPT: (1) it draws the caller-owned static VBO via a dedicated persistent
+// VAO (the per-frame terrainOverlayBatch_.vao captured the per-frame VBO at
+// makeOverlayVAO time, so it cannot be reused for a different buffer);
+// (2) draw ranges are supplied by the caller (gos_terrain_indirect's static
+// bake) rather than read from terrainOverlayBatch_.draws; (3) it does NOT
+// clear anything (mirrors DrawMineStatic — the static buffer persists across
+// frames). The vertex layout (WorldOverlayVert, 28-byte stride, attribs
+// 0..3) is identical to makeOverlayVAO so the same overlay shader binds.
+bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
+                                       const struct GosDecalStaticDraw* draws,
+                                       int drawCount)
+{
+    if (!overlayProg_ || vboGL == 0 || !draws || drawCount <= 0)
+        return false;
+
+    // [TEMP DECAL_GLPROBE] eager-drain probe — env MC2_DECAL_GLPROBE=1.
+    // Removed once root cause is pinned. Attributes GL_INVALID_OPERATION to
+    // the exact call instead of the deferred CHECK_GL_ERROR drain site.
+    static const bool s_decalGlProbe =
+        (getenv("MC2_DECAL_GLPROBE") && getenv("MC2_DECAL_GLPROBE")[0] == '1');
+    #define DECAL_GLPROBE(tag) do { if (s_decalGlProbe) { \
+        GLenum e; while ((e = glGetError()) != GL_NO_ERROR) \
+            printf("[DECAL_GLPROBE] at=%s err=0x%x\n", tag, (unsigned)e); \
+        fflush(stdout); } } while(0)
+    DECAL_GLPROBE("entry");
+
+    // Capture the caller's VAO binding ONCE, before any VAO mutation. The
+    // lazy-init block below clobbers the binding; if prevVao were captured
+    // after it (as drawTerrainOverlays captures it — that path has no lazy
+    // init), the first armed draw would record VAO 0 and this function would
+    // return with VAO 0 bound, breaking the next generic-mesh draw on AMD
+    // (trap #4, gpu_direct_renderer_bringup_checklist.md — VAO 0 left bound
+    // raises GL_INVALID_OPERATION at the next applyVertexDeclaration/draw).
+    GLint prevVao = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+
+    // Persistent VAO bound to whatever static VBO name the bake hands us.
+    // Created once; the bake keeps a single GL_STATIC_DRAW buffer for the
+    // process lifetime (mirror MineStaticVBO), so the name is stable.
+    static GLuint s_decalStaticVAO = 0;
+    static unsigned int s_decalStaticVAOBoundVBO = 0;
+    if (s_decalStaticVAO == 0 || s_decalStaticVAOBoundVBO != vboGL) {
+        if (s_decalStaticVAO == 0)
+            glGenVertexArrays(1, &s_decalStaticVAO);
+        constexpr int kStride = 28;  // sizeof(WorldOverlayVert) — mirror makeOverlayVAO
+        glBindVertexArray(s_decalStaticVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, (GLuint)vboGL);
+        glVertexAttribPointer(0, 3, GL_FLOAT,         GL_FALSE, kStride, (void*)0);
+        glVertexAttribPointer(1, 2, GL_FLOAT,         GL_FALSE, kStride, (void*)12);
+        glVertexAttribPointer(2, 1, GL_FLOAT,         GL_FALSE, kStride, (void*)20);
+        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE,  kStride, (void*)24);
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glEnableVertexAttribArray(2);
+        glEnableVertexAttribArray(3);
+        // Restore the caller's VAO (NOT 0) so a draw issued between this
+        // init and the bind below still sees a valid VAO on AMD.
+        glBindVertexArray((GLuint)prevVao);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        s_decalStaticVAOBoundVBO = vboGL;
+        DECAL_GLPROBE("after_vao_init");
+    }
+    DECAL_GLPROBE("after_vao_block");
+
+    // ---- State block: identical to drawTerrainOverlays() -------------------
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LEQUAL);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -1.0f);
+
+    DECAL_GLPROBE("after_state_block");
+    glUseProgram(overlayProg_->shp_);
+    float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
+    uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed);
+    DECAL_GLPROBE("after_uniform_upload");
+
+    glBindVertexArray(s_decalStaticVAO);
+    for (int i = 0; i < drawCount; ++i) {
+        const struct GosDecalStaticDraw& entry = draws[i];
+        if (overlayLocs_.tex1 >= 0)
+            glUniform1i(overlayLocs_.tex1, 0);
+        glActiveTexture(GL_TEXTURE0);
+        gosTexture* t = lookupBatchTextureOrWarn(textureList_, entry.texHandle, "decalStaticBatch");
+        glBindTexture(GL_TEXTURE_2D, t ? t->getTextureId() : 0);
+        glDrawArrays(GL_TRIANGLES, (GLint)entry.firstVert, (GLsizei)entry.vertCount);
+        if (i == 0) DECAL_GLPROBE("after_first_drawarrays");
+    }
+    DECAL_GLPROBE("after_all_drawarrays");
+    glBindVertexArray((GLuint)prevVao);
+    DECAL_GLPROBE("after_vao_restore");
+
+    glDepthFunc(GL_LESS);
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glEnable(GL_CULL_FACE);
+    glDepthMask(GL_TRUE);
+    glUseProgram(0);
+
+    // NO batch clear — the static bake persists across frames (mirror
+    // DrawMineStatic; the per-frame drawTerrainOverlays clears here).
+
+    // RENDER_STATES v1: same trap class as drawTerrainOverlays — depth-func
+    // and unit-0 texture binding mutated outside applyRenderStates' tracking.
+    gos_InvalidateRenderStateCache();
+    DECAL_GLPROBE("exit");
+    #undef DECAL_GLPROBE
+    return true;
 }
 
 // Draw the decal batch (bomb craters + mech footprints).

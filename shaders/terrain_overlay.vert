@@ -40,4 +40,28 @@ void main()
     // Restore perspective so gl_FragCoord.z / depth testing work correctly.
     float absW = abs(clip4.w);
     gl_Position = vec4(ndc.xyz * absW, absW);
+
+    // Behind/at-camera (and past-far-plane) reject. px.z is the
+    // post-divide depth, identical to Camera::projectZ()'s sp.z and the
+    // CPU pz gate (mclib/quad.cpp pzTri1/pzTri2, sp.z in [0,1)). The live
+    // per-frame TerrainOverlayBatch path is CPU-pz-culled so every quad
+    // it feeds has px.z in [0,1): this branch is never taken there and
+    // gl_Position is bit-identical to before (provable no-op for the
+    // working path; zero depth/MRT change). The static decal bake feeds
+    // unculled all-map tiles; any vertex outside [0,1) is behind/at
+    // camera or past the far plane and is forced to a single constant
+    // clip point a fixed finite distance outside the near plane (w=1, no
+    // UB; not the pre-fix exploded 1/clip4.w sign-flipped pathology).
+    // All-out primitives collapse to one point => zero-area,
+    // non-rasterizing; mixed primitives clip cleanly against the near
+    // plane (constant, one-plane-exterior => edges monotonically exit,
+    // cannot re-enter/span) => no frustum-spanning raster sheet. Negated-
+    // AND form so NaN px.z (from clip4.w==0) also rejects. This is the
+    // project-sanctioned sp.z-in-[0,1) front-test; do NOT replace with a
+    // clip4.w sign test or remove abs(clip4.w) -- terrain_tes_projection
+    // records 3 falsified attempts (ddc173f, 6c6e872) that regress all
+    // terrain. Root cause + design: memory/drawpass_retirement_decal_
+    // bake_state_and_raster_sheet_trap.md.
+    if (!(px.z >= 0.0 && px.z < 1.0))
+        gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
 }

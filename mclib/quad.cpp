@@ -2396,8 +2396,19 @@ void TerrainQuad::draw (void)
 		        CostSplitOverlayScope _csOverlay;
 		        gos_terrain_indirect::Counters_AddM2dOverlayEmitQuad();
 
+		        // Slice A — substitutive gate-off, mirrors the PR2c mine gate
+		        // (quad.cpp `if (!IsFrameMineArmed()) enqueueTerrainMineState`).
+		        // When armed, the mission-static cement-overlay bake
+		        // (gos_terrain_indirect::DrawDecalStatic, Render.TerrainOverlays
+		        // Static) reproduces this exact emit from a persistent buffer,
+		        // so the per-quad gos_PushTerrainOverlay producer is skipped.
+		        // Default OFF (MC2_TERRAIN_INDIRECT_OVERLAY unset) => this is
+		        // false => the legacy per-quad emit runs unchanged: ZERO
+		        // behavior change. The legacy :2599+ sites are the FASTPATH-off
+		        // fallback (post-`return` body) and are deliberately untouched.
 		        const DWORD overlayTexId = tex_resolve(overlayHandle);
-		        if (overlayTexId != 0)
+		        if (overlayTexId != 0 &&
+		            !gos_terrain_indirect::IsFrameOverlayArmed())
 		        {
 		            WorldOverlayVert wov_corner[4];
 		            for (int c = 0; c < 4; c++) {
@@ -2653,6 +2664,10 @@ void TerrainQuad::draw (void)
 							sVertex[2].argb		= 0xffffffff;
 						}
 
+						// Slice A (A2) - DRAWALPHA detail dead-confirmation counter.
+						// Counter-only; behaviour unchanged. Post-return legacy body,
+						// unreachable on armed frames; expected ==0 (A2 gate).
+						gos_terrain_indirect::Counters_AddLegacyDrawAlphaDetailQuad();
 						mcTextureManager->addVertices(terrainDetailHandle,sVertex,MC2_ISTERRAIN | MC2_DRAWALPHA);	
 					}
 				}
@@ -2796,6 +2811,10 @@ void TerrainQuad::draw (void)
 							sVertex[2].argb		= 0xffffffff;
 						}
 
+						// Slice A (A2) - DRAWALPHA detail dead-confirmation counter.
+						// Counter-only; behaviour unchanged. Post-return legacy body,
+						// unreachable on armed frames; expected ==0 (A2 gate).
+						gos_terrain_indirect::Counters_AddLegacyDrawAlphaDetailQuad();
 						mcTextureManager->addVertices(terrainDetailHandle,sVertex,MC2_ISTERRAIN | MC2_DRAWALPHA);
 					}
 				}
@@ -2968,6 +2987,10 @@ void TerrainQuad::draw (void)
 							sVertex[1].argb		= 
 							sVertex[2].argb		= 0xffffffff;
 						}
+						// Slice A (A2) - DRAWALPHA detail dead-confirmation counter.
+						// Counter-only; behaviour unchanged. Post-return legacy body,
+						// unreachable on armed frames; expected ==0 (A2 gate).
+						gos_terrain_indirect::Counters_AddLegacyDrawAlphaDetailQuad();
 						mcTextureManager->addVertices(terrainDetailHandle,sVertex,MC2_ISTERRAIN | MC2_DRAWALPHA);
 					}
 					
@@ -3109,6 +3132,10 @@ void TerrainQuad::draw (void)
 							sVertex[1].argb		= 
 							sVertex[2].argb		= 0xffffffff;
 						}
+						// Slice A (A2) - DRAWALPHA detail dead-confirmation counter.
+						// Counter-only; behaviour unchanged. Post-return legacy body,
+						// unreachable on armed frames; expected ==0 (A2 gate).
+						gos_terrain_indirect::Counters_AddLegacyDrawAlphaDetailQuad();
 						mcTextureManager->addVertices(terrainDetailHandle,sVertex,MC2_ISTERRAIN | MC2_DRAWALPHA);
 					}
 					

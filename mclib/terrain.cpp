@@ -649,6 +649,15 @@ void Terrain::primeMissionTerrainCache (volatile float& progress, float progress
 	// cycle).
 	gos_terrain_indirect::ResetMineStaticVBO();
 	gos_terrain_indirect::ResetMineTextureArray();
+
+	// Slice A — cement-overlay static-bake lifecycle. CPU-clear only; do NOT
+	// build here. Mirrors the mine R7 timing-trap mitigation EXACTLY: the
+	// overlay texture handles lazy-load in TerrainQuad::setupTextures during
+	// the first paint cycle (before Render.TerrainOverlaysStatic fires), so
+	// the build is deferred to the first armed DrawDecalStatic via
+	// RebuildDecalStaticVBOIfDirty. ResetDecalStaticVBO leaves the dirty flag
+	// set so that first armed draw bakes.
+	gos_terrain_indirect::ResetDecalStaticVBO();
 }
 
 //---------------------------------------------------------------------------
@@ -737,6 +746,11 @@ void Terrain::destroy (void)
 	// + texture-array allocations for next-mission reuse.
 	gos_terrain_indirect::ResetMineStaticVBO();
 	gos_terrain_indirect::ResetMineTextureArray();
+
+	// Slice A — cement-overlay static-bake teardown. CPU-clear; keep the
+	// GL_STATIC_DRAW buffer allocation for next-mission reuse (mirror
+	// ResetMineStaticVBO teardown placement).
+	gos_terrain_indirect::ResetDecalStaticVBO();
 
 	if (terrainTextures)
 	{
@@ -949,6 +963,12 @@ void Terrain::setOverlayTile (long block, long vertex, long offset)
 void Terrain::setOverlay( long tileR, long tileC, Overlays type, DWORD offset )
 {
 	mapData->setOverlay( tileR, tileC, type, offset );
+	// Slice A — public cement-overlay mutation chokepoint. Any caller that
+	// changes a tile's overlay (bridge destroy routes through here via
+	// Terrain::mapData->setOverlay at bldng.cpp, plus any future caller)
+	// invalidates the mission-static decal bake. Mirrors MarkMineDirty at
+	// the setMine chokepoint; idempotent (dirty-flag debounced).
+	gos_terrain_indirect::MarkDecalDirty();
 }
 
 //---------------------------------------------------------------------------
@@ -1031,23 +1051,60 @@ void Terrain::render (void)
 	if (drawTerrainTiles)
 	{
 		ZoneScopedN("Terrain::render drawPass");
-		TerrainQuadPtr currentQuad = quadList;
-		for (long i = 0; i < numberQuads; i++)
+		// drawPass-retirement Slice B (mirrors the proven minePass gate at
+		// the sibling loop below). The per-quad draw() loop is retired only
+		// when BOTH producers it bundles are GPU-covered:
+		//   - SOLID base terrain  -> GPU indirect path (IsFrameSolidArmed)
+		//   - cement/road decals  -> Slice-A static bake (IsFrameOverlayArmed)
+		// DRAWALPHA detail is unconditionally dead (pixel-suppressed since
+		// 521d83a; A2-confirmed via legacy_drawalpha_detail_quads counter).
+		// The conjunction is load-bearing: gating on IsFrameSolidArmed()
+		// ALONE (the naive minePass mirror) would skip draw() in normal
+		// default play (solid armed, decal bake default-OFF) and silently
+		// kill ALL decals = the reverted 9964d5a regression, shipped by
+		// default. MC2_TERRAIN_INDIRECT_OVERLAY (the Slice-A kill-switch,
+		// default OFF) is therefore the master switch for the whole
+		// retirement: unset -> gate false -> draw() runs -> decals via M2d
+		// -> zero behavior change.
+		if (!(gos_terrain_indirect::IsFrameSolidArmed()
+		      && gos_terrain_indirect::IsFrameOverlayArmed()))
 		{
-			// M2b loop-level pure-water hoist: skip the function call entirely for
-			// quads with no base terrain, no overlay, and no detail handle. ~28K
-			// quads/frame on water-heavy maps. Mirror of the in-draw() early-exit;
-			// the in-function check is the fallback if useOverlayTexture /
-			// useWaterInterestTexture globals get toggled at runtime.
-			if (currentQuad->terrainHandle == 0
-			    && currentQuad->overlayHandle == 0xffffffff
-			    && currentQuad->terrainDetailHandle == 0xffffffff)
+			TerrainQuadPtr currentQuad = quadList;
+			for (long i = 0; i < numberQuads; i++)
 			{
+				// M2b loop-level pure-water hoist: skip the function call entirely for
+				// quads with no base terrain, no overlay, and no detail handle. ~28K
+				// quads/frame on water-heavy maps. Mirror of the in-draw() early-exit;
+				// the in-function check is the fallback if useOverlayTexture /
+				// useWaterInterestTexture globals get toggled at runtime.
+				if (currentQuad->terrainHandle == 0
+				    && currentQuad->overlayHandle == 0xffffffff
+				    && currentQuad->terrainDetailHandle == 0xffffffff)
+				{
+					currentQuad++;
+					continue;
+				}
+				currentQuad->draw();
 				currentQuad++;
-				continue;
 			}
-			currentQuad->draw();
-			currentQuad++;
+		}
+		else
+		{
+			// [SUBSYS] lifecycle line (env-gated, one-shot) per the
+			// debug-instrumentation rule. Mirrors the mine retirement
+			// trace. drawPass zone is now ~empty on armed frames -> the
+			// Tracy total-frame delta is the substitutive proof.
+			static bool s_drawPassRetiredLogged = false;
+			if (!s_drawPassRetiredLogged
+			    && gos_terrain_indirect::IsTraceEnabled())
+			{
+				s_drawPassRetiredLogged = true;
+				printf("[TERRAIN_DRAWPASS v1] event=retired "
+				       "reason=solid+overlay_armed "
+				       "(SOLID->gpu_indirect, decals->static_bake, "
+				       "detail->dead)\n");
+				fflush(stdout);
+			}
 		}
 	}
 

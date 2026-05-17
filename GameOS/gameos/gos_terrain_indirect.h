@@ -295,6 +295,58 @@ bool         IsMineTextureArrayReady();
 bool DrawMineStatic();
 
 // ---------------------------------------------------------------------------
+// Slice A — cement-overlay (decal) static-bake infrastructure.
+//
+// STRUCTURAL MIRROR of the PR2c mine static-bake above. Same lifetime
+// discipline:
+//   ResetDecalStaticVBO()         — Terrain::primeMissionTerrainCache +
+//                                   Terrain::destroy (same chokepoints as
+//                                   ResetMineStaticVBO). CPU-clears state,
+//                                   keeps the GL_STATIC_DRAW buffer.
+//   MarkDecalDirty()              — cement-mutation chokepoint hook. Wired at
+//                                   bldng.cpp bridge-destroy setOverlay(
+//                                   DAMAGED_BRIDGE) + Terrain::setOverlay
+//                                   public wrapper (mirrors MarkMineDirty at
+//                                   the setMine sites). Idempotent.
+//   RebuildDecalStaticVBOIfDirty()— fires from DrawDecalStatic before draw
+//                                   (mirror RebuildMineStaticVBOIfDirty).
+//   BuildDecalStaticVBO()         — walks the map-immutable Shape-C terrain
+//                                   face cache; for each alpha-cement quad,
+//                                   reproduces M2d's 4-corner + per-uvMode
+//                                   tri emit UNCONDITIONALLY (no pz cull).
+//   GetDecalStaticVBO_GL()        — GLuint name; 0 if unallocated.
+//   GetDecalVertCount()           — int; 0 if mission has no cement overlay.
+//
+// IsFrameOverlayArmed() (declared above) is the env gate, default OFF
+// (MC2_TERRAIN_INDIRECT_OVERLAY must be "=1"). DrawDecalStatic is the
+// Render.TerrainOverlaysStatic hook: lazy first-build + single bridge
+// dispatch + decal_static_tris_drawn counter. Default-OFF => M2d per-quad
+// emit runs unchanged, bake inert, ZERO behavior change.
+void  ResetDecalStaticVBO();
+void  MarkDecalDirty();
+void  RebuildDecalStaticVBOIfDirty();
+void  BuildDecalStaticVBO();
+unsigned int GetDecalStaticVBO_GL();
+int          GetDecalVertCount();
+bool  DrawDecalStatic();
+
+// Slice A counters.
+//   decal_static_tris_drawn      — substitutive analog of
+//                                  indirect_mine_drawn_cells; nonzero when
+//                                  the static bake draws (gos_push_overlay_calls
+//                                  -> 0 on the same armed frame).
+//   legacy_drawalpha_detail_quads— A2 dead-confirmation. Incremented at the 4
+//                                  post-return DRAWALPHA detail addVertices
+//                                  sites (quad.cpp ~2656/2799/2971/3112). The
+//                                  existing legacy_detail_overlay_quads
+//                                  conflates mine/overlay/detail; this one is
+//                                  DRAWALPHA-detail-only. Expected == 0.
+void      Counters_AddDecalStaticTrisDrawn(long long n);
+long long Counters_GetDecalStaticTrisDrawn();
+void      Counters_AddLegacyDrawAlphaDetailQuad();
+long long Counters_GetLegacyDrawAlphaDetailQuads();
+
+// ---------------------------------------------------------------------------
 // Stage 2: dense recipe SSBO build / lifecycle / per-entry invalidation.
 //
 // Dense recipe indexing convention (Option A):

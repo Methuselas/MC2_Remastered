@@ -136,6 +136,13 @@ long long s_m2c_detail_emit_quads        = 0;
 long long s_m2d_overlay_emit_quads       = 0;
 long long s_indirect_overlay_packed_quads = 0;
 long long s_gos_push_overlay_calls       = 0;  // probe at producer body
+// Slice A — cement-overlay static-bake counters (mirror s_indirect_mine_drawn_cells
+// + the legacy_detail_overlay split rationale). decal_static_tris_drawn is the
+// substitutive analog of indirect_mine_drawn_cells; legacy_drawalpha_detail_quads
+// is the A2 dead-confirmation counter (the existing legacy_detail_overlay_quads
+// conflates mine/overlay/detail — this one is DRAWALPHA-detail-only).
+long long s_decal_static_tris_drawn      = 0;
+long long s_legacy_drawalpha_detail_quads = 0;
 }  // namespace
 
 namespace gos_terrain_indirect {
@@ -163,6 +170,11 @@ void      Counters_AddGosPushOverlayCall()       { ++s_gos_push_overlay_calls; }
 long long Counters_GetM2dOverlayEmitQuads()      { return s_m2d_overlay_emit_quads; }
 long long Counters_GetIndirectOverlayPackedQuads(){ return s_indirect_overlay_packed_quads; }
 long long Counters_GetGosPushOverlayCalls()      { return s_gos_push_overlay_calls; }
+// Slice A — cement-overlay static-bake counters.
+void      Counters_AddDecalStaticTrisDrawn(long long n) { s_decal_static_tris_drawn += n; }
+long long Counters_GetDecalStaticTrisDrawn()     { return s_decal_static_tris_drawn; }
+void      Counters_AddLegacyDrawAlphaDetailQuad(){ ++s_legacy_drawalpha_detail_quads; }
+long long Counters_GetLegacyDrawAlphaDetailQuads(){ return s_legacy_drawalpha_detail_quads; }
 
 // PR2c — Stage 4 default-on flip 2026-05-08.
 // Static-bake mine path retires ~932 µs/frame (mc2_01 baseline:
@@ -195,9 +207,17 @@ bool IsOverlayParityCheckEnabled() {
     return s;
 }
 
-// Stage 3b wires the real preflight latch; Stage 0b/1b/2b stub always-false
-// so gate-off sites compile and stay dormant until Stage 3b lands the draw.
-bool IsFrameOverlayArmed() { return false; }
+// Slice A — wire the real predicate (replaces the Stage 0b/1b/2b always-false
+// stub). Mirrors IsFrameMineArmed() == IsMineEnabled() EXACTLY: arming is
+// purely the env gate. The cement-overlay static bake (DrawDecalStatic) lazy-
+// builds on first armed draw and handles the empty/not-yet-built case
+// internally, so there is no readiness gate here (same bootstrap-cycle
+// reasoning as the IsFrameMineArmed comment further down).
+//
+// MC2_TERRAIN_INDIRECT_OVERLAY default OFF (IsOverlayEnabled requires "=1"):
+// unset => IsFrameOverlayArmed()==false => M2d per-quad emit runs unchanged,
+// the static bake stays inert. ZERO behavior change until the env is flipped.
+bool IsFrameOverlayArmed() { return IsOverlayEnabled(); }
 
 // IsFrameMineArmed is defined further down (after Stage 1c's
 // g_mineTextureArrayReady storage). Forward decl is in the header.
@@ -3158,10 +3178,20 @@ void ResetMineTextureArray() {
     // re-allocating the GL texture.
 }
 
+// [TEMP MINE_GLPROBE] eager-drain probe — env MC2_DECAL_GLPROBE=1 (shared
+// gate with the decal probe). Removed once root cause is pinned.
+#define MINE_GLPROBE(tag) do { \
+    static const bool s_p = (getenv("MC2_DECAL_GLPROBE") && \
+                             getenv("MC2_DECAL_GLPROBE")[0] == '1'); \
+    if (s_p) { GLenum e; while ((e = glGetError()) != GL_NO_ERROR) \
+        printf("[MINE_GLPROBE] at=%s err=0x%x\n", tag, (unsigned)e); \
+        fflush(stdout); } } while(0)
+
 void BuildMineTextureArray() {
     // Texture-array contents are process-stable; re-read only if first build
     // or invalidated.
     if (g_mineTextureArrayReady) return;
+    MINE_GLPROBE("atlas_entry");
 
     // R7: handles must be loaded by setupTextures before this fires. If still
     // 0xffffffff, bail — the next dirty event retries. (Stage 2c invokes
@@ -3206,10 +3236,13 @@ void BuildMineTextureArray() {
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 
+    MINE_GLPROBE("before_getteximage");
     glBindTexture(GL_TEXTURE_2D, mineGLTex);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, mineBuf.data());
+    MINE_GLPROBE("after_getteximage_mine");
     glBindTexture(GL_TEXTURE_2D, blownGLTex);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, blownBuf.data());
+    MINE_GLPROBE("after_getteximage_blown");
 
     if (g_mineTextureArrayGL == 0) glGenTextures(1, &g_mineTextureArrayGL);
     glBindTexture(GL_TEXTURE_2D_ARRAY, g_mineTextureArrayGL);
@@ -3227,6 +3260,7 @@ void BuildMineTextureArray() {
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    MINE_GLPROBE("after_teximage3d");
 
     // Restore state.
     glPixelStorei(GL_PACK_ALIGNMENT, savedPackAlign);
@@ -3235,6 +3269,7 @@ void BuildMineTextureArray() {
     glActiveTexture((GLenum)savedActive);
 
     g_mineTextureArrayReady = true;
+    MINE_GLPROBE("atlas_exit");
 
     if (IsTraceEnabled()) {
         printf("[TERRAIN_INDIRECT v1] event=mine_atlas_built "
@@ -3246,6 +3281,7 @@ void BuildMineTextureArray() {
 }
 
 void BuildMineStaticVBO() {
+    MINE_GLPROBE("vbo_entry");
     if (!GameMap || !land) {
         g_mineVertCount = 0;
         return;
@@ -3323,6 +3359,7 @@ void BuildMineStaticVBO() {
                  verts.empty() ? nullptr : verts.data(),
                  GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+    MINE_GLPROBE("vbo_after_bufferdata");
 
     if (IsTraceEnabled()) {
         printf("[TERRAIN_INDIRECT v1] event=mine_vbo_built cells=%d verts=%d "
@@ -3406,4 +3443,338 @@ bool DrawMineStatic() {
 // and resolved at link time.
 void gos_terrain_indirect_MarkMineDirty() {
     gos_terrain_indirect::MarkMineDirty();
+}
+
+// ---------------------------------------------------------------------------
+// Slice A — cement-overlay (decal) static-bake infrastructure.
+//
+// STRUCTURAL MIRROR of the PR2c mine static-bake (BuildMineStaticVBO /
+// RebuildMineStaticVBOIfDirty / MarkMineDirty / ResetMineStaticVBO /
+// IsFrameMineArmed / DrawMineStatic, ~line 3119-3398 above). Same lifetime
+// discipline: one GL_STATIC_DRAW buffer kept across missions, CPU state reset
+// on mission load + destroy, lazy rebuild-if-dirty on first armed draw (R7
+// timing-trap mitigation: do NOT eager-build at primeMissionTerrainCache —
+// the overlay tex handles lazy-load in TerrainQuad::setupTextures during the
+// first paint cycle, before Render.TerrainOverlaysStatic fires).
+//
+// What it bakes: the per-quad M2d cement-overlay producer (mclib/quad.cpp
+// `if (useOverlayTexture && overlayHandle != 0xffffffff)`). Decal inputs are
+// map-stable — corner world XYZ, overlayHandle, uvMode are all derivable from
+// the map-immutable Shape-C terrain face cache (MapData::buildTerrainFaceCache)
+// + MapData::blocks. The bake reproduces M2d's 4-corner WorldOverlayVert build
+// + per-uvMode tri emit UNCONDITIONALLY (no pzTri camera cull — plan's pz-cull
+// policy; cement is sparse, GPU clips, mirrors DrawMineStatic's unconditional
+// static draw). Vertex argb/fog are forced to 0xffffffff / 1.0: shaders/
+// terrain_overlay.frag never reads the Color/FogValue varyings (explicit
+// comment at terrain_overlay.frag:48 — it recomputes lighting/fog from WorldPos
+// + live uniforms), so a geometry-only bake is lighting-identical to M2d, the
+// same way MineVert is pos/uv/layer-only.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// WorldOverlayVert layout MUST byte-match GameOS/include/gameos.hpp's struct
+// (28-byte stride) — the bridge VAO (drawDecalStaticBatch / makeOverlayVAO)
+// reads attribs 0..3 at offsets 0/12/20/24.
+struct DecalVert {
+    float        wx, wy, wz;   // offset  0  — MC2 world (x=east, y=north, z=elev)
+    float        u, v;         // offset 12
+    float        fog;          // offset 20  — forced 1.0 (frag discards it)
+    uint32_t     argb;         // offset 24  — forced 0xffffffff (frag discards it)
+};
+
+// Per-overlayTexId draw range (mirror gameos_graphics.cpp OverlayBatchEntry_
+// and gos_terrain_indirect's mine 6-verts-per-cell grouping idea).
+struct DecalDrawRange {
+    uint32_t texHandle;
+    uint32_t firstVert;
+    uint32_t vertCount;
+};
+
+GLuint                       g_decalStaticVBO_GL  = 0;
+int                          g_decalVertCount     = 0;
+bool                         g_decalVBODirty      = true;  // first build triggers via Rebuild on first armed draw
+std::vector<DecalDrawRange>  g_decalDrawRanges;
+
+// Mirrors quad.cpp's OVERLAY_ELEV_OFFSET (0.15f) + the fixed overlay UV
+// constants (oldminU/oldmaxU/oldminV/oldmaxV at quad.cpp:2054-2057). The M2d
+// overlay path uses these CONSTANT UVs (not uvData), so they are fully
+// map-stable.
+constexpr float kOverlayElevOffset = 0.15f;
+constexpr float kOldMinU = 0.0078125f;
+constexpr float kOldMaxU = 0.9921875f;
+constexpr float kOldMinV = 0.0078125f;
+constexpr float kOldMaxV = 0.9921875f;
+
+}  // namespace
+
+namespace gos_terrain_indirect {
+
+// Mirror MarkMineDirty — idempotent; multiple cement mutations between paints
+// debounce to one rebuild via the dirty flag.
+void MarkDecalDirty() {
+    g_decalVBODirty = true;
+}
+
+// Mirror ResetMineStaticVBO — CPU-clear only; keep g_decalStaticVBO_GL
+// allocation across missions (next BuildDecalStaticVBO reuses it via
+// glBufferData orphan+realloc).
+void ResetDecalStaticVBO() {
+    g_decalVertCount = 0;
+    g_decalVBODirty  = true;
+    g_decalDrawRanges.clear();
+    if (IsTraceEnabled()) {
+        printf("[TERRAIN_OVERLAY v1] event=decal_vbo_reset "
+               "vbo_gl=%u kept=1\n", (unsigned)g_decalStaticVBO_GL);
+        fflush(stdout);
+    }
+}
+
+// Mirror BuildMineStaticVBO. Iterates the map-immutable Shape-C terrain face
+// cache exactly as MapData::buildTerrainFaceCache does (mapdata.cpp:262-309):
+// same tile range, same 4-corner block layout, same worldQuadUVMode formula.
+void BuildDecalStaticVBO() {
+    g_decalVertCount = 0;
+    g_decalDrawRanges.clear();
+
+    if (!Terrain::mapData) return;
+    PostcompVertexPtr blocks = Terrain::mapData->getBlocks();
+    if (!blocks) return;
+
+    const long mapSide  = Terrain::realVerticesMapSide;
+    const long half     = Terrain::halfVerticesMapSide;
+    const float wupv    = Terrain::worldUnitsPerVertex;
+    const long cacheW   = mapSide - 1;   // == worldQuadCacheWidth() (mapdata.cpp:107)
+    if (cacheW <= 0) return;
+
+    std::vector<DecalVert> verts;
+    verts.reserve(64 * 6);
+
+    // First collect (texId -> tri verts) so draws can be grouped per texId
+    // (mirror OverlayBatch_'s verts + draws split / pushToOverlayBatch_).
+    // overlay tile count is empirically tiny — a flat scan + run-grouping is
+    // fine (cement sparse, matches DrawMineStatic's tileHasMines short-circuit
+    // in spirit).
+    struct PendingTri { uint32_t texId; DecalVert v[3]; };
+    std::vector<PendingTri> pending;
+
+    for (long tileR = 0; tileR < cacheW; ++tileR) {
+        for (long tileC = 0; tileC < cacheW; ++tileC) {
+            const MapData::WorldQuadTerrainCacheEntry* e =
+                Terrain::mapData->getTerrainFaceCacheEntry(tileR, tileC);
+            if (!e || !e->isValid()) continue;
+            // M2d gate equivalent: useOverlayTexture && overlayHandle !=
+            // 0xffffffff. buildTerrainFaceCache only sets overlayHandle for
+            // the alpha-cement case (mapdata.cpp:296-302); pure-cement and
+            // non-cement leave it 0xffffffff. Use the handle directly so this
+            // matches the live M2d predicate byte-for-byte.
+            const DWORD overlayHandle = e->overlayHandle;
+            if (overlayHandle == 0xffffffffu) continue;
+
+            const DWORD overlayTexId = tex_resolve(overlayHandle);
+            if (overlayTexId == 0) continue;
+
+            // 4 corners — mirror buildTerrainFaceCache (mapdata.cpp:266-275)
+            // and fillWorldCacheVertex (mapdata.cpp:125-132). Quad
+            // vertices[0..3] == cache worldVertices[0..3] (verified vs
+            // MapData::makeLists v0=v(x,y) v1=v(x+1,y) v2=v(x+1,y+1)
+            // v3=v(x,y+1)).
+            const long idx0 = tileC + tileR * mapSide;
+            PostcompVertexPtr p0 = &blocks[idx0];
+            PostcompVertexPtr p1 = p0 + 1;
+            PostcompVertexPtr p2 = p0 + mapSide + 1;
+            PostcompVertexPtr p3 = p0 + mapSide;
+
+            auto cornerXY = [&](long tR, long tC, float& wx, float& wy) {
+                wx = float(tC - half) * wupv;     // fillWorldCacheVertex vx
+                wy = float(half - tR) * wupv;     // fillWorldCacheVertex vy
+            };
+
+            DecalVert c[4];
+            cornerXY(tileR,     tileC,     c[0].wx, c[0].wy);
+            cornerXY(tileR,     tileC + 1, c[1].wx, c[1].wy);
+            cornerXY(tileR + 1, tileC + 1, c[2].wx, c[2].wy);
+            cornerXY(tileR + 1, tileC,     c[3].wx, c[3].wy);
+            c[0].wz = p0->elevation + kOverlayElevOffset;  // M2d quad.cpp:2406
+            c[1].wz = p1->elevation + kOverlayElevOffset;
+            c[2].wz = p2->elevation + kOverlayElevOffset;
+            c[3].wz = p3->elevation + kOverlayElevOffset;
+
+            // [TERRAIN_OVERLAY v1] decal_corner_probe — env-gated
+            // (MC2_TERRAIN_INDIRECT_TRACE), first few cement tiles only.
+            // Diagnostic for the raster-sheet bug: prints the bake's
+            // per-corner world coords + the Terrain globals it derived
+            // them from + an ELEV_IDENTICAL flag (all 4 corner elevations
+            // bit-equal = the smoking gun). Next session: one armed+TRACE
+            // capture -> compare these to the live M2d
+            // vertices[c]->vx/vy/pVertex->elevation for the same tile ->
+            // the divergence is then directly visible (no guessing). See
+            // memory/drawpass_retirement_decal_bake_state_and_raster_sheet_trap.md
+            if (IsTraceEnabled()) {
+                static int s_probeCount = 0;
+                if (s_probeCount < 6) {
+                    ++s_probeCount;
+                    const bool elevIdentical =
+                        (p0->elevation == p1->elevation) &&
+                        (p1->elevation == p2->elevation) &&
+                        (p2->elevation == p3->elevation);
+                    printf("[TERRAIN_OVERLAY v1] event=decal_corner_probe "
+                           "tileR=%ld tileC=%ld mapSide=%ld half=%ld "
+                           "wupv=%.6f elev_identical=%d "
+                           "c0=(%.3f,%.3f,%.5f) c1=(%.3f,%.3f,%.5f) "
+                           "c2=(%.3f,%.3f,%.5f) c3=(%.3f,%.3f,%.5f) "
+                           "elev_raw=(%.5f,%.5f,%.5f,%.5f)\n",
+                           tileR, tileC, (long)mapSide, (long)half,
+                           (double)wupv, elevIdentical ? 1 : 0,
+                           c[0].wx, c[0].wy, c[0].wz,
+                           c[1].wx, c[1].wy, c[1].wz,
+                           c[2].wx, c[2].wy, c[2].wz,
+                           c[3].wx, c[3].wy, c[3].wz,
+                           (double)p0->elevation, (double)p1->elevation,
+                           (double)p2->elevation, (double)p3->elevation);
+                    fflush(stdout);
+                }
+            }
+            for (int k = 0; k < 4; ++k) {
+                c[k].fog  = 1.0f;          // frag discards FogValue (terrain_overlay.frag:48)
+                c[k].argb = 0xffffffffu;   // frag discards Color    (terrain_overlay.frag:48)
+            }
+
+            // uvMode: mirror worldQuadUVMode (mapdata.cpp:115-118). The cache's
+            // uvData was resolved with this; M2d's diagonal/UV choice keys off
+            // the live quad uvMode, which equals worldQuadUVMode(absRow,absCol)
+            // (MapData::makeLists parity == absolute-tile parity).
+            const long uvMode =
+                ((tileR & 1) == (tileC & 1)) ? BOTTOMRIGHT : BOTTOMLEFT;
+
+            auto emit = [&](const DecalVert& a, float au, float av,
+                            const DecalVert& b, float bu, float bv,
+                            const DecalVert& d, float du, float dv) {
+                PendingTri t;
+                t.texId = (uint32_t)overlayTexId;
+                t.v[0] = a; t.v[0].u = au; t.v[0].v = av;
+                t.v[1] = b; t.v[1].u = bu; t.v[1].v = bv;
+                t.v[2] = d; t.v[2].u = du; t.v[2].v = dv;
+                pending.push_back(t);
+            };
+
+            // EXACT reproduction of M2d's per-uvMode tri emit
+            // (quad.cpp:2412-2443), but UNCONDITIONAL (no pzTri1/pzTri2).
+            if (uvMode == BOTTOMLEFT) {
+                // tri1: corners 0,1,3
+                emit(c[0], kOldMinU, kOldMinV,
+                     c[1], kOldMaxU, kOldMinV,
+                     c[3], kOldMinU, kOldMaxV);
+                // tri2: corners 1,2,3
+                emit(c[1], kOldMaxU, kOldMinV,
+                     c[2], kOldMaxU, kOldMaxV,
+                     c[3], kOldMinU, kOldMaxV);
+            } else {
+                // BOTTOMRIGHT — tri1: corners 0,1,2
+                emit(c[0], kOldMinU, kOldMinV,
+                     c[1], kOldMaxU, kOldMinV,
+                     c[2], kOldMaxU, kOldMaxV);
+                // tri2: corners 0,2,3
+                emit(c[0], kOldMinU, kOldMinV,
+                     c[2], kOldMaxU, kOldMaxV,
+                     c[3], kOldMinU, kOldMaxV);
+            }
+        }
+    }
+
+    // Group pending tris into contiguous per-texId draw ranges (mirror
+    // pushToOverlayBatch_'s run-coalescing: consecutive same-texHandle tris
+    // extend the last range).
+    for (const PendingTri& t : pending) {
+        if (!g_decalDrawRanges.empty() &&
+            g_decalDrawRanges.back().texHandle == t.texId) {
+            g_decalDrawRanges.back().vertCount += 3;
+        } else {
+            DecalDrawRange r;
+            r.texHandle = t.texId;
+            r.firstVert = (uint32_t)verts.size();
+            r.vertCount = 3;
+            g_decalDrawRanges.push_back(r);
+        }
+        verts.push_back(t.v[0]);
+        verts.push_back(t.v[1]);
+        verts.push_back(t.v[2]);
+    }
+
+    g_decalVertCount = (int)verts.size();
+
+    if (g_decalStaticVBO_GL == 0) glGenBuffers(1, &g_decalStaticVBO_GL);
+    glBindBuffer(GL_ARRAY_BUFFER, g_decalStaticVBO_GL);
+    glBufferData(GL_ARRAY_BUFFER,
+                 (GLsizeiptr)(verts.size() * sizeof(DecalVert)),
+                 verts.empty() ? nullptr : verts.data(),
+                 GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    if (IsTraceEnabled()) {
+        printf("[TERRAIN_OVERLAY v1] event=decal_vbo_built tris=%d verts=%d "
+               "ranges=%d vbo_gl=%u\n",
+               g_decalVertCount / 3, g_decalVertCount,
+               (int)g_decalDrawRanges.size(),
+               (unsigned)g_decalStaticVBO_GL);
+        fflush(stdout);
+    }
+}
+
+// Mirror RebuildMineStaticVBOIfDirty (no texture-array first-build step —
+// cement overlay uses the existing per-mission terrain texture nodes via
+// tex_resolve, not a dedicated 2-layer array).
+void RebuildDecalStaticVBOIfDirty() {
+    if (!g_decalVBODirty) return;
+    BuildDecalStaticVBO();
+    g_decalVBODirty = false;
+}
+
+unsigned int GetDecalStaticVBO_GL() { return g_decalStaticVBO_GL; }
+int          GetDecalVertCount()    { return g_decalVertCount; }
+
+// Mirror DrawMineStatic. Lazy rebuild-if-dirty on first armed draw, single
+// bridge dispatch, NO clear (static buffer persists). Returns true on a
+// successful zero-emit frame (mission has no cement overlay) — the M2d gate-
+// off is still the point.
+bool DrawDecalStatic() {
+    RebuildDecalStaticVBOIfDirty();
+    if (g_decalVertCount <= 0 || g_decalDrawRanges.empty()) {
+        return true;  // no cement overlay this mission — successful no-op
+    }
+    static_assert(sizeof(DecalDrawRange) == sizeof(GosDecalStaticDraw),
+                  "DecalDrawRange must layout-match GosDecalStaticDraw");
+    const bool ok = gos_terrain_bridge_drawDecalStatic(
+        g_decalStaticVBO_GL,
+        reinterpret_cast<const GosDecalStaticDraw*>(g_decalDrawRanges.data()),
+        (int)g_decalDrawRanges.size());
+    if (ok) {
+        Counters_AddDecalStaticTrisDrawn((long long)(g_decalVertCount / 3));
+        if (IsTraceEnabled()) {
+            static bool s_firstDraw = true;
+            if (s_firstDraw) {
+                printf("[TERRAIN_OVERLAY v1] event=decal_first_draw tris=%d\n",
+                       g_decalVertCount / 3);
+                fflush(stdout);
+                s_firstDraw = false;
+            }
+        }
+    } else if (IsTraceEnabled()) {
+        printf("[TERRAIN_OVERLAY v1] event=decal_draw_fallback "
+               "reason=bridge_returned_false verts=%d\n", g_decalVertCount);
+        fflush(stdout);
+    }
+    return ok;
+}
+
+}  // namespace gos_terrain_indirect
+
+// C-linkage forwarder for the cement-mutation invalidation sites (code/
+// bldng.cpp bridge-destroy + mclib/terrain.cpp Terrain::setOverlay). Mirrors
+// gos_terrain_indirect_MarkMineDirty: forward-declared `extern void
+// gos_terrain_indirect_MarkDecalDirty();` at the call sites so widely-included
+// headers do not need gos_terrain_indirect.h. Idempotent — chain mutations
+// debounce to one rebuild/paint via the dirty flag.
+void gos_terrain_indirect_MarkDecalDirty() {
+    gos_terrain_indirect::MarkDecalDirty();
 }
