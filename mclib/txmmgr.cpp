@@ -1281,10 +1281,15 @@ uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
     s_lightDataDedupMap.emplace(hash, rv);  // O(1) avg insert
 
     // PERF DIAGNOSTIC 2026-05-06: log table growth periodically. 1 line per
-    // 256 new entries — silent until table actually grows that fast.
-    // Always-on (no env gate) so the regression is visible without setup.
-    // Demote to env-gate once the regression is closed.
-    if ((lightDataStructuresCount & 0xFF) == 0) {
+    // 256 new entries. DEMOTED 2026-05-17 to env-gated (its own "demote
+    // once the regression is closed" instruction): the dedup-growth
+    // regression is closed (D2 + SSBO + static-bake shipped); it was
+    // emitting ~6k lines/run and polluting frame-time captures.
+    // Capability kept (debug_instrumentation_rule: demote-not-delete) --
+    // set MC2_LIGHT_DEDUP_TRACE=1 to re-enable.
+    static const bool s_lightDedupTrace =
+        (std::getenv("MC2_LIGHT_DEDUP_TRACE") != nullptr);
+    if (s_lightDedupTrace && (lightDataStructuresCount & 0xFF) == 0) {
         printf("[LIGHT_DEDUP v1] count=%u capacity=%u memcmp_per_call_bytes_max=%zu\n",
                lightDataStructuresCount,
                lightDataStructuresCapacity,

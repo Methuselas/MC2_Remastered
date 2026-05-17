@@ -226,7 +226,10 @@ static void loadProgramsIfNeeded() {
     // constraint) and there is no fixed 64-entry window. Disabling mech
     // lighting on the UBO basis would defeat the ceiling-removal this
     // conversion delivers. Gate removed.
-    {
+    // Diagnostic gated behind MC2_LIGHTSSBO_TRACE (demote-not-delete;
+    // matches gameos_graphics.cpp s_lightSsboTrace). Default-off so it
+    // does not pollute frame-time captures.
+    if (std::getenv("MC2_LIGHTSSBO_TRACE") != nullptr) {
         GLint maxSsbo = 0;
         glGetIntegerv(GL_MAX_SHADER_STORAGE_BLOCK_SIZE, &maxSsbo);
         std::fprintf(stderr,

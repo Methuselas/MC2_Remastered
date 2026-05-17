@@ -2480,8 +2480,12 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
                 // registered as a peer?". Cap at 30 to keep the log
                 // tractable; if more types are registered, the count is
                 // shown so the truncation is visible.
+                // Gated behind MC2_STATIC_PROP_TRACE 2026-05-17: one-shot
+                // but ~600-line load-time dump; demote-not-delete.
+                static const bool s_gpuPropsRegDump =
+                    (getenv("MC2_STATIC_PROP_TRACE") != nullptr);
                 static bool s_emittedRegisteredDump = false;
-                if (!s_emittedRegisteredDump) {
+                if (s_gpuPropsRegDump && !s_emittedRegisteredDump) {
                     s_emittedRegisteredDump = true;
                     const size_t total = s_types.size();
                     // 2026-05-10 diag: bumped 30 -> 600 to surface buildings.
