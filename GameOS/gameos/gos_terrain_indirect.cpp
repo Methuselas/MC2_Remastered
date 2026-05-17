@@ -3601,14 +3601,16 @@ void BuildDecalStaticVBO() {
             c[3].wz = p3->elevation + kOverlayElevOffset;
 
             // [TERRAIN_OVERLAY v1] decal_corner_probe — env-gated
-            // (MC2_TERRAIN_INDIRECT_TRACE), first few cement tiles only.
-            // Diagnostic for the raster-sheet bug: prints the bake's
-            // per-corner world coords + the Terrain globals it derived
-            // them from + an ELEV_IDENTICAL flag (all 4 corner elevations
-            // bit-equal = the smoking gun). Next session: one armed+TRACE
-            // capture -> compare these to the live M2d
-            // vertices[c]->vx/vy/pVertex->elevation for the same tile ->
-            // the divergence is then directly visible (no guessing). See
+            // (MC2_TERRAIN_INDIRECT_TRACE), first few cement tiles only,
+            // SILENT by default. Retained dormant diagnostic (demote-not-
+            // delete per the debug-instrumentation rule): prints the bake's
+            // per-corner world coords + the Terrain globals it derived them
+            // from + an ELEV_IDENTICAL flag. The raster-sheet bug it was
+            // built for was root-caused (unconditional all-map draw vs the
+            // non-clip-safe terrain_overlay.vert) and FIXED 2026-05-17 (the
+            // px.z in [0,1) guard) — the bake coords were proven correct, so
+            // this stays as a coord-sanity check for any future bake-source
+            // change, not an active investigation. Background:
             // memory/drawpass_retirement_decal_bake_state_and_raster_sheet_trap.md
             if (IsTraceEnabled()) {
                 static int s_probeCount = 0;
