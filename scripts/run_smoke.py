@@ -268,6 +268,9 @@ def main():
                             "MC2_TERRAIN_INDIRECT_OVERLAY",
                             "MC2_TERRAIN_INDIRECT_OVERLAY_PARITY_CHECK",
                             "MC2_TERRAIN_COST_SPLIT",
+                            "MC2_LIGHT_COST_SPLIT",
+                            "MC2_GPUPROPS_TRACE",
+                            "MC2_MECH_RESTORE_TRACE",
                             # Phase 1 — terrain lighting GPU compute
                             "MC2_TERRAIN_LIGHTING_GPU",
                             "MC2_TERRAIN_LIGHTING_PARITY",
