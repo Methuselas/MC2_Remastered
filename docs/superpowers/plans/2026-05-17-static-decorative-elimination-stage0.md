@@ -39,6 +39,36 @@ All `(A)`-marked spec anchors and any line cited below MUST be re-grepped at
 task execution time (symbols stable, lines drift). No emoji. No wall-clock
 projections.
 
+## Hard constraints (from Task 1 boundary proof + user rulings 2026-05-17)
+
+These override any conflicting candidate mechanism in the spec/plan:
+
+- **HC-1 Save games are descoped, not patched.** The on-disk PacketFile
+  save-game format, `objList` slot/index identity, the `watchSave`
+  index map (`code/objmgr.cpp:3257-3283`, re-grep), and decorative
+  destroyed/fallen-state persistence via the existing slotted
+  `TerrainObject::Save` MUST remain byte-unchanged. This slice does NOT
+  modify save/load. Any mechanism that compacts, reorders, or removes
+  `objList` slots is forbidden.
+- **HC-2 Sever at `objBlockInfo`, not `objList`.** Decoratives remain
+  present in `objList` and the typed `terrainObjects[]` array (mission
+  lifetime, static, cheap). Severance removes them only from the
+  per-frame `objBlockInfo` block ranges (`firstHandle`/`numObjects`)
+  that the per-frame walks iterate. This is what reconciles HC-1 with
+  `seen -> 0`.
+- **HC-3 Elimination = per-frame cost, not existence.** The decorative
+  object still exists and is still resolvable on demand by infrequent
+  consumers (ABL `getTerrainObject(i)` typed-array path
+  `ablmc2.cpp:1469`; on-hit collision). These are not per-frame and are
+  acceptable as-is. The boundary-proof Blockers #2/#3/#4 are addressed
+  by "the object still exists, just not per-frame-iterated", NOT by
+  deleting it from existence.
+- **HC-4 Per-frame sites in scope are all three `objBlockInfo`-driven
+  walks:** `objmgr.cpp:1706` render, `:1837` renderShadows, `:2017`
+  update (all re-grep), plus the mech/vehicle/artillery/carnage
+  collision block-walk (Blocker #2 sites). All must reach `seen -> 0`
+  for decoratives via the single HC-2 `objBlockInfo` severance.
+
 ---
 
 ### Task 1: objList consumer boundary proof (Stage 0 hard gate, first deliverable)
@@ -104,43 +134,72 @@ git commit -m "stage0(static-decor): objList consumer boundary proof (13 classes
 
 ---
 
-### Task 2: Blocker 1 - objList/objBlockInfo removal mechanism
+### Task 2: Blocker 1 - objBlockInfo severance mechanism (HC-1..HC-4)
 
 **Files:**
 - Create: `docs/superpowers/specs/2026-05-17-static-decorative-RESOLUTION.md` (section: Blocker 1)
-- Investigate: `code/objmgr.cpp:504-631`, `:2004-2036`; `mclib/terrain.h:106-107,179`; `mclib/terrain.cpp` (objBlockInfo population)
+- Investigate: `code/objmgr.cpp` (objList build ~:504-631, save ~:3257-3283, per-frame walks :1706/:1837/:2017 -- re-grep all); `mclib/terrain.h:106-107,179`; `mclib/terrain.cpp` (objBlockInfo population); `code/ablmc2.cpp:1469` (typed-array path)
 
-- [ ] **Step 1: Map objBlockInfo construction and every range consumer**
+The mechanism is fixed by HC-2 (sever at `objBlockInfo`, leave `objList`
+and `terrainObjects[]` intact). This task does not choose between candidate
+mechanisms; it PROVES the HC-2 mechanism satisfies HC-1 and HC-4 and
+records the exact edit sites.
+
+- [ ] **Step 1: Map objBlockInfo construction and every block-range consumer**
 
 Run:
 ```
-rg -n "objBlockInfo|firstHandle|numObjects|numObjBlocks" mclib/terrain.cpp code/objmgr.cpp
+rg -n "objBlockInfo|firstHandle|numObjects|numObjBlocks|getObjBlock" mclib/terrain.cpp code/objmgr.cpp code/mech.cpp code/gvehicl.cpp code/artlry.cpp code/carnage.cpp
 ```
-Record who writes `firstHandle`/`numObjects`/the `objBlockInfo` array and
-every site that iterates `[firstHandle, firstHandle+numObjects)`. Note the
-collidable-prefix invariant (terrain.h:107).
+Record who writes the `objBlockInfo` ranges and EVERY site that iterates
+`[firstHandle, firstHandle+numObjects)` or uses `getObjBlock*`. Tag each as
+per-frame (in scope, must reach `seen -> 0`) vs non-per-frame.
 
-- [ ] **Step 2: Evaluate the four candidate mechanisms against the invariant**
+- [ ] **Step 2: Prove HC-1 (save untouched) by construction**
 
-For each: (a) compact block ranges at mission load; (b) side structure
-before ranges finalized; (c) separate non-objList terrain-object index;
-(d) registration-path split. For each, state whether it keeps
-`firstHandle`/`numObjects` coherent for surviving non-decorative objects in
-the same block AND preserves the collidable-prefix ordering, with the exact
-edit site (`objmgr.cpp:553` is where `terrainObjects[i]` enters objList).
+Re-grep `GameObjectManager::Save`/`Load` and the `watchSave` loop
+(`objmgr.cpp` ~:3246-3299). Record the proof that an `objBlockInfo`-only
+severance does not touch `objList[i]`, the packet/slot numbering, the
+`watchSave` index map, or `TerrainObject::Save`. Exit sub-criterion: a
+written argument that the save path never reads `objBlockInfo` for slot
+identity (grep `objBlockInfo` inside Save/Load -- expect zero).
 
-- [ ] **Step 3: Decide and record**
+- [ ] **Step 3: Prove HC-4 (all per-frame sites covered by one severance)**
 
-Pick one mechanism. Record the decision, the coherence argument, the exact
-edit sites, and the residual risk. Exit criterion: the chosen mechanism has
-a written proof that no surviving range consumer (from Step 1) sees a gap or
-a shifted collidable prefix.
+For each of `objmgr.cpp:1706` (render), `:1837` (renderShadows), `:2017`
+(update), and the Blocker #2 collision block-walk
+(`mech.cpp` handleStaticCollision, `gvehicl.cpp`, `artlry.cpp`,
+`carnage.cpp` -- re-grep), confirm it iterates via `objBlockInfo`
+ranges/`getObjBlock*` and therefore a single `objBlockInfo` decorative
+exclusion drives `seen -> 0` for all of them. Record any per-frame site
+that does NOT route through `objBlockInfo` (would be a new blocker).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Record the exact edit site + collidable-prefix coherence**
 
+Identify where `objBlockInfo` block membership/ordering is built
+(collidable prefix per terrain.h:107) and the exact point a decorative
+would be excluded from the block range while remaining in `objList`.
+Record how `firstHandle`/`numObjects` and the collidable prefix stay
+coherent for surviving non-decorative objects in the same block (this is
+the load-bearing coherence proof).
+
+- [ ] **Step 5: Record the typed-array (HC-3) disposition**
+
+State explicitly: `terrainObjects[]` and the `objList` slot are NOT
+trimmed; ABL `getTerrainObject(i)` (`ablmc2.cpp:1469`, re-grep) and on-hit
+collision still resolve the object on demand; this is acceptable because
+it is not per-frame. No code change required for the typed-array path;
+record why.
+
+- [ ] **Step 6: Exit criterion + commit**
+
+Exit PASS only if Steps 2-4 each have a written, grep-grounded proof and
+no per-frame site escapes the single `objBlockInfo` severance. If any
+per-frame site is not `objBlockInfo`-routed, record it as a new OPEN
+blocker (do not fabricate coverage).
 ```
 git add docs/superpowers/specs/2026-05-17-static-decorative-RESOLUTION.md
-git commit -m "stage0(static-decor): resolve Blocker 1 objList removal mechanism"
+git commit -m "stage0(static-decor): resolve Blocker 1 objBlockInfo severance (HC-1..HC-4)"
 ```
 
 ---
