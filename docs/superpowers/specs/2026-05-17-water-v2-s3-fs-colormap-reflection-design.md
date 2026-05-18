@@ -10,7 +10,22 @@ camera-dependent term).
 ring/fence/`g_dispatchMvp16` mutation findings). That document remains as the
 historical record of why the in-pipeline approach is dead and why Option B
 below is the deferred fidelity upgrade, NOT a revival of it.
-**Status:** DESIGN - pending user spec review, then 2 adversarials.
+**Status:** SHELVED (user, 2026-05-17, after visual loop). Implemented &
+adversarial-passed & smoke-live exactly as designed, but on first visual
+review the user rejected ANY perceptible camera-dependence in the water. A
+reflection is inherently camera-dependent (it must change with viewpoint), so
+S3 - and Option B - cannot satisfy that constraint. Disabled via compile-time
+`S3_REFLECTION_ENABLED=false` in `shaders/gos_terrain_water_mdi.frag` (block
+dead-stripped; water provably 100% camera-independent again). Scaffolding
+retained dormant. **The camera-independence ruling's "S3 reflection is the
+ONE sanctioned camera-dependent term" carve-out is VOID in practice:** when
+the user actually saw camera-dependent water they rejected it regardless of
+the sanction. Do NOT re-attempt S3/Option B/any water reflection without
+first re-confirming with the user that perceptible camera-dependence is
+acceptable - it currently is NOT. The shipped water-v2 visual win is
+camera-independent only: mild transparency (`WATER_MAX_ALPHA`) + brighter
+glint (commit `24190b9`). History of the (correct, working) implementation
+below is retained for the deferred-Option-B record only.
 **Grounding:** two code-grounded advisor passes this session (render-expert +
 terrain-indirect-expert + shader-expert, Rule 0). All file:line below were
 grep-verified 2026-05-17; symbols are stable, line numbers drift - the
