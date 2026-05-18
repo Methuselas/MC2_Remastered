@@ -49,10 +49,17 @@ const float SKY_AMBIENT        = 0.18;   // brightness floor (camera-independent
 const float FOAM_DEPTH_MIN   = 0.0;   // world-u: full foam at/under this depth
 const float FOAM_DEPTH_MAX   = 8.0;   // world-u: foam gone beyond this depth (surf-band width; 6->8 for visibility)
 const float FOAM_NOISE_AMP   = 2.5;   // world-u: nz perturbs the band edge -> irregular + moving (not a clean ring)
-const float FOAM_TEX_VAR     = 0.45;  // nz texture variation, ALWAYS-ON (foam = band*((1-VAR)+VAR*nz01)). Replaces the old smoothstep "break" gate which zeroed foam (nz is ~zero-mean -> sat in the dead band)
-const float FOAM_INTENSITY   = 1.00;  // white blend strength at waterline (BOLD first pass; dial DOWN by eye if too much)
+// Dedicated HIGH-FREQUENCY foam froth (independent of the big-wave nz which
+// is WAVE_FREQ=0.030 = low-freq -> a blurry wash). ~6x finer = crisp surf.
+const float FOAM_FREQ        = 0.18;  // 1/world-u froth detail (vs WAVE_FREQ 0.030); higher = finer
+const float FOAM_DRIFT       = 3.0;   // world-u/sec froth scroll (gentle)
+const float FOAM_TEX_LO      = 0.35;  // froth contrast window lo (fbm3 ~0.44 mean) -> sharpen to flecks
+const float FOAM_TEX_HI      = 0.75;  // froth contrast window hi
+const float FOAM_TEX_FLOOR   = 0.25;  // min foam within the band (continuity); high-freq froth adds bright detail on top
+const float FOAM_INTENSITY   = 1.00;  // white blend strength at waterline (BOLD; dial DOWN by eye if too much)
 const vec3  FOAM_COLOR       = vec3(0.90, 0.95, 0.96);  // near-white, faint cool blue-green surf
 const float FOAM_ALPHA_BOOST = 0.90;  // foam is NOT see-through: near-opaque surf
+const float EDGE_FADE_DEPTH  = 1.5;   // world-u: outer alpha dissolve so the contact is a soft blend, not a hard opaque cliff at the kill boundary
 const float SHORE_NOISE_AMP  = 5.0;   // world-u: nz perturbs the kill/feather boundary -> wavy coastline (1.5 was too subtle; 5 = pronounced)
 // --- camera-INDEPENDENT procedural water detail (BAR-style: 2 fBm layers,
 //     OPPOSITE scroll dirs -> organic churn, no grid). f(WorldPos,time) only. ---
@@ -178,17 +185,27 @@ void main(void)
         // not see-through) so it adds to alpha.
         PREC float foamBand  = smoothstep(FOAM_DEPTH_MAX, FOAM_DEPTH_MIN,
                                           WaterThickness + nz * FOAM_NOISE_AMP);
-        // Always-on gentle nz texture (NOT a hard gate): foam is present
-        // across the whole shallow band, nz only varies its intensity ->
-        // organic surf, never zeroed. (The prior smoothstep "break" sat in
-        // nz's ~zero-mean dead band and killed foam entirely.)
-        PREC float foamTex = (1.0 - FOAM_TEX_VAR) + FOAM_TEX_VAR * (nz * 0.5 + 0.5);
-        PREC float foam = clamp(foamBand * foamTex * FOAM_INTENSITY * waveLOD,
-                                0.0, 1.0);
+        // Dedicated HIGH-FREQUENCY froth (NOT the low-freq big-wave nz, which
+        // read as a blurry wash). fbm3 ~0..0.875; sharpen to flecks. At
+        // distance blend the froth detail toward mean so it does not stair-
+        // step on the heightmap grid (kills the far-away pixel lines).
+        // Camera-INDEPENDENT: f(WorldPos, time, distance).
+        PREC float fsc   = time * FOAM_DRIFT * FOAM_FREQ;
+        PREC float foamN = fbm3(WorldPos.xy * FOAM_FREQ + vec2(0.7, -0.4) * fsc);
+        foamN = smoothstep(FOAM_TEX_LO, FOAM_TEX_HI, foamN);
+        foamN = mix(0.5, foamN, waveLOD);
+        PREC float foam = clamp(foamBand
+                                * (FOAM_TEX_FLOOR + (1.0 - FOAM_TEX_FLOOR) * foamN)
+                                * FOAM_INTENSITY * waveLOD, 0.0, 1.0);
         col = mix(col, FOAM_COLOR, foam);
-        PREC float wAlpha = clamp(shore * WATER_MAX_ALPHA
-                                  + foam * FOAM_ALPHA_BOOST, 0.0, 1.0);
-        FragColor = vec4(col, wAlpha);  // shore ramp + foam; deep water still mildly transparent
+        // Outer alpha dissolve: the last EDGE_FADE_DEPTH of water before the
+        // kill boundary fades translucent so the contact is a soft blend, not
+        // a hard opaque white cliff. Camera-INDEPENDENT (wtShore=f(depth,nz)).
+        PREC float edgeFade = smoothstep(0.0, EDGE_FADE_DEPTH, wtShore);
+        PREC float wAlpha = clamp((shore * WATER_MAX_ALPHA
+                                   + foam * FOAM_ALPHA_BOOST) * edgeFade,
+                                  0.0, 1.0);
+        FragColor = vec4(col, wAlpha);  // shore + high-freq foam + soft edge dissolve
         GBuffer1  = rc_gbuffer1_screenShadowEligible(vec3(0.0, 0.0, 1.0));
         return;
     }
