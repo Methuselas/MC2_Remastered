@@ -3006,33 +3006,24 @@ void ComputeDispatch() {
                 const float z_gpuw =
                     (czT / cwT) + mc2depth::WATER_DEPTH_FUDGE_FAST;
 
-                // DECAL: mirror terrain_overlay.vert (px.z = clip.z/clip.w,
-                // NO additive fudge constant). Fix B removed the host-side
-                // glPolygonOffset(-1,-1) calls from the overlay/decal draws in
-                // gameos_graphics.cpp; depth ordering for decals/overlays over
-                // terrain is now carried exclusively by the in-shader constant
-                // OVERLAY_DEPTH_BIAS (signed clip-z bias), single-sourced via
-                // shaders/include/terrain_depth_bias.hglsl and
-                // mclib/terrain_depth_bias.h. The decal binds
-                // getTerrainMVP()==terrain_mvp_ (the LIVE matrix, NOT the
-                // dispatch MVP -- see uploadOverlayUniforms_ in
-                // gameos_graphics.cpp). kPolyOffsetNdcApprox below preserves
-                // the historical polygon-offset NDC approximation (units=-1,
-                // 24-bit r ~= 2^-23 ~= 1.19e-7, slope term omitted) as a
-                // CPU-side constant for probe parity; it no longer mirrors live
-                // rasterizer state. z_decal is an APPROXIMATION and is labeled
-                // approx in the emit; it remains the least-trustworthy field
-                // and is flagged as such.
-                const float* liveMvp = gos_GetTerrainMVPMat4();
-                float z_decal = 0.0f;
-                int   decalOk = 0;
-                if (liveMvp) {
-                    float czD, cwD;
-                    projZ(liveMvp, Px, Py, Pz, czD, cwD);
-                    const float kPolyOffsetNdcApprox = -1.0f * 1.1920929e-7f;
-                    z_decal = (czD / cwD) + kPolyOffsetNdcApprox;
-                    decalOk = 1;
-                }
+                // DECAL (post-Fix B, probe==producer): the armed overlay/
+                // decal callers (drawTerrainOverlays / drawDecalStaticBatch /
+                // drawDecals) bind the symmetric-mirror MVP -- armed ->
+                // gos_terrain_indirect_getDispatchMvp16() == g_dispatchMvp16,
+                // the SAME matrix z_terr/z_gpuw use here (uploadOverlayUniforms_
+                // in gameos_graphics.cpp) -- and terrain_overlay.vert adds
+                // OVERLAY_DEPTH_BIAS (single-sourced mc2depth). This code is
+                // armed-only (ComputeDispatch), so the faithful producer model
+                // is czT/cwT + OVERLAY_DEPTH_BIAS, co-planar with z_terr/z_gpuw
+                // by construction (Fix B). Retired the pre-Fix-B model (stale
+                // liveMvp gos_GetTerrainMVPMat4 + kPolyOffsetNdcApprox modelling
+                // the REMOVED glPolygonOffset(-1,-1)); that produced a
+                // counterfactual constant dz_decal blind to the fix
+                // (parity_probe_100pct: probe must equal producer). z_decal is
+                // now exact, not an approximation.
+                const float z_decal =
+                    (czT / cwT) + mc2depth::OVERLAY_DEPTH_BIAS;
+                const int decalOk = 1;
 
                 // CPU WATER: SAMPLED real produced value (NOT a CPU re-derive;
                 // the Stuff eye->projectForTerrainAdmission pipeline is not
@@ -3089,7 +3080,7 @@ void ComputeDispatch() {
                            "z_terr=%.7f z_cpuw=%.7f z_gpuw=%.7f z_decal=%.7f "
                            "dz_cpuw=%.7f dz_gpuw=%.7f dz_decal=%.7f "
                            "cpuw_fresh=%d cpuw_any=%d cpuw_stamp=%llu "
-                           "cpuw_stamp_delta=%lld decal_ok=%d decal_z_approx=1\n",
+                           "cpuw_stamp_delta=%lld decal_ok=%d decal_z_approx=0\n",
                            kind,
                            (unsigned long long)L.f,
                            (double)L.md,
