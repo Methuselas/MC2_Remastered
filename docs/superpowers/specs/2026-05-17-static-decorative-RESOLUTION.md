@@ -1709,7 +1709,7 @@ compared directly). Fields sourced from the spec (Section 8: "matrix / fog / hig
 lightDataIndex" + "per-leaf world AABB"). All padding explicitly zeroed before comparison.
 
 ```
-struct alignas(16) DecorParityRecord {     // 96 + 24 + 4 = 124 bytes; padded to 128
+struct alignas(16) DecorParityRecord {     // Total: 144 bytes (9 x 16); see byte tally below
     // -- instance fields (from GpuStaticPropInstance) --
     float    modelMatrix[16];   // offset   0  (64 B)  shape-to-world, row-major
                                 //               source: batcher buildRecipeFromShape()
@@ -1805,7 +1805,7 @@ are zeroed with memset(&rec, 0, sizeof(rec)) before any field assignment.
 
 #### Comparison granularity and pass criterion
 
-GRANULARITY: per-prop 128-byte DecorParityRecord (one record per registered decorative leaf).
+GRANULARITY: per-prop 144-byte DecorParityRecord (one record per registered decorative leaf).
 Each parity sample covers one (decorative, leaf) pair; a multi-leaf decorative produces one
 comparison per leaf.
 
@@ -1948,7 +1948,7 @@ The interface authority (sibling design section) exists and is reconciled per sp
    - All padding zeroed: YES (rule stated: memset to zero before any field assignment)
    - Every source field initialized before compare: YES (field-by-field source mapping documented,
      lightDataIndex taken post-flush-patch on both sides)
-   - Comparison granularity: YES (per-prop 128-byte struct; one record per registered decorative leaf)
+   - Comparison granularity: YES (per-prop 144-byte struct; one record per registered decorative leaf)
    - Pass criterion: YES (zero mismatch over tier1 round-robin sampling)
    - No TBD in core record: YES, except two Plan 2 grep-to-confirm items explicitly noted:
        * per-leaf tight bounding radius source (worldAabbMin/Max)
