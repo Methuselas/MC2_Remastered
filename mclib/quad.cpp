@@ -2039,7 +2039,7 @@ void TerrainQuad::setupTextures (void)
 // CPU raster consumers are the RASTER water regime: WATER_DEPTH_FUDGE
 // resolves (via the header's back-compat alias) to WATER_DEPTH_FUDGE_RASTER
 // = terrain + 0.0005 = 0.0025. Water has TWO LEGITIMATE REGIMES (RASTER
-// here / CPU raster + mask-water; FAST = the GPU water VS at 0.003) -- they
+// here / CPU raster + mask-water; FAST = the GPU water VS at 0.0025) -- they
 // are deliberately NOT unified to one value; a single constant regressed
 // the map edges (TES tiles through water). Do NOT "collapse the deltas":
 // see the two-regime rationale + git 89d7c4f-vs-6ff6c5c reconciliation in

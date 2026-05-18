@@ -41,6 +41,13 @@
 //     low-LOD tiles break through the water as blocky islands at map
 //     edges/shore. RASTER is out of scope for Fix B -- do NOT touch it.
 //
+// Note: FAST and RASTER currently resolve to the same absolute value (0.0025)
+// by coincidence -- the post-Fix-B co-planar epsilon (WATER_DEPTH_BIAS 0.0005)
+// happens to equal the pre-existing RASTER delta. They remain SEPARATE named
+// constants because their future change trajectories differ: FAST is the
+// matrix-share co-planar regime and may retune independently; RASTER is the
+// untouched legacy CPU-water path out of scope for Fix B.
+//
 // Hard bound either regime: water absolute < 2*TERRAIN (never >=0.002 over
 // terrain -> proven lake-bottom punch-through, 2026-05-06 /
 // gos_terrain_water_fast.vert:327-364). Current absolute 0.0025 < 0.004 bound.
@@ -57,5 +64,8 @@ constexpr float WATER_DEPTH_FUDGE_RASTER = TERRAIN_DEPTH_FUDGE + WATER_DEPTH_DEL
 // WATER_DEPTH_FUDGE consumers (wz + WATER_DEPTH_FUDGE) are the RASTER regime.
 constexpr float WATER_DEPTH_FUDGE        = WATER_DEPTH_FUDGE_RASTER;                       // 0.0025f
 
-static_assert(OVERLAY_DEPTH_BIAS < 0.0f && 0.0f < WATER_DEPTH_BIAS && (TERRAIN_DEPTH_FUDGE + WATER_DEPTH_BIAS) < 2.0f*TERRAIN_DEPTH_FUDGE, "Fix B depth ordering invariant: OVERLAY<0<WATER and water-abs<2*terrain");
+static_assert(
+    OVERLAY_DEPTH_BIAS < 0.0f && 0.0f < WATER_DEPTH_BIAS &&
+    (TERRAIN_DEPTH_FUDGE + WATER_DEPTH_BIAS) < 2.0f * TERRAIN_DEPTH_FUDGE,
+    "Fix B depth ordering invariant: OVERLAY<0<WATER and water-abs<2*terrain");
 }

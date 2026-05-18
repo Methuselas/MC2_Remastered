@@ -285,10 +285,10 @@ void main() {
     vec3 screen;
     screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
     screen.y = clip.y * rhw * terrainViewport.y + terrainViewport.w;
-    // Three-tier z-ordering: terrain=+0.002, water=+0.003 (delta 0.001 so water
-    // loses GL_LEQUAL to already-drawn terrain at shorelines; wins on open water).
-    // Full change history and drift rationale: gos_terrain_water_fast.vert lines 327-363.
-    screen.z = clip.z * rhw + WATER_DEPTH_FUDGE_FAST;  // FAST regime 0.003; see terrain_depth_bias.hglsl
+    // Three-tier z-ordering: terrain=+0.002, water=+0.0025 (delta 0.0005, WATER_DEPTH_BIAS,
+    // so water loses GL_LEQUAL to already-drawn terrain at shorelines; wins on open water).
+    // Full change history and drift rationale: gos_terrain_water_fast.vert projection block.
+    screen.z = clip.z * rhw + WATER_DEPTH_FUDGE_FAST;  // FAST regime 0.0025; see terrain_depth_bias.hglsl
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
     gl_Position = vec4(ndc.xyz * absW, absW);

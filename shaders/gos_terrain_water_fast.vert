@@ -344,7 +344,7 @@ void main() {
     // Three-tier z-ordering invariant (load-bearing):
     //   decals/overlays:  +0.000   (drawn first; smaller z, win LEQUAL pre-terrain)
     //   terrain:          +0.002   (terrain.tese:133, gos_terrain_thin.vert:175)
-    //   water:            +0.003   (this line; water draws last via post-renderLists hook)
+    //   water:            +0.0025  (this line; water draws last via post-renderLists hook)
     //
     // 2026-05-06 part 1: doubled both tiers (0.001→0.002 terrain, 0.002→0.004
     // water) after glClipControl(ZERO_TO_ONE) adoption (commit 4c8f9a4). Native
@@ -359,10 +359,13 @@ void main() {
     // the load-bearing "water loses shoreline LEQUAL ties to terrain" property
     // without over-biasing water against deep terrain.
     //
-    // Future drift check: keep delta = water - terrain ≈ 0.001 in current depth
+    // Fix B (post-matrix-share co-planar): delta now 0.0005 (WATER_DEPTH_BIAS),
+    // water absolute 0.0025 (terrain 0.002 + 0.0005). Projection divergence gone;
+    // smaller co-planar epsilon is sufficient. See terrain_depth_bias.hglsl.
+    // Future drift check: keep delta = water - terrain ~= 0.0005 in current depth
     // regime. Doubling the absolute terrain fudge is fine; doubling the delta is
     // not.
-    screen.z = clip.z * rhw + WATER_DEPTH_FUDGE_FAST;  // FAST regime 0.003; see terrain_depth_bias.hglsl
+    screen.z = clip.z * rhw + WATER_DEPTH_FUDGE_FAST;  // FAST regime 0.0025; see terrain_depth_bias.hglsl
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
     gl_Position = vec4(ndc.xyz * absW, absW);

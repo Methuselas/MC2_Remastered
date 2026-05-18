@@ -3002,7 +3002,7 @@ void ComputeDispatch() {
                 // (== g_dispatchMvp16; gos_terrain_water_stream.cpp:1409-1413)
                 // and ComputeDispatch only runs armed, so this is the live
                 // GPU-water producer's exact matrix this frame. screen.z =
-                // clip.z/clip.w + WATER_DEPTH_FUDGE_FAST (0.003).
+                // clip.z/clip.w + WATER_DEPTH_FUDGE_FAST (0.0025).
                 const float z_gpuw =
                     (czT / cwT) + mc2depth::WATER_DEPTH_FUDGE_FAST;
 
