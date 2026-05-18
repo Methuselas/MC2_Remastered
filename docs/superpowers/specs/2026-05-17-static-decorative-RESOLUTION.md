@@ -405,7 +405,7 @@ Per-resolver classification:
 |----------|---------------|-------------------|---------|
 | R-1 get(handle) | on-demand, ALLOWED | event-sourced (mech hit, ABL) | objmgr.cpp:2181; callers in contact.cpp/ablmc2.cpp are mover-targeted |
 | R-2 getTerrainObject(i) | on-demand, ALLOWED | ABL script execution (non-per-frame) | objmgr.cpp:797; ablmc2.cpp:1469,1530 criteria cases |
-| R-3 findByPartId(partId) | per-frame-BUT-OUT-OF-SCOPE (pre-existing, non-decorative-specific); on-demand callsites (ABL, turret) also ALLOWED | per-frame via gamecam.cpp:550->436 when lookTargetObject!=-1; event-sourced via ABL/init | objmgr.cpp:2098; gamecam.cpp:522,456-459; pre-existing path, not decorative-specific, not re-introduced by this slice; recorded as future-work |
+| R-3 findByPartId(partId) | per-frame-BUT-OUT-OF-SCOPE (pre-existing, non-decorative-specific); on-demand callsites (ABL, turret) also ALLOWED | per-frame via gamecam.cpp:550->551->528 when lookTargetObject!=-1; event-sourced via ABL/init | objmgr.cpp:2363; gamecam.cpp:522 (getCamObject def),550-551,528; pre-existing path, not decorative-specific, not re-introduced by this slice; recorded as future-work |
 | R-4 findByCellPosition(row,col) | on-demand, ALLOWED | mission-load + savegame-restore only | objmgr.cpp:2390; callers at bldng.cpp:737, gate.cpp:266, objmgr.cpp:1125,1150,3766,3789, turret.cpp:550 -- all init/load |
 | R-5 findByBlockVertex(blockNum,v) | on-demand, ALLOWED | zero callers (dead/unused) | objmgr.cpp:2380; no callers in code/*.cpp or mclib/*.cpp |
 | R-6 ABL getObject(partId) | on-demand, ALLOWED | ABL script execution (event-sourced) | ablmc2.cpp:338-353; wraps R-3 |
