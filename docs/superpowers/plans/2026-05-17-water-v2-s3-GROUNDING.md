@@ -433,3 +433,25 @@ schema-versioned marker, gated by a `static const bool` env guard
 CONFLICT OUTCOME: shader advisor (opus) correct. The S3 perturbation uses the screen-space
 gradient of the in-scope scalar fBm `nz`, NOT the dead `wave1`/`wave2` sine field. NOT
 BLOCKED -- the reachability + camera-independence premise was independently grep-confirmed.
+
+## S6 prep recon
+
+A water-specific arm predicate DOES exist and water arms independently of the
+solid path. `IsFrameMaskWaterArmed()` is declared at
+`GameOS/gameos/gos_terrain_mask_dispatch.h:55` and defined at
+`GameOS/gameos/gos_terrain_mask_dispatch.cpp:170-175`; it returns
+`s_readyThisFrame && env(MC2_TERRAIN_MASK_DISPATCH_WATER) != "0"`. Its solid
+sibling `IsFrameMaskSolidArmed()` (`gos_terrain_mask_dispatch.cpp:163-168`)
+gates on the separate `MC2_TERRAIN_MASK_DISPATCH_SOLID` killswitch -- the two
+buckets share only the per-frame `s_readyThisFrame` mask-dispatch readiness
+flag (set by `BuildAndUploadMasksForFrame`, reset by `BeginFrame`) and are
+otherwise independently env-gated, so water can arm while solid is disabled
+and vice-versa. This is a DIFFERENT subsystem from `IsFrameSolidArmed()`
+(`gos_terrain_indirect.cpp:2203-2205`, `s_frameSolidArmed &&
+!s_processArmingDisabled`), which is the indirect-SOLID arming used by the
+`quadSetupTextures` loop's water-narrow append predicate
+(`mclib/terrain.cpp:1790`). The water-fast-path narrow walk gates on
+`WaterStream::NarrowEnabled()` (`gos_terrain_water_stream.cpp:156-157`), a
+third independent env predicate. Net: S6 has a real per-bucket water arm
+predicate available (`IsFrameMaskWaterArmed`) and need not overload
+`IsFrameSolidArmed`; this informs (does not gate) the eventual S6 design.

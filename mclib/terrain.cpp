@@ -1751,6 +1751,36 @@ void Terrain::geometry (void)
 	// setup terrain quad textures
 	// Also sets up mine data.
 	TerrainQuadPtr currentQuad = quadList;
+
+	// S6-prep parity probe: the slim reduce loop above is documented as the
+	// "proven sole producer" of the leastZ/mostZ/leastW/mostW/leastWY/mostWY
+	// reduction that feeds eye->setInverseProject below. The per-frame
+	// TerrainQuad::setupTextures water-projection block (quad.cpp ~1069-1287,
+	// reached via the loop right below) ALSO writes those same globals. If
+	// the slim loop already produces the identical 6-tuple, the water block's
+	// contribution is redundant and S6 may arm-gate it (substitutive). If the
+	// water block contributes UNIQUE extrema (water-elevation Z differs from
+	// terrain Z), arm-gating it would silently corrupt screen->world picking.
+	// Snapshot A is taken HERE: strictly AFTER the slim reduce loop has fully
+	// completed (loop closes at the `}` above line 1748) and the per-frame
+	// reset (lines 1476-1478) has run, and strictly BEFORE the
+	// quadSetupTextures loop's first setupTextures() call. No global reset
+	// occurs between A and B (verified: only writers in the A..B span are the
+	// quad.cpp water-projection blocks via setupTextures()). Reads only.
+	static const bool s_waterInvprojParity =
+		(getenv("MC2_WATER_INVPROJ_PARITY") != nullptr);
+	float aLeastZ = 0.0f, aMostZ = 0.0f, aLeastW = 0.0f,
+	      aMostW = 0.0f, aLeastWY = 0.0f, aMostWY = 0.0f;
+	if (s_waterInvprojParity)
+	{
+		aLeastZ  = leastZ;
+		aMostZ   = mostZ;
+		aLeastW  = leastW;
+		aMostW   = mostW;
+		aLeastWY = leastWY;
+		aMostWY  = mostWY;
+	}
+
 	{
 		ZoneScopedN("Terrain::geometry quadSetupTextures");
 		// Stage 3: preflight arming — walks live quadList BEFORE the loop so
@@ -1832,6 +1862,62 @@ void Terrain::geometry (void)
 	{
 		ywRange = (mostW - leastW) / (mostWY - leastWY);
 		yzRange = (mostZ - leastZ) / (mostWY - leastWY);
+	}
+
+	// S6-prep parity probe: Snapshot B — the same 6 globals, captured
+	// strictly BEFORE the setInverseProject consumer. Exact per-field ==
+	// compare against Snapshot A. Latched (s_lastState edge latch like the
+	// [WATER_REFL v1] probe) so it prints only on the first frame and on
+	// transitions, never per-frame. Pure reads; zero perturbation of the
+	// reduction or any rendering. identical => the slim loop already produced
+	// the full 6-tuple and the water block adds nothing (S6 substitutive);
+	// divergent => the water block contributes unique extrema and arm-gating
+	// it would corrupt picking (S6 NOT substitutive).
+	if (s_waterInvprojParity)
+	{
+		const float bLeastZ  = leastZ;
+		const float bMostZ   = mostZ;
+		const float bLeastW  = leastW;
+		const float bMostW   = mostW;
+		const float bLeastWY = leastWY;
+		const float bMostWY  = mostWY;
+		const bool identical =
+			(aLeastZ  == bLeastZ)  && (aMostZ  == bMostZ)  &&
+			(aLeastW  == bLeastW)  && (aMostW  == bMostW)  &&
+			(aLeastWY == bLeastWY) && (aMostWY == bMostWY);
+		static int s_lastState = -1;            // edge-detect latch (geometry() runs every frame)
+		const int state = identical ? 1 : 0;
+		if (state != s_lastState)
+		{
+			if (identical)
+			{
+				printf("[WATER_INVPROJ v1] event=parity result=identical\n");
+			}
+			else
+			{
+				printf("[WATER_INVPROJ v1] event=parity result=divergent\n");
+				if (aLeastZ  != bLeastZ)
+					printf("[WATER_INVPROJ v1] event=parity result=divergent field=leastZ a=%.9g b=%.9g\n",
+					       aLeastZ, bLeastZ);
+				if (aMostZ   != bMostZ)
+					printf("[WATER_INVPROJ v1] event=parity result=divergent field=mostZ a=%.9g b=%.9g\n",
+					       aMostZ, bMostZ);
+				if (aLeastW  != bLeastW)
+					printf("[WATER_INVPROJ v1] event=parity result=divergent field=leastW a=%.9g b=%.9g\n",
+					       aLeastW, bLeastW);
+				if (aMostW   != bMostW)
+					printf("[WATER_INVPROJ v1] event=parity result=divergent field=mostW a=%.9g b=%.9g\n",
+					       aMostW, bMostW);
+				if (aLeastWY != bLeastWY)
+					printf("[WATER_INVPROJ v1] event=parity result=divergent field=leastWY a=%.9g b=%.9g\n",
+					       aLeastWY, bLeastWY);
+				if (aMostWY  != bMostWY)
+					printf("[WATER_INVPROJ v1] event=parity result=divergent field=mostWY a=%.9g b=%.9g\n",
+					       aMostWY, bMostWY);
+			}
+			fflush(stdout);
+			s_lastState = state;
+		}
 	}
 
 	eye->setInverseProject(mostZ,leastW,yzRange,ywRange);
