@@ -1606,6 +1606,18 @@ void Terrain::geometry (void)
 	{
 		ZoneScopedN("Terrain::geometry slimReduce");
 		const bool ssOn = SlimSplitOn();  // [SLIMSPLIT v1] latched, loop-local
+		// CULL de-inline: hoist the two loop-invariant cull-cascade bounds
+		// (mission-load constants; written only in init/destroy, never in
+		// geometry() -- grep-verified) and inline the bounds-checked array
+		// writes, restoring the legacy s_vpFast fast-path form (0c8e06b^
+		// :1633-1645; the retirement's own :1520 comment: "inlined ... so the
+		// compiler doesn't gamble on inlining setObjBlockActive"). The slim
+		// re-home regressed to the slow-path setObj*Active member calls
+		// (~40k non-inlined calls/frame == the [SLIMSPLIT v1] CULL bucket).
+		// Byte-identical to Terrain::setObjBlockActive/setObjVertexActive
+		// (terrain.cpp:2042/2056) by construction: same predicate, same store.
+		const long ssNumObjB        = numObjBlocks;
+		const long ssNumActiveVerts = realVerticesMapSide * realVerticesMapSide;
 		VertexPtr rv = vertexList;
 		for (long ri = 0; ri < numberVertices; ++ri, ++rv)
 		{
@@ -1721,8 +1733,15 @@ void Terrain::geometry (void)
 
 			if (rv->clipInfo)				//ONLY set TRUE ones.  Otherwise we just reset the FLAG each vertex!
 			{
-				setObjBlockActive(rv->getBlockNumber(), true);
-				setObjVertexActive(rv->vertexNum,true);
+				// De-inlined == Terrain::setObjBlockActive/setObjVertexActive
+				// (terrain.cpp:2042/:2056) verbatim: same bounds predicate,
+				// same store, active==true folded. Legacy s_vpFast form.
+				const long blockNum = rv->getBlockNumber();
+				if ((blockNum >= 0) && (blockNum < ssNumObjB))
+					objBlockInfo[blockNum].active = true;
+				const long vertNum = rv->vertexNum;
+				if ((vertNum >= 0) && (vertNum < ssNumActiveVerts))
+					objVertexActive[vertNum] = true;
 				// Approach A (lag-free collect): rv->vertexNum is the same
 				// map-stable vertexNum space as the recipe index / RecipeFor-
 				// VertexNum.  Appending every cull-active vertexNum is a
