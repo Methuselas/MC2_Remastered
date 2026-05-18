@@ -1973,3 +1973,287 @@ sibling-helper dependency is recorded as CP-3, an explicit Plan 2 sequencing pre
 interface-authority reference. Stage 0 is not blocked.
 
 No new OPEN blockers from this task.
+
+---
+
+## Stage 0 Design Delta (net changes to the spec)
+
+Date: 2026-05-18
+Scope: enumerates every net change the Stage 0 resolutions (Blockers 1-5, HC-1
+discharge, parity record, sibling coordination) and the BOUNDARY-PROOF impose on
+the approved spec (2026-05-17-static-decorative-elimination-design.md).
+This section is the input to the adversarial review gate.
+
+---
+
+### Delta 1: HC-1..HC-4 hard constraints (reference: Blocker 1)
+
+The Stage 0 investigation established four constraints that govern the mechanism:
+
+- HC-1 (save descoped by construction): the on-disk save format is byte-unchanged.
+  objBlockInfo is never read by Save(); Load() rebuilds it but does not alter
+  the on-disk bytes. This descopes savegame format risk entirely.
+- HC-2 (sever at objBlockInfo, not objList): decoratives are excluded from the
+  per-block field counts (numObjects, numCollidableObjects) using an effective-count
+  approach; objList slot assignments and terrainObjects[] entries are untouched.
+- HC-3 (elimination = per-frame cost, not existence): decoratives remain valid,
+  resolvable objects in objList and terrainObjects[] for the full mission lifetime.
+  On-demand resolution (ABL, collision hit dispatch, mouse pick) is allowed; only
+  per-frame iteration via objBlockInfo ranges is severed.
+- HC-4 (all per-frame objBlockInfo walks covered by one severance): all eight
+  per-frame consumer sites (render, renderShadows, update, updateAppearancesOnly,
+  BattleMech/GroundVehicle collision, Artillery, Carnage) route through
+  getObjBlock* accessors that read Terrain::objBlockInfo[] fields directly. A
+  single change to those fields propagates to all consumers; no per-consumer
+  patch is required.
+
+---
+
+### Delta 2: Mechanism change -- spec Approach A superseded (reference: Blocker 1)
+
+The approved spec (Section 3, Approach A) stated "remove decoratives from
+objList/objBlockInfo working set." Stage 0 investigation established that
+physical removal from objList would require reordering slot assignments and is
+incompatible with HC-1 (slot identity is serialized). The mechanism is therefore
+superseded:
+
+Superseded: remove decoratives from objList and compact block ranges.
+Adopted: exclude decoratives from objBlockInfo block-range counts via an
+  effective-count reduction (numObjects and numCollidableObjects reduced for
+  blocks containing decoratives); objList slot identity and terrainObjects[]
+  entries remain untouched for the full mission lifetime. Per HC-3, decoratives
+  are still resolvable on demand for any non-per-frame caller.
+
+Trees (TREE/TERRAINOBJECT) remain in terrainObjects[] and objList at their
+original slot assignments per HC-3 (Blocker 2). This dissolves the old framing
+that "generic lookup must not materialize a severed decorative" -- on-demand
+resolution of a decorative is allowed by design; the prohibition is restricted
+to re-introduction of per-frame iteration over decoratives.
+
+---
+
+### Delta 3: Boundary proof -- four hard blockers and their dispositions
+(reference: BOUNDARY-PROOF.md, Blocker 2)
+
+The BOUNDARY-PROOF document identified four CAN-REACH-UNCOVERED hard blockers
+under the old (objList-removal) framing. Under the HC-2/HC-3 mechanism adopted
+in Stage 0, each is dispositioned:
+
+- HARD BLOCKER #1 (render/update, Class 1): resolved by HC-2 objBlockInfo
+  effective-count severance (Blocker 1). Render/renderShadows/update/
+  updateAppearancesOnly iterate numObjects/numCollidableObjects via
+  getObjBlock* accessors; reducing those counts to exclude decoratives
+  eliminates their reach. Object still exists in objList at original slot (HC-3).
+
+- HARD BLOCKER #2 (collision, Class 2): resolved by HC-2 severance (numCollidables
+  reduced) plus the MANDATORY dedicated DecorativeCollisionProxy (Blocker 3). The
+  per-frame mech/gvehicl/artlry/carnage collision walks no longer reach decoratives
+  via objBlockInfo; the proxy provides the collision service as a replacement.
+
+- HARD BLOCKER #3 (script triggers / findByPartId, Class 4): dissolved by HC-3.
+  ABL getObject (findByPartId) and ABL getTerrainObject() callers are event-sourced
+  (non-per-frame); they are allowed to resolve a decorative because the decorative
+  is still in objList and terrainObjects[]. The per-frame camera-lock findByPartId
+  path (gamecam.cpp:550 -> getCamObject -> findByPartId) is a pre-existing,
+  non-decorative-specific O(N) linear scan that is out of scope for this slice --
+  it neither re-introduces per-frame iteration over decoratives nor targets them
+  as a class. Recorded as candidate future work, not a blocker.
+
+- HARD BLOCKER #4 (save/load, Class 6): dissolved by HC-1 and HC-3. Save iterates
+  objList and writes decoratives normally; disk format unchanged. Load rebuilds
+  objBlockInfo (raises OB-1 -- see Delta 8). Under HC-3, decoratives being in
+  objList at save time is the intended behavior. No new blocker for save semantics.
+
+---
+
+### Delta 4: Collision -- dedicated proxy is MANDATORY (reference: Blocker 3)
+
+The spec (Section 10, Blocker 3) allowed either reuse of the existing collidable-
+prefix index or a dedicated proxy. Stage 0 investigation disqualified reuse: the
+collidable-prefix structure IS Terrain::objBlockInfo (terrain.h:102-108); using
+it post-severance would re-read the exact fields HC-2 severs, re-introducing the
+forbidden per-frame decorative walk via a different code path.
+
+MANDATORY OUTCOME: a dedicated DecorativeCollisionProxy is required. Four
+collision callsites must be repointed:
+
+- code/mech.cpp:1115-1140 (BattleMech::handleStaticCollision)
+- code/gvehicl.cpp:800-825 (GroundVehicle::handleStaticCollision)
+- code/artlry.cpp:737-757 (Artillery::handleStaticCollision inner block loop)
+- code/carnage.cpp:527-544 (Carnage::handleStaticCollision inner block loop)
+
+Each callsite adds a proxy query (getBlock(blockNumber), filter tangible entries,
+resolve via ObjectManager->get(handle), call detectStaticCollision) as a second
+pass after the existing objBlockInfo range loop. The HC-2 severance removes
+decoratives from both numCollidableObjects (for mech/gvehicl) and numObjects
+(for artlry/carnage); the proxy is the sole replacement collision source. No
+other collision caller was found that independently iterates terrain objects by
+block range.
+
+---
+
+### Delta 5: Shadow -- verdict BUILD-FIRST (reference: Blocker 4)
+
+The plan-write claim that the static shadow map was "not implemented in
+GameOS/gameos/" was refuted by Stage 0 investigation. The FBO (shadowFBO_,
+4096x4096 GL_DEPTH_COMPONENT32F), the world-fixed ortho matrix
+(staticLightSpaceMatrix_), and the consumer chain (calcShadow() in
+shadow.hglsl, tex unit 9) all exist and are operational.
+
+HOWEVER, the Shadow.StaticAccum loop (txmmgr.cpp:1556-1581) filters exclusively
+for MC2_DRAWSOLID | MC2_ISTERRAIN and submits only via
+gos_DrawShadowBatchTessellated (terrain-specific vertex arrays). No path exists
+to submit a decorative TG_Shape mesh (vb/ib/vdecl) into the static shadow map.
+This entry point must be built (CP-2).
+
+Verdict: BUILD-FIRST -- FBO/matrix/consumer chain EXISTS; decorative-mesh
+static-caster submission path DOES NOT EXIST and must be built before the
+decorative shadow bake can be wired.
+
+In-scope (TREE/TERRAINOBJECT) shadow regression risk: NONE. Both proof routes
+confirm trees cast no shadow today -- TreeAppearance::renderShadows() is a
+complete no-op under tessellation (bdactor.cpp:4703-4707), and SetAlphaTest(true)
+(bdactor.cpp:3627,3650,3669) excludes all tree TG_Shapes from
+eligibleForDynamicShadow (tgl.cpp:3057-3059). Shadow bake is therefore additive
+with no regression risk for the in-scope set.
+
+Out-of-scope follow-on regression risk (buildings): BldgAppearance has no
+SetAlphaTest(true) anywhere in bdactor.cpp; opaque decorative buildings DO
+satisfy eligibleForDynamicShadow and currently cast a real dynamic shadow via
+Route B. Any future follow-on slice that severs building shapes from the
+per-frame render path MUST treat shadow severance as a regression risk, not
+additive. This is recorded as a known follow-on obligation; it does not affect
+this slice.
+
+---
+
+### Delta 6: Same-frame deregister -- ordering constraint OC-1 (reference: Blocker 5)
+
+The spec (Section 10, Blocker 5) required a defined sequence to prevent a
+one-frame double-tree or no-tree. Stage 0 investigation established the
+structural guarantee:
+
+The game main loop (gameosmain.cpp) runs Phase A (DoGameLogic, which contains
+ObjectManager->updateCollisions()) entirely before Phase B (draw_screen, which
+contains ObjectManager->render(), flush(), and compute_dispatch()). This
+ordering is structural: gameosmain.cpp:1025 before :1042.
+
+OC-1 (ordering constraint, Plan 2 must enforce): deregister(handle) must fire
+at terrobj.cpp:393 (the same callsite as setTangible(false), in Phase A) and
+must write the SSBO liveness tombstone and re-admit the object to the dynamic
+objBlockInfo range before Phase B begins. This is satisfied by construction
+when deregister is placed at that callsite. The SSBO visibility mechanism
+(persistent-mapped BAR write per Option A, or glBufferSubData + GL_SHADER_
+STORAGE_BARRIER_BIT per Option B) is a Plan 2 implementation choice; the
+Phase A / Phase B ordering guarantee holds under both options.
+
+Never-both and never-neither are guaranteed: the tombstone is written in Phase A
+and visible to all of Phase B; the re-admitted dynamic fall object is rendered in
+Phase B; the static indirect draw skips the tombstoned instance in the same
+Phase B. Exactly one representation appears on screen on the hit frame.
+
+---
+
+### Delta 7: Parity gate -- canonical DecorParityRecord fully specified
+(reference: Parity record + sibling-helper coordination section)
+
+The spec (Section 8) required a "canonical packed parity record" with field list
+and packing fixed. Stage 0 produced the full specification:
+
+Primary ship gate: decoratives_seen_in_objmgr_loop == 0 over a full tier1 run,
+combined with dual-output bit-identity parity (zero mismatch over tier1
+round-robin sampling). The logic counter is contamination-immune; Tracy timing
+numbers are supporting evidence only.
+
+Canonical record: struct DecorParityRecord, 144 bytes (9 x 16), alignas(16).
+Fields: modelMatrix[16] (64 B), fogRGB[3] + pad (16 B), aRGBHighlight[4] (16 B),
+lightDataIndex + 3 x pad (16 B), worldAabbMin[3] + pad (16 B), worldAabbMax[3]
++ pad (16 B). All padding fields zeroed via memset before any field assignment.
+lightDataIndex is taken post-flush-patch on both comparison sides, not from
+the buildRecipeFromShape sentinel (0xFFFFFFFFu). Full field-by-field source
+mapping is documented in the parity section above.
+
+Tracy baseline (supporting evidence only, not the ship gate): mean 1.53 ms,
+P99.9 6.62 ms for the GameLogic.Units.TerrainObjects bucket. The fat upper tail
+is consistent with needsFullBakeNextFrame/camera-move re-bake bursts identified
+in the spec; it is NOT the pass criterion.
+
+Three Plan 2 grep-to-confirm items remain (bounded, not TBDs blocking Stage 0):
+per-leaf tight bounding radius source for worldAabbMin/Max; flags field inclusion
+decision; fogRGB[3] w-component invariance for decoratives.
+
+---
+
+### Delta 8: Plan 2 sequencing preconditions -- consolidated list
+
+The following preconditions are load-bearing for Plan 2. Plan 2 (Stages 1-6)
+MUST NOT start until each is addressed.
+
+- OB-1 (re-run severance + proxy rebuild after GameObjectManager::Load):
+  GameObjectManager::Load (objmgr.cpp:3460-3586) rebuilds objBlockInfo from
+  saved data.blockNumber per object, restoring the pre-severance layout. A
+  single shared (severance + proxy-rebuild) function must be called at both
+  initial mission load and immediately after Load completes. OB-1 now also
+  covers proxy rebuild: fallen-tree tangible flags must be restored from the
+  loaded per-object state after Load, not just at initial load.
+
+- OC-1 (deregister at terrobj.cpp:393, liveness write GPU-visible before
+  compute_dispatch): StaticDecorativeSet::deregister(handle) must fire at
+  terrobj.cpp:393 in Phase A and use a GPU-visibility mechanism (Option A:
+  persistent-mapped BAR write, or Option B: glBufferSubData + GL_SHADER_
+  STORAGE_BARRIER_BIT before compute_dispatch at txmmgr.cpp:1778) that ensures
+  the tombstone is observed by the Phase B cull-compute.
+
+- CP-1 (per-mission static shadow reset): s_terrainShadowPrimed (txmmgr.cpp:1510)
+  and staticLightMatrixBuilt_ are process-scoped statics that do not reset between
+  missions. Before Plan 2 wires the decorative shadow bake, confirm or add a
+  per-mission hook that calls gos_RequestFullShadowRebuild() and resets
+  staticLightMatrixBuilt_ so the bake fires correctly on every mission in a
+  multi-mission process run. Discharge at Plan 2 time by grepping
+  gos_RequestFullShadowRebuild callers in code/*.cpp and mclib/*.cpp.
+
+- CP-2 (build decorative-mesh static-caster submission path): the
+  Shadow.StaticAccum loop submits only terrain patches via
+  gos_DrawShadowBatchTessellated (terrain vertex arrays). A new submission entry
+  point accepting TG_Shape vb/ib/vdecl into the static shadowFBO_ (not
+  dynShadowFBO_) must be built before the decorative shadow bake can be wired.
+  This is a BUILD-FIRST infrastructure item; the existing FBO/matrix/consumer
+  chain is reusable but the write path does not exist.
+
+- CP-3 (sibling substrate_writeRecord must exist or be merged before wiring
+  fallback path): under MC2_STATIC_DECOR_GPU=0 (legacy killswitch) and under
+  bake-failure fallback, decoratives re-entering the legacy CPU path must flow
+  through substrate_writeRecord (the single-choke-point obligation per spec
+  Section 11). substrate_writeRecord exists in the sibling worktree
+  (gpu-driven-rendering, gpu_cull_substrate.cpp:223) but is absent in this
+  worktree (nifty-mendeleev). Plan 2 must merge or re-implement it before
+  wiring the fallback/legacy path. No parallel counter path may be introduced.
+
+---
+
+### Delta 9: Scope reductions vs original spec
+
+These scope items were already stated in the approved spec (Section 2) and are
+confirmed unchanged:
+
+- Buildings (140), turrets (26), gates: out of scope; they have load-bearing
+  per-frame logic and are decomposed to a follow-on spec. Unchanged.
+- 18 unregistered objects (buildings skip=12, turrets skip=6): out of scope;
+  they were never eliminated and must be excluded from the zero-counter
+  denominator or reported separately to avoid fake regressions. Unchanged.
+
+New scope item established by Stage 0 (not in original spec):
+
+- Decorative building shadows: a follow-on regression risk. Buildings cast real
+  dynamic shadow today via eligibleForDynamicShadow (Route B). Any follow-on
+  slice severing building shapes from the per-frame render path must treat
+  shadow severance as a regression risk, not additive. This is explicitly
+  recorded here as a known follow-on obligation; it does not affect this slice's
+  in-scope TREE/TERRAINOBJECT no-regression conclusion.
+
+---
+
+### Stage 0 status
+
+PASS with the above deltas and the OB-1/OC-1/CP-1/CP-2/CP-3 preconditions
+carried to Plan 2; no unresolved Stage-0 OPEN blocker.
