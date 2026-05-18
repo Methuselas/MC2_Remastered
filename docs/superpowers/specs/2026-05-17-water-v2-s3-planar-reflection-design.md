@@ -3,7 +3,17 @@
 **Date:** 2026-05-17
 **Branch:** `claude/water-material-v1` (isolated; keep-as-is)
 **Parent:** `2026-05-17-water-v2-scope-and-decomposition.md` (Section 3 ruling)
-**Status:** BLOCKED by opus adversarial (2026-05-17). Spec premise false vs code: ComputeDispatch() mutates global ring/fence state (Fix-A/B), single shared g_indirectCmdBuffer already consumed by primary terrain MDI, reflected view needs own cull/window. Real S3 = dedicated reflection thin-SSBO+cmdbuf + parameterized compute (extracted from ring machinery) + decided cull + viewport/shadow reconcile. Needs terrain-indirect-expert + user scope decision. NOT plan-ready as written.
+**Status:** DEAD / SUPERSEDED (2026-05-17). BLOCKED x2 by dual adversarial:
+ComputeDispatch() mutates global ring/fence state (Fix-A/B), single shared
+g_indirectCmdBuffer already consumed by primary terrain MDI, reflected view
+needs own cull/window, unconditional g_dispatchMvp16 overwrite re-breaks the
+water 1-frame-lag fix. The active S3 is now the pure-FS reflected-ray
+colormap reflection (Option C):
+`2026-05-17-water-v2-s3-fs-colormap-reflection-design.md`. This document is
+retained ONLY as the historical record of why the in-pipeline second-dispatch
+approach is dead and why the dedicated low-rate offscreen render (Option B in
+the new spec) is the deferred fidelity upgrade - NOT a revival of the design
+below. Do not implement anything in this file.
 **Grounding:** code-grounded feasibility map (render-expert + terrain-indirect-expert,
 2026-05-17) - all design choices below trace to grep-verified findings.
 
