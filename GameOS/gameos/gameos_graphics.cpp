@@ -43,6 +43,14 @@ class gosFont;
 // to avoid pulling in mclib headers gameos_graphics.cpp doesn't already use.
 extern int g_terrainMaterialProfile;
 
+// Fix B: forward-declared TU-wide so the symmetric-mirror at the GPU-water
+// binds in renderWaterFastPath (earlier in this file than the historical
+// probe-accessor block) can see them. Linkage matches definitions:
+// gos_terrain_indirect_getDispatchMvp16 is extern "C" (gos_terrain_indirect.cpp);
+// gos_GetTerrainMVPMat4 is C++ linkage (defined later in this file).
+extern "C" const float* gos_terrain_indirect_getDispatchMvp16();
+extern const float*     gos_GetTerrainMVPMat4();
+
 static const DWORD INVALID_TEXTURE_ID = 0;
 
 static gosRenderer* g_gos_renderer = NULL;
@@ -2538,9 +2546,9 @@ void gosRenderer::renderWaterFastPath(
 extern "C" uint32_t gos_terrain_indirect_getDispatchMvpFp();
 extern "C" uint64_t gos_terrain_indirect_getDispatchMvpFrameIdx();
 extern "C" void     gos_terrain_indirect_getDispatchMvpFloats4(float out[4]);
-// Fix B: full 4x4 dispatch MVP used by water + overlay symmetric-mirror.
-extern "C" const float* gos_terrain_indirect_getDispatchMvp16();
-extern const float* gos_GetTerrainMVPMat4();
+// gos_terrain_indirect_getDispatchMvp16 and gos_GetTerrainMVPMat4 are declared
+// TU-wide near the top of this file (after g_terrainMaterialProfile) so that
+// renderWaterFastPath (which precedes this block) can see them.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Terrain indirect draw bridge (Stage 3 of indirect-terrain SOLID PR1)
