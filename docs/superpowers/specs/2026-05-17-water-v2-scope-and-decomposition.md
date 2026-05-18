@@ -63,11 +63,42 @@ documented ownership - do not fold into a water-v2 material slice.
 
 ---
 
-## 3. Active slice
+## 3. LOAD-BEARING design ruling (user, 2026-05-17) - reshapes the backlog
 
-**S1 - Living surface.** Spec: `2026-05-17-water-v2-s1-living-surface-design.md`.
-Goal: continuous-world-space animated wave normal (no tile seams), driving the
-already-wired Fresnel + specular, restoring surface life lost when v1 shipped
-flat - camera-stable, zero new per-frame CPU, pure hot-reloadable FS edit,
-reactivating the documented v1 seam (`NORMAL_STRENGTH` + the procedural-wave
-block) but sourced from `WorldPos.xy` instead of `Texcoord`.
+> MC2 has **no real sun "for now"**, so the fake Fresnel/specular sky terms
+> are removed. The water base is **100% camera-independent** (`f(WorldPos,
+> time)` only). The **ONLY** legitimate camera-dependent term in the entire
+> water material is **S3 terrain planar reflection**. Any future camera-
+> dependent code in water MUST be terrain reflection (S3) and nothing else.
+
+This is a named contract: "water-base-is-camera-independent; S3-reflection-is-
+the-sole-camera-dependent-term." It supersedes S1 rev2's Fresnel/sine approach
+(`SKY_TINT`/`fres`/`spec` deleted from the shader, commit `8ee5d12`).
+
+## 4. Status and re-prioritised plan (post-ruling)
+
+- **S1 - DONE** (`8ee5d12`, user-approved "beautiful"). As-built: BAR-style
+  dual counter-scroll fBm value-noise, fully camera-independent, brighten-only
+  crest + near-white additive glint, seam-free, precision-safe, pure FS. The
+  S1 spec's rev2 design (continuous-coord sine + Fresnel) is superseded; the
+  commit `8ee5d12` message + this doc are the authoritative as-built record.
+- **S4 - DONE (subsumed by S1).** The legacy `o_isWater==2` tiled detail stays
+  suppressed; S1's procedural surface is the replacement. No separate slice.
+- **S3 - GPU-driven planar terrain reflection = THE active slice ("the rest").**
+  Explicitly user-wanted (the ruling: terrain reflection is the one thing that
+  should be camera-dependent). Largest scope; must be GPU-driven (re-issue the
+  existing indirect terrain dispatch into a quarter-res reflection FBO with a
+  reflected MVP - the original spec's CPU re-render is rejected per north-star).
+  Spec: `2026-05-17-water-v2-s3-planar-reflection-design.md` (next).
+- **S2 - screen-space refraction: DEPRIORITISED / reassess.** Not user-
+  requested; the absorption water reads acceptably opaque; refraction
+  reintroduces the v1-rev1 scene-color feedback-loop hazard for marginal gain
+  and is mildly view-dependent (tension with the ruling). Park unless the user
+  asks; not scheduled ahead of S3.
+- **S5 - WaterStyle UBO: demand-gated**, unchanged (only when per-biome/mod
+  config is actually wanted).
+
+Discipline per slice unchanged: spec -> 2 adversarials (opus|sonnet,
+adversarial-plan-review skill) -> plan -> subagent execute -> isolated
+`mc2-win64-water` build/deploy -> kill-aware `mc2_01` marker-gated smoke ->
+user visual tuning.

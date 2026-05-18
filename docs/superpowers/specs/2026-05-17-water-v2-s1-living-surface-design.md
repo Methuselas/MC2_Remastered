@@ -1,4 +1,8 @@
 # Water v2 - Slice S1: Living Surface (continuous-space animated normal)
+n> SUPERSEDED BY AS-BUILT (2026-05-17): the rev2 sine+Fresnel design below was
+> replaced via the user visual loop with a camera-independent dual-counter-
+> scroll fBm surface. Authoritative as-built = commit 8ee5d12 + the v2-scope
+> doc Section 3-4 (camera-independence ruling). Kept for review history.
 
 **Date:** 2026-05-17
 **Branch:** `claude/water-material-v1` (isolated; keep-as-is)
