@@ -40,27 +40,9 @@ uniform PREC vec4 cameraPos;      // water-v1: MC2 world-space camera (Fresnel)
 const vec3  SHALLOW_COLOR      = vec3(0.22, 0.45, 0.38);  // user-approved teal (keep)
 const vec3  DEEP_COLOR         = vec3(0.03, 0.13, 0.20);  // dark blue, NOT black
 const float ABSORPTION_DENSITY = 0.022;  // 1/world-units (Beer-Lambert k; ~45u e-fold over 0..150)
-const float SHORE_BLEND_DEPTH  = 7.0;    // world-units to full opacity (widened 3->7 for a SOFTER edge; tune by eye - larger = broader shallow fade)
+const float SHORE_BLEND_DEPTH  = 3.0;    // world-units to full opacity
 const float WATER_MAX_ALPHA    = 0.87;   // mild transparency: deep water never 100% opaque (lakebed shows through). 1.0 = old opaque slab; lower = more see-through. f(depth) only - camera-indep
 const float SKY_AMBIENT        = 0.18;   // brightness floor (camera-independent)
-// --- BAR-style procedural shoreline: foam/surf band + soft wavy edge.
-//     Camera-INDEPENDENT: f(WaterThickness, nz=f(WorldPos,time), distance).
-//     Pure-FS, hot-reloadable; all values tune-by-eye. ---
-const float FOAM_DEPTH_MIN   = 0.0;   // world-u: full foam at/under this depth
-const float FOAM_DEPTH_MAX   = 8.0;   // world-u: foam gone beyond this depth (surf-band width; 6->8 for visibility)
-const float FOAM_NOISE_AMP   = 2.5;   // world-u: nz perturbs the band edge -> irregular + moving (not a clean ring)
-// Dedicated HIGH-FREQUENCY foam froth (independent of the big-wave nz which
-// is WAVE_FREQ=0.030 = low-freq -> a blurry wash). ~6x finer = crisp surf.
-const float FOAM_FREQ        = 0.18;  // 1/world-u froth detail (vs WAVE_FREQ 0.030); higher = finer
-const float FOAM_DRIFT       = 3.0;   // world-u/sec froth scroll (gentle)
-const float FOAM_TEX_LO      = 0.35;  // froth contrast window lo (fbm3 ~0.44 mean) -> sharpen to flecks
-const float FOAM_TEX_HI      = 0.75;  // froth contrast window hi
-const float FOAM_TEX_FLOOR   = 0.25;  // min foam within the band (continuity); high-freq froth adds bright detail on top
-const float FOAM_INTENSITY   = 1.00;  // white blend strength at waterline (BOLD; dial DOWN by eye if too much)
-const vec3  FOAM_COLOR       = vec3(0.90, 0.95, 0.96);  // near-white, faint cool blue-green surf
-const float FOAM_ALPHA_BOOST = 0.90;  // foam is NOT see-through: near-opaque surf
-const float EDGE_FADE_DEPTH  = 1.5;   // world-u: outer alpha dissolve so the contact is a soft blend, not a hard opaque cliff at the kill boundary
-const float SHORE_NOISE_AMP  = 5.0;   // world-u: nz perturbs the kill/feather boundary -> wavy coastline (1.5 was too subtle; 5 = pronounced)
 // --- camera-INDEPENDENT procedural water detail (BAR-style: 2 fBm layers,
 //     OPPOSITE scroll dirs -> organic churn, no grid). f(WorldPos,time) only. ---
 const float WAVE_FREQ   = 0.030;   // 1/world-u; lower = bigger waves, visible at zoom-out
@@ -124,12 +106,8 @@ void main(void)
         PREC float trans    = exp(-WaterThickness * ABSORPTION_DENSITY);  // 1 at shore -> 0 deep
         PREC vec3  waterCol = mix(DEEP_COLOR, SHALLOW_COLOR, trans);
 
-        // Soft + WAVY edge: perturb the feather/kill boundary by the existing
-        // nz fBm so the waterline is an irregular coastline, not the faceted
-        // water-quad polygon silhouette. Camera-INDEPENDENT (nz=f(WorldPos,time)).
-        PREC float wtShore = WaterThickness + nz * SHORE_NOISE_AMP;
-        PREC float shore = smoothstep(0.0, SHORE_BLEND_DEPTH, wtShore);
-        if (shore <= 0.0) discard;            // kill land-quad overdraw (now wavy, not pointy)
+        PREC float shore = smoothstep(0.0, SHORE_BLEND_DEPTH, WaterThickness);
+        if (shore <= 0.0) discard;            // kill invisible land-quad overdraw
 
         PREC vec3  vertexLightRGB = Color.bgra.rgb;  // VS packs .bgra; un-swizzle (camera-indep)
         PREC vec3  col = waterCol * max(vertexLightRGB, vec3(SKY_AMBIENT))
@@ -177,35 +155,7 @@ void main(void)
                       clamp(fres * REFL_STRENGTH * waveLOD, 0.0, REFL_MAX));
         }
 
-        // BAR-style procedural foam/surf band (camera-INDEPENDENT). Foam fills
-        // a shallow depth band whose edge is perturbed AND animated by the
-        // existing nz fBm (-> irregular, gently moving surf, not a clean ring);
-        // nz also breaks it into froth patches; waveLOD distance-fades it so it
-        // does not alias when zoomed out. Foam is opaque-ish (surf is froth,
-        // not see-through) so it adds to alpha.
-        PREC float foamBand  = smoothstep(FOAM_DEPTH_MAX, FOAM_DEPTH_MIN,
-                                          WaterThickness + nz * FOAM_NOISE_AMP);
-        // Dedicated HIGH-FREQUENCY froth (NOT the low-freq big-wave nz, which
-        // read as a blurry wash). fbm3 ~0..0.875; sharpen to flecks. At
-        // distance blend the froth detail toward mean so it does not stair-
-        // step on the heightmap grid (kills the far-away pixel lines).
-        // Camera-INDEPENDENT: f(WorldPos, time, distance).
-        PREC float fsc   = time * FOAM_DRIFT * FOAM_FREQ;
-        PREC float foamN = fbm3(WorldPos.xy * FOAM_FREQ + vec2(0.7, -0.4) * fsc);
-        foamN = smoothstep(FOAM_TEX_LO, FOAM_TEX_HI, foamN);
-        foamN = mix(0.5, foamN, waveLOD);
-        PREC float foam = clamp(foamBand
-                                * (FOAM_TEX_FLOOR + (1.0 - FOAM_TEX_FLOOR) * foamN)
-                                * FOAM_INTENSITY * waveLOD, 0.0, 1.0);
-        col = mix(col, FOAM_COLOR, foam);
-        // Outer alpha dissolve: the last EDGE_FADE_DEPTH of water before the
-        // kill boundary fades translucent so the contact is a soft blend, not
-        // a hard opaque white cliff. Camera-INDEPENDENT (wtShore=f(depth,nz)).
-        PREC float edgeFade = smoothstep(0.0, EDGE_FADE_DEPTH, wtShore);
-        PREC float wAlpha = clamp((shore * WATER_MAX_ALPHA
-                                   + foam * FOAM_ALPHA_BOOST) * edgeFade,
-                                  0.0, 1.0);
-        FragColor = vec4(col, wAlpha);  // shore + high-freq foam + soft edge dissolve
+        FragColor = vec4(col, shore * WATER_MAX_ALPHA);  // shore ramp preserved; capped so deep water is mildly transparent
         GBuffer1  = rc_gbuffer1_screenShadowEligible(vec3(0.0, 0.0, 1.0));
         return;
     }
