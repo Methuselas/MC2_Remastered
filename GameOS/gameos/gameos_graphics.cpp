@@ -2329,6 +2329,18 @@ void gosRenderer::renderWaterFastPath(
         GLuint reflTexHandle = gos_terrain_indirect_getAtlasGLTex();
         int    reflOn = (gos_terrain_indirect::IsFrameSolidArmed()
                          && reflTexHandle != 0) ? 1 : 0;
+        { static const bool s_reflTrace = (getenv("MC2_WATER_REFL_TRACE") != nullptr); if (s_reflTrace) {
+            static int s_lastReflOn = -1;            // edge-detect latch (renderWaterFastPath runs every frame)
+            if (reflOn != s_lastReflOn) {
+                const char* reason =
+                    !gos_terrain_indirect::IsFrameSolidArmed() ? "solid0" :
+                    (reflTexHandle == 0)                        ? "atlas0" : "on";
+                printf("[WATER_REFL v1] event=state reflectionOn=%d atlas=%u reason=%s\n",
+                       reflOn, (unsigned)reflTexHandle, reason);
+                fflush(stdout);
+                s_lastReflOn = reflOn;
+            }
+        } }
         setMI         ("reflectionOn",          reflOn);
         setMI         ("reflTex",               2);
         setMF         ("atlasMapTopLeftX",       gos_terrain_indirect_getAtlasMapTopLeftX());
