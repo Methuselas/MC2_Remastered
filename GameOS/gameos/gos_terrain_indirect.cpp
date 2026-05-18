@@ -193,10 +193,18 @@ bool IsMineEnabled() {
 }
 
 // PR2b Stage 0b — env-gate readers.
+// 2026-05-17 Stage-6 default-ON flip (drawPass-retirement campaign endpoint):
+// the Slice-A decal static-bake + Slice-B drawPass-skip are substitutively
+// proven (drawPass self-time ~1.7ms -> ~20us armed, total frame dropped) and
+// raster-sheet-fixed + user-visual-confirmed. Mirror IsMineEnabled() EXACTLY:
+// literal "0" opts out (bisection / code-proof fallback escape hatch), any
+// other value INCLUDING UNSET opts in. Stock play now gets the retirement;
+// `MC2_TERRAIN_INDIRECT_OVERLAY=0` is the built-in revert.
 bool IsOverlayEnabled() {
     static const bool s = []() {
         const char* v = getenv("MC2_TERRAIN_INDIRECT_OVERLAY");
-        return v && v[0] == '1' && v[1] == '\0';
+        if (v && v[0] == '0' && v[1] == '\0') return false;
+        return true;
     }();
     return s;
 }
@@ -216,9 +224,11 @@ bool IsOverlayParityCheckEnabled() {
 // internally, so there is no readiness gate here (same bootstrap-cycle
 // reasoning as the IsFrameMineArmed comment further down).
 //
-// MC2_TERRAIN_INDIRECT_OVERLAY default OFF (IsOverlayEnabled requires "=1"):
-// unset => IsFrameOverlayArmed()==false => M2d per-quad emit runs unchanged,
-// the static bake stays inert. ZERO behavior change until the env is flipped.
+// MC2_TERRAIN_INDIRECT_OVERLAY default ON since the 2026-05-17 Stage-6 flip
+// (IsOverlayEnabled: only literal "0" opts out): unset => IsFrameOverlay
+// Armed()==true => Slice-A decal static-bake is the producer and Slice-B
+// skips the drawPass per-quad loop. `MC2_TERRAIN_INDIRECT_OVERLAY=0` reverts
+// to the legacy M2d per-quad emit (the code-proof fallback).
 bool IsFrameOverlayArmed() { return IsOverlayEnabled(); }
 
 // IsFrameMineArmed is defined further down (after Stage 1c's

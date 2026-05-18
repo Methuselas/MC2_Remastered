@@ -12,8 +12,8 @@ Directional commitments. Every modernization slice should ladder up to at least 
 
 The engine started CPU-bound. Frame-budget reduction is the central performance goal.
 
-- **Measurable in:** Tracy CPU-frame budget at wolfman zoom. Current baseline and target tracked in `docs/render-perf-snapshot.md`. As of 2026-05-08: ~9.5ms wolfman; near-term target ~4.5ms per the orchestrator playbook.
-- **Direction:** at every CPU-vs-GPU fork, choose GPU. Methodology in `.claude/agents/mc2-cpu-gpu-offload-expert.md`. The shipped Track A/B/C/D slices are reference precedents for the recon -> design -> stage -> soak -> default-on flip pattern.
+- **Measurable in:** Tracy CPU-frame budget at wolfman zoom - the metric is named-CPU-zone disappearance from a fresh capture, NOT offload coverage. Current baseline and target tracked in `docs/render-perf-snapshot.md`. As of 2026-05-08: ~9.5ms wolfman; near-term target ~4.5ms per the orchestrator playbook.
+- **Direction:** at every CPU-vs-GPU fork, choose GPU - but offload must be SUBSTITUTIVE, not additive. A slice is not done until the CPU original zone is gated/deleted AND its live consumers are repointed, proven by that Tracy zone going to ~0 in a fresh capture. Adding a GPU path while the CPU original still runs is a failed slice that looks shipped: it adds feed-the-GPU bookkeeping (hashing, rings, fences, state brackets) with zero CPU recovery. The 2026-05-16 finding: a 2-week GPU-driven campaign netted ~0ms because every slice was additive. Full rule + case study: `memory/feedback_offload_must_be_substitutive_not_additive.md`. The minePass `IsFrameMineArmed()` gate is the reference precedent for a correct substitutive retirement; the Track A/B/C/D slices are recon -> design -> stage -> soak -> default-on precedents. Methodology in `.claude/agents/mc2-cpu-gpu-offload-expert.md`.
 - **Adversarial review required** for any new "all callers must X" contract introduced by a slice. See `.claude/skills/adversarial-plan-review.md`.
 
 ### 2. Fully exploit modern OpenGL features
@@ -49,6 +49,8 @@ This principle MAKES the structure axis (north star 3) achievable. Declaring "we
 Read together they shape every architectural decision. The canonical example: the black-tree-bug (resolved 2026-05-05) lived in the unnamed gap between `update()` and `render()`; once the producer/consumer contract was named (the `cachedFrame_` stamp), the bug couldn't recur.
 
 **Change discipline (the WHEN governor, not a 4th axis):** the triad defines WHAT "modern" means; `memory/minimal_touch_modern_when_touched.md` defines WHEN to apply it - at the forced-touch moment, not preemptively, not never. Don't touch what you don't have to (every touch has blast radius); when you must touch, bring it to the modern standard. Aggressive in direction, minimal in footprint-per-change. Standalone "cleanup" slices require a blocking or non-linear-debt justification (e.g. the dual-queue retirement).
+
+**Substitution discipline (the DONE governor on north star 1):** offload is scored by CPU-zone-death, never by offload coverage. Companion to the WHEN governor: WHEN says touch minimally; SUBSTITUTION says when you do offload, the CPU original must die and its consumers be repointed in the same slice, or the slice is net-negative (GPU goes idle while CPU keeps the old work plus new feed-the-GPU overhead). The landmine-protected consumer-repoint IS the deliverable, not the thing that triggers a revert. The render-path floor is ~5-6ms (light map) / ~8-10ms (static-heavy); below that is genuine `Mission::update` game simulation, not engine debt - chasing sub-floor frame time with render work repeats the category error. Full rule + the 2-week-plateau case study: `memory/feedback_offload_must_be_substitutive_not_additive.md`.
 
 ## Architectural endpoint
 
