@@ -322,27 +322,55 @@ Also to be fixed in the plan (lower risk): generation/tombstone width and
 slot-reuse policy; canonical parity-record layout (field list + packing),
 shared C++/GLSL per `cpp_glsl_ubo_struct_lockstep` if any part is GPU-read.
 
-## 11. Integration with write-side substrate accumulation
+## 11. Integration with write-side substrate accumulation (contract reconciled)
 
-This design does not clash with the separate write-side
-`s_cpuVisibleCount` / substrate-record accumulation design, but the
-relationship is load-bearing and stated here so neither side reads a false
-parity failure:
+The coordination contract now exists and has been reconciled against. It is
+the "Counter-semantics contract" section of the sibling design,
+`.claude/worktrees/gpu-driven-rendering/docs/superpowers/specs/2026-05-17-substrate-cpuvisible-writeside-accumulation-design.md`
+(branch `claude/gpu-driven-rendering`). The two designs composed without
+clash; user decision is to proceed independently with the contract baked in.
+
+Adopted contract terms (load-bearing, this side must honor them):
 
 > `s_cpuVisibleCount` and substrate record parity count only records
-> submitted through the active substrate producer set. After
-> `MC2_STATIC_DECOR_GPU=1` severance, `StaticDecorativeSet` decoratives no
-> longer submit per-frame substrate records and are validated by
-> `MC2_DECOR_PARITY` plus `decoratives_seen_in_objmgr_loop`, not by
-> preserving legacy substrate-visible counts. The drop in substrate-visible
-> count for decoratives is the intended effect, not a regression.
+> submitted through the active substrate producer set, accumulated solely
+> through the shared write helper `substrate_writeRecord`
+> (`GameOS/gameos/gpu_cull_substrate.cpp`) after overflow rejection and
+> after the record write. After `MC2_STATIC_DECOR_GPU=1` severance,
+> `StaticDecorativeSet` decoratives no longer submit per-frame substrate
+> records and intentionally disappear from `s_cpuVisibleCount`; decorative
+> visibility is validated by `MC2_DECOR_PARITY` plus
+> `decoratives_seen_in_objmgr_loop == 0`, NOT by preserving legacy
+> substrate-visible counts. The drop is the intended effect, not a
+> regression. Accumulator parity is scoped to the active substrate producer
+> set: after severance, substrate-count parity must compare against a legacy
+> count generated under the SAME feature configuration, or report decorative
+> records separately.
 
-## 12. Cross-session coordination dependency
+**Single-choke-point obligation (constrains Blockers 1 and 3 and the
+killswitch path):** under `MC2_STATIC_DECOR_GPU=0` (legacy fallback) and
+under decorative bake-failure fallback (Section 8), a decorative re-entering
+the legacy CPU path MUST still flow through the normal substrate producer so
+it passes through `substrate_writeRecord` and is counted naturally. The
+severance and the collision/damage re-admission paths MUST NOT bypass or
+special-case the substrate producer for fallback/legacy decoratives -- the
+helper is the single counting choke point and there is to be no parallel
+count path.
 
-A parallel session working on adjacent static-prop/substrate write-side work
-is authoring a coordination contract to prevent clashes between the two
-efforts. That contract is a **consumed input to the implementation plan**:
-the plan MUST NOT be finalized until the contract is available and Section 11
-has been reconciled against it (interface ownership, who severs vs who counts,
-shared killswitch interaction). Stage 0 design is complete; plan-writing is
-gated on this contract.
+**Separate attribution in any shared proof:** counter accumulation (sibling
+slice) eliminates the substrate flush count-loop cost; `StaticDecorativeSet`
+severance (this slice) eliminates decorative static-prop production/replay
+cost. Adjacent but distinct; performance wins are attributed separately.
+
+## 12. Cross-session coordination dependency (satisfied)
+
+Stage 0 design is complete and the plan gate is now SATISFIED: the sibling
+session's coordination contract exists (Section 11) and Section 11 has been
+reconciled against it -- interface ownership (the `substrate_writeRecord`
+choke point is owned by the sibling slice; this slice consumes it for the
+fallback/legacy path only), who severs vs who counts, and shared-killswitch
+interaction are all resolved above. Plan-writing may proceed. The plan MUST
+treat the Section 11 contract terms and the single-choke-point obligation as
+hard constraints, and MUST re-grep the sibling `substrate_writeRecord`
+signature/location at plan-write time (cross-branch; symbols stable, lines
+drift).
