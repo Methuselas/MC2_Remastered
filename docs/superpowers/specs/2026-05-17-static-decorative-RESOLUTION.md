@@ -511,3 +511,324 @@ Evidence:
 - Pre-existing engine inefficiency noted and recorded: O(N) linear findByPartId on the
   gamecam.cpp camera-lock path (gamecam.cpp:550-551 -> getCamObject -> findByPartId).
   Not a regression from this slice; candidate future work outside this scope.
+
+---
+
+## Blocker 3: collision proxy ownership (MANDATORY post-severance)
+
+Date: 2026-05-17
+Status: PASS -- ownership DEDICATED; complete proxy spec recorded; all four collision
+callsites identified; deregister hook tied; OB-1/OB-2 interactions explicit.
+
+All file:line citations re-grepped at write time.
+
+---
+
+### Step 1: Trace the terrain-object collision / spatial index
+
+#### Grep run
+
+  rg -n "objBlockInfo|collid|firstHandle|getObjBlock|terrainBlock"
+     mclib/terrain.cpp code/objmgr.cpp code/terrobj.cpp
+  rg -n "objBlockInfo|collid|firstHandle|getObjBlock|numCollidable|handleStaticCollision"
+     code/mech.cpp code/gvehicl.cpp code/artlry.cpp code/carnage.cpp
+
+#### How each collision caller currently locates an in-block decorative
+
+MECH (BattleMech::handleStaticCollision, code/mech.cpp:1103-1142):
+  mech.cpp:1115 -- numCollidables = ObjectManager->getObjBlockNumCollidables(blockNumber)
+  mech.cpp:1116 -- terrainObjHandle = ObjectManager->getObjBlockFirstHandle(blockNumber)
+  mech.cpp:1119-1140 -- for i in [0, numCollidables):
+    terrainObj = ObjectManager->get(terrainObjHandle + i)   // reads objList[handle+i]
+    switch on terrainObj->getObjectClass() { TREE, TREEBUILDING, TERRAINOBJECT, BUILDING }
+    isTangible = terrainObj->getTangible()
+    if isTangible: ObjectManager->detectStaticCollision(this, terrainObj)
+  The loop reads getObjBlockNumCollidables and getObjBlockFirstHandle, which are both
+  direct reads of Terrain::objBlockInfo[blockNumber] fields (code/objmgr.h:434-440).
+  TREE/TERRAINOBJECT are placed at curCollidableHandle (the collidable prefix) by
+  addObject (code/objmgr.cpp:1366-1367), so they ARE reachable by this loop at present.
+  The isTangible guard further filters: a fallen/falling tree has setTangible(false)
+  called (terrobj.cpp:393), so it is walked but skipped by the isTangible check.
+
+GROUND VEHICLE (GroundVehicle::handleStaticCollision, code/gvehicl.cpp:789-827):
+  gvehicl.cpp:800 -- numCollidables = ObjectManager->getObjBlockNumCollidables(blockNumber)
+  gvehicl.cpp:801 -- terrainObjHandle = ObjectManager->getObjBlockFirstHandle(blockNumber)
+  gvehicl.cpp:804-825 -- identical iteration pattern to mech; same getObjectClass switch.
+  TREE/TERRAINOBJECT reachable via same collidable-prefix path.
+
+ARTILLERY (Artillery::handleStaticCollision, code/artlry.cpp:672-758):
+  artlry.cpp:743 -- numObjectsInBlock = ObjectManager->getObjBlockNumObjects(currentBlockNumber)
+  artlry.cpp:744-747 -- for objIndex in [0, numObjectsInBlock):
+    obj = ObjectManager->getObjBlockObject(currentBlockNumber, objIndex)
+    if obj->getExists(): ObjectManager->detectStaticCollision(this, obj)
+  Artillery uses getObjBlockNumObjects (full range, NOT just collidables) and
+  getObjBlockObject. It iterates a 3x3 block neighbourhood. ALL objects including
+  decoratives are in scope.
+
+CARNAGE (Carnage::handleStaticCollision, code/carnage.cpp:509-544):
+  carnage.cpp:533 -- numObjectsInBlock = ObjectManager->getObjBlockNumObjects(currentBlockNumber)
+  carnage.cpp:534-538 -- for objIndex in [0, numObjectsInBlock):
+    obj = ObjectManager->getObjBlockObject(currentBlockNumber, objIndex)
+    if obj->getExists() && class != GATE && class != TURRET:
+      ObjectManager->detectStaticCollision(this, obj)
+  Carnage also uses getObjBlockNumObjects (full range) and iterates a 3x3 neighbourhood.
+  Decoratives in those blocks are reachable.
+
+#### All four collision callers are objBlockInfo-routed
+
+Every one of the four callers reads objBlockInfo fields through getObjBlock* accessors
+(code/objmgr.h:426-440), which are direct struct-field reads of Terrain::objBlockInfo[].
+There is no separate spatial index (k-d tree, grid, or per-cell pointer array) that any
+of these callers consults. The objBlockInfo block range IS the spatial index.
+
+#### Does the existing collidable index answer a decorative hit WITHOUT routing through the per-frame objBlockInfo walk?
+
+No. The collidable-prefix mechanism IS objBlockInfo. It is not a separate structure:
+  terrain.h:102-108 -- ObjBlockInfo { numCollidableObjects; numObjects; firstHandle }
+  objmgr.h:434-440 -- getObjBlockNumCollidables / getObjBlockFirstHandle read these fields
+  mech.cpp:1115-1116 / gvehicl.cpp:800-801 -- call those same accessors
+
+There is no independent collision proxy, AABB tree, or cell-indexed decorative list.
+Answering a "which decorative is at position X?" query requires either:
+  (a) routing through objBlockInfo (the per-frame walk we are severing), or
+  (b) a NEW structure not currently present.
+
+REUSE DISQUALIFIED: A non-routing proof is impossible because the collidable-prefix
+structure and the per-frame objBlockInfo walk are the same data structure. Any post-
+severance use of getObjBlockNumCollidables or getObjBlockFirstHandle to find decoratives
+would re-read exactly the block-range fields the HC-2 severance reduces -- re-introducing
+the forbidden per-frame walk for decoratives via a different code path. This is the
+Blocker-2 forbidden re-introduction.
+
+Conclusion: DEDICATED proxy required.
+
+---
+
+### Step 2: Ownership decision -- DEDICATED
+
+DECISION: DEDICATED decorative collision proxy.
+
+JUSTIFICATION: The existing collidable-prefix index is not separable from the per-frame
+objBlockInfo walk. REUSE would require reading the same Terrain::objBlockInfo fields that
+HC-2 severs for decoratives. A dedicated proxy provides the collision service without
+routing through the severed range.
+
+#### Proxy data source
+
+Mission load (countTerrainObjects / loadTerrainObjects path, code/objmgr.cpp:927-1113):
+  For each TREE/TERRAINOBJECT object (objType->getObjectClass() == TREE or TERRAINOBJECT,
+  code/objmgr.cpp:1015-1018 and 1356-1370):
+  - GameObjectHandle handle (assigned at curCollidableHandle, objmgr.cpp:1367)
+  - ObjectClass (TREE or TERRAINOBJECT)
+  - World position (objData->vector, used at objmgr.cpp:1452)
+  - AABB / extentRadius (from objType->getExtentRadius(), available post-init)
+  - blockNumber (objData->blockNumber, available at count time)
+
+These are the same fields the (future) instance bake uses. The proxy is populated in a
+single pass over the ObjDataLoader array, in the same loop that currently calls
+countObject / addObject.
+
+#### Proxy keying
+
+Key per proxy entry:
+  - GameObjectHandle handle (the objList slot index assigned by addObject)
+  - generation (a monotonic counter incremented when a handle slot is reused; prevents
+    stale handle references from matching a newly-occupied slot; generation=0 at
+    mission load, never incremented for static decoratives since they never leave objList)
+  - blockNumber (the terrain block this decorative belongs to; enables O(1) block lookup)
+  - AABB (world-space axis-aligned bounding box; used for broadphase rejection)
+
+Alternative key sufficient for this slice (since decoratives never move and never leave
+objList): handle alone is sufficient for validity checks. blockNumber and AABB enable
+efficient spatial query. Generation is a defensive guard against future use; zero cost
+to carry.
+
+#### Collision callsites to repoint
+
+All four callers (mech, gvehicl, artlry, carnage) must be updated. The proxy supports
+two query shapes that match the existing caller patterns:
+
+CALLSITE-1 (mech, gvehicl):
+  Current: for i in [0, numCollidables): terrainObj = get(firstHandle + i)
+  Post-severance: [0, numCollidables) no longer includes decoratives (HC-2 severance
+  reduces numCollidableObjects to exclude them -- see Step 4/OB-2 ruling). Therefore
+  the mech/gvehicl loop already CANNOT reach decoratives after severance; it still
+  correctly finds non-decorative collidables (buildings, turrets, gates).
+  HOWEVER: to preserve tree/terrain-object collision, the caller must ADDITIONALLY
+  query the proxy for the same blockNumber. The proxy lookup returns only TANGIBLE
+  decoratives in the block (proxy filters on tangible flag, see Step 3).
+  Repoint: mech.cpp:1119-1140 and gvehicl.cpp:804-825 -- after the numCollidables loop,
+  add a second loop over DecorativeCollisionProxy::getBlock(blockNumber), iterating
+  only proxy entries where proxyEntry.tangible == true. Each entry yields a handle;
+  ObjectManager->get(handle) returns the live TerrainObject* (HC-3 guarantees it).
+  detectStaticCollision call is unchanged.
+
+CALLSITE-2 (artlry, carnage):
+  Current: for objIndex in [0, numObjects): obj = getObjBlockObject(block, objIndex)
+  Post-severance: numObjects is reduced for the block (HC-2 severs decoratives from
+  numObjects). This means artlry/carnage NO LONGER REACH decoratives via numObjects.
+  To preserve artillery/explosion-vs-tree collision, the caller must query the proxy
+  for each of the nine blocks in the 3x3 neighbourhood.
+  Repoint: artlry.cpp:737-757 and carnage.cpp:527-544 -- for each currentBlockNumber
+  in the 3x3 loop, after the numObjects loop, add a proxy query:
+  DecorativeCollisionProxy::getBlock(currentBlockNumber) -> iterate tangible entries ->
+  get(handle) -> detectStaticCollision. Same filter as CALLSITE-1.
+
+SUMMARY of callers to repoint:
+  code/mech.cpp:1115-1140      BattleMech::handleStaticCollision
+  code/gvehicl.cpp:800-825     GroundVehicle::handleStaticCollision
+  code/artlry.cpp:737-757      Artillery::handleStaticCollision (inner block loop)
+  code/carnage.cpp:527-544     Carnage::handleStaticCollision (inner block loop)
+
+No other collision caller was found in code/*.cpp or mclib/*.cpp that independently
+iterates terrain objects by block range. (code/collsn.cpp:590 detectStaticCollision
+is a dispatcher, not a locator; it operates on already-resolved pointers.)
+
+---
+
+### Step 3: Deregister hook -- tying proxy removal to OBJECT_FLAG_FALLING
+
+#### OBJECT_FLAG_FALLING set site (re-grepped)
+
+code/terrobj.cpp:385-393 -- TerrainObjectType::handleCollision, TERROBJ_TREE branch:
+  if (!tree->getFlag(OBJECT_FLAG_FALLEN) && !tree->getFlag(OBJECT_FLAG_FALLING)):
+    tree->setFlag(OBJECT_FLAG_FALLING, true)          // terrobj.cpp:386
+    tree->setTangible(false)                           // terrobj.cpp:393
+  "Tree has fallen. You may no longer collide with it." (comment at terrobj.cpp:392)
+
+This is the canonical discrete event where a decorative tree transitions from collidable
+to non-collidable. It fires exactly once per tree per mission (the outer flag check
+ensures idempotence: already-fallen or already-falling trees skip the branch).
+
+#### How the proxy is updated on this event
+
+The proxy entry carries a `tangible` boolean mirroring OBJECT_FLAG_TANGIBLE. When
+setTangible(false) is called at terrobj.cpp:393, the same call (or a wrapper called
+immediately after) clears proxyEntry.tangible for the matching handle. The proxy's
+getBlock() iterator filters on proxyEntry.tangible, so cleared entries are skipped.
+
+Deregister hook design (consistent with HC-3):
+  The decorative is NOT removed from the proxy. Its entry is tombstoned (tangible=false).
+  This is consistent with HC-3: the object still exists in objList at its original slot.
+  Only its per-frame iteration (severed by HC-2) and its proxy-side collidability change
+  on the discrete event. The tombstone is read O(1) per proxy query.
+  No entry is ever removed from the proxy during a mission; the proxy is mission-lifetime
+  read-mostly after population.
+
+setTangible-vs-proxy invariant: proxyEntry.tangible MUST be cleared in the same
+callsite that clears OBJECT_FLAG_TANGIBLE for decoratives (terrobj.cpp:393). No other
+path clears tangibility for a tree at the falling transition; this is the single hook
+point. (Other setTangible(false) calls in the codebase are on buildings, vehicles, and
+carnage; they do not affect decorative proxy entries.)
+
+Separately, OBJECT_FLAG_FALLEN is set at terrobj.cpp:684 (end of fall animation in
+TerrainObject::update). At that point tangibility is already false (set at fall start);
+no additional proxy update is needed.
+
+---
+
+### Step 4: Reconcile with Task 2 OB-1 and OB-2
+
+#### OB-2 (decorative position in collidable prefix -- interaction with proxy)
+
+OB-2 asks: does HC-2 severance also exclude decoratives from numCollidableObjects, or
+does only numObjects change?
+
+The proxy design answers this definitively. The mech/gvehicl collision walk uses
+getObjBlockNumCollidables (the collidable prefix). Post-severance, the proxy is the
+replacement collision source for decoratives. Therefore:
+
+RULING: HC-2 severance MUST exclude decoratives from BOTH numCollidableObjects AND
+numObjects for the mech/gvehicl path to work correctly.
+
+Rationale:
+  - If decoratives remain in the collidable prefix (numCollidableObjects includes them),
+    the mech/gvehicl loop still reaches them via the original objBlockInfo path.
+    This re-introduces the per-frame decorative walk for collision, violating HC-2.
+  - The proxy provides the collision service instead; the mech/gvehicl loop must use
+    ONLY the proxy for decoratives.
+  - Therefore numCollidableObjects must be reduced to exclude decoratives, and the proxy
+    must be queried as a second pass (CALLSITE-1 above).
+
+For artlry/carnage, numObjects must also be reduced (CALLSITE-2 above).
+
+OB-2 ruling: the effective-count severance must reduce BOTH numCollidableObjects and
+numObjects for blocks containing decoratives. Surviving non-decorative collidables
+(buildings, turrets, gates) remain at their original slots in objList and their handles
+are unchanged (HC-1 preserved). The ordering constraint in the collidable prefix (collidables
+first, then non-collidables) is maintained for the surviving objects because their
+handles are not moved; only the per-block counts change.
+
+This is the load-bearing OB-2 resolution. It closes OB-2 as a design ruling.
+
+#### OB-1 (severance must survive save-game restore -- interaction with proxy)
+
+OB-1 states: GameObjectManager::Load (objmgr.cpp:3460-3586) rebuilds objBlockInfo from
+saved data.blockNumber per object, restoring the pre-severance layout. The severance
+pass must be re-applied after Load.
+
+The proxy is subject to the same OB-1 sequencing requirement:
+  - At initial mission load: proxy is populated from the ObjDataLoader array
+    (same pass as countTerrainObjects/addObject).
+  - After GameObjectManager::Load: objBlockInfo is rebuilt to the unsevered state AND
+    proxy state (tangible flags) is reset to match the loaded game state. Specifically,
+    if the loaded game has a tree with OBJECT_FLAG_FALLEN set, the proxy entry for that
+    tree must have tangible=false after Load. Load writes OBJECT_FLAG_FALLEN state via
+    the per-object data.damage field (re-check at Plan 2 time; the precise field is the
+    damage byte encoding, objmgr.cpp:3355-3360 area).
+  Plan 2 must identify a single shared (severance + proxy-rebuild) function called from
+  both initial mission load and post-Load. OB-1 carries to Plan 2 unchanged but now
+  includes the proxy rebuild requirement as well as the objBlockInfo severance.
+
+---
+
+### Step 5: Exit criterion
+
+PASS.
+
+Evidence:
+1. All four collision callsites identified with grep-verified file:line:
+   - BattleMech::handleStaticCollision: mech.cpp:1103-1142 (key lines 1115-1139)
+   - GroundVehicle::handleStaticCollision: gvehicl.cpp:789-827 (key lines 800-824)
+   - Artillery::handleStaticCollision: artlry.cpp:672-758 (key lines 743-751)
+   - Carnage::handleStaticCollision: carnage.cpp:509-544 (key lines 533-538)
+
+2. REUSE disqualified with airtight non-routing proof: the collidable prefix IS
+   Terrain::objBlockInfo (terrain.h:102-108). Using it post-severance re-introduces the
+   forbidden per-frame decorative walk. No separate spatial index exists.
+
+3. DEDICATED proxy specified completely:
+   - Data source: ObjDataLoader array at mission load (same pass as countTerrainObjects)
+   - Key: handle, blockNumber, AABB, tangible flag (mirror of OBJECT_FLAG_TANGIBLE)
+   - Population: initial mission load (same pass as countTerrainObjects / addObject,
+     objmgr.cpp:927-1113) and post-GameObjectManager::Load (OB-1 sequencing).
+   - Query shape CALLSITE-1 (mech/gvehicl): getBlock(blockNumber) -> filter tangible ->
+     get(handle) -> detectStaticCollision. Added as second pass after numCollidables loop.
+   - Query shape CALLSITE-2 (artlry/carnage): same getBlock query per block in 3x3 loop,
+     added after the numObjects loop.
+   - Deregister hook: clears proxyEntry.tangible at terrobj.cpp:393 (same callsite as
+     setTangible(false) on tree fall). Idempotent by construction (OBJECT_FLAG_FALLING
+     checked before entry).
+
+4. OB-2 interaction: RULING RECORDED. HC-2 severance must reduce numCollidableObjects AND
+   numObjects. Proxy provides replacement collision service for all four callers.
+   OB-2 is closed as a design ruling.
+
+5. OB-1 interaction: proxy rebuild requirement added to OB-1 scope. OB-1 carries to
+   Plan 2 with expanded definition.
+
+6. No collision caller is left unaddressed. No new OPEN blocker.
+
+---
+
+### New OPEN blocker from this task
+
+None. All four collision callers have a stated proxy-repoint path. OB-2 is closed.
+OB-1 is expanded but not a new blocker.
+
+One implementation note for Plan 2 (not a blocker): the proxy's getBlock() API must
+correctly handle block-boundary cases for the 3x3 neighbourhood (artlry/carnage) --
+out-of-range blockNumbers must return an empty iterator, matching the existing
+"(currentBlockNumber >= 0) && (currentBlockNumber < totalBlocks)" guard at
+artlry.cpp:741 / carnage.cpp:531. This is a correctness requirement for Plan 2, not an
+investigation blocker.
