@@ -1157,6 +1157,24 @@ void Terrain::render (void)
 }
 
 //---------------------------------------------------------------------------
+// Single-source predicate: all conditions that allow renderWater() to skip the
+// legacy loop and quad.cpp::setupTextures() to skip the armed-frame (ii) writes.
+// Definition lives here (terrain.cpp) because this is the only TU that sees
+// WaterStream + gpu_driven. Declared in gos_terrain_indirect.h (already
+// included by both terrain.cpp and quad.cpp; zero new includes in either).
+bool gos_terrain_indirect::WaterFastPathOwnsArmedDraw()
+{
+	static const bool s_fastPath =
+	    (getenv("MC2_RENDER_WATER_FASTPATH") != nullptr) ||
+	    gpu_driven::IsWaterEnabled();
+	return s_fastPath
+	    && gos_terrain_indirect::IsFrameSolidArmed()
+	    && WaterStream::IsReady()
+	    && WaterStream::GetRecipeCount() > 0
+	    && Terrain::terrainTextures2 != nullptr;
+}
+
+//---------------------------------------------------------------------------
 void Terrain::renderWater (void)
 {
 	ZoneScopedN("Terrain::renderWater");
@@ -1180,37 +1198,8 @@ void Terrain::renderWater (void)
 	if (s_waterDebugOn)
 		QueryPerformanceCounter((LARGE_INTEGER*)&s_qpcStart);
 
-	// Skip the legacy water queueing entirely when the fast-path owns the
-	// draw. This gate MUST stay byte-identical to renderWaterFastPath()'s
-	// s_fastPath (below) — if the fast-path runs but this early-return is
-	// not taken, BOTH water paths execute and the legacy loop is pure
-	// additive waste (~540us/frame self-time, observed 2026-05-17). The
-	// `|| gpu_driven::IsWaterEnabled()` term is the load-bearing half:
-	// MC2_GPU_DRIVEN_WATER is default-ON, so without it the legacy loop
-	// runs in the default shipped config even though the fast-path also
-	// draws. The actual draw runs from Terrain::renderWaterFastPath()
-	// AFTER mcTextureManager->renderLists() has flushed terrain — otherwise
-	// terrain would render OVER our water and overwrite it.
-	static const bool s_fastPath =
-	    (getenv("MC2_RENDER_WATER_FASTPATH") != nullptr) ||
-	    gpu_driven::IsWaterEnabled();
-	// IsFrameSolidArmed() guard (2026-05-17): the water fast-path COMPUTE
-	// (WaterStream::ComputeDispatchAndBindThinRecords) only ever runs when
-	// solid is armed — proven by [WATER_DEPTHPROBE v2]: 575 lines, ALL
-	// armed=1, ZERO armed=0, despite v2 emitting unconditionally un-armed.
-	// So during the UN-ARMED intro/deployment pan the fast-path produces NO
-	// water; without this guard the s_fastPath early-return would skip the
-	// legacy loop there too -> NO water on the intro pan (the regression the
-	// gate-asymmetry fix exposed). Gating the skip on IsFrameSolidArmed()
-	// keeps the legacy loop running in the un-armed cinematic (exactly the
-	// pre-gate-fix behaviour for that brief phase, no perf concern) while
-	// still skipping it + banking the ~540us in the armed in-mission case
-	// where the fast-path provably owns the draw (926 armed frames).
-	if (s_fastPath
-	    && gos_terrain_indirect::IsFrameSolidArmed()
-	    && WaterStream::IsReady()
-	    && WaterStream::GetRecipeCount() > 0
-	    && Terrain::terrainTextures2 != nullptr)
+	// Predicate is now single-sourced in gos_terrain_indirect::WaterFastPathOwnsArmedDraw().
+	if (gos_terrain_indirect::WaterFastPathOwnsArmedDraw())
 	{
 		// Skip legacy loop entirely; renderWaterFastPath() does the work.
 		return;
