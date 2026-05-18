@@ -77,7 +77,7 @@ grep -nE "\[SMOKE v1\] event=summary result=pass" "$LOG"mc2_01*.log
 grep -nE "\[WATER_INVPROJ v1\]" "$LOG"mc2_01*.log | tail -5
 grep -nE "0\([0-9]+\): error" "$LOG"mc2_01*.log
 ```
-GATE (HARD): `result=pass` present AND the LATEST `[WATER_INVPROJ v1]` state is `result=identical` (NOT `divergent`) AND no `0(N): error`. **`result=divergent` => the gate leaked into (i) => REVERT this task's quad.cpp change and re-do Step 1 (do NOT proceed).**
+GATE (HARD, GROUNDED - the "latest==identical" wording was an over-simplification; corrected per `parity_probe_100pct_can_be_a_correct_redesign_report` discipline): `result=pass` + no `0(N): error` + **the canary's deterministic early divergence block (the first `result=divergent field=` lines, frames that are byte-stable across runs) must be BYTE-IDENTICAL to the pre-(ii)-gate baseline** (Task 1 run / `2026-05-17`-class baseline: `leastZ a=-35.0183792 b=-129.922501`, `mostZ a=10.2855549 b=89.5980682`, `leastW a=0.000967585423 b=0.000383557257`, `mostW a=0.267905027 b=0.973846912`). Rationale: (i) is KEPT unconditional, so the water block STILL contributes its unique extrema -> divergent frames are EXPECTED and NORMAL (same as pre-S6). A real leak of the gate into (i) would make the water block STOP contributing -> divergence would SHRINK or VANISH, NOT be preserved byte-for-byte. So: compare the early `field=` a/b deltas to the baseline; identical => (i) untouched => PASS. The later/tail identical<->divergent flap is frame-trajectory variance between independent autonomous default-camera runs (the probe is inherently frame/quad-window sensitive) and is NOT a signal - do NOT gate on last-state. ONLY if the early deterministic divergence values CHANGED (shrunk/vanished/differ) => the gate leaked into (i) => REVERT this task's quad.cpp change and re-do Step 1.
 
 - [ ] **Step 5: Commit**
 ```
@@ -122,7 +122,7 @@ No code change. The autonomously-verifiable acceptance gate.
 ```
 MC2_SMOKE_MODE=1 MC2_WATER_INVPROJ_PARITY=1 MC2_WATER_S6_TRACE=1 py -3 scripts/run_smoke.py --mission mc2_01 --duration 30 --keep-logs --exe A:/Games/mc2-opengl/mc2-win64-water/mc2.exe
 ```
-- [ ] **Step 2:** Marker-gate the latest artifact: `[SMOKE v1] event=summary result=pass` present; latest `[WATER_INVPROJ v1]` = `result=identical` (substitutive canary - (i) untouched); `[WATER_S6 v1] armedSkip=1` present (proves (ii) IS skipped on armed frames, not silently always running); no `0(N): error`. Any failure => stop, diagnose, do not advance.
+- [ ] **Step 2:** Marker-gate the latest artifact: `[SMOKE v1] event=summary result=pass` present; **the canary's deterministic early `result=divergent field=` block byte-matches the pre-(ii)-gate baseline** (the GROUNDED substitutive test - proves (i) untouched; see Task 2 Step 4's corrected rationale - do NOT gate on last-state identical/divergent, the tail flaps with run trajectory; a leak SHRINKS divergence, it does not preserve it); `[WATER_S6 v1] armedSkip=1` present (proves (ii) IS skipped on armed frames, not silently always running); no `0(N): error`. Any failure (esp. early divergence values CHANGED vs baseline) => stop, diagnose, do not advance.
 
 ---
 
