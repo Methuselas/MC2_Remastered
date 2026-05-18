@@ -185,3 +185,73 @@ execute -> isolated build/deploy -> kill-aware mc2_01 smoke
 (`[DEPTH_TRANSITION v1]` collapsed+zoom-invariant) -> USER visual gate
 (GPU-water+decal; CPU water + Sym1 out). Branch isolated; user integrates
 separately.
+
+---
+
+## 10. DUAL ADVERSARIAL OUTCOME (opus + sonnet, 2026-05-18)
+
+opus=BLOCK / sonnet=APPROVE-WITH-REQUIRED-EDITS. Reconciled: the APPROACH
+is sound (core numerical premise CLEARED by sonnet's make-or-break check:
+terrain's two-stage projector and water/decal's are structurally identical
+chains -> same matrix => bit-identical depth, co-planar by construction
+WHEN ARMED; S3-BLOCK not smuggled; CPU-water/Sym1 exclusion confirmed
+genuinely proven-distinct, not a punt) - but the spec AS WRITTEN has
+CRITICAL defects. Required revision (folded / tracked below):
+
+- **C1 (CRITICAL, both): wrong decal edit-site.** `~:3262` is the
+  mine-sprite / `drawDecalStaticBatch` setup block, NOT the decal MVP
+  upload. The real shared site is `uploadOverlayUniforms_()`
+  ~`gameos_graphics.cpp:7013-7014` (`getTerrainMVP()` -> overlay
+  `terrainMVP`), called from THREE paths: `drawTerrainOverlays` (~:7066,
+  live per-frame), `drawDecalStaticBatch` (~:7176, static bake),
+  `drawDecals` (~:7240, live bomb-crater). The armed substitution must be
+  inside `uploadOverlayUniforms_` with an armed-vs-LIVE split (or a
+  per-caller MVP arg) - a naive swap regresses the two LIVE paths (the
+  85d9d17 shared-helper trap, confirmed real). Plus verify
+  `overlayLocs_.terrainMVP` vs `decalLocs_.terrainMVP` (two
+  `OverlayUniformLocs_` instances; `drawDecalStaticBatch` uses
+  `overlayLocs_`).
+- **C2/C3 (CRITICAL opus / MINOR sonnet) - ESCALATED ARCHITECTURAL FORK:**
+  the spec's R-a "mirror the proven 926/0 / reflOn arm-gate" is a
+  MISIDENTIFICATION - the 926/0 fix (`gos_terrain_water_stream.cpp:
+  ~1409-1416`) feeds the water CULL-COMPUTE `u_terrainMVP`, NOT the render
+  VS; `reflOn` ~:2330 is a texture-bind gate, not an MVP-source gate.
+  There is NO existing proven render-VS MVP arm-gate to mirror. An
+  `IsFrameSolidArmed()?getDispatchMvp16():terrain_mvp_` at the render bind
+  is NOVEL plumbing creating a NEW armed<->un-armed render-path transition
+  discontinuity that `[WATER_DEPTHPROBE v2]` (cull-MVP hash) is
+  structurally BLIND to = the 1-frame-lag class on an un-probed path.
+  FORK (needs render/terrain-indirect grounding before revise): (Fa) add a
+  render-path depth-consistency probe + explicit arming-transition
+  analysis and keep the arm-switch; vs (Fb) make the water/decal RENDER VS
+  ALWAYS read `getDispatchMvp16()` with a DEFINED un-armed value (no
+  flip -> no transition discontinuity -> dodges the whole 1-frame-lag
+  risk). Fb is likely the cleaner answer; grounding decides.
+- **M1 (MAJOR, both): zero-fudge is UNSAFE - mandate a non-zero shared
+  constant.** Identical MVP + zero epsilon + LEQUAL + draw-order = coplanar
+  shoreline TIE = the v0.3 staircase regression the LEQUAL scar block
+  (`gos_terrain_water_fast.vert:~328-364`) exists to prevent. The shared
+  epsilon's RELATIVE-pop-cancellation math IS sound (a shared constant
+  cancels in relative ordering, no zoom-nonlinearity reintroduced - the
+  spec's load-bearing claim holds), but "zero" is NOT viable. Spec MUST
+  mandate ONE non-zero shared small constant, applied identically to
+  water AND `terrain_overlay.vert` (currently fudge=0; removing
+  `glPolygonOffset` there without adding it strips the live overlay's ONLY
+  depth ordering). Not optional.
+- **M3/m-3: scope completeness.** All three `glPolygonOffset(-1,-1)` sites
+  (~:7062/7171/7236) are decal-family (not shared w/ terrain/water/shadow
+  - clears that hazard) but are 3 distinct passes; removal is all-or-
+  nothing single-PR and REQUIRES the shared shader constant for all three.
+  Missing host bind: the NON-MDI water path binds `terrain_mvp_` at
+  ~`gameos_graphics.cpp:2153` (not just the MDI ~:2308) - it needs the
+  same armed substitution + its `WATER_DEPTH_FUDGE_FAST` removal
+  (`gos_terrain_water_fast.vert:~365`) or MDI/non-MDI water split.
+- **Surface to user (m-2):** the user's "happens with CPU water too" will
+  persist on the un-armed intro/deploy cinematic (CPU raster, no
+  terrainMVP uniform - genuinely out of scope, probe-proven) - this is
+  EXPECTED, not a fix failure; confirm acceptable at the visual gate.
+
+Plan is NOT written until: the C2/C3 R-a fork is grounded (Fa vs Fb), and
+the spec is revised with the corrected sites (C1), mandated non-zero
+shared constant (M1), and full scope (M3/m-3). Then re-adversarial (the
+revision is substantial).
