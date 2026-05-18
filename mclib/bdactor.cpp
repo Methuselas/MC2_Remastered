@@ -12,6 +12,12 @@
 #include"bdactor.h"
 #endif
 
+// [TOBJSPLIT v1] RDTSC includes for the BldgAppearance/TreeAppearance probe
+// points. __rdtsc() overhead ~5-10ns (cost_split_instrumentation_is_observer_
+// effect_dominated.md). Accumulators defined in code/terrobj.cpp.
+#include <intrin.h>
+#include <stdlib.h>
+
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_batcher.h"
 #include "gos_static_prop_registry.h"  // Stage 3.C: static-registry fast path
@@ -1151,17 +1157,28 @@ bool BldgAppearance::isMouseOver (float px, float py)
 //-----------------------------------------------------------------------------
 bool BldgAppearance::recalcBounds (void)
 {
+	// [TOBJSPLIT v1] extern accumulators defined in code/terrobj.cpp.
+	// s_tobjSplitEnabled is a file-static duplicate (one getenv per TU;
+	// process-start-constant -- no observable cost when disabled).
+	static bool s_tobjSplitEnabled = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
+	extern unsigned long long g_tobjAngularCyc;
+	extern unsigned long long g_tobjProjCyc;
+
 	Stuff::Vector4D tempPos;
 	inView = false;
 
 	float distanceToEye = 0.0f;
-	
+
 	if (eye)
 	{
 		//-------------------------------------------------------------------
 		//NEW METHOD from the WAY BACK Days
 		inView = true;
-		
+
+		// [TOBJSPLIT v1] ANGULAR bracket: matrix-free sphere angular clip.
+		// Disjoint from PROJ below; reads cycle counter immediately before/after.
+		{
+		unsigned long long _tsA = s_tobjSplitEnabled ? __rdtsc() : 0ULL;
 		if (eye->usePerspective)
 		{
 			Stuff::Vector3D cameraPos;
@@ -1169,14 +1186,14 @@ bool BldgAppearance::recalcBounds (void)
 			cameraPos.y = eye->getCameraOrigin().z;
 			cameraPos.z = eye->getCameraOrigin().y;
 			float vClipConstant = eye->verticalSphereClipConstant;
-			float hClipConstant = eye->horizontalSphereClipConstant; 
-	
+			float hClipConstant = eye->horizontalSphereClipConstant;
+
 			Stuff::Vector3D objectCenter;
 			objectCenter.Subtract(position,cameraPos);
 			Camera::cameraFrame.trans_to_frame(objectCenter);
 			distanceToEye = objectCenter.GetApproximateLength();
 			float clip_distance = fabs(1.0f / objectCenter.y);
-			
+
 			//Is vertex on Screen OR close enough to screen that its triangle MAY be visible?
 			// WE have removed the atans here by simply taking the tan of the angle we want above.
 			float object_angle = fabs(objectCenter.z) * clip_distance;
@@ -1196,9 +1213,14 @@ bool BldgAppearance::recalcBounds (void)
 				}
 			}
 		}
-		
+		if (s_tobjSplitEnabled) g_tobjAngularCyc += __rdtsc() - _tsA;
+		}  // end ANGULAR bracket
+
 		//Can we be seen at all?
 		// If yes, check if we are behind fog plane.
+		// [TOBJSPLIT v1] PROJ bracket: projectForScreenXY + 8-corner box + fog.
+		// Disjoint from ANGULAR above; this is the body targeted for deletion.
+		unsigned long long _tsP = s_tobjSplitEnabled ? __rdtsc() : 0ULL;
 		if (inView)
 		{
 			//ALWAYS need to do this or select is YAYA
@@ -1581,9 +1603,11 @@ bool BldgAppearance::recalcBounds (void)
 				inView = false;
 			}
 		}
+		if (s_tobjSplitEnabled) g_tobjProjCyc += __rdtsc() - _tsP;
+		// end PROJ bracket
 	}
 
-	
+
 	return(inView);
 }
 
@@ -4277,9 +4301,16 @@ bool TreeAppearance::isMouseOver (float px, float py)
 //-----------------------------------------------------------------------------
 bool TreeAppearance::recalcBounds (void)
 {
+	// [TOBJSPLIT v1] extern accumulators defined in code/terrobj.cpp.
+	// s_tobjSplitEnabled is a file-static duplicate (one getenv per TU;
+	// process-start-constant -- no observable cost when disabled).
+	static bool s_tobjSplitEnabled = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
+	extern unsigned long long g_tobjAngularCyc;
+	extern unsigned long long g_tobjProjCyc;
+
 	Stuff::Vector4D tempPos;
 	inView = false;
-	
+
 	float distanceToEye = 0.0f;
 
 	if (eye)
@@ -4287,6 +4318,11 @@ bool TreeAppearance::recalcBounds (void)
 		//-------------------------------------------------------------------
 		//NEW METHOD from the WAY BACK Days
 		inView = true;
+
+		// [TOBJSPLIT v1] ANGULAR bracket: matrix-free sphere angular clip.
+		// Disjoint from PROJ below; reads cycle counter immediately before/after.
+		{
+		unsigned long long _tsA = s_tobjSplitEnabled ? __rdtsc() : 0ULL;
 		if (eye->usePerspective)
 		{
 			Stuff::Vector3D cameraPos;
@@ -4294,14 +4330,14 @@ bool TreeAppearance::recalcBounds (void)
 			cameraPos.y = eye->getCameraOrigin().z;
 			cameraPos.z = eye->getCameraOrigin().y;
 			float vClipConstant = eye->verticalSphereClipConstant;
-			float hClipConstant = eye->horizontalSphereClipConstant; 
-	
+			float hClipConstant = eye->horizontalSphereClipConstant;
+
 			Stuff::Vector3D objectCenter;
 			objectCenter.Subtract(position,cameraPos);
 			Camera::cameraFrame.trans_to_frame(objectCenter);
 			distanceToEye = objectCenter.GetApproximateLength();
 			float clip_distance = fabs(1.0f / objectCenter.y);
-			
+
 			//Is vertex on Screen OR close enough to screen that its triangle MAY be visible?
 			// WE have removed the atans here by simply taking the tan of the angle we want above.
 			float object_angle = fabs(objectCenter.z) * clip_distance;
@@ -4321,9 +4357,14 @@ bool TreeAppearance::recalcBounds (void)
 				}
 			}
 		}
-		
+		if (s_tobjSplitEnabled) g_tobjAngularCyc += __rdtsc() - _tsA;
+		}  // end ANGULAR bracket
+
 		//Can we be seen at all?
 		// If yes, check if we are behind fog plane.
+		// [TOBJSPLIT v1] PROJ bracket: projectForScreenXY + 8-corner box + fog.
+		// Disjoint from ANGULAR above; this is the body targeted for deletion.
+		unsigned long long _tsP = s_tobjSplitEnabled ? __rdtsc() : 0ULL;
 		if (inView)
 		{
 			//ALWAYS need to do this or select is YAYA
@@ -4568,8 +4609,10 @@ bool TreeAppearance::recalcBounds (void)
 				inView = false;		//Did alot of extra work checking this, but WHY draw and insult to injury?
 			}
 		}
+		if (s_tobjSplitEnabled) g_tobjProjCyc += __rdtsc() - _tsP;
+		// end PROJ bracket
 	}
-	
+
 	return(inView);
 }
 

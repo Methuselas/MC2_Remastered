@@ -162,6 +162,42 @@ void g_staticUpdateEmitSummary(uint32_t frame) {
     g_staticUpdateLastSummaryFrame = frame;
 }
 
+// [TOBJSPLIT v1] env-gated RDTSC cost split for the recalcBounds slice.
+// MC2_TOBJ_COST_SPLIT=1 -> partition GameLogic.Units.TerrainObjects into
+// ANGULAR (kept coarse clip) / PROJ (to-delete projection body) / UPDATE
+// (appearance->update refill). RDTSC only; chrono per-call is observer-effect
+// dominated here (cost_split_instrumentation_is_observer_effect_dominated.md).
+// Accumulators defined here (terrobj.cpp) so objmgr.cpp can call the once-
+// per-frame roll via g_tobjSplitRollAndMaybeEmit() (static_update_counters.h).
+// Probe points in mclib/bdactor.cpp use extern-declarations to reach these.
+#include <intrin.h>
+#include <stdlib.h>
+#include <stdio.h>
+static bool s_tobjSplitEnabled = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
+unsigned long long g_tobjAngularCyc = 0ULL;
+unsigned long long g_tobjProjCyc    = 0ULL;
+unsigned long long g_tobjUpdateCyc  = 0ULL;
+static unsigned long long g_tobjFrameCount = 0ULL;
+
+void g_tobjSplitRollAndMaybeEmit() {
+    if (!s_tobjSplitEnabled) return;
+    // 120-frame interval (not 600): the smoke is hard-capped at 30s; a 600-frame
+    // window requires ~10s+ and may not complete in a short mission segment.
+    // 120 frames (~2s at 60fps) guarantees several summary lines per 30s run.
+    // SLIMSPLIT precedent uses 600 (long uninterrupted missions); here the probe
+    // runs under a time-bounded smoke gate so the interval is shortened.
+    if (++g_tobjFrameCount % 120ULL == 0ULL) {
+        fprintf(stderr, "[TOBJSPLIT v1] event=summary frames=%llu "
+               "angular_cyc=%llu proj_cyc=%llu update_cyc=%llu\n",
+               (unsigned long long)g_tobjFrameCount,
+               (unsigned long long)g_tobjAngularCyc,
+               (unsigned long long)g_tobjProjCyc,
+               (unsigned long long)g_tobjUpdateCyc);
+        fflush(stderr);
+        g_tobjAngularCyc = g_tobjProjCyc = g_tobjUpdateCyc = 0ULL;
+    }
+}
+
 extern unsigned long NextIdNumber;
 extern float worldUnitsPerMeter;
 extern bool drawExtents;
@@ -749,7 +785,12 @@ long TerrainObject::update (void) {
 					++g_routeUpdateByClass[_apprClass];
 					if (ownerForcesDynamic && appearanceClaimsStatic)
 						++g_staticUpdateCounters.dyn_falling;
-					appearance->update();
+					// [TOBJSPLIT v1] UPDATE bracket
+					{
+						unsigned long long _tsU = s_tobjSplitEnabled ? __rdtsc() : 0ULL;
+						appearance->update();
+						if (s_tobjSplitEnabled) g_tobjUpdateCyc += __rdtsc() - _tsU;
+					}
 				}
 			}
 

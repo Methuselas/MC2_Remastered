@@ -502,3 +502,56 @@ DELETE with CRIT-1 (pick) + Q3 (lifecycle-semantics) re-homing; the render-gate
 edit is consequential because `g_useGpuStaticProps` already makes render
 `inView`-independent. Framed as a render-gate OR-term addition the slice is
 additive and fails the substitutive proof.**
+
+---
+
+## Stage-0.5 measured split (Task 0)
+
+Probe: `[TOBJSPLIT v1]` env-gated RDTSC (`MC2_TOBJ_COST_SPLIT=1`). Accumulators
+in `code/terrobj.cpp`; probe points in `mclib/bdactor.cpp` (both
+`BldgAppearance::recalcBounds` and `TreeAppearance::recalcBounds`). Summary
+interval: 120 frames (not 600 -- smoke hard-capped at 30s). Smoke:
+`MC2_TOBJ_COST_SPLIT=1 py -3 scripts/run_smoke.py --tier tier1 --duration 30
+--kill-existing --keep-logs`. Result: PASS 5/5. Artifact dir:
+`tests/smoke/artifacts/2026-05-18T11-03-39/`.
+
+ANGULAR = matrix-free sphere angular clip (kept). PROJ = `projectForScreenXY` +
+8-corner box + fog refine (targeted for deletion). UPDATE = `appearance->update()`
+(refill risk from the wider coarse-only lifecycle gate after the delete).
+
+Last full 120-frame window per mission (steady-state; first window is inflated by
+mission-load transitions):
+
+| Mission | ANGULAR cyc | PROJ cyc   | UPDATE cyc | PROJ ratio |
+|---------|-------------|------------|------------|------------|
+| mc2_01  | 1,737,542   | 6,092,088  | 0          | 77.8%      |
+| mc2_03  | 7,339,781   | 16,074,881 | 41,261     | 68.5%      |
+| mc2_10  | 9,684,723   | 46,776,228 | 0          | 82.8%      |
+| mc2_17  | 5,216,370   | 20,023,176 | 0          | 79.3%      |
+| mc2_24  | 3,202,059   | 3,473,188  | 0          | 52.0%      |
+| **AGG** | 27,180,475  | 92,439,561 | 41,261     | **77.3%**  |
+
+PROJ ratio = PROJ / (ANGULAR + PROJ + UPDATE).
+
+Key observations:
+- PROJ is the dominant cost in 4 of 5 missions (68-83%). mc2_24 is the outlier
+  at 52% (PROJ and ANGULAR are near-equal; this mission has fewer on-screen static
+  props so the absolute cycle counts are lower and the ANGULAR fraction is larger).
+- UPDATE is near-zero in steady state (0 in 4/5 missions). The first 120-frame
+  window shows elevated UPDATE (mission-load dynamic activity); by steady state it
+  drops to nearly zero. This is the critical sizing signal: after the projection
+  delete, the refill from the wider coarse-only lifecycle gate is expected to be
+  small relative to the deleted PROJ cost.
+- mc2_10 has the highest PROJ absolute (46.8M cyc / 120 frames ~= 390K cyc/frame).
+  At ~3.5 GHz that is ~0.11ms/frame from PROJ alone per window -- corroborates the
+  ~1.43ms Tracy zone having PROJ as the primary contributor (the RDTSC accumulators
+  sum Bldg + Tree for the whole update loop, amortized across all active objects).
+
+These numbers are raw RDTSC cycle counts accumulated over a 120-frame window, NOT
+wall-time. They are relative ratios; absolute ms values require dividing by CPU
+frequency and are NOT the right metric for this probe (see
+`cost_split_instrumentation_is_observer_effect_dominated.md` -- ratios from RDTSC
+are valid; the absolute-vs-Tracy delta is a separate concern).
+
+Status: **DONE**. PROJ is clearly dominant across the mission set. Controller +
+user determine go/no-go for Task 1+.

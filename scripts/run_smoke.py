@@ -270,6 +270,7 @@ def main():
                             "MC2_TERRAIN_COST_SPLIT",
                             "MC2_LIGHT_COST_SPLIT",
                             "MC2_SLIM_COST_SPLIT",
+                            "MC2_TOBJ_COST_SPLIT",
                             "MC2_GPUPROPS_TRACE",
                             "MC2_MECH_RESTORE_TRACE",
                             # Phase 1 — terrain lighting GPU compute
