@@ -1191,15 +1191,16 @@ void gosPostProcess::destroyShadows()
     }
 }
 
-// CP-1: per-mission reset of all process-scoped static-shadow priming state.
-// Resets the static light matrix built flag (so the next mission rebuilds it)
-// and requests a full shadow rebuild (so the terrain shadow accumulation
-// re-primes on the first frame of the new mission).
+// CP-1: per-mission reset of process-scoped static-shadow priming state.
+// Resets the static light matrix built flag so the next mission rebuilds it
+// against fresh blocks[]. The gos_*ShadowRebuild* one-shot-flag API was
+// RETIRED with the move to the build-once full-map static shadow (see the
+// note in gameos_graphics.cpp by gos_ResetStaticLightMatrix); the matrix
+// rebuild alone re-primes the accumulation, no camera-motion trigger.
 void gos_ResetStaticShadowPriming()
 {
     gosPostProcess* pp = getGosPostProcess();
     if (pp) pp->resetStaticLightMatrix();
-    gos_RequestFullShadowRebuild();
 }
 
 void gosPostProcess::buildStaticLightMatrix(float sunDirX, float sunDirY, float sunDirZ,

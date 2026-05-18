@@ -2300,6 +2300,11 @@ void gos_MarkStaticLightMatrixBuilt();
 // VPL-#shadow C-1: per-mission re-arm of the one-shot full-map static
 // shadow (Terrain::destroy -> rebuild next mission vs frozen prior one).
 void gos_ResetStaticLightMatrix();
+// CP-1: per-mission-init companion re-prime (mission.cpp chokepoint). Body
+// is now just the static-light-matrix reset - the gos_*ShadowRebuild* one-
+// shot trigger it used to also fire was RETIRED (see note below); coexists
+// idempotently with the Terrain::destroy gos_ResetStaticLightMatrix path.
+void gos_ResetStaticShadowPriming();
 void gos_BeginShadowPrePass(bool clearDepth = true);
 void gos_DrawShadowBatchTessellated(gos_VERTEX* vertices, int numVerts,
     WORD* indices, int numIndices,
