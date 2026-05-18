@@ -259,6 +259,22 @@ static inline void NoteLegacyDetailOverlayCluster() {
 }
 }  // namespace
 
+// [DEPTH_TRANSITION v1] cross-TU CPU-water REAL screen-z sample (env-gated
+// MC2_DEPTH_TRANSITION_PROBE; silent default). Written by TerrainQuad::drawWater
+// for the water vertex nearest the fixed mid-map probe point P; READ by the
+// transition dump in gos_terrain_indirect.cpp. g_cpuWaterProbeStamp is bumped
+// once per CPU-water frame so the dump can detect a STALE value (CPU water and
+// the GPU water fast path are mutually exclusive per frame -- on an armed
+// transition frame this is the last un-armed steady sample, NOT this-frame).
+float    g_cpuWaterProbeZ        = 0.0f;
+double   g_cpuWaterProbeBestD2   = 0.0;
+bool     g_cpuWaterProbeAny      = false;
+unsigned long long g_cpuWaterProbeStamp = 0;
+// Per-CPU-water-frame reset of the nearest-vertex search is done once/frame in
+// Terrain::renderWater (terrain.cpp) BEFORE the drawWater quad loop -- the
+// single legacy-loop entry where CPU water is the live producer. It clears
+// g_cpuWaterProbeAny / g_cpuWaterProbeBestD2 and bumps g_cpuWaterProbeStamp.
+
 static const bool s_shapeCParityCheck = (getenv("MC2_SHAPE_C_PARITY_CHECK") != nullptr);
 
 // Step 1b-1 (cpu-pack-retirement plan §2 A1): the M2 thin-record emit scope is
@@ -3312,6 +3328,49 @@ void TerrainQuad::drawWater (void)
 	if (waterHandle != 0xffffffff)
 	{
 		numTerrainFaces++;
+
+		// [DEPTH_TRANSITION v1] CPU-water REAL screen-z sample (env-gated,
+		// silent default). The zoom-step depth-pop diagnosis has been wrong
+		// 3x; sampling the ACTUAL produced value is strictly better evidence
+		// than a CPU re-derivation of the Stuff eye->projectForTerrainAdmission
+		// pipeline (which is NOT reachable from the gos_terrain_indirect.cpp
+		// transition dump site). The drawn CPU-water screen-z is exactly
+		// `vertices[k]->wz + WATER_DEPTH_FUDGE` (== WATER_DEPTH_FUDGE_RASTER
+		// 0.0025; see the gVertex[*].z assignments at ~:3345 and the
+		// terrain_depth_bias.h RASTER regime). We latch the value for the
+		// water vertex nearest the FIXED mid-map probe point P so the dump's
+		// dz is frame-comparable. world XY is vertices[k]->vx / ->vy (the
+		// same pre-projection world coords drawWater emits). g_cpuWaterProbeZ
+		// carries a frame stamp because CPU water and the GPU fast path are
+		// MUTUALLY EXCLUSIVE per frame (terrain.cpp:1225-1229 early-returns
+		// renderWater when WaterFastPathOwnsArmedDraw()): on an armed
+		// transition frame this static is the LAST un-armed steady value, not
+		// this-frame data. The dump emits g_cpuWaterProbeFrameValid so a
+		// stale CPU sample is visibly flagged, never silently trusted.
+		extern float    g_cpuWaterProbeZ;
+		extern double   g_cpuWaterProbeBestD2;
+		extern bool     g_cpuWaterProbeAny;
+		static const bool s_depthTransProbe =
+		    (getenv("MC2_DEPTH_TRANSITION_PROBE") != nullptr);
+		if (s_depthTransProbe)
+		{
+			const float px = Terrain::mapTopLeft3d.x
+			                 + Terrain::worldUnitsMapSide * 0.5f;
+			const float py = Terrain::mapTopLeft3d.y
+			                 - Terrain::worldUnitsMapSide * 0.5f;
+			for (int k = 0; k < 4; ++k)
+			{
+				const float dx = vertices[k]->vx - px;
+				const float dy = vertices[k]->vy - py;
+				const double d2 = (double)dx * dx + (double)dy * dy;
+				if (!g_cpuWaterProbeAny || d2 < g_cpuWaterProbeBestD2)
+				{
+					g_cpuWaterProbeBestD2 = d2;
+					g_cpuWaterProbeZ = vertices[k]->wz + WATER_DEPTH_FUDGE;
+					g_cpuWaterProbeAny = true;
+				}
+			}
+		}
 
 		//---------------------------------------
 		// GOS 3D draw Calls now!

@@ -45,6 +45,16 @@
 // `char missionName[1024]`).  Used by BuildCementCatalogAtlas summary line.
 extern char missionName[];
 
+// [DEPTH_TRANSITION v1] CPU-water REAL screen-z sample - DEFINED at global
+// scope in mclib/quad.cpp (writer) and reset in mclib/terrain.cpp. Declared
+// here at GLOBAL file scope (NOT block-scope inside namespace
+// gos_terrain_indirect) so the dump's unqualified use binds the global
+// ::g_cpuWaterProbe* (a block-scope extern inside the namespace would bind
+// gos_terrain_indirect:: and not link - C++ [basic.link] innermost-ns rule).
+extern float              g_cpuWaterProbeZ;
+extern bool               g_cpuWaterProbeAny;
+extern unsigned long long g_cpuWaterProbeStamp;
+
 namespace gos_terrain_indirect {
 
 // ---------------------------------------------------------------------------
@@ -2891,6 +2901,234 @@ void ComputeDispatch() {
         // Water-consistency fix: full MVP snapshot (see decl). This is the
         // exact matrix terrain-solid's Fix-B clipPos bake uses this frame.
         memcpy(g_dispatchMvp16, mvp, sizeof(float) * 16);
+
+        // ── [DEPTH_TRANSITION v1] zoom-step depth-pop diagnostic ───────────
+        // Env-gated MC2_DEPTH_TRANSITION_PROBE (cached static const bool;
+        // silent default; matches the [WATER_DEPTHPROBE v2] idiom at
+        // gos_terrain_water_stream.cpp:1429 — raw printf+fflush). HIGH STAKES:
+        // this zoom-step depth-pop root-cause has been WRONG 3x. The probe
+        // dumps each flat consumer's ACTUAL resulting screen-z for a FIXED
+        // world point ONLY on the MVP-transition (zoom-step) frame so the
+        // ~0.1-unit 1-frame pop is numerically visible. [WATER_DEPTHPROBE v2]
+        // is structurally blind (it FNV-hashes the MVP, not the downstream
+        // per-consumer depth-fudge). RenderDoc cannot capture a 1-frame
+        // transient. ZERO behavior change: pure reads of g_dispatchMvp16 (the
+        // exact matrix terrain-solid's Fix-B clipPos bake + the armed GPU
+        // water fast path both project with this frame), live terrain_mvp_
+        // (the matrix the decal overlay binds), and the cross-TU sampled CPU
+        // water value; O(1)/frame; printf only on transition frames (latched).
+        {
+            static const bool s_depthTransProbe =
+                (getenv("MC2_DEPTH_TRANSITION_PROBE") != nullptr);
+            if (s_depthTransProbe) {
+                // --- Transition detector -----------------------------------
+                // maxDelta = max_i |g_dispatchMvp16[i] - prev[i]|. kEps chosen
+                // so a smooth pan does NOT trip but a DISCRETE zoom-level step
+                // does. Justification: a per-frame camera pan changes the MVP
+                // translation row by a small continuous increment (sub-1e-4 in
+                // the normalized clip-matrix entries per frame at normal pan
+                // speed); MC2's zoom is a DISCRETE camera-distance step (the
+                // bug only reproduces on zoom/elevation-change, NOT pan — see
+                // CLAUDE.md Known issues), which jumps several matrix entries
+                // (projection scale + translation) by >>1e-4 in one frame. A
+                // smooth same-magnitude pan would also trip a too-small kEps,
+                // so kEps=1e-3f is used: large enough that normalized
+                // per-frame pan deltas (empirically ~1e-5..1e-4 in these
+                // entries) stay below it, small enough that a discrete zoom
+                // step (whole-number camera-distance change -> matrix entry
+                // jumps ~1e-2+) trips it decisively. This is a DIAGNOSTIC
+                // gate, not a control path; over/under-trip only changes which
+                // frames print, never rendering.
+                static float g_prevDispatchMvp16[16] = { 0.0f };
+                static bool  s_prevValid = false;
+                static unsigned long long s_dtFrame = 0;
+                const unsigned long long f = ++s_dtFrame;
+                const float kEps = 1.0e-3f;
+                float maxDelta = 0.0f;
+                for (int i = 0; i < 16; ++i) {
+                    const float d =
+                        std::abs(g_dispatchMvp16[i] - g_prevDispatchMvp16[i]);
+                    if (d > maxDelta) maxDelta = d;
+                }
+                const bool transition = s_prevValid && (maxDelta > kEps);
+
+                // --- Fixed probe point P -----------------------------------
+                // Deterministic mid-map XY at the water plane. FRAME-STABLE
+                // (map geometry constants + waterElevation, NOT camera): the
+                // dz across the transition is therefore attributable purely to
+                // the per-consumer depth-fudge x MVP interaction, not point
+                // motion. MC2 world layout (terrain.h:367-368): X increases
+                // from mapTopLeft3d.x, Y decreases from mapTopLeft3d.y.
+                const float Px = Terrain::mapTopLeft3d.x
+                                 + Terrain::worldUnitsMapSide * 0.5f;
+                const float Py = Terrain::mapTopLeft3d.y
+                                 - Terrain::worldUnitsMapSide * 0.5f;
+                const float Pz = Terrain::waterElevation;
+
+                // Project P with a given GL_FALSE row-major MVP using the
+                // file's authoritative convention (see :1881-1898 and
+                // memory/terrain_mvp_gl_false.md): GLSL reads our row-major
+                // bytes column-major, so clip[i] = sum_j m[j*4+i]*P[j]. This
+                // is byte-identical to gpu_driven_terrain_solid.comp's
+                // projectClip() (terrain-solid's clipPos source, read verbatim
+                // by gos_terrain_thin.vert:210) and to the `terrainMVP*vec4`
+                // in gos_terrain_water_fast_mdi.vert:283 and
+                // terrain_overlay.vert:31 (same upload convention).
+                auto projZ = [](const float* m,
+                                 float x, float y, float z,
+                                 float& outZ, float& outW) {
+                    const float cz =
+                        m[0 * 4 + 2] * x + m[1 * 4 + 2] * y +
+                        m[2 * 4 + 2] * z + m[3 * 4 + 2];
+                    const float cw =
+                        m[0 * 4 + 3] * x + m[1 * 4 + 3] * y +
+                        m[2 * 4 + 3] * z + m[3 * 4 + 3];
+                    outZ = cz; outW = cw;
+                };
+
+                // terrain SOLID: mirror gos_terrain_thin.vert:219 exactly.
+                // clip = (dispatch MVP) * P (the compute bakes tr.clipPos with
+                // EXACTLY g_dispatchMvp16 -- see :1521 decl + :1894 bake);
+                // screen.z = clip.z/clip.w + TERRAIN_DEPTH_FUDGE (0.002,
+                // single-sourced mc2depth::TERRAIN_DEPTH_FUDGE).
+                float czT, cwT;
+                projZ(g_dispatchMvp16, Px, Py, Pz, czT, cwT);
+                const float z_terr =
+                    (czT / cwT) + mc2depth::TERRAIN_DEPTH_FUDGE;
+
+                // GPU WATER (fast MDI): mirror
+                // gos_terrain_water_fast_mdi.vert:291 exactly. The armed water
+                // fast path binds gos_terrain_indirect_getDispatchMvp16()
+                // (== g_dispatchMvp16; gos_terrain_water_stream.cpp:1409-1413)
+                // and ComputeDispatch only runs armed, so this is the live
+                // GPU-water producer's exact matrix this frame. screen.z =
+                // clip.z/clip.w + WATER_DEPTH_FUDGE_FAST (0.003).
+                const float z_gpuw =
+                    (czT / cwT) + mc2depth::WATER_DEPTH_FUDGE_FAST;
+
+                // DECAL: mirror terrain_overlay.vert:36 (px.z = clip.z/clip.w,
+                // NO additive fudge constant) + the glPolygonOffset(-1,-1) at
+                // gameos_graphics.cpp:7062/7171/7236 as its NDC-equivalent
+                // depth bias. The decal binds getTerrainMVP()==terrain_mvp_
+                // (the LIVE matrix, NOT the dispatch MVP -- see
+                // gameos_graphics.cpp:7014 uploadOverlayUniforms_). Documented
+                // polygon-offset approximation: in the [0,1] glClipControl
+                // depth regime, glPolygonOffset(factor,units) adds
+                // factor*maxDepthSlope + units*r, where r is the minimum
+                // resolvable depth increment. We cannot read the rasterizer's
+                // per-primitive maxDepthSlope from the CPU; for a near-planar
+                // water-coincident decal the slope term is small, so we model
+                // the bias as units*r with the conventional 24-bit-depth
+                // r ~= 2^-23 ~= 1.19e-7 and units=-1 -> ndcBias ~= -1.19e-7.
+                // This is an APPROXIMATION (slope term omitted) and is labeled
+                // approx in the emit; the decal's true bias is rasterizer
+                // state we cannot mirror byte-faithfully -- its z_decal is the
+                // least-trustworthy field and is flagged as such.
+                const float* liveMvp = gos_GetTerrainMVPMat4();
+                float z_decal = 0.0f;
+                int   decalOk = 0;
+                if (liveMvp) {
+                    float czD, cwD;
+                    projZ(liveMvp, Px, Py, Pz, czD, cwD);
+                    const float kPolyOffsetNdcApprox = -1.0f * 1.1920929e-7f;
+                    z_decal = (czD / cwD) + kPolyOffsetNdcApprox;
+                    decalOk = 1;
+                }
+
+                // CPU WATER: SAMPLED real produced value (NOT a CPU re-derive;
+                // the Stuff eye->projectForTerrainAdmission pipeline is not
+                // reachable here). TerrainQuad::drawWater (mclib/quad.cpp
+                // ~:3345) latches vertices[k]->wz + WATER_DEPTH_FUDGE (raster
+                // 0.0025) for the water vertex nearest the SAME fixed P.
+                // CRITICAL: CPU water and the GPU fast path are mutually
+                // exclusive per frame (terrain.cpp:1225-1229). ComputeDispatch
+                // (this code) only runs ARMED, i.e. exactly when CPU water is
+                // SKIPPED -- so g_cpuWaterProbeZ is the LAST un-armed steady
+                // sample, NOT this-frame data. We emit cpuw_stamp + its delta
+                // vs the previous dump so a stale CPU value is VISIBLE and
+                // never silently trusted (we have been wrong 3x trusting
+                // models over real data; a flagged-stale real value is honest
+                // evidence, a fabricated this-frame CPU value would be false).
+                // (declared at global file scope above - unqualified lookup
+                // here binds the global ::g_cpuWaterProbe* defined in quad.cpp)
+                const float z_cpuw = g_cpuWaterProbeZ;
+                const int   cpuwAny = g_cpuWaterProbeAny ? 1 : 0;
+                static unsigned long long s_prevCpuStamp = 0;
+                const unsigned long long cpuStampNow = g_cpuWaterProbeStamp;
+
+                // --- Emit (transition frames only, latched) ----------------
+                // Also emit the 1 steady frame immediately BEFORE a transition
+                // (one-frame-back latch) and the 1 steady frame AFTER, so the
+                // transition-frame dz can be compared to adjacent steady dz.
+                // s_emitTail counts down post-transition steady frames to
+                // print; s_havePrevSteady stashes the immediately-preceding
+                // steady line so we can print it retroactively when a
+                // transition is detected (cheap: 4 floats).
+                struct DtLine {
+                    unsigned long long f; float md; float zt, zc, zg, zd;
+                    int cAny; unsigned long long cStamp;
+                };
+                static DtLine s_prevSteady = {0,0,0,0,0,0,0,0};
+                static bool   s_havePrevSteady = false;
+                static int    s_emitTail = 0;
+
+                DtLine cur;
+                cur.f = f; cur.md = maxDelta;
+                cur.zt = z_terr; cur.zc = z_cpuw;
+                cur.zg = z_gpuw; cur.zd = z_decal;
+                cur.cAny = cpuwAny; cur.cStamp = cpuStampNow;
+
+                auto emitLine = [&](const DtLine& L, const char* kind) {
+                    const long long cpuStampDelta =
+                        (long long)L.cStamp - (long long)s_prevCpuStamp;
+                    // cpuw_fresh=1 only if the CPU sampler advanced its stamp
+                    // since the previous emitted line AND it found a vertex.
+                    const int cpuwFresh =
+                        (L.cAny && cpuStampDelta != 0) ? 1 : 0;
+                    printf("[DEPTH_TRANSITION v1] kind=%s f=%llu "
+                           "maxMvpDelta=%.7f "
+                           "z_terr=%.7f z_cpuw=%.7f z_gpuw=%.7f z_decal=%.7f "
+                           "dz_cpuw=%.7f dz_gpuw=%.7f dz_decal=%.7f "
+                           "cpuw_fresh=%d cpuw_any=%d cpuw_stamp=%llu "
+                           "cpuw_stamp_delta=%lld decal_ok=%d decal_z_approx=1\n",
+                           kind,
+                           (unsigned long long)L.f,
+                           (double)L.md,
+                           (double)L.zt, (double)L.zc,
+                           (double)L.zg, (double)L.zd,
+                           (double)(L.zc - L.zt),
+                           (double)(L.zg - L.zt),
+                           (double)(L.zd - L.zt),
+                           cpuwFresh, L.cAny,
+                           (unsigned long long)L.cStamp,
+                           cpuStampDelta, decalOk);
+                    fflush(stdout);
+                    s_prevCpuStamp = L.cStamp;
+                };
+
+                if (transition) {
+                    if (s_havePrevSteady)
+                        emitLine(s_prevSteady, "pre");
+                    emitLine(cur, "trans");
+                    s_emitTail = 1;  // print 1 steady frame after
+                } else if (s_emitTail > 0) {
+                    emitLine(cur, "post");
+                    --s_emitTail;
+                }
+                // Always stash the latest (steady or not) for the next
+                // transition's retroactive "pre" line.
+                s_prevSteady = cur;
+                s_havePrevSteady = true;
+
+                // Maintain prev MVP snapshot AFTER the diff (copy current ->
+                // prev). s_prevValid gates the first frame (no prior to diff).
+                memcpy(g_prevDispatchMvp16, g_dispatchMvp16,
+                       sizeof(float) * 16);
+                s_prevValid = true;
+            }
+        }
+        // ── end [DEPTH_TRANSITION v1] ──────────────────────────────────────
+
         // Probe 8b: stash first 4 floats so bridge can log byte-level delta.
         g_dispatchMvpFloats[0] = mvp[0];
         g_dispatchMvpFloats[1] = mvp[1];

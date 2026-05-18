@@ -1228,6 +1228,29 @@ void Terrain::renderWater (void)
 		return;
 	}
 
+	// [DEPTH_TRANSITION v1] reset the CPU-water REAL screen-z nearest-vertex
+	// search once per CPU-water frame (env-gated; silent default). Reached
+	// ONLY when the legacy loop runs (s6FastPathOwns early-returned above),
+	// i.e. exactly the frames CPU water is the live producer. The stamp bump
+	// lets the transition dump in gos_terrain_indirect.cpp detect a STALE
+	// CPU sample on armed frames (CPU water and the GPU fast path are
+	// mutually exclusive per frame). Pure writes, zero behavior change.
+	{
+		static const bool s_depthTransProbe =
+		    (getenv("MC2_DEPTH_TRANSITION_PROBE") != nullptr);
+		if (s_depthTransProbe)
+		{
+			extern float              g_cpuWaterProbeZ;
+			extern double             g_cpuWaterProbeBestD2;
+			extern bool               g_cpuWaterProbeAny;
+			extern unsigned long long g_cpuWaterProbeStamp;
+			(void)g_cpuWaterProbeZ;
+			g_cpuWaterProbeAny = false;
+			g_cpuWaterProbeBestD2 = 0.0;
+			++g_cpuWaterProbeStamp;
+		}
+	}
+
 	//-----------------------------------
 	// Draw resulting terrain quads
 	TerrainQuadPtr currentQuad = quadList;
