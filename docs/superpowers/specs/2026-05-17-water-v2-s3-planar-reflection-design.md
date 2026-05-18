@@ -181,3 +181,44 @@ S1 surface + camera-independence of everything-but-this unchanged.
 re-invocation, dispatch-MVP anchor) + `mc2-render-expert` (FBO/feedback-loop,
 state save-restore, hook ordering). Cross: `mc2-shader-expert` (FS reflection
 projection + Fresnel as the sole camera-dependent term).
+
+---
+
+## DUAL ADVERSARIAL OUTCOME (opus + sonnet, 2026-05-17) - BLOCK x2
+
+Both independent code-grounded reviews BLOCK. Convergent confirmed findings:
+- **C1 (CRITICAL):** `gos_terrain_indirect::ComputeDispatch()` mutates global
+  per-frame state - advances `g_thinRingSlot`, waits/installs `g_thinRingFences`,
+  clears the single shared `g_indirectCmdBuffer` count, and **unconditionally
+  overwrites `g_dispatchMvp16`** (`gos_terrain_indirect.cpp:2466/2795/2893`).
+- **CRITICAL-A (sonnet):** that `g_dispatchMvp16` overwrite re-introduces the
+  EXACT water 1-frame-lag corruption v2 fixed (`memory/water_fastpath_interim_
+  fixes_and_residuals.md`) - the reflection dispatch poisons the primary water
+  depth anchor.
+- **C2 (MAJOR):** the indirect cmd count is primary-camera cull-windowed
+  (`BuildSolidQuadWindowSSBO`, `g_solidWindowStaging`); the reflected view
+  needs its own cull window or the full-range identity dispatch.
+- **M2 (CRITICAL):** the thin VS is a two-stage projector
+  (`gos_terrain_thin.vert:210-222`: clipPos -> screen via `terrainViewport`
+  -> NDC via `mvp`); both encode the PRIMARY pixel grid - a quarter-res
+  reflection cannot reuse them; needs full-res OR rebuilt viewport+projection.
+- **M3 (MAJOR):** `terrainBindThinUniformsForPatchStream` binds primary-camera
+  shadow/light-space uniforms - reflected terrain shadows wrong by construction.
+- **M5 (MINOR):** spec's dedicated reflection FBO correctly sidesteps the
+  `sceneFBO_` MRT/`glDrawBuffers(2)` issue (the one thing the spec got right).
+
+**Required before S3 is plan-ready (a dedicated, terrain-indirect-expert-led
+architectural slice - NOT an autonomous tune-after task):**
+1. A concrete new entry point e.g. `ComputeDispatchReflection(reflectedMVP)`
+   that touches NONE of `g_thinRingSlot`/`g_thinRingFences`/`g_indirectCmdBuffer`/
+   `g_dispatchMvp16`, writing reflected clip positions into a DEDICATED second
+   thin-SSBO + dedicated cmd buffer.
+2. Reflection cull strategy decided (full-range identity vs reflected-frustum
+   window) with its per-frame cost owned.
+3. Full-res reflection target OR a specified rebuild of `terrainViewport`+`mvp`
+   for the reflected pass (new renderer plumbing).
+4. Shadow policy in the reflected pass (disable / accept artifact / reflected
+   shadow path).
+SSR-via-sceneColor is feedback-loop-blocked AND structurally misses the
+off-screen/behind-camera terrain that dominates MC2's oblique camera - viable
+only as a poor approximation, not the stated goal.
