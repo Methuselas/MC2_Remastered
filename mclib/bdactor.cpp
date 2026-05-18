@@ -3036,14 +3036,23 @@ bool BldgAppearance::IsStaticNow() const
 
 void BldgAppearance::touch()
 {
-	// Only fires when MC2_STATIC_UPDATE_SKIP=1; default config keeps update()
-	// running every frame and CacheGpuLightData() at bdactor.cpp:2248 refreshes
-	// the cached UBO slot index. ResubmitCachedGpuLightData re-submits this
-	// actor's already-populated lightData_ via the dedup-cache — no
-	// s_listOfLights dependency. Touch() advances lastTurnTransformed so any
-	// legacy fallback path's staleness guard passes.
+	// MC2_STATIC_UPDATE_SKIP defaults TRUE (terrobj.cpp:92); touch() is the
+	// DEFAULT path. update() runs only when the env var is explicitly cleared.
 	if (bldgShape) {
-		bldgShape->ResubmitCachedGpuLightData();
+		// [LIGHTBRIDGE v1] C6 retirement: repoint to the primed 38d8720 slot
+		// (zero FNV/memcmp; cachedFrame_ stamped). MISS keeps the legacy
+		// resubmit (NOT CacheGpuLightData -- terrain-color-staleness,
+		// msl.cpp:1874-1887). MC2_LIGHTBAKE=0 -> legacy path bit-for-bit.
+		extern bool mc2LightBakeEnabled();
+		extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
+		TG_HWLightsData baked;
+		if (mc2LightBakeEnabled()
+		    && staticReg.registered && staticReg.recipeIndex >= 0
+		    && mc2GetBakedStaticLight(staticReg.recipeIndex, baked)) {
+			bldgShape->EmitBakedGpuLightData(staticReg.recipeIndex, baked);
+		} else {
+			bldgShape->ResubmitCachedGpuLightData();
+		}
 		// 2026-05-11 per-instance capture: snapshot the just-resubmitted slot
 		// for THIS actor before sibling instances of the same multi-type
 		// overwrite multi->cachedGpuLightIndex_ in the same update phase.
