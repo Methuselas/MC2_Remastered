@@ -1456,6 +1456,51 @@ float mostZ = -1.0f, mostW = -1.0;
 float leastWY = 0.0f, mostWY = 0.0f;
 extern bool InEditor;
 
+// --- [SLIMSPLIT v1] -------------------------------------------------------
+// RDTSC sub-decomposition of the "Terrain::geometry slimReduce" per-vertex
+// loop. Distinct env gate MC2_SLIM_COST_SPLIT -- NOT the observer-effect-
+// dominated MC2_TERRAIN_COST_SPLIT chrono scopes (memory/cost_split_
+// instrumentation_is_observer_effect_dominated.md). __rdtsc() per-leaf
+// bracket, no Tracy zone by design (a per-vertex hot loop busts the 100ns
+// floor; same sanctioned exception as [LIGHT_COST_SPLIT v1] in tgl.cpp).
+// Isolates the three independent costs the single slimReduce Tracy zone
+// conflates, so the elimination campaign cuts in ROI order:
+//   PROJ : eye->projectForTerrainAdmission (survives for cull + raster)
+//   CULL : clipInfo + setObjBlock/VertexActive + solid-window append
+//   RED  : leastZ/mostZ/leastW/mostW reduction (feeds dead inverseProjectZ)
+// "front/other" (onScreenR sphere/cone math + raster px/pz write) =
+// Tracy slimReduce total - (PROJ+CULL+RED); not separately bracketed to
+// hold the per-vertex rdtsc-pair count at 3. Demote-not-delete after the
+// attribution lands (debug_instrumentation_rule.md).
+#include <intrin.h>
+#include <stdlib.h>
+#include <stdio.h>
+namespace {
+	bool               g_ssInit = false, g_ssOn = false;
+	unsigned long long g_ssProjCyc = 0, g_ssCullCyc = 0, g_ssRedCyc = 0;
+	unsigned long long g_ssProjCall = 0, g_ssVtx = 0, g_ssFrames = 0;
+	bool SlimSplitOn()
+	{
+		if (!g_ssInit) { g_ssOn = (getenv("MC2_SLIM_COST_SPLIT") != nullptr); g_ssInit = true; }
+		return g_ssOn;
+	}
+	void SlimSplitRollAndMaybeEmit()
+	{
+		if (!g_ssOn) return;
+		++g_ssFrames;
+		if (g_ssFrames % 600ULL != 0ULL) return;
+		const double f = 600.0;
+		fprintf(stderr,
+			"[SLIMSPLIT v1] event=summary frames=600 "
+			"vtx_per_frame=%.0f proj_cyc_per_frame=%.0f proj_calls_per_frame=%.0f "
+			"cull_cyc_per_frame=%.0f red_cyc_per_frame=%.0f\n",
+			(double)g_ssVtx / f, (double)g_ssProjCyc / f, (double)g_ssProjCall / f,
+			(double)g_ssCullCyc / f, (double)g_ssRedCyc / f);
+		g_ssProjCyc = g_ssCullCyc = g_ssRedCyc = 0;
+		g_ssProjCall = g_ssVtx = 0;
+	}
+}  // namespace
+
 //---------------------------------------------------------------------------
 void Terrain::geometry (void)
 {
@@ -1560,9 +1605,11 @@ void Terrain::geometry (void)
 	const bool s_solidNarrowOn = gos_terrain_indirect::SolidWindowEnabled();
 	{
 		ZoneScopedN("Terrain::geometry slimReduce");
+		const bool ssOn = SlimSplitOn();  // [SLIMSPLIT v1] latched, loop-local
 		VertexPtr rv = vertexList;
 		for (long ri = 0; ri < numberVertices; ++ri, ++rv)
 		{
+			if (ssOn) ++g_ssVtx;
 			bool onScreenR = false;
 
 			if (eye->usePerspective)
@@ -1656,7 +1703,11 @@ void Terrain::geometry (void)
 			bool inViewR = false;
 			const bool clipUsesOnScreen = (eye->usePerspective && Environment.Renderer != 3);
 			if (onScreenR || !clipUsesOnScreen)
+			{
+				unsigned long long _ssT = ssOn ? __rdtsc() : 0ULL;  // [SLIMSPLIT v1] PROJ
 				inViewR = eye->projectForTerrainAdmission(vertex3D,sp);
+				if (ssOn) { g_ssProjCyc += __rdtsc() - _ssT; ++g_ssProjCall; }
+			}
 
 			bool clipR = clipUsesOnScreen ? onScreenR : inViewR;
 
@@ -1665,6 +1716,7 @@ void Terrain::geometry (void)
 			// clipR (== legacy onScreen-derived clipInfo in stock); the
 			// active-set write fires `if (clipInfo)` exactly as the legacy
 			// `if (currentVertex->clipInfo)` site, NOT gated on inViewR.
+			unsigned long long _ssC = ssOn ? __rdtsc() : 0ULL;  // [SLIMSPLIT v1] CULL
 			rv->clipInfo = clipR;
 
 			if (rv->clipInfo)				//ONLY set TRUE ones.  Otherwise we just reset the FLAG each vertex!
@@ -1685,6 +1737,7 @@ void Terrain::geometry (void)
 						gos_terrain_indirect::AppendSolidWindowCandidate(svn);
 				}
 			}
+			if (ssOn) g_ssCullCyc += __rdtsc() - _ssC;  // [SLIMSPLIT v1] CULL end
 
 			// VPL Step 8b re-home: Step 8b (12ad8dc) deleted the per-vertex
 			// px/py/pz/pw writes on the premise the GPU-driven indirect path
@@ -1723,6 +1776,7 @@ void Terrain::geometry (void)
 			if (!clipR || !inViewR)
 				continue;
 
+			unsigned long long _ssR = ssOn ? __rdtsc() : 0ULL;  // [SLIMSPLIT v1] RED
 			if (sp.z < leastZ)
 			{
 				leastZ = sp.z;
@@ -1744,7 +1798,9 @@ void Terrain::geometry (void)
 				mostW = sp.w;
 				mostWY = sp.y;
 			}
+			if (ssOn) g_ssRedCyc += __rdtsc() - _ssR;  // [SLIMSPLIT v1] RED end
 		}
+		SlimSplitRollAndMaybeEmit();  // [SLIMSPLIT v1] once/frame (slimReduce is 1/frame)
 	}
 
 	//-----------------------------------
