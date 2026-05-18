@@ -408,3 +408,45 @@ This branch is ISOLATED; the user integrates separately (the cross-branch push i
 - **Spec coverage:** §12.1 two-constant CRITICAL → Task 1+3 (+Task 2 ref). §12.3 Fa (all-3-callers mirror) → Task 4. §11 sites 1+2 water binds → Task 5. §12.4 Invariant A/B probe → Task 6. §11 site-4 polygon-offset removal → Task 4 Step 4. Q1 un-armed (V10) → Task 0 Step 2. Build/deploy/smoke/visual discipline (§7/§9) → Tasks 7-9. No spec requirement left unmapped; CPU water + Sym1 explicitly out (stated in Task 9 Step 1).
 - **Placeholder scan:** the only deferred values are the two depth-bias magnitudes — these are *correctly* deferred to mc2-shader-expert per spec V6/V9 (Task 1 Step 1 makes the decision a concrete dispatched action with exact constraints, not a "TBD"). No other placeholders.
 - **Type/symbol consistency:** the symmetric-mirror local is named distinctly per scope (`fixBMvp` Task 4, `wMvp`/`wMvpMdi` Task 5) to avoid shadowing; `terrainMvpOverride` is the single helper param name used in decl, def, and body; `OVERLAY_DEPTH_FUDGE` / `WATER_DEPTH_FUDGE_FAST` are the single constant names across `.hglsl`, `.h`, and all consuming `.vert`. Consistent.
+
+---
+
+## Task 0 grounding result (2026-05-18)
+
+All anchors re-grepped at write-time from worktree `A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1/`. Every V-assertion: PASS.
+
+### Anchor table
+
+| Anchor string | File | Current line | Shape | V-assertion | Result |
+|---|---|---|---|---|---|
+| `setMat4Direct("terrainMVP"` | `GameOS/gameos/gameos_graphics.cpp` | 2153 | `setMat4Direct("terrainMVP", (const float*)&terrain_mvp_);` inside `renderWaterFastPath` shared preamble | Site 1 non-MDI water | PASS |
+| `setMMat4Direct("terrainMVP"` | `GameOS/gameos/gameos_graphics.cpp` | 2308 | `setMMat4Direct("terrainMVP", (const float*)&terrain_mvp_);` inside `if (mdiValid)` block | Site 2 MDI water | PASS |
+| `const bool mdiValid` | `GameOS/gameos/gameos_graphics.cpp` | 2251 | `const bool mdiValid = gpuArmed && s_waterMdiProg != 0 ...` arming context confirmed | Site-2 arming context | PASS |
+| `void gosRenderer::uploadOverlayUniforms_` | `GameOS/gameos/gameos_graphics.cpp` | 7011 | out-of-line definition; in-class decl at 1823 | V7 decl | PASS |
+| `uploadOverlayUniforms_(` all occurrences | `GameOS/gameos/gameos_graphics.cpp` | 1823 (in-class decl), 7011 (def), 7066 (`drawTerrainOverlays`), 7176 (`drawDecalStaticBatch`), 7240 (`drawDecals`) | Exactly 1 in-class decl + 1 out-of-line def + 3 callers; no 4th caller | V7 call-site count | PASS |
+| V7 per-caller args | `GameOS/gameos/gameos_graphics.cpp` | 7066, 7176, 7240 | `drawTerrainOverlays` passes `overlayProg_->shp_, overlayLocs_`; `drawDecalStaticBatch` passes `overlayProg_->shp_, overlayLocs_`; `drawDecals` passes `decalProg_->shp_, decalLocs_` | V7 arg dispatch | PASS |
+| `glPolygonOffset(-1.0f, -1.0f)` | `GameOS/gameos/gameos_graphics.cpp` | 7062, 7171, 7236 | All 3 inside `drawTerrainOverlays`, `drawDecalStaticBatch`, `drawDecals` respectively; each immediately preceded by `glEnable(GL_POLYGON_OFFSET_FILL)`; none in terrain/water/shadow paths | V3/M3 | PASS |
+| `WATER_DEPTH_FUDGE_FAST` | `shaders/gos_terrain_water_fast_mdi.vert` | 291 | `screen.z = clip.z * rhw + WATER_DEPTH_FUDGE_FAST;` comment cites `terrain_depth_bias.hglsl` | V6/symbol present | PASS |
+| `WATER_DEPTH_FUDGE_FAST` | `shaders/gos_terrain_water_fast.vert` | 365 | `screen.z = clip.z * rhw + WATER_DEPTH_FUDGE_FAST;` | V6/symbol present | PASS |
+| `px.z` | `shaders/terrain_overlay.vert` | 36 | `px.z = clip4.z * rhw;` -- no bias term yet (correct pre-Task-3 state) | Pre-edit baseline | PASS |
+| `IsFrameSolidArmed() ? gos_terrain_indirect_getDispatchMvp16() : gos_GetTerrainMVPMat4()` canonical mirror | `GameOS/gameos/gos_terrain_water_stream.cpp` | 1409-1413 | `const float* mvp = gos_terrain_indirect::IsFrameSolidArmed() ? gos_terrain_indirect_getDispatchMvp16() : gos_GetTerrainMVPMat4(); if (!mvp) mvp = gos_GetTerrainMVPMat4();` -- the proven 926/0 pattern | V1 canonical mirror | PASS |
+| `getTerrainMVP()` body | `GameOS/gameos/gameos_graphics.cpp` | 1419 | `const mat4& getTerrainMVP() const { return terrain_mvp_; }` | V10/Q3 storage identity | PASS |
+| `gos_GetTerrainMVPMat4()` body | `GameOS/gameos/gameos_graphics.cpp` | 7319-7321 | `return (const float*)&g_gos_renderer->getTerrainMVP();` -- same `terrain_mvp_` storage; guards `isTerrainMVPValid()` | V10/Q3 storage identity | PASS |
+| `AW^T * (vx,vy,elev,1) = projectZ` comment | `code/gamecam.cpp` | 170 | Full text: `// AW^T * (vx,vy,elev,1) = projectZ(vx,vy,elev) exactly (Stuff row-vector convention).` | V10/Q1 co-planarity comment | PASS |
+| `gos_terrain_indirect_getDispatchMvp16` definition | `GameOS/gameos/gos_terrain_indirect.cpp` | 3366 | `const float* gos_terrain_indirect_getDispatchMvp16() { return g_dispatchMvp16; }` with comment at 3363-3365: "Callers MUST gate on IsFrameSolidArmed() (only then did ComputeDispatch run + refresh this); otherwise it is stale." | V2 armed+documented | PASS |
+| `s_frameSolidArmed` | `GameOS/gameos/gos_terrain_indirect.cpp` | 1493 | `static bool s_frameSolidArmed = false;` -- reset-per-frame storage confirmed | V2 arming state | PASS |
+
+### Note on V2 grep pattern
+
+The Task 0 spec says to grep `'otherwise stale'`; the actual comment text at line 3365 is `"otherwise it is stale"` (not a substring match). This is an imprecise grep pattern in the spec, not a design drift -- the semantic content is unambiguously present and correct. Recorded as PASS.
+
+### Step 1 checked: - [x] Step 2 assertions
+- V7 (uploadOverlayUniforms_ exactly 1 decl + 3 callers): PASS
+- V7 (per-caller arg dispatch -- drawDecalStaticBatch and drawTerrainOverlays use overlayProg_/overlayLocs_; drawDecals uses decalProg_/decalLocs_): PASS
+- V3/M3 (exactly 3 glPolygonOffset(-1,-1), all overlay/decal family): PASS
+- V1 (canonical symmetric-mirror at gos_terrain_water_stream.cpp:1409-1413): PASS
+- V10/Q3 (getTerrainMVP returns terrain_mvp_; gos_GetTerrainMVPMat4 returns &terrain_mvp_ same storage): PASS
+- V10/Q1 (gamecam.cpp AW^T projectZ comment present): PASS
+- V2 (getDispatchMvp16 populated-when-armed, "otherwise it is stale" documented): PASS
+
+**All assertions: PASS. Pipeline may proceed to Task 1.**
