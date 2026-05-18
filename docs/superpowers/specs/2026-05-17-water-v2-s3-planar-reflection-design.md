@@ -3,7 +3,7 @@
 **Date:** 2026-05-17
 **Branch:** `claude/water-material-v1` (isolated; keep-as-is)
 **Parent:** `2026-05-17-water-v2-scope-and-decomposition.md` (Section 3 ruling)
-**Status:** READY FOR ADVERSARIAL REVIEW (x2 opus|sonnet, adversarial-plan-review skill)
+**Status:** BLOCKED by opus adversarial (2026-05-17). Spec premise false vs code: ComputeDispatch() mutates global ring/fence state (Fix-A/B), single shared g_indirectCmdBuffer already consumed by primary terrain MDI, reflected view needs own cull/window. Real S3 = dedicated reflection thin-SSBO+cmdbuf + parameterized compute (extracted from ring machinery) + decided cull + viewport/shadow reconcile. Needs terrain-indirect-expert + user scope decision. NOT plan-ready as written.
 **Grounding:** code-grounded feasibility map (render-expert + terrain-indirect-expert,
 2026-05-17) - all design choices below trace to grep-verified findings.
 
