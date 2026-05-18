@@ -123,24 +123,25 @@ void main(void)
             // from the screen-space gradient of the in-scope scalar fBm nz (~:84,
             // f(WorldPos,time)). clamp() prevents zoom-out over-distortion. This is
             // the GROUNDING-authoritative construction (supersedes wave1/wave2).
-            vec2  nzGrad     = clamp(vec2(dFdx(nz), dFdy(nz)), -2.0, 2.0);
-            vec3  waveNormal = normalize(vec3(nzGrad * REFL_WAVE_SLOPE, 1.0));
-            vec3  vdir       = normalize(cameraPos.xyz - WorldPos); // sole cam-dep input
-            vec3  rdir       = reflect(-vdir, waveNormal);
-            vec3  acc  = vec3(0.0);
-            float wsum = 0.0;
+            PREC vec2  nzGrad     = clamp(vec2(dFdx(nz), dFdy(nz)), -2.0, 2.0);
+            PREC vec3  waveNormal = normalize(vec3(nzGrad * REFL_WAVE_SLOPE, 1.0));
+            PREC vec3  vdir       = normalize(cameraPos.xyz - WorldPos); // sole cam-dep input
+            PREC vec3  rdir       = reflect(-vdir, waveNormal);
+            PREC vec3  acc  = vec3(0.0);
+            PREC float wsum = 0.0;
             for (int i = 1; i <= REFL_STEPS; ++i) {
-                vec2 wp = WorldPos.xy + rdir.xy * (float(i) * REFL_STEP_LEN);
-                vec2 uv;
+                PREC vec2 wp = WorldPos.xy + rdir.xy * (float(i) * REFL_STEP_LEN);
+                PREC vec2 uv;
                 uv.x = (wp.x - atlasMapTopLeftX) * atlasOneOverWorldUnits;  // X: not flipped
                 uv.y = (atlasMapTopLeftY - wp.y) * atlasOneOverWorldUnits;  // Y: inverted
-                float inb = step(0.0, uv.x) * step(uv.x, 1.0)
+                PREC float inb = step(0.0, uv.x) * step(uv.x, 1.0)
                           * step(0.0, uv.y) * step(uv.y, 1.0);
                 acc  += inb * texture(reflTex, uv).rgb;
                 wsum += inb;
             }
-            vec3  refl = (wsum > 0.0) ? acc / wsum : col;        // all off-map -> no-op
-            float fres = REFL_F0 + (1.0 - REFL_F0)
+            PREC vec3  refl = (wsum > 0.0) ? acc / wsum : col;        // all off-map -> no-op
+            // flat-water normal is +Z (matches the GBuffer1 screenShadowEligible(vec3(0,0,1)) below); vdir.z = N.V
+            PREC float fres = REFL_F0 + (1.0 - REFL_F0)
                          * pow(1.0 - max(vdir.z, 0.0), 5.0);
             col = mix(col, refl,
                       clamp(fres * REFL_STRENGTH * waveLOD, 0.0, REFL_MAX));
