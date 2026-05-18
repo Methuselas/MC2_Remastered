@@ -3929,7 +3929,6 @@ bool TreeAppearance::recalcBounds (void)
 	// (included above via ../code/static_update_counters.h).
 	// Gate: file-scope s_tobjSplitBdOn (defined above, shared with BldgAppearance).
 
-	Stuff::Vector4D tempPos;
 	inView = false;
 
 	if (eye)
