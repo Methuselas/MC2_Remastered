@@ -1203,7 +1203,26 @@ void Terrain::renderWater (void)
 		QueryPerformanceCounter((LARGE_INTEGER*)&s_qpcStart);
 
 	// Predicate is now single-sourced in gos_terrain_indirect::WaterFastPathOwnsArmedDraw().
-	if (gos_terrain_indirect::WaterFastPathOwnsArmedDraw())
+	// renderWater() is once-per-frame, so this is the correct (non-hot) site
+	// for the S6 armed-skip probe - it observes the EXACT predicate the
+	// quad.cpp setupTextures (ii) gate uses, so armedSkip=1 here == "(ii)
+	// legacy draw-side skipped this frame, GPU fast path owns it".
+	const bool s6FastPathOwns = gos_terrain_indirect::WaterFastPathOwnsArmedDraw();
+	{
+		static const bool s_waterS6Trace = (getenv("MC2_WATER_S6_TRACE") != nullptr);
+		if (s_waterS6Trace)
+		{
+			static int s_lastS6 = -1;
+			int s6 = s6FastPathOwns ? 1 : 0;
+			if (s6 != s_lastS6)
+			{
+				printf("[WATER_S6 v1] event=state armedSkip=%d (1=GPU fast path owns armed draw; legacy (ii) draw-side skipped this frame)\n", s6);
+				fflush(stdout);
+				s_lastS6 = s6;
+			}
+		}
+	}
+	if (s6FastPathOwns)
 	{
 		// Skip legacy loop entirely; renderWaterFastPath() does the work.
 		return;
