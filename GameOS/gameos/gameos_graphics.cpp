@@ -2260,6 +2260,14 @@ void gosRenderer::renderWaterFastPath(
         // by ComputeDispatchAndBindThinRecords() (M2 fix).
         // ─────────────────────────────────────────────────────────────
 
+        // Atlas accessors: defined only in gos_terrain_indirect.cpp (no header).
+        // Precedent: sibling terrain-solid functions declare identical extern blocks
+        // (gameos_graphics.cpp:2584-2588, :2877-2881, :3100).
+        extern GLuint gos_terrain_indirect_getAtlasGLTex();
+        extern float  gos_terrain_indirect_getAtlasMapTopLeftX();
+        extern float  gos_terrain_indirect_getAtlasMapTopLeftY();
+        extern float  gos_terrain_indirect_getAtlasOneOverWorldUnits();
+
         // Upload per-draw data (base + detail).
         WaterPerCmd cmds[2];
         cmds[0] = { 0u, 1, 0, oneOverTF,      cloudOffsetX, cloudOffsetY, 0u, 0u };
@@ -2316,6 +2324,17 @@ void gosRenderer::renderWaterFastPath(
         setMI         ("tex1",  0);
         setMI         ("tex2",  1);
 
+        // S3: resolve atlas handle once; gate reflectionOn on both solid-armed
+        // AND a valid handle (R1: water arms independently of IsFrameSolidArmed).
+        GLuint reflTexHandle = gos_terrain_indirect_getAtlasGLTex();
+        int    reflOn = (gos_terrain_indirect::IsFrameSolidArmed()
+                         && reflTexHandle != 0) ? 1 : 0;
+        setMI         ("reflectionOn",          reflOn);
+        setMI         ("reflTex",               2);
+        setMF         ("atlasMapTopLeftX",       gos_terrain_indirect_getAtlasMapTopLeftX());
+        setMF         ("atlasMapTopLeftY",       gos_terrain_indirect_getAtlasMapTopLeftY());
+        setMF         ("atlasOneOverWorldUnits", gos_terrain_indirect_getAtlasOneOverWorldUnits());
+
         // Bind SSBOs.
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, recipeBuf);
         // Slot 6 (thin records) was already bound by ComputeDispatchAndBindThinRecords.
@@ -2340,11 +2359,33 @@ void gosRenderer::renderWaterFastPath(
         glBindTexture(GL_TEXTURE_2D, detailOrBase);
         glActiveTexture(GL_TEXTURE0);
 
+        // S3: conditionally bind atlas on unit 2 (mirrors unit-1 save/restore idiom).
+        // When reflOn == 0: unit 2 is intentionally left untouched (the shader skip
+        // is the sole source of truth; binding 0 would mask a missing-atlas R1 bug).
+        GLuint savedSampler2 = 0;
+        if (reflOn) {
+            GLint q = 0;
+            glGetIntegeri_v(GL_SAMPLER_BINDING, 2, &q);
+            savedSampler2 = (GLuint)q;
+            glBindSampler(2, 0);
+            glActiveTexture(GL_TEXTURE0 + 2);
+            glBindTexture(GL_TEXTURE_2D, reflTexHandle);
+            glActiveTexture(GL_TEXTURE0);
+        }
+
         // MDI: 2 draws (base + detail); 1 if detail not present.
         const GLsizei drawCount = (detailTex != 0) ? 2 : 1;
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, WaterStream::GetIndirectCmdBuffer());
         glMultiDrawArraysIndirect(GL_TRIANGLES, nullptr, drawCount, 0);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+
+        // Restore unit 2 — mirror unit-1 force-clear + sampler restore.
+        if (reflOn) {
+            glActiveTexture(GL_TEXTURE0 + 2);
+            glBindTexture(GL_TEXTURE_2D, 0);    // force-clear; mirrors unit-1 post-draw
+            glActiveTexture(GL_TEXTURE0);
+            glBindSampler(2, savedSampler2);    // restore sampler only
+        }
 
         // Restore unit 1 — don't leave a texture bound on unit 1 for the legacy path.
         glActiveTexture(GL_TEXTURE1);
