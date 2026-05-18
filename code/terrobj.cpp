@@ -211,6 +211,51 @@ void g_tobjSplitRollAndMaybeEmit() {
     }
 }
 
+// [TOBJPARITY v1] env-gated superset-parity counter (proof-gate #2).
+// MC2_TOBJ_PARITY=1 -> per terrain static per frame, after the meta-fix
+// source injection point (setRenderVisible), count:
+//   samples   = terrain statics where coarse inView is true (denominator).
+//   violations = inView && !renderVisible (catastrophic dropped-prop class).
+//
+// Contract: a violation (coarseInView && !renderVisible) is the CATASTROPHIC
+// dropped-prop class -- an object the coarse angular cull says is on-screen
+// that the readback says is not, so it would be silently absent. Expected
+// ZERO. Legitimate over-inclusion (renderVisible && !inView) is fine and NOT
+// a violation: readback says visible but the coarse cull said off-screen,
+// so we render something extra. That is the intended safe-side behaviour.
+// Counter never chrono; no std::chrono, no RDTSC -- this is a pure event
+// count (cost_split_instrumentation_is_observer_effect_dominated.md).
+//
+// Transitive-dependency note: this probe asserts readback SUPERSET-OF coarse
+// (readback >= coarse). This implies the contract's intended invariant
+// (readback >= projected_original) ONLY because coarse >= projected is
+// independently proven -- the deleted projection block (Tasks 2/3) was
+// entirely `if(inView)`-gated and could only narrow the visible set, never
+// widen it. If that superset proof were ever invalidated (e.g. the coarse
+// cull were tightened past the original projection), this gate would pass
+// while masking a projected-set regression. The CRIT-D superset proof
+// (documented in the plan) must remain valid for this gate to be sound.
+//
+// Demote-not-delete after attribution lands (debug_instrumentation_rule.md).
+// Mirrors [TOBJSPLIT v1]: file-static enable flag, same 120-frame roll
+// interval, accumulators defined here, roll called from objmgr.cpp.
+static bool s_tobjParityEnabled = (getenv("MC2_TOBJ_PARITY") != nullptr);
+static unsigned long long g_tobjParitySamples   = 0ULL;
+static unsigned long long g_tobjParityViolation = 0ULL;
+static unsigned long long g_tobjParityFrameCount = 0ULL;
+
+void g_tobjParityRollAndMaybeEmit() {
+    if (!s_tobjParityEnabled) return;
+    // 120-frame interval: matches [TOBJSPLIT v1] (see rationale above).
+    if (++g_tobjParityFrameCount % 120ULL == 0ULL) {
+        fprintf(stderr, "[TOBJPARITY v1] event=summary samples=%llu violations=%llu\n",
+                g_tobjParitySamples, g_tobjParityViolation);
+        fflush(stderr);
+        g_tobjParitySamples   = 0ULL;
+        g_tobjParityViolation = 0ULL;
+    }
+}
+
 extern unsigned long NextIdNumber;
 extern float worldUnitsPerMeter;
 extern bool drawExtents;
@@ -883,6 +928,17 @@ long TerrainObject::update (void) {
 			? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
 			: true;
 		appearance->setRenderVisible(renderVis);
+
+		// [TOBJPARITY v1] per-object parity count. Placed HERE -- AFTER
+		// setRenderVisible() -- so renderVisible is this frame's value.
+		// inView (coarse, from recalcBounds above) and renderVisible
+		// (readback-backed or fail-open) are both current at this point.
+		// Sample denominator: coarse inView true. Violation: inView && !renderVisible.
+		if (s_tobjParityEnabled && inView) {
+			++g_tobjParitySamples;
+			if (!renderVis)
+				++g_tobjParityViolation;
+		}
 	}
 
 	return(1);

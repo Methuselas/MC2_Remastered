@@ -31,3 +31,10 @@ void     g_staticUpdateEmitSummary(uint32_t frame);
 extern unsigned long long g_tobjAngularCyc;
 extern unsigned long long g_tobjProjCyc;
 void g_tobjSplitRollAndMaybeEmit();
+
+// [TOBJPARITY v1] once-per-frame roll + 120-frame summary for the superset-
+// parity counter probe (proof-gate #2). Accumulators defined in terrobj.cpp;
+// called from objmgr.cpp immediately after g_tobjSplitRollAndMaybeEmit() at
+// the end of the TerrainObjects sweep (same per-frame boundary).
+// Env-gated: MC2_TOBJ_PARITY=1. Counter only, demote-not-delete.
+void g_tobjParityRollAndMaybeEmit();

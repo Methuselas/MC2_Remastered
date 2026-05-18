@@ -2085,6 +2085,10 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		// terrain.cpp:1822 SlimSplitRollAndMaybeEmit() placement at the
 		// end of the per-frame loop; frame counter lives in terrobj.cpp).
 		g_tobjSplitRollAndMaybeEmit();
+		// [TOBJPARITY v1] once-per-frame roll + 120-frame summary for the
+		// superset-parity counter probe (proof-gate #2). Called here at the
+		// same per-frame boundary as TOBJSPLIT (see static_update_counters.h).
+		g_tobjParityRollAndMaybeEmit();
 	}
 	
  	if (movers) {

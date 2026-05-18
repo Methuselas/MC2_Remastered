@@ -271,6 +271,8 @@ def main():
                             "MC2_LIGHT_COST_SPLIT",
                             "MC2_SLIM_COST_SPLIT",
                             "MC2_TOBJ_COST_SPLIT",
+                            # Task 7 — superset-parity counter probe (proof-gate #2)
+                            "MC2_TOBJ_PARITY",
                             "MC2_GPUPROPS_TRACE",
                             "MC2_MECH_RESTORE_TRACE",
                             # Phase 1 — terrain lighting GPU compute
