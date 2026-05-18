@@ -57,6 +57,10 @@ public:
                                 float mapHalfExtent);
     bool staticLightMatrixBuilt() const { return staticLightMatrixBuilt_; }
     void markStaticLightMatrixBuilt() { staticLightMatrixBuilt_ = true; }
+    // CP-1: per-mission reset so the next mission rebuilds the static light
+    // matrix (staticLightMatrixBuilt_ is process-scoped and never reset
+    // between missions without this explicit hook).
+    void resetStaticLightMatrix() { staticLightMatrixBuilt_ = false; }
     void setMapHalfExtent(float extent) { mapHalfExtent_ = extent; }
     float getMapHalfExtent() const { return mapHalfExtent_; }
 

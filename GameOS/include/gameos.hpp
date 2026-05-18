@@ -2310,6 +2310,10 @@ void gos_EndShadowPrePass();
 void gos_RequestFullShadowRebuild();
 bool gos_ShadowRebuildPending();
 void gos_ClearShadowRebuildPending();
+// CP-1: per-mission reset of all process-scoped static-shadow priming state.
+// Call at the per-mission init chokepoint so mission N does not inherit the
+// static shadow map or the static light matrix from mission N-1.
+void gos_ResetStaticShadowPriming();
 void gos_DrawShadowObjectBatch(HGOSBUFFER vb, HGOSBUFFER ib,
     HGOSVERTEXDECLARATION vdecl, const float* worldMatrix4x4);
 

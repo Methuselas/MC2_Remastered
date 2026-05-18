@@ -132,6 +132,10 @@
 // Macro Definitions
 //#define NUM_FIRERANGES		3
 
+// CP-1: frame counter used in the per-mission shadow reset probe.
+// Defined in mclib/tgl.cpp; incremented by GameOS frame-end path.
+extern uint32_t g_mc2FrameCounter;
+
 //----------------------------------------------------------------------------------
 // Static globals
 float minFrameRate = 4.0;
@@ -2804,6 +2808,15 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 		const uint32_t maxActors = static_cast<uint32_t>(ObjectManager->getMaxObjects());
 		const uint32_t staticPropHeadroom = 8192u;
 		gpu_cull::readback_init(maxActors + maxActors / 4u + staticPropHeadroom);
+	}
+	// CP-1: new mission - re-prime the world-fixed static shadow map and the
+	// static light matrix (both are process-scoped and otherwise carry over
+	// the previous mission's state into this mission).
+	gos_ResetStaticShadowPriming();
+	mc_ResetTerrainShadowPrimed();
+	if (getenv("MC2_DECOR_SHADOW_TRACE")) {
+		printf("[DECOR_SHADOW v1] event=mission_reset_priming frame=%u\n",
+		       g_mc2FrameCounter); fflush(stdout);
 	}
 
 	//-------------------------

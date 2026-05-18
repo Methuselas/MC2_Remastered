@@ -82,6 +82,12 @@ extern bool useFog;
 extern DWORD BaseVertexColor;
 extern uint32_t g_mc2FrameCounter;
 
+// CP-1: file-scope so a per-mission hook can re-prime the static terrain shadow
+// accumulation for the new mission.  Previously a function-local static inside
+// renderLists(); promoted here so mc_ResetTerrainShadowPrimed() can clear it.
+static bool s_terrainShadowPrimed = false;
+void mc_ResetTerrainShadowPrimed() { s_terrainShadowPrimed = false; }
+
 // MC2_TEX_LIFECYCLE_TRACE=1 — diagnostic for the static-prop black-billboard bug
 // under MC2_STATIC_UPDATE_SKIP=1. Logs lifecycle event types under a single
 // schema (also emitted by msl.cpp, gos_static_prop_batcher.cpp,
@@ -1507,7 +1513,6 @@ void MC_TextureManager::renderLists (void)
 	// position history. This guarantees the initial camera view is shadowed
 	// from frame 1 instead of waiting for a >100-unit camera move.
 	{
-		static bool s_terrainShadowPrimed = false;
 		if (!s_terrainShadowPrimed) {
 			for (long si = 0; si < nextAvailableVertexNode; si++) {
 				if ((masterVertexNodes[si].flags & MC2_DRAWSOLID) &&
