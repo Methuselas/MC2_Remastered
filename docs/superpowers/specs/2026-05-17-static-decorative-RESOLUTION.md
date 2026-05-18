@@ -1646,3 +1646,330 @@ under both options. OC-1 is NOT an OPEN blocker; it is a specification precondit
 for Plan 2.
 
 No new OPEN blockers from this task.
+
+---
+
+## Parity record + sibling-helper coordination
+
+Date: 2026-05-18
+Status: PASS (see Step 3 exit criterion).
+
+All file:line citations grep-verified at write time. Cross-branch greps into
+.claude/worktrees/gpu-driven-rendering are noted explicitly.
+
+---
+
+### Step 1: Canonical packed parity record
+
+#### Source struct: GpuStaticPropInstance (GameOS/gameos/gos_static_prop_batcher.h:15)
+
+Grep-verified field layout (gos_static_prop_batcher.h:15-37):
+
+```
+struct alignas(16) GpuStaticPropInstance {   // 112 bytes total
+    float    modelMatrix[16];   // offset   0  (64 B) shape-to-world, row-major
+    uint32_t typeID;            // offset  64  ( 4 B)
+    uint32_t firstColorOffset;  // offset  68  ( 4 B)
+    uint32_t flags;             // offset  72  ( 4 B) bits: lightsOut/isWindow/isSpotlight
+    uint32_t lightDataIndex;    // offset  76  ( 4 B)
+    float    aRGBHighlight[4];  // offset  80  (16 B)
+    float    fogRGB[4];         // offset  96  (16 B)
+};
+```
+
+Static asserts verified in gos_static_prop_batcher.h:31-37.
+
+#### Source struct: GpuActorRecord (GameOS/gameos/gpu_cull_record.h:9) -- per-leaf world AABB source
+
+Grep-verified field layout (gpu_cull_record.h:9-20):
+
+```
+struct alignas(16) GpuActorRecord {          // 64 bytes total
+    float       worldCenter[3];   // offset  0 (12 B)
+    float       boundingRadius;   // offset 12 ( 4 B)
+    float       worldAabbMin[3];  // offset 16 (12 B)
+    uint32_t    category;         // offset 28 ( 4 B)
+    float       worldAabbMax[3];  // offset 32 (12 B)
+    ...
+};
+```
+
+In the current registry flush loop (gos_static_prop_registry.cpp:494-512), worldAabbMin/Max is
+derived from actorWorldCenter (actor-level translation, NOT per-leaf) + fixed boundingRadius=200.0f.
+The spec calls for "per-leaf world AABB". For the new StaticDecorativeSet bake path, the per-leaf
+world AABB must be computed from the per-leaf modelMatrix translation (entries [3]/[7]/[11] in
+row-vector column-major storage -- verified convention at gos_static_prop_registry.cpp:461-473)
+plus a tight per-leaf bounding radius. How to source the per-leaf bounding radius is a Plan 2
+grep-to-confirm item (see below).
+
+#### Canonical packed parity record definition
+
+The parity record is a purpose-built C struct (NOT a raw GpuStaticPropInstance or GpuActorRecord
+compared directly). Fields sourced from the spec (Section 8: "matrix / fog / highlight /
+lightDataIndex" + "per-leaf world AABB"). All padding explicitly zeroed before comparison.
+
+```
+struct alignas(16) DecorParityRecord {     // 96 + 24 + 4 = 124 bytes; padded to 128
+    // -- instance fields (from GpuStaticPropInstance) --
+    float    modelMatrix[16];   // offset   0  (64 B)  shape-to-world, row-major
+                                //               source: batcher buildRecipeFromShape()
+                                //               memcpy from Stuff::Matrix4D (bdactor.cpp:5079)
+    float    fogRGB[3];         // offset  64  (12 B)  RGB only (w channel is sentinel 0.0f)
+                                //               source: GetFogRGB() -> fogARGB decode
+                                //               (gos_static_prop_batcher.cpp:3725-3728)
+    float    _pad0;             // offset  76  ( 4 B)  zeroed; fogRGB[3] in GpuStaticPropInstance
+                                //               is the w component decoded from fogARGB >>24;
+                                //               Plan 2 grep-to-confirm whether fogARGB>>24 is
+                                //               always 0 for decoratives (see below)
+    float    aRGBHighlight[4];  // offset  80  (16 B)  ARGB components as float [R,G,B,A order]
+                                //               source: GetARGBHighlight() -> highlightARGB decode
+                                //               (gos_static_prop_batcher.cpp:3721-3724)
+    uint32_t lightDataIndex;    // offset  96  ( 4 B)  per-instance light slot
+                                //               source: GpuStaticPropRegistry::flush() patches
+                                //               per-instance at draw time from
+                                //               multi->getCachedGpuLightIndex()
+                                //               (gos_static_prop_registry.h:72-75)
+    uint32_t _pad1;             // offset 100  ( 4 B)  zeroed
+    uint32_t _pad2;             // offset 104  ( 4 B)  zeroed
+    uint32_t _pad3;             // offset 108  ( 4 B)  zeroed
+    // -- per-leaf world AABB fields --
+    float    worldAabbMin[3];   // offset 112  (12 B)  raw MC2 world coords
+    float    _pad4;             // offset 124  ( 4 B)  zeroed; AABB fields are 12-B each,
+    float    worldAabbMax[3];   // offset 128  (12 B)  raw MC2 world coords
+    float    _pad5;             // offset 140  ( 4 B)  zeroed
+};
+// Total: 144 bytes. alignas(16) keeps all fields 4-byte-aligned minimum.
+```
+
+RULE: no raw GpuStaticPropInstance or GpuActorRecord is compared directly; every
+source field is explicitly assigned into DecorParityRecord, and all padding fields
+are zeroed with memset(&rec, 0, sizeof(rec)) before any field assignment.
+
+#### Field-by-field source mapping (grep-verified)
+
+- `modelMatrix[16]`: copied from per-leaf `GpuStaticPropInstance::modelMatrix` as stored by
+  `buildRecipeFromShape` (gos_static_prop_batcher.cpp:3716: `std::memcpy(inst.modelMatrix, &shapeToWorld, 16*sizeof(float))`).
+  Bake path: TreeAppearance::registerStatic calls buildRecipeFromShape with `Stuff::Matrix4D(rec->shapeToWorld)`
+  (bdactor.cpp:5079-5085). Source-field initialized by TransformMultiShape_BuildRecipe at registerStatic
+  call time (bdactor.cpp:5059).
+
+- `fogRGB[3]` (RGB only): decoded from `GetFogRGB()` return value via `(fogARGB >> 16) & 0xFF`, etc.
+  (gos_static_prop_batcher.cpp:3725-3727). The w component (fogARGB>>24)/255.0f is stored in
+  `GpuStaticPropInstance::fogRGB[3]` but is zeroed in the parity record (_pad0) pending Plan 2
+  grep-to-confirm that fogARGB>>24 is invariantly 0 for decoratives.
+
+- `aRGBHighlight[4]`: decoded from `GetARGBHighlight()` (gos_static_prop_batcher.cpp:3721-3724).
+  All 4 float components (R, G, B, A) included; ARGB decode order: R=(highlightARGB>>16)&0xFF,
+  G=(highlightARGB>>8)&0xFF, B=(highlightARGB>>0)&0xFF, A=(highlightARGB>>24)&0xFF.
+  Source-field initialized at registerStatic call time from per-leaf child->GetARGBHighlight()
+  (bdactor.cpp:5083).
+
+- `lightDataIndex`: patched per-instance at flush time from multi->getCachedGpuLightIndex()
+  (gos_static_prop_registry.h:54-75). In `buildRecipeFromShape`, lightDataIndex is set to
+  sentinel 0xFFFFFFFFu (gos_static_prop_batcher.cpp:3720); the flush loop patches it with the
+  live cache value. The parity record's lightDataIndex must be taken AFTER flush() patches it,
+  not from the recipe snapshot. Both sides of the parity comparison (baked vs recomputed) must
+  use the SAME patched value from getCachedGpuLightIndex() -- not the sentinel.
+
+- `worldAabbMin[3]` / `worldAabbMax[3]`: the spec requires per-leaf world AABB. These must be
+  derived from the per-leaf modelMatrix translation entries (entries[3]/[7]/[11] in Stuff row-
+  vector column-major convention, verified at gos_static_prop_registry.cpp:461-473) plus a
+  per-leaf tight bounding radius. PLAN 2 GREP-TO-CONFIRM: the per-leaf tight bounding radius
+  source is not yet pinned in code. The current registry implementation uses a fixed
+  boundingRadius=200.0f (gos_static_prop_registry.cpp:506) applied to the ACTOR-LEVEL center,
+  not per-leaf. The StaticDecorativeSet bake must derive a tight per-leaf bound. Two candidate
+  sources: (a) TG_Shape::GetBoundingRadius() or equivalent; (b) per-type radius from the
+  registered TG_TypeShape. Plan 2 must grep: `rg -n "GetBoundingRadius\|getBoundingRadius\|
+  boundingRadius\|BoundingRadius" mclib/tgl.cpp mclib/tgl.h mclib/msl.cpp mclib/msl.h` and
+  pin the exact call that supplies the per-leaf tight radius.
+
+#### Fields excluded from the parity record (with rationale)
+
+- `typeID` (GpuStaticPropInstance offset 64): identifies the registered TG_TypeShape bucket; it
+  is a lookup artifact populated by `buildRecipeFromShape` from the batcher's type registry
+  (gos_static_prop_batcher.cpp:3713 area). Not a bake input from the decorative's world state;
+  excluded from the per-bake parity check.
+
+- `firstColorOffset` (GpuStaticPropInstance offset 68): per-frame mutable SSBO offset, patched by
+  `submitCachedInstance` at flush time (gos_static_prop_batcher.h:260). Excluded: per-frame state,
+  not a stable bake field.
+
+- `flags` (GpuStaticPropInstance offset 72): bits for lightsOut/isWindow/isSpotlight sourced from
+  per-leaf child->GetLightsOut()/GetIsWindow()/GetIsSpotlight() at registerStatic time
+  (bdactor.cpp:5076-5078). PLAN 2 GREP-TO-CONFIRM: the spec's parenthetical does not enumerate
+  `flags` explicitly ("matrix / fog / highlight / lightDataIndex"). However, `flags` is a stable
+  bake input (sourced from TG_Shape node state at mission-load time). Plan 2 must decide whether
+  to include it in the parity record. Conservative default: include it. Resolution requires
+  grepping whether flags can change post-registration: `rg -n "SetLightsOut\|SetIsWindow\|
+  SetIsSpotlight\|lightsOut\|isWindow\|isSpotlight" mclib/tgl.h mclib/tgl.cpp mclib/msl.cpp`.
+
+#### Comparison granularity and pass criterion
+
+GRANULARITY: per-prop 128-byte DecorParityRecord (one record per registered decorative leaf).
+Each parity sample covers one (decorative, leaf) pair; a multi-leaf decorative produces one
+comparison per leaf.
+
+PASS CRITERION: zero mismatch (memcmp returns 0 for every sampled record) over tier1 round-robin
+sampling (1 prop/type/frame, cumulative coverage per spec Section 8). Sampling strategy:
+round-robin by archetype index across frames so every registered archetype is visited at least
+once per tier1 run.
+
+GPU-READ MARKING: the parity record is CPU-only (used only by MC2_DECOR_PARITY=1 comparison
+path). Neither GpuStaticPropInstance nor GpuActorRecord changes are required by this parity
+spec. The parity record is NOT uploaded to a GPU buffer; it is a CPU-side memcmp target.
+Therefore: no cpp_glsl_ubo_struct_lockstep obligation for the parity record itself. The
+underlying GpuStaticPropInstance SSBO schema (batcher.h:15-37) and GpuActorRecord SSBO
+schema (gpu_cull_record.h:9-20) remain under cpp_glsl_ubo_struct_lockstep and are not
+modified by this spec.
+
+---
+
+### Step 2: Sibling-helper coordination
+
+#### Opposite-direction grep result (re-grepped at task execution time)
+
+Command executed:
+```
+rg -n "substrate_writeRecord|s_cpuVisibleCount|substrate_appendStaticPropRecord|substrate_submitDynamicActor" \
+   .claude/worktrees/gpu-driven-rendering/GameOS/gameos/gpu_cull_substrate.cpp
+```
+
+Result (sibling worktree gpu-driven-rendering):
+```
+50:  static uint32_t  s_cpuVisibleCount = 0;
+82:  return s_cpuVisibleCount;
+108: s_cpuVisibleCount = 0;
+171: s_cpuVisibleCount = 0;
+202: s_cpuVisibleCount = 0;
+209: // substrate_writeRecord  (shared lockstep write core)
+223: static inline void substrate_writeRecord(const GpuActorRecord& rec) {
+230: if (rec.prevVisibilityBit) ++s_cpuVisibleCount;
+235: // substrate_submitDynamicActor
+238: void substrate_submitDynamicActor(const GpuActorRecord& rec) {
+254: substrate_writeRecord(rec);
+265: // at record-write time in substrate_writeRecord; ...
+303: // substrate_appendStaticPropRecord (C1b GPU authority flip)
+316: void substrate_appendStaticPropRecord(const GpuActorRecord& rec) {
+335: substrate_writeRecord(rec);
+363: if (legacy != s_cpuVisibleCount) ...
+```
+
+FINDING: `substrate_writeRecord` EXISTS in the sibling worktree
+`.claude/worktrees/gpu-driven-rendering/GameOS/gameos/gpu_cull_substrate.cpp` at line 223
+(static inline, defined at file scope). It is called by both `substrate_submitDynamicActor`
+(line 254) and `substrate_appendStaticPropRecord` (line 335), and increments `s_cpuVisibleCount`
+per-record at write time (line 230).
+
+Command executed (opposite-direction, this worktree):
+```
+rg -n "substrate_writeRecord|s_cpuVisibleCount|substrate_appendStaticPropRecord|substrate_submitDynamicActor" \
+   GameOS/gameos/gpu_cull_substrate.cpp
+```
+
+Result (this worktree, nifty-mendeleev):
+```
+49:  static uint32_t  s_cpuVisibleCount = 0;
+81:  return s_cpuVisibleCount;
+204: // substrate_submitDynamicActor
+207: void substrate_submitDynamicActor(const GpuActorRecord& rec) {
+213: // substrate_appendStaticPropRecord (2026-05-11).
+254: s_cpuVisibleCount = cpuVis;
+285: // substrate_appendStaticPropRecord (C1b GPU authority flip)
+298: void substrate_appendStaticPropRecord(const GpuActorRecord& rec) {
+```
+
+FINDING: `substrate_writeRecord` does NOT exist in this worktree's
+`GameOS/gameos/gpu_cull_substrate.cpp`. Both `substrate_submitDynamicActor` (line 207) and
+`substrate_appendStaticPropRecord` (line 298) exist, but they contain inline record-write code
+rather than calling the shared helper. `s_cpuVisibleCount` is accumulated in the flush loop
+(substrate_flushUpload, line 254 via a per-record scan), NOT per-record at write time.
+
+PLAN-WRITE CLAIM CONFIRMED: the plan-write finding that `substrate_writeRecord` is unbuilt on
+this branch is verified by the opposite-direction grep. The sibling worktree's design has
+implemented it; this worktree has not yet received that implementation.
+
+#### Coordination requirement: CP-3 (Plan 2 sequencing precondition)
+
+CONSTRAINT CP-3 (analogous to CP-1 per-mission shadow reset and CP-2 decorative-mesh shadow
+submission entry point):
+
+Plan 2 of THIS slice (StaticDecorativeSet implementation) MUST NOT wire the fallback/legacy
+decorative path through a parallel count accumulation path. Under MC2_STATIC_DECOR_GPU=0
+(legacy killswitch) and under decorative bake-failure fallback (Section 8 of the design spec),
+decoratives that re-enter the legacy CPU path MUST flow through `substrate_writeRecord` -- the
+single counting choke point -- so they are counted naturally in `s_cpuVisibleCount` without
+a special-case branch.
+
+CURRENT STATE: `substrate_writeRecord` does not exist in this worktree's substrate file
+(`GameOS/gameos/gpu_cull_substrate.cpp`). The single-choke-point obligation (spec Section 11,
+"Single-choke-point obligation") cannot be honored until this helper is either:
+  (a) merged from the sibling worktree's implementation (gpu-driven-rendering, line 223), or
+  (b) re-implemented in this worktree's substrate file to the same interface.
+
+INTERFACE AUTHORITY: the Counter-semantics contract section of the sibling design:
+`.claude/worktrees/gpu-driven-rendering/docs/superpowers/specs/
+ 2026-05-17-substrate-cpuvisible-writeside-accumulation-design.md`
+Section "Counter-semantics contract" (line 226 in that file, grep-verified).
+
+The contract terms adopted by this slice's design (spec Section 11) require:
+  > `s_cpuVisibleCount` and substrate record parity count only records submitted through
+  > the active substrate producer set, accumulated solely through the shared write helper
+  > `substrate_writeRecord` ... after overflow rejection and after the record write.
+
+PLAN 2 SEQUENCING PRECONDITION: before Plan 2 wires the MC2_STATIC_DECOR_GPU=0 fallback path
+or the bake-failure re-entry into the legacy substrate producer, Plan 2 must:
+  (a) Confirm `substrate_writeRecord` exists and its signature matches the sibling design
+      (grep: `rg -n "substrate_writeRecord" GameOS/gameos/gpu_cull_substrate.cpp`)
+  (b) If absent: merge or re-implement it (inline, static, calls from both
+      substrate_submitDynamicActor and substrate_appendStaticPropRecord, increments
+      s_cpuVisibleCount per-record after overflow check)
+  (c) Route the fallback/legacy decorative's substrate record write through
+      substrate_writeRecord, NOT through a new parallel counter
+
+This is CP-3, a Plan 2 sequencing precondition analogous to CP-1 (per-mission shadow reset)
+and CP-2 (decorative-mesh shadow submission entry point). It does not block Stage 0 completion.
+It is an explicit Plan 2 first-step dependency that must be discharged before the fallback
+path is wired.
+
+No new OPEN blockers: CP-3 is a known Plan 2 sequencing precondition, not a design ambiguity.
+The interface authority (sibling design section) exists and is reconciled per spec Section 11.
+
+---
+
+### Step 3: Exit criterion
+
+#### Checklist
+
+1. Canonical parity record fully specified?
+   - Field list: YES (modelMatrix, fogRGB, aRGBHighlight, lightDataIndex, worldAabbMin, worldAabbMax)
+   - Byte widths: YES (modelMatrix=64B, fogRGB=12B+4B pad, aRGBHighlight=16B, lightDataIndex=4B+12B pad,
+     worldAabbMin=12B+4B pad, worldAabbMax=12B+4B pad; total 144 bytes)
+   - Field ordering: YES (instance fields first, AABB fields last, explicit padding between)
+   - All padding zeroed: YES (rule stated: memset to zero before any field assignment)
+   - Every source field initialized before compare: YES (field-by-field source mapping documented,
+     lightDataIndex taken post-flush-patch on both sides)
+   - Comparison granularity: YES (per-prop 128-byte struct; one record per registered decorative leaf)
+   - Pass criterion: YES (zero mismatch over tier1 round-robin sampling)
+   - No TBD in core record: YES, except two Plan 2 grep-to-confirm items explicitly noted:
+       * per-leaf tight bounding radius source (worldAabbMin/Max)
+       * `flags` field inclusion decision
+       * `fogRGB[3]` (w component) invariance for decoratives
+     These are recorded as Plan 2 confirmation items, not TBDs that block Stage 0.
+
+2. Sibling-helper dependency recorded as explicit Plan 2 sequencing precondition?
+   YES. CP-3 is defined above with:
+   - Opposite-direction grep evidence confirming substrate_writeRecord is absent in this worktree
+   - Confirmation it exists in the sibling worktree (line 223)
+   - Interface authority reference: sibling design Section "Counter-semantics contract" (line 226)
+   - Precise Plan 2 action items (a)-(c)
+
+#### Verdict
+
+PASS.
+
+The canonical parity record is fully specified with no floating TBDs -- the three Plan 2
+grep-to-confirm items are bounded, actionable, and do not introduce design ambiguity. The
+sibling-helper dependency is recorded as CP-3, an explicit Plan 2 sequencing precondition with
+interface-authority reference. Stage 0 is not blocked.
+
+No new OPEN blockers from this task.
