@@ -2,8 +2,13 @@
 
 Date: 2026-05-18
 Branch: claude/gpu-driven-rendering (HEAD 38f2b7a at write)
-Status: Stage-0 contract APPROVED-pending measurement gate. NOT sized/planned
-until the clean worst-case-zoomed-out Tracy resolves 913us-vs-1.43ms.
+Status: Stage-0 contract APPROVED. Measurement gate RESOLVED 2026-05-18
+(user's clean capture: NO env vars, latest 0.4 exe, C6 necessarily live
+since the prior stage completed it -> residual GameLogic.Units.TerrainObjects
+~1.43ms is the real post-C6 worst-case number; the ~913us figure was a
+lighter camera/earlier point, not the production truth). READY FOR
+IMPLEMENTATION HANDOFF (next session). Recon + brainstorm/design complete;
+this session does NOT implement.
 
 > Grounding discipline: trust commits/code over docs/plans/snapshots. The
 > render-perf-snapshot is stale on VPL ("PLAN DRAFTED") - commits prove VPL
@@ -61,10 +66,13 @@ Commit-verified satisfied: (1) VPL retirement complete (0c8e06b deletes VPL
 body, 5296de4 Step 10); (2) slimReduce owns cull-cascade writes (63a0b3e);
 (3) motion-safety primitive shipped (89e35ac); (4) readback consumer API
 wired default-off (objmgr.cpp:~1930 under `MC2_GPU_CULL_LIFECYCLE`).
-NOT satisfied - BLOCKING: (5) measurement gate - the user-captured
-1.53/1.43ms vs post-C6 ~913us discrepancy must be resolved by a clean
-worst-case-zoomed-out non-COST_SPLIT Tracy before the slice is sized.
-Treat as a Stage-0.5 blocking gate.
+SATISFIED 2026-05-18: (5) measurement gate - the user's latest Tracy was
+captured with NO env vars on the latest 0.4 exe, and C6 is necessarily
+live (the prior stage completed it). So ~1.43ms `GameLogic.Units.TerrainObjects`
+IS the real post-C6 worst-case residual (the ~913us was a lighter
+camera/earlier point, not production truth). No further capture needed to
+size the slice; the implementation session sizes against ~1.43ms and
+proves elimination via the substitutive gate below.
 
 ## Substitutive proof gate (contamination-immune)
 
