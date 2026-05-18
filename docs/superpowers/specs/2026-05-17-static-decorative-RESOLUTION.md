@@ -832,3 +832,48 @@ out-of-range blockNumbers must return an empty iterator, matching the existing
 "(currentBlockNumber >= 0) && (currentBlockNumber < totalBlocks)" guard at
 artlry.cpp:741 / carnage.cpp:531. This is a correctness requirement for Plan 2, not an
 investigation blocker.
+
+---
+
+### HC-1 proof completion (CopyTo / ObjectManagerData discharge)
+
+The Task 4 spec-compliance review flagged that the Blocker 1 HC-1 proof closed the
+save-path question only by grepping the literal token `objBlockInfo` inside `Save()`
+(zero hits), but `GameObjectManager::Save` serializes an `ObjectManagerData` struct via
+`CopyTo(&data)` (objmgr.cpp:3251-3254) and the proof never discharged whether that
+struct carries the per-block `numObjects` / `numCollidableObjects` / `firstHandle`
+counts that the OB-2 ruling reduces. Because OB-2 mandates reducing those counts, this
+vector is load-bearing for HC-1 (and for the user's explicit "descope save games"
+ruling).
+
+Discharged by direct grep this task:
+
+- `_ObjectManagerData` (code/objmgr.h:171-188) contains ONLY global type counts
+  (maxObjects, numElementals, numTerrainObjects, numBuildings, numTurrets, numWeapons,
+  numCarnage, numLights, numArtillery, numGates, maxMechs, maxVehicles, numMechs,
+  numVehicles, nextWatchId). It contains NO `objBlockInfo`, NO `numObjBlocks`, and NO
+  per-block `numObjects` / `numCollidableObjects` / `firstHandle`.
+- `objBlockInfo` is a `static ObjBlockInfo*` member of class `Terrain`
+  (mclib/terrain.h:179); `numObjBlocks` is `static long` (terrain.h:178). The
+  per-block counts the OB-2 ruling reduces live exclusively in `Terrain::objBlockInfo`,
+  entirely outside `ObjectManagerData` / `CopyTo` / the save packet stream.
+
+Conclusion: the OB-2 count reduction touches nothing in the on-disk save path. HC-1 is
+fully discharged (CONFIRMED by grep, not "almost certainly"). The user's save-descope
+ruling is preserved. Task 8 need not re-litigate this.
+
+---
+
+### Elimination-target baseline (supporting evidence, not the ship gate)
+
+Current-build Tracy histogram for the `GameLogic.Units.TerrainObjects` bucket (the
+per-frame static-object cost this slice eliminates), user-captured 2026-05-17:
+mean 1.53 ms, median 1.43 ms, mode 1.41 ms, sigma 403 us, P75 1.63 ms, P90 1.97 ms,
+P99 2.63 ms, P99.9 6.62 ms, max 15.19 ms, self-time 79.64%.
+
+The fat upper tail (P99.9 6.62 ms vs 1.43 ms median) is consistent with the
+`needsFullBakeNextFrame` / camera-move re-bake bursts the spec identifies. Per the
+machine-contamination caveat this is SUPPORTING EVIDENCE only; the primary ship gate
+remains the contamination-immune logic counter `decoratives_seen_in_objmgr_loop == 0`
+(Stage 3) plus dual-output bit-identity parity. This baseline informs the Task 8
+design-delta and the Plan 2 substitutive done-governor.
