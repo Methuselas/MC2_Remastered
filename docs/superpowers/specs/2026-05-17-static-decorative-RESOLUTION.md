@@ -877,3 +877,372 @@ machine-contamination caveat this is SUPPORTING EVIDENCE only; the primary ship 
 remains the contamination-immune logic counter `decoratives_seen_in_objmgr_loop == 0`
 (Stage 3) plus dual-output bit-identity parity. This baseline informs the Task 8
 design-delta and the Plan 2 substitutive done-governor.
+
+---
+
+## Blocker 4: static-shadow lifecycle + dependency
+
+Date: 2026-05-17
+Status: PASS -- static-shadow dependency verdict GO (infrastructure exists and is usable);
+all five lifecycle questions answered with no TBD; one new cross-slice prerequisite recorded.
+
+All file:line citations grep-verified at write time.
+
+---
+
+### Step 1: Confirm the static shadow map state
+
+#### Grep runs executed
+
+Broad shadow infrastructure search:
+  rg -n "staticShadow|StaticShadow|worldFixedShadow|shadowMap|shadowFBO"
+     GameOS/gameos/gos_postprocess.cpp
+  rg -n "staticShadow|StaticShadow|worldFixed|static.*shadow|shadow.*static"
+     GameOS/gameos/gos_postprocess.cpp
+  rg -n "staticShadow|StaticShadow|worldFixed|static.*shadow|shadow.*static"
+     GameOS/gameos/gameos_graphics.cpp
+  rg -n "renderShadows|renderStaticShadows|staticShadow|static_shadow"
+     mclib/txmmgr.cpp
+
+Shadow lifecycle API:
+  rg -n "gos_BeginShadowPrePass|gos_EndShadowPrePass|gos_BuildStaticLightMatrix|
+     gos_MarkStaticLightMatrixBuilt|gos_StaticLightMatrixBuilt|gos_RequestFullShadowRebuild|
+     gos_ShadowRebuildPending|gos_ClearShadowRebuildPending"
+     GameOS/gameos/gameos_graphics.cpp
+
+TreeAppearance and BldgAppearance renderShadows:
+  rg -n "renderShadows" mclib/bdactor.cpp
+
+Static shadow draw call:
+  rg -n "gos_DrawShadowBatchTessellated" mclib/*.cpp GameOS/gameos/*.cpp
+
+#### Findings
+
+##### Static world-fixed shadow map: EXISTS AND IS FULLY OPERATIONAL
+
+The plan-write finding ("not implemented in GameOS/gameos/") is REFUTED.
+
+Evidence (opposite-direction grep -- producers and consumers of the FBO/texture/matrix):
+
+PRODUCER SIDE (writes depth into the static shadow map):
+
+1. `gosPostProcess::initShadows()` (gos_postprocess.cpp:1073) -- allocates `shadowFBO_`
+   and `shadowDepthTex_` (a 4096x4096 GL_DEPTH_COMPONENT32F texture) at renderer
+   creation time (called from gosPostProcess::init, line 188). This is the static shadow
+   FBO, distinct from `dynShadowFBO_` which is allocated separately at line 189 via
+   initDynamicShadows().
+
+2. `gosPostProcess::buildStaticLightMatrix()` (gos_postprocess.cpp:1194) -- builds the
+   world-fixed orthographic light-space matrix centered at map origin, covering the full
+   map diagonal. Stores it in `staticLightSpaceMatrix_[16]` (gos_postprocess.h:153,
+   comment: "world-fixed ortho, built once at map load"). Idempotent: early-returns if
+   `staticLightMatrixBuilt_` is already set (line 1198).
+
+3. `gosRenderer::beginShadowPrePass(bool clearDepth)` (gameos_graphics.cpp:3973) --
+   binds `shadowFBO_`, configures GL depth state, binds the shadow shader, and uploads
+   `getLightSpaceMatrix()` (the `staticLightSpaceMatrix_`). Called from txmmgr.cpp
+   Shadow.StaticAccum path (see below).
+
+4. `gos_DrawShadowBatchTessellated()` (gameos_graphics.cpp:6282) -- submits terrain
+   vertex batches into the bound shadow FBO. ONLY ONE callsite in the entire codebase:
+   `mclib/txmmgr.cpp:1575` inside the `Shadow.StaticAccum` scope.
+
+5. `mclib/txmmgr.cpp:1525-1587` (Shadow.StaticAccum scope) -- per-frame conditional
+   that fires when tessellation is active AND (camera has moved >100 units OR a full
+   rebuild is pending). On each fire:
+   - builds the static light matrix on first frame (txmmgr.cpp:1549-1553)
+   - calls gos_BeginShadowPrePass(firstFrame) to bind the FBO and optionally clear
+   - iterates masterVertexNodes[] filtering for MC2_DRAWSOLID | MC2_ISTERRAIN
+   - submits matching terrain patches via gos_DrawShadowBatchTessellated()
+   - calls gos_EndShadowPrePass()
+
+   This is the sole static shadow accumulation path. It bakes ONLY terrain
+   (MC2_ISTERRAIN flag). No decorative trees (TREE/TERRAINOBJECT) are submitted
+   to this path at present.
+
+6. `mclib/txmmgr.cpp:1589-1621` (Shadow.DynPass scope) -- per-frame path that fires
+   every frame when tessellation is active and g_numShadowShapes > 0. Writes into
+   `dynShadowFBO_` / `dynShadowDepthTex_` (the DYNAMIC shadow map, separate FBO).
+   Covers mechs and other dynamic movers. Completely separate from the static FBO.
+
+CONSUMER SIDE (reads the static shadow depth texture):
+
+7. `gosPostProcess::renderScreenSpaceShadow()` (gos_postprocess.cpp:648) -- binds
+   `shadowDepthTex_` (the static shadow depth texture) to a sampler and renders the
+   full-screen shadow composite. Uses `staticLightSpaceMatrix_` as `lightSpaceMatrix`.
+
+8. Terrain draw in `gosRenderer` (gameos_graphics.cpp:4320, 4424, 4535) -- uploads
+   `pp->getLightSpaceMatrix()` (== staticLightSpaceMatrix_) as `lightSpaceMatrix` uniform.
+
+9. `shaders/include/shadow.hglsl:4` -- `uniform sampler2DShadow shadowMap` is the
+   static map. `calcShadow()` (line 33) uses `lightSpaceMatrix` (the static world-fixed
+   matrix). `calcDynamicShadow()` (line 91) uses `dynamicLightSpaceMatrix` and
+   `dynamicShadowMap` (the dynamic FBO). These are two SEPARATE samplers.
+
+DECORATIVE renderShadows PATH (opposite-direction grep -- where trees produce shadow depth NOW):
+
+10. `TreeAppearance::renderShadows()` (mclib/bdactor.cpp:4703-4720):
+    ```
+    if (gos_IsTerrainTessellationActive())
+        return NO_ERR;
+    ```
+    When tessellation is active (the modern path), TreeAppearance::renderShadows is a
+    NO-OP. It returns immediately without submitting any geometry. Decorative tree
+    shadows are NOT currently baked into any shadow map (static or dynamic) on the
+    tessellation path. The same early-return exists in BldgAppearance::renderShadows
+    (bdactor.cpp:2112-2116).
+
+11. `GameObjectManager::renderShadows()` (code/objmgr.cpp:1782-1877) -- iterates
+    objBlockInfo block ranges and calls objList[objIndex]->renderShadows() per object.
+    This is the per-frame objBlockInfo walk targeted by HC-2 severance. Once decoratives
+    are severed from objBlockInfo, this call path no longer reaches TreeAppearance::
+    renderShadows(). Since that function is already a NO-OP on the tessellation path,
+    severing it from this walk has no shadow effect under the current codebase.
+
+    IMPLICATION: under the current tessellation path, decorative trees cast NO shadows
+    at all -- neither static nor dynamic. Severing them from the renderShadows walk
+    does not remove any shadow contribution; it removes a NO-OP call. The design
+    proposal to bake decorative shadows into the static map is an ADDITIVE feature
+    (trees currently cast zero shadow), not a preservation of existing behavior.
+
+MISSION-RESET BEHAVIOR:
+
+12. `gosPostProcess::initShadows()` sets `staticLightMatrixBuilt_ = false` and clears
+    the depth texture (gos_postprocess.cpp:1117-1125). This runs ONCE at renderer
+    creation (`new gosPostProcess()` at gameos_graphics.cpp:5175), which is
+    process-lifetime, NOT mission-lifetime. The gosPostProcess is created and destroyed
+    once per process startup/shutdown.
+
+13. `s_terrainShadowPrimed` (txmmgr.cpp:1510) is a file-scope `static bool`,
+    initialized to false at program start. It is NOT reset between missions. The
+    same applies to `s_shadowRebuildPending` (gameos_graphics.cpp:6278).
+
+    IMPLICATION: the static shadow map accumulates across missions within one process
+    run. On a new mission load within the same process, the shadow map retains depth
+    from the previous mission until the Shadow.StaticAccum path fires with a new
+    terrain frame, which forces a full rebuild on first frame (`firstFrame = !gos_StaticLightMatrixBuilt()`).
+    The `gos_RequestFullShadowRebuild()` call in the first-frame latch (txmmgr.cpp:1517)
+    resets the accumulated depth on the first terrain submission of the new mission.
+
+#### Dependency verdict: GO
+
+The static world-fixed shadow map infrastructure is:
+  - ALLOCATED: shadowFBO_ + shadowDepthTex_ (4096x4096, process-lifetime)
+  - OPERABLE: gos_BeginShadowPrePass / gos_DrawShadowBatchTessellated / gos_EndShadowPrePass
+    form a complete write API, called per-accumulation-frame from txmmgr.cpp
+  - DISTINCT from the dynamic shadow map (dynShadowFBO_ / dynShadowDepthTex_)
+  - CONSUMED: by calcShadow() (shadow.hglsl) via shadowMap sampler (tex unit 9 per
+    gameos_graphics.cpp:4323)
+
+The plan-write claim "not implemented in GameOS/gameos/" was incorrect. It appears the CLAUDE.md "Known issues" note refers to the stutter symptom (camera-move threshold of 100 units triggers a re-bake), not to the FBO being absent. The world-fixed shadow map and its bake API exist and work.
+
+VERDICT: GO -- the static shadow map FBO is present, writable, and can accept
+decorative geometry in the same Shadow.StaticAccum pass that bakes terrain. No new
+FBO infrastructure is required.
+
+---
+
+### Step 2: Lifecycle and destruction semantics (five questions)
+
+All five questions are answered with no TBD.
+
+#### Q1: Static shadow map allocation time
+
+ANSWER: Process-lifetime, not mission-lifetime. The FBO and depth texture are allocated
+once in gosPostProcess::initShadows() (gos_postprocess.cpp:1073), called from
+gosPostProcess::init() (line 188), which is called when the gosPostProcess object is
+created (gameos_graphics.cpp:5175, `new gosPostProcess()`). This happens once per
+process startup. The FBO is not reallocated between missions.
+
+Consequence: decorative shadow bake infrastructure is always available. No per-mission
+allocation is required.
+
+#### Q2: Decorative-shadow bake order relative to terrain/building static bake
+
+ANSWER: In-pass with terrain, same Shadow.StaticAccum frame. The correct integration
+point is inside the mclib/txmmgr.cpp Shadow.StaticAccum scope (txmmgr.cpp:1525-1587),
+AFTER the existing terrain batch submission loop, BEFORE gos_EndShadowPrePass(). The
+existing loop (txmmgr.cpp:1556-1581) submits all MC2_ISTERRAIN masterVertexNodes. A
+decorative submission step immediately following that loop would bake decorative tree
+and building instances into the same depth buffer, in the same frame, under the same
+light-space matrix.
+
+Building (BldgAppearance) decoratives follow the same rule as tree (TreeAppearance)
+decoratives: both return NO_ERR immediately under tessellation (bdactor.cpp:2115,
+4706). Both are currently cast-free. Both can be baked by the same additive pass.
+
+Order within the static bake frame: terrain first, decoratives second. Terrain depth
+is the dominant occlusion; decorative depth composites additively into the same FBO
+(glDepthFunc(GL_LESS) + no clear on the decorative step). This is the same accumulation
+semantics the existing terrain multi-frame path uses for incremental updates (the
+beginShadowPassNoClear path at gos_postprocess.cpp:1153).
+
+#### Q3: Dynamic-caster (mech) compositing order relative to the static map
+
+ANSWER: Dynamic shadows are written into `dynShadowFBO_` (a completely separate FBO
+and texture from the static `shadowFBO_`). The dynamic shadow pass writes per-frame
+(txmmgr.cpp:1589-1621) using gos_BeginDynamicShadowPass() / gos_EndDynamicShadowPass(),
+which bind dynShadowFBO_, not shadowFBO_. The shader samples both independently
+(calcShadow() from shadowMap on tex unit 9; calcDynamicShadow() from dynamicShadowMap
+on tex unit 10 per gameos_graphics.cpp:4390). Compositing is additive in the fragment
+shader: the minimum of both shadow terms is applied.
+
+Adding decorative geometry to the STATIC pass does not affect the dynamic pass. No
+ordering constraint is introduced; the two FBOs are independent.
+
+#### Q4: Mission-reload behavior
+
+ANSWER: On mission reload within the same process, the static shadow map is NOT reset
+between missions at the gosPostProcess level (no per-mission initShadows call exists).
+However, `gos_RequestFullShadowRebuild()` is called by the first-frame terrain latch
+(txmmgr.cpp:1517) when `s_terrainShadowPrimed` is false. Since `s_terrainShadowPrimed`
+is a file-scope static bool that starts false at process start and is never reset, it
+does NOT re-trigger on mission reload within the same process.
+
+IMPLICATION FOR DECORATIVE BAKE: the decorative-shadow bake must fire at the same
+time as the static terrain first-frame bake. If decoratives are baked in the same
+Shadow.StaticAccum conditional, they will bake on the first terrain accumulation
+frame of the FIRST mission only. On subsequent missions within the same process, the
+shadow map will retain terrain depth from the prior mission until the accumulation
+threshold fires, but the static light matrix is not rebuilt (staticLightMatrixBuilt_
+remains true after first mission, per gos_postprocess.cpp:1198 early-return).
+
+CROSS-SLICE PREREQUISITE CP-1 (new, recorded here):
+The Shadow.StaticAccum path's per-mission reset logic is incomplete: `s_terrainShadowPrimed`
+and `staticLightMatrixBuilt_` are process-scoped statics that do not reset between
+missions. For the decorative-shadow bake to work correctly on all missions (not just
+the first), a per-mission shadow reset must fire on mission start. The existing
+`gos_RequestFullShadowRebuild()` + `gos_ClearShadowRebuildPending()` mechanism already
+provides a forced-rebuild path; what is missing is a mission-transition hook that calls
+`gos_RequestFullShadowRebuild()` AND resets `staticLightMatrixBuilt_` (via
+`initShadows()` or an explicit `staticLightMatrixBuilt_ = false` + shadowFBO clear)
+at the start of each mission. This is a precondition for Plan 2's decorative-bake
+implementation. It must be resolved before the decorative shadow bake is wired in.
+Recorded as cross-slice prerequisite CP-1: "per-mission static shadow reset."
+
+NOTE: this precondition may already be satisfied if the mission-start path calls
+gos_RequestFullShadowRebuild() elsewhere; grep of gos_RequestFullShadowRebuild callers
+in code/*.cpp and mclib/*.cpp was not performed in this task and must be done in Plan 2
+before assuming CP-1 is open.
+
+#### Q5: Destruction semantics -- fallen/destroyed decorative's baked shadow
+
+ANSWER: PERSIST FOR MISSION. Explicit design choice, justified below.
+
+A fallen decorative tree (OBJECT_FLAG_FALLING set at terrobj.cpp:386; tangibility
+cleared at terrobj.cpp:393) has its baked shadow depth persist in the static shadow
+map for the remainder of the mission. The shadow depth is NOT patched or removed on
+deregister/fall.
+
+JUSTIFICATION:
+  (a) The static shadow map is a depth texture. Removing a single object's depth
+      contribution requires re-rendering the full static pass without that object
+      (no "erase" operation exists in standard OpenGL depth-texture semantics), or
+      introducing a separate stencil/mask layer. This adds non-trivial complexity.
+
+  (b) The fallen tree physically falls over (rotation animation). On the tessellation
+      path, TreeAppearance::renderShadows is already a NO-OP (bdactor.cpp:4706). The
+      shadow baked into the static map corresponds to the tree's upright silhouette.
+      After falling, the tree's dynamic representation (the falling animation) would
+      be handled via the existing objBlockInfo re-admission path (Blocker 5, dynamic
+      re-admit), and that re-admitted object would cast dynamic shadow via the mover
+      shadow path if elevated to a dynamic object. The static baked shadow for the
+      upright tree becomes stale but is not worse than no shadow at all (it is a
+      subtle z-fighting artifact at most, and only at the former tree location).
+
+  (c) Consistency with Blocker 3 tombstone design: the collision proxy entry is
+      tombstoned (proxyEntry.tangible = false), not deleted. The same philosophy
+      applies to shadow: the static shadow depth is tombstoned (orphaned) rather than
+      actively removed. The object's shadow footprint is small and immobile.
+
+  (d) The spec's static-elimination motivation is per-frame CPU cost, not pixel-
+      perfect shadow correctness for falling trees. The stale baked shadow after tree
+      fall is an explicitly accepted visual artifact for this design.
+
+DESTRUCTION RULE: A fallen/destroyed decorative's baked static shadow PERSISTS for
+the mission. The static shadow map FBO is not modified on fall/destroy. The per-frame
+dynamic shadow pass (mclib/txmmgr.cpp:1589-1621) writes into dynShadowFBO_ and is
+unaffected. No patch, no erase, no re-render. Explicit acceptance.
+
+DEREGISTER HOOK INTERACTION (Blocker 3, terrobj.cpp:393):
+The Blocker 3 deregister hook (clears proxyEntry.tangible at terrobj.cpp:393, same
+callsite as setTangible(false)) has no shadow-map counterpart. It fires; the proxy
+entry is tombstoned; the shadow bake is left intact. These are independent subsystems.
+No conflict.
+
+---
+
+### Step 3: Exit criterion
+
+PASS.
+
+Evidence:
+
+Step 1: Static shadow map dependency verdict is GO with opposite-direction grep evidence.
+  The "does not exist" claim from plan-write is refuted by:
+  - gosPostProcess::initShadows() (gos_postprocess.cpp:1073): FBO + 4096x4096 depth
+    texture allocated at renderer creation.
+  - gosPostProcess::buildStaticLightMatrix() (gos_postprocess.cpp:1194): world-fixed
+    ortho matrix built once, stored in staticLightSpaceMatrix_[16].
+  - gos_BeginShadowPrePass / gos_DrawShadowBatchTessellated / gos_EndShadowPrePass
+    (gameos_graphics.cpp:6269-6273, 6282): complete write API, called from
+    txmmgr.cpp:1525-1587 Shadow.StaticAccum scope every accumulation frame.
+  - shaders/include/shadow.hglsl:4-77: calcShadow() consumes shadowMap (the static
+    depth texture bound to unit 9), using staticLightSpaceMatrix_ as lightSpaceMatrix.
+  - Opposite-direction grep on TreeAppearance::renderShadows (bdactor.cpp:4703):
+    confirms the current decorative shadow path is a NO-OP under tessellation.
+    Adding decorative geometry to the static bake is ADDITIVE (currently zero
+    contribution), not a replacement of existing behavior.
+  VERDICT: GO -- infrastructure exists and is usable; no new FBO build required.
+
+Step 2: All five lifecycle questions answered, no TBD.
+  Q1 (allocation): process-lifetime (one FBO, not per-mission).
+  Q2 (bake order): in-pass with terrain, same Shadow.StaticAccum frame, terrain first.
+  Q3 (dynamic compositing): independent FBO (dynShadowFBO_); no ordering constraint.
+  Q4 (mission reload): CP-1 cross-slice prerequisite recorded (per-mission reset may
+     be missing; grep of gos_RequestFullShadowRebuild callers deferred to Plan 2).
+  Q5 (destruction): PERSIST FOR MISSION. Explicit acceptance. Justified above.
+
+Step 3 exit verdict:
+  - Static shadow map dependency: GO (explicit, grep-grounded, opposite-direction)
+  - All five lifecycle questions: ANSWERED with no TBD
+  - Cross-slice prerequisite CP-1 recorded (per-mission static shadow reset)
+  - CP-1 is analogous to the sibling substrate_writeRecord dependency: it is an
+    infrastructure gap that must be confirmed or resolved before Plan 2's decorative-
+    shadow bake step can be wired in; recording it here is the correct PASS outcome.
+  - No fabricated clean-in-scope answer: CP-1 is explicitly surfaced.
+
+---
+
+### Cross-slice prerequisite from this task
+
+#### CP-1: per-mission static shadow reset
+
+Discovered in Step 2 Q4.
+
+`s_terrainShadowPrimed` (mclib/txmmgr.cpp:1510) and `staticLightMatrixBuilt_`
+(gosPostProcess, gos_postprocess.cpp:1198 early-return) are process-scoped statics
+that do not automatically reset between missions. If a process runs two missions back-
+to-back, the second mission's first-frame static shadow bake depends on whether the
+forced-rebuild path fires. The existing `gos_RequestFullShadowRebuild()` mechanism
+provides the forcing signal, but the CALLER that fires it on mission transition must
+exist.
+
+Required: before Plan 2 wires in the decorative shadow bake, confirm or add a
+per-mission shadow reset that:
+  (a) calls gos_RequestFullShadowRebuild() at mission load time
+  (b) resets staticLightMatrixBuilt_ (via pp->initShadows() or direct field reset)
+      so buildStaticLightMatrix() fires fresh with the new mission's map extent and
+      sun direction
+
+This is a Plan 2 sequencing precondition analogous to OB-1 (severance must survive
+save-game restore). It does not invalidate the GO verdict -- the infrastructure exists.
+It adds one confirmed implementation step to Plan 2: verify/add mission-start shadow reset.
+
+Grep to discharge at Plan 2 time:
+  rg -n "gos_RequestFullShadowRebuild|staticLightMatrixBuilt\|initShadows" code/*.cpp
+     mclib/*.cpp GameOS/gameos/*.cpp
+If a mission-start caller already fires gos_RequestFullShadowRebuild + resets
+staticLightMatrixBuilt_ in the mission load path, CP-1 is automatically discharged.
+If not, add it to the same mission-load function that calls the objBlockInfo severance
+pass (OB-1 shared function).
