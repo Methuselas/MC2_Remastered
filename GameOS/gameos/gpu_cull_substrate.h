@@ -34,9 +34,16 @@ uint32_t substrate_getInstanceSsboBindingPoint();
 // Lazy env probe — safe to call at any time.
 bool substrate_isEnabled();
 
-// Returns the number of records with prevVisibilityBit==1 from the most recently
-// flushed frame. Updated at flushUpload() time. Used by C1a parity summary.
+// Returns the number of records with prevVisibilityBit==1 accumulated write-side
+// across both producers (dynamic actors + static props) for the current frame.
+// Updated incrementally by substrate_writeRecord at each record submission; the
+// final all-records value is valid after the last substrate_appendStaticPropRecord
+// call for the frame (pre compute_dispatch). Resets in substrate_frameBegin.
 uint32_t substrate_getCpuVisibleCount();
+
+#if defined(MC2_SUBSTRATE_COUNT_PARITY)
+void substrate_countParityCheck();   // proof-only; removed post-proof
+#endif
 
 // Returns the byte offset of the most recently flushed ring slot within the
 // substrate SSBO. Use with glBindBufferRange() so the compute shader reads the

@@ -70,6 +70,7 @@
 #include "../GameOS/gameos/gos_terrain_indirect.h"
 #include "../GameOS/gameos/gos_terrain_mask_dispatch.h"  // B4 Stage 1b: mask-SOLID draw
 #include "../GameOS/gameos/gpu_cull_compute.h"  // C1b: compute_dispatch() moved here from mission.cpp
+#include "../GameOS/gameos/gpu_cull_substrate.h"
 
 //---------------------------------------------------------------------------
 // static globals
@@ -2071,6 +2072,9 @@ void MC_TextureManager::renderLists (void)
 			// The patch shader then writes GPU-computed instanceCounts into the
 			// indirect command buffer. GpuStaticPropBatcher::flush() below uses
 			// glMultiDrawElementsIndirect which reads those GPU-authoritative counts.
+#if defined(MC2_SUBSTRATE_COUNT_PARITY)
+				gpu_cull::substrate_countParityCheck();
+#endif
 			if (gpu_cull::compute_isEnabled()) {
 				gpu_cull::compute_dispatch();
 			}
