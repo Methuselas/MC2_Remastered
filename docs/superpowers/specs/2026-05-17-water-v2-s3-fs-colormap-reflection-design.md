@@ -124,14 +124,21 @@ uniform-set lambda block (~`:2275-2298`, which already pushes
   sampling; binding `0` would make a missing-atlas bug look intentional and
   hide R1. The skip is the single source of truth; the bind is conditional
   on it.
-- When `reflOn`, bind `reflTexHandle` to **texture unit 2** using
-  the exact unit-1 save/restore idiom already present (~`:2329-2353`:
-  `glGetIntegeri_v(GL_SAMPLER_BINDING,...)` -> `glBindSampler` ->
-  `glActiveTexture`+`glBindTexture` -> draw -> restore unit + sampler).
-  Units 0/1 are occupied (tex1/tex2, ~`:2316-2317`/`:2336-2340`); unit 2 is
-  free in `s_waterMdiProg` (water FS declares only `tex1`/`tex2`,
-  `gos_terrain_water_mdi.frag` ~`:27-28`). Restore the unit-2 binding AND its
-  sampler exactly as the unit-1 pattern does.
+- When `reflOn`, bind `reflTexHandle` to **texture unit 2**. The unit-1
+  idiom at ~`:2329-2353` (adversarial M1) actually saves/restores only the
+  **sampler object** (`glGetIntegeri_v(GL_SAMPLER_BINDING,1,...)` ->
+  `glBindSampler`) and **force-clears the unit texture to 0 post-draw**
+  (~`:2350-2351`, "don't leave a texture bound for the legacy path") - it
+  does NOT restore a prior texture binding. So for unit 2: save/restore the
+  unit-2 **sampler** per that sampler idiom, and **force the unit-2 texture
+  to 0 after the draw** mirroring the unit-1 texture-clear. Do NOT specify
+  "restore the unit-2 binding" (there is nothing meaningful to restore;
+  unit 2 is unused by every program here - verified: water FS declares only
+  `tex1`/`tex2` ~`:27-28`; the terrain-solid atlas bind is on unit 0, a
+  sibling function, not unit 2). The atlas's own per-texture-object
+  `GL_CLAMP_TO_EDGE`/`GL_LINEAR` is what we want; a benign prior `GL_LINEAR`
+  sampler on unit 2 does not break it (adversarial m3). Units 0/1 stay
+  occupied (tex1/tex2, ~`:2316-2317`/`:2336-2340`).
 
 No VS change: `WorldPos` is already a varying in the water FS
 (`gos_terrain_water_mdi.frag` ~`:22`, used ~`:75/82/83`).
@@ -145,8 +152,14 @@ This is the SOLE block in the entire material allowed to read `cameraPos`.
 // S3: pure-FS reflected-ray terrain-colormap reflection.
 // The ONLY camera-dependent term in the water material (v2 ruling).
 if (reflectionOn == 1) {
+    // S1 has NO normal vector in the o_isWater==1 branch (scalar fBm only).
+    // Derive a cheap perturbation normal locally from the existing S1
+    // wave1/wave2 (same construction as the dead o_isWater==2 line ~153).
+    // The 0.06 slope scale is a tunable starting point (REFL_WAVE_SLOPE).
+    PREC vec3 waveNormal = normalize(vec3(wave1 * REFL_WAVE_SLOPE,
+                                          wave2 * REFL_WAVE_SLOPE, 1.0));
     vec3  vdir = normalize(cameraPos.xyz - WorldPos);     // sole cam-dep input
-    vec3  rdir = reflect(-vdir, waveNormal);              // S1 normal fuzzes it
+    vec3  rdir = reflect(-vdir, waveNormal);              // S1 wave fuzzes it
     vec3  acc  = vec3(0.0);
     float wsum = 0.0;
     for (int i = 1; i <= REFL_STEPS; ++i) {
@@ -169,11 +182,24 @@ if (reflectionOn == 1) {
 
 - `reflectionOn`/`reflTex`/`atlasMapTopLeftX`/`atlasMapTopLeftY`/
   `atlasOneOverWorldUnits` are new uniforms on `s_waterMdiProg`.
-- `waveNormal` and `waveLOD` are the existing S1 quantities (reused, not
-  recomputed); `waveLOD` is distance-based (NOT angle) - it keeps the
-  reflection a distant/peripheral smudge and anti-aliases it. Reusing it does
-  not introduce a second camera-dependent term (it is distance, already
-  present for S1 LOD).
+- **`waveNormal` is NOT a pre-existing S1 symbol** (adversarial C1, both
+  reviewers, convergent). The `o_isWater==1` branch is scalar fBm only -
+  there is no surface normal in scope (the only `waveNormal` in the file is
+  in the dead `o_isWater==2` fallthrough ~`:153`). S3 MUST derive its own
+  perturbation normal locally, as shown above, from the existing S1
+  `wave1`/`wave2` (which DO exist in the `o_isWater==1` branch ~`:132-136`).
+  The slope scale is the new tunable `REFL_WAVE_SLOPE`. The exact
+  perturbation construction has a visual consequence (how the "wave fuzz"
+  reads) - the plan stage routes the chosen formula past
+  `mc2-shader-expert` (the alternative being: reflect about flat
+  `vec3(0,0,1)` and perturb `rdir.xy` post-hoc). The starting formula above
+  is the conservative default.
+- `waveLOD` IS an existing S1 quantity (reused, not recomputed); it is
+  distance-based (NOT angle) - it keeps the reflection a distant/peripheral
+  smudge and anti-aliases it. It is a pre-existing S1 camera-*distance*
+  scalar that predates the ruling; reusing it does not introduce a new
+  camera-dependent term (the ruling targets the angular/reflection/sun
+  dependence S3's Fresnel block adds, which is the sole new one).
 - Tunable hot-reload consts at the top of the FS (same regime as the S1
   consts). The spec owns the first guess (conservative - this is a wash, not
   a mirror; cap strength low):
@@ -183,6 +209,7 @@ if (reflectionOn == 1) {
   const float REFL_F0       = 0.02;
   const float REFL_STRENGTH = 0.35;
   const float REFL_MAX      = 0.22;   // hard ceiling on the mix factor
+  const float REFL_WAVE_SLOPE = 0.06; // wave1/wave2 -> perturbation slope
   ```
   Numbers move during the visual loop; these are the starting point so
   implementation does not invent them. Kept as separate named constants
@@ -222,7 +249,12 @@ grazing angles a black mix darkens water; the skip is correct).
   mandatory mitigation - never assume armed-water implies atlas-present. Same
   class as the water 1-frame-lag lesson
   (`memory/water_fastpath_interim_fixes_and_residuals.md`): never infer one
-  subsystem's armed state from another's.
+  subsystem's armed state from another's. **Both adversarials verified the
+  gate is sufficient against the per-mission build/teardown lifecycle:**
+  teardown (~`:1151-1160`) zeroes `g_atlasGLTex` AND all atlas params
+  synchronously in one call at mission-load time (not concurrent with the
+  frame draw), so there is no stale-handle-with-stale-params window and no
+  driver handle-reuse window - `getAtlasGLTex()!=0` is a sound guard.
 - **R2 (MAJOR) Asymmetric atlas-UV convention.** Y is inverted, X is not
   (`gos_terrain.frag` ~`:344-346`). The FS must replicate the exact terrain
   formula; a symmetric form flips the reflection vertically.
@@ -279,8 +311,12 @@ second-dispatch design.
 ## 7. Plan-stage Rule-0 verifications (MUST close in the plan)
 
 - **V1:** re-grep and confirm the four `gos_terrain_indirect_getAtlas*()`
-  accessor names + signatures and that they are `extern`-visible in
-  `gameos_graphics.cpp` at `renderWaterFastPath`.
+  accessor names + signatures. The existing precedent bind sites
+  (~`:2584/2877/3100`) are a **sibling terrain-solid function, NOT
+  `renderWaterFastPath`**, and each re-declares the `extern` locally
+  (adversarial, opus). The plan MUST add its own local `extern` decl block
+  for the accessors inside the `mdiValid` branch - do not assume file-scope
+  visibility at the water draw.
 - **V2:** re-grep `renderWaterFastPath` `setM*` lambda names
   (`setMF`/`setMI`/`setMVec2` etc.) + the unit-1 sampler save/restore block;
   confirm unit 2 is unused by `s_waterMdiProg` (water FS sampler
@@ -291,14 +327,22 @@ second-dispatch design.
 - **V4:** confirm `IsFrameSolidArmed()` + `getAtlasGLTex()` are both callable
   from `renderWaterFastPath`'s translation unit at the water draw site
   (the `reflectionOn` gate depends on both).
-- **V5:** confirm `waveNormal` and `waveLOD` symbols exist in the current
-  `o_isWater==1` branch (S1 as-built, commit `89d329b`) with the meanings
-  reused here; if renamed, bind to the current symbols.
-- **V6 (carry into plan):** the `setM*` uniform setter must tolerate a
-  missing/optimized-out uniform location the same way the existing helpers
-  do (a tuning pass that compiles out `reflectionOn`/`REFL_*` must not
-  crash/assert). Confirm the existing `setM*` path is location-tolerant; if
-  not, the plan adds the guard.
+- **V5 (restated per adversarial C1):** there is **no `waveNormal`** in the
+  S1 `o_isWater==1` branch - S3 derives it locally from `wave1`/`wave2`
+  (Section 4.2). Confirm `wave1`, `wave2`, `waveLOD` exist in the current
+  `o_isWater==1` branch (S1 as-built, commit `89d329b`); if renamed, bind to
+  the current symbols. Route the perturbation-normal construction past
+  `mc2-shader-expert` (visual-consequence design choice).
+- **V6 (confirmed; carry into plan as a note):** the existing `setMF`/
+  `setMI` helpers already guard `if (loc >= 0)` (adversarial m4,
+  grep-verified ~`:2276-2281`) so a tuning pass that compiles out
+  `reflectionOn`/`REFL_*` will not crash. No new guard needed; the plan
+  records this so the executor does not add a redundant one.
+- **V7 (citation precision, adversarial):** the water-readiness criteria
+  cited as `gos_terrain_water_stream.cpp:1542-1543` is the function's
+  success tail, not the criteria list - substance (water arms independently
+  of `IsFrameSolidArmed()`, which is read only for MVP selection ~`:1410`)
+  is verified correct; the plan re-greps the exact criteria lines.
 
 ## 8. Gates
 
@@ -312,11 +356,15 @@ second-dispatch design.
   ONLY - never `mc2-win64-v0.4` (concurrent priority session).
 - After redeploy, grep the engine log for `0(N): error` / link error
   (shader hot-reload fails silently on bad compile).
-- Add an env-gated `[WATER_REFL v1]` probe, logged once per arm transition,
-  carrying BOTH the raw atlas handle AND the final `reflectionOn` state AND
-  a cheap reason enum: `reason=solid0` (`!IsFrameSolidArmed()`),
-  `reason=atlas0` (`getAtlasGLTex()==0`), or `reason=on` (`reflectionOn==1`).
-  This makes silent-fallback diagnosis immediate. A kill-aware `mc2_01` 30s
+- Add an env-gated `[WATER_REFL v1]` probe carrying BOTH the raw atlas
+  handle AND the final `reflectionOn` state AND a cheap reason enum:
+  `reason=solid0` (`!IsFrameSolidArmed()`), `reason=atlas0`
+  (`getAtlasGLTex()==0`), or `reason=on` (`reflectionOn==1`). **Edge-detect
+  latch is mandatory (adversarial M1)**: `renderWaterFastPath` runs every
+  frame; guard the log with `static int s_lastReflOn = -1;` and print only
+  when `reflOn != s_lastReflOn`, then update it (same single-transition
+  pattern as other probes in this codebase). Without the latch the probe
+  either floods per-frame or misses the edge. A kill-aware `mc2_01` 30s
   smoke (`--keep-logs --exe`, marker-gated, exit-code-agnostic) must show
   `reason=on` to prove the path is live and NOT in silent fallback.
 - Real gate = USER visual tuning loop on the hot-reload consts: terrain
