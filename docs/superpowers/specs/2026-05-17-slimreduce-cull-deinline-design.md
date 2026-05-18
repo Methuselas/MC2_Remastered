@@ -70,6 +70,39 @@ block is moved verbatim, unchanged.
    preserved verbatim.
 4. No cross-frame state added (stateless; not the incremental variant).
 
+## MEASURED OUTCOME 2026-05-17 (hypothesis FALSIFIED — de-inline is perf-neutral)
+
+User `[SLIMSPLIT v1]` capture, post-de-inline (`63a0b3e` deployed), armed
+in-mission, multiple 600-frame summaries:
+
+- Pre-de-inline  CULL cyc/frame: ~1,438,482 / 1,423,021 / 1,448,211 / 1,445,815 (avg ~1.439M)
+- Post-de-inline CULL cyc/frame: ~1,448,133 / 1,450,087 / 1,432,448 / 1,435,200 / 1,427,158 (avg ~1.441M)
+
+**The CULL bucket did not move. The de-inline recovered ~0us.** The
+advisor's "non-inlined setObjBlockActive/setObjVertexActive member calls
+are a big chunk of CULL" hypothesis is empirically REFUTED — MSVC
+RelWithDebInfo already inlined them (or call overhead is noise). The
+~1.44M cyc / ~36 cyc-per-vertex × 40000, **rock-stable regardless of
+camera**, is **memory-latency-bound**: scattered stores to `clipInfo`
+(vertex array) + `objBlockInfo[blockNum].active` / `objVertexActive[
+vertNum]` (random-indexed across the whole map) + the per-active-vertex
+`RecipeForVertexNum`/`AppendSolidWindowCandidate`. Cache misses, not
+instruction count. PROJ unchanged (~47 cyc/call, gated == legacy); RED
+unchanged (small, variable, feeds the dead `inverseProjectZ`).
+
+**Disposition:** the de-inline is KEPT (byte-identical, faithful to the
+legacy fast-path form the retirement's own `:1520` comment demanded,
+review-approved, smoke-clean, zero regression) but is logged as
+perf-neutral, NOT a recovered win. **slimReduce CULL is a structural
+memory-bound floor — not codegen-recoverable.** The only lever is the
+granularity-inversion endpoint (don't iterate 40k verts/frame at all),
+deliberately DEFERRED: at ~7% of the gamelogic+vertex-prep budget it does
+not justify the cross-domain catastrophic-axis cost while
+`quadSetupTextures` (1.5ms) and `Units.TerrainObjects` (1.38ms) are
+untouched. Campaign pivots there (measure-first, same playbook). This is
+the third measurement to kill a slimReduce cost hypothesis — do not
+re-attempt slimReduce codegen.
+
 ## Out of scope (queued, deferred)
 
 RED-delete (reduction + `setInverseProject` + dead `inverseProjectZ`) — carries a
