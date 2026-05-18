@@ -287,3 +287,183 @@ This requires a decision on decorative ordering within the block range at Plan 2
 It does not block the Stage 0 analysis. The effective-count mechanism satisfies HC-1 and
 HC-4 regardless of which ordering sub-choice is made, as long as surviving objects remain
 at stable handles.
+
+---
+
+## Blocker 2: handle-lookup invariant (HC-3-corrected)
+
+Date: 2026-05-17
+Status: PASS -- every resolver classified; corrected invariant stated; no unclassified consumer.
+
+### Framing correction (HC-3)
+
+The original spec framing for Blocker 2 was: "generic lookup MUST NOT materialize a severed
+decorative." That framing assumes decoratives are removed from objList (i.e., severed from
+existence). Under HC-2 and HC-3 (established Task 1/2), decoratives are NOT removed from
+objList or terrainObjects[]. They still occupy their original objList slot and typed-array
+index for the full mission lifetime. Severance is only from the per-frame objBlockInfo block
+ranges. The framing is therefore wrong and the rule must be corrected.
+
+### Step 1: Generic resolver inventory (re-grepped 2026-05-17)
+
+Grep run:
+  rg -n "getTerrainObject|getObject|objList\[|getByHandle|getObjectFromHandle|findByPartId"
+     code/objmgr.cpp code/objmgr.h
+
+Resolvers that can return a decorative (TerrainObject) on demand:
+
+R-1. GameObjectManager::get(GameObjectHandle handle)
+     -- code/objmgr.cpp:2181-2187
+     -- Returns objList[handle] for handle in [1, getMaxObjects()].
+     -- Decorative still occupies its objList slot (HC-2); returns it on any valid handle.
+
+R-2. GameObjectManager::getTerrainObject(long terrainObjectIndex)
+     -- code/objmgr.cpp:797-803 (declaration: code/objmgr.h:371)
+     -- Returns terrainObjects[terrainObjectIndex] directly; does NOT route through objBlockInfo.
+     -- Post-severance decoratives remain in terrainObjects[]; this accessor returns them
+        unconditionally for any valid index.
+
+R-3. GameObjectManager::findByPartId(long partId)
+     -- code/objmgr.cpp:2363-2376 (declaration: code/objmgr.h:515)
+     -- Linear scan over objList[1..getMaxObjects()], matching obj->getPartId().
+     -- With decorative still in objList (HC-2), finds it if its partId matches.
+
+R-4. GameObjectManager::findByCellPosition(long row, long col)
+     -- code/objmgr.cpp:2390-2411
+     -- Linear scan over all objList entries matching cell coordinates.
+     -- Source comment: "PLEASE DO NOT CALL EVERY FRAME."
+     -- With decorative in objList, can return it if queried for its row/col.
+
+R-5. GameObjectManager::findByBlockVertex(long blockNum, long vertex)
+     -- code/objmgr.cpp:2380-2386
+     -- Wrapper that calls calcPartId(TERRAINOBJECT, blockNum, vertex) then findByPartId().
+     -- Can reach a decorative. Call sites: objmgr.cpp (definition only); zero callers found
+        in code/*.cpp or mclib/*.cpp (grep confirmed).
+
+R-6. ABL getObject(long partId) helper (inline)
+     -- code/ablmc2.cpp:338-353
+     -- Calls ObjectManager->findByPartId(partId) (R-3). All ABL "getObject" calls route here.
+
+R-7. ABL getTerrainObject typed-array path (execGetObjects criteria=1)
+     -- code/ablmc2.cpp:1469 and :1530
+     -- Calls ObjectManager->getTerrainObject(i) (R-2) for i in 0..getNumTerrainObjects().
+     -- Collects partIds from the typed array; subsequent getObject(partId) calls then route
+        through R-3 / R-6.
+
+R-8. GameObjectManager::getObjBlockObject(long blockNumber, long objLocalIndex)
+     -- code/objmgr.h:426-428
+     -- Returns objList[Terrain::objBlockInfo[blockNumber].firstHandle + objLocalIndex].
+     -- Block-indexed resolver; per-frame consumers (render/update/collision) use this.
+     -- This is the TARGET of HC-2 severance; post-severance the block ranges exclude
+        decoratives so per-frame loops cannot index them. Classified separately from on-demand
+        resolvers below.
+
+Absent resolvers:
+  getObjectFromHandle, handleToObject, resolveHandle, getByHandle: none of these names appear
+  in code/*.cpp or mclib/*.cpp (confirmed in BOUNDARY-PROOF Task 1 Step 1 / Class 13).
+
+---
+
+### Step 2: Corrected invariant
+
+CORRECTED INVARIANT (HC-3):
+
+  Decorative objects remain valid, resolvable objects for the full mission lifetime (HC-2).
+  On-demand resolution of a decorative via any of R-1 through R-7 is ALLOWED because these
+  consumers are not per-frame. They fire only in response to discrete events (ABL script
+  execution, mouse clicks, turret/building init, save-game restore).
+
+  The PROHIBITED thing is any consumer RE-INTRODUCING per-frame iteration over decoratives.
+  Specifically: no per-frame consumer may route through an objBlockInfo range that includes
+  a decorative handle (the HC-2 severance removes decoratives from those ranges), and no
+  new per-frame loop over terrainObjects[] or over objList filtered to TREE/TERRAINOBJECT
+  may be added post-severance.
+
+  The HC-2 objBlockInfo severance is the single enforcement point. It controls all eight
+  per-frame sites identified in Blocker 1. No additional enforcement at the resolver level
+  is required by this invariant.
+
+Per-resolver classification:
+
+| Resolver | Classification | Calling frequency | Evidence |
+|----------|---------------|-------------------|---------|
+| R-1 get(handle) | on-demand, ALLOWED | event-sourced (mech hit, ABL) | objmgr.cpp:2181; callers in contact.cpp/ablmc2.cpp are mover-targeted |
+| R-2 getTerrainObject(i) | on-demand, ALLOWED | ABL script execution (non-per-frame) | objmgr.cpp:797; ablmc2.cpp:1469,1530 criteria cases |
+| R-3 findByPartId(partId) | on-demand, ALLOWED | event-sourced (ABL getObject, turret init) | objmgr.cpp:2363; comment notes slowness |
+| R-4 findByCellPosition(row,col) | on-demand, ALLOWED | mission-load + savegame-restore only | objmgr.cpp:2390; callers at bldng.cpp:737, gate.cpp:266, objmgr.cpp:1125,1150,3766,3789, turret.cpp:550 -- all init/load |
+| R-5 findByBlockVertex(blockNum,v) | on-demand, ALLOWED | zero callers (dead/unused) | objmgr.cpp:2380; no callers in code/*.cpp or mclib/*.cpp |
+| R-6 ABL getObject(partId) | on-demand, ALLOWED | ABL script execution (event-sourced) | ablmc2.cpp:338-353; wraps R-3 |
+| R-7 ABL getTerrainObject loop | on-demand, ALLOWED | ABL script execution (event-sourced) | ablmc2.cpp:1469,1530; ABL scripts are not per-frame |
+| R-8 getObjBlockObject(block,idx) | per-frame -- HC-2 SEVERANCE TARGET | per-frame in render/renderShadows/update/collision | objmgr.h:426; resolved in Blocker 1 |
+
+R-8 is the only per-frame resolver. It is the direct target of HC-2 severance and is
+fully covered by Blocker 1. No on-demand resolver (R-1 through R-7) introduces per-frame
+access to decoratives.
+
+---
+
+### Step 3: Reconciliation with BOUNDARY-PROOF blockers and OB-1/OB-2
+
+BOUNDARY-PROOF HARD BLOCKER #1 (render/update, Class 1):
+  Root cause is R-8 (getObjBlockObject) used by the per-frame render/renderShadows/update
+  loops. Resolved by HC-2 objBlockInfo severance (Blocker 1). The object still exists in
+  objList at the same slot (HC-3); R-8 simply no longer includes its slot in the iterated
+  range. Consistent with "object still exists, not per-frame-iterated."
+
+BOUNDARY-PROOF HARD BLOCKER #2 (collision, Class 2):
+  mech.cpp:1115-1139, gvehicl.cpp:800-825 use getObjBlockNumCollidables + R-8. The per-frame
+  collision walk is R-8-routed and is covered by HC-2 severance. On-hit dispatch (R-1 /
+  get(terrainObjHandle+i)) is only reached inside the same collision loop; once the loop
+  excludes decoratives via HC-2, on-hit dispatch for decoratives does not fire per-frame.
+  Deferred to Blocker 3 / Task 4: the precise collision-proxy design for discrete hit events
+  (tree falling) is out of scope here and does not affect this invariant.
+  OB-2 (decorative position within collidable prefix) carries into Task 4 unchanged.
+
+BOUNDARY-PROOF HARD BLOCKER #3 (script triggers / findByPartId, Class 4):
+  ABL getObject (R-6 -> R-3) scans objList for any object by partId. Under HC-3 the
+  decorative is still in objList; findByPartId returns it. This is now ALLOWED by the
+  corrected invariant (on-demand, event-sourced). No code change required here.
+  ABL execGetObjects criteria=1 (R-7 -> R-2) also returns decoratives via the typed array;
+  also on-demand, also ALLOWED. The BOUNDARY-PROOF classified this as CAN-REACH-UNCOVERED
+  under the old framing; under HC-3 it is resolved -- no severance action needed.
+
+BOUNDARY-PROOF HARD BLOCKER #4 (save/load, Class 6):
+  The Save loop (objmgr.cpp:3257-3280) iterates objList[0..getMaxObjects()]. Under HC-2
+  decoratives remain in objList; Save writes them normally, disk format unchanged. HC-1
+  satisfied. OB-1 (severance must survive save-game restore) identified in Blocker 1
+  remains open and carries to Plan 2 sequencing; it does not involve resolver semantics.
+  The BOUNDARY-PROOF classified save/load as CAN-REACH-UNCOVERED under the old framing;
+  under HC-3 the decorative being in objList at save time is the intended behavior, so
+  there is no new blocker here for Blocker 2.
+
+Task 2 OB-1 (severance must survive save-game restore):
+  Not a resolver issue. GameObjectManager::Load rebuilds objBlockInfo (R-8's backing data),
+  not the resolvers. OB-1 remains open, carried to Plan 2. Consistent with this invariant.
+
+Task 2 OB-2 (decorative position within collidable prefix):
+  Affects which objects R-8 returns during the per-frame collision loop. On-demand resolvers
+  (R-1 through R-7) are unaffected by collidable-prefix ordering. OB-2 deferred to
+  Blocker 3 / Task 4.
+
+---
+
+### Step 4: Exit criterion
+
+PASS.
+
+Evidence:
+- All eight resolvers from Step 1 are classified in the table above.
+- R-1 through R-7: on-demand, event-sourced, ALLOWED by corrected invariant. No code change.
+- R-8: per-frame, fully covered by HC-2 objBlockInfo severance (Blocker 1, Task 2).
+- No resolver is per-frame AND unresolved after HC-2 severance.
+- Corrected invariant stated unambiguously: decoratives remain resolvable on demand;
+  prohibited thing is re-introduction of per-frame iteration, not on-demand resolution.
+- BOUNDARY-PROOF HARD BLOCKERs #1-#4 each reconciled: #1 and #2 covered by Blocker 1,
+  #3 and #4 resolved by HC-3 framing (no-op under corrected invariant).
+- OB-1 and OB-2 from Blocker 1 carry to later tasks without conflict.
+- One potential new OPEN blocker inspected and dismissed:
+  ABL execGetObjects criteria=1 (ablmc2.cpp:1469, :1530) iterates ALL terrainObjects[]
+  including decoratives and emits their partIds. Under the OLD framing this was a blocker
+  (leaked raw pointers to "severed" objects). Under HC-3 this is by design -- the decorative
+  exists, the partId is valid, and any subsequent getObject(partId) call returns the live
+  object. No blocker.
