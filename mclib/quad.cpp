@@ -729,6 +729,21 @@ void TerrainQuad::setupTextures (void)
 	overlayHandle       = 0xffffffff;
 	isCement            = false;
 
+	// S6: hoist the armed-water gate predicate ONCE per quad. The shared
+	// WaterFastPathOwnsArmedDraw() is a non-inline cross-TU call that itself
+	// fans into IsFrameSolidArmed()/WaterStream::IsReady()/GetRecipeCount();
+	// calling it per-vertex (x5/quad) in this hot per-quad loop would tension
+	// the 100ns hot-loop rule. It is frame-invariant within a frame, so
+	// compute it once here. legacyWaterDraw == "GPU fast path does NOT own
+	// the armed draw -> the legacy CPU (ii) draw-side must run".
+	// BOUNDARY (CONCERN-1, do not break): the (ii) gate below wraps ONLY the
+	// per-vertex wx/wy/wz/ww writes + the clipped-body handle-resolution +
+	// addTriangleBulk. clipInfo=clipData, calcThisFrame|=2, the leastZ/mostZ/
+	// leastW/mostW/leastWY/mostWY 6-tuple, and the 0xffffffff sentinel(s)
+	// MUST stay UNCONDITIONAL (they are (i)/M2a - never move them inside the
+	// if (legacyWaterDraw) braces).
+	const bool legacyWaterDraw = !gos_terrain_indirect::WaterFastPathOwnsArmedDraw();
+
 	// HISTORICAL NOTE: an earlier commit (9964d5a "perf: skip solid/recipe CPU work
 	// when GPU SOLID is armed") wrapped this body in
 	//   if (!gos_terrain_indirect::IsFrameSolidArmed()) { ... }
@@ -1055,7 +1070,7 @@ void TerrainQuad::setupTextures (void)
 				else
 					vertices[0]->clipInfo = clipData;
 		
-				if (!gos_terrain_indirect::WaterFastPathOwnsArmedDraw())
+				if (legacyWaterDraw)
 				{
 					vertices[0]->wx = screenPos.x;
 					vertices[0]->wy = screenPos.y;
@@ -1125,7 +1140,7 @@ void TerrainQuad::setupTextures (void)
 				else
 					vertices[1]->clipInfo = clipData;
  
-				if (!gos_terrain_indirect::WaterFastPathOwnsArmedDraw())
+				if (legacyWaterDraw)
 				{
 					vertices[1]->wx = screenPos.x;
 					vertices[1]->wy = screenPos.y;
@@ -1195,7 +1210,7 @@ void TerrainQuad::setupTextures (void)
 				else
 					vertices[2]->clipInfo = clipData;
 					
-				if (!gos_terrain_indirect::WaterFastPathOwnsArmedDraw())
+				if (legacyWaterDraw)
 				{
 					vertices[2]->wx = screenPos.x;
 					vertices[2]->wy = screenPos.y;
@@ -1265,7 +1280,7 @@ void TerrainQuad::setupTextures (void)
 				else
 					vertices[3]->clipInfo = clipData;
 	
-				if (!gos_terrain_indirect::WaterFastPathOwnsArmedDraw())
+				if (legacyWaterDraw)
 				{
 					vertices[3]->wx = screenPos.x;
 					vertices[3]->wy = screenPos.y;
@@ -1304,7 +1319,7 @@ void TerrainQuad::setupTextures (void)
 
 		if (clipped1 || clipped2)
 		{
-			if (!gos_terrain_indirect::WaterFastPathOwnsArmedDraw())
+			if (legacyWaterDraw)
 			{
 				if (!Terrain::terrainTextures2)
 				{
