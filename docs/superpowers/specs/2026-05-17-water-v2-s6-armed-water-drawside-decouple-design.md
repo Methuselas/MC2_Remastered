@@ -192,6 +192,99 @@ MODIFIED  mclib/<probe site>    -- [WATER_S6 v1] env-gated latched gate-decision
 Load-bearing C++ change -> full relink + isolated deploy to
 `A:/Games/mc2-opengl/mc2-win64-water` only.
 
+## 8b. DUAL ADVERSARIAL OUTCOME (opus + sonnet, 2026-05-17) - APPROVE-WITH-REQUIRED-EDITS
+
+Both independent code-grounded reviews: APPROVE-WITH-REQUIRED-EDITS. NO
+CRITICAL, NO BLOCK. Negative claims survived adversarial grep
+(`IsFrameMaskWaterArmed()` zero-consumer = confirmed dead; `drawWater` sole
+`wx..ww` reader = confirmed; slimReduce `clipInfo` write `terrain.cpp:~1668`
+runs before the setupTextures loop = cull-cascade immune confirmed;
+`addTriangleBulk` legacy `masterVertexNodes` reservation/fill paired =
+confirmed). Findings folded below; two are escalated design forks (see 8c).
+
+FOLDED (unambiguous):
+- **(sonnet MAJOR-1) Consumer chain corrected.** `gametacmap.cpp:~225-246`
+  calls `eye->inverseProjectForPicking` (thin inline, `camera.h:~634`) which
+  delegates to `inverseProjectZ`; the `setInverseProject` scalars
+  (`startZInverse/zPerPixel/startWInverse/wPerPixel`) are read ONLY in the
+  `screen.w==0` branch UNDER `usePerspective` (`camera.cpp:~1957-1966`); the
+  `!usePerspective` path falls through to `Camera::inverseProject` which
+  reads none of them. The "sole live consumer" claim holds in the shipped
+  oblique-30deg PERSPECTIVE config but is camera-mode-conditional. Section 3
+  reworded; plan-stage V-check added (V6) asserting `usePerspective` true in
+  the targeted config.
+- **(sonnet MAJOR-2) Gate boundary vs the clipped `else` sentinel.** The
+  (ii) gate wraps ONLY the `if (clipped1 || clipped2) { ... }` body (handle
+  resolution `~:1297-1305` + the two `addTriangleBulk` `~:1307-1308`); the
+  `else { waterHandle = 0xffffffff; waterDetailHandle = 0xffffffff; }`
+  sentinel (`~:1310-1314`) stays UNCONDITIONAL so armed frames always write
+  the sentinel (no stale prior-frame handle). The stale anticipatory comment
+  at `terrain.cpp:~1821` ("Armed: setupTextures() gated, waterHandle never
+  set" - written for the DEAD old S6 design) MUST be corrected by the
+  executor in the same commit. Section 3 (ii) enumeration updated.
+- **(sonnet MAJOR-3 / opus) Canary scope qualified.** `[WATER_INVPROJ v1]
+  result=identical` on mc2_01 is the STEADY-STATE substitutive proof and is
+  valid only with `usePerspective==true` (per MAJOR-1) and only for the
+  armed in-mission steady state - it structurally cannot see an arm/un-arm
+  TRANSITION-frame pop (opus M2). Section 7 gate 2 qualified; an
+  arm-transition assertion is part of the open fork 8c-(2).
+- **(sonnet MINOR-1) clipInfo if/else both branches assign identically**
+  (`quad.cpp:~1053-1056` etc. - collapsed DX8/GL dead-code pattern): the
+  gate/move needs 8 wrap/move points (2 per sub-block x4), not 4. Documented
+  for the executor; added to V1.
+- **(line nits)** `drawWater` is `quad.cpp:~3264` (`wx..ww` reads
+  `~:3313-3614`); `drawLine` `~:3891` reads `clipInfo` but NOT `wx..ww` and
+  is debug-grid, NOT same-predicate - V4 must distinguish it. handle block
+  `~:1297-1305` (not 1295). All -> V-checks (Section 6), not blocking.
+
+## 8c. OPEN DESIGN FORKS escalated by both reviewers (require sign-off before plan)
+
+- **(opus M1) The "byte-identical mirror" predicate is not mechanically
+  reproducible.** `s_fastPath` is a function-static local in
+  `Terrain::renderWater` (`terrain.cpp:~1194-1196` =
+  `getenv("MC2_RENDER_WATER_FASTPATH")!=nullptr || gpu_driven::
+  IsWaterEnabled()`), NOT visible from `quad.cpp`'s TU. An executor cannot
+  "mirror" it; reconstructing it and dropping the `gpu_driven::
+  IsWaterEnabled()` term (the load-bearing half per the `:1184` contract)
+  silently desyncs the gate from `renderWater` -> reintroduces the
+  stale-`wx..ww` regression `water_fastpath_interim_fixes_and_residuals.md`
+  fix #2 prevents. FORK: (M1a) extract a single shared predicate
+  `WaterFastPathOwnsArmedDraw()` that BOTH `renderWater:~1209` and the new
+  `quad.cpp` gate call (retires the fragile `:1184` hand-copy contract;
+  touches `renderWater`; minimal-touch rule favors this since the spec
+  already touches the predicate's consumer) vs (M1b) mandate verbatim
+  reconstruction incl. the full `s_fastPath` definition + a char-for-char
+  plan V-check across both sites (smaller blast radius; keeps the
+  documented-fragile contract alive a third time).
+- **(opus M2) clipInfo cross-frame feedback into (i).** (i)'s reduction is
+  gated by `clipped1/clipped2` derived from `vertices[N]->clipInfo`; (ii)
+  writes `clipInfo`. With the `calcThisFrame&2` fast-skip, a quad skipped
+  next frame re-reads STORED `clipInfo`. If (ii)'s clipInfo write is gated
+  off on armed frames, the water-corner `clipInfo` becomes whatever
+  slimReduce wrote (terrain-Z onscreen test, NOT the water-Z admission (ii)
+  would write) -> on the first armed frame after a legacy frame, (i)'s
+  `clipped1/2` gate input changes, possibly flipping whether the 6-tuple
+  reduction runs for a boundary quad -> a 1-frame minimap-trapezoid pop at
+  the intro-pan->mission edge that the steady-state canary cannot see, and
+  §1's "zero behaviour change to the minimap" promise is at risk. So (ii)'s
+  `clipInfo` write is redundant for the CULL CASCADE but NOT proven
+  redundant for (i)'s own re-entry gate. FORK: (M2a) MOVE the water-corner
+  `clipInfo` write OUT of (ii) and keep it UNCONDITIONAL as part of (i) (one
+  cheap assignment per corner; makes (i) self-consistent across the arm
+  transition; CHANGES the (i)/(ii) boundary the spec is built on -> needs
+  the substitutivity-verification advisor to re-bless that (i)+clipInfo
+  stays parity-identical) vs (M2b) keep clipInfo in (ii) + add an explicit
+  arm-transition probe (assert the 6-tuple matches a forced-legacy
+  reference on the first N frames after an armed<->un-armed edge) and accept
+  a possibly-visible 1-frame cosmetic trapezoid pop as out-of-scope (needs
+  USER ruling vs the §1 zero-minimap-change promise).
+
+Resolution path: M2a is grounded first (substitutivity-verification advisor:
+does moving clipInfo into (i) stay parity-identical AND fully close the
+cross-frame feedback so the canary becomes sufficient?); then both forks
+surfaced to the user for the M1a/M1b touch decision and the M2a/M2b
+minimap-promise decision. Plan is NOT written until both forks are resolved.
+
 ## 9. Discipline
 
 This spec -> 2 adversarials (opus|sonnet, adversarial-plan-review skill,
