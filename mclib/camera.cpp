@@ -1947,7 +1947,8 @@ void Camera::inverseProjectZ (Stuff::Vector4D &screen, Stuff::Vector3D &point)
 	// projectForTerrainAdmission extrema via setInverseProject, and
 	// clipToWorld is the inverse of the reverse-Z worldToClip, so the
 	// whole chain auto-follows U1 self-consistently (plan Step 5b).
-	if (getenv("MC2_REVERSE_Z_TRACE") != nullptr) {
+	static const bool s_rzTrace = (getenv("MC2_REVERSE_Z_TRACE") != nullptr);
+	if (s_rzTrace) {
 		static int s_rzFence = 0;
 		if (s_rzFence == 0) {
 			++s_rzFence;
@@ -2123,7 +2124,8 @@ void Camera::setOrthogonal(void)
 		// near and far planes: under reverse-Z near must map to NDC z=1 and
 		// far to NDC z=0. NDC z = (FF*z_cam + B) / z_cam, with FF and B the
 		// just-written cameraToClip terms.
-		if (getenv("MC2_REVERSE_Z_TRACE") != nullptr) {
+		static const bool s_rzTrace = (getenv("MC2_REVERSE_Z_TRACE") != nullptr);
+		if (s_rzTrace) {
 			static int s_rzBuild = 0;
 			++s_rzBuild;
 			const float FF = (float)cameraToClip(FORWARD_AXIS, FORWARD_AXIS);
