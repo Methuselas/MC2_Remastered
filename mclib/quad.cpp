@@ -1055,11 +1055,14 @@ void TerrainQuad::setupTextures (void)
 				else
 					vertices[0]->clipInfo = clipData;
 		
-				vertices[0]->wx = screenPos.x;
-				vertices[0]->wy = screenPos.y;
-				vertices[0]->wz = screenPos.z;
-				vertices[0]->ww = screenPos.w;
-	
+				if (!gos_terrain_indirect::WaterFastPathOwnsArmedDraw())
+				{
+					vertices[0]->wx = screenPos.x;
+					vertices[0]->wy = screenPos.y;
+					vertices[0]->wz = screenPos.z;
+					vertices[0]->ww = screenPos.w;
+				}
+
 				vertices[0]->calcThisFrame |= 2;
 
 				if (clipData)
@@ -1122,11 +1125,14 @@ void TerrainQuad::setupTextures (void)
 				else
 					vertices[1]->clipInfo = clipData;
  
-				vertices[1]->wx = screenPos.x;
-				vertices[1]->wy = screenPos.y;
-				vertices[1]->wz = screenPos.z;
-				vertices[1]->ww = screenPos.w;
-	
+				if (!gos_terrain_indirect::WaterFastPathOwnsArmedDraw())
+				{
+					vertices[1]->wx = screenPos.x;
+					vertices[1]->wy = screenPos.y;
+					vertices[1]->wz = screenPos.z;
+					vertices[1]->ww = screenPos.w;
+				}
+
 				vertices[1]->calcThisFrame |= 2;
 
 				if (clipData)
@@ -1189,11 +1195,14 @@ void TerrainQuad::setupTextures (void)
 				else
 					vertices[2]->clipInfo = clipData;
 					
-				vertices[2]->wx = screenPos.x;
-				vertices[2]->wy = screenPos.y;
-				vertices[2]->wz = screenPos.z;
-				vertices[2]->ww = screenPos.w;
-	
+				if (!gos_terrain_indirect::WaterFastPathOwnsArmedDraw())
+				{
+					vertices[2]->wx = screenPos.x;
+					vertices[2]->wy = screenPos.y;
+					vertices[2]->wz = screenPos.z;
+					vertices[2]->ww = screenPos.w;
+				}
+
 				vertices[2]->calcThisFrame |= 2;
 
 				if (clipData)
@@ -1255,12 +1264,15 @@ void TerrainQuad::setupTextures (void)
 					vertices[3]->clipInfo = clipData; //onScreen;
 				else
 					vertices[3]->clipInfo = clipData;
-				 
-				vertices[3]->wx = screenPos.x;
-				vertices[3]->wy = screenPos.y;
-				vertices[3]->wz = screenPos.z;
-				vertices[3]->ww = screenPos.w;
 	
+				if (!gos_terrain_indirect::WaterFastPathOwnsArmedDraw())
+				{
+					vertices[3]->wx = screenPos.x;
+					vertices[3]->wy = screenPos.y;
+					vertices[3]->wz = screenPos.z;
+					vertices[3]->ww = screenPos.w;
+				}
+
 				vertices[3]->calcThisFrame |= 2;
 
 				if (clipData)
@@ -1292,20 +1304,23 @@ void TerrainQuad::setupTextures (void)
 
 		if (clipped1 || clipped2)
 		{
-			if (!Terrain::terrainTextures2)
+			if (!gos_terrain_indirect::WaterFastPathOwnsArmedDraw())
 			{
-				DWORD waterDetailData = Terrain::terrainTextures->setDetail(0,sprayFrame);
-				waterHandle = Terrain::terrainTextures->getTextureHandle(MapData::WaterTXMData & 0x0000ffff);
-				waterDetailHandle = Terrain::terrainTextures->getDetailHandle(waterDetailData & 0x0000ffff); 
+				if (!Terrain::terrainTextures2)
+				{
+					DWORD waterDetailData = Terrain::terrainTextures->setDetail(0,sprayFrame);
+					waterHandle = Terrain::terrainTextures->getTextureHandle(MapData::WaterTXMData & 0x0000ffff);
+					waterDetailHandle = Terrain::terrainTextures->getDetailHandle(waterDetailData & 0x0000ffff);
+				}
+				else
+				{
+					waterHandle = Terrain::terrainTextures2->getWaterTextureHandle();
+					waterDetailHandle = Terrain::terrainTextures2->getWaterDetailHandle(sprayFrame);
+				}
+
+				mcTextureManager->addTriangleBulk(waterHandle, MC2_ISTERRAIN | MC2_DRAWALPHA | MC2_ISWATER, 2);
+				mcTextureManager->addTriangleBulk(waterDetailHandle, MC2_ISTERRAIN | MC2_DRAWALPHA | MC2_ISWATERDETAIL, 2);
 			}
-			else
-			{
-				waterHandle = Terrain::terrainTextures2->getWaterTextureHandle();
-				waterDetailHandle = Terrain::terrainTextures2->getWaterDetailHandle(sprayFrame);
-			}
-			
-			mcTextureManager->addTriangleBulk(waterHandle, MC2_ISTERRAIN | MC2_DRAWALPHA | MC2_ISWATER, 2);
-			mcTextureManager->addTriangleBulk(waterDetailHandle, MC2_ISTERRAIN | MC2_DRAWALPHA | MC2_ISWATERDETAIL, 2);
 		}
 		else
 		{

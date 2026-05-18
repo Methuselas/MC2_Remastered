@@ -1811,11 +1811,10 @@ void Terrain::geometry (void)
 				    q.vertices[3]->vertexNum >= 0) {
 					bool append;
 					if (gos_terrain_indirect::IsFrameSolidArmed()) {
-						// Armed: setupTextures() gated, waterHandle never set.
-						// Replicate the PRIMARY water gate from quad.cpp:956-959:
-						// any vertex on a water tile (pVertex->water & 1).
-						// The GPU compute shader's pzOk gate (gpu_driven_water.comp:236)
-						// handles the secondary clip test.
+						// Armed (reframe-B): draw-side (ii) is skipped in setupTextures(), but
+						// (i) projection+reduction+clipInfo AND the 0xffffffff sentinel still run,
+						// so waterHandle IS set (to 0xffffffff) on armed frames; use the water-tile
+						// predicate here instead of waterHandle to avoid stale-sentinel false negatives.
 						append = (q.vertices[0]->pVertex->water & 1) ||
 						         (q.vertices[1]->pVertex->water & 1) ||
 						         (q.vertices[2]->pVertex->water & 1) ||
