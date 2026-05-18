@@ -1817,6 +1817,23 @@ void Terrain::geometry (void)
 		// gos_terrain_water_stream.cpp:UploadAndBindThinRecords.
 		WaterStream::BeginFrameNarrow();
 		const bool s_waterNarrowOn = WaterStream::NarrowEnabled();
+		// S6 coarse cost A/B instrument: ONE QPC pair around the WHOLE
+		// per-frame setupTextures loop (NOT per-quad - the per-quad
+		// std::chrono COST_SPLIT scopes are observer-effect-poisoned and
+		// disqualified; capped FPS is also useless). Env-gated, prints a
+		// min/mean/max summary every 600 frames (MC2_TGL_POOL_TRACE idiom).
+		// Used to A/B armed ((ii) skipped) vs MC2_GPU_DRIVEN_WATER=0
+		// ((ii) runs) - the only setupTextures delta between those is (ii),
+		// so this isolates (ii)'s real per-frame CPU contribution.
+		static const bool s_s6CostOn = (getenv("MC2_WATER_S6_COST") != nullptr);
+		static uint64_t s_s6QpcFreq = 0;
+		uint64_t s_s6QpcStart = 0;
+		if (s_s6CostOn)
+		{
+			if (s_s6QpcFreq == 0)
+				QueryPerformanceFrequency((LARGE_INTEGER*)&s_s6QpcFreq);
+			QueryPerformanceCounter((LARGE_INTEGER*)&s_s6QpcStart);
+		}
 		for (i=0;i<numberQuads;i++)
 		{
 			currentQuad->setupTextures();
@@ -1846,6 +1863,27 @@ void Terrain::geometry (void)
 				}
 			}
 			currentQuad++;
+		}
+		if (s_s6CostOn)
+		{
+			uint64_t s6End = 0;
+			QueryPerformanceCounter((LARGE_INTEGER*)&s6End);
+			double s6Ms = (double)(s6End - s_s6QpcStart) * 1000.0 / (double)s_s6QpcFreq;
+			static uint32_t s_s6Frames = 0;
+			static double   s_s6Sum = 0.0;
+			static double   s_s6Min = 1e30;
+			static double   s_s6Max = 0.0;
+			s_s6Frames++;
+			s_s6Sum += s6Ms;
+			if (s6Ms < s_s6Min) s_s6Min = s6Ms;
+			if (s6Ms > s_s6Max) s_s6Max = s6Ms;
+			if ((s_s6Frames % 600) == 0)
+			{
+				printf("[WATER_S6COST v1] event=summary frames=%u quadSetupTextures_ms mean=%.4f min=%.4f max=%.4f (window of 600)\n",
+				       s_s6Frames, s_s6Sum / 600.0, s_s6Min, s_s6Max);
+				fflush(stdout);
+				s_s6Sum = 0.0; s_s6Min = 1e30; s_s6Max = 0.0;
+			}
 		}
 		// Stage 1 cost-split: roll per-frame nanosecond accumulators (no-op
 		// when MC2_TERRAIN_COST_SPLIT unset). ParityFrameTick advances the

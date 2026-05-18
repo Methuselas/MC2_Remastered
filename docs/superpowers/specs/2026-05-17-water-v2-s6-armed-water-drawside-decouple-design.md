@@ -5,12 +5,15 @@
 **Supersedes:** the S6 row of `2026-05-17-water-v2-scope-and-decomposition.md`
 Section 4 ("arm-gate the per-water-quad projection block"). That documented
 design is EMPIRICALLY NON-SUBSTITUTIVE and dead - see Section 2.
-**Status:** PLAN-READY (2026-05-17). Grounded (4 code-grounded advisor
-passes, Rule 0); dual-adversarial APPROVE-WITH-REQUIRED-EDITS folded (8b);
-both escalated forks resolved by user - M1a (shared predicate) + M2b-i
-(accept 1-frame transition pop), M2a locked (8c). Execution gated ONLY on
-the two Section 7 user-driven execute-gates (worst-case Tracy cost baseline
-+ post-change parity-identical).
+**Status:** IMPLEMENTED + COST-VERDICT IN (2026-05-18). The (ii) arm-gate is
+**NON-SUBSTITUTIVE - NOT a perf win** (proven, Section 10). Disposition (user
+2026-05-18): KEEP M1a (the real, perf-independent value) + KEEP the (ii)
+gate (correct, zero-regression cleanup) but **do not claim any perf benefit
+anywhere**. Grounded (4 advisor passes); dual-adversarial APPROVE-w/-edits
+folded (8b); forks resolved M1a + M2b-i, M2a locked (8c); Tasks 0-3
+implemented + all spec/quality reviews green + final cross-task review
+clean. See Section 10 for the cost outcome that supersedes the Section 7
+"substitutive" framing.
 **Grounding sources:** S6 recon + reframe-A/B + (B)-substitutivity
 verification advisors, 2026-05-17. All file:line below were grep-verified
 this session; symbols are stable, line numbers drift - the plan-stage Rule-0
@@ -380,3 +383,52 @@ stay `identical` + `[WATER_S6 v1]` shows armed-skip) -> user-driven
 total-frame Tracy cost gate (the real substitutive proof) -> done only when
 the armed `quadSetupTextures` zone drops with no displaced cost AND parity
 stays identical. Branch isolated; user integrates separately.
+
+---
+
+## 10. COST OUTCOME (2026-05-18) - supersedes the Section 7 "substitutive" framing
+
+**The (ii) arm-gate is NON-SUBSTITUTIVE. It frees ~0 ms. It is NOT a perf
+win and must not be described as one anywhere (commits/docs/integration).**
+
+**How proven (after a retracted invalid attempt):** an FPS A/B was tried
+first and retracted - the engine/smoke is frame-rate-capped, so Avg
+FPS/frame-count cannot reveal a sub-frame CPU saving
+(`memory/capped_fps_is_not_a_cpu_cost_ab_signal.md`). The valid instrument:
+a coarse env-gated ONCE-PER-FRAME `quadSetupTextures` QPC timer
+(`MC2_WATER_S6_COST`, min/mean/max /600-frame summary - observer-safe, NOT
+the disqualified per-quad std::chrono COST_SPLIT scopes) + a
+measurement-only `MC2_S6_FORCE_LEGACY_II` override that forced (ii) on while
+the GPU water path stayed armed (identical scene/cull/quad regime, ONLY (ii)
+toggled - the clean isolation; `MC2_GPU_DRIVEN_WATER=0` was rejected as it
+changes the whole regime and gave a confounded inverted result). Clean A/B,
+both armed: (ii)-skipped ~1.08-1.10 ms vs (ii)-forced-on ~1.05-1.09 ms -
+windows fully overlap, delta ~0 within run noise. Corroborates the user's
+worst-case Tracy ("not much change", ~1.8 ms zone).
+
+**Root cause:** the ~1.1 ms `quadSetupTextures` is dominated by the KEPT
+**(i)** `projectForTerrainAdmission` x4/water-quad + the 6-tuple reduction -
+the part S6 deliberately preserves because the minimap/picking
+`setInverseProject` 6-tuple needs it (consumer-locked; per the dual
+adversarial + the parity probe). (ii) [`wx..ww` + handle-resolution +
+`addTriangleBulk` x2] was never the cost. The S6 grounding's structural
+premise that (ii) dominates was empirically false; telemetry-before-
+architecting caught it pre-ship (the gate working as intended).
+
+**Disposition (user, 2026-05-18): KEEP M1a + KEEP the (ii) gate, relabel
+non-perf.**
+- **M1a is the real, perf-independent deliverable:** the single-source
+  `gos_terrain_indirect::WaterFastPathOwnsArmedDraw()` retired the
+  fragile `terrain.cpp:~1184` byte-identical hand-copy contract. Genuine
+  codebase cleanup, valuable regardless of S6's perf result.
+- **The (ii) gate stays:** it is correct, zero-regression (canary byte-
+  identical -> (i)/minimap untouched), and substitutively removes a
+  genuinely-redundant armed-frame enqueue - just a cheap one. Kept as
+  honest tidy, NOT advertised as perf.
+- **Temp instruments:** `MC2_S6_FORCE_LEGACY_II` REMOVED (measurement-only
+  hack, orphaned the reservation - never shippable). `MC2_WATER_S6_COST`
+  RETAINED as an env-gated, off-by-default, observer-safe coarse probe
+  (useful for the real follow-up). `[WATER_S6 v1]` armed-skip probe retained.
+- **The real per-frame water cost = (i)**, and it is minimap-consumer-
+  locked. Retiring/repointing it is the harder, previously-identified
+  blocked problem (NOT S6) - a separate future slice if pursued.
