@@ -354,6 +354,23 @@ PLAN-READY. Execution remains gated ONLY on the two Section 7 execute-gates
 (user-driven worst-case Tracy cost baseline + post-change `[WATER_INVPROJ
 v1] result=identical`).
 
+## 8d. Tracked follow-up (Task 1 code-quality finding, non-blocking)
+
+`Terrain::renderWaterFastPath` (`terrain.cpp` ~:1299-1305) still hand-rolls
+its OWN `s_fastPath` getenv-once + `IsReady()`/`GetRecipeCount()`/
+`terrainTextures2` guards - a THIRD independent copy of 4/5 of the same
+conjunction `WaterFastPathOwnsArmedDraw()` now single-sources (it differs
+only on the `IsFrameSolidArmed()` term, since the fast-path's own
+early-returns are arm-shaped differently). M1a correctly drift-proofs the
+TWO consumers it scopes (`renderWater`'s legacy-skip + Task 2's `quad.cpp`
+(ii) gate), but the PRODUCER (`renderWaterFastPath`) is not yet routed
+through the shared predicate. Pre-existing (not introduced by S6); flagged
+so the "gate can never drift" claim is honest. Consolidating it needs an
+arm-agnostic predicate variant (the fast-path entry differs on the
+`IsFrameSolidArmed()` term) - a separate small follow-up slice, NOT in S6
+scope. Do not silently expand S6 to cover it; track it as the natural next
+single-sourcing step after S6 ships.
+
 ## 9. Discipline
 
 This spec -> 2 adversarials (opus|sonnet, adversarial-plan-review skill,

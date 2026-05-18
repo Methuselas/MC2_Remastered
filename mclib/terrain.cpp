@@ -1167,6 +1167,10 @@ bool gos_terrain_indirect::WaterFastPathOwnsArmedDraw()
 	static const bool s_fastPath =
 	    (getenv("MC2_RENDER_WATER_FASTPATH") != nullptr) ||
 	    gpu_driven::IsWaterEnabled();
+	// IsFrameSolidArmed() is load-bearing: the un-armed cinematic/intro-pan
+	// MUST keep running the legacy loop (the GPU water path is not armed
+	// there) - gating it off un-armed reintroduces the stale-data regression
+	// (see memory/water_fastpath_interim_fixes_and_residuals.md fix #2).
 	return s_fastPath
 	    && gos_terrain_indirect::IsFrameSolidArmed()
 	    && WaterStream::IsReady()
