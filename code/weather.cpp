@@ -497,7 +497,12 @@ void Weather::render (void)
 			onScreen = eye->projectForEffectAdmission(botPos,screen2);
 				if (onScreen)
 				{
-					unsigned char amb = ambientFactor * (1.0f - screen1.z);
+					// Reverse-Z (Step 6d): screen1.z is post-divide reverse-Z
+					// [near->1, far->0]. The original (1.0f - z) made rain
+					// brightest near the camera under forward-Z (near=0).
+					// Under reverse-Z near=1, so the near-bright factor is
+					// screen1.z itself. Scene screen-z arithmetic consumer.
+					unsigned char amb = ambientFactor * screen1.z;
 					DWORD rainColor = (amb << 24) + (0xff << 16) + (0xff << 8) + (0xff);
 					
 					//Gotta draw this one!

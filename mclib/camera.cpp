@@ -1940,6 +1940,25 @@ float point1 = 0.000001f;
 // -fs
 void Camera::inverseProjectZ (Stuff::Vector4D &screen, Stuff::Vector3D &point)
 {
+	// [REVERSE_Z v1] fence-seam boundary trace (MC2_REVERSE_Z_TRACE=1),
+	// silent by default, one-shot. This is the reverse-Z scene -> legacy
+	// inverse path (TacMap minimap corners). No coordinate seam transform
+	// is applied: the synthesized screen.z derives from reverse-Z
+	// projectForTerrainAdmission extrema via setInverseProject, and
+	// clipToWorld is the inverse of the reverse-Z worldToClip, so the
+	// whole chain auto-follows U1 self-consistently (plan Step 5b).
+	if (getenv("MC2_REVERSE_Z_TRACE") != nullptr) {
+		static int s_rzFence = 0;
+		if (s_rzFence == 0) {
+			++s_rzFence;
+			fprintf(stderr,
+				"[REVERSE_Z v1] event=fence_seam_firstuse path=inverseProjectZ "
+				"usePerspective=%d screen.z=%.6f screen.w=%.6f "
+				"(no seam transform; reverse-Z self-consistent inverse)\n",
+				usePerspective ? 1 : 0, screen.z, screen.w);
+		}
+	}
+
 	if (!usePerspective)
 	{
 		Stuff::Vector2DOf<long> screenPos;
@@ -2029,12 +2048,14 @@ void Camera::setOrthogonal(void)
 
 		cameraToClip(FORWARD_AXIS, LEFT_AXIS) = 0.0;
 		cameraToClip(FORWARD_AXIS, UP_AXIS) = 0.0;
-		cameraToClip(FORWARD_AXIS, FORWARD_AXIS) = 1.0f / (far_clip-near_clip);
+		// Reverse-Z (U1): parallel/ortho z:[near,far]->NDC[1,0] (was [0,1]).
+		cameraToClip(FORWARD_AXIS, FORWARD_AXIS) = -1.0f / (far_clip-near_clip);
 		cameraToClip(FORWARD_AXIS, 3) = 0.0;
 
 		cameraToClip(3, LEFT_AXIS) = -right_clip / (left_clip-right_clip);
 		cameraToClip(3, UP_AXIS) = -bottom_clip / (top_clip-bottom_clip);
-		cameraToClip(3, FORWARD_AXIS) = -near_clip / (far_clip-near_clip);
+		// Reverse-Z (U1): translate term flips sign and uses far_clip.
+		cameraToClip(3, FORWARD_AXIS) = far_clip / (far_clip-near_clip);
 		cameraToClip(3, 3) = 1.0f;
 	}
 	else
@@ -2083,13 +2104,38 @@ void Camera::setOrthogonal(void)
 	
 		cameraToClip(FORWARD_AXIS, LEFT_AXIS) = -right_clip * horizontal_range;
 		cameraToClip(FORWARD_AXIS, UP_AXIS) = -bottom_clip * vertical_range;
-		cameraToClip(FORWARD_AXIS, FORWARD_AXIS) = far_clip * depth_range;
+		// Reverse-Z (U1): for NDC=(A*z+B)/z, near->1/far->0 gives
+		// A=-near/(far-near), B=+near*far/(far-near). depth_range already
+		// carries 1/(far-near) and the axis sign, so: negate-and-near-swap
+		// the FF term, sign-flip the 3F term.
+		cameraToClip(FORWARD_AXIS, FORWARD_AXIS) = -near_clip * depth_range;
 		cameraToClip(FORWARD_AXIS, 3) = 1.0f;
-	
+
 		cameraToClip(3, LEFT_AXIS) = 0.0f;
 		cameraToClip(3, UP_AXIS) = 0.0f;
-		cameraToClip(3, FORWARD_AXIS) = -far_clip * near_clip * depth_range;
+		cameraToClip(3, FORWARD_AXIS) = far_clip * near_clip * depth_range;
 		cameraToClip(3, 3) = 0.0f;
+
+		// [REVERSE_Z v1] env-gated lifecycle print (MC2_REVERSE_Z_TRACE=1),
+		// silent by default; one-shot via a static latch. Matches the
+		// MC2_DEBUG_SHADOW_* pattern (CLAUDE.md Debug instrumentation rule;
+		// structural depth change). Samples the perspective z-row at the
+		// near and far planes: under reverse-Z near must map to NDC z=1 and
+		// far to NDC z=0. NDC z = (FF*z_cam + B) / z_cam, with FF and B the
+		// just-written cameraToClip terms.
+		if (getenv("MC2_REVERSE_Z_TRACE") != nullptr) {
+			static int s_rzBuild = 0;
+			++s_rzBuild;
+			const float FF = (float)cameraToClip(FORWARD_AXIS, FORWARD_AXIS);
+			const float B  = (float)cameraToClip(3, FORWARD_AXIS);
+			const float ndcNear = (FF * near_clip + B) / near_clip;
+			const float ndcFar  = (FF * far_clip  + B) / far_clip;
+			fprintf(stderr,
+				"[REVERSE_Z v1] event=proj_build n=%d mode=perspective "
+				"near=%.4f far=%.4f FF=%.8f B=%.8f "
+				"ndcZ_near=%.6f(expect~1) ndcZ_far=%.6f(expect~0)\n",
+				s_rzBuild, near_clip, far_clip, FF, B, ndcNear, ndcFar);
+		}
 	}
 }
 

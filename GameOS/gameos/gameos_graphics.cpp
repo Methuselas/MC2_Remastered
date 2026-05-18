@@ -2228,7 +2228,7 @@ void gosRenderer::renderWaterFastPath(
     GLboolean savedDepthTest = glIsEnabled(GL_DEPTH_TEST);
     GLint savedDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC, &savedDepthFunc);
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene water)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDepthMask(GL_FALSE);
@@ -2625,7 +2625,7 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
 
     // ---- Depth + color state for opaque terrain ----------------------------
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (opaque terrain)
     glDepthMask(GL_TRUE);
     // M5: undo any prior shadow-pass glColorMask(FALSE,...) from
     // gos_postprocess.cpp:1134/1156 — without this the indirect path draws
@@ -2963,7 +2963,7 @@ bool gos_terrain_bridge_drawMaskSolid(uint32_t solidMaskSSBO,
     // z-fighting the concurrent PR1 indirect draw. Stage 1d flips this when PR1
     // is retired and the mask draw becomes the sole SOLID path.
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (mask soak 1b)
     glDepthMask(GL_FALSE);
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     glDisable(GL_BLEND);
@@ -3150,7 +3150,7 @@ bool gos_terrain_bridge_drawMaskWater(uint32_t waterMaskSSBO,
     // Water is translucent so depth writes are off anyway; keep depth test for
     // correct mask geometry.
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (mask soak 1c)
     glDepthMask(GL_FALSE);
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     // Blend on (water is semi-transparent); blend func matches water fast path.
@@ -3310,7 +3310,7 @@ bool gos_terrain_bridge_drawMineStatic(int          vertCount,
 
     // ---- Depth + blend + color state ---------------------------------------
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene terrain)
     glDepthMask(GL_TRUE);
     // M5: undo any prior shadow-pass glColorMask(FALSE,...) leakage.
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -3945,10 +3945,18 @@ void gosRenderer::applyRenderStates() {
    } else {
        glEnable(GL_DEPTH_TEST);
    }
+   // Reverse-Z (U2): gos_State_ZCompare is the SCENE depth-compare bridge.
+   // All gos_State_ZCompare writers (incl. txmmgr.cpp:2316/2327 and
+   // objmgr.cpp:1826 legacy CPU blob-shadow quads, which depth-test
+   // against the SCENE depth buffer) are scene-space; the ortho
+   // shadow-MAP passes never route through gos_State_ZCompare (they set
+   // glDepthFunc(GL_LESS) via the literal path in gameos_graphics.cpp
+   // 4436/4580/4650 + gos_postprocess.cpp 1139/1163 under their own FBO).
+   // So the scene remap applies globally here; no shadow carve-out.
    switch(renderStates_[gos_State_ZCompare]) {
-       case 0: glDepthFunc(GL_ALWAYS); break;
-       case 1: glDepthFunc(GL_LEQUAL); break;
-       case 2: glDepthFunc(GL_LESS); break;
+       case 0: glDepthFunc(GL_ALWAYS);  break;   // unchanged
+       case 1: glDepthFunc(GL_GEQUAL);  break;   // reverse-Z: was GL_LEQUAL
+       case 2: glDepthFunc(GL_GREATER); break;   // reverse-Z: was GL_LESS
        default: gosASSERT(0 && "Wrong depth test value");
    }
    curStates_[gos_State_ZCompare] = renderStates_[gos_State_ZCompare];
@@ -4431,7 +4439,9 @@ void gosRenderer::beginShadowPrePass(bool clearDepth) {
     int smSize = pp->getShadowMapSize();
     glViewport(0, 0, smSize, smSize);
     glDepthMask(GL_TRUE);
-    if (clearDepth) glClear(GL_DEPTH_BUFFER_BIT);
+    // Reverse-Z (U2) state-safe partition: shadow map stays forward-Z;
+    // scene set glClearDepth(0), so force 1.0f around this shadow clear.
+    if (clearDepth) { glClearDepth(1.0f); glClear(GL_DEPTH_BUFFER_BIT); glClearDepth(0.0f); }
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glDisable(GL_CULL_FACE);
@@ -4645,7 +4655,11 @@ void gosRenderer::beginDynamicShadowPass() {
     glBindFramebuffer(GL_FRAMEBUFFER, pp->getDynamicShadowFBO());
     glViewport(0, 0, pp->getDynamicShadowMapSize(), pp->getDynamicShadowMapSize());
     glDepthMask(GL_TRUE);
+    // Reverse-Z (U2) state-safe partition: dynamic shadow stays forward-Z;
+    // scene set glClearDepth(0), so force 1.0f around this shadow clear.
+    glClearDepth(1.0f);
     glClear(GL_DEPTH_BUFFER_BIT);
+    glClearDepth(0.0f);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glDisable(GL_CULL_FACE);
@@ -6708,7 +6722,7 @@ void __stdcall gos_ForceApplyRenderStates() {
     if (!g_gos_renderer) return;
     g_gos_renderer->invalidateRenderStateCache();
     // Just set GL directly for the critical states that renderLists() dirties
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (force-apply scene)
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
@@ -7092,7 +7106,7 @@ void gosRenderer::drawTerrainOverlays()
 
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene overlays/decals)
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
 
@@ -7203,7 +7217,7 @@ bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
     // ---- State block: identical to drawTerrainOverlays() -------------------
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene overlays/decals)
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
 
@@ -7269,7 +7283,7 @@ void gosRenderer::drawDecals()
 
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene decals)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_CULL_FACE);

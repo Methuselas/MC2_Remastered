@@ -472,6 +472,7 @@ static void draw_screen( void )
     }
 
     glViewport(0, 0, viewport_w, viewport_h);
+    glClearDepth(0.0f);   // reverse-Z (U2): far plane = depth 0
     glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 #if 0
     mat4 proj;
@@ -519,6 +520,7 @@ static void draw_screen( void )
         else
             glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     }
+    glClearDepth(0.0f);   // reverse-Z (U2): far plane = depth 0
     glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
 
     // F3: overwrite attachment 1 (GBuffer1) with the post-shadow-eligible sentinel.
@@ -749,6 +751,7 @@ int main(int argc, char** argv)
         bool gpuCullSubstrate = (_gcs == nullptr || _gcs[0] != '0');
         bool gpuCullParity    = (getenv("MC2_GPU_CULL_AABB_PARITY") != nullptr && getenv("MC2_GPU_CULL_AABB_PARITY")[0] != '0');
         const bool shrHR      = (getenv("MC2_SHADER_HOT_RELOAD")    != nullptr);
+        const bool revZ       = (getenv("MC2_REVERSE_Z_TRACE")      != nullptr);
         const char* build  =
 #ifdef MC2_BUILD_HASH
             MC2_BUILD_HASH
@@ -761,10 +764,11 @@ int main(int argc, char** argv)
         // Grew 640 -> 720 to absorb gpu_cull_substrate and gpu_cull_aabb_parity.
         // Grew 720 -> 768 to absorb terrain_indirect_mine (PR2c Stage 0c).
         // Grew 768 -> 832 to absorb terrain_indirect_overlay{,_parity} (PR2b).
+        // Grew 832 -> 896 to absorb reverse_z_trace (reverse-Z float depth).
         // (water_skip_env field was tentatively added during the closed
         // water-projection-skip slice attempt; removed when the slice
         // closed — premise invalidated by Stage 0 M3 audit.)
-        char _cbbuf[832];
+        char _cbbuf[896];
         snprintf(_cbbuf, sizeof(_cbbuf),
             "[INSTR v1] enabled: tgl_pool=%d destroy=%d gl_error_print=%d "
             "smoke=%d water_fp=%d water_parity=%d vp_fast=%d vp_parity=%d "
@@ -775,6 +779,7 @@ int main(int argc, char** argv)
             "static_prop_registry=%d "
             "gpu_cull_substrate=%d gpu_cull_aabb_parity=%d "
             "shader_hot_reload=%d "
+            "reverse_z_trace=%d "
             "camera_motion=1 "
             "build=%s",
             tgl ? 1 : 0, destr ? 1 : 0, glprint ? 1 : 0, smoke ? 1 : 0,
@@ -786,6 +791,7 @@ int main(int argc, char** argv)
             GpuStaticPropRegistry::isEnabled() ? 1 : 0,
             gpuCullSubstrate ? 1 : 0, gpuCullParity ? 1 : 0,
             shrHR ? 1 : 0,
+            revZ ? 1 : 0,
             build);
         puts(_cbbuf);
         crashbundle_append(_cbbuf);

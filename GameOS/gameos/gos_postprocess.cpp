@@ -1119,9 +1119,14 @@ void gosPostProcess::initShadows()
     staticLightSpaceMatrix_[0] = staticLightSpaceMatrix_[5] = staticLightSpaceMatrix_[10] = staticLightSpaceMatrix_[15] = 1.0f;
     staticLightMatrixBuilt_ = false;
 
-    // Clear shadow map to max depth (1.0) so everything is "lit"
+    // Clear shadow map to max depth (1.0) so everything is "lit".
+    // Reverse-Z (U2) state-safe partition: the scene sets glClearDepth(0);
+    // the shadow path stays forward-Z, so set glClearDepth(1.0f)
+    // explicitly here and restore the scene reverse-Z default after.
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFBO_);
+    glClearDepth(1.0f);
     glClear(GL_DEPTH_BUFFER_BIT);
+    glClearDepth(0.0f);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -1132,7 +1137,11 @@ void gosPostProcess::beginShadowPass()
     glGetIntegerv(GL_VIEWPORT, savedViewport_);
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFBO_);
     glViewport(0, 0, shadowMapSize_, shadowMapSize_);
+    // Reverse-Z (U2) state-safe partition: shadow stays forward-Z; scene
+    // set glClearDepth(0), so force 1.0f here and restore 0 after.
+    glClearDepth(1.0f);
     glClear(GL_DEPTH_BUFFER_BIT);
+    glClearDepth(0.0f);
 
     // Force depth test and writing ON
     glEnable(GL_DEPTH_TEST);
@@ -1359,10 +1368,14 @@ void gosPostProcess::initDynamicShadows()
     memset(dynamicLightSpaceMatrix_, 0, sizeof(dynamicLightSpaceMatrix_));
     dynamicLightSpaceMatrix_[0] = dynamicLightSpaceMatrix_[5] = dynamicLightSpaceMatrix_[10] = dynamicLightSpaceMatrix_[15] = 1.0f;
 
-    // Clear to max depth (fully lit)
+    // Clear to max depth (fully lit). Reverse-Z (U2) state-safe partition:
+    // dynamic shadow stays forward-Z; scene set glClearDepth(0), so force
+    // 1.0f here and restore the scene reverse-Z default after.
     glBindFramebuffer(GL_FRAMEBUFFER, dynShadowFBO_);
     glDepthMask(GL_TRUE);
+    glClearDepth(1.0f);
     glClear(GL_DEPTH_BUFFER_BIT);
+    glClearDepth(0.0f);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 

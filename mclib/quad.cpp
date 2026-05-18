@@ -3990,14 +3990,19 @@ void TerrainQuad::drawLine (void)
 
 	//------------------------------------------------------------
 	// Draw the Tile block lines at depth just above base tiles.
+	// Reverse-Z (Step 6b): post-divide pz is now reverse-Z [near->1,
+	// far->0] with GEQUAL; "just above base tiles" (toward camera) =
+	// LARGER z, so the hardcoded -0.002f bias flips to +0.002f. Scene
+	// debug-overlay consumer (drawTerrainGrid / selected-quad), not a
+	// named-constant site; flipped explicitly.
 	long color = XP_WHITE;
 
 	if (uvMode == BOTTOMRIGHT)
 	{
 		if (clipped1 != 0)
 		{
-			Stuff::Vector4D pos1(vertices[0]->px,vertices[0]->py,vertices[0]->pz-0.002f,1.0f / vertices[0]->pw);
-			Stuff::Vector4D pos2(vertices[1]->px,vertices[1]->py,vertices[1]->pz-0.002f,1.0f / vertices[1]->pw);
+			Stuff::Vector4D pos1(vertices[0]->px,vertices[0]->py,vertices[0]->pz+0.002f,1.0f / vertices[0]->pw);
+			Stuff::Vector4D pos2(vertices[1]->px,vertices[1]->py,vertices[1]->pz+0.002f,1.0f / vertices[1]->pw);
 			
 			{
 				LineElement newElement(pos1,pos2,color,NULL);
@@ -4017,11 +4022,11 @@ void TerrainQuad::drawLine (void)
 			
 			pos1.x = vertices[2]->px;
 			pos1.y = vertices[2]->py;
-			pos1.z = vertices[2]->pz - 0.002f;
+			pos1.z = vertices[2]->pz + 0.002f;
 
 			pos2.x = vertices[0]->px;
 			pos2.y = vertices[0]->py;
-			pos2.z = vertices[0]->pz - 0.002f;
+			pos2.z = vertices[0]->pz + 0.002f;
 
 			{
 				LineElement newElement(pos1,pos2,color,NULL);
@@ -4031,8 +4036,8 @@ void TerrainQuad::drawLine (void)
 		
 		if (clipped2 != 0)
 		{
-			Stuff::Vector4D pos1(vertices[0]->px,vertices[0]->py,vertices[0]->pz-0.002f,1.0f / vertices[0]->pw);
-			Stuff::Vector4D pos2(vertices[2]->px,vertices[2]->py,vertices[2]->pz-0.002f,1.0f / vertices[2]->pw);
+			Stuff::Vector4D pos1(vertices[0]->px,vertices[0]->py,vertices[0]->pz+0.002f,1.0f / vertices[0]->pw);
+			Stuff::Vector4D pos2(vertices[2]->px,vertices[2]->py,vertices[2]->pz+0.002f,1.0f / vertices[2]->pw);
 			
 			{
 				LineElement newElement(pos1,pos2,color,NULL);
@@ -4041,11 +4046,11 @@ void TerrainQuad::drawLine (void)
 			
 			pos1.x = vertices[2]->px;
 			pos1.y = vertices[2]->py;
-			pos1.z = vertices[2]->pz - 0.002f;
+			pos1.z = vertices[2]->pz + 0.002f;
 
 			pos2.x = vertices[3]->px;
 			pos2.y = vertices[3]->py;
-			pos2.z = vertices[3]->pz - 0.002f;
+			pos2.z = vertices[3]->pz + 0.002f;
 
 			{
 				LineElement newElement(pos1,pos2,color,NULL);
@@ -4054,11 +4059,11 @@ void TerrainQuad::drawLine (void)
 			
 			pos1.x = vertices[3]->px;
 			pos1.y = vertices[3]->py;
-			pos1.z = vertices[3]->pz - 0.002f;
+			pos1.z = vertices[3]->pz + 0.002f;
 
 			pos2.x = vertices[0]->px;
 			pos2.y = vertices[0]->py;
-			pos2.z = vertices[0]->pz - 0.002f;
+			pos2.z = vertices[0]->pz + 0.002f;
 
 			{
 				LineElement newElement(pos1,pos2,color,NULL);
@@ -4070,8 +4075,8 @@ void TerrainQuad::drawLine (void)
 	{
 		if (clipped1 != 0)
 		{
-			Stuff::Vector4D pos1(vertices[0]->px,vertices[0]->py,vertices[0]->pz-0.002f,1.0f / vertices[0]->pw);
-			Stuff::Vector4D pos2(vertices[1]->px,vertices[1]->py,vertices[1]->pz-0.002f,1.0f / vertices[1]->pw);
+			Stuff::Vector4D pos1(vertices[0]->px,vertices[0]->py,vertices[0]->pz+0.002f,1.0f / vertices[0]->pw);
+			Stuff::Vector4D pos2(vertices[1]->px,vertices[1]->py,vertices[1]->pz+0.002f,1.0f / vertices[1]->pw);
 			
 			{
 				LineElement newElement(pos1,pos2,color,NULL);
@@ -4080,11 +4085,11 @@ void TerrainQuad::drawLine (void)
 			
 			pos1.x = vertices[1]->px;
 			pos1.y = vertices[1]->py;
-			pos1.z = vertices[1]->pz - 0.002f;
+			pos1.z = vertices[1]->pz + 0.002f;
 
 			pos2.x = vertices[3]->px;
 			pos2.y = vertices[3]->py;
-			pos2.z = vertices[3]->pz - 0.002f;
+			pos2.z = vertices[3]->pz + 0.002f;
 
 			{
 				LineElement newElement(pos1,pos2,color,NULL);
@@ -4093,11 +4098,11 @@ void TerrainQuad::drawLine (void)
 			
 			pos1.x = vertices[3]->px;
 			pos1.y = vertices[3]->py;
-			pos1.z = vertices[3]->pz - 0.002f;
+			pos1.z = vertices[3]->pz + 0.002f;
 
 			pos2.x = vertices[0]->px;
 			pos2.y = vertices[0]->py;
-			pos2.z = vertices[0]->pz - 0.002f;
+			pos2.z = vertices[0]->pz + 0.002f;
 
 			{
 				LineElement newElement(pos1,pos2,color,NULL);
@@ -4107,8 +4112,8 @@ void TerrainQuad::drawLine (void)
 		
 		if (clipped2 != 0)
 		{
-			Stuff::Vector4D pos1(vertices[1]->px,vertices[1]->py,vertices[1]->pz-0.002f,1.0f / vertices[1]->pw);
-			Stuff::Vector4D pos2(vertices[2]->px,vertices[2]->py,vertices[2]->pz-0.002f,1.0f / vertices[2]->pw);
+			Stuff::Vector4D pos1(vertices[1]->px,vertices[1]->py,vertices[1]->pz+0.002f,1.0f / vertices[1]->pw);
+			Stuff::Vector4D pos2(vertices[2]->px,vertices[2]->py,vertices[2]->pz+0.002f,1.0f / vertices[2]->pw);
 			
 			{
 				LineElement newElement(pos1,pos2,color,NULL);
@@ -4117,11 +4122,11 @@ void TerrainQuad::drawLine (void)
 			
 			pos1.x = vertices[2]->px;
 			pos1.y = vertices[2]->py;
-			pos1.z = vertices[2]->pz - 0.002f;
+			pos1.z = vertices[2]->pz + 0.002f;
 
 			pos2.x = vertices[3]->px;
 			pos2.y = vertices[3]->py;
-			pos2.z = vertices[3]->pz - 0.002f;
+			pos2.z = vertices[3]->pz + 0.002f;
 
 			{
 				LineElement newElement(pos1,pos2,color,NULL);
@@ -4130,11 +4135,11 @@ void TerrainQuad::drawLine (void)
 			
 			pos1.x = vertices[3]->px;
 			pos1.y = vertices[3]->py;
-			pos1.z = vertices[3]->pz - 0.002f;
+			pos1.z = vertices[3]->pz + 0.002f;
 
 			pos2.x = vertices[1]->px;
 			pos2.y = vertices[1]->py;
-			pos2.z = vertices[1]->pz - 0.002f;
+			pos2.z = vertices[1]->pz + 0.002f;
 
 			{
 				LineElement newElement(pos1,pos2,color,NULL);
@@ -4208,10 +4213,10 @@ void TerrainQuad::drawLine (void)
 						// [PROJECTZ:DebugOnly id=debug_cell_passability_3]
 						eye->projectForDebugOverlay(thePoint,pos3);
 
-						pos1.z -= 0.002f;
-						pos2.z -= 0.002f;
-						pos3.z -= 0.002f;
-						pos4.z -= 0.002f;
+						pos1.z += 0.002f;
+						pos2.z += 0.002f;
+						pos3.z += 0.002f;
+						pos4.z += 0.002f;
 
 						DWORD color = XP_RED;
 						
@@ -4333,10 +4338,10 @@ void TerrainQuad::drawLine (void)
 				// [PROJECTZ:DebugOnly id=debug_door_outline_3]
 				eye->projectForDebugOverlay(thePoint,pos3);
 
-				pos1.z -= 0.002f;
-				pos2.z -= 0.002f;
-				pos3.z -= 0.002f;
-				pos4.z -= 0.002f;
+				pos1.z += 0.002f;
+				pos2.z += 0.002f;
+				pos3.z += 0.002f;
+				pos4.z += 0.002f;
 				{
 					LineElement newElement(pos1,pos2,XP_GREEN,NULL);
 					newElement.draw();
@@ -4430,10 +4435,10 @@ void TerrainQuad::drawLOSLine (void)
 						// [PROJECTZ:DebugOnly id=debug_los_cell_height_3]
 						eye->projectForDebugOverlay(thePoint,pos3);
 						
-						pos1.z -= 0.002f;
-						pos2.z -= 0.002f;
-						pos3.z -= 0.002f;
-						pos4.z -= 0.002f;
+						pos1.z += 0.002f;
+						pos2.z += 0.002f;
+						pos3.z += 0.002f;
+						pos4.z += 0.002f;
 
 						DWORD color = XP_BLACK;
 						
