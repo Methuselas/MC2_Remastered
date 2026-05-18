@@ -6289,6 +6289,19 @@ void gos_DrawShadowObjectBatch(HGOSBUFFER vb, HGOSBUFFER ib,
     HGOSVERTEXDECLARATION vdecl, const float* worldMatrix4x4) {
     if (g_gos_renderer) g_gos_renderer->drawShadowObjectBatch(vb, ib, vdecl, worldMatrix4x4);
 }
+// CP-2: static-context shadow submit. Binds the world-fixed static shadow
+// map (shadowFBO_ / staticLightSpaceMatrix_) which is already set by
+// gos_BeginShadowPrePass via active_light_space_matrix_. The body is
+// identical to gos_DrawShadowObjectBatch because gosRenderer::
+// drawShadowObjectBatch routes through active_light_space_matrix_ which
+// is already staticLightSpaceMatrix_ when called within
+// gos_BeginShadowPrePass ... gos_EndShadowPrePass. This entry point exists
+// as a named, separately-callable symbol for Plan 2C's decorative-mesh
+// static shadow wiring.
+void gos_DrawShadowObjectBatchStatic(HGOSBUFFER vb, HGOSBUFFER ib,
+    HGOSVERTEXDECLARATION vdecl, const float* worldMatrix4x4) {
+    if (g_gos_renderer) g_gos_renderer->drawShadowObjectBatch(vb, ib, vdecl, worldMatrix4x4);
+}
 
 // Dynamic object shadow pass API
 void gos_BeginDynamicShadowPass() {

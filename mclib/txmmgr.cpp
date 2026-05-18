@@ -1584,6 +1584,22 @@ void MC_TextureManager::renderLists (void)
 				}
 			}
 		}
+		// CP-2 selftest: when MC2_DECOR_SHADOW_SELFTEST=1, submit the first
+		// available dynamic-shadow shape (previous frame, not yet cleared) as a
+		// STATIC caster to prove gos_DrawShadowObjectBatchStatic links, binds
+		// the correct target (static FBO / staticLightSpaceMatrix_ already active
+		// via beginShadowPrePass), and produces no GL error. No behavior change:
+		// this is one extra depth write into the static map, acceptable transient.
+		if (getenv("MC2_DECOR_SHADOW_SELFTEST")) {
+			if (g_numShadowShapes > 0) {
+				gos_DrawShadowObjectBatchStatic(
+					g_shadowShapes[0].vb, g_shadowShapes[0].ib,
+					g_shadowShapes[0].vdecl, g_shadowShapes[0].worldMatrix);
+			}
+			GLenum e = glGetError();
+			printf("[DECOR_SHADOW v1] event=selftest_static_submit gl_err=0x%x\n", e);
+			fflush(stdout);
+		}
 		gos_EndShadowPrePass();
 
 		if (shadowRebuildForced) {
