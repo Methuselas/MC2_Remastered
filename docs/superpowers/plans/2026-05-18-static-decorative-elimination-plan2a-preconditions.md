@@ -495,3 +495,7 @@ git commit -m "feat(static-decor): DEDICATED decorative collision proxy (populat
   verbatim. Soak waived per
   `feedback_soak_waiver_with_probes_and_reviews_validated` (env-gated
   parity probe + zero-counter substitute).
+
+## Follow-up notes
+
+- mclib/txmmgr.h CRLF churn on 743a548 was reverted in a fixup; root cause is a missing .gitattributes normalization for mclib/*.h - audit in a separate hygiene change, not this slice.
