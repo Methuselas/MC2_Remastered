@@ -2081,6 +2081,10 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		    curFrame != g_staticUpdateLastSummaryFrame_get()) {
 			g_staticUpdateEmitSummary(curFrame);
 		}
+		// [TOBJSPLIT v1] once-per-frame roll + 600-frame summary (mirrors
+		// terrain.cpp:1822 SlimSplitRollAndMaybeEmit() placement at the
+		// end of the per-frame loop; frame counter lives in terrobj.cpp).
+		g_tobjSplitRollAndMaybeEmit();
 	}
 	
  	if (movers) {

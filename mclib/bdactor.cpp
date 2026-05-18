@@ -75,6 +75,7 @@
 #endif
 
 #include "../code/unitdesg.h" /* just for definition of MIN_TERRAIN_PART_ID and MAX_MAP_CELL_WIDTH */
+#include "../code/static_update_counters.h" /* [TOBJSPLIT v1] g_tobjAngularCyc / g_tobjProjCyc extern decls */
 #include "gos_static_prop_batcher.h"
 //******************************************************************************************
 extern float	worldUnitsPerMeter;
@@ -1157,12 +1158,11 @@ bool BldgAppearance::isMouseOver (float px, float py)
 //-----------------------------------------------------------------------------
 bool BldgAppearance::recalcBounds (void)
 {
-	// [TOBJSPLIT v1] extern accumulators defined in code/terrobj.cpp.
+	// [TOBJSPLIT v1] accumulators declared in code/static_update_counters.h
+	// (included above via ../code/static_update_counters.h).
 	// s_tobjSplitEnabled is a file-static duplicate (one getenv per TU;
 	// process-start-constant -- no observable cost when disabled).
 	static bool s_tobjSplitEnabled = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
-	extern unsigned long long g_tobjAngularCyc;
-	extern unsigned long long g_tobjProjCyc;
 
 	Stuff::Vector4D tempPos;
 	inView = false;
@@ -4301,12 +4301,11 @@ bool TreeAppearance::isMouseOver (float px, float py)
 //-----------------------------------------------------------------------------
 bool TreeAppearance::recalcBounds (void)
 {
-	// [TOBJSPLIT v1] extern accumulators defined in code/terrobj.cpp.
+	// [TOBJSPLIT v1] accumulators declared in code/static_update_counters.h
+	// (included above via ../code/static_update_counters.h).
 	// s_tobjSplitEnabled is a file-static duplicate (one getenv per TU;
 	// process-start-constant -- no observable cost when disabled).
 	static bool s_tobjSplitEnabled = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
-	extern unsigned long long g_tobjAngularCyc;
-	extern unsigned long long g_tobjProjCyc;
 
 	Stuff::Vector4D tempPos;
 	inView = false;
