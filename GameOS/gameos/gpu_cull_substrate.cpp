@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include "gos_profiler.h"        // Tracy ZoneScopedN
 
 // MC2_GPU_CULL_SUBSTRATE_TRACE=1 — verbose per-frame lifecycle prints.
 // Default off; the 600-frame summary + first-flush banner emit unconditionally.
@@ -188,6 +189,7 @@ void substrate_frameBegin() {
     // Wait on this slot's fence if it has not yet been signalled.
     // At 60 Hz with 3-deep ring this should never stall, but be defensive.
     if (s_fence[s_frameSlot]) {
+        ZoneScopedN("SubFrameBegin.RingWait");
         glClientWaitSync(s_fence[s_frameSlot], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
         glDeleteSync(s_fence[s_frameSlot]);
         s_fence[s_frameSlot] = 0;
@@ -238,32 +240,35 @@ void substrate_flushUpload() {
     if (!substrate_isEnabled() || !s_initialized) return;
 
     // Write the header for this slot.
-    const size_t slotOffset = s_frameSlot * s_slotBytes;
-    GpuActorRecordHeader* hdr =
-        reinterpret_cast<GpuActorRecordHeader*>(
-            static_cast<char*>(s_mappedPtr) + slotOffset);
-
-    // C1a: count CPU-visible records (prevVisibilityBit==1) for parity summary.
     {
-        uint32_t cpuVis = 0;
-        const GpuActorRecord* recs = reinterpret_cast<const GpuActorRecord*>(
-            static_cast<const char*>(s_mappedPtr) + slotOffset + sizeof(GpuActorRecordHeader));
-        for (uint32_t i = 0; i < s_perFrameCount; ++i) {
-            if (recs[i].prevVisibilityBit) ++cpuVis;
-        }
-        s_cpuVisibleCount = cpuVis;
-    }
+        ZoneScopedN("SubFlush.HeaderAndCountLoop");
+        const size_t slotOffset = s_frameSlot * s_slotBytes;
+        GpuActorRecordHeader* hdr =
+            reinterpret_cast<GpuActorRecordHeader*>(
+                static_cast<char*>(s_mappedPtr) + slotOffset);
 
-    hdr->recordCount    = s_perFrameCount;
-    hdr->recordCapacity = s_maxActors;
-    hdr->visibleCount   = 0;   // written by compute (C1+); CPU sets 0
-    hdr->_pad0          = 0;
+        // C1a: count CPU-visible records (prevVisibilityBit==1) for parity summary.
+        {
+            uint32_t cpuVis = 0;
+            const GpuActorRecord* recs = reinterpret_cast<const GpuActorRecord*>(
+                static_cast<const char*>(s_mappedPtr) + slotOffset + sizeof(GpuActorRecordHeader));
+            for (uint32_t i = 0; i < s_perFrameCount; ++i) {
+                if (recs[i].prevVisibilityBit) ++cpuVis;
+            }
+            s_cpuVisibleCount = cpuVis;
+        }
+
+        hdr->recordCount    = s_perFrameCount;
+        hdr->recordCapacity = s_maxActors;
+        hdr->visibleCount   = 0;   // written by compute (C1+); CPU sets 0
+        hdr->_pad0          = 0;
+    }
 
     // Buffer is coherent (GL_MAP_COHERENT_BIT) — no explicit glFlushMappedBufferRange needed.
 
     // Insert a fence for this slot so the next visit to this ring slot
     // waits until the GPU has finished reading it.
-    s_fence[s_frameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    { ZoneScopedN("SubFlush.FenceInsert"); s_fence[s_frameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0); }
 
     // 600-frame summary + first-flush banner.
     ++s_flushCount;
