@@ -1409,7 +1409,7 @@ PHASE A -- DoGameLogic (gameosmain.cpp:1025, Environment.DoGameLogic = mechcmd2.
          -> CollisionSystem::checkObjects() (collsn.cpp:445)
          -> objList[i]->handleStaticCollision() (collsn.cpp:468,505)
          -> BattleMech::handleStaticCollision (mech.cpp:1103) or other mover
-         -> ObjectManager->detectStaticCollision (mech.cpp:1128, etc.)
+         -> ObjectManager->detectStaticCollision (mech.cpp:1139, etc.)
          -> collisionSystem->detectStaticCollision (objmgr.cpp:2853)
          -> resolves to TerrainObjectType::handleCollision (terrobj.cpp:345)
          -> TERROBJ_TREE branch (terrobj.cpp:369):
@@ -1426,7 +1426,8 @@ PHASE B -- draw_screen (gameosmain.cpp:1042):
   -> eye->render() (mission.cpp:784, = GameCamera::render() gamecam.cpp)
      Inside GameCamera::render():
      B1. GpuStaticPropRegistry::frameBegin()   (gamecam.cpp:201)
-         Clears s_liveRangeIndices (gos_static_prop_registry.cpp:226).
+         Clears s_liveRangeIndices (gos_static_prop_registry.cpp:227;
+         :226 is the !s_enabled guard).
          [For StaticDecorativeSet: analogously resets per-frame GPU cull state]
      B2. land->render()                         (gamecam.cpp:202) -- terrain
      B3. ObjectManager->render(t,t,t)           (gamecam.cpp:213)
