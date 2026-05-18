@@ -12,7 +12,8 @@ MechCommander 2 OpenGL port: tessellated terrain, PBR splatting, shadow maps, po
 - **Render contract:** `docs/render-contract.md` (design) + `mclib/render_contract.*` (implementation) + `.claude/agents/mc2-render-contract-synthesizer.md` (refresh agent)
 - **Meta-prompt** at `.claude/prompts/distill-session-into-advisor-agent.md` - paste at end of a substantive domain-work session to harvest a new advisor
 - **Render-notes dump prompt** at `.claude/prompts/dump-render-observations.md` - produces dated notes in `docs/observations/` for the synthesizer to consume
-- **Skills** in `.claude/skills/`: `/mc2-build`, `/mc2-deploy`, `/mc2-build-deploy`, `/mc2-check`, `/mc2-shader-diff`, `/mc2-amd-shader-review`, `adversarial-plan-review`
+- **Skills** in `.claude/skills/`: `/mc2-build`, `/mc2-deploy`, `/mc2-build-deploy`, `/mc2-check`, `/mc2-shader-diff`, `/mc2-amd-shader-review`, `adversarial-plan-review`, `greybeard`
+- **Steering channel (shared, repo-root):** `A:/Games/mc2-opengl-src/.claude/STEERING.md` - out-of-band feedback for a barreling session in ANY worktree. `sh A:/Games/mc2-opengl-src/.claude/steer.sh "..."` (any terminal) blocks the session's next Bash/Agent/Task call and injects the text; agent runs `sh A:/Games/mc2-opengl-src/.claude/ack-steering.sh` to clear. Globally-registered hook `~/.claude/hooks` -> `.claude/hooks/steering_check.py`; walks up to repo root so one shared file serves every worktree.
 - **Reference docs** in `docs/`: `architecture.md`, `amd-driver-rules.md`, `docs/plans/`, `docs/superpowers/specs/`
 - **Maintenance hook:** `.claude/maintenance-rules.json` is consumed by the Stop hook (`~/.claude/hooks/gsd-staleness-monitor.js`); modifying load-bearing files surfaces related-update reminders
 
@@ -53,6 +54,20 @@ MechCommander 2 OpenGL port: tessellated terrain, PBR splatting, shadow maps, po
 ## Review discipline (load-bearing)
 
 When the user asks for "review", "code review", "second opinion", or any equivalent: **adversarial, code-grounded by default**. Read `.claude/skills/adversarial-plan-review.md`. High-stakes plans (architectural endpoints, legacy retirement, SSBO schemas, perf gates >=30%) get the full skill: grep every cited symbol, cross-reference every load-bearing constraint, list findings as CRITICAL / MAJOR / MINOR. Lower-stakes work gets prose-only review. When dispatching a review subagent, the dispatch prompt MUST include "use the adversarial-plan-review skill" verbatim. Origin: `memory/brainstorm_code_grounding_lesson.md`.
+
+## Meta-fix discipline (load-bearing)
+
+Before proposing OR writing any fix, rework, or offload: run the `greybeard`
+skill (`.claude/skills/greybeard.md`). It forces an explicit `META-FIX` vs
+`PATCH (justified)` ruling - the graybeard finds the one upstream change that
+retires the bug *class* (usually deleting a legacy mechanism whose original
+constraint no longer holds), not the local symptom patch. A patch with no
+named meta-fix and no debt justification is not allowed. This codebase has a
+documented history of additive slices netting ~0ms because the old path was
+never deleted - greybeard is the guard against that. When dispatching an
+advisor or fix subagent, the dispatch prompt MUST include "run the greybeard
+skill" verbatim (same convention as adversarial-plan-review). Applies to the
+main agent and every advisor; not required for trivial lookups.
 
 ## Documentation discipline (load-bearing)
 
