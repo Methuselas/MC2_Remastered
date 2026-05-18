@@ -1491,6 +1491,79 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
                 }
                 s_prevWfp = wfp;
             }
+            // [WATER_RENDERPROBE v1] Fix B matrix-share release gate. Env-gated
+            // (MC2_WATER_RENDERPROBE), silent by default, demote-not-delete.
+            // Invariant A (TRIPWIRE, trivially-true today): every armed frame the
+            // water cull-feed matrix FP == terrain dispatch FP. The render binds
+            // (gameos_graphics.cpp water + the 3 overlay/decal callers) inline the
+            // byte-identical symmetric-mirror expression this cull-feed uses, and
+            // terrain_mvp_ has a single per-frame writer (gamecam.cpp gos_SetTerrainMVP)
+            // before all consumers, so wfp is a faithful render-bind-FP proxy. A==0 on
+            // an armed frame ONLY if a future change mutates terrain_mvp_ mid-frame
+            // (the one residual hazard). It does NOT by itself prove correctness.
+            // Invariant B (RELEASE GATE): on the arming-transition frame (armed flips
+            // vs prev frame) water-bind FP must == terrain's this-frame source FP
+            // (dispatch FP if armed, live-cam FP if un-armed). RenderDoc cannot catch
+            // this 1-frame transient; passing B on a captured transition frame is the
+            // gate. Latched: printed exactly once.
+            // NOTE: wfp/tfp/tfi/lcfp/armed/f are scoped inside if(s_waterDepthProbe)
+            // above and are not visible here; all are recomputed locally using the
+            // identical FNV-1a idiom so this block is fully self-contained.
+            static const bool s_waterRenderProbe =
+                (getenv("MC2_WATER_RENDERPROBE") != nullptr);
+            if (s_waterRenderProbe) {
+                uint32_t wfp2 = 2166136261u;
+                for (int k = 0; k < 12; ++k) {
+                    uint32_t bits = 0;
+                    memcpy(&bits, &mvp[k], sizeof(bits));
+                    wfp2 ^= bits; wfp2 *= 16777619u;
+                }
+                const uint32_t tfp2 =
+                    gos_terrain_indirect_getDispatchMvpFp();
+                const uint64_t tfi2 =
+                    gos_terrain_indirect_getDispatchMvpFrameIdx();
+                const bool armed2 =
+                    gos_terrain_indirect::IsFrameSolidArmed();
+                uint32_t lcfp2 = 2166136261u;
+                if (const float* lc2 = gos_GetTerrainMVPMat4()) {
+                    for (int k = 0; k < 12; ++k) {
+                        uint32_t b = 0;
+                        memcpy(&b, &lc2[k], sizeof(b));
+                        lcfp2 ^= b; lcfp2 *= 16777619u;
+                    }
+                } else {
+                    lcfp2 = 0u;
+                }
+                static uint64_t s_rpFrame = 0;
+                const uint64_t f2 = ++s_rpFrame;
+                static int  s_rpPrevArmed = -1;            // -1 = no prior frame
+                static bool s_rpInvBLatched = false;
+                const int   armedI = armed2 ? 1 : 0;
+                // Invariant A: armed-frame tripwire (trivially-true; A==0 => mid-frame
+                // terrain_mvp_ mutation regression).
+                if (armed2) {
+                    printf("[WATER_RENDERPROBE v1] event=invA wframe=%llu "
+                           "water_fp=%08x terrain_dispatch_fp=%08x equal=%d "
+                           "terrain_dispatch_frameidx=%llu\n",
+                           (unsigned long long)f2, wfp2, tfp2,
+                           (wfp2 == tfp2) ? 1 : 0,
+                           (unsigned long long)tfi2);
+                    fflush(stdout);
+                }
+                // Invariant B: first arming-transition frame only, printed once.
+                if (s_rpPrevArmed != -1 && s_rpPrevArmed != armedI
+                    && !s_rpInvBLatched) {
+                    const uint32_t srcFp = armed2 ? tfp2 : lcfp2;
+                    printf("[WATER_RENDERPROBE v1] event=invB_transition wframe=%llu "
+                           "armed=%d prev_armed=%d water_fp=%08x terrain_src_fp=%08x "
+                           "equal=%d terrain_dispatch_frameidx=%llu\n",
+                           (unsigned long long)f2, armedI, s_rpPrevArmed, wfp2, srcFp,
+                           (wfp2 == srcFp) ? 1 : 0, (unsigned long long)tfi2);
+                    fflush(stdout);
+                    s_rpInvBLatched = true;
+                }
+                s_rpPrevArmed = armedI;
+            }
         } else {
             // MVP not available this frame (terrain not yet rendered). Bail out.
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);  // unbind stale thin slot
