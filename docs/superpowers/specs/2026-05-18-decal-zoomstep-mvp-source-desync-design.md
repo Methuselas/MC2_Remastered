@@ -3,7 +3,17 @@
 **Date:** 2026-05-18
 **Branch:** `claude/water-material-v1` (isolated; user integrates separately)
 **Owner:** assistant (designated water owner)
-**Status:** DESIGN - pending user spec review, then 2 mandatory adversarials.
+**Status:** DEAD / RETRACTED (2026-05-18) - the 3rd falsified model. User
+evidence (the zoom-step jump occurs with CPU water too, which has NO MVP
+uniform) + a frame-order trace (no 1-frame MVP skew exists in
+GameCamera::render) falsify the MVP-source-desync premise entirely. The
+single real root is the distance-nonlinear constant screen-z depth-fudge
+mismatch (each flat consumer carries a different fudge than terrain); the
+zoom-step jump is its TRANSIENT face. Superseded by the consolidated
+unified clip-z-bias spec (in progress). Retained only as the record of why
+the MVP-desync model is wrong. DO NOT implement.
+
+**(historical) Status:** DESIGN - pending user spec review.
 **Grounding:** 3 code-grounded advisor passes (render-expert recon ->
 shader-expert formula -> decal/zoom-step re-ground after new user evidence),
 Rule 0. file:line grep-verified 2026-05-18; symbols stable, lines drift -

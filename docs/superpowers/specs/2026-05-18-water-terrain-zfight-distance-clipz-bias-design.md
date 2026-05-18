@@ -6,8 +6,20 @@
 **Decided direction:** `memory/vulkan_aligned_depth_bias_ruling.md` (2026-05-15) -
 vertex-stage distance-proportional clip-z bias; NOT `glPolygonOffset`, NOT
 `gl_FragDepth`. This spec makes that ruling concrete.
-**Status:** DESIGN - pending user spec review, then 2 mandatory adversarials
-(structural depth change = high-stakes trigger).
+**Status:** SUPERSEDED (2026-05-18) - RIGHT FIX DIRECTION, INCOMPLETE
+SCOPE. The 3rd grounding proved the user's zoom-step jump IS the transient
+face of THIS distance-nonlinearity (one root, regime-independent) - so this
+spec's Sym2/Sym3 split is wrong (they are one root) and its scope is
+incomplete: it WRONGLY kept CPU water raster constant (CPU water jumps too -
+user-confirmed) and excluded decals (decals jump too, via
+glPolygonOffset). To be replaced by ONE consolidated unified clip-z-bias
+spec covering terrain + GPU water + CPU water (CPU-side formula mirror) +
+decals (with glPolygonOffset(-1,-1) removed same-change), gated on a new
+latched [DEPTH_TRANSITION v1] probe. The formula/constraints/canary
+sections here remain technically sound and are inherited by the
+consolidated spec. DO NOT implement this in isolation.
+
+**(historical) Status:** DESIGN - pending user spec review.
 **Grounding:** 2 code-grounded advisor passes this session (render-expert
 recon + shader-expert exact-formula), Rule 0. All file:line grep-verified
 2026-05-18; symbols stable, lines drift - Section 7 re-confirms at plan.
