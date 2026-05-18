@@ -39,14 +39,14 @@ const float SHORE_BLEND_DEPTH  = 3.0;    // world-units to full opacity
 const float SKY_AMBIENT        = 0.18;   // brightness floor (camera-independent)
 // --- camera-INDEPENDENT procedural water detail (BAR-style: 2 fBm layers,
 //     OPPOSITE scroll dirs -> organic churn, no grid). f(WorldPos,time) only. ---
-const float WAVE_FREQ   = 0.055;   // 1/world-u; lower = bigger features (tree-scale tuned)
+const float WAVE_FREQ   = 0.030;   // 1/world-u; lower = bigger waves, visible at zoom-out
 const float WAVE_SPEED  = 6.0;     // world-u/sec domain scroll
 const float RIPPLE_GAIN  = 0.22;   // crest BRIGHTEN amount - mild, low color variance
 const vec3  GLINT_TINT   = vec3(0.82, 0.88, 0.94);  // near-WHITE wave-cap (slightly cool)
 const float GLINT_GAIN   = 0.22;   // additive camera-INDEPENDENT white crest shimmer
 const float GLINT_THRESH = 0.40;   // a bit more crest area shows white caps
-const float WAVE_FADE_NEAR = 4000.0;  // full detail nearer than this (world-u)
-const float WAVE_FADE_FAR  = 12000.0; // fully calm beyond (extreme zoom-out anti-alias only)
+const float WAVE_FADE_NEAR = 9000.0;  // full detail well out (visible at zoom-out now)
+const float WAVE_FADE_FAR  = 40000.0; // only the very furthest extreme calms (no flat-at-zoom)
 
 // Precision-safe (fract-early) hash -> stable for large MC2 world coords;
 // value-noise + 3-octave fBm. No texture, no seam (continuous WorldPos).
