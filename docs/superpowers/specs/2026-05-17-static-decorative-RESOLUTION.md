@@ -324,14 +324,14 @@ R-2. GameObjectManager::getTerrainObject(long terrainObjectIndex)
         unconditionally for any valid index.
 
 R-3. GameObjectManager::findByPartId(long partId)
-     -- code/objmgr.cpp:2098-2111 (declaration: code/objmgr.h:510)
+     -- code/objmgr.cpp:2363-2376 (declaration: code/objmgr.h, grep findByPartId)
      -- Linear scan over objList[1..getMaxObjects()], matching obj->getPartId(). NOT
         objBlockInfo-routed. HC-2 severance does NOT silence this path.
      -- With decorative still in objList (HC-2), finds it if its partId matches.
-     -- VERIFIED PER-FRAME PATH (conditional): GameCamera::update() (gamecam.cpp:456,
-        per-frame) -> when lookTargetObject != -1 (gamecam.cpp:458-459) ->
-        getCamObject(lookTargetObject,true) (gamecam.cpp:430-451) ->
-        ObjectManager->findByPartId(partId) (gamecam.cpp:436). This is a full-objList
+     -- VERIFIED PER-FRAME PATH (conditional): GameCamera::update() (per-frame
+        frame loop) -> when lookTargetObject != -1 (gamecam.cpp:550) ->
+        getCamObject(lookTargetObject,true) (gamecam.cpp:551; getCamObject def gamecam.cpp:522) ->
+        ObjectManager->findByPartId(partId) (gamecam.cpp:528). This is a full-objList
         linear scan fired every frame while the camera is locked to a look-target.
         SCOPE RULING -- this path is:
           (a) PRE-EXISTING: not introduced by the decorative-severance slice;
@@ -405,7 +405,7 @@ Per-resolver classification:
 |----------|---------------|-------------------|---------|
 | R-1 get(handle) | on-demand, ALLOWED | event-sourced (mech hit, ABL) | objmgr.cpp:2181; callers in contact.cpp/ablmc2.cpp are mover-targeted |
 | R-2 getTerrainObject(i) | on-demand, ALLOWED | ABL script execution (non-per-frame) | objmgr.cpp:797; ablmc2.cpp:1469,1530 criteria cases |
-| R-3 findByPartId(partId) | per-frame-BUT-OUT-OF-SCOPE (pre-existing, non-decorative-specific); on-demand callsites (ABL, turret) also ALLOWED | per-frame via gamecam.cpp:458-459->436 when lookTargetObject!=-1; event-sourced via ABL/init | objmgr.cpp:2098; gamecam.cpp:430-451,456-459; pre-existing path, not decorative-specific, not re-introduced by this slice; recorded as future-work |
+| R-3 findByPartId(partId) | per-frame-BUT-OUT-OF-SCOPE (pre-existing, non-decorative-specific); on-demand callsites (ABL, turret) also ALLOWED | per-frame via gamecam.cpp:550->436 when lookTargetObject!=-1; event-sourced via ABL/init | objmgr.cpp:2098; gamecam.cpp:522,456-459; pre-existing path, not decorative-specific, not re-introduced by this slice; recorded as future-work |
 | R-4 findByCellPosition(row,col) | on-demand, ALLOWED | mission-load + savegame-restore only | objmgr.cpp:2390; callers at bldng.cpp:737, gate.cpp:266, objmgr.cpp:1125,1150,3766,3789, turret.cpp:550 -- all init/load |
 | R-5 findByBlockVertex(blockNum,v) | on-demand, ALLOWED | zero callers (dead/unused) | objmgr.cpp:2380; no callers in code/*.cpp or mclib/*.cpp |
 | R-6 ABL getObject(partId) | on-demand, ALLOWED | ABL script execution (event-sourced) | ablmc2.cpp:338-353; wraps R-3 |
@@ -416,7 +416,7 @@ R-8 is the only per-frame resolver targeting decoratives via block ranges. It is
 target of HC-2 severance and is fully covered by Blocker 1.
 
 NOTE on R-3 per-frame path: findByPartId is called per-frame on the camera-lock path
-(gamecam.cpp:458-459 -> gamecam.cpp:436). This path is pre-existing, not decorative-specific
+(gamecam.cpp:550 -> gamecam.cpp:528). This path is pre-existing, not decorative-specific
 (scans all objList entries), and is not re-introduced by this slice. It is out of scope for
 the decorative-severance invariant (which prohibits only RE-INTRODUCTION of per-frame
 iteration OVER DECORATIVES). It is recorded here as a separate, pre-existing engine
@@ -447,7 +447,7 @@ BOUNDARY-PROOF HARD BLOCKER #3 (script triggers / findByPartId, Class 4):
   decorative is still in objList (HC-2); findByPartId returns it. This is ALLOWED by the
   corrected invariant because: (a) the ABL callsite is script-sourced (event-driven, not
   per-frame); and (b) separately, the per-frame camera-lock path that also uses findByPartId
-  (gamecam.cpp:458-459 -> gamecam.cpp:436) is a pre-existing path that scans ALL objects,
+  (gamecam.cpp:550 -> gamecam.cpp:528) is a pre-existing path that scans ALL objects,
   not decoratives specifically, and is therefore out of scope -- it neither re-introduces
   anything nor targets decoratives as a class. The BOUNDARY-PROOF #3 dissolution rests on
   the correct basis: decorative in objList per HC-2/HC-3, ABL callsite event-sourced, and
@@ -486,7 +486,7 @@ Evidence:
 - R-1, R-2, R-4 through R-7: on-demand, event-sourced, ALLOWED by corrected invariant.
   No code change.
 - R-3 (findByPartId): correctly classified per-frame-but-out-of-scope. The per-frame path
-  via gamecam.cpp:458-459 -> gamecam.cpp:436 is pre-existing, non-decorative-specific (scans
+  via gamecam.cpp:550 -> gamecam.cpp:528 is pre-existing, non-decorative-specific (scans
   all objList), and not re-introduced by this slice. The corrected invariant prohibits
   RE-INTRODUCTION of per-frame iteration OVER DECORATIVES; this path satisfies none of those
   conditions. Recorded as separate pre-existing engine inefficiency (O(N) camera-lock linear
@@ -509,5 +509,5 @@ Evidence:
   exists, the partId is valid, and any subsequent getObject(partId) call returns the live
   object. No blocker.
 - Pre-existing engine inefficiency noted and recorded: O(N) linear findByPartId on the
-  gamecam.cpp camera-lock path (gamecam.cpp:456-459 -> getCamObject -> findByPartId).
+  gamecam.cpp camera-lock path (gamecam.cpp:550-551 -> getCamObject -> findByPartId).
   Not a regression from this slice; candidate future work outside this scope.
