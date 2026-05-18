@@ -2460,6 +2460,168 @@ GameObjectPtr GameObjectManager::findByUnitInfo (long commander, long group, lon
 
 //---------------------------------------------------------------------------
 
+// Lazy pick-time screen projection. Replaces the per-frame recalcBounds
+// projection body (deleted 2026-05-18, Task 2/3, commits 4294937/d5c5546/
+// 69e7968/d511ad9) for the ONLY surviving consumer: mouse-pick (per-click
+// over already-cull-narrowed active blocks, not per-frame). Populates a
+// local screen rect; PerPolySelect (geometry-space, mclib/bdactor.cpp,
+// survives) does the precise hit-test unchanged. Typed BldgAppearance* --
+// Appearance* has no position/getPosition; position/rotation are public on
+// ObjectAppearance, typeUpperLeft/typeLowerRight on appearType.
+//
+// Byte-equivalence note: the deleted recalcBounds block's FINAL
+// upperLeft/lowerRight (the values pick consumed) were ENTIRELY the
+// 8-corner projected min/max -- the screenPos-seeded values it computed
+// first were unconditionally overwritten by the corner min/max loop
+// (pre-delete mclib/bdactor.cpp lines 1396-1399, rev 4294937^). This
+// helper therefore seeds the rect from corner[0] (matching the pre-delete
+// `if(!i){maxX=minX=bcsp[i].x;...}` init) and does NOT seed from a
+// projection of `position`, so the resulting rect is byte-identical to
+// the old screen rect. The 8-corner boxCoords construction below is
+// lifted VERBATIM from `git show 4294937^:mclib/bdactor.cpp` lines
+// 1288-1399 (the deleted `if (inView)` projection block); do not
+// "improve" the box geometry -- pick must remain byte-equivalent or
+// building selection silently shifts/misses.
+static bool projectPickCandidateRect(BldgAppearance* ba,
+                                     long& outMinX, long& outMinY,
+                                     long& outMaxX, long& outMaxY)
+{
+	if (!ba || !eye)
+		return false;
+
+	// appearType is the public BldgAppearanceType* member (mclib/bdactor.h
+	// :192); typeUpperLeft/typeLowerRight live on the AppearanceType base
+	// (mclib/apprtype.h:52-53).
+	BldgAppearanceType* appearType = ba->appearType;
+	if (!appearType)
+		return false;
+
+	const Stuff::Vector3D& position = ba->position;
+	float rotation = ba->rotation;
+
+	Stuff::Vector3D boxCoords[8];
+	Stuff::Vector4D bcsp[8];
+
+	Stuff::Vector3D boxStart;
+	boxStart.x = -appearType->typeUpperLeft.x;
+	boxStart.y = appearType->typeUpperLeft.z;
+	boxStart.z = appearType->typeUpperLeft.y;
+
+	Stuff::Vector3D boxEnd;
+	boxEnd.x = -appearType->typeLowerRight.x;
+	boxEnd.y = appearType->typeLowerRight.z;
+	boxEnd.z = appearType->typeLowerRight.y;
+
+	Stuff::Vector3D addCoords;
+
+	addCoords.x = boxStart.x;
+	addCoords.y = boxStart.y;
+	addCoords.z = boxEnd.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[0].Add(position,addCoords);
+
+	addCoords.x = boxStart.x;
+	addCoords.y = boxEnd.y;
+	addCoords.z = boxEnd.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[1].Add(position,addCoords);
+
+	addCoords.x = boxEnd.x;
+	addCoords.y = boxEnd.y;
+	addCoords.z = boxEnd.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[2].Add(position,addCoords);
+
+	addCoords.x = boxEnd.x;
+	addCoords.y = boxStart.y;
+	addCoords.z = boxEnd.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[3].Add(position,addCoords);
+
+	addCoords.x = boxStart.x;
+	addCoords.y = boxStart.y;
+	addCoords.z = boxStart.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[4].Add(position,addCoords);
+
+	addCoords.x = boxEnd.x;
+	addCoords.y = boxStart.y;
+	addCoords.z = boxStart.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[5].Add(position,addCoords);
+
+	addCoords.x = boxEnd.x;
+	addCoords.y = boxEnd.y;
+	addCoords.z = boxStart.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[6].Add(position,addCoords);
+
+	addCoords.x = boxStart.x;
+	addCoords.y = boxEnd.y;
+	addCoords.z = boxStart.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[7].Add(position,addCoords);
+
+	float maxX = 0.0f, maxY = 0.0f;
+	float minX = 0.0f, minY = 0.0f;
+
+	for (long i=0;i<8;i++)
+	{
+		eye->projectForScreenXY(boxCoords[i],bcsp[i]);
+		if (!i)
+		{
+			maxX = minX = bcsp[i].x;
+			maxY = minY = bcsp[i].y;
+		}
+
+		if (i)
+		{
+			if (bcsp[i].x > maxX)
+				maxX = bcsp[i].x;
+
+			if (bcsp[i].x < minX)
+				minX = bcsp[i].x;
+
+			if (bcsp[i].y > maxY)
+				maxY = bcsp[i].y;
+
+			if (bcsp[i].y < minY)
+				minY = bcsp[i].y;
+		}
+	}
+
+	// Pre-delete recalcBounds wrote these as upperLeft.x=minX, upperLeft.y
+	// =minY, lowerRight.x=maxX, lowerRight.y=maxY (rev 4294937^ lines
+	// 1396-1399); the pick test then compared (float)upperLeft/lowerRight.
+	// The float->long narrowing here is the only representational change;
+	// (long)(float screen coord) truncates toward zero, and the pick
+	// comparison below is integer mouseX/mouseY against the rect, so the
+	// hit set is byte-equivalent for all on-screen rects.
+	outMinX = (long)minX;
+	outMinY = (long)minY;
+	outMaxX = (long)maxX;
+	outMaxY = (long)maxY;
+	return true;
+}
+
+//---------------------------------------------------------------------------
+
 GameObjectPtr GameObjectManager::findObjectByMouse (long mouseX,
 													long mouseY,
 													GameObjectPtr* searchList,
@@ -2642,9 +2804,116 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 		{
 			long numObjs = Terrain::objBlockInfo[terrainBlock].numObjects;
 			long objIndex = Terrain::objBlockInfo[terrainBlock].firstHandle;
-			GameObjectPtr obj = findObjectByMouse(mouseX, mouseY, &objList[objIndex], numObjs, skipDisabled);
-			if (obj)
-				return(obj);
+
+			// CRIT-1 re-home (Task 4): the per-object test below is
+			// DUPLICATED from the shared 5-param findObjectByMouse loop
+			// body (canBeSeen guard -> windowsVisible equality -> coarse
+			// rect -> PerPolySelect) as a TERRAIN-STATIC-ONLY inline
+			// test. Terrain statics are NO LONGER routed through the
+			// shared 5-param overload; that overload is left byte-
+			// UNCHANGED for its other (mover) call site
+			// (objmgr.cpp findObjectByMouse(...,&objList[1],
+			// getMaxObjects(),false)). Replacing the guard inside the
+			// shared overload would gate movers on a readback slot they
+			// have no entry for -> silent mover-pick regression. The
+			// lists walked here are terrain-statics-only by construction
+			// (countTerrainObjects fills objBlockInfo[] only for
+			// TERRAINOBJECT/TREE/TURRET/GATE/BUILDING/TREEBUILDING/
+			// BRIDGE). Trees stay pick-excluded via the
+			// getObjectClass()!=TREE skip (preserved verbatim below).
+			GameObjectPtr* searchList = &objList[objIndex];
+			for (long li = 0; li < numObjs; li++)
+			{
+				if (searchList[li] && searchList[li]->getExists())
+				{
+					GameObjectPtr obj = searchList[li];
+					Assert(obj != NULL, li, " GameObjectManager.findTerrainObjectByMouse: NULL obj ");
+					AppearancePtr objAppearance = obj->getAppearance();
+					// CRIT-1: canBeSeen() guard repointed to the GPU cull
+					// readback-visible set (fail-open when readback is
+					// disabled, so a stock install with GPU cull off keeps
+					// the legacy "always considered" behavior). Same idiom
+					// as objmgr.cpp:1930 / mech.cpp / gvehicl.cpp.
+					bool readbackVisible = gpu_cull::readback_isEnabled()
+						? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(obj->getHandle()))
+						: true;
+					if (objAppearance && readbackVisible)
+					{
+						// windowsVisible equality UNCHANGED. The stamp
+						// (code/terrobj.cpp TerrainObject::update(),
+						// `if (inView) windowsVisible = turn;`) survives
+						// via the coarse-angular recalcBounds return path:
+						// the projection-body delete made `inView` a
+						// strict SUPERSET (coarse-only), so the stamp
+						// still fires for every pick-eligible object and
+						// this equality still holds. Newly-admitted
+						// objects are filtered by the lazy rect +
+						// geometry-space PerPolySelect below. Do NOT
+						// "fix" this equality -- it is correct by the
+						// coarse-superset argument (review-verified fact).
+						if (obj->getWindowsVisible() == (turn - VISIBLE_THRESHOLD))
+						{
+							//-----------------------------------------------------
+							// CRIT-1: lazy per-candidate screen rect. Class-
+							// guarded cast to BldgAppearance* (only
+							// BUILDING/TREEBUILDING use BldgAppearance;
+							// TERRAINOBJECT/BRIDGE/TURRET/GATE/TREE do not).
+							// When the candidate is not a Bldg-class actor
+							// the lazy projection has no analogue in the
+							// deleted code (those classes never wrote the
+							// Bldg projection byproducts), so they fall to
+							// PerPolySelect unguarded by a rect -- same as
+							// the pre-delete behavior for a missing/zero
+							// rect (the deleted block only ran for
+							// BldgAppearance).
+							long ulx, uly, lrx, lry;
+							bool haveRect = false;
+							long oc = obj->getObjectClass();
+							BldgAppearance* ba =
+								((oc == BUILDING) || (oc == TREEBUILDING))
+									? (BldgAppearance*)obj->getAppearance()
+									: NULL;
+							if (ba)
+								haveRect = projectPickCandidateRect(ba, ulx, uly, lrx, lry);
+
+							bool inRect = true;
+							if (haveRect)
+							{
+								inRect = (mouseX >= ulx) &&
+								         (mouseX <= lrx) &&
+								         (mouseY >= uly) &&
+								         (mouseY <= lry);
+							}
+
+							if (inRect)
+							{
+								//---------------------------
+								// We're on it, so save it...
+								if (!obj->isMover() || (obj->isMover() && obj->isOnGUI() && Terrain::IsGameSelectTerrainPosition(obj->getPosition())))
+								{
+									if (skipDisabled)
+									{
+										if (!obj->isDisabled() &&
+											(obj->getObjectClass() != TREE) &&
+											(obj->getDamageLevel() != 36000000) &&				//We are a rock clump
+											objAppearance->PerPolySelect(mouseX, mouseY))
+											return(obj);
+									}
+									else
+									{
+										//Do not target trees or artillery strikes!!
+										if ((obj->getObjectClass() != TREE) &&
+											(obj->getObjectClass() != ARTILLERY) &&
+											(obj->getDamageLevel() != 36000000) &&				//We are a rock clump
+											objAppearance->PerPolySelect(mouseX, mouseY))
+											return(obj);
+									}
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 

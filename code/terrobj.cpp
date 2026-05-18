@@ -744,6 +744,22 @@ long TerrainObject::update (void) {
 
 		if (inView)
 		{
+			// MOUSE-PICK PATH DEPENDENCY (objmgr consumer). This
+			// `windowsVisible = turn;` stamp is read by
+			// GameObjectManager::findTerrainObjectByMouse via the
+			// `getWindowsVisible() == (turn - VISIBLE_THRESHOLD)`
+			// equality (code/objmgr.cpp). Post-Task-2/3 the
+			// recalcBounds projection body is DELETED, so `inView`
+			// here is now COARSE-ANGULAR-ONLY -- a strict SUPERSET of
+			// the old on-screen set. That is intentional and load-
+			// bearing: the stamp must still fire for every pick-
+			// eligible object so the equality holds; the precise
+			// screen-rect filtering moved to a lazy per-click
+			// projection + geometry-space PerPolySelect on the
+			// consumer side. DO NOT gate this stamp narrower than
+			// `inView` (e.g. do not reintroduce a screen-rect or
+			// projection test here) -- doing so silently drops
+			// pick-eligible buildings/props from selection.
 			windowsVisible = turn;
 			{
 				++g_staticUpdateCounters.objects_seen;
