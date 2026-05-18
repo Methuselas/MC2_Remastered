@@ -41,6 +41,7 @@ const vec3  SHALLOW_COLOR      = vec3(0.22, 0.45, 0.38);  // user-approved teal 
 const vec3  DEEP_COLOR         = vec3(0.03, 0.13, 0.20);  // dark blue, NOT black
 const float ABSORPTION_DENSITY = 0.022;  // 1/world-units (Beer-Lambert k; ~45u e-fold over 0..150)
 const float SHORE_BLEND_DEPTH  = 3.0;    // world-units to full opacity
+const float WATER_MAX_ALPHA    = 0.87;   // mild transparency: deep water never 100% opaque (lakebed shows through). 1.0 = old opaque slab; lower = more see-through. f(depth) only - camera-indep
 const float SKY_AMBIENT        = 0.18;   // brightness floor (camera-independent)
 // --- camera-INDEPENDENT procedural water detail (BAR-style: 2 fBm layers,
 //     OPPOSITE scroll dirs -> organic churn, no grid). f(WorldPos,time) only. ---
@@ -48,11 +49,18 @@ const float WAVE_FREQ   = 0.030;   // 1/world-u; lower = bigger waves, visible a
 const float WAVE_SPEED  = 6.0;     // world-u/sec domain scroll
 const float RIPPLE_GAIN  = 0.22;   // crest BRIGHTEN amount - mild, low color variance
 const vec3  GLINT_TINT   = vec3(0.82, 0.88, 0.94);  // near-WHITE wave-cap (slightly cool)
-const float GLINT_GAIN   = 0.22;   // additive camera-INDEPENDENT white crest shimmer
-const float GLINT_THRESH = 0.40;   // a bit more crest area shows white caps
+const float GLINT_GAIN   = 0.30;   // additive camera-INDEPENDENT white crest shimmer (more white on surface per user)
+const float GLINT_THRESH = 0.36;   // a bit more crest area shows white caps
 const float WAVE_FADE_NEAR = 9000.0;  // full detail well out (visible at zoom-out now)
 const float WAVE_FADE_FAR  = 40000.0; // only the very furthest extreme calms (no flat-at-zoom)
 
+// S3 reflection DISABLED (user 2026-05-17): any perceptible camera-dependence
+// in the water was rejected. A reflection is inherently camera-dependent, so
+// it cannot satisfy that - shelved. Compile-time false => the whole S3 block
+// below is dead-stripped (water is provably 100% camera-independent again;
+// zero perf). Scaffolding (uniforms / C++ bind / probe) retained dormant for
+// the deferred Option-B path (see spec). Flip to true only to re-experiment.
+const bool  S3_REFLECTION_ENABLED = false;
 const int   REFL_STEPS      = 5;
 const float REFL_STEP_LEN   = 96.0;   // ~one terrain-tile world distance
 const float REFL_F0         = 0.02;
@@ -118,7 +126,7 @@ void main(void)
 
         // S3: pure-FS reflected-ray terrain-colormap reflection.
         // The ONLY camera-dependent term in the water material (v2 ruling).
-        if (reflectionOn == 1) {
+        if (S3_REFLECTION_ENABLED && reflectionOn == 1) {
             // S1 has no normal in this branch (scalar fBm). Derive the perturbation
             // from the screen-space gradient of the in-scope scalar fBm nz (~:84,
             // f(WorldPos,time)). clamp() prevents zoom-out over-distortion. This is
@@ -147,7 +155,7 @@ void main(void)
                       clamp(fres * REFL_STRENGTH * waveLOD, 0.0, REFL_MAX));
         }
 
-        FragColor = vec4(col, shore);
+        FragColor = vec4(col, shore * WATER_MAX_ALPHA);  // shore ramp preserved; capped so deep water is mildly transparent
         GBuffer1  = rc_gbuffer1_screenShadowEligible(vec3(0.0, 0.0, 1.0));
         return;
     }
