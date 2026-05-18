@@ -3932,8 +3932,6 @@ bool TreeAppearance::recalcBounds (void)
 	Stuff::Vector4D tempPos;
 	inView = false;
 
-	float distanceToEye = 0.0f;
-
 	if (eye)
 	{
 		//-------------------------------------------------------------------
@@ -3941,7 +3939,7 @@ bool TreeAppearance::recalcBounds (void)
 		inView = true;
 
 		// [TOBJSPLIT v1] ANGULAR bracket: matrix-free sphere angular clip.
-		// Disjoint from PROJ below; reads cycle counter immediately before/after.
+		// Reads cycle counter immediately before/after.
 		{
 		unsigned long long _tsA = s_tobjSplitBdOn ? __rdtsc() : 0ULL;
 		if (eye->usePerspective)
@@ -3956,7 +3954,7 @@ bool TreeAppearance::recalcBounds (void)
 			Stuff::Vector3D objectCenter;
 			objectCenter.Subtract(position,cameraPos);
 			Camera::cameraFrame.trans_to_frame(objectCenter);
-			distanceToEye = objectCenter.GetApproximateLength();
+			float distanceToEye = objectCenter.GetApproximateLength();
 			float clip_distance = fabs(1.0f / objectCenter.y);
 
 			//Is vertex on Screen OR close enough to screen that its triangle MAY be visible?
@@ -3981,257 +3979,21 @@ bool TreeAppearance::recalcBounds (void)
 		if (s_tobjSplitBdOn) g_tobjAngularCyc += __rdtsc() - _tsA;
 		}  // end ANGULAR bracket
 
-		//Can we be seen at all?
-		// If yes, check if we are behind fog plane.
-		// [TOBJSPLIT v1] PROJ bracket: projectForScreenXY + 8-corner box + fog.
-		// Disjoint from ANGULAR above; this is the body targeted for deletion.
-		unsigned long long _tsP = s_tobjSplitBdOn ? __rdtsc() : 0ULL;
-		if (inView)
-		{
-			//ALWAYS need to do this or select is YAYA
-			// But now inView is correct.
-			// [PROJECTZ:ScreenXYOracle id=bdactor_screen_pos_b]
-			eye->projectForScreenXY(position,screenPos);
-		
-			if (eye->usePerspective)
-			{
-				if (distanceToEye > Camera::MaxClipDistance)
-				{
-					hazeFactor = 1.0f;
-					inView = false;
-				}
-				else if (distanceToEye > Camera::MinHazeDistance)
-				{
-					Camera::HazeFactor = (distanceToEye - Camera::MinHazeDistance) * Camera::DistanceFactor;
-					inView = true;
-				}
-				else
-				{
-					Camera::HazeFactor = 0.0f;
-					inView = true;
-				}
-			
-			}
-			else
-			{
-				Camera::HazeFactor = 0.0f;
-				inView = true;
-			}
-		}
-		
-		//If we were not behind fog plane, do a bunch O math we need later!!
-		if (inView)
-		{
-			//We are on screen.  Figure out selection box.
-			Stuff::Vector3D boxCoords[8];
-			Stuff::Vector4D bcsp[8];
-
-			Stuff::Vector3D minBox;
-			minBox.x = -appearType->typeUpperLeft.x;
-			minBox.y = appearType->typeUpperLeft.z;
-			minBox.z = appearType->typeUpperLeft.y;
-
-			Stuff::Vector3D maxBox;
-			maxBox.x = -appearType->typeLowerRight.x;
-			maxBox.y = appearType->typeLowerRight.z;
-			maxBox.z = appearType->typeLowerRight.y;
-
-			if (rotation != 0.0f)
-				Rotate(minBox,-rotation);
-
-			if (rotation != 0.0f)
-				Rotate(maxBox,-rotation);
-
-			boxCoords[0].x = position.x + minBox.x;
-			boxCoords[0].y = position.y + minBox.y;
-			boxCoords[0].z = position.z + minBox.z;
-
-			boxCoords[1].x = position.x + minBox.x;
-			boxCoords[1].y = position.y + maxBox.y;
-			boxCoords[1].z = position.z + minBox.z;
-
-			boxCoords[2].x = position.x + maxBox.x;
-			boxCoords[2].y = position.y + minBox.y;
-			boxCoords[2].z = position.z + minBox.z;
-
-			boxCoords[3].x = position.x + maxBox.x;
-			boxCoords[3].y = position.y + maxBox.y;
-			boxCoords[3].z = position.z + minBox.z;
-
-			boxCoords[4].x = position.x + maxBox.x;
-			boxCoords[4].y = position.y + maxBox.y;
-			boxCoords[4].z = position.z + maxBox.z;
-
-			boxCoords[5].x = position.x + maxBox.x;
-			boxCoords[5].y = position.y + minBox.y;
-			boxCoords[5].z = position.z + maxBox.z;
-
-			boxCoords[6].x = position.x + minBox.x;
-			boxCoords[6].y = position.y + maxBox.y;
-			boxCoords[6].z = position.z + maxBox.z;
-
-			boxCoords[7].x = position.x + minBox.x;
-			boxCoords[7].y = position.y + minBox.y;
-			boxCoords[7].z = position.z + maxBox.z;
-
-			float maxX = 0.0f, maxY = 0.0f;
-			float minX = 0.0f, minY = 0.0f;
-
-			for (long i=0;i<8;i++)
-			{
-				// [PROJECTZ:ScreenXYOracle id=bdactor_box_rect_b]
-				eye->projectForScreenXY(boxCoords[i],bcsp[i]);
-				if (!i)
-				{
-					maxX = minX = bcsp[i].x;
-					maxY = minY = bcsp[i].y;
-				}
-				
-				if (i)
-				{
-					if (bcsp[i].x > maxX)
-						maxX = bcsp[i].x;
-					
-					if (bcsp[i].x < minX)
-						minX = bcsp[i].x;
-						
-					if (bcsp[i].y > maxY)
-						maxY = bcsp[i].y;
-					
-					if (bcsp[i].y < minY)
-						minY = bcsp[i].y;
-				}
-			}
-	
-			upperLeft.x = minX;
-			upperLeft.y = minY;
-			lowerRight.x = maxX;
-			lowerRight.y = maxY;
-			
-			if ((lowerRight.x >= 0) && (lowerRight.y >= 0) &&
-				(upperLeft.x <= eye->getScreenResX()) &&
-				(upperLeft.y <= eye->getScreenResY()))
-			{
-				inView = true;
-		
-				if ((status != OBJECT_STATUS_DESTROYED) && (status != OBJECT_STATUS_DISABLED))
-				{
-					//-------------------------------------------------------------------------------
-					//Set LOD of Model here because we have the distance and we KNOW we can see it!
-					bool baseLOD = true;
-					DWORD selectLOD = 0;
-					// Trees use low-LOD crossed cards that light per-plane, which
-					// creates visible bright/dark self-intersections once valid
-					// lightData_ is restored under UPDATE_SKIP. Keep visible trees
-					// at LOD 0; tree GPU cost is negligible after renderer offload
-					// and these assets are expected to be replaced later.
-
-					// we are at this LOD level.
-					if (selectLOD != currentLOD)
-					{
-						currentLOD = selectLOD;
-
-						treeShape->ClearAnimation();
-						delete treeShape;
-						treeShape = NULL;
-
-						treeShape = appearType->treeShape[currentLOD]->CreateFrom();
-						//-------------------------------------------------
-						// Load the texture and store its handle.
-						for (long j=0;j<treeShape->GetNumTextures();j++)
-						{
-							char txmName[1024];
-							treeShape->GetTextureName(j,txmName,256);
-
-							char texturePath[1024];
-							sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-
-							FullPathFileName textureName;
-							textureName.init(texturePath,txmName,"");
-
-							if (fileExists(textureName))
-							{
-								if (S_strnicmp(txmName,"a_",2) == 0)
-								{
-									DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-									gosASSERT(gosTextureHandle != 0xffffffff);
-									treeShape->SetTextureHandle(j,gosTextureHandle);
-									treeShape->SetTextureAlpha(j,true);
-								}
-								else
-								{
-									DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-									gosASSERT(gosTextureHandle != 0xffffffff);
-									treeShape->SetTextureHandle(j,gosTextureHandle);
-									treeShape->SetTextureAlpha(j,false);
-								}
-							}
-							else
-							{
-								//PAUSE(("Warning: %s texture name not found",textureName));
-								treeShape->SetTextureHandle(j,0xffffffff);
-							}
-						}
-					}
-						
-					//ONLY change if we need
-					if (currentLOD && baseLOD)
-					{
-					// we are at the Base LOD level.
-						currentLOD = 0;
-						
-						treeShape->ClearAnimation();
-						delete treeShape;
-						treeShape = NULL;
-						
-						treeShape = appearType->treeShape[currentLOD]->CreateFrom();
-						
-						//-------------------------------------------------
-						// Load the texture and store its handle.
-						for (long i=0;i<treeShape->GetNumTextures();i++)
-						{
-							char txmName[1024];
-							treeShape->GetTextureName(i,txmName,256);
-									
-							char texturePath[1024];
-							sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-					
-							FullPathFileName textureName;
-							textureName.init(texturePath,txmName,"");
-									
-							if (fileExists(textureName))
-							{
-								if (S_strnicmp(txmName,"a_",2) == 0)
-								{
-									DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-									gosASSERT(gosTextureHandle != 0xffffffff);
-									treeShape->SetTextureHandle(i,gosTextureHandle);
-									treeShape->SetTextureAlpha(i,true);
-								}
-								else
-								{
-									DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-									gosASSERT(gosTextureHandle != 0xffffffff);
-									treeShape->SetTextureHandle(i,gosTextureHandle);
-									treeShape->SetTextureAlpha(i,false);
-								}
-							}
-							else
-							{
-								//PAUSE(("Warning: %s texture name not found",textureName));
-								treeShape->SetTextureHandle(i,0xffffffff);
-							}
-						}
-					}
-				}
-			}
-			else
-			{
-				inView = false;		//Did alot of extra work checking this, but WHY draw and insult to injury?
-			}
-		}
-		if (s_tobjSplitBdOn) g_tobjProjCyc += __rdtsc() - _tsP;
-		// end PROJ bracket
+		// recalcBounds projection body deleted 2026-05-18 (Task 3, Tree mirror of Task 2):
+		// the GPU compute cull (gpu_cull::readback_isActorVisibleLagged) is the
+		// substitutive twin of the per-frame screen projection. inView is now
+		// coarse-angular-only -- a strict superset of the old projected value;
+		// over-inclusion is correctness-safe (cull_gates_are_load_bearing.md).
+		// Trees are never pick targets (objmgr.cpp findObjectByMouse skips
+		// getObjectClass()==TREE), so screenPos/upperLeft/lowerRight have no
+		// pick-path consumer -- no Task-4 re-home needed for Tree.
+		// LATENT HAZARD: the deleted block also held the per-LOD-swap texture
+		// (re)loader, dead today under the 2026-05-12 TEMP LOD-0 pin
+		// (selectLOD forced 0 in this function).
+		// If that pin is reverted (when the LOD-1 invisibility root cause is
+		// fixed), LOD selection + the per-LOD texture loader MUST be re-homed
+		// BEFORE the revert lands -- TreeAppearance::init loads LOD-0 textures
+		// ONLY; LOD-1+ would be unloaded after any LOD swap.
 	}
 
 	return(inView);
