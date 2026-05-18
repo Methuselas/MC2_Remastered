@@ -97,6 +97,35 @@ the-sole-camera-dependent-term." It supersedes S1 rev2's Fresnel/sine approach
   asks; not scheduled ahead of S3.
 - **S5 - WaterStyle UBO: demand-gated**, unchanged (only when per-biome/mod
   config is actually wanted).
+- **S6 - armed-water `setupTextures` decouple (CPU-offload / legacy-retirement;
+  NOT a visual slice).** Distinct from S3 (visual reflection) and S4 (subsumed).
+  Ladders up north-star #1 (minimize per-frame CPU via GPU offload) + #2
+  (retire legacy). Grep-grounded finding (2026-05-17, producer-side proven):
+  the armed GPU water DRAW is fully decoupled from `TerrainQuad::setupTextures`
+  (`mclib/quad.cpp:704`; Tracy zone `quadSetupTextures`, sole caller
+  `mclib/terrain.cpp:1780`) - armed water = mission-static recipe SSBO
+  (`WaterStream::Build`, `terrain.cpp:622`) + per-frame compute + MDI, consumes
+  none of `setupTextures`' `waterHandle`/`uvData` output. BUT the armed water
+  path is NOT "just the upload": it still pays the full unconditional
+  per-frame `setupTextures()` loop over all windowed quads because the armed
+  narrow-candidate harvest (`WaterStream::AppendNarrowCandidate`,
+  `terrain.cpp:1804`) is bolted INTO that loop, and the per-water-quad
+  projection block (`quad.cpp:1006-1321`, up to 4x `projectForTerrainAdmission`)
+  is only SOLID-arm-gated, not water-arm-gated. **Slice goal:** make armed
+  water truly upload-only. Two grounded changes: (i) arm-gate the
+  `setupTextures` water-projection block when armed; (ii) replace the in-loop
+  narrow-candidate harvest with mission-static recipe data + the EXISTING
+  GPU-side `pzOk` visibility gate (`gpu_driven_water.comp:236`,
+  `water_stream.cpp:1141`). Un-armed legacy water remains a real
+  `setupTextures` consumer by construction - leave intact (un-armed path is
+  out of scope, same as S1/S3). Methodology: `mc2-cpu-gpu-offload-expert`
+  (recon cost-split -> design + adversarial -> stage -> parity -> default-on);
+  observer-effect caution per `memory/cost_split_instrumentation_is_observer_
+  effect_dominated.md` (use clean total-frame Tracy, not per-quad chrono).
+  Not scheduled ahead of the user's stated S2/S3 priorities; captured so it
+  is not lost. Full grounded trace is in this session's audit (the producer-
+  side proof + the adjacent `addTriangleBulk(waterHandle...)`-still-fires-armed
+  trap at `quad.cpp:1307-1308`).
 
 Discipline per slice unchanged: spec -> 2 adversarials (opus|sonnet,
 adversarial-plan-review skill) -> plan -> subagent execute -> isolated
