@@ -2150,7 +2150,12 @@ void gosRenderer::renderWaterFastPath(
         if (loc >= 0) glUniform1i(loc, a);
     };
 
-    setMat4Direct("terrainMVP",      (const float*)&terrain_mvp_);
+    const float* wMvpWaterNonMdi =
+        gos_terrain_indirect::IsFrameSolidArmed()
+            ? gos_terrain_indirect_getDispatchMvp16()
+            : gos_GetTerrainMVPMat4();
+    if (!wMvpWaterNonMdi) wMvpWaterNonMdi = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
+    setMat4Direct("terrainMVP",      wMvpWaterNonMdi);
     setMat4Std   ("mvp",             (const float*)&projection_);
     setVec4      ("terrainViewport", (const float*)&terrain_viewport_);
 
@@ -2305,7 +2310,12 @@ void gosRenderer::renderWaterFastPath(
             if (loc >= 0) glUniform2f(loc, a, b);
         };
 
-        setMMat4Direct("terrainMVP",      (const float*)&terrain_mvp_);
+        const float* wMvpWaterMdi =
+            gos_terrain_indirect::IsFrameSolidArmed()
+                ? gos_terrain_indirect_getDispatchMvp16()
+                : gos_GetTerrainMVPMat4();
+        if (!wMvpWaterMdi) wMvpWaterMdi = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
+        setMMat4Direct("terrainMVP",      wMvpWaterMdi);
         setMMat4Std   ("mvp",             (const float*)&projection_);
         setMVec4      ("terrainViewport", (const float*)&terrain_viewport_);
         setMI         ("debugMode",       s_debugMode);
