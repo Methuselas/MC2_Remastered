@@ -26,6 +26,11 @@ layout (location=1) out PREC vec4 GBuffer1;
 
 uniform sampler2D tex1;
 uniform sampler2D tex2;
+uniform sampler2D reflTex;            // unit 2: whole-map colormap atlas
+uniform int   reflectionOn;           // 0 -> skip entire S3 block
+uniform float atlasMapTopLeftX;
+uniform float atlasMapTopLeftY;
+uniform float atlasOneOverWorldUnits;
 uniform PREC vec4 fog_color;
 uniform PREC float time;          // seconds — used for water animation
 uniform PREC vec4 cameraPos;      // water-v1: MC2 world-space camera (Fresnel)
@@ -47,6 +52,13 @@ const float GLINT_GAIN   = 0.22;   // additive camera-INDEPENDENT white crest sh
 const float GLINT_THRESH = 0.40;   // a bit more crest area shows white caps
 const float WAVE_FADE_NEAR = 9000.0;  // full detail well out (visible at zoom-out now)
 const float WAVE_FADE_FAR  = 40000.0; // only the very furthest extreme calms (no flat-at-zoom)
+
+const int   REFL_STEPS      = 5;
+const float REFL_STEP_LEN   = 96.0;   // ~one terrain-tile world distance
+const float REFL_F0         = 0.02;
+const float REFL_STRENGTH   = 0.35;
+const float REFL_MAX        = 0.22;   // hard ceiling on the mix factor
+const float REFL_WAVE_SLOPE = 0.05;   // nz-gradient -> perturbation slope (range 0.02-0.10)
 
 // Precision-safe (fract-early) hash -> stable for large MC2 world coords;
 // value-noise + 3-octave fBm. No texture, no seam (continuous WorldPos).
@@ -103,6 +115,36 @@ void main(void)
         col += glint * GLINT_GAIN * waveLOD * GLINT_TINT;      // camera-INDEPENDENT shimmer
         if (fog_color.x > 0.0 || fog_color.y > 0.0 || fog_color.z > 0.0 || fog_color.w > 0.0)
             col = mix(fog_color.rgb, col, FogValue);
+
+        // S3: pure-FS reflected-ray terrain-colormap reflection.
+        // The ONLY camera-dependent term in the water material (v2 ruling).
+        if (reflectionOn == 1) {
+            // S1 has no normal in this branch (scalar fBm). Derive the perturbation
+            // from the screen-space gradient of the in-scope scalar fBm nz (~:84,
+            // f(WorldPos,time)). clamp() prevents zoom-out over-distortion. This is
+            // the GROUNDING-authoritative construction (supersedes wave1/wave2).
+            vec2  nzGrad     = clamp(vec2(dFdx(nz), dFdy(nz)), -2.0, 2.0);
+            vec3  waveNormal = normalize(vec3(nzGrad * REFL_WAVE_SLOPE, 1.0));
+            vec3  vdir       = normalize(cameraPos.xyz - WorldPos); // sole cam-dep input
+            vec3  rdir       = reflect(-vdir, waveNormal);
+            vec3  acc  = vec3(0.0);
+            float wsum = 0.0;
+            for (int i = 1; i <= REFL_STEPS; ++i) {
+                vec2 wp = WorldPos.xy + rdir.xy * (float(i) * REFL_STEP_LEN);
+                vec2 uv;
+                uv.x = (wp.x - atlasMapTopLeftX) * atlasOneOverWorldUnits;  // X: not flipped
+                uv.y = (atlasMapTopLeftY - wp.y) * atlasOneOverWorldUnits;  // Y: inverted
+                float inb = step(0.0, uv.x) * step(uv.x, 1.0)
+                          * step(0.0, uv.y) * step(uv.y, 1.0);
+                acc  += inb * texture(reflTex, uv).rgb;
+                wsum += inb;
+            }
+            vec3  refl = (wsum > 0.0) ? acc / wsum : col;        // all off-map -> no-op
+            float fres = REFL_F0 + (1.0 - REFL_F0)
+                         * pow(1.0 - max(vdir.z, 0.0), 5.0);
+            col = mix(col, refl,
+                      clamp(fres * REFL_STRENGTH * waveLOD, 0.0, REFL_MAX));
+        }
 
         FragColor = vec4(col, shore);
         GBuffer1  = rc_gbuffer1_screenShadowEligible(vec3(0.0, 0.0, 1.0));
