@@ -1,4 +1,5 @@
 #include "gos_static_prop_batcher.h"
+#include "gos_postprocess.h"             // getGosPostProcess, getDynamicLightSpaceMatrix
 #include "gos_static_prop_killswitch.h"  // gos_GetGLTextureId
 #include "gos_profiler.h"
 #include "gos_object_parity.h"           // Slice 2 Stage 2.D.1 parity harness
@@ -59,6 +60,11 @@ static const bool s_globalPoolLegacy = []() {
 }();
 #define TREE_DIAG(fmt, ...) \
     do { if (s_treeDiagTrace) { fprintf(stderr, "[TREE_DIAG] " fmt "\n", ##__VA_ARGS__); fflush(stderr); } } while (0)
+
+// [GPUPROPS v1] setup-path attribution for registerType calls.
+// 0=unknown 1=mission_init_firstload 2=ims_objmgr_load 3=sp_logistics_postinit
+// Declared extern in gos_static_prop_batcher.h; set by mission.cpp / saveload.cpp / logistics.cpp.
+int g_lightProbeSetupPath = 0;
 
 namespace {
 
@@ -173,6 +179,14 @@ struct TypeRangeSsbo {
 std::vector<GpuStaticPropPacket>                   s_packets;
 std::vector<GpuStaticPropType>                     s_types;
 std::unordered_map<const TG_TypeShape*, uint32_t>  s_typeIndex;
+
+// [GPUPROPS v1] setup-path instrumentation (internal; path tag lives at file scope).
+static bool s_gpuPropsTrace = (getenv("MC2_GPUPROPS_TRACE") != nullptr);
+// g_regCall counts EVERY registerType invocation after the null guard and
+// BEFORE the idempotent s_typeIndex.count early-return, so 0 for a path means
+// registerType was genuinely never invoked on it.
+static unsigned g_regCall[4]     = {0,0,0,0};
+static unsigned g_regLateDrop[4] = {0,0,0,0};
 
 // Peak instance count per typeID since mission load; resized lazily in the
 // per-frame flush loop. Slice-1: tracked but not consumed (foundation for
@@ -1070,6 +1084,7 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape, TG_TypeMultiSha
     // logic lands in the follow-up alpha-test self-awareness slice.
     (void)multiShape;
     if (!typeShape) return;
+    if (s_gpuPropsTrace) ++g_regCall[g_lightProbeSetupPath & 3];   // [GPUPROPS v1]
     if (s_typeIndex.count(typeShape)) return;  // idempotent
     if (s_geometryFinalized) {
         // Layer B: register-after-finalize is a bug in the map-load walk.
@@ -1078,6 +1093,7 @@ void GpuStaticPropBatcher::registerType(TG_TypeShape* typeShape, TG_TypeMultiSha
                          "CPU-fallback for this type\n", (void*)typeShape);
             s_failedTypes[typeShape] = true;
         }
+        if (s_gpuPropsTrace) ++g_regLateDrop[g_lightProbeSetupPath & 3];
         return;
     }
 
@@ -1321,6 +1337,18 @@ void GpuStaticPropBatcher::finalizeGeometry() {
 
     std::fprintf(stderr, "[GPUPROPS] finalize: %zu types, %zu packets\n",
                  s_types.size(), s_packets.size());
+
+    if (s_gpuPropsTrace) {
+        std::fprintf(stderr,
+            "[GPUPROPS v1] event=register_summary path=%d "
+            "regCalls[init=%u ims=%u splog=%u unk=%u] "
+            "lateDrops[init=%u ims=%u splog=%u unk=%u] "
+            "typeIndexSize=%zu\n",
+            g_lightProbeSetupPath,
+            g_regCall[1], g_regCall[2], g_regCall[3], g_regCall[0],
+            g_regLateDrop[1], g_regLateDrop[2], g_regLateDrop[3], g_regLateDrop[0],
+            s_typeIndex.size());
+    }
 
     s_geometryFinalized = true;
 
@@ -2479,8 +2507,12 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
                 // registered as a peer?". Cap at 30 to keep the log
                 // tractable; if more types are registered, the count is
                 // shown so the truncation is visible.
+                // Gated behind MC2_STATIC_PROP_TRACE 2026-05-17: one-shot
+                // but ~600-line load-time dump; demote-not-delete.
+                static const bool s_gpuPropsRegDump =
+                    (getenv("MC2_STATIC_PROP_TRACE") != nullptr);
                 static bool s_emittedRegisteredDump = false;
-                if (!s_emittedRegisteredDump) {
+                if (s_gpuPropsRegDump && !s_emittedRegisteredDump) {
                     s_emittedRegisteredDump = true;
                     const size_t total = s_types.size();
                     // 2026-05-10 diag: bumped 30 -> 600 to surface buildings.
@@ -2714,6 +2746,28 @@ bool uploadAllBucketsIfNeeded() {
 void GpuStaticPropBatcher::flush() {
     ZoneScopedN("GpuStaticProps.Flush");
     initTraceOnce();
+    // LODBUG probe: env-var override for debugAddrMode_.  RAlt+9 cycling is
+    // unreliable on some hosts; set MC2_GPU_PROPS_DEBUG_MODE=8 to force the
+    // magenta "did this draw call land?" mode at startup.  Applied once
+    // per process; the env value wins over any subsequent RAlt+9 cycling
+    // for the FIRST flush only, after which the cycler is authoritative
+    // again (so the user can still cycle if they want).
+    {
+        static bool s_dbgEnvInit = false;
+        if (!s_dbgEnvInit) {
+            s_dbgEnvInit = true;
+            const char* dbgEnv = getenv("MC2_GPU_PROPS_DEBUG_MODE");
+            if (dbgEnv && dbgEnv[0]) {
+                const int m = atoi(dbgEnv);
+                if (m >= 0 && m <= 8) {
+                    debugAddrMode_ = m;
+                    std::fprintf(stderr,
+                        "[LODBUG v1] event=debug_mode_env_override mode=%d\n", m);
+                    std::fflush(stderr);
+                }
+            }
+        }
+    }
     // 2026-05-11 perf diag: wall-clock timer for substrate-coalesce perf hunt.
     // Mean us reported every 600 calls when MC2_BATCHER_FLUSH_TIMING=1.
     static uint64_t s_btf_calls = 0;
@@ -3564,17 +3618,156 @@ void GpuStaticPropBatcher::flush() {
     }
 }
 
+// File-scope counters written by flushShadow() and read by Task 6 probe.
+static int s_shadowTypesDrawn = 0;
+static int s_shadowInstDrawn  = 0;
+
 void GpuStaticPropBatcher::flushShadow() {
-    // Filled in Task 13.
+    // Non-indirect, full-range, depth-only draw for GPU static props.
+    // Uses the shadow_static_prop program (Task 1) and the same per-frame
+    // SSBO upload as flush() (shared via uploadAllBucketsIfNeeded /
+    // s_lastUploadedSlot). Never uses compute_getIndirectCmdBuf() --
+    // the indirect buffer carries camera-cull-narrowed counts and must
+    // not be used for a shadow pass that needs all instances.
     //
-    // Plan v3.8 Step 7.8 / spec §6.Y forward-compat note: IsCoalesceEnabled()
-    // is irrelevant for the shadow path. The future Task 13 implementation
-    // MUST use the legacy/shadow program path (s_staticPropProgram or a
-    // dedicated shadow program), NOT s_staticPropProgramCoalesce — the
-    // coalesce program's vertex shader uses gl_DrawIDARB / gl_BaseInstanceARB
-    // to drive per-draw indirection, which is not available to a
-    // shadow-pass that does its own per-draw uniform uploads. See spec §6.Y
-    // for the rationale; no behavioral change here.
+    // Spec §6.Y: IsCoalesceEnabled() is irrelevant for the shadow path;
+    // the coalesce program uses gl_DrawIDARB / gl_BaseInstanceARB which
+    // is not available here. Always use the legacy non-indirect path.
+
+    // Geometry-readiness guard, mirroring the color flush() path (:2749).
+    // The new txmmgr shadow region calls this from frame ~1; before
+    // finalizeGeometry() s_sharedVao==0 and s_packets is empty while
+    // s_typeRanges/type.packetCount can already be non-zero, so the
+    // per-packet loop below would index an empty s_packets and fault in
+    // glDrawElementsInstancedBaseVertex. flush() bails on the same
+    // condition; flushShadow() must honor the identical precondition.
+    if (!s_geometryFinalized || s_fatalRegistrationFailure) return;
+
+    // DEFAULT-OFF pending the dedicated-VAO redesign. flushShadow sharing
+    // s_sharedVao is architecturally broken: GL_ELEMENT_ARRAY_BUFFER is
+    // VAO state, so any element-binding mutation here corrupts the main
+    // flush() indexed draws (crash signature: firstIndex*4 as a client
+    // pointer, e.g. 0x2A18 / 0x17AC). The correct fix is a private shadow
+    // VAO that never touches s_sharedVao; until that lands this path is
+    // opt-in only via MC2_SHADOW_ENABLE. See the architecture handoff doc.
+    static const bool s_shadowEnabled = (getenv("MC2_SHADOW_ENABLE") != nullptr);
+    if (!s_shadowEnabled) return;
+
+    if (!uploadAllBucketsIfNeeded()) return;
+
+    // Resolve shadow_static_prop program via the global program registry.
+    // glsl_program::s_programs is populated by makeProgram() at init; the
+    // key is the name string passed to makeProgram (gosRenderer::init uses
+    // "shadow_static_prop").
+    auto pit = glsl_program::s_programs.find("shadow_static_prop");
+    if (pit == glsl_program::s_programs.end() || !pit->second || !pit->second->shp_)
+        return;
+    const GLuint shadowProg = pit->second->shp_;
+
+    if (s_typeRanges.empty()) return;
+
+    gosPostProcess* pp = getGosPostProcess();
+    if (!pp) return;
+
+    // Save/restore the GL state this pass perturbs, mirroring flush()'s
+    // bracket (:2844-2854 / :3509-3521). flushShadow runs BEFORE
+    // gpu_cull::compute_dispatch() and the main flush(); leaking the
+    // program / VAO / element-buffer / SSBO binding-0 here poisons the
+    // cull dispatch and the indirect draw -> the entire prop+mech render
+    // is suppressed (the invisible-casters regression). All early returns
+    // above are before any GL mutation, so a single capture here + restore
+    // at the one exit is correct.
+    GLint prevProgram = 0, prevVao = 0, prevElemBuf = 0, prevSsbo0 = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &prevElemBuf);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
+
+    glUseProgram(shadowProg);
+
+    // Upload the dynamic (per-frame) light-space matrix.
+    const GLint lsLoc = glGetUniformLocation(shadowProg, "lightSpaceMatrix");
+    if (lsLoc >= 0)
+        glUniformMatrix4fv(lsLoc, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
+
+    glBindVertexArray(s_sharedVao);
+    // Root cause of the frame-2 0x2A18 crash: the GPU-cull/indirect flush()
+    // path runs between this frame's and last frame's flushShadow and leaves
+    // s_sharedVao's VAO-resident GL_ELEMENT_ARRAY_BUFFER binding at 0. An
+    // indexed draw with no element buffer treats firstIndex*4 as a client
+    // pointer (2694*4 == 0x2A18) and faults. Do NOT rely on the VAO carrying
+    // the IBO; bind s_sharedIbo explicitly (also repairs the VAO binding).
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
+
+    const bool s_shDiag = (getenv("MC2_SHADOW_DIAG") != nullptr);
+    if (s_shDiag) {
+        GLint elemBuf = -1, linkOk = -1;
+        glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &elemBuf);
+        glGetProgramiv(shadowProg, GL_LINK_STATUS, &linkOk);
+        GLenum ePre = glGetError();
+        fprintf(stderr,
+            "[SHADOW_DIAG] sp finalized=%d vao=%u isVao=%d ssbo=%u isBuf=%d "
+            "elemBind=%d prog=%u link=%d errPre=0x%x typeRanges=%zu types=%zu packets=%zu\n",
+            (int)s_geometryFinalized, s_sharedVao, (int)glIsVertexArray(s_sharedVao),
+            s_instanceSsbo, (int)glIsBuffer(s_instanceSsbo), elemBuf, shadowProg,
+            linkOk, (unsigned)ePre, s_typeRanges.size(), s_types.size(), s_packets.size());
+        fflush(stderr);
+    }
+
+    int typesDrawn = 0;
+    int instDrawn  = 0;
+
+    for (uint32_t typeID = 0; typeID < static_cast<uint32_t>(s_types.size()); ++typeID) {
+        auto rit = s_typeRanges.find(typeID);
+        if (rit == s_typeRanges.end()) continue;
+        const TypeRangeSsbo& r = rit->second;
+        const GpuStaticPropType& type = s_types[typeID];
+        if (r.instanceCount == 0 || type.packetCount == 0) continue;
+
+        // Bind the per-type instance SSBO range (binding 0 = Instances block
+        // in shadow_static_prop.vert, indexed by gl_InstanceID).
+        glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
+                          static_cast<GLintptr>(r.instanceByteOffset),
+                          static_cast<GLsizeiptr>(r.instanceByteSize));
+
+        // Per-packet draw -- mirrors the legacy non-indirect branch of flush().
+        for (uint32_t p = 0; p < type.packetCount; ++p) {
+            const uint32_t pktIdx = type.firstPacket + p;
+            if (pktIdx >= s_packets.size()) break;  // defense-in-depth: stale range
+            const GpuStaticPropPacket& pkt = s_packets[pktIdx];
+            if (s_shDiag) {
+                fprintf(stderr,
+                    "[SHADOW_DIAG] sp draw type=%u byteOff=%llu byteSize=%llu instCnt=%u "
+                    "firstPkt=%u pktCnt=%u pktIdx=%u idxCnt=%u firstIdx=%u baseV=%d errPre=0x%x\n",
+                    typeID, (unsigned long long)r.instanceByteOffset,
+                    (unsigned long long)r.instanceByteSize, r.instanceCount,
+                    type.firstPacket, type.packetCount, pktIdx,
+                    pkt.indexCount, pkt.firstIndex, pkt.baseVertex,
+                    (unsigned)glGetError());
+                fflush(stderr);
+            }
+            glDrawElementsInstancedBaseVertex(
+                GL_TRIANGLES,
+                static_cast<GLsizei>(pkt.indexCount),
+                GL_UNSIGNED_INT,
+                reinterpret_cast<void*>(static_cast<uintptr_t>(pkt.firstIndex) * sizeof(uint32_t)),
+                static_cast<GLsizei>(r.instanceCount),
+                pkt.baseVertex);
+        }
+
+        ++typesDrawn;
+        instDrawn += static_cast<int>(r.instanceCount);
+    }
+
+    s_shadowTypesDrawn = typesDrawn;
+    s_shadowInstDrawn  = instDrawn;
+
+    // Restore exactly what we changed so compute_dispatch()/flush() see
+    // the GL state they expect (mirrors flush()'s restore bracket).
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf);
+    glBindVertexArray((GLuint)prevVao);
+    glUseProgram((GLuint)prevProgram);
 }
 
 void GpuStaticPropBatcher::setDebugAddrMode(int mode) { debugAddrMode_ = mode; }
@@ -3648,7 +3841,9 @@ bool eligibleForGpuObjects(TG_Shape* shape) {
 
 void gos_GpuPropsCycleDebugMode() {
     auto& b = GpuStaticPropBatcher::instance();
-    int next = (b.getDebugAddrMode() + 1) % 8;
+    // 0..7 are the legacy bisection modes; 8 is the LODBUG probe (solid
+    // magenta with alpha-test discard bypassed — see static_prop.frag).
+    int next = (b.getDebugAddrMode() + 1) % 9;
     b.setDebugAddrMode(next);
 }
 int gos_GpuPropsGetDebugMode() {

@@ -60,6 +60,11 @@ bool IsEnabled();              // MC2_TERRAIN_INDIRECT
 bool IsParityCheckEnabled();   // MC2_TERRAIN_INDIRECT_PARITY_CHECK
 bool IsTraceEnabled();         // MC2_TERRAIN_INDIRECT_TRACE — gates
                                 // [TERRAIN_INDIRECT v1] event=... lifecycle prints
+bool SolidWindowEnabled();        // MC2_TERRAIN_SOLID_NARROW — default-ON;
+                                  // literal "0" => OFF = full-range HEAD path
+                                  // (the safety escape hatch).  Approach A.
+bool IsSolidWindowParityEnabled();// MC2_TERRAIN_SOLID_WINDOW_PARITY — default
+                                  // OFF; "1" arms the catastrophic-axis probe.
 bool IsCostSplitEnabled();     // MC2_TERRAIN_COST_SPLIT — gates Stage 1
                                 // per-frame steady_clock accumulators in quad.cpp.
                                 // When unset, the RAII timer scopes are zero-cost
@@ -143,6 +148,26 @@ long long CostSplit_GetSetupTotalNanosTotal();
 long long CostSplit_GetCacheResidentNanosTotal();
 long long CostSplit_GetVisibilityCheckNanosTotal();
 int       CostSplit_GetFramesObserved();
+
+// --- [LIGHT_COST_SPLIT v1] -------------------------------------------------
+// Separate gate from MC2_TERRAIN_COST_SPLIT (that gate's chrono scopes are
+// observer-effect-dominated and the terrain-CPU campaign is terminal --
+// memory/cost_split_instrumentation_is_observer_effect_dominated.md).
+// These buckets use __rdtsc() and a distinct env var so they can run on a
+// legacy-object mission without the falsified terrain scopes attached.
+// Three buckets isolate the three addLightDataStructure callsites the Tracy
+// "addLightDataStructure scan" zone conflates:
+//   C2-direct  : mclib/tgl.cpp  (!eligibleForGpuObjects legacy leaf)
+//   C6-resubmit: mclib/tgl.cpp  (TG_Shape::ResubmitCachedLightData)
+//   C5-peractor: mclib/tgl.cpp  (TG_Shape::GatherGpuObjectLightDataOnly)
+bool IsLightCostSplitEnabled();              // MC2_LIGHT_COST_SPLIT
+void LightCostSplit_AddC2DirectCycles(unsigned long long c);
+void LightCostSplit_AddC6ResubmitCycles(unsigned long long c);
+void LightCostSplit_AddC5PerActorCycles(unsigned long long c);
+void LightCostSplit_AddC2DirectCall();
+void LightCostSplit_AddC6ResubmitCall();
+void LightCostSplit_AddC5PerActorCall();
+void LightCostSplit_RollFrameAndMaybeEmit();  // call from CostSplit_RollFrame()
 
 // ---------------------------------------------------------------------------
 // N1 counters — units = per-quad (per cluster), NOT per-triangle.
@@ -290,6 +315,58 @@ bool         IsMineTextureArrayReady();
 bool DrawMineStatic();
 
 // ---------------------------------------------------------------------------
+// Slice A — cement-overlay (decal) static-bake infrastructure.
+//
+// STRUCTURAL MIRROR of the PR2c mine static-bake above. Same lifetime
+// discipline:
+//   ResetDecalStaticVBO()         — Terrain::primeMissionTerrainCache +
+//                                   Terrain::destroy (same chokepoints as
+//                                   ResetMineStaticVBO). CPU-clears state,
+//                                   keeps the GL_STATIC_DRAW buffer.
+//   MarkDecalDirty()              — cement-mutation chokepoint hook. Wired at
+//                                   bldng.cpp bridge-destroy setOverlay(
+//                                   DAMAGED_BRIDGE) + Terrain::setOverlay
+//                                   public wrapper (mirrors MarkMineDirty at
+//                                   the setMine sites). Idempotent.
+//   RebuildDecalStaticVBOIfDirty()— fires from DrawDecalStatic before draw
+//                                   (mirror RebuildMineStaticVBOIfDirty).
+//   BuildDecalStaticVBO()         — walks the map-immutable Shape-C terrain
+//                                   face cache; for each alpha-cement quad,
+//                                   reproduces M2d's 4-corner + per-uvMode
+//                                   tri emit UNCONDITIONALLY (no pz cull).
+//   GetDecalStaticVBO_GL()        — GLuint name; 0 if unallocated.
+//   GetDecalVertCount()           — int; 0 if mission has no cement overlay.
+//
+// IsFrameOverlayArmed() (declared above) is the env gate, default OFF
+// (MC2_TERRAIN_INDIRECT_OVERLAY must be "=1"). DrawDecalStatic is the
+// Render.TerrainOverlaysStatic hook: lazy first-build + single bridge
+// dispatch + decal_static_tris_drawn counter. Default-OFF => M2d per-quad
+// emit runs unchanged, bake inert, ZERO behavior change.
+void  ResetDecalStaticVBO();
+void  MarkDecalDirty();
+void  RebuildDecalStaticVBOIfDirty();
+void  BuildDecalStaticVBO();
+unsigned int GetDecalStaticVBO_GL();
+int          GetDecalVertCount();
+bool  DrawDecalStatic();
+
+// Slice A counters.
+//   decal_static_tris_drawn      — substitutive analog of
+//                                  indirect_mine_drawn_cells; nonzero when
+//                                  the static bake draws (gos_push_overlay_calls
+//                                  -> 0 on the same armed frame).
+//   legacy_drawalpha_detail_quads— A2 dead-confirmation. Incremented at the 4
+//                                  post-return DRAWALPHA detail addVertices
+//                                  sites (quad.cpp ~2656/2799/2971/3112). The
+//                                  existing legacy_detail_overlay_quads
+//                                  conflates mine/overlay/detail; this one is
+//                                  DRAWALPHA-detail-only. Expected == 0.
+void      Counters_AddDecalStaticTrisDrawn(long long n);
+long long Counters_GetDecalStaticTrisDrawn();
+void      Counters_AddLegacyDrawAlphaDetailQuad();
+long long Counters_GetLegacyDrawAlphaDetailQuads();
+
+// ---------------------------------------------------------------------------
 // Stage 2: dense recipe SSBO build / lifecycle / per-entry invalidation.
 //
 // Dense recipe indexing convention (Option A):
@@ -337,10 +414,31 @@ int  ParityCompareRecipeFrame();
 //                             MC2_TERRAIN_INDIRECT=0.
 // ---------------------------------------------------------------------------
 void BeginFrame();              // reset armed flag; call unconditionally once per frame
+// Approach A: camera-windowed solid dispatch collector.  Structural twin of
+// WaterStream::BeginFrameNarrow / AppendNarrowCandidate.  BeginFrameSolidWindow
+// resets the per-frame recipe-index window (no-op when MC2_TERRAIN_SOLID_NARROW
+// =0); AppendSolidWindowCandidate is called from terrain.cpp's existing
+// setupTextures loop with vn0 = quad.vertices[0]->vertexNum (caller guarantees
+// the loose superset predicate — see terrain.cpp).  NO new walk.
+void BeginFrameSolidWindow();
+void AppendSolidWindowCandidate(int32_t vn0);
 bool ComputePreflight();
+// v4 split: ComputePreflight() does arming gates only. ComputeDispatch()
+// runs after Phase 1's PackAndDispatch at terrain.cpp so it can read
+// gos_terrain_lighting::GetOutputSsbo() with same-frame data.
+// No-op when MC2_GPU_DRIVEN_TERRAIN_SOLID is unset or 0, or when not armed.
+void ComputeDispatch();
+// VPL parity-infra retirement (cpu-pack-retirement plan §7 OQ-2): the
+// gos_terrain_indirect:: ComputeDispatchParity_Check declaration is removed
+// (zero consumers post Step 4 2e11617; txmmgr caller removed same commit).
 bool IsFrameSolidArmed();
 bool DrawIndirect();
 void ForceDisableArmingForProcess();
+// Single-source water fast-path gate: true iff all conditions that allow
+// renderWater() to skip the legacy loop are satisfied. Defined in
+// terrain.cpp (the only TU that sees WaterStream + gpu_driven symbols).
+// quad.cpp calls this via the opaque bool return; no new includes needed.
+bool WaterFastPathOwnsArmedDraw();
 
 // ---------------------------------------------------------------------------
 // Parity-check printer + 600-frame summary cadence.

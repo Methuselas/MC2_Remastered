@@ -1,6 +1,6 @@
-# MC2 OpenGL - Nifty-Mendeleev Worktree
+# MC2 OpenGL - GPU-Driven-Rendering Worktree
 
-MechCommander 2 OpenGL port: tessellated terrain, PBR splatting, shadow maps, post-processing. Active dev on `claude/nifty-mendeleev`. Root checkout (`terrain-pbr-mod`) is older; do not work there.
+MechCommander 2 OpenGL port: tessellated terrain, PBR splatting, shadow maps, post-processing. This worktree is `claude/gpu-driven-rendering`. Canonical active-dev branch is `claude/nifty-mendeleev` (work pending merge from here). Root checkout (`terrain-pbr-mod`) is older; do not work there.
 
 ## Where to look first
 
@@ -12,14 +12,15 @@ MechCommander 2 OpenGL port: tessellated terrain, PBR splatting, shadow maps, po
 - **Render contract:** `docs/render-contract.md` (design) + `mclib/render_contract.*` (implementation) + `.claude/agents/mc2-render-contract-synthesizer.md` (refresh agent)
 - **Meta-prompt** at `.claude/prompts/distill-session-into-advisor-agent.md` - paste at end of a substantive domain-work session to harvest a new advisor
 - **Render-notes dump prompt** at `.claude/prompts/dump-render-observations.md` - produces dated notes in `docs/observations/` for the synthesizer to consume
-- **Skills** in `.claude/skills/`: `/mc2-build`, `/mc2-deploy`, `/mc2-build-deploy`, `/mc2-check`, `/mc2-shader-diff`, `/mc2-amd-shader-review`, `adversarial-plan-review`
+- **Skills** in `.claude/skills/`: `/mc2-build`, `/mc2-deploy`, `/mc2-build-deploy`, `/mc2-check`, `/mc2-shader-diff`, `/mc2-amd-shader-review`, `adversarial-plan-review`, `greybeard`
+- **Steering channel (shared, repo-root):** `A:/Games/mc2-opengl-src/.claude/STEERING.md` - out-of-band feedback for a barreling session in ANY worktree. `sh A:/Games/mc2-opengl-src/.claude/steer.sh "..."` (any terminal) blocks the session's next Bash/Agent/Task call and injects the text; agent runs `sh A:/Games/mc2-opengl-src/.claude/ack-steering.sh` to clear. Globally-registered hook `~/.claude/hooks` -> `.claude/hooks/steering_check.py`; walks up to repo root so one shared file serves every worktree.
 - **Reference docs** in `docs/`: `architecture.md`, `amd-driver-rules.md`, `docs/plans/`, `docs/superpowers/specs/`
 - **Maintenance hook:** `.claude/maintenance-rules.json` is consumed by the Stop hook (`~/.claude/hooks/gsd-staleness-monitor.js`); modifying load-bearing files surfaces related-update reminders
 
 ## Key paths
 
-- Source: this worktree, `A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/`
-- Deploy: `A:/Games/mc2-opengl/mc2-win64-v0.3/`
+- Source: this worktree, `A:/Games/mc2-opengl-src/.claude/worktrees/gpu-driven-rendering/`
+- Deploy: `A:/Games/mc2-opengl/mc2-win64-v0.4/`
 - CMake: `C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe`
 
 ## Critical inline rules (every session reads these)
@@ -54,6 +55,20 @@ MechCommander 2 OpenGL port: tessellated terrain, PBR splatting, shadow maps, po
 
 When the user asks for "review", "code review", "second opinion", or any equivalent: **adversarial, code-grounded by default**. Read `.claude/skills/adversarial-plan-review.md`. High-stakes plans (architectural endpoints, legacy retirement, SSBO schemas, perf gates >=30%) get the full skill: grep every cited symbol, cross-reference every load-bearing constraint, list findings as CRITICAL / MAJOR / MINOR. Lower-stakes work gets prose-only review. When dispatching a review subagent, the dispatch prompt MUST include "use the adversarial-plan-review skill" verbatim. Origin: `memory/brainstorm_code_grounding_lesson.md`.
 
+## Meta-fix discipline (load-bearing)
+
+Before proposing OR writing any fix, rework, or offload: run the `greybeard`
+skill (`.claude/skills/greybeard.md`). It forces an explicit `META-FIX` vs
+`PATCH (justified)` ruling - the graybeard finds the one upstream change that
+retires the bug *class* (usually deleting a legacy mechanism whose original
+constraint no longer holds), not the local symptom patch. A patch with no
+named meta-fix and no debt justification is not allowed. This codebase has a
+documented history of additive slices netting ~0ms because the old path was
+never deleted - greybeard is the guard against that. When dispatching an
+advisor or fix subagent, the dispatch prompt MUST include "run the greybeard
+skill" verbatim (same convention as adversarial-plan-review). Applies to the
+main agent and every advisor; not required for trivial lookups.
+
 ## Documentation discipline (load-bearing)
 
 Every cited symbol must be grep-verified AT WRITE-TIME, not after. Applies at every stage: brainstorm Q&A, recon, design, plan, review. Don't write prose then verify after; verify-then-write is the same wall-clock cost with no fictional content. Carve-out: intentions ("we will create X") need no grep. Full rationale + indirect-terrain v1 case study: `memory/brainstorm_code_grounding_lesson.md`.
@@ -75,7 +90,7 @@ For any substantive question whose domain has a dedicated advisor per `.claude/a
 
 The routing table in `.claude/agents/DOMAINS.md` is the authoritative match. When a question straddles two advisors, spawn the most-specific one; advisors have explicit `<cross_references>` and `<limits>` DEFER sections that route cross-domain questions to siblings.
 
-**Why this matters:** advisors carry tacit knowledge in their `<known_pitfalls>` blocks that does NOT live in MEMORY.md (session-derived patterns, gotchas, "we hit this twice" lessons). Advisors grep-verify file:line citations during invocation per their Rule 0 ("grep before line numbers"). Answering from main-agent context bypasses both protections and silently produces stale answers. The 2026-05-14 pipeline-matrix build proved the value: the build's grep discipline caught the substrate_frameBegin pause-bug live on this branch, a stale advisor file reference (`gpu_driven_terrain_solid.comp` doesn't exist on disk), and a stale line citation (`mcTextureManager->update` is at `mission.cpp:527`, not the `:509` cited in this file and the pause-diagnostic memory).
+**Why this matters:** advisors carry tacit knowledge in their `<known_pitfalls>` blocks that does NOT live in MEMORY.md (session-derived patterns, gotchas, "we hit this twice" lessons). Advisors grep-verify file:line citations during invocation per their Rule 0 ("grep before line numbers"). Answering from main-agent context bypasses both protections and silently produces stale answers. The 2026-05-14 pipeline-matrix build proved the value: the build's grep discipline caught the substrate_frameBegin pause-bug live on this branch and a stale line citation (`mcTextureManager->update` is at `mission.cpp:527`, not the `:509` cited in this file and the pause-diagnostic memory). (A third example once cited here -- `gpu_driven_terrain_solid.comp` "doesn't exist on disk" -- was itself retired 2026-05-15: the file exists at `shaders/gpu_driven_terrain_solid.comp` and is Fix B's sole terrain-quad projection authority; the stale-example removal is the same grep discipline applied recursively.)
 
 ## Model routing
 
@@ -117,12 +132,25 @@ Pre-commit invariant scripts (run if you touched the relevant area):
 - Object lifecycle: `sh scripts/check-destroy-invariant.sh`
 - UI icon atlas / `code/mechicon.cpp`: `sh scripts/check-asset-scale-callers.sh`
 
+## Smoke sessions are USER-DRIVEN (load-bearing)
+
+**The user can see and control every smoke session.** `run_smoke.py` launches mc2.exe in a real game window the user is watching live. They can drive the camera (mouse/keyboard), observe visual bugs (triangles, flicker, missing geometry), and terminate early. Smoke feedback like "I saw the triangle," "still doing it," "the second smoke had it" is **first-hand visual observation**, not their reading of a log.
+
+**Anti-patterns the agent must NOT do:**
+- DO NOT tell the user "please run mc2.exe manually and reproduce." They are *already* doing that during the smoke command you just ran.
+- DO NOT ask "can you confirm by re-running with X env var." The user is the visual observer; each smoke run is the user-driven repro.
+- DO NOT say "the smoke isn't reproducing the bug for me" when the user reports it IS happening. Their visual evidence outranks any silent probe.
+
+**What to do instead:**
+- After every smoke the user reports a bug in: read `tests/smoke/artifacts/<latest>/{mission}.ring_trace.log` for that run's probe events. The runner snapshots the file-sink per mission.
+- When the user says "still doing it" they mean the most recent smoke. Find the latest artifact dir, analyze its ring_trace.log.
+
 ## Smoke gate ("did I break it")
 
 Default regression gate for render / init / cull / asset changes:
 
 ```bash
-py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --duration 30 --kill-existing
+py -3 A:\Games\mc2-opengl-src\.claude\worktrees\gpu-driven-rendering\scripts\run_smoke.py --tier tier1 --duration 30 --kill-existing
 ```
 
 - `tier1` = 5 hand-picked missions covering different biomes (`mc2_01`, `mc2_03`, `mc2_10`, `mc2_17`, `mc2_24`). 30s per mission. Isolated/clean conditions.
@@ -134,9 +162,11 @@ py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smok
 ## Known issues (current)
 
 - Shadow re-render stutter when camera moves >500 units. Fix: static world-fixed shadow map (design ready).
+- **Water shoreline z-fight on zoom/elevation-change (NOT pan); water sits slightly low (pre-existing).** Interim fast-path fixes shipped 2026-05-17 (gate-asymmetry +538us, un-armed legacy guard, MVP 1-frame-lag consistency verified 926/0 — recede/flicker/intro-vanish resolved). Residual z-fight = constant screen-z depth-fudge distance-nonlinearity (ruling-compliant clip-z fix pending); water-low is a separate pre-existing baseline issue. Water is slated full-GPU; that rewrite inherits both. Full state: `memory/water_fastpath_interim_fixes_and_residuals.md`.
 - Shadow banding shifts with camera rotation (view-dependent terrain geometry).
 - **First-launch black terrain intermittency** - tier1 first mission occasionally renders black; second mission normal. Suspected: GPU/shader state dirty from previous mission teardown or first-frame ordering. Repro: tier1 with `--fail-fast`.
 - **Options menu writes bad ResolutionX / Y to options.cfg** - opening options dialog may re-save non-800x600 res (observed 4096x2160 on 4K). Engine UI canvas is 800x600 and self-scales; other values break HUD scale + video positioning. Diagnostic and fix candidates: `memory/options_cfg_resolution_drift.md`.
+- **drawPass-retirement decal static-bake (`MC2_TERRAIN_INDIRECT_OVERLAY`, default-OFF): Slice A+B WIRED & objectively validated 2026-05-17.** Sheet bug fixed earlier (clip-safe `px.z in [0,1)` guard in `terrain_overlay.vert`). This session: `DrawDecalStatic` call site committed (`3056f0e`, partial-staged out of shared `txmmgr.cpp` to spare a concurrent shadow session's WIP), `decal_corner_probe` demoted (`66f1ad5`), full-relink build + v0.4 deploy, armed+TRACE tier1 smoke 5/5 / `GL_INVALID_OPERATION`=0 / `decal_vbo_built` 4668-vert parity / Slice B conjunction genuinely exercised. ONLY remaining = the inherently USER-DRIVEN substitutive non-COST_SPLIT total-frame Tracy proof (drawPass->~0 armed, no displaced cost, both regimes incl zoomed-out) + decal visual canary, then SHIPPED. DO NOT re-derive. Full state: `memory/drawpass_retirement_decal_bake_state_and_raster_sheet_trap.md`.
 
 ## Do NOT upscale these atlases
 

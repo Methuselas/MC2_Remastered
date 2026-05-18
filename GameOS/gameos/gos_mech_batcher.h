@@ -132,6 +132,19 @@ public:
     // Upload immutable VBO/IBO after all registerTypeLod() calls.
     void finalizeGeometry();
 
+    // True once finalizeGeometry() has uploaded geometry; submitActor()
+    // fast-rejects every actor while this is false. Used by the
+    // [MECHRESTORE v1] probe to prove the savegame-load finalize gap.
+    bool isFinalized() const;
+
+    // Rebuild shared geometry to absorb types registered AFTER a prior
+    // finalizeGeometry() (VPL-#11: campaign .fit resume spawns the player
+    // force-group post-Mission::init-finalize). No-op unless a late type
+    // was staged. Caller invokes once the late-spawn batch completes
+    // (logistics.cpp SP force-group loop). NO render may occur between
+    // the late registrations and this call (adversarial-review invariant).
+    void finalizePending();
+
     // Caller-side accounting (called BEFORE any registration check).
     void recordEligibleActor();
     void recordCpuFallback(GpuMechFallbackReason reason);
@@ -142,7 +155,9 @@ public:
 
     // Post-renderLists() draw flush.
     void flush();
-    void flushShadow();  // no-op in Slice A/B1/B2; reserved for future shadow-offload slice
+    // Phase 1: draws the previous-frame (already-fenced) mech instance set into the dynamic
+    // shadow FBO depth-only.  Called from txmmgr's GPU shadow region before flush().
+    void flushShadow();
 
     bool wasLastFailureLateRegistration() const;
 

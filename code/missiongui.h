@@ -144,6 +144,16 @@ public:
 		
 		ControlGui					controlGui;
 		Stuff::Vector3D				wPos;					//World Position of camera cursor.
+
+		// VPL-retirement Step 3 3b: mandatory per-frame inverseProject
+		// delta-cache. update() runs every frame and calls eye->inverseProject
+		// (now a frustum-AABB + forward-proj walk). Skip the walk when neither
+		// the cursor pixel nor the camera matrix changed since last projection.
+		long						prevMouseX;
+		long						prevMouseY;
+		Stuff::Vector3D				cachedWPos;
+		Stuff::Matrix4D				cachedWorldToClip;
+		bool						inverseProjectCacheValid;
 		
 		//vTol
 		Stuff::Vector3D				vPos[MAX_TEAMS];		// vehicle position

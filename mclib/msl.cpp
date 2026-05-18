@@ -1920,11 +1920,76 @@ void TG_MultiShape::CacheGpuLightData()
     }
 }
 
+// [LIGHTBAKE v1] First SHAPE_NODE leaf's durable post-decompose
+// lightData_ (TG_Shape member; TG_MultiShape is friend of TG_Shape).
+// Call AFTER CacheGpuLightData() has run this frame:
+// GatherGpuObjectLightDataOnly -> addLightDataStructureWithPerActorColor
+// wrote the post-template-copy + in-place decomposeFirstActiveLightColor
+// struct into leaf->lightData_, which resetLightData does NOT touch
+// (unlike the per-frame scratch slot). Same leaf scan as
+// CacheGpuLightData for identity.
+const TG_HWLightsData* TG_MultiShape::peekCachedLeafLightData()
+{
+    TG_Shape* firstShapeNodeLeaf = nullptr;
+    for (int i = 0; i < numTG_Shapes; ++i) {
+        TG_ShapeRec& rec = listOfShapes[i];
+        if (!rec.processMe || !rec.node) continue;
+        TG_Shape* child = rec.node;
+        if (!child->myType) continue;
+        if (child->myType->GetNodeType() != SHAPE_NODE) continue;
+        firstShapeNodeLeaf = child;
+        break;
+    }
+    if (firstShapeNodeLeaf == nullptr) return nullptr;
+    return &firstShapeNodeLeaf->lightData_;
+}
+
+// [LIGHTBAKE v1] Re-emit a mission-load-baked constant into a per-frame
+// slot WITHOUT GatherLights/decompose/template recompute. Per-frame slot
+// WRITE stays (Shape-C O(1) consumer); the RECOMPUTE is what dies. Sets
+// cachedGpuLightIndex_/cachedFrame_ so the existing
+// staticReg.lightDataIndex = getCachedGpuLightIndex() capture + batcher
+// read are unchanged.
+void TG_MultiShape::EmitBakedGpuLightData(int32_t recipeIndex, const TG_HWLightsData& baked)
+{
+    // [LIGHTBAKE v2] THE substitutive edit (adversarial-review C1 locus):
+    // the static recipe's permanent light slot IS recipeIndex (the CPU
+    // mirror lives at lightData_[recipeIndex], written once by
+    // mc2WriteStaticLightSlot, re-shipped every frame by the unchanged
+    // whole-buffer upload). So this is a pure pointer assignment -- NO
+    // mc2SubmitBakedLightSlot, NO addLightDataStructure, NO 1792B FNV,
+    // NO 1792B memcmp. This is what takes `addLightDataStructure scan`
+    // -> ~0 for the static class (the ~1840 calls/~1ms/frame survivor).
+    (void)baked;  // identity is recipeIndex; the struct already persists in the slot
+    cachedGpuLightIndex_ = static_cast<uint32_t>(recipeIndex);
+    cachedFrame_         = g_mc2FrameCounter;
+}
+
 void TG_MultiShape::ResubmitCachedGpuLightData()
 {
     // Slice B1 (2026-05-09): see CacheGpuLightData rationale.
     if (!g_useGpuObjects && !g_useGpuMechs)
         return;
+
+    // [LIGHTBRIDGE v1] C6 repoint: if this multi already populated a VALID
+    // slot THIS frame, that slot is still live (per-frame reset by
+    // resetLightData/clearArrays at frame start) — return it and skip the
+    // direct addLightDataStructure 1792B FNV + 1792B memcmp entirely. The
+    // cachedGpuLightIndex_ != sentinel guard is load-bearing: the
+    // registration path (gos_static_prop_registry.cpp) sets cachedFrame_
+    // without a valid index. Kill-switch OFF -> legacy resubmit bit-for-bit.
+    extern bool mc2LightBridgeRepointEnabled();
+    if (mc2LightBridgeRepointEnabled() &&
+        cachedFrame_ == g_mc2FrameCounter &&
+        cachedGpuLightIndex_ != 0xFFFFFFFFu) {
+        static bool s_c6Logged = false;
+        if (!s_c6Logged) {
+            s_c6Logged = true;
+            printf("[LIGHTBRIDGE v1] event=c6_fastpath_hit\n");
+            fflush(stdout);
+        }
+        return;
+    }
 
     TG_Shape* firstShapeNodeLeaf = nullptr;
     for (int i = 0; i < numTG_Shapes; ++i) {

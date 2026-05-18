@@ -858,11 +858,17 @@ void TerrainPatchStream::appendThinRecord(
     tr.recipeIdx     = recipeSlot;
     tr.terrainHandle = static_cast<uint32_t>(terrainHandle);
     tr.flags         = flags;
-    tr._pad0         = 0u;
+    tr.cementWord    = 0u;  // Fix B rename: was _pad0; patch-stream path doesn't
+                            // emit cement quads, so the field stays zero here.
     tr.lightRGB0     = lightRGB0;
     tr.lightRGB1     = lightRGB1;
     tr.lightRGB2     = lightRGB2;
     tr.lightRGB3     = lightRGB3;
+    // Fix B 2026-05-14: clipPos[16] zeroed.  The patch-stream path uses a
+    // separate VS (gos_terrain_patch.vert / its own shader), not the indirect
+    // thin VS that reads clipPos.  Zero is the safe / degenerate value if any
+    // future path picks up these records under the new VS.
+    for (int k = 0; k < 16; ++k) tr.clipPos[k] = 0.0f;
 }
 
 void TerrainPatchStream::addThinRecordVertParity(uint32_t n) {
@@ -886,7 +892,7 @@ bool TerrainPatchStream::flush()
                          && s_thinRecordBuf && s_recipeBuf && s_thinRecordCount > 0;
 
     if (!hasExpanded && !hasFat && !hasThin) {
-        return true;  // Nothing to draw — skip legacy.
+        return false;  // Nothing drawn — let legacy handle terrain vertices.
     }
 
     SavedGLState saved;

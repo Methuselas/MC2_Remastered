@@ -1,4 +1,5 @@
 //#version 430 (version provided by material prefix)
+#include <include/terrain_depth_bias.hglsl>  // single-source TERRAIN/WATER_DEPTH_FUDGE
 //
 // B4 Slice Stage 1b — mask-SOLID dual-run vertex shader.
 //
@@ -161,7 +162,7 @@ void main() {
     vec3 screen;
     screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
     screen.y = clip.y * rhw * terrainViewport.y + terrainViewport.w;
-    screen.z = clip.z * rhw + 0.002;  // TERRAIN_DEPTH_FUDGE (quad.cpp:1911)
+    screen.z = clip.z * rhw + TERRAIN_DEPTH_FUDGE;  // single-sourced; see terrain_depth_bias.hglsl
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
     gl_Position      = vec4(ndc.xyz * absW, absW);

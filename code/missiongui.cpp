@@ -321,8 +321,14 @@ void MissionInterfaceManager::init (void)
 	realRotation = 0.0;
 	dragStart.Zero();
 	dragEnd.Zero();
-	isDragging = FALSE;	
+	isDragging = FALSE;
 	terrainLineChanged = 0;
+
+	// VPL-retirement Step 3 3b: invalidate the per-frame inverseProject cache.
+	prevMouseX = -2147483647;
+	prevMouseY = -2147483647;
+	cachedWPos.Zero();
+	inverseProjectCacheValid = false;
 	
 	for (long i=0;i<MAX_TEAMS;i++)
 	{
@@ -739,7 +745,30 @@ void MissionInterfaceManager::update (void)
 	Stuff::Vector2DOf<long>	mouseXY;
 	mouseXY.x = mouseX;
 	mouseXY.y = mouseY;
-	eye->inverseProject(mouseXY, wPos);
+
+	// VPL-retirement Step 3 3b: mandatory per-frame delta-cache. This is the
+	// SOLE production Camera::inverseProject caller and runs every frame; the
+	// repointed inverseProject (Step 3 3a) walks every quad. Skip the walk
+	// when neither the cursor pixel (exact, >=1px, no tolerance) nor the
+	// camera world->clip matrix changed since the last real projection.
+	const Stuff::Matrix4D& curW2C = eye->getWorldToClip();
+	const bool mouseSame = (mouseX == prevMouseX) && (mouseY == prevMouseY);
+	const bool camSame   = inverseProjectCacheValid &&
+		(memcmp(&cachedWorldToClip, &curW2C, sizeof(Stuff::Matrix4D)) == 0);
+	if (inverseProjectCacheValid && mouseSame && camSame)
+	{
+		// Cursor and camera both unchanged - reuse the cached world point.
+		wPos = cachedWPos;
+	}
+	else
+	{
+		eye->inverseProject(mouseXY, wPos);
+		prevMouseX = mouseX;
+		prevMouseY = mouseY;
+		cachedWPos = wPos;
+		cachedWorldToClip = curW2C;
+		inverseProjectCacheValid = true;
+	}
 
 	// find out if this position is passable, has line of sight
 	int cellR, cellC;

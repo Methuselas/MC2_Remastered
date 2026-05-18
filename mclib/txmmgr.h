@@ -395,7 +395,8 @@ class MC_TextureManager
         TG_HWLightsData*                lightData_;
         uint32_t                        lightDataStructuresCapacity;
         uint32_t                        lightDataStructuresCount;
-		gosBuffer						*lightDataBuffer_;
+		// [LIGHTSSBO v1] lightDataBuffer_ removed: LightsData is now an
+		// SSBO owned by gameos_graphics.cpp (gos_LightDataSsbo_*).
         TG_HWSceneData*                 sceneData_;
 		gosBuffer						*sceneDataBuffer_;
 		
@@ -427,7 +428,6 @@ class MC_TextureManager
 			hardwareVertexData = hardwareVertexData2 = hardwareVertexData3 = hardwareVertexData4 = hardwareVertexData5 = NULL;
 
 			lightData_ = nullptr;
-            lightDataBuffer_ = nullptr;
             lightDataStructuresCapacity = 0;
             lightDataStructuresCount = 0;
 
@@ -527,6 +527,12 @@ class MC_TextureManager
 
 		
         void resetLightData();
+
+        // [LIGHTBAKE v2] persistent static-light table: write the baked
+        // constant into the permanent CPU slot lightData_[recipeIndex]
+        // (grow-preserving) + advance the static high-water S. Called
+        // once per recipe at bake / invalidate re-bake, NOT per frame.
+        void bakeStaticLightSlot(int32_t recipeIndex, const struct TG_HWLightsData& baked);
 
         // Diagnostic accessors for the static-prop registry's flush trace
         // (2026-05-05 black-billboard investigation). Read-only views of the

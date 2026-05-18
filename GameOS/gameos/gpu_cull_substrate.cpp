@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include "gos_profiler.h"        // Tracy ZoneScopedN
 
 // MC2_GPU_CULL_SUBSTRATE_TRACE=1 — verbose per-frame lifecycle prints.
 // Default off; the 600-frame summary + first-flush banner emit unconditionally.
@@ -104,6 +105,7 @@ void substrate_init(uint32_t maxActors) {
 
     s_maxActors      = maxActors;
     s_perFrameCount  = 0;
+    s_cpuVisibleCount = 0;
     s_frameSlot      = 0;
     s_flushCount     = 0;
     s_firstFlushDone = false;
@@ -166,6 +168,7 @@ void substrate_shutdown() {
     s_mappedPtr      = nullptr;
     s_maxActors      = 0;
     s_perFrameCount  = 0;
+    s_cpuVisibleCount = 0;
     s_frameSlot      = 0;
     s_slotBytes      = 0;
     s_initialized    = false;
@@ -188,6 +191,7 @@ void substrate_frameBegin() {
     // Wait on this slot's fence if it has not yet been signalled.
     // At 60 Hz with 3-deep ring this should never stall, but be defensive.
     if (s_fence[s_frameSlot]) {
+        ZoneScopedN("SubFrameBegin.RingWait");
         glClientWaitSync(s_fence[s_frameSlot], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
         glDeleteSync(s_fence[s_frameSlot]);
         s_fence[s_frameSlot] = 0;
@@ -195,9 +199,36 @@ void substrate_frameBegin() {
 
     // Reset the per-frame record count for this slot.
     s_perFrameCount = 0;
+    s_cpuVisibleCount = 0;
     s_overflowLoggedThisFrame = false;  // 2026-05-11 reset overflow log latch
 
     SUBSTRATE_TRACE("event=frame_begin slot=%u", s_frameSlot);
+}
+
+// ---------------------------------------------------------------------------
+// substrate_writeRecord  (shared lockstep write core)
+// ---------------------------------------------------------------------------
+//
+// Writes one record into the current ring slot's array and maintains the two
+// lockstep per-frame counters (s_perFrameCount, s_cpuVisibleCount).
+// PRECONDITION: caller has passed the s_perFrameCount >= s_maxActors overflow
+// guard and verified s_mappedPtr != nullptr. The cpuVisible increment is
+// computed from the cache-hot `rec` parameter, never by reading back from the
+// write-combined mapped buffer; it occurs AFTER the successful memcpy so the
+// accumulator counts exactly records actually written into
+// recs[0..s_perFrameCount). Replaces the deleted flush-side readback loop.
+// Single-threaded: no atomics; inherits the existing s_perFrameCount
+// externally-serialized-producer contract.
+
+static inline void substrate_writeRecord(const GpuActorRecord& rec) {
+    const size_t slotOffset = s_frameSlot * s_slotBytes;
+    char* dest = static_cast<char*>(s_mappedPtr)
+                 + slotOffset
+                 + sizeof(GpuActorRecordHeader)
+                 + s_perFrameCount * sizeof(GpuActorRecord);
+    memcpy(dest, &rec, sizeof(GpuActorRecord));
+    if (rec.prevVisibilityBit) ++s_cpuVisibleCount;
+    ++s_perFrameCount;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,14 +251,7 @@ void substrate_submitDynamicActor(const GpuActorRecord& rec) {
         return;
     }
 
-    // Destination = slot_base + sizeof(header) + record_index * sizeof(record)
-    const size_t slotOffset = s_frameSlot * s_slotBytes;
-    char* dest = static_cast<char*>(s_mappedPtr)
-                 + slotOffset
-                 + sizeof(GpuActorRecordHeader)
-                 + s_perFrameCount * sizeof(GpuActorRecord);
-    memcpy(dest, &rec, sizeof(GpuActorRecord));
-    ++s_perFrameCount;
+    substrate_writeRecord(rec);
 }
 
 // ---------------------------------------------------------------------------
@@ -237,33 +261,27 @@ void substrate_submitDynamicActor(const GpuActorRecord& rec) {
 void substrate_flushUpload() {
     if (!substrate_isEnabled() || !s_initialized) return;
 
-    // Write the header for this slot.
-    const size_t slotOffset = s_frameSlot * s_slotBytes;
-    GpuActorRecordHeader* hdr =
-        reinterpret_cast<GpuActorRecordHeader*>(
-            static_cast<char*>(s_mappedPtr) + slotOffset);
-
-    // C1a: count CPU-visible records (prevVisibilityBit==1) for parity summary.
+    // Write the header for this slot. (s_cpuVisibleCount is now accumulated
+    // at record-write time in substrate_writeRecord; the old flush-side
+    // readback count-loop is deleted — see the write-side accumulation spec.)
     {
-        uint32_t cpuVis = 0;
-        const GpuActorRecord* recs = reinterpret_cast<const GpuActorRecord*>(
-            static_cast<const char*>(s_mappedPtr) + slotOffset + sizeof(GpuActorRecordHeader));
-        for (uint32_t i = 0; i < s_perFrameCount; ++i) {
-            if (recs[i].prevVisibilityBit) ++cpuVis;
-        }
-        s_cpuVisibleCount = cpuVis;
-    }
+        ZoneScopedN("SubFlush.HeaderWrite");
+        const size_t slotOffset = s_frameSlot * s_slotBytes;
+        GpuActorRecordHeader* hdr =
+            reinterpret_cast<GpuActorRecordHeader*>(
+                static_cast<char*>(s_mappedPtr) + slotOffset);
 
-    hdr->recordCount    = s_perFrameCount;
-    hdr->recordCapacity = s_maxActors;
-    hdr->visibleCount   = 0;   // written by compute (C1+); CPU sets 0
-    hdr->_pad0          = 0;
+        hdr->recordCount    = s_perFrameCount;
+        hdr->recordCapacity = s_maxActors;
+        hdr->visibleCount   = 0;   // written by compute (C1+); CPU sets 0
+        hdr->_pad0          = 0;
+    }
 
     // Buffer is coherent (GL_MAP_COHERENT_BIT) — no explicit glFlushMappedBufferRange needed.
 
     // Insert a fence for this slot so the next visit to this ring slot
     // waits until the GPU has finished reading it.
-    s_fence[s_frameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    { ZoneScopedN("SubFlush.FenceInsert"); s_fence[s_frameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0); }
 
     // 600-frame summary + first-flush banner.
     ++s_flushCount;
@@ -314,18 +332,11 @@ void substrate_appendStaticPropRecord(const GpuActorRecord& rec) {
         return;
     }
 
-    const size_t slotOffset = s_frameSlot * s_slotBytes;
-
-    // Write the record at the next available position.
-    char* dest = static_cast<char*>(s_mappedPtr)
-                 + slotOffset
-                 + sizeof(GpuActorRecordHeader)
-                 + s_perFrameCount * sizeof(GpuActorRecord);
-    memcpy(dest, &rec, sizeof(GpuActorRecord));
-    ++s_perFrameCount;
+    substrate_writeRecord(rec);
 
     // Update hdr->recordCount in-place so compute_dispatch's glCopyBufferSubData
     // copies the updated count. Buffer is GL_MAP_COHERENT_BIT — no explicit flush.
+    const size_t slotOffset = s_frameSlot * s_slotBytes;
     GpuActorRecordHeader* hdr =
         reinterpret_cast<GpuActorRecordHeader*>(
             static_cast<char*>(s_mappedPtr) + slotOffset);
@@ -334,6 +345,28 @@ void substrate_appendStaticPropRecord(const GpuActorRecord& rec) {
     SUBSTRATE_TRACE("event=append_static type=%u count=%u",
                     (rec.category >> 4), s_perFrameCount);
 }
+
+#if defined(MC2_SUBSTRATE_COUNT_PARITY)
+// PROOF-ONLY: recompute the all-records legacy count over the FINAL
+// post-static-append population and assert the write-side accumulator
+// matches. Default-OFF compile gate; never in a shipping/default build;
+// removed in the post-proof cleanup. Caller MUST invoke this AFTER the last
+// static-prop append for the frame (pre compute_dispatch), NOT inside flush.
+void substrate_countParityCheck() {
+    if (!substrate_isEnabled() || !s_initialized || !s_mappedPtr) return;
+    const size_t slotOffset = s_frameSlot * s_slotBytes;
+    const GpuActorRecord* recs = reinterpret_cast<const GpuActorRecord*>(
+        static_cast<const char*>(s_mappedPtr) + slotOffset + sizeof(GpuActorRecordHeader));
+    uint32_t legacy = 0;
+    for (uint32_t i = 0; i < s_perFrameCount; ++i)
+        if (recs[i].prevVisibilityBit) ++legacy;
+    if (legacy != s_cpuVisibleCount) {
+        printf("[GPU_CULL v1] event=cpuvis_parity_mismatch legacy=%u accum=%u count=%u\n",
+               legacy, s_cpuVisibleCount, s_perFrameCount);
+        fflush(stdout);
+    }
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // substrate_getCurrentRecordCount

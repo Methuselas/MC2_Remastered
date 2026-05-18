@@ -57,9 +57,9 @@ public:
                                 float mapHalfExtent);
     bool staticLightMatrixBuilt() const { return staticLightMatrixBuilt_; }
     void markStaticLightMatrixBuilt() { staticLightMatrixBuilt_ = true; }
-    // CP-1: per-mission reset so the next mission rebuilds the static light
-    // matrix (staticLightMatrixBuilt_ is process-scoped and never reset
-    // between missions without this explicit hook).
+    // VPL-#shadow C-1: per-mission re-arm so the one-shot full-map static
+    // shadow rebuilds on the next mission (against fresh blocks[]) instead
+    // of freezing the previous mission's shadow. Called from Terrain::destroy.
     void resetStaticLightMatrix() { staticLightMatrixBuilt_ = false; }
     void setMapHalfExtent(float extent) { mapHalfExtent_ = extent; }
     float getMapHalfExtent() const { return mapHalfExtent_; }
@@ -67,8 +67,10 @@ public:
     // Dynamic object shadows: camera-centered, re-rendered every frame
     void initDynamicShadows();
     void destroyDynamicShadows();
+    // camFitCornersMC2 = 8 raw-MC2 frustum corners (clipToWorld-unprojected
+    // + Stuff->MC2 swizzled by the caller). Builder clamps + fits the ortho.
     void buildDynamicLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
-                                 float camX, float camY, float camZ);
+                                 const float camFitCornersMC2[8][3]);
     GLuint getDynamicShadowTexture() const { return dynShadowDepthTex_; }
     GLuint getDynamicShadowFBO() const { return dynShadowFBO_; }
     const float* getDynamicLightSpaceMatrix() const { return dynamicLightSpaceMatrix_; }

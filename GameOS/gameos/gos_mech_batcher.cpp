@@ -4,6 +4,7 @@
 #include "gos_static_prop_batcher.h"  // for STATIC_PROP_RING_FRAMES cross-check
 #include "gameos.hpp"                 // gos_InvalidateRenderStateCache
 #include "utils/shader_builder.h"
+#include "gos_postprocess.h"           // getGosPostProcess()->getDynamicLightSpaceMatrix()
 #include "../../mclib/txmmgr.h"       // mcTextureManager->get_gosTextureHandle (live resolve)
 #include <GL/glew.h>
 #include <cstdio>
@@ -106,8 +107,19 @@ static GLuint s_sharedVbo = 0;
 static GLuint s_sharedIbo = 0;
 static GLuint s_sampler   = 0;    // session-lifetime; GL_REPEAT / LINEAR
 static bool   s_geometryFinalized = false;
+// VPL-#11 (SP-logistics late roster): set by registerTypeLod when a type
+// registers AFTER finalizeGeometry (campaign .fit resume spawns the
+// player force-group post-Mission::init-finalize). finalizePending()
+// consumes it to rebuild the shared VBO/IBO from the (retained) staging.
+static bool   s_pendingLateTypes = false;
+static uint32_t s_lateStagedCount = 0;  // late (type,lod) regs since last finalizePending
 
-// Staging buffers (cleared after finalizeGeometry).
+// Staging buffers. RETAINED for the whole mission (NOT freed at
+// finalizeGeometry) so finalizePending() can append a late-registered
+// type and rebuild the immutable shared VBO/IBO from the full
+// original+late staging (VPL-#11 SP-logistics fix; the alternative of
+// re-deriving geometry from TG type shapes is fragile). Cleared only at
+// onMapLoad(). Memory cost is MB-scale and intentionally not optimized.
 static std::vector<uint8_t>   s_stagingVbo;
 static std::vector<uint32_t>  s_stagingIbo;
 
@@ -150,6 +162,23 @@ struct PendingSubmit {
 };
 static std::vector<PendingSubmit> s_pendingSubmits;
 
+// Per-frame draw-call snapshot persisted at the END of flush() for use by
+// flushShadow() on the NEXT frame.  flushShadow() runs before this frame's
+// flush(), so it reads last frame's already-fenced SSBO slot (s_frameSlot)
+// together with the drawCalls that were built for that same slot.
+struct ShadowDrawEntry {
+    uint32_t globalPacketIdx;
+    uint32_t instanceBase;
+    uint32_t instanceCount;
+};
+static std::vector<ShadowDrawEntry> s_lastDrawCalls;
+static size_t                       s_lastTotalInstances = 0;
+static size_t                       s_lastTotalBones     = 0;
+
+// File-scope counters written by flushShadow() and read by Task 6 probe.
+static int s_shadowTypesDrawn = 0;
+static int s_shadowInstDrawn  = 0;
+
 // Counters.
 static bool     s_mechBatcherTrace     = false;
 static bool     s_mechBatcherTraceInit = false;
@@ -189,21 +218,23 @@ static void loadProgramsIfNeeded() {
     // the UBO, force g_useGpuMechLighting off so the shader's
     // u_lightingMode=0 branch (Slice A flat-white) runs and the
     // app doesn't fail compilation or read garbage.
-    {
-        constexpr GLint kRequiredUboBytes = 64 * 1808;  // matches lighting.hglsl
-        GLint maxUbo = 0;
-        glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE, &maxUbo);
-        if (maxUbo > 0 && maxUbo < kRequiredUboBytes) {
-            std::fprintf(stderr,
-                "[MECHLIGHT v1] event=ubo_cap_too_small caps=%d required=%d "
-                "fallback=flat_white\n",
-                maxUbo, kRequiredUboBytes);
-            g_useGpuMechLighting = false;
-        } else {
-            std::fprintf(stderr,
-                "[MECHLIGHT v1] event=ubo_cap_check caps=%d required=%d ok\n",
-                maxUbo, kRequiredUboBytes);
-        }
+    // [LIGHTSSBO v1] RF4: LightsData is no longer a UBO — it is an
+    // unbounded std430 SSBO (binding 20). The old GL_MAX_UNIFORM_BLOCK_SIZE
+    // gate (which forced g_useGpuMechLighting=false on GPUs whose max UBO
+    // block < ~113KB) is now SPURIOUS: SSBO storage is bounded by
+    // GL_MAX_SHADER_STORAGE_BLOCK_SIZE (typically >=128MB, never the
+    // constraint) and there is no fixed 64-entry window. Disabling mech
+    // lighting on the UBO basis would defeat the ceiling-removal this
+    // conversion delivers. Gate removed.
+    // Diagnostic gated behind MC2_LIGHTSSBO_TRACE (demote-not-delete;
+    // matches gameos_graphics.cpp s_lightSsboTrace). Default-off so it
+    // does not pollute frame-time captures.
+    if (std::getenv("MC2_LIGHTSSBO_TRACE") != nullptr) {
+        GLint maxSsbo = 0;
+        glGetIntegerv(GL_MAX_SHADER_STORAGE_BLOCK_SIZE, &maxSsbo);
+        std::fprintf(stderr,
+            "[LIGHTSSBO v1] event=mech_ssbo_check max_ssbo_block=%d (no 64-slot cap)\n",
+            maxSsbo);
     }
 
     auto loc = [&](const char* name) {
@@ -296,6 +327,12 @@ void GpuMechBatcher::onMapLoad() {
     s_pendingSubmits.clear();
     s_eligibleActorsThisFrame = 0;
     std::memset(s_fallbacksThisFrame, 0, sizeof(s_fallbacksThisFrame));
+    // Clear persisted shadow state so flushShadow() finds no stale entries
+    // that index into the now-cleared s_packets.  Order-independent vs the
+    // !s_instanceSsbo guard in flushShadow().
+    s_lastDrawCalls.clear();
+    s_lastTotalInstances = 0;
+    s_lastTotalBones     = 0;
     std::fprintf(stderr, "[MECHBATCHER v1] event=map_load\n");
 }
 
@@ -323,10 +360,125 @@ void GpuMechBatcher::onMapUnload() {
 bool GpuMechBatcher::wasLastFailureLateRegistration() const { return s_lastFailWasLateReg; }
 uint64_t GpuMechBatcher::getAllowedLateRegEventCount()      { return s_allowedLateRegEvents; }
 uint64_t GpuMechBatcher::getDisallowedLateRegEventCount()  { return s_disallowedLateRegEvents; }
+bool GpuMechBatcher::isFinalized() const                    { return s_geometryFinalized; }
 
 void GpuMechBatcher::recordEligibleActor()                         { ++s_eligibleActorsThisFrame; }
 void GpuMechBatcher::recordCpuFallback(GpuMechFallbackReason r)   { ++s_fallbacksThisFrame[(int)r]; }
-void GpuMechBatcher::flushShadow() {}  // no-op in Slice A/B1/B2
+void GpuMechBatcher::flushShadow() {
+    // Depth-only draw of the previous frame's mech instances into the dynamic
+    // shadow FBO.  Called from Task-5's gos_BeginDynamicShadowPass region,
+    // BEFORE this frame's flush().
+    //
+    // Ring-slot reasoning (verified against flush() line numbers):
+    //   flush():913  s_frameSlot = (s_frameSlot+1) % MECH_RING_FRAMES  -- advance
+    //   flush():920  SSBO written to new s_frameSlot                    -- write
+    //   flush():1190 s_fence[s_frameSlot] = glFenceSync(...)            -- fence
+    // flushShadow() runs before this frame's flush(), so s_frameSlot still
+    // holds the PREVIOUS frame's post-advance value.  The previous frame's
+    // data lives at s_frameSlot and was already fenced by the previous
+    // flush():1097.  Read slot = s_frameSlot.  No advance / write / fence here.
+    //
+    // Bucket-reuse: Option B (persisted drawCalls).  flush()'s local DrawCall
+    // vector is entangled with the ring write inside the same function, so we
+    // persist it to s_lastDrawCalls / s_lastTotalInstances / s_lastTotalBones
+    // at the end of flush() and consume those statics here.
+
+    // DEFAULT-OFF pending the dedicated-VAO redesign (same reason as
+    // GpuStaticPropBatcher::flushShadow): sharing s_sharedVao corrupts the
+    // main flush() element binding (GL_ELEMENT_ARRAY_BUFFER is VAO state).
+    // Opt-in only via MC2_SHADOW_ENABLE until the private-VAO fix lands.
+    static const bool s_shadowEnabled = (getenv("MC2_SHADOW_ENABLE") != nullptr);
+    if (!s_shadowEnabled) return;
+
+    // Geometry-readiness guard, mirroring the color flush() path (:867).
+    // The new txmmgr shadow region calls this from frame ~1 and across
+    // mid-mission finalizePending() rebuilds; without this, a not-yet-
+    // finalized or rebuilt s_packets is indexed by stale persisted
+    // s_lastDrawCalls entries and faults in the draw below.
+    if (!g_useGpuMechs || !s_geometryFinalized || s_programLoadFailed) return;
+    if (s_lastDrawCalls.empty()) return;
+    if (!s_instanceSsbo || !s_boneSsbo) return;
+
+    // Resolve shadow_mech program via the global registry (Task 1 registered
+    // it under this key via makeProgram("shadow_mech", ...)).
+    auto pit = glsl_program::s_programs.find("shadow_mech");
+    if (pit == glsl_program::s_programs.end() || !pit->second || !pit->second->shp_)
+        return;
+    const GLuint shadowProg = pit->second->shp_;
+
+    gosPostProcess* pp = getGosPostProcess();
+    if (!pp) return;
+
+    // Save/restore the GL state this pass perturbs, mirroring flush()'s
+    // bracket (:1036-1043 / :1209-1218). Leaking program/VAO/element-
+    // buffer/SSBO bindings 0+1 here poisons gpu_cull::compute_dispatch()
+    // and the indirect flush() that run after -> invisible mechs+props.
+    // All early returns above precede any GL mutation.
+    GLint prevProgram = 0, prevVao = 0, prevElemBuf = 0, prevSsbo0 = 0, prevSsbo1 = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &prevElemBuf);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 1, &prevSsbo1);
+
+    glUseProgram(shadowProg);
+
+    const GLint lsLoc = glGetUniformLocation(shadowProg, "lightSpaceMatrix");
+    if (lsLoc >= 0)
+        glUniformMatrix4fv(lsLoc, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix());
+
+    const GLint smLoc   = glGetUniformLocation(shadowProg, "u_skinningMode");
+    const GLint baseLoc = glGetUniformLocation(shadowProg, "u_instanceBase");
+
+    if (smLoc >= 0)
+        glUniform1i(smLoc, g_useGpuMechSkin ? 1 : 0);
+
+    glBindVertexArray(s_sharedVao);
+    // Same root cause as GpuStaticPropBatcher::flushShadow: do not rely on
+    // s_sharedVao carrying the IBO (other GPU paths clobber its VAO-resident
+    // GL_ELEMENT_ARRAY_BUFFER binding); bind s_sharedIbo explicitly so the
+    // indexed draw never treats firstIndex*4 as a client pointer.
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
+
+    // Read the already-fenced previous-frame SSBO slot.
+    const uint32_t slot = s_frameSlot;
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
+        (GLintptr) (slot * s_instanceCapacity * sizeof(GpuMechInstance)),
+        (GLsizeiptr)(s_lastTotalInstances * sizeof(GpuMechInstance)));
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, s_boneSsbo,
+        (GLintptr) (slot * s_boneCapacity * sizeof(GpuMechBone)),
+        (GLsizeiptr)(s_lastTotalBones * sizeof(GpuMechBone)));
+
+    int typesDrawn = 0, instDrawn = 0;
+    for (const ShadowDrawEntry& dc : s_lastDrawCalls) {
+        if (baseLoc >= 0)
+            glUniform1i(baseLoc, (int)dc.instanceBase);
+
+        if (dc.globalPacketIdx >= s_packets.size()) break;  // defense-in-depth: stale persisted index post-rebuild
+        const GpuMechPacket& pkt = s_packets[dc.globalPacketIdx];
+        glDrawElementsInstancedBaseVertex(
+            GL_TRIANGLES,
+            (GLsizei)pkt.indexCount,
+            GL_UNSIGNED_INT,
+            (void*)(uintptr_t)(pkt.firstIndex * sizeof(uint32_t)),
+            (GLsizei)dc.instanceCount,
+            pkt.baseVertex);
+
+        ++typesDrawn;
+        instDrawn += (int)dc.instanceCount;
+    }
+
+    s_shadowTypesDrawn = typesDrawn;
+    s_shadowInstDrawn  = instDrawn;
+
+    // Restore exactly what we changed (mirrors flush()'s restore bracket)
+    // so the cull dispatch + indirect flush() that follow are not poisoned.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, (GLuint)prevSsbo1);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf);
+    glBindVertexArray((GLuint)prevVao);
+    glUseProgram((GLuint)prevProgram);
+}
 
 // ---------------------------------------------------------------------------
 // Registration (Task 4)
@@ -335,12 +487,27 @@ void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int l
     if (!mechType) return;
     const TypeLodKey key{mechType, lod};
     if (s_typeLodIndex.count(key)) return;  // idempotent
+    static const bool s_mechRestoreTrace = (getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
     if (s_geometryFinalized) {
+        // Late registration (post-finalizeGeometry). DO NOT drop: stage
+        // the type into the retained s_stagingVbo/Ibo (fall through to
+        // the body below) and mark pending so finalizePending() rebuilds
+        // the shared buffers. Caller MUST invoke finalizePending() once
+        // its late-spawn batch completes (VPL-#11: logistics.cpp SP
+        // force-group loop). Until then submitActor still fast-rejects
+        // this type (s_typeLodIndex has the entry but the GL buffers
+        // predate it) -- harmless because no frame renders between the
+        // late registers and the finalizePending() call on that path.
         std::fprintf(stderr,
-            "[MECHBATCHER v1] event=late_register type=%p lod=%d\n",
+            "[MECHBATCHER v1] event=late_register type=%p lod=%d (staged_pending)\n",
             (void*)mechType, lod);
-        ++s_disallowedLateRegEvents;
-        return;
+        if (s_mechRestoreTrace)
+            std::fprintf(stderr,
+                "[MECHRESTORE v1] event=register type=%p lod=%d result=staged_pending finalized=1\n",
+                (void*)mechType, lod);
+        s_pendingLateTypes = true;
+        ++s_lateStagedCount;
+        // fall through -- stage like a normal pre-finalize registration
     }
 
     TG_TypeMultiShape* typeMulti = mechType->mechShape[lod];
@@ -364,6 +531,10 @@ void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int l
 
     const uint32_t typeLodIdx = (uint32_t)s_typeLodRecords.size();
     s_typeLodIndex[key] = typeLodIdx;
+    if (s_mechRestoreTrace)
+        std::fprintf(stderr,
+            "[MECHRESTORE v1] event=register type=%p lod=%d result=registered finalized=0 numBones=%d\n",
+            (void*)mechType, lod, numNodes);
 
     GpuMechTypeLodRecord rec{};
     rec.firstBoneIndex = 0;
@@ -552,13 +723,88 @@ void GpuMechBatcher::finalizeGeometry() {
     glSamplerParameteri(s_sampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glSamplerParameteri(s_sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-    s_stagingVbo.clear(); s_stagingVbo.shrink_to_fit();
-    s_stagingIbo.clear(); s_stagingIbo.shrink_to_fit();
+    // Staging RETAINED (not cleared/shrunk) so finalizePending() can
+    // append a late type and rebuild from the full original+late
+    // staging. See s_stagingVbo declaration. Cleared only at onMapLoad().
 
     s_geometryFinalized = true;
     std::fprintf(stderr,
         "[MECHBATCHER v1] event=finalize_ok types=%zu packets=%zu\n",
         s_typeLodRecords.size(), s_packets.size());
+}
+
+// VPL-#11 SP-logistics fix. Rebuild the immutable shared VBO/IBO/VAO so
+// types registered AFTER a prior finalizeGeometry() (campaign .fit
+// resume spawns the player force-group post-Mission::init-finalize, via
+// logistics.cpp addMover) become drawable. No-op unless a late type was
+// staged. SAFE because: (a) no frame renders between the late registers
+// and this call on the SP path (adversarial-review grep-closed:
+// GpuMechBatcher::flush only via renderLists from the frame loop, after
+// logistics.cpp mission->update()); (b) glBufferStorage buffers are
+// immutable so they MUST be deleted before recreate; (c) s_typeLodIndex
+// /s_typeLodRecords/s_packets are append-only and preserved here, so the
+// ~pre-finalize types keep stable indices and the retained staging holds
+// their original-offset vertices + the appended late ones.
+void GpuMechBatcher::finalizePending() {
+    if (!s_pendingLateTypes) return;
+
+    // VPL-#11 shadow-regression hardening (2026-05-16): finalizePending
+    // runs mid-mission-setup; save EVERY GL binding it perturbs and
+    // restore on exit so it is provably state-neutral to the rest of the
+    // frame (vulkan_prep_explicit_device_discipline). The mech advisor
+    // ruled GL-state OUT as the half-map-shadow cause (left-bound buffer
+    // is overwritten before first render), but this removes it as a
+    // variable definitively and is correct discipline regardless.
+    GLint prevVao = 0, prevArr = 0, prevElem = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING,        &prevVao);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING,        &prevArr);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING,&prevElem);
+
+    // Drain ring fences before deleting GL objects (defensive; mirrors
+    // onMapUnload). No draw can be in flight here per (a), so this is
+    // belt-and-suspenders, not load-bearing.
+    for (uint32_t i = 0; i < MECH_RING_FRAMES; ++i) {
+        if (s_fence[i]) {
+            glClientWaitSync(s_fence[i], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+            glDeleteSync(s_fence[i]);
+            s_fence[i] = 0;
+        }
+    }
+    // Delete the immutable shared geometry objects finalizeGeometry()
+    // glGen'd; it will recreate all four from the retained staging.
+    if (s_sharedVao) { glDeleteVertexArrays(1, &s_sharedVao); s_sharedVao = 0; }
+    if (s_sharedVbo) { glDeleteBuffers(1, &s_sharedVbo);      s_sharedVbo = 0; }
+    if (s_sharedIbo) { glDeleteBuffers(1, &s_sharedIbo);      s_sharedIbo = 0; }
+    if (s_sampler)   { glDeleteSamplers(1, &s_sampler);       s_sampler   = 0; }
+
+    const uint32_t lateAdded = s_lateStagedCount;
+    s_lateStagedCount   = 0;
+    s_pendingLateTypes  = false;
+    s_geometryFinalized = false;   // re-open the guard so finalizeGeometry runs
+    finalizeGeometry();            // rebuilds VBO/IBO/VAO from full retained staging
+
+    // The rebuild above repopulates s_packets with new indices/order, so
+    // the persisted shadow draw list (pre-rebuild globalPacketIdx values)
+    // is now stale. Clear it (mirrors onMapLoad); the next flush() will
+    // repopulate it consistently with the rebuilt s_packets. flushShadow()
+    // early-returns on empty s_lastDrawCalls until then.
+    s_lastDrawCalls.clear();
+    s_lastTotalInstances = 0;
+    s_lastTotalBones     = 0;
+
+    // Restore the bindings finalizeGeometry left dirty (it ends on
+    // glBindVertexArray(0) with GL_ARRAY_BUFFER still = the new s_sharedVbo).
+    glBindVertexArray((GLuint)prevVao);
+    glBindBuffer(GL_ARRAY_BUFFER,         (GLuint)prevArr);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElem);
+
+    std::fprintf(stderr,
+        "[MECHBATCHER v1] event=finalize_pending types=%zu lateAdded=%u rebuilt=%d\n",
+        s_typeLodRecords.size(), lateAdded, s_geometryFinalized ? 1 : 0);
+    if (getenv("MC2_MECH_RESTORE_TRACE") != nullptr)
+        std::fprintf(stderr,
+            "[MECHRESTORE v1] event=finalize_pending types=%zu lateAdded=%u rebuilt=%d\n",
+            s_typeLodRecords.size(), lateAdded, s_geometryFinalized ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -643,26 +889,18 @@ void GpuMechBatcher::flush() {
         s_mechLightTraceInit = true;
     }
     if (s_mechLightTrace) {
-        // LightsData UBO holds 64 ObjectLights entries (lighting.hglsl,
-        // raised from 32 in B1 after mc2_17 hit the cap). Must stay in
-        // lockstep with the GLSL declaration per
-        // memory/cpp_glsl_ubo_struct_lockstep.md. AMD typically returns
-        // zero on OOB UBO reads → flat-black mech; surface the event so
-        // soak ops know to raise the cap further if a denser mission
-        // fires this.
-        const uint32_t kUboLightSlotCap = 64u;  // matches lighting.hglsl LightsData[64]
+        // [LIGHTSSBO v1] RF4: LightsData is an unbounded SSBO now — there
+        // is NO 64-slot cap, so the old event=cache_full overflow alarm
+        // would false-fire on exactly the dense missions this conversion
+        // enables. Repurposed to a pure maxIdx observation (no cap, no
+        // disable). s_lightCacheFullFrames retired.
         uint32_t maxIdx = 0;
-        bool overCap = false;
         for (const auto& ps : s_pendingSubmits) {
             if (ps.desc.lightDataIndex > maxIdx) maxIdx = ps.desc.lightDataIndex;
-            if (ps.desc.lightDataIndex >= kUboLightSlotCap) overCap = true;
         }
-        if (overCap) {
-            ++s_lightCacheFullFrames;
-            std::fprintf(stderr,
-                "[MECHLIGHT v1] event=cache_full frames=%u submitted=%zu cap=%u maxIdx=%u\n",
-                s_lightCacheFullFrames, s_pendingSubmits.size(), kUboLightSlotCap, maxIdx);
-        }
+        std::fprintf(stderr,
+            "[LIGHTSSBO v1] event=mech_lightidx_max submitted=%zu maxIdx=%u (unbounded SSBO)\n",
+            s_pendingSubmits.size(), maxIdx);
     }
 
     if (!g_useGpuMechs || !s_geometryFinalized || s_programLoadFailed ||
@@ -1028,6 +1266,20 @@ void GpuMechBatcher::flush() {
             }
         }
     }
+
+    // Persist this frame's draw-call list and SSBO sizes for flushShadow()
+    // to consume on the NEXT frame (Option B: persisted drawCalls).
+    s_lastDrawCalls.clear();
+    s_lastDrawCalls.reserve(drawCalls.size());
+    for (const DrawCall& dc : drawCalls) {
+        ShadowDrawEntry e;
+        e.globalPacketIdx = dc.globalPacketIdx;
+        e.instanceBase    = dc.instanceBase;
+        e.instanceCount   = dc.instanceCount;
+        s_lastDrawCalls.push_back(e);
+    }
+    s_lastTotalInstances = totalInstances;
+    s_lastTotalBones     = totalBones;
 
     s_pendingSubmits.clear();
     s_eligibleActorsThisFrame = 0;

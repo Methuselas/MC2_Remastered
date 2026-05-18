@@ -14,11 +14,19 @@
 
 #include "gos_terrain_indirect.h"
 #include "gos_terrain_patch_stream.h"  // TerrainQuadRecipe
+#include "gpu_driven_common.h"         // gpu_driven::IsTerrainSolidEnabled
+#include "gos_terrain_lighting.h"      // gos_terrain_lighting::GetOutputSsbo()
+#include "gos_static_prop_killswitch.h" // gos_GetTerrainMVPMat4()
 
 #include <vector>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>  // memcpy
+#include <cmath>    // std::abs (clipPos ULP-bounded parity comparator)
+#include <chrono>   // MC2_RING_TRACE wait-time measurement (probe-only)
+#include <ctime>    // RING_SINK timestamp on probe-sink open
+
+#include <intrin.h>   // __rdtsc -- [LIGHT_COST_SPLIT v1]
 
 #include <GL/glew.h>
 
@@ -38,6 +46,16 @@
 // (defined in code/mechcmd2.cpp:180 and code/logmain.cpp:88 as
 // `char missionName[1024]`).  Used by BuildCementCatalogAtlas summary line.
 extern char missionName[];
+
+// [DEPTH_TRANSITION v1] CPU-water REAL screen-z sample - DEFINED at global
+// scope in mclib/quad.cpp (writer) and reset in mclib/terrain.cpp. Declared
+// here at GLOBAL file scope (NOT block-scope inside namespace
+// gos_terrain_indirect) so the dump's unqualified use binds the global
+// ::g_cpuWaterProbe* (a block-scope extern inside the namespace would bind
+// gos_terrain_indirect:: and not link - C++ [basic.link] innermost-ns rule).
+extern float              g_cpuWaterProbeZ;
+extern bool               g_cpuWaterProbeAny;
+extern unsigned long long g_cpuWaterProbeStamp;
 
 namespace gos_terrain_indirect {
 
@@ -78,6 +96,31 @@ bool IsTraceEnabled() {
     return s;
 }
 
+// Camera-windowed solid dispatch gate.  Default-ON (Approach A re-introduction
+// after 08bd3b2 hard-wired the dispatch to the FULL recipe range every frame,
+// camera-independent -> Terrain::IndirectDraw ~7.8ms zoomed-out on big maps).
+// Same idiom as IsEnabled() above: literal "0" => OFF == current HEAD
+// full-range behavior (the safety escape hatch); absent or anything else => ON.
+bool SolidWindowEnabled() {
+    static const bool s = []() {
+        const char* v = getenv("MC2_TERRAIN_SOLID_NARROW");
+        if (v && v[0] == '0' && v[1] == '\0') return false;
+        return true;
+    }();
+    return s;
+}
+
+// Parity-probe gate for the windowed dispatch (catastrophic-axis: a visible
+// quad dropped from the window).  Default-OFF; literal "1" arms it.  When off
+// the probe path does ZERO per-frame work (no ref build, no assert).
+bool IsSolidWindowParityEnabled() {
+    static const bool s = []() {
+        const char* v = getenv("MC2_TERRAIN_SOLID_WINDOW_PARITY");
+        return v && v[0] == '1' && v[1] == '\0';
+    }();
+    return s;
+}
+
 bool IsCostSplitEnabled() {
     static const bool s = []() {
         const char* v = getenv("MC2_TERRAIN_COST_SPLIT");
@@ -105,6 +148,13 @@ long long s_m2c_detail_emit_quads        = 0;
 long long s_m2d_overlay_emit_quads       = 0;
 long long s_indirect_overlay_packed_quads = 0;
 long long s_gos_push_overlay_calls       = 0;  // probe at producer body
+// Slice A — cement-overlay static-bake counters (mirror s_indirect_mine_drawn_cells
+// + the legacy_detail_overlay split rationale). decal_static_tris_drawn is the
+// substitutive analog of indirect_mine_drawn_cells; legacy_drawalpha_detail_quads
+// is the A2 dead-confirmation counter (the existing legacy_detail_overlay_quads
+// conflates mine/overlay/detail — this one is DRAWALPHA-detail-only).
+long long s_decal_static_tris_drawn      = 0;
+long long s_legacy_drawalpha_detail_quads = 0;
 }  // namespace
 
 namespace gos_terrain_indirect {
@@ -132,6 +182,11 @@ void      Counters_AddGosPushOverlayCall()       { ++s_gos_push_overlay_calls; }
 long long Counters_GetM2dOverlayEmitQuads()      { return s_m2d_overlay_emit_quads; }
 long long Counters_GetIndirectOverlayPackedQuads(){ return s_indirect_overlay_packed_quads; }
 long long Counters_GetGosPushOverlayCalls()      { return s_gos_push_overlay_calls; }
+// Slice A — cement-overlay static-bake counters.
+void      Counters_AddDecalStaticTrisDrawn(long long n) { s_decal_static_tris_drawn += n; }
+long long Counters_GetDecalStaticTrisDrawn()     { return s_decal_static_tris_drawn; }
+void      Counters_AddLegacyDrawAlphaDetailQuad(){ ++s_legacy_drawalpha_detail_quads; }
+long long Counters_GetLegacyDrawAlphaDetailQuads(){ return s_legacy_drawalpha_detail_quads; }
 
 // PR2c — Stage 4 default-on flip 2026-05-08.
 // Static-bake mine path retires ~932 µs/frame (mc2_01 baseline:
@@ -148,10 +203,18 @@ bool IsMineEnabled() {
 }
 
 // PR2b Stage 0b — env-gate readers.
+// 2026-05-17 Stage-6 default-ON flip (drawPass-retirement campaign endpoint):
+// the Slice-A decal static-bake + Slice-B drawPass-skip are substitutively
+// proven (drawPass self-time ~1.7ms -> ~20us armed, total frame dropped) and
+// raster-sheet-fixed + user-visual-confirmed. Mirror IsMineEnabled() EXACTLY:
+// literal "0" opts out (bisection / code-proof fallback escape hatch), any
+// other value INCLUDING UNSET opts in. Stock play now gets the retirement;
+// `MC2_TERRAIN_INDIRECT_OVERLAY=0` is the built-in revert.
 bool IsOverlayEnabled() {
     static const bool s = []() {
         const char* v = getenv("MC2_TERRAIN_INDIRECT_OVERLAY");
-        return v && v[0] == '1' && v[1] == '\0';
+        if (v && v[0] == '0' && v[1] == '\0') return false;
+        return true;
     }();
     return s;
 }
@@ -164,9 +227,19 @@ bool IsOverlayParityCheckEnabled() {
     return s;
 }
 
-// Stage 3b wires the real preflight latch; Stage 0b/1b/2b stub always-false
-// so gate-off sites compile and stay dormant until Stage 3b lands the draw.
-bool IsFrameOverlayArmed() { return false; }
+// Slice A — wire the real predicate (replaces the Stage 0b/1b/2b always-false
+// stub). Mirrors IsFrameMineArmed() == IsMineEnabled() EXACTLY: arming is
+// purely the env gate. The cement-overlay static bake (DrawDecalStatic) lazy-
+// builds on first armed draw and handles the empty/not-yet-built case
+// internally, so there is no readiness gate here (same bootstrap-cycle
+// reasoning as the IsFrameMineArmed comment further down).
+//
+// MC2_TERRAIN_INDIRECT_OVERLAY default ON since the 2026-05-17 Stage-6 flip
+// (IsOverlayEnabled: only literal "0" opts out): unset => IsFrameOverlay
+// Armed()==true => Slice-A decal static-bake is the producer and Slice-B
+// skips the drawPass per-quad loop. `MC2_TERRAIN_INDIRECT_OVERLAY=0` reverts
+// to the legacy M2d per-quad emit (the code-proof fallback).
+bool IsFrameOverlayArmed() { return IsOverlayEnabled(); }
 
 // IsFrameMineArmed is defined further down (after Stage 1c's
 // g_mineTextureArrayReady storage). Forward decl is in the header.
@@ -202,6 +275,53 @@ long long s_visibilityCheckNanosTotal   = 0;  // 1A-alt Slice 0 follow-up #2
 int       s_costSplitFramesObserved     = 0;
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// [LIGHT_COST_SPLIT v1] -- RDTSC, distinct gate. See header rationale.
+// ---------------------------------------------------------------------------
+namespace {
+    bool                g_lcsInit   = false;
+    bool                g_lcsOn     = false;
+    unsigned long long  g_lcsC2Cyc  = 0, g_lcsC6Cyc = 0, g_lcsC5Cyc = 0;
+    unsigned long long  g_lcsC2Call = 0, g_lcsC6Call = 0, g_lcsC5Call = 0;
+    unsigned long long  g_lcsFrames = 0;
+}  // namespace
+
+namespace gos_terrain_indirect {
+
+bool IsLightCostSplitEnabled() {
+    if (!g_lcsInit) {                       // cache once -- getenv per-call is slow
+        g_lcsOn   = (getenv("MC2_LIGHT_COST_SPLIT") != nullptr);
+        g_lcsInit = true;
+    }
+    return g_lcsOn;
+}
+
+void LightCostSplit_AddC2DirectCycles(unsigned long long c)  { g_lcsC2Cyc  += c; }
+void LightCostSplit_AddC6ResubmitCycles(unsigned long long c){ g_lcsC6Cyc  += c; }
+void LightCostSplit_AddC5PerActorCycles(unsigned long long c){ g_lcsC5Cyc  += c; }
+void LightCostSplit_AddC2DirectCall()                        { ++g_lcsC2Call; }
+void LightCostSplit_AddC6ResubmitCall()                      { ++g_lcsC6Call; }
+void LightCostSplit_AddC5PerActorCall()                      { ++g_lcsC5Call; }
+
+void LightCostSplit_RollFrameAndMaybeEmit() {
+    if (!IsLightCostSplitEnabled()) return;
+    ++g_lcsFrames;
+    if (g_lcsFrames % 600ULL != 0ULL) return;
+    const double f = (double)600.0;
+    fprintf(stderr,
+        "[LIGHT_COST_SPLIT v1] event=summary frames=600 "
+        "c2_cyc_per_frame=%.0f c2_calls_per_frame=%.1f "
+        "c6_cyc_per_frame=%.0f c6_calls_per_frame=%.1f "
+        "c5_cyc_per_frame=%.0f c5_calls_per_frame=%.1f\n",
+        (double)g_lcsC2Cyc/f, (double)g_lcsC2Call/f,
+        (double)g_lcsC6Cyc/f, (double)g_lcsC6Call/f,
+        (double)g_lcsC5Cyc/f, (double)g_lcsC5Call/f);
+    g_lcsC2Cyc=g_lcsC6Cyc=g_lcsC5Cyc=0;
+    g_lcsC2Call=g_lcsC6Call=g_lcsC5Call=0;
+}
+
+}  // namespace gos_terrain_indirect
+
 namespace gos_terrain_indirect {
 
 void CostSplit_AddSolidNanos(long long n)         { s_solidBranchNanosThisFrame  += n; }
@@ -217,7 +337,9 @@ void CostSplit_AddCacheResidentNanos(long long n) { s_cacheResidentNanosThisFram
 void CostSplit_AddVisibilityCheckNanos(long long n) { s_visibilityCheckNanosThisFrame += n; }
 
 void CostSplit_RollFrame() {
-    if (!IsCostSplitEnabled()) return;
+    LightCostSplit_RollFrameAndMaybeEmit();   // [LIGHT_COST_SPLIT v1] -- MUST be
+                                              // above the next line; self-gates.
+    if (!IsCostSplitEnabled()) return;        // existing MC2_TERRAIN_COST_SPLIT gate
     s_solidBranchNanosTotal       += s_solidBranchNanosThisFrame;
     s_detailOverlayNanosTotal     += s_detailOverlayNanosThisFrame;
     s_mineEnqueueNanosTotal       += s_mineEnqueueNanosThisFrame;
@@ -410,18 +532,36 @@ namespace {
 // Sized mapSide² when built; cleared on ResetDenseRecipe.
 std::vector<TerrainQuadRecipe> g_denseRecipes;
 std::vector<bool>              g_denseRecipeDirty;
+
+// ---------------------------------------------------------------------------
+// Camera-windowed solid dispatch (Approach A: GPU windowed-index buffer).
+// Structural twin of WaterStream's narrow path (gos_terrain_water_stream.cpp
+// BuildQuadWindowSSBO / g_quadWindowSsbo / g_quadWindowSsboCapacity).  std430
+// plain uint[] (4 B stride): each entry is a recipe index (= top-left
+// vertexNum).
+//
+// LIFECYCLE (LAG-FREE): terrain.cpp calls BeginFrameSolidWindow() then fills
+// g_solidWindowStaging in the SLIM LOOP (Terrain::geometry slimReduce), which
+// runs BEFORE gos_terrain_indirect::ComputeDispatch() consumes it later in
+// the SAME geometry() call.  Frame N's dispatch consumes frame N's window —
+// no 1-frame lag, so a moving camera cannot transiently vanish edge terrain.
+// Declared here (not with the other Stage-3 GLuint state) so the per-mission
+// ResetDenseRecipe() below can clear the staging + high-water mark (MAJOR-1).
+std::vector<uint32_t> g_solidWindowStaging;
+GLuint   g_solidQuadWindowSsbo     = 0;   // per-frame: recipe indices in camera window
+uint32_t g_solidQuadWindowCapacity = 0;   // CPU-side mirror of allocated size (bytes); NO readback
+uint32_t g_solidWindowMaxSeen      = 0;   // high-water mark for reserve sizing
+
 bool                           g_denseRecipeAnyDirty = false;
 GLuint                         g_recipeSSBO          = 0;
 int32_t                        g_recipeMapSide       = 0;
 bool                           g_recipeReady         = false;
 
-// Slice B4 Stage 1b — parity shadow mask. Set by PackThinRecordsForFrame() each
-// time a quad is successfully packed (bit index = vn0 = corner-0 vertexNum).
-// Read by gos_terrain_mask_dispatch::DrawMaskSolid() comparator.
-// Sized at worst-case 120×120 = 14,400 quads → ceil(14400/32) = 450 uint32s,
-// matching gos_terrain_mask_dispatch::kMaskWords.
-static constexpr int32_t kParityMaskWords = 450;
-static uint32_t s_packParityMask[kParityMaskWords] = {0};
+// VPL parity-infra retirement (cpu-pack-retirement plan §7 OQ-2, full
+// delete): s_packParityMask / kParityMaskWords removed. The last consumer
+// (gos_terrain_mask_dispatch accessor read) was retired in Step 4 (2e11617);
+// the txmmgr ComputeDispatchParity_Check caller is removed in this same
+// commit. See memory/mc_texture_manager_dual_queue_legacy_retirement_debt.md.
 
 // Mission-latch for trace reset
 static bool s_firstDrawPrintedThisMission = false;
@@ -535,8 +675,14 @@ void buildRecipeSlot(int32_t vn, TerrainQuadRecipe& out) {
                 maxU = entry->uvData.maxU;
                 maxV = entry->uvData.maxV;
             }
+            // Bake terrain texture nodeId into _wp2 for GPU-direct dispatch.
+            // _wp3 (cementWord) is baked in PopulateRecipeCementWords() after
+            // BuildCementCatalogAtlas() because g_cementLayerIndexBySlot isn't
+            // ready yet at buildRecipeSlot() time.
+            const uint32_t nodeId = (uint32_t)entry->terrainHandle;
+            memcpy(&out._wp2, &nodeId, 4);
         }
-        // If entry is NULL or !isValid(): normal after setTerrain; use defaults.
+        // If entry is NULL or !isValid(): _wp2 remains 0 → GPU skips quad.
     }
 
     out.minU = minU; out.minV = minV; out.maxU = maxU; out.maxV = maxV;
@@ -551,7 +697,17 @@ void buildRecipeSlot(int32_t vn, TerrainQuadRecipe& out) {
         const uint32_t tpacked = m0 | (m1 << 8) | (m2 << 16) | (m3 << 24);
         memcpy(&out._wp0, &tpacked, 4);
     }
+
+    // NOTE: _wp3 (cement word) is NOT baked here.  Reasons:
+    //   * First-init from BuildDenseRecipe: g_cementLayerIndexBySlot is empty
+    //     (BuildCementCatalogAtlas hasn't run yet) — PopulateRecipeCementWords
+    //     bakes it post-atlas-build.
+    //   * Later callers (InvalidateRecipeForVertexNum / InvalidateAllRecipes):
+    //     they MUST re-bake cement after calling buildRecipeSlot, otherwise
+    //     out._wp3 = 0.f above silently wipes the cement layer for every
+    //     subsequent FlushDirtyRecipeSlotsToGPU upload.
 }
+
 
 }  // anonymous namespace
 
@@ -615,6 +771,69 @@ static uint16_t g_cementLayerIndexByNodeIdx[MC_MAXTEXTURES];
 // Sized MC_MAX_TERRAIN_TXMS = 3000 (terrtxm.h:34) — the textures[] cap.
 // 0xFFFF = "not cement / not in atlas".
 static uint16_t g_cementLayerIndexBySlot[MC_MAX_TERRAIN_TXMS];
+
+// ---------------------------------------------------------------------------
+// PopulateRecipeCementWords — bake cementWord into recipe._wp3 for every slot.
+// Must be called AFTER BuildCementCatalogAtlas() because g_cementLayerIndexBySlot
+// is not populated until that function runs.
+// Marks all modified slots dirty so FlushDirtyRecipeSlotsToGPU uploads them.
+// ---------------------------------------------------------------------------
+static void PopulateRecipeCementWords() {
+    if (!Terrain::mapData) return;
+    const long mapSide = Terrain::realVerticesMapSide;
+    if (mapSide <= 0) return;
+    const size_t N = g_denseRecipes.size();
+    constexpr uint32_t kCementLayerValidBit = 0x80000000u;
+
+    long cementQuadCount = 0;
+    for (size_t vn = 0; vn < N; ++vn) {
+        const long mx = (long)vn % mapSide;
+        const long my = (long)vn / mapSide;
+        if (mx >= mapSide - 1 || my >= mapSide - 1) continue;
+
+        uint32_t cementWord = 0u;
+        if (g_cementLayerMapReady) {
+            const DWORD texData = Terrain::mapData->getTexture(my, mx);
+            const DWORD slot    = texData & 0xFFFFu;
+            if (slot < (DWORD)MC_MAX_TERRAIN_TXMS) {
+                const uint16_t idx = g_cementLayerIndexBySlot[slot];
+                if (idx != 0xFFFFu) {
+                    cementWord = kCementLayerValidBit | ((uint32_t)idx & 0xFFFFu);
+                    ++cementQuadCount;
+                }
+            }
+        }
+        memcpy(&g_denseRecipes[vn]._wp3, &cementWord, 4);
+        g_denseRecipeDirty[vn]  = true;
+    }
+    g_denseRecipeAnyDirty = true;
+    printf("[CEMENT_ATLAS v1] event=cement_words_baked cement_quads=%ld total_vn=%zu\n",
+           cementQuadCount, N);
+    fflush(stdout);
+}
+
+// ---------------------------------------------------------------------------
+// CollectUniqueNodeIds — build list of unique terrain texture nodeIds from
+// the baked _wp2 fields. Called once per mission after recipes are fully
+// populated. Used by UploadTerrainHandleLUT() to resolve handles per frame
+// without iterating the full quadList.
+// ---------------------------------------------------------------------------
+static std::vector<uint32_t> g_uniqueTerrainNodeIds;
+
+static void CollectUniqueNodeIds() {
+    g_uniqueTerrainNodeIds.clear();
+    static bool seen[MC_MAXTEXTURES];
+    memset(seen, 0, sizeof(seen));
+    for (const TerrainQuadRecipe& rec : g_denseRecipes) {
+        uint32_t nodeId;
+        memcpy(&nodeId, &rec._wp2, 4);
+        if (nodeId == 0 || nodeId >= (uint32_t)MC_MAXTEXTURES) continue;
+        if (!seen[nodeId]) {
+            seen[nodeId] = true;
+            g_uniqueTerrainNodeIds.push_back(nodeId);
+        }
+    }
+}
 
 // Per-frame counter — incremented when the packer sees a quad whose
 // q.terrainHandle is non-zero AND maps to no cement layer.  A non-zero count
@@ -771,18 +990,11 @@ void BuildCementCatalogAtlas() {
         fflush(stdout);
     }
 
-    // Memory blowup guard: if true cement count > 1024, skip atlas alloc
-    // entirely (diag-only run).  Tier1 expected <300 per plan; this is
-    // a safety net while the diag is in tree.
-    if (diagTotal > 1024) {
-        if (traceOn()) {
-            printf("[CEMENT_DIAG] atlas_alloc_skipped diagTotal=%ld exceeds 1024 cap\n", diagTotal);
-            fflush(stdout);
-        }
-        return;
-    }
-
     const int N = (int)cementNodeIndices.size();
+    // Always-on summary — not trace-gated so the count is visible without MC2_TERRAIN_INDIRECT_TRACE.
+    printf("[CEMENT_ATLAS v1] event=build_result N=%d diagTotal=%ld mission=%s\n",
+           N, diagTotal, (::missionName[0] ? ::missionName : "unknown"));
+    fflush(stdout);
     if (N == 0) {
         if (traceOn()) printf("[TERRAIN_INDIRECT v1] event=cement_atlas_skip reason=no_cement_tiles count=0\n");
         return;
@@ -915,14 +1127,58 @@ void BuildDenseRecipe() {
         buildRecipeSlot(vn, g_denseRecipes[vn]);
     }
 
-    // Full GPU upload on mission load.
+    // Upload the merged colormap atlas for the indirect draw bridge.
+    // Must run after recipe build so terrainTextures2 is ready.
+    BuildColormapAtlas();
+
+    // Build cement catalog atlas via GPU readback — populates g_cementLayerIndexBySlot.
+    BuildCementCatalogAtlas();
+
+    // Bake cementWord into _wp3 now that g_cementLayerIndexBySlot is ready.
+    // Must run BEFORE glBufferData so the cement words are included in the initial
+    // GPU upload and don't require a FlushDirtyRecipeSlotsToGPU on frame 1.
+    PopulateRecipeCementWords();
+
+    // Full GPU upload on mission load — includes _wp3 cement words from above.
     if (g_recipeSSBO == 0) glGenBuffers(1, &g_recipeSSBO);
+    // Pre-upload audit: dumps how many recipes have a non-zero _wp3 (i.e.,
+    // valid cement word) in the CPU memory glBufferData is about to upload.
+    // Gated on MC2_TERRAIN_INDIRECT_TRACE; left in-tree as a tripwire because
+    // a mismatch between this count and the subsequent `cement_words_baked`
+    // count (also gated) is the canary for cement-bake regressions like the
+    // InvalidateAllRecipes bug that motivated this audit.
+    if (traceOn()) {
+        long preUploadNonzero = 0;
+        uint32_t firstNonzeroWp3 = 0;
+        size_t firstNonzeroVn = (size_t)-1;
+        for (size_t vn = 0; vn < N; ++vn) {
+            uint32_t w;
+            memcpy(&w, &g_denseRecipes[vn]._wp3, 4);
+            if (w != 0u) {
+                ++preUploadNonzero;
+                if (firstNonzeroVn == (size_t)-1) {
+                    firstNonzeroVn = vn;
+                    firstNonzeroWp3 = w;
+                }
+            }
+        }
+        printf("[CEMENT_DIAG] event=pre_upload_wp3_audit "
+               "nonzero=%ld firstVn=%lld firstWp3=0x%08x sizeof_recipe=%zu wp3_offset=%zu\n",
+               preUploadNonzero, (long long)firstNonzeroVn, firstNonzeroWp3,
+               sizeof(TerrainQuadRecipe),
+               (size_t)((const char*)&g_denseRecipes[0]._wp3 - (const char*)&g_denseRecipes[0]));
+        fflush(stdout);
+    }
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_recipeSSBO);
     glBufferData(GL_SHADER_STORAGE_BUFFER,
                  (GLsizeiptr)(N * sizeof(TerrainQuadRecipe)),
                  g_denseRecipes.data(),
                  GL_DYNAMIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // Clear dirty flags — data already in GPU from glBufferData above.
+    g_denseRecipeDirty.assign(N, false);
+    g_denseRecipeAnyDirty = false;
 
     g_recipeReady = true;
 
@@ -934,13 +1190,8 @@ void BuildDenseRecipe() {
         fflush(stdout);
     }
 
-    // Upload the merged colormap atlas for the indirect draw bridge.
-    // Must run after recipe build so terrainTextures2 is ready.
-    BuildColormapAtlas();
-
-    // Build cement catalog atlas via GPU readback (textureData[0] is NULL in
-    // stock gameplay; see plan v2.1 §C1/B1).
-    BuildCementCatalogAtlas();
+    // Collect unique terrain texture nodeIds for per-frame LUT upload.
+    CollectUniqueNodeIds();
 }
 
 void ResetDenseRecipe() {
@@ -954,6 +1205,13 @@ void ResetDenseRecipe() {
 
     g_denseRecipes.clear();
     g_denseRecipeDirty.clear();
+    // MAJOR-1 (Approach A): the camera-window staging + its monotonic high-
+    // water mark are per-mission state — clear them here alongside the recipe
+    // reset.  Without this, g_solidWindowMaxSeen carries a previous (larger)
+    // map's mark into a smaller map's reserve, and stale staging contents
+    // could be uploaded on the first frame before the slim loop runs.
+    g_solidWindowStaging.clear();
+    g_solidWindowMaxSeen         = 0;
     g_denseRecipeAnyDirty        = false;
     g_recipeMapSide              = 0;
     g_recipeReady                = false;
@@ -971,6 +1229,8 @@ void ResetDenseRecipe() {
     g_atlasMapTopLeftX       = 0.f;
     g_atlasMapTopLeftY       = 0.f;
     g_atlasOneOverWorldUnits = 0.f;
+    // Clear stale nodeIds so the GPU path guard doesn't fire from a prior mission.
+    g_uniqueTerrainNodeIds.clear();
 
     // Cement catalog atlas teardown — mirror g_atlasGLTex pattern.
     if (g_cementAtlasGLTex != 0) {
@@ -1006,6 +1266,12 @@ void InvalidateRecipeForVertexNum(int32_t vn) {
     if (g_denseRecipes.empty()) return;
     if (vn < 0 || static_cast<size_t>(vn) >= g_denseRecipes.size()) return;
     buildRecipeSlot(vn, g_denseRecipes[vn]);
+    // buildRecipeSlot zeroes _wp3.  Re-bake cement words from the layer map
+    // so the next FlushDirtyRecipeSlotsToGPU doesn't upload a zeroed _wp3
+    // and nuke this quad's cement render.  PopulateRecipeCementWords is
+    // whole-grid; cheap (~10k simple iterations) and only fires on the rare
+    // invalidate events (shadow recalc, light-dir change, normal recompute).
+    PopulateRecipeCementWords();
     g_denseRecipeDirty[vn] = true;
     g_denseRecipeAnyDirty  = true;
     if (traceOn()) {
@@ -1022,6 +1288,11 @@ void InvalidateAllRecipes() {
         buildRecipeSlot((int32_t)vn, g_denseRecipes[vn]);
         g_denseRecipeDirty[vn] = true;
     }
+    // Re-bake cement words: buildRecipeSlot zeroed _wp3 on every slot above.
+    // Without this, FlushDirtyRecipeSlotsToGPU uploads zeroed _wp3 for all
+    // cement quads and the GPU compute shader's read of r.pos3.w returns 0,
+    // making cement pads render as bare colormap (the original cement bug).
+    PopulateRecipeCementWords();
     g_denseRecipeAnyDirty = true;
     if (traceOn()) {
         printf("[TERRAIN_INDIRECT v1] event=invalidate_all entries=%zu\n", N);
@@ -1244,12 +1515,12 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
 // tex_resolve — lazy per-frame memoization. Header includes txmmgr.h.
 #include "../../mclib/tex_resolve_table.h"
 
-// Include TERRAIN_DEPTH_FUDGE for the per-tri pz check.
-// Defined in quad.cpp as a local constant, re-stated here.
-// sync: quad.cpp:1832 uses `vertices[c]->pz + TERRAIN_DEPTH_FUDGE` with FUDGE=0.001f
-#ifndef TERRAIN_DEPTH_FUDGE
-static constexpr float TERRAIN_DEPTH_FUDGE = 0.001f;
-#endif
+// TERRAIN_DEPTH_FUDGE for the per-tri pz check: single source of truth is
+// mclib/terrain_depth_bias.h (was a re-stated local constexpr; the old
+// #ifndef guard defended against a quad.cpp MACRO collision that the
+// constexpr header eliminates). Consumer below uses it unqualified.
+#include "../../mclib/terrain_depth_bias.h"
+using mc2depth::TERRAIN_DEPTH_FUDGE;
 
 namespace {
 
@@ -1297,11 +1568,100 @@ static bool  s_resourcesAllocated = false;
 static bool  s_resourcesReady     = false;
 
 // ---------------------------------------------------------------------------
+// Phase C Stage 2 — SOLID GPU compute resources.
+// Lazy-allocated on first ComputeDispatch(); destroyed on ResetDenseRecipe.
+// ---------------------------------------------------------------------------
+static GLuint  g_solidComputeProgram    = 0;
+// Step 2b (VPL retirement): cmd-patch program retired.  Primary compute is
+// the sole writer of cmds[0].count via atomicAdd.  Bucket-header SSBO is
+// demoted behind MC2_BUCKET_HEADER_TRACE=1 (default-off) per plan
+// amendment C1; when off the SSBO is not allocated, not bound, not cleared,
+// and no diagnostic atomicAdds run in the shader.
+static GLuint  g_solidBucketHeaderSsbo  = 0;
+static GLuint  g_terrainHandleLutSSBO   = 0;
+// Camera-windowed solid dispatch (Approach A) state — DECLARED EARLY (next to
+// g_denseRecipes) so the per-mission reset in ResetDenseRecipe() can clear it
+// (MAJOR-1).  Definitions live near g_denseRecipes; see the comment there.
+static GLuint  g_thinCanarySSBO         = 0;   // probe 6: separate buffer, never bound by bridge
+// Probe 8: MVP fingerprint at compute dispatch time, read by bridge at draw time.
+static uint32_t g_dispatchMvpFp      = 0;
+static uint64_t g_dispatchMvpFrameIdx = 0;
+// Probe 8b: verification — also stash first 4 floats from compute-time MVP.
+// Bridge logs both sets on mismatch so we can see byte-level difference.
+static float    g_dispatchMvpFloats[4] = { 0, 0, 0, 0 };
+// Water-consistency fix (2026-05-17): full 16-float snapshot of the MVP
+// terrain-solid baked its Fix-B clipPos with THIS frame. The water compute
+// reads this (via gos_terrain_indirect_getDispatchMvp16) so the drawn water
+// is bit-consistent with the drawn terrain. [WATER_DEPTHPROBE v1] proved an
+// exact 1-frame divergence (terrain-solid stale vs water fresh) was the
+// shoreline recede/flicker/vanish root cause. ring_slot_state_must_travel_
+// with_slot.md. Unconditional 64 B/frame; written only when ComputeDispatch
+// actually runs (terrain-solid armed), so a consumer that gates on
+// IsFrameSolidArmed() always sees this-frame-fresh data.
+static float    g_dispatchMvp16[16] = { 0 };
+
+// Fix A (2026-05-14): per-ring-slot MVP stash for the intentional 1-frame
+// compute->bridge lag.  Compute writes thin records to slot S using MVP_X;
+// the bridge consumes slot S one frame later when terrain_mvp_ has rotated
+// to MVP_Y.  Without this snapshot the VS projects records with MVP_Y while
+// their pzOk gates assume MVP_X — producing the giant grey-banded terrain
+// triangle under fast camera rotation documented in
+// docs/superpowers/progress/2026-05-14-raster-triangle-handoff.md.
+// Both the GPU path (ComputeDispatch) and the CPU path (PackThinRecordsForFrame)
+// stash here for invariant uniformity, even though the CPU path is not lagged.
+//
+// VPL retirement step 9 (2026-05-15): DEMOTED behind MC2_RING_TRACE.  The VPL
+// body was deleted in step 8c-2 (commit 63c023f) and Fix B re-homed projection
+// into tr.clipPos[] (the thin VS no longer declares a terrainMVP uniform —
+// shaders/gos_terrain_thin.vert:56-61), so this per-slot MVP snapshot is no
+// longer load-bearing defense-in-depth.  Per the Debug-instrumentation rule
+// (demote-not-silently-delete; memory/debug_instrumentation_rule.md) the array
+// + the Probe 8 [RING_MVP_DELTA v1] snapshot/compare path are KEPT but gated:
+// when g_envRingTrace is false the writers below are skipped and the
+// gos_terrain_indirect_getRingSlotMvp() accessor returns nullptr, so the
+// snapshot does zero per-frame work.  Net cost when off: ~192 bytes of static
+// state.  Re-armable for any future temporal-misalignment regression via
+// MC2_RING_TRACE=1.  See docs/superpowers/plans/
+// 2026-05-14-vertex-project-loop-retirement.md §"Step 9" and
+// memory/ring_slot_state_must_travel_with_slot.md (Fix B is the surviving
+// instance of that rule; Fix A's snapshot is the retired mechanism).
+static const bool g_envRingTrace = (getenv("MC2_RING_TRACE") != nullptr);
+static float    g_thinSlotMVP[kThinRingFrames][16] = { { 0 } };
+static bool     g_thinSlotMVPValid[kThinRingFrames] = { false, false, false };
+
+// Cached uniform locations — populated once when programs are compiled.
+// Per-frame varying uniforms (u_windowCount, u_terrainMVP, u_alphaOverride)
+// are still uploaded every frame; only the locations themselves are cached.
+static GLint g_locSolidWC  = -1;   // u_windowCount   (per-frame)
+static GLint g_locSolidAO  = -1;   // u_alphaOverride (per-frame, may be absent)
+static GLint g_locSolidMVP = -1;   // u_terrainMVP    (per-frame)
+// Step 2b (VPL retirement): cmd-patch uniform-location caches retired
+// (g_locCmdVPE, g_locCmdCC removed) — cmd-patch program is no longer compiled.
+// u_bucketHeaderTrace gates the demoted bucket-header SSBO writes in the
+// primary compute shader (MC2_BUCKET_HEADER_TRACE).
+static GLint g_locSolidBHT = -1;   // u_bucketHeaderTrace (per-frame int gate)
+static GLint g_locSolidUW  = -1;   // u_useWindow (per-frame: 1=windowed, 0=full-range identity)
+
+
+// Flag: whether ComputeDispatch() ran the GPU path this frame.
+static bool s_solidGpuDispatchRanThisFrame = false;
+
+// ---------------------------------------------------------------------------
 // ResourcesReady() — lazy-allocate thin-record SSBO + indirect buffer.
 // Called from ComputePreflight; returns true once both are allocated.
 // ---------------------------------------------------------------------------
 static bool ResourcesReady() {
-    if (s_resourcesReady) return true;
+    if (s_resourcesReady) {
+        // Between-mission check: atlas is deleted by ResetDenseRecipe but
+        // s_resourcesReady isn't visible from that public function. Re-arm
+        // the lazy setup path so the atlas guard re-runs next mission.
+        if (g_atlasGLTex == 0) {
+            s_resourcesReady     = false;
+            s_resourcesAllocated = false;
+        } else {
+            return true;
+        }
+    }
     if (s_resourcesAllocated) return false;  // already tried and failed
 
     // Thin-record SSBO: triple-buffered, GL_STREAM_DRAW.
@@ -1326,9 +1686,22 @@ static bool ResourcesReady() {
     if (g_indirectCmdBuffer == 0) {
         glGenBuffers(1, &g_indirectCmdBuffer);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_indirectCmdBuffer);
+        // Step 2b (VPL retirement, C2): pre-initialize {count=0,
+        // instanceCount=1, first=0, baseInstance=0} once at allocation.
+        // The primary compute touches only cmds[0].count (via atomicAdd) so
+        // the other three fields must be correct at allocation.  Per-frame
+        // count clear is done in ComputeDispatch via glClearBufferSubData of
+        // the 4-byte count slot before the primary dispatch fires.
+        DrawArraysIndirectCommand initCmd[16];
+        for (size_t i = 0; i < 16; ++i) {
+            initCmd[i].count         = 0;
+            initCmd[i].instanceCount = 1;
+            initCmd[i].first         = 0;
+            initCmd[i].baseInstance  = 0;
+        }
         glBufferData(GL_DRAW_INDIRECT_BUFFER,
                      (GLsizeiptr)kIndirectCmdBufferBytes,
-                     nullptr, GL_STREAM_DRAW);
+                     initCmd, GL_STREAM_DRAW);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
         if (g_indirectCmdBuffer == 0) {
             if (traceOn()) {
@@ -1383,14 +1756,33 @@ static inline bool InMissionTransition() { return false; }
 //   4. Per-tri pz check (drives flags bits 1, 2)
 // ---------------------------------------------------------------------------
 static int PackThinRecordsForFrame() {
+    // VPL retirement step 1 (2026-05-14): CPU thin-record pack demoted behind
+    // MC2_TERRAIN_INDIRECT_CPU_FALLBACK. Default-off — the GPU compute path in
+    // shaders/gpu_driven_terrain_solid.comp is the sole projection authority
+    // post Fix-B (commit 005ebc7). The CPU body is retained as the GPU-arm-
+    // failure safety net per memory/stock_install_must_remain_playable.md;
+    // future plan retires the declaration itself once telemetry confirms the
+    // env-gate is never set in production. See
+    // docs/superpowers/plans/2026-05-14-cpu-pack-retirement.md §3.
+    static const bool s_cpuFallback =
+        (getenv("MC2_TERRAIN_INDIRECT_CPU_FALLBACK") != nullptr);
+    if (!s_cpuFallback) {
+        // One-shot demotion log so smoke artifacts capture the gate state.
+        static bool s_loggedDemote = false;
+        if (!s_loggedDemote) {
+            s_loggedDemote = true;
+            printf("[TERRAIN_INDIRECT v1] event=cpu_pack_demoted "
+                   "path=stock_solid gate=MC2_TERRAIN_INDIRECT_CPU_FALLBACK\n");
+            fflush(stdout);
+        }
+        return 0;  // no records this frame — indirect pipeline disarms
+    }
+
     ZoneScopedN("Terrain::ThinRecordPack");
 
     // Diagnostic Test 1 — reset per-frame cement classification counters.
     g_cementMappedThisFrame       = 0;
     g_concreteAllCornersThisFrame = 0;
-
-    // Slice B4 Stage 1b — clear parity mask for this frame.
-    memset(s_packParityMask, 0, sizeof(s_packParityMask));
 
     if (!land) return 0;
     const long total          = land->getNumQuads();
@@ -1404,6 +1796,19 @@ static int PackThinRecordsForFrame() {
                          GL_SYNC_FLUSH_COMMANDS_BIT, 10000000u /* 10ms */);
         glDeleteSync(g_thinRingFences[g_thinRingSlot]);
         g_thinRingFences[g_thinRingSlot] = 0;
+    }
+
+    // Fix A: snapshot current MVP for this slot.  The CPU pack path is not
+    // frame-lagged (records are produced and drawn in the same frame), so this
+    // stash equals the bridge's terrain_mvp_ at draw time — the override is a
+    // no-op for CPU-packed slots.  Stash anyway to keep the "every slot has
+    // a valid MVP" invariant uniform across CPU and GPU paths.
+    // Step 9 (2026-05-15): demoted behind MC2_RING_TRACE — skipped by default.
+    if (g_envRingTrace) {
+        if (const float* curMvp = gos_GetTerrainMVPMat4()) {
+            memcpy(g_thinSlotMVP[g_thinRingSlot], curMvp, sizeof(float) * 16);
+            g_thinSlotMVPValid[g_thinRingSlot] = true;
+        }
     }
 
     // Stage area: up to kMaxThinRecords records into a stack-local shadow.
@@ -1533,20 +1938,46 @@ static int PackThinRecordsForFrame() {
         //     const uint16_t idx2 = g_cementLayerIndexByNodeIdx[nodeIdx];
         //     ...
         // }
-        tr._pad0         = cementWord;
+        tr.cementWord    = cementWord;
         tr.lightRGB0     = lightRGBc(0);
         tr.lightRGB1     = lightRGBc(1);
         tr.lightRGB2     = lightRGBc(2);
         tr.lightRGB3     = lightRGBc(3);
 
+        // Fix B 2026-05-14: per-corner clip-space positions from the recipe's
+        // worldPos0..3 multiplied by the current terrainMVP.  Mirrors the
+        // compute shader's projectClip() at gpu_driven_terrain_solid.comp:174.
+        //
+        // Matrix convention (memory/terrain_mvp_gl_false.md): terrain_mvp_ is
+        // stored row-major on CPU and uploaded with GL_FALSE.  GLSL interprets
+        // bytes as column-major, so GPU's `m * v` reads as a dot of v with the
+        // i-th *column* of our row-major storage — i.e. out[i] = sum_j m[j*4+i]
+        // * v[j].  CPU mirror uses the same formula so values match modulo
+        // FMA-fusion / rounding-mode drift (parity comparator allows ~4 ULP).
+        const float* mvp = gos_GetTerrainMVPMat4();
+        if (mvp) {
+            const float* wp[4] = {
+                &rec->wx0, &rec->wx1, &rec->wx2, &rec->wx3
+            };
+            for (int c = 0; c < 4; ++c) {
+                const float vx = wp[c][0], vy = wp[c][1], vz = wp[c][2];
+                for (int i = 0; i < 4; ++i) {
+                    tr.clipPos[c * 4 + i] =
+                        mvp[0 * 4 + i] * vx +
+                        mvp[1 * 4 + i] * vy +
+                        mvp[2 * 4 + i] * vz +
+                        mvp[3 * 4 + i];
+                }
+            }
+        } else {
+            // No MVP this frame (impossible during normal play, defensive).
+            // Zero clipPos so VS produces a degenerate triangle behind near
+            // clip — same fail-safe shape as the pzOk culled path in the VS.
+            for (int k = 0; k < 16; ++k) tr.clipPos[k] = 0.0f;
+        }
+
         gos_terrain_indirect::Counters_AddIndirectSolidPackedQuad();
         ++packed;
-
-        // Slice B4 Stage 1b — record this quad's vn0 in the parity mask so
-        // gos_terrain_mask_dispatch can compare against the SOLID mask.
-        if (vn0 < (kParityMaskWords * 32)) {
-            s_packParityMask[vn0 >> 5] |= (1u << (vn0 & 31));
-        }
     }
 
     if (packed == 0) return 0;
@@ -1596,6 +2027,242 @@ static int BuildIndirectCommands(int thinCount) {
     return 1;
 }
 
+// ---------------------------------------------------------------------------
+// UploadTerrainHandleLUT — Phase C Stage 2 (GPU-direct replacement for
+// BuildSolidQuadWindowSSBO). Builds a uint[MC_MAXTEXTURES] LUT mapping
+// nodeId → resolved gosHandle (tex_resolve result), then uploads it as a
+// 16KB SSBO on binding 2. The GPU shader reads nodeId from recipe._wp2 and
+// indexes into this LUT — eliminating the per-frame quadList CPU walk.
+// Returns g_denseRecipes.size() as the GPU dispatch count (full recipe range).
+// ---------------------------------------------------------------------------
+static uint32_t UploadTerrainHandleLUT() {
+    constexpr GLsizeiptr kLutBytes = MC_MAXTEXTURES * sizeof(uint32_t);
+
+    if (g_terrainHandleLutSSBO == 0) {
+        glGenBuffers(1, &g_terrainHandleLutSSBO);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_terrainHandleLutSSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, kLutBytes, nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // Resolve unique nodeIds from the mission-static set — typically 20-50
+    // entries regardless of camera position. O(uniqueTextures), not O(quads).
+    static uint32_t lut[MC_MAXTEXTURES];
+    memset(lut, 0, sizeof(lut));
+    for (uint32_t nodeId : g_uniqueTerrainNodeIds) {
+        if (nodeId > 0u && nodeId < (uint32_t)MC_MAXTEXTURES) {
+            const uint32_t th = static_cast<uint32_t>(tex_resolve((DWORD)nodeId));
+            lut[nodeId] = (th == 0u || th == 0xffffffffu) ? 0u : th;
+        }
+    }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_terrainHandleLutSSBO);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, kLutBytes, lut);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    {
+        static bool s_lutFirstPrinted = false;
+        if (!s_lutFirstPrinted) {
+            s_lutFirstPrinted = true;
+            int nonZero = 0;
+            for (uint32_t nodeId : g_uniqueTerrainNodeIds) {
+                if (nodeId > 0u && nodeId < (uint32_t)MC_MAXTEXTURES && lut[nodeId] != 0u)
+                    ++nonZero;
+            }
+            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=lut_upload unique=%d nonzero=%d\n",
+                    (int)g_uniqueTerrainNodeIds.size(), nonZero);
+            fflush(stderr);
+        }
+    }
+
+    return (uint32_t)g_denseRecipes.size();
+}
+
+// ---------------------------------------------------------------------------
+// BuildSolidQuadWindowSSBO — Approach A.  Structural twin of WaterStream's
+// BuildQuadWindowSSBO (gos_terrain_water_stream.cpp:1109).  Uploads the
+// per-frame camera-windowed list of recipe indices collected by
+// AppendSolidWindowCandidate() into a std430 plain-uint[] SSBO (4 B stride,
+// NOT the old 16 B SolidQuadWindowEntry — no struct, no static_assert
+// lockstep; the GPU re-derives thSlot/cementWord/uvMode from the recipe).
+//
+// Lazy-grow capped at kMaxThinRecords using the CPU-side capacity mirror
+// (g_solidQuadWindowCapacity) — NO glGetBufferSubData / glMapBuffer.
+//
+// Return value == GPU dispatch count:
+//   * narrow ON  && staging non-empty: window count; *outUseWindow = 1.
+//   * narrow OFF || staging empty:     full g_denseRecipes.size() fallback;
+//     *outUseWindow = 0 (shader uses identity vn0 = id == current HEAD path).
+// The empty-on-armed-frame case (e.g. the 1-frame lag's very first armed
+// frame, before the loop has run once) falls back to full-range so terrain
+// is never blank.
+static uint32_t BuildSolidQuadWindowSSBO(int* outUseWindow) {
+    const bool narrowOn = gos_terrain_indirect::SolidWindowEnabled();
+
+    if (!narrowOn || g_solidWindowStaging.empty()) {
+        if (outUseWindow) *outUseWindow = 0;
+        return (uint32_t)g_denseRecipes.size();
+    }
+
+    // Cap the window at the thin-record capacity — the GPU output array is
+    // kMaxThinRecords entries; dispatching more invocations than that cannot
+    // admit more records, and over-large windows waste GPU threads.
+    uint32_t windowCount = (uint32_t)g_solidWindowStaging.size();
+    if (windowCount > (uint32_t)kMaxThinRecords)
+        windowCount = (uint32_t)kMaxThinRecords;
+    if (windowCount == 0) {
+        if (outUseWindow) *outUseWindow = 0;
+        return (uint32_t)g_denseRecipes.size();
+    }
+
+    const uint32_t bytesNeeded = windowCount * (uint32_t)sizeof(uint32_t);
+
+    // Lazy-grow via the CPU-side capacity mirror (no GPU round-trip).  Cap the
+    // allocation at kMaxThinRecords entries (the hard upper bound).
+    if (g_solidQuadWindowSsbo != 0 && g_solidQuadWindowCapacity < bytesNeeded) {
+        glDeleteBuffers(1, &g_solidQuadWindowSsbo);
+        g_solidQuadWindowSsbo     = 0;
+        g_solidQuadWindowCapacity = 0;
+    }
+    if (g_solidQuadWindowSsbo == 0) {
+        const uint32_t cap =
+            (uint32_t)(kMaxThinRecords * sizeof(uint32_t));
+        glGenBuffers(1, &g_solidQuadWindowSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidQuadWindowSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)cap, nullptr,
+                     GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        g_solidQuadWindowCapacity = cap;
+    }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidQuadWindowSsbo);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)bytesNeeded,
+                    g_solidWindowStaging.data());
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // -----------------------------------------------------------------------
+    // PARITY PROBE (catastrophic-axis).  Active ONLY under
+    // MC2_TERRAIN_SOLID_WINDOW_PARITY=1 — zero hot cost when off.
+    //
+    // Non-tautological by construction: `win` is built from
+    // g_solidWindowStaging (produced by terrain.cpp's slim-loop predicate:
+    // clipInfo cull-active + RecipeForVertexNum).  `ref` is built by an
+    // INDEPENDENT producer here — iterating g_denseRecipes indices and
+    // applying: Terrain::getObjVertexActive(vn) (the slim loop's dilated
+    // visible-cull superset, the SAME source-of-truth the corrected collector
+    // rides) AND the GPU shader keep predicate MINUS pz (edge-skip +
+    // recipe-resolvable + _wp2!=0 + LUT-resolvable-or-cement).  Two different
+    // producers (g_denseRecipes/objVertexActive vs g_solidWindowStaging), two
+    // different data sources — ref does NOT read g_solidWindowStaging.
+    //
+    // Catastrophic direction only: a recipe that is cull-active AND the GPU
+    // WOULD keep (ref-member) AND that is a live drawable quad
+    // (RecipeForVertexNum non-null) but is ABSENT from `win` == a dropped
+    // visible quad == terrain-vanish.  With identical source-of-truth and
+    // same-frame consumption, dropped MUST be 0 steady-state AND under camera
+    // motion; any nonzero is logged (gated stderr, NOT assert — assert is a
+    // no-op under RelWithDebInfo's /DNDEBUG).
+    if (gos_terrain_indirect::IsSolidWindowParityEnabled()) {
+        const long mapSide = Terrain::realVerticesMapSide;
+        const size_t N = g_denseRecipes.size();
+
+        // win membership set (recipe idx -> present this frame's window).
+        static std::vector<uint8_t> winSet;
+        winSet.assign(N, 0u);
+        for (uint32_t i = 0; i < windowCount; ++i) {
+            const uint32_t v = g_solidWindowStaging[i];
+            if (v < (uint32_t)N) winSet[v] = 1u;
+        }
+
+        uint64_t refVisible = 0;
+        uint64_t dropped    = 0;
+        if (mapSide > 0) {
+            for (size_t vn = 0; vn < N; ++vn) {
+                const long mx = (long)vn % mapSide;
+                const long my = (long)vn / mapSide;
+                // GPU edge-skip (gpu_driven_terrain_solid.comp:244).
+                if (mx >= mapSide - 1 || my >= mapSide - 1) continue;
+
+                // MAJOR-2: ref must add the cull-active term so it matches the
+                // corrected (slim-loop / dilated-cull) collector's source-of-
+                // truth.  Without this the probe would false-alarm on every
+                // off-window-but-GPU-keepable recipe.  This is the SAME
+                // objVertexActive[] the slim loop writes via
+                // setObjVertexActive(rv->vertexNum,true) — read independently
+                // here, NOT via g_solidWindowStaging.
+                if (!Terrain::getObjVertexActive((long)vn)) continue;
+
+                const TerrainQuadRecipe& rec = g_denseRecipes[vn];
+                uint32_t nodeId = 0u, cementWord = 0u;
+                memcpy(&nodeId,     &rec._wp2, 4);
+                memcpy(&cementWord, &rec._wp3, 4);
+                const bool cementQuad = (cementWord & 0x80000000u) != 0u;
+
+                // GPU thSlot gate (comp:285-294): non-cement quads need a
+                // resolvable nodeId; cement quads pass regardless.
+                bool gpuKeep;
+                if (nodeId == 0u || nodeId >= (uint32_t)MC_MAXTEXTURES) {
+                    gpuKeep = cementQuad;
+                } else {
+                    const uint32_t th =
+                        static_cast<uint32_t>(tex_resolve((DWORD)nodeId));
+                    const bool resolvable =
+                        (th != 0u && th != 0xffffffffu);
+                    gpuKeep = resolvable || cementQuad;
+                }
+                if (!gpuKeep) continue;
+
+                // Restrict to quads that are actually live drawables this
+                // frame (a recipe slot with no current quad cannot vanish).
+                if (!gos_terrain_indirect::RecipeForVertexNum((int32_t)vn)) continue;
+
+                ++refVisible;
+                if (vn < N && winSet[vn] == 0u) ++dropped;
+            }
+        }
+
+        static int      s_parityFrame    = 0;
+        static uint32_t s_parityMaxWin   = 0;
+        static uint64_t s_parityTotDrop  = 0;
+        const int frame = s_parityFrame++;
+        if (windowCount > s_parityMaxWin) s_parityMaxWin = windowCount;
+        s_parityTotDrop += dropped;
+
+        if (frame < 64) {
+            fprintf(stderr,
+                "[TERRAIN_SOLID_WINDOW v1] event=frame frame=%d window=%u "
+                "ref_visible=%u dropped=%u\n",
+                frame, windowCount, (unsigned)refVisible,
+                (unsigned)dropped);
+            fflush(stderr);
+        }
+        if (frame > 0 && (frame % 600) == 0) {
+            fprintf(stderr,
+                "[TERRAIN_SOLID_WINDOW v1] event=summary frames=%u "
+                "max_window=%u total_dropped=%llu\n",
+                (unsigned)frame, s_parityMaxWin,
+                (unsigned long long)s_parityTotDrop);
+            fflush(stderr);
+        }
+        // CRITICAL-1: catastrophic-axis tripwire — gated unconditional stderr,
+        // NOT assert.  The project mandates --config RelWithDebInfo, under
+        // which MSVC injects /DNDEBUG (CMakeLists does not strip it), so
+        // assert() compiles to a no-op and a dropped visible quad would pass
+        // silently.  fprintf always fires regardless of NDEBUG.
+        if (dropped) {
+            fprintf(stderr,
+                "[TERRAIN_SOLID_WINDOW v1] event=catastrophic dropped=%llu "
+                "frame=%d\n",
+                (unsigned long long)dropped, frame);
+            fflush(stderr);
+        }
+        (void)dropped;
+    }
+
+    if (outUseWindow) *outUseWindow = 1;
+    return windowCount;
+}
+
 }  // anonymous namespace (Stage 3 helpers)
 
 namespace gos_terrain_indirect {
@@ -1609,6 +2276,10 @@ bool IsFrameSolidArmed() {
 }
 
 void ForceDisableArmingForProcess() {
+    if (!s_processArmingDisabled) {
+        fprintf(stderr, "[TERRAIN_INDIRECT v1] event=arming_disabled_process_sticky\n");
+        fflush(stderr);
+    }
     s_processArmingDisabled = true;
 }
 
@@ -1616,23 +2287,127 @@ void BeginFrame() {
     // Reset armed flag unconditionally every frame so mech-bay / menu frames
     // don't inherit the armed state from the last gameplay frame.
     // ComputePreflight() re-arms when terrain is actually present.
+    static int s_beginFrameCount = 0;
+    ++s_beginFrameCount;
+    if (s_solidGpuDispatchRanThisFrame && !s_frameSolidArmed) {
+        // Dispatch ran this frame but arming is already false — double BeginFrame call.
+        fprintf(stderr, "[TERRAIN_INDIRECT v1] event=double_beginframe count=%d\n",
+                s_beginFrameCount);
+        fflush(stderr);
+    }
     s_frameSolidArmed = false;
+}
+
+// ---------------------------------------------------------------------------
+// BeginFrameSolidWindow / AppendSolidWindowCandidate — camera-windowed solid
+// dispatch collector.  Structural twin of WaterStream::BeginFrameNarrow /
+// AppendNarrowCandidate (gos_terrain_water_stream.cpp:149/161).  Called from
+// terrain.cpp's existing setupTextures loop; NO new walk is introduced.
+// ---------------------------------------------------------------------------
+void BeginFrameSolidWindow() {
+    if (!SolidWindowEnabled()) return;
+    // Reserve last-frame max + 10% slack + 64, mirroring water :149-158.
+    // vector::clear on a trivially-destructible uint32_t is a size reset; no
+    // allocation occurs in the hot loop once the high-water mark is reached.
+    const size_t reserve =
+        (size_t)(g_solidWindowMaxSeen + (g_solidWindowMaxSeen / 10) + 64);
+    if (g_solidWindowStaging.capacity() < reserve)
+        g_solidWindowStaging.reserve(reserve);
+    g_solidWindowStaging.clear();
+}
+
+void AppendSolidWindowCandidate(int32_t vn0) {
+    // Caller (terrain.cpp) asserts the quad already passed a predicate that is
+    // STRICTLY LOOSER than the GPU keep-set: corners non-null, vertexNum >= 0,
+    // and RecipeForVertexNum(vn0) != nullptr.  It applies NO pz, NO
+    // terrainHandle, NO _wp2 filter — the GPU shader still does all of those
+    // per-thread.  Looseness == guaranteed superset == no terrain-vanish.
+    if (vn0 < 0) return;
+    g_solidWindowStaging.push_back((uint32_t)vn0);
+    if (g_solidWindowStaging.size() > g_solidWindowMaxSeen)
+        g_solidWindowMaxSeen = (uint32_t)g_solidWindowStaging.size();
 }
 
 bool ComputePreflight() {
     ZoneScopedN("Terrain::IndirectPreflight");
-    s_frameSolidArmed           = false;
-    s_frameSolidPackedThinCount = 0;
-    s_frameSolidCmdCount        = 0;
+    {
+        // VPL parity-infra retirement lifecycle marker (Debug-instrumentation
+        // rule): one-shot, grep-visible in smoke artifacts. s_packParityMask /
+        // kParityMaskWords / gos_terrain_indirect_getPackParityMask /
+        // ComputeDispatchParity_Check fully removed; txmmgr call removed.
+        static bool s_loggedParityRetired = false;
+        if (!s_loggedParityRetired) {
+            s_loggedParityRetired = true;
+            printf("[TERRAIN_INDIRECT v1] event=parity_infra_retired "
+                   "path=gos_terrain_indirect scope=full "
+                   "removed=s_packParityMask,ComputeDispatchParity_Check,getPackParityMask,txmmgr_call\n");
+            fflush(stdout);
+        }
+    }
+    s_frameSolidArmed                = false;
+    s_frameSolidPackedThinCount      = 0;
+    s_frameSolidCmdCount             = 0;
+    s_solidGpuDispatchRanThisFrame   = false;
 
-    if (s_processArmingDisabled) return false;
-    if (!IsEnabled())             return false;
-    if (!IsDenseRecipeReady())    return false;
-    if (!ResourcesReady())        return false;
+    if (s_processArmingDisabled) return false;  // ForceDisableArmingForProcess already printed
+    if (!IsEnabled()) {
+        static bool s_warnedEnabled = false;
+        if (!s_warnedEnabled) {
+            s_warnedEnabled = true;
+            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=preflight_fail reason=not_enabled\n");
+            fflush(stderr);
+        }
+        return false;
+    }
+    if (!IsDenseRecipeReady()) {
+        static bool s_warnedRecipe = false;
+        if (!s_warnedRecipe) {
+            s_warnedRecipe = true;
+            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=preflight_fail reason=recipe_not_ready\n");
+            fflush(stderr);
+        }
+        return false;
+    }
+    if (!ResourcesReady()) {
+        static bool s_warnedResources = false;
+        if (!s_warnedResources) {
+            s_warnedResources = true;
+            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=preflight_fail reason=resources_not_ready\n");
+            fflush(stderr);
+        }
+        return false;
+    }
     if (InMissionTransition())    return false;
 
     FlushDirtyRecipeSlotsToGPU();
 
+    if (gpu_driven::IsTerrainSolidEnabled() && !g_uniqueTerrainNodeIds.empty()) {
+        // GPU path: arm immediately. ComputeDispatch() (called after Phase 1
+        // PackAndDispatch) will build the window SSBO and issue the primary
+        // cull/pack compute dispatch.  Per VPL step 2 (commit 2b), the primary
+        // dispatch is the sole writer of cmds[0].count (atomicAdd of 6u per
+        // admitted record); the cmd-patch shader dispatch is retired.
+        // DrawIndirect() fires glMultiDrawArraysIndirect with cmdCount=1.
+        // Guard: g_uniqueTerrainNodeIds populated only when terrainTextures2 is active
+        // (recipe._wp2 baked in buildRecipeSlot). Legacy terrainTextures path leaves
+        // _wp2=0 → empty node list → zero-LUT → GPU skips all quads → black terrain.
+        // Fall through to CPU thin-record path in that case.
+        s_frameSolidPackedThinCount = -1;   // sentinel: GPU path (logged only)
+        s_frameSolidCmdCount        = 1;    // PR1: always 1 indirect draw command
+        s_frameSolidArmed           = true;
+        {
+            static bool s_firstArm = false;
+            if (!s_firstArm) {
+                s_firstArm = true;
+                fprintf(stderr, "[TERRAIN_INDIRECT v1] event=first_arm path=gpu nodeIds=%zu\n",
+                        g_uniqueTerrainNodeIds.size());
+                fflush(stderr);
+            }
+        }
+        return true;
+    }
+
+    // CPU path (legacy — demote-don't-delete per CLAUDE.md debug instrumentation rule).
     const int thinCount = PackThinRecordsForFrame();
     if (thinCount == 0) {
         if (traceOn())
@@ -1650,11 +2425,893 @@ bool ComputePreflight() {
     s_frameSolidPackedThinCount = thinCount;
     s_frameSolidCmdCount        = cmdCount;
     s_frameSolidArmed           = true;
+    {
+        static bool s_firstArm = false;
+        if (!s_firstArm) {
+            s_firstArm = true;
+            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=first_arm path=cpu thin=%d cmd=%d\n",
+                    thinCount, cmdCount);
+            fflush(stderr);
+        }
+    }
     return true;
 }
 
+void ComputeDispatch() {
+    // Phase C Stage 2. Called AFTER gos_terrain_lighting::PackAndDispatch() so
+    // Phase 1's lighting SSBO is populated with same-frame data.
+    if (!s_frameSolidArmed)                    return;
+    if (!gpu_driven::IsTerrainSolidEnabled())  return;
+
+    ZoneScopedN("Terrain::SolidComputeDispatch");
+
+    // Guard: Phase 1 lighting SSBO must be ready.
+    const GLuint lightSsbo = gos_terrain_lighting::GetOutputSsbo();
+    if (lightSsbo == 0) {
+        static bool s_warnedLight = false;
+        if (!s_warnedLight) {
+            printf("[TERRAIN_INDIRECT v1] event=warn msg=solid_lighting_ssbo_not_ready\n");
+            fflush(stdout);
+            s_warnedLight = true;
+        }
+        return;
+    }
+
+    // Lazy-build compute programs and cache uniform locations + constant uniforms.
+    if (g_solidComputeProgram == 0) {
+        g_solidComputeProgram = gpu_driven::BuildComputeProgramFromFile(
+            "shaders/gpu_driven_terrain_solid.comp", nullptr, 0, "gpu_driven_terrain_solid");
+        if (g_solidComputeProgram == 0) {
+            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=error msg=solid_compute_compile_failed\n");
+            fflush(stderr);
+            ForceDisableArmingForProcess();
+            return;
+        }
+        g_locSolidWC  = glGetUniformLocation(g_solidComputeProgram, "u_windowCount");
+        g_locSolidAO  = glGetUniformLocation(g_solidComputeProgram, "u_alphaOverride");
+        g_locSolidMVP = glGetUniformLocation(g_solidComputeProgram, "u_terrainMVP");
+        // Step 2b: u_bucketHeaderTrace — gate for hdr.{visibleCount,pad1_,pad2_}
+        // writes in the primary compute shader.
+        g_locSolidBHT = glGetUniformLocation(g_solidComputeProgram, "u_bucketHeaderTrace");
+        // Approach A: window-vs-identity gate for the solid index buffer.
+        g_locSolidUW  = glGetUniformLocation(g_solidComputeProgram, "u_useWindow");
+        // Upload constants once — these never change across frames.
+        glUseProgram(g_solidComputeProgram);
+        const GLint locMTR  = glGetUniformLocation(g_solidComputeProgram, "u_maxThinRecords");
+        const GLint locMS   = glGetUniformLocation(g_solidComputeProgram, "u_mapSide");
+        const GLint locWUPV = glGetUniformLocation(g_solidComputeProgram, "u_worldUnitsPerVertex");
+        if (locMTR  >= 0) glUniform1i(locMTR, (int)kMaxThinRecords);
+        if (locMS   >= 0) glUniform1i(locMS,  (int)Terrain::realVerticesMapSide);
+        if (locWUPV >= 0) glUniform1f(locWUPV, Terrain::worldUnitsPerVertex);
+        glUseProgram(0);
+    }
+    // Step 2b (VPL retirement): cmd-patch program compile retired -- the
+    // primary compute writes cmds[0].count directly via atomicAdd.
+
+    // Step 2b: bucket-header SSBO demoted behind MC2_BUCKET_HEADER_TRACE.
+    // Cached env lookup, used at alloc / bind / clear / readback / teardown.
+    static const bool s_bucketHeaderTrace =
+        (getenv("MC2_BUCKET_HEADER_TRACE") != nullptr);
+    // Lazy-allocate bucket header SSBO (16 B GpuDrivenBucketHeader) ONLY when
+    // diagnostic tracing is requested.  Default-off: zero allocation, zero
+    // per-frame work, zero binding.
+    if (s_bucketHeaderTrace && g_solidBucketHeaderSsbo == 0) {
+        glGenBuffers(1, &g_solidBucketHeaderSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // Probe 6 + 7a: lazy-allocate canary SSBO — 2*kMaxThinRecords uints,
+    // never bound by the bridge.  Compute writes [recipeIdx, flags] per record.
+    if (g_thinCanarySSBO == 0) {
+        glGenBuffers(1, &g_thinCanarySSBO);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinCanarySSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     (GLsizeiptr)(2u * kMaxThinRecords * sizeof(uint32_t)),
+                     nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // Upload per-frame terrain handle LUT (nodeId → gosHandle, ~20-50 entries).
+    // KEPT from 08bd3b2: the shader still resolves thSlot via LUT[nodeId] from
+    // recipe._wp2 and cementWord from _wp3 regardless of windowing.  The LUT
+    // upload is O(uniqueTextures); its return value (full recipe count) is
+    // discarded — the dispatch count now comes from the camera window.
+    (void)UploadTerrainHandleLUT();
+
+    // Approach A: build the per-frame camera-windowed recipe-index SSBO from
+    // the list collected by AppendSolidWindowCandidate() during terrain.cpp's
+    // setupTextures loop (NO new walk).  s_solidUseWindow=1 when the window is
+    // active; 0 == fall back to full-range identity (current HEAD behavior /
+    // safety escape hatch / first armed frame before the loop has run).
+    int s_solidUseWindow = 0;
+    const uint32_t windowCount = BuildSolidQuadWindowSSBO(&s_solidUseWindow);
+    if (windowCount == 0) {
+        // Zero visible quads this frame; leave armed — DrawIndirect fires with
+        // cmd.count=0 (after bucket-clear + cmd-patch). No visual artifact.
+        // Still need to run both dispatches to keep cmd buffer in defined state.
+    }
+
+    // Advance the thin-record ring slot (same ring as CPU path).
+    g_thinRingSlot = (g_thinRingSlot + 1) % kThinRingFrames;
+
+    // ── Probe sink — writes tripwires to a file next to mc2.exe regardless of
+    // how the process was launched.  Solves the "stderr disappears under
+    // double-click on Windows" problem so raw user repros are captured.
+    // Append-mode; line-buffered via fflush after each write.  Opened once,
+    // never closed (process-lifetime).  Stderr writes are kept too — the
+    // file is additive, not a redirect.
+    static FILE* s_probeSink = []{
+        FILE* f = fopen("ring_trace.log", "a");
+        if (f) {
+            fprintf(f, "\n[RING_SINK v1] event=open time=%lld\n",
+                    (long long)time(nullptr));
+            fflush(f);
+        }
+        return f;
+    }();
+#define PROBE_LOG(fmt, ...) do { \
+        fprintf(stderr, fmt, ##__VA_ARGS__); \
+        fflush(stderr); \
+        if (s_probeSink) { fprintf(s_probeSink, fmt, ##__VA_ARGS__); fflush(s_probeSink); } \
+    } while (0)
+
+    // ── Ring-hazard probe (MC2_RING_TRACE) ────────────────────────────────
+    // Default-off per-frame trace; ALWAYS-on tripwire when the wait actually
+    // times out or the fence is missing on a non-warmup frame. Either signal
+    // proves the ring discipline is broken — the CPU is about to write a
+    // thin-record slot whose prior GPU consumer may still be reading it.
+    // Symptom we are chasing: huge raster triangles under fast camera
+    // rotation; the bug is masked when the camera is still because the
+    // thin-record content is frame-to-frame identical (atomicAdd reorder
+    // notwithstanding) and the race produces the same bytes either way.
+    // Fingerprint of the camera MVP rotation rows lets offline analysis
+    // correlate fence misses with rotation magnitude.
+    static const bool s_ringTrace        = (getenv("MC2_RING_TRACE") != nullptr);
+    static uint64_t   s_ringTraceFrameIdx = 0;
+    const uint64_t  ringFrameIdx = ++s_ringTraceFrameIdx;
+    const int       probedSlot   = g_thinRingSlot;
+    const bool      fencePresent = (g_thinRingFences[probedSlot] != 0);
+
+    uint32_t mvpFp = 0u;
+    if (s_ringTrace) {
+        const float* mvpProbe = gos_GetTerrainMVPMat4();
+        if (mvpProbe) {
+            // FNV-1a over rotation/translation rows (skip projection row mvp[12..15])
+            // — gives a stable fingerprint that changes proportionally to camera
+            // rotation rate but is insensitive to projection-only mutation.
+            mvpFp = 2166136261u;
+            for (int k = 0; k < 12; ++k) {
+                uint32_t bits = 0;
+                memcpy(&bits, &mvpProbe[k], sizeof(bits));
+                mvpFp ^= bits;
+                mvpFp *= 16777619u;
+            }
+        }
+    }
+
+    GLenum waitResult = GL_ALREADY_SIGNALED;
+    uint64_t waitUs   = 0;
+    if (g_thinRingFences[probedSlot]) {
+        const auto t0 = std::chrono::steady_clock::now();
+        waitResult = glClientWaitSync(g_thinRingFences[probedSlot],
+                         GL_SYNC_FLUSH_COMMANDS_BIT, 10000000u /*10ms*/);
+        const auto t1 = std::chrono::steady_clock::now();
+        waitUs = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        glDeleteSync(g_thinRingFences[probedSlot]);
+        g_thinRingFences[probedSlot] = 0;
+    }
+
+    // Tripwire #1: missing fence past warmup OR fence timeout.
+    // Warmup window = 2*kThinRingFrames frames; first slot 1 wrap can miss
+    // a fence if frame-1's DrawIndirect didn't issue (recipe not ready /
+    // MVP not yet valid).  This is benign startup, not a bug.
+    {
+        const bool fenceMissedAfterWarmup =
+            (!fencePresent) && (ringFrameIdx > (uint64_t)(2 * kThinRingFrames));
+        const bool timeoutFired =
+            (waitResult == GL_TIMEOUT_EXPIRED || waitResult == GL_WAIT_FAILED);
+        if (fenceMissedAfterWarmup || timeoutFired) {
+            static uint32_t s_tripwireMissCount    = 0;
+            static uint32_t s_tripwireTimeoutCount = 0;
+            uint32_t totalMiss    = (fenceMissedAfterWarmup ? ++s_tripwireMissCount    : s_tripwireMissCount);
+            uint32_t totalTimeout = (timeoutFired           ? ++s_tripwireTimeoutCount : s_tripwireTimeoutCount);
+            PROBE_LOG(
+                "[RING_TRIPWIRE v1] frame=%llu slot=%d fence=%d wait=0x%x wait_us=%llu "
+                "totalMiss=%u totalTimeout=%u mvpFp=0x%08x\n",
+                (unsigned long long)ringFrameIdx, probedSlot, (int)fencePresent,
+                (unsigned)waitResult, (unsigned long long)waitUs,
+                (unsigned)totalMiss, (unsigned)totalTimeout, (unsigned)mvpFp);
+        }
+    }
+
+    // Tripwire #2: prev-frame visibleCount overshoot.
+    // The cull compute shader does atomicAdd(visibleCount, 1) unconditionally,
+    // then early-returns if outSlot >= kMaxThinRecords.  So visibleCount can
+    // climb past the cap; in that case the records that ran the atomicAdd
+    // LAST get dropped — atomicAdd ordering is race-dependent → different
+    // frames drop different records → thin-SSBO content varies between
+    // compute write and VS read EVEN AT THE SAME RING SLOT.  This is the
+    // candidate root cause for the "huge garbage triangle on fast rotation"
+    // signature: cmd-patch clamps the count to 65536*6 but the records past
+    // the kept records are race-dependent.
+    //
+    // Cost: one 4-byte readback per frame.  The fence wait above guarantees
+    // all prior GPU commands are complete, so glGetBufferSubData is stall-
+    // free here on AMD/NV (driver fast-path for already-signaled buffers).
+    if (g_solidBucketHeaderSsbo != 0 && ringFrameIdx > 1) {
+        // Read all 16 bytes of GpuDrivenBucketHeader:
+        //   [0]=visibleCount, [1]=pad0_ (unused), [2]=pad1_ (near-zero clip.w count,
+        //   probe 4), [3]=pad2_ (recipe-spread corruption count, probe 5).
+        uint32_t hdr4[4] = { 0, 0, 0, 0 };
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                           (GLsizeiptr)sizeof(hdr4), hdr4);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        const uint32_t prevVisible = hdr4[0];
+        const uint32_t prevNearW   = hdr4[2];
+        const uint32_t prevSpread  = hdr4[3];
+
+        static uint32_t s_peakVisible    = 0;
+        static uint32_t s_overshootCount = 0;
+        static uint32_t s_peakNearW      = 0;
+        static uint32_t s_nearWFrames    = 0;
+        static uint64_t s_lastSummary    = 0;
+        if (prevVisible > s_peakVisible) s_peakVisible = prevVisible;
+        if (prevNearW   > s_peakNearW  ) s_peakNearW   = prevNearW;
+        if (prevNearW > 0) ++s_nearWFrames;
+        const bool overshot = (prevVisible >= (uint32_t)kMaxThinRecords);
+        if (overshot) {
+            ++s_overshootCount;
+            PROBE_LOG(
+                "[RING_OVERSHOOT v1] frame=%llu prev_visible=%u cap=%zu "
+                "overshootCount=%u peak=%u mvpFp=0x%08x\n",
+                (unsigned long long)ringFrameIdx, (unsigned)prevVisible,
+                kMaxThinRecords, (unsigned)s_overshootCount,
+                (unsigned)s_peakVisible, (unsigned)mvpFp);
+        }
+        // Probe 6 (FULL COVERAGE): compare thin[i].recipeIdx vs canary[i]
+        // for EVERY i in [0, visibleCount).  Compute writes both at the same
+        // outSlot in the SAME dispatch; canary buffer is never bound by the
+        // bridge.  If for any i the two disagree, the thin SSBO has been
+        // clobbered between compute write and our readback.
+        //
+        // User-reported symptom: giant grey-banded triangle that appears in
+        // varied screen locations (skybox / mid-screen / behind terrain at
+        // water level) frame-to-frame.  Only mechanism that explains location
+        // variance is ONE thin record per frame having a corrupt recipeIdx
+        // pointing to different recipes each occurrence.  Sample-based probe
+        // (5 indices) almost certainly missed it; full coverage will catch it.
+        //
+        // Cost: visibleCount * 4 bytes for canary + visibleCount * 4 bytes for
+        // thin.recipeIdx = ~80KB/frame at peak visibleCount=10000. PCIe stall
+        // possible but acceptable for diagnostic.
+        if (g_thinCanarySSBO != 0 && g_thinRecordSSBO != 0 && prevVisible > 0) {
+            const uint32_t vis = prevVisible < (uint32_t)kMaxThinRecords
+                                ? prevVisible : (uint32_t)kMaxThinRecords;
+            const int priorSlot = (g_thinRingSlot + kThinRingFrames - 1) % kThinRingFrames;
+            const GLintptr thinSlotByteOffset = (GLintptr)(priorSlot * kThinRecordBytes);
+
+            // Reuse heap buffers across frames to avoid alloc churn.
+            static std::vector<uint32_t> s_canaryBuf;
+            static std::vector<uint32_t> s_thinBlock;
+            if (s_canaryBuf.size() < (size_t)vis * 2u) s_canaryBuf.resize((size_t)vis * 2u);
+            const size_t thinDwords = (size_t)vis * 8u;
+            if (s_thinBlock.size() < thinDwords) s_thinBlock.resize(thinDwords);
+
+            // 1) Bulk-read canary[0..2*vis-1] (single readback, vis*8 bytes).
+            //    Layout: [recipeIdx_0, flags_0, recipeIdx_1, flags_1, ...]
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinCanarySSBO);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                               (GLsizeiptr)(vis * 2u * sizeof(uint32_t)),
+                               s_canaryBuf.data());
+
+            // 2) Read full thin records as packed block (vis * 32 bytes).
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinRecordSSBO);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, thinSlotByteOffset,
+                               (GLsizeiptr)(vis * 32u),
+                               s_thinBlock.data());
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+            // 3) Compare BOTH recipeIdx AND flags.
+            //    Thin record layout: dword 0=recipeIdx, dword 1=terrainHandle,
+            //    dword 2=flags, dword 3=cementWord, dwords 4..7=lightRGB0..3.
+            //    Canary layout: word 0=recipeIdx, word 1=flags (paired per record).
+            static uint32_t s_recipeIdxMismatchFrames = 0;
+            static uint64_t s_recipeIdxMismatchTotal  = 0;
+            static uint32_t s_flagsMismatchFrames     = 0;
+            static uint64_t s_flagsMismatchTotal      = 0;
+            static uint32_t s_nextRecipeReportAt      = 1;
+            static uint32_t s_nextFlagsReportAt       = 1;
+            uint32_t recipeMismatchInFrame = 0, flagsMismatchInFrame = 0;
+            uint32_t firstBadIdxR = 0, firstBadCanaryR = 0, firstBadThinR = 0;
+            uint32_t firstBadIdxF = 0, firstBadCanaryF = 0, firstBadThinF = 0;
+            for (uint32_t i = 0; i < vis; ++i) {
+                const uint32_t canaryR = s_canaryBuf[i * 2u];
+                const uint32_t canaryF = s_canaryBuf[i * 2u + 1u];
+                const uint32_t thinR   = s_thinBlock[i * 8u];        // recipeIdx
+                const uint32_t thinF   = s_thinBlock[i * 8u + 2u];   // flags
+                if (canaryR != thinR) {
+                    if (recipeMismatchInFrame == 0) {
+                        firstBadIdxR    = i;
+                        firstBadCanaryR = canaryR;
+                        firstBadThinR   = thinR;
+                    }
+                    ++recipeMismatchInFrame; ++s_recipeIdxMismatchTotal;
+                }
+                if (canaryF != thinF) {
+                    if (flagsMismatchInFrame == 0) {
+                        firstBadIdxF    = i;
+                        firstBadCanaryF = canaryF;
+                        firstBadThinF   = thinF;
+                    }
+                    ++flagsMismatchInFrame; ++s_flagsMismatchTotal;
+                }
+            }
+            if (recipeMismatchInFrame > 0) {
+                ++s_recipeIdxMismatchFrames;
+                if (s_recipeIdxMismatchFrames == s_nextRecipeReportAt) {
+                    PROBE_LOG(
+                        "[RING_CANARY_RECIPE v1] frame=%llu visible=%u prior_slot=%d "
+                        "mismatch_in_frame=%u first_bad_idx=%u "
+                        "first_bad_canary=%u first_bad_thin=%u "
+                        "frames=%u total=%llu mvpFp=0x%08x\n",
+                        (unsigned long long)ringFrameIdx, (unsigned)vis, priorSlot,
+                        (unsigned)recipeMismatchInFrame, (unsigned)firstBadIdxR,
+                        (unsigned)firstBadCanaryR, (unsigned)firstBadThinR,
+                        (unsigned)s_recipeIdxMismatchFrames,
+                        (unsigned long long)s_recipeIdxMismatchTotal, (unsigned)mvpFp);
+                    s_nextRecipeReportAt = s_nextRecipeReportAt < 100
+                        ? (s_nextRecipeReportAt + 1) : (s_nextRecipeReportAt * 10);
+                }
+            }
+            if (flagsMismatchInFrame > 0) {
+                ++s_flagsMismatchFrames;
+                if (s_flagsMismatchFrames == s_nextFlagsReportAt) {
+                    PROBE_LOG(
+                        "[RING_CANARY_FLAGS v1] frame=%llu visible=%u prior_slot=%d "
+                        "mismatch_in_frame=%u first_bad_idx=%u "
+                        "first_bad_canary=0x%x first_bad_thin=0x%x "
+                        "frames=%u total=%llu mvpFp=0x%08x\n",
+                        (unsigned long long)ringFrameIdx, (unsigned)vis, priorSlot,
+                        (unsigned)flagsMismatchInFrame, (unsigned)firstBadIdxF,
+                        (unsigned)firstBadCanaryF, (unsigned)firstBadThinF,
+                        (unsigned)s_flagsMismatchFrames,
+                        (unsigned long long)s_flagsMismatchTotal, (unsigned)mvpFp);
+                    s_nextFlagsReportAt = s_nextFlagsReportAt < 100
+                        ? (s_nextFlagsReportAt + 1) : (s_nextFlagsReportAt * 10);
+                }
+            }
+        }
+
+        // Probe 5 tripwire: any frame where pad2_ > 0 means at least one
+        // RECIPE entry has worldPos corners spanning more than 2.5 cells —
+        // ground-truth evidence that the recipe SSBO is corrupt.  If this
+        // fires AND the bug is visible, recipe data is the root cause.
+        // If silent AND bug visible, recipe is fine — corruption is in the
+        // VS or downstream.
+        if (prevSpread > 0) {
+            static uint32_t s_spreadFrames = 0;
+            static uint32_t s_peakSpread   = 0;
+            static uint32_t s_nextSpreadReportAt = 1;
+            ++s_spreadFrames;
+            if (prevSpread > s_peakSpread) s_peakSpread = prevSpread;
+            if (s_spreadFrames == s_nextSpreadReportAt) {
+                PROBE_LOG(
+                    "[RING_SPREAD v1] frame=%llu spread_count=%u spread_frames=%u "
+                    "peak_spread=%u prev_visible=%u mvpFp=0x%08x\n",
+                    (unsigned long long)ringFrameIdx, (unsigned)prevSpread,
+                    (unsigned)s_spreadFrames, (unsigned)s_peakSpread,
+                    (unsigned)prevVisible, (unsigned)mvpFp);
+                s_nextSpreadReportAt = s_nextSpreadReportAt < 100 ? (s_nextSpreadReportAt + 1)
+                                     : (s_nextSpreadReportAt * 10);
+            }
+        }
+        // Probe 4 tripwire: any frame where pad1_ > 0 means at least one quad
+        // passed the pzOk gate while having a corner with |clip.w| < 0.05.
+        // Strong candidate for the "huge garbage triangle" bug per
+        // memory/clip_w_sign_trap.md.  Rate-limit by printing only on first
+        // event AND on every 100x increase in s_nearWFrames so we don't
+        // flood the log when the bug is continuous.
+        if (prevNearW > 0) {
+            static uint32_t s_nextNearWReportAt = 1;
+            if (s_nearWFrames == s_nextNearWReportAt) {
+                PROBE_LOG(
+                    "[RING_NEARW v1] frame=%llu near_w_count=%u total_near_w_frames=%u "
+                    "peak_near_w=%u prev_visible=%u mvpFp=0x%08x\n",
+                    (unsigned long long)ringFrameIdx, (unsigned)prevNearW,
+                    (unsigned)s_nearWFrames, (unsigned)s_peakNearW,
+                    (unsigned)prevVisible, (unsigned)mvpFp);
+                s_nextNearWReportAt = s_nextNearWReportAt < 100 ? (s_nextNearWReportAt + 1)
+                                    : (s_nextNearWReportAt * 10);
+            }
+        }
+        if (s_ringTrace) {
+            printf("[RING v1] frame=%llu slot=%d fence=%d wait=0x%x wait_us=%llu "
+                   "prev_visible=%u near_w=%u peak=%u peakNearW=%u mvpFp=0x%08x\n",
+                (unsigned long long)ringFrameIdx, probedSlot, (int)fencePresent,
+                (unsigned)waitResult, (unsigned long long)waitUs,
+                (unsigned)prevVisible, (unsigned)prevNearW,
+                (unsigned)s_peakVisible, (unsigned)s_peakNearW, (unsigned)mvpFp);
+            fflush(stdout);
+        }
+        // Periodic peak summary even when MC2_RING_TRACE is off so manual
+        // runs without env-var still surface the peak visible count.
+        if (ringFrameIdx - s_lastSummary >= 600) {
+            s_lastSummary = ringFrameIdx;
+            PROBE_LOG(
+                "[RING_PEAK v1] frame=%llu peak_visible=%u cap=%zu "
+                "overshootCount=%u peak_near_w=%u near_w_frames=%u\n",
+                (unsigned long long)ringFrameIdx, (unsigned)s_peakVisible,
+                kMaxThinRecords, (unsigned)s_overshootCount,
+                (unsigned)s_peakNearW, (unsigned)s_nearWFrames);
+        }
+    } else if (s_ringTrace) {
+        printf("[RING v1] frame=%llu slot=%d fence=%d wait=0x%x wait_us=%llu mvpFp=0x%08x\n",
+            (unsigned long long)ringFrameIdx, probedSlot, (int)fencePresent,
+            (unsigned)waitResult, (unsigned long long)waitUs, (unsigned)mvpFp);
+        fflush(stdout);
+    }
+    // ── end probe ─────────────────────────────────────────────────────────
+
+    const GLintptr thinSlotOffset = (GLintptr)(g_thinRingSlot * kThinRecordBytes);
+
+    // Step 2b: zero the indirect-cmd buffer's count slot (offset 0, 4 bytes)
+    // every frame before the primary dispatch.  instanceCount / first /
+    // baseInstance were initialized to {1,0,0} at allocation and are never
+    // re-written (cmd-patch dispatch retired).
+    {
+        const uint32_t zero = 0u;
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_indirectCmdBuffer);
+        glClearBufferSubData(GL_DRAW_INDIRECT_BUFFER, GL_R32UI, 0, 4,
+                             GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    }
+
+    // Step 2b: bucket-header SSBO (when traced) gets the same per-frame clear
+    // it always had.  No-op when MC2_BUCKET_HEADER_TRACE is unset because
+    // g_solidBucketHeaderSsbo is 0.
+    if (g_solidBucketHeaderSsbo != 0) {
+        const uint32_t zero = 0u;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
+        glClearBufferSubData(GL_SHADER_STORAGE_BUFFER, GL_R32UI, 0, 16,
+                             GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // ------------------------------------------------------------------
+    // DISPATCH 1: cull/pack (gpu_driven_terrain_solid.comp)
+    // Bindings: 0=recipe, 1=lighting, 2=terrainHandleLut, 3=thin, 6=header,
+    //           7=canary, 8=cmdbuf, 9=solid window (Approach A).
+    // NOTE: the plan named binding 7 for the window SSBO, but on this branch
+    // bindings 7 (canary) and 8 (cmdbuf) are already occupied (post-VPL
+    // retirement additions that did not exist when 08bd3b2 freed binding 2).
+    // Binding 9 is the first free slot — chosen to avoid the collision the
+    // plan explicitly warned against.
+    // ------------------------------------------------------------------
+    glUseProgram(g_solidComputeProgram);
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, g_recipeSSBO);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, lightSsbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2,
+                     g_terrainHandleLutSSBO ? g_terrainHandleLutSSBO : 0);
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 3,
+                      g_thinRecordSSBO, thinSlotOffset, (GLsizeiptr)kThinRecordBytes);
+    // Step 2b: bucket-header SSBO only bound when MC2_BUCKET_HEADER_TRACE
+    // armed.  When unbound, the shader sees u_bucketHeaderTrace=0 and skips
+    // all hdr.* writes (including the slot-counter atomicAdd on visibleCount).
+    if (g_solidBucketHeaderSsbo != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, g_solidBucketHeaderSsbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, g_thinCanarySSBO);  // probe 6
+    // Step 2b: bind the indirect-cmd buffer as SSBO at slot 8.  The primary
+    // compute atomicAdds 6u into cmds[0].count per admitted record and uses
+    // the returned-before-increment value as the thin-record slot index when
+    // the bucket-header trace path is off.  Buffer is double-bound
+    // (GL_DRAW_INDIRECT_BUFFER for the draw, GL_SHADER_STORAGE_BUFFER for
+    // the atomicAdd).  Coherent qualifier on the shader-side declaration
+    // covers cross-target visibility within the frame.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, g_indirectCmdBuffer);
+    // Approach A: camera-windowed recipe-index buffer.  Only meaningful when
+    // s_solidUseWindow==1; bound unconditionally (when allocated) so the
+    // shader's solidWin[] declaration always resolves.  When the window is
+    // inactive the shader uses identity (vn0 = id) and never reads solidWin[].
+    if (g_solidQuadWindowSsbo != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, g_solidQuadWindowSsbo);
+
+    if (g_locSolidWC < 0 || g_locSolidMVP < 0) {
+        fprintf(stderr,
+            "[TERRAIN_INDIRECT v1] event=error msg=solid_compute_missing_uniform "
+            "u_windowCount=%d u_terrainMVP=%d\n",
+            g_locSolidWC, g_locSolidMVP);
+        fflush(stderr);
+        glUseProgram(0);
+        ForceDisableArmingForProcess();
+        return;
+    }
+
+    glUniform1i(g_locSolidWC, (int)windowCount);
+    if (g_locSolidAO >= 0)
+        glUniform1i(g_locSolidAO, Terrain::terrainTextures2 != nullptr ? 1 : 0);
+    // Step 2b: upload u_bucketHeaderTrace gate every frame.  Uniform values
+    // reset across glUseProgram cycles on some drivers, so per-frame upload
+    // is safer than once-at-compile.
+    if (g_locSolidBHT >= 0)
+        glUniform1i(g_locSolidBHT, s_bucketHeaderTrace ? 1 : 0);
+    // Approach A: 1 == read vn0 from solidWin[id]; 0 == identity vn0 = id
+    // (full-range fallback == current HEAD behavior).  CPU-side value, no
+    // GPU readback.
+    if (g_locSolidUW >= 0)
+        glUniform1i(g_locSolidUW, s_solidUseWindow);
+
+    {
+        const float* mvp = gos_GetTerrainMVPMat4();
+        if (!mvp) { glUseProgram(0); return; }
+        glUniformMatrix4fv(g_locSolidMVP, 1, GL_FALSE, mvp);
+        // Probe 8: fingerprint the MVP the COMPUTE uploaded (FNV-1a over rotation
+        // + translation rows = first 12 floats).  Bridge compares against MVP
+        // at draw time via gos_terrain_indirect_getDispatchMvpFp().
+        uint32_t fp = 2166136261u;
+        for (int k = 0; k < 12; ++k) {
+            uint32_t bits = 0;
+            memcpy(&bits, &mvp[k], sizeof(bits));
+            fp ^= bits; fp *= 16777619u;
+        }
+        g_dispatchMvpFp       = fp;
+        g_dispatchMvpFrameIdx = ringFrameIdx;
+        // Water-consistency fix: full MVP snapshot (see decl). This is the
+        // exact matrix terrain-solid's Fix-B clipPos bake uses this frame.
+        memcpy(g_dispatchMvp16, mvp, sizeof(float) * 16);
+
+        // ── [DEPTH_TRANSITION v1] zoom-step depth-pop diagnostic ───────────
+        // Env-gated MC2_DEPTH_TRANSITION_PROBE (cached static const bool;
+        // silent default; matches the [WATER_DEPTHPROBE v2] idiom at
+        // gos_terrain_water_stream.cpp:1429 — raw printf+fflush). HIGH STAKES:
+        // this zoom-step depth-pop root-cause has been WRONG 3x. The probe
+        // dumps each flat consumer's ACTUAL resulting screen-z for a FIXED
+        // world point ONLY on the MVP-transition (zoom-step) frame so the
+        // ~0.1-unit 1-frame pop is numerically visible. [WATER_DEPTHPROBE v2]
+        // is structurally blind (it FNV-hashes the MVP, not the downstream
+        // per-consumer depth-fudge). RenderDoc cannot capture a 1-frame
+        // transient. ZERO behavior change: pure reads of g_dispatchMvp16 (the
+        // exact matrix terrain-solid's Fix-B clipPos bake + the armed GPU
+        // water fast path both project with this frame), live terrain_mvp_
+        // (the matrix the decal overlay binds), and the cross-TU sampled CPU
+        // water value; O(1)/frame; printf only on transition frames (latched).
+        {
+            static const bool s_depthTransProbe =
+                (getenv("MC2_DEPTH_TRANSITION_PROBE") != nullptr);
+            if (s_depthTransProbe) {
+                // --- Transition detector -----------------------------------
+                // maxDelta = max_i |g_dispatchMvp16[i] - prev[i]|. kEps chosen
+                // so a smooth pan does NOT trip but a DISCRETE zoom-level step
+                // does. Justification: a per-frame camera pan changes the MVP
+                // translation row by a small continuous increment (sub-1e-4 in
+                // the normalized clip-matrix entries per frame at normal pan
+                // speed); MC2's zoom is a DISCRETE camera-distance step (the
+                // bug only reproduces on zoom/elevation-change, NOT pan — see
+                // CLAUDE.md Known issues), which jumps several matrix entries
+                // (projection scale + translation) by >>1e-4 in one frame. A
+                // smooth same-magnitude pan would also trip a too-small kEps,
+                // so kEps=1e-3f is used: large enough that normalized
+                // per-frame pan deltas (empirically ~1e-5..1e-4 in these
+                // entries) stay below it, small enough that a discrete zoom
+                // step (whole-number camera-distance change -> matrix entry
+                // jumps ~1e-2+) trips it decisively. This is a DIAGNOSTIC
+                // gate, not a control path; over/under-trip only changes which
+                // frames print, never rendering.
+                static float g_prevDispatchMvp16[16] = { 0.0f };
+                static bool  s_prevValid = false;
+                static unsigned long long s_dtFrame = 0;
+                const unsigned long long f = ++s_dtFrame;
+                const float kEps = 1.0e-3f;
+                float maxDelta = 0.0f;
+                for (int i = 0; i < 16; ++i) {
+                    const float d =
+                        std::abs(g_dispatchMvp16[i] - g_prevDispatchMvp16[i]);
+                    if (d > maxDelta) maxDelta = d;
+                }
+                const bool transition = s_prevValid && (maxDelta > kEps);
+
+                // --- Fixed probe point P -----------------------------------
+                // Deterministic mid-map XY at the water plane. FRAME-STABLE
+                // (map geometry constants + waterElevation, NOT camera): the
+                // dz across the transition is therefore attributable purely to
+                // the per-consumer depth-fudge x MVP interaction, not point
+                // motion. MC2 world layout (terrain.h:367-368): X increases
+                // from mapTopLeft3d.x, Y decreases from mapTopLeft3d.y.
+                const float Px = Terrain::mapTopLeft3d.x
+                                 + Terrain::worldUnitsMapSide * 0.5f;
+                const float Py = Terrain::mapTopLeft3d.y
+                                 - Terrain::worldUnitsMapSide * 0.5f;
+                const float Pz = Terrain::waterElevation;
+
+                // Project P with a given GL_FALSE row-major MVP using the
+                // file's authoritative convention (see :1881-1898 and
+                // memory/terrain_mvp_gl_false.md): GLSL reads our row-major
+                // bytes column-major, so clip[i] = sum_j m[j*4+i]*P[j]. This
+                // is byte-identical to gpu_driven_terrain_solid.comp's
+                // projectClip() (terrain-solid's clipPos source, read verbatim
+                // by gos_terrain_thin.vert:210) and to the `terrainMVP*vec4`
+                // in gos_terrain_water_fast_mdi.vert:283 and
+                // terrain_overlay.vert:31 (same upload convention).
+                auto projZ = [](const float* m,
+                                 float x, float y, float z,
+                                 float& outZ, float& outW) {
+                    const float cz =
+                        m[0 * 4 + 2] * x + m[1 * 4 + 2] * y +
+                        m[2 * 4 + 2] * z + m[3 * 4 + 2];
+                    const float cw =
+                        m[0 * 4 + 3] * x + m[1 * 4 + 3] * y +
+                        m[2 * 4 + 3] * z + m[3 * 4 + 3];
+                    outZ = cz; outW = cw;
+                };
+
+                // terrain SOLID: mirror gos_terrain_thin.vert:219 exactly.
+                // clip = (dispatch MVP) * P (the compute bakes tr.clipPos with
+                // EXACTLY g_dispatchMvp16 -- see :1521 decl + :1894 bake);
+                // screen.z = clip.z/clip.w + TERRAIN_DEPTH_FUDGE (0.002,
+                // single-sourced mc2depth::TERRAIN_DEPTH_FUDGE).
+                float czT, cwT;
+                projZ(g_dispatchMvp16, Px, Py, Pz, czT, cwT);
+                const float z_terr =
+                    (czT / cwT) + mc2depth::TERRAIN_DEPTH_FUDGE;
+
+                // GPU WATER (fast MDI): mirror
+                // gos_terrain_water_fast_mdi.vert:291 exactly. The armed water
+                // fast path binds gos_terrain_indirect_getDispatchMvp16()
+                // (== g_dispatchMvp16; gos_terrain_water_stream.cpp:1409-1413)
+                // and ComputeDispatch only runs armed, so this is the live
+                // GPU-water producer's exact matrix this frame. screen.z =
+                // clip.z/clip.w + WATER_DEPTH_FUDGE_FAST (0.0025).
+                const float z_gpuw =
+                    (czT / cwT) + mc2depth::WATER_DEPTH_FUDGE_FAST;
+
+                // DECAL (post-Fix B, probe==producer): the armed overlay/
+                // decal callers (drawTerrainOverlays / drawDecalStaticBatch /
+                // drawDecals) bind the symmetric-mirror MVP -- armed ->
+                // gos_terrain_indirect_getDispatchMvp16() == g_dispatchMvp16,
+                // the SAME matrix z_terr/z_gpuw use here (uploadOverlayUniforms_
+                // in gameos_graphics.cpp) -- and terrain_overlay.vert adds
+                // OVERLAY_DEPTH_BIAS (single-sourced mc2depth). This code is
+                // armed-only (ComputeDispatch), so the faithful producer model
+                // is czT/cwT + OVERLAY_DEPTH_BIAS, co-planar with z_terr/z_gpuw
+                // by construction (Fix B). Retired the pre-Fix-B model (stale
+                // liveMvp gos_GetTerrainMVPMat4 + kPolyOffsetNdcApprox modelling
+                // the REMOVED glPolygonOffset(-1,-1)); that produced a
+                // counterfactual constant dz_decal blind to the fix
+                // (parity_probe_100pct: probe must equal producer). z_decal is
+                // now exact, not an approximation.
+                const float z_decal =
+                    (czT / cwT) + mc2depth::OVERLAY_DEPTH_BIAS;
+                const int decalOk = 1;
+
+                // CPU WATER: SAMPLED real produced value (NOT a CPU re-derive;
+                // the Stuff eye->projectForTerrainAdmission pipeline is not
+                // reachable here). TerrainQuad::drawWater (mclib/quad.cpp
+                // ~:3345) latches vertices[k]->wz + WATER_DEPTH_FUDGE (raster
+                // 0.0025) for the water vertex nearest the SAME fixed P.
+                // CRITICAL: CPU water and the GPU fast path are mutually
+                // exclusive per frame (terrain.cpp:1225-1229). ComputeDispatch
+                // (this code) only runs ARMED, i.e. exactly when CPU water is
+                // SKIPPED -- so g_cpuWaterProbeZ is the LAST un-armed steady
+                // sample, NOT this-frame data. We emit cpuw_stamp + its delta
+                // vs the previous dump so a stale CPU value is VISIBLE and
+                // never silently trusted (we have been wrong 3x trusting
+                // models over real data; a flagged-stale real value is honest
+                // evidence, a fabricated this-frame CPU value would be false).
+                // (declared at global file scope above - unqualified lookup
+                // here binds the global ::g_cpuWaterProbe* defined in quad.cpp)
+                const float z_cpuw = g_cpuWaterProbeZ;
+                const int   cpuwAny = g_cpuWaterProbeAny ? 1 : 0;
+                static unsigned long long s_prevCpuStamp = 0;
+                const unsigned long long cpuStampNow = g_cpuWaterProbeStamp;
+
+                // --- Emit (transition frames only, latched) ----------------
+                // Also emit the 1 steady frame immediately BEFORE a transition
+                // (one-frame-back latch) and the 1 steady frame AFTER, so the
+                // transition-frame dz can be compared to adjacent steady dz.
+                // s_emitTail counts down post-transition steady frames to
+                // print; s_havePrevSteady stashes the immediately-preceding
+                // steady line so we can print it retroactively when a
+                // transition is detected (cheap: 4 floats).
+                struct DtLine {
+                    unsigned long long f; float md; float zt, zc, zg, zd;
+                    int cAny; unsigned long long cStamp;
+                };
+                static DtLine s_prevSteady = {0,0,0,0,0,0,0,0};
+                static bool   s_havePrevSteady = false;
+                static int    s_emitTail = 0;
+
+                DtLine cur;
+                cur.f = f; cur.md = maxDelta;
+                cur.zt = z_terr; cur.zc = z_cpuw;
+                cur.zg = z_gpuw; cur.zd = z_decal;
+                cur.cAny = cpuwAny; cur.cStamp = cpuStampNow;
+
+                auto emitLine = [&](const DtLine& L, const char* kind) {
+                    const long long cpuStampDelta =
+                        (long long)L.cStamp - (long long)s_prevCpuStamp;
+                    // cpuw_fresh=1 only if the CPU sampler advanced its stamp
+                    // since the previous emitted line AND it found a vertex.
+                    const int cpuwFresh =
+                        (L.cAny && cpuStampDelta != 0) ? 1 : 0;
+                    printf("[DEPTH_TRANSITION v1] kind=%s f=%llu "
+                           "maxMvpDelta=%.7f "
+                           "z_terr=%.7f z_cpuw=%.7f z_gpuw=%.7f z_decal=%.7f "
+                           "dz_cpuw=%.7f dz_gpuw=%.7f dz_decal=%.7f "
+                           "cpuw_fresh=%d cpuw_any=%d cpuw_stamp=%llu "
+                           "cpuw_stamp_delta=%lld decal_ok=%d decal_z_approx=0\n",
+                           kind,
+                           (unsigned long long)L.f,
+                           (double)L.md,
+                           (double)L.zt, (double)L.zc,
+                           (double)L.zg, (double)L.zd,
+                           (double)(L.zc - L.zt),
+                           (double)(L.zg - L.zt),
+                           (double)(L.zd - L.zt),
+                           cpuwFresh, L.cAny,
+                           (unsigned long long)L.cStamp,
+                           cpuStampDelta, decalOk);
+                    fflush(stdout);
+                    s_prevCpuStamp = L.cStamp;
+                };
+
+                if (transition) {
+                    if (s_havePrevSteady)
+                        emitLine(s_prevSteady, "pre");
+                    emitLine(cur, "trans");
+                    s_emitTail = 1;  // print 1 steady frame after
+                } else if (s_emitTail > 0) {
+                    emitLine(cur, "post");
+                    --s_emitTail;
+                }
+                // Always stash the latest (steady or not) for the next
+                // transition's retroactive "pre" line.
+                s_prevSteady = cur;
+                s_havePrevSteady = true;
+
+                // Maintain prev MVP snapshot AFTER the diff (copy current ->
+                // prev). s_prevValid gates the first frame (no prior to diff).
+                memcpy(g_prevDispatchMvp16, g_dispatchMvp16,
+                       sizeof(float) * 16);
+                s_prevValid = true;
+            }
+        }
+        // ── end [DEPTH_TRANSITION v1] ──────────────────────────────────────
+
+        // Probe 8b: stash first 4 floats so bridge can log byte-level delta.
+        g_dispatchMvpFloats[0] = mvp[0];
+        g_dispatchMvpFloats[1] = mvp[1];
+        g_dispatchMvpFloats[2] = mvp[2];
+        g_dispatchMvpFloats[3] = mvp[3];
+        // Fix A: full 16-float snapshot for the bridge to re-upload at draw
+        // time.  Indexed by the current ring slot — compute is about to write
+        // thin records to g_thinRingSlot using this MVP, so the bridge must
+        // project them with the same MVP one frame later.
+        // Step 9 (2026-05-15): demoted behind MC2_RING_TRACE.  Default-off ⇒
+        // the snapshot is not written; gos_terrain_indirect_getRingSlotMvp()
+        // returns nullptr and the (already inert post-Fix-B) bridge override
+        // is skipped.  One-shot lifecycle line per the Debug-instrumentation
+        // rule, matching the step 8c-2 event=retired one-shots.
+        if (g_envRingTrace) {
+            memcpy(g_thinSlotMVP[g_thinRingSlot], mvp, sizeof(float) * 16);
+            g_thinSlotMVPValid[g_thinRingSlot] = true;
+        } else {
+            static bool s_loggedFixADemote = false;
+            if (!s_loggedFixADemote) {
+                s_loggedFixADemote = true;
+                printf("[RING_MVP v1] event=fixA_demoted gate=MC2_RING_TRACE\n");
+                fflush(stdout);
+            }
+        }
+    }
+
+    const uint32_t groups = (windowCount + 63u) / 64u;
+    if (groups > 0) glDispatchCompute(groups, 1, 1);
+    // Step 2b (VPL retirement): single barrier replaces the prior pair.  Both
+    // bits are required:
+    //   - GL_SHADER_STORAGE_BARRIER_BIT: fences thin[] + (when traced) hdr[]
+    //     writes against the VS that reads thin[] at draw time.
+    //   - GL_COMMAND_BARRIER_BIT: fences cmds[0].count atomicAdd writes
+    //     against the subsequent glMultiDrawElementsIndirect's read of the
+    //     indirect-cmd buffer.  Without this bit, AMD drivers can re-order
+    //     the indirect-cmd fetch ahead of the compute write (NVIDIA tolerant,
+    //     AMD failing per plan §"Load-bearing constraints").
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
+
+    // ── Probe 7 (MC2_RING_FORCE_FINISH) — directed barrier-hypothesis test ──
+    // Forces full GPU pipeline drain after the compute dispatches.
+    // If the giant-triangle bug DISAPPEARS with this on, the barrier is
+    // insufficient on AMD — VS reads stale thin records via L1$ even though
+    // CPU readback sees correct data in VRAM (probe 6 full coverage silent).
+    // Severe perf cost (every-frame stall); diagnostic-only, default OFF.
+    static const bool s_ringForceFinish = (getenv("MC2_RING_FORCE_FINISH") != nullptr);
+    if (s_ringForceFinish) {
+        glFinish();
+    }
+    // ── end probe 7 ────────────────────────────────────────────────────────
+
+    // ── Probe 3 (MC2_RING_TRACE) — read back the indirect cmd's count after patch ──
+    // If a cmd-patch race is occurring under fast rotation, cmd.count may not equal
+    // min(visibleCount, kMaxThinRecords) * 6.  Reading it here after the
+    // GL_COMMAND_BARRIER_BIT means the GPU has finished cmd-patch; no stall.
+    // Cost: one 16-byte readback per frame (one DrawArraysIndirectCommand).
+    if (s_ringTrace && g_indirectCmdBuffer != 0) {
+        uint32_t cmdQuad[4] = { 0, 0, 0, 0 };
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_indirectCmdBuffer);
+        glGetBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0, (GLsizeiptr)sizeof(cmdQuad), cmdQuad);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+        // Step 2b: with cmd-patch retired the [RING_CMDPATCH] tripwire can no
+        // longer recompute expected from hdr.visibleCount unless the bucket-
+        // header SSBO is also armed (MC2_BUCKET_HEADER_TRACE).  When it is
+        // off, cmdQuad[0] IS the authoritative count (primary's atomicAdd
+        // accounting) so there is nothing to cross-check; we still surface
+        // the raw cmd values via the existing RING_PEAK summary.
+        uint32_t vis = 0;
+        uint32_t expectedCount = cmdQuad[0];
+        if (g_solidBucketHeaderSsbo != 0) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)sizeof(vis), &vis);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            expectedCount =
+                (vis < (uint32_t)kMaxThinRecords ? vis : (uint32_t)kMaxThinRecords) * 6u;
+        }
+        if (g_solidBucketHeaderSsbo != 0 && cmdQuad[0] != expectedCount) {
+            static uint32_t s_cmdMismatchCount = 0;
+            ++s_cmdMismatchCount;
+            PROBE_LOG(
+                "[RING_CMDPATCH v1] frame=%llu cmd_count=%u expected=%u "
+                "visible=%u inst=%u first=%u base=%u mismatchCount=%u\n",
+                (unsigned long long)ringFrameIdx, (unsigned)cmdQuad[0],
+                (unsigned)expectedCount, (unsigned)vis,
+                (unsigned)cmdQuad[1], (unsigned)cmdQuad[2], (unsigned)cmdQuad[3],
+                (unsigned)s_cmdMismatchCount);
+        }
+    }
+    // ── end probe 3 ─────────────────────────────────────────────────────────
+
+    // Step 2b: parity probe retired with cmd-patch (commit 2a's safety net no
+    // longer needed once cmd-patch is gone -- there is nothing to compare
+    // against).  The surviving MC2_RING_TRACE probe below still reads
+    // cmds[0].count for the [RING_CMDPATCH] tripwire; its expected-value
+    // calculation now derives from the primary's atomicAdd accounting
+    // (see comment in that block).
+
+    glUseProgram(0);
+
+    // Restore compute-only slots to clean state.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, 0);
+    // Step 2b: unbind the indirect-cmd SSBO at slot 8 to keep the SSBO
+    // bind-points clean for the next compute pipeline (water-stream cmd-patch
+    // uses different bindings but symmetry helps debug).
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, 0);
+    // Step 2b: unbind slot 6 only if we bound it (bucket-header SSBO trace path).
+    if (g_solidBucketHeaderSsbo != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, 0);
+    // Leave slot 3 as the thin-record range (DrawIndirect's bridge reads it via
+    // gos_terrain_bridge_drawIndirect which re-binds by recipeSSBO/thinRecordSSBO
+    // arguments — no leak risk).
+
+    s_solidGpuDispatchRanThisFrame = true;
+}
+
 bool DrawIndirect() {
-    if (!IsFrameSolidArmed()) return false;
+    if (!IsFrameSolidArmed()) {
+        static bool s_warnedOnce = false;
+        if (!s_warnedOnce) {
+            s_warnedOnce = true;
+            fprintf(stderr, "[TERRAIN_INDIRECT v1] event=draw_indirect_skip "
+                   "armed=%d process_disabled=%d\n",
+                   (int)s_frameSolidArmed, (int)s_processArmingDisabled);
+            fflush(stderr);
+        }
+        return false;
+    }
+    ZoneScopedN("Terrain::SolidDrawIndirect");
+    TracyGpuZone("Terrain::SolidDrawIndirect");
 
     const bool ok = gos_terrain_bridge_drawIndirect(
         s_frameSolidCmdCount,
@@ -1681,12 +3338,12 @@ bool DrawIndirect() {
     // first_draw lifecycle print — once per mission via the mission-latch.
     // s_firstDrawPrintedThisMission is declared in the Stage 2 anonymous ns;
     // it's reset by ResetDenseRecipe() at mission teardown.
-    if (!s_firstDrawPrintedThisMission && traceOn()) {
+    if (!s_firstDrawPrintedThisMission) {
         s_firstDrawPrintedThisMission = true;
-        printf("[TERRAIN_INDIRECT v1] event=first_draw "
+        fprintf(stderr, "[TERRAIN_INDIRECT v1] event=first_draw "
                "thin_count=%d cmd_count=%d ring_slot=%d\n",
                s_frameSolidPackedThinCount, s_frameSolidCmdCount, g_thinRingSlot);
-        fflush(stdout);
+        fflush(stderr);
     }
 
     // Ring fence for the slot just drawn.
@@ -1698,6 +3355,14 @@ bool DrawIndirect() {
     return true;
 }
 
+// VPL parity-infra retirement (cpu-pack-retirement plan §7 OQ-2, full
+// delete): gos_terrain_indirect::ComputeDispatchParity_Check() removed.
+// Both retirement gates clear (Step 4 2e11617 retired the last accessor
+// consumer; soak-waiver) and the txmmgr coupling is resolved by removing
+// that call in this same commit. WaterStream::ComputeDispatchParity_Check
+// (gos_terrain_water_stream.cpp) is a SEPARATE symbol and is unaffected.
+// See memory/mc_texture_manager_dual_queue_legacy_retirement_debt.md.
+
 }  // namespace gos_terrain_indirect  // Stage 3 block
 
 // Bridge accessor for the current thin-record ring slot (used by
@@ -1706,7 +3371,27 @@ int gos_terrain_indirect_getRingSlot() {
     return g_thinRingSlot;
 }
 
+// Fix A: returns the per-slot MVP snapshot for the current ring slot, or
+// nullptr if no MVP has been stashed yet (early frames before any pack /
+// dispatch).  Bridge re-uploads this over terrain_mvp_ so the thin VS
+// projects records with the MVP they were culled by.
+// Step 9 (2026-05-15): demoted behind MC2_RING_TRACE.  When off (default) the
+// writers above never populate g_thinSlotMVPValid[], so this would return
+// nullptr regardless; the explicit early-out makes the demote contract
+// self-documenting and guarantees zero snapshot work on the default render
+// path (the gameos_graphics.cpp:2532 caller handles nullptr by skipping the
+// terrainOverrideThinMVP override — itself a no-op post-Fix-B since the thin
+// VS declares no terrainMVP uniform; see gos_terrain_thin.vert:56-61).
+const float* gos_terrain_indirect_getRingSlotMvp() {
+    if (!g_envRingTrace) return nullptr;
+    const int slot = g_thinRingSlot;
+    if (slot < 0 || slot >= kThinRingFrames) return nullptr;
+    if (!g_thinSlotMVPValid[slot]) return nullptr;
+    return g_thinSlotMVP[slot];
+}
+
 // Slice B4 Stage 1b — C-linkage accessors used by gos_terrain_mask_dispatch::DrawMaskSolid.
+// Probe 8: MVP fingerprint accessors also live here (C linkage for cross-TU call from bridge).
 extern "C" {
 
 unsigned int gos_terrain_indirect_getRecipeSSBO() {
@@ -1722,9 +3407,26 @@ int gos_terrain_indirect_getRecipeQuadCount() {
     return (int)g_recipeMapSide * (int)g_recipeMapSide;
 }
 
-const uint32_t* gos_terrain_indirect_getPackParityMask(int* outWords) {
-    if (outWords) *outWords = (int)kParityMaskWords;
-    return s_packParityMask;
+uint32_t gos_terrain_indirect_getDispatchMvpFp() {
+    return g_dispatchMvpFp;
+}
+
+// Water-consistency fix (2026-05-17): the full MVP terrain-solid baked its
+// Fix-B clipPos with this frame. Callers MUST gate on IsFrameSolidArmed()
+// (only then did ComputeDispatch run + refresh this); otherwise it is stale.
+const float* gos_terrain_indirect_getDispatchMvp16() {
+    return g_dispatchMvp16;
+}
+
+uint64_t gos_terrain_indirect_getDispatchMvpFrameIdx() {
+    return g_dispatchMvpFrameIdx;
+}
+
+void gos_terrain_indirect_getDispatchMvpFloats4(float out[4]) {
+    out[0] = g_dispatchMvpFloats[0];
+    out[1] = g_dispatchMvpFloats[1];
+    out[2] = g_dispatchMvpFloats[2];
+    out[3] = g_dispatchMvpFloats[3];
 }
 
 }  // extern "C"
@@ -1785,10 +3487,20 @@ void ResetMineTextureArray() {
     // re-allocating the GL texture.
 }
 
+// [TEMP MINE_GLPROBE] eager-drain probe — env MC2_DECAL_GLPROBE=1 (shared
+// gate with the decal probe). Removed once root cause is pinned.
+#define MINE_GLPROBE(tag) do { \
+    static const bool s_p = (getenv("MC2_DECAL_GLPROBE") && \
+                             getenv("MC2_DECAL_GLPROBE")[0] == '1'); \
+    if (s_p) { GLenum e; while ((e = glGetError()) != GL_NO_ERROR) \
+        printf("[MINE_GLPROBE] at=%s err=0x%x\n", tag, (unsigned)e); \
+        fflush(stdout); } } while(0)
+
 void BuildMineTextureArray() {
     // Texture-array contents are process-stable; re-read only if first build
     // or invalidated.
     if (g_mineTextureArrayReady) return;
+    MINE_GLPROBE("atlas_entry");
 
     // R7: handles must be loaded by setupTextures before this fires. If still
     // 0xffffffff, bail — the next dirty event retries. (Stage 2c invokes
@@ -1833,10 +3545,13 @@ void BuildMineTextureArray() {
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 
+    MINE_GLPROBE("before_getteximage");
     glBindTexture(GL_TEXTURE_2D, mineGLTex);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, mineBuf.data());
+    MINE_GLPROBE("after_getteximage_mine");
     glBindTexture(GL_TEXTURE_2D, blownGLTex);
     glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, blownBuf.data());
+    MINE_GLPROBE("after_getteximage_blown");
 
     if (g_mineTextureArrayGL == 0) glGenTextures(1, &g_mineTextureArrayGL);
     glBindTexture(GL_TEXTURE_2D_ARRAY, g_mineTextureArrayGL);
@@ -1854,6 +3569,7 @@ void BuildMineTextureArray() {
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    MINE_GLPROBE("after_teximage3d");
 
     // Restore state.
     glPixelStorei(GL_PACK_ALIGNMENT, savedPackAlign);
@@ -1862,6 +3578,7 @@ void BuildMineTextureArray() {
     glActiveTexture((GLenum)savedActive);
 
     g_mineTextureArrayReady = true;
+    MINE_GLPROBE("atlas_exit");
 
     if (IsTraceEnabled()) {
         printf("[TERRAIN_INDIRECT v1] event=mine_atlas_built "
@@ -1873,6 +3590,7 @@ void BuildMineTextureArray() {
 }
 
 void BuildMineStaticVBO() {
+    MINE_GLPROBE("vbo_entry");
     if (!GameMap || !land) {
         g_mineVertCount = 0;
         return;
@@ -1950,6 +3668,7 @@ void BuildMineStaticVBO() {
                  verts.empty() ? nullptr : verts.data(),
                  GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+    MINE_GLPROBE("vbo_after_bufferdata");
 
     if (IsTraceEnabled()) {
         printf("[TERRAIN_INDIRECT v1] event=mine_vbo_built cells=%d verts=%d "
@@ -2033,4 +3752,340 @@ bool DrawMineStatic() {
 // and resolved at link time.
 void gos_terrain_indirect_MarkMineDirty() {
     gos_terrain_indirect::MarkMineDirty();
+}
+
+// ---------------------------------------------------------------------------
+// Slice A — cement-overlay (decal) static-bake infrastructure.
+//
+// STRUCTURAL MIRROR of the PR2c mine static-bake (BuildMineStaticVBO /
+// RebuildMineStaticVBOIfDirty / MarkMineDirty / ResetMineStaticVBO /
+// IsFrameMineArmed / DrawMineStatic, ~line 3119-3398 above). Same lifetime
+// discipline: one GL_STATIC_DRAW buffer kept across missions, CPU state reset
+// on mission load + destroy, lazy rebuild-if-dirty on first armed draw (R7
+// timing-trap mitigation: do NOT eager-build at primeMissionTerrainCache —
+// the overlay tex handles lazy-load in TerrainQuad::setupTextures during the
+// first paint cycle, before Render.TerrainOverlaysStatic fires).
+//
+// What it bakes: the per-quad M2d cement-overlay producer (mclib/quad.cpp
+// `if (useOverlayTexture && overlayHandle != 0xffffffff)`). Decal inputs are
+// map-stable — corner world XYZ, overlayHandle, uvMode are all derivable from
+// the map-immutable Shape-C terrain face cache (MapData::buildTerrainFaceCache)
+// + MapData::blocks. The bake reproduces M2d's 4-corner WorldOverlayVert build
+// + per-uvMode tri emit UNCONDITIONALLY (no pzTri camera cull — plan's pz-cull
+// policy; cement is sparse, GPU clips, mirrors DrawMineStatic's unconditional
+// static draw). Vertex argb/fog are forced to 0xffffffff / 1.0: shaders/
+// terrain_overlay.frag never reads the Color/FogValue varyings (explicit
+// comment at terrain_overlay.frag:48 — it recomputes lighting/fog from WorldPos
+// + live uniforms), so a geometry-only bake is lighting-identical to M2d, the
+// same way MineVert is pos/uv/layer-only.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// WorldOverlayVert layout MUST byte-match GameOS/include/gameos.hpp's struct
+// (28-byte stride) — the bridge VAO (drawDecalStaticBatch / makeOverlayVAO)
+// reads attribs 0..3 at offsets 0/12/20/24.
+struct DecalVert {
+    float        wx, wy, wz;   // offset  0  — MC2 world (x=east, y=north, z=elev)
+    float        u, v;         // offset 12
+    float        fog;          // offset 20  — forced 1.0 (frag discards it)
+    uint32_t     argb;         // offset 24  — forced 0xffffffff (frag discards it)
+};
+
+// Per-overlayTexId draw range (mirror gameos_graphics.cpp OverlayBatchEntry_
+// and gos_terrain_indirect's mine 6-verts-per-cell grouping idea).
+struct DecalDrawRange {
+    uint32_t texHandle;
+    uint32_t firstVert;
+    uint32_t vertCount;
+};
+
+GLuint                       g_decalStaticVBO_GL  = 0;
+int                          g_decalVertCount     = 0;
+bool                         g_decalVBODirty      = true;  // first build triggers via Rebuild on first armed draw
+std::vector<DecalDrawRange>  g_decalDrawRanges;
+
+// Mirrors quad.cpp's OVERLAY_ELEV_OFFSET (0.15f) + the fixed overlay UV
+// constants (oldminU/oldmaxU/oldminV/oldmaxV at quad.cpp:2054-2057). The M2d
+// overlay path uses these CONSTANT UVs (not uvData), so they are fully
+// map-stable.
+constexpr float kOverlayElevOffset = 0.15f;
+constexpr float kOldMinU = 0.0078125f;
+constexpr float kOldMaxU = 0.9921875f;
+constexpr float kOldMinV = 0.0078125f;
+constexpr float kOldMaxV = 0.9921875f;
+
+}  // namespace
+
+namespace gos_terrain_indirect {
+
+// Mirror MarkMineDirty — idempotent; multiple cement mutations between paints
+// debounce to one rebuild via the dirty flag.
+void MarkDecalDirty() {
+    g_decalVBODirty = true;
+}
+
+// Mirror ResetMineStaticVBO — CPU-clear only; keep g_decalStaticVBO_GL
+// allocation across missions (next BuildDecalStaticVBO reuses it via
+// glBufferData orphan+realloc).
+void ResetDecalStaticVBO() {
+    g_decalVertCount = 0;
+    g_decalVBODirty  = true;
+    g_decalDrawRanges.clear();
+    if (IsTraceEnabled()) {
+        printf("[TERRAIN_OVERLAY v1] event=decal_vbo_reset "
+               "vbo_gl=%u kept=1\n", (unsigned)g_decalStaticVBO_GL);
+        fflush(stdout);
+    }
+}
+
+// Mirror BuildMineStaticVBO. Iterates the map-immutable Shape-C terrain face
+// cache exactly as MapData::buildTerrainFaceCache does (mapdata.cpp:262-309):
+// same tile range, same 4-corner block layout, same worldQuadUVMode formula.
+void BuildDecalStaticVBO() {
+    g_decalVertCount = 0;
+    g_decalDrawRanges.clear();
+
+    if (!Terrain::mapData) return;
+    PostcompVertexPtr blocks = Terrain::mapData->getBlocks();
+    if (!blocks) return;
+
+    const long mapSide  = Terrain::realVerticesMapSide;
+    const long half     = Terrain::halfVerticesMapSide;
+    const float wupv    = Terrain::worldUnitsPerVertex;
+    const long cacheW   = mapSide - 1;   // == worldQuadCacheWidth() (mapdata.cpp:107)
+    if (cacheW <= 0) return;
+
+    std::vector<DecalVert> verts;
+    verts.reserve(64 * 6);
+
+    // First collect (texId -> tri verts) so draws can be grouped per texId
+    // (mirror OverlayBatch_'s verts + draws split / pushToOverlayBatch_).
+    // overlay tile count is empirically tiny — a flat scan + run-grouping is
+    // fine (cement sparse, matches DrawMineStatic's tileHasMines short-circuit
+    // in spirit).
+    struct PendingTri { uint32_t texId; DecalVert v[3]; };
+    std::vector<PendingTri> pending;
+
+    for (long tileR = 0; tileR < cacheW; ++tileR) {
+        for (long tileC = 0; tileC < cacheW; ++tileC) {
+            const MapData::WorldQuadTerrainCacheEntry* e =
+                Terrain::mapData->getTerrainFaceCacheEntry(tileR, tileC);
+            if (!e || !e->isValid()) continue;
+            // M2d gate equivalent: useOverlayTexture && overlayHandle !=
+            // 0xffffffff. buildTerrainFaceCache only sets overlayHandle for
+            // the alpha-cement case (mapdata.cpp:296-302); pure-cement and
+            // non-cement leave it 0xffffffff. Use the handle directly so this
+            // matches the live M2d predicate byte-for-byte.
+            const DWORD overlayHandle = e->overlayHandle;
+            if (overlayHandle == 0xffffffffu) continue;
+
+            const DWORD overlayTexId = tex_resolve(overlayHandle);
+            if (overlayTexId == 0) continue;
+
+            // 4 corners — mirror buildTerrainFaceCache (mapdata.cpp:266-275)
+            // and fillWorldCacheVertex (mapdata.cpp:125-132). Quad
+            // vertices[0..3] == cache worldVertices[0..3] (verified vs
+            // MapData::makeLists v0=v(x,y) v1=v(x+1,y) v2=v(x+1,y+1)
+            // v3=v(x,y+1)).
+            const long idx0 = tileC + tileR * mapSide;
+            PostcompVertexPtr p0 = &blocks[idx0];
+            PostcompVertexPtr p1 = p0 + 1;
+            PostcompVertexPtr p2 = p0 + mapSide + 1;
+            PostcompVertexPtr p3 = p0 + mapSide;
+
+            auto cornerXY = [&](long tR, long tC, float& wx, float& wy) {
+                wx = float(tC - half) * wupv;     // fillWorldCacheVertex vx
+                wy = float(half - tR) * wupv;     // fillWorldCacheVertex vy
+            };
+
+            DecalVert c[4];
+            cornerXY(tileR,     tileC,     c[0].wx, c[0].wy);
+            cornerXY(tileR,     tileC + 1, c[1].wx, c[1].wy);
+            cornerXY(tileR + 1, tileC + 1, c[2].wx, c[2].wy);
+            cornerXY(tileR + 1, tileC,     c[3].wx, c[3].wy);
+            c[0].wz = p0->elevation + kOverlayElevOffset;  // M2d quad.cpp:2406
+            c[1].wz = p1->elevation + kOverlayElevOffset;
+            c[2].wz = p2->elevation + kOverlayElevOffset;
+            c[3].wz = p3->elevation + kOverlayElevOffset;
+
+            // [TERRAIN_OVERLAY v1] decal_corner_probe — env-gated
+            // (MC2_TERRAIN_INDIRECT_TRACE), first few cement tiles only,
+            // SILENT by default. Retained dormant diagnostic (demote-not-
+            // delete per the debug-instrumentation rule): prints the bake's
+            // per-corner world coords + the Terrain globals it derived them
+            // from + an ELEV_IDENTICAL flag. The raster-sheet bug it was
+            // built for was root-caused (unconditional all-map draw vs the
+            // non-clip-safe terrain_overlay.vert) and FIXED 2026-05-17 (the
+            // px.z in [0,1) guard) — the bake coords were proven correct, so
+            // this stays as a coord-sanity check for any future bake-source
+            // change, not an active investigation. Background:
+            // memory/drawpass_retirement_decal_bake_state_and_raster_sheet_trap.md
+            if (IsTraceEnabled()) {
+                static int s_probeCount = 0;
+                if (s_probeCount < 6) {
+                    ++s_probeCount;
+                    const bool elevIdentical =
+                        (p0->elevation == p1->elevation) &&
+                        (p1->elevation == p2->elevation) &&
+                        (p2->elevation == p3->elevation);
+                    printf("[TERRAIN_OVERLAY v1] event=decal_corner_probe "
+                           "tileR=%ld tileC=%ld mapSide=%ld half=%ld "
+                           "wupv=%.6f elev_identical=%d "
+                           "c0=(%.3f,%.3f,%.5f) c1=(%.3f,%.3f,%.5f) "
+                           "c2=(%.3f,%.3f,%.5f) c3=(%.3f,%.3f,%.5f) "
+                           "elev_raw=(%.5f,%.5f,%.5f,%.5f)\n",
+                           tileR, tileC, (long)mapSide, (long)half,
+                           (double)wupv, elevIdentical ? 1 : 0,
+                           c[0].wx, c[0].wy, c[0].wz,
+                           c[1].wx, c[1].wy, c[1].wz,
+                           c[2].wx, c[2].wy, c[2].wz,
+                           c[3].wx, c[3].wy, c[3].wz,
+                           (double)p0->elevation, (double)p1->elevation,
+                           (double)p2->elevation, (double)p3->elevation);
+                    fflush(stdout);
+                }
+            }
+            for (int k = 0; k < 4; ++k) {
+                c[k].fog  = 1.0f;          // frag discards FogValue (terrain_overlay.frag:48)
+                c[k].argb = 0xffffffffu;   // frag discards Color    (terrain_overlay.frag:48)
+            }
+
+            // uvMode: mirror worldQuadUVMode (mapdata.cpp:115-118). The cache's
+            // uvData was resolved with this; M2d's diagonal/UV choice keys off
+            // the live quad uvMode, which equals worldQuadUVMode(absRow,absCol)
+            // (MapData::makeLists parity == absolute-tile parity).
+            const long uvMode =
+                ((tileR & 1) == (tileC & 1)) ? BOTTOMRIGHT : BOTTOMLEFT;
+
+            auto emit = [&](const DecalVert& a, float au, float av,
+                            const DecalVert& b, float bu, float bv,
+                            const DecalVert& d, float du, float dv) {
+                PendingTri t;
+                t.texId = (uint32_t)overlayTexId;
+                t.v[0] = a; t.v[0].u = au; t.v[0].v = av;
+                t.v[1] = b; t.v[1].u = bu; t.v[1].v = bv;
+                t.v[2] = d; t.v[2].u = du; t.v[2].v = dv;
+                pending.push_back(t);
+            };
+
+            // EXACT reproduction of M2d's per-uvMode tri emit
+            // (quad.cpp:2412-2443), but UNCONDITIONAL (no pzTri1/pzTri2).
+            if (uvMode == BOTTOMLEFT) {
+                // tri1: corners 0,1,3
+                emit(c[0], kOldMinU, kOldMinV,
+                     c[1], kOldMaxU, kOldMinV,
+                     c[3], kOldMinU, kOldMaxV);
+                // tri2: corners 1,2,3
+                emit(c[1], kOldMaxU, kOldMinV,
+                     c[2], kOldMaxU, kOldMaxV,
+                     c[3], kOldMinU, kOldMaxV);
+            } else {
+                // BOTTOMRIGHT — tri1: corners 0,1,2
+                emit(c[0], kOldMinU, kOldMinV,
+                     c[1], kOldMaxU, kOldMinV,
+                     c[2], kOldMaxU, kOldMaxV);
+                // tri2: corners 0,2,3
+                emit(c[0], kOldMinU, kOldMinV,
+                     c[2], kOldMaxU, kOldMaxV,
+                     c[3], kOldMinU, kOldMaxV);
+            }
+        }
+    }
+
+    // Group pending tris into contiguous per-texId draw ranges (mirror
+    // pushToOverlayBatch_'s run-coalescing: consecutive same-texHandle tris
+    // extend the last range).
+    for (const PendingTri& t : pending) {
+        if (!g_decalDrawRanges.empty() &&
+            g_decalDrawRanges.back().texHandle == t.texId) {
+            g_decalDrawRanges.back().vertCount += 3;
+        } else {
+            DecalDrawRange r;
+            r.texHandle = t.texId;
+            r.firstVert = (uint32_t)verts.size();
+            r.vertCount = 3;
+            g_decalDrawRanges.push_back(r);
+        }
+        verts.push_back(t.v[0]);
+        verts.push_back(t.v[1]);
+        verts.push_back(t.v[2]);
+    }
+
+    g_decalVertCount = (int)verts.size();
+
+    if (g_decalStaticVBO_GL == 0) glGenBuffers(1, &g_decalStaticVBO_GL);
+    glBindBuffer(GL_ARRAY_BUFFER, g_decalStaticVBO_GL);
+    glBufferData(GL_ARRAY_BUFFER,
+                 (GLsizeiptr)(verts.size() * sizeof(DecalVert)),
+                 verts.empty() ? nullptr : verts.data(),
+                 GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    if (IsTraceEnabled()) {
+        printf("[TERRAIN_OVERLAY v1] event=decal_vbo_built tris=%d verts=%d "
+               "ranges=%d vbo_gl=%u\n",
+               g_decalVertCount / 3, g_decalVertCount,
+               (int)g_decalDrawRanges.size(),
+               (unsigned)g_decalStaticVBO_GL);
+        fflush(stdout);
+    }
+}
+
+// Mirror RebuildMineStaticVBOIfDirty (no texture-array first-build step —
+// cement overlay uses the existing per-mission terrain texture nodes via
+// tex_resolve, not a dedicated 2-layer array).
+void RebuildDecalStaticVBOIfDirty() {
+    if (!g_decalVBODirty) return;
+    BuildDecalStaticVBO();
+    g_decalVBODirty = false;
+}
+
+unsigned int GetDecalStaticVBO_GL() { return g_decalStaticVBO_GL; }
+int          GetDecalVertCount()    { return g_decalVertCount; }
+
+// Mirror DrawMineStatic. Lazy rebuild-if-dirty on first armed draw, single
+// bridge dispatch, NO clear (static buffer persists). Returns true on a
+// successful zero-emit frame (mission has no cement overlay) — the M2d gate-
+// off is still the point.
+bool DrawDecalStatic() {
+    RebuildDecalStaticVBOIfDirty();
+    if (g_decalVertCount <= 0 || g_decalDrawRanges.empty()) {
+        return true;  // no cement overlay this mission — successful no-op
+    }
+    static_assert(sizeof(DecalDrawRange) == sizeof(GosDecalStaticDraw),
+                  "DecalDrawRange must layout-match GosDecalStaticDraw");
+    const bool ok = gos_terrain_bridge_drawDecalStatic(
+        g_decalStaticVBO_GL,
+        reinterpret_cast<const GosDecalStaticDraw*>(g_decalDrawRanges.data()),
+        (int)g_decalDrawRanges.size());
+    if (ok) {
+        Counters_AddDecalStaticTrisDrawn((long long)(g_decalVertCount / 3));
+        if (IsTraceEnabled()) {
+            static bool s_firstDraw = true;
+            if (s_firstDraw) {
+                printf("[TERRAIN_OVERLAY v1] event=decal_first_draw tris=%d\n",
+                       g_decalVertCount / 3);
+                fflush(stdout);
+                s_firstDraw = false;
+            }
+        }
+    } else if (IsTraceEnabled()) {
+        printf("[TERRAIN_OVERLAY v1] event=decal_draw_fallback "
+               "reason=bridge_returned_false verts=%d\n", g_decalVertCount);
+        fflush(stdout);
+    }
+    return ok;
+}
+
+}  // namespace gos_terrain_indirect
+
+// C-linkage forwarder for the cement-mutation invalidation sites (code/
+// bldng.cpp bridge-destroy + mclib/terrain.cpp Terrain::setOverlay). Mirrors
+// gos_terrain_indirect_MarkMineDirty: forward-declared `extern void
+// gos_terrain_indirect_MarkDecalDirty();` at the call sites so widely-included
+// headers do not need gos_terrain_indirect.h. Idempotent — chain mutations
+// debounce to one rebuild/paint via the dirty flag.
+void gos_terrain_indirect_MarkDecalDirty() {
+    gos_terrain_indirect::MarkDecalDirty();
 }

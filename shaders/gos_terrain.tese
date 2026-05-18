@@ -34,6 +34,7 @@ uniform sampler2D matNormal3;   // concrete normal+disp
 uniform vec4 detailNormalTiling; // .x = base tiling multiplier
 
 #include <include/terrain_common.hglsl>
+#include <include/terrain_depth_bias.hglsl>  // single-source TERRAIN/WATER_DEPTH_FUDGE
 
 void main()
 {
@@ -134,7 +135,7 @@ void main()
     // (commit 4c8f9a4) — the old fudge was tuned under [-1,1]→[0,1] remap
     // where the visible NDC range was halved; under native [0,1] z-fighting
     // headroom near shoreline shrank and the staircase regressed.
-    screen.z = clip.z * rhw + 0.002;
+    screen.z = clip.z * rhw + TERRAIN_DEPTH_FUDGE;  // single-sourced; see terrain_depth_bias.hglsl
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
     gl_Position = vec4(ndc.xyz * absW, absW);

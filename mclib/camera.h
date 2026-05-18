@@ -639,9 +639,27 @@ class Camera
 		
 		void projectCamera (Stuff::Vector3D &point);
 
+		// Read-only view of the world->clip matrix. Used by the per-frame
+		// inverseProject delta-cache (VPL-retirement Step 3 3b) to detect a
+		// camera-matrix change via memcmp without re-projecting every frame.
+		const Stuff::Matrix4D& getWorldToClip (void) const { return worldToClip; }
+
+		// Shared CPU camera-frustum x quad-AABB primitive (VPL-retirement Step 3 3a
+		// OWNS the definition; Step 5B references it). Pure CPU, no GL, no readback.
+		// extractFrustumPlanes: Gribb-Hartmann 6-plane extraction from worldToClip,
+		// with the projection swizzle s=(-wx,wz,wy) folded into each plane so the
+		// returned planes test RAW world AABBs (built from vertices[].vx/.vy/.elevation).
+		void extractFrustumPlanes (float planes[6][4]) const;
+		// quadAabbInFrustum: conservative p-vertex AABB-vs-frustum test. Never
+		// false-negative (may false-positive slightly outside - acceptable).
+		bool quadAabbInFrustum (const float planes[6][4],
+		                        const Stuff::Vector3D& mn,
+		                        const Stuff::Vector3D& mx) const;
+
 		unsigned long inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff::Vector3D &point);
 
-		void getClosestVertex (Stuff::Vector2DOf<long> &screenPos, long &row, long &col);
+		// VPL Step 8b: getClosestVertex declaration deleted (dead code, zero
+		// callers; def removed from camera.cpp). See Step 8 review SS3.
 		
 		void setOrthogonal(void);
 		virtual void setCameraOrigin (void);

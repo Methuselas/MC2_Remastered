@@ -88,7 +88,9 @@ float sampleShadowMap(sampler2DShadow smap, vec3 worldPos, mat4 lsMatrix, int nu
 {
     vec4 lsPos = lsMatrix * vec4(worldPos, 1.0);
     vec3 projCoords = lsPos.xyz / lsPos.w;
-    projCoords = projCoords * 0.5 + 0.5;
+    // z already [0,1]: both static and dynamic light orthos now emit
+    // ZERO_TO_ONE clip-z (lockstep with gos_postprocess buildStatic/Dynamic).
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
 
     if (projCoords.z > 1.0 || projCoords.z < 0.0) return 1.0;
     if (projCoords.x < 0.0 || projCoords.x > 1.0 ||

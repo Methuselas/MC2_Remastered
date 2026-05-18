@@ -259,7 +259,56 @@ static inline void NoteLegacyDetailOverlayCluster() {
 }
 }  // namespace
 
+// [DEPTH_TRANSITION v1] cross-TU CPU-water REAL screen-z sample (env-gated
+// MC2_DEPTH_TRANSITION_PROBE; silent default). Written by TerrainQuad::drawWater
+// for the water vertex nearest the fixed mid-map probe point P; READ by the
+// transition dump in gos_terrain_indirect.cpp. g_cpuWaterProbeStamp is bumped
+// once per CPU-water frame so the dump can detect a STALE value (CPU water and
+// the GPU water fast path are mutually exclusive per frame -- on an armed
+// transition frame this is the last un-armed steady sample, NOT this-frame).
+float    g_cpuWaterProbeZ        = 0.0f;
+double   g_cpuWaterProbeBestD2   = 0.0;
+bool     g_cpuWaterProbeAny      = false;
+unsigned long long g_cpuWaterProbeStamp = 0;
+// Per-CPU-water-frame reset of the nearest-vertex search is done once/frame in
+// Terrain::renderWater (terrain.cpp) BEFORE the drawWater quad loop -- the
+// single legacy-loop entry where CPU water is the live producer. It clears
+// g_cpuWaterProbeAny / g_cpuWaterProbeBestD2 and bumps g_cpuWaterProbeStamp.
+
 static const bool s_shapeCParityCheck = (getenv("MC2_SHAPE_C_PARITY_CHECK") != nullptr);
+
+// Step 1b-1 (cpu-pack-retirement plan §2 A1): the M2 thin-record emit scope is
+// orphaned by Fix B (commit 005ebc7) — the GPU compute shader
+// gpu_driven_terrain_solid.comp re-derives the thin record + the pzTri flag
+// bits for every quad it admits and overwrites the CPU-written record. When
+// gos_terrain_indirect::IsFrameSolidArmed() is true (default-armed under
+// MC2_GPU_DRIVEN_TERRAIN_SOLID=1) the CPU thin-emit is dead work. Only the
+// thin-emit is gated; pz/pzTri compute, the both-culled cull, and the M2d
+// gos_PushTerrainOverlay decal producer stay UNCONDITIONAL (the live
+// cement-transition/runway/road decal path — §2 WARNING, 9964d5a regression
+// class). MC2_TERRAIN_INDIRECT_THINEMIT_TRACE=1 emits a one-shot lifecycle
+// line so smoke artifacts capture the gate state.
+static const bool s_thinEmitTrace =
+    (getenv("MC2_TERRAIN_INDIRECT_THINEMIT_TRACE") != nullptr);
+
+// MC2_M2D_PZ_PARITY probe (VPL Step 8b precursor validator). Re-authored per
+// docs/superpowers/reviews/2026-05-15-overlay-pz-scoped-redesign-rereview.md
+// Finding 5. Arming is a static file-scope getenv read (NOT a Renderer!=3
+// arm-guard — that guard sat in the dead legacy arm; the modern fast path is
+// the perspective GL renderer, Environment.Renderer != 3). When armed, the
+// M2d pzc/pzTri block bit-compares pzc_new (the corrected reprojection +
+// clipInfo==0 sentinel guard) against pzc_old (the literal vertices[c]->pz
+// formula, legal probe-only because terrain.cpp still writes cv->pz pre-Step-8b
+// and the read is confined to a probe-local). First-N mismatches are emitted
+// unconditionally (NOT frame-modulo); a per-mission summary line asserts
+// checked > 0 (the v1 failure mode was checked == 0 = probe never fired).
+// Demote-don't-delete after green per the Debug-instrumentation rule.
+static const bool s_m2dPzParity = (getenv("MC2_M2D_PZ_PARITY") != nullptr);
+static int  s_m2dPzParityChecked = 0;       // quads the probe actually compared
+static int  s_m2dPzParityMismatch = 0;      // quads with any pzc/pzTri divergence
+static int  s_m2dPzParityEmitted = 0;       // first-N detail lines emitted so far
+static bool s_m2dPzParityArmLogged = false; // one-shot arm/scope-assertion line
+static const int s_m2dPzParityEmitCap = 32; // first-N detail-line cap
 static const bool s_shapeCEnabled = ([] {
 	// Default ON post Slice-1 flip (2026-04-29). Tier1 parity validated:
 	// 19.7M field-equality checks across 5 missions, zero mismatches.
@@ -685,6 +734,48 @@ void TerrainQuad::setupTextures (void)
 		blownTextureHandle = mcTextureManager->loadTexture(mineTextureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink, 0, 0x1);
 	}
 
+	// quadList is allocated via Malloc+memset(0), not C++ new, so TerrainQuad's
+	// constructor and init() are never called. Reset render handles to their
+	// sentinel values (0xffffffff = "no texture") so draw() exits at its first
+	// guard rather than emitting tris with handle=0 when the GPU path is armed.
+	terrainHandle       = 0xffffffff;
+	terrainDetailHandle = 0xffffffff;
+	waterHandle         = 0xffffffff;
+	waterDetailHandle   = 0xffffffff;
+	overlayHandle       = 0xffffffff;
+	isCement            = false;
+
+	// S6: hoist the armed-water gate predicate ONCE per quad. The shared
+	// WaterFastPathOwnsArmedDraw() is a non-inline cross-TU call that itself
+	// fans into IsFrameSolidArmed()/WaterStream::IsReady()/GetRecipeCount();
+	// calling it per-vertex (x5/quad) in this hot per-quad loop would tension
+	// the 100ns hot-loop rule. It is frame-invariant within a frame, so
+	// compute it once here. legacyWaterDraw == "GPU fast path does NOT own
+	// the armed draw -> the legacy CPU (ii) draw-side must run".
+	// BOUNDARY (CONCERN-1, do not break): the (ii) gate below wraps ONLY the
+	// per-vertex wx/wy/wz/ww writes + the clipped-body handle-resolution +
+	// addTriangleBulk. clipInfo=clipData, calcThisFrame|=2, the leastZ/mostZ/
+	// leastW/mostW/leastWY/mostWY 6-tuple, and the 0xffffffff sentinel(s)
+	// MUST stay UNCONDITIONAL (they are (i)/M2a - never move them inside the
+	// if (legacyWaterDraw) braces).
+	const bool legacyWaterDraw = !gos_terrain_indirect::WaterFastPathOwnsArmedDraw();
+
+	// HISTORICAL NOTE: an earlier commit (9964d5a "perf: skip solid/recipe CPU work
+	// when GPU SOLID is armed") wrapped this body in
+	//   if (!gos_terrain_indirect::IsFrameSolidArmed()) { ... }
+	// on the rationale that solid triangles + recipe build are wasted when GPU SOLID
+	// handles drawing. The author noted "detail-overlay triangles are thrown away in
+	// txmmgr" — true of the OLD addTerrainTriangles overlay path, but NOT of the NEW
+	// world-space `gos_PushTerrainOverlay` → `gos_DrawTerrainOverlays` batch path,
+	// which is the live producer of cement-transition tiles, runway/road decals, and
+	// other on-terrain overlays. The gate caused those decals to vanish silently
+	// (gos_push_overlay_calls dropped to 0 on the indirect path).
+	//
+	// Reverted to unconditional execution. A future perf slice can split the body
+	// surgically: keep the recipe-cache lookup + member field assignments (which
+	// populate overlayHandle / isCement for TerrainQuad::draw to consume), gate only
+	// addTerrainTriangles + pz_emit_terrain_tris.
+
  	if (!Terrain::terrainTextures2)
 	{
 		if (uvMode == BOTTOMRIGHT)
@@ -995,11 +1086,14 @@ void TerrainQuad::setupTextures (void)
 				else
 					vertices[0]->clipInfo = clipData;
 		
-				vertices[0]->wx = screenPos.x;
-				vertices[0]->wy = screenPos.y;
-				vertices[0]->wz = screenPos.z;
-				vertices[0]->ww = screenPos.w;
-	
+				if (legacyWaterDraw)
+				{
+					vertices[0]->wx = screenPos.x;
+					vertices[0]->wy = screenPos.y;
+					vertices[0]->wz = screenPos.z;
+					vertices[0]->ww = screenPos.w;
+				}
+
 				vertices[0]->calcThisFrame |= 2;
 
 				if (clipData)
@@ -1062,11 +1156,14 @@ void TerrainQuad::setupTextures (void)
 				else
 					vertices[1]->clipInfo = clipData;
  
-				vertices[1]->wx = screenPos.x;
-				vertices[1]->wy = screenPos.y;
-				vertices[1]->wz = screenPos.z;
-				vertices[1]->ww = screenPos.w;
-	
+				if (legacyWaterDraw)
+				{
+					vertices[1]->wx = screenPos.x;
+					vertices[1]->wy = screenPos.y;
+					vertices[1]->wz = screenPos.z;
+					vertices[1]->ww = screenPos.w;
+				}
+
 				vertices[1]->calcThisFrame |= 2;
 
 				if (clipData)
@@ -1129,11 +1226,14 @@ void TerrainQuad::setupTextures (void)
 				else
 					vertices[2]->clipInfo = clipData;
 					
-				vertices[2]->wx = screenPos.x;
-				vertices[2]->wy = screenPos.y;
-				vertices[2]->wz = screenPos.z;
-				vertices[2]->ww = screenPos.w;
-	
+				if (legacyWaterDraw)
+				{
+					vertices[2]->wx = screenPos.x;
+					vertices[2]->wy = screenPos.y;
+					vertices[2]->wz = screenPos.z;
+					vertices[2]->ww = screenPos.w;
+				}
+
 				vertices[2]->calcThisFrame |= 2;
 
 				if (clipData)
@@ -1195,12 +1295,15 @@ void TerrainQuad::setupTextures (void)
 					vertices[3]->clipInfo = clipData; //onScreen;
 				else
 					vertices[3]->clipInfo = clipData;
-				 
-				vertices[3]->wx = screenPos.x;
-				vertices[3]->wy = screenPos.y;
-				vertices[3]->wz = screenPos.z;
-				vertices[3]->ww = screenPos.w;
 	
+				if (legacyWaterDraw)
+				{
+					vertices[3]->wx = screenPos.x;
+					vertices[3]->wy = screenPos.y;
+					vertices[3]->wz = screenPos.z;
+					vertices[3]->ww = screenPos.w;
+				}
+
 				vertices[3]->calcThisFrame |= 2;
 
 				if (clipData)
@@ -1232,20 +1335,23 @@ void TerrainQuad::setupTextures (void)
 
 		if (clipped1 || clipped2)
 		{
-			if (!Terrain::terrainTextures2)
+			if (legacyWaterDraw)
 			{
-				DWORD waterDetailData = Terrain::terrainTextures->setDetail(0,sprayFrame);
-				waterHandle = Terrain::terrainTextures->getTextureHandle(MapData::WaterTXMData & 0x0000ffff);
-				waterDetailHandle = Terrain::terrainTextures->getDetailHandle(waterDetailData & 0x0000ffff); 
+				if (!Terrain::terrainTextures2)
+				{
+					DWORD waterDetailData = Terrain::terrainTextures->setDetail(0,sprayFrame);
+					waterHandle = Terrain::terrainTextures->getTextureHandle(MapData::WaterTXMData & 0x0000ffff);
+					waterDetailHandle = Terrain::terrainTextures->getDetailHandle(waterDetailData & 0x0000ffff);
+				}
+				else
+				{
+					waterHandle = Terrain::terrainTextures2->getWaterTextureHandle();
+					waterDetailHandle = Terrain::terrainTextures2->getWaterDetailHandle(sprayFrame);
+				}
+
+				mcTextureManager->addTriangleBulk(waterHandle, MC2_ISTERRAIN | MC2_DRAWALPHA | MC2_ISWATER, 2);
+				mcTextureManager->addTriangleBulk(waterDetailHandle, MC2_ISTERRAIN | MC2_DRAWALPHA | MC2_ISWATERDETAIL, 2);
 			}
-			else
-			{
-				waterHandle = Terrain::terrainTextures2->getWaterTextureHandle();
-				waterDetailHandle = Terrain::terrainTextures2->getWaterDetailHandle(sprayFrame);
-			}
-			
-			mcTextureManager->addTriangleBulk(waterHandle, MC2_ISTERRAIN | MC2_DRAWALPHA | MC2_ISWATER, 2);
-			mcTextureManager->addTriangleBulk(waterDetailHandle, MC2_ISTERRAIN | MC2_DRAWALPHA | MC2_ISWATERDETAIL, 2);
 		}
 		else
 		{
@@ -1260,6 +1366,8 @@ void TerrainQuad::setupTextures (void)
 	}
 	} // close CostSplitWaterVertProjScope (1A-alt Slice 0)
 
+	// (former close of IsFrameSolidArmed guard — gate removed, see opening note ~line 699)
+
 	// 1A-alt Slice 0 — bracket the per-vertex lighting block (4 vertices ×
 	// numTerrainLights × falloff + RGB accumulation + lightRGB pack + fogRGB).
 	// Expected dominant at wolfman zoom on lit missions.
@@ -1271,10 +1379,34 @@ void TerrainQuad::setupTextures (void)
 	// before this loop ran.
 	{
 	CostSplitLightingScope _csLight;
-	// Cached once per process to avoid per-quad IsEnabled()/IsParityCheckEnabled()
-	// calls (14K quads × 2 env-lookups each would be ~28K calls/frame).
-	static const bool s_lightingGpuAuth = gos_terrain_lighting::IsEnabled()
-	                                      && !gos_terrain_lighting::IsParityCheckEnabled();
+	// VPL retirement Step 8c-part-2: the legacy CPU terrain-lighting path
+	// reads vertices[N]->hazeFactor (terrain Vertex::hazeFactor) which the
+	// deleted VertexProjectLoop body was the SOLE writer of. Post-8c that
+	// field has no writer and only a defensive mapdata zero-init, so the
+	// !s_lightingGpuAuth block below MUST be unreachable under BOTH legacy
+	// entries (MC2_TERRAIN_LIGHTING_GPU=0 -> IsEnabled()==false AND
+	// MC2_TERRAIN_LIGHTING_PARITY=1 -> IsParityCheckEnabled()==true), per
+	// the v3.5 plan amendment (MAJOR-c, both-env) +
+	// memory/stock_install_must_remain_playable.md (degrade, never render
+	// wrong). The legacy opt-out + parity entry are HARD-RETIRED here by
+	// forcing GPU authority; a one-shot lifecycle line tells anyone who
+	// set either env that the legacy CPU lighting path is gone.
+	static const bool s_lightingGpuAuth = true;
+	{
+		static bool s_legacyCpuLightingRetiredLogged = false;
+		if (!s_legacyCpuLightingRetiredLogged) {
+			s_legacyCpuLightingRetiredLogged = true;
+			const bool legacyEnvRequested =
+				!gos_terrain_lighting::IsEnabled() ||
+				 gos_terrain_lighting::IsParityCheckEnabled();
+			if (legacyEnvRequested) {
+				fprintf(stderr,
+					"[TERRAIN_LIGHTING v1] event=legacy_cpu_path_retired "
+					"reason=vpl_hazeFactor_writer_deleted_gpu_now_authoritative\n");
+				fflush(stderr);
+			}
+		}
+	}
 	if (!s_lightingGpuAuth && terrainHandle != 0xffffffff)
 	{
 		//-----------------------------------------------------
@@ -1902,22 +2034,20 @@ void TerrainQuad::setupTextures (void)
 	} // close CostSplitLightingScope (1A-alt Slice 0)
 }
 
-// 2026-05-06: doubled 0.001f → 0.002f after glClipControl(ZERO_TO_ONE)
-// adoption (commit 4c8f9a4). Native [0,1] window depth halved the
-// per-LSB headroom near shoreline vs the old [-1,1]→[0,1] remap;
-// doubling restores the bit-equivalent bias. Mirror in shaders:
-// gos_terrain.tese:133, gos_terrain_thin.vert:175,
-// gos_terrain_water_fast.vert:350.
-#define TERRAIN_DEPTH_FUDGE		0.002f
-// Water MUST be biased farther than terrain so it loses LEQUAL ties at the
-// coast (smooth shore — no tile-aligned staircase where terrain crests
-// exactly to waterElevation). The bias is a SMALL DELTA on top of terrain's
-// fudge, not a multiple — doubling water's absolute bias also doubles the
-// delta, which is enough to push water behind legitimate underwater terrain
-// and break lake-bottom coverage (observed 2026-05-06 when water was set to
-// TERRAIN_DEPTH_FUDGE * 2.0f under glClipControl). Mirror: water VS at
-// gos_terrain_water_fast.vert:357.
-#define WATER_DEPTH_FUDGE		(TERRAIN_DEPTH_FUDGE + 0.0005f)
+// Terrain/water NDC depth bias: SINGLE SOURCE OF TRUTH is now
+// mclib/terrain_depth_bias.h (+ its lockstep GLSL sibling). These legacy
+// CPU raster consumers are the RASTER water regime: WATER_DEPTH_FUDGE
+// resolves (via the header's back-compat alias) to WATER_DEPTH_FUDGE_RASTER
+// = terrain + 0.0005 = 0.0025. Water has TWO LEGITIMATE REGIMES (RASTER
+// here / CPU raster + mask-water; FAST = the GPU water VS at 0.0025) -- they
+// are deliberately NOT unified to one value; a single constant regressed
+// the map edges (TES tiles through water). Do NOT "collapse the deltas":
+// see the two-regime rationale + git 89d7c4f-vs-6ff6c5c reconciliation in
+// terrain_depth_bias.h. Consumers below use TERRAIN_DEPTH_FUDGE /
+// WATER_DEPTH_FUDGE (== RASTER) unqualified.
+#include "terrain_depth_bias.h"
+using mc2depth::TERRAIN_DEPTH_FUDGE;
+using mc2depth::WATER_DEPTH_FUDGE;
 #define OVERLAY_ELEV_OFFSET		0.15f
 
 // GPU projection: pack MC2 world coords into overlay vertex instead of screen-space
@@ -2057,23 +2187,111 @@ void TerrainQuad::draw (void)
 
 		if (fastPathEligible)
 		{
-		    // pz validity — vertices[c]->pz is pre-projected by the camera transform pass.
-		    // Range [0,1) is in-clip; outside is behind-camera or far-clipped.
-		    bool pzc[4];
-		    for (int c = 0; c < 4; c++) {
-		        float pz_adj = vertices[c]->pz + TERRAIN_DEPTH_FUDGE;
-		        pzc[c] = (pz_adj >= 0.0f) && (pz_adj < 1.0f);
+		    // pz-validity gate. v2-scoping: only the M2d overlay (live-when-armed)
+		    // and the not-armed thin-emit consume pzc/pzTri; gate the (re-)compute
+		    // behind the union of their producer predicates so the cost is bounded
+		    // to the sparse overlay-quad set (NOT every terrain quad — the v1
+		    // 146->42 regression was unconditional re-projection here).
+		    // v1-mechanism: re-project on-site from the SAME (vx,vy,elevation)
+		    // triple VPL used, and reproduce VPL's pz=-0.5 off-screen sentinel via
+		    // the clipInfo==0 short-circuit (v1 Finding 1, proven bit-exact). This
+		    // makes the gate INDEPENDENT of vertices[c]->pz so Step 8b can delete
+		    // the VPL cv->pz write (terrain.cpp:1601 / :1738).
+		    // Source of truth: docs/superpowers/reviews/
+		    //   2026-05-15-overlay-pz-scoped-redesign-rereview.md Finding 1
+		    //   §Corrected edit.
+		    bool pzc[4] = { false, false, false, false };
+		    const bool pzNeeded =
+		        (useOverlayTexture && overlayHandle != 0xffffffff)
+		        || (terrainHandle != 0 && !gos_terrain_indirect::IsFrameSolidArmed());
+		    if (pzNeeded)
+		    {
+		        for (int c = 0; c < 4; c++) {
+		            // VPL writes pz=-0.5 (sentinel) iff clipInfo==0 (onScreen==false)
+		            // for the perspective renderer (terrain.cpp:1577/1601/1603,
+		            // :1749/1759). Reproduce that co-decision; do NOT re-project the
+		            // sentinel corners (re-projection of an off-cone corner whose true
+		            // projectZ z is still in [0,1) would flip pzc false->true — the
+		            // divergence v1 Finding 1 closes).
+		            if (vertices[c]->clipInfo == 0) { pzc[c] = false; continue; }
+		            Stuff::Vector3D ov3D(vertices[c]->vx, vertices[c]->vy,
+		                                 vertices[c]->pVertex->elevation);
+		            Stuff::Vector4D osp;
+		            eye->projectForTerrainAdmission(ov3D, osp);
+		            float pz_adj = osp.z + TERRAIN_DEPTH_FUDGE;
+		            pzc[c] = (pz_adj >= 0.0f) && (pz_adj < 1.0f);
+		        }
 		    }
 
 		    bool pzTri1, pzTri2;
 		    if (uvMode == BOTTOMLEFT) {
-		        // tri1 = corners [0,1,3], tri2 = corners [1,2,3]
 		        pzTri1 = pzc[0] && pzc[1] && pzc[3];
 		        pzTri2 = pzc[1] && pzc[2] && pzc[3];
 		    } else {
-		        // BOTTOMRIGHT (= TOPRIGHT diagonal): tri1 = [0,1,2], tri2 = [0,2,3]
 		        pzTri1 = pzc[0] && pzc[1] && pzc[2];
 		        pzTri2 = pzc[0] && pzc[2] && pzc[3];
+		    }
+
+		    // MC2_M2D_PZ_PARITY probe (Step 8b precursor validator, demote-don't-
+		    // delete). Bit-compares the corrected reprojection+sentinel result
+		    // above against the literal vertices[c]->pz formula in a PROBE-ONLY
+		    // local (legal because terrain.cpp still writes cv->pz pre-Step-8b).
+		    // Per 2026-05-15-overlay-pz-scoped-redesign-rereview.md Finding 5:
+		    // static getenv arm (NO Renderer!=3 arm-guard), one-shot Renderer!=3
+		    // scope-assertion log, first-N unconditional mismatch emit, running
+		    // summary with checked>0 (vacuous-probe guard). pzc_old does NOT feed
+		    // the production path; it exists solely for this comparison.
+		    if (s_m2dPzParity)
+		    {
+		        if (!s_m2dPzParityArmLogged) {
+		            s_m2dPzParityArmLogged = true;
+		            fprintf(stderr,
+		                "[M2D_PZ_PARITY v1] event=armed mechanism=reproject+clipInfo_guard "
+		                "scope_assert=Renderer!=3 Environment.Renderer=%d emit_cap=%d "
+		                "note=probe_only_cv_pz_read_pre_step8b\n",
+		                (int)Environment.Renderer, s_m2dPzParityEmitCap);
+		            fflush(stderr);
+		        }
+		        bool pzc_old[4];
+		        for (int c = 0; c < 4; c++) {
+		            float pz_adj_old = vertices[c]->pz + TERRAIN_DEPTH_FUDGE;
+		            pzc_old[c] = (pz_adj_old >= 0.0f) && (pz_adj_old < 1.0f);
+		        }
+		        bool pzTri1_old, pzTri2_old;
+		        if (uvMode == BOTTOMLEFT) {
+		            pzTri1_old = pzc_old[0] && pzc_old[1] && pzc_old[3];
+		            pzTri2_old = pzc_old[1] && pzc_old[2] && pzc_old[3];
+		        } else {
+		            pzTri1_old = pzc_old[0] && pzc_old[1] && pzc_old[2];
+		            pzTri2_old = pzc_old[0] && pzc_old[2] && pzc_old[3];
+		        }
+		        ++s_m2dPzParityChecked;
+		        const bool mism =
+		            (pzc[0] != pzc_old[0]) || (pzc[1] != pzc_old[1]) ||
+		            (pzc[2] != pzc_old[2]) || (pzc[3] != pzc_old[3]) ||
+		            (pzTri1 != pzTri1_old) || (pzTri2 != pzTri2_old);
+		        if (mism) {
+		            ++s_m2dPzParityMismatch;
+		            if (s_m2dPzParityEmitted < s_m2dPzParityEmitCap) {
+		                ++s_m2dPzParityEmitted;
+		                fprintf(stderr,
+		                    "[M2D_PZ_PARITY v1] event=mismatch n=%d "
+		                    "pzc_new=%d%d%d%d pzc_old=%d%d%d%d "
+		                    "pzTri_new=%d%d pzTri_old=%d%d pzNeeded=%d uvMode=%d\n",
+		                    s_m2dPzParityEmitted,
+		                    pzc[0], pzc[1], pzc[2], pzc[3],
+		                    pzc_old[0], pzc_old[1], pzc_old[2], pzc_old[3],
+		                    pzTri1, pzTri2, pzTri1_old, pzTri2_old,
+		                    pzNeeded ? 1 : 0, (int)uvMode);
+		                fflush(stderr);
+		            }
+		        }
+		        if ((s_m2dPzParityChecked % 14000) == 0) {
+		            fprintf(stderr,
+		                "[M2D_PZ_PARITY v1] event=summary checked=%d mismatches=%d\n",
+		                s_m2dPzParityChecked, s_m2dPzParityMismatch);
+		            fflush(stderr);
+		        }
 		    }
 
 		    if (!pzTri1 && !pzTri2) return;  // both culled — skip entirely
@@ -2082,7 +2300,33 @@ void TerrainQuad::draw (void)
 		    // Detail-only quads (terrainHandle == 0 + has detail) skip this entire block
 		    // and go straight to the M2c detail emit below. The thin record is a base-
 		    // texture submission; quads without a base texture have nothing to put in it.
-		    if (terrainHandle != 0)
+		    //
+		    // Step 1b-1 gate-split: skip the entire thin-emit scope (recipe
+		    // peek/build via ensureRecipeForQuad + the TerrainQuadThinRecord
+		    // build + appendThinRecordDirect) when GPU SOLID is armed. Post
+		    // Fix-B the compute shader is the sole projection authority and
+		    // re-derives this record (incl. the pzTri1/pzTri2 flag bits) for
+		    // every admitted quad, so the CPU emit is dead work whose output
+		    // the GPU overwrites. NOTE: pz/pzTri compute, the
+		    // `if (!pzTri1 && !pzTri2) return;` cull, and the M2d
+		    // gos_PushTerrainOverlay block below stay UNCONDITIONAL — they
+		    // feed the live decal producer (§2 WARNING, 9964d5a
+		    // conflated-overlay regression class). The `goto fp_detail_only`
+		    // inside this block jumps to a label AFTER it, so gating the
+		    // block leaves the SSBO-full detail fallthrough intact.
+		    const bool thinEmitArmed = gos_terrain_indirect::IsFrameSolidArmed();
+		    if (s_thinEmitTrace) {
+		        static bool s_loggedThinEmit = false;
+		        if (!s_loggedThinEmit) {
+		            s_loggedThinEmit = true;
+		            printf("[TERRAIN_INDIRECT v1] event=cpu_thinemit_demoted "
+		                   "path=quad_m2 armed=%d gate=IsFrameSolidArmed "
+		                   "note=overlay_producer_unconditional\n",
+		                   thinEmitArmed ? 1 : 0);
+		            fflush(stdout);
+		        }
+		    }
+		    if (terrainHandle != 0 && !thinEmitArmed)
 		    {
 		        const bool isCement = Terrain::terrainTextures->isCement(vertices[0]->pVertex->textureData & 0x0000ffff);
 		        const bool isAlpha  = Terrain::terrainTextures->isAlpha(vertices[0]->pVertex->textureData & 0x0000ffff);
@@ -2140,11 +2384,15 @@ void TerrainQuad::draw (void)
 		            tr.flags         = (uvMode == BOTTOMLEFT ? 1u : 0u)
 		                             | (pzTri1 ? 2u : 0u)
 		                             | (pzTri2 ? 4u : 0u);
-		            tr._pad0         = 0u;
+		            tr.cementWord    = 0u;  // Fix B rename (was _pad0).  Patch-stream
+		                                    // path doesn't carry cement bits.
 		            tr.lightRGB0     = lightRGBc(0);
 		            tr.lightRGB1     = lightRGBc(1);
 		            tr.lightRGB2     = lightRGBc(2);
 		            tr.lightRGB3     = lightRGBc(3);
+		            // Fix B 2026-05-14: clipPos zeroed (patch-stream uses its own VS,
+		            // not the indirect thin VS that consumes clipPos).
+		            for (int k = 0; k < 16; ++k) tr.clipPos[k] = 0.0f;
 		            TerrainPatchStream::appendThinRecordDirect(tr);
 		        }
 		    }
@@ -2194,8 +2442,19 @@ void TerrainQuad::draw (void)
 		        CostSplitOverlayScope _csOverlay;
 		        gos_terrain_indirect::Counters_AddM2dOverlayEmitQuad();
 
+		        // Slice A — substitutive gate-off, mirrors the PR2c mine gate
+		        // (quad.cpp `if (!IsFrameMineArmed()) enqueueTerrainMineState`).
+		        // When armed, the mission-static cement-overlay bake
+		        // (gos_terrain_indirect::DrawDecalStatic, Render.TerrainOverlays
+		        // Static) reproduces this exact emit from a persistent buffer,
+		        // so the per-quad gos_PushTerrainOverlay producer is skipped.
+		        // Default OFF (MC2_TERRAIN_INDIRECT_OVERLAY unset) => this is
+		        // false => the legacy per-quad emit runs unchanged: ZERO
+		        // behavior change. The legacy :2599+ sites are the FASTPATH-off
+		        // fallback (post-`return` body) and are deliberately untouched.
 		        const DWORD overlayTexId = tex_resolve(overlayHandle);
-		        if (overlayTexId != 0)
+		        if (overlayTexId != 0 &&
+		            !gos_terrain_indirect::IsFrameOverlayArmed())
 		        {
 		            WorldOverlayVert wov_corner[4];
 		            for (int c = 0; c < 4; c++) {
@@ -2267,6 +2526,53 @@ void TerrainQuad::draw (void)
 			gVertex[0].y		= vertices[0]->py;
 			gVertex[0].z		= vertices[0]->pz + TERRAIN_DEPTH_FUDGE;
 			gVertex[0].rhw		= vertices[0]->pw;
+			// [DEPTHBIAS_CALIB] VPL-#10 distance-proportional grounding
+			// probe (env MC2_DEPTHBIAS_CALIB, INERT log-only). pw == |1/clip.w|;
+			// clip.w == 1/pw. One mc2_17 zoom-sweep (in/default/out) gives
+			// W0 (default-zoom clip.w) + the real min/max clip.w to ground
+			// the 6 CRITICAL assumptions in the distance-proportional spec.
+			{
+				static const bool s_dbc = (getenv("MC2_DEPTHBIAS_CALIB") != nullptr);
+				if (s_dbc) {
+					// Filter to VALID on-screen post-admission terrain verts
+					// ONLY: pz in [0,1) (the [0,1] glClipControl NDC-z the
+					// depth buffer actually sees -- excludes off-screen /
+					// pre-gate / pz=-0.5 sentinel), pw finite & positive in a
+					// sane camera range (excludes the pw=0.5 sentinel and the
+					// pw=512 / pw=5.4e-5 behind-camera/degenerate outliers
+					// that wrecked the first capture). clip.w == 1/pw.
+					const float pz = vertices[0]->pz;
+					const float pw = vertices[0]->pw;
+					const bool  valid =
+						(pz >= 0.0f && pz < 1.0f) &&
+						(pw > 1.0e-5f && pw < 0.2f);   // clip.w in (5, 100000)
+					if (valid) {
+						const float cw = 1.0f / pw;
+						// WINDOWED stats, RESET each summary so the user's
+						// distinct zoom pauses (full-in / default / full-out)
+						// read as distinct consecutive summary lines.
+						static int   s_w = 0;
+						static float s_cwMin = 1e30f, s_cwMax = -1e30f, s_cwSum = 0.0f;
+						static int   s_first = 0;
+						if (cw < s_cwMin) s_cwMin = cw;
+						if (cw > s_cwMax) s_cwMax = cw;
+						s_cwSum += cw;
+						if (s_first < 12) {
+							++s_first;
+							fprintf(stderr,
+								"[DEPTHBIAS_CALIB v2] event=sample pz=%.6f clipw=%.3f\n",
+								pz, cw);
+						}
+						if ((++s_w % 4000) == 0) {
+							fprintf(stderr,
+								"[DEPTHBIAS_CALIB v2] event=window validN=%d "
+								"clipwMin=%.2f clipwAvg=%.2f clipwMax=%.2f\n",
+								s_w, s_cwMin, s_cwSum / (float)s_w, s_cwMax);
+							s_cwMin = 1e30f; s_cwMax = -1e30f; s_cwSum = 0.0f; s_w = 0;
+						}
+					}
+				}
+			}
 			gVertex[0].u		= minU;
 			gVertex[0].v		= minV;
 			gVertex[0].argb		= lightRGB0;
@@ -2404,6 +2710,10 @@ void TerrainQuad::draw (void)
 							sVertex[2].argb		= 0xffffffff;
 						}
 
+						// Slice A (A2) - DRAWALPHA detail dead-confirmation counter.
+						// Counter-only; behaviour unchanged. Post-return legacy body,
+						// unreachable on armed frames; expected ==0 (A2 gate).
+						gos_terrain_indirect::Counters_AddLegacyDrawAlphaDetailQuad();
 						mcTextureManager->addVertices(terrainDetailHandle,sVertex,MC2_ISTERRAIN | MC2_DRAWALPHA);	
 					}
 				}
@@ -2547,6 +2857,10 @@ void TerrainQuad::draw (void)
 							sVertex[2].argb		= 0xffffffff;
 						}
 
+						// Slice A (A2) - DRAWALPHA detail dead-confirmation counter.
+						// Counter-only; behaviour unchanged. Post-return legacy body,
+						// unreachable on armed frames; expected ==0 (A2 gate).
+						gos_terrain_indirect::Counters_AddLegacyDrawAlphaDetailQuad();
 						mcTextureManager->addVertices(terrainDetailHandle,sVertex,MC2_ISTERRAIN | MC2_DRAWALPHA);
 					}
 				}
@@ -2719,6 +3033,10 @@ void TerrainQuad::draw (void)
 							sVertex[1].argb		= 
 							sVertex[2].argb		= 0xffffffff;
 						}
+						// Slice A (A2) - DRAWALPHA detail dead-confirmation counter.
+						// Counter-only; behaviour unchanged. Post-return legacy body,
+						// unreachable on armed frames; expected ==0 (A2 gate).
+						gos_terrain_indirect::Counters_AddLegacyDrawAlphaDetailQuad();
 						mcTextureManager->addVertices(terrainDetailHandle,sVertex,MC2_ISTERRAIN | MC2_DRAWALPHA);
 					}
 					
@@ -2860,6 +3178,10 @@ void TerrainQuad::draw (void)
 							sVertex[1].argb		= 
 							sVertex[2].argb		= 0xffffffff;
 						}
+						// Slice A (A2) - DRAWALPHA detail dead-confirmation counter.
+						// Counter-only; behaviour unchanged. Post-return legacy body,
+						// unreachable on armed frames; expected ==0 (A2 gate).
+						gos_terrain_indirect::Counters_AddLegacyDrawAlphaDetailQuad();
 						mcTextureManager->addVertices(terrainDetailHandle,sVertex,MC2_ISTERRAIN | MC2_DRAWALPHA);
 					}
 					
@@ -3006,6 +3328,49 @@ void TerrainQuad::drawWater (void)
 	if (waterHandle != 0xffffffff)
 	{
 		numTerrainFaces++;
+
+		// [DEPTH_TRANSITION v1] CPU-water REAL screen-z sample (env-gated,
+		// silent default). The zoom-step depth-pop diagnosis has been wrong
+		// 3x; sampling the ACTUAL produced value is strictly better evidence
+		// than a CPU re-derivation of the Stuff eye->projectForTerrainAdmission
+		// pipeline (which is NOT reachable from the gos_terrain_indirect.cpp
+		// transition dump site). The drawn CPU-water screen-z is exactly
+		// `vertices[k]->wz + WATER_DEPTH_FUDGE` (== WATER_DEPTH_FUDGE_RASTER
+		// 0.0025; see the gVertex[*].z assignments at ~:3345 and the
+		// terrain_depth_bias.h RASTER regime). We latch the value for the
+		// water vertex nearest the FIXED mid-map probe point P so the dump's
+		// dz is frame-comparable. world XY is vertices[k]->vx / ->vy (the
+		// same pre-projection world coords drawWater emits). g_cpuWaterProbeZ
+		// carries a frame stamp because CPU water and the GPU fast path are
+		// MUTUALLY EXCLUSIVE per frame (terrain.cpp:1225-1229 early-returns
+		// renderWater when WaterFastPathOwnsArmedDraw()): on an armed
+		// transition frame this static is the LAST un-armed steady value, not
+		// this-frame data. The dump emits g_cpuWaterProbeFrameValid so a
+		// stale CPU sample is visibly flagged, never silently trusted.
+		extern float    g_cpuWaterProbeZ;
+		extern double   g_cpuWaterProbeBestD2;
+		extern bool     g_cpuWaterProbeAny;
+		static const bool s_depthTransProbe =
+		    (getenv("MC2_DEPTH_TRANSITION_PROBE") != nullptr);
+		if (s_depthTransProbe)
+		{
+			const float px = Terrain::mapTopLeft3d.x
+			                 + Terrain::worldUnitsMapSide * 0.5f;
+			const float py = Terrain::mapTopLeft3d.y
+			                 - Terrain::worldUnitsMapSide * 0.5f;
+			for (int k = 0; k < 4; ++k)
+			{
+				const float dx = vertices[k]->vx - px;
+				const float dy = vertices[k]->vy - py;
+				const double d2 = (double)dx * dx + (double)dy * dy;
+				if (!g_cpuWaterProbeAny || d2 < g_cpuWaterProbeBestD2)
+				{
+					g_cpuWaterProbeBestD2 = d2;
+					g_cpuWaterProbeZ = vertices[k]->wz + WATER_DEPTH_FUDGE;
+					g_cpuWaterProbeAny = true;
+				}
+			}
+		}
 
 		//---------------------------------------
 		// GOS 3D draw Calls now!

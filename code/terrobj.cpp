@@ -20,6 +20,7 @@
 #endif
 
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
+#include "../GameOS/gameos/gpu_cull_readback.h"  // Task 5/6: per-actor GPU visibility readback
 
 #ifndef GAMESOUND_H
 #include"gamesound.h"
@@ -160,6 +161,104 @@ void g_staticUpdateEmitSummary(uint32_t frame) {
 
     g_staticUpdateLastSummary = cur;
     g_staticUpdateLastSummaryFrame = frame;
+}
+
+// [TOBJSPLIT v1] env-gated RDTSC cost split for the recalcBounds slice.
+// MC2_TOBJ_COST_SPLIT=1 -> partition GameLogic.Units.TerrainObjects into
+// ANGULAR (kept coarse clip) / PROJ (to-delete projection body) / UPDATE
+// (appearance->update refill). RDTSC only; chrono per-call is observer-effect
+// dominated here (cost_split_instrumentation_is_observer_effect_dominated.md).
+// RDTSC per-leaf bracket is a deliberate sanctioned exception to the Tracy
+// 100ns-floor prohibition (same class as [SLIMSPLIT v1] in terrain.cpp and
+// [LIGHT_COST_SPLIT v1] in tgl.cpp): these per-object hot-loop costs are too
+// fine-grained for a Tracy zone but the RDTSC pairs are ~5-10ns and gated.
+// Demote-not-delete after the attribution lands (debug_instrumentation_rule.md).
+// Accumulators defined here (terrobj.cpp) so objmgr.cpp can call the once-
+// per-frame roll via g_tobjSplitRollAndMaybeEmit() (static_update_counters.h).
+// Probe points in mclib/bdactor.cpp use extern-declarations to reach these.
+#include <intrin.h>
+#include <stdlib.h>
+#include <stdio.h>
+static bool s_tobjSplitEnabled = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
+unsigned long long g_tobjAngularCyc = 0ULL;
+unsigned long long g_tobjProjCyc    = 0ULL;
+unsigned long long g_tobjUpdateCyc  = 0ULL;
+static unsigned long long g_tobjFrameCount = 0ULL;
+
+void g_tobjSplitRollAndMaybeEmit() {
+    if (!s_tobjSplitEnabled) return;
+    // 120-frame interval (not 600): the smoke is hard-capped at 30s; a 600-frame
+    // window requires ~10s+ and may not complete in a short mission segment.
+    // 120 frames (~2s at 60fps) guarantees several summary lines per 30s run.
+    // SLIMSPLIT precedent uses 600 (long uninterrupted missions); here the probe
+    // runs under a time-bounded smoke gate so the interval is shortened.
+    if (++g_tobjFrameCount % 120ULL == 0ULL) {
+        // Per-frame normalization matches SLIMSPLIT (terrain.cpp:1492-1498):
+        // raw N-frame integrals are uninterpretable without the window and not
+        // comparable across different interval sizes; dividing by the fixed
+        // window makes values legible and SLIMSPLIT-comparable. The PROJ/
+        // (ANGULAR+PROJ+UPDATE) ratio is interval-invariant so this does NOT
+        // alter the Stage-0.5 gate result -- it only makes future captures
+        // legible.
+        const double f = 120.0;
+        fprintf(stderr, "[TOBJSPLIT v1] event=summary frames=120 "
+               "angular_cyc_per_frame=%.0f proj_cyc_per_frame=%.0f update_cyc_per_frame=%.0f\n",
+               (double)g_tobjAngularCyc / f,
+               (double)g_tobjProjCyc / f,
+               (double)g_tobjUpdateCyc / f);
+        fflush(stderr);
+        g_tobjAngularCyc = g_tobjProjCyc = g_tobjUpdateCyc = 0ULL;
+    }
+}
+
+// [TOBJPARITY v1] env-gated STANDALONE readback-vs-coarse superset-parity
+// instrument. NOT a passing gate for any shipped slice -- the readback
+// render/shadow repoint was REVERTED (de-risk): Task 7 empirically proved
+// the GPU readback is NOT a superset of the coarse visible set (it drops
+// 10-60% of in-view terrain statics), so gating render/shadow on it is
+// unsound. Render/shadow run on the coarse canBeSeen()/inView path again.
+//
+// This probe survives, demoted-not-deleted, purely to QUANTIFY that
+// readback non-superset for the separately-tracked GPU-path meta-fix
+// task (make the GPU cull authoritative and delete the CPU approximation
+// gate). MC2_TOBJ_PARITY=1 -> per terrain static per frame, in
+// TerrainObject::update(), inlining the per-actor lagged readback
+// expression (fail-open when readback disabled) and comparing it to the
+// LOCAL coarse `inView` from recalcBounds():
+//   samples    = terrain statics where coarse inView is true (denominator).
+//   violations = coarseInView && !readbackVisible (the dropped-prop class
+//                the deferred GPU-path meta-fix must eliminate).
+//
+// Legitimate over-inclusion (readbackVisible && !coarseInView) is fine and
+// NOT a violation. Counter never chrono; no std::chrono, no RDTSC -- pure
+// event count (cost_split_instrumentation_is_observer_effect_dominated.md).
+//
+// Transitive-dependency note: this probe measures readback-vs-coarse
+// (readback >= coarse). Coarse >= projected is independently proven -- the
+// deleted projection block (Tasks 2/3) was entirely `if(inView)`-gated and
+// could only narrow the visible set, never widen it. The known result here
+// is NON-zero violations (readback is a non-superset by Task 7); the probe
+// quantifies the magnitude for the meta-fix task. It is NOT a pass/fail
+// gate for this de-risked slice.
+//
+// Demote-not-delete (debug_instrumentation_rule.md).
+// Mirrors [TOBJSPLIT v1]: file-static enable flag, same 120-frame roll
+// interval, accumulators defined here, roll called from objmgr.cpp.
+static bool s_tobjParityEnabled = (getenv("MC2_TOBJ_PARITY") != nullptr);
+static unsigned long long g_tobjParitySamples   = 0ULL;
+static unsigned long long g_tobjParityViolation = 0ULL;
+static unsigned long long g_tobjParityFrameCount = 0ULL;
+
+void g_tobjParityRollAndMaybeEmit() {
+    if (!s_tobjParityEnabled) return;
+    // 120-frame interval: matches [TOBJSPLIT v1] (see rationale above).
+    if (++g_tobjParityFrameCount % 120ULL == 0ULL) {
+        fprintf(stderr, "[TOBJPARITY v1] event=summary samples=%llu violations=%llu\n",
+                g_tobjParitySamples, g_tobjParityViolation);
+        fflush(stderr);
+        g_tobjParitySamples   = 0ULL;
+        g_tobjParityViolation = 0ULL;
+    }
 }
 
 extern unsigned long NextIdNumber;
@@ -696,6 +795,22 @@ long TerrainObject::update (void) {
 
 		if (inView)
 		{
+			// MOUSE-PICK PATH DEPENDENCY (objmgr consumer). This
+			// `windowsVisible = turn;` stamp is read by
+			// GameObjectManager::findTerrainObjectByMouse via the
+			// `getWindowsVisible() == (turn - VISIBLE_THRESHOLD)`
+			// equality (code/objmgr.cpp). Post-Task-2/3 the
+			// recalcBounds projection body is DELETED, so `inView`
+			// here is now COARSE-ANGULAR-ONLY -- a strict SUPERSET of
+			// the old on-screen set. That is intentional and load-
+			// bearing: the stamp must still fire for every pick-
+			// eligible object so the equality holds; the precise
+			// screen-rect filtering moved to a lazy per-click
+			// projection + geometry-space PerPolySelect on the
+			// consumer side. DO NOT gate this stamp narrower than
+			// `inView` (e.g. do not reintroduce a screen-rect or
+			// projection test here) -- doing so silently drops
+			// pick-eligible buildings/props from selection.
 			windowsVisible = turn;
 			{
 				++g_staticUpdateCounters.objects_seen;
@@ -749,7 +864,12 @@ long TerrainObject::update (void) {
 					++g_routeUpdateByClass[_apprClass];
 					if (ownerForcesDynamic && appearanceClaimsStatic)
 						++g_staticUpdateCounters.dyn_falling;
-					appearance->update();
+					// [TOBJSPLIT v1] UPDATE bracket
+					{
+						unsigned long long _tsU = s_tobjSplitEnabled ? __rdtsc() : 0ULL;
+						appearance->update();
+						if (s_tobjSplitEnabled) g_tobjUpdateCyc += __rdtsc() - _tsU;
+					}
 				}
 			}
 
@@ -777,6 +897,35 @@ long TerrainObject::update (void) {
 					bldgDustPoofEffect = NULL;
 				}
 			}
+		}
+
+		// [TOBJPARITY v1] STANDALONE readback-vs-coarse superset-parity
+		// instrument (env-gated MC2_TOBJ_PARITY). This is NOT a passing
+		// gate for the current slice and does NOT influence render or
+		// shadow visibility -- the readback render/shadow repoint was
+		// reverted (de-risk: Task 7 empirically proved the readback is
+		// NOT a superset of the coarse visible set, dropping 10-60% of
+		// in-view terrain statics, so gating render/shadow on it is
+		// unsound). Render/shadow now run on the coarse canBeSeen()/
+		// inView (pre-slice, safe over-inclusive) path again.
+		//
+		// This probe survives, demoted-not-deleted, purely to QUANTIFY
+		// that readback non-superset for the separately-tracked GPU-path
+		// meta-fix task (make the GPU cull authoritative and delete the
+		// CPU approximation gate). It reads the SAME inlined expression
+		// the reverted injection used -- the per-actor lagged readback,
+		// fail-open when readback is disabled -- and compares it against
+		// the LOCAL coarse `inView` (from recalcBounds at the top of
+		// this `if (appearance)` block, unchanged, contract-safe).
+		// Sample denominator: coarse inView true. Violation (the class
+		// the meta-fix must eliminate): coarseInView && !readbackVisible.
+		if (s_tobjParityEnabled && inView) {
+			bool readbackVisible = gpu_cull::readback_isEnabled()
+				? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+				: true;
+			++g_tobjParitySamples;
+			if (!readbackVisible)
+				++g_tobjParityViolation;
 		}
 	}
 

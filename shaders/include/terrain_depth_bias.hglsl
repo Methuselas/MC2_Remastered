@@ -1,0 +1,40 @@
+// GLSL sibling of mclib/terrain_depth_bias.h -- keep LOCKSTEP (byte-equal
+// values, same commit). Full rationale + the two-water-regime explanation
+// (FAST vs RASTER) and the post-matrix-share co-planar bias design live in
+// that C++ header.
+//
+// Post-matrix-share design (Fix B): water and overlays/decals project through
+// the bit-identical baked terrain MVP (symmetric mirror). They are co-planar
+// in world space; depth ordering is maintained by two small, oppositely-signed
+// epsilons off the shared terrain reference -- NOT by divergent projection
+// compensation.
+//
+//   OVERLAY_DEPTH_BIAS < 0 < WATER_DEPTH_BIAS
+//   TERRAIN + OVERLAY_DEPTH_BIAS < TERRAIN < TERRAIN + WATER_DEPTH_BIAS
+//
+//   WATER_DEPTH_BIAS   > 0: water strictly LOSES the shoreline GL_LEQUAL tie
+//                           (preserves v0.3 staircase-scar invariant).
+//   OVERLAY_DEPTH_BIAS < 0: decals/overlays strictly WIN the tie over terrain
+//                           (replaces the removed host glPolygonOffset(-1,-1)).
+//
+// RASTER regime (WATER_DEPTH_FUDGE_RASTER) is the separate, out-of-scope
+// legacy CPU-raster water path. Its value is unchanged and must NOT be
+// touched by Fix B tasks.
+//
+// Note: FAST and RASTER currently resolve to the same absolute value (0.0025)
+// by coincidence -- the post-Fix-B co-planar epsilon (WATER_DEPTH_BIAS 0.0005)
+// happens to equal the pre-existing RASTER delta. They remain SEPARATE named
+// constants because their future change trajectories differ: FAST is the
+// matrix-share co-planar regime and may retune independently; RASTER is the
+// untouched legacy CPU-water path and is out of scope for Fix B changes.
+//
+// Hard bound: water absolute (TERRAIN + WATER_DEPTH_BIAS = 0.0025) < 0.004
+// (2*TERRAIN). Proven lake-bottom punch-through threshold; see C++ header.
+#ifndef TERRAIN_DEPTH_BIAS_HGLSL
+#define TERRAIN_DEPTH_BIAS_HGLSL
+const float TERRAIN_DEPTH_FUDGE      = 0.002;
+const float WATER_DEPTH_BIAS         = 0.0005;   // signed delta off terrain; > 0 water loses LEQUAL tie
+const float OVERLAY_DEPTH_BIAS       = -0.0005;  // signed delta off terrain; < 0 decals win LEQUAL tie
+const float WATER_DEPTH_FUDGE_RASTER = 0.0025;   // RASTER regime (CPU-raster water); out of scope for Fix B
+const float WATER_DEPTH_FUDGE_FAST   = TERRAIN_DEPTH_FUDGE + WATER_DEPTH_BIAS;  // 0.0025; FAST regime (matrix-share co-planar)
+#endif

@@ -378,3 +378,4 @@ void batcher_unbindBaseInstanceByCmdSsboForPatch();
 // Legacy mode: returns immediately (s_coalesceFrameSlot mirrors s_frameSlot at :2644).
 void batcher_prepareBaseInstanceTable();
 
+extern int g_lightProbeSetupPath;  // [GPUPROPS v1]

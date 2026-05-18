@@ -20,6 +20,8 @@
 #include <cstdint>
 #include <cstddef>
 
+#include <GL/glew.h>  // GLuint — required for GetIndirectCmdBuffer() return type
+
 namespace WaterStream {
 
 // One record per water-bearing quad in a mission. Built once on the first
@@ -143,6 +145,31 @@ struct NarrowCandidate {
     const void* quadPtr; // TerrainQuadPtr — opaque to keep the header lean
 };
 void AppendNarrowCandidate(const void* quadPtr);
+
+// --- Phase C Stage 1: compute dispatch ------------------------------------
+//
+// ComputeDispatchAndBindThinRecords() replaces UploadAndBindThinRecords() on
+// the GPU-driven path. Dispatches two compute shaders:
+//   1. gpu_driven_water.comp  — cull/pack (water quads → WaterThinRecord[])
+//   2. gpu_driven_cmd_patch.comp — writes DrawArraysIndirectCommand.count
+// Followed by GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT.
+//
+// Returns true on success (g_waterGpuDrivenArmed set true).
+// Returns false if killswitch is off, recipe not ready, or window is empty.
+// The MDI bridge (Task 1.5) calls IsGpuDrivenArmed() to decide the draw path.
+bool ComputeDispatchAndBindThinRecords(float frameCos);
+
+// True if ComputeDispatchAndBindThinRecords() succeeded this frame.
+bool IsGpuDrivenArmed();
+
+// GL buffer name for the indirect draw commands (2 × DrawArraysIndirectCommand).
+// Valid only when IsGpuDrivenArmed() is true.
+GLuint GetIndirectCmdBuffer();
+
+// When MC2_GPU_DRIVEN_PARITY=1: runs both CPU and GPU thin-record paths,
+// reads both back from SSBOs, and byte-compares by recipeIdx. Emits
+// [GPU_DRIVEN_WATER_PARITY v1] summary every 600 frames.
+void ComputeDispatchParity_Check();
 
 // Tear down GL buffers (mission unload, app shutdown).
 void ReleaseGlResources();

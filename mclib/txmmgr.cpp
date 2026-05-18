@@ -44,6 +44,8 @@
 
 #include"../GameOS/gameos/gos_profiler.h"
 
+#include"terrain.h"   // VPL-#shadow Phase 1+2: Terrain::mapData for the full-map static-shadow build
+
 #ifndef PATHS_H
 #include"paths.h"
 #endif
@@ -56,6 +58,7 @@
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
+#include <chrono>   // [LIGHTBRIDGE v1] coarse per-frame populate sizing
 #include <utils/gl_utils.h>
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
@@ -67,6 +70,7 @@
 #include "../GameOS/gameos/gos_terrain_indirect.h"
 #include "../GameOS/gameos/gos_terrain_mask_dispatch.h"  // B4 Stage 1b: mask-SOLID draw
 #include "../GameOS/gameos/gpu_cull_compute.h"  // C1b: compute_dispatch() moved here from mission.cpp
+#include "../GameOS/gameos/gpu_cull_substrate.h"
 
 //---------------------------------------------------------------------------
 // static globals
@@ -321,8 +325,17 @@ void MC_TextureManager::start (void)
     lightDataStructuresCapacity = 128;
     lightDataStructuresCount = 0;
     lightData_ = new TG_HWLightsData[lightDataStructuresCapacity];
-	lightDataBuffer_ = gos_CreateBuffer(gosBUFFER_TYPE::UNIFORM, gosBUFFER_USAGE::STATIC_DRAW, sizeof(TG_HWLightsData) * lightDataStructuresCapacity, 1, NULL);
-	gos_BindBufferBase(lightDataBuffer_, LIGHT_DATA_ATTACHMENT_SLOT);
+	// [LIGHTSSBO v1] EAGER create+bind here (not lazy). The old UBO was
+	// created in this constructor so SSBO/UBO binding always had a valid
+	// buffer for EVERY consumer regardless of frame phase — notably the
+	// GPU static-prop/mech batcher, which reads LightsData via explicit
+	// layout(binding=20) and runs in a different phase than the txmmgr
+	// per-frame upload site. Lazy-create broke that lifetime invariant
+	// (batcher drew before first upload -> binding 20 empty -> black
+	// props). Allocate-once/update-many is the correct lifetime model.
+	gos_LightDataSsbo_Upload(
+		lightData_,
+		(size_t)lightDataStructuresCapacity * sizeof(TG_HWLightsData));
 
     sceneData_ = new TG_HWSceneData;
 	sceneDataBuffer_ = gos_CreateBuffer(gosBUFFER_TYPE::UNIFORM, gosBUFFER_USAGE::STATIC_DRAW, sizeof(TG_HWSceneData), 1, NULL);
@@ -386,9 +399,7 @@ void MC_TextureManager::destroy (void)
 	delete textureStringHeap;
 	textureStringHeap = NULL;
 
-	if(lightDataBuffer_)
-		gos_DestroyBuffer(lightDataBuffer_);
-	lightDataBuffer_ = nullptr;
+	gos_LightDataSsbo_Destroy();  // [LIGHTSSBO v1]
 
     delete[] lightData_;
     lightData_ = nullptr;
@@ -1025,6 +1036,223 @@ namespace {
 
         return h;
     }
+
+    // [LIGHTBRIDGE v1] C5/C6 populate sizing recon (env-gated, measure-only,
+    // demote-not-delete). The handoff's prescribed shape_emit_ns counter was
+    // grep-proven to wrap only the C1 legacy leaf (tgl.cpp:2602 scope, gated
+    // !eligibleForGpuObjects) which is structurally dead for the GPU-batched
+    // population this slice targets; the C5/C6 path
+    // (addLightDataStructureWithPerActorColor, the sole caller route from
+    // GatherGpuObjectLightDataOnly) had NO armed-path attribution. This is
+    // that attribution: ONE std::chrono pair per call (NOT a per-call Tracy
+    // zone / not nested -> ~30-50ns/call observer effect, << the claimed
+    // multi-ms lever; the 6-nested-scope cost-split apparatus that inflated
+    // terrain numbers is the anti-pattern this deliberately avoids), summed
+    // per-frame, drained at resetLightData() (frame-start). Gated on the SAME
+    // MC2_OBJECT_RECON_TRACY the handoff capture protocol already sets, so the
+    // protocol is unchanged. tmpl_hit counts the template-cache-hit calls
+    // whose trailing FNV+memcmp is the redundancy the slice retires.
+    static bool     s_lbInit = false;
+    static bool     s_lbEnabled = false;
+    static uint64_t s_lbFrameNs = 0,    s_lbMonoNs = 0;
+    static uint64_t s_lbFrameCalls = 0, s_lbMonoCalls = 0;
+    static uint64_t s_lbFrameHit = 0,   s_lbMonoHit = 0;
+    static uint64_t s_lbFrameMiss = 0,  s_lbMonoMiss = 0;
+    static uint64_t s_lbFrameNo = 0,    s_lbMonoNo = 0;
+    static uint32_t s_lbFirstDataFrame = 0;
+
+    static inline void lbInitFromEnv() {
+        if (s_lbInit) return;
+        s_lbInit = true;
+        const char* e = std::getenv("MC2_OBJECT_RECON_TRACY");
+        s_lbEnabled = (e != nullptr && e[0] != '\0' && e[0] != '0');
+        if (s_lbEnabled) {
+            std::puts("[LIGHTBRIDGE v1] event=enabled note=c5c6_populate_sizing_active");
+            std::fflush(stdout);
+        }
+    }
+
+    struct LbScope {
+        std::chrono::steady_clock::time_point t0;
+        LbScope() : t0(std::chrono::steady_clock::now()) {}
+        ~LbScope() {
+            s_lbFrameNs += (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - t0).count();
+            ++s_lbFrameCalls;
+        }
+    };
+
+    static void lbDrainPerFrame(uint32_t frame) {
+        if (!s_lbInit) lbInitFromEnv();
+        const bool hadData = (s_lbFrameCalls != 0);
+        if (hadData && s_lbFirstDataFrame == 0) s_lbFirstDataFrame = frame;
+
+        if (s_lbEnabled && hadData) {
+            char buf[512];
+            std::snprintf(buf, sizeof(buf),
+                "[LIGHTBRIDGE v1] frame=%u populate={ns:%llu,calls:%llu,"
+                "tmpl_hit:%llu,tmpl_miss:%llu,no_actor_light:%llu}",
+                (unsigned)frame,
+                (unsigned long long)s_lbFrameNs,  (unsigned long long)s_lbFrameCalls,
+                (unsigned long long)s_lbFrameHit, (unsigned long long)s_lbFrameMiss,
+                (unsigned long long)s_lbFrameNo);
+            std::puts(buf); crashbundle_append(buf); std::fflush(stdout);
+        }
+
+        s_lbMonoNs   += s_lbFrameNs;   s_lbMonoCalls += s_lbFrameCalls;
+        s_lbMonoHit  += s_lbFrameHit;  s_lbMonoMiss  += s_lbFrameMiss;
+        s_lbMonoNo   += s_lbFrameNo;
+        s_lbFrameNs = s_lbFrameCalls = s_lbFrameHit = s_lbFrameMiss = s_lbFrameNo = 0;
+
+        if (frame > 0 && (frame % 600) == 0 && s_lbMonoCalls != 0) {
+            char buf[512];
+            std::snprintf(buf, sizeof(buf),
+                "[LIGHTBRIDGE v1] summary=%u populate={ns:%llu,calls:%llu,"
+                "tmpl_hit:%llu,tmpl_miss:%llu,no_actor_light:%llu} "
+                "ns_per_call=%llu first_data_frame=%u",
+                (unsigned)frame,
+                (unsigned long long)s_lbMonoNs,  (unsigned long long)s_lbMonoCalls,
+                (unsigned long long)s_lbMonoHit, (unsigned long long)s_lbMonoMiss,
+                (unsigned long long)s_lbMonoNo,
+                (unsigned long long)(s_lbMonoCalls ? s_lbMonoNs / s_lbMonoCalls : 0),
+                (unsigned)s_lbFirstDataFrame);
+            std::puts(buf); crashbundle_append(buf); std::fflush(stdout);
+        }
+    }
+
+    // ---- [LIGHTBRIDGE v1] SUBSTITUTIVE REPOINT (slice, not recon) ----------
+    // Retires the per-call 1792B fnv1a_64_struct + 1792B memcmp for the
+    // C5/C6/C7 GPU-object populate. On the 99.3% template-cache-hit common
+    // path the slot is resolved by a tiny (templateKey + per-actor-aRGB)
+    // key instead. See docs/superpowers/plans/
+    // 2026-05-17-addlightdatastructure-bridge-retirement.md. Kill-switch
+    // MC2_LIGHTBRIDGE (default ON; =0 restores legacy FNV/memcmp bit-for-
+    // bit). Slot cache is per-frame, cleared in resetLightData alongside
+    // s_lightDataDedupMap (same frame-start slot-reset invariant).
+    struct LightSlotEntry { uint64_t tmpl; uint32_t actorARGB; uint32_t slot; };
+    static std::unordered_map<uint64_t, LightSlotEntry> s_lightSlotByActorKey;
+
+    static bool s_lbRepointInit = false;
+    static bool s_lbRepointEnabled = true;          // default ON
+    static bool s_lbFirstPopulateLogged = false;
+    static bool s_lbC6FastpathLogged = false;
+
+    static inline void lbRepointInitFromEnv() {
+        if (s_lbRepointInit) return;
+        s_lbRepointInit = true;
+        const char* e = std::getenv("MC2_LIGHTBRIDGE");
+        // OFF only on explicit "0"; any other value (or unset) = ON.
+        s_lbRepointEnabled = !(e != nullptr && e[0] == '0' && e[1] == '\0');
+        std::printf("[LIGHTBRIDGE v1] event=enabled mode=%s\n",
+                    s_lbRepointEnabled ? "repoint" : "legacy");
+        std::fflush(stdout);
+    }
+
+    // ---- [LIGHTBAKE v1] static-actor mission-load lighting bake --------
+    // Static bdactor bldg/tree actors have a mission-constant per-actor
+    // light (position-derived getTerrainLight + frozen sun/nightFactor;
+    // no dynamic emitters -- lighting_is_mission_load_static_no_dynamic_
+    // emitters.md). Lazily bake the post-decompose TG_HWLightsData once
+    // (keyed by monotonic-never-reused registry recipeIndex) then re-emit
+    // the constant into a per-frame slot WITHOUT the per-frame
+    // GatherLights+decompose+template recompute (the retired CPU zone).
+    // Shape-C precedent: recompute dies, the O(1) per-frame slot WRITE
+    // stays. Post-SSBO this is the full design (no window/partition --
+    // see docs/superpowers/plans/2026-05-17-static-lighting-bake-SIMPLIFIED.md).
+    // s_bakedStaticLight = mission-scoped struct SOURCE (recipeIndex ->
+    // baked TG_HWLightsData; cleared on mission unload + per-recipe on
+    // invalidate; NOT per-frame). [LIGHTBAKE v2] persistent static table:
+    // each static recipe owns a PERMANENT lightData_ slot == recipeIndex
+    // in [0..s_staticLightHighWater); written ONCE at bake (CPU mirror),
+    // re-shipped idempotently by the unchanged per-frame whole-buffer
+    // upload (no per-frame addLightDataStructure / FNV / memcmp). S =
+    // max(recipeIndex)+1; resetLightData rebases the dynamic count to S
+    // so dynamic appends never collide into [0..S).
+    static std::unordered_map<int32_t, TG_HWLightsData> s_bakedStaticLight;
+    static uint32_t                                      s_staticLightHighWater = 0;
+    static bool s_bakeInit = false;
+    static bool s_bakeEnabled = true;          // default ON
+    static bool s_bakeFirstLogged = false;
+
+    static inline void bakeInitFromEnv() {
+        if (s_bakeInit) return;
+        s_bakeInit = true;
+        const char* e = std::getenv("MC2_LIGHTBAKE");
+        s_bakeEnabled = !(e != nullptr && e[0] == '0' && e[1] == '\0');
+        std::printf("[LIGHTBAKE v1] event=enabled mode=%s\n",
+                    s_bakeEnabled ? "bake" : "passthrough");
+        std::fflush(stdout);
+    }
+}
+
+// Cross-TU kill-switch view (C6 repoint lives in msl.cpp). Free function
+// to avoid pulling txmmgr.h into msl.cpp. Lazy-inits the env read.
+bool mc2LightBridgeRepointEnabled()
+{
+    lbRepointInitFromEnv();
+    return s_lbRepointEnabled;
+}
+
+// ---- [LIGHTBAKE v1] cross-TU free fns (bdactor/msl/registry call these;
+// free fns avoid pulling txmmgr.h into those TUs) ----
+bool mc2LightBakeEnabled()
+{
+    bakeInitFromEnv();
+    return s_bakeEnabled;
+}
+
+bool mc2GetBakedStaticLight(int32_t recipeIndex, TG_HWLightsData& out)
+{
+    if (recipeIndex < 0) return false;
+    auto it = s_bakedStaticLight.find(recipeIndex);
+    if (it == s_bakedStaticLight.end()) return false;
+    out = it->second;
+    return true;
+}
+
+void mc2SetBakedStaticLight(int32_t recipeIndex, const TG_HWLightsData& in)
+{
+    if (recipeIndex < 0) return;
+    s_bakedStaticLight[recipeIndex] = in;
+    if (!s_bakeFirstLogged) {
+        s_bakeFirstLogged = true;
+        std::printf("[LIGHTBAKE v1] event=first_bake recipe=%d\n", recipeIndex);
+        std::fflush(stdout);
+    }
+}
+
+// Erased on destruction/LOD multi-swap (via invalidateStaticRegistration
+// -> GpuStaticPropRegistry::invalidate) so the next CacheGpuLightData
+// lazily re-bakes the same position-derived constant for the new multi.
+void mc2EraseBakedStaticLight(int32_t recipeIndex)
+{
+    if (recipeIndex < 0) return;
+    s_bakedStaticLight.erase(recipeIndex);
+}
+
+// Mission unload: recipeIndex restarts per mission -> a stale entry
+// would alias a different actor. Drop the whole mission-scoped map.
+void mc2ClearAllBakedStaticLight()
+{
+    // Co-located with GpuStaticPropRegistry::destroy s_recipeRanges.clear()
+    // (gos_static_prop_registry.cpp) via mission.cpp -> next mission's
+    // recipeIndex restarts at 0 against a fresh prefix.
+    s_bakedStaticLight.clear();
+    s_staticLightHighWater = 0;
+}
+
+// [LIGHTBAKE v2] Persistent static slot write. Replaces the retired
+// per-frame mc2SubmitBakedLightSlot (which re-ran addLightDataStructure
+// -> 1792B FNV + 1792B memcmp every frame per recipe). Called ONCE per
+// recipe at bake (and again only on invalidate re-bake): mirror the
+// constant into the permanent CPU slot lightData_[recipeIndex] and
+// advance S. The unchanged per-frame whole-buffer upload then ships it
+// to the GPU every frame idempotently (resetLightData never memsets
+// lightData_ contents). No GL call, no FNV, no memcmp.
+void mc2WriteStaticLightSlot(int32_t recipeIndex, const TG_HWLightsData& baked)
+{
+    if (recipeIndex < 0 || !mcTextureManager) return;
+    mcTextureManager->bakeStaticLightSlot(recipeIndex, baked);
 }
 
 uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
@@ -1064,10 +1292,15 @@ uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
     s_lightDataDedupMap.emplace(hash, rv);  // O(1) avg insert
 
     // PERF DIAGNOSTIC 2026-05-06: log table growth periodically. 1 line per
-    // 256 new entries — silent until table actually grows that fast.
-    // Always-on (no env gate) so the regression is visible without setup.
-    // Demote to env-gate once the regression is closed.
-    if ((lightDataStructuresCount & 0xFF) == 0) {
+    // 256 new entries. DEMOTED 2026-05-17 to env-gated (its own "demote
+    // once the regression is closed" instruction): the dedup-growth
+    // regression is closed (D2 + SSBO + static-bake shipped); it was
+    // emitting ~6k lines/run and polluting frame-time captures.
+    // Capability kept (debug_instrumentation_rule: demote-not-delete) --
+    // set MC2_LIGHT_DEDUP_TRACE=1 to re-enable.
+    static const bool s_lightDedupTrace =
+        (std::getenv("MC2_LIGHT_DEDUP_TRACE") != nullptr);
+    if (s_lightDedupTrace && (lightDataStructuresCount & 0xFF) == 0) {
         printf("[LIGHT_DEDUP v1] count=%u capacity=%u memcmp_per_call_bytes_max=%zu\n",
                lightDataStructuresCount,
                lightDataStructuresCapacity,
@@ -1080,6 +1313,7 @@ uint32_t MC_TextureManager::addLightDataStructure(TG_HWLightsData* light_data)
 uint32_t MC_TextureManager::addLightDataStructureWithPerActorColor(TG_HWLightsData* light_data)
 {
     gosASSERT(light_data);
+    LbScope _lb_;  // [LIGHTBRIDGE v1] C5/C6 populate sizing (RAII, all return paths)
 
     if (s_sceneLightTemplateFrame != g_mc2FrameCounter) {
         s_sceneLightTemplateMap.clear();
@@ -1088,6 +1322,7 @@ uint32_t MC_TextureManager::addLightDataStructureWithPerActorColor(TG_HWLightsDa
 
     const uint32_t actorLightSource = firstActiveLightSourceIndex();
     if (actorLightSource == 0xFFFFFFFFu) {
+        ++s_lbFrameNo;  // [LIGHTBRIDGE v1] no per-actor light (direct passthrough)
         GatherLightsParameters(light_data);
         return addLightDataStructure(light_data);
     }
@@ -1095,28 +1330,117 @@ uint32_t MC_TextureManager::addLightDataStructureWithPerActorColor(TG_HWLightsDa
     const uint64_t key = sceneLightTemplateKey(actorLightSource);
     auto it = s_sceneLightTemplateMap.find(key);
     if (it == s_sceneLightTemplateMap.end()) {
+        ++s_lbFrameMiss;  // [LIGHTBRIDGE v1] template miss (GatherLightsParameters runs)
         CachedSceneLightTemplate entry;
         GatherLightsParameters(&entry.data);
         entry.actorLightSlot = decomposeFirstActiveLightColor(&entry.data);
         it = s_sceneLightTemplateMap.emplace(key, entry).first;
+    } else {
+        ++s_lbFrameHit;  // [LIGHTBRIDGE v1] template hit (trailing FNV+memcmp = retirable redundancy)
     }
 
     *light_data = it->second.data;
-    if (it->second.actorLightSlot != 0xFFFFFFFFu)
+    const bool perActor = (it->second.actorLightSlot != 0xFFFFFFFFu);
+    if (perActor)
         decomposeFirstActiveLightColor(light_data);
+
+    // [LIGHTBRIDGE v1] substitutive repoint: on the (template + per-actor-
+    // color) cache hit, return the resolved slot directly and SKIP the
+    // 1792B fnv1a_64_struct + 1792B memcmp in addLightDataStructure.
+    // Symmetry invariant (load-bearing — do not break without re-deriving
+    // the key): actorLightSource == firstActiveLightSourceIndex() is the
+    // SAME light decompose mutates into lightColor[0][0..3] AND the SAME
+    // light sceneLightTemplateKey deliberately excludes from the template
+    // key (txmmgr.cpp ~:1017-1020). actorARGB closes exactly that excluded
+    // gap. perActor==false => no decompose => template key alone suffices
+    // (actorARGB folds to 0, combined == key).
+    if (!s_lbRepointInit) lbRepointInitFromEnv();
+    if (s_lbRepointEnabled) {
+        const uint32_t actorARGB = perActor
+            ? (uint32_t)TG_Shape::s_listOfLights[actorLightSource]->GetaRGB()
+            : 0u;
+        const uint64_t combined =
+            key ^ ((uint64_t)actorARGB * 0x9E3779B97F4A7C15ULL);
+        auto sit = s_lightSlotByActorKey.find(combined);
+        if (sit != s_lightSlotByActorKey.end() &&
+            sit->second.tmpl == key && sit->second.actorARGB == actorARGB) {
+            return sit->second.slot;   // retired: no FNV, no memcmp
+        }
+        const uint32_t slot = addLightDataStructure(light_data);
+        s_lightSlotByActorKey[combined] =
+            LightSlotEntry{ key, actorARGB, slot };
+        if (!s_lbFirstPopulateLogged) {
+            s_lbFirstPopulateLogged = true;
+            std::puts("[LIGHTBRIDGE v1] event=first_populate");
+            std::fflush(stdout);
+        }
+        return slot;
+    }
 
     return addLightDataStructure(light_data);
 }
 
 void MC_TextureManager::resetLightData()
 {
-    lightDataStructuresCount = 0;
+    // [LIGHTBRIDGE v1] frame-start boundary: flush the just-completed frame's
+    // C5/C6 populate sizing (same boundary the dedup-map reset relies on).
+    lbDrainPerFrame(g_mc2FrameCounter);
+
+    // [LIGHTBAKE v2] Rebase the DYNAMIC allocator base to S (the static
+    // prefix high-water) when the bake is on, so dynamic appends start
+    // above [0..S) and addLightDataStructure never returns a slot < S
+    // (rv = count, count never < S -> the dedup maps below stay
+    // dynamic-only by construction, exactly as before but rebased). With
+    // MC2_LIGHTBAKE=0 the persistent table is off -> base 0 (else the
+    // dynamic allocator would collide into a non-rebased prefix).
+    lightDataStructuresCount = mc2LightBakeEnabled() ? s_staticLightHighWater : 0;
     // PERF FIX 2026-05-07: clear the dedup map alongside the count reset.
-    // Both must reset together — slot indices restart from 0 each frame, so
-    // any stale hash→slot entries from the prior frame are invalid.
+    // Both must reset together — dynamic slot indices restart from the
+    // base (S or 0) each frame, so any stale hash→slot entries from the
+    // prior frame are invalid. (Static [0..S) is NEVER cleared here:
+    // s_bakedStaticLight + lightData_[0..S) persist across frames; that
+    // is the whole point — resetLightData does not memset lightData_.)
     s_lightDataDedupMap.clear();
     s_sceneLightTemplateMap.clear();
+    s_lightSlotByActorKey.clear();  // [LIGHTBRIDGE v1] per-frame slot cache
     s_sceneLightTemplateFrame = 0xFFFFFFFFu;
+}
+
+// [LIGHTBAKE v2] Persistent static slot writer (member: needs private
+// lightData_/capacity access). Grow lightData_ so [recipeIndex] is
+// addressable (preserving ALL existing contents -- static prefix AND any
+// transient dynamic entries -- via the same realloc+memcpy pattern as
+// the addLightDataStructure grow), mirror the baked constant into the
+// permanent slot, advance S. Called once per recipe at bake / invalidate
+// re-bake -- NOT per frame.
+void MC_TextureManager::bakeStaticLightSlot(int32_t recipeIndex, const TG_HWLightsData& baked)
+{
+    if (recipeIndex < 0) return;
+    const uint32_t ri = static_cast<uint32_t>(recipeIndex);
+    if (ri + 1 >= lightDataStructuresCapacity)
+    {
+        uint32_t newCap = lightDataStructuresCapacity;
+        while (ri + 1 >= newCap) newCap += 128;            // +128 chunks, like the dynamic grow
+        TG_HWLightsData* grown = new TG_HWLightsData[newCap];
+        // Preserve the FULL old array (static prefix is in [0..S); copying
+        // only `count` would drop persisted static slots).
+        memcpy(grown, lightData_, sizeof(TG_HWLightsData) * lightDataStructuresCapacity);
+        delete[] lightData_;
+        lightData_ = grown;
+        lightDataStructuresCapacity = newCap;
+    }
+    lightData_[ri] = baked;                                 // CPU mirror (persists)
+    if (ri + 1 > s_staticLightHighWater) s_staticLightHighWater = ri + 1;
+    // CRITICAL: the frame a recipe FIRST bakes, this-frame's count was
+    // set to the OLD (smaller) S at frame-start resetLightData. Without
+    // this bump, a later dynamic addLightDataStructure append THIS frame
+    // could land on slot `ri` and clobber the just-written permanent
+    // static slot (wrong-light, never re-baked). Raising the live count
+    // to S keeps same-frame dynamic appends strictly above [0..S). Only
+    // skips some low dynamic slots that frame (harmless -- dynamic is
+    // per-frame ephemeral, rebuilt from S next resetLightData).
+    if (lightDataStructuresCount < s_staticLightHighWater)
+        lightDataStructuresCount = s_staticLightHighWater;
 }
 
 // Diagnostic body — declaration in txmmgr.h. See header for rationale.
@@ -1201,10 +1525,15 @@ public:
 		// GPU projection via terrainMVP (skip for HUD elements which need legacy viewport projection)
 		gos_SetRenderMaterialParameterInt(mat, "gpuProjection", isHudElement ? 0 : 1);
 
-		gos_SetRenderMaterialUniformBlockBindingPoint(mat, "LightsData", LIGHT_DATA_ATTACHMENT_SLOT);
+		// [LIGHTSSBO v1] FORK-2: LightsData is now an SSBO; the UBO-
+		// reflection bind below would silently no-op (SSBO blocks are not
+		// in GL_ACTIVE_UNIFORM_BLOCKS) -> legacy lit meshes would render
+		// garbage lighting. Bind the storage block explicitly instead.
+		// SceneData stays a UBO.
 		gos_SetRenderMaterialUniformBlockBindingPoint(mat, "SceneData", SCENE_DATA_ATTACHMENT_SLOT);
 
 		gos_ApplyRenderMaterial(mat);
+		gos_BindLightDataStorageBlock(mat);
 
 		// Bind shadow maps + terrainMVP after apply() (requires active program)
 		if (!isHudElement) {
@@ -1389,25 +1718,21 @@ void MC_TextureManager::renderLists (void)
 
     // copy global list of light data into GPU buffer
     
-	const uint32_t gpu_buf_size = gos_GetBufferSizeBytes(lightDataBuffer_);
-    // Slice B1 (2026-05-09): floor the buffer size to the GLSL UBO window
-    // (LightsData[64] in shaders/include/lighting.hglsl). Without this floor,
-    // the bound buffer can be smaller than the shader's declared window
-    // when actor count < 64; UBO reads past the bound buffer are GL-undefined
-    // (AMD returns zero, others may crash). Adversarial review MAJOR-2.
-    constexpr uint32_t kGlslUboMinBytes = 64u * sizeof(TG_HWLightsData);
-    const uint32_t cpu_buf_size = std::max<uint32_t>(
-        lightDataStructuresCount * sizeof(TG_HWLightsData),
-        kGlslUboMinBytes);
-    if(gpu_buf_size < cpu_buf_size) {
-        gos_DestroyBuffer(lightDataBuffer_);
-        lightDataBuffer_ = gos_CreateBuffer(gosBUFFER_TYPE::UNIFORM, gosBUFFER_USAGE::STATIC_DRAW, cpu_buf_size, 1, lightData_);
-	    gos_BindBufferBase(lightDataBuffer_, LIGHT_DATA_ATTACHMENT_SLOT);
-    }
-    else {
-        gos_UpdateBuffer(lightDataBuffer_, lightData_, 0, cpu_buf_size);
-	    gos_BindBufferBase(lightDataBuffer_, LIGHT_DATA_ATTACHMENT_SLOT);
-    }
+    // [LIGHTSSBO v1] Upload-size FLOOR retained (NOT a removable UBO-window
+    // artifact — falsified 2026-05-17). The engine deliberately tolerates
+    // transient over-count lightDataIndex for cull-stale actors whose
+    // update() was skipped offscreen (see gos_static_prop_registry.cpp
+    // comment "...points at a slot ... beyond the upload count"). The
+    // floor guarantees those indices still read valid backing memory
+    // instead of past-end (-> zero -> black props). std::max keeps the
+    // old max(count, 64) semantics; lightData_ is capacity(128)-sized so
+    // sourcing 64 entries is in-bounds.
+    constexpr uint32_t kLightUploadFloor = 64u;
+    const size_t lightUploadCount =
+        std::max<uint32_t>(lightDataStructuresCount, kLightUploadFloor);
+    gos_LightDataSsbo_Upload(
+        lightData_,
+        lightUploadCount * sizeof(TG_HWLightsData));
     //
     
     // update scene data uniform buffer
@@ -1430,7 +1755,6 @@ void MC_TextureManager::renderLists (void)
         sceneData_->baseVertexColor = uint32_to_vec4(BaseVertexColor).zyxw();
         gos_UpdateBuffer(sceneDataBuffer_, sceneData_, 0, sizeof(TG_HWSceneData));
     }
-    //gos_BindBufferBase(lightDataBuffer_, LIGHT_DATA_ATTACHMENT_SLOT);
     
     
 
@@ -1508,137 +1832,96 @@ void MC_TextureManager::renderLists (void)
 	// restore viewport
 	gos_SetRenderViewport(0, 0, Environment.drawableWidth, Environment.drawableHeight);
 
-	// Phase 4a: on the first frame that submits real terrain into
-	// masterVertexNodes[], force one static shadow pass regardless of camera
-	// position history. This guarantees the initial camera view is shadowed
-	// from frame 1 instead of waiting for a >100-unit camera move.
-	{
-		if (!s_terrainShadowPrimed) {
-			for (long si = 0; si < nextAvailableVertexNode; si++) {
-				if ((masterVertexNodes[si].flags & MC2_DRAWSOLID) &&
-					(masterVertexNodes[si].flags & MC2_ISTERRAIN) &&
-					masterVertexNodes[si].vertices &&
-					masterVertexNodes[si].currentVertex != masterVertexNodes[si].vertices) {
-					gos_RequestFullShadowRebuild();
-					s_terrainShadowPrimed = true;
-					break;
-				}
-			}
-		}
-	}
+	// VPL-#shadow Phase 1+2 (arch-doc docs/plans/static-terrain-shadow-
+	// architecture.md): build the static terrain shadow from the FULL map
+	// ONCE. Was: a prime + a camera-windowed accumulate behind a >100u
+	// camera-move gate -> the shadow FBO was fed only the ~110 visible
+	// terrain nodes and never cleared -> a near-empty depth atlas ->
+	// soft half-map shadow wash. Root cause is feed-scope and was
+	// probe-proven: the world-fixed ortho light matrix is correct and
+	// built-once ([SHADOWFRUSTUM v1] n=1 mapHalfExtent=6400
+	// orthoHalf=9503.5; build & sample share getLightSpaceMatrix()).
+	// Phase 1 retires the prime block, the camera-motion gate, and the
+	// gos_*ShadowRebuild* API (this was their only caller). The build is
+	// gated solely by the gos_StaticLightMatrixBuilt() latch, which
+	// Terrain::destroy re-arms per mission (C-1) so mission 2+ rebuilds
+	// against fresh blocks[]. The MapData full-map feed is stock-safe
+	// (no-ops if blocks[] unallocated -> shadow simply absent, never a
+	// crash, never worse than a missing shadow).
+	if (gos_IsTerrainTessellationActive() && !gos_StaticLightMatrixBuilt() &&
+	    Terrain::mapData) {
+		ZoneScopedN("Shadow.StaticFullMapBuild");
+		TracyGpuZone("Shadow.StaticFullMapBuild");
 
-	// Static shadow pass: accumulate terrain into shadow map over multiple frames.
-	// World-fixed ortho projection covers entire map. First frame clears + builds matrix,
-	// subsequent frames accumulate new terrain as camera reveals new areas.
-	// Skip re-render when camera hasn't moved (same terrain already in shadow map).
-	{
-		static float lastShadowCamX = 1e9f, lastShadowCamY = 1e9f, lastShadowCamZ = 1e9f;
-		float sdx = cp.x - lastShadowCamX;
-		float sdy = cp.y - lastShadowCamY;
-		float sdz = cp.z - lastShadowCamZ;
-		float shadowCamDist = sdx*sdx + sdy*sdy + sdz*sdz;
-		float shadowCacheThreshold = 100.0f;  // re-render when camera moves >100 units
+		gos_BuildStaticLightMatrix();   // world-fixed, camera-independent
+		gos_MarkStaticLightMatrixBuilt();
 
-	bool shadowRebuildForced = gos_ShadowRebuildPending();
-	if (gos_IsTerrainTessellationActive() &&
-		(shadowRebuildForced || shadowCamDist > shadowCacheThreshold * shadowCacheThreshold)) {
-		ZoneScopedN("Shadow.StaticAccum");
-		TracyGpuZone("Shadow.StaticAccum");
-
-		// Forced passes must NOT advance the camera tracker — a subsequent
-		// genuine >100-unit move must still trigger a normal accumulation update.
-		if (!shadowRebuildForced) {
-			lastShadowCamX = cp.x; lastShadowCamY = cp.y; lastShadowCamZ = cp.z;
-		}
-
-		bool firstFrame = !gos_StaticLightMatrixBuilt();
-		if (firstFrame) {
-			gos_BuildStaticLightMatrix();  // builds world-fixed light matrix (once)
-			gos_MarkStaticLightMatrixBuilt();
-		}
-
-		gos_BeginShadowPrePass(firstFrame);  // clear only on first frame
+		// Any valid terrain colormap: the shadow prepass is depth-only
+		// (shadow_terrain.tese = plain lightSpaceMatrix*worldPos, not
+		// sampled for depth), so the exact texture is irrelevant -- bind
+		// the first terrain node's, else the solid default (idx 0).
+		unsigned long shTex = masterTextureNodes[0].get_gosTextureHandle();
 		for (long si = 0; si < nextAvailableVertexNode; si++) {
 			if ((masterVertexNodes[si].flags & MC2_DRAWSOLID) &&
-				(masterVertexNodes[si].flags & MC2_ISTERRAIN) &&
-				masterVertexNodes[si].vertices &&
-				masterVertexNodes[si].extras) {
-
-				DWORD totalVerts = masterVertexNodes[si].numVertices;
-				if (masterVertexNodes[si].currentVertex !=
-					(masterVertexNodes[si].vertices + masterVertexNodes[si].numVertices)) {
-					totalVerts = masterVertexNodes[si].currentVertex - masterVertexNodes[si].vertices;
-				}
-
-				int extraCount = masterVertexNodes[si].currentExtra
-					? (int)(masterVertexNodes[si].currentExtra - masterVertexNodes[si].extras)
-					: 0;
-
-				if (totalVerts > 0 && extraCount > 0) {
-					gos_SetRenderState(gos_State_Texture, masterTextureNodes[masterVertexNodes[si].textureIndex].get_gosTextureHandle());
-
-					gos_DrawShadowBatchTessellated(
-						masterVertexNodes[si].vertices, totalVerts,
-						indexArray, totalVerts,
-						masterVertexNodes[si].extras, extraCount);
-				}
+				(masterVertexNodes[si].flags & MC2_ISTERRAIN)) {
+				shTex = masterTextureNodes[masterVertexNodes[si].textureIndex].get_gosTextureHandle();
+				break;
 			}
 		}
-		// CP-2 selftest: when MC2_DECOR_SHADOW_SELFTEST=1, submit the first
-		// available dynamic-shadow shape (previous frame, not yet cleared) as a
-		// STATIC caster to prove gos_DrawShadowObjectBatchStatic links, binds
-		// the correct target (static FBO / staticLightSpaceMatrix_ already active
-		// via beginShadowPrePass), and produces no GL error. No behavior change:
-		// this is one extra depth write into the static map, acceptable transient.
-		if (getenv("MC2_DECOR_SHADOW_SELFTEST")) {
-			if (g_numShadowShapes > 0) {
-				gos_DrawShadowObjectBatchStatic(
-					g_shadowShapes[0].vb, g_shadowShapes[0].ib,
-					g_shadowShapes[0].vdecl, g_shadowShapes[0].worldMatrix);
-			}
-			GLenum e = glGetError();
-			printf("[DECOR_SHADOW v1] event=selftest_static_submit gl_err=0x%x\n", e);
-			fflush(stdout);
-		}
+
+		gos_BeginShadowPrePass(true);   // one-shot clear (no accumulate)
+		Terrain::mapData->renderStaticTerrainShadowFullMap(indexArray, shTex);
 		gos_EndShadowPrePass();
-
-		if (shadowRebuildForced) {
-			gos_ClearShadowRebuildPending();
-		}
 	}
-	} // end shadow cache scope
-	// Dynamic object shadow pass: render g_shadowShapes[] every frame
-	if (gos_IsTerrainTessellationActive() && g_numShadowShapes > 0) {
-		ZoneScopedN("Shadow.DynPass");
-		TracyGpuZone("Shadow.DynPass");
-		float lx = 0, ly = 0, lz = 0;
-		gos_GetTerrainLightDir(&lx, &ly, &lz);
-
-		// Ray-ground intersection to find where camera is actually looking.
-		// Camera is in Stuff space (x=left, y=elevation, z=forward).
-		// Ground plane is y=0 in Stuff space (z=0 in MC2 space).
-		// Ray: P = cp + t * lookVector. Solve for cp.y + t * lv.y = 0.
-		Stuff::Vector3D lv = eye->getLookVector();
-		float focusX, focusZ;  // MC2 space: x=east, y=north
-		if (fabsf(lv.y) > 0.001f) {
-			float t = -cp.y / lv.y;
-			// Pull center 20% back toward camera so bottom-of-screen mechs
-			// aren't clipped. t=1.0 = exact screen center, t=0.0 = camera feet.
-			t *= 0.80f;
-			// Stuff hit point → MC2: MC2.x = -Stuff.x, MC2.y = Stuff.z
-			focusX = -(cp.x + t * lv.x);
-			focusZ = cp.z + t * lv.z;
-		} else {
-			// Camera looking horizontally — fall back to ground projection
-			focusX = -cp.x;
-			focusZ = cp.z;
+	// GPU-driven dynamic sun shadow (Phase 1): frustum-fit + flushShadow.
+	// Runs BEFORE gpu_cull::compute_dispatch so the static-prop shadow uses the
+	// full camera-visible per-type ranges (not the cull-narrowed indirect).
+	// Casters = the camera-visible (inView) batched set (Phase 1 scope; the
+	// off-screen-caster low-sun shadow is the documented Phase-2 gap).
+	{
+		extern bool g_useGpuObjects;
+		extern bool g_useGpuMechs;
+		if (gos_IsTerrainTessellationActive() && (g_useGpuObjects || g_useGpuMechs)) {
+			// Unproject 8 NDC corners through clipToWorld (-> STUFF space), then
+			// swizzle Stuff->MC2 (-x, z, y) EXACTLY as Camera::inverseProjectZ does.
+			// inverseProjectZ convention: Multiply(in, clipToWorld), then if
+			// xformCoords.w < 0 call Negate (negates all 4 components), then
+			// perspective-divide x/y/z by w, then swizzle (-x, z, y).
+			// For raw NDC input (w=1) the perspective divide is required (unlike
+			// inverseProjectZ which pre-bakes 1/screen.w into coords.w).
+			static const float ndc[8][3] = {
+				{-1.0f,-1.0f, 0.0f},{ 1.0f,-1.0f, 0.0f},
+				{-1.0f, 1.0f, 0.0f},{ 1.0f, 1.0f, 0.0f},
+				{-1.0f,-1.0f, 1.0f},{ 1.0f,-1.0f, 1.0f},
+				{-1.0f, 1.0f, 1.0f},{ 1.0f, 1.0f, 1.0f}
+			};
+			float cornersMC2[8][3];
+			// clipToWorld is protected; derive it from the public getWorldToClip().
+			// Invert(src) stores the inverse of src into *this (matrix.hpp:584).
+			Stuff::Matrix4D clipToWorld;
+			clipToWorld.Invert(eye->getWorldToClip());
+			for (int c = 0; c < 8; ++c) {
+				Stuff::Vector4D in, out;
+				in.x = ndc[c][0]; in.y = ndc[c][1]; in.z = ndc[c][2]; in.w = 1.0f;
+				out.Multiply(in, clipToWorld);        // row-vector * matrix, arg order per camera.cpp:1977
+				if (out.w < 0.0f)
+					out.Negate(out);                  // mirrors inverseProjectZ:1979-1980
+				float inv = (fabsf(out.w) > 1e-6f) ? (1.0f / out.w) : 0.0f;
+				float sx = out.x * inv;
+				float sy = out.y * inv;
+				float sz = out.z * inv;
+				cornersMC2[c][0] = -sx;               // Stuff->MC2: (-x, z, y) per camera.cpp:1982-1984
+				cornersMC2[c][1] =  sz;
+				cornersMC2[c][2] =  sy;
+			}
+			float lx, ly, lz;
+			gos_GetTerrainLightDir(&lx, &ly, &lz);   // same accessor used by old shim
+			gos_BuildDynamicLightMatrix(-lx, -ly, -lz, cornersMC2);  // sign matches old shim
+			gos_BeginDynamicShadowPass();             // no-op if shadowsEnabled_ false
+			GpuStaticPropBatcher::instance().flushShadow();
+			GpuMechBatcher::instance().flushShadow();
+			gos_EndDynamicShadowPass();
 		}
-		gos_BuildDynamicLightMatrix(-lx, -ly, -lz, focusX, focusZ, 0.0f);
-		gos_BeginDynamicShadowPass();
-		for (int si = 0; si < g_numShadowShapes; si++)
-			gos_DrawShadowObjectBatch(g_shadowShapes[si].vb, g_shadowShapes[si].ib,
-				g_shadowShapes[si].vdecl, g_shadowShapes[si].worldMatrix);
-		gos_EndDynamicShadowPass();
 	}
 	g_numShadowShapes = 0;
 
@@ -1795,6 +2078,9 @@ void MC_TextureManager::renderLists (void)
 			// The patch shader then writes GPU-computed instanceCounts into the
 			// indirect command buffer. GpuStaticPropBatcher::flush() below uses
 			// glMultiDrawElementsIndirect which reads those GPU-authoritative counts.
+#if defined(MC2_SUBSTRATE_COUNT_PARITY)
+				gpu_cull::substrate_countParityCheck();
+#endif
 			if (gpu_cull::compute_isEnabled()) {
 				gpu_cull::compute_dispatch();
 			}
@@ -1838,6 +2124,21 @@ void MC_TextureManager::renderLists (void)
 		ZoneScopedN("Render.TerrainOverlays");
 		TracyGpuZone("Render.TerrainOverlays");
 		gos_DrawTerrainOverlays();
+	}
+	// Slice A — cement-overlay static-bake draw. Mirrors the Render.Terrain
+	// Mines hook below EXACTLY: gated on IsFrameOverlayArmed() (default OFF
+	// unless MC2_TERRAIN_INDIRECT_OVERLAY=1). When armed, the per-quad M2d
+	// gos_PushTerrainOverlay producer is skipped (quad.cpp gate-off) and
+	// gos_DrawTerrainOverlays above flushes an empty batch (early-return);
+	// DrawDecalStatic draws the persistent static bake instead. Placed right
+	// after Render.TerrainOverlays so the static cement composites in the
+	// same slot the per-frame batch used (before mines/decals/old overlays).
+	{
+		ZoneScopedN("Render.TerrainOverlaysStatic");
+		TracyGpuZone("Render.TerrainOverlaysStatic");
+		if (gos_terrain_indirect::IsFrameOverlayArmed()) {
+			gos_terrain_indirect::DrawDecalStatic();
+		}
 	}
 	// PR2c Stage 2c — mine static-bake draw. Hooks between TerrainOverlays
 	// and Decals so mines composite ABOVE cement/road overlays and BENEATH

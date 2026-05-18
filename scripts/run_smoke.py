@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT))
 from scripts.smoke_lib import baselines, manifest, report
 from scripts.smoke_lib.runner import RunConfig, run_one
 
-DEFAULT_EXE = Path(r"A:/Games/mc2-opengl/mc2-win64-v0.3/mc2.exe")
+DEFAULT_EXE = Path(r"A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe")
 ARTIFACT_ROOT = ROOT / "tests" / "smoke" / "artifacts"
 MANIFEST_PATH = ROOT / "tests" / "smoke" / "smoke_missions.txt"
 BASELINE_PATH = ROOT / "tests" / "smoke" / "baselines.json"
@@ -87,7 +87,10 @@ def _run_menu_canary(exe: Path, script_path: Path, artifact_dir: Path,
 
     game_alive = proc.poll() is None
     if game_alive:
-        proc.wait(timeout=max(1, settle_s))
+        try:
+            proc.wait(timeout=max(1, settle_s))
+        except subprocess.TimeoutExpired:
+            proc.kill()
     try:
         stdout, _ = proc.communicate(timeout=5)
     except subprocess.TimeoutExpired:
@@ -250,10 +253,28 @@ def main():
                             "MC2_TERRAIN_INDIRECT",
                             "MC2_TERRAIN_INDIRECT_PARITY_CHECK",
                             "MC2_TERRAIN_INDIRECT_TRACE",
+                            # Decal static-bake (drawPass-retirement Slice A) kill-switch
+                            "MC2_TERRAIN_INDIRECT_OVERLAY",
+                            # Ring-buffer hazard probe (raster-triangle bug)
+                            "MC2_RING_TRACE",
+                            # Probe 7: force glFinish() between compute and draw
+                            "MC2_RING_FORCE_FINISH",
+                            # GPU object batcher gate (bisect partner for terrain bug)
+                            "MC2_GPU_OBJECTS",
+                            # Mask-dispatch (pre-bake-terrain merge)
+                            "MC2_TERRAIN_MASK_DISPATCH",
+                            "MC2_TERRAIN_MASK_DISPATCH_PARITY",
                             "MC2_TERRAIN_INDIRECT_MINE",
                             "MC2_TERRAIN_INDIRECT_OVERLAY",
                             "MC2_TERRAIN_INDIRECT_OVERLAY_PARITY_CHECK",
                             "MC2_TERRAIN_COST_SPLIT",
+                            "MC2_LIGHT_COST_SPLIT",
+                            "MC2_SLIM_COST_SPLIT",
+                            "MC2_TOBJ_COST_SPLIT",
+                            # Task 7 — superset-parity counter probe (proof-gate #2)
+                            "MC2_TOBJ_PARITY",
+                            "MC2_GPUPROPS_TRACE",
+                            "MC2_MECH_RESTORE_TRACE",
                             # Phase 1 — terrain lighting GPU compute
                             "MC2_TERRAIN_LIGHTING_GPU",
                             "MC2_TERRAIN_LIGHTING_PARITY",
@@ -282,14 +303,25 @@ def main():
                             # Both require --with-env overrides; not automated yet.
                             "MC2_GPU_CULL_LIFECYCLE",
                             "MC2_GPU_CULL_LIFECYCLE_TRACE",
-                            # Slice B4 — mask dispatch
-                            "MC2_TERRAIN_MASK_DISPATCH",
-                            "MC2_TERRAIN_MASK_DISPATCH_SOLID",
-                            "MC2_TERRAIN_MASK_DISPATCH_WATER",
-                            "MC2_TERRAIN_MASK_DISPATCH_PARITY",
-                            "MC2_TERRAIN_MASK_DISPATCH_TRACE")},
+                            # Phase C — GPU-driven unified path
+                            "MC2_GPU_DRIVEN",
+                            "MC2_GPU_DRIVEN_WATER",
+                            "MC2_GPU_DRIVEN_TERRAIN_SOLID",
+                            "MC2_GPU_DRIVEN_OVERLAY",
+                            "MC2_GPU_DRIVEN_PARITY",
+                            "MC2_GPU_DRIVEN_TRACE")},
             },
         )
+        # Clear the file-sink probe log next to mc2.exe before each mission
+        # so each run captures its own probe events.  See gos_terrain_indirect
+        # PROBE_LOG / RING_SINK in the engine: ring-buffer / cmd-patch /
+        # overshoot / near-clip-w / recipe-spread tripwires.
+        ring_sink_path = Path(cfg.exe[0]).resolve().parent / "ring_trace.log"
+        try:
+            ring_sink_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
         print(f"[runner] running {e.stem} (tier={tier} duration={duration})",
               file=sys.stderr)
         result = run_one(cfg)
@@ -302,6 +334,15 @@ def main():
 
         if not result.verdict.passed or args.keep_logs:
             (artifact_dir / f"{e.stem}.log").write_text(result.stdout_text, encoding="utf-8", errors="replace")
+            # Snapshot the probe file-sink alongside the regular log.  Survives
+            # across runs (the per-mission unlink above resets it for next).
+            try:
+                if ring_sink_path.exists():
+                    (artifact_dir / f"{e.stem}.ring_trace.log").write_text(
+                        ring_sink_path.read_text(encoding="utf-8", errors="replace"),
+                        encoding="utf-8", errors="replace")
+            except Exception as exc:
+                print(f"[runner] could not snapshot ring_trace.log: {exc}", file=sys.stderr)
         if args.baseline_update and result.verdict.passed:
             baseline_data.setdefault(key, {})["destroys"] = {
                 "mean": result.summary.destroys, "stddev": 0, "samples": 1,

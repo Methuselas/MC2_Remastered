@@ -12,9 +12,20 @@
 #include"bdactor.h"
 #endif
 
+// [TOBJSPLIT v1] RDTSC includes for the BldgAppearance/TreeAppearance probe
+// points. __rdtsc() overhead ~5-10ns (cost_split_instrumentation_is_observer_
+// effect_dominated.md). Accumulators defined in code/terrobj.cpp.
+#include <intrin.h>
+#include <stdlib.h>
+// File-scope gate: one getenv per TU, process-start-constant, shared across
+// BldgAppearance::recalcBounds and TreeAppearance::recalcBounds. Matches the
+// file-scope pattern in code/terrobj.cpp:176.
+static bool s_tobjSplitBdOn = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
+
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_batcher.h"
 #include "gos_static_prop_registry.h"  // Stage 3.C: static-registry fast path
+#include <unordered_map>  // LODBUG probe: tracks per-actor previous bldgShape*
 #include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
 #include "gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for per-update breakdown
@@ -68,6 +79,7 @@
 #endif
 
 #include "../code/unitdesg.h" /* just for definition of MIN_TERRAIN_PART_ID and MAX_MAP_CELL_WIDTH */
+#include "../code/static_update_counters.h" /* [TOBJSPLIT v1] g_tobjAngularCyc / g_tobjProjCyc extern decls */
 #include "gos_static_prop_batcher.h"
 //******************************************************************************************
 extern float	worldUnitsPerMeter;
@@ -1150,17 +1162,22 @@ bool BldgAppearance::isMouseOver (float px, float py)
 //-----------------------------------------------------------------------------
 bool BldgAppearance::recalcBounds (void)
 {
-	Stuff::Vector4D tempPos;
+	// [TOBJSPLIT v1] accumulators declared in code/static_update_counters.h
+	// (included above via ../code/static_update_counters.h).
+	// Gate: file-scope s_tobjSplitBdOn (defined above, shared with TreeAppearance).
+
 	inView = false;
 
-	float distanceToEye = 0.0f;
-	
 	if (eye)
 	{
 		//-------------------------------------------------------------------
 		//NEW METHOD from the WAY BACK Days
 		inView = true;
-		
+
+		// [TOBJSPLIT v1] ANGULAR bracket: matrix-free sphere angular clip.
+		// Reads cycle counter immediately before/after.
+		{
+		unsigned long long _tsA = s_tobjSplitBdOn ? __rdtsc() : 0ULL;
 		if (eye->usePerspective)
 		{
 			Stuff::Vector3D cameraPos;
@@ -1168,14 +1185,14 @@ bool BldgAppearance::recalcBounds (void)
 			cameraPos.y = eye->getCameraOrigin().z;
 			cameraPos.z = eye->getCameraOrigin().y;
 			float vClipConstant = eye->verticalSphereClipConstant;
-			float hClipConstant = eye->horizontalSphereClipConstant; 
-	
+			float hClipConstant = eye->horizontalSphereClipConstant;
+
 			Stuff::Vector3D objectCenter;
 			objectCenter.Subtract(position,cameraPos);
 			Camera::cameraFrame.trans_to_frame(objectCenter);
-			distanceToEye = objectCenter.GetApproximateLength();
+			float distanceToEye = objectCenter.GetApproximateLength();
 			float clip_distance = fabs(1.0f / objectCenter.y);
-			
+
 			//Is vertex on Screen OR close enough to screen that its triangle MAY be visible?
 			// WE have removed the atans here by simply taking the tan of the angle we want above.
 			float object_angle = fabs(objectCenter.z) * clip_distance;
@@ -1195,353 +1212,26 @@ bool BldgAppearance::recalcBounds (void)
 				}
 			}
 		}
-		
-		//Can we be seen at all?
-		// If yes, check if we are behind fog plane.
-		if (inView)
-		{
-			//ALWAYS need to do this or select is YAYA
-			// But now inView is correct!!
-			// [PROJECTZ:ScreenXYOracle id=bdactor_screen_pos_a]
-			eye->projectForScreenXY(position,screenPos);
+		if (s_tobjSplitBdOn) g_tobjAngularCyc += __rdtsc() - _tsA;
+		}  // end ANGULAR bracket
 
-			if (eye->usePerspective)
-			{
-				if (distanceToEye > Camera::MaxClipDistance)
-				{
-					hazeFactor = 1.0f;
-					inView = false;
-				}
-				else if (distanceToEye > Camera::MinHazeDistance)
-				{
-					Camera::HazeFactor = (distanceToEye - Camera::MinHazeDistance) * Camera::DistanceFactor;
-					inView = true;
-				}
-				else
-				{
-					Camera::HazeFactor = 0.0f;
-					inView = true;
-				}
-			}
-			else
-			{
-				Camera::HazeFactor = 0.0f;
-				inView = true;
-			}
-		}
-		
-		//If we were not behind fog plane, do a bunch O math we need later!!
-		if (inView)
-		{
-			if (reloadBounds)
-				appearType->reinit();
-
-			appearType->boundsLowerRightY = (OBBRadius * eye->getTiltFactor() * 2.0f);
-			
-			//-------------------------------------------------------------------------
-			// do a rough check if on screen.  If no where near, do NOT do the below.
-			// Mighty mighty slow!!!!
-			// Use the original check done before all this 3D madness.  Dig out sourceSafe tomorrow!
-			tempPos = screenPos;
-			upperLeft.x = tempPos.x;
-			upperLeft.y = tempPos.y;
-			
-			lowerRight.x = tempPos.x;
-			lowerRight.y = tempPos.y;
-			
-			upperLeft.x += (appearType->boundsUpperLeftX * eye->getScaleFactor());
-			upperLeft.y += (appearType->boundsUpperLeftY * eye->getScaleFactor());
-	
-			lowerRight.x += (appearType->boundsLowerRightX * eye->getScaleFactor());
-			lowerRight.y += (appearType->boundsLowerRightY * eye->getScaleFactor());
-
-			if ((lowerRight.x >= 0) && (lowerRight.y >= 0) &&
-				(upperLeft.x <= eye->getScreenResX()) &&
-				(upperLeft.y <= eye->getScreenResY()))
-			{
-				//We are on screen.  Figure out selection box.
-				Stuff::Vector3D boxCoords[8];
-				Stuff::Vector4D bcsp[8];
-
-				Stuff::Vector3D boxStart;
-				boxStart.x = -appearType->typeUpperLeft.x;
-				boxStart.y = appearType->typeUpperLeft.z;
-				boxStart.z = appearType->typeUpperLeft.y;
-
-				Stuff::Vector3D boxEnd;
-				boxEnd.x = -appearType->typeLowerRight.x;
-				boxEnd.y = appearType->typeLowerRight.z;
-				boxEnd.z = appearType->typeLowerRight.y;
-				
-				Stuff::Vector3D addCoords;
-		
-				addCoords.x = boxStart.x;
-				addCoords.y = boxStart.y;
-				addCoords.z = boxEnd.z;
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[0].Add(position,addCoords);
-		
-				addCoords.x = boxStart.x;
-				addCoords.y = boxEnd.y;  
-				addCoords.z = boxEnd.z;  		
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[1].Add(position,addCoords);
-		
-				addCoords.x = boxEnd.x; 
-				addCoords.y = boxEnd.y; 
-				addCoords.z = boxEnd.z; 		
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[2].Add(position,addCoords);
-				
-				addCoords.x = boxEnd.x;   
-				addCoords.y = boxStart.y; 
-				addCoords.z = boxEnd.z;   		
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[3].Add(position,addCoords);
-				
-				addCoords.x = boxStart.x;
-				addCoords.y = boxStart.y; 
-				addCoords.z = boxStart.z; 		
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[4].Add(position,addCoords);
-							  
-				addCoords.x = boxEnd.x;   
-				addCoords.y = boxStart.y;   
-				addCoords.z = boxStart.z; 
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[5].Add(position,addCoords);
-				
-				addCoords.x = boxEnd.x;   
-				addCoords.y = boxEnd.y;   
-				addCoords.z = boxStart.z; 
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[6].Add(position,addCoords);
-				
-				addCoords.x = boxStart.x; 
-				addCoords.y = boxEnd.y;   
-				addCoords.z = boxStart.z; 
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[7].Add(position,addCoords);
-				
-				float maxX = 0.0f, maxY = 0.0f;
-				float minX = 0.0f, minY = 0.0f;
-
-				for (long i=0;i<8;i++)
-				{
-					// [PROJECTZ:ScreenXYOracle id=bdactor_box_rect_a]
-					eye->projectForScreenXY(boxCoords[i],bcsp[i]);
-					if (!i)
-					{
-						maxX = minX = bcsp[i].x;
-						maxY = minY = bcsp[i].y;
-					}
-
-					if (i)
-					{
-						if (bcsp[i].x > maxX)
-							maxX = bcsp[i].x;
-
-						if (bcsp[i].x < minX)
-							minX = bcsp[i].x;
-
-						if (bcsp[i].y > maxY)
-							maxY = bcsp[i].y;
-						
-						if (bcsp[i].y < minY)
-							minY = bcsp[i].y;
-					}
-				}
-		
-				upperLeft.x = minX;
-				upperLeft.y = minY;
-				lowerRight.x = maxX;
-				lowerRight.y = maxY;
-				
-				if ((lowerRight.x >= 0) && (lowerRight.y >= 0) &&
-					(upperLeft.x <= eye->getScreenResX()) &&
-					(upperLeft.y <= eye->getScreenResY()))
-				{
-					inView = true;
-
-					if ((status != OBJECT_STATUS_DESTROYED) && (status != OBJECT_STATUS_DISABLED))
-					{
-						//-------------------------------------------------------------------------------
-						//Set LOD of Model here because we have the distance and we KNOW we can see it!
-						bool baseLOD = true;
-						DWORD selectLOD = 0;
-						// Animated buildings (turrets, gates, dropships) must stay at LOD 0.
-						// TG_AnimateShape caches node-name -> shape-index after first
-						// SetAnimationState (msl.cpp:2559) and writes the index into shared
-						// per-type state. The animation data is loaded against LOD 0 only
-						// (bdactor.cpp:322), so an LOD swap drives the retract animation
-						// against LOD 1's possibly-different sub-shape ordering -- the
-						// turret body never lowers. Suppressing LOD swap costs a few
-						// extra vertices per animated building (small set per map).
-						bool hasAnimations = false;
-						for (long ai = 0; ai < MAX_BD_ANIMATIONS; ++ai)
-						{
-							if (appearType->bdAnimData[ai])
-							{
-								hasAnimations = true;
-								break;
-							}
-						}
-						if (!hasAnimations)
-						{
-							if (useHighObjectDetail)
-							{
-								for (long i=1;i<MAX_LODS;i++)
-								{
-									if (appearType->bldgShape[i] && (distanceToEye > appearType->lodDistance[i]))
-									{
-										baseLOD = false;
-										selectLOD = i;
-									}
-								}
-							}
-							else	//We always want to use the lowest LOD!!
-							{
-								if (appearType->bldgShape[1])
-								{
-									baseLOD = false;
-									selectLOD = 1;
-								}
-							}
-						}
-						
-						// we are at this LOD level.
-						if (selectLOD != currentLOD)
-						{
-							currentLOD = selectLOD;
-
-							bldgShape->ClearAnimation();
-							delete bldgShape;
-							bldgShape = NULL;
-
-							bldgShape = appearType->bldgShape[currentLOD]->CreateFrom();
-							if (bdAnimationState != -1)
-								appearType->setAnimation(bldgShape,bdAnimationState);
-
-							//-------------------------------------------------
-							// Load the texture and store its handle.
-							for (long j=0;j<bldgShape->GetNumTextures();j++)
-							{
-								char txmName[1024];
-								bldgShape->GetTextureName(j,txmName,256);
-
-								char texturePath[1024];
-								sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-
-								FullPathFileName textureName;
-								textureName.init(texturePath,txmName,"");
-
-								if (fileExists(textureName))
-								{
-									if (S_strnicmp(txmName,"a_",2) == 0)
-									{
-										DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-										gosASSERT(gosTextureHandle != 0xffffffff);
-										bldgShape->SetTextureHandle(j,gosTextureHandle);
-										bldgShape->SetTextureAlpha(j,true);
-									}
-									else
-									{
-										DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-										gosASSERT(gosTextureHandle != 0xffffffff);
-										bldgShape->SetTextureHandle(j,gosTextureHandle);
-										bldgShape->SetTextureAlpha(j,false);
-									}
-								}
-								else
-								{
-									//PAUSE(("Warning: %s texture name not found",textureName));
-									bldgShape->SetTextureHandle(j,0xffffffff);
-								}
-							}
-						}
-
-						//ONLY change if we need
-						if (currentLOD && baseLOD)
-						{
-						// we are at the Base LOD level.
-							currentLOD = 0;
-							
-							bldgShape->ClearAnimation();
-							delete bldgShape;
-							bldgShape = NULL;
-							
-							bldgShape = appearType->bldgShape[currentLOD]->CreateFrom();
-							if (bdAnimationState != -1)
-								appearType->setAnimation(bldgShape,bdAnimationState);
-							
-							//-------------------------------------------------
-							// Load the texture and store its handle.
-							for (long i=0;i<bldgShape->GetNumTextures();i++)
-							{
-								char txmName[1024];
-								bldgShape->GetTextureName(i,txmName,256);
-										
-								char texturePath[1024];
-								sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-						
-								FullPathFileName textureName;
-								textureName.init(texturePath,txmName,"");
-										
-								if (fileExists(textureName))
-								{
-									if (S_strnicmp(txmName,"a_",2) == 0)
-									{
-										DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-										gosASSERT(gosTextureHandle != 0xffffffff);
-										bldgShape->SetTextureHandle(i,gosTextureHandle);
-										bldgShape->SetTextureAlpha(i,true);
-									}
-									else
-									{
-										DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-										gosASSERT(gosTextureHandle != 0xffffffff);
-										bldgShape->SetTextureHandle(i,gosTextureHandle);
-										bldgShape->SetTextureAlpha(i,false);
-									}
-								}
-								else
-								{
-									//PAUSE(("Warning: %s texture name not found",textureName));
-									bldgShape->SetTextureHandle(i,0xffffffff);
-								}
-							}
-						}
-					}
-				}
-				else
-				{
-					inView = false;		//Did alot of extra work checking this, but WHY draw and insult to injury?
-				}
-			}
-			else
-			{
-				inView = false;
-			}
-		}
+		// recalcBounds projection body deleted 2026-05-18 (Task 2): the GPU
+		// compute cull (gpu_cull::readback_isActorVisibleLagged) is the
+		// substitutive twin of the per-frame screen projection. inView is now
+		// coarse-angular-only -- a strict superset of the old projected value;
+		// over-inclusion is correctness-safe (cull_gates_are_load_bearing.md).
+		// screenPos/upperLeft/lowerRight are computed lazily at pick time
+		// (objmgr.cpp findTerrainObjectByMouse, Task 4).
+		// LATENT HAZARD: the deleted block also held the per-LOD-swap texture
+		// (re)loader, dead today under the 2026-05-12 TEMP LOD-0 pin
+		// (selectLOD forced 0 / (void)useHighObjectDetail in this function).
+		// If that pin is reverted (when the LOD-1 invisibility root cause is
+		// fixed), LOD selection + the per-LOD texture loader MUST be re-homed
+		// BEFORE the revert lands -- BldgAppearance::init loads LOD-0 textures
+		// ONLY; LOD-1+ would be unloaded after any LOD swap.
 	}
 
-	
+
 	return(inView);
 }
 
@@ -1793,6 +1483,36 @@ long BldgAppearance::render (long depthFixup)
 				bldgShape->Render(false,0.9999999f);
 			else if (depthFixup < 0)
 				bldgShape->Render(false,0.00001f);
+		}
+
+		// LODBUG probe — post-swap submit observation.  When the actor's
+		// bldgShape pointer changed since the last render() call for this
+		// actor, log the submit outcome.  Almost all shape-pointer changes
+		// are LOD swaps (recalcBounds:1437/1450 reassigns bldgShape via
+		// CreateFrom); damage swaps would also trigger but are rare during
+		// 30s passive smoke.  Off by default — env-gated.  Tracks state via
+		// a static unordered_map keyed on the actor pointer so we don't
+		// touch the BldgAppearance class layout.
+		{
+			static const bool s_lodBugTrace =
+				(getenv("MC2_LODBUG_TRACE") != nullptr);
+			if (s_lodBugTrace) {
+				static std::unordered_map<BldgAppearance*, TG_MultiShape*>
+					s_prevShape;
+				auto it = s_prevShape.find(this);
+				TG_MultiShape* prev =
+					(it != s_prevShape.end()) ? it->second : nullptr;
+				if (prev && prev != bldgShape) {
+					printf("[LODBUG v1] event=post_swap_render actor=%p "
+					       "prevShape=%p newShape=%p currentLOD=%u "
+					       "inView=%d submittedToGpu=%d\n",
+					       (void*)this, (void*)prev, (void*)bldgShape,
+					       (unsigned)currentLOD, (int)inView,
+					       (int)submittedToGpu);
+					fflush(stdout);
+				}
+				s_prevShape[this] = bldgShape;
+			}
 		}
 
 		if (selected & DRAW_BARS)
@@ -2128,6 +1848,59 @@ long BldgAppearance::renderShadows (void)
 }
 
 //-----------------------------------------------------------------------------
+// [LIGHTBAKE v1] Static-actor lighting mission-load bake gate. Replaces
+// the raw shape->CacheGpuLightData() at the 4 static (bldg/tree) call
+// sites. The trailing staticReg.lightDataIndex =
+// shape->getCachedGpuLightIndex() per-instance capture is UNCHANGED
+// (both CacheGpuLightData and EmitBakedGpuLightData set
+// cachedGpuLightIndex_). Key = monotonic-never-reused registry
+// recipeIndex; invalidate (destruction/LOD swap) routes through
+// invalidateStaticRegistration -> GpuStaticPropRegistry::invalidate ->
+// mc2EraseBakedStaticLight -> lazy re-bake of the same position-derived
+// constant. Kill-switch MC2_LIGHTBAKE (=0 -> unchanged D2 path
+// bit-for-bit). Mechs never reach this (mech3d.cpp calls
+// CacheGpuLightData directly); generic props take the no-actor-light
+// path. C++-only. See docs/superpowers/plans/
+// 2026-05-17-static-lighting-bake-SIMPLIFIED.md
+static void mc2CacheOrBakeStaticGpuLight(TG_MultiShape* shape,
+                                         bool registered, int32_t recipeIndex)
+{
+	extern bool mc2LightBakeEnabled();
+	extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
+	extern void mc2SetBakedStaticLight(int32_t, const TG_HWLightsData&);
+	extern void mc2WriteStaticLightSlot(int32_t, const TG_HWLightsData&);  // [LIGHTBAKE v2]
+	if (!shape) return;
+	if (!mc2LightBakeEnabled() || !registered || recipeIndex < 0) {
+		shape->CacheGpuLightData();                  // unchanged D2/legacy path
+		return;
+	}
+	TG_HWLightsData baked;
+	if (mc2GetBakedStaticLight(recipeIndex, baked)) {
+		shape->EmitBakedGpuLightData(recipeIndex, baked);    // HIT: recompute retired
+	} else {
+		shape->CacheGpuLightData();                          // MISS: real gather (frame 1 / post-invalidate)
+		// C1 (adversarial review): CacheGpuLightData early-returns when
+		// !g_useGpuObjects && !g_useGpuMechs (supported MC2_GPU_OBJECTS=0
+		// operator config), leaving cachedGpuLightIndex_ at the
+		// 0xFFFFFFFF sentinel and leaf->lightData_ stale. Only persist
+		// the bake if the gather actually ran (valid index) -- else leave
+		// uncached so it retries next frame; never persist a no-op
+		// snapshot (would poison s_bakedStaticLight until invalidate).
+		const TG_HWLightsData* leaf = shape->peekCachedLeafLightData();
+		if (leaf && shape->getCachedGpuLightIndex() != 0xFFFFFFFFu) {
+			mc2SetBakedStaticLight(recipeIndex, *leaf);      // mission source-of-truth (re-bake/invalidate)
+			// [LIGHTBAKE v2] write the PERMANENT static slot once
+			// (lightData_[recipeIndex] CPU mirror + advance S), then
+			// point this multi at it -- identical end-state to the HIT
+			// path, so from this frame on there is NO per-frame
+			// addLightDataStructure for this recipe.
+			mc2WriteStaticLightSlot(recipeIndex, *leaf);
+			shape->EmitBakedGpuLightData(recipeIndex, *leaf);
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
 long BldgAppearance::update (bool animate)
 {
 	::mc2_object_recon::Scope _recon_bldg_(
@@ -2403,7 +2176,7 @@ long BldgAppearance::update (bool animate)
 			// By the time submitMultiShape() runs (during renderLists()), later
 			// actors have overwritten worldLights[0]->aRGB for their positions.
 			{
-				bldgShape->CacheGpuLightData();
+				mc2CacheOrBakeStaticGpuLight(bldgShape, staticReg.registered, staticReg.recipeIndex);
 				// 2026-05-11 per-instance capture: snapshot the multi's just-written
 				// cache slot for THIS actor before sibling actors of the same
 				// multi-type overwrite it. Ferried to RecipeRange via markVisible().
@@ -2446,7 +2219,7 @@ long BldgAppearance::update (bool animate)
 			// through update() seeds the light index. Cheap: same call
 			// already runs unconditionally in submitMultiShape; here we
 			// just hoist its effect to be visible to render() this frame.
-			bldgShape->CacheGpuLightData();
+			mc2CacheOrBakeStaticGpuLight(bldgShape, staticReg.registered, staticReg.recipeIndex);
 			// 2026-05-11 per-instance capture: see gpuEligible branch above.
 			staticReg.lightDataIndex = bldgShape->getCachedGpuLightIndex();
 			needsFullBakeNextFrame = false;
@@ -2911,14 +2684,23 @@ bool BldgAppearance::IsStaticNow() const
 
 void BldgAppearance::touch()
 {
-	// Only fires when MC2_STATIC_UPDATE_SKIP=1; default config keeps update()
-	// running every frame and CacheGpuLightData() at bdactor.cpp:2248 refreshes
-	// the cached UBO slot index. ResubmitCachedGpuLightData re-submits this
-	// actor's already-populated lightData_ via the dedup-cache — no
-	// s_listOfLights dependency. Touch() advances lastTurnTransformed so any
-	// legacy fallback path's staleness guard passes.
+	// MC2_STATIC_UPDATE_SKIP defaults TRUE (terrobj.cpp:92); touch() is the
+	// DEFAULT path. update() runs only when the env var is explicitly cleared.
 	if (bldgShape) {
-		bldgShape->ResubmitCachedGpuLightData();
+		// [LIGHTBRIDGE v1] C6 retirement: repoint to the primed 38d8720 slot
+		// (zero FNV/memcmp; cachedFrame_ stamped). MISS keeps the legacy
+		// resubmit (NOT CacheGpuLightData -- terrain-color-staleness,
+		// msl.cpp:1874-1887). MC2_LIGHTBAKE=0 -> legacy path bit-for-bit.
+		extern bool mc2LightBakeEnabled();
+		extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
+		TG_HWLightsData baked;
+		if (mc2LightBakeEnabled()
+		    && staticReg.registered && staticReg.recipeIndex >= 0
+		    && mc2GetBakedStaticLight(staticReg.recipeIndex, baked)) {
+			bldgShape->EmitBakedGpuLightData(staticReg.recipeIndex, baked);
+		} else {
+			bldgShape->ResubmitCachedGpuLightData();
+		}
 		// 2026-05-11 per-instance capture: snapshot the just-resubmitted slot
 		// for THIS actor before sibling instances of the same multi-type
 		// overwrite multi->cachedGpuLightIndex_ in the same update phase.
@@ -4143,16 +3925,22 @@ bool TreeAppearance::isMouseOver (float px, float py)
 //-----------------------------------------------------------------------------
 bool TreeAppearance::recalcBounds (void)
 {
-	Stuff::Vector4D tempPos;
+	// [TOBJSPLIT v1] accumulators declared in code/static_update_counters.h
+	// (included above via ../code/static_update_counters.h).
+	// Gate: file-scope s_tobjSplitBdOn (defined above, shared with BldgAppearance).
+
 	inView = false;
-	
-	float distanceToEye = 0.0f;
 
 	if (eye)
 	{
 		//-------------------------------------------------------------------
 		//NEW METHOD from the WAY BACK Days
 		inView = true;
+
+		// [TOBJSPLIT v1] ANGULAR bracket: matrix-free sphere angular clip.
+		// Reads cycle counter immediately before/after.
+		{
+		unsigned long long _tsA = s_tobjSplitBdOn ? __rdtsc() : 0ULL;
 		if (eye->usePerspective)
 		{
 			Stuff::Vector3D cameraPos;
@@ -4160,14 +3948,14 @@ bool TreeAppearance::recalcBounds (void)
 			cameraPos.y = eye->getCameraOrigin().z;
 			cameraPos.z = eye->getCameraOrigin().y;
 			float vClipConstant = eye->verticalSphereClipConstant;
-			float hClipConstant = eye->horizontalSphereClipConstant; 
-	
+			float hClipConstant = eye->horizontalSphereClipConstant;
+
 			Stuff::Vector3D objectCenter;
 			objectCenter.Subtract(position,cameraPos);
 			Camera::cameraFrame.trans_to_frame(objectCenter);
-			distanceToEye = objectCenter.GetApproximateLength();
+			float distanceToEye = objectCenter.GetApproximateLength();
 			float clip_distance = fabs(1.0f / objectCenter.y);
-			
+
 			//Is vertex on Screen OR close enough to screen that its triangle MAY be visible?
 			// WE have removed the atans here by simply taking the tan of the angle we want above.
 			float object_angle = fabs(objectCenter.z) * clip_distance;
@@ -4187,255 +3975,26 @@ bool TreeAppearance::recalcBounds (void)
 				}
 			}
 		}
-		
-		//Can we be seen at all?
-		// If yes, check if we are behind fog plane.
-		if (inView)
-		{
-			//ALWAYS need to do this or select is YAYA
-			// But now inView is correct.
-			// [PROJECTZ:ScreenXYOracle id=bdactor_screen_pos_b]
-			eye->projectForScreenXY(position,screenPos);
-		
-			if (eye->usePerspective)
-			{
-				if (distanceToEye > Camera::MaxClipDistance)
-				{
-					hazeFactor = 1.0f;
-					inView = false;
-				}
-				else if (distanceToEye > Camera::MinHazeDistance)
-				{
-					Camera::HazeFactor = (distanceToEye - Camera::MinHazeDistance) * Camera::DistanceFactor;
-					inView = true;
-				}
-				else
-				{
-					Camera::HazeFactor = 0.0f;
-					inView = true;
-				}
-			
-			}
-			else
-			{
-				Camera::HazeFactor = 0.0f;
-				inView = true;
-			}
-		}
-		
-		//If we were not behind fog plane, do a bunch O math we need later!!
-		if (inView)
-		{
-			//We are on screen.  Figure out selection box.
-			Stuff::Vector3D boxCoords[8];
-			Stuff::Vector4D bcsp[8];
+		if (s_tobjSplitBdOn) g_tobjAngularCyc += __rdtsc() - _tsA;
+		}  // end ANGULAR bracket
 
-			Stuff::Vector3D minBox;
-			minBox.x = -appearType->typeUpperLeft.x;
-			minBox.y = appearType->typeUpperLeft.z;
-			minBox.z = appearType->typeUpperLeft.y;
-
-			Stuff::Vector3D maxBox;
-			maxBox.x = -appearType->typeLowerRight.x;
-			maxBox.y = appearType->typeLowerRight.z;
-			maxBox.z = appearType->typeLowerRight.y;
-
-			if (rotation != 0.0f)
-				Rotate(minBox,-rotation);
-
-			if (rotation != 0.0f)
-				Rotate(maxBox,-rotation);
-
-			boxCoords[0].x = position.x + minBox.x;
-			boxCoords[0].y = position.y + minBox.y;
-			boxCoords[0].z = position.z + minBox.z;
-
-			boxCoords[1].x = position.x + minBox.x;
-			boxCoords[1].y = position.y + maxBox.y;
-			boxCoords[1].z = position.z + minBox.z;
-
-			boxCoords[2].x = position.x + maxBox.x;
-			boxCoords[2].y = position.y + minBox.y;
-			boxCoords[2].z = position.z + minBox.z;
-
-			boxCoords[3].x = position.x + maxBox.x;
-			boxCoords[3].y = position.y + maxBox.y;
-			boxCoords[3].z = position.z + minBox.z;
-
-			boxCoords[4].x = position.x + maxBox.x;
-			boxCoords[4].y = position.y + maxBox.y;
-			boxCoords[4].z = position.z + maxBox.z;
-
-			boxCoords[5].x = position.x + maxBox.x;
-			boxCoords[5].y = position.y + minBox.y;
-			boxCoords[5].z = position.z + maxBox.z;
-
-			boxCoords[6].x = position.x + minBox.x;
-			boxCoords[6].y = position.y + maxBox.y;
-			boxCoords[6].z = position.z + maxBox.z;
-
-			boxCoords[7].x = position.x + minBox.x;
-			boxCoords[7].y = position.y + minBox.y;
-			boxCoords[7].z = position.z + maxBox.z;
-
-			float maxX = 0.0f, maxY = 0.0f;
-			float minX = 0.0f, minY = 0.0f;
-
-			for (long i=0;i<8;i++)
-			{
-				// [PROJECTZ:ScreenXYOracle id=bdactor_box_rect_b]
-				eye->projectForScreenXY(boxCoords[i],bcsp[i]);
-				if (!i)
-				{
-					maxX = minX = bcsp[i].x;
-					maxY = minY = bcsp[i].y;
-				}
-				
-				if (i)
-				{
-					if (bcsp[i].x > maxX)
-						maxX = bcsp[i].x;
-					
-					if (bcsp[i].x < minX)
-						minX = bcsp[i].x;
-						
-					if (bcsp[i].y > maxY)
-						maxY = bcsp[i].y;
-					
-					if (bcsp[i].y < minY)
-						minY = bcsp[i].y;
-				}
-			}
-	
-			upperLeft.x = minX;
-			upperLeft.y = minY;
-			lowerRight.x = maxX;
-			lowerRight.y = maxY;
-			
-			if ((lowerRight.x >= 0) && (lowerRight.y >= 0) &&
-				(upperLeft.x <= eye->getScreenResX()) &&
-				(upperLeft.y <= eye->getScreenResY()))
-			{
-				inView = true;
-		
-				if ((status != OBJECT_STATUS_DESTROYED) && (status != OBJECT_STATUS_DISABLED))
-				{
-					//-------------------------------------------------------------------------------
-					//Set LOD of Model here because we have the distance and we KNOW we can see it!
-					bool baseLOD = true;
-					DWORD selectLOD = 0;
-					// Trees use low-LOD crossed cards that light per-plane, which
-					// creates visible bright/dark self-intersections once valid
-					// lightData_ is restored under UPDATE_SKIP. Keep visible trees
-					// at LOD 0; tree GPU cost is negligible after renderer offload
-					// and these assets are expected to be replaced later.
-
-					// we are at this LOD level.
-					if (selectLOD != currentLOD)
-					{
-						currentLOD = selectLOD;
-
-						treeShape->ClearAnimation();
-						delete treeShape;
-						treeShape = NULL;
-
-						treeShape = appearType->treeShape[currentLOD]->CreateFrom();
-						//-------------------------------------------------
-						// Load the texture and store its handle.
-						for (long j=0;j<treeShape->GetNumTextures();j++)
-						{
-							char txmName[1024];
-							treeShape->GetTextureName(j,txmName,256);
-
-							char texturePath[1024];
-							sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-
-							FullPathFileName textureName;
-							textureName.init(texturePath,txmName,"");
-
-							if (fileExists(textureName))
-							{
-								if (S_strnicmp(txmName,"a_",2) == 0)
-								{
-									DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-									gosASSERT(gosTextureHandle != 0xffffffff);
-									treeShape->SetTextureHandle(j,gosTextureHandle);
-									treeShape->SetTextureAlpha(j,true);
-								}
-								else
-								{
-									DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-									gosASSERT(gosTextureHandle != 0xffffffff);
-									treeShape->SetTextureHandle(j,gosTextureHandle);
-									treeShape->SetTextureAlpha(j,false);
-								}
-							}
-							else
-							{
-								//PAUSE(("Warning: %s texture name not found",textureName));
-								treeShape->SetTextureHandle(j,0xffffffff);
-							}
-						}
-					}
-						
-					//ONLY change if we need
-					if (currentLOD && baseLOD)
-					{
-					// we are at the Base LOD level.
-						currentLOD = 0;
-						
-						treeShape->ClearAnimation();
-						delete treeShape;
-						treeShape = NULL;
-						
-						treeShape = appearType->treeShape[currentLOD]->CreateFrom();
-						
-						//-------------------------------------------------
-						// Load the texture and store its handle.
-						for (long i=0;i<treeShape->GetNumTextures();i++)
-						{
-							char txmName[1024];
-							treeShape->GetTextureName(i,txmName,256);
-									
-							char texturePath[1024];
-							sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-					
-							FullPathFileName textureName;
-							textureName.init(texturePath,txmName,"");
-									
-							if (fileExists(textureName))
-							{
-								if (S_strnicmp(txmName,"a_",2) == 0)
-								{
-									DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-									gosASSERT(gosTextureHandle != 0xffffffff);
-									treeShape->SetTextureHandle(i,gosTextureHandle);
-									treeShape->SetTextureAlpha(i,true);
-								}
-								else
-								{
-									DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-									gosASSERT(gosTextureHandle != 0xffffffff);
-									treeShape->SetTextureHandle(i,gosTextureHandle);
-									treeShape->SetTextureAlpha(i,false);
-								}
-							}
-							else
-							{
-								//PAUSE(("Warning: %s texture name not found",textureName));
-								treeShape->SetTextureHandle(i,0xffffffff);
-							}
-						}
-					}
-				}
-			}
-			else
-			{
-				inView = false;		//Did alot of extra work checking this, but WHY draw and insult to injury?
-			}
-		}
+		// recalcBounds projection body deleted 2026-05-18 (Task 3, Tree mirror of Task 2):
+		// the GPU compute cull (gpu_cull::readback_isActorVisibleLagged) is the
+		// substitutive twin of the per-frame screen projection. inView is now
+		// coarse-angular-only -- a strict superset of the old projected value;
+		// over-inclusion is correctness-safe (cull_gates_are_load_bearing.md).
+		// Trees are never pick targets (objmgr.cpp findObjectByMouse skips
+		// getObjectClass()==TREE), so screenPos/upperLeft/lowerRight have no
+		// pick-path consumer -- no Task-4 re-home needed for Tree.
+		// LATENT HAZARD: the deleted block also held the per-LOD-swap texture
+		// (re)loader, dead today under the 2026-05-12 TEMP LOD-0 pin
+		// (selectLOD forced 0 in this function).
+		// If that pin is reverted (when the LOD-1 invisibility root cause is
+		// fixed), LOD selection + the per-LOD texture loader MUST be re-homed
+		// BEFORE the revert lands -- TreeAppearance::init loads LOD-0 textures
+		// ONLY; LOD-1+ would be unloaded after any LOD swap.
 	}
-	
+
 	return(inView);
 }
 
@@ -4837,7 +4396,7 @@ long TreeAppearance::update (bool animate)
 		{
 			// Stage 2.D.2 fix: cache GPU light data while lights are per-actor-correct.
 			{
-				treeShape->CacheGpuLightData();
+				mc2CacheOrBakeStaticGpuLight(treeShape, staticReg.registered, staticReg.recipeIndex);
 				// 2026-05-11 per-instance capture (mirror of BldgAppearance::update).
 				staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
 			}
@@ -4858,7 +4417,7 @@ long TreeAppearance::update (bool animate)
 			// Seed cachedGpuLightIndex_ in the full-bake branch so the
 			// next render() doesn't fail the UINT32_MAX gate at :4341
 			// and invalidate the freshly-set staticReg.
-			treeShape->CacheGpuLightData();
+			mc2CacheOrBakeStaticGpuLight(treeShape, staticReg.registered, staticReg.recipeIndex);
 			// 2026-05-11 per-instance capture (mirror of gpuEligible branch).
 			staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
 			needsFullBakeNextFrame = false;
@@ -5025,7 +4584,20 @@ void TreeAppearance::touch()
 	// Touch() advances lastTurnTransformed so TG_Shape::Render()'s staleness
 	// guard doesn't suppress the legacy fallback path.
 	if (treeShape) {
-		treeShape->ResubmitCachedGpuLightData();
+		// [LIGHTBRIDGE v1] C6 retirement: repoint to the primed 38d8720 slot
+		// (zero FNV/memcmp; cachedFrame_ stamped). MISS keeps the legacy
+		// resubmit (NOT CacheGpuLightData -- terrain-color-staleness,
+		// msl.cpp:1874-1887). MC2_LIGHTBAKE=0 -> legacy path bit-for-bit.
+		extern bool mc2LightBakeEnabled();
+		extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
+		TG_HWLightsData baked;
+		if (mc2LightBakeEnabled()
+		    && staticReg.registered && staticReg.recipeIndex >= 0
+		    && mc2GetBakedStaticLight(staticReg.recipeIndex, baked)) {
+			treeShape->EmitBakedGpuLightData(staticReg.recipeIndex, baked);
+		} else {
+			treeShape->ResubmitCachedGpuLightData();
+		}
 		// 2026-05-11 per-instance capture: see BldgAppearance::touch.
 		staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
 		treeShape->Touch();

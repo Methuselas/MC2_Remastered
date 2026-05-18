@@ -359,6 +359,15 @@ class TG_MultiShape
 		// IsStaticNow() guarantees this — registration requires a prior full-bake.
 		void ResubmitCachedGpuLightData();
 
+		// [LIGHTBAKE v1] peekCachedLeafLightData: after CacheGpuLightData()
+		// has run this frame, returns the first SHAPE_NODE leaf's durable
+		// post-decompose lightData_ (TG_Shape member; TG_MultiShape is a
+		// friend) or nullptr — the bit-identity-preserving bake source.
+		// EmitBakedGpuLightData: re-emit a baked constant into a per-frame
+		// slot WITHOUT GatherLights/decompose/template recompute.
+		const TG_HWLightsData* peekCachedLeafLightData();
+		void EmitBakedGpuLightData(int32_t recipeIndex, const TG_HWLightsData& baked);
+
 		//This function sets the fog values for the shape.  Straight fog right now.
 		void SetFogRGB (DWORD fRGB);
 
