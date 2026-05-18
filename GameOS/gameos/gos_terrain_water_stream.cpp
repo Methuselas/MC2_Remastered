@@ -1536,7 +1536,11 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
                 }
                 static uint64_t s_rpFrame = 0;
                 const uint64_t f2 = ++s_rpFrame;
-                static int  s_rpPrevArmed = -1;            // -1 = no prior frame
+                static int  s_rpPrevArmed = -1;            // -1 = no prior PROBE frame (includes frames skipped while
+                                                           //   mvp==null or the env var is off); a transition that
+                                                           //   occurs before the first mvp-non-null probe frame is not
+                                                           //   caught -- acceptable: the release gate fires on a
+                                                           //   running mission where mvp is reliably non-null.
                 static bool s_rpInvBLatched = false;
                 const int   armedI = armed2 ? 1 : 0;
                 // Invariant A: armed-frame tripwire (trivially-true; A==0 => mid-frame
