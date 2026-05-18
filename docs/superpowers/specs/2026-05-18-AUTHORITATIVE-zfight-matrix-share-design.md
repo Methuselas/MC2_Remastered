@@ -3,8 +3,12 @@
 **Date:** 2026-05-18
 **Branch:** `claude/water-material-v1` (isolated; user integrates separately)
 **Owner:** assistant (designated water owner)
-**Status:** DESIGN - pending user spec review, then 2 mandatory adversarials
-(structural depth change = high-stakes trigger).
+**Status:** PLAN-READY. Re-adversarial #2 PASSED (opus+sonnet both
+APPROVE-WITH-REQUIRED-EDITS, no BLOCK, 2026-05-18); open questions GROUNDED;
+all required edits FOLDED into Section 12 (authoritative over Sections 3, 4,
+and the edit-site lists of 11). User approved the Fa scope expansion
+2026-05-18. Next: plan -> subagent execute. **Section 12 is the operative
+design; read it last and treat it as authoritative.**
 **Supersedes ALL prior z-fight specs:** `2026-05-18-water-terrain-zfight-
 distance-clipz-bias-design.md` (`64f265b`), `2026-05-18-decal-zoomstep-mvp-
 source-desync-design.md` (`85d9d17`, dead), `2026-05-18-CONSOLIDATED-zfight-
@@ -335,3 +339,190 @@ across the transition frame), (b) Invariant A intra-frame-mutation hazard,
 (c) the `uploadOverlayUniforms_` per-caller-arg leaving the 2 live callers
 byte-unchanged, (d) M1 non-zero shared constant preserving the shoreline
 LEQUAL invariant at all zooms.
+
+---
+
+## 12. RE-ADVERSARIAL #2 OUTCOME + GROUNDED FOLD (2026-05-18) - AUTHORITATIVE
+
+Re-adversarial #2 (opus + sonnet, adversarial-plan-review skill,
+code-grounded, independent). **Both APPROVE-WITH-REQUIRED-EDITS; neither
+BLOCK.** Foci verdicts converged: (a) armed-regime co-planarity PROVEN
+bit-identical (terrain armed reads `g_dispatchMvp16` baked from
+`gos_GetTerrainMVPMat4()` at `gos_terrain_indirect.cpp:~2887/2903`; armed
+thin VS reads `tr.clipPos[]`, no `terrainMVP`); the ternary's two arms
+correspond bit-identically to terrain's two regimes; "no-flip pin creates
+the discontinuity" reasoning correct. (b) Invariant A hazard NOT real under
+current single-per-frame writer. (c) per-caller-arg mechanically sound,
+exactly 3 callers, no 4th. (d) zero-fudge UNSAFE confirmed, BUT the spec's
+"one shared constant" is internally impossible. **This section is
+authoritative over Sections 3, 4, and the edit-site/probe text of 11.**
+Folded required edits + the grounded resolutions of the 2 open questions:
+
+### 12.1 CRITICAL (both reviewers, independently, same math): TWO single-sourced oppositely-signed constants - NOT one
+
+With matrix-share the layers are bit-identically co-planar in `clip.z*rhw`;
+the added screen-z constant is the ONLY depth separator. Grounded ordering
+invariants (LEQUAL, forward-z `glClipControl(ZERO_TO_ONE)`, draw order
+terrain -> decals/overlays -> water):
+- **Water must lose the shoreline tie to terrain** (occluded by terrain) ->
+  water constant **> `TERRAIN_DEPTH_FUDGE` (0.002)**. Enforced by the v0.3
+  staircase LEQUAL-scar block `gos_terrain_water_fast.vert:~328-364`
+  (verified real; zero/coplanar water = the staircase regression).
+- **Decals/overlays must win the tie over terrain** (render on top,
+  replacing today's `glPolygonOffset(-1,-1)` = toward-camera) ->
+  decal/overlay constant **< `TERRAIN_DEPTH_FUDGE` (0.002)** (candidate
+  `0.0`, or a small epsilon `< 0.002`; exact value is the open shader
+  sub-question -> `/mc2-amd-shader-review` + mc2-shader-expert at plan
+  time, Section 6 V6).
+- `K > 0.002` AND `K < 0.002` cannot both hold -> **a single shared
+  constant is mathematically impossible.** Section 11 edit-site-4 and the M1
+  mandate are CORRECTED: define **TWO** constants, single-sourced in the
+  lockstep `shaders/include/terrain_depth_bias.hglsl` + `mclib/terrain_
+  depth_bias.h`, e.g. `WATER_DEPTH_BIAS` (> terrain ref) applied at
+  `gos_terrain_water_fast_mdi.vert:~291` + `gos_terrain_water_fast.vert:
+  ~365`, and `OVERLAY_DEPTH_BIAS` (< terrain ref) applied at
+  `terrain_overlay.vert:~36`, with `TERRAIN_DEPTH_FUDGE` (0.002, terrain
+  VS UNCHANGED) as the shared reference. This is NOT Fix A's
+  zoom-nonlinearity: with a bit-identical shared projection a constant
+  post-divide offset is invariant in relative depth ordering at every zoom;
+  the relative-pop-cancellation math holds *per signed pair*. This is
+  precisely `feedback_single_source_scattered_tuning_constants.md`:
+  single-source the MECHANISM (the lockstep header), keep regime-distinct
+  VALUES as separate named constants - the header already documents this
+  same lesson for FAST-vs-RASTER. All three `glPolygonOffset(-1,-1)`
+  (`gameos_graphics.cpp:~7062/7171/7236`, confirmed all decal-family, none
+  shared w/ terrain/water/shadow) removed all-or-nothing same-PR, replaced
+  by `OVERLAY_DEPTH_BIAS`.
+
+### 12.2 GROUNDED Q1 (un-armed co-planarity - spec wording corrected, conclusion HOLDS)
+
+The reviewers contradicted each other; grounding resolved it. In the
+DEFAULT smoke env the fast-path env trio is default-OFF, so the thin-VS /
+patch-stream tessellation paths are DEAD and the thin VS declares no
+`terrainMVP` uniform anyway (`gos_terrain_thin.vert:~57-64`, reads
+`tr.clipPos[]`). Un-armed terrain runs the **legacy per-quad raster**
+(`terrain.cpp:~1069-1089` -> `quad.cpp:~2508+`) submitting CPU
+pre-projected `vertices[].px/py/pz` from `eye->projectForTerrainAdmission`
+/ `Camera::projectZ` (`terrain.cpp:~1741-1753`) - NOT a shader projecting
+`terrain_mvp_`. **Section 11's "terrain projects from live `terrain_mvp_`
+un-armed" wording is imprecise and is corrected here.** Conclusion still
+HOLDS: `gos_GetTerrainMVPMat4()` (`= &terrain_mvp_`,
+`gameos_graphics.cpp:~7319/1419`) is constructed to be the matrix-EXACT
+equivalent of that same `projectZ` - documented load-bearing invariant
+`gamecam.cpp:~167-172` ("AW^T*(vx,vy,elev,1) = projectZ(...) exactly,
+Stuff row-vector convention"). So Fix B's un-armed ternary arm IS
+co-planar with un-armed terrain **by construction**. Caveat (carry to plan
+verification): this equivalence is by construction/comment, not a runtime
+parity probe - the `[DEPTH_TRANSITION v1]` / `MC2_WATER_RENDERPROBE`
+Invariant B on a captured arming-transition frame is the empirical check.
+CPU-water's separate `dz_cpuw` sign-flip residual is a DIFFERENT
+`eye->projectForTerrainAdmission`-vs-dispatch divergence, still OUT.
+
+### 12.3 GROUNDED Q2/Q3 -> Fa (USER-APPROVED 2026-05-18): extend the symmetric-mirror to ALL THREE overlay/decal callers; supersedes Section 11 edit-site-3 and the prior-adversarial C1 "byte-unchanged" constraint
+
+Grounding (Q2): in the DEFAULT smoke env the user's cement + bomb-crater
+zoom-step pop flows through the **LIVE** path - `gos_DrawTerrainOverlays()`
+UNCONDITIONAL (`txmmgr.cpp:~2064-2067`) -> `drawTerrainOverlays`
+(`gameos_graphics.cpp:~7066`) and `gos_DrawDecals()` UNCONDITIONAL
+(`txmmgr.cpp:~2095-2098`) -> `drawDecals` (`~:7240`). The static bake
+`drawDecalStaticBatch` (`~:7176`) is `IsFrameOverlayArmed()`-gated
+(`txmmgr.cpp:~2079-2081` -> `gos_terrain_indirect.cpp:~204-230`,
+`MC2_TERRAIN_INDIRECT_OVERLAY` default OFF) -> **DEAD in default smoke.**
+Section 11's static-bake-only edit-site-3 therefore does NOT touch the
+matrix source for the decals the user actually sees - it would leave the
+reported symptom unfixed.
+
+Grounding (Q3) -> **Fa, USER-APPROVED:** all three callers
+(`drawTerrainOverlays` `~:7066`, `drawDecalStaticBatch` `~:7176`,
+`drawDecals` `~:7240`) pass the symmetric-mirror expression
+`IsFrameSolidArmed() ? gos_terrain_indirect_getDispatchMvp16() :
+gos_GetTerrainMVPMat4()` via the new per-caller `const float*
+terrainMvpOverride` argument to `uploadOverlayUniforms_()`
+(`gameos_graphics.cpp:~7011-7014`). The `nullptr` default is retained ONLY
+as a safety no-op fallback, NOT used by any of the 3 callers. Grounded
+safety rationale (supersedes the prior-adversarial C1 "leave the 2 live
+callers byte-unchanged", which rested on the now-DEAD 85d9d17
+MVP-desync model):
+- **Un-armed: byte-identical.** Live callers today upload `getTerrainMVP()`
+  == `&terrain_mvp_`; the mirror's un-armed arm `gos_GetTerrainMVPMat4()`
+  returns the SAME `&terrain_mvp_` (`gameos_graphics.cpp:~7319/1419`). No
+  un-armed live-overlay regression.
+- **Armed: strictly MORE correct.** Live callers run on armed frames the
+  same frame terrain-solid draws from `g_dispatchMvp16`; today they use
+  divergent live `terrain_mvp_` (= the bug). The mirror makes them read
+  `getDispatchMvp16()` - the exact matrix terrain baked from
+  (`gos_terrain_indirect.cpp:~3366`) - co-planar by construction.
+- **No shared-helper trap, no double-draw.** The trap was specific to the
+  dead asymmetric 85d9d17 model. Under the symmetric mirror the correct
+  projection for every decal/cement consumer on a frame is uniformly
+  "whatever terrain used that frame"; grounding found NO armed case where a
+  live decal should intentionally diverge from terrain. Live (unconditional)
+  vs static (`IsFrameOverlayArmed`-gated, default OFF) are mutually
+  exclusive in default play; in the non-default config the M2d cement
+  producer is gate-suppressed (`quad.cpp:~2457`) so they never both emit
+  the same frame - all-3-mirrored stays consistent there too.
+- **Mechanical:** `drawTerrainOverlays` + `drawDecalStaticBatch` use
+  `overlayLocs_`/`overlayProg_`; `drawDecals` uses `decalLocs_`/`decalProg_`
+  - but all three share `terrain_overlay.vert`. Per-locs dispatch inside
+  the helper is impossible (confirms Section 11 C1); the policy lives at
+  the 3 call sites via the per-caller arg, helper stays neutral.
+
+**Net edit-site-3 (REPLACES Section 11 site 3):** add `const float*
+terrainMvpOverride = nullptr` to `uploadOverlayUniforms_`; the 3 callers
+each pass the symmetric-mirror expression (with the
+`if(!mvp) mvp=gos_GetTerrainMVPMat4()` nullptr-safety as
+`gos_terrain_water_stream.cpp:~1413`). Sites 1 (`~:2153` non-MDI water,
+config-dependent-live but harmless+correct for the `!mdiValid` fallback -
+apply anyway), 2 (`~:2308` MDI water) unchanged from Section 11.
+
+### 12.4 MINOR (both): Invariant A re-characterized; Invariant B is the release gate
+
+`MC2_WATER_RENDERPROBE` Invariant A (FNV render-bind matrix == FNV cull-feed
+matrix) is TRIVIALLY-TRUE under the current architecture: sole per-frame
+`terrain_mvp_` writer is `gos_SetTerrainMVP` @ `gamecam.cpp:~176` (only
+caller of the only writer, before all consumers); `g_dispatchMvp16` written
+once/armed-frame @ `gos_terrain_indirect.cpp:~2903`, never mutated
+intra-frame. It is a valid FUTURE-REGRESSION TRIPWIRE (fires if someone
+later adds a mid-frame MVP mutation) but is NOT "the canary for the one
+real residual hazard" - that hazard does not exist today. Re-document
+accordingly; do NOT read a green Invariant A as a correctness proof.
+**Invariant B (latched arming-transition frame: water/decal render-bind FP
+== terrain's this-frame source FP) is the genuine release gate** -
+RenderDoc cannot catch the 1-frame transient; Invariant B on a captured
+transition frame substitutes for it. Probe stays env-gated, demote-not-
+delete.
+
+### 12.5 What re-adversarial #2 confirmed RIGHT (do not regress in plan)
+
+Symmetric-mirror approach + armed bit-identical co-planarity; mirrors the
+shipped 926/0 ternary (`gos_terrain_water_stream.cpp:~1409-1416`), not
+novel plumbing; the C2/C3 STRIKE-R-a fold correct (no render-VS arm-gate
+to mirror; 926/0 feeds cull-compute `u_terrainMVP` `~:1344`); S3-BLOCK
+non-violation (same MVP/frame/on-screen view, none of the 4 blocked
+elements); zero-fudge-UNSAFE premise; all 3 `glPolygonOffset` decal-family;
+`getDispatchMvp16()` armed/stale contract + un-armed fallback choice;
+CPU-water + Sym1 exclusion genuinely proven-distinct (`dz_cpuw`
+non-constant sign-flipping ~+0.055->-0.006 vs flat `dz_gpuw=+0.001`/
+`dz_decal=-0.002`), not a punt.
+
+### 12.6 Plan-stage additions (fold into Section 6 Rule-0 verifications)
+
+- **V7:** re-grep all 3 `uploadOverlayUniforms_` callers + the helper
+  signature; confirm still exactly 3, no 4th (opposite-direction grep);
+  confirm `drawDecalStaticBatch` uses `overlayLocs_` (not `decalLocs_`).
+- **V8:** confirm the two-constant lockstep header pair compiles in both
+  the `.hglsl` (all consuming `.vert`) and `.h` (any C++ consumer) sides;
+  `OVERLAY_DEPTH_BIAS` < `TERRAIN_DEPTH_FUDGE` < `WATER_DEPTH_BIAS`
+  ordering asserted at the single-source site.
+- **V9:** mc2-shader-expert + `/mc2-amd-shader-review` decide
+  `OVERLAY_DEPTH_BIAS` exact value (0.0 vs small epsilon) in the
+  `ZERO_TO_ONE` regime; confirm `WATER_DEPTH_BIAS` preserves the
+  `gos_terrain_water_fast.vert:~328-364` scar invariant at all zooms.
+- **V10:** re-confirm un-armed `terrain_mvp_` == `gos_GetTerrainMVPMat4()`
+  pointer identity and the `gamecam.cpp:~167-172` projectZ-equivalence
+  comment still present (Q1 conclusion depends on it).
+
+Re-adversarial #2 satisfied; no third dual-adversarial (the fold is
+convergent + grounded, not a substantial re-design - a 3rd would be the
+over-caution anti-pattern). Per-task spec+quality reviews in
+subagent-execute + the plan-checker carry residual risk. -> plan.
