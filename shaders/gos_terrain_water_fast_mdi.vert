@@ -59,6 +59,8 @@ out vec4  Color;
 out vec2  Texcoord;
 out float FogValue;
 flat out int o_isWater;
+out float WaterThickness;   // water-v1: world-unit column (max(0, waterElevation - terrain floor))
+out vec3  WorldPos;         // water-v1: wave-displaced surface position (Fresnel view vector ONLY)
 
 // Uniforms — set by Terrain::renderWaterFastPath C++ code.
 uniform mat4  terrainMVP;        // axisSwap * worldToClip
@@ -164,10 +166,12 @@ void main() {
                    ? (thinFlags & kPzTri1ValidBit)
                    : (thinFlags & kPzTri2ValidBit);
     if (pzValid == 0u) {
-        gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
-        Color       = vec4(0.0);
-        Texcoord    = vec2(0.0);
-        FogValue    = 0.0;
+        gl_Position    = vec4(0.0, 0.0, -2.0, 1.0);
+        Color          = vec4(0.0);
+        Texcoord       = vec2(0.0);
+        FogValue       = 0.0;
+        WaterThickness = 0.0;
+        WorldPos       = vec3(0.0);
         return;
     }
 
@@ -193,6 +197,13 @@ void main() {
 
     float wz = waveOurCos(waterBits) + waterElevation;
     vec3 worldPos = vec3(vxy, wz);
+
+    // water-v1 LOAD-BEARING Z INVARIANT: thickness uses velev (terrain FLOOR);
+    // WorldPos carries the wave-displaced SURFACE and is for the Fresnel view
+    // vector ONLY. The two Z values are intentionally different - do not unify,
+    // do not derive thickness from worldPos.z (this is the rev-1 trap class).
+    WaterThickness = max(0.0, waterElevation - velev);
+    WorldPos       = worldPos;
 
     float u = (vxy.x - mapTopLeft.x) * uvScale + uvOffset.x;
     float v = (mapTopLeft.y - vxy.y) * uvScale + uvOffset.y;
@@ -226,13 +237,15 @@ void main() {
         }
     }
 
-    uint elevAlphaByte = elevAlphaBandByte(velev);
+    uint elevAlphaByte = elevAlphaBandByte(velev);   // KEPT: detail branch still consumes it
     uint argb;
     if (detailMode == 0) {
         uint lrgb = cornerLightRGB(trec, cornerIdx);
-        argb = (lrgb & 0x00FFFFFFu) | (elevAlphaByte << 24);
+        // water-v1: base-layer alpha is now owned by the FS shore term, not the
+        // elevation-band staircase. Opaque sentinel; FS writes the real alpha.
+        argb = (lrgb & 0x00FFFFFFu) | 0xFF000000u;
     } else {
-        argb = (elevAlphaByte << 24) | 0x00FFFFFFu;
+        argb = (elevAlphaByte << 24) | 0x00FFFFFFu;  // DETAIL/SPRAY: UNCHANGED
     }
 
     uint frgb = cornerFogRGB(trec, cornerIdx);
@@ -272,10 +285,10 @@ void main() {
     vec3 screen;
     screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
     screen.y = clip.y * rhw * terrainViewport.y + terrainViewport.w;
-    // Three-tier z-ordering: terrain=+0.002, water=+0.003 (delta 0.001 so water
-    // loses GL_LEQUAL to already-drawn terrain at shorelines; wins on open water).
-    // Full change history and drift rationale: gos_terrain_water_fast.vert lines 327-363.
-    screen.z = clip.z * rhw + WATER_DEPTH_FUDGE_FAST;  // FAST regime 0.003; see terrain_depth_bias.hglsl
+    // Three-tier z-ordering: terrain=+0.002, water=+0.0025 (delta 0.0005, WATER_DEPTH_BIAS,
+    // so water loses GL_LEQUAL to already-drawn terrain at shorelines; wins on open water).
+    // Full change history and drift rationale: gos_terrain_water_fast.vert projection block.
+    screen.z = clip.z * rhw + WATER_DEPTH_FUDGE_FAST;  // FAST regime 0.0025; see terrain_depth_bias.hglsl
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
     gl_Position = vec4(ndc.xyz * absW, absW);

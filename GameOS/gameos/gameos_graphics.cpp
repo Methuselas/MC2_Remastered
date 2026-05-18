@@ -43,6 +43,14 @@ class gosFont;
 // to avoid pulling in mclib headers gameos_graphics.cpp doesn't already use.
 extern int g_terrainMaterialProfile;
 
+// Fix B: forward-declared TU-wide so the symmetric-mirror at the GPU-water
+// binds in renderWaterFastPath (earlier in this file than the historical
+// probe-accessor block) can see them. Linkage matches definitions:
+// gos_terrain_indirect_getDispatchMvp16 is extern "C" (gos_terrain_indirect.cpp);
+// gos_GetTerrainMVPMat4 is C++ linkage (defined later in this file).
+extern "C" const float* gos_terrain_indirect_getDispatchMvp16();
+extern const float*     gos_GetTerrainMVPMat4();
+
 static const DWORD INVALID_TEXTURE_ID = 0;
 
 static gosRenderer* g_gos_renderer = NULL;
@@ -1820,7 +1828,7 @@ class gosRenderer {
 
         // private helpers
         void pushToOverlayBatch_(OverlayBatch_& b, const WorldOverlayVert* v3, unsigned int texHandle);
-        void uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& L, float elapsed);
+        void uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& L, float elapsed, const float* terrainMvpOverride = nullptr);
         // ── End world-space overlay batch members ──────────────────────────────
 };
 
@@ -2150,7 +2158,12 @@ void gosRenderer::renderWaterFastPath(
         if (loc >= 0) glUniform1i(loc, a);
     };
 
-    setMat4Direct("terrainMVP",      (const float*)&terrain_mvp_);
+    const float* wMvpWaterNonMdi =
+        gos_terrain_indirect::IsFrameSolidArmed()
+            ? gos_terrain_indirect_getDispatchMvp16()
+            : gos_GetTerrainMVPMat4();
+    if (!wMvpWaterNonMdi) wMvpWaterNonMdi = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
+    setMat4Direct("terrainMVP",      wMvpWaterNonMdi);
     setMat4Std   ("mvp",             (const float*)&projection_);
     setVec4      ("terrainViewport", (const float*)&terrain_viewport_);
 
@@ -2260,6 +2273,14 @@ void gosRenderer::renderWaterFastPath(
         // by ComputeDispatchAndBindThinRecords() (M2 fix).
         // ─────────────────────────────────────────────────────────────
 
+        // Atlas accessors: defined only in gos_terrain_indirect.cpp (no header).
+        // Precedent: sibling terrain-solid functions declare identical extern blocks
+        // (gameos_graphics.cpp:2584-2588, :2877-2881, :3100).
+        extern GLuint gos_terrain_indirect_getAtlasGLTex();
+        extern float  gos_terrain_indirect_getAtlasMapTopLeftX();
+        extern float  gos_terrain_indirect_getAtlasMapTopLeftY();
+        extern float  gos_terrain_indirect_getAtlasOneOverWorldUnits();
+
         // Upload per-draw data (base + detail).
         WaterPerCmd cmds[2];
         cmds[0] = { 0u, 1, 0, oneOverTF,      cloudOffsetX, cloudOffsetY, 0u, 0u };
@@ -2297,7 +2318,12 @@ void gosRenderer::renderWaterFastPath(
             if (loc >= 0) glUniform2f(loc, a, b);
         };
 
-        setMMat4Direct("terrainMVP",      (const float*)&terrain_mvp_);
+        const float* wMvpWaterMdi =
+            gos_terrain_indirect::IsFrameSolidArmed()
+                ? gos_terrain_indirect_getDispatchMvp16()
+                : gos_GetTerrainMVPMat4();
+        if (!wMvpWaterMdi) wMvpWaterMdi = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
+        setMMat4Direct("terrainMVP",      wMvpWaterMdi);
         setMMat4Std   ("mvp",             (const float*)&projection_);
         setMVec4      ("terrainViewport", (const float*)&terrain_viewport_);
         setMI         ("debugMode",       s_debugMode);
@@ -2312,8 +2338,32 @@ void gosRenderer::renderWaterFastPath(
         setMF         ("maxMinUV",        maxMinUV);
         setMF         ("time",  (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
         setMVec4      ("fog_color", (const float*)&fog_color_);
+        setMVec4      ("cameraPos", (const float*)&terrain_camera_pos_);  // water-v1 Fresnel
         setMI         ("tex1",  0);
         setMI         ("tex2",  1);
+
+        // S3: resolve atlas handle once; gate reflectionOn on both solid-armed
+        // AND a valid handle (R1: water arms independently of IsFrameSolidArmed).
+        GLuint reflTexHandle = gos_terrain_indirect_getAtlasGLTex();
+        int    reflOn = (gos_terrain_indirect::IsFrameSolidArmed()
+                         && reflTexHandle != 0) ? 1 : 0;
+        { static const bool s_reflTrace = (getenv("MC2_WATER_REFL_TRACE") != nullptr); if (s_reflTrace) {
+            static int s_lastReflOn = -1;            // edge-detect latch (renderWaterFastPath runs every frame)
+            if (reflOn != s_lastReflOn) {
+                const char* reason =
+                    !gos_terrain_indirect::IsFrameSolidArmed() ? "solid0" :
+                    (reflTexHandle == 0)                        ? "atlas0" : "on";
+                printf("[WATER_REFL v1] event=state reflectionOn=%d atlas=%u reason=%s\n",
+                       reflOn, (unsigned)reflTexHandle, reason);
+                fflush(stdout);
+                s_lastReflOn = reflOn;
+            }
+        } }
+        setMI         ("reflectionOn",          reflOn);
+        setMI         ("reflTex",               2);
+        setMF         ("atlasMapTopLeftX",       gos_terrain_indirect_getAtlasMapTopLeftX());
+        setMF         ("atlasMapTopLeftY",       gos_terrain_indirect_getAtlasMapTopLeftY());
+        setMF         ("atlasOneOverWorldUnits", gos_terrain_indirect_getAtlasOneOverWorldUnits());
 
         // Bind SSBOs.
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, recipeBuf);
@@ -2339,11 +2389,33 @@ void gosRenderer::renderWaterFastPath(
         glBindTexture(GL_TEXTURE_2D, detailOrBase);
         glActiveTexture(GL_TEXTURE0);
 
+        // S3: conditionally bind atlas on unit 2 (mirrors unit-1 save/restore idiom).
+        // When reflOn == 0: unit 2 is intentionally left untouched (the shader skip
+        // is the sole source of truth; binding 0 would mask a missing-atlas R1 bug).
+        GLuint savedSampler2 = 0;
+        if (reflOn) {
+            GLint q = 0;
+            glGetIntegeri_v(GL_SAMPLER_BINDING, 2, &q);
+            savedSampler2 = (GLuint)q;
+            glBindSampler(2, 0);
+            glActiveTexture(GL_TEXTURE0 + 2);
+            glBindTexture(GL_TEXTURE_2D, reflTexHandle);
+            glActiveTexture(GL_TEXTURE0);
+        }
+
         // MDI: 2 draws (base + detail); 1 if detail not present.
         const GLsizei drawCount = (detailTex != 0) ? 2 : 1;
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, WaterStream::GetIndirectCmdBuffer());
         glMultiDrawArraysIndirect(GL_TRIANGLES, nullptr, drawCount, 0);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+
+        // Restore unit 2 — mirror unit-1 force-clear + sampler restore.
+        if (reflOn) {
+            glActiveTexture(GL_TEXTURE0 + 2);
+            glBindTexture(GL_TEXTURE_2D, 0);    // force-clear; mirrors unit-1 post-draw
+            glActiveTexture(GL_TEXTURE0);
+            glBindSampler(2, savedSampler2);    // restore sampler only
+        }
 
         // Restore unit 1 — don't leave a texture bound on unit 1 for the legacy path.
         glActiveTexture(GL_TEXTURE1);
@@ -2474,7 +2546,9 @@ void gosRenderer::renderWaterFastPath(
 extern "C" uint32_t gos_terrain_indirect_getDispatchMvpFp();
 extern "C" uint64_t gos_terrain_indirect_getDispatchMvpFrameIdx();
 extern "C" void     gos_terrain_indirect_getDispatchMvpFloats4(float out[4]);
-extern const float* gos_GetTerrainMVPMat4();
+// gos_terrain_indirect_getDispatchMvp16 and gos_GetTerrainMVPMat4 are declared
+// TU-wide near the top of this file (after g_terrainMaterialProfile) so that
+// renderWaterFastPath (which precedes this block) can see them.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Terrain indirect draw bridge (Stage 3 of indirect-terrain SOLID PR1)
@@ -6954,10 +7028,14 @@ static void setupOverlayShadowsForShp(GLuint shp)
 }
 
 // Private member: common uniform upload for both draw paths.
-void gosRenderer::uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& L, float elapsed)
+void gosRenderer::uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& L, float elapsed, const float* terrainMvpOverride)
 {
-    if (L.terrainMVP >= 0)
-        glUniformMatrix4fv(L.terrainMVP, 1, GL_FALSE, (const float*)&getTerrainMVP());
+    if (L.terrainMVP >= 0) {
+        const float* tmvp = terrainMvpOverride
+                                ? terrainMvpOverride
+                                : (const float*)&getTerrainMVP();
+        glUniformMatrix4fv(L.terrainMVP, 1, GL_FALSE, tmvp);
+    }
     if (L.terrainVP >= 0)
         glUniform4fv(L.terrainVP, 1, (const float*)&getTerrainViewport());
     // projection_: row-major Stuff matrix — upload GL_TRUE (column-major interpretation)
@@ -7004,12 +7082,15 @@ void gosRenderer::drawTerrainOverlays()
     glDepthFunc(GL_LEQUAL);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -1.0f);
 
     glUseProgram(overlayProg_->shp_);
     float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
-    uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed);
+    const float* fixBMvpOverlay =
+        gos_terrain_indirect::IsFrameSolidArmed()
+            ? gos_terrain_indirect_getDispatchMvp16()
+            : gos_GetTerrainMVPMat4();
+    if (!fixBMvpOverlay) fixBMvpOverlay = gos_GetTerrainMVPMat4();
+    uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed, fixBMvpOverlay);
 
     GLint prevVao = 0;
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
@@ -7025,7 +7106,6 @@ void gosRenderer::drawTerrainOverlays()
     glBindVertexArray((GLuint)prevVao);
 
     glDepthFunc(GL_LESS);
-    glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
     glUseProgram(0);
@@ -7113,13 +7193,16 @@ bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
     glDepthFunc(GL_LEQUAL);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -1.0f);
 
     DECAL_GLPROBE("after_state_block");
     glUseProgram(overlayProg_->shp_);
     float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
-    uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed);
+    const float* fixBMvpDecalStatic =
+        gos_terrain_indirect::IsFrameSolidArmed()
+            ? gos_terrain_indirect_getDispatchMvp16()
+            : gos_GetTerrainMVPMat4();
+    if (!fixBMvpDecalStatic) fixBMvpDecalStatic = gos_GetTerrainMVPMat4();
+    uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed, fixBMvpDecalStatic);
     DECAL_GLPROBE("after_uniform_upload");
 
     glBindVertexArray(s_decalStaticVAO);
@@ -7138,7 +7221,6 @@ bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
     DECAL_GLPROBE("after_vao_restore");
 
     glDepthFunc(GL_LESS);
-    glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
     glUseProgram(0);
@@ -7178,12 +7260,15 @@ void gosRenderer::drawDecals()
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_CULL_FACE);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -1.0f);
 
     glUseProgram(decalProg_->shp_);
     float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
-    uploadOverlayUniforms_(decalProg_->shp_, decalLocs_, elapsed);
+    const float* fixBMvpDecals =
+        gos_terrain_indirect::IsFrameSolidArmed()
+            ? gos_terrain_indirect_getDispatchMvp16()
+            : gos_GetTerrainMVPMat4();
+    if (!fixBMvpDecals) fixBMvpDecals = gos_GetTerrainMVPMat4();
+    uploadOverlayUniforms_(decalProg_->shp_, decalLocs_, elapsed, fixBMvpDecals);
 
     GLint prevVao = 0;
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
@@ -7200,7 +7285,6 @@ void gosRenderer::drawDecals()
 
     glDepthFunc(GL_LESS);
     glDisable(GL_BLEND);
-    glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
     glUseProgram(0);

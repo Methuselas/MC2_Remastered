@@ -259,6 +259,22 @@ static inline void NoteLegacyDetailOverlayCluster() {
 }
 }  // namespace
 
+// [DEPTH_TRANSITION v1] cross-TU CPU-water REAL screen-z sample (env-gated
+// MC2_DEPTH_TRANSITION_PROBE; silent default). Written by TerrainQuad::drawWater
+// for the water vertex nearest the fixed mid-map probe point P; READ by the
+// transition dump in gos_terrain_indirect.cpp. g_cpuWaterProbeStamp is bumped
+// once per CPU-water frame so the dump can detect a STALE value (CPU water and
+// the GPU water fast path are mutually exclusive per frame -- on an armed
+// transition frame this is the last un-armed steady sample, NOT this-frame).
+float    g_cpuWaterProbeZ        = 0.0f;
+double   g_cpuWaterProbeBestD2   = 0.0;
+bool     g_cpuWaterProbeAny      = false;
+unsigned long long g_cpuWaterProbeStamp = 0;
+// Per-CPU-water-frame reset of the nearest-vertex search is done once/frame in
+// Terrain::renderWater (terrain.cpp) BEFORE the drawWater quad loop -- the
+// single legacy-loop entry where CPU water is the live producer. It clears
+// g_cpuWaterProbeAny / g_cpuWaterProbeBestD2 and bumps g_cpuWaterProbeStamp.
+
 static const bool s_shapeCParityCheck = (getenv("MC2_SHAPE_C_PARITY_CHECK") != nullptr);
 
 // Step 1b-1 (cpu-pack-retirement plan §2 A1): the M2 thin-record emit scope is
@@ -729,6 +745,21 @@ void TerrainQuad::setupTextures (void)
 	overlayHandle       = 0xffffffff;
 	isCement            = false;
 
+	// S6: hoist the armed-water gate predicate ONCE per quad. The shared
+	// WaterFastPathOwnsArmedDraw() is a non-inline cross-TU call that itself
+	// fans into IsFrameSolidArmed()/WaterStream::IsReady()/GetRecipeCount();
+	// calling it per-vertex (x5/quad) in this hot per-quad loop would tension
+	// the 100ns hot-loop rule. It is frame-invariant within a frame, so
+	// compute it once here. legacyWaterDraw == "GPU fast path does NOT own
+	// the armed draw -> the legacy CPU (ii) draw-side must run".
+	// BOUNDARY (CONCERN-1, do not break): the (ii) gate below wraps ONLY the
+	// per-vertex wx/wy/wz/ww writes + the clipped-body handle-resolution +
+	// addTriangleBulk. clipInfo=clipData, calcThisFrame|=2, the leastZ/mostZ/
+	// leastW/mostW/leastWY/mostWY 6-tuple, and the 0xffffffff sentinel(s)
+	// MUST stay UNCONDITIONAL (they are (i)/M2a - never move them inside the
+	// if (legacyWaterDraw) braces).
+	const bool legacyWaterDraw = !gos_terrain_indirect::WaterFastPathOwnsArmedDraw();
+
 	// HISTORICAL NOTE: an earlier commit (9964d5a "perf: skip solid/recipe CPU work
 	// when GPU SOLID is armed") wrapped this body in
 	//   if (!gos_terrain_indirect::IsFrameSolidArmed()) { ... }
@@ -1055,11 +1086,14 @@ void TerrainQuad::setupTextures (void)
 				else
 					vertices[0]->clipInfo = clipData;
 		
-				vertices[0]->wx = screenPos.x;
-				vertices[0]->wy = screenPos.y;
-				vertices[0]->wz = screenPos.z;
-				vertices[0]->ww = screenPos.w;
-	
+				if (legacyWaterDraw)
+				{
+					vertices[0]->wx = screenPos.x;
+					vertices[0]->wy = screenPos.y;
+					vertices[0]->wz = screenPos.z;
+					vertices[0]->ww = screenPos.w;
+				}
+
 				vertices[0]->calcThisFrame |= 2;
 
 				if (clipData)
@@ -1122,11 +1156,14 @@ void TerrainQuad::setupTextures (void)
 				else
 					vertices[1]->clipInfo = clipData;
  
-				vertices[1]->wx = screenPos.x;
-				vertices[1]->wy = screenPos.y;
-				vertices[1]->wz = screenPos.z;
-				vertices[1]->ww = screenPos.w;
-	
+				if (legacyWaterDraw)
+				{
+					vertices[1]->wx = screenPos.x;
+					vertices[1]->wy = screenPos.y;
+					vertices[1]->wz = screenPos.z;
+					vertices[1]->ww = screenPos.w;
+				}
+
 				vertices[1]->calcThisFrame |= 2;
 
 				if (clipData)
@@ -1189,11 +1226,14 @@ void TerrainQuad::setupTextures (void)
 				else
 					vertices[2]->clipInfo = clipData;
 					
-				vertices[2]->wx = screenPos.x;
-				vertices[2]->wy = screenPos.y;
-				vertices[2]->wz = screenPos.z;
-				vertices[2]->ww = screenPos.w;
-	
+				if (legacyWaterDraw)
+				{
+					vertices[2]->wx = screenPos.x;
+					vertices[2]->wy = screenPos.y;
+					vertices[2]->wz = screenPos.z;
+					vertices[2]->ww = screenPos.w;
+				}
+
 				vertices[2]->calcThisFrame |= 2;
 
 				if (clipData)
@@ -1255,12 +1295,15 @@ void TerrainQuad::setupTextures (void)
 					vertices[3]->clipInfo = clipData; //onScreen;
 				else
 					vertices[3]->clipInfo = clipData;
-				 
-				vertices[3]->wx = screenPos.x;
-				vertices[3]->wy = screenPos.y;
-				vertices[3]->wz = screenPos.z;
-				vertices[3]->ww = screenPos.w;
 	
+				if (legacyWaterDraw)
+				{
+					vertices[3]->wx = screenPos.x;
+					vertices[3]->wy = screenPos.y;
+					vertices[3]->wz = screenPos.z;
+					vertices[3]->ww = screenPos.w;
+				}
+
 				vertices[3]->calcThisFrame |= 2;
 
 				if (clipData)
@@ -1292,20 +1335,23 @@ void TerrainQuad::setupTextures (void)
 
 		if (clipped1 || clipped2)
 		{
-			if (!Terrain::terrainTextures2)
+			if (legacyWaterDraw)
 			{
-				DWORD waterDetailData = Terrain::terrainTextures->setDetail(0,sprayFrame);
-				waterHandle = Terrain::terrainTextures->getTextureHandle(MapData::WaterTXMData & 0x0000ffff);
-				waterDetailHandle = Terrain::terrainTextures->getDetailHandle(waterDetailData & 0x0000ffff); 
+				if (!Terrain::terrainTextures2)
+				{
+					DWORD waterDetailData = Terrain::terrainTextures->setDetail(0,sprayFrame);
+					waterHandle = Terrain::terrainTextures->getTextureHandle(MapData::WaterTXMData & 0x0000ffff);
+					waterDetailHandle = Terrain::terrainTextures->getDetailHandle(waterDetailData & 0x0000ffff);
+				}
+				else
+				{
+					waterHandle = Terrain::terrainTextures2->getWaterTextureHandle();
+					waterDetailHandle = Terrain::terrainTextures2->getWaterDetailHandle(sprayFrame);
+				}
+
+				mcTextureManager->addTriangleBulk(waterHandle, MC2_ISTERRAIN | MC2_DRAWALPHA | MC2_ISWATER, 2);
+				mcTextureManager->addTriangleBulk(waterDetailHandle, MC2_ISTERRAIN | MC2_DRAWALPHA | MC2_ISWATERDETAIL, 2);
 			}
-			else
-			{
-				waterHandle = Terrain::terrainTextures2->getWaterTextureHandle();
-				waterDetailHandle = Terrain::terrainTextures2->getWaterDetailHandle(sprayFrame);
-			}
-			
-			mcTextureManager->addTriangleBulk(waterHandle, MC2_ISTERRAIN | MC2_DRAWALPHA | MC2_ISWATER, 2);
-			mcTextureManager->addTriangleBulk(waterDetailHandle, MC2_ISTERRAIN | MC2_DRAWALPHA | MC2_ISWATERDETAIL, 2);
 		}
 		else
 		{
@@ -1993,7 +2039,7 @@ void TerrainQuad::setupTextures (void)
 // CPU raster consumers are the RASTER water regime: WATER_DEPTH_FUDGE
 // resolves (via the header's back-compat alias) to WATER_DEPTH_FUDGE_RASTER
 // = terrain + 0.0005 = 0.0025. Water has TWO LEGITIMATE REGIMES (RASTER
-// here / CPU raster + mask-water; FAST = the GPU water VS at 0.003) -- they
+// here / CPU raster + mask-water; FAST = the GPU water VS at 0.0025) -- they
 // are deliberately NOT unified to one value; a single constant regressed
 // the map edges (TES tiles through water). Do NOT "collapse the deltas":
 // see the two-regime rationale + git 89d7c4f-vs-6ff6c5c reconciliation in
@@ -3282,6 +3328,49 @@ void TerrainQuad::drawWater (void)
 	if (waterHandle != 0xffffffff)
 	{
 		numTerrainFaces++;
+
+		// [DEPTH_TRANSITION v1] CPU-water REAL screen-z sample (env-gated,
+		// silent default). The zoom-step depth-pop diagnosis has been wrong
+		// 3x; sampling the ACTUAL produced value is strictly better evidence
+		// than a CPU re-derivation of the Stuff eye->projectForTerrainAdmission
+		// pipeline (which is NOT reachable from the gos_terrain_indirect.cpp
+		// transition dump site). The drawn CPU-water screen-z is exactly
+		// `vertices[k]->wz + WATER_DEPTH_FUDGE` (== WATER_DEPTH_FUDGE_RASTER
+		// 0.0025; see the gVertex[*].z assignments at ~:3345 and the
+		// terrain_depth_bias.h RASTER regime). We latch the value for the
+		// water vertex nearest the FIXED mid-map probe point P so the dump's
+		// dz is frame-comparable. world XY is vertices[k]->vx / ->vy (the
+		// same pre-projection world coords drawWater emits). g_cpuWaterProbeZ
+		// carries a frame stamp because CPU water and the GPU fast path are
+		// MUTUALLY EXCLUSIVE per frame (terrain.cpp:1225-1229 early-returns
+		// renderWater when WaterFastPathOwnsArmedDraw()): on an armed
+		// transition frame this static is the LAST un-armed steady value, not
+		// this-frame data. The dump emits g_cpuWaterProbeFrameValid so a
+		// stale CPU sample is visibly flagged, never silently trusted.
+		extern float    g_cpuWaterProbeZ;
+		extern double   g_cpuWaterProbeBestD2;
+		extern bool     g_cpuWaterProbeAny;
+		static const bool s_depthTransProbe =
+		    (getenv("MC2_DEPTH_TRANSITION_PROBE") != nullptr);
+		if (s_depthTransProbe)
+		{
+			const float px = Terrain::mapTopLeft3d.x
+			                 + Terrain::worldUnitsMapSide * 0.5f;
+			const float py = Terrain::mapTopLeft3d.y
+			                 - Terrain::worldUnitsMapSide * 0.5f;
+			for (int k = 0; k < 4; ++k)
+			{
+				const float dx = vertices[k]->vx - px;
+				const float dy = vertices[k]->vy - py;
+				const double d2 = (double)dx * dx + (double)dy * dy;
+				if (!g_cpuWaterProbeAny || d2 < g_cpuWaterProbeBestD2)
+				{
+					g_cpuWaterProbeBestD2 = d2;
+					g_cpuWaterProbeZ = vertices[k]->wz + WATER_DEPTH_FUDGE;
+					g_cpuWaterProbeAny = true;
+				}
+			}
+		}
 
 		//---------------------------------------
 		// GOS 3D draw Calls now!

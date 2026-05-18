@@ -434,6 +434,11 @@ void ComputeDispatch();
 bool IsFrameSolidArmed();
 bool DrawIndirect();
 void ForceDisableArmingForProcess();
+// Single-source water fast-path gate: true iff all conditions that allow
+// renderWater() to skip the legacy loop are satisfied. Defined in
+// terrain.cpp (the only TU that sees WaterStream + gpu_driven symbols).
+// quad.cpp calls this via the opaque bool return; no new includes needed.
+bool WaterFastPathOwnsArmedDraw();
 
 // ---------------------------------------------------------------------------
 // Parity-check printer + 600-frame summary cadence.

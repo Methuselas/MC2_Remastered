@@ -1157,6 +1157,28 @@ void Terrain::render (void)
 }
 
 //---------------------------------------------------------------------------
+// Single-source predicate: all conditions that allow renderWater() to skip the
+// legacy loop and quad.cpp::setupTextures() to skip the armed-frame (ii) writes.
+// Definition lives here (terrain.cpp) because this is the only TU that sees
+// WaterStream + gpu_driven. Declared in gos_terrain_indirect.h (already
+// included by both terrain.cpp and quad.cpp; zero new includes in either).
+bool gos_terrain_indirect::WaterFastPathOwnsArmedDraw()
+{
+	static const bool s_fastPath =
+	    (getenv("MC2_RENDER_WATER_FASTPATH") != nullptr) ||
+	    gpu_driven::IsWaterEnabled();
+	// IsFrameSolidArmed() is load-bearing: the un-armed cinematic/intro-pan
+	// MUST keep running the legacy loop (the GPU water path is not armed
+	// there) - gating it off un-armed reintroduces the stale-data regression
+	// (see memory/water_fastpath_interim_fixes_and_residuals.md fix #2).
+	return s_fastPath
+	    && gos_terrain_indirect::IsFrameSolidArmed()
+	    && WaterStream::IsReady()
+	    && WaterStream::GetRecipeCount() > 0
+	    && Terrain::terrainTextures2 != nullptr;
+}
+
+//---------------------------------------------------------------------------
 void Terrain::renderWater (void)
 {
 	ZoneScopedN("Terrain::renderWater");
@@ -1180,40 +1202,53 @@ void Terrain::renderWater (void)
 	if (s_waterDebugOn)
 		QueryPerformanceCounter((LARGE_INTEGER*)&s_qpcStart);
 
-	// Skip the legacy water queueing entirely when the fast-path owns the
-	// draw. This gate MUST stay byte-identical to renderWaterFastPath()'s
-	// s_fastPath (below) — if the fast-path runs but this early-return is
-	// not taken, BOTH water paths execute and the legacy loop is pure
-	// additive waste (~540us/frame self-time, observed 2026-05-17). The
-	// `|| gpu_driven::IsWaterEnabled()` term is the load-bearing half:
-	// MC2_GPU_DRIVEN_WATER is default-ON, so without it the legacy loop
-	// runs in the default shipped config even though the fast-path also
-	// draws. The actual draw runs from Terrain::renderWaterFastPath()
-	// AFTER mcTextureManager->renderLists() has flushed terrain — otherwise
-	// terrain would render OVER our water and overwrite it.
-	static const bool s_fastPath =
-	    (getenv("MC2_RENDER_WATER_FASTPATH") != nullptr) ||
-	    gpu_driven::IsWaterEnabled();
-	// IsFrameSolidArmed() guard (2026-05-17): the water fast-path COMPUTE
-	// (WaterStream::ComputeDispatchAndBindThinRecords) only ever runs when
-	// solid is armed — proven by [WATER_DEPTHPROBE v2]: 575 lines, ALL
-	// armed=1, ZERO armed=0, despite v2 emitting unconditionally un-armed.
-	// So during the UN-ARMED intro/deployment pan the fast-path produces NO
-	// water; without this guard the s_fastPath early-return would skip the
-	// legacy loop there too -> NO water on the intro pan (the regression the
-	// gate-asymmetry fix exposed). Gating the skip on IsFrameSolidArmed()
-	// keeps the legacy loop running in the un-armed cinematic (exactly the
-	// pre-gate-fix behaviour for that brief phase, no perf concern) while
-	// still skipping it + banking the ~540us in the armed in-mission case
-	// where the fast-path provably owns the draw (926 armed frames).
-	if (s_fastPath
-	    && gos_terrain_indirect::IsFrameSolidArmed()
-	    && WaterStream::IsReady()
-	    && WaterStream::GetRecipeCount() > 0
-	    && Terrain::terrainTextures2 != nullptr)
+	// Predicate is now single-sourced in gos_terrain_indirect::WaterFastPathOwnsArmedDraw().
+	// renderWater() is once-per-frame, so this is the correct (non-hot) site
+	// for the S6 armed-skip probe - it observes the EXACT predicate the
+	// quad.cpp setupTextures (ii) gate uses, so armedSkip=1 here == "(ii)
+	// legacy draw-side skipped this frame, GPU fast path owns it".
+	const bool s6FastPathOwns = gos_terrain_indirect::WaterFastPathOwnsArmedDraw();
+	{
+		static const bool s_waterS6Trace = (getenv("MC2_WATER_S6_TRACE") != nullptr);
+		if (s_waterS6Trace)
+		{
+			static int s_lastS6 = -1;
+			int s6 = s6FastPathOwns ? 1 : 0;
+			if (s6 != s_lastS6)
+			{
+				printf("[WATER_S6 v1] event=state armedSkip=%d (1=GPU fast path owns armed draw; legacy (ii) draw-side skipped this frame)\n", s6);
+				fflush(stdout);
+				s_lastS6 = s6;
+			}
+		}
+	}
+	if (s6FastPathOwns)
 	{
 		// Skip legacy loop entirely; renderWaterFastPath() does the work.
 		return;
+	}
+
+	// [DEPTH_TRANSITION v1] reset the CPU-water REAL screen-z nearest-vertex
+	// search once per CPU-water frame (env-gated; silent default). Reached
+	// ONLY when the legacy loop runs (s6FastPathOwns early-returned above),
+	// i.e. exactly the frames CPU water is the live producer. The stamp bump
+	// lets the transition dump in gos_terrain_indirect.cpp detect a STALE
+	// CPU sample on armed frames (CPU water and the GPU fast path are
+	// mutually exclusive per frame). Pure writes, zero behavior change.
+	{
+		static const bool s_depthTransProbe =
+		    (getenv("MC2_DEPTH_TRANSITION_PROBE") != nullptr);
+		if (s_depthTransProbe)
+		{
+			extern float              g_cpuWaterProbeZ;
+			extern double             g_cpuWaterProbeBestD2;
+			extern bool               g_cpuWaterProbeAny;
+			extern unsigned long long g_cpuWaterProbeStamp;
+			(void)g_cpuWaterProbeZ;
+			g_cpuWaterProbeAny = false;
+			g_cpuWaterProbeBestD2 = 0.0;
+			++g_cpuWaterProbeStamp;
+		}
 	}
 
 	//-----------------------------------
@@ -1826,6 +1861,36 @@ void Terrain::geometry (void)
 	// setup terrain quad textures
 	// Also sets up mine data.
 	TerrainQuadPtr currentQuad = quadList;
+
+	// S6-prep parity probe: the slim reduce loop above is documented as the
+	// "proven sole producer" of the leastZ/mostZ/leastW/mostW/leastWY/mostWY
+	// reduction that feeds eye->setInverseProject below. The per-frame
+	// TerrainQuad::setupTextures water-projection block (quad.cpp ~1069-1287,
+	// reached via the loop right below) ALSO writes those same globals. If
+	// the slim loop already produces the identical 6-tuple, the water block's
+	// contribution is redundant and S6 may arm-gate it (substitutive). If the
+	// water block contributes UNIQUE extrema (water-elevation Z differs from
+	// terrain Z), arm-gating it would silently corrupt screen->world picking.
+	// Snapshot A is taken HERE: strictly AFTER the slim reduce loop has fully
+	// completed (loop closes at the `}` above line 1748) and the per-frame
+	// reset (lines 1476-1478) has run, and strictly BEFORE the
+	// quadSetupTextures loop's first setupTextures() call. No global reset
+	// occurs between A and B (verified: only writers in the A..B span are the
+	// quad.cpp water-projection blocks via setupTextures()). Reads only.
+	static const bool s_waterInvprojParity =
+		(getenv("MC2_WATER_INVPROJ_PARITY") != nullptr);
+	float aLeastZ = 0.0f, aMostZ = 0.0f, aLeastW = 0.0f,
+	      aMostW = 0.0f, aLeastWY = 0.0f, aMostWY = 0.0f;
+	if (s_waterInvprojParity)
+	{
+		aLeastZ  = leastZ;
+		aMostZ   = mostZ;
+		aLeastW  = leastW;
+		aMostW   = mostW;
+		aLeastWY = leastWY;
+		aMostWY  = mostWY;
+	}
+
 	{
 		ZoneScopedN("Terrain::geometry quadSetupTextures");
 		// Stage 3: preflight arming — walks live quadList BEFORE the loop so
@@ -1850,6 +1915,23 @@ void Terrain::geometry (void)
 		// gos_terrain_water_stream.cpp:UploadAndBindThinRecords.
 		WaterStream::BeginFrameNarrow();
 		const bool s_waterNarrowOn = WaterStream::NarrowEnabled();
+		// S6 coarse cost A/B instrument: ONE QPC pair around the WHOLE
+		// per-frame setupTextures loop (NOT per-quad - the per-quad
+		// std::chrono COST_SPLIT scopes are observer-effect-poisoned and
+		// disqualified; capped FPS is also useless). Env-gated, prints a
+		// min/mean/max summary every 600 frames (MC2_TGL_POOL_TRACE idiom).
+		// Used to A/B armed ((ii) skipped) vs MC2_GPU_DRIVEN_WATER=0
+		// ((ii) runs) - the only setupTextures delta between those is (ii),
+		// so this isolates (ii)'s real per-frame CPU contribution.
+		static const bool s_s6CostOn = (getenv("MC2_WATER_S6_COST") != nullptr);
+		static uint64_t s_s6QpcFreq = 0;
+		uint64_t s_s6QpcStart = 0;
+		if (s_s6CostOn)
+		{
+			if (s_s6QpcFreq == 0)
+				QueryPerformanceFrequency((LARGE_INTEGER*)&s_s6QpcFreq);
+			QueryPerformanceCounter((LARGE_INTEGER*)&s_s6QpcStart);
+		}
 		for (i=0;i<numberQuads;i++)
 		{
 			currentQuad->setupTextures();
@@ -1863,11 +1945,10 @@ void Terrain::geometry (void)
 				    q.vertices[3]->vertexNum >= 0) {
 					bool append;
 					if (gos_terrain_indirect::IsFrameSolidArmed()) {
-						// Armed: setupTextures() gated, waterHandle never set.
-						// Replicate the PRIMARY water gate from quad.cpp:956-959:
-						// any vertex on a water tile (pVertex->water & 1).
-						// The GPU compute shader's pzOk gate (gpu_driven_water.comp:236)
-						// handles the secondary clip test.
+						// Armed (reframe-B): draw-side (ii) is skipped in setupTextures(), but
+						// (i) projection+reduction+clipInfo AND the 0xffffffff sentinel still run,
+						// so waterHandle IS set (to 0xffffffff) on armed frames; use the water-tile
+						// predicate here instead of waterHandle to avoid stale-sentinel false negatives.
 						append = (q.vertices[0]->pVertex->water & 1) ||
 						         (q.vertices[1]->pVertex->water & 1) ||
 						         (q.vertices[2]->pVertex->water & 1) ||
@@ -1880,6 +1961,27 @@ void Terrain::geometry (void)
 				}
 			}
 			currentQuad++;
+		}
+		if (s_s6CostOn)
+		{
+			uint64_t s6End = 0;
+			QueryPerformanceCounter((LARGE_INTEGER*)&s6End);
+			double s6Ms = (double)(s6End - s_s6QpcStart) * 1000.0 / (double)s_s6QpcFreq;
+			static uint32_t s_s6Frames = 0;
+			static double   s_s6Sum = 0.0;
+			static double   s_s6Min = 1e30;
+			static double   s_s6Max = 0.0;
+			s_s6Frames++;
+			s_s6Sum += s6Ms;
+			if (s6Ms < s_s6Min) s_s6Min = s6Ms;
+			if (s6Ms > s_s6Max) s_s6Max = s6Ms;
+			if ((s_s6Frames % 600) == 0)
+			{
+				printf("[WATER_S6COST v1] event=summary frames=%u quadSetupTextures_ms mean=%.4f min=%.4f max=%.4f (window of 600)\n",
+				       s_s6Frames, s_s6Sum / 600.0, s_s6Min, s_s6Max);
+				fflush(stdout);
+				s_s6Sum = 0.0; s_s6Min = 1e30; s_s6Max = 0.0;
+			}
 		}
 		// Stage 1 cost-split: roll per-frame nanosecond accumulators (no-op
 		// when MC2_TERRAIN_COST_SPLIT unset). ParityFrameTick advances the
@@ -1907,6 +2009,67 @@ void Terrain::geometry (void)
 	{
 		ywRange = (mostW - leastW) / (mostWY - leastWY);
 		yzRange = (mostZ - leastZ) / (mostWY - leastWY);
+	}
+
+	// S6-prep parity probe: Snapshot B — the same 6 globals, captured
+	// strictly BEFORE the setInverseProject consumer. Exact per-field ==
+	// compare against Snapshot A. Latched (s_lastState edge latch like the
+	// [WATER_REFL v1] probe) so it prints only on the first frame and on
+	// transitions, never per-frame. Pure reads; zero perturbation of the
+	// reduction or any rendering. identical => the slim loop already produced
+	// the full 6-tuple and the water block adds nothing (S6 substitutive);
+	// divergent => the water block contributes unique extrema and arm-gating
+	// it would corrupt picking (S6 NOT substitutive).
+	if (s_waterInvprojParity)
+	{
+		const float bLeastZ  = leastZ;
+		const float bMostZ   = mostZ;
+		const float bLeastW  = leastW;
+		const float bMostW   = mostW;
+		const float bLeastWY = leastWY;
+		const float bMostWY  = mostWY;
+		// Exact bitwise == is DELIBERATE, not a bug: min/max of a superset
+		// that adds nothing is bitwise-identical, so any real unique extrema
+		// from the water block must show. Do NOT add an epsilon/tolerance -
+		// it would mask a genuine unique contribution and silently defeat
+		// this S6 substitutive go/no-go instrument.
+		const bool identical =
+			(aLeastZ  == bLeastZ)  && (aMostZ  == bMostZ)  &&
+			(aLeastW  == bLeastW)  && (aMostW  == bMostW)  &&
+			(aLeastWY == bLeastWY) && (aMostWY == bMostWY);
+		static int s_lastState = -1;            // edge-detect latch (geometry() runs every frame)
+		const int state = identical ? 1 : 0;
+		if (state != s_lastState)
+		{
+			if (identical)
+			{
+				printf("[WATER_INVPROJ v1] event=parity result=identical\n");
+			}
+			else
+			{
+				printf("[WATER_INVPROJ v1] event=parity result=divergent\n");
+				if (aLeastZ  != bLeastZ)
+					printf("[WATER_INVPROJ v1] event=parity result=divergent field=leastZ a=%.9g b=%.9g\n",
+					       aLeastZ, bLeastZ);
+				if (aMostZ   != bMostZ)
+					printf("[WATER_INVPROJ v1] event=parity result=divergent field=mostZ a=%.9g b=%.9g\n",
+					       aMostZ, bMostZ);
+				if (aLeastW  != bLeastW)
+					printf("[WATER_INVPROJ v1] event=parity result=divergent field=leastW a=%.9g b=%.9g\n",
+					       aLeastW, bLeastW);
+				if (aMostW   != bMostW)
+					printf("[WATER_INVPROJ v1] event=parity result=divergent field=mostW a=%.9g b=%.9g\n",
+					       aMostW, bMostW);
+				if (aLeastWY != bLeastWY)
+					printf("[WATER_INVPROJ v1] event=parity result=divergent field=leastWY a=%.9g b=%.9g\n",
+					       aLeastWY, bLeastWY);
+				if (aMostWY  != bMostWY)
+					printf("[WATER_INVPROJ v1] event=parity result=divergent field=mostWY a=%.9g b=%.9g\n",
+					       aMostWY, bMostWY);
+			}
+			fflush(stdout);
+			s_lastState = state;
+		}
 	}
 
 	eye->setInverseProject(mostZ,leastW,yzRange,ywRange);

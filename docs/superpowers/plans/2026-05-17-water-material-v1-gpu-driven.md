@@ -6,13 +6,22 @@
 
 **Architecture:** Water thickness = `max(0, waterElevation - velev)` computed in the MDI water vertex shader from the mission-static recipe SSBO (`.elev`) and the existing `waterElevation` uniform; emitted as a new varying. The fragment shader does Beer-Lambert absorption + Fresnel + procedural-normal specular on the base layer only. No depth-buffer read, no UBO, no reflection/refraction. The detail/spray layer and every band uniform are preserved byte-for-byte (the MDI program serves both base and detail draws with one uniform set).
 
-**Tech Stack:** GLSL 4.30 (MDI, `GL_ARB_shader_draw_parameters`), OpenGL 4.3 core, C++ (gosRenderer), tier1 smoke harness, env-gated CPU probe.
+**Tech Stack:** GLSL 4.30 (MDI, `GL_ARB_shader_draw_parameters`), OpenGL 4.3 core, C++ (gosRenderer), `mc2_01` smoke against an isolated deploy, env-gated CPU probe. Runs in a dedicated worktree (see "Isolation" below).
 
 **Spec:** `docs/superpowers/specs/2026-05-17-water-material-v1-gpu-driven-design.md` (rev 3, cleared 2 adversarial rounds).
 
 **Codebase note:** This is a shader/render change. There is no unit-test framework for GLSL here; the project's regression gate is the tier1 smoke harness plus an env-gated CPU probe plus a manual visual checklist. Task verification steps reflect that, not pytest. All file:line below were grep-verified at write-time; grep the symbol if a line has drifted (Rule 0).
 
 **Atomicity:** Task 1 (VS) and Task 2 (FS) change the VS/FS varying interface together. The program only links at runtime; do not run the game between Task 1 and Task 2. The build+smoke gate is Task 5, after both shader sides and both C++ changes are in.
+
+**Isolation (cross-session — load-bearing):** This work runs in a DEDICATED worktree with a DEDICATED build + deploy, so the shared-branch build/PDB/deploy/shader-lockstep hazard cannot occur. A separate concurrent session holds priority on the shared smoke harness/GPU.
+- **Worktree (source + own `build64/`):** `A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1/` (branch `claude/water-material-v1`, forked from `claude/gpu-driven-rendering`). All Task commands run here. Never build or deploy from `.claude/worktrees/gpu-driven-rendering/`.
+- **Dedicated deploy dir:** `A:/Games/mc2-opengl/mc2-win64-water/` (independent 4.9G mirror of `mc2-win64-v0.4`). NEVER deploy into `mc2-win64-v0.4/` — the other session smokes it live; clobbering it mid-run is the exact hazard this isolation exists to remove.
+- **Smoke-kill protocol (marker-based, exit-code-agnostic):** the other session can kill any water smoke at any moment. **The exit code is not authoritative either way** (an external kill of mc2.exe makes the harness exit nonzero; other kill paths can exit 0 — do not reason from the exit code at all). All smoke commands pass `--keep-logs` so the per-mission engine log is written even on a clean pass (without it the harness writes the log ONLY on failure, and the marker gate could never see a passing run). Decide solely from the `mc2_01` engine log:
+  - **Log file absent entirely** = launch/harness failure (not a kill) — investigate, do not blindly re-run.
+  - **`[SMOKE v1] event=summary result=pass` present** = the run completed. Now require `[WATER_MAT v1] ... thickness_max>0`. Present+positive = PASS. `result=pass` but `[WATER_MAT v1]` absent or `thickness_max==0` = real FAIL (elevation path dead) — diagnose, do not re-run-spam.
+  - **`result=fail reason=early_exit` / no `event=summary` line, AND wall-time far under 30s** = KILLED by the priority session: wait ~3-5 minutes, re-run the exact command. Re-run up to ~3 times. Never escalate a kill as a regression.
+- **Smoke scope while sharing:** `mc2_01` only, `--duration 30`. `mc2_01` is the heavy water map (the relevant stress for this change); full tier1 is deferred until the harness is free.
 
 ---
 
@@ -102,13 +111,13 @@ Do NOT remove `elevAlphaBandByte`, do NOT touch the `debugMode` branches below, 
 
 - [ ] **Step 4: Sanity-check the edit (no build yet - FS not done)**
 
-Run: `git -C A:/Games/mc2-opengl-src/.claude/worktrees/gpu-driven-rendering diff --stat shaders/gos_terrain_water_fast_mdi.vert`
+Run: `git -C A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1 diff --stat shaders/gos_terrain_water_fast_mdi.vert`
 Expected: one file changed, roughly `+9 -2` (2 varyings, 4 emit lines incl. comment, 1 argb line changed, comments).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd A:/Games/mc2-opengl-src/.claude/worktrees/gpu-driven-rendering
+cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
 git add shaders/gos_terrain_water_fast_mdi.vert
 git commit -m "feat(water-v1): VS emit WaterThickness+WorldPos; base alpha off staircase"
 ```
@@ -230,13 +239,13 @@ Everything from `PREC vec4 c = Color.bgra;` to the end of `main()` (the `#ifdef 
 
 - [ ] **Step 3: Verify the edit shape (no build yet)**
 
-Run: `git -C A:/Games/mc2-opengl-src/.claude/worktrees/gpu-driven-rendering diff --stat shaders/gos_terrain_water_mdi.frag`
+Run: `git -C A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1 diff --stat shaders/gos_terrain_water_mdi.frag`
 Expected: one file changed, roughly `+45 -0` (varyings, uniform, const block, new branch; no deletions - the old body is retained).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd A:/Games/mc2-opengl-src/.claude/worktrees/gpu-driven-rendering
+cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
 git add shaders/gos_terrain_water_mdi.frag
 git commit -m "feat(water-v1): FS stylized base-water material; detail path verbatim"
 ```
@@ -274,7 +283,7 @@ Change to:
 - [ ] **Step 2: Commit (build happens in Task 5 with everything together)**
 
 ```bash
-cd A:/Games/mc2-opengl-src/.claude/worktrees/gpu-driven-rendering
+cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
 git add GameOS/gameos/gameos_graphics.cpp
 git commit -m "feat(water-v1): push cameraPos uniform to MDI water program"
 ```
@@ -339,92 +348,111 @@ Change to:
 - [ ] **Step 2: Commit**
 
 ```bash
-cd A:/Games/mc2-opengl-src/.claude/worktrees/gpu-driven-rendering
+cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
 git add GameOS/gameos/gos_terrain_water_stream.cpp
 git commit -m "feat(water-v1): [WATER_MAT v1] CPU thickness probe (distinct env)"
 ```
 
 ---
 
-### Task 5: Build, deploy, gate (smoke + probe + visual)
+### Task 5: Build, deploy, gate (ISOLATED worktree + deploy; mc2_01 only)
 
-**Files:** none modified. This is the regression gate for all of Tasks 1-4.
+**Files:** none modified. This is the regression gate for all of Tasks 1-4. Read the header "Isolation (cross-session)" block first - every path below is the dedicated water worktree / deploy, NEVER the shared `gpu-driven-rendering` worktree or `mc2-win64-v0.4`.
 
-- [ ] **Step 1: Full-relink build (load-bearing functions changed in 2 TUs)**
+- [ ] **Step 1: Configure (fresh worktree has NO build64) then full build**
 
-```bash
-cd A:/Games/mc2-opengl-src/.claude/worktrees/gpu-driven-rendering
-rm -f build64/RelWithDebInfo/mc2.exe
-"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build64 --config RelWithDebInfo
-```
+This worktree was created fresh - `build64/` does not exist yet, so `cmake --build` alone fails ("does not contain CMakeCache.txt"). Configure first. The generator/platform below match the project's existing worktree cache exactly (`Visual Studio 17 2022` / `x64`); `LINUX_BUILD` is handled inside the project CMakeLists, no vcpkg toolchain var. If configure errors on missing deps/flags, that is a build-system question - stop and route to `mc2-build-system-expert` (do NOT guess additional flags).
 
-Expected: build succeeds; `build64/RelWithDebInfo/mc2.exe` exists and is newly timestamped. If the build fails, fix the reported error before proceeding - do not deploy a stale exe.
-
-- [ ] **Step 2: Deploy per-file (never cp -r)**
+Dependency vars below are copied verbatim from the existing working worktree's CMakeCache (`CMAKE_PREFIX_PATH` + the three `SDL2*_DIR` point at the SHARED repo-root `3rdparty/3rdparty` prebuilt libs - shared read-only, build64 stays per-worktree so isolation holds). These are the proven config, not guesses.
 
 ```bash
-cd A:/Games/mc2-opengl-src/.claude/worktrees/gpu-driven-rendering
-cp -f build64/RelWithDebInfo/mc2.exe A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe
-diff -q build64/RelWithDebInfo/mc2.exe A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe
-cp -f shaders/gos_terrain_water_fast_mdi.vert A:/Games/mc2-opengl/mc2-win64-v0.4/shaders/gos_terrain_water_fast_mdi.vert
-cp -f shaders/gos_terrain_water_mdi.frag      A:/Games/mc2-opengl/mc2-win64-v0.4/shaders/gos_terrain_water_mdi.frag
-diff -q shaders/gos_terrain_water_fast_mdi.vert A:/Games/mc2-opengl/mc2-win64-v0.4/shaders/gos_terrain_water_fast_mdi.vert
-diff -q shaders/gos_terrain_water_mdi.frag      A:/Games/mc2-opengl/mc2-win64-v0.4/shaders/gos_terrain_water_mdi.frag
+cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
+CMAKE="C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
+TP="A:/Games/mc2-opengl-src/3rdparty/3rdparty"
+"$CMAKE" -S . -B build64 -G "Visual Studio 17 2022" -A x64 \
+  -DCMAKE_PREFIX_PATH="$TP" -DSDL2_DIR="$TP/cmake" \
+  -DSDL2_mixer_DIR="$TP/cmake" -DSDL2_ttf_DIR="$TP/cmake" \
+  -DGLEW_INCLUDE_DIR="$TP/include" \
+  -DGLEW_SHARED_LIBRARY_RELEASE="$TP/lib/x64/glew32.lib" \
+  -DGLEW_STATIC_LIBRARY_RELEASE="$TP/lib/x64/glew32s.lib" \
+  -DZLIB_INCLUDE_DIR="$TP/include" \
+  -DZLIB_LIBRARY="$TP/lib/x64/zlib.lib" \
+  -DZLIB_LIBRARY_RELEASE="$TP/lib/x64/zlib.lib"
+"$CMAKE" --build build64 --config RelWithDebInfo --target mc2
 ```
 
-Expected: every `diff -q` prints nothing (files identical). Any difference = deploy failed; re-copy that file.
+This `build64/` belongs only to this worktree - it cannot collide with the other session's build/PDB. A fresh configure means this is necessarily a full build (the plan's intent - no incremental-stale risk). Expected: build succeeds; `build64/RelWithDebInfo/mc2.exe` exists. Build fails: fix before deploying; do not deploy a stale exe.
 
-- [ ] **Step 3: Run the tier1 smoke with the probe enabled**
+- [ ] **Step 2: Deploy per-file into the DEDICATED water deploy dir (never `mc2-win64-v0.4`, never cp -r)**
 
 ```bash
-cd A:/Games/mc2-opengl-src/.claude/worktrees/gpu-driven-rendering
-MC2_WATER_MATERIAL_PROBE=1 py -3 A:\Games\mc2-opengl-src\.claude\worktrees\gpu-driven-rendering\scripts\run_smoke.py --tier tier1 --duration 30 --kill-existing
+cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
+cp -f build64/RelWithDebInfo/mc2.exe A:/Games/mc2-opengl/mc2-win64-water/mc2.exe
+diff -q build64/RelWithDebInfo/mc2.exe A:/Games/mc2-opengl/mc2-win64-water/mc2.exe
+cp -f shaders/gos_terrain_water_fast_mdi.vert A:/Games/mc2-opengl/mc2-win64-water/shaders/gos_terrain_water_fast_mdi.vert
+cp -f shaders/gos_terrain_water_mdi.frag      A:/Games/mc2-opengl/mc2-win64-water/shaders/gos_terrain_water_mdi.frag
+diff -q shaders/gos_terrain_water_fast_mdi.vert A:/Games/mc2-opengl/mc2-win64-water/shaders/gos_terrain_water_fast_mdi.vert
+diff -q shaders/gos_terrain_water_mdi.frag      A:/Games/mc2-opengl/mc2-win64-water/shaders/gos_terrain_water_mdi.frag
 ```
 
-Expected: process exit code `0`. Nonzero = inspect `tests/smoke/artifacts/<latest>/`.
+Expected: every `diff -q` prints nothing (identical). Difference = re-copy that file. Deploying to `mc2-win64-water` (NOT v0.4) is load-bearing: the other session smokes v0.4 live.
 
-- [ ] **Step 4: Verify the positive probe marker fired with a live thickness range**
+- [ ] **Step 3: Run mc2_01 only (heavy water map), pointed at the water exe, probe on**
 
-Run (point at the newest artifact dir):
+`--exe` points the harness at the isolated deploy. `--keep-logs` is REQUIRED: without it the harness writes the per-mission engine log ONLY on failure, so a clean pass would leave the marker gate (Step 4) with nothing to read and the run would be misclassified as a kill forever. (`MC2_SMOKE_MODE=1` is set unconditionally by the runner per mission; the prefix below is belt-and-suspenders, harmless.) mc2_01 only, 30s.
 
 ```bash
-cd A:/Games/mc2-opengl-src/.claude/worktrees/gpu-driven-rendering
-grep -h "\[WATER_MAT v1\]" tests/smoke/artifacts/*/mc2_*.log | tail -10
+cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
+MC2_SMOKE_MODE=1 MC2_WATER_MATERIAL_PROBE=1 py -3 A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1/scripts/run_smoke.py --mission mc2_01 --duration 30 --kill-existing --keep-logs --exe A:/Games/mc2-opengl/mc2-win64-water/mc2.exe
 ```
 
-Expected: at least one line `[WATER_MAT v1] event=summary recipes=<N> thickness_min=... thickness_max=<M> ...` with `thickness_max` strictly > 0 and `recipes` > 0. `thickness_max == 0` or marker absent = the elevation path is dead (flat/unbound read) - FAIL, do not claim success; diagnose before continuing.
+Judge the outcome ONLY via Step 4 against the engine log, per the header "Smoke-kill protocol" - never from the exit code.
 
-- [ ] **Step 5: Verify the MVP instrument is undisturbed**
+- [ ] **Step 4: Decide from the engine log (header Smoke-kill protocol)**
 
 ```bash
-cd A:/Games/mc2-opengl-src/.claude/worktrees/gpu-driven-rendering
-MC2_WATER_DEPTHPROBE=1 py -3 A:\Games\mc2-opengl-src\.claude\worktrees\gpu-driven-rendering\scripts\run_smoke.py --tier tier1 --duration 30 --kill-existing --fail-fast
-grep -h "\[WATER_DEPTHPROBE v2\]" tests/smoke/artifacts/*/mc2_*.log | tail -5
+cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
+LATEST=$(ls -1dt tests/smoke/artifacts/*/ | head -1); echo "artifact dir: $LATEST"
+ls -la "$LATEST"mc2_01*.log 2>/dev/null || echo "NO LOG => launch/harness failure (not a kill) - investigate, do not re-run-spam"
+grep -h "\[SMOKE v1\] event=summary" "$LATEST"mc2_01*.log 2>/dev/null | tail -3
+grep -h "\[WATER_MAT v1\]"           "$LATEST"mc2_01*.log 2>/dev/null | tail -5
 ```
 
-Expected: smoke exit `0`; `[WATER_DEPTHPROBE v2]` lines still present and report MVP equal on motion frames (instrument behaves exactly as before this change).
+Apply the header decision tree exactly:
+- Log absent => launch/harness failure (not a kill). Investigate.
+- `[SMOKE v1] event=summary result=pass` present => run completed. PASS iff also `[WATER_MAT v1] event=summary recipes=<N> ... thickness_max=<M>` with `thickness_max` strictly > 0 and `recipes` > 0. `result=pass` but `[WATER_MAT v1]` absent or `thickness_max==0` => real FAIL (elevation path dead): diagnose, do NOT re-run-spam.
+- `result=fail reason=early_exit` / no `event=summary`, AND wall-time far under 30s => KILLED by the priority session: wait ~3-5 min, re-run Step 3 (up to ~3x). Never escalate a kill as a regression.
 
-- [ ] **Step 6: Manual visual checklist (tier1 PASS is necessary, not sufficient)**
+- [ ] **Step 5: Verify the retained MVP instrument is undisturbed (mc2_01)**
 
-The smoke window is user-driven and visible. Confirm by observation:
+```bash
+cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
+MC2_SMOKE_MODE=1 MC2_WATER_DEPTHPROBE=1 py -3 A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1/scripts/run_smoke.py --mission mc2_01 --duration 30 --kill-existing --keep-logs --exe A:/Games/mc2-opengl/mc2-win64-water/mc2.exe
+LATEST=$(ls -1dt tests/smoke/artifacts/*/ | head -1)
+grep -h "\[WATER_DEPTHPROBE v2\]" "$LATEST"mc2_01*.log 2>/dev/null | tail -5
+```
+
+`--keep-logs` required (same reason as Step 3). Same kill protocol as the header (re-run on kill). Expected once a run completes: `[WATER_DEPTHPROBE v2]` lines present and reporting MVP equal on motion frames - the instrument behaves exactly as before this change (a separate env from our `MC2_WATER_MATERIAL_PROBE`, confirming non-interference).
+
+- [ ] **Step 6: Manual visual checklist (marker PASS is necessary, not sufficient)**
+
+The smoke window is user-driven and visible; mc2_01 is the heavy water map (~30s is enough to reach water). Confirm by observation:
 - Continuous shoreline fade; the 3-band staircase is gone on the base water layer; no waterline flicker on zoom/elevation change.
 - Deep water visibly darker than shallow near-shore (absorption over real world-unit thickness).
 - Cinematic low/grazing camera angle: Fresnel rim visibly brighter than at the oblique default.
 - Detail/spray layer (`o_isWater==2`) looks unchanged versus baseline.
 - Un-armed intro pan: legacy flat water still draws (no fallback regression).
-- Zoomed-out big-map: capture a Tracy GPU water-zone sample; base FS is heavier per fragment (Fresnel pow5, sines, specular pow64) - confirm the water zone is not worse than ~2x the pre-change MDI water FS at the same camera. Measure; do not assume cost-neutral.
+- Zoomed-out big-map (within mc2_01): capture a Tracy GPU water-zone sample; base FS is heavier per fragment (Fresnel pow5, sines, specular pow64) - confirm the water zone is not worse than ~2x the pre-change MDI water FS at the same camera. Measure; do not assume cost-neutral.
 
 - [ ] **Step 7: Final gate commit (artifacts/notes only if the harness produces tracked output)**
 
-If the smoke harness left tracked artifact summaries that the repo expects committed, stage and commit them:
-
 ```bash
-cd A:/Games/mc2-opengl-src/.claude/worktrees/gpu-driven-rendering
+cd A:/Games/mc2-opengl-src/.claude/worktrees/water-material-v1
 git status --porcelain
 # commit only intended tracked outputs; do NOT git add tests/smoke/artifacts if it is gitignored
 ```
 
-If nothing tracked changed, no commit - the feature commits are Tasks 1-4.
+If nothing tracked changed, no commit - the feature commits are Tasks 1-4. Integration back to the shared branch is merge-only (separate concern, not part of this gate).
 
 ---
 
