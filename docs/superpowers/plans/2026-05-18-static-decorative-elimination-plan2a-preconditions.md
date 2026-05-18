@@ -46,6 +46,29 @@ change (`rm build64/RelWithDebInfo/mc2.exe` + changed `.obj`, or
 env-gated `[SUBSYS v1]` probes land in the same commit as the code they
 instrument and are demoted-not-deleted.
 
+**VERIFICATION PROTOCOL OVERRIDE (user, 2026-05-18 - authoritative):**
+Wherever a task's verify step says "tier1 smoke", instead run this exact
+2-mission command (mc2_01 = mission 1, mc2_24 = mission 24), keeping logs
+and enabling the cost-split path-activation counters:
+
+```
+set MC2_TERRAIN_COST_SPLIT=1   (plus the task's own probe env, e.g.
+                                MC2_DECOR_SHADOW_TRACE / MC2_DECOR_PROXY_TRACE)
+py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --mission mc2_01 --mission mc2_24 --duration 30 --keep-logs --kill-existing
+```
+
+- Exit `0` on BOTH missions = pass. Nonzero => inspect the kept logs in
+  `tests/smoke/artifacts/<latest>/`.
+- The cost-split output is used HERE only to read CALL VOLUME / which paths
+  are vs are not activated at each stage (path-activation evidence). Do
+  NOT interpret cost-split ABSOLUTE timings as perf deltas: per
+  `memory/cost_split_instrumentation_is_observer_effect_dominated.md`
+  chrono scopes inflate ~3.5x and fabricate fake setup_total. Each
+  task's PASS criterion stays the probe-counter assertion + smoke exit 0;
+  call-volume is recorded as supporting evidence only.
+- The user runs a clean Tracy capture at the END of the slice for real
+  timing - no per-task Tracy, no per-task perf claim.
+
 **Verified-at-plan-write targets (re-grep at task time):**
 - CP-1: `s_terrainShadowPrimed` `mclib/txmmgr.cpp:1510-1518` (function-local
   static, never reset between missions); `staticLightMatrixBuilt_`
