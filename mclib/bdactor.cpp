@@ -1231,12 +1231,6 @@ bool BldgAppearance::recalcBounds (void)
 		// ONLY; LOD-1+ would be unloaded after any LOD swap.
 	}
 
-	// Meta-fix (Task 5/6): default the render-visibility to the coarse
-	// value. Owners that repoint it (TerrainObject::update via
-	// setRenderVisible AFTER its coarse lifecycle block) override this;
-	// all other BldgAppearance owners (Building/Gate/Turret/Bridge) stay
-	// byte-identical to the legacy coarse render behavior.
-	renderVisible = inView;
 
 	return(inView);
 }
@@ -1301,16 +1295,11 @@ bool BldgAppearance::playDestruction (void)
 //-----------------------------------------------------------------------------
 long BldgAppearance::render (long depthFixup)
 {
-	// GPU-batcher path bypasses the cull here — the whole point of C2 is
+	// GPU-batcher path bypasses inView here — the whole point of C2 is
 	// letting the GPU clipper decide visibility. The legacy angular-cull
 	// recalcBounds has a ~87% false-negative rate at wolfman zoom; under
 	// the GPU path we render every actor and trust the GPU.
-	// Meta-fix (Task 5/6): gate on renderVisible (== coarse inView for
-	// Building/Gate/Turret/Bridge; == motion-safe GPU readback for
-	// terrain statics, source-injected in TerrainObject::update). This
-	// is the INNER submit gate the plan's per-gate canBeSeen() swap
-	// provably missed -- repointing it here is why the meta-fix holds.
-	if (renderVisible || g_useGpuStaticProps)
+	if (inView || g_useGpuStaticProps)
 	{
 		uint32_t color = SD_BLUE;
 		uint32_t highLight = 0x007f7f7f;
@@ -1846,9 +1835,7 @@ long BldgAppearance::renderShadows (void)
 	if (gos_IsTerrainTessellationActive())
 		return NO_ERR;
 
-	// Meta-fix (Task 5/6): SHADOW gate uses motion-safe renderVisible
-	// (== coarse inView for non-terrain-static owners).
-	if (renderVisible && visible && !appearType->spinMe)
+	if (inView && visible && !appearType->spinMe)
 	{
 		//---------------------------------------------
 		// Call Multi-shape render stuff here.
@@ -4008,23 +3995,16 @@ bool TreeAppearance::recalcBounds (void)
 		// ONLY; LOD-1+ would be unloaded after any LOD swap.
 	}
 
-	// Meta-fix (Task 5/6): default render-visibility to the coarse value
-	// (mirror of BldgAppearance::recalcBounds). TerrainObject::update
-	// repoints it via setRenderVisible after its coarse lifecycle block.
-	renderVisible = inView;
-
 	return(inView);
 }
 
 //-----------------------------------------------------------------------------
 long TreeAppearance::render (long depthFixup)
 {
-	// Mirror BldgAppearance::render: bypass the cull under GPU path — the
+	// Mirror BldgAppearance::render: bypass inView under GPU path — the
 	// GPU clipper decides visibility, and the legacy angular cull has a
 	// ~87% false-negative rate at wolfman zoom.
-	// Meta-fix (Task 5/6): gate on renderVisible (motion-safe GPU
-	// readback for trees, source-injected in TerrainObject::update).
-	if (renderVisible || g_useGpuStaticProps)
+	if (inView || g_useGpuStaticProps)
 	{
 		long color = SD_BLUE;
 		//unsigned long highLight = 0x007f7f7f;
@@ -4285,8 +4265,7 @@ long TreeAppearance::renderShadows (void)
 	if (gos_IsTerrainTessellationActive())
 		return NO_ERR;
 
-	// Meta-fix (Task 5/6): SHADOW gate uses motion-safe renderVisible.
-	if (renderVisible && visible)
+	if (inView && visible)
 	{
 		//---------------------------------------------
 		// Call Multi-shape render stuff here.

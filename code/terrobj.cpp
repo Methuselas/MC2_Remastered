@@ -211,32 +211,37 @@ void g_tobjSplitRollAndMaybeEmit() {
     }
 }
 
-// [TOBJPARITY v1] env-gated superset-parity counter (proof-gate #2).
-// MC2_TOBJ_PARITY=1 -> per terrain static per frame, after the meta-fix
-// source injection point (setRenderVisible), count:
-//   samples   = terrain statics where coarse inView is true (denominator).
-//   violations = inView && !renderVisible (catastrophic dropped-prop class).
+// [TOBJPARITY v1] env-gated STANDALONE readback-vs-coarse superset-parity
+// instrument. NOT a passing gate for any shipped slice -- the readback
+// render/shadow repoint was REVERTED (de-risk): Task 7 empirically proved
+// the GPU readback is NOT a superset of the coarse visible set (it drops
+// 10-60% of in-view terrain statics), so gating render/shadow on it is
+// unsound. Render/shadow run on the coarse canBeSeen()/inView path again.
 //
-// Contract: a violation (coarseInView && !renderVisible) is the CATASTROPHIC
-// dropped-prop class -- an object the coarse angular cull says is on-screen
-// that the readback says is not, so it would be silently absent. Expected
-// ZERO. Legitimate over-inclusion (renderVisible && !inView) is fine and NOT
-// a violation: readback says visible but the coarse cull said off-screen,
-// so we render something extra. That is the intended safe-side behaviour.
-// Counter never chrono; no std::chrono, no RDTSC -- this is a pure event
-// count (cost_split_instrumentation_is_observer_effect_dominated.md).
+// This probe survives, demoted-not-deleted, purely to QUANTIFY that
+// readback non-superset for the separately-tracked GPU-path meta-fix
+// task (make the GPU cull authoritative and delete the CPU approximation
+// gate). MC2_TOBJ_PARITY=1 -> per terrain static per frame, in
+// TerrainObject::update(), inlining the per-actor lagged readback
+// expression (fail-open when readback disabled) and comparing it to the
+// LOCAL coarse `inView` from recalcBounds():
+//   samples    = terrain statics where coarse inView is true (denominator).
+//   violations = coarseInView && !readbackVisible (the dropped-prop class
+//                the deferred GPU-path meta-fix must eliminate).
 //
-// Transitive-dependency note: this probe asserts readback SUPERSET-OF coarse
-// (readback >= coarse). This implies the contract's intended invariant
-// (readback >= projected_original) ONLY because coarse >= projected is
-// independently proven -- the deleted projection block (Tasks 2/3) was
-// entirely `if(inView)`-gated and could only narrow the visible set, never
-// widen it. If that superset proof were ever invalidated (e.g. the coarse
-// cull were tightened past the original projection), this gate would pass
-// while masking a projected-set regression. The CRIT-D superset proof
-// (documented in the plan) must remain valid for this gate to be sound.
+// Legitimate over-inclusion (readbackVisible && !coarseInView) is fine and
+// NOT a violation. Counter never chrono; no std::chrono, no RDTSC -- pure
+// event count (cost_split_instrumentation_is_observer_effect_dominated.md).
 //
-// Demote-not-delete after attribution lands (debug_instrumentation_rule.md).
+// Transitive-dependency note: this probe measures readback-vs-coarse
+// (readback >= coarse). Coarse >= projected is independently proven -- the
+// deleted projection block (Tasks 2/3) was entirely `if(inView)`-gated and
+// could only narrow the visible set, never widen it. The known result here
+// is NON-zero violations (readback is a non-superset by Task 7); the probe
+// quantifies the magnitude for the meta-fix task. It is NOT a pass/fail
+// gate for this de-risked slice.
+//
+// Demote-not-delete (debug_instrumentation_rule.md).
 // Mirrors [TOBJSPLIT v1]: file-static enable flag, same 120-frame roll
 // interval, accumulators defined here, roll called from objmgr.cpp.
 static bool s_tobjParityEnabled = (getenv("MC2_TOBJ_PARITY") != nullptr);
@@ -894,49 +899,32 @@ long TerrainObject::update (void) {
 			}
 		}
 
-		// META-FIX (Task 5/6) SOURCE INJECTION POINT.
+		// [TOBJPARITY v1] STANDALONE readback-vs-coarse superset-parity
+		// instrument (env-gated MC2_TOBJ_PARITY). This is NOT a passing
+		// gate for the current slice and does NOT influence render or
+		// shadow visibility -- the readback render/shadow repoint was
+		// reverted (de-risk: Task 7 empirically proved the readback is
+		// NOT a superset of the coarse visible set, dropping 10-60% of
+		// in-view terrain statics, so gating render/shadow on it is
+		// unsound). Render/shadow now run on the coarse canBeSeen()/
+		// inView (pre-slice, safe over-inclusive) path again.
 		//
-		// At this point the LOCAL coarse `inView` (from recalcBounds()
-		// at the top of this `if (appearance)` block) has ALREADY been
-		// consumed by the lifecycle `if (inView)` block above
-		// (windowsVisible = turn; appearance->update()). That gate is
-		// UNCHANGED and still reads the COARSE value -- contract-
-		// mandated (cull_gates_are_load_bearing.md): buildings/turrets
-		// need update() even when offscreen; making lifecycle readback-
-		// gated is the catastrophic cull-cascade the contract forbids.
-		//
-		// Now -- AFTER lifecycle, BEFORE TerrainObject::render() / the
-		// shadow pass / the inner BldgAppearance/TreeAppearance submit
-		// gates run this frame, and BEFORE objmgr.cpp emitGpuCullRecord
-		// (called immediately after this update() returns) reads the
-		// COARSE member `inView` for the GPU-cull parity reference --
-		// we inject the motion-safe RENDER visibility into the SEPARATE
-		// `renderVisible` member (NOT `inView`). The render/shadow/
-		// submit gates read renderVisible (canRenderBeSeen()); the
-		// lifecycle gate and the parity reader keep reading the coarse
-		// `inView`. Separate field, not an overload, because
-		// emitGpuCullRecord (objmgr.cpp:~207) is a per-frame class-(L)
-		// consumer of the member `inView` that MUST stay coarse.
-		//
-		// SUBSTITUTIVE semantics (matches the plan): replace-with-
-		// readback, NOT OR'd-with-coarse. Fail-open all-visible when
-		// readback is disabled so a stock install with GPU cull off
-		// stays fully playable (stock_install_must_remain_playable.md);
-		// readback_isActorVisibleLagged() itself also fail-opens
-		// (tier-3 conservative) when no good slot exists.
-		bool renderVis = gpu_cull::readback_isEnabled()
-			? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
-			: true;
-		appearance->setRenderVisible(renderVis);
-
-		// [TOBJPARITY v1] per-object parity count. Placed HERE -- AFTER
-		// setRenderVisible() -- so renderVisible is this frame's value.
-		// inView (coarse, from recalcBounds above) and renderVisible
-		// (readback-backed or fail-open) are both current at this point.
-		// Sample denominator: coarse inView true. Violation: inView && !renderVisible.
+		// This probe survives, demoted-not-deleted, purely to QUANTIFY
+		// that readback non-superset for the separately-tracked GPU-path
+		// meta-fix task (make the GPU cull authoritative and delete the
+		// CPU approximation gate). It reads the SAME inlined expression
+		// the reverted injection used -- the per-actor lagged readback,
+		// fail-open when readback is disabled -- and compares it against
+		// the LOCAL coarse `inView` (from recalcBounds at the top of
+		// this `if (appearance)` block, unchanged, contract-safe).
+		// Sample denominator: coarse inView true. Violation (the class
+		// the meta-fix must eliminate): coarseInView && !readbackVisible.
 		if (s_tobjParityEnabled && inView) {
+			bool readbackVisible = gpu_cull::readback_isEnabled()
+				? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+				: true;
 			++g_tobjParitySamples;
-			if (!renderVis)
+			if (!readbackVisible)
 				++g_tobjParityViolation;
 		}
 	}
@@ -952,19 +940,9 @@ void TerrainObject::render (void) {
 	{
 	}
 
-	// GPU static-prop path bypasses the cull for the same reason as
+	// GPU static-prop path bypasses canBeSeen() for the same reason as
 	// Building::render — the legacy angular cull is too aggressive.
-	// Meta-fix (Task 5/6): the OUTER render gate reads canRenderBeSeen()
-	// (renderVisible) instead of canBeSeen() (coarse inView). For
-	// terrain statics renderVisible is the motion-safe GPU readback
-	// value source-injected in TerrainObject::update() AFTER the coarse
-	// lifecycle block. canBeSeen()/inView stays coarse for the
-	// lifecycle gate and the GPU-cull parity reference (objmgr.cpp
-	// emitGpuCullRecord). This kills the camera-motion edge-popping
-	// (Tasks 2/3 deleted the projection body that had stabilized
-	// far-peripheral static visibility; the raw angular sphere-clip
-	// jitters as the camera pans).
-	if (appearance->canRenderBeSeen() || g_useGpuStaticProps)
+	if (appearance->canBeSeen() || g_useGpuStaticProps)
 	{
 		if (getSelected())
 		{
@@ -1033,12 +1011,8 @@ void TerrainObject::renderShadows (void)
 {
 	if (getFlag(OBJECT_FLAG_FALLING) || getFlag(OBJECT_FLAG_FALLEN))
 		return;			//No shadows on fallen trees.
-
-	// Meta-fix (Task 5/6): SHADOW gate uses canRenderBeSeen()
-	// (motion-safe GPU readback for terrain statics) so static shadows
-	// do not pop during camera movement. Same rationale as the render
-	// gate above; canBeSeen()/inView stays coarse for lifecycle/parity.
-	if (appearance->canRenderBeSeen())
+		
+	if (appearance->canBeSeen())
 	{
 		appearance->renderShadows();
 	}
