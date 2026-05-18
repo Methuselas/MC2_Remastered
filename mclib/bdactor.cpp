@@ -17,6 +17,10 @@
 // effect_dominated.md). Accumulators defined in code/terrobj.cpp.
 #include <intrin.h>
 #include <stdlib.h>
+// File-scope gate: one getenv per TU, process-start-constant, shared across
+// BldgAppearance::recalcBounds and TreeAppearance::recalcBounds. Matches the
+// file-scope pattern in code/terrobj.cpp:176.
+static bool s_tobjSplitBdOn = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
 
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_batcher.h"
@@ -1160,9 +1164,7 @@ bool BldgAppearance::recalcBounds (void)
 {
 	// [TOBJSPLIT v1] accumulators declared in code/static_update_counters.h
 	// (included above via ../code/static_update_counters.h).
-	// s_tobjSplitEnabled is a file-static duplicate (one getenv per TU;
-	// process-start-constant -- no observable cost when disabled).
-	static bool s_tobjSplitEnabled = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
+	// Gate: file-scope s_tobjSplitBdOn (defined above, shared with TreeAppearance).
 
 	Stuff::Vector4D tempPos;
 	inView = false;
@@ -1178,7 +1180,7 @@ bool BldgAppearance::recalcBounds (void)
 		// [TOBJSPLIT v1] ANGULAR bracket: matrix-free sphere angular clip.
 		// Disjoint from PROJ below; reads cycle counter immediately before/after.
 		{
-		unsigned long long _tsA = s_tobjSplitEnabled ? __rdtsc() : 0ULL;
+		unsigned long long _tsA = s_tobjSplitBdOn ? __rdtsc() : 0ULL;
 		if (eye->usePerspective)
 		{
 			Stuff::Vector3D cameraPos;
@@ -1213,14 +1215,14 @@ bool BldgAppearance::recalcBounds (void)
 				}
 			}
 		}
-		if (s_tobjSplitEnabled) g_tobjAngularCyc += __rdtsc() - _tsA;
+		if (s_tobjSplitBdOn) g_tobjAngularCyc += __rdtsc() - _tsA;
 		}  // end ANGULAR bracket
 
 		//Can we be seen at all?
 		// If yes, check if we are behind fog plane.
 		// [TOBJSPLIT v1] PROJ bracket: projectForScreenXY + 8-corner box + fog.
 		// Disjoint from ANGULAR above; this is the body targeted for deletion.
-		unsigned long long _tsP = s_tobjSplitEnabled ? __rdtsc() : 0ULL;
+		unsigned long long _tsP = s_tobjSplitBdOn ? __rdtsc() : 0ULL;
 		if (inView)
 		{
 			//ALWAYS need to do this or select is YAYA
@@ -1603,7 +1605,7 @@ bool BldgAppearance::recalcBounds (void)
 				inView = false;
 			}
 		}
-		if (s_tobjSplitEnabled) g_tobjProjCyc += __rdtsc() - _tsP;
+		if (s_tobjSplitBdOn) g_tobjProjCyc += __rdtsc() - _tsP;
 		// end PROJ bracket
 	}
 
@@ -4303,9 +4305,7 @@ bool TreeAppearance::recalcBounds (void)
 {
 	// [TOBJSPLIT v1] accumulators declared in code/static_update_counters.h
 	// (included above via ../code/static_update_counters.h).
-	// s_tobjSplitEnabled is a file-static duplicate (one getenv per TU;
-	// process-start-constant -- no observable cost when disabled).
-	static bool s_tobjSplitEnabled = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
+	// Gate: file-scope s_tobjSplitBdOn (defined above, shared with BldgAppearance).
 
 	Stuff::Vector4D tempPos;
 	inView = false;
@@ -4321,7 +4321,7 @@ bool TreeAppearance::recalcBounds (void)
 		// [TOBJSPLIT v1] ANGULAR bracket: matrix-free sphere angular clip.
 		// Disjoint from PROJ below; reads cycle counter immediately before/after.
 		{
-		unsigned long long _tsA = s_tobjSplitEnabled ? __rdtsc() : 0ULL;
+		unsigned long long _tsA = s_tobjSplitBdOn ? __rdtsc() : 0ULL;
 		if (eye->usePerspective)
 		{
 			Stuff::Vector3D cameraPos;
@@ -4356,14 +4356,14 @@ bool TreeAppearance::recalcBounds (void)
 				}
 			}
 		}
-		if (s_tobjSplitEnabled) g_tobjAngularCyc += __rdtsc() - _tsA;
+		if (s_tobjSplitBdOn) g_tobjAngularCyc += __rdtsc() - _tsA;
 		}  // end ANGULAR bracket
 
 		//Can we be seen at all?
 		// If yes, check if we are behind fog plane.
 		// [TOBJSPLIT v1] PROJ bracket: projectForScreenXY + 8-corner box + fog.
 		// Disjoint from ANGULAR above; this is the body targeted for deletion.
-		unsigned long long _tsP = s_tobjSplitEnabled ? __rdtsc() : 0ULL;
+		unsigned long long _tsP = s_tobjSplitBdOn ? __rdtsc() : 0ULL;
 		if (inView)
 		{
 			//ALWAYS need to do this or select is YAYA
@@ -4608,7 +4608,7 @@ bool TreeAppearance::recalcBounds (void)
 				inView = false;		//Did alot of extra work checking this, but WHY draw and insult to injury?
 			}
 		}
-		if (s_tobjSplitEnabled) g_tobjProjCyc += __rdtsc() - _tsP;
+		if (s_tobjSplitBdOn) g_tobjProjCyc += __rdtsc() - _tsP;
 		// end PROJ bracket
 	}
 

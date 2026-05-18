@@ -555,3 +555,10 @@ are valid; the absolute-vs-Tracy delta is a separate concern).
 
 Status: **DONE**. PROJ is clearly dominant across the mission set. Controller +
 user determine go/no-go for Task 1+.
+
+Format note (2026-05-18, post-review): the probe now emits `*_cyc_per_frame`
+fields (e.g. `angular_cyc_per_frame`, `proj_cyc_per_frame`, `update_cyc_per_frame`)
+normalized by the 120-frame window, matching SLIMSPLIT (terrain.cpp:1492-1498).
+The numbers in the table above are the originally-recorded raw 120-frame cumulative
+totals; the PROJ ratio 77.3% aggregate / dominant 4-of-5 is interval-invariant and
+stands unchanged.

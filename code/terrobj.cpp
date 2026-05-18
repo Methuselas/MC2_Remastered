@@ -167,6 +167,11 @@ void g_staticUpdateEmitSummary(uint32_t frame) {
 // ANGULAR (kept coarse clip) / PROJ (to-delete projection body) / UPDATE
 // (appearance->update refill). RDTSC only; chrono per-call is observer-effect
 // dominated here (cost_split_instrumentation_is_observer_effect_dominated.md).
+// RDTSC per-leaf bracket is a deliberate sanctioned exception to the Tracy
+// 100ns-floor prohibition (same class as [SLIMSPLIT v1] in terrain.cpp and
+// [LIGHT_COST_SPLIT v1] in tgl.cpp): these per-object hot-loop costs are too
+// fine-grained for a Tracy zone but the RDTSC pairs are ~5-10ns and gated.
+// Demote-not-delete after the attribution lands (debug_instrumentation_rule.md).
 // Accumulators defined here (terrobj.cpp) so objmgr.cpp can call the once-
 // per-frame roll via g_tobjSplitRollAndMaybeEmit() (static_update_counters.h).
 // Probe points in mclib/bdactor.cpp use extern-declarations to reach these.
@@ -187,12 +192,19 @@ void g_tobjSplitRollAndMaybeEmit() {
     // SLIMSPLIT precedent uses 600 (long uninterrupted missions); here the probe
     // runs under a time-bounded smoke gate so the interval is shortened.
     if (++g_tobjFrameCount % 120ULL == 0ULL) {
-        fprintf(stderr, "[TOBJSPLIT v1] event=summary frames=%llu "
-               "angular_cyc=%llu proj_cyc=%llu update_cyc=%llu\n",
-               (unsigned long long)g_tobjFrameCount,
-               (unsigned long long)g_tobjAngularCyc,
-               (unsigned long long)g_tobjProjCyc,
-               (unsigned long long)g_tobjUpdateCyc);
+        // Per-frame normalization matches SLIMSPLIT (terrain.cpp:1492-1498):
+        // raw N-frame integrals are uninterpretable without the window and not
+        // comparable across different interval sizes; dividing by the fixed
+        // window makes values legible and SLIMSPLIT-comparable. The PROJ/
+        // (ANGULAR+PROJ+UPDATE) ratio is interval-invariant so this does NOT
+        // alter the Stage-0.5 gate result -- it only makes future captures
+        // legible.
+        const double f = 120.0;
+        fprintf(stderr, "[TOBJSPLIT v1] event=summary frames=120 "
+               "angular_cyc_per_frame=%.0f proj_cyc_per_frame=%.0f update_cyc_per_frame=%.0f\n",
+               (double)g_tobjAngularCyc / f,
+               (double)g_tobjProjCyc / f,
+               (double)g_tobjUpdateCyc / f);
         fflush(stderr);
         g_tobjAngularCyc = g_tobjProjCyc = g_tobjUpdateCyc = 0ULL;
     }
