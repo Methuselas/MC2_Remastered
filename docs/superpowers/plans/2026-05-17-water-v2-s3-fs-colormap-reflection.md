@@ -101,8 +101,16 @@ const float REFL_STEP_LEN   = 96.0;   // ~one terrain-tile world distance
 const float REFL_F0         = 0.02;
 const float REFL_STRENGTH   = 0.35;
 const float REFL_MAX        = 0.22;   // hard ceiling on the mix factor
-const float REFL_WAVE_SLOPE = 0.06;   // wave1/wave2 -> perturbation slope
+const float REFL_WAVE_SLOPE = 0.05;   // nz-gradient -> perturbation slope (GROUNDING; range 0.02-0.10)
 ```
+
+> **GROUNDING supersedes the old `wave1`/`wave2` default.** Task 0 proved
+> (`2026-05-17-water-v2-s3-GROUNDING.md`, commit `e8332ff`) the live
+> `o_isWater==1` branch ends `return;` at `:109`; `wave1`/`wave2`/`waveNormal`
+> are DEAD code at `:131-153` and will not compile in scope. The in-scope
+> noise is scalar fBm `nz` (`:84`, `f(WorldPos,time)`, no camera). Use the
+> `nz`-gradient construction below (the addendum's authoritative GLSL), NOT
+> any `wave1`/`wave2` form.
 
 - [ ] **Step 2: Insert the S3 reflection block at the injection point**
 
@@ -112,12 +120,14 @@ Immediately BEFORE `FragColor = vec4(col, shore);` inside the `o_isWater==1` bra
 // S3: pure-FS reflected-ray terrain-colormap reflection.
 // The ONLY camera-dependent term in the water material (v2 ruling).
 if (reflectionOn == 1) {
-    // S1 has no normal in this branch (scalar fBm); derive locally from
-    // the existing wave1/wave2 (mirrors the dead o_isWater==2 construction).
-    PREC vec3 waveNormal = normalize(vec3(wave1 * REFL_WAVE_SLOPE,
-                                          wave2 * REFL_WAVE_SLOPE, 1.0));
-    vec3  vdir = normalize(cameraPos.xyz - WorldPos);   // sole cam-dep input
-    vec3  rdir = reflect(-vdir, waveNormal);
+    // S1 has no normal in this branch (scalar fBm). Derive the perturbation
+    // from the screen-space gradient of the in-scope scalar fBm nz (:84,
+    // f(WorldPos,time)). clamp() prevents zoom-out over-distortion. This is
+    // the GROUNDING-authoritative construction (supersedes wave1/wave2).
+    vec2  nzGrad     = clamp(vec2(dFdx(nz), dFdy(nz)), -2.0, 2.0);
+    vec3  waveNormal = normalize(vec3(nzGrad * REFL_WAVE_SLOPE, 1.0));
+    vec3  vdir       = normalize(cameraPos.xyz - WorldPos); // sole cam-dep input
+    vec3  rdir       = reflect(-vdir, waveNormal);
     vec3  acc  = vec3(0.0);
     float wsum = 0.0;
     for (int i = 1; i <= REFL_STEPS; ++i) {
@@ -138,7 +148,7 @@ if (reflectionOn == 1) {
 }
 ```
 
-If GROUNDING Step 6 chose the flat-normal-plus-post-perturb variant, use that exact recorded GLSL instead of the `waveNormal`/`reflect` two lines; everything else is identical.
+GROUNDING (commit `e8332ff`) recorded the `nz`-gradient construction shown above as authoritative; use it verbatim. Confirm `nz` is in scope at the injection point from the addendum's V5 record before inserting.
 
 - [ ] **Step 3: Deploy the shader to the isolated mirror**
 

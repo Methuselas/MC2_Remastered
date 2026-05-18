@@ -153,13 +153,14 @@ This is the SOLE block in the entire material allowed to read `cameraPos`.
 // The ONLY camera-dependent term in the water material (v2 ruling).
 if (reflectionOn == 1) {
     // S1 has NO normal vector in the o_isWater==1 branch (scalar fBm only).
-    // Derive a cheap perturbation normal locally from the existing S1
-    // wave1/wave2 (same construction as the dead o_isWater==2 line ~153).
-    // The 0.06 slope scale is a tunable starting point (REFL_WAVE_SLOPE).
-    PREC vec3 waveNormal = normalize(vec3(wave1 * REFL_WAVE_SLOPE,
-                                          wave2 * REFL_WAVE_SLOPE, 1.0));
+    // wave1/wave2/waveNormal are DEAD code (after the branch's return; ~:109)
+    // - confirmed by plan Task 0 grounding (commit e8332ff). Derive the
+    // perturbation from the screen-space gradient of the in-scope scalar
+    // fBm nz (~:84, f(WorldPos,time)); clamp prevents zoom-out over-distort.
+    vec2  nzGrad     = clamp(vec2(dFdx(nz), dFdy(nz)), -2.0, 2.0);
+    vec3  waveNormal = normalize(vec3(nzGrad * REFL_WAVE_SLOPE, 1.0));
     vec3  vdir = normalize(cameraPos.xyz - WorldPos);     // sole cam-dep input
-    vec3  rdir = reflect(-vdir, waveNormal);              // S1 wave fuzzes it
+    vec3  rdir = reflect(-vdir, waveNormal);              // nz-grad fuzzes it
     vec3  acc  = vec3(0.0);
     float wsum = 0.0;
     for (int i = 1; i <= REFL_STEPS; ++i) {
@@ -182,18 +183,23 @@ if (reflectionOn == 1) {
 
 - `reflectionOn`/`reflTex`/`atlasMapTopLeftX`/`atlasMapTopLeftY`/
   `atlasOneOverWorldUnits` are new uniforms on `s_waterMdiProg`.
-- **`waveNormal` is NOT a pre-existing S1 symbol** (adversarial C1, both
-  reviewers, convergent). The `o_isWater==1` branch is scalar fBm only -
-  there is no surface normal in scope (the only `waveNormal` in the file is
-  in the dead `o_isWater==2` fallthrough ~`:153`). S3 MUST derive its own
-  perturbation normal locally, as shown above, from the existing S1
-  `wave1`/`wave2` (which DO exist in the `o_isWater==1` branch ~`:132-136`).
-  The slope scale is the new tunable `REFL_WAVE_SLOPE`. The exact
-  perturbation construction has a visual consequence (how the "wave fuzz"
-  reads) - the plan stage routes the chosen formula past
-  `mc2-shader-expert` (the alternative being: reflect about flat
-  `vec3(0,0,1)` and perturb `rdir.xy` post-hoc). The starting formula above
-  is the conservative default.
+- **`waveNormal` is NOT a pre-existing S1 symbol** (adversarial C1). Task 0
+  grounding (commit `e8332ff`) definitively resolved this by control-flow
+  grep: the live `o_isWater==1` branch ends `return;` at ~`:109`;
+  `wave1`/`wave2`/`waveNormal` exist ONLY at ~`:131-153`, which is DEAD
+  unreachable code (adversarial sonnet's `wave1`/`wave2` fix was wrong - it
+  cited dead code). The ONLY in-scope noise at the injection point is the
+  scalar fBm `nz` (~`:84`, built from `q0`/`q1` ~`:82-83` =
+  `WorldPos.xy*FREQ + scroll*time` - grep-confirmed `f(WorldPos,time)`, no
+  `cameraPos`/`viewVec`). S3 derives the perturbation from `nz`'s
+  screen-space gradient (shown above), `clamp`ed to prevent zoom-out
+  over-distortion. `dFdx/dFdy(nz)` is a screen-footprint term (same benign
+  class as the existing `waveLOD = f(length(viewVec))`), NOT a camera-angle
+  term - it does not violate the camera-independence ruling (shader-expert
+  grounded). `REFL_WAVE_SLOPE` default 0.05 (NOT 0.06 - different noise
+  statistics than the dead legacy 2-sine field), visual-loop range
+  0.02-0.10. Authoritative GLSL + line refs:
+  `docs/superpowers/plans/2026-05-17-water-v2-s3-GROUNDING.md`.
 - `waveLOD` IS an existing S1 quantity (reused, not recomputed); it is
   distance-based (NOT angle) - it keeps the reflection a distant/peripheral
   smudge and anti-aliases it. It is a pre-existing S1 camera-*distance*
@@ -209,7 +215,7 @@ if (reflectionOn == 1) {
   const float REFL_F0       = 0.02;
   const float REFL_STRENGTH = 0.35;
   const float REFL_MAX      = 0.22;   // hard ceiling on the mix factor
-  const float REFL_WAVE_SLOPE = 0.06; // wave1/wave2 -> perturbation slope
+  const float REFL_WAVE_SLOPE = 0.05; // nz-gradient -> slope (range 0.02-0.10)
   ```
   Numbers move during the visual loop; these are the starting point so
   implementation does not invent them. Kept as separate named constants
@@ -327,12 +333,12 @@ second-dispatch design.
 - **V4:** confirm `IsFrameSolidArmed()` + `getAtlasGLTex()` are both callable
   from `renderWaterFastPath`'s translation unit at the water draw site
   (the `reflectionOn` gate depends on both).
-- **V5 (restated per adversarial C1):** there is **no `waveNormal`** in the
-  S1 `o_isWater==1` branch - S3 derives it locally from `wave1`/`wave2`
-  (Section 4.2). Confirm `wave1`, `wave2`, `waveLOD` exist in the current
-  `o_isWater==1` branch (S1 as-built, commit `89d329b`); if renamed, bind to
-  the current symbols. Route the perturbation-normal construction past
-  `mc2-shader-expert` (visual-consequence design choice).
+- **V5 (CLOSED by Task 0, commit `e8332ff`):** confirmed there is no
+  in-scope `waveNormal`/`wave1`/`wave2` (dead code after `return;` ~`:109`);
+  S3 uses the in-scope scalar fBm `nz` (~`:84`) gradient per Section 4.2.
+  `waveLOD` (~`:76`), `WorldPos`, `cameraPos`, `nz` confirmed in-scope at
+  the injection point (immediately before `FragColor` ~`:109`). No further
+  action - the GROUNDING addendum is the line-ref source of truth.
 - **V6 (confirmed; carry into plan as a note):** the existing `setMF`/
   `setMI` helpers already guard `if (loc >= 0)` (adversarial m4,
   grep-verified ~`:2276-2281`) so a tuning pass that compiles out
