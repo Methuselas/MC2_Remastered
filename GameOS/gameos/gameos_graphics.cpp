@@ -1820,7 +1820,7 @@ class gosRenderer {
 
         // private helpers
         void pushToOverlayBatch_(OverlayBatch_& b, const WorldOverlayVert* v3, unsigned int texHandle);
-        void uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& L, float elapsed);
+        void uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& L, float elapsed, const float* terrainMvpOverride = nullptr);
         // ── End world-space overlay batch members ──────────────────────────────
 };
 
@@ -2528,6 +2528,8 @@ void gosRenderer::renderWaterFastPath(
 extern "C" uint32_t gos_terrain_indirect_getDispatchMvpFp();
 extern "C" uint64_t gos_terrain_indirect_getDispatchMvpFrameIdx();
 extern "C" void     gos_terrain_indirect_getDispatchMvpFloats4(float out[4]);
+// Fix B: full 4x4 dispatch MVP used by water + overlay symmetric-mirror.
+extern "C" const float* gos_terrain_indirect_getDispatchMvp16();
 extern const float* gos_GetTerrainMVPMat4();
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -7008,10 +7010,14 @@ static void setupOverlayShadowsForShp(GLuint shp)
 }
 
 // Private member: common uniform upload for both draw paths.
-void gosRenderer::uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& L, float elapsed)
+void gosRenderer::uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& L, float elapsed, const float* terrainMvpOverride)
 {
-    if (L.terrainMVP >= 0)
-        glUniformMatrix4fv(L.terrainMVP, 1, GL_FALSE, (const float*)&getTerrainMVP());
+    if (L.terrainMVP >= 0) {
+        const float* tmvp = terrainMvpOverride
+                                ? terrainMvpOverride
+                                : (const float*)&getTerrainMVP();
+        glUniformMatrix4fv(L.terrainMVP, 1, GL_FALSE, tmvp);
+    }
     if (L.terrainVP >= 0)
         glUniform4fv(L.terrainVP, 1, (const float*)&getTerrainViewport());
     // projection_: row-major Stuff matrix — upload GL_TRUE (column-major interpretation)
@@ -7058,12 +7064,15 @@ void gosRenderer::drawTerrainOverlays()
     glDepthFunc(GL_LEQUAL);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -1.0f);
 
     glUseProgram(overlayProg_->shp_);
     float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
-    uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed);
+    const float* fixBMvpOverlay =
+        gos_terrain_indirect::IsFrameSolidArmed()
+            ? gos_terrain_indirect_getDispatchMvp16()
+            : gos_GetTerrainMVPMat4();
+    if (!fixBMvpOverlay) fixBMvpOverlay = gos_GetTerrainMVPMat4();
+    uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed, fixBMvpOverlay);
 
     GLint prevVao = 0;
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
@@ -7079,7 +7088,6 @@ void gosRenderer::drawTerrainOverlays()
     glBindVertexArray((GLuint)prevVao);
 
     glDepthFunc(GL_LESS);
-    glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
     glUseProgram(0);
@@ -7167,13 +7175,16 @@ bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
     glDepthFunc(GL_LEQUAL);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -1.0f);
 
     DECAL_GLPROBE("after_state_block");
     glUseProgram(overlayProg_->shp_);
     float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
-    uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed);
+    const float* fixBMvpDecalStatic =
+        gos_terrain_indirect::IsFrameSolidArmed()
+            ? gos_terrain_indirect_getDispatchMvp16()
+            : gos_GetTerrainMVPMat4();
+    if (!fixBMvpDecalStatic) fixBMvpDecalStatic = gos_GetTerrainMVPMat4();
+    uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed, fixBMvpDecalStatic);
     DECAL_GLPROBE("after_uniform_upload");
 
     glBindVertexArray(s_decalStaticVAO);
@@ -7192,7 +7203,6 @@ bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
     DECAL_GLPROBE("after_vao_restore");
 
     glDepthFunc(GL_LESS);
-    glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
     glUseProgram(0);
@@ -7232,12 +7242,15 @@ void gosRenderer::drawDecals()
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_CULL_FACE);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -1.0f);
 
     glUseProgram(decalProg_->shp_);
     float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
-    uploadOverlayUniforms_(decalProg_->shp_, decalLocs_, elapsed);
+    const float* fixBMvpDecals =
+        gos_terrain_indirect::IsFrameSolidArmed()
+            ? gos_terrain_indirect_getDispatchMvp16()
+            : gos_GetTerrainMVPMat4();
+    if (!fixBMvpDecals) fixBMvpDecals = gos_GetTerrainMVPMat4();
+    uploadOverlayUniforms_(decalProg_->shp_, decalLocs_, elapsed, fixBMvpDecals);
 
     GLint prevVao = 0;
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
@@ -7254,7 +7267,6 @@ void gosRenderer::drawDecals()
 
     glDepthFunc(GL_LESS);
     glDisable(GL_BLEND);
-    glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
     glUseProgram(0);
