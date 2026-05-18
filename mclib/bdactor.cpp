@@ -5159,7 +5159,20 @@ void TreeAppearance::touch()
 	// Touch() advances lastTurnTransformed so TG_Shape::Render()'s staleness
 	// guard doesn't suppress the legacy fallback path.
 	if (treeShape) {
-		treeShape->ResubmitCachedGpuLightData();
+		// [LIGHTBRIDGE v1] C6 retirement: repoint to the primed 38d8720 slot
+		// (zero FNV/memcmp; cachedFrame_ stamped). MISS keeps the legacy
+		// resubmit (NOT CacheGpuLightData -- terrain-color-staleness,
+		// msl.cpp:1874-1887). MC2_LIGHTBAKE=0 -> legacy path bit-for-bit.
+		extern bool mc2LightBakeEnabled();
+		extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
+		TG_HWLightsData baked;
+		if (mc2LightBakeEnabled()
+		    && staticReg.registered && staticReg.recipeIndex >= 0
+		    && mc2GetBakedStaticLight(staticReg.recipeIndex, baked)) {
+			treeShape->EmitBakedGpuLightData(staticReg.recipeIndex, baked);
+		} else {
+			treeShape->ResubmitCachedGpuLightData();
+		}
 		// 2026-05-11 per-instance capture: see BldgAppearance::touch.
 		staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
 		treeShape->Touch();
