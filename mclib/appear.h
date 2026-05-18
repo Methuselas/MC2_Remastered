@@ -80,11 +80,15 @@ class Appearance
 		//    consumer that MUST keep the legacy/coarse value, else the
 		//    parity summary compares the readback against itself).
 		//  - `renderVisible` is what the RENDER / SHADOW / SUBMIT gates
-		//    read. Defaulted to == `inView` at the END of recalcBounds()
-		//    (each concrete override does `renderVisible = inView;`) so
-		//    every owner that does NOT explicitly repoint it (Building /
-		//    Gate / Turret / Bridge) is byte-identical to the legacy
-		//    coarse behavior. TerrainObject::update() overrides it via
+		//    read. Defaulted to == `inView` ONLY in BldgAppearance and
+		//    TreeAppearance recalcBounds overrides (building/gate/turret/
+		//    bridge/tree stay byte-identical to the legacy coarse path).
+		//    Mech3DAppearance and GVAppearance are full overrides that do
+		//    NOT call base and do NOT assign renderVisible -- for those
+		//    classes it stays at the ctor/init fail-open TRUE and is an
+		//    intentionally dead field (their render/shadow paths read
+		//    canBeSeen(), not canRenderBeSeen()). Do NOT wire mech/GV to
+		//    canRenderBeSeen(). TerrainObject::update() overrides it via
 		//    setRenderVisible(<gpu readback, fail-open>) AFTER the coarse
 		//    lifecycle block has consumed the local coarse value, so the
 		//    terrain-static render/shadow path becomes motion-safe while
