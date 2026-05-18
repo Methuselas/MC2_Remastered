@@ -324,9 +324,25 @@ R-2. GameObjectManager::getTerrainObject(long terrainObjectIndex)
         unconditionally for any valid index.
 
 R-3. GameObjectManager::findByPartId(long partId)
-     -- code/objmgr.cpp:2363-2376 (declaration: code/objmgr.h:515)
-     -- Linear scan over objList[1..getMaxObjects()], matching obj->getPartId().
+     -- code/objmgr.cpp:2098-2111 (declaration: code/objmgr.h:510)
+     -- Linear scan over objList[1..getMaxObjects()], matching obj->getPartId(). NOT
+        objBlockInfo-routed. HC-2 severance does NOT silence this path.
      -- With decorative still in objList (HC-2), finds it if its partId matches.
+     -- VERIFIED PER-FRAME PATH (conditional): GameCamera::update() (gamecam.cpp:456,
+        per-frame) -> when lookTargetObject != -1 (gamecam.cpp:458-459) ->
+        getCamObject(lookTargetObject,true) (gamecam.cpp:430-451) ->
+        ObjectManager->findByPartId(partId) (gamecam.cpp:436). This is a full-objList
+        linear scan fired every frame while the camera is locked to a look-target.
+        SCOPE RULING -- this path is:
+          (a) PRE-EXISTING: not introduced by the decorative-severance slice;
+          (b) NOT decorative-specific: it scans ALL objects (objList[1..getMaxObjects()]),
+              not decoratives qua decoratives;
+          (c) therefore NOT a violation of the corrected invariant, whose prohibition is
+              "no consumer RE-INTRODUCING per-frame iteration OVER DECORATIVES" -- this
+              path neither re-introduces anything nor targets decoratives.
+        CONCLUSION: OUT OF SCOPE for the objBlockInfo decorative-severance slice. This
+        is a separate, pre-existing engine inefficiency (O(N) linear findByPartId on the
+        camera-lock path). Recorded as candidate future work, NOT a blocker or regression.
 
 R-4. GameObjectManager::findByCellPosition(long row, long col)
      -- code/objmgr.cpp:2390-2411
@@ -389,16 +405,23 @@ Per-resolver classification:
 |----------|---------------|-------------------|---------|
 | R-1 get(handle) | on-demand, ALLOWED | event-sourced (mech hit, ABL) | objmgr.cpp:2181; callers in contact.cpp/ablmc2.cpp are mover-targeted |
 | R-2 getTerrainObject(i) | on-demand, ALLOWED | ABL script execution (non-per-frame) | objmgr.cpp:797; ablmc2.cpp:1469,1530 criteria cases |
-| R-3 findByPartId(partId) | on-demand, ALLOWED | event-sourced (ABL getObject, turret init) | objmgr.cpp:2363; comment notes slowness |
+| R-3 findByPartId(partId) | per-frame-BUT-OUT-OF-SCOPE (pre-existing, non-decorative-specific); on-demand callsites (ABL, turret) also ALLOWED | per-frame via gamecam.cpp:458-459->436 when lookTargetObject!=-1; event-sourced via ABL/init | objmgr.cpp:2098; gamecam.cpp:430-451,456-459; pre-existing path, not decorative-specific, not re-introduced by this slice; recorded as future-work |
 | R-4 findByCellPosition(row,col) | on-demand, ALLOWED | mission-load + savegame-restore only | objmgr.cpp:2390; callers at bldng.cpp:737, gate.cpp:266, objmgr.cpp:1125,1150,3766,3789, turret.cpp:550 -- all init/load |
 | R-5 findByBlockVertex(blockNum,v) | on-demand, ALLOWED | zero callers (dead/unused) | objmgr.cpp:2380; no callers in code/*.cpp or mclib/*.cpp |
 | R-6 ABL getObject(partId) | on-demand, ALLOWED | ABL script execution (event-sourced) | ablmc2.cpp:338-353; wraps R-3 |
 | R-7 ABL getTerrainObject loop | on-demand, ALLOWED | ABL script execution (event-sourced) | ablmc2.cpp:1469,1530; ABL scripts are not per-frame |
 | R-8 getObjBlockObject(block,idx) | per-frame -- HC-2 SEVERANCE TARGET | per-frame in render/renderShadows/update/collision | objmgr.h:426; resolved in Blocker 1 |
 
-R-8 is the only per-frame resolver. It is the direct target of HC-2 severance and is
-fully covered by Blocker 1. No on-demand resolver (R-1 through R-7) introduces per-frame
-access to decoratives.
+R-8 is the only per-frame resolver targeting decoratives via block ranges. It is the direct
+target of HC-2 severance and is fully covered by Blocker 1.
+
+NOTE on R-3 per-frame path: findByPartId is called per-frame on the camera-lock path
+(gamecam.cpp:458-459 -> gamecam.cpp:436). This path is pre-existing, not decorative-specific
+(scans all objList entries), and is not re-introduced by this slice. It is out of scope for
+the decorative-severance invariant (which prohibits only RE-INTRODUCTION of per-frame
+iteration OVER DECORATIVES). It is recorded here as a separate, pre-existing engine
+inefficiency (O(N) linear scan per frame on camera-lock). Candidate future work.
+No on-demand resolver (R-1 through R-7) RE-INTRODUCES per-frame access to decoratives.
 
 ---
 
@@ -421,8 +444,15 @@ BOUNDARY-PROOF HARD BLOCKER #2 (collision, Class 2):
 
 BOUNDARY-PROOF HARD BLOCKER #3 (script triggers / findByPartId, Class 4):
   ABL getObject (R-6 -> R-3) scans objList for any object by partId. Under HC-3 the
-  decorative is still in objList; findByPartId returns it. This is now ALLOWED by the
-  corrected invariant (on-demand, event-sourced). No code change required here.
+  decorative is still in objList (HC-2); findByPartId returns it. This is ALLOWED by the
+  corrected invariant because: (a) the ABL callsite is script-sourced (event-driven, not
+  per-frame); and (b) separately, the per-frame camera-lock path that also uses findByPartId
+  (gamecam.cpp:458-459 -> gamecam.cpp:436) is a pre-existing path that scans ALL objects,
+  not decoratives specifically, and is therefore out of scope -- it neither re-introduces
+  anything nor targets decoratives as a class. The BOUNDARY-PROOF #3 dissolution rests on
+  the correct basis: decorative in objList per HC-2/HC-3, ABL callsite event-sourced, and
+  the camera-lock per-frame findByPartId path out-of-scope as recorded in R-3 above.
+  No code change required here for the decorative-severance slice.
   ABL execGetObjects criteria=1 (R-7 -> R-2) also returns decoratives via the typed array;
   also on-demand, also ALLOWED. The BOUNDARY-PROOF classified this as CAN-REACH-UNCOVERED
   under the old framing; under HC-3 it is resolved -- no severance action needed.
@@ -453,13 +483,24 @@ PASS.
 
 Evidence:
 - All eight resolvers from Step 1 are classified in the table above.
-- R-1 through R-7: on-demand, event-sourced, ALLOWED by corrected invariant. No code change.
+- R-1, R-2, R-4 through R-7: on-demand, event-sourced, ALLOWED by corrected invariant.
+  No code change.
+- R-3 (findByPartId): correctly classified per-frame-but-out-of-scope. The per-frame path
+  via gamecam.cpp:458-459 -> gamecam.cpp:436 is pre-existing, non-decorative-specific (scans
+  all objList), and not re-introduced by this slice. The corrected invariant prohibits
+  RE-INTRODUCTION of per-frame iteration OVER DECORATIVES; this path satisfies none of those
+  conditions. Recorded as separate pre-existing engine inefficiency (O(N) camera-lock linear
+  scan) and flagged as candidate future work. NOT a blocker and NOT a regression. The
+  on-demand ABL callsites for findByPartId remain event-sourced and ALLOWED.
 - R-8: per-frame, fully covered by HC-2 objBlockInfo severance (Blocker 1, Task 2).
-- No resolver is per-frame AND unresolved after HC-2 severance.
+- No resolver is per-frame-AND-decorative-specific AND unresolved after HC-2 severance.
 - Corrected invariant stated unambiguously: decoratives remain resolvable on demand;
-  prohibited thing is re-introduction of per-frame iteration, not on-demand resolution.
-- BOUNDARY-PROOF HARD BLOCKERs #1-#4 each reconciled: #1 and #2 covered by Blocker 1,
-  #3 and #4 resolved by HC-3 framing (no-op under corrected invariant).
+  prohibited thing is re-introduction of per-frame iteration over decoratives, not on-demand
+  resolution, and not pre-existing non-decorative-specific per-frame paths.
+- BOUNDARY-PROOF HARD BLOCKERs #1-#4 each reconciled: #1 and #2 covered by Blocker 1;
+  #3 resolved by HC-3 framing on the correct basis (decorative in objList per HC-2/HC-3,
+  ABL callsite event-sourced, camera-lock per-frame path out-of-scope pre-existing); #4
+  resolved by HC-3 framing (no-op under corrected invariant).
 - OB-1 and OB-2 from Blocker 1 carry to later tasks without conflict.
 - One potential new OPEN blocker inspected and dismissed:
   ABL execGetObjects criteria=1 (ablmc2.cpp:1469, :1530) iterates ALL terrainObjects[]
@@ -467,3 +508,6 @@ Evidence:
   (leaked raw pointers to "severed" objects). Under HC-3 this is by design -- the decorative
   exists, the partId is valid, and any subsequent getObject(partId) call returns the live
   object. No blocker.
+- Pre-existing engine inefficiency noted and recorded: O(N) linear findByPartId on the
+  gamecam.cpp camera-lock path (gamecam.cpp:456-459 -> getCamObject -> findByPartId).
+  Not a regression from this slice; candidate future work outside this scope.
