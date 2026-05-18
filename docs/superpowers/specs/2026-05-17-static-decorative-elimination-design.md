@@ -278,14 +278,71 @@ Discipline.
 (`--tier tier1 --duration 30 --kill-existing`). Substrate must be ON for
 static-prop visual validity (`substrate_off_renders_no_static_props`).
 
-## 10. Open questions for the plan
+## 10. Plan-resolution blockers (must be closed before any code)
 
-- Exact `objList`/`objBlockInfo` removal mechanism that keeps block
-  bookkeeping (`firstHandle`/`numObjects`) consistent for the surviving
-  non-decorative objects in the same block.
-- Generation/tombstone width and slot-reuse policy in the instance SSBO.
-- Whether the collision/damage proxy is a separate spatial structure or a
-  handle map keyed off the existing terrain-object spatial index.
-- Canonical parity-record layout (field list + packing) -- to be fixed in
-  the plan and shared C++/GLSL per `cpp_glsl_ubo_struct_lockstep` if any part
-  is GPU-read.
+Approved for Stage 0 / plan-writing. Implementation MUST NOT start until the
+plan resolves all five. Each is a plan decision, not a design ambiguity.
+
+1. **`objList`/`objBlockInfo` removal mechanism.** The plan must pick one of:
+   compact block ranges at mission load; move decoratives into a side
+   structure before block ranges are finalized; maintain a separate
+   non-`objList` terrain-object index; or split the existing registration
+   path. Whatever is chosen, `firstHandle`, `numObjects`, and every consumer
+   of those ranges must remain coherent for the surviving non-decorative
+   objects in the same block. Biggest implementation risk.
+
+2. **Generic handle-lookup semantics.** Plan rule (required):
+   generic object lookup MUST NOT silently materialize or return a severed
+   decorative. It may return "not object-resident"; approved systems route
+   through `StaticDecorativeSet` / collision-proxy APIs instead. Without this
+   rule a future "resolve handle" helper bypasses severance even if the block
+   loop is clean.
+
+3. **Collision proxy ownership.** Plan must choose: reuse the existing
+   terrain-object spatial index ONLY if it can be proven not to route back
+   through `objList`; otherwise build a small decorative collision proxy
+   keyed by handle/generation/source-block/AABB. Bias toward the dedicated
+   proxy unless the reuse non-routing proof is clean.
+
+4. **Static-shadow destruction semantics.** Plan must explicitly state what
+   happens to a fallen/destroyed decorative's baked static shadow: either the
+   stale baked shadow persists for the mission (explicitly accepted) or it is
+   removed/patched on deregister. Also: static shadow map allocation time,
+   decorative-bake order vs terrain/building static bake, dynamic-caster
+   compositing order, and mission-reload behavior.
+
+5. **Same-frame deregister ordering.** Plan must define the exact sequence to
+   prevent a one-frame "double tree" (static + dynamic): hit detected ->
+   tombstone write -> dynamic object spawn/re-admit -> compute cull observes
+   tombstone (or prior-frame indirect command invalidated) -> draw shows
+   exactly one representation. This is the most likely visual bug in the
+   slice.
+
+Also to be fixed in the plan (lower risk): generation/tombstone width and
+slot-reuse policy; canonical parity-record layout (field list + packing),
+shared C++/GLSL per `cpp_glsl_ubo_struct_lockstep` if any part is GPU-read.
+
+## 11. Integration with write-side substrate accumulation
+
+This design does not clash with the separate write-side
+`s_cpuVisibleCount` / substrate-record accumulation design, but the
+relationship is load-bearing and stated here so neither side reads a false
+parity failure:
+
+> `s_cpuVisibleCount` and substrate record parity count only records
+> submitted through the active substrate producer set. After
+> `MC2_STATIC_DECOR_GPU=1` severance, `StaticDecorativeSet` decoratives no
+> longer submit per-frame substrate records and are validated by
+> `MC2_DECOR_PARITY` plus `decoratives_seen_in_objmgr_loop`, not by
+> preserving legacy substrate-visible counts. The drop in substrate-visible
+> count for decoratives is the intended effect, not a regression.
+
+## 12. Cross-session coordination dependency
+
+A parallel session working on adjacent static-prop/substrate write-side work
+is authoring a coordination contract to prevent clashes between the two
+efforts. That contract is a **consumed input to the implementation plan**:
+the plan MUST NOT be finalized until the contract is available and Section 11
+has been reconciled against it (interface ownership, who severs vs who counts,
+shared killswitch interaction). Stage 0 design is complete; plan-writing is
+gated on this contract.
