@@ -2854,18 +2854,34 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 						if (obj->getWindowsVisible() == (turn - VISIBLE_THRESHOLD))
 						{
 							//-----------------------------------------------------
-							// CRIT-1: lazy per-candidate screen rect. Class-
-							// guarded cast to BldgAppearance* (only
-							// BUILDING/TREEBUILDING use BldgAppearance;
-							// TERRAINOBJECT/BRIDGE/TURRET/GATE/TREE do not).
-							// When the candidate is not a Bldg-class actor
-							// the lazy projection has no analogue in the
-							// deleted code (those classes never wrote the
-							// Bldg projection byproducts), so they fall to
-							// PerPolySelect unguarded by a rect -- same as
-							// the pre-delete behavior for a missing/zero
-							// rect (the deleted block only ran for
-							// BldgAppearance).
+							// CRIT-1: lazy per-candidate screen rect.
+							// Class-guarded cast to BldgAppearance*.
+							//
+							// CORRECTION (Task 4 spec-review): an earlier
+							// version of this comment claimed only
+							// BUILDING/TREEBUILDING use BldgAppearance and
+							// that TERRAINOBJECT/BRIDGE/TURRET/GATE "do
+							// not". That was FALSE. TERRAINOBJECT and
+							// BRIDGE (terrobj.cpp `appearance = new
+							// BldgAppearance`), TURRET (turret.cpp same),
+							// GATE (gate.cpp same) and ARTILLERY
+							// (artlry.cpp same) ALL instantiate
+							// BldgAppearance too. (TREE uses
+							// TreeAppearance; movers use Mech3D/GV.)
+							//
+							// The rect pre-filter is INTENTIONALLY applied
+							// ONLY to BUILDING/TREEBUILDING here. For the
+							// other BldgAppearance classes the lazy rect
+							// is deliberately DROPPED: skipping it is a
+							// correctness-safe OVER-inclusion (a candidate
+							// is never wrongly rejected by a missing
+							// rect), and PerPolySelect (geometry-space,
+							// run below) remains the authoritative pick
+							// test for every class. This matches the pre-
+							// delete behavior for a missing/zero rect (the
+							// deleted projection block only produced a rect
+							// for BldgAppearance, and only the
+							// building-class path consumed it).
 							long ulx, uly, lrx, lry;
 							bool haveRect = false;
 							long oc = obj->getObjectClass();

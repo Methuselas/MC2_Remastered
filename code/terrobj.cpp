@@ -20,6 +20,7 @@
 #endif
 
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
+#include "../GameOS/gameos/gpu_cull_readback.h"  // Task 5/6: per-actor GPU visibility readback
 
 #ifndef GAMESOUND_H
 #include"gamesound.h"
@@ -847,6 +848,41 @@ long TerrainObject::update (void) {
 				}
 			}
 		}
+
+		// META-FIX (Task 5/6) SOURCE INJECTION POINT.
+		//
+		// At this point the LOCAL coarse `inView` (from recalcBounds()
+		// at the top of this `if (appearance)` block) has ALREADY been
+		// consumed by the lifecycle `if (inView)` block above
+		// (windowsVisible = turn; appearance->update()). That gate is
+		// UNCHANGED and still reads the COARSE value -- contract-
+		// mandated (cull_gates_are_load_bearing.md): buildings/turrets
+		// need update() even when offscreen; making lifecycle readback-
+		// gated is the catastrophic cull-cascade the contract forbids.
+		//
+		// Now -- AFTER lifecycle, BEFORE TerrainObject::render() / the
+		// shadow pass / the inner BldgAppearance/TreeAppearance submit
+		// gates run this frame, and BEFORE objmgr.cpp emitGpuCullRecord
+		// (called immediately after this update() returns) reads the
+		// COARSE member `inView` for the GPU-cull parity reference --
+		// we inject the motion-safe RENDER visibility into the SEPARATE
+		// `renderVisible` member (NOT `inView`). The render/shadow/
+		// submit gates read renderVisible (canRenderBeSeen()); the
+		// lifecycle gate and the parity reader keep reading the coarse
+		// `inView`. Separate field, not an overload, because
+		// emitGpuCullRecord (objmgr.cpp:~207) is a per-frame class-(L)
+		// consumer of the member `inView` that MUST stay coarse.
+		//
+		// SUBSTITUTIVE semantics (matches the plan): replace-with-
+		// readback, NOT OR'd-with-coarse. Fail-open all-visible when
+		// readback is disabled so a stock install with GPU cull off
+		// stays fully playable (stock_install_must_remain_playable.md);
+		// readback_isActorVisibleLagged() itself also fail-opens
+		// (tier-3 conservative) when no good slot exists.
+		bool renderVis = gpu_cull::readback_isEnabled()
+			? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+			: true;
+		appearance->setRenderVisible(renderVis);
 	}
 
 	return(1);
@@ -860,9 +896,19 @@ void TerrainObject::render (void) {
 	{
 	}
 
-	// GPU static-prop path bypasses canBeSeen() for the same reason as
+	// GPU static-prop path bypasses the cull for the same reason as
 	// Building::render — the legacy angular cull is too aggressive.
-	if (appearance->canBeSeen() || g_useGpuStaticProps)
+	// Meta-fix (Task 5/6): the OUTER render gate reads canRenderBeSeen()
+	// (renderVisible) instead of canBeSeen() (coarse inView). For
+	// terrain statics renderVisible is the motion-safe GPU readback
+	// value source-injected in TerrainObject::update() AFTER the coarse
+	// lifecycle block. canBeSeen()/inView stays coarse for the
+	// lifecycle gate and the GPU-cull parity reference (objmgr.cpp
+	// emitGpuCullRecord). This kills the camera-motion edge-popping
+	// (Tasks 2/3 deleted the projection body that had stabilized
+	// far-peripheral static visibility; the raw angular sphere-clip
+	// jitters as the camera pans).
+	if (appearance->canRenderBeSeen() || g_useGpuStaticProps)
 	{
 		if (getSelected())
 		{
@@ -931,8 +977,12 @@ void TerrainObject::renderShadows (void)
 {
 	if (getFlag(OBJECT_FLAG_FALLING) || getFlag(OBJECT_FLAG_FALLEN))
 		return;			//No shadows on fallen trees.
-		
-	if (appearance->canBeSeen())
+
+	// Meta-fix (Task 5/6): SHADOW gate uses canRenderBeSeen()
+	// (motion-safe GPU readback for terrain statics) so static shadows
+	// do not pop during camera movement. Same rationale as the render
+	// gate above; canBeSeen()/inView stays coarse for lifecycle/parity.
+	if (appearance->canRenderBeSeen())
 	{
 		appearance->renderShadows();
 	}

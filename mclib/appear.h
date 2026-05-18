@@ -69,6 +69,29 @@ class Appearance
 	public:
 
 		bool						inView;			//Can I be Seen?
+
+		// Meta-fix (Task 5/6) source-injected RENDER/SHADOW/SUBMIT visibility.
+		// Distinct from `inView` (the COARSE angular cull) on purpose:
+		//  - `inView` stays the coarse value. It feeds the LIFECYCLE gate
+		//    (terrobj.cpp `if(inView)` lifecycle/update block, contract-
+		//    mandated coarse per cull_gates_are_load_bearing.md) AND the
+		//    GPU-cull parity reference bit (objmgr.cpp emitGpuCullRecord
+		//    reads `app->inView` AFTER update() returns -- a class-(L)
+		//    consumer that MUST keep the legacy/coarse value, else the
+		//    parity summary compares the readback against itself).
+		//  - `renderVisible` is what the RENDER / SHADOW / SUBMIT gates
+		//    read. Defaulted to == `inView` at the END of recalcBounds()
+		//    (each concrete override does `renderVisible = inView;`) so
+		//    every owner that does NOT explicitly repoint it (Building /
+		//    Gate / Turret / Bridge) is byte-identical to the legacy
+		//    coarse behavior. TerrainObject::update() overrides it via
+		//    setRenderVisible(<gpu readback, fail-open>) AFTER the coarse
+		//    lifecycle block has consumed the local coarse value, so the
+		//    terrain-static render/shadow path becomes motion-safe while
+		//    lifecycle + parity stay coarse. Fail-open default TRUE so a
+		//    stock install with GPU cull off stays fully playable
+		//    (stock_install_must_remain_playable.md).
+		bool						renderVisible;
 		Stuff::Vector4D				upperLeft;		//used to draw select boxes.  Can be 3D Now!
 		Stuff::Vector4D				lowerRight;		//used to draw select boxes.
 		
@@ -85,6 +108,7 @@ class Appearance
 		Appearance (void)
 		{
 			inView = FALSE;
+			renderVisible = TRUE;	// fail-open: see renderVisible decl comment
 			screenPos.x = screenPos.y = screenPos.z = screenPos.w = -999.0f;
 			upperLeft.x = upperLeft.y = upperLeft.z = upperLeft.w = -999.0f;
 			lowerRight.x = lowerRight.y = lowerRight.z = lowerRight.w = -999.0f;
@@ -97,6 +121,7 @@ class Appearance
 		virtual void init (AppearanceTypePtr tree = NULL, GameObjectPtr obj = NULL)
 		{
 			inView = FALSE;
+			renderVisible = TRUE;	// fail-open: see renderVisible decl comment
 			screenPos.x = screenPos.y = screenPos.z = screenPos.w = -999.0f;
 			upperLeft.x = upperLeft.y = upperLeft.z = upperLeft.w = -999.0f;
 			lowerRight.x = lowerRight.y = lowerRight.z = lowerRight.w = -999.0f;
@@ -182,6 +207,21 @@ class Appearance
 		{
 			inView = viewStatus;
 		}
+
+		// Meta-fix (Task 5/6): RENDER/SHADOW/SUBMIT visibility accessor +
+		// setter. canRenderBeSeen() is what the render/shadow/submit gates
+		// read instead of canBeSeen() so the terrain-static render path is
+		// motion-safe (GPU readback) while canBeSeen()/inView stays coarse
+		// for the lifecycle gate and the GPU-cull parity reference.
+		bool canRenderBeSeen (void)
+		{
+			return(renderVisible);
+		}
+
+		void setRenderVisible (bool viewStatus)
+		{
+			renderVisible = viewStatus;
+		}
 				
 		Stuff::Vector4D getScreenPos (void)
 		{
@@ -210,6 +250,11 @@ class Appearance
 			//-------------------------------------------------------
 			// returns TRUE is this appearance is Visible this frame
 			inView = FALSE;
+			// Meta-fix (Task 5/6): keep renderVisible == coarse inView by
+			// default. Owners that repoint it (TerrainObject::update via
+			// setRenderVisible) override AFTER recalcBounds; owners that
+			// do not (Building/Gate/Turret/Bridge) stay byte-identical.
+			renderVisible = inView;
 			return inView;
 		}
 
