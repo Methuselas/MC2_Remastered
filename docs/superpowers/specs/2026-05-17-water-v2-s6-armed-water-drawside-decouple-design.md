@@ -5,9 +5,12 @@
 **Supersedes:** the S6 row of `2026-05-17-water-v2-scope-and-decomposition.md`
 Section 4 ("arm-gate the per-water-quad projection block"). That documented
 design is EMPIRICALLY NON-SUBSTITUTIVE and dead - see Section 2.
-**Status:** DESIGN - grounded (3 code-grounded advisor passes this session,
-Rule 0). Plan-ready PENDING two explicit gates (Section 7). Not yet 2x
-adversarial.
+**Status:** PLAN-READY (2026-05-17). Grounded (4 code-grounded advisor
+passes, Rule 0); dual-adversarial APPROVE-WITH-REQUIRED-EDITS folded (8b);
+both escalated forks resolved by user - M1a (shared predicate) + M2b-i
+(accept 1-frame transition pop), M2a locked (8c). Execution gated ONLY on
+the two Section 7 user-driven execute-gates (worst-case Tracy cost baseline
++ post-change parity-identical).
 **Grounding sources:** S6 recon + reframe-A/B + (B)-substitutivity
 verification advisors, 2026-05-17. All file:line below were grep-verified
 this session; symbols are stable, line numbers drift - the plan-stage Rule-0
@@ -66,8 +69,13 @@ concerns inside each of the (up to 4) per-water-vertex sub-blocks
   stored scalars; object-pick never touches the 6-tuple (water/terrain are
   never pick targets - `memory/mc2_selection_picking_model_water_terrain_
   never_picked.md`). Keeping (i) unconditional => the parity probe stays
-  `result=identical` => zero behaviour change to the minimap, picking, cull,
-  camera, fog.
+  `result=identical` in STEADY STATE => zero steady-state behaviour change
+  to the minimap, picking, cull, camera, fog. **(M2b-i, user 2026-05-17:)**
+  one bounded, cosmetically-negligible 1-frame minimap-trapezoid pop at the
+  intro-pan->mission `IsFrameSolidArmed()` edge is ACCEPTED as out of scope
+  (intrinsic to the existing slimReduce/clipped-gate machinery, not
+  introduced by S6, never during gameplay, minimap rectangle only - see
+  8c-UPDATE). No arm-transition probe gate (M2b-ii declined).
 
 - **(ii) ARM-GATE - the draw-side that does NOT feed the 6-tuple.** Per
   sub-block: the `clipInfo` writes (~:1053/1056, 1121/1123, 1188/1190,
@@ -81,14 +89,25 @@ concerns inside each of the (up to 4) per-water-vertex sub-blocks
   handle resolution). The gate is INTERLEAVED inside each sub-block (project
   + reduce stay; the stores + handles + bulk go) - NOT one contiguous range.
 
-### 3.1 The gate predicate (load-bearing - get this exactly right)
+### 3.1 The gate predicate (load-bearing - RESOLVED M1a: single shared source)
 
-Gate (ii) on **`gos_terrain_indirect::IsFrameSolidArmed()`**, encoded
-**byte-identical** to `Terrain::renderWater`'s loop early-return conjunction
-`s_fastPath && gos_terrain_indirect::IsFrameSolidArmed() &&
-WaterStream::IsReady() && WaterStream::GetRecipeCount() > 0 &&
-terrainTextures2` (`terrain.cpp` ~:1209-1217), mirrored EXACTLY per the
-existing "MUST stay byte-identical" contract at `terrain.cpp` ~:1184.
+**FORK M1 RESOLVED -> M1a (user, 2026-05-17): extract ONE shared
+predicate.** Add a single callable - `Terrain::WaterFastPathOwnsArmedDraw()`
+(or a `gos_terrain_indirect` sibling; plan picks the exact home) - that
+encapsulates the FULL conjunction including the `s_fastPath` definition
+(`getenv("MC2_RENDER_WATER_FASTPATH") != nullptr ||
+gpu_driven::IsWaterEnabled()`) + `gos_terrain_indirect::IsFrameSolidArmed()`
++ `WaterStream::IsReady()` + `WaterStream::GetRecipeCount() > 0` +
+`Terrain::terrainTextures2 != nullptr`. `Terrain::renderWater`'s
+early-return (`terrain.cpp` ~:1209-1217) is refactored to CALL it, and the
+new `quad.cpp` (ii) gate calls the SAME helper. This RETIRES the
+already-documented-fragile `terrain.cpp` ~:1184 "MUST stay byte-identical"
+hand-copy contract (single source of truth -> zero drift-regression risk;
+the `s_fastPath` function-static is no longer hand-reconstructed anywhere).
+Minimal-touch-justified: S6 already modifies the predicate's consumer, so
+bringing the predicate to a single source is the modern-when-touched move,
+not unrelated cleanup. **Do NOT gate on `IsFrameMaskWaterArmed()`**
+(grep-verified dead, zero consumers).
 
 **Do NOT gate on `IsFrameMaskWaterArmed()`** (`gos_terrain_mask_dispatch.cpp`
 ~:170): grep-verified ZERO consumers anywhere - it is a DEAD predicate (an
@@ -327,8 +346,13 @@ transition.
   `IsFrameSolidArmed()` edge, assert match) as a third execute-gate -
   definitively safe, more instrumentation.
 
-Plan is NOT written until M1 and M2b are resolved by the user. M2a is locked
-(boundary rule above).
+**BOTH FORKS RESOLVED (user, 2026-05-17): M1 -> M1a (shared predicate
+`WaterFastPathOwnsArmedDraw()`, retires the `:1184` hand-copy); M2b ->
+M2b-i (accept the 1-frame transition pop, promise relaxed to steady-state,
+NO arm-transition probe).** M2a locked (boundary rule). Spec is now
+PLAN-READY. Execution remains gated ONLY on the two Section 7 execute-gates
+(user-driven worst-case Tracy cost baseline + post-change `[WATER_INVPROJ
+v1] result=identical`).
 
 ## 9. Discipline
 
