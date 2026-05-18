@@ -279,11 +279,56 @@ FOLDED (unambiguous):
   a possibly-visible 1-frame cosmetic trapezoid pop as out-of-scope (needs
   USER ruling vs the §1 zero-minimap-change promise).
 
-Resolution path: M2a is grounded first (substitutivity-verification advisor:
-does moving clipInfo into (i) stay parity-identical AND fully close the
-cross-frame feedback so the canary becomes sufficient?); then both forks
-surfaced to the user for the M1a/M1b touch decision and the M2a/M2b
-minimap-promise decision. Plan is NOT written until both forks are resolved.
+### 8c-UPDATE: M2 re-blessed (substitutivity-verification advisor, 2026-05-17)
+
+**M2a is ADOPTED as a settled boundary rule, NOT a fork.** Grounded:
+`clipData` is produced wholly by the (i) projection
+(`clipData = eye->projectForTerrainAdmission(...)`, then `if(!isVisible)
+clipData=false`) with ZERO (ii) dependency; the `clipInfo = clipData` write
+is ALREADY physically above the proposed (ii) boundary today, so "keep it in
+(i)" is parity-identical-to-today by construction and breaks no consumer
+(every `clipInfo` reader uses it as a reset-then-set boolean, never as a
+written-ness "water-drew" sentinel). **S6 (ii)-gate boundary RULE: the
+`clipInfo = clipData` assignment(s) stay above the gate (in (i)),
+unconditional.** Free, correct, mandatory.
+
+**But M2a does NOT make the canary sufficient — the adversarial's deeper
+premise was FALSE.** The cross-arm-transition variance in next-frame
+`clipped1/clipped2` does NOT originate in (ii)'s clipInfo write. It
+originates in: (a) slimReduce (`terrain.cpp:~1668`) unconditionally stamping
+EVERY vertex's `clipInfo` with a TERRAIN-Z admission every frame, before
+setupTextures; and (b) (i) being entered at all only when the
+slimReduce-derived `clipped1||clipped2` is true and `calcThisFrame&2` is
+clear. M2a touches neither. So a bounded 1-frame 6-tuple/minimap-trapezoid
+pop across the `IsFrameSolidArmed()` edge (intro-pan -> mission) can still
+occur, and the `[WATER_INVPROJ v1]` STEADY-STATE canary structurally cannot
+see it (it latches A-vs-B within one frame, never frame-N vs frame-N+1
+across an arm edge). This residual is intrinsic to the existing
+slimReduce/clipped-gate machinery, NOT introduced by S6's (ii) gate - S6
+merely makes one frame's water-corner 6-tuple contribution blink at the
+transition.
+
+### 8c-FORKS still requiring user sign-off before plan
+
+- **(M1) predicate single-sourcing** - unchanged from above: (M1a) extract
+  shared `WaterFastPathOwnsArmedDraw()` both sites call (retires the fragile
+  `:1184` hand-copy; touches `renderWater`; minimal-touch-favored) vs (M1b)
+  verbatim reconstruct incl. full `s_fastPath` def + char-for-char V-check
+  (smaller blast radius; keeps fragile contract a 3rd time).
+- **(M2b) the intrinsic 1-frame arm-transition minimap pop** (M2a adopted
+  regardless): (M2b-i) ACCEPT it as cosmetically negligible - the 6-tuple
+  feeds ONLY `setInverseProject` -> the minimap camera-footprint trapezoid
+  (`terrain.cpp:~1928`); one frame of slightly-off screen->world extrema at
+  the intro-pan->mission edge, never during gameplay; this RELAXES the
+  Section 1 "zero behaviour change to the minimap" promise to "zero
+  steady-state change; one cosmetically-negligible transition frame" - a
+  USER ruling. vs (M2b-ii) add a MANDATORY arm-transition parity probe
+  (snapshot the 6-tuple on the last armed + first unarmed frame across an
+  `IsFrameSolidArmed()` edge, assert match) as a third execute-gate -
+  definitively safe, more instrumentation.
+
+Plan is NOT written until M1 and M2b are resolved by the user. M2a is locked
+(boundary rule above).
 
 ## 9. Discipline
 
