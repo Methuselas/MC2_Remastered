@@ -1351,3 +1351,297 @@ precondition (FBO/matrix/consumer EXISTS; submission path DOES NOT).
 
 Recorded as the primary reason for the BUILD-FIRST verdict. CP-1 (per-mission reset)
 is a secondary sequencing constraint that must also be resolved.
+
+---
+
+## Blocker 5: same-frame deregister ordering
+
+Date: 2026-05-18
+Status: PASS with one ordering constraint (OC-1) that Plan 2 must enforce.
+
+All file:line citations grep-verified at write time.
+
+---
+
+### Step 1: Grep-verified per-frame sequence
+
+#### Grep runs executed
+
+Frame-loop entry points:
+  rg -n "DoGameLogic|draw_screen|UpdateRenderers|Environment.DoGameLogic"
+     GameOS/gameos/gameosmain.cpp
+
+Mission logic sequence:
+  rg -n "eye->update|ObjectManager->update|ObjectManager->updateCollisions|Mission::update"
+     code/mission.cpp
+
+Collision -> deregister path:
+  rg -n "OBJECT_FLAG_FALLING|setTangible|handleCollision|TERROBJ_TREE"
+     code/terrobj.cpp
+
+Registry / cull / draw sequence:
+  rg -n "frameBegin|GpuStaticPropRegistry::flush|compute_dispatch|GpuStaticPropBatcher"
+     code/gamecam.cpp mclib/txmmgr.cpp
+
+TerrainObject::update FALLING check:
+  rg -n "OBJECT_FLAG_FALLING|ownerForcesDynamic|appearanceClaimsStatic|invalidateStaticRegistration"
+     code/terrobj.cpp
+
+#### Verified frame sequence (ordered, with file:line)
+
+The game main loop (gameosmain.cpp main loop) calls two distinct phases per frame
+in this order:
+
+PHASE A -- DoGameLogic (gameosmain.cpp:1025, Environment.DoGameLogic = mechcmd2.cpp:2139):
+  -> mission->update() (mechcmd2.cpp:2241, = mission.cpp:263 Mission::update)
+     Inside Mission::update():
+     A1. eye->update()                      (mission.cpp:476)
+     A2. land->geometry()                   (mission.cpp:505)
+     A3. ObjectManager->update(t,t,t)       (mission.cpp:510, = objmgr.cpp:1884
+                                             GameObjectManager::update)
+         For each terrain object in active blocks: TerrainObject::update()
+         (code/terrobj.cpp:715-752). This checks OBJECT_FLAG_FALLING
+         (terrobj.cpp:716 ownerForcesDynamic) and calls
+         appearance->invalidateStaticRegistration() if falling (terrobj.cpp:728).
+         Since severed decoratives are NOT in objBlockInfo ranges, this step
+         does NOT run for severed decoratives.
+     A4. ObjectManager->updateCollisions()  (mission.cpp:535)
+         -> CollisionSystem::checkObjects() (collsn.cpp:445)
+         -> objList[i]->handleStaticCollision() (collsn.cpp:468,505)
+         -> BattleMech::handleStaticCollision (mech.cpp:1103) or other mover
+         -> ObjectManager->detectStaticCollision (mech.cpp:1128, etc.)
+         -> collisionSystem->detectStaticCollision (objmgr.cpp:2853)
+         -> resolves to TerrainObjectType::handleCollision (terrobj.cpp:345)
+         -> TERROBJ_TREE branch (terrobj.cpp:369):
+              terrobj.cpp:385: guard (!FALLEN && !FALLING)
+              terrobj.cpp:386: tree->setFlag(OBJECT_FLAG_FALLING, true)
+              terrobj.cpp:393: tree->setTangible(false)
+              [Plan 2 insertion point: StaticDecorativeSet::deregister(handle)
+               MUST be called here, at terrobj.cpp:393, same callsite as
+               setTangible(false) -- see OC-1 below]
+
+PHASE B -- draw_screen (gameosmain.cpp:1042):
+  -> UpdateRenderers() (mechcmd2.cpp:698)
+  -> mission->render() (mechcmd2.cpp:738, = mission.cpp:770 Mission::render)
+  -> eye->render() (mission.cpp:784, = GameCamera::render() gamecam.cpp)
+     Inside GameCamera::render():
+     B1. GpuStaticPropRegistry::frameBegin()   (gamecam.cpp:201)
+         Clears s_liveRangeIndices (gos_static_prop_registry.cpp:226).
+         [For StaticDecorativeSet: analogously resets per-frame GPU cull state]
+     B2. land->render()                         (gamecam.cpp:202) -- terrain
+     B3. ObjectManager->render(t,t,t)           (gamecam.cpp:213)
+         For each object in active objBlockInfo ranges: calls render().
+         Re-admitted fall objects (re-entered objBlockInfo via OC-1) render here
+         via the dynamic path (OBJECT_FLAG_FALLING is set; IsStaticNow() returns
+         false because ownerForcesDynamic is set; the registry entry is tombstoned
+         so the static path is NOT taken). Severed decoratives that are NOT
+         re-admitted are not in the ranges and do NOT render here.
+     B4. mcTextureManager->renderLists()        (gamecam.cpp:245)
+         Inside renderLists() (txmmgr.cpp:1332), Render.GpuStaticProps scope
+         (txmmgr.cpp:1753):
+         B4a. GpuStaticPropRegistry::flush()    (txmmgr.cpp:1763)
+              Iterates s_liveRangeIndices; tombstoned entries (count==0) are
+              skipped (gos_static_prop_registry.cpp:327 tombstone guard).
+              [For StaticDecorativeSet: analogous flush checks instance SSBO
+               liveness field; tombstoned instance is not submitted]
+         B4b. batcher_prepareBaseInstanceTable() (txmmgr.cpp:1768)
+         B4c. gpu_cull::compute_dispatch()       (txmmgr.cpp:1778)
+              Cull compute shader reads the instance SSBO (including liveness).
+              [For StaticDecorativeSet: cull shader reads liveness field; zero
+               liveness = instance culled, writes instanceCount=0 in indirect
+               command buffer]
+         B4d. GpuStaticPropBatcher::instance().flush() (txmmgr.cpp:1781)
+              Calls glMultiDrawElementsIndirect. Tombstoned/zero-count command
+              draws nothing.
+
+Phase A runs entirely before Phase B in the same frame (gameosmain.cpp:1025 before :1042).
+Within Phase A, ObjectManager->updateCollisions() (A4) runs AFTER
+ObjectManager->update() (A3) but entirely within DoGameLogic, before draw_screen begins.
+
+---
+
+### Step 2: No-double-tree / no-gap sequence
+
+The no-double-tree guarantee is grounded in the Phase A / Phase B ordering above.
+
+#### Exact ordered sequence on the hit frame
+
+Step 1 (Phase A, A4, terrobj.cpp:393): Hit detected. OBJECT_FLAG_FALLING set
+  (terrobj.cpp:386) and setTangible(false) (terrobj.cpp:393). These happen during
+  ObjectManager->updateCollisions() in Phase A, before Phase B begins.
+
+Step 2 (Plan 2 insertion, same callsite terrobj.cpp:393):
+  StaticDecorativeSet::deregister(handle) is called immediately after
+  setTangible(false). It writes the tombstone (liveness field = 0) into the
+  CPU-side instance SSBO mapping for this instance. This is the ONLY write that
+  must happen at this callsite (see OC-1 for SSBO visibility constraint).
+  The object is simultaneously re-admitted to the dynamic path: its block-range
+  effective count is restored (HC-2 severance reversed for this instance only),
+  so ObjectManager->render() can reach it in Step 5.
+
+Step 3 (Phase B, B3): ObjectManager->render() -- the re-admitted fall object
+  renders via the dynamic path. OBJECT_FLAG_FALLING is set; IsStaticNow() returns
+  false; the object's registry entry is tombstoned (count=0) so even if it were
+  still in the registry, flush() would skip it. The dynamic render enqueues its
+  mesh into the master arrays at the current (upright) pose. This is the one and
+  only draw of this object this frame.
+
+Step 4 (Phase B, B4a): GpuStaticPropRegistry::flush() / StaticDecorativeSet flush.
+  The tombstoned instance (liveness=0) is skipped. It is NOT submitted to the
+  batcher or the cull-compute substrate.
+
+Step 5 (Phase B, B4c): compute_dispatch(). The cull compute shader reads the
+  instance SSBO. The tombstoned instance has liveness=0; the shader writes
+  instanceCount=0 for that slot in the indirect command buffer.
+
+Step 6 (Phase B, B4d): glMultiDrawElementsIndirect. The tombstoned instance's
+  indirect command has instanceCount=0 and draws nothing. Only the dynamic fall
+  object (enqueued in Step 3) is visible.
+
+#### Which step provides the guarantee
+
+The guarantee is provided by the Phase A / Phase B ordering:
+  - Steps 1-2 (tombstone write + re-admit) complete during Phase A
+    (DoGameLogic -> ObjectManager->updateCollisions(), mission.cpp:535)
+  - Steps 3-6 (dynamic draw + static skip) run during Phase B (draw_screen)
+  - Phase A completes before Phase B begins (gameosmain.cpp:1025 before :1042)
+
+Therefore: on the frame the hit lands, the tombstone is written in Phase A and is
+visible to all of Phase B. The dynamic object is re-admitted in Phase A and rendered
+in Phase B Step 3. The static indirect draw (Phase B Step 6) skips the tombstoned
+instance. The screen shows exactly one representation -- the dynamic fall object at
+its upright pose, identical to what the static path would have drawn, with the fall
+animation starting on the following frame (when ObjectManager->update() processes
+OBJECT_FLAG_FALLING for the re-admitted object).
+
+Never both: the static instance is tombstoned (Steps 4-6 skip it) in the same Phase B
+where the dynamic object draws (Step 3). They are mutually exclusive by construction.
+
+Never neither: the dynamic fall object is re-admitted to objBlockInfo in Step 2 (Phase A)
+before ObjectManager->render() runs in Step 3 (Phase B). It renders this frame.
+The static instance would have drawn via the indirect path (Phase B Steps 4-6); since it
+is now tombstoned, only the dynamic object draws. There is no frame where neither draws.
+
+---
+
+### Step 3: Tombstone/generation mechanics
+
+#### Tombstone field
+
+Name: liveness field (per-instance flag) within the instance SSBO.
+Width: 1 byte (uint8 packed into the per-instance record, or 1 uint32 with value 0/1
+for alignment; exact encoding is a Plan 2 C++/GLSL struct lockstep decision per
+cpp_glsl_ubo_struct_lockstep).
+Location: the instance SSBO (per design spec Section 4: "Liveness/generation/tombstone
+state is the ONLY mutable GPU-resident field"). The SSBO layout places this field
+adjacent to the immutable geometry/LOD/material fields baked at mission load. Only
+deregister(handle) may write it; all other SSBO fields are immutable post-bake.
+
+#### How the cull-compute reads it
+
+The cull compute shader iterates over the instance SSBO. For each instance it checks
+the liveness field. If liveness == 0, the instance is skipped: the shader writes
+instanceCount = 0 for that slot in the indirect command buffer. This is the tombstone
+predicate -- no geometry is dispatched for tombstoned instances.
+
+#### Generation field
+
+Width: 1 uint32 per instance slot, stored alongside liveness in the SSBO.
+Purpose: prevents stale handle references after slot reuse. A deregister call
+increments the generation for that slot; any subsequent collision-proxy lookup that
+presents the old (handle, generation) pair gets rejected.
+Initial value: 0 at mission load. For static decoratives (which never leave objList,
+per HC-3), the generation is never incremented during a mission; the generation field
+is a defensive guard for slot-reuse at mission reload or future feature work. It carries
+zero per-frame cost.
+Reuse policy: mission-lifetime. Slot assignments are fixed at mission load and never
+compacted (HC-1 invariant). A deregistered decorative's slot is tombstoned (liveness=0)
+and its generation is incremented; the slot is NOT reassigned during the mission.
+The tombstoned slot persists as a zero-draw no-op for the remainder of the mission.
+This is consistent with the HC-3 "object still exists in objList" policy: the SSBO
+slot mirrors the objList slot's existence.
+
+#### Tie to Blocker 3 deregister hook (terrobj.cpp:393)
+
+Blocker 3 established: proxyEntry.tangible is cleared at terrobj.cpp:393, the same
+callsite as setTangible(false), making collision-proxy deregister and render-instance
+deregister atomic at one callsite.
+
+The StaticDecorativeSet::deregister(handle) SSBO liveness write is added to the SAME
+callsite at terrobj.cpp:393. The three operations at this single callsite become:
+  (a) tree->setTangible(false)                   (existing, terrobj.cpp:393)
+  (b) proxyEntry.tangible = false                (Blocker 3, same callsite)
+  (c) StaticDecorativeSet::deregister(handle)    (this blocker, same callsite)
+       -- writes liveness=0 in SSBO
+       -- increments generation for that slot
+       -- re-admits the object to dynamic objBlockInfo range
+
+All three fire atomically at the same callsite, guarded by the existing
+!FALLEN && !FALLING idempotence check (terrobj.cpp:385). The guard ensures
+deregister is called exactly once per tree per mission.
+
+SSBO visibility at deregister time: The liveness write in deregister(handle) writes
+to the CPU-side view of the instance SSBO. This write must be GPU-visible before
+compute_dispatch() (txmmgr.cpp:1778) reads the SSBO in Phase B. This is satisfied by
+the Phase A / Phase B ordering (deregister fires in Phase A at mission.cpp:535; compute
+fires in Phase B at txmmgr.cpp:1778, which is a separate draw_screen call after
+DoGameLogic completes). The mechanism for visibility is OC-1 below.
+
+---
+
+### Step 4 (Exit criterion)
+
+#### Ordering constraint OC-1 (Plan 2 must enforce)
+
+CONSTRAINT: StaticDecorativeSet::deregister(handle) must write the instance SSBO
+liveness field using a mechanism that guarantees GPU visibility BEFORE
+compute_dispatch() (txmmgr.cpp:1778) reads that SSBO in the same frame.
+
+INSERTION POINT: terrobj.cpp:393 (same callsite as setTangible(false), Phase A).
+
+MECHANISM CHOICE (Plan 2 decision, two options):
+  Option A (preferred): Use a coherent persistent-mapped BAR SSBO for liveness.
+    CPU writes to the mapped liveness field are immediately visible to the GPU
+    without an explicit glBufferSubData or glMemoryBarrier call. This is the
+    lowest-latency path and matches the "no readback / no sync stall" design
+    contract (spec Section 5: honors substrate_coalesce_sync_point_lesson).
+  Option B (fallback): Use glBufferSubData for the liveness field in deregister().
+    The upload must happen before compute_dispatch(). Since deregister fires in
+    Phase A and compute_dispatch fires in Phase B, the Phase A / Phase B ordering
+    already provides the necessary sequencing. An explicit glMemoryBarrier
+    (GL_SHADER_STORAGE_BARRIER_BIT) before compute_dispatch() (txmmgr.cpp:1778)
+    ensures coherence. Plan 2 must add this barrier if not already present.
+
+Either option satisfies OC-1. The choice is a Plan 2 implementation decision.
+The ordering guarantee (Phase A before Phase B) is structural and holds regardless
+of which option is chosen.
+
+DYNAMIC RE-ADMIT insertion point (Plan 2 must also enforce):
+  Also at terrobj.cpp:393 callsite: StaticDecorativeSet::deregister(handle) must
+  restore the object to the per-block effective count (reverse the HC-2 severance
+  for this slot only) so ObjectManager->render() (B3) can reach it this frame.
+  The re-admit must happen BEFORE Phase B begins, i.e., within Phase A at the
+  deregister callsite. Since the callsite is terrobj.cpp:393 in Phase A, this
+  constraint is satisfied by construction if the re-admit is part of deregister().
+
+#### Verdict
+
+PASS.
+
+The Phase A / Phase B ordering provides a written, grep-verified guarantee that for
+ANY frame where the hit lands:
+- The tombstone write (liveness=0) happens in Phase A (mission.cpp:535 via terrobj.cpp:393)
+  before the cull-compute and indirect draw in Phase B (txmmgr.cpp:1778, :1781).
+- The dynamic fall object is re-admitted in Phase A (terrobj.cpp:393 deregister callsite)
+  before ObjectManager->render() in Phase B (gamecam.cpp:213).
+- The draw shows exactly one representation: the dynamic fall object (Phase B B3),
+  not the static GPU-resident instance (skipped by tombstone in Phase B B4a-B4d).
+- Never both: static instance is tombstoned before indirect draw.
+- Never neither: dynamic fall object is re-admitted before render.
+
+The only un-resolved item is the SSBO liveness write mechanism (OC-1, Option A vs B),
+which is a Plan 2 implementation choice, not a blocker. The ordering guarantee holds
+under both options. OC-1 is NOT an OPEN blocker; it is a specification precondition
+for Plan 2.
+
+No new OPEN blockers from this task.
