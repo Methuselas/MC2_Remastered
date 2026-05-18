@@ -1881,6 +1881,11 @@ void Terrain::geometry (void)
 		const float bMostW   = mostW;
 		const float bLeastWY = leastWY;
 		const float bMostWY  = mostWY;
+		// Exact bitwise == is DELIBERATE, not a bug: min/max of a superset
+		// that adds nothing is bitwise-identical, so any real unique extrema
+		// from the water block must show. Do NOT add an epsilon/tolerance -
+		// it would mask a genuine unique contribution and silently defeat
+		// this S6 substitutive go/no-go instrument.
 		const bool identical =
 			(aLeastZ  == bLeastZ)  && (aMostZ  == bMostZ)  &&
 			(aLeastW  == bLeastW)  && (aMostW  == bMostW)  &&
