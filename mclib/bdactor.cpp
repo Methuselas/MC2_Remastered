@@ -1168,8 +1168,6 @@ bool BldgAppearance::recalcBounds (void)
 
 	inView = false;
 
-	float distanceToEye = 0.0f;
-
 	if (eye)
 	{
 		//-------------------------------------------------------------------
@@ -1177,7 +1175,7 @@ bool BldgAppearance::recalcBounds (void)
 		inView = true;
 
 		// [TOBJSPLIT v1] ANGULAR bracket: matrix-free sphere angular clip.
-		// Disjoint from PROJ below; reads cycle counter immediately before/after.
+		// Reads cycle counter immediately before/after.
 		{
 		unsigned long long _tsA = s_tobjSplitBdOn ? __rdtsc() : 0ULL;
 		if (eye->usePerspective)
@@ -1192,7 +1190,7 @@ bool BldgAppearance::recalcBounds (void)
 			Stuff::Vector3D objectCenter;
 			objectCenter.Subtract(position,cameraPos);
 			Camera::cameraFrame.trans_to_frame(objectCenter);
-			distanceToEye = objectCenter.GetApproximateLength();
+			float distanceToEye = objectCenter.GetApproximateLength();
 			float clip_distance = fabs(1.0f / objectCenter.y);
 
 			//Is vertex on Screen OR close enough to screen that its triangle MAY be visible?
