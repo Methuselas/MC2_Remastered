@@ -47,14 +47,13 @@ const float SKY_AMBIENT        = 0.18;   // brightness floor (camera-independent
 //     Camera-INDEPENDENT: f(WaterThickness, nz=f(WorldPos,time), distance).
 //     Pure-FS, hot-reloadable; all values tune-by-eye. ---
 const float FOAM_DEPTH_MIN   = 0.0;   // world-u: full foam at/under this depth
-const float FOAM_DEPTH_MAX   = 6.0;   // world-u: foam gone beyond this depth (surf-band width)
+const float FOAM_DEPTH_MAX   = 8.0;   // world-u: foam gone beyond this depth (surf-band width; 6->8 for visibility)
 const float FOAM_NOISE_AMP   = 2.5;   // world-u: nz perturbs the band edge -> irregular + moving (not a clean ring)
-const float FOAM_BREAK_LO    = 0.45;  // nz(0..1) below this -> no froth (patchiness lo edge)
-const float FOAM_BREAK_HI    = 0.85;  // nz(0..1) above this -> full froth (patchiness hi edge)
-const float FOAM_INTENSITY   = 0.85;  // white blend strength at the waterline
+const float FOAM_TEX_VAR     = 0.45;  // nz texture variation, ALWAYS-ON (foam = band*((1-VAR)+VAR*nz01)). Replaces the old smoothstep "break" gate which zeroed foam (nz is ~zero-mean -> sat in the dead band)
+const float FOAM_INTENSITY   = 1.00;  // white blend strength at waterline (BOLD first pass; dial DOWN by eye if too much)
 const vec3  FOAM_COLOR       = vec3(0.90, 0.95, 0.96);  // near-white, faint cool blue-green surf
-const float FOAM_ALPHA_BOOST = 0.60;  // foam is NOT see-through: added to alpha where foamy
-const float SHORE_NOISE_AMP  = 1.5;   // world-u: nz perturbs the kill/feather boundary -> wavy coastline (breaks the faceted water-quad silhouette)
+const float FOAM_ALPHA_BOOST = 0.90;  // foam is NOT see-through: near-opaque surf
+const float SHORE_NOISE_AMP  = 5.0;   // world-u: nz perturbs the kill/feather boundary -> wavy coastline (1.5 was too subtle; 5 = pronounced)
 // --- camera-INDEPENDENT procedural water detail (BAR-style: 2 fBm layers,
 //     OPPOSITE scroll dirs -> organic churn, no grid). f(WorldPos,time) only. ---
 const float WAVE_FREQ   = 0.030;   // 1/world-u; lower = bigger waves, visible at zoom-out
@@ -179,9 +178,12 @@ void main(void)
         // not see-through) so it adds to alpha.
         PREC float foamBand  = smoothstep(FOAM_DEPTH_MAX, FOAM_DEPTH_MIN,
                                           WaterThickness + nz * FOAM_NOISE_AMP);
-        PREC float foamBreak = smoothstep(FOAM_BREAK_LO, FOAM_BREAK_HI,
-                                          nz * 0.5 + 0.5);
-        PREC float foam = clamp(foamBand * foamBreak * FOAM_INTENSITY * waveLOD,
+        // Always-on gentle nz texture (NOT a hard gate): foam is present
+        // across the whole shallow band, nz only varies its intensity ->
+        // organic surf, never zeroed. (The prior smoothstep "break" sat in
+        // nz's ~zero-mean dead band and killed foam entirely.)
+        PREC float foamTex = (1.0 - FOAM_TEX_VAR) + FOAM_TEX_VAR * (nz * 0.5 + 0.5);
+        PREC float foam = clamp(foamBand * foamTex * FOAM_INTENSITY * waveLOD,
                                 0.0, 1.0);
         col = mix(col, FOAM_COLOR, foam);
         PREC float wAlpha = clamp(shore * WATER_MAX_ALPHA
