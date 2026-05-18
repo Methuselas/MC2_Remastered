@@ -3006,24 +3006,23 @@ void ComputeDispatch() {
                 const float z_gpuw =
                     (czT / cwT) + mc2depth::WATER_DEPTH_FUDGE_FAST;
 
-                // DECAL: mirror terrain_overlay.vert:36 (px.z = clip.z/clip.w,
-                // NO additive fudge constant) + the glPolygonOffset(-1,-1) at
-                // gameos_graphics.cpp:7062/7171/7236 as its NDC-equivalent
-                // depth bias. The decal binds getTerrainMVP()==terrain_mvp_
-                // (the LIVE matrix, NOT the dispatch MVP -- see
-                // gameos_graphics.cpp:7014 uploadOverlayUniforms_). Documented
-                // polygon-offset approximation: in the [0,1] glClipControl
-                // depth regime, glPolygonOffset(factor,units) adds
-                // factor*maxDepthSlope + units*r, where r is the minimum
-                // resolvable depth increment. We cannot read the rasterizer's
-                // per-primitive maxDepthSlope from the CPU; for a near-planar
-                // water-coincident decal the slope term is small, so we model
-                // the bias as units*r with the conventional 24-bit-depth
-                // r ~= 2^-23 ~= 1.19e-7 and units=-1 -> ndcBias ~= -1.19e-7.
-                // This is an APPROXIMATION (slope term omitted) and is labeled
-                // approx in the emit; the decal's true bias is rasterizer
-                // state we cannot mirror byte-faithfully -- its z_decal is the
-                // least-trustworthy field and is flagged as such.
+                // DECAL: mirror terrain_overlay.vert (px.z = clip.z/clip.w,
+                // NO additive fudge constant). Fix B removed the host-side
+                // glPolygonOffset(-1,-1) calls from the overlay/decal draws in
+                // gameos_graphics.cpp; depth ordering for decals/overlays over
+                // terrain is now carried exclusively by the in-shader constant
+                // OVERLAY_DEPTH_BIAS (signed clip-z bias), single-sourced via
+                // shaders/include/terrain_depth_bias.hglsl and
+                // mclib/terrain_depth_bias.h. The decal binds
+                // getTerrainMVP()==terrain_mvp_ (the LIVE matrix, NOT the
+                // dispatch MVP -- see uploadOverlayUniforms_ in
+                // gameos_graphics.cpp). kPolyOffsetNdcApprox below preserves
+                // the historical polygon-offset NDC approximation (units=-1,
+                // 24-bit r ~= 2^-23 ~= 1.19e-7, slope term omitted) as a
+                // CPU-side constant for probe parity; it no longer mirrors live
+                // rasterizer state. z_decal is an APPROXIMATION and is labeled
+                // approx in the emit; it remains the least-trustworthy field
+                // and is flagged as such.
                 const float* liveMvp = gos_GetTerrainMVPMat4();
                 float z_decal = 0.0f;
                 int   decalOk = 0;
