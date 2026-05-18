@@ -468,7 +468,7 @@ long Mission::update (void)
 #endif
 
 		ZoneScopedN("GameLogic.Mission.Update");
-		mcTextureManager->clearArrays();
+		{ ZoneScopedN("Mission.clearArrays"); mcTextureManager->clearArrays(); }
 
 		if (missionInterface)
 			{ ZoneScopedN("GameLogic.Mission.Interface"); missionInterface->update(); }

@@ -1895,6 +1895,7 @@ void GameObjectManager::renderShadows (bool terrain, bool movers, bool other) {
 
 void GameObjectManager::update (bool terrain, bool movers, bool other)
 {
+	ZoneScopedN("GameObjectManager::update");
 	//----------------------------
 	// Now, update game objects...
 
@@ -1905,6 +1906,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 	// conservative_or_admits counters) fires even without LIFECYCLE wired.
 	// readback_buildActorVisSnapshot is no-op-cheap when no good slot exists.
 	if (s_gpuCullLifecycle || gpu_cull::readback_isEnabled()) {
+		ZoneScopedN("GOM.readbackSnapshot");
 		// Max handle is bounded by maxObjects + slack; 4096 is safe for MC2 (~2000 max).
 		gpu_cull::readback_buildActorVisSnapshot(4096u);
 	}
@@ -1913,6 +1915,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 	// framesSinceActive. One sweep over objList covers every GameObject this
 	// manager owns. Uses the three virtual accessors added on GameObject base.
 	{
+		ZoneScopedN("GOM.framesSinceActive sweep");
 		const long maxObjs = getMaxObjects();
 		for (long i = 1; i <= maxObjs; i++) {
 			GameObjectPtr obj = objList[i];
@@ -1957,7 +1960,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 	// smearing.  See the LODBUG/pause-smear investigation 2026-05-13
 	// and pause_unpause_diagnostic_for_static_render_bugs.md.
 
-	updateCaptureList();
+	{ ZoneScopedN("GOM.captureList"); updateCaptureList(); }
 
 	if (terrain && renderObjects)
 	{
@@ -2204,7 +2207,7 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 
 	// C0-3: finalize GPU cull substrate SSBO for this frame.
 	// Called unconditionally — substrate_flushUpload internally checks isEnabled().
-	gpu_cull::substrate_flushUpload();
+	{ ZoneScopedN("GOM.substrateFlushUpload"); gpu_cull::substrate_flushUpload(); }
 }
 
 //---------------------------------------------------------------------------
