@@ -109,10 +109,22 @@ uniform-set lambda block (~`:2275-2298`, which already pushes
 - `setMF("atlasMapTopLeftX", gos_terrain_indirect_getAtlasMapTopLeftX())`,
   same for `atlasMapTopLeftY`, `atlasOneOverWorldUnits`.
 - `setMI("reflTex", 2)`.
-- `setMI("reflectionOn", reflOn)` where
-  `int reflOn = (gos_terrain_indirect::IsFrameSolidArmed()
-  && gos_terrain_indirect_getAtlasGLTex() != 0) ? 1 : 0;`
-- Bind `gos_terrain_indirect_getAtlasGLTex()` to **texture unit 2** using
+- Resolve the atlas handle ONCE, gate, and **only bind on the armed path**:
+  ```
+  GLuint reflTexHandle = gos_terrain_indirect_getAtlasGLTex();
+  int    reflOn = (gos_terrain_indirect::IsFrameSolidArmed()
+                   && reflTexHandle != 0) ? 1 : 0;
+  setMI("reflectionOn", reflOn);
+  if (reflOn) { /* bind reflTexHandle on unit 2 (idiom below) */ }
+  else        { /* do NOT bind anything to unit 2: leave the unit
+                    restored/untouched by the save-restore path */ }
+  ```
+  Rule: when `reflOn == 0`, the C++ side must NOT issue a `glBindTexture` of
+  handle `0` (or anything) to unit 2. The shader skip already prevents
+  sampling; binding `0` would make a missing-atlas bug look intentional and
+  hide R1. The skip is the single source of truth; the bind is conditional
+  on it.
+- When `reflOn`, bind `reflTexHandle` to **texture unit 2** using
   the exact unit-1 save/restore idiom already present (~`:2329-2353`:
   `glGetIntegeri_v(GL_SAMPLER_BINDING,...)` -> `glBindSampler` ->
   `glActiveTexture`+`glBindTexture` -> draw -> restore unit + sampler).
@@ -163,9 +175,29 @@ if (reflectionOn == 1) {
   not introduce a second camera-dependent term (it is distance, already
   present for S1 LOD).
 - Tunable hot-reload consts at the top of the FS (same regime as the S1
-  consts): `REFL_STEPS` (~4-6), `REFL_STEP_LEN`, `REFL_F0`, `REFL_STRENGTH`,
-  `REFL_MAX`. Kept as separate named constants (different regimes stay
-  distinct per the scattered-tuning-constants ruling).
+  consts). The spec owns the first guess (conservative - this is a wash, not
+  a mirror; cap strength low):
+  ```glsl
+  const int   REFL_STEPS    = 5;
+  const float REFL_STEP_LEN = 96.0;   // ~one terrain-tile world distance
+  const float REFL_F0       = 0.02;
+  const float REFL_STRENGTH = 0.35;
+  const float REFL_MAX      = 0.22;   // hard ceiling on the mix factor
+  ```
+  Numbers move during the visual loop; these are the starting point so
+  implementation does not invent them. Kept as separate named constants
+  (different regimes stay distinct per the scattered-tuning-constants
+  ruling).
+- **Reflected-ray sign acceptance criterion (do NOT "fix" by intuition):**
+  the march direction is the mirror ray's XY projection
+  (`reflect(-vdir, waveNormal).xy`), NOT "toward shore". Because the
+  algorithm ignores terrain height and samples colormap XY only, the visual
+  direction can feel counterintuitive during tuning. If the first visual
+  pass appears directionally reversed, the **adversarial review must verify
+  the sign against the incident/reflection convention before anyone changes
+  constants or flips a sign**. The convention here
+  (`vdir = cameraPos - WorldPos`, `reflect(-vdir, n)`) is the physically
+  correct one for "what the water reflects".
 
 ### 4.3 Graceful fallback (load-bearing, not optional)
 
@@ -202,6 +234,20 @@ grazing angles a black mix darkens water; the skip is correct).
 - **R4 (MINOR) `GL_LINEAR`/no-mips shimmer.** Distant/oblique reflection
   taps will shimmer (no mip filtering on the atlas). Acceptable for an
   intentional smear; noted so it is not later mis-rooted as a new bug.
+- **R5 (MINOR, named limitation) Source is albedo-like terrain colormap,
+  NOT lit scene color.** The atlas is static terrain color - it carries no
+  dynamic lighting, no sun direction, no shadows, no battle-damage/scorch.
+  The reflection will therefore NOT match the lit/shadowed appearance of the
+  terrain it mirrors. This is intentional and accepted for S3 (the whole
+  point of the cheap slice). Named here so a later session does not
+  mis-triage "reflection doesn't match sun/shadows/damage" as a bug and try
+  to wire lit scene color (that is the feedback-loop-blocked SSPR path).
+- **R6 (MINOR, perf-only) Off-map taps still fetch.** The in-bounds
+  `step()` mask multiplies by zero but GLSL arithmetic does not
+  short-circuit, so `texture(reflTex, uv)` is still sampled for off-map
+  steps (clamped, so correctness is fine - only the edge texel is fetched
+  then zeroed). Cost only, not a correctness issue; do not "optimize" it
+  into a branch that breaks uniform control flow.
 - **Camera-independence named contract:** the `vdir`/`reflect`/`fres` block
   is the ONLY `cameraPos`-dependent code added; S1 wave/glint/color stay
   `f(WorldPos,time)`. No `SKY_TINT`/`fres`/`spec` sky terms reintroduced
@@ -248,6 +294,11 @@ second-dispatch design.
 - **V5:** confirm `waveNormal` and `waveLOD` symbols exist in the current
   `o_isWater==1` branch (S1 as-built, commit `89d329b`) with the meanings
   reused here; if renamed, bind to the current symbols.
+- **V6 (carry into plan):** the `setM*` uniform setter must tolerate a
+  missing/optimized-out uniform location the same way the existing helpers
+  do (a tuning pass that compiles out `reflectionOn`/`REFL_*` must not
+  crash/assert). Confirm the existing `setM*` path is location-tolerant; if
+  not, the plan adds the guard.
 
 ## 8. Gates
 
@@ -261,10 +312,13 @@ second-dispatch design.
   ONLY - never `mc2-win64-v0.4` (concurrent priority session).
 - After redeploy, grep the engine log for `0(N): error` / link error
   (shader hot-reload fails silently on bad compile).
-- Add an env-gated `[WATER_REFL v1]` probe (logs `reflectionOn` decision +
-  atlas handle once per arm transition) so a kill-aware `mc2_01` 30s smoke
-  (`--keep-logs --exe`, marker-gated, exit-code-agnostic) proves the path is
-  live and NOT in silent fallback.
+- Add an env-gated `[WATER_REFL v1]` probe, logged once per arm transition,
+  carrying BOTH the raw atlas handle AND the final `reflectionOn` state AND
+  a cheap reason enum: `reason=solid0` (`!IsFrameSolidArmed()`),
+  `reason=atlas0` (`getAtlasGLTex()==0`), or `reason=on` (`reflectionOn==1`).
+  This makes silent-fallback diagnosis immediate. A kill-aware `mc2_01` 30s
+  smoke (`--keep-logs --exe`, marker-gated, exit-code-agnostic) must show
+  `reason=on` to prove the path is live and NOT in silent fallback.
 - Real gate = USER visual tuning loop on the hot-reload consts: terrain
   colors visibly wash into the water from terrain-adjacent shorelines,
   correct from each camera angle when settled, fuzzed by S1 waves, fades to
