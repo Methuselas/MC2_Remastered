@@ -255,3 +255,83 @@ Plan is NOT written until: the C2/C3 R-a fork is grounded (Fa vs Fb), and
 the spec is revised with the corrected sites (C1), mandated non-zero
 shared constant (M1), and full scope (M3/m-3). Then re-adversarial (the
 revision is substantial).
+
+---
+
+## 11. REVISED DESIGN (post R-a fork grounding, 2026-05-18) - supersedes S3/S4-R-a
+
+The dual-adversarial BLOCK is resolved: approach sound; the fictional R-a
+is replaced by the grounded SYMMETRIC-MIRROR + a mandatory render-path
+probe. This section is authoritative over Sections 3 and 4-R-a.
+
+**STRIKE R-a.** There is NO existing render-VS MVP arm-gate to "mirror"
+(the 926/0 gate `gos_terrain_water_stream.cpp:~1409-1416` feeds the water
+CULL-COMPUTE `u_terrainMVP` ~:1344, not a render VS).
+
+**Root design = symmetric mirror.** Grounded fact: when ARMED, terrain
+draws from `g_dispatchMvp16` (snapshot of `terrain_mvp_` at compute-
+dispatch); when UN-ARMED, `DrawIndirect` early-returns and terrain falls to
+the LEGACY per-quad live path projecting from live `terrain_mvp_`
+(`terrain.cpp:~1069-1089`). So the co-planarity target itself arm-switches
+on `s_frameSolidArmed` the same frame. Water/decal must bind the SAME
+expression terrain effectively uses:
+`IsFrameSolidArmed() ? gos_terrain_indirect_getDispatchMvp16() :
+gos_GetTerrainMVPMat4()` (with the `if(!mvp) mvp=gos_GetTerrainMVPMat4()`
+nullptr-safety exactly as `gos_terrain_water_stream.cpp:~1413`). This is
+INTENTIONAL and REQUIRED: because terrain itself flips source on the same
+gate the same frame, the symmetric flip yields ZERO *relative*
+water-vs-terrain discontinuity in both regimes AND across the transition
+frame (the only thing z-fight/co-planarity cares about). A "no-flip pin to
+one source" would CREATE a relative discontinuity - explicitly rejected.
+
+**Corrected exact edit sites (4):**
+1. `gameos_graphics.cpp:~2153` - non-MDI water `setMat4Direct("terrainMVP",
+   &terrain_mvp_)`. NOT dead: it is the shared pre-amble bind in
+   `renderWaterFastPath`, live whenever `mdiValid` is false. Bind the
+   symmetric-mirror expression.
+2. `gameos_graphics.cpp:~2308` - MDI water `setMMat4Direct("terrainMVP",
+   &terrain_mvp_)`. Same symmetric-mirror.
+3. `uploadOverlayUniforms_()` `gameos_graphics.cpp:~7011-7014` - add an
+   explicit `const float* terrainMvpOverride = nullptr` param (nullptr =>
+   current live `getTerrainMVP()`, unchanged). ONLY `drawDecalStaticBatch`
+   (`~:7176`, the armed static-bake decal path co-planar with armed
+   terrain-solid) passes the symmetric-mirror expression. The two LIVE
+   callers `drawTerrainOverlays` (`~:7066`) and `drawDecals` (`~:7240`)
+   pass nothing => unchanged live behaviour => NO live-overlay regression.
+   **Correction to C1's locs note:** `drawDecalStaticBatch` uses
+   `overlayLocs_`/`overlayProg_` (SHARED with the live `drawTerrainOverlays`),
+   NOT `decalLocs_` - so per-locs-struct dispatch is IMPOSSIBLE; the
+   per-caller argument is mandatory.
+4. Fudge removal: `gos_terrain_water_fast_mdi.vert:~291` +
+   `gos_terrain_water_fast.vert:~365` remove `WATER_DEPTH_FUDGE_FAST`;
+   `terrain_overlay.vert:~36` + the 3 `glPolygonOffset(-1,-1)` sites
+   (`gameos_graphics.cpp:~7062/7171/7236`, all decal-family, none shared
+   w/ terrain/water/shadow) - replace ALL with the SAME single non-zero
+   shared small constant (M1: zero is UNSAFE - regresses the shoreline
+   LEQUAL scar `gos_terrain_water_fast.vert:~328-364`; the live overlay at
+   :7062 has NO other ordering once polygon-offset is gone, so the shared
+   constant in `terrain_overlay.vert` is MANDATORY not optional).
+   Single-sourced in the lockstep `terrain_depth_bias.hglsl`/`.h`.
+
+**Mandatory render-path probe (new spec deliverable, same commit):**
+`MC2_WATER_RENDERPROBE` (env-gated, silent default, demote-not-delete,
+FNV idiom of `[WATER_DEPTHPROBE v1]` `gos_terrain_water_stream.cpp:
+~1431-1437`). Invariant A: FNV(matrix actually uploaded at :2153/:2308/
+:7014-static) == FNV(the cull-feed matrix `gos_terrain_water_stream.cpp:
+~1416`) every armed frame - the canary for the ONE real residual hazard
+(`terrain_mvp_` mutated between the early cull-feed read and the late
+render-bind read within one armed frame). Invariant B: latch the
+arming-transition frame; assert water-render-bind FP == terrain's
+this-frame source FP (dispatch FP if armed, live FP if un-armed). Passing
+Invariant B on a captured arming-transition frame is a RELEASE GATE (it
+substitutes for the un-probed-path risk; RenderDoc cannot catch the
+1-frame transient). If Invariant A ever trips, the fix is to snapshot at a
+single frame point - NOT to abandon the symmetric switch.
+
+Plan-ready. Re-adversarial (the revision is substantial) -> plan ->
+subagent execute. Mandated re-adversarial foci: (a) the symmetric-mirror
+relative-co-planarity argument (prove water==terrain MVP in BOTH regimes +
+across the transition frame), (b) Invariant A intra-frame-mutation hazard,
+(c) the `uploadOverlayUniforms_` per-caller-arg leaving the 2 live callers
+byte-unchanged, (d) M1 non-zero shared constant preserving the shoreline
+LEQUAL invariant at all zooms.
