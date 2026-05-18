@@ -45,14 +45,17 @@ reverse-Z item has its own scoping doc:
 
 ## Two user-decision forks (named, not pre-resolved)
 
-- **Fork B (PIVOTAL - gates the cheapest path & #1's shape):** the
-  load-bearing water ruling *"ZERO perceptible camera-dependence"* blocks
-  depth-driven water (#2) because depth-buffer reads make contact-band
-  extent mildly zoom-dependent. **Does smooth-shoreline/refraction come from
-  DEPTH (cheap, infra ~75% exists, needs the ruling relaxed/qualified) or
-  from a continuous-surface GEOMETRY (#1, ruling-safe, the large keystone)?**
-  This decision cascades through #1 (its shape) and #2 (its legality). Only
-  the user can decide. **To be taken THIS session (step b).**
+- **Fork B - RESOLVED 2026-05-18 = QUALIFY (depth-driven water PERMITTED).**
+  The "zero perceptible camera-dependence" ruling was an aesthetic rejection
+  of one ugly S3 result, NOT an invariant (user: *"ugly as shit lmao, not
+  some invariant principle"*). Operative rule now: camera-dependent water
+  permitted IF it looks good (sub-perceptible/not-ugly, USER visual gate).
+  **#2 depth-driven water UNLOCKED**, sequenced AFTER reverse-Z (which makes
+  the depth band ~zoom-invariant by precision -> sub-perceptible largely for
+  free). The parked BAR-shoreline Option A (depth-soft-contact) is REVIVED.
+  S3/reflection/specular no longer permanently void (re-pursuable if good).
+  #1 still committed; #2 complements it. See the water living-record
+  "CAMERA-DEPENDENCE RULING - CORRECTED/QUALIFIED" (authoritative).
 - **Fork P/F (shared #5 <-> #3-Q2):** port the legacy scalar
   `inverseProjectZ`/`projectZ` to reverse-Z/[0,1], vs **fence** the dying
   CPU-water/TacMap path. Water-going-full-GPU favours fencing. Methodology
@@ -60,13 +63,15 @@ reverse-Z item has its own scoping doc:
 
 ## Greybeard sequence
 
-1. **Greenlight #3 reverse-Z** - already scoped, Fix B unblocked it,
-   highest-leverage, fork-free. (Session step a = scope it into a real
-   design; answer its 2 gating Qs: gos_terrain.frag POM `gl_FragDepth`
-   re-derivation; legacy `projectZ` port-vs-fence = Fork P/F.)
-2. **Resolve Fork B** (session step b) - depth vs geometry; cascades to #1.
-3. **#5 retire/fence legacy water** - one projection authority; shares Fork
-   P/F with #3.
+1. **#3 reverse-Z - DESIGN DONE 2026-05-18** (`2026-05-18-reversed-z-float-
+   depth-design.md`, commit `a24e259`; gating Qs resolved: D1 FENCE legacy
+   scalar = Fork P/F, D2 MINIMAL POM re-derive). NEXT SESSION: 2 adversarials
+   -> plan -> subagent execute (user deferred plan/execute to a fresh
+   session).
+2. **Fork B - RESOLVED 2026-05-18 = QUALIFY.** Depth-driven water permitted
+   (quality-gated); sequenced after reverse-Z. Option A shoreline revived.
+3. **#5 retire/fence legacy water** - one projection authority; Fork P/F
+   already decided = FENCE (co-decided with reverse-Z D1).
 4. **#1 continuous water surface** - the COMMITTED keystone; shape chosen by
    Fork B outcome.
 5. **Wire #2 + #4 on demand** - depth into water FS; params UBO when a
