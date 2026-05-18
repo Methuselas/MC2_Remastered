@@ -2,6 +2,7 @@
 // Shared vertex shader for world-space overlay batches (TerrainOverlayBatch and DecalBatch).
 // Inputs are typed WorldOverlayVert (wx,wy,wz, u,v, fog, argb) — no rhw sentinel.
 // Projection chain is identical to the TES: terrainMVP → perspective divide + viewport → mvp.
+#include <include/terrain_depth_bias.hglsl>  // single-source OVERLAY/TERRAIN depth bias
 
 layout(location=0) in vec3  worldPos;   // MC2 world space (x=east, y=north, z=elev)
 layout(location=1) in vec2  texcoord;
@@ -33,7 +34,7 @@ void main()
     vec3  px;
     px.x = clip4.x * rhw * terrainViewport.x + terrainViewport.z;
     px.y = clip4.y * rhw * terrainViewport.y + terrainViewport.w;
-    px.z = clip4.z * rhw;
+    px.z = clip4.z * rhw + OVERLAY_DEPTH_BIAS;  // Fix B: < 0 => decals/overlays win LEQUAL tie over terrain (replaces removed glPolygonOffset(-1,-1)); co-planar epsilon on the shared baked MVP. terrain_depth_bias.hglsl
 
     // mvp converts screen-pixel coords to NDC.
     vec4 ndc   = mvp * vec4(px, 1.0);
