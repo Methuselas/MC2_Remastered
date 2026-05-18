@@ -562,3 +562,147 @@ normalized by the 120-frame window, matching SLIMSPLIT (terrain.cpp:1492-1498).
 The numbers in the table above are the originally-recorded raw 120-frame cumulative
 totals; the PROJ ratio 77.3% aggregate / dominant 4-of-5 is interval-invariant and
 stands unchanged.
+
+---
+
+## Task 1 -- texture-loader precondition (CRIT-2)
+
+Date: 2026-05-18. Branch: claude/gpu-driven-rendering. All file:line citations
+grep-verified at HEAD (post-Task-0 commits 2285da6 / ecc7a1b / 40ab1e1).
+
+### Step 1: Texture-load side effect mapped in the projection block
+
+The projection block being deleted in Task 2 (`BldgAppearance::recalcBounds`
+and `TreeAppearance::recalcBounds`, the `if (inView)` body after the coarse
+angular clip) contains two per-LOD texture-load sub-blocks, both reachable only
+under specific conditions:
+
+**Bldg -- `bdactor.cpp` projection block (currently lines ~1407-1595):**
+
+- `if (selectLOD != currentLOD)` block (~:1442): deletes and recreates
+  `bldgShape` from `appearType->bldgShape[currentLOD]`, then loads textures
+  into the new shape via `mcTextureManager->loadTexture` / `SetTextureHandle`
+  loop for all `bldgShape->GetNumTextures()` entries.
+- `if (currentLOD && baseLOD)` block (~:1546): resets `currentLOD = 0`, same
+  delete/recreate/load pattern for `bldgShape[0]`.
+
+**Verdict -- both sub-blocks are DEAD CODE today (grep-confirmed):**
+- `selectLOD` is a local variable declared and initialized to `0` at the top
+  of the LOD section (`DWORD selectLOD = 0;`). The original dynamic selection
+  logic was replaced by the 2026-05-12 TEMP LOD-0 pin (`(void)useHighObjectDetail;`);
+  `selectLOD` is never modified after initialization.
+- `currentLOD` is initialized to `0` in `BldgAppearance::init` at
+  `bdactor.cpp:658`. With `selectLOD == 0` and `currentLOD == 0`, the
+  condition `selectLOD != currentLOD` is always `false`. The LOD-swap texture
+  loader never fires.
+- `baseLOD` is declared `true` and never modified. `currentLOD` is `0`. The
+  condition `currentLOD && baseLOD` evaluates to `0 && true == false`. The
+  base-LOD-reset texture loader never fires.
+
+**Tree -- `bdactor.cpp` projection block (currently lines ~4500-4603):**
+- Same structure: `selectLOD = 0` local pin, `currentLOD` initialized to `0`
+  in `TreeAppearance::init` at `bdactor.cpp:3942`. Both sub-blocks (`if
+  (selectLOD != currentLOD)` at ~:4508 and `if (currentLOD && baseLOD)` at
+  ~:4556) are unreachable by the same argument.
+
+**Summary:** the projection block contains texture loaders that are exclusively
+for LOD-swap events (switching from LOD-0 to LOD-N) and base-LOD resets (back
+to LOD-0). Under the 2026-05-12 TEMP pin, `selectLOD` is always `0` and
+`currentLOD` is always `0`, so neither condition is ever true. No texture
+handle is written by this block on any path reachable at runtime today.
+
+### Step 2: Opposite-direction grep -- second (type-init) loader
+
+Per `feedback_data_flow_audit_asymmetry.md`: a negative claim ("the projection
+block is not the only loader") requires grepping the TYPE-INIT path, not the
+obvious symbol. Grep `BldgAppearance::init` and `TreeAppearance::init`
+directly, not the texture-load symbol.
+
+**`BldgAppearance::init` -- `bdactor.cpp:611-715` (grep-verified):**
+
+Definition: `bdactor.cpp:611` `void BldgAppearance::init (AppearanceTypePtr
+tree, GameObjectPtr obj)`.
+
+At `bdactor.cpp:658`: `currentLOD = 0;` (zero-init).
+
+At `bdactor.cpp:676-715` (inside `if (appearType)` block):
+```
+bldgShape = appearType->bldgShape[0]->CreateFrom();  // line 678
+// Load the texture and store its handle.
+for (int i=0;i<bldgShape->GetNumTextures();i++)      // line 682
+{
+    ...GetTextureName(i,txmName,256)...
+    ...mcTextureManager->loadTexture(textureName, gos_Texture_Alpha/Solid, ...)
+    ...bldgShape->SetTextureHandle(i, gosTextureHandle)...
+}
+```
+
+This is the sole live LOD-0 texture loader for buildings. It runs unconditionally
+at actor init time (during mission setup, before the first frame), loads LOD-0
+textures for the created `bldgShape`, and sets all texture handles. It is NOT
+gated on `inView` or any projection result.
+
+**`TreeAppearance::init` -- `bdactor.cpp:3919-3998` (grep-verified):**
+
+Definition: `bdactor.cpp:3919` `void TreeAppearance::init (AppearanceTypePtr
+tree, GameObjectPtr obj)`.
+
+At `bdactor.cpp:3942`: `currentLOD = 0;` (zero-init).
+
+At `bdactor.cpp:3959-3998` (inside `if (appearType)` block):
+```
+treeShape = appearType->treeShape[0]->CreateFrom();  // line 3961
+// Load the texture and store its handle.
+for (long i=0;i<treeShape->GetNumTextures();i++)     // line 3965
+{
+    ...GetTextureName(i,txmName,256)...
+    ...mcTextureManager->loadTexture(textureName, gos_Texture_Alpha/Solid, ...)
+    ...treeShape->SetTextureHandle(i, gosTextureHandle)...
+}
+```
+
+Exact mirror of the Bldg loader: unconditional at init time, loads LOD-0
+textures for `treeShape`, sets all texture handles.
+
+**Conclusion:** a concrete second (type-init) loader exists at both
+`BldgAppearance::init:676-715` and `TreeAppearance::init:3959-3998`. These
+are the SOLE live LOD-0 texture loaders. The projection-block loaders are
+unreachable dead code.
+
+### Step 3: Outcome
+
+**Outcome (a): second loader confirmed.** The projection-block texture loaders
+are dead code under the 2026-05-12 TEMP LOD-0 pin and are unreachable today.
+The init-time loaders (`BldgAppearance::init:676-715`,
+`TreeAppearance::init:3959-3998`) are the sole live LOD-0 texture loaders.
+
+Task 2's projection-body delete is texture-safe: deleting the projection block
+removes only dead code from the LOD-swap / base-LOD-reset paths. The LOD-0
+textures that actors carry at runtime were loaded at init time and will remain
+valid after the delete.
+
+**No code change required by this task.**
+
+### Latent-hazard note (for resolution doc AND for Task 2 deletion point)
+
+The following comment text is to be placed at the Task 2 deletion point in
+`bdactor.cpp` (both the Bldg and Tree analogous locations), verbatim:
+
+```cpp
+// LATENT HAZARD (texture-loader): the deleted projection block contained the
+// per-LOD-swap texture (re)loader (SetTextureHandle loop under
+// `if (selectLOD != currentLOD)` and `if (currentLOD && baseLOD)`). These
+// paths are dead under the 2026-05-12 TEMP LOD-0 pin (selectLOD = 0 always,
+// currentLOD = 0 always => conditions never true). The SOLE live LOD-0 texture
+// loader is BldgAppearance::init (bdactor.cpp:676-715) / TreeAppearance::init
+// (bdactor.cpp:3959-3998), which runs unconditionally at actor-init time.
+// If the TEMP pin is ever reverted (when the LOD-1 invisibility root cause is
+// fixed), LOD selection + the per-LOD texture loader MUST be re-homed to a
+// path that runs outside the projection block BEFORE the revert lands --
+// the init-time loader covers LOD-0 only; LOD-1+ textures will be unloaded
+// after any LOD swap if this comment is not addressed first.
+```
+
+Status: **DONE (outcome a)**. No code change. Task 2's projection-body delete
+is texture-safe at the current TEMP-pin state. The latent hazard above must be
+applied as a code comment at the deletion point in Task 2.
