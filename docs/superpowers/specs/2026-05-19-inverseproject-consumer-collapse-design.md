@@ -35,30 +35,54 @@ inversion (~1902-1909). terrain.cpp:1549 itself annotates the reduction
 consume this (cross-ref `memory/mc2_selection_picking_model_water_
 terrain_never_picked.md`).
 
-## 2. The change (Strategy C - consumer collapse)
+## 2. The change (Strategy C - pure-delete; consumer stubbed)
 
-**Delete:**
-- `Camera::setInverseProject` + the 4 scalars + `Camera::inverseProjectZ`
-  (the deprecated synthetic-ramp) and its `inverseProjectForPicking`
-  inline (camera.h ~634-636).
-- The `slimReduce` RED reduction writing the 6-tuple (terrain.cpp
-  ~1878-1898) and the `setInverseProject` call site (terrain.cpp:2119).
-- The `quad.cpp` water-block 6-tuple reduction (the `CostSplitWaterVert
-  ProjScope` writers of leastZ/mostZ/... ~1101-1287). The Slice-2
-  DIVERGENT-water problem becomes MOOT (no reduction -> nothing to
-  diverge; no probe needed).
+**User-clarified context 2026-05-19:** the TacMap minimap viewport-rect
+trapezoid is BROKEN today ("camera vertices are way off") and the user
+authorized "kill it and reimplement later." So this effort does NOT add
+a new plane-unproject helper. The broken consumer is removed; a future
+separately-chartered effort reimplements the minimap viewport-rect with
+correct visual/product requirements. This eliminates the reviewer's
+underspecified "ground/water plane" must-fix by deleting the helper
+from scope entirely.
 
-**Repoint (same commit as the inverseProjectForPicking deletion - the 4
-call sites must never dangle):** replace each of the 4
-`eye->inverseProjectForPicking(nScreen, world)` calls at
-gametacmap.cpp:225/232/239/246 with a call to the new geometric
-`clipToWorld` plane-unproject helper against the ground/water plane.
-Reuse / factor the EXISTING technique at `txmmgr.cpp:1902-1909` (it
-already inverts NDC corners via `clipToWorld` with the Stuff->MC2
-(-x,z,y) swizzle + the w<0 negate). Prefer extracting that into one
-shared helper called by both txmmgr and the TacMap corners over
-duplicating it. The result is geometrically MORE correct than the
-regression-line ramp it replaces.
+**Stub the consumer FIRST** (compile-safe sequencing - all later
+deletions become safe once nothing reads the chain):
+- Delete the entire broken viewport-rect block in `GameTacMap::render`
+  - `code/gametacmap.cpp:212-276` (the `// this is the little viewing
+  rect` comment through the trapezoid's `gos_DrawQuads(&corners[0],
+  4)`). This removes the 4 `inverseProjectForPicking` calls + the 4
+  `worldToTacMap` calls + the trapezoid setup + draw, surgically.
+- The minimap base bitmap (`GameTacMap::render` ~128-170, the
+  `gos_DrawTriangles` calls for the underlying minimap) and the
+  mover/team rendering (~278+) are NOT touched - they are independent
+  and stay intact. The minimap still renders; it simply no longer
+  draws the (currently-broken) viewport-rect overlay.
+
+**Then delete the orphaned chain** (each commit compiles + bisectable;
+opposite-direction grep before each deletion):
+- `Camera::inverseProjectForPicking` (camera.h ~634-636) +
+  `Camera::inverseProjectZ` (camera.cpp ~1941, decl camera.h:626
+  `[[deprecated]]`). Confirm no remaining callers exist (the gametacmap
+  block was the sole live one).
+- `Camera::setInverseProject` (camera.h:1115) + the 4 scalar member
+  fields `startZInverse/startWInverse/zPerPixel/wPerPixel`
+  (camera.h:141-144). Confirm no remaining readers (the
+  inverseProjectZ body was the sole reader).
+- The `setInverseProject` call site at terrain.cpp:2119 + the
+  `yzRange/ywRange` computation (~terrain.cpp:2051-2055) + the
+  `slimReduce` RED reduction writing the 6-tuple (terrain.cpp
+  ~1878-1898).
+- The `quad.cpp` water-block 6-tuple reduction writers in the
+  `CostSplitWaterVertProjScope` block (~quad.cpp:1101-1287). The
+  Slice-2 DIVERGENT-water nemesis becomes MOOT here (no reduction ->
+  nothing to diverge; no probe needed).
+- The file-scope `extern float leastZ/leastW/mostZ/mostW/leastWY/mostWY`
+  declarations (~quad.cpp:540-545) and their definition site, once no
+  writers/readers remain.
+
+`worldToTacMap`: keep if any other caller exists; otherwise delete in
+the gametacmap commit (opposite-direction grep at plan time).
 
 ## 3. Scope boundary / carve-out (do NOT bundle)
 
@@ -90,35 +114,96 @@ The expensive projection reduction - the actual CPU cost - is gone.
   zoomed-out-big-map (tier1 default camera is structurally blind -
   `memory/zoomed_out_big_map...`). No displaced cost into draw /
   mission-load / the TacMap path.
-- TacMap minimap viewport-footprint VISUAL PARITY across a zoom +
-  pan + elevation-change sweep (USER-driven; the footprint trapezoid is
-  the only behavioral surface and a wrong one is visually self-evident).
-  The new plane-unproject should be equal-or-more-correct vs the old
-  ramp; document any intentional difference.
+- TacMap MINIMAP STILL RENDERS (base bitmap + mover/team markers) -
+  USER-confirmed; the only intentional behavioral change is the
+  viewport-rect trapezoid no longer drawn (it was broken anyway -
+  user-acknowledged). NO crash, no garbage corners, no unrelated UI
+  regression. Per reviewer's parity-reframe: this is NOT pixel-identical
+  reproduction; it is "stable + plausible behavior" - here, "stub
+  renders no footprint, minimap otherwise unchanged." A future
+  separately-chartered minimap-reimplementation effort restores the
+  viewport-rect with a correct geometric inverse and clear product
+  requirements.
 - Reject capped-FPS / per-quad-chrono / cost-split absolutes
   (`memory/cost_split_instrumentation_is_observer_effect_dominated.md`).
 
 ## 5. Risk + discipline
 
-Risk LOW and contained: the ONLY behavioral surface is the decorative
-TacMap footprint; cursor/picking/camera were verified non-consumers.
-But it touches camera inverse-projection + is campaign-adjacent, and
-this session hit 6 clean-model-vs-code collisions - so full discipline:
-- The implementer MUST re-run the opposite-direction grep of every
-  reader of `inverseProjectZ`/`inverseProjectForPicking`/`setInverse
-  Project`/the 4 scalars at HEAD and confirm the consumer set is EXACTLY
-  the 4 gametacmap corners BEFORE deleting anything. If any other live
-  consumer exists, STOP and escalate (premise change).
+Risk LOW and contained: the ONLY behavioral surface is the
+already-broken TacMap viewport-rect (user-acknowledged); cursor/picking/
+camera were verified non-consumers. But it touches camera
+inverse-projection + is campaign-adjacent, and this session hit 6
+clean-model-vs-code collisions - so full discipline:
 - Spec -> adversarial-plan-review -> writing-plans -> subagent execution
-  with atomic commits -> the substitutive Tracy + USER TacMap visual
-  gate. Each deletion is its own bisectable commit.
+  with atomic commits -> the substitutive Tracy + USER minimap-still-
+  renders smoke gate. Each commit is bisectable AND compile-safe.
 - `Camera::inverseProjectZ` is `[[deprecated]]`; confirm no external/
-  mod ABI depends on it (grep + the stock-install-playable memory).
+  mod ABI depends on it ([[stock-install-must-remain-playable]]).
+
+### Mandatory grep checklist (reviewer guardrail; the implementer MUST run this BEFORE each deletion commit)
+
+For each symbol about to be deleted, grep across ALL of code/ mclib/
+GameOS/ shaders/ data/ docs/ - covering **declarations, definitions,
+inline wrappers, member-field access, comments, external/mod headers**,
+NOT just call sites. Bare-identifier `this->` member access is invisible
+to `->member` patterns (this session's recurring trap); use both
+patterns. Symbols to sweep, in order:
+1. `inverseProjectForPicking` (camera.h:634-636 inline + 4 gametacmap
+   call sites - confirm those 4 are the sole live callers at HEAD).
+2. `inverseProjectZ` (camera.cpp:1941 def + camera.h:626 `[[deprecated]]`
+   decl + the inverseProjectForPicking inline call - confirm no other
+   readers; also grep for the symbol in comments/docs to update).
+3. `setInverseProject` (camera.h:1115 def + terrain.cpp:2119 call -
+   confirm sole call site).
+4. The 4 scalar member fields: `startZInverse / startWInverse /
+   zPerPixel / wPerPixel` (camera.h:141-144). Opposite-direction grep
+   bare-identifier reads (NOT just `->startZInverse` - inside Camera
+   member functions they're bare). Confirm only `inverseProjectZ` body
+   reads them.
+5. The 6 file-scope globals `leastZ / leastW / mostZ / mostW / leastWY /
+   mostWY` (quad.cpp:540-545 decls). Opposite-direction grep across the
+   tree: writers (slimReduce + the water block) and readers (terrain.cpp
+   :2051-2055 yzRange/ywRange + :2119 setInverseProject call). Confirm
+   no third site. If any unexpected reader/writer exists, STOP and
+   escalate (premise change = 7th-collision guard).
+6. `worldToTacMap` - confirm caller set; if the 4 gametacmap lines are
+   sole callers, include its deletion in the same commit.
+
+### Compile-safe deletion sequence (reviewer guardrail; no commit may leave dangling calls or dead fields still required by later code)
+
+**Phase 1 (consumer stub):** Delete gametacmap.cpp:212-276 (the broken
+viewport-rect block). The chain becomes orphaned-but-still-compiles.
+Build + smoke + USER confirms minimap still renders (base + movers; no
+viewport rect). Commit.
+
+**Phase 2 (Camera inverse-proj inlines):** Delete
+`Camera::inverseProjectForPicking` + `Camera::inverseProjectZ` (decls
+camera.h:626/634-636, def camera.cpp:1941-...). Build + smoke. Commit.
+
+**Phase 3 (Camera state):** Delete `Camera::setInverseProject` +
+`startZInverse/startWInverse/zPerPixel/wPerPixel` member fields
+(camera.h:141-144/1115-1121). Build + smoke. Commit.
+
+**Phase 4 (terrain producer):** Delete the `setInverseProject` call
+(terrain.cpp:2119) + the `yzRange/ywRange` computation (~2051-2055) +
+the slimReduce RED reduction (~1878-1898). Build + smoke. Commit.
+
+**Phase 5 (water producer + globals):** Delete the `quad.cpp` water-
+block 6-tuple reduction writers (~1101-1287 inside the
+`CostSplitWaterVertProjScope` block - the 6-global writes only; preserve
+the other water-block residue per Slice-2 spec's residue rules) + the
+6 file-scope `extern float` decls (~quad.cpp:540-545). Build + smoke +
+USER worst-case zoomed-out-big-map Tracy = the substitutive proof
+(slimReduce zone shrinks by the RED reduction's share; quadSetupTextures
+shrinks by the water-block reduction's share; no displaced cost). Commit.
+
+Invariant on every commit: builds clean, runs the 20s 1-2-mission
+`--keep-logs` smoke, no `GL_INVALID_*`, USER confirms minimap renders.
+Any phase that breaks any invariant: STOP, do not chain forward.
 
 ## 6. Verification items
 
 1. Re-pin all file:line at plan time (drift; bare-identifier reads).
-2. Confirm `gametacmap.cpp:225-246` is the sole live consumer at HEAD
-   (the make-or-break; a 7th-collision guard).
-3. Confirm the txmmgr `clipToWorld` plane-unproject is reusable for the
-   TacMap corners (same clip space, same swizzle, same w<0 handling).
+2. Run the §5 grep checklist before each phase. The 4 gametacmap corners
+   being the sole live consumer at HEAD is the make-or-break / 7th-
+   collision guard.
