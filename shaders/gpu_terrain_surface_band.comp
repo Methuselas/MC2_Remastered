@@ -1,0 +1,253 @@
+// shaders/gpu_terrain_surface_band.comp
+//
+// [TERRAIN_SURFACE] PR-3 -- distance-band LOD + crack-free per-edge seam
+// index-emission compute (Fork LB = LB-precomputed, RULED). Plan PR-3,
+// design Section 3.2-3.5.
+//
+// #version 430 + the band-config #define preamble are prepended host-side by
+// the program builder (gameos_graphics.cpp), single-sourced from
+// mclib/terrain_surface_bands.h via injected #defines -- the proven idiom
+// (gpu_cull READBACK_SSBO_BINDING). Do NOT add #version or hardcode the band
+// config here; the host injects:
+//   #define TS_BLOCK_CELLS   <kBlockCells>
+//   #define TS_BAND_COUNT    <kBandCount>
+//   #define TS_BAND_DIST0    <kBandDist0>
+//   #define TS_BAND_DIST1    <kBandDist1>
+//   #define TS_BAND_DIST2    <kBandDist2>
+//
+// ROLE (design 3.5 LB-precomputed): per-frame, one invocation per BLOCK (a
+// TS_BLOCK_CELLS x TS_BLOCK_CELLS group of mission-static quad cells). The
+// block's band is chosen from its centroid distance to the camera; the block
+// emits its triangles into a per-frame output index buffer at vertex stride
+// 1<<band, and EACH of the 4 block edges is emitted at the COARSER of the two
+// adjacent blocks' strides ( 1 << min(myBand, neighborBand[e]) ) so the
+// shared edge sample set is bit-identical from both sides -> NO crack
+// (design 3.3, the named cost-center R1). Bands are discrete + enumerable so
+// the seam space is the finite band-pair set. A single-invocation tail (the
+// last block, or a separate 1-thread dispatch) patches the indirect draw
+// command's vertex count from the atomic write cursor.
+//
+// >=1 FLOOR / NEVER CULL (design 3.2,
+// distant_buildings_render_at_lower_lod_never_distance_culled.md): the stride
+// is clamped to TS_BLOCK_CELLS so the coarsest band still emits the block's
+// 4 corner verts == 2 triangles. The distance function ONLY selects a coarser
+// mesh; it can never drop a block. There is no distance-reject term.
+//
+// SSE/meshlet drop-in (design 3.4): the mission-static surface VB / index
+// topology / adjacency are untouched; only THIS band-select stage is swapped
+// for a later SSE/meshlet stage. Vertices are shared (the VS pulls
+// surfaceVerts[outIndex[i]]); only the index list changes per frame.
+//
+// 'uniform uint' crashes this engine's GLSL compile
+// (memory/uniform_uint_crash.md): use int + cast.
+
+layout(local_size_x = 64) in;
+
+// ---- Surface SSBOs (mission-static; PR-1 generated, PR-2 bindings 20/21) ---
+struct TS_Vertex { vec4 pos; vec4 normal; };   // 32 B std430 (schema mirror)
+
+layout(std430, binding = 20) readonly buffer SurfaceVertexBuf {
+    TS_Vertex surfaceVerts[];
+};
+// PR-1 baked finest index buffer is binding 21 (the unarmed C-1 path draws it
+// directly; the armed path here REGENERATES indices into binding 22 instead).
+layout(std430, binding = 22) writeonly buffer SurfaceOutIndexBuf {
+    uint outIndices[];
+};
+// Single-uint write cursor (atomic append) at binding 23, plus the indirect
+// draw command this dispatch patches (binding 24).
+layout(std430, binding = 23) buffer SurfaceCursorBuf {
+    uint outCount;     // atomicAdd cursor (reset to 0 by the host each frame)
+};
+struct DrawArraysIndirectCommand { uint count; uint instanceCount; uint first; uint baseInstance; };
+layout(std430, binding = 24) buffer SurfaceCmdBuf {
+    DrawArraysIndirectCommand cmd;
+};
+
+// ---- Uniforms -------------------------------------------------------------
+uniform vec4 cameraPos;       // MC2 world-space camera (xyz); same as the VS
+uniform int  u_mapSide;       // grid nodes per side (vertexNum = mx + my*mapSide)
+uniform int  u_blocksPerSide; // ceil((mapSide-1)/TS_BLOCK_CELLS)
+uniform int  u_phase;         // 0 = emit indices ; 1 = patch indirect cmd (1 thread)
+
+// vertexNum of grid node (gx,gy), clamped to the last node so a partial far
+// block never indexes out of range (the grid is mission-static, mapSide^2).
+uint vnum(int gx, int gy) {
+    int mx = min(gx, u_mapSide - 1);
+    int my = min(gy, u_mapSide - 1);
+    return uint(mx + my * u_mapSide);
+}
+
+// Pure distance->band -- BYTE-IDENTICAL to the C++ BandForDistance in
+// mclib/terrain_surface_bands.h (determinism is load-bearing for crack-free
+// seams: a neighbor block's band is recomputed from ITS centroid by this
+// exact function so both sides agree on min without a publish pass).
+int bandForDist(float d) {
+    if (d < TS_BAND_DIST0) return 0;
+    if (d < TS_BAND_DIST1) return 1;
+    if (d < TS_BAND_DIST2) return 2;
+    return TS_BAND_COUNT - 1;
+}
+int strideForBand(int band) {
+    band = clamp(band, 0, TS_BAND_COUNT - 1);
+    int s = 1 << band;
+    return min(s, TS_BLOCK_CELLS);   // >=1 floor: never finer-than-cell, never 0
+}
+
+// Centroid (world XY) of block (bx,by); Z ignored (terrain is near-planar in
+// XY for the LOD distance metric, matches the per-patch centroid in 3.2).
+vec2 blockCentroid(int bx, int by) {
+    int cx0 = bx * TS_BLOCK_CELLS;
+    int cy0 = by * TS_BLOCK_CELLS;
+    int gcx = min(cx0 + TS_BLOCK_CELLS / 2, u_mapSide - 1);
+    int gcy = min(cy0 + TS_BLOCK_CELLS / 2, u_mapSide - 1);
+    TS_Vertex v = surfaceVerts[vnum(gcx, gcy)];
+    return v.pos.xy;
+}
+int blockBand(int bx, int by) {
+    if (bx < 0 || by < 0 || bx >= u_blocksPerSide || by >= u_blocksPerSide)
+        return TS_BAND_COUNT - 1;   // off-grid neighbor -> coarsest (safe min)
+    vec2 c = blockCentroid(bx, by);
+    float d = distance(cameraPos.xy, c);
+    return bandForDist(d);
+}
+
+void emitTri(uint a, uint b, uint c) {
+    uint base = atomicAdd(outCount, 3u);
+    if (base + 2u >= uint(outIndices.length())) return;  // overflow guard
+    outIndices[base + 0u] = a;
+    outIndices[base + 1u] = b;
+    outIndices[base + 2u] = c;
+}
+
+// Emit one transition-aware quad-cell-group spanning [gx0,gx0+S] x [gy0,gy0+S]
+// (S = block interior stride). Each of the 4 sides may be coarsened to the
+// neighbor's stride; we fan the coarse side samples to the opposite interior
+// corner so the shared edge uses ONLY the coarse samples (crack-free) while
+// the interior stays at S.
+//
+// PR-3 keeps the stitch conservative + provably seam-correct: a block is
+// emitted as a grid of SxS interior quads; the boundary ring quads whose
+// outward edge is coarsened are re-triangulated as a fan from the coarse
+// edge endpoints. effStride[e] >= S always (min() can only coarsen the edge
+// vs the interior, never refine -- see header proof), so the fan is always
+// well-formed.
+
+void emitBlock(int bx, int by) {
+    int cx0 = bx * TS_BLOCK_CELLS;
+    int cy0 = by * TS_BLOCK_CELLS;
+
+    int myBand = blockBand(bx, by);
+    int S      = strideForBand(myBand);                 // interior stride (cells)
+
+    // Per-edge effective stride = coarser of self / neighbor (crack-free).
+    int sT = strideForBand(min(myBand, blockBand(bx,     by - 1))); // top    (y=cy0)
+    int sR = strideForBand(min(myBand, blockBand(bx + 1, by    ))); // right  (x=cx0+span)
+    int sB = strideForBand(min(myBand, blockBand(bx,     by + 1))); // bottom (y=cy0+span)
+    int sL = strideForBand(min(myBand, blockBand(bx - 1, by    ))); // left   (x=cx0)
+
+    int span = TS_BLOCK_CELLS;   // a full block is always TS_BLOCK_CELLS cells
+
+    // Interior grid at stride S, EXCLUDING the one-strip boundary ring on any
+    // side that is coarsened (sX > S). Those strips are emitted by the fan
+    // below. When sX == S the edge is regular and the interior loop covers it.
+    for (int ly = 0; ly < span; ly += S) {
+        for (int lx = 0; lx < span; lx += S) {
+            int gx = cx0 + lx;
+            int gy = cy0 + ly;
+
+            bool onT = (ly == 0)        && (sT > S);
+            bool onB = (ly == span - S) && (sB > S);
+            bool onL = (lx == 0)        && (sL > S);
+            bool onR = (lx == span - S) && (sR > S);
+            if (onT || onB || onL || onR) continue;     // fanned below
+
+            // Two tris per interior cell. Winding matches the PR-1 CPU bake
+            // diagonal parity convention (worldQuadUVMode); a consistent
+            // single diagonal is sufficient here (per-fragment material is
+            // WorldPos-driven, NOT diagonal-dependent -- design Sec 2 NC1).
+            uint v00 = vnum(gx,     gy);
+            uint v10 = vnum(gx + S, gy);
+            uint v11 = vnum(gx + S, gy + S);
+            uint v01 = vnum(gx,     gy + S);
+            emitTri(v00, v10, v11);
+            emitTri(v00, v11, v01);
+        }
+    }
+
+    // --- Crack-free edge strips: emit each coarsened side as a fan from the
+    // coarse edge samples to the inner ring corner. A single inner anchor per
+    // segment keeps the strip watertight to the interior and the coarse
+    // samples make the SHARED edge identical to the coarser neighbor's edge.
+    // TOP (gy = cy0), coarse stride sT along x.
+    if (sT > S) {
+        int gy = cy0;
+        for (int x = 0; x < span; x += sT) {
+            uint e0 = vnum(cx0 + x,      gy);
+            uint e1 = vnum(cx0 + x + sT, gy);
+            uint inA = vnum(cx0 + x,      gy + S);
+            uint inB = vnum(cx0 + x + sT, gy + S);
+            emitTri(e0, e1, inB);
+            emitTri(e0, inB, inA);
+        }
+    }
+    // BOTTOM (gy = cy0 + span), coarse stride sB along x.
+    if (sB > S) {
+        int gy = cy0 + span;
+        for (int x = 0; x < span; x += sB) {
+            uint e0 = vnum(cx0 + x,      gy);
+            uint e1 = vnum(cx0 + x + sB, gy);
+            uint inA = vnum(cx0 + x,      gy - S);
+            uint inB = vnum(cx0 + x + sB, gy - S);
+            emitTri(e1, e0, inA);
+            emitTri(e1, inA, inB);
+        }
+    }
+    // LEFT (gx = cx0), coarse stride sL along y.
+    if (sL > S) {
+        int gx = cx0;
+        for (int y = 0; y < span; y += sL) {
+            uint e0 = vnum(gx, cy0 + y);
+            uint e1 = vnum(gx, cy0 + y + sL);
+            uint inA = vnum(gx + S, cy0 + y);
+            uint inB = vnum(gx + S, cy0 + y + sL);
+            emitTri(e1, e0, inA);
+            emitTri(e1, inA, inB);
+        }
+    }
+    // RIGHT (gx = cx0 + span), coarse stride sR along y.
+    if (sR > S) {
+        int gx = cx0 + span;
+        for (int y = 0; y < span; y += sR) {
+            uint e0 = vnum(gx, cy0 + y);
+            uint e1 = vnum(gx, cy0 + y + sR);
+            uint inA = vnum(gx - S, cy0 + y);
+            uint inB = vnum(gx - S, cy0 + y + sR);
+            emitTri(e0, e1, inB);
+            emitTri(e0, inB, inA);
+        }
+    }
+}
+
+void main() {
+    // Phase 1: single-thread tail patches the indirect command from the
+    // atomic cursor (the proven gpu_driven_cmd_patch idiom).
+    if (u_phase == 1) {
+        if (gl_GlobalInvocationID.x == 0u) {
+            cmd.count         = outCount;
+            cmd.instanceCount = 1u;
+            cmd.first         = 0u;
+            cmd.baseInstance  = 0u;
+        }
+        return;
+    }
+
+    // Phase 0: one invocation per block; off-range threads no-op.
+    uint idx        = gl_GlobalInvocationID.x;
+    uint totalBlocks = uint(u_blocksPerSide) * uint(u_blocksPerSide);
+    if (idx >= totalBlocks) return;
+
+    int bx = int(idx % uint(u_blocksPerSide));
+    int by = int(idx / uint(u_blocksPerSide));
+    emitBlock(bx, by);
+}
