@@ -188,13 +188,35 @@ void GenerateForMission() {
     // ---- 2. Mission-static index buffer + 3. per-tile material table +
     //         4. per-edge adjacency. One entry per quad cell (mx,my) with
     // mx,my in [0, cells). Cell index = mx + my*cells.
+    //
+    // ADJUST-1 meshlet-readiness 2026-05-19 (user-ruled): block-clustered cell
+    // emission so the committed index artifact is meshlet-partition-ready;
+    // verts/material/winding unchanged, only emission order; see
+    // docs/superpowers/specs/2026-05-19-terrain-surface-meshlet-readiness.md
+    //
+    // The cell *visiting* order is now block-major (iterate kBlockCells x
+    // kBlockCells blocks, emit each block's cells contiguously into g_indices)
+    // instead of pure row-major, so the flat index stream is a sequence of
+    // spatially-coherent runs a future meshlet builder can window directly.
+    // Cell id stays `mx + my*cells` -> g_tiles / g_adjacency keep their
+    // row-major-keyed indexing (table indexing is DECOUPLED from emission
+    // order); every cell is still emitted exactly once with identical c0..c3
+    // vertexNums and identical worldQuadUVMode diagonal-parity winding, so the
+    // total index set is byte-identical, only reordered. Partial edge blocks
+    // (cells not divisible by kBlockCells) are clamped per block so boundary
+    // cells are emitted exactly once -- no dupes, no drops.
     const size_t nCells = (size_t)cells * (size_t)cells;
     g_indices.reserve(nCells * kSurfaceIndicesPerCell);
     g_tiles.resize(nCells);
     g_adjacency.resize(nCells);
 
-    for (long my = 0; my < cells; ++my) {
-        for (long mx = 0; mx < cells; ++mx) {
+    const long bc = (long)mc2_terrain_surface_bands::kBlockCells;
+    for (long by = 0; by < cells; by += bc) {
+      const long myEnd = (by + bc < cells) ? (by + bc) : cells;
+      for (long bx = 0; bx < cells; bx += bc) {
+        const long mxEnd = (bx + bc < cells) ? (bx + bc) : cells;
+        for (long my = by; my < myEnd; ++my) {
+          for (long mx = bx; mx < mxEnd; ++mx) {
             const size_t cell = (size_t)mx + (size_t)my * (size_t)cells;
 
             // Corner node vertexNums (top-left = vn0; matches buildRecipeSlot
@@ -241,7 +263,9 @@ void GenerateForMission() {
             a.nbrRight  = (mx < cells - 1) ? (uint32_t)((size_t)(mx + 1) + (size_t)my * (size_t)cells) : kSurfaceNoNeighbor;
             a.nbrBottom = (my < cells - 1) ? (uint32_t)((size_t)mx + (size_t)(my + 1) * (size_t)cells) : kSurfaceNoNeighbor;
             a.nbrLeft   = (mx > 0)         ? (uint32_t)((size_t)(mx - 1) + (size_t)my * (size_t)cells) : kSurfaceNoNeighbor;
+          }
         }
+      }
     }
 
     g_generated = true;
@@ -300,6 +324,15 @@ int32_t  GetMapSide()        { return g_mapSide; }
 // buffers. Empty/null when not generated (the bridge guards on IsGenerated()).
 const void* GetVertexData()  { return g_vertices.empty() ? nullptr : (const void*)g_vertices.data(); }
 const void* GetIndexData()   { return g_indices.empty()  ? nullptr : (const void*)g_indices.data();  }
+// META-FIX 2026-05-19: surface VS forwards REAL per-tile varyings (Texcoord /
+// TerrainType) from this per-tile material table instead of PR-2 placeholders.
+// The table is keyed by ROW-MAJOR cell id (mx + my*cells), exactly how
+// RecipeForVertexNum(vn0) populated it above (NOT the block-clustered g_indices
+// emission order -- ADJUST-1 decoupled the table key from the emission order;
+// the VS recovers the row-major key from the cell's top-left vertexNum). 32 B /
+// TerrainSurfaceTile std430 lockstep with shaders/include/gos_terrain_surface_
+// schema.hglsl. Empty/null when not generated (bridge guards on IsGenerated()).
+const void* GetTileData()    { return g_tiles.empty()    ? nullptr : (const void*)g_tiles.data();    }
 uint32_t    GetGenerationEpoch() { return g_genEpoch; }
 
 // ---------------------------------------------------------------------------

@@ -92,6 +92,13 @@ int32_t  GetMapSide();         // realVerticesMapSide at generation time
 // ---------------------------------------------------------------------------
 const void* GetVertexData();      // TerrainSurfaceVertex[GetVertexCount()]
 const void* GetIndexData();       // uint32_t[GetIndexCount()]
+// META-FIX: per-tile material table (TerrainSurfaceTile[GetTileCount()], 32 B
+// each) the surface VS reads to forward REAL Texcoord / TerrainType varyings
+// (replacing the PR-2 placeholders). Row-major-keyed (mx + my*cells), the same
+// key RecipeForVertexNum() populated -- the VS recovers it from the cell's
+// top-left vertexNum so it is independent of the ADJUST-1 block-clustered
+// index emission order. NULL when not generated.
+const void* GetTileData();        // TerrainSurfaceTile[GetTileCount()]
 uint32_t    GetGenerationEpoch(); // increments on every (re)generation
 
 // ---------------------------------------------------------------------------

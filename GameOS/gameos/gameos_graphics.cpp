@@ -2581,107 +2581,6 @@ extern "C" void     gos_terrain_indirect_getDispatchMvpFloats4(float out[4]);
 // State save/restore + AMD VAO-0 / attr-0 mitigations mirror
 // gos_terrain_bridge_drawIndirect exactly (the proven pattern in this file).
 //
-// ── PR-3 (Wave 1, still ADDITIVE / DEFAULT-OFF / DELETES NOTHING) ──────────
-// Distance-band LOD (Fork LB = LB-precomputed, RULED) + crack-free per-edge
-// seam + the C-1 screen-agnostic draw incl. the unarmed deploy/unit-select
-// screen. PR-3 adds NO deletion and NO C-1 *repoint* (the repoint lands
-// atomically with the kill in PR-4 / interlock #1); it builds only the
-// screen-agnostic draw CAPABILITY:
-//   - ARMED in-mission: the per-frame band-select compute
-//     (gpu_terrain_surface_band.comp) regenerates the index list at the
-//     per-block distance band, crack-free per-edge (neighbor-min), into a
-//     per-frame SSBO; the surface draws via glDrawArraysIndirect.
-//   - UNARMED deploy/unit-select: the compute is SKIPPED; the surface draws
-//     the PR-1 mission-static FINEST index buffer directly (a fixed safe
-//     band, uniform => zero seam class, tessLevel>=1, draw-all). Surface
-//     EXISTENCE is decoupled from arming -- arming gates only LOD/visibility
-//     refinement, NEVER surface existence (design C-1 items 1-2).
-// >=1 floor / never distance-cull is enforced in the compute (stride clamped
-// to kBlockCells). SSE/meshlet stays a drop-in: only the band-select compute
-// swaps later; VB / topology / adjacency unchanged (design 3.4).
-// ──────────────────────────────────────────────────────────────────────────
-
-// ── PR-3 band-select compute program builder ──────────────────────────────
-// Self-contained (gameos_graphics.cpp has no compute infra); mirrors the
-// proven gpu_cull_compute.cpp compile/link pattern. The band config is
-// single-sourced from mclib/terrain_surface_bands.h and injected as a
-// #define preamble (the gpu_cull READBACK_SSBO_BINDING idiom) so the shader
-// can NEVER drift from the C++ tunables.
-namespace {
-
-char* ts_load_text_file(const char* fname) {
-    FILE* f = fopen(fname, "rb");
-    if (!f) return nullptr;
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (sz <= 0) { fclose(f); return nullptr; }
-    char* buf = new char[sz + 1];
-    if ((long)fread(buf, 1, sz, f) != (long)sz) { fclose(f); delete[] buf; return nullptr; }
-    buf[sz] = '\0';
-    fclose(f);
-    return buf;
-}
-
-GLuint ts_build_band_compute() {
-    char* src = ts_load_text_file("shaders/gpu_terrain_surface_band.comp");
-    if (!src) {
-        fprintf(stderr, "[TERRAIN_SURFACE v1] event=band_compute_load_fail "
-                        "file=shaders/gpu_terrain_surface_band.comp\n");
-        return 0;
-    }
-    namespace B = mc2_terrain_surface_bands;
-    char defs[512];
-    snprintf(defs, sizeof(defs),
-        "#define TS_BLOCK_CELLS %d\n"
-        "#define TS_BAND_COUNT %d\n"
-        "#define TS_BAND_DIST0 %.1f\n"
-        "#define TS_BAND_DIST1 %.1f\n"
-        "#define TS_BAND_DIST2 %.1f\n",
-        (int)B::kBlockCells, (int)B::kBandCount,
-        (double)B::kBandDist0, (double)B::kBandDist1, (double)B::kBandDist2);
-
-    const char* kPrefix = "#version 430\n";
-    const char* strs[3] = { kPrefix, defs, src };
-
-    GLuint sh = glCreateShader(GL_COMPUTE_SHADER);
-    glShaderSource(sh, 3, strs, nullptr);
-    glCompileShader(sh);
-    GLint ok = 0; glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
-    if (!ok) {
-        GLint ll = 0; glGetShaderiv(sh, GL_INFO_LOG_LENGTH, &ll);
-        char* log = (ll > 0) ? new char[ll] : nullptr;
-        if (log) { glGetShaderInfoLog(sh, ll, nullptr, log); }
-        fprintf(stderr, "[TERRAIN_SURFACE v1] event=band_compute_compile_fail\n%s\n",
-                log ? log : "(no log)");
-        delete[] log; delete[] src; glDeleteShader(sh);
-        return 0;
-    }
-    delete[] src;
-    GLuint prog = glCreateProgram();
-    glAttachShader(prog, sh);
-    glLinkProgram(prog);
-    glDeleteShader(sh);
-    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        GLint ll = 0; glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &ll);
-        char* log = (ll > 0) ? new char[ll] : nullptr;
-        if (log) { glGetProgramInfoLog(prog, ll, nullptr, log); }
-        fprintf(stderr, "[TERRAIN_SURFACE v1] event=band_compute_link_fail\n%s\n",
-                log ? log : "(no log)");
-        delete[] log; glDeleteProgram(prog);
-        return 0;
-    }
-    return prog;
-}
-
-GLuint ts_band_compute_prog() {
-    static GLuint s_prog = ts_build_band_compute();   // built once, first use
-    return s_prog;
-}
-
-} // namespace
-
 void gos_terrain_surface_bridge_draw()
 {
     if (!gos_terrain_surface::IsEnabled())   return;   // kill-switch OFF: no-op
@@ -2701,59 +2600,47 @@ void gos_terrain_surface_bridge_draw()
 
     // ---- Lazy GPU upload, epoch-tracked (re-upload on regeneration) --------
     // s_surfaceVB/IB: mission-static vertex + finest index (PR-1/PR-2).
-    // PR-3 per-frame band buffers: s_outIB (regenerated index list, sized to
-    // the worst-case finest cap), s_cursor (atomic append cursor), s_cmdBuf
-    // (the DrawArraysIndirectCommand the compute patches). All mission-static
-    // in size; only their CONTENTS change per armed frame (the band-select
-    // is the only per-frame producer; the topology/VB never changes -- the
-    // SSE/meshlet drop-in invariant, design 3.4).
+    // s_surfaceTB: mission-static per-tile material table (META-FIX). All
+    // mission-static; the topology/VB never changes -- the SSE/meshlet
+    // drop-in invariant (design 3.4). Band-LOD per-frame buffers deleted in
+    // the 2026-05-19 STOP+HARVEST (uniform finest, no per-frame compute).
     static GLuint   s_surfaceVB     = 0;
     static GLuint   s_surfaceIB     = 0;
-    static GLuint   s_outIB         = 0;
-    static GLuint   s_cursor        = 0;
-    static GLuint   s_cmdBuf        = 0;
+    static GLuint   s_surfaceTB     = 0;   // META-FIX: per-tile material SSBO
     static uint32_t s_uploadedEpoch = 0;
-    static uint32_t s_maxOutIdx     = 0;
     const uint32_t  epoch           = gos_terrain_surface::GetGenerationEpoch();
     if (s_surfaceVB == 0) glGenBuffers(1, &s_surfaceVB);
     if (s_surfaceIB == 0) glGenBuffers(1, &s_surfaceIB);
-    if (s_outIB     == 0) glGenBuffers(1, &s_outIB);
-    if (s_cursor    == 0) glGenBuffers(1, &s_cursor);
-    if (s_cmdBuf    == 0) glGenBuffers(1, &s_cmdBuf);
+    if (s_surfaceTB == 0) glGenBuffers(1, &s_surfaceTB);
     if (epoch != s_uploadedEpoch) {
         const void* vd = gos_terrain_surface::GetVertexData();
         const void* id = gos_terrain_surface::GetIndexData();
-        if (!vd || !id) return;
-        // 32 B / TerrainSurfaceVertex (std430 vec4[2]); 4 B / uint32 index.
+        const void* td = gos_terrain_surface::GetTileData();
+        if (!vd || !id || !td) return;
+        const uint32_t tileCount = gos_terrain_surface::GetTileCount();
+        // 32 B / TerrainSurfaceVertex (std430 vec4[2]); 4 B / uint32 index;
+        // 32 B / TerrainSurfaceTile (std430 uvec4 wp + vec4 uvExt).
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_surfaceVB);
         glBufferData(GL_SHADER_STORAGE_BUFFER,
                      (GLsizeiptr)vertCount * 32, vd, GL_STATIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_surfaceIB);
         glBufferData(GL_SHADER_STORAGE_BUFFER,
                      (GLsizeiptr)indexCount * 4, id, GL_STATIC_DRAW);
-        // Per-frame regenerated-index SSBO: worst-case (finest, all blocks)
-        // cap so the compute's atomic append can never overflow (it also
-        // carries an explicit length() guard). DYNAMIC: rewritten every
-        // armed frame by the band compute.
-        s_maxOutIdx = gos_terrain_surface::GetMaxOutputIndexCount();
-        if (s_maxOutIdx < indexCount) s_maxOutIdx = indexCount;  // never below finest
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_outIB);
+        // META-FIX: mission-static per-tile material table. Row-major-keyed
+        // (mx + my*cells), uploaded byte-identical to the dense recipe; the
+        // surface VS recovers the row-major key from the cell's top-left
+        // vertexNum so it is independent of the ADJUST-1 block-clustered
+        // index emission order.
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_surfaceTB);
         glBufferData(GL_SHADER_STORAGE_BUFFER,
-                     (GLsizeiptr)s_maxOutIdx * 4, nullptr, GL_DYNAMIC_DRAW);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_cursor);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, 4, nullptr, GL_DYNAMIC_DRAW);
-        {   // indirect cmd (4 uint); count patched by the compute tail.
-            const GLuint zero4[4] = { 0u, 1u, 0u, 0u };
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_cmdBuf);
-            glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(zero4), zero4, GL_DYNAMIC_DRAW);
-        }
+                     (GLsizeiptr)tileCount * 32, td, GL_STATIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
         s_uploadedEpoch = epoch;
         TS_TRACE("event=ssbo_upload epoch=%u verts=%u indices=%u vb=%u ib=%u "
-                 "out_ib=%u max_out_idx=%u",
+                 "tb=%u",
                  epoch, vertCount, indexCount,
                  (unsigned)s_surfaceVB, (unsigned)s_surfaceIB,
-                 (unsigned)s_outIB, s_maxOutIdx);
+                 (unsigned)s_surfaceTB);
     }
 
     // ---- Save state (mirrors gos_terrain_bridge_drawIndirect) -------------
@@ -2839,110 +2726,46 @@ void gos_terrain_surface_bridge_draw()
     //      disturbs the armed indirect path.
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 20, s_surfaceVB);
 
-    // ── PR-3 screen-agnostic draw: ARMED = per-frame band-select compute
-    //    regenerates the crack-free index list -> glDrawArraysIndirect;
-    //    UNARMED (C-1, deploy/unit-select) = compute SKIPPED, draw the PR-1
-    //    mission-static FINEST index buffer at a fixed safe band (uniform =>
-    //    zero seam class, tessLevel>=1, draw-all). Surface EXISTENCE is
-    //    decoupled from arming -- arming gates ONLY LOD/visibility refinement
-    //    (design C-1 items 1-2). No C-1 *repoint* here (that is PR-4).
-    const bool   armed    = gos_terrain_indirect::IsFrameSolidArmed();
-    const GLuint bandProg = ts_band_compute_prog();
-    bool         drewIndirect = false;
-
-    if (armed && bandProg != 0) {
-        // Reset the atomic append cursor to 0 for this frame.
-        const uint32_t zero = 0u;
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_cursor);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 4, &zero);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-        const uint32_t bps         = gos_terrain_surface::GetBlocksPerSide();
-        const uint32_t totalBlocks = bps * bps;
-        const int32_t  mapSide     = gos_terrain_surface::GetMapSide();
-
-        // Compute SSBOs: 20=vertex (already bound), 22=out-index,
-        // 23=cursor, 24=indirect cmd.
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 22, s_outIB);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 23, s_cursor);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 24, s_cmdBuf);
-
-        glUseProgram(bandProg);
-        {
-            const vec4& cp = g_gos_renderer->getTerrainCameraPos();
-            const GLint lCam = glGetUniformLocation(bandProg, "cameraPos");
-            const GLint lMS  = glGetUniformLocation(bandProg, "u_mapSide");
-            const GLint lBPS = glGetUniformLocation(bandProg, "u_blocksPerSide");
-            const GLint lPh  = glGetUniformLocation(bandProg, "u_phase");
-            if (lCam >= 0) glUniform4fv(lCam, 1, (const float*)&cp);
-            if (lMS  >= 0) glUniform1i(lMS,  (GLint)mapSide);
-            if (lBPS >= 0) glUniform1i(lBPS, (GLint)bps);
-            // Phase 0: one invocation per block (local_size_x = 64).
-            if (lPh >= 0) glUniform1i(lPh, 0);
-            const GLuint groups = (totalBlocks + 63u) / 64u;
-            glDispatchCompute(groups ? groups : 1u, 1, 1);
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-            // Phase 1: single-thread tail patches the indirect cmd count.
-            if (lPh >= 0) glUniform1i(lPh, 1);
-            glDispatchCompute(1, 1, 1);
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT |
-                            GL_COMMAND_BARRIER_BIT);
-        }
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 22, 0);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 23, 0);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 24, 0);
-
-        // Draw the regenerated crack-free index list. The VS is unchanged:
-        // rebind the per-frame out-index SSBO at binding 21 (the VS's
-        // surfaceIndices[] binding) and issue glDrawArraysIndirect.
-        glUseProgram(prog);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 21, s_outIB);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_cmdBuf);
-        glDrawArraysIndirect(GL_TRIANGLES, nullptr);
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-        drewIndirect = true;
-
-        static bool s_firstBandPrinted = false;
-        if (!s_firstBandPrinted) {
-            s_firstBandPrinted = true;
-            TS_TRACE("event=band_select_first armed=1 blocks=%u "
-                     "blocks_per_side=%u band_count=%d block_cells=%d "
-                     "max_out_idx=%u lb=precomputed crackfree=per_edge_neighbor_min",
-                     totalBlocks, bps,
-                     (int)mc2_terrain_surface_bands::kBandCount,
-                     (int)mc2_terrain_surface_bands::kBlockCells,
-                     s_maxOutIdx);
-        }
+    // ---- META-FIX 2026-05-19: bind the mission-static per-tile material SSBO
+    //      at binding 22 so the surface VS can forward the REAL Texcoord /
+    //      TerrainType varyings (replacing the PR-2 placeholders that broke
+    //      the detail / cement frag layer close-up). The VS recovers the
+    //      row-major tile key from the cell's top-left vertexNum via
+    //      u_mapSide, so the lookup is correct under the ADJUST-1
+    //      block-clustered index emission order.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 22, s_surfaceTB);
+    {
+        const GLint locMS = glGetUniformLocation(prog, "u_mapSide");
+        if (locMS >= 0)
+            glUniform1i(locMS, (GLint)gos_terrain_surface::GetMapSide());
     }
 
-    if (!drewIndirect) {
-        // UNARMED (C-1) or band compute unavailable: draw the PR-1 finest
-        // mission-static index buffer directly at a fixed safe band. Uniform
-        // band => zero seam class (no neighbor-min needed), tessLevel>=1,
-        // draw-all. Surface still EXISTS every frame regardless of arming.
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 21, s_surfaceIB);
-        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)indexCount);
+    // ── Screen-agnostic surface draw (band-LOD deferred, user-ruled
+    //    2026-05-19 STOP+HARVEST per the 2026-05-19 architecture
+    //    re-evaluation): draw the PR-1 mission-static FINEST index buffer
+    //    directly every frame. Uniform finest => zero band-boundary artifact
+    //    class, tessLevel>=1, draw-all (over-draws, never distance-culls --
+    //    correctness-safe re the long-sightline invariant). The discrete
+    //    band-LOD subsystem is DELETED, not parked; future LOD is a
+    //    re-chartered NS2 slice. Surface EXISTS every frame regardless of
+    //    arming; no C-1 *repoint* here (legacy + Fix-B retained).
+    const bool armed = gos_terrain_indirect::IsFrameSolidArmed();
 
-        static bool s_firstUnarmedPrinted = false;
-        if (!s_firstUnarmedPrinted) {
-            s_firstUnarmedPrinted = true;
-            TS_TRACE("event=unarmed_surface_arm armed=%d band_prog=%u "
-                     "indices=%u fixed_band=finest reason=%s "
-                     "screen_agnostic=1 c1_existence_decoupled=1",
-                     (int)armed, (unsigned)bandProg, indexCount,
-                     (bandProg == 0) ? "band_compute_unavailable"
-                                     : "not_armed_deploy_or_unit_select");
-        }
-    }
-
+    // Unconditional PR-1 mission-static FINEST index-buffer draw
+    // (binding 21 = s_surfaceIB). Band-LOD deleted (not parked) per the
+    // STOP+HARVEST; uniform finest => zero band-boundary artifact class,
+    // tessLevel>=1, draw-all. Surface EXISTS every frame regardless of
+    // arming; arming no longer selects a path here.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 21, s_surfaceIB);
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)indexCount);
     // first_draw lifecycle print -- once per process (coarse, never per-quad).
     static bool s_firstSurfaceDrawPrinted = false;
     if (!s_firstSurfaceDrawPrinted) {
         s_firstSurfaceDrawPrinted = true;
         TS_TRACE("event=first_surface_draw verts=%u indices=%u "
-                 "armed=%d indirect=%d screen_agnostic=1 fork_v=ssbo "
-                 "fork_lb=precomputed fork_d=clip_pre_divide",
-                 vertCount, indexCount, (int)armed, (int)drewIndirect);
+                 "armed=%d screen_agnostic=1 fork_v=ssbo "
+                 "lod=uniform_finest fork_d=clip_pre_divide",
+                 vertCount, indexCount, (int)armed);
     }
 
     // ---- Reset shared-frag flags so legacy/indirect path doesn't inherit --
@@ -2954,6 +2777,7 @@ void gos_terrain_surface_bridge_draw()
     // ---- Restore state ----------------------------------------------------
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 20, 0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 21, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 22, 0);  // META-FIX tile SSBO
     glBindSampler(0, savedSampler);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex0Binding);
