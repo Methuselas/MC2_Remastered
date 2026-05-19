@@ -1,5 +1,15 @@
 # quadSetupTextures Orphan-Walk Retirement - Design
 
+> **CORRECTION 2026-05-19:** the "irreducible" conclusion below was an
+> over-conclusion (isTerrainQuadVisible does zero projection - it's a
+> free OR-reduction of slimReduce's clipInfo). The cheap CPU
+> repoint/fold slices are dead, but the real target - a GPU/architectural
+> transition of the whole per-frame terrain cull/projection - is
+> user-chartered and under fresh recon. See `memory/setuptextures_is_a_
+> multiwriter_tangle_not_a_clean_shuttle.md` (CORRECTION) +
+> `memory/HANDOFF_actual_terrain_perframe_cull_fix.md`. Banner below is
+> retained for history.
+
 > **EFFORT CONCLUDED 2026-05-19: NO ENGINE CHANGE. Both slices terminally
 > dead.** Slice 1: the setupTextures walk IS the per-frame camera
 > visibility cull (not an orphan). Slice 2: the water 6-tuple is gated

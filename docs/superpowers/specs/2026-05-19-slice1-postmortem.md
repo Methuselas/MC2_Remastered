@@ -1,7 +1,21 @@
 # Slice 1 Postmortem - why "retire the quadSetupTextures orphan producer" could not proceed
 
-Date: 2026-05-19. Outcome: Slice 1 CANCELLED, premise falsified at root.
-No engine code was changed (the methodology caught it pre-edit).
+Date: 2026-05-19. Outcome: the cheap CPU repoint/fold slices are dead;
+no engine code changed (the methodology caught each pre-edit).
+
+> **CORRECTION 2026-05-19:** this doc's "irreducible" conclusion was an
+> OVER-CONCLUSION. `isTerrainQuadVisible` (quad.cpp:432-444) does ZERO
+> projection - it is a pure OR-reduction of slimReduce's per-vertex
+> `clipInfo`. The per-quad "cull" is a free derived read, not an
+> independent camera pass; the slices died from ENTANGLEMENT (overloaded
+> handle sentinel; 1340-line multi-writer setupTextures), not
+> impossibility. The real target is the GPU/architectural transition of
+> the whole per-frame terrain cull/projection (GPU cull infra already
+> exists) - user-chartered, recon in progress. Authoritative current
+> view: `memory/setuptextures_is_a_multiwriter_tangle_not_a_clean_
+> shuttle.md` (CORRECTION block) + `memory/HANDOFF_actual_terrain_
+> perframe_cull_fix.md`. The code findings below are accurate; only the
+> "irreducible/terminal" interpretation is retracted.
 
 ## The claim that died
 
