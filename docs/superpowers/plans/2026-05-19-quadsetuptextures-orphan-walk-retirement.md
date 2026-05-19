@@ -26,38 +26,42 @@
 
 > **SCOPE CHANGE 2026-05-19 (user-ruled): DRAWALPHA-reservation deletion DROPPED.** The original Task 1.1 (counter pre-gate) + Task 1.2 (delete reservation) are REMOVED. Reason: `legacy_drawalpha_detail_quads` instruments the draw()-internal DRAWALPHA site (trivially 0 armed because draw() is skipped wholesale), NOT the `addTerrainTriangles` reservation; txmmgr.cpp has live `MC2_ISTERRAIN & MC2_DRAWALPHA` passes - no valid dead-pixel proof. Reservation stays as-is (pre-existing, not a regression). See `memory/drawalpha_counter_instruments_wrong_site.md`. Slice 1 is now a single task: the recipe->member retirement.
 
-### Task 1.1: Delete the recipe->member assignments + compile-enforce the reader set
+### Task 1.1: NARROW-A - delete the 1004-1008 recipe->member assigns, repoint draw + hoist to cache, KEEP fields
 
-**Files:** Modify `mclib/quad.cpp` (`setupTextures` member assigns ~1004-1008), `mclib/quad.h` (the five fields + ctor inits).
+> Compile-enforce is OFF (the sole-consumer model was falsified at HEAD - `setupTextures` is a 720-2061 multi-writer tangle; see `memory/setuptextures_is_a_multiwriter_tangle_not_a_clean_shuttle.md`). KEEP the 5 `TerrainQuad` fields. This is a narrow structural decoupling, not a compile-enforced META-FIX, not a perf claim.
 
-- [ ] **Step 1: Re-grep the assignment block**
+**Files:** Modify `mclib/quad.cpp` (delete `setupTextures` assigns ~1004-1008; repoint `draw` reads), `mclib/terrain.cpp` (the ~1120 drawPass hoist consumer). Do NOT modify `mclib/quad.h`.
 
-```bash
-grep -n "isCement            = recipe\|terrainHandle       = recipe\|terrainDetailHandle = recipe\|overlayHandle       = recipe\|uvData *= recipe\|tryGetCachedTerrainRecipe(cachedEntry" mclib/quad.cpp
-```
-
-- [ ] **Step 2: Delete the five `recipe`->member assignments in `setupTextures`.** Keep the `tryGetCachedTerrainRecipe` call IF its `recipe` local still feeds `addTerrainTriangles(recipe)` (it does - that is separate, SOLID/cement contract). Delete ONLY the `this->`-member stores.
-
-- [ ] **Step 3: Compile-enforce - delete the five fields from `TerrainQuad` (quad.h)**
-
-Remove the declarations `terrainHandle`, `terrainDetailHandle`, `overlayHandle`, `uvData`, `isCement` and their ctor inits (quad.h ~68/71/76/100-107). This makes every surviving reader a compile error - the mechanical sole-consumer proof (spec must-fix #1).
-
-- [ ] **Step 4: Compile; the compiler enumerates every reader**
+- [ ] **Step 1: Re-grep the assignment block + both consumers**
 
 ```bash
-"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build64 --config RelWithDebInfo 2>&1 | grep -E "error|terrainHandle|overlayHandle|isCement|uvData|terrainDetailHandle"
+grep -n "isCement            = recipe\|terrainHandle       = recipe\|terrainDetailHandle = recipe\|overlayHandle       = recipe\|uvData *= recipe" mclib/quad.cpp
+grep -nE "^[[:space:]]*(if[[:space:]]*\()?[^a-zA-Z_]*(terrainHandle|terrainDetailHandle|overlayHandle|uvData|isCement)\b" mclib/quad.cpp | sed -n '1,80p'   # bare-id reads in draw (2062-3309) - NOT ->member
+grep -n "currentQuad->terrainHandle\|currentQuad->overlayHandle\|currentQuad->terrainDetailHandle" mclib/terrain.cpp   # the ~1120 hoist consumer
 ```
-Expected: a finite list of compile errors = the exact reader set (in `TerrainQuad::draw` and possibly the `=0` revert loop / hoist check).
 
-- [ ] **Step 5: Repoint each errored reader to the cache entry**
+- [ ] **Step 2: Delete ONLY the five `recipe`->member assignments at quad.cpp:1004-1008.** Keep `tryGetCachedTerrainRecipe`/`recipe` (feeds `addTerrainTriangles(recipe)`). Do NOT touch quad.h, the legacy `!terrainTextures2` self-consuming branch (789-891), the sentinel resets (741-746/858-966), the dead-1410 guard, the water block, the DRAWALPHA reservation.
 
-For each error site, fetch the static entry and read from it (the same source the deleted assignments copied FROM):
+- [ ] **Step 3: Repoint every `TerrainQuad::draw` member read (2062-3309) to the cache entry**
+
+For each bare-identifier read of the 5 members in `draw`:
 ```cpp
 const MapData::WorldQuadTerrainCacheEntry* e =
     Terrain::mapData ? Terrain::mapData->getTerrainFaceCacheEntry(tileR, tileC) : NULL;
 // e->terrainHandle / e->terrainDetailHandle / e->overlayHandle / e->uvData / e->isCement()
 ```
-Key on the STABLE `tileR/tileC` (NOT the camera-windowed quadList slot). If a reader site (e.g. inside `TerrainQuad::draw`) does not already have `tileR/tileC` in scope, derive them the same way `setupTextures` does before its `getTerrainFaceCacheEntry` call (re-grep the `tileR`/`tileC` computation feeding quad.cpp ~979 and lift the identical derivation; do NOT invent a new tile-identity source). Guard `e == NULL` exactly as the pre-existing `cachedEntry` sites do (quad.cpp ~979). Prefer reusing `enqueueCachedTerrainTriangles(const WorldQuadTerrainCacheEntry&)` (quad.cpp:502) if a site is an enqueue. Repeat Step 4/5 until zero errors.
+Key on the STABLE `tileR/tileC`. If `draw` lacks `tileR/tileC` in scope, derive IDENTICALLY to how `setupTextures` derives them before its `getTerrainFaceCacheEntry` call (re-grep quad.cpp ~979; lift the same derivation; do NOT invent a new tile-identity source). Guard `e == NULL` exactly as the pre-existing `cachedEntry` site (quad.cpp ~979). Reuse `enqueueCachedTerrainTriangles(const MapData::WorldQuadTerrainCacheEntry&)` (quad.cpp:502) where a site is an enqueue. (The 5 fields still exist, so this is a deliberate read-source switch in `draw`, NOT compiler-forced.)
+
+- [ ] **Step 4: Resolve the terrain.cpp ~1120 drawPass hoist consumer**
+
+`if (currentQuad->terrainHandle == 0 && currentQuad->overlayHandle == 0xffffffff && currentQuad->terrainDetailHandle == 0xffffffff) continue;` runs on the `=0` revert path. After Step 2, modern-path members are SENTINEL (0xffffffff) not recipe values, changing this skip decision. EITHER repoint this hoist to read the cache entry (behavior-preserving - preferred), OR prove `draw()`'s internal early-out is exactly behavior-equivalent for the formerly-hoist-skipped (pure-water) quads and document the proof. The `=0`-revert smoke (Step 7) is the gate.
+
+- [ ] **Step 5: Build foreground until clean**
+
+```bash
+"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build64 --config RelWithDebInfo 2>&1 | tail -15
+```
+(No compiler-forced reader list - fields are KEPT. Correctness is by the `=0`-revert smoke, not the compiler.)
 
 - [ ] **Step 6: Full relink + deploy**
 
@@ -67,24 +71,26 @@ rm -f build64/RelWithDebInfo/mc2.exe
 cp -f build64/RelWithDebInfo/mc2.exe "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe" && diff -q build64/RelWithDebInfo/mc2.exe "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe"
 ```
 
-- [ ] **Step 7: Slice-1 acceptance smokes (spec gates 3-6)**
+- [ ] **Step 7: Slice-1 acceptance smokes (`=0` revert is LOAD-BEARING)**
 
 ```bash
-py -3 scripts/run_smoke.py --mission mc2_01 --mission mc2_10 --duration 20 --keep-logs --kill-existing
-MC2_TERRAIN_INDIRECT_OVERLAY=0 py -3 scripts/run_smoke.py --mission mc2_01 --duration 20 --keep-logs --kill-existing
+# LOAD-BEARING: the =0 revert path is where draw() + the hoist actually run
+MC2_TERRAIN_INDIRECT_OVERLAY=0 py -3 scripts/run_smoke.py --mission mc2_01 --mission mc2_10 --duration 20 --keep-logs --kill-existing
+# regression check: default-armed (draw() skipped wholesale - exercises little of this change)
+py -3 scripts/run_smoke.py --mission mc2_01 --duration 20 --keep-logs --kill-existing
 ```
-Expected: PASS both. USER visually confirms: default-armed parity, `=0` revert parity, a cement canary scene unchanged, and a map-edge / zoomed-out camera-window pass (tileR/tileC identity holds). Surface to user for the visual gate.
+Expected: PASS both. USER visually confirms on the `=0` path: terrain/decal/detail parity, cement canary scene unchanged, map-edge / zoomed-out camera-window pass (tileR/tileC identity holds), AND default-armed shows no regression. Surface to USER for the visual gate (this is the substitutive proof for Narrow-A - the `=0` path is where the change is observable).
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add mclib/quad.cpp mclib/quad.h
-git commit -m "feat(terrain): retire setupTextures recipe->member orphan producer; cache-direct reads (compile-enforced)
+git add mclib/quad.cpp mclib/terrain.cpp
+git commit -m "feat(terrain): Narrow-A - draw reads Shape-C cache directly; delete setupTextures recipe->member shuttle (modern path)
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 9: Slice-1 substitutive proof (USER-DRIVEN)** - hand to user: clean non-COST_SPLIT total-frame Tracy at worst-case zoomed-out-big-map; confirm `Terrain::geometry quadSetupTextures` net-shrinks with no displaced cost into `draw`/mission-load. Record. (Honest test = net-shrink, NOT zone-gone - residue stays per spec.)
+- [ ] **Step 9: Slice-1 Tracy (USER-DRIVEN, no-regression)** - hand to user: clean non-COST_SPLIT total-frame Tracy at worst-case zoomed-out-big-map; confirm NO regression (negligible delta - this is a decoupling, not a measurable win; do NOT assert "net-shrink"/"zone-gone"). Record.
 
 ---
 

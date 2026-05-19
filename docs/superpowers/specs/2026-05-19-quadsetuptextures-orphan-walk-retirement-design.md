@@ -31,7 +31,7 @@ The per-frame terrain walks:
 | Walk | Status (HEAD 48ba0d8) | Action |
 |---|---|---|
 | `slimReduce` (terrain.cpp `ZoneScopedN("Terrain::geometry slimReduce")`) | Camera-dependent, irreducible, proven sole producer of cull + the leastZ/mostZ/leastW/mostW/leastWY/mostWY 6-tuple | KEEP |
-| (b) `setupTextures` recipe->member shuttle (quad.cpp:1004-1008, `CostSplitRecipeCacheScope` ~987) | Consumer `draw` default-dead via 60f2ef8 | Slice 1: delete the recipe->member ORPHAN PRODUCER + repoint consumers to cache (NOT a full-walk-removal claim - residue stays) |
+| (b) `setupTextures` recipe->member shuttle (quad.cpp:1004-1008 ONLY; setupTextures is a 720-2061 multi-writer tangle) | `draw` NOT sole consumer (legacy branch self-consumes; hoist+1410 also read) | Slice 1 NARROW-A: delete ONLY the 1004-1008 assigns, repoint draw + the terrain.cpp hoist to cache, KEEP fields. Structural decoupling, no compile-enforce, no perf claim |
 | DRAWALPHA detail reservation (`addTerrainTriangles` quad.cpp:668) | Dead-pixel claim UNPROVEN (counter mis-targeted; live txmmgr DRAWALPHA passes) | OUT OF SCOPE (user-ruled 2026-05-19; stays as-is, not a regression) |
 | (c) water-projection 6-tuple (quad.cpp water block; second writer) | Probe DIVERGENT - contributes UNIQUE extrema | Slice 2: joint re-home into slimReduce |
 | (a) `CopyResultsToVertexPool` scatter (gos_terrain_lighting.cpp:834) | LOAD-BEARING - armed indirect packer (quad.cpp:2389) + water-overlay (quad.cpp:2465) re-read scattered pool | Slice 3 (PREP only) |
@@ -52,66 +52,77 @@ stays AS-IS (pre-existing, not a regression). See
 `memory/drawalpha_counter_instruments_wrong_site.md`. Slice 1 is now
 purely the recipe->member orphan-producer retirement.
 
-Target wording (false-victory guard, per review must-fix #3): "delete
-the recipe->member orphan producer; do NOT claim full `setupTextures`
-walk removal until the residue is separately fused or retired." The
-honest done-test is "zone net-shrinks with no displaced cost," not
-"zone gone."
+**SCOPE CHANGE 2026-05-19 #2 (user-ruled): NARROW-A, honestly
+downgraded.** The recon's "single recipe->member shuttle at 1004-1008,
+sole consumer `draw`, compile-enforced sole-consumer proof" model is
+FALSIFIED at HEAD: `setupTextures` is quad.cpp:720-2061 (~1340 lines),
+the five members are written at >=6 sites (sentinel resets 741-746/
+858-966; the legacy `!terrainTextures2` self-consuming SOLID/detail
+branch 789-807/873-891; the recipe shuttle 1004-1008) and read by
+`draw` (~40) AND a statically-dead in-`setupTextures` guard at 1410.
+`draw` is NOT the sole consumer; the compile-enforce proof (former
+review must-fix #1) CANNOT hold. See
+`memory/setuptextures_is_a_multiwriter_tangle_not_a_clean_shuttle.md`.
+Slice 1 is therefore re-scoped to NARROW-A:
 
-**Delete** the per-quad member-store assignments: in `setupTextures`
-(quad.cpp), the `recipe`->member assignments (`isCement`/`terrainHandle`/
-`terrainDetailHandle`/`overlayHandle`/`uvData` at quad.cpp:1004-1008).
-Keep the `tryGetCachedTerrainRecipe` call / `recipe` local (it still
-feeds `addTerrainTriangles(recipe)` - the SOLID/cement contract, NOT in
-scope).
+- **Delete ONLY the five `recipe`->member assignments at
+  quad.cpp:1004-1008.** Keep the `tryGetCachedTerrainRecipe` call /
+  `recipe` local (still feeds `addTerrainTriangles(recipe)` - SOLID/
+  cement contract, not in scope).
+- **KEEP the five `TerrainQuad` fields** (the legacy `!terrainTextures2`
+  branch, the sentinel resets, and the dead-1410 guard still reference
+  them). NO field deletion, NO compile-enforce, NO privatize/rename.
+- **Repoint every `TerrainQuad::draw` read of the five members
+  (~40 reads, 2062-3309, bare-identifier `this->` access) to
+  `getTerrainFaceCacheEntry(tileR,tileC)`.** Do NOT touch the legacy
+  branch's self-consuming writes/reads (789-891), the sentinel resets,
+  or the dead-1410 guard - they keep using the (retained) fields.
 
-**Compile-enforce the sole-consumer proof (review must-fix #1).** The
-plan MUST enumerate every reader of the five `TerrainQuad` fields
-(`grep -n "->\(isCement\|terrainHandle\|terrainDetailHandle\|overlay
-Handle\|uvData\)" mclib/*.cpp GameOS/**/*.cpp`). Then:
-- If ALL readers are repointed to the cache entry: DELETE the five
-  fields from `TerrainQuad` outright (the strongest proof - any
-  surviving/reintroduced reader becomes a compile error).
-- If any armed-path residue genuinely still needs a field: privatize /
-  rename it (e.g. `terrainHandle_RETIRED_USE_CACHE`) so every accidental
-  or future read fails loudly at compile time, not silently on stale
-  data.
-Grep-only "draw is the sole consumer" is NOT sufficient; the retirement
-must be mechanically enforced.
+**Honest label:** this is a NARROW structural decoupling - `draw` reads
+the immutable mission-load cache instead of per-frame-mutated quad
+state - NOT the "META-FIX orphan-producer retirement" the recon framed,
+NOT a perf claim (it removes 5 stores/quad/frame from a 1340-line walk
+that otherwise stays). Value = decoupling/clarity, the user's
+"simplify" goal, with zero behavior change. The former "net-shrink
+Tracy" done-test downgrades to "no regression / negligible delta."
 
-**Repoint** the two consumers to read the static Shape-C entry directly:
-- `TerrainQuad::draw` member reads -> `getTerrainFaceCacheEntry(tileR,
-  tileC)` (mapdata.cpp:232) returning `WorldQuadTerrainCacheEntry`
-  (fields `terrainHandle`/`terrainDetailHandle`/`overlayHandle`/`uvData`/
-  `isCement()` all present). Key is the STABLE `tileR/tileC`, NOT the
-  camera-windowed `quadList` slot.
-- The `MC2_TERRAIN_INDIRECT_OVERLAY=0` revert loop (terrain.cpp drawPass
-  `if` branch) also reads the cache directly - serves BOTH paths, so
-  SOLID-emit for cement is NOT removed (class-3 untouched).
+**The member consumers under Narrow-A (BOTH must be handled):**
+1. `TerrainQuad::draw` member reads (~40, 2062-3309, bare-identifier)
+   -> `getTerrainFaceCacheEntry(tileR,tileC)` (mapdata.cpp:232)
+   `WorldQuadTerrainCacheEntry` (fields all present). Key on the STABLE
+   `tileR/tileC`, NOT the camera-windowed `quadList` slot. Reuse
+   `enqueueCachedTerrainTriangles(const WorldQuadTerrainCacheEntry&)`
+   (quad.cpp:502) where a site is an enqueue.
+2. The terrain.cpp drawPass hoist check (~1120,
+   `currentQuad->terrainHandle == 0 && ->overlayHandle == 0xffffffff &&
+   ->terrainDetailHandle == 0xffffffff` -> skip the quad). This runs on
+   the `=0` revert path. After 1004-1008 is deleted, modern-path
+   members are SENTINEL (0xffffffff) not recipe values, so this hoist's
+   skip decision CHANGES (pure-water quads no longer hoist-skipped;
+   they fall through to `draw()` which must early-out internally). The
+   implementer MUST resolve this explicitly: either repoint the hoist
+   to read the cache entry (behavior-preserving), OR prove `draw()`'s
+   internal early-out is exactly behavior-equivalent for the formerly-
+   hoist-skipped quads. The `=0`-revert smoke + visual parity is the
+   load-bearing gate for this (that is the path where `draw()` and the
+   hoist actually run; armed-default `draw()` is skipped wholesale).
 
-Reuse opportunity to verify at plan time: `enqueueCachedTerrainTriangles
-(const WorldQuadTerrainCacheEntry&)` (quad.cpp:502) already exists - a
-cache-direct enqueue that may be the substitution machinery.
+**Do NOT touch:** the legacy `!terrainTextures2` self-consuming writes/
+reads (789-891), the sentinel resets, the dead-1410 guard, the DRAWALPHA
+reservation, the (c) water block (Slice 2), `tryGetCachedTerrainRecipe`/
+`recipe`/`addTerrainTriangles`, pure-cement SOLID emit. KEEP the 5
+fields. The plan must enumerate KEEP vs DELETE per statement.
 
-**Scope boundary (removes the ambiguity):** Slice 1 deletes ONLY the
-recipe->member assignments and repoints `draw`. It does NOT delete
-`setupTextures` wholesale, and (per the 2026-05-19 scope change) does
-NOT touch the DRAWALPHA reservation. Residue that STAYS (separate
-concerns, not this slice): the posTile decode / `ensureTerrainFaceCache
-EntryResident` residency touch; the water fast-path narrow-append
-predicate; the (c) water-projection block (owned by Slice 2); the
-DRAWALPHA reservation (out of scope); any armed-path SOLID/indirect
-emit. The plan must enumerate, per `setupTextures` statement, KEEP vs
-DELETE before editing.
-
-**Done-criterion (substitutive):** the `setupTextures` recipe->member
-store walk is DELETED (not flagged/bypassed); on a clean
-non-COST_SPLIT total-frame Tracy at worst-case zoomed-out-big-map the
-`Terrain::geometry quadSetupTextures` zone net-shrinks with NO displaced
-cost into `draw`/mission-load (the bake already exists); both default-
-armed and `=0`-revert render identically; class-3 cement untouched.
-Reject capped-FPS / per-quad-chrono / cost-split absolutes
-(`cost_split_instrumentation_is_observer_effect_dominated.md`).
+**Done-criterion (Narrow-A, honestly downgraded):** the 5 recipe->member
+assignments at 1004-1008 are DELETED; every `draw` member read + the
+terrain.cpp hoist consumer are repointed/proven-equivalent;
+default-armed AND `=0`-revert render IDENTICALLY (visual parity,
+USER-observed - the `=0` path is load-bearing here); class-3 cement
+untouched; clean non-COST_SPLIT total-frame Tracy shows NO regression
+(negligible delta expected - this removes 5 stores/quad from a
+1340-line walk; it is a decoupling, not a measurable win - do NOT claim
+"net-shrink"). Reject capped-FPS / per-quad-chrono / cost-split
+absolutes (`cost_split_instrumentation_is_observer_effect_dominated.md`).
 
 ## 3. Slice 2 - collapse the water 6-tuple onto slimReduce (NOW)
 
@@ -192,20 +203,24 @@ regardless of Slice-3 prep state.
   the worktree discipline; main agent runs long builds backgrounded.
 - Build RelWithDebInfo + full relink + v0.4 deploy before every smoke.
 
-### Slice-1 acceptance gates (ALL required, in order)
-1. Build RelWithDebInfo + full relink.
-2. Stale-member retirement compile-enforced (fields deleted, or
-   privatized/renamed so any reader fails to compile).
-3. Default-armed path visual parity.
-4. `MC2_TERRAIN_INDIRECT_OVERLAY=0` revert path visual parity.
+### Slice-1 acceptance gates (NARROW-A; ALL required, in order)
+1. Build RelWithDebInfo + full relink (fields KEPT - no compile-enforce
+   gate; that proof was falsified at HEAD).
+2. Both member consumers handled: every `draw` read repointed to the
+   cache AND the terrain.cpp ~1120 hoist check repointed-or-proven-
+   equivalent.
+3. `MC2_TERRAIN_INDIRECT_OVERLAY=0` revert path visual + behavior
+   parity - **LOAD-BEARING** (this is the path where `draw()` and the
+   hoist actually execute; armed-default skips `draw()` wholesale so it
+   exercises almost nothing of this change).
+4. Default-armed path visual parity (regression check).
 5. Cement canary scene/map visually unchanged (explicit canary, NOT
    "unchanged by reasoning").
-6. Map-edge / camera-window boundary visual smoke (tileR/tileC identity
-   must hold at call sites - cache lookup O(1) + resident on BOTH the
-   default and `=0` paths).
-7. Clean non-COST_SPLIT total-frame Tracy at worst-case zoomed-out-big-
-   map: `Terrain::geometry quadSetupTextures` net-shrinks with NO
-   obvious displaced cost into `draw` or mission load.
+6. Map-edge / camera-window boundary visual smoke on the `=0` path
+   (tileR/tileC identity must hold; cache O(1) + resident).
+7. Clean non-COST_SPLIT total-frame Tracy: NO regression (negligible
+   delta expected - decoupling, not a measurable win; do NOT assert
+   "net-shrink").
 
 ### Slice-2 acceptance gates (ALL required)
 1. `MC2_WATER_INVPROJ_PARITY` flips to `result=identical`.
