@@ -170,10 +170,6 @@ void GameTacMap::render()
 	gos_DrawTriangles( &corners[1], 3 );
 
 
-	Stuff::Vector2DOf<long> screen;
-	Stuff::Vector4D 		nScreen;
-	Stuff::Vector3D			world;
-
 	//-----------------------------------------------------------
 	// Render the objective markers
 	long count = 0;
@@ -208,54 +204,20 @@ void GameTacMap::render()
 		count++;
 	}
 
-	
-	// this is the little viewing rect
-
-	// Routine that InverseProjects is slightly less accurate but an order of magnitude faster.
-	// Can make more accurate later at very little expense to performance.
-	// Easy to fix with camera later.  -fs
-
-	screen.x = 1;
-	screen.y = 1;
-	
-	nScreen.x = nScreen.y = 1.0f;
-	nScreen.z = nScreen.w = 0.0f;
-	
-	// [PROJECTZ:InverseProjectionPair id=tacmap_inverse_corner0]
-	eye->inverseProjectForPicking( nScreen, world );
-	worldToTacMap( world, corners[0] );
-
-	screen.y = Environment.screenHeight - 1;
-	nScreen.y = (Environment.screenHeight * 0.6667f) - 1;
-	nScreen.z = nScreen.w = 0.0f;
-	// [PROJECTZ:InverseProjectionPair id=tacmap_inverse_corner1]
-	eye->inverseProjectForPicking( nScreen, world );
-	worldToTacMap( world, corners[1] );
-
-	screen.x = Environment.screenWidth - 1;
-	nScreen.x = Environment.screenWidth - 1;
-	nScreen.z = nScreen.w = 0.0f;
-	// [PROJECTZ:InverseProjectionPair id=tacmap_inverse_corner2]
-	eye->inverseProjectForPicking( nScreen, world );
-	worldToTacMap( world, corners[2] );
-
-	screen.y = 1;
-	nScreen.y = 1;
-	nScreen.z = nScreen.w = 0.0f;
-	// [PROJECTZ:InverseProjectionPair id=tacmap_inverse_corner3]
-	eye->inverseProjectForPicking( nScreen, world );
-	worldToTacMap( world, corners[3] );
-
-	corners[0].argb = 0xffffffff;
-	corners[1].argb = 0xffffffff;
-	corners[2].argb = 0xffffffff;
-	corners[3].argb = 0xffffffff;
-	corners[0].u = corners[1].u = 0.078125f;
-	corners[3].u = corners[2].u = .99875f;
-	corners[0].v = corners[3].v = 0.078125f;
-	corners[1].v = corners[2].v = .99875f;
-	corners[4] = corners[0];
-
+	// Surgical Phase-1 carve-out 2026-05-19: the broken viewport-rect
+	// overlay block that used to live here (4x inverseProjectForPicking +
+	// worldToTacMap + gos_DrawQuads trapezoid) is killed (the camera
+	// vertices are broken; the chain inverseProjectForPicking ->
+	// inverseProjectZ -> setInverseProject is being retired in Phases 2-5).
+	// HOWEVER these 13 gos_SetRenderState calls are PRESERVED: they were
+	// inside the deleted block but their effect on GPU state is inherited
+	// by every renderer that runs after GameTacMap::render() (gos render
+	// state is sticky across calls; see memory/blend_state_inheritance_in_
+	// post_process.md). Deleting them caused mech-invisible + terrain-
+	// texture-tiling regressions because next-frame 3D rendering inherited
+	// AlphaMode=OneZero / Filter=None / unset TextureAddress instead of
+	// AlphaInvAlpha / BiLinear / Wrap. The state setup STAYS even though
+	// it no longer prefaces a draw within this function.
 	gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha);
 	gos_SetRenderState( gos_State_ShadeMode, gos_ShadeGouraud);
 	gos_SetRenderState( gos_State_MonoEnable, 0);
@@ -268,12 +230,7 @@ void GameTacMap::render()
 	gos_SetRenderState( gos_State_Filter, gos_FilterBiLinear);
 	gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
 	gos_SetRenderState( gos_State_ZCompare, 0);
-	gos_SetRenderState(	gos_State_ZWrite, 0);
-	DWORD gosTextureHandle = mcTextureManager->get_gosTextureHandle(viewRectHandle);
-
-	gos_SetRenderState( gos_State_Texture, gosTextureHandle );
-
-	gos_DrawQuads( &corners[0], 4 );
+	gos_SetRenderState( gos_State_ZWrite, 0);
 
 	unsigned long colors[MAX_MOVERS];
 	unsigned long ringColors[MAX_MOVERS];
