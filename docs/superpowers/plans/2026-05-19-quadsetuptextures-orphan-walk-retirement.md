@@ -26,7 +26,11 @@
 
 > **SCOPE CHANGE 2026-05-19 (user-ruled): DRAWALPHA-reservation deletion DROPPED.** The original Task 1.1 (counter pre-gate) + Task 1.2 (delete reservation) are REMOVED. Reason: `legacy_drawalpha_detail_quads` instruments the draw()-internal DRAWALPHA site (trivially 0 armed because draw() is skipped wholesale), NOT the `addTerrainTriangles` reservation; txmmgr.cpp has live `MC2_ISTERRAIN & MC2_DRAWALPHA` passes - no valid dead-pixel proof. Reservation stays as-is (pre-existing, not a regression). See `memory/drawalpha_counter_instruments_wrong_site.md`. Slice 1 is now a single task: the recipe->member retirement.
 
-### Task 1.1: NARROW-A - delete the 1004-1008 recipe->member assigns, repoint draw + hoist to cache, KEEP fields
+### Task 1.1: CANCELLED - Slice 1 is DEAD (premise falsified at root)
+
+> **DO NOT EXECUTE.** `setupTextures`'s per-quad walk IS the per-frame camera-dependent terrain visibility cull (handle `0xffffffff` sentinel = cull channel: `!isTerrainQuadVisible` writes it quad.cpp:955-967, `draw()` early-outs on it quad.cpp:2064). A static cache has no camera; repointing defeats per-quad cull (full-map render). Not an orphan, not Narrow-A, not anything. See `memory/setuptextures_is_a_multiwriter_tangle_not_a_clean_shuttle.md`. Skip to Slice 2 (the live deliverable). Original (void) steps follow for history only.
+
+#### (VOID) NARROW-A steps - historical, do not run
 
 > Compile-enforce is OFF (the sole-consumer model was falsified at HEAD - `setupTextures` is a 720-2061 multi-writer tangle; see `memory/setuptextures_is_a_multiwriter_tangle_not_a_clean_shuttle.md`). KEEP the 5 `TerrainQuad` fields. This is a narrow structural decoupling, not a compile-enforced META-FIX, not a perf claim.
 

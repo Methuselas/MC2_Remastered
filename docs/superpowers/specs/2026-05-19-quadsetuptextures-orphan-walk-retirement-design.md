@@ -31,12 +31,31 @@ The per-frame terrain walks:
 | Walk | Status (HEAD 48ba0d8) | Action |
 |---|---|---|
 | `slimReduce` (terrain.cpp `ZoneScopedN("Terrain::geometry slimReduce")`) | Camera-dependent, irreducible, proven sole producer of cull + the leastZ/mostZ/leastW/mostW/leastWY/mostWY 6-tuple | KEEP |
-| (b) `setupTextures` recipe->member shuttle (quad.cpp:1004-1008 ONLY; setupTextures is a 720-2061 multi-writer tangle) | `draw` NOT sole consumer (legacy branch self-consumes; hoist+1410 also read) | Slice 1 NARROW-A: delete ONLY the 1004-1008 assigns, repoint draw + the terrain.cpp hoist to cache, KEEP fields. Structural decoupling, no compile-enforce, no perf claim |
+| (b) `setupTextures` per-quad walk | NOT an orphan: it IS the per-frame camera-dependent visibility cull (handle 0xffffffff sentinel = cull channel; quad.cpp:955-967 write, 2064 read) | Slice 1 DEAD/CANCELLED - irreducible like slimReduce; a static cache has no camera. Do not re-attempt |
 | DRAWALPHA detail reservation (`addTerrainTriangles` quad.cpp:668) | Dead-pixel claim UNPROVEN (counter mis-targeted; live txmmgr DRAWALPHA passes) | OUT OF SCOPE (user-ruled 2026-05-19; stays as-is, not a regression) |
 | (c) water-projection 6-tuple (quad.cpp water block; second writer) | Probe DIVERGENT - contributes UNIQUE extrema | Slice 2: joint re-home into slimReduce |
 | (a) `CopyResultsToVertexPool` scatter (gos_terrain_lighting.cpp:834) | LOAD-BEARING - armed indirect packer (quad.cpp:2389) + water-overlay (quad.cpp:2465) re-read scattered pool | Slice 3 (PREP only) |
 
-## 2. Slice 1 - retire the recipe->member orphan producer (NOW)
+## 2. Slice 1 - DEAD / CANCELLED (premise falsified at root 2026-05-19)
+
+> **SLICE 1 IS DEAD IN EVERY FORM. Do not execute, do not re-attempt.**
+> Execution proved the foundational premise false: `setupTextures`'s
+> per-quad walk IS the per-frame camera-dependent terrain visibility
+> cull - `!isTerrainQuadVisible(*this)` writes the handle `0xffffffff`
+> sentinel (quad.cpp:955-967), `draw()` early-outs on it (quad.cpp:2064);
+> the sentinel IS the cull channel. The static Shape-C cache has no
+> camera, so repointing `draw`/the hoist at it defeats per-quad cull
+> (full-map render = catastrophic zoomed-out regression). There is no
+> "orphan producer" - the recon/recon-extension/both advisors/design/
+> outside-review/Narrow-A all modeled a static shuttle and were wrong.
+> Any "fix" still computes per-quad visibility every frame = the
+> additive-inertia marathon the discipline forbids. Authoritative
+> record: `memory/setuptextures_is_a_multiwriter_tangle_not_a_clean_
+> shuttle.md`. The rest of this section is HISTORICAL. **Slice 2 (sec 3)
+> is independent and remains the live deliverable; Slice 3 (sec 4) =
+> prep doc only.**
+
+### (historical) original Slice 1 text follows
 
 **SCOPE CHANGE 2026-05-19 (user-ruled): DRAWALPHA-reservation deletion
 DROPPED from this effort.** Reason: the planned pre-delete gate
