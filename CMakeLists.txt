@@ -181,6 +181,7 @@ list(APPEND THIRDPARTY_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tracy"
 # Findings (advisor review): docs/superpowers/explorations/2026-05-02-track-d-mvp-adversarial-findings.md
 # ---------------------------------------------------------------------------
 option(ENABLE_ASSIMP_IMPORTER "Enable FBX/GLB mech import via Assimp (Track D)" ON)
+option(ENABLE_CDAG_COOKER "Build the cdag_cooker host tool (requires meshoptimizer; never linked into mc2)" OFF)
 
 if(ENABLE_ASSIMP_IMPORTER)
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/assimp/CMakeLists.txt")
