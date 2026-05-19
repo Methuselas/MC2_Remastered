@@ -86,6 +86,10 @@ std::vector<TerrainSurfaceTile>      g_tiles;
 std::vector<TerrainSurfaceAdjacency> g_adjacency;
 int32_t                              g_mapSide   = 0;
 bool                                 g_generated = false;
+// PR-2: bumped on every successful (re)generation so the GPU-upload bridge
+// (gameos_graphics.cpp) can detect a rebuild and re-upload the SSBOs. 0 means
+// "never generated"; the bridge caches the last-uploaded epoch.
+uint32_t                             g_genEpoch  = 0;
 
 // uvMode parity -- IDENTICAL to mclib/mapdata.cpp:115 worldQuadUVMode(tileR,
 // tileC) = ((tileR & 1) == (tileC & 1)) ? BOTTOMRIGHT : BOTTOMLEFT, with
@@ -263,10 +267,14 @@ void GenerateForMission() {
         return;
     }
 
+    // PR-2: a complete, fence-passed generation -- advance the epoch so the
+    // GPU-upload bridge re-uploads the surface SSBOs on the next draw.
+    ++g_genEpoch;
+
     TS_TRACE("event=gen_complete mapSide=%d verts=%zu indices=%zu tiles=%zu "
-             "adj=%zu src=stock_dense_recipe arming=none savegame=none",
+             "adj=%zu epoch=%u src=stock_dense_recipe arming=none savegame=none",
              g_mapSide, g_vertices.size(), g_indices.size(),
-             g_tiles.size(), g_adjacency.size());
+             g_tiles.size(), g_adjacency.size(), g_genEpoch);
     TS_TRACE("event=stock_fence_pass detail=resources_populated_at_mission_load_"
              "before_first_frame_from_stock_only");
 }
@@ -286,5 +294,11 @@ uint32_t GetIndexCount()     { return (uint32_t)g_indices.size(); }
 uint32_t GetTileCount()      { return (uint32_t)g_tiles.size(); }
 uint32_t GetAdjacencyCount() { return (uint32_t)g_adjacency.size(); }
 int32_t  GetMapSide()        { return g_mapSide; }
+
+// PR-2 GPU-upload accessors -- read-only views into the mission-static CPU
+// buffers. Empty/null when not generated (the bridge guards on IsGenerated()).
+const void* GetVertexData()  { return g_vertices.empty() ? nullptr : (const void*)g_vertices.data(); }
+const void* GetIndexData()   { return g_indices.empty()  ? nullptr : (const void*)g_indices.data();  }
+uint32_t    GetGenerationEpoch() { return g_genEpoch; }
 
 } // namespace gos_terrain_surface

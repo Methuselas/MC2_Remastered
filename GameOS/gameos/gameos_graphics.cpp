@@ -31,6 +31,8 @@
 #include "gos_terrain_bridge.h"
 #include "gos_terrain_patch_stream.h"
 #include "gos_terrain_indirect.h"
+#include "gos_terrain_surface.h"                 // [TERRAIN_SURFACE] PR-2 producer
+#include "../../mclib/terrain_surface_trace.h"   // [TERRAIN_SURFACE v1] channel
 #include "gos_terrain_water_stream.h"
 #include "gpu_driven_common.h"
 
@@ -1318,6 +1320,8 @@ class gosRenderer {
         void terrainOverrideThinMVP(const float* mvp4x4);
         // Returns the glsl_program for the thin terrain shader. Used by bridge exports.
         glsl_program* getThinTerrainProgram()      const { return thin_terrain_prog_;        }
+        // [TERRAIN_SURFACE] PR-2: indexed continuous-surface VS + gos_terrain.frag.
+        glsl_program* getTerrainSurfaceProgram()   const { return terrain_surface_prog_;     }
         glsl_program* getWaterFastProgram()        const { return water_fast_prog_;           }
         glsl_program* getMineStaticProgram()       const { return mine_static_prog_;          }  // PR2c Stage 2c
         glsl_program* getMaskSolidProgram()        const { return mask_solid_prog_;           }  // B4 Stage 1b — mask-SOLID draw
@@ -1635,6 +1639,7 @@ class gosRenderer {
         // Terrain tessellation material
         gosRenderMaterial* terrain_material_ = nullptr;
         glsl_program* thin_terrain_prog_ = nullptr;  // gos_terrain_thin.vert + gos_terrain.frag
+        glsl_program* terrain_surface_prog_ = nullptr;  // [TERRAIN_SURFACE] PR-2 gos_terrain_surface.vert + gos_terrain.frag
         glsl_program* water_fast_prog_   = nullptr;  // gos_terrain_water_fast.vert + gos_tex_vertex.frag
         glsl_program* mine_static_prog_  = nullptr;  // PR2c Stage 2c — gos_terrain_mine_static.vert + .frag
         glsl_program* mask_solid_prog_   = nullptr;  // B4 Stage 1b — gos_terrain_mask_solid.vert + gos_terrain.frag
@@ -2549,6 +2554,195 @@ extern "C" void     gos_terrain_indirect_getDispatchMvpFloats4(float out[4]);
 // gos_terrain_indirect_getDispatchMvp16 and gos_GetTerrainMVPMat4 are declared
 // TU-wide near the top of this file (after g_terrainMaterialProfile) so that
 // renderWaterFastPath (which precedes this block) can see them.
+
+// ──────────────────────────────────────────────────────────────────────────
+// [TERRAIN_SURFACE] PR-2 — continuous indexed-surface validation draw bridge.
+//
+// Plan : docs/superpowers/plans/.../terrain-continuous-surface-producer-plan.md
+//        PR-2 (Wave 1, ADDITIVE / DEFAULT-OFF / DELETES NOTHING). Behind the
+//        MC2_TERRAIN_SURFACE path-select kill-switch (gos_terrain_surface::
+//        IsEnabled()); a no-op when OFF (behaviour-neutral). When ON it draws
+//        the surface ON TOP of the still-running legacy/indirect path purely
+//        for visual validation of the V-ssbo VS + Fork D reverse-Z bias --
+//        PR-2 lands NO deletion and NO legacy kill site (that is PR-4).
+//
+// Fork V = V-ssbo (RULED): the surface vertex SSBO (binding 11) + the baked
+// mission-static index SSBO (binding 12) are uploaded once per generation
+// epoch (gos_terrain_surface::GetGenerationEpoch()); the VS pulls
+// surfaceVerts[ surfaceIndices[gl_VertexID] ]. NO IBO / VAO element-array
+// state (memory/element_array_buffer_is_vao_state_new_draw_paths_own_their_vao.md).
+//
+// Screen-agnostic (design Convergence C-1): the draw does NOT test
+// IsFrameSolidArmed() -- surface EXISTENCE is decoupled from arming. PR-2
+// draws at a single (fixed) LOD with draw-all visibility on BOTH armed and
+// unarmed frames; the per-frame band/visibility refinement is PR-3 scope.
+//
+// State save/restore + AMD VAO-0 / attr-0 mitigations mirror
+// gos_terrain_bridge_drawIndirect exactly (the proven pattern in this file).
+// ──────────────────────────────────────────────────────────────────────────
+void gos_terrain_surface_bridge_draw()
+{
+    if (!gos_terrain_surface::IsEnabled())   return;   // kill-switch OFF: no-op
+    if (!gos_terrain_surface::IsGenerated()) return;   // nothing generated yet
+    if (!g_gos_renderer)                     return;
+
+    glsl_program* p = g_gos_renderer->getTerrainSurfaceProgram();
+    if (!p || !p->shp_) return;   // compile failed (logged once at init)
+    const GLuint prog = p->shp_;
+
+    const uint32_t indexCount = gos_terrain_surface::GetIndexCount();
+    const uint32_t vertCount  = gos_terrain_surface::GetVertexCount();
+    if (indexCount == 0u || vertCount == 0u) return;
+
+    ZoneScopedN("Terrain::SurfaceValidationDraw");
+    TracyGpuZone("Terrain::SurfaceValidationDraw");
+
+    // ---- Lazy GPU upload, epoch-tracked (re-upload on regeneration) --------
+    static GLuint   s_surfaceVB     = 0;
+    static GLuint   s_surfaceIB     = 0;
+    static uint32_t s_uploadedEpoch = 0;
+    const uint32_t  epoch           = gos_terrain_surface::GetGenerationEpoch();
+    if (s_surfaceVB == 0) glGenBuffers(1, &s_surfaceVB);
+    if (s_surfaceIB == 0) glGenBuffers(1, &s_surfaceIB);
+    if (epoch != s_uploadedEpoch) {
+        const void* vd = gos_terrain_surface::GetVertexData();
+        const void* id = gos_terrain_surface::GetIndexData();
+        if (!vd || !id) return;
+        // 32 B / TerrainSurfaceVertex (std430 vec4[2]); 4 B / uint32 index.
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_surfaceVB);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     (GLsizeiptr)vertCount * 32, vd, GL_STATIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_surfaceIB);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     (GLsizeiptr)indexCount * 4, id, GL_STATIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        s_uploadedEpoch = epoch;
+        TS_TRACE("event=ssbo_upload epoch=%u verts=%u indices=%u vb=%u ib=%u",
+                 epoch, vertCount, indexCount,
+                 (unsigned)s_surfaceVB, (unsigned)s_surfaceIB);
+    }
+
+    // ---- Save state (mirrors gos_terrain_bridge_drawIndirect) -------------
+    GLint     savedProgram   = 0; glGetIntegerv(GL_CURRENT_PROGRAM,    &savedProgram);
+    GLboolean savedBlend     = glIsEnabled(GL_BLEND);
+    GLint     savedSrcRGB    = 0; glGetIntegerv(GL_BLEND_SRC_RGB,      &savedSrcRGB);
+    GLint     savedDstRGB    = 0; glGetIntegerv(GL_BLEND_DST_RGB,      &savedDstRGB);
+    GLint     savedDepthMask = 0; glGetIntegerv(GL_DEPTH_WRITEMASK,    &savedDepthMask);
+    GLboolean savedDepthTest = glIsEnabled(GL_DEPTH_TEST);
+    GLint     savedDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC,         &savedDepthFunc);
+    GLint     savedVAO       = 0; glGetIntegerv(GL_VERTEX_ARRAY_BINDING,&savedVAO);
+    GLboolean savedColorMask[4]; glGetBooleanv(GL_COLOR_WRITEMASK,     savedColorMask);
+    GLuint    savedSampler   = 0;
+    { GLint q = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 0, &q); savedSampler = (GLuint)q; }
+
+    // ---- VAO rebind (AMD VAO-0 trap) + attr-0 (AMD attribute-0 trap) ------
+    extern void gos_RendererRebindVAO();
+    gos_RendererRebindVAO();
+    glEnableVertexAttribArray(0);
+
+    // ---- Program + uniforms (reuse the thin binder: it sets mvp /
+    //      terrainViewport / camera / shadows / tex1 / matNormal* / atlas
+    //      uniforms for the override program). terrainMVP IS declared by the
+    //      surface VS (it projects world->clip itself, unlike the thin VS),
+    //      so the binder's terrainMVP upload is consumed here. ----
+    g_gos_renderer->terrainBindThinUniformsForPatchStream(p);
+
+    // ---- Depth + color state for opaque terrain (inherit scene reverse-Z;
+    //      do NOT set glClearDepth; design Section 4.4). GL_GEQUAL is the
+    //      scene-global reverse-Z compare. ----
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_GEQUAL);
+    glDepthMask(GL_TRUE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDisable(GL_BLEND);
+
+    // ---- Sampler 0: CLAMP_TO_EDGE / LINEAR (matches indirect atlas path) --
+    static GLuint s_surfaceSampler = 0;
+    if (s_surfaceSampler == 0) {
+        glGenSamplers(1, &s_surfaceSampler);
+        glSamplerParameteri(s_surfaceSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(s_surfaceSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(s_surfaceSampler, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(s_surfaceSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glSamplerParameteri(s_surfaceSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    glBindSampler(0, s_surfaceSampler);
+
+    // ---- Bind merged colormap atlas at unit 0; per-fragment WorldPos->tile
+    //      material model (design Section 2 NC1: useAtlasColormap=1, the frag
+    //      reconstructs atlas-absolute UV from WorldPos). useCementAtlas=0 so
+    //      the frag never dereferences the binding-2 thin SSBO (PR-2 does not
+    //      bind one; the cement-atlas path is unchanged legacy scope). ----
+    extern GLuint gos_terrain_indirect_getAtlasGLTex();
+    extern float  gos_terrain_indirect_getNumTexturesAcross();
+    extern float  gos_terrain_indirect_getAtlasMapTopLeftX();
+    extern float  gos_terrain_indirect_getAtlasMapTopLeftY();
+    extern float  gos_terrain_indirect_getAtlasOneOverWorldUnits();
+
+    GLint savedTex0Binding = 0;
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex0Binding);
+    glBindTexture(GL_TEXTURE_2D, gos_terrain_indirect_getAtlasGLTex());
+    {
+        const GLint locNTA  = glGetUniformLocation(prog, "atlasNumTexturesAcross");
+        const GLint locMTX  = glGetUniformLocation(prog, "atlasMapTopLeftX");
+        const GLint locMTY  = glGetUniformLocation(prog, "atlasMapTopLeftY");
+        const GLint locOOWS = glGetUniformLocation(prog, "atlasOneOverWorldUnits");
+        const GLint locUAC  = glGetUniformLocation(prog, "useAtlasColormap");
+        const GLint locUCA  = glGetUniformLocation(prog, "useCementAtlas");
+        if (locNTA  >= 0) glUniform1f(locNTA,  gos_terrain_indirect_getNumTexturesAcross());
+        if (locMTX  >= 0) glUniform1f(locMTX,  gos_terrain_indirect_getAtlasMapTopLeftX());
+        if (locMTY  >= 0) glUniform1f(locMTY,  gos_terrain_indirect_getAtlasMapTopLeftY());
+        if (locOOWS >= 0) glUniform1f(locOOWS, gos_terrain_indirect_getAtlasOneOverWorldUnits());
+        if (locUAC  >= 0) glUniform1i(locUAC,  1);
+        if (locUCA  >= 0) glUniform1i(locUCA,  0);
+    }
+
+    // ---- Bind surface SSBOs (V-ssbo): 20 = vertex, 21 = baked index. High
+    //      bindings chosen so the additive PR-2 validation draw never collides
+    //      with the live thin path (1=recipe, 2=thin) or compute-cull (11/12).
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 20, s_surfaceVB);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 21, s_surfaceIB);
+
+    // ---- Draw: one VS invocation per emitted index; no EBO ---------------
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)indexCount);
+
+    // first_draw lifecycle print -- once per process (coarse, never per-quad).
+    static bool s_firstSurfaceDrawPrinted = false;
+    if (!s_firstSurfaceDrawPrinted) {
+        s_firstSurfaceDrawPrinted = true;
+        const bool armed = gos_terrain_indirect::IsFrameSolidArmed();
+        TS_TRACE("event=first_surface_draw verts=%u indices=%u tris=%u "
+                 "armed=%d screen_agnostic=1 fork_v=ssbo fork_d=clip_pre_divide",
+                 vertCount, indexCount, indexCount / 3u, (int)armed);
+    }
+
+    // ---- Reset shared-frag flags so legacy/indirect path doesn't inherit --
+    {
+        const GLint locUAC = glGetUniformLocation(prog, "useAtlasColormap");
+        if (locUAC >= 0) glUniform1i(locUAC, 0);
+    }
+
+    // ---- Restore state ----------------------------------------------------
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 20, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 21, 0);
+    glBindSampler(0, savedSampler);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex0Binding);
+    glColorMask(savedColorMask[0], savedColorMask[1],
+                savedColorMask[2], savedColorMask[3]);
+    glDepthMask((GLboolean)savedDepthMask);
+    glDepthFunc((GLenum)savedDepthFunc);
+    if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
+    else                 glEnable(GL_DEPTH_TEST);
+    if (savedBlend) glEnable(GL_BLEND);
+    else            glDisable(GL_BLEND);
+    glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+    glBindVertexArray((GLuint)savedVAO);
+    glUseProgram((GLuint)savedProgram);
+
+    if (g_gos_renderer) g_gos_renderer->invalidateRenderStateCache();
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Terrain indirect draw bridge (Stage 3 of indirect-terrain SOLID PR1)
@@ -3570,6 +3764,31 @@ void gosRenderer::init() {
         else
             printf("[THIN_TERRAIN] Thin terrain shader loaded: prog=%u\n",
                    (unsigned)thin_terrain_prog_->shp_);
+        fflush(stdout);
+    }
+
+    // [TERRAIN_SURFACE] PR-2 — load the continuous indexed-surface program
+    // (gos_terrain_surface.vert + gos_terrain.frag, V-ssbo vertex-pull, no
+    // tess). #version provided by the prefix here; NEVER a #version line in
+    // the shader file (worktree CLAUDE.md). Shader hot-reload fails SILENTLY
+    // (bad compile -> old shader stays active) -- a failed compile here is a
+    // hard WARNING so the smoke log shows it; PR-2's automated gate greps the
+    // run log for shader compile errors.
+    {
+        ZoneScopedN("gosRenderer::init terrainSurfaceProg");
+        static const char* kSurfacePrefix = "#version 430\n";
+        terrain_surface_prog_ = glsl_program::makeProgram(
+            "gos_terrain_surface",
+            "shaders/gos_terrain_surface.vert",
+            "shaders/gos_terrain.frag",
+            kSurfacePrefix);
+        if (!terrain_surface_prog_ || !terrain_surface_prog_->shp_)
+            fprintf(stderr, "[TERRAIN_SURFACE v1] event=shader_compile_fail "
+                            "vs=gos_terrain_surface.vert fs=gos_terrain.frag "
+                            "-- MC2_TERRAIN_SURFACE draw disabled\n");
+        else
+            printf("[TERRAIN_SURFACE v1] event=shader_loaded prog=%u\n",
+                   (unsigned)terrain_surface_prog_->shp_);
         fflush(stdout);
     }
 

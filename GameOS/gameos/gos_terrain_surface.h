@@ -81,4 +81,17 @@ uint32_t GetTileCount();       // per-tile material table entries
 uint32_t GetAdjacencyCount();  // per-cell adjacency entries (== cells)
 int32_t  GetMapSide();         // realVerticesMapSide at generation time
 
+// ---------------------------------------------------------------------------
+// PR-2 GPU-upload accessors. PR-1 owns only the CPU std::vector<> generation;
+// PR-2's draw bridge (gameos_graphics.cpp) needs the raw bytes to upload the
+// surface vertex + index SSBOs once per generation. The pointers are valid
+// until the next ResetForMission()/RegenerateForMission(); a generation
+// epoch counter lets the bridge detect a rebuild and re-upload. These are
+// READ-only views into the mission-static CPU buffers (32 B/vertex,
+// 4 B/index); never mutated by the bridge.
+// ---------------------------------------------------------------------------
+const void* GetVertexData();      // TerrainSurfaceVertex[GetVertexCount()]
+const void* GetIndexData();       // uint32_t[GetIndexCount()]
+uint32_t    GetGenerationEpoch(); // increments on every (re)generation
+
 } // namespace gos_terrain_surface

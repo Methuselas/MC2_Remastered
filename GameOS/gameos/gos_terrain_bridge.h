@@ -140,6 +140,19 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount,
                                      unsigned int thinRecordSSBO,
                                      unsigned int indirectCmdBuffer);
 
+// [TERRAIN_SURFACE] PR-2 — continuous indexed-surface VALIDATION draw bridge.
+//
+// Plan: docs/superpowers/plans/.../terrain-continuous-surface-producer-plan.md
+// PR-2 (Wave 1, ADDITIVE / DEFAULT-OFF / DELETES NOTHING). Behind the
+// MC2_TERRAIN_SURFACE path-select kill-switch (gos_terrain_surface::IsEnabled);
+// a no-op when OFF (behaviour-neutral, no legacy path touched). When ON it
+// draws the V-ssbo continuous surface ON TOP of the still-running legacy/
+// indirect path for visual validation of the indexed VS + Fork D clip-space
+// pre-divide reverse-Z bias. Screen-agnostic: NO IsFrameSolidArmed() test for
+// existence (design Convergence C-1). Full GL state save/restore. PR-2 lands
+// NO deletion and NO legacy kill site -- that is PR-4.
+void gos_terrain_surface_bridge_draw();
+
 // PR2c Stage 2c — mine static-bake draw bridge.
 //
 // Called by gos_terrain_indirect::DrawMineStatic from the Render.TerrainMines

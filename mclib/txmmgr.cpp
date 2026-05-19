@@ -68,6 +68,7 @@
 #include "../GameOS/gameos/gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "../GameOS/gameos/gos_terrain_patch_stream.h"
 #include "../GameOS/gameos/gos_terrain_indirect.h"
+#include "../GameOS/gameos/gos_terrain_bridge.h"   // [TERRAIN_SURFACE] PR-2 surface validation draw
 #include "../GameOS/gameos/gos_terrain_mask_dispatch.h"  // B4 Stage 1b: mask-SOLID draw
 #include "../GameOS/gameos/gpu_cull_compute.h"  // C1b: compute_dispatch() moved here from mission.cpp
 #include "../GameOS/gameos/gpu_cull_substrate.h"
@@ -1972,6 +1973,18 @@ void MC_TextureManager::renderLists (void)
 			// TerrainPatchStream normally. M2 thin-record-direct draw runs SOLID.
 			modernHandled = TerrainPatchStream::flush();
 		}
+
+		// [TERRAIN_SURFACE] PR-2 (Wave 1, ADDITIVE / DEFAULT-OFF / DELETES
+		// NOTHING). Screen-agnostic continuous-surface VALIDATION draw: runs
+		// on EVERY frame regardless of arming (design Convergence C-1 --
+		// surface existence is decoupled from IsFrameSolidArmed). A no-op
+		// unless MC2_TERRAIN_SURFACE is set (gos_terrain_surface::IsEnabled,
+		// checked inside the bridge), so the default path is byte-for-byte
+		// behaviour-neutral. When ON, the surface draws ON TOP of the still-
+		// running legacy/indirect terrain above for visual validation of the
+		// V-ssbo VS + Fork D clip-space pre-divide reverse-Z bias. NO legacy
+		// kill site lands here -- the substitutive draw-kill is PR-4.
+		gos_terrain_surface_bridge_draw();
 
 		bool bSkip_DRAWSOLID = false;
 		for (long i=0;i<nextAvailableVertexNode && !bSkip_DRAWSOLID;i++)
