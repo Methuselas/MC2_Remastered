@@ -3,6 +3,19 @@
 Date: 2026-05-19. Outcome: the cheap CPU repoint/fold slices are dead;
 no engine code changed (the methodology caught each pre-edit).
 
+> **RESOLVED 2026-05-19 -> Strategy C.** Continued recon found the
+> expensive per-frame per-vertex CPU projection reduction feeds ONLY the
+> `[[deprecated]]` `inverseProjectZ` synthetic-ramp, whose SOLE live
+> consumer is the 4 TacMap minimap corners (`gametacmap.cpp:225-246`).
+> Any framing in this doc that it feeds "cursor / picking" is WRONG
+> (grep-verified: `missiongui.cpp:765` uses the 2D overload that never
+> calls inverseProjectZ; `txmmgr.cpp:1887` does its own clipToWorld).
+> The sound meta-fix (chartered): delete the reduction +
+> setInverseProject + inverseProjectZ + the DIVERGENT water-block
+> reduction (-> DIVERGENT becomes moot), repoint the 4 TacMap corners to
+> a clipToWorld plane-unproject. Authoritative:
+> `docs/superpowers/specs/2026-05-19-inverseproject-consumer-collapse-design.md`.
+
 > **CORRECTION 2026-05-19:** this doc's "irreducible" conclusion was an
 > OVER-CONCLUSION. `isTerrainQuadVisible` (quad.cpp:432-444) does ZERO
 > projection - it is a pure OR-reduction of slimReduce's per-vertex
