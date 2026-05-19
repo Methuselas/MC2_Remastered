@@ -281,3 +281,70 @@ mechanical plan-stage enumeration. Then writing-plans -> ONE atomic task
 forward-Z consumer re-derivations + scene/shadow partition) -> subagent
 execute. Recommend a FRESH SESSION owns the C1 resolution + plan +
 execute (deep projectZ-body read + clean context); see the handoff doc.
+
+## 9.1 C1 RESOLVED - ruling (ii), code-grounded (2026-05-18)
+
+projectZ full body read (`camera.h:436-516`, grep-verified at write-time).
+
+**RULING: case (ii).** The returned bool is governed SOLELY by the
+screen-XY rectangle test at `camera.h:472`:
+`screen.x<0 || screen.y<0 || screen.x>screenResolution.x ||
+screen.y>screenResolution.y`. There is NO z-range test anywhere in the
+accept/reject path. `screen.z` is computed (`:459` perspective
+`xformCoords.z*rhw`; `:468` parallel `xformCoords.z`) and written to the
+out-param but never participates in the bool. screen.x/screen.y depend
+only on the x/y clip rows; reverse-Z flips only the z-row of
+`worldToClip`; therefore projectZ's bool is reverse-Z-INVARIANT.
+
+- **projectZ + all 7 `projectFor*` wrappers (`camera.h:526-624`): NO
+  reverse-Z change.** Wrappers are byte-identical `projectZ` delegations
+  (`#pragma warning 4996` only). Confirmed individually.
+- **NEW C1-scope site the Section 9 floor MISSED — the Modern admission
+  predicate.** `projectForObjectAdmission`/`projectForEffectAdmission`
+  Modern mode return `clipSpaceFrustumAdmit(result.rawClip)`
+  (`camera.h:561/585`); same predicate also drives the trace parity
+  candidate (`projectz_trace.cpp:166` -> `homogClipFull`). Bodies:
+  `object_admission_predicate.cpp:69` (`clipSpaceFrustumAdmit`) and
+  `:100` (`clipSpaceFrustumAdmitSphere`), GLSL lockstep
+  `shaders/gpu_cull_predicate.glsl`.
+  - `clipSpaceFrustumAdmit` z-test `cz<0 || cz>cw` (`:92`, NDC z in
+    [0,1]) is a frustum CONTAINMENT test, not a depth-ordering compare.
+    Reverse-Z is a bijection of [0,w] onto itself (near<->far relabel),
+    so a point inside the frustum still satisfies `0<=cz<=cw`. This site
+    is reverse-Z-INVARIANT - NO change. (x/y tests `:89-90` already
+    z-independent.)
+  - `clipSpaceFrustumAdmitSphere` z-test `cz < -tol || cz > cw+tol`
+    (`:112`): both `-tol` and `+tol` are admit-WIDENING, so the band is
+    monotone-widening. Reverse-Z swaps which world plane maps to NDC 0
+    vs 1, but a widening band can never produce a false-REJECT - so
+    behavior is PROVABLY INVARIANT under reverse-Z (no object popping,
+    no math change). GLSL lockstep `gpu_cull_predicate.glsl` is
+    byte-identical on this z-test; parity gate uncompromised; NO GLSL
+    change. C1-only closure-adversarial 2026-05-18 verdict CONVERGENT
+    (no CRITICAL/MAJOR). RESIDUAL = comment-debt ONLY, FILED (not an
+    open design unknown): the near/far masking rationale at
+    `object_admission_predicate.cpp:96-99` and
+    `gpu_cull_predicate.glsl:40-55,69-73` inverts under the reverse-Z
+    near<->far swap (its "near-camera buildings already pass the strict
+    test" justification lands at far-camera post-flip). Comment-only,
+    behavior proven unchanged, OUT OF SCOPE for the atomic reverse-Z
+    task; fix = update both lockstep comments (or adopt the exact
+    `radius*(cw/nearPlaneDist)` form noted at
+    `gpu_cull_predicate.glsl:47-48`) as separate filed debt.
+- **True forward-Z post-divide `screen.z` consumers** remain exactly the
+  Section 9 floor (quad.cpp terrain admission cluster C2;
+  `gameobj.cpp:2090`; `clouds.cpp:212`/`crater.cpp:323+`/
+  `weather.cpp:489+`; `camera.cpp` shadow projector). These read the
+  flipped post-divide z directly and are the mechanical re-derivation
+  set already enumerated above. Ruling (ii) does NOT widen this set; it
+  only ADDS the admission-predicate Sphere-tolerance sub-question.
+
+**C1 blast radius (final, CLOSED - design is plannable):** projectZ + 7
+wrappers + plain `clipSpaceFrustumAdmit` + `clipSpaceFrustumAdmitSphere`
+= NO change (all reverse-Z-invariant; Sphere proven monotone-widening,
+GLSL lockstep byte-identical, parity gate intact). Mechanical forward-Z
+post-divide `screen.z` consumer set = UNCHANGED from Section 9 floor
+(ruling (ii) does not widen it). NO open design sub-question remains.
+Sole carried item = the FILED comment-debt above (stale near/far
+masking rationale; comment-only; explicitly out of scope for the atomic
+reverse-Z task). C1-only closure-adversarial 2026-05-18: CONVERGENT.
