@@ -52,11 +52,23 @@ branch.
    shuttle; `draw` not sole consumer.
 4. Narrow-A: the members are dual-purpose recipe + (then thought)
    hoist-entangled state.
-5. Terminal: the members ARE the per-frame camera visibility-cull
-   channel. Static repoint is impossible by construction.
+5. Terminal (Slice 1): the members ARE the per-frame camera
+   visibility-cull channel. Static repoint impossible by construction.
+6. Terminal (Slice 2): the water-projection 6-tuple's candidate set is
+   gated by a per-quad `(clipped1||clipped2)` predicate that sums
+   sibling-corner `clipInfo` (quad.cpp:1047-1054) - and slimReduce IS
+   the producer of `clipInfo` (terrain.cpp:1811), running entirely
+   before the water block (slimReduce loop terrain.cpp:1701;
+   quadSetupTextures zone terrain.cpp:1939). Folding the water visit
+   into slimReduce's per-vertex loop is CIRCULAR (needs clipInfo
+   slimReduce hasn't produced yet). An unconditional `water&1` superset
+   flips the parity probe to `identical` (the probe only checks "B adds
+   nothing beyond A") while silently shifting the `setInverseProject`
+   extrema = green-probe-masked regression. Relocating the block to
+   another post-slimReduce pass = the old block moved = inertia.
 
 Each collision was caught by code-grounded verification BEFORE editing
-engine code. Net engine regressions: zero.
+engine code. Net engine regressions: zero. Engine changes shipped: zero.
 
 ## The honest conclusion
 
@@ -70,5 +82,18 @@ ever wanted) is an architecture change to the per-frame terrain cull
 itself - see the companion handoff
 `memory/HANDOFF_actual_terrain_perframe_cull_fix.md`. Full durable
 record: `memory/setuptextures_is_a_multiwriter_tangle_not_a_clean_
-shuttle.md`. Slice 2 (water 6-tuple -> slimReduce) was independent and
-proceeded.
+shuttle.md`.
+
+**Slice 2 (water 6-tuple -> slimReduce) is ALSO terminally dead** -
+collision #6 above. It was believed independent and advisor-validated;
+execution proved the fold is circular on slimReduce's own `clipInfo`,
+cannot be deleted (probe DIVERGENT = real unique extrema feeding
+cursor/cull/camera), and cannot be relocated without inertia. The
+entire quadSetupTextures-retirement effort therefore yields NO engine
+change. This is not a failure - it is an exhaustive, code-grounded
+proof (from every angle: greybeard, adversarial, steelman, "what are we
+not thinking of") that the remaining per-frame per-quad terrain CPU
+work is IRREDUCIBLE: the camera-dependent visibility cull + the
+clipInfo-gated water-projection extrema, both entangled with the
+slimReduce cull cascade. That proof permanently closes a recurring
+inertia magnet, which is the real value delivered.
