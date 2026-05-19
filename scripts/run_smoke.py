@@ -325,7 +325,16 @@ def main():
                             # allowlist subprocess.Popen drops them and the
                             # forced-ON / trace smoke states are meaningless.
                             "MC2_TERRAIN_SURFACE",
-                            "MC2_TERRAIN_SURFACE_TRACE")},
+                            "MC2_TERRAIN_SURFACE_TRACE",
+                            # quadSetupTextures-retirement recon (2026-05-19):
+                            # MC2_WATER_INVPROJ_PARITY = the [WATER_INVPROJ v1]
+                            # snapshot-A-vs-B 6-tuple parity probe (terrain.cpp;
+                            # trace-only, default-OFF). Decides whether the
+                            # setupTextures water block contributes unique
+                            # extrema beyond slimReduce. Without this in the
+                            # allowlist subprocess.Popen drops it and the probe
+                            # never fires.
+                            "MC2_WATER_INVPROJ_PARITY")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

@@ -1098,14 +1098,18 @@ void Terrain::render (void)
 		//   - cement/road decals  -> Slice-A static bake (IsFrameOverlayArmed)
 		// DRAWALPHA detail is unconditionally dead (pixel-suppressed since
 		// 521d83a; A2-confirmed via legacy_drawalpha_detail_quads counter).
-		// The conjunction is load-bearing: gating on IsFrameSolidArmed()
-		// ALONE (the naive minePass mirror) would skip draw() in normal
-		// default play (solid armed, decal bake default-OFF) and silently
-		// kill ALL decals = the reverted 9964d5a regression, shipped by
-		// default. MC2_TERRAIN_INDIRECT_OVERLAY (the Slice-A kill-switch,
-		// default OFF) is therefore the master switch for the whole
-		// retirement: unset -> gate false -> draw() runs -> decals via M2d
-		// -> zero behavior change.
+		// MC2_TERRAIN_INDIRECT_OVERLAY is DEFAULT-ON since the 60f2ef8
+		// Stage-6 flip (IsOverlayEnabled(): only literal "0" opts out).
+		// So on the stock/default path BOTH IsFrameSolidArmed() and
+		// IsFrameOverlayArmed() are true -> the conjunction is true ->
+		// the per-quad draw() loop below is SKIPPED (the else branch is
+		// the live default branch; the drawPass zone is ~empty). The
+		// conjunction is still load-bearing, but for the opposite reason
+		// the old comment claimed: it ensures the MC2_TERRAIN_INDIRECT_
+		// OVERLAY=0 revert (overlay disabled, the code-proof fallback)
+		// STILL runs draw() so decals fall back to the M2d per-quad emit
+		// and do not vanish = the 9964d5a-regression guard. Gating on
+		// IsFrameSolidArmed() alone would kill decals on the =0 revert.
 		if (!(gos_terrain_indirect::IsFrameSolidArmed()
 		      && gos_terrain_indirect::IsFrameOverlayArmed()))
 		{

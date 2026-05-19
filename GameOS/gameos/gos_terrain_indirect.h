@@ -245,7 +245,9 @@ bool IsMineEnabled();
 bool IsFrameMineArmed();
 
 // PR2b Stage 0b — env gate readers.
-//   IsOverlayEnabled()        — MC2_TERRAIN_INDIRECT_OVERLAY (default OFF).
+//   IsOverlayEnabled()        — MC2_TERRAIN_INDIRECT_OVERLAY (DEFAULT-ON
+//                               since the 60f2ef8 Stage-6 flip; only
+//                               literal "0" opts out / reverts).
 //   IsOverlayParityCheckEnabled() — MC2_TERRAIN_INDIRECT_OVERLAY_PARITY_CHECK.
 //   IsFrameOverlayArmed()     — Stage 3b wires the real predicate; Stage 0b
 //                               stub returns false so gate-off sites can be
@@ -337,11 +339,13 @@ bool DrawMineStatic();
 //   GetDecalStaticVBO_GL()        — GLuint name; 0 if unallocated.
 //   GetDecalVertCount()           — int; 0 if mission has no cement overlay.
 //
-// IsFrameOverlayArmed() (declared above) is the env gate, default OFF
-// (MC2_TERRAIN_INDIRECT_OVERLAY must be "=1"). DrawDecalStatic is the
-// Render.TerrainOverlaysStatic hook: lazy first-build + single bridge
-// dispatch + decal_static_tris_drawn counter. Default-OFF => M2d per-quad
-// emit runs unchanged, bake inert, ZERO behavior change.
+// IsFrameOverlayArmed() (declared above) is the env gate, DEFAULT-ON
+// since the 60f2ef8 Stage-6 flip (only MC2_TERRAIN_INDIRECT_OVERLAY=0
+// reverts). DrawDecalStatic is the Render.TerrainOverlaysStatic hook:
+// lazy first-build + single bridge dispatch + decal_static_tris_drawn
+// counter. Default (armed) => the static decal bake is the producer and
+// the drawPass per-quad draw() loop is skipped. The =0 revert restores
+// the M2d per-quad emit (code-proof fallback), bake inert.
 void  ResetDecalStaticVBO();
 void  MarkDecalDirty();
 void  RebuildDecalStaticVBOIfDirty();
