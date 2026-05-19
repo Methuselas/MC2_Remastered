@@ -78,8 +78,28 @@ opposite-direction grep before each deletion):
   Slice-2 DIVERGENT-water nemesis becomes MOOT here (no reduction ->
   nothing to diverge; no probe needed).
 - The file-scope `extern float leastZ/leastW/mostZ/mostW/leastWY/mostWY`
-  declarations (~quad.cpp:540-545) and their definition site, once no
-  writers/readers remain.
+  declarations (`quad.cpp:540-545`), their per-frame reset
+  (`terrain.cpp:1600-1602`), AND their definition site
+  (`terrain.cpp:1533-1535` `float leastZ = 1.0f, leastW = 1.0f; float
+  mostZ = -1.0f, mostW = -1.0; float leastWY = 0.0f, mostWY = 0.0f;`)
+  - the storage itself, not only the decls - once no writers/readers
+  remain.
+
+**Water-block deletion rule (self-contained, NOT a reference to other
+specs):** in the `quad.cpp` `CostSplitWaterVertProjScope` block
+(~1037-1287), delete ONLY writes/computations whose **sole purpose** is
+feeding the six globals. PRESERVE every unrelated water-block side
+effect that any other code path consumes: `vertices[i]->clipInfo` writes
+(consumed by other quad-cull paths), `vertices[i]->calcThisFrame |= 2`
+(latch), the `legacyWaterDraw`-gated `wx/wy/wz/ww` screen writes (the
+in-tree legacy raster path), the outer water-predicate gate, the water
+fast-path narrow-append predicate, and `addTriangleBulk`/draw setup. If
+a `projectForTerrainAdmission(vertex3D, screenPos)` call's `screenPos`
+result is ONLY consumed by the 6-global writes (no `legacyWaterDraw`,
+no `clipInfo`, no other use in that block-iteration), the projection
+call itself goes too; otherwise keep the call and delete only the
+6-global writes after it. Decide per-vertex-block by greping `screenPos`
+usage within the block before editing.
 
 `worldToTacMap`: keep if any other caller exists; otherwise delete in
 the gametacmap commit (opposite-direction grep at plan time).
@@ -137,8 +157,16 @@ clean-model-vs-code collisions - so full discipline:
 - Spec -> adversarial-plan-review -> writing-plans -> subagent execution
   with atomic commits -> the substitutive Tracy + USER minimap-still-
   renders smoke gate. Each commit is bisectable AND compile-safe.
-- `Camera::inverseProjectZ` is `[[deprecated]]`; confirm no external/
-  mod ABI depends on it ([[stock-install-must-remain-playable]]).
+- `Camera::inverseProjectZ` is `[[deprecated]]`. Before its Phase-2
+  deletion, the implementer MUST record positive evidence on each of:
+  (i) no exported / dllexport / public symbol (grep `__declspec` /
+  visibility attrs near the decl); (ii) no public SDK / mod header
+  consumer (grep the `Code/` SDK headers + any mod-facing `.h` outside
+  `mclib/`/`GameOS/`); (iii) no stock-install savegame/data dependency
+  ([[stock-install-must-remain-playable]] + a tier1 stock-mission
+  smoke). A repo grep alone is NOT sufficient ABI proof; absence of
+  exports + absence of public-header callers + a passing stock smoke
+  together are. Record this in the Phase-2 commit message.
 
 ### Mandatory grep checklist (reviewer guardrail; the implementer MUST run this BEFORE each deletion commit)
 
@@ -188,14 +216,26 @@ camera.h:626/634-636, def camera.cpp:1941-...). Build + smoke. Commit.
 (terrain.cpp:2119) + the `yzRange/ywRange` computation (~2051-2055) +
 the slimReduce RED reduction (~1878-1898). Build + smoke. Commit.
 
-**Phase 5 (water producer + globals):** Delete the `quad.cpp` water-
-block 6-tuple reduction writers (~1101-1287 inside the
-`CostSplitWaterVertProjScope` block - the 6-global writes only; preserve
-the other water-block residue per Slice-2 spec's residue rules) + the
-6 file-scope `extern float` decls (~quad.cpp:540-545). Build + smoke +
-USER worst-case zoomed-out-big-map Tracy = the substitutive proof
-(slimReduce zone shrinks by the RED reduction's share; quadSetupTextures
-shrinks by the water-block reduction's share; no displaced cost). Commit.
+**Phase 5 (water producer + globals + storage):** In this order, in
+ONE commit:
+- Delete the `quad.cpp` water-block 6-tuple reduction writers
+  (~1101-1287 inside `CostSplitWaterVertProjScope`) per the §2
+  self-contained water-block deletion rule (6-global writes only;
+  preserve clipInfo / calcThisFrame / legacyWaterDraw writes /
+  fast-path predicates / addTriangleBulk; per-vertex-block decide
+  whether `projectForTerrainAdmission` itself goes based on `screenPos`
+  use within the block).
+- Delete the per-frame reset of the 6 globals (`terrain.cpp:1600-1602`,
+  `leastZ = 1.0f; leastW = 1.0f; mostZ = -1.0f; ...`).
+- Delete the 6 file-scope `extern float` decls (`quad.cpp:540-545`).
+- Delete the storage / definition site (`terrain.cpp:1533-1535`,
+  `float leastZ = 1.0f, leastW = 1.0f; float mostZ = -1.0f, ...`).
+- Final grep confirms zero remaining writers, readers, or references.
+
+Build + smoke + USER worst-case zoomed-out-big-map Tracy = the
+substitutive proof (slimReduce zone shrinks by the RED reduction's
+share; quadSetupTextures shrinks by the water-block reduction's share;
+no displaced cost). Commit.
 
 Invariant on every commit: builds clean, runs the 20s 1-2-mission
 `--keep-logs` smoke, no `GL_INVALID_*`, USER confirms minimap renders.
