@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Retire the per-frame O(N) `setupTextures` recipe->member orphan producer (consumer `draw` is already default-dead via 60f2ef8) + the 521d83a-dead DRAWALPHA reservation, and re-home the still-load-bearing water 6-tuple onto slimReduce as its literal sole producer.
+**Goal:** Retire the per-frame O(N) `setupTextures` recipe->member orphan producer (consumer `draw` is already default-dead via 60f2ef8), and re-home the still-load-bearing water 6-tuple onto slimReduce as its literal sole producer. (DRAWALPHA-reservation deletion was dropped 2026-05-19 - no valid dead-pixel proof; see Slice-1 scope-change note.)
 
 **Architecture:** Slice 1 deletes the recipe->member assignments and repoints every reader to the static Shape-C cache (`getTerrainFaceCacheEntry`), compile-enforced by deleting/poisoning the five `TerrainQuad` fields. Slice 2 folds an unconditional water-tile-Z visit into slimReduce reusing the exact old predicate/source/helper/accumulator, then deletes the quad.cpp water-projection reduction. Slice 3 is prep/spec-only.
 
@@ -14,7 +14,7 @@
 
 ## File Structure
 
-- `mclib/quad.cpp` - `setupTextures` member assignments (~1004-1008), `addTerrainTriangles` DRAWALPHA sub-emit (~688/704), the water-projection reduction block (`CostSplitWaterVertProjScope` ~1038-~1287), `TerrainQuad::draw` (~2062) reader repoints.
+- `mclib/quad.cpp` - `setupTextures` member assignments (~1004-1008), the water-projection reduction block (`CostSplitWaterVertProjScope` ~1038-~1287), `TerrainQuad::draw` (~2062) reader repoints. (DRAWALPHA sub-emit NOT touched - out of scope.)
 - `mclib/quad.h` - the five `TerrainQuad` fields (`terrainDetailHandle` ~68, `overlayHandle` ~71, `uvData` ~76, plus `terrainHandle`, `isCement`; ctor inits ~100-107).
 - `mclib/terrain.cpp` - slimReduce per-vertex visit (`ZoneScopedN("Terrain::geometry slimReduce")` ~1686, `projectForTerrainAdmission` ~1799), the drawPass `=0` revert loop (~1109+), probe A/B (~1924/2067), `setInverseProject` (~2119).
 - `GameOS/gameos/gos_terrain_indirect.cpp` - `Counters_GetLegacyDrawAlphaDetailQuads()` (~189).
@@ -22,75 +22,11 @@
 
 ---
 
-## Slice 1 - Retire the recipe->member orphan producer + dead DRAWALPHA
+## Slice 1 - Retire the recipe->member orphan producer
 
-### Task 1.1: DRAWALPHA pre-delete telemetry gate (substitutive, BEFORE any deletion)
+> **SCOPE CHANGE 2026-05-19 (user-ruled): DRAWALPHA-reservation deletion DROPPED.** The original Task 1.1 (counter pre-gate) + Task 1.2 (delete reservation) are REMOVED. Reason: `legacy_drawalpha_detail_quads` instruments the draw()-internal DRAWALPHA site (trivially 0 armed because draw() is skipped wholesale), NOT the `addTerrainTriangles` reservation; txmmgr.cpp has live `MC2_ISTERRAIN & MC2_DRAWALPHA` passes - no valid dead-pixel proof. Reservation stays as-is (pre-existing, not a regression). See `memory/drawalpha_counter_instruments_wrong_site.md`. Slice 1 is now a single task: the recipe->member retirement.
 
-**Files:** none modified (measurement only).
-
-- [ ] **Step 1: Build current HEAD + deploy** (baseline binary the gate runs on)
-
-```bash
-cd A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev
-"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build64 --config RelWithDebInfo
-cp -f build64/RelWithDebInfo/mc2.exe "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe" && diff -q build64/RelWithDebInfo/mc2.exe "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe"
-```
-
-- [ ] **Step 2: Run an armed parity-summary smoke (2 missions, 20s, keep-logs)**
-
-Run:
-```bash
-py -3 scripts/run_smoke.py --mission mc2_01 --mission mc2_10 --duration 20 --keep-logs --kill-existing
-```
-
-- [ ] **Step 3: Confirm the DRAWALPHA path is cold**
-
-Grep the kept logs for the legacy DRAWALPHA detail counter (the `legacy_drawalpha_detail_quads` summary; emitter `Counters_GetLegacyDrawAlphaDetailQuads()` gos_terrain_indirect.cpp:189):
-```bash
-grep -aErn "legacy_drawalpha_detail|drawalpha_detail_quads" tests/smoke/artifacts/$(ls -1t tests/smoke/artifacts | head -1)/
-```
-Expected: counter == 0 (path cold). **If non-zero: STOP - DRAWALPHA is NOT dead; do not delete the reservation; escalate to the user (the 521d83a dead-claim is falsified).**
-
-- [ ] **Step 4: Record the gate result** in the task notes (counter value + artifact dir). No commit (measurement task).
-
-### Task 1.2: Delete the DRAWALPHA dead reservation
-
-**Files:** Modify `mclib/quad.cpp` - the `addTriangleBulk(r.terrainDetailHandle, MC2_ISTERRAIN | MC2_DRAWALPHA, 2)` sub-emits in `addTerrainTriangles` (re-grep: ~688 non-cement, ~704 alpha-cement; the `else // pure cement` at ~708 has NO DRAWALPHA - leave it).
-
-- [ ] **Step 1: Re-grep the exact DRAWALPHA sites**
-
-```bash
-grep -n "MC2_DRAWALPHA, 2)\|addTriangleBulk(r.terrainDetailHandle" mclib/quad.cpp
-```
-
-- [ ] **Step 2: Delete ONLY the `DRAWALPHA, 2` detail `addTriangleBulk` reservation lines in `addTerrainTriangles`.** Do NOT touch the `MC2_DRAWSOLID` emits, the pure-cement branch, or any mine `MC2_DRAWALPHA` (those are different). Preserve the SOLID/cement contract (spec carve-out).
-
-- [ ] **Step 3: Build RelWithDebInfo + full relink + deploy**
-
-```bash
-rm -f build64/RelWithDebInfo/mc2.exe build64/RelWithDebInfo/mclib.dir/quad.obj 2>/dev/null
-"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build64 --config RelWithDebInfo
-cp -f build64/RelWithDebInfo/mc2.exe "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe" && diff -q build64/RelWithDebInfo/mc2.exe "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe"
-```
-
-- [ ] **Step 4: Smoke - default-armed + the `=0` revert, both visual-parity**
-
-```bash
-py -3 scripts/run_smoke.py --mission mc2_01 --mission mc2_10 --duration 20 --keep-logs --kill-existing
-MC2_TERRAIN_INDIRECT_OVERLAY=0 py -3 scripts/run_smoke.py --mission mc2_01 --duration 20 --keep-logs --kill-existing
-```
-Expected: both PASS, no `GL_INVALID_*`, user confirms no visual delta (decals/detail). USER is the visual observer (smoke is user-driven).
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add mclib/quad.cpp
-git commit -m "feat(terrain): delete 521d83a-dead DRAWALPHA detail reservation (counter==0 pre-gated)
-
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
-```
-
-### Task 1.3: Delete the recipe->member assignments + compile-enforce the reader set
+### Task 1.1: Delete the recipe->member assignments + compile-enforce the reader set
 
 **Files:** Modify `mclib/quad.cpp` (`setupTextures` member assigns ~1004-1008), `mclib/quad.h` (the five fields + ctor inits).
 
@@ -131,7 +67,7 @@ rm -f build64/RelWithDebInfo/mc2.exe
 cp -f build64/RelWithDebInfo/mc2.exe "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe" && diff -q build64/RelWithDebInfo/mc2.exe "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe"
 ```
 
-- [ ] **Step 7: Slice-1 acceptance smokes (spec gates 4-7)**
+- [ ] **Step 7: Slice-1 acceptance smokes (spec gates 3-6)**
 
 ```bash
 py -3 scripts/run_smoke.py --mission mc2_01 --mission mc2_10 --duration 20 --keep-logs --kill-existing

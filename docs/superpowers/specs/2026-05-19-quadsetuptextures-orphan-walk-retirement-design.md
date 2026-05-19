@@ -32,23 +32,38 @@ The per-frame terrain walks:
 |---|---|---|
 | `slimReduce` (terrain.cpp `ZoneScopedN("Terrain::geometry slimReduce")`) | Camera-dependent, irreducible, proven sole producer of cull + the leastZ/mostZ/leastW/mostW/leastWY/mostWY 6-tuple | KEEP |
 | (b) `setupTextures` recipe->member shuttle (quad.cpp:1004-1008, `CostSplitRecipeCacheScope` ~987) | Consumer `draw` default-dead via 60f2ef8 | Slice 1: delete the recipe->member ORPHAN PRODUCER + repoint consumers to cache (NOT a full-walk-removal claim - residue stays) |
-| DRAWALPHA detail reservation (`addTerrainTriangles` quad.cpp:668; dead since 521d83a, quad.cpp:2409) | Zero pixels; pure dead enqueue | Slice 1: DELETE reservation |
+| DRAWALPHA detail reservation (`addTerrainTriangles` quad.cpp:668) | Dead-pixel claim UNPROVEN (counter mis-targeted; live txmmgr DRAWALPHA passes) | OUT OF SCOPE (user-ruled 2026-05-19; stays as-is, not a regression) |
 | (c) water-projection 6-tuple (quad.cpp water block; second writer) | Probe DIVERGENT - contributes UNIQUE extrema | Slice 2: joint re-home into slimReduce |
 | (a) `CopyResultsToVertexPool` scatter (gos_terrain_lighting.cpp:834) | LOAD-BEARING - armed indirect packer (quad.cpp:2389) + water-overlay (quad.cpp:2465) re-read scattered pool | Slice 3 (PREP only) |
 
-## 2. Slice 1 - retire the recipe->member orphan producer + dead DRAWALPHA (NOW)
+## 2. Slice 1 - retire the recipe->member orphan producer (NOW)
+
+**SCOPE CHANGE 2026-05-19 (user-ruled): DRAWALPHA-reservation deletion
+DROPPED from this effort.** Reason: the planned pre-delete gate
+(`legacy_drawalpha_detail_quads`==0) instruments the draw()-INTERNAL
+DRAWALPHA site (quad.cpp:2716/2863/3039/3184), which is trivially 0 on
+armed frames because `draw()` is skipped wholesale - it does NOT prove
+the `addTerrainTriangles` reservation (quad.cpp ~688/704, runs every
+armed frame via `setupTextures`) is pixel-dead, and txmmgr.cpp has LIVE
+`MC2_ISTERRAIN & MC2_DRAWALPHA` terrain passes (~2196-2199/~2408-2410).
+Deleting it on that evidence would be an assume-dead substitution = the
+orphan risk that killed the prior campaign. The DRAWALPHA reservation
+stays AS-IS (pre-existing, not a regression). See
+`memory/drawalpha_counter_instruments_wrong_site.md`. Slice 1 is now
+purely the recipe->member orphan-producer retirement.
 
 Target wording (false-victory guard, per review must-fix #3): "delete
-the recipe->member orphan producer and the DRAWALPHA dead reservation;
-do NOT claim full `setupTextures` walk removal until the residue is
-separately fused or retired." The honest done-test is "zone net-shrinks
-with no displaced cost," not "zone gone."
+the recipe->member orphan producer; do NOT claim full `setupTextures`
+walk removal until the residue is separately fused or retired." The
+honest done-test is "zone net-shrinks with no displaced cost," not
+"zone gone."
 
 **Delete** the per-quad member-store assignments: in `setupTextures`
 (quad.cpp), the `recipe`->member assignments (`isCement`/`terrainHandle`/
-`terrainDetailHandle`/`overlayHandle`/`uvData` at quad.cpp:1004-1008) and
-the dead DRAWALPHA `addTriangleBulk(detail, DRAWALPHA, 2)` path in
-`addTerrainTriangles` (quad.cpp:668+).
+`terrainDetailHandle`/`overlayHandle`/`uvData` at quad.cpp:1004-1008).
+Keep the `tryGetCachedTerrainRecipe` call / `recipe` local (it still
+feeds `addTerrainTriangles(recipe)` - the SOLID/cement contract, NOT in
+scope).
 
 **Compile-enforce the sole-consumer proof (review must-fix #1).** The
 plan MUST enumerate every reader of the five `TerrainQuad` fields
@@ -63,15 +78,6 @@ Handle\|uvData\)" mclib/*.cpp GameOS/**/*.cpp`). Then:
   data.
 Grep-only "draw is the sole consumer" is NOT sufficient; the retirement
 must be mechanically enforced.
-
-**DRAWALPHA deletion is a pre-gated render-path change (review must-fix
-#2).** It is a real render-path deletion, not an optional cleanup.
-Sequence, in order, no skipping:
-1. Run an armed parity-summary smoke; confirm
-   `Counters_GetLegacyDrawAlphaDetailQuads()` == 0 (telemetry proof the
-   path is cold - substitutive, not assumptive).
-2. Only then delete the DRAWALPHA reservation.
-3. Re-run visual/parity smoke (default-armed + `=0` revert).
 
 **Repoint** the two consumers to read the static Shape-C entry directly:
 - `TerrainQuad::draw` member reads -> `getTerrainFaceCacheEntry(tileR,
@@ -88,16 +94,18 @@ Reuse opportunity to verify at plan time: `enqueueCachedTerrainTriangles
 cache-direct enqueue that may be the substitution machinery.
 
 **Scope boundary (removes the ambiguity):** Slice 1 deletes ONLY the
-recipe->member assignments + the DRAWALPHA sub-emit and repoints `draw`.
-It does NOT delete `setupTextures` wholesale. Residue that STAYS (separate
+recipe->member assignments and repoints `draw`. It does NOT delete
+`setupTextures` wholesale, and (per the 2026-05-19 scope change) does
+NOT touch the DRAWALPHA reservation. Residue that STAYS (separate
 concerns, not this slice): the posTile decode / `ensureTerrainFaceCache
 EntryResident` residency touch; the water fast-path narrow-append
-predicate; the (c) water-projection block (owned by Slice 2); any
-armed-path SOLID/indirect emit. The plan must enumerate, per
-`setupTextures` statement, KEEP vs DELETE before editing.
+predicate; the (c) water-projection block (owned by Slice 2); the
+DRAWALPHA reservation (out of scope); any armed-path SOLID/indirect
+emit. The plan must enumerate, per `setupTextures` statement, KEEP vs
+DELETE before editing.
 
-**Done-criterion (substitutive):** the `setupTextures` member-store walk
-+ DRAWALPHA reservation are DELETED (not flagged/bypassed); on a clean
+**Done-criterion (substitutive):** the `setupTextures` recipe->member
+store walk is DELETED (not flagged/bypassed); on a clean
 non-COST_SPLIT total-frame Tracy at worst-case zoomed-out-big-map the
 `Terrain::geometry quadSetupTextures` zone net-shrinks with NO displaced
 cost into `draw`/mission-load (the bake already exists); both default-
@@ -185,19 +193,17 @@ regardless of Slice-3 prep state.
 - Build RelWithDebInfo + full relink + v0.4 deploy before every smoke.
 
 ### Slice-1 acceptance gates (ALL required, in order)
-1. Armed parity-summary smoke; `Counters_GetLegacyDrawAlphaDetailQuads()`
-   == 0 BEFORE deleting the DRAWALPHA reservation (pre-delete gate).
-2. Build RelWithDebInfo + full relink.
-3. Stale-member retirement compile-enforced (fields deleted, or
+1. Build RelWithDebInfo + full relink.
+2. Stale-member retirement compile-enforced (fields deleted, or
    privatized/renamed so any reader fails to compile).
-4. Default-armed path visual parity.
-5. `MC2_TERRAIN_INDIRECT_OVERLAY=0` revert path visual parity.
-6. Cement canary scene/map visually unchanged (explicit canary, NOT
+3. Default-armed path visual parity.
+4. `MC2_TERRAIN_INDIRECT_OVERLAY=0` revert path visual parity.
+5. Cement canary scene/map visually unchanged (explicit canary, NOT
    "unchanged by reasoning").
-7. Map-edge / camera-window boundary visual smoke (tileR/tileC identity
+6. Map-edge / camera-window boundary visual smoke (tileR/tileC identity
    must hold at call sites - cache lookup O(1) + resident on BOTH the
    default and `=0` paths).
-8. Clean non-COST_SPLIT total-frame Tracy at worst-case zoomed-out-big-
+7. Clean non-COST_SPLIT total-frame Tracy at worst-case zoomed-out-big-
    map: `Terrain::geometry quadSetupTextures` net-shrinks with NO
    obvious displaced cost into `draw` or mission load.
 
@@ -212,8 +218,14 @@ regardless of Slice-3 prep state.
 
 ## 7. Verification items
 
-1. (Promoted to Slice-1 gate #1 - the DRAWALPHA counter==0 pre-delete
-   check is no longer "non-blocking.")
+1. DRAWALPHA-reservation deletion DROPPED (user-ruled 2026-05-19). The
+   `legacy_drawalpha_detail_quads` counter instruments the wrong site
+   (draw()-internal, trivially 0 armed; not the `addTerrainTriangles`
+   reservation) and txmmgr has live `MC2_DRAWALPHA` terrain passes - no
+   valid dead-pixel proof exists, so the reservation stays as-is. Full
+   rationale: `memory/drawalpha_counter_instruments_wrong_site.md`. If
+   ever retired later it needs a renderer/visual dead-pixel proof, NOT
+   the counter.
 2. The user's `drawPass`-area flame-graph zone was a CLICK-LAUNCH
    default capture (user-clarified 2026-05-19), NOT a worst-case Tracy -
    confirmed NOT load-bearing for this design. On the default path that
