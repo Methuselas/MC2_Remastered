@@ -1060,7 +1060,7 @@ void GpuMechBatcher::flush() {
     glBindVertexArray(s_sharedVao);
 
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene mech draw)
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
     glEnable(GL_CULL_FACE);

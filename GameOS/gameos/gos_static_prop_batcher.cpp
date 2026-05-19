@@ -6,6 +6,7 @@
 #include "gpu_cull_compute.h"            // C1b: compute_isEnabled, getIndirectCmdBuf, getBucketCount
 #include "gpu_cull_substrate.h"          // 2026-05-10: substrate_appendStaticPropRecord
 #include "gpu_cull_record.h"             // 2026-05-10: GpuActorRecord, Cat_StaticProp
+#include "../../mclib/terrain.h"         // C1b temporal-superset: Terrain::worldToBlockIdx()
 #include "gameos.hpp"
 #include "utils/shader_builder.h"
 #include "tgl.h"  // TG_Shape::s_worldToClip
@@ -2276,7 +2277,41 @@ bool GpuStaticPropBatcher::submit(TG_Shape* shape,
         rec.actorId         = 0u;
         rec.prevVisibilityBit = 1u;
         rec.consumerFlags   = 0u;
-        rec.blockIdx        = 0u;
+        // C1b temporal-superset Slice 1: real terrain block index so the
+        // block rollup can stamp the right block. worldCenter[0] is raw-MC2
+        // east, [1] raw-MC2 north (the -inst.modelMatrix[3] unswap above
+        // produced the east-frame). Feed [0],[1] ONLY; NEVER [2] (elev).
+        // worldCenter fully populated above (rec.worldCenter[0..2]).
+        rec.blockIdx        = static_cast<uint32_t>(
+            Terrain::worldToBlockIdx(rec.worldCenter[0],
+                                     rec.worldCenter[1]));
+        // [BLKIDX v1] env-gated GEOMETRIC probe (demote-not-delete).
+        {
+            static const bool s_blkidxTrace =
+                (getenv("MC2_BLKIDX_TRACE") != nullptr);
+            if (s_blkidxTrace) {
+                const float pwx = rec.worldCenter[0];
+                const float pwy = rec.worldCenter[1];
+                long mx = ((long)pwx >> 7) + Terrain::halfVerticesMapSide;
+                long bx = (long)(mx * Terrain::oneOverVerticesBlockSide);
+                long my = Terrain::halfVerticesMapSide -
+                          (((long)pwy >> 7) + 1);
+                long by = (long)(my * Terrain::oneOverVerticesBlockSide);
+                long cpuBlk = bx + (by * Terrain::blocksMapSide);
+                long helperBlk = Terrain::worldToBlockIdx(pwx, pwy);
+                fprintf(stderr,
+                    "[BLKIDX v1] event=geom_check src=batcher"
+                    " wx=%.1f wy=%.1f wz=%.1f helper=%ld cpu=%ld"
+                    " match=%d\n",
+                    pwx, pwy, rec.worldCenter[2],
+                    helperBlk, cpuBlk, (helperBlk == cpuBlk) ? 1 : 0);
+                fprintf(stderr,
+                    "[BLKIDX v1] event=zero_verify src=batcher"
+                    " blockIdx=%u z_excluded=1\n",
+                    rec.blockIdx);
+                fflush(stderr);
+            }
+        }
         gpu_cull::substrate_appendStaticPropRecord(rec);
     }
 
@@ -2896,7 +2931,7 @@ void GpuStaticPropBatcher::flush() {
     // Explicit state for our pass.
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene static-prop/building draw)
     glDisable(GL_BLEND);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
