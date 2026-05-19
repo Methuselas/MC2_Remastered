@@ -1,4 +1,19 @@
-# quadSetupTextures Orphan-Walk Retirement - Design (approved)
+# quadSetupTextures Orphan-Walk Retirement - Design
+
+> **EFFORT CONCLUDED 2026-05-19: NO ENGINE CHANGE. Both slices terminally
+> dead.** Slice 1: the setupTextures walk IS the per-frame camera
+> visibility cull (not an orphan). Slice 2: the water 6-tuple is gated
+> by a per-quad predicate over `clipInfo` that slimReduce itself
+> produces - folding into slimReduce is circular, deleting is unsafe
+> (probe DIVERGENT = real extrema), relocating = inertia. The recon's
+> clean-decomposition model was falsified 6x by code. The original
+> recon's "inertia / nothing substitutive to bank" verdict is
+> vindicated, now exhaustively code-proven. Bankable outputs: the
+> drawPass doc-lie fixes (48ba0d8), the DIVERGENT probe result, and the
+> proof itself (postmortem `2026-05-19-slice1-postmortem.md`,
+> `memory/setuptextures_is_a_multiwriter_tangle_not_a_clean_shuttle.md`,
+> `memory/HANDOFF_actual_terrain_perframe_cull_fix.md`). Everything
+> below is HISTORICAL.
 
 Date: 2026-05-19
 Worktree: `claude/nifty-mendeleev`, HEAD 48ba0d8

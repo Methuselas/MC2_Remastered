@@ -1,5 +1,11 @@
 # quadSetupTextures Orphan-Walk Retirement Implementation Plan
 
+> **DO NOT EXECUTE - EFFORT CONCLUDED 2026-05-19, NO ENGINE CHANGE.**
+> Both slices terminally dead (Slice 1 = the per-frame camera cull;
+> Slice 2 = water 6-tuple circular on slimReduce's own clipInfo). See
+> the spec's top banner + `memory/setuptextures_is_a_multiwriter_tangle_
+> not_a_clean_shuttle.md`. This plan is historical.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Retire the per-frame O(N) `setupTextures` recipe->member orphan producer (consumer `draw` is already default-dead via 60f2ef8), and re-home the still-load-bearing water 6-tuple onto slimReduce as its literal sole producer. (DRAWALPHA-reservation deletion was dropped 2026-05-19 - no valid dead-pixel proof; see Slice-1 scope-change note.)
