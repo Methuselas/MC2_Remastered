@@ -22,9 +22,14 @@ through the existing indirect static-prop path:
 - Stock building: its existing full-res `TG_TypeMultiShape` (parsed today via
   `LoadTGMultiShapeFromASE`, mclib/msl.cpp:425) is wrapped IN-MEMORY at load
   as a single degenerate cluster (1-cut DAG). No offline cook, no `.cdag`
-  file. Visual result is IDENTITY (same triangles), so
-  `stock_install_must_remain_playable` holds by construction, not by a
-  tolerance.
+  file. TRIANGLE PAYLOAD identity holds by construction (same vertices/
+  indices, no simplification). RENDER identity is NOT by construction and
+  remains gated: the private VAO/IBO, material-slot remap, index binding,
+  winding order, and the new command-generation path can each regress
+  output even with an identical triangle payload. `stock_install_must_
+  remain_playable` is therefore satisfied by the payload-identity
+  construction PLUS the render-identity gate (see "Done" gate), not by
+  construction alone.
 - High-detail building: an offline-cooked `<name>.cdag` sidecar supplies the
   multi-level cluster-DAG. `.cdag` exists ONLY as the high-detail extension.
 
@@ -130,6 +135,32 @@ Defer but RESERVE a header flag (so adding later is NOT a version bump):
 vertex/index compression (`meshopt_encodeVertex/IndexBuffer`), overdraw
 reorder (`meshopt_optimizeOverdraw`).
 
+`.cdag` header fields (defined NOW so the cooker and runtime loader agree;
+all little-endian, the build/runtime are same-arch x64):
+
+- `magic` (4 bytes, e.g. `'C''D''A''G'`)
+- `formatVersion` (u32)
+- `endianMarker` (u32 known constant -- defensive, asserts LE)
+- `flags` (u32 bitfield; bits RESERVED now: `COMPRESSED_VTX`,
+  `COMPRESSED_IDX`, `OVERDRAW_REORDERED` -- all 0 in the POC)
+- `vertexFormatId` (u32 -- enumerates the interleaved vertex layout;
+  POC has exactly one)
+- `indexFormatId` (u32 -- u32 indices in the POC)
+- `clusterCount` (u32)
+- `dagNodeCount` (u32)
+- `maxClusterDraws` (u32 -- the runtime CONSTANT drawcount bound; see
+  Runtime drawcount strategy)
+- `boundsSpace` (u32 -- 0 = object/local space; the cut-select compute
+  transforms per-instance, so bounds are LOCAL)
+- `sourceHashKind` (u32) + `sourceHash` (32 bytes -- freshness key vs the
+  high-poly source; identifies WHICH hash algo so it can change later)
+- table offsets+counts (u64 offset, u32 count each) for: cluster table,
+  DAG-node/parent-link table, vertex blob, index blob, string/material-slot
+  table
+- a stock degenerate 1-cut `.cdag` is never written to disk (stock wraps
+  in-memory); the header still defines the in-memory contract the loader
+  builds for the stock path so both paths share one struct.
+
 ## Cluster-select compute (NET-NEW, not reuse)
 
 New per-cluster compute dispatch. Prior art is `gpu_cull_patch.comp` (NOT
@@ -139,13 +170,44 @@ insufficient: it patches only `instanceCount`/`baseInstance`;
 `compute_buildIndirectBuffer` (gpu_cull_compute.cpp), and the
 `glMultiDrawElementsIndirect` drawcount (gos_static_prop_batcher.cpp:3317/
 :3339) is a mission-load constant. Per-view cut selection writes
-per-surviving-cluster `count`/`firstIndex`/`baseVertex` AND a
-per-frame-variable drawcount -- acknowledged net-new GPU-driven
-command-generation, the core POC work. Cut rule:
-`keep iff error(self) > threshold >= error(parent)`; backface-cone reject;
-distance => coarser cut, never reject
-(`distant_buildings_render_at_lower_lod_never_distance_culled`). No
-`glGetBufferSubData` after the SSBO copy (the mc2_10 135->62fps stall).
+per-surviving-cluster `count`/`firstIndex`/`baseVertex` -- acknowledged
+net-new GPU-driven command-generation, the core POC work.
+
+### Runtime drawcount strategy (GL 4.3-constrained -- decided)
+
+Plain `glMultiDrawElementsIndirect` takes `drawcount` from the CPU call; a
+GPU-decided drawcount is NOT expressible with it alone. Decision:
+
+- PRIMARY (POC): CONSTANT max drawcount = `maxClusterDraws` (the per-type
+  cluster-slot count, bounded at cook). The cluster-select compute writes
+  `count=0` into the `DrawElementsIndirectCommand` of every non-survivor;
+  GL skips zero-count commands. Drawcount stays a CPU constant; only
+  command CONTENTS vary per frame. This is exactly the already-proven
+  in-codebase pattern (`gpu_cull_patch.comp` zeroes per-command counts; the
+  static-prop path's drawcount is already a mission-load constant) -- borrow
+  it, do not invent. Barrier: `GL_COMMAND_BARRIER_BIT` (already used).
+- OPTIONAL optimization (NOT POC scope): if
+  `glewIsSupported("GL_ARB_indirect_parameters")` is true, switch to
+  `glMultiDrawElementsIndirectCountARB` with a compute-written parameter
+  buffer (extra barrier: `GL_PARAMETER_BUFFER_BARRIER_BIT` +
+  `GL_COMMAND_BARRIER_BIT`). The codebase has ZERO `ARB_indirect_parameters`
+  usage today; per the GPU-direct-bring-up-risk culture this is a
+  capability-gated follow-on, never the POC's load-bearing path.
+
+`maxClusterDraws` (the bound) is computed at cook and stored in the `.cdag`
+header (see format); the runtime never needs a variable drawcount.
+
+Cut rule: keep cluster iff `error(self) > threshold >= error(parent)`;
+backface-cone reject; distance => coarser cut, never reject
+(`distant_buildings_render_at_lower_lod_never_distance_culled`). Sentinels
+(fixed conventions -- workers must NOT invent alternates): the DAG ROOT
+cluster has `parentError = +INF` (always eligible, never culled by the
+parent test); a LEAF cluster (no finer child) has `childError` treated as
+`0.0` (the `error(self)` term), so a leaf is kept whenever its own error
+exceeds threshold. A degenerate stock 1-cut DAG is a single cluster that is
+simultaneously root and leaf (`parentError=+INF`, `error(self)` such that it
+is always selected) -- the identity case. No `glGetBufferSubData` after the
+SSBO copy (the mc2_10 135->62fps stall).
 
 REUSE (scaffolding, not the kernel): the per-mission SSBO
 free-prev/realloc lifecycle, substrate-staging-SSBO sizing, and the
@@ -190,11 +252,18 @@ inside `renderLists()`.
 
 ## "Done" gate (cooker-independent oracle)
 
-1. Phase-0 gate passed (stock ASE/TGL load identity; tier1 zoomed-out
-   green with Assimp merged-but-unused).
-2. Stock identity: every stock building's 1-cut path renders the same
-   triangles as the pre-change full-res registration. Identity check (not
-   a tolerance), all tier1 missions AT zoomed-out-big-map.
+1. Phase-0 gate passed (stock ASE/TGL load identity; per the Phase-0 plan
+   the zoomed-out check is lighter there because Phase 0 changes NO
+   draw-volume/LOD/cull code -- importer present but unused. The FULL
+   every-tier1-mission zoomed-out-big-map gate is load-bearing HERE,
+   because THIS slice does change building draw generation).
+2. Stock RENDER identity: every stock building's 1-cut path is
+   pixel-identical to the pre-change full-res registration -- GEOMETRY
+   (triangles) AND MATERIAL. The check MUST include at least one
+   MULTI-MATERIAL building (material-slot remap + index binding can
+   regress output even with an identical triangle payload; triangle
+   visibility alone misses this). Identity check (not a tolerance), all
+   tier1 missions AT zoomed-out-big-map.
 3. High-detail equivalence: rasterize the high-poly source full-res and the
    `.cdag` coarsest cut from a FIXED set of N camera poses at fixed
    resolution; concrete silhouette metric (XOR coverage ratio, stated

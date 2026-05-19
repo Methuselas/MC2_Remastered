@@ -8,7 +8,7 @@
 
 **Tech Stack:** git cherry-pick, CMake (RelWithDebInfo, full-relink discipline), vendored Assimp under `3rdparty/assimp/`, `run_smoke.py` tier1, user-driven zoomed-out-big-map visual identity check.
 
-**Scope:** This is Plan 1 of 2. Plan 2 (the substitutive static-prop cluster-LOD arc) is written AFTER this plan's Phase-0 gate (Task 7) passes — its tasks depend on Phase-0 outputs and on spec-deferred traces, and would otherwise be placeholder-laden. Spec: `docs/superpowers/specs/2026-05-19-static-prop-cluster-lod-poc-design.md`.
+**Scope:** This is Plan 1 of 2. Two-stage unlock for Plan 2 (the substitutive static-prop cluster-LOD arc): it may be DRAFTED once the Task 7 stock-identity gate is GREEN (importer-present nifty is concrete), and may be IMPLEMENTED only after Task 8 (positive import proof) passes and `assimp-phase0-complete` is tagged. Plan 2's tasks depend on Phase-0 outputs and spec-deferred traces and would otherwise be placeholder-laden. Spec: `docs/superpowers/specs/2026-05-19-static-prop-cluster-lod-poc-design.md`.
 
 **The 8 cherry-pick commits (on `claude/assimp-testing`, in order):**
 
@@ -58,13 +58,29 @@ py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smok
 ```
 Expected: exit `0`. Note the artifacts dir printed (`tests/smoke/artifacts/<timestamp>/`). Record per-mission GL-error counts from `report.*` — this is the BASELINE the Task 7 identity gate compares against. Do NOT add `--with-menu-canary`.
 
-- [ ] **Step 4: Dry-run the cherry-pick conflict surface (no apply)**
+- [ ] **Step 4: SEQUENTIAL throwaway-branch dry-run (real conflict surface)**
 
-Run:
+Independent per-commit dry-runs from HEAD are misleading: commits 2-8 depend
+on earlier cherry-picks, so resetting after each produces false conflicts AND
+false confidence. Use a sequential throwaway branch instead:
+
 ```bash
-for c in feeaeaa 7753d9d e843911 d4176d2 70a8a88 066e6a9 f19ce2e 857c965; do echo "== $c =="; git cherry-pick --no-commit -n $c 2>&1 | tail -3; git cherry-pick --abort 2>/dev/null; git reset --hard HEAD >/dev/null; done
+git switch -c tmp-assimp-dryrun
+for c in feeaeaa 7753d9d e843911 d4176d2 70a8a88 066e6a9 f19ce2e 857c965; do
+  echo "== $c =="
+  if ! git cherry-pick "$c"; then
+    echo "CONFLICT at $c -- record conflicting files:"; git diff --name-only --diff-filter=U
+    git cherry-pick --abort
+    break
+  fi
+done
+git switch claude/nifty-mendeleev
+git branch -D tmp-assimp-dryrun
 ```
-Expected: a per-commit summary of which apply clean vs conflict. Record the conflicting files. (This is informational — the real applies happen in Tasks 2-5 with resolution.)
+Expected: the FIRST commit that conflicts (if any) and its real conflicting
+files, given prior cherry-picks applied. Record this — it tells the
+implementer exactly where Tasks 2-5 need conflict resolution. Informational
+only; the throwaway branch is deleted, the real applies happen in Tasks 2-5.
 
 - [ ] **Step 5: Commit (tag only — nothing to add)**
 
@@ -125,11 +141,12 @@ Run:
 ```bash
 git cherry-pick 7753d9d
 ```
-Expected: clean, or a conflict in `mclib/msl.h` / `mclib/tgl.h` (nifty drift). Resolution rule: the incoming change ADDS a format-agnostic construction entry point; nifty has no conflicting symbol (confirmed absent). Keep nifty's existing declarations and ADD the incoming new declarations adjacent. Then:
+Expected: clean, or a conflict in `mclib/msl.h` / `mclib/tgl.h` (nifty drift). Resolution rule: the incoming change ADDS a format-agnostic construction entry point; nifty has no conflicting symbol (confirmed absent). Keep nifty's existing declarations and ADD the incoming new declarations adjacent. Then (fail-closed — explicit files only, NO `|| true`, NO `git add -A`; if `--continue` fails, STOP and resolve):
 ```bash
 git add mclib/msl.h mclib/tgl.h mclib/tgl.cpp
 git cherry-pick --continue
 ```
+If `git cherry-pick --continue` exits non-zero, there are unresolved conflicts or unstaged resolutions — do NOT proceed; resolve and re-stage the exact files, then re-run `--continue`.
 
 - [ ] **Step 2: Cherry-pick the ImportGeometryFromFile body**
 
@@ -228,10 +245,12 @@ Run:
 ```bash
 git cherry-pick 066e6a9
 ```
-Expected: clean or trivial `mclib/msl.cpp` conflict (the `kImportExts[]` array — keep incoming `{".glb",".fbx"}`).
+Expected: clean or trivial `mclib/msl.cpp` conflict (the `kImportExts[]` array — keep incoming `{".glb",".fbx"}`). Fail-closed (no `|| true`, no output suppression):
 ```bash
-git add mclib/msl.cpp && git cherry-pick --continue 2>/dev/null || true
+git add mclib/msl.cpp
+git cherry-pick --continue
 ```
+If clean (no conflict), `cherry-pick --continue` is unnecessary and will error "no cherry-pick in progress" — that is expected; the commit already applied. Only run `--continue` if Step reported a conflict. If it reports unresolved conflicts, STOP and resolve.
 
 - [ ] **Step 2: Cherry-pick the mclib build-wiring fix**
 
@@ -250,10 +269,12 @@ Run:
 ```bash
 git cherry-pick 857c965
 ```
-Expected: clean (gates trace prints behind `MC2_ASSIMP_TRACE`).
+Expected: clean (gates trace prints behind `MC2_ASSIMP_TRACE`). Fail-closed, explicit files only (the commit touches `mclib/assimp_importer.cpp`; if the dry-run from Task 1 revealed other files, stage exactly those, never `git add -A`):
 ```bash
-git add -A && git cherry-pick --continue 2>/dev/null || true
+git add mclib/assimp_importer.cpp
+git cherry-pick --continue
 ```
+If clean, no `--continue` needed (commit already applied). If conflicts, STOP, resolve the exact files, re-stage, re-run `--continue`.
 
 - [ ] **Step 4: Verify all 8 commits landed**
 
@@ -285,14 +306,29 @@ rm -f build64/RelWithDebInfo/mc2.exe
 ```
 Expected: configure picks up `3rdparty/assimp` + `ENABLE_ASSIMP_IMPORTER=ON`; build succeeds; `build64/RelWithDebInfo/mc2.exe` exists and is newer than the cherry-picks.
 
-- [ ] **Step 2: Deploy (per-file cp -f, never cp -r)**
+- [ ] **Step 1b: ENABLE_ASSIMP_IMPORTER=OFF compile sanity (anti-bitrot)**
 
-Run:
+The OFF path must not rot. Configure+compile mclib only in OFF mode (cheap; does not need a full mc2 link or deploy):
+```bash
+"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" -B build64-assimpoff -DENABLE_ASSIMP_IMPORTER=OFF
+"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build64-assimpoff --config RelWithDebInfo --target mclib
+```
+Expected: mclib compiles clean with the importer compiled out (the `ENABLE_ASSIMP_IMPORTER` guards in msl/tgl/assimp_importer must `#ifdef` cleanly). If OFF fails to compile, the guards are wrong — fix before proceeding. Then return to the ON `build64` for the rest of the plan.
+
+- [ ] **Step 2: Deploy (per-file cp -f, never cp -r; deterministic DLL set)**
+
+First capture the explicit pre-build DLL inventory of the deploy dir (deterministic — "newer than baseline" is not reliable on this filesystem):
+```bash
+ls -1 A:/Games/mc2-opengl/mc2-win64-v0.4/*.dll | sort > /tmp/deploy_dll_before.txt
+ls -1 build64/RelWithDebInfo/*.dll 2>/dev/null | sed 's#.*/##' | sort > /tmp/build_dll.txt
+```
+Deploy the exe and every DLL the build produced, each explicitly:
 ```bash
 cp -f build64/RelWithDebInfo/mc2.exe A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe
-diff -q build64/RelWithDebInfo/mc2.exe A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe && echo DEPLOY_OK
+diff -q build64/RelWithDebInfo/mc2.exe A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe && echo EXE_OK
+while read d; do cp -f "build64/RelWithDebInfo/$d" "A:/Games/mc2-opengl/mc2-win64-v0.4/$d" && diff -q "build64/RelWithDebInfo/$d" "A:/Games/mc2-opengl/mc2-win64-v0.4/$d" && echo "DLL_OK $d"; done < /tmp/build_dll.txt
 ```
-Expected: `DEPLOY_OK`. Copy any new Assimp runtime DLL the same way if the build produced one (check `build64/RelWithDebInfo/*.dll` newer than baseline; deploy each with `cp -f` + `diff -q`).
+Expected: `EXE_OK` and a `DLL_OK <name>` line for every built DLL (an Assimp DLL appears here iff the vendored build produced one; if Assimp is static there will be none — both are acceptable, the criterion is that every built DLL is byte-identical in the deploy dir). Record `/tmp/build_dll.txt` in the Task 8 tag notes so the deployed DLL set is documented, not vague.
 
 - [ ] **Step 3: Commit (no source change — build artifact only)**
 
@@ -318,15 +354,17 @@ Expected: exit `0`. Compare per-mission GL-error counts in the new `tests/smoke/
 
 tier1's default camera is structurally blind to zoomed-out regressions (recurred 3x historically). This step is USER-DRIVEN: the smoke window is live and user-observable.
 
+**Scope justification (reconciles with the spec "Done" gate item 1):** the FULL every-tier1-mission zoomed-out gate is load-bearing for Plan 2 (the cluster-LOD arc CHANGES building draw generation). Phase 0 changes NO draw-volume / LOD / cull code — the importer is present but unused by stock, so the zoomed-out structural-blindness risk class (which is specifically about draw-volume/LOD/cull changes) does not apply with the same force here. Phase 0's zoomed-out check is therefore a deliberate spot-check, not the full gate — but it MUST cover the known big-map stress mission, not "any one".
+
 Run:
 ```bash
-py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --duration 60 --kill-existing --keep-logs
+py -3 A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/scripts/run_smoke.py --tier tier1 --duration 60 --kill-existing --keep-logs
 ```
-Ask the user to zoom out to big-map on at least one mission and confirm building/terrain rendering is visually identical to pre-change (no missing geometry, no flicker, no shape drop-outs). Record the user's first-hand visual confirmation. PASS criterion: user confirms visual identity zoomed-out.
+Ask the user to zoom out to big-map on AT MINIMUM `mc2_10` (the documented big-map stress mission) AND one other tier1 mission, and confirm building/terrain rendering is visually identical to pre-change (no missing geometry, no flicker, no shape drop-outs). Record the user's first-hand visual confirmation per mission. PASS criterion: user confirms visual identity zoomed-out on `mc2_10` + >=1 other.
 
-- [ ] **Step 3: Decision gate**
+- [ ] **Step 3: Decision gate (Plan 2 DRAFT unlock)**
 
-If Step 1 OR Step 2 fails: the "shouldn't interfere" hypothesis is FALSIFIED. Roll back (`git reset --hard pre-assimp-phase0`), record which cherry-pick introduced the regression (re-bisect the 8 commits), and do NOT proceed to Plan 2. If both pass: Phase 0 stock-identity gate is GREEN.
+If Step 1 OR Step 2 fails: the "shouldn't interfere" hypothesis is FALSIFIED. Roll back (`git reset --hard pre-assimp-phase0`), record which cherry-pick introduced the regression (re-bisect the 8 commits via the sequential method from Task 1 Step 4), and do NOT proceed. If both pass: the Phase 0 stock-identity gate is GREEN, which unlocks **drafting** Plan 2 (the cluster-LOD arc design tasks may now be written against a concrete importer-present nifty). Plan 2 IMPLEMENTATION remains blocked until Task 8 (positive import proof) passes and the completion tag lands.
 
 - [ ] **Step 4: Commit**
 
@@ -337,33 +375,52 @@ No source commit. Record the gate result in the Task 8 tag message.
 ### Task 8: Positive glB-import proof + Phase-0-complete tag
 
 **Files:**
-- Create (test fixture): a minimal `.glb` + a test mech `.ini` with `[Import] Source=<that glb>` (use any existing tiny glB; if none, export a unit cube glB — the proof is that the import path executes and produces geometry, not asset fidelity)
+- Create (test fixture): a minimal `.glb` (any valid small mesh; export a unit cube if none on hand — the proof is path execution, not asset fidelity).
+- Modify (deterministic load binding): the `.ini` of a mech that a SPECIFIC tier1 mission is KNOWN to spawn, adding `[Import]` / `Source=<glb>`.
 
-- [ ] **Step 1: Stage a glB import fixture**
+- [ ] **Step 1: Identify a mech that a tier1 mission deterministically loads**
 
-Place a known-good small `.glb` under the mech asset path used by a throwaway test mech entry, with an INI containing `[Import]` / `Source=<glb>`. (Exact asset dir: mirror an existing mech `.ini` location; the importer resolves via the same path machinery, `PATH_SEPARATOR`/forward-slash only — no `\\`.)
-
-- [ ] **Step 2: Run with import trace ON**
-
-Run:
+A fixture that nothing references produces NO `[ASSIMP]` trace — the task would then "pass" only by absence of crash, which proves nothing. Bind the fixture to a guaranteed load:
 ```bash
-set MC2_ASSIMP_TRACE=1
-py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --duration 30 --kill-existing --keep-logs
+grep -rIl --include=*.fit --include=*.fst --include=*purchase* -e 'mech' tests/smoke 2>/dev/null | head
+# Identify which mech variant tier1 mission mc2_10 spawns (mission/purchase data
+# resolves the deployed mech .ini set). Pick ONE such mech .ini X that mc2_10
+# loads on every run.
 ```
-Expected: in `tests/smoke/artifacts/<timestamp>/` logs, `[ASSIMP` trace lines showing `LoadFromFile` probed the `.glb` and `ImportGeometryFromFile` populated a `TG_TypeMultiShape` (non-zero vertices). PASS criterion: the import path executed and produced geometry without GL errors / crash.
+Record the exact mech `.ini` path X that `mc2_10` is verified to load. (This is a deterministic data lookup, not a guess — if mc2_10's loaded mech set cannot be confirmed, pick another tier1 mission whose mech set can.)
 
-- [ ] **Step 3: Tag Phase 0 complete**
+- [ ] **Step 2: Place the glB and point the verified mech .ini at it**
+
+Place the test `.glb` beside mech assets; add to mech `.ini` X:
+```
+[Import]
+Source=<relative/forward-slash/path/to/test.glb>
+```
+Forward-slash only — no `\\` (`PATH_SEPARATOR` is `/` under the global `-DLINUX_BUILD`). X is now guaranteed to be loaded by `mc2_10`, so the import path WILL execute during the smoke.
+
+- [ ] **Step 3: Run with import trace ON (bash env syntax)**
+
+Run (MSYS/bash — inline env export, NOT CMD `set`):
+```bash
+MC2_ASSIMP_TRACE=1 py -3 A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/scripts/run_smoke.py --tier tier1 --duration 30 --kill-existing --keep-logs
+```
+PASS requires BOTH, in `tests/smoke/artifacts/<timestamp>/` logs:
+1. a log line proving mech `.ini` X (the fixture target) was opened/loaded during `mc2_10`, AND
+2. an `[ASSIMP]` trace line proving `LoadFromFile` probed the `.glb` and `ImportGeometryFromFile` populated a `TG_TypeMultiShape` with NON-ZERO vertices.
+Plus: no new GL errors / no crash vs the Task 7 baseline. Absence of `[ASSIMP]` trace = FAIL (fixture not actually exercised), not a pass.
+
+- [ ] **Step 4: Tag Phase 0 complete (Plan 2 IMPLEMENT unlock)**
 
 Run:
 ```bash
-git tag -a assimp-phase0-complete -m "Phase 0: assimp import cherry-picked (8 track-d commits); stock-identity gate GREEN (tier1 + user zoomed-out); glB import proven. Plan 2 (cluster-LOD arc) unblocked."
+git tag -a assimp-phase0-complete -m "Phase 0: assimp import cherry-picked (8 track-d commits); stock-identity gate GREEN (tier1 + user zoomed-out mc2_10+1); positive glB import proven (fixture INI opened + non-zero geometry). Plan 2 (cluster-LOD arc) IMPLEMENTATION unblocked. Deployed DLL set: see /tmp/build_dll.txt at tag time."
 git log --oneline pre-assimp-phase0..assimp-phase0-complete
 ```
 Expected: the 8 track-d commits listed; tag created.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
-The tag is the deliverable. Phase 0 is complete; Plan 2 may now be written against a concrete, importer-present nifty.
+The tag is the deliverable. Two-stage unlock (consistent with Task 7 Step 3): Task 7 GREEN already unlocked DRAFTING Plan 2; this tag unlocks IMPLEMENTING Plan 2 against a concrete, importer-present, identity-verified nifty.
 
 ---
 
@@ -371,9 +428,9 @@ The tag is the deliverable. Phase 0 is complete; Plan 2 may now be written again
 
 **Spec coverage (vs spec "Phase 0 (PREREQUISITE)"):**
 - "merge the assimp-testing import path" → Tasks 2-5 (cherry-pick, not branch-merge — safer, per the stale-branch finding).
-- "blast-radius scope is a Phase-0 task" → Task 1 Step 4 (dry-run) + Task 4 (mech3d drift) + Task 7 Step 3 (falsification gate).
-- "Assimp heavy dep, vendoring rides along" → Task 2 (vendored tree via `feeaeaa`); Task 6 (`ENABLE_ASSIMP_IMPORTER` build).
-- "Phase-0 exit gate: tier1 zoomed-out green, stock load unchanged, BEFORE cooker work" → Task 7 (identity gate) + Task 8 (tag unblocks Plan 2).
+- "blast-radius scope is a Phase-0 task" → Task 1 Step 4 (SEQUENTIAL dry-run) + Task 4 (mech3d drift) + Task 7 Step 3 (falsification gate).
+- "Assimp heavy dep, vendoring rides along" → Task 2 (vendored tree via `feeaeaa`); Task 6 (`ENABLE_ASSIMP_IMPORTER` ON build + Step 1b OFF anti-bitrot).
+- "Phase-0 exit gate: stock load unchanged BEFORE cooker work" → Task 7 (identity gate, two-stage Plan 2 unlock) + Task 8 (positive proof + tag = implement unlock). Zoomed-out is a justified spot-check here (Phase 0 changes no draw-volume code); full every-tier1 zoomed-out is Plan 2's gate.
 - "stock ASE/TGL behaviorally unchanged (identity)" → Task 4 Step 4 + Task 7 Steps 1-2 (baseline comparison).
 
 **Placeholder scan:** No TBD/TODO. Conflict resolutions are specified by intent + exact files + exact git commands. The one fixture not byte-specified (Task 8 Step 1 glB) is intentionally any-valid-glB — the proof is path execution, not a specific asset; criterion is concrete (trace + non-zero geometry).
