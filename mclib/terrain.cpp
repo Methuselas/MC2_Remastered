@@ -39,6 +39,7 @@
 #include"../GameOS/gameos/gos_terrain_water_stream.h"
 #include"../GameOS/gameos/gpu_driven_common.h"
 #include"../GameOS/gameos/gos_terrain_indirect.h"
+#include"../GameOS/gameos/gos_terrain_surface.h"  // PR-1: continuous-surface mission-load generation
 #include"../GameOS/gameos/gos_terrain_mask_dispatch.h"
 #include"../GameOS/gameos/gos_terrain_bridge.h"
 #include"../GameOS/gameos/gos_terrain_lighting.h"
@@ -632,11 +633,25 @@ void Terrain::primeMissionTerrainCache (volatile float& progress, float progress
 	// cache is ready when buildRecipeSlot reads UV data from it.
 	// Gated on IsEnabled() OR IsParityCheckEnabled() — no allocation when both
 	// are unset.
+	// PR-1 (terrain continuous-surface producer): the surface generator
+	// de-duplicates the dense recipe corners as its stock-derivable source
+	// (gos_terrain_surface.cpp, design M-4), so the recipe MUST be built when
+	// the surface kill-switch is on even if MC2_TERRAIN_INDIRECT is off. This
+	// is the M-4 stock-only contract: the surface generation source is the
+	// mission-load recipe, with no arming precondition.
 	if (gos_terrain_indirect::IsEnabled() ||
-	    gos_terrain_indirect::IsParityCheckEnabled()) {
+	    gos_terrain_indirect::IsParityCheckEnabled() ||
+	    gos_terrain_surface::IsEnabled()) {
 		gos_terrain_indirect::ResetDenseRecipe();
 		gos_terrain_indirect::BuildDenseRecipe();
 	}
+
+	// PR-1: mission-load continuous-surface generation (Wave 1, ADDITIVE,
+	// default-OFF). No-op unless MC2_TERRAIN_SURFACE is set. Runs AFTER
+	// BuildDenseRecipe (its stock-derivable generation source) and emits the
+	// [TERRAIN_SURFACE v1] mission-load lifecycle + stock-only-fence prints.
+	// PR-1 generates only -- the surface is NOT drawn/consumed yet (PR-2..4).
+	gos_terrain_surface::GenerateForMission();
 
 	// Slice B4 Stage 1a — mask-dispatch lifecycle. Same call site as
 	// BuildDenseRecipe (no-op when MC2_TERRAIN_MASK_DISPATCH unset).
@@ -755,6 +770,10 @@ void Terrain::destroy (void)
 	    gos_terrain_indirect::IsParityCheckEnabled()) {
 		gos_terrain_indirect::ResetDenseRecipe();
 	}
+	// PR-1: continuous-surface per-mission teardown. Unconditional and
+	// idempotent (no-op when nothing was generated / kill-switch OFF); emits
+	// the [TERRAIN_SURFACE v1] teardown lifecycle print when it had state.
+	gos_terrain_surface::ResetForMission();
 	// Unconditional — mirrors Init() placement (not gated on IsEnabled/IsParityCheck).
 	// Stage 1b/1c may add per-mission state inside Reset(); guarding it here would
 	// silently skip teardown when MC2_TERRAIN_MASK_DISPATCH=1 but MC2_TERRAIN_INDIRECT=0.

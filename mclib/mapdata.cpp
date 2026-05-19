@@ -35,6 +35,7 @@
 #include<algorithm>
 
 #include"../GameOS/gameos/gos_terrain_indirect.h"
+#include"../GameOS/gameos/gos_terrain_surface.h"  // PR-1: continuous-surface regen on recipe rebuild
 
 //---------------------------------------------------------------------------
 // c'tors for postCompVertex
@@ -921,6 +922,15 @@ void MapData::calcLight (void)
 	// InvalidateAllRecipes is a no-op when g_denseRecipes.empty() (i.e., when
 	// neither MC2_TERRAIN_INDIRECT nor MC2_TERRAIN_INDIRECT_PARITY_CHECK is set).
 	gos_terrain_indirect::InvalidateAllRecipes();
+	// PR-1 (terrain continuous-surface): the dense recipe was just rebuilt
+	// in-gameplay (normals recomputed -> light-direction change). Regenerate
+	// the surface from the fresh recipe so it stays in sync. No-op when the
+	// MC2_TERRAIN_SURFACE kill-switch is OFF. The mission-load build is the
+	// primeMissionTerrainCache path; this is the only in-gameplay recipe
+	// rebuild that runs with the recipe populated (the MapData::destroy /
+	// newInit InvalidateAllRecipes sites tear the recipe down and are handled
+	// by the next primeMissionTerrainCache GenerateForMission).
+	gos_terrain_surface::RegenerateForMission();
 }
 
 //---------------------------------------------------------------------------
