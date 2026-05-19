@@ -1111,6 +1111,10 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 			{
 				EditorDataTrace("EditorData::initTerrainFromTGA: malloc failed for jpg buffer");
 				src.close();
+				if (!justResaveAllMaps)
+				{
+					AfxMessageBox("Could not create terrain: memory allocation failed while reading texture file.", MB_OK | MB_ICONERROR);
+				}
 				EditorInterface::instance()->UnsetBusyMode();
 				return false;
 			}
@@ -1121,6 +1125,10 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 			{
 				EditorDataTrace("EditorData::initTerrainFromTGA: CreateScaledColorMap failed");
 				free(tmpRAM);
+				if (!justResaveAllMaps)
+				{
+					AfxMessageBox("Could not create terrain: failed to scale the color map texture.", MB_OK | MB_ICONERROR);
+				}
 				EditorInterface::instance()->UnsetBusyMode();
 				return false;
 			}
@@ -1189,18 +1197,38 @@ bool EditorData::initTerrainFromTGA( int mapSize, int min, int max, int terrain 
 		{
 			EditorDataTrace("EditorData::initTerrainFromTGA: terrain JPG missing; selected terrain cannot be created path=%s",
 				(const char*)tgaColorMapName);
+			if (!justResaveAllMaps)
+			{
+				CString errMsg;
+				errMsg.Format("Could not create terrain: texture file not found.\n\n%s\n\nPlease verify your data\\textures\\Random_Maps folder contains the required terrain JPG files.", (const char*)tgaColorMapName);
+				AfxMessageBox(errMsg, MB_OK | MB_ICONERROR);
+			}
 			EditorInterface::instance()->UnsetBusyMode();
 			return false;
 		}
 	}
 	else
 	{
-		if (!justResaveAllMaps)
+		// terrainTextures2 was already allocated by Terrain::init().
+		// For a new map, this is fine — the color map system is pre-initialized.
+		// Just set up the terrain/map name so the rest of the pipeline works.
+		EditorDataTrace("EditorData::initTerrainFromTGA: terrainTextures2 already set by Terrain::init, setting up map name");
+		
+		CreateDirectory(missionPath, NULL);
+		CreateDirectory(warriorPath, NULL);
+		CreateDirectory(terrainPath, NULL);
+		CreateDirectory(texturePath, NULL);
+
+		const char* name2 = "newMap";
+		if (!land->terrainName)
 		{
-			AfxMessageBox( IDS_MUSTBERIGHTFORMAT );
+			land->terrainName = (char *)gos_Malloc(strlen(name2) + 1);
+			strcpy(land->terrainName, name2);
 		}
-		EditorInterface::instance()->UnsetBusyMode();
-		return 0;
+
+		FullPathFileName missionName;
+		missionName.init(missionPath, name2, ".pak");
+		setMapName(missionName);
 	}
 
 	// New-map water smoke-test default.

@@ -326,6 +326,12 @@ void Editor::init( char* loader )
 								else
 								{
 								}
+
+								if ( !bOK )
+								{
+									resolved = false;
+									break;
+								}
 							}
 							else
 							{
@@ -1259,6 +1265,13 @@ int EditorInterface::New()
 				eye->reset();
 				bOK = EditorData::initTerrainFromTGA( msdlg.mapSize, 0, 0, dlg.terrain );
 				UnsetBusyMode();
+				if ( !bOK )
+				{
+					// Terrain init failed (missing texture, etc.).
+					// Let the user retry with different settings
+					// instead of looping endlessly.
+					continue;
+				}
 			}
 			else
 			{
