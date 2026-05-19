@@ -309,7 +309,14 @@ def main():
                             "MC2_GPU_DRIVEN_TERRAIN_SOLID",
                             "MC2_GPU_DRIVEN_OVERLAY",
                             "MC2_GPU_DRIVEN_PARITY",
-                            "MC2_GPU_DRIVEN_TRACE")},
+                            "MC2_GPU_DRIVEN_TRACE",
+                            # Reverse-Z depth verification probes (2026-05-18):
+                            # depth-transition zoom-pop, water render/depth
+                            # parity, reverse-Z proj-matrix lifecycle trace.
+                            "MC2_DEPTH_TRANSITION_PROBE",
+                            "MC2_WATER_RENDERPROBE",
+                            "MC2_WATER_DEPTHPROBE",
+                            "MC2_REVERSE_Z_TRACE")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
