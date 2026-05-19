@@ -316,7 +316,16 @@ def main():
                             "MC2_DEPTH_TRANSITION_PROBE",
                             "MC2_WATER_RENDERPROBE",
                             "MC2_WATER_DEPTHPROBE",
-                            "MC2_REVERSE_Z_TRACE")},
+                            "MC2_REVERSE_Z_TRACE",
+                            # Terrain continuous-surface producer (2026-05-18):
+                            # MC2_TERRAIN_SURFACE = path-select kill-switch
+                            # (PR-1+, default-OFF); MC2_TERRAIN_SURFACE_TRACE =
+                            # the PR-0 [TERRAIN_SURFACE v1] lifecycle trace gate
+                            # (trace-only, default-OFF). Without these in the
+                            # allowlist subprocess.Popen drops them and the
+                            # forced-ON / trace smoke states are meaningless.
+                            "MC2_TERRAIN_SURFACE",
+                            "MC2_TERRAIN_SURFACE_TRACE")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
