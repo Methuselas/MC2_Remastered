@@ -70,6 +70,13 @@ static bool      s_firstSummaryDone  = false;
 static uint64_t  s_accFalseNeg       = 0;
 static uint64_t  s_accFalsePos       = 0;
 static uint32_t  s_dispatchFrames    = 0;
+// C1b temporal-superset (M1/R7): DEDICATED never-reset cull-frame counter.
+// Do NOT reuse s_dispatchFrames — it resets every 600 frames (the v2
+// sawtooth BLOCK). This counter is NEVER reset anywhere (no entry at any of
+// the 3 s_dispatchFrames reset sites). Seeded at K so untouched stamp-0
+// blocks satisfy (uint(F)-0) >= uint(K) for the first K frames => NOT
+// temporally admitted at startup (pairs with the M3 one-shot mission zero).
+static uint32_t  s_cullFrameIdx      = gpu_cull::GPU_CULL_BLOCK_TEMPORAL_K;
 
 // ---------------------------------------------------------------------------
 // Module state — C1b
@@ -518,6 +525,21 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
     if (typeCount == 0) {
         printf("[GPU_CULL v1] event=c1b_build_skip reason=no_types\n");
         fflush(stdout);
+        // C1b temporal-superset (R8 / Gate2 MAJOR-1): a props -> props-less
+        // mission ordering early-returns HERE, before the free at :524-530
+        // and the post-:749 one-shot zero, so mission-A's s_blockVisBuf
+        // would survive with stale stamps AND s_blockCount!=0 — the shader
+        // M3 clamp (uBlockCount!=0) would then be BYPASSED and read stale
+        // temporal data. Free the buffer and zero s_blockCount so the M3
+        // clamp correctly engages (uBlockCount=0 => effVisible=false).
+        // s_c1bInitialized DELIBERATELY stays true (Gate1 MINOR-1):
+        // s_blockCount=0 is the intended M3-clamp trigger, NOT a
+        // s_c1bInitialized reset. CO-DEPENDENCY: this free is only safe
+        // WITH the Slice-2 per-frame-clear deletion in the SAME commit
+        // (R10) — a surviving clear would hit s_blockVisBuf==0 and raise
+        // per-frame GL_INVALID_OPERATION on a props->props-less mission.
+        if (s_blockVisBuf) { glDeleteBuffers(1, &s_blockVisBuf); s_blockVisBuf = 0; }
+        s_blockCount = 0;
         return true;  // not an error — mission has no static props
     }
 
@@ -747,6 +769,19 @@ bool compute_buildIndirectBuffer(uint32_t typeCount) {
     glGenBuffers(1, &s_blockVisBuf);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_blockVisBuf);
     glBufferData(GL_SHADER_STORAGE_BUFFER, blockVisBytes, nullptr, GL_DYNAMIC_DRAW);
+    // C1b temporal-superset (M3): ONE-SHOT per-mission zero. The frame-stamp
+    // self-ages (atomicMax(...,uFrameStamp) every frame), so the wasteful
+    // per-frame dead-clear at the cull dispatch was DELETED — but the buffer
+    // contents are undefined after glBufferData(nullptr), so zero ONCE here
+    // at allocation. compute_buildIndirectBuffer is per-mission (free-prev
+    // above + realloc here). Stamp 0 + s_cullFrameIdx seeded at K means
+    // these blocks are NOT temporally admitted in the first K frames.
+    {
+        const GLuint zero = 0u;
+        glClearNamedBufferSubData(s_blockVisBuf, GL_R32UI, 0,
+                                  blockVisBytes,
+                                  GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+    }
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     s_c1bInitialized = true;
@@ -908,7 +943,25 @@ void compute_dispatch() {
         // C1b path: full indirect draw authority
         // ========================================================
 
+        // C1b temporal-superset (M2/R9): SINGLE increment + lockstep stamp.
+        // Declared at THIS if-block scope (before the binds) — NOT inside
+        // the uniform sub-block — so the SAME value also feeds the rollup
+        // program below. Cull reads prev-frame stamps; rollup writes this
+        // frameStamp. One shared value = clean K-window; any desync =
+        // window collapse. s_cullFrameIdx is NEVER reset (M1/R7).
+        ++s_cullFrameIdx;
+        const GLint frameStamp = (GLint)s_cullFrameIdx;
+
         // 1. Reset per-bucket counters (perBucketCount[] + overflowCount) + actorVisBits[].
+        // NOTE (R10/Gate2 MAJOR-1 co-dependency): the per-frame
+        // glClearNamedBufferSubData(s_blockVisBuf,...) that USED to live
+        // here was DELETED in this same commit — the frame-stamp self-ages
+        // (atomicMax each frame) so a per-frame zero would destroy the
+        // now-load-bearing stamp. The one-shot per-mission zero in
+        // compute_buildIndirectBuffer (post-glBufferData) is the sole
+        // initializer. Deleting this clear is also what makes the
+        // typeCount==0 free (s_blockVisBuf=0) safe — a surviving clear
+        // would raise per-frame GL_INVALID_OPERATION on props->props-less.
         {
             const GLuint zero = 0u;
             const uint32_t effectiveCount = recordCount <= s_maxActors ? recordCount : s_maxActors;
@@ -918,9 +971,6 @@ void compute_dispatch() {
             glClearNamedBufferSubData(s_actorVisBuf, GL_R32UI, 0,
                                       static_cast<GLsizeiptr>(effectiveCount * sizeof(GLuint)),
                                       GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
-            glClearNamedBufferSubData(s_blockVisBuf, GL_R32UI, 0,
-                                      static_cast<GLsizeiptr>(s_blockCount * sizeof(GLuint)),
-                                      GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
         }
 
         // 2. Bind C1b SSBOs and cull dispatch.
@@ -928,12 +978,31 @@ void compute_dispatch() {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUCKET_COUNTS_BINDING, s_bucketCountsBuf);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUCKET_CAPS_BINDING,   s_bucketCapsBuf);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ACTOR_VIS_BINDING,     s_actorVisBuf);
+        // C1b temporal-superset (R1): the cull program reads binding 13;
+        // its bind site previously bound NO block buffer (only the rollup
+        // at :1064 did). When s_blockVisBuf==0 the shader's M3 clamp
+        // (uBlockCount==0) means binding 13 is never indexed — safe to
+        // bind 0 here.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BLOCK_VIS_BINDING,     s_blockVisBuf);
 
         glUseProgram(s_c1bCullProgram);
         {
             const GLint locNB = glGetUniformLocation(s_c1bCullProgram, "u_nBuckets");
             if (locNB >= 0)
                 glUniform1i(locNB, (int)s_bucketCount);
+            // C1b temporal-superset uniforms (R1/M2/M3). uBlockCount is
+            // s_blockCount only when the buffer is allocated, else 0 — the
+            // shader-side M3 fail-OPEN clamp (short-circuit && on
+            // rec.blockIdx < uint(uBlockCount)).
+            const GLint locFS = glGetUniformLocation(s_c1bCullProgram, "uFrameStamp");
+            if (locFS >= 0)
+                glUniform1i(locFS, frameStamp);
+            const GLint locHK = glGetUniformLocation(s_c1bCullProgram, "uHistoryK");
+            if (locHK >= 0)
+                glUniform1i(locHK, (int)gpu_cull::GPU_CULL_BLOCK_TEMPORAL_K);
+            const GLint locBC = glGetUniformLocation(s_c1bCullProgram, "uBlockCount");
+            if (locBC >= 0)
+                glUniform1i(locBC, s_blockVisBuf ? (int)s_blockCount : 0);
         }
         glDispatchCompute(cullGroups, 1, 1);
         glUseProgram(0);
@@ -1067,6 +1136,13 @@ void compute_dispatch() {
             const GLint locRC = glGetUniformLocation(s_rollupProgram, "u_recordCount");
             if (locRC >= 0)
                 glUniform1i(locRC, (int)recordCount);
+            // C1b temporal-superset (M2/R9): feed the SAME frameStamp the
+            // cull program got this frame. Rollup WRITES this stamp via
+            // atomicMax; cull READS the prev-frame stamp. Lockstep — any
+            // desync between these two uniforms collapses the K-window.
+            const GLint locFSr = glGetUniformLocation(s_rollupProgram, "uFrameStamp");
+            if (locFSr >= 0)
+                glUniform1i(locFSr, frameStamp);
             glDispatchCompute(cullGroups, 1, 1);
             glUseProgram(0);
 

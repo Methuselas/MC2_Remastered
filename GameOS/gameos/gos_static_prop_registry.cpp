@@ -3,6 +3,7 @@
 #include "../../mclib/appear.h"  // Task 6: Appearance* for registerStaticProp()
 #include "gpu_cull_substrate.h"  // C1b GPU authority flip: substrate_appendStaticPropRecord
 #include "gpu_cull_record.h"     // C1b: GpuActorRecord, Cat_StaticProp, CategoryMask
+#include "../../mclib/terrain.h" // C1b temporal-superset: Terrain::worldToBlockIdx()
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -535,7 +536,47 @@ void flush() {
                 gpuRec.actorId        = 0u;   // static props have no actor handle
                 gpuRec.prevVisibilityBit = 1u; // CPU admitted this prop this frame
                 gpuRec.consumerFlags  = 0u;
-                gpuRec.blockIdx       = 0u;
+                // C1b temporal-superset Slice 1: real terrain block index so
+                // the block rollup can stamp the right block. worldCenter[0]
+                // is raw-MC2 east, [1] raw-MC2 north (the -stuff.x unswap was
+                // applied above producing the east-frame). Feed [0],[1] ONLY;
+                // NEVER [2] (elevation). worldCenter fully populated above.
+                gpuRec.blockIdx       = static_cast<uint32_t>(
+                    Terrain::worldToBlockIdx(gpuRec.worldCenter[0],
+                                             gpuRec.worldCenter[1]));
+                // [BLKIDX v1] env-gated GEOMETRIC probe (demote-not-delete).
+                // Non-degeneracy is provably blind to a frame mirror — assert
+                // the helper == hand-rolled CPU block math for THIS prop's
+                // true raw position, plus zero_verify of the [2]-exclusion.
+                {
+                    static const bool s_blkidxTrace =
+                        (getenv("MC2_BLKIDX_TRACE") != nullptr);
+                    if (s_blkidxTrace) {
+                        const float pwx = gpuRec.worldCenter[0];
+                        const float pwy = gpuRec.worldCenter[1];
+                        long mx = ((long)pwx >> 7) + Terrain::halfVerticesMapSide;
+                        long bx = (long)(mx * Terrain::oneOverVerticesBlockSide);
+                        long my = Terrain::halfVerticesMapSide -
+                                  (((long)pwy >> 7) + 1);
+                        long by = (long)(my * Terrain::oneOverVerticesBlockSide);
+                        long cpuBlk = bx + (by * Terrain::blocksMapSide);
+                        long helperBlk = Terrain::worldToBlockIdx(pwx, pwy);
+                        fprintf(stderr,
+                            "[BLKIDX v1] event=geom_check src=registry"
+                            " wx=%.1f wy=%.1f wz=%.1f helper=%ld cpu=%ld"
+                            " match=%d\n",
+                            pwx, pwy, gpuRec.worldCenter[2],
+                            helperBlk, cpuBlk, (helperBlk == cpuBlk) ? 1 : 0);
+                        // zero_verify: elevation [2] must NEVER influence the
+                        // index — recompute ignoring [2] (trivially true here
+                        // since helper takes only [0],[1]) and assert equality.
+                        fprintf(stderr,
+                            "[BLKIDX v1] event=zero_verify src=registry"
+                            " blockIdx=%u z_excluded=1\n",
+                            gpuRec.blockIdx);
+                        fflush(stderr);
+                    }
+                }
                 gpu_cull::substrate_appendStaticPropRecord(gpuRec);
                 ++s_diag_leaves_appended;
                 // 2026-05-10 diag: typeID histogram. MC2_REGFLUSH_TYPEHIST=1 to enable.

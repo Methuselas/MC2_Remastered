@@ -248,6 +248,14 @@ class Terrain
 		static bool IsEditorSelectTerrainPosition (const Stuff::Vector3D pos);
 		static bool IsGameSelectTerrainPosition (const Stuff::Vector3D pos);
 
+		// FREE helper: world (raw MC2: x=east, y=north) -> terrain block index.
+		// Replicates GameObject::getBlockAndVertexNumber's block math EXACTLY
+		// (gameobj.cpp). Used ONLY by the two static-prop substrate-record
+		// producers to populate GpuActorRecord::blockIdx for the C1b block
+		// rollup. Does NOT compute vertexNum and is NOT a substitute for
+		// getBlockAndVertexNumber (which has ~12 collision-critical callers).
+		static long worldToBlockIdx (float wx, float wy);
+
 		long save( PacketFile* fileName, int whichPacket, bool QuickSave = false);
 		bool save( FitIniFile* fitFile ); // save stuff like water info
 		bool load( FitIniFile* fitFile );

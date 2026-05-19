@@ -110,6 +110,20 @@ uniform int u_nBuckets;
 const uint CAT_STATIC_PROP = 5u;
 const uint CATEGORY_MASK   = 0xFu;
 
+// Binding 13: per-block LAST-VISIBLE frame-stamp (C1b temporal-superset
+// META-FIX). Written by gpu_cull_block_rollup.comp via
+// atomicMax(blockVisBits[blk], uint(uFrameStamp)). This cull reads the
+// PREVIOUS frame's stamps (the :1074 barrier orders rollup-write before the
+// next cull-read). The C1a #else path must NOT see binding 13 — this decl
+// stays inside the GPU_CULL_C1B_INDIRECT guard. ('uniform uint' crashes
+// this engine's compiler — use int + cast everywhere.)
+layout(std430, binding = 13) coherent buffer BlockVis {
+    uint blockVisBits[];
+};
+uniform int uFrameStamp;   // this frame's stamp (== s_cullFrameIdx)
+uniform int uHistoryK;     // rolling window length (GPU_CULL_BLOCK_TEMPORAL_K)
+uniform int uBlockCount;   // s_blockCount when allocated, else 0 (M3 fail-OPEN)
+
 #else  // C1a mode -------------------------------------------------------------
 
 layout(std430, binding = 9) buffer DebugOut {
@@ -232,12 +246,17 @@ void main() {
 
 #ifdef GPU_CULL_C1B_INDIRECT
     // C1b path: write per-actor visibility bit (used by block-rollup kernel).
+    // RAW visible — R4: rollup self-latch reads this raw bit; do NOT widen.
     actorVisBits[i] = visible ? 1u : 0u;
 
+    // HOISTED (R6): category decode lifted ABOVE the if(visible) gate so the
+    // parallel else-if sibling below can reference `cat` in scope. Byte-
+    // identical value/uses; only the decl site moved up one scope. The old
+    // in-block decl was DELETED (the decl must appear exactly once).
+    uint cat = rec.category & CATEGORY_MASK;
     if (visible) {
         // Only static props participate in the indirect bucket system.
         // Dynamic actors (mechs, GVs, etc.) go to actorVisBits only.
-        uint cat = rec.category & CATEGORY_MASK;
         if (cat == CAT_STATIC_PROP) {
             // The bucket (typeID) is packed in the upper 28 bits of category.
             uint bucket = rec.category >> 4;
@@ -250,6 +269,37 @@ void main() {
                 // Store the local instance slot index (= i within the record
                 // array). The vertex shader reads visibleIds[base + inst] to
                 // get the per-instance SSBO index for this invocation.
+                visibleIds[base + slot] = i;
+            }
+        }
+    } else if (cat == CAT_STATIC_PROP) {
+        // C1b TEMPORAL-SUPERSET sibling (option (b), R6): this prop was
+        // rejected by this frame's stateless frustum test. Re-admit it if
+        // its terrain block was stamped visible within the last uHistoryK
+        // cull frames. `else if` (not widening if(visible)) confines the
+        // temporal term to CAT_STATIC_PROP so the dynamic mech/GV path
+        // through if(visible) is byte-identical ([MECHVOL] invariant).
+        // M3 fail-OPEN: the `rec.blockIdx < uint(uBlockCount)` test
+        // short-circuits (GLSL && is short-circuit, spec 5.10) so when the
+        // block buffer is unallocated (uBlockCount==0) binding 13 is NEVER
+        // indexed and admit falls to the byte-identical if(visible) path.
+        bool effVisible = (rec.blockIdx < uint(uBlockCount)) &&
+            ((uint(uFrameStamp) - blockVisBits[rec.blockIdx]) <
+             uint(uHistoryK));
+        if (effVisible) {
+            // Recompute bucket/cap/base/slot EXACTLY as the if(visible)
+            // branch; same shared atomicAdd on bucketCountData[bucket] +
+            // same slot>=cap overflow sentinel + same visibleIds scatter.
+            // Code-dup (GLSL has no closure/fallthrough), NOT path-dup —
+            // one buffer, one binding, one rollup. Filed debt: collapse
+            // into a shared GLSL fn once [MECHVOL] is no longer the gate.
+            uint bucket = rec.category >> 4;
+            uint cap    = capsData[bucket];                   // bucketCapacity[b]
+            uint base   = capsData[uint(u_nBuckets) + bucket];// bucketBase[b]
+            uint slot   = atomicAdd(bucketCountData[bucket], 1u);
+            if (slot >= cap) {
+                atomicAdd(bucketCountData[uint(u_nBuckets)], 1u);  // overflowCount
+            } else {
                 visibleIds[base + slot] = i;
             }
         }

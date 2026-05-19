@@ -14,6 +14,10 @@
 #include"terrain.h"
 #endif
 
+#ifndef ERR_H
+#include"err.h"   // C1b temporal-superset: 3-arg Assert() for worldToBlockIdx guard
+#endif
+
 #ifndef VERTEX_H
 #include"vertex.h"
 #endif
@@ -658,6 +662,23 @@ void Terrain::primeMissionTerrainCache (volatile float& progress, float progress
 	// RebuildDecalStaticVBOIfDirty. ResetDecalStaticVBO leaves the dirty flag
 	// set so that first armed draw bakes.
 	gos_terrain_indirect::ResetDecalStaticVBO();
+}
+
+//---------------------------------------------------------------------------
+long Terrain::worldToBlockIdx (float wx, float wy)
+{
+	// Verbatim transcription of GameObject::getBlockAndVertexNumber's block
+	// math (gameobj.cpp). float2long truncation, the >>7 (==/128), and the
+	// Y-flip are ALL load-bearing — do NOT "clean up" the float math.
+	Assert(Terrain::worldUnitsPerVertex==128,0," block >>7 broken ");
+
+	long mx = (float2long(wx) >> 7) + Terrain::halfVerticesMapSide;
+	long blockX = float2long(mx * Terrain::oneOverVerticesBlockSide);
+
+	long my = Terrain::halfVerticesMapSide - ((float2long(wy) >> 7) + 1);
+	long blockY = float2long(my * Terrain::oneOverVerticesBlockSide);
+
+	return blockX + (blockY * Terrain::blocksMapSide);
 }
 
 //---------------------------------------------------------------------------

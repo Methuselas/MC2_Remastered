@@ -28,6 +28,17 @@ namespace gpu_cull {
 // Plan v3.8 Step 1.4.
 static constexpr GLsizei kDrawElementsIndirectCommandSize = 20;
 
+// C1b temporal-superset (META-FIX 2026-05-18): rolling K-frame window over
+// the per-block last-visible frame-stamp. A static prop in a block stamped
+// within the last K cull frames is temporally admitted even when this
+// frame's stateless frustum test rejected it (kills 1-2-frame edge-pop on
+// the default C1b indirect path). K has NO a-priori lower bound vs the
+// documented lag; the user-driven worst-case zoomed-out visual gate is the
+// SOLE K-adequacy authority — gate failure => RAISE K, do not abandon.
+// Also seeds s_cullFrameIdx so untouched stamp-0 blocks are NOT temporally
+// admitted in the first K frames (pairs with the one-shot mission zero).
+static constexpr uint32_t GPU_CULL_BLOCK_TEMPORAL_K = 12u;
+
 // Initialise the compute pipeline: GL version probe, shader compile, SSBO alloc.
 // Call once at mission load, after substrate_init() and after GL context is up.
 // Hard-fails via STOP() if shader compile or SSBO allocation fails.

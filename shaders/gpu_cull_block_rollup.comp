@@ -61,11 +61,21 @@ layout(std430, binding = 13) coherent buffer BlockVis {
 
 // Uniform: number of records this frame.
 uniform int u_recordCount;
+// C1b temporal-superset: this frame's stamp (== s_cullFrameIdx, lockstep
+// with the cull program's uFrameStamp). 'uniform uint' crashes this
+// engine's compiler (gpu_cull.comp note) — declare int, cast at use.
+uniform int uFrameStamp;
 
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= uint(u_recordCount)) return;
     if (actorVisBits[i] == 0u) return;
     uint blk = recs[i].blockIdx;
-    atomicOr(blockVisBits[blk], 1u);
+    // C1b temporal-superset (R3): stamp this block with the CURRENT frame
+    // index. atomicMax (not atomicOr/store) so concurrent same-block
+    // writers converge to the max stamp. uint() cast is mandatory — there
+    // is no atomicMax(uint[], int) GLSL overload; an uncast call is a
+    // rollup compile-fail = silent stale shader = green smoke on a dead
+    // feature.
+    atomicMax(blockVisBits[blk], uint(uFrameStamp));
 }
