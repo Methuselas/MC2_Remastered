@@ -116,6 +116,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "projectz_overlay.h" // RAlt+P debug overlay (commit 4)
 #include "gos_visual_diff.h"  // Stage 2.E pre-HUD capture + Ctrl+Shift+P record
 #include "gos_terrain_indirect.h"  // [INSTR v1] banner: terrain_indirect{,_parity} fields
+#include "terrain_surface_trace.h" // [INSTR v1] banner: terrain_surface_trace field (PR-0)
 #include "gpu_cull_record.h"       // C0-1: GpuActorRecord schema selftest
 #include "gpu_cull_readback.h"    // C2: async readback ring buffer selftest
 #include "object_admission_predicate.h"  // Track A1: init probe + selftest gate
@@ -752,6 +753,9 @@ int main(int argc, char** argv)
         bool gpuCullParity    = (getenv("MC2_GPU_CULL_AABB_PARITY") != nullptr && getenv("MC2_GPU_CULL_AABB_PARITY")[0] != '0');
         const bool shrHR      = (getenv("MC2_SHADER_HOT_RELOAD")    != nullptr);
         const bool revZ       = (getenv("MC2_REVERSE_Z_TRACE")      != nullptr);
+        // PR-0: dormant [TERRAIN_SURFACE v1] lifecycle channel gate. Trace-only,
+        // default-OFF, separate from the MC2_TERRAIN_SURFACE path-select switch.
+        const bool tSurfTrc   = mc2_terrain_surface_trace::enabled();
         const char* build  =
 #ifdef MC2_BUILD_HASH
             MC2_BUILD_HASH
@@ -765,10 +769,11 @@ int main(int argc, char** argv)
         // Grew 720 -> 768 to absorb terrain_indirect_mine (PR2c Stage 0c).
         // Grew 768 -> 832 to absorb terrain_indirect_overlay{,_parity} (PR2b).
         // Grew 832 -> 896 to absorb reverse_z_trace (reverse-Z float depth).
+        // Grew 896 -> 960 to absorb terrain_surface_trace (PR-0 Wave 0).
         // (water_skip_env field was tentatively added during the closed
         // water-projection-skip slice attempt; removed when the slice
         // closed — premise invalidated by Stage 0 M3 audit.)
-        char _cbbuf[896];
+        char _cbbuf[960];
         snprintf(_cbbuf, sizeof(_cbbuf),
             "[INSTR v1] enabled: tgl_pool=%d destroy=%d gl_error_print=%d "
             "smoke=%d water_fp=%d water_parity=%d vp_fast=%d vp_parity=%d "
@@ -780,6 +785,7 @@ int main(int argc, char** argv)
             "gpu_cull_substrate=%d gpu_cull_aabb_parity=%d "
             "shader_hot_reload=%d "
             "reverse_z_trace=%d "
+            "terrain_surface_trace=%d "
             "camera_motion=1 "
             "build=%s",
             tgl ? 1 : 0, destr ? 1 : 0, glprint ? 1 : 0, smoke ? 1 : 0,
@@ -792,6 +798,7 @@ int main(int argc, char** argv)
             gpuCullSubstrate ? 1 : 0, gpuCullParity ? 1 : 0,
             shrHR ? 1 : 0,
             revZ ? 1 : 0,
+            tSurfTrc ? 1 : 0,
             build);
         puts(_cbbuf);
         crashbundle_append(_cbbuf);
