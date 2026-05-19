@@ -48,6 +48,7 @@
 #include "gos_terrain_surface.h"
 #include "gos_terrain_surface_schema.h"
 #include "../../mclib/terrain_surface_trace.h"  // PR-0 [TERRAIN_SURFACE v1] channel
+#include "../../mclib/terrain_surface_bands.h"  // PR-3 single-sourced band config
 
 #include "gos_terrain_indirect.h"               // RecipeForVertexNum / IsDenseRecipeReady
 #include "gos_terrain_patch_stream.h"           // TerrainQuadRecipe
@@ -300,5 +301,33 @@ int32_t  GetMapSide()        { return g_mapSide; }
 const void* GetVertexData()  { return g_vertices.empty() ? nullptr : (const void*)g_vertices.data(); }
 const void* GetIndexData()   { return g_indices.empty()  ? nullptr : (const void*)g_indices.data();  }
 uint32_t    GetGenerationEpoch() { return g_genEpoch; }
+
+// ---------------------------------------------------------------------------
+// PR-3 distance-band LOD block-grid accessors. Mission-static (derived purely
+// from g_mapSide); zero per-frame / arming dependency. A partial far block is
+// clamped by the compute's vnum() saturation, never dropped (>=1 floor;
+// design 3.2 / distant_buildings_render_at_lower_lod_never_distance_culled).
+// ---------------------------------------------------------------------------
+uint32_t GetBlocksPerSide() {
+    if (!g_generated || g_mapSide <= 1) return 0u;
+    const int32_t cells = g_mapSide - 1;
+    const int32_t bc    = mc2_terrain_surface_bands::kBlockCells;
+    return (uint32_t)((cells + bc - 1) / bc);   // ceil
+}
+
+uint32_t GetMaxOutputIndexCount() {
+    // Worst case = finest band (band 0, stride 1) for every FULL block:
+    // kBlockCells^2 interior cells * 6 indices. The crack-free edge fans can
+    // add at most ~4 * kBlockCells extra triangles per block on band
+    // boundaries; bound generously at 2x the plain finest count so the
+    // per-frame regenerated-index SSBO can never overflow (the compute also
+    // carries an explicit outIndices.length() append guard).
+    const uint32_t bps = GetBlocksPerSide();
+    if (bps == 0u) return 0u;
+    const uint64_t bc      = (uint64_t)mc2_terrain_surface_bands::kBlockCells;
+    const uint64_t perBlk  = bc * bc * 6ull;            // finest interior
+    const uint64_t total   = (uint64_t)bps * (uint64_t)bps * perBlk * 2ull;
+    return (uint32_t)total;
+}
 
 } // namespace gos_terrain_surface

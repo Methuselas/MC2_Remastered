@@ -94,4 +94,17 @@ const void* GetVertexData();      // TerrainSurfaceVertex[GetVertexCount()]
 const void* GetIndexData();       // uint32_t[GetIndexCount()]
 uint32_t    GetGenerationEpoch(); // increments on every (re)generation
 
+// ---------------------------------------------------------------------------
+// PR-3 distance-band LOD (Fork LB = LB-precomputed). The band-select compute
+// (shaders/gpu_terrain_surface_band.comp) is dispatched per BLOCK -- a
+// kBlockCells x kBlockCells group of mission-static quad cells
+// (mclib/terrain_surface_bands.h). These accessors expose the block grid
+// dimensions + a worst-case output-index upper bound the bridge needs to
+// size the per-frame regenerated-index SSBO. They depend ONLY on the
+// mission-static map dimensions (NO per-frame / arming state) -- a partial
+// far block is clamped, never dropped (>=1 floor; design 3.2).
+// ---------------------------------------------------------------------------
+uint32_t GetBlocksPerSide();        // ceil((mapSide-1)/kBlockCells); 0 if not gen
+uint32_t GetMaxOutputIndexCount();  // worst-case (band 0, all blocks) index cap
+
 } // namespace gos_terrain_surface
