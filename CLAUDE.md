@@ -126,6 +126,7 @@ Any rework touching object lifecycle, cull / visibility gates, render path, reso
 - `MC2_ASSET_SCALE_SELFTEST=1` - synthetic 2x/4x/8x/1.5x golden tests at startup
 - `MC2_HEARTBEAT=1` - stderr `[HEARTBEAT]` per second; detect renderer freezes during mod load
 - `MC2_REVERSE_Z_TRACE=1` - `[REVERSE_Z v1]` one-shot lifecycle prints: scene projection-matrix build (near/far + sampled NDC z of near/far; reverse-Z expects near->1, far->0) and the inverseProjectZ fence-seam first use
+- `MC2_GL_DEBUG_FATAL=1` - abort() on GL_DEBUG_SEVERITY_HIGH; opt-in safety net for smoke runs (Tier 1.2 per docs/testing-strategy.md)
 
 Startup banner `[INSTR v1] enabled: ...` appears at log start. Grep schema-version with `\[SUBSYS v[0-9]+\]`. Asset-scale spec: `docs/superpowers/specs/2026-04-23-asset-scale-aware-rendering-design.md`.
 

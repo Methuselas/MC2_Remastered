@@ -160,7 +160,13 @@ def main():
     ap.add_argument("--duration", type=int)
     ap.add_argument("--profile", default="stock")
     ap.add_argument("--exe", default=str(DEFAULT_EXE))
+    # Tier 1.2 (docs/testing-strategy.md): opt-in safety net that promotes
+    # GL_DEBUG_SEVERITY_HIGH from a silent log to abort(). Off by default.
+    ap.add_argument("--gl-debug-fatal", action="store_true",
+                    help="set MC2_GL_DEBUG_FATAL=1 (abort on GL_DEBUG_SEVERITY_HIGH)")
     args = ap.parse_args()
+    if args.gl_debug_fatal:
+        os.environ["MC2_GL_DEBUG_FATAL"] = "1"
 
     # Existing-process safety.
     pids = _running_mc2()
@@ -334,7 +340,11 @@ def main():
                             # extrema beyond slimReduce. Without this in the
                             # allowlist subprocess.Popen drops it and the probe
                             # never fires.
-                            "MC2_WATER_INVPROJ_PARITY")},
+                            "MC2_WATER_INVPROJ_PARITY",
+                            # Tier 1.2 — KHR_debug fatal-on-HIGH opt-in
+                            # (docs/testing-strategy.md). Forwarded so
+                            # --gl-debug-fatal reaches the engine subprocess.
+                            "MC2_GL_DEBUG_FATAL")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

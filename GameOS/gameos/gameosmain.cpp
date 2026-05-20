@@ -666,6 +666,19 @@ void GLAPIENTRY OpenGLDebugLog(GLenum source, GLenum type, GLuint id, GLenum sev
 		);
 		printf("Message : %s\n", message);
 	}
+	// Tier 1.2 (docs/testing-strategy.md): opt-in fatal abort on GL_DEBUG_SEVERITY_HIGH.
+	// Default behavior unchanged. Catches the GL state-leak / sampler-inheritance /
+	// depth-state-inheritance bug class documented in
+	// memory/{blend,sampler,gpu_direct_depth}_state_inheritance.md.
+	if (severity == GL_DEBUG_SEVERITY_HIGH)
+	{
+		static const bool s_glDebugFatal = (getenv("MC2_GL_DEBUG_FATAL") != NULL);
+		if (s_glDebugFatal)
+		{
+			fflush(stdout);
+			abort();
+		}
+	}
 }
 
 #ifndef DISABLE_GAMEOS_MAIN
