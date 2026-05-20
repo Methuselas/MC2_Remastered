@@ -28,16 +28,18 @@ namespace gpu_cull {
 // Plan v3.8 Step 1.4.
 static constexpr GLsizei kDrawElementsIndirectCommandSize = 20;
 
-// C1b temporal-superset (META-FIX 2026-05-18): rolling K-frame window over
-// the per-block last-visible frame-stamp. A static prop in a block stamped
-// within the last K cull frames is temporally admitted even when this
-// frame's stateless frustum test rejected it (kills 1-2-frame edge-pop on
-// the default C1b indirect path). K has NO a-priori lower bound vs the
-// documented lag; the user-driven worst-case zoomed-out visual gate is the
-// SOLE K-adequacy authority — gate failure => RAISE K, do not abandon.
-// Also seeds s_cullFrameIdx so untouched stamp-0 blocks are NOT temporally
-// admitted in the first K frames (pairs with the one-shot mission zero).
-static constexpr uint32_t GPU_CULL_BLOCK_TEMPORAL_K = 12u;
+// C1b temporal-superset (META-FIX 2026-05-18, sticky-bit revision 2026-05-20):
+// per-block sticky-bit admit. Once a block has ever been frustum-visible
+// during this mission, blockVisBits[i] is set permanently and the cull
+// re-admits any static prop in that block whose stateless frustum test
+// rejected it. Strictly conservative — sticky-bit admits a superset of any
+// K-frame window. Cleared ONLY by the per-mission one-shot zero in
+// compute_buildIndirectBuffer (gpu_cull_compute.cpp:779-784), the props-less
+// free at :541-542, and the Mission::destroy free at :483-488. The previous
+// K-window mechanism (uFrameStamp + uHistoryK + s_cullFrameIdx +
+// GPU_CULL_BLOCK_TEMPORAL_K) retired under v3 §2.5 — its bound was
+// structurally redundant with the bucketCapacity overdraw cap at
+// gpu_cull.comp:266-268.
 
 // Initialise the compute pipeline: GL version probe, shader compile, SSBO alloc.
 // Call once at mission load, after substrate_init() and after GL context is up.

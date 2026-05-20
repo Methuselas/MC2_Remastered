@@ -52,30 +52,29 @@ layout(std430, binding = 12) readonly buffer ActorVis {
     uint actorVisBits[];
 };
 
-// Binding 13: per-block visibility SSBO. One uint per terrain block.
-// OR-accumulated across actors in block. Reset per-frame by C++ via
-// glClearNamedBufferSubData before cull dispatch.
+// Binding 13: per-block STICKY visibility SSBO. One uint per terrain block.
+// Sticky-bit semantics: once stamped (non-zero), the block stays admitted
+// for the remainder of the mission. The per-mission one-shot zero at
+// gpu_cull_compute.cpp:779-784 is the SOLE clearing point (also the
+// props-less free at :541-542 and Mission::destroy free at :483-488); the
+// per-frame glClearNamedBufferSubData that used to live here is
+// INTENTIONALLY ABSENT — a per-frame zero would degrade sticky to
+// strict-only.
 layout(std430, binding = 13) coherent buffer BlockVis {
     uint blockVisBits[];
 };
 
 // Uniform: number of records this frame.
 uniform int u_recordCount;
-// C1b temporal-superset: this frame's stamp (== s_cullFrameIdx, lockstep
-// with the cull program's uFrameStamp). 'uniform uint' crashes this
-// engine's compiler (gpu_cull.comp note) — declare int, cast at use.
-uniform int uFrameStamp;
 
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= uint(u_recordCount)) return;
     if (actorVisBits[i] == 0u) return;
     uint blk = recs[i].blockIdx;
-    // C1b temporal-superset (R3): stamp this block with the CURRENT frame
-    // index. atomicMax (not atomicOr/store) so concurrent same-block
-    // writers converge to the max stamp. uint() cast is mandatory — there
-    // is no atomicMax(uint[], int) GLSL overload; an uncast call is a
-    // rollup compile-fail = silent stale shader = green smoke on a dead
-    // feature.
-    atomicMax(blockVisBits[blk], uint(uFrameStamp));
+    // C1b sticky-bit temporal-superset: idempotent set-once on this block.
+    // atomicOr (not atomicMax/store) so concurrent same-block writers all
+    // converge to the same set-bit result; ordering between writers is
+    // irrelevant under sticky semantics.
+    atomicOr(blockVisBits[blk], 1u);
 }

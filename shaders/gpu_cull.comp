@@ -110,18 +110,20 @@ uniform int u_nBuckets;
 const uint CAT_STATIC_PROP = 5u;
 const uint CATEGORY_MASK   = 0xFu;
 
-// Binding 13: per-block LAST-VISIBLE frame-stamp (C1b temporal-superset
-// META-FIX). Written by gpu_cull_block_rollup.comp via
-// atomicMax(blockVisBits[blk], uint(uFrameStamp)). This cull reads the
-// PREVIOUS frame's stamps (the :1074 barrier orders rollup-write before the
-// next cull-read). The C1a #else path must NOT see binding 13 — this decl
-// stays inside the GPU_CULL_C1B_INDIRECT guard. ('uniform uint' crashes
-// this engine's compiler — use int + cast everywhere.)
+// Binding 13: per-block STICKY visibility bits (C1b temporal-superset
+// META-FIX, sticky-bit revision). Written by gpu_cull_block_rollup.comp via
+// atomicOr(blockVisBits[blk], 1u). Once a block has ever been frustum-visible
+// during this mission its bit is set permanently; the per-mission one-shot
+// zero at gpu_cull_compute.cpp:779-784 (also props-less free at :541-542
+// and Mission::destroy free at :483-488) are the SOLE clearing paths.
+// Strictly conservative: sticky-bit admits a SUPERSET of any K-frame
+// rolling window. The :1074 rollup→barrier→cull ordering carries forward
+// (cull still reads bits set by prior frames). The C1a #else path must
+// NOT see binding 13 — this decl stays inside the GPU_CULL_C1B_INDIRECT
+// guard.
 layout(std430, binding = 13) coherent buffer BlockVis {
     uint blockVisBits[];
 };
-uniform int uFrameStamp;   // this frame's stamp (== s_cullFrameIdx)
-uniform int uHistoryK;     // rolling window length (GPU_CULL_BLOCK_TEMPORAL_K)
 uniform int uBlockCount;   // s_blockCount when allocated, else 0 (M3 fail-OPEN)
 
 #else  // C1a mode -------------------------------------------------------------
@@ -273,19 +275,22 @@ void main() {
             }
         }
     } else if (cat == CAT_STATIC_PROP) {
-        // C1b TEMPORAL-SUPERSET sibling (option (b), R6): this prop was
-        // rejected by this frame's stateless frustum test. Re-admit it if
-        // its terrain block was stamped visible within the last uHistoryK
-        // cull frames. `else if` (not widening if(visible)) confines the
-        // temporal term to CAT_STATIC_PROP so the dynamic mech/GV path
-        // through if(visible) is byte-identical ([MECHVOL] invariant).
-        // M3 fail-OPEN: the `rec.blockIdx < uint(uBlockCount)` test
-        // short-circuits (GLSL && is short-circuit, spec 5.10) so when the
-        // block buffer is unallocated (uBlockCount==0) binding 13 is NEVER
-        // indexed and admit falls to the byte-identical if(visible) path.
+        // C1b STICKY-BIT TEMPORAL-SUPERSET sibling (option (b), R6): this prop
+        // was rejected by this frame's stateless frustum test. Re-admit it
+        // if its terrain block has been frustum-visible at any point during
+        // this mission (set by rollup atomicOr; cleared only by the
+        // per-mission one-shot zero at gpu_cull_compute.cpp:779-784). The
+        // admit set is monotonically growing per mission and is a
+        // superset-by-construction of any K-frame rolling window.
+        // `else if` (not widening if(visible)) confines the temporal term
+        // to CAT_STATIC_PROP so the dynamic mech/GV path through if(visible)
+        // is byte-identical ([MECHVOL] invariant). M3 fail-OPEN: the
+        // `rec.blockIdx < uint(uBlockCount)` test short-circuits (GLSL && is
+        // short-circuit, spec 5.10) so when the block buffer is unallocated
+        // (uBlockCount==0) binding 13 is NEVER indexed and admit falls to
+        // the byte-identical if(visible) path.
         bool effVisible = (rec.blockIdx < uint(uBlockCount)) &&
-            ((uint(uFrameStamp) - blockVisBits[rec.blockIdx]) <
-             uint(uHistoryK));
+            (blockVisBits[rec.blockIdx] != 0u);
         if (effVisible) {
             // Recompute bucket/cap/base/slot EXACTLY as the if(visible)
             // branch; same shared atomicAdd on bucketCountData[bucket] +
