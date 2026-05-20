@@ -1,9 +1,14 @@
 # Appearance::inView unconflation — alpha-Stage 1 design
 
 Date: 2026-05-20. Worktree: `claude/nifty-mendeleev` @ `dc2e8f6` (post-§4
-revert, post-§2.5 sticky-bit ship). Status: DESIGN v1. Adopts the
-"alpha-Stage 1" name the v3 Stage 0.5 spec carves out for the deeper
-META-FIX. Cited symbols all grep-verified at write-time.
+revert, post-§2.5 sticky-bit ship). Status: **DESIGN v3** — corrected
+per user blocking review 2026-05-20 (see §9.5 v3 amendments). v1 → v2
+folded a 10-finding adversarial pass; v2 → v3 fixes 5 blocking design
+defects (no simulation-migration stage, Stage 2b black-tree
+resurrection risk, GpuConsumerFlags taxonomy mismatch, circular
+lifecycle-destroy condition, Stage 0 metric measures wrong thing).
+Adopts the "alpha-Stage 1" name the Stage 0.5 v3 spec carves out for
+the deeper META-FIX. Cited symbols all grep-verified at write-time.
 
 Scope: this spec covers the architectural retirement of the single
 `Appearance::inView` boolean (`mclib/appear.h:71`) which is currently
@@ -189,33 +194,144 @@ the substrate emission code already answered it.
 
 ## 4. The four-gate model
 
-The campaign promotes `GpuConsumerFlags` (`gpu_cull_record.h:63-66`)
-from substrate-emission instrumentation to the actual Appearance-side
-gate dispatch. Each `Consumer_*` bit gets a dedicated `Appearance`
-member, written by `recalcBounds()`, consumed at the matching
-callsite.
+The campaign INFORMS its gate decomposition from `GpuConsumerFlags`
+(`gpu_cull_record.h:63-66`) but does NOT claim a strict 1:1 mapping.
+The substrate's Consumer_* taxonomy was scoped to substrate-emission
+classification (which downstream consumers a given actor record
+participates in), not to a complete enumeration of every gate concern
+on the Appearance class. Specifically:
+
+- `Consumer_RenderGate` ↔ `Appearance::renderVisible` (1:1)
+- `Consumer_LifecycleGate` ↔ `Appearance::lifecycleAlive` (1:1 in
+  spirit; semantics differ — see §4.1)
+- `Consumer_AIGate` and `Consumer_WeaponSpawnNode` both fold into
+  `Appearance::aiPresentable` (N:1 — both express "presentable to AI
+  / game logic"). Weapon-spawn-node visibility is already gated by
+  the same readback the rest of AI-presentability uses (per
+  mech-runtime advisor), and no callsite distinguishes them.
+- `Appearance::simActive` has **no Consumer_* equivalent**. The
+  substrate emission code lives downstream of the simulation gate —
+  only actors whose `update()` already ran can be emitted. Sim
+  gating is an Appearance-level concern that the substrate taxonomy
+  doesn't model.
+
+**This is partial-taxonomy promotion, not 1:1 lift.** Some gates
+inherit from the substrate enum; one is novel; one folds two enum
+bits. Adversarial review (v2→v3) flagged the initial "promote 1:1"
+framing as overfit; corrected here.
 
 ### 4.1 Gate definitions
 
 | Gate (member) | Set by | Read by | Semantics |
 |---|---|---|---|
-| `Appearance::renderVisible` | Producer-side: union of (coarse-frustum AND on-screen) — initially mirror of `inView` for stage-1 byte-identical behavior | All `XXX::render()` enqueue points + shadow gates + GpuStaticPropBatcher submit | "Should this be drawn this frame?" — frustum-correctness question |
-| `Appearance::simActive` | Producer-side: hysteresis-with-floor over `inView` history (~N=4 frame floor like `framesSinceActive`); statics: TRUE when `inView` OR `objBlockInfo.active`; movers: always TRUE for alive actors regardless of view | `TerrainObject::update` lifecycle-block gate (`terrobj.cpp:796`), per-class `update()` body gates, animation/skinning entry | "Should we run per-frame work?" — tick-budget question with hysteresis |
-| `Appearance::lifecycleAlive` | Producer-side: TRUE while actor exists; cleared by event (destroy, mission end). NOT camera-driven. | `mech.cpp:6047` destroy-on-withdrawal, `gvehicl.cpp:3484`, `terrobj.cpp:destroy`, mouse-pick gates | "Is this actor in the active world?" — event-driven, not cull-driven |
-| `Appearance::aiPresentable` | Producer-side: matches `Consumer_AIGate` semantics — game-presentable visibility; movers use readback-lagged (already wired via `MC2_GPU_CULL_LIFECYCLE`) | HUD fire-icon (`mech.cpp:6453-6513`), sensor text (`gvehicl.cpp:3944-3959`), AI behavior gates | "Is this actor presentable to the player this frame?" — 1-frame HUD lag acceptable |
+| `Appearance::renderVisible` | Producer-side via `setVisibilityGatesFromLegacy()` (see §4.4): union of (coarse-frustum AND on-screen). Initially equals `inView`; widens in Stage 6 to include sticky-bit-admit | All `XXX::render()` enqueue points + shadow gates + GpuStaticPropBatcher submit | "Should this be drawn this frame?" — frustum-correctness question |
+| `Appearance::simActive` | Producer-side: hysteresis-with-floor over `inView` history (~N=4 frame floor like `framesSinceActive`); statics: TRUE when `inView` OR `objBlockInfo.active`; movers: always TRUE for alive actors regardless of view | `TerrainObject::update` lifecycle-block gate (`terrobj.cpp:796`), per-class `update()` body gates, animation/skinning entry | "Should we run per-frame work?" — tick-budget question with hysteresis. **Must always be a superset of `renderVisible` at any given frame** to preserve the gate-pair invariant that prevents black-tree resurrection. |
+| `Appearance::lifecycleAlive` | Set TRUE in `Appearance::init()`. Cleared only when the actor is removed from the active world (mission-end teardown, AI-driven removal). NOT camera-driven. NOT consumed by destroy-trigger code. | Mouse picking (`objmgr.cpp:2645, 2714, 2757` via `canBeSeen()` migration), destroy GUARD checks, save-load lifecycle audits | "Is this actor in the active world?" — pure event-driven membership check |
+| `Appearance::aiPresentable` | Producer-side: matches both `Consumer_AIGate` + `Consumer_WeaponSpawnNode` semantics — game-presentable visibility; movers use readback-lagged (already wired via `MC2_GPU_CULL_LIFECYCLE`) | HUD fire-icon (`mech.cpp:6453-6513` via `canBeSeen()` indirection), sensor text (`gvehicl.cpp:3944-3959`), AI behavior gates, weapon-spawn-node visibility | "Is this actor presentable to the player / AI this frame?" — 1-frame HUD lag acceptable |
 
-### 4.2 Save-game schema invariant
+### 4.2 The destroy-trigger is a SEPARATE concern from `lifecycleAlive`
+
+(v3 correction per user blocking finding 4.) The current
+`mech.cpp:6047` predicate `withdrawing && !inView` is **camera-driven
+destruction**: when a withdrawing mech leaves the screen, it's cheap
+to clean up. The semantic is "withdrawing AND camera-lost = good time
+to destroy."
+
+Under unconflation, this stays camera-driven and migrates to
+`withdrawing && !renderVisible` (Stage 2 work — render-gate
+migration). It does NOT consume `lifecycleAlive`. `lifecycleAlive` is
+the GUARD that protects code paths from operating on a destroyed
+actor — it's the answer to "is this still here?", not "should I
+destroy this?".
+
+Using `!lifecycleAlive` as the destroy-trigger predicate would be
+circular: `lifecycleAlive` is only cleared by destruction, so
+`!lifecycleAlive` means "already destroyed" — that's a no-op
+condition, not a trigger.
+
+The v2 spec made this mistake at §5 Stage 3. v3 fixes it: destroy
+trigger stays camera-driven (`renderVisible`-bound); `lifecycleAlive`
+serves the GUARD use case (picking, save, AI's "can I target this?").
+
+### 4.3 The gate-pair invariant (load-bearing)
+
+**Invariant:** for every frame, every actor:
+`simActive ⊇ renderVisible`.
+
+If render fires for an actor, its update MUST have run. Violating
+this is the black-tree class (§1.1 bug 2). The §2 v4-style widening
+that the v2 spec proposed under Stage 2b (sticky-bit widening
+`renderVisible` without widening `simActive`) violated this
+invariant; v3 corrects the rollout ordering — widening cannot land
+until `simActive` migration ships and the producer ensures
+`simActive` widens in lockstep.
+
+Producer-side enforcement: `setVisibilityGatesFromLegacy()` writes
+both fields from the same source. Any widening of `renderVisible`
+must widen `simActive` first or simultaneously.
+
+### 4.4 The `setVisibilityGatesFromLegacy(bool)` helper
+
+(v3 addition per user blocking finding "Recommended edit 1".)
+Manual lockstep assignment across 6 subclass overrides is the
+inherited-citations anti-pattern waiting to happen — one missed
+override silently breaks the invariant.
+
+The helper is a base-class non-virtual method:
+
+```cpp
+// In Appearance, line ~180:
+void setVisibilityGatesFromLegacy(bool v) {
+    inView         = v;
+    renderVisible  = v;
+    simActive      = v;
+    aiPresentable  = v;
+    // lifecycleAlive NOT touched — event-driven, not camera-driven
+}
+```
+
+Every `recalcBounds()` override calls this once with the computed
+visibility result. Existing direct writes to `inView` become a single
+call. This:
+- Removes the lockstep burden from the 6 overrides.
+- Centralizes the byte-identical Stage 1 contract.
+- Provides a single audit point if Stage 6 widening changes the
+  invariant.
+- **Notably excludes `lifecycleAlive`** — preserving its
+  event-driven semantics. `recalcBounds()` does NOT clear it; only
+  destroy-events do.
+
+`setInView()` legacy setter is DEPRECATED but not removed in Stage 1.
+Its 8 force-true callsites are audited per stage; the recommended
+disposition by v3 is to have `setInView()` ALSO call
+`setVisibilityGatesFromLegacy(v)` to keep the force-true callsites
+coherent across all gates while Stage 1 is in flight. But by Stage 4
+(after `lifecycleAlive` migration), `setInView(false)` would
+incorrectly clear lifecycleAlive — at that stage we either (a) audit
+each `setInView()` caller and migrate to per-gate setters, or (b)
+make `setInView()` exclude `lifecycleAlive` from its write set.
+
+(v3 correction per user blocking finding "Major cleanup: setInView
+writing all five fields is acceptable for Stage 1 byte-identity, but
+becomes dangerous before Stage 3+".)
+
+### 4.5 Save-game schema invariant
 
 `code/artlry.cpp:1746` writes `data->inView = inView;` and `:1764`
 reads `inView = data->inView;`. Save-game schema currently round-trips
 `inView`. The spec MUST preserve this round-trip OR migrate the schema
-in a versioned way. **Stage 1's byte-identical behavior covers this:**
-the legacy `inView` field stays as a deprecated alias (set to
-`renderVisible || simActive` or equivalent) until save schema migrates
-in a later phase. Save migration is OUT OF SCOPE for this spec; treat
-`inView` as a serialization sentinel that must stay write-able.
+in a versioned way.
 
-### 4.3 Legacy `inView` field write preservation
+**The legacy `inView` field continues to receive the EXACT
+recalcBounds() visibility result** — not a derived expression like
+`renderVisible || simActive`. (v3 correction: v2 said the latter,
+which would silently change save semantics once `simActive` widens
+beyond frustum visibility.) This means `inView` writes are
+unchanged from pre-Stage-1 code; only the new gate fields are
+introduced. Save migration is OUT OF SCOPE for this spec; the legacy
+field stays as a frozen serialization sentinel.
+
+### 4.6 Legacy `inView` field write preservation
 
 **Sole grounding (corrected per adversarial review 2026-05-20):**
 save-game schema. `code/artlry.cpp:1746` writes `data->inView =
@@ -243,163 +359,319 @@ keep `inView` writes intact.
 Each stage has an explicit gate. No stage starts before its
 predecessor's gate passes.
 
-### Stage 0 — Disagreement-rate measurement (PRECONDITION)
+### Stage 0 — Candidate-predicate disagreement measurement (PRECONDITION)
 
-Per adversarial-steelman deciding question. Instrument every read of
-`inView`/`canBeSeen()` with a callsite tag (`render`/`update`/`lifecycle`/`ai`)
-and log per-frame disagreement: for each actor-frame, how often do the
-4 effective reads demand different answers?
+(v3 correction per user blocking finding 5.) The v2 plan to "instrument
+`canBeSeen()` and `setInView()`" was wrong on two counts: (a) many
+consumers read `inView` directly without going through `canBeSeen()`,
+and (b) recording reads of the SAME bit doesn't produce disagreement
+— every consumer sees the same value because there IS only one value.
 
-Implementation: a thin probe at `Appearance::canBeSeen()` and
-`Appearance::setInView()` that records call-site (via
-`__builtin_return_address(0)` or explicit macro tag), accumulates a
-2D matrix of (consumer × frame) reads, and emits per-frame
-disagreement counts.
+The corrected Stage 0 measures **candidate-predicate disagreement**:
+for each actor each frame, compute four CANDIDATE predicates that
+WOULD have been emitted by the unconflated design, then count
+disagreement.
+
+Implementation: a probe in `GameObjectManager::update` (after
+`framesSinceActive` sweep at `objmgr.cpp:1918-1941`) that for each
+live actor computes:
+
+```cpp
+struct InViewCandidates {
+    bool render_cand;     // coarse-frustum strict (current inView)
+    bool sim_cand;        // coarse-frustum OR objBlockInfo.active OR (mover ? alive : framesSinceActive < N)
+    bool lifecycle_cand;  // actor-alive (always TRUE for live actors)
+    bool ai_cand;         // for movers: readback-lagged; for statics: coarse-frustum
+};
+```
+
+Per-frame disagreement counter increments when any pair of these
+candidates differs for the same actor. Per-N-frame summary logs:
+- Total actor-frames sampled
+- Actor-frames with ANY pairwise disagreement
+- Per-pair disagreement counts: render×sim, render×lifecycle,
+  render×ai, sim×lifecycle, sim×ai, lifecycle×ai
+- Worst-case actor (for triage)
+
+Env-gated `MC2_INVIEW_CONFLATION_TRACE=1` per
+`debug_instrumentation_rule.md`. 120-frame summary roll like
+`[TOBJPARITY v1]`.
 
 Output gate:
-- **< 5% actor-frames with disagreement:** abort this spec. The
-  conflation is benign; Position B (preserve + BIH/octree) is the
-  right move. File as memory; pivot to acceleration-structure work.
-- **5-20% actor-frames with disagreement:** soft-ship. Stage 1
-  proceeds but be conservative on Stage 3+ scope.
+- **< 5% actor-frames with ANY disagreement:** abort this spec. The
+  conflation is benign in practice; pivot to BIH/octree
+  (acceleration-structure) work as the CPU-perf path.
+- **5-20% actor-frames with disagreement:** soft-ship. Stages 1-2
+  proceed; reassess before Stage 3 sim migration.
 - **> 20% actor-frames with disagreement:** confirm META-FIX. Full
-  rollout proceeds with confidence.
+  rollout proceeds with confidence. (Predicted regime — `bdactor.cpp:1300`
+  comment documents ~87% false-negative on the render-candidate at
+  wolfman zoom.)
 
 User-driven mc2_10 worst-case (matches Stage 0.5 §3 precondition
-methodology). Camera regime: pan + spin + corner + zoom range.
-Duration: 120s minimum. Probe stays env-gated
-(`MC2_INVIEW_CONFLATION_TRACE=1`).
+methodology). Camera regime: pan + spin + corner + zoom range,
+including wolfman-zoom worst case. Duration: 120s minimum.
 
-Cost estimate: ~30 LOC instrumentation + 1 user-driven session.
+`sizeof(Appearance)` audit also runs during Stage 0: grep for
+`sizeof.*Appearance`, `memcpy.*appearance`, `placement new` patterns
+that could be silently broken by Stage 1's class-layout change.
+(M3 fold-in.)
+
+Cost estimate: ~80 LOC probe (candidate computation +
+disagreement matrix + summary roll) + 1 user-driven session.
 
 ### Stage 1 — Producer-side decomposition (BYTE-IDENTICAL)
 
 Add 4 new `Appearance` members (`renderVisible`, `simActive`,
-`lifecycleAlive`, `aiPresentable`). Set them all from
-`recalcBounds()` to the SAME value as `inView`. ZERO behavior change.
+`lifecycleAlive`, `aiPresentable`). Add the
+`setVisibilityGatesFromLegacy(bool)` helper (per §4.4). Each
+`recalcBounds()` override replaces its `inView = <expr>` line with
+`setVisibilityGatesFromLegacy(<expr>)`. `lifecycleAlive` is set TRUE
+in `Appearance::init()` and remains TRUE for the actor's lifetime
+(NOT touched by `recalcBounds()`). ZERO behavior change for consumer
+reads (they still read `inView`).
 
-**6 subclass virtual overrides** must set all 4 new bools in lockstep
-(per §1.2 enumeration; per mech-runtime advisor, mover overrides don't
-call base): `BldgAppearance`, `TreeAppearance`, `VFXAppearance`,
-`GenericAppearance`, `GVAppearance`, `Mech3DAppearance`. Plus base
-`Appearance::recalcBounds()`.
+**6 subclass virtual overrides** must call the helper instead of
+manually assigning `inView`: `BldgAppearance`, `TreeAppearance`,
+`VFXAppearance`, `GenericAppearance`, `GVAppearance`,
+`Mech3DAppearance`. Plus base `Appearance::recalcBounds()`. The
+helper-based approach replaces the v2 "lockstep manual assignment"
+discipline that adversarial review correctly flagged as fragile.
 
 `Artillery::recalcBounds(CameraPtr)` is on a separate signature; if
 it shadows the polymorphism in practice, audit it separately. Stage 1
 adversarial review checklist: confirm `Artillery` instances either
-inherit base behavior or have their own gate logic that Stage 1
-preserves.
+inherit base behavior or call the helper themselves.
 
-**Constructor + init zero-init contract.** Each of the 4 new bools
-gets a zero/false init in BOTH `Appearance()` ctor (`appear.h:85-95`)
-AND `Appearance::init()` (`appear.h:97-107`), mirroring the existing
-`inView = FALSE` lines exactly. Save-game `ArtilleryData` does NOT
+**Constructor + init zero-init contract.** Both `Appearance()` ctor
+(`appear.h:85-95`) and `Appearance::init()` (`appear.h:97-107`):
+
+```cpp
+inView          = FALSE;
+renderVisible   = FALSE;
+simActive       = FALSE;
+lifecycleAlive  = TRUE;   // <-- TRUE because actor is alive at construction
+aiPresentable   = FALSE;
+```
+
+`lifecycleAlive` defaults TRUE because construction means the actor
+exists. Other gates default FALSE because the first `recalcBounds()`
+call will overwrite them. Save-game `ArtilleryData` does NOT
 serialize the new bools — Stage 1 explicitly leaves them
 recomputed-on-next-recalcBounds; the byte-identical claim depends on
-ctor init being correct so the first frame after construction has
-defined values until the first `recalcBounds()` call. (Adversarial
-review M3 finding.)
+ctor init being correct.
 
-**`setInView()` semantics decision (adversarial review M4).** The
-existing `setInView()` setter (`appear.h:181-184`) is called by 8
-sites (`gamecam.cpp:686, 701` compass/sky, `gate.cpp:351`,
+**`setInView()` semantics (v3 correction per user blocking finding).**
+The existing setter (`appear.h:181-184`) is called by 8 sites
+(`gamecam.cpp:686, 701` compass/sky, `gate.cpp:351`,
 `turret.cpp:579, 810`, `missiongui.cpp:4485, 5936` HUD-VTOL,
-`mover.cpp:3471, 3514` LOS save/restore). It writes only `inView`.
-After Stage 1, this creates intra-frame skew where
-`inView != renderVisible` until the next `recalcBounds()`.
+`mover.cpp:3471, 3514` LOS save/restore). In Stage 1 it is updated to
+route through `setVisibilityGatesFromLegacy(v)` BUT explicitly
+EXCLUDES `lifecycleAlive` from its write set (lifecycleAlive is
+event-driven; a force-visible call from compass/sky/VTOL/LOS code
+must NOT clear it). This preserves byte-identical behavior at the 8
+force-true callsites while keeping the invariant that
+`lifecycleAlive` is only cleared by destroy events.
 
-**Decision (RECOMMENDED):** `setInView()` writes ALL 5 fields
-(`inView`, `renderVisible`, `simActive`, `lifecycleAlive`,
-`aiPresentable`) to the new value. This preserves the existing
-"force visible" semantics at every legacy callsite and keeps Stage 1
-truly byte-identical. The 8 callsites that force `setInView(true)`
-genuinely want the actor to act as if visible across ALL concerns
-(compass/sky/VTOL force-true; mover LOS save/restore needs the round-
-trip to be coherent for all consumers).
+**Stage 3+ prerequisite:** Stage 3 (simulation migration) introduces
+the first divergence between `inView` and `simActive` (hysteresis).
+At that point, `setInView(false)` callers — if any exist — could
+inappropriately clear `simActive`. Stage 3 must audit the
+`setInView(false)` callsites:
+- `gate.cpp:351` (only path that calls `setInView(inView)` with the
+  recalcBounds-computed value — equivalent to `recalcBounds()`'s own
+  write; safe through helper)
+- `mover.cpp:3514` (`setInView(oldInView)` — LOS restore; oldInView
+  is captured at `:3471` before the force-true, so restores to the
+  pre-call value; safe)
+- All other 6 callsites force TRUE only — never FALSE — so no
+  Stage 3 risk.
 
-**Alternative (DEFERRED):** introduce `setRenderVisible()`,
-`setSimActive()`, etc. separately and audit each `setInView()` caller
-to pick which subset to write. Higher precision but expands Stage 1
-scope substantially.
+Audit confirmed at v3 write-time: NO Stage 3+ risk from
+`setInView(false)`. The 8 sites are either force-TRUE or
+restore-pre-captured-value patterns.
 
-**`sizeof(Appearance)` audit.** Adding 4 bools changes the class
-footprint. Adversarial review M3 recommends a grep pass for:
-`sizeof.*Appearance`, `memcpy.*appearance`, `placement new` patterns
-that could be silently broken. Stage 0 instrumentation pass extends
-to include this audit.
+**`sizeof(Appearance)` audit.** Adding 4 bools + 4-byte alignment
+slack changes the class footprint by 4-8 bytes. Stage 0
+instrumentation already includes a grep pass for `sizeof.*Appearance`,
+`memcpy.*appearance`, `placement new` patterns.
 
 **No consumer migrations in this stage.** Producer-side only.
+Consumers still read `inView` and `canBeSeen()` (which returns
+`inView`); they see byte-identical values.
 
 Gate: tier1 5/5 30s PASS, no regression in any Tracy zone, no
 behavior diff from pre-Stage-1. Class layout change → `--clean-first`
 mandatory.
 
-### Stage 2 — Render-gate migration (substitutive single-consumer)
+### Stage 2 — Render-gate migration (substitutive, no widening)
 
 Migrate ONLY `renderVisible` consumers to the new member. Each
 callsite: `if (inView || g_useGpuStaticProps)` → `if (renderVisible
-|| g_useGpuStaticProps)`. Same byte-identical fail-open rule as v3
-spec §4.
+|| g_useGpuStaticProps)`. Stage 1 set `renderVisible = inView` via
+the helper; Stage 2's gate change is byte-identical.
 
 **This is the Stage 0.5 §4 work, properly scoped.** The black-tree
-class is dissolved because Stage 1 set `renderVisible = inView`
-exactly — no false-positives possible. The dropout class is
-dissolved because the value of `renderVisible` is producer-controlled
-(matches whatever `recalcBounds` currently computes), not
-readback-driven.
+class is dissolved because `renderVisible == inView` exactly — no
+false-positives possible. The dropout class is dissolved because
+`renderVisible` is producer-controlled (matches `recalcBounds()`
+output), not readback-driven.
 
-Optional sub-stage 2b: **v4 reframe** — Stage 1's
-`renderVisible` producer expands to include sticky-bit-admit
-(`renderVisible = inView || blockSticky(blockIdx)`). This widens the
-admit set monotonically per mission (matches `R-NEW-8` analysis from
-v3 §5). Ship only if Stage 2 ships clean.
+Stage 2 does NOT widen `renderVisible`. The sticky-bit / v4-style
+admission widening (formerly Stage 2b) is deferred to Stage 6, AFTER
+simulation gate migrates. This avoids the v2 black-tree
+resurrection risk that user blocking finding 2 flagged.
 
-Gate: tier1 5/5 + user-driven mc2_10 visual canary (the same 60s
-worst-case as Stage 0.5 §6.5). NO observable pop; NO black textures;
+Gate: tier1 5/5 + user-driven mc2_10 visual canary (60s worst-case,
+Stage 0.5 §6.5 methodology). NO observable pop; NO black textures;
 NO LOD-swap regression at ~5000 units.
 
-### Stage 3 — Lifecycle-gate migration (hysteresis)
+### Stage 3 — Simulation-gate migration (NEW — fixes user blocking finding 1)
 
-Migrate `lifecycleAlive` consumers. The hysteresis discipline:
-`lifecycleAlive` STAYS true while alive in the world; cleared by
-event (destroy, mission end), NOT by camera-driven cull.
+Migrate `simActive` consumers. Sites to migrate:
+- `code/terrobj.cpp:796` `if (inView)` → `if (simActive)` (lifecycle/
+  static-update-bypass inner block gate)
+- Per-class `update()` body internal gates that check `inView` or
+  `canBeSeen()` for "should we do per-frame work?": grep all
+  `Appearance` subclasses for `update()` consumers of `inView`.
+- Animation/skinning entry points that gate on visibility.
 
-This is the load-bearing change: `mech.cpp:6047` currently destroys
-on `withdrawing && !inView` — that becomes `withdrawing &&
-!lifecycleAlive`. Since `lifecycleAlive` is event-driven, withdrawing
-mechs no longer destroy because the camera turned away. Destroy
-fires when the AI logic decides withdrawal completes.
+**Hysteresis activation.** Stage 3 also activates the hysteresis
+discipline in the producer: `simActive` becomes a SUPERSET of
+`inView` (statics: `inView OR objBlockInfo.active OR framesSinceActive
+< N` floor; movers: always TRUE for alive actors per mech-runtime
+advisor "no inView gate on update for movers"). The helper
+`setVisibilityGatesFromLegacy(v)` is updated:
 
-Save-game schema: `lifecycleAlive` is NOT serialized (already
-implicit in actor-list membership). Legacy `inView` field stays
-written for save round-trip; saves restore `inView` from data
-verbatim and `recalcBounds()` overwrites it next frame.
+```cpp
+void setVisibilityGatesFromLegacy(bool v) {
+    inView         = v;
+    renderVisible  = v;
+    simActive      = v || (framesSinceActive < SIM_HYSTERESIS_N);
+    aiPresentable  = v;  // movers' override widens to readback-lagged in Stage 5
+}
+```
 
-Gate: tier1 5/5 + user-driven 5-minute mission completion canary
-(focus on withdrawing-mech behavior). Adversarial review mandatory
-because this changes destroy timing.
+**Critical invariant check (§4.3).** After Stage 3, `simActive ⊇
+renderVisible` by construction (hysteresis-OR is monotonic widening).
+Stage 6 (render widening) becomes safe to land BECAUSE `simActive` is
+already a superset — any future widening of `renderVisible` will be
+covered by the still-wider `simActive` so update + render agree.
 
-### Stage 4 — AI/combat gate migration
+**setInView() audit.** With `simActive ≠ inView` after Stage 3, the
+8 `setInView()` callsites get a final audit. Per Stage 1 audit
+section, none are `setInView(false)` in adversarial position; safe.
+
+Gate: tier1 5/5 + user-driven mc2_10 visual canary + tier1 perf
+delta check (simActive widens admit set, so per-frame update count
+may rise; verify GameLogic.Units.TerrainObjects doesn't regress
+beyond noise threshold). Adversarial review mandatory.
+
+### Stage 4 — Lifecycle-gate migration (NOT destroy-trigger)
+
+Migrate `lifecycleAlive` CONSUMERS. The semantics: `lifecycleAlive`
+stays TRUE while the actor exists in the active world; cleared ONLY
+by destroy/mission-end events.
+
+Sites to migrate:
+- Mouse picking (`code/objmgr.cpp:2645, 2714, 2757` —
+  `canBeSeen()` reads). Migration: replace `appearance->canBeSeen()`
+  with `appearance->lifecycleAlive` at these sites if and only if
+  the original intent was "is this still a pickable target." Audit
+  each site individually — picking may actually want visibility (UI
+  frustum), in which case it migrates to `renderVisible` instead.
+- Save-load lifecycle audits — if any code path reads `inView` to
+  decide "is this actor still in the world," migrate to
+  `lifecycleAlive`.
+
+**v3 correction per user blocking finding 4:** the destroy-trigger
+at `mech.cpp:6047` (`withdrawing && !inView`) does NOT migrate to
+`!lifecycleAlive` (which would be circular). It migrates to
+`!renderVisible` in Stage 2 — already done. `lifecycleAlive` is a
+GUARD, not a TRIGGER.
+
+Stage 4 also clears `lifecycleAlive` at the event sites:
+- `TerrainObject::destroy()` (`terrobj.cpp:1026`)
+- `Mech::handleDestruction()` (called from `mech.cpp:6048`)
+- `GVehicle::handleDestruction()` (called from `gvehicl.cpp:3484`'s
+  destroy path)
+- Mission teardown (`Mission::destroy` for any per-mission cleanup
+  that wasn't already destroy-event-driven)
+
+Gate: tier1 5/5 + 5-minute mission completion canary (focus on
+picking behavior + withdrawing-mech destroy timing). Adversarial
+review mandatory.
+
+### Stage 5 — AI/combat-presentability migration
 
 Migrate `aiPresentable` consumers. HUD fire-icon, sensor text,
-etc. — these already route through `MC2_GPU_CULL_LIFECYCLE`
-readback when the env is set. Stage 4 just renames the read.
+weapon-spawn-node visibility — these already route through
+`MC2_GPU_CULL_LIFECYCLE` readback when the env is set. Stage 5
+formalizes this:
+- `Appearance::aiPresentable` producer: for movers, set from
+  readback-lagged signal when `MC2_GPU_CULL_LIFECYCLE` is on; else
+  from coarse `inView`. For statics, mirror `renderVisible` (no
+  separate AI semantics).
+- Sites: `mech.cpp:6453-6513` (HUD fire-icon via `canBeSeen()`
+  indirection — migrate to `aiPresentable`), `gvehicl.cpp:3944-3959`
+  (sensor text), AI behavior gates.
+
+Mover-override producer: Stage 5 is when `Mech3DAppearance::recalcBounds`
+and `GVAppearance::recalcBounds` overrides extend their helper call
+to set `aiPresentable` to the readback-lagged signal when enabled.
 
 Gate: tier1 5/5 + AI behavior canary (verify HUD-fire decisions
 unchanged).
 
-### Stage 5 — Deprecate `Appearance::inView`
+### Stage 6 — Render widening (formerly Stage 2b)
 
-After Stages 2-4 ship, no live runtime consumer reads `inView`
-directly. Save-game schema and editor still need the field. The
-deprecation:
-- Rename `inView` → `legacyInView_DEPRECATED_save_schema_only`
-- All current writers keep writing (save schema invariant)
-- Compile-time error on any new direct read
-- Editor migration: separate slice; either editor migrates to new
-  gates OR keeps reading the renamed field
+NOW safe to ship after Stage 3 simulation migration. `renderVisible`
+producer widens: `renderVisible = inView || blockSticky(blockIdx)`.
 
-Gate: codebase grep returns 0 unintended reads.
+The gate-pair invariant (§4.3) is preserved because Stage 3
+already widened `simActive` with hysteresis; `simActive` remains a
+superset of the widened `renderVisible` for any actor whose block
+is sticky-admitted (since sticky-admit only fires for actors that
+were `inView` at some point, and the hysteresis floor was already
+keeping their `simActive` true).
+
+(v3 correction per user blocking finding 2: in v2 this was Stage 2b
+positioned BEFORE simulation migration, which would have resurrected
+the black-tree class by widening render-admit while update was still
+gated on the narrower `inView`. v3 reorders this stage AFTER Stage
+3 so the invariant `simActive ⊇ renderVisible` holds by construction
+across the widening.)
+
+Gate: tier1 5/5 + user-driven mc2_10 visual canary specifically
+targeting the v2 black-tree symptoms (camera-motion popping +
+black textures). Cleared canary = sticky-bit widening shipped.
+
+### Stage 7 — Deprecate `Appearance::inView`
+
+(v3 correction per user blocking finding "Stage 5 vs deferred LEAVE-sites".)
+After Stages 2-6 ship, the live runtime readers of `inView`
+are reduced to a small named LEAVE-site set (not zero):
+
+**Permitted-remaining direct `inView` readers** (named LEAVE-sites):
+- `code/artlry.cpp:1746, 1764` — save-game schema round-trip
+- `code/gamecam.cpp:686, 701` — compass/sky force-visible (separate
+  contract; doesn't participate in gate model)
+- `code/mover.cpp:3471, 3514` — LOS save/restore (becomes dead after
+  consumers migrate; not deleted by this spec)
+- Cinematic intro/outro unarmed-camera paths (per
+  `step8b_gated_retirement_is_not_wholesale_delete.md`)
+
+The deprecation:
+- Rename `inView` → `legacyInView_DEPRECATED` with a `#define inView
+  legacyInView_DEPRECATED` alias scoped to the LEAVE-site
+  translation units so they continue to compile without textual
+  edits.
+- Compile-time error on any unintended read elsewhere (controlled by
+  removing the broad header alias and only defining it in the LEAVE-
+  site .cpp files).
+- Save-game schema continues to read/write the renamed field.
+
+Gate: codebase grep returns ONLY the named LEAVE-site reads.
 
 ---
 
@@ -489,13 +761,14 @@ together; the accessor hides the read.
 
 | Stage | Smoke gate | Visual canary | Adversarial review | --clean-first? |
 |---|---|---|---|---|
-| 0 (instrument) | tier1 5/5 30s | mc2_10 120s (collect data) | optional | no |
-| 1 (decompose) | tier1 5/5 30s | none (byte-identical) | yes (override completeness) | YES (class layout) |
+| 0 (instrument) | tier1 5/5 30s | mc2_10 120s (collect candidate-disagreement data) | optional | no |
+| 1 (decompose + helper) | tier1 5/5 30s | none (byte-identical) | yes (helper completeness, ctor init, setInView audit) | YES (class layout) |
 | 2 (render) | tier1 5/5 + mc2_10 60s | yes (Stage 0.5 §6.5 methodology) | yes | no |
-| 2b (v4) | same as 2 | same | yes | no |
-| 3 (lifecycle) | tier1 5/5 + 5-min mission | yes (withdrawing-mech) | YES (destroy timing) | no |
-| 4 (AI) | tier1 5/5 | yes (HUD-fire decisions) | yes | no |
-| 5 (deprecate) | tier1 5/5 + grep audit | none | yes | no |
+| 3 (simulation) | tier1 5/5 + perf-delta check | yes (mc2_10 60s; verify update count doesn't visibly regress) | YES (hysteresis + invariant verification) | no |
+| 4 (lifecycle GUARD) | tier1 5/5 + 5-min mission | yes (picking + withdrawing-mech destroy) | YES (semantic shift) | no |
+| 5 (AI presentability) | tier1 5/5 | yes (HUD-fire decisions) | yes | no |
+| 6 (render widening) | tier1 5/5 + mc2_10 60s | YES (v2-revert symptoms specifically) | YES (invariant proof) | no |
+| 7 (deprecate) | tier1 5/5 + grep audit | none | yes | no |
 
 `MC2_GL_DEBUG_FATAL=1` mandatory for all stages per worktree CLAUDE.md
 Tier 1.2.
@@ -504,39 +777,87 @@ Tier 1.2.
 
 ## 9. Open questions for next planner
 
-1. **Stage 0 instrumentation form.** Macro tag at every consumer
-   callsite, or `__builtin_return_address(0)` bucketing? Macro tag is
-   explicit; return-address is non-invasive but symbol-stripped in
-   RelWithDebInfo. Recommend macro tag.
+1. **Stage 0 candidate-predicate definitions.** The candidate
+   semantics defined in v3 §5 Stage 0 are first-pass; the user-driven
+   canary may surface that one or more candidates needs adjusting
+   (e.g., should the AI candidate use raw readback or
+   conservative-OR? Should the sim candidate's hysteresis floor be
+   N=4 or N=8?). Treat candidates as tunable knobs during Stage 0
+   data collection; lock them after the canary lands.
 
-2. **Save-game schema deprecation.** Stages 2-4 leave the legacy
-   `inView` field written. Stage 5 wants to rename it. Should saves
+2. **Save-game schema deprecation.** Stages 2-7 leave the legacy
+   `inView` field written. Stage 7 wants to rename it. Should saves
    migrate to a versioned schema that drops `inView` entirely, or do
    we keep writing it forever as a frozen field? Confirm with user.
 
-3. **Stage 2b v4 reframe scope.** Should `renderVisible` producer
-   include sticky-bit-admit (`|| blockSticky(blockIdx)`), or stay
-   pure mirror of coarse `inView` to keep Stage 2 minimum-diff?
-   Recommend: stay pure in 2; v4 lands as 2b after 2 ships clean.
+3. **`SIM_HYSTERESIS_N` floor value.** Stage 3 introduces
+   `simActive = inView OR (framesSinceActive < N)`. Adversarial review
+   for Stage 3 should re-examine `objmgr.cpp:1918-1941`'s existing
+   sweep — the `framesSinceActive` increment cadence is per-frame, so
+   N=4 means "kept simActive for 4 frames after coarse inView drops."
+   Should we match `framesSinceActive`'s consumer (currently used for
+   instrumentation only) or pick a different N? Recommend N=4 as
+   conservative; let Stage 3 canary tune.
 
-4. **Mover override edit audit.** All 5 subclass `recalcBounds`
-   overrides must set all 4 new bools. Should we add a base-class
-   non-virtual helper that sets all four, and require overrides to
-   call it? Or accept the lockstep edit discipline? Recommend
-   helper.
+4. **`Artillery::recalcBounds(CameraPtr)` audit.** Adversarial review
+   M1 flagged this as a separate-signature method not on the polymorphism
+   chain. Stage 1 needs to confirm whether `Artillery` instances
+   actually reach base `Appearance::recalcBounds()` or their own
+   shadow. If shadow: add helper call to it. If unreachable: untouched.
 
-5. **Editor migration deferral.** Should this spec call out a
-   follow-on slice for editor convergence (the
-   `feedback_editor_must_converge_with_runtime_paths.md` debt), or
-   leave it unscheduled? Recommend: add to a roadmap, don't schedule.
+5. **Mover override producer divergence.** Stage 5 has mover overrides
+   write `aiPresentable` from readback-lagged signal while still
+   writing `simActive` from "always TRUE for alive movers." Verify
+   this divergence in the helper or use a Mover-specific override of
+   `setVisibilityGatesFromLegacy`.
 
 6. **`framesSinceActive` retirement.** Once `simActive` exists as a
-   first-class member, `framesSinceActive` becomes redundant
-   instrumentation. Retire it in Stage 1 or defer? Recommend defer.
+   first-class member, `framesSinceActive` may become redundant.
+   Retire it in Stage 3 (when simActive consumes its hysteresis) or
+   keep both? Recommend keep as instrumentation; small cost.
+
+7. **Editor migration (out-of-scope acknowledgment).** Editor lives
+   in a separate worktree (per adversarial review C2). When editor
+   work resumes, the editor must either migrate to the new gates or
+   stay on the legacy `inView` field (which we keep written
+   forever per save schema). Recommend: roadmap-only; do not
+   schedule from this spec.
 
 ---
 
-## 9.5 Adversarial review summary (2026-05-20)
+## 9.5 v3 amendments — user blocking review (2026-05-20)
+
+User blocking review on v2 returned 5 design defects + 4 cleanup
+items. All folded into v3:
+
+| Finding | v3 disposition |
+|---|---|
+| **1. Rollout never migrates `simActive`** — Stages 2/3/4/deprecate covered render/lifecycle/AI but not sim; yet §11 claimed "no runtime readers after Stages 2-4." | Inserted **new Stage 3 (Simulation-gate migration)**. Renumbered subsequent stages: lifecycle is now Stage 4, AI is Stage 5, render-widening (was 2b) is Stage 6, deprecate is Stage 7. Stage 8 gate strategy table updated. |
+| **2. Stage 2b can resurrect black-tree** — widening renderVisible via sticky while update still on inView creates false-positives → stale cached light data. | Moved Stage 2b → Stage 6, gated on Stage 3 (sim migration) having shipped. The gate-pair invariant (§4.3 new section) is enforced producer-side: `simActive ⊇ renderVisible` always. Render widening is safe only after sim widens. |
+| **3. `GpuConsumerFlags` doesn't map 1:1** — enum has `WeaponSpawnNode` (no member); `simActive` has no enum bit. | Rewrote §4 lead-in: "informs gate decomposition but does NOT claim 1:1." Explicit per-bit mapping table: RenderGate↔renderVisible (1:1), LifecycleGate↔lifecycleAlive (1:1 in spirit), AIGate+WeaponSpawnNode→aiPresentable (N:1), simActive has no enum equivalent. "This is partial-taxonomy promotion, not 1:1 lift." |
+| **4. `lifecycleAlive` circular destroy** — using `!lifecycleAlive` to TRIGGER destruction, where lifecycleAlive is cleared only by destruction, is a no-op condition. | New §4.2 separating destroy-TRIGGER from lifecycle-GUARD. Destroy trigger stays camera-driven (`withdrawing && !renderVisible`) and migrates in Stage 2. `lifecycleAlive` is the GUARD (picking, save) and migrates in Stage 4. NOT consumed by destroy code. |
+| **5. Stage 0 metric measures wrong thing** — recording reads of single bit doesn't produce disagreement; many reads bypass canBeSeen(). | Rewrote Stage 0: candidate-predicate disagreement matrix. For each actor-frame, compute 4 CANDIDATE predicates (render/sim/lifecycle/ai) and count pairwise disagreement. Probe lives in `GameObjectManager::update` after `framesSinceActive` sweep — covers every live actor regardless of consumer path. |
+| Cleanup: legacy `inView` write inconsistency | §4.5 fixed: legacy `inView` continues to receive EXACT `recalcBounds()` result (not `renderVisible \|\| simActive`). |
+| Cleanup: `setInView()` writing all 5 fields dangerous post-Stage 3 | Stage 1 setInView semantics rewritten: routes through helper but EXCLUDES `lifecycleAlive` (event-driven). Audit of all 8 callsites confirms NO `setInView(false)` adversarial cases (all are force-TRUE or capture-and-restore patterns). |
+| Cleanup: Stage 5 (now 7) reconciliation with deferred LEAVE-sites | Stage 7 deprecation rewritten: explicit LEAVE-site list (artlry save, gamecam compass/sky, mover LOS, cinematic). `#define inView` alias scoped to LEAVE-site TUs; compile error elsewhere. |
+| Cleanup: stale v1/v2 + 17/30 + 5/6 references | §1.2 fixed to "≥30 readers" + "6 polymorphism overrides." Open questions Q4 fixed. Stage 1 enumerates 6 overrides explicitly. Status line bumped to v3. |
+| Recommended edit: `setVisibilityGatesFromLegacy(bool)` helper | Added as §4.4 first-class. Every override calls it from `recalcBounds()`. Replaces v2 "lockstep manual assignment" discipline. |
+
+The v3 design is what would have been written if the spec had been
+properly grounded from the start. Three of the five blocking findings
+(simActive migration, Stage 2b resurrection, lifecycle circularity)
+were direct consequences of v2 promoting `Consumer_*` as a complete
+taxonomy when it's actually partial — the missing `Consumer_SimActive`
+bit hid the missing migration stage, and the absence of a destroy-
+trigger / lifecycle-guard split came from over-mapping
+`Consumer_LifecycleGate` to a single semantic.
+
+The v2 → v3 lesson for future architectural specs: **a partial
+taxonomy is more dangerous than no taxonomy**, because it tempts you
+to believe gaps are intentional rather than accidental. The user
+review caught what 6 advisors + 1 adversarial-plan-review missed.
+
+## 9.6 Adversarial review summary (2026-05-20, against v1)
 
 Adversarial-plan-review run against v1 of this spec returned 2
 CRITICAL + 4 MAJOR + 4 MINOR findings. All folded into v2 (the version
