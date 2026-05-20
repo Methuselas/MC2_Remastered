@@ -436,6 +436,12 @@ void ComputeDispatch();
 // gos_terrain_indirect:: ComputeDispatchParity_Check declaration is removed
 // (zero consumers post Step 4 2e11617; txmmgr caller removed same commit).
 bool IsFrameSolidArmed();
+// Process-sticky cousin of IsFrameSolidArmed(); true once preflight has
+// armed at least one frame this process. Consumed by VisualDiff to gate
+// the visual-diff capture on the engine's "intro pan complete" signal --
+// the per-frame arm is reset by gosRenderer::endFrame() before the
+// VisualDiff post-PP hook fires, so a sticky-once cousin is needed.
+bool WasEverFrameSolidArmed();
 bool DrawIndirect();
 void ForceDisableArmingForProcess();
 // Single-source water fast-path gate: true iff all conditions that allow

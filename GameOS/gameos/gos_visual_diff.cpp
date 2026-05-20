@@ -7,11 +7,18 @@
 // camera and clear goal-tracking state ran into intro-pan / mission-script
 // camera-driver fights that the goal-clearing block alone couldn't address.
 //
-// The engine's job here is now minimal: count frames, capture at frame N,
-// exit. Per-mission frameN tuning lives in the Python harness.
+// The engine's job here is now minimal: latch on the first frame where
+// gos_terrain_indirect::WasEverFrameSolidArmed() returns true (the
+// sticky-once cousin of IsFrameSolidArmed(); see header for why we need
+// the sticky variant), count frames after that, capture at frame N, exit.
+// MC2_VISUAL_DIFF_FRAME_N is then frames-since-intro-complete, so small
+// values (60-90) suffice -- the intro-pan wall-clock jitter is upstream of
+// the latch and cancels across runs. Per-mission frameN tuning lives in the
+// Python harness.
 #include "gos_visual_diff.h"
 #include "gos_screenshot.h"
 #include "gos_smoke.h"
+#include "gos_terrain_indirect.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -27,13 +34,13 @@ bool s_capture     = false;
 enum class Phase { Waiting, Done };
 
 struct State {
-    int   localFrame           = 0;
-    int   missionStartFrame    = -1;
-    bool  missionStartObserved = false;
-    Phase phase                = Phase::Waiting;
-    bool  paramsResolved       = false;
-    int   frameN               = 90;
-    int   maxFrames            = 150;
+    int   localFrame            = 0;
+    int   introCompleteFrame    = -1;
+    bool  introCompleteObserved = false;
+    Phase phase                 = Phase::Waiting;
+    bool  paramsResolved        = false;
+    int   frameN                = 90;
+    int   maxFrames             = 150;
 };
 State s_state;
 
@@ -100,20 +107,28 @@ void onFrameTick(int viewportW, int viewportH) {
         fflush(stderr);
     }
 
-    // Snapshot mission-start frame on first tick after missionHasStarted() goes true.
-    if (!s_state.missionStartObserved) {
-        if (SmokeMode::missionHasStarted()) {
-            s_state.missionStartObserved = true;
-            s_state.missionStartFrame    = s_state.localFrame;
+    // Snapshot intro-complete frame on first tick after the engine's own
+    // "intro pan complete" signal: WasEverFrameSolidArmed() is the sticky
+    // cousin of IsFrameSolidArmed() and is set on the first frame that
+    // ComputePreflight() arms. We must use the sticky variant here because
+    // gosRenderer::endFrame() resets the per-frame s_frameSolidArmed flag
+    // BEFORE the VisualDiff post-PP hook fires, so the per-frame getter
+    // always reads false from here. Latching on the sticky makes frameN
+    // deterministic: intro-pan wall-clock jitter is upstream of the latch
+    // and cancels across runs.
+    if (!s_state.introCompleteObserved) {
+        if (gos_terrain_indirect::WasEverFrameSolidArmed()) {
+            s_state.introCompleteObserved = true;
+            s_state.introCompleteFrame    = s_state.localFrame;
             fprintf(stderr,
-                    "[VISUAL_DIFF v1] event=mission_start_observed local_frame=%d\n",
+                    "[VISUAL_DIFF v1] event=intro_pan_complete_observed local_frame=%d\n",
                     s_state.localFrame);
             fflush(stderr);
         }
         return;
     }
 
-    int framesSinceStart = s_state.localFrame - s_state.missionStartFrame;
+    int framesSinceStart = s_state.localFrame - s_state.introCompleteFrame;
 
     // Timeout — exit cleanly with code 4 so the Python harness can distinguish.
     if (framesSinceStart > s_state.maxFrames) {

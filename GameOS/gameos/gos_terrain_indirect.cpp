@@ -1558,6 +1558,14 @@ static int   s_frameSolidCmdCount        = 0;
 // Process-sticky hard-failure latch.
 static bool  s_processArmingDisabled     = false;
 
+// Process-sticky "intro pan complete observed" latch. Set on the first
+// frame where ComputePreflight() arms (path=gpu or path=cpu); never
+// resets within a process. Consumed by VisualDiff::onFrameTick to gate
+// frame counting on the engine's own intro-complete signal -- the
+// IsFrameSolidArmed() per-frame flag is reset by gosRenderer::endFrame()
+// before VisualDiff's post-PP hook fires, so a sticky cousin is needed.
+static bool  s_everFrameSolidArmed       = false;
+
 // first_draw lifecycle latch (reset by ResetDenseRecipe / mission teardown).
 // Declared extern in the anonymous ns of the Stage 2 block; re-stated here
 // via file-scope bool below.  Use the existing s_firstDrawPrintedThisMission
@@ -2275,6 +2283,15 @@ bool IsFrameSolidArmed() {
     return s_frameSolidArmed && !s_processArmingDisabled;
 }
 
+// Process-sticky variant: true once ComputePreflight() has armed at least
+// one frame in this process. Used by VisualDiff to latch "intro pan
+// complete" -- the per-frame arm is cleared by gosRenderer::endFrame()
+// before the VisualDiff post-PP hook reads it, so a sticky-once cousin
+// is required. Never resets within a process.
+bool WasEverFrameSolidArmed() {
+    return s_everFrameSolidArmed && !s_processArmingDisabled;
+}
+
 void ForceDisableArmingForProcess() {
     if (!s_processArmingDisabled) {
         fprintf(stderr, "[TERRAIN_INDIRECT v1] event=arming_disabled_process_sticky\n");
@@ -2395,6 +2412,7 @@ bool ComputePreflight() {
         s_frameSolidPackedThinCount = -1;   // sentinel: GPU path (logged only)
         s_frameSolidCmdCount        = 1;    // PR1: always 1 indirect draw command
         s_frameSolidArmed           = true;
+        s_everFrameSolidArmed       = true;
         {
             static bool s_firstArm = false;
             if (!s_firstArm) {
@@ -2425,6 +2443,7 @@ bool ComputePreflight() {
     s_frameSolidPackedThinCount = thinCount;
     s_frameSolidCmdCount        = cmdCount;
     s_frameSolidArmed           = true;
+    s_everFrameSolidArmed       = true;
     {
         static bool s_firstArm = false;
         if (!s_firstArm) {

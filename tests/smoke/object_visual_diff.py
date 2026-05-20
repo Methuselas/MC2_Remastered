@@ -14,13 +14,14 @@ Modes:
                        apply spec tolerance (<=2 LSB / <=0.5%);
                        PASS / FAIL gate. Exit 0 / 2.
 
-Per-mission frameN values are tuned in CAPTURE_FRAMES below based on
-each mission's intro duration (user observation 2026-05-04). Adjust
-empirically after first variance measurement.
+Per-mission frameN values in CAPTURE_FRAMES below are frames AFTER
+gos_terrain_indirect::IsFrameSolidArmed() returns true (intro pan
+complete; the engine's own gate). The wall-clock intro-pan jitter is
+upstream of this latch, so small values (60-90) are sufficient.
 
 Architecture per Stage 2.E phase 1 plan (round-6 simplification):
   - No camera teleport. Engine captures the natural mission camera at
-    frameN ticks after SmokeMode::missionHasStarted().
+    frameN ticks after gos_terrain_indirect::IsFrameSolidArmed().
   - mc2.exe launches sequentially (feedback_smoke_serial_only.md).
   - No menu canary (feedback_smoke_no_canary.md).
 """
@@ -43,22 +44,20 @@ TIER1   = ["mc2_01", "mc2_03", "mc2_10", "mc2_17", "mc2_24"]
 STRESS  = ["mc2_18"]
 MISSIONS = TIER1 + STRESS
 
-# Per-mission capture frame. = intro_seconds * 142fps + ~200-frame settle.
-# User observation 2026-05-04 maps intro durations to these values; adjust
-# empirically once Step 1.7 variance measurement runs.
+# Per-mission capture frame. Frames AFTER gos_terrain_indirect::IsFrameSolidArmed()
+# / intro-pan-complete; small values OK because the wall-clock intro-pan
+# jitter is upstream of the engine-side latch and cancels across runs. 60
+# frames is ~0.4-1s of settle depending on FPS -- plenty for
+# terrain/shadow/water-reflection to converge.
 CAPTURE_FRAMES = {
-    # All missions captured at frameN=1000 (~7s at 142fps) post-mission_ready.
-    # Recipe per user observation 2026-05-04: load ~2s, double-hit escape (the
-    # engine-side auto-skip via VisualDiff-gated forceMovieToEnd in
-    # missiongui.cpp does this every frame while inMovieMode), then settle ~5s.
-    "mc2_01": 400,
-    "mc2_03": 400,
-    "mc2_05": 400,
-    "mc2_06": 400,
-    "mc2_10": 400,
-    "mc2_17": 400,
-    "mc2_18": 400,
-    "mc2_24": 400,
+    "mc2_01": 60,
+    "mc2_03": 60,
+    "mc2_05": 60,
+    "mc2_06": 60,
+    "mc2_10": 60,
+    "mc2_17": 60,
+    "mc2_18": 60,
+    "mc2_24": 60,
 }
 
 # Spec tolerance: pixel "differs" if any channel delta > 2 LSB.
@@ -81,11 +80,14 @@ MC2_EXE    = DEPLOY_DIR / "mc2.exe"
 def harness_duration_s(frame_n: int) -> int:
     """Wall-clock budget for one capture run.
 
-    The engine runs at ~142 FPS measured, ~30 FPS worst case. Use 60 FPS
-    floor for the time budget so a slow run can still reach frame N. Add a
-    10s settle buffer for window/GL/mission load.
+    With the IsFrameSolidArmed() latch, the run must budget for:
+      (1) intro-pan wall-clock, which can hit ~60s on mc2_01;
+      (2) frame_n frames AFTER intro complete (at ~60 FPS worst case);
+      (3) a small settle buffer for window/GL/mission load.
     """
-    return max(30, int(frame_n / 60) + 10)
+    # Worst-case observed intro is ~60s on mc2_01; budget 75s to cover it.
+    INTRO_BUDGET_S = 75
+    return max(75, INTRO_BUDGET_S + int(frame_n / 60) + 10)
 
 
 def run_capture(mission: str, gpu_objects: bool, out_path: Path,

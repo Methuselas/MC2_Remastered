@@ -1,10 +1,14 @@
 // gos_visual_diff.h - Stage 2.E natural-mission-camera capture harness.
 //
-// The engine waits for mission_ready, counts frames, captures the pre-HUD
-// framebuffer at MC2_VISUAL_DIFF_FRAME_N, and exits. No camera teleport, no
-// pose authoring, no goal-clearing, no camera APIs. The mission's own intro
-// pan / command-position settle gives us a deterministic vantage; the
-// harness just snapshots it at a chosen frame.
+// The engine waits for gos_terrain_indirect::WasEverFrameSolidArmed() to
+// go true (intro pan complete; the engine's own gate per terrain.cpp -- a
+// sticky-once cousin of IsFrameSolidArmed() needed because the per-frame
+// arm is cleared by gosRenderer::endFrame() before this hook fires), counts
+// frames from there, captures the pre-HUD framebuffer at
+// MC2_VISUAL_DIFF_FRAME_N, and exits. No camera teleport, no pose
+// authoring, no goal-clearing, no camera APIs. MC2_VISUAL_DIFF_FRAME_N is
+// "frames AFTER intro-pan-complete"; intro-pan wall-clock jitter is
+// upstream of the latch and cancels across runs.
 //
 // Per-mission frameN values live in the Python harness (Phase 1 Step 1.7),
 // not in the engine.
@@ -22,8 +26,8 @@ bool isCaptureEnabled();
 //
 // When enabled:
 //   - Owns its own localFrame counter (independent of SmokeMode::g_frameCount)
-//   - Snapshots its own "mission start frame" on the first tick after
-//     SmokeMode::missionHasStarted() returns true
+//   - Snapshots its own "intro complete frame" on the first tick after
+//     gos_terrain_indirect::WasEverFrameSolidArmed() returns true
 //   - At framesSinceStart == MC2_VISUAL_DIFF_FRAME_N (default 90):
 //     writes a TGA via gos::screenshot::writeTGA to MC2_VISUAL_DIFF_OUT
 //   - At framesSinceStart > MC2_VISUAL_DIFF_MAX_FRAMES (default frameN+60):
