@@ -69,6 +69,18 @@ class Appearance
 	public:
 
 		bool						inView;			//Can I be Seen?
+		// alpha-Stage 0.5 v3 §4: per-actor RENDER-visible flag.
+		// Computed in TerrainObject::update() as
+		//   readback_isActorVisibleLagged(handle) when readback is enabled,
+		//   else fail-open to coarse inView (R-NEW-9 (a) USER-LOCKED 2026-05-20).
+		// Render/shadow gates in BldgAppearance/TreeAppearance + the
+		// canRenderBeSeen() accessor read this instead of inView. Under
+		// stock-default (MC2_GPU_CULL_READBACK unset AND g_useGpuStaticProps
+		// false) the gate evaluates byte-identically to the legacy
+		// (inView || g_useGpuStaticProps). LEAVE-sites (lifecycle / picking /
+		// inner pre-submit / mover combat / destroy) intentionally stay on
+		// coarse inView per v3 §2.1.
+		bool						renderVisible;
 		Stuff::Vector4D				upperLeft;		//used to draw select boxes.  Can be 3D Now!
 		Stuff::Vector4D				lowerRight;		//used to draw select boxes.
 		
@@ -85,6 +97,12 @@ class Appearance
 		Appearance (void)
 		{
 			inView = FALSE;
+			// alpha-Stage 0.5 v3 §4.1 fail-open default: until the first
+			// TerrainObject::update() injection runs, renderVisible mirrors
+			// the legacy permissive default. The injection overwrites this
+			// every frame so this only matters for the brief construction
+			// -> first-update window.
+			renderVisible = TRUE;
 			screenPos.x = screenPos.y = screenPos.z = screenPos.w = -999.0f;
 			upperLeft.x = upperLeft.y = upperLeft.z = upperLeft.w = -999.0f;
 			lowerRight.x = lowerRight.y = lowerRight.z = lowerRight.w = -999.0f;
@@ -93,10 +111,13 @@ class Appearance
 
 			visible = seen = false;
 		}
-		
+
 		virtual void init (AppearanceTypePtr tree = NULL, GameObjectPtr obj = NULL)
 		{
 			inView = FALSE;
+			// alpha-Stage 0.5 v3 §4.1: fail-open mirror of ctor (chained from
+			// all 6 *Appearance::init overrides per v3 §4.1 audit).
+			renderVisible = TRUE;
 			screenPos.x = screenPos.y = screenPos.z = screenPos.w = -999.0f;
 			upperLeft.x = upperLeft.y = upperLeft.z = upperLeft.w = -999.0f;
 			lowerRight.x = lowerRight.y = lowerRight.z = lowerRight.w = -999.0f;
@@ -177,7 +198,21 @@ class Appearance
 		{
 			return(inView);
 		}
-		
+
+		// alpha-Stage 0.5 v3 §2 + §4: per-actor render-visible accessor.
+		// Reads the renderVisible value set by TerrainObject::update()'s
+		// setRenderVisible() injection. Render/shadow gates use this; LEAVE
+		// sites (picking, lifecycle, mover combat, destroy) keep canBeSeen().
+		bool canRenderBeSeen (void)
+		{
+			return(renderVisible);
+		}
+
+		void setRenderVisible (bool rv)
+		{
+			renderVisible = rv;
+		}
+
 		void setInView (bool viewStatus)
 		{
 			inView = viewStatus;
