@@ -1,10 +1,11 @@
 # GPU Particle Pipeline — Design Spec (B)
 
-- **Status:** DRAFT — ready for plan-phase. Companion to (A) [gosFX retirement](2026-05-20-gosfx-retirement-or-replacement-design.md). Design only; no code changes.
+- **Status:** DRAFT — open questions resolved 2026-05-20 (see §5); ready for plan-phase as an **integrated A0..A3 → B1 → A4 plan** (see §6). Design only; no code changes.
 - **Date:** 2026-05-20
 - **Authoring branch:** `claude/nifty-mendeleev`
-- **Greybeard verdict:** PATCH (justified) — see §3. (A) is the META-FIX; (B) is feature reintroduction onto the clean substrate.
+- **Greybeard verdict:** PATCH (justified) — see §3. (A) is the META-FIX; (B) is feature reintroduction onto the clean substrate. **Mechanical enforcement:** CI grep gate per §3.4.
 - **Recommended architecture:** **(α) CPU-emit, GPU-batch billboards.** See §3.
+- **F3 baseline (must-not-regress):** `mlr_total worst_window_p95 = 293us` in user-driven mc2_10 (commit `d064b77`, capture `2026-05-20T16-41-58`) — 99.9% of all CPU projection cost. (A) deletion delivers the full 293us CPU win; (B) must not regress it. Memory: `f3_tier1_baseline_2026_05_20.md`.
 - **All file:line citations grep-verified against `nifty-mendeleev` at write-time (Appendix A).**
 
 ---
@@ -102,7 +103,25 @@ Coverage floor for the (B) ship gate (`stock_install_must_remain_playable.md` re
 2. **Symptom vs cause.** Symptom: between (A) ship and (B) ship, stock install has zero in-game particle visuals (explosions, muzzle, hit, dust, contrails, VTOL effects, beams). Upstream condition: (A) intentionally deletes the only particle backend. (B) is not chasing a bug *class*; it fills a feature void created by (A) by design.
 3. **The meta-fix.** There is no upstream change that retires "we need a particle subsystem" — that question was answered by user §5.1 of the (A) spec: particle reintroduction is **required-for-ship debt**. The candidate "accept no-particle as permanent" is incompatible with the ship gate. The candidate "ship a particle subsystem" is (B) itself.
 4. **Substitutive test.** (B) is substitutive iff each sub-slice **repoints producer sites in the same commit that adds the GPU consumer**. Concretely: when v1's `CardCloud` coverage lands, the spawn sites in `code/artlry.cpp:793,811,1785,1823`, `code/carnage.cpp:913`, and `code/missiongui.cpp:4357,4405,4426,5838,5863,5884` that called `gosFX::EffectLibrary::Instance->Find(...)` must be repointed to the new `gpu_fx::Spawn(...)` API for the spec types covered in that slice, and the no-op-stub branches left by (A) must be deleted. Shipping the batcher with no caller repoint is the **additive anti-pattern** (`feedback_offload_must_be_substitutive_not_additive.md`) and must be rejected at adversarial review.
-5. **Verdict: `PATCH (justified)`.** (B) is not a meta-fix — (A) is. (B) is capability-restoration filed against (A)'s deliberate transitional regression. The named meta-fix (A) is shipped first. Deferral justification: (A) atomically retires the bug class (`mlrclipper.cpp:206` CPU read of `cameraToClip(2,2)`); (B) carries a **greybeard guardrail**: anything (B) introduces that reads `cameraToClip` CPU-side, sorts billboards CPU-side via projected depth, or otherwise re-couples to a CPU projection authority is **a retired-bug-class re-introduction** and is rejected at code review. (B) must consume the unified-projection UBO from the GPU side.
+5. **Verdict: `PATCH (justified)`.** (B) is not a meta-fix — (A) is. (B) is capability-restoration filed against (A)'s deliberate transitional regression. The named meta-fix (A) is shipped first. Deferral justification: (A) atomically retires the bug class (`mlrclipper.cpp:206` CPU read of `cameraToClip(2,2)`); (B) carries a **greybeard guardrail**: anything (B) introduces that reads `cameraToClip` CPU-side, sorts billboards CPU-side via projected depth, or otherwise re-couples to a CPU projection authority is **a retired-bug-class re-introduction** and is rejected at code review. (B) must consume the unified-projection UBO from the GPU side. **Mechanical enforcement: §3.4 CI grep gate.**
+
+### 3.4 Greybeard guardrail — CI grep gate (mechanical enforcement)
+
+The verbal guardrail in §3.1 ¶5 is advisory; reviews miss things. The (B) namespace (`mclib/particles/` per §5 Q2) gets a CI pre-commit / pre-push grep gate that fails on any match for the retired-bug-class symbols:
+
+```bash
+# scripts/check-particles-no-cpu-projection.sh
+set -e
+FORBIDDEN='cameraToClip|Camera::projectZ|worldToClipMatrix|theClipper|MLRClipper|projectForObjectAdmission|projectForEffectAdmission'
+if grep -rEn "$FORBIDDEN" mclib/particles/ 2>/dev/null; then
+  echo "FAIL: mclib/particles/ contains CPU-projection symbol — retired-bug-class re-introduction (per spec §3.1 ¶5)"
+  exit 1
+fi
+```
+
+Rationale: cheap script (one grep), exact enforcement of the greybeard ruling. Pair with the existing pre-commit invariant scripts (`scripts/check-destroy-invariant.sh`, `scripts/check-asset-scale-callers.sh`) and the CLAUDE.md "Maintenance hook" set. The `projectForObjectAdmission` / `projectForEffectAdmission` entries close the `policy_split_wrapper_grep_trap.md` loophole — a naive `projectZ` grep would miss the typed-policy wrappers, but the wrapper names ARE the actual call sites and must be banned too.
+
+**Caveat.** The unified-projection UBO is the legitimate GPU-side consumer of the same projection authority; consumed via SSBO/UBO binding from GLSL, not via C++ symbol. The CI gate scopes to `mclib/particles/` source only — GLSL files in `shaders/` are not scanned. Particles consume the projection through the bind point, not the C++ symbol.
 
 ### 3.2 Load-bearing rationale
 
@@ -115,7 +134,7 @@ Coverage floor for the (B) ship gate (`stock_install_must_remain_playable.md` re
 
 ### 3.3 Shape of the slice (informs plan-phase, not a plan)
 
-**Modified Stage 0'-5' staging** ("greenfield-with-feature-gate" — Stage 0-6 doesn't apply because there's no CPU baseline after (A)):
+**(B)-internal decomposition of "B1" in the §6 integrated sequencing.** "Modified Stage 0'-5' staging" ("greenfield-with-feature-gate" — Stage 0-6 doesn't apply because there's no CPU baseline after (A)):
 
 1. **Stage 0' — content recon.** Inventory all ~100 specs in `mc2.fx` by primitive type, spawn frequency in tier1 (from (A) Stage 0's `[GOSFX_TRACE v1]` per-mission histograms — runs concurrently with this stage), and visual category (muzzle / explosion / smoke / dust / contrail / beam). Output: coverage table.
 2. **Stage 1' — scaffold.** SSBO-backed billboard batcher, post-`renderLists()` hook at `code/gamecam.cpp:270` slot, driven from unified-projection UBO. One hardcoded `Card` test effect. Default-off `MC2_GPU_PARTICLES=1`. No `mc2.fx` consumption. Validates the 10-trap bring-up checklist end-to-end.
@@ -190,13 +209,13 @@ Pair the C++ struct and GLSL block in one header pair (e.g. `include/gpu_particl
 
 ### 4.5 LightManager coupling
 
-`gosFX::LightManager` (`mclib/gosfx/pointlight.cpp:1-342`) is a per-process singleton (created at `code/mechcmd2.cpp:1676`, destroyed at `:2053`) that effects use to spawn dynamic lights consumed by `LightsData` SSBO (`shaders/include/lighting.hglsl:53`). (A) deletes `mclib/gosfx/` entirely, taking `LightManager` with it. **(B) must resurrect a minimal `LightManager`-equivalent** (CPU-side, just feeds `LightsData` exactly as today) — naming TBD, but the API is `MakePointLight`/`ChangeLight`/`DeleteLight`. This is producer-side only; the consumer (`LightsData` shader code) is unchanged. Grep `gosFX::LightManager::Instance` outside `mclib/gosfx/` before plan-phase to enumerate caller sites (`mechcmd2.cpp:1676` and `:2053` are the singleton plumbing; `pointlight.cpp:233,265,266,318,319,332` are internal uses — confirm no external producers exist).
+`gosFX::LightManager` (`mclib/gosfx/pointlight.cpp:1-342`) is a per-process singleton (created at `code/mechcmd2.cpp:1676`, destroyed at `:2053`) that effects use to spawn dynamic lights consumed by `LightsData` SSBO (`shaders/include/lighting.hglsl:53`). (A) deletes `mclib/gosfx/` entirely, taking `LightManager` with it. **(B) resurrects the class file-namespace-moved into `mclib/particles/` but KEEPS the API verbatim** (`MakePointLight`/`ChangeLight`/`DeleteLight`) — see §5 Q5. Renaming the class itself would ripple through every light consumer in the engine for zero benefit; the move is namespace-only. If a new emitter class is needed, it's `ParticleLightEmitter` (specific to behavior, agnostic to particle representation). Producer-side only; the consumer (`LightsData` shader code) is unchanged. Grep `gosFX::LightManager::Instance` outside `mclib/gosfx/` before plan-phase to enumerate caller sites (`mechcmd2.cpp:1676` and `:2053` are the singleton plumbing; `pointlight.cpp:233,265,266,318,319,332` are internal uses — confirm no external producers exist).
 
 ### 4.6 `mc2.fx` parser placement
 
 (B) keeps the parser CPU-side (subset of `gosFX::EffectLibrary::Load` at `effectlibrary.cpp:58`). Parser feeds a GPU spec table at startup. Per-spawn lookup is a hashmap-by-name (mirroring `EffectLibrary::Find` at `:92`). No per-frame parsing.
 
-After (A) Stage 4 deletes `mclib/gosfx/`, the parser must be **moved** (not copied) into the new (B) namespace before deletion. Coordination: (A)'s Stage 4 PR depends on (B)'s parser-resurrection PR landing first, OR (A) Stage 4 carries a temporary `mclib/gpu_fx/effect_loader.cpp` extracted from the deletion.
+After (A) Stage 4 deletes `mclib/gosfx/`, the parser must be **moved** (not copied) into `mclib/particles/` (per §5 Q2 resolution) before deletion. Coordination is now fixed by the integrated sequencing in §6: B1 moves the parser file (and ships the batcher consuming it) BEFORE A4 deletes the rest of `mclib/gosfx/`. There is no temporary-extract shim; B1 owns the move atomically.
 
 ### 4.7 ShapeCloud / DebrisCloud — TG_Shape inheritance
 
@@ -245,27 +264,60 @@ After (B) ships default-on, expect a NEW Tracy zone (`gpu_fx_update` or similar)
 
 ---
 
-## 5. Open questions
+## 5. Open questions — RESOLVED 2026-05-20
 
-To answer before plan-phase begins:
+User decisions captured below. These were the scoping calls needed before plan-phase.
 
-1. **(B) v1 ordering relative to (A) Stage 4.** (A) §5 says (B) "does not block (A) shipping" but is required-for-ship. Three feasible orderings:
-   - (A) Stages 1-4 ship first; (B) lands after on the clean substrate. Visual-gap window is non-zero.
-   - (A) Stages 1-3 ship; (B) v1 lands; (A) Stage 4 (atomic deletion of `mclib/gosfx/` + `mclib/mlr/` runtime-side) lands after (B) covers `CardCloud`/`PointCloud`/`ShardCloud`/`Tube`. Visual-gap window is zero, but (B) and gosFX coexist briefly in the build (with (B) off by default per Stage 1' env-gate). Manageable.
-   - (A) and (B) merge into a single atomic slice. Substantially larger PR. Reject; too risky.
-   - **Recommend ordering #2.** Confirm.
+1. **(B) v1 ordering relative to (A) Stage 4 — INTEGRATED A0..A3 → B1 → A4.** Adopted. (A) Stages 0-3 ship gate-armed-but-default-off (env-gate added, soak runs alongside default gosFX), B1 lands as the new default particle path, then (A) Stage 4 atomically deletes `mclib/gosfx/` + `mclib/mlr/` runtime-side. **User never experiences a no-particles state.** See §6 for the integrated sequencing graph.
+2. **`mc2.fx` parser ownership — `mclib/particles/`.** Adopted. Rationale: avoid `mclib/gpu_fx/` because the namespace shouldn't lock to "GPU forever" (parser is rendering-agnostic — it reads effect definitions, doesn't render); avoid `mclib/fx/` as too generic given gosFX already used "fx" semantics. `particles/` is specific and forward-compatible. Parser moves (not copies) BEFORE (A) Stage 4 deletes `mclib/gosfx/effectlibrary.cpp`.
+3. **Atlas vs per-effect texture binding — ATLAS.** Adopted. Per `memory/render_state_change_cost_hierarchy.md`: without bindless, per-bucket texture binds dominate per-frame draw cost. The whole win of (α) over current MLR is fewer draw calls; per-effect binding partially squanders that. Atlas built at v1 startup; sampled by UV in particle FS. CLAMP_TO_EDGE on sampler to avoid bleed across atlas cells.
+4. **v1 vs v2 split — CARD/POINT/SHARD/TUBE in v1; PERT/SHAPE/DEBRIS/EFFECTCLOUD in v2.** Adopted. Split is on technical complexity (compound + recursive effects need GPU-side recursion which is uncommon and risky in this codebase) AND content coverage (Card/Point/Shard/Tube cover the heavy-impact visuals — explosions, weapon trails, dust). v1 unblocks the ship gate; v2 ships as polish.
+5. **`LightManager` resurrection naming — KEEP `LightManager` AS-IS.** Adopted. `LightManager` is the sink; the new particle path emits into it under the existing API. If a new emitter class is needed, it's `ParticleLightEmitter` (specific to behavior, agnostic to particle representation). Do NOT rename `LightManager` itself — would ripple through every light consumer in the engine for zero benefit. The current `gosFX::LightManager` (`mclib/gosfx/pointlight.cpp:8-9`) moves to `mclib::particles::LightManager` (or stays at file-namespace scope) but keeps its three-method API (`MakePointLight`/`ChangeLight`/`DeleteLight`).
+6. **Soak duration — VISUAL CANARY, NO CALENDAR SOAK.** Adopted. Ship gate is user visual approval. Specifically: tier1 5/5 at 30s + user-driven mc2_10 at 60s + one additional heavy-combat stock mission (mc2_17 or mc2_24 — pick at plan-phase based on which has the most sustained mech-on-mech action) at 60s user-driven canary. mc2_10 is the gosFX-heaviest *terrain* per the F3 capture, but not necessarily the gosFX-heaviest *combat*; the heavy-combat third capture is the one that actually stresses particle density.
+7. **(γ) — HARD REJECTED.** Adopted. `stock_install_must_remain_playable.md` is load-bearing; (γ) requires discarding stock content (`mc2.fx`). Holding it as backup adds optionality the rule explicitly forecloses, and "backup" status quietly becomes "fallback we reached for under pressure." Reject cleanly. Removed from consideration; not held as exploratory backup.
 
-2. **`mc2.fx` parser ownership.** (B) resurrects a subset of `gosFX::EffectLibrary::Load`. Naming and namespace TBD. Suggested: `gpu_fx::EffectLibrary` in `mclib/gpu_fx/`. Confirm.
+### 5.1 Implications for plan-phase
 
-3. **Atlas vs per-effect texture binding** (§4.9). Recommend atlas for v1; defer to Stage 1' implementation. Confirm scope.
+- **`mclib/particles/` is the new namespace.** All new code (parser, batcher, light-emitter, schema header) lives there. CI grep gate per §3.4 enforces no-CPU-projection within this directory.
+- **Integrated plan-phase, not two separate plans** (per §6). The sequencing constraint between (B) v1 and (A) Stage 4 is too tight for two plans to coordinate at execution time without overhead.
+- **Visual-canary mission picks deferred to plan-phase.** mc2_17 vs mc2_24 — decide based on per-mission spawn-count from (A) Stage 0 `[GOSFX_TRACE v1]` baseline once it lands. Plan-phase picks the mission with the highest combat-density spawn count.
+- **`LightManager` is sink-renamed (file/namespace), not API-renamed.** Producer-side spawn code in `mclib/particles/` calls the same three-method API. Consumer-side (`shaders/include/lighting.hglsl:53` `LightsData` SSBO) is unchanged.
+- **(γ) is closed.** Don't reopen.
 
-4. **PertCloud / ShapeCloud / DebrisCloud / EffectCloud for v1 vs v2.** Recommend defer to v2 for ShapeCloud / DebrisCloud / PertCloud / EffectCloud; v1 covers Card/Point/Shard/Tube. Confirm scope or expand v1.
+---
 
-5. **LightManager naming** (§4.5). Resurrect under `gpu_fx::LightManager` in `mclib/gpu_fx/pointlight.cpp`? Or fold into the main batcher? Confirm.
+## 6. Integrated sequencing — A0..A3 → B1 → A4
 
-6. **Soak duration.** No parity probe substrate (per §3.2 / cpu-gpu-offload advisor). Calendar soak duration TBD — recommend match the standard-slice cadence used for other substitutive-but-non-parity-validated work; user judgment.
+The dependency graph (now that both specs exist + F3 baseline is in):
 
-7. **(γ) hard-rejected, or held as exploratory backup?** Recommended hard-rejected per §3.2 stock-assets constraint. Confirm.
+```
+(A) gosFX retirement spec ──┐
+                            ├──> integrated plan: A0..A3 → B1 → A4
+(B) GPU particle pipeline ──┤
+                            │
+F3 baseline (d064b77, 293us) ┘   (must-not-regress floor)
+```
+
+**Sequencing:**
+
+| Stage | Owner | What ships | Default state | User visible? |
+|---|---|---|---|---|
+| A0 | (A) | `MC2_GOSFX_TRACE=1` invocation counter on `Effect::Draw` | OFF (env-opt-in) | No |
+| A1 | (A) | `MC2_DISABLE_GOSFX=1` env-gate added to 16 `drawInfo.m_clipper = theClipper` sites + `gamecam.cpp:142,287` + `simplecamera.cpp:168` | OFF (env-opt-in) | No (when off) |
+| A2 | (A) | Flip `MC2_DISABLE_GOSFX` default to ON; gosFX no-ops; tier1 visual canary documents the regression scope | ON (default) | YES — no-particle transitional state visible internally only; not shipped |
+| A3 | (A) | Soak under default-on (internal). User-driven canary across tier1. Progression / savegame / mission completion verified | ON (default) | Internal canary only |
+| **B1** | **(B)** | **`mclib/particles/` parser MOVED from `mclib/gosfx/effectlibrary.cpp`; GPU billboard batcher; Card/Point/Shard/Tube coverage; `MC2_GPU_PARTICLES=1` env-gate added then default-flipped; visual canary across tier1 + mc2_10 + heavy-combat mission** | **ON (default after B1 flip)** | **YES — particles return; this is what ships externally** |
+| A4 | (A) | Atomic deletion: `mclib/gosfx/` removed from runtime exe build, `mclib/mlr/` removed from runtime exe build (kept linkable into editor / Viewer / aseconv targets); env-gates retired | n/a (code gone) | No visual delta from B1 |
+| B2 | (B) | Defer: PertCloud / ShapeCloud / DebrisCloud / EffectCloud + v2 polish | n/a | Polish only |
+
+**Why this ordering is correct:**
+
+- **A0..A3 are reversible.** Env-gate flips. If anything goes wrong, set `MC2_DISABLE_GOSFX=0` and gosFX is back.
+- **B1 is the externally-visible ship event.** Before B1, the no-particle state is internal-only canary; after B1, particles return on the new GPU path.
+- **A4 is post-ship cleanup.** Atomic deletion happens after B1 has soaked default-on. By A4, gosFX has been no-op for a full B1 soak window AND the new path has replaced its visual surface — deletion is mechanical.
+- **F3 baseline (293us) frames the perf claim:** (A) deletion saves 293us; (B) reintroduction must not regress this (CI grep gate per §3.4 prevents the CPU-projection coupling that would). The net frame-budget delta after B1+A4 is `-293us + (new gpu_fx_update CPU cost, expected < 50us)` = roughly `-240us` floor. Plan-phase should set an explicit perf gate against the F3 capture.
+
+**Suggested plan-phase form:** a SINGLE integrated plan with named handoffs between A0/A1/A2/A3/B1/A4, not two parallel plans. The sequencing constraint between B1 and A4 (B1 must ship default-on AND soak before A4 deletes) is too tight for two-plan coordination without overhead.
 
 ---
 
@@ -312,7 +364,7 @@ Reviewing this spec for what could be wrong:
 **Findings against this spec:**
 - **MAJOR:** the producer-site census in §4.14 lists 11 direct `EffectLibrary::Instance->Find` sites; (A) §1.3 enumerates 16 *consumer*-side `drawInfo.m_clipper = theClipper` sites in 8 source files (including mech3d, gvactor, bdactor, terrobj, weaponbolt that the producer-grep above missed because their effect lookups go through the `weaponEffects` manager indirection). The actual producer site count is "at least 11 + N indirect via `weaponEffects`." Plan-phase MUST drive site enumeration off a compile-time mechanism (delete the `gpu_fx::Find` API and let the compiler enumerate), not the §4.14 grep list. Annotated in §4.14.
 - **MAJOR:** SSBO binding 10 is asserted free but not exhaustively grep-verified (I grepped only the four cited shader files). Plan-phase must `grep -rn 'binding *= *10\b' shaders/` before claim. Annotated in §4.2.
-- **MINOR:** the (B) parser must move (not copy) from `mclib/gosfx/effectlibrary.cpp` to its new home before (A) Stage 4 deletes the source. Open Question #1's recommended ordering #2 makes this a non-issue if Stage 4 lands after (B) v1.
+- **MINOR (RESOLVED):** the (B) parser must move (not copy) from `mclib/gosfx/effectlibrary.cpp` to `mclib/particles/` before (A) Stage 4 deletes the source. Resolved by §5 Q1 / §6 integrated sequencing — B1 owns the move atomically, A4 deletes the rest of `mclib/gosfx/` after B1 has soaked default-on.
 - **MINOR:** `EffectCloud` recursion in (α) (§4.4) is hand-waved — "CPU-side recursion stays in CPU code." Plan-phase should verify the spawn API supports recursion and that the CPU-side update doesn't blow stacks on pathological specs.
 
 No CRITICAL findings against this spec. Spec is plan-phase-ready subject to the open questions in §5.
