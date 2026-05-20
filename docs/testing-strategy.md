@@ -153,12 +153,83 @@ slice.
 
 ## Tier 4 -- sanitized smoke
 
-The `.claude/worktrees/asan-mvp/` worktree is already 90% of this work.
-Promote: one ASAN build of `mc2.exe`, one ASAN smoke run (`mc2_01`, 30s)
-as a weekly or pre-merge gate.
+**Status (2026-05-20): WIRED.** The asan-mvp worktree's CMake +
+runbook landed on this branch via merge `b3451e1`. This commit adds
+`scripts/run_smoke_asan.py`, the missing thin wrapper that closes the
+gate. Tier 4 is now runnable on any clone with no further setup beyond
+the one-time ASan configure + build.
 
-Catches the use-after-free / pool-overrun / heap-write-OOB class. ASAN
-overhead is ~2-3x runtime; tier1 (5 missions x 30s) is still tractable.
+Decision: **port-back** (option A). The asan-mvp infrastructure is
+already merged here -- only the smoke-runner wrapper was outstanding.
+Building a fresh minimal Tier 4 from scratch would have duplicated 130
+lines of MSVC-specific CMake conditioning (`/MP`, `/RTC1`,
+`/INCREMENTAL`, Tracy gating, clang_rt DLL POST_BUILD copy) plus the
+runbook covering the FFmpeg-DLL launch trap (`0xC0000135`). Consuming
+from the asan-mvp worktree was rejected because asan-mvp is branch-stale
+(forked at the 2026-04-24 baseline; main has moved through Stage 0.5,
+water fast-path, terrain-indirect drawPass retirement, plus 5 ABL / cull
+fixes) -- the gate must build the current binary, not a snapshot.
+
+### What got wired (this commit)
+
+- `scripts/run_smoke_asan.py` (~210 lines):
+  * Launches `build64-asan/RelWithDebInfo/mc2.exe` as `mc2-asan.exe`
+    sibling of the production binary in `mc2-win64-v0.4/`. The production
+    `mc2.exe` is never touched (per asan-mvp-runbook "DO NOT overwrite").
+  * `cp -f` + `filecmp.cmp` per-file verify (no `cp -r`).
+  * `ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1:`
+    `print_stacktrace=1:symbolize=1`.
+  * Default mission `mc2_01`, default duration 30s (tier1 under ASan is
+    too slow per memory `feedback_smoke_duration.md` + ASan ~2-3x).
+  * Greps stderr for `==N==ERROR: AddressSanitizer` and
+    `SUMMARY: AddressSanitizer:`; exit 0 clean, 1 setup failure, 2 ASan
+    trip.
+  * Optional `--suppressions FILE` (no preemptive suppressions file
+    written; only add entries the gate actually emits).
+
+### How to run the gate
+
+```bash
+# One-time configure of the ASan build dir (parallel to build64/).
+"$CMAKE" -S . -B build64-asan -G "Visual Studio 17 2022" -A x64 \
+    -DCMAKE_PREFIX_PATH=A:/Games/mc2-opengl-src/3rdparty/3rdparty \
+    -DGLEW_INCLUDE_DIR=A:/Games/mc2-opengl-src/3rdparty/3rdparty/include \
+    -DGLEW_SHARED_LIBRARY_RELEASE=A:/Games/mc2-opengl-src/3rdparty/3rdparty/lib/x64/glew32.lib \
+    -DZLIB_INCLUDE_DIR=A:/Games/mc2-opengl-src/3rdparty/3rdparty/include \
+    -DZLIB_LIBRARY=A:/Games/mc2-opengl-src/3rdparty/3rdparty/lib/x64/zlibstatic.lib \
+    -DZLIB_LIBRARY_RELEASE=A:/Games/mc2-opengl-src/3rdparty/3rdparty/lib/x64/zlib.lib \
+    -DMC2_ASAN=ON
+
+# Incremental build (full clean build ~12-15 min the first time).
+"$CMAKE" --build build64-asan --config RelWithDebInfo --target mc2
+
+# Smoke gate.
+py -3 scripts/run_smoke_asan.py --mission mc2_01 --duration 30 --kill-existing
+#   exit 0 = clean, 1 = setup failure, 2 = ASan tripped (trace dumped)
+```
+
+Catches the use-after-free / pool-overrun / heap-write-OOB class.
+
+### Cost
+
+- Configure: ~3s (one-time).
+- Initial full build: ~12-15 minutes on this hardware. Parallel build
+  serialized (ASan strips `/MP`).
+- Per-gate smoke: ~30s mission run + ~15-25s engine startup +
+  exe/dll deploy. End-to-end ~50-60s per invocation.
+- Memory footprint: multi-GB; do not stack with Tracy capture (`MC2_ASAN`
+  defines disable Tracy).
+- ASan runtime is ~2-3x slower; do NOT run on full tier1 (5 missions x
+  ~75s = ~6 min per gate, plus the second-mission startup hits a
+  separate ABL-parse bug we don't want stop-the-line on a memory gate).
+  Single mission is the contract.
+
+### Step 3 status (this dispatch)
+
+See commit body for the concrete Step 3 outcome (clean / known trip /
+suppressed false-positive). The gate infrastructure is independent of
+the outcome -- any ASan trip is filed as a separable bug fix, not a
+Tier 4 blocker.
 
 ## Tier 5 -- RenderDoc CLI pipeline-state snapshot  (advanced; optional)
 
@@ -212,7 +283,7 @@ sanitizer-augmented runtime.
 | 1.3 | (already wired in tree) | clang-tidy via `export_clang_paths.sh` |
 | 2   | `tests/unit/CMakeLists.txt`, `tests/unit/test_main.cpp`, `tests/unit/test_hashing.cpp`, `tests/unit/test_projection.cpp`, `tests/unit/test_argb_pack.cpp` | doctest harness + three example tests |
 | 3   | `GameOS/gameos/gos_visual_diff.{h,cpp}`, `tests/smoke/object_visual_diff.py`, `tests/smoke/baselines/visual-diff/` (pending green variance) | Implemented; Sketch B SUPERSEDED -- see `docs/testing-strategy-engine-hooks.md` |
-| 4   | `scripts/run_smoke_asan.py`, `scripts/asan_suppressions.txt` | ASAN build + single-mission smoke wrapper (sketches not yet in tree) |
+| 4   | `scripts/run_smoke_asan.py` (`scripts/asan_suppressions.txt` deferred -- only add if the gate emits a known false-positive) | ASAN build + single-mission smoke wrapper -- WIRED (see "Tier 4" above) |
 | 5   | `scripts/renderdoc_capture.py`, `docs/testing-strategy-engine-hooks.md` (Sketch C) | In-process RenderDoc capture + pipeline-state JSON diff |
 
 All sketches are structurally complete but not exercised. Each one calls
@@ -240,8 +311,12 @@ both harnesses).
                                   See "Tier 3 status" above. Baseline
                                   commit is gated on variance green.
 
-4    ASAN smoke                 prerequisite: clang_rt ASAN runtime DLL on PATH
-                                  or copied next to mc2-asan.exe
+4    ASAN smoke                 WIRED. CMake (MC2_ASAN=ON option) +
+                                  scripts/run_smoke_asan.py. POST_BUILD
+                                  copies clang_rt.asan_dynamic-x86_64.dll
+                                  next to mc2.exe automatically; wrapper
+                                  redeploys both to mc2-win64-v0.4/ as
+                                  mc2-asan.exe.
 
 5    RenderDoc capture          prerequisites:
                                   (a) engine-side RenderDoc API hook (Sketch C)

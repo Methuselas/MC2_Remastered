@@ -21,6 +21,7 @@
 #include "gos_terrain_lighting.h"
 #include "gos_static_prop_killswitch.h"  // gos_GetTerrainMVPMat4()
 #include "gos_terrain_indirect.h"        // IsFrameSolidArmed()
+#include <algorithm>                     // std::sort -- surfaced by MC2_ASAN build (Tracy-disabled config drops the transitive include)
 #include <cassert>
 
 #include <vector>
