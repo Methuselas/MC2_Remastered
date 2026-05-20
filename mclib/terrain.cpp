@@ -1546,7 +1546,7 @@ extern bool InEditor;
 // conflates, so the elimination campaign cuts in ROI order:
 //   PROJ : eye->projectForTerrainAdmission (survives for cull + raster)
 //   CULL : clipInfo + setObjBlock/VertexActive + solid-window append
-//   RED  : leastZ/mostZ/leastW/mostW reduction (feeds dead inverseProjectZ)
+//   RED  : leastZ/mostZ/leastW/mostW reduction (retired Phase 4 2026-05-19; bracket retained as dead-instrumentation envelope until SLIMSPLIT demote/delete)
 // "front/other" (onScreenR sphere/cone math + raster px/pz write) =
 // Tracy slimReduce total - (PROJ+CULL+RED); not separately bracketed to
 // hold the per-vertex rdtsc-pair count at 3. Demote-not-delete after the
@@ -1623,23 +1623,14 @@ void Terrain::geometry (void)
 
 	long i=0;
 
-	// VPL retirement Step 6: self-contained slim min/max-only reduction
-	// pass. RE-HOMES (does NOT eliminate) the per-vertex projection that
-	// feeds the leastZ/mostZ/leastW/mostW/leastWY/mostWY reduction ->
-	// eye->setInverseProject. The extremes of projected screenPos.z/.w/.y
-	// over the in-rect-visible vertex set are provably NOT derivable from
-	// world-AABB bounds under the oblique cinematic camera (perspective
-	// divide does not preserve ordering), so the projection must stay;
-	// this loop owns it in a form decoupled from the cull cascade so it
-	// SURVIVES Step 8c (which deletes the VPL body but NOT this loop).
-	// The onScreen derivation below is copied byte-for-byte from the
-	// legacy projection loop's onScreen block (the `eye->usePerspective`
-	// branch above) MINUS the currentVertex->hazeFactor writes, which do
-	// not feed the onScreen decision and are owned by the projection
-	// loops / Step 7. Step 6 strictly precedes Step 7; whichever lands
-	// second re-verifies this copy in lockstep. No GPU readback: this is
-	// pure CPU projectForTerrainAdmission feeding CPU setInverseProject
-	// (cf. memory/substrate_coalesce_sync_point_lesson.md).
+	// VPL retirement Step 6: self-contained slim per-vertex loop. Originally
+	// re-homed the leastZ/mostZ/leastW/mostW/leastWY/mostWY reduction feeding
+	// the inverse-projection consumer; that RED reduction was deleted in
+	// Phase 4 (2026-05-19) once the consumer chain was retired in Phase 3
+	// (6d61801). The per-vertex projectForTerrainAdmission call
+	// SURVIVES because its return drives the clipInfo / objBlock cull cascade
+	// AND the rv->px/py/pz/pw raster writes consumed by the legacy
+	// TerrainQuad::draw() immediate path on un-armed frames.
 	// VPL retirement Step 8c-part-2: the VertexProjectLoop body (fast +
 	// legacy-twin) is DELETED here â the slim reduce loop below is the
 	// proven sole producer of BOTH the cull cascade and the
@@ -1875,27 +1866,11 @@ void Terrain::geometry (void)
 				continue;
 
 			unsigned long long _ssR = ssOn ? __rdtsc() : 0ULL;  // [SLIMSPLIT v1] RED
-			if (sp.z < leastZ)
-			{
-				leastZ = sp.z;
-			}
-
-			if (sp.z > mostZ)
-			{
-				mostZ = sp.z;
-			}
-
-			if (sp.w < leastW)
-			{
-				leastW = sp.w;
-				leastWY = sp.y;
-			}
-
-			if (sp.w > mostW)
-			{
-				mostW = sp.w;
-				mostWY = sp.y;
-			}
+			// Phase 4 (2026-05-19): leastZ/mostZ/leastW/mostW/leastWY/mostWY
+			// RED-reduction writes deleted. The sole consumer chain (the
+			// eye-side inverse-projection setter + downstream picking/Z helpers)
+			// was retired in Phase 3 (6d61801). Globals + per-frame reset retained pending Phase 5
+			// (quad.cpp water-block still writes them; full removal lands then).
 			if (ssOn) g_ssRedCyc += __rdtsc() - _ssR;  // [SLIMSPLIT v1] RED end
 		}
 		SlimSplitRollAndMaybeEmit();  // [SLIMSPLIT v1] once/frame (slimReduce is 1/frame)
@@ -1906,9 +1881,11 @@ void Terrain::geometry (void)
 	// Also sets up mine data.
 	TerrainQuadPtr currentQuad = quadList;
 
-	// S6-prep parity probe: the slim reduce loop above is documented as the
+	// S6-prep parity probe: the slim reduce loop above was the
 	// "proven sole producer" of the leastZ/mostZ/leastW/mostW/leastWY/mostWY
-	// reduction that feeds eye->setInverseProject below. The per-frame
+	// reduction that fed the (now-retired Phase 3) inverse-projection consumer
+	// chain. The producer writes were deleted in Phase 4, but Phase 5 still
+	// owes removal of the globals + per-frame reset, and the per-frame
 	// TerrainQuad::setupTextures water-projection block (quad.cpp ~1069-1287,
 	// reached via the loop right below) ALSO writes those same globals. If
 	// the slim loop already produces the identical 6-tuple, the water block's
@@ -2048,15 +2025,8 @@ void Terrain::geometry (void)
 		}
 	}
 
-	float ywRange = 0.0f, yzRange = 0.0f;
-	if (fabs(mostWY - leastWY) > Stuff::SMALL)
-	{
-		ywRange = (mostW - leastW) / (mostWY - leastWY);
-		yzRange = (mostZ - leastZ) / (mostWY - leastWY);
-	}
-
 	// S6-prep parity probe: Snapshot B — the same 6 globals, captured
-	// strictly BEFORE the setInverseProject consumer. Exact per-field ==
+	// strictly BEFORE the (retired) inverse-projection consumer site. Exact per-field ==
 	// compare against Snapshot A. Latched (s_lastState edge latch like the
 	// [WATER_REFL v1] probe) so it prints only on the first frame and on
 	// transitions, never per-frame. Pure reads; zero perturbation of the
