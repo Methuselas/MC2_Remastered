@@ -623,20 +623,6 @@ class Camera
 		}
 #pragma warning(pop)
 
-		[[deprecated("Use inverseProjectForPicking. "
-		             "See docs/superpowers/specs/2026-04-26-projectz-policy-split-design.md.")]]
-		void inverseProjectZ (Stuff::Vector4D &screen, Stuff::Vector3D &point);
-
-		// Inverse projection for tactical-map viewport corner unprojection.
-		// Trivial alias for symmetry with the forward-direction split.
-#pragma warning(push)
-#pragma warning(disable: 4996)
-		inline void inverseProjectForPicking (Stuff::Vector4D& screen,
-		                                      Stuff::Vector3D& point) {
-			inverseProjectZ(screen, point);
-		}
-#pragma warning(pop)
-		
 		void projectCamera (Stuff::Vector3D &point);
 
 		// Read-only view of the world->clip matrix. Used by the per-frame
