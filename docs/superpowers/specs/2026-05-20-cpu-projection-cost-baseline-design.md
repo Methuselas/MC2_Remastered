@@ -5,12 +5,20 @@ Status: DRAFT v2 (pre-greybeard/adversarial). Measurement slice. No
 consumer retired, no shader touched, no architectural change. Reverts
 cleanly.
 
-**v2 changes from v1 (`34c9b65`):** external review folded — 6 blocking
-+ 3 non-blocking issues. MLR census folded (gosFX is the SOLE live MLR
-consumer). `matrix_build` boundary rewritten (v1 was wrong: cameraToClip
-is composed event-driven in setOrthogonal/setPerspective, not per-frame).
-Outcome adjudication separated from skinning sidecar. Windowed
-percentile reporting replaces single-sample-at-cadence.
+**v3 changes from v2 (`aacca2f`):** second external review folded — 4
+blocking + 3 tightening items. `tgl_transform` scope rule explicitly
+allows per-multishape aggregation (resolves invariant contradiction).
+Worst-case adjudication defined as `max(window.p95)` across windows
+plus a full-capture final-stats line at process/mission exit.
+`projectZ_eventdriven` is NEVER included in `projection_total` (was
+ambiguous between §4.4 and §6 in v2); if outer boundary found it goes
+to a `eventdriven_projection_total` sidecar. Env-OFF behavior: no
+chrono AND no counters (was incorrectly claimed "free" with always-on
+counters in v2). `matrix_build` wording de-ambiguated. `mlr_total ≈ 0`
+gets numeric thresholds. `n_prims_clipped` counter discipline (thread-
+local non-atomic, merged once per frame) added.
+
+**v2 changes from v1 (`34c9b65`):** see §12.
 
 ## 1. Purpose
 
@@ -33,8 +41,13 @@ slice produces the number that adjudicates that test.
   cost-split scopes that mirror or extend them.
 - Not a sizing of any specific F1/F2 slice. It produces the data that
   sizes those slices; it does not commit to them.
-- Not per-element instrumentation. ALL scopes are coarse — one per
-  subsystem per frame, at the outer-call boundary. NO `std::chrono`
+- Not per-element instrumentation. ALL cost-split scopes wrap a unit
+  of work above the observer-effect threshold: minimum scope size is
+  a **full subsystem pass** (e.g., one multishape's whole CPU vertex
+  transform, one MLR RenderNow), never a per-vertex/per-leaf/per-quad/
+  per-primitive scope. Most buckets are one scope per frame; some
+  (notably `tgl_transform`) are per-pass-instance scopes whose times
+  AGGREGATE into a single per-frame bucket value. NO `std::chrono`
   inside any hot-loop function (including `Camera::projectZ`).
 
 ## 3. Provenance
@@ -63,12 +76,16 @@ slice produces the number that adjudicates that test.
 
 - Env: `MC2_CPU_PROJ_COST_SPLIT=1`. Default OFF. Banner
   `[INSTR v1] enabled: CPU_PROJ_COST_SPLIT` at startup.
-- **When env is OFF:** counters tick (free); chronos do NOT execute.
-  Always-on monotonic line at frame-1500 reports counters only (no
-  timing). This makes the env truly free in production.
+- **When env is OFF:** NO chrono executes AND NO workload counters
+  tick. The instrumentation is genuinely zero-cost when disabled. A
+  single one-shot startup line `[CPU_PROJ v1 disabled] set MC2_CPU_PROJ_COST_SPLIT=1 to enable`
+  is printed so it's discoverable; nothing further.
 - **When env is ON:** per-frame samples are accumulated in a ring
   buffer. Every 500 frames, the window's stats are computed and
-  printed to stderr; ring buffer is then reset.
+  printed to stderr; ring buffer is then reset. At process exit AND
+  on mission-load hard-reset, partial-window samples are flushed
+  into a final-stats line so the last 1-499 frames do not silently
+  disappear.
 
 **Per-frame ring-buffer commit format (every 500 frames):**
 
@@ -79,13 +96,27 @@ slice produces the number that adjudicates that test.
     recalcBounds_render      p50=...  p95=...  max=...     n_visible_p50=NNN
     tgl_transform            p50=...  p95=...  max=...     n_multishapes_p50=NN  n_verts_p50=NNNN
     mlr_total                p50=...  p95=...  max=...     n_prims_p50=NNN
-    projectZ_eventdriven     n_calls_p50=NN   time=COUNT-ONLY|outer=Zus  (see §4.4)
-  sidecar (NOT in projection_total):
-    skinning_chain           p50=...  p95=...  max=...     n_nodes_p50=NNNN
-    cpu_pipeline_total       p50=...  p95=...  max=...     (= projection_total + skinning_chain)
+  sidecar buckets (NEVER in projection_total adjudication):
+    eventdriven_projection_total  p50=...  p95=...  n_calls_p50=NN   (see §4.4; absent if no outer boundary found)
+    skinning_chain                p50=...  p95=...  max=...          n_nodes_p50=NNNN
+    cpu_pipeline_total            p50=...  p95=...  max=...          (= projection_total + eventdriven + skinning)
 ```
 
 Status: `PASS` if `projection_total p95 < 100us`, `OVER` otherwise.
+
+Final-stats line (at process exit, mission-load hard-reset, OR end of
+capture) — uses full-capture per-frame samples retained alongside the
+ring buffer:
+
+```
+[CPU_PROJ v1 final] frames=N worst-case-camera=mc2_10
+  projection_total   p50=Xus  p95=Yus  max=Zus  worst_window_p95=Wus  budget=100us  status=PASS|OVER
+  ... per-bucket and sidecar same format ...
+```
+
+`worst_window_p95` = `max(window.projection_total.p95)` across all
+windows seen in this capture. This is the load-bearing number for §6
+adjudication.
 
 **Frame lifecycle (canonical, NOT discovered-by-implementation):**
 
@@ -105,11 +136,11 @@ also accumulates a workload counter for extrapolability.
 
 | Bucket | Wraps | Workload counter | Existing Tracy zone? |
 |---|---|---|---|
-| `matrix_build` | Sum of three per-frame matrix-composition sites: (a) the `Camera.BuildMVP` block at `code/gamecam.cpp:153-191` (existing Tracy zone); (b) `TG_Shape::SetCameraMatrices` call at `code/gamecam.cpp:1651` whose body composes `s_worldToClip` at `mclib/tgl.cpp:1624`; (c) the matrix work inside `MLRClipper::StartDraw` — **note (c) is captured by `mlr_total`, not double-counted here.** So `matrix_build` = (a) + (b) only. `cameraToClip` itself is event-driven (composed in `setOrthogonal`/`setPerspective` at `mclib/camera.cpp:1876-1894`/`:1930+`); per-frame matrix work is the three derived compositions, not cameraToClip itself | 2 sites/frame | Yes — existing `Camera.BuildMVP` at `gamecam.cpp:153`. New zone needed only for site (b) |
+| `matrix_build` | `matrix_build` = **site (a) `Camera.BuildMVP` block at `code/gamecam.cpp:153-191`** + **site (b) `TG_Shape::SetCameraMatrices` call at `code/gamecam.cpp:1651`** (body composes `s_worldToClip` at `mclib/tgl.cpp:1624`). **`MLRClipper::StartDraw` matrix work is intentionally excluded from `matrix_build` because it is captured inside `mlr_total`** (not double-counted). `cameraToClip` itself is event-driven (composed in `setOrthogonal`/`setPerspective` at `mclib/camera.cpp:1876-1894`/`:1930+` — NOT per-frame); per-frame matrix work is the two derived compositions | 2 sites/frame | Yes — existing `Camera.BuildMVP` at `gamecam.cpp:153`. New zone needed only for site (b) |
 | `recalcBounds_render` | OUTER dispatcher loop in `ObjectManager::render()` that visits each visible object's `Appearance::recalcBounds()`. Wraps the OUTER loop, NOT per-object calls. (Renamed from v1's `recalcBounds_total` to clarify "from-render-loop only" — event-driven recalcBounds is out of scope; if it exists, it's `projectZ_eventdriven` territory) | `n_visible_objects` | No |
-| `tgl_transform` | OUTER call to `TG_Shape::MultiTransformShape` (`mclib/tgl.cpp:1702`) per multishape — captures the whole per-shape CPU vertex transform pass | `n_multishapes`, `n_verts_total` | Yes — adjacent zone `TG.MultiShape.PerShapeLoop` at `mclib/msl.cpp:1452`. Cost-split adds its own outer scope at the same boundary |
+| `tgl_transform` | **Per-multishape coarse scope** wrapping `TG_Shape::MultiTransformShape` (`mclib/tgl.cpp:1702`) — captures the whole per-shape CPU vertex transform pass. Per-frame bucket value AGGREGATES across all per-multishape scopes invoked in the frame. This intentionally violates the "one scope per frame" simplification but stays above the observer-effect threshold because each scope wraps a full multishape transform (never a vertex/leaf/primitive). Cost: ~50-200ns per call × ~50-300 multishapes/frame = ~15-60us scope overhead, well below the smallest bucket of interest. **Preferred alternative if found** (per §5 step 0 audit): if an outer per-frame dispatcher exists that contains ALL `MultiTransformShape` invocations, wrap that ONCE instead. Implementation chooses whichever is cleaner; result is the same per-frame bucket value | `n_multishapes`, `n_verts_total` | Yes — adjacent zone `TG.MultiShape.PerShapeLoop` at `mclib/msl.cpp:1452`. Cost-split adds its own outer scope at the same boundary |
 | `mlr_total` | The existing `ZoneScopedN("GameCamera::render clipperRenderNow")` at `code/gamecam.cpp:268`, wrapping `theClipper->RenderNow()` at `:269`. (Also instrument `StartDraw` at `:142` as a separate sub-scope; sum into `mlr_total`.) **Per MLR census, this measures the entire CPU cost of the gosFX particle render path — MLR's only live consumer. Substitution = GPU-side gosFX.** Acceptable that this includes vertex submission to driver in addition to clip/project; MLR retirement substitutes BOTH | `n_prims_clipped` — add static counter inside `MLRClipper` at the per-primitive dispatch site (location to be greped pre-implementation; bumped exactly once per primitive submitted) | Yes — existing `clipperRenderNow` at `code/gamecam.cpp:268` (covers RenderNow only; StartDraw scope is new) |
-| `projectZ_eventdriven` | **NO chrono inside `Camera::projectZ`.** Counter-only inside projectZ, with TLS render-loop flag (see §4.4). If a per-frame outer event-dispatch boundary is identified during the pre-implementation audit (e.g., a per-frame AI tick), wrap that with one chrono pair; otherwise time stays UNMEASURED and is excluded from `projection_total` adjudication | `n_calls_eventdriven` (always); outer-scope time IF outer boundary found | No |
+| `projectZ_eventdriven` | **NO chrono inside `Camera::projectZ`.** Counter-only inside projectZ, with TLS render-loop flag (see §4.4). If a per-frame outer event-dispatch boundary is identified during pre-implementation audit (e.g., per-frame AI tick), wrap that with one chrono pair; time is reported in a SEPARATE sidecar bucket `eventdriven_projection_total`, **NEVER aggregated into `projection_total`**. Whether or not the outer scope is found, this bucket is treated as a candidate for its OWN follow-up arc, not as part of the steady-state render-projection budget | `n_calls_eventdriven` (always); outer-scope time IF outer boundary found, in `eventdriven_projection_total` | No |
 
 ### 4.3 Sidecar bucket (NOT in `projection_total`)
 
@@ -127,31 +158,39 @@ total. See §6 outcome triggers.
 `cpu_pipeline_total = projection_total + skinning_chain` is also printed
 as a broader-context signal but is NOT what adjudicates this slice.
 
-### 4.4 `projectZ_eventdriven` attribution (count-only by default)
+### 4.4 `projectZ_eventdriven` attribution (count-only + optional sidecar)
 
-Per external-review issue #1: putting chrono inside `Camera::projectZ()`
-is per-call timing — even gated by a TLS flag, it recreates the
-observer-effect problem if AI LOS / similar fires many times per frame.
+Per external-review v1 issue #1 and v2 blocker #3: putting chrono inside
+`Camera::projectZ()` is per-call timing — even gated by a TLS flag, it
+recreates the observer-effect problem if AI LOS / similar fires many
+times per frame. Resolution: count-only inside projectZ; optional outer
+boundary timing reported as a SEPARATE sidecar (never aggregated into
+`projection_total`).
 
 Design:
-- **Always:** TLS `bool s_inRenderLoop` set true at entry of
-  `ObjectManager::render()` (RAII guard restores at exit). Static
-  counter inside `Camera::projectZ()` increments `n_calls_eventdriven`
-  iff `!s_inRenderLoop`. Cost: one TLS read + one branch + one
-  counter bump per call — no chrono.
-- **Conditional (if pre-implementation audit identifies an outer
-  event-dispatch boundary):** wrap that boundary with one chrono
-  pair. The boundary candidate: per-frame AI tick dispatcher (if
-  it exists and is bounded), OR a per-frame mouse/input handler.
-  If no clean outer boundary exists, the time stays UNMEASURED.
-- **Reporting:** if outer-scope time exists, print it; otherwise
-  print `time=COUNT-ONLY`. Either way, `projectZ_eventdriven` is
-  EXCLUDED from `projection_total` adjudication (only the count
-  is informative when no time is measured).
+- **Counter (always when env ON):** TLS `bool s_inRenderLoop` set true
+  at entry of `ObjectManager::render()` (RAII guard restores at exit;
+  see `gamecam.cpp:213`). Static counter inside `Camera::projectZ()`
+  increments `n_calls_eventdriven` iff `!s_inRenderLoop`. Cost: one
+  TLS read + one branch + one non-atomic counter bump per call. No
+  chrono.
+- **Optional outer scope (if pre-impl audit identifies a per-frame
+  event-dispatch boundary):** wrap that boundary with one chrono pair.
+  Candidates: per-frame AI-tick dispatcher (if bounded), per-frame
+  mouse/input handler. If no clean outer boundary exists, time stays
+  UNMEASURED.
+- **Reporting:** `eventdriven_projection_total` is a sidecar bucket.
+  If outer-scope time exists, it populates the bucket's time fields;
+  otherwise the bucket reports `n_calls` only.
+- **Adjudication:** **NEVER part of `projection_total`.** Reported
+  alongside as a candidate for its own follow-up slice. A separate
+  outcome row in §6 governs what we do with it.
 
 Rationale: counts answer "is this site actually exercised in worst-case
 capture?" Time without observer effect requires a coarse outer scope.
-Don't compromise discipline for time data we may not actually need.
+Sidecar reporting avoids both contaminating the steady-state render
+adjudication AND silently dropping the data when an outer boundary
+exists.
 
 ### 4.5 Tracy cross-validation (INCLUSIVE time, not self-time)
 
@@ -187,7 +226,17 @@ sizing decisions.
      accept count-only reporting.
    - **MLR per-primitive dispatch site** for the `n_prims_clipped`
      counter (within `mclib/mlr/mlrclipper.cpp` or its callees). Grep
-     for the per-prim hot loop entry.
+     for the per-prim hot loop entry. **Counter discipline:**
+     thread-local or frame-local non-atomic increment; merged into
+     the per-frame bucket at frame-end. NO atomics inside per-primitive
+     loops unless threading audit proves them unavoidable (an atomic
+     contended at primitive-rate would distort the hot path).
+   - **`tgl_transform` outer-dispatcher search:** look for a single
+     per-frame call site upstream of all `TG_Shape::MultiTransformShape`
+     invocations (likely candidates: a render-list flush or a
+     `mcTextureManager` dispatch). If found, wrap that ONCE and skip
+     per-multishape scopes. If not found, accept per-multishape scopes
+     summed into a per-frame bucket (per §4.2 `tgl_transform` row).
    - **Mission init/load hook** for ring-buffer hard reset. Likely
      candidates: `Mission::init` (`code/mission.cpp`), `Mission::load`
      (savegame path), `Logistics::beginMission` (campaign resume).
@@ -215,19 +264,22 @@ sizing decisions.
    classification (LIVE vs not-stimulated) requires this if the
    default capture is zero.
 6. **Analysis:** extract `[CPU_PROJ v1]` window lines from
-   `tests/smoke/artifacts/<latest>/mc2_10.log`. The window p95 across
-   the ~7 windows is the load-bearing number. Cross-validate against
-   Tracy export.
+   `tests/smoke/artifacts/<latest>/mc2_10.log`. The **load-bearing
+   number for §6 adjudication is `worst_window_p95 = max(window.projection_total.p95)`
+   across all windows in the capture** (also printed in the
+   `[CPU_PROJ v1 final]` line at capture end). Not the mean of window
+   p95s, not the p95-of-p95s. Cross-validate per-bucket against Tracy
+   inclusive-time export per §4.5.
 
 ## 6. Predeclared outcome triggers
 
 `projection_total = matrix_build + recalcBounds_render + tgl_transform + mlr_total`.
-`projectZ_eventdriven` is informational; its count matters but its
-time is excluded unless an outer boundary was found. `skinning_chain`
-is reported as sidecar.
+`eventdriven_projection_total` and `skinning_chain` are sidecars,
+**never** part of `projection_total` adjudication.
 
-Adjudication uses **window p95** at worst-case camera (mc2_10 corner
-zoomed-out), not single-frame max and not p50.
+Adjudication uses `worst_window_p95 = max(window.projection_total.p95)`
+across all windows in the worst-case capture (mc2_10 corner zoomed-out).
+Not mean, not single-frame max, not p95-of-p95s.
 
 | Condition | Action |
 |---|---|
@@ -236,8 +288,9 @@ zoomed-out), not single-frame max and not p50.
 | `projection_total` p95 100us–500us, single bucket > 60% of `projection_total` | F2 with that bucket as first eviction target. Bucket dictates the slice: `tgl_transform` dominant → TG_MultiShape retirement; `recalcBounds_render` dominant → recalcBounds unconflation continues; `mlr_total` dominant → gosFX GPU backend slice (clean per MLR census). |
 | `projection_total` p95 100us–500us, spread across 2-3 buckets | F1 foundation slice (matrix unification) first — multiple consumers need a clean unified GPU-side matrix to point at. Then F2 evictions in cost-descending order. |
 | `projection_total` p95 > 500us, spread across 3+ buckets | F1 first; F2 evictions become a multi-slice campaign in cost-descending order. |
-| `mlr_total` ≈ 0 in worst-case (mc2_10) | gosFX particles not exercising MLR meaningfully under stock content. MLR retirement becomes near-free (no measurable substitution gain, but removes a CPU/code-debt class). Schedule as a low-risk cleanup, not a perf slice. |
-| `projectZ_eventdriven` n_calls == 0 in steady-state capture | Need event-driven coverage capture (§5 step 5). If still zero with stimulation, bucket is dead-code in current build — schedule deletion of `Camera::projectZ` itself as a separate slice. |
+| `mlr_total` p95 < 5us OR `n_prims_clipped` p95 == 0 in worst-case | gosFX particles not exercising MLR meaningfully under stock content. MLR retirement becomes near-free (no measurable substitution gain, but removes a CPU/code-debt class). Schedule as a low-risk cleanup, not a perf slice. |
+| `eventdriven_projection_total` n_calls == 0 in steady-state capture | Need event-driven coverage capture (§5 step 5). If still zero with stimulation, sidecar is dead-code in current build — schedule deletion of `Camera::projectZ` itself as a separate slice. |
+| `eventdriven_projection_total` n_calls > 0 AND (outer-scope time > 100us OR time UNMEASURED with high n_calls) | Open separate follow-up slice for event-driven projection migration. Does NOT block or modify the steady-state projection adjudication above. |
 | `tgl_transform` n_verts == 0 or `recalcBounds_render` n_visible == 0 | Coverage hole — capture didn't hit content that exercises this bucket. Try different stock mission OR document as "stock content does not exercise this; bucket cannot be sized." |
 | `matrix_build` n_calls == 0 | Bucket implementation bug (matrix_build always has work>0 by definition); fix before re-running. |
 | Cost-split per-bucket sum disagrees with Tracy INCLUSIVE time > 2x | **Stop.** Instrumentation broken. Fix and re-measure. Do not size any slice on broken data. |
@@ -298,6 +351,19 @@ doesn't argue the scope is "too broad."
 
 **R10 — Ring-buffer memory cost.** 500 samples * 6 buckets * (8 bytes
 time + 4 bytes counter) ≈ 36KB. Trivial; flagged only for completeness.
+
+**R11 — Counter atomicity.** Per §5 step 0 + §4.2 `mlr_total` row:
+`n_prims_clipped` and other workload counters must be thread-local or
+frame-local non-atomic. An atomic contended at primitive/multishape rate
+would distort the hot path. Threading audit gates this.
+
+**R12 — `tgl_transform` per-multishape scope overhead.** ~50-200ns per
+chrono pair × ~50-300 multishapes/frame = ~15-60us aggregate scope
+overhead — well below smallest bucket of interest but explicitly
+documented so the analysis stage can subtract if needed. If `tgl_transform`
+reads suspiciously close to this overhead band, the bucket is dominated
+by instrumentation and the per-multishape pattern should be replaced
+with the outer-dispatcher pattern (§5 step 0 search).
 
 ## 8. What the data does NOT tell us
 
@@ -391,7 +457,37 @@ time + 4 bytes counter) ≈ 36KB. Trivial; flagged only for completeness.
 - `mclib/txmmgr.cpp:349` — `new MidLevelRenderer::MLRClipper(...)`
   startup creation
 
-## 12. v1 → v2 changelog
+## 12. Changelog
+
+### v2 → v3 (this revision)
+
+Second external review folded:
+
+- **(blocker 1)** `tgl_transform` scope rule explicitly allows
+  per-multishape aggregation; §4 invariant statement reworded to
+  match. `tgl_transform` per-multishape overhead documented (R12).
+  Pre-impl audit (§5 step 0) adds outer-dispatcher search as the
+  preferred alternative.
+- **(blocker 2)** Worst-case adjudication defined precisely as
+  `max(window.projection_total.p95)`. Final-stats line added at
+  process exit / mission-load reset / capture end to flush partial
+  windows and compute `worst_window_p95`.
+- **(blocker 3)** `projectZ_eventdriven` removed entirely from
+  `projection_total`. Becomes `eventdriven_projection_total` sidecar
+  with its own outcome rows in §6. §4.4 and §6 are now consistent.
+- **(blocker 4)** Env-OFF behavior: no chrono AND no counters. The
+  v2 claim of "always-on free counters" was wrong (counters in hot
+  paths cost ~5-15ns each). Replaced with a single startup
+  `[CPU_PROJ v1 disabled]` line.
+- **(tightening 1)** `matrix_build` wording de-ambiguated: explicit
+  "site (a) + site (b) only; MLR matrix work in `mlr_total` not
+  here."
+- **(tightening 2)** `mlr_total ≈ 0` defined as `p95 < 5us OR
+  n_prims_clipped p95 == 0`. No more post-hoc interpretation.
+- **(tightening 3)** Counter discipline (thread-local non-atomic,
+  merged once per frame) added to §5 step 0 and R11.
+
+### v1 → v2 (commit `aacca2f`)
 
 External review folded:
 
