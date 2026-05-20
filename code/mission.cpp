@@ -3300,6 +3300,20 @@ void Mission::destroy (bool initLogistics)
 
 		delete eye;
 		eye = NULL;
+		// Null the static TG_Shape camera-matrix aliases that TG_Shape::
+		// SetCameraMatrices() (tgl.cpp:1619-1620) populated with raw pointers
+		// into the now-freed eye object. Both `s_cameraOrigin` and
+		// `s_cameraToClip` outlive their owner; if a subsequent code path
+		// (e.g. Mission::load -> MechWarrior::Load -> registerStaticProp ->
+		// TG_MultiShape::TransformMultiShape at msl.cpp:1438) dereferences
+		// the stale pointer before eye->update() re-primes them, the dereference
+		// reads freed heap (latent UB; reliably crashed 2026-05-20 after Block A
+		// allocations stomped the freed eye block first). The next eye->update()
+		// in Mission::init / Mission::load re-populates both via
+		// SetCameraMatrices(). quad.cpp:2008 carries the same dereference and
+		// is also covered by this nulling.
+		TG_Shape::s_cameraOrigin = NULL;
+		TG_Shape::s_cameraToClip = NULL;
 	}
 
 	if (PathManager) {
