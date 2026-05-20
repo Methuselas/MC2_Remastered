@@ -134,14 +134,23 @@ static const bool s_gpuCullLifecycle = (getenv("MC2_GPU_CULL_LIFECYCLE") != null
 // to justify the architectural retirement of the conflation?
 //
 // Candidates (per spec §5 Stage 0):
-//   render_cand    = inView_instr() (current coarse-frustum, what render
-//                    reads via canBeSeen() today)
-//   sim_cand       = inView OR blockActive OR (framesSinceActive < N)
+//   render_cand    = canBeSeen_instr() — routes through
+//                    appearance->canBeSeen() which returns appearance->inView.
+//                    This is the actual coarse-frustum bit consumers read.
+//                    (v1.1 fix 2026-05-20: was inView_instr() which has
+//                    only one override in the codebase — Artillery at
+//                    artlry.h:215 — so it returned FALSE for every
+//                    non-Artillery actor and the probe measured nothing
+//                    useful. Most missions have no Artillery on screen,
+//                    so the bogus 95% disagreement was effectively
+//                    "non-Artillery actor through sim widening" — not
+//                    a real render-vs-sim measurement.)
+//   sim_cand       = render OR blockActive OR (framesSinceActive < N)
 //                    (the proposed Stage 3 hysteresis-with-floor signal)
 //   lifecycle_cand = TRUE for any actor visited (we got past the
 //                    objList[i]==NULL skip and the implicit alive check)
 //   ai_cand        = movers: readback-lagged when readback enabled, else
-//                    inView. statics: inView. (Stage 5 producer rule.)
+//                    render. statics: render. (Stage 5 producer rule.)
 //
 // Pairwise XOR counters tell us how often each pair of consumers would
 // have demanded a different answer. Of particular interest:
@@ -2044,7 +2053,12 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 			// stays env-gated; zero cost when MC2_INVIEW_CONFLATION_TRACE
 			// is unset.
 			if (s_inViewConflationEnabled) {
-				const bool render_cand    = obj->inView_instr();
+				// v1.1 (2026-05-20): canBeSeen_instr() not inView_instr().
+				// canBeSeen_instr routes through appearance->canBeSeen() →
+				// returns appearance->inView (the actual consumer bit).
+				// inView_instr has only one override (Artillery); using it
+				// made render_cand=FALSE for ~all actors.
+				const bool render_cand    = obj->canBeSeen_instr();
 				const bool sim_cand       = render_cand
 				                          || obj->blockActive_instr()
 				                          || (obj->framesSinceActive < s_inViewConflationHysteresisN);
