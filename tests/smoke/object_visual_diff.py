@@ -39,7 +39,7 @@ from pathlib import Path
 # Configuration
 # -----------------------------------------------------------------------------
 
-TIER1   = ["mc2_01", "mc2_03", "mc2_05", "mc2_06", "mc2_24"]
+TIER1   = ["mc2_01", "mc2_03", "mc2_10", "mc2_17", "mc2_24"]
 STRESS  = ["mc2_18"]
 MISSIONS = TIER1 + STRESS
 
@@ -55,6 +55,8 @@ CAPTURE_FRAMES = {
     "mc2_03": 400,
     "mc2_05": 400,
     "mc2_06": 400,
+    "mc2_10": 400,
+    "mc2_17": 400,
     "mc2_18": 400,
     "mc2_24": 400,
 }
@@ -69,7 +71,7 @@ HOT_GRID = 8
 
 # Build & deploy paths (per worktree CLAUDE.md).
 WORKTREE   = Path(__file__).resolve().parent.parent.parent
-DEPLOY_DIR = Path("A:/Games/mc2-opengl/mc2-win64-v0.3")
+DEPLOY_DIR = Path("A:/Games/mc2-opengl/mc2-win64-v0.4")
 MC2_EXE    = DEPLOY_DIR / "mc2.exe"
 
 # -----------------------------------------------------------------------------
