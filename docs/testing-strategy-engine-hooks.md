@@ -83,7 +83,17 @@ section for the current contract, including the empirical-variance gate.
 
 ---
 
-## Sketch C -- Tier 5: in-process RenderDoc capture
+## Sketch C -- Tier 5: in-process RenderDoc capture  [SHIPPED 2026-05-20]
+
+**SHIPPED 2026-05-20.** Implemented at `GameOS/gameos/gos_rdoc_capture.{h,cpp}`
+with a slightly tightened env-var prefix (`MC2_RDC_*` not the prototype's
+`MC2_RENDERDOC_*`) and a phase machine that latches on
+`gos_terrain_indirect::WasEverFrameSolidArmed()` to match Tier 3 visual-diff
+semantics. The harness is `scripts/renderdoc_capture.py`. See
+`docs/testing-strategy.md` Tier 5 section for the contract, including the
+normalization rules and the empirical "diff-vs-self == 0" gate. The text
+below is preserved as the design-stage record.
+
 
 Vendor `renderdoc_app.h` at `3rdparty/renderdoc/renderdoc_app.h`. Single
 header from <https://github.com/baldurk/renderdoc/blob/v1.x/renderdoc/api/app/renderdoc_app.h>,

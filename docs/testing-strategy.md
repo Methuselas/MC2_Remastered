@@ -231,19 +231,110 @@ suppressed false-positive). The gate infrastructure is independent of
 the outcome -- any ASan trip is filed as a separable bug fix, not a
 Tier 4 blocker.
 
-## Tier 5 -- RenderDoc CLI pipeline-state snapshot  (advanced; optional)
+## Tier 5 -- RenderDoc in-process capture + pipeline-state XML diff (SHIPPED)
 
-`renderdoccmd` can re-run a `.rdc` capture headless and dump the
-GL/Vulkan pipeline state to JSON. Workflow:
+Automates the manual RenderDoc-export workflow described in
+`memory/reference_renderdoc_pipeline_export_first_step_for_render_regressions.md`.
+Two pieces:
 
-1. Capture one reference frame per scene with RenderDoc, check in `.rdc`.
-2. CI step: `renderdoccmd convert -i ref.rdc -o pipeline.json`,
-   `diff pipeline.json baseline.json`.
+1. **Engine-side hook** (`GameOS/gameos/gos_rdoc_capture.{h,cpp}`).
+   Env-gated, default-off. Vendors `3rdparty/renderdoc/renderdoc_app.h`
+   (v1.x branch, MIT, 875 lines, no link-time dep). At runtime the hook
+   resolves `RENDERDOC_GetAPI` via `GetModuleHandleA("renderdoc.dll")`
+   (or `LoadLibraryA` as a fallback); if neither succeeds it silently
+   no-ops. When armed, the hook waits for `WasEverFrameSolidArmed()`
+   (the same intro-pan-complete latch Tier 3 uses), counts frames, and
+   calls `RENDERDOC_API_1_5_0::TriggerCapture()` at the target frame.
+   Hook seam is post `pp->endScene()` / pre HUD replay, alongside
+   `VisualDiff::onFrameTick`.
 
-Catches silent state regressions (blend mode flipped, sampler swapped,
-wrong texture unit, depth bias clobbered) without needing pixel-perfect
-golden images. Exactly the workflow `memory/reference_renderdoc_pipeline_export_first_step_for_render_regressions.md`
-already describes -- this just automates it.
+2. **Harness** (`scripts/renderdoc_capture.py`). Launches `mc2.exe`
+   under `renderdoccmd capture -w` so RenderDoc injects `renderdoc.dll`
+   into the process, then post-processes the resulting `.rdc` via
+   `renderdoccmd convert -c xml`. The XML form is RenderDoc's full
+   API-call + pipeline-state dump per EID -- exactly what the user's
+   pipeline-state-export workflow produces, just for every draw in the
+   frame instead of one EID at a time.
+
+### Env vars
+
+| Var                       | Meaning |
+| ------------------------- | ------- |
+| `MC2_RDC_CAPTURE_FRAME=N` | Frames after intro-complete latch; unset = hook off |
+| `MC2_RDC_CAPTURE_PATH`    | Template (no .rdc suffix) for the capture file |
+| `MC2_RDC_EXIT_AFTER=1`    | `exit(0)` two frames after capture finalizes |
+| `MC2_RDC_MAX_WAIT`        | Frames to wait past the target before timing out (default 600) |
+
+### Running locally
+
+```bash
+py -3 scripts/renderdoc_capture.py capture \
+    --mission mc2_01 --frame 60 \
+    --out tests/smoke/captures/mc2_01.rdc \
+    --baseline tests/smoke/baselines/rdoc/mc2_01.xml
+```
+
+Without `--baseline` the harness just produces the capture pair. With
+`--baseline` (and no existing baseline) the harness seeds the file.
+
+The `diff-self` subcommand captures twice and diffs the two -- the
+self-test for the harness itself:
+
+```bash
+py -3 scripts/renderdoc_capture.py diff-self --mission mc2_01 --frame 60
+```
+
+### What gets diffed (and what gets normalized)
+
+The harness normalizes the XML before diffing so the gate only fires on
+genuine pipeline-state regressions:
+
+- Stripped: `threadID`, `timestamp`, `duration` (per-chunk profiling
+  metadata).
+- Stripped: GL resource handles, sync object IDs, monotonic uint counters
+  (driver-allocation order, not pipeline state).
+- Stripped: `<float>` / `<double>` payloads (animation-driven uniform /
+  camera / view-matrix jitter; MC2 is not a fixed-step sim).
+- Stripped: byteLength on persistent-mapped buffer writes (per-frame
+  geometry-streaming volume).
+- Skipped entirely: `Internal::Coherent Mapped Memory Write` chunks (the
+  GL driver schedules adjacent persistent-mapped writes in non-stable
+  order; the equivalent state shows up in the surrounding `glDraw*` and
+  bind chunks, which ARE stable).
+- Kept: every `<enum>` (GL state), every `glBindTexture` /
+  `glUseProgram` / `glBlendFunc` / `glDepthMask` / `glViewport` chunk,
+  every `ResourceId` *name* (just not the numeric handle).
+
+Catches: blend mode flipped, sampler swapped, wrong texture unit, depth
+bias clobbered, program ID swapped, FBO attachment changed, vertex
+attrib layout regressed.
+
+Does not catch (intentionally): camera position drift, uniform numeric
+drift, draw-order reshuffles inside a single API-call category.
+
+### Empirical: diff-vs-self is zero
+
+Two back-to-back captures of `mc2_01` at frame 60 after intro-complete
+produce a normalized XML diff of zero lines. This is the gate's only
+real correctness contract -- if it ever stops being zero, the harness
+itself has regressed, not the engine.
+
+### Cost
+
+A single opt-in capture run takes ~5-6s of mission setup + the per-frame
+overhead of RenderDoc injection (negligible until trigger). Default
+smoke (`run_smoke.py --tier tier1`) does not load `renderdoc.dll` and
+the hook is fully silent -- verified by grepping `RDOC|renderdoc` across
+the tier1 artifact dir (zero matches).
+
+### Cross-references
+
+- Header vendor + version pin: `3rdparty/renderdoc/README.md`
+- Original sketch (now superseded): `docs/testing-strategy-engine-hooks.md`
+  Sketch C
+- User's existing manual workflow: `memory/reference_renderdoc_pipeline_export_first_step_for_render_regressions.md`
+- Tier 3 (visual-diff) shares the same `WasEverFrameSolidArmed` latch
+  and post-PP / pre-HUD seam.
 
 ## Industry context (one sentence per shop)
 
@@ -271,8 +362,10 @@ sanitizer-augmented runtime.
 4. **Tier 4 (ASAN smoke)** -- promote the existing `asan-mvp` worktree.
 5. **Tier 2 (doctest unit tests)** -- opportunistic; write one whenever
    fixing a math/parser/hash bug so the regression test exists forever.
-6. **Tier 5 (RenderDoc pipeline JSON)** -- last; advanced; only if state
-   leaks become a recurring pain point.
+6. **Tier 5 (RenderDoc pipeline-state XML)** -- SHIPPED 2026-05-20.
+   Opt-in only; not on the default smoke gate. Use when a regression
+   suspect is state-leak-shaped (blend / depth / sampler / texture
+   binding) rather than pixel-shaped.
 
 ## Sketches
 
@@ -284,7 +377,7 @@ sanitizer-augmented runtime.
 | 2   | `tests/unit/CMakeLists.txt`, `tests/unit/test_main.cpp`, `tests/unit/test_hashing.cpp`, `tests/unit/test_projection.cpp`, `tests/unit/test_argb_pack.cpp` | doctest harness + three example tests |
 | 3   | `GameOS/gameos/gos_visual_diff.{h,cpp}`, `tests/smoke/object_visual_diff.py`, `tests/smoke/baselines/visual-diff/` (pending green variance) | Implemented; Sketch B SUPERSEDED -- see `docs/testing-strategy-engine-hooks.md` |
 | 4   | `scripts/run_smoke_asan.py` (`scripts/asan_suppressions.txt` deferred -- only add if the gate emits a known false-positive) | ASAN build + single-mission smoke wrapper -- WIRED (see "Tier 4" above) |
-| 5   | `scripts/renderdoc_capture.py`, `docs/testing-strategy-engine-hooks.md` (Sketch C) | In-process RenderDoc capture + pipeline-state JSON diff |
+| 5   | `GameOS/gameos/gos_rdoc_capture.{h,cpp}`, `scripts/renderdoc_capture.py`, `3rdparty/renderdoc/renderdoc_app.h` | SHIPPED: in-process RenderDoc capture + XML diff. Sketch C superseded; see Tier 5 section above |
 
 All sketches are structurally complete but not exercised. Each one calls
 out its prerequisites explicitly in its header docstring -- the most
@@ -318,12 +411,20 @@ both harnesses).
                                   redeploys both to mc2-win64-v0.4/ as
                                   mc2-asan.exe.
 
-5    RenderDoc capture          prerequisites:
-                                  (a) engine-side RenderDoc API hook (Sketch C)
-                                  (b) renderdoc_app.h vendored at
-                                      3rdparty/renderdoc/
-                                  (c) renderdoccmd on PATH
-                                  (d) one regen-pass to seed baseline JSONs
+5    RenderDoc capture          SHIPPED 2026-05-20. All four prereqs
+                                  resolved:
+                                  (a) gos_rdoc_capture.{h,cpp} in gameosmain
+                                      post-PP / pre-HUD seam
+                                  (b) renderdoc_app.h pinned at
+                                      3rdparty/renderdoc/renderdoc_app.h
+                                      (v1.x branch HEAD, MIT)
+                                  (c) renderdoccmd discovered via PATH or
+                                      default install at C:/Program Files/
+                                      RenderDoc/renderdoccmd.exe (harness
+                                      auto-resolves)
+                                  (d) baseline-seeding handled by harness:
+                                      first --baseline run that finds no
+                                      file seeds it
 ```
 
 Promote in adoption order from the section above

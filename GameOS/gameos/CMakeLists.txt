@@ -26,6 +26,7 @@ set(SOURCES ${SOURCES}
     gos_validate.cpp
     gos_screenshot.cpp
     gos_visual_diff.cpp
+    gos_rdoc_capture.cpp
     gos_crashbundle.cpp
     gos_smoke.cpp
     gos_font.cpp

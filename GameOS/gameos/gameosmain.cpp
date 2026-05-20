@@ -115,6 +115,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "projectz_trace.h"  // projectz_trace_init/frame_tick/shutdown (PROJECTZ v1)
 #include "projectz_overlay.h" // RAlt+P debug overlay (commit 4)
 #include "gos_visual_diff.h"  // Stage 2.E pre-HUD capture + Ctrl+Shift+P record
+#include "gos_rdoc_capture.h"  // Tier 5: env-gated in-process RenderDoc capture
 #include "gos_terrain_indirect.h"  // [INSTR v1] banner: terrain_indirect{,_parity} fields
 #include "terrain_surface_trace.h" // [INSTR v1] banner: terrain_surface_trace field (PR-0)
 #include "gpu_cull_record.h"       // C0-1: GpuActorRecord schema selftest
@@ -552,6 +553,12 @@ static void draw_screen( void )
     // and HUD replay so neither leaks into the captured TGA. Default-off
     // (early-return when MC2_VISUAL_DIFF_CAPTURE is unset).
     VisualDiff::onFrameTick(Environment.drawableWidth, Environment.drawableHeight);
+
+    // Tier 5: in-process RenderDoc capture trigger. Default-off; activates
+    // only when MC2_RDC_CAPTURE_FRAME is set. Shares the post-PP / pre-HUD
+    // seam with VisualDiff so the captured frame matches visual-diff
+    // semantics (intro-complete + N frames). See gos_rdoc_capture.h.
+    RdocCapture::onFrameTick();
 
     // ProjectZ debug overlay (RAlt+P): drawn on the default framebuffer
     // AFTER post-process composite and BEFORE HUD replay so it sits over the
