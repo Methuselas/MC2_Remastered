@@ -5,6 +5,8 @@ Status: DRAFT v2 (pre-greybeard/adversarial). Measurement slice. No
 consumer retired, no shader touched, no architectural change. Reverts
 cleanly.
 
+**v4 changes from v3 (`ff1c4aa`):** material design defect found by F3 executor's §5 step 0 audit — `recalcBounds_perframe` bucket as spec'd had no callers (spec said `ObjectManager::render`, real dispatch is via `Mission::update`→`updateAppearancesOnly`/`update`→ per-actor `recalcBounds()`). Bucket renamed `recalcBounds_perframe`; instrumentation moved inside each of the 6 `recalcBounds` overrides (RAII guard at top of each); per-call-aggregated-into-bucket discipline matches `tgl_transform` per v3. Stale line numbers from drift updated: `gos_RendererBeginFrame` is `:5936` not `:2384`; `gos_RendererEndFrame` is `:5941` not `:2389`; `TG_Shape::SetCameraMatrices` per-frame call is at `mclib/camera.cpp:1729` (inside `Camera::render()`), not `code/gamecam.cpp:1651`. Audit also confirmed: single-threaded (TLS safe), `cameraToClip` writers are only event-driven, no clean outer event-dispatch boundary for projectZ_eventdriven (accept count-only), MLR per-prim site is `MLRClipper::DrawShape` at `mclib/mlr/mlrclipper.cpp:399`, no outer above `TG_MultiShape::TransformMultiShape` so per-multishape scope chosen.
+
 **v3 changes from v2 (`aacca2f`):** second external review folded — 4
 blocking + 3 tightening items. `tgl_transform` scope rule explicitly
 allows per-multishape aggregation (resolves invariant contradiction).
@@ -93,7 +95,7 @@ slice produces the number that adjudicates that test.
 [CPU_PROJ v1] window=N..N+499 worst-case-camera=mc2_10
   projection_total           p50=Xus  p95=Yus  max=Zus     budget=100us  status=PASS|OVER
     matrix_build             p50=...  p95=...  max=...
-    recalcBounds_render      p50=...  p95=...  max=...     n_visible_p50=NNN
+    recalcBounds_perframe      p50=...  p95=...  max=...     n_visible_p50=NNN
     tgl_transform            p50=...  p95=...  max=...     n_multishapes_p50=NN  n_verts_p50=NNNN
     mlr_total                p50=...  p95=...  max=...     n_prims_p50=NNN
   sidecar buckets (NEVER in projection_total adjudication):
@@ -137,7 +139,7 @@ also accumulates a workload counter for extrapolability.
 | Bucket | Wraps | Workload counter | Existing Tracy zone? |
 |---|---|---|---|
 | `matrix_build` | `matrix_build` = **site (a) `Camera.BuildMVP` block at `code/gamecam.cpp:153-191`** + **site (b) `TG_Shape::SetCameraMatrices` call at `code/gamecam.cpp:1651`** (body composes `s_worldToClip` at `mclib/tgl.cpp:1624`). **`MLRClipper::StartDraw` matrix work is intentionally excluded from `matrix_build` because it is captured inside `mlr_total`** (not double-counted). `cameraToClip` itself is event-driven (composed in `setOrthogonal`/`setPerspective` at `mclib/camera.cpp:1876-1894`/`:1930+` — NOT per-frame); per-frame matrix work is the two derived compositions | 2 sites/frame | Yes — existing `Camera.BuildMVP` at `gamecam.cpp:153`. New zone needed only for site (b) |
-| `recalcBounds_render` | OUTER dispatcher loop in `ObjectManager::render()` that visits each visible object's `Appearance::recalcBounds()`. Wraps the OUTER loop, NOT per-object calls. (Renamed from v1's `recalcBounds_total` to clarify "from-render-loop only" — event-driven recalcBounds is out of scope; if it exists, it's `projectZ_eventdriven` territory) | `n_visible_objects` | No |
+| `recalcBounds_perframe` | **Per-actor coarse scope at the TOP of each of the 6 `recalcBounds` overrides** (`BldgAppearance::recalcBounds` `mclib/bdactor.cpp:1163`, `TreeAppearance::recalcBounds` `mclib/bdactor.cpp:3926`, `GenericAppearance::recalcBounds` `mclib/genactor.cpp:587`, `GVAppearance::recalcBounds` `mclib/gvactor.cpp:1614`, `Mech3DAppearance::recalcBounds` `mclib/mech3d.cpp:2132`, `VFXAppearance::recalcBounds` if it exists per audit) via RAII guard. Per-frame bucket value AGGREGATES across all per-actor scopes in the frame (same discipline as `tgl_transform`). Captures every caller automatically — dispatch happens via `Mission::update`→`GameObjectManager::update`/`updateAppearancesOnly` AND inline calls in mech/gvehicl/bldng update bodies; instrumenting inside the overrides covers all paths. **v1-v3 spec error:** said the bucket wraps "OUTER dispatcher loop in `ObjectManager::render()`" but `ObjectManager::render()` has zero `recalcBounds()` calls — corrected v4 per F3 executor audit | `n_actors_recalc` | No |
 | `tgl_transform` | **Per-multishape coarse scope** wrapping `TG_Shape::MultiTransformShape` (`mclib/tgl.cpp:1702`) — captures the whole per-shape CPU vertex transform pass. Per-frame bucket value AGGREGATES across all per-multishape scopes invoked in the frame. This intentionally violates the "one scope per frame" simplification but stays above the observer-effect threshold because each scope wraps a full multishape transform (never a vertex/leaf/primitive). Cost: ~50-200ns per call × ~50-300 multishapes/frame = ~15-60us scope overhead, well below the smallest bucket of interest. **Preferred alternative if found** (per §5 step 0 audit): if an outer per-frame dispatcher exists that contains ALL `MultiTransformShape` invocations, wrap that ONCE instead. Implementation chooses whichever is cleaner; result is the same per-frame bucket value | `n_multishapes`, `n_verts_total` | Yes — adjacent zone `TG.MultiShape.PerShapeLoop` at `mclib/msl.cpp:1452`. Cost-split adds its own outer scope at the same boundary |
 | `mlr_total` | The existing `ZoneScopedN("GameCamera::render clipperRenderNow")` at `code/gamecam.cpp:268`, wrapping `theClipper->RenderNow()` at `:269`. (Also instrument `StartDraw` at `:142` as a separate sub-scope; sum into `mlr_total`.) **Per MLR census, this measures the entire CPU cost of the gosFX particle render path — MLR's only live consumer. Substitution = GPU-side gosFX.** Acceptable that this includes vertex submission to driver in addition to clip/project; MLR retirement substitutes BOTH | `n_prims_clipped` — add static counter inside `MLRClipper` at the per-primitive dispatch site (location to be greped pre-implementation; bumped exactly once per primitive submitted) | Yes — existing `clipperRenderNow` at `code/gamecam.cpp:268` (covers RenderNow only; StartDraw scope is new) |
 | `projectZ_eventdriven` | **NO chrono inside `Camera::projectZ`.** Counter-only inside projectZ, with TLS render-loop flag (see §4.4). If a per-frame outer event-dispatch boundary is identified during pre-implementation audit (e.g., per-frame AI tick), wrap that with one chrono pair; time is reported in a SEPARATE sidecar bucket `eventdriven_projection_total`, **NEVER aggregated into `projection_total`**. Whether or not the outer scope is found, this bucket is treated as a candidate for its OWN follow-up arc, not as part of the steady-state render-projection budget | `n_calls_eventdriven` (always); outer-scope time IF outer boundary found, in `eventdriven_projection_total` | No |
@@ -273,7 +275,7 @@ sizing decisions.
 
 ## 6. Predeclared outcome triggers
 
-`projection_total = matrix_build + recalcBounds_render + tgl_transform + mlr_total`.
+`projection_total = matrix_build + recalcBounds_perframe + tgl_transform + mlr_total`.
 `eventdriven_projection_total` and `skinning_chain` are sidecars,
 **never** part of `projection_total` adjudication.
 
@@ -285,13 +287,13 @@ Not mean, not single-frame max, not p95-of-p95s.
 |---|---|
 | `projection_total` p95 < 100us AND `skinning_chain` p95 < 100us | **Both framings falsified.** CPU projection is not the cost-dominant problem AND skinning isn't either. Hunt elsewhere (AI / mission update / asset streaming). Reframe the brainstorm. |
 | `projection_total` p95 < 100us BUT `skinning_chain` p95 > 100us | **Projection framing falsified, but a different CPU arc exists.** Park projection; open separate "GPU skinning compute" arc. Bring data back to brainstorm. |
-| `projection_total` p95 100us–500us, single bucket > 60% of `projection_total` | F2 with that bucket as first eviction target. Bucket dictates the slice: `tgl_transform` dominant → TG_MultiShape retirement; `recalcBounds_render` dominant → recalcBounds unconflation continues; `mlr_total` dominant → gosFX GPU backend slice (clean per MLR census). |
+| `projection_total` p95 100us–500us, single bucket > 60% of `projection_total` | F2 with that bucket as first eviction target. Bucket dictates the slice: `tgl_transform` dominant → TG_MultiShape retirement; `recalcBounds_perframe` dominant → recalcBounds unconflation continues; `mlr_total` dominant → gosFX GPU backend slice (clean per MLR census). |
 | `projection_total` p95 100us–500us, spread across 2-3 buckets | F1 foundation slice (matrix unification) first — multiple consumers need a clean unified GPU-side matrix to point at. Then F2 evictions in cost-descending order. |
 | `projection_total` p95 > 500us, spread across 3+ buckets | F1 first; F2 evictions become a multi-slice campaign in cost-descending order. |
 | `mlr_total` p95 < 5us OR `n_prims_clipped` p95 == 0 in worst-case | gosFX particles not exercising MLR meaningfully under stock content. MLR retirement becomes near-free (no measurable substitution gain, but removes a CPU/code-debt class). Schedule as a low-risk cleanup, not a perf slice. |
 | `eventdriven_projection_total` n_calls == 0 in steady-state capture | Need event-driven coverage capture (§5 step 5). If still zero with stimulation, sidecar is dead-code in current build — schedule deletion of `Camera::projectZ` itself as a separate slice. |
 | `eventdriven_projection_total` n_calls > 0 AND (outer-scope time > 100us OR time UNMEASURED with high n_calls) | Open separate follow-up slice for event-driven projection migration. Does NOT block or modify the steady-state projection adjudication above. |
-| `tgl_transform` n_verts == 0 or `recalcBounds_render` n_visible == 0 | Coverage hole — capture didn't hit content that exercises this bucket. Try different stock mission OR document as "stock content does not exercise this; bucket cannot be sized." |
+| `tgl_transform` n_verts == 0 or `recalcBounds_perframe` n_visible == 0 | Coverage hole — capture didn't hit content that exercises this bucket. Try different stock mission OR document as "stock content does not exercise this; bucket cannot be sized." |
 | `matrix_build` n_calls == 0 | Bucket implementation bug (matrix_build always has work>0 by definition); fix before re-running. |
 | Cost-split per-bucket sum disagrees with Tracy INCLUSIVE time > 2x | **Stop.** Instrumentation broken. Fix and re-measure. Do not size any slice on broken data. |
 
@@ -446,7 +448,7 @@ with the outer-dispatcher pattern (§5 step 0 search).
 - `code/gamecam.cpp:1651` — `TG_Shape::SetCameraMatrices(...)` per-frame call
   (`matrix_build` site (b))
 - `code/gamecam.cpp:213` — `ObjectManager->render(true, true, true)`
-  (outer scope for TLS render-loop flag + `recalcBounds_render` bucket)
+  (outer scope for TLS render-loop flag + `recalcBounds_perframe` bucket)
 - `code/gamecam.cpp:268` — existing `ZoneScopedN("GameCamera::render clipperRenderNow")`
 - `code/gamecam.cpp:269` — `theClipper->RenderNow()` (inner of `mlr_total`)
 - `GameOS/gameos/gameos_graphics.cpp:2384` — `gos_RendererBeginFrame`
