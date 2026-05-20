@@ -1,6 +1,54 @@
 # alpha-Stage 0.5 - Re-arm the readback render gate (design v3)
 
-> **POSTSCRIPT 2026-05-20 EVENING — §4 BLOCKED, §2.5 SHIPPED INDEPENDENTLY.**
+> **POSTSCRIPT 2026-05-20 LATE-EVENING — §4 EMPIRICALLY NO-GO (visual canary).**
+>
+> Tentative-ship of §4 as commit `40a54b7` followed by user-driven mc2_10
+> visual canary (90s, fast pan + spin + corner, MC2_GPU_CULL=1
+> MC2_GPU_CULL_READBACK=1) returned **visual NO-GO**. Reverted as `dc2e8f6`.
+> Observed artifacts:
+> - Static-prop / tree / mech POPPING in and out during camera motion
+>   (readback false-negative class — the 2.8%/30% probe envelope made
+>   visual)
+> - **BLACK building textures** — RESURRECTED 2026-05-05 black-tree bug
+>   class. §4 keeps update-gate on coarse `inView` (LEAVE-site §2.1) but
+>   moves render-gate to readback; readback false-positives admit actors
+>   whose `update()` was cull-skipped, `cachedGpuLightIndex_` is stale,
+>   registry::flush emits draws with stale light data. The 2026-05-05
+>   black-tree fix (`cachedFrame_` stamp gate at
+>   `gos_static_prop_registry::flush()`) protects the batcher path only;
+>   §4's gate flip routes through the legacy submit path which has no
+>   equivalent stamp gate. See
+>   `memory/black_tree_bug_investigation_state.md`.
+> - Z-fighting at distance + colored→blank at ~5000 unit LOD transition,
+>   both attributable to the same readback false-positive class
+>   admitting actors whose registration state wasn't refreshed.
+>
+> Root cause analysis: §4 in its current shape has TWO structural bugs,
+> not one. The v3 spec only modelled bug #1 (readback non-superset →
+> dropouts); the spec missed bug #2 entirely (update/render gate split
+> resurrects the cull-aware staleness class that 2026-05-05 fixed for
+> coarse-cull-only configs). Three possible meta-fixes:
+> 1. **Defer to alpha-Stage 1** (deeper readback-quality work). Both
+>    bugs need to be solved before §4 lands.
+> 2. **v4 reframe — gate render on `blockVisBits[]` directly under
+>    sticky-bit.** Block-level admit is strict-superset-by-construction
+>    per-mission under sticky (no readback dependency, no false-positive
+>    class, no update/render split). The gate is coarser (whole block
+>    lights up at once) but that's a stock-default safety feature, not
+>    a bug. Lifetime aligns with R-NEW-8 admit-only-grows analysis.
+> 3. **Couple update gate to render gate.** If §4 ships as specced, the
+>    update gate at `terrobj.cpp:796` must also move off coarse — that's
+>    the alpha-Stage 1 carve-out the spec explicitly defers. Bringing
+>    it into Stage 0.5 substantially expands scope.
+>
+> §2.5 sticky-bit (`91b6991`) stays shipped — independent durable value
+> (retired K-window META-FIX of `056c365`). Do NOT re-attempt §4 in
+> current shape; full reasoning + the user's
+> "K was meant to fix this" finding (which is correct for indirect-batcher
+> path, doesn't apply to readback channel) at
+> `memory/stage_0_5_section_4_blocked_on_readback_non_superset.md`.
+
+> **POSTSCRIPT 2026-05-20 EVENING — §4 BLOCKED, §2.5 SHIPPED INDEPENDENTLY.** (Superseded by LATE-EVENING postscript above; preserved for arc context.)
 >
 > §2.5 sticky-bit shipped as commit `91b6991` on `claude/nifty-mendeleev`
 > (META-FIX of `056c365`; independent durable value — net -9 LOC,
