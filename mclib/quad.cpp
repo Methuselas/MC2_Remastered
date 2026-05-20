@@ -537,12 +537,6 @@ bool useOverlayTexture = true;
 long numTerrainFaces = 0;
 extern float MaxMinUV;
 
-extern float leastZ;
-extern float leastW;
-extern float mostZ; 
-extern float mostW;
-extern float leastWY; 
-extern float mostWY;
 
 //---------------------------------------------------------------------------
 struct TerrainRecipe {
@@ -1095,34 +1089,9 @@ void TerrainQuad::setupTextures (void)
 				}
 
 				vertices[0]->calcThisFrame |= 2;
-
-				if (clipData)
-				{
-					if (screenPos.z < leastZ)
-					{
-						leastZ = screenPos.z;
-					}
-
-					if (screenPos.z > mostZ)
-					{
-						mostZ = screenPos.z;
-					}
-
-					if (screenPos.w < leastW)
-					{
-						leastW = screenPos.w;
-						leastWY = screenPos.y;
-					}
-
-					if (screenPos.w > mostW)
-					{
-						mostW = screenPos.w;
-						mostWY = screenPos.y;
-					}
-				}
 			}
 		}
-		
+
 		if (!(vertices[1]->calcThisFrame & 2))
 		{
 			if (clipped1 || clipped2)
@@ -1165,31 +1134,6 @@ void TerrainQuad::setupTextures (void)
 				}
 
 				vertices[1]->calcThisFrame |= 2;
-
-				if (clipData)
-				{
-					if (screenPos.z < leastZ)
-					{
-						leastZ = screenPos.z;
-					}
-
-					if (screenPos.z > mostZ)
-					{
-						mostZ = screenPos.z;
-					}
-
-					if (screenPos.w < leastW)
-					{
-						leastW = screenPos.w;
-						leastWY = screenPos.y;
-					}
-
-					if (screenPos.w > mostW)
-					{
-						mostW = screenPos.w;
-						mostWY = screenPos.y;
-					}
-				}
 			}
 		}
 
@@ -1235,31 +1179,6 @@ void TerrainQuad::setupTextures (void)
 				}
 
 				vertices[2]->calcThisFrame |= 2;
-
-				if (clipData)
-				{
-					if (screenPos.z < leastZ)
-					{
-						leastZ = screenPos.z;
-					}
-
-					if (screenPos.z > mostZ)
-					{
-						mostZ = screenPos.z;
-					}
-
-					if (screenPos.w < leastW)
-					{
-						leastW = screenPos.w;
-						leastWY = screenPos.y;
-					}
-
-					if (screenPos.w > mostW)
-					{
-						mostW = screenPos.w;
-						mostWY = screenPos.y;
-					}
-				}
 			}
 		}
 
@@ -1305,31 +1224,6 @@ void TerrainQuad::setupTextures (void)
 				}
 
 				vertices[3]->calcThisFrame |= 2;
-
-				if (clipData)
-				{
-					if (screenPos.z < leastZ)
-					{
-						leastZ = screenPos.z;
-					}
-
-					if (screenPos.z > mostZ)
-					{
-						mostZ = screenPos.z;
-					}
-
-					if (screenPos.w < leastW)
-					{
-						leastW = screenPos.w;
-						leastWY = screenPos.y;
-					}
-
-					if (screenPos.w > mostW)
-					{
-						mostW = screenPos.w;
-						mostWY = screenPos.y;
-					}
-				}
 			}
 		}
 
