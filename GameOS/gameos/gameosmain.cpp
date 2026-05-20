@@ -670,14 +670,17 @@ void GLAPIENTRY OpenGLDebugLog(GLenum source, GLenum type, GLuint id, GLenum sev
 	// Default behavior unchanged. Catches the GL state-leak / sampler-inheritance /
 	// depth-state-inheritance bug class documented in
 	// memory/{blend,sampler,gpu_direct_depth}_state_inheritance.md.
-	if (severity == GL_DEBUG_SEVERITY_HIGH)
+	// MEDIUM/LOW are too noisy on AMD (perf warnings on every TGL stream).
+	// Function-scope static: 99.9% of callback invocations are a single load+branch.
+	static const bool s_glDebugFatal = (std::getenv("MC2_GL_DEBUG_FATAL") != nullptr);
+	if (s_glDebugFatal && severity == GL_DEBUG_SEVERITY_HIGH)
 	{
-		static const bool s_glDebugFatal = (getenv("MC2_GL_DEBUG_FATAL") != NULL);
-		if (s_glDebugFatal)
-		{
-			fflush(stdout);
-			abort();
-		}
+		std::fprintf(stderr,
+			"[MC2_GL_DEBUG_FATAL] severity=HIGH source=0x%x type=0x%x "
+			"id=%u\n  %.*s\n",
+			source, type, id, (int)length, message);
+		std::fflush(stderr);
+		std::abort();
 	}
 }
 
