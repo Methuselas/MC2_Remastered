@@ -1232,11 +1232,6 @@ bool BldgAppearance::recalcBounds (void)
 	}
 
 
-	// alpha-Stage 0.5 v3 §2 default: mirror inView into renderVisible so that
-	// under stock-default (readback disabled) the render/shadow gates are
-	// byte-identical to legacy (inView || g_useGpuStaticProps). The
-	// TerrainObject::update injection overrides this when readback is enabled.
-	renderVisible = inView;
 	return(inView);
 }
 
@@ -1300,13 +1295,11 @@ bool BldgAppearance::playDestruction (void)
 //-----------------------------------------------------------------------------
 long BldgAppearance::render (long depthFixup)
 {
-	// alpha-Stage 0.5 v3 §2: render gate reads renderVisible (set by
-	// TerrainObject::update injection — readback-driven when enabled, fail-open
-	// to coarse inView via recalcBounds default when not). GPU-batcher path
-	// still bypasses via g_useGpuStaticProps: the legacy angular-cull
-	// recalcBounds has a ~87% false-negative rate at wolfman zoom; under the
-	// GPU path we render every actor and trust the GPU.
-	if (renderVisible || g_useGpuStaticProps)
+	// GPU-batcher path bypasses inView here — the whole point of C2 is
+	// letting the GPU clipper decide visibility. The legacy angular-cull
+	// recalcBounds has a ~87% false-negative rate at wolfman zoom; under
+	// the GPU path we render every actor and trust the GPU.
+	if (inView || g_useGpuStaticProps)
 	{
 		uint32_t color = SD_BLUE;
 		uint32_t highLight = 0x007f7f7f;
@@ -1842,10 +1835,7 @@ long BldgAppearance::renderShadows (void)
 	if (gos_IsTerrainTessellationActive())
 		return NO_ERR;
 
-	// alpha-Stage 0.5 v3 §2: shadow gate reads renderVisible. Dead under
-	// default tessellated path (early-return above); kept per v3 §1.2 for
-	// minimum-diff revert symmetry + future debug paths + alpha-Stage 0.6.
-	if (renderVisible && visible && !appearType->spinMe)
+	if (inView && visible && !appearType->spinMe)
 	{
 		//---------------------------------------------
 		// Call Multi-shape render stuff here.
@@ -4005,20 +3995,16 @@ bool TreeAppearance::recalcBounds (void)
 		// ONLY; LOD-1+ would be unloaded after any LOD swap.
 	}
 
-	// alpha-Stage 0.5 v3 §2 default: mirror inView into renderVisible (see
-	// BldgAppearance::recalcBounds note above for full rationale).
-	renderVisible = inView;
 	return(inView);
 }
 
 //-----------------------------------------------------------------------------
 long TreeAppearance::render (long depthFixup)
 {
-	// alpha-Stage 0.5 v3 §2: render gate reads renderVisible (mirror of
-	// BldgAppearance::render). Under stock-default this is inView via
-	// recalcBounds; under readback-on this is readback_isActorVisibleLagged.
-	// GPU-batcher path still bypasses via g_useGpuStaticProps.
-	if (renderVisible || g_useGpuStaticProps)
+	// Mirror BldgAppearance::render: bypass inView under GPU path — the
+	// GPU clipper decides visibility, and the legacy angular cull has a
+	// ~87% false-negative rate at wolfman zoom.
+	if (inView || g_useGpuStaticProps)
 	{
 		long color = SD_BLUE;
 		//unsigned long highLight = 0x007f7f7f;
@@ -4279,9 +4265,7 @@ long TreeAppearance::renderShadows (void)
 	if (gos_IsTerrainTessellationActive())
 		return NO_ERR;
 
-	// alpha-Stage 0.5 v3 §2: shadow gate reads renderVisible. Dead under
-	// default tessellated path (early-return above); kept per v3 §1.2.
-	if (renderVisible && visible)
+	if (inView && visible)
 	{
 		//---------------------------------------------
 		// Call Multi-shape render stuff here.

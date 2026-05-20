@@ -899,30 +899,15 @@ long TerrainObject::update (void) {
 			}
 		}
 
-		// alpha-Stage 0.5 v3 §2 INJECTION: drive per-actor renderVisible
-		// off the readback when readback is enabled; fail-open to the
-		// coarse `inView` just computed by recalcBounds (R-NEW-9 (a)
-		// USER-LOCKED 2026-05-20) when not. Under stock-default
-		// (MC2_GPU_CULL_READBACK unset AND g_useGpuStaticProps==false) the
-		// downstream gate `(renderVisible || g_useGpuStaticProps)` evaluates
-		// to `inView` — byte-identical to pre-Stage-0.5 coarse cull. Under
-		// readback-on this is the Stage 0.5 design intent (readback-driven
-		// gate). Tentative empirical canary 2026-05-20 EVENING: §3 probe
-		// rate is 2.8% sustained / 30% worst — the visual canary (§6.5) is
-		// the authoritative gate, not the probe.
-		appearance->setRenderVisible(
-			gpu_cull::readback_isEnabled()
-				? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
-				: inView);
-
 		// [TOBJPARITY v1] STANDALONE readback-vs-coarse superset-parity
-		// instrument (env-gated MC2_TOBJ_PARITY). NOT a passing gate;
-		// quantifies the readback non-superset envelope (Task 7: 10-60%;
-		// measured 2026-05-20: 2.8% sustained / 30% worst on mc2_10
-		// worst-case under sticky-bit). The §4 injection above tentatively
-		// re-arms the render gate against the readback — visual canary is
-		// the authority. Probe stays demoted-not-deleted per
-		// debug_instrumentation_rule.md.
+		// instrument (env-gated MC2_TOBJ_PARITY). This is NOT a passing
+		// gate for the current slice and does NOT influence render or
+		// shadow visibility -- the readback render/shadow repoint was
+		// reverted (de-risk: Task 7 empirically proved the readback is
+		// NOT a superset of the coarse visible set, dropping 10-60% of
+		// in-view terrain statics, so gating render/shadow on it is
+		// unsound). Render/shadow now run on the coarse canBeSeen()/
+		// inView (pre-slice, safe over-inclusive) path again.
 		//
 		// This probe survives, demoted-not-deleted, purely to QUANTIFY
 		// that readback non-superset for the separately-tracked GPU-path
@@ -955,11 +940,9 @@ void TerrainObject::render (void) {
 	{
 	}
 
-	// alpha-Stage 0.5 v3 §2: read renderVisible via canRenderBeSeen() (set
-	// in TerrainObject::update; readback-driven when enabled, fail-open to
-	// coarse inView via recalcBounds otherwise). GPU static-prop path still
-	// bypasses via g_useGpuStaticProps — legacy angular cull too aggressive.
-	if (appearance->canRenderBeSeen() || g_useGpuStaticProps)
+	// GPU static-prop path bypasses canBeSeen() for the same reason as
+	// Building::render — the legacy angular cull is too aggressive.
+	if (appearance->canBeSeen() || g_useGpuStaticProps)
 	{
 		if (getSelected())
 		{
@@ -1028,11 +1011,8 @@ void TerrainObject::renderShadows (void)
 {
 	if (getFlag(OBJECT_FLAG_FALLING) || getFlag(OBJECT_FLAG_FALLEN))
 		return;			//No shadows on fallen trees.
-
-	// alpha-Stage 0.5 v3 §2: shadow gate reads renderVisible. Dead under
-	// default tessellated path (BldgAppearance/TreeAppearance::renderShadows
-	// early-return on gos_IsTerrainTessellationActive()); kept per v3 §1.2.
-	if (appearance->canRenderBeSeen())
+		
+	if (appearance->canBeSeen())
 	{
 		appearance->renderShadows();
 	}
