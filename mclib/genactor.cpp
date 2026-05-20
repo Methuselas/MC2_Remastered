@@ -587,7 +587,7 @@ bool GenericAppearance::isMouseOver (float px, float py)
 bool GenericAppearance::recalcBounds (void)
 {
 	Stuff::Vector4D tempPos;
-	inView = false;
+	setVisibilityGatesFromLegacy(false);
 
 	if (eye)
 	{
@@ -609,17 +609,17 @@ bool GenericAppearance::recalcBounds (void)
 			if (eyeDistance > Camera::MaxClipDistance)
 			{
 				hazeFactor = 1.0f;
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 			else if (eyeDistance > Camera::MinHazeDistance)
 			{
 				Camera::HazeFactor = (eyeDistance - Camera::MinHazeDistance) * Camera::DistanceFactor;
-				inView = true;
+				setVisibilityGatesFromLegacy(true);
 			}
 			else
 			{
 				Camera::HazeFactor = 0.0f;
-				inView = true;
+				setVisibilityGatesFromLegacy(true);
 			}
 			
 			//-----------------------------------------------------------------
@@ -640,15 +640,15 @@ bool GenericAppearance::recalcBounds (void)
 				
 				float cosine = Distance * eye->getLookVector();
  				if (cosine > eye->cosHalfFOV)
-					inView = true;
+					setVisibilityGatesFromLegacy(true);
 				else
-					inView = false;
+					setVisibilityGatesFromLegacy(false);
 			}
 		}
 		else
 		{
 			Camera::HazeFactor = 0.0f;
-			inView = true;
+			setVisibilityGatesFromLegacy(true);
 		}
 		
 		if (inView)
@@ -755,16 +755,16 @@ bool GenericAppearance::recalcBounds (void)
 					(upperLeft.x <= eye->getScreenResX()) &&
 					(upperLeft.y <= eye->getScreenResY()))
 				{
-					inView = true;
+					setVisibilityGatesFromLegacy(true);
 				}
 				else
 				{
-					inView = false;		//Did alot of extra work checking this, but WHY draw and insult to injury?
+					setVisibilityGatesFromLegacy(false);		//Did alot of extra work checking this, but WHY draw and insult to injury?
 				}
 			}
 			else
 			{
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 		}
 	}

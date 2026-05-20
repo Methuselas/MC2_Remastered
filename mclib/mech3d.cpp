@@ -2133,7 +2133,7 @@ bool Mech3DAppearance::recalcBounds (void)
 {
 	Stuff::Vector4D tempPos;
 	bool wasInView = inView;
-	inView = false;
+	setVisibilityGatesFromLegacy(false);
 	float eyeDistance = 0.0f;
 
 	if (eye)
@@ -2159,17 +2159,17 @@ bool Mech3DAppearance::recalcBounds (void)
 			if (eyeDistance > Camera::MaxClipDistance)
 			{
 				hazeFactor = 1.0f;
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 			else if (eyeDistance > Camera::MinHazeDistance)
 			{
 				Camera::HazeFactor = (eyeDistance - Camera::MinHazeDistance) * Camera::DistanceFactor;
-				inView = true;
+				setVisibilityGatesFromLegacy(true);
 			}
 			else
 			{
 				Camera::HazeFactor = 0.0f;
-				inView = true;
+				setVisibilityGatesFromLegacy(true);
 			}
 			
 			//-----------------------------------------------------------------
@@ -2190,15 +2190,15 @@ bool Mech3DAppearance::recalcBounds (void)
 				
 				float cosine = Distance * eye->getLookVector();
  				if (cosine > eye->cosHalfFOV)
-					inView = true;
+					setVisibilityGatesFromLegacy(true);
 				else
-					inView = false;
+					setVisibilityGatesFromLegacy(false);
 			}
 		}
 		else
 		{
 			Camera::HazeFactor = 0.0f;
-			inView = true;
+			setVisibilityGatesFromLegacy(true);
 		}
 		
 		if (inView)
@@ -2239,14 +2239,14 @@ bool Mech3DAppearance::recalcBounds (void)
 				//Gotta let the NodeIdPosition know that its matrix is valid or invalid so this actually does clip mech to screen!!
 				// Leave the old one in place until we are inView again!
 				// Should fix flickering on screen edge?  It does.  Must let jump flicker or he never comes down.
-				inView = wasInView;
+				setVisibilityGatesFromLegacy(wasInView);
 				if (inView || (currentGestureId == 20))
 					baseRootNodeDifference = (getNodeIdPosition(rootNodeIndex).z - position.z) - baseRootNodeHeight;
 
 				if (inView && isHelicopter)
 					baseRootNodeDifference -= HELICOPTER_FACTOR;
 
-				inView = true;
+				setVisibilityGatesFromLegacy(true);
 
 				if (InEditor)
 				{
@@ -2336,7 +2336,7 @@ bool Mech3DAppearance::recalcBounds (void)
 					: false;
 				if (cpuScreenRect || rbVisible)
 				{
-					inView = cpuScreenRect || rbVisible;
+					setVisibilityGatesFromLegacy(cpuScreenRect || rbVisible);
 					
 					if (status != OBJECT_STATUS_DESTROYED)
 					{
@@ -2423,12 +2423,12 @@ bool Mech3DAppearance::recalcBounds (void)
 				}
 				else
 				{
-					inView = false;		//Did alot of extra work checking this, but WHY draw and insult to injury?
+					setVisibilityGatesFromLegacy(false);		//Did alot of extra work checking this, but WHY draw and insult to injury?
 				}
 			}
 			else
 			{
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 		}
 	}
@@ -4510,9 +4510,9 @@ long Mech3DAppearance::update (bool animate)
 			rootNodeIndex = mechShape->GetNodeNameId("joint_root");
 
 		bool oldInView = inView;
-		inView = true;
+		setVisibilityGatesFromLegacy(true);
 	 	baseRootNodeHeight = (getNodeIdPosition(rootNodeIndex).z - position.z);
-		inView = oldInView;
+		setVisibilityGatesFromLegacy(oldInView);
 	}
 
 	// D-gpu-pose-instrument: Arms stage — leftArm/rightArm dynamics +

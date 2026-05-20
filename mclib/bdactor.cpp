@@ -1166,13 +1166,13 @@ bool BldgAppearance::recalcBounds (void)
 	// (included above via ../code/static_update_counters.h).
 	// Gate: file-scope s_tobjSplitBdOn (defined above, shared with TreeAppearance).
 
-	inView = false;
+	setVisibilityGatesFromLegacy(false);
 
 	if (eye)
 	{
 		//-------------------------------------------------------------------
 		//NEW METHOD from the WAY BACK Days
-		inView = true;
+		setVisibilityGatesFromLegacy(true);
 
 		// [TOBJSPLIT v1] ANGULAR bracket: matrix-free sphere angular clip.
 		// Reads cycle counter immediately before/after.
@@ -1200,7 +1200,7 @@ bool BldgAppearance::recalcBounds (void)
 			if (object_angle > (vClipConstant + extent_angle))
 			{
 				//In theory, we would return here.  Object is NOT on screen.
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 			else
 			{
@@ -1208,7 +1208,7 @@ bool BldgAppearance::recalcBounds (void)
 				if (object_angle > (hClipConstant + extent_angle))
 				{
 					//In theory, we would return here.  Object is NOT on screen.
-					inView = false;
+					setVisibilityGatesFromLegacy(false);
 				}
 			}
 		}
@@ -3929,13 +3929,13 @@ bool TreeAppearance::recalcBounds (void)
 	// (included above via ../code/static_update_counters.h).
 	// Gate: file-scope s_tobjSplitBdOn (defined above, shared with BldgAppearance).
 
-	inView = false;
+	setVisibilityGatesFromLegacy(false);
 
 	if (eye)
 	{
 		//-------------------------------------------------------------------
 		//NEW METHOD from the WAY BACK Days
-		inView = true;
+		setVisibilityGatesFromLegacy(true);
 
 		// [TOBJSPLIT v1] ANGULAR bracket: matrix-free sphere angular clip.
 		// Reads cycle counter immediately before/after.
@@ -3963,7 +3963,7 @@ bool TreeAppearance::recalcBounds (void)
 			if (object_angle > (vClipConstant + extent_angle))
 			{
 				//In theory, we would return here.  Object is NOT on screen.
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 			else
 			{
@@ -3971,7 +3971,7 @@ bool TreeAppearance::recalcBounds (void)
 				if (object_angle > (hClipConstant + extent_angle))
 				{
 					//In theory, we would return here.  Object is NOT on screen.
-					inView = false;
+					setVisibilityGatesFromLegacy(false);
 				}
 			}
 		}

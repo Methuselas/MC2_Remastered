@@ -236,7 +236,7 @@ void VFXAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	currentFrame = -1;
 	currentRotation = 0;
 
-	inView = FALSE;
+	setVisibilityGatesFromLegacy(FALSE);
 	lastInView = 0.0;
 
 	timeInFrame = 0.0;
@@ -280,7 +280,7 @@ extern float currentScaleFactor;
 bool VFXAppearance::recalcBounds (void)
 {
 	Stuff::Vector4D tempPos;
-	inView = FALSE;
+	setVisibilityGatesFromLegacy(FALSE);
 
 	if (eye)
 	{
@@ -335,7 +335,7 @@ bool VFXAppearance::recalcBounds (void)
 			(upperLeft.x <= eye->getScreenResX()) &&
 			(upperLeft.y <= eye->getScreenResY()))
 		{
-			inView = TRUE;
+			setVisibilityGatesFromLegacy(TRUE);
 		}
 	}
 	

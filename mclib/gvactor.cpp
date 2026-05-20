@@ -1614,7 +1614,7 @@ bool GVAppearance::isMouseOver (float px, float py)
 bool GVAppearance::recalcBounds (void)
 {
 	Stuff::Vector4D tempPos;
-	inView = false;
+	setVisibilityGatesFromLegacy(false);
 
 	float eyeDistance = 0.0f;
 
@@ -1641,17 +1641,17 @@ bool GVAppearance::recalcBounds (void)
 			if (eyeDistance > Camera::MaxClipDistance)
 			{
 				hazeFactor = 1.0f;
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 			else if (eyeDistance > Camera::MinHazeDistance)
 			{
 				Camera::HazeFactor = (eyeDistance - Camera::MinHazeDistance) * Camera::DistanceFactor;
-				inView = true;
+				setVisibilityGatesFromLegacy(true);
 			}
 			else
 			{
 				Camera::HazeFactor = 0.0f;
-				inView = true;
+				setVisibilityGatesFromLegacy(true);
 			}
 			
 			//-----------------------------------------------------------------
@@ -1672,15 +1672,15 @@ bool GVAppearance::recalcBounds (void)
 				
 				float cosine = Distance * eye->getLookVector();
  				if (cosine > eye->cosHalfFOV)
-					inView = true;
+					setVisibilityGatesFromLegacy(true);
 				else
-					inView = false;
+					setVisibilityGatesFromLegacy(false);
 			}
 		}
 		else
 		{
 			Camera::HazeFactor = 0.0f;
-			inView = true;
+			setVisibilityGatesFromLegacy(true);
 		}
 		
 		if (inView)
@@ -1801,7 +1801,7 @@ bool GVAppearance::recalcBounds (void)
 					(upperLeft.x <= eye->getScreenResX()) &&
 					(upperLeft.y <= eye->getScreenResY()))
 				{
-					inView = true;
+					setVisibilityGatesFromLegacy(true);
 					if ((status != OBJECT_STATUS_DESTROYED) && (status != OBJECT_STATUS_DISABLED))
 					{
 						//-------------------------------------------------------------------------------
@@ -1944,12 +1944,12 @@ bool GVAppearance::recalcBounds (void)
 				}
 				else
 				{
-					inView = false;		//Did alot of extra work checking this, but WHY draw and insult to injury?
+					setVisibilityGatesFromLegacy(false);		//Did alot of extra work checking this, but WHY draw and insult to injury?
 				}
 			}
 			else
 			{
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 		}
 	}
