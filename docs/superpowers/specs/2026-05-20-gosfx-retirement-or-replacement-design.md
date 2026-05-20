@@ -1,6 +1,6 @@
 # gosFX Retirement / Replacement — Design Spec
 
-- **Status:** DRAFT (design only; no code changes)
+- **Status:** DRAFT — open questions resolved 2026-05-20, ready for plan-phase (design only; no code changes)
 - **Date:** 2026-05-20
 - **Authoring branch:** `claude/nifty-mendeleev`
 - **Companion docs:** `docs/superpowers/specs/2026-05-20-cpu-projection-cost-baseline-design.md` (F3 telemetry plan); `docs/superpowers/specs/2026-05-20-unified-projection-spec.md` (DRAFT, per HANDOFF)
@@ -211,16 +211,21 @@ What might break / surprise that isn't obvious:
 
 ---
 
-## 5. Open questions
+## 5. Open questions — RESOLVED 2026-05-20
 
-These need user input before plan-phase:
+User decisions captured below. These were the scoping calls needed before plan-phase.
 
-1. **Visual fidelity floor.** Is "no in-game particles" acceptable as a *shipping* state, or only as a *transitional* state with (B) on a near-term roadmap? The answer changes the urgency of the (B) debt entry. Recommendation embedded above assumes transitional.
-2. **Editor scope.** Should the gosFX retirement slice also retire MLR from the editor target (`engine-standalone` worktree), or accept the divergence as known debt until editor-convergence work picks it up? Recommendation embedded above assumes accept-divergence.
-3. **Viewer / aseconv.** Keep `mclib/mlr/` compiled into those targets only (CMake scoping), or retire MLR entirely and port the offline tools to a non-MLR shape? Recommendation: scope to runtime exe; leave offline binaries alone until they're touched independently.
-4. **F3 telemetry as a gate.** Should we wait for the F3 cost baseline (`docs/superpowers/specs/2026-05-20-cpu-projection-cost-baseline-design.md`) to land before kicking Stage 0 of this slice, or run them concurrently? F3 doesn't gate the *decision* (the schema-coupling axis already settles it) but it would inform the post-retirement perf claim ("retired N µs of CPU clip work").
-5. **(B) timing.** If (B) is filed as debt, does it sit indefinitely, or does it get a milestone? Recommendation: tag it to whichever future milestone first complains about visual fidelity in playtest.
-6. **Tube / contrails.** Single-effect carve-out: should `Tube` ship a stand-alone GPU contrail path before the full (B) is built, to preserve the most-noticed visual? Adds scope to (A) but recovers ~30% of the perceived visual gap with ~5% of (B)'s work.
+1. **Visual fidelity floor — TRANSITIONAL ONLY.** "No in-game particles" is acceptable as a transitional state only. Option (B) — particle reinstatement — is **required-for-ship debt**, not optional. The (B) debt entry must be filed at the same time as the (A) retirement lands and must be tracked toward a ship gate, not parked indefinitely. The minimum-viable GPU particle pipeline is on the critical path for the next shipping milestone.
+2. **Editor scope — ENGINE ONLY.** This slice retires MLR from the runtime exe (`mc2.exe`) only. The editor (`engine-standalone` worktree) transitions separately as part of the existing editor-convergence debt (`feedback_editor_must_converge_with_runtime_paths.md`). CMake target scoping must keep `mclib/mlr/` linkable into editor / Viewer / `aseconv` targets while excluding it from the runtime exe.
+3. **Tube / contrails — NO CARVE-OUT.** Clean delete. `Tube` (contrails) goes with the rest of gosFX in Stage 3. No stand-alone GPU contrail path before (B) lands. Accept the contrail visual gap during the transitional period.
+4. **F3 telemetry — CONCURRENT, NOT GATED.** Stage 0 of this slice runs concurrently with the F3 cost-baseline work (`docs/superpowers/specs/2026-05-20-cpu-projection-cost-baseline-design.md`). F3 doesn't gate the retirement decision (the schema-coupling axis already settles it), but its data informs the post-retirement perf claim. The two specs are independent in execution order.
+
+### 5.1 Implications for plan-phase
+
+- **Stage 4 deletion is final.** `mc2srcdata/effects/mc2.fx` stays on disk (the (B) work surface needs it as the spec library); `mclib/gosfx/` and `mclib/mlr/` are removed from the runtime exe build only — CMake must scope linkage to editor / Viewer / `aseconv` targets explicitly.
+- **(B) must follow soon.** Because (B) is required-for-ship, the spec author for the (A) plan should also draft an initial scope sketch / dependency note for (B) so the next milestone planning has a stub to fill in. The (B) plan does NOT block (A) shipping, but (A) cannot be the last slice before ship.
+- **No Tube carve-out simplifies (A).** The deletion is uniform across all gosFX particle types — no special-case path to maintain.
+- **Concurrent F3 means no sequencing constraint.** Stage 0 instrumentation (`MC2_GOSFX_TRACE=1` counter) can land independently of F3 telemetry. F3's `mlr_total` zone will register the retirement as "zone disappears" (PASS per `feedback_offload_must_be_substitutive_not_additive.md`).
 
 ---
 
