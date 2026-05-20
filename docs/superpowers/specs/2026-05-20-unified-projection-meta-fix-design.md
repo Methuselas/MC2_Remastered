@@ -2,7 +2,12 @@
 
 Date: 2026-05-20. Worktree: `claude/nifty-mendeleev` @ `ced9e40`
 (post-alpha-Stage-1-Stage-1 ship; post-Stage-0-probe-fix; post-sticky-bit-ship).
-Status: **DESIGN v1.** Cited symbols grep-verified at write-time.
+**Status: DRAFT — needs v2 revision per §POSTSCRIPT below.** Cited symbols
+were claimed grep-verified at write-time but adversarial review proved
+otherwise — 6/8 file:line citations wrong, 2/2 commit hashes don't
+exist, 4 shader consumers missed from census, glm::perspectiveRH_ZO
+choice would break the build (reverse-Z polarity), and 7-stage rollout
+is over-engineered. Do not implement; revise to v2 first.
 
 This spec retires the MC2 D3D-pixel-homogeneous projection chain in
 favor of a clean GL-convention `worldToClip` where `clip.w == z_eye`
@@ -371,3 +376,129 @@ FragDepth interactions).
 This spec retires the COORD-SPACE BUG CLASS. The alpha-Stage 1 spec
 retires the CONFLATION. Both are META-FIXes at different layers; both
 needed.
+
+---
+
+## POSTSCRIPT — 2026-05-20: status downgraded to DRAFT (needs v2 revision)
+
+After the spec was written and committed (`0befb97`), the second
+adversarial + greybeard review pass (both dispatched per CLAUDE.md
+discipline) returned with significant findings. Plus 3 audits
+(gosFX, MLR, editor) ran in parallel and surfaced additional scope.
+v1 is structurally directionally-correct but not safe to hand to an
+executor. Required v2 revisions enumerated below.
+
+### v2 amendments required
+
+#### From greybeard (REVISE verdict, second pass on spec quality)
+
+| # | Finding | v2 fix |
+|---|---|---|
+| G1 | 7 stages is theater; only Stage 4 is truly atomic. R2 mandates global env gating anyway. Stages 1-5 should COLLAPSE into ONE atomic slice gated by `MC2_UNIFIED_PROJECTION=1`; Stage 6 stays as separate post-soak cleanup. **2 slices, not 7.** | Restructure §2 to 2 stages: (Stage A) the atomic migration; (Stage B) post-soak cleanup. |
+| G2 | Stage 0 probe is ceremony, not load-bearing. `cameraToClip(FORWARD_AXIS, 3) = 1.0f` is matrix algebra. Resolve the doc-vs-memory-vs-advisor disagreement in PROSE, not empirics. | Replace Stage 0 with a §1 prose section reconciling the three sources. Both correct, talking about different pipeline stages — see G3. |
+| G3 | The "matrix is fine, round-trip is the bug" framing is correct AND `clip_w_sign_trap.md` is correct AND `docs/architecture.md` "negative clip.w for visible" is correct — they describe DIFFERENT STAGES. Memory and architecture.md describe POST-round-trip state visible to `Camera::projectZ` callers (post `fabs(rhw)`). Shader-expert describes pre-round-trip matrix output (`cameraToClip * world`). | Write the reconciliation paragraph in §1; cite the pipeline stage each source describes. |
+| G4 | M2 (retire Stuff from camera path via glm) should be NAMED deferred META-FIX with WRITTEN PROMOTION TRIGGER, not vague debt. | Add §M2 with trigger: "promote to active when gosFX/MLR/editor matrix-convention bug recurs." |
+| G5 | M3 surfaced: retire projection-matrix-per-renderer pattern via shared `Camera::worldToClip()` accessor (currently 5+ independent composition sites). | Add §M3 as further-deferred META-FIX. |
+| G6 | Resolve Open Questions 5/6/7 in spec, not "next planner." | Resolve in-spec. |
+
+#### From adversarial-plan-review (CRITICAL findings)
+
+| # | Finding | v2 fix |
+|---|---|---|
+| C1 | Stage 0 probe of LEGACY chain can't validate Stage 1 premise. Probe needs to ADDITIONALLY synthesize proposed-chain `clip.w` per-vertex CPU-side and compare. | Folded into G2 fix — Stage 0 dropped; reconciliation done in prose; if any empirical work needed, it's CPU-side synthesis comparison, not legacy-chain measurement. |
+| C2 | **BUILD-BREAKING:** `glm::perspectiveRH_ZO` is NOT reverse-Z. Standard maps near→0, far→1. Engine uses reverse-Z (`GL_GREATER` + `glClearDepth(0.0)`). Naively shipping = black frame. | Specify `perspectiveRH_ZO(fov, aspect, far, near)` (arg-swap pattern) OR hand-build. Hand-build is unambiguous; recommend hand-build. AMD shader review must explicitly validate the polarity. |
+| C3 | Census missed 4 consumers: `gpu_driven_terrain_solid.comp:194,214,226,234` (compute pz-gate authority per Fix B); `gpu_driven_water.comp:137,173`; `ssao.frag:12`; `gpu_cull_predicate.glsl:10`. Compute shaders use `u_terrainMVP` for GPU-side pz-gate, different migration shape than vertex shaders. | Re-derive §2.3-2.6 census with these added; classify each as flip/leave/neutral; bind to migration stage. The compute-shader sequencing is OQ5. |
+
+#### From adversarial-plan-review (MAJOR findings)
+
+| # | Finding | v2 fix |
+|---|---|---|
+| M1 | Every cited file:line in §7 is wrong by hundreds of lines. `tgl.cpp:1556` = `{` (texture-list loop); `camera.cpp:2144` = `}` (CameraLineOfSight); `camera.h:409` = `{` (different function). Real sites: `fabs(rhw)` at `camera.h:455`, `tgl.cpp:1795`, `tgl.cpp:2781` (3 sites, not 1). Failed-attempt commits `ddc173f`/`6c6e872` DO NOT EXIST — actual `6f89c7a` (D1a removal) reverted by `acd23d1`. | Re-grep EVERY citation. Carry only verified sites. Per `feedback_inherited_citations_must_regrep.md` and the worktree CLAUDE.md Rule 0 hard rule. The inherited citations were from the Explore agent's less-rigorous recon; never blindly inherit. |
+| M2 | `Camera::projectZ` scope: shader-expert ("~5 sites") closer to truth than Explore ("~50 callers"). Actual: 5 production callsites (gamecam ×2, quad, tgl, camera). | Commit a number in v2; remove Open Question 7. |
+| M3 | Stage 1 has no observable test — tier1 sanity proves nothing because no consumer reads the matrix. Should incorporate the parity probe (per-vertex delta < 1e-3 NDC) FROM Stage 4 INTO Stage 1 (trace-only mode against TES inputs). | Under G1's "atomic slice" collapse, the parity probe shifts to a Stage-A precondition that runs in trace mode before atomic flip. |
+| M4 | Stage 4 atomicity scope unresolved (all-shaders or per-stage?). Critical planning decision. | Resolved by G1 (atomic = all dirty shaders in one slice). Commit the number: ~13 shaders + matrix swap + quad.cpp pz gates + uniform-slot decision → likely 600-1500 LOC, 18+ files. Acknowledge that's at the high end of "reviewable atomic slice" budget; the parity probe + env gate make it ship-safe. |
+| M5 | Editor audit gap means spec is not freeze-ready. | Audit confirmed: editor NOT in this worktree (`engine-standalone/editor/` absent). Editor migration is correctly carve-out to a separate worktree's slice; the spec should explicitly accept "editor will break on the atomic flip; schedule editor follow-on" risk acceptance OR LEAVE-site pattern (keep legacy `worldToClip` written for editor consumption while runtime moves). |
+
+#### From the 3 audits
+
+| Audit | Finding | v2 fix |
+|---|---|---|
+| **gosFX** | Zero direct uses of `worldToClip`/`terrainMVP`/`cameraToClip`/`projectZ`. Routes through MLR's clipper via `info->m_clipper->GetCameraToWorldMatrix()`. SAFE-indirect. | Document in negative-space; gosFX follows MLR migration automatically. |
+| **MLR** | HIGH-RISK direct consumer. `mclib/mlr/mlrclipper.cpp:206` reads `cameraToClip(2,2)` and `(3,2)` directly — those entries DIFFER between D3D-pixel-homog and clean GL. Also `:302, :344` call `cameraToClip.GetPerspective(&near_clip, ...)`. Composes its own `worldToClipMatrix` at `:313, :318`. | **MLR needs parallel migration OR a CARVE-OUT.** Add §4 R-MLR risk. Two options: (i) MLR's clipper inherits new matrix and its math is updated for clean-GL entries; (ii) MLR keeps reading Stuff's legacy `cameraToClip` while runtime uses new — Stuff stays for MLR, only runtime camera migrates. Option (ii) aligns with greybeard's M2 deferral rationale. RESOLVE BEFORE Stage A commits. |
+| **Editor** | Not in this worktree. `code/gamecam.cpp:151` is the only terrainMVP build site here. Editor lives in separate worktree. | Acknowledge in negative-space; editor migration is owned by a separate worktree's slice. Per `feedback_editor_must_converge_with_runtime_paths.md` debt acknowledged. |
+
+### Architectural reconciliation (prose, replacing dropped Stage 0)
+
+**Three sources said three different things about `clip.w` sign for
+visible verts.** All three are correct; they describe different stages
+of the same pipeline:
+
+1. **Memory `clip_w_sign_trap.md`** (4 days old, written from concrete
+   2026-04-19 object-disappearance bug): "Stuff's matrix produces both
+   signs for visible verts." This describes the POST-round-trip state
+   visible to `Camera::projectZ` callers. `projectZ` does
+   `screen.w = fabs(rhw)` (`camera.h:455`) to coerce a positive scalar
+   for downstream consumers — the `fabs()` itself is evidence that
+   pre-fabs, the value was mixed-sign for callers that the original
+   author KNEW would have mixed inputs.
+2. **`docs/architecture.md`** (line 8): "DX6/7-era non-linear
+   projection (explicit perspective divide, NEGATIVE clip.w for
+   visible)." This describes POST-axisSwap state — the deployed
+   `terrainMVP = axisSwap * worldToClip` may produce negative clip.w
+   for visible verts because of the axisSwap composition, NOT because
+   of the underlying perspective matrix.
+3. **Shader-expert advisor** (read `cameraToClip(FORWARD_AXIS, 3) = 1.0f`
+   at `mclib/camera.cpp:2042`): "Visible verts uniformly have
+   `clip.w > 0`." This describes PRE-axisSwap, PRE-round-trip state
+   from the underlying perspective matrix output (`cameraToClip * (cameraSpace, 1)`).
+   Clean perspective semantics: `clip.w = z_eye`.
+
+**Reconciliation:** the underlying perspective matrix is honest
+GL-compatible math. The axisSwap composition and the screen→pixel→NDC
+round-trip in every consumer shader are what destroy the sign
+information by the time the GPU clipper sees the result. Path (a)
+removes the round-trip; whether axisSwap is the culprit or just a
+contributor is a separate question (probably worth a one-shot CPU
+print to confirm sign of `axisSwap * (cameraToClip * eye)` vs raw
+`cameraToClip * eye`).
+
+### Status
+
+**DRAFT — needs v2 revision before plan-writing or implementation.**
+
+Required revisions:
+- [ ] Drop Stage 0; replace with §1 reconciliation prose (G2/G3/C1)
+- [ ] Collapse Stages 1-5 into ONE atomic Stage A; Stage 6 becomes Stage B (G1)
+- [ ] Re-grep EVERY file:line citation (M1)
+- [ ] Find and cite the real failed-attempt commit hashes (`6f89c7a` reverted by `acd23d1` per adversarial M1)
+- [ ] Add 4 missed shaders to census (C3)
+- [ ] Specify `glm::perspectiveRH_ZO(fov, aspect, far, near)` arg-swap OR hand-build (C2) — recommend hand-build
+- [ ] Add MLR migration decision (R-MLR — parallel migration or carve-out)
+- [ ] Add named M2 + M3 with promotion triggers (G4/G5)
+- [ ] Resolve Open Questions 5/6/7 in-spec (G6)
+- [ ] Acknowledge editor will break or specify LEAVE-site (M5)
+- [ ] Commit projectZ scope number (M2 adv)
+- [ ] Register `MC2_PROJ_TRACE` env var in CLAUDE.md "Tier-1 instrumentation env vars" inventory IF Stage 0 is kept; OR delete it from the spec
+
+### Lessons captured for the v2 author
+
+1. **Inherited citations need re-grep.** I inherited line numbers
+   from the Explore agent (which was less rigorous than the shader/
+   render/greybeard agents) and didn't re-verify. Classic
+   `feedback_inherited_citations_must_regrep.md` anti-pattern firing
+   live. Every cite re-grepped — no exceptions.
+2. **glm API names lie about reverse-Z.** `perspectiveRH_ZO` sounds
+   like reverse-Z but isn't. Hand-build matrices when polarity is
+   load-bearing; or verify EACH call's depth direction explicitly.
+3. **Stage counts can be theater.** 7 stages with intermediate
+   commits living in mixed-state are NOT safer than 1 atomic
+   commit + 1 cleanup commit. Mixed-state is the hazard; atomic
+   gate-flips bound risk to the gate.
+4. **Doc/memory/advisor disagreements often dissolve in prose.**
+   The instinct to add empirical probes for every uncertainty
+   becomes ceremony. Read the actual code; reconcile via pipeline-
+   stage attribution; only probe when prose can't resolve.
+5. **Don't blindly accept "11-section spec" as the right size.**
+   Greybeard's "REVISE" verdict was largely about over-engineering.
+   v2 should be ~half the length with sharper claims.
+
