@@ -125,6 +125,103 @@
 // ---------------------------------------------------------------------------
 static const bool s_gpuCullLifecycle = (getenv("MC2_GPU_CULL_LIFECYCLE") != nullptr);
 
+// alpha-Stage 1 §5 Stage 0: candidate-predicate disagreement probe.
+// For each live actor each frame, compute four CANDIDATE predicates that
+// the unconflated four-gate design would have driven, then accumulate
+// pairwise XOR disagreement counters. The probe answers the
+// adversarial-steelman deciding question: do the four read-concerns of
+// the single inView bit actually demand different answers, often enough
+// to justify the architectural retirement of the conflation?
+//
+// Candidates (per spec §5 Stage 0):
+//   render_cand    = inView_instr() (current coarse-frustum, what render
+//                    reads via canBeSeen() today)
+//   sim_cand       = inView OR blockActive OR (framesSinceActive < N)
+//                    (the proposed Stage 3 hysteresis-with-floor signal)
+//   lifecycle_cand = TRUE for any actor visited (we got past the
+//                    objList[i]==NULL skip and the implicit alive check)
+//   ai_cand        = movers: readback-lagged when readback enabled, else
+//                    inView. statics: inView. (Stage 5 producer rule.)
+//
+// Pairwise XOR counters tell us how often each pair of consumers would
+// have demanded a different answer. Of particular interest:
+//   render_vs_sim — the gate-pair-invariant violation rate (the bug
+//                   class §4.3 names). Should be HIGH if hysteresis
+//                   actually catches real off-screen activity.
+//   render_vs_ai  — the readback-vs-coarse divergence for movers.
+//                   Currently 0 unless readback is enabled.
+//   sim_vs_lifecycle — how often hysteresis disagrees with "alive."
+//                      Should be HIGH because most alive actors are
+//                      off-screen but the disagreement is benign.
+//   render_vs_lifecycle — render says no, alive says yes. ~100% of
+//                         off-screen actor-frames. Reported but not
+//                         a "bug-class" disagreement.
+//
+// Output gate per spec §5 Stage 0:
+//   < 5% render_vs_sim disagreement → conflation is benign; abort spec
+//   > 20% render_vs_sim disagreement → confirm META-FIX; full rollout
+//
+// Env-gated MC2_INVIEW_CONFLATION_TRACE=1 per debug_instrumentation_rule.md.
+// 120-frame summary roll matches [TOBJPARITY v1] cadence.
+static bool s_inViewConflationEnabled = (getenv("MC2_INVIEW_CONFLATION_TRACE") != nullptr);
+// Hysteresis floor for sim_cand (Stage 0 tunable knob per spec §9 Q3).
+// Default 4 frames matches conservative recommendation.
+static const uint8_t s_inViewConflationHysteresisN = 4u;
+
+// Pairwise XOR accumulators (frame-actor counts).
+static unsigned long long g_invConfActorFrames      = 0ULL;
+static unsigned long long g_invConfRenderVsSim      = 0ULL;
+static unsigned long long g_invConfRenderVsLife     = 0ULL;
+static unsigned long long g_invConfRenderVsAi       = 0ULL;
+static unsigned long long g_invConfSimVsLife        = 0ULL;
+static unsigned long long g_invConfSimVsAi          = 0ULL;
+static unsigned long long g_invConfLifeVsAi         = 0ULL;
+// Movers vs statics for partial breakdown.
+static unsigned long long g_invConfMovers           = 0ULL;
+static unsigned long long g_invConfStatics          = 0ULL;
+static unsigned long long g_invConfMoverRenderVsAi  = 0ULL;
+static unsigned long long g_invConfFrameCount       = 0ULL;
+
+void g_invViewConflationRollAndMaybeEmit() {
+    if (!s_inViewConflationEnabled) return;
+    // 120-frame interval to match [TOBJPARITY v1] cadence.
+    if (++g_invConfFrameCount % 120ULL == 0ULL) {
+        // Avoid divide-by-zero in summary line.
+        const unsigned long long denom = g_invConfActorFrames ? g_invConfActorFrames : 1ULL;
+        fprintf(stderr,
+            "[INVIEW_CONFLATION v1] event=summary actor_frames=%llu"
+            " render_vs_sim=%llu (%.2f%%)"
+            " render_vs_ai=%llu (%.2f%%)"
+            " sim_vs_ai=%llu (%.2f%%)"
+            " render_vs_life=%llu (%.2f%%)"
+            " sim_vs_life=%llu (%.2f%%)"
+            " life_vs_ai=%llu (%.2f%%)"
+            " movers=%llu statics=%llu"
+            " mover_render_vs_ai=%llu hysteresis_N=%u\n",
+            g_invConfActorFrames,
+            g_invConfRenderVsSim, 100.0 * (double)g_invConfRenderVsSim / (double)denom,
+            g_invConfRenderVsAi,  100.0 * (double)g_invConfRenderVsAi  / (double)denom,
+            g_invConfSimVsAi,     100.0 * (double)g_invConfSimVsAi     / (double)denom,
+            g_invConfRenderVsLife,100.0 * (double)g_invConfRenderVsLife/ (double)denom,
+            g_invConfSimVsLife,   100.0 * (double)g_invConfSimVsLife   / (double)denom,
+            g_invConfLifeVsAi,    100.0 * (double)g_invConfLifeVsAi    / (double)denom,
+            g_invConfMovers, g_invConfStatics,
+            g_invConfMoverRenderVsAi,
+            (unsigned)s_inViewConflationHysteresisN);
+        fflush(stderr);
+        g_invConfActorFrames     = 0ULL;
+        g_invConfRenderVsSim     = 0ULL;
+        g_invConfRenderVsLife    = 0ULL;
+        g_invConfRenderVsAi      = 0ULL;
+        g_invConfSimVsLife       = 0ULL;
+        g_invConfSimVsAi         = 0ULL;
+        g_invConfLifeVsAi        = 0ULL;
+        g_invConfMovers          = 0ULL;
+        g_invConfStatics         = 0ULL;
+        g_invConfMoverRenderVsAi = 0ULL;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // C0-4: helper — category enum → short name string for parity logging
 // ---------------------------------------------------------------------------
@@ -1940,7 +2037,42 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 			} else if (obj->framesSinceActive < 255) {
 				obj->framesSinceActive++;
 			}
+
+			// alpha-Stage 1 §5 Stage 0 probe: compute 4 candidate
+			// predicates per actor + accumulate pairwise XOR. Cheap:
+			// 4 bool reads + 6 XORs per live actor per frame. Probe
+			// stays env-gated; zero cost when MC2_INVIEW_CONFLATION_TRACE
+			// is unset.
+			if (s_inViewConflationEnabled) {
+				const bool render_cand    = obj->inView_instr();
+				const bool sim_cand       = render_cand
+				                          || obj->blockActive_instr()
+				                          || (obj->framesSinceActive < s_inViewConflationHysteresisN);
+				const bool lifecycle_cand = true; // alive by virtue of being in objList[i]
+				const bool isMover_flag   = obj->isMover();
+				const bool ai_cand        = isMover_flag
+				                          ? (gpu_cull::readback_isEnabled()
+				                              ? gpu_cull::readback_isActorVisibleLagged(
+				                                    static_cast<uint32_t>(obj->getHandle()))
+				                              : render_cand)
+				                          : render_cand;
+				++g_invConfActorFrames;
+				if (isMover_flag) {
+					++g_invConfMovers;
+					if (render_cand != ai_cand) ++g_invConfMoverRenderVsAi;
+				} else {
+					++g_invConfStatics;
+				}
+				if (render_cand != sim_cand)       ++g_invConfRenderVsSim;
+				if (render_cand != lifecycle_cand) ++g_invConfRenderVsLife;
+				if (render_cand != ai_cand)        ++g_invConfRenderVsAi;
+				if (sim_cand    != lifecycle_cand) ++g_invConfSimVsLife;
+				if (sim_cand    != ai_cand)        ++g_invConfSimVsAi;
+				if (lifecycle_cand != ai_cand)     ++g_invConfLifeVsAi;
+			}
 		}
+		// Per-frame roll-and-maybe-emit (120-frame summary cadence).
+		g_invViewConflationRollAndMaybeEmit();
 	}
 
 	// 2026-05-13: substrate_frameBegin() was MOVED to Mission::update

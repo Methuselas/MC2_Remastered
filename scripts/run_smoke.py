@@ -279,6 +279,9 @@ def main():
                             "MC2_TOBJ_COST_SPLIT",
                             # Task 7 — superset-parity counter probe (proof-gate #2)
                             "MC2_TOBJ_PARITY",
+                            # alpha-Stage 1 §5 Stage 0 — candidate-predicate
+                            # disagreement probe for inView unconflation.
+                            "MC2_INVIEW_CONFLATION_TRACE",
                             "MC2_GPUPROPS_TRACE",
                             "MC2_MECH_RESTORE_TRACE",
                             # Phase 1 — terrain lighting GPU compute
