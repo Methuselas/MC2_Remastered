@@ -31,6 +31,7 @@ set(SOURCES ${SOURCES}
     weaponfx.cpp
     csvfile.cpp
     fastfile.cpp
+    fst_hash.cpp
     ffile.cpp
     file.cpp
     gamelog.cpp

@@ -117,18 +117,9 @@ FastFile *FastFileFind (const char *fname, long &fastFileHandle)
 }
 
 //------------------------------------------------------------------
-DWORD elfHash (const char *name)
-{
-    unsigned long   h = 0, g;
-    while ( *name )
-    {
-        h = ( h << 4 ) + *name++;
-        if ( (g = h & 0xF0000000) )
-            h ^= g >> 24;
-        h &= ~g;
-    }
-    return h;
-}
+// elfHash() relocated to mclib/fst_hash.cpp so the tests/unit target can
+// link it without pulling in the engine include stack. Decl still lives
+// in mclib/fastfile.h; engine callers are unchanged.
 
 //-----------------------------------------------------------------------------------
 
