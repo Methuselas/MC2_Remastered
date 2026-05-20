@@ -23,6 +23,15 @@
 #include"mathfunc.h"
 #endif
 
+// F3 CPU projection cost-baseline: forward declarations to keep camera.h
+// header weight low. projectZ() bumps n_calls_eventdriven when called
+// outside the render loop (TLS flag tracked by RenderLoopGuard).
+namespace mc2_cpu_proj_cost {
+    extern bool g_cpuProjEnabled;
+    extern thread_local bool tls_inRenderLoop;
+    void add_workload_eventdriven_projectZ();
+}
+
 #ifndef TGL_H
 #include"tgl.h"
 #endif
@@ -431,6 +440,14 @@ class Camera
 		bool projectZ (Stuff::Vector3D &point, Stuff::Vector4D &screen,
 		               LegacyProjectionResult* optionalResult = nullptr)
 		{
+			// F3 CPU projection cost-baseline: eventdriven projectZ
+			// attribution. Count-only (no chrono); single TLS read + branch
+			// + non-atomic counter bump. Per audit (c): no outer event
+			// boundary exists, so count is the only signal.
+			if (mc2_cpu_proj_cost::g_cpuProjEnabled &&
+			    !mc2_cpu_proj_cost::tls_inRenderLoop) {
+				mc2_cpu_proj_cost::add_workload_eventdriven_projectZ();
+			}
 			//--------------------------------------------------------------------
 			// Now run the NEW project code
 			Stuff::Vector4D xformCoords;

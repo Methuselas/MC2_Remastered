@@ -19,6 +19,7 @@
 #include "../code/gameobj.h"  // C3: full GameObject definition for obj->getHandle() in init()
 #include "../GameOS/gameos/gos_mech_batcher.h"
 #include "../GameOS/gameos/gos_mech_killswitch.h"
+#include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
 
 // MC2_MECH_LOD_TRACE=1: per-actor LOD-swap boundary print.
 static const bool s_mechLodTrace = (getenv("MC2_MECH_LOD_TRACE") != nullptr);
@@ -2131,6 +2132,11 @@ bool Mech3DAppearance::isMouseOver (float px, float py)
 //-----------------------------------------------------------------------------
 bool Mech3DAppearance::recalcBounds (void)
 {
+	// F3 CPU projection cost-baseline: aggregate per-actor scope into the
+	// recalcBounds_perframe bucket. No-op when env OFF.
+	::mc2_cpu_proj_cost::Scope _f3_recalcBounds_scope(
+	    ::mc2_cpu_proj_cost::BUCKET_RECALCBOUNDS_PERFRAME);
+	::mc2_cpu_proj_cost::add_workload_recalcbounds(1);
 	Stuff::Vector4D tempPos;
 	bool wasInView = inView;
 	setVisibilityGatesFromLegacy(false);
@@ -3203,6 +3209,10 @@ void Mech3DAppearance::setObjStatus (long oStatus)
 void Mech3DAppearance::updateGeometry (void)
 {
 	ZoneScopedN("GameLogic.Mech3D.UpdateGeometry");
+	// F3 CPU projection cost-baseline: sidecar bucket (NEVER in
+	// projection_total). One scope per visible mech per frame.
+	::mc2_cpu_proj_cost::SidecarScope _f3_skin_scope(
+	    ::mc2_cpu_proj_cost::SIDECAR_SKINNING_CHAIN);
 	//Always override with our local instance.
 	mechShape->SetTextureHandle(0,localTextureHandle);
 	

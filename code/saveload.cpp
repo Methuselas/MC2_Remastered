@@ -12,6 +12,7 @@
 // Include Files
 #ifndef MCLIB_H
 #include"mclib.h"
+#include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (hard_reset)
 #endif
 
 #ifndef MISSION_H
@@ -639,6 +640,9 @@ void Part::Load (FitIniFilePtr file, long partNum)
 void Mission::load (const char *loadFileName)
 {
 	extern int g_lightProbeSetupPath; g_lightProbeSetupPath = 2; // [GPUPROPS v1]
+	// F3 CPU projection cost-baseline: flush previous-mission samples and
+	// clear ring buffer. No-op when env OFF.
+	::mc2_cpu_proj_cost::hard_reset("Mission::load");
 	userInput->mouseOff();
 	loadProgress = 0.0f;
 

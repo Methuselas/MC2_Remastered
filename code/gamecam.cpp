@@ -41,6 +41,7 @@
 
 #include<mlr/mlr.hpp>
 #include <tracy/Tracy.hpp>
+#include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
 #include "../GameOS/gameos/gos_static_prop_registry.h"  // Stage 3.C: frameBegin()
 
 //---------------------------------------------------------------------------
@@ -139,7 +140,13 @@ void GameCamera::render (void)
 	eye->setLightIntensity(1,1.0);
 
 	MidLevelRenderer::PerspectiveMode = usePerspective;
-	theClipper->StartDraw(cameraOrigin, cameraToClip, fColor, &fColor, default_state, &z);
+	{
+		// F3 CPU projection cost-baseline: mlr_total bucket — wraps StartDraw
+		// (per-frame MLR setup). RenderNow gets a second scope further below.
+		::mc2_cpu_proj_cost::Scope _f3_mlr_start_scope(
+		    ::mc2_cpu_proj_cost::BUCKET_MLR_TOTAL);
+		theClipper->StartDraw(cameraOrigin, cameraToClip, fColor, &fColor, default_state, &z);
+	}
 	MidLevelRenderer::GOSVertex::farClipReciprocal = (1.0f-cameraToClip(2, 2))/cameraToClip(3, 2);
 
 	if (active && turn > 1)
@@ -151,6 +158,9 @@ void GameCamera::render (void)
 		// Compose terrainMVP: MC2 world coords -> GL clip coords
 		{
 			ZoneScopedN("Camera.BuildMVP");
+			// F3 CPU projection cost-baseline: matrix_build site (a).
+			::mc2_cpu_proj_cost::Scope _f3_mvp_scope(
+			    ::mc2_cpu_proj_cost::BUCKET_MATRIX_BUILD);
 			const float* W = (const float*)&worldToClip;
 			#define WTC(r,c) W[(c)*4+(r)]
 
@@ -210,6 +220,10 @@ void GameCamera::render (void)
 
 		{
 			ZoneScopedN("GameCamera::render objects");
+			// F3 CPU projection cost-baseline: mark we are inside the render
+			// loop so eventdriven projectZ attribution can distinguish
+			// render-time calls from AI/picking/input calls.
+			::mc2_cpu_proj_cost::RenderLoopGuard _f3_render_guard;
 			ObjectManager->render(true, true, true);	//render all other objects
 		}
 
@@ -266,6 +280,10 @@ void GameCamera::render (void)
 
 		{
 			ZoneScopedN("GameCamera::render clipperRenderNow");
+			// F3 CPU projection cost-baseline: mlr_total bucket — RenderNow
+			// scope (joined with the StartDraw scope above into mlr_total).
+			::mc2_cpu_proj_cost::Scope _f3_mlr_rendernow_scope(
+			    ::mc2_cpu_proj_cost::BUCKET_MLR_TOTAL);
 			theClipper->RenderNow();		//Draw the FX
 		}
 

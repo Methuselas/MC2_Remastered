@@ -20,6 +20,7 @@
 #endif
 
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
+#include "cpu_proj_cost_split.h"     // F3 CPU projection cost-baseline (RAII scope)
 #include "../GameOS/gameos/gos_static_prop_batcher.h"    // Stage 2.D.2 CacheGpuLightData
 #include "../GameOS/gameos/gos_static_prop_killswitch.h" // g_useGpuObjects extern
 #include "../GameOS/gameos/gos_mech_killswitch.h"        // g_useGpuMechs extern (Slice B1)
@@ -1411,6 +1412,11 @@ long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuatern
 	::mc2_object_recon::Scope _recon_mShape_(
 		&::mc2_object_recon::g_per_frame.mShape_total_ns,
 		&::mc2_object_recon::g_per_frame.mShape_calls);
+	// F3 CPU projection cost-baseline: per-multishape scope, aggregated
+	// into the tgl_transform per-frame bucket. No-op when env OFF.
+	::mc2_cpu_proj_cost::Scope _f3_tgl_scope(
+	    ::mc2_cpu_proj_cost::BUCKET_TGL_TRANSFORM);
+	::mc2_cpu_proj_cost::add_workload_tgl_transform(numTG_Shapes);
     //Profile T&L so I can break out GameLogic from T&L
 #ifdef LAB_ONLY
     __int64 x;

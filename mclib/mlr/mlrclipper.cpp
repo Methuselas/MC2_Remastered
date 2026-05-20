@@ -3,6 +3,7 @@
 //===========================================================================//
 
 #include"mlrheaders.hpp"
+#include "../cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (n_prims_clipped)
 
 extern DWORD gShowBirdView, gEnableDetailTexture, gEnableMultiTexture, gEnableLightMaps;
 
@@ -402,6 +403,10 @@ void
 //
 // Statistic timing function
 //
+	// F3 CPU projection cost-baseline: n_prims_clipped workload counter.
+	// Per audit (d): MLRClipper::DrawShape is the per-primitive dispatch
+	// site. No-op when env OFF.
+	::mc2_cpu_proj_cost::add_workload_mlr_prim_clipped();
 
 	gos_PushCurrentHeap(Heap);
 	MLRShape *shape = dInfo->shape;

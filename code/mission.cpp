@@ -13,6 +13,7 @@
 #ifndef MCLIB_H
 #include"mclib.h"
 #include "gos_crashbundle.h"
+#include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (hard_reset)
 #define CB_PRINTF(fmt, ...) do { \
     char _cbbuf[256]; \
     snprintf(_cbbuf, sizeof(_cbbuf), fmt, ##__VA_ARGS__); \
@@ -1681,6 +1682,9 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	extern int g_lightProbeSetupPath; g_lightProbeSetupPath = 1; // [GPUPROPS v1]
 	ZoneScopedN("Mission::init");
 	mission_phase_begin();
+	// F3 CPU projection cost-baseline: flush previous-mission samples and
+	// clear ring buffer. No-op when env OFF.
+	::mc2_cpu_proj_cost::hard_reset("Mission::init");
 
 	// Reset GPU static-prop batcher state at every map boundary, before any
 	// actor registerType() calls happen during actor spawn (Task 6).

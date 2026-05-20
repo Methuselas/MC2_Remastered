@@ -28,6 +28,7 @@ static bool s_tobjSplitBdOn = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
 #include <unordered_map>  // LODBUG probe: tracks per-actor previous bldgShape*
 #include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
+#include "cpu_proj_cost_split.h"      // F3 CPU projection cost-baseline (RAII scope)
 #include "gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for per-update breakdown
 
 #ifndef CAMERA_H
@@ -1162,6 +1163,11 @@ bool BldgAppearance::isMouseOver (float px, float py)
 //-----------------------------------------------------------------------------
 bool BldgAppearance::recalcBounds (void)
 {
+	// F3 CPU projection cost-baseline: aggregate per-actor scope into the
+	// recalcBounds_perframe bucket. No-op when env OFF.
+	::mc2_cpu_proj_cost::Scope _f3_recalcBounds_scope(
+	    ::mc2_cpu_proj_cost::BUCKET_RECALCBOUNDS_PERFRAME);
+	::mc2_cpu_proj_cost::add_workload_recalcbounds(1);
 	// [TOBJSPLIT v1] accumulators declared in code/static_update_counters.h
 	// (included above via ../code/static_update_counters.h).
 	// Gate: file-scope s_tobjSplitBdOn (defined above, shared with TreeAppearance).
@@ -3925,6 +3931,11 @@ bool TreeAppearance::isMouseOver (float px, float py)
 //-----------------------------------------------------------------------------
 bool TreeAppearance::recalcBounds (void)
 {
+	// F3 CPU projection cost-baseline: aggregate per-actor scope into the
+	// recalcBounds_perframe bucket. No-op when env OFF.
+	::mc2_cpu_proj_cost::Scope _f3_recalcBounds_scope(
+	    ::mc2_cpu_proj_cost::BUCKET_RECALCBOUNDS_PERFRAME);
+	::mc2_cpu_proj_cost::add_workload_recalcbounds(1);
 	// [TOBJSPLIT v1] accumulators declared in code/static_update_counters.h
 	// (included above via ../code/static_update_counters.h).
 	// Gate: file-scope s_tobjSplitBdOn (defined above, shared with BldgAppearance).

@@ -48,6 +48,7 @@
 // Lifecycle Option C (camera-motion-gated fail-open) is shippable. See
 // docs/superpowers/explorations/2026-05-07-lifecycle-normal-zoom-design.md.
 #include"../GameOS/gameos/gos_profiler.h"
+#include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
 #include <math.h>
 #include <cstdlib>  // std::getenv for [VPL_PICK v1] env-gated trace (Step 3 3a)
 #include <cstdio>   // std::printf for [VPL_PICK v1] lifecycle print
@@ -1725,8 +1726,14 @@ long Camera::update (void)
 	setLightIntensity(1,1.0);
 
     updateLights();
- 
-	TG_Shape::SetCameraMatrices(&cameraOrigin,&cameraToClip);
+
+	{
+		// F3 CPU projection cost-baseline: matrix_build site (b) —
+		// per-frame TG_Shape::SetCameraMatrices composes s_worldToClip.
+		::mc2_cpu_proj_cost::Scope _f3_setcam_scope(
+		    ::mc2_cpu_proj_cost::BUCKET_MATRIX_BUILD);
+		TG_Shape::SetCameraMatrices(&cameraOrigin,&cameraToClip);
+	}
 	TG_Shape::SetFog(fogColor,fogStart,fogFull);
 
 	active = true;

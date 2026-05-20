@@ -28,6 +28,7 @@
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
+#include "../../mclib/cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline
 #include "gos_terrain_bridge.h"
 #include "gos_terrain_patch_stream.h"
 #include "gos_terrain_indirect.h"
@@ -5935,12 +5936,19 @@ void gos_DestroyRenderer() {
 
 void gos_RendererBeginFrame() {
     gosASSERT(g_gos_renderer);
+    // F3 CPU projection cost-baseline: idempotent first-call init, then
+    // reset per-frame bucket accumulators. No-op when env OFF.
+    ::mc2_cpu_proj_cost::init_from_env();
+    ::mc2_cpu_proj_cost::frame_begin();
     g_gos_renderer->beginFrame();
 }
 
 void gos_RendererEndFrame() {
     gosASSERT(g_gos_renderer);
     g_gos_renderer->endFrame();
+    // F3 CPU projection cost-baseline: commit per-frame samples; print
+    // window stats every 500 frames. No-op when env OFF.
+    ::mc2_cpu_proj_cost::frame_end();
 }
 
 void gos_RendererFlushHUDBatch() {
