@@ -119,6 +119,7 @@
 // (submitActor fast-rejects while !s_geometryFinalized).
 #include "gos_static_prop_batcher.h"
 #include "gos_mech_batcher.h"
+#include "../GameOS/gameos/gpu_cull_compute.h"   // Stage 0.5 §0: mirror Init's compute_buildIndirectBuffer tail
 #include "apprtype.h"
 #ifndef LINUX_BUILD
 #include<ddraw.h>
@@ -1583,6 +1584,15 @@ void Mission::load (const char *loadFileName)
 	// mission.cpp:3112-3115.
 	GpuStaticPropBatcher::instance().finalizeGeometry();
 	GpuMechBatcher::instance().finalizeGeometry();
+
+	// Stage 0.5 §0 prerequisite: mirror Mission::init's compute_buildIndirectBuffer
+	// tail (mission.cpp:3134-3136). Without this, s_blockVisBuf inherits the
+	// previous mission's block-temporal stamps on savegame restore, breaking any
+	// future readback consumer that depends on block-vis correctness post-restore.
+	// Logistics::beginMission inherits this transitively via mission->init().
+	if (gpu_cull::compute_isEnabled()) {
+		gpu_cull::compute_buildIndirectBuffer(batcher_getTypeCount());
+	}
 	{
 		static const bool s_mechRestoreTrace =
 			(getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
