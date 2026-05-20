@@ -138,11 +138,6 @@ class Camera
 		Stuff::Matrix4D				worldToClip;					//Matrix used to bring a point from world space to camera/clip space
 		Stuff::Matrix4D				clipToWorld;					//Matrix used to bring a point from camera/clip space to world space
 		
-		float						startZInverse;					//Used to help interpolate the Screen Coords in InverseProjectZ
-		float						startWInverse;
-		float						zPerPixel;
-		float						wPerPixel;
-		
 		TG_LightPtr					*worldLights;					//Lighting for the entire world.
 		long						numLights;						//Number of lights in the above list.  Always MAX_LIGHTS!
 		
@@ -1098,13 +1093,6 @@ class Camera
 			return lookTargetObject;
 		}
 		
-		void setInverseProject (float sZ, float sW, float zPP, float wPP)
-		{
-			startZInverse = sZ;
-			startWInverse = sW;
-			zPerPixel = zPP;
-			wPerPixel = wPP;
-		}
 };		
 
 //---------------------------------------------------------------------------

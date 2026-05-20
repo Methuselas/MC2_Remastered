@@ -2116,8 +2116,6 @@ void Terrain::geometry (void)
 		}
 	}
 
-	eye->setInverseProject(mostZ,leastW,yzRange,ywRange);
-
 	//-----------------------------------
 	// update the cloud layer
 	if (Terrain::cloudLayer)
