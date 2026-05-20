@@ -49,9 +49,29 @@ static const bool s_trace               = parseEnvBoolWithDefault("MC2_STATIC_PR
 // Set MC2_STATIC_PROP_MISSION_LOAD_REG=0 to opt out.
 static const bool s_missionLoadRegEnabled =
     parseEnvBoolWithDefault("MC2_STATIC_PROP_MISSION_LOAD_REG", true);
-// Set MC2_STATIC_PROP_LATE_SPAWN_REG=0 to opt out.
+// Set MC2_STATIC_PROP_LATE_SPAWN_REG=1 to opt in (default OFF as of 2026-05-20).
+//
+// Previously default-on (Task 9 Track B, 2026-05-06). The sole caller is
+// MechWarrior::getWayPointMarker (code/warrior.cpp:7593), which registers
+// tactical-order waypoint markers ("WalkWayPoint"/"RunWayPoint"/"JumpWayPoint")
+// into the static-prop batcher so they GPU-batch alongside building props.
+//
+// 2026-05-20: User-driven savegame-restore canary on mc2_10 (post-commit
+// 4008185) surfaced that these late-registered markers render as a
+// persistent black octagon at the LZ. Two contributing factors:
+//   1. MechWarrior::copyFromData (warrior.cpp:8345) iterates the restored
+//      tacOrderQueue and re-creates a marker for every saved slot — including
+//      slots whose orders had completed pre-save but whose .point was never
+//      cleared, planting a marker at stale coordinates.
+//   2. Late-registered instances never get their per-instance lightDataIndex
+//      patched by flush(); calc_light() returns (0,0,0); v_argb is black.
+//
+// Project does not use waypoint markers as a gameplay feature, so disabling
+// late-spawn registration unconditionally fixes the visible artifact with
+// no behavior loss. Operator can opt back in (MC2_STATIC_PROP_LATE_SPAWN_REG=1)
+// if revisiting Task 6/9 Track B's lighting-patch integration.
 static const bool s_lateSpawnRegEnabled =
-    parseEnvBoolWithDefault("MC2_STATIC_PROP_LATE_SPAWN_REG", true);
+    parseEnvBoolWithDefault("MC2_STATIC_PROP_LATE_SPAWN_REG", false);
 
 // 2026-05-11 per-instance light-idx capture. flush() consumes the value
 // stored in RecipeRange.lightDataIndex by markVisible() when this is on;
