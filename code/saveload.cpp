@@ -120,6 +120,9 @@
 #include "gos_static_prop_batcher.h"
 #include "gos_mech_batcher.h"
 #include "../GameOS/gameos/gpu_cull_compute.h"   // Stage 0.5 §0: mirror Init's compute_buildIndirectBuffer tail
+#include "../GameOS/gameos/gpu_cull_substrate.h"   // Stage 0.5 §0 (cont'd): mirror Init's per-mission substrate re-init (mission.cpp:2807)
+#include "../GameOS/gameos/gpu_cull_readback.h"    // Stage 0.5 §0 (cont'd): mirror Init's per-mission readback re-init (mission.cpp:2826)
+#include "../GameOS/gameos/gos_terrain_lighting.h" // Stage 0.5 §0 (cont'd): mirror Init's per-mission terrain-lighting re-init (mission.cpp:2817)
 #include "apprtype.h"
 #ifndef LINUX_BUILD
 #include<ddraw.h>
@@ -1136,7 +1139,25 @@ void Mission::load (const char *loadFileName)
 
 	land->load( &missionFile );
 
-	loadProgress = 38.0f;
+	// Stage 0.5 §0 prereq (continued, Block A): mirror Mission::init's
+	// terrain-side per-mission init that Mission::destroy() tore down at the
+	// top of this function. Block B (gpu_cull substrate/compute/readback
+	// re-init) is deferred to after ObjectManager->Load below, because those
+	// subsystems size their SSBOs to ObjectManager->getMaxObjects() which
+	// returns 0 until Load populates the actor counts. Plan:
+	// docs/superpowers/plans/2026-05-20-mission-load-init-mirror-design.md.
+	loadProgress = 36.0f;
+	land->primeMissionTerrainCache(loadProgress, 4.0f);
+	loadProgress = 40.0f;
+	// Phase 1: terrain lighting GPU compute — per-mission init alongside
+	// gpu_cull (mirror mission.cpp:2817). Uses Terrain::realVerticesMapSide
+	// set during land->init() above.
+	gos_terrain_lighting::mission_init(
+		static_cast<uint32_t>(Terrain::realVerticesMapSide * Terrain::realVerticesMapSide),
+		64u);
+	// Static-shadow priming reset (process-scoped, mirror mission.cpp:2831-2832).
+	gos_ResetStaticShadowPriming();
+	mc_ResetTerrainShadowPrimed();
 
 	//----------------------------------------------------
 	// Start GameMap for Movement System
@@ -1401,6 +1422,35 @@ void Mission::load (const char *loadFileName)
 				"mechFinalized=%d appearanceListNull=%d\n",
 				GpuMechBatcher::instance().isFinalized() ? 1 : 0,
 				(appearanceTypeList == NULL) ? 1 : 0);
+	}
+
+	// Stage 0.5 §0 prereq (continued, Block B): gpu_cull substrate/compute/readback
+	// re-init paired with Mission::destroy's *_shutdown calls (mission.cpp:3264-3269).
+	// Placed AFTER ObjectManager->Load above because substrate_init and readback_init
+	// size their SSBOs to ObjectManager->getMaxObjects(), which returns 0 until that
+	// Load call populates the actor counts. Mirror of Mission::init's order at
+	// mission.cpp:2796 setNumObjects -> :2807 substrate_init -> :2811 compute_init
+	// -> :2826 readback_init. Each *_init drops its prior state internally on re-init.
+	// Plan: docs/superpowers/plans/2026-05-20-mission-load-init-mirror-design.md.
+	{
+		const uint32_t maxActors = static_cast<uint32_t>(ObjectManager->getMaxObjects());
+		const uint32_t staticPropHeadroom = 8192u;  // visible static props at wolfman zoom
+		gpu_cull::substrate_init(maxActors + maxActors / 4u + staticPropHeadroom);
+	}
+	gpu_cull::compute_init();
+	{
+		const uint32_t maxActors = static_cast<uint32_t>(ObjectManager->getMaxObjects());
+		const uint32_t staticPropHeadroom = 8192u;
+		gpu_cull::readback_init(maxActors + maxActors / 4u + staticPropHeadroom);
+	}
+	{
+		static const bool s_mechRestoreTrace =
+			(getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
+		if (s_mechRestoreTrace)
+			fprintf(stderr,
+				"[MECHRESTORE v1] event=saveload_phase phase=post_init_mirror "
+				"maxActors=%u\n",
+				(uint32_t)ObjectManager->getMaxObjects());
 	}
 
 	ObjectManager->buildMoverLists();
