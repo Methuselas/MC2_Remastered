@@ -344,6 +344,13 @@ def main():
                             # allowlist subprocess.Popen drops it and the probe
                             # never fires.
                             "MC2_WATER_INVPROJ_PARITY",
+                            # F3 CPU-projection cost-split (2026-05-20):
+                            # MC2_CPU_PROJ_COST_SPLIT = master env gate for the
+                            # measurement-only bucket/sidecar instrumentation
+                            # (mclib/cpu_proj_cost_split.{h,cpp}). Without this
+                            # in the allowlist subprocess.Popen drops it and
+                            # tier1 captures emit "[CPU_PROJ v1 disabled]".
+                            "MC2_CPU_PROJ_COST_SPLIT",
                             # Tier 1.2 — KHR_debug fatal-on-HIGH opt-in
                             # (docs/testing-strategy.md). Forwarded so
                             # --gl-debug-fatal reaches the engine subprocess.
