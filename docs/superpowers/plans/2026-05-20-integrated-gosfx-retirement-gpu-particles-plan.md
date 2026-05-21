@@ -18,7 +18,7 @@
 - **MAJOR-2 (trace oracle gosFX-coupled)** — Trace module relocated to neutral `mclib/fx_trace/` BEFORE B1 Stage 2'; env var renamed `MC2_FX_TRACE=1`. Survives A4 unchanged.
 - **MAJOR-3 (CI grep gate scoping unresolved)** — Two-phase definition: B1 phase forbids only projection APIs inside `mclib/particles/`; A4 phase tightens to also forbid `theClipper`/`MLRClipper` anywhere outside (now-deleted) `mclib/gosfx/`.
 - **MAJOR-4 (std430 guard too weak)** — Per-field `offsetof` + `alignof` static_asserts added to B1 Stage 1'; one-source schema generation filed as B2 polish debt.
-- **MINOR-1 (A1 internal contradiction)** — A1 gate moves entirely inside `gosFX::Effect::Draw` no-op; 16 clipper assignments continue executing.
+- **MINOR-1 (A1 internal contradiction)** — RETRACTED-AND-REPLACED by v3 round-3 audit. v2's `gosFX::Effect::Draw` single-leaf gate would have missed `MLRClipper::DrawScalableShape` (called direct from `gosFX::Shape::Draw`, not through `Effect::Draw`) and `MLRClipper::DrawEffect` (reads `worldToClipMatrix` directly). v3 gates all four MLR work-leaves identified in the sibling audit `2026-05-20-integrated-gosfx-retirement-INSTRUMENTATION-AUDIT-v3.md`. See §2.1 for the v1→v2→v3 history.
 - **MINOR-2 (A5 default)** — A5 default is **no-op stub** (delete bodies, leave shells). Light type registration stays so mission .fit parsing continues.
 
 ---
@@ -141,19 +141,72 @@ A0 is shippable independently. A1 can begin once the counter is verified produci
 ## 2. Stage A1 — `MC2_DISABLE_GOSFX=1` env-gate
 
 ### 2.1 Goal
-Single env-gate that short-circuits the gosFX render WORK. When ON: `Effect::Draw` early-returns no-op at its entry point. `theClipper->StartDraw` and `theClipper->RenderNow` continue running but draw zero (because no `Effect::Draw` ever enqueues into the clipper). 16 `drawInfo.m_clipper = theClipper` assignments **continue executing** (cheap pointer stores; structural integrity preserved for A4's clean cutover). Default OFF.
+Env-gate that short-circuits the gosFX render WORK by gating every
+MLR work-leaf identified in the v3 audit. When ON: each of the four
+gated MLR leaves early-returns no-op at function entry.
+`theClipper->StartDraw` and `theClipper->RenderNow` continue running
+(outer Tracy `mlr_total` scope preserved) but the sorter accumulates
+nothing because the front-door leaves don't enqueue. 16
+`drawInfo.m_clipper = theClipper` assignments **continue executing**
+(cheap pointer stores; structural integrity preserved for A4's clean
+cutover). Default OFF.
 
-**(v2 MINOR-1 fold-in):** Previous wording said the clipper assignments "skipped" then "continue executing" — contradictory. The CORRECT design (and the one implemented here) is: gate fires INSIDE `gosFX::Effect::Draw` to no-op the work, NOT at the clipper-assignment site. This preserves the call-chain shape so A4's atomic deletion remains a clean cutover. Clipper state still gets set up; it just never receives effect geometry.
+**(v3 round-3 audit fold-in — RETRACTS-AND-REPLACES v2 MINOR-1):**
+
+History:
+- **v1:** gate at the 16 clipper-assignment sites. Rejected — too many
+  touch points.
+- **v2 MINOR-1:** single gate inside `gosFX::Effect::Draw`. Round-2
+  pre-impl audit found `MLRClipper::DrawEffect` reads
+  `worldToClipMatrix` directly and `MLRClipper::DrawScalableShape` is a
+  parallel front-door leaf (`gosFX::Shape::Draw` →
+  `info->m_clipper->DrawScalableShape`, NOT through `Effect::Draw`).
+  Single `Effect::Draw` gate would have missed both. **v2 MINOR-1
+  RETRACTED.**
+- **v3 (this version):** exhaustive `mclib/mlr/` audit (sibling document
+  `2026-05-20-integrated-gosfx-retirement-INSTRUMENTATION-AUDIT-v3.md`)
+  identifies four MLR work-leaves; all four are gated. CI script
+  `scripts/check-mlr-leaves-gated.sh` enforces.
 
 ### 2.2 Inputs
 - A0 trace counter (still active; `FX_TRACE_DRAW` expected to drop to zero per spec when A1 gates ON; `FX_TRACE_SPAWN` still nonzero — spawn still happens; only draw is gated).
+- v3 audit document §2.1 (gated leaf list) + §5 (side-effect safety) + §7 (CI script outline).
 
 ### 2.3 Files modified/created
-Per §0.1 compile-time enumeration discipline: **do NOT touch the 16 sites.** Instead:
-- `mclib/gosfx/effect.cpp` (or where `Effect::Draw` lives — grep at execute): single env-check `if (s_disableGosFx) return;` as first statement of `Effect::Draw`.
-- A1 introduces NO other gate point. `theClipper->StartDraw`, `theClipper->RenderNow`, and the 16 `m_clipper = theClipper` assignments at the producer sites all continue to execute. This is intentional per MINOR-1.
 
-The 16 assignment sites continue executing (cheap pointer store); the no-op happens at `Effect::Draw`. **Important: gate at the leaf, not 16 different sites.** Single gate point = single rollback risk. Cull cascade (`memory/cull_gates_are_load_bearing.md`) sees identical code path on/off (no `update()` path divergence).
+**Gated MLR work-leaves (4 sites, all in `mclib/mlr/mlrclipper.cpp`):**
+
+| Leaf | Line | Gate placement |
+|---|---|---|
+| `MLRClipper::DrawShape` | `:400` | `MC2_GOSFX_GATE_EARLY_RETURN();` as first statement after `Check_Object(this);` |
+| `MLRClipper::DrawScalableShape` | `:565` | same |
+| `MLRClipper::DrawEffect` | `:668` | same (after the three `Check_Object` calls) |
+| `MLRClipper::DrawScreenQuads` | `:697` | same |
+
+Per v3 audit §5: all four leaves are simple early-return safe. No
+caller reads post-state. `DrawShape` and `DrawScreenQuads` have **zero
+external callers** — gating them is defensive coverage.
+
+**NOT gated:**
+- `MLRClipper::StartDraw` and `MLRClipper::RenderNow` — outer scope
+  wrapped by the `code/gamecam.cpp:148/287` `mlr_total` Tracy zone. Per
+  user Step 2: gate inner leaves only so the outer measurement remains
+  structurally intact for the A2 `mlr_total → 0us` verification.
+- `gosFX::Effect::Draw` — v2 placement RETRACTED per §2.1 history.
+- The 16 `m_clipper = theClipper` assignment sites — A4 retires these
+  via compile-time enumeration when `Effect::DrawInfo::m_clipper` is
+  removed from the struct.
+
+**New files:**
+- `mclib/mlr/mlr_gate.h` — declares `MC2_GOSFX_GATE_EARLY_RETURN()`
+  macro that expands to `if (mc2::gosfx::gate::is_disabled()) return;`
+  (the env-check is once-per-frame cached; the macro is inline-cheap).
+- `mclib/mlr/mlr_gate.cpp` — implementation with `getenv` read at first
+  call, env value latched at process start per existing
+  instrumentation idiom (CLAUDE.md "Tier-1 instrumentation env vars"
+  / `debug_instrumentation_rule.md`).
+- `scripts/check-mlr-leaves-gated.sh` — CI gate per v3 audit §7. Hooks
+  into pre-commit invariant list when `mclib/mlr/` touched.
 
 ### 2.4 Default state
 `MC2_DISABLE_GOSFX=0` (default). gosFX renders exactly as today. ON = no particles.
@@ -162,13 +215,21 @@ The 16 assignment sites continue executing (cheap pointer store); the no-op happ
 - Build/deploy as A0.
 - Smoke `tier1 5/5 30s` env-OFF + `MC2_FX_TRACE=1` → counters match A0 baseline ±5% (cull-driven variance acceptable).
 - Smoke `tier1 5/5 30s` env-ON + `MC2_FX_TRACE=1` → counters at zero for `Effect::Draw`; `Find()` counters still nonzero (spawn still happens; render is gated).
+- **CI script run:** `sh scripts/check-mlr-leaves-gated.sh` → `OK`. Verify the trip-wire fires by temporarily removing one gate and re-running (expected: violation print, exit nonzero); restore gate.
 - **NO user canary at A1 (default-OFF).** A2 owns the visual-canary step.
 
 ### 2.6 Rollback
-Set env to 0. Code revert: one commit.
+Set env to 0. Code revert: one or two commits (gate-plumbing + script).
 
 ### 2.7 Commit shape
-- Commit 1: add the env-gate plumbing + early-return at leaf sites. Atomic.
+- Commit 1: add `mclib/mlr/mlr_gate.{h,cpp}` + macro plumbing + CMake. Compiles inert (no caller). Atomic.
+- Commit 2: insert `MC2_GOSFX_GATE_EARLY_RETURN();` at the four leaf sites in `mlrclipper.cpp` + add `scripts/check-mlr-leaves-gated.sh` + run script (expect `OK`). Atomic.
+
+A4 commit shape note: the gate macro and the four insertion sites all
+live inside `mclib/mlr/`. A4's `mclib/mlr/` tree-deletion commit
+deletes the gate code automatically (no orphan gate cleanup commit
+needed). The check script lives in `scripts/` and must be deleted in
+the same A4 commit bundle (§6.7 Commit 4: scope addition).
 
 ### 2.8 Handoff to A2
 A1 ships default-OFF; A2 is just the default flip.
@@ -404,6 +465,7 @@ B1 Stage 5' flipped default-ON and user-soaked. A4 begins.
 - **DELETE:** `mclib/txmmgr.cpp:369, :475, :503` — `theClipper` lifecycle (the double-teardown per §0.3).
 - **DELETE:** `code/gamecam.cpp:148, :287`; `code/simplecamera.cpp:168` — `StartDraw` / `RenderNow`.
 - **DELETE:** `MC2_DISABLE_GOSFX` env-gate plumbing from A1/A2 (dead).
+- **DELETE:** `scripts/check-mlr-leaves-gated.sh` — scan range (`mclib/mlr/`) deleted in this stage; the script self-retires.
 - **KEEP:** `MC2_FX_TRACE` env-gate + `mclib/fx_trace/` module survive A4 unchanged (neutral oracle per §1, MAJOR-2 fold-in). `FX_TRACE_DRAW` callers in deleted `Effect::Draw` go away naturally; `FX_TRACE_SPAWN` callers in new `mclib::particles::Spawn` (from B1 Stage 2' enumerator commit) continue to emit.
 - **MODIFY:** `scripts/check-particles-no-cpu-projection.sh` — **(v2 MAJOR-3 fold-in, A4 phase)** tighten gate from B1-phase scope to A4-phase scope:
   ```
@@ -435,7 +497,7 @@ gosFX + MLR code physically removed from runtime build. Particles continue rende
 - Commit 1: delete the 16 `drawInfo.m_clipper = theClipper` assignments + delete the `Effect::DrawInfo::m_clipper` field declaration + delete `theClipper` global declaration + delete `theClipper` lifecycle sites (`mechcmd2.cpp:1647, :1940`; `txmmgr.cpp:369, :475, :503`) + delete `code/gamecam.cpp:148, :287` + delete `code/simplecamera.cpp:168`. **All-or-nothing**: this is the compile-time-enumerator commit; nothing else in this commit. After this lands, `mclib/gosfx/` and `mclib/mlr/` are unreferenced from `mc2.exe` link graph but still in the tree. Editor / Viewer / `aseconv` targets DO still reference these trees at this commit — they will fail to build (intentional; Commit 2 makes it explicit at CMake level).
 - Commit 2: CMake scope change — gosFX/MLR removed from `mc2.exe` link list AND from editor / Viewer / `aseconv` target link lists. **Those targets fail to build after this commit; this is the documented intentional debt per §6.1 / §6.5.** Build `mc2.exe` target only at this and subsequent commit boundaries.
 - Commit 3: delete `mclib/gosfx/` tree (minus the parser moved to `mclib/particles/` in B1 Stage 2'). `mc2.exe` builds clean.
-- Commit 4: delete `mclib/mlr/` tree. `mc2.exe` builds clean.
+- Commit 4: delete `mclib/mlr/` tree (including the A1-introduced `mclib/mlr/mlr_gate.{h,cpp}` and the four leaf gate-macro insertions — they live inside the deleted tree, so they self-retire). Delete `scripts/check-mlr-leaves-gated.sh` (its scan range is gone). Delete the `MC2_DISABLE_GOSFX` env-gate plumbing from A1/A2 (dead). `mc2.exe` builds clean.
 - Commit 5: CI grep gate tightening — modify `scripts/check-particles-no-cpu-projection.sh` per §6.3 to add the repo-wide `theClipper|MLRClipper` forbidance. Run the script post-edit; verify zero matches.
 - Commit 6: delete `MC2_DISABLE_GOSFX` env-gate plumbing (now dead). `MC2_FX_TRACE` and `mclib/fx_trace/` SURVIVE — neutral oracle per §1 (v2 MAJOR-2). `FX_TRACE_DRAW` callers go away naturally with the tree deletions; `FX_TRACE_SPAWN` callers in `mclib::particles::Spawn` continue to emit.
 - Commit 7 (paired with A4 ship): file editor/Viewer/aseconv follow-on slice spec stub at `docs/superpowers/specs/<date>-editor-viewer-aseconv-gosfx-retirement-followon.md`. Lists broken targets, points at `feedback_editor_must_converge_with_runtime_paths.md`, defers solution to separate worktree.
@@ -646,7 +708,7 @@ External review surfaced 1 CRITICAL + 4 MAJOR + 2 MINOR. All folded in v2 (this 
 - **MAJOR-2** (trace oracle gosFX-coupled) — Folded into §1 (relocated to `mclib/fx_trace/`) and §6 (KEPT through A4).
 - **MAJOR-3** (CI grep gate scoping unresolved) — Folded into §5.4 Stage 1' (B1 phase) + §6.3/§6.7 (A4 phase) + §8.1 (two-phase summary).
 - **MAJOR-4** (std430 guard too weak) — Folded into §5.4 Stage 1' (per-field offsetof + alignof asserts; one-source schema deferred to B2 debt).
-- **MINOR-1** (A1 internal contradiction) — Folded into §2.1 (gate inside `Effect::Draw`; clipper assignments continue executing).
+- **MINOR-1** (A1 internal contradiction) — RETRACTED-AND-REPLACED by v3 round-3 audit; see §2.1 history. v3 gates 4 MLR work-leaves in `mlrclipper.cpp` (not `gosFX::Effect::Draw`), backed by `scripts/check-mlr-leaves-gated.sh` CI script per audit §7.
 - **MINOR-2** (A5 default) — Folded into §7.1/7.3/7.4/7.7 (no-op stub default; type registration kept; 2 commits → 1 commit).
 
 **Adversarial verdict (round 2): 1 CRITICAL (USER-RESOLVED + folded), 4 MAJOR (folded), 2 MINOR (folded).** v2 plan is pending one more adversarial-plan-review dispatch per CLAUDE.md "high-stakes plans" discipline.
