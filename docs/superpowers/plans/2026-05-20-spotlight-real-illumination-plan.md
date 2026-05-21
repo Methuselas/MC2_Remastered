@@ -258,11 +258,11 @@ Every T-numbered task lands as one commit. Commit messages reference task number
           light->SetaRGB(0xffffff00);              // anubis-equivalent default
           light->SetIntensity(0.15f);              // anubis default
           light->SetFalloffDistances(50.0f, 250.0f); // anubis default
-          DWORD slotId = eye->addWorldLight(light);
-          if ((long)slotId < 0) { free(light); continue; }
+          long slotId = eye->addWorldLight(light);  // camera.h:805 returns long; -1 on overflow
+          if (slotId < 0) { free(light); continue; }
           spotlightNodeIds_.push_back(nodeId);
           spotlightLights_.push_back(light);
-          spotlightSlotIds_.push_back(slotId);
+          spotlightSlotIds_.push_back(static_cast<DWORD>(slotId));
       }
       spotlightsRegistered_ = true;  // M3 fix: register-once flag, not vector.empty()
   }
