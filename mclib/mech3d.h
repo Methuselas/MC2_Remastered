@@ -29,6 +29,7 @@
 #include"memfunc.h"
 
 #include<gosfx/gosfxheaders.hpp>
+#include <vector>  // T1.6: Mech3DAppearance::spotlight{Lights,SlotIds,NodeIds}_
 //-------------------------------------------------------------------------------
 // Structs used by layer.
 //
@@ -360,6 +361,18 @@ class Mech3DAppearance: public ObjectAppearance
 
 		TG_LightPtr					pointLight;
 		DWORD						lightId;
+
+		// (E) T1.6: generalised SpotLight_-child illumination. PER-CHILD-
+		// SPOTLIGHT-NODE (TG_LIGHT_POINT). NOT the same as `pointLight`/
+		// `lightId` above — that pair is the hardcoded SLCircle_anubis
+		// searchlight (TG_LIGHT_SPOT) at mech3d.cpp:3333-3383. The two
+		// node-name prefixes are disjoint (SLCircle != SpotLight) so no
+		// double-registration; both paths coexist until T3.x consolidation.
+		// See plan R7.
+		std::vector<long>			spotlightNodeIds_;   // mechShape NodeNameId
+		std::vector<TG_LightPtr>	spotlightLights_;    // owned via malloc/free
+		std::vector<DWORD>			spotlightSlotIds_;   // worldLights[] indices
+		bool						spotlightsRegistered_;
 		
 		float						idleTime;				//Elapsed time since I've done something.
 															//If it gets larger then X, play the idle animation.

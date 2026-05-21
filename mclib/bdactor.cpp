@@ -2031,6 +2031,20 @@ long BldgAppearance::update (bool animate)
 			Stuff::Vector3D childPos =
 				getNodeIdPosition(spotlightNodeIds_[k]);
 			spotlightLights_[k]->SetPosition(&childPos);
+			// Rule-2 correctness fix: lightToWorld is consumed at
+			// msl.cpp:1659 (s_lightToShape = lightToWorld * worldToShape).
+			// Without setting it, lightToShape collapses to worldToShape
+			// alone and the light's effective world position falls back to
+			// origin regardless of the `position` field for some consumers.
+			// Anubis sets this same matrix; existing per-building pointLight
+			// at bdactor.cpp:1955 also sets it. Translation-only suffices
+			// for POINT lights (matches the anubis/terrain-light pattern).
+			Stuff::LinearMatrix4D lightToWorldMatrix;
+			Stuff::Point3D childPosP;
+			childPosP.x = childPos.x; childPosP.y = childPos.y; childPosP.z = childPos.z;
+			lightToWorldMatrix.BuildTranslation(childPosP);
+			lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(0.0f, 0.0f, 0.0f));
+			spotlightLights_[k]->SetLightToWorld(&lightToWorldMatrix);
 			// eye->isNight is a bare field at camera.h:272 (C-r3 C2). visible
 			// matches anubis at mech3d.cpp:3353 (C-r1 C5). forceLightsOut
 			// matches the existing per-building pointLight gate at :1933.

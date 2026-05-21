@@ -20,6 +20,7 @@
 #include "../GameOS/gameos/gos_mech_batcher.h"
 #include "../GameOS/gameos/gos_mech_killswitch.h"
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
+#include "spotlight_real.h"        // (E) T1.6: MC2_SPOTLIGHT_REAL gate
 
 // MC2_MECH_LOD_TRACE=1: per-actor LOD-swap boundary print.
 static const bool s_mechLodTrace = (getenv("MC2_MECH_LOD_TRACE") != nullptr);
@@ -1081,6 +1082,11 @@ void Mech3DAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	hitLeftNodeIndex = hitRightNodeIndex = -1;
 	rootNodeIndex = lightCircleNodeIndex = -1;
 	leftArmNodeIndex = rightArmNodeIndex = -1;
+
+	// (E) T1.6: lazy-init key for SpotLight_ children. Vectors default-init
+	// to empty. lightCircleNodeIndex above is for the legacy anubis
+	// SLCircle_anubis path; SpotLight_ is a different node-name prefix.
+	spotlightsRegistered_ = false;
 
 	screenPos.x = screenPos.y = screenPos.z = screenPos.w = -999.0f;
 	
@@ -3380,6 +3386,70 @@ void Mech3DAppearance::updateGeometry (void)
 			else
 			{
 				pointLight->active = false;
+			}
+		}
+
+		// (E) T1.6 / T1.7: generalised SpotLight_-child illumination. Parallel
+		// path to the SLCircle_anubis pointLight block above (R7: distinct
+		// node-name prefixes, no double-registration). Lazy first-night
+		// register; per-frame in-place update afterwards (T1.7: no per-frame
+		// pool churn). Public accessors (msl.h:431 GetNumShapes, msl.h:438
+		// GetShapeRec, tgl.h:951 GetIsSpotlight) because Mech3DAppearance is
+		// NOT in the TG_MultiShape friend list at msl.h:251-256.
+		if (mc2_spotlight_real::isEnabled() && mechShape)
+		{
+			if (!spotlightsRegistered_ && eye->isNight)
+			{
+				for (int i = 0; i < mechShape->GetNumShapes(); ++i)
+				{
+					const TG_ShapeRec* recp = mechShape->GetShapeRec(i);
+					if (!recp) continue;
+					TG_Shape* c = recp->node;
+					if (!c || !recp->processMe) continue;
+					if (!c->GetIsSpotlight()) continue;
+
+					const char* nodeName = c->getNodeName();
+					if (!nodeName) continue;
+					long nodeId = mechShape->GetNodeNameId(nodeName);
+					if (nodeId == -1) continue;
+
+					TG_LightPtr light = (TG_LightPtr)malloc(sizeof(TG_Light));
+					light->init(TG_LIGHT_POINT);              // v1 (OQ2/M6) — POINT
+					light->SetaRGB(0xffffff00);                // anubis-equiv default
+					light->SetIntensity(0.15f);                // anubis default
+					light->SetFalloffDistances(50.0f, 250.0f); // anubis default
+
+					long slotId = eye->addWorldLight(light);
+					if (slotId < 0) { free(light); continue; }
+					spotlightNodeIds_.push_back(nodeId);
+					spotlightLights_.push_back(light);
+					spotlightSlotIds_.push_back(static_cast<DWORD>(slotId));
+				}
+				spotlightsRegistered_ = true;  // register-once flag (M3)
+			}
+
+			// T1.7: per-frame in-place update. UNCONDITIONAL once registered
+			// (C-r2 C2: lights stay allocated across day/night; toggle active).
+			// active gate matches anubis verbatim (C-r1 C5): visible && (sensorLevel
+			// > 4) && !InEditor, plus isNight (bare field, no parens, per C-r3 C2).
+			for (size_t k = 0; k < spotlightLights_.size(); ++k)
+			{
+				Stuff::Vector3D childPos =
+					getNodeIdPosition(spotlightNodeIds_[k]);
+				spotlightLights_[k]->SetPosition(&childPos);
+				// Rule-2 correctness fix: lightToWorld is consumed at
+				// msl.cpp:1659. Without it, the precomputed s_lightToShape
+				// collapses to worldToShape alone and the light's effective
+				// world position is lost. Matches the existing anubis
+				// pattern at mech3d.cpp:3373-3377 (translation-only).
+				Stuff::LinearMatrix4D lightToWorldMatrix;
+				Stuff::Point3D childPosP;
+				childPosP.x = childPos.x; childPosP.y = childPos.y; childPosP.z = childPos.z;
+				lightToWorldMatrix.BuildTranslation(childPosP);
+				lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(0.0f, 0.0f, 0.0f));
+				spotlightLights_[k]->SetLightToWorld(&lightToWorldMatrix);
+				spotlightLights_[k]->active =
+					(eye->isNight && visible && (sensorLevel > 4) && !InEditor);
 			}
 		}
 
