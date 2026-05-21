@@ -52,6 +52,17 @@ static const bool s_texHandoffTrace = (getenv("MC2_TEX_HANDOFF_TRACE") != nullpt
 // reset per process lifetime; format matches both call sites verbatim.
 static const bool s_treeDiagTrace = (getenv("MC2_TREE_DIAG_TRACE") != nullptr);
 
+// MC2_SPOTLIGHT_REAL_TRACE=1 — (E) SpotLight_ → real illumination baseline counter.
+// Stage 0 instrumentation (T0.1, plan 2026-05-20). Counts per-frame static-prop
+// submitMultiShape events where the child has isSpotlight==true (i.e. the per-instance
+// shape whose source typeShape carried the "SpotLight_*" node-name prefix and that
+// the CPU path tags via tgl.cpp:259/475). First-hit is always-on (one-line stderr
+// confirms a SpotLight_ child was observed at least once even without the env);
+// per-frame and 600-frame summary streams are env-gated to keep the log quiet by
+// default. Pattern mirrors the [INSTR v1] schema family + the 600-frame window
+// used by [OBJBATCHER v1] / [TGL_POOL v1].
+static const bool s_spotlightRealTrace = (getenv("MC2_SPOTLIGHT_REAL_TRACE") != nullptr);
+
 // MC2_STATIC_PROP_GLOBAL_POOL_LEGACY=1 — forces the legacy per-type-cap
 // coalesce layout (keeps existing path; new global-pool path is disabled).
 // Env-read once at process start; survives until soak completes.
@@ -715,6 +726,15 @@ bool s_objbatcherTrace     = false;
 bool s_objbatcherTraceInit = false;
 bool s_atexitRegistered    = false;
 
+// [SPOTLIGHT_REAL_TRACE v1] (E) Stage 0 / T0.1 baseline. Counts submitMultiShape
+// events whose child has isSpotlight==true. Separate state (not in
+// ObjBatcherCounters) so the schema stays self-contained and easy to retire.
+// First-hit emits one-line stderr always-on so an operator without the env still
+// sees confirmation that SpotLight_ children are observed at all.
+uint64_t s_spotlightReal_window  = 0;  // resets every 600 frames
+uint64_t s_spotlightReal_mono    = 0;  // monotonic since process start
+bool     s_spotlightReal_firstHit = false;
+
 // Late-registration aggregate per-type accounting + allowlist.
 std::unordered_map<std::string, uint32_t> s_lateRegisterCounts;
 std::unordered_set<std::string> s_lateRegisterAllowlist;
@@ -905,6 +925,24 @@ void accumulateMonotonicAndMaybeEmit(bool forceEmit) {
                (unsigned long long)s_counters.mono_submitted_instances_by_pop[3],
                (unsigned long long)s_late_register_recovery_skips);
         std::fflush(stderr);
+    }
+
+    // [SPOTLIGHT_REAL_TRACE v1] T0.1 — separate summary line, env-gated.
+    // Mono is always advanced (no env gate); the env only gates the print.
+    // 600-frame window count emitted alongside mono to show steady-state vs
+    // accumulated. Reset window AFTER emit so window resets every 600 frames
+    // regardless of env-gating.
+    if (s_spotlightRealTrace && periodic) {
+        std::fprintf(stderr,
+               "[SPOTLIGHT_REAL_TRACE v1] event=summary site=static_prop_batcher "
+               "frames=%llu window_spotlight_submits=%llu mono_spotlight_submits=%llu\n",
+               (unsigned long long)s_counters.frame_count,
+               (unsigned long long)s_spotlightReal_window,
+               (unsigned long long)s_spotlightReal_mono);
+        std::fflush(stderr);
+    }
+    if (periodic) {
+        s_spotlightReal_window = 0;
     }
 
     // Reset per-frame counters for next frame.
@@ -2631,7 +2669,27 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
         uint32_t flags = 0;
         if (child->lightsOut)   flags |= (1u << 0);
         if (child->isWindow)    flags |= (1u << 1);
-        if (child->isSpotlight) flags |= (1u << 2);
+        if (child->isSpotlight) {
+            flags |= (1u << 2);
+            // [SPOTLIGHT_REAL_TRACE v1] T0.1 — baseline counter. Note: per R8
+            // (plan v6), TransformShape early-outs to listOfVertices==NULL for
+            // isSpotlight && !isNight (tgl.cpp ~1657), and the !listOfVertices
+            // guard at line ~2626 above already filtered those out. So this
+            // increment fires only for SpotLight_ children whose CPU path
+            // emitted geometry — i.e. night-time only. Daytime baseline is
+            // expected to be ~0.
+            ++s_spotlightReal_window;
+            ++s_spotlightReal_mono;
+            if (!s_spotlightReal_firstHit) {
+                s_spotlightReal_firstHit = true;
+                const char* nm = const_cast<TG_Shape*>(child)->getNodeName();
+                std::fprintf(stderr,
+                    "[SPOTLIGHT_REAL_TRACE v1] event=first_hit site=static_prop_batcher "
+                    "name=%s\n",
+                    (nm && nm[0]) ? nm : "<unnamed>");
+                std::fflush(stderr);
+            }
+        }
 
         // rec.shapeToWorld is LinearMatrix4D; convert to Matrix4D for submit().
         Stuff::Matrix4D xform(rec.shapeToWorld);
