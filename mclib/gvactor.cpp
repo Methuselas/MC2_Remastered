@@ -2899,6 +2899,24 @@ long GVAppearance::update (bool animate)
 //-----------------------------------------------------------------------------
 void GVAppearance::destroy (void)
 {
+	// (E) T1.12: paired cleanup for SpotLight_-child illumination from
+	// T1.11. Walks CACHED state only (spotlightLights_/spotlightSlotIds_);
+	// does NOT call getNodeIdPosition or any gvShape method — same
+	// destroy-ordering discipline as mech3d.cpp T1.8 and bdactor.cpp T1.5.
+	// Unlike Mech3DAppearance there is no pre-existing pointLight pair to
+	// worry about leaking; GVAppearance had no legacy spotlight wiring
+	// before T1.10.
+	for (size_t k = 0; k < spotlightLights_.size(); ++k)
+	{
+		if (eye)
+			eye->removeWorldLight(spotlightSlotIds_[k], spotlightLights_[k]);
+		free(spotlightLights_[k]);
+	}
+	spotlightLights_.clear();
+	spotlightSlotIds_.clear();
+	spotlightNodeIds_.clear();
+	spotlightsRegistered_ = false;
+
 	if (gvShape)
 	{
 		delete gvShape;
