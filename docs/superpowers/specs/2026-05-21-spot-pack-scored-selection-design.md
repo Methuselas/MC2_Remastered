@@ -1,13 +1,14 @@
 # Per-Shape Light-Pack SpotLight_ Priority Lift — Design Spec
 
-- **Status:** DRAFT v3 — addresses round-2 adversarial review (1 CRITICAL fundamentally re-framed; 2 secondary CRITICALs resolved)
+- **Status:** DRAFT v4 — addresses round-3 adversarial review (3 CRITICALs about rationale accuracy + 3 MAJORs)
 - **Date:** 2026-05-21
 - **Worktree:** `claude/nifty-mendeleev`
 - **Slice ID:** (E') — extends (E) SpotLight_ real illumination; in (E)'s scope per greybeard ruling
 - **Review history:**
   - **v1** — round-1 (opus) BLOCKING-CRITICAL: per-actor scored selection would have killed LIGHTBRIDGE template-cache → 8.5ms regression. Plus 7+ caller-survey errors.
   - **v2** — round-2 (sonnet) NEEDS-REVISION: foundational mis-read about which array `s_listOfLights[]` points to. `getWorldLights()` returns `activeLights[]` (compacted per-frame), NOT `worldLights[]` (sparse registration storage).
-  - **v3 (this version)** — fix happens in `Camera::updateLights` `activeLights[]` assembly loop. ~25 LOC. No parallel array. No accessor change. No LIGHTBRIDGE template-key disruption.
+  - **v3** — round-3 (opus) NEEDS-REVISION: architectural approach sound, but §3.3(a) "listPtr unchanged" rationale was materially wrong about HOW the LIGHTBRIDGE cache works (it hashes per-light contents, not just listPtr — conclusion happens to be right via a different mechanism). Plus: anubis untag_slot leak interaction, stack→static for deferred buffer, missing `firstActiveLightSourceIndex` audit.
+  - **v4 (this version)** — corrected template-cache rationale (frame-scoped + global-per-frame reorder property), defers anubis tagging (Option X) to avoid leak entanglement, hoists deferred buffer to static, audits `firstActiveLightSourceIndex` / `decomposeFirstActiveLightColor` semantics.
 - **All file:line citations grep-verified at write time against `.claude/worktrees/nifty-mendeleev/`.**
 
 ---
@@ -69,8 +70,10 @@ void Camera::updateLights()
     
     // (E') deferred buffer for non-priority POINT/SPOT — appended after the
     // main loop so SpotLight_-tagged lights survive the GatherLightsParameters
-    // 16-slot FIFO truncation. See docs/superpowers/specs/2026-05-21-spot-pack-scored-selection-design.md
-    TG_LightPtr deferredNonPriority[MAX_LIGHTS_IN_WORLD];
+    // 16-slot FIFO truncation. Static to avoid 8KB stack growth per call
+    // (round-3 CRITICAL-3 fix). Engine is single-threaded for this path per
+    // memory/vulkan_prep_explicit_device_discipline.md.
+    static TG_LightPtr s_deferredNonPriority[MAX_LIGHTS_IN_WORLD];
     long numDeferred = 0;
     
     for (long i = 0; i < MAX_LIGHTS_IN_WORLD; ++i)
@@ -105,7 +108,7 @@ void Camera::updateLights()
                 activeLights[numActiveLights++] = light;
             } else {
                 // Non-priority: defer to after the main loop
-                deferredNonPriority[numDeferred++] = light;
+                s_deferredNonPriority[numDeferred++] = light;
             }
         }
     }
@@ -114,15 +117,32 @@ void Camera::updateLights()
     // after all priority lights have been appended. FIFO truncation in
     // GatherLightsParameters now reaches priority lights first.
     for (long j = 0; j < numDeferred && numActiveLights < MAX_LIGHTS_IN_WORLD; ++j) {
-        activeLights[numActiveLights++] = deferredNonPriority[j];
+        activeLights[numActiveLights++] = s_deferredNonPriority[j];
     }
 }
 ```
 
 ### 3.3 Properties (audited)
 
-**(a) LIGHTBRIDGE template-cache preserved.**
-[txmmgr.cpp:1020-1021](mclib/txmmgr.cpp) `sceneLightTemplateKey` hashes `reinterpret_cast<uintptr_t>(listOfLights)`. The `listOfLights` value is `activeLights` (the array pointer). The pointer itself is stable — the array is allocated once at camera init and only its contents are rewritten per frame. **Pointer unchanged → listPtr hash unchanged → cache key unchanged.** Template hits at the existing rate.
+**(a) LIGHTBRIDGE template-cache preserved (corrected rationale, round-3 CRITICAL-1 fix).**
+
+The cache mechanism (verified [txmmgr.cpp:1012-1050](mclib/txmmgr.cpp)):
+
+1. **Frame-scoped.** [txmmgr.cpp:1330-1333](mclib/txmmgr.cpp): `s_sceneLightTemplateMap.clear()` runs each frame transition; `g_mc2FrameCounter` is also IN the hash. So the cache invalidates on every frame boundary by design.
+
+2. **Within-frame hit rate** is the optimization that matters. The template key hashes:
+   - `g_mc2FrameCounter` (frame-scoped)
+   - `numLights`, `listPtr`
+   - For each iLight: `non-null` bit, `active` bit, `lightType`, `lightToWorld` matrix, falloff distances, color (for non-actor-mutated slots)
+   - The hash is ORDER-DEPENDENT (per-light contents hashed in iLight iteration order).
+
+3. **All shapes within a frame consume the SAME reordered `activeLights[]`.** So all shapes produce the SAME hash key (since the reordered list contents are global-per-frame, not per-actor). First call misses → runs `GatherLightsParameters` → caches; subsequent N-1 calls hit cache.
+
+4. **After v3 priority lift:** the order of POINT/SPOT entries in `activeLights[]` differs from pre-(E') world. The hash BYTES differ. BUT: within a single frame, every shape sees the same reordered list → all shapes still key the same hash → first-miss-then-hit pattern preserved → N-1/N within-frame hit rate preserved.
+
+5. **Cross-frame:** invalidates every frame regardless (per #1). Priority lift doesn't change cross-frame behavior.
+
+**Net: hit rate within-frame is unchanged. Cache preserves its 8.5ms→0.4ms benefit.** The v3 spec's "listPtr unchanged → key unchanged" framing was misleading because the key DOES hash per-light contents — but the conclusion holds for the actual reason (global-per-frame reorder + frame-scoped cache).
 
 **(b) `addLightDataStructure` dedup preserved.**
 [txmmgr.cpp:1283-1322](mclib/txmmgr.cpp) FNV+memcmps the full `TG_HWLightsData`. After the priority lift, all shapes within a frame still see the same reordered `activeLights[]` → same `TG_HWLightsData` content → dedup hit rate unchanged.
@@ -137,7 +157,19 @@ The reorder happens on `activeLights[]` (the compacted view). `worldLights[]` st
 Reads `s_listOfLights[]` = `activeLights[]` = the reordered view. Same priority lift applies to CPU path without explicit code change. **No CPU/GPU divergence.**
 
 **(f) `[SPOT_DIAG v1]` probes still work for their intended purpose.**
-The camera-overwrite probe at [camera.cpp:1965-1975](mclib/camera.cpp) reports `slot=<worldLights[] index>` for unique slots seen during the loop. Slot index is unchanged. The probe correctly reflects camera-gate rejection rate. It doesn't show the post-loop priority-lift effect (that's a `activeLights[]` ordering, not a `worldLights[]` property) — but it doesn't need to; the visual canary is the meaningful test.
+The camera-overwrite probe at [camera.cpp:1965-1975](mclib/camera.cpp) reports `slot=<worldLights[] index>` for unique slots seen during the loop. Slot index is unchanged. The probe correctly reflects camera-gate rejection rate. It doesn't show the post-loop priority-lift effect (that's a `activeLights[]` ordering, not a `worldLights[]` property) — see §3.7 for the new `[SPOT_PRIORITY_LIFT v1]` probe added by this slice.
+
+**(g) `firstActiveLightSourceIndex()` / `decomposeFirstActiveLightColor()` semantics (round-3 CRITICAL-2 audit).**
+
+Verified [txmmgr.cpp:980-1010](mclib/txmmgr.cpp):
+- `firstActiveLightSourceIndex()` returns the FIRST iLight in `s_listOfLights[]` where the light is non-null AND `active==true`.
+- `decomposeFirstActiveLightColor()` does the same scan and writes the first active light's color into `TG_HWLightsData.lightColor[0]`.
+
+In production, slot 0 is `TG_LIGHT_INFINITE` (sun, always active per [camera.cpp:1917-1925](mclib/camera.cpp)). The proposed v3/v4 priority lift keeps the AMBIENT/INFINITE handling unchanged at [code sketch lines 86-93](§3.2) — they're appended to `activeLights[]` in their worldLights scan order BEFORE the POINT/SPOT priority branch. So `activeLights[0]` is still INFINITE (sun), `firstActiveLightSourceIndex()` still returns 0.
+
+`decomposeFirstActiveLightColor()` still reads `activeLights[0]` = sun color → unchanged behavior.
+
+**No regression in `addLightDataStructureWithPerActorColor` per-actor color decomposition.**
 
 ### 3.4 Tagging mechanism — `mc2_spotlight_diag::is_e_slot()`
 
@@ -150,19 +182,70 @@ The `MC2_SPOT_DIAG` env var only gates the `[SPOT_DIAG v1]` PRINT lines, not the
 
 Decision: the priority-lift code path uses `mc2_spotlight_diag::is_e_slot(i, nullptr)` unconditionally. No env gate. The diagnostic infrastructure becomes the authoritative source for "is this a SpotLight_-tagged slot" classification. Document this transition in code comment.
 
-### 3.5 Anubis interaction (response to v2 §A3 and round-2 G)
+### 3.5 Anubis interaction — **Option X (defer tagging)** per round-3 MAJOR-1
 
-Pre-existing anubis searchlight at [mech3d.cpp:3333-3344](mclib/mech3d.cpp) uses `eye->addWorldLight(pointLight)` but DOES NOT call `mc2_spotlight_diag::tag_slot()`. So anubis is in the "non-priority POINT/SPOT" deferred bucket → appended after priority slots → potentially truncated.
+Pre-existing anubis searchlight at [mech3d.cpp:3355-3360](mclib/mech3d.cpp) (`addWorldLight` at line 3357) does NOT call `mc2_spotlight_diag::tag_slot()`. Round-3 review surfaced that anubis has a documented R1 leak: the matching `removeWorldLight` + `free(pointLight)` cleanup is missing from `Mech3DAppearance::destroy`. Across mission reloads, anubis slots accumulate.
+
+**Adding `tag_slot` for anubis creates a paired `untag_slot` debt:** if we tag at allocation but the cleanup site doesn't exist, every anubis tag is permanent and the `is_e_slot()` map grows mission-over-mission. Slots get reused (`addWorldLight` returns a previously-released slot), but the old tag stays mapped to a different SourceClass than the new owner. Not a correctness crash, but progressive map pollution.
 
 **Two options:**
-- **Option X: leave anubis untagged.** It's a pre-existing optional feature, has been shipping unmodified; (E')'s priority lift may incidentally reduce anubis's slot survival rate in busy scenes. Acceptable IF anubis is rarely visible (it requires `eye->isNight && visible && sensorLevel > 4`).
-- **Option Y: tag anubis.** Add `mc2_spotlight_diag::tag_slot(lightId, Mech)` after the anubis `addWorldLight` at mech3d.cpp:3344. Anubis enters the priority bucket alongside (E)'s spotlights.
+- **Option X: leave anubis untagged.** Anubis stays in the "non-priority POINT/SPOT" deferred bucket. Loses FIFO contest in busy scenes (same as today — anubis has been shipping this way). Acceptable; matches pre-(E') behavior. Anubis-leak fix becomes its own follow-up slice.
+- **Option Y: tag anubis AND fix the leak in the same slice.** Pair the new `tag_slot(lightId, Mech)` with a `removeWorldLight + free + untag_slot` block in `Mech3DAppearance::destroy`. Scope creep but architecturally cleaner.
 
-Recommendation: **Option Y**. The architectural intent is "spotlight-class lights have priority over generic POINT/SPOT." Anubis is a spotlight by every measure (semantic: searchlight node; gate: night+visible+sensor; type: TG_LIGHT_SPOT with directional cone). Tagging it preserves architectural consistency. 1-line code change.
+**v4 recommends Option X.** Reasons:
+1. Scope discipline — v4 is a focused META-FIX for (E)'s explicit promise (mech/GV bodies illuminate from their SpotLight_ children). Anubis is a pre-existing optional feature with separate scope.
+2. Per worktree CLAUDE.md "change discipline: don't touch it if you don't have to" — the anubis leak isn't load-bearing for (E')'s correctness.
+3. File anubis-leak fix as future cleanup slice; reference from this spec's open questions.
+
+If anubis priority becomes a user-visible requirement later, promote to Option Y in a follow-up slice that fixes the leak first.
 
 ### 3.6 Reorder cost
 
-Per-frame: O(MAX_LIGHTS_IN_WORLD) walk (already paid by existing `Camera::updateLights`) + O(num_active_non_priority_POINT_SPOT) deferred-buffer flush. Net additional cost: ~1024 conditional branches + one extra `MAX_LIGHTS_IN_WORLD` stack-allocated pointer array per frame. **~5-10µs/frame.** Below the 100µs CPU-projection budget.
+Per-frame: O(MAX_LIGHTS_IN_WORLD) walk (already paid by existing `Camera::updateLights`) + O(num_active_non_priority_POINT_SPOT) deferred-buffer flush. Net additional cost: ~1024 conditional branches + one extra `is_e_slot()` lookup per active POINT/SPOT (O(1) unordered_map). The deferred buffer is now file-scope static (round-3 CRITICAL-3 fix), no stack cost. **~5-10µs/frame.** Below the 100µs CPU-projection budget.
+
+### 3.7 Mandatory probe — `[SPOT_PRIORITY_LIFT v1]` (round-3 MAJOR-3)
+
+Promoted from optional (v3 OQ3) to **mandatory for first integration**. The existing `[SPOT_DIAG v1]` probes show camera-gate rejection rate at the `worldLights[]` slot level, but do NOT show whether the priority lift actually fires in production. Add inside `Camera::updateLights`:
+
+```cpp
+// [SPOT_PRIORITY_LIFT v1] env-gated periodic emit. First-hit always-on
+// (one stderr line) so any operator sees confirmation without env.
+// MC2_SPOT_LIFT_TRACE=1 enables per-summary every 600 frames.
+static const bool s_liftTrace = (std::getenv("MC2_SPOT_LIFT_TRACE") != nullptr);
+static bool s_liftFirstHit = false;
+static unsigned long s_liftFrames = 0;
+static unsigned long s_liftWindowPriority = 0;
+static unsigned long s_liftWindowDeferred = 0;
+
+// ... after the deferred-flush loop ...
+
+const long priorityCount = numActiveLights - numDeferred;  // approx; refine
+const long deferredCount = numDeferred;
+if (!s_liftFirstHit && priorityCount > 0) {
+    std::fprintf(stderr,
+        "[SPOT_PRIORITY_LIFT v1] event=first_hit priority=%ld deferred=%ld total_active=%ld\n",
+        priorityCount, deferredCount, (long)numActiveLights);
+    std::fflush(stderr);
+    s_liftFirstHit = true;
+}
+++s_liftFrames;
+s_liftWindowPriority += priorityCount;
+s_liftWindowDeferred += deferredCount;
+if (s_liftTrace && (s_liftFrames % 600 == 0)) {
+    std::fprintf(stderr,
+        "[SPOT_PRIORITY_LIFT v1] event=summary frames=%lu avg_priority=%.2f avg_deferred=%.2f\n",
+        s_liftFrames,
+        (double)s_liftWindowPriority / 600.0,
+        (double)s_liftWindowDeferred / 600.0);
+    std::fflush(stderr);
+    s_liftWindowPriority = 0;
+    s_liftWindowDeferred = 0;
+}
+```
+
+Schema-version tag `[SPOT_PRIORITY_LIFT v1]` matches `[INSTR v1]` family. First-hit always-on (operator confirmation); per-summary env-gated (production silent default). Demote-not-delete per Debug Instrumentation Rule.
+
+Substitutive test: mc2_10 first-hit line should report `priority>=4` (mc2_10 baseline shows ~5-7 (E)-active SpotLight_ POINTs in camera zone). If priority=0 across all frames, the lift isn't firing → investigation needed.
 
 ## 4. Greybeard 5-question ruling (v3)
 
@@ -170,7 +253,7 @@ Per-frame: O(MAX_LIGHTS_IN_WORLD) walk (already paid by existing `Camera::update
 
 2. **Symptom vs cause.** Symptom: mech/GV bodies don't visibly illuminate from their SpotLight_ POINT registrations. Cause: assembly-order-equals-registration-order places (E)'s priority spotlights behind base-scene lights in `activeLights[]`, causing FIFO truncation in `GatherLightsParameters` to consume its budget on the base lights before reaching the spotlights.
 
-3. **The meta-fix.** Two-pass append within `Camera::updateLights`: SpotLight_-tagged POINT/SPOT lights go into `activeLights[]` immediately; non-tagged POINT/SPOT defer to after the main loop. FIFO truncation reaches priority lights first by construction. **Modifies one function (`Camera::updateLights`) plus one line at anubis (`tag_slot` call after its `addWorldLight`).**
+3. **The meta-fix.** Two-pass append within `Camera::updateLights`: SpotLight_-tagged POINT/SPOT lights go into `activeLights[]` immediately; non-tagged POINT/SPOT defer to after the main loop. FIFO truncation reaches priority lights first by construction. **Modifies one function (`Camera::updateLights`).** Anubis tagging deferred to follow-up slice (Option X per §3.5).
 
 4. **Substitutive test.**
    - Visual canary on mc2_10 intro: (E) mech/GV bodies show yellow contribution from their attached spotlights. Buildings keep their yellow glow.
@@ -209,20 +292,26 @@ Per-frame: O(MAX_LIGHTS_IN_WORLD) walk (already paid by existing `Camera::update
 
 ## 8. Open questions for plan-phase
 
-- **OQ1.** Anubis tagging — Option Y (tag in [mech3d.cpp:3344](mclib/mech3d.cpp) after `addWorldLight`). Confirm semantic: anubis is currently the only TG_LIGHT_SPOT in active production; should we tag it? Recommend yes per §3.5 rationale.
-- **OQ2.** Stack vs static allocation of `deferredNonPriority[]`. Stack is simpler. Static would save 8KB stack but adds thread-safety concerns if `Camera::updateLights` becomes multi-threaded later. Recommend stack.
-- **OQ3.** Probe enhancement (optional): a new `[SPOT_PRIORITY_LIFT v1]` first-hit log on the first frame the deferred buffer is non-empty, showing priority-vs-deferred counts. Helps verify the lift fires in production. Recommend yes.
-- **OQ4.** Test coverage for the `is_e_slot()` map lifetime — confirm that an untag (on actor destroy) doesn't fire BEFORE the next `Camera::updateLights` consumes the tag. Should be safe (destroy is in same frame as removeWorldLight; both happen before next frame's updateLights).
+- **OQ1.** ~~Anubis tagging~~ — RESOLVED in §3.5: Option X (defer tagging) for v4. Anubis leak fix is independent follow-up.
+- **OQ2.** ~~Stack vs static allocation~~ — RESOLVED in §3.2 code sketch: file-scope static (round-3 CRITICAL-3 fix).
+- **OQ3.** ~~Probe enhancement~~ — RESOLVED in §3.7: mandatory, not optional (round-3 MAJOR-3 fix).
+- **OQ4.** Test coverage for the `is_e_slot()` map lifetime — confirm that an untag (on actor destroy) doesn't fire BEFORE the next `Camera::updateLights` consumes the tag. Should be safe (destroy is in same frame as removeWorldLight; both happen before next frame's updateLights). Verify in plan-phase via grep of destroy hook ordering.
+- **OQ5 (NEW).** `numActiveLights` post-lift may be larger than pre-(E') for some consumers. The 14 `SetLightList` callers (15 was wrong count — round-3 MINOR fix; `genactor.cpp:1207` is `SetLightList(NULL, 0)` and not in the priority-affected set) pass `eye->getNumLights()` which returns `numActiveLights`. CPU-lit shape paths in `tgl.cpp:1968` and adjacent loops iterate all `numActiveLights` entries. After v4 with priority lift, `numActiveLights` is unchanged (we don't ADD lights — same set, different order). So no per-shape iteration cost increase. Confirmed safe; document for plan-phase.
 
 ## 9. Implementation scope
 
 - **One function modified**: `Camera::updateLights` at [mclib/camera.cpp:1887-1983](mclib/camera.cpp).
-- **One line added**: `mc2_spotlight_diag::tag_slot(lightId, Mech)` after anubis `addWorldLight` at [mech3d.cpp:3344](mclib/mech3d.cpp).
-- **One optional probe**: `[SPOT_PRIORITY_LIFT v1]` first-hit/summary.
-- **Total LOC**: ~25 in `camera.cpp`, ~1 in `mech3d.cpp`, ~15 if probe added.
-- **No shader change. No SSBO layout change. No `worldLights[]` reorder. No accessor signature change. No new TU. No threading actor position. No LIGHTBRIDGE disruption.**
+- **One mandatory probe**: `[SPOT_PRIORITY_LIFT v1]` first-hit/summary (round-3 MAJOR-3 fix).
+- **Total LOC**: ~25 for the priority-lift logic + ~30 for the mandatory probe = ~55 LOC.
+- **No shader change. No SSBO layout change. No `worldLights[]` reorder. No accessor signature change. No new TU. No threading actor position. No LIGHTBRIDGE disruption. No anubis touch (deferred per Option X).**
 
 This is the smallest viable META-FIX for the bug class. Sized correctly for stock content (~5-7 active SpotLight_ POINTs). Compatible with future scoring/clustering as outlined in §6.
+
+## 9.1 Filed follow-up work (out of scope here)
+
+- **Anubis pointLight leak fix.** Documented R1: anubis `addWorldLight` at [mech3d.cpp:3357](mclib/mech3d.cpp) has no matching `removeWorldLight` in `Mech3DAppearance::destroy`. Independent cleanup slice; this spec leaves anubis untagged (Option X).
+- **Scored selection for content scale > 16 active SpotLight_.** Future (F)-class.
+- **Clustered/forward+ lighting.** Future (F)-class architectural rework.
 
 ## 10. Cross-references
 
