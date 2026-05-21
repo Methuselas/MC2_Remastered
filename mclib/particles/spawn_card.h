@@ -8,9 +8,9 @@
 //           spawn-event Emit() into the GPU particle batcher; the GPU      //
 //           billboard pass owns animation, projection, and rasterization.  //
 //                                                                           //
-//           CPU does NOT project. This function MUST NOT reference         //
-//           cameraToClip / projectZ / worldToClipMatrix / projectFor*      //
-//           (CI gate: scripts/check-particles-no-cpu-projection.sh).        //
+//           CPU does NOT project. This function MUST NOT reference any of  //
+//           the forbidden projection wrappers enumerated by the CI gate    //
+//           scripts/check-particles-no-cpu-projection.sh.                  //
 //                                                                           //
 //           NOT YET WIRED into producers — wiring lands at C7. C3 only     //
 //           ships the function so it builds clean and is ready to call.    //

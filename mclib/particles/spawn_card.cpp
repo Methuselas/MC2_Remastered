@@ -23,9 +23,8 @@
 // containing the initial state; the shader extrapolates age from the spawn //
 // timestamp baked into the record (Stage 2' lifecycle, see plan §5.4).     //
 //                                                                           //
-// CPU projection invariant: this file MUST NOT include or reference         //
-// cameraToClip / projectZ / worldToClipMatrix / projectForObjectAdmission / //
-// projectForEffectAdmission. CI gate enforced by                            //
+// CPU projection invariant: this file MUST NOT include or reference any    //
+// of the forbidden projection wrappers enumerated by the CI gate            //
 // scripts/check-particles-no-cpu-projection.sh.                             //
 //===========================================================================//
 
