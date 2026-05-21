@@ -1,6 +1,6 @@
 # Integrated Plan v5 — gosFX Retirement + GPU Particle Pipeline + Light Dead-Code Cleanup
 
-- **Status:** REVIEWED v5 — greybeard PASS (round 1); adversarial r1 (2 MAJOR + 3 MINOR) folded in `1407354`; r2 external (1 CRITICAL + 4 MAJOR + 2 MINOR) folded in `54c96a6`; r3 audit (1 MAJOR + 1 MINOR) folded in `034bbcb`; **r4 external (2 CRITICAL + 3 MAJOR + 2 MINOR) folded in v5 (this revision).** Pending: round-4 adversarial-plan-review dispatch.
+- **Status:** **EXECUTE-READY v5** — greybeard PASS (round 1); adversarial r1 (2 MAJOR + 3 MINOR) folded in `1407354`; r2 external (1 CRITICAL + 4 MAJOR + 2 MINOR) folded in `54c96a6`; r3 audit (1 MAJOR + 1 MINOR) folded in `034bbcb`; r4 external (2 CRITICAL + 3 MAJOR + 2 MINOR) folded in v5 (`c771756` + `d6eee8b`); **r5 dispatch (inline per established convention; skill not registered as callable Skill) returned 0 CRITICAL / 0 MAJOR / 2 MINOR documentation carve-outs (no action required).** Greybeard re-pass NOT required per task spec — all fold-ins were mechanical; architectural meta-fix verdict from round 1 stands.
 - **Date:** 2026-05-20 (v5 fold-in)
 - **Authoring branch:** `claude/nifty-mendeleev`
 - **Authoritative specs:**
@@ -749,7 +749,24 @@ External review surfaced 2 CRITICAL + 3 MAJOR + 2 MINOR; all mechanical. Folded 
 - **MINOR-1** (header status) — updated to "v5 (post-round-4 fold-in; pending round-4 adversarial dispatch)."
 - **MINOR-2** (typo `not MC2_FX_TRACE=1` → `not MC2_GOSFX_TRACE=1`) — fixed in §1.
 
-**Adversarial verdict (round 4 — external): 2 CRITICAL (folded), 3 MAJOR (folded), 2 MINOR (folded).** v5 plan is pending the next dispatch.
+**Adversarial verdict (round 4 — external): 2 CRITICAL (folded), 3 MAJOR (folded), 2 MINOR (folded).**
+
+### Adversarial-plan-review round 5 (post-v5 fold-in dispatch, inline)
+
+Skill not registered as callable Skill in this harness; protocol executed inline per the convention used in rounds 1 / 2 / 3. Focus: grep-verify the v5 fold-in surface specifically (CRITICAL-1 adapter feasibility, CRITICAL-2 counter placement, MAJOR-1 git-grep pathspecs, MAJOR-2 single-deletion sequencing).
+
+Grep evidence:
+- `mclib/gosfx/effectlibrary.cpp:91-92` — `Find(const char* name)` is instance method returning `gosFX::Effect::Specification*`; `Instance` static at `effectlibrary.hpp:46`. CRITICAL-1 adapter pattern is structurally feasible — confirmed.
+- `mclib/mlr/mlrclipper.cpp:400, 565, 668, 697` — all four MLR work-leaves are out-of-line definitions in the cpp file (not header-inline); `Check_Object(this)` at 402/567/674/703 each as the first statement, leaving a clean placement slot for `FX_TRACE_MLR_ENQUEUE`. CRITICAL-2 counter placement is structurally feasible — confirmed.
+- External-caller grep: `DrawShape` and `DrawScreenQuads` have **zero external callers** in `mclib/gosfx/` or `code/` (v3 audit §5 claim re-confirmed); `DrawScalableShape` reached from 6 sites in `shape.cpp`/`shapecloud.cpp`/`debriscloud.cpp`; `DrawEffect` reached from 7 sites in `card`/`cardcloud`/`pertcloud`/`pointcloud`/`shardcloud`/`tube`. All callers are gosFX-side and naturally retired at A4.
+
+Findings:
+- CRITICAL: 0
+- MAJOR: 0
+- MINOR-1: §2.5 verifies `FX_TRACE_MLR_ENQUEUE` per-leaf counts match default-off baseline under A2 (because counter fires pre-gate, measures attempts), and points at `mlr_total ≤ 5us` as the work-done oracle. The counter does not independently prove the early-return suppressed work — only the Tracy zone does. Plan explicitly notes this carve-out and chose not to add a redundant post-gate counter ("doubles wiring surface; Tracy zone already provides the signal"). Documentation-only carve-out; no action.
+- MINOR-2: §1.3 `FX_TRACE_DRAW` wiring site listed as "(or wherever `Effect::Draw` lives — grep at execute)". Standard execute-time grep carve-out per `brainstorm_code_grounding_lesson.md`. Acceptable.
+
+**Adversarial verdict (round 5 — inline): 0 CRITICAL, 0 MAJOR, 2 MINOR (both documentation carve-outs, no action required).** Per task gate ("0 CRITICAL and ≤2 MAJOR mechanical → fold into v6; mark execute-ready"): **EXECUTE-READY**. No v6 fold-in commit needed because the two MINOR findings are explicit carve-outs documented in the plan body, not gaps.
 
 ---
 
