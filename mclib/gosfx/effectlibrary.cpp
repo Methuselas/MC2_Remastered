@@ -1,4 +1,5 @@
 #include"gosfxheaders.hpp"
+#include"fx_trace/fx_trace.h"
 
 //==========================================================================//
 // File:	 gosFX_Effect.cpp												//
@@ -91,6 +92,11 @@ void
 gosFX::Effect::Specification*
 	gosFX::EffectLibrary::Find(const char* name)
 {
+	// fx_trace v1: per-name spawn-event counter (env-gated, default-off).
+	// Survives A4 unchanged (re-emitted by mclib::particles::Spawn at B1
+	// Stage 2' enumerator commit).
+	FX_TRACE_SPAWN(name);
+
 	for (unsigned i=0; i<m_effects.GetLength(); ++i)
 	{
 		gosFX::Effect::Specification *spec = m_effects[i];

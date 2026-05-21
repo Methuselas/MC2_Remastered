@@ -4,6 +4,7 @@
 
 #include"mlrheaders.hpp"
 #include "../cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (n_prims_clipped)
+#include "../fx_trace/fx_trace.h"    // fx_trace v1: gated MLR-leaf invocation counter
 
 extern DWORD gShowBirdView, gEnableDetailTexture, gEnableMultiTexture, gEnableLightMaps;
 
@@ -400,6 +401,11 @@ void
 	MLRClipper::DrawShape (DrawShapeInformation *dInfo)
 {
 	Check_Object(this);
+	// fx_trace v1 (plan v6 §1 CRITICAL-2): pre-gate enqueue counter.
+	// Counts attempts, not work performed; A2 perf gate compares vs
+	// default-off baseline +/- 5% while mlr_total Tracy zone proves the
+	// downstream work no-op'd.
+	FX_TRACE_MLR_ENQUEUE("DrawShape");
 //
 // Statistic timing function
 //
@@ -565,6 +571,8 @@ void
 	MLRClipper::DrawScalableShape (DrawScalableShapeInformation *dInfo)
 {
 	Check_Object(this);
+	// fx_trace v1 (plan v6 §1 CRITICAL-2): pre-gate enqueue counter.
+	FX_TRACE_MLR_ENQUEUE("DrawScalableShape");
 //
 // Statistic timing function
 //
@@ -674,6 +682,8 @@ void
 	Check_Object(this);
 	Check_Object(dInfo);
 	Check_Object(dInfo->effect);
+	// fx_trace v1 (plan v6 §1 CRITICAL-2): pre-gate enqueue counter.
+	FX_TRACE_MLR_ENQUEUE("DrawEffect");
 
 #ifdef LAB_ONLY
 	if(gShowBirdView)
@@ -702,6 +712,8 @@ void
 
 	Check_Object(this);
 	Check_Object(dInfo);
+	// fx_trace v1 (plan v6 §1 CRITICAL-2): pre-gate enqueue counter.
+	FX_TRACE_MLR_ENQUEUE("DrawScreenQuads");
 
 	gos_GetViewport( &ViewportScalars::MulX, &ViewportScalars::MulY, &ViewportScalars::AddX, &ViewportScalars::AddY );
 
