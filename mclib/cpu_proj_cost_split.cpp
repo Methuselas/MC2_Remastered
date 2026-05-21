@@ -69,6 +69,12 @@ static const char* kSidecarName[SIDECAR_COUNT] = {
     "skinning_chain",
     "eventdriven_projection_total",
     "cull_admission_perframe",
+    "screenxy_perframe",
+    "effect_admission_perframe",
+    "terrain_admission_perframe",
+    "lighting_shadow_perframe",
+    "selection_picking_perframe",
+    "debug_overlay_perframe",
 };
 
 // --- Helpers --------------------------------------------------------------
@@ -352,6 +358,75 @@ void cull_admission_end_ns(int64_t startNs) {
     int64_t elapsed = now_ns() - startNs;
     s_curFrameSidecar[SIDECAR_CULL_ADMISSION_PERFRAME].ns       += elapsed;
     s_curFrameSidecar[SIDECAR_CULL_ADMISSION_PERFRAME].workload += 1;
+}
+
+// R3 narrow-subset wrapper sidecars. One pair per remaining policy-split
+// wrapper in camera.h. Same chrono-around-wrapper pattern as the R2
+// cull_admission pair — keeps the inner projectZ un-timed.
+int64_t screenxy_begin_ns() {
+    if (!g_cpuProjEnabled) return 0;
+    return now_ns();
+}
+void screenxy_end_ns(int64_t startNs) {
+    if (!g_cpuProjEnabled) return;
+    int64_t elapsed = now_ns() - startNs;
+    s_curFrameSidecar[SIDECAR_SCREENXY_PERFRAME].ns       += elapsed;
+    s_curFrameSidecar[SIDECAR_SCREENXY_PERFRAME].workload += 1;
+}
+
+int64_t effect_admission_begin_ns() {
+    if (!g_cpuProjEnabled) return 0;
+    return now_ns();
+}
+void effect_admission_end_ns(int64_t startNs) {
+    if (!g_cpuProjEnabled) return;
+    int64_t elapsed = now_ns() - startNs;
+    s_curFrameSidecar[SIDECAR_EFFECT_ADMISSION_PERFRAME].ns       += elapsed;
+    s_curFrameSidecar[SIDECAR_EFFECT_ADMISSION_PERFRAME].workload += 1;
+}
+
+int64_t terrain_admission_begin_ns() {
+    if (!g_cpuProjEnabled) return 0;
+    return now_ns();
+}
+void terrain_admission_end_ns(int64_t startNs) {
+    if (!g_cpuProjEnabled) return;
+    int64_t elapsed = now_ns() - startNs;
+    s_curFrameSidecar[SIDECAR_TERRAIN_ADMISSION_PERFRAME].ns       += elapsed;
+    s_curFrameSidecar[SIDECAR_TERRAIN_ADMISSION_PERFRAME].workload += 1;
+}
+
+int64_t lighting_shadow_begin_ns() {
+    if (!g_cpuProjEnabled) return 0;
+    return now_ns();
+}
+void lighting_shadow_end_ns(int64_t startNs) {
+    if (!g_cpuProjEnabled) return;
+    int64_t elapsed = now_ns() - startNs;
+    s_curFrameSidecar[SIDECAR_LIGHTING_SHADOW_PERFRAME].ns       += elapsed;
+    s_curFrameSidecar[SIDECAR_LIGHTING_SHADOW_PERFRAME].workload += 1;
+}
+
+int64_t selection_picking_begin_ns() {
+    if (!g_cpuProjEnabled) return 0;
+    return now_ns();
+}
+void selection_picking_end_ns(int64_t startNs) {
+    if (!g_cpuProjEnabled) return;
+    int64_t elapsed = now_ns() - startNs;
+    s_curFrameSidecar[SIDECAR_SELECTION_PICKING_PERFRAME].ns       += elapsed;
+    s_curFrameSidecar[SIDECAR_SELECTION_PICKING_PERFRAME].workload += 1;
+}
+
+int64_t debug_overlay_begin_ns() {
+    if (!g_cpuProjEnabled) return 0;
+    return now_ns();
+}
+void debug_overlay_end_ns(int64_t startNs) {
+    if (!g_cpuProjEnabled) return;
+    int64_t elapsed = now_ns() - startNs;
+    s_curFrameSidecar[SIDECAR_DEBUG_OVERLAY_PERFRAME].ns       += elapsed;
+    s_curFrameSidecar[SIDECAR_DEBUG_OVERLAY_PERFRAME].workload += 1;
 }
 
 // --- Scope guards ---------------------------------------------------------

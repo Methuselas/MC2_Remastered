@@ -42,7 +42,18 @@ enum SidecarId : int {
     SIDECAR_SKINNING_CHAIN          = 0,  // Mech3D.UpdateGeometry outer
     SIDECAR_EVENTDRIVEN_PROJECT_Z   = 1,  // projectZ called outside render loop (count-only)
     SIDECAR_CULL_ADMISSION_PERFRAME = 2,  // projectForObjectAdmission (timed; R2 follow-on)
-    SIDECAR_COUNT                   = 3,
+    // R3 narrow-subset sidecars — one timed bucket per remaining
+    // policy-split wrapper. Goal: identify which wrapper accounts for
+    // the ~946-call/frame mc2_10 surplus surfaced by
+    // SIDECAR_EVENTDRIVEN_PROJECT_Z (R2 falsified cull-admission as the
+    // source). Same chrono-around-wrapper pattern as the R2 sidecar.
+    SIDECAR_SCREENXY_PERFRAME           = 3,  // projectForScreenXY
+    SIDECAR_EFFECT_ADMISSION_PERFRAME   = 4,  // projectForEffectAdmission
+    SIDECAR_TERRAIN_ADMISSION_PERFRAME  = 5,  // projectForTerrainAdmission
+    SIDECAR_LIGHTING_SHADOW_PERFRAME    = 6,  // projectForLightingShadow
+    SIDECAR_SELECTION_PICKING_PERFRAME  = 7,  // projectForSelectionPicking
+    SIDECAR_DEBUG_OVERLAY_PERFRAME      = 8,  // projectForDebugOverlay
+    SIDECAR_COUNT                       = 9,
 };
 
 // Master env flag — checked at the head of every scope/counter path. When
@@ -93,6 +104,28 @@ void add_workload_eventdriven_projectZ();   // sidecar count-only
 //     memory; the R2 capture must be read with that in mind.
 int64_t cull_admission_begin_ns();
 void    cull_admission_end_ns(int64_t startNs);
+
+// R3 narrow-subset wrapper sidecars. Identical contract to the R2
+// cull-admission pair: env-OFF returns 0 / no-op; end_ns accumulates
+// elapsed ns and bumps workload by 1 (n_calls_p50 = paired-call count).
+// Wired top/bottom of the matching inline wrapper in camera.h. Same
+// ~50–100 us upper-bound observer-effect caveat applies per wrapper
+// (chrono pair x calls/frame). Cross-validation: the SUM of all 7
+// narrow-subset wrapper n_calls (cull_admission + the 6 below) should
+// approximately equal eventdriven_projection_total.n_calls; any wild
+// discrepancy is a stop-condition (see §14).
+int64_t screenxy_begin_ns();
+void    screenxy_end_ns(int64_t startNs);
+int64_t effect_admission_begin_ns();
+void    effect_admission_end_ns(int64_t startNs);
+int64_t terrain_admission_begin_ns();
+void    terrain_admission_end_ns(int64_t startNs);
+int64_t lighting_shadow_begin_ns();
+void    lighting_shadow_end_ns(int64_t startNs);
+int64_t selection_picking_begin_ns();
+void    selection_picking_end_ns(int64_t startNs);
+int64_t debug_overlay_begin_ns();
+void    debug_overlay_end_ns(int64_t startNs);
 
 // RAII scope guard — opens chrono, closes + accumulates into bucket on
 // destruction. Zero-cost when env OFF (constructor early-out).

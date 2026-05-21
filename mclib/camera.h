@@ -34,6 +34,21 @@ namespace mc2_cpu_proj_cost {
     // R2 cull-admission timing pair (see cpu_proj_cost_split.h comment).
     int64_t cull_admission_begin_ns();
     void    cull_admission_end_ns(int64_t startNs);
+    // R3 narrow-subset wrapper timing pairs (one per remaining
+    // policy-split wrapper). Same contract as cull_admission_*_ns:
+    // env-OFF returns 0 / no-op.
+    int64_t screenxy_begin_ns();
+    void    screenxy_end_ns(int64_t startNs);
+    int64_t effect_admission_begin_ns();
+    void    effect_admission_end_ns(int64_t startNs);
+    int64_t terrain_admission_begin_ns();
+    void    terrain_admission_end_ns(int64_t startNs);
+    int64_t lighting_shadow_begin_ns();
+    void    lighting_shadow_end_ns(int64_t startNs);
+    int64_t selection_picking_begin_ns();
+    void    selection_picking_end_ns(int64_t startNs);
+    int64_t debug_overlay_begin_ns();
+    void    debug_overlay_end_ns(int64_t startNs);
 }
 
 #ifndef TGL_H
@@ -541,6 +556,8 @@ class Camera
 		// Terrain vertex admission — bool gates submission; per-vertex wedge-risk concentration.
 		inline bool projectForTerrainAdmission (Stuff::Vector3D& point,
 		                                        Stuff::Vector4D& screen) {
+			// R3 narrow-subset sidecar (see cpu_proj_cost_split.h).
+			const int64_t _f3_terrain_t0 = ::mc2_cpu_proj_cost::terrain_admission_begin_ns();
 #pragma warning(push)
 #pragma warning(disable: 4996)
 			bool accepted = projectZ(point, screen);
@@ -551,6 +568,7 @@ class Camera
 				          isfinite(screen.z) && isfinite(screen.w));
 			}
 #endif
+			::mc2_cpu_proj_cost::terrain_admission_end_ns(_f3_terrain_t0);
 			return accepted;
 		}
 
@@ -590,6 +608,8 @@ class Camera
 		// Effect billboard admission — bool gates submission; same wedge-class hazard as terrain.
 		inline bool projectForEffectAdmission (Stuff::Vector3D& point,
 		                                       Stuff::Vector4D& screen) {
+			// R3 narrow-subset sidecar (see cpu_proj_cost_split.h).
+			const int64_t _f3_effect_t0 = ::mc2_cpu_proj_cost::effect_admission_begin_ns();
 			LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
@@ -605,10 +625,14 @@ class Camera
 				          isfinite(screen.z) && isfinite(screen.w));
 			}
 #endif
+			bool ret;
 			if (effectAdmissionPredicateMode() == EffectAdmissionPredicateMode::Modern) {
-				return clipSpaceFrustumAdmit(result.rawClip);
+				ret = clipSpaceFrustumAdmit(result.rawClip);
+			} else {
+				ret = legacyAccepted;
 			}
-			return legacyAccepted;
+			::mc2_cpu_proj_cost::effect_admission_end_ns(_f3_effect_t0);
+			return ret;
 		}
 
 		// Lighting / shadow activation — bool gates light->active; screen discarded.
@@ -616,7 +640,10 @@ class Camera
 #pragma warning(disable: 4996)
 		inline bool projectForLightingShadow (Stuff::Vector3D& point,
 		                                      Stuff::Vector4D& screen) {
-			return projectZ(point, screen);
+			const int64_t _f3_lshadow_t0 = ::mc2_cpu_proj_cost::lighting_shadow_begin_ns();
+			bool ret = projectZ(point, screen);
+			::mc2_cpu_proj_cost::lighting_shadow_end_ns(_f3_lshadow_t0);
+			return ret;
 		}
 #pragma warning(pop)
 
@@ -625,7 +652,10 @@ class Camera
 #pragma warning(disable: 4996)
 		inline bool projectForSelectionPicking (Stuff::Vector3D& point,
 		                                        Stuff::Vector4D& screen) {
-			return projectZ(point, screen);
+			const int64_t _f3_pick_t0 = ::mc2_cpu_proj_cost::selection_picking_begin_ns();
+			bool ret = projectZ(point, screen);
+			::mc2_cpu_proj_cost::selection_picking_end_ns(_f3_pick_t0);
+			return ret;
 		}
 #pragma warning(pop)
 
@@ -634,7 +664,10 @@ class Camera
 #pragma warning(disable: 4996)
 		inline bool projectForScreenXY (Stuff::Vector3D& point,
 		                                Stuff::Vector4D& screen) {
-			return projectZ(point, screen);
+			const int64_t _f3_sxy_t0 = ::mc2_cpu_proj_cost::screenxy_begin_ns();
+			bool ret = projectZ(point, screen);
+			::mc2_cpu_proj_cost::screenxy_end_ns(_f3_sxy_t0);
+			return ret;
 		}
 #pragma warning(pop)
 
@@ -643,7 +676,10 @@ class Camera
 #pragma warning(disable: 4996)
 		inline bool projectForDebugOverlay (Stuff::Vector3D& point,
 		                                    Stuff::Vector4D& screen) {
-			return projectZ(point, screen);
+			const int64_t _f3_dbg_t0 = ::mc2_cpu_proj_cost::debug_overlay_begin_ns();
+			bool ret = projectZ(point, screen);
+			::mc2_cpu_proj_cost::debug_overlay_end_ns(_f3_dbg_t0);
+			return ret;
 		}
 #pragma warning(pop)
 
