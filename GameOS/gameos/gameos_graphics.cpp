@@ -29,6 +29,10 @@
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "../../mclib/cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline
+
+// [B1 C16] (diagnostic) gosFX heap + child accumulation counters; env-gated on
+// MC2_GPU_PARTICLES=1. Forward-decl to avoid Stuff/gosfx header chain here.
+namespace gosFX { void DiagFrameTick(); }
 #include "gos_terrain_bridge.h"
 #include "gos_terrain_patch_stream.h"
 #include "gos_terrain_indirect.h"
@@ -5949,6 +5953,8 @@ void gos_RendererEndFrame() {
     // F3 CPU projection cost-baseline: commit per-frame samples; print
     // window stats every 500 frames. No-op when env OFF.
     ::mc2_cpu_proj_cost::frame_end();
+    // [B1 C16] gosFX heap + child counter tick; env-gated; no-op when OFF.
+    ::gosFX::DiagFrameTick();
 }
 
 void gos_RendererFlushHUDBatch() {

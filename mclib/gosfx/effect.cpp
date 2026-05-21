@@ -1,6 +1,88 @@
 #include"gosfxheaders.hpp"
 #include"fx_trace/fx_trace.h"
 
+// [B1 C16] (diagnostic) GOSFX_HEAP + GOSFX_CHILD counters
+// Env-gated on MC2_GPU_PARTICLES=1. No-op when disabled.
+// Hypotheses being differentiated:
+//   H1: gosFX heap exhaustion via process-wide allocation growth.
+//   H2: Effect::m_children leak on looped parents (creates > destroys).
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
+#if defined(_WIN32)
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#  include <psapi.h>
+#endif
+
+namespace {
+    std::atomic<long long> g_effectCreates{0};
+    std::atomic<long long> g_effectDestroys{0};
+    std::atomic<long long> g_effectAlivePeak{0};
+    std::atomic<long long> g_effectAliveNow{0};
+
+    long long g_diagFrameCount = 0;
+    bool      g_diagEnabledChecked = false;
+    bool      g_diagEnabled = false;
+    bool      g_diagAtexitRegistered = false;
+    long long g_diagHeapPeakBytes = 0;
+
+    void emit_diag_summary(const char* reason) {
+        long long creates  = g_effectCreates.load();
+        long long destroys = g_effectDestroys.load();
+        long long peak     = g_effectAlivePeak.load();
+        std::fprintf(stderr,
+            "[GOSFX_CHILD v1] event=summary reason=%s frames=%lld creates=%lld destroys=%lld delta=%lld max_alive=%lld peak_rss=%lldKB\n",
+            reason, g_diagFrameCount, creates, destroys,
+            creates - destroys, peak, g_diagHeapPeakBytes / 1024);
+    }
+
+    void diag_init_if_needed() {
+        if (g_diagEnabledChecked) return;
+        g_diagEnabledChecked = true;
+        const char* v = std::getenv("MC2_GPU_PARTICLES");
+        g_diagEnabled = (v && v[0] == '1');
+        if (g_diagEnabled && !g_diagAtexitRegistered) {
+            g_diagAtexitRegistered = true;
+            std::atexit([](){ emit_diag_summary("atexit"); });
+            std::fprintf(stderr, "[INSTR v1] enabled: GOSFX_HEAP + GOSFX_CHILD counters (C16)\n");
+        }
+    }
+}
+
+namespace gosFX {
+    void DiagFrameTick() {
+        diag_init_if_needed();
+        if (!g_diagEnabled) return;
+        ++g_diagFrameCount;
+        if ((g_diagFrameCount % 500) != 0) return;
+
+        long long workingSet = 0;
+        long long pagefile   = 0;
+#if defined(_WIN32)
+        PROCESS_MEMORY_COUNTERS pmc;
+        ZeroMemory(&pmc, sizeof(pmc));
+        pmc.cb = sizeof(pmc);
+        if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+            workingSet = static_cast<long long>(pmc.WorkingSetSize);
+            pagefile   = static_cast<long long>(pmc.PagefileUsage);
+        }
+#endif
+        if (workingSet > g_diagHeapPeakBytes) g_diagHeapPeakBytes = workingSet;
+
+        long long creates  = g_effectCreates.load();
+        long long destroys = g_effectDestroys.load();
+        long long alive    = g_effectAliveNow.load();
+        long long peak     = g_effectAlivePeak.load();
+        std::fprintf(stderr,
+            "[GOSFX_HEAP v1] frame=%lld rss=%lldKB pagefile=%lldKB peakRss=%lldKB "
+            "[GOSFX_CHILD v1] creates=%lld destroys=%lld delta=%lld alive=%lld max_alive=%lld\n",
+            g_diagFrameCount, workingSet / 1024, pagefile / 1024,
+            g_diagHeapPeakBytes / 1024,
+            creates, destroys, creates - destroys, alive, peak);
+    }
+}
+
 //==========================================================================//
 // File:	 gosFX_Effect.cpp												//
 // Contents: Base gosFX::Effect Component									//
@@ -384,6 +466,16 @@ gosFX::Effect::Effect(
 	m_flags = flags;
 	m_lastRan = -1.0f;
 	m_localToParent = Stuff::LinearMatrix4D::Identity;
+
+	// [B1 C16] (diagnostic) Effect create counter — increments for every
+	// gosFX::Effect subclass via base ctor. Env-gated read inside DiagFrameTick.
+	{
+		long long now = ++g_effectAliveNow;
+		++g_effectCreates;
+		long long prevPeak = g_effectAlivePeak.load();
+		while (now > prevPeak &&
+		       !g_effectAlivePeak.compare_exchange_weak(prevPeak, now)) {}
+	}
 }
 
 
@@ -394,6 +486,12 @@ gosFX::Effect::~Effect()
 	Check_Object(this);
 	Stuff::ChainIteratorOf<gosFX::Effect*> children(&m_children);
 	children.DeletePlugs();
+
+	// [B1 C16] (diagnostic) Effect destroy counter — covers both child->Kill()
+	// at effect.cpp:619 (delete child) AND DeletePlugs() above for orphan kills
+	// in ~Effect, since both ultimately invoke this dtor.
+	--g_effectAliveNow;
+	++g_effectDestroys;
 }
 
 //------------------------------------------------------------------------------

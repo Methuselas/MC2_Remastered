@@ -47,6 +47,11 @@ namespace gosFX
 
 	extern HGOSHEAP Heap;
 
+	// [B1 C16] Per-frame diagnostic tick for GOSFX_HEAP + GOSFX_CHILD counters.
+	// Env-gated on MC2_GPU_PARTICLES=1; no-op otherwise. Safe to call every frame.
+	// Hooked from gos_RendererEndFrame (sibling of mc2_cpu_proj_cost::frame_end).
+	void DiagFrameTick();
+
 	extern const Stuff::LinearMatrix4D &Effect_Into_Motion;
 	extern const Stuff::LinearMatrix4D &Effect_Against_Motion;
 
