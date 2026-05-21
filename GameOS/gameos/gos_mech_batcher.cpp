@@ -574,13 +574,12 @@ void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int l
 
         // Skip spotlight leaves: TG_Shape::isSpotlight is set on the
         // per-instance shape from "SpotLight_*" node name prefix at
-        // tgl.cpp:259/475. The CPU mech path's per-leaf rendering
-        // path skips spotlights based on per-actor lightsOut state;
-        // Slice A doesn't carry per-actor lightsOut, so skipping
-        // spotlight geometry entirely is the safe move. Mirrors what
-        // gos_static_prop_batcher.cpp does via its renderFlags
-        // (bit 2: isSpotlight). Slice B+ can re-enable with a
-        // per-actor lightsOut/spotlight flag.
+        // tgl.cpp:259/475. Post-T3.1 ((E) SpotLight_ -> real illumination),
+        // mech spotlight child shapes are emitted as real TG_Light
+        // registrations via Mech3DAppearance::updateGeometry (T1.6/T1.7,
+        // commit fceb304). Skip the geometry emission here — the cone is
+        // no longer drawn, only the light contribution lives downstream.
+        // See docs/superpowers/plans/2026-05-20-spotlight-real-illumination-plan.md.
         const char* nodeName = tnode->getNodeId();
         if (nodeName && S_strnicmp(nodeName, "SpotLight_", 10) == 0) {
             if (s_nodeTrace) {
