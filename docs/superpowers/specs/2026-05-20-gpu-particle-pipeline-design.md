@@ -5,7 +5,7 @@
 - **Authoring branch:** `claude/nifty-mendeleev`
 - **Greybeard verdict:** PATCH (justified) — see §3. (A) is the META-FIX; (B) is feature reintroduction onto the clean substrate. **Mechanical enforcement:** CI grep gate per §3.4.
 - **Recommended architecture:** **(α) CPU-emit, GPU-batch billboards.** See §3.
-- **F3 baseline (must-not-regress):** `mlr_total worst_window_p95 = 293us` in user-driven mc2_10 (commit `d064b77`, capture `2026-05-20T16-41-58`) — 99.9% of all CPU projection cost. (A) deletion delivers the full 293us CPU win; (B) must not regress it. Memory: `f3_tier1_baseline_2026_05_20.md`.
+- **F3 baseline (must-not-regress):** `mlr_total worst_window_p95 = 408us` in R2 confirmation user-driven mc2_10 under moderate camera motion (~16%, commit `41b6853`, capture `2026-05-20T19-19-53`) — 99.9% of all CPU projection cost. Supersedes the initial light-motion capture (`d064b77`, 7% motion, 293us). mlr_total scales with particle density under motion; sustained-combat captures may push higher. (A) deletion delivers the full 408us+ CPU win; (B) must not regress it. Memory: `f3_mc2_10_worstcase_2026_05_20.md`.
 - **All file:line citations grep-verified against `nifty-mendeleev` at write-time (Appendix A).**
 
 ---
@@ -295,7 +295,7 @@ The dependency graph (now that both specs exist + F3 baseline is in):
                             ├──> integrated plan: A0..A3 → B1 → A4
 (B) GPU particle pipeline ──┤
                             │
-F3 baseline (d064b77, 293us) ┘   (must-not-regress floor)
+F3 baseline (41b6853, 408us) ┘   (must-not-regress floor; R2 confirmation under 16% motion)
 ```
 
 **Sequencing:**
@@ -308,6 +308,7 @@ F3 baseline (d064b77, 293us) ┘   (must-not-regress floor)
 | A3 | (A) | Soak under default-on (internal). User-driven canary across tier1. Progression / savegame / mission completion verified | ON (default) | Internal canary only |
 | **B1** | **(B)** | **`mclib/particles/` parser MOVED from `mclib/gosfx/effectlibrary.cpp`; GPU billboard batcher; Card/Point/Shard/Tube coverage; `MC2_GPU_PARTICLES=1` env-gate added then default-flipped; visual canary across tier1 + mc2_10 + heavy-combat mission** | **ON (default after B1 flip)** | **YES — particles return; this is what ships externally** |
 | A4 | (A) | Atomic deletion: `mclib/gosfx/` removed from runtime exe build, `mclib/mlr/` removed from runtime exe build (kept linkable into editor / Viewer / aseconv targets); env-gates retired | n/a (code gone) | No visual delta from B1 |
+| **A5** | **(C)** | **Light dead-code retirement: delete `USE_LIGHT_APPEARANCE`-gated bodies in `code/light.cpp` (Light::init's VFXAppearance allocation, Light::update's onScreen() call, Light::render); collapse the GameObject ghost pool slot for mission .fit Light entries to a no-op stub OR remove the Light GameObject type entirely if no other lifecycle code depends on the slot. ~200 LOC + a pool. Per `memory/lights_are_dead_code_use_light_appearance_undef.md`** | n/a (code gone) | **No** — paths were already dead; mission .fit Light entries continue to do nothing (until/unless future (D) arc activates them) |
 | B2 | (B) | Defer: PertCloud / ShapeCloud / DebrisCloud / EffectCloud + v2 polish | n/a | Polish only |
 
 **Why this ordering is correct:**
@@ -315,9 +316,11 @@ F3 baseline (d064b77, 293us) ┘   (must-not-regress floor)
 - **A0..A3 are reversible.** Env-gate flips. If anything goes wrong, set `MC2_DISABLE_GOSFX=0` and gosFX is back.
 - **B1 is the externally-visible ship event.** Before B1, the no-particle state is internal-only canary; after B1, particles return on the new GPU path.
 - **A4 is post-ship cleanup.** Atomic deletion happens after B1 has soaked default-on. By A4, gosFX has been no-op for a full B1 soak window AND the new path has replaced its visual surface — deletion is mechanical.
-- **F3 baseline (293us) frames the perf claim:** (A) deletion saves 293us; (B) reintroduction must not regress this (CI grep gate per §3.4 prevents the CPU-projection coupling that would). The net frame-budget delta after B1+A4 is `-293us + (new gpu_fx_update CPU cost, expected < 50us)` = roughly `-240us` floor. Plan-phase should set an explicit perf gate against the F3 capture.
+- **F3 baseline (408us R2-confirmed) frames the perf claim:** (A) deletion saves 408us at moderate-motion worst-case (potentially higher under sustained combat); (B) reintroduction must not regress this (CI grep gate per §3.4 prevents the CPU-projection coupling that would). The net frame-budget delta after B1+A4 is `-408us + (new gpu_fx_update CPU cost, expected < 50us)` = roughly `-350us` floor. Plan-phase should set an explicit perf gate against the R2 capture AND require a sustained-combat re-capture during B1 visual canary to confirm the floor under heavier particle density than mc2_10 alone exercises.
 
-**Suggested plan-phase form:** a SINGLE integrated plan with named handoffs between A0/A1/A2/A3/B1/A4, not two parallel plans. The sequencing constraint between B1 and A4 (B1 must ship default-on AND soak before A4 deletes) is too tight for two-plan coordination without overhead.
+**Suggested plan-phase form:** a SINGLE integrated plan with named handoffs between A0/A1/A2/A3/B1/A4/A5, not two parallel plans. The sequencing constraint between B1 and A4 (B1 must ship default-on AND soak before A4 deletes) is too tight for two-plan coordination without overhead. A5 is independent of (B) so could be sequenced anywhere post-A4; placed at end as the cleanest cleanup ordering.
+
+**Out of scope for this integrated arc:** option (D) Real light illumination plumbing (mission .fit Light positions → live TG_Light pool). (D) is an ADDITIVE feature, not debt repayment — current state is "lights illuminate nothing" and has been forever; (D) would turn that feature on for the first time. Doesn't fit this campaign's "eliminate per-frame CPU work" framing. Filed as a future fidelity arc; spec at [docs/superpowers/specs/2026-05-20-light-real-illumination-plumbing-design.md](2026-05-20-light-real-illumination-plumbing-design.md). The R5 risk noted by session 1 (`mclib/bdactor.cpp:2180-2183` "Stage 2.D.2 fix" ordering trap on `worldLights[0]->aRGB`) applies only to (D), not to A5.
 
 ---
 
