@@ -46,7 +46,26 @@ Per the (D) recon plus tonight's grep:
 | Active consumers via `addWorldLight` | [mclib/bdactor.cpp:1939](mclib/bdactor.cpp), [mclib/mech3d.cpp:3343](mclib/mech3d.cpp), [code/weaponbolt.cpp:1262](code/weaponbolt.cpp) | Live |
 | LightsData baked-static path (`mc2WriteStaticLightSlot`) | [mclib/txmmgr.cpp:1205-1253](mclib/txmmgr.cpp) | Live, recipe-indexed |
 
-**Key budget reality:** the SHADER side has 16 slots, not 256. The 256-slot world pool is filtered each frame down to the 16 most relevant for the camera's view. So a per-frame culling / scoring step already runs; (E) just adds to its input population.
+**Key budget reality (corrected 2026-05-20 after user pushback + lighting.hglsl re-read):**
+
+The two `MAX_LIGHTS_IN_WORLD` values share a name but operate at different scopes:
+
+- **CPU world pool = 256** ([mclib/tgl.h:170](mclib/tgl.h)). The total registered lights for the mission.
+- **Shader per-shape array = 16** ([shaders/include/lighting.hglsl:23](shaders/include/lighting.hglsl)). The lights packed into a single `TG_HWLightsData` struct for one draw object.
+
+The pipeline:
+1. CPU registers up to 256 lights into `worldLights[]` via `addWorldLight`.
+2. Per-shape, CPU runs `CacheGpuLightData` ([mclib/bdactor.cpp:1880](mclib/bdactor.cpp), [:1887](mclib/bdactor.cpp)) to PICK the most-relevant ≤16 lights for that shape and pack them into a `TG_HWLightsData`. Slot cached in `cachedGpuLightIndex_`.
+3. At draw time, shader iterates `numLights.x` (≤16) from that bound struct.
+
+So 950 SpotLights in the world pool would NOT make the shader iterate 950 per pixel. Each pixel iterates only its draw object's pre-filtered 16. The CPU filter already handles "more world lights than shader slots" today.
+
+**What (E) actually constrains:**
+- (a) CPU world pool: 256 → may need to bump to 1024 or more depending on stock-content SpotLight_ population (see OQ6).
+- (b) Shader per-shape array: 16 → may need to bump to 32 or 64 if dense building/mech areas have more lights affecting one shape than 16 best-quality.
+- (c) Per-shape filter quality: the existing scoring picks "best 16" — needs sanity-check for static spotlights (distance-based is likely fine).
+
+Per user: "if there isn't some actual limit, just increase the number of slots, or go to a different architecture for lights ... we have a piss ton of room." So both (a) and (b) are permissive scope. Plan-phase should: count actual stock-content SpotLight_ population, set pool size accordingly, and bump shader array only if quality demands it.
 
 ## 3. Three approaches
 
@@ -55,14 +74,14 @@ Per the (D) recon plus tonight's grep:
 At `GpuStaticPropBatcher::submitMultiShape` and `gos_mech_batcher.cpp:553-563`: when `child->isSpotlight==true`, SKIP submitting the cone geometry; instead, register a `TG_Light` of type `TG_LIGHT_POINT` (or `TG_LIGHT_SPOT` — see OQ2) at the child's world-space position via `eye->addWorldLight()`. Store the slot index for `removeWorldLight` at building destruction / mech-killed lifecycle events.
 
 **Pros.**
-- No new shader code (existing terrain.frag, mech shaders, static_prop.frag already sample LightsData).
+- No new shader code required for the basic case (existing terrain.frag, mech shaders, static_prop.frag already sample LightsData).
 - No alpha sub-pass → no glUseProgram swap → no state-leak class (sidesteps `feedback_static_prop_subpass_program_switch.md`).
 - Substitutive by construction: cone draws delete, real light registrations replace.
 - Real spillage onto surrounding terrain/props — the actual visual the user wants.
 
 **Cons.**
-- Loses the visible cone beam (searchlight-through-air, lamp-cone aesthetic). If content relies on the cone being visible (e.g. atmospheric VTOL searchlight), it's gone.
-- Building-static spotlights become real lights consuming pool slots; large stock missions may overflow the 16-active-slot shader budget.
+- Loses the visible cone beam (searchlight-through-air, lamp-cone aesthetic). If content relies on the cone being visible (e.g. atmospheric VTOL searchlight), it's gone. User confirmed: don't care, drop them.
+- World pool may need bumping (currently 256 CPU slots) and per-shape shader array may need bumping (currently 16) — both pre-approved per user 2026-05-20 ("piss ton of room"). See OQ6.
 
 ### (β) Keep cone geometry opaque (current state), add TG_Light alongside
 
@@ -132,11 +151,20 @@ Which materials sample LightsData? Buildings (per `peekCachedLeafLightData`), me
 
 Recommendation: dispatch `mc2-render-expert` advisor to enumerate. If terrain doesn't sample, file as follow-up shader work; (E) v1 ships with the consumers that already sample.
 
-### OQ6 — Per-frame budget overflow (16 shader slots vs N spotlights in active blocks)
+### OQ6 — Budget sizing (CPU pool + shader array) — RELAXED per user 2026-05-20
 
-Each terrain block at wolfman zoom may have many lamp posts. If active blocks contain >16 lamps, only the per-frame scoring selects which 16 illuminate. Currently the scoring runs against ~handful of mech/building dynamic lights; adding hundreds of static lamp lights may starve the dynamic lights.
+Two budgets, two questions:
 
-Recommendation: route static spotlights through the LIGHTBAKE v2 path (`mc2WriteStaticLightSlot`) which is recipe-indexed and bakes per-shape — possibly bypasses the 16-slot dynamic budget by emitting pre-baked spillage in `TG_HWLightsData` per-leaf. Need `mc2-render-expert` advisor to confirm the baking-path budget semantics.
+**(a) CPU world pool size.** Currently `MAX_LIGHTS_IN_WORLD = 256` at [mclib/tgl.h:170](mclib/tgl.h). If stock missions register more than 256 SpotLight_ TG_Lights total, the world pool overflows and the rest get silently dropped at `addWorldLight` (returns -1). Bump to whatever fits.
+
+**(b) Per-shape shader array size.** Currently `MAX_LIGHTS_IN_WORLD = 16` at [shaders/include/lighting.hglsl:23](shaders/include/lighting.hglsl) (separate `#define` despite shared name). The CPU pre-filter picks the up-to-16 most relevant lights per shape into `TG_HWLightsData`. If dense areas have >16 lights affecting one shape, the lowest-scoring get dropped — visible as "edge of room is dim despite 20 lamps."
+
+Plan-phase actions:
+1. **Instrument first.** Add a `MC2_SPOTLIGHT_REAL_TRACE=1` counter on `isSpotlight==true` registrations during mission load across all tier1 stock missions + mc2_10. Get an actual count. Then pick the world-pool size from data, not speculation.
+2. **Score the per-shape filter.** Run F3-style telemetry on `CacheGpuLightData`'s pick-best-16 logic — does it ever truncate, and on which shapes? If yes, bump shader array (the lockstep `TG_HWLightsData` + `lighting.hglsl` array sizes; see [memory/cpp_glsl_ubo_struct_lockstep.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\cpp_glsl_ubo_struct_lockstep.md)). User pre-approves: "piss ton of room."
+3. **Fallback if both are insufficient.** Route static SpotLight_ TG_Lights through LIGHTBAKE v2 (`mc2WriteStaticLightSlot`) which bakes per-shape and bypasses the dynamic pool — keeps the world pool free for dynamic (mech / weapon-bolt) lights.
+
+**Recommendation:** start with naive (a) bump → measure → either ship or escalate to (b)+(c). Don't move to clustered/forward+ unless (a)+(b)+(c) genuinely insufficient (user explicitly permitted but it's overkill for 950 mostly-static lights).
 
 ### OQ7 — Day vs night gating
 
