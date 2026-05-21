@@ -60,10 +60,10 @@ namespace gosFX
 	//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	// Effect management
 	//
+	// Per B1 Stage 2' C1: the m_effects storage now lives in
+	// mc2::particles::SpecLibrary. EffectLibrary is a forwarding adapter
+	// during the migration window.
 	public:
-		Stuff::DynamicArrayOf<Effect::Specification*>
-			m_effects;
-
 		Effect::Specification*
 			Find(const char* name);
 		Effect*

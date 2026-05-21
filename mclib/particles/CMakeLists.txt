@@ -8,9 +8,10 @@ project(particles)
 
 set(SOURCES
     batcher.cpp
+    spec_library.cpp
 )
 
-include_directories(${COMMON_INCLUDE_DIRS} "../../" "./")
+include_directories(${COMMON_INCLUDE_DIRS} "../../" "../../mclib" "./")
 include_directories(${THIRDPARTY_INCLUDE_DIRS})
 
 add_library(particles ${SOURCES})
