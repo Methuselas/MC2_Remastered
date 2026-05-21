@@ -26,9 +26,9 @@ namespace mc2_spotlight_real {
 // Result is cached in a file-scope static inside spotlight_real.cpp.
 void initFromEnv();
 
-// Stage 1 / T1.2: default-off. Returns true ONLY when MC2_SPOTLIGHT_REAL is
-// set to any non-"0" value at process startup. Stage 2 / T2.1 will invert
-// the default; Stage 3 / T3.1 deletes the gate entirely.
+// Stage 2 / T2.1: default-on. Returns true UNLESS MC2_SPOTLIGHT_REAL is
+// explicitly set to "0" at process startup (regression escape hatch).
+// Stage 3 / T3.1 deletes the gate entirely after soak.
 bool isEnabled();
 
 }  // namespace mc2_spotlight_real
