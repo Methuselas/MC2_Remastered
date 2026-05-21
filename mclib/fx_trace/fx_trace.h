@@ -40,6 +40,14 @@ void record_spawn(const char* name);
 void record_draw(const char* name);
 void record_mlr_enqueue(const char* leaf_name);
 
+// C10: per-ClassID distribution counter. Called from gosFX::Effect::Start
+// (per-Start-event semantics — counts effects that actually spawn).
+// class_id is the Stuff::RegisteredClass::ClassID enum value; name is the
+// spec name (for first-sighting cross-reference). Maintains:
+//   - per-class total Start count
+//   - first-seen spec name for each class (one-shot)
+void record_class(unsigned int class_id, const char* name);
+
 // Called at mission boundaries (and atexit) to dump and reset.
 void dump_and_reset(const char* reason);
 
@@ -56,3 +64,6 @@ void dump_and_reset(const char* reason);
 
 #define FX_TRACE_MLR_ENQUEUE(leaf_name) \
     do { if (::mc2::fx_trace::is_enabled()) { ::mc2::fx_trace::record_mlr_enqueue(leaf_name); } } while (0)
+
+#define FX_TRACE_CLASS(class_id, name) \
+    do { if (::mc2::fx_trace::is_enabled()) { ::mc2::fx_trace::record_class((unsigned int)(class_id), (name)); } } while (0)

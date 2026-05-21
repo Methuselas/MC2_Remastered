@@ -430,6 +430,17 @@ void
 	Check_Pointer(info);
 	gos_PushCurrentHeap(Heap);
 
+	// C10: per-ClassID per-Start-event counter (env-gated, default-off).
+	// Plan v6 §B1 C10: classify gosFX ClassID distribution in stock content
+	// to determine whether C8/C9's 4 routed primitive types (Card/Point/
+	// Shard/Tube) actually dominate, or whether the deferred B2 types
+	// (Pert/Shape/ShapeCloud/Debris/EffectCloud) do.
+	if (m_specification)
+	{
+		FX_TRACE_CLASS(m_specification->GetClassID(),
+		               m_specification->m_name);
+	}
+
 	//
 	//---------------------------------------------------------------------
 	// Don't override m_lastran if we are issuing a Start command while the
