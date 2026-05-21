@@ -11,6 +11,7 @@
 #ifndef GVACTOR_H
 #include"gvactor.h"
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
+#include "spotlight_real.h"        // (E) T1.11: MC2_SPOTLIGHT_REAL gate
 #endif
 
 #ifndef CAMERA_H
@@ -2531,6 +2532,81 @@ void GVAppearance::updateGeometry (void)
 //		Camera::HazeFactor = hazeFactor;
 		gvShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
 		gvShape->TransformMultiShape (&xlatPosition,&totalRotation);
+
+		// (E) T1.11: generalised SpotLight_-child illumination on ground
+		// vehicles. Mirrors the Mech3DAppearance T1.6/T1.7 block in
+		// mech3d.cpp ~:3392-3452 and the BldgAppearance T1.4/T1.5 block in
+		// bdactor.cpp ~:1986-2055. Lazy first-night register, per-frame
+		// in-place update afterwards (no per-frame pool churn). Public
+		// accessors (GetNumShapes/GetShapeRec/GetIsSpotlight) because
+		// GVAppearance is NOT in TG_MultiShape's friend list (msl.h
+		// ~:251-256).
+		if (mc2_spotlight_real::isEnabled() && gvShape)
+		{
+			if (!spotlightsRegistered_ && eye->isNight)
+			{
+				for (int i = 0; i < gvShape->GetNumShapes(); ++i)
+				{
+					const TG_ShapeRec* recp = gvShape->GetShapeRec(i);
+					if (!recp) continue;
+					TG_Shape* c = recp->node;
+					if (!c || !recp->processMe) continue;
+					if (!c->GetIsSpotlight()) continue;
+
+					const char* nodeName = c->getNodeName();
+					if (!nodeName) continue;
+					long nodeId = gvShape->GetNodeNameId(nodeName);
+					if (nodeId == -1) continue;
+
+					TG_LightPtr light = (TG_LightPtr)malloc(sizeof(TG_Light));
+					light->init(TG_LIGHT_POINT);              // v1 (OQ2/M6) — POINT
+					light->SetaRGB(0xffffff00);                // anubis-equiv default
+					light->SetIntensity(0.15f);                // anubis default
+					light->SetFalloffDistances(50.0f, 250.0f); // anubis default
+
+					long slotId = eye->addWorldLight(light);
+					if (slotId < 0) { free(light); continue; }
+					spotlightNodeIds_.push_back(nodeId);
+					spotlightLights_.push_back(light);
+					spotlightSlotIds_.push_back(static_cast<DWORD>(slotId));
+
+					// First-hit trace (gv-side) — one stderr line per
+					// successful GV spotlight registration, matching the
+					// MC2_SPOTLIGHT_REAL_TRACE schema. Gated implicitly by
+					// the mc2_spotlight_real::isEnabled() outer check; no
+					// extra env var needed for v1 surfacing.
+					fprintf(stderr,
+						"[SPOTLIGHT_REAL_TRACE v1] event=gv_first_hit"
+						" actorHandle=%ld node=%s slot=%ld\n",
+						actorHandle_, nodeName, slotId);
+				}
+				spotlightsRegistered_ = true;  // register-once flag
+			}
+
+			// Per-frame in-place update. UNCONDITIONAL once registered
+			// (lights stay allocated across day/night; toggle active).
+			// active gate matches the mech/building pattern verbatim:
+			// visible && (sensorLevel > 4) && !InEditor, plus isNight.
+			for (size_t k = 0; k < spotlightLights_.size(); ++k)
+			{
+				Stuff::Vector3D childPos =
+					getNodeIdPosition(spotlightNodeIds_[k]);
+				spotlightLights_[k]->SetPosition(&childPos);
+				// lightToWorld is consumed at msl.cpp:1659; without it the
+				// precomputed s_lightToShape collapses to worldToShape
+				// alone and the light's effective world position is lost.
+				// Translation-only matrix matches the canonical pattern at
+				// mech3d.cpp:3373-3377 and bdactor.cpp:1955-1959.
+				Stuff::LinearMatrix4D lightToWorldMatrix;
+				Stuff::Point3D childPosP;
+				childPosP.x = childPos.x; childPosP.y = childPos.y; childPosP.z = childPos.z;
+				lightToWorldMatrix.BuildTranslation(childPosP);
+				lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(0.0f, 0.0f, 0.0f));
+				spotlightLights_[k]->SetLightToWorld(&lightToWorldMatrix);
+				spotlightLights_[k]->active =
+					(eye->isNight && visible && (sensorLevel > 4) && !InEditor);
+			}
+		}
 	//}
 	
 	//------------------------------------------------
