@@ -1,6 +1,7 @@
 # Light (GameObject) Retirement — Design Spec
 
-- **Status:** DRAFT (design only; no code changes)
+- **Status:** DRAFT — revised 2026-05-20 after R2 falsification of perf attribution + `USE_LIGHT_APPEARANCE` discovery (design only; no code changes)
+- **Revision note (2026-05-20 R2):** The original perf justification (~1ms from Light's 950 `projectForObjectAdmission` calls/frame) was FALSIFIED. R2 narrow-subset instrumentation on `Camera::projectForObjectAdmission` reads **0 calls** in mc2_10. The 946 eventdriven_projection calls are coming from a DIFFERENT policy-split wrapper (R3 follow-up needed to identify). Also: `USE_LIGHT_APPEARANCE` is referenced only inside three `#ifdef` blocks in `code/light.cpp` and is NEVER defined anywhere — meaning `Light::init`'s VFXAppearance allocation, `Light::update`'s `onScreen()` call, and `Light::render`'s actual draw are ALL dead code. Lights are currently **pool-occupying ghosts** — they take a microscopic update cost (altitudeOffset adjustment) and render nothing. The "shitty ugly light projection thing" was already invisible long before this slice. (C) retirement therefore = pure architectural cleanup, no perf gain, no visual loss.
 - **Date:** 2026-05-20
 - **Worktree:** `claude/nifty-mendeleev`
 - **Sibling specs:** [(A) gosFX retirement](2026-05-20-gosfx-retirement-or-replacement-design.md); [F3 cost-baseline](2026-05-20-cpu-projection-cost-baseline-design.md); [per-object cull recon](../explorations/2026-05-20-per-object-cull-gpu-recon.md)
