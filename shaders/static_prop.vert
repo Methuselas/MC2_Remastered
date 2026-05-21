@@ -234,16 +234,18 @@ void main() {
     //    Stage 2.D.2 parity proved this is the cause of ~86% mismatch on window
     //    building types — GPU was adding lighting where CPU skips it.
     //
-    //    isSpotlight (inst.flags bit 2): mirrors CPU tgl.cpp:1929 `!isSpotlight`
-    //    guard — same condition as isWindow. Spotlight nodes skip the full
-    //    calc_light loop; base_light only. C++ side populates bit 2 in
-    //    gos_static_prop_batcher.cpp:1022 (`if (child->isSpotlight) flags |= (1u<<2)`).
-    //    Stage 2.D.2.1 (M2): added to GPU shader to close the gap vs CPU gate.
+    //    [T3.2] Bit-2 (kFlagIsSpotlight) read deleted. Post-T3.1 the C++
+    //    submit path skips spotlight children unconditionally (T1.3 ->
+    //    unconditional `continue` in gos_static_prop_batcher.cpp
+    //    submitMultiShape). The CPP-side bit-2 emission is dead, so the
+    //    shader-side bit-2 read is removed in lockstep per
+    //    memory/cpp_glsl_ubo_struct_lockstep.md. Spotlights now contribute
+    //    via real TG_Light registrations (BldgAppearance::update), not via
+    //    cone-billboard packets.
     const uint kFlagIsWindow    = (1u << 1);
-    const uint kFlagIsSpotlight = (1u << 2);
     vec3 lit;
-    if ((inst.flags & (kFlagIsWindow | kFlagIsSpotlight)) != 0u) {
-        // Window or spotlight node: hot-color magic only, no sun/ambient lighting.
+    if ((inst.flags & kFlagIsWindow) != 0u) {
+        // Window node: hot-color magic only, no sun/ambient lighting.
         lit = base_light;
     } else {
         lit = calc_light(int(inst.lightDataIndex), worldNormal, worldPos, base_light);

@@ -927,11 +927,12 @@ void accumulateMonotonicAndMaybeEmit(bool forceEmit) {
         std::fflush(stderr);
     }
 
-    // [SPOTLIGHT_REAL_TRACE v1] T0.1 — separate summary line, env-gated.
-    // Mono is always advanced (no env gate); the env only gates the print.
-    // 600-frame window count emitted alongside mono to show steady-state vs
-    // accumulated. Reset window AFTER emit so window resets every 600 frames
-    // regardless of env-gating.
+    // [SPOTLIGHT_REAL_TRACE v1] summary line, env-gated. Post-T3.2 the
+    // increment site is gone (spotlight children are unconditionally skipped
+    // at submit, the bit-2 flag is no longer emitted). Window/mono counters
+    // therefore print 0 — that 0 IS the substitutive evidence (criterion #2:
+    // zero static-prop draws contain spotlight-tagged packets). Demoted, not
+    // deleted, per the Debug Instrumentation Rule.
     if (s_spotlightRealTrace && periodic) {
         std::fprintf(stderr,
                "[SPOTLIGHT_REAL_TRACE v1] event=summary site=static_prop_batcher "
@@ -2683,29 +2684,14 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
         uint32_t flags = 0;
         if (child->lightsOut)   flags |= (1u << 0);
         if (child->isWindow)    flags |= (1u << 1);
-        if (child->isSpotlight) {
-            flags |= (1u << 2);
-            // [SPOTLIGHT_REAL_TRACE v1] T0.1 — baseline counter. Reaches here
-            // only when the MC2_SPOTLIGHT_REAL gate is OFF (otherwise the T1.3
-            // `continue` above skipped the whole submit). Per R8 (plan v6),
-            // TransformShape early-outs to listOfVertices==NULL for
-            // isSpotlight && !isNight (tgl.cpp ~1657), and the !listOfVertices
-            // guard at line ~2626 above already filtered those out. So this
-            // increment fires only for SpotLight_ children whose CPU path
-            // emitted geometry — i.e. night-time only. Daytime baseline is
-            // expected to be ~0.
-            ++s_spotlightReal_window;
-            ++s_spotlightReal_mono;
-            if (!s_spotlightReal_firstHit) {
-                s_spotlightReal_firstHit = true;
-                const char* nm = const_cast<TG_Shape*>(child)->getNodeName();
-                std::fprintf(stderr,
-                    "[SPOTLIGHT_REAL_TRACE v1] event=first_hit site=static_prop_batcher "
-                    "name=%s\n",
-                    (nm && nm[0]) ? nm : "<unnamed>");
-                std::fflush(stderr);
-            }
-        }
+        // [T3.2] Bit-2 (kFlagIsSpotlight) emission deleted. After T3.1 the
+        // spotlight `continue` skip above is unconditional, so this code path
+        // is structurally unreachable for spotlight children. The dead
+        // shader-side read in static_prop.vert is removed in lockstep per
+        // memory/cpp_glsl_ubo_struct_lockstep.md. The static-prop branch of
+        // [SPOTLIGHT_REAL_TRACE v1] never fires post-T3.1; the per-actor
+        // mech/gv first-hit traces remain via the registration sites in
+        // mech3d.cpp / gvactor.cpp (Debug Instrumentation Rule).
 
         // rec.shapeToWorld is LinearMatrix4D; convert to Matrix4D for submit().
         Stuff::Matrix4D xform(rec.shapeToWorld);
