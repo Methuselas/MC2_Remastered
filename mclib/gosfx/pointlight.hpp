@@ -9,51 +9,22 @@
 
 #include"gosfx.hpp"
 #include"effect.hpp"
+#include"particles/light_manager.h"
 
 namespace gosFX
 {
 	//############################################################################
 	//############################  LightManager  ################################
 	//############################################################################
+	//
+	// B1 Stage 2' C2: class body moved to mc2::particles::LightManager
+	// (mclib/particles/light_manager.{h,cpp}). The using-alias preserves the
+	// gosFX::LightManager surface so this file's .cpp internal references and
+	// the seven external lifecycle sites compile unchanged. gosFX::Light is
+	// still the value-typed handle that LightManager::MakePointLight returns.
 
 	class Light;
-	class LightManager
-		#if defined(_ARMOR)
-			: public Stuff::Signature
-		#endif
-	{
-	public:
-		static LightManager* Instance;
-
-		virtual Light*
-			MakePointLight(const char* light_map=NULL);
-
-		struct Info {
-			Stuff::RGBColor
-				m_color;
-			Stuff::LinearMatrix4D
-				m_origin;
-			Stuff::Scalar
-				m_intensity,
-				m_inner,
-				m_outer;
-			Stuff::Radian
-				m_spread;
-		};
-
-		virtual void
-			ChangeLight(
-				Light *light,
-				Info *info
-			);
-
-		virtual void
-			DeleteLight(Light *light);
-
-		void
-			TestInstance() const
-				{}
-	};
+	using LightManager = ::mc2::particles::LightManager;
 
 	//############################################################################
 	//####################  PointLight__Specification  #########################

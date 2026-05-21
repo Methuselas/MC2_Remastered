@@ -5,27 +5,13 @@
 #include"gosfxheaders.hpp"
 #include<mlr/mlrpointlight.hpp>
 
-gosFX::LightManager
-	*gosFX::LightManager::Instance = NULL;
-
-gosFX::Light*
-	gosFX::LightManager::MakePointLight(const char* light_map)
-{
-	return reinterpret_cast<Light*>(this);
-}
-
-void
-	gosFX::LightManager::ChangeLight(
-		Light *light,
-		Info *info
-	)
-{
-}
-
-void
-	gosFX::LightManager::DeleteLight(Light *light)
-{
-}
+// B1 Stage 2' C2: gosFX::LightManager class body + method implementations
+// (Instance, MakePointLight, ChangeLight, DeleteLight) moved to
+// mc2::particles::LightManager in mclib/particles/light_manager.cpp.
+// gosFX::LightManager is now a using-alias declared in pointlight.hpp; this
+// translation unit keeps its ~10 internal LightManager::Instance / Info /
+// MakePointLight / ChangeLight / DeleteLight references compiling unchanged
+// via the alias.
 
 //############################################################################
 //########################  gosFX::PointLight__Specification  #############################

@@ -9,6 +9,7 @@ project(particles)
 set(SOURCES
     batcher.cpp
     spec_library.cpp
+    light_manager.cpp
 )
 
 include_directories(${COMMON_INCLUDE_DIRS} "../../" "../../mclib" "./")
