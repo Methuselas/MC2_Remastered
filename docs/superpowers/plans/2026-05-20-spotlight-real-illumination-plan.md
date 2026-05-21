@@ -34,7 +34,7 @@ Every T-numbered task lands as one commit. Commit messages reference task number
 
 **Changes:**
 - Add env-gated bool `s_spotlightRealTrace` reading `MC2_SPOTLIGHT_REAL_TRACE`.
-- At `submitMultiShape`, when `child->isSpotlight==true`, increment monotonic + window counters. First-hit always-on (one-line stderr) so any operator sees confirmation without env.
+- At `submitMultiShape`, when `child->isSpotlight==true` (this site is INSIDE GpuStaticPropBatcher which IS a TG_MultiShape friend per msl.h:251-256, so direct field access compiles), increment monotonic + window counters. First-hit always-on (one-line stderr) so any operator sees confirmation without env.
 - 600-flush summary print, env-gated, matches `[INSTR v1]` schema family.
 - Tag: `[SPOTLIGHT_REAL_TRACE v1]`.
 
@@ -102,7 +102,7 @@ Every T-numbered task lands as one commit. Commit messages reference task number
 **Files:** `GameOS/gameos/gos_static_prop_batcher.cpp` (submitMultiShape around the existing `flags |= (1u << 2)` site)
 
 **Changes:**
-- Wrap the existing `child->isSpotlight` packet emission in `if (isSpotlightRealEnabled() && child->isSpotlight) { /* skip — light is handled at BldgAppearance::init */ continue; }`. Effectively: when gate ON, the cone is NOT submitted.
+- Wrap the existing isSpotlight packet emission in `if (isSpotlightRealEnabled() && child->GetIsSpotlight()) { /* skip — light is handled at BldgAppearance::update */ continue; }`. Effectively: when gate ON, the cone is NOT submitted. (Note: the static-prop batcher's existing direct-field access works because `GpuStaticPropBatcher` IS in the TG_MultiShape friend list at msl.h:251-256; but using the public `GetIsSpotlight()` accessor here is forward-compatible.)
 - Keep the existing `flags |= (1u << 2)` path for the gate-off case (no behavior change when default-off).
 
 **Verification:** With `MC2_SPOTLIGHT_REAL=1`, RenderDoc capture on mc2_04 shows no static-prop packets with the spotlight bit set in the coalesce multidraw. With env unset: behavior unchanged.
@@ -162,10 +162,12 @@ Every T-numbered task lands as one commit. Commit messages reference task number
               light->SetaRGB(0xffe8c870);                                    // OQ3 v1 warm hardcoded
               light->SetIntensity(0.5f);                                     // OQ4 v1 initial
               light->SetFalloffDistances(20.0f, 80.0f);                      // OQ4 v1
-              DWORD slotId = eye->addWorldLight(light);
-              if ((long)slotId < 0) { free(light); continue; }               // pool overflow
+              long slotId = eye->addWorldLight(light);  // camera.h:805 returns long; -1 on overflow
+              if (slotId < 0) { free(light); continue; }
+              // Cast to DWORD for storage to match existing lightId convention
+              // (bdactor.h:260 lightId is DWORD; removeWorldLight takes DWORD).               // pool overflow
               spotlightLights_.push_back(light);
-              spotlightSlotIds_.push_back(slotId);
+              spotlightSlotIds_.push_back(static_cast<DWORD>(slotId));
               spotlightNodeIds_.push_back(nodeId);                           // C-r3 C1: store NAME-id, not index
           }
           spotlightsRegistered_ = true;
@@ -236,11 +238,15 @@ Every T-numbered task lands as one commit. Commit messages reference task number
   ```cpp
   if (isSpotlightRealEnabled() && !spotlightsRegistered_ && eye->isNight) {  // C-r3 C2: no parens
       // Walk mechShape children using the same canonical pattern as T1.4
-      // (msl.h:441 listOfShapes[i].node + tgl.h:964 getNodeName).
-      for (int i = 0; i < mechShape->numTG_Shapes; ++i) {
-          auto& rec = mechShape->listOfShapes[i];
+      // (msl.h:431 GetNumShapes + msl.h:438 GetShapeRec + tgl.h:951 GetIsSpotlight).
+      // Same C-r4 C1/M1 protected-access fix as T1.4 — Mech3DAppearance is NOT
+      // in the TG_MultiShape friend list (msl.h:251-256).
+      for (int i = 0; i < mechShape->GetNumShapes(); ++i) {
+          const TG_ShapeRec* recp = mechShape->GetShapeRec(i);
+          if (!recp) continue;
+          const TG_ShapeRec& rec = *recp;
           TG_Shape* c = rec.node;
-          if (!c || !rec.processMe || !c->isSpotlight) continue;
+          if (!c || !rec.processMe || !c->GetIsSpotlight()) continue;
 
           const char* nodeName = c->getNodeName();
           if (!nodeName) continue;
