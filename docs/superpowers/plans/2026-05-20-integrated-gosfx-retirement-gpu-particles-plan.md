@@ -1,7 +1,7 @@
-# Integrated Plan — gosFX Retirement + GPU Particle Pipeline + Light Dead-Code Cleanup
+# Integrated Plan v2 — gosFX Retirement + GPU Particle Pipeline + Light Dead-Code Cleanup
 
-- **Status:** REVIEWED — greybeard PASS; adversarial 2 MAJOR + 3 MINOR folded in (this commit). Execution-ready.
-- **Date:** 2026-05-20
+- **Status:** REVIEWED v2 — greybeard PASS (round 1); adversarial round 1 (2 MAJOR + 3 MINOR) folded in `1407354`; **external review round 2 (1 CRITICAL + 4 MAJOR + 2 MINOR) folded in v2 (this revision).** Pending: one more adversarial-plan-review pass to confirm execute-ready.
+- **Date:** 2026-05-20 (v2 fold-in)
 - **Authoring branch:** `claude/nifty-mendeleev`
 - **Authoritative specs:**
   - (A) `docs/superpowers/specs/2026-05-20-gosfx-retirement-or-replacement-design.md`
@@ -10,6 +10,16 @@
 - **F3 must-not-regress floor:** `mlr_total worst_window_p95 = 408us` (R2 confirmation `41b6853`, user-driven mc2_10, ~16% motion) — see `memory/f3_mc2_10_worstcase_2026_05_20.md`. R3 (`cf43c4f`, ~17%) = 413us; floor is robust within 1%.
 - **All file:line citations re-grepped at plan-write time against `nifty-mendeleev` HEAD `d40185e`. See Appendix A for the diff vs spec citations.**
 - **Stage scaffold:** A0 → A1 → A2 → A3 → B1 (Stage 0'–5' internal) → A4 → A5. Out of scope: B2 (PertCloud/ShapeCloud/DebrisCloud/EffectCloud), D (real light illumination plumbing).
+
+## v2 fold-in summary (external review round 2)
+
+- **CRITICAL (A4 self-contradiction)** — USER-RESOLVED to **full deletion**: editor/Viewer/aseconv targets will fail to build after A4; tracked as separate follow-on slice. Plan updated throughout §6, Appendix A negative space, Appendix B open items.
+- **MAJOR-1 (B1 per-primitive enumeration infeasible)** — Producer-site repointing is now **one atomic enumerator commit** at end of Stage 2', not per-primitive. Per-primitive commits in Stage 2' wire the GPU spawn path; atomic sweep flips all 31+ callers. Soft-fail shim REJECTED per `gpu_offload_must_be_substitutive_not_additive.md`.
+- **MAJOR-2 (trace oracle gosFX-coupled)** — Trace module relocated to neutral `mclib/fx_trace/` BEFORE B1 Stage 2'; env var renamed `MC2_FX_TRACE=1`. Survives A4 unchanged.
+- **MAJOR-3 (CI grep gate scoping unresolved)** — Two-phase definition: B1 phase forbids only projection APIs inside `mclib/particles/`; A4 phase tightens to also forbid `theClipper`/`MLRClipper` anywhere outside (now-deleted) `mclib/gosfx/`.
+- **MAJOR-4 (std430 guard too weak)** — Per-field `offsetof` + `alignof` static_asserts added to B1 Stage 1'; one-source schema generation filed as B2 polish debt.
+- **MINOR-1 (A1 internal contradiction)** — A1 gate moves entirely inside `gosFX::Effect::Draw` no-op; 16 clipper assignments continue executing.
+- **MINOR-2 (A5 default)** — A5 default is **no-op stub** (delete bodies, leave shells). Light type registration stays so mission .fit parsing continues.
 
 ---
 
@@ -88,38 +98,40 @@ Re-grep `code/light.cpp:120, 142, 167`. Confirms `memory/lights_are_dead_code_us
 
 ---
 
-## 1. Stage A0 — `[GOSFX_TRACE v1]` invocation counter
+## 1. Stage A0 — `[FX_TRACE v1]` invocation counter (neutral module)
 
 ### 1.1 Goal
-Per-spec invocation counter on `Effect::Draw` (and a per-`Find()`-name spawn counter), env-gated `MC2_GOSFX_TRACE=1`, default-off. Produces the per-mission histogram (B) §3.3 Stage 0' / Stage 3' uses for coverage equivalence.
+Per-spec invocation counter on `Effect::Draw` (and a per-`Find()`-name spawn counter), env-gated `MC2_FX_TRACE=1`, default-off. Produces the per-mission histogram (B) §3.3 Stage 0' / Stage 3' uses for coverage equivalence.
+
+**(v2 MAJOR-2 fold-in):** Module is **neutral** (not gosFX-coupled). Lives at `mclib/fx_trace/`, not `mclib/gosfx/`. Env var is `MC2_FX_TRACE=1`, not `MC2_FX_TRACE=1`. This is load-bearing: at B1 Stage 2', the same counters are emitted by the new `mclib::particles::Spawn` API using identical key schema. At A4, gosFX deletes but `mclib/fx_trace/` survives unchanged — no mid-arc oracle gap. The counters become the per-mission histogram for the new path too.
 
 ### 1.2 Inputs
 - F3 baseline 408us memory.
 - `debug_instrumentation_rule.md` macro pattern (`MC2_DEBUG_SHADOW_COLLECT` analog).
 
 ### 1.3 Files modified/created
-- **NEW** `mclib/gosfx/gosfx_trace.h` (macro + counter table; one-line lifecycle prints at lib-load only).
-- **NEW** `mclib/gosfx/gosfx_trace.cpp` (counter aggregation; atexit / mission-end dump).
-- `mclib/gosfx/effect.cpp` (or wherever `Effect::Draw` lives — grep at execute) — counter increment in `Effect::Draw`.
-- `mclib/gosfx/effectlibrary.cpp` — counter increment in `Find()` (or wrap `Find` call sites via macro).
-- `mclib/CMakeLists.txt` — add the new TU.
+- **NEW** `mclib/fx_trace/fx_trace.h` (macro + counter table; one-line lifecycle prints at lib-load only). Public API: `FX_TRACE_SPAWN(specName)`, `FX_TRACE_DRAW(specName)`.
+- **NEW** `mclib/fx_trace/fx_trace.cpp` (counter aggregation; atexit / mission-end dump).
+- `mclib/gosfx/effect.cpp` (or wherever `Effect::Draw` lives — grep at execute) — `FX_TRACE_DRAW` in `Effect::Draw`.
+- `mclib/gosfx/effectlibrary.cpp` — `FX_TRACE_SPAWN` in `Find()` (or wrap `Find` call sites via macro).
+- `mclib/CMakeLists.txt` — add the new `fx_trace` TU. `fx_trace` is a sibling of `gosfx/`, with NO dependency on gosFX headers (one-way: gosFX includes `fx_trace.h`, never the reverse).
 
 ### 1.4 Default state at end of stage
-- `MC2_GOSFX_TRACE` env-opt-in, OFF by default. Zero behavior change otherwise.
-- Banner `[INSTR v1] enabled: ... gosfx_trace` follows existing pattern (CLAUDE.md "Tier-1 instrumentation env vars").
+- `MC2_FX_TRACE` env-opt-in, OFF by default. Zero behavior change otherwise.
+- Banner `[INSTR v1] enabled: ... fx_trace` follows existing pattern (CLAUDE.md "Tier-1 instrumentation env vars").
 
 ### 1.5 Verification gates
 - Build: `--clean-first --config RelWithDebInfo`.
 - Deploy: `cp -f` + `diff -q` (one file: `mc2.exe`).
 - Smoke: `tier1 5/5 30s` env-OFF. Expect zero behavior diff.
-- Smoke: one mc2_10 run with `MC2_GOSFX_TRACE=1` env-set. Verify `[GOSFX_TRACE v1]` lines in stderr; verify per-mission histogram dumped at mission-end.
+- Smoke: one mc2_10 run with `MC2_FX_TRACE=1` env-set. Verify `[FX_TRACE v1]` lines in stderr; verify per-mission histogram dumped at mission-end.
 
 ### 1.6 Rollback
-Trivial: set `MC2_GOSFX_TRACE=0` (default). Code revert: one commit, atomic.
+Trivial: set `MC2_FX_TRACE=0` (default). Code revert: one commit, atomic.
 
 ### 1.7 Commit shape (atomic)
-- Commit 1: add `gosfx_trace.{h,cpp}` + CMake (compiles but inert; no caller).
-- Commit 2: wire counter into `Effect::Draw` + `EffectLibrary::Find` behind env-gate. **A0 ships in 2 commits.**
+- Commit 1: add `mclib/fx_trace/{fx_trace.h,fx_trace.cpp}` + CMake (compiles but inert; no caller).
+- Commit 2: wire `FX_TRACE_DRAW` into `Effect::Draw` + `FX_TRACE_SPAWN` into `EffectLibrary::Find` behind env-gate. **A0 ships in 2 commits.**
 
 ### 1.8 Handoff to A1
 A0 is shippable independently. A1 can begin once the counter is verified producing histograms on at least one tier1 mission.
@@ -129,27 +141,27 @@ A0 is shippable independently. A1 can begin once the counter is verified produci
 ## 2. Stage A1 — `MC2_DISABLE_GOSFX=1` env-gate
 
 ### 2.1 Goal
-Single env-gate that short-circuits the gosFX render path. When ON: `Effect::Draw` no-ops, `theClipper->StartDraw` skipped, `theClipper->RenderNow` skipped, 16 `drawInfo.m_clipper = theClipper` assignments skipped. Default OFF.
+Single env-gate that short-circuits the gosFX render WORK. When ON: `Effect::Draw` early-returns no-op at its entry point. `theClipper->StartDraw` and `theClipper->RenderNow` continue running but draw zero (because no `Effect::Draw` ever enqueues into the clipper). 16 `drawInfo.m_clipper = theClipper` assignments **continue executing** (cheap pointer stores; structural integrity preserved for A4's clean cutover). Default OFF.
+
+**(v2 MINOR-1 fold-in):** Previous wording said the clipper assignments "skipped" then "continue executing" — contradictory. The CORRECT design (and the one implemented here) is: gate fires INSIDE `gosFX::Effect::Draw` to no-op the work, NOT at the clipper-assignment site. This preserves the call-chain shape so A4's atomic deletion remains a clean cutover. Clipper state still gets set up; it just never receives effect geometry.
 
 ### 2.2 Inputs
-- A0 trace counter (still active; expected to drop to zero per spec when A1 gates ON).
+- A0 trace counter (still active; `FX_TRACE_DRAW` expected to drop to zero per spec when A1 gates ON; `FX_TRACE_SPAWN` still nonzero — spawn still happens; only draw is gated).
 
 ### 2.3 Files modified/created
-Per §0.1 compile-time enumeration discipline: **do NOT touch the 16 sites directly.** Instead:
-- `mclib/mlr/mlr.hpp` (or wherever `MLRClipper::StartDraw` is declared) — keep API stable; gate at producer.
-- `mclib/gosfx/effect.cpp` (or where `Effect::Draw` lives) — early-return when env-gate ON.
-- `code/gamecam.cpp:148, :287` — env-gate around `StartDraw` / `RenderNow`.
-- `code/simplecamera.cpp:168` — same env-gate around `StartDraw`.
+Per §0.1 compile-time enumeration discipline: **do NOT touch the 16 sites.** Instead:
+- `mclib/gosfx/effect.cpp` (or where `Effect::Draw` lives — grep at execute): single env-check `if (s_disableGosFx) return;` as first statement of `Effect::Draw`.
+- A1 introduces NO other gate point. `theClipper->StartDraw`, `theClipper->RenderNow`, and the 16 `m_clipper = theClipper` assignments at the producer sites all continue to execute. This is intentional per MINOR-1.
 
-The 16 assignment sites continue executing (cheap pointer store); the no-op happens at `Effect::Draw` so the cull cascade (`memory/cull_gates_are_load_bearing.md`) does not see a different code path on/off. **Important: gate at the leaf, not 16 different sites.** Single gate point = single rollback risk.
+The 16 assignment sites continue executing (cheap pointer store); the no-op happens at `Effect::Draw`. **Important: gate at the leaf, not 16 different sites.** Single gate point = single rollback risk. Cull cascade (`memory/cull_gates_are_load_bearing.md`) sees identical code path on/off (no `update()` path divergence).
 
 ### 2.4 Default state
 `MC2_DISABLE_GOSFX=0` (default). gosFX renders exactly as today. ON = no particles.
 
 ### 2.5 Verification gates
 - Build/deploy as A0.
-- Smoke `tier1 5/5 30s` env-OFF + `MC2_GOSFX_TRACE=1` → counters match A0 baseline ±5% (cull-driven variance acceptable).
-- Smoke `tier1 5/5 30s` env-ON + `MC2_GOSFX_TRACE=1` → counters at zero for `Effect::Draw`; `Find()` counters still nonzero (spawn still happens; render is gated).
+- Smoke `tier1 5/5 30s` env-OFF + `MC2_FX_TRACE=1` → counters match A0 baseline ±5% (cull-driven variance acceptable).
+- Smoke `tier1 5/5 30s` env-ON + `MC2_FX_TRACE=1` → counters at zero for `Effect::Draw`; `Find()` counters still nonzero (spawn still happens; render is gated).
 - **NO user canary at A1 (default-OFF).** A2 owns the visual-canary step.
 
 ### 2.6 Rollback
@@ -260,7 +272,7 @@ Ship GPU particle pipeline covering `CardCloud` + `PointCloud` + `ShardCloud` + 
 #### Stage 0' — content recon
 - **Goal:** per-spec inventory of `mc2.fx` by primitive type + per-mission spawn frequency.
 - **Files:** none (read-only; uses A0 traces).
-- **Verification:** run `MC2_GOSFX_TRACE=1` on tier1 5/5 with `MC2_DISABLE_GOSFX=0` (legacy ON for trace; **(MINOR-2 fold-in)** this is an opt-in env-set FOR THIS TRACE RUN ONLY — it does NOT revert the A2 default. After the trace artifact is captured, no env-set persists; A2 default-on remains in effect for all other smoke / canary runs in Stage 0'/1'/2'/3' until B1 Stage 5' flips `MC2_GPU_PARTICLES` default-on). Collect per-spec histogram. Output: coverage table named "tier1 spawn count per `mc2.fx` spec name."
+- **Verification:** run `MC2_FX_TRACE=1` on tier1 5/5 with `MC2_DISABLE_GOSFX=0` (legacy ON for trace; **(MINOR-2 fold-in)** this is an opt-in env-set FOR THIS TRACE RUN ONLY — it does NOT revert the A2 default. After the trace artifact is captured, no env-set persists; A2 default-on remains in effect for all other smoke / canary runs in Stage 0'/1'/2'/3' until B1 Stage 5' flips `MC2_GPU_PARTICLES` default-on). Collect per-spec histogram. Output: coverage table named "tier1 spawn count per `mc2.fx` spec name."
 - **Default state:** no code change.
 - **Handoff:** coverage table committed under `docs/observations/`. Picks the v1-vs-v2 split-list authoritatively from data, not from class names.
 
@@ -277,9 +289,26 @@ Ship GPU particle pipeline covering `CardCloud` + `PointCloud` + `ShardCloud` + 
   - GL_ELEMENT_ARRAY_BUFFER per-VAO ownership.
   - texture handle resolution per-flush (not at parse time per `memory/mc2_texture_handle_is_live.md`).
   - **(MAJOR-1 fold-in)** in-front test discipline per `memory/clip_w_sign_trap.md`: VS billboard expansion must use `projectZ()` (or equivalent `pz ∈ [0,1)` check) for in-front culling, NOT `sign(clip.w)`. Stuff's matrix produces both signs for visible verts in MC2.
-- **SSBO bindings (per §0.6):** `Particles` = 13, `ParticleSpecTable` = 14. **(MINOR-1 fold-in)** Pre-flight grep `grep -rEn 'binding *= *(13|14)\b' shaders/` MUST run at the Stage 1' Commit 4 boundary (hook-wired commit), not earlier. If either slot is taken by an interim landing between plan-write and execute, escalate to user and pick new slots before Commit 4 lands.
-- **std430 schema (per (B) §4.3):** `static_assert(sizeof(GpuParticle) == 64)` in C++ TU.
-- **CI gate (per (B) §3.4):** `scripts/check-particles-no-cpu-projection.sh` lands in this stage and is wired to the existing pre-commit hooks.
+- **SSBO bindings (per §0.6):** `Particles` = 13, `ParticleSpecTable` = 14. **(round 1 MINOR-1 fold-in)** Pre-flight grep `grep -rEn 'binding *= *(13|14)\b' shaders/` MUST run at the Stage 1' Commit 4 boundary (hook-wired commit), not earlier. If either slot is taken by an interim landing between plan-write and execute, escalate to user and pick new slots before Commit 4 lands.
+- **std430 schema (per (B) §4.3) — (v2 MAJOR-4 fold-in):** `sizeof()` alone is necessary but not sufficient. Schema lockstep requires:
+  - C++ TU at `mclib/particles/particle_schema.h`:
+    - `static_assert(sizeof(GpuParticle) == 64, "GpuParticle size drift")`.
+    - `static_assert(alignof(GpuParticle) == 16, "GpuParticle alignment drift")` (std430 vec4 alignment requirement).
+    - **Per-field `static_assert(offsetof(GpuParticle, FIELD) == EXPECTED, ...)` for EVERY field GLSL reads.** Suggested baseline (subject to schema design at execute):
+      - `position` (vec3+pad) at offset 0
+      - `color` (vec4) at offset 16
+      - `velocity` (vec3+pad) at offset 32
+      - `lifetime, age, size, atlasIndex` (4× float/uint) at offsets 48,52,56,60
+    - Exact field set is fixed at Stage 1' Commit 2 (schema commit); asserts MUST be added in the same commit. Any change to the C++ struct in a later commit MUST update the asserts in the same atomic commit.
+  - GLSL shader at `shaders/include/particle_schema.hglsl`:
+    - Parallel `// offset N: <field>` comment block above the `struct Particle` declaration, citing each C++ offsetof for visual cross-reference. Comment block is the human-side schema doc; static_asserts are the compile-side enforcement.
+  - One-source schema generation (single declarative file emitting both C++ + GLSL) is the proper long-term fix; **filed as B2 polish debt** (per task spec) rather than v1 scope.
+- **CI gate (per (B) §3.4) — (v2 MAJOR-3 fold-in, B1 phase):** `scripts/check-particles-no-cpu-projection.sh` lands in this stage and is wired to the existing pre-commit hooks. **B1-phase scope (lands here):**
+  ```
+  FORBIDDEN_B1='cameraToClip|Camera::projectZ|worldToClipMatrix|projectForObjectAdmission|projectForEffectAdmission'
+  grep -rEn "$FORBIDDEN_B1" mclib/particles/  # fail if matches inside mclib/particles/
+  ```
+  B1 phase forbids ONLY projection APIs inside `mclib/particles/` (the 7 wrappers + `Camera::projectZ` + `cameraToClip` + `worldToClipMatrix`). Does NOT forbid `theClipper`/`MLRClipper` patterns at this phase because gosFX/MLR are still alive in the same build and transitional B1 code may incidentally reference them. Script header comment documents the phase explicitly. A4 tightens to add `theClipper|MLRClipper` patterns repo-wide (see §6.3 / §6.7).
 - **Env-gate:** `MC2_GPU_PARTICLES=1` opt-in (default OFF). With OFF, batcher does not flush.
 - **Verification:** build/deploy/smoke `tier1 5/5 30s` default-OFF (zero behavior diff). Then env-ON one mc2_01 run: hardcoded test card appears in correct world position; depth-test correct; blend correct; no GL errors (`MC2_GL_DEBUG_FATAL=1`).
 - **Commit shape (atomic per CLAUDE.md):** 
@@ -289,24 +318,42 @@ Ship GPU particle pipeline covering `CardCloud` + `PointCloud` + `ShardCloud` + 
   - Commit 4: hook wired; env-gate default OFF.
 - **Rollback:** set `MC2_GPU_PARTICLES=0` (default); branch-revert the 4 commits if needed.
 
-#### Stage 2' — content authority + spawn-site repoint
-- **Goal:** `mclib/particles/spec_library` MOVED from `mclib/gosfx/effectlibrary.cpp` (one commit). Per primitive type, in order Card → Point → Shard → Tube: implement spec → GPU-particle emission; in the same commit repoint the producer sites for that type via the compile-time-enumerator discipline.
-- **Files:** `mclib/particles/spec_library.{h,cpp}` (moved from gosfx); `mclib/particles/spawn_api.{h,cpp}`; producer call sites (31+; iterative per type — see commit shape).
+#### Stage 2' — content authority + GPU spawn wiring + atomic producer-site enumerator
+
+**(v2 MAJOR-1 fold-in):** Round 1 plan said "delete `EffectLibrary::Find` per primitive type." That's infeasible: `Find` is one name-based surface — deleting it enumerates ALL 31+ call sites at once, not per-primitive. Soft-fail shim (record unsupported spawn) REJECTED per `gpu_offload_must_be_substitutive_not_additive.md`. **Revised approach:** the per-primitive-type progression (Card → Point → Shard → Tube) wires the GPU-side spawn/emit path per type; producer-site repointing is **one atomic enumerator commit** at the END of Stage 2'.
+
+- **Goal:** (a) `mclib/particles/spec_library` MOVED from `mclib/gosfx/effectlibrary.cpp` (one commit). (b) Per primitive type Card → Point → Shard → Tube: implement spec → GPU-particle emission path inside `mclib/particles/`. The new `mclib::particles::Spawn(name, pos, ...)` API exists from the first per-type commit but is not yet called by producers — it's reachable only via a test harness / one canary site. (c) One atomic enumerator commit at the end: delete `gosFX::EffectLibrary::Find` API, flip ALL 31+ producer sites to `mclib::particles::Spawn` in one commit; compiler enumerates any missed site.
+- **Files:** `mclib/particles/spec_library.{h,cpp}` (moved from gosfx); `mclib/particles/spawn_api.{h,cpp}` (new in this stage); per-type emit code under `mclib/particles/`; producer call sites (31+; touched once, atomically, in the enumerator commit).
 - **Move discipline:** B1 owns atomic move per (B) §5 Q1. The (A)-side `mclib/gosfx/effectlibrary.cpp` is deleted in this stage (NOT A4) — because A4 deletes `mclib/gosfx/` as a tree, but the parser file moves out FIRST.
-- **Compile-time enumeration:** add `gpu_fx::Spawn(...)` API; delete `gosFX::EffectLibrary::Find(...)` API in the same commit per primitive type — compiler enumerates broken call sites; fix them in the same commit (per (A) §4 ¶1 / (B) §3.1 ¶4 substitutive test).
-- **LightManager move:** also moves in Stage 2' (verbatim API; `mechcmd2.cpp` + `txmmgr.cpp` lifecycle repoint per §0.4). Producer side only; SSBO consumer unchanged.
-- **Env-gate:** `MC2_GPU_PARTICLES=1` (still opt-in). `MC2_DISABLE_GOSFX=1` (still A2 default; legacy still gated off).
-- **Verification (per primitive type sub-slice):**
+- **Per-type wiring discipline:** Each per-type commit implements the GPU spawn path for that primitive type (e.g. Card billboard SSBO push, color/blend selection, atlas-index resolution). The `Spawn` API surface stays stable; only its internal coverage grows per commit. A type that is not yet implemented returns a "spec not yet wired" diagnostic to the trace counter but DOES NOT silently no-op — this is necessary-not-sufficient enforcement before the enumerator commit lands.
+- **Atomic enumerator commit (the cutover):** Lands at the END of Stage 2', AFTER all four per-type GPU-spawn paths are wired. This commit:
+  1. Deletes the `gosFX::EffectLibrary::Find` symbol declaration + definition.
+  2. Repoints ALL 31+ producer sites (per §0.5 census; compiler enumerates any drift since plan-write) to `mclib::particles::Spawn(name, ...)`.
+  3. Wires `mclib::particles::Spawn` to emit to the SAME `fx_trace` counter as the old `Find` did (`FX_TRACE_SPAWN(name)`), preserving the per-mission histogram across the cutover (no oracle gap).
+  4. Builds clean at the commit boundary. Required: `--clean-first` build verifying zero residual `EffectLibrary::Find` references.
+- **LightManager move:** also moves in Stage 2' (verbatim API; `mechcmd2.cpp` + `txmmgr.cpp` lifecycle repoint per §0.4). Producer side only; SSBO consumer unchanged. Separate commit from the per-type wiring and from the enumerator commit.
+- **Env-gate:** `MC2_GPU_PARTICLES=1` (still opt-in). `MC2_DISABLE_GOSFX=1` (still A2 default; legacy still gated off). After the enumerator commit, producers no longer call `gosFX::EffectLibrary::Find` at all; `MC2_DISABLE_GOSFX` continues to gate the (now-empty-of-new-effects) gosFX `Effect::Draw` path. Existing in-flight legacy effect instances drain via the gated `Effect::Draw`.
+- **Verification (per primitive type wiring commit):**
   - Build/deploy.
-  - Smoke `tier1 5/5 30s` with `MC2_GPU_PARTICLES=1 MC2_GOSFX_TRACE=1`. Compare per-spec histogram for this type's spec names against Stage 0' coverage table; require ±10% spawn-event equivalence per `parity_probe_100pct_can_be_correct_redesign_report.md` (necessary-not-sufficient).
-  - **NO user-driven canary per sub-slice** (too granular). Mass canary at Stage 4'.
-- **Commit shape:** 1 commit for the file move (mechanical, byte-equivalent except namespace); 1 commit per primitive type (Card, Point, Shard, Tube — 4 commits) wiring + repoint + delete-of-old-API-overload; 1 commit for LightManager move. **6+ atomic commits total in Stage 2'.**
-- **Rollback per sub-slice:** branch-revert.
+  - Smoke `tier1 5/5 30s` with `MC2_GPU_PARTICLES=1 MC2_FX_TRACE=1 MC2_DISABLE_GOSFX=1`. Default A2 state: producers still call old `Find` (until the enumerator commit lands), so legacy `FX_TRACE_SPAWN` counters stay populated; new `Spawn` is reachable only via canary harness — verify no regression.
+  - **NO user-driven canary per per-type wiring commit** (too granular). Mass canary at Stage 4'.
+- **Verification (atomic enumerator commit):**
+  - Build `--clean-first` MUST succeed with zero `EffectLibrary::Find` references — proves enumeration is complete.
+  - Smoke `tier1 5/5 30s` with `MC2_GPU_PARTICLES=1 MC2_FX_TRACE=1 MC2_DISABLE_GOSFX=1`. `FX_TRACE_SPAWN` counters now sourced from `mclib::particles::Spawn` — per-spec histogram should match Stage 0' coverage table for the four implemented types within ±10% (parity gate). Out-of-scope types (Pert/Shape/Debris/EffectCloud) show zero spawns post-cutover (filed as B2 debt).
+  - **NO user-driven canary at the enumerator commit itself** (deferred to Stage 4').
+- **Commit shape:**
+  - Commit 1: file move (mechanical, namespace-only) of `effectlibrary.cpp` → `mclib/particles/spec_library.{h,cpp}`. Build/test parity.
+  - Commit 2: LightManager move (verbatim API; lifecycle repoint per §0.4).
+  - Commit 3–6: per-type GPU-spawn wiring (Card, Point, Shard, Tube — 4 commits). Each adds emit-path coverage; `Spawn` API gains type without producer migration.
+  - Commit 7: **atomic enumerator cutover** — delete `EffectLibrary::Find`, repoint all 31+ sites to `mclib::particles::Spawn`, wire `FX_TRACE_SPAWN`. ONE commit. Build clean at boundary.
+  - **7 atomic commits total in Stage 2'.**
+- **Rollback per per-type commit:** branch-revert that commit; `Spawn` loses that type but producer migration hasn't happened yet so no caller breaks.
+- **Rollback of the enumerator commit:** branch-revert restores `EffectLibrary::Find` and all 31+ caller call-site lines; per-type GPU-spawn wiring remains. This is a single-commit rollback at the highest-risk boundary in B1 — explicit design property.
 
 #### Stage 3' — coverage gates
 - **Goal:** machine-checked equivalence for each shipped primitive type.
 - **Files:** none (uses A0 traces + Stage 0' coverage table).
-- **Verification:** tier1 5/5 with `MC2_GPU_PARTICLES=1 MC2_GOSFX_TRACE=1`. For each `Find()`-name in the coverage table whose primitive type is in v1 scope, require gpu-side spawn-event count within ±10% of legacy baseline (Stage 0' capture). Out-of-scope types (Pert/Shape/Debris/EffectCloud) report zero spawns and are filed as B2 debt.
+- **Verification:** tier1 5/5 with `MC2_GPU_PARTICLES=1 MC2_FX_TRACE=1`. For each `Find()`-name in the coverage table whose primitive type is in v1 scope, require gpu-side spawn-event count within ±10% of legacy baseline (Stage 0' capture). Out-of-scope types (Pert/Shape/Debris/EffectCloud) report zero spawns and are filed as B2 debt.
 - **No commits.** Soak-style stage.
 
 #### Stage 4' — visual canary soak + ADVERSARIAL REVIEW
@@ -338,32 +385,41 @@ B1 Stage 5' flipped default-ON and user-soaked. A4 begins.
 
 ---
 
-## 6. Stage A4 — atomic deletion of `mclib/gosfx/` + `mclib/mlr/` (runtime-side only)
+## 6. Stage A4 — atomic FULL deletion of `mclib/gosfx/` + `mclib/mlr/` trees
 
 ### 6.1 Goal
-Delete `mclib/gosfx/` tree (minus the parser already moved by B1 Stage 2') and `mclib/mlr/` tree from the `mc2.exe` runtime build. Keep linkable into editor / Viewer / `aseconv` targets per (A) §5 Q2.
+**(v2 CRITICAL fold-in, USER-RESOLVED):** **Full deletion.** Delete `mclib/gosfx/` tree (minus the parser already moved by B1 Stage 2') and `mclib/mlr/` tree entirely from the repository. Remove from `mc2.exe` build AND from editor / Viewer / `aseconv` targets. **editor/Viewer/aseconv targets WILL FAIL TO BUILD after A4 ships. This is intentional and accepted debt;** tracked in a follow-on slice spec to be filed at A4 ship time. Per `feedback_editor_must_converge_with_runtime_paths.md`, eventual editor convergence is a separate worktree's responsibility (the editor's forked render loop ends at `renderLists()` anyway, so its current dependency on gosFX/MLR is itself legacy debt). Round 1's "kept linkable" guarantee is RETRACTED in v2.
 
 ### 6.2 Inputs
 - B1 Stage 5' shipped default-on and soaked.
 - (A) Stage 3 staging guidance.
+- User decision (binding): editor breakage is accepted; file follow-on slice.
 
 ### 6.3 Files modified/created
 - **DELETE:** all `.cpp/.hpp` under `mclib/gosfx/` EXCEPT the parser already moved to `mclib/particles/` in B1 Stage 2'.
 - **DELETE:** all `.cpp/.hpp` under `mclib/mlr/`.
-- **MODIFY:** `mclib/CMakeLists.txt` + top-level CMake — scope MLR + gosFX linkage to editor / Viewer / `aseconv` targets only; remove from `mc2.exe` link list.
+- **MODIFY:** `mclib/CMakeLists.txt` + top-level CMake — remove gosFX/MLR from `mc2.exe` link list AND from editor / Viewer / `aseconv` target link lists. After this commit, those targets reference nonexistent symbols and FAIL TO BUILD; this is documented in the CMake comment alongside the change.
 - **DELETE:** `theClipper` declaration; the 16 `drawInfo.m_clipper = theClipper` sites (now dead because `m_clipper` field of `Effect::DrawInfo` is also deleted — compile-time enumeration).
 - **DELETE:** `code/mechcmd2.cpp:1647` (new), `:1940` (delete) — `theClipper` lifecycle.
 - **DELETE:** `mclib/txmmgr.cpp:369, :475, :503` — `theClipper` lifecycle (the double-teardown per §0.3).
 - **DELETE:** `code/gamecam.cpp:148, :287`; `code/simplecamera.cpp:168` — `StartDraw` / `RenderNow`.
 - **DELETE:** `MC2_DISABLE_GOSFX` env-gate plumbing from A1/A2 (dead).
-- **DELETE:** `MC2_GOSFX_TRACE` env-gate + counter (A0; gosFX is gone).
+- **KEEP:** `MC2_FX_TRACE` env-gate + `mclib/fx_trace/` module survive A4 unchanged (neutral oracle per §1, MAJOR-2 fold-in). `FX_TRACE_DRAW` callers in deleted `Effect::Draw` go away naturally; `FX_TRACE_SPAWN` callers in new `mclib::particles::Spawn` (from B1 Stage 2' enumerator commit) continue to emit.
+- **MODIFY:** `scripts/check-particles-no-cpu-projection.sh` — **(v2 MAJOR-3 fold-in, A4 phase)** tighten gate from B1-phase scope to A4-phase scope:
+  ```
+  FORBIDDEN_A4='cameraToClip|Camera::projectZ|worldToClipMatrix|projectForObjectAdmission|projectForEffectAdmission|theClipper|MLRClipper'
+  grep -rEn "$FORBIDDEN_A4" mclib/particles/  # fail if matches inside mclib/particles/ (unchanged)
+  grep -rEn 'theClipper|MLRClipper' .          # fail if matches ANYWHERE in repo (NEW in A4)
+  ```
+  The A4 tightening catches accidental re-introduction of clipper / MLR references anywhere in the tree after the trees are gone. Tightening lands in the same atomic bundle as the deletions (see §6.7 Commit 5).
 
 ### 6.4 Default state
 gosFX + MLR code physically removed from runtime build. Particles continue rendering via the B1 GPU path. `mc2.fx` stays on disk (per (A) §4 ¶7) — the spec library B1 needs.
 
 ### 6.5 Verification gates
-- Build: `--clean-first --config RelWithDebInfo`. Confirm `mc2.exe` links without gosFX/MLR symbols.
-- **(MINOR-3 fold-in)** Editor target build is OUT of scope for the A4 gate per (A) §5 Q2. A4 Commit 2 CMake change keeps `mclib/mlr/` and `mclib/gosfx/` linkable into editor / Viewer / `aseconv` targets so future editor convergence work is not pre-broken. **Action at A4 gate:** confirm the CMake change preserves editor-target linkage by inspection of the CMake diff (not by building the editor); editor build is a separate slice tracked under `feedback_editor_must_converge_with_runtime_paths.md`.
+- Build: `--clean-first --config RelWithDebInfo`. Confirm `mc2.exe` target links cleanly without gosFX/MLR symbols.
+- **(v2 CRITICAL fold-in, supersedes round 1 MINOR-3):** Editor / Viewer / `aseconv` targets are EXPECTED to fail to build after A4. **Action at A4 gate:** explicitly build `mc2.exe` ONLY (not the `ALL_BUILD` target). If using `cmake --build . --config RelWithDebInfo --target mc2`, confirm success. Editor target failure is NOT a regression — it is the documented intentional debt. File follow-on slice spec at A4 ship time per task: `docs/superpowers/specs/<date>-editor-viewer-aseconv-gosfx-retirement-followon.md` (stub; details to come from a separate editor-convergence worktree).
+- CI grep gate: run `sh scripts/check-particles-no-cpu-projection.sh` after the tightening commit lands; verify it now fires on any residual `theClipper|MLRClipper` reference anywhere in the tree (expected: zero matches post-deletion).
 - Deploy.
 - Smoke `tier1 5/5 30s`. Expected: byte-identical (visually) to B1 Stage 5' end state — A4 is **dormant-code deletion**. **No perf delta expected** (the 408us savings was realized at A2/A3; B1's additive cost was measured at Stage 4').
 - **CPU_PROJ recapture optional / sanity-only** (per task spec). If captured, expect identical numbers to Stage 4'.
@@ -374,14 +430,16 @@ gosFX + MLR code physically removed from runtime build. Particles continue rende
 - Risk window: small. Per (A) §3.2, deletion is layer-clean (gosFX → MLR → nothing else in runtime exe).
 
 ### 6.7 Commit shape
-**(MAJOR-2 fold-in)** Ordering corrected: the callers-deletion commit MUST precede the `mclib/gosfx/` tree deletion, otherwise build breaks at the tree-deletion commit because callers still reference `Effect::DrawInfo::m_clipper`. Revised order:
+**(round 1 MAJOR-2 fold-in)** Ordering: the callers-deletion commit MUST precede the `mclib/gosfx/` tree deletion, otherwise build breaks at the tree-deletion commit because callers still reference `Effect::DrawInfo::m_clipper`. **(v2 CRITICAL + MAJOR-2 + MAJOR-3 fold-ins)** Commit 2 now removes gosFX/MLR from editor/Viewer/aseconv targets too (full deletion); `MC2_FX_TRACE` is KEPT (neutral oracle); CI gate tightens in a dedicated commit. Revised order:
 
-- Commit 1: delete the 16 `drawInfo.m_clipper = theClipper` assignments + delete the `Effect::DrawInfo::m_clipper` field declaration + delete `theClipper` global declaration + delete `theClipper` lifecycle sites (`mechcmd2.cpp:1647, :1940`; `txmmgr.cpp:369, :475, :503`) + delete `code/gamecam.cpp:148, :287` + delete `code/simplecamera.cpp:168`. **All-or-nothing**: this is the compile-time-enumerator commit; nothing else in this commit. After this lands, `mclib/gosfx/` and `mclib/mlr/` are unreferenced from `mc2.exe` link graph but still in the tree.
-- Commit 2: CMake scope change — gosFX/MLR no longer linked into `mc2.exe` link list; remain linkable into editor / Viewer / `aseconv` targets per (A) §5 Q2.
-- Commit 3: delete `mclib/gosfx/` tree (minus the parser moved to `mclib/particles/` in B1 Stage 2').
-- Commit 4: delete `mclib/mlr/` tree.
-- Commit 5: delete `MC2_DISABLE_GOSFX` and `MC2_GOSFX_TRACE` env-gates (now dead).
-- **5 atomic commits, REVISED ORDER.** Build must succeed at every commit boundary; verify via `--clean-first` build after each.
+- Commit 1: delete the 16 `drawInfo.m_clipper = theClipper` assignments + delete the `Effect::DrawInfo::m_clipper` field declaration + delete `theClipper` global declaration + delete `theClipper` lifecycle sites (`mechcmd2.cpp:1647, :1940`; `txmmgr.cpp:369, :475, :503`) + delete `code/gamecam.cpp:148, :287` + delete `code/simplecamera.cpp:168`. **All-or-nothing**: this is the compile-time-enumerator commit; nothing else in this commit. After this lands, `mclib/gosfx/` and `mclib/mlr/` are unreferenced from `mc2.exe` link graph but still in the tree. Editor / Viewer / `aseconv` targets DO still reference these trees at this commit — they will fail to build (intentional; Commit 2 makes it explicit at CMake level).
+- Commit 2: CMake scope change — gosFX/MLR removed from `mc2.exe` link list AND from editor / Viewer / `aseconv` target link lists. **Those targets fail to build after this commit; this is the documented intentional debt per §6.1 / §6.5.** Build `mc2.exe` target only at this and subsequent commit boundaries.
+- Commit 3: delete `mclib/gosfx/` tree (minus the parser moved to `mclib/particles/` in B1 Stage 2'). `mc2.exe` builds clean.
+- Commit 4: delete `mclib/mlr/` tree. `mc2.exe` builds clean.
+- Commit 5: CI grep gate tightening — modify `scripts/check-particles-no-cpu-projection.sh` per §6.3 to add the repo-wide `theClipper|MLRClipper` forbidance. Run the script post-edit; verify zero matches.
+- Commit 6: delete `MC2_DISABLE_GOSFX` env-gate plumbing (now dead). `MC2_FX_TRACE` and `mclib/fx_trace/` SURVIVE — neutral oracle per §1 (v2 MAJOR-2). `FX_TRACE_DRAW` callers go away naturally with the tree deletions; `FX_TRACE_SPAWN` callers in `mclib::particles::Spawn` continue to emit.
+- Commit 7 (paired with A4 ship): file editor/Viewer/aseconv follow-on slice spec stub at `docs/superpowers/specs/<date>-editor-viewer-aseconv-gosfx-retirement-followon.md`. Lists broken targets, points at `feedback_editor_must_converge_with_runtime_paths.md`, defers solution to separate worktree.
+- **7 atomic commits, REVISED ORDER.** `mc2.exe` build must succeed at every commit boundary 1–6; verify via `--clean-first --target mc2` build after each. Editor target build NOT verified post-Commit 2 (intentional).
 
 ### 6.8 Handoff to A5
 A4 PASS = gosFX + MLR gone from runtime exe.
@@ -391,19 +449,21 @@ A4 PASS = gosFX + MLR gone from runtime exe.
 ## 7. Stage A5 — Light dead-code retirement
 
 ### 7.1 Goal
-Delete the `USE_LIGHT_APPEARANCE`-gated bodies in `code/light.cpp` (3 sites per §0.7). Collapse the GameObject ghost pool slot for mission `.fit` Light entries to a no-op stub OR delete the Light GameObject type entirely if no other lifecycle code depends on the slot.
+**(v2 MINOR-2 fold-in):** **A5 default is no-op stub.** Light GameObject type registration STAYS so mission `.fit` Light entries continue to populate the ghost pool. `Light::init` / `update` / `render` bodies become no-op stubs (delete the `#ifdef`'d-out code, leave the function shells). A5 does NOT delete the type registration — that would require a separate loader-side proof that's not in A5 scope and would risk mission .fit parse failures across the stock missions.
+
+Concretely: delete the `USE_LIGHT_APPEARANCE`-gated bodies in `code/light.cpp` (3 sites per §0.7); leave the surrounding function shells (now empty bodies) intact; leave the Light class declaration and GameObject type registration intact; mission `.fit` Light parsing continues to populate ghost-pool entries that do nothing at update/render time. **No loader change required.**
 
 ### 7.2 Inputs
 - `memory/lights_are_dead_code_use_light_appearance_undef.md`.
 - A4 PASS (no dependency, but conservative ordering).
 
 ### 7.3 Files modified/created
-- `code/light.cpp` — delete the 3 `#ifdef USE_LIGHT_APPEARANCE`/`#endif` blocks (Light::init's VFXAppearance allocation, Light::update's `onScreen()` call, Light::render).
-- `code/light.h` — possibly delete the Light class entirely if compile-time enumeration shows no live callers outside the GameObject lifecycle plumbing.
-- Mission `.fit` Light loader (grep at execute time for the type code that creates Light objects): collapse to no-op stub (preserve the slot read so stock missions don't fail to parse) OR delete the type registration if loader supports skipping unknown types.
+- `code/light.cpp` — delete the 3 `#ifdef USE_LIGHT_APPEARANCE`/`#endif` blocks (Light::init's VFXAppearance allocation, Light::update's `onScreen()` call, Light::render). Function shells (`void Light::init(...) { }`, etc.) remain so the v-table and type registration stay valid.
+- `code/light.h` — **KEEP the Light class declaration intact.** Do NOT delete the class — mission `.fit` Light type registration depends on it. Compile-time enumeration of callers is NOT performed in A5; deletion of the class is explicitly out of scope per v2 MINOR-2.
+- Mission `.fit` Light loader — **NO CHANGE.** Light type registration stays; loader continues to instantiate Light ghosts.
 
 ### 7.4 Default state
-Light GameObject becomes a no-op stub (or is gone entirely). Mission `.fit` Light entries are skipped or ghost-allocate with zero behavior. **No visual delta** (the code was already dead per `lights_are_dead_code_use_light_appearance_undef.md`).
+Light GameObject continues to exist as a no-op stub. Mission `.fit` Light entries continue to ghost-allocate with zero behavior at update/render. **No visual delta** (the code was already dead per `lights_are_dead_code_use_light_appearance_undef.md`); **no loader delta** (type registration unchanged).
 
 ### 7.5 Verification gates
 - Build/deploy.
@@ -416,9 +476,8 @@ Light GameObject becomes a no-op stub (or is gone entirely). Mission `.fit` Ligh
 Revert the A5 commits. Light ghosts return; zero behavior diff.
 
 ### 7.7 Commit shape
-- Commit 1: delete the 3 `#ifdef` blocks in `code/light.cpp`.
-- Commit 2: collapse / delete Light GameObject type per loader-grep finding.
-- 2 atomic commits.
+- Commit 1: delete the 3 `#ifdef` blocks in `code/light.cpp`. Function shells remain.
+- **1 atomic commit (v2 MINOR-2 reduction).** No second commit: Light type registration stays per v2 MINOR-2; loader unchanged.
 
 ### 7.8 R5 ordering trap is NOT in scope for A5
 Per task spec + `memory/lights_are_dead_code_use_light_appearance_undef.md`: the `mclib/bdactor.cpp:2180-2183` "Stage 2.D.2 fix" ordering trap belongs to the FUTURE (D) arc (real light illumination plumbing — `docs/superpowers/specs/2026-05-20-light-real-illumination-plumbing-design.md`). **Do not touch `bdactor.cpp:2180-2183` in A5.**
@@ -430,15 +489,25 @@ A5 PASS = integrated arc complete. File B2 (PertCloud/ShapeCloud/DebrisCloud/Eff
 
 ## 8. Cross-cutting discipline
 
-### 8.1 CI grep gate (per (B) §3.4)
-`scripts/check-particles-no-cpu-projection.sh` lands in B1 Stage 1'. Wires into the existing pre-commit hooks (`scripts/check-destroy-invariant.sh`, `scripts/check-asset-scale-callers.sh`, `scripts/check-render-contract-gbuffer1.sh`).
+### 8.1 CI grep gate (per (B) §3.4) — TWO-PHASE per v2 MAJOR-3 fold-in
+`scripts/check-particles-no-cpu-projection.sh` lands in B1 Stage 1' (B1-phase scope) and tightens in A4 (A4-phase scope). Wires into the existing pre-commit hooks (`scripts/check-destroy-invariant.sh`, `scripts/check-asset-scale-callers.sh`, `scripts/check-render-contract-gbuffer1.sh`).
 
+**B1-phase scope (lands at B1 Stage 1' Commit 3):**
 ```
-FORBIDDEN='cameraToClip|Camera::projectZ|worldToClipMatrix|theClipper|MLRClipper|projectForObjectAdmission|projectForEffectAdmission'
-grep -rEn "$FORBIDDEN" mclib/particles/
+FORBIDDEN_B1='cameraToClip|Camera::projectZ|worldToClipMatrix|projectForObjectAdmission|projectForEffectAdmission'
+grep -rEn "$FORBIDDEN_B1" mclib/particles/  # fail if matches inside mclib/particles/
 ```
+Forbids ONLY projection APIs inside `mclib/particles/`. Does NOT forbid `theClipper`/`MLRClipper` because gosFX/MLR are still alive in the same build during B1; transitional code may reference them. Script header comment cites the phase explicitly.
 
-The gate has TEETH only after A4 deletes MLR types — before A4, the script still runs (because Stage 1' lands it) but the `theClipper|MLRClipper` patterns may match B1 transitional code. Plan-execute time decision: scope the script body to fail only on the *projection* patterns until A4 lands, then unconditional after.
+**A4-phase scope (tightening lands at A4 Commit 5):**
+```
+FORBIDDEN_A4='cameraToClip|Camera::projectZ|worldToClipMatrix|projectForObjectAdmission|projectForEffectAdmission|theClipper|MLRClipper'
+grep -rEn "$FORBIDDEN_A4" mclib/particles/  # particles-scope clipper ban
+grep -rEn 'theClipper|MLRClipper' .          # repo-wide clipper ban
+```
+Repo-wide forbidance catches accidental re-introduction post-deletion. Pre-deletion this would false-positive against `gosfx/`/`mlr/` themselves; post-deletion both trees are gone so the gate is meaningful.
+
+Both phases run via the same script file; the A4 commit edits the script body. No CI infrastructure rewiring required.
 
 ### 8.2 Pre-commit invariants (existing + new)
 - `sh scripts/check-destroy-invariant.sh` — must run if A4/A5 touch object lifecycle.
@@ -567,14 +636,37 @@ Inline pass; skill not registered as callable Skill in this harness. Process exe
 
 **Architectural decisions needing user sign-off:** none. All findings were mechanical and folded in.
 
-**Adversarial verdict: 0 CRITICAL, 2 MAJOR (folded), 3 MINOR (folded).** Plan is execution-ready.
+**Adversarial verdict (round 1): 0 CRITICAL, 2 MAJOR (folded), 3 MINOR (folded).** Plan is execution-ready PENDING round 2.
+
+### Adversarial-plan-review round 2 (external)
+
+External review surfaced 1 CRITICAL + 4 MAJOR + 2 MINOR. All folded in v2 (this revision):
+- **CRITICAL** (A4 self-contradiction) — USER-RESOLVED to full deletion; editor/Viewer/aseconv intentionally broken; follow-on slice filed at A4 ship time. Folded throughout §6, §6.1/6.3/6.5/6.7, and Appendix A negative space below.
+- **MAJOR-1** (B1 per-primitive enumeration infeasible) — Folded into §5.4 Stage 2' as atomic enumerator commit at end of stage.
+- **MAJOR-2** (trace oracle gosFX-coupled) — Folded into §1 (relocated to `mclib/fx_trace/`) and §6 (KEPT through A4).
+- **MAJOR-3** (CI grep gate scoping unresolved) — Folded into §5.4 Stage 1' (B1 phase) + §6.3/§6.7 (A4 phase) + §8.1 (two-phase summary).
+- **MAJOR-4** (std430 guard too weak) — Folded into §5.4 Stage 1' (per-field offsetof + alignof asserts; one-source schema deferred to B2 debt).
+- **MINOR-1** (A1 internal contradiction) — Folded into §2.1 (gate inside `Effect::Draw`; clipper assignments continue executing).
+- **MINOR-2** (A5 default) — Folded into §7.1/7.3/7.4/7.7 (no-op stub default; type registration kept; 2 commits → 1 commit).
+
+**Adversarial verdict (round 2): 1 CRITICAL (USER-RESOLVED + folded), 4 MAJOR (folded), 2 MINOR (folded).** v2 plan is pending one more adversarial-plan-review dispatch per CLAUDE.md "high-stakes plans" discipline.
+
+---
+
+## Appendix A.neg — Negative space (intentionally NOT in scope) — UPDATED v2
+
+- **(v2 CRITICAL fold-in)** editor / Viewer / `aseconv` build correctness AFTER A4 — those targets will fail to build; the round-1 "kept linkable into editor/Viewer/aseconv targets" guarantee is **RETRACTED**. Editor convergence to the modern runtime path is the responsibility of a separate worktree (per `feedback_editor_must_converge_with_runtime_paths.md`). A follow-on slice spec is FILED at A4 ship time (§6.7 Commit 7) but its implementation is not part of this plan.
+- B2 primitive types (PertCloud, ShapeCloud, DebrisCloud, EffectCloud) — filed as debt at B1 Stage 5'.
+- (D) real light illumination plumbing — separate spec.
+- One-source schema generation for `GpuParticle` C++/GLSL pair — filed as B2 polish debt at v2 (MAJOR-4).
+- `bdactor.cpp:2180-2183` "Stage 2.D.2 fix" ordering trap — belongs to future (D) arc, NOT A5 (§7.8).
 
 ---
 
 ## Appendix B — open items for execute time
 
 1. **Heavy-combat mission pick** (B1 Stage 4') — confirm mc2_24 vs mc2_17 from Stage 0' coverage table.
-2. **SSBO binding 13/14 pre-flight grep** (B1 Stage 1') — confirm no drift since plan-write.
-3. **CI grep gate scoping** (B1 Stage 1') — decide whether script body scopes `theClipper|MLRClipper` patterns conditional on A4 being landed or unconditional.
-4. **Editor build status** (A4 ship) — confirm whether editor target build is in CI. If not, file as debt; do not block A4.
-5. **Light GameObject loader site** (A5) — grep at execute time for `.fit` Light type registration; decide stub-vs-delete.
+2. **SSBO binding 13/14 pre-flight grep** (B1 Stage 1' Commit 4) — confirm no drift since plan-write.
+3. **CI grep gate scoping** — RESOLVED in v2: two-phase definition specified (§5.4 Stage 1', §6.3, §8.1). No execute-time decision required.
+4. **(v2 CRITICAL fold-in, replaces round 1 item 4)** **File editor/Viewer/aseconv breakage spec at A4 ship time** — concrete deliverable: `docs/superpowers/specs/<date>-editor-viewer-aseconv-gosfx-retirement-followon.md`. Should enumerate broken targets, cite `feedback_editor_must_converge_with_runtime_paths.md`, and defer implementation to a separate editor-convergence worktree.
+5. **Light GameObject loader site** — RESOLVED in v2 (MINOR-2): type registration STAYS; no loader change; no grep required at execute. A5 is `code/light.cpp` only.
