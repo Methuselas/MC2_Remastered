@@ -32,6 +32,15 @@ layout(std430, binding = 14) readonly buffer Particles {
 
 uniform mat4 terrainMVP;  // GL_FALSE upload (row-major direct) per
                           // memory/terrain_mvp_gl_false.md.
+// B1 C14: terrainMVP is D3D pixel-homog clip-space (per
+// gos_terrain_surface.vert documentation), NOT GL clip. To get to GL
+// clip we must mirror the 3-step chain used by static_prop.vert:148-156
+// and mech.vert: (1) terrainMVP -> pixel-homog clip4, (2) viewport
+// divide via u_terrainViewport, (3) u_mvp NDC remap with absW restore.
+// C13's inspection identified the prior direct gl_Position = clip4
+// assignment as the ~90%-confidence invisibility root cause.
+uniform vec4 u_terrainViewport;
+uniform mat4 u_mvp;
 
 // Atlas UVs for the four billboard corners.
 // Stage 1' Card test effect uses the full atlas page (0..1).
@@ -63,19 +72,21 @@ void main() {
     vec2 cornerXY = (kCornerUv[cornerIdx] - vec2(0.5, 0.5)) * (2.0 * p.size);
     vec3 worldPos = p.position.xyz + vec3(cornerXY, 0.0);
 
-    vec4 clip = terrainMVP * vec4(worldPos, 1.0);
-
-    // In-front cull per clip_w_sign_trap.md. abs() to defang MC2's matrix
-    // sign behavior; pz in [0,1) under reverse-Z is the visibility window.
-    float absW = abs(clip.w);
-    float pz   = (absW > 0.0) ? (clip.z / absW) : -1.0;
-    bool  inFront = (pz >= 0.0 && pz < 1.0);
-
-    if (!inFront) {
-        gl_Position = vec4(0.0, 0.0, -2.0, 1.0);  // degenerate (behind near plane)
-    } else {
-        gl_Position = clip;
-    }
+    // B1 C14: 3-step chain mirroring static_prop.vert:148-156.
+    // Step 1: world -> pixel-homog clip via terrainMVP (D3D convention).
+    vec4 clip4 = terrainMVP * vec4(worldPos, 1.0);
+    float rhw  = 1.0 / clip4.w;
+    // Step 2: viewport divide (pixel space).
+    vec3 px;
+    px.x = clip4.x * rhw * u_terrainViewport.x + u_terrainViewport.z;
+    px.y = clip4.y * rhw * u_terrainViewport.y + u_terrainViewport.w;
+    px.z = clip4.z * rhw;
+    // Step 3: pixel -> GL NDC via u_mvp, then absW restore so behind-camera
+    // vertices get correct GL clip-space w (preserves clip_w_sign_trap.md
+    // discipline without bespoke pz cull — GL clipper handles it natively).
+    vec4 ndc  = u_mvp * vec4(px, 1.0);
+    float absW = abs(clip4.w);
+    gl_Position = vec4(ndc.xyz * absW, absW);
 
     v_uv    = kCornerUv[cornerIdx];
     v_color = p.color;
