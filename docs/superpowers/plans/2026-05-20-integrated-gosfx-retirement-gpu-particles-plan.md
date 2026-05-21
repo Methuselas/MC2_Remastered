@@ -1,7 +1,7 @@
-# Integrated Plan v2 — gosFX Retirement + GPU Particle Pipeline + Light Dead-Code Cleanup
+# Integrated Plan v5 — gosFX Retirement + GPU Particle Pipeline + Light Dead-Code Cleanup
 
-- **Status:** REVIEWED v2 — greybeard PASS (round 1); adversarial round 1 (2 MAJOR + 3 MINOR) folded in `1407354`; **external review round 2 (1 CRITICAL + 4 MAJOR + 2 MINOR) folded in v2 (this revision).** Pending: one more adversarial-plan-review pass to confirm execute-ready.
-- **Date:** 2026-05-20 (v2 fold-in)
+- **Status:** REVIEWED v5 — greybeard PASS (round 1); adversarial r1 (2 MAJOR + 3 MINOR) folded in `1407354`; r2 external (1 CRITICAL + 4 MAJOR + 2 MINOR) folded in `54c96a6`; r3 audit (1 MAJOR + 1 MINOR) folded in `034bbcb`; **r4 external (2 CRITICAL + 3 MAJOR + 2 MINOR) folded in v5 (this revision).** Pending: round-4 adversarial-plan-review dispatch.
+- **Date:** 2026-05-20 (v5 fold-in)
 - **Authoring branch:** `claude/nifty-mendeleev`
 - **Authoritative specs:**
   - (A) `docs/superpowers/specs/2026-05-20-gosfx-retirement-or-replacement-design.md`
@@ -103,18 +103,24 @@ Re-grep `code/light.cpp:120, 142, 167`. Confirms `memory/lights_are_dead_code_us
 ### 1.1 Goal
 Per-spec invocation counter on `Effect::Draw` (and a per-`Find()`-name spawn counter), env-gated `MC2_FX_TRACE=1`, default-off. Produces the per-mission histogram (B) §3.3 Stage 0' / Stage 3' uses for coverage equivalence.
 
-**(v2 MAJOR-2 fold-in):** Module is **neutral** (not gosFX-coupled). Lives at `mclib/fx_trace/`, not `mclib/gosfx/`. Env var is `MC2_FX_TRACE=1`, not `MC2_FX_TRACE=1`. This is load-bearing: at B1 Stage 2', the same counters are emitted by the new `mclib::particles::Spawn` API using identical key schema. At A4, gosFX deletes but `mclib/fx_trace/` survives unchanged — no mid-arc oracle gap. The counters become the per-mission histogram for the new path too.
+**(v2 MAJOR-2 fold-in):** Module is **neutral** (not gosFX-coupled). Lives at `mclib/fx_trace/`, not `mclib/gosfx/`. Env var is `MC2_FX_TRACE=1`, not `MC2_GOSFX_TRACE=1` (v5 MINOR-2 typo fix). This is load-bearing: at B1 Stage 2', the same counters are emitted by the new `mclib::particles::Spawn` API using identical key schema. At A4, gosFX deletes but `mclib/fx_trace/` survives unchanged — no mid-arc oracle gap. The counters become the per-mission histogram for the new path too.
+
+**(v5 CRITICAL-2 fold-in — adds 3rd counter `FX_TRACE_MLR_ENQUEUE`):** A1's MLR-leaf gate placement (per v3) gates the 4 MLR work-leaves, NOT `gosFX::Effect::Draw` itself. Under A2 default-on, `Effect::Draw` and its subclasses still run to completion — their bodies merely hit the gated MLR leaves which no-op. The v4 verification language claiming "`FX_TRACE_DRAW` → 0 under A2" is therefore wrong: `Effect::Draw` keeps running. The plan distinguishes three counters:
+- **`FX_TRACE_SPAWN(specName)`** — fires at `EffectLibrary::Find` (parser-side). Counts spawn events. Per-mission histogram authority. Survives A4 (re-emitted by `mclib::particles::Spawn` post-cutover).
+- **`FX_TRACE_DRAW(specName)`** — fires at `gosFX::Effect::Draw` entry. Counts draw invocations. Per-spawn-event parity oracle across the migration (gosFX vs particles spawn-event equivalence; this is what Stage 3' uses). **Expected NONZERO under A2 default-on** — the subclass code runs to completion; only the MLR leaves no-op downstream.
+- **`FX_TRACE_MLR_ENQUEUE` (NEW in v5)** — fires at entry of each of the 4 gated MLR work-leaves (`DrawShape`, `DrawScalableShape`, `DrawEffect`, `DrawScreenQuads`) in `mclib/mlr/mlrclipper.cpp`. **The counter increment fires BEFORE the early-return gate check** so it counts attempts, not work performed. Expected NONZERO under A1 default-off; expected ~0 under A2 default-on. **This is the counter the A2 perf gate checks** alongside `mlr_total worst_window_p95 ≤ 5us`.
 
 ### 1.2 Inputs
 - F3 baseline 408us memory.
 - `debug_instrumentation_rule.md` macro pattern (`MC2_DEBUG_SHADOW_COLLECT` analog).
 
 ### 1.3 Files modified/created
-- **NEW** `mclib/fx_trace/fx_trace.h` (macro + counter table; one-line lifecycle prints at lib-load only). Public API: `FX_TRACE_SPAWN(specName)`, `FX_TRACE_DRAW(specName)`.
-- **NEW** `mclib/fx_trace/fx_trace.cpp` (counter aggregation; atexit / mission-end dump).
+- **NEW** `mclib/fx_trace/fx_trace.h` (macro + counter table; one-line lifecycle prints at lib-load only). Public API: `FX_TRACE_SPAWN(specName)`, `FX_TRACE_DRAW(specName)`, **`FX_TRACE_MLR_ENQUEUE(leafName)` (v5 CRITICAL-2)**.
+- **NEW** `mclib/fx_trace/fx_trace.cpp` (counter aggregation; atexit / mission-end dump). Three counter tables (spawn, draw, mlr_enqueue) keyed independently.
 - `mclib/gosfx/effect.cpp` (or wherever `Effect::Draw` lives — grep at execute) — `FX_TRACE_DRAW` in `Effect::Draw`.
 - `mclib/gosfx/effectlibrary.cpp` — `FX_TRACE_SPAWN` in `Find()` (or wrap `Find` call sites via macro).
-- `mclib/CMakeLists.txt` — add the new `fx_trace` TU. `fx_trace` is a sibling of `gosfx/`, with NO dependency on gosFX headers (one-way: gosFX includes `fx_trace.h`, never the reverse).
+- **(v5 CRITICAL-2)** `mclib/mlr/mlrclipper.cpp` — `FX_TRACE_MLR_ENQUEUE("DrawShape")` at `:400`, `FX_TRACE_MLR_ENQUEUE("DrawScalableShape")` at `:565`, `FX_TRACE_MLR_ENQUEUE("DrawEffect")` at `:668`, `FX_TRACE_MLR_ENQUEUE("DrawScreenQuads")` at `:697`. Placement: FIRST statement after the existing `Check_Object(this)` calls and BEFORE the A1 gate-macro early-return. This way the counter measures attempted enqueues (nonzero default-off, ~0 under A2 default-on), giving the A2 perf gate its primary oracle.
+- `mclib/CMakeLists.txt` — add the new `fx_trace` TU. `fx_trace` is a sibling of `gosfx/` and `mlr/`, with NO dependency on either (one-way: gosFX and mlrclipper include `fx_trace.h`, never the reverse). Survives A4 deletion of both trees.
 
 ### 1.4 Default state at end of stage
 - `MC2_FX_TRACE` env-opt-in, OFF by default. Zero behavior change otherwise.
@@ -130,8 +136,8 @@ Per-spec invocation counter on `Effect::Draw` (and a per-`Find()`-name spawn cou
 Trivial: set `MC2_FX_TRACE=0` (default). Code revert: one commit, atomic.
 
 ### 1.7 Commit shape (atomic)
-- Commit 1: add `mclib/fx_trace/{fx_trace.h,fx_trace.cpp}` + CMake (compiles but inert; no caller).
-- Commit 2: wire `FX_TRACE_DRAW` into `Effect::Draw` + `FX_TRACE_SPAWN` into `EffectLibrary::Find` behind env-gate. **A0 ships in 2 commits.**
+- Commit 1: add `mclib/fx_trace/{fx_trace.h,fx_trace.cpp}` + CMake (compiles but inert; no caller). Exposes all three macros (`FX_TRACE_SPAWN`, `FX_TRACE_DRAW`, `FX_TRACE_MLR_ENQUEUE`).
+- Commit 2: wire `FX_TRACE_DRAW` into `Effect::Draw` + `FX_TRACE_SPAWN` into `EffectLibrary::Find` + **(v5 CRITICAL-2) `FX_TRACE_MLR_ENQUEUE` into the 4 MLR leaves at the lines cited in §1.3** behind env-gate. **A0 ships in 2 commits.** Wiring the MLR-enqueue counter in A0 (not A1) means the A2 perf gate has a baseline-vs-gated A/B from the same counter source.
 
 ### 1.8 Handoff to A1
 A0 is shippable independently. A1 can begin once the counter is verified producing histograms on at least one tier1 mission.
@@ -213,8 +219,8 @@ external callers** — gating them is defensive coverage.
 
 ### 2.5 Verification gates
 - Build/deploy as A0.
-- Smoke `tier1 5/5 30s` env-OFF + `MC2_FX_TRACE=1` → counters match A0 baseline ±5% (cull-driven variance acceptable).
-- Smoke `tier1 5/5 30s` env-ON + `MC2_FX_TRACE=1` → counters at zero for `Effect::Draw`; `Find()` counters still nonzero (spawn still happens; render is gated).
+- Smoke `tier1 5/5 30s` env-OFF + `MC2_FX_TRACE=1` → all three counters (`FX_TRACE_SPAWN`, `FX_TRACE_DRAW`, `FX_TRACE_MLR_ENQUEUE`) match A0 baseline ±5% (cull-driven variance acceptable).
+- Smoke `tier1 5/5 30s` env-ON + `MC2_FX_TRACE=1` → **`FX_TRACE_MLR_ENQUEUE` → ~0** (this is the load-bearing assertion: MLR leaves still entered, but counter fires before the early-return so a non-zero value means the gate didn't compile in; expected value is small but nonzero because the counter increments BEFORE the gate check — see note below); **`FX_TRACE_DRAW` stays nonzero** (per v5 CRITICAL-2: `Effect::Draw` subclass bodies run to completion under A1 gate; only the downstream MLR leaves no-op); `FX_TRACE_SPAWN` unchanged (spawn-side is upstream of any gate). **Per-leaf check:** verify the counter for each of the 4 MLR leaves shows the same value as default-off (i.e. all four are still ENTERED — the gate is at the body's first statement, the counter at entry); the A2 perf gate proves the early-return actually executes via the `mlr_total` Tracy zone going to ~0us. Note: if you want a "work-done" counter that drops to ~0 under the gate, increment a second counter AFTER the early-return; we deliberately do NOT do this in v5 because the Tracy zone already provides that signal and adding a second counter doubles wiring surface.
 - **CI script run:** `sh scripts/check-mlr-leaves-gated.sh` → `OK`. Verify the trip-wire fires by temporarily removing one gate and re-running (expected: violation print, exit nonzero); restore gate.
 - **NO user canary at A1 (default-OFF).** A2 owns the visual-canary step.
 
@@ -255,7 +261,7 @@ A1 gate landed and verified.
 - Smoke `tier1 5/5 30s` (default; gate ON). Visual: no particles. Progression: 5/5 PASS.
 - **USER-DRIVEN visual canary mc2_10 60s** with default ON. User observes: no in-game particle visuals (explosions, muzzle, dust, contrails, VTOL effects, recovery beam). User confirms mission completable, save/load works.
 - **USER-DRIVEN heavy-combat canary (mc2_24, 60s)** with default ON. Same checks.
-- **CPU_PROJ recapture (user-driven mc2_10, 60s, moderate motion ~16%, `MC2_CPU_PROJ_COST_SPLIT=1`).** Expected: `mlr_total worst_window_p95 → 0us` (gate eliminates MLR work). Compare against the 408us R2 baseline (`memory/f3_mc2_10_worstcase_2026_05_20.md`). **Gate: mlr_total must read ≤5us.** Any residual indicates the gate doesn't actually short-circuit MLR work — STOP and investigate.
+- **CPU_PROJ recapture (user-driven mc2_10, 60s, moderate motion ~16%, `MC2_CPU_PROJ_COST_SPLIT=1`).** Expected: `mlr_total worst_window_p95 ≤ 5us` (**empty-scope overhead floor** — `StartDraw`/`RenderNow` Tracy scope still wraps; the 4 MLR work-leaves no-op under the gate, so the scope contains near-zero work but is not literally zero — Tracy zone entry/exit + cache-flush touches register as a few-hundred-ns floor; **"zero work" is not "zero measurement"**). Compare against the 408us R2 baseline (`memory/f3_mc2_10_worstcase_2026_05_20.md`). **Gate: mlr_total must read ≤ 5us AND `FX_TRACE_MLR_ENQUEUE` per-leaf counts must match the default-off baseline within ±5%** (per v5 CRITICAL-2: the counter sits BEFORE the gate check, so leaves are still ENTERED; it's the early-return that suppresses work, measured by `mlr_total ≤ 5us`). Either gate failing = the gate didn't compile in; STOP and investigate.
 
 ### 3.6 Rollback
 Set `MC2_DISABLE_GOSFX=0`. Re-runs legacy path. Or revert the one-LOC default flip.
@@ -295,7 +301,7 @@ Set env to 0; tracked back to A2.
 No commits (soak only). State-of-soak captured in commit-message tag or a memory entry only if anomalies appear.
 
 ### 4.8 Handoff to B1
-A3 PASS means gosFX is provably no-op. B1 can land the new particle path. **The 408us → 0us CPU savings is realized at A2; A3 confirms it's safe.**
+A3 PASS means gosFX is provably no-op. B1 can land the new particle path. **The 408us → ≤5us CPU savings (empty-scope floor) is realized at A2; A3 confirms it's safe.**
 
 ---
 
@@ -602,7 +608,7 @@ All B1 GPU resources use explicit device-mediated binding (`device.bindVertexBuf
 
 | Handoff | Capture | Mission | Expected | Gate |
 |---|---|---|---|---|
-| After A2 default-on | CPU_PROJ recapture user-driven mc2_10 60s ~16% motion | mc2_10 | `mlr_total worst_window_p95 → 0us` | **≤ 5us required.** Any residual = gate doesn't work; STOP. |
+| After A2 default-on | CPU_PROJ recapture user-driven mc2_10 60s ~16% motion | mc2_10 | `mlr_total worst_window_p95 ≤ 5us` (empty-scope floor — StartDraw/RenderNow Tracy scope still wraps but MLR work-leaves no-op under gate) | **≤ 5us required AND `FX_TRACE_MLR_ENQUEUE` per-leaf counts match default-off ±5%** (per v5 CRITICAL-2). Either failing = gate doesn't work; STOP. |
 | After B1 Stage 4' | CPU_PROJ recapture user-driven mc2_10 60s ~16% motion | mc2_10 | `mlr_total = 0`, new `gpu_fx_update worst_window_p95 < 50us` | **Total projection ≤ 408us required** (must not regress past F3 floor). |
 | After B1 Stage 4' (stress) | CPU_PROJ recapture user-driven mc2_24 60s sustained combat | mc2_24 | `gpu_fx_update worst_window_p95` documented | If ≥ 200us, escalate. |
 | After A4 | Optional / sanity only | mc2_10 | identical to Stage 4' end-state | No-op gate. |
