@@ -9,12 +9,14 @@
 
 ## Risk register before execution
 
-- **R1.** Cross-mission lifecycle leak. Existing anubis `pointLight` is leaked at mech destruction in `mech3d.cpp` (advisor flagged). Don't inherit when generalising; pair every `addWorldLight` with a `removeWorldLight` in the destroy hook.
+- **R1.** Cross-mission lifecycle leak. Existing anubis `pointLight` is leaked at mech destruction in `mech3d.cpp` (advisor flagged). Don't inherit when generalising; pair every `addWorldLight` with a `removeWorldLight` in the destroy hook. Building-side bdactor.cpp:1967-1972 + :2754-2762 IS the canonical paired-cleanup pattern — mirror it for the new vectors.
 - **R2.** `active=false` discipline. Off-screen mechs / culled buildings must set `active=false` or they consume per-shape best-16 slots from visible shapes. Mirror [mech3d.cpp:3382](mclib/mech3d.cpp).
 - **R3.** addWorldLight is O(N) first-empty-slot scan. After 256→1024 bump, never call per-frame. One-shot at registration only.
-- **R4.** Per-instance not per-type. Building instances have different world transforms; register at instance-spawn, not at TG_TypeShape construction.
-- **R5.** Day/night gating. CPU path skips spotlight cones during day at [tgl.cpp:1728](mclib/tgl.cpp). Real lights should follow the same convention — use `active = isNight && inView` to match.
+- **R4.** Per-instance not per-type. Building instances have different world transforms; register at INSTANCE update (BldgAppearance::update where position is valid), NOT at init (where position is zero — see T1.4 C-r1 C1 fix) and NOT at TG_TypeShape construction (per-type, not per-instance).
+- **R5.** Day/night gating. CPU path skips spotlight cones during day at [tgl.cpp:1728](mclib/tgl.cpp). Real lights follow the same convention — gate registration on `eye->isNight` AND active toggle on `visible` (per anubis at mech3d.cpp:3353; the inView gate was a mistake — see C-r1 C5).
 - **R6.** Vedette/LRMC canary. The f77f135 revert was triggered by a state-leak that made Vedettes invisible. (E) does NOT add a new draw path, so the same class doesn't apply, but Stage 1 smoke MUST include mc2_24 visual confirmation as a paranoia check.
+- **R7. (NEW from C-r1 C3+):** existing `BldgAppearance::pointLight` is the PER-BUILDING terrain ambient light (TG_LIGHT_TERRAIN, sourced from appearType->terrainLightRGB). The new `spotlightLights_` vector is PER-CHILD-SPOTLIGHT-NODE (TG_LIGHT_POINT). Distinct concerns; both coexist. Document in code comment at the vector declaration so future readers don't conflate. Same goes for mech3d anubis `pointLight` (the hardcoded SLCircle_anubis single light) vs the new `spotlightLights_` vector — coexist until T3.x consolidation.
+- **R8. (NEW from C-r1 M2):** the existing CPU spotlight render at [tgl.cpp:1728](mclib/tgl.cpp) sets `listOfVertices = NULL; return;` when `isSpotlight && !isNight`. The downstream static-prop batcher at gos_static_prop_batcher.cpp:2627 then skips children with `!listOfVertices`. So in DAYTIME, the cone is already skipped without (E). T1.3's `continue` branch only meaningfully diverges from current behavior at NIGHT. Baseline measurements (T0.3) should be captured AT NIGHT to be meaningful. Day baselines will show ~zero spotlight submits regardless of env state.
 
 ## Per-task atomic commit rule
 
@@ -40,12 +42,13 @@ Every T-numbered task lands as one commit. Commit messages reference task number
 
 ### T0.2 — Same counter at mech batcher skip site
 
-**Files:** `GameOS/gameos/gos_mech_batcher.cpp` around line 553-563 (the existing skip_spotlight branch).
+**Files:** `GameOS/gameos/gos_mech_batcher.cpp` around line 553-563.
 
-**Changes:**
-- At the skip site, add counter increment + first-hit print. Tag: `[SPOTLIGHT_REAL_TRACE v1]` `event=mech_skip`.
+**Important (per adversarial review C-r1 M1):** the existing `skip_spotlight` site at line 553-563 fires during RECIPE CONSTRUCTION (`numNodes` iteration in TG_TypeShape bring-up), once per type. It is NOT a per-frame counter. For per-frame mech-spotlight evidence, instrument the per-instance draw submission path instead. T0.2 instruments BOTH:
+- (a) The existing recipe-build skip — to count how many type-recipes carry spotlight nodes. Tag: `[SPOTLIGHT_REAL_TRACE v1] event=type_spotlight_node`.
+- (b) The per-frame mech draw submission for spotlight-carrying types — counter increment per drawn instance. Tag: `[SPOTLIGHT_REAL_TRACE v1] event=mech_spotlight_draw`.
 
-**Verification:** mc2_24 smoke run shows mech spotlight skip counter > 0 (mech batcher is being exercised).
+**Verification:** mc2_24 smoke run shows BOTH counters; (a) reports type-count, (b) reports per-frame draws.
 
 ### T0.3 — Baseline measurement run
 
@@ -63,14 +66,24 @@ Every T-numbered task lands as one commit. Commit messages reference task number
 
 ### T1.1 — Bump CPU world pool 256 → 1024
 
-**Files:** `mclib/tgl.h`, `mclib/camera.cpp`
+**Files:** `mclib/tgl.h`, `mclib/camera.cpp`, `mclib/tgl.cpp`
+
+**Adversarial review C-r1 C4 — full census of MAX_LIGHTS_IN_WORLD readers (grep-verified):**
+- [mclib/tgl.h:170](mclib/tgl.h) — the `#define` itself
+- [mclib/tgl.h:790](mclib/tgl.h) — `static Stuff::LinearMatrix4D TG_Shape::s_lightToShape[MAX_LIGHTS_IN_WORLD];`
+- [mclib/tgl.h:791](mclib/tgl.h) — `static Stuff::Vector3D TG_Shape::s_lightDir[MAX_LIGHTS_IN_WORLD];`
+- [mclib/tgl.h:792](mclib/tgl.h) — `static Stuff::Vector3D TG_Shape::s_spotDir[MAX_LIGHTS_IN_WORLD];`
+- [mclib/tgl.h:793](mclib/tgl.h) — `static Stuff::Vector3D TG_Shape::s_rootLightDir[MAX_LIGHTS_IN_WORLD];`
+- [mclib/tgl.cpp:78-81](mclib/tgl.cpp) — definitions of the four static arrays above
+- [mclib/camera.cpp:411,:423,:430](mclib/camera.cpp) — the three pool allocations (worldLights / activeLights / terrainLights)
 
 **Changes:**
 - `mclib/tgl.h:170` — `#define MAX_LIGHTS_IN_WORLD 1024`.
-- Audit allocations at `mclib/camera.cpp:411` (worldLights), `:423` (activeLights), `:430` (terrainLights). All three multiply `sizeof(TG_LightPtr) * MAX_LIGHTS_IN_WORLD`; the macro substitution carries through automatically. 1024 × 8 bytes × 3 arrays = 24KB total. Verify the `memset` calls at `:412`, `:424`, `:431` use the macro consistently (no hard-coded `256`).
-- Grep `MAX_LIGHTS_IN_WORLD` across `mclib/` and confirm no usage assumes the value is exactly 256. Shader-side `MAX_LIGHTS_IN_WORLD = 16` in [shaders/include/lighting.hglsl:23](shaders/include/lighting.hglsl) is a DIFFERENT scope (per-shape array) and DOES NOT change.
+- The four static arrays at tgl.h:790-793 grow automatically (BSS expansion at link time). 4 × 1024 × sizeof(LinearMatrix4D=64) ≈ 256KB; 3 × 1024 × sizeof(Vector3D=12) ≈ 36KB. Plus three pool pointer arrays at 8 × 1024 × 3 = 24KB. **Revised total BSS cost: ~316KB**, not 24KB. Below the project's RAM-cost-irrelevance threshold per [memory/feedback_ram_cost_not_a_concern_below_500mb.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\feedback_ram_cost_not_a_concern_below_500mb.md).
+- No other `MAX_LIGHTS_IN_WORLD` readers found outside the cited sites. Shader-side `MAX_LIGHTS_IN_WORLD = 16` in [shaders/include/lighting.hglsl:23](shaders/include/lighting.hglsl) is a DIFFERENT scope (per-shape array) and DOES NOT change.
+- Verify the `memset` calls at `:412`, `:424`, `:431` use the macro consistently (no hard-coded `256`).
 
-**Verification:** clean build (RelWithDebInfo, `--clean-first` per [memory/feedback_class_layout_change_needs_clean_first.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\feedback_class_layout_change_needs_clean_first.md) — header changes affect class layout). Smoke tier1 with no env vars: passes unchanged.
+**Verification:** clean build (RelWithDebInfo, `--clean-first` per [memory/feedback_class_layout_change_needs_clean_first.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\feedback_class_layout_change_needs_clean_first.md) — every TU including tgl.h must recompile because the static array sizes changed). Smoke tier1 with no env vars: passes unchanged.
 
 ### T1.2 — Env-gate plumbing
 
@@ -92,62 +105,137 @@ Every T-numbered task lands as one commit. Commit messages reference task number
 
 **Verification:** With `MC2_SPOTLIGHT_REAL=1`, RenderDoc capture on mc2_04 shows no static-prop packets with the spotlight bit set in the coalesce multidraw. With env unset: behavior unchanged.
 
-### T1.4 — Building-side TG_Light registration at instance spawn
+### T1.4 — Building-side TG_Light registration in `BldgAppearance::update`
 
-**Files:** `mclib/bdactor.cpp` (BldgAppearance::init at line 612), `mclib/bdactor.h` (add a vector field)
+**Adversarial review C-r1 C1 fix:** `BldgAppearance::init` at [bdactor.cpp:612](mclib/bdactor.cpp) sets `position.Zero()` at line 652. World position is (0,0,0) at init time. Registering there places EVERY building spotlight at world origin — substitutive completion criterion #5 (lamps illuminate ground) would fail by construction. Correct hook is `BldgAppearance::update` at [bdactor.cpp:1910](mclib/bdactor.cpp), mirroring the existing per-building terrain pointLight pattern at lines 1933-1973 (which is itself a different concern — TG_LIGHT_TERRAIN building-ambient — and continues to coexist; see C-r1 C3 note below).
+
+**Adversarial review C-r1 C3 disambiguation:** `BldgAppearance::pointLight` ([bdactor.h:259](mclib/bdactor.h), allocated at [bdactor.cpp:1937](mclib/bdactor.cpp)) is the PRE-EXISTING per-building TERRAIN illumination (TG_LIGHT_TERRAIN type, sourced from `appearType->terrainLightRGB`). It is a SEPARATE concern from SpotLight_ child nodes. (E) adds a vector of NEW lights (TG_LIGHT_POINT type, per-SpotLight_-child); existing `pointLight` is untouched. Document this in code comment at the new vector declaration so future readers don't conflate.
+
+**Files:** `mclib/bdactor.cpp` (`BldgAppearance::update` at line 1910), `mclib/bdactor.h` (add fields)
 
 **Changes:**
-- In `BldgAppearance` header: add `std::vector<TG_LightPtr> spotlightLights_;` and `std::vector<long> spotlightSlotIds_;` member fields (paired arrays; one entry per registered SpotLight_ child).
-- In `BldgAppearance::init` (bdactor.cpp:612): walk MultiShape children. For each `child->isSpotlight`:
-  1. `TG_LightPtr light = (TG_LightPtr)systemHeap->Malloc(sizeof(TG_Light));`
-  2. `light->init(TG_LIGHT_POINT);` (per OQ2 v1 decision — POINT not SPOT for simplicity)
-  3. Compute world-space position from building world transform + child local position (use existing `getNodeIdPosition` pattern from `bdactor.cpp:1041`).
-  4. `light->SetPosition(&worldPos);`
-  5. `light->SetaRGB(0xffe8c870);` (hardcoded warm — OQ3 v1 default)
-  6. `light->SetIntensity(0.5f);` (initial; tune in canary)
-  7. `light->SetFalloffDistances(20.0f, 80.0f);` (hardcoded — OQ4 v1 default)
-  8. `light->active = false;` (gated by per-frame update in T1.7)
-  9. `long slotId = eye->addWorldLight(light);`
-  10. If `slotId == -1`: free the malloc, log a one-line warning, continue (pool overflow). With 1024-pool this should never fire on stock content.
-  11. Push light + slotId into the paired vectors.
-- Guard the entire registration block on `isSpotlightRealEnabled()` so env-off behavior is unchanged.
+- In `BldgAppearance` header: add THREE members (paired arrays + init flag):
+  ```cpp
+  // (E) SpotLight_-child illumination. NOT the same as `pointLight`/`lightId`
+  // above (which is per-building terrain ambient, TG_LIGHT_TERRAIN).
+  std::vector<TG_LightPtr>  spotlightLights_;
+  std::vector<DWORD>        spotlightSlotIds_;
+  bool                      spotlightsRegistered_;  // C-r1 M3 per-node lazy-init key
+  ```
+- Initialize `spotlightsRegistered_ = false` in the existing init block at bdactor.cpp:645-674.
+- In `BldgAppearance::update` (line 1910 area), AFTER the existing terrain pointLight block (1933-1973):
+  ```cpp
+  if (isSpotlightRealEnabled() && eye->isNight()) {
+      if (!spotlightsRegistered_) {
+          // Lazy first-night register. World position is valid here
+          // (mirrors existing pointLight pattern); not valid at ::init.
+          for (each child shape with isSpotlight==true) {
+              TG_LightPtr light = (TG_LightPtr)systemHeap->Malloc(sizeof(TG_Light));
+              light->init(TG_LIGHT_POINT);
+              light->SetaRGB(0xffe8c870);          // OQ3 v1 warm hardcoded
+              light->SetIntensity(0.5f);            // OQ4 v1 initial
+              light->SetFalloffDistances(20.0f, 80.0f);  // OQ4 v1
+              DWORD slotId = eye->addWorldLight(light);
+              if ((long)slotId < 0) { free(light); continue; }  // pool overflow
+              spotlightLights_.push_back(light);
+              spotlightSlotIds_.push_back(slotId);
+          }
+          spotlightsRegistered_ = !spotlightLights_.empty();
+      }
+      // Per-frame in-place update (R3: no remove/add per frame)
+      for (i = 0; i < spotlightLights_.size(); ++i) {
+          Stuff::Vector3D childPos = getNodeIdPosition(childNodeIds_[i]);
+          spotlightLights_[i]->SetPosition(&childPos);
+          spotlightLights_[i]->active = visible && !forceLightsOut;
+          // 'visible' matches anubis at mech3d.cpp:3353 (C-r1 C5);
+          // !forceLightsOut matches existing pointLight gate at :1933
+      }
+  }
+  ```
+  (NB: pseudocode; resolve child shape iteration API at write-time — likely `bldgShape->getNumChildShapes()` / `getChildShape(i)` pattern.)
+- Guard the entire registration AND per-frame update block on `isSpotlightRealEnabled()` so env-off behavior is unchanged.
 
-**Verification:** With env on, mission load of mc2_04 produces N `addWorldLight` calls matching the T0.3 baseline. Confirm via `MC2_SPOTLIGHT_REAL_TRACE` counters.
+**Verification:** With env on AND mission_04 (night mission), mission load → first night-update calls `addWorldLight` N times where N matches the T0.3 baseline count. Per-frame in-place updates show no further `addWorldLight` calls after the first night-frame. Day → no allocation.
 
 ### T1.5 — Building destroy hook: removeWorldLight
 
-**Files:** `mclib/bdactor.cpp` (`BldgAppearance::destroy` — locate via grep)
+**Files:** `mclib/bdactor.cpp` (`BldgAppearance::destroy` — same hook as existing `pointLight` removal at line 2754-2762)
 
 **Changes:**
-- Walk `spotlightLights_` / `spotlightSlotIds_`. For each: `eye->removeWorldLight(slotId, light); systemHeap->Free(light);`. Clear both vectors.
+- Add a parallel cleanup block alongside the existing `pointLight` removal at [bdactor.cpp:2754-2762](mclib/bdactor.cpp):
+  ```cpp
+  for (i = 0; i < spotlightLights_.size(); ++i) {
+      if (eye) eye->removeWorldLight(spotlightSlotIds_[i], spotlightLights_[i]);
+      free(spotlightLights_[i]);
+  }
+  spotlightLights_.clear();
+  spotlightSlotIds_.clear();
+  spotlightsRegistered_ = false;
+  ```
+  Use the existing `pointLight` cleanup as the canonical pattern (it correctly uses `removeWorldLight` + `free` and guards on `eye`).
+- ALSO add the SAME cleanup block to the day-transition tear-down at [bdactor.cpp:1967-1972](mclib/bdactor.cpp) (when night ends), so mission day/night cycles don't leak. Match the existing pointLight day-tear-down pattern.
+
+**Note on existing anubis-equivalent leak:** the per-`pointLight` pattern at bdactor.cpp:1967-1972 + 2754-2762 is correctly paired. The advisor-flagged leak in `mech3d.cpp` anubis path is a separate latent bug; this task does NOT inherit it because we're mirroring the bdactor pattern (paired init/teardown), not the mech3d one. T1.8 mech destroy hook (below) explicitly guards against the mech3d latent leak.
 
 **Verification:** Smoke run loads mc2_04 twice in sequence (mission reload). Mission 2's `addWorldLight` call count matches mission 1's (no slot leak from previous). Verify via the trace counter and a one-line stderr at `removeWorldLight`.
 
 ### T1.6 — Mech-side: generalize anubis pattern from single node to all SpotLight_
 
-**Files:** `mclib/mech3d.cpp` (UpdateGeometry region around line 3333-3383)
+**Files:** `mclib/mech3d.cpp` (UpdateGeometry region around line 3333-3383), `mclib/mech3d.h` (add member fields)
+
+**Adversarial review C-r1 M3 fix:** the existing anubis `lightCircleNodeIndex == -1` lazy-init key is a per-NODE state, not per-vector. Generalising naively to `spotlightNodeIds_.empty()` would skip re-registration after the first walk completes (since vector is non-empty thereafter, no further nodes would ever register). Correct lazy-init: a SEPARATE `bool spotlightsRegistered_` flag set true after the walk completes.
+
+**Pre-task design decision (resolved before commit — adversarial review C-r1 m3 lift to here):** TG_LIGHT_POINT for v1 (consistency with T1.4 building registration; no direction extraction). TG_LIGHT_SPOT is filed as v2 follow-up if visual canary on mc2_24 shows mech spotlights need directional cone behavior.
 
 **Changes:**
-- Refactor the existing anubis block to iterate ALL child shapes with `isSpotlight==true`, not just the hardcoded `"SLCircle_anubis"` node lookup.
-- Replace `lightCircleNodeIndex` (single-node cached id) with `std::vector<long> spotlightNodeIds_;` (one entry per spotlight child).
-- Replace `pointLight` single pointer with `std::vector<TG_LightPtr> spotlightLights_;` and `std::vector<long> spotlightSlotIds_;`.
-- At first-night-visibility (preserve the `eye->isNight` lazy-init gate): for each spotlight child node, malloc + init + addWorldLight + initial SetPosition/SetaRGB/SetIntensity/SetFalloffDistances, same as anubis (TG_LIGHT_SPOT to preserve directionality is acceptable here OR TG_LIGHT_POINT for v1 consistency — pick one and document).
-- Guard new code on `isSpotlightRealEnabled()`.
+- In `Mech3D` (or `MechAppearance` — whichever class owns the anubis `pointLight` field; grep at write-time) header: add THREE members alongside the existing `pointLight` / `lightId` / `lightCircleNodeIndex`:
+  ```cpp
+  // (E) generalised SpotLight_ children. NOT the same as `pointLight`
+  // above (anubis hard-coded SLCircle_anubis searchlight). Different
+  // node-name match; coexist until T3.x decides on consolidation.
+  std::vector<long>         spotlightNodeIds_;
+  std::vector<TG_LightPtr>  spotlightLights_;
+  std::vector<DWORD>        spotlightSlotIds_;
+  bool                      spotlightsRegistered_;
+  ```
+- Initialize `spotlightsRegistered_ = false` and clear vectors in the existing init path alongside `lightCircleNodeIndex = -1`.
+- Replace the anubis `if (!pointLight && eye->isNight)` lazy-init block with:
+  ```cpp
+  if (isSpotlightRealEnabled() && !spotlightsRegistered_ && eye->isNight) {
+      // Walk children once; cache node IDs + allocate TG_Lights for each.
+      for (each child shape c with c->isSpotlight==true) {
+          long nodeId = mechShape->GetNodeNameId(c->getNodeName());
+          if (nodeId == -1) continue;
+          TG_LightPtr light = (TG_LightPtr)malloc(sizeof(TG_Light));
+          light->init(TG_LIGHT_POINT);            // v1 — POINT not SPOT
+          light->SetaRGB(0xffffff00);              // anubis-equivalent default
+          light->SetIntensity(0.15f);              // anubis default
+          light->SetFalloffDistances(50.0f, 250.0f); // anubis default
+          DWORD slotId = eye->addWorldLight(light);
+          if ((long)slotId < 0) { free(light); continue; }
+          spotlightNodeIds_.push_back(nodeId);
+          spotlightLights_.push_back(light);
+          spotlightSlotIds_.push_back(slotId);
+      }
+      spotlightsRegistered_ = true;  // M3 fix: register-once flag, not vector.empty()
+  }
+  ```
+- LEAVE the existing anubis `lightCircleNodeIndex == -1` block IN PLACE — the "SLCircle_anubis" node-name is a HARDCODED single-node lookup that may or may not also be tagged `isSpotlight` (verify at write-time; SLCircle prefix vs SpotLight prefix). Don't break the existing anubis behavior. The two paths may double-register if SLCircle_anubis also has isSpotlight=true; check the node-name match at tgl.cpp:278.
 
-**Risk:** the existing anubis `lightCircleNodeIndex = -1` initial-state check is the lazy-init key. Generalising it means tracking lazy-init per node. Use `spotlightNodeIds_.empty()` as the equivalent.
-
-**Decision needed in this task (resolve before commit):** TG_LIGHT_POINT (simpler — no direction extraction) or TG_LIGHT_SPOT (matches anubis precedent — has spotDir / maxSpotLength). Recommend POINT for v1; SPOT for v2 if directionality is missed.
+**Verification:** mc2_24 with `MC2_SPOTLIGHT_REAL=1` shows first-night-visibility lazy allocation; further frames show only per-frame in-place updates (T1.7); registration count matches mech instance × spotlight-children-per-mech.
 
 ### T1.7 — Mech per-frame in-place update
 
 **Files:** `mclib/mech3d.cpp` (UpdateGeometry, after the lazy-init block)
+
+**Adversarial review C-r1 C5 fix:** anubis uses `visible && (sensorLevel > 4) && !InEditor` at [mech3d.cpp:3353](mclib/mech3d.cpp), NOT `inView`. `visible` is the "rendered-last-frame" semantic; `inView` is the "frustum-included-this-frame" semantic. Per [memory/cull_gates_are_load_bearing.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\cull_gates_are_load_bearing.md), inView gates UpdateGeometry execution — if inView==false the update doesn't run, so checking inView inside UpdateGeometry is partially redundant AND introduces a behavioral fork from the existing anubis pattern. Match anubis exactly.
 
 **Changes:**
 - For each registered spotlight light (after init):
   - Look up the spotlight child node's current world position via `getNodeIdPosition`.
   - `light->SetPosition(&pos);`
   - `light->SetLightToWorld(&lightToWorldMatrix);` (per the anubis pattern at mech3d.cpp:3378)
-  - `light->active = (eye->isNight && inView && (sensorLevel > 4) && !InEditor);` — match anubis's gate semantics; add `inView` so culled mechs don't consume best-16 slots (R2).
+  - `light->active = (visible && (sensorLevel > 4) && !InEditor);` — verbatim anubis gate semantics, no `inView` addition.
 - NO `removeWorldLight` / `addWorldLight` per frame (R3).
 
 **Verification:** Tracy capture on mc2_24 shows no per-frame pool churn. `addWorldLight` first-hit prints fire only at first-night-visibility per mech.
