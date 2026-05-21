@@ -133,16 +133,20 @@ Every T-numbered task lands as one commit. Commit messages reference task number
       // World position is valid in update() (not in init()) per C-r1 C1.
       // eye->isNight is a BARE FIELD at camera.h:272 — no parens (C-r3 C2 fix).
       if (!spotlightsRegistered_ && eye->isNight) {
-          // Canonical child iteration per gos_static_prop_batcher.cpp:2447/2478:
-          //   multi->numTG_Shapes  +  multi->listOfShapes[i].node
-          // (msl.h:262 declares numTG_Shapes; msl.h:441 returns listOfShapes[i])
-          for (int i = 0; i < bldgShape->numTG_Shapes; ++i) {
-              auto& rec = bldgShape->listOfShapes[i];
+          // C-r4 C1: numTG_Shapes / listOfShapes are PROTECTED on TG_MultiShape
+          // (msl.h:260-263) and BldgAppearance is not a friend. Use public
+          // accessors GetNumShapes() at msl.h:431 + GetShapeRec(int) at msl.h:438
+          // (returns const TG_ShapeRec*). The static-prop batcher uses direct
+          // field access ONLY because it's in the friend list at msl.h:251-256.
+          for (int i = 0; i < bldgShape->GetNumShapes(); ++i) {
+              const TG_ShapeRec* recp = bldgShape->GetShapeRec(i);
+              if (!recp) continue;
+              const TG_ShapeRec& rec = *recp;
               TG_Shape* child = rec.node;
               // C-r3 M1: mirror canonical batcher guards at
               // gos_static_prop_batcher.cpp:2477 — skip helper nodes / inactive.
               if (!child || !rec.processMe) continue;
-              if (!child->isSpotlight) continue;
+              if (!child->GetIsSpotlight()) continue;  // C-r4 M1: TG_Shape::isSpotlight field is protected; use accessor at tgl.h:951
 
               // C-r3 C1 fix: resolve node-NAME id (NOT listOfShapes index).
               // getNodeIdPosition takes a name-id from GetNodeNameId per the
