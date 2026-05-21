@@ -10,6 +10,7 @@ set(SOURCES
     batcher.cpp
     spec_library.cpp
     light_manager.cpp
+    spawn_card.cpp
 )
 
 include_directories(${COMMON_INCLUDE_DIRS} "../../" "../../mclib" "./")
