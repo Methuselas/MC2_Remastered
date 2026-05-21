@@ -242,7 +242,8 @@ Mission teardown is at [code/mission.cpp:3263](code/mission.cpp): `void Mission:
 - **Files modified:**
   - `mclib/camera.cpp` (T0.1 probe scaffolding + T1.1 priority-lift body + T2.1 reset function)
   - `mclib/camera.h` (T2.1 `resetSpotlightLiftProbe()` declaration)
-  - `code/mission.cpp` (T2.1 reset calls at `Mission::destroy:3263`)
+  - `code/mission.cpp` (T2.1 reset calls at `Mission::init:1687`)
+  - `code/saveload.cpp` (T2.1 reset calls at `Mission::load:645` — round-4 CRITICAL-2 fix)
 - **NOT modified:** `mclib/spotlight_diag.cpp` (round-1 C1 fix — corrected from plan v1)
 - **Total LOC:** ~55 in `camera.cpp` (T0.1+T1.1+T2.1 function) + ~2 in `camera.h` + ~5 in `mission.cpp` = ~62 LOC.
 - **No shader changes. No SSBO layout changes. No new TU. No accessor signature changes. No header layout changes (no `--clean-first` required).**
