@@ -35,6 +35,14 @@ static uint32_t s_lcSkipCount3d = 0u;
 #define LC3D_TRACE(fmt, ...) \
     do { if (s_lcTrace) { printf("[GPU_CULL_LIFECYCLE v1] mech3d " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while(0)
 
+// T1.15 SpotLight_ illumination diagnostic — registration probe (mech class).
+// First-hit always-on; per-summary every 600 updateGeometry calls when env=1.
+static const bool s_spotDiagMechEnabled = (getenv("MC2_SPOT_DIAG") != nullptr);
+static unsigned long s_spotDiagMechRegistered = 0;
+static unsigned long s_spotDiagMechOverflows  = 0;
+static unsigned long s_spotDiagMechActors     = 0;
+static unsigned long s_spotDiagMechCalls      = 0;
+
 #ifndef CAMERA_H
 #include"camera.h"
 #endif
@@ -3402,13 +3410,20 @@ void Mech3DAppearance::updateGeometry (void)
 		{
 			if (!spotlightsRegistered_ && eye->isNight)
 			{
+				// [SPOT_DIAG v1] T1.15 per-actor registration counters.
+				int diagChildrenWalked = 0;
+				int diagSpotlightsFound = 0;
+				int diagRegistered = 0;
+				int diagOverflow = 0;
 				for (int i = 0; i < mechShape->GetNumShapes(); ++i)
 				{
 					const TG_ShapeRec* recp = mechShape->GetShapeRec(i);
 					if (!recp) continue;
 					TG_Shape* c = recp->node;
 					if (!c || !recp->processMe) continue;
+					++diagChildrenWalked;
 					if (!c->GetIsSpotlight()) continue;
+					++diagSpotlightsFound;
 
 					const char* nodeName = c->getNodeName();
 					if (!nodeName) continue;
@@ -3426,8 +3441,34 @@ void Mech3DAppearance::updateGeometry (void)
 					spotlightNodeIds_.push_back(nodeId);
 					spotlightLights_.push_back(light);
 					spotlightSlotIds_.push_back(static_cast<DWORD>(slotId));
+					++diagRegistered;
+				}
+				diagOverflow = diagSpotlightsFound - diagRegistered;
+				if (diagOverflow < 0) diagOverflow = 0;
+				s_spotDiagMechRegistered += (unsigned long)diagRegistered;
+				s_spotDiagMechOverflows  += (unsigned long)diagOverflow;
+				++s_spotDiagMechActors;
+				if (s_spotDiagMechActors <= 8) {
+					std::fprintf(stderr,
+						"[SPOT_DIAG v1] event=first_register class=mech actor_id=%ld "
+						"children_walked=%d spotlights_found=%d registered=%d overflow=%d\n",
+						actorHandle_, diagChildrenWalked, diagSpotlightsFound,
+						diagRegistered, diagOverflow);
+					std::fflush(stderr);
 				}
 				spotlightsRegistered_ = true;  // register-once flag (M3)
+			}
+			// [SPOT_DIAG v1] T1.15 per-summary registration aggregate (mech).
+			if (s_spotDiagMechEnabled) {
+				++s_spotDiagMechCalls;
+				if ((s_spotDiagMechCalls % 600) == 0) {
+					std::fprintf(stderr,
+						"[SPOT_DIAG v1] event=registration_summary class=mech "
+						"calls=%lu actors_first_hit=%lu lights_registered=%lu overflows=%lu\n",
+						s_spotDiagMechCalls, s_spotDiagMechActors,
+						s_spotDiagMechRegistered, s_spotDiagMechOverflows);
+					std::fflush(stderr);
+				}
 			}
 
 			// T1.7: per-frame in-place update. UNCONDITIONAL once registered

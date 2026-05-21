@@ -107,6 +107,17 @@ void mc_ResetTerrainShadowPrimed() { s_terrainShadowPrimed = false; }
 // re-cached. See docs/superpowers/specs/2026-05-06-static-prop-texture-pin-fix.md
 static const bool s_texLifecycleTrace =
     (getenv("MC2_TEX_LIFECYCLE_TRACE") != nullptr);
+
+// T1.15 [SPOT_DIAG v1] pack-probe state (GatherLightsParameters).
+// First-shape always-on (one stderr line on the first call after process start).
+// Per-summary every 600 GatherLightsParameters calls when env=1. `calls=N`
+// because GatherLightsParameters runs once per submitMultiShape (many per frame).
+static const bool s_spotDiagPackEnabled = (getenv("MC2_SPOT_DIAG") != nullptr);
+static bool          s_spotDiagPackFirstHit  = false;
+static unsigned long s_spotDiagPackCalls     = 0;
+static unsigned long s_spotDiagPackActiveSum = 0;
+static unsigned long s_spotDiagPackInactSum  = 0;
+static unsigned long s_spotDiagPackPointSum  = 0;
 #define TEX_LC(fmt, ...) \
     do { if (s_texLifecycleTrace) { printf("[TEX_LIFECYCLE v1] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
 
@@ -1565,10 +1576,29 @@ void GatherLightsParameters(TG_HWLightsData* lights)
 	const TG_LightPtr* listOfLights = TG_Shape::s_listOfLights;
 	const DWORD numLights = TG_Shape::s_numLights;
 
+	// T1.15 [SPOT_DIAG v1] per-call active/inactive/point_active tally.
+	unsigned diagActiveLights = 0;
+	unsigned diagInactiveLights = 0;
+	unsigned diagPointActive = 0;
+
 	for (uint32_t iLight = 0; iLight < numLights; iLight++)
 	{
 		if (num_lights == max_num_lights)
 			break;
+
+		// T1.15 [SPOT_DIAG v1] count active/inactive lights in the source list
+		// before the active-filter culls them. Read `active` ONCE here; the
+		// canonical filter below reads it again, but the field is plain DWORD
+		// and not externally mutated between these two reads in this loop.
+		if (listOfLights[iLight] != NULL) {
+			const DWORD t = listOfLights[iLight]->lightType;
+			if (listOfLights[iLight]->active) {
+				++diagActiveLights;
+				if (t == TG_LIGHT_POINT) ++diagPointActive;
+			} else {
+				++diagInactiveLights;
+			}
+		}
 
 		if ((listOfLights[iLight] != NULL) && (listOfLights[iLight]->active))
 		{
@@ -1658,6 +1688,35 @@ void GatherLightsParameters(TG_HWLightsData* lights)
 	}
 
 	lights->numLights_ = num_lights;
+
+	// T1.15 [SPOT_DIAG v1] pack-probe emit. First-call always-on; summary
+	// every 600 calls when env=1.
+	++s_spotDiagPackCalls;
+	s_spotDiagPackActiveSum += diagActiveLights;
+	s_spotDiagPackInactSum  += diagInactiveLights;
+	s_spotDiagPackPointSum  += diagPointActive;
+	if (!s_spotDiagPackFirstHit) {
+		s_spotDiagPackFirstHit = true;
+		std::fprintf(stderr,
+			"[SPOT_DIAG v1] event=pack_first_shape shape=%p active_lights=%u "
+			"inactive_lights=%u point_lights_active=%u\n",
+			(void*)lights, diagActiveLights, diagInactiveLights, diagPointActive);
+		std::fflush(stderr);
+	}
+	if (s_spotDiagPackEnabled && (s_spotDiagPackCalls % 600) == 0) {
+		double avgA = (double)s_spotDiagPackActiveSum / 600.0;
+		double avgI = (double)s_spotDiagPackInactSum  / 600.0;
+		double avgP = (double)s_spotDiagPackPointSum  / 600.0;
+		std::fprintf(stderr,
+			"[SPOT_DIAG v1] event=pack_summary calls=%lu "
+			"avg_active_per_shape=%.3f avg_inactive_per_shape=%.3f "
+			"avg_point_active_per_shape=%.3f\n",
+			s_spotDiagPackCalls, avgA, avgI, avgP);
+		std::fflush(stderr);
+		s_spotDiagPackActiveSum = 0;
+		s_spotDiagPackInactSum  = 0;
+		s_spotDiagPackPointSum  = 0;
+	}
 }
 
 

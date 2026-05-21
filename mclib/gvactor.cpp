@@ -107,6 +107,14 @@ static bool gvEnvFlagDefaultOn(const char* name) {
 }
 static const bool g_useGpuGVShadowSkip = gvEnvFlagDefaultOn("MC2_GPU_GV_SHADOW_SKIP");
 
+// T1.15 SpotLight_ illumination diagnostic — registration probe (gv class).
+// First-hit always-on; per-summary every 600 updateGeometry calls when env=1.
+static const bool s_spotDiagGvEnabled = (getenv("MC2_SPOT_DIAG") != nullptr);
+static unsigned long s_spotDiagGvRegistered = 0;
+static unsigned long s_spotDiagGvOverflows  = 0;
+static unsigned long s_spotDiagGvActors     = 0;
+static unsigned long s_spotDiagGvCalls      = 0;
+
 //******************************************************************************************
 extern float	worldUnitsPerMeter;
 extern bool 	drawTerrainGrid;
@@ -2545,13 +2553,20 @@ void GVAppearance::updateGeometry (void)
 		{
 			if (!spotlightsRegistered_ && eye->isNight)
 			{
+				// [SPOT_DIAG v1] T1.15 per-actor registration counters.
+				int diagChildrenWalked = 0;
+				int diagSpotlightsFound = 0;
+				int diagRegistered = 0;
+				int diagOverflow = 0;
 				for (int i = 0; i < gvShape->GetNumShapes(); ++i)
 				{
 					const TG_ShapeRec* recp = gvShape->GetShapeRec(i);
 					if (!recp) continue;
 					TG_Shape* c = recp->node;
 					if (!c || !recp->processMe) continue;
+					++diagChildrenWalked;
 					if (!c->GetIsSpotlight()) continue;
+					++diagSpotlightsFound;
 
 					const char* nodeName = c->getNodeName();
 					if (!nodeName) continue;
@@ -2569,6 +2584,7 @@ void GVAppearance::updateGeometry (void)
 					spotlightNodeIds_.push_back(nodeId);
 					spotlightLights_.push_back(light);
 					spotlightSlotIds_.push_back(static_cast<DWORD>(slotId));
+					++diagRegistered;
 
 					// First-hit trace (gv-side) — one stderr line per
 					// successful GV spotlight registration, matching the
@@ -2579,7 +2595,32 @@ void GVAppearance::updateGeometry (void)
 						" actorHandle=%ld node=%s slot=%ld\n",
 						actorHandle_, nodeName, slotId);
 				}
+				diagOverflow = diagSpotlightsFound - diagRegistered;
+				if (diagOverflow < 0) diagOverflow = 0;
+				s_spotDiagGvRegistered += (unsigned long)diagRegistered;
+				s_spotDiagGvOverflows  += (unsigned long)diagOverflow;
+				++s_spotDiagGvActors;
+				if (s_spotDiagGvActors <= 8) {
+					std::fprintf(stderr,
+						"[SPOT_DIAG v1] event=first_register class=gv actor_id=%ld "
+						"children_walked=%d spotlights_found=%d registered=%d overflow=%d\n",
+						actorHandle_, diagChildrenWalked, diagSpotlightsFound,
+						diagRegistered, diagOverflow);
+					std::fflush(stderr);
+				}
 				spotlightsRegistered_ = true;  // register-once flag
+			}
+			// [SPOT_DIAG v1] T1.15 per-summary registration aggregate (gv).
+			if (s_spotDiagGvEnabled) {
+				++s_spotDiagGvCalls;
+				if ((s_spotDiagGvCalls % 600) == 0) {
+					std::fprintf(stderr,
+						"[SPOT_DIAG v1] event=registration_summary class=gv "
+						"calls=%lu actors_first_hit=%lu lights_registered=%lu overflows=%lu\n",
+						s_spotDiagGvCalls, s_spotDiagGvActors,
+						s_spotDiagGvRegistered, s_spotDiagGvOverflows);
+					std::fflush(stderr);
+				}
 			}
 
 			// Per-frame in-place update. UNCONDITIONAL once registered

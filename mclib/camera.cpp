@@ -52,6 +52,7 @@
 #include <math.h>
 #include <cstdlib>  // std::getenv for [VPL_PICK v1] env-gated trace (Step 3 3a)
 #include <cstdio>   // std::printf for [VPL_PICK v1] lifecycle print
+#include <vector>   // T1.15 [SPOT_DIAG v1] camera-overwrite probe state
 
 extern void AG_ellipse_draw(PANE *pane, LONG xc, LONG yc, LONG width, LONG height, LONG color);
 extern void AG_ellipse_fill(PANE *pane, LONG xc, LONG yc, LONG width, LONG height, LONG color);
@@ -1868,11 +1869,23 @@ void Camera::render (void)
 }
 
 //---------------------------------------------------------------------------
+// T1.15 [SPOT_DIAG v1] file-scope state for the camera-overwrite probe.
+// First-seen-per-slot is always-on (one stderr line per unique slot index seen
+// here); per-summary is env-gated every 600 frames.
+static const bool s_spotDiagCamEnabled = (getenv("MC2_SPOT_DIAG") != nullptr);
+static std::vector<bool> s_spotDiagCamSeenSlot;  // sized to MAX_LIGHTS_IN_WORLD lazily
+static unsigned long s_spotDiagCamFrames        = 0;
+static unsigned long s_spotDiagCamPointSeen     = 0;  // window: distinct POINT slots seen
+static unsigned long s_spotDiagCamActiveTrue    = 0;  // window: active_after=true counts
+static unsigned long s_spotDiagCamActiveFalse   = 0;  // window: active_after=false counts
+
 void Camera::updateLights()
 {
 	//---------------------------------------------------------------------------------
 	// Check which lights are on screen and deactivate those which are NOT on screen!
 	numActiveLights = numTerrainLights = 0;
+	++s_spotDiagCamFrames;  // T1.15 frame tick (updateLights is once-per-frame)
+	if (s_spotDiagCamSeenSlot.empty()) s_spotDiagCamSeenSlot.assign(MAX_LIGHTS_IN_WORLD, false);
 	for (long i=0;i<MAX_LIGHTS_IN_WORLD;i++)
 	{
 		if (worldLights[i])
@@ -1915,10 +1928,42 @@ void Camera::updateLights()
 				// [PROJECTZ:LightingShadow id=light_spot_point_active_test]
 				PROJECTZ_SITE("light_spot_point_active_test", "LightingShadow");
 				light->active = projectForLightingShadow(light->position,dummy);
+				// T1.15 [SPOT_DIAG v1] camera-overwrite probe.
+				// First-hit per slot index — always-on, one stderr line per
+				// distinct slot ever seen here. Window counters tally
+				// active_after true/false for periodic summary.
+				if ((size_t)i < s_spotDiagCamSeenSlot.size() && !s_spotDiagCamSeenSlot[i]) {
+					s_spotDiagCamSeenSlot[i] = true;
+					const char* tname = (light->lightType == TG_LIGHT_POINT) ? "POINT" : "SPOT";
+					std::fprintf(stderr,
+						"[SPOT_DIAG v1] event=overwrite_first_seen slot=%ld type=%s "
+						"pos=(%.2f,%.2f,%.2f) active_after=%d\n",
+						i, tname,
+						(float)light->position.x, (float)light->position.y, (float)light->position.z,
+						light->active ? 1 : 0);
+					std::fflush(stderr);
+					++s_spotDiagCamPointSeen;
+				}
+				if (light->active) ++s_spotDiagCamActiveTrue;
+				else               ++s_spotDiagCamActiveFalse;
 				activeLights[numActiveLights++] = light;
 				terrainLights[numTerrainLights++] = light;
 			}
 		}
+	}
+	// T1.15 [SPOT_DIAG v1] per-summary overwrite aggregate (env-gated).
+	if (s_spotDiagCamEnabled && (s_spotDiagCamFrames % 600) == 0) {
+		unsigned long total = s_spotDiagCamActiveTrue + s_spotDiagCamActiveFalse;
+		double truePct  = (total > 0) ? (100.0 * (double)s_spotDiagCamActiveTrue  / (double)total) : 0.0;
+		double falsePct = (total > 0) ? (100.0 * (double)s_spotDiagCamActiveFalse / (double)total) : 0.0;
+		std::fprintf(stderr,
+			"[SPOT_DIAG v1] event=overwrite_summary frames=%lu point_slots_seen=%lu "
+			"active_true_pct=%.2f active_false_pct=%.2f samples=%lu\n",
+			s_spotDiagCamFrames, s_spotDiagCamPointSeen, truePct, falsePct, total);
+		std::fflush(stderr);
+		// Reset window counters (per-summary cadence per task spec)
+		s_spotDiagCamActiveTrue  = 0;
+		s_spotDiagCamActiveFalse = 0;
 	}
 }
 

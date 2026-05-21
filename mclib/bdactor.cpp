@@ -22,6 +22,16 @@
 // file-scope pattern in code/terrobj.cpp:176.
 static bool s_tobjSplitBdOn = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
 
+// T1.15 SpotLight_ illumination diagnostic — registration probe (bldg class).
+// Env-gated per Debug Instrumentation Rule. First-hit is always-on (one stderr
+// line per BldgAppearance instance that walks the lazy-init block). Periodic
+// summary emits every 600 update() calls when env=1. Demote-not-delete.
+static const bool s_spotDiagBldgEnabled = (getenv("MC2_SPOT_DIAG") != nullptr);
+static unsigned long s_spotDiagBldgRegistered = 0;   // total lights added
+static unsigned long s_spotDiagBldgOverflows  = 0;   // pool-overflow count
+static unsigned long s_spotDiagBldgActors     = 0;   // actor first-hits
+static unsigned long s_spotDiagBldgCalls      = 0;   // update() call counter
+
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_batcher.h"
 #include "gos_static_prop_registry.h"  // Stage 3.C: static-registry fast path
@@ -1991,6 +2001,11 @@ long BldgAppearance::update (bool animate)
 			// Public accessors (msl.h:431 GetNumShapes, msl.h:438 GetShapeRec)
 			// because BldgAppearance is NOT in the TG_MultiShape friend list at
 			// msl.h:251-256 (C-r4 C1 fix).
+			// [SPOT_DIAG v1] T1.15 per-actor registration counters.
+			int diagChildrenWalked = 0;
+			int diagSpotlightsFound = 0;
+			int diagRegistered = 0;
+			int diagOverflow = 0;
 			for (int i = 0; i < bldgShape->GetNumShapes(); ++i)
 			{
 				const TG_ShapeRec* recp = bldgShape->GetShapeRec(i);
@@ -1999,7 +2014,9 @@ long BldgAppearance::update (bool animate)
 				// Mirror canonical batcher guards at
 				// gos_static_prop_batcher.cpp:2477 (C-r3 M1).
 				if (!child || !recp->processMe) continue;
+				++diagChildrenWalked;
 				if (!child->GetIsSpotlight()) continue;  // tgl.h:951
+				++diagSpotlightsFound;
 
 				// Resolve node-NAME id (NOT listOfShapes index) per the anubis
 				// pattern at mech3d.cpp:3336-3338 (C-r3 C1).
@@ -2020,8 +2037,45 @@ long BldgAppearance::update (bool animate)
 				spotlightLights_.push_back(light);
 				spotlightSlotIds_.push_back(static_cast<DWORD>(slotId));
 				spotlightNodeIds_.push_back(static_cast<int>(nodeId));
+				++diagRegistered;
+			}
+			// Pool overflow detection: any spotlight found but not registered
+			// where node-id resolution succeeded is treated as overflow signal.
+			// Simpler: overflow = spotlights_found - registered (under-counts
+			// nodeName misses; honest enough for the H1 disambiguation).
+			diagOverflow = diagSpotlightsFound - diagRegistered;
+			if (diagOverflow < 0) diagOverflow = 0;
+			s_spotDiagBldgRegistered += (unsigned long)diagRegistered;
+			s_spotDiagBldgOverflows  += (unsigned long)diagOverflow;
+			++s_spotDiagBldgActors;
+			// First-hit per actor — always-on (one stderr line per actor that
+			// walks lazy-init, regardless of env). Cap noise by emitting only
+			// for the first 8 actors to avoid log flood; cap is generous enough
+			// to confirm registration is firing across distinct buildings.
+			if (s_spotDiagBldgActors <= 8) {
+				std::fprintf(stderr,
+					"[SPOT_DIAG v1] event=first_register class=bldg actor_id=%p "
+					"children_walked=%d spotlights_found=%d registered=%d overflow=%d\n",
+					(void*)this, diagChildrenWalked, diagSpotlightsFound,
+					diagRegistered, diagOverflow);
+				std::fflush(stderr);
 			}
 			spotlightsRegistered_ = true;
+		}
+		// [SPOT_DIAG v1] T1.15 per-summary registration aggregate (bldg).
+		// Increments every BldgAppearance::update() call; emit every 600 calls
+		// when env=1. `calls=N` rather than `frames=N` because update() runs per
+		// actor per frame (many actors -> many calls per frame).
+		if (s_spotDiagBldgEnabled) {
+			++s_spotDiagBldgCalls;
+			if ((s_spotDiagBldgCalls % 600) == 0) {
+				std::fprintf(stderr,
+					"[SPOT_DIAG v1] event=registration_summary class=bldg "
+					"calls=%lu actors_first_hit=%lu lights_registered=%lu overflows=%lu\n",
+					s_spotDiagBldgCalls, s_spotDiagBldgActors,
+					s_spotDiagBldgRegistered, s_spotDiagBldgOverflows);
+				std::fflush(stderr);
+			}
 		}
 
 		// Per-frame in-place update. Runs UNCONDITIONALLY once registered
