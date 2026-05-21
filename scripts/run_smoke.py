@@ -354,7 +354,22 @@ def main():
                             # Tier 1.2 — KHR_debug fatal-on-HIGH opt-in
                             # (docs/testing-strategy.md). Forwarded so
                             # --gl-debug-fatal reaches the engine subprocess.
-                            "MC2_GL_DEBUG_FATAL")},
+                            "MC2_GL_DEBUG_FATAL",
+                            # Integrated gosFX-retirement / GPU-particles plan
+                            # (2026-05-20-integrated-gosfx-retirement-*):
+                            # MC2_FX_TRACE = neutral fx invocation counter
+                            # (mclib/fx_trace; default-OFF). Without this in
+                            # the allowlist subprocess.Popen drops it and the
+                            # Stage 0' content-recon trace never fires.
+                            # MC2_DISABLE_GOSFX = A1 MLR work-leaf gate
+                            # (default-ON since A2). Forwarded so Stage 0'
+                            # captures can opt back to legacy-gosFX-ON for
+                            # the histogram-baseline run only.
+                            "MC2_FX_TRACE",
+                            "MC2_DISABLE_GOSFX",
+                            # B1 Stage 1'+: GPU particle batcher opt-in gate.
+                            # (default-OFF; flipped ON for Stage 1' canaries.)
+                            "MC2_GPU_PARTICLES")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
