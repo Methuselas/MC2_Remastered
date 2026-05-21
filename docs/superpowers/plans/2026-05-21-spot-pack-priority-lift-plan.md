@@ -32,6 +32,8 @@
 
 Same atomic-commit-per-task pattern as (E) plan. Three stages: **instrument → ship default-on → cleanup**. No env gate — the priority lift is correct behavior and ships unconditionally (round-1 m1 fix).
 
+**Stage independence (round-3 MINOR-1 note):** T1.1 ships the priority-lift functionality and is independently shippable for correctness. T2.1's reset wiring is a probe-accuracy improvement for multi-mission sessions — required for clean diagnostics across mission transitions, but NOT required for the priority-lift itself to work correctly. If T1.1 ships without T2.1, the lift still functions in production; only the multi-mission `[SPOT_PRIORITY_LIFT v1] event=first_hit` diagnostic degrades to "fires once per exe run, not once per mission."
+
 ---
 
 ## Stage 0 — Instrument (no behavior change)
@@ -218,12 +220,12 @@ Mission teardown is at [code/mission.cpp:3263](code/mission.cpp): `void Mission:
 
 ### T2.2 — Final substitutive verification
 
-**Files:** none
+**Files:** none (validation gate; round-3 MINOR-2 fix: explicitly USER-DRIVEN per worktree CLAUDE.md "Smoke sessions are USER-DRIVEN")
 
-**Action:**
-1. Tier1 smoke (no env vars): mc2_05 + mc2_10 + mc2_24 all PASS.
-2. RenderDoc frame capture on mc2_10 intro: mech `lightDataIndex` slot's `TG_HWLightsData` contains the SpotLight_ POINT entry within first 16 entries.
-3. With `MC2_LIGHTBRIDGE_TRACE=1` (if such env exists per existing infrastructure) or equivalent: confirm template-cache hit rate unchanged from pre-(E') baseline.
+**Action (USER-DRIVEN):**
+1. Single-mission smoke (no env vars), one-at-a-time per user discipline: mc2_05, mc2_10, mc2_24 all PASS.
+2. **(Optional, USER-DRIVEN)** RenderDoc frame capture on mc2_10 intro: mech `lightDataIndex` slot's `TG_HWLightsData` contains the SpotLight_ POINT entry within first 16 entries. User decides whether to run RenderDoc; not blocking for merge.
+3. **(Optional, USER-DRIVEN)** With `MC2_OBJECT_RECON_TRACY=1` (existing infrastructure, gates `[LIGHTBRIDGE v1]` counters per txmmgr.cpp:1076-1085): confirm template-cache hit rate unchanged from pre-(E') baseline.
 
 **Commit:** none (validation gate)
 
