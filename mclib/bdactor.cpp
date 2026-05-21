@@ -29,6 +29,7 @@ static bool s_tobjSplitBdOn = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
 #include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
 #include "cpu_proj_cost_split.h"      // F3 CPU projection cost-baseline (RAII scope)
+#include "spotlight_real.h"           // (E) T1.4: MC2_SPOTLIGHT_REAL gate
 #include "gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for per-update breakdown
 
 #ifndef CAMERA_H
@@ -647,6 +648,12 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	pointLight = NULL;
 	lightId = 0xffffffff;
 	forceLightsOut = false;
+
+	// (E) T1.4: lazy-init key for SpotLight_ children. Vectors default-init
+	// to empty; the first-night-visibility check in update() switches this
+	// to true after the one-shot bldgShape walk. World position is invalid
+	// (zero) at init() time per C-r1 C1, so registration is deferred.
+	spotlightsRegistered_ = false;
 	
 	screenPos.x = screenPos.y = screenPos.z = screenPos.w = -999.0f;
 	position.Zero();
@@ -1969,6 +1976,66 @@ long BldgAppearance::update (bool animate)
 			eye->removeWorldLight(lightId,pointLight);
 			free(pointLight);
 			pointLight = NULL;
+		}
+	}
+
+	// (E) T1.4: SpotLight_-child illumination. Distinct from the per-building
+	// terrain pointLight above (R7). World position is valid here in update()
+	// (not in init() per C-r1 C1). Lazy first-night register; subsequent frames
+	// do per-frame SetPosition + active toggle ONLY (R3: no per-frame add/remove).
+	if (mc2_spotlight_real::isEnabled() && bldgShape)
+	{
+		if (!spotlightsRegistered_ && eye && eye->isNight)
+		{
+			// Public accessors (msl.h:431 GetNumShapes, msl.h:438 GetShapeRec)
+			// because BldgAppearance is NOT in the TG_MultiShape friend list at
+			// msl.h:251-256 (C-r4 C1 fix).
+			for (int i = 0; i < bldgShape->GetNumShapes(); ++i)
+			{
+				const TG_ShapeRec* recp = bldgShape->GetShapeRec(i);
+				if (!recp) continue;
+				TG_Shape* child = recp->node;
+				// Mirror canonical batcher guards at
+				// gos_static_prop_batcher.cpp:2477 (C-r3 M1).
+				if (!child || !recp->processMe) continue;
+				if (!child->GetIsSpotlight()) continue;  // tgl.h:951
+
+				// Resolve node-NAME id (NOT listOfShapes index) per the anubis
+				// pattern at mech3d.cpp:3336-3338 (C-r3 C1).
+				const char* nodeName = child->getNodeName();  // tgl.h:964
+				if (!nodeName) continue;
+				long nodeId = bldgShape->GetNodeNameId(nodeName);
+				if (nodeId == -1) continue;
+
+				TG_LightPtr light = (TG_LightPtr)malloc(sizeof(TG_Light));
+				light->init(TG_LIGHT_POINT);            // v1 — POINT (OQ2)
+				light->SetaRGB(0xffe8c870);             // OQ3 warm hardcoded
+				light->SetIntensity(0.5f);              // OQ4 initial
+				light->SetFalloffDistances(20.0f, 80.0f); // OQ4
+
+				long slotId = eye->addWorldLight(light);  // camera.h:805
+				if (slotId < 0) { free(light); continue; }  // pool overflow
+
+				spotlightLights_.push_back(light);
+				spotlightSlotIds_.push_back(static_cast<DWORD>(slotId));
+				spotlightNodeIds_.push_back(static_cast<int>(nodeId));
+			}
+			spotlightsRegistered_ = true;
+		}
+
+		// Per-frame in-place update. Runs UNCONDITIONALLY once registered
+		// (NOT inside the isNight gate above) — C-r2 C2: day->night->day
+		// transitions toggle active via the gate below; lights stay allocated.
+		for (size_t k = 0; k < spotlightLights_.size(); ++k)
+		{
+			Stuff::Vector3D childPos =
+				getNodeIdPosition(spotlightNodeIds_[k]);
+			spotlightLights_[k]->SetPosition(&childPos);
+			// eye->isNight is a bare field at camera.h:272 (C-r3 C2). visible
+			// matches anubis at mech3d.cpp:3353 (C-r1 C5). forceLightsOut
+			// matches the existing per-building pointLight gate at :1933.
+			spotlightLights_[k]->active =
+				(eye && eye->isNight && visible && !forceLightsOut);
 		}
 	}
 

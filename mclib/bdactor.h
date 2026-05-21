@@ -33,6 +33,7 @@
 #endif
 
 #include<gosfx/gosfxheaders.hpp>
+#include <vector>  // T1.4: BldgAppearance::spotlightLights_/spotlightSlotIds_/spotlightNodeIds_
 //**************************************************************************************
 #ifndef NO_ERR
 #define NO_ERR						0
@@ -260,6 +261,16 @@ class BldgAppearance : public ObjectAppearance
 		DWORD										lightId;
 		bool										forceLightsOut;
 		bool										beenInView;
+
+		// (E) T1.4: SpotLight_-child illumination. PER-CHILD-SPOTLIGHT-NODE
+		// (TG_LIGHT_POINT). NOT the same as `pointLight`/`lightId` above —
+		// that pair is per-building TERRAIN ambient (TG_LIGHT_TERRAIN,
+		// sourced from appearType->terrainLightRGB at bdactor.cpp:1933-1972).
+		// Distinct concerns; both coexist. See plan R7.
+		std::vector<TG_LightPtr>					spotlightLights_;
+		std::vector<DWORD>							spotlightSlotIds_;
+		std::vector<int>							spotlightNodeIds_;  // bldgShape NodeNameId
+		bool										spotlightsRegistered_;
 		
 		bool										fogLightSet;
 		DWORD										lightRGB;
