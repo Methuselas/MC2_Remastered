@@ -14,10 +14,10 @@ namespace mc2 {
 namespace mlr_gate {
 
 namespace {
-// A1 default: OFF (disabled = false). A2 flips this to true.
-// The default is intentionally inverted in the env-read fallback path
-// so a single-line edit at A2 is the entire default-flip commit.
-constexpr bool kDefaultDisabled = false;
+// A2 default: ON (disabled = true). Particles disappear in stock play.
+// Plan v6 §3 — transitional regression state acknowledged in (A) §3 / §5 Q1.
+// MC2_DISABLE_GOSFX=0 restores legacy gosFX path.
+constexpr bool kDefaultDisabled = true;
 
 bool g_initialized = false;
 bool g_disabled = false;
