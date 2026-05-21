@@ -131,13 +131,28 @@ Every T-numbered task lands as one commit. Commit messages reference task number
   if (isSpotlightRealEnabled()) {
       // Lazy first-night register (mirrors anubis lazy pattern).
       // World position is valid in update() (not in init()) per C-r1 C1.
-      if (!spotlightsRegistered_ && eye->isNight()) {
+      // eye->isNight is a BARE FIELD at camera.h:272 — no parens (C-r3 C2 fix).
+      if (!spotlightsRegistered_ && eye->isNight) {
           // Canonical child iteration per gos_static_prop_batcher.cpp:2447/2478:
           //   multi->numTG_Shapes  +  multi->listOfShapes[i].node
           // (msl.h:262 declares numTG_Shapes; msl.h:441 returns listOfShapes[i])
           for (int i = 0; i < bldgShape->numTG_Shapes; ++i) {
-              TG_Shape* child = bldgShape->listOfShapes[i].node;
-              if (!child || !child->isSpotlight) continue;
+              auto& rec = bldgShape->listOfShapes[i];
+              TG_Shape* child = rec.node;
+              // C-r3 M1: mirror canonical batcher guards at
+              // gos_static_prop_batcher.cpp:2477 — skip helper nodes / inactive.
+              if (!child || !rec.processMe) continue;
+              if (!child->isSpotlight) continue;
+
+              // C-r3 C1 fix: resolve node-NAME id (NOT listOfShapes index).
+              // getNodeIdPosition takes a name-id from GetNodeNameId per the
+              // anubis pattern at mech3d.cpp:3336-3338 and bdactor.cpp:574/1610.
+              // Chain: TG_Shape::getNodeName() at tgl.h:964 → bldgShape->GetNodeNameId(name).
+              const char* nodeName = child->getNodeName();
+              if (!nodeName) continue;
+              long nodeId = bldgShape->GetNodeNameId(nodeName);
+              if (nodeId == -1) continue;
+
               TG_LightPtr light = (TG_LightPtr)malloc(sizeof(TG_Light));   // m3 fix: plain malloc, mirror :1937
               light->init(TG_LIGHT_POINT);                                  // OQ2 v1 — POINT not SPOT
               light->SetaRGB(0xffe8c870);                                    // OQ3 v1 warm hardcoded
@@ -147,7 +162,7 @@ Every T-numbered task lands as one commit. Commit messages reference task number
               if ((long)slotId < 0) { free(light); continue; }               // pool overflow
               spotlightLights_.push_back(light);
               spotlightSlotIds_.push_back(slotId);
-              spotlightNodeIds_.push_back(i);                                // C-r2 C1: store listOfShapes index
+              spotlightNodeIds_.push_back(nodeId);                           // C-r3 C1: store NAME-id, not index
           }
           spotlightsRegistered_ = true;
       }
@@ -157,15 +172,14 @@ Every T-numbered task lands as one commit. Commit messages reference task number
       // toggle active via the gate below; lights stay allocated.
       // R3: no remove/add per frame, just SetPosition + active toggle.
       for (size_t k = 0; k < spotlightLights_.size(); ++k) {
-          // getNodeIdPosition takes the node id (resolve write-time:
-          // either the listOfShapes index directly, or bldgShape->GetNodeNameId(child->getNodeName()).
-          // Mirror anubis pattern at mech3d.cpp:3338).
+          // getNodeIdPosition takes a name-id (resolved at registration above
+          // per anubis pattern at mech3d.cpp:3338).
           Stuff::Vector3D childPos = getNodeIdPosition(spotlightNodeIds_[k]);
           spotlightLights_[k]->SetPosition(&childPos);
-          spotlightLights_[k]->active = (eye->isNight() && visible && !forceLightsOut);
+          // C-r3 C2: eye->isNight (bare field, no parens) per camera.h:272 + canonical mech3d.cpp:3333.
+          spotlightLights_[k]->active = (eye->isNight && visible && !forceLightsOut);
           // 'visible' matches anubis at mech3d.cpp:3353 (C-r1 C5)
           // !forceLightsOut matches existing pointLight gate at :1933
-          // isNight inside the toggle (NOT around the whole block) per C-r2 C2.
       }
   }
   ```
@@ -216,13 +230,21 @@ Every T-numbered task lands as one commit. Commit messages reference task number
 - Initialize `spotlightsRegistered_ = false` and clear vectors in the existing init path alongside `lightCircleNodeIndex = -1`.
 - Replace the anubis `if (!pointLight && eye->isNight)` lazy-init block with:
   ```cpp
-  if (isSpotlightRealEnabled() && !spotlightsRegistered_ && eye->isNight) {
-      // Walk children once; cache node IDs + allocate TG_Lights for each.
-      for (each child shape c with c->isSpotlight==true) {
-          long nodeId = mechShape->GetNodeNameId(c->getNodeName());
+  if (isSpotlightRealEnabled() && !spotlightsRegistered_ && eye->isNight) {  // C-r3 C2: no parens
+      // Walk mechShape children using the same canonical pattern as T1.4
+      // (msl.h:441 listOfShapes[i].node + tgl.h:964 getNodeName).
+      for (int i = 0; i < mechShape->numTG_Shapes; ++i) {
+          auto& rec = mechShape->listOfShapes[i];
+          TG_Shape* c = rec.node;
+          if (!c || !rec.processMe || !c->isSpotlight) continue;
+
+          const char* nodeName = c->getNodeName();
+          if (!nodeName) continue;
+          long nodeId = mechShape->GetNodeNameId(nodeName);
           if (nodeId == -1) continue;
+
           TG_LightPtr light = (TG_LightPtr)malloc(sizeof(TG_Light));
-          light->init(TG_LIGHT_POINT);            // v1 — POINT not SPOT
+          light->init(TG_LIGHT_POINT);            // v1 — POINT not SPOT (M6 sign-off)
           light->SetaRGB(0xffffff00);              // anubis-equivalent default
           light->SetIntensity(0.15f);              // anubis default
           light->SetFalloffDistances(50.0f, 250.0f); // anubis default
@@ -245,12 +267,14 @@ Every T-numbered task lands as one commit. Commit messages reference task number
 
 **Adversarial review C-r1 C5 fix:** anubis uses `visible && (sensorLevel > 4) && !InEditor` at [mech3d.cpp:3353](mclib/mech3d.cpp), NOT `inView`. `visible` is the "rendered-last-frame" semantic; `inView` is the "frustum-included-this-frame" semantic. Per [memory/cull_gates_are_load_bearing.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\cull_gates_are_load_bearing.md), inView gates UpdateGeometry execution — if inView==false the update doesn't run, so checking inView inside UpdateGeometry is partially redundant AND introduces a behavioral fork from the existing anubis pattern. Match anubis exactly.
 
+**Member-scoping verified (C-r3 round-3 grep):** `visible` is on base `ObjectAppearance` ([appear.h:66](mclib/appear.h)); `sensorLevel` is on `Mech3DAppearance` ([mech3d.h:271](mclib/mech3d.h)); `InEditor` is the existing-scope identifier the anubis block already uses. All resolve correctly inside `Mech3DAppearance::UpdateGeometry`.
+
 **Changes:**
 - For each registered spotlight light (after init):
-  - Look up the spotlight child node's current world position via `getNodeIdPosition`.
+  - Look up the spotlight child node's current world position via `getNodeIdPosition(spotlightNodeIds_[k])`.
   - `light->SetPosition(&pos);`
   - `light->SetLightToWorld(&lightToWorldMatrix);` (per the anubis pattern at mech3d.cpp:3378)
-  - `light->active = (visible && (sensorLevel > 4) && !InEditor);` — verbatim anubis gate semantics, no `inView` addition.
+  - `light->active = (eye->isNight && visible && (sensorLevel > 4) && !InEditor);` — verbatim anubis gate semantics + isNight (C-r3 C2: bare field, no parens), no `inView` addition.
 - NO `removeWorldLight` / `addWorldLight` per frame (R3).
 
 **Verification:** Tracy capture on mc2_24 shows no per-frame pool churn. `addWorldLight` first-hit prints fire only at first-night-visibility per mech.
