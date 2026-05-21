@@ -19,25 +19,12 @@ namespace fx_trace {
 namespace {
 
 // Latch the env value once at first query (per debug_instrumentation_rule.md
-// idiom; same as other tier-1 instrumentation env vars).
-bool g_enabled_initialized = false;
-bool g_enabled_value = false;
-std::mutex g_init_mutex;
-
-void initialize_enabled_flag() {
-    std::lock_guard<std::mutex> lock(g_init_mutex);
-    if (g_enabled_initialized) return;
-    const char* v = std::getenv("MC2_FX_TRACE");
-    g_enabled_value = (v && v[0] == '1');
-    g_enabled_initialized = true;
-    if (g_enabled_value) {
-        std::fprintf(stderr, "[INSTR v1] enabled: fx_trace\n");
-        std::fprintf(stderr, "[FX_TRACE v1] counters: spawn/draw/mlr_enqueue\n");
-    }
-}
-
-// Three independent counter tables keyed by name. We dedupe on string
-// content, not pointer (callers may pass spec-name buffers that get freed).
+// idiom). Three independent counter tables. We deliberately allocate the
+// tables on the heap and NEVER destroy them — this avoids the well-known
+// static-dtor ordering trap where one TU's static dtor calls into another
+// TU whose statics have already been destroyed (and would crash the
+// process during atexit, suppressing the [SMOKE v1] summary). Leaking the
+// tables at process exit is the correct trade.
 using CounterMap = std::map<std::string, unsigned long long>;
 struct CounterTables {
     CounterMap spawn;
@@ -46,10 +33,11 @@ struct CounterTables {
     std::mutex m;
 };
 
-CounterTables& tables() {
-    static CounterTables t;
-    return t;
-}
+bool g_enabled_initialized = false;
+bool g_enabled_value = false;
+bool g_atexit_registered = false;
+CounterTables* g_tables = nullptr;
+std::mutex g_init_mutex;
 
 void dump_table(const char* label, const CounterMap& tbl) {
     if (tbl.empty()) {
@@ -66,55 +54,74 @@ void dump_table(const char* label, const CounterMap& tbl) {
     }
 }
 
-struct AtexitDumper {
-    ~AtexitDumper() {
-        if (g_enabled_value) {
-            dump_and_reset("atexit");
-        }
+void atexit_dump() {
+    if (g_enabled_value && g_tables) {
+        dump_and_reset("atexit");
     }
-};
-AtexitDumper g_atexit_dumper;
+}
+
+void initialize_locked() {
+    if (g_enabled_initialized) return;
+    const char* v = std::getenv("MC2_FX_TRACE");
+    g_enabled_value = (v && v[0] == '1');
+    g_tables = new CounterTables();  // intentionally leaked
+    if (!g_atexit_registered) {
+        std::atexit(&atexit_dump);
+        g_atexit_registered = true;
+    }
+    g_enabled_initialized = true;
+    if (g_enabled_value) {
+        std::fprintf(stderr, "[INSTR v1] enabled: fx_trace\n");
+        std::fprintf(stderr, "[FX_TRACE v1] counters: spawn/draw/mlr_enqueue\n");
+    }
+}
+
+void ensure_initialized() {
+    if (g_enabled_initialized) return;
+    std::lock_guard<std::mutex> lock(g_init_mutex);
+    initialize_locked();
+}
 
 } // namespace
 
 bool is_enabled() {
-    if (!g_enabled_initialized) initialize_enabled_flag();
+    if (!g_enabled_initialized) ensure_initialized();
     return g_enabled_value;
 }
 
 void record_spawn(const char* name) {
+    if (!g_tables) ensure_initialized();
     if (!name) name = "(null)";
-    auto& t = tables();
-    std::lock_guard<std::mutex> lock(t.m);
-    ++t.spawn[name];
+    std::lock_guard<std::mutex> lock(g_tables->m);
+    ++g_tables->spawn[name];
 }
 
 void record_draw(const char* name) {
+    if (!g_tables) ensure_initialized();
     if (!name) name = "(null)";
-    auto& t = tables();
-    std::lock_guard<std::mutex> lock(t.m);
-    ++t.draw[name];
+    std::lock_guard<std::mutex> lock(g_tables->m);
+    ++g_tables->draw[name];
 }
 
 void record_mlr_enqueue(const char* leaf_name) {
+    if (!g_tables) ensure_initialized();
     if (!leaf_name) leaf_name = "(null)";
-    auto& t = tables();
-    std::lock_guard<std::mutex> lock(t.m);
-    ++t.mlr_enqueue[leaf_name];
+    std::lock_guard<std::mutex> lock(g_tables->m);
+    ++g_tables->mlr_enqueue[leaf_name];
 }
 
 void dump_and_reset(const char* reason) {
-    auto& t = tables();
-    std::lock_guard<std::mutex> lock(t.m);
+    if (!g_tables) return;
+    std::lock_guard<std::mutex> lock(g_tables->m);
     std::fprintf(stderr, "[FX_TRACE v1] === dump (%s) ===\n",
                  reason ? reason : "?");
-    dump_table("spawn", t.spawn);
-    dump_table("draw", t.draw);
-    dump_table("mlr_enqueue", t.mlr_enqueue);
+    dump_table("spawn", g_tables->spawn);
+    dump_table("draw", g_tables->draw);
+    dump_table("mlr_enqueue", g_tables->mlr_enqueue);
     std::fprintf(stderr, "[FX_TRACE v1] === end dump ===\n");
-    t.spawn.clear();
-    t.draw.clear();
-    t.mlr_enqueue.clear();
+    g_tables->spawn.clear();
+    g_tables->draw.clear();
+    g_tables->mlr_enqueue.clear();
 }
 
 } // namespace fx_trace
