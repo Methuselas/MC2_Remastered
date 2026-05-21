@@ -41,7 +41,8 @@ enum BucketId : int {
 enum SidecarId : int {
     SIDECAR_SKINNING_CHAIN          = 0,  // Mech3D.UpdateGeometry outer
     SIDECAR_EVENTDRIVEN_PROJECT_Z   = 1,  // projectZ called outside render loop (count-only)
-    SIDECAR_COUNT                   = 2,
+    SIDECAR_CULL_ADMISSION_PERFRAME = 2,  // projectForObjectAdmission (timed; R2 follow-on)
+    SIDECAR_COUNT                   = 3,
 };
 
 // Master env flag — checked at the head of every scope/counter path. When
@@ -76,6 +77,22 @@ void add_workload_recalcbounds(int actorsRecalc);
 void add_workload_tgl_transform(int numShapes);
 void add_workload_mlr_prim_clipped();
 void add_workload_eventdriven_projectZ();   // sidecar count-only
+
+// R2 cull-admission instrumentation (projectForObjectAdmission wrapper).
+// Free-function pair instead of RAII Scope so camera.h's header-weight
+// stays at forward-decls only (consistent with the existing pattern
+// established by add_workload_eventdriven_projectZ). Both functions are
+// no-ops when env OFF (single g_cpuProjEnabled check at entry).
+//   * cull_admission_begin_ns(): returns steady_clock ns sample, or 0
+//     when disabled. Caller MUST pair with cull_admission_end_ns().
+//   * cull_admission_end_ns(startNs): accumulates elapsed ns into
+//     SIDECAR_CULL_ADMISSION_PERFRAME and bumps workload by 1.
+//   * Observer-effect caveat: chrono pair ~50-100 ns x ~1000 calls/frame
+//     = ~50-100 us self-cost on the measurement itself. The reported
+//     bucket time is an UPPER bound. See cost_split observer-effect
+//     memory; the R2 capture must be read with that in mind.
+int64_t cull_admission_begin_ns();
+void    cull_admission_end_ns(int64_t startNs);
 
 // RAII scope guard — opens chrono, closes + accumulates into bucket on
 // destruction. Zero-cost when env OFF (constructor early-out).

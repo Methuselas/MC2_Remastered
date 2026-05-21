@@ -68,6 +68,7 @@ static const char* kBucketName[BUCKET_COUNT] = {
 static const char* kSidecarName[SIDECAR_COUNT] = {
     "skinning_chain",
     "eventdriven_projection_total",
+    "cull_admission_perframe",
 };
 
 // --- Helpers --------------------------------------------------------------
@@ -336,6 +337,21 @@ void add_workload_mlr_prim_clipped() {
 void add_workload_eventdriven_projectZ() {
     if (!g_cpuProjEnabled) return;
     s_curFrameSidecar[SIDECAR_EVENTDRIVEN_PROJECT_Z].workload += 1;
+}
+
+// R2: per-call chrono around projectForObjectAdmission. Pair pattern keeps
+// camera.h at forward-decls only (no RAII class in the hot inline header).
+// Caller MUST pair begin/end; mismatched pairing silently inflates the bucket.
+int64_t cull_admission_begin_ns() {
+    if (!g_cpuProjEnabled) return 0;
+    return now_ns();
+}
+
+void cull_admission_end_ns(int64_t startNs) {
+    if (!g_cpuProjEnabled) return;
+    int64_t elapsed = now_ns() - startNs;
+    s_curFrameSidecar[SIDECAR_CULL_ADMISSION_PERFRAME].ns       += elapsed;
+    s_curFrameSidecar[SIDECAR_CULL_ADMISSION_PERFRAME].workload += 1;
 }
 
 // --- Scope guards ---------------------------------------------------------

@@ -26,10 +26,14 @@
 // F3 CPU projection cost-baseline: forward declarations to keep camera.h
 // header weight low. projectZ() bumps n_calls_eventdriven when called
 // outside the render loop (TLS flag tracked by RenderLoopGuard).
+#include <cstdint>  // int64_t for cull_admission_*_ns
 namespace mc2_cpu_proj_cost {
     extern bool g_cpuProjEnabled;
     extern thread_local bool tls_inRenderLoop;
     void add_workload_eventdriven_projectZ();
+    // R2 cull-admission timing pair (see cpu_proj_cost_split.h comment).
+    int64_t cull_admission_begin_ns();
+    void    cull_admission_end_ns(int64_t startNs);
 }
 
 #ifndef TGL_H
@@ -553,6 +557,10 @@ class Camera
 		// Object lifecycle admission — bool feeds windowsVisible → canBeSeen() cull chain.
 		inline bool projectForObjectAdmission (Stuff::Vector3D& point,
 		                                       Stuff::Vector4D& screen) {
+			// R2 cull-admission instrumentation. begin_ns returns 0 when env
+			// OFF; end_ns short-circuits the same way. Inline pair is safe in
+			// header (no class definition needed).
+			const int64_t _f3_cull_t0 = ::mc2_cpu_proj_cost::cull_admission_begin_ns();
 			LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
@@ -569,10 +577,14 @@ class Camera
 				          isfinite(screen.z) && isfinite(screen.w));
 			}
 #endif
+			bool ret;
 			if (objectAdmissionPredicateMode() == ObjectAdmissionPredicateMode::Modern) {
-				return clipSpaceFrustumAdmit(result.rawClip);
+				ret = clipSpaceFrustumAdmit(result.rawClip);
+			} else {
+				ret = legacyAccepted;
 			}
-			return legacyAccepted;
+			::mc2_cpu_proj_cost::cull_admission_end_ns(_f3_cull_t0);
+			return ret;
 		}
 
 		// Effect billboard admission — bool gates submission; same wedge-class hazard as terrain.

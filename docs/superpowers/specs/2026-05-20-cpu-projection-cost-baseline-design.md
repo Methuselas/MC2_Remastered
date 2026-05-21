@@ -529,3 +529,113 @@ MLR census folded:
   architecture.md staleness note.
 - Architecture.md memory update is a separate follow-on task (the
   "ObjectManager draws immediately via MLR" claim is stale).
+
+## §13 — R2 follow-on: cull_admission_perframe sidecar (2026-05-20)
+
+Small addendum to the F3 measurement-only contract. NO architectural
+change, NO consumer retired. One new sidecar bucket added; one
+user-driven worst-case capture pending.
+
+### Why
+
+F3 v1 ship (`d064b77`) measured `eventdriven_projection_total` as
+count-only (workload counter, no chrono — per audit (c), per-call
+chrono inside `Camera::projectZ` would distort the hot path).
+Subsequent grep located the policy-split wrapper for the
+object-admission cull check at `code/gameobj.cpp:2090`
+(`GameObject::onScreen` → `eye->projectForObjectAdmission(...)`).
+Plan-phase for the GPU object-admission migration needs a real time
+number for the cull-admission cost, not a `count × plausible_ns/call`
+guess. The trick that makes timing safe: chrono around the policy-
+split WRAPPER (`Camera::projectForObjectAdmission`) instead of the
+inner `projectZ`, keeping the hot inner function un-timed.
+
+### Wire
+
+- New sidecar `SIDECAR_CULL_ADMISSION_PERFRAME` in `cpu_proj_cost_split.h`.
+- Free-function pair `cull_admission_begin_ns()` / `cull_admission_end_ns()`
+  (NOT a SidecarScope class) so `camera.h` stays at forward-decls only —
+  consistent with the existing `add_workload_eventdriven_projectZ` pattern.
+  No RAII class definition needed in the hot inline header.
+- Wire site: top + bottom of `Camera::projectForObjectAdmission`
+  (`mclib/camera.h:558`). Both begin/end short-circuit when env OFF.
+- Workload counter `n_calls_p50` bumps inside `end_ns` (one tick per
+  paired call), so the workload number = the timing call count.
+- Reports as a new sidecar line in the per-window stats and final-stats
+  blocks. Same env gate `MC2_CPU_PROJ_COST_SPLIT=1`. Same frame
+  lifecycle (reset at `gos_RendererBeginFrame`, commit at
+  `gos_RendererEndFrame`).
+
+### Attribution overlap (intentional)
+
+`eventdriven_projection_total.n_calls` (broader) counts every
+`projectZ` call where `tls_inRenderLoop == false` — that's ALL seven
+projectZ wrappers (admission, effect-admission, lighting-shadow,
+selection-picking, screen-XY, debug-overlay, plus the deprecated
+direct call) when they fire outside the render loop.
+`cull_admission_perframe.n_calls` is the NARROW subset
+(`projectForObjectAdmission` only). Their difference is "everything
+else in the eventdriven path." This composition is by design — the
+broad counter remains the umbrella for "outside render-loop projection
+cost" while the narrow counter pins down one specific retirement
+candidate.
+
+### Observer-effect caveat
+
+Per `cost_split_instrumentation_is_observer_effect_dominated.md`:
+two `now_ns()` calls per `projectForObjectAdmission` invocation add
+~50–100 ns of measurement self-cost per call. At ~1000 calls/frame
+that's ~50–100 us of overhead on the bucket itself. The bucket's
+reported ns is therefore an UPPER bound. Any plan-phase decision
+comparing this bucket to other CPU costs must subtract a per-call
+chrono-pair baseline (or read the result as "<= measured value").
+This caveat is documented in the header API comments.
+
+### Stop conditions
+
+- If `cull_admission_perframe.n_calls` >> `eventdriven_projection_total.n_calls`
+  in a window: bug (subset is larger than superset).
+- If env-OFF builds show any non-zero overhead in
+  `projectForObjectAdmission`: bug (the `if (!g_cpuProjEnabled) return 0;`
+  short-circuit is misfiring).
+- If `n_calls` ticks but `ns` is identically zero across all windows
+  (and env is ON): bug in the `end_ns` accumulator.
+
+### tier1 baseline (2026-05-20, post-R2 build)
+
+5/5 PASS. New `cull_admission_perframe` line appears in every window
+block. Observed counts: across mc2_01 / mc2_03 / mc2_17 / mc2_24,
+both `eventdriven_projection_total.n_calls_p50` and
+`cull_admission_perframe.n_calls_p50` read 0 (stationary smoke camera,
+isolated start position — no objects enter `onScreen()` path). mc2_10
+shows `eventdriven_projection_total.n_calls_p50 = 946` and
+`cull_admission_perframe.n_calls_p50 = 0`.
+
+**The 946-vs-0 gap is a measurement-driven correction of the prior
+hypothesis** in `f3_tier1_baseline_2026_05_20.md`. The memory's claim
+that the 950/frame eventdriven count was the per-object cull via
+`gameobj.cpp:2090` is WRONG: `GameObject::onScreen()` has very few
+callers (chiefly `code/light.cpp:123/139` behind `USE_LIGHT_APPEARANCE`),
+not "once per active game object." The 946 eventdriven count is
+predominantly coming from one of the OTHER six projectZ wrappers
+(plausibly `projectForScreenXY` from per-actor HUD positioning at
+`code/actor.cpp:297/301`, or `projectForEffectAdmission` from weather
+/ clouds / craters). This R2 instrumentation is what enabled the
+correction — the prior memory's `1:1 with active object count` claim
+was a grep-derived hypothesis, never measurement-verified.
+
+The user-driven mc2_10 worst-case capture (camera corner-of-map
+zoomed-out, 60s) is still the size-sentinel for the cull-admission
+bucket — it may show >0 calls if motion / wider FOV admits more
+`onScreen()` invocations. Stationary tier1 cannot bound this bucket
+for the GPU-object-admission plan-phase sizing.
+
+### Out of scope for R2
+
+- No `projectForScreenXY` / `projectForEffectAdmission` / others
+  instrumentation. If R2 capture confirms cull-admission is a small
+  bucket and the eventdriven majority lives in another wrapper, that
+  becomes an R3 follow-on with its own narrow-subset sidecars.
+- No retirement of any consumer. Measurement-only.
+- No adjudication of `cull_admission_perframe` against the
+  `projection_total` budget — it is a SIDECAR per §4.4.
