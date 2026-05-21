@@ -20,12 +20,6 @@
 // terrainMVP getter — same accessor used by gos_terrain_bridge_renderWaterFast
 // at gameos_graphics.cpp:2171. C linkage upstream.
 extern const float* gos_GetTerrainMVPMat4();
-// B1 C14: 3-step projection chain accessors (mirror static_prop bridge at
-// gos_static_prop_batcher.cpp:3010/3013). terrainMVP alone is D3D pixel-
-// homog clip; the shader needs viewport + pixel->NDC remap to land in GL
-// clip space.
-extern const float* gos_GetTerrainViewportVec4();
-extern const float* gos_GetProj2ScreenMat4();
 
 // VAO rebind helper (memory/projectz_overlay_findings.md trap #4) — AMD
 // silently drops draws when VAO=0; rebind to a known-non-zero VAO before
@@ -160,24 +154,6 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
         if (mvp) {
             GLint loc = glGetUniformLocation(s_prog->shp_, "terrainMVP");
             if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, mvp);
-        }
-    }
-    {
-        // B1 C14: u_terrainViewport — pixel-space scale/offset for the
-        // viewport divide step of the 3-step chain.
-        const float* vp = gos_GetTerrainViewportVec4();
-        if (vp) {
-            GLint loc = glGetUniformLocation(s_prog->shp_, "u_terrainViewport");
-            if (loc >= 0) glUniform4fv(loc, 1, vp);
-        }
-    }
-    {
-        // B1 C14: u_mvp — pixel-space -> GL NDC matrix. GL_TRUE (transpose)
-        // matches the static_prop bridge at gos_static_prop_batcher.cpp:3014.
-        const float* mm = gos_GetProj2ScreenMat4();
-        if (mm) {
-            GLint loc = glGetUniformLocation(s_prog->shp_, "u_mvp");
-            if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_TRUE, mm);
         }
     }
     {
