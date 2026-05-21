@@ -1,5 +1,7 @@
 #include"gosfxheaders.hpp"
 #include"particles/spec_library.h"
+#include"particles/batcher.h"
+#include"particles/effect_adapter.h"
 
 //==========================================================================//
 // File:	 gosFX_Effect.cpp												//
@@ -96,6 +98,20 @@ gosFX::Effect*
 	gosFX::Effect::Specification *spec =
 		mc2::particles::SpecLibrary::Instance()->At(index);
 	Check_Object(spec);
+
+	// B1 Stage 2' C7-revised: under MC2_GPU_PARTICLES=1, return a
+	// particles-backed Effect shell whose Start() routes to
+	// mc2::particles::Spawn(). Producers see an unchanged gosFX::Effect
+	// API surface; the legacy primitive subclass is never constructed.
+	// When MC2_GPU_PARTICLES=0 (default during B1) the legacy branch below
+	// runs and behavior is byte-identical to pre-C7-revised.
+	if (mc2::particles::Batcher::is_enabled()) {
+		gos_PushCurrentHeap(gosFX::Heap);
+		gosFX::Effect *adapter = new mc2::particles::EffectAdapter(spec, flags);
+		gos_PopCurrentHeap();
+		return adapter;
+	}
+
 	gosFX::Effect::ClassData *data =
 		Cast_Pointer(
 			gosFX::Effect::ClassData*,
