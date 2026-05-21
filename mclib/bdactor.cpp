@@ -2826,6 +2826,24 @@ void BldgAppearance::destroy (void)
 		pointLight = NULL;
 	}
 
+	// (E) T1.5: paired cleanup for SpotLight_-child illumination from T1.4.
+	// IMPORTANT (C-r2 M5): bldgShape was deleted above; do NOT call
+	// getNodeIdPosition or any bldgShape method here. Use CACHED state
+	// (spotlightLights_/spotlightSlotIds_/spotlightNodeIds_) only. Unlike
+	// `pointLight` (alloc/free per night/day boundary), spotlightLights_
+	// stay allocated for the building's lifetime — this destroy hook is the
+	// only cleanup site.
+	for (size_t k = 0; k < spotlightLights_.size(); ++k)
+	{
+		if (eye)
+			eye->removeWorldLight(spotlightSlotIds_[k], spotlightLights_[k]);
+		free(spotlightLights_[k]);
+	}
+	spotlightLights_.clear();
+	spotlightSlotIds_.clear();
+	spotlightNodeIds_.clear();
+	spotlightsRegistered_ = false;
+
 	if (activity)
 	{
 		activity->Kill();
