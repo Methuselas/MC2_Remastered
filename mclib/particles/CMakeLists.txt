@@ -13,6 +13,7 @@ set(SOURCES
     spawn_card.cpp
     spawn_point.cpp
     spawn_shard.cpp
+    spawn_tube.cpp
 )
 
 include_directories(${COMMON_INCLUDE_DIRS} "../../" "../../mclib" "./")
