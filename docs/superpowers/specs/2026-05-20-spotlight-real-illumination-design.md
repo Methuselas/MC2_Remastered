@@ -145,26 +145,33 @@ Recommendation: (a) for v1, (b) for v2 if mission-specific lamp colors matter.
 
 Recommendation: hardcoded defaults for v1; derived from bbox for v2.
 
-### OQ5 — Shader coverage
+### OQ5 — Shader coverage — RESOLVED 2026-05-20
 
-Which materials sample LightsData? Buildings (per `peekCachedLeafLightData`), mechs (per the MultiTransformShape path), and... terrain? props? Need to enumerate shader-side `light_falloff[]` reads in `shaders/`. If terrain.frag doesn't sample LightsData, lamp posts won't illuminate the ground (only the building they're on). Partial visual win.
+mc2-render-expert advisor enumerated LightsData consumers, then a follow-up grep CORRECTED the advisor's terrain claim. The actual coverage:
 
-Recommendation: dispatch `mc2-render-expert` advisor to enumerate. If terrain doesn't sample, file as follow-up shader work; (E) v1 ships with the consumers that already sample.
+| Shader | Samples LightsData / point+spot? | Path |
+|---|---|---|
+| [shaders/static_prop.vert:249](shaders/static_prop.vert) | YES (calc_light VS) | Buildings / static props |
+| [shaders/mech.vert:162](shaders/mech.vert) | YES (calc_light VS, MC2_GPU_MECH_LIGHTING) | Mech bodies |
+| [shaders/gos_tex_vertex_lighted.vert:84](shaders/gos_tex_vertex_lighted.vert) + .frag:54 | YES | Legacy lit vertex path |
+| [shaders/gos_terrain_lighting.comp:231](shaders/gos_terrain_lighting.comp) | **YES** for `TG_LIGHT_POINT_GPU` and `TG_LIGHT_SPOT_GPU` | Terrain ground illumination via compute |
+| `gos_tex_vertex.frag`, `decal.frag`, `terrain_overlay.frag`, `mech.frag` | NO | Modulate / decal paths |
 
-### OQ6 — Budget sizing (CPU pool + shader array) — RELAXED per user 2026-05-20
+**The terrain story (corrected from advisor's first pass):** [mclib/camera.cpp:1912](mclib/camera.cpp) at `Camera::updateLights` adds POINT and SPOT lights to `terrainLights[]` via the comparison `light->lightType >= TG_LIGHT_POINT && light->lightType < TG_LIGHT_TERRAIN` (POINT=3, SPOT=4, TERRAIN=5 per [mclib/tgl.h:163-167](mclib/tgl.h)). The compute kernel at line 231 then iterates and applies falloff. Ground illumination from SpotLight_ TG_Lights is **free** — no new shader code, no schema extension. The infrastructure was built for exactly this case.
 
-Two budgets, two questions:
+**Implication for (E) v1:** lamp posts will illuminate building + props + mechs + the GROUND around them via the existing pipeline. No Stage-2 shader follow-up needed for the user's stated visual.
 
-**(a) CPU world pool size.** Currently `MAX_LIGHTS_IN_WORLD = 256` at [mclib/tgl.h:170](mclib/tgl.h). If stock missions register more than 256 SpotLight_ TG_Lights total, the world pool overflows and the rest get silently dropped at `addWorldLight` (returns -1). Bump to whatever fits.
+### OQ6 — Budget sizing — RESOLVED 2026-05-20
 
-**(b) Per-shape shader array size.** Currently `MAX_LIGHTS_IN_WORLD = 16` at [shaders/include/lighting.hglsl:23](shaders/include/lighting.hglsl) (separate `#define` despite shared name). The CPU pre-filter picks the up-to-16 most relevant lights per shape into `TG_HWLightsData`. If dense areas have >16 lights affecting one shape, the lowest-scoring get dropped — visible as "edge of room is dim despite 20 lamps."
+User decision: **bump CPU world pool to 1024, keep per-shape shader array at 16.**
+
+Rationale per user: stock content is "really simple"; actual SpotLight_ population is "extremely low"; 1024 is plenty of headroom. Per-shape best-16 selection only becomes a problem with dense mech clustering, which is rare. Don't pre-measure; just bump and ship.
 
 Plan-phase actions:
-1. **Instrument first.** Add a `MC2_SPOTLIGHT_REAL_TRACE=1` counter on `isSpotlight==true` registrations during mission load across all tier1 stock missions + mc2_10. Get an actual count. Then pick the world-pool size from data, not speculation.
-2. **Score the per-shape filter.** Run F3-style telemetry on `CacheGpuLightData`'s pick-best-16 logic — does it ever truncate, and on which shapes? If yes, bump shader array (the lockstep `TG_HWLightsData` + `lighting.hglsl` array sizes; see [memory/cpp_glsl_ubo_struct_lockstep.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\cpp_glsl_ubo_struct_lockstep.md)). User pre-approves: "piss ton of room."
-3. **Fallback if both are insufficient.** Route static SpotLight_ TG_Lights through LIGHTBAKE v2 (`mc2WriteStaticLightSlot`) which bakes per-shape and bypasses the dynamic pool — keeps the world pool free for dynamic (mech / weapon-bolt) lights.
-
-**Recommendation:** start with naive (a) bump → measure → either ship or escalate to (b)+(c). Don't move to clustered/forward+ unless (a)+(b)+(c) genuinely insufficient (user explicitly permitted but it's overkill for 950 mostly-static lights).
+1. **Bump `MAX_LIGHTS_IN_WORLD` from 256 → 1024** in [mclib/tgl.h:170](mclib/tgl.h). Audit the three pool allocations at [mclib/camera.cpp:411, :423, :430](mclib/camera.cpp) (worldLights, activeLights, terrainLights) — they all multiply 256 × sizeof(TG_LightPtr); 1024 × 8 bytes = 8KB per pool, 24KB total. Negligible.
+2. **Keep shader-side `MAX_LIGHTS_IN_WORLD = 16`** in [shaders/include/lighting.hglsl:23](shaders/include/lighting.hglsl) (lockstep with `TG_HWLightsData`'s `lightFalloff[16][4]`). Do NOT bump unless a mech-cluster canary visibly demands it.
+3. **Mission canaries:** mc2_04 (night mission, the visual proof case) and mc2_10 (existing tier1 stress). Skip the F3 telemetry pre-measurement — sizing is settled.
+4. **Fallback path remains documented:** if a future mission overflows 1024 OR per-shape truncation becomes visually objectionable, route through LIGHTBAKE v2 (`mc2WriteStaticLightSlot`). Not needed for v1.
 
 ### OQ7 — Day vs night gating
 
@@ -172,9 +179,19 @@ CPU path skips spotlight geometry when `!isNight` ([tgl.cpp:1728](mclib/tgl.cpp)
 
 Recommendation: gate registration on `isNight` (the same flag tgl.cpp:1728 reads). Re-evaluate at mission state change (day→night transition mid-mission, if such transitions exist).
 
-### OQ8 — Lifecycle (building destruction, mech death)
+### OQ8 — Lifecycle (building destruction, mech death) — META-FIX from advisor
 
-Buildings can be destroyed; mechs can die. Their spotlights should turn off. Need `removeWorldLight` calls at destruction events. Per [memory/mission_load_inits_mirror_init_per_subsystem.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\mission_load_inits_mirror_init_per_subsystem.md), init/teardown must mirror or state leaks across missions.
+Per render-expert greybeard ruling, the canonical pattern already exists at [mclib/mech3d.cpp:3333-3383](mclib/mech3d.cpp) for the mech anubis searchlight. The pattern:
+
+1. **First-visibility (or mission load for static buildings):** `addWorldLight(lightPtr)` ONCE, retain slot index / pointer on the actor.
+2. **Per-frame for moving objects:** `SetLightToWorld(...)` + `SetPosition(...)` + toggle `active` based on `inView`. NEVER `removeWorldLight + addWorldLight` per frame — pool churn is O(N) per call.
+3. **Destruction:** `removeWorldLight(slot, light)` only at actor destroy event.
+
+(E) generalizes this from "one anubis light" to "N SpotLight_ children." No new design needed.
+
+**Latent leak to NOT inherit:** advisor flagged that existing mech3d.cpp anubis path leaks pointLight at mech destruction (removeWorldLight called only in two narrow contexts). When (E) generalizes the pattern, the destroy hook must be properly wired for both buildings and mechs, per [memory/mission_load_inits_mirror_init_per_subsystem.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\mission_load_inits_mirror_init_per_subsystem.md).
+
+**`active` flag is the cull gate.** [mclib/camera.cpp:1890](mclib/camera.cpp) `updateLights` filters on `active`. Mechs that are `inView==false` MUST set their spotlight's `active=false` so they don't consume per-shape best-16 slots from visible shapes. Same pattern as [mech3d.cpp:3382](mclib/mech3d.cpp).
 
 ## 7. Adversarial review of this spec
 
@@ -210,6 +227,29 @@ Mirror the (A) gosFX retirement staging shape:
 - `mc2-render-expert` advisor — OQ5 (shader coverage), OQ6 (budget routing), R5 (worldLights[0] ordering)
 - `mc2-shader-expert` advisor — OQ5 + R7 (AMD)
 
-## 10. Recommended next step
+## 10. Status — READY FOR PLAN-PHASE 2026-05-20
 
-Dispatch `mc2-render-expert` advisor to answer OQ5 + OQ6 + R5 with the greybeard skill. The other open questions (OQ1/2/3/4/7/8) can be answered in plan-phase. After OQ5/6/R5 have answers, plan-phase (E) Stage 0.
+All load-bearing open questions resolved:
+
+| Item | Resolution | Source |
+|---|---|---|
+| OQ5 (shader coverage) | Terrain compute already handles POINT/SPOT; ground spillage works for free | grep verified against `gos_terrain_lighting.comp:231` + `camera.cpp:1912` |
+| OQ6 (sizing) | World pool 256→1024; shader array stays at 16 | User decision 2026-05-20 |
+| R5 (worldLights[0] trap) | Sun-only mutation; slots 2+ are untouched per-actor | grep `setLightColor(` shows only `(0,*)` and `(1,*)` writes |
+| OQ8 (lifecycle / per-frame update) | Reuse mech3d.cpp:3333-3383 anubis pattern verbatim; no per-frame remove/add | Render-expert greybeard ruling |
+
+Remaining OQ1 / OQ2 / OQ3 / OQ4 / OQ7 can be decided during plan-phase (they're parameter choices, not architectural blockers):
+- OQ1 keep/drop cone: drop (user-confirmed)
+- OQ2 POINT vs SPOT: POINT for v1, SPOT optional v2
+- OQ3 color: hardcoded warm for v1, texture-sample for v2
+- OQ4 falloff distances: hardcoded for v1, bbox-derived for v2
+- OQ7 day/night gate: match `isNight` flag from CPU path
+
+**Plan-phase actions on day 1:**
+1. Bump `MAX_LIGHTS_IN_WORLD` 256→1024 ([mclib/tgl.h:170](mclib/tgl.h)) + audit three pool allocations at [camera.cpp:411,:423,:430](mclib/camera.cpp).
+2. Add `MC2_SPOTLIGHT_REAL_TRACE=1` registration counter + `event=skip_spotlight_drawn` count at the static-prop batcher (per the spec's Stage 0).
+3. Add the env gate `MC2_SPOTLIGHT_REAL=1` for the four sites: `gos_static_prop_batcher::submitMultiShape` (skip cone for isSpotlight), `gos_mech_batcher.cpp:553-563` (un-skip + register), building spawn (mission load addWorldLight + retain slot), building destroy (removeWorldLight). Default-off.
+4. Tier1 + mc2_04 (night) + mc2_10 visual canary. Vedette/LRMC canary on mc2_24 (the f77f135 revert canary class).
+5. Flip default-on after soak; delete the gate code at Stage 3.
+
+The spec is now actionable. Plan-phase can proceed without further open questions.
