@@ -30,23 +30,55 @@
 
 ## Stage shape
 
-Same atomic-commit-per-task pattern as (E) plan. Three stages: instrument → gate-on → cleanup-and-promote.
+Same atomic-commit-per-task pattern as (E) plan. Three stages: **instrument → ship default-on → cleanup**. No env gate — the priority lift is correct behavior and ships unconditionally (round-1 m1 fix).
 
 ---
 
 ## Stage 0 — Instrument (no behavior change)
 
-### T0.1 — Add `[SPOT_PRIORITY_LIFT v1]` probe block (gated default-off)
+### T0.1 — Add `[SPOT_PRIORITY_LIFT v1]` probe block
 
-**Files:** `mclib/camera.cpp` (`Camera::updateLights`)
+**Files:** `mclib/camera.cpp` (`Camera::updateLights` at [:1887](mclib/camera.cpp))
 
-**Changes:**
-- Add file-scope static `s_liftTrace` reading `MC2_SPOT_LIFT_TRACE`.
-- Add file-scope statics `s_liftFirstHit`, `s_liftFrames`, `s_liftWindowPriority`, `s_liftWindowDeferred`.
-- Add local `s_liftPriorityCount` (function-scope, per-call reset).
-- NO reorder logic yet — only the probe scaffolding. Probe counts will be 0 in this commit (priority branch doesn't exist).
+**Changes (per round-1 C3 fix — explicit declarations to ensure T0.1 compiles + baseline is observable):**
+- At file scope (top of `camera.cpp` near the existing T1.15/T1.16 statics at [:1873-1885](mclib/camera.cpp)), add:
+  - `static const bool s_liftTrace = (std::getenv("MC2_SPOT_LIFT_TRACE") != nullptr);`
+  - `static bool s_liftFirstHit = false;`
+  - `static unsigned long s_liftFrames = 0;`
+  - `static unsigned long s_liftWindowPriority = 0;`
+  - `static unsigned long s_liftWindowDeferred = 0;`
+- Inside `Camera::updateLights`, at the top (right after `numActiveLights = numTerrainLights = 0;` at [:1891](mclib/camera.cpp)), add:
+  - `long s_liftPriorityCount = 0;` (function-local; resets per call)
+  - `long numDeferred = 0;` (function-local; resets per call — round-1 C2 fix)
+- At the END of `Camera::updateLights`, AFTER the existing main loop (line 1983), add the full emit block per spec §3.7:
+  ```cpp
+  // [SPOT_PRIORITY_LIFT v1] — see spec for full rationale
+  const long priorityCount = s_liftPriorityCount;
+  const long deferredCount = numDeferred;
+  if (!s_liftFirstHit && (priorityCount > 0 || deferredCount > 0)) {
+      std::fprintf(stderr,
+          "[SPOT_PRIORITY_LIFT v1] event=first_hit priority=%ld deferred=%ld total_active=%ld\n",
+          priorityCount, deferredCount, (long)numActiveLights);
+      std::fflush(stderr);
+      s_liftFirstHit = true;
+  }
+  ++s_liftFrames;
+  s_liftWindowPriority += priorityCount;
+  s_liftWindowDeferred += deferredCount;
+  if (s_liftTrace && (s_liftFrames % 600 == 0)) {
+      std::fprintf(stderr,
+          "[SPOT_PRIORITY_LIFT v1] event=summary frames=%lu avg_priority=%.2f avg_deferred=%.2f\n",
+          s_liftFrames,
+          (double)s_liftWindowPriority / 600.0,
+          (double)s_liftWindowDeferred / 600.0);
+      std::fflush(stderr);
+      s_liftWindowPriority = 0;
+      s_liftWindowDeferred = 0;
+  }
+  ```
+- NO reorder logic yet. `s_liftPriorityCount` stays 0 throughout (no `++` calls yet); `numDeferred` stays 0 throughout (no `++` calls or flush loop yet). T1.1 will add those.
 
-**Verification:** smoke mc2_10 with `MC2_SPOT_LIFT_TRACE=1` shows the periodic summary line firing every 600 frames with `avg_priority=0.00 avg_deferred=0.00`. Confirms probe is wired without changing behavior.
+**Verification:** smoke mc2_10 with `MC2_SPOT_LIFT_TRACE=1` shows summary line firing every 600 frames with `avg_priority=0.00 avg_deferred=0.00`. The `event=first_hit` line should NOT fire (gated on `priority > 0 || deferred > 0` which are both zero in T0.1). Probe wiring confirmed; baseline observable; no behavior change.
 
 **Commit:** `feat(spotlight-lift T0.1): wire [SPOT_PRIORITY_LIFT v1] probe scaffolding`
 
@@ -60,31 +92,50 @@ Per spec §3.4: tagging mechanism (`is_e_slot`) is already populated uncondition
 
 **Files:** `mclib/camera.cpp` (`Camera::updateLights` at [:1887-1983](mclib/camera.cpp))
 
+**CRITICAL — round-1 M1 fix — surgical replacement, preserve existing probes:**
+
+The POINT/SPOT branch at [camera.cpp:1927-1981](mclib/camera.cpp) contains:
+- The existing `light->active = projectForLightingShadow(...)` assignment
+- The existing `terrainLights[numTerrainLights++] = light` append
+- T1.15's per-slot first-seen probe block at approximately [:1936-1960](mclib/camera.cpp)
+- T1.16's per-slot transition probe block at approximately [:1961-1978](mclib/camera.cpp)
+- The `activeLights[numActiveLights++] = light;` append at approximately [:1979](mclib/camera.cpp) (the LAST line in the branch)
+
+**ONLY the single line `activeLights[numActiveLights++] = light;` at [:1979](mclib/camera.cpp) is replaced.** All T1.15 and T1.16 probe code is preserved verbatim per worktree CLAUDE.md "Debug Instrumentation Rule: demote-not-delete."
+
 **Changes:**
-- Add file-scope `static TG_LightPtr s_deferredNonPriority[MAX_LIGHTS_IN_WORLD]` per spec §3.2.
-- In the existing `for (long i = 0; i < MAX_LIGHTS_IN_WORLD; ++i)` loop:
-  - Keep `if (!worldLights[i]) continue` (existing).
-  - Keep TG_LIGHT_TERRAIN branch (existing at [:1902-1915](mclib/camera.cpp)).
-  - Keep AMBIENT/INFINITE branch (existing at [:1917-1925](mclib/camera.cpp)). AMBIENT/INFINITE still go into `activeLights[]` first.
-  - **Modify** the POINT/SPOT branch (existing at [:1927-1968](mclib/camera.cpp)):
-    - Keep the existing `light->active = projectForLightingShadow(...)` assignment.
-    - Keep the existing `terrainLights[numTerrainLights++] = light` append (terrain pipeline unaffected).
-    - Replace the `activeLights[numActiveLights++] = light` unconditional append with the priority split:
-      - `if (mc2_spotlight_diag::is_e_slot(i, nullptr))` → append immediately + `++s_liftPriorityCount`
-      - `else` → append to `s_deferredNonPriority[numDeferred++]`
-- After the main loop, add the deferred-flush:
+- Add file-scope `static TG_LightPtr s_deferredNonPriority[MAX_LIGHTS_IN_WORLD];` near the other file-scope statics (no thread safety needed; engine single-threaded for this path per `memory/vulkan_prep_explicit_device_discipline.md`).
+- In `Camera::updateLights`, at the POINT/SPOT branch ([camera.cpp:1927-1981](mclib/camera.cpp)):
+  - Keep the existing `light->active = projectForLightingShadow(...)` assignment unchanged.
+  - Keep the existing `terrainLights[numTerrainLights++] = light` append unchanged.
+  - Keep the existing T1.15 `[SPOT_DIAG v1] event=overwrite_first_seen` block unchanged.
+  - Keep the existing T1.16 `[SPOT_DIAG v1] event=our_slot_transition` block unchanged.
+  - **Replace** the single statement `activeLights[numActiveLights++] = light;` at approximately [:1979](mclib/camera.cpp) with the priority split:
+    ```cpp
+    if (mc2_spotlight_diag::is_e_slot(i, nullptr)) {
+        // (E') priority lift: SpotLight_-tagged POINT/SPOT survives FIFO 16-cap
+        activeLights[numActiveLights++] = light;
+        ++s_liftPriorityCount;
+    } else {
+        // Non-priority POINT/SPOT/non-TERRAIN: defer to post-loop flush
+        s_deferredNonPriority[numDeferred++] = light;
+    }
+    ```
+- After the main loop closing brace (line 1981 of current code), BEFORE the T0.1 probe emit block added in T0.1, add the deferred-flush:
   ```cpp
+  // (E') flush deferred non-priority POINT/SPOT into activeLights after
+  // all priority lights have been appended. FIFO truncation in
+  // GatherLightsParameters now reaches priority lights first.
   for (long j = 0; j < numDeferred && numActiveLights < MAX_LIGHTS_IN_WORLD; ++j) {
       activeLights[numActiveLights++] = s_deferredNonPriority[j];
   }
   ```
-- After the deferred-flush, wire the probe emit (first-hit always-on, summary env-gated per T0.1 scaffolding).
 
-**Include addition:** `#include "spotlight_diag.h"` at top of `camera.cpp` if not already present.
+**Include addition:** `#include "spotlight_diag.h"` at top of `camera.cpp` if not already present (T0.1 may have added it already).
 
 **Verification:** smoke mc2_10 with NO env vars:
-- `[SPOT_PRIORITY_LIFT v1] event=first_hit` fires once with priority≥4.
-- With `MC2_SPOT_LIFT_TRACE=1`: per-summary lines show `avg_priority` ~4-7 (matches T1.16 baseline).
+- `[SPOT_PRIORITY_LIFT v1] event=first_hit` fires once (wiring confirmation only — any priority > 0 counts; the gate is just "did the lift fire at all").
+- With `MC2_SPOT_LIFT_TRACE=1`: per-summary lines on mc2_10 show `avg_priority>=3.0` across the first 600-frame summary window (round-1 M4 threshold fix — matches T1.16 baseline of 5-7 active priority lights, with slack for actor-destroy `updateLights` calls during teardown that may see a smaller subset).
 - mc2_10 visual canary: mech/GV bodies show yellow contribution from their SpotLight_ children.
 
 **Commit:** `feat(spotlight-lift T1.1): priority-lift activeLights assembly in Camera::updateLights`
@@ -93,10 +144,10 @@ Per spec §3.4: tagging mechanism (`is_e_slot`) is already populated uncondition
 
 **Files:** none (validation gate)
 
-**Action:** USER-DRIVEN smoke per worktree CLAUDE.md "Smoke sessions are USER-DRIVEN":
-1. `set MC2_SPOT_LIFT_TRACE=1 && py -3 scripts\run_smoke.py --mission mc2_10 --duration 20 --keep-logs` → expect priority>=4 first-hit; mech/GV illumination visible
-2. `set MC2_SPOT_LIFT_TRACE=1 && py -3 scripts\run_smoke.py --mission mc2_05 --duration 20 --keep-logs` → expect priority>=2 (mc2_05 has building lamps); ground illumination near lamps visible
-3. `set MC2_SPOT_LIFT_TRACE=1 && py -3 scripts\run_smoke.py --mission mc2_24 --duration 20 --keep-logs` → Vedette/LRMC integrity check
+**Action:** USER-DRIVEN smoke per worktree CLAUDE.md "Smoke sessions are USER-DRIVEN". Round-1 M3 fix: absolute paths + 30s duration (worktree canonical):
+1. `set MC2_SPOT_LIFT_TRACE=1 && py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --mission mc2_10 --duration 30 --keep-logs` → expect `avg_priority>=3.0` first summary window; mech/GV illumination visible
+2. `set MC2_SPOT_LIFT_TRACE=1 && py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --mission mc2_05 --duration 30 --keep-logs` → expect `avg_priority>=1.0` (mc2_05 has building lamps); ground illumination near lamps visible
+3. `set MC2_SPOT_LIFT_TRACE=1 && py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --mission mc2_24 --duration 30 --keep-logs` → Vedette/LRMC integrity check
 
 NO `--kill-existing` (user kill-aware). Single mission per command (user discipline).
 
@@ -110,14 +161,42 @@ If any mission fails (crash, GL_DEBUG_HIGH abort, Vedette invisibility, priority
 
 ### T2.1 — Wire `mc2_spotlight_diag::reset()` + probe-statics reset to mission boundary (OQ6)
 
-**Files:** `mclib/spotlight_diag.cpp`, `mclib/camera.cpp` (probe-statics reset)
+**Files:** `mclib/camera.h` (declaration), `mclib/camera.cpp` (definition), `code/mission.cpp` (call sites)
+
+**Round-1 C1 fix — one concrete design (not the contradictory "spotlight_diag.cpp + camera.cpp" of plan v1):**
+
+Camera.cpp owns the `[SPOT_PRIORITY_LIFT v1]` probe statics (internal linkage). Add a free function `resetSpotlightLiftProbe()` in camera.cpp that resets those statics. Declare it in camera.h. Mission::destroy calls both `mc2_spotlight_diag::reset()` AND `resetSpotlightLiftProbe()` directly. `mclib/spotlight_diag.cpp` is NOT modified by T2.1.
+
+**Round-1 M2 fix — pinned teardown site:**
+
+Mission teardown is at [code/mission.cpp:3263](code/mission.cpp): `void Mission::destroy (bool initLogistics)`. Verified via grep at write-time. Also verify at plan-execute time whether there is a second teardown overload (e.g. saveload path); if so, mirror the reset calls.
 
 **Changes:**
-- Add a `mc2_spotlight_diag::reset_probe_statics()` exposing the camera.cpp file-scope statics through a setter (cleanest implementation: a single `void resetSpotlightLiftProbe()` in camera.cpp's namespace, exported via a tiny header).
-- Find mission-boundary teardown site. Per [memory/mission_load_inits_mirror_init_per_subsystem.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\mission_load_inits_mirror_init_per_subsystem.md), the canonical mission teardown is `Mission::destroy` or similar. Grep at plan-execute time to find exact line.
-- At mission teardown: call `mc2_spotlight_diag::reset()` + `resetSpotlightLiftProbe()`.
+- In `mclib/camera.cpp` (next to the lift-probe statics at file scope), add:
+  ```cpp
+  // Reset the [SPOT_PRIORITY_LIFT v1] probe state for a new mission.
+  // Called from Mission::destroy. Pairs with mc2_spotlight_diag::reset().
+  extern "C" void resetSpotlightLiftProbe() {
+      s_liftFirstHit = false;
+      s_liftFrames = 0;
+      s_liftWindowPriority = 0;
+      s_liftWindowDeferred = 0;
+  }
+  ```
+- In `mclib/camera.h`, add the declaration in the appropriate namespace/scope (or in a small new include block):
+  ```cpp
+  extern "C" void resetSpotlightLiftProbe();
+  ```
+- In `code/mission.cpp` at the start of `Mission::destroy` (line 3263), add:
+  ```cpp
+  // (E') reset diagnostic state — paired with the in-mission tag/probe
+  // population. Per spec OQ6 round-3 fix.
+  mc2_spotlight_diag::reset();
+  resetSpotlightLiftProbe();
+  ```
+- Add appropriate `#include` for `spotlight_diag.h` and `camera.h` in mission.cpp if not present.
 
-**Verification:** smoke two-mission sequence (load mc2_10, then mc2_05) with `MC2_SPOT_LIFT_TRACE=1`. Expect `event=first_hit` to fire ONCE per mission (not just on first mission of session).
+**Verification:** smoke two-mission sequence (load mc2_10, then mc2_05) with `MC2_SPOT_LIFT_TRACE=1`. Expect `event=first_hit` to fire ONCE per mission (not just on first mission of session). Inspect ring_trace.log for two distinct first-hit lines.
 
 **Commit:** `feat(spotlight-lift T2.1): wire reset() to mission boundary — OQ6 fix`
 
@@ -142,9 +221,12 @@ If any mission fails (crash, GL_DEBUG_HIGH abort, Vedette invisibility, priority
 
 ## Total implementation scope
 
-- **Files modified:** `mclib/camera.cpp` (one function modified + probe block).
-- **Optional cleanup file**: `mclib/spotlight_diag.cpp` (add `reset_probe_statics` shim or similar; T2.1).
-- **Total LOC:** ~55 in `camera.cpp` (T0.1+T1.1) + ~10 in spotlight_diag/mission-teardown (T2.1) = ~65 LOC.
+- **Files modified:**
+  - `mclib/camera.cpp` (T0.1 probe scaffolding + T1.1 priority-lift body + T2.1 reset function)
+  - `mclib/camera.h` (T2.1 `resetSpotlightLiftProbe()` declaration)
+  - `code/mission.cpp` (T2.1 reset calls at `Mission::destroy:3263`)
+- **NOT modified:** `mclib/spotlight_diag.cpp` (round-1 C1 fix — corrected from plan v1)
+- **Total LOC:** ~55 in `camera.cpp` (T0.1+T1.1+T2.1 function) + ~2 in `camera.h` + ~5 in `mission.cpp` = ~62 LOC.
 - **No shader changes. No SSBO layout changes. No new TU. No accessor signature changes. No header layout changes (no `--clean-first` required).**
 
 ## Cross-references
