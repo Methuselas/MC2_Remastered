@@ -14,9 +14,22 @@ A function in `mclib/mlr/` is a "work-leaf" if its body satisfies ANY of:
 - Reads `worldToClipMatrix` directly
 - Reads `cameraToClip` directly (the F3 attribution `cameraToClip(2,2)` pattern)
 - Calls `TransformAndClip` (the primitive-level clip operation)
-- Calls `sorter->AddPrimitive` or `sorter->DrawPrimitive` (sorter accumulation)
+- Calls `sorter->AddPrimitive`, `sorter->DrawPrimitive`, `sorter->AddEffect`,
+  or `sorter->AddScreenQuads` (the four sorter-accumulation entry points;
+  full set per `mlrsorter.hpp:117-119`)
 - Reads any per-frame projection-derived data (`worldToCameraMatrix`,
   `farClipReciprocal`, etc.)
+
+**(v4 round-3 review fold-in):** v3 criteria list was missing
+`sorter->AddEffect` and `sorter->AddScreenQuads`. Adversarial review
+found the cloud `Draw` implementations (`mlrcardcloud.cpp:158`,
+`mlrtrianglecloud.cpp:131`, `mlrlinecloud.cpp:98`, etc.) call
+`sorter->AddEffect`. These are structurally guarded by
+`MLRClipper::DrawEffect` being gated (cloud Draws are reached ONLY via
+`DrawEffect → dInfo->effect->Draw`); no new gate site required. The
+criteria are completed for predicate-completeness rather than to add
+gates. `AddScreenQuads` is called only from `MLRClipper::DrawScreenQuads
+:745`, also structurally guarded.
 
 ## 2. Inventory
 
@@ -39,7 +52,9 @@ bodies live in 4 places:
 
 | Function | Defn line | Notes |
 |---|---|---|
-| `MLRSorter::RenderNow` (or analog) | `:239`+ | Reads `farClipReciprocal`; calls `TransformAndClip` at `:325, :395`. **NOT a work-leaf for gating purposes** — runs over the sorter's accumulated TBDPs; if the front-door leaves accumulate nothing, this loop iterates over zero. Structurally guarded by §2.1 gating. |
+| `MLRSortByOrder::RenderNow` | `:227` (reads `farClipReciprocal` `:239`; `TransformAndClip` `:325, :395`) | **NOT a work-leaf for gating purposes** — runs over the sorter's accumulated TBDPs; if the front-door leaves accumulate nothing, this loop iterates over zero. Structurally guarded by §2.1 gating. |
+| `MLRSortByOrder::AddEffect` | `:125` | Sorter-accumulation entry; called ONLY from cloud `Draw` (`mlr*cloud.cpp`) which are reached only via gated `MLRClipper::DrawEffect`. Structurally guarded. |
+| `MLRSortByOrder::AddScreenQuads` | `:185` | Sorter-accumulation entry; called ONLY from gated `MLRClipper::DrawScreenQuads :745`. Structurally guarded. |
 
 ### 2.3 `MLREffect::Draw` virtual chain — per-effect Draw implementations
 
@@ -241,7 +256,8 @@ for leaf in $LEAVES; do
 done
 
 # Defense: detect new MLR functions reading projection state that aren't in LEAVES.
-NEW=$(grep -rEn 'worldToClipMatrix|TransformAndClip|sorter->(AddPrimitive|DrawPrimitive)' \
+# (v4: predicate completed to include AddEffect / AddScreenQuads per §1.)
+NEW=$(grep -rEn 'worldToClipMatrix|TransformAndClip|sorter->(AddPrimitive|DrawPrimitive|AddEffect|AddScreenQuads)' \
     mclib/mlr/*.cpp \
     | grep -v 'mlrclipper.cpp' \
     | grep -v 'mlrsortbyorder.cpp' \
@@ -281,3 +297,24 @@ unless explicitly whitelisted, forcing a deliberate audit-update decision.
 - All 4 leaves are simple early-return safe (no STOP condition from §5).
 - Compile-time enumeration mechanism chosen: shell check script (Option B).
 - v3 plan rewrite owns A1 §2.3 / §2.7 fold-in of this audit.
+
+## 10. Round-3 review fold-in (v4 deltas)
+
+Inline adversarial review of v3 produced 0 CRITICAL, 1 MAJOR, 2 MINOR:
+
+- **MAJOR (predicate completeness):** v3 §1 criteria list missing
+  `sorter->AddEffect` / `sorter->AddScreenQuads`. No new gate site
+  required (both structurally guarded by §2.1 leaves) but criteria
+  list and CI script predicate were both completed for correctness.
+  Folded into §1 + §2.2 (RenderNow row plus two new rows) + §7 script
+  outline (predicate completed).
+- **MINOR (citation drift):** v3 §2.2 said `MLRSorter::RenderNow (or
+  analog) :239+`. Actual: `MLRSortByOrder::RenderNow` at `:227`
+  (`:239` is the inner `farClipReciprocal` read). Folded into §2.2.
+- **MINOR (layer smell):** `MC2_DISABLE_GOSFX`-named gate plumbing
+  lives inside `mclib/mlr/`. Semantic mismatch (mlr is below gosFX in
+  the layer cake). A4 retires both trees simultaneously, so this is
+  cosmetic at worst. NOT folded — accepted as transitional.
+
+Round 3 verdict: PASS (≤2 MAJOR mechanical, 0 CRITICAL).
+**Executor-ready.**
