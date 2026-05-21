@@ -221,31 +221,13 @@ User decisions captured below. These were the scoping calls needed before plan-p
 3. **Tube / contrails — NO CARVE-OUT.** Clean delete. `Tube` (contrails) goes with the rest of gosFX in Stage 3. No stand-alone GPU contrail path before (B) lands. Accept the contrail visual gap during the transitional period.
 4. **F3 telemetry — CONCURRENT, NOT GATED.** Stage 0 of this slice runs concurrently with the F3 cost-baseline work (`docs/superpowers/specs/2026-05-20-cpu-projection-cost-baseline-design.md`). F3 doesn't gate the retirement decision (the schema-coupling axis already settles it), but its data informs the post-retirement perf claim. The two specs are independent in execution order.
 
-### 5.0 Cross-slice opportunity — Light absorption (added 2026-05-20)
+### 5.0 Cross-slice note — Light retirement is (C), independent of (B)
 
-A parallel recon ([docs/superpowers/explorations/2026-05-20-per-object-cull-gpu-recon.md](docs/superpowers/explorations/2026-05-20-per-object-cull-gpu-recon.md)) found that the MC2 `Light` class ([code/light.h:76](code/light.h), implementation [code/light.cpp](code/light.cpp)) is **shape-identical to a gosFX CardCloud particle**:
+The MC2 `Light : public GameObject` class ([code/light.h:76](code/light.h)) is a cosmetic 2D alpha-billboard sprite — NOT an illumination contributor. Real lighting is `TG_Light` via `eye->addWorldLight()` ([mclib/camera.h:769](mclib/camera.h)), used by `bdactor.cpp:1939`, `mech3d.cpp:3343`, `weaponbolt.cpp:1262`, and already ships.
 
-- Pool-allocated, dynamically spawned ([code/objmgr.cpp:985](code/objmgr.cpp))
-- Animated 2D billboard rendered via `VFXAppearance::render` reading `screenPos.x/y` ([code/actor.cpp:379](code/actor.cpp))
-- Position stable once spawned ([code/light.cpp:112-113](code/light.cpp))
-- Texture frame sequence ([code/actor.cpp:367](code/actor.cpp) `actorStateData`)
-- Expire on lifespan/animation end (`oneShotFlag`)
-- Pays ~950 `projectForObjectAdmission` calls/frame in F3 baseline as a side effect of being a `GameObject`
+**User architectural call 2026-05-20:** delete `Light : public GameObject` entirely (the "shitty ugly light projection thing"). Filed as a separate retirement spec: [docs/superpowers/specs/2026-05-20-light-gameobject-retirement-design.md](2026-05-20-light-gameobject-retirement-design.md). This retirement is **independent of (B)** — (B) does NOT need to absorb Light's content. Just deletion + acceptance of the ambient-glow visual gap, same shape as (A) accepts the particle visual gap.
 
-**Implication for (B) GPU particle pipeline.** (B) should be scoped to absorb `Light` as a content category, not just replace gosFX. Required (B) capabilities for absorption:
-- Texture frame-sequence animation per particle (gosFX CardCloud already has; trivial)
-- Per-particle terrain-light color sampling (NEW for (B); either per-particle SSBO field updated CPU-side at emit, or GPU compute pass sampling terrain light map)
-- Depth-fixup attribute per particle ([code/light.cpp:25](code/light.cpp) `LIGHT_DEPTH_FIXUP = -500`; single float per particle)
-- Content-side: route `LightType` `.fit` data into the (B) effect-spec loader, analogous to gosFX `mc2.fx`
-
-If (B) absorbs Light:
-- `code/light.cpp`, `code/light.h` retire to stubs / deletion
-- `LightType` retires
-- The 950/frame `projectForObjectAdmission` calls vanish as a side effect (substitutive)
-- GameObject `numLights` pool reclaimed
-- Removes a parallel 2D-billboard-effect system; MC2 has just one effect pipeline
-
-**If (B) does NOT absorb Light:** Light keeps its own infrastructure. The per-object cull recon's L1+L2 transitional fixes (cache + block-cull) become a separate slice. Architectural debt persists. Surface to (B) session per the recon's §7 recommendation.
+**Implication for (B) session:** ignore prior guidance about absorbing Light. (B)'s scope is gosFX replacement only; do not extend (B) to cover per-particle terrain-light, depth-fixup, or LightType `.fit` loading. (C) handles the Light problem by deletion, not migration.
 
 ### 5.1 Implications for plan-phase
 

@@ -1,9 +1,9 @@
 # Per-Object Cull GPU-Side — Recon (v2, REVISED)
 
-- **Status:** RECON — verdict reached, no plan written
+- **Status:** RECON — SUPERSEDED by [(C) Light retirement spec](../specs/2026-05-20-light-gameobject-retirement-design.md). User architectural call 2026-05-20: rip Light out entirely; real lighting (`TG_Light`) already ships independently. The L1/L2/L3 layered analysis below is retained for arc context but the recommendation is OBSOLETE.
 - **Date:** 2026-05-20
 - **Worktree:** `claude/nifty-mendeleev`
-- **Verdict:** Three layered meta-fixes (L1 transitional, L2 transitional, L3 architectural). L3 is the META-META fix the user prompted for. **DO NOT** treat as Stage 0.5 §4 by another name — that framing was wrong (v1 of this recon, retracted).
+- **Original verdict (now superseded):** Three layered meta-fixes (L1 transitional, L2 transitional, L3 architectural). L3 was the META-META the recon converged on. **The actual architectural call went one level higher — delete `Light` entirely; "real lighting" is `TG_Light` which already exists.** See (C) spec.
 - **v1 retraction note:** the first pass hypothesized lights were SSBO illumination contributors with sphere-of-influence shape. **Wrong.** Grep of [code/actor.cpp:361-413](code/actor.cpp) (VFXAppearance::render) shows lights are 2D animated billboard sprites that read `screenPos.x, screenPos.y` for placement (line 379). They DO need projection output, not sphere-frustum admission. The v1 DEFER recommendation rested on a false premise; revised analysis below.
 - **All file:line citations grep-verified at write time.**
 
