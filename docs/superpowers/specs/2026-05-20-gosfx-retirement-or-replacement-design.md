@@ -221,6 +221,32 @@ User decisions captured below. These were the scoping calls needed before plan-p
 3. **Tube / contrails — NO CARVE-OUT.** Clean delete. `Tube` (contrails) goes with the rest of gosFX in Stage 3. No stand-alone GPU contrail path before (B) lands. Accept the contrail visual gap during the transitional period.
 4. **F3 telemetry — CONCURRENT, NOT GATED.** Stage 0 of this slice runs concurrently with the F3 cost-baseline work (`docs/superpowers/specs/2026-05-20-cpu-projection-cost-baseline-design.md`). F3 doesn't gate the retirement decision (the schema-coupling axis already settles it), but its data informs the post-retirement perf claim. The two specs are independent in execution order.
 
+### 5.0 Cross-slice opportunity — Light absorption (added 2026-05-20)
+
+A parallel recon ([docs/superpowers/explorations/2026-05-20-per-object-cull-gpu-recon.md](docs/superpowers/explorations/2026-05-20-per-object-cull-gpu-recon.md)) found that the MC2 `Light` class ([code/light.h:76](code/light.h), implementation [code/light.cpp](code/light.cpp)) is **shape-identical to a gosFX CardCloud particle**:
+
+- Pool-allocated, dynamically spawned ([code/objmgr.cpp:985](code/objmgr.cpp))
+- Animated 2D billboard rendered via `VFXAppearance::render` reading `screenPos.x/y` ([code/actor.cpp:379](code/actor.cpp))
+- Position stable once spawned ([code/light.cpp:112-113](code/light.cpp))
+- Texture frame sequence ([code/actor.cpp:367](code/actor.cpp) `actorStateData`)
+- Expire on lifespan/animation end (`oneShotFlag`)
+- Pays ~950 `projectForObjectAdmission` calls/frame in F3 baseline as a side effect of being a `GameObject`
+
+**Implication for (B) GPU particle pipeline.** (B) should be scoped to absorb `Light` as a content category, not just replace gosFX. Required (B) capabilities for absorption:
+- Texture frame-sequence animation per particle (gosFX CardCloud already has; trivial)
+- Per-particle terrain-light color sampling (NEW for (B); either per-particle SSBO field updated CPU-side at emit, or GPU compute pass sampling terrain light map)
+- Depth-fixup attribute per particle ([code/light.cpp:25](code/light.cpp) `LIGHT_DEPTH_FIXUP = -500`; single float per particle)
+- Content-side: route `LightType` `.fit` data into the (B) effect-spec loader, analogous to gosFX `mc2.fx`
+
+If (B) absorbs Light:
+- `code/light.cpp`, `code/light.h` retire to stubs / deletion
+- `LightType` retires
+- The 950/frame `projectForObjectAdmission` calls vanish as a side effect (substitutive)
+- GameObject `numLights` pool reclaimed
+- Removes a parallel 2D-billboard-effect system; MC2 has just one effect pipeline
+
+**If (B) does NOT absorb Light:** Light keeps its own infrastructure. The per-object cull recon's L1+L2 transitional fixes (cache + block-cull) become a separate slice. Architectural debt persists. Surface to (B) session per the recon's §7 recommendation.
+
 ### 5.1 Implications for plan-phase
 
 - **Stage 4 deletion is final.** `mc2srcdata/effects/mc2.fx` stays on disk (the (B) work surface needs it as the spec library); `mclib/gosfx/` and `mclib/mlr/` are removed from the runtime exe build only — CMake must scope linkage to editor / Viewer / `aseconv` targets explicitly.
