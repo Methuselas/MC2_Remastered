@@ -1,200 +1,306 @@
-# Per-Shape Light-Pack Scored Selection — Design Spec
+# Per-Shape Light-Pack SpotLight_ Priority Lift — Design Spec
 
-- **Status:** DRAFT — ready for adversarial review
+- **Status:** DRAFT v2 — addresses round-1 adversarial review (3 CRITICALs + 5 MAJORs)
 - **Date:** 2026-05-21
 - **Worktree:** `claude/nifty-mendeleev`
 - **Slice ID:** (E') — extends (E) SpotLight_ real illumination; in (E)'s scope per greybeard ruling
-- **Companion specs:**
-  - [(E) SpotLight_ retirement](2026-05-20-spotlight-real-illumination-design.md) — shipped Stages 0-3; this spec finishes the user-visible promise
-  - (F) terrain lighting saturation — separate, orthogonal slice (lighting MODEL not data flow)
-- **Greybeard verdict:** META-FIX, in (E)'s scope. Deferring would be the canonical additive-slice anti-pattern.
+- **Round-1 review verdict:** BLOCKING-CRITICAL (3 CRITICALs found). v1 was rewritten ground-up; this is v2.
+- **Companion specs:** [(E) SpotLight_ retirement](2026-05-20-spotlight-real-illumination-design.md); (F) terrain lighting saturation (separate, orthogonal).
 - **All file:line citations grep-verified at write time against `.claude/worktrees/nifty-mendeleev/`.**
 
 ---
 
-## 1. The bug class (T1.16 evidence)
+## 1. What v1 got wrong (record so future readers don't repeat)
 
-(E) Stages 0-3 retire cone billboards and register real `TG_Light` instances via `addWorldLight`. Diagnostic T1.16 confirmed:
+Round-1 adversarial review found 3 CRITICALs that made v1 unimplementable:
 
-- Registration works: 4 bldg + 19 mech + 31 GV lights registered into `worldLights[]` at slots 4, 6, 15, 17 (bldg) and 18-67 (mech + GV). Zero pool overflows.
-- Camera gate (`projectForLightingShadow` at [mclib/camera.cpp:1935](mclib/camera.cpp)) correctly admits in-camera-zone slots — slot=36 mech and GV cluster 45/56-59 are 100% active in summary windows.
-- BUT user-visible: mechs/GVs in mc2_10's intro DON'T visibly illuminate, even when their slots are `active=1`.
+**C1 (v1) — `s_listOfLights[]` index space conflation.** v1 said "(E)'s lights at slots 18-67 are above the 16-cap." Wrong. `s_listOfLights[]` is the pointer to `eye->worldLights[]` set via [tgl.cpp:1655 `TG_Shape::SetLightList`](mclib/tgl.cpp). It carries the WHOLE world pool. FIFO walks all of it, breaks after 16 ACTIVE-pass-throughs in pool-iteration-order. The truncation IS real — but the cause is "first 16 active win in iteration order," not "slot index above cap."
 
-Adversarial + greybeard parallel reviews converged on:
+**C2 (v1) — Caller survey missed 5+ sites + had false citations.** Round-1 reviewer ran a clean grep and found:
+- `txmmgr.cpp:1338` and `txmmgr.cpp:1347` (LIGHTBRIDGE template path — both hit and miss invoke `GatherLightsParameters`)
+- `mech3d.cpp:4636` (`mechShape->CacheGpuLightData()`)
+- `genactor.cpp:1225` (`genShape->CacheGpuLightData()`)
+- `gos_static_prop_batcher.cpp:2644` (fallback `firstShapeNodeLeaf->GatherGpuObjectLightDataOnly()`)
+- `bdactor.cpp:1897` and `:1904` (`shape->CacheGpuLightData()` — bldg static D2/MISS paths)
+- v1's `gvactor.cpp` CacheGpuLightData citation was FICTIONAL — GVs only call `SetLightList`, not `CacheGpuLightData`. GVs reach the gather via the batcher fallback at `gos_static_prop_batcher.cpp:2644`.
 
-**`GatherLightsParameters` at [mclib/txmmgr.cpp:1561-1720](mclib/txmmgr.cpp) is FIFO with a 16-slot cap. No scoring.** It walks `s_listOfLights[0..1023]` linearly and breaks on `num_lights == MAX_HW_LIGHTS_IN_WORLD (16)`. World-level base lights (AMBIENT, INFINITE, TERRAIN, weapon-bolt POINTs) occupy slots 0..17. (E)'s POINT lights register LATER at slots 18-67, beyond where the FIFO walk truncates.
+**C3 (v1) — LIGHTBRIDGE template-cache regression.** v1's per-actor scored selection would have broken the FNV+memcmp template dedup at [txmmgr.cpp:1342-1357](mclib/txmmgr.cpp). The template key `sceneLightTemplateKey(actorLightSource)` does NOT currently include actor position. Per-actor scoring would force position into the key → unique-per-actor templates → cache hit rate → 0 → undoing the 8.5ms→0.4ms `addLightDataStructure` optimization landed in commit `996aff4`. v1 claimed "perf-neutral, ~20µs"; reality would have been an ~8ms regression.
 
-**Buildings glow** because their slots (4/6/15/17) are below the 16-cap → survive FIFO → reach shader → visible yellow.
+Plus 5 MAJORs: tgl.cpp:1968 CPU vertex lighting also FIFOs `s_listOfLights[]` (divergent CPU/GPU if only one is fixed); frame ordering bug for moving mechs; K1=4 partition starves weapon-bolt POINTs; missing `std::partial_sort` specification; `light->active` filter re-introduces the camera-gate bug.
 
-**Mechs/GVs don't glow** because their slots (18-67) are above the 16-cap → truncated → never reach shader.
+## 2. Correct symptom→cause framing
 
-The bug class: **per-actor finite-range light truncated by first-N-active selection.** This applies not just to (E)'s SpotLight_ lights — any future per-actor dynamic light (muzzle flash, weapon impact, explosion glow) hits the same wall.
+### What the data actually shows
 
-## 2. Three approaches
+T1.16 diagnostic on mc2_10: of the 54 (E)-owned slots in `worldLights[]`, only ~12-15% land `active=true` in `Camera::updateLights` summary windows. The 86%+ that fail are positionally-distant from the camera frustum. **Within active=true slots**, mc2_10 intro shows mech/GV bodies visibly NOT illuminating despite slot=36 mech and GV cluster 45/56-59 being in active state.
 
-### (α) Scored per-shape selection (RECOMMENDED)
+### The real bug class
 
-Replace `GatherLightsParameters`'s FIFO with a partitioned scored selection:
+`GatherLightsParameters` at [txmmgr.cpp:1561](mclib/txmmgr.cpp) walks `s_listOfLights[0..s_numLights-1]` (which equals `worldLights[0..numLights-1]`) and accumulates lights with `active==true` into the per-shape `TG_HWLightsData`. The walk breaks at the first 16 active-pass-throughs. **Selection criterion: pool iteration order × active-flag.** No relevance scoring, no priority, no shape-position awareness.
 
-1. **Always-in partition** (cheap, world-global): AMBIENT, INFINITE, INFINITE_WITH_FALLOFF. These are scene-wide; include unconditionally up to a soft cap (typically 1-4 such lights total in stock content).
-2. **Finite-range partition** (POINT, SPOT, TERRAIN): Score each by distance-to-actor against `farDistance`. Include nearest-K up to the remaining slot count.
+When `s_listOfLights[]` contains a mix of base-scene lights (AMBIENT slot 1, INFINITE slot 0, weapon-bolt POINTs at slots 2-N) plus (E)'s SpotLight_ POINTs (registered after via `addWorldLight`), the iteration-order is registration-order. (E)'s lights register at world-pool indices 18-67 because (E)'s `addWorldLight` happens during per-frame `Mech3DAppearance::update` / `GVAppearance::update` AFTER the scene's base lights at slots 0-17. So they appear at the END of the iteration order.
 
-**Selection function signature:**
+For shapes near (E) lights, the FIFO consumes its 16-slot budget on the EARLIER base-scene lights and never reaches the (E) spotlights, despite them being more relevant to the shape's local illumination.
+
+### Why the fix is "priority lift," not "scored selection"
+
+The data shows ~5-7 SpotLight_ POINTs active per frame in mc2_10's camera zone (T1.16 summary windows). All comfortably fit within the 16-cap if they're at the FRONT of the iteration order. Reordering `s_listOfLights[]` so SpotLight_-tagged POINTs come FIRST is sufficient to ensure they always survive truncation.
+
+This preserves:
+- LIGHTBRIDGE template hit rate (the reordered list is scene-state-dependent, not per-actor)
+- `addLightDataStructure` dedup (every shape sees the same prefix-ordered list → same `TG_HWLightsData` for shapes with same active set)
+- Per-shape CPU cost (no per-shape sort)
+
+And accepts the limitation:
+- All shapes get ALL active SpotLight_ POINTs, not the K-nearest. With 5-7 spotlights total and 16-slot cap, irrelevant spotlights still "fit." Bandwidth-wise: those spotlights contribute zero to shapes outside their `farDistance` (the shader's `GetFalloff` returns 0 → no visual artifact, just wasted slots).
+- If/when content grows beyond ~12 simultaneously-active SpotLight_ POINTs, this approach starts truncating spotlights again. At that point we need scored selection (or clustered lighting). This is a future (F)-class problem with content-driven trigger; not a v1 concern.
+
+## 3. Proposed META-FIX: SpotLight_ priority-front-insertion at SetLightList
+
+### 3.1 Architectural shape
+
+Modify `TG_Shape::SetLightList(TG_LightPtr* lightList, DWORD nLights)` at [mclib/tgl.cpp:1655](mclib/tgl.cpp) (or its callers — see §3.2 for the exact insertion site decision) to produce a reordered light list with SpotLight_-tagged POINT lights at the front, before any other POINT/SPOT/TERRAIN lights.
+
+Stable ordering principle: **lights of higher priority class appear before lights of lower priority class.** Within a class, original iteration order preserved.
+
+Priority classes (highest first):
+1. **AMBIENT, INFINITE** — scene-global; always-active; cheap.
+2. **SpotLight_-tagged POINT/SPOT** — (E)-registered or anubis-class actor-attached lights. Tagged by [mclib/spotlight_diag.h](mclib/spotlight_diag.h) `is_e_slot()` (already exists from T1.16 instrumentation).
+3. **Other POINT/SPOT/TERRAIN** — weapon-bolt POINTs, per-building terrain ambients, anubis searchlight (TG_LIGHT_SPOT), unclassified.
+
+The FIFO walk in `GatherLightsParameters` reaches class 1 first (always packed; budget ~2-4 slots), then class 2 (packed within the remaining 12-14 slots; in stock content fits comfortably), then class 3 fills remaining slots if any.
+
+### 3.2 Where the reorder happens — decision
+
+Two candidate sites:
+
+**Option A: at `Camera::updateLights`** ([mclib/camera.cpp:1871](mclib/camera.cpp)) — after the active-flag pass, rebuild `worldLights[]` to put SpotLight_ tagged slots first. Affects EVERY caller of `eye->getWorldLights()` (via SetLightList plumbing). Single touchpoint.
+
+**Option B: at each `SetLightList` call site** — every caller (15 sites per §3.3) builds its own reordered list before calling `SetLightList`. More duplication; allows per-actor reorder policies if ever needed (currently no).
+
+**Recommendation: Option A.** Single touchpoint, no caller changes. Reordered `worldLights[]` flows naturally to every consumer.
+
+### 3.3 Full caller survey (grep-verified, 2026-05-21)
+
+`SetLightList(eye->getWorldLights(), eye->getNumLights())` callers — 15 sites:
+
+| File | Line | Caller context | Affected? |
+|---|---|---|---|
+| `mclib/bdactor.cpp` | 2291 | `BldgAppearance::update` → bldgShape | YES (reordered list propagates) |
+| `mclib/bdactor.cpp` | 2383 | `BldgAppearance::update` → bldgShadowShape | YES |
+| `mclib/bdactor.cpp` | 4552 | `TreeAppearance::update` → treeShape | YES |
+| `mclib/bdactor.cpp` | 4606 | `TreeAppearance::update` → treeShadowShape | YES |
+| `mclib/genactor.cpp` | 1207 | `GenericAppearance::render` → `SetLightList(NULL, 0)` zaps | NEUTRAL (no list) |
+| `mclib/gvactor.cpp` | 2530 | `GVAppearance::update` → gvShadowShape | YES |
+| `mclib/gvactor.cpp` | 2541 | `GVAppearance::update` → gvShape | YES |
+| `mclib/gvactor.cpp` | 2828 | sensorTriangleShape | YES |
+| `mclib/gvactor.cpp` | 2834 | sensorCircleShape | YES |
+| `mclib/mech3d.cpp` | 3551 | `Mech3DAppearance::updateGeometry` → mechShadowShape | YES |
+| `mclib/mech3d.cpp` | 3587 | `Mech3DAppearance::updateGeometry` → mechShape | YES |
+| `mclib/mech3d.cpp` | 3827 | sensorTriangleShape | YES |
+| `mclib/mech3d.cpp` | 3833 | sensorSquareShape | YES |
+| `mclib/mech3d.cpp` | 4715 | leftArm | YES |
+| `mclib/mech3d.cpp` | 4799 | rightArm | YES |
+
+Per Option A, ZERO of these sites need code change. They consume `eye->getWorldLights()` which transparently returns the reordered list after this slice lands.
+
+### 3.4 GatherLightsParameters / CacheGpuLightData / GatherGpuObjectLightDataOnly call sites
+
+For completeness (these are the downstream consumers of the reordered list — NO change needed per Option A):
+
+| File | Line | Caller |
+|---|---|---|
+| `mclib/txmmgr.cpp` | 1338 | LIGHTBRIDGE no-actor-light passthrough |
+| `mclib/txmmgr.cpp` | 1347 | LIGHTBRIDGE template-MISS path |
+| `mclib/tgl.cpp` | 2644 | `GatherGpuObjectLightDataOnly` → `GatherLightsParameters` |
+| `mclib/msl.cpp` | 1924 | `TG_MultiShape::CacheGpuLightData` → first SHAPE_NODE leaf → `GatherGpuObjectLightDataOnly` |
+| `mclib/bdactor.cpp` | 1897 | `mc2CacheOrBakeStaticGpuLight` D2 legacy `shape->CacheGpuLightData()` |
+| `mclib/bdactor.cpp` | 1904 | `mc2CacheOrBakeStaticGpuLight` static MISS `shape->CacheGpuLightData()` |
+| `mclib/genactor.cpp` | 1225 | `GenericAppearance::render` `genShape->CacheGpuLightData()` |
+| `mclib/mech3d.cpp` | 4636 | `Mech3DAppearance::render` `mechShape->CacheGpuLightData()` |
+| `GameOS/gameos/gos_static_prop_batcher.cpp` | 2644 | batcher fallback `firstShapeNodeLeaf->GatherGpuObjectLightDataOnly()` (used by GVs and bldg static fallback path) |
+
+These all consume the FIFO order of `s_listOfLights[]` after the priority lift, so they automatically get the desired behavior. **The fix is in ONE function, with a small data structure on the camera side.**
+
+### 3.5 LIGHTBRIDGE template-cache audit (response to C3)
+
+The template key at [txmmgr.cpp:1018-1019](mclib/txmmgr.cpp) `sceneLightTemplateKey` is `FNV1A(actorLightSource, ...)`. It does NOT include actor position. After the priority lift:
+- `s_listOfLights[]` ordering changes once per frame (when `Camera::updateLights` runs)
+- All shapes within a frame see the SAME reordered list
+- All shapes that compute the same template key still hit the same template entry
+- Cache hit rate UNCHANGED
+
+The reordered list might mean different lights are at slots 0-15 than before. The `TG_HWLightsData` contents differ from the pre-(E') world, but they're consistent across same-template shapes within a frame.
+
+**No template-cache regression.** This is the key correctness property of Option A.
+
+### 3.6 `addLightDataStructure` dedup audit
+
+The downstream dedup at [txmmgr.cpp:1283-1322](mclib/txmmgr.cpp) `addLightDataStructure` FNV+memcmps the full `TG_HWLightsData`. After the priority lift:
+- Shapes with the same template key get the same `TG_HWLightsData` content
+- The FNV+memcmp dedup map hits as before
+- Worst-case "200 unique entries" feared in v1 doesn't materialize because per-actor variability is gone
+
+**No dedup regression.** Confirmed.
+
+### 3.7 CPU vertex lighting path (response to MAJOR M2)
+
+[mclib/tgl.cpp:1968](mclib/tgl.cpp) and adjacent CPU vertex-lighting loops also FIFO `s_listOfLights[]`. After Option A:
+- Same `s_listOfLights[]` is reordered upstream at `Camera::updateLights`
+- CPU vertex lighting automatically benefits from the priority lift
+- No GPU/CPU lighting divergence introduced
+
+The CPU and GPU paths produce the same SpotLight_ contribution for the same shapes. This was M2 in round-1; addressed by virtue of using a shared-data fix instead of a per-call-site fix.
+
+### 3.8 Frame ordering (response to MAJOR M3)
+
+`Camera::updateLights` runs once per frame, BEFORE `Mech3DAppearance::update`/`GVAppearance::update`/`BldgAppearance::update` call `SetLightList`. So:
+- T0: Camera::updateLights runs → `worldLights[]` reordered + active flags set
+- T1..TN: Actor updates run → each calls `SetLightList(eye->getWorldLights(), ...)` → sees reordered list
+
+The (E) lights set position INSIDE the actor update via `SetPosition`. But the priority lift is a CLASS-MEMBERSHIP test (`is_e_slot()`), not position-dependent. The reorder result doesn't change frame-to-frame for any given set of registered slots. Position updates within the same frame don't invalidate the ordering.
+
+**No frame-ordering bug.** M3 addressed.
+
+### 3.9 Weapon-bolt and other POINTs (response to MAJOR M4)
+
+Weapon-bolt POINTs at [code/weaponbolt.cpp:1262](code/weaponbolt.cpp) registered via `addWorldLight` get classified as "Other POINT/SPOT" (class 3, NOT class 2 SpotLight_-tagged). They appear after class 1+2 in the reordered list. In a busy combat frame with many weapon-bolts, they fill remaining slots after SpotLight_.
+
+Acceptable: weapon-bolt POINTs are typically transient (a few frames per bolt), highly localized (small radius), and don't need globally-priority status. SpotLight_-tagged lights are persistent and represent the (E)-design-intent of "this is a deliberate scene light."
+
+If specific content needs weapon-bolt POINTs to take priority over SpotLight_, that's a content-design problem orthogonal to this slice; we'd extend the classification.
+
+### 3.10 `light->active` filter (response to MAJOR M5)
+
+The priority lift only reorders slots; it doesn't filter by `active`. The downstream FIFO still respects `active==true` for inclusion. So:
+- A SpotLight_ POINT with `active=false` (because `Camera::updateLights` rejected its world position) is at slot 0..M but skipped by FIFO walk
+- Next active SpotLight_ POINT at slot M+1 gets the slot
+- If all SpotLight_ are inactive, FIFO falls through to class 3 lights
+- Camera-gate bug is NOT re-introduced by the priority lift
+
+The original camera-gate symptom (mc2_10 mechs/GVs not illuminating despite active=1) is independently fixed by this slice because the relevant SpotLight_ at active=true slots now wins the FIFO that was previously consuming its budget on base-scene lights.
+
+For the 86%+ slots that are active=false due to the camera frustum point-test: those don't contribute regardless. That's the (F) clustered/widened-frustum-test problem; out of scope here.
+
+## 4. Greybeard 5-question ruling
+
+1. **Subsystem pin.** `worldLights[]` iteration order, as established by `Camera::updateLights` at [camera.cpp:1871](mclib/camera.cpp) and consumed via `s_listOfLights[]` by every `GatherLightsParameters` / CPU-vertex-lighting / template-cache call.
+
+2. **Symptom vs cause.** Symptom: mech/GV bodies don't illuminate despite (E) lights registered+active. Cause: FIFO truncation at 16-cap consumes its budget on base-scene lights that register first; (E)'s SpotLight_ POINTs register later and never reach the cap in iteration order.
+
+3. **The meta-fix.** Reorder `worldLights[]` at `Camera::updateLights` time to place SpotLight_-tagged POINTs ahead of generic POINT/SPOT/TERRAIN. The FIFO truncation reaches them within 16 by construction. Single function modified; no caller changes; LIGHTBRIDGE and dedup preserved.
+
+4. **Substitutive test.** Pre-existing T1.16 probe will see the 5-7 (E)-active SpotLight_ POINTs at the FRONT of `s_listOfLights[]` per frame. New visual canary on mc2_10 intro: mech/GV bodies show yellow contribution from their attached spotlights. New `[SPOTLIGHT_PRIORITY_LIFT v1]` summary: confirms reordering fires and that (E) slots survive FIFO walk for sample shapes.
+
+5. **Verdict.** **META-FIX**, single function, ~50 LOC + a sort function. Bug class retired: "later-registered SpotLight_ POINTs lose FIFO contest against earlier-registered base lights." Compatible with future scoring (just enrich the comparator). Compatible with future clustered (the reorder is a no-op when clustered lookup replaces FIFO).
+
+## 5. Implementation shape
+
+### 5.1 Code change (single function modification)
+
+In [mclib/camera.cpp:1871-1923](mclib/camera.cpp) `Camera::updateLights()`, AFTER the existing active-flag pass, add a final partition-sort step:
+
 ```cpp
-// In mclib/light_select.h (new TU)
-namespace mc2_light_select {
-    // Returns N actual indices into s_listOfLights[] selected for this actor.
-    // The decoupling point: now per-shape scored selection; later a clustered
-    // implementation swaps this function without changing the packer.
-    size_t select_lights_for_actor(
-        const Stuff::Vector3D& actorWorldPos,
-        TG_LightPtr* worldLights, size_t numWorldLights,
-        size_t maxOutCount,
-        size_t* outIndices  // capacity >= maxOutCount
-    );
-}
+// (E') priority lift: put SpotLight_-tagged POINTs ahead of generic
+// POINT/SPOT/TERRAIN within s_listOfLights iteration order, so the
+// FIFO walk in GatherLightsParameters reaches them within the
+// 16-slot cap before consuming budget on base-scene lights.
+// See docs/superpowers/specs/2026-05-21-spot-pack-scored-selection-design.md
+std::stable_partition(
+    /* worldLights[] from index 2 onward — preserve slots 0/1 for sun/ambient */,
+    /* end of populated range */,
+    [](TG_LightPtr l) -> bool {
+        // Priority class 2: SpotLight_-tagged. Class 1 (AMBIENT/INFINITE)
+        // is already at slots 0-1 by Camera construction (see camera.cpp:417/444).
+        return l && mc2_spotlight_diag::is_e_slot(slot_index_for(l), nullptr);
+    });
 ```
 
-The packer at `GatherLightsParameters` calls this once, gets indices, packs only those into `TG_HWLightsData`. Identical SSBO layout; identical shader; only the SELECTION logic changes.
+Two snags to resolve in plan-phase:
+- **Snag 1: `worldLights[]` is a `TG_LightPtr*` array; partition works on iterators, not array indices.** Use `std::stable_partition(&worldLights[2], &worldLights[2+populated_range], ...)`. `populated_range` is `numLights`-2 to skip the always-present sun (slot 0) and ambient (slot 1).
+- **Snag 2: `is_e_slot()` currently takes a slot index, not a `TG_LightPtr`.** After partition, slot indices SHIFT. Either: (a) iterate `worldLights[]` BEFORE partition, build a `set<TG_LightPtr>` of e-lights, then partition by membership in the set. (b) Reverse-lookup slot-from-pointer (linear scan: O(N²) overall — N=1024). Recommendation: (a) — one allocation per frame.
 
-**Cost (CPU):** O(num_world_lights × num_lit_shapes) per frame. With 1024 candidate slots × ~200 lit shapes per frame = 200K distance computations. At <100ns per float-subtract-and-compare, ~20µs total per frame. Below F3's 100µs CPU-projection budget. Negligible.
+### 5.2 Slot-index invariants — IMPORTANT correctness concern
 
-### (β) Flat bump 16 → 32 or 64
+T1.16's `[SPOT_DIAG v1] event=overwrite_first_seen` probe at [camera.cpp:1923](mclib/camera.cpp) tracks lights by `slot=<i>` where `i` is the index into `worldLights[]`. After this slice's reorder, the slot index for a given light changes between frames. Downstream code that uses slot index as a stable identifier across frames would break.
 
-Increase `MAX_HW_LIGHTS_IN_WORLD` shader-side. Doesn't fix the bug class (still FIFO; still truncates at whatever the new N is); just raises the truncation ceiling. Costs:
-- Per-vertex shader loop is N× more iterations — 4× cost increase at N=64
-- SSBO size per shape grows linearly — `TG_HWLightsData` from ~1.8KB at N=16 to ~7.2KB at N=64. With ~200 lit shapes per mission: ~1.4GB total SSBO at N=64. NOT viable.
+**Audit:** grep for stored `worldLights[]` indices across the codebase. Identified storage sites:
+- `BldgAppearance::lightId` (DWORD, stores `addWorldLight` return value)
+- `Mech3DAppearance::lightId` (anubis pointLight)
+- Similar fields on weapon-bolt and other actor types
+- `spotlightSlotIds_` vectors on BldgAppearance/Mech3DAppearance/GVAppearance (added by (E))
 
-**Rejected.** Doesn't address the bug class, AND blows out memory/perf.
+These all assume `worldLights[slotId] == storedLight` stays true across frames. **The reorder breaks this invariant unless we ALSO update stored slot indices on every reorder.**
 
-### (γ) Clustered forward+ / deferred lighting
+**Mitigation options:**
 
-Modern approach used by Unreal, Frostbite, idTech. Decompose screen into 3D clusters; compute shader builds per-cluster light list; fragment shader iterates only the cluster's lights. Scales to thousands of lights with bounded per-pixel cost.
+**M1: De-reference by pointer, not slot.** Replace `worldLights[slotId]` reads with stored `TG_LightPtr` direct reads. Slot index becomes informational only. `removeWorldLight` already takes `(slotNum, light)` and verifies `worldLights[slotNum] == light` — could verify by pointer alone, slot is redundant.
 
-**Out of scope for now.** MC2's scene scale (50-100 lights) doesn't justify the architectural complexity (compute pass, per-tile data, fragment shader rewrite, full pipeline rework). The (F) lighting MODEL rework may revisit this when the broader question of MC2's lighting becomes the topic. Currently filed as a future milestone.
+**M2: Do NOT physically reorder `worldLights[]`.** Instead, populate a SEPARATE `s_orderedLightView[]` that the SetLightList path consumes. The world pool indices stay stable; the iteration order varies. `eye->getWorldLights()` returns the ordered view; `worldLights[slotId]` still works for slot-based reads.
 
-**The selection function in (α) is the future-extension hook for (γ):** when MC2 eventually goes clustered, replace `select_lights_for_actor()` with a per-cluster light-list lookup; the packer downstream stays unchanged. Decoupling selection from packing is what makes the future-clustered transition cheap.
+**M3 (preferred per plan-phase recommendation): M2 — preserve `worldLights[]` index stability.**
 
-## 3. Greybeard ruling (verbatim from parallel subagent review)
+This makes the spec change more nuanced: the reorder is at the CONSUMPTION side (whatever `getWorldLights()` returns to `SetLightList` callers), NOT at the storage side. The storage `worldLights[]` array stays in registration order with stable slot indices. A second array `s_orderedLights[]` is computed each frame at `updateLights` time.
 
-**1. Subsystem pin.** `GatherLightsParameters` in [mclib/txmmgr.cpp:1561-1720](mclib/txmmgr.cpp) — the per-shape pack that copies `TG_Shape::s_listOfLights` into the per-shape `TG_HWLightsData` SSBO entry. The selection is first-N-active, NOT best-N-by-relevance. No distance scoring, no type-priority, no spatial cull.
+Cost: extra 1024-pointer copy per frame. Trivial.
 
-**2. Symptom vs cause.** Symptom: shader gets no contribution from (E) lights for mech/GV bodies. Cause: pack policy is first-active-16, ignoring spatial relevance of POINT/SPOT lights to the actor being packed.
+### 5.3 Spec proposes M3 as default
 
-**3. The meta-fix.** Replace `GatherLightsParameters`'s first-N-active selection with relevance-scored selection for finite-range lights. Partition: AMBIENT+INFINITE always-in, finite-range filled by distance-to-actor.
+**Updated proposal:**
+- Add `s_orderedLights[]` array (parallel to `worldLights[]`) maintained at `Camera::updateLights` time.
+- Populate it via stable partition: AMBIENT/INFINITE at front (slots 0-1 from `worldLights`), SpotLight_-tagged POINTs next, others last.
+- `getWorldLights()` returns the ordered view.
+- `worldLights[]` storage is unchanged; slot-by-index reads still work; T1.16 probe and lightId fields stay valid.
 
-**4. Substitutive test.** Per-frame probe over the per-shape pack output (`TG_HWLightsData` after `GatherLightsParameters`) shows `point_lights_packed >= 1` for mech/GV shapes with (E) registrations within range. Visual: mc2_10 intro shows visible illumination contribution from spotlights.
+This adds ~24KB BSS (`s_orderedLights[1024]` of TG_LightPtr) and 1024-pointer copy per frame (~8µs).
 
-**5. Verdict.** `META-FIX` — `GatherLightsParameters` selection becomes relevance-scored. Blast radius: one function + one parameter threaded through `CacheGpuLightData`. Bug class retired: "per-actor finite-range light truncated by first-N-active selection." In (E)'s scope because (E) cannot claim "real illumination" while its registered lights are systematically dropped before the shader.
-
-## 4. Implementation shape
-
-### 4.1 New TU: `mclib/light_select.{h,cpp}`
-
-~50 LOC. Exposes `mc2_light_select::select_lights_for_actor()` per §2 (α) signature. Internally:
-
-1. Walk `worldLights[0..numLights-1]`.
-2. For each AMBIENT/INFINITE/INFINITEWITHFALLOFF: push index into `out[0..K1-1]` slots; track K1 used. Cap K1 at a small number (e.g. 4 — far more than stock content uses; cheap safety).
-3. For each POINT/SPOT/TERRAIN with `active==true`: compute `distSq = (light->position - actorWorldPos).MagnitudeSquared()`; compute `farDistSq = light->farDistance * light->farDistance`; if `distSq <= farDistSq`, push (index, distSq) into a candidate vector.
-4. Partial sort candidate vector by `distSq` ascending, take the nearest `maxOutCount - K1` indices, append to `out`.
-5. Return total count `K1 + numFiniteRangeSelected`.
-
-Pure C++; no GL; no engine state. Vulkan-friendly by absence-of-coupling.
-
-### 4.2 `GatherLightsParameters` callsite
-
-In [mclib/txmmgr.cpp:1561](mclib/txmmgr.cpp), the FIFO loop is replaced with:
-1. Call `select_lights_for_actor(actorWorldPos, s_listOfLights, ...)` → indices array.
-2. Loop over indices, packing each into `TG_HWLightsData` (the existing per-element copy code stays unchanged).
-
-### 4.3 Thread `actorWorldPos` through `CacheGpuLightData`
-
-`CacheGpuLightData` and its leaf-level `EmitBakedGpuLightData` need actor position. The call sites (grep-verify):
-- `mclib/bdactor.cpp:1880` (`mc2CacheOrBakeStaticGpuLight`) — building case; pass `BldgAppearance::position`
-- `mclib/bdactor.cpp:1887` (same function alt branch)
-- mech-side equivalents in `mclib/mech3d.cpp` (Mech3DAppearance::position)
-- GV-side equivalents in `mclib/gvactor.cpp` (GVAppearance::position)
-
-~20 LOC of plumbing through the 4 callsites.
-
-### 4.4 Backward compat / pre-existing callers
-
-If `CacheGpuLightData` has callers I haven't identified (terrain bake, weapon-bolt-cache, etc.), they need either:
-- A default `actorWorldPos = origin` overload (preserves existing behavior for non-actor cases), OR
-- Update at the time of audit if they're meaningful (e.g. weapon-bolt should pass the bolt's world position)
-
-Plan-phase will catch these via grep + signature audit.
-
-### 4.5 Total scope
-
-~150 LOC across:
-- 1 new TU (`mclib/light_select.{h,cpp}`)
-- 1 modified function (`GatherLightsParameters`)
-- 1 new parameter threaded through `CacheGpuLightData` + its 4-5 callers
-- No shader change
-- No SSBO layout change
-- No GL state change
-
-## 5. Vulkan-prep audit
-
-Per [memory/vulkan_prep_explicit_device_discipline.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\vulkan_prep_explicit_device_discipline.md), check each requirement:
+## 6. Vulkan-prep audit (unchanged from v1)
 
 | Requirement | This slice |
 |---|---|
-| Explicit device-mediated binding (no `vb.bind()`) | Not applicable — no new GL bindings |
+| Explicit device-mediated binding | Not applicable — no new GL bindings |
 | No implicit cross-call GL state | Not applicable — no new GL state |
 | std430 lockstep | Not applicable — SSBO layout unchanged |
 | `[0,1]` depth | Not applicable — no depth |
-| Enqueue/flush patterns | Not applicable — selection runs at `CacheGpuLightData` time, before existing enqueue |
-| No full RHI ahead of need | Compliant — no abstraction layer added; pure C++ refactor |
+| Enqueue/flush patterns | Not applicable — runs at `Camera::updateLights` |
+| No full RHI ahead of need | Compliant — pure CPU reorder, no abstraction layer added |
 
-**Vulkan-ready by absence.** The selection function is pure CPU code with no GPU resource coupling. The downstream packer's GL behavior is unchanged.
+**Vulkan-ready by absence.** Pure CPU-side data reordering.
 
-## 6. Future-extension hooks
+## 7. Future-extension hooks
 
-The slice is **explicitly designed to be the swap-point for clustered lighting later**:
+The priority comparator is the swap-point for future expansion:
 
-1. **`select_lights_for_actor()` is a clean interface.** Its inputs (actor position, world light list) are exactly what a per-tile cluster lookup would also consume. Replacing the function body with a cluster-lookup at some future date doesn't perturb the caller.
-2. **No new global state.** The selection function is stateless; no per-frame accumulation state to migrate.
-3. **No shader change.** The fragment/vertex shader doesn't know about selection policy. A clustered approach would replace the data flow into `TG_HWLightsData`, not the SSBO layout.
-4. **Document the swap-point in code.** Comment block at `select_lights_for_actor()` declaration:
-   ```cpp
-   // SCOPE: per-shape light selection for the current data-driven pack pipeline.
-   // FUTURE: when scene scale grows to require clustered/forward+ lighting,
-   // replace this function body with a per-tile cluster lookup. The packer
-   // downstream stays unchanged; only the source of indices changes.
-   ```
+- **Today: class-based partition** (`is_e_slot()` membership).
+- **Future scored selection** (if SpotLight_ active count exceeds 16-cap): replace the partition with a sort by relevance to a scene-representative actor position (e.g., camera focus position). One comparator change.
+- **Future clustered lighting**: replace `Camera::updateLights` reorder entirely with a per-tile cluster build. `s_orderedLights[]` becomes a per-cluster array instead of a global ordered view. Caller changes are zero (still call `getWorldLights()`).
 
-This is the "modernize the shim when you touch it" pattern from worktree CLAUDE.md change-discipline rule, applied to a new shim that doesn't exist yet but will.
+The decoupling is at the data structure: `worldLights[]` (storage) vs `s_orderedLights[]` (presentation). Future architectural moves replace the presentation builder, leaving storage stable.
 
-## 7. Adversarial considerations
+## 8. Adversarial considerations
 
-Potential failure modes to surface during plan-phase + adversarial-plan-review:
+- **A1. AMBIENT/INFINITE assumed at slots 0-1.** The camera initialization at [camera.cpp:417-446](mclib/camera.cpp) populates slot 0 (TG_LIGHT_INFINITE = sun) and slot 1 (TG_LIGHT_AMBIENT). If a future change moves them, the reorder logic at slots 2+ breaks. Document the invariant; consider asserting it at startup.
+- **A2. SpotLight_ tagging via `mc2_spotlight_diag::is_e_slot()`.** This is currently env-gated diagnostic infrastructure. Promote it to always-on for the priority-lift path; document as load-bearing for (E') correctness.
+- **A3. Anubis searchlight uses TG_LIGHT_SPOT.** Pre-existing anubis at [mech3d.cpp:3342](mclib/mech3d.cpp) is NOT tagged as `is_e_slot()` because it was never registered through (E)'s lazy-init path. Should it be priority-lifted? Plan-phase decision: tag anubis too, OR add a second SpotLight_ check via TG_LIGHT_SPOT type AND `isSpotlight=true` shape tag.
+- **A4. SetLightList(NULL, 0) at genactor.cpp:1207.** GenericAppearance::render zaps the light list. This bypasses the priority lift entirely — generic appearance objects don't get any lights. Acceptable: they don't render lit anyway.
+- **A5. Reorder cost.** 1024-pointer copy + O(N) partition per frame ≈ 8µs. Well below the 100µs CPU-projection budget.
+- **A6. Bake-static path.** `mc2WriteStaticLightSlot` uses recipe-indexed cached light data. The reorder doesn't invalidate baked static slots (those are per-recipe, position-cached). Buildings rebaked from a reordered list see the new priority on next bake.
+- **A7. Per-frame ordering stability.** `is_e_slot()` membership is set at `addWorldLight` time and cleared at `removeWorldLight` time. Across frames within a mission, membership is stable for a given light. Reorder result is deterministic; no flicker.
 
-- **A1. Per-shape scoring is too eager.** If the selection function is called for every leaf shape in a deep mech hierarchy, the cost multiplies. Need to confirm whether `CacheGpuLightData` is called per-leaf (≈ hundreds per mech) or per-root-shape (1 per mech). The latter is fine; the former needs caching.
-- **A2. Light position is stale for moving mechs.** The selection runs against `light->position`, which is set per-frame by our (E) in-place update. If frame ordering is wrong (selection runs before `Mech3DAppearance::UpdateGeometry` sets position), we score against last-frame position. Tolerable for a 1-frame lag visually; worth confirming the order is correct.
-- **A3. Stable sort matters or not?** If two lights have equal `distSq`, the selection result should be deterministic to avoid frame-to-frame flicker. Use `std::stable_sort` or break ties by world-pool slot index.
-- **A4. Saving the existing CPU-fast-path.** `tgl.cpp:1968` `TransformMultiShape` also reads `s_listOfLights[]` for CPU vertex lighting. Whether it uses the SAME selection (truncated by best-N) or sees the full list is unclear. Need plan-phase audit.
-- **A5. AMBIENT+INFINITE always-in might starve POINT slots.** Stock content may have 2-4 AMBIENT/INFINITE lights, leaving 12-14 slots for POINT/SPOT. Plenty. But if a future mod has 20 AMBIENT lights, the partition explodes. Add a soft cap (`K1 ≤ 4` or similar; remaining always-in spillover into finite-range partition).
-- **A6. Negative-coord-axis projection trap.** The Stuff axis swizzle (Vector3D vs Point3D, with x/y/z swap convention) means `light->position` is in MC2 coords and `actorWorldPos` must be in the same coord system. Need to confirm both `BldgAppearance::position` / `Mech3DAppearance::position` / `GVAppearance::position` are MC2 world-space (un-swizzled), not Stuff-space.
+## 9. Open questions for plan-phase
 
-## 8. Open questions
+- **OQ1.** Should anubis (TG_LIGHT_SPOT, pre-existing) be priority-lifted too? Recommendation: yes — add `is_anubis_spotlight()` companion to `is_e_slot()` OR generalize the priority-lift test to "any TG_LIGHT_SPOT OR any (E)-registered TG_LIGHT_POINT."
+- **OQ2.** Slot-by-index storage assumption — confirm via grep that no consumer outside of `worldLights[storedSlotId] == storedLight`-style reads exists. If a render-thread reads `worldLights[i]` directly assuming a stable convention (e.g. `worldLights[0]` is always sun), the M3 ordered-view approach is mandatory.
+- **OQ3.** Should `s_orderedLights[]` be re-built at every `Camera::updateLights`, or only when SpotLight_ membership changes? Lazy rebuild would save ~8µs/frame but adds invalidation complexity. Recommend eager (rebuild every frame); 8µs is negligible.
+- **OQ4.** Tagging `addWorldLight` from (E)'s lazy-init blocks: should we also tag from `weaponbolt.cpp:1262` POINT lights? Or strictly only SpotLight_-child-shape-derived registrations? Recommend: only SpotLight_-child — weapon-bolt POINTs are transient and shouldn't compete for permanent priority slots.
 
-Resolve in plan-phase or surface to user for sign-off:
+## 10. Cross-references
 
-- **OQ1.** What's the `K1` cap for the always-in partition? Recommendation: 4 (sufficient for stock content's typical 1 AMBIENT + 1 INFINITE = 2 base lights; gives 2 slots of safety; leaves 12 for finite-range).
-- **OQ2.** Does the per-shape filter run per-leaf or per-root for mechs? Plan-phase grep required.
-- **OQ3.** Frame ordering of `select_lights_for_actor` vs `light->SetPosition` in our (E) in-place update — need to confirm selection sees current-frame positions. If not, simplest fix is to call `CacheGpuLightData` after position updates in the per-frame loop.
-- **OQ4.** Does `tgl.cpp:1968` CPU vertex lighting need the same selection treatment, or is it dead/legacy enough to leave as FIFO?
-- **OQ5.** For weapon-bolt lights or other non-actor TG_Light users, what `actorWorldPos` to use? Recommendation: pass `light->position` itself or origin; their per-shape effect is incidental.
-
-## 9. Cross-references
-
-- Spec (E): [docs/superpowers/specs/2026-05-20-spotlight-real-illumination-design.md](2026-05-20-spotlight-real-illumination-design.md)
-- Plan (E): [docs/superpowers/plans/2026-05-20-spotlight-real-illumination-plan.md](../plans/2026-05-20-spotlight-real-illumination-plan.md)
-- (F) lighting MODEL rework brief: [memory/terrain_lighting_compute_kernel_saturation.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\terrain_lighting_compute_kernel_saturation.md)
-- Vulkan-prep discipline: [memory/vulkan_prep_explicit_device_discipline.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\vulkan_prep_explicit_device_discipline.md)
+- Round-1 review verdict: BLOCKING-CRITICAL — preserved as §1 of this v2 spec for learning continuity
+- Spec (E): [2026-05-20-spotlight-real-illumination-design.md](2026-05-20-spotlight-real-illumination-design.md)
+- (F) lighting MODEL rework brief: [terrain_lighting_compute_kernel_saturation.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\terrain_lighting_compute_kernel_saturation.md)
+- LIGHTBRIDGE template-cache origin: commit `996aff4` (8.5ms→0.4ms optimization)
+- T1.16 diagnostic artifact: `tests/smoke/artifacts/2026-05-21T06-48-58/mc2_10.log`
+- `mc2_spotlight_diag` (`is_e_slot()` infrastructure): [mclib/spotlight_diag.h](mclib/spotlight_diag.h)
 - Greybeard skill: [.claude/skills/greybeard.md](../../.claude/skills/greybeard.md)
 - Adversarial review skill: [.claude/skills/adversarial-plan-review.md](../../.claude/skills/adversarial-plan-review.md)
-- T1.16 diagnostic artifact: `tests/smoke/artifacts/2026-05-21T06-48-58/mc2_10.log`
-- C++/GLSL UBO lockstep rule: [memory/cpp_glsl_ubo_struct_lockstep.md](C:\Users\Joe\.claude\projects\A--Games-mc2-opengl-src\memory\cpp_glsl_ubo_struct_lockstep.md) (not triggered here — SSBO layout unchanged — but worth checking if anyone tries to extend `TG_HWLightsData`)
