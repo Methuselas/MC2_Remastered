@@ -217,9 +217,18 @@ static unsigned long s_liftFrames = 0;
 static unsigned long s_liftWindowPriority = 0;
 static unsigned long s_liftWindowDeferred = 0;
 
+// Round-4 MINOR-B fix: dedicated priorityCount incremented in priority
+// branch only. Previously computed as numActiveLights - numDeferred but
+// that over-reports by N (AMBIENT/INFINITE/TERRAIN appended first).
+long s_liftPriorityCount = 0;  // local; reset per updateLights call
+
+// ... inside priority branch ...
+// activeLights[numActiveLights++] = light;
+// ++s_liftPriorityCount;
+
 // ... after the deferred-flush loop ...
 
-const long priorityCount = numActiveLights - numDeferred;  // approx; refine
+const long priorityCount = s_liftPriorityCount;
 const long deferredCount = numDeferred;
 if (!s_liftFirstHit && priorityCount > 0) {
     std::fprintf(stderr,
@@ -297,6 +306,8 @@ Substitutive test: mc2_10 first-hit line should report `priority>=4` (mc2_10 bas
 - **OQ3.** ~~Probe enhancement~~ — RESOLVED in §3.7: mandatory, not optional (round-3 MAJOR-3 fix).
 - **OQ4.** Test coverage for the `is_e_slot()` map lifetime — confirm that an untag (on actor destroy) doesn't fire BEFORE the next `Camera::updateLights` consumes the tag. Should be safe (destroy is in same frame as removeWorldLight; both happen before next frame's updateLights). Verify in plan-phase via grep of destroy hook ordering.
 - **OQ5 (NEW).** `numActiveLights` post-lift may be larger than pre-(E') for some consumers. The 14 `SetLightList` callers (15 was wrong count — round-3 MINOR fix; `genactor.cpp:1207` is `SetLightList(NULL, 0)` and not in the priority-affected set) pass `eye->getNumLights()` which returns `numActiveLights`. CPU-lit shape paths in `tgl.cpp:1968` and adjacent loops iterate all `numActiveLights` entries. After v4 with priority lift, `numActiveLights` is unchanged (we don't ADD lights — same set, different order). So no per-shape iteration cost increase. Confirmed safe; document for plan-phase.
+
+- **OQ6 (NEW from round-4 MINOR-D/F).** `mc2_spotlight_diag::reset()` is declared at [spotlight_diag.h:32](mclib/spotlight_diag.h) but NEVER WIRED to any mission-boundary teardown. Between missions, the `is_e_slot()` map drains via per-actor destroy hooks calling `untag_slot`. Pre-existing anubis leak leaves stale tags. Plan-phase decision: either wire `reset()` to mission boundary (1-line addition; defensive cleanup) OR document as known-limitation and rely on destroy-hook drain. Same applies to probe statics (`s_liftFirstHit`, `s_liftFrames`, etc.) — they tick on `removeWorldLight`-triggered `updateLights` calls during teardown AND don't reset between missions. Probe accuracy degrades over multi-mission sessions; not correctness-critical. Recommend: wire `reset()` AND probe statics together at mission teardown (one hook, multiple cleanups).
 
 ## 9. Implementation scope
 
