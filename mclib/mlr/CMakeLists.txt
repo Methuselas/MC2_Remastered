@@ -44,6 +44,7 @@ set(SOURCES ${SOURCES}
     gosvertex.cpp
     gosvertex2uv.cpp
     mlrclipper.cpp
+    mlr_gate.cpp
     mlrclippingstate.cpp
     mlrcardcloud.cpp
     mlreffect.cpp
