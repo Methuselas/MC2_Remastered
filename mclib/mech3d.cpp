@@ -3450,8 +3450,17 @@ void Mech3DAppearance::updateGeometry (void)
 				lightToWorldMatrix.BuildTranslation(childPosP);
 				lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(0.0f, 0.0f, 0.0f));
 				spotlightLights_[k]->SetLightToWorld(&lightToWorldMatrix);
+				// T1.13: dropped (sensorLevel > 4) gate. The original gate
+				// was inherited verbatim from the anubis-specific pointLight
+				// branch above (~:3358) where "show enemy searchlight only when
+				// player has sensor lock" is the correct semantic. For the
+				// generalized SpotLight_ vector path this is overly
+				// restrictive: player-owned mechs (sensorLevel=5) work, but
+				// any enemy mech at sensorLevel<5 is stuck active=false. The
+				// generalized path should illuminate for any visible mech at
+				// night regardless of sensor state.
 				spotlightLights_[k]->active =
-					(eye->isNight && visible && (sensorLevel > 4) && !InEditor);
+					(eye->isNight && visible && !InEditor);
 			}
 		}
 

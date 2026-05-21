@@ -2602,8 +2602,16 @@ void GVAppearance::updateGeometry (void)
 				lightToWorldMatrix.BuildTranslation(childPosP);
 				lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(0.0f, 0.0f, 0.0f));
 				spotlightLights_[k]->SetLightToWorld(&lightToWorldMatrix);
+				// T1.13: dropped (sensorLevel > 4) gate. The original gate
+				// was copied verbatim from the anubis searchlight pattern at
+				// mech3d.cpp:3358 where it correctly restricts to sensor-locked
+				// enemy mechs. For GVs the gate is *impossible*: every
+				// code/gvehicl.cpp setSensorLevel(N) caller passes 0..4, so
+				// (sensorLevel > 4) is never true and all 39 GV spotlight
+				// registrations were stuck active=false. Generalized SpotLight_
+				// illumination should fire for any visible GV at night.
 				spotlightLights_[k]->active =
-					(eye->isNight && visible && (sensorLevel > 4) && !InEditor);
+					(eye->isNight && visible && !InEditor);
 			}
 		}
 	//}
