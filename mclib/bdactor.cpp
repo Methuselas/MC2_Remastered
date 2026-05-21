@@ -29,7 +29,6 @@ static bool s_tobjSplitBdOn = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
 #include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
 #include "cpu_proj_cost_split.h"      // F3 CPU projection cost-baseline (RAII scope)
-#include "spotlight_real.h"           // (E) T1.4: MC2_SPOTLIGHT_REAL gate
 #include "gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for per-update breakdown
 
 #ifndef CAMERA_H
@@ -1979,11 +1978,13 @@ long BldgAppearance::update (bool animate)
 		}
 	}
 
-	// (E) T1.4: SpotLight_-child illumination. Distinct from the per-building
+	// (E) T3.1: SpotLight_-child illumination. Distinct from the per-building
 	// terrain pointLight above (R7). World position is valid here in update()
 	// (not in init() per C-r1 C1). Lazy first-night register; subsequent frames
 	// do per-frame SetPosition + active toggle ONLY (R3: no per-frame add/remove).
-	if (mc2_spotlight_real::isEnabled() && bldgShape)
+	// Gate retired in T3.1 (Stage 3 substitutive completion); behavior is now
+	// unconditional. See docs/superpowers/plans/2026-05-20-spotlight-real-illumination-plan.md
+	if (bldgShape)
 	{
 		if (!spotlightsRegistered_ && eye && eye->isNight)
 		{

@@ -11,7 +11,6 @@
 #ifndef GVACTOR_H
 #include"gvactor.h"
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
-#include "spotlight_real.h"        // (E) T1.11: MC2_SPOTLIGHT_REAL gate
 #endif
 
 #ifndef CAMERA_H
@@ -2541,7 +2540,8 @@ void GVAppearance::updateGeometry (void)
 		// accessors (GetNumShapes/GetShapeRec/GetIsSpotlight) because
 		// GVAppearance is NOT in TG_MultiShape's friend list (msl.h
 		// ~:251-256).
-		if (mc2_spotlight_real::isEnabled() && gvShape)
+		// (E) T3.1: gate retired; behavior is now unconditional.
+		if (gvShape)
 		{
 			if (!spotlightsRegistered_ && eye->isNight)
 			{
@@ -2572,9 +2572,8 @@ void GVAppearance::updateGeometry (void)
 
 					// First-hit trace (gv-side) — one stderr line per
 					// successful GV spotlight registration, matching the
-					// MC2_SPOTLIGHT_REAL_TRACE schema. Gated implicitly by
-					// the mc2_spotlight_real::isEnabled() outer check; no
-					// extra env var needed for v1 surfacing.
+					// MC2_SPOTLIGHT_REAL_TRACE schema. Kept post-T3.1 per the
+					// Debug Instrumentation Rule (demote, don't delete).
 					fprintf(stderr,
 						"[SPOTLIGHT_REAL_TRACE v1] event=gv_first_hit"
 						" actorHandle=%ld node=%s slot=%ld\n",

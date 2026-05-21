@@ -20,7 +20,6 @@
 #include "../GameOS/gameos/gos_mech_batcher.h"
 #include "../GameOS/gameos/gos_mech_killswitch.h"
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
-#include "spotlight_real.h"        // (E) T1.6: MC2_SPOTLIGHT_REAL gate
 
 // MC2_MECH_LOD_TRACE=1: per-actor LOD-swap boundary print.
 static const bool s_mechLodTrace = (getenv("MC2_MECH_LOD_TRACE") != nullptr);
@@ -3396,7 +3395,10 @@ void Mech3DAppearance::updateGeometry (void)
 		// pool churn). Public accessors (msl.h:431 GetNumShapes, msl.h:438
 		// GetShapeRec, tgl.h:951 GetIsSpotlight) because Mech3DAppearance is
 		// NOT in the TG_MultiShape friend list at msl.h:251-256.
-		if (mc2_spotlight_real::isEnabled() && mechShape)
+		// (E) T3.1: gate retired; behavior is now unconditional. Coexists with
+		// the SLCircle_anubis pointLight block above (R7: distinct node-name
+		// prefix, no double-registration).
+		if (mechShape)
 		{
 			if (!spotlightsRegistered_ && eye->isNight)
 			{

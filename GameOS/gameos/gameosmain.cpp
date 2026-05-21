@@ -117,7 +117,6 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "gos_visual_diff.h"  // Stage 2.E pre-HUD capture + Ctrl+Shift+P record
 #include "gos_rdoc_capture.h"  // Tier 5: env-gated in-process RenderDoc capture
 #include "gos_terrain_indirect.h"  // [INSTR v1] banner: terrain_indirect{,_parity} fields
-#include "spotlight_real.h"        // [INSTR v1] banner: spotlight_real field (T1.2)
 #include "terrain_surface_trace.h" // [INSTR v1] banner: terrain_surface_trace field (PR-0)
 #include "gpu_cull_record.h"       // C0-1: GpuActorRecord schema selftest
 #include "gpu_cull_readback.h"    // C2: async readback ring buffer selftest
@@ -780,12 +779,10 @@ int main(int argc, char** argv)
         // PR-0: dormant [TERRAIN_SURFACE v1] lifecycle channel gate. Trace-only,
         // default-OFF, separate from the MC2_TERRAIN_SURFACE path-select switch.
         const bool tSurfTrc   = mc2_terrain_surface_trace::enabled();
-        // T1.2: (E) SpotLight_ -> real illumination env gate. Default-off in
-        // Stage 1; T2.1 inverts default; T3.1 deletes the gate. initFromEnv()
-        // is the one-shot cache point so per-frame call sites read the bool
-        // without re-touching getenv.
-        mc2_spotlight_real::initFromEnv();
-        const bool spotReal   = mc2_spotlight_real::isEnabled();
+        // T3.1: (E) SpotLight_ -> real illumination env gate deleted. The
+        // new TG_Light registration path is the unconditional production
+        // behavior. MC2_SPOTLIGHT_REAL_TRACE counters remain (Debug
+        // Instrumentation Rule: demote, don't delete) for future diagnostics.
         const char* build  =
 #ifdef MC2_BUILD_HASH
             MC2_BUILD_HASH
@@ -801,6 +798,8 @@ int main(int argc, char** argv)
         // Grew 832 -> 896 to absorb reverse_z_trace (reverse-Z float depth).
         // Grew 896 -> 960 to absorb terrain_surface_trace (PR-0 Wave 0).
         // Grew 960 -> 1024 to absorb spotlight_real (T1.2, (E) SpotLight_ -> real).
+        // Shrank back to 960 effective use post-T3.1 (spotlight_real field
+        // removed); buffer kept at 1024 for future absorbers.
         // (water_skip_env field was tentatively added during the closed
         // water-projection-skip slice attempt; removed when the slice
         // closed — premise invalidated by Stage 0 M3 audit.)
@@ -817,7 +816,6 @@ int main(int argc, char** argv)
             "shader_hot_reload=%d "
             "reverse_z_trace=%d "
             "terrain_surface_trace=%d "
-            "spotlight_real=%d "
             "camera_motion=1 "
             "build=%s",
             tgl ? 1 : 0, destr ? 1 : 0, glprint ? 1 : 0, smoke ? 1 : 0,
@@ -831,7 +829,6 @@ int main(int argc, char** argv)
             shrHR ? 1 : 0,
             revZ ? 1 : 0,
             tSurfTrc ? 1 : 0,
-            spotReal ? 1 : 0,
             build);
         puts(_cbbuf);
         crashbundle_append(_cbbuf);

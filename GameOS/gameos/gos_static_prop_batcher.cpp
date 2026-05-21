@@ -10,7 +10,6 @@
 #include "gameos.hpp"
 #include "utils/shader_builder.h"
 #include "tgl.h"  // TG_Shape::s_worldToClip
-#include "spotlight_real.h"  // T1.3: gate the isSpotlight submit skip
 #include <GL/glew.h>
 #include <algorithm>
 #include <array>
@@ -2667,16 +2666,16 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
             continue;
         }
 
-        // [T1.3] When MC2_SPOTLIGHT_REAL=1 is in effect, SpotLight_-prefixed
-        // children are illuminated as real TG_Lights by BldgAppearance::update
-        // (T1.4). The legacy cone billboard packet is therefore suppressed at
-        // the source so substitutive-completion criterion #2 ("zero static-prop
-        // draws contain spotlight-tagged packets") is satisfied by construction.
-        // Public accessor GetIsSpotlight() is forward-compatible; direct field
-        // access also works because GpuStaticPropBatcher is in the TG_MultiShape
-        // friend list at msl.h:251-256.
-        if (mc2_spotlight_real::isEnabled() &&
-            const_cast<TG_Shape*>(child)->GetIsSpotlight()) {
+        // [T3.1] SpotLight_-prefixed children are illuminated as real TG_Lights
+        // by BldgAppearance::update (T1.4 / per-instance). The legacy cone
+        // billboard packet is suppressed at the source so substitutive-completion
+        // criterion #2 ("zero static-prop draws contain spotlight-tagged
+        // packets") is satisfied by construction. Public accessor
+        // GetIsSpotlight() is forward-compatible; direct field access also
+        // works because GpuStaticPropBatcher is in the TG_MultiShape friend
+        // list at msl.h:251-256. Gate retired in T3.1; behavior is now
+        // unconditional.
+        if (const_cast<TG_Shape*>(child)->GetIsSpotlight()) {
             s_counters.skipped_children++;
             continue;
         }

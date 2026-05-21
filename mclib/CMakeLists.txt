@@ -67,7 +67,6 @@ set(SOURCES ${SOURCES}
     projectz_overlay.cpp
     render_contract.cpp
     cpu_proj_cost_split.cpp
-    spotlight_real.cpp
     clouds.cpp
     crater.cpp
     mapdata.cpp
