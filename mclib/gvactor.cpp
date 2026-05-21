@@ -761,6 +761,10 @@ void GVAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	rotationalNodeIndex = -1;
 	dustNodeIndex = activityNodeIndex = hitNodeId = weaponNodeId[0] = weaponNodeId[1] = weaponNodeId[2] = weaponNodeId[3] = -1;
 
+	// (E) T1.10: lazy-init key for SpotLight_ children. Vectors default-init
+	// to empty. GVAppearance has no legacy pointLight pair to reset.
+	spotlightsRegistered_ = false;
+
 	screenPos.x = screenPos.y = screenPos.z = screenPos.w = -999.0f;
 	position.Zero();
 	rotation = 0.0;;
