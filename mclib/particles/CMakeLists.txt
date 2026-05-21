@@ -12,6 +12,7 @@ set(SOURCES
     light_manager.cpp
     spawn_card.cpp
     spawn_point.cpp
+    spawn_shard.cpp
 )
 
 include_directories(${COMMON_INCLUDE_DIRS} "../../" "../../mclib" "./")
