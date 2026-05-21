@@ -131,7 +131,7 @@ The TWO systems exist in parallel because of historical accident, not architectu
 
 Promote `SIDECAR_EVENTDRIVEN_PROJECT_Z` from count-only to a timed `BucketId` ([mclib/cpu_proj_cost_split.h:43](mclib/cpu_proj_cost_split.h)). The F3 spec's "n_calls > 0 AND time UNMEASURED with high n_calls → open separate follow-up slice" trigger has fired; this single-bucket addition gives baseline µs data for sizing L1+L2.
 
-**A separate session is currently capturing new F3 data.** This recon's sizing claims will firm up when that capture lands. If timed cost < 25 µs, L1+L2 is below worth-it threshold and the recon's recommendation collapses to "wait for L3 via (B) absorption." If timed cost is meaningful, L1+L2 ships as a small standalone slice.
+**Update (parallel session F3 mc2_10 worst-case landed during this recon):** the new capture sized `projection_total worst_window_p95 = 293 µs` with **99.9% attributable to `mlr_total` (gosFX)**. The `eventdriven_projection_total` bucket is still TIME-UNMEASURED with ~1000 calls/frame; memory `f3_mc2_10_worstcase_2026_05_20` explicitly flags this as "**potentially ~1ms**" pending R2 follow-up. If R2 confirms the ~1ms estimate, L1+L2 jumps from "marginal" to "must-ship" (1 ms = 10× the 100 µs CPU-projection budget). If R2 measures <100 µs, L1+L2 is below threshold and the recon collapses to "wait for L3 via (B) absorption." Sizing is BLOCKED ON R2.
 
 ## 6. Adversarial review of this recon
 
