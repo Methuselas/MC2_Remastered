@@ -174,49 +174,61 @@ If any mission fails (crash, GL_DEBUG_HIGH abort, Vedette invisibility, priority
 
 ### T2.1 — Wire `mc2_spotlight_diag::reset()` + probe-statics reset to mission boundary (OQ6)
 
-**Files:** `mclib/camera.h` (declaration), `mclib/camera.cpp` (definition), `code/mission.cpp` (call sites)
+**Files:** `mclib/camera.h` (declaration), `mclib/camera.cpp` (definition), `code/mission.cpp` (Mission::init call site), `code/saveload.cpp` (Mission::load call site — round-4 CRITICAL-2 fix)
 
-**Round-1 C1 fix — one concrete design (not the contradictory "spotlight_diag.cpp + camera.cpp" of plan v1):**
+**Design — all prior-round fixes consolidated:**
 
-Camera.cpp owns the `[SPOT_PRIORITY_LIFT v1]` probe statics (internal linkage). Add a free function `resetSpotlightLiftProbe()` in camera.cpp that resets those statics. Declare it in camera.h. Mission::destroy calls both `mc2_spotlight_diag::reset()` AND `resetSpotlightLiftProbe()` directly. `mclib/spotlight_diag.cpp` is NOT modified by T2.1.
+Camera.cpp owns the `[SPOT_PRIORITY_LIFT v1]` probe statics (internal linkage). Add a free function `resetSpotlightLiftProbe()` in camera.cpp. Declare it in camera.h. Both `Mission::init` AND `Mission::load` call the resets — they are PARALLEL mission-START boundaries. `mclib/spotlight_diag.cpp` is NOT modified.
 
-**Round-1 M2 fix — pinned teardown site:**
+**Why mission-START not Mission::destroy (round-3 MAJOR-1):** during `Mission::destroy`, per-actor destroy hooks call `removeWorldLight` → `updateLights()` cascade ([camera.h:829, :843](mclib/camera.h)). Those post-reset `updateLights` calls would re-assert `s_liftFirstHit=true` and tick `s_liftFrames`. Mission-START is the only boundary where no actor-destroy can fire.
 
-Mission teardown is at [code/mission.cpp:3263](code/mission.cpp): `void Mission::destroy (bool initLogistics)`. Verified via grep at write-time. Also verify at plan-execute time whether there is a second teardown overload (e.g. saveload path); if so, mirror the reset calls.
+**Why BOTH Mission::init and Mission::load (round-4 CRITICAL-2):** `Mission::load` at [code/saveload.cpp:640](code/saveload.cpp) is the quicksave-resume path; it bypasses `Mission::init`. The codebase's existing convention is that both init paths get parallel hard_resets — see `mc2_cpu_proj_cost::hard_reset("Mission::init")` at [mission.cpp:1687](code/mission.cpp) AND `mc2_cpu_proj_cost::hard_reset("Mission::load")` at [saveload.cpp:645](code/saveload.cpp). Mirror that pattern exactly.
 
 **Changes:**
-- In `mclib/camera.cpp` (next to the lift-probe statics at file scope), add:
-  ```cpp
-  // Reset the [SPOT_PRIORITY_LIFT v1] probe state for a new mission.
-  // Called from Mission::destroy. Pairs with mc2_spotlight_diag::reset().
-  void resetSpotlightLiftProbe() {
-      s_liftFirstHit = false;
-      s_liftFrames = 0;
-      s_liftWindowPriority = 0;
-      s_liftWindowDeferred = 0;
-  }
-  ```
-- In `mclib/camera.h`, add the declaration in the appropriate namespace/scope (or in a small new include block):
-  ```cpp
-  void resetSpotlightLiftProbe();
-  ```
-- In `code/mission.cpp` at the start of `Mission::destroy` (line 3263), add. **Round-2 MINOR-3 fix — order documented:** call resets BEFORE per-actor teardown. Per-actor `untag_slot` calls during teardown become safe no-ops on the cleared map. Either order works correctness-wise but BEFORE is documented for code-reading consistency:
-  ```cpp
-  // (E') reset diagnostic state — paired with the in-mission tag/probe
-  // population. Per spec OQ6 round-3 fix.
-  // Called BEFORE per-actor destroy hooks so untag_slot becomes a safe
-  // no-op (map already cleared). Either order is correct; document order
-  // for code-reader consistency.
-  mc2_spotlight_diag::reset();
-  resetSpotlightLiftProbe();
-  ```
-- **Round-2 C1 + MINOR-2 fix — include audit:**
-  - `code/mission.cpp` currently has `#include "mclib.h"` (line 14), which transitively includes `camera.h` at `mclib.h:135`. **No direct `camera.h` include needed.**
-  - `code/mission.cpp` does NOT currently include `spotlight_diag.h` (grep-verified — zero matches). **Add `#include "spotlight_diag.h"` to `code/mission.cpp` unconditionally** (required for `mc2_spotlight_diag::reset()` linkage; without it the call site is a compile error).
 
-**Verification:** smoke two-mission sequence (load mc2_10, then mc2_05) with `MC2_SPOT_LIFT_TRACE=1`. Expect `event=first_hit` to fire ONCE per mission (not just on first mission of session). Inspect ring_trace.log for two distinct first-hit lines.
+1. In `mclib/camera.cpp` (next to the lift-probe statics at file scope), add:
+   ```cpp
+   // Reset the [SPOT_PRIORITY_LIFT v1] probe state for a new mission.
+   // Called from Mission::init (mission.cpp:1687) AND Mission::load
+   // (saveload.cpp:645) to mirror the mc2_cpu_proj_cost::hard_reset
+   // pattern used by both init paths.
+   void resetSpotlightLiftProbe() {
+       s_liftFirstHit = false;
+       s_liftFrames = 0;
+       s_liftWindowPriority = 0;
+       s_liftWindowDeferred = 0;
+   }
+   ```
 
-**Commit:** `feat(spotlight-lift T2.1): wire reset() to mission boundary — OQ6 fix`
+2. In `mclib/camera.h`, add the declaration:
+   ```cpp
+   void resetSpotlightLiftProbe();
+   ```
+
+3. In `code/mission.cpp` at `Mission::init` immediately after the existing `::mc2_cpu_proj_cost::hard_reset("Mission::init");` at line [1687](code/mission.cpp):
+   ```cpp
+   // (E') reset diagnostic state — mirrors the cpu_proj_cost pattern at line 1687
+   mc2_spotlight_diag::reset();
+   resetSpotlightLiftProbe();
+   ```
+
+4. In `code/saveload.cpp` at `Mission::load` immediately after the existing `::mc2_cpu_proj_cost::hard_reset("Mission::load");` at line [645](code/saveload.cpp):
+   ```cpp
+   // (E') reset diagnostic state — mirrors the cpu_proj_cost pattern at line 645
+   mc2_spotlight_diag::reset();
+   resetSpotlightLiftProbe();
+   ```
+
+5. **Include audit:**
+   - `code/mission.cpp` has `#include "mclib.h"` (line 14) → transitively includes `camera.h` via `mclib.h:135`. No direct `camera.h` include needed.
+   - `code/mission.cpp` does NOT include `spotlight_diag.h` (grep-verified). **Add `#include "spotlight_diag.h"` unconditionally** to mission.cpp.
+   - `code/saveload.cpp`: grep at plan-execute time for `mclib.h` / `spotlight_diag.h` / `camera.h` includes. Add `#include "spotlight_diag.h"` if not transitively available. `camera.h` is almost certainly available via mclib.h or similar; verify.
+
+**Verification:**
+- Two-mission canary: load mc2_10, then mc2_05, with `MC2_SPOT_LIFT_TRACE=1`. Expect `event=first_hit` to fire ONCE per mission (two distinct lines in artifact log).
+- Quicksave-resume canary: load mc2_10, quicksave, quickload — expect a NEW `event=first_hit` line after the quickload.
+
+**Commit:** `feat(spotlight-lift T2.1): wire reset() to Mission::init + Mission::load — OQ6 fix`
 
 ### T2.2 — Final substitutive verification
 
