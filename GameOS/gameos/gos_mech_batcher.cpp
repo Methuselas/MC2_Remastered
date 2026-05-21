@@ -191,6 +191,28 @@ static uint64_t s_allowedLateRegEvents    = 0;
 static uint64_t s_disallowedLateRegEvents = 0;
 static bool     s_lastFailWasLateReg      = false;
 
+// [SPOTLIGHT_REAL_TRACE v1] (E) Stage 0 / T0.2 baseline. Two-channel evidence:
+//   (a) event=type_spotlight_node — emitted from registerTypeLod when a
+//       SpotLight_-prefixed TypeNode is skipped during recipe build. Counts
+//       distinct (typeLod, nodeIdx) tuples. Per-process monotonic; not gated
+//       on per-frame cadence.
+//   (b) event=mech_spotlight_draw — emitted from submitActor for actors whose
+//       mechType carries >= 1 spotlight TypeNode (seen at recipe build).
+//       Per-frame counter, 600-frame summary alongside mono.
+// Map keyed by Mech3DAppearanceType* (the desc.mechType field on submitActor).
+// Value is the number of SpotLight_-prefixed TypeNodes seen during ANY LOD's
+// recipe build (max across LODs, since each instance only renders at one LOD).
+static const bool s_spotlightRealTrace =
+    (getenv("MC2_SPOTLIGHT_REAL_TRACE") != nullptr);
+static std::unordered_map<const Mech3DAppearanceType*, uint32_t>
+    s_spotlightRealTypeNodeCount;
+static uint64_t s_spotlightReal_typeNodeEvents = 0;  // monotonic (a)
+static uint64_t s_spotlightReal_drawWindow     = 0;  // 600-frame window (b)
+static uint64_t s_spotlightReal_drawMono       = 0;  // monotonic (b)
+static uint64_t s_spotlightReal_drawFrameCount = 0;  // frames flushed since process start
+static bool     s_spotlightReal_firstHitTypeNode = false;
+static bool     s_spotlightReal_firstHitDraw     = false;
+
 // ---------------------------------------------------------------------------
 // Shader load
 // ---------------------------------------------------------------------------
@@ -566,6 +588,29 @@ void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int l
                     "[MECHREG v1] event=skip_spotlight type=%p lod=%d nodeIdx=%d name=%s\n",
                     (void*)mechType, lod, nodeIdx, nodeName);
             }
+            // [SPOTLIGHT_REAL_TRACE v1] T0.2 (a) — record SpotLight_ TypeNode
+            // observed at recipe build. Tracks max across LODs since each
+            // instance only renders at one LOD; the running submitActor counter
+            // (b) below cares about whether the actor has ANY spotlight nodes,
+            // and lazy-registration in T1.6 walks the live mechShape regardless
+            // of LOD layout.
+            ++s_spotlightReal_typeNodeEvents;
+            const uint32_t newCount = s_spotlightRealTypeNodeCount[mechType] + 1;
+            s_spotlightRealTypeNodeCount[mechType] = newCount;
+            if (!s_spotlightReal_firstHitTypeNode) {
+                s_spotlightReal_firstHitTypeNode = true;
+                std::fprintf(stderr,
+                    "[SPOTLIGHT_REAL_TRACE v1] event=first_hit site=mech_recipe_build "
+                    "type=%p lod=%d nodeIdx=%d name=%s\n",
+                    (const void*)mechType, lod, nodeIdx, nodeName);
+                std::fflush(stderr);
+            }
+            if (s_spotlightRealTrace) {
+                std::fprintf(stderr,
+                    "[SPOTLIGHT_REAL_TRACE v1] event=type_spotlight_node "
+                    "type=%p lod=%d nodeIdx=%d name=%s type_node_count=%u\n",
+                    (const void*)mechType, lod, nodeIdx, nodeName, newCount);
+            }
             continue;
         }
 
@@ -873,6 +918,24 @@ bool GpuMechBatcher::submitActor(const GpuMechSubmitDesc& desc) {
     }
 
     s_pendingSubmits.push_back(std::move(ps));
+
+    // [SPOTLIGHT_REAL_TRACE v1] T0.2 (b) — per-instance counter. Fires once
+    // per submitActor when the actor's mechType has at least one SpotLight_
+    // TypeNode (recorded at registerTypeLod time). Per-frame increment is
+    // unconditional; 600-frame summary is env-gated in flush() below.
+    if (s_spotlightRealTypeNodeCount.find(desc.mechType)
+            != s_spotlightRealTypeNodeCount.end()) {
+        ++s_spotlightReal_drawWindow;
+        ++s_spotlightReal_drawMono;
+        if (!s_spotlightReal_firstHitDraw) {
+            s_spotlightReal_firstHitDraw = true;
+            std::fprintf(stderr,
+                "[SPOTLIGHT_REAL_TRACE v1] event=first_hit site=mech_submit "
+                "type=%p lod=%d\n",
+                (const void*)desc.mechType, desc.currentLOD);
+            std::fflush(stderr);
+        }
+    }
     return true;
 }
 
@@ -880,6 +943,29 @@ bool GpuMechBatcher::submitActor(const GpuMechSubmitDesc& desc) {
 // flush (Task 7) — bucket-sorted compaction + draw loop
 // ---------------------------------------------------------------------------
 void GpuMechBatcher::flush() {
+    // [SPOTLIGHT_REAL_TRACE v1] T0.2 (b) — periodic summary at 600-frame
+    // cadence. Frame counter advances every flush() regardless of env or
+    // pending submits, so the cadence stays stable across missions. Window
+    // counter resets after emit; mono is monotonic.
+    ++s_spotlightReal_drawFrameCount;
+    const bool spotlightRealPeriodic =
+        (s_spotlightReal_drawFrameCount % 600 == 0 && s_spotlightReal_drawFrameCount > 0);
+    if (s_spotlightRealTrace && spotlightRealPeriodic) {
+        std::fprintf(stderr,
+            "[SPOTLIGHT_REAL_TRACE v1] event=summary site=mech_submit "
+            "frames=%llu window_mech_spotlight_draws=%llu mono_mech_spotlight_draws=%llu "
+            "type_node_events_total=%llu distinct_types_with_spotlights=%zu\n",
+            (unsigned long long)s_spotlightReal_drawFrameCount,
+            (unsigned long long)s_spotlightReal_drawWindow,
+            (unsigned long long)s_spotlightReal_drawMono,
+            (unsigned long long)s_spotlightReal_typeNodeEvents,
+            s_spotlightRealTypeNodeCount.size());
+        std::fflush(stderr);
+    }
+    if (spotlightRealPeriodic) {
+        s_spotlightReal_drawWindow = 0;
+    }
+
     if (!s_mechBatcherTraceInit) {
         s_mechBatcherTrace     = (getenv("MC2_MECH_BATCHER_STATS") != nullptr);
         s_mechBatcherTraceInit = true;
