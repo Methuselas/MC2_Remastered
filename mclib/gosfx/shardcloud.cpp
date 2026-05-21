@@ -1,6 +1,10 @@
 #include"gosfxheaders.hpp"
 #include<mlr/mlrtrianglecloud.hpp>
 
+// B1 Stage 2' C8: subclass-Start routing into the GPU particle pipeline.
+#include"particles/batcher.h"
+#include"particles/spawn.h"
+
 //==========================================================================//
 // File:	 gosFX_ShardCloud.cpp											//
 // Contents: Base gosFX::ShardCloud Component								//
@@ -668,4 +672,27 @@ void
 	gosFX::ShardCloud::TestInstance() const
 {
 	Verify(IsDerivedFrom(DefaultData));
+}
+
+//------------------------------------------------------------------------------
+// B1 Stage 2' C8 — route to GPU particle pipeline when env-gated on.
+// See pointcloud.cpp Start for the full rationale; same pattern.
+//
+void
+	gosFX::ShardCloud::Start(ExecuteInfo *info)
+{
+	Check_Object(this);
+	Check_Pointer(info);
+
+	if (mc2::particles::Batcher::is_enabled()) {
+		// Run only the base Effect::Start so m_seed / m_age / m_ageRate /
+		// m_localToWorld settle to the same values the legacy path sees,
+		// without provisioning the per-particle birth-accumulator that
+		// the GPU pipeline does not use.
+		Effect::Start(info);
+		(void)mc2::particles::Spawn(m_specification, &m_localToWorld, (float)m_seed);
+		return;
+	}
+
+	SpinningCloud::Start(info);
 }

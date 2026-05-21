@@ -5,6 +5,12 @@
 #include"gosfxheaders.hpp"
 #include<mlr/mlrcardcloud.hpp>
 
+// B1 Stage 2' C8: subclass-Start routing into the GPU particle pipeline
+// (replaces C7 EffectAdapter-at-MakeEffect, which only caught top-level
+// MakeEffect returns and missed composite-children spawned by EffectCloud).
+#include"particles/batcher.h"
+#include"particles/spawn.h"
+
 //############################################################################
 //########################  gosFX::Card__Specification  #############################
 //############################################################################
@@ -343,6 +349,19 @@ void
 	Check_Object(this);
 	Check_Object(info);
 	Singleton::Start(info);
+
+	// B1 Stage 2' C8 — route to GPU particle pipeline when env-gated on.
+	// Subclass-Start routing catches BOTH top-level direct spawns AND
+	// children-inside-composites (EffectCloud iterates its children and
+	// calls child Start which lands here). After Singleton::Start ->
+	// Effect::Start has resolved m_seed / m_age / m_localToWorld we
+	// hand off to mc2::particles::Spawn and skip the legacy per-particle
+	// init below; the GPU pipeline owns rendering. Lifecycle (Execute /
+	// IsExecuted / HasFinished / Kill) remains on this subclass.
+	if (mc2::particles::Batcher::is_enabled()) {
+		(void)mc2::particles::Spawn(m_specification, &m_localToWorld, (float)m_seed);
+		return;
+	}
 
 	Specification *spec = GetSpecification();
 	Check_Object(spec);

@@ -1,6 +1,10 @@
 #include"gosfxheaders.hpp"
 #include<mlr/mlrindexedtrianglecloud.hpp>
 
+// B1 Stage 2' C8: subclass-Start routing into the GPU particle pipeline.
+#include"particles/batcher.h"
+#include"particles/spawn.h"
+
 //==========================================================================//
 // File:	 gosFX_Tube.cpp										            //
 // Contents: Base gosFX::Tube Component									    //
@@ -733,6 +737,13 @@ void
 	//----------------------
 	//
 	Effect::Start(info);
+
+	// B1 Stage 2' C8 — route to GPU particle pipeline when env-gated on.
+	// See card.cpp for the rationale; same pattern applies here.
+	if (mc2::particles::Batcher::is_enabled()) {
+		(void)mc2::particles::Spawn(m_specification, &m_localToWorld, (float)m_seed);
+		return;
+	}
 
 	//
 	//--------------------------------------------------------------------------

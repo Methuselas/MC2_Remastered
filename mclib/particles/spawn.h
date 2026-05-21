@@ -4,14 +4,17 @@
 //           by gosFX spec ClassID to the per-primitive SpawnCard /          //
 //           SpawnPoint / SpawnShard / SpawnTube entry points.               //
 //                                                                           //
-//           Per integrated plan v6 §5.4 B1 Stage 2' C7-revised.             //
+//           Per integrated plan v6 §5.4 B1 Stage 2' C8.                     //
 //                                                                           //
-//           Two consumers:                                                  //
-//             1. mc2::particles::EffectAdapter::Start() - hot path when     //
-//                MC2_GPU_PARTICLES=1 forces MakeEffect to return adapters.  //
-//             2. Future producer-flip slices (C8+) that bypass the          //
-//                gosFX::Effect lifecycle entirely. Producers DO NOT call    //
-//                this today; the symbol exists as infrastructure.           //
+//           Consumer (C8): the four primitive gosFX subclass Start()        //
+//           methods (Card / PointCloud / ShardCloud / Tube) call Spawn()    //
+//           after Effect::Start has resolved m_seed / m_localToWorld,       //
+//           under the MC2_GPU_PARTICLES=1 gate. This catches both top-      //
+//           level direct spawns AND children-inside-composites (an          //
+//           EffectCloud parent iterates and calls each child Start, which   //
+//           lands here). The C7 EffectAdapter-at-MakeEffect boundary was    //
+//           retired because composite parents bypass MakeEffect for their   //
+//           children, leaving the new pipeline starved.                     //
 //                                                                           //
 //           Pert / Shape / Debris / EffectCloud are NOT dispatched today    //
 //           (no Stage 2' Spawn* implementation); Spawn() returns false for  //

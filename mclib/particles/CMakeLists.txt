@@ -15,7 +15,6 @@ set(SOURCES
     spawn_shard.cpp
     spawn_tube.cpp
     spawn.cpp
-    effect_adapter.cpp
 )
 
 include_directories(${COMMON_INCLUDE_DIRS} "../../" "../../mclib" "./")
