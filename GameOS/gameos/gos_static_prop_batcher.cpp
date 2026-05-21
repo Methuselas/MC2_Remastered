@@ -10,6 +10,7 @@
 #include "gameos.hpp"
 #include "utils/shader_builder.h"
 #include "tgl.h"  // TG_Shape::s_worldToClip
+#include "spotlight_real.h"  // T1.3: gate the isSpotlight submit skip
 #include <GL/glew.h>
 #include <algorithm>
 #include <array>
@@ -2666,13 +2667,29 @@ bool GpuStaticPropBatcher::submitMultiShape(TG_MultiShape* multi,
             continue;
         }
 
+        // [T1.3] When MC2_SPOTLIGHT_REAL=1 is in effect, SpotLight_-prefixed
+        // children are illuminated as real TG_Lights by BldgAppearance::update
+        // (T1.4). The legacy cone billboard packet is therefore suppressed at
+        // the source so substitutive-completion criterion #2 ("zero static-prop
+        // draws contain spotlight-tagged packets") is satisfied by construction.
+        // Public accessor GetIsSpotlight() is forward-compatible; direct field
+        // access also works because GpuStaticPropBatcher is in the TG_MultiShape
+        // friend list at msl.h:251-256.
+        if (mc2_spotlight_real::isEnabled() &&
+            const_cast<TG_Shape*>(child)->GetIsSpotlight()) {
+            s_counters.skipped_children++;
+            continue;
+        }
+
         uint32_t flags = 0;
         if (child->lightsOut)   flags |= (1u << 0);
         if (child->isWindow)    flags |= (1u << 1);
         if (child->isSpotlight) {
             flags |= (1u << 2);
-            // [SPOTLIGHT_REAL_TRACE v1] T0.1 — baseline counter. Note: per R8
-            // (plan v6), TransformShape early-outs to listOfVertices==NULL for
+            // [SPOTLIGHT_REAL_TRACE v1] T0.1 — baseline counter. Reaches here
+            // only when the MC2_SPOTLIGHT_REAL gate is OFF (otherwise the T1.3
+            // `continue` above skipped the whole submit). Per R8 (plan v6),
+            // TransformShape early-outs to listOfVertices==NULL for
             // isSpotlight && !isNight (tgl.cpp ~1657), and the !listOfVertices
             // guard at line ~2626 above already filtered those out. So this
             // increment fires only for SpotLight_ children whose CPU path
