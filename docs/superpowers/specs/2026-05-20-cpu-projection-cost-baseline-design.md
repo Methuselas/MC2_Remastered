@@ -639,3 +639,155 @@ for the GPU-object-admission plan-phase sizing.
 - No retirement of any consumer. Measurement-only.
 - No adjudication of `cull_admission_perframe` against the
   `projection_total` budget — it is a SIDECAR per §4.4.
+
+## §14 — R3 follow-on: 6 narrow-subset wrapper sidecars (2026-05-20)
+
+Decisive identification of which `Camera::projectFor*` policy-split
+wrapper accounts for the ~946-call/frame `eventdriven_projection_total`
+surplus mc2_10 surfaced under R2. R2 falsified the cull-admission
+attribution (n_calls = 0). R3 instruments every remaining wrapper.
+NO architectural change; one sidecar per wrapper.
+
+### Why
+
+R2's `cull_admission_perframe` read 0 in mc2_10 while
+`eventdriven_projection_total` read 946. The 946 must therefore be
+flowing through one of the other six wrappers in `mclib/camera.h`:
+
+- `projectForScreenXY` (per-actor HUD positioning; `code/actor.cpp:297/301` candidate)
+- `projectForEffectAdmission` (weather / clouds / craters)
+- `projectForTerrainAdmission` (terrain vertex culling)
+- `projectForLightingShadow` (shadow path)
+- `projectForSelectionPicking` (mouse picking)
+- `projectForDebugOverlay` (debug overlay)
+
+Hypothesis ranking from §13's correction memo: HUD `screenxy` or
+`effect_admission` are the most plausible high-rate callers; the
+other four are expected to be either off (no debug overlay), trivial
+(single click for picking), or covered by R2 disambiguation already.
+R3 measures rather than guesses.
+
+### Wire
+
+- 6 new sidecar ids in `cpu_proj_cost_split.h` (`SIDECAR_COUNT` 3 -> 9).
+  Names mirror the wrapper short-names suffixed with `_perframe`.
+- 6 begin/end free-function pairs in `cpu_proj_cost_split.cpp`,
+  identical contract to the R2 `cull_admission_*_ns` pair: env-OFF
+  returns 0 / no-op; `end_ns` accumulates elapsed ns and bumps the
+  workload counter by 1 (so `n_calls_p50` = the paired-call count).
+- `camera.h` forward-declares all 12 new free functions in the
+  `mc2_cpu_proj_cost` namespace block at the top of the header
+  (alongside the R2 pair).
+- Wire site: top + bottom of each of the 6 inline wrappers in
+  `camera.h`. Two-branch wrappers (`projectForEffectAdmission`) are
+  refactored to assign the result to a local `ret` before `end_ns()`
+  fires — same R2 pattern, ensures the timing pair always closes on
+  return. Single-line wrappers (`projectForScreenXY`,
+  `projectForLightingShadow`, `projectForSelectionPicking`,
+  `projectForDebugOverlay`) are expanded from `return projectZ(...)`
+  to begin/ret/end/return.
+- 6 new per-window lines in `[CPU_PROJ v1]` output, format matching
+  `cull_admission_perframe`:
+  ```
+    screenxy_perframe          p50=...us p95=...us max=...us  n_calls_p50=NN
+    effect_admission_perframe  p50=...us p95=...us max=...us  n_calls_p50=NN
+    terrain_admission_perframe p50=...us p95=...us max=...us  n_calls_p50=NN
+    lighting_shadow_perframe   p50=...us p95=...us max=...us  n_calls_p50=NN
+    selection_picking_perframe p50=...us p95=...us max=...us  n_calls_p50=NN
+    debug_overlay_perframe     p50=...us p95=...us max=...us  n_calls_p50=NN
+  ```
+
+### Attribution overlap (intentional, identical to §13)
+
+`eventdriven_projection_total.n_calls` remains the umbrella counter
+across all 7 wrappers (any `projectZ` with `tls_inRenderLoop == false`).
+Each narrow sidecar is a disjoint subset of that umbrella because
+each policy-split wrapper is the sole inline caller of `projectZ`
+for its intent — they do NOT delegate to each other. The 7 sidecars
+should therefore PARTITION the umbrella, modulo the deprecated direct
+`projectZ` caller (which routes to neither wrapper and lands only in
+the umbrella).
+
+### Cross-validation invariant (load-bearing, R3-specific)
+
+Sum the 7 narrow-subset wrapper `n_calls_p50` over a window:
+
+```
+S = cull_admission + screenxy + effect_admission + terrain_admission
+    + lighting_shadow + selection_picking + debug_overlay
+```
+
+Compare to `eventdriven_projection_total.n_calls_p50` (call it T):
+
+- `S ~= T` — wrapper layer is the full picture; attribution
+  successful. The largest of the 7 buckets identifies the hot caller.
+- `S << T` — eventdriven `projectZ` callers exist OUTSIDE the
+  wrapper layer (e.g. the deprecated direct caller flagged at
+  `camera.h:442`, or a path missed by the inventory). STOP and
+  report; route to a grep audit before continuing.
+- `S > T` — attribution bug (a wrapper is somehow nested inside
+  another, double-counting via reentrant begin/end pairs, or one of
+  the begin/end pairs is misordered and accumulates a runaway delta).
+  STOP and report.
+
+Tier1's stationary cameras may yield small or zero counts across the
+board; that's not a stop-condition by itself — it just means the
+invariant is not exercised at low call rates. The user-driven mc2_10
+worst-case capture is the size-sentinel (same protocol as R2).
+
+### Observer-effect caveat
+
+Each wrapper adds ~50–100 ns chrono pair self-cost per call. With
+the per-wrapper rates plausibly in the hundreds-to-thousands per
+frame and 7 wrappers wired, the cumulative measurement-layer
+self-cost may be sub-millisecond per frame. Each individual bucket's
+reported ns is an UPPER bound. Acceptable per
+`cost_split_instrumentation_is_observer_effect_dominated.md` — the
+per-call chrono rate at the policy-wrapper level is in-band with
+existing `recalcBounds_perframe` / `tgl_transform` /
+`cull_admission_perframe` cadences. Plan-phase reads must subtract a
+chrono-pair baseline or treat the bucket as `<= measured value`.
+
+### Stop conditions (R3-specific)
+
+- Cross-validation invariant fails wildly (`S << T` or `S > T` outside
+  ~10% tolerance) in a non-stationary capture: STOP, report.
+- `cull_admission_perframe` reads NON-ZERO in this build's tier1
+  (contradicting R2's 0-across-tier1 baseline): STOP, report —
+  there's an environment/build difference worth understanding before
+  continuing.
+- Any wrapper signature drifted since this spec was written (e.g. body
+  is no longer inline, or it dispatches to something other than
+  `projectZ`): STOP, report — do not work around.
+- Env-OFF builds show non-zero overhead in any of the 6 new wrappers:
+  bug in the `if (!g_cpuProjEnabled) return 0;` short-circuit.
+
+### tier1 baseline (post-R3 build, pre-user-driven worst-case)
+
+Capture pending. Expected outcome at stationary tier1 cameras: all 6
+new buckets read 0 in mc2_01 / mc2_03 / mc2_17 / mc2_24 (same as
+R2 cull_admission did); mc2_10 may show non-zero counts in one or
+more buckets, summing approximately to its 946 eventdriven total.
+
+### Worst-case capture protocol (identical to R2)
+
+User-driven mc2_10, 60s, camera in corner-of-map zoomed-out
+position. Run:
+
+```bash
+MC2_CPU_PROJ_COST_SPLIT=1 ./mc2.exe -mission mc2_10
+```
+
+User maneuvers the camera into the worst-case position and lets the
+60s window block emit. The user reports back the 6+1 narrow-subset
+bucket `n_calls_p50` values plus `eventdriven_projection_total
+.n_calls_p50` from the final window block before exit. Adjudication
+of the §6 outcome waits on that data.
+
+### Out of scope for R3
+
+- No retirement of any wrapper. Measurement-only.
+- No adjudication of any narrow-subset bucket against the
+  `projection_total` budget — all are SIDECARS per §4.4.
+- No deprecated-direct-`projectZ` instrumentation. If R3 fires the
+  `S << T` stop-condition, that's the natural R4 follow-on.
