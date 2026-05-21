@@ -167,7 +167,24 @@ typedef TG_ShadowTriangle* TG_ShadowTrianglePtr;
 #define		TG_LIGHT_SPOT					4
 #define		TG_LIGHT_TERRAIN				5
 
-#define 	MAX_LIGHTS_IN_WORLD				256
+// 2026-05-20: bumped 256 -> 1024 for (E) SpotLight_ -> real illumination.
+// Stage 1 / T1.1 (plan docs/superpowers/plans/2026-05-20-spotlight-real-illumination-plan.md).
+// Rationale: the new BldgAppearance::spotlightLights_ + Mech3DAppearance::
+// spotlightLights_ vectors call addWorldLight once per registered SpotLight_
+// child at first-night-visibility. T0.3 baselines:
+//   mc2_04 (night-canary): 0 static-prop + 9 distinct mech-types
+//   mc2_10 (stress)      : 1 static-prop family + 9 distinct mech-types
+//   mc2_24 (Vedette/LRMC): 0 static-prop + 13 distinct mech-types
+// Combined with the existing per-building terrainLight pointLight (1 per
+// active building), the 256 ceiling is the realistic concern only on mc2_10-
+// class stress missions. 1024 carries ~4x headroom with ~124KB BSS cost
+// (one LinearMatrix4D + three Vector3D arrays at tgl.h ~790-793, plus three
+// TG_LightPtr arrays at camera.cpp ~411-432). Well below the project's
+// RAM-cost-irrelevance threshold per memory/feedback_ram_cost_not_a_concern_below_500mb.md.
+// Shader-side MAX_LIGHTS_IN_WORLD in shaders/include/lighting.hglsl is a
+// DIFFERENT scope (per-shape best-N=16 truncation in the SSBO ld block);
+// that stays at 16.
+#define 	MAX_LIGHTS_IN_WORLD				1024
 
 #define 	TG_NODE_ID						25
 
