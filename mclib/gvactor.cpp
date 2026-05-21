@@ -11,6 +11,7 @@
 #ifndef GVACTOR_H
 #include"gvactor.h"
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
+#include "spotlight_diag.h"  // T1.16 — (E)-owned slot tagging for per-slot probe
 #endif
 
 #ifndef CAMERA_H
@@ -2584,6 +2585,8 @@ void GVAppearance::updateGeometry (void)
 					spotlightNodeIds_.push_back(nodeId);
 					spotlightLights_.push_back(light);
 					spotlightSlotIds_.push_back(static_cast<DWORD>(slotId));
+					// T1.16 — tag this slot as (E)-owned, source=Gv.
+					mc2_spotlight_diag::tag_slot(slotId, mc2_spotlight_diag::Gv);
 					++diagRegistered;
 
 					// First-hit trace (gv-side) — one stderr line per
@@ -2958,6 +2961,8 @@ void GVAppearance::destroy (void)
 	{
 		if (eye)
 			eye->removeWorldLight(spotlightSlotIds_[k], spotlightLights_[k]);
+		// T1.16 — pair untag with removeWorldLight.
+		mc2_spotlight_diag::untag_slot(static_cast<long>(spotlightSlotIds_[k]));
 		free(spotlightLights_[k]);
 	}
 	spotlightLights_.clear();

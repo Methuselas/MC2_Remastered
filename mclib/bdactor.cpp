@@ -39,6 +39,7 @@ static unsigned long s_spotDiagBldgCalls      = 0;   // update() call counter
 #include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
 #include "cpu_proj_cost_split.h"      // F3 CPU projection cost-baseline (RAII scope)
+#include "spotlight_diag.h"  // T1.16 — (E)-owned slot tagging for per-slot probe
 #include "gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for per-update breakdown
 
 #ifndef CAMERA_H
@@ -2037,6 +2038,9 @@ long BldgAppearance::update (bool animate)
 				spotlightLights_.push_back(light);
 				spotlightSlotIds_.push_back(static_cast<DWORD>(slotId));
 				spotlightNodeIds_.push_back(static_cast<int>(nodeId));
+				// T1.16 — tag this slot as (E)-owned, source=Bldg, so the
+				// Camera::updateLights per-slot probe can recognize it.
+				mc2_spotlight_diag::tag_slot(slotId, mc2_spotlight_diag::Bldg);
 				++diagRegistered;
 			}
 			// Pool overflow detection: any spotlight found but not registered
@@ -2906,6 +2910,8 @@ void BldgAppearance::destroy (void)
 	{
 		if (eye)
 			eye->removeWorldLight(spotlightSlotIds_[k], spotlightLights_[k]);
+		// T1.16 — pair untag with removeWorldLight before free().
+		mc2_spotlight_diag::untag_slot(static_cast<long>(spotlightSlotIds_[k]));
 		free(spotlightLights_[k]);
 	}
 	spotlightLights_.clear();

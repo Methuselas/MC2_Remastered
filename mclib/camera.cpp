@@ -53,6 +53,7 @@
 #include <cstdlib>  // std::getenv for [VPL_PICK v1] env-gated trace (Step 3 3a)
 #include <cstdio>   // std::printf for [VPL_PICK v1] lifecycle print
 #include <vector>   // T1.15 [SPOT_DIAG v1] camera-overwrite probe state
+#include "spotlight_diag.h"  // T1.16 — (E)-owned per-slot probe registry
 
 extern void AG_ellipse_draw(PANE *pane, LONG xc, LONG yc, LONG width, LONG height, LONG color);
 extern void AG_ellipse_fill(PANE *pane, LONG xc, LONG yc, LONG width, LONG height, LONG color);
@@ -1879,6 +1880,10 @@ static unsigned long s_spotDiagCamPointSeen     = 0;  // window: distinct POINT 
 static unsigned long s_spotDiagCamActiveTrue    = 0;  // window: active_after=true counts
 static unsigned long s_spotDiagCamActiveFalse   = 0;  // window: active_after=false counts
 
+// T1.16 — per-slot active-state tracker for (E)-owned slots only.
+// Sentinel 0xFFu == "never seen yet" (no transition emitted on first sample).
+static std::vector<unsigned char> s_spotDiagT16LastActive;
+
 void Camera::updateLights()
 {
 	//---------------------------------------------------------------------------------
@@ -1928,6 +1933,31 @@ void Camera::updateLights()
 				// [PROJECTZ:LightingShadow id=light_spot_point_active_test]
 				PROJECTZ_SITE("light_spot_point_active_test", "LightingShadow");
 				light->active = projectForLightingShadow(light->position,dummy);
+				// T1.16 [SPOT_DIAG v1] per-slot transition probe — emit ONLY for
+				// (E)-owned slots, state-change-on-transition. Per-summary
+				// snapshot below at end of updateLights() every 600 frames.
+				if (mc2_spotlight_diag::is_enabled()) {
+					mc2_spotlight_diag::SourceClass src;
+					if (mc2_spotlight_diag::is_e_slot(i, &src)) {
+						if (s_spotDiagT16LastActive.size() < (size_t)MAX_LIGHTS_IN_WORLD)
+							s_spotDiagT16LastActive.assign(MAX_LIGHTS_IN_WORLD, 0xFFu);
+						const unsigned char curActive = light->active ? 1u : 0u;
+						const unsigned char prev = s_spotDiagT16LastActive[i];
+						if (prev != 0xFFu && prev != curActive) {
+							const char* srcName =
+								(src == mc2_spotlight_diag::Bldg ? "bldg" :
+								 src == mc2_spotlight_diag::Mech ? "mech" : "gv");
+							std::fprintf(stderr,
+								"[SPOT_DIAG v1] event=our_slot_transition slot=%ld src=%s "
+								"frame=%lu light_pos=(%.1f, %.1f, %.1f) active=%u prev=%u\n",
+								i, srcName, s_spotDiagCamFrames,
+								(float)light->position.x, (float)light->position.y, (float)light->position.z,
+								(unsigned)curActive, (unsigned)prev);
+							std::fflush(stderr);
+						}
+						s_spotDiagT16LastActive[i] = curActive;
+					}
+				}
 				// T1.15 [SPOT_DIAG v1] camera-overwrite probe.
 				// First-hit per slot index — always-on, one stderr line per
 				// distinct slot ever seen here. Window counters tally
@@ -1964,6 +1994,28 @@ void Camera::updateLights()
 		// Reset window counters (per-summary cadence per task spec)
 		s_spotDiagCamActiveTrue  = 0;
 		s_spotDiagCamActiveFalse = 0;
+		// T1.16 — per-slot summary: one stderr line per tagged (E)-owned slot.
+		// Periodic ground-truth snapshot (every 600 frames) without per-frame
+		// line volume. Walks MAX_LIGHTS_IN_WORLD; emits only for slots that
+		// is_e_slot() recognizes as tagged.
+		for (long si = 0; si < MAX_LIGHTS_IN_WORLD; ++si) {
+			mc2_spotlight_diag::SourceClass src;
+			if (mc2_spotlight_diag::is_e_slot(si, &src)) {
+				TG_LightPtr l = worldLights[si];
+				const char* srcName =
+					(src == mc2_spotlight_diag::Bldg ? "bldg" :
+					 src == mc2_spotlight_diag::Mech ? "mech" : "gv");
+				std::fprintf(stderr,
+					"[SPOT_DIAG v1] event=our_slot_summary frame=%lu slot=%ld src=%s "
+					"active=%u pos=(%.1f, %.1f, %.1f)\n",
+					s_spotDiagCamFrames, si, srcName,
+					l ? (unsigned)(l->active ? 1u : 0u) : 0xFFu,
+					l ? (float)l->position.x : 0.0f,
+					l ? (float)l->position.y : 0.0f,
+					l ? (float)l->position.z : 0.0f);
+				std::fflush(stderr);
+			}
+		}
 	}
 }
 

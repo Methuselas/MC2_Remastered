@@ -62,6 +62,7 @@ set(SOURCES ${SOURCES}
     ablxstd.cpp
     ablxstmt.cpp
     camera.cpp
+    spotlight_diag.cpp
     object_admission_predicate.cpp
     projectz_trace.cpp
     projectz_overlay.cpp
