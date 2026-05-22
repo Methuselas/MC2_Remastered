@@ -6,14 +6,12 @@
 
 #include "gosfx/gosfxheaders.hpp"
 #include "gosfx/card.hpp"
-#include "gosfx/cardcloud.hpp"
 #include "gosfx/pointcloud.hpp"
 #include "gosfx/shardcloud.hpp"
 #include "gosfx/tube.hpp"
 
 #include "spawn.h"
 #include "spawn_card.h"
-#include "spawn_cardcloud.h"
 #include "spawn_point.h"
 #include "spawn_shard.h"
 #include "spawn_tube.h"
@@ -36,10 +34,6 @@ bool Spawn(gosFX::Effect::Specification* spec,
         case gosFX::CardClassID:
             SpawnCard(static_cast<const gosFX::Card__Specification*>(spec),
                       parentToWorld, spawnSeed);
-            return true;
-        case gosFX::CardCloudClassID:
-            SpawnCardCloud(static_cast<const gosFX::CardCloud__Specification*>(spec),
-                           parentToWorld, spawnSeed);
             return true;
         case gosFX::PointCloudClassID:
             SpawnPoint(static_cast<const gosFX::PointCloud__Specification*>(spec),

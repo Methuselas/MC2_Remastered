@@ -5,10 +5,6 @@
 #include"gosfxheaders.hpp"
 #include<mlr/mlrcardcloud.hpp>
 
-// B1 Stage 2' C11: subclass-Start routing into the GPU particle pipeline.
-#include"particles/batcher.h"
-#include"particles/spawn.h"
-
 //------------------------------------------------------------------------------
 //
 gosFX::CardCloud__Specification::CardCloud__Specification(
@@ -886,27 +882,4 @@ void
 	gosFX::CardCloud::TestInstance() const
 {
 	Verify(IsDerivedFrom(DefaultData));
-}
-
-//------------------------------------------------------------------------------
-// B1 Stage 2' C11 — route to GPU particle pipeline when env-gated on.
-// See pointcloud.cpp Start for the full rationale; same pattern as
-// ShardCloud (C5/C8). C10 diagnostic showed CardCloud is 45.9% of stock
-// Effect::Start calls in mc2_10 — the dominant per-class spawn type.
-//
-void
-	gosFX::CardCloud::Start(ExecuteInfo *info)
-{
-	Check_Object(this);
-	Check_Pointer(info);
-
-	// C9 fix: ALWAYS call SpinningCloud::Start (which resolves to the
-	// inherited ParticleCloud::Start) so per-particle structures are
-	// initialized. Skipping the parent under env-on corrupts heap state
-	// because the destructor and legacy Execute walk garbage memory.
-	SpinningCloud::Start(info);
-
-	if (mc2::particles::Batcher::is_enabled()) {
-		(void)mc2::particles::Spawn(m_specification, &m_localToWorld, (float)m_seed);
-	}
 }

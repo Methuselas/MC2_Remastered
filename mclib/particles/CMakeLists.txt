@@ -11,7 +11,6 @@ set(SOURCES
     spec_library.cpp
     light_manager.cpp
     spawn_card.cpp
-    spawn_cardcloud.cpp
     spawn_point.cpp
     spawn_shard.cpp
     spawn_tube.cpp
