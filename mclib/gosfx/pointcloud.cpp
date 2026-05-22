@@ -506,20 +506,15 @@ void
 	Check_Object(this);
 	Check_Pointer(info);
 
-	// C9 fix: ALWAYS call ParticleCloud::Start to initialize per-particle
-	// structures (m_birthAccumulator, m_activeParticleCount, etc.) so the
-	// destructor and the legacy Execute()/AnimateParticle() per-frame loop
-	// walk valid state. C8 skipped this under env-on by calling only
-	// Effect::Start; subsequent reads of garbage fields and writes to
-	// uninitialized offsets corrupted the heap adjacent to mcTextureManager
-	// state, ultimately crashing in MC_TextureNode::get_gosTextureHandle at
-	// frame ~3542. Under env-on we ADDITIONALLY emit a particle record into
-	// the SSBO batcher; legacy ParticleCloud per-frame work continues
-	// (B2 polish will skip Execute when env-on). Legacy ::Draw is A2-gated
-	// at the MLR work-leaves so it no-ops.
-	ParticleCloud::Start(info);
-
 	if (mc2::particles::Batcher::is_enabled()) {
+		// Run only the base Effect::Start (NOT ParticleCloud::Start) so
+		// m_seed / m_age / m_ageRate / m_localToWorld settle to the same
+		// values the legacy path sees, without provisioning the per-
+		// particle birth-accumulator that the GPU pipeline does not use.
+		Effect::Start(info);
 		(void)mc2::particles::Spawn(m_specification, &m_localToWorld, (float)m_seed);
+		return;
 	}
+
+	ParticleCloud::Start(info);
 }

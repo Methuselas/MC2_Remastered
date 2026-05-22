@@ -684,14 +684,15 @@ void
 	Check_Object(this);
 	Check_Pointer(info);
 
-	// C9 fix: ALWAYS call SpinningCloud::Start (which resolves to the
-	// inherited ParticleCloud::Start) so per-particle structures are
-	// initialized. C8 skipped this under env-on and the destructor /
-	// legacy Execute walked garbage memory, corrupting heap state. See
-	// pointcloud.cpp Start for the full rationale.
-	SpinningCloud::Start(info);
-
 	if (mc2::particles::Batcher::is_enabled()) {
+		// Run only the base Effect::Start so m_seed / m_age / m_ageRate /
+		// m_localToWorld settle to the same values the legacy path sees,
+		// without provisioning the per-particle birth-accumulator that
+		// the GPU pipeline does not use.
+		Effect::Start(info);
 		(void)mc2::particles::Spawn(m_specification, &m_localToWorld, (float)m_seed);
+		return;
 	}
+
+	SpinningCloud::Start(info);
 }
