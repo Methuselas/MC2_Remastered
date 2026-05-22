@@ -33,6 +33,34 @@ uniform sampler2D matNormal2;   // dirt normal+disp
 uniform sampler2D matNormal3;   // concrete normal+disp
 uniform vec4 detailNormalTiling; // .x = base tiling multiplier
 
+// F1 Stage A-pre: parallel uniform for parity probe (spec §5.1).
+// Stage A retires terrainMVP/terrainViewport/mvp and keeps only this one.
+// During A-pre, u_worldToClipGL is declared but NOT consumed for emission --
+// only read inside the probe block. Default-build (no probe macro) treats
+// it as dead uniform; AMD driver may warn-on-unused-uniform (acceptable).
+uniform mat4 u_worldToClipGL;
+
+// F1 Stage A-pre parity probe SSBO (spec §5.1).
+// Per codex P1: guard SSBO declaration behind the same macro as the probe
+// block, so default-build is byte-identical to pre-F1 (no SSBO binding,
+// no dead-uniform-decl noise).
+//
+// Counter layout (uint32 each):
+//   [0] = max_delta_comparable (bit-cast float, atomicMax)
+//   [1] = count_compared
+//   [2] = count_behind_old_only
+//   [3] = count_behind_new_only
+//   [4] = count_nonfinite_old_only (hazard: in-front but NaN/Inf)
+//   [5] = count_behind_both
+//   [6] = count_nonfinite_both
+//   [7] = count_nonfinite_new_only
+// Cleared at mission start; accumulated across run.
+#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
+layout(std430, binding = 23) buffer DebugSSBO {
+    uint debugSSBO_counters[8];
+};
+#endif // MC2_UNIFIED_PROJECTION_PARITY_PROBE
+
 #include <include/terrain_common.hglsl>
 #include <include/terrain_depth_bias.hglsl>  // single-source TERRAIN/WATER_DEPTH_FUDGE
 
@@ -123,6 +151,7 @@ void main()
     WorldPos = worldPos;
 
     // --- Projection of DISPLACED position (visual rendering) ---
+    // Begin computeLegacyGlPosition equivalent -- EXACT existing block:
     vec4 clip = terrainMVP * vec4(worldPos, 1.0);
     float rhw = 1.0 / clip.w;
     vec3 screen;
@@ -131,14 +160,64 @@ void main()
     // Match legacy CPU emit's TERRAIN_DEPTH_FUDGE=0.002 (mclib/quad.cpp:1707)
     // so decals/GpuStaticProps/water-on-terrain at coincident depth win the
     // GL_LEQUAL tie. Precedent: gos_terrain_water_fast.vert:350.
-    // Doubled from 0.001→0.002 after glClipControl(ZERO_TO_ONE) adoption
-    // (commit 4c8f9a4) — the old fudge was tuned under [-1,1]→[0,1] remap
+    // Doubled from 0.001->0.002 after glClipControl(ZERO_TO_ONE) adoption
+    // (commit 4c8f9a4) -- the old fudge was tuned under [-1,1]->[0,1] remap
     // where the visible NDC range was halved; under native [0,1] z-fighting
     // headroom near shoreline shrank and the staircase regressed.
     screen.z = clip.z * rhw + TERRAIN_DEPTH_FUDGE;  // single-sourced; see terrain_depth_bias.hglsl
     vec4 ndc = mvp * vec4(screen, 1.0);
     float absW = abs(clip.w);
-    gl_Position = vec4(ndc.xyz * absW, absW);
+    vec4 legacyGlPosition = vec4(ndc.xyz * absW, absW);
+    // End computeLegacyGlPosition equivalent.
+
+#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
+    vec4 newClip = u_worldToClipGL * vec4(worldPos, 1.0);
+
+    const float epsilon = 1e-4;
+    bool oldBehind = (legacyGlPosition.w <= epsilon);
+    bool newBehind = (newClip.w <= epsilon);
+
+    vec3 oldNDC = oldBehind ? vec3(0.0) : (legacyGlPosition.xyz / legacyGlPosition.w);
+    vec3 newNDC = newBehind ? vec3(0.0) : (newClip.xyz       / newClip.w);
+
+    // Hazard = in-front AND has NaN/Inf NDC. Isolates math hazard from
+    // behind-camera classification (spec gemini #4 fix).
+    bool oldHazard = !oldBehind && (any(isnan(oldNDC)) || any(isinf(oldNDC)));
+    bool newHazard = !newBehind && (any(isnan(newNDC)) || any(isinf(newNDC)));
+    bool comparable = !oldBehind && !newBehind && !oldHazard && !newHazard;
+
+    if (comparable) {
+        float d = max(abs(oldNDC.x - newNDC.x),
+                  max(abs(oldNDC.y - newNDC.y),
+                      abs(oldNDC.z - newNDC.z)));
+        // Un-nest bitcast inside atomicMax per AMD GLSL compiler quirk
+        // (spec gemini #3). Cast to local uint first.
+        uint dBits = floatBitsToUint(d);
+        atomicMax(debugSSBO_counters[0], dBits);
+        atomicAdd(debugSSBO_counters[1], 1u);
+    } else {
+        if (oldBehind && newBehind) {
+            atomicAdd(debugSSBO_counters[5], 1u);  // count_behind_both
+        } else if (oldBehind) {
+            atomicAdd(debugSSBO_counters[2], 1u);  // count_behind_old_only
+        } else if (newBehind) {
+            atomicAdd(debugSSBO_counters[3], 1u);  // count_behind_new_only
+        } else {
+            if (oldHazard && newHazard) {
+                atomicAdd(debugSSBO_counters[6], 1u);
+            } else if (oldHazard) {
+                atomicAdd(debugSSBO_counters[4], 1u);
+            } else /* newHazard */ {
+                atomicAdd(debugSSBO_counters[7], 1u);
+            }
+        }
+    }
+#endif
+
+    // CRITICAL: BOTH branches output legacy. Stage A-pre changes ZERO
+    // production behavior. A build without
+    // MC2_UNIFIED_PROJECTION_PARITY_PROBE behaves byte-identical to pre-F1.
+    gl_Position = legacyGlPosition;
 
     // Seam expansion removed. All worldPos.xy variants changed the surface gradient
     // at edge triangles (shifting shadow coords, fwidth derivatives, fwConcrete AA),
