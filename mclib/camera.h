@@ -163,6 +163,14 @@ class Camera
 		Stuff::Vector2DOf<float>	cameraShift;					//Position camera is looking At.
 		
 		Stuff::Matrix4D				cameraToClip;					//Camera Clip Matrix--Used for projection and zoom.
+		// F2 unified-projection: parallel GL-native projection product.
+		// = cameraToClip * kPixelHomogToGLNDC (precomputed at camera-update
+		// time). Consumed by Camera::worldToClipGL() for the GPU path.
+		// The legacy `cameraToClip` stays in D3D-pixel-homogeneous form for
+		// CPU projectZ + 8 wrappers + MLR. Mclib/camera.cpp keeps both in
+		// sync via cameraToClipGL.Multiply(cameraToClip, kPixelHomogToGLNDC)
+		// called after every cameraToClip write in calculateProjectionConstants.
+		Stuff::Matrix4D				cameraToClipGL;
 		Stuff::Matrix4D				worldToClip;					//Matrix used to bring a point from world space to camera/clip space
 		Stuff::Matrix4D				clipToWorld;					//Matrix used to bring a point from camera/clip space to world space
 		

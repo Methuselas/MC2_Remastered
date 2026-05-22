@@ -89,6 +89,11 @@ Stuff::Matrix4D makeAxisSwapMC2toGL()
 }
 const Stuff::Matrix4D kAxisSwapMC2toGL = makeAxisSwapMC2toGL();
 
+// F2 unified-projection: D3D-pixel-homogeneous -> GL-NDC conversion matrix.
+// Used at camera-update time to precompute cameraToClipGL from the legacy
+// cameraToClip. Not consumed in the worldToClipGL() hot path -- the
+// composition is fixed once per camera config.
+//
 // F1 Task 24 (2026-05-22 LATE): D3D-pixel-homogeneous -> GL-NDC conversion.
 //
 // MC2's existing terrainMVP product (axisSwap * worldToCam * cameraToClip)
@@ -2178,6 +2183,8 @@ void Camera::setOrthogonal(void)
 		// Reverse-Z (U1): translate term flips sign and uses far_clip.
 		cameraToClip(3, FORWARD_AXIS) = far_clip / (far_clip-near_clip);
 		cameraToClip(3, 3) = 1.0f;
+		// F2 unified-projection: keep GL-native product in sync with cameraToClip.
+		cameraToClipGL.Multiply(cameraToClip, kPixelHomogToGLNDC);
 	}
 	else
 	{
@@ -2236,6 +2243,8 @@ void Camera::setOrthogonal(void)
 		cameraToClip(3, UP_AXIS) = 0.0f;
 		cameraToClip(3, FORWARD_AXIS) = far_clip * near_clip * depth_range;
 		cameraToClip(3, 3) = 0.0f;
+		// F2 unified-projection: keep GL-native product in sync with cameraToClip.
+		cameraToClipGL.Multiply(cameraToClip, kPixelHomogToGLNDC);
 
 		// [REVERSE_Z v1] env-gated lifecycle print (MC2_REVERSE_Z_TRACE=1),
 		// silent by default; one-shot via a static latch. Matches the
@@ -2462,21 +2471,16 @@ void Camera::setCameraOrigin (void)
 //---------------------------------------------------------------------------
 Stuff::Matrix4D Camera::worldToClipGL() const
 {
-    // F1 unified-projection accessor. Composes:
-    //   (kAxisSwapMC2toGL * worldToCameraMatrix * cameraToClip) * kPixelHomogToGLNDC
-    //
-    // The first chain produces D3D-pixel-homogeneous clip (same as the
-    // legacy terrainMVP product). The final kPixelHomogToGLNDC factor
-    // converts to standard GL NDC (Y-flip + range remap + polarity), so
-    // `gl_Position = u_worldToClipGL * vec4(world,1)` ships clip coords
-    // hardware can perspective-divide directly. See literal block at top
-    // of file for the M_fix derivation.
-    Stuff::Matrix4D viewClip;
-    viewClip.Multiply(worldToCameraMatrix, cameraToClip);
-    Stuff::Matrix4D mc2Clip;
-    mc2Clip.Multiply(kAxisSwapMC2toGL, viewClip);
+    // F2 unified-projection: GPU-path projection product.
+    //   = kAxisSwapMC2toGL * worldToCameraMatrix * cameraToClipGL
+    // cameraToClipGL was precomputed at camera-update time (see
+    // cameraToClipGL.Multiply invocations after every cameraToClip write
+    // in calculateProjectionConstants). Replaces the prior per-call
+    // kPixelHomogToGLNDC Multiply.
+    Stuff::Matrix4D viewClipGL;
+    viewClipGL.Multiply(worldToCameraMatrix, cameraToClipGL);
     Stuff::Matrix4D out;
-    out.Multiply(mc2Clip, kPixelHomogToGLNDC);
+    out.Multiply(kAxisSwapMC2toGL, viewClipGL);
     return out;
 }
 
