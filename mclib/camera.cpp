@@ -2485,6 +2485,23 @@ Stuff::Matrix4D Camera::worldToClipGL() const
 }
 
 //---------------------------------------------------------------------------
+ModernClipResult Camera::projectModernClipGL(const Stuff::Vector3D& world) const
+{
+    // F4 projectZ-bypass helper. Row-vector convention:
+    //   clip_row = world_row * M
+    // world.w = 1.
+    // M = worldToClipGL() = kAxisSwapMC2toGL * worldToCameraMatrix * cameraToClipGL.
+    Stuff::Matrix4D M = worldToClipGL();
+    ModernClipResult r;
+    r.clip.x = world.x * M(0,0) + world.y * M(1,0) + world.z * M(2,0) + M(3,0);
+    r.clip.y = world.x * M(0,1) + world.y * M(1,1) + world.z * M(2,1) + M(3,1);
+    r.clip.z = world.x * M(0,2) + world.y * M(1,2) + world.z * M(2,2) + M(3,2);
+    r.clip.w = world.x * M(0,3) + world.y * M(1,3) + world.z * M(2,3) + M(3,3);
+    r.admit  = clipSpaceFrustumAdmitGL(r.clip);
+    return r;
+}
+
+//---------------------------------------------------------------------------
 void Camera::calculateProjectionConstants (void)
 {
 	cameraDirection.yaw = cameraRotation * DEGREES_TO_RADS;

@@ -12,7 +12,11 @@
 // Plan: docs/superpowers/plans/2026-05-06-track-a1-object-admission-predicate.md
 //---------------------------------------------------------------------------
 
-namespace Stuff { class Vector4D; }
+// Full Stuff headers needed for ModernClipResult (struct members must be complete types).
+// Include the umbrella header so the Stuff type hierarchy is initialized in correct order
+// (stuff.hpp -> point3d.hpp -> vector3d.hpp; stuff.hpp -> vector4d.hpp).
+#include "stuff/stuff.hpp"
+#include "stuff/vector3d.hpp"
 
 // Mode probed at startup from MC2_OBJECT_ADMISSION_PREDICATE env var.
 enum class ObjectAdmissionPredicateMode {
@@ -44,6 +48,44 @@ bool clipSpaceFrustumAdmit(const Stuff::Vector4D& rawClip);
 // per case. Returns the number of failures (0 = all pass). Caller is
 // expected to fail loudly on non-zero return — see Task 4.
 int objectAdmissionPredicate_selftest();
+
+//---------------------------------------------------------------------------
+// F4 projectZ-bypass support.
+// Used by the 5 Modern-default wrappers (object, effect, lighting_shadow,
+// debug_overlay, selection_picking) when MC2_PROJECTZ_BYPASS_MODE != Off,
+// to compute clip space directly from worldToClipGL() without routing
+// through projectZ.
+//---------------------------------------------------------------------------
+
+struct ModernClipResult {
+    Stuff::Vector4D clip;  // post-axisSwap, post-kPixelHomogToGLNDC: GL-NDC convention
+    bool            admit; // standard clip-volume test: -w<=x,y<=w AND 0<=z<=w
+};
+
+// GL-NDC convention clipSpaceFrustumAdmit. Mirrors clipSpaceFrustumAdmit
+// but for the GL-NDC clip range (clip.xy in [-w,w]; clip.z in [0,w]).
+// Distinct from clipSpaceFrustumAdmit which assumes D3D-pixel-homog clip.
+bool clipSpaceFrustumAdmitGL(const Stuff::Vector4D& clipGL);
+
+// 3-state bypass mode read from env MC2_PROJECTZ_BYPASS_MODE.
+enum class ProjectZBypassMode {
+    Off,     // current behavior: Modern routes through projectZ + clipSpaceFrustumAdmit(rawClip). Default.
+    Compare, // run BOTH paths; log disagreements; return Legacy result (no behavior change).
+    Bypass,  // use ONLY projectModernClipGL; skip projectZ entirely.
+};
+
+// Reads env MC2_PROJECTZ_BYPASS_MODE. Default = Off. Values: Off / Compare / Bypass.
+ProjectZBypassMode projectZBypassMode();
+
+// Logs a disagreement between Legacy and Bypass at low rate (first ~64 per
+// wrapper per process). Wrapper-name is one of: object, effect,
+// lighting_shadow, debug_overlay, selection_picking.
+void logProjectZBypassDisagreement(const char* wrapper,
+                                   const Stuff::Vector3D& world,
+                                   const Stuff::Vector4D& legacyRawClip,
+                                   bool legacyAdmit,
+                                   const Stuff::Vector4D& bypassClipGL,
+                                   bool bypassAdmit);
 
 //---------------------------------------------------------------------------
 // Track A2 - effect admission mode (sibling of the Track A1 object mode).

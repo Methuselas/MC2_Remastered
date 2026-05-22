@@ -587,28 +587,46 @@ class Camera
 			// OFF; end_ns short-circuits the same way. Inline pair is safe in
 			// header (no class definition needed).
 			const int64_t _f3_cull_t0 = ::mc2_cpu_proj_cost::cull_admission_begin_ns();
-			LegacyProjectionResult result;
+
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (objectAdmissionPredicateMode() == ObjectAdmissionPredicateMode::Modern);
+			bool ret;
+
+			if (isModern && bypassMode == ProjectZBypassMode::Bypass) {
+				// Pure bypass: skip projectZ entirely. screen stays uninitialized;
+				// object_admission callers discard screen (verified Track A1/A2).
+				ModernClipResult r = projectModernClipGL(point);
+				ret = r.admit;
+			} else {
+				LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
-			// projectZ writes screen byte-identically to legacy; we capture rawClip
-			// via the optionalResult sidecar so the modern predicate can see it.
-			bool legacyAccepted = projectZ(point, screen, &result);
+				// projectZ writes screen byte-identically to legacy; we capture rawClip
+				// via the optionalResult sidecar so the modern predicate can see it.
+				bool legacyAccepted = projectZ(point, screen, &result);
 #pragma warning(pop)
 #if defined(MC2_PROJECTZ_FINITE_CHECK)
-			// Invariant gates on legacy-rect-acceptance (the original semantics),
-			// not on the bool we ultimately return — preserves the policy-split
-			// contract from commit cc83857.
-			if (result.acceptedByLegacyScreenRect) {
-				gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
-				          isfinite(screen.z) && isfinite(screen.w));
-			}
+				// Invariant gates on legacy-rect-acceptance (the original semantics),
+				// not on the bool we ultimately return — preserves the policy-split
+				// contract from commit cc83857.
+				if (result.acceptedByLegacyScreenRect) {
+					gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
+					          isfinite(screen.z) && isfinite(screen.w));
+				}
 #endif
-			bool ret;
-			if (objectAdmissionPredicateMode() == ObjectAdmissionPredicateMode::Modern) {
-				ret = clipSpaceFrustumAdmit(result.rawClip);
-			} else {
-				ret = legacyAccepted;
+				if (isModern) {
+					ret = clipSpaceFrustumAdmit(result.rawClip);
+					if (bypassMode == ProjectZBypassMode::Compare) {
+						ModernClipResult b = projectModernClipGL(point);
+						if (b.admit != ret) {
+							logProjectZBypassDisagreement("object", point, result.rawClip, ret, b.clip, b.admit);
+						}
+					}
+				} else {
+					ret = legacyAccepted;
+				}
 			}
+
 			::mc2_cpu_proj_cost::cull_admission_end_ns(_f3_cull_t0);
 			return ret;
 		}
@@ -618,27 +636,45 @@ class Camera
 		                                       Stuff::Vector4D& screen) {
 			// R3 narrow-subset sidecar (see cpu_proj_cost_split.h).
 			const int64_t _f3_effect_t0 = ::mc2_cpu_proj_cost::effect_admission_begin_ns();
-			LegacyProjectionResult result;
+
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (effectAdmissionPredicateMode() == EffectAdmissionPredicateMode::Modern);
+			bool ret;
+
+			if (isModern && bypassMode == ProjectZBypassMode::Bypass) {
+				// Pure bypass: skip projectZ entirely. screen stays uninitialized;
+				// effect_admission callers discard screen (verified F3 design).
+				ModernClipResult r = projectModernClipGL(point);
+				ret = r.admit;
+			} else {
+				LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
-			// projectZ writes screen byte-identically to legacy; we capture rawClip
-			// via the optionalResult sidecar so the modern predicate can see it.
-			bool legacyAccepted = projectZ(point, screen, &result);
+				// projectZ writes screen byte-identically to legacy; we capture rawClip
+				// via the optionalResult sidecar so the modern predicate can see it.
+				bool legacyAccepted = projectZ(point, screen, &result);
 #pragma warning(pop)
 #if defined(MC2_PROJECTZ_FINITE_CHECK)
-			// Invariant gates on legacy-rect-acceptance (the original semantics),
-			// not on the bool we ultimately return. Same as Track A1's object wrapper.
-			if (result.acceptedByLegacyScreenRect) {
-				gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
-				          isfinite(screen.z) && isfinite(screen.w));
-			}
+				// Invariant gates on legacy-rect-acceptance (the original semantics),
+				// not on the bool we ultimately return. Same as Track A1's object wrapper.
+				if (result.acceptedByLegacyScreenRect) {
+					gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
+					          isfinite(screen.z) && isfinite(screen.w));
+				}
 #endif
-			bool ret;
-			if (effectAdmissionPredicateMode() == EffectAdmissionPredicateMode::Modern) {
-				ret = clipSpaceFrustumAdmit(result.rawClip);
-			} else {
-				ret = legacyAccepted;
+				if (isModern) {
+					ret = clipSpaceFrustumAdmit(result.rawClip);
+					if (bypassMode == ProjectZBypassMode::Compare) {
+						ModernClipResult b = projectModernClipGL(point);
+						if (b.admit != ret) {
+							logProjectZBypassDisagreement("effect", point, result.rawClip, ret, b.clip, b.admit);
+						}
+					}
+				} else {
+					ret = legacyAccepted;
+				}
 			}
+
 			::mc2_cpu_proj_cost::effect_admission_end_ns(_f3_effect_t0);
 			return ret;
 		}
@@ -648,23 +684,41 @@ class Camera
 		inline bool projectForLightingShadow (Stuff::Vector3D& point,
 		                                      Stuff::Vector4D& screen) {
 			const int64_t _f3_lshadow_t0 = ::mc2_cpu_proj_cost::lighting_shadow_begin_ns();
-			LegacyProjectionResult result;
+
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (lightingShadowPredicateMode() == LightingShadowPredicateMode::Modern);
+			bool ret;
+
+			if (isModern && bypassMode == ProjectZBypassMode::Bypass) {
+				// Pure bypass: skip projectZ entirely. screen stays uninitialized;
+				// lighting_shadow callers discard screen (light->active gating only).
+				ModernClipResult r = projectModernClipGL(point);
+				ret = r.admit;
+			} else {
+				LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
-			bool legacyAccepted = projectZ(point, screen, &result);
+				bool legacyAccepted = projectZ(point, screen, &result);
 #pragma warning(pop)
 #if defined(MC2_PROJECTZ_FINITE_CHECK)
-			if (result.acceptedByLegacyScreenRect) {
-				gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
-				          isfinite(screen.z) && isfinite(screen.w));
-			}
+				if (result.acceptedByLegacyScreenRect) {
+					gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
+					          isfinite(screen.z) && isfinite(screen.w));
+				}
 #endif
-			bool ret;
-			if (lightingShadowPredicateMode() == LightingShadowPredicateMode::Modern) {
-				ret = clipSpaceFrustumAdmit(result.rawClip);
-			} else {
-				ret = legacyAccepted;
+				if (isModern) {
+					ret = clipSpaceFrustumAdmit(result.rawClip);
+					if (bypassMode == ProjectZBypassMode::Compare) {
+						ModernClipResult b = projectModernClipGL(point);
+						if (b.admit != ret) {
+							logProjectZBypassDisagreement("lighting_shadow", point, result.rawClip, ret, b.clip, b.admit);
+						}
+					}
+				} else {
+					ret = legacyAccepted;
+				}
 			}
+
 			::mc2_cpu_proj_cost::lighting_shadow_end_ns(_f3_lshadow_t0);
 			return ret;
 		}
@@ -673,26 +727,46 @@ class Camera
 		// F3 modernized via clipSpaceFrustumAdmit when MC2_SELECTION_PICKING_PREDICATE_MODE=Modern.
 		// screen output is byte-identical between Legacy and Modern (sidecar ptr doesn't affect
 		// projectZ's screen-write path), so callers consuming screen.xy are unaffected.
+		//
+		// F4 NOTE: selection_picking does NOT support Bypass mode because callers consume
+		// screen.xy. Bypass is treated as Off for this wrapper. Compare still runs
+		// (projectZ executes first, so screen is written). Address in a follow-on slice
+		// that defines the bypass screen-output convention for picking.
 		inline bool projectForSelectionPicking (Stuff::Vector3D& point,
 		                                        Stuff::Vector4D& screen) {
 			const int64_t _f3_pick_t0 = ::mc2_cpu_proj_cost::selection_picking_begin_ns();
-			LegacyProjectionResult result;
+
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (selectionPickingPredicateMode() == SelectionPickingPredicateMode::Modern);
+			// Bypass treated as Off for selection_picking (callers consume screen.xy).
+			// Always routes through projectZ. Only Compare path runs bypass for logging.
+			bool ret;
+
+			{
+				LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
-			bool legacyAccepted = projectZ(point, screen, &result);
+				bool legacyAccepted = projectZ(point, screen, &result);
 #pragma warning(pop)
 #if defined(MC2_PROJECTZ_FINITE_CHECK)
-			if (result.acceptedByLegacyScreenRect) {
-				gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
-				          isfinite(screen.z) && isfinite(screen.w));
-			}
+				if (result.acceptedByLegacyScreenRect) {
+					gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
+					          isfinite(screen.z) && isfinite(screen.w));
+				}
 #endif
-			bool ret;
-			if (selectionPickingPredicateMode() == SelectionPickingPredicateMode::Modern) {
-				ret = clipSpaceFrustumAdmit(result.rawClip);
-			} else {
-				ret = legacyAccepted;
+				if (isModern) {
+					ret = clipSpaceFrustumAdmit(result.rawClip);
+					if (bypassMode == ProjectZBypassMode::Compare) {
+						ModernClipResult b = projectModernClipGL(point);
+						if (b.admit != ret) {
+							logProjectZBypassDisagreement("selection_picking", point, result.rawClip, ret, b.clip, b.admit);
+						}
+					}
+				} else {
+					ret = legacyAccepted;
+				}
 			}
+
 			::mc2_cpu_proj_cost::selection_picking_end_ns(_f3_pick_t0);
 			return ret;
 		}
@@ -714,23 +788,41 @@ class Camera
 		inline bool projectForDebugOverlay (Stuff::Vector3D& point,
 		                                    Stuff::Vector4D& screen) {
 			const int64_t _f3_dbg_t0 = ::mc2_cpu_proj_cost::debug_overlay_begin_ns();
-			LegacyProjectionResult result;
+
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (debugOverlayPredicateMode() == DebugOverlayPredicateMode::Modern);
+			bool ret;
+
+			if (isModern && bypassMode == ProjectZBypassMode::Bypass) {
+				// Pure bypass: skip projectZ entirely. screen stays uninitialized;
+				// debug_overlay callers discard screen (LAB_ONLY draw paths).
+				ModernClipResult r = projectModernClipGL(point);
+				ret = r.admit;
+			} else {
+				LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
-			bool legacyAccepted = projectZ(point, screen, &result);
+				bool legacyAccepted = projectZ(point, screen, &result);
 #pragma warning(pop)
 #if defined(MC2_PROJECTZ_FINITE_CHECK)
-			if (result.acceptedByLegacyScreenRect) {
-				gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
-				          isfinite(screen.z) && isfinite(screen.w));
-			}
+				if (result.acceptedByLegacyScreenRect) {
+					gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
+					          isfinite(screen.z) && isfinite(screen.w));
+				}
 #endif
-			bool ret;
-			if (debugOverlayPredicateMode() == DebugOverlayPredicateMode::Modern) {
-				ret = clipSpaceFrustumAdmit(result.rawClip);
-			} else {
-				ret = legacyAccepted;
+				if (isModern) {
+					ret = clipSpaceFrustumAdmit(result.rawClip);
+					if (bypassMode == ProjectZBypassMode::Compare) {
+						ModernClipResult b = projectModernClipGL(point);
+						if (b.admit != ret) {
+							logProjectZBypassDisagreement("debug_overlay", point, result.rawClip, ret, b.clip, b.admit);
+						}
+					}
+				} else {
+					ret = legacyAccepted;
+				}
 			}
+
 			::mc2_cpu_proj_cost::debug_overlay_end_ns(_f3_dbg_t0);
 			return ret;
 		}
@@ -748,6 +840,12 @@ class Camera
 		// (pre-axisSwap; feeds projectZ body and 8 wrappers). See spec
 		// 2026-05-22 §0.1 invariant.
 		Stuff::Matrix4D worldToClipGL() const;
+
+		// F4 projectZ-bypass helper. Computes clip directly via worldToClipGL()
+		// for a single world point. Used by the 5 Modern-default wrappers when
+		// MC2_PROJECTZ_BYPASS_MODE = Compare or Bypass. Does NOT touch
+		// cameraToClip / projectZ / worldToClip (legacy paths preserved).
+		ModernClipResult projectModernClipGL(const Stuff::Vector3D& world) const;
 
 		// Shared CPU camera-frustum x quad-AABB primitive (VPL-retirement Step 3 3a
 		// OWNS the definition; Step 5B references it). Pure CPU, no GL, no readback.

@@ -1,6 +1,7 @@
 // mclib/object_admission_predicate.cpp
 #include "object_admission_predicate.h"
 #include "stuff/stuff.hpp"   // Stuff::Vector4D
+#include "stuff/vector3d.hpp" // Stuff::Vector3D (for logProjectZBypassDisagreement)
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -157,6 +158,76 @@ SelectionPickingPredicateMode selectionPickingPredicateMode() {
     // Lazy init - startup ordering is non-load-bearing.
     selectionPickingPredicate_init();
     return s_selfpickMode;
+}
+
+bool clipSpaceFrustumAdmitGL(const Stuff::Vector4D& clipGL) {
+    // Standard GL clip-volume test. Same epsilon as clipSpaceFrustumAdmit
+    // for behind-camera rejection.
+    if (clipGL.w <= 1e-4f) return false;  // behind camera or degenerate
+    if (clipGL.x < -clipGL.w || clipGL.x > clipGL.w) return false;
+    if (clipGL.y < -clipGL.w || clipGL.y > clipGL.w) return false;
+    if (clipGL.z < 0.0f      || clipGL.z > clipGL.w) return false;
+    return true;
+}
+
+namespace {
+
+bool               s_bypassInitialized = false;
+ProjectZBypassMode s_bypassMode = ProjectZBypassMode::Off;
+
+} // namespace
+
+ProjectZBypassMode projectZBypassMode() {
+    if (!s_bypassInitialized) {
+        const char* env = std::getenv("MC2_PROJECTZ_BYPASS_MODE");
+        if (env && std::strcmp(env, "Compare") == 0) {
+            s_bypassMode = ProjectZBypassMode::Compare;
+        } else if (env && std::strcmp(env, "Bypass") == 0) {
+            s_bypassMode = ProjectZBypassMode::Bypass;
+        } else {
+            s_bypassMode = ProjectZBypassMode::Off;
+        }
+        s_bypassInitialized = true;
+        const char* label = (s_bypassMode == ProjectZBypassMode::Compare) ? "compare"
+                          : (s_bypassMode == ProjectZBypassMode::Bypass)  ? "bypass"
+                          :                                                  "off";
+        std::printf("[OBJECT_ADMISSION_PREDICATE v1] event=mode_select wrapper=projectz_bypass mode=%s\n", label);
+        std::fflush(stdout);
+    }
+    return s_bypassMode;
+}
+
+void logProjectZBypassDisagreement(const char* wrapper,
+                                   const Stuff::Vector3D& world,
+                                   const Stuff::Vector4D& legacyRawClip,
+                                   bool legacyAdmit,
+                                   const Stuff::Vector4D& bypassClipGL,
+                                   bool bypassAdmit)
+{
+    // 5 wrapper slots indexed by wrapper name hash (stable within process).
+    // Simple approach: compare against the known 5 names.
+    static int s_counts[5] = {0, 0, 0, 0, 0};
+    static const char* const s_names[5] = {
+        "object", "effect", "lighting_shadow", "debug_overlay", "selection_picking"
+    };
+    int idx = -1;
+    for (int i = 0; i < 5; ++i) {
+        if (std::strcmp(wrapper, s_names[i]) == 0) { idx = i; break; }
+    }
+    if (idx < 0) idx = 0;  // unknown wrapper: slot 0
+    if (s_counts[idx] >= 64) return;
+    ++s_counts[idx];
+    std::printf("[OBJECT_ADMISSION_PREDICATE v1] event=disagree wrapper=%s "
+                "world=(%.3f,%.3f,%.3f) "
+                "legacyRawClip=(%.4f,%.4f,%.4f,%.4f) legacyAdmit=%d "
+                "bypassClipGL=(%.4f,%.4f,%.4f,%.4f) bypassAdmit=%d\n",
+                wrapper,
+                world.x, world.y, world.z,
+                legacyRawClip.x, legacyRawClip.y, legacyRawClip.z, legacyRawClip.w,
+                legacyAdmit ? 1 : 0,
+                bypassClipGL.x, bypassClipGL.y, bypassClipGL.z, bypassClipGL.w,
+                bypassAdmit ? 1 : 0);
+    std::fflush(stdout);
 }
 
 bool clipSpaceFrustumAdmit(const Stuff::Vector4D& rawClip) {
