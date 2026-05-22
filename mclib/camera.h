@@ -690,6 +690,13 @@ class Camera
 		// camera-matrix change via memcmp without re-projecting every frame.
 		const Stuff::Matrix4D& getWorldToClip (void) const { return worldToClip; }
 
+		// F1 unified-projection: single composition source for runtime GPU
+		// uniform path. axisSwap * worldToCameraMatrix * cameraToClip,
+		// post-axisSwap GL convention. Distinct from `Camera::worldToClip`
+		// (pre-axisSwap; feeds projectZ body and 8 wrappers). See spec
+		// 2026-05-22 §0.1 invariant.
+		Stuff::Matrix4D worldToClipGL() const;
+
 		// Shared CPU camera-frustum x quad-AABB primitive (VPL-retirement Step 3 3a
 		// OWNS the definition; Step 5B references it). Pure CPU, no GL, no readback.
 		// extractFrustumPlanes: Gribb-Hartmann 6-plane extraction from worldToClip,
