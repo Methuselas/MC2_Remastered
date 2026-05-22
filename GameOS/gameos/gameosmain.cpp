@@ -165,13 +165,18 @@ extern void gos_DestroyAudio();
 #ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
 static GLuint s_unifiedProjProbeSSBO = 0;
 static const GLuint kUnifiedProjProbeBinding = 23;  // matches gos_terrain.tese (Task 6)
+// Byte offset of the 16-float matrix within the SSBO (after 8 uint32 counters).
+// Matches debugSSBO_matrix layout in gos_terrain.tese.
+static const GLintptr kProbeSSBOMatrixOffset = 8 * sizeof(uint32_t);  // = 32
 
 static void unifiedProj_probeInit()
 {
     glGenBuffers(1, &s_unifiedProjProbeSSBO);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_unifiedProjProbeSSBO);
-    uint32_t zeros[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-    glBufferStorage(GL_SHADER_STORAGE_BUFFER, sizeof(zeros), zeros,
+    // Buffer layout: 8 uint32 counters + 16 float matrix = 96 bytes total.
+    // Matrix initialized to zero; written per-frame by unifiedProj_probeSetMatrix.
+    uint8_t zeros[8 * sizeof(uint32_t) + 16 * sizeof(float)] = {};
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)sizeof(zeros), zeros,
                     GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kUnifiedProjProbeBinding,
                      s_unifiedProjProbeSSBO);
@@ -185,9 +190,27 @@ void unifiedProj_probeReset()
 {
     if (!s_unifiedProjProbeSSBO) return;
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_unifiedProjProbeSSBO);
+    // Reset only the 8 counter words; preserve the matrix (written separately).
     uint32_t zeros[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(zeros), zeros);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+// Write the 16-float row-major matrix into the SSBO at kProbeSSBOMatrixOffset.
+// Called from gos_SetWorldToClipGLProbeUBO each frame before draws.
+// Re-binds the SSBO base after write (AMD driver can unbind SSBOs on program switch).
+// Non-static: called via extern decl in gameos_graphics.cpp.
+void unifiedProj_probeSetMatrix(const float* M16)
+{
+    if (!s_unifiedProjProbeSSBO) return;
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_unifiedProjProbeSSBO);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                    kProbeSSBOMatrixOffset,
+                    16 * sizeof(float), M16);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    // Re-issue binding so it is visible to any program that switches after upload.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kUnifiedProjProbeBinding,
+                     s_unifiedProjProbeSSBO);
 }
 
 static void unifiedProj_probeSnapshot(const char* tag)

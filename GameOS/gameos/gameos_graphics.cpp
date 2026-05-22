@@ -1444,11 +1444,6 @@ class gosRenderer {
         const vec4& getTerrainViewport() const { return terrain_viewport_; }
         gosRenderMaterial* getTerrainMaterial() const { return terrain_material_; }
         const vec4& getTerrainCameraPos() const { return terrain_camera_pos_; }
-        // F1 Stage A-pre Task 5: expose tessellated-terrain program handle for
-        // gos_GetTerrainTeseProgram(). Returns 0 before first draw call arms the
-        // cache (caller must guard).
-        unsigned int getTerrainTeseProgram() const { return terrainLocs_.program; }
-
         // Shadow mode
         void setShadowMode(bool enabled) { shadow_mode_ = enabled; }
         bool getShadowMode() const { return shadow_mode_; }
@@ -1462,6 +1457,13 @@ class gosRenderer {
         void setTerrainDrawEnabled(bool e) { terrain_draw_enabled_ = e; }
         bool getTerrainDrawEnabled() const { return terrain_draw_enabled_; }
         float getTerrainDebugMode() const { return terrain_debug_mode_; }
+
+        // F1 Stage A-pre Task 7b: store probe-only worldToClipGL for upload at
+        // draw time inside terrainBindUniformsForPatchStream / terrainDrawIndexedPatches.
+        void setWorldToClipGLProbeMatrix(const float* M16) {
+            memcpy(probeWorldToClipGL_, M16, 16 * sizeof(float));
+            probeWorldToClipGLValid_ = true;
+        }
 
         // Shadow pre-pass (separate pass over all terrain batches before shading)
         void beginShadowPrePass(bool clearDepth = true);
@@ -1652,6 +1654,12 @@ class gosRenderer {
         vec4 terrain_camera_pos_;  // MC2 world space camera position for TCS LOD
         vec4 terrain_viewport_;    // (vmx, vmy, vax, vay) for TES perspective project
 
+        // F1 Stage A-pre Task 7b: probe-only worldToClipGL. Written per-frame by
+        // gos_SetWorldToClipGLProbeUBO. Read in both terrain draw paths as a flat
+        // uniform uploaded after glUseProgram (AMD driver / tess stage compatibility).
+        float probeWorldToClipGL_[16] = {};
+        bool probeWorldToClipGLValid_ = false;
+
         // Terrain tessellation material
         gosRenderMaterial* terrain_material_ = nullptr;
         glsl_program* thin_terrain_prog_ = nullptr;  // gos_terrain_thin.vert + gos_terrain.frag
@@ -1700,6 +1708,7 @@ class gosRenderer {
             GLint time = -1;
             GLint mapHalfExtent = -1;
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
+            GLint worldToClipGL = -1;            // F1 Task 7b probe uniform
             GLuint program = 0;
         } terrainLocs_;
 
@@ -1759,6 +1768,8 @@ class gosRenderer {
             terrainLocs_.time = glGetUniformLocation(shp, "time");
             terrainLocs_.mapHalfExtent = glGetUniformLocation(shp, "mapHalfExtent");
             terrainLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
+            // F1 Task 7b: probe uniform location (flat uniform, not UBO member).
+            terrainLocs_.worldToClipGL = glGetUniformLocation(shp, "u_worldToClipGL");
         }
 
         void cacheThinTerrainUniformLocations(GLuint shp) {
@@ -5021,6 +5032,14 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
         glUniform4fv(tl.terrainViewport, 1, (const float*)&terrain_viewport_);
     if (terrain_mvp_valid_ && tl.terrainMVP >= 0)
         glUniformMatrix4fv(tl.terrainMVP, 1, GL_FALSE, (const float*)&terrain_mvp_);
+    // F1 Task 7b: probe-only worldToClipGL flat-uniform fallback path.
+    // Kept for non-AMD or future driver fixes; SSBO path (binding 23) is
+    // the reliable transport on AMD TES stages (proven: loc=-1 from driver
+    // optimizer removing the unused flat uniform once SSBO became primary).
+    // When the shader declares u_worldToClipGL as a flat uniform, loc >= 0
+    // and this path fires. Currently loc=-1 (shader uses SSBO only).
+    if (probeWorldToClipGLValid_ && tl.worldToClipGL >= 0)
+        glUniformMatrix4fv(tl.worldToClipGL, 1, GL_FALSE, probeWorldToClipGL_);
 
     if (tl.terrainLightDir >= 0)        glUniform4fv(tl.terrainLightDir, 1, (const float*)&terrain_light_dir_);
     float tiling[4]      = { terrain_detail_tiling_, 0.0f, 0.0f, 0.0f };
@@ -5255,6 +5274,10 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
         if (tl.terrainMVP >= 0)
             glUniformMatrix4fv(tl.terrainMVP, 1, GL_FALSE, (const float*)&terrain_mvp_);
     }
+    // F1 Task 7b: probe-only worldToClipGL flat uniform. Same convention as
+    // terrainMVP: GL_FALSE + row-major C++ storage.
+    if (probeWorldToClipGLValid_ && tl.worldToClipGL >= 0)
+        glUniformMatrix4fv(tl.worldToClipGL, 1, GL_FALSE, probeWorldToClipGL_);
 
     // Bind terrain splatting uniforms (light, tiling, POM, cell bomb)
     if (tl.terrainLightDir >= 0) glUniform4fv(tl.terrainLightDir, 1, (const float*)&terrain_light_dir_);
@@ -7091,33 +7114,37 @@ void gos_GetTerrainCameraPos(float* x, float* y, float* z) {
 void __stdcall gos_SetTerrainMVP(const float* matrix16) {
     if (g_gos_renderer) g_gos_renderer->setTerrainMVP(matrix16);
 }
-// F1 unified-projection — A-PRE PROBE-ONLY setter (Task 4).
-// Uploads u_worldToClipGL to the explicitly-passed program; does NOT
-// write terrain_mvp_ cache. Legacy gos_SetTerrainMVP remains
-// authoritative for all consumers until Stage A (Task 14) promotes
-// a cache-writing variant.
-//
-// Uses glProgramUniformMatrix4fv (GL 4.1+) for explicit-program upload --
-// glUniformMatrix4fv would upload to currently-bound program (silent
-// wrong-shader bug). Engine is GL 4.5; explicit-program family is
-// unconditionally available.
-void __stdcall gos_SetWorldToClipGLProbeOnly(unsigned int program, const Stuff::Matrix4D& mat)
+// F1 unified-projection -- A-PRE PROBE-ONLY setter (Task 7b).
+// Stores the column-major -> row-major repackaged matrix in:
+//   (a) gosRenderer::probeWorldToClipGL_ for the flat-uniform path (draw-time
+//       glUniformMatrix4fv after apply(); kept as no-harm safety net).
+//   (b) the probe SSBO at binding 23 via unifiedProj_probeSetMatrix (the
+//       ACTUAL working path for AMD TES: flat-uniform propagation is unreliable
+//       for tessellation stages on AMD, proven by glGetUniformfv readback matching
+//       but compared=0 persisting. SSBO writes/reads are reliable -- proven by
+//       behind_new_only atomicAdd accumulating correctly every frame).
+// Does NOT write terrain_mvp_ cache; A-pre observation-only contract preserved.
+#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
+extern void unifiedProj_probeSetMatrix(const float* M16);
+#endif
+void __stdcall gos_SetWorldToClipGLProbeUBO(const Stuff::Matrix4D& mat)
 {
-    if (program == 0) return;
-    GLint loc = glGetUniformLocation(program, "u_worldToClipGL");
-    if (loc == -1) {
-        // Stage A-pre tolerance: not-yet-migrated shaders silently no-op.
-        // Becomes fatal in Stage A (Task 14).
-        return;
-    }
+    if (!g_gos_renderer) return;
     const float* col = (const float*)&mat;
     #define WTC(r,c) col[(c)*4 + (r)]
     float M[16];
     for (int i = 0; i < 4; ++i)
         for (int j = 0; j < 4; ++j)
-            M[i*4 + j] = WTC(i, j);  // column-major -> row-major
+            M[i*4 + j] = WTC(i, j);  // column-major -> row-major (same repackage as legacy upload)
     #undef WTC
-    glProgramUniformMatrix4fv(program, loc, 1, GL_FALSE, M);
+    g_gos_renderer->setWorldToClipGLProbeMatrix(M);
+#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
+    // Write matrix into probe SSBO -- the reliable transport path for TES on AMD.
+    // AMD driver does not propagate glUniformMatrix4fv to tessellation stages;
+    // SSBO writes are reliable (proven: atomicAdd to binding 23 accumulates
+    // correctly per frame, while glGetUniformfv readback matched but TES saw zeros).
+    unifiedProj_probeSetMatrix(M);
+#endif
     // NO terrain_mvp_ write -- A-pre is observation-only. See Task 14
     // for the Stage A promotion that adds cache write.
 }
@@ -7703,12 +7730,8 @@ const float* gos_GetTerrainMVPMat4() {
     return (const float*)&g_gos_renderer->getTerrainMVP();
 }
 
-// F1 Stage A-pre Task 5: return the tessellated-terrain GL program handle so
-// gamecam.cpp can upload u_worldToClipGL as a parallel probe-only call.
-// Returns 0 before the terrain shader is first armed (caller guards).
-unsigned int __stdcall gos_GetTerrainTeseProgram() {
-    if (!g_gos_renderer) return 0;
-    return g_gos_renderer->getTerrainTeseProgram();
-}
+// gos_GetTerrainTeseProgram removed in Task 7b (UBO pivot).
+// Per-program upload approach retired; UnifiedProjectionUBO at binding=0
+// reaches all material-variant programs by binding point.
 
 #include "gameos_graphics_debug.cpp"

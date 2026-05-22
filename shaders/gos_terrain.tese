@@ -33,19 +33,12 @@ uniform sampler2D matNormal2;   // dirt normal+disp
 uniform sampler2D matNormal3;   // concrete normal+disp
 uniform vec4 detailNormalTiling; // .x = base tiling multiplier
 
-// F1 Stage A-pre: parallel uniform for parity probe (spec §5.1).
-// Stage A retires terrainMVP/terrainViewport/mvp and keeps only this one.
-// During A-pre, u_worldToClipGL is declared but NOT consumed for emission --
-// only read inside the probe block. Default-build (no probe macro) treats
-// it as dead uniform; AMD driver may warn-on-unused-uniform (acceptable).
-uniform mat4 u_worldToClipGL;
-
 // F1 Stage A-pre parity probe SSBO (spec §5.1).
 // Per codex P1: guard SSBO declaration behind the same macro as the probe
 // block, so default-build is byte-identical to pre-F1 (no SSBO binding,
 // no dead-uniform-decl noise).
 //
-// Counter layout (uint32 each):
+// Counter layout (uint32 each, offsets 0-7):
 //   [0] = max_delta_comparable (bit-cast float, atomicMax)
 //   [1] = count_compared
 //   [2] = count_behind_old_only
@@ -55,10 +48,35 @@ uniform mat4 u_worldToClipGL;
 //   [6] = count_nonfinite_both
 //   [7] = count_nonfinite_new_only
 // Cleared at mission start; accumulated across run.
+//
+// Matrix transport (offsets 8-23, floats):
+//   u_worldToClipGL: 16 floats in row-major order (same convention as
+//   terrainMVP -- C++ stores rows, GPU reads cols, transpose is correct).
+//   Written from C++ via glBufferSubData at offset 32 bytes (8 * sizeof(uint)).
+//   AMD driver does not reliably propagate std140 UBO bindings or
+//   glUniformMatrix4fv to tessellation stages; SSBO reads are reliable
+//   (proven: atomicAdd to this same SSBO accumulates correctly per frame).
 #ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
 layout(std430, binding = 23) buffer DebugSSBO {
-    uint debugSSBO_counters[8];
+    uint  debugSSBO_counters[8];
+    float debugSSBO_matrix[16];  // u_worldToClipGL row-major; see C++ kProbeSSBOMatrixOffset
 };
+// Read the probe matrix from SSBO as a mat4.
+// std430: float[16] has same layout as mat4 (column-major by GLSL convention,
+// but we stored it row-major from C++ and use GL_FALSE on glUniformMatrix*fv
+// elsewhere -- the equivalent here: we READ the mat4 column-by-column from
+// debugSSBO_matrix which was stored ROW-major, so we must take the transpose).
+// Simpler: just load it as 4 column vec4s that correspond to C++ rows.
+mat4 ssbo_readWorldToClipGL() {
+    // C++ stored [row][col] = debugSSBO_matrix[row*4+col] (row-major).
+    // GLSL mat4 col-major: mat4(c0, c1, c2, c3) where ci = column i.
+    // Column j of the matrix = row j of the C++ storage.
+    vec4 c0 = vec4(debugSSBO_matrix[0],  debugSSBO_matrix[4],  debugSSBO_matrix[8],  debugSSBO_matrix[12]);
+    vec4 c1 = vec4(debugSSBO_matrix[1],  debugSSBO_matrix[5],  debugSSBO_matrix[9],  debugSSBO_matrix[13]);
+    vec4 c2 = vec4(debugSSBO_matrix[2],  debugSSBO_matrix[6],  debugSSBO_matrix[10], debugSSBO_matrix[14]);
+    vec4 c3 = vec4(debugSSBO_matrix[3],  debugSSBO_matrix[7],  debugSSBO_matrix[11], debugSSBO_matrix[15]);
+    return mat4(c0, c1, c2, c3);
+}
 #endif // MC2_UNIFIED_PROJECTION_PARITY_PROBE
 
 #include <include/terrain_common.hglsl>
@@ -171,7 +189,7 @@ void main()
     // End computeLegacyGlPosition equivalent.
 
 #ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
-    vec4 newClip = u_worldToClipGL * vec4(worldPos, 1.0);
+    vec4 newClip = ssbo_readWorldToClipGL() * vec4(worldPos, 1.0);
 
     const float epsilon = 1e-4;
     bool oldBehind = (legacyGlPosition.w <= epsilon);

@@ -2332,15 +2332,14 @@ void gos_BuildDynamicLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
                                   const float camFitCornersMC2[8][3]);
 void __stdcall gos_SetTerrainMVP(const float* matrix16);
 // Forward decl for F1 unified-projection API (Stuff::Matrix4D defined in mclib/stuff/matrix.hpp).
-// GLuint = unsigned int per GL spec; avoids pulling GL headers into the public GOS header.
 namespace Stuff { class Matrix4D; }
-// A-pre setter (probe only, no cache write). Retired in Stage A.
-void __stdcall gos_SetWorldToClipGLProbeOnly(unsigned int program, const Stuff::Matrix4D& mat);
-// F1 Stage A-pre Task 5: return tessellated-terrain GL program handle.
-// Returns 0 before first terrain draw arms the cache; caller must guard.
-unsigned int __stdcall gos_GetTerrainTeseProgram();
-// Stage A setter (explicit-program upload + cache write). Body added in Task 14.
-void __stdcall gos_SetWorldToClipGL(unsigned int program, const Stuff::Matrix4D& mat);
+// A-pre setter (probe only, no cache write). Uploads to a dedicated
+// UnifiedProjectionUBO at a fixed binding point (std140 binding=0);
+// every program declaring the matching block inherits the matrix.
+// Retired in Stage A (replaced by gos_SetWorldToClipGL in Task 14).
+void __stdcall gos_SetWorldToClipGLProbeUBO(const Stuff::Matrix4D& mat);
+// Stage A setter (UBO + cache write). Body added in Task 14.
+void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat);
 void __stdcall gos_SetTerrainViewport(float vmx, float vmy, float vax, float vay);
 void __stdcall gos_SetTerrainCameraPos(float x, float y, float z);
 
