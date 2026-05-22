@@ -122,6 +122,11 @@ struct RecipeRange {
     // into multi->cachedGpuLightIndex_ before sibling actors overwrote it.
     // UINT32_MAX = uncaptured (flush falls back to multi->getCachedGpuLightIndex()).
     uint32_t           lightDataIndex;
+    // 2026-05-22 per-prop extent radius (F4 T3 static-prop pop-in fix):
+    // world-unit bounding sphere radius from bldgShape/treeShape->GetExtentRadius().
+    // Written to GpuActorRecord.boundingRadius in flush(). 0.0f = uncaptured;
+    // flush falls back to 200.0f (legacy placeholder) for unpatched callers.
+    float              extentRadius;
 };
 
 static std::vector<GpuStaticPropInstance> s_recipes;
@@ -305,7 +310,7 @@ int32_t registerRecipe(TG_MultiShape* multi,
     return regIdx;
 }
 
-void markVisible(int32_t regIdx, uint32_t lightDataIndex) {
+void markVisible(int32_t regIdx, uint32_t lightDataIndex, float extentRadius) {
     if (!s_enabled) return;
     if (regIdx < 0 || static_cast<uint32_t>(regIdx) >= s_recipeRanges.size()) return;
     RecipeRange& rng = s_recipeRanges[static_cast<uint32_t>(regIdx)];
@@ -315,6 +320,8 @@ void markVisible(int32_t regIdx, uint32_t lightDataIndex) {
     // the same multi-type overwrote it). flush() consumes this when
     // MC2_STATIC_PER_INSTANCE_LIGHT=1 is set; otherwise flush ignores it.
     rng.lightDataIndex = lightDataIndex;
+    // 2026-05-22 F4 T3: store per-prop extent radius for GPU cull record.
+    rng.extentRadius = extentRadius;
     s_liveRangeIndices.push_back(static_cast<uint32_t>(regIdx));
 }
 
@@ -329,6 +336,7 @@ void invalidate(int32_t regIdx) {
     rng.count = 0;
     rng.multi  = nullptr;
     rng.lightDataIndex = 0xFFFFFFFFu;  // 2026-05-11 reset capture on invalidate
+    rng.extentRadius   = 0.0f;         // 2026-05-22 F4 T3 reset extent radius
     // [LIGHTBAKE v1] drop the baked static-light entry so destruction/LOD
     // multi-swap lazily re-bakes the same position-derived constant.
     ::mc2EraseBakedStaticLight(regIdx);
@@ -527,16 +535,15 @@ void flush() {
                 gpuRec.worldCenter[0] = actorWorldCenter[0];
                 gpuRec.worldCenter[1] = actorWorldCenter[1];
                 gpuRec.worldCenter[2] = actorWorldCenter[2];
-                // Bounding radius: 200.0f covers stock MC2 buildings (largest are
-                // ~150 units across, e.g. warehouse footprint). Trees/fences are
-                // smaller but over-admission at the frustum edge is harmless —
-                // CPU-side markVisible already gates which actors reach this code,
-                // and the cull is sphere-aware via clipSpaceFrustumAdmitSphere
-                // (gpu_cull_predicate.glsl). 50.0f (pre-2026-05-10) was too small:
-                // building centroids offset from the visible silhouette failed the
-                // strict point-in-frustum test even when most of the building was
-                // on screen — empty-render symptom under substrate=ON.
-                gpuRec.boundingRadius = 200.0f;
+                // Bounding radius: use per-prop extent radius captured by markVisible()
+                // from bldgShape/treeShape->GetExtentRadius() (F4 T3, 2026-05-22).
+                // This fixes static-prop pop-in: post-F1 the correct GL-NDC matrix
+                // produces a tighter clipSpaceFrustumAdmitSphere envelope than the
+                // old D3D-pixel-homog matrix; large props (>200 units) were
+                // over-culled when their centroid exited the frustum by >200 units.
+                // Fallback to 200.0f when extentRadius == 0.0f (unpatched callers or
+                // missing shape pointer) preserves prior behavior.
+                gpuRec.boundingRadius = (rng.extentRadius > 0.0f) ? rng.extentRadius : 200.0f;
                 gpuRec.worldAabbMin[0] = gpuRec.worldCenter[0] - gpuRec.boundingRadius;
                 gpuRec.worldAabbMin[1] = gpuRec.worldCenter[1] - gpuRec.boundingRadius;
                 gpuRec.worldAabbMin[2] = gpuRec.worldCenter[2] - gpuRec.boundingRadius;

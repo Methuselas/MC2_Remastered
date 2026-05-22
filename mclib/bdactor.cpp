@@ -1401,7 +1401,8 @@ long BldgAppearance::render (long depthFixup)
 					// instead of multi->getCachedGpuLightIndex() — the per-multi
 					// scratch slot is last-writer-wins across sibling instances.
 					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex,
-					                                  staticReg.lightDataIndex);
+					                                  staticReg.lightDataIndex,
+					                                  bldgShape ? bldgShape->GetExtentRadius() : 0.0f);
 					++s_diag_markVisible;
 					submittedToGpu = true;
 				}
@@ -4224,7 +4225,8 @@ long TreeAppearance::render (long depthFixup)
 				} else {
 					// 2026-05-11: see BldgAppearance::render markVisible site.
 					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex,
-					                                  staticReg.lightDataIndex);
+					                                  staticReg.lightDataIndex,
+					                                  treeShape ? treeShape->GetExtentRadius() : 0.0f);
 					submittedToGpu = true;
 				}
 			}

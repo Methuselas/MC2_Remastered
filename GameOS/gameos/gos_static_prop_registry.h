@@ -58,7 +58,15 @@ int32_t registerRecipe(TG_MultiShape* multi,
 // without the flag, flush() ignores it and reads the multi's cache (the
 // historical last-writer-wins behavior). Default arg keeps source-compat
 // for callers that haven't been updated.
-void markVisible(int32_t regIdx, uint32_t lightDataIndex = 0xFFFFFFFFu);
+// extentRadius: per-prop world-unit bounding sphere radius from
+// bldgShape->GetExtentRadius() / treeShape->GetExtentRadius().
+// Written into GpuActorRecord.boundingRadius at flush time so the GPU
+// clipSpaceFrustumAdmitSphere test uses the actual prop footprint rather
+// than the old hardcoded 200.0f placeholder. Pass 0.0f when unknown;
+// flush falls back to 200.0f (preserves pre-fix behavior for unpatched
+// callers).
+void markVisible(int32_t regIdx, uint32_t lightDataIndex = 0xFFFFFFFFu,
+                 float extentRadius = 0.0f);
 
 // Called when static registration must be cleared (fall, late-reg recovery,
 // shape-pointer change, UINT32_MAX light index). Sets recipe range to
