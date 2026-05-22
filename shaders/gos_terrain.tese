@@ -79,6 +79,18 @@ mat4 ssbo_readWorldToClipGL() {
 }
 #endif // MC2_UNIFIED_PROJECTION_PARITY_PROBE
 
+// Task 7c: diagnostic SSBO at binding 24 -- GPU matrix readback + sample vertex.
+// Layout: 16 floats matrix + 4*4 floats sample data = 32 floats = 128 bytes.
+#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
+layout(std430, binding = 24) buffer DiagSSBO {
+    float diagMatrix[16];          // TES-visible u_worldToClipGL, row-major
+    float diagSampleWorld[4];      // worldPos used for sample vertex
+    float diagSampleNewClip[4];    // newClip = ssbo_readWorldToClipGL() * worldPos
+    float diagSampleLegacyClip[4]; // clip    = terrainMVP * worldPos (legacy)
+    float diagSampleLegacyGlPos[4];// legacyGlPosition.xyzw
+};
+#endif // MC2_UNIFIED_PROJECTION_PARITY_PROBE
+
 #include <include/terrain_common.hglsl>
 #include <include/terrain_depth_bias.hglsl>  // single-source TERRAIN/WATER_DEPTH_FUDGE
 
@@ -229,6 +241,27 @@ void main()
                 atomicAdd(debugSSBO_counters[7], 1u);
             }
         }
+    }
+
+    // Task 7c: diagnostic snapshot -- exactly one TES invocation per frame writes
+    // the matrix the TES actually sees + a sample vertex for CPU comparison.
+    // Guard: first vertex of first primitive (gl_PrimitiveID==0, bary corner).
+    if (gl_PrimitiveID == 0 && bary.x > 0.999) {
+        mat4 m = ssbo_readWorldToClipGL();
+        // Store row-major so CPU readback index = [row*4+col].
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+                diagMatrix[r*4+c] = m[c][r];
+        diagSampleWorld[0] = worldPos.x;    diagSampleWorld[1] = worldPos.y;
+        diagSampleWorld[2] = worldPos.z;    diagSampleWorld[3] = 1.0;
+        diagSampleNewClip[0] = newClip.x;   diagSampleNewClip[1] = newClip.y;
+        diagSampleNewClip[2] = newClip.z;   diagSampleNewClip[3] = newClip.w;
+        diagSampleLegacyClip[0] = clip.x;   diagSampleLegacyClip[1] = clip.y;
+        diagSampleLegacyClip[2] = clip.z;   diagSampleLegacyClip[3] = clip.w;
+        diagSampleLegacyGlPos[0] = legacyGlPosition.x;
+        diagSampleLegacyGlPos[1] = legacyGlPosition.y;
+        diagSampleLegacyGlPos[2] = legacyGlPosition.z;
+        diagSampleLegacyGlPos[3] = legacyGlPosition.w;
     }
 #endif
 

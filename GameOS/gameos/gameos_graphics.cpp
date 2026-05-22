@@ -7144,6 +7144,23 @@ void __stdcall gos_SetWorldToClipGLProbeUBO(const Stuff::Matrix4D& mat)
     // SSBO writes are reliable (proven: atomicAdd to binding 23 accumulates
     // correctly per frame, while glGetUniformfv readback matched but TES saw zeros).
     unifiedProj_probeSetMatrix(M);
+    // Task 7c: CPU-side matrix upload dump -- first 3 frames only.
+    {
+        static int s_cpuDumpsRemaining = 3;
+        if (s_cpuDumpsRemaining > 0) {
+            s_cpuDumpsRemaining--;
+            fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=cpu_matrix_upload bytes=");
+            for (int k = 0; k < 16; ++k)
+                fprintf(stderr, "%a ", M[k]);
+            fprintf(stderr, "\n");
+            fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=cpu_matrix_upload human=\n");
+            for (int i = 0; i < 4; ++i) {
+                fprintf(stderr, "  row %d: %.6f %.6f %.6f %.6f\n",
+                    i, M[i*4+0], M[i*4+1], M[i*4+2], M[i*4+3]);
+            }
+            fflush(stderr);
+        }
+    }
 #endif
     // NO terrain_mvp_ write -- A-pre is observation-only. See Task 14
     // for the Stage A promotion that adds cache write.

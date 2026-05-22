@@ -230,6 +230,67 @@ static void unifiedProj_probeSnapshot(const char* tag)
         counters[4], counters[7], counters[6]);
     fflush(stderr);
 }
+// Task 7c: diagnostic SSBO at binding 24 -- read GPU-visible matrix + sample vertex.
+// Buffer layout: 32 floats = 128 bytes.
+//   [0..15]  diagMatrix[16]          -- TES-visible worldToClipGL row-major
+//   [16..19] diagSampleWorld[4]      -- worldPos.xyz + 1.0
+//   [20..23] diagSampleNewClip[4]    -- newClip.xyzw
+//   [24..27] diagSampleLegacyClip[4] -- clip.xyzw (terrainMVP result)
+//   [28..31] diagSampleLegacyGlPos[4]-- legacyGlPosition.xyzw
+static GLuint s_diagSSBO = 0;
+static const GLuint kDiagBinding = 24;
+
+static void unifiedProj_diagInit()
+{
+    glGenBuffers(1, &s_diagSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_diagSSBO);
+    float zeros[32] = {};
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)sizeof(zeros), zeros,
+                    GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kDiagBinding, s_diagSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=diag_ssbo_init binding=%u\n", kDiagBinding);
+    fflush(stderr);
+}
+
+static void unifiedProj_diagSnapshot(const char* tag)
+{
+    if (!s_diagSSBO) return;
+    float data[32] = {};
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_diagSSBO);
+    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)sizeof(data), data);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=gpu_matrix_readback tag=%s bytes=", tag);
+    for (int k = 0; k < 16; ++k) fprintf(stderr, "%a ", data[k]);
+    fprintf(stderr, "\n");
+    fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=gpu_matrix_readback human=\n");
+    for (int i = 0; i < 4; ++i) {
+        fprintf(stderr, "  row %d: %.6f %.6f %.6f %.6f\n",
+            i, data[i*4+0], data[i*4+1], data[i*4+2], data[i*4+3]);
+    }
+    fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=sample world=(%.3f %.3f %.3f %.3f) "
+        "newClip=(%.3f %.3f %.3f %.3f) legacyClip=(%.3f %.3f %.3f %.3f) "
+        "legacyGlPos=(%.3f %.3f %.3f %.3f)\n",
+        data[16], data[17], data[18], data[19],
+        data[20], data[21], data[22], data[23],
+        data[24], data[25], data[26], data[27],
+        data[28], data[29], data[30], data[31]);
+    float newW = data[23], oldW = data[27];
+    if (fabsf(newW) > 1e-6f && fabsf(oldW) > 1e-6f) {
+        float newNDC[3] = { data[20]/newW, data[21]/newW, data[22]/newW };
+        float oldNDC[3] = { data[24]/oldW, data[25]/oldW, data[26]/oldW };
+        fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=ndc_compare tag=%s "
+            "newNDC=(%.6f %.6f %.6f) oldNDC=(%.6f %.6f %.6f) "
+            "delta=(%.6f %.6f %.6f) w_ratio=%.6f\n",
+            tag,
+            newNDC[0], newNDC[1], newNDC[2],
+            oldNDC[0], oldNDC[1], oldNDC[2],
+            newNDC[0]-oldNDC[0], newNDC[1]-oldNDC[1], newNDC[2]-oldNDC[2],
+            newW/oldW);
+    }
+    fflush(stderr);
+}
 #endif  // MC2_UNIFIED_PROJECTION_PARITY_PROBE
 
 static bool g_exit = false;
@@ -1087,6 +1148,7 @@ int main(int argc, char** argv)
     startup_phase("renderer_created");
 #ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
     unifiedProj_probeInit();
+    unifiedProj_diagInit();
 #endif
     if(!gos_CreateAudio())
     {   // not an error
@@ -1196,6 +1258,7 @@ int main(int argc, char** argv)
                     char tag[32];
                     snprintf(tag, sizeof(tag), "frame_%u", s_probeSnapshotFrame * 60);
                     unifiedProj_probeSnapshot(tag);
+                    unifiedProj_diagSnapshot(tag);
                     s_probeSnapshotFrame++;
                 }
             }
