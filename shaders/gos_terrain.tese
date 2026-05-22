@@ -59,22 +59,28 @@ uniform vec4 detailNormalTiling; // .x = base tiling multiplier
 #ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
 layout(std430, binding = 23) buffer DebugSSBO {
     uint  debugSSBO_counters[8];
-    float debugSSBO_matrix[16];  // u_worldToClipGL row-major; see C++ kProbeSSBOMatrixOffset
+    float debugSSBO_matrix[16];  // CPU M[i*4+j] = Stuff(row i, col j); GL_FALSE semantics apply
 };
 // Read the probe matrix from SSBO as a mat4.
-// std430: float[16] has same layout as mat4 (column-major by GLSL convention,
-// but we stored it row-major from C++ and use GL_FALSE on glUniformMatrix*fv
-// elsewhere -- the equivalent here: we READ the mat4 column-by-column from
-// debugSSBO_matrix which was stored ROW-major, so we must take the transpose).
-// Simpler: just load it as 4 column vec4s that correspond to C++ rows.
+// F1 Task 7d fix: CPU writes M[i*4+j] = Stuff(row i, col j) (row-major repackage of
+// column-major Stuff). Legacy glUniformMatrix4fv(loc, 1, GL_FALSE, M) reads 4 consecutive
+// floats as one column, giving GLSL terrainMVP = transpose(Stuff). This SSBO reconstruct
+// must do the same: read 4 consecutive floats per column so m = transpose(Stuff) = terrainMVP.
+// Prior strided read produced m = Stuff (untransposed), inflating w by ~3000x.
+// See observations doc for full layout trace.
 mat4 ssbo_readWorldToClipGL() {
-    // C++ stored [row][col] = debugSSBO_matrix[row*4+col] (row-major).
-    // GLSL mat4 col-major: mat4(c0, c1, c2, c3) where ci = column i.
-    // Column j of the matrix = row j of the C++ storage.
-    vec4 c0 = vec4(debugSSBO_matrix[0],  debugSSBO_matrix[4],  debugSSBO_matrix[8],  debugSSBO_matrix[12]);
-    vec4 c1 = vec4(debugSSBO_matrix[1],  debugSSBO_matrix[5],  debugSSBO_matrix[9],  debugSSBO_matrix[13]);
-    vec4 c2 = vec4(debugSSBO_matrix[2],  debugSSBO_matrix[6],  debugSSBO_matrix[10], debugSSBO_matrix[14]);
-    vec4 c3 = vec4(debugSSBO_matrix[3],  debugSSBO_matrix[7],  debugSSBO_matrix[11], debugSSBO_matrix[15]);
+    // F1 Task 7d fix: read 4 consecutive floats per column, matching
+    // glUniformMatrix4fv(loc, 1, GL_FALSE, M) interpretation in legacy
+    // upload. C++ stored M[i*4+j] = matrix(row i, col j) (row-major
+    // repackage of column-major Stuff). GL_FALSE on that buffer treats
+    // 4 consecutive floats as one column, giving GLSL mat4 = transpose
+    // of the original. SSBO reconstruct must do the same to match
+    // legacy `terrainMVP` semantics. See observations doc for the
+    // full layout trace.
+    vec4 c0 = vec4(debugSSBO_matrix[0],  debugSSBO_matrix[1],  debugSSBO_matrix[2],  debugSSBO_matrix[3]);
+    vec4 c1 = vec4(debugSSBO_matrix[4],  debugSSBO_matrix[5],  debugSSBO_matrix[6],  debugSSBO_matrix[7]);
+    vec4 c2 = vec4(debugSSBO_matrix[8],  debugSSBO_matrix[9],  debugSSBO_matrix[10], debugSSBO_matrix[11]);
+    vec4 c3 = vec4(debugSSBO_matrix[12], debugSSBO_matrix[13], debugSSBO_matrix[14], debugSSBO_matrix[15]);
     return mat4(c0, c1, c2, c3);
 }
 #endif // MC2_UNIFIED_PROJECTION_PARITY_PROBE
