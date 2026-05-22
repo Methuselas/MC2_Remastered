@@ -45,9 +45,7 @@ out float UndisplacedDepth;
 flat out uint RecordIdx;
 
 // Uniforms (shared names with gos_terrain_thin.vert)
-uniform mat4  terrainMVP;
-uniform vec4  terrainViewport;
-uniform mat4  mvp;
+uniform mat4  u_worldToClipGL;
 uniform int   mapSide;
 uniform float atlasNumTexturesAcross;
 uniform float atlasMapTopLeftX;
@@ -156,15 +154,9 @@ void main() {
     WorldNorm = worldNorm;
     WorldPos  = worldPos;
 
-    // ---- Double-projection (identical to gos_terrain_thin.vert) ---------
-    vec4 clip = terrainMVP * vec4(worldPos, 1.0);
-    float rhw = 1.0 / clip.w;
-    vec3 screen;
-    screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
-    screen.y = clip.y * rhw * terrainViewport.y + terrainViewport.w;
-    screen.z = clip.z * rhw + TERRAIN_DEPTH_FUDGE;  // single-sourced; see terrain_depth_bias.hglsl
-    vec4 ndc = mvp * vec4(screen, 1.0);
-    float absW = abs(clip.w);
-    gl_Position      = vec4(ndc.xyz * absW, absW);
-    UndisplacedDepth = screen.z;
+    // ---- F1 Stage A: direct GL clip emit with depth bias --------------------
+    vec4 clip = u_worldToClipGL * vec4(worldPos, 1.0);
+    clip.z   += TERRAIN_DEPTH_FUDGE * clip.w;
+    gl_Position      = clip;
+    UndisplacedDepth = clip.z / clip.w;
 }

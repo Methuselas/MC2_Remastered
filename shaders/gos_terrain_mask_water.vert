@@ -46,9 +46,7 @@ out vec4  Color;
 out vec2  Texcoord;
 out float FogValue;
 
-uniform mat4  terrainMVP;
-uniform mat4  mvp;
-uniform vec4  terrainViewport;
+uniform mat4  u_worldToClipGL;
 uniform float waterElevation;
 uniform float frameCos;
 
@@ -132,13 +130,7 @@ void main() {
     // (TES tiles breaking through at map edges); see header + git 89d7c4f.
     //   terrain: TERRAIN_DEPTH_FUDGE       = 0.002
     //   water:   WATER_DEPTH_FUDGE_RASTER  = 0.0025 (TERRAIN + 0.0005)
-    vec4 clip = terrainMVP * vec4(worldPos, 1.0);
-    float rhw = 1.0 / clip.w;
-    vec3 screen;
-    screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
-    screen.y = clip.y * rhw * terrainViewport.y + terrainViewport.w;
-    screen.z = clip.z * rhw + WATER_DEPTH_FUDGE_RASTER;  // RASTER regime 0.0025 (its real peer = CPU raster)
-    vec4 ndc = mvp * vec4(screen, 1.0);
-    float absW = abs(clip.w);
-    gl_Position = vec4(ndc.xyz * absW, absW);
+    vec4 clip = u_worldToClipGL * vec4(worldPos, 1.0);
+    clip.z   += WATER_DEPTH_FUDGE_RASTER * clip.w;
+    gl_Position = clip;
 }

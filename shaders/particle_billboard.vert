@@ -15,14 +15,11 @@
 //   - textureLod (not texture) in the FS — partner shader uses textureLod
 //     to dodge AMD auto-LOD black-on-incomplete-mips strict-fail.
 //
-// In-front discipline (memory: clip_w_sign_trap.md): MC2's worldToClip
-// (terrainMVP) produces well-formed finite clip values for behind-camera
-// vertices that have the same sign-of-w as visible verts. We must not use
-// sign(clip.w) as an in-front test. The pz computation below mirrors the
-// projectZ() pattern used by gos_terrain_thin.vert / gos_terrain_water_fast.vert:
-//   pz = clip.z / abs(clip.w); valid iff pz in [0, 1) under reverse-Z.
-// When pz is out of range we emit a degenerate gl_Position to cull the
-// particle entirely.
+// In-front discipline post-F1 (kAxisSwapMC2toGL has the R-clipw polarity
+// fold per addendum-rclipw-polarity.md, so u_worldToClipGL produces
+// clip.w > 0 for in-front MC2 verts). Hardware clip-volume test handles
+// rejection of behind-camera vertices; no explicit pz cull in this VS.
+// CPU-side particle visibility is gated upstream by the gosFX/MLR system.
 
 #include <include/particles.hglsl>
 
@@ -30,17 +27,7 @@ layout(std430, binding = 14) readonly buffer Particles {
     Particle particles[];
 };
 
-uniform mat4 terrainMVP;  // GL_FALSE upload (row-major direct) per
-                          // memory/terrain_mvp_gl_false.md.
-// B1 C14: terrainMVP is D3D pixel-homog clip-space (per
-// gos_terrain_surface.vert documentation), NOT GL clip. To get to GL
-// clip we must mirror the 3-step chain used by static_prop.vert:148-156
-// and mech.vert: (1) terrainMVP -> pixel-homog clip4, (2) viewport
-// divide via u_terrainViewport, (3) u_mvp NDC remap with absW restore.
-// C13's inspection identified the prior direct gl_Position = clip4
-// assignment as the ~90%-confidence invisibility root cause.
-uniform vec4 u_terrainViewport;
-uniform mat4 u_mvp;
+uniform mat4 u_worldToClipGL;  // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 
 // Atlas UVs for the four billboard corners.
 // Stage 1' Card test effect uses the full atlas page (0..1).
@@ -90,21 +77,8 @@ void main() {
     // interpretation lands far from any tier1 mission's SPOT_DIAG range.
     vec3 worldPos = vec3(-worldStuff.x, worldStuff.z, worldStuff.y);
 
-    // B1 C14: 3-step chain mirroring static_prop.vert:148-156.
-    // Step 1: world -> pixel-homog clip via terrainMVP (D3D convention).
-    vec4 clip4 = terrainMVP * vec4(worldPos, 1.0);
-    float rhw  = 1.0 / clip4.w;
-    // Step 2: viewport divide (pixel space).
-    vec3 px;
-    px.x = clip4.x * rhw * u_terrainViewport.x + u_terrainViewport.z;
-    px.y = clip4.y * rhw * u_terrainViewport.y + u_terrainViewport.w;
-    px.z = clip4.z * rhw;
-    // Step 3: pixel -> GL NDC via u_mvp, then absW restore so behind-camera
-    // vertices get correct GL clip-space w (preserves clip_w_sign_trap.md
-    // discipline without bespoke pz cull — GL clipper handles it natively).
-    vec4 ndc  = u_mvp * vec4(px, 1.0);
-    float absW = abs(clip4.w);
-    gl_Position = vec4(ndc.xyz * absW, absW);
+    // F1 Stage A: direct GL clip emit.
+    gl_Position = u_worldToClipGL * vec4(worldPos, 1.0);
 
     v_uv    = kCornerUv[cornerIdx];
     v_color = p.color;

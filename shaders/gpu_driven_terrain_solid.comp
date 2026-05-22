@@ -191,54 +191,28 @@ uniform int  u_bucketHeaderTrace;
 // Approach A: 1 == vn0 = solidWin[id] (camera-windowed dispatch); 0 == vn0 = id
 // (full-range identity == 08bd3b2 HEAD behavior / safety fallback).
 uniform int  u_useWindow;
-uniform mat4 u_terrainMVP;
+uniform mat4 u_worldToClipGL;  // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 uniform float u_worldUnitsPerVertex;  // Terrain::worldUnitsPerVertex; probe-5 spread check
 
 // ---------------------------------------------------------------------------
-// Depth fudge — GATE ONLY (pz_adj ∈ [0,1) cull threshold, equivalent to
-// pz ∈ [-FUDGE, 1-FUDGE)); the indirect terrain DRAW depth is emitted by
-// gos_terrain_thin.vert. Value single-sourced from terrain_depth_bias.hglsl
-// (was a hand-mirrored 0.002 literal; 2026-05-16 VPL-#10 single-source).
+// projectClip — project world position through u_worldToClipGL (raw clip vec4).
+// The thin VS reads this directly from tr.clipPos[c] and does its own 1/w.
 // ---------------------------------------------------------------------------
-const float kTerrainDepthFudge = TERRAIN_DEPTH_FUDGE;
-
-// ---------------------------------------------------------------------------
-// projectZ — project world-space position through u_terrainMVP and return
-// the perspective-divided z (NDC depth). Matches CPU projectZ / vertexProjectLoop.
-// See memory/terrain_mvp_gl_false.md for the row-major / GL_FALSE convention.
-// No guard on clip.w <= 0 — both z and w can be negative at map boundaries
-// (oblique camera convention, see memory/clip_w_sign_trap.md). clip.z*rhw
-// with negative w gives a value the CPU pzOk gate also sees; no early return.
-// ---------------------------------------------------------------------------
-float projectZ(float wx, float wy, float wz) {
-    vec4 clip = u_terrainMVP * vec4(wx, wy, wz, 1.0);
-    float rhw = (clip.w != 0.0) ? 1.0 / clip.w : 1.0;
-    return clip.z * rhw;
-}
-
-// Fix B helper: return the full clip-space vec4 for storage in the thin
-// record's clipPos[c] field.  Same math as projectZ() but without the
-// rhw divide — the writer keeps raw clip and the VS does its own 1/w.
-// Keeping projectZ() separate (rather than refactoring it to return vec4
-// and computing rhw at every call site) preserves the pzOk gate's exact
-// existing math, removing one axis of risk for the schema change.
 vec4 projectClip(float wx, float wy, float wz) {
-    return u_terrainMVP * vec4(wx, wy, wz, 1.0);
+    return u_worldToClipGL * vec4(wx, wy, wz, 1.0);
 }
 
-// Probe-4 helper: return |clip.w| for the same projection.  Used by the
-// near-zero-clip.w detector to count quads that pass pzOk with one or more
-// corners straddling the camera plane (where clip.w ~ 0 produces wild VS
-// projection — see memory/clip_w_sign_trap.md).
-float absClipW(float wx, float wy, float wz) {
-    vec4 clip = u_terrainMVP * vec4(wx, wy, wz, 1.0);
-    return abs(clip.w);
-}
-
-// pzOk — with TERRAIN_DEPTH_FUDGE applied. Mirrors packer:1435-1436.
-bool pzOk(float pz) {
-    float adj = pz + kTerrainDepthFudge;
-    return adj >= 0.0 && adj < 1.0;
+// ---------------------------------------------------------------------------
+// pzOk — ZERO_TO_ONE admission gate (spec §4.4).
+// Under glClipControl(ZERO_TO_ONE), in-frustum depth maps clip.z ∈ [0, clip.w].
+// TERRAIN_DEPTH_FUDGE applied pre-divide by the thin VS (clip.z += FUDGE*clip.w);
+// mirror that here so the cull gate matches what the VS will render.
+// No x/y plane tests — matches CPU pzOk which only gates depth (spec §4.4).
+// ---------------------------------------------------------------------------
+bool pzOk(vec4 clip) {
+    if (clip.w <= 1e-4) return false;
+    float biasedZ = clip.z + TERRAIN_DEPTH_FUDGE * clip.w;
+    return biasedZ >= 0.0 && biasedZ < clip.w;
 }
 
 // ---------------------------------------------------------------------------
@@ -320,26 +294,18 @@ void main() {
     //   corner 2 = (wx2,wy2,wz2) — bot-right vn = vn0+ms+1
     //   corner 3 = (wx3,wy3,wz3) — bot-left  vn = vn0+ms
     // -----------------------------------------------------------------------
-    float pz0 = projectZ(r.pos0.x, r.pos0.y, r.pos0.z);
-    float pz1 = projectZ(r.pos1.x, r.pos1.y, r.pos1.z);
-    float pz2 = projectZ(r.pos2.x, r.pos2.y, r.pos2.z);
-    float pz3 = projectZ(r.pos3.x, r.pos3.y, r.pos3.z);
-
-    // Fix B 2026-05-14: capture per-corner clip-space vec4 alongside the pz
-    // computation above.  These are stored in tr.clipPos[c] below; the VS
-    // reads them directly and bypasses terrainMVP * worldPos projection.
-    // Same matrix (u_terrainMVP), same lane, same dispatch — so the pzOk
-    // gate and clipPos cannot disagree about which projection-frame the
-    // record describes.
+    // F1 Stage A: projectClip() now uses u_worldToClipGL (true GL clip).
+    // pzOk() uses the ZERO_TO_ONE clip-space test (spec §4.4).
+    // clip* stored in tr.clipPos[c]; VS emits them directly.
     vec4 clip0 = projectClip(r.pos0.x, r.pos0.y, r.pos0.z);
     vec4 clip1 = projectClip(r.pos1.x, r.pos1.y, r.pos1.z);
     vec4 clip2 = projectClip(r.pos2.x, r.pos2.y, r.pos2.z);
     vec4 clip3 = projectClip(r.pos3.x, r.pos3.y, r.pos3.z);
 
-    bool ok0 = pzOk(pz0);
-    bool ok1 = pzOk(pz1);
-    bool ok2 = pzOk(pz2);
-    bool ok3 = pzOk(pz3);
+    bool ok0 = pzOk(clip0);
+    bool ok1 = pzOk(clip1);
+    bool ok2 = pzOk(clip2);
+    bool ok3 = pzOk(clip3);
 
     // uvMode derived from (mx, my) parity — matches worldQuadUVMode() mapdata.cpp:117:
     //   ((tileR & 1) == (tileC & 1)) ? BOTTOMRIGHT : BOTTOMLEFT
@@ -379,10 +345,10 @@ void main() {
     // ~1% of typical clip.w under oblique camera; tune via [RING_NEARW] data.
     {
         const float kClipWWarn = 0.05;
-        float aw0 = absClipW(r.pos0.x, r.pos0.y, r.pos0.z);
-        float aw1 = absClipW(r.pos1.x, r.pos1.y, r.pos1.z);
-        float aw2 = absClipW(r.pos2.x, r.pos2.y, r.pos2.z);
-        float aw3 = absClipW(r.pos3.x, r.pos3.y, r.pos3.z);
+        float aw0 = abs(clip0.w);
+        float aw1 = abs(clip1.w);
+        float aw2 = abs(clip2.w);
+        float aw3 = abs(clip3.w);
         float minAw = min(min(aw0, aw1), min(aw2, aw3));
         if (minAw < kClipWWarn && u_bucketHeaderTrace != 0) {
             // pad1_ = count of pzOk-passed quads with one or more "thin" corners

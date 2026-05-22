@@ -37,6 +37,8 @@
 //                      See memory/terrain_mvp_gl_false.md: GL_FALSE + row-major +
 //                      GLSL column-major mat4 → terrainMVP * vec4(pos,1) is correct.
 
+#include <include/terrain_depth_bias.hglsl>  // single-source WATER_DEPTH_FUDGE_FAST (gate-only here)
+
 layout(local_size_x = 64) in;
 
 // ---------------------------------------------------------------------------
@@ -132,9 +134,7 @@ uniform float u_frameCos;          // Terrain::frameCos — per-vertex wave Z-li
 uniform int   u_windowCount;
 uniform int   u_maxThinRecords;
 uniform int   u_mapSide;           // Terrain::realVerticesMapSide
-// terrainMVP: row-major upload with GL_FALSE. GLSL mat4 is column-major but
-// GL_FALSE + row-major cancels correctly — see memory/terrain_mvp_gl_false.md.
-uniform mat4  u_terrainMVP;
+uniform mat4  u_worldToClipGL;  // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 
 // ---------------------------------------------------------------------------
 // terrainTypeToMaterial — replicates terrainTypeToMaterialLocal() in
@@ -158,29 +158,29 @@ float waveOurCos(uint vWaterBits) {
 }
 
 // ---------------------------------------------------------------------------
-// projectWaterZ — project world-space (wx, wy, waterElev + waveZ) through
-// u_terrainMVP and return the perspective-divided z (NDC depth).
-// Mirrors quad.cpp:953-1201 water projection in setupTextures, including the
-// frameCos wave Z-lift applied before projection (quad.cpp:689-700).
+// projectWaterClip — project world-space (wx, wy, waterElev + waveZ) through
+// u_worldToClipGL and return the raw clip-space vec4 (pre-divide).
+// Mirrors quad.cpp:953-1201 water projection setup, including the frameCos
+// wave Z-lift applied before projection (quad.cpp:689-700).
 // vWaterBits is the per-vertex byte from WaterRecipe.waterBits.
-// Matches CPU projectZ exactly: rhw = (w != 0) ? 1/w : 1, screen.z = clip.z * rhw.
-// No guard on clip.w <= 0 — at map boundaries both clip.z and clip.w can be negative,
-// giving a positive screen.z that CPU pzOk [0,1) accepts. The old early-return caused
-// cpu_only=1 mismatches for these degenerate near-plane quads (see clip_w_sign_trap.md).
+// Post-F1: clip.w > 0 for in-front per kAxisSwapMC2toGL polarity fold
+// (addendum-rclipw-polarity.md). Admission via pzOk(clip) uses
+// ZERO_TO_ONE depth-only test; no x/y plane tests added (spec §4.4).
 // ---------------------------------------------------------------------------
-float projectWaterZ(float wx, float wy, uint vWaterBits) {
+vec4 projectWaterClip(float wx, float wy, uint vWaterBits) {
     float elev = u_waterElevation + waveOurCos(vWaterBits);
-    vec4 clip = u_terrainMVP * vec4(wx, wy, elev, 1.0);
-    float rhw = (clip.w != 0.0) ? 1.0 / clip.w : 1.0;
-    return clip.z * rhw;
+    return u_worldToClipGL * vec4(wx, wy, elev, 1.0);
 }
 
 // ---------------------------------------------------------------------------
-// pzOk — wz ∈ [0,1) gate matching UploadAndBindThinRecords line 432:
-//   auto pzOk = [](float z) { return z >= 0.0f && z < 1.0f; };
+// pzOk — ZERO_TO_ONE admission gate (spec §4.4).
+// Water depth bias (WATER_DEPTH_FUDGE_FAST) mirrors the thin VS which applies
+// it pre-divide: clip.z += FUDGE * clip.w. Gate must agree.
 // ---------------------------------------------------------------------------
-bool pzOk(float z) {
-    return z >= 0.0 && z < 1.0;
+bool pzOk(vec4 clip) {
+    if (clip.w <= 1e-4) return false;
+    float biasedZ = clip.z + WATER_DEPTH_FUDGE_FAST * clip.w;
+    return biasedZ >= 0.0 && biasedZ < clip.w;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,15 +206,17 @@ void main() {
     uint wb2 = (r.waterBits >> 16) & 0xFFu;
     uint wb3 = (r.waterBits >> 24) & 0xFFu;
 
-    float wz0 = projectWaterZ(r.v0x, r.v0y, wb0);
-    float wz1 = projectWaterZ(r.v1x, r.v1y, wb1);
-    float wz2 = projectWaterZ(r.v2x, r.v2y, wb2);
-    float wz3 = projectWaterZ(r.v3x, r.v3y, wb3);
+    // F1 Stage A: projectWaterClip uses u_worldToClipGL (true GL clip).
+    // pzOk uses ZERO_TO_ONE clip-space test (spec §4.4).
+    vec4 wc0 = projectWaterClip(r.v0x, r.v0y, wb0);
+    vec4 wc1 = projectWaterClip(r.v1x, r.v1y, wb1);
+    vec4 wc2 = projectWaterClip(r.v2x, r.v2y, wb2);
+    vec4 wc3 = projectWaterClip(r.v3x, r.v3y, wb3);
 
-    bool ok0 = pzOk(wz0);
-    bool ok1 = pzOk(wz1);
-    bool ok2 = pzOk(wz2);
-    bool ok3 = pzOk(wz3);
+    bool ok0 = pzOk(wc0);
+    bool ok1 = pzOk(wc1);
+    bool ok2 = pzOk(wc2);
+    bool ok3 = pzOk(wc3);
 
     // uvMode from recipe flags bit 0: 0 = BOTTOMRIGHT, 1 = BOTTOMLEFT.
     bool isBottomLeft = (r.flags & kFlagBitUvModeBottomLeft) != 0u;

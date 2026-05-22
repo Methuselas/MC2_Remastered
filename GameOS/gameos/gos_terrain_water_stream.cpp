@@ -1498,7 +1498,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
             // water cull-feed matrix FP == terrain dispatch FP. The render binds
             // (gameos_graphics.cpp water + the 3 overlay/decal callers) inline the
             // byte-identical symmetric-mirror expression this cull-feed uses, and
-            // terrain_mvp_ has a single per-frame writer (gamecam.cpp gos_SetTerrainMVP)
+            // terrain_mvp_ has a single per-frame writer (gamecam.cpp gos_SetWorldToClipGL)
             // before all consumers, so wfp is a faithful render-bind-FP proxy. A==0 on
             // an armed frame ONLY if a future change mutates terrain_mvp_ mid-frame
             // (the one residual hazard). It does NOT by itself prove correctness.

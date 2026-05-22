@@ -94,9 +94,7 @@ flat out uint RecordIdx;
 
 // Projection chain uniforms (set by terrainBindThinUniformsForPatchStream;
 // SAME names/semantics as gos_terrain_thin.vert / gos_terrain.tese).
-uniform mat4 terrainMVP;        // axisSwap*worldToClip (D3D pixel-homogeneous)
-uniform vec4 terrainViewport;   // (vmx, vmy, vax, vay) post-divide viewport map
-uniform mat4 mvp;               // projection_: screen pixels -> NDC (z-row identity)
+uniform mat4 u_worldToClipGL;   // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 uniform int  u_mapSide;         // META-FIX: realVerticesMapSide; cells = mapSide-1.
                                 // Recovers the ROW-MAJOR tile key from the cell's
                                 // top-left vertexNum (ADJUST-1-emission-safe).
@@ -186,68 +184,21 @@ void main() {
         TerrainType = float((terrainTypes >> (cornerIdx * 8u)) & 0xFFu);
     }
 
-    // ---- Fork D: clip-space PRE-perspective-divide reverse-Z bias ----------
-    // terrainMVP*world -> D3D pixel-homogeneous clip (see header block). Apply
-    // the single-sourced, already-flipped (do NOT re-flip) reverse-Z terrain
-    // layer bias in clip space BEFORE the 1/w divide. consume TERRAIN_DEPTH_FUDGE
-    // unchanged (terrain_depth_bias.hglsl:43, = -0.002, reverse-Z convention:
-    // OVERLAY>0>WATER; static_assert pinned C++ side terrain_depth_bias.h:78-81).
-    vec4 clip = terrainMVP * vec4(worldPos, 1.0);
-    clip.z   += TERRAIN_DEPTH_FUDGE * clip.w;   // PRE-divide; *clip.w keeps the
-                                                // post-divide NDC offset ~const
-    float rhw = 1.0 / clip.w;
-    vec3 screen;
-    screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
-    screen.y = clip.y * rhw * terrainViewport.y + terrainViewport.w;
-    screen.z = clip.z * rhw;                    // NO additive post-divide fudge
-                                                // (the deleted §4.1 mechanism)
-    vec4 ndc  = mvp * vec4(screen, 1.0);        // pixels->NDC; z-row (0,0,1,0)
-                                                // so ndc.z == screen.z exactly
-    float absW = abs(clip.w);                   // memory/clip_w_sign_trap.md:
-                                                // never sign(clip.w); abs is
-                                                // load-bearing for oblique cam
-    gl_Position      = vec4(ndc.xyz * absW, absW);
-    UndisplacedDepth = screen.z;                // no displacement on the base
-                                                // surface; overlay tie uses this
+    // ---- F1 Stage A: direct GL clip emit with pre-divide depth bias ----------
+    // Apply TERRAIN_DEPTH_FUDGE in clip space before the hardware divide so the
+    // post-divide NDC offset stays ~constant. Same effect as the legacy Fork D
+    // pre-divide form (clip.z += FUDGE * clip.w), now against the true GL clip.
+    vec4 clip = u_worldToClipGL * vec4(worldPos, 1.0);
+    clip.z   += TERRAIN_DEPTH_FUDGE * clip.w;  // PRE-divide; *clip.w keeps post-divide offset ~const
+    gl_Position      = clip;
+    UndisplacedDepth = clip.z / clip.w;  // no displacement on base surface; overlay tie uses this
 
-    // ---- Clip-safe front/far reject (mirrors shipped terrain_overlay.vert) --
-    // The continuous surface spans the WHOLE map incl. around/behind the
-    // oblique RTS camera and is drawn UNCONDITIONALLY (no CPU pz-cull window,
-    // unlike the live M2d makeLists path). Without this guard, vertices with
-    // clip.w<=0 drive rhw=1/clip.w to explode/sign-flip -> garbage gl_Position
-    // with per-vertex sign flips -> a quad straddling opposite clip planes ->
-    // a non-cullable frustum-spanning raster sheet the camera looks through
+    // ---- Clip-safe front/far reject (raster-sheet guard) --------------------
+    // Degenerate vertices (clip.w <= 0) would produce NaN or sign-flipped NDC,
+    // causing a frustum-spanning raster sheet
     // (memory/drawpass_retirement_decal_bake_state_and_raster_sheet_trap.md).
-    //
-    // screen.z is the post-divide D3D pixel-homogeneous depth (clip.z*rhw),
-    // i.e. Camera::projectZ()'s sp.z / the CPU pz gate domain (mclib/quad.cpp
-    // pzTri1/pzTri2, sp.z in [0,1)) -- this is the pre-`mvp` projectZ space,
-    // NOT the final GL depth-buffer convention. Reverse-Z (near->1, far->0,
-    // GL_GEQUAL, clearDepth 0) applies only at the FINAL NDC/depth stage via
-    // the scene projection; it does NOT alter this intermediate projectZ
-    // domain, so the bound stays [0,1) -- byte-identical to the shipped
-    // terrain_overlay.vert guard (b3c30ad, deliberately unchanged across the
-    // reverse-Z landing dae87a8 for exactly this reason). Mirrored verbatim;
-    // NO new bound invented. Tests the post-Fork-D-bias screen.z just as the
-    // overlay tests its post-OVERLAY_DEPTH_BIAS px.z (the ~5e-4 epsilon is
-    // immaterial to a front/far reject).
-    //
-    // Provable no-op for valid on-screen verts (screen.z in [0,1) -> branch
-    // not taken -> gl_Position bit-identical). Behind/at-camera/past-far verts
-    // collapse to one constant one-plane-exterior point (w=1, finite, NaN-safe
-    // via the negated-AND so clip.w==0 -> NaN screen.z also rejects): all-out
-    // primitives become zero-area non-rasterizing; mixed-clip primitives clip
-    // cleanly against the near plane (constant exterior point => edges
-    // monotonically exit, cannot re-enter/span) => no spanning sheet. This is
-    // the project-sanctioned sp.z-in-[0,1) front-test; do NOT replace with a
-    // clip.w sign test or remove abs(clip.w) -- memory/terrain_tes_projection
-    // .md + memory/clip_w_sign_trap.md record 3 falsified attempts (ddc173f,
-    // 6c6e872) that regress ALL terrain. META-FIX (single-source clip-safe
-    // projection helper across the 13 sibling terrain/water/overlay VS) is
-    // owned by the separate continuous-GPU-terrain-surface keystone session;
-    // a per-path consolidation arc here is the forbidden additive-~0ms /
-    // doomed-path trap (memory/reverse_z_residuals_belong_to_terrain_surface_
-    // metafix.md). Greybeard verdict: PATCH (justified), meta-fix debt filed.
-    if (!(screen.z >= 0.0 && screen.z < 1.0))
+    // Under ZERO_TO_ONE, in-frustum verts have clip.w > 0 and clip.z in [0, clip.w].
+    // Collapse out-of-frustum verts to a degenerate off-screen point.
+    if (!(clip.w > 0.0 && clip.z >= 0.0 && clip.z <= clip.w))
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
 }

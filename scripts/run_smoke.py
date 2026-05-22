@@ -168,6 +168,15 @@ def main():
     if args.gl_debug_fatal:
         os.environ["MC2_GL_DEBUG_FATAL"] = "1"
 
+    # F1 unified-projection: forbid MC2_DISABLE_GOSFX=0 in smoke runs.
+    # Visual regression accepted only in dev-override sessions; smoke must
+    # represent shipped default state.
+    if os.environ.get("MC2_DISABLE_GOSFX") == "0":
+        print("[run_smoke] FATAL: MC2_DISABLE_GOSFX=0 conflicts with unified "
+              "projection; smoke would record regressed visuals. Unset or set =1.",
+              file=sys.stderr)
+        sys.exit(2)
+
     # Existing-process safety.
     pids = _running_mc2()
     if pids:

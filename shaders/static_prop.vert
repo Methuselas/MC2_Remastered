@@ -66,9 +66,7 @@ layout(std430, binding = 2) readonly buffer PerType   { PerTypeData  t[]; } perT
 // entries, so writes never overflow.
 layout(std430, binding = 3) buffer ParityOut { uint parityOut[]; } parityOut_;
 
-uniform mat4 terrainMVP;
-uniform vec4 u_terrainViewport;
-uniform mat4 u_mvp;
+uniform mat4 u_worldToClipGL;  // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 // Slice 2 (object-offload) — Stage 2.D.1: parity write gate.
 // 0 (default) = no write to parityOut_; nonzero = write per-vertex lit ARGB.
 // 'uniform uint' crashes this engine's shader compile (memory/uniform_uint_crash.md)
@@ -145,15 +143,7 @@ void main() {
     vec4 world = vec4(world_mc2, 1.0);
     // Match terrain_overlay.vert exactly: terrainMVP is the CPU-composed
     // axisSwap * worldToClip matrix uploaded GL_FALSE.
-    vec4 clip4 = terrainMVP * world;
-    float rhw  = 1.0 / clip4.w;
-    vec3  px;
-    px.x = clip4.x * rhw * u_terrainViewport.x + u_terrainViewport.z;
-    px.y = clip4.y * rhw * u_terrainViewport.y + u_terrainViewport.w;
-    px.z = clip4.z * rhw;
-    vec4 ndc = u_mvp * vec4(px, 1.0);
-    float absW = abs(clip4.w);
-    gl_Position = vec4(ndc.xyz * absW, absW);
+    gl_Position = u_worldToClipGL * world;
 
     // Slice 2 (object-offload) — Stage 2.C.2: GPU vertex lighting.
     //

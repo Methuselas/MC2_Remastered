@@ -48,14 +48,9 @@ layout(std430, binding=1) readonly buffer BoneBuffer {
 // 'uniform uint' crashes this engine's shader compiler — use int + cast.
 uniform int  u_instanceBase;
 uniform int  u_materialFlags;
-// terrainMVP is the CPU-composed axisSwap * worldToClip matrix (row-major,
-// upload GL_FALSE). Same uniform name + upload convention as
-// static_prop.vert / terrain_overlay.vert, sourced from
-// gos_GetTerrainMVPMat4(). Using raw TG_Shape::s_worldToClip would skip
-// the axis swap and place mech vertices off-screen.
-uniform mat4 terrainMVP;
-uniform vec4 u_terrainViewport;  // (vmx, vmy, vax, vay) for D3D->GL projection chain
-uniform mat4 u_mvp;              // px->NDC (upload GL_TRUE)
+// u_worldToClipGL: CPU-composed kAxisSwapMC2toGL * worldToClip (row-major, GL_FALSE).
+// Same upload convention as static_prop.vert / terrain_overlay.vert.
+uniform mat4 u_worldToClipGL;
 // Slice B1: 0 = Slice A passthrough (baseLight=vec3(1.0)),
 // 1 = VS-side calc_light per-vertex. Driven by MC2_GPU_MECH_LIGHTING.
 // 'uniform uint' crashes the engine's shader compile (see
@@ -117,20 +112,10 @@ void main() {
     vec3 normalStuff = mat3(boneT) * a_normal;
     vec3 worldNormal = normalize(vec3(-normalStuff.x, normalStuff.z, normalStuff.y));
 
-    // D3D pixel-homogeneous projection chain (identical to static_prop.vert).
-    vec4 clip4 = terrainMVP * vec4(worldMC2, 1.0);
-    float rhw  = 1.0 / clip4.w;
-    vec3  px;
-    px.x = clip4.x * rhw * u_terrainViewport.x + u_terrainViewport.z;
-    px.y = clip4.y * rhw * u_terrainViewport.y + u_terrainViewport.w;
-    px.z = clip4.z * rhw;
-    vec4 ndc   = u_mvp * vec4(px, 1.0);
-    float absW = abs(clip4.w);
-    gl_Position = vec4(ndc.xyz * absW, absW);
-    // No "clip4.w < 0.1 -> push offscreen" clause: MC2 clip.w sign is NOT
-    // front/back per memory/clip_w_sign_trap.md; never sign-test clip.w.
-    // static_prop.vert correctly omits the guard. The plan template
-    // included it and made all mech vertices end up at (2,2,2,1).
+    // F1 Stage A: direct GL clip emit.
+    gl_Position = u_worldToClipGL * vec4(worldMC2, 1.0);
+    // No clip.w sign test — per memory/clip_w_sign_trap.md, clip.w sign
+    // is not front/back in MC2 world coords; static_prop.vert omits this too.
 
     // Slice B1: per-vertex GPU lighting via calc_light from lighting.hglsl.
     // u_lightingMode=0 keeps Slice A's flat-white passthrough (used as a

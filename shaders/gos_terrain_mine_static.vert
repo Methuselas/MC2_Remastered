@@ -18,13 +18,13 @@ layout(location = 0) in vec3 a_pos;
 layout(location = 1) in vec2 a_uv;
 layout(location = 2) in uint a_layer;
 
-uniform mat4 terrainMVP;   // worldToClip (matches PR1 SOLID terrainMVP)
+uniform mat4 u_worldToClipGL;  // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 
 out vec2  v_uv;
 flat out uint v_layer;
 
 void main() {
-    gl_Position = terrainMVP * vec4(a_pos, 1.0);
+    gl_Position = u_worldToClipGL * vec4(a_pos, 1.0);
     v_uv    = a_uv;
     v_layer = a_layer;
 }

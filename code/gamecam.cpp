@@ -162,36 +162,16 @@ void GameCamera::render (void)
 			// F3 CPU projection cost-baseline: matrix_build site (a).
 			::mc2_cpu_proj_cost::Scope _f3_mvp_scope(
 			    ::mc2_cpu_proj_cost::BUCKET_MATRIX_BUILD);
-			const float* W = (const float*)&worldToClip;
-			#define WTC(r,c) W[(c)*4+(r)]
-
-			// Axis swap: (-x, z, y) per projectZ()
-			float AW[4][4];
-			for (int j = 0; j < 4; j++) {
-				AW[0][j] = -WTC(0,j);
-				AW[1][j] =  WTC(2,j);
-				AW[2][j] =  WTC(1,j);
-				AW[3][j] =  WTC(3,j);
-			}
-
-			// Upload raw AW matrix (axisSwap * worldToClip)
-			// TES does perspective divide + viewport in shader (non-linear, can't be matrix)
-			// AW stored row-major in M[], uploaded with GL_FALSE in gameos_graphics.cpp.
-			// GL_FALSE → OpenGL reads each C++ row as a GLSL column → GLSL sees AW^T.
-			// AW^T * (vx,vy,elev,1) = projectZ(vx,vy,elev) exactly (Stuff row-vector convention).
-			float M[16];
-			for (int i = 0; i < 4; i++)
-				for (int j = 0; j < 4; j++)
-					M[i*4+j] = AW[i][j];
-
-			gos_SetTerrainMVP(M);
-
-			// F1 Stage A-pre Task 7b: parallel probe-only upload via UBO.
-			// Legacy gos_SetTerrainMVP(M) above stays AUTHORITATIVE. New UBO
-			// transport reaches every material-variant terrain program that
-			// declares UnifiedProjectionUBO (std140 binding=0). Does NOT write
-			// terrain_mvp_ cache.
-			gos_SetWorldToClipGLProbeUBO(eye->worldToClipGL());
+			// F1 Stage A unified-projection: single producer call.
+			// gos_SetWorldToClipGL composes nothing here — the matrix is
+			// built once by Camera::worldToClipGL() (axisSwap *
+			// worldToCamera * cameraToClip, with R-clipw polarity folded
+			// into kAxisSwapMC2toGL). gos_SetWorldToClipGL handles the
+			// column-major -> row-major repackage internally AND writes
+			// the terrain_mvp_ cache so all gos_GetTerrainMVPMat4()
+			// callers (CullUBO, mech-batcher, static-prop-batcher,
+			// particle-bridge, etc.) inherit transparently.
+			gos_SetWorldToClipGL(eye->worldToClipGL());
 
 			// Viewport params for TES: (vmx, vmy, vax, vay)
 			gos_SetTerrainViewport(viewMulX, viewMulY, viewAddX, viewAddY);
@@ -206,19 +186,6 @@ void GameCamera::render (void)
 			gos_SetTerrainLightDir(lightDirection.x, lightDirection.y, lightDirection.z);
 
 			#undef WTC
-		}
-
-		// F1 Stage A-pre Task 3: basis-vector smoke test gate. Runs once per
-		// process when MC2_UNIFIED_PROJECTION_BASIS_TEST=1 env is set. One-off
-		// scaffold; deleted in Stage A.
-		{
-			static bool s_unifiedProjBasisTestRan = false;
-			if (!s_unifiedProjBasisTestRan &&
-			    getenv("MC2_UNIFIED_PROJECTION_BASIS_TEST") != nullptr) {
-				s_unifiedProjBasisTestRan = true;
-				extern void unifiedProj_runBasisTest(Camera* eye);
-				unifiedProj_runBasisTest(this);
-			}
 		}
 
 		if (Environment.Renderer != 3)

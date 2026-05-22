@@ -88,12 +88,6 @@ public:
     bool screenShadowEnabled_;
     int screenShadowDebug_;  // 0=normal, 1=visualize
 
-    void runSSAO();
-    bool ssaoEnabled_;
-    float ssaoRadius_;
-    float ssaoBias_;
-    float ssaoPower_;
-
     // Scene state — set by terrain draw, cleared each frame in beginScene()
     bool sceneHasTerrain_;
     bool prevFrameHadTerrain_;  // for clear color: blue-grey in gameplay, black in menus
@@ -172,16 +166,6 @@ private:
     glsl_program* screenShadowProg_;
     float inverseViewProj_[16];
     float viewProj_[16];
-
-    // SSAO
-    glsl_program* ssaoProg_;
-    glsl_program* ssaoBlurProg_;
-    glsl_program* ssaoApplyProg_;
-    GLuint ssaoFBO_;           // half-res, single-channel AO
-    GLuint ssaoColorTex_;      // R16F
-    GLuint ssaoBlurFBO_;       // half-res blur target
-    GLuint ssaoBlurTex_;       // R16F
-    GLuint ssaoNoiseTex_;      // 4x4 RGB noise
 
     // God ray
     glsl_program* godrayProg_;

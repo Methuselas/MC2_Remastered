@@ -546,7 +546,7 @@ void loadProgramsIfNeeded() {
     // branch's per-frame upload path. Step 7's "Legacy path keeps working"
     // guardrail: do NOT redirect the existing legacy uploads to read from
     // s_locsLegacy here — that's a follow-up cleanup, not a Step 7 edit.
-    s_locsLegacy.terrainMVP        = glGetUniformLocation(s_staticPropProgram, "terrainMVP");
+    s_locsLegacy.terrainMVP        = glGetUniformLocation(s_staticPropProgram, "u_worldToClipGL");
     s_locsLegacy.terrainViewport   = glGetUniformLocation(s_staticPropProgram, "u_terrainViewport");
     s_locsLegacy.mvp               = glGetUniformLocation(s_staticPropProgram, "u_mvp");
     s_locsLegacy.fogValue          = glGetUniformLocation(s_staticPropProgram, "u_fogValue");
@@ -578,7 +578,7 @@ void loadProgramsIfNeeded() {
             // static_prop.frag (Step 8.5); glGetUniformLocation returns
             // -1 for them, ProgramLocs default-init keeps them -1, and
             // Step 11.7.d's upload helper skips -1 locations.
-            s_locsCoalesce.terrainMVP        = glGetUniformLocation(s_staticPropProgramCoalesce, "terrainMVP");
+            s_locsCoalesce.terrainMVP        = glGetUniformLocation(s_staticPropProgramCoalesce, "u_worldToClipGL");
             s_locsCoalesce.terrainViewport   = glGetUniformLocation(s_staticPropProgramCoalesce, "u_terrainViewport");
             s_locsCoalesce.mvp               = glGetUniformLocation(s_staticPropProgramCoalesce, "u_mvp");
             s_locsCoalesce.fogValue          = glGetUniformLocation(s_staticPropProgramCoalesce, "u_fogValue");
@@ -2999,7 +2999,7 @@ void GpuStaticPropBatcher::flush() {
     // Direct uniforms. Static props use the same CPU-composed terrainMVP as
     // terrain/terrain_overlay.vert: axisSwap * worldToClip, row-major
     // rewritten in gamecam.cpp and uploaded GL_FALSE.
-    const GLint locTerrainMVP = glGetUniformLocation(s_staticPropProgram, "terrainMVP");
+    const GLint locTerrainMVP = glGetUniformLocation(s_staticPropProgram, "u_worldToClipGL");
     const float* terrainMVP = gos_GetTerrainMVPMat4();
     if (locTerrainMVP >= 0 && terrainMVP)
         glUniformMatrix4fv(locTerrainMVP, 1, GL_FALSE, terrainMVP);

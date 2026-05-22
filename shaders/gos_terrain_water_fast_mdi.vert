@@ -63,9 +63,7 @@ out float WaterThickness;   // water-v1: world-unit column (max(0, waterElevatio
 out vec3  WorldPos;         // water-v1: wave-displaced surface position (Fresnel view vector ONLY)
 
 // Uniforms — set by Terrain::renderWaterFastPath C++ code.
-uniform mat4  terrainMVP;        // axisSwap * worldToClip
-uniform mat4  mvp;               // projection_: screen pixels -> NDC
-uniform vec4  terrainViewport;   // (vmx, vmy, vax, vay)
+uniform mat4  u_worldToClipGL;   // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 uniform float waterElevation;    // Terrain::waterElevation
 uniform float alphaDepth;        // MapData::alphaDepth
 uniform vec2  mapTopLeft;        // Terrain::mapTopLeft3d.xy (note: y is positive-up)
@@ -279,18 +277,9 @@ void main() {
         Texcoord = vec2(0.5);
     }
 
-    // Double projection chain — identical to gos_terrain_thin.vert.
-    vec4 clip = terrainMVP * vec4(worldPos, 1.0);
-    float rhw = 1.0 / clip.w;
-    vec3 screen;
-    screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
-    screen.y = clip.y * rhw * terrainViewport.y + terrainViewport.w;
-    // Three-tier z-ordering: terrain=+0.002, water=+0.0025 (delta 0.0005, WATER_DEPTH_BIAS,
-    // so water loses GL_LEQUAL to already-drawn terrain at shorelines; wins on open water).
-    // Full change history and drift rationale: gos_terrain_water_fast.vert projection block.
-    screen.z = clip.z * rhw + WATER_DEPTH_FUDGE_FAST;  // FAST regime 0.0025; see terrain_depth_bias.hglsl
-    vec4 ndc = mvp * vec4(screen, 1.0);
-    float absW = abs(clip.w);
-    gl_Position = vec4(ndc.xyz * absW, absW);
+    // F1 Stage A: direct GL clip emit with water depth bias (pre-divide).
+    vec4 clip = u_worldToClipGL * vec4(worldPos, 1.0);
+    clip.z   += WATER_DEPTH_FUDGE_FAST * clip.w;
+    gl_Position = clip;
 
 }

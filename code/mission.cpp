@@ -1686,13 +1686,6 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// clear ring buffer. No-op when env OFF.
 	::mc2_cpu_proj_cost::hard_reset("Mission::init");
 
-#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
-	// F1 A-pre parity probe: zero SSBO counters at mission boundary so each
-	// mission's readback is independent. extern from gameosmain.cpp.
-	extern void unifiedProj_probeReset();
-	unifiedProj_probeReset();
-#endif
-
 	// Reset GPU static-prop batcher state at every map boundary, before any
 	// actor registerType() calls happen during actor spawn (Task 6).
 	GpuStaticPropBatcher::instance().onMapLoad();

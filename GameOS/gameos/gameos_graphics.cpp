@@ -29,7 +29,7 @@
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "../../mclib/cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline
-#include "Stuff/Stuff.hpp"                     // Stuff::Matrix4D for gos_SetWorldToClipGLProbeOnly (full chain required; matrix.hpp alone creates circular include ordering)
+#include "Stuff/Stuff.hpp"                     // Stuff::Matrix4D for gos_SetWorldToClipGL (full chain required; matrix.hpp alone creates circular include ordering)
 
 // [B1 C16] (diagnostic) gosFX heap + child accumulation counters; env-gated on
 // MC2_GPU_PARTICLES=1. Forward-decl to avoid Stuff/gosfx header chain here.
@@ -225,11 +225,6 @@ class gosMaterialVariationHelper {
         void getMaterialVariation(gosMaterialVariation& variation)
         {
             std::string defines_str = "#version 430\n";
-#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
-            // GLSL macros do NOT inherit C++ build flags — must be injected
-            // into the shader prefix string. See CLAUDE.md rule.
-            defines_str += "#define MC2_UNIFIED_PROJECTION_PARITY_PROBE 1\n";
-#endif
             std::string unique_suffix_str = "#";
             for(auto d : defines)
             {
@@ -1654,9 +1649,8 @@ class gosRenderer {
         vec4 terrain_camera_pos_;  // MC2 world space camera position for TCS LOD
         vec4 terrain_viewport_;    // (vmx, vmy, vax, vay) for TES perspective project
 
-        // F1 Stage A-pre Task 7b: probe-only worldToClipGL. Written per-frame by
-        // gos_SetWorldToClipGLProbeUBO. Read in both terrain draw paths as a flat
-        // uniform uploaded after glUseProgram (AMD driver / tess stage compatibility).
+        // F1 Stage A-pre Task 7b: probe-only worldToClipGL cache. Written by the
+        // now-retired probe setter; retained for diagnostic retirement batch.
         float probeWorldToClipGL_[16] = {};
         bool probeWorldToClipGLValid_ = false;
 
@@ -1746,7 +1740,7 @@ class gosRenderer {
             terrainLocs_.cameraPos = glGetUniformLocation(shp, "cameraPos");
             terrainLocs_.tessDebug = glGetUniformLocation(shp, "tessDebug");
             terrainLocs_.terrainViewport = glGetUniformLocation(shp, "terrainViewport");
-            terrainLocs_.terrainMVP = glGetUniformLocation(shp, "terrainMVP");
+            terrainLocs_.terrainMVP = glGetUniformLocation(shp, "u_worldToClipGL");
             terrainLocs_.terrainLightDir = glGetUniformLocation(shp, "terrainLightDir");
             terrainLocs_.detailNormalTiling = glGetUniformLocation(shp, "detailNormalTiling");
             terrainLocs_.detailNormalStrength = glGetUniformLocation(shp, "detailNormalStrength");
@@ -1775,9 +1769,8 @@ class gosRenderer {
         void cacheThinTerrainUniformLocations(GLuint shp) {
             if (thinTerrainLocs_.program == shp) return;
             thinTerrainLocs_.program            = shp;
-            thinTerrainLocs_.terrainMVP         = glGetUniformLocation(shp, "terrainMVP");
+            thinTerrainLocs_.terrainMVP         = glGetUniformLocation(shp, "u_worldToClipGL");
             thinTerrainLocs_.terrainViewport    = glGetUniformLocation(shp, "terrainViewport");
-            thinTerrainLocs_.mvp                = glGetUniformLocation(shp, "mvp");
             thinTerrainLocs_.cameraPos          = glGetUniformLocation(shp, "cameraPos");
             thinTerrainLocs_.terrainLightDir    = glGetUniformLocation(shp, "terrainLightDir");
             thinTerrainLocs_.detailNormalTiling   = glGetUniformLocation(shp, "detailNormalTiling");
@@ -2195,7 +2188,7 @@ void gosRenderer::renderWaterFastPath(
             ? gos_terrain_indirect_getDispatchMvp16()
             : gos_GetTerrainMVPMat4();
     if (!wMvpWaterNonMdi) wMvpWaterNonMdi = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
-    setMat4Direct("terrainMVP",      wMvpWaterNonMdi);
+    setMat4Direct("u_worldToClipGL", wMvpWaterNonMdi);
     setMat4Std   ("mvp",             (const float*)&projection_);
     setVec4      ("terrainViewport", (const float*)&terrain_viewport_);
 
@@ -2355,7 +2348,7 @@ void gosRenderer::renderWaterFastPath(
                 ? gos_terrain_indirect_getDispatchMvp16()
                 : gos_GetTerrainMVPMat4();
         if (!wMvpWaterMdi) wMvpWaterMdi = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
-        setMMat4Direct("terrainMVP",      wMvpWaterMdi);
+        setMMat4Direct("u_worldToClipGL", wMvpWaterMdi);
         setMMat4Std   ("mvp",             (const float*)&projection_);
         setMVec4      ("terrainViewport", (const float*)&terrain_viewport_);
         setMI         ("debugMode",       s_debugMode);
@@ -3548,7 +3541,7 @@ bool gos_terrain_bridge_drawMineStatic(int          vertCount,
     // terrainMVP (mirrors PR1 thin-VS upload — GL_FALSE + row-major per
     // terrain_mvp_gl_false.md).
     {
-        const GLint loc = glGetUniformLocation(prog, "terrainMVP");
+        const GLint loc = glGetUniformLocation(prog, "u_worldToClipGL");
         if (loc >= 0)
             glUniformMatrix4fv(loc, 1, GL_FALSE,
                                (const float*)&g_gos_renderer->getTerrainMVP());
@@ -3976,9 +3969,8 @@ void gosRenderer::init() {
     auto cacheOverlayLocs = [](glsl_program* prog, OverlayUniformLocs_& locs) {
         if (!prog) return;
         GLuint shp = prog->shp_;
-        locs.terrainMVP      = glGetUniformLocation(shp, "terrainMVP");
+        locs.terrainMVP      = glGetUniformLocation(shp, "u_worldToClipGL");
         locs.terrainVP       = glGetUniformLocation(shp, "terrainViewport");
-        locs.mvp             = glGetUniformLocation(shp, "mvp");
         locs.tex1            = glGetUniformLocation(shp, "tex1");
         locs.fog_color       = glGetUniformLocation(shp, "fog_color");
         locs.time            = glGetUniformLocation(shp, "time");
@@ -6958,7 +6950,7 @@ void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material)
 
 	// Upload terrainMVP for GPU projection (MC2 world → clip space)
 	if (g_gos_renderer->isTerrainMVPValid()) {
-		GLint mvpLoc = glGetUniformLocation(shp, "terrainMVP");
+		GLint mvpLoc = glGetUniformLocation(shp, "u_worldToClipGL");
 		if (mvpLoc >= 0) {
 			const mat4& mvp = g_gos_renderer->getTerrainMVP();
 			glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, (const float*)&mvp);
@@ -7111,59 +7103,35 @@ void gos_GetTerrainCameraPos(float* x, float* y, float* z) {
         if (z) *z = cp.z;
     }
 }
-void __stdcall gos_SetTerrainMVP(const float* matrix16) {
-    if (g_gos_renderer) g_gos_renderer->setTerrainMVP(matrix16);
-}
-// F1 unified-projection -- A-PRE PROBE-ONLY setter (Task 7b).
-// Stores the column-major -> row-major repackaged matrix in:
-//   (a) gosRenderer::probeWorldToClipGL_ for the flat-uniform path (draw-time
-//       glUniformMatrix4fv after apply(); kept as no-harm safety net).
-//   (b) the probe SSBO at binding 23 via unifiedProj_probeSetMatrix (the
-//       ACTUAL working path for AMD TES: flat-uniform propagation is unreliable
-//       for tessellation stages on AMD, proven by glGetUniformfv readback matching
-//       but compared=0 persisting. SSBO writes/reads are reliable -- proven by
-//       behind_new_only atomicAdd accumulating correctly every frame).
-// Does NOT write terrain_mvp_ cache; A-pre observation-only contract preserved.
-#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
-extern void unifiedProj_probeSetMatrix(const float* M16);
-#endif
-void __stdcall gos_SetWorldToClipGLProbeUBO(const Stuff::Matrix4D& mat)
+// F1 Stage A unified-projection production setter.
+// Repackages column-major Stuff::Matrix4D -> row-major M (matching
+// the legacy upload convention so all consumers see the same
+// shader-visible matrix orientation). Writes the terrain_mvp_ cache
+// for 15+ existing gos_GetTerrainMVPMat4() callers (CullUBO at
+// gpu_cull_compute.cpp:831, mech-batcher, static-prop-batcher,
+// etc.) to inherit transparently. The 10 CPU bind sites (Task 15)
+// each upload the cached matrix to their respective programs via
+// glUniformMatrix4fv(loc, 1, GL_FALSE, terrain_mvp_).
+//
+// Signature is parameter-light — no explicit program handle —
+// because per-program upload happens at the 10 bind sites via the
+// cache, not here. R-clipw polarity is baked into the matrix
+// itself via kAxisSwapMC2toGL (Task 7g); shader-visible clip.w > 0
+// for in-front MC2 verts.
+void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat)
 {
     if (!g_gos_renderer) return;
     const float* col = (const float*)&mat;
     #define WTC(r,c) col[(c)*4 + (r)]
+    // Repackage column-major Stuff -> row-major M (same convention as
+    // the legacy terrain upload; consumers see GL_FALSE-interpretation
+    // transpose, R-clipw polarity baked into kAxisSwapMC2toGL).
     float M[16];
     for (int i = 0; i < 4; ++i)
         for (int j = 0; j < 4; ++j)
-            M[i*4 + j] = WTC(i, j);  // column-major -> row-major (same repackage as legacy upload)
+            M[i*4 + j] = WTC(i, j);
     #undef WTC
-    g_gos_renderer->setWorldToClipGLProbeMatrix(M);
-#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
-    // Write matrix into probe SSBO -- the reliable transport path for TES on AMD.
-    // AMD driver does not propagate glUniformMatrix4fv to tessellation stages;
-    // SSBO writes are reliable (proven: atomicAdd to binding 23 accumulates
-    // correctly per frame, while glGetUniformfv readback matched but TES saw zeros).
-    unifiedProj_probeSetMatrix(M);
-    // Task 7c: CPU-side matrix upload dump -- first 3 frames only.
-    {
-        static int s_cpuDumpsRemaining = 3;
-        if (s_cpuDumpsRemaining > 0) {
-            s_cpuDumpsRemaining--;
-            fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=cpu_matrix_upload bytes=");
-            for (int k = 0; k < 16; ++k)
-                fprintf(stderr, "%a ", M[k]);
-            fprintf(stderr, "\n");
-            fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=cpu_matrix_upload human=\n");
-            for (int i = 0; i < 4; ++i) {
-                fprintf(stderr, "  row %d: %.6f %.6f %.6f %.6f\n",
-                    i, M[i*4+0], M[i*4+1], M[i*4+2], M[i*4+3]);
-            }
-            fflush(stderr);
-        }
-    }
-#endif
-    // NO terrain_mvp_ write -- A-pre is observation-only. See Task 14
-    // for the Stage A promotion that adds cache write.
+    g_gos_renderer->setTerrainMVP(M);
 }
 void __stdcall gos_SetTerrainViewport(float vmx, float vmy, float vax, float vay) {
     if (g_gos_renderer) g_gos_renderer->setTerrainViewport(vmx, vmy, vax, vay);

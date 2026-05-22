@@ -158,141 +158,6 @@ extern bool gosExitGameOS();
 extern bool gos_CreateAudio();
 extern void gos_DestroyAudio();
 
-// ---------------------------------------------------------------------------
-// F1 unified-projection A-pre parity probe  (Task 7)
-// All symbols gated: compiled only when MC2_UNIFIED_PROJECTION_PARITY_PROBE=1.
-// ---------------------------------------------------------------------------
-#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
-static GLuint s_unifiedProjProbeSSBO = 0;
-static const GLuint kUnifiedProjProbeBinding = 23;  // matches gos_terrain.tese (Task 6)
-// Byte offset of the 16-float matrix within the SSBO (after 8 uint32 counters).
-// Matches debugSSBO_matrix layout in gos_terrain.tese.
-static const GLintptr kProbeSSBOMatrixOffset = 8 * sizeof(uint32_t);  // = 32
-
-static void unifiedProj_probeInit()
-{
-    glGenBuffers(1, &s_unifiedProjProbeSSBO);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_unifiedProjProbeSSBO);
-    // Buffer layout: 8 uint32 counters + 16 float matrix = 96 bytes total.
-    // Matrix initialized to zero; written per-frame by unifiedProj_probeSetMatrix.
-    uint8_t zeros[8 * sizeof(uint32_t) + 16 * sizeof(float)] = {};
-    glBufferStorage(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)sizeof(zeros), zeros,
-                    GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kUnifiedProjProbeBinding,
-                     s_unifiedProjProbeSSBO);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=ssbo_init binding=%u\n",
-            kUnifiedProjProbeBinding);
-    fflush(stderr);
-}
-
-void unifiedProj_probeReset()
-{
-    if (!s_unifiedProjProbeSSBO) return;
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_unifiedProjProbeSSBO);
-    // Reset only the 8 counter words; preserve the matrix (written separately).
-    uint32_t zeros[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(zeros), zeros);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-}
-
-// Write the 16-float row-major matrix into the SSBO at kProbeSSBOMatrixOffset.
-// Called from gos_SetWorldToClipGLProbeUBO each frame before draws.
-// Re-binds the SSBO base after write (AMD driver can unbind SSBOs on program switch).
-// Non-static: called via extern decl in gameos_graphics.cpp.
-void unifiedProj_probeSetMatrix(const float* M16)
-{
-    if (!s_unifiedProjProbeSSBO) return;
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_unifiedProjProbeSSBO);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                    kProbeSSBOMatrixOffset,
-                    16 * sizeof(float), M16);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    // Re-issue binding so it is visible to any program that switches after upload.
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kUnifiedProjProbeBinding,
-                     s_unifiedProjProbeSSBO);
-}
-
-static void unifiedProj_probeSnapshot(const char* tag)
-{
-    if (!s_unifiedProjProbeSSBO) return;
-    uint32_t counters[8] = {0};
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_unifiedProjProbeSSBO);
-    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(counters), counters);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    float maxDelta = 0.0f;
-    memcpy(&maxDelta, &counters[0], sizeof(float));
-    fprintf(stderr,
-        "[UNIFIED_PROJ_PARITY v1] tag=%s max_delta_comparable=%.6f compared=%u "
-        "behind_old_only=%u behind_new_only=%u behind_both=%u "
-        "nonfinite_old_only=%u nonfinite_new_only=%u nonfinite_both=%u\n",
-        tag, maxDelta, counters[1], counters[2], counters[3], counters[5],
-        counters[4], counters[7], counters[6]);
-    fflush(stderr);
-}
-// Task 7c: diagnostic SSBO at binding 24 -- read GPU-visible matrix + sample vertex.
-// Buffer layout: 32 floats = 128 bytes.
-//   [0..15]  diagMatrix[16]          -- TES-visible worldToClipGL row-major
-//   [16..19] diagSampleWorld[4]      -- worldPos.xyz + 1.0
-//   [20..23] diagSampleNewClip[4]    -- newClip.xyzw
-//   [24..27] diagSampleLegacyClip[4] -- clip.xyzw (terrainMVP result)
-//   [28..31] diagSampleLegacyGlPos[4]-- legacyGlPosition.xyzw
-static GLuint s_diagSSBO = 0;
-static const GLuint kDiagBinding = 24;
-
-static void unifiedProj_diagInit()
-{
-    glGenBuffers(1, &s_diagSSBO);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_diagSSBO);
-    float zeros[32] = {};
-    glBufferStorage(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)sizeof(zeros), zeros,
-                    GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kDiagBinding, s_diagSSBO);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=diag_ssbo_init binding=%u\n", kDiagBinding);
-    fflush(stderr);
-}
-
-static void unifiedProj_diagSnapshot(const char* tag)
-{
-    if (!s_diagSSBO) return;
-    float data[32] = {};
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_diagSSBO);
-    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)sizeof(data), data);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
-    fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=gpu_matrix_readback tag=%s bytes=", tag);
-    for (int k = 0; k < 16; ++k) fprintf(stderr, "%a ", data[k]);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=gpu_matrix_readback human=\n");
-    for (int i = 0; i < 4; ++i) {
-        fprintf(stderr, "  row %d: %.6f %.6f %.6f %.6f\n",
-            i, data[i*4+0], data[i*4+1], data[i*4+2], data[i*4+3]);
-    }
-    fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=sample world=(%.3f %.3f %.3f %.3f) "
-        "newClip=(%.3f %.3f %.3f %.3f) legacyClip=(%.3f %.3f %.3f %.3f) "
-        "legacyGlPos=(%.3f %.3f %.3f %.3f)\n",
-        data[16], data[17], data[18], data[19],
-        data[20], data[21], data[22], data[23],
-        data[24], data[25], data[26], data[27],
-        data[28], data[29], data[30], data[31]);
-    float newW = data[23], oldW = data[27];
-    if (fabsf(newW) > 1e-6f && fabsf(oldW) > 1e-6f) {
-        float newNDC[3] = { data[20]/newW, data[21]/newW, data[22]/newW };
-        float oldNDC[3] = { data[24]/oldW, data[25]/oldW, data[26]/oldW };
-        fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=ndc_compare tag=%s "
-            "newNDC=(%.6f %.6f %.6f) oldNDC=(%.6f %.6f %.6f) "
-            "delta=(%.6f %.6f %.6f) w_ratio=%.6f\n",
-            tag,
-            newNDC[0], newNDC[1], newNDC[2],
-            oldNDC[0], oldNDC[1], oldNDC[2],
-            newNDC[0]-oldNDC[0], newNDC[1]-oldNDC[1], newNDC[2]-oldNDC[2],
-            newW/oldW);
-    }
-    fflush(stderr);
-}
-#endif  // MC2_UNIFIED_PROJECTION_PARITY_PROBE
-
 static bool g_exit = false;
 static bool g_focus_lost = false;
 
@@ -416,9 +281,9 @@ static void handle_key_down( SDL_Keysym* keysym ) {
             break;
         case SDLK_9:
             if (alt_debug) {
-                // Repurposed from SSAO toggle to GPU static prop frag debug
-                // cycle. SSAO infrastructure is preserved in code; rebind
-                // elsewhere if needed.
+                // Repurposed from SSAO toggle to GPU static prop frag debug cycle.
+                // SSAO infrastructure removed entirely in F1 unified-projection
+                // retirement (2026-05-22 spec). Key no longer toggles SSAO.
                 gos_GpuPropsCycleDebugMode();
                 int m = gos_GpuPropsGetDebugMode();
                 const char* name = "?";
@@ -968,6 +833,18 @@ int main(int argc, char** argv)
         puts(_cbbuf);
         crashbundle_append(_cbbuf);
 
+        // [UNIFIED_PROJ v1] Warn when MC2_DISABLE_GOSFX=0 dev-override is active
+        // under unified projection. Default MC2_DISABLE_GOSFX=1 is unaffected.
+        {
+            const char* gosfxEnv = getenv("MC2_DISABLE_GOSFX");
+            if (gosfxEnv != nullptr && strcmp(gosfxEnv, "0") == 0) {
+                fprintf(stderr,
+                    "[UNIFIED_PROJ v1] WARN: MC2_DISABLE_GOSFX=0 active under unified "
+                    "projection. gosFX particles will render incorrectly (MLR clipper "
+                    "uses stale convention). See CLAUDE.md Known Issues.\n");
+            }
+        }
+
         // GPU cull record schema selftest.
         {
             int gcFail = gpu_cull::gpu_cull_record_selftest();
@@ -1146,10 +1023,6 @@ int main(int argc, char** argv)
 
     gos_CreateRenderer(ctx, win, w, h);
     startup_phase("renderer_created");
-#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
-    unifiedProj_probeInit();
-    unifiedProj_diagInit();
-#endif
     if(!gos_CreateAudio())
     {   // not an error
         SPEW(("AUDIO", "Failed to create audio\n"));
@@ -1251,18 +1124,6 @@ int main(int argc, char** argv)
             projectz_frame_tick();
             projectz_overlay_begin_frame();
             drainGLErrors("frame");
-#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
-            {
-                static uint32_t s_probeSnapshotFrame = 0;
-                if (g_mc2FrameCounter % 60 == 0) {
-                    char tag[32];
-                    snprintf(tag, sizeof(tag), "frame_%u", s_probeSnapshotFrame * 60);
-                    unifiedProj_probeSnapshot(tag);
-                    unifiedProj_diagSnapshot(tag);
-                    s_probeSnapshotFrame++;
-                }
-            }
-#endif
         }
 
         {

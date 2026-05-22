@@ -158,7 +158,7 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
         // memory/terrain_mvp_gl_false.md.
         const float* mvp = gos_GetTerrainMVPMat4();
         if (mvp) {
-            GLint loc = glGetUniformLocation(s_prog->shp_, "terrainMVP");
+            GLint loc = glGetUniformLocation(s_prog->shp_, "u_worldToClipGL");
             if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, mvp);
         }
     }

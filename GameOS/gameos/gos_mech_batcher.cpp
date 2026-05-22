@@ -264,7 +264,7 @@ static void loadProgramsIfNeeded() {
     };
     s_loc_u_instanceBase    = loc("u_instanceBase");
     s_loc_u_materialFlags   = loc("u_materialFlags");
-    s_loc_terrainMVP     = loc("terrainMVP");
+    s_loc_terrainMVP     = loc("u_worldToClipGL");
     s_loc_u_terrainViewport = loc("u_terrainViewport");
     s_loc_u_mvp             = loc("u_mvp");
     s_loc_u_tex             = loc("u_tex");

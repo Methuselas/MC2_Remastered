@@ -54,19 +54,10 @@ flat out uint RecordIdx;  // index into thinRecs[] — frag reads thinRecs[Recor
 
 // Uniforms used by this shader
 uniform int  ssboRecordBase;     // global record index offset for this draw call
-// Fix B 2026-05-14: terrainMVP uniform REMOVED from the thin VS — projection
-// now comes from tr.clipPos[cornerIdx] written by the producer.
-// gosRenderer::terrainBindThinUniformsForPatchStream still uploads it for
-// other thin programs (water-fast/mask/etc.); the upload silently no-ops
-// here because glGetUniformLocation returns -1 for an absent declaration.
-// Fix A scaffolding demoted behind MC2_RING_TRACE=1 env-gate for regression
-// probing (VPL retirement step 9, 2026-05-15); default-off. The vertex shader
-// has no terrainMVP uniform; clipPos in the thin record is the sole
-// projection authority (Fix B). Fix A's terrainOverrideThinMVP path is inert
-// regardless (cached loc -1); the per-slot MVP snapshot that fed it is no
-// longer populated unless MC2_RING_TRACE is set.
-uniform vec4 terrainViewport;    // (vmx, vmy, vax, vay) for perspective projection
-uniform mat4 mvp;                // projection_: screen pixels -> NDC
+// F1 Stage A: terrainMVP was already absent (Fix B, 2026-05-14). The producer
+// (gpu_driven_terrain_solid.comp) now writes true GL clip via u_worldToClipGL.
+// The thin VS emits gl_Position = clip directly — terrainViewport and mvp
+// round-trip uniforms retired.
 
 // Atlas UV decomposition — set by the indirect bridge for glMultiDrawArraysIndirect.
 // The full merged colormap is bound as a single GL_TEXTURE_2D; per-tile UV (stored
@@ -197,30 +188,10 @@ void main() {
     WorldNorm   = worldNorm;
     WorldPos    = worldPos;
 
-    // Fix B 2026-05-14: clip-space position is now READ from the thin record
-    // (writer pre-projected via the same u_terrainMVP it used for pzOk gates,
-    // so by construction the projection and the gate agree).  The VS no
-    // longer touches terrainMVP at all — eliminating the temporal MVP
-    // misalignment that Fix A patched at the binder, by fixing it at the
-    // source.  See docs/superpowers/progress/2026-05-14-raster-triangle-handoff.md
-    // and memory/ring_slot_state_must_travel_with_slot.md for context.
-    // Same array-form indexing pattern as wpsArr[cornerIdx] above (AMD RDNA3
-    // mis-lower mitigation — kCornerTable produces cornerIdx; array indexing
-    // produces table-lookup or branchless select, never speculative scalarization).
+    // F1 Stage A: clipPos is now true GL clip (producer writes u_worldToClipGL * pos).
+    // Emit directly; TERRAIN_DEPTH_FUDGE applied pre-divide in clip space.
     vec4 clip = tr.clipPos[cornerIdx];
-    float rhw = 1.0 / clip.w;
-    vec3 screen;
-    screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
-    screen.y = clip.y * rhw * terrainViewport.y + terrainViewport.w;
-    // Match legacy CPU emit's TERRAIN_DEPTH_FUDGE=0.002 (mclib/quad.cpp:1707)
-    // so decals/GpuStaticProps/water-on-terrain at coincident depth win the
-    // GL_LEQUAL tie. Precedent: gos_terrain_water_fast.vert:350.
-    // Doubled 0.001→0.002 post glClipControl(ZERO_TO_ONE); see gos_terrain.tese:133.
-    screen.z = clip.z * rhw + TERRAIN_DEPTH_FUDGE;  // single-sourced; see terrain_depth_bias.hglsl
-    vec4 ndc = mvp * vec4(screen, 1.0);
-    float absW = abs(clip.w);
-    gl_Position      = vec4(ndc.xyz * absW, absW);
-    // glClipControl(ZERO_TO_ONE) makes screen.z (D3D-style [0, 1]) native;
-    // matches gl_FragCoord.z range without remap.
-    UndisplacedDepth = screen.z;
+    clip.z   += TERRAIN_DEPTH_FUDGE * clip.w;
+    gl_Position      = clip;
+    UndisplacedDepth = clip.z / clip.w;
 }
