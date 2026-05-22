@@ -2,7 +2,8 @@
 // File:    spawn.h                                                          //
 // Contents: mc2::particles::Spawn - polymorphic spawn dispatcher routing    //
 //           by gosFX spec ClassID to the per-primitive SpawnCard /          //
-//           SpawnPoint / SpawnShard / SpawnTube entry points.               //
+//           SpawnCardCloud / SpawnPoint / SpawnShard / SpawnTube entry      //
+//           points.                                                         //
 //                                                                           //
 //           Per integrated plan v6 §5.4 B1 Stage 2' C8.                     //
 //                                                                           //
