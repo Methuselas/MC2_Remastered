@@ -64,6 +64,32 @@ extern void AG_shape_lookaside(MemoryPtr palette);
 
 #pragma warning(disable:4305/*double to float truncation*/)
 
+namespace {
+// F1 unified-projection axisSwap literal — transplanted from existing
+// upload-site logic at code/gamecam.cpp:168-175. Per spec §2.1:
+//   GL.x = -MC2.x          (negated)
+//   GL.y =  MC2.elevation  (was z; elevation -> up)
+//   GL.z =  MC2.ground     (was y; ground -> forward, POSITIVE)
+//
+// DO NOT "correct" the sign to stock OpenGL -Z forward; this matches the
+// existing legacy upload bit-for-bit. Stage A-pre basis-vector test
+// (Task 3) verifies empirically.
+Stuff::Matrix4D makeAxisSwapMC2toGL()
+{
+    Stuff::Matrix4D m;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            m(r, c) = (r == c) ? 1.0f : 0.0f;
+    m(0, 0) = -1.0f;
+    m(1, 1) = 0.0f;
+    m(1, 2) = 1.0f;
+    m(2, 2) = 0.0f;
+    m(2, 1) = 1.0f;
+    return m;
+}
+const Stuff::Matrix4D kAxisSwapMC2toGL = makeAxisSwapMC2toGL();
+} // namespace
+
 inline float agsqrt( float _a, float _b )
 {
 	return sqrt(_a*_a + _b*_b);
@@ -2370,6 +2396,18 @@ void Camera::setCameraOrigin (void)
 	
 	if (usePerspective)
 		clipToWorld.Invert(worldToClip);
+}
+
+//---------------------------------------------------------------------------
+Stuff::Matrix4D Camera::worldToClipGL() const
+{
+    // Stuff::Matrix4D::Multiply convention: dst.Multiply(S1, S2) computes
+    // dst = S1 * S2 (verified at mclib/stuff/matrix.cpp:253-258).
+    Stuff::Matrix4D viewClip;
+    viewClip.Multiply(worldToCameraMatrix, cameraToClip);
+    Stuff::Matrix4D out;
+    out.Multiply(kAxisSwapMC2toGL, viewClip);
+    return out;
 }
 
 //---------------------------------------------------------------------------
