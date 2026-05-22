@@ -1439,6 +1439,10 @@ class gosRenderer {
         const vec4& getTerrainViewport() const { return terrain_viewport_; }
         gosRenderMaterial* getTerrainMaterial() const { return terrain_material_; }
         const vec4& getTerrainCameraPos() const { return terrain_camera_pos_; }
+        // F1 Stage A-pre Task 5: expose tessellated-terrain program handle for
+        // gos_GetTerrainTeseProgram(). Returns 0 before first draw call arms the
+        // cache (caller must guard).
+        unsigned int getTerrainTeseProgram() const { return terrainLocs_.program; }
 
         // Shadow mode
         void setShadowMode(bool enabled) { shadow_mode_ = enabled; }
@@ -7692,6 +7696,14 @@ const float* gos_GetProj2ScreenMat4() {
 const float* gos_GetTerrainMVPMat4() {
     if (!g_gos_renderer || !g_gos_renderer->isTerrainMVPValid()) return nullptr;
     return (const float*)&g_gos_renderer->getTerrainMVP();
+}
+
+// F1 Stage A-pre Task 5: return the tessellated-terrain GL program handle so
+// gamecam.cpp can upload u_worldToClipGL as a parallel probe-only call.
+// Returns 0 before the terrain shader is first armed (caller guards).
+unsigned int __stdcall gos_GetTerrainTeseProgram() {
+    if (!g_gos_renderer) return 0;
+    return g_gos_renderer->getTerrainTeseProgram();
 }
 
 #include "gameos_graphics_debug.cpp"

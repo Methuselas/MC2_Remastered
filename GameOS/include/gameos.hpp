@@ -2336,6 +2336,9 @@ void __stdcall gos_SetTerrainMVP(const float* matrix16);
 namespace Stuff { class Matrix4D; }
 // A-pre setter (probe only, no cache write). Retired in Stage A.
 void __stdcall gos_SetWorldToClipGLProbeOnly(unsigned int program, const Stuff::Matrix4D& mat);
+// F1 Stage A-pre Task 5: return tessellated-terrain GL program handle.
+// Returns 0 before first terrain draw arms the cache; caller must guard.
+unsigned int __stdcall gos_GetTerrainTeseProgram();
 // Stage A setter (explicit-program upload + cache write). Body added in Task 14.
 void __stdcall gos_SetWorldToClipGL(unsigned int program, const Stuff::Matrix4D& mat);
 void __stdcall gos_SetTerrainViewport(float vmx, float vmy, float vax, float vay);

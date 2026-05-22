@@ -186,6 +186,18 @@ void GameCamera::render (void)
 
 			gos_SetTerrainMVP(M);
 
+			// F1 Stage A-pre Task 5: parallel probe-only upload alongside legacy.
+			// Legacy gos_SetTerrainMVP(M) above stays AUTHORITATIVE.
+			// New path uploads u_worldToClipGL only to the gos_terrain.tese program
+			// (the only declarant in A-pre per Task 6) and does NOT write
+			// terrain_mvp_ cache. Guard on program != 0 handles pre-first-draw frames.
+			{
+				unsigned int terrainProg = gos_GetTerrainTeseProgram();
+				if (terrainProg != 0) {
+					gos_SetWorldToClipGLProbeOnly(terrainProg, eye->worldToClipGL());
+				}
+			}
+
 			// Viewport params for TES: (vmx, vmy, vax, vay)
 			gos_SetTerrainViewport(viewMulX, viewMulY, viewAddX, viewAddY);
 
