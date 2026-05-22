@@ -69,8 +69,26 @@ void main() {
     // particle position. A true view-aligned billboard requires the camera
     // basis uniform; Stage 2' adds that. For the Card test effect the
     // distinction is invisible (single quad at one position).
-    vec2 cornerXY = (kCornerUv[cornerIdx] - vec2(0.5, 0.5)) * (2.0 * p.size);
-    vec3 worldPos = p.position.xyz + vec3(cornerXY, 0.0);
+    // Visibility floor: real gosFX spec halfHeight peaks are often a few world
+    // units, which renders sub-pixel at typical mc2 mission camera distances.
+    // 8.0 world units is roughly the gamecam canary scale and renders as a
+    // visible sprite. Stage 2' polish: respect true spec sizes once the shader
+    // does per-frame curve evaluation and the projection stays accurate at
+    // smaller pixel coverage.
+    float effSize = max(p.size, 8.0);
+    vec2 cornerXY = (kCornerUv[cornerIdx] - vec2(0.5, 0.5)) * (2.0 * effSize);
+    vec3 worldStuff = p.position.xyz + vec3(cornerXY, 0.0);
+
+    // MC2 axis swap (load-bearing): gosFX SpawnCard emits world position in
+    // Stuff::Point3D coords (stuff-space); terrainMVP is composed against the
+    // MC2 terrain axis convention. Without this swap, world.y (elev) gets
+    // read by terrainMVP as MC2 north and world.z (south distance) as MC2
+    // elev — particles fly to wrong-axis positions (canonical "trees in the
+    // sky" failure mode, see static_prop.vert:139-144 for the same fix in
+    // the static-prop path). The canary at (0,0,50) is special-cased only
+    // because two axes are zero — invisible nonetheless because either MC2
+    // interpretation lands far from any tier1 mission's SPOT_DIAG range.
+    vec3 worldPos = vec3(-worldStuff.x, worldStuff.z, worldStuff.y);
 
     // B1 C14: 3-step chain mirroring static_prop.vert:148-156.
     // Step 1: world -> pixel-homog clip via terrainMVP (D3D convention).

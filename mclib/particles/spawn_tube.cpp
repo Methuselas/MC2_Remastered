@@ -91,9 +91,10 @@ void SpawnTube(const gosFX::Tube__Specification* spec,
     gosFX::Tube__Specification* mut_spec =
         const_cast<gosFX::Tube__Specification*>(spec);
 
-    // Sample at parent_age=0 / spawnSeed. The marker GpuParticle represents
-    // the Effect's spawn-frame state at the head of the tube.
-    const Stuff::Scalar parent_age  = 0.0f;
+    // Sample at parent_age=0.5 (mid-life / peak-visibility). See spawn_card.cpp
+    // for the rationale: GPU shader doesn't advance age so age=0 bakes fade-in
+    // invisibility into the marker particle.
+    const Stuff::Scalar parent_age  = 0.5f;
     const Stuff::Scalar parent_seed = spawnSeed;
 
     // World-space spawn position is the parent transform translation

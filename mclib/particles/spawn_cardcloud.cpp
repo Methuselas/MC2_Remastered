@@ -75,9 +75,12 @@ void SpawnCardCloud(const gosFX::CardCloud__Specification* spec,
     gosFX::CardCloud__Specification* mut_spec =
         const_cast<gosFX::CardCloud__Specification*>(spec);
 
-    // Sample population at parent age=0 / spawnSeed. Matches
-    // ParticleCloud::Start at particlecloud.cpp:347-353.
-    const Stuff::Scalar parent_age  = 0.0f;
+    // Sample curves at parent_age=0.5 (mid-life / peak-visibility). See
+    // spawn_card.cpp for the rationale: the GPU shader does not advance
+    // age, so age=0 bakes fade-in invisibility into every particle. 0.5
+    // picks the typical peak of normalized 0->1 envelopes. Stage 2' polish
+    // (shader-side age advancement) retires this constant.
+    const Stuff::Scalar parent_age  = 0.5f;
     const Stuff::Scalar parent_seed = spawnSeed;
 
     Stuff::Scalar population_f =

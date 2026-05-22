@@ -78,9 +78,9 @@ void SpawnPoint(const gosFX::PointCloud__Specification* spec,
     gosFX::PointCloud__Specification* mut_spec =
         const_cast<gosFX::PointCloud__Specification*>(spec);
 
-    // Sample population at parent age=0 / spawnSeed. Matches
-    // ParticleCloud::Start at particlecloud.cpp:347-353.
-    const Stuff::Scalar parent_age  = 0.0f;
+    // Sample curves at parent_age=0.5 (mid-life / peak-visibility). See
+    // spawn_card.cpp for the rationale.
+    const Stuff::Scalar parent_age  = 0.5f;
     const Stuff::Scalar parent_seed = spawnSeed;
 
     Stuff::Scalar population_f =

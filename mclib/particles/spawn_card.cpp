@@ -60,12 +60,15 @@ void SpawnCard(const gosFX::Card__Specification* spec,
         return;
     }
 
-    // Sample curves at age=0 / spawnSeed. Card legacy samples at instance
-    // m_age during Execute(); at SPAWN time m_age is 0 (Effect::Start
-    // initializes m_age=0 then Singleton::Start runs Execute, see Card::
-    // Start at card.cpp:341). The GPU shader advances age per-frame from
-    // the baked spawn timestamp, so the CPU records the t=0 state.
-    const Stuff::Scalar age = 0.0f;
+    // Sample curves at age=0.5 (mid-life / peak-visibility). The Stage 2'
+    // design intent is for the GPU shader to advance age per-frame from the
+    // baked spawn timestamp, but the shader currently does not — every
+    // particle renders as a fixed snapshot. Sampling at age=0 means
+    // fade-in envelopes (alpha rises from 0, halfHeight grows from 0) bake
+    // an invisible/degenerate particle. age=0.5 picks the typical peak of
+    // canonical 0->1 normalized envelopes. Stage 2' polish: shader-side
+    // age advancement + curve evaluation removes the need for this constant.
+    const Stuff::Scalar age = 0.5f;
     const Stuff::Scalar seed = spawnSeed;
 
     // Const_cast because the legacy curve ComputeValue() methods are not
