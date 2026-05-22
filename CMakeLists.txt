@@ -77,6 +77,14 @@ endif()
 # ---------------------------------------------------------------------------
 option(MC2_ASAN "Build with MSVC AddressSanitizer (parallel dev build)" OFF)
 
+# F1 unified-projection A-pre parity probe (Task 7). Default OFF.
+# Enable for probe builds: cmake -B build64 -DMC2_UNIFIED_PROJECTION_PARITY_PROBE=ON
+option(MC2_UNIFIED_PROJECTION_PARITY_PROBE "Enable F1 unified-projection A-pre parity probe" OFF)
+if(MC2_UNIFIED_PROJECTION_PARITY_PROBE)
+    add_definitions(-DMC2_UNIFIED_PROJECTION_PARITY_PROBE=1)
+    message(STATUS "MC2_UNIFIED_PROJECTION_PARITY_PROBE=ON -- parity probe active (binding 23)")
+endif()
+
 if(MC2_ASAN)
     if(NOT MSVC)
         message(FATAL_ERROR "MC2_ASAN is only wired for MSVC. Use -fsanitize=address manually on other toolchains.")

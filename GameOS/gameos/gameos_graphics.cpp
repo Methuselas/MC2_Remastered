@@ -225,6 +225,11 @@ class gosMaterialVariationHelper {
         void getMaterialVariation(gosMaterialVariation& variation)
         {
             std::string defines_str = "#version 430\n";
+#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
+            // GLSL macros do NOT inherit C++ build flags — must be injected
+            // into the shader prefix string. See CLAUDE.md rule.
+            defines_str += "#define MC2_UNIFIED_PROJECTION_PARITY_PROBE 1\n";
+#endif
             std::string unique_suffix_str = "#";
             for(auto d : defines)
             {

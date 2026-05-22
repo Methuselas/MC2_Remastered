@@ -158,6 +158,57 @@ extern bool gosExitGameOS();
 extern bool gos_CreateAudio();
 extern void gos_DestroyAudio();
 
+// ---------------------------------------------------------------------------
+// F1 unified-projection A-pre parity probe  (Task 7)
+// All symbols gated: compiled only when MC2_UNIFIED_PROJECTION_PARITY_PROBE=1.
+// ---------------------------------------------------------------------------
+#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
+static GLuint s_unifiedProjProbeSSBO = 0;
+static const GLuint kUnifiedProjProbeBinding = 23;  // matches gos_terrain.tese (Task 6)
+
+static void unifiedProj_probeInit()
+{
+    glGenBuffers(1, &s_unifiedProjProbeSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_unifiedProjProbeSSBO);
+    uint32_t zeros[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER, sizeof(zeros), zeros,
+                    GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kUnifiedProjProbeBinding,
+                     s_unifiedProjProbeSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    fprintf(stderr, "[UNIFIED_PROJ_PARITY v1] event=ssbo_init binding=%u\n",
+            kUnifiedProjProbeBinding);
+    fflush(stderr);
+}
+
+void unifiedProj_probeReset()
+{
+    if (!s_unifiedProjProbeSSBO) return;
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_unifiedProjProbeSSBO);
+    uint32_t zeros[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(zeros), zeros);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+static void unifiedProj_probeSnapshot(const char* tag)
+{
+    if (!s_unifiedProjProbeSSBO) return;
+    uint32_t counters[8] = {0};
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_unifiedProjProbeSSBO);
+    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(counters), counters);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    float maxDelta = 0.0f;
+    memcpy(&maxDelta, &counters[0], sizeof(float));
+    fprintf(stderr,
+        "[UNIFIED_PROJ_PARITY v1] tag=%s max_delta_comparable=%.6f compared=%u "
+        "behind_old_only=%u behind_new_only=%u behind_both=%u "
+        "nonfinite_old_only=%u nonfinite_new_only=%u nonfinite_both=%u\n",
+        tag, maxDelta, counters[1], counters[2], counters[3], counters[5],
+        counters[4], counters[7], counters[6]);
+    fflush(stderr);
+}
+#endif  // MC2_UNIFIED_PROJECTION_PARITY_PROBE
+
 static bool g_exit = false;
 static bool g_focus_lost = false;
 
@@ -1011,6 +1062,9 @@ int main(int argc, char** argv)
 
     gos_CreateRenderer(ctx, win, w, h);
     startup_phase("renderer_created");
+#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
+    unifiedProj_probeInit();
+#endif
     if(!gos_CreateAudio())
     {   // not an error
         SPEW(("AUDIO", "Failed to create audio\n"));
@@ -1112,6 +1166,17 @@ int main(int argc, char** argv)
             projectz_frame_tick();
             projectz_overlay_begin_frame();
             drainGLErrors("frame");
+#ifdef MC2_UNIFIED_PROJECTION_PARITY_PROBE
+            {
+                static uint32_t s_probeSnapshotFrame = 0;
+                if (g_mc2FrameCounter % 60 == 0) {
+                    char tag[32];
+                    snprintf(tag, sizeof(tag), "frame_%u", s_probeSnapshotFrame * 60);
+                    unifiedProj_probeSnapshot(tag);
+                    s_probeSnapshotFrame++;
+                }
+            }
+#endif
         }
 
         {
