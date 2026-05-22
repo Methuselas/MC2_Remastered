@@ -129,6 +129,9 @@ struct LegacyProjectionResult {
 #include "projectz_trace.h"
 #include "object_admission_predicate.h"
 
+// gos_GetViewport is declared in gameos.hpp which is transitively included via tgl.h.
+// No forward declaration needed here.
+
 //---------------------------------------------------------------------------
 class Camera
 {
@@ -728,21 +731,44 @@ class Camera
 		// screen output is byte-identical between Legacy and Modern (sidecar ptr doesn't affect
 		// projectZ's screen-write path), so callers consuming screen.xy are unaffected.
 		//
-		// F4 NOTE: selection_picking does NOT support Bypass mode because callers consume
-		// screen.xy. Bypass is treated as Off for this wrapper. Compare still runs
-		// (projectZ executes first, so screen is written). Address in a follow-on slice
-		// that defines the bypass screen-output convention for picking.
+		// F5 T1: selection_picking now honors Bypass mode and produces screen.xy via
+		// GL-NDC -> pixel remap (Y-down, Y-flip baked). Callers at camera.cpp:892,960,1026
+		// use screen.x/y as pixel coords (Y-down from top-left, compared against
+		// screenResolution and screenPos which are also pixel Y-down).
 		inline bool projectForSelectionPicking (Stuff::Vector3D& point,
 		                                        Stuff::Vector4D& screen) {
 			const int64_t _f3_pick_t0 = ::mc2_cpu_proj_cost::selection_picking_begin_ns();
 
 			ProjectZBypassMode bypassMode = projectZBypassMode();
 			const bool isModern = (selectionPickingPredicateMode() == SelectionPickingPredicateMode::Modern);
-			// Bypass treated as Off for selection_picking (callers consume screen.xy).
-			// Always routes through projectZ. Only Compare path runs bypass for logging.
 			bool ret;
 
-			{
+			if (isModern && bypassMode == ProjectZBypassMode::Bypass) {
+				// F5 T1: Bypass-with-screen.xy. Compute GL-NDC clip directly, then
+				// remap to MC2 pixel coords (Y-down) via viewport so the 3 callers
+				// (camera.cpp:892,960,1026) see byte-(near-)identical screen.x/y.
+				// gos_GetViewport: fullscreen -> vmx=width, vmy=height, vax=0, vay=0.
+				// Y-flip: screen.y = vay + (1 - (ndc.y*0.5+0.5)) * vmy
+				ModernClipResult r = projectModernClipGL(point);
+				ret = r.admit;
+				if (r.clip.w > 1e-4f) {
+					float vmx, vmy, vax, vay;
+					gos_GetViewport(&vmx, &vmy, &vax, &vay);
+					float ndcX = r.clip.x / r.clip.w;
+					float ndcY = r.clip.y / r.clip.w;
+					float ndcZ = r.clip.z / r.clip.w;
+					screen.x = vax + (ndcX * 0.5f + 0.5f) * vmx;
+					screen.y = vay + (1.0f - (ndcY * 0.5f + 0.5f)) * vmy;
+					screen.z = ndcZ;
+					screen.w = r.clip.w;
+				} else {
+					// behind camera / degenerate
+					screen.x = 0.0f;
+					screen.y = 0.0f;
+					screen.z = 0.0f;
+					screen.w = r.clip.w;
+				}
+			} else {
 				LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
@@ -757,9 +783,24 @@ class Camera
 				if (isModern) {
 					ret = clipSpaceFrustumAdmit(result.rawClip);
 					if (bypassMode == ProjectZBypassMode::Compare) {
+						// F5 T1: compare both admit parity AND screen.xy parity for picking.
 						ModernClipResult b = projectModernClipGL(point);
-						if (b.admit != ret) {
-							logProjectZBypassDisagreement("selection_picking", point, result.rawClip, ret, b.clip, b.admit);
+						bool bypassAdmit = b.admit;
+						if (bypassAdmit != ret) {
+							logProjectZBypassDisagreement("selection_picking", point, result.rawClip, ret, b.clip, bypassAdmit);
+						}
+						if (b.clip.w > 1e-4f) {
+							float vmx, vmy, vax, vay;
+							gos_GetViewport(&vmx, &vmy, &vax, &vay);
+							float ndcX = b.clip.x / b.clip.w;
+							float ndcY = b.clip.y / b.clip.w;
+							float bypassScreenX = vax + (ndcX * 0.5f + 0.5f) * vmx;
+							float bypassScreenY = vay + (1.0f - (ndcY * 0.5f + 0.5f)) * vmy;
+							float dxPx = fabsf(bypassScreenX - screen.x);
+							float dyPx = fabsf(bypassScreenY - screen.y);
+							if (dxPx > 1.0f || dyPx > 1.0f) {
+								logSelectionPickingScreenDelta(point, screen, bypassScreenX, bypassScreenY, dxPx, dyPx);
+							}
 						}
 					}
 				} else {

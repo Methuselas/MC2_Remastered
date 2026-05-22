@@ -231,6 +231,27 @@ void logProjectZBypassDisagreement(const char* wrapper,
     std::fflush(stdout);
 }
 
+void logSelectionPickingScreenDelta(const Stuff::Vector3D& world,
+                                    const Stuff::Vector4D& legacyScreen,
+                                    float bypassScreenX, float bypassScreenY,
+                                    float dxPx, float dyPx)
+{
+    // F5 T1: rate-limited to first ~64 events (single global counter for this logger).
+    static int s_count = 0;
+    if (s_count >= 64) return;
+    ++s_count;
+    std::printf("[OBJECT_ADMISSION_PREDICATE v1] event=picking_screen_delta "
+                "world=(%.3f,%.3f,%.3f) "
+                "legacyScreen=(%.2f,%.2f) "
+                "bypassScreen=(%.2f,%.2f) "
+                "dxPx=%.3f dyPx=%.3f\n",
+                world.x, world.y, world.z,
+                legacyScreen.x, legacyScreen.y,
+                bypassScreenX, bypassScreenY,
+                dxPx, dyPx);
+    std::fflush(stdout);
+}
+
 bool clipSpaceFrustumAdmit(const Stuff::Vector4D& rawClip) {
     // IMPORTANT — MC2 clip.w sign convention (see memory/clip_w_sign_trap.md):
     // MC2's Stuff worldToClip matrix produces clip.w of EITHER sign for visible

@@ -87,6 +87,14 @@ void logProjectZBypassDisagreement(const char* wrapper,
                                    const Stuff::Vector4D& bypassClipGL,
                                    bool bypassAdmit);
 
+// F5 T1: rate-limited (first ~64 events) screen.xy parity logger for
+// selection_picking Compare mode. Tracks legacy-vs-bypass screen pixel
+// disagreements >1px.
+void logSelectionPickingScreenDelta(const Stuff::Vector3D& world,
+                                    const Stuff::Vector4D& legacyScreen,
+                                    float bypassScreenX, float bypassScreenY,
+                                    float dxPx, float dyPx);
+
 //---------------------------------------------------------------------------
 // Track A2 - effect admission mode (sibling of the Track A1 object mode).
 // Same clipSpaceFrustumAdmit predicate; separate env flag so the two slices
