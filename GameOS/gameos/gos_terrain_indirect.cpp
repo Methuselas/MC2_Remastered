@@ -2488,7 +2488,7 @@ void ComputeDispatch() {
         }
         g_locSolidWC  = glGetUniformLocation(g_solidComputeProgram, "u_windowCount");
         g_locSolidAO  = glGetUniformLocation(g_solidComputeProgram, "u_alphaOverride");
-        g_locSolidMVP = glGetUniformLocation(g_solidComputeProgram, "u_terrainMVP");
+        g_locSolidMVP = glGetUniformLocation(g_solidComputeProgram, "u_worldToClipGL");
         // Step 2b: u_bucketHeaderTrace — gate for hdr.{visibleCount,pad1_,pad2_}
         // writes in the primary compute shader.
         g_locSolidBHT = glGetUniformLocation(g_solidComputeProgram, "u_bucketHeaderTrace");

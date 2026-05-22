@@ -1342,7 +1342,7 @@ bool ComputeDispatchAndBindThinRecords(float frameCos) {
     const GLint locWaterElev   = glGetUniformLocation(g_waterComputeProgram, "u_waterElevation");
     const GLint locFrameCos    = glGetUniformLocation(g_waterComputeProgram, "u_frameCos");
     const GLint locMapSide     = glGetUniformLocation(g_waterComputeProgram, "u_mapSide");
-    const GLint locMVP         = glGetUniformLocation(g_waterComputeProgram, "u_terrainMVP");
+    const GLint locMVP         = glGetUniformLocation(g_waterComputeProgram, "u_worldToClipGL");
 
     if (locWindowCount < 0) {
         fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_windowCount_not_found\n");
