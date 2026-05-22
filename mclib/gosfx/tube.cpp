@@ -738,13 +738,13 @@ void
 	//
 	Effect::Start(info);
 
-	// B1 Stage 2' C8 — route to GPU particle pipeline when env-gated on.
-	// See card.cpp for the rationale; same pattern applies here.
-	if (mc2::particles::Batcher::is_enabled()) {
-		(void)mc2::particles::Spawn(m_specification, &m_localToWorld, (float)m_seed);
-		return;
-	}
-
+	// C17 fix 2026-05-21: ALWAYS run legacy per-instance init
+	// (m_birthAccumulator = 1.0f). C8 skipped this under env-on by returning
+	// right after Spawn — but legacy Tube::Execute still walked the
+	// un-initialized birthAccumulator and tube profile state, producing wild
+	// writes that corrupted heap adjacent to child gosFX allocations. Same
+	// shape as the C9 fix for Point/Shard: legacy init runs always; Spawn
+	// emit happens ADDITIONALLY under env-on. Legacy ::Draw is A2-gated.
 	//
 	//--------------------------------------------------------------------------
 	// If the effect is off, we will create two profiles.  If they effect is on,
@@ -752,6 +752,10 @@ void
 	//--------------------------------------------------------------------------
 	//
 	m_birthAccumulator = 1.0f;
+
+	if (mc2::particles::Batcher::is_enabled()) {
+		(void)mc2::particles::Spawn(m_specification, &m_localToWorld, (float)m_seed);
+	}
 }
 
 //------------------------------------------------------------------------------

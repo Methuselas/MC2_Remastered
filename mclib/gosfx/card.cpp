@@ -350,25 +350,25 @@ void
 	Check_Object(info);
 	Singleton::Start(info);
 
-	// B1 Stage 2' C8 — route to GPU particle pipeline when env-gated on.
-	// Subclass-Start routing catches BOTH top-level direct spawns AND
-	// children-inside-composites (EffectCloud iterates its children and
-	// calls child Start which lands here). After Singleton::Start ->
-	// Effect::Start has resolved m_seed / m_age / m_localToWorld we
-	// hand off to mc2::particles::Spawn and skip the legacy per-particle
-	// init below; the GPU pipeline owns rendering. Lifecycle (Execute /
-	// IsExecuted / HasFinished / Kill) remains on this subclass.
-	if (mc2::particles::Batcher::is_enabled()) {
-		(void)mc2::particles::Spawn(m_specification, &m_localToWorld, (float)m_seed);
-		return;
-	}
-
+	// C17 fix 2026-05-21: ALWAYS run legacy per-instance init (m_halfX/Y,
+	// m_radius, m_cardCloud->TurnOn). C8 skipped this under env-on by
+	// returning right after Spawn — but legacy Card::Execute / Draw still
+	// touched m_cardCloud and the un-armed state caused wild writes that
+	// corrupted heap adjacent to gosFX child allocations (CardCloud /
+	// Tube ctors crashed walking the freelist ~25-30s into mc2_10).
+	// Same shape as the C9 fix for Point/Shard: legacy init runs always,
+	// Spawn emit happens ADDITIONALLY under env-on. Legacy ::Draw is
+	// A2-gated at the MLR work-leaves so it no-ops.
 	Specification *spec = GetSpecification();
 	Check_Object(spec);
 	m_halfY = spec->m_halfHeight.ComputeValue(m_age, m_seed);
 	m_halfX = m_halfY * spec->m_aspectRatio.ComputeValue(m_age, m_seed);
 	m_radius = Stuff::Sqrt(m_halfX * m_halfX + m_halfY * m_halfY);
 	m_cardCloud->TurnOn(0);
+
+	if (mc2::particles::Batcher::is_enabled()) {
+		(void)mc2::particles::Spawn(m_specification, &m_localToWorld, (float)m_seed);
+	}
 }
 
 //------------------------------------------------------------------------------
