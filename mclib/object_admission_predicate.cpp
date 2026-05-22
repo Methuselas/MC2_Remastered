@@ -69,7 +69,7 @@ EffectAdmissionPredicateMode effectAdmissionPredicateMode() {
 namespace {
 
 bool                           s_lshadowInitialized = false;
-LightingShadowPredicateMode    s_lshadowMode = LightingShadowPredicateMode::Legacy;
+LightingShadowPredicateMode    s_lshadowMode = LightingShadowPredicateMode::Modern;
 
 const char* lshadowModeLabel(LightingShadowPredicateMode m) {
     return (m == LightingShadowPredicateMode::Modern) ? "modern" : "legacy";
@@ -80,10 +80,10 @@ const char* lshadowModeLabel(LightingShadowPredicateMode m) {
 void lightingShadowPredicate_init() {
     if (s_lshadowInitialized) return;
     const char* env = std::getenv("MC2_LIGHTING_SHADOW_PREDICATE_MODE");
-    if (env && std::strcmp(env, "Modern") == 0) {
-        s_lshadowMode = LightingShadowPredicateMode::Modern;
+    if (env && std::strcmp(env, "Legacy") == 0) {
+        s_lshadowMode = LightingShadowPredicateMode::Legacy;
     } else {
-        s_lshadowMode = LightingShadowPredicateMode::Legacy;  // default
+        s_lshadowMode = LightingShadowPredicateMode::Modern;  // default
     }
     s_lshadowInitialized = true;
     std::printf("[OBJECT_ADMISSION_PREDICATE v1] event=mode_select wrapper=lighting_shadow mode=%s\n",
@@ -100,7 +100,7 @@ LightingShadowPredicateMode lightingShadowPredicateMode() {
 namespace {
 
 bool                        s_dbgoverlayInitialized = false;
-DebugOverlayPredicateMode   s_dbgoverlayMode = DebugOverlayPredicateMode::Legacy;
+DebugOverlayPredicateMode   s_dbgoverlayMode = DebugOverlayPredicateMode::Modern;
 
 const char* dbgoverlayModeLabel(DebugOverlayPredicateMode m) {
     return (m == DebugOverlayPredicateMode::Modern) ? "modern" : "legacy";
@@ -111,10 +111,10 @@ const char* dbgoverlayModeLabel(DebugOverlayPredicateMode m) {
 void debugOverlayPredicate_init() {
     if (s_dbgoverlayInitialized) return;
     const char* env = std::getenv("MC2_DEBUG_OVERLAY_PREDICATE_MODE");
-    if (env && std::strcmp(env, "Modern") == 0) {
-        s_dbgoverlayMode = DebugOverlayPredicateMode::Modern;
+    if (env && std::strcmp(env, "Legacy") == 0) {
+        s_dbgoverlayMode = DebugOverlayPredicateMode::Legacy;
     } else {
-        s_dbgoverlayMode = DebugOverlayPredicateMode::Legacy;  // default
+        s_dbgoverlayMode = DebugOverlayPredicateMode::Modern;  // default
     }
     s_dbgoverlayInitialized = true;
     std::printf("[OBJECT_ADMISSION_PREDICATE v1] event=mode_select wrapper=debug_overlay mode=%s\n",
@@ -131,7 +131,7 @@ DebugOverlayPredicateMode debugOverlayPredicateMode() {
 namespace {
 
 bool                          s_selfpickInitialized = false;
-SelectionPickingPredicateMode s_selfpickMode = SelectionPickingPredicateMode::Legacy;
+SelectionPickingPredicateMode s_selfpickMode = SelectionPickingPredicateMode::Modern;
 
 const char* selfpickModeLabel(SelectionPickingPredicateMode m) {
     return (m == SelectionPickingPredicateMode::Modern) ? "modern" : "legacy";
@@ -142,10 +142,10 @@ const char* selfpickModeLabel(SelectionPickingPredicateMode m) {
 void selectionPickingPredicate_init() {
     if (s_selfpickInitialized) return;
     const char* env = std::getenv("MC2_SELECTION_PICKING_PREDICATE_MODE");
-    if (env && std::strcmp(env, "Modern") == 0) {
-        s_selfpickMode = SelectionPickingPredicateMode::Modern;
+    if (env && std::strcmp(env, "Legacy") == 0) {
+        s_selfpickMode = SelectionPickingPredicateMode::Legacy;
     } else {
-        s_selfpickMode = SelectionPickingPredicateMode::Legacy;  // default
+        s_selfpickMode = SelectionPickingPredicateMode::Modern;  // default
     }
     s_selfpickInitialized = true;
     std::printf("[OBJECT_ADMISSION_PREDICATE v1] event=mode_select wrapper=selection_picking mode=%s\n",
