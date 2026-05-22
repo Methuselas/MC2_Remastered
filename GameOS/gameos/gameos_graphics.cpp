@@ -29,6 +29,7 @@
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "../../mclib/cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline
+#include "Stuff/Stuff.hpp"                     // Stuff::Matrix4D for gos_SetWorldToClipGLProbeOnly (full chain required; matrix.hpp alone creates circular include ordering)
 
 // [B1 C16] (diagnostic) gosFX heap + child accumulation counters; env-gated on
 // MC2_GPU_PARTICLES=1. Forward-decl to avoid Stuff/gosfx header chain here.
@@ -7080,6 +7081,36 @@ void gos_GetTerrainCameraPos(float* x, float* y, float* z) {
 }
 void __stdcall gos_SetTerrainMVP(const float* matrix16) {
     if (g_gos_renderer) g_gos_renderer->setTerrainMVP(matrix16);
+}
+// F1 unified-projection — A-PRE PROBE-ONLY setter (Task 4).
+// Uploads u_worldToClipGL to the explicitly-passed program; does NOT
+// write terrain_mvp_ cache. Legacy gos_SetTerrainMVP remains
+// authoritative for all consumers until Stage A (Task 14) promotes
+// a cache-writing variant.
+//
+// Uses glProgramUniformMatrix4fv (GL 4.1+) for explicit-program upload --
+// glUniformMatrix4fv would upload to currently-bound program (silent
+// wrong-shader bug). Engine is GL 4.5; explicit-program family is
+// unconditionally available.
+void __stdcall gos_SetWorldToClipGLProbeOnly(unsigned int program, const Stuff::Matrix4D& mat)
+{
+    if (program == 0) return;
+    GLint loc = glGetUniformLocation(program, "u_worldToClipGL");
+    if (loc == -1) {
+        // Stage A-pre tolerance: not-yet-migrated shaders silently no-op.
+        // Becomes fatal in Stage A (Task 14).
+        return;
+    }
+    const float* col = (const float*)&mat;
+    #define WTC(r,c) col[(c)*4 + (r)]
+    float M[16];
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            M[i*4 + j] = WTC(i, j);  // column-major -> row-major
+    #undef WTC
+    glProgramUniformMatrix4fv(program, loc, 1, GL_FALSE, M);
+    // NO terrain_mvp_ write -- A-pre is observation-only. See Task 14
+    // for the Stage A promotion that adds cache write.
 }
 void __stdcall gos_SetTerrainViewport(float vmx, float vmy, float vax, float vay) {
     if (g_gos_renderer) g_gos_renderer->setTerrainViewport(vmx, vmy, vax, vay);
