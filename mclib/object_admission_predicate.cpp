@@ -66,6 +66,37 @@ EffectAdmissionPredicateMode effectAdmissionPredicateMode() {
     return s_effectMode;
 }
 
+namespace {
+
+bool                           s_lshadowInitialized = false;
+LightingShadowPredicateMode    s_lshadowMode = LightingShadowPredicateMode::Legacy;
+
+const char* lshadowModeLabel(LightingShadowPredicateMode m) {
+    return (m == LightingShadowPredicateMode::Modern) ? "modern" : "legacy";
+}
+
+} // namespace
+
+void lightingShadowPredicate_init() {
+    if (s_lshadowInitialized) return;
+    const char* env = std::getenv("MC2_LIGHTING_SHADOW_PREDICATE_MODE");
+    if (env && std::strcmp(env, "Modern") == 0) {
+        s_lshadowMode = LightingShadowPredicateMode::Modern;
+    } else {
+        s_lshadowMode = LightingShadowPredicateMode::Legacy;  // default
+    }
+    s_lshadowInitialized = true;
+    std::printf("[OBJECT_ADMISSION_PREDICATE v1] event=mode_select wrapper=lighting_shadow mode=%s\n",
+                lshadowModeLabel(s_lshadowMode));
+    std::fflush(stdout);
+}
+
+LightingShadowPredicateMode lightingShadowPredicateMode() {
+    // Lazy init - startup ordering is non-load-bearing.
+    lightingShadowPredicate_init();
+    return s_lshadowMode;
+}
+
 bool clipSpaceFrustumAdmit(const Stuff::Vector4D& rawClip) {
     // IMPORTANT — MC2 clip.w sign convention (see memory/clip_w_sign_trap.md):
     // MC2's Stuff worldToClip matrix produces clip.w of EITHER sign for visible

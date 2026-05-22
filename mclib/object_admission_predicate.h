@@ -61,3 +61,21 @@ void effectAdmissionPredicate_init();
 
 // Read the active mode. Lazy-initializes; startup ordering is non-load-bearing.
 EffectAdmissionPredicateMode effectAdmissionPredicateMode();
+
+//---------------------------------------------------------------------------
+// Track A1 - lighting/shadow predicate mode (sibling of object + effect modes).
+// Same clipSpaceFrustumAdmit predicate; separate env flag for independent soak.
+// Default: Legacy (lighting/shadow activation gating is low-risk; flip after
+// broader canary coverage of object/effect modes).
+//---------------------------------------------------------------------------
+
+enum class LightingShadowPredicateMode {
+    Legacy,    // bool comes from projectZ's screen-rect test
+    Modern,    // bool comes from clipSpaceFrustumAdmit(rawClip)
+};
+
+// One-time probe. Idempotent. Called lazily from lightingShadowPredicateMode().
+void lightingShadowPredicate_init();
+
+// Read the active mode. Lazy-initializes; startup ordering is non-load-bearing.
+LightingShadowPredicateMode lightingShadowPredicateMode();

@@ -644,16 +644,30 @@ class Camera
 		}
 
 		// Lighting / shadow activation — bool gates light->active; screen discarded.
-#pragma warning(push)
-#pragma warning(disable: 4996)
+		// F3 modernized via clipSpaceFrustumAdmit when MC2_LIGHTING_SHADOW_PREDICATE_MODE=Modern.
 		inline bool projectForLightingShadow (Stuff::Vector3D& point,
 		                                      Stuff::Vector4D& screen) {
 			const int64_t _f3_lshadow_t0 = ::mc2_cpu_proj_cost::lighting_shadow_begin_ns();
-			bool ret = projectZ(point, screen);
+			LegacyProjectionResult result;
+#pragma warning(push)
+#pragma warning(disable: 4996)
+			bool legacyAccepted = projectZ(point, screen, &result);
+#pragma warning(pop)
+#if defined(MC2_PROJECTZ_FINITE_CHECK)
+			if (result.acceptedByLegacyScreenRect) {
+				gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
+				          isfinite(screen.z) && isfinite(screen.w));
+			}
+#endif
+			bool ret;
+			if (lightingShadowPredicateMode() == LightingShadowPredicateMode::Modern) {
+				ret = clipSpaceFrustumAdmit(result.rawClip);
+			} else {
+				ret = legacyAccepted;
+			}
 			::mc2_cpu_proj_cost::lighting_shadow_end_ns(_f3_lshadow_t0);
 			return ret;
 		}
-#pragma warning(pop)
 
 		// Picking — bool discarded; screen.xy consumed for distance / rect tests.
 #pragma warning(push)
