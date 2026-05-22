@@ -201,6 +201,19 @@ void GameCamera::render (void)
 			#undef WTC
 		}
 
+		// F1 Stage A-pre Task 3: basis-vector smoke test gate. Runs once per
+		// process when MC2_UNIFIED_PROJECTION_BASIS_TEST=1 env is set. One-off
+		// scaffold; deleted in Stage A.
+		{
+			static bool s_unifiedProjBasisTestRan = false;
+			if (!s_unifiedProjBasisTestRan &&
+			    getenv("MC2_UNIFIED_PROJECTION_BASIS_TEST") != nullptr) {
+				s_unifiedProjBasisTestRan = true;
+				extern void unifiedProj_runBasisTest(Camera* eye);
+				unifiedProj_runBasisTest(this);
+			}
+		}
+
 		if (Environment.Renderer != 3)
 		{
 			ZoneScopedN("GameCamera::render sky");

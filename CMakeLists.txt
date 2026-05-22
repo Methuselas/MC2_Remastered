@@ -191,6 +191,7 @@ set(SOURCES
     "code/weaponbolt.cpp"
     "code/ablmc2.cpp"
     "code/gamecam.cpp"
+    "code/unified_proj_basis_test.cpp"
     "code/mission.cpp"
     "code/mission2.cpp"
     "code/objective.cpp"
