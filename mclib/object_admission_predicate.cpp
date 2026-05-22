@@ -173,19 +173,20 @@ bool clipSpaceFrustumAdmitGL(const Stuff::Vector4D& clipGL) {
 namespace {
 
 bool               s_bypassInitialized = false;
-ProjectZBypassMode s_bypassMode = ProjectZBypassMode::Off;
+ProjectZBypassMode s_bypassMode = ProjectZBypassMode::Bypass;
 
 } // namespace
 
 ProjectZBypassMode projectZBypassMode() {
     if (!s_bypassInitialized) {
         const char* env = std::getenv("MC2_PROJECTZ_BYPASS_MODE");
-        if (env && std::strcmp(env, "Compare") == 0) {
-            s_bypassMode = ProjectZBypassMode::Compare;
-        } else if (env && std::strcmp(env, "Bypass") == 0) {
-            s_bypassMode = ProjectZBypassMode::Bypass;
-        } else {
+        if (env && std::strcmp(env, "Off") == 0) {
             s_bypassMode = ProjectZBypassMode::Off;
+        } else if (env && std::strcmp(env, "Compare") == 0) {
+            s_bypassMode = ProjectZBypassMode::Compare;
+        } else {
+            // Default: Bypass. Explicit "Bypass" or unset both land here.
+            s_bypassMode = ProjectZBypassMode::Bypass;
         }
         s_bypassInitialized = true;
         const char* label = (s_bypassMode == ProjectZBypassMode::Compare) ? "compare"
