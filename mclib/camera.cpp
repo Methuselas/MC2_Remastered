@@ -74,6 +74,19 @@ namespace {
 // DO NOT "correct" the sign to stock OpenGL -Z forward; this matches the
 // existing legacy upload bit-for-bit. Stage A-pre basis-vector test
 // (Task 3) verifies empirically.
+//
+// F1 R-clipw polarity fold (2026-05-22 LATE): includes the polarity
+// correction proven in Stage A-pre. MC2's cameraToClip at
+// mclib/camera.cpp:1943 puts cameraToClip(FORWARD_AXIS=2, col=3) = +1.0f;
+// combined with the camera's -z_eye forward convention, this yields
+// clip.w = z_eye < 0 for in-front geometry. Legacy rendering masks
+// this with abs(clip.w) in the shader screen-rhw round-trip. F1
+// direct emit `gl_Position = u_worldToClipGL * vec4(world,1)` requires
+// clip.w > 0 to pass hardware clip-volume tests, so the full output
+// is negated. NDC is invariant: (-xyz)/(-w) = xyz/w. Folding the
+// negation here makes the convention explicit in the literal rather
+// than in a runtime post-multiply loop. Tier1 5/5 + wolfman canary
+// (1.4B verts) confirmed empirically. See addendum-rclipw-polarity.md.
 Stuff::Matrix4D makeAxisSwapMC2toGL()
 {
     Stuff::Matrix4D m;
@@ -85,6 +98,9 @@ Stuff::Matrix4D makeAxisSwapMC2toGL()
     m(1, 2) = 1.0f;
     m(2, 2) = 0.0f;
     m(2, 1) = 1.0f;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            m(r, c) = -m(r, c);
     return m;
 }
 const Stuff::Matrix4D kAxisSwapMC2toGL = makeAxisSwapMC2toGL();
@@ -2401,26 +2417,15 @@ void Camera::setCameraOrigin (void)
 //---------------------------------------------------------------------------
 Stuff::Matrix4D Camera::worldToClipGL() const
 {
-    // Stuff::Matrix4D::Multiply convention: dst.Multiply(S1, S2) computes
-    // dst = S1 * S2 (verified at mclib/stuff/matrix.cpp:253-258).
+    // F1 unified-projection accessor. Composes:
+    //   kAxisSwapMC2toGL * (worldToCameraMatrix * cameraToClip)
+    // The R-clipw polarity correction is folded INTO kAxisSwapMC2toGL
+    // (see literal at top of file). Hot path: 2 Matrix4D::Multiply calls,
+    // no per-call element loop.
     Stuff::Matrix4D viewClip;
     viewClip.Multiply(worldToCameraMatrix, cameraToClip);
     Stuff::Matrix4D out;
     out.Multiply(kAxisSwapMC2toGL, viewClip);
-    // F1 R-clipw polarity fix (addendum 2026-05-22 LATE): cameraToClip
-    // entry (FORWARD_AXIS=2, col=3) = +1.0f at mclib/camera.cpp:1943 puts
-    // clip.w = z_eye < 0 for in-front MC2 verts (camera convention is
-    // -z_eye forward). Hardware clip-volume test (-w <= xyz <= w) rejects
-    // negative-w pre-perspective-divide; Stage A direct emit would visibly
-    // delete terrain with gl_Position = M*p.
-    // Negate entire output so clip.w > 0 for in-front verts. NDC unaffected:
-    // (-xyz)/(-w) = xyz/w (sign-invariant perspective divide). Scoped to
-    // this accessor only. cameraToClip untouched; CPU projectZ + 8 wrappers
-    // + MLR (mlrclipper.cpp:209) + legacy terrainMVP upload (gamecam.cpp:
-    // 165-187 inline AW) all see no change. See addendum + Task 7e verdict.
-    for (int r = 0; r < 4; ++r)
-        for (int c = 0; c < 4; ++c)
-            out(r, c) = -out(r, c);
     return out;
 }
 
