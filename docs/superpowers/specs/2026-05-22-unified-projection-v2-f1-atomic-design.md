@@ -1253,3 +1253,21 @@ coverage — out of F1 scope.
 - Not an editor convergence slice. Separate worktree owns that.
 - Not a Stuff library retirement. M2 promotion trigger documented; M2 not
   triggered by F1.
+
+---
+
+## POSTSCRIPT 2026-05-22 LATE: R-clipw polarity confirmed; Task 7f candidate fix identified
+
+Task 7d diagnostic proved transport bit-identical (NDC match, w_ratio=1.000). However
+matrix produces clip.w = -1181.998 for an in-front vertex (MC2.y=5120), which hardware
+clip-volume test rejects pre-divide. Risk row R-clipw is confirmed triggered.
+
+Full investigation, symbolic matrix walk, candidate fix (negate worldToClipGL() output),
+and A-E impact evaluation are in:
+`docs/superpowers/plans/2026-05-22-unified-projection-v2-f1-atomic-plan-addendum-rclipw-polarity.md`
+
+Root cause: `cameraToClip(FORWARD_AXIS=2, col=3) = +1.0f` gives clip.w = +z_eye.
+MC2 camera looks along -z_eye; in-front z_eye < 0 => clip.w < 0. Candidate fix: negate
+the full worldToClipGL() output matrix. NDC invariant: xyz/w unchanged (both flip).
+Reverse-Z, CPU wrappers, MLR, and legacy terrainMVP path all unaffected (SAFE verdicts).
+Stage A direct emit enabled if Task 7f passes. Fallback A (abs(w) in template) available.
