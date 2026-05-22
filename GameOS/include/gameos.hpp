@@ -2336,7 +2336,6 @@ namespace Stuff { class Matrix4D; }
 // Stuff::Matrix4D -> row-major and writes the terrain_mvp_ cache so all
 // gos_GetTerrainMVPMat4() callers inherit transparently.
 void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat);
-void __stdcall gos_SetTerrainViewport(float vmx, float vmy, float vax, float vay);
 void __stdcall gos_SetTerrainCameraPos(float x, float y, float z);
 
 // World-space overlay batch API ─────────────────────────────────────────────

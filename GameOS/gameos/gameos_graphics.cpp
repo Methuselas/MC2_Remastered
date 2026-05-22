@@ -1410,10 +1410,6 @@ class gosRenderer {
         void setTerrainCameraPos(float x, float y, float z) {
             terrain_camera_pos_ = vec4(x, y, z, 1.0f);
         }
-        void setTerrainViewport(float vmx, float vmy, float vax, float vay) {
-            terrain_viewport_ = vec4(vmx, vmy, vax, vay);
-        }
-
         void terrainExtraReset() { terrain_extra_count_ = 0; terrain_extra_draw_offset_ = 0; terrain_batch_extras_ = nullptr; terrain_batch_extras_count_ = 0; }
         void terrainExtraAdd(const gos_TERRAIN_EXTRA* data, int count) {
             if (terrain_extra_count_ + count <= terrain_extra_capacity_) {
@@ -1436,7 +1432,6 @@ class gosRenderer {
         gos_TERRAIN_EXTRA* getTerrainExtraData() const { return terrain_extra_data_; }
         bool isTerrainMVPValid() const { return terrain_mvp_valid_; }
         const mat4& getTerrainMVP() const { return terrain_mvp_; }
-        const vec4& getTerrainViewport() const { return terrain_viewport_; }
         gosRenderMaterial* getTerrainMaterial() const { return terrain_material_; }
         const vec4& getTerrainCameraPos() const { return terrain_camera_pos_; }
         // Shadow mode
@@ -1647,7 +1642,6 @@ class gosRenderer {
         mat4 terrain_mvp_;
         bool terrain_mvp_valid_ = false;
         vec4 terrain_camera_pos_;  // MC2 world space camera position for TCS LOD
-        vec4 terrain_viewport_;    // (vmx, vmy, vax, vay) for TES perspective project
 
         // F1 Stage A-pre Task 7b: probe-only worldToClipGL cache. Written by the
         // now-retired probe setter; retained for diagnostic retirement batch.
@@ -1693,7 +1687,7 @@ class gosRenderer {
         // Cached uniform locations for terrain shader (avoid per-draw glGetUniformLocation)
         struct TerrainUniformLocs {
             GLint tessLevel = -1, tessDistanceRange = -1, tessDisplace = -1;
-            GLint cameraPos = -1, tessDebug = -1, terrainViewport = -1, terrainMVP = -1;
+            GLint cameraPos = -1, tessDebug = -1, terrainMVP = -1;
             GLint terrainLightDir = -1, detailNormalTiling = -1, detailNormalStrength = -1;
             GLint pomParams = -1, terrainWorldScale = -1, cellBombParams = -1;
             GLint matNormal[5] = {-1, -1, -1, -1, -1};
@@ -1707,7 +1701,7 @@ class gosRenderer {
         } terrainLocs_;
 
         struct ThinTerrainUniformLocs {
-            GLint terrainMVP = -1, terrainViewport = -1, mvp = -1;
+            GLint terrainMVP = -1, mvp = -1;
             GLint cameraPos = -1, terrainLightDir = -1;
             GLint detailNormalTiling = -1, detailNormalStrength = -1;
             GLint pomParams = -1, terrainWorldScale = -1, cellBombParams = -1;
@@ -1739,7 +1733,6 @@ class gosRenderer {
             terrainLocs_.tessDisplace = glGetUniformLocation(shp, "tessDisplace");
             terrainLocs_.cameraPos = glGetUniformLocation(shp, "cameraPos");
             terrainLocs_.tessDebug = glGetUniformLocation(shp, "tessDebug");
-            terrainLocs_.terrainViewport = glGetUniformLocation(shp, "terrainViewport");
             terrainLocs_.terrainMVP = glGetUniformLocation(shp, "u_worldToClipGL");
             terrainLocs_.terrainLightDir = glGetUniformLocation(shp, "terrainLightDir");
             terrainLocs_.detailNormalTiling = glGetUniformLocation(shp, "detailNormalTiling");
@@ -1770,7 +1763,6 @@ class gosRenderer {
             if (thinTerrainLocs_.program == shp) return;
             thinTerrainLocs_.program            = shp;
             thinTerrainLocs_.terrainMVP         = glGetUniformLocation(shp, "u_worldToClipGL");
-            thinTerrainLocs_.terrainViewport    = glGetUniformLocation(shp, "terrainViewport");
             thinTerrainLocs_.cameraPos          = glGetUniformLocation(shp, "cameraPos");
             thinTerrainLocs_.terrainLightDir    = glGetUniformLocation(shp, "terrainLightDir");
             thinTerrainLocs_.detailNormalTiling   = glGetUniformLocation(shp, "detailNormalTiling");
@@ -1837,7 +1829,6 @@ class gosRenderer {
 
         struct OverlayUniformLocs_ {
             GLint terrainMVP     = -1;
-            GLint terrainVP      = -1;
             GLint mvp            = -1;
             GLint tex1           = -1;
             GLint fog_color      = -1;
@@ -2190,7 +2181,6 @@ void gosRenderer::renderWaterFastPath(
     if (!wMvpWaterNonMdi) wMvpWaterNonMdi = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
     setMat4Direct("u_worldToClipGL", wMvpWaterNonMdi);
     setMat4Std   ("mvp",             (const float*)&projection_);
-    setVec4      ("terrainViewport", (const float*)&terrain_viewport_);
 
     // Debug-mode override gated by MC2_RENDER_WATER_FASTPATH_DEBUG=N.
     // 0 = normal, 1 = magenta solid, 2 = green, 3 = yellow.
@@ -2350,7 +2340,6 @@ void gosRenderer::renderWaterFastPath(
         if (!wMvpWaterMdi) wMvpWaterMdi = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
         setMMat4Direct("u_worldToClipGL", wMvpWaterMdi);
         setMMat4Std   ("mvp",             (const float*)&projection_);
-        setMVec4      ("terrainViewport", (const float*)&terrain_viewport_);
         setMI         ("debugMode",       s_debugMode);
         setMF         ("waterElevation",  waterElevation);
         setMF         ("alphaDepth",      alphaDepth);
@@ -2681,7 +2670,7 @@ void gos_terrain_surface_bridge_draw()
     glEnableVertexAttribArray(0);
 
     // ---- Program + uniforms (reuse the thin binder: it sets mvp /
-    //      terrainViewport / camera / shadows / tex1 / matNormal* / atlas
+    //      camera / shadows / tex1 / matNormal* / atlas
     //      uniforms for the override program). terrainMVP IS declared by the
     //      surface VS (it projects world->clip itself, unlike the thin VS),
     //      so the binder's terrainMVP upload is consumed here. ----
@@ -3397,7 +3386,7 @@ bool gos_terrain_bridge_drawMaskWater(uint32_t waterMaskSSBO,
     glEnableVertexAttribArray(0);
 
     // ---- Program + uniforms ------------------------------------------------
-    // terrainBindThinUniformsForPatchStream sets terrainMVP, mvp, terrainViewport,
+    // terrainBindThinUniformsForPatchStream sets terrainMVP, mvp,
     // and other terrain-shared uniforms (same uniform names as thin/mask-solid).
     g_gos_renderer->terrainBindThinUniformsForPatchStream(p);
 
@@ -3970,7 +3959,6 @@ void gosRenderer::init() {
         if (!prog) return;
         GLuint shp = prog->shp_;
         locs.terrainMVP      = glGetUniformLocation(shp, "u_worldToClipGL");
-        locs.terrainVP       = glGetUniformLocation(shp, "terrainViewport");
         locs.tex1            = glGetUniformLocation(shp, "tex1");
         locs.fog_color       = glGetUniformLocation(shp, "fog_color");
         locs.time            = glGetUniformLocation(shp, "time");
@@ -5020,8 +5008,6 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
         float halfExt = pp ? pp->getMapHalfExtent() : 0.0f;
         glUniform1f(tl.mapHalfExtent, halfExt);
     }
-    if (tl.terrainViewport >= 0)
-        glUniform4fv(tl.terrainViewport, 1, (const float*)&terrain_viewport_);
     if (terrain_mvp_valid_ && tl.terrainMVP >= 0)
         glUniformMatrix4fv(tl.terrainMVP, 1, GL_FALSE, (const float*)&terrain_mvp_);
     // F1 Task 7b: probe-only worldToClipGL flat-uniform fallback path.
@@ -5103,8 +5089,6 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
     // VS uniforms: projection chain
     if (terrain_mvp_valid_ && tl.terrainMVP >= 0)
         glUniformMatrix4fv(tl.terrainMVP, 1, GL_FALSE, (const float*)&terrain_mvp_);
-    if (tl.terrainViewport >= 0)
-        glUniform4fv(tl.terrainViewport, 1, (const float*)&terrain_viewport_);
     // projection_: row-major Stuff matrix — upload GL_TRUE (column-major interpretation).
     // All other projection_ upload sites (shadow line ~2737, material setTransform) use GL_TRUE.
     // terrainMVP stays GL_FALSE — its D3D chain math cancels the implicit transpose.
@@ -5120,12 +5104,9 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
         fprintf(stderr,
             "[THIN_DEBUG v1] event=thin_uniforms_bound "
             "proj_row0=[%.5f,%.5f,%.5f,%.5f] proj_row1=[%.5f,%.5f,%.5f,%.5f] "
-            "tmvp_diag=[%.5f,%.5f,%.5f,%.5f] "
-            "vp=[%.1f,%.1f,%.1f,%.1f]\n",
+            "tmvp_diag=[%.5f,%.5f,%.5f,%.5f]\n",
             p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
-            m[0], m[5], m[10], m[15],
-            terrain_viewport_.x, terrain_viewport_.y,
-            terrain_viewport_.z, terrain_viewport_.w);
+            m[0], m[5], m[10], m[15]);
         fflush(stderr);
     }
 
@@ -5257,9 +5238,6 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
         float halfExt = pp ? pp->getMapHalfExtent() : 0.0f;
         glUniform1f(tl.mapHalfExtent, halfExt);
     }
-
-    // Upload viewport params for TES perspective projection
-    if (tl.terrainViewport >= 0) glUniform4fv(tl.terrainViewport, 1, (const float*)&terrain_viewport_);
 
     // Upload terrainMVP (axisSwap*worldToClip) via direct GL
     if (terrain_mvp_valid_) {
@@ -7133,9 +7111,6 @@ void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat)
     #undef WTC
     g_gos_renderer->setTerrainMVP(M);
 }
-void __stdcall gos_SetTerrainViewport(float vmx, float vmy, float vax, float vay) {
-    if (g_gos_renderer) g_gos_renderer->setTerrainViewport(vmx, vmy, vax, vay);
-}
 void __stdcall gos_SetTerrainCameraPos(float x, float y, float z) {
     if (g_gos_renderer) g_gos_renderer->setTerrainCameraPos(x, y, z);
 }
@@ -7400,8 +7375,6 @@ void gosRenderer::uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& 
                                 : (const float*)&getTerrainMVP();
         glUniformMatrix4fv(L.terrainMVP, 1, GL_FALSE, tmvp);
     }
-    if (L.terrainVP >= 0)
-        glUniform4fv(L.terrainVP, 1, (const float*)&getTerrainViewport());
     // projection_: row-major Stuff matrix — upload GL_TRUE (column-major interpretation)
     if (L.mvp >= 0)
         glUniformMatrix4fv(L.mvp, 1, GL_TRUE, (const float*)&getProj2Screen());
@@ -7698,11 +7671,6 @@ uint32_t gos_GetGLTextureId(uint32_t gosHandle) {
     if (gosHandle >= g_gos_renderer->getTextureListSize()) return 0;
     gosTexture* tex = g_gos_renderer->getTexture(gosHandle);
     return tex ? tex->getTextureId() : 0;
-}
-
-const float* gos_GetTerrainViewportVec4() {
-    if (!g_gos_renderer) return nullptr;
-    return (const float*)&g_gos_renderer->getTerrainViewport();
 }
 
 const float* gos_GetProj2ScreenMat4() {

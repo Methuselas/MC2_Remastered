@@ -366,7 +366,6 @@ size_t   s_totalUsedBytesThisFrame = 0;
 struct ProgramLocs {
     // Shared (both programs).
     GLint terrainMVP       = -1;
-    GLint terrainViewport  = -1;
     GLint mvp              = -1;
     GLint fogValue         = -1;
     GLint debugAddrMode    = -1;
@@ -538,7 +537,7 @@ void loadProgramsIfNeeded() {
     // Plan v3.8 Step 7.4 — populate s_locsLegacy. GLSL string literals are
     // mixed-prefix (terrainMVP has NO u_ prefix; the rest do); reproduce
     // them exactly — verified against existing flush() upload sites
-    // (terrainMVP at static_prop.vert:69; u_terrainViewport, u_mvp,
+    // (terrainMVP at static_prop.vert:69; u_mvp,
     // u_fogValue, u_debugAddrMode, u_maxLocalVertexID, u_materialFlags,
     // u_packetID at the corresponding upload sites in flush()).
     // The existing flush() upload sites still call glGetUniformLocation
@@ -547,7 +546,6 @@ void loadProgramsIfNeeded() {
     // guardrail: do NOT redirect the existing legacy uploads to read from
     // s_locsLegacy here — that's a follow-up cleanup, not a Step 7 edit.
     s_locsLegacy.terrainMVP        = glGetUniformLocation(s_staticPropProgram, "u_worldToClipGL");
-    s_locsLegacy.terrainViewport   = glGetUniformLocation(s_staticPropProgram, "u_terrainViewport");
     s_locsLegacy.mvp               = glGetUniformLocation(s_staticPropProgram, "u_mvp");
     s_locsLegacy.fogValue          = glGetUniformLocation(s_staticPropProgram, "u_fogValue");
     s_locsLegacy.debugAddrMode     = glGetUniformLocation(s_staticPropProgram, "u_debugAddrMode");
@@ -579,7 +577,6 @@ void loadProgramsIfNeeded() {
             // -1 for them, ProgramLocs default-init keeps them -1, and
             // Step 11.7.d's upload helper skips -1 locations.
             s_locsCoalesce.terrainMVP        = glGetUniformLocation(s_staticPropProgramCoalesce, "u_worldToClipGL");
-            s_locsCoalesce.terrainViewport   = glGetUniformLocation(s_staticPropProgramCoalesce, "u_terrainViewport");
             s_locsCoalesce.mvp               = glGetUniformLocation(s_staticPropProgramCoalesce, "u_mvp");
             s_locsCoalesce.fogValue          = glGetUniformLocation(s_staticPropProgramCoalesce, "u_fogValue");
             s_locsCoalesce.debugAddrMode     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_debugAddrMode");
@@ -3003,12 +3000,6 @@ void GpuStaticPropBatcher::flush() {
     const float* terrainMVP = gos_GetTerrainMVPMat4();
     if (locTerrainMVP >= 0 && terrainMVP)
         glUniformMatrix4fv(locTerrainMVP, 1, GL_FALSE, terrainMVP);
-    // Terrain projection chain matches shaders/terrain_overlay.vert usage:
-    // terrainMVP gives D3D-style screen-pixel homogeneous coords, then the
-    // shader does divide + viewport + pixel->NDC with abs(w).
-    const GLint locVP  = glGetUniformLocation(s_staticPropProgram, "u_terrainViewport");
-    const float* vp = gos_GetTerrainViewportVec4();
-    if (locVP >= 0 && vp) glUniform4fv(locVP, 1, vp);
     const GLint locMVP = glGetUniformLocation(s_staticPropProgram, "u_mvp");
     const float* mm = gos_GetProj2ScreenMat4();
     if (locMVP >= 0 && mm) glUniformMatrix4fv(locMVP, 1, GL_TRUE, mm);
@@ -3335,8 +3326,6 @@ void GpuStaticPropBatcher::flush() {
         // MC2_COALESCE).
         if (s_locsCoalesce.terrainMVP      >= 0)
             glUniformMatrix4fv(s_locsCoalesce.terrainMVP,    1, GL_FALSE, gos_GetTerrainMVPMat4());
-        if (s_locsCoalesce.terrainViewport >= 0)
-            glUniform4fv      (s_locsCoalesce.terrainViewport, 1, gos_GetTerrainViewportVec4());
         if (s_locsCoalesce.mvp             >= 0)
             glUniformMatrix4fv(s_locsCoalesce.mvp,           1, GL_TRUE,  gos_GetProj2ScreenMat4());
         if (s_locsCoalesce.fogValue        >= 0)

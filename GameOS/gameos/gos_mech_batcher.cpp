@@ -93,7 +93,6 @@ static glsl_program* s_mechProgramObj = nullptr;
 static GLint s_loc_u_instanceBase    = -1;
 static GLint s_loc_u_materialFlags   = -1;
 static GLint s_loc_terrainMVP     = -1;
-static GLint s_loc_u_terrainViewport = -1;
 static GLint s_loc_u_mvp             = -1;
 static GLint s_loc_u_tex             = -1;
 static GLint s_loc_u_fogValue        = -1;
@@ -265,7 +264,6 @@ static void loadProgramsIfNeeded() {
     s_loc_u_instanceBase    = loc("u_instanceBase");
     s_loc_u_materialFlags   = loc("u_materialFlags");
     s_loc_terrainMVP     = loc("u_worldToClipGL");
-    s_loc_u_terrainViewport = loc("u_terrainViewport");
     s_loc_u_mvp             = loc("u_mvp");
     s_loc_u_tex             = loc("u_tex");
     s_loc_u_fogValue        = loc("u_fogValue");
@@ -1182,8 +1180,8 @@ void GpuMechBatcher::flush() {
             if (s_loc_u_tex >= 0)
                 glGetUniformiv(s_mechProgram, s_loc_u_tex, &utexVal);
             std::fprintf(stderr,
-                "[MECHBATCHER v1] event=uni_probe loc_u_tex=%d u_tex_val=%d s_loc_terrainMVP=%d s_loc_u_mvp=%d s_loc_u_terrainViewport=%d\n",
-                s_loc_u_tex, utexVal, s_loc_terrainMVP, s_loc_u_mvp, s_loc_u_terrainViewport);
+                "[MECHBATCHER v1] event=uni_probe loc_u_tex=%d u_tex_val=%d s_loc_terrainMVP=%d s_loc_u_mvp=%d\n",
+                s_loc_u_tex, utexVal, s_loc_terrainMVP, s_loc_u_mvp);
         }
     }
     {
@@ -1204,9 +1202,6 @@ void GpuMechBatcher::flush() {
     const float* terrainMVP = gos_GetTerrainMVPMat4();
     if (s_loc_terrainMVP >= 0 && terrainMVP)
         glUniformMatrix4fv(s_loc_terrainMVP, 1, GL_FALSE, terrainMVP);
-    const float* vp = gos_GetTerrainViewportVec4();
-    if (s_loc_u_terrainViewport >= 0 && vp)
-        glUniform4fv(s_loc_u_terrainViewport, 1, vp);
     const float* mm = gos_GetProj2ScreenMat4();
     if (s_loc_u_mvp >= 0 && mm)
         glUniformMatrix4fv(s_loc_u_mvp, 1, GL_TRUE, mm);

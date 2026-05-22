@@ -173,9 +173,6 @@ void GameCamera::render (void)
 			// particle-bridge, etc.) inherit transparently.
 			gos_SetWorldToClipGL(eye->worldToClipGL());
 
-			// Viewport params for TES: (vmx, vmy, vax, vay)
-			gos_SetTerrainViewport(viewMulX, viewMulY, viewAddX, viewAddY);
-
 			// Camera position in MC2 world space for TCS distance LOD
 			Stuff::Vector3D camOrig = getCameraOrigin();
 			gos_SetTerrainCameraPos(camOrig.x, camOrig.y, camOrig.z);

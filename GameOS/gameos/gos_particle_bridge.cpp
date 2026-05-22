@@ -24,7 +24,6 @@ extern const float* gos_GetTerrainMVPMat4();
 // gos_static_prop_batcher.cpp:3010/3013). terrainMVP alone is D3D pixel-
 // homog clip; the shader needs viewport + pixel->NDC remap to land in GL
 // clip space.
-extern const float* gos_GetTerrainViewportVec4();
 extern const float* gos_GetProj2ScreenMat4();
 
 // VAO rebind helper (memory/projectz_overlay_findings.md trap #4) — AMD
@@ -160,15 +159,6 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
         if (mvp) {
             GLint loc = glGetUniformLocation(s_prog->shp_, "u_worldToClipGL");
             if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, mvp);
-        }
-    }
-    {
-        // B1 C14: u_terrainViewport — pixel-space scale/offset for the
-        // viewport divide step of the 3-step chain.
-        const float* vp = gos_GetTerrainViewportVec4();
-        if (vp) {
-            GLint loc = glGetUniformLocation(s_prog->shp_, "u_terrainViewport");
-            if (loc >= 0) glUniform4fv(loc, 1, vp);
         }
     }
     {
