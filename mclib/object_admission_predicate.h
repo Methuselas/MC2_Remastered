@@ -79,3 +79,39 @@ void lightingShadowPredicate_init();
 
 // Read the active mode. Lazy-initializes; startup ordering is non-load-bearing.
 LightingShadowPredicateMode lightingShadowPredicateMode();
+
+//---------------------------------------------------------------------------
+// Track A1 - debug overlay predicate mode (sibling of lighting/shadow mode).
+// Same clipSpaceFrustumAdmit predicate; separate env flag for independent soak.
+// Default: Legacy (debug overlay draws are lab-only; low-risk flip candidate).
+//---------------------------------------------------------------------------
+
+enum class DebugOverlayPredicateMode {
+    Legacy,    // bool comes from legacy projectZ screen-rect acceptance
+    Modern,    // bool comes from clipSpaceFrustumAdmit(rawClip)
+};
+
+// One-time probe (idempotent). Reads env MC2_DEBUG_OVERLAY_PREDICATE_MODE
+// (Legacy / Modern). Default = Legacy.
+void debugOverlayPredicate_init();
+
+// Read the active mode. Lazy-initializes; startup ordering is non-load-bearing.
+DebugOverlayPredicateMode debugOverlayPredicateMode();
+
+//---------------------------------------------------------------------------
+// Track A1 - selection picking predicate mode (sibling of lighting/shadow mode).
+// Same clipSpaceFrustumAdmit predicate; separate env flag for independent soak.
+// Default: Legacy (picking bool is discarded by callers; screen.xy still read).
+//---------------------------------------------------------------------------
+
+enum class SelectionPickingPredicateMode {
+    Legacy,    // bool comes from legacy projectZ screen-rect acceptance
+    Modern,    // bool comes from clipSpaceFrustumAdmit(rawClip)
+};
+
+// One-time probe (idempotent). Reads env MC2_SELECTION_PICKING_PREDICATE_MODE
+// (Legacy / Modern). Default = Legacy.
+void selectionPickingPredicate_init();
+
+// Read the active mode. Lazy-initializes; startup ordering is non-load-bearing.
+SelectionPickingPredicateMode selectionPickingPredicateMode();

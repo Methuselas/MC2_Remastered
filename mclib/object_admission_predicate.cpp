@@ -97,6 +97,68 @@ LightingShadowPredicateMode lightingShadowPredicateMode() {
     return s_lshadowMode;
 }
 
+namespace {
+
+bool                        s_dbgoverlayInitialized = false;
+DebugOverlayPredicateMode   s_dbgoverlayMode = DebugOverlayPredicateMode::Legacy;
+
+const char* dbgoverlayModeLabel(DebugOverlayPredicateMode m) {
+    return (m == DebugOverlayPredicateMode::Modern) ? "modern" : "legacy";
+}
+
+} // namespace
+
+void debugOverlayPredicate_init() {
+    if (s_dbgoverlayInitialized) return;
+    const char* env = std::getenv("MC2_DEBUG_OVERLAY_PREDICATE_MODE");
+    if (env && std::strcmp(env, "Modern") == 0) {
+        s_dbgoverlayMode = DebugOverlayPredicateMode::Modern;
+    } else {
+        s_dbgoverlayMode = DebugOverlayPredicateMode::Legacy;  // default
+    }
+    s_dbgoverlayInitialized = true;
+    std::printf("[OBJECT_ADMISSION_PREDICATE v1] event=mode_select wrapper=debug_overlay mode=%s\n",
+                dbgoverlayModeLabel(s_dbgoverlayMode));
+    std::fflush(stdout);
+}
+
+DebugOverlayPredicateMode debugOverlayPredicateMode() {
+    // Lazy init - startup ordering is non-load-bearing.
+    debugOverlayPredicate_init();
+    return s_dbgoverlayMode;
+}
+
+namespace {
+
+bool                          s_selfpickInitialized = false;
+SelectionPickingPredicateMode s_selfpickMode = SelectionPickingPredicateMode::Legacy;
+
+const char* selfpickModeLabel(SelectionPickingPredicateMode m) {
+    return (m == SelectionPickingPredicateMode::Modern) ? "modern" : "legacy";
+}
+
+} // namespace
+
+void selectionPickingPredicate_init() {
+    if (s_selfpickInitialized) return;
+    const char* env = std::getenv("MC2_SELECTION_PICKING_PREDICATE_MODE");
+    if (env && std::strcmp(env, "Modern") == 0) {
+        s_selfpickMode = SelectionPickingPredicateMode::Modern;
+    } else {
+        s_selfpickMode = SelectionPickingPredicateMode::Legacy;  // default
+    }
+    s_selfpickInitialized = true;
+    std::printf("[OBJECT_ADMISSION_PREDICATE v1] event=mode_select wrapper=selection_picking mode=%s\n",
+                selfpickModeLabel(s_selfpickMode));
+    std::fflush(stdout);
+}
+
+SelectionPickingPredicateMode selectionPickingPredicateMode() {
+    // Lazy init - startup ordering is non-load-bearing.
+    selectionPickingPredicate_init();
+    return s_selfpickMode;
+}
+
 bool clipSpaceFrustumAdmit(const Stuff::Vector4D& rawClip) {
     // IMPORTANT — MC2 clip.w sign convention (see memory/clip_w_sign_trap.md):
     // MC2's Stuff worldToClip matrix produces clip.w of EITHER sign for visible

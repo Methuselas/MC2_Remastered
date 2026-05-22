@@ -669,17 +669,33 @@ class Camera
 			return ret;
 		}
 
-		// Picking — bool discarded; screen.xy consumed for distance / rect tests.
-#pragma warning(push)
-#pragma warning(disable: 4996)
+		// Picking — bool discarded by most callers; screen.xy consumed for distance / rect tests.
+		// F3 modernized via clipSpaceFrustumAdmit when MC2_SELECTION_PICKING_PREDICATE_MODE=Modern.
+		// screen output is byte-identical between Legacy and Modern (sidecar ptr doesn't affect
+		// projectZ's screen-write path), so callers consuming screen.xy are unaffected.
 		inline bool projectForSelectionPicking (Stuff::Vector3D& point,
 		                                        Stuff::Vector4D& screen) {
 			const int64_t _f3_pick_t0 = ::mc2_cpu_proj_cost::selection_picking_begin_ns();
-			bool ret = projectZ(point, screen);
+			LegacyProjectionResult result;
+#pragma warning(push)
+#pragma warning(disable: 4996)
+			bool legacyAccepted = projectZ(point, screen, &result);
+#pragma warning(pop)
+#if defined(MC2_PROJECTZ_FINITE_CHECK)
+			if (result.acceptedByLegacyScreenRect) {
+				gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
+				          isfinite(screen.z) && isfinite(screen.w));
+			}
+#endif
+			bool ret;
+			if (selectionPickingPredicateMode() == SelectionPickingPredicateMode::Modern) {
+				ret = clipSpaceFrustumAdmit(result.rawClip);
+			} else {
+				ret = legacyAccepted;
+			}
 			::mc2_cpu_proj_cost::selection_picking_end_ns(_f3_pick_t0);
 			return ret;
 		}
-#pragma warning(pop)
 
 		// Cosmetic screen-XY oracle — bool discarded; screen.xy consumed.
 #pragma warning(push)
@@ -694,16 +710,30 @@ class Camera
 #pragma warning(pop)
 
 		// Debug overlays — LAB_ONLY / drawTerrainGrid-gated draw paths.
-#pragma warning(push)
-#pragma warning(disable: 4996)
+		// F3 modernized via clipSpaceFrustumAdmit when MC2_DEBUG_OVERLAY_PREDICATE_MODE=Modern.
 		inline bool projectForDebugOverlay (Stuff::Vector3D& point,
 		                                    Stuff::Vector4D& screen) {
 			const int64_t _f3_dbg_t0 = ::mc2_cpu_proj_cost::debug_overlay_begin_ns();
-			bool ret = projectZ(point, screen);
+			LegacyProjectionResult result;
+#pragma warning(push)
+#pragma warning(disable: 4996)
+			bool legacyAccepted = projectZ(point, screen, &result);
+#pragma warning(pop)
+#if defined(MC2_PROJECTZ_FINITE_CHECK)
+			if (result.acceptedByLegacyScreenRect) {
+				gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
+				          isfinite(screen.z) && isfinite(screen.w));
+			}
+#endif
+			bool ret;
+			if (debugOverlayPredicateMode() == DebugOverlayPredicateMode::Modern) {
+				ret = clipSpaceFrustumAdmit(result.rawClip);
+			} else {
+				ret = legacyAccepted;
+			}
 			::mc2_cpu_proj_cost::debug_overlay_end_ns(_f3_dbg_t0);
 			return ret;
 		}
-#pragma warning(pop)
 
 		void projectCamera (Stuff::Vector3D &point);
 

@@ -707,6 +707,11 @@ int main(int argc, char** argv)
     objectAdmissionPredicate_init();
     // Track A2: probe effect-admission mode; emit [INSTR v1] effect_admission_mode= line.
     effectAdmissionPredicate_init();
+    // F3 T1: probe lighting/shadow mode; emit [OBJECT_ADMISSION_PREDICATE v1] mode_select line.
+    lightingShadowPredicate_init();
+    // F3 T2: probe debug-overlay + selection-picking modes; emit mode_select lines.
+    debugOverlayPredicate_init();
+    selectionPickingPredicate_init();
     // Optional startup selftest — hard-fails on any boundary violation so the
     // operator knows immediately if the predicate body has a regression.
     if (const char* st = std::getenv("MC2_OBJECT_ADMISSION_SELFTEST")) {
