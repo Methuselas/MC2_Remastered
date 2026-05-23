@@ -128,28 +128,55 @@ grep -n "!gos_IsTerrainTessellationActive" mclib/bdactor.cpp
 Expected: exactly 2 matches (one in BldgAppearance::update, one in TreeAppearance::update).
 
 **Step 2 — Instrument and count entries.**
-Add temporary `[ARC3_PROBE v1]` counters gated by an env var (e.g. `MC2_ARC3_PROBE=1`) in both `if` blocks before the condition:
+Replace the existing `if` block for buildings with the probe below. Same pattern for trees. The probe wraps the OUTER candidate check and separately tracks whether the INNER transform body (`!gos_IsTerrainTessellationActive()`) was entered:
 
 ```cpp
-// [ARC3_PROBE v1] entry counter — remove before commit
-static long long s_bldg_shadow_entries = 0;
+// [ARC3_PROBE v1] temporary probe — remove before commit
+static long long s_bldg_shadow_candidates    = 0;
+static long long s_bldg_shadow_xform_entries = 0;
+static long long s_bldg_tess_true            = 0;
+static long long s_bldg_tess_false           = 0;
+
 if (bldgShadowShape && useShadows) {
-    ++s_bldg_shadow_entries;
-    if (!gos_IsTerrainTessellationActive()) {
-        // ... existing transform body
+    ++s_bldg_shadow_candidates;
+
+    const bool tessActive = gos_IsTerrainTessellationActive();
+    if (tessActive) {
+        ++s_bldg_tess_true;
+    } else {
+        ++s_bldg_tess_false;
+        ++s_bldg_shadow_xform_entries;
+
+        bldgShadowShape->SetRecalcShadows(checkShadows);
+        bldgShadowShape->SetLightList(eye->getWorldLights(), eye->getNumLights());
+        bldgShadowShape->TransformMultiShape(&xlatPosition, &rot);
     }
 }
 ```
 
-Print the counter at frame intervals (e.g. every 300 frames) to stderr. Run a 30s tier1 smoke (`mc2_01`) with `MC2_ARC3_PROBE=1`.
+Print all four counters to stderr every 300 frames. Run a 30s smoke of `mc2_01` (buildings and trees visible):
+```powershell
+py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --missions mc2_01 --duration 30 --kill-existing --keep-logs --exe A:/Games/mc2-opengl/mc2-win64-water/mc2.exe
+```
 
-**Decision gate:**
-- `bldg_shadow_entries == 0` and `tree_shadow_entries == 0`: proceed. Restate goal as dead-code cleanup, not perf win.
-- Any counter `> 0`: STOP. Tessellation is not always active. Identify the path before deleting.
+**Decision gate (C1 — corrected):**
 
-Do NOT proceed to deletion until entries are confirmed zero.
+| Condition | Action |
+|---|---|
+| `candidates == 0` | Smoke did not exercise the path. Run a mission with visible buildings/trees in camera view. Do NOT treat as proof of safety. |
+| `candidates > 0` AND `xform_entries == 0` AND `tess_false == 0` | **PROCEED.** Transform body was never entered. Deletion is dead-code cleanup. |
+| `xform_entries > 0` OR `tess_false > 0` | **STOP.** Tessellation was inactive at least once. Identify the non-tessellation path before deleting. |
 
-**Step 3 — Remove instrumentation before deletion commit.**
+The key distinction: `candidates` counts objects that reached the outer check; `xform_entries` counts objects that entered the transform body. The probe must show `candidates > 0` (path exercised) AND `xform_entries == 0` (inner body never ran).
+
+**Step 3 — Record probe results** in the commit message and spec (M1 update):
+After a successful probe run, record the outcome verbatim in the commit message:
+```
+ARC3_PROBE result: candidates=N xform_entries=0 tess_false=0
+Conclusion: dead-code cleanup only; no runtime CPU win claimed.
+```
+
+**Step 4 — Remove instrumentation** before the deletion commit. The deletion commit must contain no `[ARC3_PROBE v1]` markers.
 
 ### Task 1: Delete the two transform blocks
 
@@ -157,20 +184,25 @@ Delete both targets as described above (comment blocks + `if` blocks).
 
 ### Task 2: Post-deletion grep verification (M2)
 
-Run all of the following; each must return 0 matches:
+Run all of the following. Expected match counts are noted per gate.
 
 ```bash
-# Primary gate: active tessellation guard gone
+# Gate A: tessellation guard gone from bdactor.cpp — expect 0 matches
 grep -n "!gos_IsTerrainTessellationActive" mclib/bdactor.cpp
 
-# Confirm TransformMultiShape removed from update paths
+# Gate B: TransformMultiShape removed from bdactor.cpp update paths — expect 0 matches
+# (If TransformMultiShape appears in other bdactor functions unrelated to shadows, scope
+#  the check: confirm no match inside BldgAppearance::update or TreeAppearance::update)
 grep -n "bldgShadowShape->TransformMultiShape\|treeShadowShape->TransformMultiShape" mclib/bdactor.cpp
 
-# Confirm SetRecalcShadows removed from update paths
+# Gate C: SetRecalcShadows removed from bdactor.cpp update paths — expect 0 matches
+# (Same scoping note: only flag matches inside the update() functions, not lifecycle setup)
 grep -n "bldgShadowShape->SetRecalcShadows\|treeShadowShape->SetRecalcShadows" mclib/bdactor.cpp
 ```
 
-Note: SetLightList grep is not listed because it may appear in other (non-shadow) lighting contexts. Focus on the shadow-specific methods.
+If any of Gates B or C return matches outside the `update()` functions (e.g. in a lifecycle setup path added later), that is acceptable — confirm the match is NOT inside `BldgAppearance::update` or `TreeAppearance::update` before marking the gate as passed.
+
+Note: SetLightList is not gated because it legitimately appears in non-shadow lighting contexts.
 
 ### Task 3: Full clean build + smoke (m2, M4)
 
@@ -201,18 +233,17 @@ Pass criteria: exit 0.
 
 ### Task 4: Commit (m3)
 
-Commit message must reflect the preflight outcome:
+Commit message must include the probe result recorded in Task 0 Step 3, and must NOT claim a runtime CPU win unless `xform_entries > 0` was observed:
 
-- If entries were confirmed zero (expected path):
-  ```
-  retire dead building/tree blob shadow transform blocks (Arc 3)
-  ```
-- Only if entries were non-zero and an explicit gate was added instead:
-  ```
-  gate building/tree blob shadow transforms behind tessellation predicate
-  ```
+```
+retire dead building/tree blob shadow transform blocks (Arc 3)
 
-Do NOT claim `~3µs/object/frame` in the commit message unless the preflight counter showed entries > 0 running real work.
+ARC3_PROBE result: bldg candidates=N xform_entries=0 tess_false=0
+                   tree candidates=N xform_entries=0 tess_false=0
+Conclusion: dead-code cleanup only; no runtime CPU win claimed.
+```
+
+Do NOT use the phrase `~3µs/object/frame` or any runtime win language. The spec's background section already contains the original comment with that estimate; that comment is deleted along with the block.
 
 ---
 
