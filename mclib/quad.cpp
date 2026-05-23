@@ -929,6 +929,7 @@ void TerrainQuad::setupTextures (void)
 			waterHandle = 0xffffffff;
 			waterDetailHandle = 0xffffffff;
 			terrainDetailHandle = 0xffffffff;
+			return;
 		}
 		else
 		{
