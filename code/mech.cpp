@@ -128,6 +128,7 @@
 
 #include "../resource.h"
 #include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
+#include "../GameAdapters/MechRenderAdapter.h"  // M2: mech spawn/destroy adapter
 
 // C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
 // MC2_GPU_CULL_LIFECYCLE=1 routes AI canBeSeen() combat gates to GPU-lagged visibility.
@@ -1304,8 +1305,20 @@ void BattleMech::init (bool create, ObjectTypePtr _type) {
 
 	//------------------------------------------------------------
 	// Ultimately, try to re-use rather then keep re-allocating...
-	if (appearance)
-		delete appearance;
+	if (appearance) {
+	    // M2: MANDATORY pre-init destroyMech. If BattleMech::init() is called
+	    // on an object that already has a live appearance (re-init scenario),
+	    // the previous appearance is deleted without BattleMech::destroy() being
+	    // called. Retire the handle before the old appearance is deleted so the
+	    // adapter can access it via getRenderWorldHandle().
+	    // No-op if getRenderWorldHandle().isValid() == false (first-time init
+	    // before any prior spawn, or already retired).
+	    {
+	        Mech3DAppearance* m3d = static_cast<Mech3DAppearance*>(appearance);
+	        GameAdapters::Mech::destroyMech(*m3d);
+	    }
+	    delete appearance;
+	}
 	appearance = new Mech3DAppearance;
 	gosASSERT(appearance != NULL);
 
@@ -1314,6 +1327,16 @@ void BattleMech::init (bool create, ObjectTypePtr _type) {
 	// to work with is a spriteTree.  Anything else is wrong.
 	appearance->init((Mech3DAppearanceTypePtr)mechAppearanceType, this);
 	appearance->initFX();
+	// M2: RenderWorld spawn route. Called AFTER initFX() so the appearance
+	// is fully initialized before the adapter records the handle.
+	// static_cast safe: appearance is always Mech3DAppearance* here
+	// (verified: only this overload assigns new Mech3DAppearance; one hit
+	// in code/mech.cpp for "appearance = new").
+	// gameObjectId=0 in M2; M2.5 refines when object-ID writes need correlation.
+	{
+	    Mech3DAppearance* m3d = static_cast<Mech3DAppearance*>(appearance);
+	    GameAdapters::Mech::syncSpawn(*m3d, 0u);
+	}
 	appearance->setAlphaValue(alphaValue);
 
 	objectClass = BATTLEMECH;
@@ -3740,10 +3763,19 @@ void BattleMech::updateHeat (void)
 
 //-------------------------------------------------------------------------------------------
 
-void BattleMech::destroy (void) 
+void BattleMech::destroy (void)
 {
-	if (appearance) 
+	if (appearance)
 	{
+	    // M2: retire RenderWorld handle BEFORE deleting the appearance so the
+	    // adapter can read the handle via getRenderWorldHandle(). No-op if
+	    // already retired (valid handle check is inside destroyMech).
+	    // static_cast safe: appearance is always Mech3DAppearance* in
+	    // BattleMech (verified: one assignment site in code/mech.cpp:1304).
+	    {
+	        Mech3DAppearance* m3d = static_cast<Mech3DAppearance*>(appearance);
+	        GameAdapters::Mech::destroyMech(*m3d);
+	    }
 		delete appearance;
 		appearance = NULL;
 	}
