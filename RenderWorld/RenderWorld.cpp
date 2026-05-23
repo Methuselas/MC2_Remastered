@@ -333,6 +333,13 @@ void init() {
 }
 
 void destroy() {
+    // M1.6 Q2: pick state does not survive mission-end. Clearing here
+    // prevents a stale handle from pointing into a cleared s_objectRecords
+    // table -- the generation check would catch it on read, but the
+    // resulting "valid=true handle=N" -> "lookup returns invalid" gap
+    // would confuse anyone grepping the log post-load. Cheap; one
+    // mutex-guarded scalar reset per mission end.
+    clearLastStaticPropPick();
     std::fprintf(stderr,
         "[RENDER_WORLD v1] event=destroy upsert_ok=%llu upsert_fail=%llu "
         "destroy_calls=%llu mark_visible=%llu\n",
