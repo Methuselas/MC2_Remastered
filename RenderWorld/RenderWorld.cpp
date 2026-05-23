@@ -198,6 +198,103 @@ void runPassiveStableFrameCanary() {
     s_canaryRan = true;
 }
 
+// M1.5 T10: substrate self-test. Exercises the record table directly
+// (no rendering required): synthesize handle, populate record, retire,
+// validate alive=false and generation bump. Gated by
+// MC2_RENDER_WORLD_SELFTEST=1; runs once at RenderWorld::init.
+//
+// Result lines:
+//   [RENDER_WORLD_SELFTEST v1] result=PASS step=N
+//   [RENDER_WORLD_SELFTEST v1] result=FAIL step=N reason=<...>
+//
+// FAIL is a STOP: indicates the record table is corrupt or the
+// generation-bump logic is broken.
+void runSubstrateSelfTest() {
+    if (!envFlag("MC2_RENDER_WORLD_SELFTEST")) return;
+
+    // Use a high handle index unlikely to collide with real registrations.
+    const uint32_t kTestIndex = 0xFFFFEu;  // 20-bit max minus one
+    // Step 1: populate
+    populateRecord(kTestIndex, 1u, 0xCAFEu);
+
+    {
+        std::lock_guard<std::mutex> lk(s_objectRecordsMutex);
+        if (kTestIndex >= s_objectRecords.size()) {
+            std::fprintf(stderr,
+                "[RENDER_WORLD_SELFTEST v1] result=FAIL step=1 reason=resize_failed\n");
+            return;
+        }
+        const auto& rec = s_objectRecords[kTestIndex];
+        if ((rec.flags & RenderWorld::kRenderObjectFlagAlive) == 0u) {
+            std::fprintf(stderr,
+                "[RENDER_WORLD_SELFTEST v1] result=FAIL step=1 reason=alive_not_set_after_populate\n");
+            return;
+        }
+        if (rec.generation != 1u) {
+            std::fprintf(stderr,
+                "[RENDER_WORLD_SELFTEST v1] result=FAIL step=1 reason=wrong_generation_%u\n",
+                (unsigned)rec.generation);
+            return;
+        }
+        if (rec.gameObjectId != 0xCAFEu) {
+            std::fprintf(stderr,
+                "[RENDER_WORLD_SELFTEST v1] result=FAIL step=1 reason=gameObjectId_lost\n");
+            return;
+        }
+    }
+
+    // Step 2: retire
+    retireRecord(kTestIndex);
+
+    {
+        std::lock_guard<std::mutex> lk(s_objectRecordsMutex);
+        const auto& rec = s_objectRecords[kTestIndex];
+        if ((rec.flags & RenderWorld::kRenderObjectFlagAlive) != 0u) {
+            std::fprintf(stderr,
+                "[RENDER_WORLD_SELFTEST v1] result=FAIL step=2 reason=alive_set_after_retire\n");
+            return;
+        }
+        if (rec.generation != 2u) {
+            std::fprintf(stderr,
+                "[RENDER_WORLD_SELFTEST v1] result=FAIL step=2 reason=generation_not_bumped_%u\n",
+                (unsigned)rec.generation);
+            return;
+        }
+    }
+
+    // Step 3: re-populate with new generation
+    populateRecord(kTestIndex, 2u, 0xBEEFu);
+
+    {
+        std::lock_guard<std::mutex> lk(s_objectRecordsMutex);
+        const auto& rec = s_objectRecords[kTestIndex];
+        if ((rec.flags & RenderWorld::kRenderObjectFlagAlive) == 0u) {
+            std::fprintf(stderr,
+                "[RENDER_WORLD_SELFTEST v1] result=FAIL step=3 reason=alive_not_set_after_repopulate\n");
+            return;
+        }
+        if (rec.generation != 2u) {
+            std::fprintf(stderr,
+                "[RENDER_WORLD_SELFTEST v1] result=FAIL step=3 reason=wrong_repopulate_generation_%u\n",
+                (unsigned)rec.generation);
+            return;
+        }
+        if (rec.gameObjectId != 0xBEEFu) {
+            std::fprintf(stderr,
+                "[RENDER_WORLD_SELFTEST v1] result=FAIL step=3 reason=repopulate_gameObjectId_lost\n");
+            return;
+        }
+    }
+
+    // Cleanup: retire the test slot so it cannot poison subsequent
+    // canary sampling. (lookupAtPixel only triggers on real pixel
+    // values; index 0xFFFFE is not reachable by any real recipe.)
+    retireRecord(kTestIndex);
+
+    std::fprintf(stderr,
+        "[RENDER_WORLD_SELFTEST v1] result=PASS step=all\n");
+}
+
 } // namespace
 
 namespace RenderWorld {
@@ -217,6 +314,8 @@ void init() {
         std::fprintf(stderr,
             "[OBJECT_ID v1] event=enabled format=R32UI attachment=GL_COLOR_ATTACHMENT2\n");
     }
+    // M1.5 T10: substrate self-test (gated by MC2_RENDER_WORLD_SELFTEST=1).
+    runSubstrateSelfTest();
 }
 
 void destroy() {
