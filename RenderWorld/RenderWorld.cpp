@@ -27,6 +27,18 @@
 
 #include "../GameOS/gameos/gos_postprocess.h"
 
+// M2-pre: forward-declare the gameplay-pick self-test entry point.
+// Lives in code/gameplay_pick.h; full include would drag the game-side
+// types into a substrate-side TU unnecessarily. Symbol is resolved by
+// the linker at full-relink.
+// Firewall direction note: this is the FIRST engine-side -> game-side
+// reach in the codebase. scripts/check-include-firewall.sh:22 SCOPE_DIRS
+// excludes code/ AND does NOT enforce reach direction; the forward-decl
+// avoids including code/gameplay_pick.h from a substrate-side TU. If the
+// firewall script is ever extended to enforce direction, this site will
+// need an explicit allowlist entry.
+void RunGameplayPickSelfTest();
+
 namespace {
 
 // Anonymous-namespace state per Decision D3.A. Adapter does NOT see
@@ -330,6 +342,10 @@ void init() {
                  IsStaticPropPickDebugEnabled() ? 1 : 0);
     // M1.5 T10: substrate self-test (gated by MC2_RENDER_WORLD_SELFTEST=1).
     runSubstrateSelfTest();
+    // M2-pre: gameplay-pick self-test (gated by MC2_GAMEPLAY_PICK_SELFTEST=1
+    // + MC2_OBJECT_ID_BUFFER=1). Validates the extracted spine has not
+    // diverged from M1.6 gate semantics. Mirrors substrate self-test shape.
+    RunGameplayPickSelfTest();
 }
 
 void destroy() {

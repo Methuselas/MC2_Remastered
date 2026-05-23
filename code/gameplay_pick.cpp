@@ -130,11 +130,205 @@ GameplayPickResult tryGameplayPick(const GameplayPickRequest& req)
 
 //----------------------------------------------------------------------
 // RunGameplayPickSelfTest -- validation-gate self-test.
-// Implementation lands in T4; T1 ships a STUB so the header symbol
-// resolves cleanly. T4's body wires the 8-step assertion sequence.
+//
+// Gated by MC2_GAMEPLAY_PICK_SELFTEST=1 AND MC2_OBJECT_ID_BUFFER=1.
+// Substrate-off makes the test vacuous (step 8 cannot reach
+// lookupAtPixel); we refuse to run rather than emit a misleading PASS.
+//
+// 8-step assertion sequence per spec Section 8 Gate 2:
+//   step=1 shiftDn=false                                  -> skipped
+//   step=2 leftClicked=false                              -> skipped
+//   step=3 bGui=true                                      -> skipped
+//   step=4 bLeftDouble=true                               -> skipped
+//   step=5 moverSelectedThisFrame=true (else clean)       -> gated
+//   step=6 all gates clean + mouseX=-1                    -> skipped (off-screen)
+//   step=7 all gates clean + mouseY=INT_MAX               -> skipped (off-screen)
+//   step=8 all gates clean + center pixel (640,360)       -> miss
+//
+// Signal-reality note: RunGameplayPickSelfTest() runs at the tail of
+// RenderWorld::init(), which executes BEFORE any scene frame has been
+// rendered into the FBO. Attachment-2 (the R32_UINT object-id buffer)
+// is freshly cleared to 0 at init; lookupAtPixel() will read raw=0
+// and return LookupResult{isValid=false}. Step 8 therefore expects
+// outcome=miss DETERMINISTICALLY (NOT hit-or-miss). This reduces step
+// 8 from a "lookup correctness check" to a SPINE REACHABILITY check:
+// it proves the gate chain (env -> gesture -> mover-fallback ->
+// viewport -> bounds -> coord-scale) reaches lookupAtPixel without
+// short-circuiting. Whether lookupAtPixel returns hit on a live scene
+// is a substrate-level concern verified by the M1.5 OBJECT_ID_SELFTEST
+// passive canary, NOT by this gate.
+//
+// Result lines mirror [RENDER_WORLD_SELFTEST v1]:
+//   [GAMEPLAY_PICK_SELFTEST v1] result=PASS step=all
+//   [GAMEPLAY_PICK_SELFTEST v1] result=FAIL step=N expected=<...> actual=<...>
+//
+// FAIL is a STOP: indicates the extracted helper diverged from M1.6
+// gate semantics.
 //----------------------------------------------------------------------
+
+// Local helper: env-flag check matching the RenderWorld envFlag() shape.
+// (Not extracted to a shared utility -- the substrate-side envFlag() is
+// in RenderWorld.cpp's anonymous namespace; reaching in would be ugly.
+// The duplication is 4 lines; acceptable.)
+static bool selftestEnvFlag(const char* name) {
+    const char* v = std::getenv(name);
+    return v && std::strcmp(v, "1") == 0;
+}
+
+// Local helper: build a "clean" request (gates pass; would reach
+// lookupAtPixel) and let callers mutate one field per step.
+static GameplayPickRequest selftestCleanRequest() {
+    GameplayPickRequest req{};
+    req.mouseX                  = 640;   // viewport-center on 1280x720 logical canvas
+    req.mouseY                  = 360;
+    req.shiftDn                 = true;
+    req.leftClicked             = true;
+    req.bGui                    = false;
+    req.bLeftDouble             = false;
+    req.moverSelectedThisFrame  = false;
+    return req;
+}
+
+// Local helper: outcome enum -> stable string for FAIL line.
+static const char* selftestOutcomeName(GameplayPickResult::Outcome o) {
+    switch (o) {
+    case GameplayPickResult::Outcome::skipped: return "skipped";
+    case GameplayPickResult::Outcome::gated:   return "gated";
+    case GameplayPickResult::Outcome::miss:    return "miss";
+    case GameplayPickResult::Outcome::hit:     return "hit";
+    }
+    return "unknown";
+}
+
 void RunGameplayPickSelfTest()
 {
-    // T1 stub: no-op. T4 replaces with the env-flag gate + 8-step
-    // assertion sequence per spec Section 8 Gate 2.
+    if (!selftestEnvFlag("MC2_GAMEPLAY_PICK_SELFTEST")) return;
+
+    // Defense: substrate must be on for step 8 to be meaningful. If
+    // substrate is off, every step 1-7 still asserts correctly, BUT
+    // step 8 would assert skipped (which IS the expected outcome under
+    // substrate-off) instead of hit/miss. To avoid the confusion of
+    // "PASS step=all" meaning two different things depending on
+    // substrate state, refuse to run with substrate off.
+    if (!RenderWorld::IsObjectIdBufferEnabled()) {
+        std::fprintf(stderr,
+            "[GAMEPLAY_PICK_SELFTEST v1] result=SKIP reason=substrate_off\n");
+        return;
+    }
+
+    using Outcome = GameplayPickResult::Outcome;
+
+    // Step 1: shiftDn=false -> skipped
+    {
+        GameplayPickRequest req = selftestCleanRequest();
+        req.shiftDn = false;
+        GameplayPickResult r = tryGameplayPick(req);
+        if (r.outcome != Outcome::skipped) {
+            std::fprintf(stderr,
+                "[GAMEPLAY_PICK_SELFTEST v1] result=FAIL step=1 expected=skipped actual=%s\n",
+                selftestOutcomeName(r.outcome));
+            return;
+        }
+    }
+
+    // Step 2: leftClicked=false -> skipped
+    {
+        GameplayPickRequest req = selftestCleanRequest();
+        req.leftClicked = false;
+        GameplayPickResult r = tryGameplayPick(req);
+        if (r.outcome != Outcome::skipped) {
+            std::fprintf(stderr,
+                "[GAMEPLAY_PICK_SELFTEST v1] result=FAIL step=2 expected=skipped actual=%s\n",
+                selftestOutcomeName(r.outcome));
+            return;
+        }
+    }
+
+    // Step 3: bGui=true -> skipped
+    {
+        GameplayPickRequest req = selftestCleanRequest();
+        req.bGui = true;
+        GameplayPickResult r = tryGameplayPick(req);
+        if (r.outcome != Outcome::skipped) {
+            std::fprintf(stderr,
+                "[GAMEPLAY_PICK_SELFTEST v1] result=FAIL step=3 expected=skipped actual=%s\n",
+                selftestOutcomeName(r.outcome));
+            return;
+        }
+    }
+
+    // Step 4: bLeftDouble=true -> skipped
+    {
+        GameplayPickRequest req = selftestCleanRequest();
+        req.bLeftDouble = true;
+        GameplayPickResult r = tryGameplayPick(req);
+        if (r.outcome != Outcome::skipped) {
+            std::fprintf(stderr,
+                "[GAMEPLAY_PICK_SELFTEST v1] result=FAIL step=4 expected=skipped actual=%s\n",
+                selftestOutcomeName(r.outcome));
+            return;
+        }
+    }
+
+    // Step 5: moverSelectedThisFrame=true (else clean) -> gated
+    {
+        GameplayPickRequest req = selftestCleanRequest();
+        req.moverSelectedThisFrame = true;
+        GameplayPickResult r = tryGameplayPick(req);
+        if (r.outcome != Outcome::gated) {
+            std::fprintf(stderr,
+                "[GAMEPLAY_PICK_SELFTEST v1] result=FAIL step=5 expected=gated actual=%s\n",
+                selftestOutcomeName(r.outcome));
+            return;
+        }
+    }
+
+    // Step 6: clean gates + mouseX=-1 -> skipped (off-screen)
+    {
+        GameplayPickRequest req = selftestCleanRequest();
+        req.mouseX = -1;
+        GameplayPickResult r = tryGameplayPick(req);
+        if (r.outcome != Outcome::skipped) {
+            std::fprintf(stderr,
+                "[GAMEPLAY_PICK_SELFTEST v1] result=FAIL step=6 expected=skipped actual=%s\n",
+                selftestOutcomeName(r.outcome));
+            return;
+        }
+    }
+
+    // Step 7: clean gates + mouseY huge -> skipped (off-screen)
+    {
+        GameplayPickRequest req = selftestCleanRequest();
+        req.mouseY = 100000;  // larger than any plausible vMulY
+        GameplayPickResult r = tryGameplayPick(req);
+        if (r.outcome != Outcome::skipped) {
+            std::fprintf(stderr,
+                "[GAMEPLAY_PICK_SELFTEST v1] result=FAIL step=7 expected=skipped actual=%s\n",
+                selftestOutcomeName(r.outcome));
+            return;
+        }
+    }
+
+    // Step 8: clean gates + center pixel -> miss (DETERMINISTIC at init time)
+    //
+    // init() runs pre-frame; attachment-2 is freshly cleared to 0, so
+    // lookupAtPixel returns isValid=false and tryGameplayPick reports
+    // outcome=miss. The assertion is spine-reachability: NOT skipped
+    // AND NOT gated. We accept outcome=hit as a PASS too (defensive --
+    // if a future init-order change renders something into the FBO
+    // before this self-test runs, hit is the correct outcome and we do
+    // not want to flake), but the EXPECTED outcome is miss.
+    {
+        GameplayPickRequest req = selftestCleanRequest();
+        GameplayPickResult r = tryGameplayPick(req);
+        if (r.outcome != Outcome::miss && r.outcome != Outcome::hit) {
+            std::fprintf(stderr,
+                "[GAMEPLAY_PICK_SELFTEST v1] result=FAIL step=8 expected=miss actual=%s\n",
+                selftestOutcomeName(r.outcome));
+            return;
+        }
+    }
+
+    std::fprintf(stderr,
+        "[GAMEPLAY_PICK_SELFTEST v1] result=PASS step=all\n");
 }
