@@ -155,6 +155,7 @@ list(APPEND THIRDPARTY_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tracy"
 
 add_subdirectory("./mclib/" "./out/mclib")
 add_subdirectory("./RenderCore" "./out/RenderCore")
+add_subdirectory("./RenderWorld" "./out/RenderWorld")
 add_subdirectory("./mclib/fx_trace" "./out/mclib/fx_trace")
 add_subdirectory("./mclib/particles" "./out/mclib/particles")
 add_subdirectory("./mclib/mlr" "./out/mclib/mlr")
@@ -272,7 +273,7 @@ endif()
 
 
 add_executable(mc2 ${SOURCES} ${MAIN_SRC})
-target_link_libraries(mc2 mclib fx_trace particles gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL)
+target_link_libraries(mc2 mclib fx_trace particles gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL renderworld)
 
 target_link_libraries(mc2
     FFmpegLGPL::avformat

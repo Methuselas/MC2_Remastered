@@ -313,6 +313,7 @@ class BldgAppearance : public ObjectAppearance
 		// Task 5 (Track B): mission-load bulk registration overrides.
 		virtual void registerStatic()              override;
 		virtual bool isStaticRegistered()    const override;
+		virtual int32_t getStaticRecipeIndex() const override;
 
 		~BldgAppearance (void)
 		{
@@ -574,6 +575,7 @@ class TreeAppearance : public ObjectAppearance
 		// Task 5 (Track B): mission-load bulk registration overrides.
 		virtual void registerStatic()              override;
 		virtual bool isStaticRegistered()    const override;
+		virtual int32_t getStaticRecipeIndex() const override;
 
 		~TreeAppearance (void)
 		{

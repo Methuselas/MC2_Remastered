@@ -200,6 +200,26 @@ bool registerStaticProp(Appearance* app) {
     return ok;
 }
 
+int32_t registerStaticPropAndReturnRecipe(Appearance* app) {
+    if (!isLateSpawnRegEnabled()) return -1;
+    if (!app) return -1;
+    app->registerStatic();
+    if (!app->isStaticRegistered()) {
+        ++s_lateSpawnTypeUnknownCount;
+        return -1;
+    }
+    return app->getStaticRecipeIndex();
+}
+
+uint32_t getActiveCount() {
+    // Live recipe count = ranges with count > 0 (non-tombstoned).
+    uint32_t n = 0;
+    for (const auto& rng : s_recipeRanges) {
+        if (rng.count > 0) ++n;
+    }
+    return n;
+}
+
 void init() {
     // Env flags already parsed at file scope. init() reserves memory.
     if (s_enabled) {

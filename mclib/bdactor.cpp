@@ -2821,6 +2821,10 @@ void BldgAppearance::registerStatic() {
 
 bool BldgAppearance::isStaticRegistered() const { return staticReg.registered; }
 
+int32_t BldgAppearance::getStaticRecipeIndex() const {
+    return staticReg.registered ? staticReg.recipeIndex : -1;
+}
+
 bool BldgAppearance::IsStaticNow() const
 {
 	return staticReg.registered
@@ -4869,6 +4873,10 @@ void TreeAppearance::registerStatic() {
 }
 
 bool TreeAppearance::isStaticRegistered() const { return staticReg.registered; }
+
+int32_t TreeAppearance::getStaticRecipeIndex() const {
+    return staticReg.registered ? staticReg.recipeIndex : -1;
+}
 
 //-----------------------------------------------------------------------------
 

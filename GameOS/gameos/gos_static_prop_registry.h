@@ -89,4 +89,18 @@ void flush();
 // pre-population; non-zero means the pre-population didn't protect the entry.
 uint64_t getStaticFirstFrameSkipCount();
 
+// m4 fix (RenderWorld Slice M1): live recipe count for
+// [RENDER_WORLD v1] objects=N. Read-only; reflects current tombstone-
+// adjusted active recipe slot count.
+uint32_t getActiveCount();
+
+// m5 fix (RenderWorld Slice M1): late-spawn path needs the recipe
+// index back so the adapter can produce a RenderObjectHandle. Returns
+// the recipe index that registerStaticProp() created via
+// app->registerStatic() + app->getStaticRecipeIndex(), or -1 on
+// failure / not eligible. registerStaticProp(Appearance*) above is
+// preserved for backward compat but no longer called from the
+// worktree once Task 12 migrates warrior.cpp.
+int32_t registerStaticPropAndReturnRecipe(Appearance* app);
+
 } // namespace GpuStaticPropRegistry

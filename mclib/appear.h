@@ -183,6 +183,10 @@ class Appearance
 		// (HC-1: no void* cast, no shared interface).
 		virtual void registerStatic()               {}
 		virtual bool isStaticRegistered()  const    { return false; }
+		// m5 fix (RenderWorld Slice M1): late-spawn path readback. Base
+		// returns -1 (no recipe); BldgAppearance / TreeAppearance override
+		// to return staticReg.recipeIndex when registered, else -1.
+		virtual int32_t getStaticRecipeIndex() const { return -1; }
 
 		virtual long render (long depthFixup = 0)
 		{
