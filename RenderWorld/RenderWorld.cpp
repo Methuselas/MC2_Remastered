@@ -22,6 +22,10 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
+#include <vector>
+
+#include "../GameOS/gameos/gos_postprocess.h"
 
 namespace {
 
@@ -60,6 +64,49 @@ int32_t handleToRecipeIndex(RenderCore::RenderObjectHandle h) {
     return static_cast<int32_t>(h.index());
 }
 
+// M1.5: per-slot inspection table. Always populated (M1 decision);
+// ~85 KB peak at tier1 mc2_24 = 2641 props. Indexed by
+// handle.index(); resized lazily on upsert. mutex guards resize +
+// write; reads in lookupAtPixel acquire the same lock (cheap,
+// click-rate).
+std::mutex                                  s_objectRecordsMutex;
+std::vector<RenderWorld::RenderObjectRecord> s_objectRecords;
+
+void populateRecord(uint32_t handleIndex,
+                    uint16_t generation,
+                    uint32_t gameObjectId)
+{
+    std::lock_guard<std::mutex> lk(s_objectRecordsMutex);
+    if (handleIndex >= s_objectRecords.size()) {
+        // Grow with headroom; doubling beyond demand to amortize.
+        const size_t want = static_cast<size_t>(handleIndex) + 1;
+        const size_t cap  = (want * 3) / 2 + 16;
+        s_objectRecords.resize(cap);
+    }
+    auto& rec = s_objectRecords[handleIndex];
+    rec.generation         = generation;
+    rec.flags              = RenderWorld::kRenderObjectFlagAlive;
+    rec.meshHandleBits     = 0;           // M1.5: unknown (no MeshHandle producer)
+    rec.materialHandleBits = 0;           // M1.5: unknown
+    rec.lodLevel           = 0xFFu;       // M1.5: unknown
+    rec.pipelineId         = 0;           // M1.5 sentinel
+    rec.drawPacketIndex    = 0xFFFFFFFFu; // M1.5 sentinel
+    rec.pathReasonCode     = 0;           // M1.5 sentinel
+    rec.gameObjectId       = gameObjectId;
+}
+
+void retireRecord(uint32_t handleIndex)
+{
+    std::lock_guard<std::mutex> lk(s_objectRecordsMutex);
+    if (handleIndex >= s_objectRecords.size()) return;
+    auto& rec = s_objectRecords[handleIndex];
+    rec.flags &= static_cast<uint16_t>(~RenderWorld::kRenderObjectFlagAlive);
+    // Bump generation so the next upsert at this index produces a
+    // distinct handle and stale pixels read back as invalid via the
+    // generation check in lookupAtPixel.
+    rec.generation = static_cast<uint16_t>(rec.generation + 1u);
+}
+
 } // namespace
 
 namespace RenderWorld {
@@ -92,6 +139,10 @@ void destroy() {
 }
 
 RenderCore::RenderObjectHandle upsertStaticProp(RenderCore::StaticPropDesc desc) {
+    // M1.5: capture POD fields before std::move; vector is moved out
+    // but scalars survive on the moved-from object regardless, this
+    // is just defensive.
+    const uint32_t gameObjectId = desc.gameObjectId;
     const int32_t r = legacy::registerStaticPropRecipe(std::move(desc));
     if (r < 0) {
         s_upsertFail.fetch_add(1, std::memory_order_relaxed);
@@ -104,6 +155,11 @@ RenderCore::RenderObjectHandle upsertStaticProp(RenderCore::StaticPropDesc desc)
     s_upsertOk.fetch_add(1, std::memory_order_relaxed);
     RenderCore::RenderObjectHandle h = RenderCore::RenderObjectHandle::make(
         recipeIndexToHandleIndex(r), 1u);
+    // M1.5: populate the always-on record table (mission/upsert-time
+    // metadata, ~85 KB peak; M1 decision).
+    populateRecord(h.index(),
+                   static_cast<uint16_t>(h.generation()),
+                   gameObjectId);
     if (envFlag("MC2_RENDER_WORLD_TRACE")) {
         std::fprintf(stderr,
             "[RENDER_WORLD v1] event=upsert_ok recipe=%d handle.index=%u\n",
@@ -120,14 +176,23 @@ RenderCore::RenderObjectHandle adoptStaticPropRecipe(int32_t recipeIndex) {
         return RenderCore::RenderObjectHandle::invalid();
     }
     s_upsertOk.fetch_add(1, std::memory_order_relaxed);
-    return RenderCore::RenderObjectHandle::make(
+    RenderCore::RenderObjectHandle h = RenderCore::RenderObjectHandle::make(
         recipeIndexToHandleIndex(recipeIndex), 1u);
+    // M1.5: late-spawn populates the record table too. gameObjectId
+    // is unknown at this seam (the adapter does not pass one through
+    // syncStaticPropLateSpawn); 0 is the canonical "no cookie".
+    populateRecord(h.index(),
+                   static_cast<uint16_t>(h.generation()),
+                   0u);
+    return h;
 }
 
 void destroy(RenderCore::RenderObjectHandle h) {
     if (!h.isValid()) return;
     legacy::invalidateStaticProp(handleToRecipeIndex(h));
     s_destroyCalls.fetch_add(1, std::memory_order_relaxed);
+    // M1.5: retire the record (clears alive flag, bumps generation).
+    retireRecord(h.index());
     if (envFlag("MC2_RENDER_WORLD_TRACE")) {
         std::fprintf(stderr,
             "[RENDER_WORLD v1] event=destroy handle.index=%u\n",
@@ -165,9 +230,88 @@ void frameBannerTick() {
     // delta drifts if the registry tombstones via paths the adapter
     // never sees; registry count is canonical.
     const uint64_t active = legacy::getStaticPropActiveCount();
+    const char* oidTok = IsObjectIdBufferEnabled() ? "on" : "off";
     std::fprintf(stderr,
-        "[RENDER_WORLD v1] frame=%llu objects=%llu visible=0 packets=0 views=1\n",
-        (unsigned long long)f, (unsigned long long)active);
+        "[RENDER_WORLD v1] frame=%llu objects=%llu visible=0 packets=0 views=1 objectid_buffer=%s\n",
+        (unsigned long long)f, (unsigned long long)active, oidTok);
+}
+
+LookupResult lookupAtPixel(int screenX, int screenY) {
+    LookupResult out;
+    if (!IsObjectIdBufferEnabled()) {
+        static bool warned = false;
+        if (!warned) {
+            std::fprintf(stderr,
+                "[RENDER_WORLD v1] WARN: lookupAtPixel called with MC2_OBJECT_ID_BUFFER=0\n");
+            warned = true;
+        }
+        return out;
+    }
+    gosPostProcess* pp = getGosPostProcess();
+    if (!pp) {
+        static bool warned = false;
+        if (!warned) {
+            std::fprintf(stderr,
+                "[RENDER_WORLD v1] WARN: lookupAtPixel called before postprocess init\n");
+            warned = true;
+        }
+        return out;
+    }
+    const GLuint fbo = pp->getSceneFBO();
+    const GLuint tex = pp->getSceneObjectIdTex();
+    if (!fbo || !tex) {
+        return out;
+    }
+
+    // Synchronous single-pixel readback. Per spec section 7: stalls
+    // the GPU until prior-frame attachment-2 writes are visible.
+    // GL_RED_INTEGER + GL_UNSIGNED_INT is the integer-format pair
+    // (using GL_RED + GL_FLOAT would silently reinterpret bits).
+    uint32_t raw = 0u;
+    GLint prevReadFbo = 0;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    glReadBuffer(GL_COLOR_ATTACHMENT2);
+    glReadPixels(screenX, screenY, 1, 1, GL_RED_INTEGER, GL_UNSIGNED_INT, &raw);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prevReadFbo));
+
+    if (raw == 0u) {
+        // Background / cleared pixel.
+        return out;
+    }
+
+    RenderCore::RenderObjectHandle h;
+    h.bits = raw;
+
+    // Look up the record under the mutex; copy out under the lock.
+    RenderObjectRecord rec;
+    {
+        std::lock_guard<std::mutex> lk(s_objectRecordsMutex);
+        if (h.index() >= s_objectRecords.size()) {
+            return out;  // out-of-range index: treat as invalid
+        }
+        rec = s_objectRecords[h.index()];
+    }
+
+    // Generation check: stale pixel (rendered before slot recycle)
+    // returns invalid even though the raw value parses to a Handle.
+    if (rec.generation != static_cast<uint16_t>(h.generation())) {
+        return out;
+    }
+    if ((rec.flags & kRenderObjectFlagAlive) == 0u) {
+        return out;
+    }
+
+    out.isValid            = true;
+    out.handle             = h;
+    out.meshHandleBits     = rec.meshHandleBits;
+    out.materialHandleBits = rec.materialHandleBits;
+    out.lodLevel           = rec.lodLevel;
+    out.pipelineId         = rec.pipelineId;
+    out.drawPacketIndex    = rec.drawPacketIndex;
+    out.pathReasonCode     = rec.pathReasonCode;
+    out.gameObjectId       = rec.gameObjectId;
+    return out;
 }
 
 } // namespace RenderWorld

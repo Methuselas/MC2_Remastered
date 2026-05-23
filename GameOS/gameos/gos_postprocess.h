@@ -31,6 +31,8 @@ public:
     GLuint getSceneDepthTexture() const { return sceneDepthTex_; }
     GLuint getSceneColorTexture() const { return sceneColorTex_; }
     GLuint getSceneFBO() const { return sceneFBO_; }
+    // M1.5: readback hook for RenderWorld::lookupAtPixel.
+    GLuint getSceneObjectIdTex() const { return sceneObjectIdTex_; }
     // F3: explicit sentinel clear for GBuffer1 (attachment 1).
     // Sets attachment 1 to (0.5, 0.5, 1.0, 0.0) — flat-up encoded normal,
     // alpha = 0.0 (post-shadow eligible). Must be called while MRT is bound

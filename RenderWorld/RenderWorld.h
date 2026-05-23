@@ -84,4 +84,52 @@ void frameBannerTick();
 //   - C++ side of static-prop makeProgram() (gates the GLSL #ifdef prefix)
 bool IsObjectIdBufferEnabled();
 
+// M1.5: per-slot inspection record. Indexed by handle.index().
+// Always populated (M1 decision: mission/upsert-time RenderWorld
+// metadata; ~85 KB peak at tier1 mc2_24 = 2641 props). Slot recycle
+// bumps generation; alive=false marks a retired slot.
+//
+// Most fields are documentary in M1.5 (PipelineId / DrawPacket /
+// pathReasonCode have no real consumers yet); their sentinels are
+// returned through LookupResult so M2+ slices can fill them without
+// API churn.
+struct RenderObjectRecord {
+    uint16_t generation       = 0;          // mirrors handle.generation() for staleness check
+    uint16_t flags            = 0;          // bit 0: alive
+    uint32_t meshHandleBits   = 0;          // RenderCore::MeshHandle bits (sentinel: 0 = unknown)
+    uint32_t materialHandleBits = 0;        // RenderCore::MaterialHandle bits (sentinel: 0)
+    uint8_t  lodLevel         = 0xFFu;      // 0 = highest, 0xFF = unknown
+    uint8_t  pad0             = 0;
+    uint16_t pipelineId       = 0;          // M1.5 sentinel: 0 = unknown
+    uint32_t drawPacketIndex  = 0xFFFFFFFFu; // M1.5 sentinel
+    uint32_t pathReasonCode   = 0;          // M1.5 sentinel: 0 = m1.5-static-prop-indirect
+    uint32_t gameObjectId     = 0;          // optional engine-side cookie
+};
+
+static constexpr uint16_t kRenderObjectFlagAlive = 1u << 0;
+
+// M1.5: result of lookupAtPixel. isValid=false on background pixel or
+// generation mismatch (stale-pixel-after-destroy). Caller MUST check
+// isValid before consuming any other field.
+struct LookupResult {
+    bool                            isValid          = false;
+    RenderCore::RenderObjectHandle  handle           = RenderCore::RenderObjectHandle::invalid();
+    uint32_t                        meshHandleBits   = 0;
+    uint32_t                        materialHandleBits = 0;
+    uint8_t                         lodLevel         = 0xFFu;
+    uint16_t                        pipelineId       = 0;
+    uint32_t                        drawPacketIndex  = 0xFFFFFFFFu;
+    uint32_t                        pathReasonCode   = 0;
+    uint32_t                        gameObjectId     = 0;
+};
+
+// M1.5: synchronous pixel -> handle lookup. screenX/Y in GL convention
+// (origin bottom-left). Returns LookupResult{isValid=false} when env-OFF,
+// FBO not initialized, pixel==0, or generation mismatch. Stalls the GPU
+// to read the prior frame's attachment-2 -- intended for click-time
+// (max ~10/sec) debug; not per-frame.
+//
+// Spec: 2026-05-23-renderworld-slice-m1-5-objectid-buffer-spec.md sec 7
+LookupResult lookupAtPixel(int screenX, int screenY);
+
 } // namespace RenderWorld
