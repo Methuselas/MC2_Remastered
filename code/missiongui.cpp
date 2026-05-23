@@ -31,6 +31,7 @@
 // M1.6: IsStaticPropPickEnabled, lookupAtPixel, setLastStaticPropPick,
 // clearLastStaticPropPick, getLastStaticPropPick, IsObjectIdBufferEnabled.
 #include "../RenderWorld/RenderWorld.h"
+#include "gameplay_pick.h"  // M2-pre: tryGameplayPick spine + GameplayPickRequest
 
 #ifndef OBJMGR_H
 #include"objmgr.h"
@@ -6160,7 +6161,24 @@ void MissionInterfaceManager::updateRollovers()
 
 //--------------------------------------------------------------------------------------
 
-// M1.6: env-gated static-prop pick helper. See spec
+// M1.6 + M2-pre: env-gated static-prop pick CALLER WRAPPER.
+//
+// The M1.6 inline machinery (substrate gate, gesture gates, mover gate,
+// viewport query, off-screen guard, coord scaling, lookupAtPixel call)
+// migrated to code/gameplay_pick.cpp at M2-pre T1+T2 as
+// tryGameplayPick(). This function is now a thin caller wrapper that:
+//   1. Applies the category gate (IsStaticPropPickEnabled) -- STAYS in
+//      caller; M2.6 mech-pickup will have its own category gate.
+//   2. Builds a GameplayPickRequest from the 7 input params.
+//   3. Dispatches to tryGameplayPick(req).
+//   4. Switches on result.outcome to do category-specific side effects
+//      (debug-state mutation + [STATIC_PROP_PICK v1] hit/miss logs).
+//
+// Spec: docs/superpowers/specs/2026-05-23-renderworld-slice-m2-pre-gameplay-pick-extraction-spec.md
+// Sections 4 (algorithm), 6 (caller responsibilities), 11 (Section 11
+// invariant preserved via Outcome::gated no-op).
+//
+// Original M1.6 spec still authoritative for behavior:
 // docs/superpowers/specs/2026-05-23-renderworld-slice-m1-6-staticprop-pick-spec.md
 // Sections 3 (detection condition), 4 (fallback order), 5 (y-flip), 11
 // (forbidden behaviors), Q6 (4-site mover observable), Q8 (legacy
@@ -6173,101 +6191,81 @@ void MissionInterfaceManager::tryStaticPropPick(bool moverSelectedThisFrame,
                                                 int  mouseX,
                                                 int  mouseY)
 {
-    // Fast path: env-OFF default. Two cached bools; no per-frame getenv.
+    // Category gate STAYS in caller. Fast path: env-OFF default. Two
+    // cached bools; no per-frame getenv. M2.6 mech-pickup will gate on
+    // its own IsMechPickEnabled() before dispatching to the spine.
     if (!RenderWorld::IsStaticPropPickEnabled())
         return;
-    // Defense-in-depth: substrate must also be on. Skipping here avoids
-    // the FBO-bind + glReadPixels stall on every dormant Shift+click.
-    if (!RenderWorld::IsObjectIdBufferEnabled())
-        return;
 
-    // Gesture gate: Shift + single LMB click, NOT inside the GUI region,
-    // NOT a double-click (legacy double-click path owns that gesture).
-    if (!shiftDn)        return;
-    if (!leftClicked)    return;
-    if (bGui)            return;
-    if (bLeftDouble)     return;
+    // Build request from the 7 missiongui-side inputs. All shared
+    // machinery (substrate gate, gesture gates, mover gate, viewport
+    // query, off-screen guard, coord scaling, pixel readback) lives in
+    // the spine now.
+    GameplayPickRequest req;
+    req.mouseX                  = mouseX;
+    req.mouseY                  = mouseY;
+    req.shiftDn                 = shiftDn;
+    req.leftClicked             = leftClicked;
+    req.bGui                    = bGui;
+    req.bLeftDouble             = bLeftDouble;
+    req.moverSelectedThisFrame  = moverSelectedThisFrame;
 
-    // Section 11 + Q6/Q8 invariant: the legacy path already consumed
-    // this click to select a mover. Emitting a log line here would
-    // shadow the legacy gesture and create a user-visible incoherence.
-    if (moverSelectedThisFrame)
-        return;
+    const GameplayPickResult r = tryGameplayPick(req);
 
-    // M1.6 coord-space: missiongui mouseX/Y from userInput->getMouseX/Y()
-    // is `mouseXPosition * viewMulX`, where mouseXPosition is normalized to
-    // drawable (0.0-1.0) and viewMulX is the UI viewport width (800 in the
-    // 800x600 logical canvas). So mouseX/Y is in viewport-relative coords
-    // (0-vMulX, 0-vMulY), NOT FBO pixels. lookupAtPixel needs FBO pixels.
-    //
-    // Translation: mouseX/Y (viewport space) -> FBO pixel:
-    //   normalized = mouseX / vMulX (fraction across viewport)
-    //   fboPixel   = vAddX + normalized * vMulX_fbo
-    // where vMulX/Y from gos_GetViewport are already in FBO-pixel units
-    // (viewportRight - viewportLeft) * drawableWidth. So vMulX IS the
-    // FBO-pixel width of the viewport region. But mouseXPosition is
-    // normalized to drawable (not viewport), and getMouseX() multiplies
-    // by vMulX -- yielding (mouseX_pixel_in_drawable / drawableWidth) *
-    // viewport_pixel_width. For full-screen viewport (vMulX=drawableWidth),
-    // this is identity. For sub-viewport, it's a scaled-down value.
-    //
-    // To convert back: multiply by (drawableWidth / vMulX) to get raw
-    // drawable-pixel-X. (Equivalent to "undo the viewport scaling".)
-    // Then add vAddX for viewport-offset case. Y mirrors.
-    float vMulX = 0.0f, vMulY = 0.0f, vAddX = 0.0f, vAddY = 0.0f;
-    gos_GetViewport(&vMulX, &vMulY, &vAddX, &vAddY);
-    const int dw = Environment.drawableWidth;
-    const int dh = Environment.drawableHeight;
-
-    // Off-screen bounds guard against UI canvas (viewport) dimensions.
-    if (mouseX < 0 || mouseY < 0
-        || mouseX >= (int)vMulX || mouseY >= (int)vMulY)
-        return;
-
-    // Undo the viewport scaling: viewport-relative -> drawable-pixel.
-    const float scaleX = (vMulX > 0.0f) ? ((float)dw / vMulX) : 1.0f;
-    const float scaleY = (vMulY > 0.0f) ? ((float)dh / vMulY) : 1.0f;
-    const int fboX = (int)(vAddX + (float)mouseX * scaleX);
-    const int fboY = (int)(vAddY + (float)mouseY * scaleY);
-    const int glX  = fboX;
-    const int glY  = dh - 1 - fboY;
-
-    // Synchronous single-pixel readback. M1.5 lookupAtPixel internally
-    // validates against s_objectRecords (generation + alive).
-    RenderWorld::LookupResult res = RenderWorld::lookupAtPixel(glX, glY);
-
-    if (res.isValid) {
+    switch (r.outcome) {
+    case GameplayPickResult::Outcome::hit: {
         // Update RenderWorld debug state. Single-slot; latest wins.
-        RenderWorld::setLastStaticPropPick(res, mouseX, mouseY, glX, glY);
+        RenderWorld::setLastStaticPropPick(r.lookup,
+                                           r.ctx.mouseX, r.ctx.mouseY,
+                                           r.ctx.glX,    r.ctx.glY);
         // Sample back the debug-state struct so the log can include the
         // recipeIndex (LookupResult itself does not carry it; the
         // recipe lookup is done inside setLastStaticPropPick).
         const RenderWorld::StaticPropSelectionDebugState picked =
             RenderWorld::getLastStaticPropPick();
-        // Unconditional hit log (spec Section 7); coord-diag fields included
-        // to confirm viewport translation on this build.
+        // Unconditional hit log (spec Section 7); coord-diag fields
+        // BYTE-IDENTICAL to M1.6 to keep user-driven canary stable.
         std::fprintf(stderr,
             "[STATIC_PROP_PICK v1] hit handle=%u idx=%u gen=%u "
             "recipe=%d screen=(%d,%d) gl=(%d,%d) fbo=(%d,%d) "
             "vMul=(%.0f,%.0f) vAdd=(%.0f,%.0f) draw=(%d,%d)\n",
-            res.handle.bits,
-            (unsigned)res.handle.index(),
-            (unsigned)res.handle.generation(),
+            r.lookup.handle.bits,
+            (unsigned)r.lookup.handle.index(),
+            (unsigned)r.lookup.handle.generation(),
             (int)picked.recipeIndex,
-            mouseX, mouseY, glX, glY, fboX, fboY,
-            vMulX, vMulY, vAddX, vAddY, dw, dh);
-    } else {
+            r.ctx.mouseX, r.ctx.mouseY,
+            r.ctx.glX,    r.ctx.glY,
+            r.ctx.fboX,   r.ctx.fboY,
+            r.ctx.vMulX,  r.ctx.vMulY,
+            r.ctx.vAddX,  r.ctx.vAddY,
+            r.ctx.drawableWidth, r.ctx.drawableHeight);
+        break;
+    }
+    case GameplayPickResult::Outcome::miss: {
         // Q1 lean: clear the debug-state struct on empty Shift+click so
         // a stale prior pick does not survive an empty-click gesture.
         RenderWorld::clearLastStaticPropPick();
-        // Verbose miss log only when MC2_STATIC_PROP_PICK_DEBUG=1; coord-diag
-        // included to confirm viewport translation on this build.
+        // Verbose miss log only when MC2_STATIC_PROP_PICK_DEBUG=1;
+        // coord-diag BYTE-IDENTICAL to M1.6.
         if (RenderWorld::IsStaticPropPickDebugEnabled()) {
             std::fprintf(stderr,
                 "[STATIC_PROP_PICK v1] miss screen=(%d,%d) gl=(%d,%d) "
-                "fbo=(%d,%d) vMul=(%.0f,%.0f) vAdd=(%.0f,%.0f) draw=(%d,%d)\n",
-                mouseX, mouseY, glX, glY, fboX, fboY,
-                vMulX, vMulY, vAddX, vAddY, dw, dh);
+                "fbo=(%d,%d) vMul=(%.0f,%.0f) vAdd=(%.0f,%.0f) "
+                "draw=(%d,%d)\n",
+                r.ctx.mouseX, r.ctx.mouseY,
+                r.ctx.glX,    r.ctx.glY,
+                r.ctx.fboX,   r.ctx.fboY,
+                r.ctx.vMulX,  r.ctx.vMulY,
+                r.ctx.vAddX,  r.ctx.vAddY,
+                r.ctx.drawableWidth, r.ctx.drawableHeight);
         }
+        break;
+    }
+    case GameplayPickResult::Outcome::gated:
+    case GameplayPickResult::Outcome::skipped:
+        // Section 11 invariant: no-op, no log. The legacy path either
+        // already consumed this click (gated) or a gesture/substrate
+        // gate failed (skipped) before any lookup ran.
+        break;
     }
 }
