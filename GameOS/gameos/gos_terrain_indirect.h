@@ -130,7 +130,6 @@ void      CostSplit_AddCacheResidentNanos(long long n);
 // cache_resident. At wolfman zoom ~14K quads are iterated and ~8K are visible
 // per frame counter inference, so ~6K quads pay this cost without entering
 // any other measured block.
-void      CostSplit_AddVisibilityCheckNanos(long long n);
 // Call once per frame at the close of the per-quad setupTextures loop
 // (terrain.cpp:1684 boundary). Internally gated on IsCostSplitEnabled() —
 // safe to call unconditionally.
@@ -144,7 +143,6 @@ long long CostSplit_GetWaterVertProjNanosTotal();
 long long CostSplit_GetRecipeCacheNanosTotal();
 long long CostSplit_GetSetupTotalNanosTotal();
 long long CostSplit_GetCacheResidentNanosTotal();
-long long CostSplit_GetVisibilityCheckNanosTotal();
 int       CostSplit_GetFramesObserved();
 
 // --- [LIGHT_COST_SPLIT v1] -------------------------------------------------

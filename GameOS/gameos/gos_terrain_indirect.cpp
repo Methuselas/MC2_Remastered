@@ -259,7 +259,6 @@ long long s_waterVertProjNanosThisFrame = 0;  // 1A-alt Slice 0
 long long s_recipeCacheNanosThisFrame   = 0;  // 1A-alt Slice 0
 long long s_setupTotalNanosThisFrame    = 0;  // 1A-alt Slice 0 follow-up
 long long s_cacheResidentNanosThisFrame = 0;  // 1A-alt Slice 0 follow-up
-long long s_visibilityCheckNanosThisFrame = 0;  // 1A-alt Slice 0 follow-up #2
 long long s_solidBranchNanosTotal       = 0;
 long long s_detailOverlayNanosTotal     = 0;
 long long s_mineEnqueueNanosTotal       = 0;  // PR2c Stage 0c
@@ -269,7 +268,6 @@ long long s_waterVertProjNanosTotal     = 0;  // 1A-alt Slice 0
 long long s_recipeCacheNanosTotal       = 0;  // 1A-alt Slice 0
 long long s_setupTotalNanosTotal        = 0;  // 1A-alt Slice 0 follow-up
 long long s_cacheResidentNanosTotal     = 0;  // 1A-alt Slice 0 follow-up
-long long s_visibilityCheckNanosTotal   = 0;  // 1A-alt Slice 0 follow-up #2
 int       s_costSplitFramesObserved     = 0;
 }  // namespace
 
@@ -331,7 +329,6 @@ void CostSplit_AddWaterVertProjNanos(long long n) { s_waterVertProjNanosThisFram
 void CostSplit_AddRecipeCacheNanos(long long n)   { s_recipeCacheNanosThisFrame   += n; }
 void CostSplit_AddSetupTotalNanos(long long n)    { s_setupTotalNanosThisFrame   += n; }
 void CostSplit_AddCacheResidentNanos(long long n) { s_cacheResidentNanosThisFrame += n; }
-void CostSplit_AddVisibilityCheckNanos(long long n) { s_visibilityCheckNanosThisFrame += n; }
 
 void CostSplit_RollFrame() {
     LightCostSplit_RollFrameAndMaybeEmit();   // [LIGHT_COST_SPLIT v1] -- MUST be
@@ -346,7 +343,6 @@ void CostSplit_RollFrame() {
     s_recipeCacheNanosTotal       += s_recipeCacheNanosThisFrame;
     s_setupTotalNanosTotal        += s_setupTotalNanosThisFrame;
     s_cacheResidentNanosTotal     += s_cacheResidentNanosThisFrame;
-    s_visibilityCheckNanosTotal   += s_visibilityCheckNanosThisFrame;
     ++s_costSplitFramesObserved;
     s_solidBranchNanosThisFrame    = 0;
     s_detailOverlayNanosThisFrame  = 0;
@@ -357,7 +353,6 @@ void CostSplit_RollFrame() {
     s_recipeCacheNanosThisFrame    = 0;
     s_setupTotalNanosThisFrame     = 0;
     s_cacheResidentNanosThisFrame  = 0;
-    s_visibilityCheckNanosThisFrame = 0;
 }
 
 long long CostSplit_GetSolidNanosTotal()           { return s_solidBranchNanosTotal; }
@@ -369,7 +364,6 @@ long long CostSplit_GetWaterVertProjNanosTotal()   { return s_waterVertProjNanos
 long long CostSplit_GetRecipeCacheNanosTotal()     { return s_recipeCacheNanosTotal; }
 long long CostSplit_GetSetupTotalNanosTotal()      { return s_setupTotalNanosTotal; }
 long long CostSplit_GetCacheResidentNanosTotal()   { return s_cacheResidentNanosTotal; }
-long long CostSplit_GetVisibilityCheckNanosTotal() { return s_visibilityCheckNanosTotal; }
 int       CostSplit_GetFramesObserved()            { return s_costSplitFramesObserved; }
 
 }  // namespace gos_terrain_indirect
@@ -418,7 +412,6 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
         const long long csRecipeNs  = csOn ? CostSplit_GetRecipeCacheNanosTotal()   : 0;
         const long long csSetupNs   = csOn ? CostSplit_GetSetupTotalNanosTotal()    : 0;
         const long long csResNs     = csOn ? CostSplit_GetCacheResidentNanosTotal() : 0;
-        const long long csVisNs     = csOn ? CostSplit_GetVisibilityCheckNanosTotal() : 0;
         const long long csSolidPerFrame    = csOn ? csSolidNs   / csFrames : 0;
         const long long csDetailPerFrame   = csOn ? csDetailNs  / csFrames : 0;
         const long long csMineEnqPerFrame  = csOn ? csMineEnqNs / csFrames : 0;
@@ -428,7 +421,6 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
         const long long csRecipePerFrame   = csOn ? csRecipeNs  / csFrames : 0;
         const long long csSetupPerFrame    = csOn ? csSetupNs   / csFrames : 0;
         const long long csResPerFrame      = csOn ? csResNs     / csFrames : 0;
-        const long long csVisPerFrame      = csOn ? csVisNs     / csFrames : 0;
         if (csOn) {
             fprintf(stderr,
                     "[TERRAIN_INDIRECT_PARITY v1] event=summary frames=%lld "
@@ -452,7 +444,6 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     "recipe_cache_ns_per_frame=%lld "
                     "setup_total_ns_per_frame=%lld "
                     "cache_resident_ns_per_frame=%lld "
-                    "visibility_check_ns_per_frame=%lld "
                     "shape_c_invisible_quads=%lld "
                     "frames_observed=%d\n",
                     s_paritySummaryFrames,
@@ -477,7 +468,6 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     csRecipePerFrame,
                     csSetupPerFrame,
                     csResPerFrame,
-                    csVisPerFrame,
                     Counters_GetShapeCInvisibleQuads(),
                     csFrames);
         } else {

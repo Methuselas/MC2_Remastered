@@ -212,20 +212,6 @@ struct CostSplitCacheResidentScope {
             std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
     }
 };
-struct CostSplitVisibilityCheckScope {
-    std::chrono::steady_clock::time_point t0;
-    bool active;
-    CostSplitVisibilityCheckScope()
-        : active(gos_terrain_indirect::IsCostSplitEnabled()) {
-        if (active) t0 = std::chrono::steady_clock::now();
-    }
-    ~CostSplitVisibilityCheckScope() {
-        if (!active) return;
-        const auto dt = std::chrono::steady_clock::now() - t0;
-        gos_terrain_indirect::CostSplit_AddVisibilityCheckNanos(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(dt).count());
-    }
-};
 
 // Stage 3 SOLID gate-off helpers.
 // When indirect SOLID is armed for this frame, BeginLegacySolidCluster()
@@ -902,11 +888,7 @@ void TerrainQuad::setupTextures (void)
 		// 1A-alt Slice 0 follow-up #2 — measure isTerrainQuadVisible call cost.
 		// At wolfman zoom counter inference suggests ~6K quads/frame take the
 		// invisible branch — if the check is even ~500ns, that's 3ms/frame.
-		bool quadVisible;
-		{
-			CostSplitVisibilityCheckScope _csVis;
-			quadVisible = isTerrainQuadVisible(*this);
-		}
+		bool quadVisible = isTerrainQuadVisible(*this);
 		if (!quadVisible)
 		{
 			gos_terrain_indirect::Counters_AddShapeCInvisibleQuad();
