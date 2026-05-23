@@ -365,7 +365,6 @@ public:
 		int drawBuildings();
 		int showGrid();
 		int recalcLights();
-		int drawClouds();
 		int drawFog();
 		int usePerspective();
 		int drawWaterEffects();

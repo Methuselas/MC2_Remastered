@@ -176,7 +176,6 @@ extern bool drawTerrainOverlays;
 extern bool renderObjects;
 extern bool drawTerrainGrid;
 extern bool drawLOSGrid;
-extern bool useClouds;
 extern bool useFog;
 extern bool useWaterInterestTexture;
 extern bool useShadows;
@@ -250,7 +249,6 @@ MissionInterfaceManager::Command		MissionInterfaceManager::commands[MAX_COMMAND]
 		KEY_B | CTRL | ALT, -1,	-1,						true,		&MissionInterfaceManager::drawBuildings, 0, -1,
 		CTRL | ALT | KEY_G, -1,	-1,						true,		&MissionInterfaceManager::showGrid, 0, -1,
 		CTRL | ALT | KEY_Q, -1,	-1,						true,		&MissionInterfaceManager::recalcLights, 0, -1, 
-		CTRL | ALT | KEY_C, -1,	-1,						true,		&MissionInterfaceManager::drawClouds, 0, -1,
 		CTRL | ALT | KEY_F, -1,	-1,						true,		&MissionInterfaceManager::drawFog, 0, -1,
 		CTRL | ALT | KEY_P, -1,	-1,						true,		&MissionInterfaceManager::usePerspective, 0, -1,
 		CTRL | ALT | KEY_S, -1,	-1,						true,		&MissionInterfaceManager::drawTGLShapes, 0, -1,
@@ -2745,13 +2743,6 @@ int MissionInterfaceManager::recalcLights()
 	#ifndef FINAL
 	Terrain::recalcLight ^= TRUE;
 	Terrain::recalcShadows = false;
-	#endif
-	return 1;
-}
-int MissionInterfaceManager::drawClouds()
-{
-	#ifndef FINAL
-	useClouds ^= TRUE;
 	#endif
 	return 1;
 }

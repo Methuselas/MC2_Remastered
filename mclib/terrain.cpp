@@ -152,8 +152,6 @@ unsigned char				Terrain::fractalNoise = 0;
 bool						Terrain::recalcShadows = false;
 bool						Terrain::recalcLight = false;
 
-Clouds						*Terrain::cloudLayer = NULL;
-
 bool 						drawTerrainGrid = false;		//Override locally in editor so game don't come with these please!  Love -fs
 bool						drawLOSGrid = false;
 bool						drawTerrainTiles = true;
@@ -170,7 +168,6 @@ long 						*moverBlockList;
 unsigned long 				blockMemSize = 0;				//Misc Flags.
 bool 						useOldProject = FALSE;
 bool 						projectAll = FALSE;
-bool 						useClouds = false;
 bool 						useFog = true;
 bool 						useVertexLighting = true;
 bool 						useFaceLighting = false;
@@ -1063,12 +1060,6 @@ void Terrain::render (void)
 {
 	//-----------------------------------
 	// render the cloud layer
-	if (Terrain::cloudLayer)
-	{
-		ZoneScopedN("Terrain::render cloudLayer");
-		Terrain::cloudLayer->render();
-	}
-
 	//-----------------------------------
 	// Draw resulting terrain quads. The drawPass zone wraps the WHOLE loop
 	// (one zone per frame, not per-quad). Per-quad zones were stripped on
@@ -2040,13 +2031,6 @@ void Terrain::geometry (void)
 		}
 	}
 
-	//-----------------------------------
-	// update the cloud layer
-	if (Terrain::cloudLayer)
-	{
-		ZoneScopedN("Terrain::geometry cloudUpdate");
-		Terrain::cloudLayer->update();
-	}
 }
 
 //---------------------------------------------------------------------------

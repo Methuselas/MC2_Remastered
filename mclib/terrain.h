@@ -44,9 +44,6 @@
 #include"dvertex.h"
 #endif
 
-#ifndef CLOUDS_H
-#include"clouds.h"
-#endif
 
 //---------------------------------------------------------------------------
 // Macro Definitions
@@ -188,8 +185,6 @@ class Terrain
 
 		static bool								recalcShadows;				//Should we recalc the shadow map!
 		static bool								recalcLight;				//Should we recalc the light data.
-
-		static Clouds							*cloudLayer;
 
 	//Member Functions
 	//-----------------
