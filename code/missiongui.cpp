@@ -6194,18 +6194,43 @@ void MissionInterfaceManager::tryStaticPropPick(bool moverSelectedThisFrame,
     if (moverSelectedThisFrame)
         return;
 
-    // Off-screen bounds guard (O3 lean: guard inside helper). Win32
-    // mouseX/Y are already clamped by the OS during in-game capture,
-    // but a defensive check costs one branch and avoids a silent
-    // glReadPixels at a clipped pixel returning a wrong-looking 0.
-    const int sw = Environment.screenWidth;
-    const int sh = Environment.screenHeight;
-    if (mouseX < 0 || mouseY < 0 || mouseX >= sw || mouseY >= sh)
+    // M1.6 coord-space: missiongui mouseX/Y from userInput->getMouseX/Y()
+    // is `mouseXPosition * viewMulX`, where mouseXPosition is normalized to
+    // drawable (0.0-1.0) and viewMulX is the UI viewport width (800 in the
+    // 800x600 logical canvas). So mouseX/Y is in viewport-relative coords
+    // (0-vMulX, 0-vMulY), NOT FBO pixels. lookupAtPixel needs FBO pixels.
+    //
+    // Translation: mouseX/Y (viewport space) -> FBO pixel:
+    //   normalized = mouseX / vMulX (fraction across viewport)
+    //   fboPixel   = vAddX + normalized * vMulX_fbo
+    // where vMulX/Y from gos_GetViewport are already in FBO-pixel units
+    // (viewportRight - viewportLeft) * drawableWidth. So vMulX IS the
+    // FBO-pixel width of the viewport region. But mouseXPosition is
+    // normalized to drawable (not viewport), and getMouseX() multiplies
+    // by vMulX -- yielding (mouseX_pixel_in_drawable / drawableWidth) *
+    // viewport_pixel_width. For full-screen viewport (vMulX=drawableWidth),
+    // this is identity. For sub-viewport, it's a scaled-down value.
+    //
+    // To convert back: multiply by (drawableWidth / vMulX) to get raw
+    // drawable-pixel-X. (Equivalent to "undo the viewport scaling".)
+    // Then add vAddX for viewport-offset case. Y mirrors.
+    float vMulX = 0.0f, vMulY = 0.0f, vAddX = 0.0f, vAddY = 0.0f;
+    gos_GetViewport(&vMulX, &vMulY, &vAddX, &vAddY);
+    const int dw = Environment.drawableWidth;
+    const int dh = Environment.drawableHeight;
+
+    // Off-screen bounds guard against UI canvas (viewport) dimensions.
+    if (mouseX < 0 || mouseY < 0
+        || mouseX >= (int)vMulX || mouseY >= (int)vMulY)
         return;
 
-    // Spec Section 5: Win32 origin top-left -> GL origin bottom-left.
-    const int glX = mouseX;
-    const int glY = sh - 1 - mouseY;
+    // Undo the viewport scaling: viewport-relative -> drawable-pixel.
+    const float scaleX = (vMulX > 0.0f) ? ((float)dw / vMulX) : 1.0f;
+    const float scaleY = (vMulY > 0.0f) ? ((float)dh / vMulY) : 1.0f;
+    const int fboX = (int)(vAddX + (float)mouseX * scaleX);
+    const int fboY = (int)(vAddY + (float)mouseY * scaleY);
+    const int glX  = fboX;
+    const int glY  = dh - 1 - fboY;
 
     // Synchronous single-pixel readback. M1.5 lookupAtPixel internally
     // validates against s_objectRecords (generation + alive).
@@ -6219,24 +6244,30 @@ void MissionInterfaceManager::tryStaticPropPick(bool moverSelectedThisFrame,
         // recipe lookup is done inside setLastStaticPropPick).
         const RenderWorld::StaticPropSelectionDebugState picked =
             RenderWorld::getLastStaticPropPick();
-        // Unconditional hit log (spec Section 7).
+        // Unconditional hit log (spec Section 7); coord-diag fields included
+        // to confirm viewport translation on this build.
         std::fprintf(stderr,
             "[STATIC_PROP_PICK v1] hit handle=%u idx=%u gen=%u "
-            "recipe=%d screen=(%d,%d) gl=(%d,%d)\n",
+            "recipe=%d screen=(%d,%d) gl=(%d,%d) fbo=(%d,%d) "
+            "vMul=(%.0f,%.0f) vAdd=(%.0f,%.0f) draw=(%d,%d)\n",
             res.handle.bits,
             (unsigned)res.handle.index(),
             (unsigned)res.handle.generation(),
             (int)picked.recipeIndex,
-            mouseX, mouseY, glX, glY);
+            mouseX, mouseY, glX, glY, fboX, fboY,
+            vMulX, vMulY, vAddX, vAddY, dw, dh);
     } else {
         // Q1 lean: clear the debug-state struct on empty Shift+click so
         // a stale prior pick does not survive an empty-click gesture.
         RenderWorld::clearLastStaticPropPick();
-        // Verbose miss log only when MC2_STATIC_PROP_PICK_DEBUG=1.
+        // Verbose miss log only when MC2_STATIC_PROP_PICK_DEBUG=1; coord-diag
+        // included to confirm viewport translation on this build.
         if (RenderWorld::IsStaticPropPickDebugEnabled()) {
             std::fprintf(stderr,
-                "[STATIC_PROP_PICK v1] miss screen=(%d,%d) gl=(%d,%d)\n",
-                mouseX, mouseY, glX, glY);
+                "[STATIC_PROP_PICK v1] miss screen=(%d,%d) gl=(%d,%d) "
+                "fbo=(%d,%d) vMul=(%.0f,%.0f) vAdd=(%.0f,%.0f) draw=(%d,%d)\n",
+                mouseX, mouseY, glX, glY, fboX, fboY,
+                vMulX, vMulY, vAddX, vAddY, dw, dh);
         }
     }
 }
