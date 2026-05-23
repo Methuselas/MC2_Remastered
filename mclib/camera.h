@@ -176,6 +176,7 @@ class Camera
 		Stuff::Matrix4D				cameraToClipGL;
 		Stuff::Matrix4D				worldToClip;					//Matrix used to bring a point from world space to camera/clip space
 		Stuff::Matrix4D				clipToWorld;					//Matrix used to bring a point from camera/clip space to world space
+		float						cachedFrustumPlanes_[6][4];		// F6 T2 cache; valid after cacheFrustumPlanes() per frame.
 		
 		TG_LightPtr					*worldLights;					//Lighting for the entire world.
 		long						numLights;						//Number of lights in the above list.  Always MAX_LIGHTS!
@@ -954,6 +955,15 @@ class Camera
 		bool quadAabbInFrustum (const float planes[6][4],
 		                        const Stuff::Vector3D& mn,
 		                        const Stuff::Vector3D& mx) const;
+
+		// F6 T2: per-frame frustum-planes cache, populated by Terrain::geometry
+		// once per frame before the setupTextures loop. Shared with
+		// TerrainQuad::setupTextures' water-corner admission path.
+		// Lifecycle: written by cacheFrustumPlanes(); read via
+		// getCachedFrustumPlanes(). NOT thread-safe; assumes single-threaded
+		// terrain admission (which it is today).
+		void cacheFrustumPlanes();
+		const float (*getCachedFrustumPlanes() const)[4];
 
 		unsigned long inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff::Vector3D &point);
 

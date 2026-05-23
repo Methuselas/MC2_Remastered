@@ -770,6 +770,21 @@ bool Camera::quadAabbInFrustum (const float planes[6][4],
 }
 
 //---------------------------------------------------------------------------
+// F6 T2: per-frame frustum-planes cache. Terrain::geometry calls
+// cacheFrustumPlanes() once per frame (outside both slimReduce and
+// setupTextures loops); both then read via getCachedFrustumPlanes().
+// Single extractFrustumPlanes call per frame shared across all sites.
+void Camera::cacheFrustumPlanes()
+{
+	extractFrustumPlanes(cachedFrustumPlanes_);
+}
+
+const float (*Camera::getCachedFrustumPlanes() const)[4]
+{
+	return cachedFrustumPlanes_;
+}
+
+//---------------------------------------------------------------------------
 // Ported screen-triangle containment (the body of the deleted overThisTile),
 // rewritten to operate on FRESHLY forward-projected screen corners instead of
 // stale per-frame vertices[]->px/py. corners[4] are screen XY from

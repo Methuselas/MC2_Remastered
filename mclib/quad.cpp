@@ -25,6 +25,7 @@
 #ifndef CAMERA_H
 #include"camera.h"
 #endif
+#include"terrain_admission_mode.h"  // F6 T2: shared isModern() flag
 
 #ifndef DBASEGUI_H
 #include"dbasegui.h"
@@ -1067,7 +1068,19 @@ void TerrainQuad::setupTextures (void)
 				bool clipData = false;
 				// [PROJECTZ:BoolAdmission id=terrain_quad_vert0_admit]
 				PROJECTZ_SITE("terrain_quad_vert0_admit", "BoolAdmission");
-				clipData = eye->projectForTerrainAdmission(vertex3D,screenPos);
+				// F6 T2: Modern path uses cached frustum planes (shared with
+				// slimReduce; populated once per frame in Terrain::geometry).
+				// legacyWaterDraw=true (rare; fast path NOT armed): still call
+				// projectForTerrainAdmission so wx/wy/wz/ww have valid values;
+				// clipData stays from frustum test.
+				if (mc2_terrain_admission::isModern()) {
+					clipData = eye->quadAabbInFrustum(eye->getCachedFrustumPlanes(), vertex3D, vertex3D);
+					if (legacyWaterDraw) {
+						eye->projectForTerrainAdmission(vertex3D, screenPos);
+					}
+				} else {
+					clipData = eye->projectForTerrainAdmission(vertex3D,screenPos);
+				}
 				pz_capture_vert_preds(0);
 				bool isVisible = Terrain::IsGameSelectTerrainPosition(vertex3D) || drawTerrainGrid;
 				if (!isVisible)
@@ -1079,7 +1092,7 @@ void TerrainQuad::setupTextures (void)
 					vertices[0]->clipInfo = clipData;
 				else
 					vertices[0]->clipInfo = clipData;
-		
+
 				if (legacyWaterDraw)
 				{
 					vertices[0]->wx = screenPos.x;
@@ -1112,7 +1125,15 @@ void TerrainQuad::setupTextures (void)
 				bool clipData = false;
 				// [PROJECTZ:BoolAdmission id=terrain_quad_vert1_admit]
 				PROJECTZ_SITE("terrain_quad_vert1_admit", "BoolAdmission");
-				clipData = eye->projectForTerrainAdmission(vertex3D,screenPos);
+				// F6 T2: see vert0 comment above.
+				if (mc2_terrain_admission::isModern()) {
+					clipData = eye->quadAabbInFrustum(eye->getCachedFrustumPlanes(), vertex3D, vertex3D);
+					if (legacyWaterDraw) {
+						eye->projectForTerrainAdmission(vertex3D, screenPos);
+					}
+				} else {
+					clipData = eye->projectForTerrainAdmission(vertex3D,screenPos);
+				}
 				pz_capture_vert_preds(1);
 				bool isVisible = Terrain::IsGameSelectTerrainPosition(vertex3D) || drawTerrainGrid;
 				if (!isVisible)
@@ -1124,7 +1145,7 @@ void TerrainQuad::setupTextures (void)
 					vertices[1]->clipInfo = clipData; //onScreen;
 				else
 					vertices[1]->clipInfo = clipData;
- 
+
 				if (legacyWaterDraw)
 				{
 					vertices[1]->wx = screenPos.x;
@@ -1157,7 +1178,15 @@ void TerrainQuad::setupTextures (void)
 				bool clipData = false;
 				// [PROJECTZ:BoolAdmission id=terrain_quad_vert2_admit]
 				PROJECTZ_SITE("terrain_quad_vert2_admit", "BoolAdmission");
-				clipData = eye->projectForTerrainAdmission(vertex3D,screenPos);
+				// F6 T2: see vert0 comment above.
+				if (mc2_terrain_admission::isModern()) {
+					clipData = eye->quadAabbInFrustum(eye->getCachedFrustumPlanes(), vertex3D, vertex3D);
+					if (legacyWaterDraw) {
+						eye->projectForTerrainAdmission(vertex3D, screenPos);
+					}
+				} else {
+					clipData = eye->projectForTerrainAdmission(vertex3D,screenPos);
+				}
 				pz_capture_vert_preds(2);
 				bool isVisible = Terrain::IsGameSelectTerrainPosition(vertex3D) || drawTerrainGrid;
 				if (!isVisible)
@@ -1169,7 +1198,7 @@ void TerrainQuad::setupTextures (void)
 					vertices[2]->clipInfo = clipData; //onScreen;
 				else
 					vertices[2]->clipInfo = clipData;
-					
+
 				if (legacyWaterDraw)
 				{
 					vertices[2]->wx = screenPos.x;
@@ -1202,7 +1231,15 @@ void TerrainQuad::setupTextures (void)
 				bool clipData = false;
 				// [PROJECTZ:BoolAdmission id=terrain_quad_vert3_admit]
 				PROJECTZ_SITE("terrain_quad_vert3_admit", "BoolAdmission");
-				clipData = eye->projectForTerrainAdmission(vertex3D,screenPos);
+				// F6 T2: see vert0 comment above.
+				if (mc2_terrain_admission::isModern()) {
+					clipData = eye->quadAabbInFrustum(eye->getCachedFrustumPlanes(), vertex3D, vertex3D);
+					if (legacyWaterDraw) {
+						eye->projectForTerrainAdmission(vertex3D, screenPos);
+					}
+				} else {
+					clipData = eye->projectForTerrainAdmission(vertex3D,screenPos);
+				}
 				pz_capture_vert_preds(3);
 				bool isVisible = Terrain::IsGameSelectTerrainPosition(vertex3D) || drawTerrainGrid;
 				if (!isVisible)
@@ -1214,7 +1251,7 @@ void TerrainQuad::setupTextures (void)
 					vertices[3]->clipInfo = clipData; //onScreen;
 				else
 					vertices[3]->clipInfo = clipData;
-	
+
 				if (legacyWaterDraw)
 				{
 					vertices[3]->wx = screenPos.x;

@@ -43,6 +43,7 @@
 #include"../GameOS/gameos/gos_terrain_mask_dispatch.h"
 #include"../GameOS/gameos/gos_terrain_bridge.h"
 #include"../GameOS/gameos/gos_terrain_lighting.h"
+#include"terrain_admission_mode.h"  // F6 T2: shared isModern() flag for terrain.cpp + quad.cpp
 
 #include <vector>
 #include <cstdint>
@@ -1614,14 +1615,17 @@ void Terrain::geometry (void)
 	static const bool s_vplCull = (getenv("MC2_VPL_CULL") != nullptr);
 	static const bool s_vplReduce = (getenv("MC2_VPL_REDUCE") != nullptr);
 
-	// F6 T1: terrain admission Modern path. Replaces per-vertex
-	// projectForTerrainAdmission (camera.h:574 / camera.cpp body) with a
-	// world-space frustum-plane test using Camera::extractFrustumPlanes
-	// (one-shot per frame) + Camera::quadAabbInFrustum on a degenerate AABB
-	// (point, min==max). Default Legacy preserves the red-band fallback per
-	// spec §8. Env: MC2_TERRAIN_ADMISSION_MODERN=1 flips to Modern.
+	// F6 T1/T2: terrain admission Modern path. Replaces per-vertex
+	// projectForTerrainAdmission with a world-space frustum-plane test:
+	//   extractFrustumPlanes (one-shot per frame) + quadAabbInFrustum
+	//   on a degenerate AABB (point, min==max). Default Legacy preserves
+	//   the red-band fallback per spec §8.
+	// F6 T2: mode flag moved to mc2_terrain_admission::isModern()
+	// (terrain_admission_mode.h) shared with quad.cpp setupTextures sites.
+	// Cache populated below; quad.cpp reads via eye->getCachedFrustumPlanes().
+	// Env: MC2_TERRAIN_ADMISSION_MODERN=1 flips to Modern.
 	// Reference: docs/observations/2026-05-22-terrain-admission-hotpath-recon.md
-	static const bool s_admissionModern = (getenv("MC2_TERRAIN_ADMISSION_MODERN") != nullptr);
+	const bool s_admissionModern = mc2_terrain_admission::isModern();
 	static bool s_admissionModeLogged = false;
 	if (!s_admissionModeLogged) {
 		s_admissionModeLogged = true;
@@ -1683,11 +1687,11 @@ void Terrain::geometry (void)
 	gos_terrain_indirect::BeginFrameSolidWindow();
 	const bool s_solidNarrowOn = gos_terrain_indirect::SolidWindowEnabled();
 
-	// F6 T1: extract frustum planes once per frame (O(1)), outside the loop.
-	// Only filled when Modern mode is active; stack alloc 96 bytes regardless.
-	float s_frustumPlanes[6][4];
+	// F6 T1/T2: cache frustum planes once per frame (O(1)) into Camera member.
+	// Both slimReduce below AND quad.cpp::setupTextures water-corner sites read
+	// via eye->getCachedFrustumPlanes(). Single extraction shared across all sites.
 	if (s_admissionModern) {
-		eye->extractFrustumPlanes(s_frustumPlanes);
+		eye->cacheFrustumPlanes();
 	}
 
 	{
@@ -1813,7 +1817,7 @@ void Terrain::geometry (void)
 					// sp stays sentinel (-10000); px/py/pz/pw write below is
 					// gated out under Modern (approach a -- see commit msg).
 					Stuff::Vector3D vPos(rv->vx, rv->vy, rv->pVertex->elevation);
-					inViewR = eye->quadAabbInFrustum(s_frustumPlanes, vPos, vPos);
+					inViewR = eye->quadAabbInFrustum(eye->getCachedFrustumPlanes(), vPos, vPos);
 				} else {
 					inViewR = eye->projectForTerrainAdmission(vertex3D,sp);
 				}
