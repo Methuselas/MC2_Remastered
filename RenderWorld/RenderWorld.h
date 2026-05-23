@@ -155,4 +155,41 @@ struct LookupResult {
 // Spec: 2026-05-23-renderworld-slice-m1-5-objectid-buffer-spec.md sec 7
 LookupResult lookupAtPixel(int screenX, int screenY);
 
+// M1.6: most-recent static-prop pick debug state. Updated by
+// MissionInterfaceManager::tryStaticPropPick on a successful Shift+click
+// pick. Single-slot (latest wins); not a selection list. Not serialized.
+// Cleared on per-mission RenderWorld::destroy() so a stale handle does
+// not survive mission-load boundaries.
+//
+// Spec: 2026-05-23-renderworld-slice-m1-6-staticprop-pick-spec.md sec 6.
+struct StaticPropSelectionDebugState {
+    bool                            valid              = false;
+    RenderCore::RenderObjectHandle  handle             = RenderCore::RenderObjectHandle::invalid();
+    int32_t                         recipeIndex        = -1;
+    int32_t                         lastPickMouseX     = 0;  // Win32 origin top-left
+    int32_t                         lastPickMouseY     = 0;
+    int32_t                         lastPickGlX        = 0;  // GL origin bottom-left
+    int32_t                         lastPickGlY        = 0;
+    uint64_t                        lastPickFrameIndex = 0;  // mirrors s_frameCounter at pick time
+};
+
+// M1.6: populate from a valid LookupResult. Asserts internally that
+// res.isValid == true (callers must filter; debug build only).
+// mouseX/Y are Win32-convention click coords; glX/Y are the post-y-flip
+// GL coords passed to lookupAtPixel. lastPickFrameIndex is sampled from
+// the internal frame counter at call time.
+void setLastStaticPropPick(const LookupResult& res,
+                           int32_t mouseX, int32_t mouseY,
+                           int32_t glX,    int32_t glY);
+
+// M1.6: reset to default (valid=false). Idempotent. Called on
+// (a) empty Shift+click (Q1 lean: clear on miss), and
+// (b) per-mission RenderWorld::destroy() lifecycle hook (Q2 lean).
+void clearLastStaticPropPick();
+
+// M1.6: read-only access. Caller MUST check .valid before consuming any
+// other field. Returns a copy (the struct is tiny; avoids exposing
+// internal mutex state to callers).
+StaticPropSelectionDebugState getLastStaticPropPick();
+
 } // namespace RenderWorld

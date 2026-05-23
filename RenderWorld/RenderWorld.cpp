@@ -72,6 +72,15 @@ int32_t handleToRecipeIndex(RenderCore::RenderObjectHandle h) {
 std::mutex                                  s_objectRecordsMutex;
 std::vector<RenderWorld::RenderObjectRecord> s_objectRecords;
 
+// M1.6: most-recent static-prop pick debug state. Single-slot; updated
+// by setLastStaticPropPick from the gameplay-side tryStaticPropPick helper.
+// Mutex-guarded because get/set may interleave on a future off-thread
+// HUD consumer; M1.6 itself is main-thread only.
+//
+// Spec: 2026-05-23-renderworld-slice-m1-6-staticprop-pick-spec.md sec 6.
+std::mutex                                       s_lastStaticPropPickMutex;
+RenderWorld::StaticPropSelectionDebugState       s_lastStaticPropPick;
+
 void populateRecord(uint32_t handleIndex,
                     uint16_t generation,
                     uint32_t gameObjectId)
@@ -540,6 +549,43 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
     out.pathReasonCode     = rec.pathReasonCode;
     out.gameObjectId       = rec.gameObjectId;
     return out;
+}
+
+void setLastStaticPropPick(const LookupResult& res,
+                           int32_t mouseX, int32_t mouseY,
+                           int32_t glX,    int32_t glY)
+{
+    // Callers MUST filter on res.isValid before calling. We do not assert
+    // here (release-mode safety) but a misuse populates a "valid pick"
+    // with an invalid handle, which the next get() consumer will see
+    // and either skip or log-spam. Filter at the call site.
+    std::lock_guard<std::mutex> lk(s_lastStaticPropPickMutex);
+    s_lastStaticPropPick.valid              = res.isValid;
+    s_lastStaticPropPick.handle             = res.handle;
+    // recipeIndex: project handle -> recipe index via the existing
+    // inverse mapper handleToRecipeIndex (declared in this TU; takes a
+    // full RenderObjectHandle and returns int32_t). Per CRIT C1 of
+    // plan-review: the correct symbol is handleToRecipeIndex, NOT
+    // handleIndexToRecipeIndex.
+    s_lastStaticPropPick.recipeIndex        = res.isValid
+        ? handleToRecipeIndex(res.handle)
+        : -1;
+    s_lastStaticPropPick.lastPickMouseX     = mouseX;
+    s_lastStaticPropPick.lastPickMouseY     = mouseY;
+    s_lastStaticPropPick.lastPickGlX        = glX;
+    s_lastStaticPropPick.lastPickGlY        = glY;
+    s_lastStaticPropPick.lastPickFrameIndex =
+        s_frameCounter.load(std::memory_order_relaxed);
+}
+
+void clearLastStaticPropPick() {
+    std::lock_guard<std::mutex> lk(s_lastStaticPropPickMutex);
+    s_lastStaticPropPick = StaticPropSelectionDebugState{};
+}
+
+StaticPropSelectionDebugState getLastStaticPropPick() {
+    std::lock_guard<std::mutex> lk(s_lastStaticPropPickMutex);
+    return s_lastStaticPropPick;  // copy out; struct is tiny
 }
 
 } // namespace RenderWorld
