@@ -84,6 +84,24 @@ void frameBannerTick();
 //   - C++ side of static-prop makeProgram() (gates the GLSL #ifdef prefix)
 bool IsObjectIdBufferEnabled();
 
+// M1.6: static-prop pick master enable. When this is OFF, the missiongui
+// Shift+click wiring is dormant even if MC2_OBJECT_ID_BUFFER=1. Three-gate
+// opt-in stack per spec Section 9; defense-in-depth so a dev can enable
+// the substrate for log-driven inspection without changing click behavior.
+//
+// Process-lifetime cached; restart required to flip. Consumed by:
+//   - code/missiongui.cpp MissionInterfaceManager::tryStaticPropPick guard
+bool IsStaticPropPickEnabled();
+
+// M1.6: static-prop pick verbose-log enable. When this is OFF, the
+// `[STATIC_PROP_PICK v1] miss ...` line is suppressed (high-frequency
+// empty-Shift+click gesture would otherwise spam stderr). `hit` lines
+// fire unconditionally per spec Section 7.
+//
+// Process-lifetime cached. Consumed by:
+//   - code/missiongui.cpp MissionInterfaceManager::tryStaticPropPick miss branch
+bool IsStaticPropPickDebugEnabled();
+
 // M1.5 C1 fix: centralize Handle encoding. Returns 0 for invalid
 // recipeIndex (< 0). The producer in gos_static_prop_batcher.cpp
 // calls this with the result of GpuStaticPropRegistry::getRecipeIndexForType().

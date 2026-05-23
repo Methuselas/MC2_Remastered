@@ -314,6 +314,11 @@ void init() {
         std::fprintf(stderr,
             "[OBJECT_ID v1] event=enabled format=R32UI attachment=GL_COLOR_ATTACHMENT2\n");
     }
+    // M1.6: pick-wiring banner. Always emitted (both 0/0 and 1/1 states
+    // useful to log readers diagnosing "why did Shift+click do nothing").
+    std::fprintf(stderr, "[STATIC_PROP_PICK v1] enabled=%d debug=%d\n",
+                 IsStaticPropPickEnabled() ? 1 : 0,
+                 IsStaticPropPickDebugEnabled() ? 1 : 0);
     // M1.5 T10: substrate self-test (gated by MC2_RENDER_WORLD_SELFTEST=1).
     runSubstrateSelfTest();
 }
@@ -407,6 +412,20 @@ bool IsObjectIdBufferEnabled() {
     // Function-local static: thread-safe initialization (C++11 magic
     // statics); init runs exactly once at first call.
     static const bool s_enabled = readObjectIdBufferEnv();
+    return s_enabled;
+}
+
+// M1.6: master enable for the static-prop pick wiring (missiongui
+// Shift+click -> lookupAtPixel -> setLastStaticPropPick). Default OFF.
+bool IsStaticPropPickEnabled() {
+    static const bool s_enabled = envFlag("MC2_STATIC_PROP_PICK");
+    return s_enabled;
+}
+
+// M1.6: verbose-log enable. Gates the `[STATIC_PROP_PICK v1] miss`
+// line only; the `hit` line is unconditional.
+bool IsStaticPropPickDebugEnabled() {
+    static const bool s_enabled = envFlag("MC2_STATIC_PROP_PICK_DEBUG");
     return s_enabled;
 }
 
