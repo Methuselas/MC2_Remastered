@@ -697,6 +697,31 @@ void destroyMech(RenderCore::RenderObjectHandle h) {
                 "handle.index=%u\n", (unsigned)idx);
             return;
         }
+        // Idempotent retirement: if clearAllMechRecords (endMission sweep) or a
+        // prior destroyMech already retired this slot, the alive flag is clear
+        // and rec.generation has been bumped past h.generation(). Either signal
+        // alone means "already retired" — return without decrementing
+        // s_mechs_alive_rw (would underflow the uint64_t counter).
+        if ((rec.flags & kRenderObjectFlagAlive) == 0u) {
+            if (envFlag("MC2_RENDER_WORLD_TRACE")) {
+                std::fprintf(stderr,
+                    "[RENDER_WORLD v1] event=mech_destroy_already_dead "
+                    "handle.index=%u handle.gen=%u rec.gen=%u\n",
+                    (unsigned)idx, (unsigned)h.generation(),
+                    (unsigned)rec.generation);
+            }
+            return;
+        }
+        if (h.generation() != static_cast<uint32_t>(rec.generation)) {
+            if (envFlag("MC2_RENDER_WORLD_TRACE")) {
+                std::fprintf(stderr,
+                    "[RENDER_WORLD v1] event=mech_destroy_stale_generation "
+                    "handle.index=%u handle.gen=%u rec.gen=%u\n",
+                    (unsigned)idx, (unsigned)h.generation(),
+                    (unsigned)rec.generation);
+            }
+            return;
+        }
         rec.flags &= static_cast<uint16_t>(~kRenderObjectFlagAlive);
         rec.generation = static_cast<uint16_t>(rec.generation + 1u);
     }
