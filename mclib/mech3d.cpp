@@ -1070,6 +1070,11 @@ float Mech3DAppearance::getWeaponNodeRecycle (long node)
 void Mech3DAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 {
 	Appearance::init(tree,obj);
+	// M2: defensive reset. Guards against in-place re-init without a prior
+	// delete/new (which would carry a stale handle into the new instance).
+	// The adapter's syncSpawn assert fires on a valid handle, making
+	// accidental double-registration visible in debug builds.
+	mechRenderHandle = RenderCore::RenderObjectHandle::invalid();
 	mechType = (Mech3DAppearanceType *)tree;
 
 	// C3: cache owner handle for GPU-cull node-position early-outs.

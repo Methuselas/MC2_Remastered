@@ -30,6 +30,8 @@
 
 #include<gosfx/gosfxheaders.hpp>
 #include <vector>  // T1.6: Mech3DAppearance::spotlight{Lights,SlotIds,NodeIds}_
+// M2 RenderWorld handle storage (RenderCore is pure types; no GL, no game headers).
+#include "../RenderCore/Handle.h"
 //-------------------------------------------------------------------------------
 // Structs used by layer.
 //
@@ -462,13 +464,38 @@ class Mech3DAppearance: public ObjectAppearance
 		long						rightArmNodeIndex;
 		long						lightCircleNodeIndex;
 		float						baseRootNodeDifference;
-		
+
+		// M2 RenderWorld handle. Set by GameAdapters::Mech::syncSpawn() via
+		// setRenderWorldHandleForAdapter() after appearance->init(). Cleared by
+		// GameAdapters::Mech::destroyMech() via clearRenderWorldHandleForAdapter()
+		// before delete appearance. Default: invalid (never registered or retired).
+		//
+		// Mech3DAppearance MUST NOT call the adapter or RenderWorld directly.
+		// The adapter is the bridge; this field is storage only.
+		// Firewall: mclib/mech3d.h may NOT include GameAdapters/MechRenderAdapter.h.
+		// The field type (RenderCore::RenderObjectHandle) is in RenderCore/Handle.h,
+		// which is allowed here (RenderCore is pure; no GL, no game headers).
+		RenderCore::RenderObjectHandle mechRenderHandle =
+		    RenderCore::RenderObjectHandle::invalid();
+
 	public:
 		static PaintSchemataPtr		paintSchemata;
 		static DWORD				numPaintSchemata;
 
+		// M2 adapter accessors (public -- used ONLY by GameAdapters::Mech).
+		// No other caller may use these outside the adapter TU.
+		RenderCore::RenderObjectHandle getRenderWorldHandle() const {
+		    return mechRenderHandle;
+		}
+		void setRenderWorldHandleForAdapter(RenderCore::RenderObjectHandle h) {
+		    mechRenderHandle = h;
+		}
+		void clearRenderWorldHandleForAdapter() {
+		    mechRenderHandle = RenderCore::RenderObjectHandle::invalid();
+		}
+
 	public:
-		
+
 		Mech3DAppearance (void)
 		{
 			init();
