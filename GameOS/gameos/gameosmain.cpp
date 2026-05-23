@@ -104,6 +104,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "gos_validate.h"
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_registry.h"  // Stage 3.C: isEnabled() for [INSTR v1]
+#include "../../RenderWorld/RenderWorld.h"  // M1 Task 14
 #include "asset_scale.h"
 #include "gos_crashbundle.h"
 #include "gos_smoke.h"
@@ -539,6 +540,7 @@ static void draw_screen( void )
         { ZoneScopedN("Camera.UpdateRenderers gos_RendererBeginFrame"); gos_RendererBeginFrame(); }
         Environment.UpdateRenderers();
         { ZoneScopedN("Camera.UpdateRenderers gos_RendererEndFrame"); gos_RendererEndFrame(); }
+        RenderWorld::frameBannerTick();  // M1 Task 14 (m2 fix: post-EndFrame)
     }
 
     glUseProgram(0);
