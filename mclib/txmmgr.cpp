@@ -2254,7 +2254,6 @@ void MC_TextureManager::renderLists (void)
         {
             if ((masterVertexNodes[i].flags & MC2_ISTERRAIN) &&
                     (masterVertexNodes[i].flags & MC2_DRAWALPHA) &&
-                    !(masterVertexNodes[i].flags & MC2_ISCRATERS) &&
                     (masterVertexNodes[i].flags & MC2_ALPHATEST)==states*MC2_ALPHATEST &&
                     (masterVertexNodes[i].vertices))
             {
@@ -2454,7 +2453,6 @@ void MC_TextureManager::renderLists (void)
             if (!(masterVertexNodes[i].flags & MC2_ISTERRAIN) &&
                     !(masterVertexNodes[i].flags & MC2_ISSHADOWS) &&
                     !(masterVertexNodes[i].flags & MC2_ISCOMPASS) &&
-                    !(masterVertexNodes[i].flags & MC2_ISCRATERS) &&
                     (masterVertexNodes[i].flags & MC2_DRAWALPHA) &&
                     (masterVertexNodes[i].flags & MC2_ALPHATEST)==states*MC2_ALPHATEST &&
                     (masterVertexNodes[i].vertices))

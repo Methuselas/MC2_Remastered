@@ -55,7 +55,6 @@ enum MC_TextureKey
 #define MC2_ISSHADOWS				8
 #define MC2_ISEFFECTS				16
 #define MC2_DRAWONEIN				32
-#define MC2_ISCRATERS				64
 #define MC2_ISCOMPASS				128
 #define MC2_ISSPOTLGT				256
 #define MC2_ISHUDLMNT				512
