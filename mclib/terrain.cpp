@@ -1614,6 +1614,22 @@ void Terrain::geometry (void)
 	static const bool s_vplCull = (getenv("MC2_VPL_CULL") != nullptr);
 	static const bool s_vplReduce = (getenv("MC2_VPL_REDUCE") != nullptr);
 
+	// F6 T1: terrain admission Modern path. Replaces per-vertex
+	// projectForTerrainAdmission (camera.h:574 / camera.cpp body) with a
+	// world-space frustum-plane test using Camera::extractFrustumPlanes
+	// (one-shot per frame) + Camera::quadAabbInFrustum on a degenerate AABB
+	// (point, min==max). Default Legacy preserves the red-band fallback per
+	// spec §8. Env: MC2_TERRAIN_ADMISSION_MODERN=1 flips to Modern.
+	// Reference: docs/observations/2026-05-22-terrain-admission-hotpath-recon.md
+	static const bool s_admissionModern = (getenv("MC2_TERRAIN_ADMISSION_MODERN") != nullptr);
+	static bool s_admissionModeLogged = false;
+	if (!s_admissionModeLogged) {
+		s_admissionModeLogged = true;
+		fprintf(stderr, "[TERRAIN_ADMISSION v1] event=mode_select mode=%s\n",
+			s_admissionModern ? "modern" : "legacy");
+		fflush(stderr);
+	}
+
 	long i=0;
 
 	// VPL retirement Step 6: self-contained slim per-vertex loop. Originally
@@ -1666,6 +1682,14 @@ void Terrain::geometry (void)
 	// iteration; NO new per-frame walk is introduced.
 	gos_terrain_indirect::BeginFrameSolidWindow();
 	const bool s_solidNarrowOn = gos_terrain_indirect::SolidWindowEnabled();
+
+	// F6 T1: extract frustum planes once per frame (O(1)), outside the loop.
+	// Only filled when Modern mode is active; stack alloc 96 bytes regardless.
+	float s_frustumPlanes[6][4];
+	if (s_admissionModern) {
+		eye->extractFrustumPlanes(s_frustumPlanes);
+	}
+
 	{
 		ZoneScopedN("Terrain::geometry slimReduce");
 		const bool ssOn = SlimSplitOn();  // [SLIMSPLIT v1] latched, loop-local
@@ -1780,7 +1804,19 @@ void Terrain::geometry (void)
 			if (onScreenR || !clipUsesOnScreen)
 			{
 				unsigned long long _ssT = ssOn ? __rdtsc() : 0ULL;  // [SLIMSPLIT v1] PROJ
-				inViewR = eye->projectForTerrainAdmission(vertex3D,sp);
+				if (s_admissionModern) {
+					// F6 T1: frustum-plane test replaces projectZ matrix-mul
+					// + homogeneous divide. Degenerate AABB (single point:
+					// mn==mx). near-plane test rejects behind-camera verts
+					// via dot(rZ,swizzled_point) < 0 -- correct red-band
+					// class behavior without clip.w sign reliance.
+					// sp stays sentinel (-10000); px/py/pz/pw write below is
+					// gated out under Modern (approach a -- see commit msg).
+					Stuff::Vector3D vPos(rv->vx, rv->vy, rv->pVertex->elevation);
+					inViewR = eye->quadAabbInFrustum(s_frustumPlanes, vPos, vPos);
+				} else {
+					inViewR = eye->projectForTerrainAdmission(vertex3D,sp);
+				}
 				if (ssOn) { g_ssProjCyc += __rdtsc() - _ssT; ++g_ssProjCall; }
 			}
 
@@ -1838,18 +1874,31 @@ void Terrain::geometry (void)
 			// off-screen sentinel verbatim. Placed BEFORE the reduction gate
 			// below so off-rect-but-onscreen quads the raster path still
 			// draws are not skipped (cull_gates_are_load_bearing.md).
-			if (onScreenR)
+			// F6 T1 approach (a): Modern path leaves sp at sentinel
+			// (-10000); writing sentinel to rv->px/py/pz/pw would corrupt
+			// legacy raster coords. Skip write entirely under Modern. Safe
+			// because drawPass default-ON (GPU-indirect path) only hits
+			// legacy raster on un-armed frames (mission-deploy/unit-select),
+			// and MC2_TERRAIN_ADMISSION_MODERN is opt-in. If un-armed frames
+			// are active with Modern=1, rv->px/py retain prior-frame values.
+			// Interaction: MC2_TERRAIN_ADMISSION_MODERN=1 + MC2_TERRAIN_INDIRECT=0
+			// on un-armed frames = undefined raster coords (acceptable for
+			// opt-in experimental env; user canary gates default flip).
+			if (!s_admissionModern)
 			{
-				rv->px = sp.x;
-				rv->py = sp.y;
-				rv->pz = sp.z;
-				rv->pw = sp.w;
-			}
-			else
-			{
-				rv->px = rv->py = 10000.0f;
-				rv->pz = -0.5f;
-				rv->pw = 0.5f;
+				if (onScreenR)
+				{
+					rv->px = sp.x;
+					rv->py = sp.y;
+					rv->pz = sp.z;
+					rv->pw = sp.w;
+				}
+				else
+				{
+					rv->px = rv->py = 10000.0f;
+					rv->pz = -0.5f;
+					rv->pw = 0.5f;
+				}
 			}
 
 			// --- reduction-admission gate (decoupled from the cull write
