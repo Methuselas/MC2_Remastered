@@ -14,3 +14,8 @@ GameOS/gameos/gos_static_prop_registry.cpp
 # GpuStaticPropRegistry::*. Confined to RenderWorld/legacy/ subdir.
 RenderWorld/legacy/static_prop_backend.h
 RenderWorld/legacy/static_prop_backend.cpp
+
+# M2: the ONLY TU outside mclib/ that may include mech3d.h, per spec
+# section 12 carve-out. Named specifically (not "all GameAdapters/*.cpp")
+# to prevent adapter creep.
+GameAdapters/MechRenderAdapter.cpp

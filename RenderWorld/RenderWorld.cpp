@@ -129,7 +129,7 @@ void populateRecord(uint32_t handleIndex,
     rec.drawPacketIndex    = 0xFFFFFFFFu; // M1.5 sentinel
     rec.pathReasonCode     = 0;           // M1.5 sentinel
     rec.gameObjectId       = gameObjectId;
-    rec.kind               = RenderObjectKind::StaticProp;
+    rec.kind               = RenderWorld::RenderObjectKind::StaticProp;
     rec.debugCookie        = 0;
 }
 
