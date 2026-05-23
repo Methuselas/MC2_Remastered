@@ -1813,6 +1813,7 @@ void GameObjectManager::render (bool terrain, bool movers, bool other) {
 				for (long terrainObj = 0; terrainObj < numObjs; terrainObj++, objIndex++)
 				{
 					if (objList[objIndex] &&
+						objList[objIndex]->getExists() &&
 						Terrain::objVertexActive[objList[objIndex]->getVertexNum()])
 					{
 						objList[objIndex]->render();
@@ -1950,6 +1951,7 @@ void GameObjectManager::renderShadows (bool terrain, bool movers, bool other) {
 				for (long terrainObj = 0; terrainObj < numObjs; terrainObj++, objIndex++)
 				{
 					if (objList[objIndex] &&
+						objList[objIndex]->getExists() &&
 						Terrain::objVertexActive[objList[objIndex]->getVertexNum()])
 					{
 						objList[objIndex]->renderShadows();
