@@ -369,9 +369,10 @@ class BldgAppearance : public ObjectAppearance
 		
 		virtual float getRadius (void)
 		{
-			return OBBRadius;
+			float ext = bldgShape ? bldgShape->GetExtentRadius() : 0.0f;
+			return OBBRadius > ext ? OBBRadius : ext;
 		}
-		
+
 		virtual void flashBuilding (float duration, float flashDuration, DWORD color);
 
 		virtual float getTopZ (void)
@@ -599,9 +600,10 @@ class TreeAppearance : public ObjectAppearance
 		
 		virtual float getRadius (void)
 		{
-			return OBBRadius;
+			float ext = treeShape ? treeShape->GetExtentRadius() : 0.0f;
+			return OBBRadius > ext ? OBBRadius : ext;
 		}
-		
+
 		virtual void setLightsOut (bool lightFlag)
 		{
 			forceLightsOut = lightFlag;
