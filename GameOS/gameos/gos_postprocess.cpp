@@ -4,12 +4,58 @@
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "gameos.hpp"      // gos_InvalidateRenderStateCache (RENDER_STATES v1)
+#include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled
 
 #include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <SDL2/SDL.h>
+
+namespace {
+
+// M1.5 C1 fix + M3 plan-review fix: centralized scene-FBO draw-buffer
+// policy. Every site that calls glDrawBuffers against sceneFBO_ routes
+// through this helper. The caller passes objectIdAttachmentReady so the
+// helper does not have to guess whether sceneObjectIdTex_ has been
+// allocated yet (avoids GL_INVALID_VALUE when env-ON but FBO setup
+// hasn't run). Callers pass `sceneObjectIdTex_ != 0` for MRT sites;
+// SingleColor sites pass false.
+//
+// glClearBufferuiv(GL_COLOR, 2, ...) at frame-entry is ONLY safe
+// after setSceneDrawBuffers(MainSceneMRT, true) has bound the 3-entry list.
+//
+// Spec: 2026-05-23-renderworld-slice-m1-5-objectid-buffer-spec.md sec 3.
+enum class SceneDrawBufferMode { MainSceneMRT, SingleColor };
+
+static void setSceneDrawBuffers(SceneDrawBufferMode mode,
+                                bool objectIdAttachmentReady) {
+    const bool oid =
+        RenderWorld::IsObjectIdBufferEnabled() && objectIdAttachmentReady;
+
+    if (mode == SceneDrawBufferMode::SingleColor) {
+        GLenum bufs[1] = { GL_COLOR_ATTACHMENT0 };
+        glDrawBuffers(1, bufs);
+        return;
+    }
+
+    if (oid) {
+        GLenum bufs[3] = {
+            GL_COLOR_ATTACHMENT0,
+            GL_COLOR_ATTACHMENT1,
+            GL_COLOR_ATTACHMENT2
+        };
+        glDrawBuffers(3, bufs);
+    } else {
+        GLenum bufs[2] = {
+            GL_COLOR_ATTACHMENT0,
+            GL_COLOR_ATTACHMENT1
+        };
+        glDrawBuffers(2, bufs);
+    }
+}
+
+} // namespace
 
 static gosPostProcess* s_postProcess = nullptr;
 
