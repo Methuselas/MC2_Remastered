@@ -184,12 +184,8 @@ void LightCostSplit_RollFrameAndMaybeEmit();  // call from CostSplit_RollFrame()
 // ---------------------------------------------------------------------------
 void Counters_AddLegacySolidSetupQuad();      // un-armed legacy SOLID admit cluster
 void Counters_AddIndirectSolidPackedQuad();   // armed indirect packer per packed quad
-void Counters_AddLegacyDetailOverlayQuad();   // legacy DRAWALPHA / detail / mine /
-                                              // overlay cluster (passive — never gated)
-
 long long Counters_GetLegacySolidSetupQuads();
 long long Counters_GetIndirectSolidPackedQuads();
-long long Counters_GetLegacyDetailOverlayQuads();
 
 // PR2c Stage 0c — mine-specific counters (independent of legacy_detail_overlay).
 //   legacy_mine_enqueue_quads — incremented once per call to

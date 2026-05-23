@@ -245,8 +245,13 @@ struct CostSplitVisibilityCheckScope {
 // When indirect SOLID is armed for this frame, BeginLegacySolidCluster()
 // returns false and the caller skips the addTriangleBulk(MC2_DRAWSOLID) body.
 // EndLegacySolidCluster() bumps the legacy counter (un-armed path only).
-// DRAWALPHA / mine / overlay clusters are NEVER gated — NoteLegacyDetailOverlayCluster
-// is passive instrumentation only.
+//
+// IN-MISSION: IsFrameSolidArmed() is always true (ComputePreflight sets it).
+// These SOLID blocks are therefore ZERO-COST in-mission. They exist solely for
+// the pre-mission deployment / unit-select screens where ComputePreflight() is
+// never called and the legacy raster path renders terrain. Do NOT delete them
+// until those screens are GPU-armed. (The hot-path cost Tracy sees in
+// quadSetupTextures is the DRAWALPHA addTriangleBulk calls below, not SOLID.)
 //
 // Counter unit: per-quad (per-cluster), NOT per addTriangle call.
 static inline bool BeginLegacySolidCluster() {
@@ -254,9 +259,6 @@ static inline bool BeginLegacySolidCluster() {
 }
 static inline void EndLegacySolidCluster() {
     gos_terrain_indirect::Counters_AddLegacySolidSetupQuad();
-}
-static inline void NoteLegacyDetailOverlayCluster() {
-    gos_terrain_indirect::Counters_AddLegacyDetailOverlayQuad();
 }
 }  // namespace
 
@@ -500,19 +502,6 @@ static void enqueueTerrainMineState(TerrainQuad& quad)
 	}
 }
 
-static void enqueueCachedTerrainTriangles(const MapData::WorldQuadTerrainCacheEntry& entry)
-{
-	if(entry.terrainHandle!=0 && entry.terrainHandle != 0xffffffff) {
-		mcTextureManager->addTriangle(entry.terrainHandle,MC2_ISTERRAIN | MC2_DRAWSOLID);
-		mcTextureManager->addTriangle(entry.terrainHandle,MC2_ISTERRAIN | MC2_DRAWSOLID);
-		if (entry.terrainDetailHandle != 0xffffffff && (!entry.isCement() || entry.isAlpha()))
-		{
-			mcTextureManager->addTriangle(entry.terrainDetailHandle,MC2_ISTERRAIN | MC2_DRAWALPHA);
-			mcTextureManager->addTriangle(entry.terrainDetailHandle,MC2_ISTERRAIN | MC2_DRAWALPHA);
-		}
-	}
-}
-
 //---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
 // Class TerrainQuad
@@ -678,11 +667,6 @@ static void addTerrainTriangles(const TerrainRecipe& r)
 				mcTextureManager->addTriangleBulk(r.terrainHandle, MC2_ISTERRAIN | MC2_DRAWSOLID, 2);
 				EndLegacySolidCluster();
 			}
-			if (r.terrainDetailHandle != 0xffffffff) {
-				CostSplitDetailOverlayScope _csDetail;
-				mcTextureManager->addTriangleBulk(r.terrainDetailHandle, MC2_ISTERRAIN | MC2_DRAWALPHA, 2);
-				NoteLegacyDetailOverlayCluster();
-			}
 		}
 	}
 	else if (r.isAlpha)
@@ -693,11 +677,6 @@ static void addTerrainTriangles(const TerrainRecipe& r)
 				mcTextureManager->addTriangleBulk(r.terrainHandle, MC2_ISTERRAIN | MC2_DRAWSOLID, 2);
 				EndLegacySolidCluster();
 			}
-		}
-		if (r.terrainDetailHandle != 0xffffffff) {
-			CostSplitDetailOverlayScope _csDetail;
-			mcTextureManager->addTriangleBulk(r.terrainDetailHandle, MC2_ISTERRAIN | MC2_DRAWALPHA, 2);
-			NoteLegacyDetailOverlayCluster();
 		}
 	}
 	else // pure cement
@@ -797,11 +776,6 @@ void TerrainQuad::setupTextures (void)
 					mcTextureManager->addTriangle(terrainHandle,MC2_ISTERRAIN | MC2_DRAWSOLID);
 					EndLegacySolidCluster();
 					}
-					{ CostSplitDetailOverlayScope _csDetail;
-					mcTextureManager->addTriangle(terrainDetailHandle,MC2_ISTERRAIN | MC2_DRAWALPHA);
-					mcTextureManager->addTriangle(terrainDetailHandle,MC2_ISTERRAIN | MC2_DRAWALPHA);
-					NoteLegacyDetailOverlayCluster();
-					}
 					pz_emit_terrain_tris(vertices, uvMode, "terrain_quad_cluster_a", __FILE__, __LINE__);
 				}
 
@@ -880,11 +854,6 @@ void TerrainQuad::setupTextures (void)
 					mcTextureManager->addTriangle(terrainHandle,MC2_ISTERRAIN | MC2_DRAWSOLID);
 					mcTextureManager->addTriangle(terrainHandle,MC2_ISTERRAIN | MC2_DRAWSOLID);
 					EndLegacySolidCluster();
-					}
-					{ CostSplitDetailOverlayScope _csDetail;
-					mcTextureManager->addTriangle(terrainDetailHandle,MC2_ISTERRAIN | MC2_DRAWALPHA);
-					mcTextureManager->addTriangle(terrainDetailHandle,MC2_ISTERRAIN | MC2_DRAWALPHA);
-					NoteLegacyDetailOverlayCluster();
 					}
 					pz_emit_terrain_tris(vertices, uvMode, "terrain_quad_cluster_c", __FILE__, __LINE__);
 				}

@@ -137,7 +137,6 @@ bool IsCostSplitEnabled() {
 namespace {
 long long s_legacy_solid_setup_quads     = 0;
 long long s_indirect_solid_packed_quads  = 0;
-long long s_legacy_detail_overlay_quads  = 0;
 // PR2c Stage 0c — independent mine counters.
 long long s_legacy_mine_enqueue_quads    = 0;
 long long s_legacy_mine_draw_quads       = 0;
@@ -161,14 +160,12 @@ namespace gos_terrain_indirect {
 
 void Counters_AddLegacySolidSetupQuad()      { ++s_legacy_solid_setup_quads; }
 void Counters_AddIndirectSolidPackedQuad()   { ++s_indirect_solid_packed_quads; }
-void Counters_AddLegacyDetailOverlayQuad()   { ++s_legacy_detail_overlay_quads; }
 void Counters_AddLegacyMineEnqueueQuad()     { ++s_legacy_mine_enqueue_quads; }
 void Counters_AddLegacyMineDrawQuad()        { ++s_legacy_mine_draw_quads; }
 void Counters_AddIndirectMineDrawnCells(long long n) { s_indirect_mine_drawn_cells += n; }
 
 long long Counters_GetLegacySolidSetupQuads()    { return s_legacy_solid_setup_quads; }
 long long Counters_GetIndirectSolidPackedQuads() { return s_indirect_solid_packed_quads; }
-long long Counters_GetLegacyDetailOverlayQuads() { return s_legacy_detail_overlay_quads; }
 long long Counters_GetLegacyMineEnqueueQuads()   { return s_legacy_mine_enqueue_quads; }
 long long Counters_GetLegacyMineDrawQuads()      { return s_legacy_mine_draw_quads; }
 long long Counters_GetIndirectMineDrawnCells()   { return s_indirect_mine_drawn_cells; }
@@ -468,7 +465,7 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     s_paritySummaryMismatches,
                     Counters_GetLegacySolidSetupQuads(),
                     Counters_GetIndirectSolidPackedQuads(),
-                    Counters_GetLegacyDetailOverlayQuads(),
+                    0LL,  // Arc 2: counter retired; field kept for log schema stability (remove in Arc 5)
                     Counters_GetLegacyMineEnqueueQuads(),
                     Counters_GetLegacyMineDrawQuads(),
                     Counters_GetIndirectMineDrawnCells(),
@@ -507,7 +504,7 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     s_paritySummaryMismatches,
                     Counters_GetLegacySolidSetupQuads(),
                     Counters_GetIndirectSolidPackedQuads(),
-                    Counters_GetLegacyDetailOverlayQuads(),
+                    0LL,  // Arc 2: counter retired; field kept for log schema stability (remove in Arc 5)
                     Counters_GetLegacyMineEnqueueQuads(),
                     Counters_GetLegacyMineDrawQuads(),
                     Counters_GetIndirectMineDrawnCells(),
