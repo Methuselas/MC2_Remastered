@@ -40,6 +40,13 @@ namespace GameAdapters {
 namespace Mech {
 
 void beginMission() {
+    // Defensive: warn if endMission() was not called before the next begin.
+    if (s_mechs_alive > 0) {
+        std::fprintf(stderr,
+            "[RENDER_WORLD v1] WARN: event=mech_begin_without_end alive=%llu "
+            "(endMission was skipped)\n",
+            (unsigned long long)s_mechs_alive);
+    }
     s_mechs_registered   = 0;
     s_mechs_alive        = 0;
     s_mechs_destroyed    = 0;
