@@ -107,6 +107,97 @@ void retireRecord(uint32_t handleIndex)
     rec.generation = static_cast<uint16_t>(rec.generation + 1u);
 }
 
+// M1.5 T9 (OBJECT_ID_PASSIVE_CANARY): real-rendering validator.
+// Runs after the scene is stable (canary frame N) when both
+// MC2_OBJECT_ID_BUFFER=1 AND MC2_OBJECT_ID_BUFFER_SELFTEST=1.
+// Samples a deterministic pixel pattern; expects at least one valid
+// static-prop hit AND at least one invalid background hit; validates
+// every valid handle against s_objectRecords (generation match + alive).
+bool s_canaryRan = false;
+
+void runPassiveStableFrameCanary() {
+    if (s_canaryRan) return;
+    if (!envFlag("MC2_OBJECT_ID_BUFFER_SELFTEST")) return;
+    if (!RenderWorld::IsObjectIdBufferEnabled()) {
+        std::fprintf(stderr,
+            "[OBJECT_ID_SELFTEST v1] mode=passive_stable_frame result=SKIPPED reason=env_disabled\n");
+        s_canaryRan = true;
+        return;
+    }
+
+    gosPostProcess* pp = getGosPostProcess();
+    if (!pp) {
+        std::fprintf(stderr,
+            "[OBJECT_ID_SELFTEST v1] mode=passive_stable_frame result=SKIPPED reason=no_postprocess\n");
+        s_canaryRan = true;
+        return;
+    }
+
+    // Conservative deterministic sample pattern around an estimated
+    // screen center plus a far-corner background sentinel. Actual
+    // positions are not load-bearing as long as they hit the
+    // rendered region.
+    const int cx = 640;
+    const int cy = 360;
+    struct Sample { int x; int y; const char* role; };
+    const Sample samples[] = {
+        { cx,        cy,        "center"     },
+        { cx - 64,   cy,        "c-64x"      },
+        { cx + 64,   cy,        "c+64x"      },
+        { cx,        cy - 64,   "c-64y"      },
+        { cx,        cy + 64,   "c+64y"      },
+        { cx - 128,  cy - 128,  "c-128,-128" },
+        { cx + 128,  cy - 128,  "c+128,-128" },
+        { cx - 128,  cy + 128,  "c-128,+128" },
+        { cx + 128,  cy + 128,  "c+128,+128" },
+        { 8,         8,         "corner"     },
+    };
+
+    int validHits   = 0;
+    int invalidHits = 0;
+    bool genMismatch = false;
+    bool deadSlot    = false;
+    for (const auto& s : samples) {
+        RenderWorld::LookupResult res = RenderWorld::lookupAtPixel(s.x, s.y);
+        if (res.isValid) {
+            ++validHits;
+            // Double-check generation + alive for log clarity
+            // (lookupAtPixel already validates internally).
+            std::lock_guard<std::mutex> lk(s_objectRecordsMutex);
+            if (res.handle.index() < s_objectRecords.size()) {
+                const auto& rec = s_objectRecords[res.handle.index()];
+                if (rec.generation != static_cast<uint16_t>(res.handle.generation())) {
+                    genMismatch = true;
+                }
+                if ((rec.flags & RenderWorld::kRenderObjectFlagAlive) == 0u) {
+                    deadSlot = true;
+                }
+            }
+        } else {
+            ++invalidHits;
+        }
+    }
+
+    const char* result;
+    if (genMismatch) {
+        result = "GENERATION_MISMATCH";
+    } else if (deadSlot) {
+        result = "DEAD_SLOT_HIT";
+    } else if (validHits == 0) {
+        result = "NO_STATIC_PROP_HIT";
+    } else if (invalidHits == 0) {
+        result = "ALL_VALID_NO_BACKGROUND";
+    } else {
+        result = "PASS";
+    }
+
+    std::fprintf(stderr,
+        "[OBJECT_ID_SELFTEST v1] mode=passive_stable_frame result=%s "
+        "sampled=10 valid_hits=%d invalid_hits=%d\n",
+        result, validHits, invalidHits);
+    s_canaryRan = true;
+}
+
 } // namespace
 
 namespace RenderWorld {
@@ -234,6 +325,13 @@ uint32_t objectIdRawForStaticPropRecipe(int32_t recipeIndex) {
 
 void frameBannerTick() {
     const uint64_t f = s_frameCounter.fetch_add(1, std::memory_order_relaxed) + 1;
+
+    // M1.5 T9: passive canary fires once at frame 60 (after mission stable).
+    // Must run regardless of trace/summary gating below.
+    if (f == 60u) {
+        runPassiveStableFrameCanary();
+    }
+
     const bool perFrame = envFlag("MC2_RENDER_WORLD_TRACE");
     const bool summary  = (f % 600u) == 0u;
     if (!perFrame && !summary) return;
