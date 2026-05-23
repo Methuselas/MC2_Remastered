@@ -256,7 +256,6 @@ long long s_mineEnqueueNanosThisFrame   = 0;  // PR2c Stage 0c
 long long s_mineDrawNanosThisFrame      = 0;  // PR2c Stage 0c
 long long s_overlayNanosThisFrame       = 0;  // PR2b Stage 0b
 long long s_waterVertProjNanosThisFrame = 0;  // 1A-alt Slice 0
-long long s_lightingNanosThisFrame      = 0;  // 1A-alt Slice 0
 long long s_recipeCacheNanosThisFrame   = 0;  // 1A-alt Slice 0
 long long s_setupTotalNanosThisFrame    = 0;  // 1A-alt Slice 0 follow-up
 long long s_cacheResidentNanosThisFrame = 0;  // 1A-alt Slice 0 follow-up
@@ -267,7 +266,6 @@ long long s_mineEnqueueNanosTotal       = 0;  // PR2c Stage 0c
 long long s_mineDrawNanosTotal          = 0;  // PR2c Stage 0c
 long long s_overlayNanosTotal           = 0;  // PR2b Stage 0b
 long long s_waterVertProjNanosTotal     = 0;  // 1A-alt Slice 0
-long long s_lightingNanosTotal          = 0;  // 1A-alt Slice 0
 long long s_recipeCacheNanosTotal       = 0;  // 1A-alt Slice 0
 long long s_setupTotalNanosTotal        = 0;  // 1A-alt Slice 0 follow-up
 long long s_cacheResidentNanosTotal     = 0;  // 1A-alt Slice 0 follow-up
@@ -330,7 +328,6 @@ void CostSplit_AddMineEnqueueNanos(long long n)   { s_mineEnqueueNanosThisFrame 
 void CostSplit_AddMineDrawNanos(long long n)      { s_mineDrawNanosThisFrame     += n; }
 void CostSplit_AddOverlayNanos(long long n)       { s_overlayNanosThisFrame      += n; }
 void CostSplit_AddWaterVertProjNanos(long long n) { s_waterVertProjNanosThisFrame += n; }
-void CostSplit_AddLightingNanos(long long n)      { s_lightingNanosThisFrame      += n; }
 void CostSplit_AddRecipeCacheNanos(long long n)   { s_recipeCacheNanosThisFrame   += n; }
 void CostSplit_AddSetupTotalNanos(long long n)    { s_setupTotalNanosThisFrame   += n; }
 void CostSplit_AddCacheResidentNanos(long long n) { s_cacheResidentNanosThisFrame += n; }
@@ -346,7 +343,6 @@ void CostSplit_RollFrame() {
     s_mineDrawNanosTotal          += s_mineDrawNanosThisFrame;
     s_overlayNanosTotal           += s_overlayNanosThisFrame;
     s_waterVertProjNanosTotal     += s_waterVertProjNanosThisFrame;
-    s_lightingNanosTotal          += s_lightingNanosThisFrame;
     s_recipeCacheNanosTotal       += s_recipeCacheNanosThisFrame;
     s_setupTotalNanosTotal        += s_setupTotalNanosThisFrame;
     s_cacheResidentNanosTotal     += s_cacheResidentNanosThisFrame;
@@ -358,7 +354,6 @@ void CostSplit_RollFrame() {
     s_mineDrawNanosThisFrame       = 0;
     s_overlayNanosThisFrame        = 0;
     s_waterVertProjNanosThisFrame  = 0;
-    s_lightingNanosThisFrame       = 0;
     s_recipeCacheNanosThisFrame    = 0;
     s_setupTotalNanosThisFrame     = 0;
     s_cacheResidentNanosThisFrame  = 0;
@@ -371,7 +366,6 @@ long long CostSplit_GetMineEnqueueNanosTotal()     { return s_mineEnqueueNanosTo
 long long CostSplit_GetMineDrawNanosTotal()        { return s_mineDrawNanosTotal; }
 long long CostSplit_GetOverlayNanosTotal()         { return s_overlayNanosTotal; }
 long long CostSplit_GetWaterVertProjNanosTotal()   { return s_waterVertProjNanosTotal; }
-long long CostSplit_GetLightingNanosTotal()        { return s_lightingNanosTotal; }
 long long CostSplit_GetRecipeCacheNanosTotal()     { return s_recipeCacheNanosTotal; }
 long long CostSplit_GetSetupTotalNanosTotal()      { return s_setupTotalNanosTotal; }
 long long CostSplit_GetCacheResidentNanosTotal()   { return s_cacheResidentNanosTotal; }
@@ -421,7 +415,6 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
         const long long csMineDrwNs = csOn ? CostSplit_GetMineDrawNanosTotal()      : 0;
         const long long csOverlayNs = csOn ? CostSplit_GetOverlayNanosTotal()       : 0;
         const long long csWvpNs     = csOn ? CostSplit_GetWaterVertProjNanosTotal() : 0;
-        const long long csLightNs   = csOn ? CostSplit_GetLightingNanosTotal()      : 0;
         const long long csRecipeNs  = csOn ? CostSplit_GetRecipeCacheNanosTotal()   : 0;
         const long long csSetupNs   = csOn ? CostSplit_GetSetupTotalNanosTotal()    : 0;
         const long long csResNs     = csOn ? CostSplit_GetCacheResidentNanosTotal() : 0;
@@ -432,7 +425,6 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
         const long long csMineDrwPerFrame  = csOn ? csMineDrwNs / csFrames : 0;
         const long long csOverlayPerFrame  = csOn ? csOverlayNs / csFrames : 0;
         const long long csWvpPerFrame      = csOn ? csWvpNs     / csFrames : 0;
-        const long long csLightPerFrame    = csOn ? csLightNs   / csFrames : 0;
         const long long csRecipePerFrame   = csOn ? csRecipeNs  / csFrames : 0;
         const long long csSetupPerFrame    = csOn ? csSetupNs   / csFrames : 0;
         const long long csResPerFrame      = csOn ? csResNs     / csFrames : 0;
@@ -457,7 +449,6 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     "mine_draw_ns_per_frame=%lld "
                     "overlay_ns_per_frame=%lld "
                     "water_vert_proj_ns_per_frame=%lld "
-                    "lighting_ns_per_frame=%lld "
                     "recipe_cache_ns_per_frame=%lld "
                     "setup_total_ns_per_frame=%lld "
                     "cache_resident_ns_per_frame=%lld "
@@ -483,7 +474,6 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     csMineDrwPerFrame,
                     csOverlayPerFrame,
                     csWvpPerFrame,
-                    csLightPerFrame,
                     csRecipePerFrame,
                     csSetupPerFrame,
                     csResPerFrame,

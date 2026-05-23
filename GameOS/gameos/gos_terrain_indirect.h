@@ -109,7 +109,6 @@ void      CostSplit_AddOverlayNanos(long long n);
 //     addTerrainTriangles at quad.cpp:781-818. Expected small post
 //     Shape-C cache flip; instrumented to confirm.
 void      CostSplit_AddWaterVertProjNanos(long long n);
-void      CostSplit_AddLightingNanos(long long n);
 void      CostSplit_AddRecipeCacheNanos(long long n);
 // 1A-alt Slice 0 follow-up — close the "missing 8ms" gap between Tracy
 // outer-zone (~11ms) and sum of named sub-buckets (~3.5ms).
@@ -142,7 +141,6 @@ long long CostSplit_GetMineEnqueueNanosTotal();
 long long CostSplit_GetMineDrawNanosTotal();
 long long CostSplit_GetOverlayNanosTotal();
 long long CostSplit_GetWaterVertProjNanosTotal();
-long long CostSplit_GetLightingNanosTotal();
 long long CostSplit_GetRecipeCacheNanosTotal();
 long long CostSplit_GetSetupTotalNanosTotal();
 long long CostSplit_GetCacheResidentNanosTotal();
