@@ -76,6 +76,10 @@ void invalidate(int32_t regIdx);
 // Returns true iff regIdx is valid and not invalidated (count > 0).
 bool isReady(int32_t regIdx);
 
+// M1.5 C1 fix: typeID -> recipeIndex side-map accessor. Returns -1
+// for unknown typeID (or after invalidate()).
+int32_t getRecipeIndexForType(uint32_t typeID);
+
 // Called from txmmgr.cpp BEFORE GpuStaticPropBatcher::instance().flush().
 // For each live regIdx: reads multi->getCachedGpuLightIndex() (freshened by
 // CacheGpuLightData() in render()), patches lightDataIndex in a stack copy

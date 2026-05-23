@@ -84,6 +84,11 @@ void frameBannerTick();
 //   - C++ side of static-prop makeProgram() (gates the GLSL #ifdef prefix)
 bool IsObjectIdBufferEnabled();
 
+// M1.5 C1 fix: centralize Handle encoding. Returns 0 for invalid
+// recipeIndex (< 0). The producer in gos_static_prop_batcher.cpp
+// calls this with the result of GpuStaticPropRegistry::getRecipeIndexForType().
+uint32_t objectIdRawForStaticPropRecipe(int32_t recipeIndex);
+
 // M1.5: per-slot inspection record. Indexed by handle.index().
 // Always populated (M1 decision: mission/upsert-time RenderWorld
 // metadata; ~85 KB peak at tier1 mc2_24 = 2641 props). Slot recycle

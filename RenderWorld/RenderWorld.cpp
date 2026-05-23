@@ -220,6 +220,18 @@ bool IsObjectIdBufferEnabled() {
     return s_enabled;
 }
 
+uint32_t objectIdRawForStaticPropRecipe(int32_t recipeIndex) {
+    // M1.5 C1: centralized Handle bit encoding for the batcher
+    // producer. Mirrors the recipeIndex -> Handle convention used by
+    // upsertStaticProp/adoptStaticPropRecipe (generation=1, 20-bit
+    // index). Returns 0 (invalid raw) for negative recipeIndex.
+    if (recipeIndex < 0) return 0u;
+    return RenderCore::RenderObjectHandle::make(
+        static_cast<uint32_t>(recipeIndex) & 0x000FFFFFu,
+        1u
+    ).raw();
+}
+
 void frameBannerTick() {
     const uint64_t f = s_frameCounter.fetch_add(1, std::memory_order_relaxed) + 1;
     const bool perFrame = envFlag("MC2_RENDER_WORLD_TRACE");

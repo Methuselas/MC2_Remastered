@@ -11,6 +11,7 @@
 #include <array>
 #include <chrono>
 #include <set>
+#include <unordered_map>
 
 // MC_TextureManager singleton, defined in mclib/txmmgr.cpp.
 extern MC_TextureManager* mcTextureManager;
@@ -131,6 +132,14 @@ struct RecipeRange {
 
 static std::vector<GpuStaticPropInstance> s_recipes;
 static std::vector<RecipeRange>           s_recipeRanges;
+
+// M1.5 C1 fix: typeID -> recipeIndex side-map. Populated by
+// registerRecipe(); set to -1 on invalidate(). Lookup returns -1
+// if typeID is unknown. Last-write-wins: if two recipes register
+// with the same typeID (unusual but legal), the second overrides;
+// the first becomes unreachable via this map but remains addressable
+// via its returned recipeIndex.
+static std::unordered_map<uint32_t, int32_t> s_typeIDToRecipeIndex;
 
 // Per-frame list of regIdx values (one per visible tree).
 // markVisible() appends one regIdx per tree; flush() expands to leaves
@@ -296,6 +305,13 @@ int32_t registerRecipe(TG_MultiShape* multi,
     s_recipes.insert(s_recipes.end(), batch.begin(), batch.end());
     const int32_t regIdx = static_cast<int32_t>(s_recipeRanges.size());
     s_recipeRanges.push_back(rng);
+    // M1.5 C1: maintain typeID -> recipeIndex side-map for the
+    // batcher's objectIdRaw producer. All instances in `batch` share
+    // the same typeID in practice (one recipe = one multi-shape =
+    // one type); take the first.
+    if (!batch.empty()) {
+        s_typeIDToRecipeIndex[batch[0].typeID] = regIdx;
+    }
     SP_TRACE("register regIdx=%d first=%u count=%u", regIdx, rng.first, rng.count);
 
     // Pin every mcTextureNodeIndex referenced by this recipe's multi-shape.
@@ -350,6 +366,17 @@ void invalidate(int32_t regIdx) {
     if (regIdx < 0 || static_cast<uint32_t>(regIdx) >= s_recipeRanges.size()) return;
     RecipeRange& rng = s_recipeRanges[static_cast<uint32_t>(regIdx)];
     releasePinsForRange(rng);
+    // M1.5 C1: tombstone the side-map entry BEFORE zeroing s_recipes
+    // (typeID would otherwise be zeroed out by the loop below). Only
+    // tombstone if our regIdx still owns the mapping; a newer recipe
+    // with the same typeID may have taken over.
+    if (rng.count > 0 && rng.first < s_recipes.size()) {
+        const uint32_t typeID = s_recipes[rng.first].typeID;
+        auto it = s_typeIDToRecipeIndex.find(typeID);
+        if (it != s_typeIDToRecipeIndex.end() && it->second == regIdx) {
+            it->second = -1;
+        }
+    }
     for (uint32_t i = 0; i < rng.count; ++i)
         s_recipes[rng.first + i] = GpuStaticPropInstance{};
     SP_TRACE("invalidate regIdx=%d (was count=%u)", regIdx, rng.count);
@@ -366,6 +393,14 @@ bool isReady(int32_t regIdx) {
     if (!s_enabled) return false;
     if (regIdx < 0 || static_cast<uint32_t>(regIdx) >= s_recipeRanges.size()) return false;
     return s_recipeRanges[static_cast<uint32_t>(regIdx)].count > 0;
+}
+
+// M1.5 C1 fix: typeID -> recipeIndex side-map accessor. Returns -1
+// for unknown typeID (or after invalidate()).
+int32_t getRecipeIndexForType(uint32_t typeID) {
+    auto it = s_typeIDToRecipeIndex.find(typeID);
+    if (it == s_typeIDToRecipeIndex.end()) return -1;
+    return it->second;
 }
 
 void flush() {
