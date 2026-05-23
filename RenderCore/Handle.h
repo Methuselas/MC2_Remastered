@@ -11,9 +11,9 @@
 //   - Equality is bitwise; trivially hashable by uint32_t pun.
 //
 // Phase 1 documentary: M1 does not yet recycle slots (recipe path is
-// mission-lifetime). Generation defaults to 1 on first construction so
-// that the canonical invalid() (index=0, generation=0) cannot collide
-// with the first legitimate live handle.
+// mission-lifetime). Default-constructed Handle{} is invalid() (bits=0).
+// Allocators MUST issue generation>=1 for the first live handle so it
+// cannot collide with invalid().
 
 #pragma once
 
@@ -31,7 +31,7 @@ struct Handle {
 
     static constexpr Handle make(uint32_t index, uint32_t generation) noexcept {
         Handle h;
-        h.bits = (generation << 20) | (index & 0xFFFFFu);
+        h.bits = ((generation & 0xFFFu) << 20) | (index & 0xFFFFFu);
         return h;
     }
 
