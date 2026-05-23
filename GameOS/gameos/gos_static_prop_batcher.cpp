@@ -503,18 +503,29 @@ void loadProgramsIfNeeded() {
     // Plan v3.8 Step 7.1 — two prefixes. Coalesce variant requires
     // GL_ARB_shader_draw_parameters (gl_DrawIDARB / gl_BaseInstanceARB)
     // and gates legacy-only uniforms out via #define MC2_COALESCE 1.
-    static const char* kShaderPrefixLegacy   = "#version 430\n";
-    static const char* kShaderPrefixCoalesce =
+    // M1.5 M2 plan-review fix: both prefixes are runtime std::string
+    // builders so MC2_OBJECT_ID_BUFFER can append a #define conditionally.
+    // GLSL preprocessor does not inherit C++ build flags
+    // (memory/glsl_preprocessor_does_not_inherit_cpp_build_flags.md).
+    std::string legacyPrefix = "#version 430\n";
+    if (RenderWorld::IsObjectIdBufferEnabled()) {
+        legacyPrefix += "#define MC2_OBJECT_ID_BUFFER 1\n";
+    }
+
+    std::string coalescePrefix =
         "#version 430\n"
         "#extension GL_ARB_shader_draw_parameters : require\n"
         "#define MC2_COALESCE 1\n";
+    if (RenderWorld::IsObjectIdBufferEnabled()) {
+        coalescePrefix += "#define MC2_OBJECT_ID_BUFFER 1\n";
+    }
 
     // Step 7.3 — legacy program (unchanged identity / no rename).
     s_staticPropProgramObj = glsl_program::makeProgram(
         "static_prop",
         "shaders/static_prop.vert",
         "shaders/static_prop.frag",
-        kShaderPrefixLegacy);
+        legacyPrefix.c_str());
     if (!s_staticPropProgramObj || !s_staticPropProgramObj->is_valid()) {
         std::fprintf(stderr,
             "[GPUPROPS] failed to compile/link static_prop shader pair — "
@@ -568,7 +579,7 @@ void loadProgramsIfNeeded() {
             "static_prop_coalesce",
             "shaders/static_prop.vert",
             "shaders/static_prop.frag",
-            kShaderPrefixCoalesce);
+            coalescePrefix.c_str());
         if (coalesceObj && coalesceObj->is_valid()) {
             s_staticPropProgramCoalesce = coalesceObj->shp_;
 

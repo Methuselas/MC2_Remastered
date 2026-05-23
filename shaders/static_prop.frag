@@ -53,6 +53,11 @@ uniform sampler2D u_tex;
 uniform int       u_materialFlags;   // bit 0: ALPHA_TEST
 uniform int       u_maxLocalVertexID;
 uniform int       u_packetID;
+#ifdef MC2_OBJECT_ID_BUFFER
+// M1.5 non-coalesce path: handle bits uploaded as int (uniform-uint
+// crash trap, memory/uniform_uint_crash.md), cast to uint in body.
+uniform int       u_objectIdRaw;
+#endif
 #endif
 
 uniform float u_fogValue;        // 1.0 = clear, 0.0 = fully fogged
@@ -60,6 +65,11 @@ uniform int   u_debugAddrMode;   // 0 normal, 1 gradient, 2 hash, 3 white, 4 arg
 
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 GBuffer1;
+#ifdef MC2_OBJECT_ID_BUFFER
+// M1.5: per-pixel object handle. Emitted to GL_COLOR_ATTACHMENT2
+// (R32UI). Spec section 5; struct field renamed in Task 7.
+layout(location = 2) out uint v_objectId;
+#endif
 
 const int ALPHA_TEST_BIT = 1;
 
@@ -161,4 +171,14 @@ void main() {
 
     FragColor = c;
     GBuffer1  = rc_gbuffer1_screenShadowEligible(normalize(v_normal));
+#ifdef MC2_OBJECT_ID_BUFFER
+    // M1.5: emit handle.raw() to attachment-2. Alpha-tested fragments
+    // that discard() above skip this write naturally. Coalesce path
+    // sources from PerDrawData.entries[]; legacy path from u_objectIdRaw.
+#ifdef MC2_COALESCE
+    v_objectId = uint(perDraw_.entries[v_drawID + uint(u_drawIDBase)].objectIdRaw);
+#else
+    v_objectId = uint(u_objectIdRaw);
+#endif
+#endif
 }
