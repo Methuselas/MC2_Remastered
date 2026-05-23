@@ -28,6 +28,10 @@
 #include"missiongui.h"
 #endif
 
+// M1.6: IsStaticPropPickEnabled, lookupAtPixel, setLastStaticPropPick,
+// clearLastStaticPropPick, getLastStaticPropPick, IsObjectIdBufferEnabled.
+#include "../RenderWorld/RenderWorld.h"
+
 #ifndef OBJMGR_H
 #include"objmgr.h"
 #endif
@@ -1335,6 +1339,13 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 	bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick() && !lastUpdateDoubleClick);
 	bool rightClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isRightClick());
 
+	// M1.6 Q6 4-site observable: set to true immediately after each of
+	// the setSelected(true) writer sites this style body owns (Shift+
+	// additive site and plain-LMB-select site). Read at tail by
+	// tryStaticPropPick to short-circuit when the legacy path already
+	// claimed this click. Local scope; no leakage.
+	bool moverSelectedThisFrame = false;
+
 	// deal with the hot keys
 	if ( update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight ) )
 		return;
@@ -1456,10 +1467,18 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 							alreadyThere = true;
 					}
 					
-					if (!alreadyThere && !target->isDisabled())
+					if (!alreadyThere && !target->isDisabled()) {
 						target->setSelected( true );
-					else
+						// M1.6 Q6 site 1: legacy Shift+additive-select on
+						// friendly mover. Sets fallback gate; tail
+						// tryStaticPropPick short-circuits so Section 11
+						// invariant holds (no M1.6 log line in this case).
+						moverSelectedThisFrame = true;
+					} else {
+						// M1.6 Q6 RESOLVED: setSelected(false) toggle-off
+						// site MUST NOT set the gate per spec rationale.
 						target->setSelected( false );
+					}
 				}
 				else if ( controlGui.getRepair() && canRepair( target ) )
 				{
@@ -1480,11 +1499,16 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 						Mover* pMover = (Mover*)pTeam->getMover( i );
 						if (pMover->getCommander()->getId() == Commander::home->getId())
 						{
+							// M1.6 Q6 RESOLVED: clear-others setSelected(false)
+							// loop MUST NOT set the gate.
 							pMover->setSelected( false );
 						}
 					}
-					
+
 					target->setSelected( true );
+					// M1.6 Q6 site 2: legacy plain-LMB-select on friendly
+					// mover. Sets fallback gate.
+					moverSelectedThisFrame = true;
 				}
 				else
 					soundSystem->playDigitalSample( INVALID_GUI );
@@ -1505,7 +1529,21 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 		}
 	}
 
-}	
+	// M1.6: env-gated static-prop pick attempt. Runs AFTER the legacy
+	// mover-selection path above. Short-circuits internally when
+	// moverSelectedThisFrame == true (Section 11 + Q6/Q8 invariant) or
+	// when MC2_STATIC_PROP_PICK / MC2_OBJECT_ID_BUFFER are off.
+	{
+		const bool bLeftDouble = userInput->isLeftDoubleClick();
+		tryStaticPropPick(moverSelectedThisFrame,
+		                  shiftDn,
+		                  leftClicked,
+		                  bGui,
+		                  bLeftDouble,
+		                  mouseX,
+		                  mouseY);
+	}
+}
 void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrlDn, 
 											  bool bGui, bool lineOfSight, bool passable, 
 											  long moverCount, long nonMoverCount )
@@ -1528,6 +1566,13 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 
 	bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
 	bool rightClicked = (!userInput->isLeftDrag() && !userInput->wasRightDrag() && userInput->rightMouseReleased());
+
+	// M1.6 Q6 4-site observable: set to true immediately after each of
+	// the setSelected(true) writer sites this style body owns (Shift+
+	// additive site and plain-LMB-select site). Read at tail by
+	// tryStaticPropPick to short-circuit when the legacy path already
+	// claimed this click. Local scope; no leakage.
+	bool moverSelectedThisFrame = false;
 
 	// deal with the hot keys
 	if ( update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight ) )
@@ -1686,10 +1731,18 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 							alreadyThere = true;
 					}
 					
-					if (!alreadyThere && !target->isDisabled())
+					if (!alreadyThere && !target->isDisabled()) {
 						target->setSelected( true );
-					else
+						// M1.6 Q6 site 3: legacy Shift+additive-select on
+						// friendly mover (AOE style). Sets fallback gate;
+						// tail tryStaticPropPick short-circuits so
+						// Section 11 invariant holds.
+						moverSelectedThisFrame = true;
+					} else {
+						// M1.6 Q6 RESOLVED: setSelected(false) toggle-off
+						// site MUST NOT set the gate per spec rationale.
 						target->setSelected( false );
+					}
 				}
 				else if ( target->isMover() )
 				{
@@ -1698,13 +1751,18 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 						Mover* pMover = (Mover*)pTeam->getMover( i );
 						if (pMover->getCommander()->getId() == Commander::home->getId())
 						{
+							// M1.6 Q6 RESOLVED: clear-others setSelected(false)
+							// loop MUST NOT set the gate.
 							pMover->setSelected( false );
 						}
 					}
-					
+
 					target->setSelected( true );
+					// M1.6 Q6 site 4: legacy plain-LMB-select on friendly
+					// mover (AOE style). Sets fallback gate.
+					moverSelectedThisFrame = true;
 				}
-			}			
+			}
 		}
 		else
 		{	
@@ -1712,6 +1770,21 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 			controlGui.cancelInfo();
 			soundSystem->playDigitalSample( INVALID_GUI );
 		}
+	}
+
+	// M1.6: env-gated static-prop pick attempt. Runs AFTER the legacy
+	// mover-selection path above. Short-circuits internally when
+	// moverSelectedThisFrame == true (Section 11 + Q6/Q8 invariant) or
+	// when MC2_STATIC_PROP_PICK / MC2_OBJECT_ID_BUFFER are off.
+	{
+		const bool bLeftDouble = userInput->isLeftDoubleClick();
+		tryStaticPropPick(moverSelectedThisFrame,
+		                  shiftDn,
+		                  leftClicked,
+		                  bGui,
+		                  bLeftDouble,
+		                  mouseX,
+		                  mouseY);
 	}
 }
 
@@ -6086,3 +6159,84 @@ void MissionInterfaceManager::updateRollovers()
 }
 
 //--------------------------------------------------------------------------------------
+
+// M1.6: env-gated static-prop pick helper. See spec
+// docs/superpowers/specs/2026-05-23-renderworld-slice-m1-6-staticprop-pick-spec.md
+// Sections 3 (detection condition), 4 (fallback order), 5 (y-flip), 11
+// (forbidden behaviors), Q6 (4-site mover observable), Q8 (legacy
+// preservation invariant).
+void MissionInterfaceManager::tryStaticPropPick(bool moverSelectedThisFrame,
+                                                bool shiftDn,
+                                                bool leftClicked,
+                                                bool bGui,
+                                                bool bLeftDouble,
+                                                int  mouseX,
+                                                int  mouseY)
+{
+    // Fast path: env-OFF default. Two cached bools; no per-frame getenv.
+    if (!RenderWorld::IsStaticPropPickEnabled())
+        return;
+    // Defense-in-depth: substrate must also be on. Skipping here avoids
+    // the FBO-bind + glReadPixels stall on every dormant Shift+click.
+    if (!RenderWorld::IsObjectIdBufferEnabled())
+        return;
+
+    // Gesture gate: Shift + single LMB click, NOT inside the GUI region,
+    // NOT a double-click (legacy double-click path owns that gesture).
+    if (!shiftDn)        return;
+    if (!leftClicked)    return;
+    if (bGui)            return;
+    if (bLeftDouble)     return;
+
+    // Section 11 + Q6/Q8 invariant: the legacy path already consumed
+    // this click to select a mover. Emitting a log line here would
+    // shadow the legacy gesture and create a user-visible incoherence.
+    if (moverSelectedThisFrame)
+        return;
+
+    // Off-screen bounds guard (O3 lean: guard inside helper). Win32
+    // mouseX/Y are already clamped by the OS during in-game capture,
+    // but a defensive check costs one branch and avoids a silent
+    // glReadPixels at a clipped pixel returning a wrong-looking 0.
+    const int sw = Environment.screenWidth;
+    const int sh = Environment.screenHeight;
+    if (mouseX < 0 || mouseY < 0 || mouseX >= sw || mouseY >= sh)
+        return;
+
+    // Spec Section 5: Win32 origin top-left -> GL origin bottom-left.
+    const int glX = mouseX;
+    const int glY = sh - 1 - mouseY;
+
+    // Synchronous single-pixel readback. M1.5 lookupAtPixel internally
+    // validates against s_objectRecords (generation + alive).
+    RenderWorld::LookupResult res = RenderWorld::lookupAtPixel(glX, glY);
+
+    if (res.isValid) {
+        // Update RenderWorld debug state. Single-slot; latest wins.
+        RenderWorld::setLastStaticPropPick(res, mouseX, mouseY, glX, glY);
+        // Sample back the debug-state struct so the log can include the
+        // recipeIndex (LookupResult itself does not carry it; the
+        // recipe lookup is done inside setLastStaticPropPick).
+        const RenderWorld::StaticPropSelectionDebugState picked =
+            RenderWorld::getLastStaticPropPick();
+        // Unconditional hit log (spec Section 7).
+        std::fprintf(stderr,
+            "[STATIC_PROP_PICK v1] hit handle=%u idx=%u gen=%u "
+            "recipe=%d screen=(%d,%d) gl=(%d,%d)\n",
+            res.handle.bits,
+            (unsigned)res.handle.index(),
+            (unsigned)res.handle.generation(),
+            (int)picked.recipeIndex,
+            mouseX, mouseY, glX, glY);
+    } else {
+        // Q1 lean: clear the debug-state struct on empty Shift+click so
+        // a stale prior pick does not survive an empty-click gesture.
+        RenderWorld::clearLastStaticPropPick();
+        // Verbose miss log only when MC2_STATIC_PROP_PICK_DEBUG=1.
+        if (RenderWorld::IsStaticPropPickDebugEnabled()) {
+            std::fprintf(stderr,
+                "[STATIC_PROP_PICK v1] miss screen=(%d,%d) gl=(%d,%d)\n",
+                mouseX, mouseY, glX, glY);
+        }
+    }
+}

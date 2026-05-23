@@ -258,8 +258,24 @@ public:
 
 		void updateOldStyle(bool shiftDn, bool altDn, bool ctrlDn, bool bGui, 
 			bool lineOfSight, bool passable, long moverCount, long nonMoverCount );
-		void updateAOEStyle(bool shiftDn, bool altDn, bool ctrlDn, bool bGui, 
+		void updateAOEStyle(bool shiftDn, bool altDn, bool ctrlDn, bool bGui,
 			bool lineOfSight, bool passable, long moverCount, long nonMoverCount );
+
+		// M1.6: env-gated static-prop pick helper. Called from the tail of
+		// both updateOldStyle and updateAOEStyle when leftClicked && shiftDn
+		// && !bGui. Short-circuits when moverSelectedThisFrame == true so
+		// the legacy Shift+LMB additive-select gesture on a friendly mover
+		// is preserved verbatim (no M1.6 log line in that case). Emits
+		// [STATIC_PROP_PICK v1] hit/miss and updates RenderWorld debug state.
+		//
+		// Spec: docs/superpowers/specs/2026-05-23-renderworld-slice-m1-6-staticprop-pick-spec.md
+		void tryStaticPropPick(bool moverSelectedThisFrame,
+		                       bool shiftDn,
+		                       bool leftClicked,
+		                       bool bGui,
+		                       bool bLeftDouble,
+		                       int  mouseX,
+		                       int  mouseY);
 
 		static int saveHotKeys( FitIniFile& file );
 		static int loadHotKeys( FitIniFile& file );
