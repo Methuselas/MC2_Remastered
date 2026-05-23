@@ -2378,19 +2378,6 @@ long BldgAppearance::update (bool animate)
 			needsFullBakeNextFrame = false;
 		}
 
-		// Skip the legacy-blob-shadow per-frame transform when shadow maps are
-		// active. BldgAppearance::renderShadows() at line 2010 already early-
-		// returns under the same condition (gos_IsTerrainTessellationActive),
-		// meaning bldgShadowShape's transformed state is never consumed in this
-		// pipeline. Per-actor saving = 1 TransformMultiShape call per visible
-		// building per frame (~3 µs of pure waste).
-		if (bldgShadowShape && useShadows && !gos_IsTerrainTessellationActive())
-		{
-			bldgShadowShape->SetRecalcShadows(checkShadows);
-			bldgShadowShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-			bldgShadowShape->TransformMultiShape (&xlatPosition,&rot);
-		}
- 		
 		if ((turn > 3) && useShadows)
 			beenInView = true;
 			
@@ -4613,17 +4600,6 @@ long TreeAppearance::update (bool animate)
 
 		light->active = true;
 
-		// Skip the legacy-blob-shadow per-frame transform when shadow maps are
-		// active — same rationale as BldgAppearance::update. TreeAppearance::
-		// renderShadows() at line 4544 already early-returns under the same
-		// condition; treeShadowShape's transformed state is never consumed.
-		if (treeShadowShape && useShadows && !gos_IsTerrainTessellationActive())
-		{
-			treeShadowShape->SetRecalcShadows(checkShadows);
-			treeShadowShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-			treeShadowShape->TransformMultiShape (&xlatPosition,&rot);
-		}
-		
 		if ((turn > 3) && useShadows)
 			beenInView = true;
 	}
