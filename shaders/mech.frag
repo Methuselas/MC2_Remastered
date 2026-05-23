@@ -12,6 +12,7 @@
 //   Pass:           Mech
 //   Color0:         RGBA, opaque (alpha-test for ALPHA_TEST_BIT materials)
 //   GBuffer1:       rc_gbuffer1_screenShadowEligible
+//   GBuffer2:       rc_gbuffer2_objectIdU32  // M2.5 (#ifdef MC2_OBJECT_ID_BUFFER)
 //   StateContract:  depthTest=true, depthWrite=true, blend=Opaque, requiresMRT=true
 
 in vec2 v_uv;
@@ -35,6 +36,16 @@ uniform int u_debugMode;
 
 layout(location=0) out vec4 FragColor;
 layout(location=1) out vec4 GBuffer1;
+#ifdef MC2_OBJECT_ID_BUFFER
+// M2.5: per-pixel mech ObjectID. Emitted to GL_COLOR_ATTACHMENT2
+// (R32_UINT; M1.5 substrate). `flat in` matches mech.vert's
+// `flat out uint v_objectIdRaw`. Alpha-tested fragments that
+// discard() at line 56 skip this write naturally -- the attachment-2
+// pixel retains the clear value (0 = Handle::invalid()), correctly
+// classified as background under lookupAtPixel.
+flat in uint v_objectIdRaw;
+layout(location=2) out uint v_objectId;
+#endif
 
 const int ALPHA_TEST_BIT = 1;
 
@@ -74,4 +85,11 @@ void main() {
 
     FragColor = c;
     GBuffer1  = rc_gbuffer1_screenShadowEligible(normalize(v_normal));
+#ifdef MC2_OBJECT_ID_BUFFER
+    // M2.5: emit per-pixel RenderObjectHandle.raw(). Debug-mode pixels
+    // (u_debugMode 1..9 at lines 65-73) DO NOT discard; they still emit
+    // a valid handle, which is the correct substrate behavior (a
+    // lookupAtPixel on a debug-color pixel returns the actor's handle).
+    v_objectId = v_objectIdRaw;
+#endif
 }

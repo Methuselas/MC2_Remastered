@@ -2583,6 +2583,21 @@ long Mech3DAppearance::render (long depthFixup)
 				const uint8_t hazeByte  = (uint8_t)(hazeClamped * 255.0f + 0.5f);
 				desc.fogARGB        = (uint32_t)hazeByte << 24;
 
+				// M2.5 (Q3 unconditional): forward the M2-stored RenderWorld handle
+				// to the GPU. M2 stored the handle on Mech3DAppearance::mechRenderHandle
+				// via GameAdapters::Mech::registerMech. M2.5 emits the bits to
+				// attachment-2 via mech.frag under MC2_OBJECT_ID_BUFFER.
+				//
+				// CPU fill is UNCONDITIONAL per spec Q3: env-OFF still pays the
+				// load+store (< 10 ns per instance) so instance data shape stays
+				// stable; the env gate lives at the GLSL macro level. Realistic
+				// cost at mc2_24 (46 mechs): < 1 us per frame.
+				//
+				// Handle::invalid().raw() == 0 by definition, so any pre-register
+				// frame or actor that missed registration writes 0 -- correctly
+				// classified as "background" by RenderWorld::lookupAtPixel.
+				desc.objectIdRaw    = getRenderWorldHandle().raw();
+
 				gpuMechSubmitted = GpuMechBatcher::instance().submitActor(desc);
 				// Only count as a fallback if the GPU path was nominally
 				// enabled at this point. submitActor returns false on

@@ -27,6 +27,10 @@ layout(location=5) in vec2  a_tangentOct;    // GL_SHORT normalized; zero-fill f
 layout(location=6) in uint  a_aRGBLight;     // TG_TypeVertex::aRGBLight, BGRA packed
 
 // Per-instance SSBO (binding 0).
+// M2.5: 64 bytes (was 48). MUST mirror C++ GpuMechInstance at
+// GameOS/gameos/gos_mech_batcher.h:35. Trailing _padN slots keep the
+// std430 layout explicit so M3+ field adds (terrain chunk, VFX) take
+// named slots rather than silently consuming pad bytes.
 struct GpuMechInstance {
     uint  typeLodRecordIndex;
     uint  baseBoneOffset;
@@ -34,6 +38,10 @@ struct GpuMechInstance {
     uint  renderFlags;
     vec4  aRGBHighlight;
     vec4  fogRGB;
+    uint  objectIdRaw;
+    uint  _pad1;
+    uint  _pad2;
+    uint  _pad3;
 };
 layout(std430, binding=0) readonly buffer InstanceBuffer {
     GpuMechInstance instances[];
@@ -74,6 +82,15 @@ out vec4 v_highlightColor;
 // alpha byte of desc.fogARGB).
 out vec4 v_fogRGB;
 out vec3 v_normal;   // world-space for GBuffer1
+// M2.5: forward per-instance ObjectID to FS for the
+// layout(location=2) out uint emission under
+// #ifdef MC2_OBJECT_ID_BUFFER. `flat` qualifier MANDATORY: GL spec
+// FORBIDS linear interpolation of integer varyings; without `flat`
+// the program fails to link and [MECHBATCHER v1] event=shader_fail
+// fires -> GPU mech path goes silently dormant.
+#ifdef MC2_OBJECT_ID_BUFFER
+flat out uint v_objectIdRaw;
+#endif
 
 void main() {
     uint instIdx = uint(u_instanceBase) + uint(gl_InstanceID);
@@ -171,4 +188,10 @@ void main() {
     // mech3d.cpp; .rgb of inst.fogRGB is unused for mechs.
     v_fogRGB         = vec4(g_scene.fogColor.rgb, inst.fogRGB.a);
     v_normal         = worldNormal;
+#ifdef MC2_OBJECT_ID_BUFFER
+    // M2.5: forward per-instance ObjectID through the existing SSBO read;
+    // no extra memory traffic. Driver handles `flat` carry-through as one
+    // register write per provoking vertex.
+    v_objectIdRaw    = inst.objectIdRaw;
+#endif
 }

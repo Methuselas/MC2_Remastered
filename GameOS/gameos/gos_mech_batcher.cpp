@@ -1,5 +1,12 @@
 // GameOS/gameos/gos_mech_batcher.cpp — GPU mech batcher, Slice A.
 #include "gos_mech_batcher.h"
+// M2.5: IsObjectIdBufferEnabled() drives the GLSL prefix that gates the
+// mech.frag layout(location=2) write. Mirrors the include shipped by M1.5
+// at gos_static_prop_batcher.cpp:3. GameOS/ is outside the firewall
+// SCOPE_DIRS (scripts/check-include-firewall.sh:22) so this include is
+// not policed by the firewall script; reviewer-discipline gate only.
+// RenderWorld/RenderWorld.h is the PUBLIC header (no legacy/* reach).
+#include "../../RenderWorld/RenderWorld.h"
 #include "gos_mech_killswitch.h"
 #include "gos_static_prop_batcher.h"  // for STATIC_PROP_RING_FRAMES cross-check
 #include "gameos.hpp"                 // gos_InvalidateRenderStateCache
@@ -10,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <string>
 #include <vector>
 #include <map>
 #include <algorithm>
@@ -186,6 +194,22 @@ static bool     s_mechLightTraceInit   = false;
 static uint32_t s_lightCacheFullFrames = 0;  // monotonic; emitted on first overflow per frame
 static uint32_t s_eligibleActorsThisFrame = 0;
 static uint32_t s_fallbacksThisFrame[5]   = {};  // indexed by GpuMechFallbackReason
+
+// M2.5 (Q4): always-on per-mission counter of per-instance fills whose
+// objectIdRaw was non-zero. Incremented in flush()'s per-instance loop;
+// emitted on the per-mission [MECHBATCHER v1] event=mech_id_summary
+// line from onMapUnload(); reset in onMapLoad() and on emit.
+//
+// Per adversarial M1: the per-frame intermediate (s_gpuMechIdWritesThisFrame)
+// was dropped -- it had NO consumer (only the per-mission counter is read
+// by the emit). Direct per-mission accumulation removes three would-be
+// reset sites (onMapLoad, flush early-out, flush normal end at line 1365)
+// from M2.5's edit surface.
+//
+// Counter is ALWAYS-ON (NOT env-gated). When env-OFF the handle bits are
+// still written into inst.objectIdRaw (Q3 unconditional CPU fill), so
+// the counter tracks writer volume regardless of env state.
+static uint64_t s_gpuMechIdWritesThisMission = 0;
 static uint64_t s_allowedLateRegEvents    = 0;
 static uint64_t s_disallowedLateRegEvents = 0;
 static bool     s_lastFailWasLateReg      = false;
@@ -219,8 +243,18 @@ static void loadProgramsIfNeeded() {
     if (s_programLoadTried) return;
     s_programLoadTried = true;
 
+    // M2.5: GLSL preprocessor does NOT inherit C++ build flags
+    // (memory/glsl_preprocessor_does_not_inherit_cpp_build_flags.md).
+    // Build the prefix as a std::string and append the
+    // MC2_OBJECT_ID_BUFFER macro definition when the env gate is on,
+    // mirroring gos_static_prop_batcher.cpp:510-521.
+    std::string mechPrefix = "#version 430\n";
+    if (RenderWorld::IsObjectIdBufferEnabled()) {
+        mechPrefix += "#define MC2_OBJECT_ID_BUFFER 1\n";
+    }
+
     s_mechProgramObj = glsl_program::makeProgram(
-        "mech", "shaders/mech.vert", "shaders/mech.frag", "#version 430\n");
+        "mech", "shaders/mech.vert", "shaders/mech.frag", mechPrefix.c_str());
 
     if (!s_mechProgramObj || !s_mechProgramObj->is_valid()) {
         std::fprintf(stderr,
@@ -336,6 +370,8 @@ GpuMechBatcher& GpuMechBatcher::instance() {
 }
 
 void GpuMechBatcher::onMapLoad() {
+    // M2.5 (Q4): per-mission writer counter; emitted on onMapUnload.
+    s_gpuMechIdWritesThisMission = 0;
     s_typeLodRecords.clear();
     s_packets.clear();
     s_typeLodIndex.clear();
@@ -357,6 +393,14 @@ void GpuMechBatcher::onMapLoad() {
 }
 
 void GpuMechBatcher::onMapUnload() {
+    // M2.5 (Q4 + Q6 amendment 2): always-on per-mission writer summary.
+    // Surfaces gpu_mech_id_writes to the M2.6 readiness decision rule.
+    // Always-on (NOT env-gated): M2.6 needs this signal regardless of
+    // MC2_OBJECT_ID_BUFFER state to size the MLR-vs-GPU split.
+    std::fprintf(stderr,
+        "[MECHBATCHER v1] event=mech_id_summary gpu_mech_id_writes=%llu\n",
+        (unsigned long long)s_gpuMechIdWritesThisMission);
+    s_gpuMechIdWritesThisMission = 0;
     for (uint32_t i = 0; i < MECH_RING_FRAMES; ++i) {
         if (s_fence[i]) {
             glClientWaitSync(s_fence[i], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
@@ -1100,6 +1144,16 @@ void GpuMechBatcher::flush() {
             inst.renderFlags        = d.renderFlags;
             unpack(d.highlightARGB, inst.aRGBHighlight);
             unpack(d.fogARGB,       inst.fogRGB);
+            // M2.5 (Q3 unconditional): carry the RenderWorld handle through
+            // to the SSBO. Env-OFF: GLSL macro gates out the FS write, so
+            // the value is never read by the GPU.
+            inst.objectIdRaw        = d.objectIdRaw;
+            // M2.5 (Q4): count non-zero writes for per-mission observability.
+            // Direct per-mission accumulation (no per-frame intermediate;
+            // per adversarial M1 the per-frame counter had no consumer).
+            if (d.objectIdRaw != 0u) {
+                ++s_gpuMechIdWritesThisMission;
+            }
             instDst[instHead++]     = inst;
         }
         drawCalls.push_back(dc);

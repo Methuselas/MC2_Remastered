@@ -30,7 +30,7 @@ static_assert(offsetof(GpuMechVertex, boneWeights) == 36, "boneWeights offset");
 static_assert(offsetof(GpuMechVertex, tangentOct)  == 40, "tangentOct offset");
 static_assert(offsetof(GpuMechVertex, aRGBLight)   == 44, "aRGBLight offset");
 
-// Per-instance GPU record — std430, 48 bytes.
+// Per-instance GPU record — std430, 64 bytes (M2.5: was 48 bytes).
 // CHANGING THIS STRUCT REQUIRES CHANGING mech.vert IN LOCKSTEP.
 struct alignas(16) GpuMechInstance {
     uint32_t typeLodRecordIndex;  // resolved Mech3DAppearanceType × LOD record index
@@ -39,9 +39,19 @@ struct alignas(16) GpuMechInstance {
     uint32_t renderFlags;         // bit 0: ALPHA_TEST, bit 1: lightsOut, bit 2: isHighlighted
     float    aRGBHighlight[4];    // forwarded to FS as v_highlightColor
     float    fogRGB[4];           // forwarded to FS as v_fogRGB
+    // M2.5: RenderObjectHandle.raw() emitted by mech.frag as
+    //   layout(location=2) out uint v_objectId
+    // under #ifdef MC2_OBJECT_ID_BUFFER. 0 = Handle::invalid()
+    // (clear-value match -- background read by lookupAtPixel).
+    uint32_t objectIdRaw;         // 48
+    // Per Q2 resolved: generic _padN names; only the consumed slot is
+    // named. Future slices (M3 terrain chunk, M4 VFX) rename in place.
+    uint32_t _pad1;               // 52
+    uint32_t _pad2;               // 56
+    uint32_t _pad3;               // 60
 };
-// Layout: 16 (4 × uint32) + 16 (vec4) + 16 (vec4) = 48 bytes.
-static_assert(sizeof(GpuMechInstance) == 48,
+// Layout: 16 (4 × uint32) + 16 (vec4) + 16 (vec4) + 16 (uint32 + 3*pad) = 64 bytes.
+static_assert(sizeof(GpuMechInstance) == 64,
               "GpuMechInstance size must match std430 GLSL struct");
 static_assert(offsetof(GpuMechInstance, typeLodRecordIndex) ==  0);
 static_assert(offsetof(GpuMechInstance, baseBoneOffset)     ==  4);
@@ -49,6 +59,7 @@ static_assert(offsetof(GpuMechInstance, lightDataIndex)     ==  8);
 static_assert(offsetof(GpuMechInstance, renderFlags)        == 12);
 static_assert(offsetof(GpuMechInstance, aRGBHighlight)      == 16);
 static_assert(offsetof(GpuMechInstance, fogRGB)             == 32);
+static_assert(offsetof(GpuMechInstance, objectIdRaw)        == 48);
 
 // Bone matrix: 4 explicit rows to avoid GLSL column-major confusion.
 // Upload rows as row0..row3; GLSL mat4(row0,row1,row2,row3) fills COLUMNS from
@@ -103,6 +114,13 @@ struct GpuMechSubmitDesc {
     uint32_t                    renderFlags;
     uint32_t                    highlightARGB;
     uint32_t                    fogARGB;
+    // M2.5: RenderObjectHandle.raw() for this actor's mech handle
+    // (M2 storage). 0 = Handle::invalid() = no ObjectID write at this
+    // pixel (treated identically to legacy-path fallback). CPU-side
+    // carrier is UNCONDITIONAL per Q3; the consumer is GLSL-macro-gated.
+    // Source: mech3d.cpp submit site reads
+    //   appearance.getRenderWorldHandle().raw()  [mech3d.h:487].
+    uint32_t                    objectIdRaw;
 };
 
 // Fallback accounting reasons (used in MC2_MECH_BATCHER_STATS output).
