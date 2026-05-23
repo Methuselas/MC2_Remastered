@@ -1,8 +1,22 @@
 # RenderWorld Slice M2.5 -- Mech ObjectID Substrate Implementation Plan
 
-**PLAN STATUS: REVISED -- adversarial CONDITIONAL-PASS findings applied**
+**PLAN STATUS: READY FOR EXECUTE -- external-review fixes applied (C1+M1+M2+M3+m1+m2+m3)**
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+---
+
+## External review fixes applied
+
+External greybeard review verdict: EXECUTE WITH FIXES. All 7 findings applied verbatim:
+
+1. **C1 (CRITICAL):** Moved `extern "C" uint64_t consumeAndResetMlrMechDraws();` declaration from inside `GpuMechBatcher::onMapUnload()` body to file scope in `gos_mech_batcher.cpp` (top-of-file alongside other engine includes). Definition stays at file scope in `mclib/mech3d.cpp`. Added `#include <cstdint>` to `mclib/mech3d.cpp` (grep-confirmed absent; `uint64_t` not currently used in that TU). `GameOS/gameos/gos_mech_batcher.cpp` already pulls `uint64_t` transitively (8 existing uses); plan documents the include site. T5 Step 4 + commit message updated to reflect file-scope declaration + body-only call shape.
+2. **M1 (MAJOR):** Normalized split summary log shape as the OFFICIAL output everywhere. Removed all wording suggesting the two counters might share one banner line. Validation gates in T7 require BOTH adjacent lines (mlr first, then gpu_mech_id). Split justified explicitly: the two emitters live in different TUs (`gos_mech_batcher.cpp` for `event=mech_id_summary`; `gos_mech_batcher.cpp` also for `event=mlr_mech_summary` after consuming the MLR counter via cross-TU getter into `mclib/mech3d.cpp`).
+3. **M2 (MAJOR):** Added new shader-output uniqueness gate after T4: `Select-String` for `layout(location=2) out` across `shaders/*.frag` must return EXACTLY two files (`static_prop.frag` + `mech.frag`). Added companion `flat` qualifier gate for `mech.vert`/`mech.frag` integer varying.
+4. **M3 (MAJOR):** T2 Step 2 now explicitly grep-checks for `#include <string>` in `gos_mech_batcher.cpp` before adding, and adds it if absent. (`mechPrefix` is `std::string`.)
+5. **m1 (MINOR):** File-structure note no longer claims `RenderWorld/RenderWorld.h` is modified. Forward declaration stays in `RenderWorld.cpp` next to `RunGameplayPickSelfTest`. No public header change.
+6. **m2 (MINOR):** Verified `event=shader_ok` at `gos_mech_batcher.cpp:274` is ALWAYS-ON (emitted inside `loadProgramsIfNeeded()` after a successful link; NOT trace-gated). **Choice: option (a) is unnecessary** -- the gate works as written. Plan documents the verified line number so executor can re-grep.
+7. **m3 (MINOR):** Gate 5 wording verified substrate-only: Shift+click on a mech must NOT produce a `[STATIC_PROP_PICK v1] hit` line (mover-first short-circuit + M2.6 owns mech pick). Wording already correct; rechecked and tightened.
 
 **Goal:** Close the M2 chain: emit `Mech3DAppearance::mechRenderHandle.raw()` to `GL_COLOR_ATTACHMENT2` via `mech.frag` under `#ifdef MC2_OBJECT_ID_BUFFER`, plus measurable writer / MLR-fallback observability counters and a synthetic mech-ID self-test.
 
@@ -61,7 +75,9 @@ Every citation in the spec was re-grepped at plan-write time. One small drift fi
 
 ### Citation drift fixes (load-bearing)
 
-1. **`[MECHBATCHER v1] event=summary` is GATED.** Spec §6 + Q4 + Q6 amendment 2 imply the counters live on the existing summary line. Code reality: that line at `gos_mech_batcher.cpp:1336-1340` is wrapped in `if (s_mechBatcherTrace)` at line 1329, where `s_mechBatcherTrace = (getenv("MC2_MECH_BATCHER_STATS") != nullptr)`. Counters mandated by Q4 (`gpu_mech_id_writes`) and Q6 amendment 2 (`mlr_mech_draws`) are required to be **always-on per-mission** so the M2.6 decision rule has live data. **Plan choice:** emit a NEW always-on `event=mech_id_summary` line from `GpuMechBatcher::onMapUnload()` (per-mission lifecycle hook, already present), carrying both counters. This satisfies spec Q6 amendment 2 verbatim "either both counters on the same banner line, or split across two log lines... acceptable as long as both counters appear on the same banner line." Counter accumulation is per-frame in `flush()`; emission is per-mission in `onMapUnload()` (mirrors the M2 adapter `[RENDER_WORLD v1] event=mech_end_mission` shape).
+1. **`[MECHBATCHER v1] event=summary` is GATED.** Spec §6 + Q4 + Q6 amendment 2 imply the counters live on the existing summary line. Code reality: that line at `gos_mech_batcher.cpp:1336-1340` is wrapped in `if (s_mechBatcherTrace)` at line 1329, where `s_mechBatcherTrace = (getenv("MC2_MECH_BATCHER_STATS") != nullptr)`. Counters mandated by Q4 (`gpu_mech_id_writes`) and Q6 amendment 2 (`mlr_mech_draws`) are required to be **always-on per-mission** so the M2.6 decision rule has live data. **Plan choice (external-review fix M1: split-line is OFFICIAL):** emit TWO new always-on stderr lines from `GpuMechBatcher::onMapUnload()` (per-mission lifecycle hook, already present), one per counter. The two emitters live in different TUs: GPU writes are counted in `gos_mech_batcher.cpp` itself; MLR draws are counted in `mclib/mech3d.cpp` and consumed via an `extern "C"` getter (`consumeAndResetMlrMechDraws()`) at the unload hook. Split-line shape is sanctioned by spec Q6 amendment 2 "split across two log lines if MLR draws live in a different TU". The two lines emit adjacent (mlr first, then gpu_mech_id) so log-scrapers see them together. Single-banner shape is explicitly NOT supported in M2.5; do not collapse to one line.
+
+    Always-on `event=shader_ok prog=N` exists at `gos_mech_batcher.cpp:274` (verified during external review m2): emitted inside `loadProgramsIfNeeded()` after the successful link, NOT trace-gated. T7 Gate 2 can require its presence directly.
 
 2. **`mech.frag` is 77 lines total.** Spec §4.4.2 shows the body write inserted after `GBuffer1 = ...` at line 76. File ends at line 77 with `}`. Body inserts go BEFORE the closing brace, not after line 76 unconditionally -- verified verbatim in Task 4 Step 3.
 
@@ -90,9 +106,8 @@ Every citation in the spec was re-grepped at plan-write time. One small drift fi
 - `shaders/mech.vert` -- grow GLSL `GpuMechInstance` struct in lockstep (lines 30-37); add gated `flat out uint v_objectIdRaw` declaration; add gated `v_objectIdRaw = inst.objectIdRaw;` write at end of `main()`.
 - `shaders/mech.frag` -- add gated `flat in uint v_objectIdRaw;` + `layout(location=2) out uint v_objectId;`; add gated `v_objectId = v_objectIdRaw;` body write.
 - `mclib/mech3d.cpp` -- one unconditional assignment at the M2 submit site `desc.objectIdRaw = getRenderWorldHandle().raw();` (Q3).
-- `mclib/mech3d.cpp` (MLR fallback) -- increment `s_mlrMechDrawsThisMission` counter at `mechShape->Render(true)` site (line 2608); declared in same TU, emitted from a per-mission hook surfaced via the same `[MECHBATCHER v1] event=mech_id_summary` line through a shared global or split line. Implemented as split line: `[MECHBATCHER v1] event=mlr_mech_summary mlr_mech_draws=M` emitted from `Mech3DAppearance::endMission()` -- avoids a cross-TU singleton.
-- `RenderWorld/RenderWorld.cpp` -- add `RunMechObjectIdSelfTest()` (Q1); wire into `init()` after `RunGameplayPickSelfTest()`.
-- `RenderWorld/RenderWorld.h` -- forward-declare `RunMechObjectIdSelfTest()` in anonymous translation-unit pattern (mirrors M2-pre `RunGameplayPickSelfTest` forward decl at `RenderWorld.cpp:40`); no public header change.
+- `mclib/mech3d.cpp` (MLR fallback) -- increment `s_mlrMechDrawsThisMission` counter at `mechShape->Render(true)` site (line 2608). Counter is declared file-scope; an `extern "C" uint64_t consumeAndResetMlrMechDraws()` getter at file scope is consumed by `GpuMechBatcher::onMapUnload()` (different TU). **The split-line shape is OFFICIAL** (per external-review fix M1): two separate stderr lines emit at mission unload, mlr first then gpu_mech_id, justified by the two counters living in different TUs. Add `#include <cstdint>` to this TU (grep-verified absent; `uint64_t` not currently used here).
+- `RenderWorld/RenderWorld.cpp` -- add `RunMechObjectIdSelfTest()` (Q1); add forward declaration adjacent to existing `RunGameplayPickSelfTest` decl at line 40 (`.cpp`-local; mirrors M2-pre pattern); wire into `init()` after `RunGameplayPickSelfTest()`. **No public header change** -- `RenderWorld/RenderWorld.h` is NOT modified (external-review fix m1).
 - `A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/CLAUDE.md` -- add M2.5 SHIPPED to Active campaigns; add MLR-fallback note to Known issues (verbatim Q6 amendment 1 paragraph).
 
 **Created files:** none.
@@ -283,9 +298,17 @@ Select-String -Path "A:\Games\mc2-opengl-src\GameOS\gameos\gos_mech_batcher.cpp"
 
 Expected: `loadProgramsIfNeeded` at line 218; `makeProgram` call at line 222; first 20 includes show no `RenderWorld/RenderWorld.h`. If `RenderWorld.h` already appears, STOP -- the spec recon discrepancy has been resolved by another slice and the add below is a duplicate.
 
-- [ ] **Step 2: Add `#include "../../RenderWorld/RenderWorld.h"` to `gos_mech_batcher.cpp`**
+- [ ] **Step 2: Add `#include "../../RenderWorld/RenderWorld.h"` (and `<string>` if absent) to `gos_mech_batcher.cpp`**
 
-Locate the existing `#include` block at the top of `gos_mech_batcher.cpp`. Add the new include adjacent to other engine-side includes (the .cpp already includes `gos_mech_batcher.h`, `tgl.h`, and friends; add the RenderWorld include in the same engine block, NOT inside the system-include block).
+External-review fix M3: T2 Step 3 below converts the shader prefix to `std::string`. Grep first:
+
+```powershell
+Select-String -Path "A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\GameOS\gameos\gos_mech_batcher.cpp" -Pattern "#include <string>" | Select-Object LineNumber, Line
+```
+
+If this returns zero hits, add `#include <string>` to the system-includes band at the top of the TU. If it already appears, skip.
+
+Locate the existing `#include` block at the top of `gos_mech_batcher.cpp`. Add the new RenderWorld include adjacent to other engine-side includes (the .cpp already includes `gos_mech_batcher.h`, `tgl.h`, and friends; add the RenderWorld include in the same engine block, NOT inside the system-include block).
 
 **Existing top-of-file include band (snippet):**
 
@@ -786,6 +809,30 @@ Expected: tier1 5/5 PASS. `[MECHBATCHER v1] event=shader_ok prog=N` appears (man
 
 If env-ON shows `event=shader_fail` while env-OFF shows `event=shader_ok`: the `flat` qualifier is missing on either the vert `out` or the frag `in`. Re-verify Task 4 Steps 2 and 4.
 
+- [ ] **Step 9.5: Shader-output uniqueness allowlist gate (external-review fix M2)**
+
+M1.5's gate expected ONLY `static_prop.frag` to declare `layout(location=2) out`. M2.5 intentionally ADDS `mech.frag` -- the allowlist must now show exactly two files:
+
+```powershell
+Select-String -Path "A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\shaders\*.frag" `
+  -Pattern "layout\s*\(\s*location\s*=\s*2\s*\)\s*out"
+```
+
+Expected matches: EXACTLY two files:
+- `shaders/static_prop.frag`
+- `shaders/mech.frag`
+
+If any third file appears, STOP and report. No other shader is expected to write attachment 2 in M2.5.
+
+Companion `flat` qualifier check (the `flat` qualifier is MANDATORY on integer varyings; without it the program fails to link silently):
+
+```powershell
+Select-String -Path "A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\shaders\mech.vert","A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\shaders\mech.frag" `
+  -Pattern "flat .*uint .*objectId"
+```
+
+Expected: one `flat out` in `mech.vert`, one `flat in` in `mech.frag`. (Both inside `#ifdef MC2_OBJECT_ID_BUFFER` blocks.)
+
 - [ ] **Step 10: COMMIT (atomic lockstep: Tasks 1+2+3+4)**
 
 Stage all the artifacts touched by Tasks 1-4 together:
@@ -851,7 +898,7 @@ EOF
 
 - Modify: `mclib/mech3d.cpp` -- counter + emit at MLR fallback site (line 2608) + mission lifecycle hook.
 
-The MLR draw site lives in `mclib/mech3d.cpp` at line 2608 (`mechShape->Render(true)`). The counter is always-on (NOT env-gated) and surfaces per-mission via a split `[MECHBATCHER v1] event=mlr_mech_summary` log line. Per Q6 amendment 2: "either both counters on the same banner line, or split across two log lines if MLR draws live in a different TU -- either shape is acceptable as long as both counters surface per mission." Split-line shape is correct here: MLR draws live in `mclib/mech3d.cpp`, GPU writes live in `GameOS/gameos/gos_mech_batcher.cpp`.
+The MLR draw site lives in `mclib/mech3d.cpp` at line 2608 (`mechShape->Render(true)`). The counter is always-on (NOT env-gated) and surfaces per-mission via a split `[MECHBATCHER v1] event=mlr_mech_summary` log line. **Per external-review fix M1: split-line is the OFFICIAL and only shape.** The two counters live in different TUs (MLR draws in `mclib/mech3d.cpp`; GPU writes in `GameOS/gameos/gos_mech_batcher.cpp`), so each emits its own stderr line. Spec Q6 amendment 2 sanctions split-line for exactly this case ("split across two log lines if MLR draws live in a different TU"). Do not collapse to a single banner line in M2.5.
 
 - [ ] **Step 1: Re-grep MLR fallback site**
 
@@ -916,17 +963,18 @@ If no mission-scoped hook exists in `mech3d.cpp`, emit on `Mech3DAppearance::des
 			}
 ```
 
-- [ ] **Step 4: Emit per-mission summary**
+- [ ] **Step 4: Emit per-mission summary (extern "C" declaration at FILE SCOPE)**
 
 The chosen emit site is `Mech3DAppearance::destroy()` is per-actor and wrong scope; the right scope is "per mission load/unload." `GpuMechBatcher::onMapUnload()` already fires once per mission. Cross-TU coupling is acceptable here because the counter is for observability only.
 
-**Implementation:** declare the counter `extern` in a header-less seam, OR use the simpler shape -- expose a getter:
+**External-review fix C1 (CRITICAL):** the `extern "C"` declaration MUST live at file scope, not inside a function body. Language-linkage declarations inside function bodies are non-portable. The DEFINITION (in `mclib/mech3d.cpp`) stays at file scope; the DECLARATION (in `gos_mech_batcher.cpp`) also lives at file scope, near the other top-of-file includes / forward decls.
 
-Add at the file-scope position adjacent to the counter declaration:
+**Step 4a: definition at file scope in `mclib/mech3d.cpp`** (adjacent to the counter added in Step 2):
 
 ```cpp
 // M2.5: getter for the per-mission MLR draw count, callable from
-// GpuMechBatcher::onMapUnload() through a forward declaration there.
+// GpuMechBatcher::onMapUnload() in a different TU. Declaration in
+// gos_mech_batcher.cpp is at file scope per external-review C1.
 extern "C" uint64_t consumeAndResetMlrMechDraws() {
     const uint64_t v = s_mlrMechDrawsThisMission;
     s_mlrMechDrawsThisMission = 0;
@@ -934,15 +982,36 @@ extern "C" uint64_t consumeAndResetMlrMechDraws() {
 }
 ```
 
-Then in `GameOS/gameos/gos_mech_batcher.cpp` at the top of `onMapUnload()` (immediately before the M2.5 mech_id_summary emit added in Task 3 Step 6), add:
+**Step 4b: file-scope declaration in `GameOS/gameos/gos_mech_batcher.cpp`** (place in the engine-include / forward-decl band near the top of the TU, after the includes; this is the SAME TU that already has the new `RenderWorld/RenderWorld.h` include from T2 Step 2):
+
+```cpp
+// M2.5 (external-review C1): file-scope forward declaration of the
+// MLR-side per-mission counter getter, defined in mclib/mech3d.cpp.
+// Language-linkage declarations must be at file scope -- not inside a
+// function body. Avoids a new header.
+extern "C" uint64_t consumeAndResetMlrMechDraws();
+```
+
+If `gos_mech_batcher.cpp` does not already pull `<cstdint>` (grep-verified at plan-write time: `uint64_t` already used 8 times in this TU, transitively visible), no new include is required here. If a future build error appears citing `uint64_t` as undeclared, add `#include <cstdint>` to this TU as well.
+
+For `mclib/mech3d.cpp` (counter DEFINITION TU): `uint64_t` is NOT currently used in that file (grep-verified). Add `#include <cstdint>` to the system-includes band at the top of `mclib/mech3d.cpp` BEFORE adding the counter or getter:
+
+```powershell
+Select-String -Path "A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\mclib\mech3d.cpp" -Pattern "#include <cstdint>" | Select-Object LineNumber, Line
+```
+
+If zero hits, add `#include <cstdint>` adjacent to other system includes (`<stdio.h>` / `<stdint.h>` cluster, whichever shape the file uses).
+
+**Step 4c: body-only call in `GpuMechBatcher::onMapUnload()`** (immediately before the M2.5 mech_id_summary emit added in Task 3 Step 6):
 
 ```cpp
     // M2.5 (Q6 amendment 2): consume the MLR-side per-mission counter
     // and emit on its own [MECHBATCHER v1] event=mlr_mech_summary line.
-    // The split-line shape is sanctioned by spec Q6 amendment 2.
-    // Forward-declared extern "C" because the counter lives in
-    // mclib/mech3d.cpp (different TU); avoids a new header.
-    extern "C" uint64_t consumeAndResetMlrMechDraws();
+    // The split-line shape is OFFICIAL (external-review M1): the two
+    // counters live in different TUs and MUST emit on two adjacent
+    // lines (mlr first, then gpu_mech_id). Do not collapse to one line.
+    // consumeAndResetMlrMechDraws is forward-declared at file scope
+    // (external-review C1) -- declaration is NOT inside this function body.
     const uint64_t mlrDraws = consumeAndResetMlrMechDraws();
     std::fprintf(stderr,
         "[MECHBATCHER v1] event=mlr_mech_summary mlr_mech_draws=%llu\n",
@@ -990,9 +1059,14 @@ feat(renderworld): M2.5 T5 -- mlr_mech_draws counter (Q6 amendment 2)
 
 Always-on per-mission counter at the MLR/CPU-fallback site
 (mclib/mech3d.cpp:2608 mechShape->Render(true)). Emitted on its own
-[MECHBATCHER v1] event=mlr_mech_summary line (split-line shape sanctioned
-by spec Q6 amendment 2). Cross-TU coupling via extern "C" getter
-consumeAndResetMlrMechDraws() consumed from GpuMechBatcher::onMapUnload().
+[MECHBATCHER v1] event=mlr_mech_summary line (split-line shape is OFFICIAL
+per external-review M1 -- the two counters live in different TUs and emit
+on adjacent lines, mlr first then gpu_mech_id). Cross-TU coupling via
+extern "C" getter consumeAndResetMlrMechDraws(): DEFINITION at file scope
+in mclib/mech3d.cpp; DECLARATION at file scope in gos_mech_batcher.cpp
+(external-review C1 -- language-linkage decls inside function bodies are
+non-portable; only the call lives in onMapUnload()).
+mclib/mech3d.cpp gains #include <cstdint> (uint64_t not previously used).
 
 NOT env-gated: the M2.6 readiness decision rule (spec §12 Q6 amendment 3)
 consults this value regardless of MC2_OBJECT_ID_BUFFER state. If tier1
@@ -1367,7 +1441,7 @@ Expected: `gpu_mech_id_writes > 0` on mc2_03 (combat mission with multiple mechs
 - If `mlr_mech_draws > 0` on any tier1 mission: M2.6 MUST preserve mover-first legacy fallback for MLR mechs; cannot claim full mech GPU-pick coverage.
 - If `mlr_mech_draws == 0` across all 5 missions for ~3 ship cycles: gap is provably-rare-in-practice; M2.6 can ship without the conditional fallback warning.
 
-### Gate 4: Firewall clean
+### Gate 4: Firewall clean + shader-output uniqueness (external-review M2)
 
 - [ ] **Step 5: Verify firewall**
 
@@ -1376,6 +1450,21 @@ sh A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/scripts/check-inclu
 ```
 
 Expected: exit 0. `GameOS/` is outside SCOPE_DIRS so the new `RenderWorld/RenderWorld.h` include in `gos_mech_batcher.cpp` is not policed by the script (Q5). Reviewer-discipline gate: confirm visually that the include is to the PUBLIC `RenderWorld/RenderWorld.h` header (no `RenderWorld/legacy/*` reach), that the consumer uses only `IsObjectIdBufferEnabled()`, and that the engine -> engine direction holds.
+
+- [ ] **Step 5.5: Re-run shader-output uniqueness gate (T4 Step 9.5 -- external-review M2)**
+
+```powershell
+Select-String -Path "A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\shaders\*.frag" `
+  -Pattern "layout\s*\(\s*location\s*=\s*2\s*\)\s*out"
+Select-String -Path "A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\shaders\mech.vert","A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\shaders\mech.frag" `
+  -Pattern "flat .*uint .*objectId"
+```
+
+Expected (M2.5 allowlist):
+- `layout(location=2) out` matches in EXACTLY two files: `shaders/static_prop.frag`, `shaders/mech.frag`.
+- `flat .* uint .* objectId` matches once in `mech.vert` (as `flat out`) and once in `mech.frag` (as `flat in`).
+
+Any third frag declaring attachment 2 = STOP and report (allowlist update required out of band). Missing `flat` qualifier = silent shader-link failure under env-ON (would surface as `event=shader_fail` in Gate 2; this static grep catches it before runtime).
 
 ### Gate 5: User-driven canary -- Shift+click on a mech (M2.5 substrate-only behavior)
 
@@ -1392,10 +1481,14 @@ $env:MC2_STATIC_PROP_PICK = $null
 ```
 
 User actions during the 60s window:
-1. Shift+click on a static prop. Expected: `[STATIC_PROP_PICK v1] hit ...` log line (M1.6 behavior; M2.5 does NOT alter this).
-2. Shift+click on a mech. Expected: NO `[STATIC_PROP_PICK v1] hit ...` line (the M2-pre spine's mover-first gate short-circuits). M2.6 will add the `kind == Mech` branch; M2.5 ships substrate only.
+1. Shift+click on a static prop. Expected: `[STATIC_PROP_PICK v1] hit ...` log line (M1.6 behavior; M2.5 does NOT alter this). Proves no regression vs M1.6.
+2. Shift+click on a mech. Expected: NO `[STATIC_PROP_PICK v1] hit ...` line (the M2-pre spine's mover-first gate short-circuits; mech pixels carry a Mech-kind handle, not a StaticProp-kind handle). Selection behavior MUST NOT change: mech click is still a no-op or falls through to mover-first legacy. M2.6 will add the `kind == Mech` branch; M2.5 ships substrate only (external-review m3 gate).
 
-Post-run inspection: confirm `[STATIC_PROP_PICK v1] hit` lines exist (proves the spine still works) AND `[MECH_OBJECT_ID_SELFTEST v1] result=PASS` exists (proves the substrate is inspectable).
+Post-run inspection (substrate-only proof):
+- `[STATIC_PROP_PICK v1] hit` lines exist for static-prop clicks (proves the spine still works; no M1.6 regression).
+- ZERO `[STATIC_PROP_PICK v1] hit` lines from mech clicks (substrate-only; mech pick is M2.6).
+- `[MECH_OBJECT_ID_SELFTEST v1] result=PASS` exists (proves the substrate is inspectable).
+- No selection behavior changes (legacy mover-first behavior preserved under Shift+click-on-mech).
 
 ### Gate 6: CLAUDE.md update
 
@@ -1529,7 +1622,7 @@ Total commit count: 4. Each commit is independently revertable (T5 / T6 / T7 do 
 
 ---
 
-PLAN STATUS: REVISED -- adversarial CONDITIONAL-PASS findings applied
+PLAN STATUS: READY FOR EXECUTE -- external-review fixes applied (C1+M1+M2+M3+m1+m2+m3)
 
 ## Commit-message-ready summary of what the plan delivers
 
