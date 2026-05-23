@@ -240,6 +240,7 @@ extern PriorityQueuePtr	openList;
 #include "gos_profiler.h"
 #include "gos_static_prop_batcher.h"
 #include "gos_static_prop_registry.h"  // Stage 3.C: init()/destroy()
+#include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 Task 13
 #include "gos_mech_batcher.h"
 
 // Phase-timing hooks implemented in GameOS/gameos/gameosmain.cpp.
@@ -1691,6 +1692,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	GpuStaticPropBatcher::instance().onMapLoad();
 	GpuMechBatcher::instance().onMapLoad();
 	GpuStaticPropRegistry::init();   // Stage 3.C
+	GameAdapters::StaticProp::beginMission();  // M1 Task 13
 
 	neverEndingStory = false;
 	invulnerableON = false;
@@ -3277,6 +3279,7 @@ void Mission::destroy (bool initLogistics)
 	GpuStaticPropBatcher::instance().onMapUnload();
 	GpuMechBatcher::instance().onMapUnload();
 	GpuStaticPropRegistry::destroy(); // Stage 3.C
+	GameAdapters::StaticProp::endMission();    // M1 Task 13
 
 	//---------------------------------------------------------------
 	// Shutdown the Mission Interface
