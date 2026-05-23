@@ -107,6 +107,18 @@ bool IsStaticPropPickDebugEnabled();
 // calls this with the result of GpuStaticPropRegistry::getRecipeIndexForType().
 uint32_t objectIdRawForStaticPropRecipe(int32_t recipeIndex);
 
+// M2: kind tag for the unified handle/record table. Every RenderObjectHandle
+// issued by this module has an associated kind stored in the record.
+// The kind disambiguates static props from mechs (and future kinds) when
+// a caller examines a handle returned by lookupAtPixel or any other API.
+//
+// Values are stable across releases (never renumber; only append).
+enum class RenderObjectKind : uint8_t {
+    StaticProp = 0,
+    Mech       = 1,
+    // Future: Terrain=2, Vfx=3, Overlay=4
+};
+
 // M1.5: per-slot inspection record. Indexed by handle.index().
 // Always populated (M1 decision: mission/upsert-time RenderWorld
 // metadata; ~85 KB peak at tier1 mc2_24 = 2641 props). Slot recycle
@@ -127,6 +139,13 @@ struct RenderObjectRecord {
     uint32_t drawPacketIndex  = 0xFFFFFFFFu; // M1.5 sentinel
     uint32_t pathReasonCode   = 0;          // M1.5 sentinel: 0 = m1.5-static-prop-indirect
     uint32_t gameObjectId     = 0;          // optional engine-side cookie
+    // M2: kind tag. Populated by registerMech (kind=Mech) and upsertStaticProp
+    // (kind=StaticProp). lookupAtPixel callers MUST check kind before consuming
+    // kind-specific fields.
+    RenderObjectKind kind     = RenderObjectKind::StaticProp;  // default for M1 legacy slots
+    // M2: opaque debug cookie. Stored for log output; never dereferenced by engine.
+    // For mechs: reinterpret_cast<uintptr_t>(&mech3DAppearance). For static props: 0.
+    uintptr_t debugCookie     = 0;
 };
 
 static constexpr uint16_t kRenderObjectFlagAlive = 1u << 0;
@@ -191,5 +210,53 @@ void clearLastStaticPropPick();
 // other field. Returns a copy (the struct is tiny; avoids exposing
 // internal mutex state to callers).
 StaticPropSelectionDebugState getLastStaticPropPick();
+
+// M2: mech spawn descriptor. Engine types only -- no Mech3DAppearance*,
+// no Mech3DAppearanceType*. Firewall: spec section 12 + M2 spec section 10.
+//
+// mechTypeId: 0 in M2 by design (type identity deferred to M2.5).
+//   RenderWorld MUST NOT dereference it.
+//
+// gameObjectId: opaque uint32_t; the engine-side echo of a game-side
+//   identifier. Never dereferenced by RenderWorld. Used for future
+//   object-ID correlation in M2.5.
+//
+// debugCookie: opaque uintptr_t; never dereferenced by engine. Carries
+//   the raw Mech3DAppearance* echo for log output in MC2_RENDER_WORLD_TRACE
+//   builds. RenderWorld stores it in the record but never casts or follows it.
+struct RenderMechDesc {
+    uint32_t  mechTypeId;    // 0 in M2; real value deferred to M2.5
+    uint32_t  gameObjectId;
+    uintptr_t debugCookie;
+};
+
+// M2: register a mech with RenderWorld. Returns a new RenderObjectHandle
+// on success; invalid() on failure (OOM or internal error).
+//
+// MUST NOT be called upsert-style (no overwrite of an existing handle).
+// This is spawn-only: if the caller's handle is already valid, it means
+// a prior destroyMech was missed. The adapter asserts on this in debug.
+//
+// Route-only in M2: no new GPU path. RenderWorld records the handle in
+// the unified s_objectRecords table with kind=Mech; the handle is valid
+// from this call until destroyMech.
+RenderCore::RenderObjectHandle registerMech(RenderMechDesc desc);
+
+// M2: retire a mech handle. No-op on invalid() input.
+//
+// AUTHORITATIVE handle retirement path. After this call the handle is
+// invalid; any subsequent use of the old handle with lookupAtPixel or
+// any future API returns invalid/false.
+//
+// endMission() force-clears remaining live mech records after logging
+// a warning; correctness of per-mech destroy during normal play must
+// not depend on endMission() being called.
+void destroyMech(RenderCore::RenderObjectHandle h);
+
+// M2: force-clear all live mech records in the unified table. Called by
+// GameAdapters::Mech::endMission() after logging a leaked-handle warning.
+// Marks every record with kind=Mech and alive=true as alive=false,
+// bumps generation, and decrements s_mechs_alive_rw for each.
+void clearAllMechRecords();
 
 } // namespace RenderWorld
