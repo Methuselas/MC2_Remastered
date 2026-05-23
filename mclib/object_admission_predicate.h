@@ -95,6 +95,14 @@ void logSelectionPickingScreenDelta(const Stuff::Vector3D& world,
                                     float bypassScreenX, float bypassScreenY,
                                     float dxPx, float dyPx);
 
+// F5 T2: rate-limited (first ~64 events) screen.xy parity logger for
+// projectForScreenXY Compare mode. Tracks legacy-vs-bypass screen pixel
+// disagreements >1px.
+void logScreenXYScreenDelta(const Stuff::Vector3D& world,
+                            const Stuff::Vector4D& legacyScreen,
+                            float bypassScreenX, float bypassScreenY,
+                            float dxPx, float dyPx);
+
 //---------------------------------------------------------------------------
 // Track A2 - effect admission mode (sibling of the Track A1 object mode).
 // Same clipSpaceFrustumAdmit predicate; separate env flag so the two slices
@@ -165,3 +173,23 @@ void selectionPickingPredicate_init();
 
 // Read the active mode. Lazy-initializes; startup ordering is non-load-bearing.
 SelectionPickingPredicateMode selectionPickingPredicateMode();
+
+//---------------------------------------------------------------------------
+// F5 T2 - screen-XY predicate mode for projectForScreenXY.
+// 16 callers consume screen.xy for HUD/UI positioning; pixel parity is
+// load-bearing. Default: Legacy. Flip to Modern only after user-validated
+// HUD parity on mc2_10 + tier1.
+// Env var: MC2_SCREENXY_PREDICATE_MODE (Modern flips; default Legacy).
+//---------------------------------------------------------------------------
+
+enum class ScreenXYPredicateMode {
+    Legacy,    // screen.xy from legacy projectZ
+    Modern,    // screen.xy via projectModernClipGL + viewport remap (same as F5 T1)
+};
+
+// One-time probe (idempotent). Reads env MC2_SCREENXY_PREDICATE_MODE
+// (Modern flips; default Legacy).
+void screenXYPredicate_init();
+
+// Read the active mode. Lazy-initializes; startup ordering is non-load-bearing.
+ScreenXYPredicateMode screenXYPredicateMode();

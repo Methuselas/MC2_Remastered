@@ -812,17 +812,72 @@ class Camera
 			return ret;
 		}
 
-		// Cosmetic screen-XY oracle — bool discarded; screen.xy consumed.
-#pragma warning(push)
-#pragma warning(disable: 4996)
+		// Cosmetic screen-XY oracle -- bool discarded by all 16 callers; only
+		// screen.xy consumed for HUD/UI positioning. F5 T2: optional Bypass
+		// honors projectModernClipGL + viewport remap (same convention as
+		// selection_picking from F5 T1). Pixel parity is mandatory; Compare
+		// mode validates pre-flip. Default: Legacy (conservative).
+		// Env MC2_SCREENXY_PREDICATE_MODE=Modern + MC2_PROJECTZ_BYPASS_MODE=Compare
+		// logs pixel-delta events when bypass screen.xy disagrees >1px.
 		inline bool projectForScreenXY (Stuff::Vector3D& point,
 		                                Stuff::Vector4D& screen) {
 			const int64_t _f3_sxy_t0 = ::mc2_cpu_proj_cost::screenxy_begin_ns();
-			bool ret = projectZ(point, screen);
+
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (screenXYPredicateMode() == ScreenXYPredicateMode::Modern);
+			bool ret;
+
+			if (isModern && bypassMode == ProjectZBypassMode::Bypass) {
+				// Bypass with screen.xy via viewport remap.
+				// gos_GetViewport: fullscreen -> vmx=width, vmy=height, vax=0, vay=0.
+				// Y-flip: screen.y = vay + (1 - (ndc.y*0.5+0.5)) * vmy
+				ModernClipResult r = projectModernClipGL(point);
+				ret = r.admit;
+				if (r.clip.w > 1e-4f) {
+					float vmx, vmy, vax, vay;
+					gos_GetViewport(&vmx, &vmy, &vax, &vay);
+					float ndcX = r.clip.x / r.clip.w;
+					float ndcY = r.clip.y / r.clip.w;
+					float ndcZ = r.clip.z / r.clip.w;
+					screen.x = vax + (ndcX * 0.5f + 0.5f) * vmx;
+					screen.y = vay + (1.0f - (ndcY * 0.5f + 0.5f)) * vmy;
+					screen.z = ndcZ;
+					screen.w = r.clip.w;
+				} else {
+					screen.x = 0.0f; screen.y = 0.0f; screen.z = 0.0f; screen.w = r.clip.w;
+				}
+			} else {
+#pragma warning(push)
+#pragma warning(disable: 4996)
+				LegacyProjectionResult result;
+				bool legacyAccepted = projectZ(point, screen, &result);
+#pragma warning(pop)
+				if (isModern) {
+					ret = clipSpaceFrustumAdmit(result.rawClip);
+					if (bypassMode == ProjectZBypassMode::Compare) {
+						ModernClipResult b = projectModernClipGL(point);
+						if (b.clip.w > 1e-4f) {
+							float vmx, vmy, vax, vay;
+							gos_GetViewport(&vmx, &vmy, &vax, &vay);
+							float ndcX = b.clip.x / b.clip.w;
+							float ndcY = b.clip.y / b.clip.w;
+							float bypassScreenX = vax + (ndcX * 0.5f + 0.5f) * vmx;
+							float bypassScreenY = vay + (1.0f - (ndcY * 0.5f + 0.5f)) * vmy;
+							float dxPx = fabsf(bypassScreenX - screen.x);
+							float dyPx = fabsf(bypassScreenY - screen.y);
+							if (dxPx > 1.0f || dyPx > 1.0f) {
+								logScreenXYScreenDelta(point, screen, bypassScreenX, bypassScreenY, dxPx, dyPx);
+							}
+						}
+					}
+				} else {
+					ret = legacyAccepted;
+				}
+			}
+
 			::mc2_cpu_proj_cost::screenxy_end_ns(_f3_sxy_t0);
 			return ret;
 		}
-#pragma warning(pop)
 
 		// Debug overlays — LAB_ONLY / drawTerrainGrid-gated draw paths.
 		// F3 modernized via clipSpaceFrustumAdmit when MC2_DEBUG_OVERLAY_PREDICATE_MODE=Modern.

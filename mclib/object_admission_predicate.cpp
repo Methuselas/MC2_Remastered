@@ -252,6 +252,58 @@ void logSelectionPickingScreenDelta(const Stuff::Vector3D& world,
     std::fflush(stdout);
 }
 
+namespace {
+
+bool                s_sxyInitialized = false;
+ScreenXYPredicateMode s_sxyMode = ScreenXYPredicateMode::Legacy;
+
+const char* sxyModeLabel(ScreenXYPredicateMode m) {
+    return (m == ScreenXYPredicateMode::Modern) ? "modern" : "legacy";
+}
+
+} // namespace
+
+void screenXYPredicate_init() {
+    if (s_sxyInitialized) return;
+    const char* env = std::getenv("MC2_SCREENXY_PREDICATE_MODE");
+    if (env && std::strcmp(env, "Modern") == 0) {
+        s_sxyMode = ScreenXYPredicateMode::Modern;
+    } else {
+        s_sxyMode = ScreenXYPredicateMode::Legacy;  // default: conservative
+    }
+    s_sxyInitialized = true;
+    std::printf("[OBJECT_ADMISSION_PREDICATE v1] event=mode_select wrapper=screenxy mode=%s\n",
+                sxyModeLabel(s_sxyMode));
+    std::fflush(stdout);
+}
+
+ScreenXYPredicateMode screenXYPredicateMode() {
+    // Lazy init - startup ordering is non-load-bearing.
+    screenXYPredicate_init();
+    return s_sxyMode;
+}
+
+void logScreenXYScreenDelta(const Stuff::Vector3D& world,
+                            const Stuff::Vector4D& legacyScreen,
+                            float bypassScreenX, float bypassScreenY,
+                            float dxPx, float dyPx)
+{
+    // F5 T2: rate-limited to first ~64 events (single global counter for this logger).
+    static int s_count = 0;
+    if (s_count >= 64) return;
+    ++s_count;
+    std::printf("[OBJECT_ADMISSION_PREDICATE v1] event=screenxy_screen_delta "
+                "world=(%.3f,%.3f,%.3f) "
+                "legacyScreen=(%.2f,%.2f) "
+                "bypassScreen=(%.2f,%.2f) "
+                "dxPx=%.3f dyPx=%.3f\n",
+                world.x, world.y, world.z,
+                legacyScreen.x, legacyScreen.y,
+                bypassScreenX, bypassScreenY,
+                dxPx, dyPx);
+    std::fflush(stdout);
+}
+
 bool clipSpaceFrustumAdmit(const Stuff::Vector4D& rawClip) {
     // IMPORTANT — MC2 clip.w sign convention (see memory/clip_w_sign_trap.md):
     // MC2's Stuff worldToClip matrix produces clip.w of EITHER sign for visible
