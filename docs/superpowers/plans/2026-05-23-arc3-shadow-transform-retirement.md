@@ -8,6 +8,8 @@
 
 **Tech Stack:** C++ only. No new files. One file modified: `mclib/bdactor.cpp`. Build: `cmake --build build64 --config RelWithDebInfo`. Smoke: `run_smoke.py`.
 
+**Shell context:** Bash blocks (grep, cp, diff, git) run in Git Bash / MSYS2. PowerShell blocks (py -3 run_smoke.py) run in PowerShell. Do not mix shells within a step.
+
 **Spec:** `docs/superpowers/specs/2026-05-23-building-tree-shadow-dead-write-retirement.md`
 
 ---
@@ -107,7 +109,7 @@ Replace with:
 					bldgShadowShape->SetLightList(eye->getWorldLights(), eye->getNumLights());
 					bldgShadowShape->TransformMultiShape(&xlatPosition, &rot);
 				}
-				if ((s_bldg_candidates % 500) == 0)
+				if (s_bldg_candidates == 1 || (s_bldg_candidates % 500) == 0)
 					fprintf(stderr, "[ARC3_PROBE v1] bldg candidates=%lld xform_entries=%lld tess_true=%lld tess_false=%lld\n",
 					        s_bldg_candidates, s_bldg_xform_entries, s_bldg_tess_true, s_bldg_tess_false);
 			}
@@ -152,7 +154,7 @@ Replace with:
 					treeShadowShape->SetLightList(eye->getWorldLights(), eye->getNumLights());
 					treeShadowShape->TransformMultiShape(&xlatPosition, &rot);
 				}
-				if ((s_tree_candidates % 500) == 0)
+				if (s_tree_candidates == 1 || (s_tree_candidates % 500) == 0)
 					fprintf(stderr, "[ARC3_PROBE v1] tree candidates=%lld xform_entries=%lld tess_true=%lld tess_false=%lld\n",
 					        s_tree_candidates, s_tree_xform_entries, s_tree_tess_true, s_tree_tess_false);
 			}
@@ -250,7 +252,7 @@ Find and remove this entire block (the probe comment + braces + contents):
 					bldgShadowShape->SetLightList(eye->getWorldLights(), eye->getNumLights());
 					bldgShadowShape->TransformMultiShape(&xlatPosition, &rot);
 				}
-				if ((s_bldg_candidates % 500) == 0)
+				if (s_bldg_candidates == 1 || (s_bldg_candidates % 500) == 0)
 					fprintf(stderr, "[ARC3_PROBE v1] bldg candidates=%lld xform_entries=%lld tess_true=%lld tess_false=%lld\n",
 					        s_bldg_candidates, s_bldg_xform_entries, s_bldg_tess_true, s_bldg_tess_false);
 			}
@@ -282,7 +284,7 @@ Find and remove this entire block:
 					treeShadowShape->SetLightList(eye->getWorldLights(), eye->getNumLights());
 					treeShadowShape->TransformMultiShape(&xlatPosition, &rot);
 				}
-				if ((s_tree_candidates % 500) == 0)
+				if (s_tree_candidates == 1 || (s_tree_candidates % 500) == 0)
 					fprintf(stderr, "[ARC3_PROBE v1] tree candidates=%lld xform_entries=%lld tess_true=%lld tess_false=%lld\n",
 					        s_tree_candidates, s_tree_xform_entries, s_tree_tess_true, s_tree_tess_false);
 			}
@@ -403,13 +405,28 @@ If vehicle or mech blob shadows are visible in any tier1 mission and the user re
 git add mclib/bdactor.cpp
 ```
 
-- [ ] **Step 2: Verify staged diff contains only the two deletions**
+- [ ] **Step 2: Verify staged diff contains only deletions (no additions)**
+
+Check for unexpected additions across the entire diff (not just first 40 lines):
 
 ```bash
-git diff --cached mclib/bdactor.cpp | grep "^[+-]" | grep -v "^---\|^+++" | head -40
+git diff --cached -- mclib/bdactor.cpp \
+  | grep "^+" | grep -v "^+++" \
+  && echo "FAIL: unexpected additions remain — probe not fully removed" \
+  || echo "OK: no additions in staged diff"
 ```
 
-Expected: only removals (lines beginning with `-`). No additions. If any `+` lines appear (other than the `---`/`+++` headers), the probe was not fully cleaned up — go back to Task 2.
+Expected output: `OK: no additions in staged diff`
+
+If "FAIL" appears, the probe was not fully removed. Go back to Task 2 and check for any remaining `[ARC3_PROBE v1]` or `fprintf` lines.
+
+Then inspect the removals to confirm both blocks are gone:
+
+```bash
+git diff --cached -- mclib/bdactor.cpp | grep "^-" | grep -v "^---"
+```
+
+Expected: lines from both the building comment+if block and the tree comment+if block — no other removals.
 
 - [ ] **Step 3: Commit with probe results**
 
@@ -419,9 +436,9 @@ Use the probe counter values recorded in Task 1 Step 8. Replace `N_BLDG` and `N_
 git commit -m "$(cat <<'EOF'
 retire dead building/tree blob shadow transform blocks (Arc 3)
 
-ARC3_PROBE result:
-  bldg candidates=N_BLDG xform_entries=0 tess_true=N_BLDG tess_false=0
-  tree candidates=N_TREE xform_entries=0 tess_true=N_TREE tess_false=0
+ARC3_PROBE result (sampled; first + every-500 log lines):
+  bldg candidates>=N_BLDG xform_entries=0 tess_true>=N_BLDG tess_false=0
+  tree candidates>=N_TREE xform_entries=0 tess_true>=N_TREE tess_false=0
 Conclusion: dead-code cleanup only; no runtime CPU win claimed.
 
 Deletes two guarded if-blocks in BldgAppearance::update() and
