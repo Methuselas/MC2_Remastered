@@ -153,6 +153,10 @@ long long s_gos_push_overlay_calls       = 0;  // probe at producer body
 // is the A2 dead-confirmation counter (the existing legacy_detail_overlay_quads
 // conflates mine/overlay/detail — this one is DRAWALPHA-detail-only).
 long long s_decal_static_tris_drawn      = 0;
+// #4 recon: count Shape-C quads that fail isTerrainQuadVisible each frame.
+// Always-on (not gated on MC2_TERRAIN_COST_SPLIT). Running lifetime total;
+// divide by summary frames to get per-frame rate.
+long long s_shape_c_invisible_quads      = 0;
 }  // namespace
 
 namespace gos_terrain_indirect {
@@ -177,6 +181,8 @@ void      Counters_AddIndirectOverlayPackedQuad(){ ++s_indirect_overlay_packed_q
 void      Counters_AddGosPushOverlayCall()       { ++s_gos_push_overlay_calls; }
 long long Counters_GetM2dOverlayEmitQuads()      { return s_m2d_overlay_emit_quads; }
 long long Counters_GetIndirectOverlayPackedQuads(){ return s_indirect_overlay_packed_quads; }
+void      Counters_AddShapeCInvisibleQuad()      { ++s_shape_c_invisible_quads; }
+long long Counters_GetShapeCInvisibleQuads()     { return s_shape_c_invisible_quads; }
 long long Counters_GetGosPushOverlayCalls()      { return s_gos_push_overlay_calls; }
 // Slice A — cement-overlay static-bake counters.
 void      Counters_AddDecalStaticTrisDrawn(long long n) { s_decal_static_tris_drawn += n; }
@@ -456,6 +462,7 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     "setup_total_ns_per_frame=%lld "
                     "cache_resident_ns_per_frame=%lld "
                     "visibility_check_ns_per_frame=%lld "
+                    "shape_c_invisible_quads=%lld "
                     "frames_observed=%d\n",
                     s_paritySummaryFrames,
                     s_paritySummaryQuads,
@@ -481,6 +488,7 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     csSetupPerFrame,
                     csResPerFrame,
                     csVisPerFrame,
+                    Counters_GetShapeCInvisibleQuads(),
                     csFrames);
         } else {
             fprintf(stderr,
@@ -495,7 +503,8 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     "m2c_detail_emit_quads=%lld "
                     "legacy_m2d_overlay_emit_quads=%lld "
                     "indirect_overlay_packed_quads=%lld "
-                    "gos_push_overlay_calls=%lld\n",
+                    "gos_push_overlay_calls=%lld "
+                    "shape_c_invisible_quads=%lld\n",
                     s_paritySummaryFrames,
                     s_paritySummaryQuads,
                     s_paritySummaryMismatches,
@@ -508,7 +517,8 @@ void ParityFrameTick(int quadsCheckedThisFrame) {
                     Counters_GetM2cDetailEmitQuads(),
                     Counters_GetM2dOverlayEmitQuads(),
                     Counters_GetIndirectOverlayPackedQuads(),
-                    Counters_GetGosPushOverlayCalls());
+                    Counters_GetGosPushOverlayCalls(),
+                    Counters_GetShapeCInvisibleQuads());
         }
         fflush(stderr);
     }

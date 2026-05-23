@@ -923,9 +923,10 @@ void TerrainQuad::setupTextures (void)
 		}
 		if (!quadVisible)
 		{
+			gos_terrain_indirect::Counters_AddShapeCInvisibleQuad();
 			overlayHandle = 0xffffffff;
-			terrainHandle = 0xffffffff; 
-			waterHandle = 0xffffffff; 
+			terrainHandle = 0xffffffff;
+			waterHandle = 0xffffffff;
 			waterDetailHandle = 0xffffffff;
 			terrainDetailHandle = 0xffffffff;
 		}

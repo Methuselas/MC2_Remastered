@@ -231,6 +231,12 @@ long long Counters_GetM2dOverlayEmitQuads();
 long long Counters_GetIndirectOverlayPackedQuads();
 long long Counters_GetGosPushOverlayCalls();
 
+// #4 recon: Shape-C invisible quad counter.
+// Always-on (not MC2_TERRAIN_COST_SPLIT-gated). Lifetime running total;
+// divide by summary frames to get per-frame rate.
+void      Counters_AddShapeCInvisibleQuad();
+long long Counters_GetShapeCInvisibleQuads();
+
 // PR2c Stage 0c — env gate readers.
 //   IsMineEnabled()       — MC2_TERRAIN_INDIRECT_MINE (default OFF until Stage 4
 //                           default-on flip after Stage 2c soak).
