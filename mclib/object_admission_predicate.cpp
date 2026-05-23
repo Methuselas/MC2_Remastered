@@ -266,10 +266,10 @@ const char* sxyModeLabel(ScreenXYPredicateMode m) {
 void screenXYPredicate_init() {
     if (s_sxyInitialized) return;
     const char* env = std::getenv("MC2_SCREENXY_PREDICATE_MODE");
-    if (env && std::strcmp(env, "Modern") == 0) {
-        s_sxyMode = ScreenXYPredicateMode::Modern;
+    if (env && std::strcmp(env, "Legacy") == 0) {
+        s_sxyMode = ScreenXYPredicateMode::Legacy;  // env-revert only
     } else {
-        s_sxyMode = ScreenXYPredicateMode::Legacy;  // default: conservative
+        s_sxyMode = ScreenXYPredicateMode::Modern;  // default: Modern
     }
     s_sxyInitialized = true;
     std::printf("[OBJECT_ADMISSION_PREDICATE v1] event=mode_select wrapper=screenxy mode=%s\n",
