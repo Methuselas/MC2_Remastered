@@ -206,20 +206,27 @@ void main() {
     // Transform world-space center to clip space.
     vec4 clip = viewProj * vec4(rec.worldCenter, 1.0);
 
+    // Projection scale: converts world-space radius to clip-space half-extent.
+    // For perspective M = P*V (P diagonal, V orthonormal), |row_i(M)_xyz| = P_ii.
+    // We take max(row0_norm, row1_norm) to cover both lateral frustum planes.
+    // viewProj is column-major in GLSL; row-i element j = viewProj[j][i].
+    // This is depth-independent — clip.x = P00*world.x gives delta P00*R for
+    // any sphere of world-radius R regardless of clip.w.
+    float projScale = max(
+        length(vec3(viewProj[0][0], viewProj[1][0], viewProj[2][0])),
+        length(vec3(viewProj[0][1], viewProj[1][1], viewProj[2][1])));
+
     // Frustum cull. Dilation slice: when frustumDilation > 0, the dilated
     // predicate replaces the strict one for the visibility decision and the
     // strict result is computed only for the diagnostic delta counter.
     //
     // 2026-05-10: sphere-aware admit for records that supply a non-zero
-    // boundingRadius (static props from gos_static_prop_registry). The
-    // strict point-in-frustum test rejects buildings whose centroid is
-    // offset from the visible silhouette — a 100-unit warehouse with
-    // its centroid 50 units off-axis vanishes when the camera angles
-    // away even though most of it is on screen. Dynamic actors continue
-    // to use the point test (boundingRadius==0 → tol=0 → identical math).
+    // boundingRadius. The strict point-in-frustum test rejects buildings
+    // whose centroid is offset from the visible silhouette. All actors supply
+    // boundingRadius (via getRadius() + 30.0f fallback in emitGpuCullRecord).
     bool visibleStrict;
     if (rec.boundingRadius > 0.0) {
-        visibleStrict = clipSpaceFrustumAdmitSphere(clip, rec.boundingRadius);
+        visibleStrict = clipSpaceFrustumAdmitSphere(clip, rec.boundingRadius, projScale);
     } else {
         visibleStrict = clipSpaceFrustumAdmit(clip);
     }

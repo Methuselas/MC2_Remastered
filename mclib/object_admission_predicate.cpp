@@ -332,10 +332,13 @@ bool clipSpaceFrustumAdmit(const Stuff::Vector4D& rawClip) {
 }
 
 // 2026-05-10 — sphere-aware admit. Lockstep with shaders/gpu_cull_predicate.glsl
-// `clipSpaceFrustumAdmitSphere`. See that file for the rationale and tolerance
-// approximation. Used for static-prop records whose centroid is offset from the
-// visible silhouette (large building footprints).
-bool clipSpaceFrustumAdmitSphere(const Stuff::Vector4D& rawClip, float worldRadius) {
+// `clipSpaceFrustumAdmitSphere`. projScale converts world-space radius to
+// clip-space half-extent: for perspective M = P*V (V orthonormal, P diagonal),
+// |row_i(M)_xyz| = P_ii, so projScale = max(|row0|, |row1|) of viewProj gives
+// the correct depth-independent factor. Caller must supply projScale from the
+// current view-projection matrix (see gpu_cull.comp for the GLSL derivation).
+bool clipSpaceFrustumAdmitSphere(const Stuff::Vector4D& rawClip, float worldRadius,
+                                  float projScale) {
     const float s  = (rawClip.w < 0.0f) ? -1.0f : 1.0f;
     const float cx = rawClip.x * s;
     const float cy = rawClip.y * s;
@@ -344,7 +347,7 @@ bool clipSpaceFrustumAdmitSphere(const Stuff::Vector4D& rawClip, float worldRadi
     if (cw < 1e-5f) {
         return worldRadius > 0.0f;
     }
-    const float tol = worldRadius;
+    const float tol = worldRadius * projScale;
     if (cx < -cw - tol || cx > cw + tol) return false;
     if (cy < -cw - tol || cy > cw + tol) return false;
     if (cz < -tol      || cz > cw + tol) return false;

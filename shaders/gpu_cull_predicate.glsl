@@ -42,18 +42,16 @@ bool clipSpaceFrustumAdmit(vec4 clip) {
 // centroid is offset from their visible silhouette (large buildings — a
 // 100-unit footprint rejects on its centroid even when 80% is on screen).
 //
-// Approximation: scale the world radius by a per-vertex factor that converts
-// world distance to clip-space half-extent. For perspective projection,
-// `radius * (cw / nearPlaneDist)` would be exact; we use `radius` directly as
-// a conservative tolerance in NDC-aligned clip units, which over-admits at
-// far distances and under-admits at very close range. Both are acceptable —
-// over-admit at edge wastes a tiny bit of fragment work; under-admit at
-// near-camera is masked because near-camera buildings already pass the
-// strict test (centroid in frustum).
-//
-// The world-radius-to-clip-tolerance approximation is the same shape as the
-// terrain TES uses for sphere-vs-frustum culling (terrain_tes_projection.md).
-bool clipSpaceFrustumAdmitSphere(vec4 clip, float worldRadius) {
+// projScale converts world-space radius to clip-space half-extent. For
+// perspective projection, the clip-space extent of a world-space sphere of
+// radius R centered at any depth is exactly R * P_scale, where P_scale is
+// the projection scale factor (= length of the world-xyz portion of the
+// corresponding clip-row of viewProj). This is depth-independent: clip.x =
+// P00 * world.x means a ΔX=R world-delta always produces ΔclipX = P00*R,
+// regardless of clip.w. The caller computes projScale = max(row0_norm,
+// row1_norm) of viewProj (row norms = projection scale for orthonormal view).
+// Lockstep C++: object_admission_predicate.cpp::clipSpaceFrustumAdmitSphere.
+bool clipSpaceFrustumAdmitSphere(vec4 clip, float worldRadius, float projScale) {
     float s = (clip.w < 0.0) ? -1.0 : 1.0;
     float cx = clip.x * s;
     float cy = clip.y * s;
@@ -66,11 +64,11 @@ bool clipSpaceFrustumAdmitSphere(vec4 clip, float worldRadius) {
         // half is visible.
         return worldRadius > 0.0;
     }
-    // Tolerance: world radius interpreted as a clip-space half-extent.
-    // For MC2's perspective projection (~1 unit near, ~12000 unit far,
-    // ~60° vertical FOV), this gives a tolerance proportional to apparent
-    // on-screen size for centroids in the typical zoom range.
-    float tol = worldRadius;
+    // Convert world-space radius to clip-space half-extent using the
+    // projection scale. For an orthonormal view matrix V and diagonal
+    // projection P, |row_i(P*V)| = P_ii — so projScale = max(|row0|, |row1|)
+    // gives the correct conversion factor for both lateral frustum planes.
+    float tol = worldRadius * projScale;
     if (cx < -cw - tol || cx > cw + tol) return false;
     if (cy < -cw - tol || cy > cw + tol) return false;
     if (cz < -tol      || cz > cw + tol) return false;
