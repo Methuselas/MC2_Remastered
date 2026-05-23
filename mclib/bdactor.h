@@ -52,11 +52,7 @@ class BldgAppearanceType : public AppearanceType
 		TG_TypeMultiShapePtr		bldgShape[MAX_LODS];
 		float						lodDistance[MAX_LODS];
 		
-		TG_TypeMultiShapePtr		bldgShadowShape;
-		
 		TG_TypeMultiShapePtr		bldgDmgShape;
-		
-		TG_TypeMultiShapePtr        bldgDmgShadowShape;
 		
 		TG_AnimateShapePtr			bdAnimData[MAX_BD_ANIMATIONS];
 		bool						bdAnimLoop[MAX_BD_ANIMATIONS];
@@ -89,9 +85,7 @@ class BldgAppearanceType : public AppearanceType
 				lodDistance[i] = 0.0f;
 			}
 
-			bldgShadowShape = NULL;
 			bldgDmgShape = NULL;
-			bldgDmgShadowShape = NULL;
 			
 			for (i=0;i<MAX_BD_ANIMATIONS;i++)
             {
@@ -192,7 +186,6 @@ class BldgAppearance : public ObjectAppearance
 
 		BldgAppearanceType*							appearType;
 		TG_MultiShapePtr							bldgShape;
-		TG_MultiShapePtr							bldgShadowShape;
 
 		// Slice 2 (object-offload): set true by the GPU-object batcher's
 		// late-registration branch when a leaf type is encountered for the
@@ -461,11 +454,7 @@ class TreeAppearanceType : public AppearanceType
 		TG_TypeMultiShapePtr		treeShape[MAX_LODS];
 		float						lodDistance[MAX_LODS];
 		
-		TG_TypeMultiShapePtr		treeShadowShape;
-		
 		TG_TypeMultiShapePtr		treeDmgShape;
-		
-		TG_TypeMultiShapePtr        treeDmgShadowShape;
 		
 		TG_AnimateShapePtr			treeAnimData[MAX_BD_ANIMATIONS];
 		bool						isForestClump;
@@ -484,10 +473,7 @@ class TreeAppearanceType : public AppearanceType
 			for (i=0;i<MAX_BD_ANIMATIONS;i++)
 				treeAnimData[i] = NULL;
 				
-			treeShadowShape = NULL;
-			
 			treeDmgShape = NULL;
-			treeDmgShadowShape = NULL;
 		}
 	
 		TreeAppearanceType (void)
@@ -516,7 +502,6 @@ class TreeAppearance : public ObjectAppearance
 
 		TreeAppearanceType*							appearType;
 		TG_MultiShapePtr							treeShape;
-		TG_MultiShapePtr							treeShadowShape;
 
 		// Slice 2 (object-offload): see BldgAppearance::needsFullBakeNextFrame.
 		bool										needsFullBakeNextFrame;

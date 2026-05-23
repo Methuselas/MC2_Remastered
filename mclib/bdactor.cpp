@@ -233,20 +233,7 @@ void BldgAppearanceType::init (const char * fileName)
 		bldgShape[0]->LoadTGMultiShapeFromASE(bldgName);
 	}
 
-	result = iniFile.readIdString("ShadowName",aseFileName,511);
-	if (result == NO_ERR)
-	{
-		//----------------------------------------------
-		// Base Shadow shape.
-		bldgShadowShape = new TG_TypeMultiShape;
-		gosASSERT(bldgShadowShape != NULL);
-	
-		FullPathFileName bldgName;
-		bldgName.init(tglPath,aseFileName,".ase");
-	
-		bldgShadowShape->LoadTGMultiShapeFromASE(bldgName);
-	}
- 
+
 	//destroyed state.
 	result = iniFile.seekBlock("TGLDamage");
 	if (result == NO_ERR)
@@ -318,30 +305,10 @@ void BldgAppearanceType::init (const char * fileName)
 			}
 		}
 		
-		//Shadow for destroyed state.
-		result = iniFile.readIdString("ShadowName",aseFileName,511);
-		if (result == NO_ERR)
-		{
-			//----------------------------------------------
-			// Base Shadow shape.
-			bldgDmgShadowShape = new TG_TypeMultiShape;
-			gosASSERT(bldgDmgShadowShape != NULL);
-		
-			FullPathFileName bldgName;
-			bldgName.init(tglPath,aseFileName,".ase");
-		
-			bldgDmgShadowShape->LoadTGMultiShapeFromASE(bldgName);
-			if (!bldgDmgShadowShape->GetNumShapes())
-			{
-				delete bldgDmgShadowShape;
-				bldgDmgShadowShape = NULL;
-			}
-		}
 	}
 	else
 	{
 		bldgDmgShape = NULL;
-		bldgDmgShadowShape = NULL;
 	}
 
 	result = iniFile.seekBlock("TGLDestructEffect");
@@ -483,22 +450,10 @@ void BldgAppearanceType::destroy (void)
 		}
 	}
 
-	if (bldgShadowShape)
-	{
-		delete bldgShadowShape;
-		bldgShadowShape = NULL;
-	}
-	
  	if (bldgDmgShape)
 	{
 		delete bldgDmgShape;
 		bldgDmgShape = NULL;
-	}
-	
-	if (bldgDmgShadowShape)
-	{
-		delete bldgDmgShadowShape;
-		bldgDmgShadowShape = NULL;
 	}
 	
  	for (int i=0;i<MAX_BD_ANIMATIONS;i++)
@@ -733,51 +688,6 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 			}
 		}
 		
-		if (appearType->bldgShadowShape)
-		{
-			bldgShadowShape = appearType->bldgShadowShape->CreateFrom();
-	
-			//-------------------------------------------------
-			// Load the texture and store its handle.
-			for (long i=0;i<bldgShadowShape->GetNumTextures();i++)
-			{
-				char txmName[1024];
-				bldgShadowShape->GetTextureName(i,txmName,256);
-		
-				char texturePath[1024];
-				sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-		
-				FullPathFileName textureName;
-				textureName.init(texturePath,txmName,"");
-		
-				if (fileExists(textureName))
-				{
-					if (S_strnicmp(txmName,"a_",2) == 0)
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						bldgShadowShape->SetTextureHandle(i,gosTextureHandle);
-						bldgShadowShape->SetTextureAlpha(i,true);
-					}
-					else
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						bldgShadowShape->SetTextureHandle(i,gosTextureHandle);
-						bldgShadowShape->SetTextureAlpha(i,false);
-					}
-				}
-				else
-				{
-					bldgShadowShape->SetTextureHandle(i,0xffffffff);
-				}
-			}
-		}
-		else
-		{
-			bldgShadowShape = NULL;
-		}
- 		
 		Stuff::Vector3D boxCoords[8];
 		Stuff::Vector3D nodeCenter = bldgShape->GetRootNodeCenter();
 
@@ -858,9 +768,7 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 		// handles are resolved so packets capture the correct GL handle.
 		for (int i = 0; i < MAX_LODS; ++i)
 			GpuStaticPropBatcher::instance().registerMultiShape(appearType->bldgShape[i]);
-		GpuStaticPropBatcher::instance().registerMultiShape(appearType->bldgShadowShape);
 		GpuStaticPropBatcher::instance().registerMultiShape(appearType->bldgDmgShape);
-		GpuStaticPropBatcher::instance().registerMultiShape(appearType->bldgDmgShadowShape);
 	}
 }
 
@@ -888,24 +796,6 @@ void BldgAppearance::setObjStatus (long oStatus)
 				currentLOD = 0;
 			}
 			
-			if (appearType->bldgDmgShadowShape)
-			{
-				if (bldgShadowShape)
-				{
-					bldgShadowShape->ClearAnimation();
-					delete bldgShadowShape;
-					bldgShadowShape = NULL;
-				}
-				
-				bldgShadowShape = appearType->bldgDmgShadowShape->CreateFrom();
-				
-				//Do shadows need to animate??
-				//if (bdAnimationState != -1)
-					//appearType->setAnimation(bldgShadowShape,bdAnimationState);
-				
-				beenInView = false; 
-			}
-
 			stopActivity();
 		}
 		
@@ -927,25 +817,8 @@ void BldgAppearance::setObjStatus (long oStatus)
 				beenInView = false; 
 			}
 			
-			if (appearType->bldgShadowShape)
-			{
-				if (bldgShadowShape)
-				{
-					bldgShadowShape->ClearAnimation();
-					delete bldgShadowShape;
-					bldgShadowShape = NULL;
-				}
-				
-				bldgShadowShape = appearType->bldgShadowShape->CreateFrom();
-				
-				//Do shadows need to animate??
-//				if (bdAnimationState != -1)
-					//appearType->setAnimation(bldgShadowShape,bdAnimationState);
-				
-				beenInView = false; 
-			}
 		}
-		
+
 		if (bldgShape)
 		{
 			//-------------------------------------------------
@@ -986,46 +859,8 @@ void BldgAppearance::setObjStatus (long oStatus)
 			}
 		}
 
-		if (bldgShadowShape)
-		{
-			//-------------------------------------------------
-			// Load the texture for the shadow and store its handle.
-			for (long i=0;i<bldgShadowShape->GetNumTextures();i++)
-			{
-				char txmName[1024];
-				bldgShadowShape->GetTextureName(i,txmName,256);
-	
-				char texturePath[1024];
-				sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-		
-				FullPathFileName textureName;
-				textureName.init(texturePath,txmName,"");
-		
-				if (fileExists(textureName))
-				{
-					if (S_strnicmp(txmName,"a_",2) == 0)
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						bldgShadowShape->SetTextureHandle(i,gosTextureHandle);
-						bldgShadowShape->SetTextureAlpha(i,true);
-					}
-					else
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						bldgShadowShape->SetTextureHandle(i,gosTextureHandle);
-						bldgShadowShape->SetTextureAlpha(i,false);
-					}
-				}
-				else
-				{
-					bldgShadowShape->SetTextureHandle(i,0xffffffff);
-				}
-			}
-		}
 	}
-	
+
 	status = oStatus;
 }
 
@@ -2276,11 +2111,7 @@ long BldgAppearance::update (bool animate)
 	// memcpy from shape->listOfColors during submit().
 	if (inView || g_useGpuStaticProps)
 	{
-		bool checkShadows = ((!beenInView) || (appearType->spinMe) || (eye->forceShadowRecalc) || (currentFrame != oldFrame));
-		if (bldgShadowShape)
-			bldgShape->SetUseShadow(false);
-		else
-			bldgShape->SetRecalcShadows(checkShadows);
+		bldgShape->SetUseShadow(false);
 
 		bldgShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
 		// Slice 2 (object-offload) — Stage 2.B: eligibility hoist.
@@ -2860,12 +2691,6 @@ void BldgAppearance::destroy (void)
 	{
 		delete bldgShape;
 		bldgShape = NULL;
-	}
-
-	if (bldgShadowShape)
-	{
-		delete bldgShadowShape;
-		bldgShadowShape = NULL;
 	}
 
 	if (destructFX)
@@ -3586,25 +3411,6 @@ void TreeAppearanceType::init (const char * fileName)
 		treeShape[0]->SetFilter(true);
 	}
 
-	result = iniFile.readIdString("ShadowName",aseFileName,511);
-	if (result == NO_ERR)
-	{
-		//----------------------------------------------
-		// Base Shadow shape.
-		treeShadowShape = new TG_TypeMultiShape;
-		gosASSERT(treeShadowShape != NULL);
-	
-		FullPathFileName treeName;
-		treeName.init(tglPath,aseFileName,".ase");
-	
-		treeShadowShape->LoadTGMultiShapeFromASE(treeName);
-		
-		//---------------------------------------------------------
-		// Should only be necessary for trees.  Easy to data drive
-		treeShadowShape->SetAlphaTest(true);
-		treeShadowShape->SetFilter(true);
-	}
-	
 	result = iniFile.seekBlock("TGLDamage");
 	if (result == NO_ERR)
 	{
@@ -3625,30 +3431,10 @@ void TreeAppearanceType::init (const char * fileName)
 			treeDmgShape = NULL;
 		}
 		
-		//Shadow for destroyed state.
-		result = iniFile.readIdString("ShadowName",aseFileName,511);
-		if (result == NO_ERR)
-		{
-			//----------------------------------------------
-			// Base Shadow shape.
-			treeDmgShadowShape = new TG_TypeMultiShape;
-			gosASSERT(treeDmgShadowShape != NULL);
-		
-			FullPathFileName treeName;
-			treeName.init(tglPath,aseFileName,".ase");
-		
-			treeDmgShadowShape->LoadTGMultiShapeFromASE(treeName);
-			if (!treeDmgShadowShape->GetNumShapes())
-			{
-				delete treeDmgShadowShape;
-				treeDmgShadowShape = NULL;
-			}
-		}
 	}
 	else
 	{
 		treeDmgShape = NULL;
-		treeDmgShadowShape = NULL;
 	}
 
  	//No Animations at present.
@@ -3674,17 +3460,6 @@ void TreeAppearanceType::destroy (void)
 		treeDmgShape = NULL;
 	}
 	
-	if (treeDmgShadowShape)
-	{
-		delete treeDmgShadowShape;
-		treeDmgShadowShape = NULL;
-	}
-	
- 	if (treeShadowShape)
-	{
-		delete treeShadowShape;
-		treeShadowShape = NULL;
-	}
 }
 
 //-----------------------------------------------------------------------------
@@ -3772,51 +3547,6 @@ void TreeAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 			}
 		}
 		
-		if (appearType->treeShadowShape)
-		{
-			treeShadowShape = appearType->treeShadowShape->CreateFrom();
-	
-			//-------------------------------------------------
-			// Load the texture and store its handle.
-			for (long i=0;i<treeShadowShape->GetNumTextures();i++)
-			{
-				char txmName[1024];
-				treeShadowShape->GetTextureName(i,txmName,256);
-		
-				char texturePath[1024];
-				sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-		
-				FullPathFileName textureName;
-				textureName.init(texturePath,txmName,"");
-		
-				if (fileExists(textureName))
-				{
-					if (S_strnicmp(txmName,"a_",2) == 0)
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						treeShadowShape->SetTextureHandle(i,gosTextureHandle);
-						treeShadowShape->SetTextureAlpha(i,true);
-					}
-					else
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						treeShadowShape->SetTextureHandle(i,gosTextureHandle);
-						treeShadowShape->SetTextureAlpha(i,false);
-					}
-				}
-				else
-				{
-					treeShadowShape->SetTextureHandle(i,0xffffffff);
-				}
-			}
-		}
-		else
-		{
-			treeShadowShape = NULL;
-		}
-		
 		Stuff::Vector3D boxCoords[8];
 		Stuff::Vector3D nodeCenter = treeShape->GetRootNodeCenter();
 
@@ -3877,9 +3607,7 @@ void TreeAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 		// GPU static-prop batcher: register this tree's type shapes + variants.
 		for (int i = 0; i < MAX_LODS; ++i)
 			GpuStaticPropBatcher::instance().registerMultiShape(appearType->treeShape[i]);
-		GpuStaticPropBatcher::instance().registerMultiShape(appearType->treeShadowShape);
 		GpuStaticPropBatcher::instance().registerMultiShape(appearType->treeDmgShape);
-		GpuStaticPropBatcher::instance().registerMultiShape(appearType->treeDmgShadowShape);
 	}
 
 	pitch = yaw = 0.0f;
@@ -3905,21 +3633,8 @@ void TreeAppearance::setObjStatus (long oStatus)
 				beenInView = false; 
 			}
 			
-			if (appearType->treeDmgShadowShape)
-			{
-				if (treeShadowShape)
-				{
-					treeShadowShape->ClearAnimation();
-					delete treeShadowShape;
-					treeShadowShape = NULL;
-				}
-				
-				treeShadowShape = appearType->treeDmgShadowShape->CreateFrom();
-				
-				beenInView = false; 
-			}
 		}
-		
+
 		if (oStatus == OBJECT_STATUS_NORMAL)
 		{
 			if (appearType->treeShape[0])
@@ -3935,21 +3650,8 @@ void TreeAppearance::setObjStatus (long oStatus)
 				beenInView = false; 
 			}
 			
-			if (appearType->treeShadowShape)
-			{
-				if (treeShadowShape)
-				{
-					treeShadowShape->ClearAnimation();
-					delete treeShadowShape;
-					treeShadowShape = NULL;
-				}
-				
-				treeShadowShape = appearType->treeShadowShape->CreateFrom();
-				
-				beenInView = false;
-			}
 		}
-		
+
 		//-------------------------------------------------
 		// Load the texture and store its handle.
 		if (treeShape)
@@ -3990,47 +3692,8 @@ void TreeAppearance::setObjStatus (long oStatus)
 			}
 		}
 
-		if (treeShadowShape)
-		{
-			//-------------------------------------------------
-			// Load the texture and store its handle.
-			for (long i=0;i<treeShadowShape->GetNumTextures();i++)
-			{
-				char txmName[1024];
-				treeShadowShape->GetTextureName(i,txmName,256);
-		
-				char texturePath[1024];
-				sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-		
-				FullPathFileName textureName;
-				textureName.init(texturePath,txmName,"");
-		
-				if (fileExists(textureName))
-				{
-					if (S_strnicmp(txmName,"a_",2) == 0)
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						treeShadowShape->SetTextureHandle(i,gosTextureHandle);
-						treeShadowShape->SetTextureAlpha(i,true);
-					}
-					else
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						treeShadowShape->SetTextureHandle(i,gosTextureHandle);
-						treeShadowShape->SetTextureAlpha(i,false);
-					}
-				}
-				else
-				{
-					//PAUSE(("Warning: %s texture name not found",textureName));
-					treeShadowShape->SetTextureHandle(i,0xffffffff);
-				}
-			}
-		}
 	}
-	
+
 	status = oStatus;
 }
 
@@ -4516,12 +4179,7 @@ long TreeAppearance::update (bool animate)
 	// read shape->listOfVertices during submit().
 	if (inView || g_useGpuStaticProps)
 	{
-		bool checkShadows = ((!beenInView) || (eye->forceShadowRecalc));
-
-		if (treeShadowShape)
-			treeShape->SetUseShadow(false);
-		else
-			treeShape->SetRecalcShadows(checkShadows);
+		treeShape->SetUseShadow(false);
 
 		TG_LightPtr light = eye->getWorldLight(0);
 		light->active = false;
