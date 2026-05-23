@@ -118,6 +118,7 @@ private:
     GLuint sceneColorTex_;
     GLuint sceneDepthTex_;
     GLuint sceneNormalTex_;
+    GLuint sceneObjectIdTex_ = 0;   // M1.5 R32UI MRT attachment-2 (gated on MC2_OBJECT_ID_BUFFER)
 
     // Bloom ping-pong FBOs (half resolution)
     GLuint bloomFBO_[2];

@@ -315,12 +315,29 @@ void gosPostProcess::createFBOs(int w, int h)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, sceneNormalTex_, 0);
 
+    // M1.5: object-ID attachment-2 (GL_R32UI). Gated on
+    // MC2_OBJECT_ID_BUFFER; when env-OFF we skip the texture
+    // creation entirely so env-OFF runtime cost is exactly zero on
+    // the FBO side. glTexImage2D matches the sceneNormalTex_ pattern
+    // above (decision m4); glTexStorage2D migration deferred.
+    if (RenderWorld::IsObjectIdBufferEnabled()) {
+        glGenTextures(1, &sceneObjectIdTex_);
+        glBindTexture(GL_TEXTURE_2D, sceneObjectIdTex_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, w, h, 0,
+                     GL_RED_INTEGER, GL_UNSIGNED_INT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2,
+                               GL_TEXTURE_2D, sceneObjectIdTex_, 0);
+    }
+
     // MRT: draw to color attachments via centralized policy. Helper
-    // adds GL_COLOR_ATTACHMENT2 when MC2_OBJECT_ID_BUFFER=1 AND the
-    // caller passes objectIdAttachmentReady=true. T4 wires the actual
-    // attachment-readiness flag; until then we pass false (env-OFF
-    // and env-ON both produce 2-entry list, preserving current behavior).
-    setSceneDrawBuffers(SceneDrawBufferMode::MainSceneMRT, false);
+    // adds GL_COLOR_ATTACHMENT2 when env-ON AND sceneObjectIdTex_
+    // exists (M1.5 C1 + M3 fix).
+    setSceneDrawBuffers(SceneDrawBufferMode::MainSceneMRT,
+                        sceneObjectIdTex_ != 0);
 
     GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE) {
@@ -396,6 +413,10 @@ void gosPostProcess::destroyFBOs()
         glDeleteTextures(1, &sceneNormalTex_);
         sceneNormalTex_ = 0;
     }
+    if (sceneObjectIdTex_) {
+        glDeleteTextures(1, &sceneObjectIdTex_);
+        sceneObjectIdTex_ = 0;
+    }
     for (int i = 0; i < 2; ++i) {
         if (bloomFBO_[i]) {
             glDeleteFramebuffers(1, &bloomFBO_[i]);
@@ -463,10 +484,18 @@ void gosPostProcess::beginScene()
     // coherence guarantee. AMD location=1 corruption claim refuted 2026-04-27;
     // see docs/amd-driver-rules.md "Tested-and-refuted claims".
     if (sceneNormalTex_) {
-        // M1.5 C1 + M3 plan-review fix: route through centralized helper.
-        // T4 will update the second arg to `sceneObjectIdTex_ != 0` when
-        // it adds the attachment-2 texture member.
-        setSceneDrawBuffers(SceneDrawBufferMode::MainSceneMRT, false);
+        // M1.5 C1 + M3 fix: helper takes readiness flag explicitly.
+        setSceneDrawBuffers(SceneDrawBufferMode::MainSceneMRT,
+                            sceneObjectIdTex_ != 0);
+    }
+    // M1.5 m1 clear-order rule + M3 plan-review fix: glClearBufferuiv
+    // at INDEX 2 only safe AFTER the env-ON 3-entry list is bound.
+    // Guarded by the same readiness predicate that selects the 3-entry
+    // list above; env-OFF byte-identical.
+    if (RenderWorld::IsObjectIdBufferEnabled() && sceneObjectIdTex_) {
+        static const GLuint kClearZero[4] = { 0u, 0u, 0u, 0u };
+        setSceneDrawBuffers(SceneDrawBufferMode::MainSceneMRT, true);
+        glClearBufferuiv(GL_COLOR, 2, kClearZero);
     }
     glViewport(0, 0, width_, height_);
 }
