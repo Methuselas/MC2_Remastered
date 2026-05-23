@@ -115,10 +115,12 @@ static float compute_getFrustumDilation() {
         const char* v = getenv("MC2_GPU_CULL_FRUSTUM_DILATION");
         if (v) { float p = (float)atof(v); if (p >= 0.0f && p < 1.0f) s_value = p; }
     }
-    // Step 4.10 — dilation gate: while coalesce is ARMED, force dilation=0 to
-    // bound the GPU-admitted set to exactly the CPU-submitted set. Design v4 §6.1.
-    // Re-enable in slice 2 alongside GPU-emit when CPU and GPU sets converge.
-    if (batcher_isCoalesceArmed()) return 0.0f;
+    // Design v4 §6.1 coalesce-armed zero-dilation gate removed.
+    // Rationale: this function feeds the actor-level compute shader (gpu_cull.comp);
+    // it has no effect on static prop draw commands (GpuStaticPropRegistry path).
+    // Zeroing dilation when coalesce armed was targeting the wrong system and
+    // eliminated the temporal buffer that absorbs 1-frame readback lag for mechs,
+    // causing intro-camera flicker whenever mechs crossed the frustum boundary.
     return s_value;
 }
 
