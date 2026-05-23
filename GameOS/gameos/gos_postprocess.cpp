@@ -315,9 +315,12 @@ void gosPostProcess::createFBOs(int w, int h)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, sceneNormalTex_, 0);
 
-    // MRT: draw to both color attachments
-    GLenum drawBuffers[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-    glDrawBuffers(2, drawBuffers);
+    // MRT: draw to color attachments via centralized policy. Helper
+    // adds GL_COLOR_ATTACHMENT2 when MC2_OBJECT_ID_BUFFER=1 AND the
+    // caller passes objectIdAttachmentReady=true. T4 wires the actual
+    // attachment-readiness flag; until then we pass false (env-OFF
+    // and env-ON both produce 2-entry list, preserving current behavior).
+    setSceneDrawBuffers(SceneDrawBufferMode::MainSceneMRT, false);
 
     GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE) {
@@ -460,8 +463,10 @@ void gosPostProcess::beginScene()
     // coherence guarantee. AMD location=1 corruption claim refuted 2026-04-27;
     // see docs/amd-driver-rules.md "Tested-and-refuted claims".
     if (sceneNormalTex_) {
-        GLenum drawBuffers[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-        glDrawBuffers(2, drawBuffers);
+        // M1.5 C1 + M3 plan-review fix: route through centralized helper.
+        // T4 will update the second arg to `sceneObjectIdTex_ != 0` when
+        // it adds the attachment-2 texture member.
+        setSceneDrawBuffers(SceneDrawBufferMode::MainSceneMRT, false);
     }
     glViewport(0, 0, width_, height_);
 }
@@ -547,8 +552,9 @@ void gosPostProcess::runScreenShadow()
 
     // Render to sceneFBO_ color-only (no normal write) with multiplicative blending
     glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
-    GLenum singleBuf = GL_COLOR_ATTACHMENT0;
-    glDrawBuffers(1, &singleBuf);
+    // M1.5: single-color composite. Helper preserves env-OFF/ON parity
+    // (the postprocess composite never writes attachment-2 regardless).
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
     glDisable(GL_DEPTH_TEST);
@@ -657,8 +663,8 @@ void gosPostProcess::runGodRays()
 
     // Pass 2: Additive composite onto scene at full res
     glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
-    GLenum singleBuf = GL_COLOR_ATTACHMENT0;
-    glDrawBuffers(1, &singleBuf);
+    // M1.5: single-color composite (additive); helper preserves env shape.
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
     glEnable(GL_BLEND);
@@ -690,8 +696,8 @@ void gosPostProcess::runShoreline()
     if (!shorelineEnabled_ || !sceneHasTerrain_ || !shorelineProg_ || !shorelineProg_->is_valid()) return;
 
     glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
-    GLenum singleBuf = GL_COLOR_ATTACHMENT0;
-    glDrawBuffers(1, &singleBuf);
+    // M1.5: single-color multiplicative composite; helper preserves env shape.
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
     glDisable(GL_DEPTH_TEST);
