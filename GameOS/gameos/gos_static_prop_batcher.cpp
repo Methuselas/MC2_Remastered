@@ -1,4 +1,6 @@
 #include "gos_static_prop_batcher.h"
+#include "gos_static_prop_registry.h"    // M1.5: getRecipeIndexForType
+#include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled + objectIdRawForStaticPropRecipe
 #include "gos_postprocess.h"             // getGosPostProcess, getDynamicLightSpaceMatrix
 #include "gos_static_prop_killswitch.h"  // gos_GetGLTextureId
 #include "gos_profiler.h"
@@ -2033,6 +2035,17 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 e.texArrayLayer    = layerForPacket[globalPktIdx];
                 e.uvScaleX         = uvScaleXByPacket[globalPktIdx];
                 e.uvScaleY         = uvScaleYByPacket[globalPktIdx];
+                // M1.5 C1 fix: three-owner chain.
+                //   1. Registry resolves typeID -> recipeIndex (-1 on miss).
+                //   2. RenderWorld encodes recipeIndex -> handle bits (0 if invalid).
+                //   3. Batcher writes objectIdRaw.
+                // Env-OFF behavior: writes nonzero bits, but shader does not declare
+                // out uint (Task 8 controls the macro), so writes are invisible.
+                // Cheaper than a branch per entry.
+                const int32_t m1_5_recipeIndex =
+                    GpuStaticPropRegistry::getRecipeIndexForType(typeID);
+                e.objectIdRaw =
+                    static_cast<int32_t>(RenderWorld::objectIdRawForStaticPropRecipe(m1_5_recipeIndex));
             }
             entries[i] = e;
         }

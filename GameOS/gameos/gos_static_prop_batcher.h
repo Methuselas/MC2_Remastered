@@ -50,8 +50,8 @@ struct PerDrawEntry {
     int32_t texArrayLayer;     // 12 — group-relative layer in s_texArrayOff/On
     float   uvScaleX;          // 16 — 1.0f for Stage A
     float   uvScaleY;          // 20 — 1.0f for Stage A
-    int32_t _pad0;             // 24 — std430 alignment + size = 32
-    int32_t _pad1;             // 28
+    int32_t objectIdRaw;       // 24 — M1.5: handle.raw() when MC2_OBJECT_ID_BUFFER=1, else 0
+    int32_t _pad1;             // 28 — std430 alignment + size = 32
 };
 static_assert(sizeof(PerDrawEntry) == 32, "PerDrawEntry std430 size");
 static_assert(offsetof(PerDrawEntry, packetID)         ==  0, "packetID offset");
@@ -60,7 +60,7 @@ static_assert(offsetof(PerDrawEntry, maxLocalVertexID) ==  8, "maxLocalVertexID 
 static_assert(offsetof(PerDrawEntry, texArrayLayer)    == 12, "texArrayLayer offset");
 static_assert(offsetof(PerDrawEntry, uvScaleX)         == 16, "uvScaleX offset");
 static_assert(offsetof(PerDrawEntry, uvScaleY)         == 20, "uvScaleY offset");
-static_assert(offsetof(PerDrawEntry, _pad0)            == 24, "_pad0 offset");
+static_assert(offsetof(PerDrawEntry, objectIdRaw)      == 24, "objectIdRaw offset");
 static_assert(offsetof(PerDrawEntry, _pad1)            == 28, "_pad1 offset");
 
 // Packet descriptor (CPU-side only -- not uploaded as an SSBO).

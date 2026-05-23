@@ -41,7 +41,7 @@ struct PerDrawEntry {
     int   texArrayLayer;
     float uvScaleX;
     float uvScaleY;
-    int   _pad0;
+    int   objectIdRaw;   // M1.5: handle.raw() (read into uint at use site)
     int   _pad1;
 };
 layout(std430, binding = 4) readonly buffer PerDrawData {
