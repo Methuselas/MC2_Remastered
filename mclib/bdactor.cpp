@@ -35,6 +35,7 @@ static unsigned long s_spotDiagBldgCalls      = 0;   // update() call counter
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_batcher.h"
 #include "gos_static_prop_registry.h"  // Stage 3.C: static-registry fast path
+#include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 RenderWorld Tasks 8-11
 #include <unordered_map>  // LODBUG probe: tracks per-actor previous bldgShape*
 #include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
 #include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
@@ -1468,8 +1469,13 @@ long BldgAppearance::render (long depthFixup)
 				        && isStaticEligible()) {
 					const auto& batch =
 						GpuStaticPropBatcher::instance().getLastBuiltBatch();
-					staticReg.recipeIndex = GpuStaticPropRegistry::registerRecipe(
-						bldgShape, batch);
+					// M1 RenderWorld route (Slice M1 Task 8). Adapter performs
+					// sentinel translation; staticReg.recipeIndex remains int32_t
+					// per plan Decision D4 (slot-side storage stays legacy in M1).
+					int32_t legacyIdx = -1;
+					(void)GameAdapters::StaticProp::syncStaticProp(
+						bldgShape, batch.data(), batch.size(), &legacyIdx);
+					staticReg.recipeIndex = legacyIdx;
 					staticReg.registered  = (staticReg.recipeIndex >= 0);
 					staticReg.shape       = bldgShape;
 					if (staticReg.registered) {
