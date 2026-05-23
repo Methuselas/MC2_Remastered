@@ -4867,7 +4867,9 @@ void TreeAppearance::registerStatic() {
 	}
 	if (batch.empty()) return;
 
-	const int32_t regIdx = GpuStaticPropRegistry::registerRecipe(treeShape, batch);
+	int32_t regIdx = -1;
+	(void)GameAdapters::StaticProp::syncStaticProp(
+		treeShape, batch.data(), batch.size(), &regIdx);
 	if (regIdx >= 0) {
 		staticReg.registered  = true;
 		staticReg.shape       = treeShape;
