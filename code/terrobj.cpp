@@ -792,8 +792,14 @@ long TerrainObject::update (void) {
 		{
 			inView = appearance->recalcBounds();
 		}
-
-		if (inView)
+		// Extend update() to fire when GPU readback says visible but coarse angular
+		// does not — prevents split-gate stale cachedGpuLightIndex_ when render()
+		// fires via readback but update() was skipped (1-frame lag edge case).
+		// windowsVisible stamp below is still guarded by inView (pick-path contract).
+		const bool gpuVisible = gpu_cull::readback_isEnabled()
+			? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+			: false;
+		if (inView || gpuVisible)
 		{
 			// MOUSE-PICK PATH DEPENDENCY (objmgr consumer). This
 			// `windowsVisible = turn;` stamp is read by
@@ -899,26 +905,15 @@ long TerrainObject::update (void) {
 			}
 		}
 
-		// [TOBJPARITY v1] STANDALONE readback-vs-coarse superset-parity
-		// instrument (env-gated MC2_TOBJ_PARITY). This is NOT a passing
-		// gate for the current slice and does NOT influence render or
-		// shadow visibility -- the readback render/shadow repoint was
-		// reverted (de-risk: Task 7 empirically proved the readback is
-		// NOT a superset of the coarse visible set, dropping 10-60% of
-		// in-view terrain statics, so gating render/shadow on it is
-		// unsound). Render/shadow now run on the coarse canBeSeen()/
-		// inView (pre-slice, safe over-inclusive) path again.
-		//
-		// This probe survives, demoted-not-deleted, purely to QUANTIFY
-		// that readback non-superset for the separately-tracked GPU-path
-		// meta-fix task (make the GPU cull authoritative and delete the
-		// CPU approximation gate). It reads the SAME inlined expression
-		// the reverted injection used -- the per-actor lagged readback,
-		// fail-open when readback is disabled -- and compares it against
-		// the LOCAL coarse `inView` (from recalcBounds at the top of
-		// this `if (appearance)` block, unchanged, contract-safe).
-		// Sample denominator: coarse inView true. Violation (the class
-		// the meta-fix must eliminate): coarseInView && !readbackVisible.
+		// [TOBJPARITY v1] readback-vs-coarse superset-parity instrument
+		// (env-gated MC2_TOBJ_PARITY=1). Render/shadow are NOW gated on
+		// readback (Item 3 repoint above). This probe remains to QUANTIFY
+		// residual violation rate (coarseInView && !readbackVisible) after
+		// the projScale + getRadius() fixes. Violations = objects that the
+		// coarse angular cone sees but GPU cull culls; with dilation these
+		// should be near zero on a stationary camera and spike only on
+		// rapid pan (1-frame readback lag). Demote-don't-delete once the
+		// GPU cull is confirmed authoritative for a full release cycle.
 		if (s_tobjParityEnabled && inView) {
 			bool readbackVisible = gpu_cull::readback_isEnabled()
 				? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
@@ -940,9 +935,13 @@ void TerrainObject::render (void) {
 	{
 	}
 
-	// GPU static-prop path bypasses canBeSeen() for the same reason as
-	// Building::render — the legacy angular cull is too aggressive.
-	if (appearance->canBeSeen() || g_useGpuStaticProps)
+	// Item 3 gate repoint: GPU readback is authoritative when enabled (projScale +
+	// getRadius() fixes make readback a reliable superset); fallback to canBeSeen()
+	// keeps behaviour identical when readback is off.
+	const bool readbackVisible = gpu_cull::readback_isEnabled()
+		? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+		: appearance->canBeSeen();
+	if (readbackVisible || g_useGpuStaticProps)
 	{
 		if (getSelected())
 		{
@@ -1012,7 +1011,10 @@ void TerrainObject::renderShadows (void)
 	if (getFlag(OBJECT_FLAG_FALLING) || getFlag(OBJECT_FLAG_FALLEN))
 		return;			//No shadows on fallen trees.
 		
-	if (appearance->canBeSeen())
+	const bool readbackVisible = gpu_cull::readback_isEnabled()
+		? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+		: appearance->canBeSeen();
+	if (readbackVisible)
 	{
 		appearance->renderShadows();
 	}
