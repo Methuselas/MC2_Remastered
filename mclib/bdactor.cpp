@@ -4278,8 +4278,11 @@ long TreeAppearance::render (long depthFixup)
 				        && !needsFullBakeNextFrame) {
 					const auto& batch =
 						GpuStaticPropBatcher::instance().getLastBuiltBatch();
-					staticReg.recipeIndex = GpuStaticPropRegistry::registerRecipe(
-						treeShape, batch);
+					// M1 RenderWorld route (Slice M1 Task 10).
+					int32_t legacyIdx = -1;
+					(void)GameAdapters::StaticProp::syncStaticProp(
+						treeShape, batch.data(), batch.size(), &legacyIdx);
+					staticReg.recipeIndex = legacyIdx;
 					staticReg.registered  = (staticReg.recipeIndex >= 0);
 					staticReg.shape        = treeShape;
 					if (staticReg.registered) {
