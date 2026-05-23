@@ -14,17 +14,10 @@
 #include <cstdlib>  // std::getenv for the self-test env-flag gate
 #include <cstring>  // std::strcmp for env-flag value parse
 
-// Forward-declare the GOS viewport accessor; matches the signature at
-// code/missiongui.cpp:6218. Pulled forward here to avoid dragging the
-// full GameOS header chain into this small TU.
-extern "C" void gos_GetViewport(float* vMulX, float* vMulY,
-                                float* vAddX, float* vAddY);
-
-// Environment struct accessor: M2-pre needs Environment.drawableWidth /
-// drawableHeight (same fields M1.6's inline body reads at
-// code/missiongui.cpp:6219-6220). Reach into the GameOS header that
-// declares Environment. The exact include matches what missiongui.cpp
-// already pulls.
+// GameOS header declares both gos_GetViewport (with __stdcall calling
+// convention) and the Environment struct (drawableWidth/Height fields).
+// The original M1.6 inline at code/missiongui.cpp:6218-6220 reads from
+// these same symbols; same include avoids linkage mismatches.
 #include "../GameOS/include/gameos.hpp"
 
 //----------------------------------------------------------------------
@@ -85,11 +78,53 @@ void screenToFboPixel(int   mouseX,         int   mouseY,
 //----------------------------------------------------------------------
 GameplayPickResult tryGameplayPick(const GameplayPickRequest& req)
 {
-    // T1 stub: returns skipped. T2 replaces the body with the full
-    // algorithm per spec Section 4.
-    (void)req;
     GameplayPickResult r{};
-    r.outcome = GameplayPickResult::Outcome::skipped;
+    r.ctx.mouseX  = req.mouseX;
+    r.ctx.mouseY  = req.mouseY;
+    r.outcome     = GameplayPickResult::Outcome::skipped;
+
+    // Engine substrate gate. M1.5 cached bool; cheap.
+    if (!RenderWorld::IsObjectIdBufferEnabled())
+        return r;
+
+    // Gesture gates (M1.6 Section 3 detection condition).
+    if (!req.shiftDn)       return r;
+    if (!req.leftClicked)   return r;
+    if (req.bGui)           return r;
+    if (req.bLeftDouble)    return r;
+
+    // Mover-first fallback gate (M1.6 Section 4 + Q6/Q8 invariant).
+    if (req.moverSelectedThisFrame) {
+        r.outcome = GameplayPickResult::Outcome::gated;
+        return r;
+    }
+
+    // Viewport state for coord translation.
+    gos_GetViewport(&r.ctx.vMulX, &r.ctx.vMulY,
+                    &r.ctx.vAddX, &r.ctx.vAddY);
+    r.ctx.drawableWidth  = Environment.drawableWidth;
+    r.ctx.drawableHeight = Environment.drawableHeight;
+
+    // Off-screen guard (viewport-space bounds).
+    if (req.mouseX < 0 || req.mouseY < 0
+        || req.mouseX >= (int)r.ctx.vMulX
+        || req.mouseY >= (int)r.ctx.vMulY)
+        return r;
+
+    // Coord translation: viewport-space -> FBO pixel -> GL pixel.
+    screenToFboPixel(req.mouseX, req.mouseY,
+                     r.ctx.vMulX, r.ctx.vMulY,
+                     r.ctx.vAddX, r.ctx.vAddY,
+                     r.ctx.drawableWidth, r.ctx.drawableHeight,
+                     &r.ctx.fboX, &r.ctx.fboY,
+                     &r.ctx.glX,  &r.ctx.glY);
+
+    // Synchronous single-pixel readback (M1.5 substrate).
+    r.lookup = RenderWorld::lookupAtPixel(r.ctx.glX, r.ctx.glY);
+
+    r.outcome = r.lookup.isValid
+        ? GameplayPickResult::Outcome::hit
+        : GameplayPickResult::Outcome::miss;
     return r;
 }
 
