@@ -154,6 +154,7 @@ set(THIRDPARTY_INCLUDE_DIRS "${CMAKE_PREFIX_PATH}/include")
 list(APPEND THIRDPARTY_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tracy")
 
 add_subdirectory("./mclib/" "./out/mclib")
+add_subdirectory("./RenderCore" "./out/RenderCore")
 add_subdirectory("./mclib/fx_trace" "./out/mclib/fx_trace")
 add_subdirectory("./mclib/particles" "./out/mclib/particles")
 add_subdirectory("./mclib/mlr" "./out/mclib/mlr")
