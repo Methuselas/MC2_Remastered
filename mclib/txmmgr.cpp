@@ -2258,15 +2258,6 @@ void MC_TextureManager::renderLists (void)
                     (masterVertexNodes[i].flags & MC2_ALPHATEST)==states*MC2_ALPHATEST &&
                     (masterVertexNodes[i].vertices))
             {
-                // The legacy non-water terrain alpha/detail layer sits on the original
-                // flat terrain plane and shows through displaced tess terrain as the
-                // dark striped under-pattern. Keep water passes, but drop this layer.
-                if (!(masterVertexNodes[i].flags & MC2_ISWATER) &&
-                    !(masterVertexNodes[i].flags & MC2_ISWATERDETAIL)) {
-                    masterVertexNodes[i].currentVertex = masterVertexNodes[i].vertices;
-                    continue;
-                }
-
                 {
                     int waterMode = 0;
                     if (masterVertexNodes[i].flags & MC2_ISWATER) waterMode = 1;

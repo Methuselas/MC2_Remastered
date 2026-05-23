@@ -2557,65 +2557,6 @@ void TerrainQuad::draw (void)
 						}
 					}
 
-					//----------------------------------------------------
-					// Draw the detail Texture
-					if (useWaterInterestTexture && (terrainDetailHandle != 0xffffffff))
-					{
-						gos_VERTEX sVertex[3];
-						memcpy(sVertex,gVertex,sizeof(gos_VERTEX)*3);
-
-						float tilingFactor = Terrain::terrainTextures->getDetailTilingFactor(1);
-						if (Terrain::terrainTextures2)
-							tilingFactor = Terrain::terrainTextures2->getDetailTilingFactor();
-
-						float oneOverTf		= tilingFactor / Terrain::worldUnitsMapSide;
-						
-						sVertex[0].u		= (vertices[0]->vx - Terrain::mapTopLeft3d.x) * oneOverTf;
-						sVertex[0].v		= (Terrain::mapTopLeft3d.y - vertices[0]->vy) * oneOverTf;
-		
-						sVertex[1].u		= (vertices[1]->vx - Terrain::mapTopLeft3d.x) * oneOverTf;
-						sVertex[1].v		= (Terrain::mapTopLeft3d.y - vertices[1]->vy) * oneOverTf;
-		
-						sVertex[2].u		= (vertices[2]->vx - Terrain::mapTopLeft3d.x) * oneOverTf;
-						sVertex[2].v		= (Terrain::mapTopLeft3d.y - vertices[2]->vy) * oneOverTf;
-						
-						if ((sVertex[0].u > MaxMinUV) || 
-							(sVertex[0].v > MaxMinUV) ||
-							(sVertex[1].u > MaxMinUV) || 
-							(sVertex[1].v > MaxMinUV) ||
-							(sVertex[2].u > MaxMinUV) || 
-							(sVertex[2].v > MaxMinUV))
-						{
-							//If any are out range, move 'em back in range by adjustfactor.
-							float maxU = fmax(sVertex[0].u,fmax(sVertex[1].u,sVertex[2].u));
-							maxU = floor(maxU - (MaxMinUV-1.0f));
-							
-							float maxV = fmax(sVertex[0].v,fmax(sVertex[1].v,sVertex[2].v));
-							maxV = floor(maxV - (MaxMinUV-1.0f));
-							
-							sVertex[0].u -= maxU;
-							sVertex[1].u -= maxU;
-							sVertex[2].u -= maxU;
-							
-							sVertex[0].v -= maxV;
-							sVertex[1].v -= maxV;
-							sVertex[2].v -= maxV;
-						}
-
-						//Light the Detail Texture
-						if (Terrain::terrainTextures2)
-						{
-							sVertex[0].argb		= 
-							sVertex[1].argb		= 
-							sVertex[2].argb		= 0xffffffff;
-						}
-
-						// Slice A (A2) - DRAWALPHA detail dead-confirmation counter.
-						// Counter-only; behaviour unchanged. Post-return legacy body,
-						// unreachable on armed frames; expected ==0 (A2 gate).
-						gos_terrain_indirect::Counters_AddLegacyDrawAlphaDetailQuad();
-						mcTextureManager->addVertices(terrainDetailHandle,sVertex,MC2_ISTERRAIN | MC2_DRAWALPHA);	
-					}
 				}
 			}
 
@@ -2704,65 +2645,6 @@ void TerrainQuad::draw (void)
 						}
 					}
 
-					//----------------------------------------------------
-					// Draw the detail Texture
-					if (useWaterInterestTexture && (terrainDetailHandle != 0xffffffff))
-					{
-						gos_VERTEX sVertex[3];
-						memcpy(sVertex,gVertex,sizeof(gos_VERTEX)*3);
-
-						float tilingFactor = Terrain::terrainTextures->getDetailTilingFactor(1);
-						if (Terrain::terrainTextures2)
-							tilingFactor = Terrain::terrainTextures2->getDetailTilingFactor();
-
- 						float oneOverTF		= tilingFactor / Terrain::worldUnitsMapSide;
-						
-						sVertex[0].u		= (vertices[0]->vx - Terrain::mapTopLeft3d.x) * oneOverTF;
-						sVertex[0].v		= (Terrain::mapTopLeft3d.y - vertices[0]->vy) * oneOverTF;
-		
-						sVertex[1].u		= (vertices[2]->vx - Terrain::mapTopLeft3d.x) * oneOverTF;
-						sVertex[1].v		= (Terrain::mapTopLeft3d.y - vertices[2]->vy) * oneOverTF;
-		
-						sVertex[2].u		= (vertices[3]->vx - Terrain::mapTopLeft3d.x) * oneOverTF;
-						sVertex[2].v		= (Terrain::mapTopLeft3d.y - vertices[3]->vy) * oneOverTF;
-		
-						if ((sVertex[0].u > MaxMinUV) || 
-							(sVertex[0].v > MaxMinUV) ||
-							(sVertex[1].u > MaxMinUV) || 
-							(sVertex[1].v > MaxMinUV) ||
-							(sVertex[2].u > MaxMinUV) || 
-							(sVertex[2].v > MaxMinUV))
-						{
-							//If any are out range, move 'em back in range by adjustfactor.
-							float maxU = fmax(sVertex[0].u,fmax(sVertex[1].u,sVertex[2].u));
-							maxU = floor(maxU - (MaxMinUV-1.0f));
-							
-							float maxV = fmax(sVertex[0].v,fmax(sVertex[1].v,sVertex[2].v));
-							maxV = floor(maxV - (MaxMinUV-1.0f));
-							
-							sVertex[0].u -= maxU;
-							sVertex[1].u -= maxU;
-							sVertex[2].u -= maxU;
-							
-							sVertex[0].v -= maxV;
-							sVertex[1].v -= maxV;
-							sVertex[2].v -= maxV;
-						}
-
-						//Light the Detail Texture
-						if (Terrain::terrainTextures2)
-						{
-							sVertex[0].argb		= 
-							sVertex[1].argb		= 
-							sVertex[2].argb		= 0xffffffff;
-						}
-
-						// Slice A (A2) - DRAWALPHA detail dead-confirmation counter.
-						// Counter-only; behaviour unchanged. Post-return legacy body,
-						// unreachable on armed frames; expected ==0 (A2 gate).
-						gos_terrain_indirect::Counters_AddLegacyDrawAlphaDetailQuad();
-						mcTextureManager->addVertices(terrainDetailHandle,sVertex,MC2_ISTERRAIN | MC2_DRAWALPHA);
-					}
 				}
 			}
 
@@ -2881,65 +2763,6 @@ void TerrainQuad::draw (void)
 						// PatchStream append moved to appendQuad after both pz gates.
 					}
 
-					//----------------------------------------------------
-					// Draw the detail Texture
-					if (useWaterInterestTexture && (terrainDetailHandle != 0xffffffff))
-					{
-						gos_VERTEX sVertex[3];
-						memcpy(sVertex,gVertex,sizeof(gos_VERTEX)*3);
-		
-						float tilingFactor = Terrain::terrainTextures->getDetailTilingFactor(1);
-						if (Terrain::terrainTextures2)
-							tilingFactor = Terrain::terrainTextures2->getDetailTilingFactor();
-							
- 						float oneOverTF		= tilingFactor / Terrain::worldUnitsMapSide;
-						
-						sVertex[0].u		= (vertices[0]->vx - Terrain::mapTopLeft3d.x) * oneOverTF;
-						sVertex[0].v		= (Terrain::mapTopLeft3d.y - vertices[0]->vy) * oneOverTF;
-		
-						sVertex[1].u		= (vertices[1]->vx - Terrain::mapTopLeft3d.x) * oneOverTF;
-						sVertex[1].v		= (Terrain::mapTopLeft3d.y - vertices[1]->vy) * oneOverTF;
-		
-						sVertex[2].u		= (vertices[3]->vx - Terrain::mapTopLeft3d.x) * oneOverTF;
-						sVertex[2].v		= (Terrain::mapTopLeft3d.y - vertices[3]->vy) * oneOverTF;
-		
-						if ((sVertex[0].u > MaxMinUV) || 
-							(sVertex[0].v > MaxMinUV) ||
-							(sVertex[1].u > MaxMinUV) || 
-							(sVertex[1].v > MaxMinUV) ||
-							(sVertex[2].u > MaxMinUV) || 
-							(sVertex[2].v > MaxMinUV))
-						{
-							//If any are out range, move 'em back in range by adjustfactor.
-							float maxU = fmax(sVertex[0].u,fmax(sVertex[1].u,sVertex[2].u));
-							maxU = floor(maxU - (MaxMinUV-1.0f));
-							
-							float maxV = fmax(sVertex[0].v,fmax(sVertex[1].v,sVertex[2].v));
-							maxV = floor(maxV - (MaxMinUV-1.0f));
-							
-							sVertex[0].u -= maxU;
-							sVertex[1].u -= maxU;
-							sVertex[2].u -= maxU;
-							
-							sVertex[0].v -= maxV;
-							sVertex[1].v -= maxV;
-							sVertex[2].v -= maxV;
-						}
-						
-						//Light the Detail Texture
-						if (Terrain::terrainTextures2)
-						{
-							sVertex[0].argb		= 
-							sVertex[1].argb		= 
-							sVertex[2].argb		= 0xffffffff;
-						}
-						// Slice A (A2) - DRAWALPHA detail dead-confirmation counter.
-						// Counter-only; behaviour unchanged. Post-return legacy body,
-						// unreachable on armed frames; expected ==0 (A2 gate).
-						gos_terrain_indirect::Counters_AddLegacyDrawAlphaDetailQuad();
-						mcTextureManager->addVertices(terrainDetailHandle,sVertex,MC2_ISTERRAIN | MC2_DRAWALPHA);
-					}
-					
 					//--------------------------------------------------------------
 					// Draw the Overlay Texture if it exists.
 					if (useOverlayTexture && (overlayHandle != 0xffffffff))
@@ -3026,65 +2849,6 @@ void TerrainQuad::draw (void)
 						// PatchStream append moved to appendQuad below.
 					}
 
-					//----------------------------------------------------
-					// Draw the detail Texture
-					if (useWaterInterestTexture && (terrainDetailHandle != 0xffffffff))
-					{
-						gos_VERTEX sVertex[3];
-						memcpy(sVertex,gVertex,sizeof(gos_VERTEX)*3);
-		
-						float tilingFactor = Terrain::terrainTextures->getDetailTilingFactor(1);
-						if (Terrain::terrainTextures2)
-							tilingFactor = Terrain::terrainTextures2->getDetailTilingFactor();
-							
- 						float oneOverTf		= tilingFactor / Terrain::worldUnitsMapSide;
-						
-						sVertex[0].u		= (vertices[1]->vx - Terrain::mapTopLeft3d.x) * oneOverTf;
-						sVertex[0].v		= (Terrain::mapTopLeft3d.y - vertices[1]->vy) * oneOverTf;
-		
-						sVertex[1].u		= (vertices[2]->vx - Terrain::mapTopLeft3d.x) * oneOverTf;
-						sVertex[1].v		= (Terrain::mapTopLeft3d.y - vertices[2]->vy) * oneOverTf;
-		
-						sVertex[2].u		= (vertices[3]->vx - Terrain::mapTopLeft3d.x) * oneOverTf ;
-						sVertex[2].v		= (Terrain::mapTopLeft3d.y - vertices[3]->vy) * oneOverTf ;
-		
-						if ((sVertex[0].u > MaxMinUV) || 
-							(sVertex[0].v > MaxMinUV) ||
-							(sVertex[1].u > MaxMinUV) || 
-							(sVertex[1].v > MaxMinUV) ||
-							(sVertex[2].u > MaxMinUV) || 
-							(sVertex[2].v > MaxMinUV))
-						{
-							//If any are out range, move 'em back in range by adjustfactor.
-							float maxU = fmax(sVertex[0].u,fmax(sVertex[1].u,sVertex[2].u));
-							maxU = floor(maxU - (MaxMinUV-1.0f));
-							
-							float maxV = fmax(sVertex[0].v,fmax(sVertex[1].v,sVertex[2].v));
-							maxV = floor(maxV - (MaxMinUV-1.0f));
-							
-							sVertex[0].u -= maxU;
-							sVertex[1].u -= maxU;
-							sVertex[2].u -= maxU;
-							
-							sVertex[0].v -= maxV;
-							sVertex[1].v -= maxV;
-							sVertex[2].v -= maxV;
-						}
-						
-						//Light the Detail Texture
-						if (Terrain::terrainTextures2)
-						{
-							sVertex[0].argb		= 
-							sVertex[1].argb		= 
-							sVertex[2].argb		= 0xffffffff;
-						}
-						// Slice A (A2) - DRAWALPHA detail dead-confirmation counter.
-						// Counter-only; behaviour unchanged. Post-return legacy body,
-						// unreachable on armed frames; expected ==0 (A2 gate).
-						gos_terrain_indirect::Counters_AddLegacyDrawAlphaDetailQuad();
-						mcTextureManager->addVertices(terrainDetailHandle,sVertex,MC2_ISTERRAIN | MC2_DRAWALPHA);
-					}
-					
 					//--------------------------------------------------------------
 					// Draw the Overlay Texture if it exists.
 					if (useOverlayTexture && (overlayHandle != 0xffffffff))
