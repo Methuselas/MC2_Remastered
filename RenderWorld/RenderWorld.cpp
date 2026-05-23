@@ -77,10 +77,10 @@ int32_t handleToRecipeIndex(RenderCore::RenderObjectHandle h) {
 }
 
 // M1.5: per-slot inspection table. Always populated (M1 decision);
-// ~85 KB peak at tier1 mc2_24 = 2641 props. Indexed by
-// handle.index(); resized lazily on upsert. mutex guards resize +
-// write; reads in lookupAtPixel acquire the same lock (cheap,
-// click-rate).
+// ~127 KB peak at tier1 mc2_24 = 2641 props (48 bytes/record with M2
+// kind+debugCookie fields). Indexed by handle.index(); resized lazily
+// on upsert. mutex guards resize + write; reads in lookupAtPixel
+// acquire the same lock (cheap, click-rate).
 std::mutex                                  s_objectRecordsMutex;
 std::vector<RenderWorld::RenderObjectRecord> s_objectRecords;
 
@@ -129,6 +129,8 @@ void populateRecord(uint32_t handleIndex,
     rec.drawPacketIndex    = 0xFFFFFFFFu; // M1.5 sentinel
     rec.pathReasonCode     = 0;           // M1.5 sentinel
     rec.gameObjectId       = gameObjectId;
+    rec.kind               = RenderObjectKind::StaticProp;
+    rec.debugCookie        = 0;
 }
 
 void retireRecord(uint32_t handleIndex)

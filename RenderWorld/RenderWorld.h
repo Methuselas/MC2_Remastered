@@ -121,8 +121,9 @@ enum class RenderObjectKind : uint8_t {
 
 // M1.5: per-slot inspection record. Indexed by handle.index().
 // Always populated (M1 decision: mission/upsert-time RenderWorld
-// metadata; ~85 KB peak at tier1 mc2_24 = 2641 props). Slot recycle
-// bumps generation; alive=false marks a retired slot.
+// metadata; ~127 KB peak at tier1 mc2_24 = 2641 props (48 bytes/record
+// with M2 kind+debugCookie fields)). Slot recycle bumps generation;
+// alive=false marks a retired slot.
 //
 // Most fields are documentary in M1.5 (PipelineId / DrawPacket /
 // pathReasonCode have no real consumers yet); their sentinels are
