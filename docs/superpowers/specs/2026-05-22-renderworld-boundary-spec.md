@@ -16,6 +16,7 @@
   - convergence with Pass Contract Registry spec (advisor Edit 1)
   - greybeard pass at first slice execution (META-FIX vs PATCH ruling
     on the legacy-adapter pattern itself)
+- 2026-05-22 amendment: Section 10 sentinel translation wording softened from "exclusively at the adapter boundary" to "at every game/engine seam (M1 has two)"; rationale per `docs/superpowers/reviews/2026-05-22-renderworld-slice-m1-plan-adversarial-review.md` M3.
 
 This document is the north-star-aligned NS3 deliverable that precedes
 writing the `RenderWorld` type. The roadmap's sequencing note (item 20)
@@ -661,22 +662,38 @@ class VfxRenderAdapter       { /* same shape, takes VFX emitter */ };
 class OverlayRenderAdapter   { /* HUD / decals / overlays */ };
 ```
 
-### Sentinel translation at the boundary (load-bearing)
+### Sentinel translation at every game/engine seam (load-bearing, amended 2026-05-22)
 
-The Phase 1 first-slice path threads `RenderObjectHandle` through the
-existing `GpuStaticPropRegistry` recipe path. The registry returns
-`int32_t recipeIndex` with sentinel `-1`; `RenderObjectHandle` uses
-`Handle::invalid()` as the only sentinel (Section 3 invariants). The
-adapter MUST translate at the boundary, both directions:
+Sentinel values may not cross a module boundary untranslated. The
+Phase 1 first-slice path threads `RenderObjectHandle` through the
+existing `GpuStaticPropRegistry` recipe path, which means there are
+TWO temporary legacy seams in M1:
 
-```
--1 (recipeIndex)   <->   RenderObjectHandle::invalid()
-```
+1. **GameAdapters seam:**
+   legacy `int32_t recipeIndex` <-> `RenderObjectHandle`
+   (Appearance-side legacy data <-> RenderWorld API)
 
-`-1` MUST NOT leak upward past the adapter. `Handle::invalid()` MUST
-NOT leak downward into legacy registry calls. The adapter is the only
-place this translation is allowed; a free `int32_t` masquerading as a
-handle anywhere above the adapter is a boundary failure.
+2. **RenderWorld legacy-backend seam:**
+   `GpuStaticPropRegistry` `int32_t recipeIndex` <-> `RenderObjectHandle`
+   (RenderWorld engine API <-> registry private TU)
+
+At each seam, the translation runs both directions; outside both seams,
+neither `int32_t recipeIndex` nor `Handle::invalid()` may leak.
+
+Invariants:
+
+- No `int32_t recipeIndex` may appear in `RenderCore` public API.
+- No `int32_t recipeIndex` may appear in `RenderWorld` public API.
+- No `RenderObjectHandle` may be stored inside legacy
+  `StaticRegistration` in M1 (per Q13 resolution / D4 sign-off).
+- `-1` MUST NOT leak above either seam. `Handle::invalid()` MUST NOT
+  leak below either seam into legacy registry calls.
+
+Both seams are explicitly TEMPORARY: as the legacy backend is retired
+and `RenderWorld` gains a native handle table (post-M2), the
+RenderWorld/legacy-backend seam dissolves. Only the GameAdapters seam
+remains, and adapters are themselves deletable per Section 10's
+deletion criteria.
 
 ### Migration order
 
