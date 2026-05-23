@@ -215,6 +215,7 @@ MissionInterfaceManager::Command		MissionInterfaceManager::commands[MAX_COMMAND]
 		KEY_F3,				-1,		-1,					true,		&MissionInterfaceManager::cameraMaxIn,0, -1,
 		KEY_F4,				-1,		-1,					true,		&MissionInterfaceManager::cameraTight,0, -1,
 		KEY_F5,				-1,		-1,					true,		&MissionInterfaceManager::cameraFour,0, -1,
+		KEY_PRIOR,			-1,		-1,					true,		&MissionInterfaceManager::cameraMaxOut,0, -1,
 		KEY_F2 | CTRL,		-1,		-1,					true,		&MissionInterfaceManager::cameraAssign0,0, -1,
 		KEY_F3 | CTRL, 		-1,		-1,					true,		&MissionInterfaceManager::cameraAssign1,0, -1,
 		KEY_F4 | CTRL, 		-1,		-1,					true,		&MissionInterfaceManager::cameraAssign2,0, -1,
@@ -2475,7 +2476,14 @@ int MissionInterfaceManager::cameraMaxIn()
 {
 	if (eye)
 		eye->setCameraView(1);
- 		
+
+	return 1;
+}
+int MissionInterfaceManager::cameraMaxOut()
+{
+	if (eye)
+		eye->ZoomMin();
+
 	return 1;
 }
 int MissionInterfaceManager::cameraTight()

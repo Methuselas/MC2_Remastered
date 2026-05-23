@@ -1270,10 +1270,10 @@ void __stdcall InitializeGameEngine()
 
 				result = systemFile->readIdFloat("AltitudeMinimum",Camera::AltitudeMinimum);
 				if (result != NO_ERR)
-					Camera::AltitudeMinimum = 560.0f;
+					Camera::AltitudeMinimum = 60.0f;
 
-				if (Camera::AltitudeMinimum < 110.0f)
-					Camera::AltitudeMinimum = 110.0f;
+				if (Camera::AltitudeMinimum < 60.0f)
+					Camera::AltitudeMinimum = 60.0f;
 
 				result = systemFile->readIdFloat("AltitudeMaximumHi",Camera::AltitudeMaximumHi);
 				if (result != NO_ERR)

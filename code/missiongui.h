@@ -396,6 +396,7 @@ public:
 		int cameraNormal();
 		int cameraDefault();
 		int cameraMaxIn();
+		int cameraMaxOut();
 		int cameraTight();
 		int cameraFour();
 		int toggleCompass();
