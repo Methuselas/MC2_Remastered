@@ -210,6 +210,7 @@ set(SOURCES
     "code/keyboardref.cpp"
     "code/mechicon.cpp"
     "code/missiongui.cpp"
+    "code/gameplay_pick.cpp"
     "code/mpconnectiontype.cpp"
     "code/mpgamebrowser.cpp"
     "code/mphostgame.cpp"
