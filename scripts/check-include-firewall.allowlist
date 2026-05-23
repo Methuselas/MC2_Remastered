@@ -1,0 +1,16 @@
+# scripts/check-include-firewall.allowlist
+#
+# Phase 1 grandfathered carve-outs per adversarial review M2.
+# Each line: relative-path-from-worktree-root
+#
+# Grandfathered: the registry header forward-declares `class Appearance;`
+# at line 9 for the legacy registerStaticProp(Appearance*) signature.
+# Spec section 12 carve-out applies for the duration of Phase 1.
+GameOS/gameos/gos_static_prop_registry.h
+GameOS/gameos/gos_static_prop_registry.cpp
+
+# C1 fix: the legacy backend bridge TU is the ONLY engine-side TU
+# allowed to include gos_static_prop_batcher.h and call
+# GpuStaticPropRegistry::*. Confined to RenderWorld/legacy/ subdir.
+RenderWorld/legacy/static_prop_backend.h
+RenderWorld/legacy/static_prop_backend.cpp
