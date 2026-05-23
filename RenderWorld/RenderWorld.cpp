@@ -38,6 +38,14 @@ bool envFlag(const char* name) {
     return v && v[0] && v[0] != '0';
 }
 
+// M1.5: cached env-flag accessor. First call reads MC2_OBJECT_ID_BUFFER
+// from getenv(); subsequent calls return the cached bool. Designed so
+// the hot static-prop draw loop sees ONE branch-not-taken per draw on
+// the env-OFF default path.
+bool readObjectIdBufferEnv() {
+    return envFlag("MC2_OBJECT_ID_BUFFER");
+}
+
 uint32_t recipeIndexToHandleIndex(int32_t r) {
     // M1: generation is always 1 (no slot recycle yet). Index is the
     // raw recipe slot. -1 -> invalid (index=0, generation=0).
@@ -62,7 +70,15 @@ void init() {
     s_destroyCalls.store(0);
     s_markVisibleCalls.store(0);
     s_frameCounter.store(0);
-    std::fprintf(stderr, "[RENDER_WORLD v1] event=init\n");
+    const bool oid = IsObjectIdBufferEnabled();
+    std::fprintf(stderr, "[RENDER_WORLD v1] event=init objectid_buffer=%s\n",
+                 oid ? "on" : "off");
+    if (oid) {
+        // Once-per-process; helps log readers correlate the banner with
+        // the integer-MRT attachment lifecycle in gos_postprocess.cpp.
+        std::fprintf(stderr,
+            "[OBJECT_ID v1] event=enabled format=R32UI attachment=GL_COLOR_ATTACHMENT2\n");
+    }
 }
 
 void destroy() {
@@ -130,6 +146,13 @@ void markVisible(RenderCore::RenderObjectHandle h,
 bool isReady(RenderCore::RenderObjectHandle h) {
     if (!h.isValid()) return false;
     return legacy::isReadyStaticProp(handleToRecipeIndex(h));
+}
+
+bool IsObjectIdBufferEnabled() {
+    // Function-local static: thread-safe initialization (C++11 magic
+    // statics); init runs exactly once at first call.
+    static const bool s_enabled = readObjectIdBufferEnv();
+    return s_enabled;
 }
 
 void frameBannerTick() {

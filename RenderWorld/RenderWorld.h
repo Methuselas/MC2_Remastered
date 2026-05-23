@@ -70,4 +70,18 @@ bool isReady(RenderCore::RenderObjectHandle h);
 //   default                  -> monotonic 600-frame summary
 void frameBannerTick();
 
+// M1.5: object-ID buffer env-flag accessor. Reads
+// MC2_OBJECT_ID_BUFFER once at first call; subsequent calls return the
+// cached value. Flipping the env var requires a process restart (the
+// linked shader's GLSL macro is fixed at program-load time per
+// memory/glsl_preprocessor_does_not_inherit_cpp_build_flags.md).
+//
+// Consumed by:
+//   - gos_postprocess.cpp setSceneDrawBuffers() / createFBOs() / beginScene()
+//   - gos_static_prop_batcher.cpp producer (objectIdRaw fill)
+//   - RenderWorld.cpp lookupAtPixel() guard
+//   - RenderWorld.cpp frameBannerTick() banner token
+//   - C++ side of static-prop makeProgram() (gates the GLSL #ifdef prefix)
+bool IsObjectIdBufferEnabled();
+
 } // namespace RenderWorld
