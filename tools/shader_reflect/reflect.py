@@ -87,6 +87,9 @@ SHADER_VARIANTS: dict[str, list[dict]] = {
         _v("default",  []),
         _v("coalesce", ["MC2_COALESCE=1"]),
     ],
+    "shaders/fixtures/material_gpu_contract.frag": [
+        _v("default", []),
+    ],
 }
 
 # Macros that gate variant-specific bindings. Used for coverage audit.

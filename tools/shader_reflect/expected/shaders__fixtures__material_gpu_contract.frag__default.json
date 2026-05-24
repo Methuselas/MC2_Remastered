@@ -1,0 +1,29 @@
+{
+  "defines": [],
+  "outputs": [
+    {
+      "location": 0,
+      "name": "o_color",
+      "type": "vec4"
+    }
+  ],
+  "shader": "shaders/fixtures/material_gpu_contract.frag",
+  "ssbos": [
+    {
+      "binding": 5,
+      "members": [
+        {
+          "array_stride": 32,
+          "matrix_stride": null,
+          "name": "materials",
+          "offset": 0,
+          "type": "_11"
+        }
+      ],
+      "name": "MaterialTable"
+    }
+  ],
+  "stage": "frag",
+  "ubos": [],
+  "variant": "default"
+}
