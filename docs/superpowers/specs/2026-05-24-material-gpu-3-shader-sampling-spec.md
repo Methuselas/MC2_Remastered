@@ -1,6 +1,6 @@
 # MaterialGpu-3: First Shader Sampling Switch
 
-**Date:** 2026-05-24 (rev 2 — reviewer fixes applied)
+**Date:** 2026-05-24 (rev 3 — adversarial fixes: MAJ-1 reset, MAJ-2 loop var, MAJ-5 sampleOn+loc)
 **Status:** Approved for planning
 **Slice:** MaterialGpu-3 (first shader-consumer slice)
 **Predecessor:** MaterialGpu-2 (runtime table + SSBO upload, shipped 2026-05-24)
@@ -32,14 +32,23 @@ MC2_MATERIAL_GPU=1          (v2 gate — upload, bind, validate)
 MC2_MATERIAL_GPU_SAMPLE=1   (v3 gate — shader samples via materials[materialIdx].albedoTex)
 ```
 
-**Sampling is active only when ALL four conditions are true:**
+**Sampling is active only when ALL five conditions are true:**
 
 ```cpp
 sampleOn = s_materialGpuEnabled       // MC2_MATERIAL_GPU=1
         && s_materialGpuSampleEnabled  // MC2_MATERIAL_GPU_SAMPLE=1
         && s_materialGpuSsbo != 0      // SSBO actually uploaded
-        && s_materialGpuSidecarValid;  // sidecar size matches emitted count (see §5.1)
+        && s_materialGpuSidecarValid   // sidecar size matches emitted count (see §5.1)
+        && s_locsCoalesce.materialGpuSample >= 0;  // uniform resolved (see §6.2)
 ```
+
+The fifth condition (`loc >= 0`) ensures `sampleOn` accurately reflects "sampling
+will actually happen." Without it, `sampleOn=true` with `loc==-1` would emit
+`event=sample_mode enabled=1 loc=-1` — misleading because the uniform upload is silently
+skipped and the shader stays in legacy mode. Including `loc >= 0` guarantees that
+`enabled=1` in the log always means the uniform was set.
+`s_locsCoalesce.materialGpuSample` is resolved once in `loadProgramsIfNeeded()` and
+cached — it is available before the first `flush()` call.
 
 **Gate-off behavior:**
 - `MC2_MATERIAL_GPU_SAMPLE=1` alone (upload gate unset): `sampleOn = false`. SSBO is not
@@ -136,8 +145,22 @@ struct PerDrawEntry {
 
 ### 5.1 Sidecar valid flag
 
-At the start of the `finalizeGeometry()` sidecar block (inside `if (s_materialGpuEnabled)`),
-after the sidecar loop completes and before the PerDrawEntry entries loop, set:
+**MAJ-1 fix:** `s_materialGpuSidecarValid` MUST be reset to `false` at the very start of
+the `if (s_materialGpuEnabled)` block in `finalizeGeometry()`, before the sidecar loop.
+This prevents stale-true state if finalizeGeometry() is somehow called again
+(e.g., hot-reload, partial reinit) after a prior valid call:
+
+```cpp
+if (s_materialGpuEnabled) {
+    s_materialGpuSidecarValid = false;  // MAJ-1: reset before sidecar loop
+    s_packetMaterialIdx.clear();
+    s_materialGpuTable.clear();
+    // ... sidecar loop runs here ...
+```
+
+After the sidecar loop and upload complete (still inside `if (s_materialGpuEnabled)`,
+after the `event=compare` log, before the `} // end s_materialGpuEnabled` brace),
+set the valid flag:
 
 ```cpp
 // C1 fix: record whether the sidecar is aligned with the emitted draw count.
@@ -145,10 +168,9 @@ after the sidecar loop completes and before the PerDrawEntry entries loop, set:
 // disabled for the whole pass — legacy texArrayLayer is the fallback, not
 // a wrong-material-0 read.
 s_materialGpuSidecarValid =
-    s_materialGpuEnabled &&
     (s_packetMaterialIdx.size() == s_sortedPacketOrder.size());
 
-if (!s_materialGpuSidecarValid && s_materialGpuEnabled) {
+if (!s_materialGpuSidecarValid) {
     char buf[128];
     std::snprintf(buf, sizeof(buf),
                   "[MATERIAL_GPU v1] ERROR materialIdx sidecar size mismatch"
@@ -156,10 +178,16 @@ if (!s_materialGpuSidecarValid && s_materialGpuEnabled) {
                   s_sortedPacketOrder.size(), s_packetMaterialIdx.size());
     std::fputs(buf, stderr);
 }
+} // end if (s_materialGpuEnabled)
 ```
 
-When gate is OFF (`!s_materialGpuEnabled`): `s_materialGpuSidecarValid = false`.
-This ensures `sampleOn` in flush() is always false when the upload gate is off.
+When gate is OFF (`!s_materialGpuEnabled`): the `if` block is not entered, so
+`s_materialGpuSidecarValid` retains `false` (its initial value from the static
+declaration). `sampleOn` in flush() is therefore always false when the upload gate is off.
+
+**Insertion summary** (both modifications are inside the MaterialGpu-2 `if (s_materialGpuEnabled)` block):
+1. Reset `s_materialGpuSidecarValid = false;` — at the TOP of the block (before `s_packetMaterialIdx.clear()`)
+2. Set `s_materialGpuSidecarValid = ...;` — at the BOTTOM of the block (after `event=compare` log)
 
 ### 5.2 Fill `materialIdx` in the PerDrawEntry entries loop
 
@@ -171,12 +199,18 @@ add after the other field assignments:
 // Only when gate is ON and sidecar is valid (sizes match).
 // Fall back to 0u otherwise — safe because sampleOn will be false
 // if the sidecar is invalid, so materials[] is never accessed.
+// MAJ-2: loop variable is `i` (uint32_t), matching the existing entries loop.
 if (s_materialGpuEnabled && s_materialGpuSidecarValid) {
-    e.materialIdx = s_packetMaterialIdx[slotIndex];  // bounds safe: valid iff size match
+    e.materialIdx = s_packetMaterialIdx[i];  // bounds safe: valid iff size match
 } else {
     e.materialIdx = 0u;
 }
 ```
+
+**Note:** The entries-build loop (for loop over `s_sortedPacketOrder.size()`) is
+OUTSIDE the `if (s_materialGpuEnabled)` block. The materialIdx fill is added inside
+this loop, using the existing loop variable `i`. The sidecar validity check (`s_materialGpuSidecarValid`)
+provides the bounds guarantee: `s_packetMaterialIdx.size() == i_max` is invariant when valid.
 
 ### 5.3 Entry materialIdx compare log (m1 fix)
 
@@ -259,17 +293,19 @@ At the same site where `fogValue` and `debugAddrMode` are set for the coalesce p
 
 ```cpp
 // MaterialGpu-3: compute sampleOn once per flush.
+// MAJ-5 fix: include loc >= 0 as the 5th condition so sampleOn == true
+// means "uniform was found and sampling will actually happen."
+// Without this, sampleOn=true + loc=-1 emits misleading enabled=1 log.
 const bool sampleOn = s_materialGpuEnabled
                    && s_materialGpuSampleEnabled
                    && s_materialGpuSsbo != 0
-                   && s_materialGpuSidecarValid;
+                   && s_materialGpuSidecarValid
+                   && s_locsCoalesce.materialGpuSample >= 0;
 
 if (s_locsCoalesce.materialGpuSample >= 0) {
     glUniform1i(s_locsCoalesce.materialGpuSample, sampleOn ? 1 : 0);
-} else if (s_materialGpuEnabled && s_materialGpuSampleEnabled) {
-    // Uniform absent when both gates are ON — sampling silently stays off.
-    // Error was already logged at loadProgramsIfNeeded() time; don't flood.
 }
+// If loc == -1: M3 error already logged at loadProgramsIfNeeded(); no-op here.
 ```
 
 Do NOT call `glGetUniformLocation` inside `flush()`.
@@ -282,16 +318,20 @@ draw loop, in the coalesce path:
 ```cpp
 // M2: required diagnostic log — emitted once per flush so gate interaction
 // is always observable without a debugger. One line per flush, not per draw.
+// With MAJ-5 fix: sampleOn includes loc >= 0, so enabled=1 guarantees the
+// uniform was found. The reason cascade mirrors the sampleOn condition order.
 {
     const char* reason = "ok";
-    if (!s_materialGpuEnabled)       reason = "upload_env_off";
-    else if (!s_materialGpuSampleEnabled) reason = "sample_env_off";
-    else if (s_materialGpuSsbo == 0) reason = "no_ssbo";
-    else if (!s_materialGpuSidecarValid) reason = "sidecar_invalid";
+    if (!s_materialGpuEnabled)                    reason = "upload_env_off";
+    else if (!s_materialGpuSampleEnabled)          reason = "sample_env_off";
+    else if (s_materialGpuSsbo == 0)               reason = "no_ssbo";
+    else if (!s_materialGpuSidecarValid)           reason = "sidecar_invalid";
     else if (s_locsCoalesce.materialGpuSample < 0) reason = "uniform_missing";
+    // else: reason == "ok" → sampleOn is true (all 5 conditions met)
 
     char buf[96];
     if (sampleOn) {
+        // sampleOn=true guarantees loc >= 0 (5th condition), so loc is always valid here.
         std::snprintf(buf, sizeof(buf),
                       "[MATERIAL_GPU v1] event=sample_mode enabled=1 loc=%d\n",
                       s_locsCoalesce.materialGpuSample);
@@ -431,7 +471,7 @@ Extend the existing `[MATERIAL_GPU v1]` banner to include `sample=%d`:
 }
 ```
 
-`char buf[64]`: max output `[MATERIAL_GPU v1] enabled=1 sample=1 binding=5\n` = 44 chars + NUL.
+`char buf[64]`: max output `[MATERIAL_GPU v1] enabled=1 sample=1 binding=5\n` = 47 chars + NUL. Fits in 64.
 
 ---
 
