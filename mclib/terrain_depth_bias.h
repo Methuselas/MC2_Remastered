@@ -63,7 +63,7 @@
 namespace mc2depth {
 constexpr float TERRAIN_DEPTH_FUDGE      = -0.002f;   // reverse-Z: was 0.002f
 // Fix B co-planar signed epsilons (FAST / matrix-share regime):
-constexpr float WATER_DEPTH_BIAS         =  0.0005f;  // > 0 water WINS GEQUAL tie; FAST=-0.0015 > TERRAIN=-0.002
+constexpr float WATER_DEPTH_BIAS         = -0.00175f; // < 0 water LOSES GEQUAL tie; FAST=-0.00375 < TERRAIN=-0.002 (bumped halfway-again toward |0.004| punch-through bound to fully kill cliff-bleed at grazing/long-zoom)
 constexpr float OVERLAY_DEPTH_BIAS       =  0.00005f; // > 0 decals win GEQUAL tie; reduced from 0.0005f (was beating buildings at RTS zoom)
 constexpr float WATER_DEPTH_FUDGE_FAST   = TERRAIN_DEPTH_FUDGE + WATER_DEPTH_BIAS;   // -0.0025f; FAST regime
 // RASTER regime (legacy CPU-raster water; flips for reverse-Z, reconciled at
@@ -75,7 +75,7 @@ constexpr float WATER_DEPTH_FUDGE_RASTER = TERRAIN_DEPTH_FUDGE + WATER_DEPTH_DEL
 constexpr float WATER_DEPTH_FUDGE        = WATER_DEPTH_FUDGE_RASTER;                       // -0.0025f
 
 static_assert(
-    OVERLAY_DEPTH_BIAS > 0.0f && WATER_DEPTH_BIAS > 0.0f &&
+    OVERLAY_DEPTH_BIAS > 0.0f && WATER_DEPTH_BIAS < 0.0f &&
     (TERRAIN_DEPTH_FUDGE + WATER_DEPTH_BIAS) > 2.0f * TERRAIN_DEPTH_FUDGE,
-    "Reverse-Z depth ordering invariant: OVERLAY>0, WATER>0 (wins GEQUAL tie), |water-abs|<2*|terrain|");
+    "Reverse-Z depth ordering invariant: OVERLAY>0 (decals win), WATER<0 (loses GEQUAL tie), |water-abs|<2*|terrain|");
 }
