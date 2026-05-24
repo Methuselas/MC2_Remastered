@@ -44,6 +44,7 @@
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
 #include "../GameOS/gameos/gos_static_prop_registry.h"  // Stage 3.C: frameBegin()
 #include "particles/batcher.h"  // B1 Stage 1' Commit 3: GPU particle batcher flush hook
+#include "../GameOS/gameos/debug_renderer.h"
 
 //---------------------------------------------------------------------------
 CameraPtr eye = NULL;
@@ -313,6 +314,13 @@ void GameCamera::render (void)
 		{
 			ZoneScopedN("GameCamera::render weather");
 			weather->render();				//Draw the weather
+		}
+
+		// DebugRenderer world primitives -- depth-tested, before post-process.
+		// No-op when MC2_DEBUG_RENDERER is unset.
+		{
+			ZoneScopedN("GameCamera::render debugRendererFlushWorldPrims");
+			DebugRenderer::flushWorldPrims();
 		}
 	}
 
