@@ -120,6 +120,17 @@ static std::atomic<uint32_t> s_nextMechSlot{0};
 // INVARIANT: max static-prop recipe index < kMechHandleBase.
 static constexpr uint32_t kMechHandleBase = 0x00010000u;
 
+// kTerrainHandleBase: M3 v1 reservation (2026-05-24). RESERVED — no code
+// allocates from this base in v1. If/when a future M3.1 implementation
+// slice ships per-quad terrain identity (editor-driven; see resolutions
+// sidecar), this is the base. Range [0x00040000, 0x000FFFFF] reserves
+// 786,431 slots — comfortably above the worst-case ~196K mission-total
+// terrain quads on GameVisibleVertices=200. Leaves
+// [0x00010000..0x0003FFFF] (~245K slots) as mech-expansion headroom.
+// Tripwire-protected: see lookupAtPixel below. Spec:
+// docs/superpowers/specs/2026-05-23-renderworld-slice-m3-terrain-spec.md.
+[[maybe_unused]] static constexpr uint32_t kTerrainHandleBase = 0x00040000u;
+
 void populateRecord(uint32_t handleIndex,
                     uint16_t generation,
                     uint32_t gameObjectId)
@@ -659,6 +670,14 @@ uint32_t objectIdRawForStaticPropRecipe(int32_t recipeIndex) {
     ).raw();
 }
 
+VisibilityResult queryVisibility(VisibilityRequest /*req*/) {
+    // v0: viewId/kindMask/layerMask ignored -- wrap existing counters only.
+    VisibilityResult r{};
+    r.static_props = legacy::getStaticPropActiveCount();
+    r.mechs        = s_mechs_alive_rw.load(std::memory_order_relaxed);
+    return r;
+}
+
 void frameBannerTick() {
     const uint64_t f = s_frameCounter.fetch_add(1, std::memory_order_relaxed) + 1;
 
@@ -675,15 +694,20 @@ void frameBannerTick() {
     // active-recipe accessor, NOT from the adapter-side delta. Adapter
     // delta drifts if the registry tombstones via paths the adapter
     // never sees; registry count is canonical.
-    const uint64_t staticProps = legacy::getStaticPropActiveCount();
-    const uint64_t mechs       = s_mechs_alive_rw.load(std::memory_order_relaxed);
-    const uint64_t total       = staticProps + mechs;
+    const VisibilityResult vis  = queryVisibility(VisibilityRequest{});
+    const uint64_t total        = vis.static_props + vis.mechs;
     const char* oidTok = IsObjectIdBufferEnabled() ? "on" : "off";
     std::fprintf(stderr,
         "[RENDER_WORLD v1] frame=%llu objects=%llu static_props=%llu mechs=%llu "
         "visible=0 packets=0 views=1 objectid_buffer=%s\n",
         (unsigned long long)f, (unsigned long long)total,
-        (unsigned long long)staticProps, (unsigned long long)mechs, oidTok);
+        (unsigned long long)vis.static_props, (unsigned long long)vis.mechs, oidTok);
+    std::fprintf(stderr,
+        "[VISIBILITY v1] frame=%llu static_props=%llu mechs=%llu "
+        "terrain=deferred vfx=prohibited\n",
+        (unsigned long long)f,
+        (unsigned long long)vis.static_props,
+        (unsigned long long)vis.mechs);
 }
 
 LookupResult lookupAtPixel(int screenX, int screenY) {
@@ -750,6 +774,21 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
     }
     if ((rec.flags & kRenderObjectFlagAlive) == 0u) {
         return out;
+    }
+
+    // M3 v1 trip-wire (2026-05-24): no writer should produce a Terrain
+    // record in v1 (kTerrainHandleBase is unused; no terrain frag shader
+    // writes attachment-2). If we see one, an unintended writer has
+    // slipped in. Log once and downgrade to invalid. Removing this branch
+    // is part of the M3.1 implementation slice if it ever ships.
+    if (rec.kind == RenderObjectKind::Terrain) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            std::fprintf(stderr,
+                "[RENDER_WORLD v1] WARN: lookupAtPixel returned kind=Terrain but no writer should produce it (M3 reservation; M3.1 would change this)\n");
+        }
+        return out;  // isValid=false (default)
     }
 
     out.isValid            = true;

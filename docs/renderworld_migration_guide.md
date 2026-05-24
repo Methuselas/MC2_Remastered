@@ -215,8 +215,9 @@ Walk for adding `Terrain=2` (M3 example):
     mc2_24 max). Mechs live `[0x00010000..]` (`kMechHandleBase = 0x10000`,
     65536; ~24x headroom over the static-prop max). Pick a base with at
     least one decimal-order headroom over the projected max. For terrain
-    blocks (a 64x64 grid = 4096 max), `kTerrainHandleBase = 0x00020000`
-    keeps it cleanly disjoint from both static props and mechs.
+    blocks the M3 v1 reservation is `kTerrainHandleBase = 0x00040000`
+    (see §12 table); this leaves `[0x00010000..0x0003FFFF]` as
+    mech-expansion headroom.
 3.  **Decide your object-ID write mechanism** (see section 5). Uniform if
     every draw is a single object; SSBO per-instance if you batch.
 4.  **Build the adapter** (see section 2). Header surface mirrors
@@ -551,9 +552,17 @@ Existing allocations:
 |-------------|------------|-----------------------------|----------|
 | StaticProp  | 0          | 2641                        | ~24x to mech base |
 | Mech        | 0x00010000 | ~50                         | huge     |
-| Terrain     | TBD (0x00020000 recommended) | -- | -- |
-| Vfx         | TBD (0x00040000 recommended) | -- | -- |
-| Overlay     | TBD (0x00080000 recommended) | -- | -- |
+| Terrain     | 0x00040000 (M3 v1: RESERVED, no allocator) | -- | 786K slots reserved; [0x10000..0x3FFFF] left as mech-expansion headroom |
+| Vfx         | TBD (0x00080000 recommended in M4) | -- | -- |
+| Overlay     | DEFERRED indefinitely (M5 2026-05-24); see slice-m5 spec | -- | -- |
+
+**Terrain variants note (M3 v1):** if a future M3.1 ships per-quad terrain
+identity (editor-driven), water / decal / mine variants use a `subKind`
+payload field on `RenderObjectRecord` — do NOT proliferate
+`RenderObjectKind` values for terrain flavors. Per the
+`RenderObjectKind` "stable across releases — never renumber, only
+append" rule, splitting later costs only an enum append, but the
+resolutions sidecar explicitly picks the single-kind path for v1.
 
 Allocation rule: pick a base with at least one decimal order of magnitude
 headroom over the projected max. Power-of-two bases let you visually
@@ -629,7 +638,7 @@ skill" verbatim. Always dispatch without asking
 Working order for "add `Terrain=2` (M3) pickup":
 
 1.  Read `CLAUDE.md` "Active campaigns" for all M1..M2.6 entries.
-2.  Pick handle-base (e.g. `kTerrainHandleBase = 0x00020000`).
+2.  Pick handle-base (M3 v1 landed `kTerrainHandleBase = 0x00040000`).
 3.  Pick object-ID write mechanism (terrain blocks are batched -> SSBO
     per-instance, mechanism B).
 4.  Spec draft:

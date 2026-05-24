@@ -17,6 +17,7 @@
 
 #include "../RenderCore/Handle.h"
 #include "../RenderCore/RenderObjectDesc.h"
+#include "VisibilityRequest.h"
 
 namespace RenderWorld {
 
@@ -131,7 +132,25 @@ uint32_t objectIdRawForStaticPropRecipe(int32_t recipeIndex);
 enum class RenderObjectKind : uint8_t {
     StaticProp = 0,
     Mech       = 1,
-    // Future: Terrain=2, Vfx=3, Overlay=4
+    // M3 v1 (2026-05-24): RESERVATION ONLY. No writer is wired in v1.
+    // See docs/superpowers/specs/2026-05-23-renderworld-slice-m3-terrain-spec.md
+    // and the resolutions sidecar
+    // docs/superpowers/specs/2026-05-24-renderworld-slice-m3-m4-m5-resolutions.md
+    // for the future-trigger contract that would flip M3 to an
+    // implementation slice. lookupAtPixel emits a one-shot WARN and
+    // returns isValid=false if this kind ever surfaces in a record —
+    // that is the trip-wire for an unintended writer. Future terrain
+    // variants (water/decal/mine) use a `subKind` payload field, NOT
+    // additional RenderObjectKind values.
+    Terrain    = 2,
+    // Future: Vfx=3 (reserved in M4).
+    // Overlay reserved/deferred (M5 2026-05-24): the word "overlay" had
+    // 7 in-tree meanings without an identity-needing consumer. See
+    // docs/superpowers/specs/2026-05-23-renderworld-slice-m5-overlay-spec.md
+    // for the clarification rationale. If a future use case emerges,
+    // ship as a new named slice (HoverKindIndicator /
+    // RenderWorldDebugOverlay / M5-perf overlay-decal GPU port) — NOT
+    // as "M5 Overlay."
 };
 
 // M1.5: per-slot inspection record. Indexed by handle.index().
@@ -306,5 +325,21 @@ void clearAllMechRecords();
 // a relaxed-load uint64_t snapshot; no synchronization across
 // multiple consumers.
 uint64_t getMechsAliveCount();
+
+// Seq C step 1 — VisibilityRequest v0: reporting-only cull query.
+//
+// Wraps existing visibility/cull facts. No new culling decisions;
+// no draw-submission change. Output is counts by kind only.
+//   static_props: GpuStaticPropRegistry active-recipe count
+//   mechs:        engine-side alive-mech counter
+//   terrain:      deferred (CPU terrain picking remains canonical)
+//   vfx:          prohibited (no stable object identity in v0)
+//
+// req.viewId / req.kindMask / req.layerMask are stored but not
+// acted upon in v0 -- present for API stability going into v1.
+//
+// Env-gated log: MC2_RENDER_WORLD_TRACE=1 -> per-frame [VISIBILITY v1];
+// default -> 600-frame monotonic summary (same gate as frameBannerTick).
+VisibilityResult queryVisibility(VisibilityRequest req);
 
 } // namespace RenderWorld
