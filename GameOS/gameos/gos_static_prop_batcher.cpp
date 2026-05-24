@@ -1113,6 +1113,21 @@ void GpuStaticPropBatcher::onMapUnload() {
     if (s_perDrawSsbo)      { glDeleteBuffers(1,  &s_perDrawSsbo);      s_perDrawSsbo      = 0; }
     if (s_permutationSsbo)  { glDeleteBuffers(1,  &s_permutationSsbo);  s_permutationSsbo  = 0; }
     if (s_cmdToBucketSsbo)  { glDeleteBuffers(1,  &s_cmdToBucketSsbo);  s_cmdToBucketSsbo  = 0; }
+    // MaterialGpu-2 teardown: runs regardless of gate state (defensive).
+    // When gate is OFF, s_materialGpuSsbo == 0 and the if-block is skipped entirely.
+    if (s_materialGpuSsbo != 0) {
+        const size_t byteSize =
+            s_materialGpuTable.size() * sizeof(RenderCore::MaterialGpu);
+        char buf[96];
+        std::snprintf(buf, sizeof(buf),
+                      "[MATERIAL_GPU v1] event=unload materials=%zu bytes=%zu\n",
+                      s_materialGpuTable.size(), byteSize);
+        std::fputs(buf, stderr);
+        glDeleteBuffers(1, &s_materialGpuSsbo);
+        s_materialGpuSsbo = 0;
+    }
+    s_packetMaterialIdx.clear();
+    s_materialGpuTable.clear();
     s_sortedPacketOrder.clear();
     s_sortedPacketOrder.shrink_to_fit();
     s_alphaOffCmdCount = 0;
