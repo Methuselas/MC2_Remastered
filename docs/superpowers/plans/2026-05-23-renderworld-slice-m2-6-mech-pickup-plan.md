@@ -10,6 +10,21 @@
 
 ---
 
+## External review fixes applied (EXECUTE-WITH-FIXES -> revised)
+
+External greybeard review (post-adversarial-revision) returned EXECUTE WITH FIXES. All 6 findings applied:
+
+| Finding | Class | Change |
+|---|---|---|
+| C1 | CRITICAL | Task 4 Step 5 documents that `code/missiongui.cpp:65` already directly `#include"mech.h"` (grep-verified at plan-write time), so the full `BattleMech` type is in scope for `tryMechPick`. No additional include needed; source-of-truth note added so a future header-cleanup pass does not remove it. Fallback path documented if grep returns zero hits at write time. |
+| M1 | MAJOR | Task 4 Step 9 pass criterion + Step 11 commit subject + body reworded to match MAJOR-A: banner remains the M1.6 `[STATIC_PROP_PICK v1] enabled=...` form through Task 4; rename lands atomically in Task 5 Step 2a. Commit subject is `m2.6: add tryMechPick consumer + 3 env gates` (no "extended banner"). |
+| M2 | MAJOR | Task 6 Step 4 adds link-direction sanity gate + fallback: if linker reports unresolved `RunMechPickSelfTest` (RenderWorld -> GameAdapters static-lib link order disagrees), move the CALL from `RenderWorld::init()` to `GameAdapters::Mech::beginMission()` (same TU as definition; no forward-decl needed). Explicit ban on "fixing" by including `mech.h` in `RenderWorld.cpp`. |
+| m1 | MINOR | Task 3 Step 3 `findMechByHandle` body gains a cast-safety comment tying the `static_cast<BattleMech*>(m)` + `static_cast<Mech3DAppearance*>(bm->appearance)` chain to the M2 invariant (only `BattleMech::init` assigns `appearance = new Mech3DAppearance` at `code/mech.cpp:1304`). |
+| m2 | MINOR | Task 6 self-test now snapshots `RenderWorld::getMechsAliveCount()` pre-register and asserts no drift post-destroy (Step 5 in the self-test body). New public accessor `RenderWorld::getMechsAliveCount()` added as Task 6 Step 2b prerequisite -- the file-scope `s_mechs_alive_rw` atomic at `RenderWorld.cpp:105` cannot be read from `MechRenderAdapter.cpp` (different TU) without an accessor. |
+| m3 | MINOR (acknowledge) | External reviewer affirmed Task 5 META-FIX Gate 6 (zero-match grep for retired symbols) is correct as written. No change. |
+
+---
+
 ## Adversarial findings applied (CONDITIONAL-PASS -> revised)
 
 Per `docs/superpowers/reviews/2026-05-23-renderworld-slice-m2-6-plan-adversarial.md` (0 CRIT + 4 MAJOR + 5 MINOR). All findings mechanical; no architectural revision needed.
@@ -489,6 +504,11 @@ Per CRITICAL-1: **NO** change to `MechRenderAdapter::syncSpawn` body and NO chan
           MoverPtr m = ObjectManager->getMover(i);
           if (m == nullptr) continue;
           if (!m->isMech()) continue;
+          // Cast safety (external-review m1): isMech() filter guarantees the
+          // mover is a BattleMech. Verified in M2 spec: only BattleMech::init
+          // assigns appearance = new Mech3DAppearance (at code/mech.cpp:1304),
+          // and only BattleMech sets the isMech bit, so the static_cast pair
+          // below is sound on any mover that passes isMech().
           BattleMech* bm = static_cast<BattleMech*>(m);
           // Lifecycle race (per adversarial MINOR-2): guards against
           // pre-init or mid-destroy mech with NULL appearance. A mech
@@ -573,9 +593,11 @@ Per CRITICAL-1: **NO** change to `MechRenderAdapter::syncSpawn` body and NO chan
 
 ---
 
-## Task 4: tryMechPick consumer + 3 env vars + boot banner
+## Task 4: tryMechPick consumer + 3 env gates
 
 **Files:** `RenderWorld/RenderWorld.h`, `RenderWorld/RenderWorld.cpp`, `code/missiongui.h`, `code/missiongui.cpp`
+
+Header-include note (external-review C1): `code/missiongui.cpp` consumes `BattleMech` methods via `tryMechPick`. The full type is provided by the pre-existing `#include"mech.h"` at `code/missiongui.cpp:65` (grep-confirmed at plan-write time). If a future header-cleanup pass touches that include, audit `tryMechPick` callers + the existing fog-of-war gate at `:1272-1278`.
 
 This is the largest task: adds the new caller body, three new cached env-flag accessors, the renamed boot banner, and the two new tail call sites. Uses the OLD `setLastStaticPropPick`/`StaticPropSelectionDebugState` names; Task 5 renames them. (Wait -- Task 5 renames AFTER this task, so this task's mech body MUST use the soon-to-be-renamed `setLastGameplayPick` form. RESOLUTION: Task 4 uses the FUTURE name `setLastGameplayPick` BUT does NOT call it yet -- the mech body emits the log line and skips the debug-state setter; debug-state population for mechs is added in Task 5 in the same commit that introduces the new setter. This keeps Task 4 buildable against the M1.6 surface and Task 5 the META-FIX atomic.)
 
@@ -759,8 +781,36 @@ Equivalent simpler shape: Task 4 wires the mech body to emit only the LOG LINE (
   // IsMechPickEnabled, IsMechPickDebugEnabled, IsMechPickPierceFogEnabled.
   #include "../RenderWorld/RenderWorld.h"
   #include "gameplay_pick.h"  // M2-pre: tryGameplayPick spine + GameplayPickRequest
-  #include "../GameAdapters/MechRenderAdapter.h"  // M2.6: findMechByHandle
+  #include "../GameAdapters/MechRenderAdapter.h"  // M2.6: findMechByHandle (forward-decls BattleMech)
   ```
+
+  **BattleMech complete-type include (external-review C1):** `tryMechPick` calls
+  `bm->getTeamId()`, `bm->isDisabled()`, `bm->getAppearance()`, and casts
+  `(Mover*)bm` -- all require the full `BattleMech` class definition.
+  `MechRenderAdapter.h` only forward-declares `class BattleMech;` (per Task 3
+  Step 2). Preflight grep (run at write time):
+
+  ```powershell
+  Select-String -Path A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\code\missiongui.cpp -Pattern '#include .*mech\.h'
+  ```
+
+  **Plan-write-time result (2026-05-23):** one hit at `code/missiongui.cpp:65`
+  -- `#include"mech.h"` (no leading space; no `../` prefix; this TU is in
+  `code/` so the bare path resolves directly). This direct include provides
+  the full `BattleMech` type to the entire TU, including the `tryMechPick`
+  body inserted at Step 6. **No additional `#include "mech.h"` required.**
+
+  Source-of-truth note for the future header-cleanup pass: `code/missiongui.cpp:65`
+  `#include"mech.h"` is what provides `BattleMech`, `Mover`, and the
+  `target->isMover()` / `target->getTeamId()` / `target->isDisabled()` /
+  `Mover::conStat` / `CONTACT_SENSOR_QUALITY_1` symbols consumed by both
+  the pre-existing fog-of-war gate at `:1272-1278` and the new M2.6
+  `tryMechPick` body. Do NOT remove the `mech.h` include without auditing
+  these consumers.
+
+  If write-time grep returns ZERO hits (file drift removed the include
+  since plan write), add `#include "mech.h"` to the include block in this
+  same step -- the M2.6 body cannot compile without the full type.
 
   Also ensure `MPlayer` + `ShowMovers` + `Team::home` + `CONTACT_SENSOR_QUALITY_1` are in scope. The fog predicate at `:1272-1278` already uses all four in this TU, so the includes that satisfy that predicate satisfy `tryMechPick` too. No additional includes required.
 
@@ -989,7 +1039,7 @@ Equivalent simpler shape: Task 4 wires the mech body to emit only the LOG LINE (
   py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --duration 30 --kill-existing --keep-logs
   ```
 
-  Pass criterion: tier1 5/5 PASS. Banner emits the new form; no `[GAMEPLAY_PICK v1] hit kind=Mech` lines (no clicks during smoke; gate default OFF).
+  Pass criterion: tier1 5/5 PASS. Banner remains the M1.6 `[STATIC_PROP_PICK v1] enabled=...` form (per MAJOR-A: rename deferred to Task 5 Step 2a). No `[GAMEPLAY_PICK v1]` banner present until Task 5. No `[GAMEPLAY_PICK v1] hit kind=Mech` lines either (no clicks during smoke; gate default OFF).
 
 - [ ] **Step 10: Smoke tier1 env-ON banner check.**
 
@@ -1012,7 +1062,7 @@ Equivalent simpler shape: Task 4 wires the mech body to emit only the LOG LINE (
   ```powershell
   git -C A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev add RenderWorld/RenderWorld.h RenderWorld/RenderWorld.cpp code/missiongui.h code/missiongui.cpp
   git -C A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev commit -m @'
-  m2.6: add tryMechPick consumer + 3 env gates + extended banner
+  m2.6: add tryMechPick consumer + 3 env gates
 
   New caller MissionInterfaceManager::tryMechPick mirrors tryStaticPropPick
   shape, dispatches through the unchanged tryGameplayPick spine, kind-guards
@@ -1028,7 +1078,8 @@ Equivalent simpler shape: Task 4 wires the mech body to emit only the LOG LINE (
   this commit per adversarial MAJOR-A: keeping the M1.6 banner literal
   paired with the still-M1.6 hit/miss emit literals preserves
   end-of-commit internal consistency. Task 5 META-FIX atomically renames
-  banner + emit literals + doc comments together.
+  banner + emit literals + doc comments together (no "extended banner"
+  in this commit -- that lives in Task 5 Step 2a).
 
   Tail call sites: tryMechPick(...) added after tryStaticPropPick(...) at
   updateOldStyle:1539 and updateAOEStyle:1782. Both callers invoke the
@@ -1813,6 +1864,12 @@ Note (per adversarial MAJOR-C, documentation-only): the self-test calls `registe
               "[MECH_PICK_SELFTEST v1] result=SKIP reason=substrate_off\n");
           return;
       }
+      // External-review m2: sample live-mech count BEFORE the synthetic
+      // register/destroy pair so we can assert no drift afterwards.
+      // RenderWorld::getMechsAliveCount() is the public accessor added
+      // alongside this self-test (see "live-count accessor" sub-step below).
+      const uint64_t mechsAliveBefore = RenderWorld::getMechsAliveCount();
+
       // Step 1: register a synthetic mech.
       RenderWorld::RenderMechDesc desc{};
       desc.mechTypeId    = 0u;
@@ -1847,6 +1904,20 @@ Note (per adversarial MAJOR-C, documentation-only): the self-test calls `registe
       }
       // Step 4: destroyMech retires the handle.
       RenderWorld::destroyMech(h);
+
+      // Step 5 (external-review m2): assert live-mech count returned to
+      // baseline. A drift means destroyMech did not balance registerMech
+      // and the slot leaked (would compound across init-time invocations).
+      const uint64_t mechsAliveAfter = RenderWorld::getMechsAliveCount();
+      if (mechsAliveAfter != mechsAliveBefore) {
+          std::fprintf(stderr,
+              "[MECH_PICK_SELFTEST v1] result=FAIL step=5 reason=live_count_drift "
+              "before=%llu after=%llu\n",
+              (unsigned long long)mechsAliveBefore,
+              (unsigned long long)mechsAliveAfter);
+          return; // do not emit PASS
+      }
+
       std::fprintf(stderr,
           "[MECH_PICK_SELFTEST v1] result=PASS step=all\n");
   }
@@ -1867,6 +1938,49 @@ Note (per adversarial MAJOR-C, documentation-only): the self-test calls `registe
   ```
 
   Then mirror exactly.
+
+- [ ] **Step 2b: Add `RenderWorld::getMechsAliveCount()` public accessor (external-review m2 prerequisite).**
+
+  `s_mechs_alive_rw` is a file-scope `std::atomic<uint64_t>` in
+  `RenderWorld/RenderWorld.cpp:105` with no public accessor. The
+  self-test lives in `GameAdapters/MechRenderAdapter.cpp` (different TU)
+  and so cannot read the file-scope static directly. Add a thin
+  accessor.
+
+  Verify the storage shape at write time:
+
+  ```powershell
+  Select-String -Path A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\RenderWorld\RenderWorld.cpp -Pattern 's_mechs_alive_rw' -SimpleMatch
+  ```
+
+  Must show the `static std::atomic<uint64_t> s_mechs_alive_rw{0};`
+  definition (verified at plan-write time: `RenderWorld.cpp:105`).
+
+  **Header decl** -- insert near the other RenderWorld free-function
+  decls in `RenderWorld/RenderWorld.h` (locate `IsObjectIdBufferEnabled`
+  or `objectIdRawForStaticPropRecipe` as anchor):
+
+  ```cpp
+  // M2.6: read-only accessor for the engine-side live-mech counter
+  // (sourced from MechRenderAdapter via registerMech/destroyMech). Used
+  // by RunMechPickSelfTest in GameAdapters/MechRenderAdapter.cpp to
+  // assert no drift across a synthetic register+destroy pair. Returns
+  // a relaxed-load uint64_t snapshot; no synchronization across
+  // multiple consumers.
+  uint64_t getMechsAliveCount();
+  ```
+
+  **Impl** -- insert in `RenderWorld/RenderWorld.cpp` near the file-scope
+  static definition or near `registerMech`/`destroyMech`:
+
+  ```cpp
+  uint64_t getMechsAliveCount() {
+      return s_mechs_alive_rw.load(std::memory_order_relaxed);
+  }
+  ```
+
+  Add both files to Task 6 `git add` in Step 6. Update commit message
+  to mention the new accessor.
 
 - [ ] **Step 3: Wire RunMechPickSelfTest into RenderWorld::init.**
 
@@ -1900,6 +2014,40 @@ Note (per adversarial MAJOR-C, documentation-only): the self-test calls `registe
   & 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe' --build A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\build64 --config RelWithDebInfo --target mc2
   ```
 
+  Pass criterion (link-direction sanity, external-review M2): build completes
+  with NO unresolved-external error on `RunMechPickSelfTest`. The forward-decl
+  in `RenderWorld.cpp` creates a RenderWorld static lib -> GameAdapters static
+  lib link dependency for the self-test symbol. If `cmake --build` reports
+  `unresolved external symbol "void __cdecl RunMechPickSelfTest(void)"` (or
+  the linker dies with LNK2019 on that symbol), the static-lib link order
+  disagrees with the call direction.
+
+  **Fallback (do NOT include mech.h or any game header in RenderWorld.cpp
+  to "fix" the unresolved external -- that violates the firewall):** move
+  the self-test CALL out of `RenderWorld::init()` into
+  `GameAdapters::Mech::beginMission()` (already lives in
+  `GameAdapters/MechRenderAdapter.cpp` -- same TU as the definition; no
+  forward-decl needed; no link-direction concern). Steps:
+
+  1. Revert Step 3 of this task (remove the `RunMechPickSelfTest();` call
+     and the forward-decl from `RenderWorld.cpp`).
+  2. Add the call to `GameAdapters::Mech::beginMission()` in the same TU
+     where the definition lives. Locate with:
+     ```powershell
+     Select-String -Path A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\GameAdapters\MechRenderAdapter.cpp -Pattern 'void beginMission' -SimpleMatch
+     ```
+     Insert `::RunMechPickSelfTest();` after any existing init body in
+     `beginMission` (or at the top of the function body if no body exists yet).
+  3. Re-build; the symbol now resolves within a single TU.
+  4. Smoke gate: the self-test still fires once per mission (beginMission
+     is called per mission load, equivalent to init-time observability for
+     the synthetic registerMech+destroyMech check). Expected log line
+     `[MECH_PICK_SELFTEST v1] result=PASS step=all` still appears, just
+     during per-mission init instead of process init.
+
+  Document the fallback as taken (or NOT taken) in the Task 6 commit message
+  so future maintainers know which placement is live.
+
 - [ ] **Step 5: Deploy + env-ON smoke with selftest gate.**
 
   ```powershell
@@ -1917,7 +2065,7 @@ Note (per adversarial MAJOR-C, documentation-only): the self-test calls `registe
 - [ ] **Step 6: Commit.**
 
   ```powershell
-  git -C A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev add RenderWorld/RenderWorld.cpp GameAdapters/MechRenderAdapter.cpp
+  git -C A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev add RenderWorld/RenderWorld.h RenderWorld/RenderWorld.cpp GameAdapters/MechRenderAdapter.cpp
   git -C A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev commit -m @'
   m2.6: add RunMechPickSelfTest end-to-end validator
 
@@ -1935,9 +2083,17 @@ Note (per adversarial MAJOR-C, documentation-only): the self-test calls `registe
       scan over an empty ObjectManager). Per MINOR-clarif: validates
       the SCAN itself, not init-time mech data state.
    4. destroyMech retires the handle.
+   5. live-mech count returned to baseline (external-review m2: catches
+      register/destroy imbalance via the new getMechsAliveCount accessor).
+
+  New public accessor RenderWorld::getMechsAliveCount() exposes the
+  file-scope s_mechs_alive_rw atomic for cross-TU consumption by the
+  self-test (the test cannot read the file-scope static directly).
 
   Emits [MECH_PICK_SELFTEST v1] result=PASS|FAIL|SKIP. Wired into
-  RenderWorld::init after RunMechObjectIdSelfTest. Tier1 5/5 PASS
+  RenderWorld::init after RunMechObjectIdSelfTest (or relocated to
+  GameAdapters::Mech::beginMission if the link-direction fallback fired
+  per Step 4 of this task; note which placement landed). Tier1 5/5 PASS
   env-ON MC2_OBJECT_ID_BUFFER=1 MC2_MECH_PICK_SELFTEST=1 with
   PASS on every mission log.
 
@@ -2154,7 +2310,7 @@ Carries-acceptable hits: the literal three dots `...` may appear inside spec quo
 
 ---
 
-PLAN STATUS: REVISED -- adversarial CONDITIONAL-PASS findings applied (0 CRIT + 4 MAJOR + 5 MINOR)
+PLAN STATUS: READY FOR EXECUTE -- external-review fixes applied (C1+M1+M2+m1+m2+m3)
 
 Commit-message-ready summary (5 lines):
 
