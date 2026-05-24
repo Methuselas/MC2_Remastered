@@ -194,6 +194,45 @@ an engine API instead.
 
 ---
 
+## 3.6 VFX shaders are PROHIBITED from writing object IDs
+
+VFX shaders (`shaders/particle_billboard.{vert,frag}`, any future
+particle/effect shader) MUST NOT contain `layout(location=2) out uint`
+declarations.
+
+**Why:** The object-ID buffer is `R32_UINT` with last-write-wins on
+integer attachments (GL 4.5 §17.3.6). Translucent/additive particle
+fragments would clobber the mech/static-prop ID underneath even when
+visually transparent. This breaks M2.6 mech-pick through muzzle flashes,
+smoke, tracers, impacts — ANY effect rendered in front of a pickable
+object.
+
+**Correct behavior:** VFX is click-through. `lookupAtPixel` returns the
+object UNDER the effect (mech, static prop, terrain). Game logic that
+needs "which mech fired this explosion" looks it up at weapon/fire-event
+time, NOT via GPU pixel readback (the source mech handle is already
+known in CPU game state when the effect is spawned).
+
+**Enforced by:** `scripts/check-vfx-no-objectid.sh` (CI / pre-commit).
+
+**Allowlist:** `scripts/check-vfx-no-objectid.allowlist` — expected to
+be empty. Adding an entry requires understanding why the allowlist
+exists (read the file header).
+
+**Reserved enum slot:** `RenderObjectKind::Vfx = 3` exists for handle-
+range bookkeeping only. No writer should produce a Vfx handle in v1.
+`kVfxHandleBase = 0x00080000u` reserved in the partition chart in §12.
+
+**gosFX dev-override caveat:** `MC2_DISABLE_GOSFX=0` (developer override
+re-enabling MLR gosFX) is BROKEN under unified-projection F1 (see
+worktree `CLAUDE.md` known-issues section). Even if a future slice were
+to flip the M4 prohibition (against current recon recommendation), the
+substrate could not be validated under the gosFX dev-override path until
+MLR retirement Slices 1-5 ship and the convention is corrected. Do NOT
+use `MC2_DISABLE_GOSFX=0` as a substrate proof path for any VFX work.
+
+---
+
 ## 4. How to add a new `RenderObjectKind`
 
 The enum lives in `RenderWorld/RenderWorld.h`:
@@ -539,30 +578,29 @@ ALWAYS `--config RelWithDebInfo`. Release crashes with `GL_INVALID_ENUM`
 
 ---
 
-## 12. The `kMechHandleBase = 0x10000` pattern
+## 12. The handle-base partitioning pattern
 
 The unified `s_objectRecords` table is indexed by `handle.index()` (20 bits,
 `[0..1048575]`). Different kinds allocate disjoint index ranges so a stale
 handle's index alone reveals what kind it was meant to be (useful in logs
 even when generation is wrong).
 
-Existing allocations:
+Allocations (corrected per M3 + M4 sidecar resolutions; supersedes earlier
+TBD draft):
 
-| Kind        | Base       | Max observed (tier1 mc2_24) | Headroom |
-|-------------|------------|-----------------------------|----------|
-| StaticProp  | 0          | 2641                        | ~24x to mech base |
-| Mech        | 0x00010000 | ~50                         | huge     |
-| Terrain     | 0x00040000 (M3 v1: RESERVED, no allocator) | -- | 786K slots reserved; [0x10000..0x3FFFF] left as mech-expansion headroom |
-| Vfx         | TBD (0x00080000 recommended in M4) | -- | -- |
-| Overlay     | DEFERRED indefinitely (M5 2026-05-24); see slice-m5 spec | -- | -- |
+| Kind        | Handle base           | Slot count | Notes |
+|-------------|-----------------------|-----------:|-------|
+| StaticProp  | `0x00000..0x0FFFF`    | 64k        | Max observed mc2_24 = 2641 |
+| Mech        | `0x10000..0x3FFFF`    | 192k       | Max observed mc2_24 = 46 |
+| Terrain     | `0x40000..0x7FFFF`    | 262k       | Reserved (M3); no writer in v1 |
+| Vfx         | `0x80000..0xBFFFF`    | 262k       | Reserved (M4); PROHIBITED writers per §3.6 |
+| Overlay     | `0xC0000..0xFFFFE`    | 262k-1     | Deferred indefinitely (M5); slot may be reclaimed |
+| Sentinel    | `0xFFFFF`             | 1          | Reserved bug-bait; never allocate |
 
-**Terrain variants note (M3 v1):** if a future M3.1 ships per-quad terrain
-identity (editor-driven), water / decal / mine variants use a `subKind`
-payload field on `RenderObjectRecord` — do NOT proliferate
-`RenderObjectKind` values for terrain flavors. Per the
-`RenderObjectKind` "stable across releases — never renumber, only
-append" rule, splitting later costs only an enum append, but the
-resolutions sidecar explicitly picks the single-kind path for v1.
+20-bit index mask = `0xFFFFF` (per `RenderCore/Handle.h:34`). Bases above
+`0xFFFFF` SILENTLY TRUNCATE to `index=0`, colliding with static-prop slot 0
+— do NOT propose any base `>= 0x100000`. A prior draft hit this trap with
+`0x200000`.
 
 Allocation rule: pick a base with at least one decimal order of magnitude
 headroom over the projected max. Power-of-two bases let you visually

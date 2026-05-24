@@ -131,6 +131,33 @@ static constexpr uint32_t kMechHandleBase = 0x00010000u;
 // docs/superpowers/specs/2026-05-23-renderworld-slice-m3-terrain-spec.md.
 [[maybe_unused]] static constexpr uint32_t kTerrainHandleBase = 0x00040000u;
 
+// M4: VFX handle base. RESERVED PER SPEC; NO WRITER ISSUES HANDLES IN v1.
+//
+// VFX shaders are PROHIBITED from writing color-attachment-2 (the M1.5
+// R32_UINT objectID substrate). Integer color attachments do not blend
+// (GL 4.5 §17.3.6) — additive/alpha-blended particles would last-write-wins
+// clobber any mech/static-prop ID underneath, silently breaking M2.6
+// mech-pick on any mech occluded by a translucent particle. The
+// prohibition is enforced by scripts/check-vfx-no-objectid.sh.
+//
+// This constant exists ONLY for handle-range allocation bookkeeping so a
+// future slice (if any) that opts in to per-emitter handles has a stable
+// reserved base to use. The current recon recommends "never use this."
+//
+// Full corrected partitioning (do NOT re-derive; see migration guide §12):
+//   StaticProp:  0x00000..0x0FFFF   (max observed mc2_24 = 2641)
+//   Mech:        0x10000..0x3FFFF   (max observed mc2_24 = 46)
+//   Terrain:     0x40000..0x7FFFF   (reserved by M3; no writer in v1)
+//   Vfx:         0x80000..0xBFFFF   (this slot; PROHIBITED writers per §3.6)
+//   Overlay:     0xC0000..0xFFFFE   (reserved/deferred per M5 sidecar)
+//   Sentinel:    0xFFFFF            (bug-bait; never allocate)
+//
+// 20-bit index mask (RenderCore/Handle.h:34) limits the absolute max to
+// 0xFFFFF (1,048,575). A prior draft proposed 0x200000 — that OVERFLOWS
+// the mask and would silently truncate to index=0, colliding with
+// static-prop slot 0. Do not repeat that trap.
+[[maybe_unused]] static constexpr uint32_t kVfxHandleBase = 0x00080000u;
+
 void populateRecord(uint32_t handleIndex,
                     uint16_t generation,
                     uint32_t gameObjectId)
@@ -671,7 +698,12 @@ uint32_t objectIdRawForStaticPropRecipe(int32_t recipeIndex) {
 }
 
 VisibilityResult queryVisibility(VisibilityRequest /*req*/) {
-    // v0: viewId/kindMask/layerMask ignored -- wrap existing counters only.
+    // V0 is reporting-only. It does not drive culling, draw submission,
+    // gameplay selection, or object lifetime. It reads already-computed
+    // counters and returns them; no culling decision is made or altered.
+    //
+    // req.viewId / req.kindMask / req.layerMask are present for API
+    // stability into v1 but are ignored here.
     VisibilityResult r{};
     r.static_props = legacy::getStaticPropActiveCount();
     r.mechs        = s_mechs_alive_rw.load(std::memory_order_relaxed);

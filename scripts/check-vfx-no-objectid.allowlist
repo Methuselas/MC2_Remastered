@@ -1,0 +1,13 @@
+# M4 VFX no-objectId allowlist
+# Each entry is a path RELATIVE to the worktree root.
+#
+# EXPECTED TO BE EMPTY. VFX shaders must NEVER write to attachment-2 because
+# additive/translucent blending + last-write-wins on R32_UINT clobbers any
+# object-ID underneath, breaking M2.6 mech-pick through muzzle flashes,
+# smoke, tracers, and impacts. The correct behavior is "VFX is click-through;
+# pick the object underneath."
+#
+# If you think you need to add an entry here, STOP and read:
+# - docs/superpowers/specs/2026-05-23-renderworld-slice-m4-vfx-spec.md
+# - docs/renderworld_migration_guide.md §3.5 / §12
+# The right answer is almost certainly "don't write attachment-2 from VFX."

@@ -143,7 +143,12 @@ enum class RenderObjectKind : uint8_t {
     // variants (water/decal/mine) use a `subKind` payload field, NOT
     // additional RenderObjectKind values.
     Terrain    = 2,
-    // Future: Vfx=3 (reserved in M4).
+    Vfx        = 3,   // M4: RESERVED. No writer ships in v1.
+                      // VFX shaders are PROHIBITED from writing color-attachment-2
+                      // (R32_UINT objectID substrate) — last-write-wins on integer
+                      // attachments clobbers M2.6 mech-pick under translucent/additive
+                      // particles. Enforced by scripts/check-vfx-no-objectid.sh.
+                      // See docs/superpowers/specs/2026-05-23-renderworld-slice-m4-vfx-spec.md.
     // Overlay reserved/deferred (M5 2026-05-24): the word "overlay" had
     // 7 in-tree meanings without an identity-needing consumer. See
     // docs/superpowers/specs/2026-05-23-renderworld-slice-m5-overlay-spec.md
