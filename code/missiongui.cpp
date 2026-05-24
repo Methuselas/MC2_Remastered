@@ -6214,6 +6214,15 @@ void MissionInterfaceManager::tryStaticPropPick(bool moverSelectedThisFrame,
 
     switch (r.outcome) {
     case GameplayPickResult::Outcome::hit: {
+        // M2.6 latent-bug fix: post-M2.5, the substrate may return a
+        // Mech handle. The static-prop caller MUST guard before
+        // consuming -- a Mech handle has no recipe index, and the M2.6
+        // mech caller (tryMechPick) owns mech-kind hits.
+        if (r.lookup.kind != RenderWorld::RenderObjectKind::StaticProp) {
+            // Not our category. Silent skip; the mech caller (or future
+            // terrain/VFX caller) handles its own kinds.
+            break;
+        }
         // Update RenderWorld debug state. Single-slot; latest wins.
         RenderWorld::setLastStaticPropPick(r.lookup,
                                            r.ctx.mouseX, r.ctx.mouseY,
