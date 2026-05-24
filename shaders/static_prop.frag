@@ -42,12 +42,26 @@ struct PerDrawEntry {
     float uvScaleX;
     float uvScaleY;
     int   objectIdRaw;   // M1.5: handle.raw() (read into uint at use site)
-    int   _pad1;
+    uint  materialIdx;   // MaterialGpu-3: index into MaterialTable.materials[]
+                         // (was _pad1; uint matches uint32_t at std430 offset 28)
 };
 layout(std430, binding = 4) readonly buffer PerDrawData {
     PerDrawEntry entries[];
 } perDraw_;
 uniform sampler2DArray u_texArr;
+
+// MaterialGpu-3: material table at binding 5.
+// RENDER CONTRACT: static_prop.frag coalesce declares MaterialTable at binding 5
+//   after MaterialGpu-3. Binding 5 may be unbound when u_materialGpuSample=0;
+//   shader MUST NOT access materialTable_.materials[] in that case (enforced by the uniform branch below).
+// Always declared in the coalesce variant so the reflection surface is stable.
+// Instance name materialTable_ follows the usage pattern documented in material_gpu.hglsl.
+#include <include/material_gpu.hglsl>
+layout(std430, binding = 5) readonly buffer MaterialTable {
+    MaterialGpu materials[];
+} materialTable_;
+uniform int u_materialGpuSample;  // 0 = legacy texArrayLayer, 1 = material table
+
 #else
 uniform sampler2D u_tex;
 uniform int       u_materialFlags;   // bit 0: ALPHA_TEST
@@ -100,9 +114,25 @@ void main() {
     // GL_CLAMP_TO_EDGE so accidental over-shoot doesn't bleed into
     // adjacent (zero-padded) area at the edge.
     float uvScaleX = perDraw_.entries[v_drawID + uint(u_drawIDBase)].uvScaleX;
-    float uvScaleY = perDraw_.entries[v_drawID + uint(u_drawIDBase)].uvScaleY;
+    float uvScaleY   = perDraw_.entries[v_drawID + uint(u_drawIDBase)].uvScaleY;
+    uint  materialIdx = perDraw_.entries[v_drawID + uint(u_drawIDBase)].materialIdx;
     vec2  uvSampled = fract(v_uv) * vec2(uvScaleX, uvScaleY);
-    vec4 tex_color = texture(u_texArr, vec3(uvSampled, float(texArrayLayer)));
+    // MaterialGpu-3: runtime switch between legacy layer and material table.
+    // u_materialGpuSample is a pass-wide (not per-fragment) uniform —
+    // the branch collapses to a single predicate on AMD hardware.
+    // materialTable_.materials[] is only accessed when u_materialGpuSample != 0,
+    // enforcing the render contract above (binding 5 must be set when sampling).
+    int effectiveLayer = texArrayLayer;
+    if (u_materialGpuSample != 0) {
+        uint albedo = materialTable_.materials[materialIdx].albedoTex;
+        if (albedo != kMatTexAbsent) {
+            // kMatTexAbsent = 0xFFFFFFFFu (defined in material_gpu.hglsl).
+            // v2 mismatches=0 strongly predicts this guard is never triggered
+            // for well-formed static-prop packets. Retained defensively.
+            effectiveLayer = int(albedo);
+        }
+    }
+    vec4 tex_color = texture(u_texArr, vec3(uvSampled, float(effectiveLayer)));
 #else
     int materialFlags    = u_materialFlags;
     int packetID         = u_packetID;
