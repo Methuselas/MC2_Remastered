@@ -75,16 +75,10 @@ static void init_once() {
     }
 
     // Cache program ID for explicit-program uniform upload.
-    // glsl_program::apply() uses GL_TRUE for matrix uniforms (shader_builder.cpp:781)
-    // which would transpose our already-row-major MVP -- we must NOT use setMat4+apply.
-    // Instead: bind once here to get the GL program ID, then use glProgramUniformMatrix4fv.
-    s_program->apply();
-    {
-        GLint pid = 0;
-        glGetIntegerv(GL_CURRENT_PROGRAM, &pid);
-        s_programId = (GLuint)pid;
-    }
-    glUseProgram(0);  // unbind after init query
+    // We read shp_ directly (public field, same as gos_static_prop_batcher.cpp:539 and
+    // gameos_graphics.cpp:2094) instead of going through apply() -- apply() flushes dirty
+    // matrix uniforms with GL_TRUE (shader_builder.cpp:781), wrong for our GL_FALSE MVP.
+    s_programId = s_program->shp_;
 
     s_mvpLoc = glGetUniformLocation(s_programId, "uMVP");
     if (s_mvpLoc < 0) {
@@ -194,6 +188,7 @@ void drawRingWorld(Vec3 center, float radius, int segments, uint32_t rgba) {
 
 void flushWorldPrims() {
     // full implementation in Task 4
+    s_verts.clear();   // prevent unbounded growth until Task 4 lands
 }
 
 void flushScreenPrims() {
