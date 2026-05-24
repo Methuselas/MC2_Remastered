@@ -12,6 +12,7 @@ static bool isEnabled() {
 }
 
 static EditorInspector::InspectorSelection s_selection;
+static EditorInspector::MechInspectorData  s_mechData;
 static bool s_open = false;
 
 }  // namespace
@@ -21,6 +22,7 @@ void EditorInspector::onCtrlShiftClick(int mouseX, int mouseY) {
     // Coords are recorded; missiongui.cpp calls setPickResult after
     // running tryGameplayPick to populate the full selection.
     s_selection = InspectorSelection{};
+    s_mechData  = MechInspectorData{};
     s_selection.screenX = mouseX;
     s_selection.screenY = mouseY;
     s_open = true;
@@ -41,8 +43,13 @@ void EditorInspector::setPickResult(int mouseX, int mouseY,
     s_open = true;
 }
 
+void EditorInspector::setMechData(const MechInspectorData& md) {
+    s_mechData = md;
+}
+
 void EditorInspector::clear() {
     s_selection = InspectorSelection{};
+    s_mechData  = MechInspectorData{};
     s_open = false;
 }
 
@@ -93,11 +100,38 @@ void EditorInspector::drawImGui() {
             ImGui::Text("Mat handle bits:         0x%08X", s_selection.lookup.materialHandleBits);
         }
     } else if (s_selection.kind == RenderWorld::RenderObjectKind::Mech) {
-        if (ImGui::CollapsingHeader("Mech")) {
-            ImGui::Text("Handle idx: %u  gen: %u",
-                s_selection.handle.index(), s_selection.handle.generation());
-            ImGui::Text("Game obj ID: %u", s_selection.lookup.gameObjectId);
-            ImGui::TextUnformatted("(Reverse BattleMech* lookup requires game layer)");
+        if (ImGui::CollapsingHeader("Mech", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (!s_mechData.populated) {
+                ImGui::TextUnformatted("(no game data -- pick not resolved)");
+            } else {
+                static const char* s_classNames[] = { "None","Light","Medium","Heavy","Assault" };
+                static const char* s_conStatNames[] = {
+                    "None","Sensor Q1","Sensor Q2","Sensor Q3","Sensor Q4","Visual"
+                };
+                const int ci  = (s_mechData.chassisClass >= 0 && s_mechData.chassisClass < 5)
+                                ? s_mechData.chassisClass : 0;
+                const int csi = (s_mechData.conStat >= 0 && s_mechData.conStat < 6)
+                                ? s_mechData.conStat : 0;
+
+                ImGui::Text("Variant:   %s", s_mechData.variantName[0] ? s_mechData.variantName : "(none)");
+                ImGui::Text("Name:      %s", s_mechData.longName[0]    ? s_mechData.longName    : "(none)");
+                ImGui::Text("Class:     %s", s_classNames[ci]);
+                ImGui::Text("Team ID:   %ld", s_mechData.teamId);
+                ImGui::Text("Pilot:     %s", s_mechData.pilotName[0]   ? s_mechData.pilotName   : "(none)");
+                ImGui::Separator();
+                if (!s_mechData.destroyed && !s_mechData.disabled && !s_mechData.crippled) {
+                    ImGui::Text("Status:    OK");
+                } else {
+                    ImGui::Text("Status:    %s%s%s",
+                        s_mechData.destroyed ? "DESTROYED " : "",
+                        s_mechData.disabled  ? "disabled "  : "",
+                        s_mechData.crippled  ? "crippled"   : "");
+                }
+                ImGui::Text("Sensor:    %s", s_conStatNames[csi]);
+                ImGui::Separator();
+                ImGui::Text("Armor:     %.0f / %.0f", s_mechData.totalCurArmor, s_mechData.totalMaxArmor);
+                ImGui::Text("Structure: %.0f / %.0f", s_mechData.totalCurStr,   s_mechData.totalMaxStr);
+            }
         }
     } else if (s_selection.kind == RenderWorld::RenderObjectKind::Terrain) {
         if (ImGui::CollapsingHeader("Terrain")) {

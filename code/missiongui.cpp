@@ -1552,6 +1552,34 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 		inspReq.moverSelectedThisFrame = false; // inspector always attempts the lookup
 		GameplayPickResult inspResult = tryGameplayPick(inspReq);
 		EditorInspector::setPickResult(mouseX, mouseY, inspResult.lookup);
+		if (inspResult.lookup.isValid &&
+		    inspResult.lookup.kind == RenderWorld::RenderObjectKind::Mech) {
+			BattleMech* bm = GameAdapters::Mech::findMechByHandle(inspResult.lookup.handle);
+			if (bm) {
+				EditorInspector::MechInspectorData md;
+				md.populated   = true;
+				strncpy_s(md.variantName, sizeof(md.variantName), bm->variantName, _TRUNCATE);
+				strncpy_s(md.longName,    sizeof(md.longName),    bm->longName,    _TRUNCATE);
+				md.chassisClass = static_cast<int>(bm->chassisClass);
+				md.teamId       = bm->getTeamId();
+				md.disabled     = bm->isDisabled();
+				md.destroyed    = bm->isDestroyed();
+				md.crippled     = bm->isCrippled();
+				md.conStat      = bm->conStat;
+				for (int i = 0; i < MAX_MOVER_ARMOR_LOCATIONS; ++i) {
+					md.totalCurArmor += bm->armor[i].curArmor;
+					md.totalMaxArmor += static_cast<float>(bm->armor[i].maxArmor);
+				}
+				for (int i = 0; i < MAX_MOVER_BODY_LOCATIONS; ++i) {
+					md.totalCurStr += bm->body[i].curInternalStructure;
+					md.totalMaxStr += static_cast<float>(bm->body[i].maxInternalStructure);
+				}
+				MechWarriorPtr pilot = bm->getPilot();
+				if (pilot)
+					strncpy_s(md.pilotName, sizeof(md.pilotName), pilot->getName(), _TRUNCATE);
+				EditorInspector::setMechData(md);
+			}
+		}
 		pickedByInspector = true;
 	}
 #endif
@@ -1826,6 +1854,34 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 		inspReq.moverSelectedThisFrame = false; // inspector always attempts the lookup
 		GameplayPickResult inspResult = tryGameplayPick(inspReq);
 		EditorInspector::setPickResult(mouseX, mouseY, inspResult.lookup);
+		if (inspResult.lookup.isValid &&
+		    inspResult.lookup.kind == RenderWorld::RenderObjectKind::Mech) {
+			BattleMech* bm = GameAdapters::Mech::findMechByHandle(inspResult.lookup.handle);
+			if (bm) {
+				EditorInspector::MechInspectorData md;
+				md.populated   = true;
+				strncpy_s(md.variantName, sizeof(md.variantName), bm->variantName, _TRUNCATE);
+				strncpy_s(md.longName,    sizeof(md.longName),    bm->longName,    _TRUNCATE);
+				md.chassisClass = static_cast<int>(bm->chassisClass);
+				md.teamId       = bm->getTeamId();
+				md.disabled     = bm->isDisabled();
+				md.destroyed    = bm->isDestroyed();
+				md.crippled     = bm->isCrippled();
+				md.conStat      = bm->conStat;
+				for (int i = 0; i < MAX_MOVER_ARMOR_LOCATIONS; ++i) {
+					md.totalCurArmor += bm->armor[i].curArmor;
+					md.totalMaxArmor += static_cast<float>(bm->armor[i].maxArmor);
+				}
+				for (int i = 0; i < MAX_MOVER_BODY_LOCATIONS; ++i) {
+					md.totalCurStr += bm->body[i].curInternalStructure;
+					md.totalMaxStr += static_cast<float>(bm->body[i].maxInternalStructure);
+				}
+				MechWarriorPtr pilot = bm->getPilot();
+				if (pilot)
+					strncpy_s(md.pilotName, sizeof(md.pilotName), pilot->getName(), _TRUNCATE);
+				EditorInspector::setMechData(md);
+			}
+		}
 		pickedByInspector = true;
 	}
 #endif
