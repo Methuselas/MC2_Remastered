@@ -286,6 +286,7 @@ and one white ring at `(0, 50, 0)` radius 30, 64 segments.
 
 This gives smoke a visible artifact without coupling to any gameplay system.
 Remove or leave opt-in after initial validation.
+Canary deployed 2026-05-23: shaders + exe at mc2-win64-v0.4. Visual validation pending (run with MC2_DEBUG_RENDERER=1 MC2_DEBUG_RENDERER_TEST=1).
 
 ---
 
