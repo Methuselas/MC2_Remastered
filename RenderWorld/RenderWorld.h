@@ -164,6 +164,14 @@ struct LookupResult {
     uint32_t                        drawPacketIndex  = 0xFFFFFFFFu;
     uint32_t                        pathReasonCode   = 0;
     uint32_t                        gameObjectId     = 0;
+    // M2.6: kind discriminator copied from RenderObjectRecord.kind.
+    // Caller MUST check this before consuming kind-specific fields
+    // (recipeIndex for StaticProp; BattleMech reverse-lookup for Mech).
+    // Defaults to StaticProp to preserve M1.6 caller behavior on an
+    // isValid=false return (callers should gate on isValid first
+    // anyway; the default is only relevant for compile-time
+    // initializer compatibility).
+    RenderObjectKind                kind             = RenderObjectKind::StaticProp;
 };
 
 // M1.5: synchronous pixel -> handle lookup. screenX/Y in GL convention

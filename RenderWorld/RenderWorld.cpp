@@ -723,6 +723,7 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
     out.drawPacketIndex    = rec.drawPacketIndex;
     out.pathReasonCode     = rec.pathReasonCode;
     out.gameObjectId       = rec.gameObjectId;
+    out.kind               = rec.kind;  // M2.6: kind discriminator
     return out;
 }
 
