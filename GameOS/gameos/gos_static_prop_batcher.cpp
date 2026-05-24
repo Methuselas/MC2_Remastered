@@ -267,6 +267,13 @@ GLuint s_perDrawSsbo               = 0;  // PerDrawEntry per type, sorted (bindi
 // Size invariant: s_packetMaterialIdx.size() == s_sortedPacketOrder.size().
 static const bool s_materialGpuEnabled =
     (getenv("MC2_MATERIAL_GPU") != nullptr);
+static const bool s_materialGpuSampleEnabled =
+    (getenv("MC2_MATERIAL_GPU_SAMPLE") != nullptr);
+// Tracks whether finalizeGeometry() produced a correctly-sized sidecar.
+// Reset to false at the start of every finalizeGeometry() call; set to true
+// only after the sidecar loop completes with size == emitted count.
+// Initialized false: no table built yet.
+static bool s_materialGpuSidecarValid = false;
 static std::vector<uint32_t>                s_packetMaterialIdx;  // per draw slot
 static std::vector<RenderCore::MaterialGpu> s_materialGpuTable;   // deduplicated
 static GLuint                               s_materialGpuSsbo = 0;
