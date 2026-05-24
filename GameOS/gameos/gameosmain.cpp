@@ -858,11 +858,12 @@ int main(int argc, char** argv)
         // s_materialGpuEnabled is a private file-scope static in the batcher
         // (not accessible cross-TU — Option A from MaterialGpu-2 spec §3).
         {
-            const bool matGpuOn = (getenv("MC2_MATERIAL_GPU") != nullptr);
+            const bool matGpuOn    = (getenv("MC2_MATERIAL_GPU")        != nullptr);
+            const bool matSampleOn = (getenv("MC2_MATERIAL_GPU_SAMPLE") != nullptr);
             char buf[64];
             std::snprintf(buf, sizeof(buf),
-                          "[MATERIAL_GPU v1] enabled=%d binding=5\n",
-                          (int)matGpuOn);
+                          "[MATERIAL_GPU v1] enabled=%d sample=%d binding=5\n",
+                          (int)matGpuOn, (int)matSampleOn);
             std::fputs(buf, stderr);
         }
 
