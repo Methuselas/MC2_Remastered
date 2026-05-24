@@ -2030,6 +2030,116 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             }
         }
 
+        // --- MaterialGpu-2 sidecar (MC2_MATERIAL_GPU=1 only) ---
+        // Runs after s_sortedPacketOrder is populated (skip-filtered, layer >= 0 only).
+        // Iterates s_sortedPacketOrder in draw-slot order so that:
+        //   s_packetMaterialIdx.size() == s_sortedPacketOrder.size() == PerDrawEntry count
+        // This is the v3 invariant: draw slot i reads materials[s_packetMaterialIdx[i]].
+        if (s_materialGpuEnabled) {
+            s_packetMaterialIdx.clear();
+            s_materialGpuTable.clear();
+
+            std::unordered_map<int32_t, uint32_t> layerToMaterialIdx;
+            const uint32_t emittedCount =
+                static_cast<uint32_t>(s_sortedPacketOrder.size());
+
+            // Iterate in draw-slot order (same as PerDrawEntry build below).
+            // All entries in s_sortedPacketOrder have layerForPacket >= 0 (skip rule above).
+            for (uint32_t i = 0; i < emittedCount; ++i) {
+                const uint32_t globalPktIdx = s_sortedPacketOrder[i];
+                const int32_t  layer        = layerForPacket[globalPktIdx]; // >= 0 guaranteed
+
+                auto [it, inserted] = layerToMaterialIdx.try_emplace(
+                    layer, static_cast<uint32_t>(s_materialGpuTable.size()));
+                if (inserted) {
+                    RenderCore::MaterialGpu m = {};
+                    m.albedoTex            = static_cast<uint32_t>(layer);
+                    m.normalTex            = RenderCore::kMaterialTexAbsent;
+                    m.metallicRoughnessTex = RenderCore::kMaterialTexAbsent;
+                    m.emissiveTex          = RenderCore::kMaterialTexAbsent;
+                    m.flags                = 0;
+                    m.baseColorFactor      = 1.0f;   // neutral: full brightness
+                    m.metallicFactor       = 0.0f;
+                    m.roughnessFactor      = 0.0f;
+                    s_materialGpuTable.push_back(m);
+                }
+                s_packetMaterialIdx.push_back(it->second);
+            }
+
+            // --- Upload ---
+            // GL_STATIC_DRAW: table is mission/map lifetime, not per-frame.
+            // Guard byteSize > 0: some drivers misbehave on a zero-byte glBufferData.
+            // When no static props exist, s_materialGpuSsbo stays 0 and flush() skips the bind.
+            const size_t byteSize =
+                s_materialGpuTable.size() * sizeof(RenderCore::MaterialGpu);
+
+            if (byteSize > 0) {
+                // Idempotent: delete any buffer from a prior finalizeGeometry call.
+                // finalizeGeometry() should be once-per-map, but defensive cleanup
+                // prevents leaks if it is ever called again (partial reinit, hot-reload, etc.).
+                if (s_materialGpuSsbo != 0) {
+                    glDeleteBuffers(1, &s_materialGpuSsbo);
+                    s_materialGpuSsbo = 0;
+                }
+                while (glGetError() != GL_NO_ERROR) {}  // drain stale BEFORE operation
+                glGenBuffers(1, &s_materialGpuSsbo);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_materialGpuSsbo);
+                glBufferData(GL_SHADER_STORAGE_BUFFER,
+                             static_cast<GLsizeiptr>(byteSize),
+                             s_materialGpuTable.data(),
+                             GL_STATIC_DRAW);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+                const GLenum uploadErr = glGetError();  // sample THIS operation AFTER
+                if (uploadErr != GL_NO_ERROR) {
+                    char buf[128];
+                    std::snprintf(buf, sizeof(buf),
+                                  "[MATERIAL_GPU v1] GL ERROR after upload: 0x%x\n",
+                                  uploadErr);
+                    std::fputs(buf, stderr);
+                }
+            }
+            // s_materialGpuSsbo remains 0 when byteSize == 0.
+
+            // --- Log upload ---
+            {
+                char buf[160];
+                std::snprintf(buf, sizeof(buf),
+                              "[MATERIAL_GPU v1] event=table_upload"
+                              " materials=%zu bytes=%zu emitted=%u\n",
+                              s_materialGpuTable.size(), byteSize, emittedCount);
+                std::fputs(buf, stderr);
+            }
+
+            // --- Debug compare ---
+            // For each draw slot i: materials[s_packetMaterialIdx[i]].albedoTex
+            // must equal layerForPacket[s_sortedPacketOrder[i]].
+            // mismatches > 0 means the sidecar is wrong; execution continues for log collection.
+            int mismatches = 0;
+            for (uint32_t i = 0; i < emittedCount; ++i) {
+                const uint32_t globalPktIdx = s_sortedPacketOrder[i];
+                const uint32_t idx          = s_packetMaterialIdx[i];
+                const uint32_t albedo       = s_materialGpuTable[idx].albedoTex;
+                const uint32_t expected     =
+                    static_cast<uint32_t>(layerForPacket[globalPktIdx]);
+                if (albedo != expected) {
+                    char buf[128];
+                    std::snprintf(buf, sizeof(buf),
+                                  "[MATERIAL_GPU v1] MISMATCH slot=%u pkt=%u"
+                                  " materialIdx=%u albedoTex=%u expected=%u\n",
+                                  i, globalPktIdx, idx, albedo, expected);
+                    std::fputs(buf, stderr);
+                    ++mismatches;
+                }
+            }
+            {
+                char buf[96];
+                std::snprintf(buf, sizeof(buf),
+                              "[MATERIAL_GPU v1] event=compare emitted=%u mismatches=%d\n",
+                              emittedCount, mismatches);
+                std::fputs(buf, stderr);
+            }
+        } // end s_materialGpuEnabled (sidecar)
+
         std::vector<PerDrawEntry> entries(s_sortedPacketOrder.size());
         std::vector<uint32_t> cmdToBucket(s_sortedPacketOrder.size());
         for (uint32_t i = 0; i < s_sortedPacketOrder.size(); ++i) {
