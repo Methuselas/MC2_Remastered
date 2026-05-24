@@ -38,6 +38,11 @@
 // firewall script is ever extended to enforce direction, this site will
 // need an explicit allowlist entry.
 void RunGameplayPickSelfTest();
+// M2.5 (Q1): separate mech-substrate self-test. Mirrors the M2-pre
+// precedent ([GAMEPLAY_PICK_SELFTEST v1] separate from
+// [RENDER_WORLD_SELFTEST v1]). Validates that registerMech allocates
+// a Mech-kind handle and destroyMech bumps the generation correctly.
+void RunMechObjectIdSelfTest();
 
 namespace {
 
@@ -335,6 +340,128 @@ void runSubstrateSelfTest() {
 
 } // namespace
 
+// M2.5 (Q1): mech-substrate self-test. Synthetic-only -- no GL state,
+// no real readback. Exercises the M2 registerMech / destroyMech /
+// s_objectRecords path that M2.5 GPU writes feed. Gated by
+// MC2_MECH_OBJECT_ID_SELFTEST=1; runs once at RenderWorld::init() after
+// RunGameplayPickSelfTest().
+//
+// Why synthetic: real GPU-readback validation requires a live mission
+// frame + a known mech-on-cursor pixel; that path is exercised
+// per-frame by RunGameplayPickSelfTest's mech-side extension in M2.6.
+// M2.5's job is to prove the substrate (handle allocation, record kind,
+// generation roundtrip) is intact -- a pure-CPU self-test suffices.
+//
+// Placement note: defined at file scope (not in anonymous namespace) to
+// match the external-linkage forward declaration at line 45 so init()
+// can call it. References to anonymous-namespace s_objectRecords /
+// s_objectRecordsMutex remain valid since they are visible from the
+// enclosing translation unit.
+//
+// Result lines:
+//   [MECH_OBJECT_ID_SELFTEST v1] result=PASS step=all kind=1 gen=N handle=0xNN
+//   [MECH_OBJECT_ID_SELFTEST v1] result=FAIL step=N reason=<...>
+//   [MECH_OBJECT_ID_SELFTEST v1] result=SKIPPED reason=env_disabled
+//
+// FAIL is a STOP: the mech substrate is broken; M2.6 pickup will be
+// unreliable.
+void RunMechObjectIdSelfTest() {
+    if (!envFlag("MC2_MECH_OBJECT_ID_SELFTEST")) {
+        std::fprintf(stderr,
+            "[MECH_OBJECT_ID_SELFTEST v1] result=SKIPPED reason=env_disabled\n");
+        return;
+    }
+
+    // Step 1: register a synthetic mech, validate handle + record.
+    RenderWorld::RenderMechDesc desc;
+    desc.mechTypeId   = 0u;
+    desc.gameObjectId = 0xC0FFEEu;
+    desc.debugCookie  = 0u;
+    RenderCore::RenderObjectHandle h = RenderWorld::registerMech(desc);
+    if (!h.isValid()) {
+        std::fprintf(stderr,
+            "[MECH_OBJECT_ID_SELFTEST v1] result=FAIL step=1 reason=registerMech_returned_invalid\n");
+        return;
+    }
+    const uint32_t idx = h.index();
+    const uint16_t gen = static_cast<uint16_t>(h.generation());
+
+    // Step 2: validate record kind=Mech and alive=true.
+    {
+        std::lock_guard<std::mutex> lk(s_objectRecordsMutex);
+        if (idx >= s_objectRecords.size()) {
+            std::fprintf(stderr,
+                "[MECH_OBJECT_ID_SELFTEST v1] result=FAIL step=2 reason=record_index_out_of_range_%u\n",
+                (unsigned)idx);
+            return;
+        }
+        const auto& rec = s_objectRecords[idx];
+        if (rec.kind != RenderWorld::RenderObjectKind::Mech) {
+            std::fprintf(stderr,
+                "[MECH_OBJECT_ID_SELFTEST v1] result=FAIL step=2 reason=wrong_kind_%u\n",
+                (unsigned)rec.kind);
+            RenderWorld::destroyMech(h);
+            return;
+        }
+        if ((rec.flags & RenderWorld::kRenderObjectFlagAlive) == 0u) {
+            std::fprintf(stderr,
+                "[MECH_OBJECT_ID_SELFTEST v1] result=FAIL step=2 reason=alive_not_set_after_register\n");
+            RenderWorld::destroyMech(h);
+            return;
+        }
+        if (rec.generation != gen) {
+            std::fprintf(stderr,
+                "[MECH_OBJECT_ID_SELFTEST v1] result=FAIL step=2 reason=generation_mismatch_record_%u_handle_%u\n",
+                (unsigned)rec.generation, (unsigned)gen);
+            RenderWorld::destroyMech(h);
+            return;
+        }
+        if (rec.gameObjectId != 0xC0FFEEu) {
+            std::fprintf(stderr,
+                "[MECH_OBJECT_ID_SELFTEST v1] result=FAIL step=2 reason=gameObjectId_lost\n");
+            RenderWorld::destroyMech(h);
+            return;
+        }
+    }
+
+    // Step 3: handle round-trip. handle.raw() carries idx+gen; rebuilding
+    // via the canonical production constructor MUST recover the same raw bits.
+    // Per adversarial m3: RenderObjectHandle::make(idx, gen) is the
+    // production path (RenderCore/Handle.h:32); use it unconditionally rather
+    // than touching the `bits` field directly.
+    const uint32_t raw = h.raw();
+    RenderCore::RenderObjectHandle h2 = RenderCore::RenderObjectHandle::make(idx, gen);
+    if (h2.raw() != raw) {
+        std::fprintf(stderr,
+            "[MECH_OBJECT_ID_SELFTEST v1] result=FAIL step=3 reason=roundtrip_raw_%08X_vs_%08X\n",
+            (unsigned)h2.raw(), (unsigned)raw);
+        RenderWorld::destroyMech(h);
+        return;
+    }
+
+    // Step 4: destroyMech bumps generation and clears alive.
+    RenderWorld::destroyMech(h);
+    {
+        std::lock_guard<std::mutex> lk(s_objectRecordsMutex);
+        const auto& rec = s_objectRecords[idx];
+        if ((rec.flags & RenderWorld::kRenderObjectFlagAlive) != 0u) {
+            std::fprintf(stderr,
+                "[MECH_OBJECT_ID_SELFTEST v1] result=FAIL step=4 reason=alive_set_after_destroy\n");
+            return;
+        }
+        if (rec.generation != static_cast<uint16_t>(gen + 1u)) {
+            std::fprintf(stderr,
+                "[MECH_OBJECT_ID_SELFTEST v1] result=FAIL step=4 reason=generation_not_bumped_%u\n",
+                (unsigned)rec.generation);
+            return;
+        }
+    }
+
+    std::fprintf(stderr,
+        "[MECH_OBJECT_ID_SELFTEST v1] result=PASS step=all kind=1 gen=%u handle=0x%08X\n",
+        (unsigned)gen, (unsigned)raw);
+}
+
 namespace RenderWorld {
 
 void init() {
@@ -363,6 +490,10 @@ void init() {
     // + MC2_OBJECT_ID_BUFFER=1). Validates the extracted spine has not
     // diverged from M1.6 gate semantics. Mirrors substrate self-test shape.
     RunGameplayPickSelfTest();
+    // M2.5 (Q1): mech-substrate self-test (gated by
+    // MC2_MECH_OBJECT_ID_SELFTEST=1). Validates registerMech / destroyMech
+    // / record-table generation + kind plumbing. Synthetic; no GL state.
+    RunMechObjectIdSelfTest();
 }
 
 void destroy() {
