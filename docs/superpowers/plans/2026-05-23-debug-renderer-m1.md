@@ -153,6 +153,7 @@ Create `GameOS/gameos/debug_renderer.cpp`:
 
 #include <cstdlib>   // getenv
 #include <cstdio>    // fprintf, stderr
+#include <cstddef>   // offsetof
 #include <vector>
 #include <cmath>     // sinf, cosf
 
@@ -161,7 +162,7 @@ Create `GameOS/gameos/debug_renderer.cpp`:
 #include "utils/shader_builder.h"  // glsl_program::makeProgram
 
 // Forward-declare the scene viewproj getter (defined in gameos_graphics.cpp).
-// Upload with GL_FALSE (matrix is already row-major; see gos_mech_killswitch.h).
+// Upload with the same transpose convention as the existing terrain MVP upload sites.
 extern const float* gos_GetTerrainMVPMat4();
 
 namespace DebugRenderer {
@@ -175,12 +176,22 @@ struct DbgVert { float x, y, z, r, g, b, a; };
 static constexpr int kVertCapacity = 65536;
 
 // ---------------------------------------------------------------------------
+// Env helper (default OFF -- absent or "0" = disabled)
+// MUST be defined before the static bools that call it.
+// ---------------------------------------------------------------------------
+
+static bool envFlagDefaultOff(const char* name) {
+    const char* v = getenv(name);
+    return v && !(v[0] == '0' && v[1] == '\0');
+}
+
+// ---------------------------------------------------------------------------
 // Static state
 // ---------------------------------------------------------------------------
 
-static bool              s_enabled    = false;
-static bool              s_testCanary = false;
-static bool              s_initialized = false;
+static bool              s_enabled       = envFlagDefaultOff("MC2_DEBUG_RENDERER");
+static bool              s_testCanary    = envFlagDefaultOff("MC2_DEBUG_RENDERER_TEST");
+static bool              s_initialized   = false;
 static bool              s_capWarnedOnce = false;
 
 static GLuint            s_vao = 0;
@@ -190,15 +201,6 @@ static GLuint            s_programId = 0;  // cached for glProgramUniformMatrix4
 static GLint             s_mvpLoc = -1;
 
 static std::vector<DbgVert> s_verts;
-
-// ---------------------------------------------------------------------------
-// Env helper (default OFF -- absent or "0" = disabled)
-// ---------------------------------------------------------------------------
-
-static bool envFlagDefaultOff(const char* name) {
-    const char* v = getenv(name);
-    return v && !(v[0] == '0' && v[1] == '\0');
-}
 
 // ---------------------------------------------------------------------------
 // Internal: init on first flush
@@ -236,6 +238,11 @@ static void init_once() {
     glUseProgram(0);  // unbind after init query
 
     s_mvpLoc = glGetUniformLocation(s_programId, "uMVP");
+    if (s_mvpLoc < 0) {
+        fprintf(stderr, "[DEBUGDRAW v1] event=uniform_missing name=uMVP -- debug draw disabled\n");
+        s_enabled = false;
+        return;
+    }
 
     // VAO + VBO
     glGenVertexArrays(1, &s_vao);
@@ -300,14 +307,20 @@ void drawAabbWorld(Vec3 mn, Vec3 mx, uint32_t rgba) {
         cy[i] = (i & 2) ? mx.y : mn.y;
         cz[i] = (i & 4) ? mx.z : mn.z;
     }
-    // 12 edges: pairs of corners differing by exactly 1 bit
-    for (int a = 0; a < 8; ++a) {
-        for (int b = a + 1; b < 8; ++b) {
-            if (__builtin_popcount(a ^ b) == 1) {
-                s_verts.push_back(makeVert(cx[a], cy[a], cz[a], rgba));
-                s_verts.push_back(makeVert(cx[b], cy[b], cz[b], rgba));
-            }
-        }
+    // 12 edges: explicit list, no __builtin_popcount (MSVC portability)
+    static constexpr int kEdges[12][2] = {
+        {0,1}, {0,2}, {0,4},
+        {1,3}, {1,5},
+        {2,3}, {2,6},
+        {3,7},
+        {4,5}, {4,6},
+        {5,7},
+        {6,7},
+    };
+    for (const auto& e : kEdges) {
+        int a = e[0], b = e[1];
+        s_verts.push_back(makeVert(cx[a], cy[a], cz[a], rgba));
+        s_verts.push_back(makeVert(cx[b], cy[b], cz[b], rgba));
     }
 }
 
@@ -341,27 +354,17 @@ void flushScreenPrims() {
 } // namespace DebugRenderer
 ```
 
-- [ ] **Step 2: Wire env gates at file scope**
-
-After the static state block in `debug_renderer.cpp`, add initialization. Replace the declarations of `s_enabled` and `s_testCanary` with:
-
-```cpp
-static bool s_enabled    = envFlagDefaultOff("MC2_DEBUG_RENDERER");
-static bool s_testCanary = envFlagDefaultOff("MC2_DEBUG_RENDERER_TEST");
-```
-
-Note: `envFlagDefaultOff` must be defined BEFORE these static initializers. The file already has it defined first in the skeleton above -- verify ordering.
-
-- [ ] **Step 3: Build to confirm no compile errors**
+- [ ] **Step 2: Build to confirm no compile errors**
 
 ```
 cd A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev
 "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build64 --config RelWithDebInfo --target gameos 2>&1 | tail -20
+# (Git Bash/MSYS2; in PowerShell replace `tail -20` with `Select-Object -Last 20`)
 ```
 
 Expected: build succeeds (0 errors). Warnings about unused variables in stub `flushWorldPrims` are OK for now.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add GameOS/gameos/debug_renderer.cpp
@@ -397,7 +400,7 @@ void flushWorldPrims() {
     if (s_verts.empty()) return;
 
     if (!s_initialized) init_once();
-    if (!s_enabled) return;  // init_once() may disable on shader fail
+    if (!s_enabled) { s_verts.clear(); return; }  // init_once() may disable on shader fail
 
     const float* vp = gos_GetTerrainMVPMat4();
     if (!vp) {
@@ -490,6 +493,7 @@ void flushWorldPrims() {
 
 ```
 "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build64 --config RelWithDebInfo --target gameos 2>&1 | tail -20
+# (Git Bash/MSYS2; in PowerShell replace `tail -20` with `Select-Object -Last 20`)
 ```
 
 Expected: 0 errors.
@@ -555,6 +559,7 @@ The Tracy zone ensures the flush shows up in profiling if ever enabled.
 
 ```
 "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build build64 --config RelWithDebInfo 2>&1 | tail -30
+# (Git Bash/MSYS2; in PowerShell replace `tail -30` with `Select-Object -Last 30`)
 ```
 
 Expected: 0 errors. This builds the full project (mc2.exe + all libs).
@@ -576,12 +581,25 @@ This task verifies the renderer works end-to-end. No automated test exists; vali
 
 Follow the mc2-deploy skill (`/mc2-deploy`) to copy the freshly built exe + updated shaders to the deploy directory. Shaders changed (new files added), so the full shader tree must deploy in lockstep with mc2.exe.
 
-Key deploy steps (from skill):
+Key deploy steps (from skill). Run from worktree root in Git Bash/MSYS2:
+
+```bash
+DEPLOY="A:/Games/mc2-opengl/mc2-win64-v0.4"
+WORKTREE="A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev"
+
+cp -f "$WORKTREE/build64/RelWithDebInfo/mc2.exe" "$DEPLOY/mc2.exe"
+
+# New shader files -- must deploy in lockstep with exe (project rule)
+cp -f "$WORKTREE/shaders/debug_prim.vert" "$DEPLOY/shaders/debug_prim.vert"
+cp -f "$WORKTREE/shaders/debug_prim.frag" "$DEPLOY/shaders/debug_prim.frag"
+
+# Verify
+diff -q "$WORKTREE/shaders/debug_prim.vert" "$DEPLOY/shaders/debug_prim.vert"
+diff -q "$WORKTREE/shaders/debug_prim.frag" "$DEPLOY/shaders/debug_prim.frag"
+diff -q "$WORKTREE/build64/RelWithDebInfo/mc2.exe" "$DEPLOY/mc2.exe"
 ```
-cp -f build64/RelWithDebInfo/mc2.exe "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe"
-# copy shaders/debug_prim.vert and shaders/debug_prim.frag to deploy shader dir
-# diff -q to verify
-```
+
+Expected: all three `diff -q` print nothing (files match).
 
 - [ ] **Step 2: Run with canary env**
 
