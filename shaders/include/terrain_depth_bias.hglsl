@@ -41,7 +41,7 @@
 #ifndef TERRAIN_DEPTH_BIAS_HGLSL
 #define TERRAIN_DEPTH_BIAS_HGLSL
 const float TERRAIN_DEPTH_FUDGE      = -0.002;   // reverse-Z: was 0.002
-const float WATER_DEPTH_BIAS         = -0.0005;  // < 0 water loses GEQUAL tie (was 0.0005)
+const float WATER_DEPTH_BIAS         =  0.0005;  // > 0 water WINS GEQUAL tie; WATER_DEPTH_FUDGE_FAST=-0.0015 > TERRAIN=-0.002
 const float OVERLAY_DEPTH_BIAS       = 0.00005;  // > 0 decals win GEQUAL tie; reduced from 0.0005 (was beating buildings at RTS zoom)
 const float WATER_DEPTH_FUDGE_RASTER = -0.0025;  // RASTER regime; flips for reverse-Z (fence-seam reconciled)
 const float WATER_DEPTH_FUDGE_FAST   = TERRAIN_DEPTH_FUDGE + WATER_DEPTH_BIAS;  // -0.0025; FAST regime (matrix-share co-planar)

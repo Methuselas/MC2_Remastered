@@ -495,11 +495,27 @@ uint32_t UploadAndBindThinRecords() {
             q.vertices[2]->vertexNum < 0 || q.vertices[3]->vertexNum < 0) continue;
         // Outer gate: legacy water emit at quad.cpp:2742. Skip non-water quads
         // and quads where setupTextures decided no water emission this frame.
-        if (q.waterHandle == 0xffffffffu) continue;
-        ++waterHandleCount;
-
+        // Fix A (staircase): also include submerged tiles that lack water&1.
+        // setupTextures never sets waterHandle for those (quad.cpp:973 gate),
+        // but the GPU FS handles them via WaterThickness/shore smoothstep.
+        // Recipe lookup is hoisted here so the submerged check and main path
+        // share a single find(). On the narrow path all entries are either
+        // water-flagged or submerged (terrain.cpp append predicate mirrors this),
+        // so the lookup cost is bounded.
         const uint32_t topLeftVN = (uint32_t)q.vertices[0]->vertexNum;
         auto it = g_vertexNumToRecipe.find(topLeftVN);
+
+        bool submergedSandTile = false;
+        if (q.waterHandle == 0xffffffffu) {
+            if (it == g_vertexNumToRecipe.end()) continue;
+            const WaterRecipe& recS = g_recipes[it->second];
+            const float we = Terrain::waterElevation;
+            if (recS.v0e >= we && recS.v1e >= we && recS.v2e >= we && recS.v3e >= we)
+                continue;
+            submergedSandTile = true;
+        }
+        ++waterHandleCount;
+
         if (it == g_vertexNumToRecipe.end()) {
             ++recipeMissCount;
             continue;
@@ -523,7 +539,12 @@ uint32_t UploadAndBindThinRecords() {
         const bool ok3 = pzOk(wz3);
 
         bool pzTri1, pzTri2;
-        if (q.uvMode == BOTTOMRIGHT) {
+        if (submergedSandTile) {
+            // No CPU-side wz for tiles outside water&1 path. VS computes its
+            // own clip position from the recipe; let HW near-plane clipping
+            // handle any off-frustum vertices.
+            pzTri1 = pzTri2 = true;
+        } else if (q.uvMode == BOTTOMRIGHT) {
             // tri1=corners[0,1,2], tri2=corners[0,2,3]
             pzTri1 = ok0 && ok1 && ok2;
             pzTri2 = ok0 && ok2 && ok3;

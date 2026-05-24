@@ -1976,10 +1976,20 @@ void Terrain::geometry (void)
 						// (i) projection+reduction+clipInfo AND the 0xffffffff sentinel still run,
 						// so waterHandle IS set (to 0xffffffff) on armed frames; use the water-tile
 						// predicate here instead of waterHandle to avoid stale-sentinel false negatives.
-						append = (q.vertices[0]->pVertex->water & 1) ||
-						         (q.vertices[1]->pVertex->water & 1) ||
-						         (q.vertices[2]->pVertex->water & 1) ||
-						         (q.vertices[3]->pVertex->water & 1);
+						// Fix A (staircase): also include submerged tiles that lack water&1.
+						// UploadAndBindThinRecords mirrors this predicate exactly.
+						const bool waterFlagged =
+						    (q.vertices[0]->pVertex->water & 1) ||
+						    (q.vertices[1]->pVertex->water & 1) ||
+						    (q.vertices[2]->pVertex->water & 1) ||
+						    (q.vertices[3]->pVertex->water & 1);
+						const float we = Terrain::waterElevation;
+						const bool submergedSand = !waterFlagged && (
+						    q.vertices[0]->pVertex->elevation < we ||
+						    q.vertices[1]->pVertex->elevation < we ||
+						    q.vertices[2]->pVertex->elevation < we ||
+						    q.vertices[3]->pVertex->elevation < we);
+						append = waterFlagged || submergedSand;
 					} else {
 						append = (q.waterHandle != 0xffffffffu);
 					}
