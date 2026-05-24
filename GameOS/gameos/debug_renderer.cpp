@@ -114,6 +114,11 @@ static void init_once() {
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
+    // Drain any errors left in the GL queue by makeProgram introspection.
+    // shader_builder::apply() checks glGetError() after each glUniform* call;
+    // a stale error here would be mis-attributed to the next program that calls apply().
+    while (glGetError() != GL_NO_ERROR) {}
+
     s_verts.reserve(4096);
 }
 
