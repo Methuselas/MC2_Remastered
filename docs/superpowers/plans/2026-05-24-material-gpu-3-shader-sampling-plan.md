@@ -777,9 +777,20 @@ Expected: 0 error lines. GLSL errors surface at runtime (shader compilation on f
 
 - [ ] **Step 7.6: Deploy and run smoke — gates OFF (regression check)**
 
+**Shaders are loaded from disk at runtime — BOTH the binary and the shader file must be deployed.**
+
 ```powershell
 cp -f "A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/build64/RelWithDebInfo/mc2.exe" "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe"
+cp -f "A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/shaders/static_prop.frag" "A:/Games/mc2-opengl/mc2-win64-v0.4/shaders/static_prop.frag"
 ```
+
+Verify deploy succeeded:
+```powershell
+diff -q "A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/shaders/static_prop.frag" "A:/Games/mc2-opengl/mc2-win64-v0.4/shaders/static_prop.frag"
+```
+Expected: `diff -q` reports files differ (diff output present) — confirming the new shader was written. If `diff -q` says "identical," the source file and deploy are byte-for-byte the same, which means the deploy path already had the same version (OK if no prior shader was there). If deploy fails silently, the running game will use the old shader and G4 will show `reason=uniform_missing` — see WARNING below.
+
+> **WARNING:** If `event=sample_mode enabled=0 reason=uniform_missing` appears after deploying both gates ON, the most likely cause is that the shader file was not deployed (old shader on disk). Check that the deployed `static_prop.frag` contains `u_materialGpuSample`. Do NOT chase this as a C++ bug.
 
 Run smoke with no env vars:
 ```powershell
@@ -789,6 +800,8 @@ py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smok
 Expected: exit 0, 5/5 PASS. No GL errors in logs. The shader is unchanged behaviorally when both gates are OFF (u_materialGpuSample defaults to 0 → effectiveLayer = texArrayLayer).
 
 - [ ] **Step 7.7: Smoke — both gates ON (first sampling test)**
+
+(The shader was already deployed in Step 7.6 — no additional deploy needed here.)
 
 ```powershell
 $env:MC2_MATERIAL_GPU = "1"; $env:MC2_MATERIAL_GPU_SAMPLE = "1"
@@ -953,11 +966,20 @@ git commit -m "chore(material-gpu-3): update static_prop.frag shader reflection 
 | G9: Pixel parity | Both gates ON | 5/5 PASS + no GL ERROR (screenshot diff = 0 if harness captures; otherwise PASS is accepted) |
 | G10: Reflection golden | After golden update | `reflect.py` exit 0, no CONTRACT_VIOLATION, only static_prop.frag changed |
 
-- [ ] **Step 10.1: Deploy latest build**
+- [ ] **Step 10.1: Deploy latest build + shader**
+
+**Both the binary and shader must be deployed.** Shaders load from disk at runtime.
 
 ```powershell
 cp -f "A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/build64/RelWithDebInfo/mc2.exe" "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe"
+cp -f "A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/shaders/static_prop.frag" "A:/Games/mc2-opengl/mc2-win64-v0.4/shaders/static_prop.frag"
 ```
+
+Verify the deployed shader has the `u_materialGpuSample` uniform (confirms Task 7 changes are live):
+```powershell
+Select-String "u_materialGpuSample" "A:/Games/mc2-opengl/mc2-win64-v0.4/shaders/static_prop.frag"
+```
+Expected: one match line. If no match — the wrong shader was deployed; stop and investigate before proceeding.
 
 - [ ] **Step 10.1b: Prerequisite — verify coalesce path is active for tier1 missions**
 
