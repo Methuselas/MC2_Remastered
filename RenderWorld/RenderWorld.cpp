@@ -609,6 +609,24 @@ bool IsStaticPropPickDebugEnabled() {
     return s_enabled;
 }
 
+// M2.6: cached env-flag accessors. Same lifetime/discipline as
+// IsStaticPropPickEnabled / IsStaticPropPickDebugEnabled. Process-
+// lifetime cached; restart required to flip.
+bool IsMechPickEnabled() {
+    static const bool s_enabled = envFlag("MC2_MECH_PICK");
+    return s_enabled;
+}
+
+bool IsMechPickDebugEnabled() {
+    static const bool s_enabled = envFlag("MC2_MECH_PICK_DEBUG");
+    return s_enabled;
+}
+
+bool IsMechPickPierceFogEnabled() {
+    static const bool s_enabled = envFlag("MC2_MECH_PICK_PIERCE_FOG");
+    return s_enabled;
+}
+
 uint32_t objectIdRawForStaticPropRecipe(int32_t recipeIndex) {
     // M1.5 C1: centralized Handle bit encoding for the batcher
     // producer. Mirrors the recipeIndex -> Handle convention used by

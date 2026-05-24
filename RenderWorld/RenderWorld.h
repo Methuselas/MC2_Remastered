@@ -102,6 +102,21 @@ bool IsStaticPropPickEnabled();
 //   - code/missiongui.cpp MissionInterfaceManager::tryStaticPropPick miss branch
 bool IsStaticPropPickDebugEnabled();
 
+// M2.6: master enable for the mech-pick wiring. When OFF, the
+// missiongui Shift+click mech wiring is dormant even if
+// MC2_OBJECT_ID_BUFFER=1 and MC2_STATIC_PROP_PICK=1. Default OFF.
+bool IsMechPickEnabled();
+
+// M2.6: mech-pick verbose-log enable. Gates the miss / gated /
+// stale-handle diagnostic logs from the mech caller. `hit` lines
+// always fire when MC2_MECH_PICK=1 and the fog gate passes.
+bool IsMechPickDebugEnabled();
+
+// M2.6: dev/debug override that allows inspect through sensor fog.
+// Default OFF preserves stock gameplay (cannot incidentally reveal
+// undetected enemy mechs via the inspect log).
+bool IsMechPickPierceFogEnabled();
+
 // M1.5 C1 fix: centralize Handle encoding. Returns 0 for invalid
 // recipeIndex (< 0). The producer in gos_static_prop_batcher.cpp
 // calls this with the result of GpuStaticPropRegistry::getRecipeIndexForType().

@@ -277,6 +277,23 @@ public:
 		                       int  mouseX,
 		                       int  mouseY);
 
+		// M2.6: mech-pick consumer. Mirrors tryStaticPropPick shape;
+		// dispatches through the SAME tryGameplayPick spine; kind-guards
+		// on r.lookup.kind == Mech; reverse-resolves to BattleMech via
+		// GameAdapters::Mech::findMechByHandle; applies fog-of-war
+		// predicate (mirrors code/missiongui.cpp:1272-1278); emits
+		// [GAMEPLAY_PICK v1] hit kind=Mech ... on a visible-hostile pick.
+		// Inspect-only v1 (no selection, no attack routing).
+		//
+		// Spec: docs/superpowers/specs/2026-05-23-renderworld-slice-m2-6-mech-pickup-spec.md
+		void tryMechPick(bool moverSelectedThisFrame,
+		                 bool shiftDn,
+		                 bool leftClicked,
+		                 bool bGui,
+		                 bool bLeftDouble,
+		                 int  mouseX,
+		                 int  mouseY);
+
 		static int saveHotKeys( FitIniFile& file );
 		static int loadHotKeys( FitIniFile& file );
 

@@ -28,10 +28,12 @@
 #include"missiongui.h"
 #endif
 
-// M1.6: IsStaticPropPickEnabled, lookupAtPixel, setLastStaticPropPick,
-// clearLastStaticPropPick, getLastStaticPropPick, IsObjectIdBufferEnabled.
+// M1.6 + M2.6: IsStaticPropPickEnabled, lookupAtPixel, setLastStaticPropPick,
+// clearLastStaticPropPick, getLastStaticPropPick, IsObjectIdBufferEnabled,
+// IsMechPickEnabled, IsMechPickDebugEnabled, IsMechPickPierceFogEnabled.
 #include "../RenderWorld/RenderWorld.h"
 #include "gameplay_pick.h"  // M2-pre: tryGameplayPick spine + GameplayPickRequest
+#include "../GameAdapters/MechRenderAdapter.h"  // M2.6: findMechByHandle (forward-decls BattleMech)
 
 #ifndef OBJMGR_H
 #include"objmgr.h"
@@ -1543,9 +1545,20 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 		                  bLeftDouble,
 		                  mouseX,
 		                  mouseY);
+		// M2.6: mech-pick consumer fires second. Both callers invoke the
+		// shared tryGameplayPick spine; each kind-guards on r.lookup.kind.
+		// At most one hit branch fires per click (handle ranges disjoint:
+		// static-prop indices < kMechHandleBase, mech indices >= 65536).
+		tryMechPick(moverSelectedThisFrame,
+		            shiftDn,
+		            leftClicked,
+		            bGui,
+		            bLeftDouble,
+		            mouseX,
+		            mouseY);
 	}
 }
-void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrlDn, 
+void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrlDn,
 											  bool bGui, bool lineOfSight, bool passable, 
 											  long moverCount, long nonMoverCount )
 {
@@ -1786,6 +1799,14 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 		                  bLeftDouble,
 		                  mouseX,
 		                  mouseY);
+		// M2.6: mech-pick consumer (mirrors updateOldStyle tail).
+		tryMechPick(moverSelectedThisFrame,
+		            shiftDn,
+		            leftClicked,
+		            bGui,
+		            bLeftDouble,
+		            mouseX,
+		            mouseY);
 	}
 }
 
@@ -6275,6 +6296,144 @@ void MissionInterfaceManager::tryStaticPropPick(bool moverSelectedThisFrame,
         // Section 11 invariant: no-op, no log. The legacy path either
         // already consumed this click (gated) or a gesture/substrate
         // gate failed (skipped) before any lookup ran.
+        break;
+    }
+}
+
+void MissionInterfaceManager::tryMechPick(bool moverSelectedThisFrame,
+                                          bool shiftDn,
+                                          bool leftClicked,
+                                          bool bGui,
+                                          bool bLeftDouble,
+                                          int  mouseX,
+                                          int  mouseY)
+{
+    // M2.6: category gate. Master enable for mech pick wiring.
+    if (!RenderWorld::IsMechPickEnabled())
+        return;
+
+    // Build the same shape of request as tryStaticPropPick. The spine
+    // (tryGameplayPick) is shared and unchanged.
+    GameplayPickRequest req;
+    req.mouseX                  = mouseX;
+    req.mouseY                  = mouseY;
+    req.shiftDn                 = shiftDn;
+    req.leftClicked             = leftClicked;
+    req.bGui                    = bGui;
+    req.bLeftDouble             = bLeftDouble;
+    req.moverSelectedThisFrame  = moverSelectedThisFrame;
+
+    const GameplayPickResult r = tryGameplayPick(req);
+
+    switch (r.outcome) {
+    case GameplayPickResult::Outcome::hit: {
+        // Kind guard: M2.6 caller only handles Mech kind. Static-prop
+        // and future terrain/VFX kinds are owned by their callers.
+        if (r.lookup.kind != RenderWorld::RenderObjectKind::Mech)
+            break;
+
+        // Reverse-resolve to BattleMech via the M2.6 linear-scan resolver.
+        BattleMech* bm =
+            GameAdapters::Mech::findMechByHandle(r.lookup.handle);
+        if (bm == nullptr) {
+            // Stale handle race (mech destroyed between readback and
+            // resolver) -- impossible in practice (single-threaded), but
+            // defensive design treats it as a benign miss for the click.
+            if (RenderWorld::IsMechPickDebugEnabled()) {
+                std::fprintf(stderr,
+                    "[GAMEPLAY_PICK v1] miss kind=Mech reason=stale_handle "
+                    "handle=%u idx=%u gen=%u screen=(%d,%d) gl=(%d,%d)\n",
+                    r.lookup.handle.bits,
+                    (unsigned)r.lookup.handle.index(),
+                    (unsigned)r.lookup.handle.generation(),
+                    r.ctx.mouseX, r.ctx.mouseY,
+                    r.ctx.glX,    r.ctx.glY);
+            }
+            break;
+        }
+
+        // Fog-of-war gate. Mirrors the FULL CPU-pick predicate at
+        // code/missiongui.cpp:1272-1278 verbatim:
+        //   target->isMover() &&
+        //   !ShowMovers &&
+        //   !(MPlayer && MPlayer->allUnitsDestroyed[MPlayer->commanderID]) &&
+        //   target->getTeamId() != Team::home->getId() &&
+        //   !target->isDisabled() &&
+        //   ((Mover*)target)->conStat < CONTACT_SENSOR_QUALITY_1
+        // i.e. fog SUPPRESSES the pick ONLY when all five hold; ShowMovers
+        // (debug) and the multiplayer-defeat carve-out are the bypasses
+        // the CPU pick honors and that M2.6 MUST mirror or the inspect
+        // log will be silent on a mech the CPU pick successfully selects.
+        //
+        // MC2_MECH_PICK_PIERCE_FOG=1 short-circuits the whole predicate.
+        const bool pierce = RenderWorld::IsMechPickPierceFogEnabled();
+        bool visible;
+        if (pierce) {
+            visible = true;
+        } else {
+            const bool showMovers = (ShowMovers != 0);
+            const bool mpDefeat   = (MPlayer && MPlayer->allUnitsDestroyed[MPlayer->commanderID]);
+            const bool hostile    = (bm->getTeamId() != Team::home->getId());
+            const bool disabled   = bm->isDisabled();
+            const bool sub_q1     = (((Mover*)bm)->conStat < CONTACT_SENSOR_QUALITY_1);
+            const bool fogSuppresses =
+                !showMovers && !mpDefeat && hostile && !disabled && sub_q1;
+            visible = !fogSuppresses;
+        }
+        if (!visible) {
+            // Fog-gated; silent on default path so the substrate cannot
+            // become a sensor cheat. Diagnostic log under DEBUG=1.
+            if (RenderWorld::IsMechPickDebugEnabled()) {
+                std::fprintf(stderr,
+                    "[GAMEPLAY_PICK v1] gated kind=Mech reason=fog_of_war "
+                    "handle=%u screen=(%d,%d) gl=(%d,%d)\n",
+                    r.lookup.handle.bits,
+                    r.ctx.mouseX, r.ctx.mouseY,
+                    r.ctx.glX,    r.ctx.glY);
+            }
+            break;
+        }
+
+        // Visible hit. Inspect-only: log the resolved identity.
+        // (Debug-state mutation lives in Task 5 META-FIX once
+        // setLastGameplayPick exists.)
+        //
+        // Log line carries handle bits/index/generation + the resolved
+        // BattleMech pointer (debug; not a stable cookie). NO
+        // gameObjectId / partId fields per CRITICAL-1.
+        std::fprintf(stderr,
+            "[GAMEPLAY_PICK v1] hit kind=Mech handle=%u idx=%u gen=%u "
+            "mech=%p screen=(%d,%d) gl=(%d,%d) "
+            "fbo=(%d,%d) vMul=(%.0f,%.0f) vAdd=(%.0f,%.0f) draw=(%d,%d)%s\n",
+            r.lookup.handle.bits,
+            (unsigned)r.lookup.handle.index(),
+            (unsigned)r.lookup.handle.generation(),
+            (void*)bm,
+            r.ctx.mouseX, r.ctx.mouseY,
+            r.ctx.glX,    r.ctx.glY,
+            r.ctx.fboX,   r.ctx.fboY,
+            r.ctx.vMulX,  r.ctx.vMulY,
+            r.ctx.vAddX,  r.ctx.vAddY,
+            r.ctx.drawableWidth, r.ctx.drawableHeight,
+            pierce ? " pierce_fog=1" : "");
+        break;
+    }
+    case GameplayPickResult::Outcome::miss: {
+        // Mech caller silent on plain miss (background-pixel Shift+click
+        // is high-frequency for terrain but uninteresting for mechs).
+        // Verbose miss only under MC2_MECH_PICK_DEBUG=1.
+        if (RenderWorld::IsMechPickDebugEnabled()) {
+            std::fprintf(stderr,
+                "[GAMEPLAY_PICK v1] miss kind=Mech screen=(%d,%d) gl=(%d,%d)\n",
+                r.ctx.mouseX, r.ctx.mouseY,
+                r.ctx.glX,    r.ctx.glY);
+        }
+        break;
+    }
+    case GameplayPickResult::Outcome::gated:
+    case GameplayPickResult::Outcome::skipped:
+        // Mover-first short-circuit consumed the click (gated) or a
+        // gesture/substrate gate failed (skipped). No-op, no log.
         break;
     }
 }
