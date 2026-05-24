@@ -15,6 +15,14 @@
 // Game side. This is the ONLY TU outside mclib/ that may include mech3d.h.
 #include "../mclib/mech3d.h"
 
+// M2.6: reverse-lookup needs ObjectManager + BattleMech + MoverPtr. These
+// includes extend the M2 bridging carve-out (this .cpp is the documented
+// exception). Firewall scope (scripts/check-include-firewall.sh SCOPE_DIRS)
+// does not police GameAdapters/, so no allowlist edit needed.
+#include "../code/objmgr.h"
+#include "../code/mover.h"
+#include "../code/mech.h"
+
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -139,6 +147,37 @@ void destroyMech(Mech3DAppearance& mech) {
     if (s_mechs_alive > 0) {
         --s_mechs_alive;
     }
+}
+
+// M2.6: handle->BattleMech reverse lookup. Inspect-only path.
+BattleMech* findMechByHandle(RenderCore::RenderObjectHandle h) {
+    if (!h.isValid()) return nullptr;
+    if (ObjectManager == nullptr) return nullptr;
+    const uint32_t target = h.raw();
+    const long n = ObjectManager->getNumMovers();
+    for (long i = 0; i < n; ++i) {
+        MoverPtr m = ObjectManager->getMover(i);
+        if (m == nullptr) continue;
+        if (!m->isMech()) continue;
+        // Cast safety (external-review m1): isMech() filter guarantees the
+        // mover is a BattleMech. Verified in M2 spec: only BattleMech::init
+        // assigns appearance = new Mech3DAppearance (at code/mech.cpp:1304),
+        // and only BattleMech sets the isMech bit, so the static_cast pair
+        // below is sound on any mover that passes isMech().
+        BattleMech* bm = static_cast<BattleMech*>(m);
+        // Lifecycle race (per adversarial MINOR-2): guards against
+        // pre-init or mid-destroy mech with NULL appearance. A mech
+        // exists in ObjectManager BEFORE syncSpawn populates its
+        // appearance, and AFTER destroyMech runs but BEFORE the mover
+        // slot is reclaimed. Both windows are single-threaded but real.
+        Mech3DAppearance* app =
+            static_cast<Mech3DAppearance*>(bm->getAppearance());
+        if (app == nullptr) continue;
+        if (app->getRenderWorldHandle().raw() == target) {
+            return bm;
+        }
+    }
+    return nullptr;
 }
 
 } // namespace Mech

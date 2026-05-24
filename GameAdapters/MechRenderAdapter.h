@@ -22,6 +22,11 @@
 // the real header.
 class Mech3DAppearance;
 
+// M2.6: forward-decl game-side BattleMech (returned by findMechByHandle).
+// The .cpp includes code/mech.h to provide the full type; the header
+// stays firewall-clean per M2 adapter convention.
+class BattleMech;
+
 namespace GameAdapters {
 namespace Mech {
 
@@ -50,6 +55,21 @@ RenderCore::RenderObjectHandle syncSpawn(Mech3DAppearance& mech,
 // THIS is the AUTHORITATIVE handle retirement path. endMission() is a
 // safety sweep only and must not be relied upon for per-mech cleanup.
 void destroyMech(Mech3DAppearance& mech);
+
+// M2.6: handle->BattleMech reverse lookup. Linear scan over
+// ObjectManager mover list; matches on
+//   mech.getAppearance()->getRenderWorldHandle().raw() == h.raw().
+// Returns nullptr on stale/unknown handle (M2.6 inspect-only path
+// treats this as outcome=miss for the click).
+//
+// O(N) where N = num movers per mission (<= ~50; tier1 max mc2_24
+// has 46 mechs). Cost negligible vs the lookupAtPixel readback that
+// produced the handle. NOT main-loop-safe to call per frame; intended
+// for one call per click (~10/sec max).
+//
+// MUST be called from the main thread (ObjectManager is not
+// thread-safe). The inspect path in tryMechPick satisfies this.
+BattleMech* findMechByHandle(RenderCore::RenderObjectHandle h);
 
 } // namespace Mech
 } // namespace GameAdapters
