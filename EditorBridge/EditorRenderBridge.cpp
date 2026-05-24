@@ -216,6 +216,9 @@ void drawSelectionBounds(const EditorAabb& b, SelectionBoundsStyle style) {
         Stuff::Vector3D(b.maxX, b.maxY, b.maxZ), Stuff::Vector3D(b.minX, b.maxY, b.maxZ),
     };
 
+    // Project all 8 corners. If any are behind the camera, skip the entire
+    // wireframe -- a partial draw produces degenerate near-clipped edges,
+    // which looks worse than no overlay at all.
     float sx[8], sy[8];
     for (int i = 0; i < 8; ++i) {
         if (!projectToScreen(corners[i], &sx[i], &sy[i])) return;
@@ -280,6 +283,9 @@ void drawTerrainTileOutline(const TerrainTileOverlayDesc& desc) {
         Stuff::Vector3D(x0, y1, elevAt(x0, y1)),  // SW
     };
 
+    // Project all 4 corners. Same policy as drawSelectionBounds: if any corner
+    // is behind the camera, skip the entire outline rather than drawing a
+    // partially clipped polygon.
     float sx[4], sy[4];
     for (int i = 0; i < 4; ++i) {
         if (!projectToScreen(corners[i], &sx[i], &sy[i])) return;
