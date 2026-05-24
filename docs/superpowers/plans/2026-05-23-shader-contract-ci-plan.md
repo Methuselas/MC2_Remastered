@@ -24,6 +24,26 @@
 
 ---
 
+## Task 0: Capture validate_shaders.py baseline (before any edits)
+
+**Files:** none — read-only
+
+This step must run before Task 1 touches any file, so the diff proves behavior
+is unchanged by the extraction, not that the tool happens to work after.
+
+- [ ] **Step 0.1: Capture baseline output**
+
+```powershell
+cd A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev
+py -3 scripts/validate_shaders.py 2>&1 | Tee-Object baseline.txt
+```
+
+Expected: `validate_shaders: N passed, 0 failed, 1 skipped (out of N+1) [Vulkan/SPIR-V]`
+
+Save `baseline.txt` — it is used in Task 2 Step 2.3.
+
+---
+
 ## Task 1: Create `scripts/shader_common.py`
 
 **Files:**
@@ -227,7 +247,7 @@ def find_tool(name: str) -> str | None:
 
 
 def discover_shaders() -> list[Path]:
-    """Return all shader files in shaders/ sorted by modification time."""
+    """Return all shader files in shaders/, sorted by name within each extension group."""
     out: list[Path] = []
     for ext in STAGE_BY_EXT:
         out.extend(sorted(SHADERS.glob(f"*{ext}")))
@@ -295,7 +315,10 @@ Open `scripts/validate_shaders.py`. Make these changes:
 - `VERSION_PREFIX`, `INCLUDE_EXTENSION`, `_INCLUDE_RE`, `ENGINE_PATH_SEPARATOR`
 - `_engine_get_path`, `_engine_find_next_include_directive`, `_engine_parse_include`, `_engine_get_num_lines`, `parse_includes_engine_style`
 - `SHADER_PREFIX_OVERRIDE`, `SHADER_TOKEN_REWRITES`, `SKIP_SHADERS`, `STAGE_BY_EXT`
-- `_find_tool`, `_resolve_tools`, `discover_shaders`
+- `_find_tool` and `discover_shaders` (moved to shader_common)
+
+**Keep** `_resolve_tools` in `validate_shaders.py` — it is validate-specific — but rewrite
+it to call `shader_common.find_tool` instead of the removed `_find_tool`.
 
 **Add** at the top (after `from __future__ import annotations` and stdlib imports):
 
@@ -358,23 +381,17 @@ except ValueError as e:
 Also replace `STAGE_BY_EXT[shader.suffix]` with `shader_common.STAGE_BY_EXT[shader.suffix]`.
 Replace `SKIP_SHADERS.get(sh.name)` with `shader_common.SKIP_SHADERS.get(sh.name)`.
 
-- [ ] **Step 2.2: Capture current validate_shaders.py output as baseline**
+- [ ] **Step 2.2: Run validate_shaders.py after the edit and diff against Task 0 baseline**
 
 ```powershell
 cd A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev
-py -3 scripts/validate_shaders.py 2>&1 | Tee-Object baseline.txt
-```
-
-Expected: `validate_shaders: N passed, 0 failed, 1 skipped (out of N+1) [Vulkan/SPIR-V]`
-
-- [ ] **Step 2.3: Run validate_shaders.py after the edit**
-
-```powershell
 py -3 scripts/validate_shaders.py 2>&1 | Tee-Object after.txt
-diff baseline.txt after.txt
+Compare-Object (Get-Content baseline.txt) (Get-Content after.txt)
 ```
 
-Expected: `diff` shows no differences. If there are any differences, the extraction introduced a bug — fix before proceeding.
+Expected: `Compare-Object` prints nothing (no differences). If any lines differ,
+the extraction changed behavior — fix before proceeding. `baseline.txt` was
+captured in Task 0 before any edits.
 
 - [ ] **Step 2.4: Commit Commit 1**
 
@@ -489,6 +506,15 @@ KNOWN_VARIANT_MACROS: frozenset[str] = frozenset(
 # ---------------------------------------------------------------------------
 REQUIRED_INVARIANTS: list[dict] = [
     # objectId MRT: static_prop.frag must write v_objectId at location=2.
+    # M2: check BOTH object-ID variants (objectid AND coalesce_objectid).
+    {
+        "shader": "shaders/static_prop.frag",
+        "variant": "objectid",
+        "check": "output",
+        "name": "v_objectId",
+        "location": 2,
+        "type": "uint",
+    },
     {
         "shader": "shaders/static_prop.frag",
         "variant": "coalesce_objectid",
@@ -621,9 +647,18 @@ def compile_to_spv(
         if proc.returncode != 0:
             diag = (_decode(proc.stdout) + _decode(proc.stderr)).strip()
             diag = diag.replace(tmp.name, shader.name).replace(str(tmp), str(shader))
+            # M4: clean up any partial .spv glslangValidator may have written.
+            try:
+                spv_path.unlink()
+            except OSError:
+                pass
             return False, diag, None
         return True, "", spv_path
     except Exception as e:
+        try:
+            spv_path.unlink()
+        except OSError:
+            pass
         return False, str(e), None
     finally:
         try:
@@ -635,8 +670,9 @@ def compile_to_spv(
 def reflect_spv(spv_path: Path, spirv_cross: str) -> tuple[bool, str, dict]:
     """Run spirv-cross --reflect. Returns (ok, diagnostic, raw_json_dict)."""
     try:
+        # C2: input file first, then --reflect flag (standard spirv-cross CLI shape).
         proc = subprocess.run(
-            [spirv_cross, "--reflect", str(spv_path)],
+            [spirv_cross, str(spv_path), "--reflect"],
             capture_output=True,
         )
     except OSError as e:
@@ -689,9 +725,16 @@ def _norm_member(m: dict) -> dict:
     }
 
 
-def _norm_block(b: dict) -> dict:
+def _norm_block(raw: dict, b: dict) -> dict:
+    # C1: spirv-cross --reflect does NOT inline members on UBO/SSBO resources.
+    # Members live in raw["types"][str(type_id)]["members"].
+    type_id = b.get("type")
+    members_list: list[dict] = []
+    if type_id is not None:
+        type_info = raw.get("types", {}).get(str(type_id), {})
+        members_list = type_info.get("members", [])
     members = sorted(
-        [_norm_member(m) for m in b.get("members", [])],
+        [_norm_member(m) for m in members_list],
         key=lambda m: (m["offset"], m["name"]),
     )
     return {
@@ -723,11 +766,11 @@ def normalize(
     the rest.
     """
     ubos = sorted(
-        [_norm_block(b) for b in raw.get("ubos", [])],
+        [_norm_block(raw, b) for b in raw.get("ubos", [])],
         key=lambda b: (b["binding"], b["name"]),
     )
     ssbos = sorted(
-        [_norm_block(b) for b in raw.get("ssbos", [])],
+        [_norm_block(raw, b) for b in raw.get("ssbos", [])],
         key=lambda b: (b["binding"], b["name"]),
     )
     outputs: list[dict] = []
@@ -800,10 +843,20 @@ def check_variant_coverage(
     if shader_rel in SHADER_VARIANTS:
         return []
     try:
-        src = shader.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+        # M3: use include-expanded source so macros in headers are caught.
+        src = shader_common.build_shader_source(shader)
+    except (OSError, ValueError):
         return []
-    found = {m for m in KNOWN_VARIANT_MACROS if re.search(rf"\b{re.escape(m)}\b", src)}
+    # Strip line comments, then look only inside preprocessor directive lines.
+    src_no_comments = re.sub(r"//[^\n]*", "", src)
+    found = {
+        m for m in KNOWN_VARIANT_MACROS
+        if re.search(
+            rf"^\s*#\s*(?:if|ifdef|ifndef|elif)\b[^\n]*\b{re.escape(m)}\b",
+            src_no_comments,
+            re.MULTILINE,
+        )
+    }
     if not found:
         return []
     prefix = "FAIL" if strict else "WARNING"
@@ -996,6 +1049,8 @@ def main() -> int:
     all_diffs: list[str] = []
     # reflected: keyed by "shader_rel/variant" -> normalized contract
     reflected: dict[str, dict] = {}
+    # C4: collect --update writes; only commit to disk after invariant checks pass.
+    pending_updates: list[tuple[str, str, dict]] = []
 
     for shader in targets:
         shader_rel = shader.relative_to(ROOT).as_posix()
@@ -1057,7 +1112,8 @@ def main() -> int:
             reflected[f"{shader_rel}/{variant_name}"] = contract
 
             if args.update:
-                save_golden(shader_rel, variant_name, contract)
+                # C4: stash; write only after invariant checks pass.
+                pending_updates.append((shader_rel, variant_name, contract))
                 print(f"[UPDATE] {label}")
                 passed += 1
                 continue
@@ -1091,6 +1147,20 @@ def main() -> int:
     violations = check_invariants(reflected)
     for v in violations:
         print(v, file=sys.stderr)
+
+    # C4: write goldens only when --update AND no invariant violations.
+    # If violations exist, goldens are NOT written — bad values never land on disk.
+    if args.update:
+        if violations:
+            print(
+                f"\nreflect: {len(violations)} invariant violation(s) detected — "
+                "goldens NOT written. Fix CONTRACT_VIOLATION(s) above before "
+                "updating goldens.",
+                file=sys.stderr,
+            )
+        else:
+            for sr, vn, ct in pending_updates:
+                save_golden(sr, vn, ct)
 
     total = passed + skipped + compile_errors + drifted + new_goldens
     mode = "Vulkan" if vulkan else "GL"
@@ -1152,10 +1222,14 @@ cat tools/shader_reflect/expected/shaders__static_prop.frag__coalesce_objectid.j
 Expected output includes `"offset": 24`. The value 24 comes from the M1.5 spec
 (`PerDrawEntry` struct in `gos_static_prop_batcher.h`: `objectIdRaw` field at
 byte 24 per std430 layout — confirmed by recon on 2026-05-23 HEAD).
-If the actual offset in the golden differs from 24, update the
-`REQUIRED_INVARIANTS` entry in `reflect.py` AND update the spec
-`docs/superpowers/specs/2026-05-23-shader-contract-ci-design.md` §7 to match.
-Document the discrepancy in the commit message.
+
+**If the actual offset differs from 24: STOP. Do not update REQUIRED_INVARIANTS.**
+The invariant tracks the C++/GLSL contract. An unexpected offset means either:
+(a) the GLSL `PerDrawData` struct drifted from the C++ `PerDrawEntry` definition,
+or (b) the bootstrap compiled the wrong variant (check `MC2_OBJECT_ID_BUFFER=1`
+is present). Investigate `gos_static_prop_batcher.h` and the GLSL struct before
+changing the hardcoded offset — updating the invariant to match a wrong value
+defeats the purpose of having the invariant.
 
 - [ ] **Step 9.3: Inspect the golden count and spot-check two files**
 
@@ -1261,22 +1335,20 @@ py -3 tools/shader_reflect/reflect.py --shader shaders/static_prop.frag --update
 echo "Exit code: $LASTEXITCODE"
 ```
 
-Expected: `[UPDATE]` lines print (goldens written with location=3), but exit
-code is **1** because `check_invariants` checks the ACTUAL reflected value
-(location=3) against the hardcoded invariant (location=2) — independently of
-what the golden says. Output must include:
+Expected: `[UPDATE]` lines print but **goldens are NOT written to disk**
+because invariant checks run before the write (C4 all-or-nothing). Exit
+code is **1**. Output must include:
 
 ```
 CONTRACT_VIOLATION: shaders/static_prop.frag/coalesce_objectid: output 'v_objectId' location=3, expected 2
 ```
 
-Revert the shader edit and restore the goldens:
+Revert the shader edit (goldens were NOT written by the bad run — C4 — so no restore needed):
 ```powershell
 git -C A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev checkout -- shaders/static_prop.frag
-py -3 tools/shader_reflect/reflect.py --shader shaders/static_prop.frag --update
 ```
 
-Verify the golden is restored by checking offset is back to 24 and location=2:
+Verify existing golden still has location=2 (was never overwritten):
 ```powershell
 python -c "import json; d=json.load(open('tools/shader_reflect/expected/shaders__static_prop.frag__coalesce_objectid.json')); print([o for o in d['outputs'] if o['name']=='v_objectId'])"
 ```
