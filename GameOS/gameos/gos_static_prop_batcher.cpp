@@ -4497,15 +4497,3 @@ void batcher_prepareBaseInstanceTable() {
     s_onGroupBytesThisFrame   = (totalCount - offGroupCount) * sizeof(GpuStaticPropInstance);
     s_totalUsedBytesThisFrame = totalCount * sizeof(GpuStaticPropInstance);
 }
-
-// MaterialGpu-3: CPU-side accessor for the MaterialGpu sidecar table.
-// Returns true and copies the entry when MC2_MATERIAL_GPU=1 and idx is valid.
-// Returns false (and leaves *out unchanged) when the table is inactive or idx
-// is out of range.  Safe to call at inspector (click-time) — the table is
-// written only at mission load/unload; no lock needed.
-bool batcher_getMaterialGpuEntry(uint32_t materialIdx, RenderCore::MaterialGpu* out) {
-    if (!out || !s_materialGpuEnabled) return false;
-    if (materialIdx >= static_cast<uint32_t>(s_materialGpuTable.size())) return false;
-    *out = s_materialGpuTable[materialIdx];
-    return true;
-}
