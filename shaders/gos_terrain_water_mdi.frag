@@ -34,13 +34,13 @@ uniform float atlasOneOverWorldUnits;
 uniform PREC vec4 fog_color;
 uniform PREC float time;          // seconds — used for water animation
 uniform PREC vec4 cameraPos;      // water-v1: MC2 world-space camera (Fresnel)
+uniform PREC float alphaDepth;    // MapData::alphaDepth (world-units); shore smoothstep range
 
 // water-v1 baked style constants (compile-time; tune via shader hot-reload;
 // promote to a UBO only at per-biome per spec Section 8 TODO(water-v2)).
 const vec3  SHALLOW_COLOR      = vec3(0.22, 0.45, 0.38);  // user-approved teal (keep)
 const vec3  DEEP_COLOR         = vec3(0.03, 0.13, 0.20);  // dark blue, NOT black
 const float ABSORPTION_DENSITY = 0.022;  // 1/world-units (Beer-Lambert k; ~45u e-fold over 0..150)
-const float SHORE_BLEND_DEPTH  = 3.0;    // world-units to full opacity
 const float WATER_MAX_ALPHA    = 0.87;   // mild transparency: deep water never 100% opaque (lakebed shows through). 1.0 = old opaque slab; lower = more see-through. f(depth) only - camera-indep
 const float SKY_AMBIENT        = 0.18;   // brightness floor (camera-independent)
 // --- camera-INDEPENDENT procedural water detail (BAR-style: 2 fBm layers,
@@ -106,7 +106,9 @@ void main(void)
         PREC float trans    = exp(-WaterThickness * ABSORPTION_DENSITY);  // 1 at shore -> 0 deep
         PREC vec3  waterCol = mix(DEEP_COLOR, SHALLOW_COLOR, trans);
 
-        PREC float shore = smoothstep(0.0, SHORE_BLEND_DEPTH, WaterThickness);
+        // alphaDepth is MapData::alphaDepth (world-units); guard against 0.
+        PREC float shoreBlend = max(alphaDepth, 1.0);
+        PREC float shore = smoothstep(0.0, shoreBlend, WaterThickness);
         if (shore <= 0.0) discard;            // kill invisible land-quad overdraw
 
         PREC vec3  vertexLightRGB = Color.bgra.rgb;  // VS packs .bgra; un-swizzle (camera-indep)
