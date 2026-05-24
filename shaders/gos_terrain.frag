@@ -766,21 +766,21 @@ void main(void)
 #endif
 
     // Write depth for overlay/object depth testing. REVERSE-Z / GL_GEQUAL
-    // regime (glClipControl ZERO_TO_ONE, glClearDepth(0); near->1, far->0; the
-    // LARGER NDC z wins). K7 re-derive (terrain continuous-surface design
-    // Section 4.5): the forward-Z/GL_LEQUAL comment block this replaced was
-    // DRIFTED -- under reverse-Z the undisplaced-vs-displaced selection that
-    // keeps overlays winning INVERTS, so:
-    //  - the surface-favoring pick is min(), not max(): the SMALLER reverse-Z
-    //    z is the deeper/original undisplaced surface; writing it keeps
-    //    upward-displaced terrain from occluding overlays at the true surface,
-    //    while downward-displaced terrain still writes its own (larger) z to
-    //    avoid self-occlusion dark patches;
-    //  - the overlay-favoring epsilon is the single-sourced, reverse-Z-flipped
-    //    OVERLAY_DEPTH_BIAS (> 0, so terrain's written z is nudged so decals/
-    //    overlays at the undisplaced surface strictly WIN the GEQUAL tie --
-    //    replaces the removed host glPolygonOffset(-1,-1)), NOT a hardcoded
-    //    +0.0005. Single-sourced from include/terrain_depth_bias.hglsl in
-    //    lockstep with the C++ sibling mclib/terrain_depth_bias.h.
-    gl_FragDepth = clamp(min(UndisplacedDepth, gl_FragCoord.z) + OVERLAY_DEPTH_BIAS, 0.0, 1.0);
+    // regime (glClipControl ZERO_TO_ONE, glClearDepth(0); near->1, far->0;
+    // LARGER NDC z = closer to camera = wins GEQUAL).
+    //
+    // Must match the thin-VS convention: gos_terrain_thin.vert applies
+    // TERRAIN_DEPTH_FUDGE (-0.002) pre-divide in clip space to push terrain
+    // FARTHER from camera, so both overlays (at +OVERLAY_DEPTH_BIAS) and
+    // objects at ground level (at ~0 bias) WIN the GEQUAL tie. This fragment
+    // override replicates that same -0.002 nudge via gl_FragDepth, using
+    // min(undisplaced, displaced) to ensure upward-displaced terrain does not
+    // occlude overlays drawn at the undisplaced surface.
+    //
+    // REGRESSION NOTE: using +OVERLAY_DEPTH_BIAS (+0.0005) here instead of
+    // TERRAIN_DEPTH_FUDGE (-0.002) makes terrain appear CLOSER, causing
+    // objects at ground level (depth ~D_terrain) to fail GEQUAL against the
+    // written D_terrain+0.0005 -- the "sinking vehicles / overlay over buildings"
+    // regression. TERRAIN_DEPTH_FUDGE is the correct constant here.
+    gl_FragDepth = clamp(min(UndisplacedDepth, gl_FragCoord.z) + TERRAIN_DEPTH_FUDGE, 0.0, 1.0);
 }
