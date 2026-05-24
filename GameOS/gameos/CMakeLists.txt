@@ -30,6 +30,7 @@ set(SOURCES ${SOURCES}
     gos_rdoc_capture.cpp
     gos_crashbundle.cpp
     gos_smoke.cpp
+    debug_renderer.cpp
     gos_font.cpp
     gos_input.cpp
     asset_scale.cpp
