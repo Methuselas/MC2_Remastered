@@ -589,6 +589,9 @@ def check_invariants(
                     f"offset={m['offset']}, expected {inv['offset']}"
                 )
             if "array_stride" in inv:
+                # m["array_stride"] is _norm_stride-normalized: 0 -> None.
+                # Invariant values must be non-zero real strides; "array_stride": 0
+                # would always violate because normalized None != 0.
                 if m.get("array_stride") != inv["array_stride"]:
                     violations.append(
                         f"CONTRACT_VIOLATION: {key}: "
