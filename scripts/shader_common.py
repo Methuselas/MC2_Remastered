@@ -189,10 +189,14 @@ def find_tool(name: str) -> str | None:
 
 
 def discover_shaders() -> list[Path]:
-    """Return all shader files in shaders/, sorted by name within each extension group."""
+    """Return all shader files under shaders/, sorted by extension then name.
+    Recursive: includes shaders/fixtures/ and any future subdirectories.
+    Convention: any file under shaders/**/*.frag|vert|... is part of shader
+    validation unless explicitly listed in SKIP_SHADERS.
+    """
     out: list[Path] = []
     for ext in STAGE_BY_EXT:
-        out.extend(sorted(SHADERS.glob(f"*{ext}")))
+        out.extend(sorted(SHADERS.glob(f"**/*{ext}")))
     return out
 
 
