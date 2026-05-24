@@ -1,6 +1,6 @@
 # MaterialGpu-3: First Shader Sampling Switch
 
-**Date:** 2026-05-24 (rev 3 — adversarial fixes: MAJ-1 reset, MAJ-2 loop var, MAJ-5 sampleOn+loc)
+**Date:** 2026-05-24 (rev 4 — user review fixes: C1 gate guard, M1 onMapUnload, M2 diff expectation, M3 GL error, M4 hglsl preflight)
 **Status:** Approved for planning
 **Slice:** MaterialGpu-3 (first shader-consumer slice)
 **Predecessor:** MaterialGpu-2 (runtime table + SSBO upload, shipped 2026-05-24)
@@ -240,6 +240,24 @@ This check runs inside `finalizeGeometry()` after `entries` has been built and b
 the SSBO upload, so the comparison is valid. `entries` must be in scope at this point
 (it is — it's a local `std::vector<PerDrawEntry>` in the same `{ }` scope).
 
+### 5.4 `onMapUnload()` — reset sidecar valid flag (M1 fix)
+
+Add `s_materialGpuSidecarValid = false;` to the existing MaterialGpu teardown block in
+`onMapUnload()`. The v2 teardown already deletes `s_materialGpuSsbo`, clears
+`s_packetMaterialIdx`, and clears `s_materialGpuTable`. The v3 addition belongs in the
+same block, immediately after those clears:
+
+```cpp
+// v3 addition to existing MaterialGpu-2 teardown block in onMapUnload():
+s_materialGpuSidecarValid = false;
+```
+
+Rationale: after unload, the SSBO and tables are gone. `sampleOn` also checks
+`s_materialGpuSsbo != 0`, so this is belt-and-suspenders — but leaving
+`s_materialGpuSidecarValid = true` after unload would be a lie about state.
+A subsequent `finalizeGeometry()` call (next map load) resets it anyway, but
+correct teardown prevents confusion during debugging.
+
 ---
 
 ## 6. Uniform location — `u_materialGpuSample`
@@ -303,7 +321,16 @@ const bool sampleOn = s_materialGpuEnabled
                    && s_locsCoalesce.materialGpuSample >= 0;
 
 if (s_locsCoalesce.materialGpuSample >= 0) {
+    while (glGetError() != GL_NO_ERROR) {}  // drain stale BEFORE
     glUniform1i(s_locsCoalesce.materialGpuSample, sampleOn ? 1 : 0);
+    const GLenum uniformErr = glGetError();  // sample AFTER
+    if (uniformErr != GL_NO_ERROR) {
+        char buf[96];
+        std::snprintf(buf, sizeof(buf),
+                      "[MATERIAL_GPU v1] GL ERROR after sample uniform: 0x%x\n",
+                      uniformErr);
+        std::fputs(buf, stderr);
+    }
 }
 // If loc == -1: M3 error already logged at loadProgramsIfNeeded(); no-op here.
 ```
@@ -320,7 +347,11 @@ draw loop, in the coalesce path:
 // is always observable without a debugger. One line per flush, not per draw.
 // With MAJ-5 fix: sampleOn includes loc >= 0, so enabled=1 guarantees the
 // uniform was found. The reason cascade mirrors the sampleOn condition order.
-{
+// C1 fix: only emit when at least one MaterialGpu gate is set. Default
+// both-off runs stay quiet (only the startup banner fires). This preserves
+// full diagnostic coverage for all non-default configurations while keeping
+// default tier1 runs from producing log noise.
+if (s_materialGpuEnabled || s_materialGpuSampleEnabled) {
     const char* reason = "ok";
     if (!s_materialGpuEnabled)                    reason = "upload_env_off";
     else if (!s_materialGpuSampleEnabled)          reason = "sample_env_off";
@@ -348,10 +379,15 @@ This is the key diagnostic for debugging "SAMPLE=1 but no change." The `loc=N` o
 enabled path proves the uniform was found and set. The `reason=` on the disabled path
 pinpoints exactly which condition blocked sampling.
 
-**Note:** This emits once per `flush()` call — which is once per frame. For a 30-second
-smoke run at 30-60 FPS, this produces ~1000-2000 log lines. This is acceptable for a
-diagnostic slice. If log volume becomes a concern, add a `static int s_sampleLogCount`
-cap (e.g. first 5 flushes only) — but leave the cap out of v3 to keep debugging clean.
+**Gate coverage with C1 guard:**
+- Both gates OFF: no log (default smoke runs stay quiet; startup banner is sufficient)
+- `MC2_MATERIAL_GPU=1` only: `enabled=0 reason=sample_env_off` each flush
+- `MC2_MATERIAL_GPU_SAMPLE=1` only: `enabled=0 reason=upload_env_off` each flush
+- Both gates ON: `enabled=1 loc=N` each flush
+
+**Note:** When either gate is active, this emits once per `flush()` call. For 30-second
+smoke runs at 30-60 FPS this produces ~1000-2000 log lines — acceptable for diagnostic
+configurations. Default (both-off) produces zero sample_mode lines.
 
 ---
 
@@ -571,7 +607,7 @@ All must pass before declaring MaterialGpu-3 complete:
 
 | Gate | Verification |
 |---|---|
-| **Tier1 5/5, all gates OFF** | No MC2_* set. Exit 0, 5/5 PASS. Startup: `enabled=0 sample=0` |
+| **Tier1 5/5, all gates OFF** | No MC2_* set. Exit 0, 5/5 PASS. Startup: `enabled=0 sample=0`. **No** `event=sample_mode` lines (C1 gate guard) |
 | **Tier1 5/5, upload-only** | `MC2_MATERIAL_GPU=1` only. Exit 0, 5/5 PASS. Startup: `enabled=1 sample=0`. Logs: `event=sample_mode enabled=0 reason=sample_env_off` each flush |
 | **Tier1 5/5, sample-only (SAMPLE=1 alone)** | `MC2_MATERIAL_GPU_SAMPLE=1` only (upload gate unset). Exit 0, 5/5 PASS. Logs: `event=sample_mode enabled=0 reason=upload_env_off` |
 | **Tier1 5/5, both gates ON** | `MC2_MATERIAL_GPU=1 MC2_MATERIAL_GPU_SAMPLE=1`. Exit 0, 5/5 PASS. Startup: `enabled=1 sample=1` |
