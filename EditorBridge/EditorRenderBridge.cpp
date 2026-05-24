@@ -181,6 +181,12 @@ EditorPickResult pickAt(int screenX, int screenY) {
     int tileR = -1, tileC = -1;
     land->worldToTile(worldPt, tileR, tileC);
 
+    // Guard against camera-not-ready path: inverseProject returns 0 for both
+    // "tile found" (good) and "turn < 4, camera not ready" (bad, worldPt zeroed).
+    // worldToTile initializes tileR/tileC to -1; if they're still -1 after the call,
+    // the tile was not found -- return Miss rather than a bogus origin hit.
+    if (tileR < 0 || tileC < 0) return result;
+
     result.kind             = EditorPickResult::Kind::Terrain;
     result.terrainTileRow   = tileR;
     result.terrainTileCol   = tileC;
