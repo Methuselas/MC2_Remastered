@@ -1,0 +1,199 @@
+# Active campaigns
+
+Extracted from CLAUDE.md 2026-05-24. SHIPPED slices are kept here for
+archaeology; DECISIONS + steady-state pointers stay current. Add new
+campaigns at top (most recent first).
+
+For the RenderWorld arc specifically, see also:
+- [docs/renderworld_arc_status.md](renderworld_arc_status.md) — steady-state
+  ledger reframing M3/M4/M5 as DECISIONS (not ongoing work)
+- [docs/renderworld_migration_guide.md](renderworld_migration_guide.md) —
+  contributor onboarding for the arc
+
+---
+
+## In flight / ready to execute
+
+- **Unified-projection F1** (design + plan complete; ready for execution):
+  Spec v2.8 greybeard-signed at
+  `docs/superpowers/specs/2026-05-22-unified-projection-v2-f1-atomic-design.md`.
+  Plan v1.1 codex-signed at
+  `docs/superpowers/plans/2026-05-22-unified-projection-v2-f1-atomic-plan.md`.
+  Handoff at
+  `~/.claude/projects/A--Games-mc2-opengl-src/memory/HANDOFF_2026_05_22_unified_projection_F1_ready_for_execution.md`.
+  Correctness-only (CPU budget already met per F3 ~55us total post-A2).
+  Collapses inline `axisSwap*worldToClip` at `gamecam.cpp:165-187` into
+  `Camera::worldToClipGL()`; renames `terrainMVP` → `u_worldToClipGL`
+  across 14 vert + 3 compute/frag + 10 CPU bind sites; deletes SSAO
+  runtime entirely; Stage A-pre parity probe + Stage A atomic
+  single-commit flip. 21 tasks across 4 phases. Execute via
+  `superpowers:subagent-driven-development` skill.
+
+---
+
+## Infrastructure / platform
+
+- **C++17 Standard Flip** (SHIPPED 2026-05-24): root CMakeLists.txt now
+  sets `CMAKE_CXX_STANDARD 17` (was implicit C++14 from MSVC default;
+  three modern modules already C++17 via `target_compile_features`).
+  12-line CMake edit, zero compile fixes, tier1 5/5 PASS, no runtime
+  behavior change. Allowed-feature rules: `docs/cxx17-coding-rules.md`.
+  Audit recon:
+  `docs/superpowers/explorations/2026-05-24-cxx17-upgrade-recon.md`.
+  Stabilization gauntlet:
+  `docs/superpowers/explorations/2026-05-24-cxx17-stabilization-gauntlet.md`
+  (GREEN). First useful cleanups: inline constexpr handle-base
+  constants, std::optional in offline tools, structured bindings in
+  tools/tests. NOT runtime renderer churn.
+
+- **Render contract Phase 2** (SHIPPED 2026-05-24): `render_contract.h`
+  gains `RequiredAttachments` (which `COLOR_ATTACHMENTx` a pass needs in
+  the active draw-buffer list) + `ShaderOutputContract` (per-pass FS
+  `layout(location=N)` uniqueness check) + `attachmentCount` in
+  `PassStateContract` (expected `glDrawBuffers` arg). New runtime
+  asserts gated by `MC2_RENDER_CONTRACT_ASSERT=1` — emit `[RENDER_CONTRACT
+  v2] assert mode ACTIVE` on startup; compare live GL state to
+  `render_contract::stateContractFor()` declarations and warn on
+  mismatch. Tier1 5/5 PASS both modes; zero violations observed at HEAD.
+
+---
+
+## RenderWorld arc — STEADY STATE reached 2026-05-24
+
+See [docs/renderworld_arc_status.md](renderworld_arc_status.md) for the
+full ledger with decisions, handle-range partitioning, CI enforcement
+layer, and what's NOT an upcoming slice. Quick summary:
+
+- **M1, M1.5, M1.6, M2-pre, M2, M2.5, M2.6, M6** SHIPPED
+- **M3** SHIPPED (DECISION: terrain deferred indefinitely; CPU
+  `worldToTile` canonical)
+- **M4** SHIPPED (DECISION: VFX click-through by design; CI-grep
+  prohibits attachment-2 writes)
+- **M5** DEFERRED INDEFINITELY (overlay had 7 in-tree meanings without
+  identity-needing consumer)
+
+Future arc work is opt-in only: M3.1 if editor consumer emerges, M2.7
+mech-select-on-click if desired, or a new named slice consuming existing
+substrate.
+
+### Per-slice archaeology (verbose entries, kept for grep)
+
+- **RenderWorld Slice M1** (SHIPPED 2026-05-23): static-prop adapter
+  routes 5 audited call sites (`mclib/bdactor.cpp:1471,2802,4273,4859`,
+  `code/warrior.cpp:7593`) through
+  `GameAdapters::StaticPropRenderAdapter` ->
+  `RenderWorld::upsertStaticProp` -> `GpuStaticPropRegistry::registerRecipe`.
+  Three new modules at repo root: `RenderCore/`, `RenderWorld/`,
+  `GameAdapters/`. New virtual `Appearance::getStaticRecipeIndex()`
+  enables m5 late-spawn handle adoption. `[RENDER_WORLD v1]` banner
+  emits per mission. Firewall: `scripts/check-include-firewall.sh`.
+  Greybeard PATCH (justified) — adapter is TEMPORARY per spec section 10.
+  Tier1 5/5 PASS; objects counts: mc2_01=997, mc2_03=2552, mc2_10=2611,
+  mc2_17=1521, mc2_24=2641. Spec:
+  `docs/superpowers/specs/2026-05-22-renderworld-boundary-spec.md`.
+
+- **RenderWorld Slice M1.5** (SHIPPED 2026-05-23): substrate-only
+  ObjectID buffer. `MC2_OBJECT_ID_BUFFER=1` env-gated `R32_UINT` MRT
+  attachment at `GL_COLOR_ATTACHMENT2` on the main scene FBO; static-prop
+  fragment writes `Handle.raw()` via `layout(location=2) out uint
+  v_objectId`. RenderWorld API extension: `s_objectRecords`
+  always-populated table indexed by `handle.index()` +
+  `lookupAtPixel(x,y) -> LookupResult` synchronous readback (generation
+  + alive check). C1 META-FIX: `setSceneDrawBuffers(SceneDrawBufferMode,
+  bool objectIdAttachmentReady)` helper in `gos_postprocess.cpp`
+  centralizes scene-FBO draw-buffer policy across 5 sites. Greybeard:
+  META-FIX. Tier1 5/5 PASS env-OFF AND env-ON. Spec:
+  `docs/superpowers/specs/2026-05-23-renderworld-slice-m1-5-objectid-buffer-spec.md`.
+
+- **RenderWorld Slice M1.6** (SHIPPED 2026-05-23): static-prop pick
+  wiring. `MC2_STATIC_PROP_PICK=1` + `MC2_OBJECT_ID_BUFFER=1` enables
+  Shift+left-click inspect-only static-prop selection. User-driven
+  canary on mc2_03: 26 hits + 11 diagnostic misses. **Note:** Log schema
+  `[STATIC_PROP_PICK v1]` and `StaticPropSelectionDebugState` were
+  renamed to `[GAMEPLAY_PICK v1] kind=StaticProp` and
+  `GameplaySelectionDebugState` in M2.6 META-FIX (commit `ca08d0c`).
+  Archaeology: grep `[GAMEPLAY_PICK v1]`. Spec:
+  `docs/superpowers/specs/2026-05-23-renderworld-slice-m1-6-staticprop-pick-spec.md`.
+
+- **RenderWorld Slice M2-pre** (SHIPPED 2026-05-23): preemptive META-FIX
+  refactor of M1.6 gameplay-pick machinery. New TU
+  `code/gameplay_pick.{h,cpp}` hosts shared types + `tryGameplayPick(req)`
+  dispatcher (env-substrate gate + 4 gesture gates + mover-first
+  short-circuit + viewport query + bounds + coord scale +
+  lookupAtPixel) + pure `screenToFboPixel(...)` coord transform. New
+  automated validator `RunGameplayPickSelfTest()` gated by
+  `MC2_GAMEPLAY_PICK_SELFTEST=1`. Greybeard: META-FIX. Spec:
+  `docs/superpowers/specs/2026-05-23-renderworld-slice-m2-pre-gameplay-pick-extraction-spec.md`.
+
+- **RenderWorld Slice M2** (SHIPPED 2026-05-23): route-only
+  `MechRenderAdapter`. Every live `Mech3DAppearance` instance now has a
+  `RenderObjectHandle` stored on it. `GameAdapters/MechRenderAdapter.{h,cpp}`
+  bridges `BattleMech::init/destroy` to
+  `RenderWorld::registerMech/destroyMech`. Mechs allocate from the
+  unified `s_objectRecords` table at `kMechHandleBase=0x00010000`.
+  Tier1 5/5 PASS.
+
+- **RenderWorld Slice M2.5** (SHIPPED 2026-05-23): mech object-ID
+  substrate. `GpuMechInstance` (std430 SSBO) grows 48B->64B with
+  `objectIdRaw` field. `mech.vert` + `mech.frag` write per-instance
+  `objectIdRaw` to attachment-2. Always-on per-mission counters split:
+  `[MECHBATCHER v1] event=mech_id_summary gpu_mech_id_writes=N` +
+  `[MECHBATCHER v1] event=mlr_mech_summary mlr_mech_draws=M`.
+  Per-mission `gpu_mech_id_writes`: mc2_01=63836, mc2_03=19230,
+  mc2_10=53872, mc2_17=407061, mc2_24=1232. MLR gap empirically rare:
+  all 5 tier1 missions show `mlr_mech_draws=0`.
+
+- **RenderWorld Slice M2.6** (SHIPPED 2026-05-23): mech pickup
+  integration (inspect-only v1). Closes the RenderWorld arc's first
+  user-visible loop. Shift+LMB on a hostile mech visible to sensors
+  emits `[GAMEPLAY_PICK v1] hit kind=Mech ...`. Three new env vars
+  (`MC2_MECH_PICK`, `MC2_MECH_PICK_DEBUG`, `MC2_MECH_PICK_PIERCE_FOG`).
+  Handle→BattleMech reverse-lookup via linear scan over `ObjectManager`
+  movers (Option B; partId-cookie rejected). META-FIX retired per-kind
+  log+state pattern: `[STATIC_PROP_PICK v1]` → `[GAMEPLAY_PICK v1]
+  kind=X`. Latent post-M2.5 mislabel bug fixed simultaneously. Tier1
+  5/5 PASS env-OFF AND env-ON. Gate 6 substitutive-proof grep: zero
+  hits for retired symbols.
+
+- **RenderWorld Slice M6** (SHIPPED 2026-05-24): firewall audit script
+  — no raw GL from game side. Codifies the empirical finding that
+  `code/` has ZERO raw GL calls and `mclib/` has 3 diagnostic-only
+  gated hits in `render_contract.cpp`. New
+  `scripts/check-no-raw-gl-from-game.sh` (function-level grep, NOT
+  include-level) with allowlist of exactly one TU. Turns the arc from
+  "discipline by memory" to "discipline enforced by script."
+
+- **RenderWorld Slice M3** (SHIPPED 2026-05-24; **DECISION: deferred
+  indefinitely**): terrain reservation/deferral. `RenderObjectKind::Terrain
+  = 2` + `kTerrainHandleBase = 0x40000` + defensive `lookupAtPixel`
+  tripwire. No shaders edited, no adapter, no env var, no consumer.
+  Forward-compat: if M3.1 ever ships per-quad terrain identity
+  (editor-driven), use `subKind = Base/Water/Decal/Mine` payload (NOT
+  separate enum values).
+
+- **RenderWorld Slice M4** (SHIPPED 2026-05-24; **DECISION: never write
+  attachment-2**): VFX prohibition + scaffold. `RenderObjectKind::Vfx
+  = 3` + `kVfxHandleBase = 0x00080000u` + NEW
+  `scripts/check-vfx-no-objectid.sh` firewall grep gate. Additive
+  blending + R32_UINT last-write-wins would clobber M2.6 mech-pick
+  under particles. Source-game-object lookup stays in game logic.
+
+- **RenderWorld Slice M5** (DEFERRED INDEFINITELY 2026-05-24): "overlay"
+  had 7 in-tree meanings without identity-needing consumers. Enum slot
+  un-reserved (comment-only deferral note). If a future use case
+  emerges, ship as a NEW NAMED slice (HoverKindIndicator /
+  RenderWorldDebugOverlay / M5-perf overlay-decal GPU port — NOT as
+  "M5 Overlay").
+
+---
+
+## Pending durable artifacts (write-when-ready)
+
+- **Render contract document** at `docs/render-contract.md` (or
+  `.planning/codebase/RENDER-CONTRACT.md`) — enumerate at
+  function/symbol level: who enqueues into which master array, who
+  flushes when, what state is inherited at each hook point, what each
+  Track A/B/C/coalesce slice consumes/emits. Currently we burn context
+  re-deriving this every render slice. Captured 2026-05-14 from
+  codebase-architecture mapping; promote to real artifact when next
+  render slice plan lands.
