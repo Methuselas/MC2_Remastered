@@ -71,20 +71,20 @@ static_assert(offsetof(PerDrawEntry, _pad1) == 28, "_pad1 offset");
 
 - [ ] **Step 1.1: Rename the field and update the comment**
 
-In `GameOS/gameos/gos_static_prop_batcher.h`, find the `PerDrawEntry` struct. Replace the `_pad1` line:
+In `GameOS/gameos/gos_static_prop_batcher.h`, find the `PerDrawEntry` struct. Replace the `_pad1` line.
 
+The exact text to find (copy from file, one space between `int32_t` and `objectIdRaw`):
 ```cpp
-    int32_t  objectIdRaw;       // 24 — M1.5: handle.raw() when MC2_OBJECT_ID_BUFFER=1, else 0
+    int32_t objectIdRaw;       // 24 — M1.5: handle.raw() when MC2_OBJECT_ID_BUFFER=1, else 0
     int32_t _pad1;             // 28 — std430 alignment + size = 32
 ```
 
-with:
-
+Replace with (double space after `int32_t` to maintain comment alignment with `uint32_t`):
 ```cpp
-    int32_t  objectIdRaw;       // 24 — M1.5: handle.raw() when MC2_OBJECT_ID_BUFFER=1, else 0
-    uint32_t materialIdx;       // 28 — MaterialGpu-3: index into s_materialGpuTable
-                                //      (was _pad1; filled from s_packetMaterialIdx[slot]
-                                //       when MC2_MATERIAL_GPU=1 and sidecar valid, else 0u)
+    int32_t  objectIdRaw;      // 24 — M1.5: handle.raw() when MC2_OBJECT_ID_BUFFER=1, else 0
+    uint32_t materialIdx;      // 28 — MaterialGpu-3: index into s_materialGpuTable
+                               //      (was _pad1; filled from s_packetMaterialIdx[slot]
+                               //       when MC2_MATERIAL_GPU=1 and sidecar valid, else 0u)
 ```
 
 - [ ] **Step 1.2: Replace the `_pad1` static_assert with `materialIdx` asserts**
@@ -275,6 +275,8 @@ Replace with:
 
 - [ ] **Step 3.3: Site C — fill materialIdx in entries-build loop**
 
+**Note:** The `if (layerForPacket[globalPktIdx] >= 0)` guard here is always true for every entry in `s_sortedPacketOrder`. The skip-filter at line 2036 ensures only packets with `layerForPacket >= 0` are added to `s_sortedPacketOrder`. So every entry in the entries loop has a valid layer. The guard is legacy protective code, not a real branch. Place the `materialIdx` fill INSIDE this guard block (before `entries[i] = e;`).
+
 Find the entries-build loop. Inside it, after `e.objectIdRaw = ...` (the M1.5 line):
 
 ```cpp
@@ -462,7 +464,7 @@ Inside `flush()`, in the coalesce branch, after the SSBO bind block for slot 5:
 
 - [ ] **Step 5.1: Add sampleOn + uniform upload + event=sample_mode log**
 
-Find the closing brace of the slot-5 SSBO bind block:
+Find the closing brace of the slot-5 SSBO bind block. The landmark comment on the NEXT line is (copy verbatim including `, so`):
 ```cpp
         if (s_materialGpuEnabled && s_materialGpuSsbo != 0) {
             while (glGetError() != GL_NO_ERROR) {}  // drain stale BEFORE
@@ -476,7 +478,7 @@ Find the closing brace of the slot-5 SSBO bind block:
             }
         }
 
-        // 2026-05-11 per-packet rework: each indirect cmd is per-PACKET
+        // 2026-05-11 per-packet rework: each indirect cmd is per-PACKET, so
 ```
 
 Insert between `}` (SSBO bind close) and the `// 2026-05-11` comment:
@@ -533,7 +535,7 @@ Insert between `}` (SSBO bind close) and the `// 2026-05-11` comment:
             std::fputs(buf, stderr);
         }
 
-        // 2026-05-11 per-packet rework: each indirect cmd is per-PACKET
+        // 2026-05-11 per-packet rework: each indirect cmd is per-PACKET, so
 ```
 
 - [ ] **Step 5.2: Build — verify no errors**
@@ -711,16 +713,19 @@ uniform sampler2DArray u_texArr;
 // MaterialGpu-3: material table at binding 5.
 // RENDER CONTRACT: static_prop.frag coalesce declares MaterialTable at binding 5
 //   after MaterialGpu-3. Binding 5 may be unbound when u_materialGpuSample=0;
-//   shader MUST NOT access materials[] in that case (enforced by the uniform branch below).
+//   shader MUST NOT access materialTable_.materials[] in that case (enforced by the uniform branch below).
 // Always declared in the coalesce variant so the reflection surface is stable.
+// Instance name materialTable_ follows the usage pattern documented in material_gpu.hglsl.
 #include <include/material_gpu.hglsl>
 layout(std430, binding = 5) readonly buffer MaterialTable {
     MaterialGpu materials[];
-};
+} materialTable_;
 uniform int u_materialGpuSample;  // 0 = legacy texArrayLayer, 1 = material table
 
 #else
 ```
+
+**Critical:** The block uses instance name `materialTable_` (matching `material_gpu.hglsl` line 16: `} materialTable_;`). All access MUST use `materialTable_.materials[i]` — NOT bare `materials[i]`. Do not omit the instance name.
 
 - [ ] **Step 7.3: Site C — add materialIdx read to per-draw SSBO block**
 
@@ -747,11 +752,11 @@ Replace with:
     // MaterialGpu-3: runtime switch between legacy layer and material table.
     // u_materialGpuSample is a pass-wide (not per-fragment) uniform —
     // the branch collapses to a single predicate on AMD hardware.
-    // materials[] is only accessed when u_materialGpuSample != 0,
+    // materialTable_.materials[] is only accessed when u_materialGpuSample != 0,
     // enforcing the render contract above (binding 5 must be set when sampling).
     int effectiveLayer = texArrayLayer;
     if (u_materialGpuSample != 0) {
-        uint albedo = materials[materialIdx].albedoTex;
+        uint albedo = materialTable_.materials[materialIdx].albedoTex;
         if (albedo != kMatTexAbsent) {
             // kMatTexAbsent = 0xFFFFFFFFu (defined in material_gpu.hglsl).
             // v2 mismatches=0 strongly predicts this guard is never triggered
@@ -953,6 +958,21 @@ git commit -m "chore(material-gpu-3): update static_prop.frag shader reflection 
 ```powershell
 cp -f "A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/build64/RelWithDebInfo/mc2.exe" "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe"
 ```
+
+- [ ] **Step 10.1b: Prerequisite — verify coalesce path is active for tier1 missions**
+
+G2/G3/G4 depend on `event=sample_mode` lines appearing in the log. These lines are only emitted in the coalesce branch of `flush()`. If coalesce is NOT active (e.g., driver doesn't support `GL_ARB_shader_draw_parameters`), no `event=sample_mode` lines will appear regardless of gate state, and the smoke gates would be silently vacuous. Verify coalesce is active before proceeding.
+
+Run a quick smoke with upload gate to check:
+```powershell
+$env:MC2_MATERIAL_GPU = "1"
+py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --missions mc2_01 --duration 15 --kill-existing --keep-logs
+Remove-Item Env:\MC2_MATERIAL_GPU
+$latest = Get-ChildItem "A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\tests\smoke\artifacts" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Get-Content "$($latest.FullName)\mc2_01\stderr.log" | Select-String "event=sample_mode|coalesce|COALESCE" | Select-Object -First 5
+```
+
+Expected: at least one `event=sample_mode` line. If no `event=sample_mode` lines appear at all but smoke exits 0, check for `[COALESCE v1] event=ready` or `[GPUPROPS-DIAG] static_prop_coalesce program=N` (N > 0) to confirm the coalesce program loaded. If coalesce is not active, the `event=sample_mode` checks in G2/G3/G4 below are vacuous — escalate rather than accepting a false PASS.
 
 - [ ] **Step 10.2: G1 — All gates OFF**
 
