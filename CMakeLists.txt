@@ -302,7 +302,8 @@ if(MC2_IMGUI)
         "${CMAKE_SOURCE_DIR}/3rdparty/imgui/backends"
         "${CMAKE_SOURCE_DIR}/GuiRuntime"
     )
-    target_link_libraries(gameos_main PRIVATE imgui gui_runtime)
+    # imgui + gui_runtime symbols resolve at mc2 link; no target_link_libraries
+    # needed here for a static-lib-only target in a subdirectory.
 endif()
 
 target_link_libraries(mc2
