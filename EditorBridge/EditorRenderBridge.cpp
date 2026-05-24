@@ -101,6 +101,20 @@ static void popOverlayState() {
     gos_SetRenderState(gos_State_AlphaMode, gos_Alpha_OneZero);
 }
 
+// Project a world-space point to screen space.
+// Uses Camera::projectForScreenXY (non-deprecated intent-specific wrapper).
+// Returns false if the point is behind the camera.
+static bool projectToScreen(const Stuff::Vector3D& worldPt,
+                            float* outSx, float* outSy) {
+    if (!eye || !outSx || !outSy) return false;
+    Stuff::Vector3D pt = worldPt;   // mutable copy: projectForScreenXY takes non-const ref
+    Stuff::Vector4D screen{};
+    if (!eye->projectForScreenXY(pt, screen)) return false;
+    *outSx = screen.x;
+    *outSy = screen.y;
+    return true;
+}
+
 // ---- lifecycle ----
 
 void init() {
@@ -116,8 +130,66 @@ bool isEnabled() { return s_enabled; }
 
 // ---- stub implementations (replaced in Tasks 5-7) ----
 
-EditorPickResult pickAt(int /*screenX*/, int /*screenY*/) {
-    return {};  // Task 5
+EditorPickResult pickAt(int screenX, int screenY) {
+    EditorPickResult result{};
+    if (!s_enabled) return result;
+
+    // ---- Path A: GPU object-ID readback (StaticProp + Mech) ----
+    // Requires MC2_OBJECT_ID_BUFFER=1. Silently skipped if off -- not an error.
+    if (RenderWorld::IsObjectIdBufferEnabled()) {
+        RenderWorld::ScreenPickContext spCtx;
+        if (editorScreenToFboPixel(screenX, screenY, &spCtx)) {
+            if (screenX >= 0 && screenY >= 0
+                && screenX < static_cast<int>(spCtx.vMulX)
+                && screenY < static_cast<int>(spCtx.vMulY))
+            {
+                const RenderWorld::LookupResult lr =
+                    RenderWorld::lookupAtPixel(spCtx.glX, spCtx.glY);
+                if (lr.isValid) {
+                    result.handle = lr.handle;
+                    // Explicit switch: unknown kinds do NOT silently become StaticProp.
+                    switch (lr.kind) {
+                    case RenderWorld::RenderObjectKind::StaticProp:
+                        result.kind = EditorPickResult::Kind::StaticProp;
+                        return result;
+                    case RenderWorld::RenderObjectKind::Mech:
+                        result.kind = EditorPickResult::Kind::Mech;
+                        return result;
+                    default:
+                        // Terrain (reserved, no writer), Vfx (prohibited writers),
+                        // or any future kind: fall through to terrain raycast.
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- Path B: CPU terrain raycast ----
+    // Always fires when MC2_EDITOR_MODE=1, regardless of object-ID state.
+    // This is the canonical ground-click path per M3 arc decision.
+    if (!land || !eye) return result;
+
+    Stuff::Vector2DOf<long> screenPt;
+    screenPt.x = static_cast<long>(screenX);
+    screenPt.y = static_cast<long>(screenY);
+    Stuff::Vector3D worldPt{};
+    // inverseProject returns 0 on tile-found success, non-zero on off-map miss.
+    const unsigned long hitFlags = eye->inverseProject(screenPt, worldPt);
+    if (hitFlags != 0) return result;  // missed terrain (off-map or camera not ready)
+
+    int tileR = -1, tileC = -1;
+    land->worldToTile(worldPt, tileR, tileC);
+
+    result.kind             = EditorPickResult::Kind::Terrain;
+    result.terrainTileRow   = tileR;
+    result.terrainTileCol   = tileC;
+    result.terrainType      = static_cast<int32_t>(land->getTerrainType(worldPt));
+    result.terrainElevation = land->getTerrainElevation(worldPt);
+    result.worldX           = worldPt.x;
+    result.worldY           = worldPt.y;
+    result.worldZ           = worldPt.z;
+    return result;
 }
 
 RenderWorld::VisibilityResult queryVisibility(RenderWorld::VisibilityRequest /*req*/) {
