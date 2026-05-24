@@ -365,6 +365,8 @@ bool  DrawDecalStatic();
 //                                  DRAWALPHA-detail-only. Expected == 0.
 void      Counters_AddDecalStaticTrisDrawn(long long n);
 long long Counters_GetDecalStaticTrisDrawn();
+void      Counters_AddLegacyDrawAlphaDetailQuad();
+long long Counters_GetLegacyDrawAlphaDetailQuads();
 
 // ---------------------------------------------------------------------------
 // Stage 2: dense recipe SSBO build / lifecycle / per-entry invalidation.

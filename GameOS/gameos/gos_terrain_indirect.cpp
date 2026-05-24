@@ -157,6 +157,7 @@ long long s_decal_static_tris_drawn      = 0;
 // Always-on (not gated on MC2_TERRAIN_COST_SPLIT). Running lifetime total;
 // divide by summary frames to get per-frame rate.
 long long s_shape_c_invisible_quads      = 0;
+long long s_legacy_drawalpha_detail_quads = 0;
 }  // namespace
 
 namespace gos_terrain_indirect {
@@ -187,6 +188,8 @@ long long Counters_GetGosPushOverlayCalls()      { return s_gos_push_overlay_cal
 // Slice A — cement-overlay static-bake counters.
 void      Counters_AddDecalStaticTrisDrawn(long long n) { s_decal_static_tris_drawn += n; }
 long long Counters_GetDecalStaticTrisDrawn()     { return s_decal_static_tris_drawn; }
+void      Counters_AddLegacyDrawAlphaDetailQuad(){ ++s_legacy_drawalpha_detail_quads; }
+long long Counters_GetLegacyDrawAlphaDetailQuads(){ return s_legacy_drawalpha_detail_quads; }
 
 // PR2c — Stage 4 default-on flip 2026-05-08.
 // Static-bake mine path retires ~932 µs/frame (mc2_01 baseline:
