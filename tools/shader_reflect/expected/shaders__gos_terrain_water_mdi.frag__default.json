@@ -67,6 +67,13 @@
           "name": "cameraPos",
           "offset": 48,
           "type": "vec4"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "alphaDepth",
+          "offset": 64,
+          "type": "float"
         }
       ],
       "name": "gl_DefaultUniformBlock"
