@@ -265,8 +265,9 @@ public:
 		// both updateOldStyle and updateAOEStyle when leftClicked && shiftDn
 		// && !bGui. Short-circuits when moverSelectedThisFrame == true so
 		// the legacy Shift+LMB additive-select gesture on a friendly mover
-		// is preserved verbatim (no M1.6 log line in that case). Emits
-		// [STATIC_PROP_PICK v1] hit/miss and updates RenderWorld debug state.
+		// is preserved verbatim (no log line in that case). Emits
+		// [GAMEPLAY_PICK v1] hit kind=StaticProp / miss and updates the
+		// unified RenderWorld debug state.
 		//
 		// Spec: docs/superpowers/specs/2026-05-23-renderworld-slice-m1-6-staticprop-pick-spec.md
 		void tryStaticPropPick(bool moverSelectedThisFrame,

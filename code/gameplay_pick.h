@@ -42,7 +42,7 @@ struct GameplayPickRequest {
 // Diagnostic context propagated to caller for logging. All fields echo
 // the inputs + the intermediate coord-translation results so caller
 // logs can show the full transform on one line. Field set mirrors the
-// M1.6 [STATIC_PROP_PICK v1] hit/miss log printf args exactly.
+// M2.6 [GAMEPLAY_PICK v1] hit/miss log printf args exactly.
 struct GameplayPickContext {
     int   mouseX, mouseY;        // echo of request (viewport-space, top-left origin)
     int   fboX,   fboY;          // post-scale FBO pixel (top-left origin)

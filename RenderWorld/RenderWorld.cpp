@@ -89,14 +89,15 @@ int32_t handleToRecipeIndex(RenderCore::RenderObjectHandle h) {
 std::mutex                                  s_objectRecordsMutex;
 std::vector<RenderWorld::RenderObjectRecord> s_objectRecords;
 
-// M1.6: most-recent static-prop pick debug state. Single-slot; updated
-// by setLastStaticPropPick from the gameplay-side tryStaticPropPick helper.
+// M2.6 (META-FIX of the M1.6 per-kind selection slot): most-recent gameplay
+// pick debug state. Single mutex-guarded slot updated by
+// setLastGameplayPick from both the static-prop and mech callers.
 // Mutex-guarded because get/set may interleave on a future off-thread
-// HUD consumer; M1.6 itself is main-thread only.
+// HUD consumer; today all callers are main-thread.
 //
-// Spec: 2026-05-23-renderworld-slice-m1-6-staticprop-pick-spec.md sec 6.
-std::mutex                                       s_lastStaticPropPickMutex;
-RenderWorld::StaticPropSelectionDebugState       s_lastStaticPropPick;
+// Spec: 2026-05-23-renderworld-slice-m2-6-mech-pickup-spec.md sec 4.3.
+std::mutex                                       s_lastGameplayPickMutex;
+RenderWorld::GameplaySelectionDebugState         s_lastGameplayPick;
 
 // M2: engine-side mech counters. Separate from the adapter-side counters
 // (adapter lives in MechRenderAdapter.cpp). s_mechs_alive_rw is sourced
@@ -479,11 +480,18 @@ void init() {
         std::fprintf(stderr,
             "[OBJECT_ID v1] event=enabled format=R32UI attachment=GL_COLOR_ATTACHMENT2\n");
     }
-    // M1.6: pick-wiring banner. Always emitted (both 0/0 and 1/1 states
-    // useful to log readers diagnosing "why did Shift+click do nothing").
-    std::fprintf(stderr, "[STATIC_PROP_PICK v1] enabled=%d debug=%d\n",
+    // M1.6 + M2.6: pick-wiring banner. Always emitted; useful to log
+    // readers diagnosing "why did Shift+click do nothing". M2.6 extends
+    // the line with the three mech-pick gate states under the unified
+    // [GAMEPLAY_PICK v1] schema name.
+    std::fprintf(stderr,
+                 "[GAMEPLAY_PICK v1] static_prop_enabled=%d static_prop_debug=%d "
+                 "mech_enabled=%d mech_debug=%d mech_pierce_fog=%d\n",
                  IsStaticPropPickEnabled() ? 1 : 0,
-                 IsStaticPropPickDebugEnabled() ? 1 : 0);
+                 IsStaticPropPickDebugEnabled() ? 1 : 0,
+                 IsMechPickEnabled() ? 1 : 0,
+                 IsMechPickDebugEnabled() ? 1 : 0,
+                 IsMechPickPierceFogEnabled() ? 1 : 0);
     // M1.5 T10: substrate self-test (gated by MC2_RENDER_WORLD_SELFTEST=1).
     runSubstrateSelfTest();
     // M2-pre: gameplay-pick self-test (gated by MC2_GAMEPLAY_PICK_SELFTEST=1
@@ -503,7 +511,7 @@ void destroy() {
     // resulting "valid=true handle=N" -> "lookup returns invalid" gap
     // would confuse anyone grepping the log post-load. Cheap; one
     // mutex-guarded scalar reset per mission end.
-    clearLastStaticPropPick();
+    clearLastGameplayPick();
     std::fprintf(stderr,
         "[RENDER_WORLD v1] event=destroy upsert_ok=%llu upsert_fail=%llu "
         "destroy_calls=%llu mark_visible=%llu\n",
@@ -595,15 +603,16 @@ bool IsObjectIdBufferEnabled() {
     return s_enabled;
 }
 
-// M1.6: master enable for the static-prop pick wiring (missiongui
-// Shift+click -> lookupAtPixel -> setLastStaticPropPick). Default OFF.
+// M1.6 + M2.6: master enable for the static-prop pick wiring (missiongui
+// Shift+click -> lookupAtPixel -> setLastGameplayPick). Default OFF.
 bool IsStaticPropPickEnabled() {
     static const bool s_enabled = envFlag("MC2_STATIC_PROP_PICK");
     return s_enabled;
 }
 
-// M1.6: verbose-log enable. Gates the `[STATIC_PROP_PICK v1] miss`
-// line only; the `hit` line is unconditional.
+// M1.6 + M2.6: verbose-log enable. Gates the
+// `[GAMEPLAY_PICK v1] miss kind=StaticProp` line only; the `hit` line
+// is unconditional.
 bool IsStaticPropPickDebugEnabled() {
     static const bool s_enabled = envFlag("MC2_STATIC_PROP_PICK_DEBUG");
     return s_enabled;
@@ -745,41 +754,43 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
     return out;
 }
 
-void setLastStaticPropPick(const LookupResult& res,
-                           int32_t mouseX, int32_t mouseY,
-                           int32_t glX,    int32_t glY)
+void setLastGameplayPick(RenderObjectKind kind,
+                         const LookupResult& res,
+                         int32_t mouseX, int32_t mouseY,
+                         int32_t glX,    int32_t glY)
 {
     // Callers MUST filter on res.isValid before calling. We do not assert
     // here (release-mode safety) but a misuse populates a "valid pick"
     // with an invalid handle, which the next get() consumer will see
     // and either skip or log-spam. Filter at the call site.
-    std::lock_guard<std::mutex> lk(s_lastStaticPropPickMutex);
-    s_lastStaticPropPick.valid              = res.isValid;
-    s_lastStaticPropPick.handle             = res.handle;
-    // recipeIndex: project handle -> recipe index via the existing
-    // inverse mapper handleToRecipeIndex (declared in this TU; takes a
-    // full RenderObjectHandle and returns int32_t). Per CRIT C1 of
-    // plan-review: the correct symbol is handleToRecipeIndex, NOT
-    // handleIndexToRecipeIndex.
-    s_lastStaticPropPick.recipeIndex        = res.isValid
-        ? handleToRecipeIndex(res.handle)
-        : -1;
-    s_lastStaticPropPick.lastPickMouseX     = mouseX;
-    s_lastStaticPropPick.lastPickMouseY     = mouseY;
-    s_lastStaticPropPick.lastPickGlX        = glX;
-    s_lastStaticPropPick.lastPickGlY        = glY;
-    s_lastStaticPropPick.lastPickFrameIndex =
+    //
+    // M2.6: kind drives payload semantics. recipeIndex is set only when
+    // kind==StaticProp; mech kind leaves recipeIndex at -1 (the handle
+    // identifies the mech; callers re-resolve via findMechByHandle).
+    std::lock_guard<std::mutex> lk(s_lastGameplayPickMutex);
+    s_lastGameplayPick.valid              = res.isValid;
+    s_lastGameplayPick.kind               = kind;
+    s_lastGameplayPick.handle             = res.handle;
+    s_lastGameplayPick.recipeIndex        =
+        (res.isValid && kind == RenderObjectKind::StaticProp)
+            ? handleToRecipeIndex(res.handle)
+            : -1;
+    s_lastGameplayPick.lastPickMouseX     = mouseX;
+    s_lastGameplayPick.lastPickMouseY     = mouseY;
+    s_lastGameplayPick.lastPickGlX        = glX;
+    s_lastGameplayPick.lastPickGlY        = glY;
+    s_lastGameplayPick.lastPickFrameIndex =
         s_frameCounter.load(std::memory_order_relaxed);
 }
 
-void clearLastStaticPropPick() {
-    std::lock_guard<std::mutex> lk(s_lastStaticPropPickMutex);
-    s_lastStaticPropPick = StaticPropSelectionDebugState{};
+void clearLastGameplayPick() {
+    std::lock_guard<std::mutex> lk(s_lastGameplayPickMutex);
+    s_lastGameplayPick = GameplaySelectionDebugState{};
 }
 
-StaticPropSelectionDebugState getLastStaticPropPick() {
-    std::lock_guard<std::mutex> lk(s_lastStaticPropPickMutex);
-    return s_lastStaticPropPick;  // copy out; struct is tiny
+GameplaySelectionDebugState getLastGameplayPick() {
+    std::lock_guard<std::mutex> lk(s_lastGameplayPickMutex);
+    return s_lastGameplayPick;  // copy out; struct is tiny
 }
 
 RenderCore::RenderObjectHandle registerMech(RenderMechDesc desc) {

@@ -28,8 +28,8 @@
 #include"missiongui.h"
 #endif
 
-// M1.6 + M2.6: IsStaticPropPickEnabled, lookupAtPixel, setLastStaticPropPick,
-// clearLastStaticPropPick, getLastStaticPropPick, IsObjectIdBufferEnabled,
+// M1.6 + M2.6: IsStaticPropPickEnabled, lookupAtPixel, setLastGameplayPick,
+// clearLastGameplayPick, getLastGameplayPick, IsObjectIdBufferEnabled,
 // IsMechPickEnabled, IsMechPickDebugEnabled, IsMechPickPierceFogEnabled.
 #include "../RenderWorld/RenderWorld.h"
 #include "gameplay_pick.h"  // M2-pre: tryGameplayPick spine + GameplayPickRequest
@@ -6193,7 +6193,7 @@ void MissionInterfaceManager::updateRollovers()
 //   2. Builds a GameplayPickRequest from the 7 input params.
 //   3. Dispatches to tryGameplayPick(req).
 //   4. Switches on result.outcome to do category-specific side effects
-//      (debug-state mutation + [STATIC_PROP_PICK v1] hit/miss logs).
+//      (debug-state mutation + [GAMEPLAY_PICK v1] kind=StaticProp hit/miss logs).
 //
 // Spec: docs/superpowers/specs/2026-05-23-renderworld-slice-m2-pre-gameplay-pick-extraction-spec.md
 // Sections 4 (algorithm), 6 (caller responsibilities), 11 (Section 11
@@ -6245,18 +6245,20 @@ void MissionInterfaceManager::tryStaticPropPick(bool moverSelectedThisFrame,
             break;
         }
         // Update RenderWorld debug state. Single-slot; latest wins.
-        RenderWorld::setLastStaticPropPick(r.lookup,
-                                           r.ctx.mouseX, r.ctx.mouseY,
-                                           r.ctx.glX,    r.ctx.glY);
-        // Sample back the debug-state struct so the log can include the
-        // recipeIndex (LookupResult itself does not carry it; the
-        // recipe lookup is done inside setLastStaticPropPick).
-        const RenderWorld::StaticPropSelectionDebugState picked =
-            RenderWorld::getLastStaticPropPick();
-        // Unconditional hit log (spec Section 7); coord-diag fields
-        // BYTE-IDENTICAL to M1.6 to keep user-driven canary stable.
+        RenderWorld::setLastGameplayPick(RenderWorld::RenderObjectKind::StaticProp,
+                                         r.lookup,
+                                         r.ctx.mouseX, r.ctx.mouseY,
+                                         r.ctx.glX,    r.ctx.glY);
+        // Sample back the unified debug-state struct so the log can
+        // include the recipeIndex (LookupResult itself does not carry
+        // it; the recipe lookup is done inside setLastGameplayPick).
+        const RenderWorld::GameplaySelectionDebugState picked =
+            RenderWorld::getLastGameplayPick();
+        // Unified hit log (META-FIX of the M1.6 static-prop schema);
+        // coord-diag fields BYTE-IDENTICAL to M1.6 to keep the
+        // user-driven canary semantically stable across rename.
         std::fprintf(stderr,
-            "[STATIC_PROP_PICK v1] hit handle=%u idx=%u gen=%u "
+            "[GAMEPLAY_PICK v1] hit kind=StaticProp handle=%u idx=%u gen=%u "
             "recipe=%d screen=(%d,%d) gl=(%d,%d) fbo=(%d,%d) "
             "vMul=(%.0f,%.0f) vAdd=(%.0f,%.0f) draw=(%d,%d)\n",
             r.lookup.handle.bits,
@@ -6272,14 +6274,14 @@ void MissionInterfaceManager::tryStaticPropPick(bool moverSelectedThisFrame,
         break;
     }
     case GameplayPickResult::Outcome::miss: {
-        // Q1 lean: clear the debug-state struct on empty Shift+click so
+        // Clear the unified debug-state struct on empty Shift+click so
         // a stale prior pick does not survive an empty-click gesture.
-        RenderWorld::clearLastStaticPropPick();
+        RenderWorld::clearLastGameplayPick();
         // Verbose miss log only when MC2_STATIC_PROP_PICK_DEBUG=1;
-        // coord-diag BYTE-IDENTICAL to M1.6.
+        // coord-diag BYTE-IDENTICAL to M1.6 modulo the schema prefix.
         if (RenderWorld::IsStaticPropPickDebugEnabled()) {
             std::fprintf(stderr,
-                "[STATIC_PROP_PICK v1] miss screen=(%d,%d) gl=(%d,%d) "
+                "[GAMEPLAY_PICK v1] miss kind=StaticProp screen=(%d,%d) gl=(%d,%d) "
                 "fbo=(%d,%d) vMul=(%.0f,%.0f) vAdd=(%.0f,%.0f) "
                 "draw=(%d,%d)\n",
                 r.ctx.mouseX, r.ctx.mouseY,
@@ -6394,10 +6396,11 @@ void MissionInterfaceManager::tryMechPick(bool moverSelectedThisFrame,
             break;
         }
 
-        // Visible hit. Inspect-only: log the resolved identity.
-        // (Debug-state mutation lives in Task 5 META-FIX once
-        // setLastGameplayPick exists.)
-        //
+        // Visible hit. Inspect-only: update unified debug state + log.
+        RenderWorld::setLastGameplayPick(RenderWorld::RenderObjectKind::Mech,
+                                         r.lookup,
+                                         r.ctx.mouseX, r.ctx.mouseY,
+                                         r.ctx.glX,    r.ctx.glY);
         // Log line carries handle bits/index/generation + the resolved
         // BattleMech pointer (debug; not a stable cookie). NO
         // gameObjectId / partId fields per CRITICAL-1.

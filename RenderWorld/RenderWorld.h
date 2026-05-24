@@ -93,10 +93,10 @@ bool IsObjectIdBufferEnabled();
 //   - code/missiongui.cpp MissionInterfaceManager::tryStaticPropPick guard
 bool IsStaticPropPickEnabled();
 
-// M1.6: static-prop pick verbose-log enable. When this is OFF, the
-// `[STATIC_PROP_PICK v1] miss ...` line is suppressed (high-frequency
-// empty-Shift+click gesture would otherwise spam stderr). `hit` lines
-// fire unconditionally per spec Section 7.
+// M1.6 + M2.6: static-prop pick verbose-log enable. When this is OFF,
+// the `[GAMEPLAY_PICK v1] miss kind=StaticProp ...` line is suppressed
+// (high-frequency empty-Shift+click gesture would otherwise spam
+// stderr). `hit` lines fire unconditionally per spec Section 7.
 //
 // Process-lifetime cached. Consumed by:
 //   - code/missiongui.cpp MissionInterfaceManager::tryStaticPropPick miss branch
@@ -198,42 +198,58 @@ struct LookupResult {
 // Spec: 2026-05-23-renderworld-slice-m1-5-objectid-buffer-spec.md sec 7
 LookupResult lookupAtPixel(int screenX, int screenY);
 
-// M1.6: most-recent static-prop pick debug state. Updated by
-// MissionInterfaceManager::tryStaticPropPick on a successful Shift+click
-// pick. Single-slot (latest wins); not a selection list. Not serialized.
-// Cleared on per-mission RenderWorld::destroy() so a stale handle does
-// not survive mission-load boundaries.
+// M2.6 (META-FIX of the M1.6 per-kind selection debug state): most-recent
+// gameplay pick debug state. Single mutex-guarded slot; latest pick
+// across all kinds wins. Retires the per-kind state-slot pattern that
+// would otherwise multiply at M3 (terrain) and M4 (VFX).
 //
-// Spec: 2026-05-23-renderworld-slice-m1-6-staticprop-pick-spec.md sec 6.
-struct StaticPropSelectionDebugState {
+// Kind-specific payload:
+//   kind == StaticProp -> recipeIndex carries the recipe (M1.6 semantic)
+//   kind == Mech       -> handle alone carries the identity. Callers
+//                          re-resolve via GameAdapters::Mech::findMechByHandle
+//                          to avoid stale-pointer dereference after destroyMech.
+//                          (Adversarial CRITICAL-1: no stable cookie at
+//                          syncSpawn -- partId reassigned post-init at
+//                          code/mission.cpp:2987. Handle IS the identity.)
+//   future kinds       -> add a tagged-union payload field at that
+//                          slice; do NOT widen the struct prematurely.
+//
+// Cleared on per-mission RenderWorld::destroy() (same lifecycle as the
+// retired M1.6 selection debug state).
+//
+// Spec: 2026-05-23-renderworld-slice-m2-6-mech-pickup-spec.md sec 4.3.
+struct GameplaySelectionDebugState {
     bool                            valid              = false;
+    RenderObjectKind                kind               = RenderObjectKind::StaticProp;
     RenderCore::RenderObjectHandle  handle             = RenderCore::RenderObjectHandle::invalid();
-    int32_t                         recipeIndex        = -1;
-    int32_t                         lastPickMouseX     = 0;  // Win32 origin top-left
+    int32_t                         recipeIndex        = -1;  // kind==StaticProp only; -1 otherwise
+    int32_t                         lastPickMouseX     = 0;   // Win32 origin top-left
     int32_t                         lastPickMouseY     = 0;
-    int32_t                         lastPickGlX        = 0;  // GL origin bottom-left
+    int32_t                         lastPickGlX        = 0;   // GL origin bottom-left
     int32_t                         lastPickGlY        = 0;
-    uint64_t                        lastPickFrameIndex = 0;  // mirrors s_frameCounter at pick time
+    uint64_t                        lastPickFrameIndex = 0;
 };
 
-// M1.6: populate from a valid LookupResult. Asserts internally that
-// res.isValid == true (callers must filter; debug build only).
-// mouseX/Y are Win32-convention click coords; glX/Y are the post-y-flip
-// GL coords passed to lookupAtPixel. lastPickFrameIndex is sampled from
-// the internal frame counter at call time.
-void setLastStaticPropPick(const LookupResult& res,
-                           int32_t mouseX, int32_t mouseY,
-                           int32_t glX,    int32_t glY);
+// M2.6: populate from a valid LookupResult. Caller passes the
+// pre-checked kind (must match res.kind). Kind-specific payload
+// extracted from the appropriate source:
+//   kind==StaticProp: recipeIndex sampled from handleToRecipeIndex
+//                     (existing M1.6 path)
+//   kind==Mech:       no kind-specific payload; handle alone identifies
+//                     the mech (CRITICAL-1 note above).
+void setLastGameplayPick(RenderObjectKind kind,
+                         const LookupResult& res,
+                         int32_t mouseX, int32_t mouseY,
+                         int32_t glX,    int32_t glY);
 
-// M1.6: reset to default (valid=false). Idempotent. Called on
-// (a) empty Shift+click (Q1 lean: clear on miss), and
-// (b) per-mission RenderWorld::destroy() lifecycle hook (Q2 lean).
-void clearLastStaticPropPick();
+// M2.6: reset to default (valid=false). Idempotent. Called on
+// (a) empty Shift+click from the static-prop caller, and
+// (b) per-mission RenderWorld::destroy() lifecycle hook.
+void clearLastGameplayPick();
 
-// M1.6: read-only access. Caller MUST check .valid before consuming any
-// other field. Returns a copy (the struct is tiny; avoids exposing
-// internal mutex state to callers).
-StaticPropSelectionDebugState getLastStaticPropPick();
+// M2.6: read-only access. Caller MUST check .valid before consuming
+// any other field; then dispatch on .kind for payload semantics.
+GameplaySelectionDebugState getLastGameplayPick();
 
 // M2: mech spawn descriptor. Engine types only -- no Mech3DAppearance*,
 // no Mech3DAppearanceType*. Firewall: spec section 12 + M2 spec section 10.
