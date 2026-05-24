@@ -103,13 +103,16 @@ void main(void)
         PREC vec2  q1 = WorldPos.xy * WAVE_FREQ * 1.70 + vec2(-0.80, -1.10) * sc;
         PREC float nz = (fbm3(q0) + fbm3(q1)) - 0.875;   // ~zero-mean organic detail
 
-        PREC float trans    = exp(-WaterThickness * ABSORPTION_DENSITY);  // 1 at shore -> 0 deep
+        PREC float trans    = clamp(exp(-WaterThickness * ABSORPTION_DENSITY), 0.0, 1.0);  // clamp handles negative WaterThickness (above-water shore tiles)
         PREC vec3  waterCol = mix(DEEP_COLOR, SHALLOW_COLOR, trans);
 
         // alphaDepth is MapData::alphaDepth (world-units); guard against 0.
+        // Shore-extension fix: extend blend into above-water tiles (negative
+        // WaterThickness) so the water tint creeps onto the beach, matching
+        // the original CPU alpha-band behavior (alphaEdge on above-water verts).
         PREC float shoreBlend = max(alphaDepth, 1.0);
-        PREC float shore = smoothstep(0.0, shoreBlend, WaterThickness);
-        if (shore <= 0.0) discard;            // kill invisible land-quad overdraw
+        PREC float shore = smoothstep(-shoreBlend * 0.5, shoreBlend, WaterThickness);
+        if (shore <= 0.0) discard;            // kill tiles too far above waterline
 
         PREC vec3  vertexLightRGB = Color.bgra.rgb;  // VS packs .bgra; un-swizzle (camera-indep)
         PREC vec3  col = waterCol * max(vertexLightRGB, vec3(SKY_AMBIENT))

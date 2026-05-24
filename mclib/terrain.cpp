@@ -1984,22 +1984,27 @@ void Terrain::geometry (void)
 						    (q.vertices[2]->pVertex->water & 1) ||
 						    (q.vertices[3]->pVertex->water & 1);
 						const float we = Terrain::waterElevation;
+						// Shore-extension: include tiles slightly ABOVE waterElevation.
+						// VS positions them at terrain surface; FS fades via negative-WT smoothstep.
+						const float shoreExt = MapData::alphaDepth * 0.5f > 0.0f
+						                       ? MapData::alphaDepth * 0.5f : 15.0f;
 						const bool submergedSand = !waterFlagged && (
-						    q.vertices[0]->pVertex->elevation < we ||
-						    q.vertices[1]->pVertex->elevation < we ||
-						    q.vertices[2]->pVertex->elevation < we ||
-						    q.vertices[3]->pVertex->elevation < we);
+						    q.vertices[0]->pVertex->elevation < we + shoreExt ||
+						    q.vertices[1]->pVertex->elevation < we + shoreExt ||
+						    q.vertices[2]->pVertex->elevation < we + shoreExt ||
+						    q.vertices[3]->pVertex->elevation < we + shoreExt);
 						append = waterFlagged || submergedSand;
 					} else {
 						// Legacy path: waterHandle is set by setupTextures for water&1 tiles.
-						// Fix A (staircase): also append submerged tiles that lack water&1.
 						const bool waterHandleSet = (q.waterHandle != 0xffffffffu);
 						const float we = Terrain::waterElevation;
+						const float shoreExt = MapData::alphaDepth * 0.5f > 0.0f
+						                       ? MapData::alphaDepth * 0.5f : 15.0f;
 						const bool submergedSand = !waterHandleSet && (
-						    q.vertices[0]->pVertex->elevation < we ||
-						    q.vertices[1]->pVertex->elevation < we ||
-						    q.vertices[2]->pVertex->elevation < we ||
-						    q.vertices[3]->pVertex->elevation < we);
+						    q.vertices[0]->pVertex->elevation < we + shoreExt ||
+						    q.vertices[1]->pVertex->elevation < we + shoreExt ||
+						    q.vertices[2]->pVertex->elevation < we + shoreExt ||
+						    q.vertices[3]->pVertex->elevation < we + shoreExt);
 						append = waterHandleSet || submergedSand;
 					}
 					if (append)

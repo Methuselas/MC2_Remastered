@@ -510,7 +510,12 @@ uint32_t UploadAndBindThinRecords() {
             if (it == g_vertexNumToRecipe.end()) continue;
             const WaterRecipe& recS = g_recipes[it->second];
             const float we = Terrain::waterElevation;
-            if (recS.v0e >= we && recS.v1e >= we && recS.v2e >= we && recS.v3e >= we)
+            // Shore-extension: keep tiles slightly above waterElevation (VS sits them
+            // on terrain surface; FS fades via negative-WaterThickness smoothstep).
+            const float shoreExt = MapData::alphaDepth * 0.5f > 0.0f
+                                   ? MapData::alphaDepth * 0.5f : 15.0f;
+            if (recS.v0e >= we + shoreExt && recS.v1e >= we + shoreExt &&
+                recS.v2e >= we + shoreExt && recS.v3e >= we + shoreExt)
                 continue;
             submergedSandTile = true;
         }

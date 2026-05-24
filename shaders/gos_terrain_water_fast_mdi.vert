@@ -193,14 +193,17 @@ void main() {
     float velev = cornerElev(rec, cornerIdx);
     uint waterBits = unpackByte(rec.ctrl.w, cornerIdx);
 
-    float wz = waveOurCos(waterBits) + waterElevation;
+    // Negative WaterThickness = above-water shore tile. For those, sit the quad
+    // ON the terrain surface so the depth test passes; the FS fades via
+    // smoothstep that accepts negative values (shore-extension fix).
+    // Cap above-water vertex height to waterElevation+shoreBlend so steep cliff
+    // corners don't pull the bilinear quad surface up through the cliff face.
+    WaterThickness = waterElevation - velev;   // no clamp; negative = above waterline
+    float shoreBlendVS = max(alphaDepth, 1.0);
+    float wz = (WaterThickness >= 0.0)
+               ? waveOurCos(waterBits) + waterElevation          // below water: animated flat surface
+               : min(velev, waterElevation + shoreBlendVS);      // above water: terrain surface, capped
     vec3 worldPos = vec3(vxy, wz);
-
-    // water-v1 LOAD-BEARING Z INVARIANT: thickness uses velev (terrain FLOOR);
-    // WorldPos carries the wave-displaced SURFACE and is for the Fresnel view
-    // vector ONLY. The two Z values are intentionally different - do not unify,
-    // do not derive thickness from worldPos.z (this is the rev-1 trap class).
-    WaterThickness = max(0.0, waterElevation - velev);
     WorldPos       = worldPos;
 
     float u = (vxy.x - mapTopLeft.x) * uvScale + uvOffset.x;
