@@ -853,6 +853,19 @@ int main(int argc, char** argv)
         puts(_cbbuf);
         crashbundle_append(_cbbuf);
 
+        // [MATERIAL_GPU v1] startup banner — separate from [INSTR v1] to keep
+        // that buffer size stable. Duplicates the getenv check because
+        // s_materialGpuEnabled is a private file-scope static in the batcher
+        // (not accessible cross-TU — Option A from MaterialGpu-2 spec §3).
+        {
+            const bool matGpuOn = (getenv("MC2_MATERIAL_GPU") != nullptr);
+            char buf[64];
+            std::snprintf(buf, sizeof(buf),
+                          "[MATERIAL_GPU v1] enabled=%d binding=5\n",
+                          (int)matGpuOn);
+            std::fputs(buf, stderr);
+        }
+
         // [UNIFIED_PROJ v1] Warn when MC2_DISABLE_GOSFX=0 dev-override is active
         // under unified projection. Default MC2_DISABLE_GOSFX=1 is unaffected.
         {
