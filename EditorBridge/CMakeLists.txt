@@ -18,9 +18,6 @@ target_include_directories(editorbridge PRIVATE
     ${CMAKE_SOURCE_DIR}/GameOS
     ${CMAKE_SOURCE_DIR}/GameOS/include
     ${CMAKE_SOURCE_DIR}/GameOS/gameos
-)
-
-target_include_directories(editorbridge PRIVATE
     ${THIRDPARTY_INCLUDE_DIRS}
 )
 

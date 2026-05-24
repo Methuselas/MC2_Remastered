@@ -84,16 +84,6 @@ static bool editorScreenToFboPixel(int screenX, int screenY,
     return true;
 }
 
-static bool projectToScreen(const Stuff::Vector3D& worldPt,
-                            float* outSx, float* outSy) {
-    Stuff::Vector3D pt = worldPt;
-    Stuff::Vector4D screen{};
-    if (!eye->projectZ(pt, screen)) return false;
-    *outSx = screen.x;
-    *outSy = screen.y;
-    return true;
-}
-
 // Push overlay render state (no Z test, alpha blend, HUD layer).
 // v0 discipline: does NOT preserve prior state.
 static void pushOverlayState() {

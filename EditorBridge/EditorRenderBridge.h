@@ -73,9 +73,9 @@ struct SelectionBoundsStyle {
 };
 
 struct TerrainTileOverlayDesc {
-    int32_t  tileRow;
-    int32_t  tileCol;
-    uint32_t colorRGBA;  // e.g. 0xFF000040 (red 25% alpha) for erase preview
+    int32_t  tileRow   = -1;    // -1 = invalid (Task 7 bounds check guards this)
+    int32_t  tileCol   = -1;
+    uint32_t colorRGBA = 0u;    // e.g. 0xFF000040 (red 25% alpha) for erase preview
 };
 
 // ---- API ----
