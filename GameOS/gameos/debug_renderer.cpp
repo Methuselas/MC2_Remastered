@@ -212,7 +212,7 @@ void flushWorldPrims() {
     }
 
     // Truncate to capacity
-    if ((int)s_verts.size() > kVertCapacity) {
+    if (s_verts.size() > static_cast<size_t>(kVertCapacity)) {
         if (!s_capWarnedOnce) {
             fprintf(stderr, "[DEBUGDRAW v1] event=vert_cap_exceeded cap=%d requested=%d\n",
                     kVertCapacity, (int)s_verts.size());
@@ -220,7 +220,7 @@ void flushWorldPrims() {
         }
         s_verts.resize(kVertCapacity);
         // Ensure even count for GL_LINES (pairs)
-        if ((int)s_verts.size() % 2 != 0) s_verts.pop_back();
+        if (s_verts.size() % 2 != 0) s_verts.pop_back();
     }
 
     const GLsizeiptr byteSize = (GLsizeiptr)(s_verts.size() * sizeof(DbgVert));
@@ -230,7 +230,7 @@ void flushWorldPrims() {
     GLint  depthFuncWas = 0;
     GLint  blendSrcRGB = 0, blendDstRGB = 0, blendSrcAlpha = 0, blendDstAlpha = 0;
     GLint  blendEqRGB = 0, blendEqAlpha = 0;
-    GLboolean depthTestWas, blendWas, cullWas, depthMaskWas;
+    GLboolean depthTestWas = GL_FALSE, blendWas = GL_FALSE, cullWas = GL_FALSE, depthMaskWas = GL_FALSE;
     GLfloat lineWidthWas = 1.0f;
 
     glGetIntegerv(GL_CURRENT_PROGRAM,      &prevProg);
@@ -259,7 +259,9 @@ void flushWorldPrims() {
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                        GL_ONE,       GL_ONE_MINUS_SRC_ALPHA);
+    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
     glDisable(GL_CULL_FACE);
     glLineWidth(1.0f);
 
@@ -269,8 +271,10 @@ void flushWorldPrims() {
     // 5091, 5202, 5245, 7376).
     glProgramUniformMatrix4fv(s_programId, s_mvpLoc, 1, GL_FALSE, vp);
 
-    // Orphan + subdata upload
-    glBufferData(GL_ARRAY_BUFFER, byteSize, nullptr, GL_DYNAMIC_DRAW);
+    // Orphan at full capacity for stable allocation; upload only the needed range.
+    glBufferData(GL_ARRAY_BUFFER,
+                 kVertCapacity * (GLsizeiptr)sizeof(DbgVert),
+                 nullptr, GL_DYNAMIC_DRAW);
     glBufferSubData(GL_ARRAY_BUFFER, 0, byteSize, s_verts.data());
 
     glDrawArrays(GL_LINES, 0, (GLsizei)s_verts.size());
