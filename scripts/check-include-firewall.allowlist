@@ -19,3 +19,9 @@ RenderWorld/legacy/static_prop_backend.cpp
 # section 12 carve-out. Named specifically (not "all GameAdapters/*.cpp")
 # to prevent adapter creep.
 GameAdapters/MechRenderAdapter.cpp
+
+# EditorBridge/EditorRenderBridge.cpp -- sole carve-out file in EditorBridge/.
+# Bridges game-side (terrain.h, camera.h, gameos.hpp) and engine-side
+# (RenderWorld.h, ScreenPick.h) headers. All other EditorBridge/ files are
+# engine-only and fully watched by the firewall.
+EditorBridge/EditorRenderBridge.cpp
