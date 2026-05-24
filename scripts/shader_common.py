@@ -197,29 +197,47 @@ def discover_shaders() -> list[Path]:
 
 
 def build_shader_source(
-    shader_path: Path, extra_defines: list[str] | None = None
+    shader_path: Path,
+    extra_defines: list[str] | None = None,
+    version_override: str | None = None,
+    extra_token_rewrites: list[tuple[str, str]] | None = None,
 ) -> str:
     """Assemble full shader source as the engine would compile it.
 
     Reads shader_path, expands #include directives using engine semantics
     (parse_includes_engine_style), prepends the version prefix (or per-shader
-    override), injects extra_defines as #define lines, and applies per-shader
-    token rewrites.
+    override), injects extra_defines, and applies per-shader token rewrites.
 
     extra_defines: list of "NAME=VALUE" or "NAME" strings. Each becomes a
     #define line injected between the version prefix and the body, matching
     the engine's runtime prefix-string composition for variant programs.
+
+    version_override: if provided, replaces both SHADER_PREFIX_OVERRIDE and the
+    default VERSION_PREFIX for this invocation. Used by reflect.py to use
+    #version 460 for coalesce variants that rely on gl_BaseInstanceARB /
+    gl_DrawIDARB — glslangValidator requires version 460 (core) rather than
+    430 + GL_ARB_shader_draw_parameters for these builtins.
+
+    extra_token_rewrites: additional (old, new) string replacements applied
+    after the per-shader SHADER_TOKEN_REWRITES. Used by reflect.py to rewrite
+    ARB-suffixed builtins (e.g. gl_BaseInstanceARB → gl_BaseInstance) to their
+    GL 4.6 core names when compiling under #version 460.
 
     Raises OSError if the file cannot be read.
     Raises ValueError if an #include cannot be resolved or forms a cycle.
     """
     if extra_defines is None:
         extra_defines = []
+    if extra_token_rewrites is None:
+        extra_token_rewrites = []
 
     src_text = shader_path.read_text(encoding="utf-8", errors="replace")
     flat_text = parse_includes_engine_style(src_text, str(shader_path))
 
-    prefix = SHADER_PREFIX_OVERRIDE.get(shader_path.name, VERSION_PREFIX)
+    if version_override is not None:
+        prefix = version_override
+    else:
+        prefix = SHADER_PREFIX_OVERRIDE.get(shader_path.name, VERSION_PREFIX)
     parts: list[str] = [prefix]
 
     if _INCLUDE_RE.search(flat_text):
@@ -236,6 +254,8 @@ def build_shader_source(
     src = "".join(parts)
 
     for old_tok, new_tok in SHADER_TOKEN_REWRITES.get(shader_path.name, ()):
+        src = src.replace(old_tok, new_tok)
+    for old_tok, new_tok in extra_token_rewrites:
         src = src.replace(old_tok, new_tok)
 
     return src
