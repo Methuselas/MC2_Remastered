@@ -1545,7 +1545,7 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 		GameplayPickRequest inspReq;
 		inspReq.mouseX               = mouseX;
 		inspReq.mouseY               = mouseY;
-		inspReq.shiftDn              = false;   // inspector pick, not a gameplay shift-pick
+		inspReq.shiftDn              = true;    // shift IS held (ctrl+shift+LMB); required by tryGameplayPick gate
 		inspReq.leftClicked          = true;
 		inspReq.bGui                 = bGui;
 		inspReq.bLeftDouble          = false;
@@ -1819,7 +1819,7 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 		GameplayPickRequest inspReq;
 		inspReq.mouseX               = mouseX;
 		inspReq.mouseY               = mouseY;
-		inspReq.shiftDn              = false;   // inspector pick, not a gameplay shift-pick
+		inspReq.shiftDn              = true;    // shift IS held (ctrl+shift+LMB); required by tryGameplayPick gate
 		inspReq.leftClicked          = true;
 		inspReq.bGui                 = bGui;
 		inspReq.bLeftDouble          = false;

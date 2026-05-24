@@ -1,3 +1,4 @@
+# Dear ImGui by @methuselas (Omar Cornut et al.) -- https://github.com/ocornut/imgui
 add_library(imgui STATIC
     imgui.cpp
     imgui_demo.cpp
