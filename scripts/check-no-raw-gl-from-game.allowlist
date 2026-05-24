@@ -1,0 +1,8 @@
+# RenderWorld M6 firewall allowlist
+# Each entry is a path RELATIVE to the worktree root.
+# Add diagnostic-only TUs here with a justification comment.
+# If the exception is RENDERING (not diagnostic), reject it — route through engine API instead.
+
+# Diagnostic-only TU: gated by MC2_RENDER_CONTRACT_ASSERT=1; never executes rendering.
+# Calls: glGetIntegerv:437, glGetBooleanv:493, glGetBooleanv:502 (per M6 recon)
+mclib/render_contract.cpp

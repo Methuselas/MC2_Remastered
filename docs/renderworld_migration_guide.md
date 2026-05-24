@@ -167,6 +167,33 @@ firewall covers it.
 
 ---
 
+## 3.5 What game-side code must never CALL directly
+
+Game-side code (`code/`, `mclib/`) must NOT call raw OpenGL functions
+(`gl*()`). Rendering routes through engine abstractions:
+MeshRenderer / MaterialSystem / RenderWorld / GpuStaticPropBatcher /
+GpuMechBatcher / GameAdapters.
+
+**Diagnostic exception:** `mclib/render_contract.cpp` may call read-only
+GL state queries (`glGetIntegerv`, `glGetBooleanv`) inside the
+`assertPassContract` machinery gated by `MC2_RENDER_CONTRACT_ASSERT=1`.
+This is the ONLY exception, enforced by allowlist.
+
+**Enforced by:** `scripts/check-no-raw-gl-from-game.sh` (CI / pre-commit).
+
+**Why this matters:** Engine routing is what makes future Vulkan/Metal
+migration feasible. Direct GL calls from game-side code couple game
+logic to the GL API surface, defeating MeshRenderer / RenderDeviceGL
+abstraction. The hypothesis was empirically verified clean at HEAD —
+this section LOCKS that state.
+
+**Adding a new diagnostic exception:** Add the file + 1-line
+justification to `scripts/check-no-raw-gl-from-game.allowlist`. If the
+exception is RENDERING (not just diagnostic), reject it: route through
+an engine API instead.
+
+---
+
 ## 4. How to add a new `RenderObjectKind`
 
 The enum lives in `RenderWorld/RenderWorld.h`:
