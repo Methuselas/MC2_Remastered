@@ -19,6 +19,7 @@
 // The original M1.6 inline at code/missiongui.cpp:6218-6220 reads from
 // these same symbols; same include avoids linkage mismatches.
 #include "../GameOS/include/gameos.hpp"
+#include "../RenderWorld/ScreenPick.h"  // ScreenPickContext, screenPickCompute
 
 //----------------------------------------------------------------------
 // screenToFboPixel -- pure coord transform.
@@ -51,24 +52,22 @@
 // Precondition: caller has off-screen-guarded (mouseX/Y in [0, vMulX/Y)
 // AND vMulX/Y > 0). This helper does NOT re-check.
 //----------------------------------------------------------------------
-void screenToFboPixel(int   mouseX,         int   mouseY,
-                      float vMulX,          float vMulY,
-                      float vAddX,          float vAddY,
-                      int   drawableWidth,  int   drawableHeight,
-                      int*  outFboX,        int*  outFboY,
-                      int*  outGlX,         int*  outGlY)
+static void screenToFboPixel(int   mouseX,         int   mouseY,
+                             float vMulX,          float vMulY,
+                             float vAddX,          float vAddY,
+                             int   drawableWidth,  int   drawableHeight,
+                             int*  outFboX,        int*  outFboY,
+                             int*  outGlX,         int*  outGlY)
 {
-    // Undo the viewport scaling: viewport-relative -> drawable-pixel.
-    const float scaleX = (vMulX > 0.0f) ? ((float)drawableWidth  / vMulX) : 1.0f;
-    const float scaleY = (vMulY > 0.0f) ? ((float)drawableHeight / vMulY) : 1.0f;
-
-    *outFboX = (int)(vAddX + (float)mouseX * scaleX);
-    *outFboY = (int)(vAddY + (float)mouseY * scaleY);
-
-    // GL convention: origin bottom-left. Mirrors mclib/mouse.cpp:225
-    // and mclib/utilities.cpp:111-115 y-flip pattern.
-    *outGlX  = *outFboX;
-    *outGlY  = drawableHeight - 1 - *outFboY;
+    RenderWorld::ScreenPickContext ctx;
+    ctx.mouseX = mouseX; ctx.mouseY = mouseY;
+    ctx.vMulX  = vMulX;  ctx.vMulY  = vMulY;
+    ctx.vAddX  = vAddX;  ctx.vAddY  = vAddY;
+    ctx.drawableWidth  = drawableWidth;
+    ctx.drawableHeight = drawableHeight;
+    RenderWorld::screenPickCompute(&ctx);
+    *outFboX = ctx.fboX; *outFboY = ctx.fboY;
+    *outGlX  = ctx.glX;  *outGlY  = ctx.glY;
 }
 
 //----------------------------------------------------------------------

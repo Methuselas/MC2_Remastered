@@ -77,23 +77,6 @@ struct GameplayPickResult {
 // Thread-safety: main thread only (same as M1.6).
 GameplayPickResult tryGameplayPick(const GameplayPickRequest& req);
 
-// Pure coord transform: viewport-space mouse coords -> FBO pixel ->
-// GL pixel. No GL state mutation, no global reads, no I/O. Safe
-// anywhere on any thread.
-//
-// Coord derivation (restored verbatim from M1.6 commit 1853ad9 at
-// code/missiongui.cpp:6197-6216 -- the inline comment explains why
-// mouseX/Y is viewport-relative and not FBO pixels; the scale formula
-// "drawableWidth / vMulX" backs the viewport-scaling out to drawable-
-// pixel coords). See M2-pre spec Section 5 for the precondition list
-// (vMulX, vMulY > 0; caller has already off-screen-guarded).
-void screenToFboPixel(int   mouseX,         int   mouseY,
-                      float vMulX,          float vMulY,
-                      float vAddX,          float vAddY,
-                      int   drawableWidth,  int   drawableHeight,
-                      int*  outFboX,        int*  outFboY,
-                      int*  outGlX,         int*  outGlY);
-
 // Validation-gate self-test. Gated by MC2_GAMEPLAY_PICK_SELFTEST=1 +
 // MC2_OBJECT_ID_BUFFER=1. Exercises tryGameplayPick with 8 synthetic
 // GameplayPickRequest inputs; asserts each result.outcome matches
