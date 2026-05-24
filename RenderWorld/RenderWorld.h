@@ -211,6 +211,13 @@ struct LookupResult {
     // anyway; the default is only relevant for compile-time
     // initializer compatibility).
     RenderObjectKind                kind             = RenderObjectKind::StaticProp;
+    // World position from depth-buffer readback + inverse-VP unproject.
+    // worldPosValid=false when depth==0 (sky/far plane), inverseViewProj
+    // unavailable, or object-ID buffer disabled.
+    bool                            worldPosValid    = false;
+    float                           worldX           = 0.f;
+    float                           worldY           = 0.f;
+    float                           worldZ           = 0.f;
 };
 
 // M1.5: synchronous pixel -> handle lookup. screenX/Y in GL convention

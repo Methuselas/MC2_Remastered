@@ -108,6 +108,8 @@ public:
     void setViewProj(const float* m) { memcpy(viewProj_, m, 16 * sizeof(float)); }
     const float* getInverseViewProj() const { return inverseViewProj_; }
     const float* getViewProj() const { return viewProj_; }
+    int getWidth()  const { return width_; }
+    int getHeight() const { return height_; }
 
 private:
     void createFBOs(int w, int h);

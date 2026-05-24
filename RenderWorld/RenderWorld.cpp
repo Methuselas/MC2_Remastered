@@ -774,11 +774,15 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
     // GL_RED_INTEGER + GL_UNSIGNED_INT is the integer-format pair
     // (using GL_RED + GL_FLOAT would silently reinterpret bits).
     uint32_t raw = 0u;
+    float    depthSample = 0.f;
     GLint prevReadFbo = 0;
     glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
     glReadBuffer(GL_COLOR_ATTACHMENT2);
     glReadPixels(screenX, screenY, 1, 1, GL_RED_INTEGER, GL_UNSIGNED_INT, &raw);
+    // Depth readback shares the same FBO bind and GPU stall budget.
+    // No glReadBuffer needed — GL_DEPTH_COMPONENT reads the depth attachment.
+    glReadPixels(screenX, screenY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depthSample);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prevReadFbo));
 
     if (raw == 0u) {
@@ -833,6 +837,31 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
     out.pathReasonCode     = rec.pathReasonCode;
     out.gameObjectId       = rec.gameObjectId;
     out.kind               = rec.kind;  // M2.6: kind discriminator
+
+    // Unproject depth sample to world position using the inverse VP stored
+    // by the render loop each frame. depthSample==0 means far plane / sky.
+    if (depthSample > 0.f) {
+        const float* ivp = pp->getInverseViewProj();
+        const int    vw  = pp->getWidth();
+        const int    vh  = pp->getHeight();
+        if (ivp && vw > 0 && vh > 0) {
+            // NDC in [-1,1]^3. Reverse-Z: near=1, far=0 — standard formula holds.
+            const float nx = 2.f * static_cast<float>(screenX) / static_cast<float>(vw) - 1.f;
+            const float ny = 2.f * static_cast<float>(screenY) / static_cast<float>(vh) - 1.f;
+            const float nz = 2.f * depthSample - 1.f;
+            // Column-major multiply: world_h = ivp * (nx, ny, nz, 1)
+            const float wx = ivp[0]*nx + ivp[4]*ny + ivp[8]*nz  + ivp[12];
+            const float wy = ivp[1]*nx + ivp[5]*ny + ivp[9]*nz  + ivp[13];
+            const float wz = ivp[2]*nx + ivp[6]*ny + ivp[10]*nz + ivp[14];
+            const float ww = ivp[3]*nx + ivp[7]*ny + ivp[11]*nz + ivp[15];
+            if (ww != 0.f) {
+                out.worldPosValid = true;
+                out.worldX = wx / ww;
+                out.worldY = wy / ww;
+                out.worldZ = wz / ww;
+            }
+        }
+    }
     return out;
 }
 

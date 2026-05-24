@@ -87,6 +87,11 @@ void EditorInspector::drawImGui() {
     ImGui::Text("Handle idx:    %u / gen: %u",
         s_selection.handle.index(), s_selection.handle.generation());
     ImGui::Text("Screen:        (%d, %d)", s_selection.screenX, s_selection.screenY);
+    if (s_selection.lookup.worldPosValid)
+        ImGui::Text("World:         (%.1f, %.1f, %.1f)",
+            s_selection.lookup.worldX, s_selection.lookup.worldY, s_selection.lookup.worldZ);
+    else
+        ImGui::TextDisabled("World:         (unavailable)");
     ImGui::Separator();
 
     // LookupResult
