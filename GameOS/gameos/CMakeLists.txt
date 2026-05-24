@@ -67,5 +67,13 @@ include_directories(${THIRDPARTY_INCLUDE_DIRS})
 include_directories("${CMAKE_SOURCE_DIR}/mclib" "${CMAKE_SOURCE_DIR}/mclib/stuff")
 
 add_library(gameos ${SOURCES})
+
+# gameos_editor: same sources as gameos minus gos_render.cpp (the GL
+# renderer main). The MC2 Mission Editor (EditRel) links this instead of
+# gameos to avoid pulling in a second renderer init. From engine-standalone PR #36.
+set(GAMEOS_EDITOR_SOURCES ${SOURCES})
+list(REMOVE_ITEM GAMEOS_EDITOR_SOURCES gos_render.cpp)
+add_library(gameos_editor ${GAMEOS_EDITOR_SOURCES})
+
 add_library(gameos_main ${MAIN_SRC})
 

@@ -394,6 +394,12 @@ add_subdirectory("./data_tools" "./out/data_tools")
 add_subdirectory("./text_tool" "./out/text_tool")
 add_subdirectory("./Viewer" "./out/Viewer")
 
+# MC2 Mission Editor (MFC/Windows-only). editor/CMakeLists.txt guards
+# itself with if(NOT MSVC) return() so this is safe on all platforms.
+# Scoped import from PR #36: editor tree + gameos_editor only; PR's
+# terrain-shader/.fit/resource rework deliberately NOT merged.
+add_subdirectory("./editor" "./out/editor")
+
 # -----------------------------------------------------------------------
 # Shader contract reflection CI (Tier 1.2)
 # Depends on Vulkan SDK tools: glslangValidator, spirv-cross.
@@ -410,5 +416,29 @@ if(Python3_FOUND)
     )
     if(TARGET shader_validate)
         add_dependencies(shader_reflect shader_validate)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# NS3 boundary-enforcement instrument (design C: drop gameos_main).
+# Links engine libs ONLY (not gameos_main, not gui, not any code/) with
+# /WHOLEARCHIVE so every engine object is forced in. The unresolved-symbol
+# set is the complete mclib/engine -> code boundary (the NS3 metric).
+# Default OFF so it never blocks the normal mc2 build.
+# Spec: docs/superpowers/specs/2026-05-18-mclib-standalone-boundary-enforcement-spec.md
+option(MC2_BUILD_ENGINE_STANDALONE "NS3: link engine libs without code/ (boundary-enforcement instrument)" OFF)
+if(MC2_BUILD_ENGINE_STANDALONE)
+    add_executable(mclib_standalone tools/engine_standalone_stub.cpp)
+    target_link_libraries(mclib_standalone
+        mclib gosfx mlr stuff gameos windows
+        ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL)
+    if(MSVC)
+        target_link_options(mclib_standalone PRIVATE
+            /WHOLEARCHIVE:mclib
+            /WHOLEARCHIVE:gosfx
+            /WHOLEARCHIVE:mlr
+            /WHOLEARCHIVE:stuff
+            /WHOLEARCHIVE:gameos
+            /WHOLEARCHIVE:windows)
     endif()
 endif()

@@ -17,7 +17,13 @@ CMakeFiles/
 *.exe
 *.cfg
 *.tga
-Editor
+# MFC Mission Editor is real source: force its whole tree (incl. the
+# *.rc resource script + the *.ico/*.bmp/*.cur it #includes) to be
+# tracked, overriding the generic binary ignores above. The old bare
+# `Editor` + global `*.rc` rules silently kept the editor resource
+# script untracked (it builds, but LoadFrame(IDR_EDITOR_MENU) fails).
+!editor/
+!editor/**
 data/*
 !data/defs/
 unpacked_data
@@ -40,7 +46,7 @@ text_tool
 .ycm_extra_conf.py
 .ycm_extra_conf.pyc
 *.ico
-*.rc
+# *.rc: editor/resource.rc is tracked via !editor/** above
 vidcard.csv
 *.s14
 .gdb_history
