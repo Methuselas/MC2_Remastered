@@ -89,7 +89,7 @@ static constexpr int kVertCapacity = 65536;
 ```
 
 Initialization is lazy: happens on first `flushWorldPrims()` when `s_enabled && !s_initialized`.
-If `gos_GetCurrentSceneViewProjGL()` returns false (matrix not yet set), flush no-ops silently.
+If `gos_GetTerrainMVPMat4()` returns nullptr (matrix not yet set), flush no-ops silently.
 
 ---
 
@@ -105,8 +105,9 @@ const float* gos_GetTerrainMVPMat4();
 ```
 
 No new getter is added. `flushWorldPrims()` calls `gos_GetTerrainMVPMat4()` directly;
-the terrain-specific naming is an implementation detail hidden inside `debug_renderer.cpp`
-and invisible to debug-renderer callers.
+the terrain-specific naming is an accepted temporary dependency hidden inside
+`debug_renderer.cpp` and invisible to debug-renderer callers. Future work: replace
+with a ViewUniforms / camera UBO accessor when that layer exists.
 
 The `gameos_graphics.cpp` file column in the Files table is updated accordingly: add
 `gos_GetTerrainMVPMat4` extern forward declaration to `debug_renderer.cpp` only
@@ -116,14 +117,25 @@ The `gameos_graphics.cpp` file column in the Files table is updated accordingly:
 
 ## Vertex expansion helpers
 
+All three public enqueue functions early-return when disabled:
+
+```cpp
+if (!s_enabled) return;
+```
+
+This ensures env-off code never fills `s_verts`; `flushWorldPrims` stays zero-cost.
+
 ```
 drawLineWorld(a, b)
+    if !s_enabled → return
     append 2 verts (a, b) to s_verts
 
 drawAabbWorld(mn, mx)
+    if !s_enabled → return
     expand to 12 edges = 24 verts (all 8 corners, 12 unique edges)
 
 drawRingWorld(center, radius, segments)
+    if !s_enabled → return
     generate `segments` point pairs in XZ plane at center.y
     append 2*segments verts
     clamp segments to [3, 256]
@@ -181,17 +193,20 @@ Stride = `sizeof(DbgVert)` = 28 bytes.
 
 ```
 1. if !s_enabled → return
-2. if s_verts.empty() → return
-3. if !s_initialized → init_once()
-4. const float* vp = gos_GetTerrainMVPMat4()
+2. if MC2_DEBUG_RENDERER_TEST=1 → enqueue test axes + ring  (canary runs BEFORE empty check)
+3. if s_verts.empty() → return
+4. if !s_initialized → init_once()
+5. const float* vp = gos_GetTerrainMVPMat4()
    if !vp → s_verts.clear(); return
-5. if (int)s_verts.size() > kVertCapacity → truncate, warn once
-6. -- save GL state --
+6. if (int)s_verts.size() > kVertCapacity → truncate, warn once
+7. -- save GL state --
    GLint prevProg, prevVAO, prevVBO
    GLboolean depthTestWas, blendWas, cullWas, depthMaskWas
    GLint depthFuncWas
    GLfloat lineWidthWas
-7. -- set known state --
+   GLint blendSrcRGB, blendDstRGB, blendSrcAlpha, blendDstAlpha
+   GLint blendEqRGB, blendEqAlpha
+8. -- set known state --
    glUseProgram(s_program)
    glBindVertexArray(s_vao)
    glBindBuffer(GL_ARRAY_BUFFER, s_vbo)
@@ -202,20 +217,24 @@ Stride = `sizeof(DbgVert)` = 28 bytes.
    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
    glDisable(GL_CULL_FACE)
    glLineWidth(1.0f)
-8. upload MVP
+9. upload MVP
    glProgramUniformMatrix4fv(s_program, s_mvpLoc, 1, GL_FALSE, vp)
-   (GL_FALSE: row-major, same convention as terrain upload)
-9. orphan + upload
-   glBufferData(GL_ARRAY_BUFFER, byteSize, nullptr, GL_DYNAMIC_DRAW)
-   glBufferData(GL_ARRAY_BUFFER, byteSize, s_verts.data(), GL_DYNAMIC_DRAW)
-10. glDrawArrays(GL_LINES, 0, (GLsizei)s_verts.size())
-11. -- restore GL state --
+   GL_FALSE matches every terrain_mvp_ upload site (gameos_graphics.cpp:5012,5091,5202,5245,7376).
+   terrain_mvp_ is already row-major (converted at gos_SetWorldToClipGL); GL_FALSE = no
+   additional transpose. gos_GetTerrainMVPMat4() returns a pointer into that same matrix.
+10. orphan + subdata upload
+    glBufferData(GL_ARRAY_BUFFER, byteSize, nullptr, GL_DYNAMIC_DRAW)
+    glBufferSubData(GL_ARRAY_BUFFER, 0, byteSize, s_verts.data())
+11. glDrawArrays(GL_LINES, 0, (GLsizei)s_verts.size())
+12. -- restore GL state --
     glDepthMask(depthMaskWas)
     restore depthTest, blend, cull, depthFunc, lineWidth
+    restore blend func: glBlendFuncSeparate(blendSrcRGB, blendDstRGB, blendSrcAlpha, blendDstAlpha)
+    restore blend eq:   glBlendEquationSeparate(blendEqRGB, blendEqAlpha)
     glUseProgram(prevProg)
     glBindVertexArray(prevVAO)
     glBindBuffer(GL_ARRAY_BUFFER, prevVBO)
-12. s_verts.clear()
+13. s_verts.clear()
 ```
 
 ---
@@ -230,6 +249,12 @@ State saved before and restored after flush:
 | VAO binding | `glGetIntegerv(GL_VERTEX_ARRAY_BINDING, ...)` |
 | Array buffer binding | `glGetIntegerv(GL_ARRAY_BUFFER_BINDING, ...)` |
 | `GL_BLEND` enabled | `glIsEnabled(GL_BLEND)` |
+| `GL_BLEND_SRC_RGB` | `glGetIntegerv(GL_BLEND_SRC_RGB, ...)` |
+| `GL_BLEND_DST_RGB` | `glGetIntegerv(GL_BLEND_DST_RGB, ...)` |
+| `GL_BLEND_SRC_ALPHA` | `glGetIntegerv(GL_BLEND_SRC_ALPHA, ...)` |
+| `GL_BLEND_DST_ALPHA` | `glGetIntegerv(GL_BLEND_DST_ALPHA, ...)` |
+| `GL_BLEND_EQUATION_RGB` | `glGetIntegerv(GL_BLEND_EQUATION_RGB, ...)` |
+| `GL_BLEND_EQUATION_ALPHA` | `glGetIntegerv(GL_BLEND_EQUATION_ALPHA, ...)` |
 | `GL_DEPTH_TEST` enabled | `glIsEnabled(GL_DEPTH_TEST)` |
 | `GL_DEPTH_FUNC` | `glGetIntegerv(GL_DEPTH_FUNC, ...)` |
 | `GL_DEPTH_WRITEMASK` | `glGetBooleanv(GL_DEPTH_WRITEMASK, ...)` |
