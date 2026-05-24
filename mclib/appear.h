@@ -33,7 +33,7 @@
 #define NO_ERR			0
 #endif
 
-#define HUD_DEPTH		0.0001f			//HUD Objects draw over everything else.
+#define HUD_DEPTH		0.9999f			//HUD Objects draw over everything else (reverse-Z: near=1, far=0).
 
 #define WIDTH			19				// really half the width...
 #define HEIGHT			4

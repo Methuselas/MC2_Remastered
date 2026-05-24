@@ -96,7 +96,12 @@ echo "$BASENAMES" | while IFS= read -r name; do
         echo "scripts/check-vfx-no-objectid.sh: WARN scan-set entry missing: $src" >&2
         continue
     fi
-    grep -nE "$PATTERN" "$src" 2>/dev/null | while IFS= read -r match; do
+    # Strip trailing `// ...` comments BEFORE applying the violation grep
+    # so that documentation text naming the forbidden declaration (e.g.
+    # `// note: layout(location=2) out is forbidden here`) is not flagged.
+    # Mirrors the fix in check-no-raw-gl-from-game.sh; sed preserves line
+    # numbers (lines stay in stream, comment portion blanked).
+    sed 's|//.*$||' "$src" | grep -nE "$PATTERN" 2>/dev/null | while IFS= read -r match; do
         [ -z "$match" ] && continue
         printf '%s:%s\n' "$src" "$match"
     done

@@ -9,8 +9,8 @@ in PREC vec2 Texcoord;
 in PREC float FogValue;
 
 layout (location=0) out PREC vec4 FragColor;
-// F3 Option A: post-shadow-eligible mask + flat-up normal (debug-tier
-// content: lines, points, basic colored verts). Listed in flat-up roster.
+// F3 Option A: shadow-handled (HUD/overlay/debug draws skip post-shadow).
+// Lines, selection brackets, health bars: never shadow-darken.
 layout (location=1) out PREC vec4 GBuffer1;
 
 #ifdef ENABLE_TEXTURE1
@@ -31,7 +31,7 @@ void main(void)
 		c.rgb = mix(fog_color.rgb, c.rgb, FogValue);
     FragColor = c;
 
-    // F3 Option A: flat-up fallback (compatibility — no surface normal).
-    GBuffer1 = rc_gbuffer1_screenShadowEligible(vec3(0.0, 0.0, 1.0));
+    // F3 Option A: flat-up, shadow handled — HUD/overlay draws skip post-shadow.
+    GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
 }
 

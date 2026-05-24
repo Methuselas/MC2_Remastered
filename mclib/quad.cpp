@@ -488,7 +488,7 @@ long TerrainQuad::init (VertexPtr v0, VertexPtr v1, VertexPtr v2, VertexPtr v3)
 }
 
 float twoFiveFive = 255.0;
-#define HUD_DEPTH		0.0001f			//HUD Objects draw over everything else.
+#define HUD_DEPTH		0.9999f			//HUD Objects draw over everything else (reverse-Z: near=1, far=0).
 extern float cosineEyeHalfFOV; 
 extern DWORD BaseVertexColor;
 extern bool useShadows;

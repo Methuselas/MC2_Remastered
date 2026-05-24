@@ -92,7 +92,13 @@ fi
 echo "$SOURCES" | while IFS= read -r src; do
     [ -z "$src" ] && continue
     [ -f "$src" ] || continue
-    grep -nE "$PATTERN" "$src" 2>/dev/null | while IFS= read -r match; do
+    # Strip trailing `// ...` comments BEFORE applying the violation grep
+    # so that documentation/comment text naming a GL function (e.g.
+    # `// expects glDrawBuffers(...)`) is not flagged. Sed blanks the
+    # comment portion in-place; lines remain in the stream so grep -n
+    # reports the original line numbers. Full-line `//` comments survive
+    # the legacy is_comment_line() filter below as a defense-in-depth net.
+    sed 's|//.*$||' "$src" | grep -nE "$PATTERN" 2>/dev/null | while IFS= read -r match; do
         [ -z "$match" ] && continue
         # Prefix with filename so downstream parsing stays uniform.
         printf '%s:%s\n' "$src" "$match"
