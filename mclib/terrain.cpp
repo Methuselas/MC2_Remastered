@@ -1991,7 +1991,16 @@ void Terrain::geometry (void)
 						    q.vertices[3]->pVertex->elevation < we);
 						append = waterFlagged || submergedSand;
 					} else {
-						append = (q.waterHandle != 0xffffffffu);
+						// Legacy path: waterHandle is set by setupTextures for water&1 tiles.
+						// Fix A (staircase): also append submerged tiles that lack water&1.
+						const bool waterHandleSet = (q.waterHandle != 0xffffffffu);
+						const float we = Terrain::waterElevation;
+						const bool submergedSand = !waterHandleSet && (
+						    q.vertices[0]->pVertex->elevation < we ||
+						    q.vertices[1]->pVertex->elevation < we ||
+						    q.vertices[2]->pVertex->elevation < we ||
+						    q.vertices[3]->pVertex->elevation < we);
+						append = waterHandleSet || submergedSand;
 					}
 					if (append)
 						WaterStream::AppendNarrowCandidate(currentQuad);
