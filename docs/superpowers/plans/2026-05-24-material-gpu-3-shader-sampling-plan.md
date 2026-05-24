@@ -43,7 +43,7 @@ Build cfg:    RelWithDebInfo   ← NEVER Release (crashes with GL_INVALID_ENUM)
 cp -f "A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/build64/RelWithDebInfo/mc2.exe" "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe"
 diff -q "A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/build64/RelWithDebInfo/mc2.exe" "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe"
 ```
-(diff exit 0 = identical, which is a failure; expect nonzero = files differ, meaning deploy updated the binary.)
+(diff exit 0 = files are identical = deploy succeeded. Nonzero means the copy failed or source/dest mismatch.)
 
 **Canonical smoke command (copy-paste verbatim, never modify):**
 ```powershell
@@ -342,7 +342,38 @@ Insert between the `}` (for loop end) and `glGenBuffers`:
 
 Note: `emittedCount` was declared inside the `if (s_materialGpuEnabled)` block (a different scope that ended above). There is no shadowing — `emittedCount2` is just a clear local name for the compare log loop counter. You may also name it `emittedCount` since the prior one is out of scope.
 
-- [ ] **Step 3.5: Build — verify no errors**
+- [ ] **Step 3.5: Site E — reset sidecarValid in onMapUnload()**
+
+`onMapUnload()` tears down all MaterialGpu state (`s_materialGpuSsbo`, `s_materialGpuTable`, `s_packetMaterialIdx`). Without also clearing `s_materialGpuSidecarValid`, the flag would survive a map reload and the stale `true` value could let sampling fire against a destroyed SSBO on the first flush of the new map, before `finalizeGeometry()` runs.
+
+Find the `onMapUnload()` MaterialGpu teardown block (~lines 1120–1135). It looks like:
+
+```cpp
+    if (s_materialGpuEnabled) {
+        if (s_materialGpuSsbo != 0u) {
+            glDeleteBuffers(1, &s_materialGpuSsbo);
+            s_materialGpuSsbo = 0u;
+        }
+        s_materialGpuTable.clear();
+        s_packetMaterialIdx.clear();
+    }
+```
+
+Replace with:
+
+```cpp
+    if (s_materialGpuEnabled) {
+        if (s_materialGpuSsbo != 0u) {
+            glDeleteBuffers(1, &s_materialGpuSsbo);
+            s_materialGpuSsbo = 0u;
+        }
+        s_materialGpuTable.clear();
+        s_packetMaterialIdx.clear();
+        s_materialGpuSidecarValid = false;  // M1: reset so flush() cannot sample stale sidecar on reload
+    }
+```
+
+- [ ] **Step 3.6: Build — verify no errors**
 
 ```powershell
 & "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build "A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/build64" --config RelWithDebInfo 2>&1 | Select-String -Pattern "error C|error:" | Select-Object -First 20
@@ -350,7 +381,7 @@ Note: `emittedCount` was declared inside the `if (s_materialGpuEnabled)` block (
 
 Expected: 0 error lines.
 
-- [ ] **Step 3.6: Quick smoke to verify gate-OFF behavior still works**
+- [ ] **Step 3.8: Quick smoke to verify gate-OFF behavior still works**
 
 Deploy:
 ```powershell
@@ -364,7 +395,7 @@ py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smok
 
 Expected: exit 0, 5/5 PASS. Check one mission log for `[MATERIAL_GPU v1] event=compare`: should NOT appear (gate is OFF).
 
-- [ ] **Step 3.7: Commit**
+- [ ] **Step 3.9: Commit**
 
 ```powershell
 git add GameOS/gameos/gos_static_prop_batcher.cpp
@@ -506,13 +537,23 @@ Insert between `}` (SSBO bind close) and the `// 2026-05-11` comment:
                            && s_locsCoalesce.materialGpuSample >= 0;
 
         if (s_locsCoalesce.materialGpuSample >= 0) {
+            while (glGetError() != GL_NO_ERROR) {}  // drain stale BEFORE
             glUniform1i(s_locsCoalesce.materialGpuSample, sampleOn ? 1 : 0);
+            const GLenum uniformErr = glGetError();  // sample AFTER
+            if (uniformErr != GL_NO_ERROR) {
+                char buf[96];
+                std::snprintf(buf, sizeof(buf),
+                              "[MATERIAL_GPU v1] GL ERROR after sample uniform: 0x%x\n",
+                              uniformErr);
+                std::fputs(buf, stderr);
+            }
         }
         // If loc == -1: M3 error already logged at loadProgramsIfNeeded(); no-op here.
 
         // M2: required diagnostic log — once per flush, so gate interaction is observable.
+        // C1: guard prevents log noise on default both-gates-OFF runs (tier1 baseline stays clean).
         // reason cascade mirrors the sampleOn condition order exactly.
-        {
+        if (s_materialGpuEnabled || s_materialGpuSampleEnabled) {
             const char* reason = "ok";
             if (!s_materialGpuEnabled)                    reason = "upload_env_off";
             else if (!s_materialGpuSampleEnabled)          reason = "sample_env_off";
@@ -681,6 +722,18 @@ Current per-draw read block (~lines 89–105):
     vec4 tex_color = texture(u_texArr, vec3(uvSampled, float(texArrayLayer)));
 ```
 
+- [ ] **Step 7.0: Preflight — verify `material_gpu.hglsl` does NOT already declare the SSBO block**
+
+Task 7.2 adds the `MaterialTable` SSBO declaration to `static_prop.frag`. If `material_gpu.hglsl` already declares `MaterialTable` or `materialTable_`, including it would produce a duplicate-block compile error. Confirm it does not before editing the shader.
+
+```powershell
+Select-String "MaterialTable|materialTable_|binding\s*=\s*5" "A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/shaders/include/material_gpu.hglsl"
+```
+
+Expected: **no output** (zero matches). The file defines only the `MaterialGpu` struct and `kMatTexAbsent` constant — it must NOT declare any SSBO block or binding.
+
+If ANY match appears: STOP. Do not proceed with Task 7. The include header has changed from the design baseline. Escalate for architecture review before adding a second declaration.
+
 - [ ] **Step 7.1: Site A — rename `_pad1` → `materialIdx` in GLSL struct**
 
 In `shaders/static_prop.frag`, find:
@@ -788,7 +841,7 @@ Verify deploy succeeded:
 ```powershell
 diff -q "A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/shaders/static_prop.frag" "A:/Games/mc2-opengl/mc2-win64-v0.4/shaders/static_prop.frag"
 ```
-Expected: `diff -q` reports files differ (diff output present) — confirming the new shader was written. If `diff -q` says "identical," the source file and deploy are byte-for-byte the same, which means the deploy path already had the same version (OK if no prior shader was there). If deploy fails silently, the running game will use the old shader and G4 will show `reason=uniform_missing` — see WARNING below.
+Expected: `diff -q` reports **no differences** (identical, exit 0) — confirming the deploy wrote the correct bytes. If `diff -q` reports files differ (exit 1), the copy failed or wrote a truncated file — stop and re-run the `cp -f` before proceeding. If deploy fails silently, the running game will use the old shader and G4 will show `reason=uniform_missing` — see WARNING below.
 
 > **WARNING:** If `event=sample_mode enabled=0 reason=uniform_missing` appears after deploying both gates ON, the most likely cause is that the shader file was not deployed (old shader on disk). Check that the deployed `static_prop.frag` contains `u_materialGpuSample`. Do NOT chase this as a C++ bug.
 
