@@ -1148,7 +1148,7 @@ void GpuStaticPropBatcher::onMapUnload() {
     }
     s_packetMaterialIdx.clear();
     s_materialGpuTable.clear();
-    s_materialGpuSidecarValid = false;  // M1: reset so flush() cannot sample stale sidecar on reload
+    s_materialGpuSidecarValid = false;  // MAJ-1: reset so flush() cannot sample stale sidecar on reload
     s_sortedPacketOrder.clear();
     s_sortedPacketOrder.shrink_to_fit();
     s_alphaOffCmdCount = 0;
@@ -2159,12 +2159,14 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 const uint32_t expected     =
                     static_cast<uint32_t>(layerForPacket[globalPktIdx]);
                 if (albedo != expected) {
-                    char buf[128];
-                    std::snprintf(buf, sizeof(buf),
-                                  "[MATERIAL_GPU v1] MISMATCH slot=%u pkt=%u"
-                                  " materialIdx=%u albedoTex=%u expected=%u\n",
-                                  i, globalPktIdx, idx, albedo, expected);
-                    std::fputs(buf, stderr);
+                    if (mismatches < 10) {  // first-10-only: throttle per-slot noise
+                        char buf[128];
+                        std::snprintf(buf, sizeof(buf),
+                                      "[MATERIAL_GPU v1] MISMATCH slot=%u pkt=%u"
+                                      " materialIdx=%u albedoTex=%u expected=%u\n",
+                                      i, globalPktIdx, idx, albedo, expected);
+                        std::fputs(buf, stderr);
+                    }
                     ++mismatches;
                 }
             }
@@ -2245,13 +2247,20 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             entries[i] = e;
         }
 
-        // m1: verify PerDrawEntry.materialIdx matches s_packetMaterialIdx[slot].
-        // Catches assignment mistakes before shader sampling begins.
+        // MAJ-1: cross-system check — verify entries[i].materialIdx maps to a table entry
+        // whose albedoTex equals layerForPacket[s_sortedPacketOrder[i]].
+        // This is a non-tautological end-to-end check (PerDrawEntry -> MaterialTable -> layer).
         if (s_materialGpuEnabled && s_materialGpuSidecarValid) {
             int entryMismatches = 0;
             const uint32_t emittedCount2 = static_cast<uint32_t>(s_sortedPacketOrder.size());
             for (uint32_t i = 0; i < emittedCount2; ++i) {
-                if (entries[i].materialIdx != s_packetMaterialIdx[i]) {
+                const uint32_t globalPktIdx  = s_sortedPacketOrder[i];
+                const uint32_t expectedAlbedo = static_cast<uint32_t>(layerForPacket[globalPktIdx]);
+                const uint32_t mIdx          = entries[i].materialIdx;
+                const uint32_t actualAlbedo  = (mIdx < static_cast<uint32_t>(s_materialGpuTable.size()))
+                    ? s_materialGpuTable[mIdx].albedoTex
+                    : 0xFFFFFFFFu;
+                if (actualAlbedo != expectedAlbedo) {
                     ++entryMismatches;
                 }
             }
@@ -3583,6 +3592,55 @@ void GpuStaticPropBatcher::flush() {
                               "[MATERIAL_GPU v1] GL ERROR after bind: 0x%x\n", bindErr);
                 std::fputs(buf, stderr);
             }
+        }
+
+        // MaterialGpu-3: compute sampleOn once per flush.
+        // Five conditions — all must be true for shader sampling to occur.
+        // Including loc >= 0 as condition 5 prevents misleading "enabled=1 loc=-1" logs.
+        const bool sampleOn = s_materialGpuEnabled
+                           && s_materialGpuSampleEnabled
+                           && s_materialGpuSsbo != 0
+                           && s_materialGpuSidecarValid
+                           && s_locsCoalesce.materialGpuSample >= 0;
+
+        if (s_locsCoalesce.materialGpuSample >= 0) {
+            while (glGetError() != GL_NO_ERROR) {}  // drain stale BEFORE
+            glUniform1i(s_locsCoalesce.materialGpuSample, sampleOn ? 1 : 0);
+            const GLenum uniformErr = glGetError();  // sample AFTER
+            if (uniformErr != GL_NO_ERROR) {
+                char buf[96];
+                std::snprintf(buf, sizeof(buf),
+                              "[MATERIAL_GPU v1] GL ERROR after sample uniform: 0x%x\n",
+                              uniformErr);
+                std::fputs(buf, stderr);
+            }
+        }
+        // If loc == -1: M3 error already logged at loadProgramsIfNeeded(); no-op here.
+
+        // M2: required diagnostic log — once per flush, so gate interaction is observable.
+        // C1: guard prevents log noise on default both-gates-OFF runs (tier1 baseline stays clean).
+        // reason cascade mirrors the sampleOn condition order exactly.
+        if (s_materialGpuEnabled || s_materialGpuSampleEnabled) {
+            const char* reason = "ok";
+            if (!s_materialGpuEnabled)                    reason = "upload_env_off";
+            else if (!s_materialGpuSampleEnabled)          reason = "sample_env_off";
+            else if (s_materialGpuSsbo == 0)               reason = "no_ssbo";
+            else if (!s_materialGpuSidecarValid)           reason = "sidecar_invalid";
+            else if (s_locsCoalesce.materialGpuSample < 0) reason = "uniform_missing";
+            // else: reason == "ok" -> sampleOn is true (all 5 conditions met)
+
+            char buf[96];
+            if (sampleOn) {
+                // sampleOn=true guarantees loc >= 0, so loc is always valid here.
+                std::snprintf(buf, sizeof(buf),
+                              "[MATERIAL_GPU v1] event=sample_mode enabled=1 loc=%d\n",
+                              s_locsCoalesce.materialGpuSample);
+            } else {
+                std::snprintf(buf, sizeof(buf),
+                              "[MATERIAL_GPU v1] event=sample_mode enabled=0 reason=%s\n",
+                              reason);
+            }
+            std::fputs(buf, stderr);
         }
 
         // 2026-05-11 per-packet rework: each indirect cmd is per-PACKET, so
