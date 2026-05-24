@@ -64,7 +64,7 @@ namespace mc2depth {
 constexpr float TERRAIN_DEPTH_FUDGE      = -0.002f;   // reverse-Z: was 0.002f
 // Fix B co-planar signed epsilons (FAST / matrix-share regime):
 constexpr float WATER_DEPTH_BIAS         = -0.0005f;  // < 0 water loses GEQUAL tie (was +0.0005f)
-constexpr float OVERLAY_DEPTH_BIAS       =  0.0005f;  // > 0 decals win GEQUAL tie (was -0.0005f)
+constexpr float OVERLAY_DEPTH_BIAS       =  0.00005f; // > 0 decals win GEQUAL tie; reduced from 0.0005f (was beating buildings at RTS zoom)
 constexpr float WATER_DEPTH_FUDGE_FAST   = TERRAIN_DEPTH_FUDGE + WATER_DEPTH_BIAS;   // -0.0025f; FAST regime
 // RASTER regime (legacy CPU-raster water; flips for reverse-Z, reconciled at
 // the inverseProjectZ fence seam -- design Section 9):
