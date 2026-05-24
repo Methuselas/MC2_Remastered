@@ -392,7 +392,41 @@ git commit -m "feat(material-gpu-2): add finalizeGeometry sidecar (table build +
 **Files:**
 - Modify: `GameOS/gameos/gos_static_prop_batcher.cpp`
 
-### Where to insert
+### Context: flush() save/restore contract
+
+`flush()` saves SSBO slots 0-3 at function entry (around line 2987-3001) and restores them at function exit (around line 3648-3651). This ensures callers see unchanged GL state after `flush()` returns. The terrain pass also uses slot 5 (`WaterRecipeBuf`) in a different shader program — terrain correctly re-binds before drawing so there is no data conflict. However, slot 5 must follow the same save/restore discipline as slots 0-3 to maintain flush()'s "restore EXACTLY" contract.
+
+**This task therefore requires two insertion points:**
+
+1. Add `prevSsbo5` save at the start of flush() alongside slots 0-3
+2. Add the slot-5 bind after slot-4 bind
+3. Add `prevSsbo5` restore at the end of flush() alongside slots 0-3
+
+### Where to find the save block
+
+Locate this block at the start of `GpuStaticPropBatcher::flush()` (around line 2987):
+```cpp
+    GLint prevSsbo0=0, prevSsbo1=0, prevSsbo2=0, prevSsbo3=0;
+    ...
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 1, &prevSsbo1);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 2, &prevSsbo2);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 3, &prevSsbo3);
+```
+
+### Where to find the restore block
+
+Locate this block near the end of `GpuStaticPropBatcher::flush()` (around line 3648):
+```cpp
+    // Restore GL state to EXACTLY what it was at flush start.
+    // SSBOs
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, (GLuint)prevSsbo1);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)prevSsbo2);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, (GLuint)prevSsbo3);
+```
+
+### Where to insert the bind
 
 Locate this line in `GpuStaticPropBatcher::flush()` (around line 3365 after previous tasks' edits):
 ```cpp
@@ -402,12 +436,32 @@ Locate this line in `GpuStaticPropBatcher::flush()` (around line 3365 after prev
 
 Insert the sidecar bind **immediately after** that line:
 
-- [ ] **Step 1: Insert the slot-5 bind block after the slot-4 bind**
+- [ ] **Step 1: Add `prevSsbo5` to the save block**
+
+Change:
+```cpp
+    GLint prevSsbo0=0, prevSsbo1=0, prevSsbo2=0, prevSsbo3=0;
+```
+to:
+```cpp
+    GLint prevSsbo0=0, prevSsbo1=0, prevSsbo2=0, prevSsbo3=0, prevSsbo5=0;
+```
+
+Then after the existing `glGetIntegeri_v` calls for slots 0-3, add:
+```cpp
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 5, &prevSsbo5);
+```
+
+- [ ] **Step 2: Insert the slot-5 bind block after the slot-4 bind**
 
 ```cpp
         // MaterialGpu-2: bind slot 5 (MaterialGpu SSBO) when gate active and buffer exists.
-        // No production shader declares binding=5 in v2; the bind is a driver-error-free no-op
-        // from the shader perspective. v3 will add the shader consumer.
+        // No production shader in the static_prop program declares binding=5 in v2;
+        // the bind is a driver-error-free no-op from the shader perspective.
+        // The terrain pass uses slot 5 for WaterRecipeBuf in a different GL program —
+        // that is not a conflict (terrain re-binds WaterRecipeBuf before its own draw).
+        // prevSsbo5 is saved at flush() entry and restored at flush() exit.
+        // v3 will add the shader consumer in static_prop.frag.
         if (s_materialGpuEnabled && s_materialGpuSsbo != 0) {
             while (glGetError() != GL_NO_ERROR) {}  // drain stale BEFORE
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, s_materialGpuSsbo);
@@ -421,7 +475,19 @@ Insert the sidecar bind **immediately after** that line:
         }
 ```
 
-- [ ] **Step 2: Build**
+- [ ] **Step 3: Add `prevSsbo5` to the restore block**
+
+After:
+```cpp
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, (GLuint)prevSsbo3);
+```
+
+Add:
+```cpp
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, (GLuint)prevSsbo5);
+```
+
+- [ ] **Step 4: Build**
 
 ```powershell
 & "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe" --build "A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\build64" --config RelWithDebInfo
@@ -681,7 +747,11 @@ Open `docs/tier1_env_vars.md`. After the last section (`## Firewall / no-raw-GL 
 
 - `MC2_MATERIAL_GPU=1` — enable static-prop MaterialGpu sidecar: builds table from `texArrayLayer`, uploads mission-lifetime SSBO at binding 5, binds in `flush()`, compares `albedoTex` vs legacy layer. Default OFF. Log prefix: `[MATERIAL_GPU v1]`. Emits: `event=table_upload materials=N bytes=B emitted=M`, `event=compare emitted=M mismatches=0`, `event=unload materials=N bytes=B`. No visual change. No shader consumer until MaterialGpu-3.
 
-## SSBO binding registry (static_prop pass)
+## SSBO binding registry
+
+Note: bindings are **per-pass** (each GL program declares its own layout bindings and each pass re-binds before drawing). The static_prop pass and terrain pass are separate programs.
+
+### static_prop pass
 
 | Binding | Owner | Status |
 |---|---|---|
@@ -690,7 +760,13 @@ Open `docs/tier1_env_vars.md`. After the last section (`## Firewall / no-raw-GL 
 | 2 | PerType | active |
 | 3 | Parity (debug) | active (`MC2_OBJECT_PARITY_CHECK=1`) |
 | 4 | PerDraw | active (coalesce path) |
-| 5 | MaterialGpu | PROVISIONAL — v2 binds, no shader consumer; v3 makes load-bearing |
+| 5 | MaterialGpu | PROVISIONAL — v2 binds + restores, no shader consumer; v3 makes load-bearing |
+
+### terrain pass (separate GL program — independent binding namespace)
+
+| Binding | Owner | Status |
+|---|---|---|
+| 5 | WaterRecipeBuf | active (gos_terrain_mask_water.vert, gos_terrain_water_fast.vert, gos_terrain_water_fast_mdi.vert) |
 ```
 
 - [ ] **Step 2: Commit**
