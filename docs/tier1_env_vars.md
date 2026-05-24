@@ -57,6 +57,12 @@ Three CI scripts that lock the RenderWorld arc invariants — see `docs/renderwo
 ## MaterialGpu sidecar (MaterialGpu-2)
 
 - `MC2_MATERIAL_GPU=1` — enable static-prop MaterialGpu sidecar: builds table from `texArrayLayer`, uploads mission-lifetime SSBO at binding 5, binds in `flush()`, compares `albedoTex` vs legacy layer. Default OFF. Log prefix: `[MATERIAL_GPU v1]`. Emits: `event=table_upload materials=N bytes=B emitted=M`, `event=compare emitted=M mismatches=0`, `event=unload materials=N bytes=B`. No visual change. No shader consumer until MaterialGpu-3.
+- `MC2_MATERIAL_GPU_SAMPLE=1` — enable MaterialGpu shader sampling (MaterialGpu-3).
+  Requires `MC2_MATERIAL_GPU=1` to have any effect (both required for `u_materialGpuSample=1`).
+  Default OFF. When both active: `static_prop.frag` reads `materials[materialIdx].albedoTex`
+  instead of `PerDrawEntry.texArrayLayer`. Expected result: zero pixel delta (same layer index).
+  Log: `event=sample_mode enabled=1 loc=N` (once per flush). Diagnostic reason codes:
+  `upload_env_off | sample_env_off | no_ssbo | sidecar_invalid | uniform_missing`.
 
 ## SSBO binding registry
 
@@ -71,7 +77,7 @@ Note: bindings are **per-pass** (each GL program declares its own layout binding
 | 2 | PerType | active |
 | 3 | Parity (debug) | active (`MC2_OBJECT_PARITY_CHECK=1`) |
 | 4 | PerDraw | active (coalesce path) |
-| 5 | MaterialGpu | PROVISIONAL — v2 binds + restores, no shader consumer; v3 makes load-bearing |
+| 5 | MaterialGpu | ACTIVE (v3+) — always declared in static_prop.frag coalesce variant; SSBO bound when MC2_MATERIAL_GPU=1, unbound otherwise. Shader accesses only when u_materialGpuSample=1. |
 
 ### terrain pass (separate GL program — independent binding namespace)
 
