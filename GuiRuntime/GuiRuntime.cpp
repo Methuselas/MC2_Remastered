@@ -50,7 +50,13 @@ void GuiRuntime::NewFrame() {
 void GuiRuntime::Render() {
     if (!g_imguiInitialized) return;
 
-    ImGui::ShowDemoWindow(nullptr);
+    // F toggles the ImGui demo window.
+    static bool s_showDemo = false;
+    if (ImGui::IsKeyPressed(ImGuiKey_F, /*repeat=*/false))
+        s_showDemo = !s_showDemo;
+    if (s_showDemo)
+        ImGui::ShowDemoWindow(&s_showDemo);
+
     EditorInspector::drawImGui();
 
     ImGui::Render();
