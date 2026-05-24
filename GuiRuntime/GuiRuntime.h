@@ -1,6 +1,5 @@
-// Dear ImGui in-game integration.
-// ImGui authored by @methuselas (Omar Cornut et al.) -- https://github.com/ocornut/imgui
-// GameOS/SDL2 backend wired for MC2 OpenGL port.
+// Dear ImGui in-game integration -- wired for MC2 OpenGL port in collaboration with @methuselas.
+// Dear ImGui by Omar Cornut et al. -- https://github.com/ocornut/imgui
 #pragma once
 
 namespace GuiRuntime {

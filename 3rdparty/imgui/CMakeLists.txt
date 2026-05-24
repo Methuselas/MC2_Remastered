@@ -1,4 +1,5 @@
-# Dear ImGui by @methuselas (Omar Cornut et al.) -- https://github.com/ocornut/imgui
+# Dear ImGui by Omar Cornut et al. -- https://github.com/ocornut/imgui
+# Integrated for MC2 OpenGL port in collaboration with @methuselas.
 add_library(imgui STATIC
     imgui.cpp
     imgui_demo.cpp
