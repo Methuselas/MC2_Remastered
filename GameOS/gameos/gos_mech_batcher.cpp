@@ -23,6 +23,12 @@
 #include <algorithm>
 #include <unordered_map>
 
+// M2.5 (external-review C1): file-scope forward declaration of the
+// MLR-side per-mission counter getter, defined in mclib/mech3d.cpp.
+// Language-linkage declarations must be at file scope -- not inside a
+// function body. Avoids a new header.
+extern "C" uint64_t consumeAndResetMlrMechDraws();
+
 // MECH_RING_FRAMES must equal STATIC_PROP_RING_FRAMES so the parity SSBO
 // ring and the mech fence ring share the same depth.
 static_assert(MECH_RING_FRAMES == STATIC_PROP_RING_FRAMES,
@@ -393,6 +399,18 @@ void GpuMechBatcher::onMapLoad() {
 }
 
 void GpuMechBatcher::onMapUnload() {
+    // M2.5 (Q6 amendment 2): consume the MLR-side per-mission counter
+    // and emit on its own [MECHBATCHER v1] event=mlr_mech_summary line.
+    // The split-line shape is OFFICIAL (external-review M1): the two
+    // counters live in different TUs and MUST emit on two adjacent
+    // lines (mlr first, then gpu_mech_id). Do not collapse to one line.
+    // consumeAndResetMlrMechDraws is forward-declared at file scope
+    // (external-review C1) -- declaration is NOT inside this function body.
+    const uint64_t mlrDraws = consumeAndResetMlrMechDraws();
+    std::fprintf(stderr,
+        "[MECHBATCHER v1] event=mlr_mech_summary mlr_mech_draws=%llu\n",
+        (unsigned long long)mlrDraws);
+
     // M2.5 (Q4 + Q6 amendment 2): always-on per-mission writer summary.
     // Surfaces gpu_mech_id_writes to the M2.6 readiness decision rule.
     // Always-on (NOT env-gated): M2.6 needs this signal regardless of

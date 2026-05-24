@@ -21,6 +21,24 @@
 #include "../GameOS/gameos/gos_mech_killswitch.h"
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
 #include "spotlight_diag.h"  // T1.16 — (E)-owned slot tagging for per-slot probe
+#include <cstdint>  // M2.5 (Q6 amendment 2): uint64_t for MLR mech draw counter
+
+// M2.5 (Q6 amendment 2): always-on MLR mech draw counter. Incremented
+// at the legacy mechShape->Render(true) fallback site (~line 2623) so
+// the M2.6 readiness decision rule has live data on Path-B incidence.
+// NOT env-gated: M2.6 must consult this number regardless of
+// MC2_OBJECT_ID_BUFFER state. Consumed per-mission by
+// GpuMechBatcher::onMapUnload() via consumeAndResetMlrMechDraws().
+static uint64_t s_mlrMechDrawsThisMission = 0;
+
+// M2.5: getter for the per-mission MLR draw count, callable from
+// GpuMechBatcher::onMapUnload() in a different TU. Declaration in
+// gos_mech_batcher.cpp is at file scope per external-review C1.
+extern "C" uint64_t consumeAndResetMlrMechDraws() {
+    const uint64_t v = s_mlrMechDrawsThisMission;
+    s_mlrMechDrawsThisMission = 0;
+    return v;
+}
 
 // MC2_MECH_LOD_TRACE=1: per-actor LOD-swap boundary print.
 static const bool s_mechLodTrace = (getenv("MC2_MECH_LOD_TRACE") != nullptr);
@@ -2620,6 +2638,11 @@ long Mech3DAppearance::render (long depthFixup)
 			// cull — render nothing for this actor this frame. CPU update
 			// (AI, position, animation, damage) has already run.
 			if (!gpuMechSubmitted && !mechGpuCullSkip) {
+				// M2.5 (Q6 amendment 2): count MLR/CPU-fallback draws so
+				// the always-on per-mission mlr_mech_summary line reflects
+				// Path-B incidence. M2.6 readiness decision consults this
+				// value (spec §12 Q6 amendment 3).
+				++s_mlrMechDrawsThisMission;
 				mechShape->Render(true);  // CPU path — unchanged
 			}
 
