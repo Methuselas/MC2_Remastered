@@ -182,3 +182,88 @@ BattleMech* findMechByHandle(RenderCore::RenderObjectHandle h) {
 
 } // namespace Mech
 } // namespace GameAdapters
+
+// M2.6: end-to-end mech-pick self-test. Hosted here (not in
+// RenderWorld.cpp) because the test exercises findMechByHandle, which
+// reaches into game-side BattleMech / Mech3DAppearance -- RenderWorld
+// must not include those headers. Forward-decl'd from RenderWorld.cpp;
+// wired into RenderWorld::init() after RunMechObjectIdSelfTest.
+//
+// Gated on MC2_MECH_PICK_SELFTEST=1 AND substrate enabled. Validates:
+//  1. registerMech yields a fresh handle.
+//  2. findMechByHandle(invalid) -> nullptr.
+//  3. findMechByHandle(synthetic_handle) -> nullptr at init-time
+//     (no real BattleMech in ObjectManager), or non-null with
+//     matching bits if a real mech somehow occupies the same slot
+//     (impossible in practice). Either is a pass; the test proves
+//     scan well-formed-ness, not data state (per MINOR-clarification).
+//  4. destroyMech retires the handle.
+//  5. live-mech count returned to baseline (external-review m2:
+//     catches register/destroy imbalance via getMechsAliveCount).
+//
+// Free function in the global namespace so RenderWorld.cpp can
+// forward-declare and call it without a header dependency.
+void RunMechPickSelfTest() {
+    const char* envSelftest = std::getenv("MC2_MECH_PICK_SELFTEST");
+    const bool enabled = envSelftest && envSelftest[0] && envSelftest[0] != '0';
+    if (!enabled) return;
+    if (!RenderWorld::IsObjectIdBufferEnabled()) {
+        std::fprintf(stderr,
+            "[MECH_PICK_SELFTEST v1] result=SKIP reason=substrate_off\n");
+        return;
+    }
+    // External-review m2: sample live-mech count BEFORE the synthetic
+    // register/destroy pair so we can assert no drift afterwards.
+    const uint64_t mechsAliveBefore = RenderWorld::getMechsAliveCount();
+
+    // Step 1: register a synthetic mech.
+    RenderWorld::RenderMechDesc desc{};
+    desc.mechTypeId    = 0u;
+    desc.gameObjectId  = 0xC0FFEEu;
+    desc.debugCookie   = 0u;
+    RenderCore::RenderObjectHandle h = RenderWorld::registerMech(desc);
+    if (!h.isValid()) {
+        std::fprintf(stderr,
+            "[MECH_PICK_SELFTEST v1] result=FAIL step=1 reason=register_failed\n");
+        return;
+    }
+    // Step 2: scan with invalid handle -> nullptr.
+    if (GameAdapters::Mech::findMechByHandle(RenderCore::RenderObjectHandle::invalid()) != nullptr) {
+        std::fprintf(stderr,
+            "[MECH_PICK_SELFTEST v1] result=FAIL step=2 reason=invalid_returned_nonnull\n");
+        RenderWorld::destroyMech(h);
+        return;
+    }
+    // Step 3: scan with synthetic handle. Init-time has no real
+    // BattleMech in ObjectManager, so we expect nullptr.
+    BattleMech* found = GameAdapters::Mech::findMechByHandle(h);
+    if (found != nullptr) {
+        // If a real mech happens to occupy this slot, sanity-check
+        // the bits. (Init-time should never hit this path.)
+        Mech3DAppearance* app = static_cast<Mech3DAppearance*>(found->getAppearance());
+        if (app == nullptr || app->getRenderWorldHandle().raw() != h.raw()) {
+            std::fprintf(stderr,
+                "[MECH_PICK_SELFTEST v1] result=FAIL step=3 reason=scan_bits_mismatch\n");
+            RenderWorld::destroyMech(h);
+            return;
+        }
+    }
+    // Step 4: destroyMech retires the handle.
+    RenderWorld::destroyMech(h);
+
+    // Step 5 (external-review m2): assert live-mech count returned to
+    // baseline. A drift means destroyMech did not balance registerMech
+    // and the slot leaked (would compound across init-time invocations).
+    const uint64_t mechsAliveAfter = RenderWorld::getMechsAliveCount();
+    if (mechsAliveAfter != mechsAliveBefore) {
+        std::fprintf(stderr,
+            "[MECH_PICK_SELFTEST v1] result=FAIL step=5 reason=live_count_drift "
+            "before=%llu after=%llu\n",
+            (unsigned long long)mechsAliveBefore,
+            (unsigned long long)mechsAliveAfter);
+        return; // do not emit PASS
+    }
+
+    std::fprintf(stderr,
+        "[MECH_PICK_SELFTEST v1] result=PASS step=all\n");
+}

@@ -299,4 +299,12 @@ void destroyMech(RenderCore::RenderObjectHandle h);
 // bumps generation, and decrements s_mechs_alive_rw for each.
 void clearAllMechRecords();
 
+// M2.6: read-only accessor for the engine-side live-mech counter
+// (sourced from MechRenderAdapter via registerMech/destroyMech). Used
+// by RunMechPickSelfTest in GameAdapters/MechRenderAdapter.cpp to
+// assert no drift across a synthetic register+destroy pair. Returns
+// a relaxed-load uint64_t snapshot; no synchronization across
+// multiple consumers.
+uint64_t getMechsAliveCount();
+
 } // namespace RenderWorld

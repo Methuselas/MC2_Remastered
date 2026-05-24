@@ -43,6 +43,12 @@ void RunGameplayPickSelfTest();
 // [RENDER_WORLD_SELFTEST v1]). Validates that registerMech allocates
 // a Mech-kind handle and destroyMech bumps the generation correctly.
 void RunMechObjectIdSelfTest();
+// M2.6: end-to-end mech-pick self-test. Hosted in
+// GameAdapters/MechRenderAdapter.cpp because the test reaches into
+// game-side BattleMech via findMechByHandle (RenderWorld must not
+// include code/mech.h). Forward-decl matches existing pattern; the
+// definition lives in the adapter TU.
+void RunMechPickSelfTest();
 
 namespace {
 
@@ -502,6 +508,11 @@ void init() {
     // MC2_MECH_OBJECT_ID_SELFTEST=1). Validates registerMech / destroyMech
     // / record-table generation + kind plumbing. Synthetic; no GL state.
     RunMechObjectIdSelfTest();
+    // M2.6: mech-pick self-test (gated by MC2_MECH_PICK_SELFTEST=1).
+    // Validates findMechByHandle scan well-formed-ness; hosted in
+    // GameAdapters/MechRenderAdapter.cpp because it reaches into
+    // game-side BattleMech (RenderWorld must not include code/mech.h).
+    RunMechPickSelfTest();
 }
 
 void destroy() {
@@ -915,6 +926,10 @@ void clearAllMechRecords() {
     }
     // Reset the dense slot counter so the next beginMission starts fresh.
     s_nextMechSlot.store(0, std::memory_order_relaxed);
+}
+
+uint64_t getMechsAliveCount() {
+    return s_mechs_alive_rw.load(std::memory_order_relaxed);
 }
 
 } // namespace RenderWorld
