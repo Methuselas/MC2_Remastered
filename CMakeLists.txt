@@ -3,6 +3,15 @@ cmake_minimum_required (VERSION 3.10)
 cmake_policy(SET CMP0072 NEW) # cmake --help-policy CMP0072
 project(mc2)
 
+# C++17 baseline for the whole project (CXX17-1 flip 2026-05-24).
+# RenderCore/RenderWorld/GameAdapters/tests already require cxx_std_17 via
+# target_compile_features; flipping the root removes the C++14/17 mix and
+# makes mc2.exe uniformly C++17. See docs/superpowers/explorations/
+# 2026-05-24-cxx17-upgrade-recon.md.
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 include(CMakeToolsHelpers OPTIONAL)
 
 # Set a default build type for single-configuration
@@ -28,7 +37,9 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/sdl2)
 #set(SDL2_DIR "${CMAKE_PREFIX_PATH}/cmake")
 
 if(NOT MSVC)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x -ggdb")
+    # CXX17-1 2026-05-24: removed dead -std=c++0x (project standard now set via
+    # CMAKE_CXX_STANDARD 17 above; this branch is never reached on Windows builds).
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ggdb")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-local-typedefs -Werror=array-bounds -Wno-switch -Wwrite-strings -Wno-unknown-warning-option -Wunused-variable -fpermissive") # -fsanitize=address -fno-omit-frame-pointer")
 endif()
 # -Wno-unused-local-typedefs - to disable "typedef was ignored on this declaration"
