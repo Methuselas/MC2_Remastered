@@ -31,6 +31,10 @@ start. Grep schema versions with `\[SUBSYS v[0-9]+\]`.
 - `MC2_STATIC_PROP_PICK_DEBUG=1` — verbose static-prop pick logging (M1.6)
 - `MC2_GAMEPLAY_PICK_SELFTEST=1` — M2-pre spine validator
 
+## EditorBridge
+
+- `MC2_EDITOR_MODE` — default `0`. Set to `1` to activate the `EditorBridge` API surface. All `EditorBridge::*` functions are no-ops when `0`. Must be combined with `MC2_OBJECT_ID_BUFFER=1` for full GPU pick support (terrain raycast still works without it). Process-lifetime cached at `EditorBridge::init()`, which the mission editor must call explicitly — mc2 game startup does NOT auto-call it.
+
 ## Render-contract assert (Phase 2)
 
 - `MC2_RENDER_CONTRACT_ASSERT=1` — stderr `[RENDER_CONTRACT v2] assert mode ACTIVE` on startup; runtime queries live GL draw-buffer/depth state and compares to `render_contract::stateContractFor()` declared expectation. Inits once after `glewInit` in `gameosmain.cpp`. Phase 2 shipped 2026-05-24 (commit `137dc70`).

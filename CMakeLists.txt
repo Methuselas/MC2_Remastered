@@ -169,6 +169,7 @@ add_subdirectory("./mclib/" "./out/mclib")
 add_subdirectory("./RenderCore" "./out/RenderCore")
 add_subdirectory("./RenderWorld" "./out/RenderWorld")
 add_subdirectory("./GameAdapters" "./out/GameAdapters")
+add_subdirectory("./EditorBridge" "./out/EditorBridge")
 add_subdirectory("./mclib/fx_trace" "./out/mclib/fx_trace")
 add_subdirectory("./mclib/particles" "./out/mclib/particles")
 add_subdirectory("./mclib/mlr" "./out/mclib/mlr")
@@ -289,7 +290,7 @@ endif()
 
 
 add_executable(mc2 ${SOURCES} ${MAIN_SRC})
-target_link_libraries(mc2 mclib fx_trace particles gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL renderworld gameadapters imgui gui_runtime)
+target_link_libraries(mc2 mclib fx_trace particles gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL renderworld gameadapters editorbridge imgui gui_runtime)
 
 if(MC2_IMGUI)
     target_compile_definitions(mc2 PRIVATE MC2_IMGUI=1)
