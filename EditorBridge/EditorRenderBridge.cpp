@@ -198,12 +198,43 @@ EditorPickResult pickAt(int screenX, int screenY) {
     return result;
 }
 
-RenderWorld::VisibilityResult queryVisibility(RenderWorld::VisibilityRequest /*req*/) {
-    return {};  // Task 6
+RenderWorld::VisibilityResult queryVisibility(RenderWorld::VisibilityRequest req) {
+    if (!s_enabled) return {};
+    return RenderWorld::queryVisibility(req);
 }
 
-void drawSelectionBounds(const EditorAabb& /*bounds*/, SelectionBoundsStyle /*style*/) {
-    // Task 6
+void drawSelectionBounds(const EditorAabb& b, SelectionBoundsStyle style) {
+    if (!s_enabled || !eye) return;
+    // Degenerate AABB guard.
+    if (b.minX >= b.maxX || b.minY >= b.maxY || b.minZ >= b.maxZ) return;
+
+    // 8 world-space corners: bottom face (z=minZ) + top face (z=maxZ).
+    const Stuff::Vector3D corners[8] = {
+        Stuff::Vector3D(b.minX, b.minY, b.minZ), Stuff::Vector3D(b.maxX, b.minY, b.minZ),
+        Stuff::Vector3D(b.maxX, b.maxY, b.minZ), Stuff::Vector3D(b.minX, b.maxY, b.minZ),
+        Stuff::Vector3D(b.minX, b.minY, b.maxZ), Stuff::Vector3D(b.maxX, b.minY, b.maxZ),
+        Stuff::Vector3D(b.maxX, b.maxY, b.maxZ), Stuff::Vector3D(b.minX, b.maxY, b.maxZ),
+    };
+
+    float sx[8], sy[8];
+    for (int i = 0; i < 8; ++i) {
+        if (!projectToScreen(corners[i], &sx[i], &sy[i])) return;
+    }
+
+    // 12 edges: 4 bottom, 4 top, 4 vertical pillars.
+    constexpr int edges[12][2] = {
+        {0,1},{1,2},{2,3},{3,0},   // bottom face
+        {4,5},{5,6},{6,7},{7,4},   // top face
+        {0,4},{1,5},{2,6},{3,7},   // pillars
+    };
+
+    const uint32_t argb = rgbaToArgb(style.colorRGBA);
+    pushOverlayState();
+    for (int e = 0; e < 12; ++e) {
+        drawLine(sx[edges[e][0]], sy[edges[e][0]],
+                 sx[edges[e][1]], sy[edges[e][1]], argb);
+    }
+    popOverlayState();
 }
 
 void drawTerrainTileOutline(const TerrainTileOverlayDesc& /*desc*/) {
