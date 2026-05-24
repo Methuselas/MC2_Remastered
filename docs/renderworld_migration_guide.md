@@ -701,6 +701,15 @@ Working order for "add `Terrain=2` (M3) pickup":
     entry mirroring the M2.6 entry style.
 17. Add MEMORY.md handoff if the slice introduces new durable lessons.
 
+### C++17 language features
+
+The project is C++17 project-wide since 2026-05-24 (commit `5c03835`).
+For which C++17 features are allowed immediately, which need caution,
+and which to avoid for now, see `docs/cxx17-coding-rules.md`. Rule of
+thumb for RenderWorld slices: the runtime renderer is hot and audited
+-- do not modernize it for its own sake. Cold-path tools and tests are
+fair game.
+
 ---
 
 ## 16. References
