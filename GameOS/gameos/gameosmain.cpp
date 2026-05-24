@@ -123,6 +123,10 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "gpu_cull_record.h"       // C0-1: GpuActorRecord schema selftest
 #include "gpu_cull_readback.h"    // C2: async readback ring buffer selftest
 #include "object_admission_predicate.h"  // Track A1: init probe + selftest gate
+#ifdef MC2_IMGUI
+#include "../../GuiRuntime/GuiRuntime.h"
+#include "imgui_impl_sdl2.h"
+#endif
 
 // Tier-1 instrumentation (stability spec §5.1): single source of truth for
 // the frame=... field used by TGL_POOL, DESTROY, and GL_ERROR log lines.
@@ -376,6 +380,11 @@ static void process_events( void ) {
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+#ifdef MC2_IMGUI
+        if (g_imguiInitialized) {
+            ImGui_ImplSDL2_ProcessEvent(&event);
+        }
+#endif
         // While unfocused, drop input events but let window events through
         // so FOCUS_GAINED can propagate to the switch below and clear the
         // flag. The prior form compared event.type against a subevent value
@@ -572,6 +581,9 @@ static void draw_screen( void )
     gos_RendererFlushHUDBatch();
     drainGLErrors("hud");
     //CHECK_GL_ERROR;
+#ifdef MC2_IMGUI
+    GuiRuntime::Render();
+#endif
 }
 
 extern float frameRate;
@@ -1033,6 +1045,9 @@ int main(int argc, char** argv)
 
     gos_CreateRenderer(ctx, win, w, h);
     startup_phase("renderer_created");
+#ifdef MC2_IMGUI
+    GuiRuntime::Init();
+#endif
     if(!gos_CreateAudio())
     {   // not an error
         SPEW(("AUDIO", "Failed to create audio\n"));
@@ -1095,6 +1110,10 @@ int main(int argc, char** argv)
             ZoneScopedN("Frame.BackgroundThrottle");
             timing::sleep(10 * 1000000);
         }
+
+#ifdef MC2_IMGUI
+        GuiRuntime::NewFrame();
+#endif
 
         {
             ZoneScopedN("GameLogic");
@@ -1255,6 +1274,9 @@ int main(int argc, char** argv)
     Environment.TerminateGameEngine();
     AssetScale::shutdown();
 
+#ifdef MC2_IMGUI
+    GuiRuntime::Shutdown();
+#endif
     gos_DestroyRenderer();
 
     graphics::destroy_render_context(ctx);

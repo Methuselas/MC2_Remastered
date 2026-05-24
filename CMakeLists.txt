@@ -87,6 +87,7 @@ endif()
 #     if ASan stays quiet but pool-exhaustion events keep firing.
 # ---------------------------------------------------------------------------
 option(MC2_ASAN "Build with MSVC AddressSanitizer (parallel dev build)" OFF)
+option(MC2_IMGUI "Enable in-game ImGui UI" OFF)
 
 if(MC2_ASAN)
     if(NOT MSVC)
@@ -177,6 +178,8 @@ add_subdirectory("./gui" "./out/gui")
 add_subdirectory("./GameOS/gameos" "./out/GameOS/gameos")
 
 add_subdirectory("./GameOS/src" "./out/windows")
+add_subdirectory("3rdparty/imgui")
+add_subdirectory("GuiRuntime")
 
 set(SOURCES 
     "code/dw.cpp"
@@ -286,7 +289,21 @@ endif()
 
 
 add_executable(mc2 ${SOURCES} ${MAIN_SRC})
-target_link_libraries(mc2 mclib fx_trace particles gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL renderworld gameadapters)
+target_link_libraries(mc2 mclib fx_trace particles gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL renderworld gameadapters imgui gui_runtime)
+
+if(MC2_IMGUI)
+    target_compile_definitions(mc2 PRIVATE MC2_IMGUI=1)
+    target_compile_definitions(gui_runtime PRIVATE MC2_IMGUI=1)
+    target_compile_definitions(gameos PRIVATE MC2_IMGUI=1)
+    target_compile_definitions(gameos_main PRIVATE MC2_IMGUI=1)
+    # gameosmain.cpp includes imgui_impl_sdl2.h when MC2_IMGUI is set
+    target_include_directories(gameos_main PRIVATE
+        "${CMAKE_SOURCE_DIR}/3rdparty/imgui"
+        "${CMAKE_SOURCE_DIR}/3rdparty/imgui/backends"
+        "${CMAKE_SOURCE_DIR}/GuiRuntime"
+    )
+    target_link_libraries(gameos_main PRIVATE imgui gui_runtime)
+endif()
 
 target_link_libraries(mc2
     FFmpegLGPL::avformat

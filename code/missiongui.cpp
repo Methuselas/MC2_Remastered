@@ -34,6 +34,10 @@
 #include "../RenderWorld/RenderWorld.h"
 #include "gameplay_pick.h"  // M2-pre: tryGameplayPick spine + GameplayPickRequest
 #include "../GameAdapters/MechRenderAdapter.h"  // M2.6: findMechByHandle (forward-decls BattleMech)
+#ifdef MC2_IMGUI
+#include "../GuiRuntime/EditorInspector.h"  // Task 7: Ctrl+Shift+LMB inspector bridge
+#include "imgui.h"
+#endif
 
 #ifndef OBJMGR_H
 #include"objmgr.h"
@@ -1532,11 +1536,31 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 		}
 	}
 
+	// Task 7: Ctrl+Shift+LMB inspector pick. Runs before the legacy
+	// gameplay picks so the inspector can claim the click first.
+	// Priority: ImGui window capture > inspector > existing gameplay picks.
+	bool pickedByInspector = false;
+#ifdef MC2_IMGUI
+	if (ctrlDn && shiftDn && leftClicked && !ImGui::GetIO().WantCaptureMouse) {
+		GameplayPickRequest inspReq;
+		inspReq.mouseX               = mouseX;
+		inspReq.mouseY               = mouseY;
+		inspReq.shiftDn              = false;   // inspector pick, not a gameplay shift-pick
+		inspReq.leftClicked          = true;
+		inspReq.bGui                 = bGui;
+		inspReq.bLeftDouble          = false;
+		inspReq.moverSelectedThisFrame = false; // inspector always attempts the lookup
+		GameplayPickResult inspResult = tryGameplayPick(inspReq);
+		EditorInspector::setPickResult(mouseX, mouseY, inspResult.lookup);
+		pickedByInspector = true;
+	}
+#endif
+
 	// M1.6: env-gated static-prop pick attempt. Runs AFTER the legacy
 	// mover-selection path above. Short-circuits internally when
 	// moverSelectedThisFrame == true (Section 11 + Q6/Q8 invariant) or
 	// when MC2_STATIC_PROP_PICK / MC2_OBJECT_ID_BUFFER are off.
-	{
+	if (!pickedByInspector) {
 		const bool bLeftDouble = userInput->isLeftDoubleClick();
 		tryStaticPropPick(moverSelectedThisFrame,
 		                  shiftDn,
@@ -1786,11 +1810,31 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 		}
 	}
 
+	// Task 7: Ctrl+Shift+LMB inspector pick. Runs before the legacy
+	// gameplay picks so the inspector can claim the click first.
+	// Priority: ImGui window capture > inspector > existing gameplay picks.
+	bool pickedByInspector = false;
+#ifdef MC2_IMGUI
+	if (ctrlDn && shiftDn && leftClicked && !ImGui::GetIO().WantCaptureMouse) {
+		GameplayPickRequest inspReq;
+		inspReq.mouseX               = mouseX;
+		inspReq.mouseY               = mouseY;
+		inspReq.shiftDn              = false;   // inspector pick, not a gameplay shift-pick
+		inspReq.leftClicked          = true;
+		inspReq.bGui                 = bGui;
+		inspReq.bLeftDouble          = false;
+		inspReq.moverSelectedThisFrame = false; // inspector always attempts the lookup
+		GameplayPickResult inspResult = tryGameplayPick(inspReq);
+		EditorInspector::setPickResult(mouseX, mouseY, inspResult.lookup);
+		pickedByInspector = true;
+	}
+#endif
+
 	// M1.6: env-gated static-prop pick attempt. Runs AFTER the legacy
 	// mover-selection path above. Short-circuits internally when
 	// moverSelectedThisFrame == true (Section 11 + Q6/Q8 invariant) or
 	// when MC2_STATIC_PROP_PICK / MC2_OBJECT_ID_BUFFER are off.
-	{
+	if (!pickedByInspector) {
 		const bool bLeftDouble = userInput->isLeftDoubleClick();
 		tryStaticPropPick(moverSelectedThisFrame,
 		                  shiftDn,
