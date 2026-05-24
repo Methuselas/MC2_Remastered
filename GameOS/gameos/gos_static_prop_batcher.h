@@ -50,8 +50,10 @@ struct PerDrawEntry {
     int32_t texArrayLayer;     // 12 — group-relative layer in s_texArrayOff/On
     float   uvScaleX;          // 16 — 1.0f for Stage A
     float   uvScaleY;          // 20 — 1.0f for Stage A
-    int32_t objectIdRaw;       // 24 — M1.5: handle.raw() when MC2_OBJECT_ID_BUFFER=1, else 0
-    int32_t _pad1;             // 28 — std430 alignment + size = 32
+    int32_t  objectIdRaw;      // 24 — M1.5: handle.raw() when MC2_OBJECT_ID_BUFFER=1, else 0
+    uint32_t materialIdx;      // 28 — MaterialGpu-3: index into s_materialGpuTable
+                               //      (was _pad1; filled from s_packetMaterialIdx[slot]
+                               //       when MC2_MATERIAL_GPU=1 and sidecar valid, else 0u)
 };
 static_assert(sizeof(PerDrawEntry) == 32, "PerDrawEntry std430 size");
 static_assert(offsetof(PerDrawEntry, packetID)         ==  0, "packetID offset");
@@ -61,7 +63,7 @@ static_assert(offsetof(PerDrawEntry, texArrayLayer)    == 12, "texArrayLayer off
 static_assert(offsetof(PerDrawEntry, uvScaleX)         == 16, "uvScaleX offset");
 static_assert(offsetof(PerDrawEntry, uvScaleY)         == 20, "uvScaleY offset");
 static_assert(offsetof(PerDrawEntry, objectIdRaw)      == 24, "objectIdRaw offset");
-static_assert(offsetof(PerDrawEntry, _pad1)            == 28, "_pad1 offset");
+static_assert(offsetof(PerDrawEntry, materialIdx)      == 28, "materialIdx offset");
 
 // Packet descriptor (CPU-side only -- not uploaded as an SSBO).
 struct GpuStaticPropPacket {
