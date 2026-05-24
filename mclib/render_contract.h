@@ -1,13 +1,20 @@
-// render_contract.h — Render Contract Registry (phase 1, inert).
+// render_contract.h — Render Contract Registry (phase 2).
 //
 // Names the implicit contracts that govern how each render path interacts
 // with the G-buffer, shadow pipeline, depth/blend state, and post-process
-// passes. Phase 1 is documentation + types only. No callsite changes; no
-// behavior change. See:
+// passes. Phase 2 extends phase 1 with:
 //
-//   docs/superpowers/specs/2026-04-26-render-contract-registry-design.md
+//   - RequiredAttachments: which COLOR_ATTACHMENTx a pass needs in the
+//     active draw-buffer list (critical after M1.5 added attachment-2).
+//   - ShaderOutputContract: which layout(location=N) outputs a pass's
+//     fragment shader declares (uniqueness check; must not collide).
+//   - attachmentCount in PassStateContract: expected glDrawBuffers arg.
+//   - Debug assertions gated by MC2_RENDER_CONTRACT_ASSERT env var:
+//     assertPassContract() queries live GL state and compares to contract.
 //
-// Two load-bearing audit findings drove this header:
+// Phase 2 also fills in the remaining TODO_RENDER_CONTRACT rows.
+//
+// Two load-bearing audit findings drove this header (from phase 1):
 //
 //   1. GBuffer1.alpha is a POST-PROCESS SHADOW MASK, not a "terrain flag."
 //      Terrain, grass, terrain decals, and terrain overlays all opt in by
@@ -17,7 +24,7 @@
 //      a continuous materialAlpha into the same channel for water/shoreline
 //      pixels, and several MRT-bound shaders do not declare GBuffer1 at all.
 //
-// This header gives the contract names. It does not change pixels.
+// See: docs/superpowers/specs/2026-04-26-render-contract-registry-design.md
 
 #ifndef MC2_RENDER_CONTRACT_H
 #define MC2_RENDER_CONTRACT_H
@@ -28,8 +35,7 @@ namespace render_contract {
 
 // The kind of draw call. Queryable from material setup, shadow paths, FBO
 // state machine. Phase 1 default for an unclassified callsite is Unknown;
-// callsites are tagged via the // [RENDER_CONTRACT:Pass=...] marker as
-// commit 7 of the impl plan walks the codebase.
+// callsites are tagged via the // [RENDER_CONTRACT:Pass=...] marker.
 enum class PassIdentity : std::uint8_t {
     Unknown = 0,
     TerrainBase,        // tessellated heightfield (gos_terrain.frag)
@@ -49,48 +55,69 @@ enum class PassIdentity : std::uint8_t {
 
 // What each G-buffer attachment slot carries. The alpha of slot 1 is
 // renamed honestly: it is a post-process shadow mask, not a terrain flag.
-// Legacy code/comments may still call it "terrain flag"; the registry
-// does not preserve that misleading name as the primary API.
 enum class GBufferSlot : std::uint8_t {
     Color0_Albedo = 0,
     Normal1_PostShadowMask = 1,   // RGB = normal*0.5+0.5; a > 0.5 → skip post-shadow
+    ObjectId2_R32UI = 2,          // R32_UINT object handle (M1.5+; MC2_OBJECT_ID_BUFFER)
 };
 
-// A pass's shadow-pipeline relationship. Computed once per material setup
-// (phase 2+); for phase 1, mirrors the existing conjunction at each
-// callsite without changing it. The single "skipsPostScreenShadow" field
-// is the semantic; the storage mechanism (GBuffer1.alpha > 0.5) is
-// documented in render_contract.hglsl and may evolve under follow-up F1.
+// Which COLOR_ATTACHMENTx a pass needs present in the active glDrawBuffers
+// list. A slot may be bound without being written (e.g. terrain runs while
+// attachment-2 is bound but doesn't declare layout(location=2)) — that is
+// legal in GL. assertPassContract() verifies the REQUIRED slots are non-NONE.
+struct RequiredAttachments {
+    bool color0;    // GL_COLOR_ATTACHMENT0 — albedo / HDR scene color
+    bool color1;    // GL_COLOR_ATTACHMENT1 — GBuffer normal + post-shadow mask
+    bool color2;    // GL_COLOR_ATTACHMENT2 — R32_UINT object ID (M1.5+)
+};
+
+// A pass's shadow-pipeline relationship.
 struct ShadowContract {
     bool castsStaticShadow;       // included in static terrain shadow atlas
     bool castsDynamicShadow;      // included in dynamic local shadow map
     bool skipsPostScreenShadow;   // shadow_screen.frag will not darken this pixel
 };
 
+// What layout(location=N) outputs the fragment shader declares. Must be
+// unique within a pass (duplicate output locations are a GLSL compile error,
+// but the contract documents what's expected for auditing). assertPassContract
+// does NOT validate shader outputs — these are compile-time GLSL constraints.
+// The struct is informational; use it for cross-reference audits.
+struct ShaderOutputContract {
+    bool writesLocation0;   // out vec4 at location 0 — albedo / HDR color
+    bool writesLocation1;   // out vec4 at location 1 — normal + shadow mask
+    bool writesLocation2;   // out uint at location 2 — object ID (M1.5+)
+    bool writesDepth;       // explicit gl_FragDepth write (depth passes only)
+};
+
 // A pass's GL-state contract. Documents what the pass requires on entry
-// and guarantees on exit. Phase 1: descriptive only, NOT enforced.
-// Phase 2 (separate spec): debug-build assertions.
+// and guarantees on exit. assertPassContract() validates the GL-side fields
+// (attachments, depthTest, depthWrite) at runtime under MC2_RENDER_CONTRACT_ASSERT.
 struct PassStateContract {
     enum class BlendMode : std::uint8_t { Opaque, AlphaBlend, AlphaTest, Additive };
 
-    bool        requiresDepthTest;
-    bool        requiresDepthWrite;
-    BlendMode   blend;
-    bool        requiresMRT;          // expects glDrawBuffers(2, {COLOR0, COLOR1})
-    const char* expectedFBO;          // documentary string
-    bool        restoresStateOnExit;  // overlay must restore; main passes need not
+    bool               requiresDepthTest;
+    bool               requiresDepthWrite;
+    BlendMode          blend;
+    bool               requiresMRT;       // expects 2+ attachments via glDrawBuffers
+    std::uint8_t       attachmentCount;   // expected glDrawBuffers count (0=depth-only)
+    RequiredAttachments attachments;      // which slots must be non-NONE
+    const char*        expectedFBO;       // documentary string
+    bool               restoresStateOnExit; // overlay passes must restore state
 };
 
 // Registry accessors. Defined in render_contract.cpp.
-//
-// Phase-1 entries are CONSERVATIVE. Rows whose current contract is not
-// fully audited at commit-1 time are returned as TODO_RENDER_CONTRACT
-// sentinel values; callers must not rely on the table values for
-// behavioral decisions during phase 1. Authoritative entries are filled
-// in as commits 7 (markers) and 9 (closing report) confirm them.
-const ShadowContract&    shadowContractFor(PassIdentity);
-const PassStateContract& stateContractFor(PassIdentity);
-const char*              passIdentityName(PassIdentity);
+const ShadowContract&       shadowContractFor(PassIdentity);
+const PassStateContract&    stateContractFor(PassIdentity);
+const ShaderOutputContract& shaderOutputContractFor(PassIdentity);
+const char*                 passIdentityName(PassIdentity);
+
+// Debug assertion machinery. initRenderContractAssert() reads the
+// MC2_RENDER_CONTRACT_ASSERT env var; call it once at engine init
+// (after GL is up). assertPassContract() is a no-op if the env var
+// is not set. callerHint is logged in assertion messages (use __func__).
+void initRenderContractAssert();
+void assertPassContract(PassIdentity id, const char* callerHint = nullptr);
 
 } // namespace render_contract
 

@@ -105,6 +105,7 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_registry.h"  // Stage 3.C: isEnabled() for [INSTR v1]
 #include "../../RenderWorld/RenderWorld.h"  // M1 Task 14
+#include "../../mclib/render_contract.h"   // Phase 2 assert init
 #include "asset_scale.h"
 #include "gos_crashbundle.h"
 #include "gos_smoke.h"
@@ -951,6 +952,8 @@ int main(int argc, char** argv)
         SPEW(("GLEW", "Error: %s\n", glewGetErrorString(err)));
         return 1;
     }
+
+    render_contract::initRenderContractAssert();
 
     if (GLEW_ARB_parallel_shader_compile) {
         glMaxShaderCompilerThreadsARB(0xFFFFFFFF);
