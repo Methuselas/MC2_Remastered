@@ -187,8 +187,108 @@ void drawRingWorld(Vec3 center, float radius, int segments, uint32_t rgba) {
 }
 
 void flushWorldPrims() {
-    // full implementation in Task 4
-    s_verts.clear();   // prevent unbounded growth until Task 4 lands
+    if (!s_enabled) return;
+
+    // Test canary: enqueue BEFORE empty check so MC2_DEBUG_RENDERER_TEST=1
+    // produces output even when no other callers have queued verts.
+    if (s_testCanary) {
+        // World axis tripod at origin: X=red, Y=green, Z=blue, 50-unit arms
+        drawLineWorld({0,0,0}, {50,0,0},  0xFF0000FFu);  // X red
+        drawLineWorld({0,0,0}, {0,50,0},  0x00FF00FFu);  // Y green
+        drawLineWorld({0,0,0}, {0,0,50},  0x0000FFFFu);  // Z blue
+        // White ring at (0, 50, 0) radius 30, 64 segments
+        drawRingWorld({0, 50, 0}, 30.0f, 64, 0xFFFFFFFFu);
+    }
+
+    if (s_verts.empty()) return;
+
+    if (!s_initialized) init_once();
+    if (!s_enabled) { s_verts.clear(); return; }  // init_once() may disable on shader fail
+
+    const float* vp = gos_GetTerrainMVPMat4();
+    if (!vp) {
+        s_verts.clear();
+        return;
+    }
+
+    // Truncate to capacity
+    if ((int)s_verts.size() > kVertCapacity) {
+        if (!s_capWarnedOnce) {
+            fprintf(stderr, "[DEBUGDRAW v1] event=vert_cap_exceeded cap=%d requested=%d\n",
+                    kVertCapacity, (int)s_verts.size());
+            s_capWarnedOnce = true;
+        }
+        s_verts.resize(kVertCapacity);
+        // Ensure even count for GL_LINES (pairs)
+        if ((int)s_verts.size() % 2 != 0) s_verts.pop_back();
+    }
+
+    const GLsizeiptr byteSize = (GLsizeiptr)(s_verts.size() * sizeof(DbgVert));
+
+    // --- Save GL state ---
+    GLint  prevProg = 0, prevVAO = 0, prevVBO = 0;
+    GLint  depthFuncWas = 0;
+    GLint  blendSrcRGB = 0, blendDstRGB = 0, blendSrcAlpha = 0, blendDstAlpha = 0;
+    GLint  blendEqRGB = 0, blendEqAlpha = 0;
+    GLboolean depthTestWas, blendWas, cullWas, depthMaskWas;
+    GLfloat lineWidthWas = 1.0f;
+
+    glGetIntegerv(GL_CURRENT_PROGRAM,      &prevProg);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prevVBO);
+    depthTestWas = glIsEnabled(GL_DEPTH_TEST);
+    blendWas     = glIsEnabled(GL_BLEND);
+    cullWas      = glIsEnabled(GL_CULL_FACE);
+    glGetBooleanv(GL_DEPTH_WRITEMASK,      &depthMaskWas);
+    glGetIntegerv(GL_DEPTH_FUNC,           &depthFuncWas);
+    glGetIntegerv(GL_BLEND_SRC_RGB,        &blendSrcRGB);
+    glGetIntegerv(GL_BLEND_DST_RGB,        &blendDstRGB);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA,      &blendSrcAlpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA,      &blendDstAlpha);
+    glGetIntegerv(GL_BLEND_EQUATION_RGB,   &blendEqRGB);
+    glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEqAlpha);
+    glGetFloatv(GL_LINE_WIDTH,             &lineWidthWas);
+
+    // --- Set known state ---
+    // Use glUseProgram directly (not s_program->apply()) because apply() would
+    // flush dirty matrix uniforms with GL_TRUE -- wrong for our GL_FALSE MVP.
+    glUseProgram(s_programId);
+    glBindVertexArray(s_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_CULL_FACE);
+    glLineWidth(1.0f);
+
+    // Upload MVP. GL_FALSE: matrix from gos_GetTerrainMVPMat4 is already
+    // row-major (converted at gos_SetWorldToClipGL). All terrain upload
+    // sites use GL_FALSE with the same matrix (gameos_graphics.cpp:5012,
+    // 5091, 5202, 5245, 7376).
+    glProgramUniformMatrix4fv(s_programId, s_mvpLoc, 1, GL_FALSE, vp);
+
+    // Orphan + subdata upload
+    glBufferData(GL_ARRAY_BUFFER, byteSize, nullptr, GL_DYNAMIC_DRAW);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, byteSize, s_verts.data());
+
+    glDrawArrays(GL_LINES, 0, (GLsizei)s_verts.size());
+
+    // --- Restore GL state ---
+    glDepthMask(depthMaskWas);
+    if (depthTestWas) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (blendWas)     glEnable(GL_BLEND);      else glDisable(GL_BLEND);
+    if (cullWas)      glEnable(GL_CULL_FACE);  else glDisable(GL_CULL_FACE);
+    glDepthFunc(depthFuncWas);
+    glBlendFuncSeparate(blendSrcRGB, blendDstRGB, blendSrcAlpha, blendDstAlpha);
+    glBlendEquationSeparate(blendEqRGB, blendEqAlpha);
+    glLineWidth(lineWidthWas);
+    glUseProgram(prevProg);
+    glBindVertexArray(prevVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, prevVBO);
+
+    s_verts.clear();
 }
 
 void flushScreenPrims() {
