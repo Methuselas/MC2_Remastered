@@ -53,3 +53,28 @@ Three CI scripts that lock the RenderWorld arc invariants — see `docs/renderwo
 - `sh scripts/check-include-firewall.sh` — SCOPE_DIRS layering
 - `sh scripts/check-no-raw-gl-from-game.sh` — game-side raw GL prohibition (M6)
 - `sh scripts/check-vfx-no-objectid.sh` — VFX attachment-2 prohibition (M4)
+
+## MaterialGpu sidecar (MaterialGpu-2)
+
+- `MC2_MATERIAL_GPU=1` — enable static-prop MaterialGpu sidecar: builds table from `texArrayLayer`, uploads mission-lifetime SSBO at binding 5, binds in `flush()`, compares `albedoTex` vs legacy layer. Default OFF. Log prefix: `[MATERIAL_GPU v1]`. Emits: `event=table_upload materials=N bytes=B emitted=M`, `event=compare emitted=M mismatches=0`, `event=unload materials=N bytes=B`. No visual change. No shader consumer until MaterialGpu-3.
+
+## SSBO binding registry
+
+Note: bindings are **per-pass** (each GL program declares its own layout bindings and each pass re-binds before drawing). The static_prop pass and terrain pass are separate programs.
+
+### static_prop pass
+
+| Binding | Owner | Status |
+|---|---|---|
+| 0 | Instances | active |
+| 1 | Colors (legacy) | active |
+| 2 | PerType | active |
+| 3 | Parity (debug) | active (`MC2_OBJECT_PARITY_CHECK=1`) |
+| 4 | PerDraw | active (coalesce path) |
+| 5 | MaterialGpu | PROVISIONAL — v2 binds + restores, no shader consumer; v3 makes load-bearing |
+
+### terrain pass (separate GL program — independent binding namespace)
+
+| Binding | Owner | Status |
+|---|---|---|
+| 5 | WaterRecipeBuf | active (gos_terrain_mask_water.vert, gos_terrain_water_fast.vert, gos_terrain_water_fast_mdi.vert) |
