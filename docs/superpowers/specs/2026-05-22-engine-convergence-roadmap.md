@@ -1129,6 +1129,29 @@ engine bugs diagnosable in minutes instead of hours.
 
 ## Load-bearing constraints (do not violate)
 
+### Language standard
+
+```
+C++17 is the current stable baseline.
+C++20 is deferred until the next API-shape cluster:
+  DrawPacket, PipelineDesc runtime, FrameAllocator, AssetCook, or job graph.
+No C++20 flip while ImGui / MaterialGpu / EditorBridge are in flight.
+```
+
+Rationale: the CXX17 flip itself was a 12-line CMake edit with zero
+compile fixes (audit recon
+`docs/superpowers/explorations/2026-05-24-cxx17-upgrade-recon.md`,
+commit `5c03835`, stabilization gauntlet GREEN), but the migration
+risk for any language flip lives in the IN-FLIGHT consumers — ImGui
+integration, MaterialGpu adoption, EditorBridge work — whose APIs
+may shift under a new standard. Hold C++20 for the natural break
+between this cluster (RenderWorld arc + adjacent infra) and the next
+API-shape cluster (DrawPacket items 11+12, PipelineDesc item 12
+Phase 3, FrameAllocator item 13, AssetCook item 8, or the job-graph
+direction). Feature use policy: see `docs/cxx17-coding-rules.md`.
+
+---
+
 ## Vulkan strategy: saturate OpenGL, then swap the backend (2026-05-22)
 
 ```
