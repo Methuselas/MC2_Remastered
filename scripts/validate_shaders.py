@@ -64,296 +64,26 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
-import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-SHADERS = ROOT / "shaders"
-INCLUDE = SHADERS / "include"
+# ensure scripts/ dir is importable when invoked as `py -3 scripts/validate_shaders.py`
+sys.path.insert(0, str(Path(__file__).parent))
+import shader_common
 
-# Mirror of makeProgram() prefix in GameOS/gameos/gameos_graphics.cpp.
-# If the prefix there ever changes (e.g. 4.4 / 4.5), this must follow.
-VERSION_PREFIX = "#version 430\n"
-
-# Path-(a) validator-prep: only injected when the source actually uses
-# `#include`. Kept as a harmless safety net even though the engine-style
-# Python pre-processor below flattens out every `#include` it understands
-# before glslangValidator sees the source. If a future shader-include
-# pattern slips past parse_includes_engine_style, the extension keeps
-# glslang from rejecting the literal directive.
-INCLUDE_EXTENSION = "#extension GL_GOOGLE_include_directive : require\n"
-_INCLUDE_RE = re.compile(r"(?m)^\s*#\s*include\b")
-
-# Engine path separator. The engine builds with -DLINUX_BUILD globally
-# (see GameOS/gameos/utils/file_utils.cpp: kPathSeparator = "/"), so the
-# port uses "/" too. Hardcoded — do NOT swap to os.sep.
-ENGINE_PATH_SEPARATOR = "/"
-
-
-def _engine_get_path(fname: str) -> str:
-    """Port of GameOS/gameos/utils/file_utils.cpp:32 get_path. Returns dirname
-    by stripping after the LAST kPathSeparator. Empty string if no separator.
-    Engine's separator is "/" under LINUX_BUILD.
-    """
-    # Engine uses strrchr on kPathSeparatorAsChar ("/"). Accept both "/" and
-    # "\\" defensively since Python on Windows may surface either when the
-    # caller passed a native path; engine itself only sees "/".
-    idx = max(fname.rfind("/"), fname.rfind("\\"))
-    if idx < 0:
-        return ""
-    return fname[:idx]
-
-
-def _engine_find_next_include_directive(p: str, start: int) -> int:
-    """Port of GameOS/gameos/utils/shader_builder.cpp:231 find_next_include_directive.
-
-    Returns index of next `#include` in `p` starting at `start`, skipping
-    `//` line comments, `/* ... */` block comments, and `"..."` / `'...'`
-    string literals. Returns -1 if none.
-    """
-    INCLUDE = "#include"
-    i = start
-    n = len(p)
-    while i < n:
-        c = p[i]
-        nxt = p[i + 1] if i + 1 < n else ""
-        if c == "/" and nxt == "/":
-            while i < n and p[i] != "\n":
-                i += 1
-        elif c == "/" and nxt == "*":
-            i += 2
-            while i + 1 < n and not (p[i] == "*" and p[i + 1] == "/"):
-                i += 1
-            if i < n:
-                i += 2
-        elif c == '"' or c == "'":
-            q = c
-            i += 1
-            while i < n and p[i] != q:
-                if p[i] == "\\" and i + 1 < n:
-                    i += 2
-                else:
-                    i += 1
-            if i < n:
-                i += 1
-        elif c == "#" and p.startswith(INCLUDE, i):
-            return i
-        else:
-            i += 1
-    return -1
-
-
-def _engine_parse_include(s: str, start: int):
-    """Port of GameOS/gameos/utils/shader_builder.cpp:178 parse_include.
-
-    Parses `<name>` directly after a `#include` token. Engine only supports
-    angle-bracket form (uses strchr for '<' / '>'); quoted-string form is
-    NOT handled. Returns (include_name, ieol_idx) on success, or None.
-    `ieol_idx` is the index just past the newline ending the #include line
-    (or len(s) if the directive was on the last line without trailing \n).
-    """
-    n = len(s)
-    begin = s.find("<", start)
-    end = s.find(">", start)
-    eol = s.find("\n", start)
-    if begin < 0 or end < 0:
-        return None
-    # If newline exists and `>` is past it, malformed (matches engine check).
-    if eol >= 0 and end > eol:
-        return None
-    if end - begin <= 1:
-        return None
-    begin += 1
-    while begin < end and s[begin] == " ":
-        begin += 1
-    while end > begin and s[end - 1] == " ":
-        end -= 1
-    name = s[begin:end]
-    ieol = eol + 1 if eol >= 0 else n
-    return name, ieol
-
-
-def _engine_get_num_lines(text: str) -> int:
-    """Port of GameOS/gameos/utils/shader_builder.cpp:203 get_num_lines.
-    Engine counts 1 + number of '\\n' chars.
-    """
-    if not text:
-        return 0
-    return 1 + text.count("\n")
-
-
-def parse_includes_engine_style(source_text: str, source_path: str,
-                                _visited: set | None = None) -> str:
-    """Port of GameOS/gameos/utils/shader_builder.cpp:262 parse_includes.
-
-    Engine semantics: base_path + path-separator + include-name; NO
-    search-path resolution. Recursively inlines `#include <name>` directives
-    (angle-bracket form only — engine's parse_include uses strchr('<','>')).
-    Preserves line numbers via `#line N // fname` directives matching the
-    engine's append_line_directive (shader_builder.cpp:219). Skips
-    `#include` tokens inside // line comments, /* block comments */, and
-    string literals (matches find_next_include_directive). Detects include
-    cycles via a visited set and raises ValueError.
-
-    If parse_includes evolves, update this port (the cited lines are the
-    source of truth). Faithfulness over elegance: do NOT simplify.
-    """
-    if _visited is None:
-        _visited = set()
-    norm_self = os.path.normcase(os.path.normpath(source_path))
-    if norm_self in _visited:
-        raise ValueError(f"include cycle detected at {source_path}")
-    _visited = _visited | {norm_self}
-
-    base_path = _engine_get_path(source_path)
-    out_parts: list[str] = []
-    current_line = 1
-    start = 0
-    n = len(source_text)
-
-    INCLUDE_LEN = len("#include")
-
-    while True:
-        tok = _engine_find_next_include_directive(source_text, start)
-        if tok < 0:
-            break
-
-        # Append the pre-include code chunk with a #line directive.
-        code = source_text[start:tok]
-        out_parts.append(f"#line {current_line} // {source_path}\n")
-        out_parts.append(code)
-        current_line += _engine_get_num_lines(code)
-
-        parsed = _engine_parse_include(source_text, tok + INCLUDE_LEN)
-        if parsed is None:
-            raise ValueError(f"malformed #include in {source_path} near offset {tok}")
-        inc_name, ieol = parsed
-
-        # Engine: base_path + kPathSeparator + inc_name (NO search paths).
-        if base_path:
-            include_path = base_path + ENGINE_PATH_SEPARATOR + inc_name
-        else:
-            include_path = inc_name
-
-        try:
-            included_src = Path(include_path).read_text(encoding="utf-8",
-                                                        errors="replace")
-        except OSError as e:
-            raise ValueError(f"cannot open include {include_path} "
-                             f"(from {source_path}): {e}")
-
-        # Recurse — engine calls load_shader -> parse_includes.
-        inlined = parse_includes_engine_style(included_src, include_path,
-                                              _visited=_visited)
-        out_parts.append(inlined)
-
-        # Engine: `if(!start) break;` — if the include was on the final
-        # line with no trailing data, we stop. _engine_parse_include sets
-        # ieol = len(source_text) in that case; matching the engine, we
-        # break when there's nothing left.
-        if ieol >= n:
-            start = n
-            break
-        start = ieol
-
-    # Trailing tail after the last #include (or whole source if none).
-    if start < n:
-        out_parts.append(f"#line {current_line} // {source_path}\n")
-        out_parts.append(source_text[start:])
-
-    return "".join(out_parts)
-
-# Per-shader prefix overrides. Some shaders are compiled by the engine with
-# additional `#extension` / `#define` lines that follow `#version 430` in
-# the makeProgram preamble; the shader file itself relies on those being
-# present. Mirror them here so the validator sees the same prefix the
-# engine compiles with. Keep this table in lockstep with the call sites
-# in GameOS/gameos/gameos_graphics.cpp and gos_static_prop_batcher.cpp.
-SHADER_PREFIX_OVERRIDE: dict[str, str] = {
-    # gos_terrain_water_fast_mdi.vert -- gameos_graphics.cpp:2092 kWaterMdiPrefix.
-    # Uses gl_DrawIDARB unconditionally (no #ifdef MC2_COALESCE guard).
-    # Validator-only: bump to #version 460 so the core (unsuffixed) gl_DrawID
-    # builtin is in scope; SHADER_TOKEN_REWRITES rewrites the ARB-suffixed
-    # name in the source to the core builtin. glslang does not implement
-    # gl_DrawIDARB even with GL_ARB_shader_draw_parameters; the driver runtime
-    # accepts the ARB form. Engine still compiles the file with its own
-    # 4.3 + ARB-ext preamble; this override only changes what the validator
-    # sees.
-    "gos_terrain_water_fast_mdi.vert": (
-        "#version 460\n"
-    ),
-}
-
-# Per-shader textual rewrites applied to the assembled source AFTER the
-# prefix is prepended and BEFORE the temp file is written. Used to bridge
-# tool-vs-engine gaps where glslangValidator does not implement a builtin
-# the driver runtime accepts. Same shape as the parse_includes port: the
-# engine source is unchanged; the validator compensates locally. Keep the
-# scope of each rewrite as narrow as possible (one shader, one token).
-SHADER_TOKEN_REWRITES: dict[str, list[tuple[str, str]]] = {
-    # glslang does not implement ARB-suffixed gl_DrawIDARB even with
-    # GL_ARB_shader_draw_parameters; driver runtime accepts. Validator-only
-    # rewrite to the core unsuffixed builtin (paired with the per-shader
-    # #version 460 override below; core gl_DrawID is core-4.6).
-    # Engine source unchanged.
-    "gos_terrain_water_fast_mdi.vert": [
-        ("gl_DrawIDARB", "gl_DrawID"),
-    ],
-}
-
-# Shaders that cannot be validated standalone because the engine
-# programmatically stitches their source at runtime. See module docstring.
-SKIP_SHADERS = {
-    "gos_terrain_lighting.comp": (
-        "programmatically stitched at runtime via "
-        "tl_build_terrain_lighting_program; standalone validation cannot "
-        "reach this shader without replicating the engine's include stitching"
-    ),
-}
-
-# Map file extension to glslangValidator -S <stage> arg.
-STAGE_BY_EXT = {
-    ".vert": "vert",
-    ".frag": "frag",
-    ".tesc": "tesc",
-    ".tese": "tese",
-    ".geom": "geom",
-    ".comp": "comp",
-}
-
-
-def _find_tool(name: str) -> str | None:
-    """Locate a Vulkan SDK tool. Prefer $VULKAN_SDK/Bin, then PATH."""
-    sdk = os.environ.get("VULKAN_SDK")
-    if sdk:
-        candidate = Path(sdk) / "Bin" / (name + (".exe" if os.name == "nt" else ""))
-        if candidate.exists():
-            return str(candidate)
-    # PATH fallback
-    found = shutil.which(name)
-    if found:
-        return found
-    return None
+ROOT = shader_common.ROOT
+SHADERS = shader_common.SHADERS
 
 
 def _resolve_tools() -> tuple[str, str] | None:
     """Return (glslang, spirv_val) absolute paths, or None if missing."""
-    glslang = _find_tool("glslangValidator")
-    spirv_val = _find_tool("spirv-val")
+    glslang = shader_common.find_tool("glslangValidator")
+    spirv_val = shader_common.find_tool("spirv-val")
     if not glslang or not spirv_val:
         return None
     return glslang, spirv_val
-
-
-def discover_shaders() -> list[Path]:
-    out: list[Path] = []
-    for ext in STAGE_BY_EXT:
-        out.extend(sorted(SHADERS.glob(f"*{ext}")))
-    return out
 
 
 def _decode(data: bytes | str) -> str:
@@ -389,40 +119,13 @@ def _first_error_line(diag: str) -> str:
 def validate_one(shader: Path, vulkan: bool,
                  glslang: str, spirv_val: str) -> tuple[bool, str]:
     """Return (passed, diagnostic). diagnostic is empty on success."""
-    stage = STAGE_BY_EXT[shader.suffix]
+    stage = shader_common.STAGE_BY_EXT[shader.suffix]
     try:
-        src_text = shader.read_text(encoding="utf-8", errors="replace")
+        src = shader_common.build_shader_source(shader)
     except OSError as e:
         return False, f"--- {shader.relative_to(ROOT)} (read) ---\ncannot read shader: {e}"
-
-    # Engine-style include pre-processor (option 1): flatten `#include`
-    # directives the way GameOS/gameos/utils/shader_builder.cpp:262
-    # parse_includes does, BEFORE handing the source to glslangValidator.
-    # glslang's -I-based resolver uses search paths; the engine does not
-    # (base_path + sep + name). Flattening here makes the validator see
-    # the same source the engine compiles.
-    try:
-        flat_text = parse_includes_engine_style(src_text, str(shader))
     except ValueError as e:
         return False, f"--- {shader.relative_to(ROOT)} (include) ---\n{e}"
-
-    # Pick the engine-matching prefix: a per-shader override (mirroring a
-    # custom makeProgram preamble in C++) takes priority over the default.
-    prefix = SHADER_PREFIX_OVERRIDE.get(shader.name, VERSION_PREFIX)
-
-    # Keep the GL_GOOGLE_include_directive prefix as a harmless safety net
-    # in case a future include pattern slips past the Python pre-processor
-    # (the flattened text usually has no `#include` left at all).
-    if _INCLUDE_RE.search(flat_text):
-        src = prefix + INCLUDE_EXTENSION + flat_text
-    else:
-        src = prefix + flat_text
-
-    # Per-shader textual rewrites (tool-vs-engine gap compensation). See
-    # SHADER_TOKEN_REWRITES docstring above. Applied last so the rewrite
-    # sees the final source the validator will compile.
-    for old_tok, new_tok in SHADER_TOKEN_REWRITES.get(shader.name, ()):
-        src = src.replace(old_tok, new_tok)
 
     # Write to a temp file in the shader dir so relative #include paths
     # (if any are not in -I) and error messages stay sensible. The dir
@@ -532,12 +235,12 @@ def main() -> int:
         targets = [Path(s).resolve() for s in args.shader]
         # Validate the user gave us recognised stages.
         for t in targets:
-            if t.suffix not in STAGE_BY_EXT:
+            if t.suffix not in shader_common.STAGE_BY_EXT:
                 print(f"validate_shaders: unknown shader stage for {t}",
                       file=sys.stderr)
                 return 1
     else:
-        targets = discover_shaders()
+        targets = shader_common.discover_shaders()
 
     if not targets:
         print("validate_shaders: no shaders found", file=sys.stderr)
@@ -552,7 +255,7 @@ def main() -> int:
         rel = sh.relative_to(ROOT)
         # Skip shaders the engine stitches programmatically at runtime;
         # standalone validation cannot reach them. Counted separately.
-        skip_reason = SKIP_SHADERS.get(sh.name)
+        skip_reason = shader_common.SKIP_SHADERS.get(sh.name)
         if skip_reason is not None:
             skipped += 1
             print(f"[SKIP] {rel}: {skip_reason}")
