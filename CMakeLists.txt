@@ -363,3 +363,22 @@ add_subdirectory("./res" "./out/res")
 add_subdirectory("./data_tools" "./out/data_tools")
 add_subdirectory("./text_tool" "./out/text_tool")
 add_subdirectory("./Viewer" "./out/Viewer")
+
+# -----------------------------------------------------------------------
+# Shader contract reflection CI (Tier 1.2)
+# Depends on Vulkan SDK tools: glslangValidator, spirv-cross.
+# Run: cmake --build build64 --target shader_reflect
+# -----------------------------------------------------------------------
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_FOUND)
+    add_custom_target(shader_reflect
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/tools/shader_reflect/reflect.py
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Shader contract reflection CI (Tier 1.2)"
+        VERBATIM
+    )
+    if(TARGET shader_validate)
+        add_dependencies(shader_reflect shader_validate)
+    endif()
+endif()

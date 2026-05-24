@@ -433,12 +433,15 @@ def check_variant_coverage(
 def check_invariants(
     reflected: dict[str, dict],
     raw_by_key: dict[str, dict] | None = None,
+    allow_partial: bool = False,
 ) -> list[str]:
     """Check REQUIRED_INVARIANTS against reflected contracts.
 
     reflected: {f"{shader_rel}/{variant}": contract_dict}
     raw_by_key: {f"{shader_rel}/{variant}": raw_spirv_cross_json}
       Required for "type_member" checks. Pass None to skip those.
+    allow_partial: if True, silently skip invariants for shaders not in reflected
+      (used when --shader restricts to a subset of shaders).
 
     Returns list of CONTRACT_VIOLATION messages. An empty list = all pass.
     Invariant failures are NOT bypassable by --update.
@@ -452,6 +455,8 @@ def check_invariants(
         contract = reflected.get(key)
 
         if contract is None:
+            if allow_partial:
+                continue
             violations.append(
                 f"CONTRACT_VIOLATION: {key} not in reflected results "
                 f"(shader not compiled or skipped)"
@@ -735,7 +740,10 @@ def main() -> int:
                 print(f"[{_TAG_PASS}] {label}")
 
     # Invariant checks — run even on --update to catch bypasses.
-    violations = check_invariants(reflected, raw_by_key)
+    # allow_partial when --shader restricts to a subset: don't flag other
+    # shaders as CONTRACT_VIOLATION just because they weren't compiled.
+    violations = check_invariants(reflected, raw_by_key,
+                                  allow_partial=bool(args.shader))
     for v in violations:
         print(v, file=sys.stderr)
 
