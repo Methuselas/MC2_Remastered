@@ -1135,6 +1135,7 @@ void GpuStaticPropBatcher::onMapUnload() {
     }
     s_packetMaterialIdx.clear();
     s_materialGpuTable.clear();
+    s_materialGpuSidecarValid = false;  // M1: reset so flush() cannot sample stale sidecar on reload
     s_sortedPacketOrder.clear();
     s_sortedPacketOrder.shrink_to_fit();
     s_alphaOffCmdCount = 0;
@@ -2058,6 +2059,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         //   s_packetMaterialIdx.size() == s_sortedPacketOrder.size() == PerDrawEntry count
         // This is the v3 invariant: draw slot i reads materials[s_packetMaterialIdx[i]].
         if (s_materialGpuEnabled) {
+            s_materialGpuSidecarValid = false;  // MAJ-1: reset before sidecar loop
             s_packetMaterialIdx.clear();
             s_materialGpuTable.clear();
 
@@ -2160,6 +2162,21 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                               emittedCount, mismatches);
                 std::fputs(buf, stderr);
             }
+
+            // C1 fix: record whether the sidecar is aligned with the emitted draw count.
+            // This flag gates sampling in flush(). If sizes diverge, sampling is
+            // disabled for the whole pass — legacy texArrayLayer is the fallback.
+            s_materialGpuSidecarValid =
+                (s_packetMaterialIdx.size() == s_sortedPacketOrder.size());
+
+            if (!s_materialGpuSidecarValid) {
+                char buf[128];
+                std::snprintf(buf, sizeof(buf),
+                              "[MATERIAL_GPU v1] ERROR materialIdx sidecar size mismatch"
+                              " emitted=%zu sidecar=%zu sample_forced=0\n",
+                              s_sortedPacketOrder.size(), s_packetMaterialIdx.size());
+                std::fputs(buf, stderr);
+            }
         } // end s_materialGpuEnabled (sidecar)
 
         std::vector<PerDrawEntry> entries(s_sortedPacketOrder.size());
@@ -2202,9 +2219,36 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                     GpuStaticPropRegistry::getRecipeIndexForType(typeID);
                 e.objectIdRaw =
                     static_cast<int32_t>(RenderWorld::objectIdRawForStaticPropRecipe(m1_5_recipeIndex));
+
+                // MaterialGpu-3: fill materialIdx from v2 sidecar.
+                // Guard: sidecar valid means s_packetMaterialIdx.size() == entries.size(),
+                // so index i is in bounds.
+                if (s_materialGpuEnabled && s_materialGpuSidecarValid) {
+                    e.materialIdx = s_packetMaterialIdx[i];
+                } else {
+                    e.materialIdx = 0u;
+                }
             }
             entries[i] = e;
         }
+
+        // m1: verify PerDrawEntry.materialIdx matches s_packetMaterialIdx[slot].
+        // Catches assignment mistakes before shader sampling begins.
+        if (s_materialGpuEnabled && s_materialGpuSidecarValid) {
+            int entryMismatches = 0;
+            const uint32_t emittedCount2 = static_cast<uint32_t>(s_sortedPacketOrder.size());
+            for (uint32_t i = 0; i < emittedCount2; ++i) {
+                if (entries[i].materialIdx != s_packetMaterialIdx[i]) {
+                    ++entryMismatches;
+                }
+            }
+            char buf[96];
+            std::snprintf(buf, sizeof(buf),
+                          "[MATERIAL_GPU v1] event=entry_material_idx emitted=%u mismatches=%d\n",
+                          emittedCount2, entryMismatches);
+            std::fputs(buf, stderr);
+        }
+
         glGenBuffers(1, &s_perDrawSsbo);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perDrawSsbo);
         glBufferData(GL_SHADER_STORAGE_BUFFER,
@@ -4315,6 +4359,17 @@ size_t batcher_getCoalescePerFrameInstanceBytes() {
 bool batcher_isCoalesceLayoutReady() { return s_coalesceLayoutReady; }
 bool batcher_isCoalesceArmed()       { return s_coalesceArmed;       }
 
+// MaterialGpu-3: look up entry from the per-mission material table.
+// Returns false (and leaves *out untouched) when the gate is OFF, the table
+// is empty, or index is out of range.
+bool batcher_getMaterialGpuEntry(uint32_t index, RenderCore::MaterialGpu* out) {
+    if (!s_materialGpuEnabled) return false;
+    if (!out) return false;
+    if (index >= static_cast<uint32_t>(s_materialGpuTable.size())) return false;
+    *out = s_materialGpuTable[index];
+    return true;
+}
+
 uint32_t batcher_getPerTypePeakCount(uint32_t typeID) {
     return typeID < s_perTypePeak.size() ? s_perTypePeak[typeID] : 0u;
 }
@@ -4441,4 +4496,16 @@ void batcher_prepareBaseInstanceTable() {
     s_offGroupBytesThisFrame  = offGroupCount * sizeof(GpuStaticPropInstance);
     s_onGroupBytesThisFrame   = (totalCount - offGroupCount) * sizeof(GpuStaticPropInstance);
     s_totalUsedBytesThisFrame = totalCount * sizeof(GpuStaticPropInstance);
+}
+
+// MaterialGpu-3: CPU-side accessor for the MaterialGpu sidecar table.
+// Returns true and copies the entry when MC2_MATERIAL_GPU=1 and idx is valid.
+// Returns false (and leaves *out unchanged) when the table is inactive or idx
+// is out of range.  Safe to call at inspector (click-time) — the table is
+// written only at mission load/unload; no lock needed.
+bool batcher_getMaterialGpuEntry(uint32_t materialIdx, RenderCore::MaterialGpu* out) {
+    if (!out || !s_materialGpuEnabled) return false;
+    if (materialIdx >= static_cast<uint32_t>(s_materialGpuTable.size())) return false;
+    *out = s_materialGpuTable[materialIdx];
+    return true;
 }

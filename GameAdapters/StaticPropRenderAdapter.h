@@ -20,6 +20,7 @@
 #include <cstdint>
 
 #include "../RenderCore/Handle.h"
+#include "../RenderCore/MaterialGpu.h"
 
 // Forward-decl game-side base. Spec section 12 carve-out: adapter
 // HEADERS may forward-decl; adapter .cpp may include real header.
@@ -78,6 +79,16 @@ void destroyStaticProp(RenderCore::RenderObjectHandle h);
 // is invalid, tombstoned, or the registry is disabled.
 // recipeIndex comes from LookupResult::gameObjectId (M1.6 sentinel: -1 == invalid).
 void getRecipeShapeName(int32_t recipeIndex, char* out, size_t outLen);
+
+// M3-inspector: look up the MaterialGpu sidecar entry for a material handle.
+// materialHandleBits is LookupResult::materialHandleBits (0 = sentinel / unknown).
+// Returns true and fills *out when MC2_MATERIAL_GPU=1, the handle is valid, and
+// the index is in-range. Returns false (out unchanged) otherwise.
+bool getMaterialGpuData(uint32_t materialHandleBits, RenderCore::MaterialGpu* out);
+
+// Returns true when the MaterialGpu sidecar table is active (MC2_MATERIAL_GPU=1
+// and at least one entry has been uploaded this mission).
+bool isMaterialGpuActive();
 
 } // namespace StaticProp
 } // namespace GameAdapters

@@ -751,6 +751,7 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
                 "[RENDER_WORLD v1] WARN: lookupAtPixel called with MC2_OBJECT_ID_BUFFER=0\n");
             warned = true;
         }
+        out.lookupFailReason = "OID_BUFFER_DISABLED";
         return out;
     }
     gosPostProcess* pp = getGosPostProcess();
@@ -761,11 +762,13 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
                 "[RENDER_WORLD v1] WARN: lookupAtPixel called before postprocess init\n");
             warned = true;
         }
+        out.lookupFailReason = "NO_POSTPROCESS";
         return out;
     }
     const GLuint fbo = pp->getSceneFBO();
     const GLuint tex = pp->getSceneObjectIdTex();
     if (!fbo || !tex) {
+        out.lookupFailReason = "NO_FBO_OR_TEX";
         return out;
     }
 
@@ -785,8 +788,11 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
     glReadPixels(screenX, screenY, 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &depthSample);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prevReadFbo));
 
+    // Capture raw pixel regardless of validity — inspector shows it even for failures.
+    out.rawObjectId = raw;
+
     if (raw == 0u) {
-        // Background / cleared pixel.
+        out.lookupFailReason = "BACKGROUND_PIXEL";
         return out;
     }
 
@@ -798,7 +804,8 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
     {
         std::lock_guard<std::mutex> lk(s_objectRecordsMutex);
         if (h.index() >= s_objectRecords.size()) {
-            return out;  // out-of-range index: treat as invalid
+            out.lookupFailReason = "INDEX_OUT_OF_RANGE";
+            return out;
         }
         rec = s_objectRecords[h.index()];
     }
@@ -806,9 +813,11 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
     // Generation check: stale pixel (rendered before slot recycle)
     // returns invalid even though the raw value parses to a Handle.
     if (rec.generation != static_cast<uint16_t>(h.generation())) {
+        out.lookupFailReason = "GENERATION_MISMATCH";
         return out;
     }
     if ((rec.flags & kRenderObjectFlagAlive) == 0u) {
+        out.lookupFailReason = "SLOT_DEAD";
         return out;
     }
 
@@ -824,7 +833,8 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
             std::fprintf(stderr,
                 "[RENDER_WORLD v1] WARN: lookupAtPixel returned kind=Terrain but no writer should produce it (M3 reservation; M3.1 would change this)\n");
         }
-        return out;  // isValid=false (default)
+        out.lookupFailReason = "TERRAIN_RESERVED";
+        return out;
     }
 
     out.isValid            = true;

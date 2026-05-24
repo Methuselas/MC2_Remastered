@@ -72,41 +72,66 @@ void EditorInspector::drawImGui() {
 
     if (!s_open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(420, 380), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(440, 500), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Object Inspector", &s_open)) {
         ImGui::End();
         return;
     }
 
+    const auto& lk = s_selection.lookup;
+    static const char* s_kindNames[] = { "StaticProp", "Mech", "Terrain", "Vfx", "Unknown" };
+
+    // Object-ID — shown even for invalid / failed picks.
+    if (ImGui::CollapsingHeader("Object-ID", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Raw pixel:     0x%08X", lk.rawObjectId);
+        if (lk.rawObjectId != 0u) {
+            RenderCore::RenderObjectHandle hraw;
+            hraw.bits = lk.rawObjectId;
+            ImGui::Text("  idx [19:0]:  %u", hraw.index());
+            ImGui::Text("  gen [31:20]: %u", hraw.generation());
+        }
+        if (lk.isValid) {
+            ImGui::TextColored(ImVec4(0.4f,1.0f,0.4f,1.f), "Valid:         yes");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f,0.55f,0.3f,1.f), "Valid:         no");
+            if (lk.lookupFailReason)
+                ImGui::Text("  Reason:      %s", lk.lookupFailReason);
+        }
+    }
+
     if (!s_selection.valid) {
-        ImGui::TextUnformatted("No object selected.");
+        ImGui::Spacing();
+        ImGui::TextUnformatted("No valid object selected.");
         ImGui::TextUnformatted("Ctrl+Shift+LMB to pick.");
-        ImGui::Text("Last click: (%d, %d)", s_selection.screenX, s_selection.screenY);
+        ImGui::Text("Screen: (%d, %d)", s_selection.screenX, s_selection.screenY);
         ImGui::End();
         return;
     }
 
     // Generic header
-    const char* kindNames[] = { "StaticProp", "Mech", "Terrain", "Vfx", "Unknown" };
     const unsigned kindIdx = static_cast<unsigned>(s_selection.kind);
-    const char* kindName = kindIdx < 4 ? kindNames[kindIdx] : kindNames[4];
+    const char* kindName = kindIdx < 4 ? s_kindNames[kindIdx] : s_kindNames[4];
+    ImGui::Separator();
     ImGui::Text("Kind:          %s", kindName);
     ImGui::Text("Handle raw:    0x%08X", s_selection.handle.raw());
     ImGui::Text("Handle idx:    %u / gen: %u",
         s_selection.handle.index(), s_selection.handle.generation());
     ImGui::Text("Screen:        (%d, %d)", s_selection.screenX, s_selection.screenY);
-    if (s_selection.lookup.worldPosValid)
-        ImGui::Text("World:         (%.1f, %.1f, %.1f)",
-            s_selection.lookup.worldX, s_selection.lookup.worldY, s_selection.lookup.worldZ);
+    if (lk.worldPosValid)
+        ImGui::Text("World:         (%.1f, %.1f, %.1f)", lk.worldX, lk.worldY, lk.worldZ);
     else
         ImGui::TextDisabled("World:         (unavailable)");
 
     // Copy All — formats everything visible in the window to the clipboard.
     ImGui::Spacing();
     if (ImGui::Button("Copy All")) {
-        char buf[2048];
+        char buf[3072];
         int  n = 0;
-        const auto& lk = s_selection.lookup;
+        n += std::snprintf(buf+n, sizeof(buf)-n,
+            "ObjID raw: 0x%08X  valid: %s%s%s\n",
+            lk.rawObjectId, lk.isValid ? "yes" : "no",
+            (!lk.isValid && lk.lookupFailReason) ? "  reason: " : "",
+            (!lk.isValid && lk.lookupFailReason) ? lk.lookupFailReason : "");
         n += std::snprintf(buf+n, sizeof(buf)-n, "Kind: %s\n", kindName);
         n += std::snprintf(buf+n, sizeof(buf)-n,
             "Handle: 0x%08X  idx %u / gen %u\n",
@@ -127,6 +152,15 @@ void EditorInspector::drawImGui() {
                 "RecipeIdx: %d  Shape: %s\n",
                 s_staticPropData.recipeIndex,
                 s_staticPropData.shapeName[0] ? s_staticPropData.shapeName : "(unknown)");
+            if (s_staticPropData.materialGpuPopulated) {
+                const auto& mg = s_staticPropData.materialGpu;
+                n += std::snprintf(buf+n, sizeof(buf)-n,
+                    "MatIdx: %u  albedo: %u  normal: %u  mrTex: %u  emit: %u\n"
+                    "flags: 0x%08X  baseColor: %.3f  metallic: %.3f  rough: %.3f\n",
+                    s_staticPropData.materialIdx,
+                    mg.albedoTex, mg.normalTex, mg.metallicRoughnessTex, mg.emissiveTex,
+                    mg.flags, mg.baseColorFactor, mg.metallicFactor, mg.roughnessFactor);
+            }
         }
         if (s_selection.kind == RenderWorld::RenderObjectKind::Mech
                 && s_mechData.populated) {
@@ -162,7 +196,6 @@ void EditorInspector::drawImGui() {
 
     // LookupResult
     if (ImGui::CollapsingHeader("Lookup", ImGuiTreeNodeFlags_DefaultOpen)) {
-        const auto& lk = s_selection.lookup;
         ImGui::Text("Mesh bits:     0x%08X", lk.meshHandleBits);
         ImGui::Text("Material bits: 0x%08X", lk.materialHandleBits);
         ImGui::Text("LOD:           %u",     static_cast<unsigned>(lk.lodLevel));
@@ -220,6 +253,64 @@ void EditorInspector::drawImGui() {
     } else if (s_selection.kind == RenderWorld::RenderObjectKind::Terrain) {
         if (ImGui::CollapsingHeader("Terrain")) {
             ImGui::TextUnformatted("Terrain pick reserved (M3).");
+        }
+    }
+
+    // Material — shown for any kind; GPU fields only when MC2_MATERIAL_GPU active.
+    if (ImGui::CollapsingHeader("Material")) {
+        RenderCore::MaterialHandle mh;
+        mh.bits = lk.materialHandleBits;
+        if (mh.bits == 0u) {
+            ImGui::TextDisabled("Handle:        (unknown)");
+        } else {
+            ImGui::Text("Handle idx:    %u", mh.index());
+            ImGui::Text("Handle gen:    %u", mh.generation());
+            ImGui::Text("Handle raw:    0x%08X", mh.raw());
+        }
+        ImGui::Spacing();
+        if (s_selection.kind == RenderWorld::RenderObjectKind::StaticProp
+                && s_staticPropData.populated) {
+            if (!s_staticPropData.materialGpuActive) {
+                ImGui::TextDisabled("Source:        legacy texArrayLayer");
+                ImGui::TextDisabled("(MC2_MATERIAL_GPU not active)");
+            } else if (!s_staticPropData.materialGpuPopulated) {
+                ImGui::TextColored(ImVec4(1.f,0.55f,0.3f,1.f),
+                    "Source:        MaterialGpu");
+                ImGui::TextDisabled("  idx out of range");
+            } else {
+                const auto& mg = s_staticPropData.materialGpu;
+                ImGui::Text("Source:        MaterialGpu");
+                ImGui::Text("matIdx:        %u / gen %u",
+                    s_staticPropData.materialIdx, s_staticPropData.materialGen);
+                ImGui::Separator();
+                auto texLabel = [](uint32_t t, char* b, size_t n) {
+                    if (t == 0xFFFFFFFFu) std::snprintf(b, n, "(absent)");
+                    else std::snprintf(b, n, "%u", t);
+                };
+                char tb[24];
+                texLabel(mg.albedoTex, tb, sizeof(tb));
+                ImGui::Text("albedoTex:     %s", tb);
+                texLabel(mg.normalTex, tb, sizeof(tb));
+                ImGui::Text("normalTex:     %s", tb);
+                texLabel(mg.metallicRoughnessTex, tb, sizeof(tb));
+                ImGui::Text("mrTex:         %s", tb);
+                texLabel(mg.emissiveTex, tb, sizeof(tb));
+                ImGui::Text("emissiveTex:   %s", tb);
+                ImGui::Separator();
+                ImGui::Text("flags:         0x%08X%s%s%s%s%s%s",
+                    mg.flags,
+                    (mg.flags & 1u)  ? " AlphaTest"  : "",
+                    (mg.flags & 2u)  ? " NormalMap"  : "",
+                    (mg.flags & 4u)  ? " MetalRough" : "",
+                    (mg.flags & 8u)  ? " Emissive"   : "",
+                    (mg.flags & 16u) ? " DblSided"   : "",
+                    (mg.flags & 32u) ? " Window"     : "");
+                ImGui::Text("baseColor:     %.3f", mg.baseColorFactor);
+                ImGui::Text("metallic:      %.3f", mg.metallicFactor);
+                ImGui::Text("roughness:     %.3f", mg.roughnessFactor);
+            }
+        } else {
+            ImGui::TextDisabled("(MaterialGpu data: StaticProp only)");
         }
     }
 

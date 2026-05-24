@@ -1560,6 +1560,15 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 				sd.recipeIndex = static_cast<int32_t>(inspResult.lookup.gameObjectId);
 				GameAdapters::StaticProp::getRecipeShapeName(
 				    sd.recipeIndex, sd.shapeName, sizeof(sd.shapeName));
+				sd.materialGpuActive = GameAdapters::StaticProp::isMaterialGpuActive();
+				{
+					RenderCore::MaterialHandle mh;
+					mh.bits = inspResult.lookup.materialHandleBits;
+					sd.materialIdx = mh.index();
+					sd.materialGen = mh.generation();
+				}
+				sd.materialGpuPopulated = GameAdapters::StaticProp::getMaterialGpuData(
+				    inspResult.lookup.materialHandleBits, &sd.materialGpu);
 				EditorInspector::setStaticPropData(sd);
 			} else if (inspResult.lookup.kind == RenderWorld::RenderObjectKind::Mech) {
 				BattleMech* bm = GameAdapters::Mech::findMechByHandle(inspResult.lookup.handle);
@@ -1870,6 +1879,15 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 				sd.recipeIndex = static_cast<int32_t>(inspResult.lookup.gameObjectId);
 				GameAdapters::StaticProp::getRecipeShapeName(
 				    sd.recipeIndex, sd.shapeName, sizeof(sd.shapeName));
+				sd.materialGpuActive = GameAdapters::StaticProp::isMaterialGpuActive();
+				{
+					RenderCore::MaterialHandle mh;
+					mh.bits = inspResult.lookup.materialHandleBits;
+					sd.materialIdx = mh.index();
+					sd.materialGen = mh.generation();
+				}
+				sd.materialGpuPopulated = GameAdapters::StaticProp::getMaterialGpuData(
+				    inspResult.lookup.materialHandleBits, &sd.materialGpu);
 				EditorInspector::setStaticPropData(sd);
 			} else if (inspResult.lookup.kind == RenderWorld::RenderObjectKind::Mech) {
 				BattleMech* bm = GameAdapters::Mech::findMechByHandle(inspResult.lookup.handle);

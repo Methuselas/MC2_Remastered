@@ -144,5 +144,19 @@ void getRecipeShapeName(int32_t recipeIndex, char* out, size_t outLen) {
     out[outLen - 1] = '\0';
 }
 
+bool getMaterialGpuData(uint32_t materialHandleBits, RenderCore::MaterialGpu* out) {
+    if (!out || materialHandleBits == 0u) return false;
+    RenderCore::MaterialHandle mh;
+    mh.bits = materialHandleBits;
+    return batcher_getMaterialGpuEntry(mh.index(), out);
+}
+
+bool isMaterialGpuActive() {
+    RenderCore::MaterialGpu dummy;
+    // Table is active if entry 0 exists (one sentinel entry is always uploaded
+    // when MC2_MATERIAL_GPU=1 and at least one prop registered).
+    return batcher_getMaterialGpuEntry(0u, &dummy);
+}
+
 } // namespace StaticProp
 } // namespace GameAdapters

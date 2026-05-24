@@ -9,6 +9,10 @@
 #include "tgl.h"
 #include "msl.h"
 
+// MaterialGpu-3: forward declare RenderCore::MaterialGpu so batcher_getMaterialGpuEntry
+// can be declared without pulling in the full MaterialGpu.h into every TU that includes this header.
+namespace RenderCore { struct MaterialGpu; }
+
 // Per-instance shader-visible struct.
 // Layout mirror of the GLSL std430 struct in shaders/static_prop.vert.
 // CHANGING THIS STRUCT REQUIRES CHANGING THE SHADER IN LOCKSTEP.
@@ -381,3 +385,8 @@ void batcher_unbindBaseInstanceByCmdSsboForPatch();
 void batcher_prepareBaseInstanceTable();
 
 extern int g_lightProbeSetupPath;  // [GPUPROPS v1]
+
+// MaterialGpu-3: look up an entry from the per-mission material table by index.
+// Returns true and fills *out if MC2_MATERIAL_GPU=1, geometry is finalized,
+// and index < table size. Returns false otherwise (out is not modified).
+bool batcher_getMaterialGpuEntry(uint32_t index, RenderCore::MaterialGpu* out);

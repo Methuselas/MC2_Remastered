@@ -218,6 +218,13 @@ struct LookupResult {
     float                           worldX           = 0.f;
     float                           worldY           = 0.f;
     float                           worldZ           = 0.f;
+    // M3-inspector: raw 32-bit pixel value read from attachment-2.
+    // Populated even when isValid=false (0 = background / OID disabled).
+    // Bits[19:0]=index, bits[31:20]=generation (same as handle.bits).
+    uint32_t                        rawObjectId      = 0u;
+    // M3-inspector: static string literal describing why isValid is false.
+    // nullptr when isValid=true.
+    const char*                     lookupFailReason = nullptr;
 };
 
 // M1.5: synchronous pixel -> handle lookup. screenX/Y in GL convention

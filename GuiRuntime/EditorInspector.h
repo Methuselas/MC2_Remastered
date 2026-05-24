@@ -1,5 +1,6 @@
 #pragma once
 #include "../RenderWorld/RenderWorld.h"
+#include "../RenderCore/MaterialGpu.h"
 #include <cstdint>
 
 namespace EditorInspector {
@@ -17,6 +18,12 @@ struct StaticPropInspectorData {
     bool    populated    = false;
     int32_t recipeIndex  = -1;
     char    shapeName[128] = {};
+    // MaterialGpu sidecar (populated when MC2_MATERIAL_GPU=1).
+    bool    materialGpuActive     = false;
+    uint32_t materialIdx          = 0xFFFFFFFFu;
+    uint32_t materialGen          = 0u;
+    bool    materialGpuPopulated  = false;
+    RenderCore::MaterialGpu materialGpu = {};
 };
 
 struct MechInspectorData {
