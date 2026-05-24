@@ -1,6 +1,7 @@
 #include "gos_static_prop_registry.h"
 #include "../../mclib/txmmgr.h"  // 2026-05-05: peekLightSlotNumLights/getLightStructCount for flush trace
-#include "../../mclib/appear.h"  // Task 6: Appearance* for registerStaticProp()
+#include "../../mclib/appear.h"   // Task 6: Appearance* for registerStaticProp()
+#include "../../mclib/apprtype.h"  // AppearanceType::name (inspector shapeName capture)
 #include "gpu_cull_substrate.h"  // C1b GPU authority flip: substrate_appendStaticPropRecord
 #include "gpu_cull_record.h"     // C1b: GpuActorRecord, Cat_StaticProp, CategoryMask
 #include "../../mclib/terrain.h" // C1b temporal-superset: Terrain::worldToBlockIdx()
@@ -128,6 +129,10 @@ struct RecipeRange {
     // Written to GpuActorRecord.boundingRadius in flush(). 0.0f = uncaptured;
     // flush falls back to 200.0f (legacy placeholder) for unpatched callers.
     float              extentRadius;
+    // Inspector: AppearanceType::name captured at registerStaticPropAndReturnRecipe
+    // time (late-spawn path only; bulk registerRecipe path has no name available
+    // in RelWithDebInfo). Empty string = name not captured.
+    char               shapeName[128];
 };
 
 static std::vector<GpuStaticPropInstance> s_recipes;
@@ -217,7 +222,18 @@ int32_t registerStaticPropAndReturnRecipe(Appearance* app) {
         ++s_lateSpawnTypeUnknownCount;
         return -1;
     }
-    return app->getStaticRecipeIndex();
+    const int32_t recipeIdx = app->getStaticRecipeIndex();
+    // Capture appearance name for the inspector (AppearanceType::name always
+    // present, not debug-gated). Bulk registerRecipe callers have no name.
+    if (recipeIdx >= 0 && static_cast<size_t>(recipeIdx) < s_recipeRanges.size()) {
+        AppearanceTypePtr at = app->getAppearanceType();
+        if (at && at->name) {
+            std::strncpy(s_recipeRanges[static_cast<size_t>(recipeIdx)].shapeName,
+                         at->name, 127);
+            s_recipeRanges[static_cast<size_t>(recipeIdx)].shapeName[127] = '\0';
+        }
+    }
+    return recipeIdx;
 }
 
 uint32_t getActiveCount() {
@@ -302,6 +318,7 @@ int32_t registerRecipe(TG_MultiShape* multi,
     rng.registeredOnFrame = g_mc2FrameCounter;
     rng.firstFlushSeen    = false;
     rng.lightDataIndex    = 0xFFFFFFFFu;  // 2026-05-11 per-instance capture sentinel
+    rng.shapeName[0]      = '\0';         // populated by late-spawn path if Appearance* available
     s_recipes.insert(s_recipes.end(), batch.begin(), batch.end());
     const int32_t regIdx = static_cast<int32_t>(s_recipeRanges.size());
     s_recipeRanges.push_back(rng);
@@ -401,6 +418,14 @@ int32_t getRecipeIndexForType(uint32_t typeID) {
     auto it = s_typeIDToRecipeIndex.find(typeID);
     if (it == s_typeIDToRecipeIndex.end()) return -1;
     return it->second;
+}
+
+const char* getRecipeShapeName(int32_t recipeIndex) {
+    if (recipeIndex < 0 || static_cast<size_t>(recipeIndex) >= s_recipeRanges.size())
+        return nullptr;
+    const RecipeRange& rng = s_recipeRanges[static_cast<size_t>(recipeIndex)];
+    if (rng.count == 0) return nullptr;   // tombstoned
+    return rng.shapeName[0] ? rng.shapeName : nullptr;
 }
 
 void flush() {

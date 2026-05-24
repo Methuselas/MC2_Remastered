@@ -134,5 +134,15 @@ void destroyStaticProp(RenderCore::RenderObjectHandle h) {
     RenderWorld::destroy(h);
 }
 
+void getRecipeShapeName(int32_t recipeIndex, char* out, size_t outLen) {
+    if (!out || outLen == 0) return;
+    out[0] = '\0';
+    if (recipeIndex < 0) return;
+    const char* name = GpuStaticPropRegistry::getRecipeShapeName(recipeIndex);
+    if (!name) return;
+    std::strncpy(out, name, outLen - 1);
+    out[outLen - 1] = '\0';
+}
+
 } // namespace StaticProp
 } // namespace GameAdapters

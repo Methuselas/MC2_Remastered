@@ -11,8 +11,9 @@ static bool isEnabled() {
     return cached == 1;
 }
 
-static EditorInspector::InspectorSelection s_selection;
-static EditorInspector::MechInspectorData  s_mechData;
+static EditorInspector::InspectorSelection     s_selection;
+static EditorInspector::StaticPropInspectorData s_staticPropData;
+static EditorInspector::MechInspectorData       s_mechData;
 static bool s_open = false;
 
 }  // namespace
@@ -21,8 +22,9 @@ void EditorInspector::onCtrlShiftClick(int mouseX, int mouseY) {
     if (!isEnabled()) return;
     // Coords are recorded; missiongui.cpp calls setPickResult after
     // running tryGameplayPick to populate the full selection.
-    s_selection = InspectorSelection{};
-    s_mechData  = MechInspectorData{};
+    s_selection      = InspectorSelection{};
+    s_staticPropData = StaticPropInspectorData{};
+    s_mechData       = MechInspectorData{};
     s_selection.screenX = mouseX;
     s_selection.screenY = mouseY;
     s_open = true;
@@ -31,7 +33,9 @@ void EditorInspector::onCtrlShiftClick(int mouseX, int mouseY) {
 void EditorInspector::setPickResult(int mouseX, int mouseY,
                                     const RenderWorld::LookupResult& lookup) {
     if (!isEnabled()) return;
-    s_selection = InspectorSelection{};
+    s_selection      = InspectorSelection{};
+    s_staticPropData = StaticPropInspectorData{};
+    s_mechData       = MechInspectorData{};
     s_selection.screenX = mouseX;
     s_selection.screenY = mouseY;
     s_selection.valid   = lookup.isValid;
@@ -43,13 +47,18 @@ void EditorInspector::setPickResult(int mouseX, int mouseY,
     s_open = true;
 }
 
+void EditorInspector::setStaticPropData(const StaticPropInspectorData& sd) {
+    s_staticPropData = sd;
+}
+
 void EditorInspector::setMechData(const MechInspectorData& md) {
     s_mechData = md;
 }
 
 void EditorInspector::clear() {
-    s_selection = InspectorSelection{};
-    s_mechData  = MechInspectorData{};
+    s_selection      = InspectorSelection{};
+    s_staticPropData = StaticPropInspectorData{};
+    s_mechData       = MechInspectorData{};
     s_open = false;
 }
 
@@ -94,10 +103,14 @@ void EditorInspector::drawImGui() {
 
     // Kind-specific
     if (s_selection.kind == RenderWorld::RenderObjectKind::StaticProp) {
-        if (ImGui::CollapsingHeader("StaticProp")) {
-            ImGui::Text("Recipe via gameObjectId: %u", s_selection.lookup.gameObjectId);
-            ImGui::Text("Mesh handle bits:        0x%08X", s_selection.lookup.meshHandleBits);
-            ImGui::Text("Mat handle bits:         0x%08X", s_selection.lookup.materialHandleBits);
+        if (ImGui::CollapsingHeader("StaticProp", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (!s_staticPropData.populated) {
+                ImGui::TextUnformatted("(no game data -- pick not resolved)");
+            } else {
+                ImGui::Text("Recipe idx: %d", s_staticPropData.recipeIndex);
+                ImGui::Text("Shape:      %s",
+                    s_staticPropData.shapeName[0] ? s_staticPropData.shapeName : "(unknown)");
+            }
         }
     } else if (s_selection.kind == RenderWorld::RenderObjectKind::Mech) {
         if (ImGui::CollapsingHeader("Mech", ImGuiTreeNodeFlags_DefaultOpen)) {

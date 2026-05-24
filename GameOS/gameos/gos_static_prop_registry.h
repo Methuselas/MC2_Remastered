@@ -80,6 +80,11 @@ bool isReady(int32_t regIdx);
 // for unknown typeID (or after invalidate()).
 int32_t getRecipeIndexForType(uint32_t typeID);
 
+// Inspector accessor: shape filename for a registered recipe.
+// Returns nullptr for out-of-range, tombstoned, or null-shapeName entries.
+// Pointer is valid until the recipe is invalidated or destroy() is called.
+const char* getRecipeShapeName(int32_t recipeIndex);
+
 // Called from txmmgr.cpp BEFORE GpuStaticPropBatcher::instance().flush().
 // For each live regIdx: reads multi->getCachedGpuLightIndex() (freshened by
 // CacheGpuLightData() in render()), patches lightDataIndex in a stack copy

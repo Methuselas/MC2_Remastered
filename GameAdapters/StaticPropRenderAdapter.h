@@ -73,5 +73,11 @@ RenderCore::RenderObjectHandle syncStaticPropLateSpawn(
 // future-slice cleanup). Declared here so the surface is shape-complete.
 void destroyStaticProp(RenderCore::RenderObjectHandle h);
 
+// Inspector bridge: copy shape filename for recipeIndex into out[0..outLen-1].
+// out is null-terminated on return. Writes an empty string when recipeIndex
+// is invalid, tombstoned, or the registry is disabled.
+// recipeIndex comes from LookupResult::gameObjectId (M1.6 sentinel: -1 == invalid).
+void getRecipeShapeName(int32_t recipeIndex, char* out, size_t outLen);
+
 } // namespace StaticProp
 } // namespace GameAdapters

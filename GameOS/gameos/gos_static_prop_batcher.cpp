@@ -3107,7 +3107,7 @@ void GpuStaticPropBatcher::flush() {
     // (per-type hot-color SSBO; bound once for the whole flush, not per-type).
     // Stage 2.D.1: also save/restore SSBO slot 3 (parity readback harness;
     // bound only when MC2_OBJECT_PARITY_CHECK=1).
-    GLint prevSsbo0=0, prevSsbo1=0, prevSsbo2=0, prevSsbo3=0;
+    GLint prevSsbo0=0, prevSsbo1=0, prevSsbo2=0, prevSsbo3=0, prevSsbo5=0;
     GLboolean prevDepthTest=GL_FALSE, prevDepthMask=GL_FALSE;
     GLboolean prevCullFace=GL_FALSE, prevBlend=GL_FALSE;
     GLint prevDepthFunc=GL_LESS, prevCullMode=GL_BACK;
@@ -3122,6 +3122,7 @@ void GpuStaticPropBatcher::flush() {
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 1, &prevSsbo1);
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 2, &prevSsbo2);
     glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 3, &prevSsbo3);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 5, &prevSsbo5);
     prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
     glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
     glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
@@ -3486,6 +3487,24 @@ void GpuStaticPropBatcher::flush() {
 
         // 11.7.f — bind slot 4 (PerDraw SSBO).
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, s_perDrawSsbo);
+        // MaterialGpu-2: bind slot 5 (MaterialGpu SSBO) when gate active and buffer exists.
+        // No production shader in the static_prop program declares binding=5 in v2;
+        // the bind is a driver-error-free no-op from the shader perspective.
+        // The terrain pass uses slot 5 for WaterRecipeBuf in a different GL program —
+        // that is not a conflict (terrain re-binds WaterRecipeBuf before its own draw).
+        // prevSsbo5 is saved at flush() entry and restored at flush() exit.
+        // v3 will add the shader consumer in static_prop.frag.
+        if (s_materialGpuEnabled && s_materialGpuSsbo != 0) {
+            while (glGetError() != GL_NO_ERROR) {}  // drain stale BEFORE
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, s_materialGpuSsbo);
+            const GLenum bindErr = glGetError();    // sample AFTER
+            if (bindErr != GL_NO_ERROR) {
+                char buf[96];
+                std::snprintf(buf, sizeof(buf),
+                              "[MATERIAL_GPU v1] GL ERROR after bind: 0x%x\n", bindErr);
+                std::fputs(buf, stderr);
+            }
+        }
 
         // 2026-05-11 per-packet rework: each indirect cmd is per-PACKET, so
         // the multidraw counts and the alpha-ON byte offset use per-PACKET
@@ -3772,6 +3791,7 @@ void GpuStaticPropBatcher::flush() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, (GLuint)prevSsbo1);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)prevSsbo2);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, (GLuint)prevSsbo3);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, (GLuint)prevSsbo5);
     // Texture binding on unit 0
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit0);
