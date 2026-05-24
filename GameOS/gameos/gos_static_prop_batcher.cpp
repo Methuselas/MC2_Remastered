@@ -396,8 +396,9 @@ struct ProgramLocs {
     GLint materialFlags    = -1;
     GLint packetID         = -1;
     // Coalesce-only.
-    GLint drawIDBase       = -1;
-    GLint texArr           = -1;
+    GLint drawIDBase          = -1;
+    GLint texArr              = -1;
+    GLint materialGpuSample   = -1;   // MaterialGpu-3: u_materialGpuSample
 };
 static ProgramLocs s_locsLegacy;
 static ProgramLocs s_locsCoalesce;
@@ -615,6 +616,18 @@ void loadProgramsIfNeeded() {
             s_locsCoalesce.debugAddrMode     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_debugAddrMode");
             s_locsCoalesce.drawIDBase        = glGetUniformLocation(s_staticPropProgramCoalesce, "u_drawIDBase");
             s_locsCoalesce.texArr            = glGetUniformLocation(s_staticPropProgramCoalesce, "u_texArr");
+            s_locsCoalesce.materialGpuSample = glGetUniformLocation(s_staticPropProgramCoalesce, "u_materialGpuSample");
+
+            // M3 fix: if both gates are ON and the uniform is absent, log an error.
+            // This can only happen if the shader wasn't recompiled with v3 changes.
+            // The if(loc >= 0) guard in flush() already handles -1 safely (no-op),
+            // but the error makes the failure observable without a debugger.
+            if (s_materialGpuEnabled && s_materialGpuSampleEnabled &&
+                s_locsCoalesce.materialGpuSample < 0) {
+                std::fputs("[MATERIAL_GPU v1] ERROR uniform_missing name=u_materialGpuSample\n",
+                           stderr);
+            }
+
             // s_locsCoalesce.materialFlags / maxLocalVertexID / packetID
             // stay -1 (legacy-only; removed under MC2_COALESCE).
 
