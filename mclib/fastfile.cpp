@@ -11,6 +11,13 @@
 #include<ctype.h>
 #include"platform_str.h"
 
+// NS3 boundary: the FastFile registry storage belongs to the FastFile
+// subsystem (this TU), not to whatever game/tool main happens to link it.
+// extern'd for all consumers in ffile.h. Previously redefined in every main.
+FastFile	**fastFiles = NULL;
+long		numFastFiles = 0;
+long		maxFastFiles = 0;
+
 long ffLastError = 0;
 
 #define NO_ERR		0

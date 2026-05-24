@@ -659,12 +659,42 @@ void Camera::destroy (void)
 	}
 }
 
-// VPL Step 8b: Camera::getClosestVertex deleted (dead code, ZERO callers
-// across mclib/ + code/ + GameOS/ — grep-verified). It read topVertex->px/py
-// which Step 8b just made per-frame-stale; a dead function reading soon-stale
-// state is the additive-debt reactivation trap
-// (mc_texture_manager_dual_queue_legacy_retirement_debt.md). Deleted with the
-// VPL px/py/pz/pw writes per Step 8 review SS3 (MAJOR) + plan v3.5 MAJOR(a).
+// getClosestVertex: screen-click -> terrain vertex (row,col).
+// Reinstated 2026-05-24 for the EditRel Mission Editor (editor/TerrainBrush.h:56
+// is the sole caller). This is a NEW modern implementation — NOT the old
+// pr-36 body that read stale topVertex->px/py. Thin adapter over:
+//   (1) Camera::inverseProject  (screen -> fresh world point, no stale read)
+//   (2) Terrain::worldToTile    (world -> vertex row/col)
+// See engine-standalone camera.cpp for full design rationale.
+void Camera::getClosestVertex (Stuff::Vector2DOf<long>& screenPos,
+                               long& row, long& col)
+{
+	Stuff::Vector3D worldPoint;
+	worldPoint.x = worldPoint.y = worldPoint.z = 0.0f;
+
+	// Modern picking authority: screen -> fresh world point. Returns 0 when
+	// the camera is not yet initialized (turn < 4); worldPoint stays at origin.
+	inverseProject(screenPos, worldPoint);
+
+	// Canonical world -> terrain vertex (row,col) map.
+	int tileR = 0, tileC = 0;
+	land->worldToTile(worldPoint, tileR, tileC);
+
+	// Clamp into the valid vertex grid. The editor guard
+	// (tileR < realVerticesMapSide && tileR > -1) treats out-of-range
+	// as "no paint", so clamping here keeps row/col well-formed.
+	if (tileR < 0)
+		tileR = 0;
+	else if (tileR >= Terrain::realVerticesMapSide)
+		tileR = Terrain::realVerticesMapSide - 1;
+	if (tileC < 0)
+		tileC = 0;
+	else if (tileC >= Terrain::realVerticesMapSide)
+		tileC = Terrain::realVerticesMapSide - 1;
+
+	row = (long)tileR;
+	col = (long)tileC;
+}
 
 //---------------------------------------------------------------------------
 

@@ -31,12 +31,10 @@
 
 //------------------------------------------------------------------------------------------------------------
 // MechCmdr2 Global Instances of Things
-UserHeapPtr systemHeap = NULL;
+// NS3: systemHeap defined in mclib/heap.cpp (engine boundary).
 UserHeapPtr guiHeap = NULL;
 
-FastFile 	**fastFiles = NULL;
-long 		numFastFiles = 0;
-long		maxFastFiles = 0;
+// NS3: fastFiles/numFastFiles/maxFastFiles defined in mclib/fastfile.cpp (engine boundary).
 
 long GameDifficulty = 0;
 long gammaLevel = 0;
@@ -68,13 +66,13 @@ unsigned long spriteHeapSize = 8192000;
 unsigned long polyHeapSize = 1024000;
 unsigned long tglHeapSize = 32767000;
 
-DWORD gosResourceHandle = 0;
-HGOSFONT3D gosFontHandle = 0;
+// NS3: gosResourceHandle defined in mclib/utilities.cpp (engine boundary).
+// NS3: gosFontHandle defined in mclib/floathelp.cpp (engine boundary).
 FloatHelpPtr globalFloatHelp = NULL;
 unsigned long currentFloatHelp = 0;
 float MaxMinUV = 8.0f;
 
-DWORD BaseVertexColor = 0x00000000;		//This color is applied to all vertices in game as Brightness correction.
+// NS3: BaseVertexColor defined in mclib/quad.cpp (engine boundary).
 
 enum { CPU_UNKNOWN, CPU_PENTIUM, CPU_MMX, CPU_KATMAI } Processor = CPU_PENTIUM;		//Needs to be set when GameOS supports ProcessorID -- MECHCMDR2
 extern float frameRate;
@@ -92,11 +90,11 @@ char* ExceptionGameMsg = NULL;
 char buildNumber[80];
 
 extern long TERRAIN_TXM_SIZE;
-int ObjectTextureSize = 128;
+// NS3: ObjectTextureSize defined in mclib/bdactor.cpp (engine boundary).
 
 extern unsigned long MultiPlayCommanderId;
 extern bool	useRealLOS;
-bool reloadBounds = false;
+// NS3: reloadBounds defined in mclib/bdactor.cpp (engine boundary).
 
 //DEBUG
 

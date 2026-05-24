@@ -33,6 +33,11 @@
 #include"platform_str.h" 
 #include <ctype.h> // toupper
 
+// NS3 boundary: the engine system allocator belongs to the heap subsystem
+// (this TU), not to whatever game/tool main links it. extern'd for all
+// consumers in heap.h. Previously redefined in every main.
+UserHeapPtr systemHeap = NULL;
+
 //---------------------------------------------------------------------------
 // Static Globals
 static const char CorruptMsg[] = "Heap check failed.\n";

@@ -967,9 +967,14 @@ class Camera
 
 		unsigned long inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff::Vector3D &point);
 
-		// VPL Step 8b: getClosestVertex declaration deleted (dead code, zero
-		// callers; def removed from camera.cpp). See Step 8 review SS3.
-		
+		// getClosestVertex: screen-click -> terrain vertex (row,col).
+		// Reinstated 2026-05-24 for the EditRel Mission Editor (sole caller
+		// editor/TerrainBrush.h). Thin adapter over Camera::inverseProject +
+		// Terrain::worldToTile. Does NOT restore the stale-px/py scan that
+		// VPL Step 8b deleted. Definition in camera.cpp.
+		void getClosestVertex (Stuff::Vector2DOf<long>& screenPos,
+		                       long& row, long& col);
+
 		void setOrthogonal(void);
 		virtual void setCameraOrigin (void);
 		void calculateProjectionConstants (void);

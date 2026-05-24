@@ -2336,6 +2336,12 @@ namespace Stuff { class Matrix4D; }
 // Stuff::Matrix4D -> row-major and writes the terrain_mvp_ cache so all
 // gos_GetTerrainMVPMat4() callers inherit transparently.
 void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat);
+// gos_SetTerrainMVP: raw 16-float row-major matrix upload to terrain_mvp_.
+// Used by EditorCamera.h shim and gamecam.cpp (via gos_SetWorldToClipGL).
+// The two APIs write the SAME terrain_mvp_ cache; use whichever matches
+// the matrix available (Stuff::Matrix4D vs raw float[16]).
+void __stdcall gos_SetTerrainMVP(const float* matrix16);
+void __stdcall gos_SetTerrainViewport(float vmx, float vmy, float vax, float vay);
 void __stdcall gos_SetTerrainCameraPos(float x, float y, float z);
 
 // World-space overlay batch API ─────────────────────────────────────────────

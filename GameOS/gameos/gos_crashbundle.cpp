@@ -41,9 +41,10 @@ static char g_ring[kRingBytes];
 static volatile LONG64 g_ring_cursor = 0;  // total bytes written, monotonic
 static volatile LONG   g_ring_lock   = 0;  // spinlock, 0=free 1=held
 
-// externs we touch at crash time — wrapped in try/except at point of use.
-// Note: C++ linkage (no extern "C") to match the definition in code/mechcmd2.cpp
-extern char missionName[1024];     // code/mechcmd2.cpp
+// NS3 boundary: missionName canonical def moved here so gameos_editor (which
+// lacks code/mechcmd2.cpp) can link cleanly. All consumers extern-declare it.
+// C++ linkage (no extern "C") — matches the old mechcmd2.cpp definition.
+char missionName[1024];     // NS3: canonical def (was code/mechcmd2.cpp)
 extern uint32_t g_mc2FrameCounter; // mclib/tgl.cpp
 
 // Captured env flags (set once in crashbundle_init)

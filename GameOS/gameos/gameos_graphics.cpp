@@ -1410,6 +1410,12 @@ class gosRenderer {
         void setTerrainCameraPos(float x, float y, float z) {
             terrain_camera_pos_ = vec4(x, y, z, 1.0f);
         }
+        // setTerrainViewport: stores (vmx,vmy,vax,vay) for EditorCamera.h shim.
+        // gamecam.cpp does not call this (it reads viewport from gos_GetViewport
+        // inline); this exists so the editor can set the params the same way.
+        void setTerrainViewport(float vmx, float vmy, float vax, float vay) {
+            terrain_viewport_ = vec4(vmx, vmy, vax, vay);
+        }
         void terrainExtraReset() { terrain_extra_count_ = 0; terrain_extra_draw_offset_ = 0; terrain_batch_extras_ = nullptr; terrain_batch_extras_count_ = 0; }
         void terrainExtraAdd(const gos_TERRAIN_EXTRA* data, int count) {
             if (terrain_extra_count_ + count <= terrain_extra_capacity_) {
@@ -1642,6 +1648,7 @@ class gosRenderer {
         mat4 terrain_mvp_;
         bool terrain_mvp_valid_ = false;
         vec4 terrain_camera_pos_;  // MC2 world space camera position for TCS LOD
+        vec4 terrain_viewport_;    // (vmx, vmy, vax, vay) for EditorCamera shim
 
         // F1 Stage A-pre Task 7b: probe-only worldToClipGL cache. Written by the
         // now-retired probe setter; retained for diagnostic retirement batch.
@@ -7110,6 +7117,16 @@ void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat)
             M[i*4 + j] = WTC(i, j);
     #undef WTC
     g_gos_renderer->setTerrainMVP(M);
+}
+// gos_SetTerrainMVP / gos_SetTerrainViewport: raw-float counterparts to
+// gos_SetWorldToClipGL. Used by EditorCamera.h which builds the matrix
+// via axis-swap math rather than going through Stuff::Matrix4D. Both APIs
+// write the same terrain_mvp_ cache in the renderer.
+void __stdcall gos_SetTerrainMVP(const float* matrix16) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainMVP(matrix16);
+}
+void __stdcall gos_SetTerrainViewport(float vmx, float vmy, float vax, float vay) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainViewport(vmx, vmy, vax, vay);
 }
 void __stdcall gos_SetTerrainCameraPos(float x, float y, float z) {
     if (g_gos_renderer) g_gos_renderer->setTerrainCameraPos(x, y, z);
