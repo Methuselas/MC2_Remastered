@@ -73,22 +73,43 @@ A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\tests\smoke\artifacts\
 
 ---
 
-## Task 1: Binding-5 conflict pre-flight
+## Task 1: Binding-5 conflict pre-flight and stderr sink verification
 
 **Files:** none changed (verification only)
 
-- [ ] **Step 1: Grep all shader files for binding 5**
+- [ ] **Step 1: Verify smoke logs capture stderr**
 
+Every v2 gate depends on grepping `[MATERIAL_GPU v1]` lines from smoke logs. All `[MATERIAL_GPU v1]` output uses `std::fputs(buf, stderr)`. If the smoke harness only captures stdout, every log-grep gate will false-fail.
+
+Run a quick gate-OFF smoke on one mission:
 ```powershell
-grep -rn "binding\s*=\s*5" shaders/ --include="*.frag" --include="*.vert" --include="*.comp" --include="*.tesc" --include="*.tese"
+py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --missions mc2_01 --duration 10 --kill-existing --keep-logs
 ```
 
-Expected output — exactly one line:
-```
-shaders/fixtures/material_gpu_contract.frag:14:layout(std430, binding = 5) readonly buffer MaterialTable {
+Then grep the most recent log for any existing `fprintf(stderr)` output. The `[UNIFIED_PROJ v1]` warning is a reliable stderr canary that emits early on most runs — check for it, or for any other bracketed log tag known to use fprintf(stderr):
+```powershell
+$logDir = (Get-ChildItem "A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\tests\smoke\artifacts" | Sort-Object LastWriteTime | Select-Object -Last 1).FullName
+Get-ChildItem $logDir -Filter "*.log" -Recurse | Select-String "INSTR v1|UNIFIED_PROJ|RENDER_WORLD"
 ```
 
-If any production shader (not in `shaders/fixtures/`) appears: **STOP. Do not proceed.** Report the conflict — binding 5 is reserved for MaterialGpu and a collision must be resolved before v2 ships.
+**If stderr lines appear in the log:** `std::fputs(buf, stderr)` is the correct log path. Proceed as written.
+
+**If stderr lines do NOT appear in the log (only stdout):** Replace every `std::fputs(buf, stderr)` in Tasks 3, 4, 5, and 6 with `puts(buf)` to match the `[INSTR v1]` banner pattern (`puts(_cbbuf)`) before implementing any task. Report this substitution in your execution summary.
+
+- [ ] **Step 2: Search all shader files for binding 5**
+
+`grep` may not exist in vanilla PowerShell. Use PowerShell-native search:
+```powershell
+Get-ChildItem shaders -Recurse -Include *.frag,*.vert,*.comp,*.tesc,*.tese |
+  Select-String -Pattern "binding\s*=\s*5"
+```
+
+Expected output — exactly one match:
+```
+shaders\fixtures\material_gpu_contract.frag:14:layout(std430, binding = 5) readonly buffer MaterialTable {
+```
+
+If any production shader (not in `shaders\fixtures\`) appears: **STOP. Do not proceed.** Report the conflict — binding 5 is reserved for MaterialGpu and a collision must be resolved before v2 ships.
 
 If only the fixture line appears: safe to proceed.
 
@@ -103,9 +124,11 @@ If only the fixture line appears: safe to proceed.
 
 The file is ~4200 lines. The first few lines are `#include` directives; near line 260 the anonymous-namespace state variables are declared (`s_perDrawSsbo`, `s_perTypeSsbo`, etc.).
 
-- [ ] **Step 1: Add the MaterialGpu include**
+- [ ] **Step 1: Add the MaterialGpu and `<cstdio>` includes**
 
-In `GameOS/gameos/gos_static_prop_batcher.cpp`, after line 3:
+In `GameOS/gameos/gos_static_prop_batcher.cpp`, check whether `<cstdio>` is already directly included (scan the existing `#include` block near line 1-25). It is present (`#include <cstdio>` already exists) — do NOT add a duplicate. If for any reason it is absent, add it.
+
+After line 3:
 ```cpp
 #include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled + objectIdRawForStaticPropRecipe
 ```
@@ -248,6 +271,13 @@ The closing `}` of the `group=0..1` for-loop is the anchor. Insert the sidecar b
                 s_materialGpuTable.size() * sizeof(RenderCore::MaterialGpu);
 
             if (byteSize > 0) {
+                // Idempotent: delete any buffer from a prior finalizeGeometry call.
+                // finalizeGeometry() should be once-per-map, but defensive cleanup
+                // prevents leaks if it is ever called again (partial reinit, hot-reload, etc.).
+                if (s_materialGpuSsbo != 0) {
+                    glDeleteBuffers(1, &s_materialGpuSsbo);
+                    s_materialGpuSsbo = 0;
+                }
                 while (glGetError() != GL_NO_ERROR) {}  // drain stale BEFORE operation
                 glGenBuffers(1, &s_materialGpuSsbo);
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_materialGpuSsbo);
@@ -700,7 +730,7 @@ $logDir = (Get-ChildItem "A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendel
 Get-ChildItem $logDir -Filter "*.log" -Recurse | Select-String "MATERIAL_GPU"
 ```
 
-Expected per-mission: one `event=table_upload materials=N bytes=B emitted=M` with N > 0.
+Expected: at least one mission reports `event=table_upload materials=N bytes=B emitted=M` with `N > 0` (missions with static props). Missions with no static props may report `materials=0 emitted=0` — that is correct behavior, not a failure.
 
 - [ ] **Gate 4: Reflection gate (already satisfied — informational only)**
 
@@ -732,24 +762,23 @@ Expected: no output. Any `[MATERIAL_GPU v1] GL ERROR` line is a failure.
 - [ ] **Gate 7: No binding-5 conflict (already verified in Task 1 — re-confirm)**
 
 ```powershell
-grep -rn "binding\s*=\s*5" shaders/ --include="*.frag" --include="*.vert" --include="*.comp" --include="*.tesc" --include="*.tese"
+Get-ChildItem shaders -Recurse -Include *.frag,*.vert,*.comp,*.tesc,*.tese |
+  Select-String -Pattern "binding\s*=\s*5"
 ```
 
-Expected: only `shaders/fixtures/material_gpu_contract.frag`.
+Expected: only `shaders\fixtures\material_gpu_contract.frag`.
 
 - [ ] **Gate 8: No pixel delta**
 
-Run tier1 smoke with gate ON and visually confirm each mission renders identically to gate OFF. Since binding 5 has no shader consumer in v2, there must be zero visual change. The smoke's screenshot diff (if any) should show 0 pixel delta.
+Since binding 5 has no shader consumer in v2, there must be zero visual change between gate OFF and gate ON.
 
-If the smoke framework captures screenshots automatically, compare them. If not: the log `PASS 5/5` with no rendering anomaly reported is sufficient.
+If the smoke framework captures per-mission screenshots automatically: diff them and require zero pixel delta.
 
-- [ ] **Final commit if all 8 gates pass**
+If the smoke harness does not capture screenshots for this path: `PASS 5/5` on the gate-ON tier1 run (already obtained in Gate 2+3) plus no `GL ERROR` lines and no rendering anomaly observed during the run is sufficient evidence. Document the pass criterion used in the execution summary.
 
-```powershell
-git tag material-gpu-2-verified
-```
+- [ ] **Final: Record gate results**
 
-Or simply note in the commit message that all 8 gates passed. The implementation is complete.
+Do not create a git tag. Record all 8 gate results (PASS/FAIL with evidence) in the execution summary returned to the maintainer. The maintainer decides whether to tag or merge.
 
 ---
 
