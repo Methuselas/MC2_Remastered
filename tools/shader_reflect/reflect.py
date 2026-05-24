@@ -152,6 +152,83 @@ REQUIRED_INVARIANTS: list[dict] = [
         "member": "objectIdRaw",
         "offset": 24,
     },
+    # MaterialGpu field offsets — lock struct layout independently of golden.
+    # type_name "MaterialGpu" confirmed by bootstrap spirv-cross inspection (Task 3).
+    # These survive --update: CONTRACT_VIOLATION fires even on golden regeneration.
+    {
+        "shader": "shaders/fixtures/material_gpu_contract.frag",
+        "variant": "default",
+        "check": "type_member",
+        "type_name": "MaterialGpu",
+        "member": "albedoTex",
+        "offset": 0,
+    },
+    {
+        "shader": "shaders/fixtures/material_gpu_contract.frag",
+        "variant": "default",
+        "check": "type_member",
+        "type_name": "MaterialGpu",
+        "member": "normalTex",
+        "offset": 4,
+    },
+    {
+        "shader": "shaders/fixtures/material_gpu_contract.frag",
+        "variant": "default",
+        "check": "type_member",
+        "type_name": "MaterialGpu",
+        "member": "metallicRoughnessTex",
+        "offset": 8,
+    },
+    {
+        "shader": "shaders/fixtures/material_gpu_contract.frag",
+        "variant": "default",
+        "check": "type_member",
+        "type_name": "MaterialGpu",
+        "member": "emissiveTex",
+        "offset": 12,
+    },
+    {
+        "shader": "shaders/fixtures/material_gpu_contract.frag",
+        "variant": "default",
+        "check": "type_member",
+        "type_name": "MaterialGpu",
+        "member": "flags",
+        "offset": 16,
+    },
+    {
+        "shader": "shaders/fixtures/material_gpu_contract.frag",
+        "variant": "default",
+        "check": "type_member",
+        "type_name": "MaterialGpu",
+        "member": "baseColorFactor",
+        "offset": 20,
+    },
+    {
+        "shader": "shaders/fixtures/material_gpu_contract.frag",
+        "variant": "default",
+        "check": "type_member",
+        "type_name": "MaterialGpu",
+        "member": "metallicFactor",
+        "offset": 24,
+    },
+    {
+        "shader": "shaders/fixtures/material_gpu_contract.frag",
+        "variant": "default",
+        "check": "type_member",
+        "type_name": "MaterialGpu",
+        "member": "roughnessFactor",
+        "offset": 28,
+    },
+    # MaterialGpu array stride — hard gate: --update cannot bless a stride change.
+    {
+        "shader": "shaders/fixtures/material_gpu_contract.frag",
+        "variant": "default",
+        "check": "ssbo_member",
+        "block": "MaterialTable",
+        "member": "materials",
+        "offset": 0,
+        "array_stride": 32,
+    },
 ]
 
 
@@ -534,11 +611,21 @@ def check_invariants(
             expected_offset = inv["offset"]
 
             # spirv-cross keys types by numeric ID; scan for name.
+            # spirv-cross may emit two entries with the same struct name: one
+            # abstract (no member offsets) and one decorated (with offsets,
+            # used inside an SSBO/UBO block). We want the decorated version.
+            # Prefer the first type whose members all carry "offset" keys.
             found_type: dict | None = None
             for tinfo in raw.get("types", {}).values():
-                if tinfo.get("name") == type_name:
+                if tinfo.get("name") != type_name:
+                    continue
+                members_raw = tinfo.get("members", [])
+                if members_raw and all("offset" in m for m in members_raw):
                     found_type = tinfo
                     break
+                # Fall back: accept if no better candidate found yet.
+                if found_type is None:
+                    found_type = tinfo
 
             if found_type is None:
                 violations.append(
