@@ -33,6 +33,7 @@ add_executable(mc2_tests
     test_hashing.cpp
     test_projection.cpp     # currently scope-stopped; placeholder skipped case
     test_argb_pack.cpp
+    test_screen_pick.cpp
 
     # Leaf-TU engine sources (no transitive engine include drag).
     ${MC2_WORKTREE_ROOT}/mclib/fst_hash.cpp
@@ -41,6 +42,7 @@ add_executable(mc2_tests
 target_include_directories(mc2_tests PRIVATE
     ${MC2_WORKTREE_ROOT}/mclib
     ${MC2_WORKTREE_ROOT}/GameOS
+    ${MC2_WORKTREE_ROOT}/RenderWorld
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
