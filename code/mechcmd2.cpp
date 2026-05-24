@@ -84,12 +84,10 @@ extern CPrefs prefs;
 
 //------------------------------------------------------------------------------------------------------------
 // MechCmdr2 Global Instances of Things
-UserHeapPtr systemHeap = NULL;
+// NS3: systemHeap defined in mclib/heap.cpp (engine boundary).
 UserHeapPtr guiHeap = NULL;
 
-FastFile 	**fastFiles = NULL;
-long 		numFastFiles = 0;
-long		maxFastFiles = 0;
+// NS3: fastFiles/numFastFiles/maxFastFiles defined in mclib/fastfile.cpp (engine boundary).
 
 long GameDifficulty = 0;
 long gammaLevel = 0;
@@ -109,7 +107,7 @@ bool hasGuardBand = false;
 bool canMultiTextureDetail = false;
 bool useUnlimitedAmmo = true;
 bool useLeftRightMouseProfile = true; // if false, use old style commands
-bool justResaveAllMaps = false;
+// NS3: justResaveAllMaps defined in mclib/terrain.cpp (engine boundary).
 extern bool useWaterInterestTexture;
 extern bool useShadows;
 
@@ -150,9 +148,8 @@ unsigned long polyHeapSize = 1024000;
 extern float ProcessorSpeed;
 void __stdcall ExitGameOS();
 
-HSTRRES gosResourceHandle = 0;
-HGOSFONT3D gosFontHandle = 0;
-float		gosFontScale = 1.0;
+// NS3: gosResourceHandle defined in mclib/utilities.cpp (engine boundary).
+// NS3: gosFontHandle + gosFontScale defined in mclib/floathelp.cpp (engine boundary).
 // sebi: whe the f**k should this be defined? It is not even used
 //extern HGOSFONT3D	FontHandle;
 HGOSFONT3D	FontHandle;
@@ -161,7 +158,7 @@ FloatHelpPtr globalFloatHelp = NULL;
 unsigned long currentFloatHelp = 0;
 float MaxMinUV = 8.0f;
 
-DWORD BaseVertexColor = 0x00000000;		//This color is applied to all vertices in game as Brightness correction.
+extern DWORD BaseVertexColor;	// NS3: def in mclib/quad.cpp
 
 enum ProcType { CPU_UNKNOWN, CPU_PENTIUM, CPU_MMX, CPU_KATMAI };
 ProcType Processor = CPU_PENTIUM;		//Needs to be set when GameOS supports ProcessorID -- MECHCMDR2
@@ -177,7 +174,8 @@ bool EnemiesGoalPlan = false;
 bool inViewMode = false;
 extern bool CullPathAreas;
 unsigned long viewObject = 0x0;
-char missionName[1024];
+// NS3: missionName defined in GameOS/gameos/gos_crashbundle.cpp (engine boundary).
+extern char missionName[1024];
 
 extern char FileMissingString[];
 extern char CDMissingString[];
@@ -188,11 +186,11 @@ char* ExceptionGameMsg = NULL;
 char buildNumber[80];
 
 extern int TERRAIN_TXM_SIZE;
-int ObjectTextureSize = 128;
+extern int ObjectTextureSize;	// NS3: def in mclib/bdactor.cpp
 
 extern unsigned int MultiPlayCommanderId;
 extern bool	useRealLOS;
-bool reloadBounds = false;
+// NS3: reloadBounds defined in mclib/bdactor.cpp (engine boundary).
 
 extern long DrawDebugCells;
 
@@ -863,7 +861,7 @@ bool FirstRunEula(void)
 
 
 
-Stuff::MemoryStream *effectStream = NULL;
+extern Stuff::MemoryStream *effectStream;	// NS3: def in mclib/txmmgr.cpp
 extern MidLevelRenderer::MLRClipper * theClipper;
 
 bool gameStarted = false;

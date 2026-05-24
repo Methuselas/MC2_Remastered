@@ -102,13 +102,15 @@ extern bool		useFog;
 extern long 	mechRGBLookup[];
 extern long 	mechRGBLookup2[];
 
-extern int		ObjectTextureSize;
+// NS3 boundary: engine-canonical definitions (sole consumer is this TU + editor).
+// Previously redefined in every game/tool main. Now defined here so the editor
+// can link mclib directly without code/mechcmd2.cpp.
+int ObjectTextureSize = 128;
+bool reloadBounds = false;
+MidLevelRenderer::MLRClipper * theClipper = NULL;
 
-extern bool		reloadBounds;
 extern float	metersPerWorldUnit;
 extern bool		useShadows;
-
-extern MidLevelRenderer::MLRClipper * theClipper;
 
 extern bool useNonWeaponEffects;
 extern bool useHighObjectDetail;

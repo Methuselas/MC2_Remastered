@@ -73,6 +73,10 @@
 #include "../GameOS/gameos/gpu_cull_compute.h"  // C1b: compute_dispatch() moved here from mission.cpp
 #include "../GameOS/gameos/gpu_cull_substrate.h"
 
+// NS3 boundary: effectStream belongs to the texture/effect subsystem, not
+// to whatever game/tool main links it. Previously redefined in every main.
+Stuff::MemoryStream *effectStream = NULL;
+
 //---------------------------------------------------------------------------
 // static globals
 MC_TextureManager *mcTextureManager = NULL;

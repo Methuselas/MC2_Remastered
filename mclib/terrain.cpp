@@ -180,7 +180,8 @@ extern long 				DrawDebugCells;
 #define						MAX_TERRAIN_HEAP_SIZE		1024000
 
 long						visualRangeTable[256];
-extern bool 				justResaveAllMaps;
+// NS3 boundary: justResaveAllMaps canonical def (was code/ leak; editor consumes it).
+bool justResaveAllMaps = false;
 //---------------------------------------------------------------------------
 // These are used to determine what terrain objects to process.
 // They date back to GenCon 1996!!
