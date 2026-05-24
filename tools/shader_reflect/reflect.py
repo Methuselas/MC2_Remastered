@@ -511,6 +511,14 @@ def check_invariants(
                     f"ssbo member '{inv['block']}.{inv['member']}' "
                     f"offset={m['offset']}, expected {inv['offset']}"
                 )
+            if "array_stride" in inv:
+                if m.get("array_stride") != inv["array_stride"]:
+                    violations.append(
+                        f"CONTRACT_VIOLATION: {key}: "
+                        f"ssbo member '{inv['block']}.{inv['member']}' "
+                        f"array_stride={m.get('array_stride')}, "
+                        f"expected {inv['array_stride']}"
+                    )
 
         elif check == "type_member":
             # Check a named struct type's member offset via raw spirv-cross JSON.
