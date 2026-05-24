@@ -237,8 +237,61 @@ void drawSelectionBounds(const EditorAabb& b, SelectionBoundsStyle style) {
     popOverlayState();
 }
 
-void drawTerrainTileOutline(const TerrainTileOverlayDesc& /*desc*/) {
-    // Task 7
+void drawTerrainTileOutline(const TerrainTileOverlayDesc& desc) {
+    if (!s_enabled || !land || !eye) return;
+    const int tileR = desc.tileRow;
+    const int tileC = desc.tileCol;
+
+    // Internal bounds check -- EditorBridge is a public API and must not
+    // allow caller-supplied tile indices to run off the static coord arrays.
+    //
+    // Terrain::realVerticesMapSide is a static long holding the VERTEX/BOUNDARY
+    // count on each side of the map (confirmed: terrain.h line 132 comment says
+    // "Number of vertices on each side of map").  The inline helpers in terrain.h
+    // treat tile indices [0, realVerticesMapSide-1) as valid tiles (line 397:
+    // tileC >= realVerticesMapSide is the OOB check).  The outline needs both
+    // tileR and tileR+1 to be valid boundary indices, so the guard is
+    // tileR+1 < realVerticesMapSide  (equivalently tileR < realVerticesMapSide-1).
+    const int coordLimit = static_cast<int>(Terrain::realVerticesMapSide);
+    if (tileR < 0 || tileC < 0) return;
+    if (tileR + 1 >= coordLimit) return;
+    if (tileC + 1 >= coordLimit) return;
+
+    // Tile world-space extent from Terrain's public static coord arrays.
+    // tileColToWorldCoord[tileC]   = left X boundary of tile
+    // tileColToWorldCoord[tileC+1] = right X boundary
+    // tileRowToWorldCoord[tileR]   = near Y boundary
+    // tileRowToWorldCoord[tileR+1] = far Y boundary
+    const float x0 = Terrain::tileColToWorldCoord[tileC];
+    const float x1 = Terrain::tileColToWorldCoord[tileC + 1];
+    const float y0 = Terrain::tileRowToWorldCoord[tileR];
+    const float y1 = Terrain::tileRowToWorldCoord[tileR + 1];
+
+    // Sample elevation at the four world-space corners (CPU heightmap read).
+    auto elevAt = [&](float x, float y) -> float {
+        Stuff::Vector3D pos(x, y, 0.f);
+        return land->getTerrainElevation(pos);
+    };
+
+    const Stuff::Vector3D corners[4] = {
+        Stuff::Vector3D(x0, y0, elevAt(x0, y0)),  // NW
+        Stuff::Vector3D(x1, y0, elevAt(x1, y0)),  // NE
+        Stuff::Vector3D(x1, y1, elevAt(x1, y1)),  // SE
+        Stuff::Vector3D(x0, y1, elevAt(x0, y1)),  // SW
+    };
+
+    float sx[4], sy[4];
+    for (int i = 0; i < 4; ++i) {
+        if (!projectToScreen(corners[i], &sx[i], &sy[i])) return;
+    }
+
+    const uint32_t argb = rgbaToArgb(desc.colorRGBA);
+    pushOverlayState();
+    drawLine(sx[0], sy[0], sx[1], sy[1], argb);  // N edge
+    drawLine(sx[1], sy[1], sx[2], sy[2], argb);  // E edge
+    drawLine(sx[2], sy[2], sx[3], sy[3], argb);  // S edge
+    drawLine(sx[3], sy[3], sx[0], sy[0], argb);  // W edge
+    popOverlayState();
 }
 
 } // namespace EditorBridge
