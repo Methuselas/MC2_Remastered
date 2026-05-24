@@ -1,6 +1,7 @@
 #include "gos_static_prop_batcher.h"
 #include "gos_static_prop_registry.h"    // M1.5: getRecipeIndexForType
 #include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled + objectIdRawForStaticPropRecipe
+#include "../../RenderCore/MaterialGpu.h"   // MaterialGpu-2: sidecar upload
 #include "gos_postprocess.h"             // getGosPostProcess, getDynamicLightSpaceMatrix
 #include "gos_static_prop_killswitch.h"  // gos_GetGLTextureId
 #include "gos_profiler.h"
@@ -258,6 +259,18 @@ static bool IsCoalesceEnabled();
 // --- Step 2.1: GL handles for coalesce SSBOs and texture arrays ---
 GLuint s_coalesceInstanceSsbo      = 0;  // ring-buffered, persistent-mapped
 GLuint s_perDrawSsbo               = 0;  // PerDrawEntry per type, sorted (binding 4)
+
+// MaterialGpu-2 sidecar — active only when MC2_MATERIAL_GPU=1.
+// No shader consumer until MaterialGpu-3.
+// s_packetMaterialIdx[i] maps draw slot i (= s_sortedPacketOrder[i] position)
+// to its entry in s_materialGpuTable.
+// Size invariant: s_packetMaterialIdx.size() == s_sortedPacketOrder.size().
+static const bool s_materialGpuEnabled =
+    (getenv("MC2_MATERIAL_GPU") != nullptr);
+static std::vector<uint32_t>                s_packetMaterialIdx;  // per draw slot
+static std::vector<RenderCore::MaterialGpu> s_materialGpuTable;   // deduplicated
+static GLuint                               s_materialGpuSsbo = 0;
+
 GLuint s_texArrayOff               = 0;  // alpha-OFF group GL_TEXTURE_2D_ARRAY
 GLuint s_texArrayOn                = 0;  // alpha-ON  group GL_TEXTURE_2D_ARRAY
 GLuint s_permutationSsbo           = 0;  // sortedSlot[typeID] mapping (binding 15)
