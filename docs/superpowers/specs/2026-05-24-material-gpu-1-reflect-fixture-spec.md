@@ -58,6 +58,11 @@ def discover_shaders() -> list[Path]:
 `STAGE_BY_EXT` keys (`.vert`, `.frag`, etc.) do not match `.hglsl`, so
 `shaders/include/` header files are never returned.
 
+**New convention (document in `shader_common.py`):** Any file under
+`shaders/**/*.frag|vert|...` is part of shader validation and reflection unless
+explicitly listed in `SKIP_SHADERS`. Future backup or test shaders added under
+`shaders/fixtures/` must either compile cleanly or have a `SKIP_SHADERS` entry.
+
 `validate_shaders.py` also calls `discover_shaders()` — the fixture must be a
 valid, standalone-compilable GLSL shader. M3 resolves this: the fixture is
 written to compile cleanly. No `SKIP_SHADERS` entry needed.
@@ -144,10 +149,16 @@ raw JSON, identify the actual emitted name, and adjust the invariant
 `type_name` field accordingly before committing the golden.
 
 Procedure:
-1. Run `reflect.py --update --shader shaders/fixtures/material_gpu_contract.frag`
-2. Add temporary debug print to `check_invariants` to dump `raw["types"]` keys and names
-3. Confirm `"MaterialGpu"` appears verbatim
-4. Remove debug print; proceed
+1. Compile the fixture to SPIR-V manually:
+   ```powershell
+   # glslangValidator is in tools/shader_reflect/ or on PATH after Tier 1.2 setup
+   glslangValidator -G -S frag shaders/fixtures/material_gpu_contract.frag -o /tmp/mat.spv
+   spirv-cross /tmp/mat.spv --reflect | python3 -c "import sys,json; d=json.load(sys.stdin); [print(v.get('name','?'), list(v.get('members',[]))[:1]) for v in d.get('types',{}).values()]"
+   ```
+2. Confirm `"MaterialGpu"` appears verbatim in the output.
+3. If spirv-cross emits a different name, update the `type_name` field in the
+   invariants accordingly before committing the golden.
+4. No edits to `check_invariants` are needed for this inspection.
 
 ---
 
@@ -256,9 +267,10 @@ Expected shape (the `type` ref is an opaque spirv-cross ID; shown illustratively
 }
 ```
 
-The `type` field value in the real golden will be a spirv-cross internal type
-reference string (e.g. `"_65"`). This is expected and stable across runs for
-the same shader source.
+The `type` field value in the real golden may be a spirv-cross internal type
+reference string. It is included for diagnostic value only; correctness is
+enforced by the `type_member` and `array_stride` invariants, not by assuming
+the opaque ref is semantically stable.
 
 ---
 
