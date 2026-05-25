@@ -18,6 +18,8 @@ uniform sampler2D uAtlas;
 
 in vec2 v_uv;
 in vec4 v_color;
+flat in uint v_kind;
+flat in uint v_is_head;
 
 out vec4 outColor;
 
@@ -26,6 +28,8 @@ void main() {
     // Discard colorkey pixels (MC2 particle textures use magenta 0xFF00FF as transparent)
     if (tex.r > 0.9 && tex.g < 0.1 && tex.b > 0.9) discard;
     outColor = tex * v_color;
+    // Head-sprite brightening: particles with is_head=1 are rendered 1.5x brighter
+    if (v_is_head == 1u) outColor.rgb *= 1.5;
     // Also discard genuinely transparent pixels
     if (outColor.a < 0.01) discard;
 }

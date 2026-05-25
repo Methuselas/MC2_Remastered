@@ -61,6 +61,8 @@ const int kCornerIdx[6] = int[](0, 1, 2, 2, 3, 1);
 
 out vec2 v_uv;
 out vec4 v_color;
+flat out uint v_kind;
+flat out uint v_is_head;
 
 void main() {
     uint particleId = uint(gl_VertexID) / 6u;
@@ -93,6 +95,8 @@ void main() {
     gl_Position = u_worldToClipGL * vec4(worldPos, 1.0);
 
     // P2-1: apply UV sub-rect so each billboard samples the correct atlas frame.
-    v_uv    = u_uvOffset + kCornerUv[cornerIdx] * u_uvSize;
-    v_color = p.color;
+    v_uv      = u_uvOffset + kCornerUv[cornerIdx] * u_uvSize;
+    v_color   = p.color;
+    v_kind    = (p.kind_flags >> 4u) & 0xFu;
+    v_is_head = p.kind_flags & 1u;
 }
