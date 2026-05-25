@@ -42,6 +42,13 @@ const ::glsl_program* s_prog = nullptr;
 
 bool s_initFailed = false;
 
+// P0-4: Cached uniform locations — populated once in ensureInitialized()
+// after the program links. -2 = not yet queried; -1 = not found (GLSL may
+// strip unused uniforms); >= 0 = valid location.
+GLint s_loc_worldToClipGL = -2;
+GLint s_loc_mvp           = -2;
+GLint s_loc_uAtlas        = -2;
+
 void ensureInitialized() {
     if (s_initFailed) return;
     if (s_vao != 0 && s_prog != nullptr && s_atlasTex != 0 && s_sampler != 0) {
@@ -94,6 +101,11 @@ void ensureInitialized() {
                      "[GPU_PARTICLES v1] event=prog_compiled prog=%u\n",
                      (unsigned)s_prog->shp_);
         std::fflush(stderr);
+
+        // P0-4: cache uniform locations now that the program is linked.
+        s_loc_worldToClipGL = glGetUniformLocation(s_prog->shp_, "u_worldToClipGL");
+        s_loc_mvp           = glGetUniformLocation(s_prog->shp_, "u_mvp");
+        s_loc_uAtlas        = glGetUniformLocation(s_prog->shp_, "uAtlas");
     }
 }
 
@@ -121,7 +133,30 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     if (count == 0 || records == nullptr) return;
 
     ensureInitialized();
-    if (s_initFailed || s_prog == nullptr || s_prog->shp_ == 0) return;
+
+    // P0-5: failure log — once only.
+    if (s_initFailed) {
+        static bool s_failLogEmitted = false;
+        if (!s_failLogEmitted) {
+            s_failLogEmitted = true;
+            std::fprintf(stderr, "[GOSFX_GPU v1] ERROR init_failed\n");
+            std::fflush(stderr);
+        }
+        return;
+    }
+    if (s_prog == nullptr || s_prog->shp_ == 0) return;
+
+    // P0-5: first-call banner — once only.
+    {
+        static bool s_bannerEmitted = false;
+        if (!s_bannerEmitted) {
+            s_bannerEmitted = true;
+            std::fprintf(stderr,
+                         "[GOSFX_GPU v1] enabled=1 sprites=%u draws=1 blendMode=straight\n",
+                         count);
+            std::fflush(stderr);
+        }
+    }
 
     ensureSsboCapacity((GLsizei)count);
 
@@ -139,6 +174,10 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     GLint savedTex2D0    = 0;
     glActiveTexture(GL_TEXTURE0);
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex2D0);
+    // P0-2 cull state: bridge must disable GL_CULL_FACE for the draw because
+    // the particle shader is double-sided. Restore the caller's state after.
+    GLboolean savedCullFace = glIsEnabled(GL_CULL_FACE);
+    glDisable(GL_CULL_FACE);
 
     // ── Upload particle records to the SSBO ───────────────────────────
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_ssbo);
@@ -150,29 +189,24 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     // ── Bind our VAO (trap #4: AMD silently drops draws when VAO=0) ──
     glBindVertexArray(s_vao);
 
-    // ── Bind program + uniforms ──────────────────────────────────────
+    // ── Bind program + uniforms (P0-4: use cached locations) ─────────
     glUseProgram(s_prog->shp_);
     {
         // terrainMVP is row-major direct-upload (GL_FALSE) per
         // memory/terrain_mvp_gl_false.md.
         const float* mvp = gos_GetTerrainMVPMat4();
-        if (mvp) {
-            GLint loc = glGetUniformLocation(s_prog->shp_, "u_worldToClipGL");
-            if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, mvp);
-        }
+        if (mvp && s_loc_worldToClipGL >= 0)
+            glUniformMatrix4fv(s_loc_worldToClipGL, 1, GL_FALSE, mvp);
     }
     {
         // B1 C14: u_mvp — pixel-space -> GL NDC matrix. GL_TRUE (transpose)
         // matches the static_prop bridge at gos_static_prop_batcher.cpp:3014.
         const float* mm = gos_GetProj2ScreenMat4();
-        if (mm) {
-            GLint loc = glGetUniformLocation(s_prog->shp_, "u_mvp");
-            if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_TRUE, mm);
-        }
+        if (mm && s_loc_mvp >= 0)
+            glUniformMatrix4fv(s_loc_mvp, 1, GL_TRUE, mm);
     }
     {
-        GLint loc = glGetUniformLocation(s_prog->shp_, "uAtlas");
-        if (loc >= 0) glUniform1i(loc, 0);
+        if (s_loc_uAtlas >= 0) glUniform1i(s_loc_uAtlas, 0);
     }
 
     // ── Sampler + atlas on unit 0 (trap #5: sampler inheritance) ─────
@@ -191,6 +225,7 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(count * 6u));
 
     // ── Restore state ────────────────────────────────────────────────
+    if (savedCullFace) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
     glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex2D0);
     glBindSampler(0, (GLuint)savedSampler);
     if (savedActiveTex != GL_TEXTURE0) glActiveTexture((GLenum)savedActiveTex);

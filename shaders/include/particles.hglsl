@@ -11,7 +11,7 @@
 //
 // C++ offset -> field cross-reference (kept in lockstep with spec.h):
 //   offset  0: vec3   position    (+ 4B pad to vec4 boundary)
-//   offset 16: vec4   color       (premultiplied RGBA)
+//   offset 16: vec4   color       (straight RGBA (R,G,B,A — not premultiplied))
 //   offset 32: vec3   velocity    (+ 4B pad to vec4 boundary)
 //   offset 48: float  lifetime    (seconds)
 //   offset 52: float  age         (seconds)
@@ -20,7 +20,7 @@
 
 struct Particle {
     vec4  position;   // .xyz = world position; .w = pad
-    vec4  color;      // premultiplied RGBA
+    vec4  color;      // straight RGBA (R,G,B,A — not premultiplied)
     vec4  velocity;   // .xyz = world delta/sec; .w = pad
     float lifetime;
     float age;

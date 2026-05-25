@@ -489,6 +489,16 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 	Check_Object(this);
 	Check_Object(info);
 
+	// P0-1 double-draw gate: GPU batcher owns rendering when enabled; skip
+	// the legacy MLR draw submission so particles are not rendered twice.
+	// Per-particle state (m_P_vertices, m_P_color, m_P_uvs) is still updated
+	// by AnimateParticle above, which is fine — the destructor and TurnOff
+	// paths walk those arrays regardless of the render gate.
+	if (mc2::particles::Batcher::is_enabled()) {
+		SpinningCloud::Draw(info);
+		return;
+	}
+
 	//
 	//---------------------------------------------------------
 	// If we have active particles, set up the draw information

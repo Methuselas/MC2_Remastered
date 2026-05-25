@@ -465,6 +465,13 @@ void gosFX::PointCloud::Draw(DrawInfo *info)
 	Check_Object(this);
 	Check_Object(info);
 
+	// P0-1 double-draw gate: GPU batcher owns rendering when enabled; skip
+	// the legacy MLR draw submission so particles are not rendered twice.
+	if (mc2::particles::Batcher::is_enabled()) {
+		ParticleCloud::Draw(info);
+		return;
+	}
+
 	if (m_activeParticleCount)
 	{
 		MidLevelRenderer::DrawEffectInformation dInfo;

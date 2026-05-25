@@ -39,8 +39,11 @@ const vec2 kCornerUv[4] = vec2[](
 );
 
 // Two triangles per quad, six vertices, with corner index per VS invocation.
-// Order: tri0 = (BL, BR, TL), tri1 = (TL, BR, TR).
-const int kCornerIdx[6] = int[](0, 1, 2, 2, 1, 3);
+// P0-2 winding fix: both triangles CCW under GL_CCW default.
+// tri0 = (BL, BR, TL) = CCW; tri1 = (TL, TR, BR) -> reordered to (TL, TR, BR).
+// Old: int[](0,1,2, 2,1,3) — tri1 was (TL,BR,TR) = CW, culled when GL_CULL_FACE on.
+// New: int[](0,1,2, 2,3,1) — tri1 is (TL,TR,BR) = CCW.
+const int kCornerIdx[6] = int[](0, 1, 2, 2, 3, 1);
 
 out vec2 v_uv;
 out vec4 v_color;

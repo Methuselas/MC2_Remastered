@@ -29,7 +29,7 @@ namespace particles {
 //
 // Field layout (offset / type / purpose):
 //   00  vec3+pad  position   world-space spawn origin
-//   16  vec4      color      premultiplied RGBA at draw time
+//   16  vec4      color      straight RGBA (R,G,B,A — not premultiplied) at draw time
 //   32  vec3+pad  velocity   world-space per-second delta (Stage 2' uses this;
 //                            Stage 1' Card test effect leaves at zero)
 //   48  float     lifetime   total lifetime in seconds
