@@ -22,6 +22,11 @@
 #include "editorinterface.h"
 #include "ECharString.h"
 
+#include "../GameOS/gameos/gos_static_prop_batcher.h"
+#include "../GameOS/gameos/gos_mech_batcher.h"
+#include "../GameAdapters/StaticPropRenderAdapter.h"
+#include "../GameAdapters/MechRenderAdapter.h"
+
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -144,6 +149,14 @@ bool EditorData::clear()
 		delete land;
 		land = NULL;
 	}
+
+	// Editor GPU-batcher map-unload lifecycle (mirrors code/mission.cpp:~3279).
+	// Must run BEFORE EditorObjectMgr::clear() so batcher state tears down
+	// while actor TG_MultiShape pointers are still valid.
+	GpuStaticPropBatcher::instance().onMapUnload();
+	GpuMechBatcher::instance().onMapUnload();
+	GameAdapters::StaticProp::endMission();
+	GameAdapters::Mech::endMission();
 
 	if ( EditorObjectMgr::instance() )
 		EditorObjectMgr::instance()->clear();
@@ -408,6 +421,17 @@ bool EditorData::initTerrainFromPCV( const char* fileName )
 	EditorDataTrace("EditorData::initTerrainFromPCV: before recalcWater");
 	land->recalcWater();
 	EditorDataTrace("EditorData::initTerrainFromPCV: before EditorObjectMgr::load");
+	// Editor GPU-batcher map-load lifecycle. Mirrors code/mission.cpp:1693-1697
+	// EXACTLY. Must run BEFORE EditorObjectMgr::load() so BldgAppearance::init()
+	// registrations land against an armed batcher state, not torn-down state.
+	// clear() ran at the top of this function (~line 315), which already ran
+	// onMapUnload/endMission for any prior session.
+	GpuStaticPropBatcher::instance().onMapLoad();
+	GpuMechBatcher::instance().onMapLoad();
+	GameAdapters::StaticProp::beginMission();
+	GameAdapters::Mech::beginMission();
+	EditorDataTrace("EditorData::initTerrainFromPCV: GPU batchers armed for map load");
+
 	EditorObjectMgr::instance()->load( pFile, 1 );
 	EditorDataTrace("EditorData::initTerrainFromPCV: after EditorObjectMgr::load");
 
