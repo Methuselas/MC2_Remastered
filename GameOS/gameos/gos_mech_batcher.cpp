@@ -384,8 +384,16 @@ void GpuMechBatcher::onMapLoad() {
     s_stagingVbo.clear();
     s_stagingIbo.clear();
     s_geometryFinalized = false;
-    s_programLoadTried  = false;
-    s_programLoadFailed = false;
+    // S2.12: DO NOT reset s_programLoadTried / s_programLoadFailed here.
+    // The GL program created by loadProgramsIfNeeded() is process-global
+    // state cached in shader_builder's s_programs map under the name "mech".
+    // Resetting these flags causes loadProgramsIfNeeded() to call
+    // glsl_program::makeProgram("mech", ...) again on the second map load,
+    // which the shader_builder cache rejects with
+    // "Program with this name (mech) already exists" — disabling the GPU
+    // mech path on every load after the first. Program creation parameters
+    // (prefix derived from RenderWorld::IsObjectIdBufferEnabled() etc.) do
+    // not change per-mission, so a one-shot first-load is correct.
     s_pendingSubmits.clear();
     s_eligibleActorsThisFrame = 0;
     std::memset(s_fallbacksThisFrame, 0, sizeof(s_fallbacksThisFrame));
