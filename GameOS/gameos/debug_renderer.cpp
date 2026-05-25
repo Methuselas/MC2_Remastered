@@ -34,11 +34,16 @@ static bool envFlagDefaultOff(const char* name) {
     return v && !(v[0] == '0' && v[1] == '\0');
 }
 
+static bool envFlagDefaultOn(const char* name) {
+    const char* v = getenv(name);
+    return !v || !(v[0] == '0' && v[1] == '\0');
+}
+
 // ---------------------------------------------------------------------------
 // Static state
 // ---------------------------------------------------------------------------
 
-static bool              s_enabled       = envFlagDefaultOff("MC2_DEBUG_RENDERER");
+static bool              s_enabled       = envFlagDefaultOn("MC2_DEBUG_RENDERER");
 static bool              s_testCanary    = envFlagDefaultOff("MC2_DEBUG_RENDERER_TEST");
 static bool              s_initialized   = false;
 static bool              s_capWarnedOnce = false;

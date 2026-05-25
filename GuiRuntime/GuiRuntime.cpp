@@ -11,8 +11,10 @@ bool g_imguiInitialized = false;
 
 static bool isEnabled() {
     static int cached = -1;
-    if (cached < 0)
-        cached = (std::getenv("MC2_IMGUI") != nullptr) ? 1 : 0;
+    if (cached < 0) {
+        const char* v = std::getenv("MC2_IMGUI");
+        cached = (!v || v[0] != '0') ? 1 : 0;
+    }
     return cached == 1;
 }
 

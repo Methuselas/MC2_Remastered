@@ -65,12 +65,16 @@ bool envFlag(const char* name) {
     return v && v[0] && v[0] != '0';
 }
 
+bool envFlagDefaultOn(const char* name) {
+    const char* v = std::getenv(name);
+    return !v || (v[0] && v[0] != '0');
+}
+
 // M1.5: cached env-flag accessor. First call reads MC2_OBJECT_ID_BUFFER
-// from getenv(); subsequent calls return the cached bool. Designed so
-// the hot static-prop draw loop sees ONE branch-not-taken per draw on
-// the env-OFF default path.
+// from getenv(); subsequent calls return the cached bool. Default ON --
+// set MC2_OBJECT_ID_BUFFER=0 to disable.
 bool readObjectIdBufferEnv() {
-    return envFlag("MC2_OBJECT_ID_BUFFER");
+    return envFlagDefaultOn("MC2_OBJECT_ID_BUFFER");
 }
 
 uint32_t recipeIndexToHandleIndex(int32_t r) {

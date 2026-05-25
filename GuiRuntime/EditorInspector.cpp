@@ -8,8 +8,10 @@ namespace {
 
 static bool isEnabled() {
     static int cached = -1;
-    if (cached < 0)
-        cached = (std::getenv("MC2_IMGUI_INSPECTOR") != nullptr) ? 1 : 0;
+    if (cached < 0) {
+        const char* v = std::getenv("MC2_IMGUI_INSPECTOR");
+        cached = (!v || v[0] != '0') ? 1 : 0;
+    }
     return cached == 1;
 }
 
@@ -301,7 +303,7 @@ void EditorInspector::drawImGui() {
             if (s_drEnabled < 0)
                 s_drEnabled = (std::getenv("MC2_DEBUG_RENDERER") != nullptr) ? 1 : 0;
             if (!s_drEnabled)
-                ImGui::TextDisabled("Highlight: off (set MC2_DEBUG_RENDERER=1 to enable)");
+                ImGui::TextDisabled("Highlight: off (set MC2_DEBUG_RENDERER=0 to disable)");
         }
     }
 
