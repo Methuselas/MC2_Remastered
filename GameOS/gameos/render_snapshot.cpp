@@ -7,8 +7,8 @@
 // v0: mech + light blocks (placeholder sentinel records; structs are empty in v0)
 // v1: static-prop block (identity + transform, observational)
 //
-// Arena: a fresh RenderFrameArena is allocated per call (1 MiB slab; allocated
-// once in RenderFrameArena ctor, reset to 0 bytes-used each frame).
+// Arena: module-static ping-pong — two 1 MiB RenderFrameArena instances
+// alternate each frame via reset(). No per-frame heap allocation.
 
 #include "render_snapshot.h"
 #include "../../RenderWorld/RenderWorld.h"
@@ -20,12 +20,20 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
+// Module-static ping-pong arenas (2 × 1 MiB allocated at startup, never freed).
+// s_arenaIndex flips each call: the incoming frame resets the idle arena and
+// writes into it; the previous frame's data sits untouched in the other slot.
+// ---------------------------------------------------------------------------
+static RenderFrameArena s_arenas[2];
+static uint32_t         s_arenaIndex = 0;
+
+// ---------------------------------------------------------------------------
 // ExtractRenderSnapshot
 //
 // Called once per frame between DoGameLogic() and draw_screen().
-// Returns a snapshot backed by a frame-lifetime arena in snap.arena.
-// The unique_ptr keeps the arena alive for the frame; caller discards
-// the snapshot before the next call.
+// Returns a snapshot whose Span pointers are backed by a module-static
+// ping-pong arena (snap.arena is non-owning).  The snapshot is valid until
+// the next call, at which point the same arena slot is reset and reused.
 // ---------------------------------------------------------------------------
 RenderSnapshot ExtractRenderSnapshot()
 {
@@ -34,13 +42,10 @@ RenderSnapshot ExtractRenderSnapshot()
     RenderSnapshot snap;
     snap.frameIndex    = ++s_frameIndex;
     snap.arenaOverflow = false;
-    // TODO(extraction-v2): This allocates a fresh 1 MiB arena every frame.
-    // The spec (v0) called for a module-static ping-pong design (two persistent arenas
-    // alternating via reset()) to avoid 60 MiB/s of allocator churn at render frequency.
-    // Acceptable in v1 (observational, not on hot render path) but must be fixed before
-    // this path drives rendering. Track as extraction-v2 follow-up.
-    snap.arena         = std::make_unique<RenderFrameArena>();
-    // Arena is fresh (used=0) from make_unique.
+    // Ping-pong: flip to the idle arena, reset it, and use it for this frame.
+    s_arenaIndex ^= 1u;
+    s_arenas[s_arenaIndex].reset();
+    snap.arena = &s_arenas[s_arenaIndex];
 
     // -----------------------------------------------------------------------
     // v0: mech block

@@ -5,6 +5,8 @@
 //
 // Extraction v1 (2026-05-24): static-prop snapshot populated alongside
 // v0 mech and light records. Arena 1 MiB per slot (2 MiB ping-pong total).
+// Ping-pong: two module-static RenderFrameArena instances alternate each frame;
+// no per-frame heap allocation. Snapshot is valid only for the current frame.
 
 #pragma once
 
@@ -14,9 +16,10 @@
 #include <memory>
 
 // Frame arena management: persistent allocator with per-frame reset.
-// Ping-pong: snapshot lives in one arena for the entire frame; next
-// frame switches to the other. Existing slots/references are invalid
-// after the frame is complete.
+// Two module-static instances live in render_snapshot.cpp; ExtractRenderSnapshot()
+// flips between them each call. After the flip the idle arena is reset and
+// used for the new frame. Span pointers in RenderSnapshot are valid only for
+// the frame in which they were produced — do not hold them past the call site.
 class RenderFrameArena {
 public:
     RenderFrameArena() = default;
@@ -129,8 +132,10 @@ struct RenderSnapshot {
     uint32_t staticPropSentinelMat    = 0;           // expected == staticProps.size() in v1
     uint32_t staticPropSentinelCull   = 0;           // expected == staticProps.size() in v1
 
-    // Arena for all allocations
-    std::unique_ptr<RenderFrameArena> arena;
+    // Non-owning pointer to the current frame's ping-pong arena.
+    // Owned by module statics in render_snapshot.cpp; valid for this frame only.
+    // Do NOT hold this pointer past the frame — the arena is reset on the next call.
+    RenderFrameArena* arena = nullptr;
     bool arenaOverflow = false;
 };
 
