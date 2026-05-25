@@ -56,7 +56,17 @@ const GpuTrailTuning kTuningTable[] = {
         1,                          // additive blend (was 0/alpha — caused opaque white squares)
         kMissileSmokeTexId,         // handle 41 (smoke)
     },
-    // PpcBolt entry added in P3
+    /* [PpcBolt] */
+    {
+        {0.4f, 0.7f, 1.0f, 1.0f},   // head_color: bright blue (fully opaque)
+        {0.3f, 0.5f, 1.0f, 0.6f},   // trail_color: faint blue
+        2.5f,                        // head_size (world units)
+        0.8f,                        // trail_particle_size
+        0.05f,                       // trail_lifetime_s (per-frame clearing)
+        4.0f,                        // trail_density_per_meter
+        1,                           // additive blend
+        kMissileSmokeTexId,          // placeholder — same texture as missile until PPC-specific surveyed
+    },
 };
 
 constexpr float kEpsilonLength = 0.01f;
@@ -159,6 +169,7 @@ void GpuTrailEmitter::Spawn(GpuTrailKind kind,
                      0.f, 0.f, 1.f, 1.f,
                      static_cast<int>(t.blend_mode));
         GpuParticle p = {};
+        gpu_particle_set_is_head(p, true);
         p.position[0] = cur_world.x;
         p.position[1] = cur_world.y;
         p.position[2] = cur_world.z;
