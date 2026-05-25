@@ -25,6 +25,10 @@
 #include "../GameOS/gameos/gos_static_prop_batcher.h"
 #include "../GameOS/gameos/gos_static_prop_registry.h"
 #include "../GameOS/gameos/gos_mech_batcher.h"
+#include "../GameOS/gameos/gpu_cull_compute.h"
+#include "../GameOS/gameos/gpu_cull_substrate.h"
+#include "../GameOS/gameos/gpu_cull_readback.h"
+#include "../GameOS/gameos/gos_terrain_lighting.h"
 #include "../GameAdapters/StaticPropRenderAdapter.h"
 #include "../GameAdapters/MechRenderAdapter.h"
 
@@ -150,6 +154,14 @@ bool EditorData::clear()
 		delete land;
 		land = NULL;
 	}
+
+	// E4e: gpu_cull shutdown chain — mirrors code/mission.cpp:3272-3277,
+	// reverse of init order. Game's Mission::destroy does NOT call
+	// gos_terrain_lighting::mission_shutdown (verified via grep), so omit
+	// it here as well to stay faithful to game-side teardown order.
+	gpu_cull::readback_shutdown();
+	gpu_cull::compute_shutdown();
+	gpu_cull::substrate_shutdown();
 
 	// Editor GPU-batcher map-unload lifecycle (mirrors code/mission.cpp:~3279).
 	// Must run BEFORE EditorObjectMgr::clear() so batcher state tears down
@@ -437,6 +449,30 @@ bool EditorData::initTerrainFromPCV( const char* fileName )
 
 	EditorObjectMgr::instance()->load( pFile, 1 );
 	EditorDataTrace("EditorData::initTerrainFromPCV: after EditorObjectMgr::load");
+
+	// E4e: wire gpu_cull init chain — mirrors code/mission.cpp:2815-2834.
+	// Without these, compute_dispatch() silently early-returns on
+	// !s_initialized, leaving the indirect buffer at zeros and MDIs drawing
+	// nothing. Editor is GPU-only test bed.
+	{
+		// Substrate sizing: mirror mission.cpp:2813-2815 formula. Editor has no
+		// ObjectManager->getMaxObjects() equivalent; use a conservative editor
+		// cap (buildings + trees + mechs ~1100 worst case) + 25% headroom + the
+		// static-prop 8192 cushion from game-side.
+		const uint32_t editorMaxActors = 1100u;
+		const uint32_t staticPropHeadroom = 8192u;
+		const uint32_t cullCap = editorMaxActors + editorMaxActors / 4u + staticPropHeadroom;
+		gpu_cull::substrate_init(cullCap);
+		gpu_cull::compute_init();
+		// gos_terrain_lighting::mission_init: realVerticesMapSide is set
+		// during land->init() earlier in this function.
+		gos_terrain_lighting::mission_init(
+			static_cast<uint32_t>(Terrain::realVerticesMapSide * Terrain::realVerticesMapSide),
+			64u);
+		// readback_init sized same as substrate_init (mission.cpp:2832-2834).
+		gpu_cull::readback_init(cullCap);
+	}
+	EditorDataTrace("EditorData::initTerrainFromPCV: gpu_cull init chain complete");
 
 	// GPU-batcher geometry finalization. All TG_TypeMultiShape instances
 	// created during EditorObjectMgr::load() above have been registered via
