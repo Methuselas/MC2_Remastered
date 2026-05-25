@@ -97,10 +97,8 @@ public:
 	~EditorObjectMgr();
 
 	void		render();
-	
-	void		update();
 
-	void		renderShadows();
+	void		update();
 
 	void		init( const char* bldgListFileName, const char* objectFileName );
 

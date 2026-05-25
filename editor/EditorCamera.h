@@ -178,58 +178,22 @@ public:
 				s_ecrFrame, (active && turn > 1) ? 1 : 0);
 		if (active && turn > 1)
 		{
-			// by Methuselas: Compose terrainMVP and upload the per-frame
-			// terrain shader uniforms BEFORE land->render(). The Remastered
-			// terrain TES/VS read these uniforms; without this block they
-			// stay at whatever the previous frame (or the engine default)
-			// left behind, and the editor renders gray/black terrain even
-			// though the GL state is otherwise valid.
+			// REBUILD 2026-05-25: hand-forked per-frame chain deleted.
+			// Manual mcTextureManager->renderLists() orchestration and the
+			// hand-forked terrain MVP swap (gos_SetTerrainViewport,
+			// gos_SetTerrainCameraPos, gos_SetTerrainLightDir) are gone.
+			// land->render(), EditorObjectMgr->render/renderShadows(),
+			// land->renderWater(), and the renderLists() calls were a
+			// partial gamecam.cpp mirror; the canonical chain will be
+			// re-wired in S2 (mirrors gamecam.cpp:176-257 exactly).
+			// See docs/superpowers/plans/2026-05-25-editor-rebuild.md §S2.
 			//
-			// This mirrors GameCamera::render() in code/gamecam.cpp around
-			// lines 149-189. It is intentionally an Editor-local
-			// compatibility shim that calls the existing engine APIs
-			// (gos_SetTerrainMVP, gos_SetTerrainViewport,
-			// gos_SetTerrainCameraPos, gos_SetTerrainLightDir). No engine,
-			// shader, or mclib file is modified.
-			//
-			{
-				// Modern terrain MVP publish -- same path as code/gamecam.cpp:176.
-				// gos_SetWorldToClipGL() writes the terrain_mvp_ cache that
-				// gos_GetTerrainMVPMat4() reads, which gpu_cull::compute_dispatch()
-				// guards on. Without this, all MDI indirect commands read zeros.
-				gos_SetWorldToClipGL(eye->worldToClipGL());
-
-				// Viewport params for TES: (vmx, vmy, vax, vay)
-				gos_SetTerrainViewport(viewMulX, viewMulY, viewAddX, viewAddY);
-
-				// Camera position in MC2 world space for TCS distance LOD
-				Stuff::Vector3D camOrig = getCameraOrigin();
-				gos_SetTerrainCameraPos(camOrig.x, camOrig.y, camOrig.z);
-
-				// Light direction in raw MC2 world space (x, y, elevation).
-				// NOT swizzled — fragment shader normals are in tangent space
-				// where Z = up, which matches raw MC2 coords (Z = elevation).
-				gos_SetTerrainLightDir(lightDirection.x, lightDirection.y, lightDirection.z);
-			}
+			// KEPT: gos_SetWorldToClipGL (S0 §5 step 1; canonical first
+			// per-frame call), sky/compass/EditorInterface ImGui glue.
+			gos_SetWorldToClipGL(eye->worldToClipGL());
 
 			if (theSky)
 				theSky->render(1);
-				
-			land->render();								//render the Terrain
-	
-			//If you ever want craters in the editor, just turn this on.  No way to save 'em though!
-			//craterManager->render();					//render the craters and footprints
-	
-			//Only the GameCamera knows about this.  Heidi, override this function in EditorCamera
-			//and have your objectManager draw.
-
-			if (!s_bSensorMapEnabled)
-				EditorObjectMgr::instance()->render();		//render all other objects
-
-			land->renderWater();
-
-			if (!s_bSensorMapEnabled && useShadows)
-				EditorObjectMgr::instance()->renderShadows();	//render all other objects
 
 			if (!drawOldWay)
 			{
@@ -237,34 +201,11 @@ public:
 					compass->render(-1);		//Force this to zBuffer in front of everything
 			}
 
-			if (!drawOldWay)
-			{
-				if (s_ecrLog)
-					EditorCameraTrace("EditorCamera::render frame=%ld before mcTextureManager->renderLists() drawOldWay=%d",
-						s_ecrFrame, drawOldWay ? 1 : 0);
-				mcTextureManager->renderLists();
-				if (s_ecrLog)
-					EditorCameraTrace("EditorCamera::render frame=%ld after  mcTextureManager->renderLists() returned",
-						s_ecrFrame);
-			}
-			else if (s_ecrLog)
-			{
-				EditorCameraTrace("EditorCamera::render frame=%ld renderLists SKIPPED (drawOldWay=true)", s_ecrFrame);
-			}
-
-			//theClipper->RenderNow();		//Draw the FX
-
 			/* The editor interface needs to be drawn last, as it draws things "on top" of the
 			rendered scene. */
 			if ( EditorInterface::instance() )
 			{
 				EditorInterface::instance()->render();
-				/* We need to call renderLists() again to render the "object placement" cursor
-				that, if active, was placed in a render list in the "EditorInterface::instance()->render()"
-				call. renderLists() seems to have an automatic mechanism for not redrawing
-				things it has already drawn. Pretty much everything else drawn by
-				EditorInterface is "rendered immediately" (not placed in a renderList). */
-				mcTextureManager->renderLists();
 			}
 		}
 	
