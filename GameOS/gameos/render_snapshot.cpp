@@ -138,6 +138,9 @@ RenderSnapshot ExtractRenderSnapshot()
                 }
 
                 // Required field: instanceFlags (v2).
+                // staticPropGetInstanceFlags uses the same recipeValid() check as
+                // staticPropGetModelMatrix above; failure here means the registry
+                // entry was invalidated between the two calls (extremely unlikely).
                 uint32_t instanceFlags = 0u;
                 if (!GpuStaticPropRegistry::staticPropGetInstanceFlags(
                         v.recipeIndex, &instanceFlags)) {
