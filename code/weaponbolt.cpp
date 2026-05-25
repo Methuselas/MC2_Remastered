@@ -2432,6 +2432,18 @@ static mc2::particles::GpuTrailKind gpuTrailKindFromEffectId(int32_t eid)
     return GpuTrailKind::None;
 }
 
+// B3c-1: allowlist of GPU trail kinds that are fully proven and may suppress
+// the CPU gosFX trail. Only kinds that have passed visual + smoke validation
+// are listed here. All others fall through to the CPU path unchanged.
+static bool gpuTrailKindProven(mc2::particles::GpuTrailKind k)
+{
+    switch (k) {
+        case mc2::particles::GpuTrailKind::MissileSmoke: return true;
+        case mc2::particles::GpuTrailKind::PpcBolt:      return true;
+        default:                                          return false;
+    }
+}
+
 //---------------------------------------------------------------------------
 void WeaponBolt::init (bool create, ObjectTypePtr _type)
 {
@@ -2450,22 +2462,31 @@ void WeaponBolt::init (bool create, ObjectTypePtr _type)
 	// Are we a magical new GOSFX(tm)?
 	if (effectId >= 0)
 	{
-		if (strcmp(weaponEffects->GetEffectName(effectId),"NONE") != 0)
+		// B3c-1: suppress CPU gosFX trail when GPU owns it.
+		// gpu_trail_kind is set at the bottom of this function by gpuTrailKindFromEffectId.
+		// We need the kind before that assignment, so derive it here directly from effectId.
+		mc2::particles::GpuTrailKind init_gpu_kind = gpuTrailKindFromEffectId(effectId);
+		bool gpu_owns_trail = false;
+		if (gpuTrailKindProven(init_gpu_kind)) {
+			const char* v = std::getenv("MC2_GPU_PARTICLES");
+			gpu_owns_trail = (v && v[0] == '1');
+		}
+		if (!gpu_owns_trail && strcmp(weaponEffects->GetEffectName(effectId),"NONE") != 0)
 		{
 			//--------------------------------------------
 			// Yes, load it on up.
 			unsigned flags = gosFX::Effect::ExecuteFlag|gosFX::Effect::LoopFlag;
-	
+
 			Check_Object(gosFX::EffectLibrary::Instance);
 			gosFX::Effect::Specification* gosEffectSpec = gosFX::EffectLibrary::Instance->Find(weaponEffects->GetEffectName(effectId));
-			
+
 			if (gosEffectSpec)
 			{
 				gosEffect = gosFX::EffectLibrary::Instance->MakeEffect(gosEffectSpec->m_effectID, flags);
 				gosASSERT(gosEffect != NULL);
-			
+
 				MidLevelRenderer::MLRTexturePool::Instance->LoadImages();
-			
+
 				//gosEffect->SetScalar(BASE_EFFECT_SCALAR);
 			}
 		}
