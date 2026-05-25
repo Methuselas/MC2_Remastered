@@ -143,11 +143,11 @@ public:
 		// VFX stuff for this.  ALL GOS NOW!
 		gos_GetViewport(&viewMulX, &viewMulY, &viewAddX, &viewAddY);
 		//--------------------------------------------------------
-		// Get new viewport values to scale stuff.  No longer uses
-		// VFX stuff for this.  ALL GOS NOW!
-		screenResolution.x = viewMulX;
-		screenResolution.y = viewMulY;
-		calculateProjectionConstants();
+		// S2.13-surgical: screenResolution + calculateProjectionConstants
+		// formerly set here. Hoisted to EditorInterface::update() BEFORE
+		// land->geometry() so terrain cull constants are fresh when
+		// consumed. Local viewMulX/Y/AddX/Y are still used below for
+		// TG_Shape::SetViewport and globalScaleFactor.
 	
 		TG_Shape::SetViewport(viewMulX,viewMulY,viewAddX,viewAddY);
 	

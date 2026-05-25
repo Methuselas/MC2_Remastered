@@ -705,6 +705,23 @@ void Editor::update()
 		land->update();
 	}
 
+	// S2.13-surgical: hoist camera projection-state refresh from
+	// EditorCamera::render() to BEFORE land->geometry(). The terrain geometry
+	// pass consumes eye->verticalSphereClipConstant / horizontalSphereClipConstant
+	// and the cameraToClip-derived clip vector. Previously those were updated
+	// inside EditorCamera::render() (post-geometry), so frame 1 saw zero
+	// constants and frame N>=2 saw frame-(N-1) values. Mirrors game's
+	// Mission::update ordering (camera state setup -> terrain geometry).
+	{
+		float viewMulX, viewMulY, viewAddX, viewAddY;
+		gos_GetViewport(&viewMulX, &viewMulY, &viewAddX, &viewAddY);
+		Stuff::Vector3D newRes;
+		newRes.x = viewMulX;
+		newRes.y = viewMulY;
+		newRes.z = 0.0f;
+		eye->changeResolution(newRes);  // sets screenResolution + calculateProjectionConstants
+	}
+
 	land->clearObjBlocksActive();
 	land->geometry();
 	
