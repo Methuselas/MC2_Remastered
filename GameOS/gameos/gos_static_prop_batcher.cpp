@@ -276,6 +276,10 @@ static const bool s_materialGpuSampleEnabled =
 static bool s_materialGpuSidecarValid = false;
 static std::vector<uint32_t>                s_packetMaterialIdx;  // per draw slot
 static std::vector<RenderCore::MaterialGpu> s_materialGpuTable;   // deduplicated
+// v2: per-packet texArrayLayer sidecar. Indexed by global packet index.
+// Copied from layerForPacket[] in finalizeGeometry() before that local is discarded.
+// Valid until next finalizeGeometry() or onMapUnload(). -1 for unavailable packets.
+static std::vector<int32_t> s_packetTexArrayLayer;
 static GLuint                               s_materialGpuSsbo = 0;
 
 GLuint s_texArrayOff               = 0;  // alpha-OFF group GL_TEXTURE_2D_ARRAY
@@ -1071,6 +1075,7 @@ void GpuStaticPropBatcher::onMapLoad() {
 
 void GpuStaticPropBatcher::onMapUnload() {
     GpuStaticPropRegistry::staticPropRegistryClearMaterialCache();
+    s_packetTexArrayLayer.clear();  // v2: sidecar is per-map; clear on unload
     if (s_sharedVbo) { glDeleteBuffers(1, &s_sharedVbo); s_sharedVbo = 0; }
     if (s_sharedIbo) { glDeleteBuffers(1, &s_sharedIbo); s_sharedIbo = 0; }
     if (s_sharedVao) { glDeleteVertexArrays(1, &s_sharedVao); s_sharedVao = 0; }
@@ -1345,6 +1350,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
     if (s_geometryFinalized) return;
 
     GpuStaticPropRegistry::staticPropRegistryClearMaterialCache();
+    s_packetTexArrayLayer.clear();  // v2: will be repopulated from layerForPacket below
 
     // Compile shader programs NOW, at map-load time, while we're on the
     // same code path that compiles every other engine shader. Doing it
@@ -2032,6 +2038,11 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                                       newlyPinnedThisBuild.end());
     }
 
+    // v2: persist per-packet texArrayLayer before layerForPacket goes stale.
+    // layerForPacket is fully populated here; the PerDrawEntry loop below reads
+    // but does not modify it. -1 entries = packets with unavailable textures.
+    s_packetTexArrayLayer.assign(layerForPacket.begin(), layerForPacket.end());
+
     // 2026-05-11 per-packet rework: build s_sortedPacketOrder, s_alphaOff/OnCmdCount,
     // s_perDrawSsbo (one entry per packet in sorted order), and s_cmdToBucketSsbo
     // (one uint typeID per cmd). Fragment shader reads
@@ -2263,7 +2274,10 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                         hasMat ? e.materialIdx : 0xFFFFFFFFu,
                         hasMat,
                         wasAlphaOn,
-                        type.packetCount > 1u);
+                        type.packetCount > 1u,
+                        type.alphaClass,          // v2: 0=alpha-off, 1=alpha-on
+                        type.packetCount,         // v2: total packet count for this type
+                        type.firstPacket);        // v2: global index of first packet
                 }
             }   // end if (layerForPacket[globalPktIdx] >= 0)
             entries[i] = e;
@@ -4468,6 +4482,15 @@ bool batcher_getMaterialGpuEntry(uint32_t index, RenderCore::MaterialGpu* out) {
     if (!out) return false;
     if (index >= static_cast<uint32_t>(s_materialGpuTable.size())) return false;
     *out = s_materialGpuTable[index];
+    return true;
+}
+
+bool batcher_getPacketTexArrayLayer(uint32_t globalPacketIdx, int32_t* out) {
+    if (!out) return false;
+    *out = -1;
+    if (globalPacketIdx >= static_cast<uint32_t>(s_packetTexArrayLayer.size()))
+        return false;
+    *out = s_packetTexArrayLayer[globalPacketIdx];
     return true;
 }
 

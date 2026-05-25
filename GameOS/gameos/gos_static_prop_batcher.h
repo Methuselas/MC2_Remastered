@@ -390,3 +390,9 @@ extern int g_lightProbeSetupPath;  // [GPUPROPS v1]
 // Returns true and fills *out if MC2_MATERIAL_GPU=1, geometry is finalized,
 // and index < table size. Returns false otherwise (out is not modified).
 bool batcher_getMaterialGpuEntry(uint32_t index, RenderCore::MaterialGpu* out);
+
+// v2 extraction: per-packet texArrayLayer sidecar accessor.
+// Returns true + fills *out if globalPacketIdx is within the sidecar range.
+// Returns false + *out=-1 if out of range (sidecar empty or packet index invalid).
+// Sidecar is populated at finalizeGeometry() and valid until onMapUnload().
+bool batcher_getPacketTexArrayLayer(uint32_t globalPacketIdx, int32_t* out);

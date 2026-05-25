@@ -167,9 +167,9 @@ void staticPropCacheTypePrimaryMaterial(uint32_t typeID,
                                         bool     hasMaterialIdx,
                                         bool     wasAlphaOn,
                                         bool     multiPacket,
-                                        uint8_t  alphaClass   = 0u,
-                                        uint32_t packetCount  = 0u,
-                                        uint32_t firstPacket  = 0xFFFFFFFFu);
+                                        uint8_t  alphaClass,
+                                        uint32_t packetCount,
+                                        uint32_t firstPacket);
 
 // Clears the per-typeID cache. Called from:
 //   - start of finalizeGeometry() (re-bake)
