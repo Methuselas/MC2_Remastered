@@ -37,9 +37,8 @@ static void editor_set_default_env_vars()
     // the exe directly without a .bat. Bat overrides still work because we
     // only set when unset.
     if (!getenv("MC2_EDITOR_TRACE"))            _putenv_s("MC2_EDITOR_TRACE",              "1");
-    if (!getenv("MC2_GPU_DRIVEN"))              _putenv_s("MC2_GPU_DRIVEN",                "1");
-    if (!getenv("MC2_EDITOR_BYPASS_BLDG_CULL")) _putenv_s("MC2_EDITOR_BYPASS_BLDG_CULL",   "1");
-    if (!getenv("MC2_STATIC_PROP_REGISTRY"))    _putenv_s("MC2_STATIC_PROP_REGISTRY",      "0");
+    // S3 (2026-05-25): MC2_GPU_DRIVEN, MC2_EDITOR_BYPASS_BLDG_CULL, MC2_STATIC_PROP_REGISTRY
+    // sidesteps retired -- editor now runs canonical default-ON chain.
 }
 
 static void EarlyTrace(const char* msg)
