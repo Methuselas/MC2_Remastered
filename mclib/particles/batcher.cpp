@@ -77,9 +77,28 @@ void dump_summary() {
 void initialize_env() {
     if (g_enabled_initialized) return;
     const char* v = std::getenv("MC2_GPU_PARTICLES");
-    g_enabled_value = (v && v[0] == '1');
     const char* vl = std::getenv("MC2_GPU_PARTICLES_LOG");
     g_log_value = (vl && vl[0] == '1');
+    // B3c-2: default-ON. Absent env var → enabled. Explicit "0" → disabled.
+    if (!v) {
+        g_enabled_value = true;   // default ON
+    } else if (v[0] == '1') {
+        g_enabled_value = true;
+    } else {
+        if (v[0] != '0') {
+            // Unknown value — warn once if logging enabled.
+            if (g_log_value) {
+                static bool warned = false;
+                if (!warned) {
+                    warned = true;
+                    std::fprintf(stderr,
+                        "[GPU_PARTICLES] unknown MC2_GPU_PARTICLES value '%s'; disabling\n", v);
+                    std::fflush(stderr);
+                }
+            }
+        }
+        g_enabled_value = false;
+    }
     g_enabled_initialized = true;
     if (g_enabled_value) {
         std::fprintf(stderr, "[INSTR v1] enabled: gpu_particles log=%d\n",
