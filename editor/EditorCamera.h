@@ -72,6 +72,12 @@ extern MidLevelRenderer::MLRClipper * theClipper;
 
 extern bool useLOSAngle;	// NS3: def in mclib/camera.cpp (editor never reads it)
 
+// S-CLI globals defined in EditorMFC.cpp; consumed at end of render() below
+// to post WM_CLOSE once we've rendered the requested number of frames.
+extern long g_cliFramesLimit;
+extern long g_cliFrameCounter;
+extern bool g_cliClosePosted;
+
 class EditorCamera : public Camera
 {
 	//Data Members
@@ -236,9 +242,23 @@ public:
 			gos_SetRenderState( gos_State_ZCompare, 0);
 			gos_SetRenderState(	gos_State_ZWrite, 0);
 			gos_SetRenderState( gos_State_Perspective, 1);
-	
+
 			if (compass && (turn > 3) && drawCompass)
 				compass->render();
+		}
+
+		// S-CLI: tick the global rendered-frames counter and, if a frames
+		// limit was given, post WM_CLOSE once we've finished the Nth frame.
+		// Fires exactly once via g_cliClosePosted.
+		++g_cliFrameCounter;
+		if (!g_cliClosePosted && g_cliFramesLimit > 0 && g_cliFrameCounter >= g_cliFramesLimit)
+		{
+			g_cliClosePosted = true;
+			fprintf(stderr, "[EDITOR_CLI v1] event=frames_done frames=%ld\n", g_cliFrameCounter);
+			fflush(stderr);
+			CWnd* main = AfxGetMainWnd();
+			if (main && main->GetSafeHwnd())
+				::PostMessage(main->GetSafeHwnd(), WM_CLOSE, 0, 0);
 		}
  	}
 
