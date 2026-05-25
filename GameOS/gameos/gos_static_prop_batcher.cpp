@@ -1070,6 +1070,7 @@ void GpuStaticPropBatcher::onMapLoad() {
 }
 
 void GpuStaticPropBatcher::onMapUnload() {
+    GpuStaticPropRegistry::staticPropRegistryClearMaterialCache();
     if (s_sharedVbo) { glDeleteBuffers(1, &s_sharedVbo); s_sharedVbo = 0; }
     if (s_sharedIbo) { glDeleteBuffers(1, &s_sharedIbo); s_sharedIbo = 0; }
     if (s_sharedVao) { glDeleteVertexArrays(1, &s_sharedVao); s_sharedVao = 0; }
@@ -1342,6 +1343,8 @@ void GpuStaticPropBatcher::registerMultiShape(TG_TypeMultiShape* multiShape) {
 
 void GpuStaticPropBatcher::finalizeGeometry() {
     if (s_geometryFinalized) return;
+
+    GpuStaticPropRegistry::staticPropRegistryClearMaterialCache();
 
     // Compile shader programs NOW, at map-load time, while we're on the
     // same code path that compiles every other engine shader. Doing it
@@ -2248,7 +2251,21 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 } else {
                     e.materialIdx = 0u;
                 }
-            }
+                // v1.1: cache primary material per typeID for extraction snapshot.
+                // First-time-wins with prefer-alpha-off; s_sortedPacketOrder is alpha-off-first
+                // so alpha-off primaries are naturally seen before alpha-on ones.
+                {
+                    const bool wasAlphaOn = (i >= s_alphaOffCmdCount);
+                    const bool hasMat     = (s_materialGpuEnabled && s_materialGpuSidecarValid);
+                    GpuStaticPropRegistry::staticPropCacheTypePrimaryMaterial(
+                        typeID,
+                        e.texArrayLayer,
+                        hasMat ? e.materialIdx : 0xFFFFFFFFu,
+                        hasMat,
+                        wasAlphaOn,
+                        type.packetCount > 1u);
+                }
+            }   // end if (layerForPacket[globalPktIdx] >= 0)
             entries[i] = e;
         }
 
@@ -2296,6 +2313,17 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                      cmdToBucket.data(),
                      GL_STATIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // v1.1 material cache summary (always logged at finalize time).
+    {
+        GpuStaticPropRegistry::MaterialCacheStats mcs{};
+        GpuStaticPropRegistry::staticPropGetMaterialCacheStats(&mcs);
+        std::fprintf(stderr,
+            "[GPUPROPS] material_cache cache_slots=%u tex_wired=%u mat_wired=%u "
+            "multi_packet=%u alpha_on_fallback=%u no_primary=%u\n",
+            mcs.cacheVectorSize, mcs.texWired, mcs.matWired,
+            mcs.multiPacket, mcs.alphaOnFallback, mcs.noPrimary);
     }
 
     // Slice 1 step group 3 — allocate base-instance table under !s_globalPoolLegacy.
