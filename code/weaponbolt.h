@@ -32,6 +32,7 @@
 
 #include<stuff/stuff.hpp>
 #include<gosfx/gosfxheaders.hpp>
+#include "particles/gpu_trail.h"
 //---------------------------------------------------------------------------
 // Macro Definitions
 #define ALL_COLORS			4
@@ -220,7 +221,14 @@ class WeaponBolt : public GameObject
 			DWORD				gosTextureHandle;
 			float				startUV;
 			float				goalHeight;
-			
+
+			// B2 P2: per-frame position snapshot for GPU trail segment stamping.
+			Stuff::Vector3D		prev_position;
+
+			// B2 P2: which GPU trail kind this bolt drives.  Hardcoded to
+			// MissileSmoke during P2 test pass; replaced by INI table in P3.
+			mc2::particles::GpuTrailKind gpu_trail_kind = mc2::particles::GpuTrailKind::None;
+
 	//Member Functions
 	//-----------------
 		public:
@@ -257,14 +265,17 @@ class WeaponBolt : public GameObject
 			hsPos.Zero();
 			
 			hitLeft = 0.0f;
-			
+
 			startUV = 0.0f;
 			mcTextureHandle = 0;
 			gosTextureHandle = 0xffffffff;
-			
+
 			weaponShot.damage = 0.0f;
-			
+
 			goalHeight = 0.0f;
+
+			prev_position.Zero();
+			gpu_trail_kind = mc2::particles::GpuTrailKind::None;
 		}
 
 		~WeaponBolt (void)
