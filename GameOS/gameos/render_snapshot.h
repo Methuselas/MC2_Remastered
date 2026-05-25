@@ -132,6 +132,14 @@ struct RenderSnapshot {
     uint32_t staticPropSentinelMat    = 0;           // expected == staticProps.size() in v1
     uint32_t staticPropSentinelCull   = 0;           // expected == staticProps.size() in v1
 
+    // v1.1 material/texture wiring counters
+    uint32_t staticPropTexWired       = 0;  // texArrayLayer != -1
+    uint32_t staticPropTexSentinel    = 0;  // texArrayLayer == -1 (no valid primary)
+    uint32_t staticPropMatWired       = 0;  // materialIdx != 0xFFFFFFFF (MC2_MATERIAL_GPU=1 only)
+    uint32_t staticPropMatSentinel    = 0;  // materialIdx == 0xFFFFFFFF
+    uint32_t staticPropPrimaryAlphaOn = 0;  // primary came from alpha-on fallback
+    uint32_t staticPropMultiPacket    = 0;  // type has > 1 packet
+
     // Non-owning pointer to the current frame's ping-pong arena.
     // Owned by module statics in render_snapshot.cpp; valid for this frame only.
     // Do NOT hold this pointer past the frame — the arena is reset on the next call.

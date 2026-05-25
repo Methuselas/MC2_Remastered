@@ -101,6 +101,12 @@ RenderSnapshot ExtractRenderSnapshot()
             uint32_t validationFail = 0;
             uint32_t sentinelMat    = 0;
             uint32_t sentinelCull   = 0;
+            uint32_t texWired       = 0;
+            uint32_t texSentinel    = 0;
+            uint32_t matWired       = 0;
+            uint32_t matSentinel    = 0;
+            uint32_t primaryAlphaOn = 0;
+            uint32_t multiPacket    = 0;
 
             for (uint32_t i = 0; i < static_cast<uint32_t>(views.size()); ++i) {
                 const RenderWorld::StaticPropRecordView& v = views[i];
@@ -140,19 +146,41 @@ RenderSnapshot ExtractRenderSnapshot()
                 p.lightDataIndex = 0xFFFFFFFFu;
                 GpuStaticPropRegistry::staticPropGetLightDataIndex(v.recipeIndex, &p.lightDataIndex);
 
-                // Sentinel v1 fields (wired in v1.1+).
-                p.materialIdx   = 0xFFFFFFFFu;
+                // v1.1: wire texArrayLayer and materialIdx from per-typeID primary cache.
                 p.texArrayLayer = -1;
+                GpuStaticPropRegistry::staticPropGetTexArrayLayer(v.recipeIndex, &p.texArrayLayer);
+
+                p.materialIdx = 0xFFFFFFFFu;
+                GpuStaticPropRegistry::staticPropGetMaterialIdx(v.recipeIndex, &p.materialIdx);
+
                 p.hasCullRecord = false;
 
-                ++sentinelMat;
+                // v1 counters (backward compat)
+                if (p.materialIdx == 0xFFFFFFFFu) ++sentinelMat;
                 ++sentinelCull;
+
+                // v1.1 counters
+                if (p.texArrayLayer != -1)        ++texWired;   else ++texSentinel;
+                if (p.materialIdx != 0xFFFFFFFFu) ++matWired;   else ++matSentinel;
+
+                GpuStaticPropRegistry::StaticPropTypeMaterialCache matInfo{};
+                if (GpuStaticPropRegistry::staticPropGetMaterialCacheInfo(
+                        v.recipeIndex, &matInfo)) {
+                    if (matInfo.primaryWasAlphaOn) ++primaryAlphaOn;
+                    if (matInfo.multiPacket)       ++multiPacket;
+                }
             }
 
             snap.staticProps              = Span<ExtractedStaticProp>(propBuf, writeIdx);
             snap.staticPropValidationFail = validationFail;
             snap.staticPropSentinelMat    = sentinelMat;
             snap.staticPropSentinelCull   = sentinelCull;
+            snap.staticPropTexWired       = texWired;
+            snap.staticPropTexSentinel    = texSentinel;
+            snap.staticPropMatWired       = matWired;
+            snap.staticPropMatSentinel    = matSentinel;
+            snap.staticPropPrimaryAlphaOn = primaryAlphaOn;
+            snap.staticPropMultiPacket    = multiPacket;
         }
     }
 
@@ -174,6 +202,8 @@ RenderSnapshot ExtractRenderSnapshot()
         "[RENDER_SNAPSHOT v1] frame=%llu mechs=%u static_props=%u lights=%u "
         "bytes=%zu overflow=%d\n"
         "  sp_fail=%u sp_sentinel_mat=%u sp_sentinel_cull=%u sizeof_static_prop=%zu\n"
+        "  sp_tex_wired=%u sp_tex_sentinel=%u sp_mat_wired=%u sp_mat_sentinel=%u\n"
+        "  sp_primary_alpha_on=%u sp_multi_packet=%u\n"
         "  visibility_static_props=%u sp_vis_delta=%d\n",
         static_cast<unsigned long long>(snap.frameIndex),
         static_cast<uint32_t>(snap.mechs.size()),
@@ -185,6 +215,12 @@ RenderSnapshot ExtractRenderSnapshot()
         snap.staticPropSentinelMat,
         snap.staticPropSentinelCull,
         sizeof(ExtractedStaticProp),
+        snap.staticPropTexWired,
+        snap.staticPropTexSentinel,
+        snap.staticPropMatWired,
+        snap.staticPropMatSentinel,
+        snap.staticPropPrimaryAlphaOn,
+        snap.staticPropMultiPacket,
         visibilityStaticPropsCount,
         static_cast<int32_t>(snap.staticProps.size()) -
             static_cast<int32_t>(visibilityStaticPropsCount));
