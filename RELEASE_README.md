@@ -46,6 +46,8 @@ modder log capture easier — close it after `mc2.exe` exits.
 
 ## Mission Editor (beta)
 
+> Mission Editor and UI Editor by [@Methuselas](https://github.com/Methuselas)
+
 `Mission Editor.exe` ships alongside `mc2.exe`. Launch with `run-editor.bat`. The
 editor runs on the same GPU-driven rendering pipeline as the game and can open any
 campaign mission. Save support and asset-import polish are still in progress —
@@ -126,5 +128,6 @@ folder. Always launch via `run-editor.bat`.
 - **Original game**: Microsoft / FASA Interactive (2001)
 - **OpenGL port, Linux support, and engine bug fixes**: [alariq/mc2](https://github.com/alariq/mc2) — without this there is no remaster
 - **D3F font loader, multi-monitor mouse grab, SDL window-event dispatch fix, FMV reference**: [Alexbeav](https://github.com/Alexbeav) — code cherry-picked from [MechCommander2-Restoration-Project](https://github.com/Alexbeav/MechCommander2-Restoration-Project)
+- **Mission Editor and UI Editor**: [@Methuselas](https://github.com/Methuselas)
 - **Visual remaster + Mission Editor bring-up**: ThranduilsRing
 - **Development**: [Claude Code](https://claude.ai/code) (Anthropic)
