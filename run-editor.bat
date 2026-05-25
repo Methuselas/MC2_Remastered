@@ -26,20 +26,20 @@ REM body deletion.  The game survives via GPU compute cull; the editor has
 REM neither GPU cull nor BldgAppearance::render bypass.  This forces
 REM recalcBounds to return true for Bldg/Tree appearances so they render.
 REM
-REM MC2_GPU_OBJECTS=0: GpuStaticPropBatcher is default-ON.  Editor loop does
-REM not drive the substrate-coalesce flush.  Force legacy submitMultiShape.
-REM
-REM MC2_GPU_MECHS=0: GpuMechBatcher is default-ON.  Same reason: editor loop
-REM does not drive the GPU mech pipeline.  Force legacy CPU mech submit.
-REM
 REM MC2_EDITOR_TRACE=1: writes editor-startup.log to CWD for launch debugging.
 REM Keep this on so logs are always captured.
 
 set MC2_EDITOR_TRACE=1
 set MC2_GPU_DRIVEN=0
 set MC2_EDITOR_BYPASS_BLDG_CULL=1
-set MC2_GPU_OBJECTS=0
-set MC2_GPU_MECHS=0
+REM MC2_GPU_OBJECTS=0 retired 2026-05-24 -- editor now wires GPU static-prop batcher
+REM MC2_GPU_MECHS=0   retired 2026-05-24 -- editor now wires GPU mech batcher
+REM Editor stays on dynamic submitMultiShape path. Static-prop registry fast-path
+REM requires GpuStaticPropRegistry::frameBegin/init/destroy wiring the editor
+REM frame loop does not yet have (filed as deferred debt). Sidestepping here
+REM keeps the editor on the per-frame submit path.
+set MC2_STATIC_PROP_REGISTRY=0
+REM See docs/superpowers/plans/2026-05-24-editor-object-loop-gpu-port.md
 
 cd /d "A:\Games\mc2-opengl\mc2-editor"
 "A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\build64\out\editor\RelWithDebInfo\Mission Editor.exe"
