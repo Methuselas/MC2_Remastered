@@ -6,6 +6,7 @@
 //
 // v0: mech + light blocks (placeholder sentinel records; structs are empty in v0)
 // v1: static-prop block (identity + transform, observational)
+// v1.1: texArrayLayer/materialIdx wired from per-typeID primary material cache.
 //
 // Arena: module-static ping-pong — two 1 MiB RenderFrameArena instances
 // alternate each frame via reset(). No per-frame heap allocation.
@@ -147,13 +148,19 @@ RenderSnapshot ExtractRenderSnapshot()
                 GpuStaticPropRegistry::staticPropGetLightDataIndex(v.recipeIndex, &p.lightDataIndex);
 
                 // v1.1: wire texArrayLayer and materialIdx from per-typeID primary cache.
+                // Single registry lookup fills all material fields atomically.
                 p.texArrayLayer = -1;
-                GpuStaticPropRegistry::staticPropGetTexArrayLayer(v.recipeIndex, &p.texArrayLayer);
-
-                p.materialIdx = 0xFFFFFFFFu;
-                GpuStaticPropRegistry::staticPropGetMaterialIdx(v.recipeIndex, &p.materialIdx);
-
+                p.materialIdx   = 0xFFFFFFFFu;
                 p.hasCullRecord = false;
+
+                GpuStaticPropRegistry::StaticPropTypeMaterialCache matInfo{};
+                if (GpuStaticPropRegistry::staticPropGetMaterialCacheInfo(
+                        v.recipeIndex, &matInfo)) {
+                    p.texArrayLayer = matInfo.texArrayLayer;
+                    p.materialIdx   = matInfo.materialIdx;
+                    if (matInfo.primaryWasAlphaOn) ++primaryAlphaOn;
+                    if (matInfo.multiPacket)       ++multiPacket;
+                }
 
                 // v1 counters (backward compat)
                 if (p.materialIdx == 0xFFFFFFFFu) ++sentinelMat;
@@ -162,13 +169,6 @@ RenderSnapshot ExtractRenderSnapshot()
                 // v1.1 counters
                 if (p.texArrayLayer != -1)        ++texWired;   else ++texSentinel;
                 if (p.materialIdx != 0xFFFFFFFFu) ++matWired;   else ++matSentinel;
-
-                GpuStaticPropRegistry::StaticPropTypeMaterialCache matInfo{};
-                if (GpuStaticPropRegistry::staticPropGetMaterialCacheInfo(
-                        v.recipeIndex, &matInfo)) {
-                    if (matInfo.primaryWasAlphaOn) ++primaryAlphaOn;
-                    if (matInfo.multiPacket)       ++multiPacket;
-                }
             }
 
             snap.staticProps              = Span<ExtractedStaticProp>(propBuf, writeIdx);

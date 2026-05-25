@@ -5,6 +5,7 @@
 //
 // Extraction v1 (2026-05-24): static-prop snapshot populated alongside
 // v0 mech and light records. Arena 1 MiB per slot (2 MiB ping-pong total).
+// v1.1 (2026-05-25): texArrayLayer/materialIdx wired; material cache counters added.
 // Ping-pong: two module-static RenderFrameArena instances alternate each frame;
 // no per-frame heap allocation. Snapshot is valid only for the current frame.
 
@@ -129,7 +130,7 @@ struct RenderSnapshot {
     // --- v1: static-prop snapshot ---
     Span<ExtractedStaticProp> staticProps;           // populated by ExtractRenderSnapshot v1
     uint32_t staticPropValidationFail = 0;           // hard gate: must be 0
-    uint32_t staticPropSentinelMat    = 0;           // expected == staticProps.size() in v1
+    uint32_t staticPropSentinelMat    = 0;           // v1: expected == staticProps.size(); v1.1: < size when MC2_MATERIAL_GPU=1
     uint32_t staticPropSentinelCull   = 0;           // expected == staticProps.size() in v1
 
     // v1.1 material/texture wiring counters
