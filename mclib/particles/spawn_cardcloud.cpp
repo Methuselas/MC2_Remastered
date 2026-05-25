@@ -110,6 +110,29 @@ void SpawnCardCloud(const gosFX::CardCloud__Specification* spec,
         parent_origin = Stuff::Point3D(*parentToWorld);
     }
 
+    // P1-2: resolve the GOS texture handle from the effect spec so we can
+    // hand it to the GPU bridge for per-texture batching.  The spec carries
+    // an MLRState whose texture field is an index into MLRTexturePool; pool
+    // index 0 means "no texture".  We walk pool[mlrHandle]->GetImage()->
+    // GetHandle() to reach the DWORD gos handle and cast it to uint32_t for
+    // storage in atlasIndex.  Any step that returns 0/null produces
+    // gosHandle=0, which the bridge maps to a missing-texture log + skip.
+    uint32_t gosTexHandle = 0u;
+    {
+        const unsigned mlrHandle = mut_spec->m_state.GetTextureHandle();
+        if (mlrHandle > 0 && MidLevelRenderer::MLRTexturePool::Instance) {
+            MidLevelRenderer::MLRTexture* mlrTex =
+                (*MidLevelRenderer::MLRTexturePool::Instance)[static_cast<int>(mlrHandle)];
+            if (mlrTex) {
+                MidLevelRenderer::GOSImage* img = mlrTex->GetImage();
+                if (img) {
+                    DWORD h = img->GetHandle();
+                    gosTexHandle = static_cast<uint32_t>(h);
+                }
+            }
+        }
+    }
+
     Batcher& batcher = Batcher::Instance();
 
     for (int i = 0; i < population; ++i) {
@@ -203,10 +226,12 @@ void SpawnCardCloud(const gosFX::CardCloud__Specification* spec,
         // (m_pIndex / m_animated / m_U/VOffset / m_U/VSize) and
         // per-particle rotation (m_localRotation) are not representable in
         // the current 64-byte GpuParticle schema. The billboard pass
-        // renders camera-facing axis-aligned quads on the default atlas
-        // page; animated cards visually degrade to a single frame.
+        // renders camera-facing axis-aligned quads on the full texture page;
+        // animated cards visually degrade to a single frame.
         p.size        = (float)size;
-        p.atlasIndex  = 0u;
+        // P1-2: atlasIndex carries the gos_TextureHandle cast to uint32.
+        // Resolved to a raw GLuint at flush time by gos_GetGLTextureName().
+        p.atlasIndex  = gosTexHandle;
 
         batcher.Emit(p);
     }

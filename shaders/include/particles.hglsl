@@ -16,7 +16,7 @@
 //   offset 48: float  lifetime    (seconds)
 //   offset 52: float  age         (seconds)
 //   offset 56: float  size        (world-space radius)
-//   offset 60: uint   atlasIndex  (texture-atlas page id)
+//   offset 60: uint   atlasIndex  (gos_TextureHandle cast to uint32; resolved to GLuint at flush time)
 
 struct Particle {
     vec4  position;   // .xyz = world position; .w = pad
@@ -25,5 +25,5 @@ struct Particle {
     float lifetime;
     float age;
     float size;
-    uint  atlasIndex;
+    uint  atlasIndex;  // gos_TextureHandle cast to uint32; resolved to GLuint at flush time
 };

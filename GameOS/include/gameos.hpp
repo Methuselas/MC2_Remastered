@@ -2417,6 +2417,13 @@ void  gos_HudInverseMousePoint(float& x, float& y);
 // Shadow mode — render terrain depth to shadow FBO
 void gos_SetShadowMode(bool enable);
 
+// GPU particle bridge — narrow GL-name resolver.
+// Returns the raw OpenGL texture name (GLuint) for a resident GOS texture
+// handle.  Returns 0 if the handle is 0, out-of-bounds, or the slot is null
+// (texture evicted or not yet uploaded).  Read-only: no ref-count side
+// effects, no eviction, no async work.
+unsigned int gos_GetGLTextureName(DWORD handle);
+
 //
 // Set a renderstate
 //

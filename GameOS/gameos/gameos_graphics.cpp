@@ -7690,6 +7690,14 @@ uint32_t gos_GetGLTextureId(uint32_t gosHandle) {
     return tex ? tex->getTextureId() : 0;
 }
 
+// P1-1: FX-GPU-1 Phase 1 — narrow GL-name resolver for the GPU particle
+// bridge. Declared in GameOS/include/gameos.hpp and called at flush time.
+// Delegates to gos_GetGLTextureId; the DWORD parameter matches the GOS
+// texture handle convention used by gosFX/MLR.
+unsigned int gos_GetGLTextureName(DWORD handle) {
+    return gos_GetGLTextureId(static_cast<uint32_t>(handle));
+}
+
 const float* gos_GetProj2ScreenMat4() {
     if (!g_gos_renderer) return nullptr;
     return (const float*)&g_gos_renderer->getProj2Screen();

@@ -37,7 +37,7 @@ namespace particles {
 //                            Stage 1'; Stage 2' shifts age advance to GPU via
 //                            spawn-frame seed)
 //   56  float     size       world-space radius in meters
-//   60  uint      atlasIndex texture-atlas page id (Stage 1' Card hardcodes 0)
+//   60  uint      atlasIndex gos_TextureHandle cast to uint32; resolved to GLuint at flush time
 struct GpuParticle {
     float    position[3];
     float    _pad0;          // pad to vec4 alignment

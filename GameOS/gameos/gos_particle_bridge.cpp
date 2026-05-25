@@ -2,16 +2,17 @@
 // File:    gos_particle_bridge.cpp                                          //
 // Contents: GameOS-side GL bridge for the GPU particle batcher. Owns the   //
 //           SSBO (binding=14), the empty draw VAO, the billboard shader    //
-//           program, and a 1x1 white test atlas. Implements all 10 GPU-    //
+//           program, and the per-texture draw loop. Implements all 10 GPU- //
 //           direct bring-up traps per memory/gpu_direct_renderer_bringup_  //
 //           checklist.md.                                                  //
-//           Plan v5 §5.4 B1 Stage 1' Commit 3.                             //
+//           FX-GPU-1 Phase 1: real per-effect texture binding.             //
 //===========================================================================//
 
 #include "gos_particle_bridge.h"
 
 #include "particles/spec.h"
 
+#include <gameos.hpp>
 #include <GL/glew.h>
 #include "utils/shader_builder.h"
 
@@ -31,13 +32,17 @@ extern const float* gos_GetProj2ScreenMat4();
 // any glDrawArrays in a bridge path.
 extern void gos_RendererRebindVAO();
 
+// P1-1: narrow GL-name resolver declared in GameOS/include/gameos.hpp and
+// implemented in GameOS/gameos/gameos_graphics.cpp.  gameos.hpp is already
+// included above, so this is informational only.
+// unsigned int gos_GetGLTextureName(DWORD handle); — see gameos.hpp
+
 namespace {
 
 GLuint s_ssbo          = 0;   // GpuParticle SSBO at binding=14
 GLsizei s_ssboCapacity = 0;   // current GL buffer-data size in records
 GLuint s_vao           = 0;   // empty VAO (gl_VertexID-driven draw)
-GLuint s_sampler       = 0;   // CLAMP_TO_EDGE + LINEAR (Stage 1' atlas is small)
-GLuint s_atlasTex      = 0;   // 1x1 white texture for the Card test effect
+GLuint s_sampler       = 0;   // CLAMP_TO_EDGE + LINEAR
 const ::glsl_program* s_prog = nullptr;
 
 bool s_initFailed = false;
@@ -51,7 +56,7 @@ GLint s_loc_uAtlas        = -2;
 
 void ensureInitialized() {
     if (s_initFailed) return;
-    if (s_vao != 0 && s_prog != nullptr && s_atlasTex != 0 && s_sampler != 0) {
+    if (s_vao != 0 && s_prog != nullptr && s_sampler != 0) {
         return;
     }
 
@@ -64,21 +69,6 @@ void ensureInitialized() {
         glSamplerParameteri(s_sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glSamplerParameteri(s_sampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glSamplerParameteri(s_sampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    }
-    if (s_atlasTex == 0) {
-        // 1x1 white pixel. The Card test effect multiplies this by particle
-        // color so the output is just the particle color. Stage 2' replaces
-        // this with a real atlas. MAX_LEVEL=0 + textureLod in FS keeps the
-        // AMD auto-LOD trap (memory/amd_auto_lod_strict_fail.md) closed even
-        // before the mip pyramid would be generated.
-        glGenTextures(1, &s_atlasTex);
-        glBindTexture(GL_TEXTURE_2D, s_atlasTex);
-        const unsigned char white[4] = { 255, 255, 255, 255 };
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, white);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  0);
-        glBindTexture(GL_TEXTURE_2D, 0);
     }
     if (s_prog == nullptr) {
         // SSBO requires GL 4.3 + std430 → "#version 430\n" prefix per
@@ -146,14 +136,42 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     }
     if (s_prog == nullptr || s_prog->shp_ == 0) return;
 
-    // P0-5: first-call banner — once only.
+    // ── Collect unique texture handles (no heap allocation) ──────────
+    // Linear scan over all records. At most kMaxTexGroups unique handles
+    // per flush; any overflow entries are dropped with a one-time warning.
+    static const int kMaxTexGroups = 64;
+    uint32_t uniqueHandles[kMaxTexGroups];
+    int      numUnique = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        const uint32_t h = records[i].atlasIndex;
+        bool found = false;
+        for (int j = 0; j < numUnique; ++j) {
+            if (uniqueHandles[j] == h) { found = true; break; }
+        }
+        if (!found) {
+            if (numUnique < kMaxTexGroups) {
+                uniqueHandles[numUnique++] = h;
+            } else {
+                static bool s_overflowWarned = false;
+                if (!s_overflowWarned) {
+                    s_overflowWarned = true;
+                    std::fprintf(stderr,
+                        "[GOSFX_GPU v1] WARN tex_group_overflow max=%d — excess groups dropped\n",
+                        kMaxTexGroups);
+                    std::fflush(stderr);
+                }
+            }
+        }
+    }
+
+    // P1-5: first-call banner — once only.
     {
         static bool s_bannerEmitted = false;
         if (!s_bannerEmitted) {
             s_bannerEmitted = true;
             std::fprintf(stderr,
-                         "[GOSFX_GPU v1] enabled=1 sprites=%u draws=1 blendMode=straight\n",
-                         count);
+                         "[GOSFX_GPU v1] enabled=1 sprites=%u draws=%d textures=%d blendMode=straight\n",
+                         count, numUnique, numUnique);
             std::fflush(stderr);
         }
     }
@@ -179,13 +197,6 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     GLboolean savedCullFace = glIsEnabled(GL_CULL_FACE);
     glDisable(GL_CULL_FACE);
 
-    // ── Upload particle records to the SSBO ───────────────────────────
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_ssbo);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                    (GLsizeiptr)(count * sizeof(mc2::particles::GpuParticle)),
-                    records);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, /*binding=*/14, s_ssbo);
-
     // ── Bind our VAO (trap #4: AMD silently drops draws when VAO=0) ──
     glBindVertexArray(s_vao);
 
@@ -209,9 +220,8 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
         if (s_loc_uAtlas >= 0) glUniform1i(s_loc_uAtlas, 0);
     }
 
-    // ── Sampler + atlas on unit 0 (trap #5: sampler inheritance) ─────
+    // ── Sampler on unit 0 (trap #5: sampler inheritance) ─────────────
     glBindSampler(0, s_sampler);
-    glBindTexture(GL_TEXTURE_2D, s_atlasTex);
 
     // ── Depth + blend state (traps #9 depth, blend reset) ────────────
     // Particle billboards: alpha-blend, depth-test against scene, no write.
@@ -221,8 +231,58 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // ── The draw: 6 vertices per particle, gl_VertexID-driven ────────
-    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(count * 6u));
+    // ── Per-texture draw loop ─────────────────────────────────────────
+    // P1-3: For each unique texture handle group:
+    //   1. Collect this group's records into a temporary SSBO upload.
+    //   2. Resolve the gos handle to a GLuint via gos_GetGLTextureName.
+    //   3. Bind the resolved texture; skip the group if not resident.
+    //   4. Upload only this group's records to SSBO offset 0.
+    //   5. Draw 6 vertices per particle (gl_VertexID-driven billboard).
+    //
+    // Using a static staging buffer (avoids large stack allocation).
+    // Groups larger than kStagingMax are truncated; real particle counts
+    // per effect are small (< 1024) so this is not a concern in practice.
+    static const unsigned kStagingMax = 4096;
+    static mc2::particles::GpuParticle stagingBuf[kStagingMax];
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_ssbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, /*binding=*/14, s_ssbo);
+
+    for (int gi = 0; gi < numUnique; ++gi) {
+        const uint32_t gosHandle = uniqueHandles[gi];
+
+        // Resolve handle to GL texture name.
+        const GLuint glTex = (GLuint)gos_GetGLTextureName(gosHandle);
+        if (glTex == 0) {
+            std::fprintf(stderr,
+                "[GOSFX_GPU v1] ERROR missing_texture handle=%u\n", gosHandle);
+            std::fflush(stderr);
+            continue;
+        }
+
+        // Collect records for this handle into the staging buffer.
+        unsigned groupCount = 0;
+        for (unsigned i = 0; i < count && groupCount < kStagingMax; ++i) {
+            if (records[i].atlasIndex == gosHandle) {
+                stagingBuf[groupCount++] = records[i];
+            }
+        }
+        if (groupCount == 0) continue;
+
+        // Upload this group's records to SSBO offset 0.
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                        (GLsizeiptr)(groupCount * sizeof(mc2::particles::GpuParticle)),
+                        stagingBuf);
+
+        // Bind the resolved texture (state restore covers GL_TEXTURE_BINDING_2D
+        // on unit 0 since savedTex2D0 was captured before this loop).
+        glBindTexture(GL_TEXTURE_2D, glTex);
+
+        // Draw: 6 vertices per particle, gl_VertexID-driven.
+        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(groupCount * 6u));
+    }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     // ── Restore state ────────────────────────────────────────────────
     if (savedCullFace) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
@@ -236,5 +296,4 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     if (!savedBlend) glDisable(GL_BLEND);
     glUseProgram((GLuint)savedProgram);
     glBindVertexArray((GLuint)savedVAO);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
