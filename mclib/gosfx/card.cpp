@@ -366,9 +366,7 @@ void
 	m_radius = Stuff::Sqrt(m_halfX * m_halfX + m_halfY * m_halfY);
 	m_cardCloud->TurnOn(0);
 
-	if (mc2::particles::Batcher::is_enabled()) {
-		(void)mc2::particles::Spawn(m_specification, &m_localToWorld, (float)m_seed);
-	}
+	// GPU spawn moved to Draw() so it fires every frame (not just once at Start).
 }
 
 //------------------------------------------------------------------------------
@@ -494,6 +492,21 @@ void gosFX::Card::Draw(DrawInfo *info)
 {
 	Check_Object(this);
 	Check_Object(info);
+
+	// GPU render path (Stage 2'): re-emit this card to the batcher on every
+	// Draw() call. This matches the legacy path which submits card geometry to
+	// MLR render lists each frame. SpawnCard samples spec curves at age=0.5 so
+	// size/color are consistent frame-to-frame. Singleton::Draw propagates up
+	// the chain for EffectCloud children; it does not render card geometry.
+	//
+	// NOTE: GPU spawn moved from Start() to here. Start()-based emission only
+	// filled the batcher for one frame (until the first Flush()), leaving the
+	// batcher empty for all subsequent frames.
+	if (mc2::particles::Batcher::is_enabled()) {
+		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed);
+		Singleton::Draw(info);
+		return;
+	}
 
 	//
 	//----------------------------

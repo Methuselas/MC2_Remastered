@@ -106,6 +106,52 @@ void SpawnCard(const gosFX::Card__Specification* spec,
         worldPos = Stuff::Point3D(*parentToWorld);
     }
 
+    // Store raw MLR pool index; resolved to GOS handle at flush time.
+    uint32_t mlrTexHandle = 0u;
+    {
+        const unsigned h = mut_spec->m_state.GetTextureHandle();
+        mlrTexHandle = static_cast<uint32_t>(h);
+    }
+
+    // UV sub-rect from Card spec. m_UOffset / m_VOffset / m_USize / m_VSize
+    // are constant or seeded curves on Card__Specification (card.cpp:43-66).
+    // For non-animated specs these are typically 0,0,1,1 (full page).
+    float uSize = mut_spec->m_USize  .ComputeValue(age, seed);
+    float vSize = mut_spec->m_VSize  .ComputeValue(age, seed);
+    float u0    = mut_spec->m_UOffset.ComputeValue(age, seed);
+    float v0    = mut_spec->m_VOffset.ComputeValue(age, seed);
+
+    // Animated atlas frame selection (matches card.cpp:398-413 Execute path).
+    if (mut_spec->m_animated && mut_spec->m_width > 0) {
+        Stuff::Scalar frameF =
+            mut_spec->m_index.ComputeValue(age, seed);
+        if (frameF < 0.0f) frameF = 0.0f;
+        const int frame = static_cast<int>(frameF);
+        const int col   = frame % static_cast<int>(mut_spec->m_width);
+        const int row   = frame / static_cast<int>(mut_spec->m_width);
+        u0 += col * uSize;
+        v0 += row * vSize;
+    }
+
+    // Blend mode from MLRState alpha mode (same as spawn_cardcloud.cpp).
+    int blendMode = 0;
+    {
+        const MidLevelRenderer::MLRState::AlphaMode alphaMode =
+            mut_spec->m_state.GetAlphaMode();
+        if (alphaMode == MidLevelRenderer::MLRState::OneOneMode ||
+            alphaMode == MidLevelRenderer::MLRState::AlphaOneMode) {
+            blendMode = 1;
+        }
+    }
+
+    // Register a group with the batcher so the bridge knows which texture,
+    // UV rect, and blend mode to use for this card's particle.
+    Batcher& batcher = Batcher::Instance();
+    batcher.BeginGroup(mlrTexHandle, u0, v0,
+                       (uSize > 0.0f ? uSize : 1.0f),
+                       (vSize > 0.0f ? vSize : 1.0f),
+                       blendMode);
+
     GpuParticle p = {};
     p.position[0] = worldPos.x;
     p.position[1] = worldPos.y;
@@ -119,12 +165,11 @@ void SpawnCard(const gosFX::Card__Specification* spec,
     p.lifetime    = (lifetime > 0.0f) ? (float)lifetime : 1.0f;
     p.age         = 0.0f;
     p.size        = (float)radius;
-    // Stage 2' C3: atlasIndex stays 0 (single-atlas path). Atlas paging
-    // arrives with the animated-UV slice (Card m_animated / m_index curve)
-    // — filed as B2 polish debt; current GPU shader samples atlas page 0.
-    p.atlasIndex  = 0u;
+    // atlasIndex carries the raw MLR pool index; Batcher::ResolveTextures()
+    // converts it to a gos_TextureHandle after renderLists() / LoadImages().
+    p.atlasIndex  = mlrTexHandle;
 
-    Batcher::Instance().Emit(p);
+    batcher.Emit(p);
 }
 
 }  // namespace particles

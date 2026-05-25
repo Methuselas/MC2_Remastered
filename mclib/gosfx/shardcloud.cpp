@@ -309,9 +309,18 @@ void gosFX::ShardCloud::Draw(DrawInfo *info)
 	Check_Object(this);
 	Check_Object(info);
 
-	// P0-1 double-draw gate: GPU batcher owns rendering when enabled; skip
-	// the legacy MLR draw submission so particles are not rendered twice.
+	// GPU render path (Stage 2'): re-emit current cloud to the batcher on
+	// every Draw() call. This matches the legacy path which submits shard
+	// geometry to MLR render lists each frame. SpawnShard samples spec
+	// curves at parent_age=0.5 so positions are consistent frame-to-frame.
+	// SpinningCloud::Draw propagates up the chain for EffectCloud children;
+	// it does not render shard geometry.
+	//
+	// NOTE: GPU spawn moved from Start() to here. Start()-based emission only
+	// filled the batcher for one frame (until the first Flush()), leaving the
+	// batcher empty for all subsequent frames.
 	if (mc2::particles::Batcher::is_enabled()) {
+		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed);
 		SpinningCloud::Draw(info);
 		return;
 	}
@@ -698,7 +707,5 @@ void
 	// pointcloud.cpp Start for the full rationale.
 	SpinningCloud::Start(info);
 
-	if (mc2::particles::Batcher::is_enabled()) {
-		(void)mc2::particles::Spawn(m_specification, &m_localToWorld, (float)m_seed);
-	}
+	// GPU spawn moved to Draw() so it fires every frame (not just once at Start).
 }

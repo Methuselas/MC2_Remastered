@@ -107,6 +107,38 @@ void SpawnTube(const gosFX::Tube__Specification* spec,
         worldPos = Stuff::Point3D(*parentToWorld);
     }
 
+    // Store raw MLR pool index; resolved to GOS handle at flush time.
+    uint32_t mlrTexHandle = 0u;
+    {
+        const unsigned h = mut_spec->m_state.GetTextureHandle();
+        mlrTexHandle = static_cast<uint32_t>(h);
+    }
+
+    // UV sub-rect from Tube spec (m_pUOffset / m_pVOffset / m_pUSize / m_pVSize
+    // at tube.hpp:81-85). Sampled at (parent_age, parent_seed) for the marker.
+    const float uSize = mut_spec->m_pUSize  .ComputeValue(parent_age, parent_seed);
+    const float vSize = mut_spec->m_pVSize  .ComputeValue(parent_age, parent_seed);
+    const float u0    = mut_spec->m_pUOffset.ComputeValue(parent_age, parent_seed);
+    const float v0    = mut_spec->m_pVOffset.ComputeValue(parent_age, parent_seed);
+
+    // Blend mode from MLRState alpha mode (same pattern as spawn_cardcloud.cpp).
+    int blendMode = 0;
+    {
+        const MidLevelRenderer::MLRState::AlphaMode alphaMode =
+            mut_spec->m_state.GetAlphaMode();
+        if (alphaMode == MidLevelRenderer::MLRState::OneOneMode ||
+            alphaMode == MidLevelRenderer::MLRState::AlphaOneMode) {
+            blendMode = 1;
+        }
+    }
+
+    // Register a group with the batcher so the bridge knows which texture,
+    // UV rect, and blend mode to use for this tube marker's particle.
+    Batcher::Instance().BeginGroup(mlrTexHandle, u0, v0,
+                                   (uSize > 0.0f ? uSize : 1.0f),
+                                   (vSize > 0.0f ? vSize : 1.0f),
+                                   blendMode);
+
     // Color at age=0 / spawnSeed. Matches the per-profile color sampling
     // at tube.cpp:1012-1014.
     const Stuff::Scalar r = mut_spec->m_pRed  .ComputeValue(parent_age, parent_seed);
@@ -167,11 +199,9 @@ void SpawnTube(const gosFX::Tube__Specification* spec,
     p.lifetime    = (float)lifetime;
     p.age         = 0.0f;
     p.size        = (float)size;
-    // C6 marker uses the default atlas page. Per-spec atlas selection +
-    // UV offset animation (m_pUOffset / m_pVOffset at tube.hpp:81-82) +
-    // the eight profile-template shapes are part of the swept-mesh B2
-    // polish debt - the billboard quad pass renders camera-facing only.
-    p.atlasIndex  = 0u;
+    // atlasIndex carries the raw MLR pool index; Batcher::ResolveTextures()
+    // converts it to a gos_TextureHandle after renderLists() / LoadImages().
+    p.atlasIndex  = mlrTexHandle;
 
     Batcher::Instance().Emit(p);
 }

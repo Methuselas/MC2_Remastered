@@ -117,7 +117,27 @@ void SpawnPoint(const gosFX::PointCloud__Specification* spec,
         parent_origin = Stuff::Point3D(*parentToWorld);
     }
 
+    // Store raw MLR pool index; resolved to GOS handle at flush time.
+    uint32_t mlrTexHandle = 0u;
+    {
+        const unsigned h = mut_spec->m_state.GetTextureHandle();
+        mlrTexHandle = static_cast<uint32_t>(h);
+    }
+
+    // PointCloud has no UV sub-rect curves. Use full-page UV (0,0,1,1).
+    // Blend mode from MLRState alpha mode (same pattern as spawn_cardcloud.cpp).
+    int blendMode = 0;
+    {
+        const MidLevelRenderer::MLRState::AlphaMode alphaMode =
+            mut_spec->m_state.GetAlphaMode();
+        if (alphaMode == MidLevelRenderer::MLRState::OneOneMode ||
+            alphaMode == MidLevelRenderer::MLRState::AlphaOneMode) {
+            blendMode = 1;
+        }
+    }
+
     Batcher& batcher = Batcher::Instance();
+    batcher.BeginGroup(mlrTexHandle, 0.0f, 0.0f, 1.0f, 1.0f, blendMode);
 
     for (int i = 0; i < population; ++i) {
         // Per-particle seed in [min_seed, min_seed + seed_range], clamped
@@ -216,10 +236,9 @@ void SpawnPoint(const gosFX::PointCloud__Specification* spec,
         // GPU billboard pass uses this as the world-space radius of the
         // billboard quad. Per-spec sizing is filed as B2 polish debt.
         p.size        = 0.5f;
-        // Stage 2' C4: atlasIndex stays 0 (single-atlas path). Point
-        // primitive uses the default white-dot atlas page; per-spec atlas
-        // selection arrives with the C7 enumerator wiring.
-        p.atlasIndex  = 0u;
+        // atlasIndex carries the raw MLR pool index; Batcher::ResolveTextures()
+        // converts it to a gos_TextureHandle after renderLists() / LoadImages().
+        p.atlasIndex  = mlrTexHandle;
 
         batcher.Emit(p);
     }
