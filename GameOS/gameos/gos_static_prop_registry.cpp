@@ -839,6 +839,7 @@ void staticPropCacheTypePrimaryMaterial(uint32_t typeID,
 
 void staticPropRegistryClearMaterialCache() {
     s_typeMatCache.clear();
+    s_typeMatCache.shrink_to_fit();
 }
 
 void staticPropRegistryClearCullSubmissionState() {
