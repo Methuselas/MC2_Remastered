@@ -34,19 +34,16 @@ static bool envFlagDefaultOff(const char* name) {
     return v && !(v[0] == '0' && v[1] == '\0');
 }
 
-static bool envFlagDefaultOn(const char* name) {
-    const char* v = getenv(name);
-    return !v || !(v[0] == '0' && v[1] == '\0');
-}
-
 // ---------------------------------------------------------------------------
 // Static state
 // ---------------------------------------------------------------------------
 
-static bool              s_enabled       = envFlagDefaultOn("MC2_DEBUG_RENDERER");
+static bool              s_enabled       = envFlagDefaultOff("MC2_DEBUG_RENDERER");
 static bool              s_testCanary    = envFlagDefaultOff("MC2_DEBUG_RENDERER_TEST");
-static bool              s_initialized   = false;
-static bool              s_capWarnedOnce = false;
+static bool              s_initialized        = false;
+static bool              s_capWarnedOnce      = false;
+static bool              s_restoreWarnedOnce  = false;
+static bool              s_drawBufWarnedOnce  = false;
 
 static GLuint            s_vao = 0;
 static GLuint            s_vbo = 0;
@@ -196,6 +193,90 @@ void drawRingWorld(Vec3 center, float radius, int segments, uint32_t rgba) {
     }
 }
 
+void drawRingWorld(Vec3 center, Vec3 normal, float radius, int segments, uint32_t rgba) {
+    if (!s_enabled) return;
+    if (segments < 3)   segments = 3;
+    if (segments > 256) segments = 256;
+
+    // Normalize; fall back to XZ-plane ring on degenerate normal.
+    float nx = normal.x, ny = normal.y, nz = normal.z;
+    const float len = sqrtf(nx*nx + ny*ny + nz*nz);
+    if (len < 1e-6f) {
+        drawRingWorld(center, radius, segments, rgba);
+        return;
+    }
+    nx /= len; ny /= len; nz /= len;
+
+    // Build orthonormal tangent in the ring plane.
+    // Switch reference axis when normal is near-parallel to Y-up (|ny| > 0.9)
+    // to avoid the degenerate cross product.
+    float tx, ty, tz;
+    if (fabsf(ny) < 0.9f) {
+        // cross(normal, Y_up=(0,1,0)) = (-nz, 0, nx)
+        tx = -nz; ty = 0.0f; tz = nx;
+    } else {
+        // cross(normal, X_right=(1,0,0)) = (0, nz, -ny)
+        tx = 0.0f; ty = nz; tz = -ny;
+    }
+    const float tlen = sqrtf(tx*tx + ty*ty + tz*tz);
+    tx /= tlen; ty /= tlen; tz /= tlen;
+
+    // bitangent = cross(normal, tangent) -- unit length since both are unit + orthogonal
+    const float bx = ny*tz - nz*ty;
+    const float by = nz*tx - nx*tz;
+    const float bz = nx*ty - ny*tx;
+
+    const float step = 6.2831853f / (float)segments;
+    for (int i = 0; i < segments; ++i) {
+        const float c0 = cosf(step *  i)      * radius;
+        const float s0 = sinf(step *  i)      * radius;
+        const float c1 = cosf(step * (i + 1)) * radius;
+        const float s1 = sinf(step * (i + 1)) * radius;
+        s_verts.push_back(makeVert(center.x + c0*tx + s0*bx,
+                                   center.y + c0*ty + s0*by,
+                                   center.z + c0*tz + s0*bz, rgba));
+        s_verts.push_back(makeVert(center.x + c1*tx + s1*bx,
+                                   center.y + c1*ty + s1*by,
+                                   center.z + c1*tz + s1*bz, rgba));
+    }
+}
+
+void drawCrossWorld(Vec3 center, float halfSize, uint32_t rgba) {
+    if (!s_enabled) return;
+    drawLineWorld({center.x - halfSize, center.y,            center.z           },
+                  {center.x + halfSize, center.y,            center.z           }, rgba);
+    drawLineWorld({center.x,            center.y - halfSize, center.z           },
+                  {center.x,            center.y + halfSize, center.z           }, rgba);
+    drawLineWorld({center.x,            center.y,            center.z - halfSize},
+                  {center.x,            center.y,            center.z + halfSize}, rgba);
+}
+
+void drawSphereApproxWorld(Vec3 center, float radius, int rings, int segments, uint32_t rgba) {
+    if (!s_enabled) return;
+    if (rings < 1)  rings = 1;
+    if (rings > 16) rings = 16;
+
+    // 3 great-circle rings, one per axis plane
+    drawRingWorld(center, {0,1,0}, radius, segments, rgba);  // XZ plane (Y normal)
+    drawRingWorld(center, {0,0,1}, radius, segments, rgba);  // XY plane (Z normal)
+    drawRingWorld(center, {1,0,0}, radius, segments, rgba);  // YZ plane (X normal)
+
+    // Extra latitude rings between poles (rings=1 = great circles only)
+    const float pi = 3.14159265f;
+    for (int i = 1; i < rings; ++i) {
+        const float lat = pi * (float)i / (float)rings;
+        const float yr  = center.y + radius * cosf(lat);
+        const float r   = radius * sinf(lat);
+        drawRingWorld({center.x, yr, center.z}, r, segments, rgba);
+    }
+}
+
+void drawTextWorld(Vec3 /*pos*/, const char* /*text*/, uint32_t /*rgba*/) {
+    // Reserved: world-space text label. No-op in M1/M2.
+    // Future spec: billboard projected from pos to screen, rendered in
+    // flushScreenPrims (post post-process) via a font atlas (M3 TBD).
+}
+
 void flushWorldPrims() {
     if (!s_enabled) return;
 
@@ -242,6 +323,7 @@ void flushWorldPrims() {
     GLint  blendEqRGB = 0, blendEqAlpha = 0;
     GLboolean depthTestWas = GL_FALSE, blendWas = GL_FALSE, cullWas = GL_FALSE, depthMaskWas = GL_FALSE;
     GLfloat lineWidthWas = 1.0f;
+    GLint  drawBuf0Was = GL_NONE;  // for draw-buffer preservation assertion
 
     glGetIntegerv(GL_CURRENT_PROGRAM,      &prevProg);
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
@@ -258,6 +340,7 @@ void flushWorldPrims() {
     glGetIntegerv(GL_BLEND_EQUATION_RGB,   &blendEqRGB);
     glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &blendEqAlpha);
     glGetFloatv(GL_LINE_WIDTH,             &lineWidthWas);
+    glGetIntegerv(GL_DRAW_BUFFER0,         &drawBuf0Was);
 
     // --- Set known state ---
     // Use glUseProgram directly (not s_program->apply()) because apply() would
@@ -301,6 +384,35 @@ void flushWorldPrims() {
     glUseProgram(prevProg);
     glBindVertexArray(prevVAO);
     glBindBuffer(GL_ARRAY_BUFFER, prevVBO);
+
+    // State restore assertion: verify critical bindings were fully restored.
+    // Fires once on first mismatch to catch incomplete-restore regressions.
+    if (!s_restoreWarnedOnce) {
+        GLint chkProg = 0, chkVAO = 0, chkVBO = 0;
+        glGetIntegerv(GL_CURRENT_PROGRAM,      &chkProg);
+        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &chkVAO);
+        glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &chkVBO);
+        if (chkProg != prevProg || chkVAO != prevVAO || chkVBO != prevVBO) {
+            fprintf(stderr,
+                "[DEBUGDRAW v1] event=restore_mismatch "
+                "prog exp=%d got=%d  vao exp=%d got=%d  vbo exp=%d got=%d\n",
+                prevProg, chkProg, prevVAO, chkVAO, prevVBO, chkVBO);
+            s_restoreWarnedOnce = true;
+        }
+    }
+
+    // Draw-buffer preservation assertion: our flush must not touch draw buffers.
+    if (!s_drawBufWarnedOnce) {
+        GLint chkDrawBuf0 = GL_NONE;
+        glGetIntegerv(GL_DRAW_BUFFER0, &chkDrawBuf0);
+        if (chkDrawBuf0 != drawBuf0Was) {
+            fprintf(stderr,
+                "[DEBUGDRAW v1] event=drawbuf_mismatch "
+                "expected=0x%X got=0x%X\n",
+                (unsigned)drawBuf0Was, (unsigned)chkDrawBuf0);
+            s_drawBufWarnedOnce = true;
+        }
+    }
 
     // Drain any errors generated by our GL calls (e.g. glLineWidth > 1.0 on some
     // drivers, or driver-side validation during glDrawArrays). shader_builder::apply()
