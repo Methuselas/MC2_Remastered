@@ -192,44 +192,12 @@ public:
 			// gos_SetTerrainCameraPos, gos_SetTerrainLightDir). No engine,
 			// shader, or mclib file is modified.
 			//
-			// Migration rules being respected here:
-			//   - terrainMVP is uploaded with GL_FALSE in gameos_graphics;
-			//     the C++ row-major storage cancels with the GL column
-			//     reinterpretation so AW^T * (vx,vy,elev,1) lands on the
-			//     correct projectZ() result. Do NOT "fix" the math here
-			//     based on the misleading comment in gamecam.cpp.
-			//   - No glMatrixMode / glFrustum / glLoadIdentity. The
-			//     Remastered renderer owns matrix state.
-			//   - No glUseProgram(0). The renderer owns shader program
-			//     lifecycle.
-			//   - calculateProjectionConstants() above has already built
-			//     worldToClip for this frame, so reading it here is safe.
 			{
-				const float* W = (const float*)&worldToClip;
-				#define EDITOR_WTC(r,c) W[(c)*4+(r)]
-
-				// Axis swap: (-x, z, y) per Camera::projectZ()
-				float AW[4][4];
-				for (int j = 0; j < 4; j++)
-				{
-					AW[0][j] = -EDITOR_WTC(0,j);
-					AW[1][j] =  EDITOR_WTC(2,j);
-					AW[2][j] =  EDITOR_WTC(1,j);
-					AW[3][j] =  EDITOR_WTC(3,j);
-				}
-
-				// Upload raw AW matrix (axisSwap * worldToClip).
-				// TES does perspective divide + viewport in shader (non-linear,
-				// can't be matrix). AW stored row-major in M[], uploaded with
-				// GL_FALSE in gameos_graphics.cpp. GLSL therefore sees AW^T.
-				// AW^T * (vx,vy,elev,1) = projectZ(vx,vy,elev) exactly
-				// (Stuff row-vector convention).
-				float M[16];
-				for (int i = 0; i < 4; i++)
-					for (int j = 0; j < 4; j++)
-						M[i*4+j] = AW[i][j];
-
-				gos_SetTerrainMVP(M);
+				// Modern terrain MVP publish -- same path as code/gamecam.cpp:176.
+				// gos_SetWorldToClipGL() writes the terrain_mvp_ cache that
+				// gos_GetTerrainMVPMat4() reads, which gpu_cull::compute_dispatch()
+				// guards on. Without this, all MDI indirect commands read zeros.
+				gos_SetWorldToClipGL(eye->worldToClipGL());
 
 				// Viewport params for TES: (vmx, vmy, vax, vay)
 				gos_SetTerrainViewport(viewMulX, viewMulY, viewAddX, viewAddY);
@@ -242,8 +210,6 @@ public:
 				// NOT swizzled — fragment shader normals are in tangent space
 				// where Z = up, which matches raw MC2 coords (Z = elevation).
 				gos_SetTerrainLightDir(lightDirection.x, lightDirection.y, lightDirection.z);
-
-				#undef EDITOR_WTC
 			}
 
 			if (theSky)
