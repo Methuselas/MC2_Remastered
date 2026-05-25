@@ -130,4 +130,55 @@ bool staticPropGetExtentRadius(int32_t recipeIndex, float* out);
 // Returns RecipeRange::lightDataIndex.
 bool staticPropGetLightDataIndex(int32_t recipeIndex, uint32_t* out);
 
+// --- Extraction v1.1: per-typeID primary material cache ---
+// Representative/inspector data: primary packet only.
+// Populated by GpuStaticPropBatcher::finalizeGeometry().
+// Indexed by typeID (dense). Cleared on finalizeGeometry start and registry destroy().
+
+struct StaticPropTypeMaterialCache {
+    bool     hasPrimary        = false;
+    bool     primaryWasAlphaOn = false;  // true = alpha-on fallback (no alpha-off primary)
+    bool     multiPacket       = false;  // type has > 1 packet (informational)
+    int32_t  texArrayLayer     = -1;     // sentinel if !hasPrimary
+    uint32_t materialIdx       = 0xFFFFFFFFu; // sentinel if !hasMaterialIdx
+    bool     hasMaterialIdx    = false;  // true only when MC2_MATERIAL_GPU was on at cache time
+};
+
+struct MaterialCacheStats {
+    uint32_t cacheVectorSize;    // s_typeMatCache.size() -- includes default slots from resize; NOT active-type count
+    uint32_t texWired;           // hasPrimary == true
+    uint32_t matWired;           // hasMaterialIdx == true
+    uint32_t multiPacket;        // multiPacket == true
+    uint32_t alphaOnFallback;    // primaryWasAlphaOn == true
+    uint32_t noPrimary;          // hasPrimary == false -- INFORMATIONAL ONLY; inflated by sparse typeIDs
+};
+
+// Called by GpuStaticPropBatcher::finalizeGeometry() only.
+// First-time-wins per typeID -- subsequent calls for same typeID are no-ops
+// UNLESS upgrading from alpha-on fallback to alpha-off primary.
+// texArrayLayer + materialIdx come from the SAME primary packet (atomic write).
+void staticPropCacheTypePrimaryMaterial(uint32_t typeID,
+                                        int32_t  texArrayLayer,
+                                        uint32_t materialIdx,
+                                        bool     hasMaterialIdx,
+                                        bool     wasAlphaOn,
+                                        bool     multiPacket);
+
+// Clears the per-typeID cache. Called from:
+//   - start of finalizeGeometry() (re-bake)
+//   - registry destroy() (mission unload cleanup)
+//   - GpuStaticPropBatcher::onMapUnload()
+void staticPropRegistryClearMaterialCache();
+
+// Returns false + sets *out to sentinel if recipeIndex invalid/tombstoned or !hasPrimary.
+bool staticPropGetTexArrayLayer(int32_t recipeIndex, int32_t* out);
+bool staticPropGetMaterialIdx(int32_t recipeIndex, uint32_t* out);
+
+// Fills *out with full cache entry for inspector/counter use.
+// Returns false if recipeIndex invalid, tombstoned, or !hasPrimary.
+bool staticPropGetMaterialCacheInfo(int32_t recipeIndex, StaticPropTypeMaterialCache* out);
+
+// Returns cache stats -- call after finalizeGeometry() for the batcher log.
+void staticPropGetMaterialCacheStats(MaterialCacheStats* out);
+
 } // namespace GpuStaticPropRegistry

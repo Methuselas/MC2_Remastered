@@ -138,6 +138,10 @@ struct RecipeRange {
 static std::vector<GpuStaticPropInstance> s_recipes;
 static std::vector<RecipeRange>           s_recipeRanges;
 
+// v1.1: per-typeID primary material cache. Populated by finalizeGeometry().
+// Indexed by typeID (dense); resized as needed by staticPropCacheTypePrimaryMaterial.
+static std::vector<GpuStaticPropRegistry::StaticPropTypeMaterialCache> s_typeMatCache;
+
 // M1.5 C1 fix: typeID -> recipeIndex side-map. Populated by
 // registerRecipe(); set to -1 on invalidate(). Lookup returns -1
 // if typeID is unknown. Last-write-wins: if two recipes register
@@ -297,6 +301,7 @@ void destroy() {
     s_recipes.clear();          s_recipes.shrink_to_fit();
     s_recipeRanges.clear();     s_recipeRanges.shrink_to_fit();
     s_liveRangeIndices.clear(); s_liveRangeIndices.shrink_to_fit();
+    s_typeMatCache.clear();     s_typeMatCache.shrink_to_fit();
     // [LIGHTBAKE v1] recipeIndex restarts next mission -> stale baked
     // entries would alias a different actor. Drop the mission-scoped map.
     ::mc2ClearAllBakedStaticLight();
@@ -768,5 +773,90 @@ bool staticPropGetLightDataIndex(int32_t recipeIndex, uint32_t* out) {
     return true;
 }
 
+// --- Extraction v1.1: per-typeID primary material cache ---
+
+void staticPropCacheTypePrimaryMaterial(uint32_t typeID,
+                                        int32_t  texArrayLayer,
+                                        uint32_t materialIdx,
+                                        bool     hasMaterialIdx,
+                                        bool     wasAlphaOn,
+                                        bool     multiPacket) {
+    if (typeID >= static_cast<uint32_t>(s_typeMatCache.size())) {
+        s_typeMatCache.resize(typeID + 1u); // default-init: hasPrimary=false
+    }
+    StaticPropTypeMaterialCache& c = s_typeMatCache[typeID];
+    if (c.hasPrimary) {
+        // Prefer alpha-off primary over alpha-on fallback.
+        // Rule: alpha-off can overwrite alpha-on; nothing overwrites alpha-off.
+        if (!c.primaryWasAlphaOn) return; // already have alpha-off primary; done
+        if (wasAlphaOn)           return; // both alpha-on; keep first
+        // Upgrading from alpha-on fallback to alpha-off primary -- fall through.
+    }
+    c.hasPrimary        = true;
+    c.primaryWasAlphaOn = wasAlphaOn;
+    c.multiPacket       = multiPacket;
+    c.texArrayLayer     = texArrayLayer;
+    c.materialIdx       = materialIdx;
+    c.hasMaterialIdx    = hasMaterialIdx;
+}
+
+void staticPropRegistryClearMaterialCache() {
+    s_typeMatCache.clear();
+}
+
+bool staticPropGetTexArrayLayer(int32_t recipeIndex, int32_t* out) {
+    if (!out) return false;
+    *out = -1;
+    if (!recipeValid(recipeIndex)) return false;
+    const RecipeRange& rng = s_recipeRanges[static_cast<size_t>(recipeIndex)];
+    const uint32_t typeID = s_recipes[rng.first].typeID;
+    if (typeID >= static_cast<uint32_t>(s_typeMatCache.size())) return false;
+    const StaticPropTypeMaterialCache& c = s_typeMatCache[typeID];
+    if (!c.hasPrimary) return false;
+    *out = c.texArrayLayer;
+    return true;
+}
+
+bool staticPropGetMaterialIdx(int32_t recipeIndex, uint32_t* out) {
+    if (!out) return false;
+    *out = 0xFFFFFFFFu;
+    if (!recipeValid(recipeIndex)) return false;
+    const RecipeRange& rng = s_recipeRanges[static_cast<size_t>(recipeIndex)];
+    const uint32_t typeID = s_recipes[rng.first].typeID;
+    if (typeID >= static_cast<uint32_t>(s_typeMatCache.size())) return false;
+    const StaticPropTypeMaterialCache& c = s_typeMatCache[typeID];
+    if (!c.hasPrimary || !c.hasMaterialIdx) return false;
+    *out = c.materialIdx;
+    return true;
+}
+
+bool staticPropGetMaterialCacheInfo(int32_t recipeIndex,
+                                    StaticPropTypeMaterialCache* out) {
+    if (!out) return false;
+    if (!recipeValid(recipeIndex)) return false;
+    const RecipeRange& rng = s_recipeRanges[static_cast<size_t>(recipeIndex)];
+    const uint32_t typeID = s_recipes[rng.first].typeID;
+    if (typeID >= static_cast<uint32_t>(s_typeMatCache.size())) return false;
+    const StaticPropTypeMaterialCache& c = s_typeMatCache[typeID];
+    if (!c.hasPrimary) return false;
+    *out = c;
+    return true;
+}
+
+void staticPropGetMaterialCacheStats(MaterialCacheStats* out) {
+    if (!out) return;
+    *out = {};
+    out->cacheVectorSize = static_cast<uint32_t>(s_typeMatCache.size());
+    for (const auto& c : s_typeMatCache) {
+        if (c.hasPrimary) {
+            ++out->texWired;
+            if (c.hasMaterialIdx)    ++out->matWired;
+            if (c.multiPacket)       ++out->multiPacket;
+            if (c.primaryWasAlphaOn) ++out->alphaOnFallback;
+        } else {
+            ++out->noPrimary; // informational only; may include resize-padding slots
+        }
+    }
+}
 
 } // namespace GpuStaticPropRegistry
