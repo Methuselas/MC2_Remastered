@@ -142,6 +142,10 @@ struct StaticPropTypeMaterialCache {
     int32_t  texArrayLayer     = -1;     // sentinel if !hasPrimary
     uint32_t materialIdx       = 0xFFFFFFFFu; // sentinel if !hasMaterialIdx
     bool     hasMaterialIdx    = false;  // true only when MC2_MATERIAL_GPU was on at cache time
+    // v2 additions — type-level stable properties (same typeID → same values always)
+    uint8_t  alphaClass        = 0;           // s_types[typeID].alphaClass (0=alpha-off, 1=alpha-on)
+    uint32_t packetCount       = 0;           // s_types[typeID].packetCount
+    uint32_t firstPacket       = 0xFFFFFFFFu; // s_types[typeID].firstPacket; sentinel if !hasPrimary
 };
 
 struct MaterialCacheStats {
@@ -154,15 +158,18 @@ struct MaterialCacheStats {
 };
 
 // Called by GpuStaticPropBatcher::finalizeGeometry() only.
-// First-time-wins per typeID -- subsequent calls for same typeID are no-ops
-// UNLESS upgrading from alpha-on fallback to alpha-off primary.
-// texArrayLayer + materialIdx come from the SAME primary packet (atomic write).
+// First-time-wins per typeID with prefer-alpha-off upgrade.
+// alphaClass/packetCount/firstPacket: written unconditionally before primary-selection
+// logic (idempotent — same type always has same values). Defaults for backward compat.
 void staticPropCacheTypePrimaryMaterial(uint32_t typeID,
                                         int32_t  texArrayLayer,
                                         uint32_t materialIdx,
                                         bool     hasMaterialIdx,
                                         bool     wasAlphaOn,
-                                        bool     multiPacket);
+                                        bool     multiPacket,
+                                        uint8_t  alphaClass   = 0u,
+                                        uint32_t packetCount  = 0u,
+                                        uint32_t firstPacket  = 0xFFFFFFFFu);
 
 // Clears the per-typeID cache. Called from:
 //   - start of finalizeGeometry() (re-bake)
@@ -180,6 +187,11 @@ void staticPropRegistryClearCullSubmissionState();
 // in the most recent PREVIOUS render frame's flush() pass.
 // NOTE: ExtractRenderSnapshot() runs BEFORE flush() — this reflects the prior frame.
 bool staticPropGetHasCullRecord(int32_t recipeIndex, bool* out);
+
+// Returns GpuStaticPropInstance.flags for the first leaf of this recipe.
+// bit 0: lightsOut, bit 1: isWindow, bit 2: isSpotlight.
+// Returns false + *out=0 if recipeIndex invalid, tombstoned, or out is null.
+bool staticPropGetInstanceFlags(int32_t recipeIndex, uint32_t* out);
 
 // Returns false + sets *out to sentinel if recipeIndex invalid/tombstoned or !hasPrimary.
 bool staticPropGetTexArrayLayer(int32_t recipeIndex, int32_t* out);

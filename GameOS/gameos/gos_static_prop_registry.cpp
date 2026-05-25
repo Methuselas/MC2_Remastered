@@ -808,14 +808,23 @@ void staticPropCacheTypePrimaryMaterial(uint32_t typeID,
                                         uint32_t materialIdx,
                                         bool     hasMaterialIdx,
                                         bool     wasAlphaOn,
-                                        bool     multiPacket) {
+                                        bool     multiPacket,
+                                        uint8_t  alphaClass,
+                                        uint32_t packetCount,
+                                        uint32_t firstPacket) {
     if (typeID >= static_cast<uint32_t>(s_typeMatCache.size())) {
         s_typeMatCache.resize(typeID + 1u); // default-init: hasPrimary=false
     }
     StaticPropTypeMaterialCache& c = s_typeMatCache[typeID];
+    // Type metadata: always idempotent (same type → same values).
+    // Written unconditionally BEFORE the prefer-alpha-off early-return checks
+    // so alphaClass/packetCount/firstPacket are always set regardless of primary outcome.
+    c.alphaClass   = alphaClass;
+    c.packetCount  = packetCount;
+    c.firstPacket  = firstPacket;
+    // Prefer alpha-off primary over alpha-on fallback.
+    // Rule: alpha-off overwrites alpha-on; nothing overwrites alpha-off.
     if (c.hasPrimary) {
-        // Prefer alpha-off primary over alpha-on fallback.
-        // Rule: alpha-off can overwrite alpha-on; nothing overwrites alpha-off.
         if (!c.primaryWasAlphaOn) return; // already have alpha-off primary; done
         if (wasAlphaOn)           return; // both alpha-on; keep first
         // Upgrading from alpha-on fallback to alpha-off primary -- fall through.
@@ -899,6 +908,15 @@ void staticPropGetMaterialCacheStats(MaterialCacheStats* out) {
             ++out->noPrimary; // informational only; may include resize-padding slots
         }
     }
+}
+
+bool staticPropGetInstanceFlags(int32_t recipeIndex, uint32_t* out) {
+    if (!out) return false;
+    *out = 0u;
+    if (!recipeValid(recipeIndex)) return false;
+    const RecipeRange& rng = s_recipeRanges[static_cast<size_t>(recipeIndex)];
+    *out = s_recipes[rng.first].flags;
+    return true;
 }
 
 } // namespace GpuStaticPropRegistry
