@@ -301,7 +301,8 @@ void destroy() {
     s_recipes.clear();          s_recipes.shrink_to_fit();
     s_recipeRanges.clear();     s_recipeRanges.shrink_to_fit();
     s_liveRangeIndices.clear(); s_liveRangeIndices.shrink_to_fit();
-    s_typeMatCache.clear();     s_typeMatCache.shrink_to_fit();
+    s_typeMatCache.clear();          s_typeMatCache.shrink_to_fit();
+    s_typeIDToRecipeIndex.clear();   // unordered_map has no shrink_to_fit
     // [LIGHTBAKE v1] recipeIndex restarts next mission -> stale baked
     // entries would alias a different actor. Drop the mission-scoped map.
     ::mc2ClearAllBakedStaticLight();
@@ -323,6 +324,7 @@ int32_t registerRecipe(TG_MultiShape* multi,
     rng.registeredOnFrame = g_mc2FrameCounter;
     rng.firstFlushSeen    = false;
     rng.lightDataIndex    = 0xFFFFFFFFu;  // 2026-05-11 per-instance capture sentinel
+    rng.extentRadius      = 0.0f;
     rng.shapeName[0]      = '\0';         // populated by late-spawn path if Appearance* available
     s_recipes.insert(s_recipes.end(), batch.begin(), batch.end());
     const int32_t regIdx = static_cast<int32_t>(s_recipeRanges.size());
