@@ -2130,9 +2130,14 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 if (uploadErr != GL_NO_ERROR) {
                     char buf[128];
                     std::snprintf(buf, sizeof(buf),
-                                  "[MATERIAL_GPU v1] GL ERROR after upload: 0x%x\n",
+                                  "[MATERIAL_GPU v1] GL ERROR after upload: 0x%x — buffer deleted, sampling disabled\n",
                                   uploadErr);
                     std::fputs(buf, stderr);
+                    // Delete the corrupt/incomplete buffer so s_materialGpuSsbo returns to 0.
+                    // sampleOn checks s_materialGpuSsbo != 0, so this guarantees sampling is
+                    // disabled without needing a separate s_materialGpuSidecarValid invalidation.
+                    glDeleteBuffers(1, &s_materialGpuSsbo);
+                    s_materialGpuSsbo = 0;
                 }
             }
             // s_materialGpuSsbo remains 0 when byteSize == 0.
@@ -3575,13 +3580,10 @@ void GpuStaticPropBatcher::flush() {
 
         // 11.7.f — bind slot 4 (PerDraw SSBO).
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, s_perDrawSsbo);
-        // MaterialGpu-2: bind slot 5 (MaterialGpu SSBO) when gate active and buffer exists.
-        // No production shader in the static_prop program declares binding=5 in v2;
-        // the bind is a driver-error-free no-op from the shader perspective.
+        // MaterialGpu-2/v3: v3+ static_prop.frag declares MaterialTable at binding 5.
         // The terrain pass uses slot 5 for WaterRecipeBuf in a different GL program —
         // that is not a conflict (terrain re-binds WaterRecipeBuf before its own draw).
         // prevSsbo5 is saved at flush() entry and restored at flush() exit.
-        // v3 will add the shader consumer in static_prop.frag.
         if (s_materialGpuEnabled && s_materialGpuSsbo != 0) {
             while (glGetError() != GL_NO_ERROR) {}  // drain stale BEFORE
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, s_materialGpuSsbo);
