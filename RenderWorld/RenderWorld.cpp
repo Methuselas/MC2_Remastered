@@ -1042,4 +1042,33 @@ uint64_t getMechsAliveCount() {
     return s_mechs_alive_rw.load(std::memory_order_relaxed);
 }
 
+uint32_t getStaticPropSlotCount() {
+    std::lock_guard<std::mutex> lock(s_objectRecordsMutex);
+    uint32_t count = 0;
+    for (const auto& rec : s_objectRecords) {
+        if (rec.kind == RenderObjectKind::StaticProp) ++count;
+    }
+    return count;
+}
+
+uint32_t fillStaticPropSlots(StaticPropRecordView* out, uint32_t capacity) {
+    std::lock_guard<std::mutex> lock(s_objectRecordsMutex);
+    uint32_t total   = 0;
+    uint32_t written = 0;
+    for (uint32_t i = 0; i < static_cast<uint32_t>(s_objectRecords.size()); ++i) {
+        const RenderObjectRecord& rec = s_objectRecords[i];
+        if (rec.kind != RenderObjectKind::StaticProp) continue;
+        ++total;
+        if (written < capacity) {
+            const bool alive   = (rec.flags & kRenderObjectFlagAlive) != 0;
+            const int32_t ridx = alive ? static_cast<int32_t>(i) : -1;
+            RenderCore::RenderObjectHandle h = alive
+                ? RenderCore::RenderObjectHandle::make(i, rec.generation)
+                : RenderCore::RenderObjectHandle::invalid();
+            out[written++] = StaticPropRecordView{ h, ridx, alive, /*generationValid=*/alive };
+        }
+    }
+    return total;
+}
+
 } // namespace RenderWorld

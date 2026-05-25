@@ -361,4 +361,23 @@ uint64_t getMechsAliveCount();
 // default -> 600-frame monotonic summary (same gate as frameBannerTick).
 VisibilityResult queryVisibility(VisibilityRequest req);
 
+// --- Extraction v1: read-only enumeration (render_snapshot.cpp consumer) ---
+
+struct StaticPropRecordView {
+    RenderCore::RenderObjectHandle handle;          // invalid() if slot is dead
+    int32_t                        recipeIndex;     // == handle.index() by construction; -1 if dead
+    bool                           alive;           // true iff flags bit 0 is set
+    bool                           generationValid; // true for live records (handle constructed from current generation)
+};
+
+// Returns current allocated StaticProp slot count (alive + dead).
+uint32_t getStaticPropSlotCount();
+
+// One-pass fill: writes up to `capacity` StaticProp slots into out[0..].
+// Returns TOTAL matching StaticProp slot count (may exceed capacity if buffer
+// is too small — caller detects truncation via: total > capacity).
+// Handles are generation-validated by this function — callers must not re-read
+// s_objectRecords. Only processes slots where kind == StaticProp.
+uint32_t fillStaticPropSlots(StaticPropRecordView* out, uint32_t capacity);
+
 } // namespace RenderWorld
