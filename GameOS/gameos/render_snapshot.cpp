@@ -14,6 +14,7 @@
 #include "render_snapshot.h"
 #include "../../RenderWorld/RenderWorld.h"
 #include "gos_static_prop_registry.h"
+#include "gos_static_prop_batcher.h"
 
 #include <cstdio>
 #include <cstdint>
@@ -109,6 +110,14 @@ RenderSnapshot ExtractRenderSnapshot()
             uint32_t primaryAlphaOn = 0;
             uint32_t multiPacket    = 0;
 
+            uint32_t cullSubmitted    = 0;
+            uint32_t cullMissing      = 0;
+            uint32_t hasBounds        = 0;
+            uint32_t alphaOn          = 0;
+            uint32_t hasShapeName     = 0;
+            uint32_t packetRangesOk   = 0;
+            uint32_t packetRangeFail  = 0;
+
             for (uint32_t i = 0; i < static_cast<uint32_t>(views.size()); ++i) {
                 const RenderWorld::StaticPropRecordView& v = views[i];
                 if (!v.alive)           continue;
@@ -128,10 +137,19 @@ RenderSnapshot ExtractRenderSnapshot()
                     continue;
                 }
 
+                // Required field: instanceFlags (v2).
+                uint32_t instanceFlags = 0u;
+                if (!GpuStaticPropRegistry::staticPropGetInstanceFlags(
+                        v.recipeIndex, &instanceFlags)) {
+                    ++validationFail;
+                    continue;
+                }
+
                 ExtractedStaticProp& p = propBuf[writeIdx++];
                 p.rwHandle    = v.handle;
                 p.recipeIndex = v.recipeIndex;
                 p.typeId      = typeId;
+                p.instanceFlags = instanceFlags;
                 std::memcpy(p.worldMatrix, mtx, sizeof(float) * 16);
 
                 // Translation: row-major Stuff-space axis swap.
@@ -147,19 +165,40 @@ RenderSnapshot ExtractRenderSnapshot()
                 p.lightDataIndex = 0xFFFFFFFFu;
                 GpuStaticPropRegistry::staticPropGetLightDataIndex(v.recipeIndex, &p.lightDataIndex);
 
-                // v1.1: wire texArrayLayer and materialIdx from per-typeID primary cache.
-                // Single registry lookup fills all material fields atomically.
+                // v2: hasCullRecord from previous frame's flush().
+                p.hasCullRecord = false;
+                {
+                    bool cullRec = false;
+                    GpuStaticPropRegistry::staticPropGetHasCullRecord(v.recipeIndex, &cullRec);
+                    p.hasCullRecord = cullRec;
+                }
+
+                // v1.1 + v2: wire material cache fields (single call fills all).
                 p.texArrayLayer = -1;
                 p.materialIdx   = 0xFFFFFFFFu;
-                p.hasCullRecord = false;
+                p.alphaClass    = 0u;
+                p.packetCount   = 0u;
+                p.firstPacket   = 0xFFFFFFFFu;
 
                 GpuStaticPropRegistry::StaticPropTypeMaterialCache matInfo{};
                 if (GpuStaticPropRegistry::staticPropGetMaterialCacheInfo(
                         v.recipeIndex, &matInfo)) {
                     p.texArrayLayer = matInfo.texArrayLayer;
                     p.materialIdx   = matInfo.materialIdx;
+                    p.alphaClass    = matInfo.alphaClass;    // v2
+                    p.packetCount   = matInfo.packetCount;   // v2
+                    p.firstPacket   = matInfo.firstPacket;   // v2
                     if (matInfo.primaryWasAlphaOn) ++primaryAlphaOn;
                     if (matInfo.multiPacket)       ++multiPacket;
+                }
+
+                // v2: shapeName — safe truncating copy.
+                p.shapeName[0] = '\0';
+                {
+                    const char* sn = GpuStaticPropRegistry::getRecipeShapeName(v.recipeIndex);
+                    if (sn) {
+                        std::snprintf(p.shapeName, sizeof(p.shapeName), "%s", sn);
+                    }
                 }
 
                 // v1 counters (backward compat)
@@ -169,6 +208,24 @@ RenderSnapshot ExtractRenderSnapshot()
                 // v1.1 counters
                 if (p.texArrayLayer != -1)        ++texWired;   else ++texSentinel;
                 if (p.materialIdx != 0xFFFFFFFFu) ++matWired;   else ++matSentinel;
+
+                // v2 counters
+                if (p.hasCullRecord) ++cullSubmitted; else ++cullMissing;
+                if (p.boundingRadius > 0.0f)   ++hasBounds;
+                if (p.alphaClass == 1u)         ++alphaOn;
+                if (p.shapeName[0] != '\0')     ++hasShapeName;
+
+                // v2: packet range validity — confirm sidecar covers this type's range.
+                // Checks bounds via the last packet index; does NOT verify per-packet layer quality.
+                if (p.packetCount > 0u && p.firstPacket != 0xFFFFFFFFu) {
+                    int32_t dummy = -1;
+                    if (batcher_getPacketTexArrayLayer(
+                            p.firstPacket + p.packetCount - 1u, &dummy)) {
+                        ++packetRangesOk;
+                    } else {
+                        ++packetRangeFail;
+                    }
+                }
             }
 
             snap.staticProps              = Span<ExtractedStaticProp>(propBuf, writeIdx);
@@ -181,6 +238,13 @@ RenderSnapshot ExtractRenderSnapshot()
             snap.staticPropMatSentinel    = matSentinel;
             snap.staticPropPrimaryAlphaOn = primaryAlphaOn;
             snap.staticPropMultiPacket    = multiPacket;
+            snap.staticPropCullSubmitted    = cullSubmitted;
+            snap.staticPropCullMissing      = cullMissing;
+            snap.staticPropHasBounds        = hasBounds;
+            snap.staticPropAlphaOn          = alphaOn;
+            snap.staticPropHasShapeName     = hasShapeName;
+            snap.staticPropPacketRangesOk   = packetRangesOk;
+            snap.staticPropPacketRangesFail = packetRangeFail;
         }
     }
 
@@ -204,6 +268,9 @@ RenderSnapshot ExtractRenderSnapshot()
         "  sp_fail=%u sp_sentinel_mat=%u sp_sentinel_cull=%u sizeof_static_prop=%zu\n"
         "  sp_tex_wired=%u sp_tex_sentinel=%u sp_mat_wired=%u sp_mat_sentinel=%u\n"
         "  sp_primary_alpha_on=%u sp_multi_packet=%u\n"
+        "  sp_cull_submitted=%u sp_cull_missing=%u sp_has_bounds=%u\n"
+        "  sp_alpha_on=%u sp_has_shape_name=%u\n"
+        "  sp_packet_ranges_ok=%u sp_packet_ranges_invalid=%u\n"
         "  visibility_static_props=%u sp_vis_delta=%d\n",
         static_cast<unsigned long long>(snap.frameIndex),
         static_cast<uint32_t>(snap.mechs.size()),
@@ -221,6 +288,13 @@ RenderSnapshot ExtractRenderSnapshot()
         snap.staticPropMatSentinel,
         snap.staticPropPrimaryAlphaOn,
         snap.staticPropMultiPacket,
+        snap.staticPropCullSubmitted,
+        snap.staticPropCullMissing,
+        snap.staticPropHasBounds,
+        snap.staticPropAlphaOn,
+        snap.staticPropHasShapeName,
+        snap.staticPropPacketRangesOk,
+        snap.staticPropPacketRangesFail,
         visibilityStaticPropsCount,
         static_cast<int32_t>(snap.staticProps.size()) -
             static_cast<int32_t>(visibilityStaticPropsCount));

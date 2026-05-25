@@ -93,13 +93,26 @@ struct ExtractedStaticProp {
     // RecipeRange::lightDataIndex; 0xFFFFFFFFu if getter failed.
     uint32_t lightDataIndex;
 
-    // --- cull / AABB (sentinel v1) ---
-    bool hasCullRecord; // false — no CPU GpuActorRecord accessor exists yet
-    // AABB fields deferred until CPU mirror accessor is added
+    // --- cull / AABB ---
+    // v2: true iff substrate_appendStaticPropRecord was called for this recipe
+    // in the most recent PREVIOUS render frame's flush() pass.
+    // ExtractRenderSnapshot() runs BEFORE flush() — hasCullRecord reflects prior frame.
+    // Sphere AABB is caller-derived (no new struct fields needed):
+    //   hasBounds = (boundingRadius > 0.0f)
+    //   aabbMin   = {worldCenterX, worldCenterY, worldCenterZ} - boundingRadius
+    //   aabbMax   = {worldCenterX, worldCenterY, worldCenterZ} + boundingRadius
+    bool hasCullRecord;
+
+    // --- metadata (v2) ---
+    uint8_t  alphaClass;    // 0=alpha-off, 1=alpha-on; from s_types[typeID].alphaClass
+    uint32_t instanceFlags; // GpuStaticPropInstance.flags: bit0=lightsOut, bit1=isWindow, bit2=isSpotlight
+    uint32_t packetCount;   // s_types[typeID].packetCount; 0 if not found
+    uint32_t firstPacket;   // s_types[typeID].firstPacket; use with batcher_getPacketTexArrayLayer
+    char     shapeName[64]; // AppearanceType name; '\0' for bulk-registered props
 };
 
-static_assert(sizeof(ExtractedStaticProp) <= 160,
-    "ExtractedStaticProp exceeded 160-byte budget; adjust arena sizing");
+static_assert(sizeof(ExtractedStaticProp) <= 256,
+    "ExtractedStaticProp exceeded 256-byte budget; adjust arena sizing");
 
 // Simple span wrapper for array views.
 template <typename T>
@@ -140,6 +153,15 @@ struct RenderSnapshot {
     uint32_t staticPropMatSentinel    = 0;  // materialIdx == 0xFFFFFFFF
     uint32_t staticPropPrimaryAlphaOn = 0;  // primary came from alpha-on fallback
     uint32_t staticPropMultiPacket    = 0;  // type has > 1 packet
+
+    // v2 metadata counters
+    uint32_t staticPropCullSubmitted      = 0;  // hasCullRecord == true
+    uint32_t staticPropCullMissing        = 0;  // hasCullRecord == false
+    uint32_t staticPropHasBounds          = 0;  // boundingRadius > 0
+    uint32_t staticPropAlphaOn            = 0;  // alphaClass == 1
+    uint32_t staticPropHasShapeName       = 0;  // shapeName[0] != '\0'
+    uint32_t staticPropPacketRangesOk     = 0;  // firstPacket + packetCount within sidecar
+    uint32_t staticPropPacketRangesFail   = 0;  // firstPacket + packetCount out of range
 
     // Non-owning pointer to the current frame's ping-pong arena.
     // Owned by module statics in render_snapshot.cpp; valid for this frame only.
