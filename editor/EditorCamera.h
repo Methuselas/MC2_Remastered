@@ -33,6 +33,28 @@ EditorCamera.h			: Interface for the EditorCamera component.
 #include "objstatus.h"
 #endif
 
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+// Throwaway diagnostic helper: throttled trace to editor-startup.log,
+// gated on MC2_EDITOR_TRACE. Header is included by exactly one TU
+// (EditorInterface.cpp) so file-scope static linkage is safe. ASCII only.
+static void EditorCameraTrace(const char* fmt, ...)
+{
+	if (getenv("MC2_EDITOR_TRACE") == NULL)
+		return;
+	FILE* f = fopen("editor-startup.log", "a");
+	if (!f)
+		return;
+	va_list args;
+	va_start(args, fmt);
+	vfprintf(f, fmt, args);
+	va_end(args);
+	fputc('\n', f);
+	fclose(f);
+}
+
 //*************************************************************************************************
 
 /**************************************************************************************************
@@ -87,8 +109,19 @@ public:
 	
  	virtual void render (void)
 	{
+		// Diagnostic probe: throttled per-frame trace of EditorCamera::render
+		// entry. Active/turn gate inside this function may skip the bulk of
+		// rendering when (active && turn > 1) is false; logging entry tells
+		// us whether render() is even being driven.
+		static long s_ecrFrame = 0;
+		++s_ecrFrame;
+		const bool s_ecrLog = (s_ecrFrame == 1 || s_ecrFrame == 5 || s_ecrFrame == 30 || s_ecrFrame == 120);
+		if (s_ecrLog)
+			EditorCameraTrace("EditorCamera::render frame=%ld enter active=%d turn=%ld drawOldWay=%d",
+				s_ecrFrame, active ? 1 : 0, (long)turn, drawOldWay ? 1 : 0);
+
 		//------------------------------------------------------
-		// At present, these actually draw.  Later they will 
+		// At present, these actually draw.  Later they will
 		// add elements to the draw list and sort and draw.
 		// The later time has arrived.  We begin sorting immediately.
 		// NO LONGER NEED TO SORT!
@@ -96,7 +129,7 @@ public:
 		// Everything SIMPLY draws at the execution point into the zBuffer
 		// at the correct depth.  Miracles occur at that point!
 		// Big code change but it removes a WHOLE bunch of code and memory!
-		
+
 		//--------------------------------------------------------
 		// Get new viewport values to scale stuff.  No longer uses
 		// VFX stuff for this.  ALL GOS NOW!
@@ -140,6 +173,9 @@ public:
 		theClipper->StartDraw(cameraOrigin, cameraToClip, fColor, &fColor, default_state, &z);
 		MidLevelRenderer::GOSVertex::farClipReciprocal = (1.0f-cameraToClip(2, 2))/cameraToClip(3, 2);
 
+		if (s_ecrLog)
+			EditorCameraTrace("EditorCamera::render frame=%ld gate(active && turn>1)=%d",
+				s_ecrFrame, (active && turn > 1) ? 1 : 0);
 		if (active && turn > 1)
 		{
 			// by Methuselas: Compose terrainMVP and upload the per-frame
@@ -236,7 +272,19 @@ public:
 			}
 
 			if (!drawOldWay)
+			{
+				if (s_ecrLog)
+					EditorCameraTrace("EditorCamera::render frame=%ld before mcTextureManager->renderLists() drawOldWay=%d",
+						s_ecrFrame, drawOldWay ? 1 : 0);
 				mcTextureManager->renderLists();
+				if (s_ecrLog)
+					EditorCameraTrace("EditorCamera::render frame=%ld after  mcTextureManager->renderLists() returned",
+						s_ecrFrame);
+			}
+			else if (s_ecrLog)
+			{
+				EditorCameraTrace("EditorCamera::render frame=%ld renderLists SKIPPED (drawOldWay=true)", s_ecrFrame);
+			}
 
 			//theClipper->RenderNow();		//Draw the FX
 

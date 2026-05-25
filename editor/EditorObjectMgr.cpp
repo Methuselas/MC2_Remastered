@@ -11,6 +11,29 @@
 #define EDITOROBJECTMGR_CPP
 #include "stdafx.h"
 
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+// Throwaway diagnostic: throttled trace to editor-startup.log. Gated on
+// MC2_EDITOR_TRACE env var (same convention as EditorDataTrace in
+// EditorData.cpp). ASCII only. Remove with the rest of the editor render
+// probes when the object-loop GPU port slice is verified.
+static void EditorObjMgrTrace(const char* fmt, ...)
+{
+	if (getenv("MC2_EDITOR_TRACE") == NULL)
+		return;
+	FILE* f = fopen("editor-startup.log", "a");
+	if (!f)
+		return;
+	va_list args;
+	va_start(args, fmt);
+	vfprintf(f, fmt, args);
+	va_end(args);
+	fputc('\n', f);
+	fclose(f);
+}
+
 #ifndef BDACTOR_H
 #include "bdActor.h"
 #endif
@@ -1179,16 +1202,34 @@ void EditorObjectMgr::render()
 	// hardware-renderer state block is also removed because batcher flush()
 	// sets the necessary GL state.
 
+	// Diagnostic probe: throttled per-frame trace of buildings/units flow.
+	static long s_emrFrame = 0;
+	++s_emrFrame;
+	const bool s_emrLog = (s_emrFrame == 1 || s_emrFrame == 5 || s_emrFrame == 30 || s_emrFrame == 120);
+	if (s_emrLog)
+		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld renderObjects=%d renderTrees=%d buildings=%ld units=%ld links=%ld dropZones=%ld",
+			s_emrFrame, renderObjects ? 1 : 0, renderTrees ? 1 : 0,
+			(long)buildings.Count(), (long)units.Count(),
+			(long)links.Count(), (long)dropZones.Count());
+
+	long bTreeFiltered = 0;
+	long bRecalcPassed = 0;
+	long bRendered = 0;
 	if (renderObjects)
 	{
+		if (s_emrLog)
+			EditorObjMgrTrace("EditorObjectMgr::render frame=%ld buildings-loop enter count=%ld",
+				s_emrFrame, (long)buildings.Count());
 		for ( BUILDING_LIST::EIterator iter = buildings.Begin();
 			!iter.IsDone(); iter++ )
 		{
 			currentFloatHelp = 0;
 			if (renderTrees || (!renderTrees && ((*iter)->appearance()->getAppearanceClass() != TREE_APPR_TYPE)))
 			{
+				++bTreeFiltered;
 				if ( (*iter)->appearance()->recalcBounds() )
 				{
+					++bRecalcPassed;
 					if ( (*iter)->getDamage() )
 						(*iter)->appearance()->drawBars();
 					// BldgAppearance::render() submits into the static-prop batcher's
@@ -1196,14 +1237,27 @@ void EditorObjectMgr::render()
 					// The flush is issued later from mcTextureManager->renderLists()
 					// at EditorCamera.h:239 -- NOT here.
 					(*iter)->appearance()->render();
+					++bRendered;
 					if ( (*iter)->getColor() & 0xff000000 )
 						(*iter)->appearance()->drawSelectBrackets( (*iter)->getColor() );
 				}
 			}
 		}
+		if (s_emrLog)
+			EditorObjMgrTrace("EditorObjectMgr::render frame=%ld buildings-loop exit treeFiltered=%ld recalcPassed=%ld rendered=%ld",
+				s_emrFrame, bTreeFiltered, bRecalcPassed, bRendered);
+	}
+	else if (s_emrLog)
+	{
+		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld buildings-loop SKIPPED (renderObjects=false)", s_emrFrame);
 	}
 
 	// Always draw the Mechs/Vehicles
+	long uRecalcPassed = 0;
+	long uRendered = 0;
+	if (s_emrLog)
+		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld units-loop enter count=%ld",
+			s_emrFrame, (long)units.Count());
 	for ( UNIT_LIST::EIterator mIter = units.Begin();
 		!mIter.IsDone(); mIter++ )
 	{
@@ -1211,15 +1265,20 @@ void EditorObjectMgr::render()
 		currentFloatHelp = 0;
 		if ( pObj->appearance()->recalcBounds() )
 		{
+			++uRecalcPassed;
 			// Mech3DAppearance::render() submits into the mech batcher via
 			// submitActor() (mech3d.cpp). Flush is via renderLists(), not here.
 			pObj->appearance()->render();
+			++uRendered;
 			if ( (*mIter)->getDamage() )
 				pObj->appearance()->drawBars();
 			if ( (*mIter)->getColor() & 0xff000000 )
 				pObj->appearance()->drawSelectBrackets( pObj->getColor() );
 		}
 	}
+	if (s_emrLog)
+		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld units-loop exit recalcPassed=%ld rendered=%ld",
+			s_emrFrame, uRecalcPassed, uRendered);
 
 	// Building links -- 2D overlay, unchanged, NOT batcher scope.
 	for ( LINK_LIST::EIterator lIter = links.Begin();
