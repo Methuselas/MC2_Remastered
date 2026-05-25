@@ -26,6 +26,7 @@ CMakeFiles/
 !editor/**
 data/*
 !data/defs/
+!data/hdr/
 unpacked_data
 unpacked_data--
 data-orig

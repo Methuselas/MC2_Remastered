@@ -1,0 +1,11 @@
+HDRI Asset: DaySkyHDRI063B (4K equirectangular, OpenEXR)
+
+Source:     https://ambientcg.com/view?id=DaySkyHDRI063B
+License:    CC0 1.0 Universal (Public Domain Dedication)
+            https://creativecommons.org/publicdomain/zero/1.0/
+Downloaded: 2026-05-25
+Format:     OpenEXR (.exr) — per-channel float, ~14 MB.
+            AmbientCG does not currently expose a Radiance .hdr variant
+            for this asset; the project loader (gos_hdri.cpp) uses
+            tinyexr to read .exr directly.
+Used by:    HDRI-SKY-1 seam (see docs/superpowers/specs/2026-05-25-hdri-sky-1-design.md)
