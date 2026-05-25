@@ -300,10 +300,12 @@ void EditorInspector::drawImGui() {
                     ImGui::TextDisabled("Type:   (n/a v1)");
             }
             static int s_drEnabled = -1;
-            if (s_drEnabled < 0)
-                s_drEnabled = (std::getenv("MC2_DEBUG_RENDERER") != nullptr) ? 1 : 0;
+            if (s_drEnabled < 0) {
+                const char* v = std::getenv("MC2_DEBUG_RENDERER");
+                s_drEnabled = (!v || v[0] != '0') ? 1 : 0;  // default-ON
+            }
             if (!s_drEnabled)
-                ImGui::TextDisabled("Highlight: off (set MC2_DEBUG_RENDERER=0 to disable)");
+                ImGui::TextDisabled("Highlight: off (MC2_DEBUG_RENDERER=0)");
         }
     }
 
@@ -362,6 +364,38 @@ void EditorInspector::drawImGui() {
             }
         } else {
             ImGui::TextDisabled("(MaterialGpu data: StaticProp only)");
+        }
+    }
+
+    // Env Gates — live read of all MC2_* flags (default-ON: absent = enabled).
+    if (ImGui::CollapsingHeader("Env Gates")) {
+        struct GateInfo { const char* name; bool defaultOn; };
+        static const GateInfo kGates[] = {
+            { "MC2_IMGUI",            true  },
+            { "MC2_IMGUI_INSPECTOR",  true  },
+            { "MC2_OBJECT_ID_BUFFER", true  },
+            { "MC2_DEBUG_RENDERER",   true  },
+        };
+        for (const auto& g : kGates) {
+            const char* v = std::getenv(g.name);
+            bool on;
+            const char* src;
+            if (!v) {
+                on  = g.defaultOn;
+                src = g.defaultOn ? "(default ON)" : "(default OFF)";
+            } else if (v[0] == '0') {
+                on  = false;
+                src = "(=0)";
+            } else {
+                on  = true;
+                src = "(=1)";
+            }
+            ImGui::Text("%s", g.name);
+            ImGui::SameLine();
+            if (on)
+                ImGui::TextColored(ImVec4(0.4f,1.f,0.4f,1.f), "ON  %s", src);
+            else
+                ImGui::TextColored(ImVec4(1.f,0.55f,0.3f,1.f), "OFF %s", src);
         }
     }
 
