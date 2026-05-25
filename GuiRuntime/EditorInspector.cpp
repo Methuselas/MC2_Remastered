@@ -12,6 +12,15 @@ static bool isEnabled() {
     return cached == 1;
 }
 
+static const char* pickKindName(EditorInspector::InspectorPickKind k) {
+    switch (k) {
+        case EditorInspector::InspectorPickKind::StaticProp: return "StaticProp";
+        case EditorInspector::InspectorPickKind::Mech:       return "Mech";
+        case EditorInspector::InspectorPickKind::Terrain:    return "Terrain";
+        default:                                              return "None";
+    }
+}
+
 static EditorInspector::InspectorSelection     s_selection;
 static EditorInspector::StaticPropInspectorData s_staticPropData;
 static EditorInspector::MechInspectorData       s_mechData;
@@ -102,7 +111,6 @@ void EditorInspector::drawImGui() {
     }
 
     const auto& lk = s_selection.lookup;
-    static const char* s_kindNames[] = { "StaticProp", "Mech", "Terrain", "Vfx", "Unknown" };
 
     // Object-ID — shown even for invalid / failed picks.
     if (ImGui::CollapsingHeader("Object-ID", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -122,7 +130,7 @@ void EditorInspector::drawImGui() {
         }
     }
 
-    if (!s_selection.valid) {
+    if (!s_selection.hasSelection) {
         ImGui::Spacing();
         ImGui::TextUnformatted("No valid object selected.");
         ImGui::TextUnformatted("Ctrl+Shift+LMB to pick.");
@@ -132,8 +140,7 @@ void EditorInspector::drawImGui() {
     }
 
     // Generic header
-    const unsigned kindIdx = static_cast<unsigned>(s_selection.kind);
-    const char* kindName = kindIdx < 4 ? s_kindNames[kindIdx] : s_kindNames[4];
+    const char* kindName = pickKindName(s_selection.pickKind);
     ImGui::Separator();
     ImGui::Text("Kind:          %s", kindName);
     ImGui::Text("Handle raw:    0x%08X", s_selection.handle.raw());
@@ -229,7 +236,7 @@ void EditorInspector::drawImGui() {
     }
 
     // Kind-specific
-    if (s_selection.kind == RenderWorld::RenderObjectKind::StaticProp) {
+    if (s_selection.pickKind == InspectorPickKind::StaticProp) {
         if (ImGui::CollapsingHeader("StaticProp", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (!s_staticPropData.populated) {
                 ImGui::TextUnformatted("(no game data -- pick not resolved)");
@@ -239,7 +246,7 @@ void EditorInspector::drawImGui() {
                     s_staticPropData.shapeName[0] ? s_staticPropData.shapeName : "(unknown)");
             }
         }
-    } else if (s_selection.kind == RenderWorld::RenderObjectKind::Mech) {
+    } else if (s_selection.pickKind == InspectorPickKind::Mech) {
         if (ImGui::CollapsingHeader("Mech", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (!s_mechData.populated) {
                 ImGui::TextUnformatted("(no game data -- pick not resolved)");
@@ -273,9 +280,27 @@ void EditorInspector::drawImGui() {
                 ImGui::Text("Structure: %.0f / %.0f", s_mechData.totalCurStr,   s_mechData.totalMaxStr);
             }
         }
-    } else if (s_selection.kind == RenderWorld::RenderObjectKind::Terrain) {
-        if (ImGui::CollapsingHeader("Terrain")) {
-            ImGui::TextUnformatted("Terrain pick reserved (M3).");
+    } else if (s_selection.pickKind == InspectorPickKind::Terrain) {
+        if (ImGui::CollapsingHeader("Terrain", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (!s_terrainData.populated) {
+                ImGui::TextUnformatted("(terrain pick not resolved)");
+            } else {
+                ImGui::Text("World:  (%.1f, %.1f, %.1f)",
+                    s_terrainData.worldX, s_terrainData.worldY, s_terrainData.worldZ);
+                ImGui::Text("Tile:   row %-4d  col %d",
+                    s_terrainData.tileRow, s_terrainData.tileCol);
+                ImGui::Text("Cell:   row %-4d  col %d",
+                    s_terrainData.cellRow, s_terrainData.cellCol);
+                if (s_terrainData.terrainType >= 0)
+                    ImGui::Text("Type:   %d", s_terrainData.terrainType);
+                else
+                    ImGui::TextDisabled("Type:   (n/a v1)");
+            }
+            static int s_drEnabled = -1;
+            if (s_drEnabled < 0)
+                s_drEnabled = (std::getenv("MC2_DEBUG_RENDERER") != nullptr) ? 1 : 0;
+            if (!s_drEnabled)
+                ImGui::TextDisabled("Highlight: off (set MC2_DEBUG_RENDERER=1 to enable)");
         }
     }
 
