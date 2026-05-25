@@ -27,7 +27,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-DEPLOY="${DEPLOY:-A:/Games/mc2-opengl/mc2-win64-v0.2}"
+DEPLOY="${DEPLOY:-A:/Games/mc2-opengl/mc2-win64-v0.4}"
 SRCDATA="${SRCDATA:-A:/Games/mc2-opengl-src/mc2srcdata}"
 OUTDIR="${OUTDIR:-$REPO/release_assets}"
 SEVENZIP="${SEVENZIP:-/c/Program Files/7-Zip/7z.exe}"
@@ -158,8 +158,22 @@ cp -r "$DEPLOY/shaders" "$STAGE/engine/"
 if [ -d "$DEPLOY/assets" ]; then
     cp -r "$DEPLOY/assets" "$STAGE/engine/"
 fi
+# Mission Editor ships in the engine zip alongside mc2.exe (2026-05-25:
+# editor + game share one install; mc2-editor/ has been collapsed into v0.4).
+# .pdb is intentionally excluded (46 MB; ships separately on demand).
+if [ -f "$DEPLOY/Mission Editor.exe" ]; then
+    cp "$DEPLOY/Mission Editor.exe" "$STAGE/engine/"
+fi
+# Editor launcher bat -- runs editor from the install root via %~dp0.
+if [ -f "$DEPLOY/run-editor.bat" ]; then
+    cp "$DEPLOY/run-editor.bat" "$STAGE/engine/"
+fi
 # Runtime DLLs at the deploy root (SDL2, GLEW, FFmpeg, MSVC redist, etc).
 for f in "$DEPLOY"/*.dll "$DEPLOY"/run-with-log.bat; do
+    [ -e "$f" ] && cp "$f" "$STAGE/engine/"
+done
+# Editor splashes at the deploy root (esplash.bmp, tacsplash.bmp).
+for f in "$DEPLOY"/esplash.bmp "$DEPLOY"/tacsplash.bmp; do
     [ -e "$f" ] && cp "$f" "$STAGE/engine/"
 done
 # Prefs files at the deploy root. *.cfg glob naturally excludes
@@ -179,6 +193,24 @@ for required_cfg in options.cfg minprefs.cfg orgprefs.cfg system.cfg; do
         echo "[engine] FAIL — $required_cfg missing from engine.zip (sniffer-loop regression)"; exit 1
     fi
 done
+# Sanity: editor binary + launcher must ship in the engine zip (2026-05-25
+# editor+game shared install). Skip if DEPLOY doesn't have the editor yet
+# (allows running this script against a game-only install during dev).
+if [ -f "$DEPLOY/Mission Editor.exe" ]; then
+    for required_editor in "Mission Editor.exe" "run-editor.bat"; do
+        if ! "$SEVENZIP" l "$OUTDIR/mc2-remastered-engine.zip" | grep -q " $required_editor\$"; then
+            echo "[engine] FAIL — '$required_editor' missing from engine.zip"; exit 1
+        fi
+    done
+fi
+# Sanity: gamedata zip must carry the editor's Buildings.csv (v0.1.1 stock;
+# required by EditorInterface.cpp:596). Optional -- absent from game-only
+# installs, but if it was in DEPLOY it must land in the zip.
+if [ -f "$DEPLOY/data/art/Buildings.csv" ]; then
+    if ! "$SEVENZIP" l "$OUTDIR/mc2-gamedata.zip" | grep -q "Buildings\.csv\$"; then
+        echo "[gamedata] FAIL — Buildings.csv missing from gamedata.zip (editor regression)"; exit 1
+    fi
+fi
 echo "[engine] $(ls -lh "$OUTDIR/mc2-remastered-engine.zip" | awk '{print $5}')"
 
 echo
