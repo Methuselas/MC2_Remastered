@@ -455,6 +455,13 @@ bool EditorData::initTerrainFromPCV( const char* fileName )
 		64u);                                                                                 // step 7 — game line 2825
 	gpu_cull::readback_init(kEditorMaxActors + kEditorMaxActors / 4u + kStaticPropHeadroom);  // step 8 — game line 2834
 	gos_ResetStaticShadowPriming();                                                           // step 9 — game line 2839
+	// S2.15 — game line 2840. Process-scoped shadow priming reset for the
+	// terrain shadow pre-pass. Without this the mc2srcdata staircase z-fight
+	// between water and terrain shadow surfaces stays sticky from a prior
+	// mission's primed state, contributing to depth-ordering glitches on the
+	// reverse-Z water overlay. Pure write; safe to call whether or not the
+	// shadow pass is enabled.
+	mc_ResetTerrainShadowPrimed();                                                            // step 9b — game line 2840
 	EditorDataTrace("EditorData::initTerrainFromPCV: gpu_cull substrate/compute/readback + terrain_lighting + shadow priming initialized");
 
 	EditorDataTrace("EditorData::initTerrainFromPCV: before loadMechs");
