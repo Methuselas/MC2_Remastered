@@ -1598,7 +1598,27 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 				}
 			}
 		}
-		pickedByInspector = true;
+		// IMG-INSPECT-2: terrain CPU fallback when object-ID misses.
+		// Terrain::IsGameSelectTerrainPosition(wPos) is the canonical
+		// "world point is on selectable map terrain" guard (also used
+		// at line ~789 for LOS/cell lookup). If OID buffer is disabled
+		// (MC2_OBJECT_ID_BUFFER=0), inspResult.lookup.isValid is always
+		// false here so terrain wins on any in-map click - expected.
+		bool inspectorConsumed = inspResult.lookup.isValid;
+		if (!inspResult.lookup.isValid && land &&
+				Terrain::IsGameSelectTerrainPosition(wPos)) {
+			EditorInspector::TerrainInspectorData td;
+			td.populated = true;
+			td.worldX    = static_cast<float>(wPos.x);
+			td.worldY    = static_cast<float>(wPos.y);
+			td.worldZ    = static_cast<float>(wPos.z);
+			land->worldToTile(wPos, td.tileRow, td.tileCol);
+			land->worldToCell(wPos, td.cellRow, td.cellCol);
+			EditorInspector::setTerrainData(td);
+			inspectorConsumed = true;
+		}
+		if (inspectorConsumed)
+			pickedByInspector = true;
 	}
 #endif
 
@@ -1917,7 +1937,27 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 				}
 			}
 		}
-		pickedByInspector = true;
+		// IMG-INSPECT-2: terrain CPU fallback when object-ID misses.
+		// Terrain::IsGameSelectTerrainPosition(wPos) is the canonical
+		// "world point is on selectable map terrain" guard (also used
+		// at line ~789 for LOS/cell lookup). If OID buffer is disabled
+		// (MC2_OBJECT_ID_BUFFER=0), inspResult.lookup.isValid is always
+		// false here so terrain wins on any in-map click - expected.
+		bool inspectorConsumed = inspResult.lookup.isValid;
+		if (!inspResult.lookup.isValid && land &&
+				Terrain::IsGameSelectTerrainPosition(wPos)) {
+			EditorInspector::TerrainInspectorData td;
+			td.populated = true;
+			td.worldX    = static_cast<float>(wPos.x);
+			td.worldY    = static_cast<float>(wPos.y);
+			td.worldZ    = static_cast<float>(wPos.z);
+			land->worldToTile(wPos, td.tileRow, td.tileCol);
+			land->worldToCell(wPos, td.cellRow, td.cellCol);
+			EditorInspector::setTerrainData(td);
+			inspectorConsumed = true;
+		}
+		if (inspectorConsumed)
+			pickedByInspector = true;
 	}
 #endif
 
