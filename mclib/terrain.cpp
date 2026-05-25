@@ -1208,11 +1208,29 @@ bool gos_terrain_indirect::WaterFastPathOwnsArmedDraw()
 	// MUST keep running the legacy loop (the GPU water path is not armed
 	// there) - gating it off un-armed reintroduces the stale-data regression
 	// (see memory/water_fastpath_interim_fixes_and_residuals.md fix #2).
-	return s_fastPath
-	    && gos_terrain_indirect::IsFrameSolidArmed()
-	    && WaterStream::IsReady()
-	    && WaterStream::GetRecipeCount() > 0
-	    && Terrain::terrainTextures2 != nullptr;
+	const bool g1 = s_fastPath;
+	const bool g2 = gos_terrain_indirect::IsFrameSolidArmed();
+	const bool g3 = WaterStream::IsReady();
+	const bool g4 = (WaterStream::GetRecipeCount() > 0);
+	const bool g5 = (Terrain::terrainTextures2 != nullptr);
+	// S2.15 gate diag: editor fails to arm FAST water path - print once
+	// per (mission/state-change) what gate fails. Throttled by signature.
+	static const bool s_gateDiag = (getenv("MC2_WATER_GATE_DIAG") != nullptr);
+	if (s_gateDiag)
+	{
+		uint32_t sig = (g1?1:0) | (g2?2:0) | (g3?4:0) | (g4?8:0) | (g5?16:0);
+		static uint32_t s_lastSig = 0xffffffff;
+		if (sig != s_lastSig)
+		{
+			printf("[WATER_GATE] fastPath=%d armed=%d streamReady=%d recipes=%u tex2=%d (sig=0x%x)\n",
+			    g1?1:0, g2?1:0, g3?1:0,
+			    (unsigned)WaterStream::GetRecipeCount(),
+			    g5?1:0, sig);
+			fflush(stdout);
+			s_lastSig = sig;
+		}
+	}
+	return g1 && g2 && g3 && g4 && g5;
 }
 
 //---------------------------------------------------------------------------
