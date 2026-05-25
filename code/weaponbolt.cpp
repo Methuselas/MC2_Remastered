@@ -2402,6 +2402,36 @@ void WeaponBolt::destroy (void)
 	}
 }
 
+// ---------------------------------------------------------------------------
+// B3b-3: INI survey -> gpu_trail_kind mapping.
+// Driven by effects.csv GosEffectName column:
+//   effectName="ppc_trail"      (ids 4=PPC, 5=ER PPC)           -> PpcBolt
+//   effectName="srm_trail"      (id 8=SRM)                       -> MissileSmoke
+//   effectName="lrm_trail"      (id 9=LRM)                       -> MissileSmoke
+//   effectName="Swarm_lrm_trail"(id 74=Swarm LRM)                -> MissileSmoke
+//   effectName="TBolt_trail"    (id 27=Thunderbolt)               -> MissileSmoke
+//   effectName="flamer_trail"   (id 3=Flamer bolt)                -> MissileSmoke
+//   anything else (lasers, ACs, gauss, MG, NONE, ...)             -> None
+// Survey saved to docs/superpowers/specs/2026-05-26-fx-gpu-b3-weapon-ini-survey.md
+static mc2::particles::GpuTrailKind gpuTrailKindFromEffectId(int32_t eid)
+{
+    using mc2::particles::GpuTrailKind;
+    if (eid < 0 || !weaponEffects)
+        return GpuTrailKind::None;
+    const char* name = weaponEffects->GetEffectName(eid);
+    if (!name || S_stricmp(name, "NONE") == 0)
+        return GpuTrailKind::None;
+    if (S_stricmp(name, "ppc_trail") == 0)
+        return GpuTrailKind::PpcBolt;
+    if (S_stricmp(name, "srm_trail")       == 0 ||
+        S_stricmp(name, "lrm_trail")       == 0 ||
+        S_stricmp(name, "Swarm_lrm_trail") == 0 ||
+        S_stricmp(name, "TBolt_trail")     == 0 ||
+        S_stricmp(name, "flamer_trail")    == 0)
+        return GpuTrailKind::MissileSmoke;
+    return GpuTrailKind::None;
+}
+
 //---------------------------------------------------------------------------
 void WeaponBolt::init (bool create, ObjectTypePtr _type)
 {
@@ -2548,10 +2578,9 @@ void WeaponBolt::init (bool create, ObjectTypePtr _type)
 		gosTextureHandle = 0xffffffff;
 	}
 
-	// B2 P2 TEST MAPPING: every bolt = MissileSmoke. No CPU suppression in this
-	// phase — both CPU and GPU trails run in parallel; that's the success signal.
-	// P3 replaces this with a real INI-name -> kind table.
-	gpu_trail_kind = mc2::particles::GpuTrailKind::MissileSmoke;
+	// B3b-3: table-driven mapping from effects.csv effectName to GpuTrailKind.
+	// Unmapped weapons fall back to GpuTrailKind::None (CPU gosFX unchanged).
+	gpu_trail_kind = gpuTrailKindFromEffectId(effectId);
 }
 
 //---------------------------------------------------------------------------
