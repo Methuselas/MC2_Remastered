@@ -10,6 +10,7 @@
 // Include files
 #ifndef MCLIB_H
 #include"mclib.h"
+#include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
 #endif
 
 #ifndef ACTOR_H
@@ -236,7 +237,7 @@ void VFXAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	currentFrame = -1;
 	currentRotation = 0;
 
-	inView = FALSE;
+	setVisibilityGatesFromLegacy(FALSE);
 	lastInView = 0.0;
 
 	timeInFrame = 0.0;
@@ -279,8 +280,13 @@ extern float currentScaleFactor;
 //-----------------------------------------------------------------------------
 bool VFXAppearance::recalcBounds (void)
 {
+	// F3 CPU projection cost-baseline: aggregate per-actor scope into the
+	// recalcBounds_perframe bucket. No-op when env OFF.
+	::mc2_cpu_proj_cost::Scope _f3_recalcBounds_scope(
+	    ::mc2_cpu_proj_cost::BUCKET_RECALCBOUNDS_PERFRAME);
+	::mc2_cpu_proj_cost::add_workload_recalcbounds(1);
 	Stuff::Vector4D tempPos;
-	inView = FALSE;
+	setVisibilityGatesFromLegacy(FALSE);
 
 	if (eye)
 	{
@@ -335,7 +341,7 @@ bool VFXAppearance::recalcBounds (void)
 			(upperLeft.x <= eye->getScreenResX()) &&
 			(upperLeft.y <= eye->getScreenResY()))
 		{
-			inView = TRUE;
+			setVisibilityGatesFromLegacy(TRUE);
 		}
 	}
 	

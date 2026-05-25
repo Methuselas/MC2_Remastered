@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <cstdint>  // uint32_t — used by B4 mask-SOLID bridge signature.
+
 // Forward decls for opaque pointer types used in signatures.
 class gosRenderMaterial;
 
@@ -137,6 +139,83 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount,
                                      unsigned int recipeSSBO,
                                      unsigned int thinRecordSSBO,
                                      unsigned int indirectCmdBuffer);
+
+// [TERRAIN_SURFACE] PR-2 — continuous indexed-surface VALIDATION draw bridge.
+//
+// Plan: docs/superpowers/plans/.../terrain-continuous-surface-producer-plan.md
+// PR-2 (Wave 1, ADDITIVE / DEFAULT-OFF / DELETES NOTHING). Behind the
+// MC2_TERRAIN_SURFACE path-select kill-switch (gos_terrain_surface::IsEnabled);
+// a no-op when OFF (behaviour-neutral, no legacy path touched). When ON it
+// draws the V-ssbo continuous surface ON TOP of the still-running legacy/
+// indirect path for visual validation of the indexed VS + Fork D clip-space
+// pre-divide reverse-Z bias. Screen-agnostic: NO IsFrameSolidArmed() test for
+// existence (design Convergence C-1). Full GL state save/restore. PR-2 lands
+// NO deletion and NO legacy kill site -- that is PR-4.
+void gos_terrain_surface_bridge_draw();
+
+// PR2c Stage 2c — mine static-bake draw bridge.
+//
+// Called by gos_terrain_indirect::DrawMineStatic from the Render.TerrainMines
+// zone in txmmgr.cpp. Issues ONE glDrawArrays against the mission-static
+// MineStaticVBO, with the 2-layer mine sprite array bound at unit 5.
+// Per-frame work: zero CPU iteration, single draw call dispatch.
+//
+// Returns false if the mine_static program is not loaded or input is empty.
+// vertCount = total vertices to draw (6 per mine cell). vboGL = the
+// GL_ARRAY_BUFFER name. textureArrayGL = GL_TEXTURE_2D_ARRAY name (2 layers).
+bool gos_terrain_bridge_drawMineStatic(int          vertCount,
+                                       unsigned int vboGL,
+                                       unsigned int textureArrayGL);
+
+// Slice A — cement-overlay (decal) static-bake draw bridge.
+//
+// Called by gos_terrain_indirect::DrawDecalStatic from the
+// Render.TerrainOverlaysStatic zone in txmmgr.cpp. Reproduces the EXACT
+// drawTerrainOverlays() state block + overlay shader/uniforms/VAO, but
+// draws the mission-static decal VBO with per-overlayTexId draw ranges
+// instead of the per-frame M2d batch, and does NOT clear it (mirrors
+// DrawMineStatic semantics).
+//
+// One draw range = { texHandle, firstVert, vertCount } (mirror of
+// gameos_graphics.cpp OverlayBatchEntry_). draws points at an array of
+// drawCount such PODs; vboGL is the GL_ARRAY_BUFFER name holding
+// WorldOverlayVert verts (28-byte stride). Returns false if the overlay
+// program is not loaded or input is empty.
+struct GosDecalStaticDraw {
+    unsigned int texHandle;
+    unsigned int firstVert;
+    unsigned int vertCount;
+};
+bool gos_terrain_bridge_drawDecalStatic(unsigned int               vboGL,
+                                        const GosDecalStaticDraw*  draws,
+                                        int                        drawCount);
+
+// B4 Slice Stage 1c — mask-water draw bridge.
+// Called by gos_terrain_mask_dispatch::DrawMaskWater() from Render.TerrainMask.Water.
+// waterMaskSSBO: SSBO at binding 18 (per-frame bitset, one bit per quad vertexNum).
+// recipeSSBO: WaterRecipe SSBO at binding 5.
+// lightingSSBO: GpuTerrainLightingOutput SSBO at binding 2 (0 = skip light binding).
+// recipeCount: total WaterRecipe slots ((mapSide-1)^2). waterElevation, frameCos: per-frame.
+// Returns true if the indirect draw was issued.
+bool gos_terrain_bridge_drawMaskWater(uint32_t waterMaskSSBO,
+                                      uint32_t recipeSSBO,
+                                      uint32_t lightingSSBO,
+                                      int      recipeCount,
+                                      float    waterElevation,
+                                      float    frameCos);
+
+// B4 Slice Stage 1b — mask-SOLID MDI draw bridge.
+// Called by gos_terrain_mask_dispatch::DrawMaskSolid() from Render.TerrainMask.Solid.
+// solidMaskSSBO: SSBO at binding 17 (per-frame bitset, one bit per quad vertexNum).
+// recipeSSBO: dense recipe SSBO at binding 19.
+// lightingSSBO: GpuTerrainLightingOutput SSBO at binding 2 (0 = skip light binding).
+// quadCount: total dense recipe slots (mapSide*mapSide). mapSide: terrain map side.
+// Returns true if the indirect draw was issued.
+bool gos_terrain_bridge_drawMaskSolid(uint32_t solidMaskSSBO,
+                                      uint32_t recipeSSBO,
+                                      uint32_t lightingSSBO,
+                                      int      quadCount,
+                                      int      mapSide);
 
 void gos_terrain_bridge_renderWaterFast(
     unsigned int recordCount,

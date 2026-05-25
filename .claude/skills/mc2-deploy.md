@@ -9,7 +9,7 @@ Deploy the built exe and all shader files from the current worktree to the runti
 
 ## Paths
 - **Source worktree**: Auto-detect from CWD (or `A:/Games/mc2-opengl-src`)
-- **Deploy target**: `A:/Games/mc2-opengl/mc2-win64-v0.1.1`
+- **Deploy target**: `A:/Games/mc2-opengl/mc2-win64-v0.4`
 
 ## Steps
 
@@ -17,14 +17,14 @@ Deploy the built exe and all shader files from the current worktree to the runti
 
 2. **Deploy exe**:
 ```bash
-cp -f "<worktree>/build64/RelWithDebInfo/mc2.exe" "A:/Games/mc2-opengl/mc2-win64-v0.1.1/mc2.exe"
+cp -f "<worktree>/build64/RelWithDebInfo/mc2.exe" "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe"
 ```
 
 3. **Deploy FFmpeg DLLs** (copy each DLL individually using `cp -f`, NEVER `cp -r`):
 ```bash
 for dll in avcodec-61.dll avformat-61.dll avutil-59.dll swscale-8.dll swresample-5.dll; do
-    cp -f "<worktree>/build64/RelWithDebInfo/$dll" "A:/Games/mc2-opengl/mc2-win64-v0.1.1/$dll"
-    diff -q "<worktree>/build64/RelWithDebInfo/$dll" "A:/Games/mc2-opengl/mc2-win64-v0.1.1/$dll"
+    cp -f "<worktree>/build64/RelWithDebInfo/$dll" "A:/Games/mc2-opengl/mc2-win64-v0.4/$dll"
+    diff -q "<worktree>/build64/RelWithDebInfo/$dll" "A:/Games/mc2-opengl/mc2-win64-v0.4/$dll"
 done
 ```
 

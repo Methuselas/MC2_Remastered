@@ -14,6 +14,7 @@
 
 // FIXME: think how to make it better when different parts need window
 SDL_Window* g_sdl_window = NULL;
+static SDL_GLContext g_sdl_glcontext = NULL;
 static bool g_mouse_grabbed = false;
 
 namespace graphics {
@@ -490,6 +491,8 @@ RenderContextHandle init_render_context(RenderWindowHandle render_window)
     rc->glcontext_ = glcontext;
     rc->render_window_ = render_window;
 
+    g_sdl_glcontext = glcontext;
+
 	return rc;
 }
 
@@ -500,6 +503,7 @@ void destroy_render_context(RenderContextHandle rc_handle)
     assert(rc);
 
     SDL_GL_DeleteContext(rc->glcontext_);
+    g_sdl_glcontext = NULL;
     delete rc;
 }
 
@@ -817,5 +821,18 @@ static void PrintRenderer(SDL_RendererInfo * info)
 	}
 }
 
+
+
+//==============================================================================
+SDL_Window* getSDLWindow() noexcept
+{
+    return g_sdl_window;
+}
+
+//==============================================================================
+SDL_GLContext getSDLGLContext() noexcept
+{
+    return g_sdl_glcontext;
+}
 
 }; // namespace graphics

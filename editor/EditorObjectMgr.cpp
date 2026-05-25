@@ -11,6 +11,29 @@
 #define EDITOROBJECTMGR_CPP
 #include "stdafx.h"
 
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+// Throwaway diagnostic: throttled trace to editor-startup.log. Gated on
+// MC2_EDITOR_TRACE env var (same convention as EditorDataTrace in
+// EditorData.cpp). ASCII only. Remove with the rest of the editor render
+// probes when the object-loop GPU port slice is verified.
+static void EditorObjMgrTrace(const char* fmt, ...)
+{
+	if (getenv("MC2_EDITOR_TRACE") == NULL)
+		return;
+	FILE* f = fopen("editor-startup.log", "a");
+	if (!f)
+		return;
+	va_list args;
+	va_start(args, fmt);
+	vfprintf(f, fmt, args);
+	va_end(args);
+	fputc('\n', f);
+	fclose(f);
+}
+
 #ifndef BDACTOR_H
 #include "bdActor.h"
 #endif
@@ -1173,173 +1196,112 @@ void EditorObjectMgr::update()
 //*************************************************************************************************
 void EditorObjectMgr::render()
 {
-	//--------------------------------
-	//Set States for Software Renderer
-	if (Environment.Renderer == 3)
-	{
-		gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_OneZero);
+	// S2.5 (2026-05-25): actor walk only. Frame-level orchestration
+	// (renderLists, MVP, batcher flush, terrain dispatch) lives in the
+	// canonical game render-world chain wired by S2 -- DO NOT re-add here.
+	// Each appearance()->render() enqueues into the static-prop / mech
+	// batcher; the flush happens later via mcTextureManager->renderLists().
+	// See docs/superpowers/plans/2026-05-25-editor-rebuild.md S2 followup.
 
-		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeGouraud);
-		gos_SetRenderState( gos_State_MonoEnable, 1);
-		gos_SetRenderState( gos_State_Perspective, 0);
-		gos_SetRenderState( gos_State_Clipping, 1);
-		gos_SetRenderState( gos_State_Specular, 0);
-		gos_SetRenderState( gos_State_Dither, 0);
-		gos_SetRenderState( gos_State_TextureMapBlend, gos_BlendModulate);
-		gos_SetRenderState( gos_State_Filter, gos_FilterNone);
-		gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
-		gos_SetRenderState( gos_State_ZCompare, 1);
-		gos_SetRenderState(	gos_State_ZWrite, 1);
-	}
-	//--------------------------------
-	//Set States for Hardware Renderer	
-	else
-	{
-		gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_OneZero);
-		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeGouraud);
-		gos_SetRenderState( gos_State_MonoEnable, 0);
-		gos_SetRenderState( gos_State_Perspective, 1);
-		gos_SetRenderState( gos_State_Clipping, 1);
-		gos_SetRenderState( gos_State_Specular, 1);
-		gos_SetRenderState( gos_State_Dither, 1);
-		gos_SetRenderState( gos_State_TextureMapBlend, gos_BlendModulate);
-		gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
-		gos_SetRenderState( gos_State_ZCompare, 1);
-		gos_SetRenderState(	gos_State_ZWrite, 1);
-	}
+	static long s_emrFrame = 0;
+	++s_emrFrame;
+	const bool s_emrLog = (s_emrFrame == 1 || s_emrFrame == 5 || s_emrFrame == 30 || s_emrFrame == 120);
+	if (s_emrLog)
+		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld renderObjects=%d renderTrees=%d buildings=%ld units=%ld links=%ld dropZones=%ld",
+			s_emrFrame, renderObjects ? 1 : 0, renderTrees ? 1 : 0,
+			(long)buildings.Count(), (long)units.Count(),
+			(long)links.Count(), (long)dropZones.Count());
 
+	long bTreeFiltered = 0;
+	long bRecalcPassed = 0;
+	long bRendered = 0;
 	if (renderObjects)
 	{
+		if (s_emrLog)
+			EditorObjMgrTrace("EditorObjectMgr::render frame=%ld buildings-loop enter count=%ld",
+				s_emrFrame, (long)buildings.Count());
 		for ( BUILDING_LIST::EIterator iter = buildings.Begin();
 			!iter.IsDone(); iter++ )
-			{
-				currentFloatHelp = 0;
-				if (renderTrees || (!renderTrees && ((*iter)->appearance()->getAppearanceClass() != TREE_APPR_TYPE)))
-				{
-					if ( (*iter)->appearance()->recalcBounds() )
-					{
-						if ( (*iter)->getDamage() )
-							(*iter)->appearance()->drawBars();
-						(*iter)->appearance()->render();
-						if ( (*iter)->getColor() & 0xff000000 )
-							(*iter)->appearance()->drawSelectBrackets( (*iter)->getColor() );
-					}
-				}
-			}
-	}
-
-	//Always draw the Mechs/Vehicles
-		for ( UNIT_LIST::EIterator mIter = units.Begin();
-		!mIter.IsDone(); mIter++ )
 		{
-			EditorObject* pObj = (*mIter);
 			currentFloatHelp = 0;
-			if ( pObj->appearance()->recalcBounds() )
-			{
-				pObj->appearance()->render();
-				if ( (*mIter)->getDamage() )
-						pObj->appearance()->drawBars();
-				if ( (*mIter)->getColor() & 0xff000000 )
-						pObj->appearance()->drawSelectBrackets( pObj->getColor() );
-			}
-		}
-
-	// draw the building links
-		for ( LINK_LIST::EIterator lIter = links.Begin();
-		!lIter.IsDone(); lIter++ )
-		{
-			(*lIter)->render();
-		}
-
-	// draw the drop zones -- this will change as soon as we get art
-		for ( DROP_LIST::EIterator dIter = dropZones.Begin();
-		!dIter.IsDone(); dIter++ )
-		{
-			Stuff::Vector3D pos = (*dIter)->getPosition();
-			Stuff::Vector4D screen;
-			
-			eye->projectZ( pos, screen );
-			
-			GUI_RECT Rect;
-			Rect.top = screen.y - 3;
-			Rect.left = screen.x - 3;
-			Rect.bottom = screen.y + 3;
-			Rect.right = screen.x + 3;
-			drawRect( Rect, (*dIter)->isVTol() ? 0xff0000ff : 0xffffff00 );
-			
-		}
-
-}
-
-//*************************************************************************************************
-void EditorObjectMgr::renderShadows()
-{
-	//-----------------------------------------------------
-	//Set render states as few times as possible.
-
-	//--------------------------------
-	//Set States for Software Renderer
-	if (Environment.Renderer == 3)
-	{
-		gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_OneZero);
-		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeFlat);
-		gos_SetRenderState( gos_State_MonoEnable, 1);
-		gos_SetRenderState( gos_State_Perspective, 0);
-		gos_SetRenderState( gos_State_Clipping, 1);
-		gos_SetRenderState( gos_State_AlphaTest, 0);
-		gos_SetRenderState( gos_State_Specular, 0);
-		gos_SetRenderState( gos_State_Dither, 0);
-		gos_SetRenderState( gos_State_TextureMapBlend, gos_BlendDecal);
-		gos_SetRenderState( gos_State_Filter, gos_FilterNone);
-		gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
-		gos_SetRenderState( gos_State_ZCompare, 0);
-		gos_SetRenderState(	gos_State_ZWrite, 0);
-	}
-	//--------------------------------
-	//Set States for Hardware Renderer	
-	else
-	{
-		gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha);
-		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeFlat);
-		gos_SetRenderState( gos_State_MonoEnable, 1);
-		gos_SetRenderState( gos_State_Perspective, 0);
-		gos_SetRenderState( gos_State_Clipping, 1);
-		gos_SetRenderState( gos_State_AlphaTest, 1);
-		gos_SetRenderState( gos_State_Specular, 0);
-		gos_SetRenderState( gos_State_Dither, 1);
-		gos_SetRenderState( gos_State_TextureMapBlend, gos_BlendModulate);
-		gos_SetRenderState( gos_State_Filter, gos_FilterNone);
-		gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
-		gos_SetRenderState( gos_State_ZCompare, 1);
-		gos_SetRenderState(	gos_State_ZWrite, 1);
-	}
-
-	if (renderObjects)
-	{
-		for ( BUILDING_LIST::EIterator iter = buildings.Begin(); !iter.IsDone(); iter++ )
-		{
 			if (renderTrees || (!renderTrees && ((*iter)->appearance()->getAppearanceClass() != TREE_APPR_TYPE)))
 			{
+				++bTreeFiltered;
 				if ( (*iter)->appearance()->recalcBounds() )
 				{
-					//(*iter)->appearance()->update();
-					//(*iter)->appearance()->setVisibility(true,true);
-					(*iter)->appearance()->renderShadows();
-					//(*iter)->appearance()->render();
+					++bRecalcPassed;
+					if ( (*iter)->getDamage() )
+						(*iter)->appearance()->drawBars();
+					// BldgAppearance::render() submits into the static-prop batcher's
+					// per-frame buckets via submitMultiShape() (bdactor.cpp).
+					// Flush is issued later from mcTextureManager->renderLists().
+					(*iter)->appearance()->render();
+					++bRendered;
+					if ( (*iter)->getColor() & 0xff000000 )
+						(*iter)->appearance()->drawSelectBrackets( (*iter)->getColor() );
 				}
 			}
 		}
+		if (s_emrLog)
+			EditorObjMgrTrace("EditorObjectMgr::render frame=%ld buildings-loop exit treeFiltered=%ld recalcPassed=%ld rendered=%ld",
+				s_emrFrame, bTreeFiltered, bRecalcPassed, bRendered);
+	}
+	else if (s_emrLog)
+	{
+		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld buildings-loop SKIPPED (renderObjects=false)", s_emrFrame);
 	}
 
-	//Always draw the Mechs/Vehicles
-		for ( UNIT_LIST::EIterator mIter = units.Begin();
+	// Always draw the Mechs/Vehicles
+	long uRecalcPassed = 0;
+	long uRendered = 0;
+	if (s_emrLog)
+		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld units-loop enter count=%ld",
+			s_emrFrame, (long)units.Count());
+	for ( UNIT_LIST::EIterator mIter = units.Begin();
 		!mIter.IsDone(); mIter++ )
+	{
+		EditorObject* pObj = (*mIter);
+		currentFloatHelp = 0;
+		if ( pObj->appearance()->recalcBounds() )
 		{
-			if ( (*mIter)->appearance()->recalcBounds() )
-			{
-				(*mIter)->appearance()->renderShadows();
-			}
+			++uRecalcPassed;
+			// Mech3DAppearance::render() submits into the mech batcher via
+			// submitActor() (mech3d.cpp). Flush is via renderLists().
+			pObj->appearance()->render();
+			++uRendered;
+			if ( (*mIter)->getDamage() )
+				pObj->appearance()->drawBars();
+			if ( (*mIter)->getColor() & 0xff000000 )
+				pObj->appearance()->drawSelectBrackets( pObj->getColor() );
 		}
+	}
+	if (s_emrLog)
+		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld units-loop exit recalcPassed=%ld rendered=%ld",
+			s_emrFrame, uRecalcPassed, uRendered);
+
+	// Building links -- 2D overlay, NOT batcher scope.
+	for ( LINK_LIST::EIterator lIter = links.Begin();
+		!lIter.IsDone(); lIter++ )
+	{
+		(*lIter)->render();
+	}
+
+	// Drop zones -- 2D overlay, NOT batcher scope.
+	for ( DROP_LIST::EIterator dIter = dropZones.Begin();
+		!dIter.IsDone(); dIter++ )
+	{
+		Stuff::Vector3D pos = (*dIter)->getPosition();
+		Stuff::Vector4D screen;
+
+		eye->projectZ( pos, screen );
+
+		GUI_RECT Rect;
+		Rect.top = screen.y - 3;
+		Rect.left = screen.x - 3;
+		Rect.bottom = screen.y + 3;
+		Rect.right = screen.x + 3;
+		drawRect( Rect, (*dIter)->isVTol() ? 0xff0000ff : 0xffffff00 );
+	}
 }
 
 //*************************************************************************************************
@@ -2024,9 +1986,20 @@ bool  EditorObjectMgr::loadMechs( FitIniFile& file )
 		file.readIdULong( "ObjectNumber",fitID );
 		
 		unsigned long group, index;
-		getBuildingFromID( fitID, group, index, true );
+		if ( !getBuildingFromID( fitID, group, index, true ) )
+		{
+			// Mission references an object type absent from the (possibly
+			// incomplete) editor object catalog. getBuildingFromID leaves
+			// group/index past-the-end on a miss; addBuilding/getType would
+			// then OOB-deref (the gosASSERT bounds check is a no-op in this
+			// build config). Skip this part instead of crashing the whole
+			// mission load. Real fix is a complete object data env.
+			continue;
+		}
 
 		EditorObject* pObject = (EditorObject*)(addBuilding( position, group, index, 0, 0 ));
+		if ( !pObject )
+			continue;
 
 		gosASSERT( dynamic_cast<Unit*>(pObject)  );
 
@@ -2768,9 +2741,16 @@ bool EditorObjectMgr::loadDropZones( FitIniFile& file )
 
 int EditorObjectMgr::getType( unsigned long group, unsigned long indexWithinGroup )
 {
+	// gosASSERT is a no-op in this build, so it provides no real bounds
+	// protection; an unresolved mission object ID (caller passed past-the-end
+	// group/index) would OOB-deref here. Guard explicitly.
+	if ( group >= (unsigned long)groups.Count() )
+		return -1;
 	Group* pGroup = &groups[group];
 
 	gosASSERT( pGroup->buildings.Count() > indexWithinGroup );
+	if ( indexWithinGroup >= (unsigned long)pGroup->buildings.Count() )
+		return -1;
 	Building* pBuilding = &pGroup->buildings[indexWithinGroup];
 
 	return pBuilding->type;

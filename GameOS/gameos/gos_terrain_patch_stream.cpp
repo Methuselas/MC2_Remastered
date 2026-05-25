@@ -705,7 +705,7 @@ void TerrainPatchStream::appendQuad(
     const gos_VERTEX* vColor1, const gos_TERRAIN_EXTRA* vExtra1, bool tri1Valid,
     const gos_VERTEX* vColor2, const gos_TERRAIN_EXTRA* vExtra2, bool tri2Valid)
 {
-    ZoneScopedN("PatchStream.AppendQuad");
+    // PERF 2026-05-07: stripped hot Tracy zone PatchStream.AppendQuad.
     if (!s_initOk || !s_killswitch) return;
     if (s_overflow) return;
     // Thin-record path replaces expanded vertices — skip staging entirely.
@@ -858,11 +858,17 @@ void TerrainPatchStream::appendThinRecord(
     tr.recipeIdx     = recipeSlot;
     tr.terrainHandle = static_cast<uint32_t>(terrainHandle);
     tr.flags         = flags;
-    tr._pad0         = 0u;
+    tr.cementWord    = 0u;  // Fix B rename: was _pad0; patch-stream path doesn't
+                            // emit cement quads, so the field stays zero here.
     tr.lightRGB0     = lightRGB0;
     tr.lightRGB1     = lightRGB1;
     tr.lightRGB2     = lightRGB2;
     tr.lightRGB3     = lightRGB3;
+    // Fix B 2026-05-14: clipPos[16] zeroed.  The patch-stream path uses a
+    // separate VS (gos_terrain_patch.vert / its own shader), not the indirect
+    // thin VS that reads clipPos.  Zero is the safe / degenerate value if any
+    // future path picks up these records under the new VS.
+    for (int k = 0; k < 16; ++k) tr.clipPos[k] = 0.0f;
 }
 
 void TerrainPatchStream::addThinRecordVertParity(uint32_t n) {
@@ -886,7 +892,7 @@ bool TerrainPatchStream::flush()
                          && s_thinRecordBuf && s_recipeBuf && s_thinRecordCount > 0;
 
     if (!hasExpanded && !hasFat && !hasThin) {
-        return true;  // Nothing to draw — skip legacy.
+        return false;  // Nothing drawn — let legacy handle terrain vertices.
     }
 
     SavedGLState saved;
@@ -963,7 +969,7 @@ bool TerrainPatchStream::flush()
     cursor = 0;
     s_drawBucketCount = 0;
     {
-    ZoneScopedN("PatchStream.Consolidate");
+    // PERF 2026-05-07: stripped PatchStream.Consolidate and child copy zones.
     for (uint32_t i = 0; i < s_stagingCount; ++i) {
         const BucketSortEntry&    se = sortBuf[i];
         const PatchStagingBucket& sb = s_staging[se.stagingIdx];
@@ -971,11 +977,9 @@ bool TerrainPatchStream::flush()
         const uint32_t n = (uint32_t)sb.color.size();  // == sb.extras.size()
 
         {
-        ZoneScopedN("PatchStream.Consolidate.CopyColor");
         memcpy(colorSlot  + cursor, sb.color.data(),  n * sizeof(gos_VERTEX));
         }
         {
-        ZoneScopedN("PatchStream.Consolidate.CopyExtras");
         memcpy(extrasSlot + cursor, sb.extras.data(), n * sizeof(gos_TERRAIN_EXTRA));
         }
 

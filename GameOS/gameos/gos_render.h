@@ -1,6 +1,8 @@
 #ifndef GAMEOS_GRAPHICS_H
 #define GAMEOS_GRAPHICS_H
 
+#include <SDL2/SDL.h>
+
 namespace graphics {
 
 struct RenderWindow;
@@ -30,6 +32,9 @@ bool                get_display_mode_by_index(int display_index, int mode_index,
 RenderContextHandle init_render_context     (RenderWindowHandle render_window);
 void                make_current_context    (RenderContextHandle ctx_h);
 void                destroy_render_context  (RenderContextHandle rc_handle);
+
+SDL_Window*         getSDLWindow            () noexcept;
+SDL_GLContext       getSDLGLContext          () noexcept;
 
 };
 

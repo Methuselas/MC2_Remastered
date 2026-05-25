@@ -41,6 +41,12 @@
 
 #include<mlr/mlr.hpp>
 #include <tracy/Tracy.hpp>
+#include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
+#include "../GameOS/gameos/gos_static_prop_registry.h"  // Stage 3.C: frameBegin()
+#include "particles/batcher.h"  // GPU particle batcher flush (Stage 2' and beyond)
+#include "../GameOS/gameos/gos_particle_bridge.h"  // B2 P1: camera basis bridge
+#include "../GameOS/gameos/debug_renderer.h"
+#include "../GuiRuntime/EditorInspector.h"  // IMG-INSPECT-3 flushDebugHighlight
 
 //---------------------------------------------------------------------------
 CameraPtr eye = NULL;
@@ -138,7 +144,13 @@ void GameCamera::render (void)
 	eye->setLightIntensity(1,1.0);
 
 	MidLevelRenderer::PerspectiveMode = usePerspective;
-	theClipper->StartDraw(cameraOrigin, cameraToClip, fColor, &fColor, default_state, &z);
+	{
+		// F3 CPU projection cost-baseline: mlr_total bucket — wraps StartDraw
+		// (per-frame MLR setup). RenderNow gets a second scope further below.
+		::mc2_cpu_proj_cost::Scope _f3_mlr_start_scope(
+		    ::mc2_cpu_proj_cost::BUCKET_MLR_TOTAL);
+		theClipper->StartDraw(cameraOrigin, cameraToClip, fColor, &fColor, default_state, &z);
+	}
 	MidLevelRenderer::GOSVertex::farClipReciprocal = (1.0f-cameraToClip(2, 2))/cameraToClip(3, 2);
 
 	if (active && turn > 1)
@@ -150,32 +162,19 @@ void GameCamera::render (void)
 		// Compose terrainMVP: MC2 world coords -> GL clip coords
 		{
 			ZoneScopedN("Camera.BuildMVP");
-			const float* W = (const float*)&worldToClip;
-			#define WTC(r,c) W[(c)*4+(r)]
-
-			// Axis swap: (-x, z, y) per projectZ()
-			float AW[4][4];
-			for (int j = 0; j < 4; j++) {
-				AW[0][j] = -WTC(0,j);
-				AW[1][j] =  WTC(2,j);
-				AW[2][j] =  WTC(1,j);
-				AW[3][j] =  WTC(3,j);
-			}
-
-			// Upload raw AW matrix (axisSwap * worldToClip)
-			// TES does perspective divide + viewport in shader (non-linear, can't be matrix)
-			// AW stored row-major in M[], uploaded with GL_FALSE in gameos_graphics.cpp.
-			// GL_FALSE → OpenGL reads each C++ row as a GLSL column → GLSL sees AW^T.
-			// AW^T * (vx,vy,elev,1) = projectZ(vx,vy,elev) exactly (Stuff row-vector convention).
-			float M[16];
-			for (int i = 0; i < 4; i++)
-				for (int j = 0; j < 4; j++)
-					M[i*4+j] = AW[i][j];
-
-			gos_SetTerrainMVP(M);
-
-			// Viewport params for TES: (vmx, vmy, vax, vay)
-			gos_SetTerrainViewport(viewMulX, viewMulY, viewAddX, viewAddY);
+			// F3 CPU projection cost-baseline: matrix_build site (a).
+			::mc2_cpu_proj_cost::Scope _f3_mvp_scope(
+			    ::mc2_cpu_proj_cost::BUCKET_MATRIX_BUILD);
+			// F1 Stage A unified-projection: single producer call.
+			// gos_SetWorldToClipGL composes nothing here — the matrix is
+			// built once by Camera::worldToClipGL() (axisSwap *
+			// worldToCamera * cameraToClip, with R-clipw polarity folded
+			// into kAxisSwapMC2toGL). gos_SetWorldToClipGL handles the
+			// column-major -> row-major repackage internally AND writes
+			// the terrain_mvp_ cache so all gos_GetTerrainMVPMat4()
+			// callers (CullUBO, mech-batcher, static-prop-batcher,
+			// particle-bridge, etc.) inherit transparently.
+			gos_SetWorldToClipGL(eye->worldToClipGL());
 
 			// Camera position in MC2 world space for TCS distance LOD
 			Stuff::Vector3D camOrig = getCameraOrigin();
@@ -197,6 +196,7 @@ void GameCamera::render (void)
 
 		{
 			ZoneScopedN("GameCamera::render terrain");
+			GpuStaticPropRegistry::frameBegin();  // Stage 3.C: reset live-instance list
 			land->render();								//render the Terrain
 		}
 
@@ -208,6 +208,10 @@ void GameCamera::render (void)
 
 		{
 			ZoneScopedN("GameCamera::render objects");
+			// F3 CPU projection cost-baseline: mark we are inside the render
+			// loop so eventdriven projectZ attribution can distinguish
+			// render-time calls from AI/picking/input calls.
+			::mc2_cpu_proj_cost::RenderLoopGuard _f3_render_guard;
 			ObjectManager->render(true, true, true);	//render all other objects
 		}
 
@@ -253,6 +257,38 @@ void GameCamera::render (void)
 				ZoneScopedN("GameCamera::render waterFastPath");
 				land->renderWaterFastPath();
 			}
+
+			// GPU particle batcher flush — Stage 2' and beyond.
+			// MUST run after renderLists() so the scene depth buffer is
+			// populated before alpha-blended billboards composite on top
+			// (memory/gpu_direct_renderer_bringup_checklist.md trap #6).
+			// No-op when MC2_GPU_PARTICLES is unset (default OFF).
+			// Stage 1' canary (hardcoded orange billboard) removed now
+			// that real gosFX producers call BeginGroup+Emit via the
+			// SpawnCard*/SpawnCardCloud paths.
+			{
+				ZoneScopedN("GameCamera::render particlesFlush");
+
+				// B2 P1: publish current camera basis to particle bridge before flush.
+				// cameraOrigin is the camera's world transform (LinearMatrix4D);
+				// GetLocalRightInWorld / GetLocalUpInWorld return vectors in MC2/Stuff
+				// world space (x=east, y=north, z=elevation).  Apply the same axis swap
+				// used in particle_billboard.vert (GL_x=-Stuff_x, GL_y=Stuff_z, GL_z=Stuff_y)
+				// so the bridge vectors land in the same space as worldPos in the shader.
+				{
+					Stuff::UnitVector3D stuffRight, stuffUp;
+					cameraOrigin.GetLocalRightInWorld(&stuffRight);
+					cameraOrigin.GetLocalUpInWorld(&stuffUp);
+					float camRight[3] = { -stuffRight.x,  stuffRight.z,  stuffRight.y };
+					float camUp[3]    = { -stuffUp.x,     stuffUp.z,     stuffUp.y    };
+					gos_SetActiveCamera(camRight, camUp);
+				}
+
+				::mc2::particles::Batcher::Instance().ResolveTextures();  // resolve MLR->GOS after renderLists
+				::mc2::particles::Batcher::Instance().Flush();
+
+				gos_ClearActiveCamera();
+			}
 		}
 
 		if (drawOldWay)
@@ -264,6 +300,10 @@ void GameCamera::render (void)
 
 		{
 			ZoneScopedN("GameCamera::render clipperRenderNow");
+			// F3 CPU projection cost-baseline: mlr_total bucket — RenderNow
+			// scope (joined with the StartDraw scope above into mlr_total).
+			::mc2_cpu_proj_cost::Scope _f3_mlr_rendernow_scope(
+			    ::mc2_cpu_proj_cost::BUCKET_MLR_TOTAL);
 			theClipper->RenderNow();		//Draw the FX
 		}
 
@@ -272,6 +312,16 @@ void GameCamera::render (void)
 		{
 			ZoneScopedN("GameCamera::render weather");
 			weather->render();				//Draw the weather
+		}
+
+		// DebugRenderer world primitives -- depth-tested, before post-process.
+		// No-op when MC2_DEBUG_RENDERER is unset.
+		{
+			ZoneScopedN("GameCamera::render debugRendererFlushWorldPrims");
+#ifdef MC2_IMGUI
+			EditorInspector::flushDebugHighlight();  // IMG-INSPECT-3: queue highlight prims same-frame
+#endif
+			DebugRenderer::flushWorldPrims();
 		}
 	}
 

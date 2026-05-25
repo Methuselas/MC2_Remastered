@@ -11,6 +11,13 @@
 #include<ctype.h>
 #include"platform_str.h"
 
+// NS3 boundary: the FastFile registry storage belongs to the FastFile
+// subsystem (this TU), not to whatever game/tool main happens to link it.
+// extern'd for all consumers in ffile.h. Previously redefined in every main.
+FastFile	**fastFiles = NULL;
+long		numFastFiles = 0;
+long		maxFastFiles = 0;
+
 long ffLastError = 0;
 
 #define NO_ERR		0
@@ -117,18 +124,9 @@ FastFile *FastFileFind (const char *fname, long &fastFileHandle)
 }
 
 //------------------------------------------------------------------
-DWORD elfHash (const char *name)
-{
-    unsigned long   h = 0, g;
-    while ( *name )
-    {
-        h = ( h << 4 ) + *name++;
-        if ( (g = h & 0xF0000000) )
-            h ^= g >> 24;
-        h &= ~g;
-    }
-    return h;
-}
+// elfHash() relocated to mclib/fst_hash.cpp so the tests/unit target can
+// link it without pulling in the engine include stack. Decl still lives
+// in mclib/fastfile.h; engine callers are unchanged.
 
 //-----------------------------------------------------------------------------------
 

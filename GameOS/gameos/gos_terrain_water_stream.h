@@ -20,6 +20,8 @@
 #include <cstdint>
 #include <cstddef>
 
+#include <GL/glew.h>  // GLuint — required for GetIndirectCmdBuffer() return type
+
 namespace WaterStream {
 
 // One record per water-bearing quad in a mission. Built once on the first
@@ -119,6 +121,56 @@ unsigned int EnsureRecipeBufferUploaded();
 // records emitted (i.e., the per-frame draw instance count).
 uint32_t UploadAndBindThinRecords();
 
+// --- Narrow-walk fast path -------------------------------------------------
+//
+// Default-on (env-gate `MC2_WATER_UPLOAD_NARROW=0` to opt out and fall back
+// to the legacy full-quadList walk). The narrow walk lets the caller append
+// candidates during the same `setupTextures()` loop the engine already runs,
+// reducing UploadAndBindThinRecords' iteration count from `numberQuads`
+// (camera window, ~14K-40K) to only the water-bearing subset (typically
+// hundreds). Eligibility test must match UploadThin's exactly.
+//
+// Contract:
+//   1. BeginFrameNarrow() at the top of the per-frame setupTextures loop —
+//      clears the candidate vector, reserves prior-frame max + 10% slack.
+//   2. AppendNarrowCandidate(&q) immediately after `q.setupTextures()` for
+//      every quad whose corners + waterHandle pass the same predicate
+//      UploadAndBindThinRecords applies. O(1), no allocation in the hot
+//      path after the BeginFrameNarrow reserve.
+//   3. UploadAndBindThinRecords reads the candidate vector if narrow mode
+//      is on; otherwise falls back to the full quadList walk.
+bool NarrowEnabled();
+void BeginFrameNarrow();
+struct NarrowCandidate {
+    const void* quadPtr; // TerrainQuadPtr — opaque to keep the header lean
+};
+void AppendNarrowCandidate(const void* quadPtr);
+
+// --- Phase C Stage 1: compute dispatch ------------------------------------
+//
+// ComputeDispatchAndBindThinRecords() replaces UploadAndBindThinRecords() on
+// the GPU-driven path. Dispatches two compute shaders:
+//   1. gpu_driven_water.comp  — cull/pack (water quads → WaterThinRecord[])
+//   2. gpu_driven_cmd_patch.comp — writes DrawArraysIndirectCommand.count
+// Followed by GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT.
+//
+// Returns true on success (g_waterGpuDrivenArmed set true).
+// Returns false if killswitch is off, recipe not ready, or window is empty.
+// The MDI bridge (Task 1.5) calls IsGpuDrivenArmed() to decide the draw path.
+bool ComputeDispatchAndBindThinRecords(float frameCos);
+
+// True if ComputeDispatchAndBindThinRecords() succeeded this frame.
+bool IsGpuDrivenArmed();
+
+// GL buffer name for the indirect draw commands (2 × DrawArraysIndirectCommand).
+// Valid only when IsGpuDrivenArmed() is true.
+GLuint GetIndirectCmdBuffer();
+
+// When MC2_GPU_DRIVEN_PARITY=1: runs both CPU and GPU thin-record paths,
+// reads both back from SSBOs, and byte-compares by recipeIdx. Emits
+// [GPU_DRIVEN_WATER_PARITY v1] summary every 600 frames.
+void ComputeDispatchParity_Check();
+
 // Tear down GL buffers (mission unload, app shutdown).
 void ReleaseGlResources();
 
@@ -197,6 +249,11 @@ void Build();
 // Reset to empty state (mission unload).
 void Reset();
 
+// Returns the water parity mask for this frame (indexed by corner-0 vertexNum,
+// same format as gos_terrain_mask_dispatch's s_waterMask). Built during
+// UploadAndBindThinRecords — only valid after that call. outWords = 450.
+const uint32_t* GetWaterParityMask(int* outWords);
+
 // Read-only access to the recipe array. Pointer is stable across the
 // mission lifetime (vector capacity is fixed after Build).
 const WaterRecipe* GetRecipes();
@@ -204,5 +261,10 @@ uint32_t GetRecipeCount();
 
 // True after Build has succeeded; false after Reset or before first Build.
 bool IsReady();
+
+// Returns the WaterRecipe for a quad whose corner-0 vertexNum is vn.
+// Returns nullptr if vn has no water recipe (pure-land quad or vn < 0).
+// Only valid after IsReady() returns true.
+const WaterRecipe* RecipeForVertexNum(int32_t vn);
 
 } // namespace WaterStream

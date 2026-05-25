@@ -1,6 +1,6 @@
 # Changelog
 
-All rendering features added to the MechCommander 2 OpenGL port, grouped by category.
+All rendering features added to the MechCommander 2 OpenGL port, grouped by category. Baseline is [alariq/mc2](https://github.com/alariq/mc2) — the modern OpenGL port of the original 2001 game.
 
 ## Terrain Rendering
 
@@ -14,7 +14,7 @@ All rendering features added to the MechCommander 2 OpenGL port, grouped by cate
 
 ## Lighting and Shadows
 
-- **Static terrain shadow map** -- 8192x8192 world-fixed orthographic projection, rendered once on the first frame (not dynamically re-baked)
+- **Static terrain shadow map** -- 4096x4096 world-fixed orthographic projection, rendered once on the first frame (not dynamically re-baked)
 - **Dynamic mech shadows** -- 4096x4096 with ray-ground intersection frustum centering and camera bias
 - **Poisson disk PCF** -- 16-sample stratified sampling with per-pixel rotation to break banding, adjustable softness via `[`/`]` keys
 - **Post-process shadow pass** -- fullscreen depth-reconstruction pass that shadows all geometry (terrain, overlays, buildings, mechs) via multiplicative blending
@@ -28,7 +28,7 @@ All rendering features added to the MechCommander 2 OpenGL port, grouped by cate
 
 ## Post-Processing (infrastructure)
 
-Post-process pipeline is built and running; most effects are **off by default**. The goal is to have the plumbing in place so effects can be tuned in later without re-wiring the renderer.
+Post-process pipeline is built and running; most effects are **off by default**. The goal is to have the plumbing in place so effects can be tuned in later without re-wiring the renderer. Debug hotkeys to toggle effects at runtime are listed in RELEASE_README.md.
 
 - **Procedural skybox** -- gradient sky with sun disc, context-aware (blue-grey in gameplay, black in menus) -- **on by default**
 - **Bloom** (off) -- threshold extraction + two-pass Gaussian blur + additive composite
@@ -37,10 +37,10 @@ Post-process pipeline is built and running; most effects are **off by default**.
 
 ## Effects (Infrastructure)
 
+- **GPU gosFX particles** (`MC2_GPU_PARTICLES=1`) -- GPU-driven billboard rendering for all gosFX effect types (Card, CardCloud, PointCloud, ShardCloud, Tube). Explosions, fire, smoke, and spark effects render as textured, screen-facing sprites via SSBO + billboard VS/FS. Opt-in env var; default OFF until B2 trail/Tube correctness and RenderWorld wiring land.
 - **God rays** -- radial light scattering infrastructure, disabled by default (toggle RAlt+6)
 - **Shoreline foam** -- water edge detection infrastructure, currently non-functional (toggle RAlt+7)
-- **SSAO** -- half-resolution 16-sample hemisphere ambient occlusion, disabled by default (toggle RAlt+9)
-- **GPU grass** -- deprecated; geometry-shader grass billboard path removed from default build
+- **GPU grass** -- geometry-shader grass billboard path (removed from default build — RAlt+5 key reassigned to HUD scale cycling)
 
 ## Tools and Infrastructure
 
@@ -50,7 +50,7 @@ Post-process pipeline is built and running; most effects are **off by default**.
 - **Debug hotkeys** -- RAlt+F1-F5 and RAlt+4-9 for toggling every visual feature live
 - **RAlt+0 GPU static-prop killswitch** -- experimental GPU-driven prop rendering (buildings, trees, generics). Partially wired: enabling it currently acts as a "hide all static props" toggle, useful for screenshotting terrain without clutter. CPU path (default, killswitch off) is the supported rendering path. See `docs/gpu-static-prop-cull-lessons.md` for why the GPU path is incomplete.
 - **RAlt+8 surface debug mode** -- visualize terrain surface classification / material IDs
-- **RAlt+9 GPU frag debug-mode cycle** -- when the static-prop killswitch is on, cycles the fragment shader through 8 isolation modes (normal / addr-gradient / addr-hash / WHITE / ARGB-only / TEX-only / HIGHLIGHT-only / TEX+HIGHLIGHT) for per-component visual bisection. Replaces the old SSAO toggle hotkey; SSAO infrastructure is preserved in code but unbound.
+- **RAlt+9 GPU frag debug-mode cycle** -- cycles GPU static-prop fragment debug modes: addr-gradient, addr-hash, WHITE, ARGB-only, TEX-only, HIGHLIGHT-only, TEX+HIGHLIGHT. SSAO infrastructure was removed in the unified-projection pass (2026-05-22); this hotkey previously toggled SSAO.
 - **Shader hot-reload** -- modified shaders take effect on next frame (bad compiles silently keep old shader)
 - **Extra zoom mode** -- pulled-back camera (altitude 6000), removed LOD culling, removed fog, scaled vertex buffers
 

@@ -112,6 +112,12 @@
 #endif
 
 #include "../resource.h"
+#include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
+#include "../GameOS/gameos/gos_profiler.h"  // Tracy sub-zones for vehicles update
+
+// C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
+// MC2_GPU_CULL_LIFECYCLE=1 routes AI canBeSeen() combat gates to GPU-lagged visibility.
+static const bool s_gpuCullLifecycle = (getenv("MC2_GPU_CULL_LIFECYCLE") != nullptr);
 
 extern unsigned long		NextIdNumber;
 
@@ -3429,8 +3435,11 @@ long GroundVehicle::update (void)
 	}
 	
 	((ObjectAppearance*)appearance)->pilotNameID = IDS_NOPILOT;
-	control.update(this);
-	
+	{
+		ZoneScopedN("GameLogic.Units.Vehicles AI");
+		control.update(this);
+	}
+
 	#ifdef MC_PROFILE
 	QueryPerformanceCounter(endCk);
 	srCtrlUpd += (endCk.LowPart - startCk.LowPart);
@@ -3441,8 +3450,10 @@ long GroundVehicle::update (void)
 	#endif
 
 	bool emergencyStop = false;
-	if (!isDisabled())
-		emergencyStop = crashAvoidanceSystem();
+	{
+		ZoneScopedN("GameLogic.Units.Vehicles Mover");
+		if (!isDisabled())
+			emergencyStop = crashAvoidanceSystem();
 
 	#ifdef MC_PROFILE
 	QueryPerformanceCounter(endCk);
@@ -3672,9 +3683,11 @@ long GroundVehicle::update (void)
 	position.z = zPos;
 	if ((moveLevel == 1) && (zPos < MapData::waterDepth))
 		position.z = MapData::waterDepth;
- 
+	}  // end GameLogic.Units.Vehicles Mover
+
 	if (!isDestroyed() || (timeLeft > 0.0))
 	{
+		ZoneScopedN("GameLogic.Units.Vehicles AppearanceUpdate");
 		if (appearance)
 		{
 			updateAnimations();
@@ -3820,15 +3833,18 @@ long GroundVehicle::update (void)
 
 	//-------------------------------------------------------------------------------
 	// Let the moverBlockList know which block the Mech is in for Collision Purposes
-	float xCoord = position.x - Terrain::mapTopLeft3d.x;
-	float yCoord = Terrain::mapTopLeft3d.y + position.y ;
+	{
+		ZoneScopedN("GameLogic.Units.Vehicles Collisions");
+		float xCoord = position.x - Terrain::mapTopLeft3d.x;
+		float yCoord = Terrain::mapTopLeft3d.y + position.y ;
 
-	float divisor = (Terrain::verticesBlockSide * Terrain::worldUnitsPerVertex);
-	xCoord /= divisor;
-	yCoord /= divisor;
+		float divisor = (Terrain::verticesBlockSide * Terrain::worldUnitsPerVertex);
+		xCoord /= divisor;
+		yCoord /= divisor;
 
-	long blockNumber = float2long(xCoord) + (float2long(yCoord) * Terrain::blocksMapSide);
-	addMoverToList(blockNumber);
+		long blockNumber = float2long(xCoord) + (float2long(yCoord) * Terrain::blocksMapSide);
+		addMoverToList(blockNumber);
+	}
 
 		#ifdef MC_PROFILE
 		QueryPerformanceCounter(endCk);
@@ -3925,15 +3941,23 @@ void GroundVehicle::render (void)
 				else
 					resourceID = IDS_SENSOR_HEAVY_VEHICLE;
 					
-				if ( appearance->canBeSeen() )
+				// C3: route canBeSeen() to GPU-lagged visibility; 1-frame HUD lag: accepted.
+				const bool gvInViewQ3 = s_gpuCullLifecycle
+					? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+					: appearance->canBeSeen();
+				if ( gvInViewQ3 )
 					drawSensorTextHelp (appearance->getScreenPos().x, appearance->getScreenPos().y+20.0f, resourceID,SD_RED,false);
 			}
 			else if (cStat == CONTACT_SENSOR_QUALITY_4)
 			{
 				appearance->setBarColor(SB_RED);
 				appearance->render();
-	
-				if ( appearance->canBeSeen() )
+
+				// C3: route canBeSeen() to GPU-lagged visibility; 1-frame HUD lag: accepted.
+				const bool gvInViewQ4 = s_gpuCullLifecycle
+					? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+					: appearance->canBeSeen();
+				if ( gvInViewQ4 )
 					drawSensorTextHelp (appearance->getScreenPos().x, appearance->getScreenPos().y+20.0f,descID,SD_RED,false);
 			}
 			else if (alphaValue != 0x0)	//What if we are out of LOS and NOT on sensors!!!  Let 'em fade out.

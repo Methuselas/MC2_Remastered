@@ -23,6 +23,34 @@
 #include"mathfunc.h"
 #endif
 
+// F3 CPU projection cost-baseline: forward declarations to keep camera.h
+// header weight low. projectZ() bumps n_calls_eventdriven when called
+// outside the render loop (TLS flag tracked by RenderLoopGuard).
+#include <cstdint>  // int64_t for cull_admission_*_ns
+namespace mc2_cpu_proj_cost {
+    extern bool g_cpuProjEnabled;
+    extern thread_local bool tls_inRenderLoop;
+    void add_workload_eventdriven_projectZ();
+    // R2 cull-admission timing pair (see cpu_proj_cost_split.h comment).
+    int64_t cull_admission_begin_ns();
+    void    cull_admission_end_ns(int64_t startNs);
+    // R3 narrow-subset wrapper timing pairs (one per remaining
+    // policy-split wrapper). Same contract as cull_admission_*_ns:
+    // env-OFF returns 0 / no-op.
+    int64_t screenxy_begin_ns();
+    void    screenxy_end_ns(int64_t startNs);
+    int64_t effect_admission_begin_ns();
+    void    effect_admission_end_ns(int64_t startNs);
+    int64_t terrain_admission_begin_ns();
+    void    terrain_admission_end_ns(int64_t startNs);
+    int64_t lighting_shadow_begin_ns();
+    void    lighting_shadow_end_ns(int64_t startNs);
+    int64_t selection_picking_begin_ns();
+    void    selection_picking_end_ns(int64_t startNs);
+    int64_t debug_overlay_begin_ns();
+    void    debug_overlay_end_ns(int64_t startNs);
+}
+
 #ifndef TGL_H
 #include"tgl.h"
 #endif
@@ -99,6 +127,10 @@ struct LegacyProjectionResult {
 // g_projectz_site_cat, projectz_trace_dispatch(), and the PROJECTZ_SITE macro.
 // Must appear after LegacyProjectionResult (trace.h forward-declares it).
 #include "projectz_trace.h"
+#include "object_admission_predicate.h"
+
+// gos_GetViewport is declared in gameos.hpp which is transitively included via tgl.h.
+// No forward declaration needed here.
 
 //---------------------------------------------------------------------------
 class Camera
@@ -134,13 +166,17 @@ class Camera
 		Stuff::Vector2DOf<float>	cameraShift;					//Position camera is looking At.
 		
 		Stuff::Matrix4D				cameraToClip;					//Camera Clip Matrix--Used for projection and zoom.
+		// F2 unified-projection: parallel GL-native projection product.
+		// = cameraToClip * kPixelHomogToGLNDC (precomputed at camera-update
+		// time). Consumed by Camera::worldToClipGL() for the GPU path.
+		// The legacy `cameraToClip` stays in D3D-pixel-homogeneous form for
+		// CPU projectZ + 8 wrappers + MLR. Mclib/camera.cpp keeps both in
+		// sync via cameraToClipGL.Multiply(cameraToClip, kPixelHomogToGLNDC)
+		// called after every cameraToClip write in calculateProjectionConstants.
+		Stuff::Matrix4D				cameraToClipGL;
 		Stuff::Matrix4D				worldToClip;					//Matrix used to bring a point from world space to camera/clip space
 		Stuff::Matrix4D				clipToWorld;					//Matrix used to bring a point from camera/clip space to world space
-		
-		float						startZInverse;					//Used to help interpolate the Screen Coords in InverseProjectZ
-		float						startWInverse;
-		float						zPerPixel;
-		float						wPerPixel;
+		float						cachedFrustumPlanes_[6][4];		// F6 T2 cache; valid after cacheFrustumPlanes() per frame.
 		
 		TG_LightPtr					*worldLights;					//Lighting for the entire world.
 		long						numLights;						//Number of lights in the above list.  Always MAX_LIGHTS!
@@ -435,6 +471,14 @@ class Camera
 		bool projectZ (Stuff::Vector3D &point, Stuff::Vector4D &screen,
 		               LegacyProjectionResult* optionalResult = nullptr)
 		{
+			// F3 CPU projection cost-baseline: eventdriven projectZ
+			// attribution. Count-only (no chrono); single TLS read + branch
+			// + non-atomic counter bump. Per audit (c): no outer event
+			// boundary exists, so count is the only signal.
+			if (mc2_cpu_proj_cost::g_cpuProjEnabled &&
+			    !mc2_cpu_proj_cost::tls_inRenderLoop) {
+				mc2_cpu_proj_cost::add_workload_eventdriven_projectZ();
+			}
 			//--------------------------------------------------------------------
 			// Now run the NEW project code
 			Stuff::Vector4D xformCoords;
@@ -524,6 +568,8 @@ class Camera
 		// Terrain vertex admission — bool gates submission; per-vertex wedge-risk concentration.
 		inline bool projectForTerrainAdmission (Stuff::Vector3D& point,
 		                                        Stuff::Vector4D& screen) {
+			// R3 narrow-subset sidecar (see cpu_proj_cost_split.h).
+			const int64_t _f3_terrain_t0 = ::mc2_cpu_proj_cost::terrain_admission_begin_ns();
 #pragma warning(push)
 #pragma warning(disable: 4996)
 			bool accepted = projectZ(point, screen);
@@ -534,97 +580,401 @@ class Camera
 				          isfinite(screen.z) && isfinite(screen.w));
 			}
 #endif
+			::mc2_cpu_proj_cost::terrain_admission_end_ns(_f3_terrain_t0);
 			return accepted;
 		}
 
 		// Object lifecycle admission — bool feeds windowsVisible → canBeSeen() cull chain.
 		inline bool projectForObjectAdmission (Stuff::Vector3D& point,
 		                                       Stuff::Vector4D& screen) {
+			// R2 cull-admission instrumentation. begin_ns returns 0 when env
+			// OFF; end_ns short-circuits the same way. Inline pair is safe in
+			// header (no class definition needed).
+			const int64_t _f3_cull_t0 = ::mc2_cpu_proj_cost::cull_admission_begin_ns();
+
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (objectAdmissionPredicateMode() == ObjectAdmissionPredicateMode::Modern);
+			bool ret;
+
+			if (isModern && bypassMode == ProjectZBypassMode::Bypass) {
+				// Pure bypass: skip projectZ entirely. screen stays uninitialized;
+				// object_admission callers discard screen (verified Track A1/A2).
+				ModernClipResult r = projectModernClipGL(point);
+				ret = r.admit;
+			} else {
+				LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
-			bool accepted = projectZ(point, screen);
+				// projectZ writes screen byte-identically to legacy; we capture rawClip
+				// via the optionalResult sidecar so the modern predicate can see it.
+				bool legacyAccepted = projectZ(point, screen, &result);
 #pragma warning(pop)
 #if defined(MC2_PROJECTZ_FINITE_CHECK)
-			if (accepted) {
-				gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
-				          isfinite(screen.z) && isfinite(screen.w));
-			}
+				// Invariant gates on legacy-rect-acceptance (the original semantics),
+				// not on the bool we ultimately return — preserves the policy-split
+				// contract from commit cc83857.
+				if (result.acceptedByLegacyScreenRect) {
+					gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
+					          isfinite(screen.z) && isfinite(screen.w));
+				}
 #endif
-			return accepted;
+				if (isModern) {
+					ret = clipSpaceFrustumAdmit(result.rawClip);
+					if (bypassMode == ProjectZBypassMode::Compare) {
+						ModernClipResult b = projectModernClipGL(point);
+						if (b.admit != ret) {
+							logProjectZBypassDisagreement("object", point, result.rawClip, ret, b.clip, b.admit);
+						}
+					}
+				} else {
+					ret = legacyAccepted;
+				}
+			}
+
+			::mc2_cpu_proj_cost::cull_admission_end_ns(_f3_cull_t0);
+			return ret;
 		}
 
 		// Effect billboard admission — bool gates submission; same wedge-class hazard as terrain.
 		inline bool projectForEffectAdmission (Stuff::Vector3D& point,
 		                                       Stuff::Vector4D& screen) {
+			// R3 narrow-subset sidecar (see cpu_proj_cost_split.h).
+			const int64_t _f3_effect_t0 = ::mc2_cpu_proj_cost::effect_admission_begin_ns();
+
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (effectAdmissionPredicateMode() == EffectAdmissionPredicateMode::Modern);
+			bool ret;
+
+			if (isModern && bypassMode == ProjectZBypassMode::Bypass) {
+				// Pure bypass: skip projectZ entirely. screen stays uninitialized;
+				// effect_admission callers discard screen (verified F3 design).
+				ModernClipResult r = projectModernClipGL(point);
+				ret = r.admit;
+			} else {
+				LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
-			bool accepted = projectZ(point, screen);
+				// projectZ writes screen byte-identically to legacy; we capture rawClip
+				// via the optionalResult sidecar so the modern predicate can see it.
+				bool legacyAccepted = projectZ(point, screen, &result);
 #pragma warning(pop)
 #if defined(MC2_PROJECTZ_FINITE_CHECK)
-			if (accepted) {
-				gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
-				          isfinite(screen.z) && isfinite(screen.w));
-			}
+				// Invariant gates on legacy-rect-acceptance (the original semantics),
+				// not on the bool we ultimately return. Same as Track A1's object wrapper.
+				if (result.acceptedByLegacyScreenRect) {
+					gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
+					          isfinite(screen.z) && isfinite(screen.w));
+				}
 #endif
-			return accepted;
+				if (isModern) {
+					ret = clipSpaceFrustumAdmit(result.rawClip);
+					if (bypassMode == ProjectZBypassMode::Compare) {
+						ModernClipResult b = projectModernClipGL(point);
+						if (b.admit != ret) {
+							logProjectZBypassDisagreement("effect", point, result.rawClip, ret, b.clip, b.admit);
+						}
+					}
+				} else {
+					ret = legacyAccepted;
+				}
+			}
+
+			::mc2_cpu_proj_cost::effect_admission_end_ns(_f3_effect_t0);
+			return ret;
 		}
 
 		// Lighting / shadow activation — bool gates light->active; screen discarded.
-#pragma warning(push)
-#pragma warning(disable: 4996)
+		// F3 modernized via clipSpaceFrustumAdmit when MC2_LIGHTING_SHADOW_PREDICATE_MODE=Modern.
 		inline bool projectForLightingShadow (Stuff::Vector3D& point,
 		                                      Stuff::Vector4D& screen) {
-			return projectZ(point, screen);
-		}
-#pragma warning(pop)
+			const int64_t _f3_lshadow_t0 = ::mc2_cpu_proj_cost::lighting_shadow_begin_ns();
 
-		// Picking — bool discarded; screen.xy consumed for distance / rect tests.
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (lightingShadowPredicateMode() == LightingShadowPredicateMode::Modern);
+			bool ret;
+
+			if (isModern && bypassMode == ProjectZBypassMode::Bypass) {
+				// Pure bypass: skip projectZ entirely. screen stays uninitialized;
+				// lighting_shadow callers discard screen (light->active gating only).
+				ModernClipResult r = projectModernClipGL(point);
+				ret = r.admit;
+			} else {
+				LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
+				bool legacyAccepted = projectZ(point, screen, &result);
+#pragma warning(pop)
+#if defined(MC2_PROJECTZ_FINITE_CHECK)
+				if (result.acceptedByLegacyScreenRect) {
+					gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
+					          isfinite(screen.z) && isfinite(screen.w));
+				}
+#endif
+				if (isModern) {
+					ret = clipSpaceFrustumAdmit(result.rawClip);
+					if (bypassMode == ProjectZBypassMode::Compare) {
+						ModernClipResult b = projectModernClipGL(point);
+						if (b.admit != ret) {
+							logProjectZBypassDisagreement("lighting_shadow", point, result.rawClip, ret, b.clip, b.admit);
+						}
+					}
+				} else {
+					ret = legacyAccepted;
+				}
+			}
+
+			::mc2_cpu_proj_cost::lighting_shadow_end_ns(_f3_lshadow_t0);
+			return ret;
+		}
+
+		// Picking — bool discarded by most callers; screen.xy consumed for distance / rect tests.
+		// F3 modernized via clipSpaceFrustumAdmit when MC2_SELECTION_PICKING_PREDICATE_MODE=Modern.
+		// screen output is byte-identical between Legacy and Modern (sidecar ptr doesn't affect
+		// projectZ's screen-write path), so callers consuming screen.xy are unaffected.
+		//
+		// F5 T1: selection_picking now honors Bypass mode and produces screen.xy via
+		// GL-NDC -> pixel remap (Y-down, Y-flip baked). Callers at camera.cpp:892,960,1026
+		// use screen.x/y as pixel coords (Y-down from top-left, compared against
+		// screenResolution and screenPos which are also pixel Y-down).
 		inline bool projectForSelectionPicking (Stuff::Vector3D& point,
 		                                        Stuff::Vector4D& screen) {
-			return projectZ(point, screen);
-		}
-#pragma warning(pop)
+			const int64_t _f3_pick_t0 = ::mc2_cpu_proj_cost::selection_picking_begin_ns();
 
-		// Cosmetic screen-XY oracle — bool discarded; screen.xy consumed.
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (selectionPickingPredicateMode() == SelectionPickingPredicateMode::Modern);
+			bool ret;
+
+			if (isModern && bypassMode == ProjectZBypassMode::Bypass) {
+				// F5 T1: Bypass-with-screen.xy. Compute GL-NDC clip directly, then
+				// remap to MC2 pixel coords (Y-down) via viewport so the 3 callers
+				// (camera.cpp:892,960,1026) see byte-(near-)identical screen.x/y.
+				// gos_GetViewport: fullscreen -> vmx=width, vmy=height, vax=0, vay=0.
+				// Y-flip: screen.y = vay + (1 - (ndc.y*0.5+0.5)) * vmy
+				ModernClipResult r = projectModernClipGL(point);
+				ret = r.admit;
+				if (r.clip.w > 1e-4f) {
+					float vmx, vmy, vax, vay;
+					gos_GetViewport(&vmx, &vmy, &vax, &vay);
+					float ndcX = r.clip.x / r.clip.w;
+					float ndcY = r.clip.y / r.clip.w;
+					float ndcZ = r.clip.z / r.clip.w;
+					screen.x = vax + (ndcX * 0.5f + 0.5f) * vmx;
+					screen.y = vay + (1.0f - (ndcY * 0.5f + 0.5f)) * vmy;
+					screen.z = ndcZ;
+					screen.w = r.clip.w;
+				} else {
+					// behind camera / degenerate
+					screen.x = 0.0f;
+					screen.y = 0.0f;
+					screen.z = 0.0f;
+					screen.w = r.clip.w;
+				}
+			} else {
+				LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
+				bool legacyAccepted = projectZ(point, screen, &result);
+#pragma warning(pop)
+#if defined(MC2_PROJECTZ_FINITE_CHECK)
+				if (result.acceptedByLegacyScreenRect) {
+					gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
+					          isfinite(screen.z) && isfinite(screen.w));
+				}
+#endif
+				if (isModern) {
+					ret = clipSpaceFrustumAdmit(result.rawClip);
+					if (bypassMode == ProjectZBypassMode::Compare) {
+						// F5 T1: compare both admit parity AND screen.xy parity for picking.
+						ModernClipResult b = projectModernClipGL(point);
+						bool bypassAdmit = b.admit;
+						if (bypassAdmit != ret) {
+							logProjectZBypassDisagreement("selection_picking", point, result.rawClip, ret, b.clip, bypassAdmit);
+						}
+						if (b.clip.w > 1e-4f) {
+							float vmx, vmy, vax, vay;
+							gos_GetViewport(&vmx, &vmy, &vax, &vay);
+							float ndcX = b.clip.x / b.clip.w;
+							float ndcY = b.clip.y / b.clip.w;
+							float bypassScreenX = vax + (ndcX * 0.5f + 0.5f) * vmx;
+							float bypassScreenY = vay + (1.0f - (ndcY * 0.5f + 0.5f)) * vmy;
+							float dxPx = fabsf(bypassScreenX - screen.x);
+							float dyPx = fabsf(bypassScreenY - screen.y);
+							if (dxPx > 1.0f || dyPx > 1.0f) {
+								logSelectionPickingScreenDelta(point, screen, bypassScreenX, bypassScreenY, dxPx, dyPx);
+							}
+						}
+					}
+				} else {
+					ret = legacyAccepted;
+				}
+			}
+
+			::mc2_cpu_proj_cost::selection_picking_end_ns(_f3_pick_t0);
+			return ret;
+		}
+
+		// Cosmetic screen-XY oracle -- bool discarded by all 16 callers; only
+		// screen.xy consumed for HUD/UI positioning. F5 T2: optional Bypass
+		// honors projectModernClipGL + viewport remap (same convention as
+		// selection_picking from F5 T1). Pixel parity is mandatory; Compare
+		// mode validates pre-flip. Default: Legacy (conservative).
+		// Env MC2_SCREENXY_PREDICATE_MODE=Modern + MC2_PROJECTZ_BYPASS_MODE=Compare
+		// logs pixel-delta events when bypass screen.xy disagrees >1px.
 		inline bool projectForScreenXY (Stuff::Vector3D& point,
 		                                Stuff::Vector4D& screen) {
-			return projectZ(point, screen);
-		}
+			const int64_t _f3_sxy_t0 = ::mc2_cpu_proj_cost::screenxy_begin_ns();
+
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (screenXYPredicateMode() == ScreenXYPredicateMode::Modern);
+			bool ret;
+
+			if (isModern && bypassMode == ProjectZBypassMode::Bypass) {
+				// Bypass with screen.xy via viewport remap.
+				// gos_GetViewport: fullscreen -> vmx=width, vmy=height, vax=0, vay=0.
+				// Y-flip: screen.y = vay + (1 - (ndc.y*0.5+0.5)) * vmy
+				ModernClipResult r = projectModernClipGL(point);
+				ret = r.admit;
+				if (r.clip.w > 1e-4f) {
+					float vmx, vmy, vax, vay;
+					gos_GetViewport(&vmx, &vmy, &vax, &vay);
+					float ndcX = r.clip.x / r.clip.w;
+					float ndcY = r.clip.y / r.clip.w;
+					float ndcZ = r.clip.z / r.clip.w;
+					screen.x = vax + (ndcX * 0.5f + 0.5f) * vmx;
+					screen.y = vay + (1.0f - (ndcY * 0.5f + 0.5f)) * vmy;
+					screen.z = ndcZ;
+					screen.w = r.clip.w;
+				} else {
+					screen.x = 0.0f; screen.y = 0.0f; screen.z = 0.0f; screen.w = r.clip.w;
+				}
+			} else {
+#pragma warning(push)
+#pragma warning(disable: 4996)
+				LegacyProjectionResult result;
+				bool legacyAccepted = projectZ(point, screen, &result);
 #pragma warning(pop)
+				if (isModern) {
+					ret = clipSpaceFrustumAdmit(result.rawClip);
+					if (bypassMode == ProjectZBypassMode::Compare) {
+						ModernClipResult b = projectModernClipGL(point);
+						if (b.clip.w > 1e-4f) {
+							float vmx, vmy, vax, vay;
+							gos_GetViewport(&vmx, &vmy, &vax, &vay);
+							float ndcX = b.clip.x / b.clip.w;
+							float ndcY = b.clip.y / b.clip.w;
+							float bypassScreenX = vax + (ndcX * 0.5f + 0.5f) * vmx;
+							float bypassScreenY = vay + (1.0f - (ndcY * 0.5f + 0.5f)) * vmy;
+							float dxPx = fabsf(bypassScreenX - screen.x);
+							float dyPx = fabsf(bypassScreenY - screen.y);
+							if (dxPx > 1.0f || dyPx > 1.0f) {
+								logScreenXYScreenDelta(point, screen, bypassScreenX, bypassScreenY, dxPx, dyPx);
+							}
+						}
+					}
+				} else {
+					ret = legacyAccepted;
+				}
+			}
+
+			::mc2_cpu_proj_cost::screenxy_end_ns(_f3_sxy_t0);
+			return ret;
+		}
 
 		// Debug overlays — LAB_ONLY / drawTerrainGrid-gated draw paths.
-#pragma warning(push)
-#pragma warning(disable: 4996)
+		// F3 modernized via clipSpaceFrustumAdmit when MC2_DEBUG_OVERLAY_PREDICATE_MODE=Modern.
 		inline bool projectForDebugOverlay (Stuff::Vector3D& point,
 		                                    Stuff::Vector4D& screen) {
-			return projectZ(point, screen);
-		}
-#pragma warning(pop)
+			const int64_t _f3_dbg_t0 = ::mc2_cpu_proj_cost::debug_overlay_begin_ns();
 
-		[[deprecated("Use inverseProjectForPicking. "
-		             "See docs/superpowers/specs/2026-04-26-projectz-policy-split-design.md.")]]
-		void inverseProjectZ (Stuff::Vector4D &screen, Stuff::Vector3D &point);
+			ProjectZBypassMode bypassMode = projectZBypassMode();
+			const bool isModern = (debugOverlayPredicateMode() == DebugOverlayPredicateMode::Modern);
+			bool ret;
 
-		// Inverse projection for tactical-map viewport corner unprojection.
-		// Trivial alias for symmetry with the forward-direction split.
+			if (isModern && bypassMode == ProjectZBypassMode::Bypass) {
+				// Pure bypass: skip projectZ entirely. screen stays uninitialized;
+				// debug_overlay callers discard screen (LAB_ONLY draw paths).
+				ModernClipResult r = projectModernClipGL(point);
+				ret = r.admit;
+			} else {
+				LegacyProjectionResult result;
 #pragma warning(push)
 #pragma warning(disable: 4996)
-		inline void inverseProjectForPicking (Stuff::Vector4D& screen,
-		                                      Stuff::Vector3D& point) {
-			inverseProjectZ(screen, point);
-		}
+				bool legacyAccepted = projectZ(point, screen, &result);
 #pragma warning(pop)
-		
+#if defined(MC2_PROJECTZ_FINITE_CHECK)
+				if (result.acceptedByLegacyScreenRect) {
+					gosASSERT(isfinite(screen.x) && isfinite(screen.y) &&
+					          isfinite(screen.z) && isfinite(screen.w));
+				}
+#endif
+				if (isModern) {
+					ret = clipSpaceFrustumAdmit(result.rawClip);
+					if (bypassMode == ProjectZBypassMode::Compare) {
+						ModernClipResult b = projectModernClipGL(point);
+						if (b.admit != ret) {
+							logProjectZBypassDisagreement("debug_overlay", point, result.rawClip, ret, b.clip, b.admit);
+						}
+					}
+				} else {
+					ret = legacyAccepted;
+				}
+			}
+
+			::mc2_cpu_proj_cost::debug_overlay_end_ns(_f3_dbg_t0);
+			return ret;
+		}
+
 		void projectCamera (Stuff::Vector3D &point);
+
+		// Read-only view of the world->clip matrix. Used by the per-frame
+		// inverseProject delta-cache (VPL-retirement Step 3 3b) to detect a
+		// camera-matrix change via memcmp without re-projecting every frame.
+		const Stuff::Matrix4D& getWorldToClip (void) const { return worldToClip; }
+
+		// F1 unified-projection: single composition source for runtime GPU
+		// uniform path. axisSwap * worldToCameraMatrix * cameraToClip,
+		// post-axisSwap GL convention. Distinct from `Camera::worldToClip`
+		// (pre-axisSwap; feeds projectZ body and 8 wrappers). See spec
+		// 2026-05-22 §0.1 invariant.
+		Stuff::Matrix4D worldToClipGL() const;
+
+		// F4 projectZ-bypass helper. Computes clip directly via worldToClipGL()
+		// for a single world point. Used by the 5 Modern-default wrappers when
+		// MC2_PROJECTZ_BYPASS_MODE = Compare or Bypass. Does NOT touch
+		// cameraToClip / projectZ / worldToClip (legacy paths preserved).
+		ModernClipResult projectModernClipGL(const Stuff::Vector3D& world) const;
+
+		// Shared CPU camera-frustum x quad-AABB primitive (VPL-retirement Step 3 3a
+		// OWNS the definition; Step 5B references it). Pure CPU, no GL, no readback.
+		// extractFrustumPlanes: Gribb-Hartmann 6-plane extraction from worldToClip,
+		// with the projection swizzle s=(-wx,wz,wy) folded into each plane so the
+		// returned planes test RAW world AABBs (built from vertices[].vx/.vy/.elevation).
+		void extractFrustumPlanes (float planes[6][4]) const;
+		// quadAabbInFrustum: conservative p-vertex AABB-vs-frustum test. Never
+		// false-negative (may false-positive slightly outside - acceptable).
+		bool quadAabbInFrustum (const float planes[6][4],
+		                        const Stuff::Vector3D& mn,
+		                        const Stuff::Vector3D& mx) const;
+
+		// F6 T2: per-frame frustum-planes cache, populated by Terrain::geometry
+		// once per frame before the setupTextures loop. Shared with
+		// TerrainQuad::setupTextures' water-corner admission path.
+		// Lifecycle: written by cacheFrustumPlanes(); read via
+		// getCachedFrustumPlanes(). NOT thread-safe; assumes single-threaded
+		// terrain admission (which it is today).
+		void cacheFrustumPlanes();
+		const float (*getCachedFrustumPlanes() const)[4];
 
 		unsigned long inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff::Vector3D &point);
 
-		void getClosestVertex (Stuff::Vector2DOf<long> &screenPos, long &row, long &col);
-		
+		// getClosestVertex: screen-click -> terrain vertex (row,col).
+		// Reinstated 2026-05-24 for the EditRel Mission Editor (sole caller
+		// editor/TerrainBrush.h). Thin adapter over Camera::inverseProject +
+		// Terrain::worldToTile. Does NOT restore the stale-px/py scan that
+		// VPL Step 8b deleted. Definition in camera.cpp.
+		void getClosestVertex (Stuff::Vector2DOf<long>& screenPos,
+		                       long& row, long& col);
+
 		void setOrthogonal(void);
 		virtual void setCameraOrigin (void);
 		void calculateProjectionConstants (void);
@@ -1076,13 +1426,6 @@ class Camera
 			return lookTargetObject;
 		}
 		
-		void setInverseProject (float sZ, float sW, float zPP, float wPP)
-		{
-			startZInverse = sZ;
-			startWInverse = sW;
-			zPerPixel = zPP;
-			wPerPixel = wPP;
-		}
 };		
 
 //---------------------------------------------------------------------------

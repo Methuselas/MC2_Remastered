@@ -18,7 +18,13 @@
 #include"dobjmgr.h"
 #endif
 
+#include <cmath>   // std::abs for clip.w sign-safe frustum test
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
+#include "static_update_counters.h"      // g_staticUpdateRunCount/SkipCount/EmitSummary
+#include "../GameOS/gameos/gpu_cull_substrate.h"       // C0: GPU cull substrate SSBO upload
+#include "../GameOS/gameos/gpu_cull_parity.h"         // C0-4: AABB parity check
+#include "../GameOS/gameos/gpu_cull_readback.h"        // C3: per-actor GPU visibility snapshot
+#include "../GameOS/gameos/gos_static_prop_registry.h" // Task 5: mission-load bulk registration
 
 #ifndef OBJMGR_H
 #include"objmgr.h"
@@ -112,6 +118,243 @@
 #include"gos_profiler.h"
 #endif
 
+// ---------------------------------------------------------------------------
+// C3: env-gated lifecycle routing killswitch.
+// MC2_GPU_CULL_LIFECYCLE=1 enables GPU visibility-based update() gating.
+// Default off — legacy inView/canBeSeen/blockActive path unchanged.
+// ---------------------------------------------------------------------------
+static const bool s_gpuCullLifecycle = (getenv("MC2_GPU_CULL_LIFECYCLE") != nullptr);
+
+// alpha-Stage 1 §5 Stage 0: candidate-predicate disagreement probe.
+// For each live actor each frame, compute four CANDIDATE predicates that
+// the unconflated four-gate design would have driven, then accumulate
+// pairwise XOR disagreement counters. The probe answers the
+// adversarial-steelman deciding question: do the four read-concerns of
+// the single inView bit actually demand different answers, often enough
+// to justify the architectural retirement of the conflation?
+//
+// Candidates (per spec §5 Stage 0):
+//   render_cand    = canBeSeen_instr() — routes through
+//                    appearance->canBeSeen() which returns appearance->inView.
+//                    This is the actual coarse-frustum bit consumers read.
+//                    (v1.1 fix 2026-05-20: was inView_instr() which has
+//                    only one override in the codebase — Artillery at
+//                    artlry.h:215 — so it returned FALSE for every
+//                    non-Artillery actor and the probe measured nothing
+//                    useful. Most missions have no Artillery on screen,
+//                    so the bogus 95% disagreement was effectively
+//                    "non-Artillery actor through sim widening" — not
+//                    a real render-vs-sim measurement.)
+//   sim_cand       = render OR blockActive OR (framesSinceActive < N)
+//                    (the proposed Stage 3 hysteresis-with-floor signal)
+//   lifecycle_cand = TRUE for any actor visited (we got past the
+//                    objList[i]==NULL skip and the implicit alive check)
+//   ai_cand        = movers: readback-lagged when readback enabled, else
+//                    render. statics: render. (Stage 5 producer rule.)
+//
+// Pairwise XOR counters tell us how often each pair of consumers would
+// have demanded a different answer. Of particular interest:
+//   render_vs_sim — the gate-pair-invariant violation rate (the bug
+//                   class §4.3 names). Should be HIGH if hysteresis
+//                   actually catches real off-screen activity.
+//   render_vs_ai  — the readback-vs-coarse divergence for movers.
+//                   Currently 0 unless readback is enabled.
+//   sim_vs_lifecycle — how often hysteresis disagrees with "alive."
+//                      Should be HIGH because most alive actors are
+//                      off-screen but the disagreement is benign.
+//   render_vs_lifecycle — render says no, alive says yes. ~100% of
+//                         off-screen actor-frames. Reported but not
+//                         a "bug-class" disagreement.
+//
+// Output gate per spec §5 Stage 0:
+//   < 5% render_vs_sim disagreement → conflation is benign; abort spec
+//   > 20% render_vs_sim disagreement → confirm META-FIX; full rollout
+//
+// Env-gated MC2_INVIEW_CONFLATION_TRACE=1 per debug_instrumentation_rule.md.
+// 120-frame summary roll matches [TOBJPARITY v1] cadence.
+static bool s_inViewConflationEnabled = (getenv("MC2_INVIEW_CONFLATION_TRACE") != nullptr);
+// Hysteresis floor for sim_cand (Stage 0 tunable knob per spec §9 Q3).
+// Default 4 frames matches conservative recommendation.
+static const uint8_t s_inViewConflationHysteresisN = 4u;
+
+// Pairwise XOR accumulators (frame-actor counts).
+static unsigned long long g_invConfActorFrames      = 0ULL;
+static unsigned long long g_invConfRenderVsSim      = 0ULL;
+static unsigned long long g_invConfRenderVsLife     = 0ULL;
+static unsigned long long g_invConfRenderVsAi       = 0ULL;
+static unsigned long long g_invConfSimVsLife        = 0ULL;
+static unsigned long long g_invConfSimVsAi          = 0ULL;
+static unsigned long long g_invConfLifeVsAi         = 0ULL;
+// Movers vs statics for partial breakdown.
+static unsigned long long g_invConfMovers           = 0ULL;
+static unsigned long long g_invConfStatics          = 0ULL;
+static unsigned long long g_invConfMoverRenderVsAi  = 0ULL;
+static unsigned long long g_invConfFrameCount       = 0ULL;
+
+void g_invViewConflationRollAndMaybeEmit() {
+    if (!s_inViewConflationEnabled) return;
+    // 120-frame interval to match [TOBJPARITY v1] cadence.
+    if (++g_invConfFrameCount % 120ULL == 0ULL) {
+        // Avoid divide-by-zero in summary line.
+        const unsigned long long denom = g_invConfActorFrames ? g_invConfActorFrames : 1ULL;
+        fprintf(stderr,
+            "[INVIEW_CONFLATION v1] event=summary actor_frames=%llu"
+            " render_vs_sim=%llu (%.2f%%)"
+            " render_vs_ai=%llu (%.2f%%)"
+            " sim_vs_ai=%llu (%.2f%%)"
+            " render_vs_life=%llu (%.2f%%)"
+            " sim_vs_life=%llu (%.2f%%)"
+            " life_vs_ai=%llu (%.2f%%)"
+            " movers=%llu statics=%llu"
+            " mover_render_vs_ai=%llu hysteresis_N=%u\n",
+            g_invConfActorFrames,
+            g_invConfRenderVsSim, 100.0 * (double)g_invConfRenderVsSim / (double)denom,
+            g_invConfRenderVsAi,  100.0 * (double)g_invConfRenderVsAi  / (double)denom,
+            g_invConfSimVsAi,     100.0 * (double)g_invConfSimVsAi     / (double)denom,
+            g_invConfRenderVsLife,100.0 * (double)g_invConfRenderVsLife/ (double)denom,
+            g_invConfSimVsLife,   100.0 * (double)g_invConfSimVsLife   / (double)denom,
+            g_invConfLifeVsAi,    100.0 * (double)g_invConfLifeVsAi    / (double)denom,
+            g_invConfMovers, g_invConfStatics,
+            g_invConfMoverRenderVsAi,
+            (unsigned)s_inViewConflationHysteresisN);
+        fflush(stderr);
+        g_invConfActorFrames     = 0ULL;
+        g_invConfRenderVsSim     = 0ULL;
+        g_invConfRenderVsLife    = 0ULL;
+        g_invConfRenderVsAi      = 0ULL;
+        g_invConfSimVsLife       = 0ULL;
+        g_invConfSimVsAi         = 0ULL;
+        g_invConfLifeVsAi        = 0ULL;
+        g_invConfMovers          = 0ULL;
+        g_invConfStatics         = 0ULL;
+        g_invConfMoverRenderVsAi = 0ULL;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// C0-4: helper — category enum → short name string for parity logging
+// ---------------------------------------------------------------------------
+static const char* catNameForCategory(gpu_cull::GpuActorCategory cat) {
+    switch (cat) {
+        case gpu_cull::Cat_Mech:       return "Mech";
+        case gpu_cull::Cat_GroundVeh:  return "GV";
+        case gpu_cull::Cat_Gate:       return "Gate";
+        case gpu_cull::Cat_Turret:     return "Turret";
+        case gpu_cull::Cat_StaticProp: return "StaticProp";
+        default:                       return "Other";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// C0-3: GPU cull record emitter
+// Called inside GameObjectManager::update() loops, after update() returns,
+// gated on getExists() so the emit is observer-only (no lifecycle effect).
+// Category and consumerFlags are supplied by each call site.
+//
+// C1a: bounding radius is now derived from the concrete appearance type:
+//   - Mech3DAppearance and GVAppearance: direct OBBRadius field read (no virtual call)
+//   - BldgAppearance / BDActorAppearance: virtual getRadius() returns OBBRadius
+//   - All other types: virtual getRadius(); fall back to 30.0f if it returns 0.0f
+// ---------------------------------------------------------------------------
+static void emitGpuCullRecord(GameObjectPtr obj,
+                               gpu_cull::GpuActorCategory cat,
+                               uint32_t consumerFlags)
+{
+    if (!gpu_cull::substrate_isEnabled()) return;
+    AppearancePtr app = obj->getAppearance();
+    if (!app) return;
+
+    // C1a: derive bounding radius from concrete type via virtual getRadius().
+    // Mech3DAppearance and GVAppearance now override getRadius() to return OBBRadius.
+    // BldgAppearance and BDActorAppearance already overrode it. Others return 0.0f.
+    // Fall back to 30.0f if getRadius() returns 0.0f (defensive).
+    float boundingRadius = app->getRadius();
+    if (boundingRadius <= 0.0f) boundingRadius = 30.0f;
+
+    gpu_cull::GpuActorRecord rec{};
+    // Store worldCenter in raw MC2 world coords (x=east, y=north, z=elev).
+    // The terrainMVP (gos_GetTerrainMVPMat4) already bakes the cameraPos axis swap
+    // into its row layout: AW*v = worldToClip*(-vx, vz, vy, 1)^T.
+    // Feeding pre-swapped cameraPos here would double-apply the swap and mis-cull
+    // everything. The CPU projectZ path does its own swap before multiplying by
+    // worldToClip — so both paths agree when worldCenter = (pos.x, pos.y, pos.z).
+    rec.worldCenter[0] = obj->position.x;
+    rec.worldCenter[1] = obj->position.y;
+    rec.worldCenter[2] = obj->position.z;
+    rec.boundingRadius = boundingRadius;
+    // AABB: center ± radius (C0 placeholder; C0-4 AABB parity validates).
+    rec.worldAabbMin[0] = rec.worldCenter[0] - boundingRadius;
+    rec.worldAabbMin[1] = rec.worldCenter[1] - boundingRadius;
+    rec.worldAabbMin[2] = rec.worldCenter[2] - boundingRadius;
+    rec.worldAabbMax[0] = rec.worldCenter[0] + boundingRadius;
+    rec.worldAabbMax[1] = rec.worldCenter[1] + boundingRadius;
+    rec.worldAabbMax[2] = rec.worldCenter[2] + boundingRadius;
+    rec.category        = static_cast<uint32_t>(cat) & static_cast<uint32_t>(gpu_cull::CategoryMask);
+    rec.flags           = gpu_cull::Flag_None;
+    rec.actorId         = static_cast<uint32_t>(obj->getHandle());
+    // C1b: populate blockIdx for the block-active rollup (C1-RB).
+    // getBlockAndVertexNumber() is side-effect-free; blockNum is the index
+    // into Terrain::objBlockInfo[]. Stored in rec.blockIdx (was _pad0).
+    {
+        int blockNum = 0, vertexNum = 0;
+        obj->getBlockAndVertexNumber(blockNum, vertexNum);
+        rec.blockIdx = static_cast<uint32_t>(blockNum);
+    }
+
+    // C1a: prevVisibilityBit uses the MODERN clip-space frustum test so that
+    // compute_emitParitySummary() compares GPU cull vs CPU clip-space cull on the
+    // same MVP (previous frame's MVP — same one the compute shader will use).
+    // The legacy app->inView uses screen-rect admission which wraps behind-camera
+    // actors into screen bounds (clip.w < 0 → negative rhw → coordinates flip),
+    // producing false_neg=hundreds in the parity summary. The modern test correctly
+    // rejects clip.w <= 0.
+    // fallback: if MVP not yet valid (frame 0), use legacy inView.
+    {
+        uint32_t modernBit = app->inView ? 1u : 0u;
+        const float* mvp = gos_GetTerrainMVPMat4();
+        if (mvp) {
+            // GLSL: clip = mat * vec4(center, 1) where mat = AW^T (GL_FALSE row-major upload).
+            // In column-major GLSL: mat(i,j) = mvp[j*4+i].
+            // clip[i] = sum_j(mat(i,j)*v[j]) = sum_j(mvp[j*4+i]*v[j]).
+            const float cx = rec.worldCenter[0], cy = rec.worldCenter[1], cz = rec.worldCenter[2];
+            const float clipx = mvp[0]*cx + mvp[4]*cy + mvp[8]*cz  + mvp[12];
+            const float clipy = mvp[1]*cx + mvp[5]*cy + mvp[9]*cz  + mvp[13];
+            const float clipz = mvp[2]*cx + mvp[6]*cy + mvp[10]*cz + mvp[14];
+            const float clipw = mvp[3]*cx + mvp[7]*cy + mvp[11]*cz + mvp[15];
+            // MC2 clip.w sign: Stuff matrix gives either sign for visible objects.
+            // Sign-normalize so w > 0 before applying standard frustum tests,
+            // mirroring what the GPU clipper does implicitly.
+            // (see clip_w_sign_trap.md, terrain_tes_projection.md)
+            // Lockstep with: shaders/gpu_cull_predicate.glsl, mclib/object_admission_predicate.cpp
+            const float s   = (clipw < 0.0f) ? -1.0f : 1.0f;
+            const float ncx = clipx * s;
+            const float ncy = clipy * s;
+            const float ncz = clipz * s;
+            const float ncw = clipw * s;  // always >= 0
+            const bool admit = (ncw > 1e-5f) &&
+                               (ncx >= -ncw) && (ncx <= ncw) &&
+                               (ncy >= -ncw) && (ncy <= ncw) &&
+                               (ncz >= 0.0f) && (ncz <= ncw);
+            modernBit = admit ? 1u : 0u;
+        }
+        // m-2: prevVisibilityBit reflects CPU clip-space admission, not GPU readback.
+        // After C1b GPU authority flip the GPU is the authoritative visibility source;
+        // this field drifts for off-screen actors that were admitted by the CPU predicates
+        // but culled by the GPU frustum. The field is unused by the compute shader
+        // (struct-layout only, never read in gpu_cull.comp); it drives only the
+        // substrate_getCpuVisibleCount() parity summary. Wire to readback_isActorVisibleLagged
+        // when C3 default-on flip happens (C3-9), so the summary reflects GPU state.
+        rec.prevVisibilityBit = modernBit;
+    }
+    rec.consumerFlags   = consumerFlags;
+    // blockIdx is set above in the getBlockAndVertexNumber() block.
+
+    gpu_cull::parity_checkRecord(rec.actorId, catNameForCategory(cat),
+                                 rec.worldCenter,
+                                 obj->position.x, obj->position.y, obj->position.z);
+    gpu_cull::substrate_submitDynamicActor(rec);
+}
+
 #define BRIDGE_OBJTYPE				448
 #define MINE1						60
 #define MINE2						251
@@ -139,7 +382,8 @@ char WEAPON_LIST_ID[] = "WEAPON";
 //long ObjectQueue::objectsInList = 0;
 
 extern long* usedBlockList;			//Trust ME~~!!!!!!!!!!!!!!!!!!!!!!!!
-extern long* moverBlockList;			//Trust ME~~!!!!!!!!!!!!!!!!!!!!!!!!  AGAIN 
+extern long* moverBlockList;			//Trust ME~~!!!!!!!!!!!!!!!!!!!!!!!!  AGAIN
+extern uint32_t g_mc2FrameCounter;	// defined at mclib/tgl.cpp:3718
 extern bool updateTerrainObjects;
 extern bool	updateObjects;
 extern bool	renderTerrainObjects;
@@ -1124,6 +1368,74 @@ void GameObjectManager::primeTerrainObjectsForMissionLoad (volatile float& progr
 	TracyPlot("Terrain object appearances warmed during mission load", int64_t(warmedAppearances));
 }
 
+// Task 5 (Track B): bulk static-prop registration at mission load.
+// Walks every Bldg/Tree appearance spawned by addObject AFTER
+// primeTerrainObjectsForMissionLoad (position/rotation set) and BEFORE
+// finalizeGeometry. registerStatic() calls TransformMultiShape_PositionsOnly
+// to populate per-leaf shapeToWorld matrices, then buildRecipeFromShape per
+// leaf, then GpuStaticPropRegistry::registerRecipe.
+// Default-off: MC2_STATIC_PROP_MISSION_LOAD_REG=0 (first-render fallback covers).
+void GameObjectManager::registerStaticPropsForMissionLoad() {
+	ZoneScopedN("GameObjectManager::registerStaticPropsForMissionLoad");
+	if (!GpuStaticPropRegistry::isMissionLoadRegEnabled()) return;
+
+	int totalEnumerated = 0, totalRegistered = 0, totalSkipped = 0;
+	// 2026-05-10 diag: per-array breakdown to localise the buildings-don't-render bug.
+	int byArr_enum[4] = {0,0,0,0}; // 0=terrainObjects 1=buildings 2=turrets 3=gates
+	int byArr_reg[4]  = {0,0,0,0};
+	int byArr_skip[4] = {0,0,0,0};
+	int byArr_noapp[4]= {0,0,0,0};
+	int currentArr = 0;
+
+	// Push game-object position/rotation into Appearance::position/rotation
+	// before registerStatic() reads them. Without this, buildings/turrets/gates
+	// register at world origin (ghost-prop pile) and miss frustum admission,
+	// falling through to a broken legacy first-render path that renders them
+	// solid black. Applied uniformly to all four arrays — terrainObjects[]
+	// were already primed by primeTerrainObjectsForMissionLoad but re-priming
+	// is harmless. Known side effect: mech shadow regression (intermittent,
+	// camera-dependent); accepted trade-off until shadow path is debugged.
+	auto registerOne = [&](GameObjectPtr obj) {
+		if (!obj) return;
+		++totalEnumerated;
+		++byArr_enum[currentArr];
+		AppearancePtr app = obj->getAppearance();
+		if (!app) { ++totalSkipped; ++byArr_skip[currentArr]; ++byArr_noapp[currentArr]; return; }
+		app->setObjectParameters(obj->getPosition(), obj->getRotation(), 0, 0, 0);
+		app->registerStatic();
+		if (app->isStaticRegistered()) { ++totalRegistered; ++byArr_reg[currentArr]; }
+		else                           { ++totalSkipped;    ++byArr_skip[currentArr]; }
+	};
+
+	currentArr = 0;
+	for (long i = 0; i < numTerrainObjects; ++i)
+		registerOne(terrainObjects[i]);
+	currentArr = 1;
+	for (long i = 0; i < numBuildings; ++i)
+		registerOne(buildings[i]);
+	currentArr = 2;
+	for (long i = 0; i < numTurrets; ++i)
+		registerOne(turrets[i]);
+	currentArr = 3;
+	for (long i = 0; i < numGates; ++i)
+		registerOne(gates[i]);
+
+	fprintf(stderr,
+		"[STATIC_PROP_REG v1] event=mission_load enumerated=%d registered=%d skipped=%d\n",
+		totalEnumerated, totalRegistered, totalSkipped);
+	fprintf(stderr,
+		"[STATIC_PROP_REG v1] event=mission_load_byarr "
+		"terrainObjects=%d/%d (skip=%d noapp=%d) "
+		"buildings=%d/%d (skip=%d noapp=%d) "
+		"turrets=%d/%d (skip=%d noapp=%d) "
+		"gates=%d/%d (skip=%d noapp=%d)\n",
+		byArr_reg[0], byArr_enum[0], byArr_skip[0], byArr_noapp[0],
+		byArr_reg[1], byArr_enum[1], byArr_skip[1], byArr_noapp[1],
+		byArr_reg[2], byArr_enum[2], byArr_skip[2], byArr_noapp[2],
+		byArr_reg[3], byArr_enum[3], byArr_skip[3], byArr_noapp[3]);
+	fflush(stderr);
+}
+
 extern GameObjectFootPrint* tempSpecialAreaFootPrints;
 extern long tempNumSpecialAreas;
 
@@ -1488,6 +1800,12 @@ void GameObjectManager::render (bool terrain, bool movers, bool other) {
 	{
 		for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
 		{
+			// Cull-cascade consumer (object render). Post-8c source of truth for
+			// objBlockInfo[].active / objVertexActive[] is the cull-merged Step 6
+			// slim reduction loop in mclib/terrain.cpp (8c-part-1 merges the
+			// per-vertex cull writes into that loop) — NOT the deleted VPL body,
+			// NOT a "Step 5 / 5B slim pass" (that producer never existed; v3.2
+			// deleted it). See VPL-retirement plan v3.5 note (CRIT-0).
 			if (Terrain::objBlockInfo[terrainBlock].active)
 			{
 				long numObjs = Terrain::objBlockInfo[terrainBlock].numObjects;
@@ -1495,6 +1813,7 @@ void GameObjectManager::render (bool terrain, bool movers, bool other) {
 				for (long terrainObj = 0; terrainObj < numObjs; terrainObj++, objIndex++)
 				{
 					if (objList[objIndex] &&
+						objList[objIndex]->getExists() &&
 						Terrain::objVertexActive[objList[objIndex]->getVertexNum()])
 					{
 						objList[objIndex]->render();
@@ -1615,18 +1934,25 @@ void GameObjectManager::renderShadows (bool terrain, bool movers, bool other) {
 		gos_SetRenderState(	gos_State_ZWrite, 1);
 	}
 
-	if (terrain && renderObjects) 
+	if (terrain && renderObjects)
 	{
-		for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++) 
+		for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
 		{
-			if (Terrain::objBlockInfo[terrainBlock].active) 
+			// Cull-cascade consumer (shadow render). Post-8c source of truth for
+			// objBlockInfo[].active / objVertexActive[] is the cull-merged Step 6
+			// slim reduction loop in mclib/terrain.cpp (8c-part-1 merges the
+			// per-vertex cull writes into that loop) — NOT the deleted VPL body,
+			// NOT a "Step 5 / 5B slim pass" (that producer never existed; v3.2
+			// deleted it). See VPL-retirement plan v3.5 note (CRIT-0).
+			if (Terrain::objBlockInfo[terrainBlock].active)
 			{
 				long numObjs = Terrain::objBlockInfo[terrainBlock].numObjects;
 				long objIndex = Terrain::objBlockInfo[terrainBlock].firstHandle;
-				for (long terrainObj = 0; terrainObj < numObjs; terrainObj++, objIndex++) 
+				for (long terrainObj = 0; terrainObj < numObjs; terrainObj++, objIndex++)
 				{
 					if (objList[objIndex] &&
-						Terrain::objVertexActive[objList[objIndex]->getVertexNum()]) 
+						objList[objIndex]->getExists() &&
+						Terrain::objVertexActive[objList[objIndex]->getVertexNum()])
 					{
 						objList[objIndex]->renderShadows();
 						if (MaxObjectsDrawn) {
@@ -1677,31 +2003,113 @@ void GameObjectManager::renderShadows (bool terrain, bool movers, bool other) {
 
 void GameObjectManager::update (bool terrain, bool movers, bool other)
 {
+	ZoneScopedN("GameObjectManager::update");
 	//----------------------------
 	// Now, update game objects...
+
+	// C3: build per-actor GPU visibility snapshot from N-1 readback FIRST,
+	// so the framesSinceActive sweep below reads a freshly-built snapshot.
+	// Motion-tolerance slice: also build when READBACK alone is enabled so
+	// the [GPU_CULL v1] event=motion_tolerance summary (dilated_admits +
+	// conservative_or_admits counters) fires even without LIFECYCLE wired.
+	// readback_buildActorVisSnapshot is no-op-cheap when no good slot exists.
+	if (s_gpuCullLifecycle || gpu_cull::readback_isEnabled()) {
+		ZoneScopedN("GOM.readbackSnapshot");
+		// Max handle is bounded by maxObjects + slack; 4096 is safe for MC2 (~2000 max).
+		gpu_cull::readback_buildActorVisSnapshot(4096u);
+	}
 
 	// Tier-1 instrumentation (stability spec §3.3): single source of truth for
 	// framesSinceActive. One sweep over objList covers every GameObject this
 	// manager owns. Uses the three virtual accessors added on GameObject base.
 	{
+		ZoneScopedN("GOM.framesSinceActive sweep");
 		const long maxObjs = getMaxObjects();
 		for (long i = 1; i <= maxObjs; i++) {
 			GameObjectPtr obj = objList[i];
 			if (!obj) continue;
-			bool activeThisFrame_instr =
-			       obj->inView_instr()
-			    || obj->canBeSeen_instr()
-			    || obj->blockActive_instr();
+			bool activeThisFrame_instr;
+			if (s_gpuCullLifecycle && gpu_cull::readback_isEnabled()) {
+				// C3: GPU visibility gates the lifecycle accumulator.
+				// block-active is a supplemental gate for off-screen AI-active objects.
+				// Requires READBACK to be enabled — without it, readback_isActorVisibleLagged
+				// fail-opens (returns true for every actor), making the accumulator useless.
+				activeThisFrame_instr =
+				    gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(obj->getHandle()))
+				 || obj->blockActive_instr();
+			} else {
+				activeThisFrame_instr =
+				       obj->inView_instr()
+				    || obj->canBeSeen_instr()
+				    || obj->blockActive_instr();
+			}
 			if (activeThisFrame_instr) {
 				obj->framesSinceActive = 0;
 			} else if (obj->framesSinceActive < 255) {
 				obj->framesSinceActive++;
 			}
+
+			// alpha-Stage 1 §5 Stage 0 probe: compute 4 candidate
+			// predicates per actor + accumulate pairwise XOR. Cheap:
+			// 4 bool reads + 6 XORs per live actor per frame. Probe
+			// stays env-gated; zero cost when MC2_INVIEW_CONFLATION_TRACE
+			// is unset.
+			if (s_inViewConflationEnabled) {
+				// v1.1 (2026-05-20): canBeSeen_instr() not inView_instr().
+				// canBeSeen_instr routes through appearance->canBeSeen() →
+				// returns appearance->inView (the actual consumer bit).
+				// inView_instr has only one override (Artillery); using it
+				// made render_cand=FALSE for ~all actors.
+				const bool render_cand    = obj->canBeSeen_instr();
+				const bool sim_cand       = render_cand
+				                          || obj->blockActive_instr()
+				                          || (obj->framesSinceActive < s_inViewConflationHysteresisN);
+				const bool lifecycle_cand = true; // alive by virtue of being in objList[i]
+				const bool isMover_flag   = obj->isMover();
+				const bool ai_cand        = isMover_flag
+				                          ? (gpu_cull::readback_isEnabled()
+				                              ? gpu_cull::readback_isActorVisibleLagged(
+				                                    static_cast<uint32_t>(obj->getHandle()))
+				                              : render_cand)
+				                          : render_cand;
+				++g_invConfActorFrames;
+				if (isMover_flag) {
+					++g_invConfMovers;
+					if (render_cand != ai_cand) ++g_invConfMoverRenderVsAi;
+				} else {
+					++g_invConfStatics;
+				}
+				if (render_cand != sim_cand)       ++g_invConfRenderVsSim;
+				if (render_cand != lifecycle_cand) ++g_invConfRenderVsLife;
+				if (render_cand != ai_cand)        ++g_invConfRenderVsAi;
+				if (sim_cand    != lifecycle_cand) ++g_invConfSimVsLife;
+				if (sim_cand    != ai_cand)        ++g_invConfSimVsAi;
+				if (lifecycle_cand != ai_cand)     ++g_invConfLifeVsAi;
+			}
 		}
+		// Per-frame roll-and-maybe-emit (120-frame summary cadence).
+		g_invViewConflationRollAndMaybeEmit();
 	}
 
-	updateCaptureList();
-	
+	// 2026-05-13: substrate_frameBegin() was MOVED to Mission::update
+	// (code/mission.cpp, immediately before the
+	//   if (isPaused) updateAppearancesOnly(); else update();
+	// branch).  Reason: this function is pause-gated externally — when
+	// the mission is paused, GameObjectManager::update is skipped and
+	// updateAppearancesOnly runs instead, so a frameBegin call here
+	// never fires during pause.  Meanwhile render-time submits via
+	// BldgAppearance/TreeAppearance::render and GpuStaticPropRegistry::
+	// flush continue to append substrate records every frame.  Without
+	// a per-frame reset the substrate ring slot accumulates records
+	// across pause frames; compute cull then writes inflated
+	// bucketCountData, coalesce multi-draw overruns each bucket's
+	// instance range, and the user sees "every prop's location
+	// layered with copies of other props at the same origin" pause
+	// smearing.  See the LODBUG/pause-smear investigation 2026-05-13
+	// and pause_unpause_diagnostic_for_static_render_bugs.md.
+
+	{ ZoneScopedN("GOM.captureList"); updateCaptureList(); }
+
 	if (terrain && renderObjects)
 	{
 		ZoneScopedN("GameLogic.Units.TerrainObjects");
@@ -1728,6 +2136,10 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 				{
 					specialBuildingsUpdated++;
 				}
+				// C0-3: emit after update() so inView is fresh; gated on getExists()
+				if (specialBuildings[spBuilding] && specialBuildings[spBuilding]->getExists())
+					emitGpuCullRecord(specialBuildings[spBuilding], gpu_cull::Cat_Other,
+					                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate);
 			}
 		}
 
@@ -1750,11 +2162,29 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 				{
 					gatesUpdated++;
 				}
+				// C0-3: emit after update() so inView is fresh; gated on getExists()
+				if (gates[nGates] && gates[nGates]->getExists())
+					emitGpuCullRecord(gates[nGates], gpu_cull::Cat_Gate,
+					                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate);
 			}
 		}
 
+		// C3: terrain block inner-loop GPU-visibility gate — deferred from C3-A.
+		// Adding a readback_isActorVisibleLagged() inner gate here would skip update()
+		// for objects in active blocks that happen to be GPU-invisible. That is UNSAFE:
+		// buildings and turrets in active AI blocks need update() even when offscreen
+		// (gate logic, turret tracking, power supply). The FPS win from this loop is
+		// small compared to mech/GV render paths (most mission time is at wolfman zoom
+		// with few active terrain blocks visible). The cascade structure is preserved
+		// unchanged as required by cull_gates_are_load_bearing.md.
 		for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
 		{
+			// Cull-cascade consumer (object update). Post-8c source of truth for
+			// objBlockInfo[].active / objVertexActive[] is the cull-merged Step 6
+			// slim reduction loop in mclib/terrain.cpp (8c-part-1 merges the
+			// per-vertex cull writes into that loop) — NOT the deleted VPL body,
+			// NOT a "Step 5 / 5B slim pass" (that producer never existed; v3.2
+			// deleted it). See VPL-retirement plan v3.5 note (CRIT-0).
 			if (Terrain::objBlockInfo[terrainBlock].active)
 			{
 				activeBlocksVisited++;
@@ -1778,6 +2208,10 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 						{
 							terrainObjectsUpdated++;
 						}
+						// C0-3: emit after update() so inView is fresh; gated on getExists()
+						if (objList[objIndex] && objList[objIndex]->getExists())
+							emitGpuCullRecord(objList[objIndex], gpu_cull::Cat_Other,
+							                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate);
 					}
 				}
 			}
@@ -1787,6 +2221,22 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 		TracyPlot("TerrainObjects gates updated", int64_t(gatesUpdated));
 		TracyPlot("TerrainObjects active blocks", int64_t(activeBlocksVisited));
 		TracyPlot("TerrainObjects visible objects updated", int64_t(terrainObjectsUpdated));
+		TracyPlot("TerrainObjects dynamic updates", int64_t(g_staticUpdateRunCount()));
+		TracyPlot("TerrainObjects static skipped",  int64_t(g_staticUpdateSkipCount()));
+
+		const uint32_t curFrame = g_mc2FrameCounter;
+		if (curFrame > 0 && (curFrame % 600) == 0 &&
+		    curFrame != g_staticUpdateLastSummaryFrame_get()) {
+			g_staticUpdateEmitSummary(curFrame);
+		}
+		// [TOBJSPLIT v1] once-per-frame roll + 600-frame summary (mirrors
+		// terrain.cpp:1822 SlimSplitRollAndMaybeEmit() placement at the
+		// end of the per-frame loop; frame counter lives in terrobj.cpp).
+		g_tobjSplitRollAndMaybeEmit();
+		// [TOBJPARITY v1] once-per-frame roll + 120-frame summary for the
+		// superset-parity counter probe (proof-gate #2). Called here at the
+		// same per-frame boundary as TOBJSPLIT (see static_update_counters.h).
+		g_tobjParityRollAndMaybeEmit();
 	}
 	
  	if (movers) {
@@ -1807,6 +2257,11 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 						MC2_DESTROY(mover, "update_false");
 					if (mover->getFlag(OBJECT_FLAG_REMOVED))
 						removeList[numRemoved++] = mover;
+					// C0-3: emit after update() so inView is fresh; gated on getExists()
+					if (mover->getExists())
+						emitGpuCullRecord(mover, gpu_cull::Cat_Mech,
+						                  gpu_cull::Consumer_AIGate | gpu_cull::Consumer_WeaponSpawnNode |
+						                  gpu_cull::Consumer_LifecycleGate | gpu_cull::Consumer_RenderGate);
 				}
 			}
 		}
@@ -1825,6 +2280,11 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 						MC2_DESTROY(mover, "update_false");
 					if (mover->getFlag(OBJECT_FLAG_REMOVED))
 						removeList[numRemoved++] = mover;
+					// C0-3: emit after update() so inView is fresh; gated on getExists()
+					if (mover->getExists())
+						emitGpuCullRecord(mover, gpu_cull::Cat_GroundVeh,
+						                  gpu_cull::Consumer_AIGate | gpu_cull::Consumer_WeaponSpawnNode |
+						                  gpu_cull::Consumer_LifecycleGate | gpu_cull::Consumer_RenderGate);
 				}
 			}
 		}
@@ -1848,6 +2308,10 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 					turrets[i]->lastUpdateRet = (int32_t)updateRet_instr;
 					if (!updateRet_instr)
 						MC2_DESTROY(turrets[i], "update_false");
+					// C0-3: emit after update() so inView is fresh; gated on getExists()
+					if (turrets[i] && turrets[i]->getExists())
+						emitGpuCullRecord(turrets[i], gpu_cull::Cat_Turret,
+						                  gpu_cull::Consumer_RenderGate | gpu_cull::Consumer_LifecycleGate);
 				}
 			}
 		}
@@ -1896,6 +2360,10 @@ void GameObjectManager::update (bool terrain, bool movers, bool other)
 			}
 		}
 	}
+
+	// C0-3: finalize GPU cull substrate SSBO for this frame.
+	// Called unconditionally — substrate_flushUpload internally checks isEnabled().
+	{ ZoneScopedN("GOM.substrateFlushUpload"); gpu_cull::substrate_flushUpload(); }
 }
 
 //---------------------------------------------------------------------------
@@ -2144,6 +2612,168 @@ GameObjectPtr GameObjectManager::findByUnitInfo (long commander, long group, lon
 
 //---------------------------------------------------------------------------
 
+// Lazy pick-time screen projection. Replaces the per-frame recalcBounds
+// projection body (deleted 2026-05-18, Task 2/3, commits 4294937/d5c5546/
+// 69e7968/d511ad9) for the ONLY surviving consumer: mouse-pick (per-click
+// over already-cull-narrowed active blocks, not per-frame). Populates a
+// local screen rect; PerPolySelect (geometry-space, mclib/bdactor.cpp,
+// survives) does the precise hit-test unchanged. Typed BldgAppearance* --
+// Appearance* has no position/getPosition; position/rotation are public on
+// ObjectAppearance, typeUpperLeft/typeLowerRight on appearType.
+//
+// Byte-equivalence note: the deleted recalcBounds block's FINAL
+// upperLeft/lowerRight (the values pick consumed) were ENTIRELY the
+// 8-corner projected min/max -- the screenPos-seeded values it computed
+// first were unconditionally overwritten by the corner min/max loop
+// (pre-delete mclib/bdactor.cpp lines 1396-1399, rev 4294937^). This
+// helper therefore seeds the rect from corner[0] (matching the pre-delete
+// `if(!i){maxX=minX=bcsp[i].x;...}` init) and does NOT seed from a
+// projection of `position`, so the resulting rect is byte-identical to
+// the old screen rect. The 8-corner boxCoords construction below is
+// lifted VERBATIM from `git show 4294937^:mclib/bdactor.cpp` lines
+// 1288-1399 (the deleted `if (inView)` projection block); do not
+// "improve" the box geometry -- pick must remain byte-equivalent or
+// building selection silently shifts/misses.
+static bool projectPickCandidateRect(BldgAppearance* ba,
+                                     long& outMinX, long& outMinY,
+                                     long& outMaxX, long& outMaxY)
+{
+	if (!ba || !eye)
+		return false;
+
+	// appearType is the public BldgAppearanceType* member (mclib/bdactor.h
+	// :192); typeUpperLeft/typeLowerRight live on the AppearanceType base
+	// (mclib/apprtype.h:52-53).
+	BldgAppearanceType* appearType = ba->appearType;
+	if (!appearType)
+		return false;
+
+	const Stuff::Vector3D& position = ba->position;
+	float rotation = ba->rotation;
+
+	Stuff::Vector3D boxCoords[8];
+	Stuff::Vector4D bcsp[8];
+
+	Stuff::Vector3D boxStart;
+	boxStart.x = -appearType->typeUpperLeft.x;
+	boxStart.y = appearType->typeUpperLeft.z;
+	boxStart.z = appearType->typeUpperLeft.y;
+
+	Stuff::Vector3D boxEnd;
+	boxEnd.x = -appearType->typeLowerRight.x;
+	boxEnd.y = appearType->typeLowerRight.z;
+	boxEnd.z = appearType->typeLowerRight.y;
+
+	Stuff::Vector3D addCoords;
+
+	addCoords.x = boxStart.x;
+	addCoords.y = boxStart.y;
+	addCoords.z = boxEnd.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[0].Add(position,addCoords);
+
+	addCoords.x = boxStart.x;
+	addCoords.y = boxEnd.y;
+	addCoords.z = boxEnd.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[1].Add(position,addCoords);
+
+	addCoords.x = boxEnd.x;
+	addCoords.y = boxEnd.y;
+	addCoords.z = boxEnd.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[2].Add(position,addCoords);
+
+	addCoords.x = boxEnd.x;
+	addCoords.y = boxStart.y;
+	addCoords.z = boxEnd.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[3].Add(position,addCoords);
+
+	addCoords.x = boxStart.x;
+	addCoords.y = boxStart.y;
+	addCoords.z = boxStart.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[4].Add(position,addCoords);
+
+	addCoords.x = boxEnd.x;
+	addCoords.y = boxStart.y;
+	addCoords.z = boxStart.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[5].Add(position,addCoords);
+
+	addCoords.x = boxEnd.x;
+	addCoords.y = boxEnd.y;
+	addCoords.z = boxStart.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[6].Add(position,addCoords);
+
+	addCoords.x = boxStart.x;
+	addCoords.y = boxEnd.y;
+	addCoords.z = boxStart.z;
+	if (rotation != 0.0f)
+		Rotate(addCoords,-rotation);
+
+	boxCoords[7].Add(position,addCoords);
+
+	float maxX = 0.0f, maxY = 0.0f;
+	float minX = 0.0f, minY = 0.0f;
+
+	for (long i=0;i<8;i++)
+	{
+		eye->projectForScreenXY(boxCoords[i],bcsp[i]);
+		if (!i)
+		{
+			maxX = minX = bcsp[i].x;
+			maxY = minY = bcsp[i].y;
+		}
+
+		if (i)
+		{
+			if (bcsp[i].x > maxX)
+				maxX = bcsp[i].x;
+
+			if (bcsp[i].x < minX)
+				minX = bcsp[i].x;
+
+			if (bcsp[i].y > maxY)
+				maxY = bcsp[i].y;
+
+			if (bcsp[i].y < minY)
+				minY = bcsp[i].y;
+		}
+	}
+
+	// Pre-delete recalcBounds wrote these as upperLeft.x=minX, upperLeft.y
+	// =minY, lowerRight.x=maxX, lowerRight.y=maxY (rev 4294937^ lines
+	// 1396-1399); the pick test then compared (float)upperLeft/lowerRight.
+	// The float->long narrowing here is the only representational change;
+	// (long)(float screen coord) truncates toward zero, and the pick
+	// comparison below is integer mouseX/mouseY against the rect, so the
+	// hit set is byte-equivalent for all on-screen rects.
+	outMinX = (long)minX;
+	outMinY = (long)minY;
+	outMaxX = (long)maxX;
+	outMaxY = (long)maxY;
+	return true;
+}
+
+//---------------------------------------------------------------------------
+
 GameObjectPtr GameObjectManager::findObjectByMouse (long mouseX,
 													long mouseY,
 													GameObjectPtr* searchList,
@@ -2314,15 +2944,144 @@ GameObjectPtr GameObjectManager::findTerrainObjectByMouse (long mouseX,
 														   long mouseY,
 														   bool skipDisabled) 
 {
-	for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++) 
+	for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
 	{
-		if (Terrain::objBlockInfo[terrainBlock].active) 
+		// Cull-cascade consumer (mouse pick). Post-8c source of truth for
+		// objBlockInfo[].active / objVertexActive[] is the cull-merged Step 6
+		// slim reduction loop in mclib/terrain.cpp (8c-part-1 merges the
+		// per-vertex cull writes into that loop) — NOT the deleted VPL body,
+		// NOT a "Step 5 / 5B slim pass" (that producer never existed; v3.2
+		// deleted it). See VPL-retirement plan v3.5 note (CRIT-0).
+		if (Terrain::objBlockInfo[terrainBlock].active)
 		{
 			long numObjs = Terrain::objBlockInfo[terrainBlock].numObjects;
 			long objIndex = Terrain::objBlockInfo[terrainBlock].firstHandle;
-			GameObjectPtr obj = findObjectByMouse(mouseX, mouseY, &objList[objIndex], numObjs, skipDisabled);
-			if (obj)
-				return(obj);
+
+			// CRIT-1 re-home (Task 4): the per-object test below is
+			// DUPLICATED from the shared 5-param findObjectByMouse loop
+			// body (canBeSeen guard -> windowsVisible equality -> coarse
+			// rect -> PerPolySelect) as a TERRAIN-STATIC-ONLY inline
+			// test. Terrain statics are NO LONGER routed through the
+			// shared 5-param overload; that overload is left byte-
+			// UNCHANGED for its other (mover) call site
+			// (objmgr.cpp findObjectByMouse(...,&objList[1],
+			// getMaxObjects(),false)). Replacing the guard inside the
+			// shared overload would gate movers on a readback slot they
+			// have no entry for -> silent mover-pick regression. The
+			// lists walked here are terrain-statics-only by construction
+			// (countTerrainObjects fills objBlockInfo[] only for
+			// TERRAINOBJECT/TREE/TURRET/GATE/BUILDING/TREEBUILDING/
+			// BRIDGE). Trees stay pick-excluded via the
+			// getObjectClass()!=TREE skip (preserved verbatim below).
+			GameObjectPtr* searchList = &objList[objIndex];
+			for (long li = 0; li < numObjs; li++)
+			{
+				if (searchList[li] && searchList[li]->getExists())
+				{
+					GameObjectPtr obj = searchList[li];
+					Assert(obj != NULL, li, " GameObjectManager.findTerrainObjectByMouse: NULL obj ");
+					AppearancePtr objAppearance = obj->getAppearance();
+					// CRIT-1: canBeSeen() guard repointed to the GPU cull
+					// readback-visible set (fail-open when readback is
+					// disabled, so a stock install with GPU cull off keeps
+					// the legacy "always considered" behavior). Same idiom
+					// as objmgr.cpp:1930 / mech.cpp / gvehicl.cpp.
+					bool readbackVisible = gpu_cull::readback_isEnabled()
+						? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(obj->getHandle()))
+						: true;
+					if (objAppearance && readbackVisible)
+					{
+						// windowsVisible equality UNCHANGED. The stamp
+						// (code/terrobj.cpp TerrainObject::update(),
+						// `if (inView) windowsVisible = turn;`) survives
+						// via the coarse-angular recalcBounds return path:
+						// the projection-body delete made `inView` a
+						// strict SUPERSET (coarse-only), so the stamp
+						// still fires for every pick-eligible object and
+						// this equality still holds. Newly-admitted
+						// objects are filtered by the lazy rect +
+						// geometry-space PerPolySelect below. Do NOT
+						// "fix" this equality -- it is correct by the
+						// coarse-superset argument (review-verified fact).
+						if (obj->getWindowsVisible() == (turn - VISIBLE_THRESHOLD))
+						{
+							//-----------------------------------------------------
+							// CRIT-1: lazy per-candidate screen rect.
+							// Class-guarded cast to BldgAppearance*.
+							//
+							// CORRECTION (Task 4 spec-review): an earlier
+							// version of this comment claimed only
+							// BUILDING/TREEBUILDING use BldgAppearance and
+							// that TERRAINOBJECT/BRIDGE/TURRET/GATE "do
+							// not". That was FALSE. TERRAINOBJECT and
+							// BRIDGE (terrobj.cpp `appearance = new
+							// BldgAppearance`), TURRET (turret.cpp same),
+							// GATE (gate.cpp same) and ARTILLERY
+							// (artlry.cpp same) ALL instantiate
+							// BldgAppearance too. (TREE uses
+							// TreeAppearance; movers use Mech3D/GV.)
+							//
+							// The rect pre-filter is INTENTIONALLY applied
+							// ONLY to BUILDING/TREEBUILDING here. For the
+							// other BldgAppearance classes the lazy rect
+							// is deliberately DROPPED: skipping it is a
+							// correctness-safe OVER-inclusion (a candidate
+							// is never wrongly rejected by a missing
+							// rect), and PerPolySelect (geometry-space,
+							// run below) remains the authoritative pick
+							// test for every class. This matches the pre-
+							// delete behavior for a missing/zero rect (the
+							// deleted projection block only produced a rect
+							// for BldgAppearance, and only the
+							// building-class path consumed it).
+							long ulx, uly, lrx, lry;
+							bool haveRect = false;
+							long oc = obj->getObjectClass();
+							BldgAppearance* ba =
+								((oc == BUILDING) || (oc == TREEBUILDING))
+									? (BldgAppearance*)obj->getAppearance()
+									: NULL;
+							if (ba)
+								haveRect = projectPickCandidateRect(ba, ulx, uly, lrx, lry);
+
+							bool inRect = true;
+							if (haveRect)
+							{
+								inRect = (mouseX >= ulx) &&
+								         (mouseX <= lrx) &&
+								         (mouseY >= uly) &&
+								         (mouseY <= lry);
+							}
+
+							if (inRect)
+							{
+								//---------------------------
+								// We're on it, so save it...
+								if (!obj->isMover() || (obj->isMover() && obj->isOnGUI() && Terrain::IsGameSelectTerrainPosition(obj->getPosition())))
+								{
+									if (skipDisabled)
+									{
+										if (!obj->isDisabled() &&
+											(obj->getObjectClass() != TREE) &&
+											(obj->getDamageLevel() != 36000000) &&				//We are a rock clump
+											objAppearance->PerPolySelect(mouseX, mouseY))
+											return(obj);
+									}
+									else
+									{
+										//Do not target trees or artillery strikes!!
+										if ((obj->getObjectClass() != TREE) &&
+											(obj->getObjectClass() != ARTILLERY) &&
+											(obj->getDamageLevel() != 36000000) &&				//We are a rock clump
+											objAppearance->PerPolySelect(mouseX, mouseY))
+											return(obj);
+									}
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -2762,18 +3521,24 @@ ArtilleryPtr GameObjectManager::createArtillery (long artilleryType, Stuff::Vect
 void GameObjectManager::updateAppearancesOnly( bool terrain, bool movers, bool other)
 {
 
-	if (terrain && renderObjects) 
+	if (terrain && renderObjects)
 	{
-		for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++) 
+		for (long terrainBlock = 0; terrainBlock < Terrain::numObjBlocks; terrainBlock++)
 		{
-			if (Terrain::objBlockInfo[terrainBlock].active) 
+			// Cull-cascade consumer (object collect). Post-8c source of truth for
+			// objBlockInfo[].active / objVertexActive[] is the cull-merged Step 6
+			// slim reduction loop in mclib/terrain.cpp (8c-part-1 merges the
+			// per-vertex cull writes into that loop) — NOT the deleted VPL body,
+			// NOT a "Step 5 / 5B slim pass" (that producer never existed; v3.2
+			// deleted it). See VPL-retirement plan v3.5 note (CRIT-0).
+			if (Terrain::objBlockInfo[terrainBlock].active)
 			{
 				long numObjs = Terrain::objBlockInfo[terrainBlock].numObjects;
 				long objIndex = Terrain::objBlockInfo[terrainBlock].firstHandle;
-				for (long terrainObj = 0; terrainObj < numObjs; terrainObj++, objIndex++) 
+				for (long terrainObj = 0; terrainObj < numObjs; terrainObj++, objIndex++)
 				{
-					if (objList[objIndex] && 
-						Terrain::objVertexActive[objList[objIndex]->getVertexNum()] && 
+					if (objList[objIndex] &&
+						Terrain::objVertexActive[objList[objIndex]->getVertexNum()] &&
 						objList[objIndex]->getExists())
 					{
 						if (objList[objIndex]->getAppearance()->recalcBounds()) 

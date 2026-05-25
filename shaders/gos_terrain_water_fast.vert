@@ -1,4 +1,5 @@
 //#version 430 (provided by makeProgram prefix)
+#include <include/terrain_depth_bias.hglsl>  // single-source TERRAIN/WATER_DEPTH_FUDGE
 //
 // Stage 2 of the renderWater architectural slice. Pairs with gos_tex_vertex.frag
 // (the existing water FS) — this VS produces the same Color/Texcoord/FogValue
@@ -57,9 +58,7 @@ out vec2  Texcoord;
 out float FogValue;
 
 // Uniforms — set by Terrain::renderWaterFastPath C++ code.
-uniform mat4  terrainMVP;        // axisSwap * worldToClip
-uniform mat4  mvp;               // projection_: screen pixels -> NDC
-uniform vec4  terrainViewport;   // (vmx, vmy, vax, vay)
+uniform mat4  u_worldToClipGL;   // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 uniform float waterElevation;    // Terrain::waterElevation
 uniform float alphaDepth;        // MapData::alphaDepth
 uniform vec2  mapTopLeft;        // Terrain::mapTopLeft3d.xy (note: y is positive-up)
@@ -98,8 +97,8 @@ float cornerElev(WaterRecipe r, uint cornerIdx) {
     return r.elev.w;
 }
 
-uint unpackByte(uint packedByte, uint cornerIdx) {
-    return (packedByte >> (cornerIdx * 8u)) & 0xFFu;
+uint unpackByte(uint bits, uint cornerIdx) {
+    return (bits >> (cornerIdx * 8u)) & 0xFFu;
 }
 
 uint cornerLightRGB(WaterThinRecord t, uint cornerIdx) {
@@ -116,12 +115,12 @@ uint cornerFogRGB(WaterThinRecord t, uint cornerIdx) {
     return t.fogRGB.w;
 }
 
-vec4 unpackARGB(uint packedColor) {
+vec4 unpackARGB(uint bits) {
     return vec4(
-        float((packedColor >> 16u) & 0xFFu) / 255.0,  // R
-        float((packedColor >>  8u) & 0xFFu) / 255.0,  // G
-        float((packedColor       ) & 0xFFu) / 255.0,  // B
-        float((packedColor >> 24u) & 0xFFu) / 255.0   // A
+        float((bits >> 16u) & 0xFFu) / 255.0,  // R
+        float((bits >>  8u) & 0xFFu) / 255.0,  // G
+        float((bits       ) & 0xFFu) / 255.0,  // B
+        float((bits >> 24u) & 0xFFu) / 255.0   // A
     );
 }
 
@@ -318,38 +317,11 @@ void main() {
         Texcoord = vec2(0.5);
     }
 
-    // Double projection chain — identical to gos_terrain_thin.vert.
-    vec4 clip = terrainMVP * vec4(worldPos, 1.0);
-    float rhw = 1.0 / clip.w;
-    vec3 screen;
-    screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
-    screen.y = clip.y * rhw * terrainViewport.y + terrainViewport.w;
-    // Layered TERRAIN_DEPTH_FUDGE: water MUST be biased farther than terrain
-    // so it loses LEQUAL ties to land at the coast (smooth shore — no
-    // z-fighting sparkle, no false-positive water on pixels where the TES'd
-    // terrain crests exactly to waterElevation).
-    //
-    // History: 2026-04-30 (commit bc8c4f1) shipped this at +0.001 to match
-    // legacy CPU emit's TERRAIN_DEPTH_FUDGE (quad.cpp:2775). Worked because
-    // terrain's TES + thin VS paths emitted screen.z without any fudge — so
-    // water's +0.001 sat strictly above terrain's 0.0, water lost ties, shore
-    // was smooth. 2026-05-01 (commit ee0a7bc) added +0.001 to terrain.tese:132
-    // and gos_terrain_thin.vert:175 to fix decal/overlay z-ties (issue #12,
-    // power generator glow). That collapsed water and terrain to the SAME
-    // bias; ties at coast no longer favored terrain, render order let water
-    // win, shoreline staircase regressed (v0.3 build). 2026-05-02 fix: bump
-    // water to 2× the terrain fudge to re-establish the layering.
-    //
-    // Three-tier z-ordering invariant (load-bearing):
-    //   decals/overlays:  +0.000   (drawn first; smaller z, win LEQUAL pre-terrain)
-    //   terrain:          +0.001   (terrain.tese:132, gos_terrain_thin.vert:175)
-    //   water:            +0.002   (this line; water draws last via post-renderLists hook)
-    //
-    // Future drift check: if terrain's fudge changes, water's must move with it
-    // by the same delta. Watch for symmetric edits.
-    screen.z = clip.z * rhw + 0.002;
-    vec4 ndc = mvp * vec4(screen, 1.0);
-    float absW = abs(clip.w);
-    gl_Position = vec4(ndc.xyz * absW, absW);
+    // F1 Stage A: direct GL clip emit with water depth bias (pre-divide).
+    // Three-tier z-ordering: decals+0.0, terrain+0.002, water+0.0025 (FAST).
+    // See terrain_depth_bias.hglsl for single-sourced constants.
+    vec4 clip = u_worldToClipGL * vec4(worldPos, 1.0);
+    clip.z   += WATER_DEPTH_FUDGE_FAST * clip.w;
+    gl_Position = clip;
 
 }

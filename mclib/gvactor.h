@@ -30,6 +30,7 @@
 #endif
 
 #include<gosfx/gosfxheaders.hpp>
+#include <vector>  // T1.10: GVAppearance::spotlight{Lights,SlotIds,NodeIds}_
 //**************************************************************************************
 #ifndef NO_ERR
 #define NO_ERR						0
@@ -204,7 +205,11 @@ class GVAppearance : public ObjectAppearance
 		bool										dustCloudStart;
 		
 		float										OBBRadius;
-		
+
+		// C3: cached GameObjectHandle from init(obj), used by GPU-cull lifecycle gates
+		// in node-position functions. -1 = no owner; set in init().
+		long										actorHandle_ = -1;
+
 		long										gvAnimationState;
 		float										currentFrame;
 		float										gvFrameRate;
@@ -237,6 +242,19 @@ class GVAppearance : public ObjectAppearance
 		long										hitNodeId;
 		long										weaponNodeId[4];
 
+		// (E) T1.10: generalised SpotLight_-child illumination on ground
+		// vehicles. Mirrors the mech3d.h T1.6 layout (mech3d.h ~:362) and
+		// the bdactor.h T1.4 layout. PER-CHILD-SPOTLIGHT-NODE TG_LIGHT_POINT
+		// registered into eye->worldLights[] on the first night frame,
+		// updated in-place each frame after that, freed in destroy().
+		// GVAppearance has no pre-existing pointLight/lightId pair (unlike
+		// Mech3DAppearance's anubis searchlight) so there is no
+		// double-registration concern.
+		std::vector<long>							spotlightNodeIds_;   // gvShape NodeNameId
+		std::vector<TG_LightPtr>					spotlightLights_;    // owned via malloc/free
+		std::vector<DWORD>							spotlightSlotIds_;   // worldLights[] indices
+		bool										spotlightsRegistered_;
+
  	public:
 
 		virtual void init (AppearanceTypePtr tree = NULL, GameObjectPtr obj = NULL);
@@ -244,6 +262,13 @@ class GVAppearance : public ObjectAppearance
 		virtual AppearanceTypePtr getAppearanceType (void)
 		{
 			return appearType;
+		}
+
+		// C1a: expose OBBRadius via the base-class virtual so emitGpuCullRecord
+		// can call app->getRadius() uniformly.
+		virtual float getRadius (void)
+		{
+			return OBBRadius > 0.0f ? OBBRadius : 0.0f;
 		}
 
 		GVAppearance (void)

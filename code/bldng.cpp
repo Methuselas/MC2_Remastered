@@ -841,8 +841,18 @@ long Building::update (void)
 				Overlays oType;
 				DWORD offset;
 				Terrain::mapData->getOverlay(my,mx,oType,offset);
-				if (oType == OBRIDGE)
+				if (oType == OBRIDGE) {
 					Terrain::mapData->setOverlay(my,mx,DAMAGED_BRIDGE,offset);
+					// Slice A — mid-mission cement mutation: a destroyed bridge
+					// flips OBRIDGE(14) -> DAMAGED_BRIDGE(16), both inside the
+					// isCement [13,20] range, so the static decal bake must
+					// re-bake or it draws stale OBRIDGE cement on this tile.
+					// Mirrors MarkMineDirty wiring at the setMine sites; the
+					// C-linkage forwarder avoids pulling gos_terrain_indirect.h
+					// into bldng.cpp. Idempotent (dirty-flag debounced).
+					extern void gos_terrain_indirect_MarkDecalDirty();
+					gos_terrain_indirect_MarkDecalDirty();
+				}
 			}
 
    			if (!((BuildingTypePtr)getObjectType())->marksImpassableWhenDestroyed) 

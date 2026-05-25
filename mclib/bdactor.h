@@ -33,6 +33,7 @@
 #endif
 
 #include<gosfx/gosfxheaders.hpp>
+#include <vector>  // T1.4: BldgAppearance::spotlightLights_/spotlightSlotIds_/spotlightNodeIds_
 //**************************************************************************************
 #ifndef NO_ERR
 #define NO_ERR						0
@@ -51,11 +52,7 @@ class BldgAppearanceType : public AppearanceType
 		TG_TypeMultiShapePtr		bldgShape[MAX_LODS];
 		float						lodDistance[MAX_LODS];
 		
-		TG_TypeMultiShapePtr		bldgShadowShape;
-		
 		TG_TypeMultiShapePtr		bldgDmgShape;
-		
-		TG_TypeMultiShapePtr        bldgDmgShadowShape;
 		
 		TG_AnimateShapePtr			bdAnimData[MAX_BD_ANIMATIONS];
 		bool						bdAnimLoop[MAX_BD_ANIMATIONS];
@@ -88,9 +85,7 @@ class BldgAppearanceType : public AppearanceType
 				lodDistance[i] = 0.0f;
 			}
 
-			bldgShadowShape = NULL;
 			bldgDmgShape = NULL;
-			bldgDmgShadowShape = NULL;
 			
 			for (i=0;i<MAX_BD_ANIMATIONS;i++)
             {
@@ -191,8 +186,34 @@ class BldgAppearance : public ObjectAppearance
 
 		BldgAppearanceType*							appearType;
 		TG_MultiShapePtr							bldgShape;
-		TG_MultiShapePtr							bldgShadowShape;
-		
+
+		// Slice 2 (object-offload): set true by the GPU-object batcher's
+		// late-registration branch when a leaf type is encountered for the
+		// first time. The next BldgAppearance::update sees this flag and
+		// forces a full TransformMultiShape (not _PositionsOnly) so the
+		// per-vertex CPU bake refreshes after type registration. Stage 2.A:
+		// declared and false-init; never mutated. Stage 2.B wires the
+		// late-reg setter and the eligibility-hoist consumer.
+		bool										needsFullBakeNextFrame;
+
+		// Stage 3.D: per-instance static-registry state. Mirrors the struct
+		// inside TreeAppearance — same fields, same semantics. Set when
+		// render() successfully baked + registered a recipe; cleared by
+		// invalidateStaticRegistration() on shape swap, fall, or destroy.
+		struct StaticRegistration {
+			bool             registered;   // true iff recipeIndex is valid
+			TG_MultiShapePtr shape;        // bldgShape at registration time; detects swap
+			int32_t          recipeIndex;  // index into GpuStaticPropRegistry s_recipeRanges
+			// 2026-05-11: captured at update/touch time, immediately after
+			// CacheGpuLightData / ResubmitCachedGpuLightData write multi's
+			// per-type cachedGpuLightIndex_ — before sibling instances of the
+			// same multi-type overwrite it. Ferried into RecipeRange via
+			// markVisible() at render time. UINT32_MAX = uncaptured; flush
+			// falls back to multi cache when sentinel is seen.
+			uint32_t         lightDataIndex = 0xFFFFFFFFu;
+		};
+		StaticRegistration							staticReg;
+
 		long										bdAnimationState;
 		float										currentFrame;
 		float										bdFrameRate;
@@ -233,6 +254,16 @@ class BldgAppearance : public ObjectAppearance
 		DWORD										lightId;
 		bool										forceLightsOut;
 		bool										beenInView;
+
+		// (E) T1.4: SpotLight_-child illumination. PER-CHILD-SPOTLIGHT-NODE
+		// (TG_LIGHT_POINT). NOT the same as `pointLight`/`lightId` above —
+		// that pair is per-building TERRAIN ambient (TG_LIGHT_TERRAIN,
+		// sourced from appearType->terrainLightRGB at bdactor.cpp:1933-1972).
+		// Distinct concerns; both coexist. See plan R7.
+		std::vector<TG_LightPtr>					spotlightLights_;
+		std::vector<DWORD>							spotlightSlotIds_;
+		std::vector<int>							spotlightNodeIds_;  // bldgShape NodeNameId
+		bool										spotlightsRegistered_;
 		
 		bool										fogLightSet;
 		DWORD										lightRGB;
@@ -263,6 +294,19 @@ class BldgAppearance : public ObjectAppearance
 		virtual long renderShadows (void);
 
 		virtual void destroy (void);
+
+		// Stage 3.D: static-registry overrides (mirror of TreeAppearance).
+		virtual bool IsStaticNow() const override;
+		virtual void touch() override;
+		virtual void invalidateStaticRegistration() override;
+		// Eligibility split out from IsStaticNow so the registration block
+		// can pre-filter at submit time (don't bake a recipe for an animated
+		// or actively-fx'd building — it would never enter the static path).
+		bool isStaticEligible() const;
+		// Task 5 (Track B): mission-load bulk registration overrides.
+		virtual void registerStatic()              override;
+		virtual bool isStaticRegistered()    const override;
+		virtual int32_t getStaticRecipeIndex() const override;
 
 		~BldgAppearance (void)
 		{
@@ -325,9 +369,10 @@ class BldgAppearance : public ObjectAppearance
 		
 		virtual float getRadius (void)
 		{
-			return OBBRadius;
+			float ext = bldgShape ? bldgShape->GetExtentRadius() : 0.0f;
+			return OBBRadius > ext ? OBBRadius : ext;
 		}
-		
+
 		virtual void flashBuilding (float duration, float flashDuration, DWORD color);
 
 		virtual float getTopZ (void)
@@ -410,11 +455,7 @@ class TreeAppearanceType : public AppearanceType
 		TG_TypeMultiShapePtr		treeShape[MAX_LODS];
 		float						lodDistance[MAX_LODS];
 		
-		TG_TypeMultiShapePtr		treeShadowShape;
-		
 		TG_TypeMultiShapePtr		treeDmgShape;
-		
-		TG_TypeMultiShapePtr        treeDmgShadowShape;
 		
 		TG_AnimateShapePtr			treeAnimData[MAX_BD_ANIMATIONS];
 		bool						isForestClump;
@@ -433,10 +474,7 @@ class TreeAppearanceType : public AppearanceType
 			for (i=0;i<MAX_BD_ANIMATIONS;i++)
 				treeAnimData[i] = NULL;
 				
-			treeShadowShape = NULL;
-			
 			treeDmgShape = NULL;
-			treeDmgShadowShape = NULL;
 		}
 	
 		TreeAppearanceType (void)
@@ -465,8 +503,20 @@ class TreeAppearance : public ObjectAppearance
 
 		TreeAppearanceType*							appearType;
 		TG_MultiShapePtr							treeShape;
-		TG_MultiShapePtr							treeShadowShape;
-												
+
+		// Slice 2 (object-offload): see BldgAppearance::needsFullBakeNextFrame.
+		bool										needsFullBakeNextFrame;
+
+		// Stage 3.C: per-instance static-registry state.
+		struct StaticRegistration {
+			bool             registered;   // true iff recipeIndex is valid
+			TG_MultiShapePtr shape;        // treeShape at registration time; detects swap
+			int32_t          recipeIndex;  // index into GpuStaticPropRegistry s_recipeRanges
+			// 2026-05-11: see BldgAppearance::StaticRegistration::lightDataIndex.
+			uint32_t         lightDataIndex = 0xFFFFFFFFu;
+		};
+		StaticRegistration							staticReg;
+
 		float										hazeFactor;
 		float										pitch;
 		float										yaw;
@@ -503,6 +553,15 @@ class TreeAppearance : public ObjectAppearance
 		virtual long renderShadows (void);
 
 		virtual void destroy (void);
+
+		// Stage 3.C: static-registry overrides
+		virtual bool IsStaticNow() const override;
+		virtual void touch() override;
+		virtual void invalidateStaticRegistration() override;
+		// Task 5 (Track B): mission-load bulk registration overrides.
+		virtual void registerStatic()              override;
+		virtual bool isStaticRegistered()    const override;
+		virtual int32_t getStaticRecipeIndex() const override;
 
 		~TreeAppearance (void)
 		{
@@ -541,9 +600,10 @@ class TreeAppearance : public ObjectAppearance
 		
 		virtual float getRadius (void)
 		{
-			return OBBRadius;
+			float ext = treeShape ? treeShape->GetExtentRadius() : 0.0f;
+			return OBBRadius > ext ? OBBRadius : ext;
 		}
-		
+
 		virtual void setLightsOut (bool lightFlag)
 		{
 			forceLightsOut = lightFlag;

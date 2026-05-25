@@ -14,6 +14,10 @@
 #include"terrain.h"
 #endif
 
+#ifndef ERR_H
+#include"err.h"   // C1b temporal-superset: 3-arg Assert() for worldToBlockIdx guard
+#endif
+
 #ifndef VERTEX_H
 #include"vertex.h"
 #endif
@@ -33,8 +37,13 @@
 
 #include"../GameOS/gameos/gos_profiler.h"
 #include"../GameOS/gameos/gos_terrain_water_stream.h"
+#include"../GameOS/gameos/gpu_driven_common.h"
 #include"../GameOS/gameos/gos_terrain_indirect.h"
+#include"../GameOS/gameos/gos_terrain_surface.h"  // PR-1: continuous-surface mission-load generation
+#include"../GameOS/gameos/gos_terrain_mask_dispatch.h"
 #include"../GameOS/gameos/gos_terrain_bridge.h"
+#include"../GameOS/gameos/gos_terrain_lighting.h"
+#include"terrain_admission_mode.h"  // F6 T2: shared isModern() flag for terrain.cpp + quad.cpp
 
 #include <vector>
 #include <cstdint>
@@ -108,7 +117,12 @@ Stuff::Vector3D				Terrain::mapTopLeft3d;					//Calced during load.
 
 UserHeapPtr					Terrain::terrainHeap = NULL;			//Setup at load time.
 char *						Terrain::terrainName = NULL;
-char * 						Terrain::colorMapName = NULL;			
+char * 						Terrain::colorMapName = NULL;
+
+// C1 tactical material profile (see terrain.h). Default LEGACY = exact
+// pre-C1 byte-for-byte behavior; only mc2_24 currently flips to a
+// non-LEGACY profile.
+int							g_terrainMaterialProfile = TERRAIN_MAT_PROFILE_LEGACY;
 
 long		   				Terrain::numObjBlocks = 0;
 ObjBlockInfo				*Terrain::objBlockInfo = NULL;
@@ -138,8 +152,6 @@ unsigned char				Terrain::fractalNoise = 0;
 bool						Terrain::recalcShadows = false;
 bool						Terrain::recalcLight = false;
 
-Clouds						*Terrain::cloudLayer = NULL;
-
 bool 						drawTerrainGrid = false;		//Override locally in editor so game don't come with these please!  Love -fs
 bool						drawLOSGrid = false;
 bool						drawTerrainTiles = true;
@@ -156,7 +168,6 @@ long 						*moverBlockList;
 unsigned long 				blockMemSize = 0;				//Misc Flags.
 bool 						useOldProject = FALSE;
 bool 						projectAll = FALSE;
-bool 						useClouds = false;
 bool 						useFog = true;
 bool 						useVertexLighting = true;
 bool 						useFaceLighting = false;
@@ -169,7 +180,8 @@ extern long 				DrawDebugCells;
 #define						MAX_TERRAIN_HEAP_SIZE		1024000
 
 long						visualRangeTable[256];
-extern bool 				justResaveAllMaps;
+// NS3 boundary: justResaveAllMaps canonical def (was code/ leak; editor consumes it).
+bool justResaveAllMaps = false;
 //---------------------------------------------------------------------------
 // These are used to determine what terrain objects to process.
 // They date back to GenCon 1996!!
@@ -543,6 +555,20 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 			terrainTextures2->init(terrainName);
 	}
 
+	//-----------------------------------------------------------------
+	// C1 tactical material profile selection. Whitelist-only; default
+	// LEGACY preserves byte-for-byte pre-C1 rendering on every other
+	// mission. Profile is read by gos_terrain.frag / terrain_common.hglsl
+	// classifier branches via the `g_terrainMaterialProfile` uniform.
+	{
+		const char *profileKey = colorMapName ? colorMapName
+		                       : terrainName  ? terrainName
+		                                      : "";
+		g_terrainMaterialProfile = TERRAIN_MAT_PROFILE_LEGACY;
+		if (profileKey[0] != '\0' && _stricmp(profileKey, "mc2_24") == 0)
+			g_terrainMaterialProfile = TERRAIN_MAT_PROFILE_SAND_M24;
+	}
+
 	return NO_ERR;
 }
 
@@ -606,11 +632,67 @@ void Terrain::primeMissionTerrainCache (volatile float& progress, float progress
 	// cache is ready when buildRecipeSlot reads UV data from it.
 	// Gated on IsEnabled() OR IsParityCheckEnabled() — no allocation when both
 	// are unset.
+	// PR-1 (terrain continuous-surface producer): the surface generator
+	// de-duplicates the dense recipe corners as its stock-derivable source
+	// (gos_terrain_surface.cpp, design M-4), so the recipe MUST be built when
+	// the surface kill-switch is on even if MC2_TERRAIN_INDIRECT is off. This
+	// is the M-4 stock-only contract: the surface generation source is the
+	// mission-load recipe, with no arming precondition.
 	if (gos_terrain_indirect::IsEnabled() ||
-	    gos_terrain_indirect::IsParityCheckEnabled()) {
+	    gos_terrain_indirect::IsParityCheckEnabled() ||
+	    gos_terrain_surface::IsEnabled()) {
 		gos_terrain_indirect::ResetDenseRecipe();
 		gos_terrain_indirect::BuildDenseRecipe();
 	}
+
+	// PR-1: mission-load continuous-surface generation (Wave 1, ADDITIVE,
+	// default-OFF). No-op unless MC2_TERRAIN_SURFACE is set. Runs AFTER
+	// BuildDenseRecipe (its stock-derivable generation source) and emits the
+	// [TERRAIN_SURFACE v1] mission-load lifecycle + stock-only-fence prints.
+	// PR-1 generates only -- the surface is NOT drawn/consumed yet (PR-2..4).
+	gos_terrain_surface::GenerateForMission();
+
+	// Slice B4 Stage 1a — mask-dispatch lifecycle. Same call site as
+	// BuildDenseRecipe (no-op when MC2_TERRAIN_MASK_DISPATCH unset).
+	gos_terrain_mask_dispatch::Init(realVerticesMapSide);
+
+	// PR2c Stage 1c — mine static-bake lifecycle.
+	// CPU-clear only; do NOT build here. Build is deferred to first
+	// MissionMap::setMine event (typically the per-cell init loop at
+	// move.cpp:991) followed by a paint-cycle invocation of
+	// RebuildMineStaticVBOIfDirty from the Stage 2c bridge. This avoids
+	// the R7 timing trap (mineTextureHandle/blownTextureHandle are still
+	// 0xffffffff at primeMissionTerrainCache time — they lazy-load only
+	// when TerrainQuad::setupTextures fires per-quad in the first paint
+	// cycle).
+	gos_terrain_indirect::ResetMineStaticVBO();
+	gos_terrain_indirect::ResetMineTextureArray();
+
+	// Slice A — cement-overlay static-bake lifecycle. CPU-clear only; do NOT
+	// build here. Mirrors the mine R7 timing-trap mitigation EXACTLY: the
+	// overlay texture handles lazy-load in TerrainQuad::setupTextures during
+	// the first paint cycle (before Render.TerrainOverlaysStatic fires), so
+	// the build is deferred to the first armed DrawDecalStatic via
+	// RebuildDecalStaticVBOIfDirty. ResetDecalStaticVBO leaves the dirty flag
+	// set so that first armed draw bakes.
+	gos_terrain_indirect::ResetDecalStaticVBO();
+}
+
+//---------------------------------------------------------------------------
+long Terrain::worldToBlockIdx (float wx, float wy)
+{
+	// Verbatim transcription of GameObject::getBlockAndVertexNumber's block
+	// math (gameobj.cpp). float2long truncation, the >>7 (==/128), and the
+	// Y-flip are ALL load-bearing — do NOT "clean up" the float math.
+	Assert(Terrain::worldUnitsPerVertex==128,0," block >>7 broken ");
+
+	long mx = (float2long(wx) >> 7) + Terrain::halfVerticesMapSide;
+	long blockX = float2long(mx * Terrain::oneOverVerticesBlockSide);
+
+	long my = Terrain::halfVerticesMapSide - ((float2long(wy) >> 7) + 1);
+	long blockY = float2long(my * Terrain::oneOverVerticesBlockSide);
+
+	return blockX + (blockY * Terrain::blocksMapSide);
 }
 
 //---------------------------------------------------------------------------
@@ -671,6 +753,15 @@ void Terrain::purgeTransitions (void)
 //---------------------------------------------------------------------------
 void Terrain::destroy (void)
 {
+	// VPL-#shadow C-1 (CRITICAL): re-arm the one-shot full-map static
+	// terrain shadow so the NEXT mission rebuilds it against fresh
+	// blocks[]. Without this, the build-once latch stays set process-
+	// lifetime and mission 2+ would project mission 1's frozen shadow
+	// over mission 2's terrain (strictly worse than the original bug).
+	// Must pair with the Phase-1 camera-accumulate retirement (same
+	// commit). blocks[] is one-shot repopulated at next MapData::newInit.
+	gos_ResetStaticLightMatrix();
+
 	// Per-mission dense recipe teardown (Stage 2 indirect-terrain PR1).
 	// Called from Mission::destroy → land->destroy() once per mission exit.
 	// CPU-clears state; GL buffer is kept for reuse by next mission's Build.
@@ -678,6 +769,27 @@ void Terrain::destroy (void)
 	    gos_terrain_indirect::IsParityCheckEnabled()) {
 		gos_terrain_indirect::ResetDenseRecipe();
 	}
+	// PR-1: continuous-surface per-mission teardown. Unconditional and
+	// idempotent (no-op when nothing was generated / kill-switch OFF); emits
+	// the [TERRAIN_SURFACE v1] teardown lifecycle print when it had state.
+	gos_terrain_surface::ResetForMission();
+	// Unconditional — mirrors Init() placement (not gated on IsEnabled/IsParityCheck).
+	// Stage 1b/1c may add per-mission state inside Reset(); guarding it here would
+	// silently skip teardown when MC2_TERRAIN_MASK_DISPATCH=1 but MC2_TERRAIN_INDIRECT=0.
+	gos_terrain_mask_dispatch::Reset();
+
+	// Phase 1: terrain lighting GPU compute shutdown (per-mission teardown).
+	gos_terrain_lighting::mission_shutdown();
+
+	// PR2c Stage 1c — mine static-bake teardown. CPU-clear; keep GL buffer
+	// + texture-array allocations for next-mission reuse.
+	gos_terrain_indirect::ResetMineStaticVBO();
+	gos_terrain_indirect::ResetMineTextureArray();
+
+	// Slice A — cement-overlay static-bake teardown. CPU-clear; keep the
+	// GL_STATIC_DRAW buffer allocation for next-mission reuse (mirror
+	// ResetMineStaticVBO teardown placement).
+	gos_terrain_indirect::ResetDecalStaticVBO();
 
 	if (terrainTextures)
 	{
@@ -890,6 +1002,12 @@ void Terrain::setOverlayTile (long block, long vertex, long offset)
 void Terrain::setOverlay( long tileR, long tileC, Overlays type, DWORD offset )
 {
 	mapData->setOverlay( tileR, tileC, type, offset );
+	// Slice A — public cement-overlay mutation chokepoint. Any caller that
+	// changes a tile's overlay (bridge destroy routes through here via
+	// Terrain::mapData->setOverlay at bldng.cpp, plus any future caller)
+	// invalidates the mission-static decal bake. Mirrors MarkMineDirty at
+	// the setMine chokepoint; idempotent (dirty-flag debounced).
+	gos_terrain_indirect::MarkDecalDirty();
 }
 
 //---------------------------------------------------------------------------
@@ -943,46 +1061,106 @@ void Terrain::render (void)
 {
 	//-----------------------------------
 	// render the cloud layer
-	if (Terrain::cloudLayer)
-		Terrain::cloudLayer->render();
-	
 	//-----------------------------------
-	// Draw resulting terrain quads. Loop split into 3 passes (draw / drawMine /
-	// debugOverlays) so each gets its own Tracy zone — one zone per pass instead
-	// of ~14K per-quad zones.
+	// Draw resulting terrain quads. The drawPass zone wraps the WHOLE loop
+	// (one zone per frame, not per-quad). Per-quad zones were stripped on
+	// 2026-05-07 because zone overhead dominated; a single zone wrapping the
+	// ~14-40K iteration loop attributes the 2.02 ms drawPass cost without
+	// re-introducing the per-call overhead. PatchStream sub-zones (Flush,
+	// MemoryBarrier, BucketSort, etc.) live inside this and break out the
+	// ~290 us PatchStream slice; the residual ~1.7 ms is non-PatchStream
+	// per-quad CPU work that stays attributed to drawPass at coarse level.
 	DWORD fogColor = eye->fogColor;
+
+	// Slice B4 Stage 1a — mask-dispatch build runs alongside the legacy
+	// drawPass (does NOT replace it). IsMaskDispatchEnabled() gates on
+	// MC2_TERRAIN_MASK_DISPATCH + dense recipe ready + Init() success.
+	gos_terrain_mask_dispatch::BeginFrame();
+	if (drawTerrainTiles && gos_terrain_mask_dispatch::IsMaskDispatchEnabled()) {
+		ZoneScopedN("Terrain::render maskBuild");
+		gos_terrain_mask_dispatch::BuildAndUploadMasksForFrame(quadList, numberQuads);
+	}
 
 	if (drawTerrainTiles)
 	{
 		ZoneScopedN("Terrain::render drawPass");
-		TerrainQuadPtr currentQuad = quadList;
-		for (long i = 0; i < numberQuads; i++)
+		// drawPass-retirement Slice B (mirrors the proven minePass gate at
+		// the sibling loop below). The per-quad draw() loop is retired only
+		// when BOTH producers it bundles are GPU-covered:
+		//   - SOLID base terrain  -> GPU indirect path (IsFrameSolidArmed)
+		//   - cement/road decals  -> Slice-A static bake (IsFrameOverlayArmed)
+		// DRAWALPHA detail is unconditionally dead (pixel-suppressed since
+		// 521d83a; A2-confirmed via legacy_drawalpha_detail_quads counter).
+		// MC2_TERRAIN_INDIRECT_OVERLAY is DEFAULT-ON since the 60f2ef8
+		// Stage-6 flip (IsOverlayEnabled(): only literal "0" opts out).
+		// So on the stock/default path BOTH IsFrameSolidArmed() and
+		// IsFrameOverlayArmed() are true -> the conjunction is true ->
+		// the per-quad draw() loop below is SKIPPED (the else branch is
+		// the live default branch; the drawPass zone is ~empty). The
+		// conjunction is still load-bearing, but for the opposite reason
+		// the old comment claimed: it ensures the MC2_TERRAIN_INDIRECT_
+		// OVERLAY=0 revert (overlay disabled, the code-proof fallback)
+		// STILL runs draw() so decals fall back to the M2d per-quad emit
+		// and do not vanish = the 9964d5a-regression guard. Gating on
+		// IsFrameSolidArmed() alone would kill decals on the =0 revert.
+		if (!(gos_terrain_indirect::IsFrameSolidArmed()
+		      && gos_terrain_indirect::IsFrameOverlayArmed()))
 		{
-			// M2b loop-level pure-water hoist: skip the function call entirely for
-			// quads with no base terrain, no overlay, and no detail handle. ~28K
-			// quads/frame on water-heavy maps. Mirror of the in-draw() early-exit;
-			// the in-function check is the fallback if useOverlayTexture /
-			// useWaterInterestTexture globals get toggled at runtime.
-			if (currentQuad->terrainHandle == 0
-			    && currentQuad->overlayHandle == 0xffffffff
-			    && currentQuad->terrainDetailHandle == 0xffffffff)
+			TerrainQuadPtr currentQuad = quadList;
+			for (long i = 0; i < numberQuads; i++)
 			{
+				// M2b loop-level pure-water hoist: skip the function call entirely for
+				// quads with no base terrain, no overlay, and no detail handle. ~28K
+				// quads/frame on water-heavy maps. Mirror of the in-draw() early-exit;
+				// the in-function check is the fallback if useOverlayTexture /
+				// useWaterInterestTexture globals get toggled at runtime.
+				if (currentQuad->terrainHandle == 0
+				    && currentQuad->overlayHandle == 0xffffffff
+				    && currentQuad->terrainDetailHandle == 0xffffffff)
+				{
+					currentQuad++;
+					continue;
+				}
+				currentQuad->draw();
 				currentQuad++;
-				continue;
 			}
-			currentQuad->draw();
-			currentQuad++;
+		}
+		else
+		{
+			// [SUBSYS] lifecycle line (env-gated, one-shot) per the
+			// debug-instrumentation rule. Mirrors the mine retirement
+			// trace. drawPass zone is now ~empty on armed frames -> the
+			// Tracy total-frame delta is the substitutive proof.
+			static bool s_drawPassRetiredLogged = false;
+			if (!s_drawPassRetiredLogged
+			    && gos_terrain_indirect::IsTraceEnabled())
+			{
+				s_drawPassRetiredLogged = true;
+				printf("[TERRAIN_DRAWPASS v1] event=retired "
+				       "reason=solid+overlay_armed "
+				       "(SOLID->gpu_indirect, decals->static_bake, "
+				       "detail->dead)\n");
+				fflush(stdout);
+			}
 		}
 	}
 
 	if (drawTerrainTiles)
 	{
 		ZoneScopedN("Terrain::render minePass");
-		TerrainQuadPtr currentQuad = quadList;
-		for (long i = 0; i < numberQuads; i++)
-		{
-			currentQuad->drawMine();
-			currentQuad++;
+		// PR2c Stage 2c — when armed, the indirect path owns mine drawing for
+		// this frame (Render.TerrainMines zone in txmmgr.cpp). Skip the entire
+		// per-quad drawMine loop here. This is the bulk of the ~1.83ms minePass
+		// retirement (the loop fires drawMine on ALL ~14K visible quads, not
+		// just the few mine-bearing ones, due to drawMine's early-return
+		// pattern at quad.cpp:4242-4243).
+		if (!gos_terrain_indirect::IsFrameMineArmed()) {
+			TerrainQuadPtr currentQuad = quadList;
+			for (long i = 0; i < numberQuads; i++)
+			{
+				currentQuad->drawMine();
+				currentQuad++;
+			}
 		}
 	}
 
@@ -1016,6 +1194,46 @@ void Terrain::render (void)
 }
 
 //---------------------------------------------------------------------------
+// Single-source predicate: all conditions that allow renderWater() to skip the
+// legacy loop and quad.cpp::setupTextures() to skip the armed-frame (ii) writes.
+// Definition lives here (terrain.cpp) because this is the only TU that sees
+// WaterStream + gpu_driven. Declared in gos_terrain_indirect.h (already
+// included by both terrain.cpp and quad.cpp; zero new includes in either).
+bool gos_terrain_indirect::WaterFastPathOwnsArmedDraw()
+{
+	static const bool s_fastPath =
+	    (getenv("MC2_RENDER_WATER_FASTPATH") != nullptr) ||
+	    gpu_driven::IsWaterEnabled();
+	// IsFrameSolidArmed() is load-bearing: the un-armed cinematic/intro-pan
+	// MUST keep running the legacy loop (the GPU water path is not armed
+	// there) - gating it off un-armed reintroduces the stale-data regression
+	// (see memory/water_fastpath_interim_fixes_and_residuals.md fix #2).
+	const bool g1 = s_fastPath;
+	const bool g2 = gos_terrain_indirect::IsFrameSolidArmed();
+	const bool g3 = WaterStream::IsReady();
+	const bool g4 = (WaterStream::GetRecipeCount() > 0);
+	const bool g5 = (Terrain::terrainTextures2 != nullptr);
+	// S2.15 gate diag: editor fails to arm FAST water path - print once
+	// per (mission/state-change) what gate fails. Throttled by signature.
+	static const bool s_gateDiag = (getenv("MC2_WATER_GATE_DIAG") != nullptr);
+	if (s_gateDiag)
+	{
+		uint32_t sig = (g1?1:0) | (g2?2:0) | (g3?4:0) | (g4?8:0) | (g5?16:0);
+		static uint32_t s_lastSig = 0xffffffff;
+		if (sig != s_lastSig)
+		{
+			printf("[WATER_GATE] fastPath=%d armed=%d streamReady=%d recipes=%u tex2=%d (sig=0x%x)\n",
+			    g1?1:0, g2?1:0, g3?1:0,
+			    (unsigned)WaterStream::GetRecipeCount(),
+			    g5?1:0, sig);
+			fflush(stdout);
+			s_lastSig = sig;
+		}
+	}
+	return g1 && g2 && g3 && g4 && g5;
+}
+
+//---------------------------------------------------------------------------
 void Terrain::renderWater (void)
 {
 	ZoneScopedN("Terrain::renderWater");
@@ -1039,19 +1257,53 @@ void Terrain::renderWater (void)
 	if (s_waterDebugOn)
 		QueryPerformanceCounter((LARGE_INTEGER*)&s_qpcStart);
 
-	// MC2_RENDER_WATER_FASTPATH=1: skip legacy water queueing entirely.
-	// The actual draw runs from Terrain::renderWaterFastPath() AFTER
-	// mcTextureManager->renderLists() has flushed terrain — otherwise
-	// terrain would render OVER our water and overwrite it.
-	static const bool s_fastPath =
-	    (getenv("MC2_RENDER_WATER_FASTPATH") != nullptr);
-	if (s_fastPath
-	    && WaterStream::IsReady()
-	    && WaterStream::GetRecipeCount() > 0
-	    && Terrain::terrainTextures2 != nullptr)
+	// Predicate is now single-sourced in gos_terrain_indirect::WaterFastPathOwnsArmedDraw().
+	// renderWater() is once-per-frame, so this is the correct (non-hot) site
+	// for the S6 armed-skip probe - it observes the EXACT predicate the
+	// quad.cpp setupTextures (ii) gate uses, so armedSkip=1 here == "(ii)
+	// legacy draw-side skipped this frame, GPU fast path owns it".
+	const bool s6FastPathOwns = gos_terrain_indirect::WaterFastPathOwnsArmedDraw();
+	{
+		static const bool s_waterS6Trace = (getenv("MC2_WATER_S6_TRACE") != nullptr);
+		if (s_waterS6Trace)
+		{
+			static int s_lastS6 = -1;
+			int s6 = s6FastPathOwns ? 1 : 0;
+			if (s6 != s_lastS6)
+			{
+				printf("[WATER_S6 v1] event=state armedSkip=%d (1=GPU fast path owns armed draw; legacy (ii) draw-side skipped this frame)\n", s6);
+				fflush(stdout);
+				s_lastS6 = s6;
+			}
+		}
+	}
+	if (s6FastPathOwns)
 	{
 		// Skip legacy loop entirely; renderWaterFastPath() does the work.
 		return;
+	}
+
+	// [DEPTH_TRANSITION v1] reset the CPU-water REAL screen-z nearest-vertex
+	// search once per CPU-water frame (env-gated; silent default). Reached
+	// ONLY when the legacy loop runs (s6FastPathOwns early-returned above),
+	// i.e. exactly the frames CPU water is the live producer. The stamp bump
+	// lets the transition dump in gos_terrain_indirect.cpp detect a STALE
+	// CPU sample on armed frames (CPU water and the GPU fast path are
+	// mutually exclusive per frame). Pure writes, zero behavior change.
+	{
+		static const bool s_depthTransProbe =
+		    (getenv("MC2_DEPTH_TRANSITION_PROBE") != nullptr);
+		if (s_depthTransProbe)
+		{
+			extern float              g_cpuWaterProbeZ;
+			extern double             g_cpuWaterProbeBestD2;
+			extern bool               g_cpuWaterProbeAny;
+			extern unsigned long long g_cpuWaterProbeStamp;
+			(void)g_cpuWaterProbeZ;
+			g_cpuWaterProbeAny = false;
+			g_cpuWaterProbeBestD2 = 0.0;
+			++g_cpuWaterProbeStamp;
+		}
 	}
 
 	//-----------------------------------
@@ -1060,9 +1312,19 @@ void Terrain::renderWater (void)
 
 	const bool collect = s_waterDebugOn && (s_framesPrinted < 5)
 	                     && (s_frameCounter >= kWaterWarmupHoldoffFrames);
+	uint32_t traceTotal = 0;
+	uint32_t traceHandleValid = 0;
+	uint32_t traceDetailEligible = 0;
 
 	for (long i=0;i<numberQuads;i++)
 	{
+		++traceTotal;
+		if (currentQuad->waterHandle != 0xffffffff)
+		{
+			++traceHandleValid;
+			if (currentQuad->waterDetailHandle != 0xffffffff)
+				++traceDetailEligible;
+		}
 		if (collect)
 		{
 			++s_total;
@@ -1078,6 +1340,24 @@ void Terrain::renderWater (void)
 			currentQuad->drawWater();
 
 		currentQuad++;
+	}
+
+	{
+		static bool s_haveLast = false;
+		static uint32_t s_lastHandleValid = 0;
+		const bool disappeared = (s_haveLast && s_lastHandleValid > 0 && traceHandleValid == 0);
+		const bool recovered = (s_haveLast && s_lastHandleValid == 0 && traceHandleValid > 0);
+		if (disappeared || recovered || !s_haveLast) {
+			fprintf(stderr,
+			        "[WATER_LEGACY v1] event=population total=%u handle_valid=%u "
+			        "detail_eligible=%u state=%s prev_handle_valid=%u\n",
+			        traceTotal, traceHandleValid, traceDetailEligible,
+			        disappeared ? "disappeared" : (recovered ? "recovered" : "initial"),
+			        s_lastHandleValid);
+			fflush(stderr);
+		}
+		s_haveLast = true;
+		s_lastHandleValid = traceHandleValid;
 	}
 
 	if (s_waterDebugOn)
@@ -1115,8 +1395,11 @@ void Terrain::renderWater (void)
 // hasn't drawn yet and overwrites our water.
 void Terrain::renderWaterFastPath (void)
 {
+	// MC2_RENDER_WATER_FASTPATH: legacy fast-path gate. MC2_GPU_DRIVEN_WATER
+	// also enables the fast-path entry (the MDI branch inside the bridge).
 	static const bool s_fastPath =
-	    (getenv("MC2_RENDER_WATER_FASTPATH") != nullptr);
+	    (getenv("MC2_RENDER_WATER_FASTPATH") != nullptr) ||
+	    gpu_driven::IsWaterEnabled();
 	if (!s_fastPath) return;
 	if (!WaterStream::IsReady()) return;
 	if (WaterStream::GetRecipeCount() == 0) return;
@@ -1205,6 +1488,7 @@ void Terrain::renderWaterFastPath (void)
 	// `gos_terrain_water_stream.h` "Stage 3 parity check" doc-comment for
 	// scope and field-level granularity.
 	{
+		ZoneScopedN("WaterFast.Parity");
 		WaterStream::ParityFrameUniforms pu;
 		pu.waterElevation             = Terrain::waterElevation;
 		pu.alphaDepth                 = MapData::alphaDepth;
@@ -1257,30 +1541,53 @@ float cosineEyeHalfFOV = 0.0f;
 //a full triangle.
 #define VERTEX_EXTENT_RADIUS	(384.0f)
 
-float leastZ = 1.0f,leastW = 1.0f;
-float mostZ = -1.0f, mostW = -1.0;
-float leastWY = 0.0f, mostWY = 0.0f;
 extern bool InEditor;
 
-//---------------------------------------------------------------------------
-// vertexProjectLoop fast-path (D1: CPU loop hoist + skip PROJECTZ_SITE +
-// direct cull-cascade array writes). See:
-//   docs/superpowers/cpu-to-gpu-offload-orchestrator.md (Status Board)
-//   memory/cull_gates_are_load_bearing.md (why side effects can't move)
-//
-// MC2_VERTEX_PROJECT_FAST=1   — enables fast path (default off).
-// MC2_VERTEX_PROJECT_PARITY=1 — runs legacy in parallel and byte-compares
-//                               per-vertex outputs. Silent on pass; field-
-//                               level mismatch printer (16/frame throttle)
-//                               + 600-frame summary.
-//---------------------------------------------------------------------------
+// --- [SLIMSPLIT v1] -------------------------------------------------------
+// RDTSC sub-decomposition of the "Terrain::geometry slimReduce" per-vertex
+// loop. Distinct env gate MC2_SLIM_COST_SPLIT -- NOT the observer-effect-
+// dominated MC2_TERRAIN_COST_SPLIT chrono scopes (memory/cost_split_
+// instrumentation_is_observer_effect_dominated.md). __rdtsc() per-leaf
+// bracket, no Tracy zone by design (a per-vertex hot loop busts the 100ns
+// floor; same sanctioned exception as [LIGHT_COST_SPLIT v1] in tgl.cpp).
+// Isolates the three independent costs the single slimReduce Tracy zone
+// conflates, so the elimination campaign cuts in ROI order:
+//   PROJ : eye->projectForTerrainAdmission (survives for cull + raster)
+//   CULL : clipInfo + setObjBlock/VertexActive + solid-window append
+//   RED  : leastZ/mostZ/leastW/mostW reduction (retired Phase 4 2026-05-19; bracket retained as dead-instrumentation envelope until SLIMSPLIT demote/delete)
+// "front/other" (onScreenR sphere/cone math + raster px/pz write) =
+// Tracy slimReduce total - (PROJ+CULL+RED); not separately bracketed to
+// hold the per-vertex rdtsc-pair count at 3. Demote-not-delete after the
+// attribution lands (debug_instrumentation_rule.md).
+#include <intrin.h>
+#include <stdlib.h>
+#include <stdio.h>
 namespace {
-struct VPParitySnap {
-	bool  clipInfo;
-	float px, py, pz, pw;
-	float hazeFactor;
-};
-}
+	bool               g_ssInit = false, g_ssOn = false;
+	unsigned long long g_ssProjCyc = 0, g_ssCullCyc = 0, g_ssRedCyc = 0;
+	unsigned long long g_ssProjCall = 0, g_ssVtx = 0, g_ssFrames = 0;
+	bool SlimSplitOn()
+	{
+		if (!g_ssInit) { g_ssOn = (getenv("MC2_SLIM_COST_SPLIT") != nullptr); g_ssInit = true; }
+		return g_ssOn;
+	}
+	void SlimSplitRollAndMaybeEmit()
+	{
+		if (!g_ssOn) return;
+		++g_ssFrames;
+		if (g_ssFrames % 600ULL != 0ULL) return;
+		const double f = 600.0;
+		fprintf(stderr,
+			"[SLIMSPLIT v1] event=summary frames=600 "
+			"vtx_per_frame=%.0f proj_cyc_per_frame=%.0f proj_calls_per_frame=%.0f "
+			"cull_cyc_per_frame=%.0f red_cyc_per_frame=%.0f\n",
+			(double)g_ssVtx / f, (double)g_ssProjCyc / f, (double)g_ssProjCall / f,
+			(double)g_ssCullCyc / f, (double)g_ssRedCyc / f);
+		g_ssProjCyc = g_ssCullCyc = g_ssRedCyc = 0;
+		g_ssProjCall = g_ssVtx = 0;
+	}
+}  // namespace
+
 //---------------------------------------------------------------------------
 void Terrain::geometry (void)
 {
@@ -1298,13 +1605,7 @@ void Terrain::geometry (void)
 	}
 
 	//---------------------------------------------------------------------
-	leastZ = 1.0f;leastW = 1.0f;
-	mostZ = -1.0f; mostW = -1.0;
-	leastWY = 0.0f; mostWY = 0.0f;
-
 	//-----------------------------------
-	// Transform entire list of vertices
-	VertexPtr currentVertex = vertexList;
 
 	Stuff::Vector3D cameraPos;
 	cameraPos.x = -eye->getCameraOrigin().x;
@@ -1312,53 +1613,142 @@ void Terrain::geometry (void)
 	cameraPos.z = eye->getCameraOrigin().y;
 
 	float vClipConstant = eye->verticalSphereClipConstant;
-	float hClipConstant = eye->horizontalSphereClipConstant; 
-	
-	// vertexProjectLoop fast-path (D1) — see file-scope namespace block above.
-	static const bool s_vpFast   = (getenv("MC2_VERTEX_PROJECT_FAST")   != nullptr);
-	static const bool s_vpParity = (getenv("MC2_VERTEX_PROJECT_PARITY") != nullptr);
-	static uint32_t   s_vpFrame  = 0;
-	static uint64_t   s_vpVertsChecked  = 0;
-	static uint64_t   s_vpVertsMismatch = 0;
+	float hClipConstant = eye->horizontalSphereClipConstant;
 
-	std::vector<VPParitySnap> vpFastSnap;
-	if (s_vpFast && s_vpParity)
-		vpFastSnap.resize(numberVertices);
+	// S2.13: MC2_TERRAIN_CULL_WIDE=1 forces the angular sphere cull to
+	// admit-all (constants set to 1e9). Investigation revealed editor
+	// terrain coverage at ~25% of map vertices passing the angular cull
+	// (885/3474 verts on mc2_01 default camera). Whether this matches
+	// game-side behavior is unverified; this gate exists as an opt-in
+	// workaround so visual A/B can confirm or refute the cull as root cause
+	// of the "terrain clips to small center region in editor" symptom.
+	// Default OFF: bit-identical legacy behavior. See handoff S2.13.
+	if (getenv("MC2_TERRAIN_CULL_WIDE") != NULL) {
+		vClipConstant = 1.0e9f;
+		hClipConstant = 1.0e9f;
+	}
 
-	if (s_vpFast)
+
+	// VPL retirement: the MC2_VPL_CULL / MC2_VPL_REDUCE getenv reads are
+	// KEPT solely to gate the one-shot event=retired lifecycle lines
+	// emitted just before the slim reduce loop below (8c-part-2: the VPL
+	// body those probes compared against is deleted, so any relocated
+	// self-comparison would be tautological/false-alarm; demote-not-
+	// silently-delete per the worktree Debug-instrumentation rule).
+	static const bool s_vplCull = (getenv("MC2_VPL_CULL") != nullptr);
+	static const bool s_vplReduce = (getenv("MC2_VPL_REDUCE") != nullptr);
+
+	// F6 T1/T2: terrain admission Modern path. Replaces per-vertex
+	// projectForTerrainAdmission with a world-space frustum-plane test:
+	//   extractFrustumPlanes (one-shot per frame) + quadAabbInFrustum
+	//   on a degenerate AABB (point, min==max). Default Legacy preserves
+	//   the red-band fallback per spec §8.
+	// F6 T2: mode flag moved to mc2_terrain_admission::isModern()
+	// (terrain_admission_mode.h) shared with quad.cpp setupTextures sites.
+	// Cache populated below; quad.cpp reads via eye->getCachedFrustumPlanes().
+	// Env: MC2_TERRAIN_ADMISSION_MODERN=1 flips to Modern.
+	// Reference: docs/observations/2026-05-22-terrain-admission-hotpath-recon.md
+	const bool s_admissionModern = mc2_terrain_admission::isModern();
+	static bool s_admissionModeLogged = false;
+	if (!s_admissionModeLogged) {
+		s_admissionModeLogged = true;
+		fprintf(stderr, "[TERRAIN_ADMISSION v1] event=mode_select mode=%s\n",
+			s_admissionModern ? "modern" : "legacy");
+		fflush(stderr);
+	}
+
+	long i=0;
+
+	// VPL retirement Step 6: self-contained slim per-vertex loop. Originally
+	// re-homed the leastZ/mostZ/leastW/mostW/leastWY/mostWY reduction feeding
+	// the inverse-projection consumer; that RED reduction was deleted in
+	// Phase 4 (2026-05-19) once the consumer chain was retired in Phase 3
+	// (6d61801). The per-vertex projectForTerrainAdmission call
+	// SURVIVES because its return drives the clipInfo / objBlock cull cascade
+	// AND the rv->px/py/pz/pw raster writes consumed by the legacy
+	// TerrainQuad::draw() immediate path on un-armed frames.
+	// VPL retirement Step 8c-part-2: the VertexProjectLoop body (fast +
+	// legacy-twin) is DELETED here â the slim reduce loop below is the
+	// proven sole producer of BOTH the cull cascade and the
+	// leastZ/mostZ/... reduction (8c-part-1 static + camera-swept
+	// superset_violations=0 + bit-identity proof). The legacy-reference
+	// sources the MC2_VPL_CULL and MC2_VPL_REDUCE probes compared against
+	// died with the body, so a relocated self-comparison would be a pure
+	// tautology / false-alarm; both probes are RETIRED (demote-not-
+	// silently-delete per the worktree Debug-instrumentation rule + plan
+	// v3.3:467 + v3.5:530) to a one-shot lifecycle line, env-gated by the
+	// surviving getenv so it only prints when someone had the probe on.
+	// See docs/superpowers/reviews/2026-05-15-step8-vpl-body-deletion-
+	// adversarial-review.md CRIT-1/Â§6 + the v3.5 plan amendment.
+	if (s_vplCull)
 	{
-		// Hoist invariants out of the hot loop.
-		const bool  vp_usePersp        = eye->usePerspective;
-		const bool  vp_isPerspRenderer = vp_usePersp && (Environment.Renderer != 3);
-		const bool  vp_drawGrid        = drawTerrainGrid;
-		const float vp_maxClipD        = Camera::MaxClipDistance;
-		const float vp_minHazeD        = Camera::MinHazeDistance;
-		const float vp_distFact        = Camera::DistanceFactor;
-		const long  vp_numObjB         = numObjBlocks;
-		const long  vp_numActiveVerts  = realVerticesMapSide * realVerticesMapSide;
+		static bool s_vplCullRetiredLogged = false;
+		if (!s_vplCullRetiredLogged) {
+			s_vplCullRetiredLogged = true;
+			fprintf(stderr,
+				"[VPL_CULL v1] event=retired reason=vpl_body_deleted_slim_is_sole_producer\n");
+			fflush(stderr);
+		}
+	}
+	if (s_vplReduce)
+	{
+		static bool s_vplReduceRetiredLogged = false;
+		if (!s_vplReduceRetiredLogged) {
+			s_vplReduceRetiredLogged = true;
+			fprintf(stderr,
+				"[VPL_REDUCE v1] event=retired reason=vpl_body_deleted_slim_is_sole_reduction_producer\n");
+			fflush(stderr);
+		}
+	}
+	// Approach A (lag-free): reset the per-frame camera-windowed solid
+	// recipe-index window IMMEDIATELY before the slim loop that fills it.
+	// The slim loop runs BEFORE gos_terrain_indirect::ComputeDispatch()
+	// (called later in geometry()), so the window collected here is consumed
+	// by THIS frame's dispatch — same-frame, no 1-frame lag.  The append
+	// (inside the `if (rv->clipInfo)` block below) rides the existing slim
+	// iteration; NO new per-frame walk is introduced.
+	gos_terrain_indirect::BeginFrameSolidWindow();
+	const bool s_solidNarrowOn = gos_terrain_indirect::SolidWindowEnabled();
 
-		ZoneScopedN("Terrain::geometry vertexProjectLoop");
-		VertexPtr cv = vertexList;
-		for (long vi = 0; vi < numberVertices; ++vi, ++cv)
+	// F6 T1/T2: cache frustum planes once per frame (O(1)) into Camera member.
+	// Both slimReduce below AND quad.cpp::setupTextures water-corner sites read
+	// via eye->getCachedFrustumPlanes(). Single extraction shared across all sites.
+	if (s_admissionModern) {
+		eye->cacheFrustumPlanes();
+	}
+
+	{
+		ZoneScopedN("Terrain::geometry slimReduce");
+		const bool ssOn = SlimSplitOn();  // [SLIMSPLIT v1] latched, loop-local
+		// CULL de-inline: hoist the two loop-invariant cull-cascade bounds
+		// (mission-load constants; written only in init/destroy, never in
+		// geometry() -- grep-verified) and inline the bounds-checked array
+		// writes, restoring the legacy s_vpFast fast-path form (0c8e06b^
+		// :1633-1645; the retirement's own :1520 comment: "inlined ... so the
+		// compiler doesn't gamble on inlining setObjBlockActive"). The slim
+		// re-home regressed to the slow-path setObj*Active member calls
+		// (~40k non-inlined calls/frame == the [SLIMSPLIT v1] CULL bucket).
+		// Byte-identical to Terrain::setObjBlockActive/setObjVertexActive
+		// (terrain.cpp:2042/2056) by construction: same predicate, same store.
+		const long ssNumObjB        = numObjBlocks;
+		const long ssNumActiveVerts = realVerticesMapSide * realVerticesMapSide;
+		VertexPtr rv = vertexList;
+		for (long ri = 0; ri < numberVertices; ++ri, ++rv)
 		{
-			// Math byte-identical to legacy block at terrain.cpp:1298-1450.
-			// Differences from legacy: PROJECTZ_SITE() is omitted (g_pzTrace is
-			// debug-only); cull-cascade setters are inlined as direct array
-			// writes so the compiler doesn't gamble on inlining setObjBlockActive.
-			bool onScreen = false;
-			float hazeFactor = 0.0f;
+			if (ssOn) ++g_ssVtx;
+			bool onScreenR = false;
 
-			if (vp_usePersp)
+			if (eye->usePerspective)
 			{
-				onScreen = true;
+				onScreenR = true;
 
 				Stuff::Vector3D vPosition;
-				vPosition.x = cv->vx;
-				vPosition.y = cv->vy;
-				vPosition.z = cv->pVertex->elevation;
+				vPosition.x = rv->vx;
+				vPosition.y = rv->vy;
+				vPosition.z = rv->pVertex->elevation;
 
 				Stuff::Vector3D objectCenter;
-				objectCenter.Subtract(vPosition, cameraPos);
+				objectCenter.Subtract(vPosition,cameraPos);
 				Camera::cameraFrame.trans_to_frame(objectCenter);
 				float distanceToEye = objectCenter.GetApproximateLength();
 
@@ -1373,331 +1763,193 @@ void Terrain::geometry (void)
 					float extent_angle = VERTEX_EXTENT_RADIUS / distanceToEye;
 					if (object_angle > (vClipConstant + extent_angle))
 					{
-						onScreen = false;
+						onScreenR = false;
 					}
 					else
 					{
 						object_angle = fabs(objectCenter.x) * clip_distance;
 						if (object_angle > (hClipConstant + extent_angle))
-							onScreen = false;
+						{
+							onScreenR = false;
+						}
 					}
 				}
 
-				if (onScreen)
+				if (onScreenR)
 				{
-					if (distanceToEye > vp_maxClipD)      hazeFactor = 1.0f;
-					else if (distanceToEye > vp_minHazeD) hazeFactor = (distanceToEye - vp_minHazeD) * vp_distFact;
-					else                                  hazeFactor = 0.0f;
-
-					Stuff::Vector3D vPos(cv->vx, cv->vy, cv->pVertex->elevation);
-					bool isVisible = Terrain::IsGameSelectTerrainPosition(vPos) || vp_drawGrid;
+					//---------------------------------------
+					// Vertex is at edge of world or beyond.
+					Stuff::Vector3D vPos(rv->vx,rv->vy,rv->pVertex->elevation);
+					bool isVisible = Terrain::IsGameSelectTerrainPosition(vPos) || drawTerrainGrid;
 					if (!isVisible)
 					{
-						hazeFactor = 1.0f;
-						onScreen = true;
-					}
-				}
-				else
-				{
-					hazeFactor = 1.0f;
-				}
-			}
-			else
-			{
-				hazeFactor = 0.0f;
-				onScreen = true;
-			}
-
-			bool inView = false;
-			Stuff::Vector4D screenPos(-10000.0f, -10000.0f, -10000.0f, -10000.0f);
-			float pxL, pyL, pzL, pwL;
-			float hazeL = hazeFactor;
-
-			if (onScreen)
-			{
-				Stuff::Vector3D vertex3D(cv->vx, cv->vy, cv->pVertex->elevation);
-				inView = eye->projectForTerrainAdmission(vertex3D, screenPos);
-				pxL = screenPos.x;
-				pyL = screenPos.y;
-				pzL = screenPos.z;
-				pwL = screenPos.w;
-			}
-			else
-			{
-				pxL = pyL = 10000.0f;
-				pzL = -0.5f;
-				pwL = 0.5f;
-				hazeL = 0.0f;
-			}
-
-			const bool clipInfoFinal = vp_isPerspRenderer ? onScreen : inView;
-
-			if (s_vpParity)
-			{
-				// Snapshot only — legacy will write live state below.
-				VPParitySnap& s = vpFastSnap[vi];
-				s.clipInfo   = clipInfoFinal;
-				s.px         = pxL;
-				s.py         = pyL;
-				s.pz         = pzL;
-				s.pw         = pwL;
-				s.hazeFactor = hazeL;
-			}
-			else
-			{
-				// Live writes (cull cascade + accumulators).
-				cv->hazeFactor = hazeL;
-				cv->px = pxL;
-				cv->py = pyL;
-				cv->pz = pzL;
-				cv->pw = pwL;
-				cv->clipInfo = clipInfoFinal;
-
-				if (clipInfoFinal)
-				{
-					const long blockNum = cv->getBlockNumber();
-					if ((blockNum >= 0) && (blockNum < vp_numObjB))
-						objBlockInfo[blockNum].active = true;
-
-					const long vertNum = cv->vertexNum;
-					if ((vertNum >= 0) && (vertNum < vp_numActiveVerts))
-						objVertexActive[vertNum] = true;
-
-					if (inView)
-					{
-						if (screenPos.z < leastZ) leastZ = screenPos.z;
-						if (screenPos.z > mostZ)  mostZ  = screenPos.z;
-						if (screenPos.w < leastW) { leastW = screenPos.w; leastWY = screenPos.y; }
-						if (screenPos.w > mostW)  { mostW  = screenPos.w; mostWY  = screenPos.y; }
+						onScreenR = true;
 					}
 				}
 			}
-		}
-	}
-
-	long i=0;
-	if (!s_vpFast || s_vpParity)
-	{
-		ZoneScopedN("Terrain::geometry vertexProjectLoop");
-		for (i=0;i<numberVertices;i++)
-	{
-		//----------------------------------------------------------------------------------------
-		// Figure out if we are in front of camera or not.  Should be faster then actual project!
-		// Should weed out VAST overwhelming majority of vertices!
-		bool onScreen = false;
-	
-		//-----------------------------------------------------------------
-		// Find angle between lookVector of Camera and vector from camPos
-		// to Target.  If angle is less then halfFOV, object is visible.
-		if (eye->usePerspective)
-		{
-			//-------------------------------------------------------------------
-			//NEW METHOD from the WAY BACK Days
-			onScreen = true;
-			
-			Stuff::Vector3D vPosition;
-			vPosition.x = currentVertex->vx;
-			vPosition.y = currentVertex->vy;
-			vPosition.z = currentVertex->pVertex->elevation;
-  
-			Stuff::Vector3D objectCenter;
-			objectCenter.Subtract(vPosition,cameraPos);
-			Camera::cameraFrame.trans_to_frame(objectCenter);
-			float distanceToEye = objectCenter.GetApproximateLength();
-
-			Stuff::Vector3D clipVector = objectCenter;
-			clipVector.z = 0.0f;
-			float distanceToClip = clipVector.GetApproximateLength();
-			float clip_distance = fabs(1.0f / objectCenter.y);
-			
-			if (distanceToClip > CLIP_THRESHOLD_DISTANCE)
-			{
-				//Is vertex on Screen OR close enough to screen that its triangle MAY be visible?
-				// WE have removed the atans here by simply taking the tan of the angle we want above.
-				float object_angle = fabs(objectCenter.z) * clip_distance;
-				float extent_angle = VERTEX_EXTENT_RADIUS / distanceToEye;
-				if (object_angle > (vClipConstant + extent_angle))
-				{
-					//In theory, we would return here.  Object is NOT on screen.
-					onScreen = false;
-				}
-				else
-				{
-					object_angle = fabs(objectCenter.x) * clip_distance;
-					if (object_angle > (hClipConstant + extent_angle))
-					{
-						//In theory, we would return here.  Object is NOT on screen.
-						onScreen = false;
-					}
-				}
-			}
-			
-			if (onScreen)
-			{
-				if (distanceToEye > Camera::MaxClipDistance)
-				{
-					currentVertex->hazeFactor = 1.0f;
-				}
-				else if (distanceToEye > Camera::MinHazeDistance)
-				{
-					currentVertex->hazeFactor = (distanceToEye - Camera::MinHazeDistance) * Camera::DistanceFactor;
-				}
-				else
-				{
-					currentVertex->hazeFactor = 0.0f;
-				}
-				
-				//---------------------------------------
-				// Vertex is at edge of world or beyond.
-				Stuff::Vector3D vPos(currentVertex->vx,currentVertex->vy,currentVertex->pVertex->elevation);
-				bool isVisible = Terrain::IsGameSelectTerrainPosition(vPos) || drawTerrainGrid;
-				if (!isVisible)
-				{
-					currentVertex->hazeFactor = 1.0f;
-					onScreen = true;
-				}
-			}
 			else
 			{
-				currentVertex->hazeFactor = 1.0f;
+				onScreenR = true;
 			}
-		}
-		else
-		{
-			currentVertex->hazeFactor = 0.0f;
-			onScreen = true;
-		}
 
-		bool inView = false;
-		Stuff::Vector4D screenPos(-10000.0f,-10000.0f,-10000.0f,-10000.0f);
-		if (onScreen)
-		{
-			Stuff::Vector3D vertex3D(currentVertex->vx,currentVertex->vy,currentVertex->pVertex->elevation);
-			// [PROJECTZ:BoolAdmission id=terrain_cpu_vert_admit]
-			PROJECTZ_SITE("terrain_cpu_vert_admit", "BoolAdmission");
-			inView = eye->projectForTerrainAdmission(vertex3D,screenPos);
-		
-			currentVertex->px = screenPos.x;
-			currentVertex->py = screenPos.y;
-			currentVertex->pz = screenPos.z;
-			currentVertex->pw = screenPos.w;
-			
-			//----------------------------------------------------------------------------------
-			//We must transform these but should NOT draw any face where all three are fogged. 
-//			if (currentVertex->hazeFactor == 1.0f)		
-//				onScreen = false;
-		}
-		else
-		{
-			currentVertex->px = currentVertex->py = 10000.0f;
-			currentVertex->pz = -0.5f;
-			currentVertex->pw = 0.5f;
-			currentVertex->hazeFactor = 0.0f;
-		}	
-		
-		//------------------------------------------------------------
-		// Fix clip.  Vertices can all be off screen and triangle
-		// still needs to be drawn!
-		if (eye->usePerspective && Environment.Renderer != 3)
-		{
-			currentVertex->clipInfo = onScreen;
-		}
-		else
-			currentVertex->clipInfo = inView;
-		
-		if (currentVertex->clipInfo)				//ONLY set TRUE ones.  Otherwise we just reset the FLAG each vertex!
-		{
-			setObjBlockActive(currentVertex->getBlockNumber(), true);
-			setObjVertexActive(currentVertex->vertexNum,true);
-			
-			if (inView)
+			// VPL Step 8c-part-1 (CRIT-1, catastrophic axis): the
+			// cull-cascade write below MUST be emitted on the
+			// onScreenR/clipR decision and BEFORE the reduction-admission
+			// `if (!clipR || !inViewR) continue;` gate. The legacy
+			// `if (!onScreenR) continue;` early-out is therefore REMOVED:
+			// the projection now runs for every vertex so the cull write
+			// is reached unconditionally. clipR uses the IDENTICAL formula
+			// to the legacy VPL `clipInfo` write (terrain.cpp `eye->
+			// usePerspective && Environment.Renderer != 3 ? onScreenR :
+			// inViewR`); since onScreenR == legacy onScreen byte-for-byte
+			// and Environment.Renderer is only ever 0, clipR == legacy
+			// clipInfo. Placing the cull write AFTER this gate (or gating
+			// it on inViewR) makes the slim active-set a STRICT SUBSET of
+			// the loose 768u/384u-dilated legacy {onScreen} cull contract
+			// and edge/off-rect objects and mechs VANISH (cull_gates_are
+			// _load_bearing.md; mechs iterate last = canary).
+			Stuff::Vector3D vertex3D(rv->vx,rv->vy,rv->pVertex->elevation);
+			Stuff::Vector4D sp(-10000.0f,-10000.0f,-10000.0f,-10000.0f);
+			// Cost restoration (slimReduce was structurally heavier than the
+			// VPL it replaced): the pre-8c production fast path projected
+			// ONLY onScreen vertices (0c8e06b^ terrain.cpp:1589-1604 `if
+			// (onScreen) { inView = projectForTerrainAdmission(...); ... }
+			// else { sentinel }`). The slim loop made the projection
+			// UNCONDITIONAL, which is the regression. Restore the gate: in
+			// stock (usePerspective && Renderer!=3) clipR == onScreenR and
+			// is computed WITHOUT the projection, the re-home writes the
+			// sentinel (not sp) for !onScreenR, and the reduction continues
+			// on !clipR -- so projecting !onScreenR verts is pure waste. In
+			// the Renderer!=3 / ortho branch clipR == inViewR which DOES
+			// need the projection for every vertex, so it must still run
+			// there. The cull-cascade write below is TEXTUALLY UNCHANGED
+			// and clipR is computed identically to before in both branches
+			// -> the cull superset is bit-identical by construction (the
+			// catastrophic-axis invariant; cull_gates_are_load_bearing.md).
+			bool inViewR = false;
+			const bool clipUsesOnScreen = (eye->usePerspective && Environment.Renderer != 3);
+			if (onScreenR || !clipUsesOnScreen)
 			{
-				if (screenPos.z < leastZ)
-				{
-					leastZ = screenPos.z;
+				unsigned long long _ssT = ssOn ? __rdtsc() : 0ULL;  // [SLIMSPLIT v1] PROJ
+				if (s_admissionModern) {
+					// F6 T1: frustum-plane test replaces projectZ matrix-mul
+					// + homogeneous divide. Degenerate AABB (single point:
+					// mn==mx). near-plane test rejects behind-camera verts
+					// via dot(rZ,swizzled_point) < 0 -- correct red-band
+					// class behavior without clip.w sign reliance.
+					// sp stays sentinel (-10000); px/py/pz/pw write below is
+					// gated out under Modern (approach a -- see commit msg).
+					Stuff::Vector3D vPos(rv->vx, rv->vy, rv->pVertex->elevation);
+					inViewR = eye->quadAabbInFrustum(eye->getCachedFrustumPlanes(), vPos, vPos);
+				} else {
+					inViewR = eye->projectForTerrainAdmission(vertex3D,sp);
 				}
-				
-				if (screenPos.z > mostZ)
-				{
-					mostZ = screenPos.z;
-				}
-				
-				if (screenPos.w < leastW)
-				{
-					leastW = screenPos.w;
-					leastWY = screenPos.y;
-				}
-				
-				if (screenPos.w > mostW)
-				{
-					mostW = screenPos.w;
-					mostWY = screenPos.y;
-				}
+				if (ssOn) { g_ssProjCyc += __rdtsc() - _ssT; ++g_ssProjCall; }
 			}
-		}
 
-			currentVertex++;
-		}
-	}
+			bool clipR = clipUsesOnScreen ? onScreenR : inViewR;
 
-	// vertexProjectLoop parity compare. Field-level mismatch printer
-	// (16/frame throttle) + 600-frame summary. Silent on pass.
-	// Comparison is on raw per-vertex output bytes — same CPU math both sides,
-	// so any mismatch is a real bug, not FP drift.
-	if (s_vpFast && s_vpParity)
-	{
-		++s_vpFrame;
-		const int kMaxPrints = 16;
-		int printsThisFrame = 0;
-		VertexPtr cv = vertexList;
-		for (long vi = 0; vi < numberVertices; ++vi, ++cv)
-		{
-			++s_vpVertsChecked;
-			const VPParitySnap& s = vpFastSnap[vi];
-			const bool match =
-				((DWORD)s.clipInfo == cv->clipInfo) &&
-				(s.px         == cv->px) &&
-				(s.py         == cv->py) &&
-				(s.pz         == cv->pz) &&
-				(s.pw         == cv->pw) &&
-				(s.hazeFactor == cv->hazeFactor);
-			if (!match)
+			// --- cull-cascade write (CRIT-1: BEFORE the reduction gate) ---
+			// Replicates the legacy VPL semantic verbatim: clipInfo =
+			// clipR (== legacy onScreen-derived clipInfo in stock); the
+			// active-set write fires `if (clipInfo)` exactly as the legacy
+			// `if (currentVertex->clipInfo)` site, NOT gated on inViewR.
+			unsigned long long _ssC = ssOn ? __rdtsc() : 0ULL;  // [SLIMSPLIT v1] CULL
+			rv->clipInfo = clipR;
+
+			if (rv->clipInfo)				//ONLY set TRUE ones.  Otherwise we just reset the FLAG each vertex!
 			{
-				++s_vpVertsMismatch;
-				if (printsThisFrame < kMaxPrints)
-				{
-					fprintf(stderr,
-						"[VERTEX_PROJECT_PARITY v1] event=mismatch frame=%u vert=%ld "
-						"clipInfo=(fast=%d/legacy=%d) "
-						"px=(%a/%a) py=(%a/%a) pz=(%a/%a) pw=(%a/%a) haze=(%a/%a)\n",
-						s_vpFrame, vi,
-						(int)s.clipInfo, (int)cv->clipInfo,
-						s.px, cv->px,
-						s.py, cv->py,
-						s.pz, cv->pz,
-						s.pw, cv->pw,
-						s.hazeFactor, cv->hazeFactor);
-					fflush(stderr);
-					++printsThisFrame;
+				// De-inlined == Terrain::setObjBlockActive/setObjVertexActive
+				// (terrain.cpp:2042/:2056) verbatim: same bounds predicate,
+				// same store, active==true folded. Legacy s_vpFast form.
+				const long blockNum = rv->getBlockNumber();
+				if ((blockNum >= 0) && (blockNum < ssNumObjB))
+					objBlockInfo[blockNum].active = true;
+				const long vertNum = rv->vertexNum;
+				if ((vertNum >= 0) && (vertNum < ssNumActiveVerts))
+					objVertexActive[vertNum] = true;
+				// Approach A (lag-free collect): rv->vertexNum is the same
+				// map-stable vertexNum space as the recipe index / RecipeFor-
+				// VertexNum.  Appending every cull-active vertexNum is a
+				// correct SUPERSET — a non-corner/edge vn dispatches one
+				// thread that edge-skips/no-ops; it cannot drop a visible
+				// quad.  Gated on the recipe being live so window entries are
+				// always resolvable; NO corner/edge filter (correctness over
+				// thread-count optimization).
+				if (s_solidNarrowOn) {
+					const int32_t svn = (int32_t)rv->vertexNum;
+					if (gos_terrain_indirect::RecipeForVertexNum(svn))
+						gos_terrain_indirect::AppendSolidWindowCandidate(svn);
 				}
 			}
+			if (ssOn) g_ssCullCyc += __rdtsc() - _ssC;  // [SLIMSPLIT v1] CULL end
+
+			// VPL Step 8b re-home: Step 8b (12ad8dc) deleted the per-vertex
+			// px/py/pz/pw writes on the premise the GPU-driven indirect path
+			// made them dead. They are NOT dead for the LEGACY immediate
+			// raster terrain path (quad.cpp TerrainQuad::draw() reads
+			// vertices[c]->px/py/pz/pw to build gVertex[]); that path runs on
+			// frames where the indirect fast path is UNARMED -- the mission
+			// deployment / unit-select screen never calls ComputePreflight()
+			// so IsFrameSolidArmed() is false there. tier1 smoke is always
+			// armed in-mission so it never exercised this consumer. Re-home
+			// (not re-derive) the EXACT pre-8b semantics: gate on onScreenR
+			// (== legacy `onScreen` byte-for-byte, NOT clipR/clipInfo --
+			// faithful in the Renderer!=3 branch too), source the accepted
+			// write from the already-computed sp (same projectForTerrain-
+			// Admission output the old VPL body baked in), and reproduce the
+			// off-screen sentinel verbatim. Placed BEFORE the reduction gate
+			// below so off-rect-but-onscreen quads the raster path still
+			// draws are not skipped (cull_gates_are_load_bearing.md).
+			// F6 T1 approach (a): Modern path leaves sp at sentinel
+			// (-10000); writing sentinel to rv->px/py/pz/pw would corrupt
+			// legacy raster coords. Skip write entirely under Modern. Safe
+			// because drawPass default-ON (GPU-indirect path) only hits
+			// legacy raster on un-armed frames (mission-deploy/unit-select),
+			// and MC2_TERRAIN_ADMISSION_MODERN is opt-in. If un-armed frames
+			// are active with Modern=1, rv->px/py retain prior-frame values.
+			// Interaction: MC2_TERRAIN_ADMISSION_MODERN=1 + MC2_TERRAIN_INDIRECT=0
+			// on un-armed frames = undefined raster coords (acceptable for
+			// opt-in experimental env; user canary gates default flip).
+			if (!s_admissionModern)
+			{
+				if (onScreenR)
+				{
+					rv->px = sp.x;
+					rv->py = sp.y;
+					rv->pz = sp.z;
+					rv->pw = sp.w;
+				}
+				else
+				{
+					rv->px = rv->py = 10000.0f;
+					rv->pz = -0.5f;
+					rv->pw = 0.5f;
+				}
+			}
+
+			// --- reduction-admission gate (decoupled from the cull write
+			// above; the reduction may legitimately use the tighter set,
+			// the cull MUST use the loose {onScreen} set per CRIT-1) ---
+			if (!clipR || !inViewR)
+				continue;
+
+			unsigned long long _ssR = ssOn ? __rdtsc() : 0ULL;  // [SLIMSPLIT v1] RED
+			// Phase 4 (2026-05-19): leastZ/mostZ/leastW/mostW/leastWY/mostWY
+			// RED-reduction writes deleted. The sole consumer chain (the
+			// eye-side inverse-projection setter + downstream picking/Z helpers)
+			// was retired in Phase 3 (6d61801). Globals + per-frame reset retained pending Phase 5
+			// (quad.cpp water-block still writes them; full removal lands then).
+			if (ssOn) g_ssRedCyc += __rdtsc() - _ssR;  // [SLIMSPLIT v1] RED end
 		}
-		if ((s_vpFrame % 600) == 0)
-		{
-			fprintf(stderr,
-				"[VERTEX_PROJECT_PARITY v1] event=summary frames=%u "
-				"verts_checked=%llu total_mismatches=%llu\n",
-				s_vpFrame,
-				(unsigned long long)s_vpVertsChecked,
-				(unsigned long long)s_vpVertsMismatch);
-			fflush(stderr);
-		}
+		SlimSplitRollAndMaybeEmit();  // [SLIMSPLIT v1] once/frame (slimReduce is 1/frame)
 	}
 
 	//-----------------------------------
 	// setup terrain quad textures
 	// Also sets up mine data.
 	TerrainQuadPtr currentQuad = quadList;
+
 	{
 		ZoneScopedN("Terrain::geometry quadSetupTextures");
 		// Stage 3: preflight arming — walks live quadList BEFORE the loop so
@@ -1705,14 +1957,127 @@ void Terrain::geometry (void)
 		// On un-armed frames (recipe not ready, disabled, etc.) this returns
 		// false with zero side-effects; setupTextures runs as normal.
 		gos_terrain_indirect::ComputePreflight();
+		// Phase 1: terrain lighting GPU compute — per-frame trio (design doc Q5).
+		// BeginFrame advances ring slot; PackAndDispatch packs + dispatches;
+		// CopyResultsToVertexPool (Stage 3): T1/T2/T3 non-blocking tryConsume
+		// writes GPU lightRGB/fogRGB into vertices[i] BEFORE the setupTextures loop.
+		gos_terrain_lighting::BeginFrame();
+		gos_terrain_lighting::PackAndDispatch();
+		gos_terrain_lighting::CopyResultsToVertexPool(quadList, numberQuads);
+		// Phase C: SOLID compute dispatch. MUST be AFTER PackAndDispatch above
+		// so Phase 1's post-dispatch barrier has published the lighting SSBO.
+		gos_terrain_indirect::ComputeDispatch();
+		// Water-fast-path narrow walk: reset the candidate vector once per
+		// frame, then append every quad that passes UploadThin's eligibility
+		// gate immediately after setupTextures() establishes waterHandle.
+		// Predicate MUST match UploadThin's exactly — see
+		// gos_terrain_water_stream.cpp:UploadAndBindThinRecords.
+		WaterStream::BeginFrameNarrow();
+		const bool s_waterNarrowOn = WaterStream::NarrowEnabled();
+		// S6 coarse cost A/B instrument: ONE QPC pair around the WHOLE
+		// per-frame setupTextures loop (NOT per-quad - the per-quad
+		// std::chrono COST_SPLIT scopes are observer-effect-poisoned and
+		// disqualified; capped FPS is also useless). Env-gated, prints a
+		// min/mean/max summary every 600 frames (MC2_TGL_POOL_TRACE idiom).
+		// Used to A/B armed ((ii) skipped) vs MC2_GPU_DRIVEN_WATER=0
+		// ((ii) runs) - the only setupTextures delta between those is (ii),
+		// so this isolates (ii)'s real per-frame CPU contribution.
+		static const bool s_s6CostOn = (getenv("MC2_WATER_S6_COST") != nullptr);
+		static uint64_t s_s6QpcFreq = 0;
+		uint64_t s_s6QpcStart = 0;
+		if (s_s6CostOn)
+		{
+			if (s_s6QpcFreq == 0)
+				QueryPerformanceFrequency((LARGE_INTEGER*)&s_s6QpcFreq);
+			QueryPerformanceCounter((LARGE_INTEGER*)&s_s6QpcStart);
+		}
 		for (i=0;i<numberQuads;i++)
 		{
 			currentQuad->setupTextures();
+			if (s_waterNarrowOn) {
+				const TerrainQuad& q = *currentQuad;
+				if (q.vertices[0] && q.vertices[1] &&
+				    q.vertices[2] && q.vertices[3] &&
+				    q.vertices[0]->vertexNum >= 0 &&
+				    q.vertices[1]->vertexNum >= 0 &&
+				    q.vertices[2]->vertexNum >= 0 &&
+				    q.vertices[3]->vertexNum >= 0) {
+					bool append;
+					if (gos_terrain_indirect::IsFrameSolidArmed()) {
+						// Armed (reframe-B): draw-side (ii) is skipped in setupTextures(), but
+						// (i) projection+reduction+clipInfo AND the 0xffffffff sentinel still run,
+						// so waterHandle IS set (to 0xffffffff) on armed frames; use the water-tile
+						// predicate here instead of waterHandle to avoid stale-sentinel false negatives.
+						// Fix A (staircase): also include submerged tiles that lack water&1.
+						// UploadAndBindThinRecords mirrors this predicate exactly.
+						const bool waterFlagged =
+						    (q.vertices[0]->pVertex->water & 1) ||
+						    (q.vertices[1]->pVertex->water & 1) ||
+						    (q.vertices[2]->pVertex->water & 1) ||
+						    (q.vertices[3]->pVertex->water & 1);
+						const float we = Terrain::waterElevation;
+						// Shore-extension: include tiles slightly ABOVE waterElevation.
+						// VS positions them at terrain surface; FS fades via negative-WT smoothstep.
+						const float shoreExt = MapData::alphaDepth * 0.5f > 0.0f
+						                       ? MapData::alphaDepth * 0.5f : 15.0f;
+						const bool submergedSand = !waterFlagged && (
+						    q.vertices[0]->pVertex->elevation < we + shoreExt ||
+						    q.vertices[1]->pVertex->elevation < we + shoreExt ||
+						    q.vertices[2]->pVertex->elevation < we + shoreExt ||
+						    q.vertices[3]->pVertex->elevation < we + shoreExt);
+						append = waterFlagged || submergedSand;
+					} else {
+						// Legacy path: waterHandle is set by setupTextures for water&1 tiles.
+						const bool waterHandleSet = (q.waterHandle != 0xffffffffu);
+						const float we = Terrain::waterElevation;
+						const float shoreExt = MapData::alphaDepth * 0.5f > 0.0f
+						                       ? MapData::alphaDepth * 0.5f : 15.0f;
+						const bool submergedSand = !waterHandleSet && (
+						    q.vertices[0]->pVertex->elevation < we + shoreExt ||
+						    q.vertices[1]->pVertex->elevation < we + shoreExt ||
+						    q.vertices[2]->pVertex->elevation < we + shoreExt ||
+						    q.vertices[3]->pVertex->elevation < we + shoreExt);
+						append = waterHandleSet || submergedSand;
+					}
+					if (append)
+						WaterStream::AppendNarrowCandidate(currentQuad);
+				}
+			}
 			currentQuad++;
+		}
+		if (s_s6CostOn)
+		{
+			uint64_t s6End = 0;
+			QueryPerformanceCounter((LARGE_INTEGER*)&s6End);
+			double s6Ms = (double)(s6End - s_s6QpcStart) * 1000.0 / (double)s_s6QpcFreq;
+			static uint32_t s_s6Frames = 0;
+			static double   s_s6Sum = 0.0;
+			static double   s_s6Min = 1e30;
+			static double   s_s6Max = 0.0;
+			s_s6Frames++;
+			s_s6Sum += s6Ms;
+			if (s6Ms < s_s6Min) s_s6Min = s6Ms;
+			if (s6Ms > s_s6Max) s_s6Max = s6Ms;
+			if ((s_s6Frames % 600) == 0)
+			{
+				printf("[WATER_S6COST v1] event=summary frames=%u quadSetupTextures_ms mean=%.4f min=%.4f max=%.4f (window of 600)\n",
+				       s_s6Frames, s_s6Sum / 600.0, s_s6Min, s_s6Max);
+				fflush(stdout);
+				s_s6Sum = 0.0; s_s6Min = 1e30; s_s6Max = 0.0;
+			}
 		}
 		// Stage 1 cost-split: roll per-frame nanosecond accumulators (no-op
 		// when MC2_TERRAIN_COST_SPLIT unset). ParityFrameTick advances the
 		// summary cadence; Stage 2 passes the actual quads-checked count.
+		// Stage 2: terrain lighting parity check — AFTER the setupTextures loop
+		// so CPU has written all lightRGB/fogRGB for this frame.
+		// GetMappedOutputForParity() synchronously waits on current-frame fence
+		// (parity mode only — production path skips this entirely).
+		if (gos_terrain_lighting::IsParityCheckEnabled()) {
+			const gos_terrain_lighting::GpuTerrainLightingOutput* mappedOut =
+				gos_terrain_lighting::GetMappedOutputForParity();
+			gos_terrain_lighting::Parity_CompareFrame(quadList, numberQuads, mappedOut);
+		}
 		gos_terrain_indirect::CostSplit_RollFrame();
 		{
 			int quadsChecked = 0;
@@ -1722,22 +2087,6 @@ void Terrain::geometry (void)
 		}
 	}
 
-	float ywRange = 0.0f, yzRange = 0.0f;
-	if (fabs(mostWY - leastWY) > Stuff::SMALL)
-	{
-		ywRange = (mostW - leastW) / (mostWY - leastWY);
-		yzRange = (mostZ - leastZ) / (mostWY - leastWY);
-	}
-
-	eye->setInverseProject(mostZ,leastW,yzRange,ywRange);
-
-	//-----------------------------------
-	// update the cloud layer
-	if (Terrain::cloudLayer)
-	{
-		ZoneScopedN("Terrain::geometry cloudUpdate");
-		Terrain::cloudLayer->update();
-	}
 }
 
 //---------------------------------------------------------------------------

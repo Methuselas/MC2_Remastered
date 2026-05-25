@@ -19,7 +19,7 @@ extern bool useShadows;
 extern bool drawOldWay;
 extern bool useFog;
 
-MidLevelRenderer::MLRClipper * theClipper = NULL;
+extern MidLevelRenderer::MLRClipper * theClipper;	// NS3: def in mclib/bdactor.cpp
 
 ////////////////////////////////////////////////
 SimpleCamera::SimpleCamera()

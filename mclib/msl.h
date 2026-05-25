@@ -253,6 +253,7 @@ class TG_MultiShape
 	friend class TG_TypeShape;
 	friend class TG_AnimateShape;
 	friend class GpuStaticPropBatcher;
+	friend class GpuMechBatcher;
 	
 	//-------------
 	//Data Members
@@ -265,6 +266,24 @@ class TG_MultiShape
 		bool					isHudElement;
 		BYTE					alphaValue;				//To fade shapes in and out
 		bool					isClamped;				//So I can force a shape to clamp its textures
+
+		// Slice 2 (object-offload) — Stage 2.D.2 fix: GPU light-data index
+		// cached at update() time while worldLights[0]->aRGB is per-actor-correct.
+		// Read by submitMultiShape() during renderLists() instead of calling
+		// GatherGpuObjectLightDataOnly() there (at which point worldLights[0]->aRGB
+		// has been overwritten by later actors). UINT32_MAX = not yet cached (first
+		// frame or non-GPU path); submitMultiShape falls back to gather-now if UINT32_MAX.
+		uint32_t				cachedGpuLightIndex_;
+
+		// 2026-05-05: frame-stamp for cull-aware static replay.
+		// Set in CacheGpuLightData() / ResubmitCachedGpuLightData() to the
+		// current g_mc2FrameCounter value. Registry flush() compares this
+		// against the current frame and SKIPS the markVisible draw when stale
+		// — this happens when the actor went offscreen, the cull skipped its
+		// update(), and its cachedGpuLightIndex_ is now pointing into a slot
+		// whose content was filled by a different actor this frame.
+		// Sentinel UINT32_MAX = never cached.
+		uint32_t				cachedFrame_;
 
 	//-----------------
 	//Member Functions
@@ -282,12 +301,15 @@ class TG_MultiShape
 
 			frameNum = 0.0f;
 			d_useShadows = true;
-			
+
 			isHudElement = false;
-			
+
 			alphaValue = 0xff;
-			
+
 			isClamped = false;
+
+			cachedGpuLightIndex_ = 0xFFFFFFFFu;  // sentinel: not yet cached
+			cachedFrame_         = 0xFFFFFFFFu;  // sentinel: never refreshed
 		}
 		
 		TG_MultiShape (void)
@@ -302,11 +324,49 @@ class TG_MultiShape
 			destroy();
 		}
 
+		// Stage 3.C: propagate Touch() to all shape-node leaves.
+		void Touch();
+
+		// Stage 3.C: expose the per-frame light-data UBO slot index for
+		// GpuStaticPropRegistry::flush() to patch into cached recipe copies.
+		// CacheGpuLightData() (called from TreeAppearance::render() each frame
+		// in the static path) keeps this fresh. Returns UINT32_MAX if
+		// CacheGpuLightData() has not yet been called (first frame or non-GPU
+		// path) — render() guards against emitting a static instance with
+		// UINT32_MAX by falling through to the dynamic submit path.
+		uint32_t getCachedGpuLightIndex() const { return cachedGpuLightIndex_; }
+		uint32_t getCachedFrame()        const { return cachedFrame_; }
+		void     setCachedFrame(uint32_t f)    { cachedFrame_ = f; }
+
 		//This function sets the list of lights used by the TransformShape function
 		//to light the shape.
 		//Function returns 0 if lightList entries are all OK.  -1 otherwise.
 		//
 		long SetLightList (TG_LightPtr *lightList, DWORD nLights);
+
+		// Slice 2 (object-offload) — Stage 2.D.2 fix: cache GPU light-data index
+		// while worldLights[0]->aRGB is per-actor-correct (during update()).
+		// Must be called AFTER SetLightList and BEFORE other actors overwrite
+		// worldLights[0]->aRGB. submitMultiShape() reads cachedGpuLightIndex_
+		// instead of calling GatherGpuObjectLightDataOnly() at render time.
+		// Only call when g_useGpuObjects is true (no-op guard inside).
+		void CacheGpuLightData();
+
+		// Stage 3.C: re-submit cached light data each frame on update()-skipped frames.
+		// Finds the first SHAPE_NODE leaf and calls ResubmitCachedLightData() on it,
+		// refreshing cachedGpuLightIndex_ without touching s_listOfLights.
+		// Precondition: at least one update() must have run (lightData_ populated).
+		// IsStaticNow() guarantees this — registration requires a prior full-bake.
+		void ResubmitCachedGpuLightData();
+
+		// [LIGHTBAKE v1] peekCachedLeafLightData: after CacheGpuLightData()
+		// has run this frame, returns the first SHAPE_NODE leaf's durable
+		// post-decompose lightData_ (TG_Shape member; TG_MultiShape is a
+		// friend) or nullptr — the bit-identity-preserving bake source.
+		// EmitBakedGpuLightData: re-emit a baked constant into a per-frame
+		// slot WITHOUT GatherLights/decompose/template recompute.
+		const TG_HWLightsData* peekCachedLeafLightData();
+		void EmitBakedGpuLightData(int32_t recipeIndex, const TG_HWLightsData& baked);
 
 		//This function sets the fog values for the shape.  Straight fog right now.
 		void SetFogRGB (DWORD fRGB);
@@ -319,6 +379,35 @@ class TG_MultiShape
 		//Function returns 1 is all vertex screen positions are on screen.
 		// NOTE:  THIS IS NOT A RIGOROUS CLIP!!!!!!!!!
 		long TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot);
+
+		// Slice 2 (object-offload) — Stage 2.B: positions-only variant.
+		// Same body as TransformMultiShape (heirarchy animation, shapeToClip
+		// computation, TG_Shape::s_* state setup all run unchanged) but routes
+		// the per-leaf transform call to TG_Shape::MultiTransformShape_PositionsOnly,
+		// which strips the per-vertex / per-face lighting kernels. Slice 1
+		// batcher draws the actor with GPU vertex lighting (Stage 2.C wires
+		// calc_light() in lighting.hglsl). Called from
+		// BldgAppearance/TreeAppearance/GenericAppearance::update inside the
+		// existing inView||g_useGpuStaticProps cull gate, gated on
+		// g_useGpuObjects && !needsFullBakeNextFrame &&
+		// GpuStaticPropBatcher::isMultiShapeEligibleForGpuObjects(this).
+		long TransformMultiShape_PositionsOnly (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot);
+
+		// Track B (widen registry): recipe-build-only variant.
+		// Runs the hierarchy traversal to populate listOfShapes[i].shapeToWorld
+		// per leaf without allocating from TGL vertex/face/color pools and without
+		// requiring TG_Shape::s_cameraOrigin to be non-null. Safe to call during
+		// Mission::init before the camera is initialized.
+		long TransformMultiShape_BuildRecipe (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot);
+
+		// Slice D-leaf-skip-v2 (2026-05-09): runtime alias of _BuildRecipe for the
+		// GPU mech body callsite. Reuses s_buildRecipeOnly mechanism to skip
+		// per-leaf dispatch + MultiTransformShadows; preserves the OUTER
+		// hierarchy walk that populates listOfShapes[i].shapeToWorld (which
+		// the GPU mech batcher's submitActor and getNodePosition read).
+		// Aliased rather than reusing _BuildRecipe directly for self-documenting
+		// use at the mech runtime callsite vs the static-prop registry init use.
+		long TransformMultiShape_HierarchyOnly (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot);
 
 		//This function rotates the heirarchy from this node down.  Used for torso twists, arms, etc.
 		// SHould only be called once this way.  This way is DAMNED SLOW!!!  STRICMP!  IT returns the node num
@@ -342,6 +431,14 @@ class TG_MultiShape
 		long GetNumShapes (void)
 		{
 			return numTG_Shapes;
+		}
+
+		// Task 5 (Track B): const access to per-leaf shape records for
+		// mission-load bulk registration in BldgAppearance/TreeAppearance.
+		const TG_ShapeRec* GetShapeRec (int i) const
+		{
+			if (i < 0 || i >= numTG_Shapes) return nullptr;
+			return &listOfShapes[i];
 		}
 
 		void ScaleShape (float scaleFactor)

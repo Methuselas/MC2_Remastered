@@ -1,0 +1,37 @@
+// T1.16 — (E)-owned spotlight slot tagging registry.
+//
+// Single-source tag/untag set for the per-slot per-frame diagnostic that
+// converts T1.15's population-level "86-88% rejection" stat into per-slot
+// ground truth. Tagged at the three lazy-init sites (bldg/mech/gv) and
+// untagged at the matching destroy sites. Camera::updateLights consults
+// is_e_slot() inside the POINT/SPOT branch to emit only on (E)-owned slots.
+//
+// Env-gated: MC2_SPOT_DIAG=1 enables the probe; default-off zero runtime
+// cost. See Debug Instrumentation Rule (demote-not-delete).
+
+#pragma once
+#include <cstdint>
+
+namespace mc2_spotlight_diag {
+
+enum SourceClass : uint8_t { Bldg = 0, Mech = 1, Gv = 2 };
+
+// Tag a slot when (E) lazy-init registers a light. Idempotent; safe
+// across duplicate calls (per-mission lifecycle should not re-register,
+// but the set is hash-checked to be safe).
+void tag_slot(long slot, SourceClass src);
+
+// Untag on destroy/teardown.
+void untag_slot(long slot);
+
+// Membership probe — used by Camera::updateLights.
+// outSrc may be nullptr.
+bool is_e_slot(long slot, SourceClass* outSrc);
+
+// Clear all tags (e.g. mission boundary).
+void reset();
+
+// Whether MC2_SPOT_DIAG env is set. Cached at startup.
+bool is_enabled();
+
+} // namespace mc2_spotlight_diag

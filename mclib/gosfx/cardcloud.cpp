@@ -5,6 +5,10 @@
 #include"gosfxheaders.hpp"
 #include<mlr/mlrcardcloud.hpp>
 
+// B1 Stage 2' C11: subclass-Start routing into the GPU particle pipeline.
+#include"particles/batcher.h"
+#include"particles/spawn.h"
+
 //------------------------------------------------------------------------------
 //
 gosFX::CardCloud__Specification::CardCloud__Specification(
@@ -485,6 +489,23 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 	Check_Object(this);
 	Check_Object(info);
 
+	// GPU render path (Stage 2'): re-emit current cloud to the batcher on
+	// every Draw() call. This matches the legacy path which submits card
+	// geometry to MLR render lists each frame. SpawnCardCloud samples spec
+	// curves at parent_age=0.5 so positions are consistent frame-to-frame
+	// (per-frame CPU-animated positions are a B2 polish item).
+	// SpinningCloud::Draw propagates up the chain for EffectCloud children;
+	// it does not render card geometry.
+	//
+	// NOTE: GPU spawn moved from Start() to here. Start()-based emission only
+	// filled the batcher for one frame (until the first Flush()), leaving the
+	// batcher empty for all subsequent frames.
+	if (mc2::particles::Batcher::is_enabled()) {
+		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed);
+		SpinningCloud::Draw(info);
+		return;
+	}
+
 	//
 	//---------------------------------------------------------
 	// If we have active particles, set up the draw information
@@ -882,4 +903,27 @@ void
 	gosFX::CardCloud::TestInstance() const
 {
 	Verify(IsDerivedFrom(DefaultData));
+}
+
+//------------------------------------------------------------------------------
+// B1 Stage 2' C11 — route to GPU particle pipeline when env-gated on.
+// See pointcloud.cpp Start for the full rationale; same pattern as
+// ShardCloud (C5/C8). C10 diagnostic showed CardCloud is 45.9% of stock
+// Effect::Start calls in mc2_10 — the dominant per-class spawn type.
+//
+void
+	gosFX::CardCloud::Start(ExecuteInfo *info)
+{
+	Check_Object(this);
+	Check_Pointer(info);
+
+	// C9 fix: ALWAYS call SpinningCloud::Start (which resolves to the
+	// inherited ParticleCloud::Start) so per-particle structures are
+	// initialized. Skipping the parent under env-on corrupts heap state
+	// because the destructor and legacy Execute walk garbage memory.
+	SpinningCloud::Start(info);
+
+	// GPU spawn moved to Draw() for per-frame emission. Start()-based spawning
+	// only filled the batcher for a single frame; Draw() re-emits each frame
+	// while the effect is alive, matching the legacy MLR submission cadence.
 }

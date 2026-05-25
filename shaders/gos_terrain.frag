@@ -5,6 +5,7 @@
 #include <include/shadow.hglsl>
 #include <include/noise.hglsl>
 #include <include/render_contract.hglsl>
+#include <include/terrain_depth_bias.hglsl>  // single-sourced reverse-Z OVERLAY_DEPTH_BIAS (K7)
 
 // [RENDER_CONTRACT]
 //   Pass:           TerrainBase
@@ -84,10 +85,20 @@ uniform float atlasCementWorldUnitsPerTile;  // = Terrain::worldUnitsPerVertex (
 flat in uint RecordIdx;
 
 struct TerrainQuadThinRecord_Frag {
-    uvec4 control;    // x=recipeIdx, y=terrainHandle, z=flags, w=_pad0(cement word)
+    uvec4 control;       // x=recipeIdx, y=terrainHandle, z=flags, w=cementWord
     uvec4 lightRGBs;
+    // Fix B 2026-05-14: clipPos[4] declared here PURELY for std430 stride
+    // lockstep with the four declarations of this struct.  The frag does
+    // NOT read clipPos — that's the VS's job — but the struct size must
+    // match or thinRecsFrag[i > 0] will read the wrong bytes for cement
+    // layer-index decoding.  Silent-break risk #1 per adversarial review.
+    vec4  clipPos[4];
 };
-layout(std430, binding = 2) readonly buffer ThinRecordBufFrag {
+// AMD L1-coherency: mirror the coherent qualifier on the compute writer
+// (gpu_driven_terrain_solid.comp:118) and VS reader (gos_terrain_thin.vert:9).
+// The frag reads `_pad0` (cement layer index) which lives in bytes 12-15 of
+// the thin record; coherent here keeps the read symmetric with VS.
+layout(std430, binding = 2) coherent readonly buffer ThinRecordBufFrag {
     TerrainQuadThinRecord_Frag thinRecsFrag[];
 };
 
@@ -100,6 +111,12 @@ uniform PREC vec4 terrainViewDir;
 uniform PREC vec4 tessDebug;  // x=mode: 0=off, 1=normals, 2=worldPos
 uniform float time;           // elapsed seconds (for cloud shadow animation)
 uniform PREC float mapHalfExtent;  // half side length of playable map (0 = disabled)
+
+// C1 tactical mission-gated material profile (see mclib/terrain.h for the
+// C++ enum). Default 0 = LEGACY = exact pre-C1 classifier behavior.
+// Non-zero values widen specific classifier windows for known-bad missions
+// only. Disposable; removed when real material-palette architecture lands.
+uniform int g_terrainMaterialProfile;
 
 // --- Distance LOD thresholds (tunable, in MC2 world units) ---
 // 1 terrain tile ≈ 128 world units
@@ -147,7 +164,11 @@ PREC vec3 rgb2hsv(PREC vec3 c) {
     return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
 }
 
-// MC2 terrain palette — tuned from actual screenshot analysis
+// MC2 terrain palette — tuned from actual screenshot analysis.
+// C1 tactical: dirt's saturation gate is profile-aware so mc2_24 sand
+// (which spans s ≈ 0.20–0.40) routes uniformly into slot 2 (dirt) rather
+// than splitting between rock (low-sat) and dirt (high-sat). LEGACY
+// profile keeps the pre-C1 thresholds verbatim.
 PREC vec4 getColorWeights(PREC vec3 color) {
     PREC vec3 hsv = rgb2hsv(color);
     PREC float h = hsv.x;
@@ -156,12 +177,22 @@ PREC vec4 getColorWeights(PREC vec3 color) {
 
     PREC vec4 w = vec4(0.0);
 
+    // Per-profile dirt-saturation window. Legacy ramps 1.0 above s≥0.32.
+    // SAND_M24 ramps to 1.0 by s≥0.20 so washed-out mc2_24 sand pixels
+    // also classify as dirt instead of rock-leftover.
+    PREC float dirtSatLo = 0.10;
+    PREC float dirtSatHi = 0.32;
+    if (g_terrainMaterialProfile == 1) {  // TERRAIN_MAT_PROFILE_SAND_M24
+        dirtSatLo = 0.04;
+        dirtSatHi = 0.20;
+    }
+
     // Green → grass, brown → dirt, everything else → rock.
     // Concrete weight comes only from TerrainType (cement vertices) later in main();
     // never from colormap, so snow/overlay-whitened tiles fall through to rock.
-    w.y = smoothstep(0.10, 0.20, h) * smoothstep(0.10, 0.32, s);   // green
-    w.z = smoothstep(0.17, 0.11, h) * smoothstep(0.10, 0.32, s);   // brown
-    w.x = 1.0 - max(w.y, w.z);                                     // everything else → rock
+    w.y = smoothstep(0.10, 0.20, h) * smoothstep(0.10, 0.32, s);          // green (grass) — unchanged
+    w.z = smoothstep(0.17, 0.11, h) * smoothstep(dirtSatLo, dirtSatHi, s); // brown (dirt) — profile-aware
+    w.x = 1.0 - max(w.y, w.z);                                             // everything else → rock
     w.w = 0.0;
 
     PREC float isWater = smoothstep(0.35, 0.45, h);
@@ -248,6 +279,56 @@ void main(void)
     if (tessDebug.x < -0.5) {
         gl_FragDepth = gl_FragCoord.z;
         FragColor = vec4(1.0, 0.0, 0.0, 1.0);  // SOLID RED = tess frag running
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
+#endif
+        return;
+    }
+
+    // Debug mode 8 (Alt+1): cement-word diagnostic visualization.
+    // Reads per-quad cementWord BEFORE the override branch runs, so we can see
+    // exactly what reaches the fragment shader independent of useCementAtlas
+    // gating or downstream UV/tex3 math.  Channels are independent answers:
+    //   R = 1.0 if CEMENT_LAYER_VALID bit set (the validity flag arrived intact)
+    //   G = (cementWord & 0xFF) / 255  (low byte of layer index — modulation
+    //                                   confirms the index varies per quad)
+    //   B = 1.0 if useCementAtlas == 0 (cement uniform plumbing inactive —
+    //                                   tells "uniform off" from "word zero")
+    // Triage at a glance:
+    //   black on cement pads      → cementWord = 0 reaching frag (upstream)
+    //   solid blue                → useCementAtlas uniform not set (bridge)
+    //   red(+green) on pads only  → pipeline OK, bug is downstream (UV/tex3)
+    if (tessDebug.x > 7.5 && tessDebug.x < 8.5) {
+        uint cw = thinRecsFrag[RecordIdx].control.w;
+        float dR = ((cw & 0x80000000u) != 0u) ? 1.0 : 0.0;
+        float dG = float(cw & 0xFFu) / 255.0;
+        float dB = (useCementAtlas == 0) ? 1.0 : 0.0;
+        gl_FragDepth = gl_FragCoord.z;
+        FragColor = vec4(dR, dG, dB, 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
+#endif
+        return;
+    }
+
+    // Debug mode 9: thin-record control-channel diagnostic.  Complement to
+    // mode 8 — probes whether the compute shader's *other* writes to the
+    // thin record reach the frag at all.  If mode 8 is black but mode 9
+    // modulates, the cementWord write is the specific failure.  If both are
+    // black, the entire thin-record handoff (compute → ring slot → frag SSBO
+    // binding) is broken on this draw.
+    //   R = (recipeIdx & 0xFF) / 255  — compute writes recipeIdx unconditionally
+    //   G = (flags     & 0xFF) / 255  — compute writes flags unconditionally
+    //   B = (terrainHandle & 0xFF)/255 — compute writes terrainHandle (per-quad)
+    // Any non-zero channel = compute is alive and the thin-record buffer is
+    // the right buffer.  All-zero = wrong buffer or compute not running.
+    if (tessDebug.x > 8.5 && tessDebug.x < 9.5) {
+        uvec4 c = thinRecsFrag[RecordIdx].control;
+        float dR = float(c.x & 0xFFu) / 255.0;
+        float dG = float(c.z & 0xFFu) / 255.0;
+        float dB = float(c.y & 0xFFu) / 255.0;
+        gl_FragDepth = gl_FragCoord.z;
+        FragColor = vec4(dR, dG, dB, 1.0);
 #ifdef MRT_ENABLED
         GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
 #endif
@@ -684,10 +765,22 @@ void main(void)
     GBuffer1 = rc_gbuffer1_legacyTerrainMaterialAlpha(N, materialAlpha);
 #endif
 
-    // Write depth for overlay/object depth testing.
-    // Use max(UndisplacedDepth, gl_FragCoord.z) so:
-    //  - Upward-displaced terrain: writes UndisplacedDepth (deeper = original surface), overlays pass.
-    //  - Downward-displaced terrain: writes actual rasterized depth (deeper = no self-occlusion dark patches).
-    // Overlays at the undisplaced surface are always shallower than max(), so they always pass GL_LEQUAL.
-    gl_FragDepth = clamp(max(UndisplacedDepth, gl_FragCoord.z) + 0.0005, 0.0, 1.0);
+    // Write depth for overlay/object depth testing. REVERSE-Z / GL_GEQUAL
+    // regime (glClipControl ZERO_TO_ONE, glClearDepth(0); near->1, far->0;
+    // LARGER NDC z = closer to camera = wins GEQUAL).
+    //
+    // Must match the thin-VS convention: gos_terrain_thin.vert applies
+    // TERRAIN_DEPTH_FUDGE (-0.002) pre-divide in clip space to push terrain
+    // FARTHER from camera, so both overlays (at +OVERLAY_DEPTH_BIAS) and
+    // objects at ground level (at ~0 bias) WIN the GEQUAL tie. This fragment
+    // override replicates that same -0.002 nudge via gl_FragDepth, using
+    // min(undisplaced, displaced) to ensure upward-displaced terrain does not
+    // occlude overlays drawn at the undisplaced surface.
+    //
+    // REGRESSION NOTE: using +OVERLAY_DEPTH_BIAS (+0.0005) here instead of
+    // TERRAIN_DEPTH_FUDGE (-0.002) makes terrain appear CLOSER, causing
+    // objects at ground level (depth ~D_terrain) to fail GEQUAL against the
+    // written D_terrain+0.0005 -- the "sinking vehicles / overlay over buildings"
+    // regression. TERRAIN_DEPTH_FUDGE is the correct constant here.
+    gl_FragDepth = clamp(min(UndisplacedDepth, gl_FragCoord.z) + TERRAIN_DEPTH_FUDGE, 0.0, 1.0);
 }

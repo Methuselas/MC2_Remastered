@@ -44,9 +44,6 @@
 #include"dvertex.h"
 #endif
 
-#ifndef CLOUDS_H
-#include"clouds.h"
-#endif
 
 //---------------------------------------------------------------------------
 // Macro Definitions
@@ -57,6 +54,19 @@
 #define	MAPCELL_DIM				3
 #define	MAX_MAP_CELL_WIDTH		720
 #define TACMAP_SIZE				128.f
+
+//---------------------------------------------------------------------------
+// Tactical mission-gated material profile (C1 — disposable).
+// When the real material-palette architecture lands (post-Slice 0 design),
+// this enum + the per-profile shader branches go away in one PR. Until
+// then, mc2_24 sand renders are improved by routing low-saturation sand
+// pixels into slot 2 (dirt) consistently — see notes in
+// shaders/include/terrain_common.hglsl and shaders/gos_terrain.frag.
+enum TerrainMaterialProfile {
+	TERRAIN_MAT_PROFILE_LEGACY   = 0,
+	TERRAIN_MAT_PROFILE_SAND_M24 = 1,
+};
+extern int g_terrainMaterialProfile;
 
 //------------------------------------------------
 // Put back in Move code when Glenn moves it over.
@@ -176,8 +186,6 @@ class Terrain
 		static bool								recalcShadows;				//Should we recalc the shadow map!
 		static bool								recalcLight;				//Should we recalc the light data.
 
-		static Clouds							*cloudLayer;
-
 	//Member Functions
 	//-----------------
 	public:
@@ -234,6 +242,14 @@ class Terrain
 		static bool IsValidTerrainPosition (const Stuff::Vector3D pos);
 		static bool IsEditorSelectTerrainPosition (const Stuff::Vector3D pos);
 		static bool IsGameSelectTerrainPosition (const Stuff::Vector3D pos);
+
+		// FREE helper: world (raw MC2: x=east, y=north) -> terrain block index.
+		// Replicates GameObject::getBlockAndVertexNumber's block math EXACTLY
+		// (gameobj.cpp). Used ONLY by the two static-prop substrate-record
+		// producers to populate GpuActorRecord::blockIdx for the C1b block
+		// rollup. Does NOT compute vertexNum and is NOT a substitute for
+		// getBlockAndVertexNumber (which has ~12 collision-critical callers).
+		static long worldToBlockIdx (float wx, float wy);
 
 		long save( PacketFile* fileName, int whichPacket, bool QuickSave = false);
 		bool save( FitIniFile* fitFile ); // save stuff like water info
@@ -322,7 +338,18 @@ class Terrain
 		}
 		
 		void setObjVertexActive (long vertexNum, bool active);
-		
+
+		// Public read accessor for the cull active-set (Approach A: the slim
+		// loop's dilated visible-cull superset).  Static because both
+		// objVertexActive and realVerticesMapSide are class statics; bounds-
+		// checked so an out-of-range vn is a clean false, never an OOB read.
+		static bool getObjVertexActive (long vertexNum)
+		{
+			return (vertexNum >= 0 &&
+			        vertexNum < (realVerticesMapSide * realVerticesMapSide))
+			       ? objVertexActive[vertexNum] : false;
+		}
+
 		void clearObjVerticesActive (void);
 
 		void resetVisibleVertices(long maxVisibleVertices);

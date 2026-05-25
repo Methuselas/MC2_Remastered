@@ -1,0 +1,25 @@
+# F1 unified-projection retirement allowlist.
+# Format: substring patterns to filter from grep hits.
+# Each entry must have a documented reason in the comment-line above it.
+
+# MLR retained per spec mitigation (c) -- mlrclipper.cpp:206-209,305,321,347
+# reads cameraToClip(2,2)/(3,2) for legacy gosFX rendering; dev-override only.
+mclib/mlr/
+
+# Shadow shaders legitimately use bare 'mvp' (depth-only pass with own MVP).
+shaders/shadow_terrain.vert
+
+# HUD shaders legitimately use bare 'mvp' (2D ortho overlay, no projection
+# round-trip; HUD allowlist per spec §6.2.1).
+shaders/gos_text.vert
+shaders/gos_vertex.vert
+shaders/gos_vertex_lighted.vert
+shaders/gos_tex_vertex.vert
+
+# Shadow CPU mvp lookup (gameos_graphics.cpp:1795 area; uses its own depth-
+# only matrix, not the F1 unified projection).
+shadowLocs_.mvp
+
+# Pre-existing gos_terrain.vert uses bare 'mvp' for a draw path orthogonal
+# to F1 (cleanup tracked separately).
+shaders/gos_terrain.vert

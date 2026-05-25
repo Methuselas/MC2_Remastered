@@ -65,6 +65,14 @@ namespace MidLevelRenderer {
 		unsigned
 			LoadImages();
 
+		// Force a full texture-load scan regardless of the unLoadedImages guard.
+		// Used by the GPU particle batcher: gosFX textures may be added to the
+		// pool after the normal actor-init LoadImages() window, so unLoadedImages
+		// can be false even when pool entries still have mcTextureNodeIndex=0xffffffff.
+		unsigned
+			ForceLoadImages()
+				{ Check_Object(this); unLoadedImages = true; return LoadImages(); }
+
 		MLRTexture*
 			operator() (const char *name, int=0);
 

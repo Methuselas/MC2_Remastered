@@ -1,6 +1,10 @@
 #include"gosfxheaders.hpp"
 #include<mlr/mlrpointcloud.hpp>
 
+// B1 Stage 2' C8: subclass-Start routing into the GPU particle pipeline.
+#include"particles/batcher.h"
+#include"particles/spawn.h"
+
 //==========================================================================//
 // File:	 gosFX_PointCloud.cpp											//
 // Contents: Base gosFX::PointCloud Component								//
@@ -461,6 +465,22 @@ void gosFX::PointCloud::Draw(DrawInfo *info)
 	Check_Object(this);
 	Check_Object(info);
 
+	// GPU render path (Stage 2'): re-emit current cloud to the batcher on
+	// every Draw() call. This matches the legacy path which submits point
+	// geometry to MLR render lists each frame. SpawnPoint samples spec
+	// curves at parent_age=0.5 so positions are consistent frame-to-frame.
+	// ParticleCloud::Draw propagates up the chain for EffectCloud children;
+	// it does not render point geometry.
+	//
+	// NOTE: GPU spawn moved from Start() to here. Start()-based emission only
+	// filled the batcher for one frame (until the first Flush()), leaving the
+	// batcher empty for all subsequent frames.
+	if (mc2::particles::Batcher::is_enabled()) {
+		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed);
+		ParticleCloud::Draw(info);
+		return;
+	}
+
 	if (m_activeParticleCount)
 	{
 		MidLevelRenderer::DrawEffectInformation dInfo;
@@ -484,4 +504,36 @@ void
 	gosFX::PointCloud::TestInstance() const
 {
 	Verify(IsDerivedFrom(DefaultData));
+}
+
+//------------------------------------------------------------------------------
+// B1 Stage 2' C8 — route to GPU particle pipeline when env-gated on.
+// Subclass-Start routing catches BOTH top-level direct spawns AND
+// children-inside-composites (EffectCloud iterates its children and calls
+// child Start which lands here). After ParticleCloud::Start has resolved
+// m_seed / m_age / m_localToWorld we hand off to mc2::particles::Spawn
+// and skip the legacy newbie-accumulator path; the GPU pipeline owns
+// rendering. Lifecycle (Execute / IsExecuted / HasFinished / Kill)
+// remains on this subclass.
+//
+void
+	gosFX::PointCloud::Start(ExecuteInfo *info)
+{
+	Check_Object(this);
+	Check_Pointer(info);
+
+	// C9 fix: ALWAYS call ParticleCloud::Start to initialize per-particle
+	// structures (m_birthAccumulator, m_activeParticleCount, etc.) so the
+	// destructor and the legacy Execute()/AnimateParticle() per-frame loop
+	// walk valid state. C8 skipped this under env-on by calling only
+	// Effect::Start; subsequent reads of garbage fields and writes to
+	// uninitialized offsets corrupted the heap adjacent to mcTextureManager
+	// state, ultimately crashing in MC_TextureNode::get_gosTextureHandle at
+	// frame ~3542. Under env-on we ADDITIONALLY emit a particle record into
+	// the SSBO batcher; legacy ParticleCloud per-frame work continues
+	// (B2 polish will skip Execute when env-on). Legacy ::Draw is A2-gated
+	// at the MLR work-leaves so it no-ops.
+	ParticleCloud::Start(info);
+
+	// GPU spawn moved to Draw() so it fires every frame (not just once at Start).
 }

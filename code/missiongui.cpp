@@ -28,6 +28,18 @@
 #include"missiongui.h"
 #endif
 
+// M1.6 + M2.6: IsStaticPropPickEnabled, lookupAtPixel, setLastGameplayPick,
+// clearLastGameplayPick, getLastGameplayPick, IsObjectIdBufferEnabled,
+// IsMechPickEnabled, IsMechPickDebugEnabled, IsMechPickPierceFogEnabled.
+#include "../RenderWorld/RenderWorld.h"
+#include "gameplay_pick.h"  // M2-pre: tryGameplayPick spine + GameplayPickRequest
+#include "../GameAdapters/MechRenderAdapter.h"  // M2.6: findMechByHandle (forward-decls BattleMech)
+#ifdef MC2_IMGUI
+#include "../GuiRuntime/EditorInspector.h"  // Task 7: Ctrl+Shift+LMB inspector bridge
+#include "../GameAdapters/StaticPropRenderAdapter.h"  // inspector: getRecipeShapeName
+#include "imgui.h"
+#endif
+
 #ifndef OBJMGR_H
 #include"objmgr.h"
 #endif
@@ -102,6 +114,8 @@
 
 #include"gvehicl.h" // remove
 #include"projectz_trace.h"
+#include "gos_visual_diff.h"  // Stage 2.E: gate edge-scroll when capture enabled
+#include "gos_profiler.h"     // diag: MIF.* Tracy zones for 20ms spike bisection
 
 	static const char* terrainStr[NUM_TERRAIN_TYPES] = {
 			"Blue Water",	//MC_BLUEWATER_TYPE
@@ -174,7 +188,6 @@ extern bool drawTerrainOverlays;
 extern bool renderObjects;
 extern bool drawTerrainGrid;
 extern bool drawLOSGrid;
-extern bool useClouds;
 extern bool useFog;
 extern bool useWaterInterestTexture;
 extern bool useShadows;
@@ -211,7 +224,7 @@ MissionInterfaceManager::Command		MissionInterfaceManager::commands[MAX_COMMAND]
 		KEY_HOME,				-1,	-1,						true,		&MissionInterfaceManager::cameraNormal,0, -1,
 		KEY_F2,				-1,		-1,					true,		&MissionInterfaceManager::cameraDefault,0, -1,
 		KEY_F3,				-1,		-1,					true,		&MissionInterfaceManager::cameraMaxIn,0, -1,
-		KEY_F4,				-1,		-1,					true,		&MissionInterfaceManager::cameraTight,0, -1,
+		KEY_F4,				-1,		-1,					true,		&MissionInterfaceManager::cameraMaxOut,0, -1,
 		KEY_F5,				-1,		-1,					true,		&MissionInterfaceManager::cameraFour,0, -1,
 		KEY_F2 | CTRL,		-1,		-1,					true,		&MissionInterfaceManager::cameraAssign0,0, -1,
 		KEY_F3 | CTRL, 		-1,		-1,					true,		&MissionInterfaceManager::cameraAssign1,0, -1,
@@ -248,7 +261,6 @@ MissionInterfaceManager::Command		MissionInterfaceManager::commands[MAX_COMMAND]
 		KEY_B | CTRL | ALT, -1,	-1,						true,		&MissionInterfaceManager::drawBuildings, 0, -1,
 		CTRL | ALT | KEY_G, -1,	-1,						true,		&MissionInterfaceManager::showGrid, 0, -1,
 		CTRL | ALT | KEY_Q, -1,	-1,						true,		&MissionInterfaceManager::recalcLights, 0, -1, 
-		CTRL | ALT | KEY_C, -1,	-1,						true,		&MissionInterfaceManager::drawClouds, 0, -1,
 		CTRL | ALT | KEY_F, -1,	-1,						true,		&MissionInterfaceManager::drawFog, 0, -1,
 		CTRL | ALT | KEY_P, -1,	-1,						true,		&MissionInterfaceManager::usePerspective, 0, -1,
 		CTRL | ALT | KEY_S, -1,	-1,						true,		&MissionInterfaceManager::drawTGLShapes, 0, -1,
@@ -319,8 +331,14 @@ void MissionInterfaceManager::init (void)
 	realRotation = 0.0;
 	dragStart.Zero();
 	dragEnd.Zero();
-	isDragging = FALSE;	
+	isDragging = FALSE;
 	terrainLineChanged = 0;
+
+	// VPL-retirement Step 3 3b: invalidate the per-frame inverseProject cache.
+	prevMouseX = -2147483647;
+	prevMouseY = -2147483647;
+	cachedWPos.Zero();
+	inverseProjectCacheValid = false;
 	
 	for (long i=0;i<MAX_TEAMS;i++)
 	{
@@ -737,30 +755,63 @@ void MissionInterfaceManager::update (void)
 	Stuff::Vector2DOf<long>	mouseXY;
 	mouseXY.x = mouseX;
 	mouseXY.y = mouseY;
-	eye->inverseProject(mouseXY, wPos);
+
+	// VPL-retirement Step 3 3b: mandatory per-frame delta-cache. This is the
+	// SOLE production Camera::inverseProject caller and runs every frame; the
+	// repointed inverseProject (Step 3 3a) walks every quad. Skip the walk
+	// when neither the cursor pixel (exact, >=1px, no tolerance) nor the
+	// camera world->clip matrix changed since the last real projection.
+	const Stuff::Matrix4D& curW2C = eye->getWorldToClip();
+	const bool mouseSame = (mouseX == prevMouseX) && (mouseY == prevMouseY);
+	const bool camSame   = inverseProjectCacheValid &&
+		(memcmp(&cachedWorldToClip, &curW2C, sizeof(Stuff::Matrix4D)) == 0);
+	if (inverseProjectCacheValid && mouseSame && camSame)
+	{
+		// Cursor and camera both unchanged - reuse the cached world point.
+		wPos = cachedWPos;
+	}
+	else
+	{
+		eye->inverseProject(mouseXY, wPos);
+		prevMouseX = mouseX;
+		prevMouseY = mouseY;
+		cachedWPos = wPos;
+		cachedWorldToClip = curW2C;
+		inverseProjectCacheValid = true;
+	}
 
 	// find out if this position is passable, has line of sight
 	int cellR, cellC;
 	bool passable = 1;
 	bool lineOfSight = 0;
-	if ( Terrain::IsGameSelectTerrainPosition( wPos ) )
 	{
-		land->worldToCell(wPos, cellR, cellC);
-		if (Team::home)	   //May go NULL during multiplayer when a player first dies?
-			lineOfSight = Team::home->teamLineOfSight(wPos,0.0f);
-	}	
+		ZoneScopedN("MIF.LOS");
+		if ( Terrain::IsGameSelectTerrainPosition( wPos ) )
+		{
+			land->worldToCell(wPos, cellR, cellC);
+			if (Team::home)	   //May go NULL during multiplayer when a player first dies?
+				lineOfSight = Team::home->teamLineOfSight(wPos,0.0f);
+		}
+	}
 
 
 	// update buttons and stuff, even if not in region, it draws objectives and stuff
-	controlGui.update( isPaused() && !isPausedWithoutMenu(), lineOfSight );
+	{
+		ZoneScopedN("MIF.ControlGui");
+		controlGui.update( isPaused() && !isPausedWithoutMenu(), lineOfSight );
+	}
 
 	bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
 	bool rightClicked = (!userInput->isLeftDrag() && !userInput->wasRightDrag() && userInput->rightMouseReleased());
 	bool bLeftDouble = userInput->isLeftDoubleClick();
 
 
-	updateTarget(bGui);
+	{
+		ZoneScopedN("MIF.UpdateTarget");
+		updateTarget(bGui);
+	}
 
+	{ ZoneScopedN("MIF.PostTarget");
 	//------------------------------------
 	// Attila (Strategic Commander) Next
 	attilaXAxis 	= userInput->getAttilaXAxis();  
@@ -841,70 +892,81 @@ void MissionInterfaceManager::update (void)
 
 	}
 	
-	if( useLeftRightMouseProfile ) // using AOE control style
 	{
-		if ( WAYPOINT_KEY == -1 )
-			WAYPOINT_KEY = KEY_LCONTROL;
-
-		commandClicked = rightClicked;
-		selectClicked = !bLeftDouble && !lastUpdateDoubleClick && userInput->leftMouseReleased() && !userInput->getKeyDown( KEY_T) && !isDragging;
-		cameraClicked = gos_GetKeyStatus( KEY_LMENU ) == KEY_HELD;
-		if ( moveCameraAround( lineOfSight, passable, ctrlDn, bGui, moverCount, nonMoverCount ) )
+		ZoneScopedN("MIF.InputStyle");
+		if( useLeftRightMouseProfile ) // using AOE control style
 		{
-			bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
-			bool rightClicked = (!userInput->isLeftDrag() && !userInput->wasRightDrag() && userInput->rightMouseReleased());
+			if ( WAYPOINT_KEY == -1 )
+				WAYPOINT_KEY = KEY_LCONTROL;
 
-			// deal with the hot keys
-			update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight );
-
-			return;
-		}
-
-		updateAOEStyle(shiftDn, altDn, ctrlDn, bGui, lineOfSight, passable, moverCount, nonMoverCount);
-		
-
-	}
-	else // using mc1 style
-	{
-		commandClicked = leftClicked;
-		selectClicked = leftClicked && !lastUpdateDoubleClick;
-		cameraClicked = userInput->isRightDrag();
-
-		if ( WAYPOINT_KEY == -1 )
-			WAYPOINT_KEY = KEY_LCONTROL;
-		if ( moveCameraAround( lineOfSight, passable, ctrlDn, bGui, moverCount, nonMoverCount ) )
-		{
-			bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
-			bool rightClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isRightClick());
-
-			// deal with the hot keys
-			update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight );
-			return;
-		}
-
-		updateOldStyle(shiftDn, altDn, ctrlDn, bGui, lineOfSight, passable, moverCount, nonMoverCount);
-	}
-
-	for (int i = 0; i < Team::home->getRosterSize(); i++ )
-	{
-		Mover* pMover = (Mover*)Team::home->getMover( i );
-		MechWarrior* pilot = pMover->getPilot();
-		if ( pilot && pMover->getCommander()->getId() == Commander::home->getId())
-		{
-			GameObject* pTmpTarget = pilot->getCurrentTarget( );
-			if ( pTmpTarget && (i < MAX_ICONS))	//Must check this because old test maps have more then 16 movers on them!!
+			commandClicked = rightClicked;
+			selectClicked = !bLeftDouble && !lastUpdateDoubleClick && userInput->leftMouseReleased() && !userInput->getKeyDown( KEY_T) && !isDragging;
+			cameraClicked = gos_GetKeyStatus( KEY_LMENU ) == KEY_HELD;
+			if ( moveCameraAround( lineOfSight, passable, ctrlDn, bGui, moverCount, nonMoverCount ) )
 			{
-				pTmpTarget->setDrawBars(true);
-				oldTargets[i] = pTmpTarget;
+				bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
+				bool rightClicked = (!userInput->isLeftDrag() && !userInput->wasRightDrag() && userInput->rightMouseReleased());
+
+				// deal with the hot keys
+				update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight );
+
+				return;
+			}
+
+			updateAOEStyle(shiftDn, altDn, ctrlDn, bGui, lineOfSight, passable, moverCount, nonMoverCount);
+
+
+		}
+		else // using mc1 style
+		{
+			commandClicked = leftClicked;
+			selectClicked = leftClicked && !lastUpdateDoubleClick;
+			cameraClicked = userInput->isRightDrag();
+
+			if ( WAYPOINT_KEY == -1 )
+				WAYPOINT_KEY = KEY_LCONTROL;
+			if ( moveCameraAround( lineOfSight, passable, ctrlDn, bGui, moverCount, nonMoverCount ) )
+			{
+				bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
+				bool rightClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isRightClick());
+
+				// deal with the hot keys
+				update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight );
+				return;
+			}
+
+			updateOldStyle(shiftDn, altDn, ctrlDn, bGui, lineOfSight, passable, moverCount, nonMoverCount);
+		}
+	}
+
+	{
+		ZoneScopedN("MIF.DrawBars");
+		for (int i = 0; i < Team::home->getRosterSize(); i++ )
+		{
+			Mover* pMover = (Mover*)Team::home->getMover( i );
+			MechWarrior* pilot = pMover->getPilot();
+			if ( pilot && pMover->getCommander()->getId() == Commander::home->getId())
+			{
+				GameObject* pTmpTarget = pilot->getCurrentTarget( );
+				if ( pTmpTarget && (i < MAX_ICONS))	//Must check this because old test maps have more then 16 movers on them!!
+				{
+					pTmpTarget->setDrawBars(true);
+					oldTargets[i] = pTmpTarget;
+				}
 			}
 		}
 	}
 
-	if ( !bLeftDouble && !( lastUpdateDoubleClick && 
+	} // MIF.PostTarget
+
+	if ( !bLeftDouble && !( lastUpdateDoubleClick &&
 		userInput->getMouseLeftButtonState() == MC2_MOUSE_DOWN ) )// check for the hold )
 		lastUpdateDoubleClick = false;
 
-	updateRollovers();
+	{
+		ZoneScopedN("MIF.Rollovers");
+		updateRollovers();
+	}
 }
 
 void MissionInterfaceManager::updateVTol()
@@ -1285,6 +1347,13 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 	bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick() && !lastUpdateDoubleClick);
 	bool rightClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isRightClick());
 
+	// M1.6 Q6 4-site observable: set to true immediately after each of
+	// the setSelected(true) writer sites this style body owns (Shift+
+	// additive site and plain-LMB-select site). Read at tail by
+	// tryStaticPropPick to short-circuit when the legacy path already
+	// claimed this click. Local scope; no leakage.
+	bool moverSelectedThisFrame = false;
+
 	// deal with the hot keys
 	if ( update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight ) )
 		return;
@@ -1406,10 +1475,18 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 							alreadyThere = true;
 					}
 					
-					if (!alreadyThere && !target->isDisabled())
+					if (!alreadyThere && !target->isDisabled()) {
 						target->setSelected( true );
-					else
+						// M1.6 Q6 site 1: legacy Shift+additive-select on
+						// friendly mover. Sets fallback gate; tail
+						// tryStaticPropPick short-circuits so Section 11
+						// invariant holds (no M1.6 log line in this case).
+						moverSelectedThisFrame = true;
+					} else {
+						// M1.6 Q6 RESOLVED: setSelected(false) toggle-off
+						// site MUST NOT set the gate per spec rationale.
 						target->setSelected( false );
+					}
 				}
 				else if ( controlGui.getRepair() && canRepair( target ) )
 				{
@@ -1430,11 +1507,16 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 						Mover* pMover = (Mover*)pTeam->getMover( i );
 						if (pMover->getCommander()->getId() == Commander::home->getId())
 						{
+							// M1.6 Q6 RESOLVED: clear-others setSelected(false)
+							// loop MUST NOT set the gate.
 							pMover->setSelected( false );
 						}
 					}
-					
+
 					target->setSelected( true );
+					// M1.6 Q6 site 2: legacy plain-LMB-select on friendly
+					// mover. Sets fallback gate.
+					moverSelectedThisFrame = true;
 				}
 				else
 					soundSystem->playDigitalSample( INVALID_GUI );
@@ -1455,8 +1537,118 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 		}
 	}
 
-}	
-void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrlDn, 
+	// Task 7: Ctrl+Shift+LMB inspector pick. Runs before the legacy
+	// gameplay picks so the inspector can claim the click first.
+	// Priority: ImGui window capture > inspector > existing gameplay picks.
+	bool pickedByInspector = false;
+#ifdef MC2_IMGUI
+	if (ctrlDn && shiftDn && leftClicked && !ImGui::GetIO().WantCaptureMouse) {
+		GameplayPickRequest inspReq;
+		inspReq.mouseX               = mouseX;
+		inspReq.mouseY               = mouseY;
+		inspReq.shiftDn              = true;    // shift IS held (ctrl+shift+LMB); required by tryGameplayPick gate
+		inspReq.leftClicked          = true;
+		inspReq.bGui                 = bGui;
+		inspReq.bLeftDouble          = false;
+		inspReq.moverSelectedThisFrame = false; // inspector always attempts the lookup
+		GameplayPickResult inspResult = tryGameplayPick(inspReq);
+		EditorInspector::setPickResult(mouseX, mouseY, inspResult.lookup);
+		if (inspResult.lookup.isValid) {
+			if (inspResult.lookup.kind == RenderWorld::RenderObjectKind::StaticProp) {
+				EditorInspector::StaticPropInspectorData sd;
+				sd.populated   = true;
+				sd.recipeIndex = static_cast<int32_t>(inspResult.lookup.gameObjectId);
+				GameAdapters::StaticProp::getRecipeShapeName(
+				    sd.recipeIndex, sd.shapeName, sizeof(sd.shapeName));
+				sd.materialGpuActive = GameAdapters::StaticProp::isMaterialGpuActive();
+				{
+					RenderCore::MaterialHandle mh;
+					mh.bits = inspResult.lookup.materialHandleBits;
+					sd.materialIdx = mh.index();
+					sd.materialGen = mh.generation();
+				}
+				sd.materialGpuPopulated = GameAdapters::StaticProp::getMaterialGpuData(
+				    inspResult.lookup.materialHandleBits, &sd.materialGpu);
+				EditorInspector::setStaticPropData(sd);
+			} else if (inspResult.lookup.kind == RenderWorld::RenderObjectKind::Mech) {
+				BattleMech* bm = GameAdapters::Mech::findMechByHandle(inspResult.lookup.handle);
+				if (bm) {
+					EditorInspector::MechInspectorData md;
+					md.populated   = true;
+					strncpy_s(md.variantName, sizeof(md.variantName), bm->variantName, _TRUNCATE);
+					strncpy_s(md.longName,    sizeof(md.longName),    bm->longName,    _TRUNCATE);
+					md.chassisClass = static_cast<int>(bm->chassisClass);
+					md.teamId       = bm->getTeamId();
+					md.disabled     = bm->isDisabled();
+					md.destroyed    = bm->isDestroyed();
+					md.crippled     = bm->isCrippled();
+					md.conStat      = bm->conStat;
+					for (int i = 0; i < MAX_MOVER_ARMOR_LOCATIONS; ++i) {
+						md.totalCurArmor += bm->armor[i].curArmor;
+						md.totalMaxArmor += static_cast<float>(bm->armor[i].maxArmor);
+					}
+					for (int i = 0; i < MAX_MOVER_BODY_LOCATIONS; ++i) {
+						md.totalCurStr += bm->body[i].curInternalStructure;
+						md.totalMaxStr += static_cast<float>(bm->body[i].maxInternalStructure);
+					}
+					MechWarriorPtr pilot = bm->getPilot();
+					if (pilot)
+						strncpy_s(md.pilotName, sizeof(md.pilotName), pilot->getName(), _TRUNCATE);
+					EditorInspector::setMechData(md);
+				}
+			}
+		}
+		// IMG-INSPECT-2: terrain CPU fallback when object-ID misses.
+		// Terrain::IsGameSelectTerrainPosition(wPos) is the canonical
+		// "world point is on selectable map terrain" guard (also used
+		// at line ~789 for LOS/cell lookup). If OID buffer is disabled
+		// (MC2_OBJECT_ID_BUFFER=0), inspResult.lookup.isValid is always
+		// false here so terrain wins on any in-map click - expected.
+		bool inspectorConsumed = inspResult.lookup.isValid;
+		if (!inspResult.lookup.isValid && land &&
+				Terrain::IsGameSelectTerrainPosition(wPos)) {
+			EditorInspector::TerrainInspectorData td;
+			td.populated = true;
+			td.worldX    = static_cast<float>(wPos.x);
+			td.worldY    = static_cast<float>(wPos.y);
+			td.worldZ    = static_cast<float>(wPos.z);
+			land->worldToTile(wPos, td.tileRow, td.tileCol);
+			land->worldToCell(wPos, td.cellRow, td.cellCol);
+			EditorInspector::setTerrainData(td);
+			inspectorConsumed = true;
+		}
+		if (inspectorConsumed)
+			pickedByInspector = true;
+	}
+#endif
+
+	// M1.6: env-gated static-prop pick attempt. Runs AFTER the legacy
+	// mover-selection path above. Short-circuits internally when
+	// moverSelectedThisFrame == true (Section 11 + Q6/Q8 invariant) or
+	// when MC2_STATIC_PROP_PICK / MC2_OBJECT_ID_BUFFER are off.
+	if (!pickedByInspector) {
+		const bool bLeftDouble = userInput->isLeftDoubleClick();
+		tryStaticPropPick(moverSelectedThisFrame,
+		                  shiftDn,
+		                  leftClicked,
+		                  bGui,
+		                  bLeftDouble,
+		                  mouseX,
+		                  mouseY);
+		// M2.6: mech-pick consumer fires second. Both callers invoke the
+		// shared tryGameplayPick spine; each kind-guards on r.lookup.kind.
+		// At most one hit branch fires per click (handle ranges disjoint:
+		// static-prop indices < kMechHandleBase, mech indices >= 65536).
+		tryMechPick(moverSelectedThisFrame,
+		            shiftDn,
+		            leftClicked,
+		            bGui,
+		            bLeftDouble,
+		            mouseX,
+		            mouseY);
+	}
+}
+void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrlDn,
 											  bool bGui, bool lineOfSight, bool passable, 
 											  long moverCount, long nonMoverCount )
 {
@@ -1478,6 +1670,13 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 
 	bool leftClicked = (!userInput->isLeftDrag() && !userInput->isRightDrag() && userInput->isLeftClick());
 	bool rightClicked = (!userInput->isLeftDrag() && !userInput->wasRightDrag() && userInput->rightMouseReleased());
+
+	// M1.6 Q6 4-site observable: set to true immediately after each of
+	// the setSelected(true) writer sites this style body owns (Shift+
+	// additive site and plain-LMB-select site). Read at tail by
+	// tryStaticPropPick to short-circuit when the legacy path already
+	// claimed this click. Local scope; no leakage.
+	bool moverSelectedThisFrame = false;
 
 	// deal with the hot keys
 	if ( update( leftClicked, rightClicked, mouseX, mouseY, target,  lineOfSight ) )
@@ -1636,10 +1835,18 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 							alreadyThere = true;
 					}
 					
-					if (!alreadyThere && !target->isDisabled())
+					if (!alreadyThere && !target->isDisabled()) {
 						target->setSelected( true );
-					else
+						// M1.6 Q6 site 3: legacy Shift+additive-select on
+						// friendly mover (AOE style). Sets fallback gate;
+						// tail tryStaticPropPick short-circuits so
+						// Section 11 invariant holds.
+						moverSelectedThisFrame = true;
+					} else {
+						// M1.6 Q6 RESOLVED: setSelected(false) toggle-off
+						// site MUST NOT set the gate per spec rationale.
 						target->setSelected( false );
+					}
 				}
 				else if ( target->isMover() )
 				{
@@ -1648,13 +1855,18 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 						Mover* pMover = (Mover*)pTeam->getMover( i );
 						if (pMover->getCommander()->getId() == Commander::home->getId())
 						{
+							// M1.6 Q6 RESOLVED: clear-others setSelected(false)
+							// loop MUST NOT set the gate.
 							pMover->setSelected( false );
 						}
 					}
-					
+
 					target->setSelected( true );
+					// M1.6 Q6 site 4: legacy plain-LMB-select on friendly
+					// mover (AOE style). Sets fallback gate.
+					moverSelectedThisFrame = true;
 				}
-			}			
+			}
 		}
 		else
 		{	
@@ -1662,6 +1874,114 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 			controlGui.cancelInfo();
 			soundSystem->playDigitalSample( INVALID_GUI );
 		}
+	}
+
+	// Task 7: Ctrl+Shift+LMB inspector pick. Runs before the legacy
+	// gameplay picks so the inspector can claim the click first.
+	// Priority: ImGui window capture > inspector > existing gameplay picks.
+	bool pickedByInspector = false;
+#ifdef MC2_IMGUI
+	if (ctrlDn && shiftDn && leftClicked && !ImGui::GetIO().WantCaptureMouse) {
+		GameplayPickRequest inspReq;
+		inspReq.mouseX               = mouseX;
+		inspReq.mouseY               = mouseY;
+		inspReq.shiftDn              = true;    // shift IS held (ctrl+shift+LMB); required by tryGameplayPick gate
+		inspReq.leftClicked          = true;
+		inspReq.bGui                 = bGui;
+		inspReq.bLeftDouble          = false;
+		inspReq.moverSelectedThisFrame = false; // inspector always attempts the lookup
+		GameplayPickResult inspResult = tryGameplayPick(inspReq);
+		EditorInspector::setPickResult(mouseX, mouseY, inspResult.lookup);
+		if (inspResult.lookup.isValid) {
+			if (inspResult.lookup.kind == RenderWorld::RenderObjectKind::StaticProp) {
+				EditorInspector::StaticPropInspectorData sd;
+				sd.populated   = true;
+				sd.recipeIndex = static_cast<int32_t>(inspResult.lookup.gameObjectId);
+				GameAdapters::StaticProp::getRecipeShapeName(
+				    sd.recipeIndex, sd.shapeName, sizeof(sd.shapeName));
+				sd.materialGpuActive = GameAdapters::StaticProp::isMaterialGpuActive();
+				{
+					RenderCore::MaterialHandle mh;
+					mh.bits = inspResult.lookup.materialHandleBits;
+					sd.materialIdx = mh.index();
+					sd.materialGen = mh.generation();
+				}
+				sd.materialGpuPopulated = GameAdapters::StaticProp::getMaterialGpuData(
+				    inspResult.lookup.materialHandleBits, &sd.materialGpu);
+				EditorInspector::setStaticPropData(sd);
+			} else if (inspResult.lookup.kind == RenderWorld::RenderObjectKind::Mech) {
+				BattleMech* bm = GameAdapters::Mech::findMechByHandle(inspResult.lookup.handle);
+				if (bm) {
+					EditorInspector::MechInspectorData md;
+					md.populated   = true;
+					strncpy_s(md.variantName, sizeof(md.variantName), bm->variantName, _TRUNCATE);
+					strncpy_s(md.longName,    sizeof(md.longName),    bm->longName,    _TRUNCATE);
+					md.chassisClass = static_cast<int>(bm->chassisClass);
+					md.teamId       = bm->getTeamId();
+					md.disabled     = bm->isDisabled();
+					md.destroyed    = bm->isDestroyed();
+					md.crippled     = bm->isCrippled();
+					md.conStat      = bm->conStat;
+					for (int i = 0; i < MAX_MOVER_ARMOR_LOCATIONS; ++i) {
+						md.totalCurArmor += bm->armor[i].curArmor;
+						md.totalMaxArmor += static_cast<float>(bm->armor[i].maxArmor);
+					}
+					for (int i = 0; i < MAX_MOVER_BODY_LOCATIONS; ++i) {
+						md.totalCurStr += bm->body[i].curInternalStructure;
+						md.totalMaxStr += static_cast<float>(bm->body[i].maxInternalStructure);
+					}
+					MechWarriorPtr pilot = bm->getPilot();
+					if (pilot)
+						strncpy_s(md.pilotName, sizeof(md.pilotName), pilot->getName(), _TRUNCATE);
+					EditorInspector::setMechData(md);
+				}
+			}
+		}
+		// IMG-INSPECT-2: terrain CPU fallback when object-ID misses.
+		// Terrain::IsGameSelectTerrainPosition(wPos) is the canonical
+		// "world point is on selectable map terrain" guard (also used
+		// at line ~789 for LOS/cell lookup). If OID buffer is disabled
+		// (MC2_OBJECT_ID_BUFFER=0), inspResult.lookup.isValid is always
+		// false here so terrain wins on any in-map click - expected.
+		bool inspectorConsumed = inspResult.lookup.isValid;
+		if (!inspResult.lookup.isValid && land &&
+				Terrain::IsGameSelectTerrainPosition(wPos)) {
+			EditorInspector::TerrainInspectorData td;
+			td.populated = true;
+			td.worldX    = static_cast<float>(wPos.x);
+			td.worldY    = static_cast<float>(wPos.y);
+			td.worldZ    = static_cast<float>(wPos.z);
+			land->worldToTile(wPos, td.tileRow, td.tileCol);
+			land->worldToCell(wPos, td.cellRow, td.cellCol);
+			EditorInspector::setTerrainData(td);
+			inspectorConsumed = true;
+		}
+		if (inspectorConsumed)
+			pickedByInspector = true;
+	}
+#endif
+
+	// M1.6: env-gated static-prop pick attempt. Runs AFTER the legacy
+	// mover-selection path above. Short-circuits internally when
+	// moverSelectedThisFrame == true (Section 11 + Q6/Q8 invariant) or
+	// when MC2_STATIC_PROP_PICK / MC2_OBJECT_ID_BUFFER are off.
+	if (!pickedByInspector) {
+		const bool bLeftDouble = userInput->isLeftDoubleClick();
+		tryStaticPropPick(moverSelectedThisFrame,
+		                  shiftDn,
+		                  leftClicked,
+		                  bGui,
+		                  bLeftDouble,
+		                  mouseX,
+		                  mouseY);
+		// M2.6: mech-pick consumer (mirrors updateOldStyle tail).
+		tryMechPick(moverSelectedThisFrame,
+		            shiftDn,
+		            leftClicked,
+		            bGui,
+		            bLeftDouble,
+		            mouseX,
+		            mouseY);
 	}
 }
 
@@ -2423,7 +2743,14 @@ int MissionInterfaceManager::cameraMaxIn()
 {
 	if (eye)
 		eye->setCameraView(1);
- 		
+
+	return 1;
+}
+int MissionInterfaceManager::cameraMaxOut()
+{
+	if (eye)
+		eye->ZoomMin();
+
 	return 1;
 }
 int MissionInterfaceManager::cameraTight()
@@ -2686,13 +3013,6 @@ int MissionInterfaceManager::recalcLights()
 	#ifndef FINAL
 	Terrain::recalcLight ^= TRUE;
 	Terrain::recalcShadows = false;
-	#endif
-	return 1;
-}
-int MissionInterfaceManager::drawClouds()
-{
-	#ifndef FINAL
-	useClouds ^= TRUE;
 	#endif
 	return 1;
 }
@@ -3327,17 +3647,21 @@ bool MissionInterfaceManager::moveCameraAround( bool lineOfSight, bool passable,
 			((GameCamera *)eye)->setTarget(target);
 	}
 
-	if (!cameraClicked && !isPaused()) // sebi: only scoll if not paused
+	// Stage 2.E: when MC2_VISUAL_DIFF_CAPTURE=1, skip edge-scroll entirely.
+	// The OS cursor sits wherever the user left it (often a screen corner),
+	// which would drive the camera differently each run and torpedo
+	// same-config visual-diff determinism.
+	if (!cameraClicked && !isPaused() && !VisualDiff::isCaptureEnabled()) // sebi: only scoll if not paused
 	{
 		if ( mouseX <= (screenScrollLeft))
 			scrollLeft();
-		
+
 		if ((mouseX >= (Environment.screenWidth - screenScrollRight)) )
 			scrollRight();
-		
+
 		if ( (mouseY <= (screenScrollUp) && mouseY >= -screenScrollUp ) )
 			scrollUp();
-		
+
 		if ( (mouseY >= (Environment.screenHeight - screenScrollDown) ) )
 			scrollDown();
 	}
@@ -6032,3 +6356,262 @@ void MissionInterfaceManager::updateRollovers()
 }
 
 //--------------------------------------------------------------------------------------
+
+// M1.6 + M2-pre: env-gated static-prop pick CALLER WRAPPER.
+//
+// The M1.6 inline machinery (substrate gate, gesture gates, mover gate,
+// viewport query, off-screen guard, coord scaling, lookupAtPixel call)
+// migrated to code/gameplay_pick.cpp at M2-pre T1+T2 as
+// tryGameplayPick(). This function is now a thin caller wrapper that:
+//   1. Applies the category gate (IsStaticPropPickEnabled) -- STAYS in
+//      caller; M2.6 mech-pickup will have its own category gate.
+//   2. Builds a GameplayPickRequest from the 7 input params.
+//   3. Dispatches to tryGameplayPick(req).
+//   4. Switches on result.outcome to do category-specific side effects
+//      (debug-state mutation + [GAMEPLAY_PICK v1] kind=StaticProp hit/miss logs).
+//
+// Spec: docs/superpowers/specs/2026-05-23-renderworld-slice-m2-pre-gameplay-pick-extraction-spec.md
+// Sections 4 (algorithm), 6 (caller responsibilities), 11 (Section 11
+// invariant preserved via Outcome::gated no-op).
+//
+// Original M1.6 spec still authoritative for behavior:
+// docs/superpowers/specs/2026-05-23-renderworld-slice-m1-6-staticprop-pick-spec.md
+// Sections 3 (detection condition), 4 (fallback order), 5 (y-flip), 11
+// (forbidden behaviors), Q6 (4-site mover observable), Q8 (legacy
+// preservation invariant).
+void MissionInterfaceManager::tryStaticPropPick(bool moverSelectedThisFrame,
+                                                bool shiftDn,
+                                                bool leftClicked,
+                                                bool bGui,
+                                                bool bLeftDouble,
+                                                int  mouseX,
+                                                int  mouseY)
+{
+    // Category gate STAYS in caller. Fast path: env-OFF default. Two
+    // cached bools; no per-frame getenv. M2.6 mech-pickup will gate on
+    // its own IsMechPickEnabled() before dispatching to the spine.
+    if (!RenderWorld::IsStaticPropPickEnabled())
+        return;
+
+    // Build request from the 7 missiongui-side inputs. All shared
+    // machinery (substrate gate, gesture gates, mover gate, viewport
+    // query, off-screen guard, coord scaling, pixel readback) lives in
+    // the spine now.
+    GameplayPickRequest req;
+    req.mouseX                  = mouseX;
+    req.mouseY                  = mouseY;
+    req.shiftDn                 = shiftDn;
+    req.leftClicked             = leftClicked;
+    req.bGui                    = bGui;
+    req.bLeftDouble             = bLeftDouble;
+    req.moverSelectedThisFrame  = moverSelectedThisFrame;
+
+    const GameplayPickResult r = tryGameplayPick(req);
+
+    switch (r.outcome) {
+    case GameplayPickResult::Outcome::hit: {
+        // M2.6 latent-bug fix: post-M2.5, the substrate may return a
+        // Mech handle. The static-prop caller MUST guard before
+        // consuming -- a Mech handle has no recipe index, and the M2.6
+        // mech caller (tryMechPick) owns mech-kind hits.
+        if (r.lookup.kind != RenderWorld::RenderObjectKind::StaticProp) {
+            // Not our category. Silent skip; the mech caller (or future
+            // terrain/VFX caller) handles its own kinds.
+            break;
+        }
+        // Update RenderWorld debug state. Single-slot; latest wins.
+        RenderWorld::setLastGameplayPick(RenderWorld::RenderObjectKind::StaticProp,
+                                         r.lookup,
+                                         r.ctx.mouseX, r.ctx.mouseY,
+                                         r.ctx.glX,    r.ctx.glY);
+        // Sample back the unified debug-state struct so the log can
+        // include the recipeIndex (LookupResult itself does not carry
+        // it; the recipe lookup is done inside setLastGameplayPick).
+        const RenderWorld::GameplaySelectionDebugState picked =
+            RenderWorld::getLastGameplayPick();
+        // Unified hit log (META-FIX of the M1.6 static-prop schema);
+        // coord-diag fields BYTE-IDENTICAL to M1.6 to keep the
+        // user-driven canary semantically stable across rename.
+        std::fprintf(stderr,
+            "[GAMEPLAY_PICK v1] hit kind=StaticProp handle=%u idx=%u gen=%u "
+            "recipe=%d screen=(%d,%d) gl=(%d,%d) fbo=(%d,%d) "
+            "vMul=(%.0f,%.0f) vAdd=(%.0f,%.0f) draw=(%d,%d)\n",
+            r.lookup.handle.bits,
+            (unsigned)r.lookup.handle.index(),
+            (unsigned)r.lookup.handle.generation(),
+            (int)picked.recipeIndex,
+            r.ctx.mouseX, r.ctx.mouseY,
+            r.ctx.glX,    r.ctx.glY,
+            r.ctx.fboX,   r.ctx.fboY,
+            r.ctx.vMulX,  r.ctx.vMulY,
+            r.ctx.vAddX,  r.ctx.vAddY,
+            r.ctx.drawableWidth, r.ctx.drawableHeight);
+        break;
+    }
+    case GameplayPickResult::Outcome::miss: {
+        // Clear the unified debug-state struct on empty Shift+click so
+        // a stale prior pick does not survive an empty-click gesture.
+        RenderWorld::clearLastGameplayPick();
+        // Verbose miss log only when MC2_STATIC_PROP_PICK_DEBUG=1;
+        // coord-diag BYTE-IDENTICAL to M1.6 modulo the schema prefix.
+        if (RenderWorld::IsStaticPropPickDebugEnabled()) {
+            std::fprintf(stderr,
+                "[GAMEPLAY_PICK v1] miss kind=StaticProp screen=(%d,%d) gl=(%d,%d) "
+                "fbo=(%d,%d) vMul=(%.0f,%.0f) vAdd=(%.0f,%.0f) "
+                "draw=(%d,%d)\n",
+                r.ctx.mouseX, r.ctx.mouseY,
+                r.ctx.glX,    r.ctx.glY,
+                r.ctx.fboX,   r.ctx.fboY,
+                r.ctx.vMulX,  r.ctx.vMulY,
+                r.ctx.vAddX,  r.ctx.vAddY,
+                r.ctx.drawableWidth, r.ctx.drawableHeight);
+        }
+        break;
+    }
+    case GameplayPickResult::Outcome::gated:
+    case GameplayPickResult::Outcome::skipped:
+        // Section 11 invariant: no-op, no log. The legacy path either
+        // already consumed this click (gated) or a gesture/substrate
+        // gate failed (skipped) before any lookup ran.
+        break;
+    }
+}
+
+void MissionInterfaceManager::tryMechPick(bool moverSelectedThisFrame,
+                                          bool shiftDn,
+                                          bool leftClicked,
+                                          bool bGui,
+                                          bool bLeftDouble,
+                                          int  mouseX,
+                                          int  mouseY)
+{
+    // M2.6: category gate. Master enable for mech pick wiring.
+    if (!RenderWorld::IsMechPickEnabled())
+        return;
+
+    // Build the same shape of request as tryStaticPropPick. The spine
+    // (tryGameplayPick) is shared and unchanged.
+    GameplayPickRequest req;
+    req.mouseX                  = mouseX;
+    req.mouseY                  = mouseY;
+    req.shiftDn                 = shiftDn;
+    req.leftClicked             = leftClicked;
+    req.bGui                    = bGui;
+    req.bLeftDouble             = bLeftDouble;
+    req.moverSelectedThisFrame  = moverSelectedThisFrame;
+
+    const GameplayPickResult r = tryGameplayPick(req);
+
+    switch (r.outcome) {
+    case GameplayPickResult::Outcome::hit: {
+        // Kind guard: M2.6 caller only handles Mech kind. Static-prop
+        // and future terrain/VFX kinds are owned by their callers.
+        if (r.lookup.kind != RenderWorld::RenderObjectKind::Mech)
+            break;
+
+        // Reverse-resolve to BattleMech via the M2.6 linear-scan resolver.
+        BattleMech* bm =
+            GameAdapters::Mech::findMechByHandle(r.lookup.handle);
+        if (bm == nullptr) {
+            // Stale handle race (mech destroyed between readback and
+            // resolver) -- impossible in practice (single-threaded), but
+            // defensive design treats it as a benign miss for the click.
+            if (RenderWorld::IsMechPickDebugEnabled()) {
+                std::fprintf(stderr,
+                    "[GAMEPLAY_PICK v1] miss kind=Mech reason=stale_handle "
+                    "handle=%u idx=%u gen=%u screen=(%d,%d) gl=(%d,%d)\n",
+                    r.lookup.handle.bits,
+                    (unsigned)r.lookup.handle.index(),
+                    (unsigned)r.lookup.handle.generation(),
+                    r.ctx.mouseX, r.ctx.mouseY,
+                    r.ctx.glX,    r.ctx.glY);
+            }
+            break;
+        }
+
+        // Fog-of-war gate. Mirrors the FULL CPU-pick predicate at
+        // code/missiongui.cpp:1272-1278 verbatim:
+        //   target->isMover() &&
+        //   !ShowMovers &&
+        //   !(MPlayer && MPlayer->allUnitsDestroyed[MPlayer->commanderID]) &&
+        //   target->getTeamId() != Team::home->getId() &&
+        //   !target->isDisabled() &&
+        //   ((Mover*)target)->conStat < CONTACT_SENSOR_QUALITY_1
+        // i.e. fog SUPPRESSES the pick ONLY when all five hold; ShowMovers
+        // (debug) and the multiplayer-defeat carve-out are the bypasses
+        // the CPU pick honors and that M2.6 MUST mirror or the inspect
+        // log will be silent on a mech the CPU pick successfully selects.
+        //
+        // MC2_MECH_PICK_PIERCE_FOG=1 short-circuits the whole predicate.
+        const bool pierce = RenderWorld::IsMechPickPierceFogEnabled();
+        bool visible;
+        if (pierce) {
+            visible = true;
+        } else {
+            const bool showMovers = (ShowMovers != 0);
+            const bool mpDefeat   = (MPlayer && MPlayer->allUnitsDestroyed[MPlayer->commanderID]);
+            const bool hostile    = (bm->getTeamId() != Team::home->getId());
+            const bool disabled   = bm->isDisabled();
+            const bool sub_q1     = (((Mover*)bm)->conStat < CONTACT_SENSOR_QUALITY_1);
+            const bool fogSuppresses =
+                !showMovers && !mpDefeat && hostile && !disabled && sub_q1;
+            visible = !fogSuppresses;
+        }
+        if (!visible) {
+            // Fog-gated; silent on default path so the substrate cannot
+            // become a sensor cheat. Diagnostic log under DEBUG=1.
+            if (RenderWorld::IsMechPickDebugEnabled()) {
+                std::fprintf(stderr,
+                    "[GAMEPLAY_PICK v1] gated kind=Mech reason=fog_of_war "
+                    "handle=%u screen=(%d,%d) gl=(%d,%d)\n",
+                    r.lookup.handle.bits,
+                    r.ctx.mouseX, r.ctx.mouseY,
+                    r.ctx.glX,    r.ctx.glY);
+            }
+            break;
+        }
+
+        // Visible hit. Inspect-only: update unified debug state + log.
+        RenderWorld::setLastGameplayPick(RenderWorld::RenderObjectKind::Mech,
+                                         r.lookup,
+                                         r.ctx.mouseX, r.ctx.mouseY,
+                                         r.ctx.glX,    r.ctx.glY);
+        // Log line carries handle bits/index/generation + the resolved
+        // BattleMech pointer (debug; not a stable cookie). NO
+        // gameObjectId / partId fields per CRITICAL-1.
+        std::fprintf(stderr,
+            "[GAMEPLAY_PICK v1] hit kind=Mech handle=%u idx=%u gen=%u "
+            "mech=%p screen=(%d,%d) gl=(%d,%d) "
+            "fbo=(%d,%d) vMul=(%.0f,%.0f) vAdd=(%.0f,%.0f) draw=(%d,%d)%s\n",
+            r.lookup.handle.bits,
+            (unsigned)r.lookup.handle.index(),
+            (unsigned)r.lookup.handle.generation(),
+            (void*)bm,
+            r.ctx.mouseX, r.ctx.mouseY,
+            r.ctx.glX,    r.ctx.glY,
+            r.ctx.fboX,   r.ctx.fboY,
+            r.ctx.vMulX,  r.ctx.vMulY,
+            r.ctx.vAddX,  r.ctx.vAddY,
+            r.ctx.drawableWidth, r.ctx.drawableHeight,
+            pierce ? " pierce_fog=1" : "");
+        break;
+    }
+    case GameplayPickResult::Outcome::miss: {
+        // Mech caller silent on plain miss (background-pixel Shift+click
+        // is high-frequency for terrain but uninteresting for mechs).
+        // Verbose miss only under MC2_MECH_PICK_DEBUG=1.
+        if (RenderWorld::IsMechPickDebugEnabled()) {
+            std::fprintf(stderr,
+                "[GAMEPLAY_PICK v1] miss kind=Mech screen=(%d,%d) gl=(%d,%d)\n",
+                r.ctx.mouseX, r.ctx.mouseY,
+                r.ctx.glX,    r.ctx.glY);
+        }
+        break;
+    }
+    case GameplayPickResult::Outcome::gated:
+    case GameplayPickResult::Outcome::skipped:
+        // Mover-first short-circuit consumed the click (gated) or a
+        // gesture/substrate gate failed (skipped). No-op, no log.
+        break;
+    }
+}

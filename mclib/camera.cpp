@@ -44,6 +44,17 @@
 #include"userinput.h"
 #endif
 
+// [CAMERA_MOTION v1] recon-only motion-fraction tracking — gates whether
+// Lifecycle Option C (camera-motion-gated fail-open) is shippable. See
+// docs/superpowers/explorations/2026-05-07-lifecycle-normal-zoom-design.md.
+#include"../GameOS/gameos/gos_profiler.h"
+#include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
+#include <math.h>
+#include <cstdlib>  // std::getenv for [VPL_PICK v1] env-gated trace (Step 3 3a)
+#include <cstdio>   // std::printf for [VPL_PICK v1] lifecycle print
+#include <vector>   // T1.15 [SPOT_DIAG v1] camera-overwrite probe state
+#include "spotlight_diag.h"  // T1.16 — (E)-owned per-slot probe registry
+
 extern void AG_ellipse_draw(PANE *pane, LONG xc, LONG yc, LONG width, LONG height, LONG color);
 extern void AG_ellipse_fill(PANE *pane, LONG xc, LONG yc, LONG width, LONG height, LONG color);
 extern void AG_StatusBar( PANE *pane, int X0, int Y0, int X1, int Y1, int Color, int Width );
@@ -52,6 +63,98 @@ extern void AG_shape_translate_draw (PANE *pane, void *shape_table,LONG shape_nu
 extern void AG_shape_lookaside(MemoryPtr palette);
 
 #pragma warning(disable:4305/*double to float truncation*/)
+
+namespace {
+// F1 unified-projection axisSwap literal — transplanted from existing
+// upload-site logic at code/gamecam.cpp:168-175. Per spec §2.1:
+//   GL.x = -MC2.x          (negated)
+//   GL.y =  MC2.elevation  (was z; elevation -> up)
+//   GL.z =  MC2.ground     (was y; ground -> forward, POSITIVE)
+//
+// DO NOT "correct" the sign to stock OpenGL -Z forward; this matches the
+// existing legacy upload bit-for-bit. Stage A-pre basis-vector test
+// (Task 3) verifies empirically.
+Stuff::Matrix4D makeAxisSwapMC2toGL()
+{
+    Stuff::Matrix4D m;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            m(r, c) = (r == c) ? 1.0f : 0.0f;
+    m(0, 0) = -1.0f;
+    m(1, 1) = 0.0f;
+    m(1, 2) = 1.0f;
+    m(2, 2) = 0.0f;
+    m(2, 1) = 1.0f;
+    return m;
+}
+const Stuff::Matrix4D kAxisSwapMC2toGL = makeAxisSwapMC2toGL();
+
+// F2 unified-projection: D3D-pixel-homogeneous -> GL-NDC conversion matrix.
+// Used at camera-update time to precompute cameraToClipGL from the legacy
+// cameraToClip. Not consumed in the worldToClipGL() hot path -- the
+// composition is fixed once per camera config.
+//
+// F1 Task 24 (2026-05-22 LATE): D3D-pixel-homogeneous -> GL-NDC conversion.
+//
+// MC2's existing terrainMVP product (axisSwap * worldToCam * cameraToClip)
+// outputs D3D-style pixel-homogeneous clip: clip.xy/clip.w in [0..1] for
+// in-screen geometry, Y-down, with clip.w<0 for in-front (per cameraToClip
+// at :1943 having (FORWARD_AXIS=2, col=3) = +1.0f under the -z_eye camera).
+//
+// The legacy shader chain (`screen.x = clip.x*rhw*viewport.x + viewport.z;
+// ndc = projection_ * vec4(screen, 1); gl_Position = vec4(ndc*absW, absW);`)
+// performed the D3D->GL conversion via the viewport scale + Y-flip projection_
+// matrix. F1 Stage A (commit 59fae27) retired that chain in favour of direct
+// emit `gl_Position = u_worldToClipGL * vec4(world,1)`, which assumed
+// terrainMVP was already in standard GL clip space. It is NOT.
+//
+// Result of post-Stage-A user mc2_10 canary: terrain/props/mechs render
+// upside down and at wrong scale (only narrow center region visible; rest
+// black) because the matrix output is D3D-pixel-homog while hardware
+// interprets it as GL NDC.
+//
+// Fix: bake the D3D->GL conversion into the matrix product as a post-
+// multiply. For column-vector GLSL convention:
+//   M_fix * d3d_clip -> gl_clip
+// where M_fix =
+//   | -2   0   0   1 |   new.x = -2*lx + lw   ndc.x = 2*lx/lw - 1
+//   |  0   2   0  -1 |   new.y = 2*ly - lw    ndc.y = -2*ly/lw + 1 (Y-flip)
+//   |  0   0  -1   0 |   new.z = -lz          ndc.z = lz/lw
+//   |  0   0   0  -1 |   new.w = -lw          positive for in-front
+//
+// In Stuff (row-vector + column-major-in-memory + transpose-via-upload),
+// the matrix that produces M_fix on the GLSL side is transpose(M_fix):
+//   | -2   0   0   0 |
+//   |  0   2   0   0 |
+//   |  0   0  -1   0 |
+//   |  1  -1   0  -1 |
+//
+// Camera::worldToClipGL() applies this as the final factor:
+//   out = (axisSwap * worldToCam * cameraToClip) * kPixelHomogToGLNDC
+//
+// On-screen NDC matches the legacy chain to floating-point precision
+// (verified by hand on the Task 7d sample: world=(-6144, 5120, 273)
+// gives NDC=(-1.86, -0.56, 0.12) under both legacy and new paths).
+//
+// The negation that Task 7g folded into kAxisSwapMC2toGL is subsumed
+// by M_fix's row 3 (which negates w directly), so kAxisSwapMC2toGL
+// reverts to the pure axis-permutation literal.
+Stuff::Matrix4D makePixelHomogToGLNDC()
+{
+    Stuff::Matrix4D m;
+    for (int r = 0; r < 4; ++r)
+        for (int c = 0; c < 4; ++c)
+            m(r, c) = 0.0f;
+    m(0, 0) = -2.0f;
+    m(1, 1) =  2.0f;
+    m(2, 2) = -1.0f;
+    m(3, 0) =  1.0f;
+    m(3, 1) = -1.0f;
+    m(3, 3) = -1.0f;
+    return m;
+}
+const Stuff::Matrix4D kPixelHomogToGLNDC = makePixelHomogToGLNDC();
+} // namespace
 
 inline float agsqrt( float _a, float _b )
 {
@@ -116,7 +219,7 @@ float zoomMax = 2.0;
 float zoomMin = 0.1f;
 float FOVMax = 75.0f;
 float FOVMin = 20.0f;
-float Camera::AltitudeMinimum = 560.0f;
+float Camera::AltitudeMinimum = 60.0f;
 float Camera::AltitudeMaximumLo = 6000.0f;
 float Camera::AltitudeMaximumHi = 6400.0f;
 float Camera::AltitudeDefault = 1200.0f;
@@ -556,49 +659,42 @@ void Camera::destroy (void)
 	}
 }
 
-//---------------------------------------------------------------------------
-void Camera::getClosestVertex (Stuff::Vector2DOf<long> &screenPos, long &row, long &col)
+// getClosestVertex: screen-click -> terrain vertex (row,col).
+// Reinstated 2026-05-24 for the EditRel Mission Editor (editor/TerrainBrush.h:56
+// is the sole caller). This is a NEW modern implementation — NOT the old
+// pr-36 body that read stale topVertex->px/py. Thin adapter over:
+//   (1) Camera::inverseProject  (screen -> fresh world point, no stale read)
+//   (2) Terrain::worldToTile    (world -> vertex row/col)
+// See engine-standalone camera.cpp for full design rationale.
+void Camera::getClosestVertex (Stuff::Vector2DOf<long>& screenPos,
+                               long& row, long& col)
 {
-	//--------------------------------------------------------
-	// New method.  Use the terrain window to figure out
-	// where we are by finding the vertex closest to the clicked 
-	// position and returning its 3d pos.
-	VertexPtr topVertex = land->getVertexList();
-	unsigned long numVertices = land->getNumVertices();
-	VertexPtr closestVertex = NULL;
-	long whichVertex = 0;
+	Stuff::Vector3D worldPoint;
+	worldPoint.x = worldPoint.y = worldPoint.z = 0.0f;
 
-//
-// Redone all using integers and no square root.
-//
-	long i=0,tvx=screenPos.x,tvy=screenPos.y;
-	float dx,dy,cd=1e38f,dist;
-	for (i=0;i<(long)numVertices;i++)
-	{
-		dx = ( tvx - topVertex->px);
-		dy = ( tvy - topVertex->py);
-		dist = dx * dx + dy * dy;
-		if (dist < cd)
-		{
-			cd = dist;
-			closestVertex = topVertex;
-			whichVertex = i;
-		}
-		topVertex++;
-	}
+	// Modern picking authority: screen -> fresh world point. Returns 0 when
+	// the camera is not yet initialized (turn < 4); worldPoint stays at origin.
+	inverseProject(screenPos, worldPoint);
 
-	long block = closestVertex->blockVertex >> 16;
-	long vertex = closestVertex->blockVertex & 0x0000ffff;
+	// Canonical world -> terrain vertex (row,col) map.
+	int tileR = 0, tileC = 0;
+	land->worldToTile(worldPoint, tileR, tileC);
 
-	long blockX = block % Terrain::blocksMapSide;
-	long blockY = block / Terrain::blocksMapSide;
+	// Clamp into the valid vertex grid. The editor guard
+	// (tileR < realVerticesMapSide && tileR > -1) treats out-of-range
+	// as "no paint", so clamping here keeps row/col well-formed.
+	if (tileR < 0)
+		tileR = 0;
+	else if (tileR >= Terrain::realVerticesMapSide)
+		tileR = Terrain::realVerticesMapSide - 1;
+	if (tileC < 0)
+		tileC = 0;
+	else if (tileC >= Terrain::realVerticesMapSide)
+		tileC = Terrain::realVerticesMapSide - 1;
 
-	long vertexX = vertex % Terrain::verticesBlockSide;
-	long vertexY = vertex / Terrain::verticesBlockSide;
-
-	col = blockX * Terrain::verticesBlockSide + vertexX;
-	row = blockY * Terrain::verticesBlockSide + vertexY;
-}	
+	row = (long)tileR;
+	col = (long)tileC;
+}
 
 //---------------------------------------------------------------------------
 
@@ -619,123 +715,156 @@ inline void mapCellToWorldPos (long cellR, long cellC, Stuff::Vector3D& worldPos
 }
 
 //---------------------------------------------------------------------------
-inline bool overThisTile (TerrainQuadPtr tile, long mouseX, long mouseY)
+// VPL-retirement Step 3 (3a): shared CPU camera-frustum x quad-AABB primitive.
+// Members of Camera; Step 3 (this file) defines, Step 5B references. Pure CPU,
+// no GL, no GPU readback (all inputs are CPU camera matrices + map-stable
+// vertex coords - see memory/substrate_coalesce_sync_point_lesson.md).
+//
+// Stuff::Matrix4D is COLUMN-MAJOR (entries[(column<<2)+row], matrix.hpp:133/141);
+// operator()(row,column) is the accessor. The projection multiply is row-vector
+// clip = s * worldToClip with the swizzled point s = (-wx, wz, wy, 1) (the C
+// path of Vector4D::Multiply(Point3D,Matrix4D), vector4d.hpp:359-362, active
+// because USE_ASSEMBLER_CODE==0). With rX[k]=M(k,0), rY[k]=M(k,1), rZ[k]=M(k,2),
+// rW[k]=M(k,3): clip.x=dot4(s4,rX), clip.y=dot4(s4,rY), clip.z=dot4(s4,rZ),
+// clip.w=dot4(s4,rW) where s4=(s.x,s.y,s.z,1).
+//
+// Gribb-Hartmann planes in swizzled space (engine uses glClipControl native
+// [0,1], so near is rZ, NOT rW+rZ):
+//   left = rW+rX, right = rW-rX, bottom = rW+rY, top = rW-rY,
+//   near = rZ,    far = rW-rZ.
+// Each is [a b c d]. Fold the swizzle s=(-wx, wz, wy) so the plane tests RAW
+// world AABBs:  a*s.x + b*s.y + c*s.z + d
+//             = a*(-wx) + b*(wz) + c*(wy) + d
+//             = (-a)*wx + (c)*wy + (b)*wz + d
+// => worldPlane = [ -a, c, b, d ]  (negate X coef; swap Y and Z coefs). Exact:
+// the swizzle is a signed axis permutation, composes with no approximation.
+void Camera::extractFrustumPlanes (float planes[6][4]) const
 {
-	if (tile)
+	float rX[4], rY[4], rZ[4], rW[4];
+	for (int k = 0; k < 4; k++)
 	{
-		Stuff::Point3D v0,v1,v2;
-		v0.x = tile->vertices[0]->px;
-		v0.y = tile->vertices[0]->py;
-		
-		v1.x = tile->vertices[1]->px; 
-		v1.y = tile->vertices[1]->py; 
-		
-		v2.x = tile->vertices[2]->px; 
-		v2.y = tile->vertices[2]->py; 
-		v0.z = v1.z = v2.z = 0.0f;
-		
-		//Can trivially reject IF vertex values are these, this triangle was NOT on screen!!
-		if ((v0.x == 10000.0f) || (v0.y == 10000.0f) ||
-			(v1.x == 10000.0f) || (v1.y == 10000.0f) || 
-			(v2.x == 10000.0f) || (v2.y == 10000.0f))
-			return false;
-		
-		//Using the above vertex Data, determine if the mouse is over this poly!
-		//
-		//Theorem:
-		// Given the sides of the triangle defined by the lines v0v1, v1v2 and v2v0
-		// in the form Ax + By + C = 0
-		//
-		// the point mousex, mousey lies inside the triangle if and only if
-		//
-		//  	A0 * mouseX + B0 * mouseY + C0 = D0
-		//		A1 * mouseX * B1 * mouseY + c1 = D1
-		//		A2 * mouseX + B2 * mouseY + c2 = D2
-		//
-		// Dx is the same sign for each line as the correct sign for clockwise or counterclockwise vertices!
-		//
-		Stuff::Vector3D line1;
-		Stuff::Vector3D line2;
-		line1.Subtract(v0,v1);
-		line2.Subtract(v1,v2);
-		
-		float order = line2.x * line1.y - line1.x * line2.y;
-		order = sign2(order);
-		
-		float A0 = -(v0.y - v1.y);
-		float B0 = (v0.x - v1.x);
-		float C0 = -B0*(v0.y) - A0*(v0.x);
-		float D0 = A0 * mouseX + B0 * mouseY + C0;
-		
-		float A1 = -(v1.y - v2.y);
-		float B1 = (v1.x - v2.x);
-		float C1 = -B1*(v1.y) - A1*(v1.x);
-		float D1 = A1 * mouseX + B1 * mouseY + C1;
-		
-		float A2 = -(v2.y - v0.y);
-		float B2 = (v2.x - v0.x);
-		float C2 = -B2*(v2.y) - A2*(v2.x);
-		float D2 = A2 * mouseX + B2 * mouseY + C2;
-		
-		if ((sign2(D0) == order) && (sign2(D0) == sign2(D1)) && (sign2(D0) == sign2(D2)))
-			return true;
-			
-		//Tiles are TWO Polys.  Check number two.
-		v0.x = tile->vertices[0]->px;
-		v0.y = tile->vertices[0]->py;
-		
-		v1.x = tile->vertices[2]->px; 
-		v1.y = tile->vertices[2]->py; 
-		
-		v2.x = tile->vertices[3]->px; 
-		v2.y = tile->vertices[3]->py; 
-		v0.z = v1.z = v2.z = 0.0f;
-		
-		//Can trivially reject IF vertex values are these, this triangle was NOT on screen!!
-		if ((v0.x == 10000.0f) || (v0.y == 10000.0f) ||
-			(v1.x == 10000.0f) || (v1.y == 10000.0f) || 
-			(v2.x == 10000.0f) || (v2.y == 10000.0f))
-			return false;
-			
- 		//Using the above vertex Data, determine if the mouse is over this poly!
-		//
-		//Theorem:
-		// Given the sides of the triangle defined by the lines v0v1, v1v2 and v2v0
-		// in the form Ax + By + C = 0
-		//
-		// the point mousex, mousey lies inside the triangle if and only if
-		//
-		//  	A0 * mouseX + B0 * mouseY + C0 = D0
-		//		A1 * mouseX * B1 * mouseY + c1 = D1
-		//		A2 * mouseX + B2 * mouseY + c2 = D2
-		//
-		// Dx is the same sign for each line as the correct sign for clockwise or counterclockwise vertices!
-		//
-		line1.Subtract(v0,v1);
-		line2.Subtract(v1,v2);
-		
-		order = line2.x * line1.y - line1.x * line2.y;
-		order = sign2(order);
-		
-		A0 = -(v0.y - v1.y);
-		B0 = (v0.x - v1.x);
-		C0 = -B0*(v0.y) - A0*(v0.x);
-		D0 = A0 * mouseX + B0 * mouseY + C0;
-		
-		A1 = -(v1.y - v2.y);
-		B1 = (v1.x - v2.x);
-		C1 = -B1*(v1.y) - A1*(v1.x);
-		D1 = A1 * mouseX + B1 * mouseY + C1;
-		
-		A2 = -(v2.y - v0.y);
-		B2 = (v2.x - v0.x);
-		C2 = -B2*(v2.y) - A2*(v2.x);
-		D2 = A2 * mouseX + B2 * mouseY + C2;
-		
-		if ((sign2(D0) == order) && (sign2(D0) == sign2(D1)) && (sign2(D0) == sign2(D2)))
-			return true;
+		rX[k] = worldToClip(k,0);
+		rY[k] = worldToClip(k,1);
+		rZ[k] = worldToClip(k,2);
+		rW[k] = worldToClip(k,3);
 	}
-	
+
+	// Swizzled-space planes [a b c d] over s = (-wx, wz, wy, 1).
+	float sw[6][4];
+	for (int k = 0; k < 4; k++)
+	{
+		sw[0][k] = rW[k] + rX[k];   // left
+		sw[1][k] = rW[k] - rX[k];   // right
+		sw[2][k] = rW[k] + rY[k];   // bottom
+		sw[3][k] = rW[k] - rY[k];   // top
+		sw[4][k] = rZ[k];           // near (native [0,1] -> rZ, NOT rW+rZ)
+		sw[5][k] = rW[k] - rZ[k];   // far
+	}
+
+	// Fold the projection swizzle into each plane: worldPlane = [-a, c, b, d].
+	for (int p = 0; p < 6; p++)
+	{
+		planes[p][0] = -sw[p][0];   // -a  (world X coef)
+		planes[p][1] =  sw[p][2];   //  c  (world Y coef)
+		planes[p][2] =  sw[p][1];   //  b  (world Z coef)
+		planes[p][3] =  sw[p][3];   //  d  (constant)
+	}
+}
+
+//---------------------------------------------------------------------------
+// Conservative p-vertex AABB-vs-frustum test. For each of 6 world-space planes
+// pick the AABB corner most in the plane's positive direction; if that corner
+// is strictly behind the plane the AABB is fully outside -> reject. Never
+// false-negative; may false-positive slightly outside (acceptable - picking
+// refines with an exact forward-projection screen test downstream).
+bool Camera::quadAabbInFrustum (const float planes[6][4],
+                                const Stuff::Vector3D& mn,
+                                const Stuff::Vector3D& mx) const
+{
+	for (int p = 0; p < 6; p++)
+	{
+		const float a = planes[p][0];
+		const float b = planes[p][1];
+		const float c = planes[p][2];
+		const float d = planes[p][3];
+
+		// p-vertex: the corner farthest along the plane normal.
+		const float px = (a >= 0.0f) ? mx.x : mn.x;
+		const float py = (b >= 0.0f) ? mx.y : mn.y;
+		const float pz = (c >= 0.0f) ? mx.z : mn.z;
+
+		if (a * px + b * py + c * pz + d < 0.0f)
+			return false;   // AABB entirely behind this plane
+	}
+	return true;
+}
+
+//---------------------------------------------------------------------------
+// F6 T2: per-frame frustum-planes cache. Terrain::geometry calls
+// cacheFrustumPlanes() once per frame (outside both slimReduce and
+// setupTextures loops); both then read via getCachedFrustumPlanes().
+// Single extractFrustumPlanes call per frame shared across all sites.
+void Camera::cacheFrustumPlanes()
+{
+	extractFrustumPlanes(cachedFrustumPlanes_);
+}
+
+const float (*Camera::getCachedFrustumPlanes() const)[4]
+{
+	return cachedFrustumPlanes_;
+}
+
+//---------------------------------------------------------------------------
+// Ported screen-triangle containment (the body of the deleted overThisTile),
+// rewritten to operate on FRESHLY forward-projected screen corners instead of
+// stale per-frame vertices[]->px/py. corners[4] are screen XY from
+// projectForSelectionPicking; valid[4] flags whether each projected inside the
+// viewport rect. A tile is "over" the cursor if it contains it in either of
+// its two triangles (0,1,2) / (0,2,3) - same theorem as the original.
+static inline bool s_pointInScreenTri (const Stuff::Point3D& v0,
+                                       const Stuff::Point3D& v1,
+                                       const Stuff::Point3D& v2,
+                                       long mouseX, long mouseY)
+{
+	Stuff::Vector3D line1, line2;
+	line1.Subtract(v0,v1);
+	line2.Subtract(v1,v2);
+
+	float order = line2.x * line1.y - line1.x * line2.y;
+	order = sign2(order);
+
+	float A0 = -(v0.y - v1.y);
+	float B0 = (v0.x - v1.x);
+	float C0 = -B0*(v0.y) - A0*(v0.x);
+	float D0 = A0 * mouseX + B0 * mouseY + C0;
+
+	float A1 = -(v1.y - v2.y);
+	float B1 = (v1.x - v2.x);
+	float C1 = -B1*(v1.y) - A1*(v1.x);
+	float D1 = A1 * mouseX + B1 * mouseY + C1;
+
+	float A2 = -(v2.y - v0.y);
+	float B2 = (v2.x - v0.x);
+	float C2 = -B2*(v2.y) - A2*(v2.x);
+	float D2 = A2 * mouseX + B2 * mouseY + C2;
+
+	return ((sign2(D0) == order) && (sign2(D0) == sign2(D1)) && (sign2(D0) == sign2(D2)));
+}
+
+static inline bool s_overThisTileProjected (const Stuff::Point3D corners[4],
+                                             const bool valid[4],
+                                             long mouseX, long mouseY)
+{
+	// Triangle one: corners 0,1,2.
+	if (valid[0] && valid[1] && valid[2] &&
+	    s_pointInScreenTri(corners[0], corners[1], corners[2], mouseX, mouseY))
+		return true;
+
+	// Triangle two: corners 0,2,3 (tiles are two polys).
+	if (valid[0] && valid[2] && valid[3] &&
+	    s_pointInScreenTri(corners[0], corners[2], corners[3], mouseX, mouseY))
+		return true;
+
 	return false;
 }
 		
@@ -749,7 +878,30 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 	}
 
 	//-----------------------------------------------------------
-	// Pick the tile that has the vertex with the LEAST Z value.
+	// VPL-retirement Step 3 (3a): recursion-free tile selection.
+	// Replaces the old per-frame VPL tile walk (clipInfo admission +
+	// overThisTile screen test reading stale vertices[]->px/py + closest-pz
+	// selection). Two stages, both pure CPU, no GPU readback:
+	//   (1) frustum-AABB admission over all quads via the shared helper
+	//       (extractFrustumPlanes + quadAabbInFrustum on RAW world AABBs),
+	//   (2) exact forward-projection screen-containment + nearest-screen
+	//       refinement (ported overThisTile screen-triangle test on FRESHLY
+	//       projected corners, NOT stale per-frame px/py).
+	// This path never calls inverseProjectForPicking / inverseProjectZ, so
+	// the !usePerspective recursion (inverseProjectZ) is structurally
+	// unreachable from picking regardless of CTRL+ALT+P toggle state.
+	static const bool s_vplPickTrace =
+		(std::getenv("MC2_VPL_PICK") != nullptr);
+	{
+		static bool s_announced = false;
+		if (s_vplPickTrace && !s_announced)
+		{
+			s_announced = true;
+			std::printf("[VPL_PICK v1] event=repoint_active "
+			            "path=frustum_aabb+forward_proj_refine\n");
+		}
+	}
+
 	TerrainQuadPtr currentTile = land->getQuadList();
 	unsigned long numTiles = land->getNumQuads();
 	TerrainQuadPtr closestTiles[100];
@@ -758,70 +910,123 @@ unsigned long Camera::inverseProject (Stuff::Vector2DOf<long> &screenPos, Stuff:
 	TerrainQuadPtr closestTile = NULL;
 	long currentClosest = 0;
 	VertexPtr closestVertex = NULL;
-		
+
+	float planes[6][4];
+	extractFrustumPlanes(planes);
+
+	// Optional env-gated build-free self-test of the matrix/swizzle math:
+	// for sampled quads, any RAW world point whose forward projection lands
+	// strictly inside the viewport rect with screen.z in [0,1) MUST pass the
+	// degenerate-AABB frustum test (helper may be true when projection is
+	// just outside - acceptable; helper must NEVER be false when projection
+	// is strictly inside).
+	if (s_vplPickTrace && numTiles > 0)
+	{
+		const long sampleStride = (numTiles > 64) ? (long)(numTiles / 64) : 1;
+		TerrainQuadPtr st = land->getQuadList();
+		long checked = 0;
+		for (long i = 0; i < (long)numTiles; i += sampleStride)
+		{
+			TerrainQuadPtr q = st + i;
+			Stuff::Vector3D wp;
+			wp.x = q->vertices[0]->vx;
+			wp.y = q->vertices[0]->vy;
+			wp.z = q->vertices[0]->pVertex->elevation;
+
+			Stuff::Vector4D sc;
+			eye->projectForSelectionPicking(wp, sc);
+			const bool strictlyInside =
+				(sc.x > 0.0f) && (sc.y > 0.0f) &&
+				(sc.x < screenResolution.x) && (sc.y < screenResolution.y) &&
+				(sc.z >= 0.0f) && (sc.z < 1.0f);
+			if (strictlyInside)
+			{
+				const bool inFr = quadAabbInFrustum(planes, wp, wp);
+				gosASSERT(inFr); // conservative helper: never false when proj inside
+			}
+			if (++checked >= 64)
+				break;
+		}
+	}
+
+	//-----------------------------------------------------------
+	// Stage 1: frustum-AABB admission over all quads. RAW world AABB built
+	// from vertices[0..3]->vx/.vy/->pVertex->elevation (unrotated world
+	// coords per vertex.h:75). Keep the existing cap-100 + guard.
 	for (long i=0;i<(long)numTiles;i++)
 	{
-		if ((currentTile->vertices[0]->clipInfo) ||
-			(currentTile->vertices[1]->clipInfo) || 
-			(currentTile->vertices[2]->clipInfo) || 
-			(currentTile->vertices[3]->clipInfo))
+		Stuff::Vector3D mn, mx;
+		mn.x = mx.x = currentTile->vertices[0]->vx;
+		mn.y = mx.y = currentTile->vertices[0]->vy;
+		mn.z = mx.z = currentTile->vertices[0]->pVertex->elevation;
+		for (int c = 1; c < 4; c++)
 		{
-			bool isOver = overThisTile(currentTile, screenPos.x, screenPos.y);
-			
-			if (isOver && (currentClosest < 100))
-			{
-				//We are.  Save it into the closestTiles list.
-				closestTiles[currentClosest] = currentTile;
-				currentClosest++;
-
-	//			if (currentClosest >= 100)
-	//				STOP(("FOUND Too Many Tiles Under the mouse cursor"));
-			}
+			const float vx = currentTile->vertices[c]->vx;
+			const float vy = currentTile->vertices[c]->vy;
+			const float vz = currentTile->vertices[c]->pVertex->elevation;
+			if (vx < mn.x) mn.x = vx; if (vx > mx.x) mx.x = vx;
+			if (vy < mn.y) mn.y = vy; if (vy > mx.y) mx.y = vy;
+			if (vz < mn.z) mn.z = vz; if (vz > mx.z) mx.z = vz;
 		}
-		
+
+		if (quadAabbInFrustum(planes, mn, mx) && (currentClosest < 100))
+		{
+			closestTiles[currentClosest] = currentTile;
+			currentClosest++;
+		}
+
 		currentTile++;
 	}
-		
-	if (currentClosest > 1)
+
+	//-----------------------------------------------------------
+	// Stage 2: exact forward-projection screen-containment + nearest-screen
+	// refinement. Forward-project each admitted tile's 4 corners FRESH via
+	// projectForSelectionPicking, run the ported screen-triangle test, and
+	// keep the tile whose nearest projected corner is closest to the cursor
+	// in screen space (same nearest-screen-distance tiebreak semantics as
+	// the old pz tiebreak, computed from live projection). On cap-100
+	// saturation this ordering keeps the nearest-screen tile, not first-100.
 	{
-		float leastZ = 1.0f;
-		for (long i=0;i<currentClosest;i++)
+		double bestDistSq = 1.0e30;
+		for (long i = 0; i < currentClosest; i++)
 		{
-			//Find the least Z tile.
-			if ((closestTiles[i]->vertices[0]->pz > 0.0f) &&
-				(closestTiles[i]->vertices[1]->pz > 0.0f) && 
-				(closestTiles[i]->vertices[2]->pz > 0.0f) &&
-				(closestTiles[i]->vertices[3]->pz > 0.0f))
+			TerrainQuadPtr t = closestTiles[i];
+			Stuff::Point3D corners[4];
+			bool valid[4];
+			double tileNearestSq = 1.0e30;
+			for (int c = 0; c < 4; c++)
 			{
-				if (closestTiles[i]->vertices[0]->pz < leastZ)
+				Stuff::Vector3D wp;
+				wp.x = t->vertices[c]->vx;
+				wp.y = t->vertices[c]->vy;
+				wp.z = t->vertices[c]->pVertex->elevation;
+
+				Stuff::Vector4D sc;
+				eye->projectForSelectionPicking(wp, sc);
+				corners[c].x = sc.x;
+				corners[c].y = sc.y;
+				corners[c].z = 0.0f;
+				valid[c] = (sc.x >= 0.0f) && (sc.y >= 0.0f) &&
+				           (sc.x <= screenResolution.x) &&
+				           (sc.y <= screenResolution.y) &&
+				           (sc.z >= 0.0f) && (sc.z < 1.0f);
+
+				const double dx = (double)sc.x - (double)screenPos.x;
+				const double dy = (double)sc.y - (double)screenPos.y;
+				const double dsq = dx * dx + dy * dy;
+				if (dsq < tileNearestSq)
+					tileNearestSq = dsq;
+			}
+
+			if (s_overThisTileProjected(corners, valid, screenPos.x, screenPos.y))
+			{
+				if (tileNearestSq < bestDistSq)
 				{
-					leastZ = closestTiles[i]->vertices[0]->pz;
-					closestTile = closestTiles[i];
-				}
-				
-				if (closestTiles[i]->vertices[1]->pz < leastZ)
-				{
-					leastZ = closestTiles[i]->vertices[1]->pz;
-					closestTile = closestTiles[i];
-				}
-				
-				if (closestTiles[i]->vertices[2]->pz < leastZ)
-				{
-					leastZ = closestTiles[i]->vertices[2]->pz;
-					closestTile = closestTiles[i];
-				}
-				
-				if (closestTiles[i]->vertices[3]->pz < leastZ)
-				{
-					leastZ = closestTiles[i]->vertices[3]->pz;
-					closestTile = closestTiles[i];
+					bestDistSq = tileNearestSq;
+					closestTile = t;
 				}
 			}
 		}
-	}
-	else if (currentClosest)
-	{	
-		closestTile = closestTiles[0];
 	}
 
 	if (closestTile)
@@ -1660,13 +1865,81 @@ long Camera::update (void)
 	setLightIntensity(1,1.0);
 
     updateLights();
- 
-	TG_Shape::SetCameraMatrices(&cameraOrigin,&cameraToClip);
+
+	{
+		// F3 CPU projection cost-baseline: matrix_build site (b) —
+		// per-frame TG_Shape::SetCameraMatrices composes s_worldToClip.
+		::mc2_cpu_proj_cost::Scope _f3_setcam_scope(
+		    ::mc2_cpu_proj_cost::BUCKET_MATRIX_BUILD);
+		TG_Shape::SetCameraMatrices(&cameraOrigin,&cameraToClip);
+	}
 	TG_Shape::SetFog(fogColor,fogStart,fogFull);
 
 	active = true;
-	
+
 	terrainLightCalc = false;
+
+	// [CAMERA_MOTION v1] recon: measure stationary-camera fraction.
+	// Gates Lifecycle Option C (camera-motion-gated fail-open).
+	// Stationary thresholds:
+	//   rotation < 0.5 deg/frame: smaller than typical operator-pan rate
+	//     (RTS pans typically 30-60 deg/sec at 60fps = 0.5-1.0 deg/frame);
+	//     0.5 deg/frame is the floor below which the operator is not
+	//     actively rotating.
+	//   position < 1.0 unit/frame: world units (terrain.x/y in MC2 worldspace);
+	//     a stationary camera still drifts sub-pixel from float math but
+	//     should not exceed ~1 unit between frames at any sane FPS.
+	// Both thresholds must hold for "stationary" — translation OR rotation
+	// counts as motion, since either invalidates lagged-visibility data.
+	{
+		ZoneScopedN("Camera.MotionTracking");
+		static bool   s_motionInit       = false;
+		static float  s_prevRotation     = 0.0f;
+		static Stuff::Vector3D s_prevPosition;  // default-ctor zeroed; actual prev seeded on first call
+		static uint32_t s_motionFrames     = 0;
+		static uint32_t s_motionStationary = 0;
+		static uint32_t s_motionMoving     = 0;
+		constexpr float STATIONARY_ROT_DEG = 0.5f;
+		constexpr float STATIONARY_POS_UNI = 1.0f;
+		constexpr uint32_t SUMMARY_PERIOD  = 600u;
+
+		if (!s_motionInit) {
+			s_prevRotation = cameraRotation;
+			s_prevPosition = position;
+			s_motionInit = true;
+		} else {
+			float dRot = cameraRotation - s_prevRotation;
+			if (dRot < 0.0f) dRot = -dRot;
+			// wrap-around: rotation is in degrees, fold to [0,180]
+			if (dRot > 180.0f) dRot = 360.0f - dRot;
+
+			float dx = position.x - s_prevPosition.x;
+			float dy = position.y - s_prevPosition.y;
+			float dz = position.z - s_prevPosition.z;
+			float dPos = sqrtf(dx*dx + dy*dy + dz*dz);
+
+			s_motionFrames++;
+			if (dRot < STATIONARY_ROT_DEG && dPos < STATIONARY_POS_UNI) {
+				s_motionStationary++;
+			} else {
+				s_motionMoving++;
+			}
+
+			s_prevRotation = cameraRotation;
+			s_prevPosition = position;
+
+			if ((s_motionFrames % SUMMARY_PERIOD) == 0u) {
+				printf("[CAMERA_MOTION v1] event=summary frames=%u stationary=%u moving=%u "
+				       "stationary_pct=%.1f threshold_deg=%.2f threshold_pos=%.2f\n",
+				       s_motionFrames, s_motionStationary, s_motionMoving,
+				       (s_motionFrames > 0u)
+				           ? (100.0f * (float)s_motionStationary / (float)s_motionFrames)
+				           : 0.0f,
+				       STATIONARY_ROT_DEG, STATIONARY_POS_UNI);
+				fflush(stdout);
+			}
+		}
+	}
 
 	return NO_ERR;
 }
@@ -1734,11 +2007,27 @@ void Camera::render (void)
 }
 
 //---------------------------------------------------------------------------
+// T1.15 [SPOT_DIAG v1] file-scope state for the camera-overwrite probe.
+// First-seen-per-slot is always-on (one stderr line per unique slot index seen
+// here); per-summary is env-gated every 600 frames.
+static const bool s_spotDiagCamEnabled = (getenv("MC2_SPOT_DIAG") != nullptr);
+static std::vector<bool> s_spotDiagCamSeenSlot;  // sized to MAX_LIGHTS_IN_WORLD lazily
+static unsigned long s_spotDiagCamFrames        = 0;
+static unsigned long s_spotDiagCamPointSeen     = 0;  // window: distinct POINT slots seen
+static unsigned long s_spotDiagCamActiveTrue    = 0;  // window: active_after=true counts
+static unsigned long s_spotDiagCamActiveFalse   = 0;  // window: active_after=false counts
+
+// T1.16 — per-slot active-state tracker for (E)-owned slots only.
+// Sentinel 0xFFu == "never seen yet" (no transition emitted on first sample).
+static std::vector<unsigned char> s_spotDiagT16LastActive;
+
 void Camera::updateLights()
 {
 	//---------------------------------------------------------------------------------
 	// Check which lights are on screen and deactivate those which are NOT on screen!
 	numActiveLights = numTerrainLights = 0;
+	++s_spotDiagCamFrames;  // T1.15 frame tick (updateLights is once-per-frame)
+	if (s_spotDiagCamSeenSlot.empty()) s_spotDiagCamSeenSlot.assign(MAX_LIGHTS_IN_WORLD, false);
 	for (long i=0;i<MAX_LIGHTS_IN_WORLD;i++)
 	{
 		if (worldLights[i])
@@ -1781,8 +2070,87 @@ void Camera::updateLights()
 				// [PROJECTZ:LightingShadow id=light_spot_point_active_test]
 				PROJECTZ_SITE("light_spot_point_active_test", "LightingShadow");
 				light->active = projectForLightingShadow(light->position,dummy);
+				// T1.16 [SPOT_DIAG v1] per-slot transition probe — emit ONLY for
+				// (E)-owned slots, state-change-on-transition. Per-summary
+				// snapshot below at end of updateLights() every 600 frames.
+				if (mc2_spotlight_diag::is_enabled()) {
+					mc2_spotlight_diag::SourceClass src;
+					if (mc2_spotlight_diag::is_e_slot(i, &src)) {
+						if (s_spotDiagT16LastActive.size() < (size_t)MAX_LIGHTS_IN_WORLD)
+							s_spotDiagT16LastActive.assign(MAX_LIGHTS_IN_WORLD, 0xFFu);
+						const unsigned char curActive = light->active ? 1u : 0u;
+						const unsigned char prev = s_spotDiagT16LastActive[i];
+						if (prev != 0xFFu && prev != curActive) {
+							const char* srcName =
+								(src == mc2_spotlight_diag::Bldg ? "bldg" :
+								 src == mc2_spotlight_diag::Mech ? "mech" : "gv");
+							std::fprintf(stderr,
+								"[SPOT_DIAG v1] event=our_slot_transition slot=%ld src=%s "
+								"frame=%lu light_pos=(%.1f, %.1f, %.1f) active=%u prev=%u\n",
+								i, srcName, s_spotDiagCamFrames,
+								(float)light->position.x, (float)light->position.y, (float)light->position.z,
+								(unsigned)curActive, (unsigned)prev);
+							std::fflush(stderr);
+						}
+						s_spotDiagT16LastActive[i] = curActive;
+					}
+				}
+				// T1.15 [SPOT_DIAG v1] camera-overwrite probe.
+				// First-hit per slot index — always-on, one stderr line per
+				// distinct slot ever seen here. Window counters tally
+				// active_after true/false for periodic summary.
+				if ((size_t)i < s_spotDiagCamSeenSlot.size() && !s_spotDiagCamSeenSlot[i]) {
+					s_spotDiagCamSeenSlot[i] = true;
+					const char* tname = (light->lightType == TG_LIGHT_POINT) ? "POINT" : "SPOT";
+					std::fprintf(stderr,
+						"[SPOT_DIAG v1] event=overwrite_first_seen slot=%ld type=%s "
+						"pos=(%.2f,%.2f,%.2f) active_after=%d\n",
+						i, tname,
+						(float)light->position.x, (float)light->position.y, (float)light->position.z,
+						light->active ? 1 : 0);
+					std::fflush(stderr);
+					++s_spotDiagCamPointSeen;
+				}
+				if (light->active) ++s_spotDiagCamActiveTrue;
+				else               ++s_spotDiagCamActiveFalse;
 				activeLights[numActiveLights++] = light;
 				terrainLights[numTerrainLights++] = light;
+			}
+		}
+	}
+	// T1.15 [SPOT_DIAG v1] per-summary overwrite aggregate (env-gated).
+	if (s_spotDiagCamEnabled && (s_spotDiagCamFrames % 600) == 0) {
+		unsigned long total = s_spotDiagCamActiveTrue + s_spotDiagCamActiveFalse;
+		double truePct  = (total > 0) ? (100.0 * (double)s_spotDiagCamActiveTrue  / (double)total) : 0.0;
+		double falsePct = (total > 0) ? (100.0 * (double)s_spotDiagCamActiveFalse / (double)total) : 0.0;
+		std::fprintf(stderr,
+			"[SPOT_DIAG v1] event=overwrite_summary frames=%lu point_slots_seen=%lu "
+			"active_true_pct=%.2f active_false_pct=%.2f samples=%lu\n",
+			s_spotDiagCamFrames, s_spotDiagCamPointSeen, truePct, falsePct, total);
+		std::fflush(stderr);
+		// Reset window counters (per-summary cadence per task spec)
+		s_spotDiagCamActiveTrue  = 0;
+		s_spotDiagCamActiveFalse = 0;
+		// T1.16 — per-slot summary: one stderr line per tagged (E)-owned slot.
+		// Periodic ground-truth snapshot (every 600 frames) without per-frame
+		// line volume. Walks MAX_LIGHTS_IN_WORLD; emits only for slots that
+		// is_e_slot() recognizes as tagged.
+		for (long si = 0; si < MAX_LIGHTS_IN_WORLD; ++si) {
+			mc2_spotlight_diag::SourceClass src;
+			if (mc2_spotlight_diag::is_e_slot(si, &src)) {
+				TG_LightPtr l = worldLights[si];
+				const char* srcName =
+					(src == mc2_spotlight_diag::Bldg ? "bldg" :
+					 src == mc2_spotlight_diag::Mech ? "mech" : "gv");
+				std::fprintf(stderr,
+					"[SPOT_DIAG v1] event=our_slot_summary frame=%lu slot=%ld src=%s "
+					"active=%u pos=(%.1f, %.1f, %.1f)\n",
+					s_spotDiagCamFrames, si, srcName,
+					l ? (unsigned)(l->active ? 1u : 0u) : 0xFFu,
+					l ? (float)l->position.x : 0.0f,
+					l ? (float)l->position.y : 0.0f,
+					l ? (float)l->position.z : 0.0f);
+				std::fflush(stderr);
 			}
 		}
 	}
@@ -1805,57 +2173,6 @@ long Camera::activate (void)
 float zero = 0.0f;
 float one = 1.0f;
 float point1 = 0.000001f;
-
-//---------------------------------------------------------------------------
-// Returns a FAIRLY accurate interpretation.  NOT completely accurate unless
-// a REAL W and Z are passed in.  Will see if there's was a to better interpolate those.
-// More then accurate enough for the TacMap at present.  Really improves frameRate ALOT!
-// -fs
-void Camera::inverseProjectZ (Stuff::Vector4D &screen, Stuff::Vector3D &point)
-{
-	if (!usePerspective)
-	{
-		Stuff::Vector2DOf<long> screenPos;
-		screenPos.x = screen.x;
-		screenPos.y = screen.y;
-
-		inverseProject(screenPos,point);
-		return;
-	}
-
-	point.x = point.y = point.z = 0.0f;
-	if ((viewMulX < Stuff::SMALL) || (viewMulY < Stuff::SMALL))
-		return;
-
-	if ((screen.w == 0.0f) || (screen.z == 0.0f))
-	{
-		if (startZInverse > 1.0f)
-			startZInverse = 1.0f;
-
-		if (zPerPixel < 0.0f)
-			zPerPixel = fabs(zPerPixel);
-
-		screen.z = startZInverse - (zPerPixel * screen.y);
-		screen.w = startWInverse + (wPerPixel * screen.y);
-	}
-	
-	Stuff::Vector4D xformCoords;
-	Stuff::Vector4D coords;
-	
-	coords.w = 1.0f / screen.w;
-	coords.x = (screen.x - viewAddX) / (screen.w * viewMulX);
-	coords.y = (screen.y - viewAddY) / (screen.w * viewMulY);
-	coords.z = (screen.z / screen.w);
-	
-	xformCoords.Multiply(coords,clipToWorld);
-	
-	if (xformCoords.w < 0.0)
-		xformCoords.Negate(xformCoords);
-
-	point.x = -xformCoords.x;
-	point.y = xformCoords.z;
-	point.z = xformCoords.y;
-}
 
 //---------------------------------------------------------------------------
 void Camera::projectCamera (Stuff::Vector3D &point)
@@ -1902,13 +2219,17 @@ void Camera::setOrthogonal(void)
 
 		cameraToClip(FORWARD_AXIS, LEFT_AXIS) = 0.0;
 		cameraToClip(FORWARD_AXIS, UP_AXIS) = 0.0;
-		cameraToClip(FORWARD_AXIS, FORWARD_AXIS) = 1.0f / (far_clip-near_clip);
+		// Reverse-Z (U1): parallel/ortho z:[near,far]->NDC[1,0] (was [0,1]).
+		cameraToClip(FORWARD_AXIS, FORWARD_AXIS) = -1.0f / (far_clip-near_clip);
 		cameraToClip(FORWARD_AXIS, 3) = 0.0;
 
 		cameraToClip(3, LEFT_AXIS) = -right_clip / (left_clip-right_clip);
 		cameraToClip(3, UP_AXIS) = -bottom_clip / (top_clip-bottom_clip);
-		cameraToClip(3, FORWARD_AXIS) = -near_clip / (far_clip-near_clip);
+		// Reverse-Z (U1): translate term flips sign and uses far_clip.
+		cameraToClip(3, FORWARD_AXIS) = far_clip / (far_clip-near_clip);
 		cameraToClip(3, 3) = 1.0f;
+		// F2 unified-projection: keep GL-native product in sync with cameraToClip.
+		cameraToClipGL.Multiply(cameraToClip, kPixelHomogToGLNDC);
 	}
 	else
 	{
@@ -1956,13 +2277,41 @@ void Camera::setOrthogonal(void)
 	
 		cameraToClip(FORWARD_AXIS, LEFT_AXIS) = -right_clip * horizontal_range;
 		cameraToClip(FORWARD_AXIS, UP_AXIS) = -bottom_clip * vertical_range;
-		cameraToClip(FORWARD_AXIS, FORWARD_AXIS) = far_clip * depth_range;
+		// Reverse-Z (U1): for NDC=(A*z+B)/z, near->1/far->0 gives
+		// A=-near/(far-near), B=+near*far/(far-near). depth_range already
+		// carries 1/(far-near) and the axis sign, so: negate-and-near-swap
+		// the FF term, sign-flip the 3F term.
+		cameraToClip(FORWARD_AXIS, FORWARD_AXIS) = -near_clip * depth_range;
 		cameraToClip(FORWARD_AXIS, 3) = 1.0f;
-	
+
 		cameraToClip(3, LEFT_AXIS) = 0.0f;
 		cameraToClip(3, UP_AXIS) = 0.0f;
-		cameraToClip(3, FORWARD_AXIS) = -far_clip * near_clip * depth_range;
+		cameraToClip(3, FORWARD_AXIS) = far_clip * near_clip * depth_range;
 		cameraToClip(3, 3) = 0.0f;
+		// F2 unified-projection: keep GL-native product in sync with cameraToClip.
+		cameraToClipGL.Multiply(cameraToClip, kPixelHomogToGLNDC);
+
+		// [REVERSE_Z v1] env-gated lifecycle print (MC2_REVERSE_Z_TRACE=1),
+		// silent by default; one-shot via a static latch. Matches the
+		// MC2_DEBUG_SHADOW_* pattern (CLAUDE.md Debug instrumentation rule;
+		// structural depth change). Samples the perspective z-row at the
+		// near and far planes: under reverse-Z near must map to NDC z=1 and
+		// far to NDC z=0. NDC z = (FF*z_cam + B) / z_cam, with FF and B the
+		// just-written cameraToClip terms.
+		static const bool s_rzTrace = (getenv("MC2_REVERSE_Z_TRACE") != nullptr);
+		if (s_rzTrace) {
+			static int s_rzBuild = 0;
+			++s_rzBuild;
+			const float FF = (float)cameraToClip(FORWARD_AXIS, FORWARD_AXIS);
+			const float B  = (float)cameraToClip(3, FORWARD_AXIS);
+			const float ndcNear = (FF * near_clip + B) / near_clip;
+			const float ndcFar  = (FF * far_clip  + B) / far_clip;
+			fprintf(stderr,
+				"[REVERSE_Z v1] event=proj_build n=%d mode=perspective "
+				"near=%.4f far=%.4f FF=%.8f B=%.8f "
+				"ndcZ_near=%.6f(expect~1) ndcZ_far=%.6f(expect~0)\n",
+				s_rzBuild, near_clip, far_clip, FF, B, ndcNear, ndcFar);
+		}
 	}
 }
 
@@ -2162,6 +2511,39 @@ void Camera::setCameraOrigin (void)
 	
 	if (usePerspective)
 		clipToWorld.Invert(worldToClip);
+}
+
+//---------------------------------------------------------------------------
+Stuff::Matrix4D Camera::worldToClipGL() const
+{
+    // F2 unified-projection: GPU-path projection product.
+    //   = kAxisSwapMC2toGL * worldToCameraMatrix * cameraToClipGL
+    // cameraToClipGL was precomputed at camera-update time (see
+    // cameraToClipGL.Multiply invocations after every cameraToClip write
+    // in calculateProjectionConstants). Replaces the prior per-call
+    // kPixelHomogToGLNDC Multiply.
+    Stuff::Matrix4D viewClipGL;
+    viewClipGL.Multiply(worldToCameraMatrix, cameraToClipGL);
+    Stuff::Matrix4D out;
+    out.Multiply(kAxisSwapMC2toGL, viewClipGL);
+    return out;
+}
+
+//---------------------------------------------------------------------------
+ModernClipResult Camera::projectModernClipGL(const Stuff::Vector3D& world) const
+{
+    // F4 projectZ-bypass helper. Row-vector convention:
+    //   clip_row = world_row * M
+    // world.w = 1.
+    // M = worldToClipGL() = kAxisSwapMC2toGL * worldToCameraMatrix * cameraToClipGL.
+    Stuff::Matrix4D M = worldToClipGL();
+    ModernClipResult r;
+    r.clip.x = world.x * M(0,0) + world.y * M(1,0) + world.z * M(2,0) + M(3,0);
+    r.clip.y = world.x * M(0,1) + world.y * M(1,1) + world.z * M(2,1) + M(3,1);
+    r.clip.z = world.x * M(0,2) + world.y * M(1,2) + world.z * M(2,2) + M(3,2);
+    r.clip.w = world.x * M(0,3) + world.y * M(1,3) + world.z * M(2,3) + M(3,3);
+    r.admit  = clipSpaceFrustumAdmitGL(r.clip);
+    return r;
 }
 
 //---------------------------------------------------------------------------

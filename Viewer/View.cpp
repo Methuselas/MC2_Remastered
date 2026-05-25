@@ -35,7 +35,7 @@ MultiPlayer* MPlayer = NULL;
 extern float frameRate;
 
 // globals used for memory
-UserHeapPtr systemHeap = NULL;
+// NS3: systemHeap defined in mclib/heap.cpp (engine boundary).
 UserHeapPtr guiHeap = NULL;
 
 long GameVisibleVertices = 30;
@@ -77,31 +77,28 @@ enum { CPU_UNKNOWN, CPU_PENTIUM, CPU_MMX, CPU_KATMAI } Processor = CPU_PENTIUM;	
 
 bool	reloadBounds = false;
 int     ObjectTextureSize = 128;
-char	missionName[1024];
-float	gosFontScale = 1.0;
+// NS3: missionName defined in GameOS/gameos/gos_crashbundle.cpp (engine boundary).
+// NS3: gosFontScale defined in mclib/floathelp.cpp (engine boundary).
 
 float   doubleClickThreshold;
 float	dragThreshold;
 
 
-HSTRRES gosResourceHandle = 0;
-HGOSFONT3D gosFontHandle = 0;
+// NS3: gosResourceHandle defined in mclib/utilities.cpp (engine boundary).
+// NS3: gosFontHandle defined in mclib/floathelp.cpp (engine boundary).
 
 
 bool quitGame = FALSE;
 
 
-// these globals are necessary for fast files for some reason
-FastFile 	**fastFiles = NULL;
-long 		numFastFiles = 0;
-long		maxFastFiles = 0;
+// NS3: fastFiles/numFastFiles/maxFastFiles defined in mclib/fastfile.cpp (engine boundary).
 
 char*	ExceptionGameMsg = NULL;
 
-bool	justResaveAllMaps = 0;
+// NS3: justResaveAllMaps defined in mclib/terrain.cpp (engine boundary).
 bool	useLOSAngle = 0;
 
-Stuff::MemoryStream *effectStream = NULL;
+// NS3: effectStream defined in mclib/txmmgr.cpp (engine boundary).
 extern MidLevelRenderer::MLRClipper * theClipper;
 
 

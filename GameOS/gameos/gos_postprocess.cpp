@@ -3,12 +3,59 @@
 #include "utils/gl_utils.h"
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
+#include "gameos.hpp"      // gos_InvalidateRenderStateCache (RENDER_STATES v1)
+#include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled
 
 #include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <SDL2/SDL.h>
+
+namespace {
+
+// M1.5 C1 fix + M3 plan-review fix: centralized scene-FBO draw-buffer
+// policy. Every site that calls glDrawBuffers against sceneFBO_ routes
+// through this helper. The caller passes objectIdAttachmentReady so the
+// helper does not have to guess whether sceneObjectIdTex_ has been
+// allocated yet (avoids GL_INVALID_VALUE when env-ON but FBO setup
+// hasn't run). Callers pass `sceneObjectIdTex_ != 0` for MRT sites;
+// SingleColor sites pass false.
+//
+// glClearBufferuiv(GL_COLOR, 2, ...) at frame-entry is ONLY safe
+// after setSceneDrawBuffers(MainSceneMRT, true) has bound the 3-entry list.
+//
+// Spec: 2026-05-23-renderworld-slice-m1-5-objectid-buffer-spec.md sec 3.
+enum class SceneDrawBufferMode { MainSceneMRT, SingleColor };
+
+static void setSceneDrawBuffers(SceneDrawBufferMode mode,
+                                bool objectIdAttachmentReady) {
+    const bool oid =
+        RenderWorld::IsObjectIdBufferEnabled() && objectIdAttachmentReady;
+
+    if (mode == SceneDrawBufferMode::SingleColor) {
+        GLenum bufs[1] = { GL_COLOR_ATTACHMENT0 };
+        glDrawBuffers(1, bufs);
+        return;
+    }
+
+    if (oid) {
+        GLenum bufs[3] = {
+            GL_COLOR_ATTACHMENT0,
+            GL_COLOR_ATTACHMENT1,
+            GL_COLOR_ATTACHMENT2
+        };
+        glDrawBuffers(3, bufs);
+    } else {
+        GLenum bufs[2] = {
+            GL_COLOR_ATTACHMENT0,
+            GL_COLOR_ATTACHMENT1
+        };
+        glDrawBuffers(2, bufs);
+    }
+}
+
+} // namespace
 
 static gosPostProcess* s_postProcess = nullptr;
 
@@ -66,18 +113,6 @@ gosPostProcess::gosPostProcess()
     , screenShadowProg_(nullptr)
     , screenShadowEnabled_(false)
     , screenShadowDebug_(0)
-    , ssaoProg_(nullptr)
-    , ssaoBlurProg_(nullptr)
-    , ssaoApplyProg_(nullptr)
-    , ssaoFBO_(0)
-    , ssaoColorTex_(0)
-    , ssaoBlurFBO_(0)
-    , ssaoBlurTex_(0)
-    , ssaoNoiseTex_(0)
-    , ssaoEnabled_(false)
-    , ssaoRadius_(40.0f)
-    , ssaoBias_(1.0f)
-    , ssaoPower_(1.5f)
     , sceneHasTerrain_(false)
     , prevFrameHadTerrain_(false)
     , godrayEnabled_(false)  // disabled: no visible sky at RTS zoom. RAlt+6 to test.
@@ -159,21 +194,6 @@ void gosPostProcess::init(int w, int h)
     if (!screenShadowProg_ || !screenShadowProg_->is_valid())
         fprintf(stderr, "gosPostProcess: failed to compile shadow_screen shader\n");
 
-    ssaoProg_ = glsl_program::makeProgram("ssao",
-        "shaders/postprocess.vert", "shaders/ssao.frag", kShaderPrefix);
-    if (!ssaoProg_ || !ssaoProg_->is_valid())
-        fprintf(stderr, "gosPostProcess: failed to compile ssao shader\n");
-
-    ssaoBlurProg_ = glsl_program::makeProgram("ssao_blur",
-        "shaders/postprocess.vert", "shaders/ssao_blur.frag", kShaderPrefix);
-    if (!ssaoBlurProg_ || !ssaoBlurProg_->is_valid())
-        fprintf(stderr, "gosPostProcess: failed to compile ssao_blur shader\n");
-
-    ssaoApplyProg_ = glsl_program::makeProgram("ssao_apply",
-        "shaders/postprocess.vert", "shaders/ssao_apply.frag", kShaderPrefix);
-    if (!ssaoApplyProg_ || !ssaoApplyProg_->is_valid())
-        fprintf(stderr, "gosPostProcess: failed to compile ssao_apply shader\n");
-
     godrayProg_ = glsl_program::makeProgram("godray",
         "shaders/postprocess.vert", "shaders/godray.frag", kShaderPrefix);
     if (!godrayProg_ || !godrayProg_->is_valid())
@@ -226,19 +246,6 @@ void gosPostProcess::destroy()
     if (screenShadowProg_) {
         glsl_program::deleteProgram("shadow_screen");
         screenShadowProg_ = nullptr;
-    }
-
-    if (ssaoProg_) {
-        glsl_program::deleteProgram("ssao");
-        ssaoProg_ = nullptr;
-    }
-    if (ssaoBlurProg_) {
-        glsl_program::deleteProgram("ssao_blur");
-        ssaoBlurProg_ = nullptr;
-    }
-    if (ssaoApplyProg_) {
-        glsl_program::deleteProgram("ssao_apply");
-        ssaoApplyProg_ = nullptr;
     }
 
     if (godrayProg_) {
@@ -308,9 +315,29 @@ void gosPostProcess::createFBOs(int w, int h)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, sceneNormalTex_, 0);
 
-    // MRT: draw to both color attachments
-    GLenum drawBuffers[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-    glDrawBuffers(2, drawBuffers);
+    // M1.5: object-ID attachment-2 (GL_R32UI). Gated on
+    // MC2_OBJECT_ID_BUFFER; when env-OFF we skip the texture
+    // creation entirely so env-OFF runtime cost is exactly zero on
+    // the FBO side. glTexImage2D matches the sceneNormalTex_ pattern
+    // above (decision m4); glTexStorage2D migration deferred.
+    if (RenderWorld::IsObjectIdBufferEnabled()) {
+        glGenTextures(1, &sceneObjectIdTex_);
+        glBindTexture(GL_TEXTURE_2D, sceneObjectIdTex_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, w, h, 0,
+                     GL_RED_INTEGER, GL_UNSIGNED_INT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2,
+                               GL_TEXTURE_2D, sceneObjectIdTex_, 0);
+    }
+
+    // MRT: draw to color attachments via centralized policy. Helper
+    // adds GL_COLOR_ATTACHMENT2 when env-ON AND sceneObjectIdTex_
+    // exists (M1.5 C1 + M3 fix).
+    setSceneDrawBuffers(SceneDrawBufferMode::MainSceneMRT,
+                        sceneObjectIdTex_ != 0);
 
     GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE) {
@@ -340,68 +367,6 @@ void gosPostProcess::createFBOs(int w, int h)
         if (status != GL_FRAMEBUFFER_COMPLETE) {
             fprintf(stderr, "gosPostProcess: bloom FBO[%d] incomplete (0x%x)\n", i, status);
         }
-    }
-
-    // --- SSAO FBOs (half resolution, single channel) ---
-    {
-        // SSAO raw output
-        glGenFramebuffers(1, &ssaoFBO_);
-        glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO_);
-
-        glGenTextures(1, &ssaoColorTex_);
-        glBindTexture(GL_TEXTURE_2D, ssaoColorTex_);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, halfW, halfH, 0, GL_RED, GL_FLOAT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssaoColorTex_, 0);
-
-        status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        if (status != GL_FRAMEBUFFER_COMPLETE)
-            fprintf(stderr, "gosPostProcess: SSAO FBO incomplete (0x%x)\n", status);
-
-        // SSAO blur target
-        glGenFramebuffers(1, &ssaoBlurFBO_);
-        glBindFramebuffer(GL_FRAMEBUFFER, ssaoBlurFBO_);
-
-        glGenTextures(1, &ssaoBlurTex_);
-        glBindTexture(GL_TEXTURE_2D, ssaoBlurTex_);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, halfW, halfH, 0, GL_RED, GL_FLOAT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssaoBlurTex_, 0);
-
-        status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        if (status != GL_FRAMEBUFFER_COMPLETE)
-            fprintf(stderr, "gosPostProcess: SSAO blur FBO incomplete (0x%x)\n", status);
-    }
-
-    // --- 4x4 SSAO noise texture ---
-    {
-        // Random tangent-space rotation vectors
-        float noiseData[4 * 4 * 3];
-        // Deterministic noise pattern (reproducible)
-        unsigned int seed = 42;
-        for (int i = 0; i < 16; i++) {
-            seed = seed * 1103515245 + 12345;
-            float x = ((seed >> 16) & 0x7FFF) / 16383.5f - 1.0f;
-            seed = seed * 1103515245 + 12345;
-            float y = ((seed >> 16) & 0x7FFF) / 16383.5f - 1.0f;
-            // Encode as [0,1] for RGB texture
-            noiseData[i * 3 + 0] = x * 0.5f + 0.5f;
-            noiseData[i * 3 + 1] = y * 0.5f + 0.5f;
-            noiseData[i * 3 + 2] = 0.5f;
-        }
-        glGenTextures(1, &ssaoNoiseTex_);
-        glBindTexture(GL_TEXTURE_2D, ssaoNoiseTex_);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, 4, 4, 0, GL_RGB, GL_FLOAT, noiseData);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     }
 
     // --- God ray FBO (half resolution) ---
@@ -448,6 +413,10 @@ void gosPostProcess::destroyFBOs()
         glDeleteTextures(1, &sceneNormalTex_);
         sceneNormalTex_ = 0;
     }
+    if (sceneObjectIdTex_) {
+        glDeleteTextures(1, &sceneObjectIdTex_);
+        sceneObjectIdTex_ = 0;
+    }
     for (int i = 0; i < 2; ++i) {
         if (bloomFBO_[i]) {
             glDeleteFramebuffers(1, &bloomFBO_[i]);
@@ -458,11 +427,6 @@ void gosPostProcess::destroyFBOs()
             bloomColorTex_[i] = 0;
         }
     }
-    if (ssaoFBO_) { glDeleteFramebuffers(1, &ssaoFBO_); ssaoFBO_ = 0; }
-    if (ssaoColorTex_) { glDeleteTextures(1, &ssaoColorTex_); ssaoColorTex_ = 0; }
-    if (ssaoBlurFBO_) { glDeleteFramebuffers(1, &ssaoBlurFBO_); ssaoBlurFBO_ = 0; }
-    if (ssaoBlurTex_) { glDeleteTextures(1, &ssaoBlurTex_); ssaoBlurTex_ = 0; }
-    if (ssaoNoiseTex_) { glDeleteTextures(1, &ssaoNoiseTex_); ssaoNoiseTex_ = 0; }
     if (godrayColorTex_) { glDeleteTextures(1, &godrayColorTex_); godrayColorTex_ = 0; }
     if (godrayFBO_) { glDeleteFramebuffers(1, &godrayFBO_); godrayFBO_ = 0; }
 }
@@ -520,8 +484,18 @@ void gosPostProcess::beginScene()
     // coherence guarantee. AMD location=1 corruption claim refuted 2026-04-27;
     // see docs/amd-driver-rules.md "Tested-and-refuted claims".
     if (sceneNormalTex_) {
-        GLenum drawBuffers[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-        glDrawBuffers(2, drawBuffers);
+        // M1.5 C1 + M3 fix: helper takes readiness flag explicitly.
+        setSceneDrawBuffers(SceneDrawBufferMode::MainSceneMRT,
+                            sceneObjectIdTex_ != 0);
+    }
+    // M1.5 m1 clear-order rule + M3 plan-review fix: glClearBufferuiv
+    // at INDEX 2 only safe AFTER the env-ON 3-entry list is bound.
+    // Guarded by the same readiness predicate that selects the 3-entry
+    // list above; env-OFF byte-identical.
+    if (RenderWorld::IsObjectIdBufferEnabled() && sceneObjectIdTex_) {
+        static const GLuint kClearZero[4] = { 0u, 0u, 0u, 0u };
+        setSceneDrawBuffers(SceneDrawBufferMode::MainSceneMRT, true);
+        glClearBufferuiv(GL_COLOR, 2, kClearZero);
     }
     glViewport(0, 0, width_, height_);
 }
@@ -607,8 +581,9 @@ void gosPostProcess::runScreenShadow()
 
     // Render to sceneFBO_ color-only (no normal write) with multiplicative blending
     glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
-    GLenum singleBuf = GL_COLOR_ATTACHMENT0;
-    glDrawBuffers(1, &singleBuf);
+    // M1.5: single-color composite. Helper preserves env-OFF/ON parity
+    // (the postprocess composite never writes attachment-2 regardless).
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
     glDisable(GL_DEPTH_TEST);
@@ -672,119 +647,6 @@ void gosPostProcess::runScreenShadow()
     glActiveTexture(GL_TEXTURE0);
 }
 
-void gosPostProcess::runSSAO()
-{
-    ZoneScopedN("Render.SSAO");
-    TracyGpuZone("Render.SSAO");
-
-    if (!ssaoEnabled_) return;
-    if (!ssaoProg_ || !ssaoProg_->is_valid()) return;
-    if (!ssaoBlurProg_ || !ssaoBlurProg_->is_valid()) return;
-
-    int hw = width_ / 2, hh = height_ / 2;
-    if (hw < 1) hw = 1;
-    if (hh < 1) hh = 1;
-
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDepthMask(GL_FALSE);
-    glDisable(GL_BLEND);
-
-    // Pass 1: SSAO sampling at half resolution
-    glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO_);
-    glViewport(0, 0, hw, hh);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    ssaoProg_->setInt("sceneDepthTex", 0);
-    ssaoProg_->setInt("sceneNormalTex", 1);
-    ssaoProg_->setInt("noiseTex", 2);
-    ssaoProg_->setFloat("ssaoRadius", ssaoRadius_);
-    ssaoProg_->setFloat("ssaoBias", ssaoBias_);
-    ssaoProg_->setFloat("ssaoPower", ssaoPower_);
-    float screenSz[2] = { (float)width_, (float)height_ };
-    ssaoProg_->setFloat2("screenSize", screenSz);
-    ssaoProg_->apply();
-
-    // Upload matrices via direct GL
-    GLint loc;
-    loc = glGetUniformLocation(ssaoProg_->shp_, "viewProj");
-    if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, viewProj_);
-    loc = glGetUniformLocation(ssaoProg_->shp_, "inverseViewProj");
-    if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, inverseViewProj_);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, sceneNormalTex_);
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, ssaoNoiseTex_);
-
-    glBindVertexArray(quadVAO_);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    // Pass 2: Bilateral blur — horizontal
-    float texelSz[2] = { 1.0f / (float)hw, 1.0f / (float)hh };
-
-    glBindFramebuffer(GL_FRAMEBUFFER, ssaoBlurFBO_);
-    ssaoBlurProg_->setInt("ssaoTex", 0);
-    ssaoBlurProg_->setInt("sceneDepthTex", 1);
-    ssaoBlurProg_->setFloat2("texelSize", texelSz);
-    ssaoBlurProg_->setInt("blurHorizontal", 1);
-    ssaoBlurProg_->apply();
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, ssaoColorTex_);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    // Pass 3: Bilateral blur — vertical (back into ssaoColorTex_)
-    glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO_);
-    ssaoBlurProg_->setInt("blurHorizontal", 0);
-    ssaoBlurProg_->apply();
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, ssaoBlurTex_);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    // Pass 4+5: Second blur iteration for smoother result
-    glBindFramebuffer(GL_FRAMEBUFFER, ssaoBlurFBO_);
-    ssaoBlurProg_->setInt("blurHorizontal", 1);
-    ssaoBlurProg_->apply();
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, ssaoColorTex_);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO_);
-    ssaoBlurProg_->setInt("blurHorizontal", 0);
-    ssaoBlurProg_->apply();
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, ssaoBlurTex_);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    // Result is in ssaoColorTex_ — apply to scene via multiplicative blending
-    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
-    GLenum singleBuf = GL_COLOR_ATTACHMENT0;
-    glDrawBuffers(1, &singleBuf);
-    glViewport(0, 0, width_, height_);
-
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_DST_COLOR, GL_ZERO);
-
-    ssaoApplyProg_->setInt("ssaoTex", 0);
-    ssaoApplyProg_->apply();
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, ssaoColorTex_);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    glBindVertexArray(0);
-    glDisable(GL_BLEND);
-    glDepthMask(GL_TRUE);
-    glEnable(GL_DEPTH_TEST);
-    glActiveTexture(GL_TEXTURE0);
-}
-
 void gosPostProcess::runGodRays()
 {
     ZoneScopedN("Render.GodRays");
@@ -830,8 +692,8 @@ void gosPostProcess::runGodRays()
 
     // Pass 2: Additive composite onto scene at full res
     glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
-    GLenum singleBuf = GL_COLOR_ATTACHMENT0;
-    glDrawBuffers(1, &singleBuf);
+    // M1.5: single-color composite (additive); helper preserves env shape.
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
     glEnable(GL_BLEND);
@@ -863,8 +725,8 @@ void gosPostProcess::runShoreline()
     if (!shorelineEnabled_ || !sceneHasTerrain_ || !shorelineProg_ || !shorelineProg_->is_valid()) return;
 
     glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
-    GLenum singleBuf = GL_COLOR_ATTACHMENT0;
-    glDrawBuffers(1, &singleBuf);
+    // M1.5: single-color multiplicative composite; helper preserves env shape.
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
     glViewport(0, 0, width_, height_);
 
     glDisable(GL_DEPTH_TEST);
@@ -912,9 +774,6 @@ void gosPostProcess::endScene()
 
     // Shoreline foam pass (brightens water pixels adjacent to terrain)
     runShoreline();
-
-    // SSAO pass (half-res, bilateral blurred, multiplicative)
-    runSSAO();
 
     // God rays pass (radial light scattering, additive)
     runGodRays();
@@ -973,6 +832,12 @@ void gosPostProcess::endScene()
     // Re-enable depth test
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
+
+    // RENDER_STATES v1: post-process disturbed program, depth, blend, sampler,
+    // and unit-0/1 texture bindings outside applyRenderStates. Invalidate the
+    // applyRenderStates cache so the next renderer (e.g. HUD/debug overlay)
+    // gets a full state re-apply, not a stale-cache short-circuit.
+    gos_InvalidateRenderStateCache();
 
     drainGLErrors("post_process");
 }
@@ -1112,9 +977,14 @@ void gosPostProcess::initShadows()
     staticLightSpaceMatrix_[0] = staticLightSpaceMatrix_[5] = staticLightSpaceMatrix_[10] = staticLightSpaceMatrix_[15] = 1.0f;
     staticLightMatrixBuilt_ = false;
 
-    // Clear shadow map to max depth (1.0) so everything is "lit"
+    // Clear shadow map to max depth (1.0) so everything is "lit".
+    // Reverse-Z (U2) state-safe partition: the scene sets glClearDepth(0);
+    // the shadow path stays forward-Z, so set glClearDepth(1.0f)
+    // explicitly here and restore the scene reverse-Z default after.
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFBO_);
+    glClearDepth(1.0f);
     glClear(GL_DEPTH_BUFFER_BIT);
+    glClearDepth(0.0f);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -1125,7 +995,11 @@ void gosPostProcess::beginShadowPass()
     glGetIntegerv(GL_VIEWPORT, savedViewport_);
     glBindFramebuffer(GL_FRAMEBUFFER, shadowFBO_);
     glViewport(0, 0, shadowMapSize_, shadowMapSize_);
+    // Reverse-Z (U2) state-safe partition: shadow stays forward-Z; scene
+    // set glClearDepth(0), so force 1.0f here and restore 0 after.
+    glClearDepth(1.0f);
     glClear(GL_DEPTH_BUFFER_BIT);
+    glClearDepth(0.0f);
 
     // Force depth test and writing ON
     glEnable(GL_DEPTH_TEST);
@@ -1184,6 +1058,18 @@ void gosPostProcess::destroyShadows()
     }
 }
 
+// CP-1: per-mission reset of process-scoped static-shadow priming state.
+// Resets the static light matrix built flag so the next mission rebuilds it
+// against fresh blocks[]. The gos_*ShadowRebuild* one-shot-flag API was
+// RETIRED with the move to the build-once full-map static shadow (see the
+// note in gameos_graphics.cpp by gos_ResetStaticLightMatrix); the matrix
+// rebuild alone re-primes the accumulation, no camera-motion trigger.
+void gos_ResetStaticShadowPriming()
+{
+    gosPostProcess* pp = getGosPostProcess();
+    if (pp) pp->resetStaticLightMatrix();
+}
+
 void gosPostProcess::buildStaticLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
                                              float mapHalfExtent)
 {
@@ -1226,13 +1112,17 @@ void gosPostProcess::buildStaticLightMatrix(float sunDirX, float sunDirY, float 
         1
     };
 
-    // Ortho covers full map; near/far envelope the full elevation range
+    // Ortho covers full map; near/far envelope the full elevation range.
+    // Z-row emits clip-z in [0,1] (near->0, far->1) to match the engine-global
+    // glClipControl(GL_ZERO_TO_ONE) set in gameosmain.cpp. Mirrors the scene
+    // ortho precedent camera.cpp:2032/2037; the classic [-1,1] form clipped the
+    // near half of the light frustum away (wedge atlas / half-map shadow).
     float nearP = 1.0f, farP = 2.0f * r;
     float ortho[16] = {
         1.0f/r, 0, 0, 0,
         0, 1.0f/r, 0, 0,
-        0, 0, -2.0f/(farP - nearP), 0,
-        0, 0, -(farP + nearP)/(farP - nearP), 1
+        0, 0, -1.0f/(farP - nearP), 0,
+        0, 0, -nearP/(farP - nearP), 1
     };
 
     for (int col = 0; col < 4; col++) {
@@ -1245,6 +1135,52 @@ void gosPostProcess::buildStaticLightMatrix(float sunDirX, float sunDirY, float 
     }
 
     fprintf(stderr, "gosPostProcess: rendering static shadows (map half-extent=%.0f)\n", mapHalfExtent);
+
+    // [SHADOWFRUSTUM v1] VPL-#shadow: prove the static-shadow CLIPPER is
+    // correct (user suspected light/clipper; render-expert grep says it's
+    // feed-scope, not the matrix). INERT, env MC2_DEBUG_SHADOW_FRUSTUM,
+    // one-shot (function early-returns on staticLightMatrixBuilt_ latch).
+    // Input scalars only -- NO staticLightSpaceMatrix_[] slot reads (the
+    // matrix-index discipline lesson). If orthoHalf == mapHalfExtent*1.485
+    // and the map's real half-size, the clipper covers the FULL map ->
+    // the bug is definitively the FEED (camera-windowed terrain), not the
+    // light/clipper. buildCount>1 would mean the latch resets (rebuild).
+    if (getenv("MC2_DEBUG_SHADOW_FRUSTUM") != nullptr) {
+        static int s_buildCount = 0;
+        ++s_buildCount;
+        fprintf(stderr,
+            "[SHADOWFRUSTUM v1] event=build n=%d sunDirIn=(%.4f,%.4f,%.4f) "
+            "sunDirNorm=(%.4f,%.4f,%.4f) mapHalfExtent=%.1f orthoHalf(r)=%.1f "
+            "near=%.2f far=%.2f coversWorldXY=[-%.1f,%.1f]\n",
+            s_buildCount, sunDirX, sunDirY, sunDirZ, fx, fy, fz,
+            mapHalfExtent, r, nearP, farP, r, r);
+    }
+
+    // [SHADOWZRANGE v1] VPL-#10: prove the [0,1] ZERO_TO_ONE conversion is
+    // correct. Transform map center + 4 corners (z=0) through the COMPOSITE
+    // staticLightSpaceMatrix_ (column-major: [col*4+row]); every clip.z/clip.w
+    // MUST land in [0,1]. A sign error in the ortho z-row shows here as an
+    // out-of-range value BEFORE any GPU round-trip. Unconditional env-gated
+    // fprintf (assert is a no-op under RelWithDebInfo); one-shot via the
+    // staticLightMatrixBuilt_ latch.
+    if (getenv("MC2_DEBUG_SHADOW_ZRANGE") != nullptr) {
+        const float* M = staticLightSpaceMatrix_;
+        const float pts[5][3] = {
+            { 0.0f, 0.0f, 0.0f },
+            {  0.95f*r,  0.95f*r, 0.0f }, { -0.95f*r,  0.95f*r, 0.0f },
+            {  0.95f*r, -0.95f*r, 0.0f }, { -0.95f*r, -0.95f*r, 0.0f }
+        };
+        for (int i = 0; i < 5; i++) {
+            float px = pts[i][0], py = pts[i][1], pz = pts[i][2];
+            float cz = M[0*4+2]*px + M[1*4+2]*py + M[2*4+2]*pz + M[3*4+2];
+            float cw = M[0*4+3]*px + M[1*4+3]*py + M[2*4+3]*pz + M[3*4+3];
+            float ndc = (cw != 0.0f) ? cz / cw : 0.0f;
+            fprintf(stderr,
+                "[SHADOWZRANGE v1] event=static pt=%d world=(%.0f,%.0f,%.0f) "
+                "clipZ=%.5f clipW=%.5f ndcZ=%.5f inRange=%d\n",
+                i, px, py, pz, cz, cw, ndc, (ndc >= 0.0f && ndc <= 1.0f) ? 1 : 0);
+        }
+    }
 }
 
 void gosPostProcess::initDynamicShadows()
@@ -1290,10 +1226,14 @@ void gosPostProcess::initDynamicShadows()
     memset(dynamicLightSpaceMatrix_, 0, sizeof(dynamicLightSpaceMatrix_));
     dynamicLightSpaceMatrix_[0] = dynamicLightSpaceMatrix_[5] = dynamicLightSpaceMatrix_[10] = dynamicLightSpaceMatrix_[15] = 1.0f;
 
-    // Clear to max depth (fully lit)
+    // Clear to max depth (fully lit). Reverse-Z (U2) state-safe partition:
+    // dynamic shadow stays forward-Z; scene set glClearDepth(0), so force
+    // 1.0f here and restore the scene reverse-Z default after.
     glBindFramebuffer(GL_FRAMEBUFFER, dynShadowFBO_);
     glDepthMask(GL_TRUE);
+    glClearDepth(1.0f);
     glClear(GL_DEPTH_BUFFER_BIT);
+    glClearDepth(0.0f);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -1305,7 +1245,7 @@ void gosPostProcess::destroyDynamicShadows()
 }
 
 void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
-                                              float camX, float camY, float camZ)
+                                              const float camFitCornersMC2[8][3])
 {
     if (!shadowsEnabled_ || !dynShadowFBO_) return;
 
@@ -1315,17 +1255,35 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     if (len < 0.001f) return;
     float fx = sunDirX/len, fy = sunDirY/len, fz = sunDirZ/len;
 
-    float xyRadius = 2400.0f;  // half-extent of the dynamic shadow ortho. Covers the
-                                // zoomed-out camera view plus enough margin for
-                                // off-screen casters. At 4096² map, texel density is
-                                // (2*xyRadius)/4096 units/texel. 2400 → ~1.17 u/tex.
-    float depthDist = 5000.0f;              // large depth to envelope all elevations
-
-    // Texel snapping: quantize camera position to shadow texel grid
+    // --- Frustum-fit XY extent in raw-MC2 (corners supplied by caller).
+    // The map-bounds clamp below (r, mirrors the static path) is the
+    // footprint safety net that bounds the low-sun "frustum misses ground"
+    // case; no separate elevation slab is needed for an XY ortho fit.
+    float minX =  1e30f, maxX = -1e30f, minY = 1e30f, maxY = -1e30f;
+    for (int c = 0; c < 8; ++c) {
+        float x = camFitCornersMC2[c][0];
+        float y = camFitCornersMC2[c][1];
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+    float r = mapHalfExtent_ * sqrtf(2.0f) * 1.05f;   // mirror static path's r
+    if (minX < -r) minX = -r; if (maxX > r) maxX = r;
+    if (minY < -r) minY = -r; if (maxY > r) maxY = r;
+    float cx = 0.5f * (minX + maxX);
+    float cy = 0.5f * (minY + maxY);
+    float halfX = 0.5f * (maxX - minX);
+    float halfY = 0.5f * (maxY - minY);
+    float fitRadius = (halfX > halfY ? halfX : halfY);
+    if (fitRadius < 64.0f) fitRadius = 64.0f;
+    if (fitRadius > r)     fitRadius = r;
+    float xyRadius = 64.0f;
+    while (xyRadius < fitRadius) xyRadius *= 2.0f;     // pow2 anti-shimmer
+    if (xyRadius > r) xyRadius = r;
     float worldUnitsPerTexel = (2.0f * xyRadius) / (float)dynShadowMapSize_;
-    camX = floorf(camX / worldUnitsPerTexel) * worldUnitsPerTexel;
-    camY = floorf(camY / worldUnitsPerTexel) * worldUnitsPerTexel;
-    // Don't clamp Z — keep true camera elevation for depth centering
+    float camX = floorf(cx / worldUnitsPerTexel) * worldUnitsPerTexel;
+    float camY = floorf(cy / worldUnitsPerTexel) * worldUnitsPerTexel;
+    float camZ = 0.0f;
+    float depthDist = 5000.0f;
 
     float lightPosX = camX - fx * depthDist;
     float lightPosY = camY - fy * depthDist;
@@ -1354,12 +1312,15 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
         1
     };
 
+    // Z-row emits clip-z in [0,1] (near->0, far->1) for glClipControl
+    // (GL_ZERO_TO_ONE), lockstep with buildStaticLightMatrix above and the
+    // .xy-only sampler remap in shadow.hglsl / shadow_screen.frag.
     float nearP = 1.0f, farP = 2.0f * depthDist;
     float ortho[16] = {
         1.0f/xyRadius, 0, 0, 0,
         0, 1.0f/xyRadius, 0, 0,
-        0, 0, -2.0f/(farP - nearP), 0,
-        0, 0, -(farP + nearP)/(farP - nearP), 1
+        0, 0, -1.0f/(farP - nearP), 0,
+        0, 0, -nearP/(farP - nearP), 1
     };
 
     for (int col = 0; col < 4; col++) {
@@ -1368,6 +1329,32 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
             for (int k = 0; k < 4; k++)
                 sum += ortho[k * 4 + row] * view[col * 4 + k];
             dynamicLightSpaceMatrix_[col * 4 + row] = sum;
+        }
+    }
+
+    // [SHADOWZRANGE v1] VPL-#10: dynamic-path [0,1] verification. Rebuilds
+    // per frame -> one-shot via static counter. Transforms the snapped camera
+    // center + offsets through dynamicLightSpaceMatrix_; clip.z/clip.w MUST be
+    // in [0,1] (lockstep with the static probe + the .xy-only sampler remap).
+    if (getenv("MC2_DEBUG_SHADOW_ZRANGE") != nullptr) {
+        static int s_dynN = 0;
+        if (++s_dynN <= 1) {
+            const float* M = dynamicLightSpaceMatrix_;
+            const float pts[3][3] = {
+                { camX, camY, camZ },
+                { camX + 0.95f*xyRadius, camY + 0.95f*xyRadius, camZ },
+                { camX - 0.95f*xyRadius, camY - 0.95f*xyRadius, camZ }
+            };
+            for (int i = 0; i < 3; i++) {
+                float px = pts[i][0], py = pts[i][1], pz = pts[i][2];
+                float cz = M[0*4+2]*px + M[1*4+2]*py + M[2*4+2]*pz + M[3*4+2];
+                float cw = M[0*4+3]*px + M[1*4+3]*py + M[2*4+3]*pz + M[3*4+3];
+                float ndc = (cw != 0.0f) ? cz / cw : 0.0f;
+                fprintf(stderr,
+                    "[SHADOWZRANGE v1] event=dynamic pt=%d world=(%.0f,%.0f,%.0f) "
+                    "clipZ=%.5f clipW=%.5f ndcZ=%.5f inRange=%d\n",
+                    i, px, py, pz, cz, cw, ndc, (ndc >= 0.0f && ndc <= 1.0f) ? 1 : 0);
+            }
         }
     }
 

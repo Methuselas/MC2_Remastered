@@ -17,27 +17,27 @@ using namespace Microsoft::Xna::Arm;
 
 #include "common.hpp"
 
-HSTRRES gosResourceHandle = 0;
+// NS3: gosResourceHandle defined in mclib/utilities.cpp (engine boundary).
 
-Stuff::MemoryStream *effectStream = NULL;
+// NS3: effectStream defined in mclib/txmmgr.cpp (engine boundary).
 
 extern char CDInstallPath[];
 
 bool hasGuardBand = false;
-bool justResaveAllMaps = false;
+// NS3: justResaveAllMaps defined in mclib/terrain.cpp (engine boundary).
 Camera *eye = NULL;
 //enum { CPU_UNKNOWN, CPU_PENTIUM, CPU_MMX, CPU_KATMAI } Processor = CPU_PENTIUM;		//Needs to be set when GameOS supports ProcessorID -- MECHCMDR2
 
 float MaxMinUV = 8.0f;
 
-DWORD BaseVertexColor = 0x00000000;
+// NS3: BaseVertexColor defined in mclib/quad.cpp (engine boundary).
 
 static LPCTSTR lpszAppName = "MechCmdr2";
 
-UserHeapPtr systemHeap = NULL;
+// NS3: systemHeap defined in mclib/heap.cpp (engine boundary).
 UserHeapPtr guiHeap = NULL;
 
-float gosFontScale = 1.0f;
+// NS3: gosFontScale defined in mclib/floathelp.cpp (engine boundary).
 
 extern bool silentMode;
 bool useLOSAngle = false;
@@ -47,18 +47,16 @@ IProviderEngine * armProvider = NULL;
 
 unsigned long tglHeapSize = 16386000;
 
-FastFile 	**fastFiles = NULL;
-long 		numFastFiles = 0;
-long		maxFastFiles = 0;
+// NS3: fastFiles/numFastFiles/maxFastFiles defined in mclib/fastfile.cpp (engine boundary).
 
 HWND		appWnd = NULL;
 
 extern const char* MechAnimationNames[MaxGestures];
 
-int ObjectTextureSize = 128;
-bool reloadBounds = false;
-MidLevelRenderer::MLRClipper * theClipper = NULL;
-HGOSFONT3D gosFontHandle = 0;
+// NS3: ObjectTextureSize defined in mclib/bdactor.cpp (engine boundary).
+// NS3: reloadBounds defined in mclib/bdactor.cpp (engine boundary).
+// NS3: theClipper defined in mclib/bdactor.cpp (engine boundary).
+// NS3: gosFontHandle defined in mclib/floathelp.cpp (engine boundary).
 extern HGOSFONT3D	FontHandle;
 FloatHelpPtr globalFloatHelp = NULL;
 unsigned long currentFloatHelp = 0;

@@ -1,0 +1,70 @@
+// RenderCore/PipelineDesc.h
+//
+// Non-owning description of all fixed-function GL pipeline state a draw call
+// requires. Header-only; no runtime dispatch yet.
+//
+// Purpose: name the implicit render contracts so future DrawPacket sorting
+// and editor debug rendering have a typed handle to build cache keys from.
+// Do NOT swap live render paths to use this type until DrawPacket dispatch
+// is wired (a future slice).
+//
+// BlendMode values are intentionally identical to
+// render_contract::PassStateContract::BlendMode so callers can cast freely.
+// A static_assert enforcing this lives in mclib/render_contract.cpp when
+// MC2_RENDER_CONTRACT_ASSERT is active.
+//
+// SSBO binding slots referenced by ssboBindingsMask (bit N = slot N):
+//   8  = SUBSTRATE         (gpu_cull_substrate.cpp)
+//   9  = DEBUG             (gpu_cull_compute.cpp)
+//  14  = READBACK          (gpu_cull_readback.h)
+//  16  = BASE_INSTANCE     (gos_static_prop_batcher.cpp)
+//  20  = LIGHT_DATA        (gameos.hpp / lighting.hglsl)
+//
+// Spec: docs/superpowers/specs/2026-05-22-renderworld-boundary-spec.md §6
+
+#pragma once
+
+#include <cstdint>
+
+namespace RenderCore {
+
+// Must stay value-identical to render_contract::PassStateContract::BlendMode.
+enum class BlendMode : uint8_t { Opaque, AlphaBlend, AlphaTest, Additive };
+
+enum class CullMode  : uint8_t { None, Back, Front };
+
+// Which GL_COLOR_ATTACHMENTx slots must be non-NONE in the active FBO.
+// Mirrors render_contract::RequiredAttachments; kept separate to avoid an
+// mclib → rendercore include cycle.
+struct ColorAttachmentMask {
+    bool color0;   // GL_COLOR_ATTACHMENT0 — albedo / HDR scene color
+    bool color1;   // GL_COLOR_ATTACHMENT1 — GBuffer normal + post-shadow mask
+    bool color2;   // GL_COLOR_ATTACHMENT2 — R32_UINT object ID (M1.5+)
+};
+
+struct PipelineDesc {
+    // GL program object name (same underlying type as GLuint). Non-owning.
+    // Zero = unset / invalid. Matches DrawPacket::pipelineId when used as
+    // a cache key (DrawPacket sorts by this in the upper bits of sortKey).
+    uint32_t            glProgramName;
+
+    BlendMode           blend;
+    bool                depthTestEnable;
+    bool                depthWriteEnable;
+    CullMode            cullMode;
+
+    ColorAttachmentMask colorAttachments;
+    // True when the fragment shader declares layout(location=2) out uint
+    // for object-ID. Distinct from colorAttachments.color2: a pass can
+    // require color2 bound without writing it (terrain does this).
+    bool                objectIdWriteEnabled;
+
+    // Bit N set → SSBO binding slot N is required. Covers slots 0-31.
+    // See binding table in the file header above.
+    uint32_t            ssboBindingsMask;
+};
+
+static_assert(sizeof(PipelineDesc) <= 16,
+              "PipelineDesc must stay small; it lives in hot-path cache entries.");
+
+} // namespace RenderCore

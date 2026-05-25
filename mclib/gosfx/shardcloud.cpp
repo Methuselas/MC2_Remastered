@@ -1,6 +1,10 @@
 #include"gosfxheaders.hpp"
 #include<mlr/mlrtrianglecloud.hpp>
 
+// B1 Stage 2' C8: subclass-Start routing into the GPU particle pipeline.
+#include"particles/batcher.h"
+#include"particles/spawn.h"
+
 //==========================================================================//
 // File:	 gosFX_ShardCloud.cpp											//
 // Contents: Base gosFX::ShardCloud Component								//
@@ -304,6 +308,22 @@ void gosFX::ShardCloud::Draw(DrawInfo *info)
 {
 	Check_Object(this);
 	Check_Object(info);
+
+	// GPU render path (Stage 2'): re-emit current cloud to the batcher on
+	// every Draw() call. This matches the legacy path which submits shard
+	// geometry to MLR render lists each frame. SpawnShard samples spec
+	// curves at parent_age=0.5 so positions are consistent frame-to-frame.
+	// SpinningCloud::Draw propagates up the chain for EffectCloud children;
+	// it does not render shard geometry.
+	//
+	// NOTE: GPU spawn moved from Start() to here. Start()-based emission only
+	// filled the batcher for one frame (until the first Flush()), leaving the
+	// batcher empty for all subsequent frames.
+	if (mc2::particles::Batcher::is_enabled()) {
+		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed);
+		SpinningCloud::Draw(info);
+		return;
+	}
 
 	//
 	//---------------------------------------------------------
@@ -668,4 +688,24 @@ void
 	gosFX::ShardCloud::TestInstance() const
 {
 	Verify(IsDerivedFrom(DefaultData));
+}
+
+//------------------------------------------------------------------------------
+// B1 Stage 2' C8 — route to GPU particle pipeline when env-gated on.
+// See pointcloud.cpp Start for the full rationale; same pattern.
+//
+void
+	gosFX::ShardCloud::Start(ExecuteInfo *info)
+{
+	Check_Object(this);
+	Check_Pointer(info);
+
+	// C9 fix: ALWAYS call SpinningCloud::Start (which resolves to the
+	// inherited ParticleCloud::Start) so per-particle structures are
+	// initialized. C8 skipped this under env-on and the destructor /
+	// legacy Execute walked garbage memory, corrupting heap state. See
+	// pointcloud.cpp Start for the full rationale.
+	SpinningCloud::Start(info);
+
+	// GPU spawn moved to Draw() so it fires every frame (not just once at Start).
 }

@@ -512,7 +512,7 @@ namespace
 #endif
     }
 
-    std::string JoinPath(const std::string& a, const std::string& b)
+    std::string JoinPath(const std::string& a, const char* b)
     {
 #ifdef PLATFORM_WINDOWS
         const char sep = '\\';
@@ -742,8 +742,8 @@ namespace
         if (root.empty() || !locale || !locale[0])
             return;
 
-        dirs.push_back(JoinPath(root, std::string("text/") + locale));
-        dirs.push_back(JoinPath(root, std::string("data/defs/text/") + locale));
+        dirs.push_back(JoinPath(root, (std::string("text/") + locale).c_str()));
+        dirs.push_back(JoinPath(root, (std::string("data/defs/text/") + locale).c_str()));
     }
 
     void AddEngineSupportRootCandidates(std::vector<std::string>& dirs, const std::string& root)

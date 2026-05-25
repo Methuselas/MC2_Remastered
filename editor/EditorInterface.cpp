@@ -9,6 +9,7 @@
 ****************************************************************/
 
 #include <cstdio>
+#include <string>
 #include "stdafx.h"
 #include "EditorInterface.h"
 #include "dstd.h"
@@ -28,6 +29,15 @@
 #ifndef EDITORDATA_H
 #include "EditorData.h"
 #endif
+
+// S2.9: gpu_cull::substrate_frameBegin() hoist into editor's per-tick update.
+// Mirrors game commit f8d6b171's fix in code/mission.cpp (~line 527): substrate
+// must reset every tick regardless of pause/active state, or render-time
+// submitMultiShape calls accumulate records across an un-reset ring slot,
+// inflating per-bucket instanceCount in compute cull and causing coalesce
+// MDI sub-draws to read adjacent types' modelMatrices — each prop's origin
+// renders layered copies of other types' geometry.
+#include "../GameOS/gameos/gpu_cull_substrate.h"
 
 #ifndef OVERLAYBRUSH_H
 #include "OverlayBrush.h"
@@ -237,6 +247,16 @@ void Editor::init( char* loader )
 
 	FullPathFileName mPath;
 	mPath.init(missionPath,missionName,".pak");
+
+	// S-CLI override: if -mission was passed on the command line, use that path
+	// directly instead of (missionPath, missionName, ".pak"). This must happen
+	// BEFORE the fileExists check so the NewSingleMission modal dialog (below)
+	// is skipped -- the dialog has its own message pump and OnIdle never fires
+	// during it, so the auto-load OnIdle hook can never run.
+	extern std::string g_cliMissionPath;
+	if (!g_cliMissionPath.empty()) {
+		mPath.init("", g_cliMissionPath.c_str(), "");
+	}
 
 	bool bCanceled = false;
 	if (!justResaveAllMaps)
@@ -637,6 +657,20 @@ void Editor::render()
 
 void Editor::update()
 {
+	// S2.9 — Editor's analog to code/mission.cpp Mission::update pre-pause-branch
+	// substrate_frameBegin (commit f8d6b171). Editor::update() is invoked
+	// unconditionally from DoGameLogic() every tick (Editor.cpp:198) — no
+	// pause/active/turn gate — so this fires every frame. Render-time
+	// BldgAppearance/Mech3DAppearance::render() calls (driven from
+	// EditorObjectMgr::render) append GpuActorRecords into the substrate ring;
+	// without a per-frame reset the ring slot, per-frame counter, and bucket
+	// counts grow unbounded and coalesced MDI sub-draws overrun their type
+	// bucket, layering other props' geometry at every prop's origin.
+	// Calling without isEnabled gating is safe: substrate_frameBegin()
+	// internally checks isEnabled() and is a no-op when disabled. ONE call
+	// site by design — function is not double-call-safe.
+	gpu_cull::substrate_frameBegin();
+
 	if (windowSizeChanged)
 	{
 		windowSizeChanged = false;
@@ -671,6 +705,23 @@ void Editor::update()
 		land->update();
 	}
 
+	// S2.13-surgical: hoist camera projection-state refresh from
+	// EditorCamera::render() to BEFORE land->geometry(). The terrain geometry
+	// pass consumes eye->verticalSphereClipConstant / horizontalSphereClipConstant
+	// and the cameraToClip-derived clip vector. Previously those were updated
+	// inside EditorCamera::render() (post-geometry), so frame 1 saw zero
+	// constants and frame N>=2 saw frame-(N-1) values. Mirrors game's
+	// Mission::update ordering (camera state setup -> terrain geometry).
+	{
+		float viewMulX, viewMulY, viewAddX, viewAddY;
+		gos_GetViewport(&viewMulX, &viewMulY, &viewAddX, &viewAddY);
+		Stuff::Vector3D newRes;
+		newRes.x = viewMulX;
+		newRes.y = viewMulY;
+		newRes.z = 0.0f;
+		eye->changeResolution(newRes);  // sets screenResolution + calculateProjectionConstants
+	}
+
 	land->clearObjBlocksActive();
 	land->geometry();
 	
@@ -679,6 +730,16 @@ void Editor::update()
 		EditorInterface::instance()->update();
 	}
 	EditorObjectMgr::instance()->update();
+
+	// S2.15 — mirrors code/mission.cpp:549 (Mission::update). Without this
+	// per-tick call the MC_TextureManager texture LRU never advances: textures
+	// loaded at mission init (water base, water detail frames, terrain detail)
+	// are not refreshed against `turn`, and the cache eviction / handle
+	// integrity bookkeeping that the renderLists() + water fast-path bridge
+	// relies on for stable gosTextureHandles can drift. Mission's chain calls
+	// this every frame outside of pause; editor has no pause concept, so it
+	// runs unconditionally. Safe and idempotent.
+	mcTextureManager->update();
 }
 
 //--------------------------------------------------------------------------------------

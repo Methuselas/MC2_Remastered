@@ -78,6 +78,11 @@ HSTRRES __stdcall gos_OpenResourceDLL(char const* FileName, const char** strings
         mc2res.dll string lookup is now owned by data/defs. Return a valid
         string-resource handle without loading the DLL so gos_GetResourceString
         resolves IDs through MC2Strings instead of the old resource library.
+
+        Stock-install fallback: if the FIT catalog is empty (data/defs missing
+        or unreadable), fall through to the legacy DLL load so the engine still
+        boots. Per-ID gaps in a loaded catalog still surface as <missing-string:>
+        markers; only a fully-empty catalog triggers DLL fallback.
     */
     if (MC2_IsMC2ResDLL(FileName))
     {
@@ -90,6 +95,7 @@ HSTRRES __stdcall gos_OpenResourceDLL(char const* FileName, const char** strings
             pstrres->num_strings = 0;
             return pstrres;
         }
+
         fprintf(stderr, "[MC2Strings] catalog empty, falling back to legacy DLL: %s\n", FileName);
     }
 

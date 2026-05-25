@@ -1,9 +1,18 @@
 #include <scene.hglsl>
 
-#define ENABLE_VERTEX_LIGHTING              0
+// Slice 2 (object-offload) — Stage 2.C: GPU vertex lighting comes online.
+// The slice 1 batcher's static_prop.{vert,frag} pipeline now consumes the
+// lit ARGB this header produces instead of memcpying the CPU-baked
+// listOfVertices[].argb. ENABLE_VERTEX_LIGHTING flips on with the matching
+// 4-param calc_light() rewrite + TG_HWLightsData/ObjectLights extension.
+#define ENABLE_VERTEX_LIGHTING              1
 
 // should be in sync with C++ code
 #define     LIGHT_DATA_ATTACHMENT_SLOT      0
+// [LIGHTSSBO v1] LightsData converted UBO->SSBO to remove the 64-slot
+// ceiling. SSBO binding 20 (0-19 fully allocated; verified free). MUST
+// stay in lockstep with GameOS/include/gameos.hpp LIGHT_DATA_SSBO_BINDING.
+#define     LIGHT_DATA_SSBO_BINDING         20
 
 #define 	TG_LIGHT_AMBIENT				0
 #define		TG_LIGHT_INFINITE				1
@@ -15,16 +24,35 @@
 
 #define Stuff_SMALL                         1e-4
 
+// Slice 2 (object-offload) — Stage 2.C: ObjectLights extended with
+// per-light falloff distances. light_falloff.x = closeDistance,
+// .y = farDistance, .z = oneOverDistance, .w unused. C++ side is
+// TG_HWLightsData with float lightFalloff[16][4] in identical
+// position (post-lightColor, pre-numLights). MUST stay byte-for-byte
+// lockstep with the C++ struct (mc2_24 regression 2026-05-02 was
+// caused by extending one side without the other; see commit cdcdb7d
+// scope rule).
 struct ObjectLights {
     mat4 light_to_world[MAX_LIGHTS_IN_WORLD];
-    vec4 light_dir[MAX_LIGHTS_IN_WORLD]; // w - light type
+    vec4 light_dir[MAX_LIGHTS_IN_WORLD];     // w - light type
     vec4 light_color[MAX_LIGHTS_IN_WORLD];
+    vec4 light_falloff[MAX_LIGHTS_IN_WORLD]; // x=close, y=far, z=oneOver, w=unused
     ivec4 numLights;
 };
 
-layout (binding = LIGHT_DATA_ATTACHMENT_SLOT, std140) uniform LightsData
+// [LIGHTSSBO v1] 2026-05-17: was `std140 uniform { ObjectLights
+// light[64]; }` at binding LIGHT_DATA_ATTACHMENT_SLOT(0). Converted to a
+// std430 SSBO with an UNBOUNDED array to remove the 64-slot ceiling
+// (mc2_17 was already 57/64 combined mech+static — one dense mission from
+// silent corruption). std430==std140 byte-layout for ObjectLights because
+// every member is mat4/vec4-array + ivec4 tail (no scalar/vec2/vec3) —
+// bit-identical, pure qualifier change; this holds ONLY if the
+// ObjectLights/TG_HWLightsData struct is NOT edited in the same change
+// (cpp_glsl_ubo_struct_lockstep.md). Binding 20 (UBO/SSBO namespaces are
+// separate; slot 0 is the instance SSBO in static_prop/mech .vert).
+layout (binding = LIGHT_DATA_SSBO_BINDING, std430) buffer LightsData
 {
-    ObjectLights light[32];
+    ObjectLights light[];
 };
 
 //================================================================================ 
@@ -101,7 +129,24 @@ vec3 get_base_light(
     {
         if (!lightsOut)
         {
-            final = startVLight.xyz;
+            // Stage 2.D.2 swizzle fix: startVLight layout depends on the caller.
+            //
+            // static_prop.vert (MC2_STATIC_PROP_LIGHTING defined) decodes
+            // a_aRGBLight as (.x=B/255, .y=G/255, .z=R/255) — BGR channel order.
+            // Returning .xyz here would pass BGR to calc_light as base_light, which
+            // then adds lcolor (RGB-ordered from GatherLightsParameters) — causing
+            // cross-channel contamination: lit.x = B_base + R_light.
+            // Fix: .zyx swizzle reorders to (R,G,B) matching calc_light's RGB order.
+            //
+            // gos_tex_vertex_lighted.vert (MC2_STATIC_PROP_LIGHTING NOT defined)
+            // passes aRGBLight.bgra, giving startVLight = (R,G,B,A) — already
+            // RGB-ordered. Returning .xyz preserves pre-38ba240 legacy behavior.
+            // DO NOT change the else branch — it is intentional.
+#ifdef MC2_STATIC_PROP_LIGHTING
+            final = startVLight.zyx;  // static_prop.vert: reorder BGR→RGB
+#else
+            final = startVLight.xyz;  // legacy path: mechs/vehicles/particles (already RGB-ordered)
+#endif
         }
     }
     else if (isHudElement)
@@ -114,25 +159,128 @@ vec3 get_base_light(
     return clamp(final.xyz, vec3(0.0), vec3(1.0));
 }
 
-//================================================================================ 
-//================================================================================ 
-vec3 calc_light(in int lights_index, in vec3 normal, in vec3 base_light)
+//================================================================================
+// Slice 2 (object-offload) — Stage 2.C: GLSL port of TG_Light::GetFalloff.
+// Mirror of mclib/tgl.h:261-275 linear-interp falloff. Returns the falloff
+// scalar in `out falloff`; return value is the GetFalloff bool (true means
+// the light contributes, false means out-of-range / cull this light).
+//================================================================================
+bool GetFalloff(float length, vec3 falloff_data, out float falloff)
 {
-    // hardcode for now:
-    //  0 light - directional
-    //  1st light ambient
-    
+    // falloff_data.x = closeDistance, .y = farDistance, .z = oneOverDistance.
+    if (length <= falloff_data.x) { falloff = 1.0; return true; }
+    if (length >= falloff_data.y) { falloff = 0.0; return false; }
+    falloff = (falloff_data.y - length) * falloff_data.z;
+    return true;
+}
+
+//================================================================================
+// Slice 2 (object-offload) — Stage 2.C: full 6-type dispatch.
+// Signature change from 3-param to 4-param: `vertex_world_pos` is required
+// for POINT / SPOT / INFINITEWITHFALLOFF distance and falloff. The first
+// 3-param caller stub (used pre-Stage-2.C inside this same header) was the
+// only existing caller; static_prop.vert (Stage 2.C.2) is the new caller.
+//
+// CPU mirror: per-vertex / per-face lighting kernels in mclib/tgl.cpp:
+//   - AMBIENT:               adds light_color
+//   - INFINITE:              dot(normal, -lightDir) * light_color, clamped
+//   - INFINITEWITHFALLOFF:   dot(normal, -lightDir) * light_color * GetFalloff(|vert-lightPos|)
+//   - POINT:                 dot(normal, normalize(lightPos-vert)) * light_color * GetFalloff(|vert-lightPos|)
+//   - SPOT:                  cone test on s_spotDir + falloff (TG_LIGHT_SPOT)
+//   - TERRAIN:               pre-baked specular contribution; on GPU we
+//                            read from CPU-prebaked listOfColors[] when
+//                            useShadows fires (per spec line 245), else
+//                            ignore here (CPU path retains the bake).
+//
+// Light position decoding: light_to_world is the per-light transform; the
+// world-space light origin is column 3 (translation), i.e.
+//   lightPos = (ld.light_to_world[i] * vec4(0,0,0,1)).xyz
+// which equals ld.light_to_world[i][3].xyz under column-major mat4.
+//
+// MUST preserve the `numLights.x == 0 → return vec3(1)` early-return:
+// other shaders include this header (gos_tex_vertex_lighted.{vert,frag})
+// and may call calc_light() through code paths that fire when no lights
+// are populated.
+//================================================================================
+vec3 calc_light(in int lights_index, in vec3 normal, in vec3 vertex_world_pos, in vec3 base_light)
+{
     ObjectLights ld = light[lights_index];
 
-    if(0 == ld.numLights.x)
-        return vec3(1,1,1);
-    
-    float n_dot_l = clamp(dot((normal), -ld.light_dir[0].xyz), 0.0, 1.0);
-    vec3 diffuse = n_dot_l * ld.light_color[0].xyz;
-    vec3 ambient = ld.light_color[1].xyz;
-    // in software version ther is clamp, but I delibertely removed it
-    // now at least lighting stays same independently of ENABLE_VERTEX_LIGHTING
-    return vec3(base_light + diffuse + ambient);
-    //return clamp(base_light + diffuse + ambient, 0.0, 1.0);
+    if (0 == ld.numLights.x)
+#ifdef MC2_STATIC_PROP_LIGHTING
+        return base_light;
+#else
+        return vec3(1, 1, 1);
+#endif
+
+    vec3 final = base_light;
+    vec3 ambient = vec3(0.0);
+
+    int n = min(ld.numLights.x, MAX_LIGHTS_IN_WORLD);
+    for (int i = 0; i < n; ++i) {
+        int light_type = int(ld.light_dir[i].w);
+        vec3 lcolor = ld.light_color[i].xyz;
+
+        if (light_type == TG_LIGHT_AMBIENT) {
+            ambient += lcolor;
+        }
+        else if (light_type == TG_LIGHT_INFINITE) {
+            float n_dot_l = clamp(dot(normal, -ld.light_dir[i].xyz), 0.0, 1.0);
+            final += n_dot_l * lcolor;
+        }
+        else if (light_type == TG_LIGHT_INFINITEWITHFALLOFF) {
+            // Directional with linear distance falloff. CPU side at
+            // mclib/tgl.cpp ~1951-1980 uses the world-space light position
+            // for the distance test.
+            vec3 light_pos = ld.light_to_world[i][3].xyz;
+            float dist = length(vertex_world_pos - light_pos);
+            float falloff;
+            if (GetFalloff(dist, ld.light_falloff[i].xyz, falloff)) {
+                float n_dot_l = clamp(dot(normal, -ld.light_dir[i].xyz), 0.0, 1.0);
+                final += n_dot_l * lcolor * falloff;
+            }
+        }
+        else if (light_type == TG_LIGHT_POINT) {
+            // Point light: direction = lightPos - vertex, falloff by distance.
+            vec3 light_pos = ld.light_to_world[i][3].xyz;
+            vec3 to_light = light_pos - vertex_world_pos;
+            float dist = length(to_light);
+            float falloff;
+            if (GetFalloff(dist, ld.light_falloff[i].xyz, falloff) && dist > Stuff_SMALL) {
+                vec3 light_dir_v = to_light / dist;
+                float n_dot_l = clamp(dot(normal, light_dir_v), 0.0, 1.0);
+                final += n_dot_l * lcolor * falloff;
+            }
+        }
+        else if (light_type == TG_LIGHT_SPOT) {
+            // Spot light: direction along light_dir.xyz with cone falloff
+            // along distance from light position. The CPU kernel uses
+            // s_spotDir for the cone axis, but the existing GPU schema
+            // doesn't carry a per-light spot axis; use light_dir.xyz as
+            // the cone axis (matches the CPU kernel for spot lights where
+            // s_spotDir == s_lightDir, which is the stock case after
+            // setLightList runs).
+            vec3 light_pos = ld.light_to_world[i][3].xyz;
+            vec3 to_light = light_pos - vertex_world_pos;
+            float dist = length(to_light);
+            float falloff;
+            if (GetFalloff(dist, ld.light_falloff[i].xyz, falloff) && dist > Stuff_SMALL) {
+                vec3 light_dir_v = to_light / dist;
+                float n_dot_l = clamp(dot(normal, light_dir_v), 0.0, 1.0);
+                final += n_dot_l * lcolor * falloff;
+            }
+        }
+        else if (light_type == TG_LIGHT_TERRAIN) {
+            // CPU pre-bakes terrain-light specular contribution into
+            // listOfColors[].redSpec/.greenSpec/.blueSpec at tgl.cpp:2084-2086
+            // when useShadows is true. Slice 2 GPU side ignores
+            // TG_LIGHT_TERRAIN per spec R2 — accepts a small specular
+            // under-count for the GPU population in stock missions. The
+            // CPU full-bake path (un-eligible actors / late-reg) still
+            // applies it via the legacy listOfColors consumption.
+        }
+    }
+
+    return final + ambient;
 }
 

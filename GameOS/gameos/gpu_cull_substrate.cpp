@@ -1,0 +1,414 @@
+#include "gpu_cull_substrate.h"
+#include "gpu_cull_parity.h"
+#include <GL/glew.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include "gos_profiler.h"        // Tracy ZoneScopedN
+
+// MC2_GPU_CULL_SUBSTRATE_TRACE=1 — verbose per-frame lifecycle prints.
+// Default off; the 600-frame summary + first-flush banner emit unconditionally.
+static const bool s_substrateTrace = (getenv("MC2_GPU_CULL_SUBSTRATE_TRACE") != nullptr);
+#define SUBSTRATE_TRACE(fmt, ...) \
+    do { if (s_substrateTrace) { printf("[GPU_CULL v1] " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while (0)
+
+namespace gpu_cull {
+
+// ---------------------------------------------------------------------------
+// Ring constants
+// ---------------------------------------------------------------------------
+
+constexpr uint32_t RING_FRAMES             = 3;
+// Binding point 8: 0-3 are static-prop, 5-6 are water. 4 and 7 are unused.
+// 8 is the first binding clearly clear of all existing paths.
+constexpr uint32_t SUBSTRATE_SSBO_BINDING  = 8;
+
+// ---------------------------------------------------------------------------
+// Module state
+// ---------------------------------------------------------------------------
+
+static GLuint    s_instanceSsbo   = 0;
+static void*     s_mappedPtr      = nullptr;
+static GLsync    s_fence[RING_FRAMES] = {0, 0, 0};
+static uint32_t  s_frameSlot      = 0;
+
+static uint32_t  s_maxActors      = 0;   // set at init, immutable after
+static uint32_t  s_perFrameCount  = 0;   // records submitted this frame
+static bool      s_initialized    = false;
+// 2026-05-11: once-per-frame latch for overflow log. The s_perFrameCount==cap
+// check alone doesn't gate repeats: the overflow branch returns before
+// incrementing, so every excess submit re-fires the print. Pause cycles
+// hammer this with hundreds of submits → console lag → input stuck. Latch
+// resets in substrate_frameBegin().
+static bool      s_overflowLoggedThisFrame = false;
+
+// 600-frame summary counter.
+static uint32_t  s_flushCount     = 0;
+static bool      s_firstFlushDone = false;
+
+// C1a: CPU-visible count from last flushUpload() — count of prevVisibilityBit==1 records.
+static uint32_t  s_cpuVisibleCount = 0;
+
+// Byte size of one ring slot: header + record array.
+static size_t    s_slotBytes      = 0;
+
+// ---------------------------------------------------------------------------
+// Env probe (lazy, cached)
+// ---------------------------------------------------------------------------
+
+static bool substrate_isEnabled_impl() {
+    const char* v = getenv("MC2_GPU_CULL_SUBSTRATE");
+    return (v == nullptr || v[0] != '0');
+}
+
+bool substrate_isEnabled() {
+    static bool s_enabled = substrate_isEnabled_impl();
+    return s_enabled;
+}
+
+// ---------------------------------------------------------------------------
+// Accessors
+// ---------------------------------------------------------------------------
+
+GLuint substrate_getInstanceSsboName() {
+    return s_initialized ? s_instanceSsbo : 0;
+}
+
+uint32_t substrate_getInstanceSsboBindingPoint() {
+    return SUBSTRATE_SSBO_BINDING;
+}
+
+uint32_t substrate_getCpuVisibleCount() {
+    return s_cpuVisibleCount;
+}
+
+GLintptr substrate_getCurrentSlotOffset() {
+    if (!s_initialized) return 0;
+    return static_cast<GLintptr>(s_frameSlot * s_slotBytes);
+}
+
+GLsizeiptr substrate_getSlotBytes() {
+    if (!s_initialized) return 0;
+    return static_cast<GLsizeiptr>(s_slotBytes);
+}
+
+// ---------------------------------------------------------------------------
+// substrate_init
+// ---------------------------------------------------------------------------
+
+void substrate_init(uint32_t maxActors) {
+    if (!substrate_isEnabled()) return;
+    if (s_initialized) {
+        // Reinit after a prior mission — shut down first.
+        substrate_shutdown();
+    }
+
+    s_maxActors      = maxActors;
+    s_perFrameCount  = 0;
+    s_cpuVisibleCount = 0;
+    s_frameSlot      = 0;
+    s_flushCount     = 0;
+    s_firstFlushDone = false;
+
+    // Per-slot layout: [GpuActorRecordHeader][GpuActorRecord * maxActors]
+    s_slotBytes = sizeof(GpuActorRecordHeader) + maxActors * sizeof(GpuActorRecord);
+    const GLsizeiptr totalBytes = static_cast<GLsizeiptr>(RING_FRAMES * s_slotBytes);
+
+    const GLbitfield storageFlags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+    const GLbitfield mapFlags     = storageFlags;
+
+    glGenBuffers(1, &s_instanceSsbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_instanceSsbo);
+    glBufferStorage(GL_SHADER_STORAGE_BUFFER, totalBytes, nullptr, storageFlags);
+    s_mappedPtr = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, totalBytes, mapFlags);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    if (!s_mappedPtr) {
+        fprintf(stderr, "[GPU_CULL v1] FATAL: persistent map failed\n");
+        fflush(stderr);
+        abort();
+    }
+
+    // Zero the entire buffer so unwritten records read as zero.
+    memset(s_mappedPtr, 0, static_cast<size_t>(totalBytes));
+
+    s_initialized = true;
+
+    printf("[GPU_CULL v1] event=substrate_init maxActors=%u slotBytes=%zu totalBytes=%lld binding=%u\n",
+           maxActors, s_slotBytes, (long long)totalBytes, SUBSTRATE_SSBO_BINDING);
+    fflush(stdout);
+}
+
+// ---------------------------------------------------------------------------
+// substrate_shutdown
+// ---------------------------------------------------------------------------
+
+void substrate_shutdown() {
+    if (!substrate_isEnabled()) return;
+
+    // Wait for all in-flight slots before releasing.
+    for (uint32_t i = 0; i < RING_FRAMES; ++i) {
+        if (s_fence[i]) {
+            glClientWaitSync(s_fence[i], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+            glDeleteSync(s_fence[i]);
+            s_fence[i] = 0;
+        }
+    }
+
+    if (s_instanceSsbo) {
+        if (s_mappedPtr) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_instanceSsbo);
+            glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            s_mappedPtr = nullptr;
+        }
+        glDeleteBuffers(1, &s_instanceSsbo);
+        s_instanceSsbo = 0;
+    }
+    s_mappedPtr      = nullptr;
+    s_maxActors      = 0;
+    s_perFrameCount  = 0;
+    s_cpuVisibleCount = 0;
+    s_frameSlot      = 0;
+    s_slotBytes      = 0;
+    s_initialized    = false;
+    s_firstFlushDone = false;
+
+    printf("[GPU_CULL v1] event=substrate_shutdown\n");
+    fflush(stdout);
+}
+
+// ---------------------------------------------------------------------------
+// substrate_frameBegin
+// ---------------------------------------------------------------------------
+
+void substrate_frameBegin() {
+    if (!substrate_isEnabled() || !s_initialized) return;
+
+    // Advance ring slot.
+    s_frameSlot = (s_frameSlot + 1) % RING_FRAMES;
+
+    // Wait on this slot's fence if it has not yet been signalled.
+    // At 60 Hz with 3-deep ring this should never stall, but be defensive.
+    if (s_fence[s_frameSlot]) {
+        ZoneScopedN("SubFrameBegin.RingWait");
+        glClientWaitSync(s_fence[s_frameSlot], GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+        glDeleteSync(s_fence[s_frameSlot]);
+        s_fence[s_frameSlot] = 0;
+    }
+
+    // Reset the per-frame record count for this slot.
+    s_perFrameCount = 0;
+    s_cpuVisibleCount = 0;
+    s_overflowLoggedThisFrame = false;  // 2026-05-11 reset overflow log latch
+
+    SUBSTRATE_TRACE("event=frame_begin slot=%u", s_frameSlot);
+}
+
+// ---------------------------------------------------------------------------
+// substrate_writeRecord  (shared lockstep write core)
+// ---------------------------------------------------------------------------
+//
+// Writes one record into the current ring slot's array and maintains the two
+// lockstep per-frame counters (s_perFrameCount, s_cpuVisibleCount).
+// PRECONDITION: caller has passed the s_perFrameCount >= s_maxActors overflow
+// guard and verified s_mappedPtr != nullptr. The cpuVisible increment is
+// computed from the cache-hot `rec` parameter, never by reading back from the
+// write-combined mapped buffer; it occurs AFTER the successful memcpy so the
+// accumulator counts exactly records actually written into
+// recs[0..s_perFrameCount). Replaces the deleted flush-side readback loop.
+// Single-threaded: no atomics; inherits the existing s_perFrameCount
+// externally-serialized-producer contract.
+
+static inline void substrate_writeRecord(const GpuActorRecord& rec) {
+    const size_t slotOffset = s_frameSlot * s_slotBytes;
+    char* dest = static_cast<char*>(s_mappedPtr)
+                 + slotOffset
+                 + sizeof(GpuActorRecordHeader)
+                 + s_perFrameCount * sizeof(GpuActorRecord);
+    memcpy(dest, &rec, sizeof(GpuActorRecord));
+    if (rec.prevVisibilityBit) ++s_cpuVisibleCount;
+    ++s_perFrameCount;
+}
+
+// ---------------------------------------------------------------------------
+// substrate_submitDynamicActor
+// ---------------------------------------------------------------------------
+
+void substrate_submitDynamicActor(const GpuActorRecord& rec) {
+    if (!substrate_isEnabled() || !s_initialized) return;
+    if (!s_mappedPtr) return;
+
+    if (s_perFrameCount >= s_maxActors) {
+        // Overflow: clamp and log once per frame. Same latch fix as
+        // substrate_appendStaticPropRecord (2026-05-11).
+        if (!s_overflowLoggedThisFrame) {
+            s_overflowLoggedThisFrame = true;
+            printf("[GPU_CULL v1] event=substrate_overflow at=%u cap=%u\n",
+                   s_perFrameCount, s_maxActors);
+            fflush(stdout);
+        }
+        return;
+    }
+
+    substrate_writeRecord(rec);
+}
+
+// ---------------------------------------------------------------------------
+// substrate_flushUpload
+// ---------------------------------------------------------------------------
+
+void substrate_flushUpload() {
+    if (!substrate_isEnabled() || !s_initialized) return;
+
+    // Write the header for this slot. (s_cpuVisibleCount is now accumulated
+    // at record-write time in substrate_writeRecord; the old flush-side
+    // readback count-loop is deleted — see the write-side accumulation spec.)
+    {
+        ZoneScopedN("SubFlush.HeaderWrite");
+        const size_t slotOffset = s_frameSlot * s_slotBytes;
+        GpuActorRecordHeader* hdr =
+            reinterpret_cast<GpuActorRecordHeader*>(
+                static_cast<char*>(s_mappedPtr) + slotOffset);
+
+        hdr->recordCount    = s_perFrameCount;
+        hdr->recordCapacity = s_maxActors;
+        hdr->visibleCount   = 0;   // written by compute (C1+); CPU sets 0
+        hdr->_pad0          = 0;
+    }
+
+    // Buffer is coherent (GL_MAP_COHERENT_BIT) — no explicit glFlushMappedBufferRange needed.
+
+    // Insert a fence for this slot so the next visit to this ring slot
+    // waits until the GPU has finished reading it.
+    { ZoneScopedN("SubFlush.FenceInsert"); s_fence[s_frameSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0); }
+
+    // 600-frame summary + first-flush banner.
+    ++s_flushCount;
+    const bool firstFlush = !s_firstFlushDone;
+    s_firstFlushDone = true;
+
+    if (firstFlush || (s_flushCount % 600) == 0) {
+        printf("[GPU_CULL v1] event=substrate_ready records=%u capacity=%u slot=%u\n",
+               s_perFrameCount, s_maxActors, s_frameSlot);
+        fflush(stdout);
+    }
+
+    gpu_cull::parity_flushSummary();
+
+    SUBSTRATE_TRACE("event=flush_upload records=%u slot=%u", s_perFrameCount, s_frameSlot);
+}
+
+// ---------------------------------------------------------------------------
+// substrate_appendStaticPropRecord (C1b GPU authority flip)
+// ---------------------------------------------------------------------------
+//
+// Appends one static prop record to the ALREADY-FLUSHED current ring slot and
+// updates hdr->recordCount in-place. Called from GpuStaticPropRegistry::flush()
+// between substrate_flushUpload() and compute_dispatch() so the compute shader
+// sees both dynamic actors AND static prop records in the same dispatch.
+//
+// Safety: the fence placed by substrate_flushUpload() gates GPU reads from the
+// PREVIOUS visit to this ring slot, not the current CPU-write session. Writes to
+// the persistent-mapped coherent buffer are immediately visible to the GPU so
+// compute_dispatch() (glCopyBufferSubData) will copy the updated header + records.
+
+void substrate_appendStaticPropRecord(const GpuActorRecord& rec) {
+    if (!substrate_isEnabled() || !s_initialized) return;
+    if (!s_mappedPtr) return;
+
+    if (s_perFrameCount >= s_maxActors) {
+        // Overflow: log once per frame (latch resets in substrate_frameBegin).
+        // 2026-05-11: prior implementation tested s_perFrameCount==s_maxActors
+        // but never incremented past cap in the overflow branch, so every excess
+        // submit re-fired the print. On pause this produced hundreds of prints
+        // per frame and visibly stalled the game.
+        if (!s_overflowLoggedThisFrame) {
+            s_overflowLoggedThisFrame = true;
+            printf("[GPU_CULL v1] event=static_prop_overflow at=%u cap=%u\n",
+                   s_perFrameCount, s_maxActors);
+            fflush(stdout);
+        }
+        return;
+    }
+
+    substrate_writeRecord(rec);
+
+    // Update hdr->recordCount in-place so compute_dispatch's glCopyBufferSubData
+    // copies the updated count. Buffer is GL_MAP_COHERENT_BIT — no explicit flush.
+    const size_t slotOffset = s_frameSlot * s_slotBytes;
+    GpuActorRecordHeader* hdr =
+        reinterpret_cast<GpuActorRecordHeader*>(
+            static_cast<char*>(s_mappedPtr) + slotOffset);
+    hdr->recordCount = s_perFrameCount;
+
+    SUBSTRATE_TRACE("event=append_static type=%u count=%u",
+                    (rec.category >> 4), s_perFrameCount);
+}
+
+#if defined(MC2_SUBSTRATE_COUNT_PARITY)
+// PROOF-ONLY: recompute the all-records legacy count over the FINAL
+// post-static-append population and assert the write-side accumulator
+// matches. Default-OFF compile gate; never in a shipping/default build;
+// removed in the post-proof cleanup. Caller MUST invoke this AFTER the last
+// static-prop append for the frame (pre compute_dispatch), NOT inside flush.
+void substrate_countParityCheck() {
+    if (!substrate_isEnabled() || !s_initialized || !s_mappedPtr) return;
+    const size_t slotOffset = s_frameSlot * s_slotBytes;
+    const GpuActorRecord* recs = reinterpret_cast<const GpuActorRecord*>(
+        static_cast<const char*>(s_mappedPtr) + slotOffset + sizeof(GpuActorRecordHeader));
+    uint32_t legacy = 0;
+    for (uint32_t i = 0; i < s_perFrameCount; ++i)
+        if (recs[i].prevVisibilityBit) ++legacy;
+    if (legacy != s_cpuVisibleCount) {
+        printf("[GPU_CULL v1] event=cpuvis_parity_mismatch legacy=%u accum=%u count=%u\n",
+               legacy, s_cpuVisibleCount, s_perFrameCount);
+        fflush(stdout);
+    }
+}
+#endif
+
+// ---------------------------------------------------------------------------
+// substrate_getCurrentRecordCount
+// ---------------------------------------------------------------------------
+
+uint32_t substrate_getCurrentRecordCount() {
+    return s_perFrameCount;
+}
+
+// ---------------------------------------------------------------------------
+// substrate_getSlotRecords (C3)
+// ---------------------------------------------------------------------------
+//
+// Returns the GpuActorRecord array for the given ring slot. The returned
+// pointer points directly into the persistent-mapped SSBO; it is valid as
+// long as the substrate is initialized. The CPU may safely read this range
+// after the matching fence for that slot has been consumed (i.e. the GPU has
+// finished reading it and signalled the fence). Because readback slot K ==
+// substrate slot K, callers should only query a slot that the readback ring
+// has confirmed is no longer in flight on the GPU.
+//
+// outCount is set to hdr->recordCount for the slot (may be 0 if no frame has
+// been flushed yet, or if the substrate was just reset).
+
+const GpuActorRecord* substrate_getSlotRecords(uint32_t slot, uint32_t* outCount) {
+    if (!s_initialized || !s_mappedPtr) {
+        if (outCount) *outCount = 0u;
+        return nullptr;
+    }
+    if (slot >= RING_FRAMES) {
+        if (outCount) *outCount = 0u;
+        return nullptr;
+    }
+
+    const size_t slotOffset = slot * s_slotBytes;
+    const char* slotBase = static_cast<const char*>(s_mappedPtr) + slotOffset;
+
+    const GpuActorRecordHeader* hdr =
+        reinterpret_cast<const GpuActorRecordHeader*>(slotBase);
+    if (outCount) *outCount = hdr->recordCount;
+
+    return reinterpret_cast<const GpuActorRecord*>(slotBase + sizeof(GpuActorRecordHeader));
+}
+
+} // namespace gpu_cull

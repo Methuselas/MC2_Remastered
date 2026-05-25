@@ -28,12 +28,37 @@
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
+#include "../../mclib/cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline
+#include "Stuff/Stuff.hpp"                     // Stuff::Matrix4D for gos_SetWorldToClipGL (full chain required; matrix.hpp alone creates circular include ordering)
+
+// [B1 C16] (diagnostic) gosFX heap + child accumulation counters; env-gated on
+// MC2_GPU_PARTICLES=1. Forward-decl to avoid Stuff/gosfx header chain here.
+namespace gosFX { void DiagFrameTick(); }
 #include "gos_terrain_bridge.h"
 #include "gos_terrain_patch_stream.h"
+#include "gos_terrain_indirect.h"
+#include "gos_terrain_surface.h"                 // [TERRAIN_SURFACE] PR-2 producer
+#include "../../mclib/terrain_surface_trace.h"   // [TERRAIN_SURFACE v1] channel
+#include "../../mclib/terrain_surface_bands.h"   // [TERRAIN_SURFACE] PR-3 band config (single source)
 #include "gos_terrain_water_stream.h"
+#include "gpu_driven_common.h"
 
 class gosRenderer;
 class gosFont;
+
+// C1 tactical material profile (defined in mclib/terrain.cpp; declared in
+// mclib/terrain.h). Disposable; removed when real material-palette
+// architecture lands. Declared here rather than via `#include "terrain.h"`
+// to avoid pulling in mclib headers gameos_graphics.cpp doesn't already use.
+extern int g_terrainMaterialProfile;
+
+// Fix B: forward-declared TU-wide so the symmetric-mirror at the GPU-water
+// binds in renderWaterFastPath (earlier in this file than the historical
+// probe-accessor block) can see them. Linkage matches definitions:
+// gos_terrain_indirect_getDispatchMvp16 is extern "C" (gos_terrain_indirect.cpp);
+// gos_GetTerrainMVPMat4 is C++ linkage (defined later in this file).
+extern "C" const float* gos_terrain_indirect_getDispatchMvp16();
+extern const float*     gos_GetTerrainMVPMat4();
 
 static const DWORD INVALID_TEXTURE_ID = 0;
 
@@ -1288,10 +1313,29 @@ class gosRenderer {
         void terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh* mesh);
         void terrainBindUniformsForPatchStream(gosRenderMaterial* material);
         // Returns ssboRecordBase uniform location in the thin program, or -1.
-        int terrainBindThinUniformsForPatchStream();
+        // If overrideProg is non-null, binds uniforms to that program instead
+        // (B4 Stage 1b: mask-SOLID shader shares all uniform names with thin
+        // shader so this is safe).
+        int terrainBindThinUniformsForPatchStream(glsl_program* overrideProg = nullptr);
+        // Fix A (2026-05-14): re-upload an externally-provided terrainMVP over
+        // the one just bound by terrainBindThinUniformsForPatchStream.  Used by
+        // the indirect bridge to align the VS projection MVP with the MVP that
+        // compute used when writing the thin records being drawn this frame.
+        // Uses the already-cached thinTerrainLocs_.terrainMVP — no extra
+        // glGetUniformLocation.  Must be called AFTER terrainBindThinUniformsForPatchStream
+        // (which caches the location) and while the thin program is bound.
+        void terrainOverrideThinMVP(const float* mvp4x4);
         // Returns the glsl_program for the thin terrain shader. Used by bridge exports.
-        glsl_program* getThinTerrainProgram() const { return thin_terrain_prog_; }
-        glsl_program* getWaterFastProgram()   const { return water_fast_prog_;   }
+        glsl_program* getThinTerrainProgram()      const { return thin_terrain_prog_;        }
+        // [TERRAIN_SURFACE] PR-2: indexed continuous-surface VS + gos_terrain.frag.
+        glsl_program* getTerrainSurfaceProgram()   const { return terrain_surface_prog_;     }
+        glsl_program* getWaterFastProgram()        const { return water_fast_prog_;           }
+        glsl_program* getMineStaticProgram()       const { return mine_static_prog_;          }  // PR2c Stage 2c
+        glsl_program* getMaskSolidProgram()        const { return mask_solid_prog_;           }  // B4 Stage 1b — mask-SOLID draw
+        glsl_program* getMaskWaterProgram()        const { return mask_water_prog_;           }  // B4 Stage 1c — mask-water draw
+        // GPU-driven dynamic sun shadow -- Phase 1 getters.
+        glsl_program* getShadowMechProg()          const { return shadow_mech_prog_;          }
+        glsl_program* getShadowStaticPropProg()    const { return shadow_static_prop_prog_;   }
 
         // Water fast path (Stage 2 of renderWater architectural slice).
         // Issues 1-2 instanced draws against the WaterRecipe + WaterFrame SSBOs.
@@ -1366,10 +1410,12 @@ class gosRenderer {
         void setTerrainCameraPos(float x, float y, float z) {
             terrain_camera_pos_ = vec4(x, y, z, 1.0f);
         }
+        // setTerrainViewport: stores (vmx,vmy,vax,vay) for EditorCamera.h shim.
+        // gamecam.cpp does not call this (it reads viewport from gos_GetViewport
+        // inline); this exists so the editor can set the params the same way.
         void setTerrainViewport(float vmx, float vmy, float vax, float vay) {
             terrain_viewport_ = vec4(vmx, vmy, vax, vay);
         }
-
         void terrainExtraReset() { terrain_extra_count_ = 0; terrain_extra_draw_offset_ = 0; terrain_batch_extras_ = nullptr; terrain_batch_extras_count_ = 0; }
         void terrainExtraAdd(const gos_TERRAIN_EXTRA* data, int count) {
             if (terrain_extra_count_ + count <= terrain_extra_capacity_) {
@@ -1392,10 +1438,8 @@ class gosRenderer {
         gos_TERRAIN_EXTRA* getTerrainExtraData() const { return terrain_extra_data_; }
         bool isTerrainMVPValid() const { return terrain_mvp_valid_; }
         const mat4& getTerrainMVP() const { return terrain_mvp_; }
-        const vec4& getTerrainViewport() const { return terrain_viewport_; }
         gosRenderMaterial* getTerrainMaterial() const { return terrain_material_; }
         const vec4& getTerrainCameraPos() const { return terrain_camera_pos_; }
-
         // Shadow mode
         void setShadowMode(bool enabled) { shadow_mode_ = enabled; }
         bool getShadowMode() const { return shadow_mode_; }
@@ -1409,6 +1453,13 @@ class gosRenderer {
         void setTerrainDrawEnabled(bool e) { terrain_draw_enabled_ = e; }
         bool getTerrainDrawEnabled() const { return terrain_draw_enabled_; }
         float getTerrainDebugMode() const { return terrain_debug_mode_; }
+
+        // F1 Stage A-pre Task 7b: store probe-only worldToClipGL for upload at
+        // draw time inside terrainBindUniformsForPatchStream / terrainDrawIndexedPatches.
+        void setWorldToClipGLProbeMatrix(const float* M16) {
+            memcpy(probeWorldToClipGL_, M16, 16 * sizeof(float));
+            probeWorldToClipGLValid_ = true;
+        }
 
         // Shadow pre-pass (separate pass over all terrain batches before shading)
         void beginShadowPrePass(bool clearDepth = true);
@@ -1437,6 +1488,34 @@ class gosRenderer {
         void pushDecalTri(const WorldOverlayVert* verts3, unsigned int texHandle);
         void drawTerrainOverlays();
         void drawDecals();
+        // Slice A — draw the mission-static cement-overlay bake. Reproduces
+        // drawTerrainOverlays()'s exact state/shader/uniforms/VAO but draws
+        // the passed static VBO with per-overlayTexId ranges and does NOT
+        // clear (mirrors DrawMineStatic). draws/drawCount are forwarded from
+        // gos_terrain_indirect::DrawDecalStatic via the bridge.
+        bool drawDecalStaticBatch(unsigned int vboGL,
+                                  const struct GosDecalStaticDraw* draws,
+                                  int drawCount);
+
+        // RENDER_STATES v1: external invalidation hook (public).
+        //
+        // LOAD-BEARING CONTRACT — DO NOT REMOVE INVALIDATION CALLS.
+        // Any code path that mutates GL state outside applyRenderStates'
+        // tracked-slot set (program/depth/blend/cull/sampler/texture-bind,
+        // including per-texture-object wrap/filter via glTexParameteri) MUST
+        // call this hook AT THE END of the path so the next applyRenderStates
+        // re-applies fully. Cache is consulted on the next call without
+        // further bookkeeping; missed invalidation = silent visual corruption.
+        // Origin: MAJOR-3 from 2026-05-08 adversarial review of the cache;
+        // CRITICAL-1 was caller-side coverage gap of this exact contract.
+        // Current invalidation sites (grep gos_InvalidateRenderStateCache /
+        // invalidateRenderStateCache): gos_terrain_bridge_drawSingleBucket,
+        // renderWaterFastPath, gos_terrain_bridge_drawIndirect,
+        // endShadowPrePass, endDynamicShadowPass, gosPostProcess::endScene,
+        // GpuStaticPropBatcher::flush, drawTerrainOverlays, drawDecals,
+        // gos_ForceApplyRenderStates, gosRenderer::beginFrame (defensive).
+        // When adding a new fast path: invalidate or break the cache contract.
+        void invalidateRenderStateCache() { stateCacheValid_ = false; }
 
     private:
 
@@ -1475,6 +1554,21 @@ class gosRenderer {
         // states data
         RenderState curStates_;
         RenderState renderStates_;
+
+        // RENDER_STATES v1: state-equality early-out cache for applyRenderStates().
+        // stateCacheValid_=false forces a full apply on the next call (used after
+        // any external GL state disturbance — bridges, post-process, shadow draws).
+        // cachedResolvedTexId_[u] tracks the resolved GL texture id we last bound
+        // on unit u; texture handles mutate per-frame (see memory note
+        // mc2_texture_handle_is_live.md), so an unchanged gos_State_TextureN
+        // does NOT imply the underlying GL texture is the same.
+        bool stateCacheValid_ = false;
+        uint32_t cachedResolvedTexId_[3] = {0u, 0u, 0u};
+        // 600-frame summary counters
+        uint32_t rsCalls_ = 0;
+        uint32_t rsSkipped_ = 0;
+        uint32_t rsApplied_ = 0;
+        uint32_t rsFrames_ = 0;
 
         static const int RENDER_STATES_STACK_SIZE = 16;
         int renderStatesStackPointer;
@@ -1554,16 +1648,30 @@ class gosRenderer {
         mat4 terrain_mvp_;
         bool terrain_mvp_valid_ = false;
         vec4 terrain_camera_pos_;  // MC2 world space camera position for TCS LOD
-        vec4 terrain_viewport_;    // (vmx, vmy, vax, vay) for TES perspective project
+        vec4 terrain_viewport_;    // (vmx, vmy, vax, vay) for EditorCamera shim
+
+        // F1 Stage A-pre Task 7b: probe-only worldToClipGL cache. Written by the
+        // now-retired probe setter; retained for diagnostic retirement batch.
+        float probeWorldToClipGL_[16] = {};
+        bool probeWorldToClipGLValid_ = false;
 
         // Terrain tessellation material
         gosRenderMaterial* terrain_material_ = nullptr;
         glsl_program* thin_terrain_prog_ = nullptr;  // gos_terrain_thin.vert + gos_terrain.frag
+        glsl_program* terrain_surface_prog_ = nullptr;  // [TERRAIN_SURFACE] PR-2 gos_terrain_surface.vert + gos_terrain.frag
         glsl_program* water_fast_prog_   = nullptr;  // gos_terrain_water_fast.vert + gos_tex_vertex.frag
+        glsl_program* mine_static_prog_  = nullptr;  // PR2c Stage 2c — gos_terrain_mine_static.vert + .frag
+        glsl_program* mask_solid_prog_   = nullptr;  // B4 Stage 1b — gos_terrain_mask_solid.vert + gos_terrain.frag
+        glsl_program* mask_water_prog_   = nullptr;  // B4 Stage 1c — gos_terrain_mask_water.vert + gos_tex_vertex.frag
 
         // Shadow mode
         gosRenderMaterial* shadow_terrain_material_ = nullptr;
         gosRenderMaterial* shadow_object_material_ = nullptr;
+        // GPU-driven dynamic sun shadow -- depth-only instanced programs (Phase 1).
+        // Registered at init; called by Tasks 3+ to draw GPU-batched mechs/buildings
+        // into the dynamic shadow FBO.
+        glsl_program* shadow_mech_prog_        = nullptr;  // shadow_mech.vert + shadow_instanced.frag
+        glsl_program* shadow_static_prop_prog_ = nullptr;  // shadow_static_prop.vert + shadow_instanced.frag
         bool shadow_mode_ = false;
         bool shadow_prepass_active_ = false;
         float terrain_shadow_softness_ = 0.9f;  // tuned for gradient-adaptive PCF + 4096² maps
@@ -1586,7 +1694,7 @@ class gosRenderer {
         // Cached uniform locations for terrain shader (avoid per-draw glGetUniformLocation)
         struct TerrainUniformLocs {
             GLint tessLevel = -1, tessDistanceRange = -1, tessDisplace = -1;
-            GLint cameraPos = -1, tessDebug = -1, terrainViewport = -1, terrainMVP = -1;
+            GLint cameraPos = -1, tessDebug = -1, terrainMVP = -1;
             GLint terrainLightDir = -1, detailNormalTiling = -1, detailNormalStrength = -1;
             GLint pomParams = -1, terrainWorldScale = -1, cellBombParams = -1;
             GLint matNormal[5] = {-1, -1, -1, -1, -1};
@@ -1594,11 +1702,13 @@ class gosRenderer {
             GLint dynamicLightSpaceMatrix = -1, enableDynamicShadows = -1, dynamicShadowMap = -1;
             GLint time = -1;
             GLint mapHalfExtent = -1;
+            GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
+            GLint worldToClipGL = -1;            // F1 Task 7b probe uniform
             GLuint program = 0;
         } terrainLocs_;
 
         struct ThinTerrainUniformLocs {
-            GLint terrainMVP = -1, terrainViewport = -1, mvp = -1;
+            GLint terrainMVP = -1, mvp = -1;
             GLint cameraPos = -1, terrainLightDir = -1;
             GLint detailNormalTiling = -1, detailNormalStrength = -1;
             GLint pomParams = -1, terrainWorldScale = -1, cellBombParams = -1;
@@ -1608,6 +1718,8 @@ class gosRenderer {
             GLint dynamicLightSpaceMatrix = -1, enableDynamicShadows = -1, dynamicShadowMap = -1;
             GLint time = -1, mapHalfExtent = -1;
             GLint ssboRecordBase = -1;
+            GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
+            GLint tessDebug = -1;               // shader debug-viz mode (frag mode 1..8)
             GLuint program = 0;
         } thinTerrainLocs_;
 
@@ -1616,6 +1728,7 @@ class gosRenderer {
             GLint lightSpaceMatrix = -1, tessLevel = -1, tessDistanceRange = -1;
             GLint tessDisplace = -1, cameraPos = -1, mvp = -1;
             GLint matNormal2 = -1, detailNormalTiling = -1, tex1 = -1;
+            GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
             GLuint program = 0;
         } shadowLocs_;
 
@@ -1627,8 +1740,7 @@ class gosRenderer {
             terrainLocs_.tessDisplace = glGetUniformLocation(shp, "tessDisplace");
             terrainLocs_.cameraPos = glGetUniformLocation(shp, "cameraPos");
             terrainLocs_.tessDebug = glGetUniformLocation(shp, "tessDebug");
-            terrainLocs_.terrainViewport = glGetUniformLocation(shp, "terrainViewport");
-            terrainLocs_.terrainMVP = glGetUniformLocation(shp, "terrainMVP");
+            terrainLocs_.terrainMVP = glGetUniformLocation(shp, "u_worldToClipGL");
             terrainLocs_.terrainLightDir = glGetUniformLocation(shp, "terrainLightDir");
             terrainLocs_.detailNormalTiling = glGetUniformLocation(shp, "detailNormalTiling");
             terrainLocs_.detailNormalStrength = glGetUniformLocation(shp, "detailNormalStrength");
@@ -1649,14 +1761,15 @@ class gosRenderer {
             terrainLocs_.dynamicShadowMap = glGetUniformLocation(shp, "dynamicShadowMap");
             terrainLocs_.time = glGetUniformLocation(shp, "time");
             terrainLocs_.mapHalfExtent = glGetUniformLocation(shp, "mapHalfExtent");
+            terrainLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
+            // F1 Task 7b: probe uniform location (flat uniform, not UBO member).
+            terrainLocs_.worldToClipGL = glGetUniformLocation(shp, "u_worldToClipGL");
         }
 
         void cacheThinTerrainUniformLocations(GLuint shp) {
             if (thinTerrainLocs_.program == shp) return;
             thinTerrainLocs_.program            = shp;
-            thinTerrainLocs_.terrainMVP         = glGetUniformLocation(shp, "terrainMVP");
-            thinTerrainLocs_.terrainViewport    = glGetUniformLocation(shp, "terrainViewport");
-            thinTerrainLocs_.mvp                = glGetUniformLocation(shp, "mvp");
+            thinTerrainLocs_.terrainMVP         = glGetUniformLocation(shp, "u_worldToClipGL");
             thinTerrainLocs_.cameraPos          = glGetUniformLocation(shp, "cameraPos");
             thinTerrainLocs_.terrainLightDir    = glGetUniformLocation(shp, "terrainLightDir");
             thinTerrainLocs_.detailNormalTiling   = glGetUniformLocation(shp, "detailNormalTiling");
@@ -1680,6 +1793,8 @@ class gosRenderer {
             thinTerrainLocs_.time               = glGetUniformLocation(shp, "time");
             thinTerrainLocs_.mapHalfExtent      = glGetUniformLocation(shp, "mapHalfExtent");
             thinTerrainLocs_.ssboRecordBase     = glGetUniformLocation(shp, "ssboRecordBase");
+            thinTerrainLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
+            thinTerrainLocs_.tessDebug          = glGetUniformLocation(shp, "tessDebug");
         }
 
         void cacheShadowUniformLocations(GLuint shp) {
@@ -1694,6 +1809,7 @@ class gosRenderer {
             shadowLocs_.matNormal2 = glGetUniformLocation(shp, "matNormal2");
             shadowLocs_.detailNormalTiling = glGetUniformLocation(shp, "detailNormalTiling");
             shadowLocs_.tex1 = glGetUniformLocation(shp, "tex1");
+            shadowLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
         }
 
         // ── World-space overlay batches ────────────────────────────────────────
@@ -1720,7 +1836,6 @@ class gosRenderer {
 
         struct OverlayUniformLocs_ {
             GLint terrainMVP     = -1;
-            GLint terrainVP      = -1;
             GLint mvp            = -1;
             GLint tex1           = -1;
             GLint fog_color      = -1;
@@ -1736,7 +1851,7 @@ class gosRenderer {
 
         // private helpers
         void pushToOverlayBatch_(OverlayBatch_& b, const WorldOverlayVert* v3, unsigned int texHandle);
-        void uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& L, float elapsed);
+        void uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& L, float elapsed, const float* terrainMvpOverride = nullptr);
         // ── End world-space overlay batch members ──────────────────────────────
 };
 
@@ -1854,6 +1969,10 @@ void gos_terrain_bridge_drawSingleBucket(
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, glTex); // binding 0 is valid; matches standard path behavior
         glDrawArrays(GL_PATCHES, (GLint)firstVertex, (GLsizei)vertexCount);
+        // RENDER_STATES v1: direct-bind path bypasses applyRenderStates; cache is
+        // stale wrt unit-0 binding. Invalidate so the next applyRenderStates
+        // (called by endBucketLoop, or by the next renderer) re-binds fully.
+        g_gos_renderer->invalidateRenderStateCache();
     } else {
         // Standard path: full state machine flush.
         g_gos_renderer->setRenderState(gos_State_Texture, (int)gosHandle);
@@ -1907,6 +2026,20 @@ unsigned int gos_terrain_bridge_getWaterFastShaderProgram() {
     glsl_program* p = g_gos_renderer->getWaterFastProgram();
     return (p && p->shp_) ? (unsigned int)p->shp_ : 0u;
 }
+
+// WaterPerCmd — per-draw data for glMultiDrawArraysIndirect, indexed by gl_DrawID.
+// 32 B std430-aligned; lockstep with gos_terrain_water_fast_mdi.vert binding 7.
+struct WaterPerCmd {
+    uint32_t textureSlot;   // reserved; texture unit selection driven by o_isWater in FS
+    int32_t  isWater;       // 1 = base, 2 = detail (matches legacy isWater uniform)
+    int32_t  detailMode;    // 0 = base, 1 = detail
+    float    uvScale;
+    float    uvOffsetX;
+    float    uvOffsetY;
+    uint32_t pad0_;
+    uint32_t pad1_;
+};
+static_assert(sizeof(WaterPerCmd) == 32, "WaterPerCmd must be 32 B");
 
 void gos_terrain_bridge_renderWaterFast(
     unsigned int recordCount,
@@ -1967,6 +2100,39 @@ void gosRenderer::renderWaterFastPath(
     if (!water_fast_prog_ || !water_fast_prog_->shp_ || recordCount == 0) return;
     GLuint prog = water_fast_prog_->shp_;
 
+    // Lazy-compile the MDI variant program (MDI VS + MDI FS) the first time it's needed.
+    static GLuint s_waterMdiProg = 0;
+    static GLuint s_perCmdSsbo   = 0;
+    if (s_waterMdiProg == 0 && gpu_driven::IsWaterEnabled()) {
+        // ARB_shader_draw_parameters in prefix (same pattern as static_prop batcher).
+        // gl_DrawIDARB is used in the VS; the unsuffixed gl_DrawID is core only in 4.6.
+        static const char* kWaterMdiPrefix =
+            "#version 430\n"
+            "#extension GL_ARB_shader_draw_parameters : require\n";
+        glsl_program* mdi = glsl_program::makeProgram(
+            "gos_terrain_water_mdi",
+            "shaders/gos_terrain_water_fast_mdi.vert",
+            "shaders/gos_terrain_water_mdi.frag",
+            kWaterMdiPrefix);
+        if (mdi && mdi->shp_) {
+            s_waterMdiProg = mdi->shp_;
+            printf("[WATER_MDI v1] event=prog_compiled prog=%u\n", (unsigned)s_waterMdiProg);
+            fflush(stdout);
+        } else {
+            // Permanently disable MDI path so we don't attempt re-compile every frame.
+            // Use a sentinel GLuint of UINT_MAX (not a valid GL object name).
+            s_waterMdiProg = (GLuint)~0u;
+            fprintf(stderr, "[WATER_MDI v1] event=prog_compile_fail — MDI path disabled\n");
+            fflush(stderr);
+        }
+    }
+    if (s_perCmdSsbo == 0 && gpu_driven::IsWaterEnabled()) {
+        glGenBuffers(1, &s_perCmdSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perCmdSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, 2 * (GLsizeiptr)sizeof(WaterPerCmd), nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
     // Save state for restore. Water is alpha-blended overlay; we set blend +
     // depth-mask off temporarily.
     GLint savedProgram   = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &savedProgram);
@@ -2015,9 +2181,13 @@ void gosRenderer::renderWaterFastPath(
         if (loc >= 0) glUniform1i(loc, a);
     };
 
-    setMat4Direct("terrainMVP",      (const float*)&terrain_mvp_);
+    const float* wMvpWaterNonMdi =
+        gos_terrain_indirect::IsFrameSolidArmed()
+            ? gos_terrain_indirect_getDispatchMvp16()
+            : gos_GetTerrainMVPMat4();
+    if (!wMvpWaterNonMdi) wMvpWaterNonMdi = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
+    setMat4Direct("u_worldToClipGL", wMvpWaterNonMdi);
     setMat4Std   ("mvp",             (const float*)&projection_);
-    setVec4      ("terrainViewport", (const float*)&terrain_viewport_);
 
     // Debug-mode override gated by MC2_RENDER_WATER_FASTPATH_DEBUG=N.
     // 0 = normal, 1 = magenta solid, 2 = green, 3 = yellow.
@@ -2052,22 +2222,14 @@ void gosRenderer::renderWaterFastPath(
     setF   ("time", (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
     setVec4("fog_color", (const float*)&fog_color_);
 
-    // SSBO bindings (recipe at 5, thin record at 6).
-    //   Recipe  = static, uploaded once per mission (idempotent guard inside).
-    //   Thin    = per-frame ring; one entry per in-window water quad.
-    //             UploadAndBindThinRecords binds at slot 6 internally and
-    //             returns the actual record count (= our draw instance count).
+    // GPU-driven path: dispatch compute cull/pack + cmd-patch if enabled.
+    // This MUST happen before EnsureRecipeBufferUploaded so the thin records
+    // are ready and slot 6 is correctly restored to thin data (M2 fix).
+    const bool gpuArmed = WaterStream::ComputeDispatchAndBindThinRecords(frameCos);
+
+    // Ensure the recipe buffer is uploaded (idempotent, mission-static).
     GLuint recipeBuf = (GLuint)WaterStream::EnsureRecipeBufferUploaded();
     if (recipeBuf == 0) {
-        glDepthMask(savedDepthMask);
-        if (!savedBlend) glDisable(GL_BLEND);
-        glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
-        glUseProgram((GLuint)savedProgram);
-        return;
-    }
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, recipeBuf);
-    const uint32_t thinCount = WaterStream::UploadAndBindThinRecords();
-    if (thinCount == 0) {
         glDepthMask(savedDepthMask);
         if (!savedBlend) glDisable(GL_BLEND);
         glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
@@ -2088,7 +2250,7 @@ void gosRenderer::renderWaterFastPath(
     GLboolean savedDepthTest = glIsEnabled(GL_DEPTH_TEST);
     GLint savedDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC, &savedDepthFunc);
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene water)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDepthMask(GL_FALSE);
@@ -2120,85 +2282,533 @@ void gosRenderer::renderWaterFastPath(
                        ? (GLuint)gos_terrain_bridge_glTextureForGosHandle(waterDetailGosHandle)
                        : 0u;
 
-    // One-time diagnostic for the fast path.
-    static bool s_fastDiagPrinted = false;
-    if (!s_fastDiagPrinted) {
-        s_fastDiagPrinted = true;
-        // Drain any pending GL errors first so we only catch ours.
-        while (glGetError() != GL_NO_ERROR) {}
-        GLint curVAO=0, curFBO=0, curVP[4]={0};
-        glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &curVAO);
-        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &curFBO);
-        glGetIntegerv(GL_VIEWPORT, curVP);
-        GLboolean depthTest = glIsEnabled(GL_DEPTH_TEST);
-        GLboolean cullFace  = glIsEnabled(GL_CULL_FACE);
-        GLint curDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC, &curDepthFunc);
-        fprintf(stderr,
-                "[WATER_FAST v1] event=first_draw prog=%u recipeBuf=%u "
-                "thin=%u baseGosH=%u baseGLTex=%u detailGosH=%u detailGLTex=%u "
-                "VAO=%d FBO=%d viewport=[%d,%d,%d,%d] depthTest=%d cullFace=%d depthFunc=0x%x\n",
-                (unsigned)prog, (unsigned)recipeBuf,
-                (unsigned)thinCount,
-                (unsigned)waterGosHandle, (unsigned)baseTex,
-                (unsigned)waterDetailGosHandle, (unsigned)detailTex,
-                curVAO, curFBO, curVP[0], curVP[1], curVP[2], curVP[3],
-                depthTest, cullFace, (unsigned)curDepthFunc);
-        fflush(stderr);
-    }
+    // Determine whether MDI path is fully operational.
+    const bool mdiValid = gpuArmed
+                          && s_waterMdiProg != 0 && s_waterMdiProg != (GLuint)~0u
+                          && s_perCmdSsbo  != 0
+                          && baseTex       != 0;
 
-    const GLsizei drawVerts = (GLsizei)(thinCount * 6u);
+    if (mdiValid) {
+        // ─────────────────────────────────────────────────────────────
+        // GPU-driven MDI path
+        // Thin records: already cull-packed by compute + bound to slot 6
+        // by ComputeDispatchAndBindThinRecords() (M2 fix).
+        // ─────────────────────────────────────────────────────────────
 
-    // --- Base water layer ---
-    if (baseTex != 0) {
+        // Atlas accessors: defined only in gos_terrain_indirect.cpp (no header).
+        // Precedent: sibling terrain-solid functions declare identical extern blocks
+        // (gameos_graphics.cpp:2584-2588, :2877-2881, :3100).
+        extern GLuint gos_terrain_indirect_getAtlasGLTex();
+        extern float  gos_terrain_indirect_getAtlasMapTopLeftX();
+        extern float  gos_terrain_indirect_getAtlasMapTopLeftY();
+        extern float  gos_terrain_indirect_getAtlasOneOverWorldUnits();
+
+        // Upload per-draw data (base + detail).
+        WaterPerCmd cmds[2];
+        cmds[0] = { 0u, 1, 0, oneOverTF,      cloudOffsetX, cloudOffsetY, 0u, 0u };
+        cmds[1] = { 1u, 2, 1, oneOverWaterTF, sprayOffsetX, sprayOffsetY, 0u, 0u };
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_perCmdSsbo);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)sizeof(cmds), cmds);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        // Switch to MDI program.
+        glUseProgram(s_waterMdiProg);
+
+        // Re-define lambdas that target s_waterMdiProg.
+        auto setMF = [&](const char* name, float a) {
+            GLint loc = glGetUniformLocation(s_waterMdiProg, name);
+            if (loc >= 0) glUniform1f(loc, a);
+        };
+        auto setMI = [&](const char* name, int a) {
+            GLint loc = glGetUniformLocation(s_waterMdiProg, name);
+            if (loc >= 0) glUniform1i(loc, a);
+        };
+        auto setMMat4Direct = [&](const char* name, const float* v) {
+            GLint loc = glGetUniformLocation(s_waterMdiProg, name);
+            if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_FALSE, v);
+        };
+        auto setMMat4Std = [&](const char* name, const float* v) {
+            GLint loc = glGetUniformLocation(s_waterMdiProg, name);
+            if (loc >= 0) glUniformMatrix4fv(loc, 1, GL_TRUE, v);
+        };
+        auto setMVec4 = [&](const char* name, const float* v) {
+            GLint loc = glGetUniformLocation(s_waterMdiProg, name);
+            if (loc >= 0) glUniform4fv(loc, 1, v);
+        };
+        auto setMVec2 = [&](const char* name, float a, float b) {
+            GLint loc = glGetUniformLocation(s_waterMdiProg, name);
+            if (loc >= 0) glUniform2f(loc, a, b);
+        };
+
+        const float* wMvpWaterMdi =
+            gos_terrain_indirect::IsFrameSolidArmed()
+                ? gos_terrain_indirect_getDispatchMvp16()
+                : gos_GetTerrainMVPMat4();
+        if (!wMvpWaterMdi) wMvpWaterMdi = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
+        setMMat4Direct("u_worldToClipGL", wMvpWaterMdi);
+        setMMat4Std   ("mvp",             (const float*)&projection_);
+        setMI         ("debugMode",       s_debugMode);
+        setMF         ("waterElevation",  waterElevation);
+        setMF         ("alphaDepth",      alphaDepth);
+        setMI         ("alphaEdgeByte",   (int)alphaEdgeByte);
+        setMI         ("alphaMiddleByte", (int)alphaMiddleByte);
+        setMI         ("alphaDeepByte",   (int)alphaDeepByte);
+        setMVec2      ("mapTopLeft",      mapTopLeftX, mapTopLeftY);
+        setMF         ("frameCos",        frameCos);
+        setMF         ("frameCosAlpha",   frameCosAlpha);
+        setMF         ("maxMinUV",        maxMinUV);
+        setMF         ("time",  (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
+        setMVec4      ("fog_color", (const float*)&fog_color_);
+        setMVec4      ("cameraPos", (const float*)&terrain_camera_pos_);  // water-v1 Fresnel
+        setMI         ("tex1",  0);
+        setMI         ("tex2",  1);
+
+        // S3: resolve atlas handle once; gate reflectionOn on both solid-armed
+        // AND a valid handle (R1: water arms independently of IsFrameSolidArmed).
+        GLuint reflTexHandle = gos_terrain_indirect_getAtlasGLTex();
+        int    reflOn = (gos_terrain_indirect::IsFrameSolidArmed()
+                         && reflTexHandle != 0) ? 1 : 0;
+        { static const bool s_reflTrace = (getenv("MC2_WATER_REFL_TRACE") != nullptr); if (s_reflTrace) {
+            static int s_lastReflOn = -1;            // edge-detect latch (renderWaterFastPath runs every frame)
+            if (reflOn != s_lastReflOn) {
+                const char* reason =
+                    !gos_terrain_indirect::IsFrameSolidArmed() ? "solid0" :
+                    (reflTexHandle == 0)                        ? "atlas0" : "on";
+                printf("[WATER_REFL v1] event=state reflectionOn=%d atlas=%u reason=%s\n",
+                       reflOn, (unsigned)reflTexHandle, reason);
+                fflush(stdout);
+                s_lastReflOn = reflOn;
+            }
+        } }
+        setMI         ("reflectionOn",          reflOn);
+        setMI         ("reflTex",               2);
+        setMF         ("atlasMapTopLeftX",       gos_terrain_indirect_getAtlasMapTopLeftX());
+        setMF         ("atlasMapTopLeftY",       gos_terrain_indirect_getAtlasMapTopLeftY());
+        setMF         ("atlasOneOverWorldUnits", gos_terrain_indirect_getAtlasOneOverWorldUnits());
+
+        // Bind SSBOs.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, recipeBuf);
+        // Slot 6 (thin records) was already bound by ComputeDispatchAndBindThinRecords.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, s_perCmdSsbo);
+
+        // Bind textures: base to unit 0, detail (or base) to unit 1.
+        // Save+restore the unit-1 sampler: prior passes (e.g. patch-stream bucket)
+        // may have left CLAMP_TO_EDGE on unit 1. The detail UV range (0..MaxMinUV ≈
+        // 0..8) would collapse to edge-texel smear under CLAMP. Bind s_waterFastSampler
+        // (REPEAT/LINEAR) for the duration of the MDI draw, then restore.
+        GLuint savedSampler1 = 0;
+        {
+            GLint q = 0;
+            glGetIntegeri_v(GL_SAMPLER_BINDING, 1, &q);
+            savedSampler1 = (GLuint)q;
+        }
+        glBindSampler(1, s_waterFastSampler);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, baseTex);
+        glActiveTexture(GL_TEXTURE1);
+        GLuint detailOrBase = (detailTex != 0) ? detailTex : baseTex;
+        glBindTexture(GL_TEXTURE_2D, detailOrBase);
+        glActiveTexture(GL_TEXTURE0);
 
-        setI("isWater",    1);
-        setI("detailMode", 0);
-        setF("uvScale",    oneOverTF);
-        setVec2("uvOffset", cloudOffsetX, cloudOffsetY);
+        // S3: conditionally bind atlas on unit 2 (mirrors unit-1 save/restore idiom).
+        // When reflOn == 0: unit 2 is intentionally left untouched (the shader skip
+        // is the sole source of truth; binding 0 would mask a missing-atlas R1 bug).
+        GLuint savedSampler2 = 0;
+        if (reflOn) {
+            GLint q = 0;
+            glGetIntegeri_v(GL_SAMPLER_BINDING, 2, &q);
+            savedSampler2 = (GLuint)q;
+            glBindSampler(2, 0);
+            glActiveTexture(GL_TEXTURE0 + 2);
+            glBindTexture(GL_TEXTURE_2D, reflTexHandle);
+            glActiveTexture(GL_TEXTURE0);
+        }
 
-        glDrawArrays(GL_TRIANGLES, 0, drawVerts);
-        // GL error diagnostic (silent on success — base_draw_ok was confirmed
-        // during Stage 2 bring-up; only print on actual error from here on).
-        {
-            GLenum err = glGetError();
-            if (err != GL_NO_ERROR) {
-                static bool s_errPrinted = false;
-                if (!s_errPrinted) {
-                    s_errPrinted = true;
-                    fprintf(stderr, "[WATER_FAST v1] event=base_draw_gl_err err=0x%x verts=%d\n",
-                            (unsigned)err, (int)drawVerts);
-                    fflush(stderr);
+        // MDI: 2 draws (base + detail); 1 if detail not present.
+        const GLsizei drawCount = (detailTex != 0) ? 2 : 1;
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, WaterStream::GetIndirectCmdBuffer());
+        glMultiDrawArraysIndirect(GL_TRIANGLES, nullptr, drawCount, 0);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+
+        // Restore unit 2 — mirror unit-1 force-clear + sampler restore.
+        if (reflOn) {
+            glActiveTexture(GL_TEXTURE0 + 2);
+            glBindTexture(GL_TEXTURE_2D, 0);    // force-clear; mirrors unit-1 post-draw
+            glActiveTexture(GL_TEXTURE0);
+            glBindSampler(2, savedSampler2);    // restore sampler only
+        }
+
+        // Restore unit 1 — don't leave a texture bound on unit 1 for the legacy path.
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindSampler(1, savedSampler1);
+
+        // Parity check: when MC2_GPU_DRIVEN_PARITY=1, runs CPU pack and compares
+        // against the GPU compute output byte-for-byte. No-op when disabled.
+        WaterStream::ComputeDispatchParity_Check();
+
+        // Restore GL state.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, 0);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, 0);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, 0);
+        glBindSampler(0, savedSampler);
+        glDepthMask(savedDepthMask);
+        glDepthFunc((GLenum)savedDepthFunc);
+        if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
+        if (!savedBlend) glDisable(GL_BLEND);
+        glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+        glUseProgram((GLuint)savedProgram);
+        glBindVertexArray((GLuint)savedVAO);
+    } else {
+        // ─────────────────────────────────────────────────────────────
+        // Legacy CPU-pack path (unchanged)
+        // ─────────────────────────────────────────────────────────────
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, recipeBuf);
+        const uint32_t thinCount = WaterStream::UploadAndBindThinRecords();
+        if (thinCount == 0) {
+            glBindSampler(0, savedSampler);
+            glDepthMask(savedDepthMask);
+            glDepthFunc((GLenum)savedDepthFunc);
+            if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
+            if (!savedBlend) glDisable(GL_BLEND);
+            glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+            glUseProgram((GLuint)savedProgram);
+            glBindVertexArray((GLuint)savedVAO);
+            return;
+        }
+
+        // One-time diagnostic for the fast path.
+        static bool s_fastDiagPrinted = false;
+        if (!s_fastDiagPrinted) {
+            s_fastDiagPrinted = true;
+            while (glGetError() != GL_NO_ERROR) {}
+            GLint curVAO=0, curFBO=0, curVP[4]={0};
+            glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &curVAO);
+            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &curFBO);
+            glGetIntegerv(GL_VIEWPORT, curVP);
+            GLboolean depthTest = glIsEnabled(GL_DEPTH_TEST);
+            GLboolean cullFace  = glIsEnabled(GL_CULL_FACE);
+            GLint curDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC, &curDepthFunc);
+            fprintf(stderr,
+                    "[WATER_FAST v1] event=first_draw prog=%u recipeBuf=%u "
+                    "thin=%u baseGosH=%u baseGLTex=%u detailGosH=%u detailGLTex=%u "
+                    "VAO=%d FBO=%d viewport=[%d,%d,%d,%d] depthTest=%d cullFace=%d depthFunc=0x%x\n",
+                    (unsigned)prog, (unsigned)recipeBuf,
+                    (unsigned)thinCount,
+                    (unsigned)waterGosHandle, (unsigned)baseTex,
+                    (unsigned)waterDetailGosHandle, (unsigned)detailTex,
+                    curVAO, curFBO, curVP[0], curVP[1], curVP[2], curVP[3],
+                    depthTest, cullFace, (unsigned)curDepthFunc);
+            fflush(stderr);
+        }
+
+        const GLsizei drawVerts = (GLsizei)(thinCount * 6u);
+
+        // --- Base water layer ---
+        if (baseTex != 0) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, baseTex);
+
+            setI("isWater",    1);
+            setI("detailMode", 0);
+            setF("uvScale",    oneOverTF);
+            setVec2("uvOffset", cloudOffsetX, cloudOffsetY);
+
+            glDrawArrays(GL_TRIANGLES, 0, drawVerts);
+            // GL error diagnostic.
+            {
+                GLenum err = glGetError();
+                if (err != GL_NO_ERROR) {
+                    static bool s_errPrinted = false;
+                    if (!s_errPrinted) {
+                        s_errPrinted = true;
+                        fprintf(stderr, "[WATER_FAST v1] event=base_draw_gl_err err=0x%x verts=%d\n",
+                                (unsigned)err, (int)drawVerts);
+                        fflush(stderr);
+                    }
                 }
             }
         }
+
+        // --- Detail/spray layer ---
+        if (detailTex != 0) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, detailTex);
+
+            setI("isWater",    2);
+            setI("detailMode", 1);
+            setF("uvScale",    oneOverWaterTF);
+            setVec2("uvOffset", sprayOffsetX, sprayOffsetY);
+
+            glDrawArrays(GL_TRIANGLES, 0, drawVerts);
+        }
+
+        // Restore GL state.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, 0);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, 0);
+        glBindSampler(0, savedSampler);
+        glDepthMask(savedDepthMask);
+        glDepthFunc((GLenum)savedDepthFunc);
+        if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
+        if (!savedBlend) glDisable(GL_BLEND);
+        glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+        glUseProgram((GLuint)savedProgram);
+        glBindVertexArray((GLuint)savedVAO);
     }
 
-    // --- Detail/spray layer ---
-    if (detailTex != 0) {
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, detailTex);
+    // RENDER_STATES v1: water fast path bound textures directly on unit 0; the
+    // applyRenderStates cache is now stale. Force a full re-apply on next call.
+    invalidateRenderStateCache();
+}
 
-        setI("isWater",    2);
-        setI("detailMode", 1);
-        setF("uvScale",    oneOverWaterTF);
-        setVec2("uvOffset", sprayOffsetX, sprayOffsetY);
+// Probe 8: forward decls for cross-TU MVP fingerprint accessors (defined in
+// gos_terrain_indirect.cpp inside its extern "C" block).
+extern "C" uint32_t gos_terrain_indirect_getDispatchMvpFp();
+extern "C" uint64_t gos_terrain_indirect_getDispatchMvpFrameIdx();
+extern "C" void     gos_terrain_indirect_getDispatchMvpFloats4(float out[4]);
+// gos_terrain_indirect_getDispatchMvp16 and gos_GetTerrainMVPMat4 are declared
+// TU-wide near the top of this file (after g_terrainMaterialProfile) so that
+// renderWaterFastPath (which precedes this block) can see them.
 
-        glDrawArrays(GL_TRIANGLES, 0, drawVerts);
+// ──────────────────────────────────────────────────────────────────────────
+// [TERRAIN_SURFACE] PR-2 — continuous indexed-surface validation draw bridge.
+//
+// Plan : docs/superpowers/plans/.../terrain-continuous-surface-producer-plan.md
+//        PR-2 (Wave 1, ADDITIVE / DEFAULT-OFF / DELETES NOTHING). Behind the
+//        MC2_TERRAIN_SURFACE path-select kill-switch (gos_terrain_surface::
+//        IsEnabled()); a no-op when OFF (behaviour-neutral). When ON it draws
+//        the surface ON TOP of the still-running legacy/indirect path purely
+//        for visual validation of the V-ssbo VS + Fork D reverse-Z bias --
+//        PR-2 lands NO deletion and NO legacy kill site (that is PR-4).
+//
+// Fork V = V-ssbo (RULED): the surface vertex SSBO (binding 11) + the baked
+// mission-static index SSBO (binding 12) are uploaded once per generation
+// epoch (gos_terrain_surface::GetGenerationEpoch()); the VS pulls
+// surfaceVerts[ surfaceIndices[gl_VertexID] ]. NO IBO / VAO element-array
+// state (memory/element_array_buffer_is_vao_state_new_draw_paths_own_their_vao.md).
+//
+// Screen-agnostic (design Convergence C-1): the draw does NOT test
+// IsFrameSolidArmed() -- surface EXISTENCE is decoupled from arming. PR-2
+// draws at a single (fixed) LOD with draw-all visibility on BOTH armed and
+// unarmed frames; the per-frame band/visibility refinement is PR-3 scope.
+//
+// State save/restore + AMD VAO-0 / attr-0 mitigations mirror
+// gos_terrain_bridge_drawIndirect exactly (the proven pattern in this file).
+//
+void gos_terrain_surface_bridge_draw()
+{
+    if (!gos_terrain_surface::IsEnabled())   return;   // kill-switch OFF: no-op
+    if (!gos_terrain_surface::IsGenerated()) return;   // nothing generated yet
+    if (!g_gos_renderer)                     return;
+
+    glsl_program* p = g_gos_renderer->getTerrainSurfaceProgram();
+    if (!p || !p->shp_) return;   // compile failed (logged once at init)
+    const GLuint prog = p->shp_;
+
+    const uint32_t indexCount = gos_terrain_surface::GetIndexCount();
+    const uint32_t vertCount  = gos_terrain_surface::GetVertexCount();
+    if (indexCount == 0u || vertCount == 0u) return;
+
+    ZoneScopedN("Terrain::SurfaceValidationDraw");
+    TracyGpuZone("Terrain::SurfaceValidationDraw");
+
+    // ---- Lazy GPU upload, epoch-tracked (re-upload on regeneration) --------
+    // s_surfaceVB/IB: mission-static vertex + finest index (PR-1/PR-2).
+    // s_surfaceTB: mission-static per-tile material table (META-FIX). All
+    // mission-static; the topology/VB never changes -- the SSE/meshlet
+    // drop-in invariant (design 3.4). Band-LOD per-frame buffers deleted in
+    // the 2026-05-19 STOP+HARVEST (uniform finest, no per-frame compute).
+    static GLuint   s_surfaceVB     = 0;
+    static GLuint   s_surfaceIB     = 0;
+    static GLuint   s_surfaceTB     = 0;   // META-FIX: per-tile material SSBO
+    static uint32_t s_uploadedEpoch = 0;
+    const uint32_t  epoch           = gos_terrain_surface::GetGenerationEpoch();
+    if (s_surfaceVB == 0) glGenBuffers(1, &s_surfaceVB);
+    if (s_surfaceIB == 0) glGenBuffers(1, &s_surfaceIB);
+    if (s_surfaceTB == 0) glGenBuffers(1, &s_surfaceTB);
+    if (epoch != s_uploadedEpoch) {
+        const void* vd = gos_terrain_surface::GetVertexData();
+        const void* id = gos_terrain_surface::GetIndexData();
+        const void* td = gos_terrain_surface::GetTileData();
+        if (!vd || !id || !td) return;
+        const uint32_t tileCount = gos_terrain_surface::GetTileCount();
+        // 32 B / TerrainSurfaceVertex (std430 vec4[2]); 4 B / uint32 index;
+        // 32 B / TerrainSurfaceTile (std430 uvec4 wp + vec4 uvExt).
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_surfaceVB);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     (GLsizeiptr)vertCount * 32, vd, GL_STATIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_surfaceIB);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     (GLsizeiptr)indexCount * 4, id, GL_STATIC_DRAW);
+        // META-FIX: mission-static per-tile material table. Row-major-keyed
+        // (mx + my*cells), uploaded byte-identical to the dense recipe; the
+        // surface VS recovers the row-major key from the cell's top-left
+        // vertexNum so it is independent of the ADJUST-1 block-clustered
+        // index emission order.
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_surfaceTB);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     (GLsizeiptr)tileCount * 32, td, GL_STATIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        s_uploadedEpoch = epoch;
+        TS_TRACE("event=ssbo_upload epoch=%u verts=%u indices=%u vb=%u ib=%u "
+                 "tb=%u",
+                 epoch, vertCount, indexCount,
+                 (unsigned)s_surfaceVB, (unsigned)s_surfaceIB,
+                 (unsigned)s_surfaceTB);
     }
 
-    // Restore GL state to what it was before this function ran.
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, 0);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, 0);
+    // ---- Save state (mirrors gos_terrain_bridge_drawIndirect) -------------
+    GLint     savedProgram   = 0; glGetIntegerv(GL_CURRENT_PROGRAM,    &savedProgram);
+    GLboolean savedBlend     = glIsEnabled(GL_BLEND);
+    GLint     savedSrcRGB    = 0; glGetIntegerv(GL_BLEND_SRC_RGB,      &savedSrcRGB);
+    GLint     savedDstRGB    = 0; glGetIntegerv(GL_BLEND_DST_RGB,      &savedDstRGB);
+    GLint     savedDepthMask = 0; glGetIntegerv(GL_DEPTH_WRITEMASK,    &savedDepthMask);
+    GLboolean savedDepthTest = glIsEnabled(GL_DEPTH_TEST);
+    GLint     savedDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC,         &savedDepthFunc);
+    GLint     savedVAO       = 0; glGetIntegerv(GL_VERTEX_ARRAY_BINDING,&savedVAO);
+    GLboolean savedColorMask[4]; glGetBooleanv(GL_COLOR_WRITEMASK,     savedColorMask);
+    GLuint    savedSampler   = 0;
+    { GLint q = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 0, &q); savedSampler = (GLuint)q; }
+
+    // ---- VAO rebind (AMD VAO-0 trap) + attr-0 (AMD attribute-0 trap) ------
+    extern void gos_RendererRebindVAO();
+    gos_RendererRebindVAO();
+    glEnableVertexAttribArray(0);
+
+    // ---- Program + uniforms (reuse the thin binder: it sets mvp /
+    //      camera / shadows / tex1 / matNormal* / atlas
+    //      uniforms for the override program). terrainMVP IS declared by the
+    //      surface VS (it projects world->clip itself, unlike the thin VS),
+    //      so the binder's terrainMVP upload is consumed here. ----
+    g_gos_renderer->terrainBindThinUniformsForPatchStream(p);
+
+    // ---- Depth + color state for opaque terrain (inherit scene reverse-Z;
+    //      do NOT set glClearDepth; design Section 4.4). GL_GEQUAL is the
+    //      scene-global reverse-Z compare. ----
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_GEQUAL);
+    glDepthMask(GL_TRUE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDisable(GL_BLEND);
+
+    // ---- Sampler 0: CLAMP_TO_EDGE / LINEAR (matches indirect atlas path) --
+    static GLuint s_surfaceSampler = 0;
+    if (s_surfaceSampler == 0) {
+        glGenSamplers(1, &s_surfaceSampler);
+        glSamplerParameteri(s_surfaceSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(s_surfaceSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(s_surfaceSampler, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(s_surfaceSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glSamplerParameteri(s_surfaceSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    glBindSampler(0, s_surfaceSampler);
+
+    // ---- Bind merged colormap atlas at unit 0; per-fragment WorldPos->tile
+    //      material model (design Section 2 NC1: useAtlasColormap=1, the frag
+    //      reconstructs atlas-absolute UV from WorldPos). useCementAtlas=0 so
+    //      the frag never dereferences the binding-2 thin SSBO (PR-2 does not
+    //      bind one; the cement-atlas path is unchanged legacy scope). ----
+    extern GLuint gos_terrain_indirect_getAtlasGLTex();
+    extern float  gos_terrain_indirect_getNumTexturesAcross();
+    extern float  gos_terrain_indirect_getAtlasMapTopLeftX();
+    extern float  gos_terrain_indirect_getAtlasMapTopLeftY();
+    extern float  gos_terrain_indirect_getAtlasOneOverWorldUnits();
+
+    GLint savedTex0Binding = 0;
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex0Binding);
+    glBindTexture(GL_TEXTURE_2D, gos_terrain_indirect_getAtlasGLTex());
+    {
+        const GLint locNTA  = glGetUniformLocation(prog, "atlasNumTexturesAcross");
+        const GLint locMTX  = glGetUniformLocation(prog, "atlasMapTopLeftX");
+        const GLint locMTY  = glGetUniformLocation(prog, "atlasMapTopLeftY");
+        const GLint locOOWS = glGetUniformLocation(prog, "atlasOneOverWorldUnits");
+        const GLint locUAC  = glGetUniformLocation(prog, "useAtlasColormap");
+        const GLint locUCA  = glGetUniformLocation(prog, "useCementAtlas");
+        if (locNTA  >= 0) glUniform1f(locNTA,  gos_terrain_indirect_getNumTexturesAcross());
+        if (locMTX  >= 0) glUniform1f(locMTX,  gos_terrain_indirect_getAtlasMapTopLeftX());
+        if (locMTY  >= 0) glUniform1f(locMTY,  gos_terrain_indirect_getAtlasMapTopLeftY());
+        if (locOOWS >= 0) glUniform1f(locOOWS, gos_terrain_indirect_getAtlasOneOverWorldUnits());
+        if (locUAC  >= 0) glUniform1i(locUAC,  1);
+        if (locUCA  >= 0) glUniform1i(locUCA,  0);
+    }
+
+    // ---- Bind the mission-static vertex SSBO at binding 20 (the VS always
+    //      pulls surfaceVerts[surfaceIndices[gl_VertexID]] from here). High
+    //      bindings (20-24) chosen clear of the live thin path (1=recipe,
+    //      2=thin) and compute-cull (11/12) so this additive PR-3 draw never
+    //      disturbs the armed indirect path.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 20, s_surfaceVB);
+
+    // ---- META-FIX 2026-05-19: bind the mission-static per-tile material SSBO
+    //      at binding 22 so the surface VS can forward the REAL Texcoord /
+    //      TerrainType varyings (replacing the PR-2 placeholders that broke
+    //      the detail / cement frag layer close-up). The VS recovers the
+    //      row-major tile key from the cell's top-left vertexNum via
+    //      u_mapSide, so the lookup is correct under the ADJUST-1
+    //      block-clustered index emission order.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 22, s_surfaceTB);
+    {
+        const GLint locMS = glGetUniformLocation(prog, "u_mapSide");
+        if (locMS >= 0)
+            glUniform1i(locMS, (GLint)gos_terrain_surface::GetMapSide());
+    }
+
+    // ── Screen-agnostic surface draw (band-LOD deferred, user-ruled
+    //    2026-05-19 STOP+HARVEST per the 2026-05-19 architecture
+    //    re-evaluation): draw the PR-1 mission-static FINEST index buffer
+    //    directly every frame. Uniform finest => zero band-boundary artifact
+    //    class, tessLevel>=1, draw-all (over-draws, never distance-culls --
+    //    correctness-safe re the long-sightline invariant). The discrete
+    //    band-LOD subsystem is DELETED, not parked; future LOD is a
+    //    re-chartered NS2 slice. Surface EXISTS every frame regardless of
+    //    arming; no C-1 *repoint* here (legacy + Fix-B retained).
+    const bool armed = gos_terrain_indirect::IsFrameSolidArmed();
+
+    // Unconditional PR-1 mission-static FINEST index-buffer draw
+    // (binding 21 = s_surfaceIB). Band-LOD deleted (not parked) per the
+    // STOP+HARVEST; uniform finest => zero band-boundary artifact class,
+    // tessLevel>=1, draw-all. Surface EXISTS every frame regardless of
+    // arming; arming no longer selects a path here.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 21, s_surfaceIB);
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)indexCount);
+    // first_draw lifecycle print -- once per process (coarse, never per-quad).
+    static bool s_firstSurfaceDrawPrinted = false;
+    if (!s_firstSurfaceDrawPrinted) {
+        s_firstSurfaceDrawPrinted = true;
+        TS_TRACE("event=first_surface_draw verts=%u indices=%u "
+                 "armed=%d screen_agnostic=1 fork_v=ssbo "
+                 "lod=uniform_finest fork_d=clip_pre_divide",
+                 vertCount, indexCount, (int)armed);
+    }
+
+    // ---- Reset shared-frag flags so legacy/indirect path doesn't inherit --
+    {
+        const GLint locUAC = glGetUniformLocation(prog, "useAtlasColormap");
+        if (locUAC >= 0) glUniform1i(locUAC, 0);
+    }
+
+    // ---- Restore state ----------------------------------------------------
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 20, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 21, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 22, 0);  // META-FIX tile SSBO
     glBindSampler(0, savedSampler);
-    glDepthMask(savedDepthMask);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex0Binding);
+    glColorMask(savedColorMask[0], savedColorMask[1],
+                savedColorMask[2], savedColorMask[3]);
+    glDepthMask((GLboolean)savedDepthMask);
     glDepthFunc((GLenum)savedDepthFunc);
     if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
-    if (!savedBlend) glDisable(GL_BLEND);
+    else                 glEnable(GL_DEPTH_TEST);
+    if (savedBlend) glEnable(GL_BLEND);
+    else            glDisable(GL_BLEND);
     glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
-    glUseProgram((GLuint)savedProgram);
     glBindVertexArray((GLuint)savedVAO);
+    glUseProgram((GLuint)savedProgram);
+
+    if (g_gos_renderer) g_gos_renderer->invalidateRenderStateCache();
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2263,9 +2873,20 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
     if (ssboRecordBaseLoc >= 0)
         glUniform1i(ssboRecordBaseLoc, 0);
 
+    // Fix A (2026-05-14): override the just-uploaded terrainMVP with the
+    // per-ring-slot snapshot captured at compute-dispatch time.  Compute
+    // wrote pzOk gates into the thin records using that MVP; the VS must
+    // project them with the same MVP or fast-rotation frames produce the
+    // giant grey-banded terrain triangle.  See
+    // docs/superpowers/progress/2026-05-14-raster-triangle-handoff.md.
+    extern const float* gos_terrain_indirect_getRingSlotMvp();
+    if (const float* slotMvp = gos_terrain_indirect_getRingSlotMvp()) {
+        g_gos_renderer->terrainOverrideThinMVP(slotMvp);
+    }
+
     // ---- Depth + color state for opaque terrain ----------------------------
     glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (opaque terrain)
     glDepthMask(GL_TRUE);
     // M5: undo any prior shadow-pass glColorMask(FALSE,...) from
     // gos_postprocess.cpp:1134/1156 — without this the indirect path draws
@@ -2389,22 +3010,100 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
     // the sub-range at that offset so index 0 in the shader == our first record.
     // Re-bind as a range binding to point ssboRecordBase=0 to the current slot.
     {
-        // Ring slot offset in bytes. kThinRecordBytes = kMaxThinRecords * 32.
-        // This is a compile-time constant so we compute it portably.
-        // g_thinRingSlot is in the anonymous namespace of gos_terrain_indirect.cpp;
-        // we need it here. Use the cmdCount and the fact that each ring-slot is
-        // exactly (65536 * 32) bytes from the previous.
-        // Simpler: the ring slot is 0-based.  We share it via a bridge accessor.
-        // Judgment call: use glBindBufferRange to point slot 2 at only the
-        // current ring-slot's region, keeping ssboRecordBase=0.
+        // Ring slot offset in bytes.  Each slot holds kMaxRecs records of
+        // sizeof(TerrainQuadThinRecord) each — post Fix B (2026-05-14) the
+        // record size is 96 B (was 32 B), so this offset would silently
+        // diverge from gos_terrain_indirect.cpp's kThinRecordBytes if the
+        // multiplier were left hardcoded.  Source the size from the struct.
         extern int gos_terrain_indirect_getRingSlot();
         const int    slot       = gos_terrain_indirect_getRingSlot();
-        const size_t kRecordSz  = 32u;
+        const size_t kRecordSz  = sizeof(TerrainQuadThinRecord);
         const size_t kMaxRecs   = 65536u;
         const GLintptr offset   = (GLintptr)(slot * kMaxRecs * kRecordSz);
         const GLsizeiptr sz     = (GLsizeiptr)(kMaxRecs * kRecordSz);
         glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)thinRecordSSBO, offset, sz);
     }
+
+    // ── Probe 8: compare draw-time MVP fingerprint vs compute-time fingerprint.
+    // Both compute and the thin VS use gos_GetTerrainMVPMat4().  If the matrix
+    // has been mutated between those two read points (in the same frame), the
+    // compute's pzOk gate decisions disagree with the VS's projection — quads
+    // that compute marked as visible may project to wild screen positions.
+    // Hypothesis after probes 1-7a all silent + bug persists: MVP delta is the
+    // last data-source candidate we haven't tested.
+    // VPL retirement deferred #4 (2026-05-16): inert post-Fix-B (no
+    // load-bearing consumer); gated behind MC2_RING_TRACE like the rest of
+    // the Step 9 demotion so the per-frame FNV + glGetBufferSubData on the
+    // indirect buffer cost nothing in the default config.
+    { static const bool s_ringMvpProbe = (getenv("MC2_RING_TRACE") != nullptr); if (s_ringMvpProbe) {
+        const float* drawMvp = gos_GetTerrainMVPMat4();
+        if (drawMvp) {
+            uint32_t drawFp = 2166136261u;
+            for (int k = 0; k < 12; ++k) {
+                uint32_t bits = 0;
+                memcpy(&bits, &drawMvp[k], sizeof(bits));
+                drawFp ^= bits; drawFp *= 16777619u;
+            }
+            const uint32_t dispatchFp     = gos_terrain_indirect_getDispatchMvpFp();
+            const uint64_t dispatchFrame  = gos_terrain_indirect_getDispatchMvpFrameIdx();
+            static uint64_t s_bridgeFrame = 0;
+            ++s_bridgeFrame;
+            if (drawFp != dispatchFp) {
+                static FILE* s_probeSink2 = []{ FILE* f = fopen("ring_trace.log", "a"); return f; }();
+                static uint32_t s_mvpMismatchCount = 0;
+                ++s_mvpMismatchCount;
+                if (s_mvpMismatchCount == 1 || s_mvpMismatchCount % 100 == 0) {
+                    // Probe 8b: read back compute-time matrix bytes for byte-level verification.
+                    float dispatchFloats[4] = { 0, 0, 0, 0 };
+                    gos_terrain_indirect_getDispatchMvpFloats4(dispatchFloats);
+                    fprintf(stderr,
+                        "[RING_MVP_DELTA v1] bridge_frame=%llu dispatch_frame=%llu dispatch_fp=0x%08x draw_fp=0x%08x count=%u "
+                        "disp_mvp[0..3]=[%.6f,%.6f,%.6f,%.6f] "
+                        "draw_mvp[0..3]=[%.6f,%.6f,%.6f,%.6f]\n",
+                        (unsigned long long)s_bridgeFrame,
+                        (unsigned long long)dispatchFrame, dispatchFp, drawFp, s_mvpMismatchCount,
+                        dispatchFloats[0], dispatchFloats[1], dispatchFloats[2], dispatchFloats[3],
+                        drawMvp[0], drawMvp[1], drawMvp[2], drawMvp[3]);
+                    fflush(stderr);
+                    if (s_probeSink2) {
+                        fprintf(s_probeSink2,
+                            "[RING_MVP_DELTA v1] bridge_frame=%llu dispatch_frame=%llu dispatch_fp=0x%08x draw_fp=0x%08x count=%u "
+                            "disp_mvp[0..3]=[%.6f,%.6f,%.6f,%.6f] "
+                            "draw_mvp[0..3]=[%.6f,%.6f,%.6f,%.6f]\n",
+                            (unsigned long long)s_bridgeFrame,
+                            (unsigned long long)dispatchFrame, dispatchFp, drawFp, s_mvpMismatchCount,
+                            dispatchFloats[0], dispatchFloats[1], dispatchFloats[2], dispatchFloats[3],
+                            drawMvp[0], drawMvp[1], drawMvp[2], drawMvp[3]);
+                        fflush(s_probeSink2);
+                    }
+                }
+            }
+        }
+
+        // Also dump cmd block (terrain-indirect-expert's probe 8 secondary):
+        // check cmd.first and cmd.baseInstance fields are zero.  cmd-patch
+        // shader sets them to 0 explicitly; non-zero indicates a race or wrong
+        // upload.
+        uint32_t cmdBlock[4] = {0,0,0,0};
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, (GLuint)indirectCmdBuffer);
+        glGetBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0, sizeof(cmdBlock), cmdBlock);
+        if (cmdBlock[2] != 0u || cmdBlock[3] != 0u) {
+            static FILE* s_probeSink3 = []{ FILE* f = fopen("ring_trace.log", "a"); return f; }();
+            static uint32_t s_cmdFieldsBad = 0;
+            ++s_cmdFieldsBad;
+            if (s_cmdFieldsBad == 1 || s_cmdFieldsBad % 50 == 0) {
+                fprintf(stderr, "[RING_CMDFIELDS v1] count=%u inst=%u first=%u base=%u bad_count=%u\n",
+                    cmdBlock[0], cmdBlock[1], cmdBlock[2], cmdBlock[3], s_cmdFieldsBad);
+                fflush(stderr);
+                if (s_probeSink3) {
+                    fprintf(s_probeSink3, "[RING_CMDFIELDS v1] count=%u inst=%u first=%u base=%u bad_count=%u\n",
+                        cmdBlock[0], cmdBlock[1], cmdBlock[2], cmdBlock[3], s_cmdFieldsBad);
+                    fflush(s_probeSink3);
+                }
+            }
+        }
+    } }
+    // ── end probe 8 ────────────────────────────────────────────────────────
 
     // ---- Draw --------------------------------------------------------------
     glMultiDrawArraysIndirect(GL_TRIANGLES, nullptr, (GLsizei)cmdCount, 0);
@@ -2448,7 +3147,476 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
     glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
     glBindVertexArray((GLuint)savedVAO);
     glUseProgram((GLuint)savedProgram);
+
+    // RENDER_STATES v1: indirect terrain bound textures on units 0 and 3 directly;
+    // the applyRenderStates cache is now stale. Force a full re-apply on next call.
+    if (g_gos_renderer) g_gos_renderer->invalidateRenderStateCache();
     return true;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// B4 Slice Stage 1b — Mask-SOLID dual-run draw bridge.
+//
+// Called by gos_terrain_mask_dispatch::DrawMaskSolid() from
+// Render.TerrainMask.Solid. Reads the per-frame SOLID mask SSBO at binding 17,
+// the dense recipe SSBO at binding 19, and the per-vertex lighting SSBO at
+// binding 2. Issues ONE glDrawArraysIndirect covering all quadCount*6 vertices;
+// the VS emits degenerate triangles for quads outside the mask.
+// State save/restore mirrors gos_terrain_bridge_drawIndirect.
+// ──────────────────────────────────────────────────────────────────────────
+bool gos_terrain_bridge_drawMaskSolid(uint32_t solidMaskSSBO,
+                                      uint32_t recipeSSBO,
+                                      uint32_t lightingSSBO,
+                                      int      quadCount,
+                                      int      mapSide)
+{
+    ZoneScopedN("Terrain::MaskSolidDraw");
+    if (!g_gos_renderer) return false;
+    glsl_program* p = g_gos_renderer->getMaskSolidProgram();
+    if (!p || !p->shp_) return false;
+    if (solidMaskSSBO == 0 || recipeSSBO == 0 || quadCount <= 0 || mapSide <= 0) return false;
+
+    const GLuint prog = p->shp_;
+
+    // ---- Save state (same set as drawIndirect) -----------------------------
+    GLint     savedProgram   = 0; glGetIntegerv(GL_CURRENT_PROGRAM,     &savedProgram);
+    GLboolean savedBlend     = glIsEnabled(GL_BLEND);
+    GLint     savedSrcRGB    = 0; glGetIntegerv(GL_BLEND_SRC_RGB,       &savedSrcRGB);
+    GLint     savedDstRGB    = 0; glGetIntegerv(GL_BLEND_DST_RGB,       &savedDstRGB);
+    GLint     savedDepthMask = 0; glGetIntegerv(GL_DEPTH_WRITEMASK,     &savedDepthMask);
+    GLboolean savedDepthTest = glIsEnabled(GL_DEPTH_TEST);
+    GLint     savedDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC,          &savedDepthFunc);
+    GLint     savedVAO       = 0; glGetIntegerv(GL_VERTEX_ARRAY_BINDING,&savedVAO);
+    GLboolean savedColorMask[4]; glGetBooleanv(GL_COLOR_WRITEMASK, savedColorMask);
+    GLuint    savedSampler   = 0;
+    { GLint q = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 0, &q); savedSampler = (GLuint)q; }
+
+    // ---- AMD VAO-0 + attr-0 traps ------------------------------------------
+    extern void gos_RendererRebindVAO();
+    gos_RendererRebindVAO();
+    glEnableVertexAttribArray(0);
+
+    // ---- Program + uniforms ------------------------------------------------
+    // Pass overrideProg so terrainBindThinUniformsForPatchStream binds + sets
+    // uniforms directly on mask_solid_prog_. All uniform names match the thin
+    // shader (cache is keyed by program, so it re-fetches locations on switch).
+    g_gos_renderer->terrainBindThinUniformsForPatchStream(p);
+
+    // ---- mapSide uniform ---------------------------------------------------
+    {
+        const GLint locMS = glGetUniformLocation(prog, "mapSide");
+        if (locMS >= 0) glUniform1i(locMS, mapSide);
+    }
+
+    extern GLuint gos_terrain_indirect_getAtlasGLTex();
+    extern float  gos_terrain_indirect_getNumTexturesAcross();
+    extern float  gos_terrain_indirect_getAtlasMapTopLeftX();
+    extern float  gos_terrain_indirect_getAtlasMapTopLeftY();
+    extern float  gos_terrain_indirect_getAtlasOneOverWorldUnits();
+    extern GLuint gos_terrain_indirect_getCementAtlasGLTex();
+    extern int    gos_terrain_indirect_getCementAtlasGridSide();
+    extern bool   gos_terrain_indirect_isCementAtlasReady();
+    extern float  gos_terrain_indirect_getWorldUnitsPerVertex();
+
+    // ---- Depth + color state -----------------------------------------------
+    // Stage 1b dual-run soak: suppress all framebuffer writes so the mask draw
+    // validates the pipeline (mask culling, shader compile/run, GL errors) without
+    // z-fighting the concurrent PR1 indirect draw. Stage 1d flips this when PR1
+    // is retired and the mask draw becomes the sole SOLID path.
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (mask soak 1b)
+    glDepthMask(GL_FALSE);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    glDisable(GL_BLEND);
+
+    // ---- Sampler unit 0: CLAMP_TO_EDGE / LINEAR (matches drawIndirect) -----
+    static GLuint s_maskSolidSampler = 0;
+    if (s_maskSolidSampler == 0) {
+        glGenSamplers(1, &s_maskSolidSampler);
+        glSamplerParameteri(s_maskSolidSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(s_maskSolidSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(s_maskSolidSampler, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(s_maskSolidSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glSamplerParameteri(s_maskSolidSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    glBindSampler(0, s_maskSolidSampler);
+
+    // ---- Atlas colormap at unit 0 ------------------------------------------
+    GLint savedTex0Binding = 0;
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex0Binding);
+    glBindTexture(GL_TEXTURE_2D, gos_terrain_indirect_getAtlasGLTex());
+    {
+        const GLint locNTA  = glGetUniformLocation(prog, "atlasNumTexturesAcross");
+        const GLint locMTX  = glGetUniformLocation(prog, "atlasMapTopLeftX");
+        const GLint locMTY  = glGetUniformLocation(prog, "atlasMapTopLeftY");
+        const GLint locOOWS = glGetUniformLocation(prog, "atlasOneOverWorldUnits");
+        const GLint locUAC  = glGetUniformLocation(prog, "useAtlasColormap");
+        if (locNTA  >= 0) glUniform1f(locNTA,  gos_terrain_indirect_getNumTexturesAcross());
+        if (locMTX  >= 0) glUniform1f(locMTX,  gos_terrain_indirect_getAtlasMapTopLeftX());
+        if (locMTY  >= 0) glUniform1f(locMTY,  gos_terrain_indirect_getAtlasMapTopLeftY());
+        if (locOOWS >= 0) glUniform1f(locOOWS, gos_terrain_indirect_getAtlasOneOverWorldUnits());
+        if (locUAC  >= 0) glUniform1i(locUAC,  1);
+    }
+
+    // ---- Cement atlas at unit 3 (if ready) ---------------------------------
+    GLint  savedTex3Binding = 0;
+    GLuint savedTex3Sampler = 0;
+    const bool cementReady = gos_terrain_indirect_isCementAtlasReady();
+    if (cementReady) {
+        glActiveTexture(GL_TEXTURE3);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex3Binding);
+        { GLint q = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 3, &q); savedTex3Sampler = (GLuint)q; }
+        glBindSampler(3, 0);
+        glBindTexture(GL_TEXTURE_2D, gos_terrain_indirect_getCementAtlasGLTex());
+        glActiveTexture(GL_TEXTURE0);
+    }
+    {
+        const GLint locTex3  = glGetUniformLocation(prog, "tex3");
+        const GLint locUCA   = glGetUniformLocation(prog, "useCementAtlas");
+        const GLint locGSide = glGetUniformLocation(prog, "atlasCementGridSide");
+        const GLint locWUPT  = glGetUniformLocation(prog, "atlasCementWorldUnitsPerTile");
+        if (locTex3  >= 0) glUniform1i(locTex3, 3);
+        if (cementReady) {
+            if (locUCA   >= 0) glUniform1i(locUCA,   1);
+            if (locGSide >= 0) glUniform1i(locGSide, gos_terrain_indirect_getCementAtlasGridSide());
+            if (locWUPT  >= 0) glUniform1f(locWUPT,  gos_terrain_indirect_getWorldUnitsPerVertex());
+        } else {
+            if (locUCA   >= 0) glUniform1i(locUCA,   0);
+        }
+    }
+
+    // ---- SSBO bindings -----------------------------------------------------
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 17, (GLuint)solidMaskSSBO);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 19, (GLuint)recipeSSBO);
+    if (lightingSSBO != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)lightingSSBO);
+
+    // ---- Build and issue one DrawArraysIndirect ----------------------------
+    struct DrawArraysIndirectCommand {
+        uint32_t count;
+        uint32_t instanceCount;
+        uint32_t first;
+        uint32_t baseInstance;
+    };
+    static GLuint s_indirectCmdBuf = 0;
+    if (s_indirectCmdBuf == 0) {
+        glGenBuffers(1, &s_indirectCmdBuf);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_indirectCmdBuf);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER, sizeof(DrawArraysIndirectCommand),
+                     nullptr, GL_DYNAMIC_DRAW);
+    }
+    DrawArraysIndirectCommand cmd = { uint32_t(quadCount * 6), 1u, 0u, 0u };
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_indirectCmdBuf);
+    glBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0, sizeof(cmd), &cmd);
+    glDrawArraysIndirect(GL_TRIANGLES, nullptr);
+
+    // ---- Restore -----------------------------------------------------------
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 17, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 19, 0);
+    if (lightingSSBO != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, 0);
+
+    // Reset useAtlasColormap on this program so re-entry doesn't inherit atlas mode.
+    {
+        const GLint locUAC = glGetUniformLocation(prog, "useAtlasColormap");
+        if (locUAC >= 0) glUniform1i(locUAC, 0);
+        const GLint locUCA = glGetUniformLocation(prog, "useCementAtlas");
+        if (locUCA >= 0) glUniform1i(locUCA, 0);
+    }
+
+    if (cementReady) {
+        glActiveTexture(GL_TEXTURE3);
+        glBindSampler(3, savedTex3Sampler);
+        glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex3Binding);
+        glActiveTexture(GL_TEXTURE0);
+    }
+    glBindSampler(0, savedSampler);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex0Binding);
+    glColorMask(savedColorMask[0], savedColorMask[1], savedColorMask[2], savedColorMask[3]);
+    glDepthMask((GLboolean)savedDepthMask);
+    glDepthFunc((GLenum)savedDepthFunc);
+    if (savedDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (savedBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+    glBindVertexArray((GLuint)savedVAO);
+    glUseProgram((GLuint)savedProgram);
+
+    // Mark render-state cache stale since we bound textures + program directly.
+    if (g_gos_renderer) g_gos_renderer->invalidateRenderStateCache();
+    return true;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// B4 Slice Stage 1c — Mask-water dual-run draw bridge.
+//
+// Called by gos_terrain_mask_dispatch::DrawMaskWater() from
+// Render.TerrainMask.Water. Reads the per-frame water mask SSBO at binding 18,
+// the WaterRecipe SSBO at binding 5, and the per-vertex lighting SSBO at
+// binding 2. Issues ONE glDrawArraysIndirect covering all recipeCount*6 vertices;
+// the VS emits degenerate triangles for quads outside the mask.
+// State save/restore mirrors gos_terrain_bridge_drawMaskSolid.
+// ──────────────────────────────────────────────────────────────────────────
+bool gos_terrain_bridge_drawMaskWater(uint32_t waterMaskSSBO,
+                                      uint32_t recipeSSBO,
+                                      uint32_t lightingSSBO,
+                                      int      recipeCount,
+                                      float    waterElevation,
+                                      float    frameCos)
+{
+    ZoneScopedN("Terrain::MaskWaterDraw");
+    if (!g_gos_renderer) return false;
+    glsl_program* p = g_gos_renderer->getMaskWaterProgram();
+    if (!p || !p->shp_) return false;
+    if (waterMaskSSBO == 0 || recipeSSBO == 0 || recipeCount <= 0) return false;
+
+    const GLuint prog = p->shp_;
+
+    // ---- Save state --------------------------------------------------------
+    GLint     savedProgram   = 0; glGetIntegerv(GL_CURRENT_PROGRAM,      &savedProgram);
+    GLboolean savedBlend     = glIsEnabled(GL_BLEND);
+    GLint     savedSrcRGB    = 0; glGetIntegerv(GL_BLEND_SRC_RGB,        &savedSrcRGB);
+    GLint     savedDstRGB    = 0; glGetIntegerv(GL_BLEND_DST_RGB,        &savedDstRGB);
+    GLint     savedDepthMask = 0; glGetIntegerv(GL_DEPTH_WRITEMASK,      &savedDepthMask);
+    GLboolean savedDepthTest = glIsEnabled(GL_DEPTH_TEST);
+    GLint     savedDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC,           &savedDepthFunc);
+    GLint     savedVAO       = 0; glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &savedVAO);
+    GLboolean savedColorMask[4]; glGetBooleanv(GL_COLOR_WRITEMASK, savedColorMask);
+    GLuint    savedSampler   = 0;
+    { GLint q = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 0, &q); savedSampler = (GLuint)q; }
+
+    // ---- AMD VAO-0 + attr-0 traps ------------------------------------------
+    extern void gos_RendererRebindVAO();
+    gos_RendererRebindVAO();
+    glEnableVertexAttribArray(0);
+
+    // ---- Program + uniforms ------------------------------------------------
+    // terrainBindThinUniformsForPatchStream sets terrainMVP, mvp,
+    // and other terrain-shared uniforms (same uniform names as thin/mask-solid).
+    g_gos_renderer->terrainBindThinUniformsForPatchStream(p);
+
+    // waterElevation and frameCos are not set by terrainBindThinUniformsForPatchStream.
+    {
+        const GLint locWE = glGetUniformLocation(prog, "waterElevation");
+        const GLint locFC = glGetUniformLocation(prog, "frameCos");
+        if (locWE >= 0) glUniform1f(locWE, waterElevation);
+        if (locFC >= 0) glUniform1f(locFC, frameCos);
+    }
+
+    // ---- Depth + color state -----------------------------------------------
+    // Stage 1c dual-run soak: suppress all framebuffer writes so the mask draw
+    // validates the pipeline without z-fighting the concurrent water fast path.
+    // Water is translucent so depth writes are off anyway; keep depth test for
+    // correct mask geometry.
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (mask soak 1c)
+    glDepthMask(GL_FALSE);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    // Blend on (water is semi-transparent); blend func matches water fast path.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // ---- Sampler unit 0 ----------------------------------------------------
+    static GLuint s_maskWaterSampler = 0;
+    if (s_maskWaterSampler == 0) {
+        glGenSamplers(1, &s_maskWaterSampler);
+        glSamplerParameteri(s_maskWaterSampler, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glSamplerParameteri(s_maskWaterSampler, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glSamplerParameteri(s_maskWaterSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glSamplerParameteri(s_maskWaterSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    }
+    glBindSampler(0, s_maskWaterSampler);
+
+    // ---- Bind a valid texture at unit 0 (terrain atlas) to prevent undefined sampling.
+    // glColorMask(GL_FALSE) suppresses output, but we still bind something safe.
+    extern GLuint gos_terrain_indirect_getAtlasGLTex();
+    GLint savedTex0Binding = 0;
+    glActiveTexture(GL_TEXTURE0);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex0Binding);
+    glBindTexture(GL_TEXTURE_2D, gos_terrain_indirect_getAtlasGLTex());
+
+    // ---- SSBO bindings -----------------------------------------------------
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 18, (GLuint)waterMaskSSBO);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,  5, (GLuint)recipeSSBO);
+    if (lightingSSBO != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)lightingSSBO);
+
+    // ---- Build and issue one DrawArraysIndirect ----------------------------
+    struct DrawArraysIndirectCommand {
+        uint32_t count;
+        uint32_t instanceCount;
+        uint32_t first;
+        uint32_t baseInstance;
+    };
+    static GLuint s_waterIndirectCmdBuf = 0;
+    if (s_waterIndirectCmdBuf == 0) {
+        glGenBuffers(1, &s_waterIndirectCmdBuf);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_waterIndirectCmdBuf);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER, sizeof(DrawArraysIndirectCommand),
+                     nullptr, GL_DYNAMIC_DRAW);
+    }
+    DrawArraysIndirectCommand cmd = { uint32_t(recipeCount * 6), 1u, 0u, 0u };
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, s_waterIndirectCmdBuf);
+    glBufferSubData(GL_DRAW_INDIRECT_BUFFER, 0, sizeof(cmd), &cmd);
+    glDrawArraysIndirect(GL_TRIANGLES, nullptr);
+
+    // ---- Restore -----------------------------------------------------------
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 18, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER,  5, 0);
+    if (lightingSSBO != 0)
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, 0);
+
+    glBindSampler(0, savedSampler);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex0Binding);
+    glColorMask(savedColorMask[0], savedColorMask[1], savedColorMask[2], savedColorMask[3]);
+    glDepthMask((GLboolean)savedDepthMask);
+    glDepthFunc((GLenum)savedDepthFunc);
+    if (savedDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (savedBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+    glBindVertexArray((GLuint)savedVAO);
+    glUseProgram((GLuint)savedProgram);
+
+    // Mark render-state cache stale since we bound textures + program directly.
+    if (g_gos_renderer) g_gos_renderer->invalidateRenderStateCache();
+    return true;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// PR2c Stage 2c — Mine static-bake bridge.
+//
+// Issues ONE glDrawArrays(GL_TRIANGLES) against the mission-static MineStaticVBO,
+// with the 2-layer mine sprite array bound at unit 5. State save/restore mirrors
+// gos_terrain_bridge_drawIndirect (Program, Blend, Depth, ColorMask, VAO,
+// sampler unit 5, texture binding on unit 5, vertex attrib state). Per-frame
+// CPU work is dominated by this state churn — the actual draw is one dispatch
+// over a few hundred verts max (mines are sparse: 2-3 missions x small
+// overlay each per user direction 2026-05-08).
+// ──────────────────────────────────────────────────────────────────────────
+bool gos_terrain_bridge_drawMineStatic(int          vertCount,
+                                       unsigned int vboGL,
+                                       unsigned int textureArrayGL)
+{
+    ZoneScopedN("Terrain::MineStaticDraw");
+    if (!g_gos_renderer) return false;
+    if (vertCount <= 0 || vboGL == 0 || textureArrayGL == 0) return false;
+    glsl_program* p = g_gos_renderer->getMineStaticProgram();
+    if (!p || !p->shp_) return false;
+
+    const GLuint prog = p->shp_;
+
+    // ---- Save state ---------------------------------------------------------
+    GLint     savedProgram   = 0; glGetIntegerv(GL_CURRENT_PROGRAM,         &savedProgram);
+    GLboolean savedBlend     = glIsEnabled(GL_BLEND);
+    GLint     savedSrcRGB    = 0; glGetIntegerv(GL_BLEND_SRC_RGB,           &savedSrcRGB);
+    GLint     savedDstRGB    = 0; glGetIntegerv(GL_BLEND_DST_RGB,           &savedDstRGB);
+    GLint     savedDepthMask = 0; glGetIntegerv(GL_DEPTH_WRITEMASK,         &savedDepthMask);
+    GLboolean savedDepthTest = glIsEnabled(GL_DEPTH_TEST);
+    GLint     savedDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC,              &savedDepthFunc);
+    GLint     savedVAO       = 0; glGetIntegerv(GL_VERTEX_ARRAY_BINDING,    &savedVAO);
+    GLint     savedActiveTex = GL_TEXTURE0; glGetIntegerv(GL_ACTIVE_TEXTURE, &savedActiveTex);
+    GLboolean savedColorMask[4]; glGetBooleanv(GL_COLOR_WRITEMASK,           savedColorMask);
+    GLint     savedArrayBuf  = 0; glGetIntegerv(GL_ARRAY_BUFFER_BINDING,    &savedArrayBuf);
+    GLint     savedTex5Bind  = 0;
+    GLuint    savedTex5Sampler = 0;
+    glActiveTexture(GL_TEXTURE5);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D_ARRAY, &savedTex5Bind);
+    { GLint q = 0; glGetIntegeri_v(GL_SAMPLER_BINDING, 5, &q); savedTex5Sampler = (GLuint)q; }
+
+    // ---- VAO rebind (AMD VAO-0 trap) ---------------------------------------
+    extern void gos_RendererRebindVAO();
+    gos_RendererRebindVAO();
+
+    // ---- Program -----------------------------------------------------------
+    glUseProgram(prog);
+
+    // terrainMVP (mirrors PR1 thin-VS upload — GL_FALSE + row-major per
+    // terrain_mvp_gl_false.md).
+    {
+        const GLint loc = glGetUniformLocation(prog, "u_worldToClipGL");
+        if (loc >= 0)
+            glUniformMatrix4fv(loc, 1, GL_FALSE,
+                               (const float*)&g_gos_renderer->getTerrainMVP());
+    }
+
+    // mineSpriteArray uniform → unit 5
+    {
+        const GLint loc = glGetUniformLocation(prog, "mineSpriteArray");
+        if (loc >= 0) glUniform1i(loc, 5);
+    }
+
+    // ---- Vertex attrib setup (GL_ARRAY_BUFFER + 3 attrs at locations 0/1/2)
+    // Vertex format must match MineVert in gos_terrain_indirect.cpp:
+    //   offset  0: vec3 pos    (location 0)
+    //   offset 12: vec2 uv     (location 1)
+    //   offset 20: uint layer  (location 2)
+    glBindBuffer(GL_ARRAY_BUFFER, (GLuint)vboGL);
+    constexpr GLsizei kStride = 24;  // sizeof(MineVert)
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer (0, 3, GL_FLOAT, GL_FALSE, kStride, (const void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, kStride, (const void*)12);
+    glEnableVertexAttribArray(2);
+    glVertexAttribIPointer(2, 1, GL_UNSIGNED_INT,    kStride, (const void*)20);
+
+    // ---- Bind texture-array at unit 5 + clear sampler-object override ------
+    glActiveTexture(GL_TEXTURE5);
+    glBindSampler(5, 0);  // use the texture's own params (NEAREST/CLAMP_TO_EDGE)
+    glBindTexture(GL_TEXTURE_2D_ARRAY, (GLuint)textureArrayGL);
+    glActiveTexture(GL_TEXTURE0);
+
+    // ---- Depth + blend + color state ---------------------------------------
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene terrain)
+    glDepthMask(GL_TRUE);
+    // M5: undo any prior shadow-pass glColorMask(FALSE,...) leakage.
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    // Mine sprite uses alpha-test discard (in FS); no blend needed.
+    glDisable(GL_BLEND);
+
+    // ---- Draw --------------------------------------------------------------
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertCount);
+
+    // ---- Restore state -----------------------------------------------------
+    glDisableVertexAttribArray(2);
+    glDisableVertexAttribArray(1);
+    // Leave attr-0 enabled — AMD attribute-0 trap (other paths assume it on).
+
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, (GLuint)savedTex5Bind);
+    glBindSampler(5, savedTex5Sampler);
+    glActiveTexture((GLenum)savedActiveTex);
+
+    glBindBuffer(GL_ARRAY_BUFFER, (GLuint)savedArrayBuf);
+    glColorMask(savedColorMask[0], savedColorMask[1], savedColorMask[2], savedColorMask[3]);
+    glDepthFunc((GLenum)savedDepthFunc);
+    glDepthMask((GLboolean)savedDepthMask);
+    if (savedDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (savedBlend)     glEnable(GL_BLEND);      else glDisable(GL_BLEND);
+    glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
+    glBindVertexArray((GLuint)savedVAO);
+    glUseProgram((GLuint)savedProgram);
+
+    // RENDER_STATES v1: invalidate cache since we touched units + state.
+    if (g_gos_renderer) g_gos_renderer->invalidateRenderStateCache();
+    return true;
+}
+
+// Slice A — cement-overlay static-bake draw bridge. Thin forwarder to the
+// gosRenderer member (which owns the private overlay program/locs/texture
+// list), mirroring how gos_DrawTerrainOverlays forwards to drawTerrainOverlays
+// and how gos_terrain_bridge_drawMineStatic gates on g_gos_renderer.
+bool gos_terrain_bridge_drawDecalStatic(unsigned int               vboGL,
+                                        const GosDecalStaticDraw*  draws,
+                                        int                        drawCount)
+{
+    ZoneScopedN("Terrain::DecalStaticDraw");
+    if (!g_gos_renderer) return false;
+    return g_gos_renderer->drawDecalStaticBatch(vboGL, draws, drawCount);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2607,6 +3775,46 @@ void gosRenderer::init() {
         }
     }
 
+    // GPU-driven dynamic sun shadow Phase 1 -- depth-only instanced programs.
+    // shadow_mech.vert: skinned mech instances (SSBOs binding0=InstanceBuffer,
+    //   binding1=BoneBuffer). Mirrors mech.vert position-only path.
+    // shadow_static_prop.vert: static-prop instances (SSBO binding0=Instances).
+    //   Mirrors static_prop.vert legacy non-coalesce path (gl_InstanceID bare;
+    //   caller binds per-type SSBO range via glBindBufferRange).
+    // Nothing calls these yet -- registration only (Task 1).
+    {
+        ZoneScopedN("gosRenderer::init shadowMechProg");
+        static const char* kShadowInstPrefix = "#version 430\n";
+        shadow_mech_prog_ = glsl_program::makeProgram(
+            "shadow_mech",
+            "shaders/shadow_mech.vert",
+            "shaders/shadow_instanced.frag",
+            kShadowInstPrefix);
+        if (!shadow_mech_prog_ || !shadow_mech_prog_->shp_)
+            fprintf(stderr, "[SHADOW_MECH] WARNING: failed to compile shadow_mech shader"
+                            " -- GPU-driven mech shadow draw disabled\n");
+        else
+            printf("[SHADOW_MECH] Shadow mech shader loaded: prog=%u\n",
+                   (unsigned)shadow_mech_prog_->shp_);
+        fflush(stdout);
+    }
+    {
+        ZoneScopedN("gosRenderer::init shadowStaticPropProg");
+        static const char* kShadowStaticPropPrefix = "#version 430\n";
+        shadow_static_prop_prog_ = glsl_program::makeProgram(
+            "shadow_static_prop",
+            "shaders/shadow_static_prop.vert",
+            "shaders/shadow_instanced.frag",
+            kShadowStaticPropPrefix);
+        if (!shadow_static_prop_prog_ || !shadow_static_prop_prog_->shp_)
+            fprintf(stderr, "[SHADOW_STATIC_PROP] WARNING: failed to compile shadow_static_prop shader"
+                            " -- GPU-driven static-prop shadow draw disabled\n");
+        else
+            printf("[SHADOW_STATIC_PROP] Shadow static-prop shader loaded: prog=%u\n",
+                   (unsigned)shadow_static_prop_prog_->shp_);
+        fflush(stdout);
+    }
+
     // Load thin-record terrain program (gos_terrain_thin.vert + gos_terrain.frag, no tess).
     // Used by PatchStream M1g to draw thin records via GL_TRIANGLES, avoiding tessellation overhead.
     {
@@ -2623,6 +3831,89 @@ void gosRenderer::init() {
         else
             printf("[THIN_TERRAIN] Thin terrain shader loaded: prog=%u\n",
                    (unsigned)thin_terrain_prog_->shp_);
+        fflush(stdout);
+    }
+
+    // [TERRAIN_SURFACE] PR-2 — load the continuous indexed-surface program
+    // (gos_terrain_surface.vert + gos_terrain.frag, V-ssbo vertex-pull, no
+    // tess). #version provided by the prefix here; NEVER a #version line in
+    // the shader file (worktree CLAUDE.md). Shader hot-reload fails SILENTLY
+    // (bad compile -> old shader stays active) -- a failed compile here is a
+    // hard WARNING so the smoke log shows it; PR-2's automated gate greps the
+    // run log for shader compile errors.
+    {
+        ZoneScopedN("gosRenderer::init terrainSurfaceProg");
+        static const char* kSurfacePrefix = "#version 430\n";
+        terrain_surface_prog_ = glsl_program::makeProgram(
+            "gos_terrain_surface",
+            "shaders/gos_terrain_surface.vert",
+            "shaders/gos_terrain.frag",
+            kSurfacePrefix);
+        if (!terrain_surface_prog_ || !terrain_surface_prog_->shp_)
+            fprintf(stderr, "[TERRAIN_SURFACE v1] event=shader_compile_fail "
+                            "vs=gos_terrain_surface.vert fs=gos_terrain.frag "
+                            "-- MC2_TERRAIN_SURFACE draw disabled\n");
+        else
+            printf("[TERRAIN_SURFACE v1] event=shader_loaded prog=%u\n",
+                   (unsigned)terrain_surface_prog_->shp_);
+        fflush(stdout);
+    }
+
+    // PR2c Stage 2c — load mine static-bake program.
+    {
+        ZoneScopedN("gosRenderer::init mineStaticProg");
+        static const char* kMinePrefix = "#version 430\n";
+        mine_static_prog_ = glsl_program::makeProgram(
+            "gos_terrain_mine_static",
+            "shaders/gos_terrain_mine_static.vert",
+            "shaders/gos_terrain_mine_static.frag",
+            kMinePrefix);
+        if (!mine_static_prog_ || !mine_static_prog_->shp_)
+            fprintf(stderr, "[MINE_STATIC] WARNING: failed to compile mine static-bake shader"
+                            " — MC2_TERRAIN_INDIRECT_MINE=1 will be a no-op\n");
+        else
+            printf("[MINE_STATIC] Mine static-bake shader loaded: prog=%u\n",
+                   (unsigned)mine_static_prog_->shp_);
+        fflush(stdout);
+    }
+
+    // B4 Slice Stage 1b — load mask-SOLID program.
+    // Pairs the new mask-SOLID VS with the existing terrain frag, reusing all
+    // PBR/shadow/atlas logic from gos_terrain.frag.
+    {
+        ZoneScopedN("gosRenderer::init maskSolidProg");
+        static const char* kMaskSolidPrefix = "#version 430\n";
+        mask_solid_prog_ = glsl_program::makeProgram(
+            "gos_terrain_mask_solid",
+            "shaders/gos_terrain_mask_solid.vert",
+            "shaders/gos_terrain.frag",
+            kMaskSolidPrefix);
+        if (!mask_solid_prog_ || !mask_solid_prog_->shp_)
+            fprintf(stderr, "[MASK_SOLID] WARNING: failed to compile mask-SOLID shader"
+                            " — MC2_TERRAIN_MASK_DISPATCH=1 SOLID draw disabled\n");
+        else
+            printf("[MASK_SOLID] Mask-SOLID shader loaded: prog=%u\n",
+                   (unsigned)mask_solid_prog_->shp_);
+        fflush(stdout);
+    }
+
+    // B4 Slice Stage 1c — load mask-water program.
+    // Pairs the mask-water VS (reads water mask + WaterRecipe) with
+    // gos_tex_vertex.frag (same frag as the water fast path).
+    {
+        ZoneScopedN("gosRenderer::init maskWaterProg");
+        static const char* kMaskWaterPrefix = "#version 430\n";
+        mask_water_prog_ = glsl_program::makeProgram(
+            "gos_terrain_mask_water",
+            "shaders/gos_terrain_mask_water.vert",
+            "shaders/gos_tex_vertex.frag",
+            kMaskWaterPrefix);
+        if (!mask_water_prog_ || !mask_water_prog_->shp_)
+            fprintf(stderr, "[MASK_WATER] WARNING: failed to compile mask-water shader"
+                            " — MC2_TERRAIN_MASK_DISPATCH=1 water draw disabled\n");
+        else
+            printf("[MASK_WATER] Mask-water shader loaded: prog=%u\n",
+                   (unsigned)mask_water_prog_->shp_);
         fflush(stdout);
     }
 
@@ -2674,9 +3965,7 @@ void gosRenderer::init() {
     auto cacheOverlayLocs = [](glsl_program* prog, OverlayUniformLocs_& locs) {
         if (!prog) return;
         GLuint shp = prog->shp_;
-        locs.terrainMVP      = glGetUniformLocation(shp, "terrainMVP");
-        locs.terrainVP       = glGetUniformLocation(shp, "terrainViewport");
-        locs.mvp             = glGetUniformLocation(shp, "mvp");
+        locs.terrainMVP      = glGetUniformLocation(shp, "u_worldToClipGL");
         locs.tex1            = glGetUniformLocation(shp, "tex1");
         locs.fog_color       = glGetUniformLocation(shp, "fog_color");
         locs.time            = glGetUniformLocation(shp, "time");
@@ -2757,6 +4046,13 @@ void gosRenderer::destroy() {
 }
 
 void gosRenderer::initRenderStates() {
+    // RENDER_STATES v1: zero-init the entire arrays so the equality check has
+    // a defined comparison for states that initRenderStates does not assign
+    // explicitly (Terrain, Water, Overlay, IsHUD, Texture3). Without this,
+    // uninitialized members at non-explicit indices could differ between
+    // curStates_ and renderStates_ on every call and defeat the early-out.
+    memset(&curStates_, 0, sizeof(curStates_));
+    memset(&renderStates_, 0, sizeof(renderStates_));
 
 	renderStates_[gos_State_Texture] = INVALID_TEXTURE_ID;
 	renderStates_[gos_State_Texture2] = INVALID_TEXTURE_ID;
@@ -2818,8 +4114,87 @@ void gosRenderer::popRenderStates()
     renderStatesStackPointer--;
 }
 
+// RENDER_STATES v1: kill-switch (default-off → short-circuit path runs).
+// MC2_RENDERSTATES_LEGACY=1 forces unconditional apply behavior.
+static bool gos_renderStatesLegacyEnabled() {
+    static const bool s = []() {
+        const char* v = getenv("MC2_RENDERSTATES_LEGACY");
+        return v && v[0] == '1' && v[1] == '\0';
+    }();
+    return s;
+}
+
 void gosRenderer::applyRenderStates() {
     ZoneScopedN("ApplyRenderStates");
+
+    rsCalls_++;
+
+    // RENDER_STATES v1: state-equality early-out.
+    // Auto-reset of Terrain/Water flags must run every call regardless (these are
+    // single-frame "intent" bits cleared after read). gos_State_Overlay is copied,
+    // not auto-reset — managed by renderLists. We therefore split the auto-reset
+    // out so it always runs, then test the rest of state for equality.
+    const bool legacy = gos_renderStatesLegacyEnabled();
+    if (!legacy && stateCacheValid_) {
+        bool equal = true;
+        int mismatchK = -1;
+        uint32_t mismatchCur = 0, mismatchRen = 0;
+        // Iterate valid enum values [gos_State_Texture .. gos_MaxState). Index 0
+        // is not a valid enum (gos_State_Texture==1) and is never written by
+        // initRenderStates(), so its value is indeterminate and may differ
+        // between curStates_ / renderStates_ — skip it.
+        for (int k = gos_State_Texture; k < gos_MaxState; ++k) {
+            if (k == gos_State_Texture || k == gos_State_Texture2 || k == gos_State_Texture3) {
+                continue; // texture handles mutate per-frame; checked separately below
+            }
+            // Terrain/Water are auto-reset bits — renderStates_[k] is cleared after
+            // each apply, so curStates_[k] will diverge if a caller set it; that is
+            // exactly the signal we want to force a full apply through.
+            if (curStates_[k] != renderStates_[k]) {
+                equal = false;
+                mismatchK = k;
+                mismatchCur = curStates_[k];
+                mismatchRen = renderStates_[k];
+                break;
+            }
+        }
+        // Optional diagnostic: print the first 8 mismatch reasons. Env-gated,
+        // off by default per Debug Instrumentation Rule (keep, demote, don't
+        // delete). MC2_RENDERSTATES_TRACE=1 to enable.
+        static const bool s_rsTrace = (getenv("MC2_RENDERSTATES_TRACE") != nullptr);
+        static int s_mismatchPrints = 0;
+        if (s_rsTrace && !equal && s_mismatchPrints < 8) {
+            s_mismatchPrints++;
+            printf("[RENDER_STATES v1] event=mismatch_first idx=%d cur=%u ren=%u\n",
+                   mismatchK, mismatchCur, mismatchRen);
+            fflush(stdout);
+        }
+        if (equal) {
+            // Resolved-handle parity: check the underlying GL texture id, not the
+            // gos handle slot (handles mutate per-frame via tex_resolve).
+            uint32_t tex_states[] = { gos_State_Texture, gos_State_Texture2, gos_State_Texture3 };
+            for (int i = 0; i < 3 && equal; ++i) {
+                DWORD h = renderStates_[tex_states[i]];
+                gosTexture* tex = (h == INVALID_TEXTURE_ID) ? nullptr : this->getTexture(h);
+                uint32_t glId = tex ? (uint32_t)tex->getTextureId() : 0u;
+                if (glId != cachedResolvedTexId_[i]) { equal = false; break; }
+                if (curStates_[tex_states[i]] != h) { equal = false; break; }
+            }
+            if (equal) {
+                // Skip GL work. Still run auto-reset bookkeeping so Terrain/Water
+                // intent bits don't bleed into the next frame.
+                curStates_[gos_State_Terrain] = renderStates_[gos_State_Terrain];
+                renderStates_[gos_State_Terrain] = 0;
+                curStates_[gos_State_Water]   = renderStates_[gos_State_Water];
+                renderStates_[gos_State_Water]   = 0;
+                curStates_[gos_State_Overlay] = renderStates_[gos_State_Overlay];
+                rsSkipped_++;
+                return;
+            }
+        }
+    }
+
+    rsApplied_++;
 
 	////////////////////////////////////////////////////////////////////////////////
 	switch (renderStates_[gos_State_Culling]) {
@@ -2854,10 +4229,18 @@ void gosRenderer::applyRenderStates() {
    } else {
        glEnable(GL_DEPTH_TEST);
    }
+   // Reverse-Z (U2): gos_State_ZCompare is the SCENE depth-compare bridge.
+   // All gos_State_ZCompare writers (incl. txmmgr.cpp:2316/2327 and
+   // objmgr.cpp:1826 legacy CPU blob-shadow quads, which depth-test
+   // against the SCENE depth buffer) are scene-space; the ortho
+   // shadow-MAP passes never route through gos_State_ZCompare (they set
+   // glDepthFunc(GL_LESS) via the literal path in gameos_graphics.cpp
+   // 4436/4580/4650 + gos_postprocess.cpp 1139/1163 under their own FBO).
+   // So the scene remap applies globally here; no shadow carve-out.
    switch(renderStates_[gos_State_ZCompare]) {
-       case 0: glDepthFunc(GL_ALWAYS); break;
-       case 1: glDepthFunc(GL_LEQUAL); break;
-       case 2: glDepthFunc(GL_LESS); break;
+       case 0: glDepthFunc(GL_ALWAYS);  break;   // unchanged
+       case 1: glDepthFunc(GL_GEQUAL);  break;   // reverse-Z: was GL_LEQUAL
+       case 2: glDepthFunc(GL_GREATER); break;   // reverse-Z: was GL_LESS
        default: gosASSERT(0 && "Wrong depth test value");
    }
    curStates_[gos_State_ZCompare] = renderStates_[gos_State_ZCompare];
@@ -2922,8 +4305,10 @@ void gosRenderer::applyRenderStates() {
 
        gosTexture* tex = gosTextureHandle == INVALID_TEXTURE_ID ? 0 : this->getTexture(gosTextureHandle);
        if(tex) {
-           glBindTexture(GL_TEXTURE_2D, tex->getTextureId());
+           const uint32_t glId = (uint32_t)tex->getTextureId();
+           glBindTexture(GL_TEXTURE_2D, glId);
            setSamplerParams(tex->getTextureType(), address_mode, filter);
+           cachedResolvedTexId_[i] = glId;
 
            gosTextureInfo texinfo;
            tex->getTextureInfo(&texinfo);
@@ -2934,23 +4319,42 @@ void gosRenderer::applyRenderStates() {
 
        } else {
            glBindTexture(GL_TEXTURE_2D, 0);
+           cachedResolvedTexId_[i] = 0u;
        }
        curStates_[tex_states[i]] = gosTextureHandle;
    }
 
    ////////////////////////////////////////////////////////////////////////////////
-   // Terrain tessellation flag — copy then auto-reset to prevent bleed to non-terrain draws
-   curStates_[gos_State_Terrain] = renderStates_[gos_State_Terrain];
-   renderStates_[gos_State_Terrain] = 0;
-   curStates_[gos_State_Water] = renderStates_[gos_State_Water];
-   renderStates_[gos_State_Water] = 0;
-   // Overlay GPU projection — copy, no auto-reset (managed by renderLists loop)
-   curStates_[gos_State_Overlay] = renderStates_[gos_State_Overlay];
+   // RENDER_STATES v1: snapshot the full renderStates_ array into curStates_ so
+   // the equality check has a coherent "last applied" reference for ALL state
+   // dimensions. Many states (Perspective, Specular, ShadeMode, TextureMapBlend,
+   // ...) aren't applied to GL at all (commented "now in shaders") but are still
+   // mutated by callers per-shape — without this snapshot they'd never match
+   // and the early-out would always fail.
+   memcpy(&curStates_, &renderStates_, sizeof(curStates_));
 
+   // Terrain tessellation flag — auto-reset to prevent bleed to non-terrain
+   // draws. The snapshot above already copied the true value; clear renderStates_
+   // AFTER so the next call sees curStates_[Terrain]=value, renderStates_=0 and
+   // forces a full apply if a caller re-sets Terrain.
+   renderStates_[gos_State_Terrain] = 0;
+   renderStates_[gos_State_Water]   = 0;
+   // Overlay is NOT auto-reset — managed by renderLists loop. Snapshot above
+   // already mirrored its value.
+
+   // RENDER_STATES v1: full-apply complete — cache is now coherent with GL.
+   stateCacheValid_ = true;
 }
 
 void gosRenderer::beginFrame()
 {
+    // RENDER_STATES v1: defensive cache invalidate at frame start. SDL window
+    // swap, ImGui (if added), or any external GL hook between frames could
+    // disturb GL state without the cache knowing. Cost is one redundant full
+    // apply per frame at startup; the [RENDER_STATES v1] summary surfaces any
+    // unexpected impact. MINOR-1 from the 2026-05-08 adversarial review.
+    invalidateRenderStateCache();
+
     // Frame-boundary hygiene: IsHUD must be cleared by every callsite before the frame ends.
     // If it is still set here, a callsite leaked the bit across the frame boundary.
     if (renderStates_[gos_State_IsHUD] != 0) {
@@ -2963,18 +4367,64 @@ void gosRenderer::beginFrame()
     num_draw_calls_ = 0;
 
     TerrainPatchStream::beginFrame();
+    // gos_terrain_indirect::BeginFrame() moved to endFrame() — see comment there.
+}
+
+// Lazy-eval gate for the dev-only shader hot-reload sweep. Default OFF in
+// shipping; set MC2_SHADER_HOT_RELOAD=1 to opt in for shader iteration.
+// Pattern matches gos_terrain_indirect::IsEnabled() — static-init-order safe.
+// Diagnostic 2026-05-07: the unconditional sweep showed 1.82 ms self-time
+// inside Camera.UpdateRenderers/gos_RendererEndFrame in Tracy because
+// last_check_time was never updated, so once 500 ms elapsed checkReload()
+// ran every frame over materialList_.
+static bool gos_ShaderHotReloadEnabled() {
+    static const bool s = []() {
+        const char* v = getenv("MC2_SHADER_HOT_RELOAD");
+        return v && v[0] == '1' && v[1] == '\0';
+    }();
+    return s;
 }
 
 void gosRenderer::endFrame()
 {
+    // Clear the GPU-terrain arm AFTER renderLists() has consumed it this frame.
+    // Must be end-of-frame, not begin-of-frame: DoGameLogic() (which calls
+    // Terrain::geometry() → ComputePreflight() → arm) runs BEFORE draw_screen()
+    // (which calls beginFrame() then renderLists()). Placing the reset in
+    // beginFrame() wiped the arm before renderLists() could see it, causing
+    // permanent black terrain. Menu / mech-bay frames never call ComputePreflight(),
+    // so they never set the arm; the end-of-frame clear is a no-op for them.
+    gos_terrain_indirect::BeginFrame();
+
+    // RENDER_STATES v1: 600-frame summary line. Always-on counter; gated print.
+    rsFrames_++;
+    if (rsFrames_ >= 600) {
+        printf("[RENDER_STATES v1] event=summary frames=%u calls=%u skipped_count=%u applied_count=%u\n",
+               rsFrames_, rsCalls_, rsSkipped_, rsApplied_);
+        fflush(stdout);
+        rsFrames_ = 0;
+        rsCalls_ = 0;
+        rsSkipped_ = 0;
+        rsApplied_ = 0;
+    }
+
+    if (!gos_ShaderHotReloadEnabled())
+        return;
+
     // check for file changes every half second
     static uint64_t last_check_time = timing::get_wall_time_ms();
-    if(timing::get_wall_time_ms() - last_check_time > 500)
+    const uint64_t now = timing::get_wall_time_ms();
+    if(now - last_check_time > 500)
     {
         for(int i=0; i< materialList_.size(); ++i)
         {
             materialList_[i]->checkReload();
         }
+        // Originally absent: without reassigning last_check_time the
+        // condition stayed true every frame after the first 500 ms,
+        // turning a 2 Hz cadence into a per-frame O(materialList_.size())
+        // sweep. Diagnosed via [RENDER_STATES v1] / Tracy 2026-05-07.
+        last_check_time = now;
     }
 }
 
@@ -3273,7 +4723,9 @@ void gosRenderer::beginShadowPrePass(bool clearDepth) {
     int smSize = pp->getShadowMapSize();
     glViewport(0, 0, smSize, smSize);
     glDepthMask(GL_TRUE);
-    if (clearDepth) glClear(GL_DEPTH_BUFFER_BIT);
+    // Reverse-Z (U2) state-safe partition: shadow map stays forward-Z;
+    // scene set glClearDepth(0), so force 1.0f around this shadow clear.
+    if (clearDepth) { glClearDepth(1.0f); glClear(GL_DEPTH_BUFFER_BIT); glClearDepth(0.0f); }
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glDisable(GL_CULL_FACE);
@@ -3344,6 +4796,9 @@ void gosRenderer::drawShadowBatchTessellated(gos_VERTEX* vertices, int numVerts,
 
     float tiling[4] = { terrain_detail_tiling_, 0.0f, 0.0f, 0.0f };
     if (sl.detailNormalTiling >= 0) glUniform4fv(sl.detailNormalTiling, 1, tiling);
+    // C1 tactical: push mission-gated material profile to the shadow tese
+    // classifier (terrain_common.hglsl). Uniform default is 0 = LEGACY.
+    if (sl.terrainMaterialProfile >= 0) glUniform1i(sl.terrainMaterialProfile, g_terrainMaterialProfile);
 
     // tex1 (colormap) sampler — bound to unit 0 by the gos_SetRenderState texture call
     if (sl.tex1 >= 0) glUniform1i(sl.tex1, 0);
@@ -3455,6 +4910,10 @@ void gosRenderer::endShadowPrePass() {
     active_light_space_matrix_ = nullptr;
     shadow_prepass_active_ = false;
 
+    // RENDER_STATES v1: shadow prepass disturbed program/depth/buffers via direct
+    // GL calls. Invalidate cache so next applyRenderStates does a full re-apply.
+    invalidateRenderStateCache();
+
     drainGLErrors("shadow_static");
 }
 
@@ -3480,7 +4939,11 @@ void gosRenderer::beginDynamicShadowPass() {
     glBindFramebuffer(GL_FRAMEBUFFER, pp->getDynamicShadowFBO());
     glViewport(0, 0, pp->getDynamicShadowMapSize(), pp->getDynamicShadowMapSize());
     glDepthMask(GL_TRUE);
+    // Reverse-Z (U2) state-safe partition: dynamic shadow stays forward-Z;
+    // scene set glClearDepth(0), so force 1.0f around this shadow clear.
+    glClearDepth(1.0f);
     glClear(GL_DEPTH_BUFFER_BIT);
+    glClearDepth(0.0f);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glDisable(GL_CULL_FACE);
@@ -3514,6 +4977,9 @@ void gosRenderer::endDynamicShadowPass() {
 
     active_light_space_matrix_ = nullptr;
     shadow_prepass_active_ = false;
+
+    // RENDER_STATES v1: dynamic shadow pass disturbed program/depth/buffers.
+    invalidateRenderStateCache();
 
     drainGLErrors("shadow_dynamic");
 }
@@ -3549,10 +5015,16 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
         float halfExt = pp ? pp->getMapHalfExtent() : 0.0f;
         glUniform1f(tl.mapHalfExtent, halfExt);
     }
-    if (tl.terrainViewport >= 0)
-        glUniform4fv(tl.terrainViewport, 1, (const float*)&terrain_viewport_);
     if (terrain_mvp_valid_ && tl.terrainMVP >= 0)
         glUniformMatrix4fv(tl.terrainMVP, 1, GL_FALSE, (const float*)&terrain_mvp_);
+    // F1 Task 7b: probe-only worldToClipGL flat-uniform fallback path.
+    // Kept for non-AMD or future driver fixes; SSBO path (binding 23) is
+    // the reliable transport on AMD TES stages (proven: loc=-1 from driver
+    // optimizer removing the unused flat uniform once SSBO became primary).
+    // When the shader declares u_worldToClipGL as a flat uniform, loc >= 0
+    // and this path fires. Currently loc=-1 (shader uses SSBO only).
+    if (probeWorldToClipGLValid_ && tl.worldToClipGL >= 0)
+        glUniformMatrix4fv(tl.worldToClipGL, 1, GL_FALSE, probeWorldToClipGL_);
 
     if (tl.terrainLightDir >= 0)        glUniform4fv(tl.terrainLightDir, 1, (const float*)&terrain_light_dir_);
     float tiling[4]      = { terrain_detail_tiling_, 0.0f, 0.0f, 0.0f };
@@ -3562,6 +5034,9 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     float cellP[4]       = { terrain_cell_scale_, terrain_cell_jitter_, terrain_cell_rotation_, 0.0f };
     if (tl.detailNormalTiling >= 0)   glUniform4fv(tl.detailNormalTiling, 1, tiling);
     if (tl.detailNormalStrength >= 0) glUniform4fv(tl.detailNormalStrength, 1, strength);
+    // C1 tactical: push mission-gated material profile to terrain classifier.
+    // Default 0 = LEGACY = exact pre-C1 byte-for-byte rendering.
+    if (tl.terrainMaterialProfile >= 0) glUniform1i(tl.terrainMaterialProfile, g_terrainMaterialProfile);
     if (tl.pomParams >= 0)            glUniform4fv(tl.pomParams, 1, pomP);
     if (tl.terrainWorldScale >= 0)    glUniform4fv(tl.terrainWorldScale, 1, worldScaleV);
     if (tl.cellBombParams >= 0)       glUniform4fv(tl.cellBombParams, 1, cellP);
@@ -3609,10 +5084,11 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     }
 }
 
-int gosRenderer::terrainBindThinUniformsForPatchStream()
+int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overrideProg)
 {
-    if (!thin_terrain_prog_ || !thin_terrain_prog_->shp_) return -1;
-    GLuint shp = thin_terrain_prog_->shp_;
+    glsl_program* target = overrideProg ? overrideProg : thin_terrain_prog_;
+    if (!target || !target->shp_) return -1;
+    GLuint shp = target->shp_;
     glUseProgram(shp);
     cacheThinTerrainUniformLocations(shp);
     const auto& tl = thinTerrainLocs_;
@@ -3620,8 +5096,6 @@ int gosRenderer::terrainBindThinUniformsForPatchStream()
     // VS uniforms: projection chain
     if (terrain_mvp_valid_ && tl.terrainMVP >= 0)
         glUniformMatrix4fv(tl.terrainMVP, 1, GL_FALSE, (const float*)&terrain_mvp_);
-    if (tl.terrainViewport >= 0)
-        glUniform4fv(tl.terrainViewport, 1, (const float*)&terrain_viewport_);
     // projection_: row-major Stuff matrix — upload GL_TRUE (column-major interpretation).
     // All other projection_ upload sites (shadow line ~2737, material setTransform) use GL_TRUE.
     // terrainMVP stays GL_FALSE — its D3D chain math cancels the implicit transpose.
@@ -3637,18 +5111,28 @@ int gosRenderer::terrainBindThinUniformsForPatchStream()
         fprintf(stderr,
             "[THIN_DEBUG v1] event=thin_uniforms_bound "
             "proj_row0=[%.5f,%.5f,%.5f,%.5f] proj_row1=[%.5f,%.5f,%.5f,%.5f] "
-            "tmvp_diag=[%.5f,%.5f,%.5f,%.5f] "
-            "vp=[%.1f,%.1f,%.1f,%.1f]\n",
+            "tmvp_diag=[%.5f,%.5f,%.5f,%.5f]\n",
             p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
-            m[0], m[5], m[10], m[15],
-            terrain_viewport_.x, terrain_viewport_.y,
-            terrain_viewport_.z, terrain_viewport_.w);
+            m[0], m[5], m[10], m[15]);
         fflush(stderr);
     }
 
     // FS uniforms (same as terrainBindUniformsForPatchStream, minus tess-only params)
     if (tl.cameraPos >= 0)        glUniform4fv(tl.cameraPos, 1, (const float*)&terrain_camera_pos_);
     if (tl.terrainLightDir >= 0)  glUniform4fv(tl.terrainLightDir, 1, (const float*)&terrain_light_dir_);
+    // tessDebug: matches non-thin path (line ~4080). The thin path historically
+    // omitted this — debug-viz modes 1..8 in gos_terrain.frag therefore could
+    // not fire on the indirect/substrate draw, which silently broke the entire
+    // shader-debug channel for the path that needs it most.  Env override
+    // mirrors the tessellated path so MC2_TERRAIN_DEBUG_MODE works uniformly.
+    {
+        float debugMode = terrain_debug_mode_;
+        if (const char* envDebug = getenv("MC2_TERRAIN_DEBUG_MODE")) {
+            debugMode = (float)atof(envDebug);
+        }
+        float tessDebugVec[4] = { debugMode, 0.0f, 0.0f, 0.0f };
+        if (tl.tessDebug >= 0) glUniform4fv(tl.tessDebug, 1, tessDebugVec);
+    }
     if (tl.mapHalfExtent >= 0) {
         gosPostProcess* pp = getGosPostProcess();
         float halfExt = pp ? pp->getMapHalfExtent() : 0.0f;
@@ -3661,6 +5145,9 @@ int gosRenderer::terrainBindThinUniformsForPatchStream()
     float cellP[4]       = { terrain_cell_scale_, terrain_cell_jitter_, terrain_cell_rotation_, 0.0f };
     if (tl.detailNormalTiling >= 0)   glUniform4fv(tl.detailNormalTiling, 1, tiling);
     if (tl.detailNormalStrength >= 0) glUniform4fv(tl.detailNormalStrength, 1, strength);
+    // C1 tactical: push mission-gated material profile to terrain classifier.
+    // Default 0 = LEGACY = exact pre-C1 byte-for-byte rendering.
+    if (tl.terrainMaterialProfile >= 0) glUniform1i(tl.terrainMaterialProfile, g_terrainMaterialProfile);
     if (tl.pomParams >= 0)            glUniform4fv(tl.pomParams, 1, pomP);
     if (tl.terrainWorldScale >= 0)    glUniform4fv(tl.terrainWorldScale, 1, worldScaleV);
     if (tl.cellBombParams >= 0)       glUniform4fv(tl.cellBombParams, 1, cellP);
@@ -3712,6 +5199,16 @@ int gosRenderer::terrainBindThinUniformsForPatchStream()
     return tl.ssboRecordBase;
 }
 
+void gosRenderer::terrainOverrideThinMVP(const float* mvp4x4)
+{
+    if (!mvp4x4) return;
+    const auto& tl = thinTerrainLocs_;
+    if (tl.terrainMVP < 0) return;
+    // GL_FALSE is correct for terrainMVP (memory/terrain_mvp_gl_false.md) —
+    // matches the upload at terrainBindThinUniformsForPatchStream above.
+    glUniformMatrix4fv(tl.terrainMVP, 1, GL_FALSE, mvp4x4);
+}
+
 void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh* mesh) {
     ZoneScopedN("Terrain.DrawPatches");
     TracyGpuZone("Terrain.DrawPatches");
@@ -3749,14 +5246,15 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
         glUniform1f(tl.mapHalfExtent, halfExt);
     }
 
-    // Upload viewport params for TES perspective projection
-    if (tl.terrainViewport >= 0) glUniform4fv(tl.terrainViewport, 1, (const float*)&terrain_viewport_);
-
     // Upload terrainMVP (axisSwap*worldToClip) via direct GL
     if (terrain_mvp_valid_) {
         if (tl.terrainMVP >= 0)
             glUniformMatrix4fv(tl.terrainMVP, 1, GL_FALSE, (const float*)&terrain_mvp_);
     }
+    // F1 Task 7b: probe-only worldToClipGL flat uniform. Same convention as
+    // terrainMVP: GL_FALSE + row-major C++ storage.
+    if (probeWorldToClipGLValid_ && tl.worldToClipGL >= 0)
+        glUniformMatrix4fv(tl.worldToClipGL, 1, GL_FALSE, probeWorldToClipGL_);
 
     // Bind terrain splatting uniforms (light, tiling, POM, cell bomb)
     if (tl.terrainLightDir >= 0) glUniform4fv(tl.terrainLightDir, 1, (const float*)&terrain_light_dir_);
@@ -3764,6 +5262,9 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
     if (tl.detailNormalTiling >= 0) glUniform4fv(tl.detailNormalTiling, 1, tiling);
     float strength[4] = { terrain_detail_strength_, 0.0f, 0.0f, 0.0f };
     if (tl.detailNormalStrength >= 0) glUniform4fv(tl.detailNormalStrength, 1, strength);
+    // C1 tactical: push mission-gated material profile to terrain classifier.
+    // Default 0 = LEGACY = exact pre-C1 byte-for-byte rendering.
+    if (tl.terrainMaterialProfile >= 0) glUniform1i(tl.terrainMaterialProfile, g_terrainMaterialProfile);
     float pomP[4] = { terrain_pom_scale_, 8.0f, 32.0f, 0.0f };
     if (tl.pomParams >= 0) glUniform4fv(tl.pomParams, 1, pomP);
     float worldScaleV[4] = { terrain_world_scale_, 0.0f, 0.0f, 0.0f };
@@ -3988,6 +5489,11 @@ void gosRenderer::drawIndexedTris(HGOSBUFFER ib, HGOSBUFFER vb, HGOSVERTEXDECLAR
 
     mat->setTransform(transform);
     //mat->setFogColor(fog_color_);
+
+	// [LIGHTSSBO v1] FORK-2: this legacy lit material's LightsData is now
+	// an SSBO; UBO reflection no longer binds it. Bind the storage block
+	// for this program (idempotent, per-draw, hot-reload-safe).
+	gos_BindLightDataStorageBlock(mat);
 
 	gosMesh::drawIndexed(ib, vb, vdecl, mat);
 
@@ -4443,12 +5949,21 @@ void gos_DestroyRenderer() {
 
 void gos_RendererBeginFrame() {
     gosASSERT(g_gos_renderer);
+    // F3 CPU projection cost-baseline: idempotent first-call init, then
+    // reset per-frame bucket accumulators. No-op when env OFF.
+    ::mc2_cpu_proj_cost::init_from_env();
+    ::mc2_cpu_proj_cost::frame_begin();
     g_gos_renderer->beginFrame();
 }
 
 void gos_RendererEndFrame() {
     gosASSERT(g_gos_renderer);
     g_gos_renderer->endFrame();
+    // F3 CPU projection cost-baseline: commit per-frame samples; print
+    // window stats every 500 frames. No-op when env OFF.
+    ::mc2_cpu_proj_cost::frame_end();
+    // [B1 C16] gosFX heap + child counter tick; env-gated; no-op when OFF.
+    ::gosFX::DiagFrameTick();
 }
 
 void gos_RendererFlushHUDBatch() {
@@ -5320,6 +6835,86 @@ void __stdcall gos_SetRenderMaterialParameterInt(HGOSRENDERMATERIAL material, co
 	material->getShader()->setInt(name, v);
 }
 
+// ===================================================================
+// [LIGHTSSBO v1] LightsData SSBO. Was a std140 UBO (ObjectLights
+// light[64]) at LIGHT_DATA_ATTACHMENT_SLOT; converted to an unbounded
+// std430 SSBO at LIGHT_DATA_SSBO_BINDING to remove the 64-slot ceiling
+// (mc2_17 was 57/64 combined mech+static — one dense mission from silent
+// corruption). The gos buffer API has no STORAGE type, so this is raw
+// GL, mirroring the s_perCmdSsbo pattern. Named device-mediated helper
+// (vulkan-prep): callers do NOT touch GL directly.
+// See docs/superpowers/plans/2026-05-17-lightsdata-ubo-to-ssbo.md
+// ===================================================================
+static GLuint     s_lightDataSsbo      = 0;
+static GLsizeiptr s_lightDataSsboBytes = 0;
+static const bool s_lightSsboTrace =
+	(getenv("MC2_LIGHTSSBO_TRACE") != nullptr);
+
+void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes)
+{
+	if (bytes == 0) return;
+	if (s_lightDataSsbo == 0) {
+		glGenBuffers(1, &s_lightDataSsbo);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
+		glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)bytes, data, GL_DYNAMIC_DRAW);
+		s_lightDataSsboBytes = (GLsizeiptr)bytes;
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+		if (s_lightSsboTrace) {
+			std::fprintf(stderr, "[LIGHTSSBO v1] event=enabled binding=%d bytes=%zu\n",
+			             LIGHT_DATA_SSBO_BINDING, bytes);
+			std::fflush(stderr);
+		}
+		return;
+	}
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_lightDataSsbo);
+	if ((GLsizeiptr)bytes > s_lightDataSsboBytes) {
+		// Grow: reallocate storage. RF2 — the buffer->binding-point
+		// (glBindBufferBase below) is CONTEXT state and must follow the
+		// new storage; the program block->binding
+		// (glShaderStorageBlockBinding, gos_BindLightDataStorageBlock) is
+		// PROGRAM state and is UNAFFECTED by buffer reallocation — do NOT
+		// re-issue it here.
+		glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)bytes, data, GL_DYNAMIC_DRAW);
+		if (s_lightSsboTrace) {
+			std::fprintf(stderr, "[LIGHTSSBO v1] event=buffer_grow old=%td new=%zu\n",
+			             (ptrdiff_t)s_lightDataSsboBytes, bytes);
+			std::fflush(stderr);
+		}
+		s_lightDataSsboBytes = (GLsizeiptr)bytes;
+	} else {
+		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)bytes, data);
+	}
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, LIGHT_DATA_SSBO_BINDING, s_lightDataSsbo);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+void __stdcall gos_LightDataSsbo_Destroy()
+{
+	if (s_lightDataSsbo) {
+		glDeleteBuffers(1, &s_lightDataSsbo);
+		s_lightDataSsbo      = 0;
+		s_lightDataSsboBytes = 0;
+	}
+}
+
+// RF1: bind the LightsData SSBO block for a lit material's program.
+// Unconditional per-draw (idempotent, ~free, and immune to the CLAUDE.md
+// shader-hot-reload relink which resets program block bindings to 0 — a
+// cached guard would silently revert). Called from BOTH the legacy lit
+// paths (ShapeRenderer::render in txmmgr.cpp, gosRenderer::drawIndexedTris
+// here). Replaces the now-silent UBO-reflection
+// gos_SetRenderMaterialUniformBlockBindingPoint(mat,"LightsData",...).
+void __stdcall gos_BindLightDataStorageBlock(HGOSRENDERMATERIAL material)
+{
+	if (!material || !material->getShader() || !material->getShader()->shp_)
+		return;
+	GLuint shp = material->getShader()->shp_;
+	GLuint idx = glGetProgramResourceIndex(shp, GL_SHADER_STORAGE_BLOCK, "LightsData");
+	if (idx != GL_INVALID_INDEX)
+		glShaderStorageBlockBinding(shp, idx, LIGHT_DATA_SSBO_BINDING);
+}
+
 void __stdcall gos_SetRenderMaterialUniformBlockBindingPoint(HGOSRENDERMATERIAL material, const char* name, uint32_t slot)
 {
 	gosASSERT(material && name);
@@ -5339,7 +6934,7 @@ void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material)
 
 	// Upload terrainMVP for GPU projection (MC2 world → clip space)
 	if (g_gos_renderer->isTerrainMVPValid()) {
-		GLint mvpLoc = glGetUniformLocation(shp, "terrainMVP");
+		GLint mvpLoc = glGetUniformLocation(shp, "u_worldToClipGL");
 		if (mvpLoc >= 0) {
 			const mat4& mvp = g_gos_renderer->getTerrainMVP();
 			glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, (const float*)&mvp);
@@ -5416,16 +7011,27 @@ void __stdcall gos_SetCommonMaterialParameters(HGOSRENDERMATERIAL material)
 
 void __stdcall gos_ForceApplyRenderStates() {
     // Force-apply by directly setting GL state to match the requested render states.
-    // applyRenderStates() may skip if curStates_ == renderStates_, so bypass it.
+    // applyRenderStates() short-circuits if curStates_ == renderStates_ (RENDER_STATES v1),
+    // so invalidate the cache first to force the full body to run.
     if (!g_gos_renderer) return;
+    g_gos_renderer->invalidateRenderStateCache();
     // Just set GL directly for the critical states that renderLists() dirties
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (force-apply scene)
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ZERO);
     // Then sync applyRenderStates tracking
     g_gos_renderer->applyRenderStates();
+}
+
+// RENDER_STATES v1: invalidation hook for fast paths that disturb GL state outside
+// of applyRenderStates() (terrain bridges, water fast path, post-process composite,
+// shadow direct draws, indirect terrain). Callers MUST call this AFTER finishing
+// their direct-GL work so the next applyRenderStates() does a full re-apply.
+void __stdcall gos_InvalidateRenderStateCache() {
+    if (!g_gos_renderer) return;
+    g_gos_renderer->invalidateRenderStateCache();
 }
 
 // Terrain tessellation API
@@ -5481,6 +7087,59 @@ void gos_GetTerrainCameraPos(float* x, float* y, float* z) {
         if (z) *z = cp.z;
     }
 }
+// F1 Stage A unified-projection production setter.
+// Repackages column-major Stuff::Matrix4D -> row-major M (matching
+// the legacy upload convention so all consumers see the same
+// shader-visible matrix orientation). Writes the terrain_mvp_ cache
+// for 15+ existing gos_GetTerrainMVPMat4() callers (CullUBO at
+// gpu_cull_compute.cpp:831, mech-batcher, static-prop-batcher,
+// etc.) to inherit transparently. The 10 CPU bind sites (Task 15)
+// each upload the cached matrix to their respective programs via
+// glUniformMatrix4fv(loc, 1, GL_FALSE, terrain_mvp_).
+//
+// Signature is parameter-light — no explicit program handle —
+// because per-program upload happens at the 10 bind sites via the
+// cache, not here. R-clipw polarity is baked into the matrix
+// itself via kAxisSwapMC2toGL (Task 7g); shader-visible clip.w > 0
+// for in-front MC2 verts.
+// [MVP_DIAG v1] S2.7 — shared frame counter incremented at the
+// canonical world-to-clip set site. Read by gos_GetTerrainMVPMat4
+// and the static-prop coalesce uploader (extern in
+// gos_static_prop_batcher.cpp). Kept past S2.7 because every probe
+// is throttled (frames {1,5,30,120}) — silent at steady state.
+long g_mvpDiagFrame = 0;
+
+void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat)
+{
+    if (!g_gos_renderer) return;
+    const float* col = (const float*)&mat;
+    #define WTC(r,c) col[(c)*4 + (r)]
+    // Repackage column-major Stuff -> row-major M (same convention as
+    // the legacy terrain upload; consumers see GL_FALSE-interpretation
+    // transpose, R-clipw polarity baked into kAxisSwapMC2toGL).
+    float M[16];
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+            M[i*4 + j] = WTC(i, j);
+    #undef WTC
+    g_gos_renderer->setTerrainMVP(M);
+
+    // [MVP_DIAG v1] S2.7 — log set_mvp entry. Throttled to frames
+    // {1,5,30,120}. row0 is M[0..3] AFTER the column->row repack.
+    ++g_mvpDiagFrame;
+    if (g_mvpDiagFrame == 1 || g_mvpDiagFrame == 5 ||
+        g_mvpDiagFrame == 30 || g_mvpDiagFrame == 120) {
+        fprintf(stderr,
+                "[MVP_DIAG v1] event=set_mvp frame=%ld renderer=%p row0=[%g %g %g %g]\n",
+                g_mvpDiagFrame, (void*)g_gos_renderer,
+                M[0], M[1], M[2], M[3]);
+        fflush(stderr);
+    }
+}
+// gos_SetTerrainMVP / gos_SetTerrainViewport: raw-float counterparts to
+// gos_SetWorldToClipGL. Used by EditorCamera.h which builds the matrix
+// via axis-swap math rather than going through Stuff::Matrix4D. Both APIs
+// write the same terrain_mvp_ cache in the renderer.
 void __stdcall gos_SetTerrainMVP(const float* matrix16) {
     if (g_gos_renderer) g_gos_renderer->setTerrainMVP(matrix16);
 }
@@ -5517,13 +7176,18 @@ void gos_BeginShadowPrePass(bool clearDepth) {
 void gos_EndShadowPrePass() {
     if (g_gos_renderer) g_gos_renderer->endShadowPrePass();
 }
-// Phase 4a: file-static one-shot flag. Set when external code (or the
-// txmmgr.cpp first-terrain-frame latch) wants to force the static shadow
-// pass to run regardless of the camera-motion cache threshold.
-static bool s_shadowRebuildPending = false;
-void gos_RequestFullShadowRebuild() { s_shadowRebuildPending = true; }
-bool gos_ShadowRebuildPending() { return s_shadowRebuildPending; }
-void gos_ClearShadowRebuildPending() { s_shadowRebuildPending = false; }
+// VPL-#shadow C-1: per-mission re-arm of the one-shot full-map static
+// shadow build (called from Terrain::destroy so mission 2+ rebuilds
+// against fresh blocks[] instead of freezing mission 1's shadow).
+void gos_ResetStaticLightMatrix() {
+    gosPostProcess* pp = getGosPostProcess();
+    if (pp) pp->resetStaticLightMatrix();
+}
+// VPL-#shadow Phase 1: the gos_*ShadowRebuild* one-shot-flag API
+// (s_shadowRebuildPending + Request/Pending/Clear) is RETIRED. Its only
+// caller was the txmmgr camera-windowed-accumulate prime block, deleted
+// with the move to the build-once full-map static shadow. Do not
+// reintroduce a camera-motion shadow trigger.
 void gos_DrawShadowBatchTessellated(gos_VERTEX* vertices, int numVerts,
     WORD* indices, int numIndices,
     const gos_TERRAIN_EXTRA* extras, int extraCount) {
@@ -5531,6 +7195,19 @@ void gos_DrawShadowBatchTessellated(gos_VERTEX* vertices, int numVerts,
         vertices, numVerts, indices, numIndices, extras, extraCount);
 }
 void gos_DrawShadowObjectBatch(HGOSBUFFER vb, HGOSBUFFER ib,
+    HGOSVERTEXDECLARATION vdecl, const float* worldMatrix4x4) {
+    if (g_gos_renderer) g_gos_renderer->drawShadowObjectBatch(vb, ib, vdecl, worldMatrix4x4);
+}
+// CP-2: static-context shadow submit. Binds the world-fixed static shadow
+// map (shadowFBO_ / staticLightSpaceMatrix_) which is already set by
+// gos_BeginShadowPrePass via active_light_space_matrix_. The body is
+// identical to gos_DrawShadowObjectBatch because gosRenderer::
+// drawShadowObjectBatch routes through active_light_space_matrix_ which
+// is already staticLightSpaceMatrix_ when called within
+// gos_BeginShadowPrePass ... gos_EndShadowPrePass. This entry point exists
+// as a named, separately-callable symbol for Plan 2C's decorative-mesh
+// static shadow wiring.
+void gos_DrawShadowObjectBatchStatic(HGOSBUFFER vb, HGOSBUFFER ib,
     HGOSVERTEXDECLARATION vdecl, const float* worldMatrix4x4) {
     if (g_gos_renderer) g_gos_renderer->drawShadowObjectBatch(vb, ib, vdecl, worldMatrix4x4);
 }
@@ -5543,9 +7220,9 @@ void gos_EndDynamicShadowPass() {
     if (g_gos_renderer) g_gos_renderer->endDynamicShadowPass();
 }
 void gos_BuildDynamicLightMatrix(float sx, float sy, float sz,
-                                  float cx, float cy, float cz) {
+                                  const float camFitCornersMC2[8][3]) {
     gosPostProcess* pp = getGosPostProcess();
-    if (pp) pp->buildDynamicLightMatrix(sx, sy, sz, cx, cy, cz);
+    if (pp) pp->buildDynamicLightMatrix(sx, sy, sz, camFitCornersMC2);
 }
 
 void gos_GetTerrainLightDir(float* x, float* y, float* z) {
@@ -5725,12 +7402,14 @@ static void setupOverlayShadowsForShp(GLuint shp)
 }
 
 // Private member: common uniform upload for both draw paths.
-void gosRenderer::uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& L, float elapsed)
+void gosRenderer::uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& L, float elapsed, const float* terrainMvpOverride)
 {
-    if (L.terrainMVP >= 0)
-        glUniformMatrix4fv(L.terrainMVP, 1, GL_FALSE, (const float*)&getTerrainMVP());
-    if (L.terrainVP >= 0)
-        glUniform4fv(L.terrainVP, 1, (const float*)&getTerrainViewport());
+    if (L.terrainMVP >= 0) {
+        const float* tmvp = terrainMvpOverride
+                                ? terrainMvpOverride
+                                : (const float*)&getTerrainMVP();
+        glUniformMatrix4fv(L.terrainMVP, 1, GL_FALSE, tmvp);
+    }
     // projection_: row-major Stuff matrix — upload GL_TRUE (column-major interpretation)
     if (L.mvp >= 0)
         glUniformMatrix4fv(L.mvp, 1, GL_TRUE, (const float*)&getProj2Screen());
@@ -5772,15 +7451,18 @@ void gosRenderer::drawTerrainOverlays()
 
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_TRUE);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene overlays/decals)
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -1.0f);
 
     glUseProgram(overlayProg_->shp_);
     float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
-    uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed);
+    const float* fixBMvpOverlay =
+        gos_terrain_indirect::IsFrameSolidArmed()
+            ? gos_terrain_indirect_getDispatchMvp16()
+            : gos_GetTerrainMVPMat4();
+    if (!fixBMvpOverlay) fixBMvpOverlay = gos_GetTerrainMVPMat4();
+    uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed, fixBMvpOverlay);
 
     GLint prevVao = 0;
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
@@ -5796,13 +7478,134 @@ void gosRenderer::drawTerrainOverlays()
     glBindVertexArray((GLuint)prevVao);
 
     glDepthFunc(GL_LESS);
-    glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
     glUseProgram(0);
 
     terrainOverlayBatch_.verts.clear();
     terrainOverlayBatch_.draws.clear();
+
+    // RENDER_STATES v1: this path leaves depth-func at GL_LESS and the
+    // unit-0 texture binding mutated, neither tracked by applyRenderStates'
+    // cache. MAJOR-1 from the 2026-05-08 adversarial review.
+    gos_InvalidateRenderStateCache();
+}
+
+// Slice A — draw the mission-static cement-overlay bake.
+//
+// Byte-for-byte mirror of gosRenderer::drawTerrainOverlays()'s render-state
+// block + program + uniform upload + per-draw texture bind + glDrawArrays,
+// EXCEPT: (1) it draws the caller-owned static VBO via a dedicated persistent
+// VAO (the per-frame terrainOverlayBatch_.vao captured the per-frame VBO at
+// makeOverlayVAO time, so it cannot be reused for a different buffer);
+// (2) draw ranges are supplied by the caller (gos_terrain_indirect's static
+// bake) rather than read from terrainOverlayBatch_.draws; (3) it does NOT
+// clear anything (mirrors DrawMineStatic — the static buffer persists across
+// frames). The vertex layout (WorldOverlayVert, 28-byte stride, attribs
+// 0..3) is identical to makeOverlayVAO so the same overlay shader binds.
+bool gosRenderer::drawDecalStaticBatch(unsigned int vboGL,
+                                       const struct GosDecalStaticDraw* draws,
+                                       int drawCount)
+{
+    if (!overlayProg_ || vboGL == 0 || !draws || drawCount <= 0)
+        return false;
+
+    // [TEMP DECAL_GLPROBE] eager-drain probe — env MC2_DECAL_GLPROBE=1.
+    // Removed once root cause is pinned. Attributes GL_INVALID_OPERATION to
+    // the exact call instead of the deferred CHECK_GL_ERROR drain site.
+    static const bool s_decalGlProbe =
+        (getenv("MC2_DECAL_GLPROBE") && getenv("MC2_DECAL_GLPROBE")[0] == '1');
+    #define DECAL_GLPROBE(tag) do { if (s_decalGlProbe) { \
+        GLenum e; while ((e = glGetError()) != GL_NO_ERROR) \
+            printf("[DECAL_GLPROBE] at=%s err=0x%x\n", tag, (unsigned)e); \
+        fflush(stdout); } } while(0)
+    DECAL_GLPROBE("entry");
+
+    // Capture the caller's VAO binding ONCE, before any VAO mutation. The
+    // lazy-init block below clobbers the binding; if prevVao were captured
+    // after it (as drawTerrainOverlays captures it — that path has no lazy
+    // init), the first armed draw would record VAO 0 and this function would
+    // return with VAO 0 bound, breaking the next generic-mesh draw on AMD
+    // (trap #4, gpu_direct_renderer_bringup_checklist.md — VAO 0 left bound
+    // raises GL_INVALID_OPERATION at the next applyVertexDeclaration/draw).
+    GLint prevVao = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+
+    // Persistent VAO bound to whatever static VBO name the bake hands us.
+    // Created once; the bake keeps a single GL_STATIC_DRAW buffer for the
+    // process lifetime (mirror MineStaticVBO), so the name is stable.
+    static GLuint s_decalStaticVAO = 0;
+    static unsigned int s_decalStaticVAOBoundVBO = 0;
+    if (s_decalStaticVAO == 0 || s_decalStaticVAOBoundVBO != vboGL) {
+        if (s_decalStaticVAO == 0)
+            glGenVertexArrays(1, &s_decalStaticVAO);
+        constexpr int kStride = 28;  // sizeof(WorldOverlayVert) — mirror makeOverlayVAO
+        glBindVertexArray(s_decalStaticVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, (GLuint)vboGL);
+        glVertexAttribPointer(0, 3, GL_FLOAT,         GL_FALSE, kStride, (void*)0);
+        glVertexAttribPointer(1, 2, GL_FLOAT,         GL_FALSE, kStride, (void*)12);
+        glVertexAttribPointer(2, 1, GL_FLOAT,         GL_FALSE, kStride, (void*)20);
+        glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE,  kStride, (void*)24);
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glEnableVertexAttribArray(2);
+        glEnableVertexAttribArray(3);
+        // Restore the caller's VAO (NOT 0) so a draw issued between this
+        // init and the bind below still sees a valid VAO on AMD.
+        glBindVertexArray((GLuint)prevVao);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        s_decalStaticVAOBoundVBO = vboGL;
+        DECAL_GLPROBE("after_vao_init");
+    }
+    DECAL_GLPROBE("after_vao_block");
+
+    // ---- State block: identical to drawTerrainOverlays() -------------------
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene overlays/decals)
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+
+    DECAL_GLPROBE("after_state_block");
+    glUseProgram(overlayProg_->shp_);
+    float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
+    const float* fixBMvpDecalStatic =
+        gos_terrain_indirect::IsFrameSolidArmed()
+            ? gos_terrain_indirect_getDispatchMvp16()
+            : gos_GetTerrainMVPMat4();
+    if (!fixBMvpDecalStatic) fixBMvpDecalStatic = gos_GetTerrainMVPMat4();
+    uploadOverlayUniforms_(overlayProg_->shp_, overlayLocs_, elapsed, fixBMvpDecalStatic);
+    DECAL_GLPROBE("after_uniform_upload");
+
+    glBindVertexArray(s_decalStaticVAO);
+    for (int i = 0; i < drawCount; ++i) {
+        const struct GosDecalStaticDraw& entry = draws[i];
+        if (overlayLocs_.tex1 >= 0)
+            glUniform1i(overlayLocs_.tex1, 0);
+        glActiveTexture(GL_TEXTURE0);
+        gosTexture* t = lookupBatchTextureOrWarn(textureList_, entry.texHandle, "decalStaticBatch");
+        glBindTexture(GL_TEXTURE_2D, t ? t->getTextureId() : 0);
+        glDrawArrays(GL_TRIANGLES, (GLint)entry.firstVert, (GLsizei)entry.vertCount);
+        if (i == 0) DECAL_GLPROBE("after_first_drawarrays");
+    }
+    DECAL_GLPROBE("after_all_drawarrays");
+    glBindVertexArray((GLuint)prevVao);
+    DECAL_GLPROBE("after_vao_restore");
+
+    glDepthFunc(GL_LESS);
+    glEnable(GL_CULL_FACE);
+    glDepthMask(GL_TRUE);
+    glUseProgram(0);
+
+    // NO batch clear — the static bake persists across frames (mirror
+    // DrawMineStatic; the per-frame drawTerrainOverlays clears here).
+
+    // RENDER_STATES v1: same trap class as drawTerrainOverlays — depth-func
+    // and unit-0 texture binding mutated outside applyRenderStates' tracking.
+    gos_InvalidateRenderStateCache();
+    DECAL_GLPROBE("exit");
+    #undef DECAL_GLPROBE
+    return true;
 }
 
 // Draw the decal batch (bomb craters + mech footprints).
@@ -5825,16 +7628,19 @@ void gosRenderer::drawDecals()
 
     glEnable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
-    glDepthFunc(GL_LEQUAL);
+    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene decals)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_CULL_FACE);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(-1.0f, -1.0f);
 
     glUseProgram(decalProg_->shp_);
     float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
-    uploadOverlayUniforms_(decalProg_->shp_, decalLocs_, elapsed);
+    const float* fixBMvpDecals =
+        gos_terrain_indirect::IsFrameSolidArmed()
+            ? gos_terrain_indirect_getDispatchMvp16()
+            : gos_GetTerrainMVPMat4();
+    if (!fixBMvpDecals) fixBMvpDecals = gos_GetTerrainMVPMat4();
+    uploadOverlayUniforms_(decalProg_->shp_, decalLocs_, elapsed, fixBMvpDecals);
 
     GLint prevVao = 0;
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
@@ -5851,18 +7657,26 @@ void gosRenderer::drawDecals()
 
     glDepthFunc(GL_LESS);
     glDisable(GL_BLEND);
-    glDisable(GL_POLYGON_OFFSET_FILL);
     glEnable(GL_CULL_FACE);
     glDepthMask(GL_TRUE);
     glUseProgram(0);
 
     decalBatch_.verts.clear();
     decalBatch_.draws.clear();
+
+    // RENDER_STATES v1: same trap class as drawTerrainOverlays — depth-func
+    // and unit-0 texture binding mutated outside applyRenderStates' tracking.
+    // MAJOR-2 from the 2026-05-08 adversarial review.
+    gos_InvalidateRenderStateCache();
 }
 
 // ── Thin exported wrappers ────────────────────────────────────────────────────
 
 void __stdcall gos_PushTerrainOverlay(const WorldOverlayVert* verts3, unsigned int texHandle) {
+    // PR2b Stage 0b probe — counts every entry into the producer regardless
+    // of which call site invoked. Diagnoses whether the overlay-via-quad-walk
+    // pipeline is live anywhere in tier1.
+    gos_terrain_indirect::Counters_AddGosPushOverlayCall();
     if (g_gos_renderer && verts3) g_gos_renderer->pushTerrainOverlayTri(verts3, texHandle);
 }
 
@@ -5894,9 +7708,12 @@ uint32_t gos_GetGLTextureId(uint32_t gosHandle) {
     return tex ? tex->getTextureId() : 0;
 }
 
-const float* gos_GetTerrainViewportVec4() {
-    if (!g_gos_renderer) return nullptr;
-    return (const float*)&g_gos_renderer->getTerrainViewport();
+// P1-1: FX-GPU-1 Phase 1 — narrow GL-name resolver for the GPU particle
+// bridge. Declared in GameOS/include/gameos.hpp and called at flush time.
+// Delegates to gos_GetGLTextureId; the DWORD parameter matches the GOS
+// texture handle convention used by gosFX/MLR.
+unsigned int gos_GetGLTextureName(DWORD handle) {
+    return gos_GetGLTextureId(static_cast<uint32_t>(handle));
 }
 
 const float* gos_GetProj2ScreenMat4() {
@@ -5905,8 +7722,33 @@ const float* gos_GetProj2ScreenMat4() {
 }
 
 const float* gos_GetTerrainMVPMat4() {
-    if (!g_gos_renderer || !g_gos_renderer->isTerrainMVPValid()) return nullptr;
-    return (const float*)&g_gos_renderer->getTerrainMVP();
+    const bool rendererOk = (g_gos_renderer != nullptr);
+    const bool valid      = rendererOk && g_gos_renderer->isTerrainMVPValid();
+    const float* p        = valid ? (const float*)&g_gos_renderer->getTerrainMVP() : nullptr;
+
+    // [MVP_DIAG v1] S2.7 — log get_mvp entry, throttled. If valid,
+    // also dump row0 from the cache to compare against set_mvp row0.
+    if (g_mvpDiagFrame == 1 || g_mvpDiagFrame == 5 ||
+        g_mvpDiagFrame == 30 || g_mvpDiagFrame == 120) {
+        static long s_lastLogged = -1;
+        if (s_lastLogged != g_mvpDiagFrame) {
+            s_lastLogged = g_mvpDiagFrame;
+            fprintf(stderr,
+                    "[MVP_DIAG v1] event=get_mvp frame=%ld renderer=%p valid=%d ptr=%p\n",
+                    g_mvpDiagFrame, (void*)g_gos_renderer, valid ? 1 : 0, (void*)p);
+            if (p) {
+                fprintf(stderr,
+                        "[MVP_DIAG v1] event=get_mvp_row0 frame=%ld row0=[%g %g %g %g]\n",
+                        g_mvpDiagFrame, p[0], p[1], p[2], p[3]);
+            }
+            fflush(stderr);
+        }
+    }
+    return p;
 }
+
+// gos_GetTerrainTeseProgram removed in Task 7b (UBO pivot).
+// Per-program upload approach retired; UnifiedProjectionUBO at binding=0
+// reaches all material-variant programs by binding point.
 
 #include "gameos_graphics_debug.cpp"

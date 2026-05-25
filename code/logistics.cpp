@@ -13,6 +13,11 @@
 #include"logistics.h"
 #endif
 
+// VPL-#11: campaign .fit resume spawns the player force-group via
+// mission->addMover() AFTER mission->init() finalized the mech batcher;
+// finalizePending() rebuilds shared geometry so those mechs are visible.
+#include "gos_mech_batcher.h"
+
 #ifndef TEST_SHELL
 #ifndef MISSION_H
 #include"mission.h"
@@ -591,6 +596,7 @@ int _stdcall Logistics::beginMission(void*, int, void*[])
 	}
 
 	mission->init((char*)(const char*)LogisticsData::instance->getCurrentMission(), missionLoadType, dropZoneID, dropZoneList, commandersToLoad, numMoversPerCommander[numPlayers - 1]);
+	extern int g_lightProbeSetupPath; g_lightProbeSetupPath = 3; // [GPUPROPS v1] post mission->init
 
 	LogisticsData::instance->rpJustAdded = 0;
 
@@ -800,6 +806,13 @@ int _stdcall Logistics::beginMission(void*, int, void*[])
 		}
 	}
 */
+	// VPL-#11: absorb any mech types registered post-Mission::init-finalize
+	// by the SP force-group addMover waves above (logistics.cpp:675/780/785).
+	// No-op unless a late type was staged. MUST be before any render --
+	// the next render is gated by mission->update() at :808 (adversarial-
+	// review no-render-in-gap invariant).
+	GpuMechBatcher::instance().finalizePending();
+
 	mission->missionInterface->initMechs();
 
 	eye->activate();

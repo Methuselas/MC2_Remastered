@@ -27,7 +27,7 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-DEPLOY="${DEPLOY:-A:/Games/mc2-opengl/mc2-win64-v0.2}"
+DEPLOY="${DEPLOY:-A:/Games/mc2-opengl/mc2-win64-v0.4}"
 SRCDATA="${SRCDATA:-A:/Games/mc2-opengl-src/mc2srcdata}"
 OUTDIR="${OUTDIR:-$REPO/release_assets}"
 SEVENZIP="${SEVENZIP:-/c/Program Files/7-Zip/7z.exe}"
@@ -131,7 +131,8 @@ for kind in art tgl; do
 done
 
 # ---------- mc2-remastered-engine.zip ----------
-# mc2.exe + shaders/ + runtime DLLs at the install root + assets/ (font data).
+# mc2.exe + shaders/ + runtime DLLs at the install root + assets/ (font data)
+# + *.cfg prefs files at the install root.
 # Excludes data/ and FSTs (those live in mc2-gamedata.zip).
 #
 # assets/ carries .d3f + .glyph font data needed by the gos_font.cpp D3F
@@ -139,6 +140,17 @@ done
 # inline, v0.2's per-zip layout dropped them, and v0.3's font sprint
 # requires them again — without these files the engine boots but renders
 # UI text as boxes.
+#
+# *.cfg files are required by the sniffer-bypass path in mechcmd2.cpp:971.
+# On startup the engine checks for options.cfg; if missing, it sets
+# SnifferMode=true and tries CopyFile("minprefs.cfg","options.cfg",...) as
+# a self-heal. Without minprefs.cfg the CopyFile silently fails (return
+# value ignored) and the user is stuck in an infinite loop where every
+# launch shows the IDS_SNIFFER_INIT_MSG dialog ("will now check your
+# computer's hardware") and quits without persisting anything. v0.2's
+# engine zip shipped options.cfg/orgprefs.cfg/system.cfg explicitly; v0.3
+# regressed when this script first codified the packaging recipe and
+# forgot the cfg glob. Issue: ThranduilsRing/mc2-opengl-remastered#22.
 echo "[engine] staging"
 mkdir -p "$STAGE/engine"
 cp "$DEPLOY/mc2.exe" "$STAGE/engine/"
@@ -146,12 +158,66 @@ cp -r "$DEPLOY/shaders" "$STAGE/engine/"
 if [ -d "$DEPLOY/assets" ]; then
     cp -r "$DEPLOY/assets" "$STAGE/engine/"
 fi
+# Mission Editor ships in the engine zip alongside mc2.exe (2026-05-25:
+# editor + game share one install; mc2-editor/ has been collapsed into v0.4).
+# .pdb is intentionally excluded (46 MB; ships separately on demand).
+if [ -f "$DEPLOY/Mission Editor.exe" ]; then
+    cp "$DEPLOY/Mission Editor.exe" "$STAGE/engine/"
+fi
+# Editor launcher bat -- runs editor from the install root via %~dp0.
+if [ -f "$DEPLOY/run-editor.bat" ]; then
+    cp "$DEPLOY/run-editor.bat" "$STAGE/engine/"
+fi
 # Runtime DLLs at the deploy root (SDL2, GLEW, FFmpeg, MSVC redist, etc).
-for f in "$DEPLOY"/*.dll "$DEPLOY"/run-with-log.bat; do
+for f in "$DEPLOY"/*.dll "$DEPLOY"/run-with-log.bat "$DEPLOY"/run-mc2.bat; do
+    [ -e "$f" ] && cp "$f" "$STAGE/engine/"
+done
+# Idiot-proof docs at the install root. INSTALL.txt covers SmartScreen,
+# VC++ runtime, "don't install under Program Files", and the bat picker.
+# RELEASE_README has the full feature list, known issues, and GH issue
+# triage. license.txt + EULA.txt are required for any public distribution.
+for f in "$DEPLOY"/INSTALL.txt "$DEPLOY"/RELEASE_README.md "$DEPLOY"/license.txt "$DEPLOY"/EULA.txt; do
+    [ -e "$f" ] && cp "$f" "$STAGE/engine/"
+done
+# Editor splashes at the deploy root (esplash.bmp, tacsplash.bmp).
+for f in "$DEPLOY"/esplash.bmp "$DEPLOY"/tacsplash.bmp; do
+    [ -e "$f" ] && cp "$f" "$STAGE/engine/"
+done
+# Prefs files at the deploy root. *.cfg glob naturally excludes
+# options.cfg.old (different extension), which is a developer-side backup
+# we don't want to ship.
+for f in "$DEPLOY"/*.cfg; do
     [ -e "$f" ] && cp "$f" "$STAGE/engine/"
 done
 rm -f "$OUTDIR/mc2-remastered-engine.zip"
 ( cd "$STAGE/engine" && z "$OUTDIR/mc2-remastered-engine.zip" . ) >/dev/null
+# Sanity: engine zip must contain the cfg files that gate the sniffer
+# branch. options.cfg's presence is what makes mc2.exe skip the sniffer
+# dialog on first launch; minprefs.cfg is the fallback source the engine
+# would copy from if options.cfg ever went missing.
+for required_cfg in options.cfg minprefs.cfg orgprefs.cfg system.cfg; do
+    if ! "$SEVENZIP" l "$OUTDIR/mc2-remastered-engine.zip" | grep -q " $required_cfg\$"; then
+        echo "[engine] FAIL — $required_cfg missing from engine.zip (sniffer-loop regression)"; exit 1
+    fi
+done
+# Sanity: editor binary + launcher must ship in the engine zip (2026-05-25
+# editor+game shared install). Skip if DEPLOY doesn't have the editor yet
+# (allows running this script against a game-only install during dev).
+if [ -f "$DEPLOY/Mission Editor.exe" ]; then
+    for required_editor in "Mission Editor.exe" "run-editor.bat"; do
+        if ! "$SEVENZIP" l "$OUTDIR/mc2-remastered-engine.zip" | grep -q " $required_editor\$"; then
+            echo "[engine] FAIL — '$required_editor' missing from engine.zip"; exit 1
+        fi
+    done
+fi
+# Sanity: gamedata zip must carry the editor's Buildings.csv (v0.1.1 stock;
+# required by EditorInterface.cpp:596). Optional -- absent from game-only
+# installs, but if it was in DEPLOY it must land in the zip.
+if [ -f "$DEPLOY/data/art/Buildings.csv" ]; then
+    if ! "$SEVENZIP" l "$OUTDIR/mc2-gamedata.zip" | grep -q "Buildings\.csv\$"; then
+        echo "[gamedata] FAIL — Buildings.csv missing from gamedata.zip (editor regression)"; exit 1
+    fi
+fi
 echo "[engine] $(ls -lh "$OUTDIR/mc2-remastered-engine.zip" | awk '{print $5}')"
 
 echo

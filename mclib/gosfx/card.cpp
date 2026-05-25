@@ -5,6 +5,12 @@
 #include"gosfxheaders.hpp"
 #include<mlr/mlrcardcloud.hpp>
 
+// B1 Stage 2' C8: subclass-Start routing into the GPU particle pipeline
+// (replaces C7 EffectAdapter-at-MakeEffect, which only caught top-level
+// MakeEffect returns and missed composite-children spawned by EffectCloud).
+#include"particles/batcher.h"
+#include"particles/spawn.h"
+
 //############################################################################
 //########################  gosFX::Card__Specification  #############################
 //############################################################################
@@ -344,12 +350,23 @@ void
 	Check_Object(info);
 	Singleton::Start(info);
 
+	// C17 fix 2026-05-21: ALWAYS run legacy per-instance init (m_halfX/Y,
+	// m_radius, m_cardCloud->TurnOn). C8 skipped this under env-on by
+	// returning right after Spawn — but legacy Card::Execute / Draw still
+	// touched m_cardCloud and the un-armed state caused wild writes that
+	// corrupted heap adjacent to gosFX child allocations (CardCloud /
+	// Tube ctors crashed walking the freelist ~25-30s into mc2_10).
+	// Same shape as the C9 fix for Point/Shard: legacy init runs always,
+	// Spawn emit happens ADDITIONALLY under env-on. Legacy ::Draw is
+	// A2-gated at the MLR work-leaves so it no-ops.
 	Specification *spec = GetSpecification();
 	Check_Object(spec);
 	m_halfY = spec->m_halfHeight.ComputeValue(m_age, m_seed);
 	m_halfX = m_halfY * spec->m_aspectRatio.ComputeValue(m_age, m_seed);
 	m_radius = Stuff::Sqrt(m_halfX * m_halfX + m_halfY * m_halfY);
 	m_cardCloud->TurnOn(0);
+
+	// GPU spawn moved to Draw() so it fires every frame (not just once at Start).
 }
 
 //------------------------------------------------------------------------------
@@ -475,6 +492,21 @@ void gosFX::Card::Draw(DrawInfo *info)
 {
 	Check_Object(this);
 	Check_Object(info);
+
+	// GPU render path (Stage 2'): re-emit this card to the batcher on every
+	// Draw() call. This matches the legacy path which submits card geometry to
+	// MLR render lists each frame. SpawnCard samples spec curves at age=0.5 so
+	// size/color are consistent frame-to-frame. Singleton::Draw propagates up
+	// the chain for EffectCloud children; it does not render card geometry.
+	//
+	// NOTE: GPU spawn moved from Start() to here. Start()-based emission only
+	// filled the batcher for one frame (until the first Flush()), leaving the
+	// batcher empty for all subsequent frames.
+	if (mc2::particles::Batcher::is_enabled()) {
+		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed);
+		Singleton::Draw(info);
+		return;
+	}
 
 	//
 	//----------------------------

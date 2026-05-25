@@ -1,0 +1,58 @@
+//==========================================================================//
+// File:    spawn.h                                                          //
+// Contents: mc2::particles::Spawn - polymorphic spawn dispatcher routing    //
+//           by gosFX spec ClassID to the per-primitive SpawnCard /          //
+//           SpawnCardCloud / SpawnPoint / SpawnShard / SpawnTube entry      //
+//           points.                                                         //
+//                                                                           //
+//           Per integrated plan v6 §5.4 B1 Stage 2' C8.                     //
+//                                                                           //
+//           Consumer (C8): the four primitive gosFX subclass Start()        //
+//           methods (Card / PointCloud / ShardCloud / Tube) call Spawn()    //
+//           after Effect::Start has resolved m_seed / m_localToWorld,       //
+//           under the MC2_GPU_PARTICLES=1 gate. This catches both top-      //
+//           level direct spawns AND children-inside-composites (an          //
+//           EffectCloud parent iterates and calls each child Start, which   //
+//           lands here). The C7 EffectAdapter-at-MakeEffect boundary was    //
+//           retired because composite parents bypass MakeEffect for their   //
+//           children, leaving the new pipeline starved.                     //
+//                                                                           //
+//           Pert / Shape / Debris / EffectCloud are NOT dispatched today    //
+//           (no Stage 2' Spawn* implementation); Spawn() returns false for  //
+//           those ClassIDs. Stage 0' recon shows these primitives never     //
+//           spawn in tier1 stock content, so the visual gap is acknowledged //
+//           and the slots are filed as B2 polish debt.                      //
+//===========================================================================//
+
+#pragma once
+
+#include "gosfx/effect.hpp"
+
+namespace Stuff { class LinearMatrix4D; }
+
+namespace mc2 {
+namespace particles {
+
+// Polymorphic dispatcher. Routes by spec->GetClassID() to one of the four
+// implemented per-primitive entry points; returns false (no-op) for the
+// four deferred primitive classes.
+//
+// Inputs:
+//   spec           - non-null gosFX::Effect::Specification*. Class is read
+//                    via GetClassID() (which Check_Object's the spec).
+//   parentToWorld  - parent transform; passed straight through. May be null
+//                    only if the underlying SpawnX permits it.
+//   spawnSeed      - per-instance random seed in [0..1]. Producers without
+//                    a seed should pass 0.5f (median).
+//
+// Returns:
+//   true  - spec was dispatched to a Spawn* entry point (Card / PointCloud /
+//           ShardCloud / Tube).
+//   false - spec is null OR its ClassID is one of Pert / Shape / Debris /
+//           EffectCloud (B2 deferred) OR an unknown subclass.
+bool Spawn(gosFX::Effect::Specification* spec,
+           const Stuff::LinearMatrix4D*  parentToWorld,
+           float                          spawnSeed);
+
+}  // namespace particles
+}  // namespace mc2

@@ -253,6 +253,28 @@ long File::open (const char* fName, FileMode _mode, long numChild, bool doNotLow
 		//-- First, see if file is in normal place.  Useful for patches!!
 		handle = _open(fileName,_O_RDONLY | _O_BINARY);
 
+		// Try stripping a numeric size subdir (e.g. data/tgl/128/foo.tga -> data/tgl/foo.tga).
+		// Upscaled loose overrides live in the parent dir without the size component.
+		if (handle == INVALID_HANDLE_VALUE) {
+			for (const char* p = fileName; *p; ++p) {
+				if (*p != '/') continue;
+				const char* digits = p + 1;
+				const char* q = digits;
+				while (*q >= '0' && *q <= '9') ++q;
+				if (q > digits && *q == '/') {
+					char stripped[2048];
+					const size_t prefixLen = (size_t)(digits - fileName);
+					const char* suffix = q + 1;
+					if (prefixLen + strlen(suffix) < sizeof(stripped)) {
+						memcpy(stripped, fileName, prefixLen);
+						strcpy(stripped + prefixLen, suffix);
+						handle = _open(stripped, _O_RDONLY | _O_BINARY);
+					}
+					break;
+				}
+			}
+		}
+
 		//------------------------------------------
 		//-- Next, see if file is in fastFile.
 		if (handle == INVALID_HANDLE_VALUE)

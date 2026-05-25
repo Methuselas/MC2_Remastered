@@ -3,6 +3,9 @@
 //===========================================================================//
 
 #include"mlrheaders.hpp"
+#include "../cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (n_prims_clipped)
+#include "../fx_trace/fx_trace.h"    // fx_trace v1: gated MLR-leaf invocation counter
+#include "mlr_gate.h"                // MC2_DISABLE_GOSFX env-gate (plan v6 §2)
 
 extern DWORD gShowBirdView, gEnableDetailTexture, gEnableMultiTexture, gEnableLightMaps;
 
@@ -399,9 +402,19 @@ void
 	MLRClipper::DrawShape (DrawShapeInformation *dInfo)
 {
 	Check_Object(this);
+	// fx_trace v1 (plan v6 §1 CRITICAL-2): pre-gate enqueue counter.
+	// Counts attempts, not work performed; A2 perf gate compares vs
+	// default-off baseline +/- 5% while mlr_total Tracy zone proves the
+	// downstream work no-op'd.
+	FX_TRACE_MLR_ENQUEUE("DrawShape");
+	MC2_GOSFX_GATE_EARLY_RETURN();
 //
 // Statistic timing function
 //
+	// F3 CPU projection cost-baseline: n_prims_clipped workload counter.
+	// Per audit (d): MLRClipper::DrawShape is the per-primitive dispatch
+	// site. No-op when env OFF.
+	::mc2_cpu_proj_cost::add_workload_mlr_prim_clipped();
 
 	gos_PushCurrentHeap(Heap);
 	MLRShape *shape = dInfo->shape;
@@ -560,6 +573,9 @@ void
 	MLRClipper::DrawScalableShape (DrawScalableShapeInformation *dInfo)
 {
 	Check_Object(this);
+	// fx_trace v1 (plan v6 §1 CRITICAL-2): pre-gate enqueue counter.
+	FX_TRACE_MLR_ENQUEUE("DrawScalableShape");
+	MC2_GOSFX_GATE_EARLY_RETURN();
 //
 // Statistic timing function
 //
@@ -669,6 +685,9 @@ void
 	Check_Object(this);
 	Check_Object(dInfo);
 	Check_Object(dInfo->effect);
+	// fx_trace v1 (plan v6 §1 CRITICAL-2): pre-gate enqueue counter.
+	FX_TRACE_MLR_ENQUEUE("DrawEffect");
+	MC2_GOSFX_GATE_EARLY_RETURN();
 
 #ifdef LAB_ONLY
 	if(gShowBirdView)
@@ -697,6 +716,9 @@ void
 
 	Check_Object(this);
 	Check_Object(dInfo);
+	// fx_trace v1 (plan v6 §1 CRITICAL-2): pre-gate enqueue counter.
+	FX_TRACE_MLR_ENQUEUE("DrawScreenQuads");
+	MC2_GOSFX_GATE_EARLY_RETURN();
 
 	gos_GetViewport( &ViewportScalars::MulX, &ViewportScalars::MulY, &ViewportScalars::AddX, &ViewportScalars::AddY );
 

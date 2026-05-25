@@ -6,10 +6,8 @@
 #include <stdio.h>
 
 
-UserHeapPtr systemHeap = NULL;
-FastFile** fastFiles = NULL;
-long numFastFiles = 0;
-long maxFastFiles = 0;
+// NS3: systemHeap defined in mclib/heap.cpp (engine boundary).
+// NS3: fastFiles/numFastFiles/maxFastFiles defined in mclib/fastfile.cpp (engine boundary).
 
 void usage(char** argv) {
     printf("%s [-d] [-c] <-f pak_file> [-p path] [-m mount_path]\n", argv[0]);

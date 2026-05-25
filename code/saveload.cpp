@@ -12,6 +12,7 @@
 // Include Files
 #ifndef MCLIB_H
 #include"mclib.h"
+#include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (hard_reset)
 #endif
 
 #ifndef MISSION_H
@@ -112,6 +113,18 @@
 
 #include "../resource.h"
 #include<gameos.hpp>
+
+// VPL-deferred item 11 fix: the in-mission-save load path (Mission::load)
+// bypasses Mission::init and must mirror its finalizeGeometry() tail, or
+// every mech of any type re-registered on restore stays invisible
+// (submitActor fast-rejects while !s_geometryFinalized).
+#include "gos_static_prop_batcher.h"
+#include "gos_mech_batcher.h"
+#include "../GameOS/gameos/gpu_cull_compute.h"   // Stage 0.5 §0: mirror Init's compute_buildIndirectBuffer tail
+#include "../GameOS/gameos/gpu_cull_substrate.h"   // Stage 0.5 §0 (cont'd): mirror Init's per-mission substrate re-init (mission.cpp:2807)
+#include "../GameOS/gameos/gpu_cull_readback.h"    // Stage 0.5 §0 (cont'd): mirror Init's per-mission readback re-init (mission.cpp:2826)
+#include "../GameOS/gameos/gos_terrain_lighting.h" // Stage 0.5 §0 (cont'd): mirror Init's per-mission terrain-lighting re-init (mission.cpp:2817)
+#include "apprtype.h"
 #ifndef LINUX_BUILD
 #include<ddraw.h>
 #else
@@ -626,6 +639,10 @@ void Part::Load (FitIniFilePtr file, long partNum)
 
 void Mission::load (const char *loadFileName)
 {
+	extern int g_lightProbeSetupPath; g_lightProbeSetupPath = 2; // [GPUPROPS v1]
+	// F3 CPU projection cost-baseline: flush previous-mission samples and
+	// clear ring buffer. No-op when env OFF.
+	::mc2_cpu_proj_cost::hard_reset("Mission::load");
 	userInput->mouseOff();
 	loadProgress = 0.0f;
 
@@ -685,6 +702,38 @@ void Mission::load (const char *loadFileName)
 
 	//Used to call this before the version check.  Wow.
 	destroy();
+
+	{
+		static const bool s_mechRestoreTrace =
+			(getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
+		if (s_mechRestoreTrace)
+			fprintf(stderr,
+				"[MECHRESTORE v1] event=saveload_phase phase=post_destroy "
+				"mechFinalized=%d appearanceListNull=%d\n",
+				GpuMechBatcher::instance().isFinalized() ? 1 : 0,
+				(appearanceTypeList == NULL) ? 1 : 0);
+	}
+
+	// VPL-deferred item 11 FIX (pre-spawn half — completes the tail-side
+	// finalizeGeometry() below). destroy() above ran Mission::destroy ->
+	// GpuMechBatcher::onMapUnload() (mission.cpp:3260), which frees GL
+	// buffers + clears s_geometryFinalized but does NOT clear the CPU
+	// s_typeLodIndex / s_typeLodRecords / staging (only onMapLoad()
+	// does). destroy() also UNCONDITIONALLY deletes appearanceTypeList
+	// (mission.cpp:3438-3443). The mechs respawned below via
+	// ObjectManager->Load heap-reuse freed Mech3DAppearanceType
+	// addresses; registerTypeLod()'s idempotent guard
+	// (gos_mech_batcher.cpp:337, key = {Mech3DAppearanceType*, lod})
+	// then false-hits the stale entry and SILENTLY SKIPS registering the
+	// reused-address type -> that type's mechs are invisible from a
+	// savegame. Mission::init avoids this by calling onMapLoad() BEFORE
+	// any spawn (mission.cpp:1682-1683); Mission::load is a parallel
+	// path that skipped it. Mirror Init's pre-spawn reset exactly here
+	// (after destroy(), before any ::Load respawn) so registration
+	// rebuilds into a clean index; the finalizeGeometry() tail below is
+	// Init's matching post-spawn half.
+	GpuStaticPropBatcher::instance().onMapLoad();
+	GpuMechBatcher::instance().onMapLoad();
 
 	loadProgress = 1.0f;
 
@@ -1094,7 +1143,25 @@ void Mission::load (const char *loadFileName)
 
 	land->load( &missionFile );
 
-	loadProgress = 38.0f;
+	// Stage 0.5 §0 prereq (continued, Block A): mirror Mission::init's
+	// terrain-side per-mission init that Mission::destroy() tore down at the
+	// top of this function. Block B (gpu_cull substrate/compute/readback
+	// re-init) is deferred to after ObjectManager->Load below, because those
+	// subsystems size their SSBOs to ObjectManager->getMaxObjects() which
+	// returns 0 until Load populates the actor counts. Plan:
+	// docs/superpowers/plans/2026-05-20-mission-load-init-mirror-design.md.
+	loadProgress = 36.0f;
+	land->primeMissionTerrainCache(loadProgress, 4.0f);
+	loadProgress = 40.0f;
+	// Phase 1: terrain lighting GPU compute — per-mission init alongside
+	// gpu_cull (mirror mission.cpp:2817). Uses Terrain::realVerticesMapSide
+	// set during land->init() above.
+	gos_terrain_lighting::mission_init(
+		static_cast<uint32_t>(Terrain::realVerticesMapSide * Terrain::realVerticesMapSide),
+		64u);
+	// Static-shadow priming reset (process-scoped, mirror mission.cpp:2831-2832).
+	gos_ResetStaticShadowPriming();
+	mc_ResetTerrainShadowPrimed();
 
 	//----------------------------------------------------
 	// Start GameMap for Movement System
@@ -1350,6 +1417,46 @@ void Mission::load (const char *loadFileName)
 	//
 	currentPacket = ObjectManager->Load( &loadFile, currentPacket );
 
+	{
+		static const bool s_mechRestoreTrace =
+			(getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
+		if (s_mechRestoreTrace)
+			fprintf(stderr,
+				"[MECHRESTORE v1] event=saveload_phase phase=post_objmgr_load "
+				"mechFinalized=%d appearanceListNull=%d\n",
+				GpuMechBatcher::instance().isFinalized() ? 1 : 0,
+				(appearanceTypeList == NULL) ? 1 : 0);
+	}
+
+	// Stage 0.5 §0 prereq (continued, Block B): gpu_cull substrate/compute/readback
+	// re-init paired with Mission::destroy's *_shutdown calls (mission.cpp:3264-3269).
+	// Placed AFTER ObjectManager->Load above because substrate_init and readback_init
+	// size their SSBOs to ObjectManager->getMaxObjects(), which returns 0 until that
+	// Load call populates the actor counts. Mirror of Mission::init's order at
+	// mission.cpp:2796 setNumObjects -> :2807 substrate_init -> :2811 compute_init
+	// -> :2826 readback_init. Each *_init drops its prior state internally on re-init.
+	// Plan: docs/superpowers/plans/2026-05-20-mission-load-init-mirror-design.md.
+	{
+		const uint32_t maxActors = static_cast<uint32_t>(ObjectManager->getMaxObjects());
+		const uint32_t staticPropHeadroom = 8192u;  // visible static props at wolfman zoom
+		gpu_cull::substrate_init(maxActors + maxActors / 4u + staticPropHeadroom);
+	}
+	gpu_cull::compute_init();
+	{
+		const uint32_t maxActors = static_cast<uint32_t>(ObjectManager->getMaxObjects());
+		const uint32_t staticPropHeadroom = 8192u;
+		gpu_cull::readback_init(maxActors + maxActors / 4u + staticPropHeadroom);
+	}
+	{
+		static const bool s_mechRestoreTrace =
+			(getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
+		if (s_mechRestoreTrace)
+			fprintf(stderr,
+				"[MECHRESTORE v1] event=saveload_phase phase=post_init_mirror "
+				"maxActors=%u\n",
+				(uint32_t)ObjectManager->getMaxObjects());
+	}
+
 	ObjectManager->buildMoverLists();
 
 	//----------------------------------------------
@@ -1515,6 +1622,41 @@ void Mission::load (const char *loadFileName)
 	loadProgress = 100.f;
 
 	DebugGameObject[0] = DebugGameObject[1] = DebugGameObject[2] = NULL;
+
+	// VPL-deferred item 11 FIX (a): Mission::load is a parallel mission-
+	// setup path that never routes through Mission::init, so it skips
+	// Init's unconditional finalizeGeometry() tail (mission.cpp:3114-3115).
+	// Mission::destroy() above ran onMapUnload() (s_geometryFinalized=
+	// false, s_typeLodIndex cleared); the mechs respawned via
+	// ObjectManager->Load re-ran registerTypeLod() while !finalized (OK),
+	// but without this call s_geometryFinalized stays false and
+	// GpuMechBatcher::submitActor() fast-rejects every actor -> mechs
+	// invisible from a savegame. Mirror Init's known-good tail exactly
+	// (both batchers; finalizeGeometry() is idempotent / early-returns if
+	// already finalized). GL context is live here (camera + mission
+	// interface already initialized above), same precondition as
+	// mission.cpp:3112-3115.
+	GpuStaticPropBatcher::instance().finalizeGeometry();
+	GpuMechBatcher::instance().finalizeGeometry();
+
+	// Stage 0.5 §0 prerequisite: mirror Mission::init's compute_buildIndirectBuffer
+	// tail (mission.cpp:3134-3136). Without this, s_blockVisBuf inherits the
+	// previous mission's block-temporal stamps on savegame restore, breaking any
+	// future readback consumer that depends on block-vis correctness post-restore.
+	// Logistics::beginMission inherits this transitively via mission->init().
+	if (gpu_cull::compute_isEnabled()) {
+		gpu_cull::compute_buildIndirectBuffer(batcher_getTypeCount());
+	}
+	{
+		static const bool s_mechRestoreTrace =
+			(getenv("MC2_MECH_RESTORE_TRACE") != nullptr);
+		if (s_mechRestoreTrace)
+			fprintf(stderr,
+				"[MECHRESTORE v1] event=saveload_phase phase=post_finalize "
+				"mechFinalized=%d appearanceListNull=%d\n",
+				GpuMechBatcher::instance().isFinalized() ? 1 : 0,
+				(appearanceTypeList == NULL) ? 1 : 0);
+	}
 
 	//YIKES!!  We could be checking the if before the null and executing after!!  Block the thread!
 	//Wait for thread to finish.

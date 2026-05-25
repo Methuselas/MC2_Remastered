@@ -144,6 +144,16 @@ public:
 		
 		ControlGui					controlGui;
 		Stuff::Vector3D				wPos;					//World Position of camera cursor.
+
+		// VPL-retirement Step 3 3b: mandatory per-frame inverseProject
+		// delta-cache. update() runs every frame and calls eye->inverseProject
+		// (now a frustum-AABB + forward-proj walk). Skip the walk when neither
+		// the cursor pixel nor the camera matrix changed since last projection.
+		long						prevMouseX;
+		long						prevMouseY;
+		Stuff::Vector3D				cachedWPos;
+		Stuff::Matrix4D				cachedWorldToClip;
+		bool						inverseProjectCacheValid;
 		
 		//vTol
 		Stuff::Vector3D				vPos[MAX_TEAMS];		// vehicle position
@@ -248,8 +258,42 @@ public:
 
 		void updateOldStyle(bool shiftDn, bool altDn, bool ctrlDn, bool bGui, 
 			bool lineOfSight, bool passable, long moverCount, long nonMoverCount );
-		void updateAOEStyle(bool shiftDn, bool altDn, bool ctrlDn, bool bGui, 
+		void updateAOEStyle(bool shiftDn, bool altDn, bool ctrlDn, bool bGui,
 			bool lineOfSight, bool passable, long moverCount, long nonMoverCount );
+
+		// M1.6: env-gated static-prop pick helper. Called from the tail of
+		// both updateOldStyle and updateAOEStyle when leftClicked && shiftDn
+		// && !bGui. Short-circuits when moverSelectedThisFrame == true so
+		// the legacy Shift+LMB additive-select gesture on a friendly mover
+		// is preserved verbatim (no log line in that case). Emits
+		// [GAMEPLAY_PICK v1] hit kind=StaticProp / miss and updates the
+		// unified RenderWorld debug state.
+		//
+		// Spec: docs/superpowers/specs/2026-05-23-renderworld-slice-m1-6-staticprop-pick-spec.md
+		void tryStaticPropPick(bool moverSelectedThisFrame,
+		                       bool shiftDn,
+		                       bool leftClicked,
+		                       bool bGui,
+		                       bool bLeftDouble,
+		                       int  mouseX,
+		                       int  mouseY);
+
+		// M2.6: mech-pick consumer. Mirrors tryStaticPropPick shape;
+		// dispatches through the SAME tryGameplayPick spine; kind-guards
+		// on r.lookup.kind == Mech; reverse-resolves to BattleMech via
+		// GameAdapters::Mech::findMechByHandle; applies fog-of-war
+		// predicate (mirrors code/missiongui.cpp:1272-1278); emits
+		// [GAMEPLAY_PICK v1] hit kind=Mech ... on a visible-hostile pick.
+		// Inspect-only v1 (no selection, no attack routing).
+		//
+		// Spec: docs/superpowers/specs/2026-05-23-renderworld-slice-m2-6-mech-pickup-spec.md
+		void tryMechPick(bool moverSelectedThisFrame,
+		                 bool shiftDn,
+		                 bool leftClicked,
+		                 bool bGui,
+		                 bool bLeftDouble,
+		                 int  mouseX,
+		                 int  mouseY);
 
 		static int saveHotKeys( FitIniFile& file );
 		static int loadHotKeys( FitIniFile& file );
@@ -355,7 +399,6 @@ public:
 		int drawBuildings();
 		int showGrid();
 		int recalcLights();
-		int drawClouds();
 		int drawFog();
 		int usePerspective();
 		int drawWaterEffects();
@@ -386,6 +429,7 @@ public:
 		int cameraNormal();
 		int cameraDefault();
 		int cameraMaxIn();
+		int cameraMaxOut();
 		int cameraTight();
 		int cameraFour();
 		int toggleCompass();

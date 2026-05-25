@@ -89,12 +89,32 @@ the final viewport.
 These paths submit raw MC2 world-space positions and expect GPU projection and
 GPU depth/shadow logic to be authoritative.
 
+<!-- UPDATED 2026-05-15 by mc2-render-contract-synthesizer:
+     action: UPDATE
+     reason: VPL (VertexProjectLoop) retirement complete (Steps 1-9, plan
+       2026-05-14-vertex-project-loop-retirement.md, HEAD 96642cc). The
+       "still has CPU visibility debt" / projectZ()-as-producer status no
+       longer holds: the slim reduction loop is now the sole CPU producer
+       of both the cull cascade and the setInverseProject reductions, and
+       terrain-quad projection authority is the GPU (clipPos/Fix-B). The
+       old VPL body is DELETED.
+     source notes: plan 2026-05-14-vertex-project-loop-retirement.md (v3.5
+       trail), docs/superpowers/reviews/2026-05-15-step8-vpl-body-deletion-
+       adversarial-review.md, docs/superpowers/reviews/2026-05-15-overlay-
+       pz-v2-bit-identity-proof.md
+     verification: terrain.cpp:1466 ZoneScopedN slimReduce, :1544
+       projectForTerrainAdmission, :1553-1559 cull cascade write,
+       :1564 reduction gate, :1678 setInverseProject; zero
+       vertexProjectLoop/VPParitySnap/s_vpFast/s_vpParity in mclib/code/
+       GameOS/shaders (comments only)
+-->
 ### A1. Terrain base (tessellated)
 
 Status:
 - active
-- partially clean
-- still has CPU visibility debt
+- clean (CPU projected-depth debt RETIRED 2026-05-15 via VPL retirement)
+- one decoupled slim CPU pass remains by design (cull cascade + min/max
+  reduction; projection re-homed here, NOT a debt)
 
 Primary files:
 - [mclib/quad.cpp](A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/mclib/quad.cpp)
@@ -109,19 +129,57 @@ Authoritative submission space:
 - raw MC2 world space
 
 Projection owner:
-- GPU tessellation path via `terrainMVP` plus viewport chain
+- GPU. The indirect terrain-quad path's sole projection authority is
+  `clipPos[4]` in the thin record (Fix B): the producer writes per-corner
+  clip-space positions and the thin VS reads them directly. The thin VS
+  has NO `terrainMVP` uniform. Verified: `shaders/gos_terrain_thin.vert`
+  Fix-B comment block (`vec4 clipPos[4]` at the record struct; "terrainMVP
+  uniform REMOVED from the thin VS"). Fix A's per-slot MVP snapshot is
+  DEMOTED behind `MC2_RING_TRACE=1` (default-off, inert: cached uniform
+  loc is -1) - verified `g_envRingTrace` gate at
+  `GameOS/gameos/gos_terrain_indirect.cpp:1473`, writers skipped at
+  `:1651` when unset.
 
 Shadow owner:
 - forward terrain shading
 
-Current debt:
-- [mclib/quad.cpp](A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/mclib/quad.cpp) submits world-space terrain vertices but still contains projected-space cull semantics through `pz`
-- [mclib/terrain.cpp](A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/mclib/terrain.cpp) still uses `projectZ()` as the producer of terrain visibility metadata
+CPU cull + reduction producer (post-VPL-retirement, by design - NOT debt):
+- The slim reduction loop in [mclib/terrain.cpp](A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/mclib/terrain.cpp)
+  (`ZoneScopedN("Terrain::geometry slimReduce")` at `terrain.cpp:1466`)
+  is the SOLE CPU producer of BOTH:
+  (a) the cull cascade - `rv->clipInfo = clipR;` then, `if (rv->clipInfo)`,
+      `setObjBlockActive` + `setObjVertexActive` at `terrain.cpp:1553-1559`,
+      written BEFORE the reduction-admission gate `if (!clipR || !inViewR)
+      continue;` at `terrain.cpp:1564`;
+  (b) the `leastZ/mostZ/leastW/mostW/leastWY/mostWY` reductions at
+      `terrain.cpp:1567-1587`, which derive `yzRange`/`ywRange` at
+      `terrain.cpp:1671-1675` and feed `eye->setInverseProject(mostZ,
+      leastW,yzRange,ywRange)` at `terrain.cpp:1678`.
+- The per-vertex projection is RE-HOMED here, not eliminated:
+  `eye->projectForTerrainAdmission(vertex3D,sp)` at `terrain.cpp:1544`.
+  It cannot be derived from world-AABB bounds because perspective divide
+  under the oblique cinematic camera does not preserve z/w ordering over
+  the per-frame in-rect-visible set (camera model:
+  `memory/camera_model_oblique_cinematic.md`).
+- INVARIANT (catastrophic-axis, CRIT-1 of the Step 8 review): the cull
+  write MUST be emitted on the `clipR` decision and BEFORE the
+  `if (!clipR || !inViewR) continue;` reduction gate. `clipR` uses the
+  identical formula to the deleted VPL `clipInfo` write
+  (`eye->usePerspective && Environment.Renderer != 3 ? onScreenR :
+  inViewR`, `terrain.cpp:1546`). Placing the cull write AFTER the gate, or
+  gating it on `inViewR`, makes the slim active-set a STRICT SUBSET of the
+  loose 768u/384u-dilated legacy `{onScreen}` cull contract, and
+  edge/off-rect objects and mechs VANISH (`memory/cull_gates_are_load_
+  bearing.md`; mechs iterate last = canary). The loose `onScreen`
+  contract is intentionally wider than strict `inView`; the cull must
+  honor the loose set, the reduction may legitimately use the tighter set.
 
-Required end state:
+End state (REACHED 2026-05-15):
 - world-space submission remains
-- CPU visibility becomes coarse world-space visibility rather than projected-depth correctness
-- no terrain correctness dependency on `pz`
+- terrain-quad projection authority is the GPU (clipPos/Fix-B); no
+  terrain correctness dependency on CPU `pz`
+- the surviving CPU pass is the decoupled slim cull+reduction loop above
+  (re-homed projection, by design)
 
 ### A2. Grass
 
@@ -145,10 +203,29 @@ Shadow owner:
 Notes:
 - This path should continue to inherit terrain's world-space contract.
 
+<!-- UPDATED 2026-05-15 by mc2-render-contract-synthesizer:
+     action: CLARIFY
+     reason: The VPL retirement re-homed the overlay-pz VISIBILITY GATE
+       off cv->pz (D1 resolution), but the dedicated typed world-space
+       overlay/decal batch path (this A3 target state) is still a deferred
+       sibling slice. Clarify the boundary so the two are not conflated.
+     source notes: plan 2026-05-14-vertex-project-loop-retirement.md,
+       docs/superpowers/specs/2026-05-15-overlay-decal-gpu-port-slice-
+       stub.md
+     verification: stub present at docs/superpowers/specs/2026-05-15-
+       overlay-decal-gpu-port-slice-stub.md; quad.cpp:2159-2189 gate
+       re-home (visibility only, still M2d gos_PushTerrainOverlay submit)
+-->
 ### A3. Terrain overlays and decals (target state)
 
 Status:
 - target state, not fully implemented
+- the VPL retirement re-homed only the overlay-pz VISIBILITY GATE off
+  cv->`pz` (see D1 resolution); the overlay still SUBMITS through the M2d
+  `gos_PushTerrainOverlay` decal producer. The dedicated typed world-space
+  batch path is a deferred sibling slice:
+  `docs/superpowers/specs/2026-05-15-overlay-decal-gpu-port-slice-stub.md`
+  (see also VPL-RETIREMENT-DEFERRED.md item 7).
 
 Primary design:
 - [2026-04-15-world-space-overlay-design.md](A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/docs/plans/2026-04-15-world-space-overlay-design.md)
@@ -243,28 +320,61 @@ Notes:
 These paths are temporary compatibility layers. They are allowed only while a
 replacement path is being brought online.
 
+<!-- UPDATED 2026-05-15 by mc2-render-contract-synthesizer:
+     action: UPDATE
+     reason: D1 (the highest-priority contract violation) is RESOLVED by
+       the VPL retirement. Terrain quad projection authority is now the
+       GPU (clipPos/Fix-B); the M2d overlay-pz visibility gate is now a
+       cv->pz-INDEPENDENT on-site re-projection; the VPL body that
+       produced the projected-depth metadata is DELETED. Status flipped
+       active->resolved; the section is kept (per protocol: no silent
+       REMOVE) with the resolution mechanism documented.
+     source notes: plan 2026-05-14-vertex-project-loop-retirement.md,
+       docs/superpowers/reviews/2026-05-15-step8-vpl-body-deletion-
+       adversarial-review.md, docs/superpowers/reviews/2026-05-15-overlay-
+       pz-v2-bit-identity-proof.md
+     verification: quad.cpp:2159-2189 (clipInfo==0 sentinel + on-site
+       projectForTerrainAdmission, no vertices[c]->pz read in the
+       production path; only the demoted MC2_M2D_PZ_PARITY probe at
+       :2213 reads pz, probe-only local); zero vertexProjectLoop in
+       mclib/code/GameOS/shaders
+-->
 ### D1. Terrain world-space submission gated by projected depth
 
 Status:
-- active
-- highest-priority contract violation
+- RESOLVED 2026-05-15 (VPL retirement, plan
+  2026-05-14-vertex-project-loop-retirement.md, HEAD 96642cc)
+- kept as a resolved-bridge record, not an active violation
 
 Primary files:
 - [mclib/quad.cpp](A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/mclib/quad.cpp)
 - [mclib/terrain.cpp](A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/mclib/terrain.cpp)
 
-Problem:
-- terrain base vertices are submitted in world-space
-- triangle acceptance still depends on `pz` values produced by CPU projection
+Original problem (now closed):
+- terrain base vertices submitted in world-space while triangle acceptance
+  depended on `pz` values produced by the CPU VertexProjectLoop
 
-Why this is dangerous:
-- it makes terrain correctness depend on a projected-space producer even though
-  terrain is visually GPU-driven
-- it encourages future half-migrations
-
-Required cleanup:
-- remove projected-depth correctness dependence
-- replace with a contract-consistent visibility decision
+How it was resolved:
+- The VPL body that produced the per-vertex `px/py/pz/pw/clipInfo`
+  projected-depth metadata is DELETED (zero `vertexProjectLoop` /
+  `VPParitySnap` / `s_vpFast` / `s_vpParity` symbols remain in
+  `mclib/`, `code/`, `GameOS/`, `shaders/` - only historical comments).
+- Terrain-quad projection authority is the GPU via `clipPos`/Fix-B (see
+  Bucket A1 Projection owner).
+- The one remaining `pz`-shaped visibility gate - the M2d
+  `gos_PushTerrainOverlay` decal producer's per-corner visibility test -
+  is now a cv->`pz`-INDEPENDENT on-site re-projection in
+  `mclib/quad.cpp:2159-2189`: it short-circuits on the
+  `vertices[c]->clipInfo == 0` sentinel (`quad.cpp:2172`, reproducing the
+  old VPL `pz=-0.5` off-screen sentinel) and otherwise re-projects from
+  the same `(vx,vy,elevation)` triple via
+  `eye->projectForTerrainAdmission(ov3D, osp)` at `quad.cpp:2176`. It does
+  NOT read `vertices[c]->pz`. Bit-identical-by-construction to the old
+  VPL-cv->`pz` behavior (proof:
+  `docs/superpowers/reviews/2026-05-15-overlay-pz-v2-bit-identity-proof.md`).
+  The only `vertices[c]->pz` read is inside the demoted
+  `MC2_M2D_PZ_PARITY` probe-only local at `quad.cpp:2213`
+  (belt-and-suspenders; default-off; see VPL-RETIREMENT-DEFERRED.md item 3).
 
 ### D2. IS_OVERLAY / `rhw=1.0` / terrainMVP bridge inside `gos_tex_vertex`
 
@@ -342,11 +452,50 @@ That is how silent half-state regressions happen.
 
 ## Current Priorities
 
-### Priority 1
+<!-- UPDATED 2026-05-15 by mc2-render-contract-synthesizer:
+     action: UPDATE
+     reason: Priority 1 (remove terrain's projected-depth-correctness
+       dependency) is DELIVERED by the VPL retirement. Restated as DONE
+       with the exact post-retirement cull contract, rather than left as
+       an open priority.
+     source notes: plan 2026-05-14-vertex-project-loop-retirement.md
+     verification: terrain.cpp:1466/1544/1553-1559/1564/1678; quad.cpp:
+       2159-2189; no VPL symbols remain
+-->
+### Priority 1 - DELIVERED 2026-05-15 (VPL retirement)
 
-Remove terrain's dependency on projected-depth correctness:
-- document the exact terrain cull contract
-- stop using `pz` as a load-bearing terrain correctness input
+Terrain's dependency on projected-depth correctness is removed:
+- the exact terrain cull contract is documented in Bucket A1 (the slim
+  reduction loop is the sole CPU cull+reduction producer; the
+  before-the-continue catastrophic-axis placement invariant is
+  load-bearing)
+- `pz` is no longer a load-bearing terrain correctness input: the VPL
+  body is deleted, terrain-quad projection authority is the GPU
+  (clipPos/Fix-B), and the M2d overlay-pz gate is cv->`pz`-independent
+
+Retired / demoted scaffolding family (demote-don't-delete per the
+worktree Debug-instrumentation rule - all default-off, inert):
+- bucket-header SSBO: `MC2_BUCKET_HEADER_TRACE`
+  (`GameOS/gameos/gos_terrain_indirect.cpp:2121`)
+- CPU-pack fallback: `MC2_TERRAIN_INDIRECT_CPU_FALLBACK`
+  (`GameOS/gameos/gos_terrain_indirect.cpp:1612`)
+- Fix A per-slot MVP snapshot: `MC2_RING_TRACE`
+  (`GameOS/gameos/gos_terrain_indirect.cpp:1473`)
+- `MC2_VPL_CULL` + `MC2_VPL_REDUCE`: retired to one-shot
+  `event=retired` lifecycle lines (`mclib/terrain.cpp:1445-1464`); the
+  legacy reference they compared against died with the VPL body, so a
+  relocated self-comparison would be tautological
+- parity-infra: FULLY DELETED (zero-consumer; zero `VPParity`/`s_vpParity`
+  symbols remain anywhere in `mclib/`/`GameOS/`)
+- Legacy CPU terrain-lighting path: HARD-RETIRED both-env. `MC2_TERRAIN_
+  LIGHTING_GPU=0` AND `MC2_TERRAIN_LIGHTING_PARITY=1` no longer reach the
+  CPU lighting block: `s_lightingGpuAuth = true` forces GPU authority at
+  `mclib/quad.cpp:1348`; the `!s_lightingGpuAuth` block at
+  `quad.cpp:1364` is unreachable. The VPL body was the sole writer of
+  terrain `Vertex::hazeFactor`; a defensive `currentVertex->hazeFactor =
+  0.0f` zero-init now lives at `mclib/mapdata.cpp:1154`. A one-shot
+  `[TERRAIN_LIGHTING v1] event=legacy_cpu_path_retired` line fires if
+  either env was set.
 
 ### Priority 2
 

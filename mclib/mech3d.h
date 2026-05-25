@@ -29,6 +29,9 @@
 #include"memfunc.h"
 
 #include<gosfx/gosfxheaders.hpp>
+#include <vector>  // T1.6: Mech3DAppearance::spotlight{Lights,SlotIds,NodeIds}_
+// M2 RenderWorld handle storage (RenderCore is pure types; no GL, no game headers).
+#include "../RenderCore/Handle.h"
 //-------------------------------------------------------------------------------
 // Structs used by layer.
 //
@@ -360,6 +363,18 @@ class Mech3DAppearance: public ObjectAppearance
 
 		TG_LightPtr					pointLight;
 		DWORD						lightId;
+
+		// (E) T1.6: generalised SpotLight_-child illumination. PER-CHILD-
+		// SPOTLIGHT-NODE (TG_LIGHT_POINT). NOT the same as `pointLight`/
+		// `lightId` above — that pair is the hardcoded SLCircle_anubis
+		// searchlight (TG_LIGHT_SPOT) at mech3d.cpp:3333-3383. The two
+		// node-name prefixes are disjoint (SLCircle != SpotLight) so no
+		// double-registration; both paths coexist until T3.x consolidation.
+		// See plan R7.
+		std::vector<long>			spotlightNodeIds_;   // mechShape NodeNameId
+		std::vector<TG_LightPtr>	spotlightLights_;    // owned via malloc/free
+		std::vector<DWORD>			spotlightSlotIds_;   // worldLights[] indices
+		bool						spotlightsRegistered_;
 		
 		float						idleTime;				//Elapsed time since I've done something.
 															//If it gets larger then X, play the idle animation.
@@ -413,7 +428,11 @@ class Mech3DAppearance: public ObjectAppearance
 		bool						isHelicopter;
 		
 		float						OBBRadius;
-		
+
+		// C3: cached GameObjectHandle from init(obj), used by GPU-cull lifecycle gates
+		// in node-position functions. -1 = no owner; set in init().
+		long						actorHandle_ = -1;
+
 		DWORD						localTextureHandle;
 		float						baseRootNodeHeight;
 
@@ -445,13 +464,38 @@ class Mech3DAppearance: public ObjectAppearance
 		long						rightArmNodeIndex;
 		long						lightCircleNodeIndex;
 		float						baseRootNodeDifference;
-		
+
+		// M2 RenderWorld handle. Set by GameAdapters::Mech::syncSpawn() via
+		// setRenderWorldHandleForAdapter() after appearance->init(). Cleared by
+		// GameAdapters::Mech::destroyMech() via clearRenderWorldHandleForAdapter()
+		// before delete appearance. Default: invalid (never registered or retired).
+		//
+		// Mech3DAppearance MUST NOT call the adapter or RenderWorld directly.
+		// The adapter is the bridge; this field is storage only.
+		// Firewall: mclib/mech3d.h may NOT include GameAdapters/MechRenderAdapter.h.
+		// The field type (RenderCore::RenderObjectHandle) is in RenderCore/Handle.h,
+		// which is allowed here (RenderCore is pure; no GL, no game headers).
+		RenderCore::RenderObjectHandle mechRenderHandle =
+		    RenderCore::RenderObjectHandle::invalid();
+
 	public:
 		static PaintSchemataPtr		paintSchemata;
 		static DWORD				numPaintSchemata;
 
+		// M2 adapter accessors (public -- used ONLY by GameAdapters::Mech).
+		// No other caller may use these outside the adapter TU.
+		RenderCore::RenderObjectHandle getRenderWorldHandle() const {
+		    return mechRenderHandle;
+		}
+		void setRenderWorldHandleForAdapter(RenderCore::RenderObjectHandle h) {
+		    mechRenderHandle = h;
+		}
+		void clearRenderWorldHandleForAdapter() {
+		    mechRenderHandle = RenderCore::RenderObjectHandle::invalid();
+		}
+
 	public:
-		
+
 		Mech3DAppearance (void)
 		{
 			init();
@@ -471,6 +515,13 @@ class Mech3DAppearance: public ObjectAppearance
 		virtual AppearanceTypePtr getAppearanceType (void)
 		{
 			return mechType;
+		}
+
+		// C1a: expose OBBRadius via the base-class virtual so emitGpuCullRecord
+		// can call app->getRadius() uniformly without reaching into protected state.
+		virtual float getRadius (void)
+		{
+			return OBBRadius > 0.0f ? OBBRadius : 0.0f;
 		}
 
 		virtual long update (bool animate = true);

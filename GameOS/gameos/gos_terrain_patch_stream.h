@@ -98,17 +98,34 @@ struct alignas(16) TerrainQuadRecipe {
 static_assert(sizeof(TerrainQuadRecipe) == 144,
     "TerrainQuadRecipe must be 144 bytes for std430 alignment");
 
-// Per-frame thin record: recipe index + per-frame lighting, handle, flags.
-// 2 uvec4s = 32 bytes (fog dropped — GPU reconstructs from height/recipe).
+// Per-frame thin record: recipe index + per-frame lighting + per-corner clip.
+// 96 bytes (Fix B 2026-05-14: per-corner clip-space positions added so the
+// thin VS skips terrainMVP projection entirely — eliminates the temporal MVP
+// misalignment root cause of the raster-triangle bug at its source).
+// LOCKSTEP across four declarations per memory/cpp_glsl_ubo_struct_lockstep.md:
+//   - this C++ struct
+//   - shaders/gpu_driven_terrain_solid.comp (writer)
+//   - shaders/gos_terrain_thin.vert         (VS reader)
+//   - shaders/gos_terrain.frag              (frag mirror — declared for std430 stride only, not read)
+// The clipPos[16] flat-float form (with alignas(16) on the field) matches
+// std430 vec4[4] (16 B per element, contiguous, 16-aligned). glm::vec4 is
+// not in scope at this header so we use the flat form + offset asserts.
 struct alignas(16) TerrainQuadThinRecord {
-    uint32_t recipeIdx;     // index into the recipe SSBO (global, no slot offset)
-    uint32_t terrainHandle; // raw gosHandle — tex_resolve applied at flush
-    uint32_t flags;         // bit 0: uvMode, bit 1: pzTri1Valid, bit 2: pzTri2Valid
-    uint32_t _pad0;
+    uint32_t recipeIdx;        // index into the recipe SSBO (global, no slot offset)
+    uint32_t terrainHandle;    // raw gosHandle — tex_resolve applied at flush
+    uint32_t flags;            // bit 0: uvMode, bit 1: pzTri1Valid, bit 2: pzTri2Valid
+    uint32_t cementWord;       // cement layer index + valid bit (bit 31)
+                               //   (was _pad0; renamed 2026-05-14 to match writer compute shader)
     uint32_t lightRGB0, lightRGB1, lightRGB2, lightRGB3;
+    alignas(16) float clipPos[16];  // 4 corners x vec4(x,y,z,w) in clip space
+                                    //   ordering: clipPos[c*4 + {0,1,2,3}] = corner c (x,y,z,w)
+                                    //   written by writer at compute/CPU time; VS reads via
+                                    //   `vec4 clip = clipArr[cornerIdx]` where cornerIdx 0..3.
 };
-static_assert(sizeof(TerrainQuadThinRecord) == 32,
-    "TerrainQuadThinRecord must be 32 bytes for std430 alignment");
+static_assert(sizeof(TerrainQuadThinRecord) == 96,
+    "TerrainQuadThinRecord must be 96 bytes for std430 alignment");
+static_assert(offsetof(TerrainQuadThinRecord, clipPos) == 32,
+    "clipPos must start at offset 32 (after control + lightRGB)");
 
 // Recipe SSBO: single-buffered, shared across all ring slots.
 // Sized for the full terrain grid (120×120 grid ≈ 14 K quads) with 4× headroom.
@@ -117,10 +134,10 @@ constexpr uint32_t kPatchStreamRecipeBytes             =
     kPatchStreamMaxRecipesTotal * 144u;  // 9.2 MB
 
 // Thin-record SSBO: triple-buffered alongside the fat-record SSBO.
-// Same per-slot quad capacity as the fat-record path; 32 B vs 192 B.
+// Same per-slot quad capacity as the fat-record path; 96 B per record post Fix B.
 constexpr uint32_t kPatchStreamMaxThinRecordsPerSlot   = kPatchStreamMaxRecordsPerSlot;
 constexpr uint32_t kPatchStreamThinRecordBytesPerSlot  =
-    kPatchStreamMaxThinRecordsPerSlot * 32u;
+    kPatchStreamMaxThinRecordsPerSlot * static_cast<uint32_t>(sizeof(TerrainQuadThinRecord));
 
 struct PatchStreamBucket {
     DWORD    gosHandle;   // resolved gosHandle (tex_resolve already applied)

@@ -29,9 +29,9 @@ uniform vec4 vp; //viewport
 
 uniform float forceZ; // baked in a wvp matrix
 
-// GPU projection: when enabled, use terrainMVP with MC2 world coords
+// GPU projection: when enabled, use u_worldToClipGL with MC2 world coords
 uniform int gpuProjection;
-uniform mat4 terrainMVP;  // MC2 world space -> clip space (direct GL, GL_FALSE)
+uniform mat4 u_worldToClipGL;  // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 
 out vec3 Normal;
 out float FogValue;
@@ -51,8 +51,8 @@ void main(void)
     MC2WorldPos = vec3(-WorldPos.x, WorldPos.z, WorldPos.y);
 
     if (gpuProjection != 0) {
-        // GPU projection: transform to MC2 world space, then to clip via terrainMVP
-        gl_Position = terrainMVP * vec4(MC2WorldPos, 1.0);
+        // GPU projection: transform to MC2 world space, then to clip via u_worldToClipGL
+        gl_Position = u_worldToClipGL * vec4(MC2WorldPos, 1.0);
     } else {
         // Legacy CPU-assist projection: manual perspective divide + viewport mapping
         vec4 p = wvp_ * vec4(pos.xyz, 1);
@@ -77,7 +77,11 @@ void main(void)
 
 #if ENABLE_VERTEX_LIGHTING
     const int lights_index = int(light_offset_.x);
-    VertexLight = calc_light(lights_index, Normal, base_light);
+    // Slice 2 (object-offload) — Stage 2.C: calc_light() signature changed
+    // to 4-param. Pass WorldPos (Stuff-space world position) as
+    // vertex_world_pos — distances are rotation-invariant so any consistent
+    // world space works; WorldPos is what we already compute above.
+    VertexLight = calc_light(lights_index, Normal, WorldPos, base_light);
 #else
     VertexLight = base_light;
 #endif

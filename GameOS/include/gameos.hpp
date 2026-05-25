@@ -2275,6 +2275,7 @@ void __stdcall gos_SetRenderViewport(float x, float y, float w, float h);
 void __stdcall gos_GetRenderViewport(float* x, float* y, float* w, float* h); //sebi
 
 void __stdcall gos_ForceApplyRenderStates();
+void __stdcall gos_InvalidateRenderStateCache();
 
 // Terrain tessellation API
 void __stdcall gos_SetTerrainTessParams(float level, float near_dist, float far_dist);
@@ -2296,27 +2297,49 @@ void gos_SetMapHalfExtent(float halfExtent);
 bool gos_StaticLightMatrixBuilt();
 void gos_BuildStaticLightMatrix();  // builds matrix once (idempotent)
 void gos_MarkStaticLightMatrixBuilt();
+// VPL-#shadow C-1: per-mission re-arm of the one-shot full-map static
+// shadow (Terrain::destroy -> rebuild next mission vs frozen prior one).
+void gos_ResetStaticLightMatrix();
+// CP-1: per-mission-init companion re-prime (mission.cpp chokepoint). Body
+// is now just the static-light-matrix reset - the gos_*ShadowRebuild* one-
+// shot trigger it used to also fire was RETIRED (see note below); coexists
+// idempotently with the Terrain::destroy gos_ResetStaticLightMatrix path.
+void gos_ResetStaticShadowPriming();
 void gos_BeginShadowPrePass(bool clearDepth = true);
 void gos_DrawShadowBatchTessellated(gos_VERTEX* vertices, int numVerts,
     WORD* indices, int numIndices,
     const gos_TERRAIN_EXTRA* extras, int extraCount);
 void gos_EndShadowPrePass();
-
-// Phase 4a: force the static terrain shadow pass to run on the next
-// renderLists() call regardless of camera movement. Latched automatically
-// inside renderLists() on the first frame that submits real terrain
-// geometry; can also be called externally if needed.
-void gos_RequestFullShadowRebuild();
-bool gos_ShadowRebuildPending();
-void gos_ClearShadowRebuildPending();
+// VPL-#shadow Phase 1: gos_RequestFullShadowRebuild / gos_ShadowRebuildPending
+// / gos_ClearShadowRebuildPending RETIRED (camera-windowed-accumulate
+// machinery; only caller was the deleted txmmgr prime block).
 void gos_DrawShadowObjectBatch(HGOSBUFFER vb, HGOSBUFFER ib,
+    HGOSVERTEXDECLARATION vdecl, const float* worldMatrix4x4);
+// CP-2: submit an arbitrary TG_Shape mesh as a STATIC shadow caster - bakes
+// into the world-fixed static shadow map using staticLightSpaceMatrix_.
+// Must be called inside the static shadow pre-pass
+// (gos_BeginShadowPrePass ... gos_EndShadowPrePass). Uses the same
+// shadow_object shader and active_light_space_matrix_ already bound by
+// gos_BeginShadowPrePass; differs from gos_DrawShadowObjectBatch only in
+// call-site intent (static vs dynamic context).
+void gos_DrawShadowObjectBatchStatic(HGOSBUFFER vb, HGOSBUFFER ib,
     HGOSVERTEXDECLARATION vdecl, const float* worldMatrix4x4);
 
 // Dynamic object shadow pass (camera-centered, per-frame)
 void gos_BeginDynamicShadowPass();
 void gos_EndDynamicShadowPass();
 void gos_BuildDynamicLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
-                                  float camX, float camY, float camZ);
+                                  const float camFitCornersMC2[8][3]);
+// Forward decl for F1 unified-projection API (Stuff::Matrix4D defined in mclib/stuff/matrix.hpp).
+namespace Stuff { class Matrix4D; }
+// F1 Stage A unified-projection production setter. Repackages column-major
+// Stuff::Matrix4D -> row-major and writes the terrain_mvp_ cache so all
+// gos_GetTerrainMVPMat4() callers inherit transparently.
+void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat);
+// gos_SetTerrainMVP: raw 16-float row-major matrix upload to terrain_mvp_.
+// Used by EditorCamera.h shim and gamecam.cpp (via gos_SetWorldToClipGL).
+// The two APIs write the SAME terrain_mvp_ cache; use whichever matches
+// the matrix available (Stuff::Matrix4D vs raw float[16]).
 void __stdcall gos_SetTerrainMVP(const float* matrix16);
 void __stdcall gos_SetTerrainViewport(float vmx, float vmy, float vax, float vay);
 void __stdcall gos_SetTerrainCameraPos(float x, float y, float z);
@@ -2393,6 +2416,13 @@ void  gos_HudInverseMousePoint(float& x, float& y);
 
 // Shadow mode — render terrain depth to shadow FBO
 void gos_SetShadowMode(bool enable);
+
+// GPU particle bridge — narrow GL-name resolver.
+// Returns the raw OpenGL texture name (GLuint) for a resident GOS texture
+// handle.  Returns 0 if the handle is 0, out-of-bounds, or the slot is null
+// (texture evicted or not yet uploaded).  Read-only: no ref-count side
+// effects, no eviction, no async work.
+unsigned int gos_GetGLTextureName(DWORD handle);
 
 //
 // Set a renderstate
@@ -2686,6 +2716,12 @@ void __stdcall gos_SetRenderMaterialUniformBlockBindingPoint(HGOSRENDERMATERIAL 
 void __stdcall gos_SetCommonMaterialParameters(HGOSRENDERMATERIAL material);
 // Bind shadow map textures + uniforms to an already-applied material (for GPU-projected objects)
 void __stdcall gos_SetupObjectShadows(HGOSRENDERMATERIAL material);
+// [LIGHTSSBO v1] LightsData SSBO (was UBO). Upload = create/grow + rebind
+// buffer to LIGHT_DATA_SSBO_BINDING; Destroy = teardown; BindStorageBlock
+// = per-draw program block->binding for the legacy lit materials.
+void __stdcall gos_LightDataSsbo_Upload(const void* data, size_t bytes);
+void __stdcall gos_LightDataSsbo_Destroy();
+void __stdcall gos_BindLightDataStorageBlock(HGOSRENDERMATERIAL material);
 
 
 
@@ -2785,6 +2821,10 @@ void __stdcall gos_DestroyVertexDeclaration(HGOSVERTEXDECLARATION buffer);
 // Uniform buffers attachment slots (indices)
 // 
 #define LIGHT_DATA_ATTACHMENT_SLOT	0
+// [LIGHTSSBO v1] LightsData is now an SSBO at this binding (was UBO at
+// LIGHT_DATA_ATTACHMENT_SLOT). Lockstep with shaders/include/lighting.hglsl
+// LIGHT_DATA_SSBO_BINDING. SSBO bindings 0-19 are allocated elsewhere.
+#define LIGHT_DATA_SSBO_BINDING		20
 #define SCENE_DATA_ATTACHMENT_SLOT	1
 
 

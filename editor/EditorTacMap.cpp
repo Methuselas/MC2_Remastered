@@ -66,8 +66,15 @@ BOOL EditorTacMap::OnInitDialog()
 }
 
 
-void EditorTacMap::OnTga() 
+void EditorTacMap::OnTga()
 {
+	// Pre-mission the camera (eye) is NULL; this handler unconditionally
+	// calls eye->setPosition() after tacMapToWorld(). A tac-map click with
+	// no mission loaded is a no-op anyway. (tacMapToWorld() itself is also
+	// land-null-guarded engine-side.)
+	if (!eye)
+		return;
+
 	POINT pt;
 	GetCursorPos( &pt );	
 

@@ -20,7 +20,18 @@
 
 static const int GAME_MAX_PLAYERS = 8;
 
-#define EDITOR_VISIBLE_VERTICES			60
+// S2.14: editor terrain camera-window side. Was 60, which clipped the visible
+// terrain to a 60x60-vertex region around the camera on 100x100 maps (mc2_01),
+// matching the user-reported "small region of terrain renders, props render
+// at full world positions outside that region" symptom. The game uses
+// GameVisibleVertices=200 (code/mission.cpp:251) which covers the largest
+// stock map (200x200) edge-to-edge; the editor needs the same so the entire
+// authored map is iterated by MapData::makeLists each frame regardless of
+// camera position. Both CPU and GPU-indirect terrain paths consume this same
+// camera-windowed vertexList/quadList, which is why MC2_TERRAIN_INDIRECT=0
+// and MC2_TERRAIN_CULL_WIDE=1 did not expand the visible region (the upstream
+// camera-window iterator at mapdata.cpp:1114-1117 caps both paths).
+#define EDITOR_VISIBLE_VERTICES			200
 
 // ARM
 namespace Microsoft

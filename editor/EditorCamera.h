@@ -33,6 +33,30 @@ EditorCamera.h			: Interface for the EditorCamera component.
 #include "objstatus.h"
 #endif
 
+#include "../GameOS/gameos/gos_static_prop_registry.h"
+
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+// Throwaway diagnostic helper: throttled trace to editor-startup.log,
+// gated on MC2_EDITOR_TRACE. Header is included by exactly one TU
+// (EditorInterface.cpp) so file-scope static linkage is safe. ASCII only.
+static void EditorCameraTrace(const char* fmt, ...)
+{
+	if (getenv("MC2_EDITOR_TRACE") == NULL)
+		return;
+	FILE* f = fopen("editor-startup.log", "a");
+	if (!f)
+		return;
+	va_list args;
+	va_start(args, fmt);
+	vfprintf(f, fmt, args);
+	va_end(args);
+	fputc('\n', f);
+	fclose(f);
+}
+
 //*************************************************************************************************
 
 /**************************************************************************************************
@@ -46,7 +70,13 @@ extern bool useFog;
 
 extern MidLevelRenderer::MLRClipper * theClipper;
 
-bool useLOSAngle = false;
+extern bool useLOSAngle;	// NS3: def in mclib/camera.cpp (editor never reads it)
+
+// S-CLI globals defined in EditorMFC.cpp; consumed at end of render() below
+// to post WM_CLOSE once we've rendered the requested number of frames.
+extern long g_cliFramesLimit;
+extern long g_cliFrameCounter;
+extern bool g_cliClosePosted;
 
 class EditorCamera : public Camera
 {
@@ -87,8 +117,19 @@ public:
 	
  	virtual void render (void)
 	{
+		// Diagnostic probe: throttled per-frame trace of EditorCamera::render
+		// entry. Active/turn gate inside this function may skip the bulk of
+		// rendering when (active && turn > 1) is false; logging entry tells
+		// us whether render() is even being driven.
+		static long s_ecrFrame = 0;
+		++s_ecrFrame;
+		const bool s_ecrLog = (s_ecrFrame == 1 || s_ecrFrame == 5 || s_ecrFrame == 30 || s_ecrFrame == 120);
+		if (s_ecrLog)
+			EditorCameraTrace("EditorCamera::render frame=%ld enter active=%d turn=%ld drawOldWay=%d",
+				s_ecrFrame, active ? 1 : 0, (long)turn, drawOldWay ? 1 : 0);
+
 		//------------------------------------------------------
-		// At present, these actually draw.  Later they will 
+		// At present, these actually draw.  Later they will
 		// add elements to the draw list and sort and draw.
 		// The later time has arrived.  We begin sorting immediately.
 		// NO LONGER NEED TO SORT!
@@ -96,17 +137,17 @@ public:
 		// Everything SIMPLY draws at the execution point into the zBuffer
 		// at the correct depth.  Miracles occur at that point!
 		// Big code change but it removes a WHOLE bunch of code and memory!
-		
+
 		//--------------------------------------------------------
 		// Get new viewport values to scale stuff.  No longer uses
 		// VFX stuff for this.  ALL GOS NOW!
 		gos_GetViewport(&viewMulX, &viewMulY, &viewAddX, &viewAddY);
 		//--------------------------------------------------------
-		// Get new viewport values to scale stuff.  No longer uses
-		// VFX stuff for this.  ALL GOS NOW!
-		screenResolution.x = viewMulX;
-		screenResolution.y = viewMulY;
-		calculateProjectionConstants();
+		// S2.13-surgical: screenResolution + calculateProjectionConstants
+		// formerly set here. Hoisted to EditorInterface::update() BEFORE
+		// land->geometry() so terrain cull constants are fresh when
+		// consumed. Local viewMulX/Y/AddX/Y are still used below for
+		// TG_Shape::SetViewport and globalScaleFactor.
 	
 		TG_Shape::SetViewport(viewMulX,viewMulY,viewAddX,viewAddY);
 	
@@ -140,94 +181,50 @@ public:
 		theClipper->StartDraw(cameraOrigin, cameraToClip, fColor, &fColor, default_state, &z);
 		MidLevelRenderer::GOSVertex::farClipReciprocal = (1.0f-cameraToClip(2, 2))/cameraToClip(3, 2);
 
+		if (s_ecrLog)
+			EditorCameraTrace("EditorCamera::render frame=%ld gate(active && turn>1)=%d",
+				s_ecrFrame, (active && turn > 1) ? 1 : 0);
 		if (active && turn > 1)
 		{
-			// by Methuselas: Compose terrainMVP and upload the per-frame
-			// terrain shader uniforms BEFORE land->render(). The Remastered
-			// terrain TES/VS read these uniforms; without this block they
-			// stay at whatever the previous frame (or the engine default)
-			// left behind, and the editor renders gray/black terrain even
-			// though the GL state is otherwise valid.
-			//
-			// This mirrors GameCamera::render() in code/gamecam.cpp around
-			// lines 149-189. It is intentionally an Editor-local
-			// compatibility shim that calls the existing engine APIs
-			// (gos_SetTerrainMVP, gos_SetTerrainViewport,
-			// gos_SetTerrainCameraPos, gos_SetTerrainLightDir). No engine,
-			// shader, or mclib file is modified.
-			//
-			// Migration rules being respected here:
-			//   - terrainMVP is uploaded with GL_FALSE in gameos_graphics;
-			//     the C++ row-major storage cancels with the GL column
-			//     reinterpretation so AW^T * (vx,vy,elev,1) lands on the
-			//     correct projectZ() result. Do NOT "fix" the math here
-			//     based on the misleading comment in gamecam.cpp.
-			//   - No glMatrixMode / glFrustum / glLoadIdentity. The
-			//     Remastered renderer owns matrix state.
-			//   - No glUseProgram(0). The renderer owns shader program
-			//     lifecycle.
-			//   - calculateProjectionConstants() above has already built
-			//     worldToClip for this frame, so reading it here is safe.
-			{
-				const float* W = (const float*)&worldToClip;
-				#define EDITOR_WTC(r,c) W[(c)*4+(r)]
+			// S2 per-frame chain — mirrors code/gamecam.cpp:176-257 exactly.
+			// Canonical order locked by docs/superpowers/plans/2026-05-25-editor-rebuild-S0-contract.md.
+			// DO NOT call GpuStaticPropBatcher::flush() directly; the only legal dispatch
+			// path is through mcTextureManager->renderLists() (txmmgr.cpp:2164).
 
-				// Axis swap: (-x, z, y) per Camera::projectZ()
-				float AW[4][4];
-				for (int j = 0; j < 4; j++)
-				{
-					AW[0][j] = -EDITOR_WTC(0,j);
-					AW[1][j] =  EDITOR_WTC(2,j);
-					AW[2][j] =  EDITOR_WTC(1,j);
-					AW[3][j] =  EDITOR_WTC(3,j);
-				}
+			gos_SetWorldToClipGL(eye->worldToClipGL());        // step 1 — game line 176
 
-				// Upload raw AW matrix (axisSwap * worldToClip).
-				// TES does perspective divide + viewport in shader (non-linear,
-				// can't be matrix). AW stored row-major in M[], uploaded with
-				// GL_FALSE in gameos_graphics.cpp. GLSL therefore sees AW^T.
-				// AW^T * (vx,vy,elev,1) = projectZ(vx,vy,elev) exactly
-				// (Stuff row-vector convention).
-				float M[16];
-				for (int i = 0; i < 4; i++)
-					for (int j = 0; j < 4; j++)
-						M[i*4+j] = AW[i][j];
-
-				gos_SetTerrainMVP(M);
-
-				// Viewport params for TES: (vmx, vmy, vax, vay)
-				gos_SetTerrainViewport(viewMulX, viewMulY, viewAddX, viewAddY);
-
-				// Camera position in MC2 world space for TCS distance LOD
-				Stuff::Vector3D camOrig = getCameraOrigin();
-				gos_SetTerrainCameraPos(camOrig.x, camOrig.y, camOrig.z);
-
-				// Light direction in raw MC2 world space (x, y, elevation).
-				// NOT swizzled — fragment shader normals are in tangent space
-				// where Z = up, which matches raw MC2 coords (Z = elevation).
-				gos_SetTerrainLightDir(lightDirection.x, lightDirection.y, lightDirection.z);
-
-				#undef EDITOR_WTC
-			}
+			// S2.10: terrain shader needs camera position (distance LOD in TCS)
+			// and light direction (PBR lighting in FS). Without these the
+			// terrain_camera_pos_ / terrain_light_dir_ uniforms remain at their
+			// zero-initialized defaults, breaking distance-based tessellation
+			// admission and producing the "GPU path renders zero / falls back to
+			// CPU look" symptom. Mirrors code/gamecam.cpp:178-185 exactly.
+			Stuff::Vector3D camOrig = getCameraOrigin();
+			gos_SetTerrainCameraPos(camOrig.x, camOrig.y, camOrig.z);
+			gos_SetTerrainLightDir(lightDirection.x, lightDirection.y, lightDirection.z);
 
 			if (theSky)
 				theSky->render(1);
-				
-			land->render();								//render the Terrain
-	
-			//If you ever want craters in the editor, just turn this on.  No way to save 'em though!
-			//craterManager->render();					//render the craters and footprints
-	
-			//Only the GameCamera knows about this.  Heidi, override this function in EditorCamera
-			//and have your objectManager draw.
 
+			GpuStaticPropRegistry::frameBegin();               // step 2 — game line 198
+			if (land)
+				land->render();                                // step 3 — game line 199
+
+			// step 4 — game line 214: ObjectManager->render(...)
+			// TODO(S2): editor has no GameObjectManager (ObjectManager == nullptr —
+			// see editor/EditorGlobals.cpp). EditorObjectMgr::render() is a no-op
+			// stub post-S1 carve. Buildings/mechs/trees will not register per-frame
+			// visibility until an editor-side render walk is restored (out of S2
+			// scope per plan; see report).
 			if (!s_bSensorMapEnabled)
-				EditorObjectMgr::instance()->render();		//render all other objects
+				EditorObjectMgr::instance()->render();
 
-			land->renderWater();
+			if (land)
+				land->renderWater();                           // step 5 — game line 219
 
-			if (!s_bSensorMapEnabled && useShadows)
-				EditorObjectMgr::instance()->renderShadows();	//render all other objects
+			// step 6 — game line 225: ObjectManager->renderShadows(...)
+			// TODO(S2): same gap as step 4. EditorObjectMgr::renderShadows() was
+			// deleted in S1 carve. Shadow visibility for actors deferred.
 
 			if (!drawOldWay)
 			{
@@ -235,23 +232,18 @@ public:
 					compass->render(-1);		//Force this to zBuffer in front of everything
 			}
 
-			if (!drawOldWay)
-				mcTextureManager->renderLists();
-
-			//theClipper->RenderNow();		//Draw the FX
-
 			/* The editor interface needs to be drawn last, as it draws things "on top" of the
 			rendered scene. */
 			if ( EditorInterface::instance() )
 			{
 				EditorInterface::instance()->render();
-				/* We need to call renderLists() again to render the "object placement" cursor
-				that, if active, was placed in a render list in the "EditorInterface::instance()->render()"
-				call. renderLists() seems to have an automatic mechanism for not redrawing
-				things it has already drawn. Pretty much everything else drawn by
-				EditorInterface is "rendered immediately" (not placed in a renderList). */
-				mcTextureManager->renderLists();
 			}
+
+			if (mcTextureManager)
+				mcTextureManager->renderLists();               // step 7 — game line 246 (drives GpuStaticPropBatcher::flush at txmmgr.cpp:2164)
+
+			if (land)
+				land->renderWaterFastPath();                   // step 8 — game line 257
 		}
 	
 	 	//-----------------------------------------------------
@@ -260,9 +252,23 @@ public:
 			gos_SetRenderState( gos_State_ZCompare, 0);
 			gos_SetRenderState(	gos_State_ZWrite, 0);
 			gos_SetRenderState( gos_State_Perspective, 1);
-	
+
 			if (compass && (turn > 3) && drawCompass)
 				compass->render();
+		}
+
+		// S-CLI: tick the global rendered-frames counter and, if a frames
+		// limit was given, post WM_CLOSE once we've finished the Nth frame.
+		// Fires exactly once via g_cliClosePosted.
+		++g_cliFrameCounter;
+		if (!g_cliClosePosted && g_cliFramesLimit > 0 && g_cliFrameCounter >= g_cliFramesLimit)
+		{
+			g_cliClosePosted = true;
+			fprintf(stderr, "[EDITOR_CLI v1] event=frames_done frames=%ld\n", g_cliFrameCounter);
+			fflush(stderr);
+			CWnd* main = AfxGetMainWnd();
+			if (main && main->GetSafeHwnd())
+				::PostMessage(main->GetSafeHwnd(), WM_CLOSE, 0, 0);
 		}
  	}
 

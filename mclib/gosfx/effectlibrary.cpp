@@ -1,4 +1,11 @@
 #include"gosfxheaders.hpp"
+#include"particles/spec_library.h"
+// B1 Stage 2' C8: EffectAdapter retired. Subclass-Start routing (in
+// card.cpp / pointcloud.cpp / shardcloud.cpp / tube.cpp) now dispatches
+// into mc2::particles::Spawn directly, which catches both top-level
+// MakeEffect returns AND composite-children (EffectCloud iterating
+// child Start). MakeEffect goes back to the unconditional legacy
+// construction path; the env gate is checked at the leaf subclass.
 
 //==========================================================================//
 // File:	 gosFX_Effect.cpp												//
@@ -6,6 +13,13 @@
 //---------------------------------------------------------------------------//
 // Copyright (C) Microsoft Corporation. All rights reserved.                 //
 //===========================================================================//
+//
+// B1 Stage 2' C1: parser/lookup body extracted to
+// mc2::particles::SpecLibrary (mclib/particles/spec_library.{h,cpp}).
+// This file is now the gosFX-namespace forwarding adapter. m_effects
+// ownership moved to SpecLibrary; FX_TRACE_SPAWN emit site moved with
+// Find() to spec_library.cpp.
+//
 
 gosFX::EffectLibrary*
 	gosFX::EffectLibrary::Instance = NULL;
@@ -29,6 +43,9 @@ void
 		delete Instance;
 		Instance=NULL;
 	}
+	// Tear down the underlying SpecLibrary so a subsequent mission load
+	// reparses cleanly. Safe to call repeatedly.
+	mc2::particles::SpecLibrary::Shutdown();
 }
 
 //------------------------------------------------------------------------------
@@ -36,20 +53,18 @@ void
 gosFX::EffectLibrary::EffectLibrary()
 {
 	Verify(gos_GetCurrentHeap() == Heap);
+	// Lazy-init the underlying spec library so producer-side singleton-init
+	// at the existing call sites (code/mechcmd2.cpp:1657, Viewer/View.cpp:550,
+	// mclib/txmmgr.cpp:522) wires SpecLibrary without touching those sites.
+	mc2::particles::SpecLibrary::Instance();
 }
 
 //------------------------------------------------------------------------------
 //
 gosFX::EffectLibrary::~EffectLibrary()
 {
-	for (unsigned i=0; i<m_effects.GetLength(); ++i)
-	{
-		if (m_effects[i])
-		{
-			Unregister_Object(m_effects[i]);
-			delete m_effects[i];
-		}
-	}
+	// Storage lives on SpecLibrary; nothing to free here. SpecLibrary is
+	// torn down in TerminateClass() above.
 }
 
 //------------------------------------------------------------------------------
@@ -57,19 +72,7 @@ gosFX::EffectLibrary::~EffectLibrary()
 void
 	gosFX::EffectLibrary::Load(Stuff::MemoryStream* stream)
 {
-	Verify(gos_GetCurrentHeap() == Heap);
-	Verify(!m_effects.GetLength());
-	int version = ReadGFXVersion(stream);
-	unsigned len;
-	*stream >> len;
-	m_effects.SetLength(len);
-	for (unsigned i=0; i<len; ++i)
-	{
-        gosFX::Effect::Specification* pspec = gosFX::Effect::Specification::Create(stream, version);
-		m_effects[i] = pspec;
-		Check_Object(m_effects[i]);
-		m_effects[i]->m_effectID = i;
-	}
+	mc2::particles::SpecLibrary::Instance()->Load(stream);
 }
 
 //------------------------------------------------------------------------------
@@ -77,13 +80,7 @@ void
 void
 	gosFX::EffectLibrary::Save(Stuff::MemoryStream* stream)
 {
-	WriteGFXVersion(stream);
-	*stream << m_effects.GetLength();
-	for (unsigned i=0; i<m_effects.GetLength(); ++i)
-	{
-		Check_Object(m_effects[i]);
-		m_effects[i]->Save(stream);
-	}
+	mc2::particles::SpecLibrary::Instance()->Save(stream);
 }
 
 //------------------------------------------------------------------------------
@@ -91,20 +88,7 @@ void
 gosFX::Effect::Specification*
 	gosFX::EffectLibrary::Find(const char* name)
 {
-	for (unsigned i=0; i<m_effects.GetLength(); ++i)
-	{
-		gosFX::Effect::Specification *spec = m_effects[i];
-		if (spec)
-		{
-			Check_Object(spec);
-			if (!S_stricmp(spec->m_name, name))
-			{
-				Verify( spec->m_effectID == i );
-				return spec;
-			}
-		}
-	}
-	return NULL;
+	return mc2::particles::SpecLibrary::Instance()->Find(name);
 }
 
 //------------------------------------------------------------------------------
@@ -115,11 +99,19 @@ gosFX::Effect*
 		unsigned flags
 	)
 {
-	gosFX::Effect::Specification *spec = m_effects[index];
+	gosFX::Effect::Specification *spec =
+		mc2::particles::SpecLibrary::Instance()->At(index);
 	Check_Object(spec);
+
+	// B1 Stage 2' C8: unconditional legacy construction. The GPU pipeline
+	// is now wired by per-subclass Start overrides (see card.cpp /
+	// pointcloud.cpp / shardcloud.cpp / tube.cpp), which catches both
+	// top-level MakeEffect returns AND composite-children via the
+	// EffectCloud parent that iterates and calls child Start. The C7
+	// EffectAdapter-at-this-boundary approach is retired.
 	gosFX::Effect::ClassData *data =
 		Cast_Pointer(
-			gosFX::Effect::ClassData*, 
+			gosFX::Effect::ClassData*,
 			Stuff::RegisteredClass::FindClassData(spec->GetClassID())
 		);
 	Check_Object(data);

@@ -1,6 +1,9 @@
 #ifndef GOS_INPUT_H
 #define GOS_INPUT_H
 
+// Self-containment: signatures below use SDL_Event*/SDL_Keysym. mc2/viewer
+// only compiled by include-order luck; EditRel includes this header first.
+// (Additive include hardening, from PR #36.)
 #include <SDL2/SDL.h>
 #include <cstdint>
 

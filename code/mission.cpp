@@ -13,6 +13,7 @@
 #ifndef MCLIB_H
 #include"mclib.h"
 #include "gos_crashbundle.h"
+#include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (hard_reset)
 #define CB_PRINTF(fmt, ...) do { \
     char _cbbuf[256]; \
     snprintf(_cbbuf, sizeof(_cbbuf), fmt, ##__VA_ARGS__); \
@@ -123,10 +124,18 @@
 #include "../resource.h"
 
 #include<gameos.hpp>
+#include "../GameOS/gameos/gpu_cull_substrate.h"  // C0-3: GPU cull substrate init/shutdown
+#include "../GameOS/gameos/gpu_cull_compute.h"   // C1a: GPU visibility compute dispatch
+#include "../GameOS/gameos/gpu_cull_readback.h"  // C2: async readback ring buffer
+#include "../GameOS/gameos/gos_terrain_lighting.h"  // Phase 1: terrain lighting GPU compute
 
 //----------------------------------------------------------------------------------
 // Macro Definitions
 //#define NUM_FIRERANGES		3
+
+// CP-1: frame counter used in the per-mission shadow reset probe.
+// Defined in mclib/tgl.cpp; incremented by GameOS frame-end path.
+extern uint32_t g_mc2FrameCounter;
 
 //----------------------------------------------------------------------------------
 // Static globals
@@ -230,6 +239,10 @@ extern PriorityQueuePtr	openList;
 
 #include "gos_profiler.h"
 #include "gos_static_prop_batcher.h"
+#include "gos_static_prop_registry.h"  // Stage 3.C: init()/destroy()
+#include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 Task 13
+#include "../GameAdapters/MechRenderAdapter.h"          // M2: mech lifecycle adapter
+#include "gos_mech_batcher.h"
 
 // Phase-timing hooks implemented in GameOS/gameos/gameosmain.cpp.
 extern "C" void mission_phase_begin();
@@ -462,7 +475,7 @@ long Mission::update (void)
 #endif
 
 		ZoneScopedN("GameLogic.Mission.Update");
-		mcTextureManager->clearArrays();
+		{ ZoneScopedN("Mission.clearArrays"); mcTextureManager->clearArrays(); }
 
 		if (missionInterface)
 			{ ZoneScopedN("GameLogic.Mission.Interface"); missionInterface->update(); }
@@ -498,10 +511,35 @@ long Mission::update (void)
 
 		{ ZoneScopedN("GameLogic.Mission.TerrainGeometry"); land->geometry(); }
 
+		// 2026-05-13: begin GPU cull substrate frame BEFORE the pause-branch.
+		// Was inside GameObjectManager::update (objmgr.cpp), which is
+		// pause-gated.  Render-time submits (BldgAppearance/TreeAppearance::
+		// render and GpuStaticPropRegistry::flush) keep appending substrate
+		// records every frame regardless of pause, so this reset must also
+		// run every frame to keep the ring slot and per-frame counter in
+		// sync.  Calling without isEnabled gating is safe — substrate_frameBegin
+		// internally checks isEnabled() and is a no-op when disabled.
+		// Fixes the pause-smear bug where paused frames accumulated
+		// substrate records across the un-reset ring slot, inflating
+		// per-bucket instanceCount in compute cull and causing coalesce
+		// multi-draw to render copies of other types' geometry at every
+		// prop's origin.
+		gpu_cull::substrate_frameBegin();
+
 		if ( missionInterface->isPaused() && !MPlayer )
 			ObjectManager->updateAppearancesOnly( true, true, true );
 		else
 			ObjectManager->update(true, true, true);
+
+		// C1b GPU authority flip: compute_dispatch() has been MOVED to txmmgr.cpp
+		// (between GpuStaticPropRegistry::flush() and GpuStaticPropBatcher::flush())
+		// so that static prop substrate records appended during registry flush are
+		// visible to the cull shader. compute_emitParitySummary() still runs here
+		// (no static-prop records yet in the substrate; summary is for dynamic actors
+		// from substrate_flushUpload earlier this frame — timing is acceptable).
+		if (gpu_cull::compute_isEnabled()) {
+			gpu_cull::compute_emitParitySummary();
+		}
 
 		{ ZoneScopedN("GameLogic.Mission.Craters"); craterManager->update(); }
 		
@@ -753,6 +791,7 @@ long Mission::getStatus (void) {
 
 long Mission::render (void)
 {
+	ZoneScopedN("Camera.UpdateRenderers Mission.render");
 	if (active)
 	{
 		unsigned char tempAmbientLight[3];
@@ -764,9 +803,9 @@ long Mission::render (void)
 			eye->ambientGreen = 0xFF;
 			eye->ambientBlue = 0xFF;
 		}
-		eye->render();
-		GameMap->clearCellDebugs(0);
-	
+		{ ZoneScopedN("Camera.UpdateRenderers eye.render"); eye->render(); }
+		{ ZoneScopedN("Camera.UpdateRenderers clearCellDebugs"); GameMap->clearCellDebugs(0); }
+
 		//-----------------------------------------------------
 		// FOG time.  Set Render state to FOG on!
 		DWORD fogColor = eye->fogColor;
@@ -778,30 +817,36 @@ long Mission::render (void)
 		{
 			gos_SetRenderState( gos_State_Fog, 0);
 		}
-		
+
 		gos_SetRenderState( gos_State_Fog, 0);
-		
-		FloatHelp::renderAll();
-	
+
+		{ ZoneScopedN("Camera.UpdateRenderers FloatHelp.renderAll"); FloatHelp::renderAll(); }
+
 		currentFloatHelp = 0;
-	
+
 		if (missionInterface)
+		{
+			ZoneScopedN("Camera.UpdateRenderers missionInterface.render");
 			missionInterface->render();
+		}
 
 		if (KillAmbientLight) {
 			eye->ambientRed = tempAmbientLight[0];
 			eye->ambientGreen = tempAmbientLight[1];
 			eye->ambientBlue = tempAmbientLight[2];
 		}
-		
+
 		//reset the TGL RAM pools.
-		colorPool->reset();
-		vertexPool->reset();
-		facePool->reset();
-		shadowPool->reset();
-		trianglePool->reset();
+		{
+			ZoneScopedN("Camera.UpdateRenderers tglPools.reset");
+			colorPool->reset();
+			vertexPool->reset();
+			facePool->reset();
+			shadowPool->reset();
+			trianglePool->reset();
+		}
 	}
-		
+
 	return scenarioResult;
 }
 
@@ -1636,12 +1681,20 @@ bool IsGateOpen (int objectWID) {
 //----------------------------------------------------------------------------
 void Mission::init (const char *missionName, long loadType, long dropZoneID, Stuff::Vector3D* dropZoneList, char commandersToLoad[8][3], long numMoversPerCommander)
 {
+	extern int g_lightProbeSetupPath; g_lightProbeSetupPath = 1; // [GPUPROPS v1]
 	ZoneScopedN("Mission::init");
 	mission_phase_begin();
+	// F3 CPU projection cost-baseline: flush previous-mission samples and
+	// clear ring buffer. No-op when env OFF.
+	::mc2_cpu_proj_cost::hard_reset("Mission::init");
 
 	// Reset GPU static-prop batcher state at every map boundary, before any
 	// actor registerType() calls happen during actor spawn (Task 6).
 	GpuStaticPropBatcher::instance().onMapLoad();
+	GpuMechBatcher::instance().onMapLoad();
+	GpuStaticPropRegistry::init();   // Stage 3.C
+	GameAdapters::StaticProp::beginMission();  // M1 Task 13
+	GameAdapters::Mech::beginMission();              // M2: mech lifecycle
 
 	neverEndingStory = false;
 	invulnerableON = false;
@@ -2750,6 +2803,46 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	loadProgress = 58.0f;
 	ObjectManager->setNumObjects(numMechs, numVehicles, 0, -1, -1, -1, 100, 50, 0, 130, -1);
 
+	// C0-3 + C1b GPU authority flip: init GPU cull substrate SSBO sized to
+	// worst-case per-frame record count. Now includes BOTH dynamic actors
+	// (getMaxObjects() + 25% headroom) AND static prop instances (appended by
+	// GpuStaticPropRegistry::flush() before compute_dispatch()). Static props
+	// at wolfman zoom can reach ~4096+ visible instances; add a flat 8192
+	// record headroom beyond the dynamic actor count to cover them safely.
+	{
+		const uint32_t maxActors = static_cast<uint32_t>(ObjectManager->getMaxObjects());
+		const uint32_t staticPropHeadroom = 8192u;  // visible static props at wolfman zoom
+		gpu_cull::substrate_init(maxActors + maxActors / 4u + staticPropHeadroom);
+	}
+	// C1a: init GPU visibility compute pipeline (shadow/diagnostic mode).
+	// No-op if MC2_GPU_CULL env var is not set (default off).
+	gpu_cull::compute_init();
+	// Phase 1: terrain lighting GPU compute — per-mission init alongside gpu_cull.
+	// CRITICAL: use realVerticesMapSide * realVerticesMapSide, NOT getNumVertices()
+	// (getNumVertices() returns 0 at this point — set per-frame by makeLists).
+	// Terrain::realVerticesMapSide set during land->init() at mission.cpp:2222, before here.
+	// No-op if MC2_TERRAIN_LIGHTING_GPU env var is not set (default off at Stage 1).
+	gos_terrain_lighting::mission_init(
+		static_cast<uint32_t>(Terrain::realVerticesMapSide * Terrain::realVerticesMapSide),
+		64u);
+	// C2: init async readback ring buffer.
+	// Same maxActors sizing as substrate_init — readback slot must hold one flag per actor.
+	// No-op if MC2_GPU_CULL_READBACK env var is not set (default off).
+	{
+		const uint32_t maxActors = static_cast<uint32_t>(ObjectManager->getMaxObjects());
+		const uint32_t staticPropHeadroom = 8192u;
+		gpu_cull::readback_init(maxActors + maxActors / 4u + staticPropHeadroom);
+	}
+	// CP-1: new mission - re-prime the world-fixed static shadow map and the
+	// static light matrix (both are process-scoped and otherwise carry over
+	// the previous mission's state into this mission).
+	gos_ResetStaticShadowPriming();
+	mc_ResetTerrainShadowPrimed();
+	if (getenv("MC2_DECOR_SHADOW_TRACE")) {
+		printf("[DECOR_SHADOW v1] event=mission_reset_priming frame=%u\n",
+		       g_mc2FrameCounter); fflush(stdout);
+	}
+
 	//-------------------------
 	// Load the mech objects...
 	long curMech = 0;
@@ -2806,6 +2899,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 
 	{ ZoneScopedN("Mission::init ObjectManager::loadTerrainObjects"); ObjectManager->loadTerrainObjects(&pakFile, loadProgress, 30); }
 	{ ZoneScopedN("Mission::init ObjectManager::primeTerrainObjectsForMissionLoad"); ObjectManager->primeTerrainObjectsForMissionLoad(loadProgress, 2.0f); }
+	{ ZoneScopedN("Mission::init Track B static-prop registration walk"); ObjectManager->registerStaticPropsForMissionLoad(); }
 
 	loadProgress = 98.0f;
 
@@ -3040,6 +3134,14 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// mission. Safe here: GL context is live (textures/shadow FBOs already
 	// exist by this point) and this is the unconditional tail of map-load.
 	GpuStaticPropBatcher::instance().finalizeGeometry();
+	GpuMechBatcher::instance().finalizeGeometry();
+
+	// C1b: build the DrawElementsIndirectCommand buffer now that all static prop
+	// types are registered and geometry is finalized. No-op if MC2_GPU_CULL is
+	// not set or if there are no static prop types in this mission.
+	if (gpu_cull::compute_isEnabled()) {
+		gpu_cull::compute_buildIndirectBuffer(batcher_getTypeCount());
+	}
 }
 
 //----------------------------------------------------------------------------------
@@ -3166,9 +3268,21 @@ void Mission::destroy (bool initLogistics)
 {
 	gos_SetHudScaleActive(false);  // back to 100% for menus/logistics
 
+	// C2: release async readback ring buffer at mission teardown.
+	gpu_cull::readback_shutdown();
+	// C1a: release GPU compute resources at mission teardown.
+	gpu_cull::compute_shutdown();
+	// C0-3: release GPU cull substrate SSBO at mission teardown.
+	// substrate_init() handles re-init on next mission load (calls shutdown internally).
+	gpu_cull::substrate_shutdown();
+
 	// Release GPU static-prop batcher resources (VBO/IBO/VAO) at mission
 	// shutdown. Safe to call when nothing was registered.
 	GpuStaticPropBatcher::instance().onMapUnload();
+	GpuMechBatcher::instance().onMapUnload();
+	GpuStaticPropRegistry::destroy(); // Stage 3.C
+	GameAdapters::StaticProp::endMission();    // M1 Task 13
+	GameAdapters::Mech::endMission();               // M2: mech lifecycle
 
 	//---------------------------------------------------------------
 	// Shutdown the Mission Interface
@@ -3196,6 +3310,20 @@ void Mission::destroy (bool initLogistics)
 
 		delete eye;
 		eye = NULL;
+		// Null the static TG_Shape camera-matrix aliases that TG_Shape::
+		// SetCameraMatrices() (tgl.cpp:1619-1620) populated with raw pointers
+		// into the now-freed eye object. Both `s_cameraOrigin` and
+		// `s_cameraToClip` outlive their owner; if a subsequent code path
+		// (e.g. Mission::load -> MechWarrior::Load -> registerStaticProp ->
+		// TG_MultiShape::TransformMultiShape at msl.cpp:1438) dereferences
+		// the stale pointer before eye->update() re-primes them, the dereference
+		// reads freed heap (latent UB; reliably crashed 2026-05-20 after Block A
+		// allocations stomped the freed eye block first). The next eye->update()
+		// in Mission::init / Mission::load re-populates both via
+		// SetCameraMatrices(). quad.cpp:2008 carries the same dereference and
+		// is also covered by this nulling.
+		TG_Shape::s_cameraOrigin = NULL;
+		TG_Shape::s_cameraToClip = NULL;
 	}
 
 	if (PathManager) {

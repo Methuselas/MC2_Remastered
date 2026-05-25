@@ -19,6 +19,18 @@
 #include"msl.h"
 #endif
 
+#include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
+#include "cpu_proj_cost_split.h"     // F3 CPU projection cost-baseline (RAII scope)
+#include "../GameOS/gameos/gos_static_prop_batcher.h"    // Stage 2.D.2 CacheGpuLightData
+#include "../GameOS/gameos/gos_static_prop_killswitch.h" // g_useGpuObjects extern
+#include "../GameOS/gameos/gos_mech_killswitch.h"        // g_useGpuMechs extern (Slice B1)
+#include "../GameOS/gameos/gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for CacheGpuLightData breakdown
+
+// 2026-05-05: frame-stamp the cache so registry::flush() can skip stale entries
+// (actors whose update() was culled this frame; their cached UBO slot index now
+// points to a slot whose content was filled by a different actor).
+extern uint32_t g_mc2FrameCounter;
+
 #ifndef CIDENT_H
 #include"cident.h"
 #endif
@@ -977,6 +989,13 @@ long TG_TypeMultiShape::GetTextureName (DWORD textureNum, char *tName, long name
 //Function returns 0 if OK.  -1 if textureNum is out of range of numTextures.
 // Assigns a MCTextureNodeIndex to this NOT a GOS handle anymore.  Must go through
 // cache in case of too many handles.
+// MC2_TEX_LIFECYCLE_TRACE=1 — see mclib/txmmgr.cpp for full event taxonomy.
+// Logs every TG_TypeMultiShape::SetTextureHandle call (the bdactor.cpp/genactor.cpp
+// "actor.update() → re-cache" pathway). Absence of these logs for a given multiType
+// during gameplay = appearance->touch() ran instead of update() (UPDATE_SKIP=1 path).
+static const bool s_msl_texLifecycleTrace =
+    (getenv("MC2_TEX_LIFECYCLE_TRACE") != nullptr);
+
 long TG_TypeMultiShape::SetTextureHandle (DWORD textureNum, DWORD gosTextureHandle)
 {
 	if (textureNum >= numTextures)
@@ -985,8 +1004,43 @@ long TG_TypeMultiShape::SetTextureHandle (DWORD textureNum, DWORD gosTextureHand
 	listOfTextures[textureNum].mcTextureNodeIndex = gosTextureHandle;
 	listOfTextures[textureNum].gosTextureHandle = 0xffffffff;
 
+	// 2026-05-11 leaf propagation. Mirror the multi-level write into every
+	// leaf TG_TypeShape's TG_TinyTexture so consumers reading at leaf level
+	// (GpuStaticPropBatcher::finalizeGeometry's texture-array build reads
+	// `src->listOfTextures[slot].mcTextureNodeIndex`, where src is a leaf
+	// TG_TypeShape) see the live nodeIdx. Without this, damage-shape leaves
+	// permanently report 0xFFFFFFFF (the CreateListOfTextures default) and
+	// the per-packet texture-array build skips them with layer=-1.
+	for (long i = 0; i < numTG_TypeShapes; ++i) {
+		if (listOfTypeShapes[i]) {
+			listOfTypeShapes[i]->SetTextureHandle(textureNum, gosTextureHandle);
+		}
+	}
+
+	// PERF DIAGNOSTIC 2026-05-07: per-frame call rate makes the unfiltered
+	// log unusable for diagnosis (see capture 3 — console flooding tanks
+	// frame rate). Rate-limit to: (a) first 32 events per session, then
+	// (b) 1-in-256 sampling, plus (c) periodic summary every 1024 events.
+	// Set MC2_TEX_LIFECYCLE_TRACE_VERBOSE=1 to restore unfiltered output
+	// for narrow-window debugging where flood is acceptable.
+	if (s_msl_texLifecycleTrace) {
+		static uint32_t s_eventCount = 0;
+		static const bool s_verbose =
+		    (getenv("MC2_TEX_LIFECYCLE_TRACE_VERBOSE") != nullptr);
+		const bool firstWindow = (s_eventCount < 32);
+		const bool sample = ((s_eventCount & 0xFF) == 0);  // 1/256
+		if (s_verbose || firstWindow || sample) {
+			printf("[TEX_LIFECYCLE v1] event=recache_multi multiType=%p texNum=%lu nodeIdx=0x%08lx numTex=%ld total=%u\n",
+			       (void*)this, (unsigned long)textureNum,
+			       (unsigned long)gosTextureHandle, (long)numTextures,
+			       s_eventCount);
+			fflush(stdout);
+		}
+		++s_eventCount;
+	}
+
 	return(0);
-}	
+}
 
 //-------------------------------------------------------------------------------
 //Function returns 0 if OK.  -1 if textureNum is out of range of numTextures.
@@ -999,8 +1053,24 @@ long TG_TypeMultiShape::SetTextureAlpha (DWORD textureNum, bool alphaFlag)
 
 	listOfTextures[textureNum].textureAlpha = alphaFlag;
 
+	// 2026-05-11 leaf propagation: TG_TypeShape leaves carry their own
+	// listOfTextures (TG_TinyTexture array) which is COPIED from this
+	// multi-type at ASE-load time via CreateListOfTextures (msl.cpp:834)
+	// and NEVER refreshed by this setter. Consumers reading at leaf level
+	// (GpuStaticPropBatcher reads `type.source->listOfTextures[slot].textureAlpha`,
+	// where type.source is a TG_TypeShape leaf) saw stale `false` values
+	// for damage-shape textures even after bdactor's setObjStatus loop
+	// called SetTextureAlpha(true) on the multi-shape. That produced the
+	// destroyed-prop opaque-rectangle alpha bug. Mirror the multi-level
+	// write down to every leaf so leaf-reads pick up the live value.
+	for (long i = 0; i < numTG_TypeShapes; ++i) {
+		if (listOfTypeShapes[i]) {
+			listOfTypeShapes[i]->SetTextureAlpha(textureNum, alphaFlag);
+		}
+	}
+
 	return(0);
-}	
+}
 
 //-------------------------------------------------------------------------------
 //This function rotates the heirarchy from this node down.  Used for torso twists, arms, etc.
@@ -1326,8 +1396,27 @@ __int64 MCTimeAnimationandMatrix	= 0;
 __int64 MCTimePerShapeTransform		= 0;
 #endif
 
+// Slice 2 (object-offload) — Stage 2.B: dispatch flag for the per-leaf
+// MultiTransformShape call inside TransformMultiShape's body. Set true by
+// TransformMultiShape_PositionsOnly, cleared after the inner call returns.
+// File-static so the state is local to the per-frame transform dispatch.
+// Single-threaded by construction (MC2 update is serial; no actor's update
+// runs while another's TransformMultiShape is in flight).
+static bool s_multiShapePositionsOnly = false;
+// Track B: when true, TransformMultiShape populates shapeToWorld but skips the
+// pool-allocating MultiTransformShape_* dispatch and the s_cameraOrigin read.
+static bool s_buildRecipeOnly = false;
+
 long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot)
 {
+	::mc2_object_recon::Scope _recon_mShape_(
+		&::mc2_object_recon::g_per_frame.mShape_total_ns,
+		&::mc2_object_recon::g_per_frame.mShape_calls);
+	// F3 CPU projection cost-baseline: per-multishape scope, aggregated
+	// into the tgl_transform per-frame bucket. No-op when env OFF.
+	::mc2_cpu_proj_cost::Scope _f3_tgl_scope(
+	    ::mc2_cpu_proj_cost::BUCKET_TGL_TRANSFORM);
+	::mc2_cpu_proj_cost::add_workload_tgl_transform(numTG_Shapes);
     //Profile T&L so I can break out GameLogic from T&L
 #ifdef LAB_ONLY
     __int64 x;
@@ -1349,13 +1438,24 @@ long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuatern
 
     long i=0;
     Stuff::Point3D camPosition;
-    camPosition = *TG_Shape::s_cameraOrigin;
+    // Guard null — s_cameraOrigin is unset during Mission::init (before first Camera::update).
+    // s_buildRecipeOnly skips per-vertex dispatch so camPosition is never used in that mode.
+    if (TG_Shape::s_cameraOrigin)
+        camPosition = *TG_Shape::s_cameraOrigin;
+    else
+        { camPosition.x = camPosition.y = camPosition.z = 0.0f; }
 
     Stuff::Matrix4D  shapeToClip, rootShapeToClip;
     Stuff::Point3D backFacePoint;
 
     TG_ShapeRecPtr childChain[MAX_NODES];
 
+    // D-gpu-pose-instrument: PerShapeLoop wraps the per-shape iteration.
+    // Per-mech-per-call (fires once per TransformMultiShape invocation),
+    // not per-leaf-iteration. Captures the WHOLE loop including hierarchy
+    // walk + per-leaf dispatch + MultiTransformShadows. Future GPU-compute
+    // target.
+    { ZoneScopedN("TG.MultiShape.PerShapeLoop");
     for (i=0;i<numTG_Shapes;i++)
     {
         //----------------------------------------------
@@ -1681,10 +1781,38 @@ long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuatern
         x=GetCycles();
 #endif
 
-        listOfShapes[i].node->MultiTransformShape(&shapeToClip,&backFacePoint,listOfShapes[i].parentNode,isHudElement,alphaValue,isClamped);
+        // Track B: recipe-build-only mode — shapeToWorld is now populated above.
+        // Skip pool-allocating per-vertex/per-face dispatch entirely.
+        if (s_buildRecipeOnly)
+            continue;
 
+        // Slice 2 (object-offload) — Stage 2.B: dispatch on the file-static
+        // flag set by TransformMultiShape_PositionsOnly. The positions-only
+        // variant strips the per-vertex / per-face lighting kernels; slice 1
+        // batcher provides GPU vertex lighting via the calc_light() kernel
+        // finished in lighting.hglsl (Stage 2.C). Default branch (flag false)
+        // is the unchanged legacy call.
+        // D-gpu-pose-instrument: PerLeaf zone wraps the per-shape dispatch.
+        // Per-leaf-iteration (fires N times per loop). Per-leaf work is
+        // ~500ns (pool alloc + per-vertex projection + per-face cull),
+        // above the 100ns floor; aggregate Tracy overhead <1% frame budget.
+        { ZoneScopedN("TG.MultiShape.PerLeaf");
+        if (s_multiShapePositionsOnly)
+        {
+            listOfShapes[i].node->MultiTransformShape_PositionsOnly(&shapeToClip,&backFacePoint,listOfShapes[i].parentNode,isHudElement,alphaValue,isClamped);
+        }
+        else
+        {
+            listOfShapes[i].node->MultiTransformShape(&shapeToClip,&backFacePoint,listOfShapes[i].parentNode,isHudElement,alphaValue,isClamped);
+        }
+        } // end PerLeaf zone
+
+        // D-gpu-pose-instrument: ShadowProj wraps the MultiTransformShadows
+        // dispatch (per-light × per-vertex shadow projection). Per-leaf-
+        // iteration; only fires when useShadows && d_useShadows.
         if (useShadows && d_useShadows)
         {
+            ZoneScopedN("TG.MultiShape.ShadowProj");
             listOfShapes[i].node->MultiTransformShadows(pos, &(listOfShapes[i].shapeToWorld),yawRotation);
         }
 
@@ -1694,12 +1822,197 @@ long TG_MultiShape::TransformMultiShape (Stuff::Point3D *pos, Stuff::UnitQuatern
         x=GetCycles();
 #endif
     }
+    } // end PerShapeLoop zone
 
 #ifdef LAB_ONLY
     MCTimeTransformandLight = MCTimeAnimationandMatrix + MCTimePerShapeTransform;
 #endif
     return(0);
-}	
+}
+
+//-------------------------------------------------------------------------------
+// Slice 2 (object-offload) — Stage 2.B
+// TransformMultiShape_PositionsOnly: thin wrapper that flips the file-static
+// per-leaf dispatch flag, calls the existing TransformMultiShape (so the
+// heirarchy animation, shapeToClip computation, and TG_Shape::s_* state setup
+// all run unchanged), then clears the flag. The flag is read at the per-leaf
+// MultiTransformShape call site near the bottom of TransformMultiShape's body.
+//-------------------------------------------------------------------------------
+long TG_MultiShape::TransformMultiShape_PositionsOnly (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot)
+{
+    s_multiShapePositionsOnly = true;
+    long result = TransformMultiShape(pos, rot);
+    s_multiShapePositionsOnly = false;
+    return result;
+}
+
+//-------------------------------------------------------------------------------
+// Track B (widen registry): recipe-build-only variant.
+// Runs the hierarchy traversal to populate listOfShapes[i].shapeToWorld per
+// leaf without touching TGL vertex/face/color pools and without requiring
+// TG_Shape::s_cameraOrigin to be non-null. Called from BldgAppearance/
+// TreeAppearance::registerStatic during Mission::init before Camera::update.
+//-------------------------------------------------------------------------------
+long TG_MultiShape::TransformMultiShape_BuildRecipe (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot)
+{
+    s_buildRecipeOnly = true;
+    long result = TransformMultiShape(pos, rot);
+    s_buildRecipeOnly = false;
+    return result;
+}
+
+//-------------------------------------------------------------------------------
+// Slice D-leaf-skip-v2 (2026-05-09): thin runtime wrapper that reuses the
+// s_buildRecipeOnly mechanism for the GPU mech body callsite. Skip per-leaf
+// dispatch + MultiTransformShadows; preserve hierarchy walk. Recon proved
+// per-leaf state on mechShape has zero practical consumer in modern + GPU
+// mech mode (Slice A bypasses Render(true); RenderShadows unreachable on
+// tessellation; PerPolySelect-on-mechs theoretical via fallback findObjectByMouse
+// but findMoverByMouse rect-only test catches all real mech selection).
+//-------------------------------------------------------------------------------
+long TG_MultiShape::TransformMultiShape_HierarchyOnly (Stuff::Point3D *pos, Stuff::UnitQuaternion *rot)
+{
+    s_buildRecipeOnly = true;
+    long result = TransformMultiShape(pos, rot);
+    s_buildRecipeOnly = false;
+    return result;
+}
+
+//-------------------------------------------------------------------------------
+// Slice 2 (object-offload) — Stage 2.D.2 fix:
+// Cache the GPU light-data index while worldLights[0]->aRGB is correct for
+// THIS actor (during update(), immediately after SetLightList is called).
+// By the time submitMultiShape() runs (during renderLists()), later actors
+// will have overwritten worldLights[0]->aRGB for their own terrain positions.
+// Calling GatherGpuObjectLightDataOnly() there produces the WRONG light color.
+//
+// This method locates the first SHAPE_NODE leaf (same heuristic as
+// submitMultiShape's firstShapeNodeLeaf scan) and calls
+// GatherGpuObjectLightDataOnly() to cache the dedup-cache index in
+// cachedGpuLightIndex_. submitMultiShape then reads cachedGpuLightIndex_
+// instead of calling GatherGpuObjectLightDataOnly() itself.
+//
+// Only active when g_useGpuObjects is true; no-op otherwise so non-GPU
+// paths have zero overhead.
+//-------------------------------------------------------------------------------
+void TG_MultiShape::CacheGpuLightData()
+{
+    // PERF 2026-05-07: stripped hot Tracy zones CacheGpuLightData,
+    // CacheGpuLightData findLeaf, and CacheGpuLightData GatherGpuObjectLightDataOnly.
+    //
+    // Slice B1 (2026-05-09): also honor g_useGpuMechs so an operator
+    // running MC2_GPU_OBJECTS=0 MC2_GPU_MECHS=1 still gets the cache
+    // refresh for mechs. Adversarial review MAJOR-1.
+    if (!g_useGpuObjects && !g_useGpuMechs)
+        return;
+
+    // Find first SHAPE_NODE leaf — same logic as submitMultiShape.
+    TG_Shape* firstShapeNodeLeaf = nullptr;
+    {
+        for (int i = 0; i < numTG_Shapes; ++i) {
+            TG_ShapeRec& rec = listOfShapes[i];
+            if (!rec.processMe || !rec.node) continue;
+            TG_Shape* child = rec.node;
+            if (!child->myType) continue;
+            if (child->myType->GetNodeType() != SHAPE_NODE) continue;
+            firstShapeNodeLeaf = child;
+            break;
+        }
+    }
+
+    if (firstShapeNodeLeaf != nullptr) {
+        cachedGpuLightIndex_ = firstShapeNodeLeaf->GatherGpuObjectLightDataOnly();
+        cachedFrame_         = g_mc2FrameCounter;
+    }
+}
+
+// [LIGHTBAKE v1] First SHAPE_NODE leaf's durable post-decompose
+// lightData_ (TG_Shape member; TG_MultiShape is friend of TG_Shape).
+// Call AFTER CacheGpuLightData() has run this frame:
+// GatherGpuObjectLightDataOnly -> addLightDataStructureWithPerActorColor
+// wrote the post-template-copy + in-place decomposeFirstActiveLightColor
+// struct into leaf->lightData_, which resetLightData does NOT touch
+// (unlike the per-frame scratch slot). Same leaf scan as
+// CacheGpuLightData for identity.
+const TG_HWLightsData* TG_MultiShape::peekCachedLeafLightData()
+{
+    TG_Shape* firstShapeNodeLeaf = nullptr;
+    for (int i = 0; i < numTG_Shapes; ++i) {
+        TG_ShapeRec& rec = listOfShapes[i];
+        if (!rec.processMe || !rec.node) continue;
+        TG_Shape* child = rec.node;
+        if (!child->myType) continue;
+        if (child->myType->GetNodeType() != SHAPE_NODE) continue;
+        firstShapeNodeLeaf = child;
+        break;
+    }
+    if (firstShapeNodeLeaf == nullptr) return nullptr;
+    return &firstShapeNodeLeaf->lightData_;
+}
+
+// [LIGHTBAKE v1] Re-emit a mission-load-baked constant into a per-frame
+// slot WITHOUT GatherLights/decompose/template recompute. Per-frame slot
+// WRITE stays (Shape-C O(1) consumer); the RECOMPUTE is what dies. Sets
+// cachedGpuLightIndex_/cachedFrame_ so the existing
+// staticReg.lightDataIndex = getCachedGpuLightIndex() capture + batcher
+// read are unchanged.
+void TG_MultiShape::EmitBakedGpuLightData(int32_t recipeIndex, const TG_HWLightsData& baked)
+{
+    // [LIGHTBAKE v2] THE substitutive edit (adversarial-review C1 locus):
+    // the static recipe's permanent light slot IS recipeIndex (the CPU
+    // mirror lives at lightData_[recipeIndex], written once by
+    // mc2WriteStaticLightSlot, re-shipped every frame by the unchanged
+    // whole-buffer upload). So this is a pure pointer assignment -- NO
+    // mc2SubmitBakedLightSlot, NO addLightDataStructure, NO 1792B FNV,
+    // NO 1792B memcmp. This is what takes `addLightDataStructure scan`
+    // -> ~0 for the static class (the ~1840 calls/~1ms/frame survivor).
+    (void)baked;  // identity is recipeIndex; the struct already persists in the slot
+    cachedGpuLightIndex_ = static_cast<uint32_t>(recipeIndex);
+    cachedFrame_         = g_mc2FrameCounter;
+}
+
+void TG_MultiShape::ResubmitCachedGpuLightData()
+{
+    // Slice B1 (2026-05-09): see CacheGpuLightData rationale.
+    if (!g_useGpuObjects && !g_useGpuMechs)
+        return;
+
+    // [LIGHTBRIDGE v1] C6 repoint: if this multi already populated a VALID
+    // slot THIS frame, that slot is still live (per-frame reset by
+    // resetLightData/clearArrays at frame start) — return it and skip the
+    // direct addLightDataStructure 1792B FNV + 1792B memcmp entirely. The
+    // cachedGpuLightIndex_ != sentinel guard is load-bearing: the
+    // registration path (gos_static_prop_registry.cpp) sets cachedFrame_
+    // without a valid index. Kill-switch OFF -> legacy resubmit bit-for-bit.
+    extern bool mc2LightBridgeRepointEnabled();
+    if (mc2LightBridgeRepointEnabled() &&
+        cachedFrame_ == g_mc2FrameCounter &&
+        cachedGpuLightIndex_ != 0xFFFFFFFFu) {
+        static bool s_c6Logged = false;
+        if (!s_c6Logged) {
+            s_c6Logged = true;
+            printf("[LIGHTBRIDGE v1] event=c6_fastpath_hit\n");
+            fflush(stdout);
+        }
+        return;
+    }
+
+    TG_Shape* firstShapeNodeLeaf = nullptr;
+    for (int i = 0; i < numTG_Shapes; ++i) {
+        TG_ShapeRec& rec = listOfShapes[i];
+        if (!rec.processMe || !rec.node) continue;
+        TG_Shape* child = rec.node;
+        if (!child->myType) continue;
+        if (child->myType->GetNodeType() != SHAPE_NODE) continue;
+        firstShapeNodeLeaf = child;
+        break;
+    }
+
+    if (firstShapeNodeLeaf != nullptr) {
+        cachedGpuLightIndex_ = firstShapeNodeLeaf->ResubmitCachedLightData();
+        cachedFrame_         = g_mc2FrameCounter;
+    }
+}
 
 //-------------------------------------------------------------------------------
 //This function takes the current listOfVisibleFaces and draws them using
@@ -2588,4 +2901,10 @@ void TG_AnimateShape::SetAnimationState (TG_MultiShapePtr shape)
 	}
 }	
 
+
+void TG_MultiShape::Touch() {
+	for (long i = 0; i < numTG_Shapes; i++)
+		if (listOfShapes[i].node)
+			listOfShapes[i].node->Touch();
+}
 //-------------------------------------------------------------------------------

@@ -38,19 +38,17 @@ extern void InitWLib(void);
 
 
 // globals used for memory
-UserHeapPtr systemHeap = NULL;
 UserHeapPtr guiHeap = NULL;
 
-float MaxMinUV = 8.0f;
 
-Stuff::MemoryStream *effectStream = NULL;
+extern Stuff::MemoryStream *effectStream;	// NS3: def in mclib/txmmgr.cpp
+extern DWORD BaseVertexColor;	// NS3: def in mclib/quad.cpp (used at ParseCmdLine/prefs)
 static MemoryPtr effectsData = NULL;  // kept alive until effectStream is deleted at shutdown
 
 unsigned long systemHeapSize = 8192000;
 unsigned long guiHeapSize = 1023999;
 unsigned long tglHeapSize = 65536000;
 
-DWORD BaseVertexColor = 0x00000000;		//This color is applied to all vertices in game as Brightness correction.
 
 long gammaLevel = 0;
 bool hasGuardBand = false;
@@ -65,9 +63,6 @@ extern char MissingTitleString[];
 
 extern char CDInstallPath[];
 
-HSTRRES gosResourceHandle = 0;
-HGOSFONT3D gosFontHandle = 0;
-float gosFontScale = 1.0;
 FloatHelpPtr globalFloatHelp = NULL;
 unsigned long currentFloatHelp = 0;
 extern float CliffTerrainAngle;
@@ -80,14 +75,11 @@ bool quitGame = FALSE;
 
 bool gamePaused = FALSE;
 
-bool reloadBounds = false;
-bool justResaveAllMaps = false;
+extern bool reloadBounds;	// NS3: def in mclib/bdactor.cpp
+extern bool justResaveAllMaps;	// NS3: def in mclib/terrain.cpp
 
 extern bool forceShadowBurnIn;
 // these globals are necessary for fast files for some reason
-FastFile 	**fastFiles = NULL;
-long 		numFastFiles = 0;
-long		maxFastFiles = 0;
 
 #define MAX_SHAPES	0
 
@@ -101,15 +93,15 @@ TimerManagerPtr timerManager = NULL;
 long FilterState = gos_FilterNone;
 
 extern int TERRAIN_TXM_SIZE;
-int ObjectTextureSize = 128;
+extern int ObjectTextureSize;	// NS3: def in mclib/bdactor.cpp
 
 Editor* editor = NULL;
 
-char missionName[1024] = "\0";
+extern char missionName[1024];	// NS3: def in GameOS/gameos/gos_crashbundle.cpp
 
 enum { CPU_UNKNOWN, CPU_PENTIUM, CPU_MMX, CPU_KATMAI } Processor = CPU_PENTIUM;		//Needs to be set when GameOS supports ProcessorID -- MECHCMDR2
 
-MidLevelRenderer::MLRClipper *  theClipper = NULL;
+extern MidLevelRenderer::MLRClipper * theClipper;	// NS3: def in mclib/bdactor.cpp
 
 // called by gos
 //---------------------------------------------------------------------------

@@ -166,6 +166,11 @@ namespace gosFX
 			DestroyParticle(unsigned index);
 
 	public:
+		// B1 Stage 2' C8: override Start to route to mc2::particles::Spawn
+		// under MC2_GPU_PARTICLES=1; otherwise falls through to the
+		// inherited ParticleCloud::Start path (via SpinningCloud).
+		void
+			Start(ExecuteInfo *info);
 		void
 			Draw(DrawInfo *info);
 	};

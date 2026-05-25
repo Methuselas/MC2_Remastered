@@ -42,6 +42,18 @@ void TacMap::worldToTacMap( Stuff::Vector3D& world, int xOffset, int yOffset, in
 
 void TacMap::tacMapToWorld( const Stuff::Vector2DOf<long>& screen, int xSize, int ySize,  Stuff::Vector3D& world )
 {
+	// The editor can fire tac-map clicks before any mission/terrain is
+	// loaded, when the global `land` is still NULL; the cell math below
+	// dereferences it unconditionally. Mirror the existing out-of-range
+	// fallback rather than null-deref. (Game callers only show the
+	// tac-map in-mission, so land is non-NULL there - unchanged.)
+	if (!land)
+	{
+		if (eye) world = eye->getPosition();
+		else { world.x = world.y = world.z = 0.0f; }
+		return;
+	}
+
 	// turn screen into cells
 	long cellX = screen.x /(float)xSize * ((float)land->realVerticesMapSide * MAPCELL_DIM);
 	long cellY = screen.y /(float)ySize * ((float)land->realVerticesMapSide * MAPCELL_DIM);

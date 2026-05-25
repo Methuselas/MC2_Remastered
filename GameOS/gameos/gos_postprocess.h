@@ -31,6 +31,8 @@ public:
     GLuint getSceneDepthTexture() const { return sceneDepthTex_; }
     GLuint getSceneColorTexture() const { return sceneColorTex_; }
     GLuint getSceneFBO() const { return sceneFBO_; }
+    // M1.5: readback hook for RenderWorld::lookupAtPixel.
+    GLuint getSceneObjectIdTex() const { return sceneObjectIdTex_; }
     // F3: explicit sentinel clear for GBuffer1 (attachment 1).
     // Sets attachment 1 to (0.5, 0.5, 1.0, 0.0) — flat-up encoded normal,
     // alpha = 0.0 (post-shadow eligible). Must be called while MRT is bound
@@ -57,14 +59,20 @@ public:
                                 float mapHalfExtent);
     bool staticLightMatrixBuilt() const { return staticLightMatrixBuilt_; }
     void markStaticLightMatrixBuilt() { staticLightMatrixBuilt_ = true; }
+    // VPL-#shadow C-1: per-mission re-arm so the one-shot full-map static
+    // shadow rebuilds on the next mission (against fresh blocks[]) instead
+    // of freezing the previous mission's shadow. Called from Terrain::destroy.
+    void resetStaticLightMatrix() { staticLightMatrixBuilt_ = false; }
     void setMapHalfExtent(float extent) { mapHalfExtent_ = extent; }
     float getMapHalfExtent() const { return mapHalfExtent_; }
 
     // Dynamic object shadows: camera-centered, re-rendered every frame
     void initDynamicShadows();
     void destroyDynamicShadows();
+    // camFitCornersMC2 = 8 raw-MC2 frustum corners (clipToWorld-unprojected
+    // + Stuff->MC2 swizzled by the caller). Builder clamps + fits the ortho.
     void buildDynamicLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
-                                 float camX, float camY, float camZ);
+                                 const float camFitCornersMC2[8][3]);
     GLuint getDynamicShadowTexture() const { return dynShadowDepthTex_; }
     GLuint getDynamicShadowFBO() const { return dynShadowFBO_; }
     const float* getDynamicLightSpaceMatrix() const { return dynamicLightSpaceMatrix_; }
@@ -81,12 +89,6 @@ public:
     void runScreenShadow();
     bool screenShadowEnabled_;
     int screenShadowDebug_;  // 0=normal, 1=visualize
-
-    void runSSAO();
-    bool ssaoEnabled_;
-    float ssaoRadius_;
-    float ssaoBias_;
-    float ssaoPower_;
 
     // Scene state — set by terrain draw, cleared each frame in beginScene()
     bool sceneHasTerrain_;
@@ -106,6 +108,8 @@ public:
     void setViewProj(const float* m) { memcpy(viewProj_, m, 16 * sizeof(float)); }
     const float* getInverseViewProj() const { return inverseViewProj_; }
     const float* getViewProj() const { return viewProj_; }
+    int getWidth()  const { return width_; }
+    int getHeight() const { return height_; }
 
 private:
     void createFBOs(int w, int h);
@@ -118,6 +122,7 @@ private:
     GLuint sceneColorTex_;
     GLuint sceneDepthTex_;
     GLuint sceneNormalTex_;
+    GLuint sceneObjectIdTex_ = 0;   // M1.5 R32UI MRT attachment-2 (gated on MC2_OBJECT_ID_BUFFER)
 
     // Bloom ping-pong FBOs (half resolution)
     GLuint bloomFBO_[2];
@@ -166,16 +171,6 @@ private:
     glsl_program* screenShadowProg_;
     float inverseViewProj_[16];
     float viewProj_[16];
-
-    // SSAO
-    glsl_program* ssaoProg_;
-    glsl_program* ssaoBlurProg_;
-    glsl_program* ssaoApplyProg_;
-    GLuint ssaoFBO_;           // half-res, single-channel AO
-    GLuint ssaoColorTex_;      // R16F
-    GLuint ssaoBlurFBO_;       // half-res blur target
-    GLuint ssaoBlurTex_;       // R16F
-    GLuint ssaoNoiseTex_;      // 4x4 RGB noise
 
     // God ray
     glsl_program* godrayProg_;

@@ -3,6 +3,15 @@ cmake_minimum_required (VERSION 3.10)
 cmake_policy(SET CMP0072 NEW) # cmake --help-policy CMP0072
 project(mc2)
 
+# C++17 baseline for the whole project (CXX17-1 flip 2026-05-24).
+# RenderCore/RenderWorld/GameAdapters/tests already require cxx_std_17 via
+# target_compile_features; flipping the root removes the C++14/17 mix and
+# makes mc2.exe uniformly C++17. See docs/superpowers/explorations/
+# 2026-05-24-cxx17-upgrade-recon.md.
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 include(CMakeToolsHelpers OPTIONAL)
 
 # Set a default build type for single-configuration
@@ -28,7 +37,9 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/sdl2)
 #set(SDL2_DIR "${CMAKE_PREFIX_PATH}/cmake")
 
 if(NOT MSVC)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x -ggdb")
+    # CXX17-1 2026-05-24: removed dead -std=c++0x (project standard now set via
+    # CMAKE_CXX_STANDARD 17 above; this branch is never reached on Windows builds).
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ggdb")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-local-typedefs -Werror=array-bounds -Wno-switch -Wwrite-strings -Wno-unknown-warning-option -Wunused-variable -fpermissive") # -fsanitize=address -fno-omit-frame-pointer")
 endif()
 # -Wno-unused-local-typedefs - to disable "typedef was ignored on this declaration"
@@ -76,6 +87,7 @@ endif()
 #     if ASan stays quiet but pool-exhaustion events keep firing.
 # ---------------------------------------------------------------------------
 option(MC2_ASAN "Build with MSVC AddressSanitizer (parallel dev build)" OFF)
+option(MC2_IMGUI "Enable in-game ImGui UI" OFF)
 
 if(MC2_ASAN)
     if(NOT MSVC)
@@ -153,7 +165,62 @@ set(THIRDPARTY_INCLUDE_DIRS "${CMAKE_PREFIX_PATH}/include")
 # Tracy headers resolve as <tracy/Tracy.hpp>
 list(APPEND THIRDPARTY_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tracy")
 
+# ---------------------------------------------------------------------------
+# Track D — Assimp-backed FBX/GLB mech importer (vendored).
+#
+# Default ON. When OFF, the importer .cpp body is gated out and mech3d.cpp
+# falls through to the legacy ASE path unconditionally. Stock install must
+# remain playable regardless of this flag.
+#
+# Vendoring rationale: deterministic builds, no network at configure time,
+# matches 3rdparty/tracy precedent. Source lives at 3rdparty/assimp/
+# (master branch tarball; pin to a release tag later once MVP stabilises).
+#
+# Spec: docs/superpowers/specs/2026-04-27-assimp-mech-importer-design.md
+# Plan: docs/superpowers/plans/2026-04-27-assimp-mech-importer.md
+# Findings (advisor review): docs/superpowers/explorations/2026-05-02-track-d-mvp-adversarial-findings.md
+# ---------------------------------------------------------------------------
+option(ENABLE_ASSIMP_IMPORTER "Enable FBX/GLB mech import via Assimp (Track D)" ON)
+option(ENABLE_CDAG_COOKER "Build the cdag_cooker host tool (requires meshoptimizer; never linked into mc2)" OFF)
+
+if(ENABLE_ASSIMP_IMPORTER)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/assimp/CMakeLists.txt")
+        message(FATAL_ERROR
+            "ENABLE_ASSIMP_IMPORTER=ON but 3rdparty/assimp/ is empty. "
+            "Vendor Assimp source there (master branch from "
+            "https://github.com/assimp/assimp), or set -DENABLE_ASSIMP_IMPORTER=OFF.")
+    endif()
+    # Prune Assimp's build surface to the importers we actually need.
+    set(ASSIMP_BUILD_TESTS                    OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ASSIMP_TOOLS             OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_INSTALL                        OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_FBX_IMPORTER             ON  CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_GLTF_IMPORTER            ON  CACHE BOOL "" FORCE)
+    set(ASSIMP_WARNINGS_AS_ERRORS             OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS                     OFF CACHE BOOL "" FORCE)
+    # Assimp's Compression.cpp uses Z_TREES (zlib >= 1.2.4); our system zlib
+    # is 1.2.3. Force Assimp to build + use its own bundled zlib.
+    # ASSIMP_BUILD_ZLIB alone isn't enough — Assimp's CMakeLists.txt skips its
+    # own zlib if ZLIB_FOUND is already true, which it is because the root
+    # find_package(ZLIB) ran at line 131. Reset ZLIB_FOUND in this scope so
+    # Assimp's contrib/zlib path (line 586 in vendored CMakeLists.txt) wins.
+    # The engine's own ZLIB::ZLIB target is unaffected (already created).
+    set(ASSIMP_BUILD_ZLIB                     ON  CACHE BOOL "" FORCE)
+    set(ZLIB_FOUND FALSE)
+    # EXCLUDE_FROM_ALL: don't build assimp unless mclib actually links it.
+    add_subdirectory(3rdparty/assimp out/3rdparty/assimp EXCLUDE_FROM_ALL)
+    message(STATUS "ENABLE_ASSIMP_IMPORTER=ON — vendored Assimp at 3rdparty/assimp/ (FBX + GLTF, static)")
+endif()
+
 add_subdirectory("./mclib/" "./out/mclib")
+add_subdirectory("./RenderCore" "./out/RenderCore")
+add_subdirectory("./RenderWorld" "./out/RenderWorld")
+add_subdirectory("./GameAdapters" "./out/GameAdapters")
+add_subdirectory("./EditorBridge" "./out/EditorBridge")
+add_subdirectory("./mclib/fx_trace" "./out/mclib/fx_trace")
+add_subdirectory("./mclib/particles" "./out/mclib/particles")
 add_subdirectory("./mclib/mlr" "./out/mclib/mlr")
 add_subdirectory("./mclib/gosfx" "./out/mclib/gosfx")
 add_subdirectory("./mclib/stuff" "./out/mclib/stuff")
@@ -161,6 +228,8 @@ add_subdirectory("./gui" "./out/gui")
 add_subdirectory("./GameOS/gameos" "./out/GameOS/gameos")
 
 add_subdirectory("./GameOS/src" "./out/windows")
+add_subdirectory("3rdparty/imgui")
+add_subdirectory("GuiRuntime")
 
 set(SOURCES 
     "code/dw.cpp"
@@ -205,6 +274,7 @@ set(SOURCES
     "code/keyboardref.cpp"
     "code/mechicon.cpp"
     "code/missiongui.cpp"
+    "code/gameplay_pick.cpp"
     "code/mpconnectiontype.cpp"
     "code/mpgamebrowser.cpp"
     "code/mphostgame.cpp"
@@ -269,7 +339,22 @@ endif()
 
 
 add_executable(mc2 ${SOURCES} ${MAIN_SRC})
-target_link_libraries(mc2 mclib gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL)
+target_link_libraries(mc2 mclib fx_trace particles gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL renderworld gameadapters editorbridge imgui gui_runtime)
+
+if(MC2_IMGUI)
+    target_compile_definitions(mc2 PRIVATE MC2_IMGUI=1)
+    target_compile_definitions(gui_runtime PRIVATE MC2_IMGUI=1)
+    target_compile_definitions(gameos PRIVATE MC2_IMGUI=1)
+    target_compile_definitions(gameos_main PRIVATE MC2_IMGUI=1)
+    # gameosmain.cpp includes imgui_impl_sdl2.h when MC2_IMGUI is set
+    target_include_directories(gameos_main PRIVATE
+        "${CMAKE_SOURCE_DIR}/3rdparty/imgui"
+        "${CMAKE_SOURCE_DIR}/3rdparty/imgui/backends"
+        "${CMAKE_SOURCE_DIR}/GuiRuntime"
+    )
+    # imgui + gui_runtime symbols resolve at mc2 link; no target_link_libraries
+    # needed here for a static-lib-only target in a subdirectory.
+endif()
 
 target_link_libraries(mc2
     FFmpegLGPL::avformat
@@ -299,6 +384,36 @@ foreach(_dll ${FFmpegLGPL_RUNTIME_DLLS})
                 "${_dll}" "$<TARGET_FILE_DIR:mc2>")
 endforeach()
 install(FILES ${FFmpegLGPL_RUNTIME_DLLS} DESTINATION ".")
+
+# Other runtime DLLs (SDL2/GLEW/ZLIB/mc2res). Same rationale as the
+# editor target — without these mc2.exe fails at launch with a
+# missing-DLL error after a clean build. Root floor is CMake 3.10, so
+# TARGET_RUNTIME_DLLS (3.21+) is unavailable; we use TARGET_FILE for
+# imported targets whose IMPORTED_LOCATION is the .dll (SDL2/SDL2_mixer/
+# mc2res) and explicit filenames for GLEW/ZLIB (their IMPORTED_LOCATION
+# points at the .lib import library). vcpkg colocates all DLLs next to
+# SDL2.dll, so anchor on $<TARGET_FILE_DIR:SDL2::SDL2>.
+set(_mc2_runtime_dll_targets
+    SDL2::SDL2
+    SDL2_mixer::SDL2_mixer
+    mc2res_64
+)
+foreach(_t IN LISTS _mc2_runtime_dll_targets)
+    add_custom_command(TARGET mc2 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:${_t}>" "$<TARGET_FILE_DIR:mc2>"
+        VERBATIM
+    )
+endforeach()
+
+foreach(_dll_name glew32.dll zlib1.dll)
+    add_custom_command(TARGET mc2 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE_DIR:SDL2::SDL2>/${_dll_name}"
+                "$<TARGET_FILE_DIR:mc2>"
+        VERBATIM
+    )
+endforeach()
 
 # ASan runtime DLL must sit next to mc2.exe. Without it the exe fails to
 # launch with status 0xC0000139 (entry point not found). The DLL ships with
@@ -358,7 +473,51 @@ add_subdirectory("./data_tools" "./out/data_tools")
 add_subdirectory("./text_tool" "./out/text_tool")
 add_subdirectory("./Viewer" "./out/Viewer")
 
-# MC2 Mission Editor (MFC/Windows-only). The CMakeLists inside
-# editor/ guards itself with if(NOT MSVC) return() so this is
-# safe on all platforms.
+# MC2 Mission Editor (MFC/Windows-only). editor/CMakeLists.txt guards
+# itself with if(NOT MSVC) return() so this is safe on all platforms.
+# Scoped import from PR #36: editor tree + gameos_editor only; PR's
+# terrain-shader/.fit/resource rework deliberately NOT merged.
 add_subdirectory("./editor" "./out/editor")
+
+# -----------------------------------------------------------------------
+# Shader contract reflection CI (Tier 1.2)
+# Depends on Vulkan SDK tools: glslangValidator, spirv-cross.
+# Run: cmake --build build64 --target shader_reflect
+# -----------------------------------------------------------------------
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_FOUND)
+    add_custom_target(shader_reflect
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/tools/shader_reflect/reflect.py
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Shader contract reflection CI (Tier 1.2)"
+        VERBATIM
+    )
+    if(TARGET shader_validate)
+        add_dependencies(shader_reflect shader_validate)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# NS3 boundary-enforcement instrument (design C: drop gameos_main).
+# Links engine libs ONLY (not gameos_main, not gui, not any code/) with
+# /WHOLEARCHIVE so every engine object is forced in. The unresolved-symbol
+# set is the complete mclib/engine -> code boundary (the NS3 metric).
+# Default OFF so it never blocks the normal mc2 build.
+# Spec: docs/superpowers/specs/2026-05-18-mclib-standalone-boundary-enforcement-spec.md
+option(MC2_BUILD_ENGINE_STANDALONE "NS3: link engine libs without code/ (boundary-enforcement instrument)" OFF)
+if(MC2_BUILD_ENGINE_STANDALONE)
+    add_executable(mclib_standalone tools/engine_standalone_stub.cpp)
+    target_link_libraries(mclib_standalone
+        mclib gosfx mlr stuff gameos windows
+        ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL)
+    if(MSVC)
+        target_link_options(mclib_standalone PRIVATE
+            /WHOLEARCHIVE:mclib
+            /WHOLEARCHIVE:gosfx
+            /WHOLEARCHIVE:mlr
+            /WHOLEARCHIVE:stuff
+            /WHOLEARCHIVE:gameos
+            /WHOLEARCHIVE:windows)
+    endif()
+endif()

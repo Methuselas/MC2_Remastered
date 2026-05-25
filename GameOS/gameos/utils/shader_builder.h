@@ -8,6 +8,14 @@
 typedef GLvoid (APIENTRY *UNIFORM_FUNC)(GLint location, GLsizei count, const void *value);
 typedef GLvoid (APIENTRY *UNIFORM_MAT_FUNC)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
 
+// Recursive #include resolver used by glsl_shader::makeShader (the makeProgram
+// path). Reads `fname`, splices `#include <...>` bodies and injects #line
+// directives into `shader_source`; appends every resolved file (incl. nested)
+// to `includes`. Returns false on read/parse failure. Exposed here so the
+// GPU-driven compute-program builder can resolve includes the same way the
+// rest of the engine does, instead of duplicating the substitution logic.
+bool load_shader(const char* fname, std::string& shader_source, std::vector<std::string>& includes);
+
 enum ConstantType {
     CONSTANT_FLOAT,
     CONSTANT_INT,

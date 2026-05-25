@@ -10,6 +10,36 @@
 
 #include <cstdio>
 #include <stdlib.h>
+#include <string>
+#include <cstring>
+#include <vector>
+
+// ---------------------------------------------------------------------------
+// S-CLI: command-line flags for autonomous editor launches.
+//
+//   -mission PATH.pak       auto-load .pak on first idle after InitGameOS
+//   -frames N               PostMessage WM_CLOSE after N rendered frames
+//   -exit-on-load-fail      exit nonzero on mission load failure (no modal)
+//
+// Globals are file-scope here; EditorCamera.h reads g_cliFramesLimit /
+// g_cliFrameCounter via extern declarations to drive the WM_CLOSE post.
+// ---------------------------------------------------------------------------
+std::string g_cliMissionPath;
+long        g_cliFramesLimit     = 0;     // 0 = no auto-close
+bool        g_cliExitOnLoadFail  = false;
+long        g_cliFrameCounter    = 0;     // bumped by EditorCamera::render
+bool        g_cliClosePosted     = false; // one-shot guard for WM_CLOSE
+bool        g_cliAutoLoadFired   = false; // one-shot guard for auto-load
+
+static void editor_set_default_env_vars()
+{
+    // Bake editor-preferred defaults so RenderDoc and other tools can launch
+    // the exe directly without a .bat. Bat overrides still work because we
+    // only set when unset.
+    if (!getenv("MC2_EDITOR_TRACE"))            _putenv_s("MC2_EDITOR_TRACE",              "1");
+    // S3 (2026-05-25): MC2_GPU_DRIVEN, MC2_EDITOR_BYPASS_BLDG_CULL, MC2_STATIC_PROP_REGISTRY
+    // sidesteps retired -- editor now runs canonical default-ON chain.
+}
 
 static void EarlyTrace(const char* msg)
 {
@@ -48,6 +78,73 @@ static void EarlyTraceBegin()
 #include "MainFrm.h"
 #include "editorinterface.h"
 #include "EditorVersion.h"
+#include "EditorData.h"
+
+// -- S-CLI parser ------------------------------------------------------------
+// Accepts: -mission/--mission PATH (or =PATH), -frames/--frames N (or =N),
+// -exit-on-load-fail / --exit-on-load-fail. Tokenizes a Windows-style cmdline
+// honoring double-quoted spans (no escape processing beyond quote toggling —
+// matches how MFC's CFileDialog hands paths back to itself).
+static bool s_cli_flag_match(const char* tok, const char* shortName, const char* longName)
+{
+	return (strcmp(tok, shortName) == 0) || (strcmp(tok, longName) == 0);
+}
+static bool s_cli_starts_with(const char* tok, const char* prefix, const char** outRest)
+{
+	size_t n = strlen(prefix);
+	if (strncmp(tok, prefix, n) == 0) { *outRest = tok + n; return true; }
+	return false;
+}
+static void s_cli_parse(const char* cmd)
+{
+	if (!cmd || !*cmd) return;
+	std::vector<std::string> argv;
+	{
+		std::string cur;
+		bool inQuote = false;
+		for (const char* p = cmd; *p; ++p)
+		{
+			char c = *p;
+			if (c == '"') { inQuote = !inQuote; continue; }
+			if (!inQuote && (c == ' ' || c == '\t'))
+			{
+				if (!cur.empty()) { argv.push_back(cur); cur.clear(); }
+				continue;
+			}
+			cur.push_back(c);
+		}
+		if (!cur.empty()) argv.push_back(cur);
+	}
+
+	for (size_t i = 0; i < argv.size(); ++i)
+	{
+		const char* tok = argv[i].c_str();
+		const char* rest = NULL;
+
+		if (s_cli_flag_match(tok, "-mission", "--mission"))
+		{
+			if (i + 1 < argv.size()) { g_cliMissionPath = argv[++i]; }
+		}
+		else if (s_cli_starts_with(tok, "-mission=", &rest) ||
+		         s_cli_starts_with(tok, "--mission=", &rest))
+		{
+			g_cliMissionPath = rest;
+		}
+		else if (s_cli_flag_match(tok, "-frames", "--frames"))
+		{
+			if (i + 1 < argv.size()) { g_cliFramesLimit = atol(argv[++i].c_str()); }
+		}
+		else if (s_cli_starts_with(tok, "-frames=", &rest) ||
+		         s_cli_starts_with(tok, "--frames=", &rest))
+		{
+			g_cliFramesLimit = atol(rest);
+		}
+		else if (s_cli_flag_match(tok, "-exit-on-load-fail", "--exit-on-load-fail"))
+		{
+			g_cliExitOnLoadFail = true;
+		}
+	}
+}
 
 // Forward declaration — defined in EditorGameOS.cpp.
 // MFCPlatform.hpp is a legacy header that may not be present in all build
@@ -84,9 +181,19 @@ EditorMFCApp theApp;
 
 BOOL EditorMFCApp::InitInstance()
 {
+	editor_set_default_env_vars();
 	EarlyTraceBegin();
 	EarlyTrace("InitInstance: enter");
 	EarlyTrace(EditorVersion_GetStartupLine());
+
+	// S-CLI: parse before any MFC chrome so flags are stable for the rest of
+	// startup. MFC's default arg handling still receives m_lpCmdLine — we
+	// don't consume it — but we use only explicit -mission so MFC's implicit
+	// "first non-flag = file to shell-open" path stays untouched.
+	s_cli_parse(m_lpCmdLine ? (const char*)m_lpCmdLine : "");
+	fprintf(stderr, "[EDITOR_CLI v1] event=parsed mission=\"%s\" frames=%ld exit_on_load_fail=%d\n",
+		g_cliMissionPath.c_str(), g_cliFramesLimit, g_cliExitOnLoadFail ? 1 : 0);
+	fflush(stderr);
 
 #ifdef _AFXDLL
 	// Enable3dControls() is deprecated and no-op on modern MSVC -- removed per C4996
@@ -293,6 +400,23 @@ BOOL EditorMFCApp::OnIdle(LONG lCount)
 		EarlyTrace("OnIdle: deferred InitGameOS: enter");
 		InitGameOS(m_hInstance, m_hEditorWnd, (char*)(LPCSTR)m_sCmdLine);
 		EarlyTrace("OnIdle: deferred InitGameOS: complete");
+	}
+
+	// S-CLI: auto-load a mission on the FIRST idle after InitGameOS so the GL
+	// context, asset system, and texture manager are fully up. One-shot.
+	if (!g_cliAutoLoadFired && !g_cliMissionPath.empty() && !m_bPendingInitGameOS)
+	{
+		g_cliAutoLoadFired = true;
+		EarlyTrace("OnIdle: S-CLI auto-load: enter");
+		bool ok = EditorData::initTerrainFromPCV(g_cliMissionPath.c_str());
+		EarlyTrace(ok ? "OnIdle: S-CLI auto-load: OK" : "OnIdle: S-CLI auto-load: FAILED");
+		if (!ok && g_cliExitOnLoadFail)
+		{
+			fprintf(stderr, "[EDITOR_CLI v1] event=load_fail mission=\"%s\"\n",
+				g_cliMissionPath.c_str());
+			fflush(stderr);
+			exit(1);
+		}
 	}
 
 	EditorInterface* pEditor = EditorInterface::instance();

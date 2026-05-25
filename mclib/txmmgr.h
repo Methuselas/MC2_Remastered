@@ -55,7 +55,6 @@ enum MC_TextureKey
 #define MC2_ISSHADOWS				8
 #define MC2_ISEFFECTS				16
 #define MC2_DRAWONEIN				32
-#define MC2_ISCRATERS				64
 #define MC2_ISCOMPASS				128
 #define MC2_ISSPOTLGT				256
 #define MC2_ISHUDLMNT				512
@@ -135,7 +134,9 @@ struct MC_TextureNode
 	public:
 		char 				*nodeName;					//Used for Unique nodes so I can just return the handle!
 		DWORD				uniqueInstance;				//Texture is modifiable.  DO NOT CACHE OUT!!!!!!
-		DWORD				neverFLUSH;					//Textures used by Userinput, etc.  DO NOT CACHE OUT!!!!!! 
+		DWORD				neverFLUSH;					//Textures used by Userinput, etc.  DO NOT CACHE OUT!!!!!!
+		DWORD				pinRefCount;				//Registry-driven pin (refcount).  Excludes node from cacheout when > 0.
+														//See docs/superpowers/specs/2026-05-06-static-prop-texture-pin-fix.md
 		DWORD				numUsers;					//Pushed up for each user using.
 														//Users can "free" a texture which will decrement the number and actually free it if number is 0
 		gos_TextureFormat 	key;						//Used to recreate texture if cached out.
@@ -177,6 +178,7 @@ struct MC_TextureNode
 		width = 0;
 		uniqueInstance = 0x0;
 		neverFLUSH = false;
+		pinRefCount = 0;
 		vertexData = NULL;
 		vertexData2 = NULL;
 		vertexData3 = NULL;
@@ -392,7 +394,8 @@ class MC_TextureManager
         TG_HWLightsData*                lightData_;
         uint32_t                        lightDataStructuresCapacity;
         uint32_t                        lightDataStructuresCount;
-		gosBuffer						*lightDataBuffer_;
+		// [LIGHTSSBO v1] lightDataBuffer_ removed: LightsData is now an
+		// SSBO owned by gameos_graphics.cpp (gos_LightDataSsbo_*).
         TG_HWSceneData*                 sceneData_;
 		gosBuffer						*sceneDataBuffer_;
 		
@@ -424,7 +427,6 @@ class MC_TextureManager
 			hardwareVertexData = hardwareVertexData2 = hardwareVertexData3 = hardwareVertexData4 = hardwareVertexData5 = NULL;
 
 			lightData_ = nullptr;
-            lightDataBuffer_ = nullptr;
             lightDataStructuresCapacity = 0;
             lightDataStructuresCount = 0;
 
@@ -524,6 +526,29 @@ class MC_TextureManager
 
 		
         void resetLightData();
+
+        // [LIGHTBAKE v2] persistent static-light table: write the baked
+        // constant into the permanent CPU slot lightData_[recipeIndex]
+        // (grow-preserving) + advance the static high-water S. Called
+        // once per recipe at bake / invalidate re-bake, NOT per frame.
+        void bakeStaticLightSlot(int32_t recipeIndex, const struct TG_HWLightsData& baked);
+
+        // Diagnostic accessors for the static-prop registry's flush trace
+        // (2026-05-05 black-billboard investigation). Read-only views of the
+        // per-frame light dedup table. Bodies in txmmgr.cpp because
+        // TG_HWLightsData is fwd-declared here (full type lives in tgl.h).
+        // LightSlotPeek includes the first light's type (lightDir[0].w) and
+        // color (lightColor[0].rgb) so registry::flush() can identify the
+        // H2 hypothesis: slot has numLights=1 but lightColor=(0,0,0) → black.
+        struct LightSlotPeek {
+            int   numLights;    // -1 if out of range
+            int   firstType;    // -1 if numLights==0; else int(lightDir[0].w)
+            float firstColorR;
+            float firstColorG;
+            float firstColorB;
+        };
+        uint32_t getLightStructCount() const { return lightDataStructuresCount; }
+        LightSlotPeek peekLightSlot(uint32_t idx) const;
 
  		//-----------------------------------------------------------------
 		// Gets gosTextureHandle for Node ID.  Does all caching necessary.
@@ -1184,6 +1209,7 @@ class MC_TextureManager
         // returns index at which this light structure was added
         // ( if same one was found, then that index is returned and nothing is added)
         uint32_t addLightDataStructure(TG_HWLightsData* lightData);
+        uint32_t addLightDataStructureWithPerActorColor(TG_HWLightsData* lightData);
 
 		void clearArrays (void)
 		{
@@ -1241,10 +1267,24 @@ class MC_TextureManager
 		
 		//-----------------------------------------------------------------------
 		// This routine will run through the TXM Cache on a regular basis and free
-		// up GOS Handles which haven't been used in some time.  Some Time TBD 
+		// up GOS Handles which haven't been used in some time.  Some Time TBD
 		// more accurately with time.
 		DWORD update (void);
-		
+
+		//-----------------------------------------------------------------------
+		// Registry-driven texture pinning.  Excludes the master node at nodeIdx
+		// from cacheout while pinRefCount > 0.  Refcounted so multiple registrants
+		// can share the same node (static-prop typeIDs share underlying textures —
+		// confirmed by trace).  See
+		// docs/superpowers/specs/2026-05-06-static-prop-texture-pin-fix.md
+		//
+		// pinNode  asserts nodeIdx < MC_MAXTEXTURES AND numUsers > 0 (orphan-pin
+		//          guard — slot must have a live texture allocation).
+		// unpinNode asserts pinRefCount > 0 before decrement.
+		void  pinNode    (DWORD nodeIdx);
+		void  unpinNode  (DWORD nodeIdx);
+		DWORD getPinCount(DWORD nodeIdx) const;
+
 		bool checkCacheHeap (void)
 		{
 			if (textureCacheHeap->totalCoreLeft() <= (TEXTURE_CACHE_SIZE - MAX_CACHE_SIZE))
@@ -1264,6 +1304,11 @@ extern MC_TextureManager *mcTextureManager;
 
 // Shadow shape collection — populated during TG_Shape::Render(), consumed in renderLists()
 void addShadowShape(HGOSBUFFER vb, HGOSBUFFER ib, HGOSVERTEXDECLARATION vdecl, const float* worldEntries16);
+
+// CP-1: per-mission reset of the static terrain shadow priming flag.
+// Call alongside gos_ResetStaticShadowPriming() at the per-mission init
+// chokepoint so each mission re-primes its static terrain shadow.
+void mc_ResetTerrainShadowPrimed();
 
 //----------------------------------------------------------------------
 #endif

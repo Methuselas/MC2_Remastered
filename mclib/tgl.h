@@ -167,7 +167,24 @@ typedef TG_ShadowTriangle* TG_ShadowTrianglePtr;
 #define		TG_LIGHT_SPOT					4
 #define		TG_LIGHT_TERRAIN				5
 
-#define 	MAX_LIGHTS_IN_WORLD				256
+// 2026-05-20: bumped 256 -> 1024 for (E) SpotLight_ -> real illumination.
+// Stage 1 / T1.1 (plan docs/superpowers/plans/2026-05-20-spotlight-real-illumination-plan.md).
+// Rationale: the new BldgAppearance::spotlightLights_ + Mech3DAppearance::
+// spotlightLights_ vectors call addWorldLight once per registered SpotLight_
+// child at first-night-visibility. T0.3 baselines:
+//   mc2_04 (night-canary): 0 static-prop + 9 distinct mech-types
+//   mc2_10 (stress)      : 1 static-prop family + 9 distinct mech-types
+//   mc2_24 (Vedette/LRMC): 0 static-prop + 13 distinct mech-types
+// Combined with the existing per-building terrainLight pointLight (1 per
+// active building), the 256 ceiling is the realistic concern only on mc2_10-
+// class stress missions. 1024 carries ~4x headroom with ~124KB BSS cost
+// (one LinearMatrix4D + three Vector3D arrays at tgl.h ~790-793, plus three
+// TG_LightPtr arrays at camera.cpp ~411-432). Well below the project's
+// RAM-cost-irrelevance threshold per memory/feedback_ram_cost_not_a_concern_below_500mb.md.
+// Shader-side MAX_LIGHTS_IN_WORLD in shaders/include/lighting.hglsl is a
+// DIFFERENT scope (per-shape best-N=16 truncation in the SSBO ld block);
+// that stays at 16.
+#define 	MAX_LIGHTS_IN_WORLD				1024
 
 #define 	TG_NODE_ID						25
 
@@ -281,10 +298,31 @@ typedef  TG_Light *TG_LightPtr;
 
 #define MAX_HW_LIGHTS_IN_WORLD	16
 
+// Slice 2 (object-offload) — Stage 2.C: TG_HWLightsData extended with
+// per-light falloff distances. lightFalloff[i] = (closeDistance,
+// farDistance, oneOverDistance, _unused). MUST stay byte-for-byte
+// lockstep with the GLSL `ObjectLights` struct in
+// shaders/include/lighting.hglsl (`vec4 light_falloff[16]`).
+//
+// Layout (std140-equivalent):
+//   lightToWorld[16][16] : offset    0,   1024 B
+//   lightDir[16][4]      : offset 1024,    256 B
+//   lightColor[16][4]    : offset 1280,    256 B
+//   lightFalloff[16][4]  : offset 1536,    256 B   (NEW Stage 2.C)
+//   numLights_           : offset 1792,      4 B
+//   pad[3]               : offset 1796,     12 B
+//   total                                   1808 B per ObjectLights
+//   UBO                                  32 × 1808 = 57856 B (under 64 KB)
+//
+// Schema-version note: the prior 1552-byte layout (without lightFalloff)
+// is the "Stage-2.A scope rule" reference layout; cdcdb7d shipped without
+// extending it. mc2_24 regression 2026-05-02 was caused by extending
+// the C++ side without the matching GLSL change; Stage 2.C lands both.
 struct TG_HWLightsData {
 	float lightToWorld[MAX_HW_LIGHTS_IN_WORLD][16];
 	float lightDir[MAX_HW_LIGHTS_IN_WORLD][4];
 	float lightColor[MAX_HW_LIGHTS_IN_WORLD][4];
+	float lightFalloff[MAX_HW_LIGHTS_IN_WORLD][4];
     int numLights_;
     int pad[3];
 
@@ -293,8 +331,9 @@ struct TG_HWLightsData {
 		memset(lightToWorld, 0, sizeof(lightToWorld));
 		memset(lightDir, 0, sizeof(lightDir));
 		memset(lightColor, 0, sizeof(lightColor));
+		memset(lightFalloff, 0, sizeof(lightFalloff));
         pad[0] = pad[1] = pad[2] = 13;
-    } 
+    }
 };
 
 typedef TG_HWLightsData* TG_HWLightsDataPtr;
@@ -538,6 +577,7 @@ class TG_TypeShape : public TG_TypeNode
 	friend class TG_MultiShape;
 	friend class TG_Shape;
 	friend class GpuStaticPropBatcher;
+	friend class GpuMechBatcher;
 
 	//-------------
 	//Data Members
@@ -693,6 +733,14 @@ class TG_Shape
 	friend class TG_TypeNode;
 	friend class TG_TypeMultiShape;
 	friend class GpuStaticPropBatcher;
+	// Slice 2 (object-offload) — Stage 2.A introduced this free function as
+	// the per-leaf eligibility check called from the addRenderShape gate at
+	// tgl.cpp:2522 (legacy bShadersDrawPathEnabled path). It needs to read
+	// `myType` and `myType->GetNodeType()`. Caught by Stage 2.B's clean
+	// rebuild of gos_static_prop_batcher.cpp (msl.h header touch invalidated
+	// the .obj cache that previously masked the access; cdcdb7d shipped this
+	// declaration but the existing mc2.exe binary predated the commit).
+	friend bool eligibleForGpuObjects(class TG_Shape* shape);
 
 	//-------------
 	//Data Members
@@ -779,7 +827,18 @@ class TG_Shape
 
 			listOfVertices = NULL;
 			listOfTriangles = NULL;
+			// Slice 2 (object-offload) — Stage 2.C: keep s_listOfLights and
+			// s_numLights consistent. Pre-Stage-2.C a latent bug here cleared
+			// s_listOfLights but not s_numLights — never fired in practice
+			// because the only GatherLightsParameters call ran inside
+			// MultiTransformShape, immediately after SetLightList. Stage 2.C
+			// adds a render-time reader (GatherGpuObjectLightDataOnly via
+			// submitMultiShape) that can fire when init() ran on a freshly-
+			// constructed TG_Shape between an earlier actor's SetLightList
+			// and this read — null-deref on s_listOfLights[i] in
+			// GatherLightsParameters. Reset both to keep the count truthful.
 			s_listOfLights = NULL;
+			s_numLights = 0;
 			listOfVisibleFaces = NULL;
 
 			listOfShadowVertices = NULL;
@@ -823,6 +882,11 @@ class TG_Shape
 			destroy();
 		}
 
+		// Stage 3.C: advance lastTurnTransformed without running vertex transform.
+		// Prevents TG_Shape::Render's staleness guard from firing when update() is
+		// skipped by the static-registry fast path.
+		void Touch();
+
 		//This function sets up the camera Matrices for this TG_Shape to transform
 		//itself with.  These matrices are static and only need to be set once per
 		//render pass if the camera does not change for that pass.
@@ -851,6 +915,34 @@ class TG_Shape
 		// NOTE:  THIS IS NOT A RIGOROUS CLIP!!!!!!!!!
 		long MultiTransformShape (Stuff::Matrix4D *shapeToClip, Stuff::Point3D *backFacePoint, TG_ShapeRecPtr parentNode, bool isHudElement, BYTE alphaValue, bool isClamped);
 
+		// Slice 2 (object-offload): reduced CPU pass — copy-and-strip variant
+		// of MultiTransformShape that keeps transform / screen-space positions /
+		// shadow-vertex projection / backface cull (listOfVisibleFaces) /
+		// lastTurnTransformed AND retains pool allocations for listOfColors,
+		// listOfTriangles, listOfVisibleShadows (PerPolySelect at tglpp.cpp:14-21
+		// requires these pointers non-null). Strips the per-vertex lighting
+		// kernel, aRGBHighlight additive, per-face lighting, listOfTriangles
+		// aRGBLight/fRGBLight writes, addTriangle queue calls, and the
+		// addRenderShape block. Stage 2.A: declared and defined but unused;
+		// Stage 2.B wires call sites in BldgAppearance/TreeAppearance/
+		// GenericAppearance::update inside their existing cull gates.
+		long MultiTransformShape_PositionsOnly (Stuff::Matrix4D *shapeToClip, Stuff::Point3D *backFacePoint, TG_ShapeRecPtr parentNode, bool isHudElement, BYTE alphaValue, bool isClamped);
+
+		// Slice 2 (object-offload): per-actor light-data cache without the
+		// per-vertex bake side-effects of MultiTransformShape. Uses the
+		// texture manager's scene-template path, then broadcasts the returned
+		// index into per-leaf GpuStaticPropInstance.lightDataIndex
+		// (Recon Section 9 Item 5: all leaves of one multi-shape see identical
+		// lightData_, so this is per-actor not per-leaf).
+		uint32_t GatherGpuObjectLightDataOnly();
+
+		// Stage 3.C: re-submit the already-populated lightData_ to get a fresh
+		// UBO slot index for this frame, without re-gathering from s_listOfLights.
+		// Call from touch() on frames where update() is skipped — lightData_ was
+		// set by GatherLightsParameters during the last update() run and is valid
+		// until shape or registration changes (both trigger invalidation).
+		uint32_t ResubmitCachedLightData();
+
 		//This function creates the list of shadows and transforms them in preparation to drawing.
 		//
 		void MultiTransformShadows (Stuff::Point3D *pos, Stuff::LinearMatrix4D *s2w, float rotation);
@@ -868,11 +960,24 @@ class TG_Shape
 			aRGBHighlight = argb;
 		}
 
+		// Task 5 (Track B): read-only accessors for recipe building outside GpuStaticPropBatcher.
+		DWORD GetARGBHighlight()  const { return aRGBHighlight; }
+		DWORD GetFogRGB()         const { return fogRGB; }
+		bool  GetLightsOut()      const { return lightsOut; }
+		bool  GetIsWindow()       const { return isWindow; }
+		bool  GetIsSpotlight()    const { return isSpotlight; }
+		// 2026-05-10: SHAPE_NODE filter accessor for non-friend callers
+		// (BldgAppearance/TreeAppearance::registerStatic). Mirrors the
+		// guard used by submitMultiShape at gos_static_prop_batcher.cpp:2047.
+		// Returns true only when myType is non-null AND its node-type is
+		// SHAPE_NODE (the only kind that has TG_TypeShape geometry).
+		bool  IsShapeNode()       const;
+
 		void SetLightsOut (bool lightFlag)
 		{
 			lightsOut = lightFlag;
 		}
-		
+
 		char * getNodeName (void)
 		{
 			return myType->getNodeId();

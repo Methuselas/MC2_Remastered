@@ -1,0 +1,83 @@
+{
+  "defines": [],
+  "outputs": [
+    {
+      "location": 0,
+      "name": "FragColor",
+      "type": "vec4"
+    },
+    {
+      "location": 1,
+      "name": "GBuffer1",
+      "type": "vec4"
+    }
+  ],
+  "shader": "shaders/gos_terrain_water_mdi.frag",
+  "ssbos": [],
+  "stage": "frag",
+  "ubos": [
+    {
+      "binding": 3,
+      "members": [
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "reflectionOn",
+          "offset": 0,
+          "type": "int"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "atlasMapTopLeftX",
+          "offset": 4,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "atlasMapTopLeftY",
+          "offset": 8,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "atlasOneOverWorldUnits",
+          "offset": 12,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "fog_color",
+          "offset": 16,
+          "type": "vec4"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "time",
+          "offset": 32,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "cameraPos",
+          "offset": 48,
+          "type": "vec4"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "alphaDepth",
+          "offset": 64,
+          "type": "float"
+        }
+      ],
+      "name": "gl_DefaultUniformBlock"
+    }
+  ],
+  "variant": "default"
+}

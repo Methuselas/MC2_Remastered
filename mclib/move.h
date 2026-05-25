@@ -643,6 +643,12 @@ class MissionMap {
 				if (mine == 0) --tileMineCount[tileIdx];
 				else           ++tileMineCount[tileIdx];
 			}
+			// PR2c Stage 1c — mark MineStaticVBO dirty on any cell mutation
+			// (forward-declared to avoid pulling gos_terrain_indirect.h into
+			// this widely-included header). Idempotent — chain explosions
+			// debounce to one rebuild/frame via dirty-flag.
+			extern void gos_terrain_indirect_MarkMineDirty();
+			gos_terrain_indirect_MarkMineDirty();
 		}
 
 		// Fast per-frame read used by terrain quad mine/scorch reservation. Returns

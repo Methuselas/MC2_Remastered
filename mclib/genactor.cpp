@@ -12,6 +12,10 @@
 #include"genactor.h"
 #endif
 
+#include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
+#include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
+#include "cpu_proj_cost_split.h"      // F3 CPU projection cost-baseline (RAII scope)
+
 #ifndef CAMERA_H
 #include"camera.h"
 #endif
@@ -260,7 +264,10 @@ void GenericAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	isLooping = false;
 	setFirstFrame = false;
 	canTransition = true;
-	
+
+	// Slice 2 (object-offload) substrate: never set true in Stage 2.A.
+	needsFullBakeNextFrame = false;
+
 	paintScheme = -1;
 	objectNameId = 30469;
 	hazeFactor = 0.0f;
@@ -580,8 +587,13 @@ bool GenericAppearance::isMouseOver (float px, float py)
 //-----------------------------------------------------------------------------
 bool GenericAppearance::recalcBounds (void)
 {
+	// F3 CPU projection cost-baseline: aggregate per-actor scope into the
+	// recalcBounds_perframe bucket. No-op when env OFF.
+	::mc2_cpu_proj_cost::Scope _f3_recalcBounds_scope(
+	    ::mc2_cpu_proj_cost::BUCKET_RECALCBOUNDS_PERFRAME);
+	::mc2_cpu_proj_cost::add_workload_recalcbounds(1);
 	Stuff::Vector4D tempPos;
-	inView = false;
+	setVisibilityGatesFromLegacy(false);
 
 	if (eye)
 	{
@@ -603,17 +615,17 @@ bool GenericAppearance::recalcBounds (void)
 			if (eyeDistance > Camera::MaxClipDistance)
 			{
 				hazeFactor = 1.0f;
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 			else if (eyeDistance > Camera::MinHazeDistance)
 			{
 				Camera::HazeFactor = (eyeDistance - Camera::MinHazeDistance) * Camera::DistanceFactor;
-				inView = true;
+				setVisibilityGatesFromLegacy(true);
 			}
 			else
 			{
 				Camera::HazeFactor = 0.0f;
-				inView = true;
+				setVisibilityGatesFromLegacy(true);
 			}
 			
 			//-----------------------------------------------------------------
@@ -634,15 +646,15 @@ bool GenericAppearance::recalcBounds (void)
 				
 				float cosine = Distance * eye->getLookVector();
  				if (cosine > eye->cosHalfFOV)
-					inView = true;
+					setVisibilityGatesFromLegacy(true);
 				else
-					inView = false;
+					setVisibilityGatesFromLegacy(false);
 			}
 		}
 		else
 		{
 			Camera::HazeFactor = 0.0f;
-			inView = true;
+			setVisibilityGatesFromLegacy(true);
 		}
 		
 		if (inView)
@@ -749,16 +761,16 @@ bool GenericAppearance::recalcBounds (void)
 					(upperLeft.x <= eye->getScreenResX()) &&
 					(upperLeft.y <= eye->getScreenResY()))
 				{
-					inView = true;
+					setVisibilityGatesFromLegacy(true);
 				}
 				else
 				{
-					inView = false;		//Did alot of extra work checking this, but WHY draw and insult to injury?
+					setVisibilityGatesFromLegacy(false);		//Did alot of extra work checking this, but WHY draw and insult to injury?
 				}
 			}
 			else
 			{
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 		}
 	}
@@ -793,13 +805,42 @@ long GenericAppearance::render (long depthFixup)
 		// Call Multi-shape render stuff here.
 		if (visible)
 		{
+			// Slice 1 path (g_useGpuObjects). Same shape as BldgAppearance::render.
+			bool submittedToGpu = false;
+			if (g_useGpuObjects)
+			{
+				GpuStaticPropBatcher::instance().recordEligibleActor(
+					GpuStaticPropPopulation::Generic);
+				if (genShape)
+				{
+					// Stage 2.C+: see BldgAppearance::render for callerName intent.
+					const char* callerName = (appearType ? appearType->name : nullptr);
+					submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
+						genShape, GpuStaticPropPopulation::Generic, callerName);
+					// Slice 2 (object-offload) — Stage 2.B: see BldgAppearance::render
+					// for full rationale on the late-reg recovery flag.
+					if (!submittedToGpu &&
+					    GpuStaticPropBatcher::instance().wasLastFailureLateRegistration())
+					{
+						needsFullBakeNextFrame = true;
+					}
+				}
+				if (!submittedToGpu)
+				{
+					GpuStaticPropBatcher::instance().recordCpuFallback(
+						GpuStaticPropPopulation::Generic);
+				}
+			}
+			// Legacy bypass-cull path. Mutually exclusive with slice 1 — gated on
+			// !g_useGpuObjects. Tagged Legacy so Gate F's fallback-rate is computed
+			// only over slice-1 populations. See spec R1.
 			// GPU path: skip depthFixup (sky/background push-back). Those
 			// cases use a non-standard z override that doesn't fit the
 			// per-packet instanced draw. Fall back to CPU for depthFixup.
-			bool submittedToGpu = false;
-			if (g_useGpuStaticProps && genShape && !depthFixup)
+			if (!submittedToGpu && !g_useGpuObjects && g_useGpuStaticProps && genShape && !depthFixup)
 			{
-				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(genShape);
+				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
+					genShape, GpuStaticPropPopulation::Legacy);
 			}
 			if (!submittedToGpu)
 			{
@@ -1024,8 +1065,11 @@ long GenericAppearance::renderShadows (void)
 }
 
 //-----------------------------------------------------------------------------
-long GenericAppearance::update (bool animate) 
+long GenericAppearance::update (bool animate)
 {
+	::mc2_object_recon::Scope _recon_generic_(
+		&::mc2_object_recon::g_per_frame.generic_update_ns,
+		&::mc2_object_recon::g_per_frame.generic_update_calls);
 	Stuff::Point3D xlatPosition;
 	Stuff::UnitQuaternion rot;
 	Stuff::UnitQuaternion yawAngle;
@@ -1161,7 +1205,37 @@ long GenericAppearance::update (bool animate)
 	{
 		genShape->SetIsClamped(true);
 		genShape->SetLightList(NULL,0);
-		genShape->TransformMultiShape (&xlatPosition,&rot);
+		// Slice 2 (object-offload) — Stage 2.B: eligibility hoist.
+		// See BldgAppearance::update for the full rationale; same shape.
+		// Branch lives INSIDE the existing inView||g_useGpuStaticProps cull
+		// gate to preserve slice 1's R1 invariant.
+		if (g_useGpuObjects &&
+		    !needsFullBakeNextFrame &&
+		    GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(genShape))
+		{
+			// Stage 2.D.2.1 (M1): cache GPU light data now, while
+			// worldLights[0]->aRGB is the per-actor terrain-scaled value.
+			// Mirrors bdactor.cpp:2247 and :4398. Without this call,
+			// submitMultiShape() falls back to GatherGpuObjectLightDataOnly()
+			// during renderLists(), which reads the last-written
+			// worldLights[0]->aRGB (the final actor's value) instead of
+			// this actor's value. The resulting safe-by-accident invariant
+			// (GenericAppearance::SetLightList(NULL, 0) zaps s_listOfLights)
+			// is brittle — explicit caching removes the fragility.
+			genShape->CacheGpuLightData();
+			genShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+			// Stage 2.D.2: dual-emit full bake — same rationale as BldgAppearance.
+			// Populates listOfTriangles[].aRGBLight for snapshot in submit().
+			// Stage 2.D.3: per-actor gate (see BldgAppearance::update).
+			if (gos_object_parity::IsDualEmitArmedForActor(genShape)) {
+				genShape->TransformMultiShape (&xlatPosition,&rot);
+			}
+		}
+		else
+		{
+			genShape->TransformMultiShape (&xlatPosition,&rot);
+			needsFullBakeNextFrame = false;
+		}
 	}
 
 	return TRUE;

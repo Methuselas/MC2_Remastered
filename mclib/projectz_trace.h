@@ -19,7 +19,7 @@
 namespace Stuff { class Vector3D; class Vector4D; }
 
 //--------------------------------------------------------------------
-// Per-vertex predicates: six booleans + perspective flag.
+// Per-vertex predicates: seven booleans + perspective flag.
 // Parallel-branch calls set isPerspective=false; modern predicates are n/a.
 struct ProjectZPredicates {
     bool legacyRect;        // ground truth: current screen-rect test (must == bool return)
@@ -28,6 +28,7 @@ struct ProjectZPredicates {
     bool rectSignedW;       // legacyRect && signedW > 0
     bool rectNearFar;       // legacyRect && rawClip.z in [0, rawClip.w]
     bool rectGuard;         // legacyRect with viewport expanded by g_pzGuardPx pixels
+    bool homogClipFull;     // clipSpaceFrustumAdmit(rawClip) — full clip-space frustum test (Track A1 modern predicate)
     bool isPerspective;     // false => modern predicates are n/a for this call
 };
 

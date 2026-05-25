@@ -19,9 +19,7 @@ out vec3 GrassBaseColor;
 out float GrassAlpha;
 
 uniform sampler2D tex1;         // colormap (unit 0)
-uniform mat4 terrainMVP;        // axisSwap * worldToClip
-uniform vec4 terrainViewport;   // (vmx, vmy, vax, vay) for perspective projection
-uniform mat4 mvp;               // screen pixels -> NDC
+uniform mat4 u_worldToClipGL;   // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 uniform vec4 cameraPos;         // Stuff/MLR space: x=left, y=elev, z=forward
 uniform float time;             // elapsed time in seconds
 
@@ -43,17 +41,9 @@ float hash21(vec2 p) {
     return fract(p.x * p.y);
 }
 
-// Project a world position using the same two-step projection as TES
+// Project a world position to GL clip space (F1 Stage A: direct emit)
 vec4 projectWorldPos(vec3 worldPos) {
-    vec4 clip = terrainMVP * vec4(worldPos, 1.0);
-    float rhw = 1.0 / clip.w;
-    vec3 screen;
-    screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
-    screen.y = clip.y * rhw * terrainViewport.y + terrainViewport.w;
-    screen.z = clip.z * rhw;
-    vec4 ndc = mvp * vec4(screen, 1.0);
-    float absW = abs(clip.w);
-    return vec4(ndc.xyz * absW, absW);
+    return u_worldToClipGL * vec4(worldPos, 1.0);
 }
 
 // Emit one grass quad vertex

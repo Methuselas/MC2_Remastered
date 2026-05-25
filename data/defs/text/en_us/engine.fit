@@ -1,11 +1,20 @@
 /***************************************************************
  * FILENAME: engine.fit
- * DESCRIPTION: Engine and platform visible localized text definitions.
+ * DESCRIPTION: Engine/platform visible text definitions from source-string migration.
  *
- * CREATED BY: Methuselas
- * CREATED: 2026-04-30
+ * AUTHOR: Microsoft / FASA source data
+ * CREATED: Unknown
  *
+ * UPDATED BY: Methuselas
+ * UPDATED: 2026-05-05
+ *
+ * CHANGES:
+ * - Built collapsed exact-text source string candidates; existing text keys reused when exact text already exists.
  ***************************************************************/
+
+// Generated for MC2R data/defs master FIT set.
+// Exact duplicate visible text is collapsed to one String key.
+// Legacy/resource/menu/control identity is preserved in alias/binding FITs.
 
 String {
     key = "engine.source.mc2_gl_error_drain_silent_percents"

@@ -16,12 +16,21 @@
 
 #include "gos_terrain_water_stream.h"
 
+#include "gos_profiler.h"
+#include "gpu_driven_common.h"
+#include "gos_terrain_lighting.h"
+#include "gos_static_prop_killswitch.h"  // gos_GetTerrainMVPMat4()
+#include "gos_terrain_indirect.h"        // IsFrameSolidArmed()
+#include <algorithm>                     // std::sort -- surfaced by MC2_ASAN build (Tracy-disabled config drops the transitive include)
+#include <cassert>
+
 #include <vector>
 #include <unordered_map>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <string>
 
 #include <GL/glew.h>
 
@@ -29,6 +38,17 @@
 #include "../../mclib/quad.h"
 #include "../../mclib/vertex.h"
 #include "../../mclib/mapdata.h"
+
+// [WATER_DEPTHPROBE v1] cross-TU Probe-8 fingerprint accessors (terrain-solid
+// side). Paired per-frame against the water-upload MVP fingerprint to
+// discriminate a RUNTIME temporal MVP divergence (fps differ under camera
+// motion) from a static depth-derivation/fudge mismatch (fps stay equal).
+extern "C" uint32_t gos_terrain_indirect_getDispatchMvpFp();
+extern "C" uint64_t gos_terrain_indirect_getDispatchMvpFrameIdx();
+// Water-consistency fix (2026-05-17): full MVP terrain-solid baked its Fix-B
+// clipPos with this frame. Used only when IsFrameSolidArmed() (then it is
+// this-frame-fresh) so the drawn water matches the drawn terrain exactly.
+extern "C" const float* gos_terrain_indirect_getDispatchMvp16();
 
 namespace WaterStream {
 
@@ -50,6 +70,35 @@ uint32_t g_thinSlot = 0;
 uint32_t g_thinSlotCapacity = 0;
 std::vector<WaterThinRecord> g_thinStaging;
 
+// Narrow-walk candidate vector. Populated by AppendNarrowCandidate during
+// the per-frame setupTextures loop; consumed by UploadAndBindThinRecords.
+// Default-on; env-gated `MC2_WATER_UPLOAD_NARROW=0` falls back to full walk.
+std::vector<TerrainQuadPtr> g_narrowQuadsThisFrame;
+uint32_t g_narrowMaxSeen = 0;
+bool s_narrowEnabledKnown = false;
+bool s_narrowEnabled = true;
+inline bool NarrowEnabledImpl() {
+    if (!s_narrowEnabledKnown) {
+        const char* v = getenv("MC2_WATER_UPLOAD_NARROW");
+        s_narrowEnabled = !(v && v[0] == '0' && v[1] == '\0');
+        s_narrowEnabledKnown = true;
+    }
+    return s_narrowEnabled;
+}
+// Per-600-frame upload summary (so the user can confirm the narrow path
+// actually fires and the volume drop is real).
+uint32_t g_uploadSummaryFrames = 0;
+uint64_t g_uploadSummaryNarrowQuads = 0;
+uint64_t g_uploadSummaryFullWalkQuads = 0;
+
+// B4 Stage 1c — water parity mask.
+// One bit per corner-0 vertexNum. Set for every quad that UploadAndBindThinRecords
+// emits a thin record for (= quads the legacy water path draws this frame).
+// Reset at the top of UploadAndBindThinRecords and in Reset().
+// Indexed and sized identically to gos_terrain_mask_dispatch's s_waterMask.
+static constexpr int32_t kWaterParityMaskWords = 450;  // ceil(14400/32)
+static uint32_t s_waterParityMask[kWaterParityMaskWords];
+
 bool s_debugEnabledKnown = false;
 bool s_debugEnabled = false;
 bool DebugOn() {
@@ -59,6 +108,21 @@ bool DebugOn() {
     }
     return s_debugEnabled;
 }
+
+// ---------------------------------------------------------------------------
+// Phase C Stage 1 compute resources
+// ---------------------------------------------------------------------------
+GLuint   g_waterComputeProgram    = 0;
+GLuint   g_cmdPatchProgram        = 0;
+GLuint   g_quadWindowSsbo         = 0;   // per-frame: recipe indices in quadList window
+uint32_t g_quadWindowSsboCapacity = 0;   // CPU-side mirror of g_quadWindowSsbo allocated size (bytes)
+GLuint   g_waterBucketHeaderSsbo  = 0;   // GpuDrivenBucketHeader (16 B)
+GLuint   g_waterIndirectCmdBuffer = 0;   // 2 × DrawArraysIndirectCommand (32 B)
+bool     g_waterGpuDrivenArmed    = false;
+
+// CPU staging array for BuildQuadWindowSSBO. Persists across frames to avoid
+// per-frame allocation. Capacity grows to the high-water-mark and stays there.
+std::vector<uint32_t> g_quadWindowStaging;
 
 // Mirrors the file-static `terrainTypeToMaterial` in mclib/quad.cpp.
 // Kept here as a duplicate (~3 lookups) so neither this file nor the parity
@@ -84,6 +148,35 @@ void Reset() {
     g_vertexNumToRecipe.clear();
     g_ready = false;
     g_recipeBufferUploadedCount = 0;
+    g_narrowQuadsThisFrame.clear();
+    g_narrowQuadsThisFrame.shrink_to_fit();
+    g_narrowMaxSeen = 0;
+    memset(s_waterParityMask, 0, sizeof(s_waterParityMask));
+}
+
+bool NarrowEnabled() {
+    return NarrowEnabledImpl();
+}
+
+void BeginFrameNarrow() {
+    if (!NarrowEnabledImpl()) return;
+    // Reserve last-frame max + 10% slack, capped at recipe count (the hard
+    // upper bound — every map water quad simultaneously). vector::clear is
+    // O(n) destructor-call here but TerrainQuadPtr is a trivial pointer, so
+    // it's effectively a size reset. No allocation in the hot loop.
+    const size_t reserve = (size_t)(g_narrowMaxSeen + (g_narrowMaxSeen / 10) + 64);
+    if (g_narrowQuadsThisFrame.capacity() < reserve)
+        g_narrowQuadsThisFrame.reserve(reserve);
+    g_narrowQuadsThisFrame.clear();
+}
+
+void AppendNarrowCandidate(const void* quadPtr) {
+    // Caller asserts the quad already passed the same predicate
+    // UploadAndBindThinRecords applies (corners non-null, vertexNum >= 0,
+    // waterHandle != 0xffffffff). The Upload loop re-checks defensively.
+    g_narrowQuadsThisFrame.push_back((TerrainQuadPtr)quadPtr);
+    if (g_narrowQuadsThisFrame.size() > g_narrowMaxSeen)
+        g_narrowMaxSeen = (uint32_t)g_narrowQuadsThisFrame.size();
 }
 
 void Build() {
@@ -221,6 +314,34 @@ void Build() {
 
     g_ready = true;
 
+    // [WATER_MAT v1] positive-marker probe (env MC2_WATER_MATERIAL_PROBE; SEPARATE
+    // from the retained [WATER_DEPTHPROBE v2] MVP instrument - do not share its env).
+    // Recomputes the VS thickness formula CPU-side over the populated recipes so a
+    // smoke can assert the elevation path is live (max > 0), not a flat unbound read.
+    {
+        static const bool s_waterMatProbe =
+            (getenv("MC2_WATER_MATERIAL_PROBE") != nullptr);
+        if (s_waterMatProbe && !g_recipes.empty()) {
+            float tmin = 1e30f, tmax = -1e30f;
+            for (const WaterRecipe& r : g_recipes) {
+                float floorMin = r.v0e;
+                floorMin = (r.v1e < floorMin) ? r.v1e : floorMin;
+                floorMin = (r.v2e < floorMin) ? r.v2e : floorMin;
+                floorMin = (r.v3e < floorMin) ? r.v3e : floorMin;
+                float thick = (float)Terrain::waterElevation - floorMin;
+                if (thick < 0.0f) thick = 0.0f;
+                if (thick < tmin) tmin = thick;
+                if (thick > tmax) tmax = thick;
+            }
+            fprintf(stderr,
+                    "[WATER_MAT v1] event=summary recipes=%zu thickness_min=%.3f "
+                    "thickness_max=%.3f waterElevation=%.3f\n",
+                    g_recipes.size(), (double)tmin, (double)tmax,
+                    (double)Terrain::waterElevation);
+            fflush(stderr);
+        }
+    }
+
     if (DebugOn()) {
         fprintf(stderr,
                 "[WATER_STREAM v1] event=build_done recipes=%zu "
@@ -262,6 +383,20 @@ bool IsReady() {
     return g_ready;
 }
 
+// B4 Stage 1c — water parity mask accessor.
+const uint32_t* GetWaterParityMask(int* outWords) {
+    if (outWords) *outWords = kWaterParityMaskWords;
+    return s_waterParityMask;
+}
+
+const WaterRecipe* RecipeForVertexNum(int32_t vn) {
+    if (vn < 0) return nullptr;
+    auto it = g_vertexNumToRecipe.find(static_cast<uint32_t>(vn));
+    if (it == g_vertexNumToRecipe.end()) return nullptr;
+    assert(it->second < (uint32_t)g_recipes.size()); // invariant: Build populates both atomically
+    return &g_recipes[it->second];
+}
+
 unsigned int EnsureRecipeBufferUploaded() {
     if (!g_ready || g_recipes.empty())
         return 0;
@@ -292,6 +427,7 @@ unsigned int EnsureRecipeBufferUploaded() {
 }
 
 uint32_t UploadAndBindThinRecords() {
+    ZoneScopedN("WaterFast.UploadThin");
     if (!g_ready || g_recipes.empty())
         return 0;
 
@@ -300,15 +436,53 @@ uint32_t UploadAndBindThinRecords() {
     const long total = terrainPtr ? terrainPtr->getNumQuads() : 0;
     if (!quads || total <= 0) return 0;
 
-    // Walk the live (camera-windowed) quadList. For each water-bearing quad,
-    // look up its stable recipe by top-left-vertex `vertexNum` and emit a
-    // thin record carrying live light/fog/pzValid.
+    // Candidate selection: narrow vector (default) vs full quadList walk
+    // (env-opt-out). Narrow vector was populated during the engine's existing
+    // per-frame setupTextures loop with the SAME corner-validity + waterHandle
+    // gate this loop applies — so iterating it covers every quad the legacy
+    // walk would have admitted, but typically with 100x fewer iterations.
+    const bool narrow = NarrowEnabledImpl();
+    const TerrainQuadPtr* narrowArr = narrow && !g_narrowQuadsThisFrame.empty()
+        ? g_narrowQuadsThisFrame.data() : nullptr;
+    const size_t narrowN = narrow ? g_narrowQuadsThisFrame.size() : 0;
+    const long iterCount = narrow ? (long)narrowN : total;
+
+    // Per-frame upload-summary accounting (per 600 frames).
+    g_uploadSummaryNarrowQuads   += narrow ? narrowN : 0;
+    g_uploadSummaryFullWalkQuads += narrow ? 0 : (uint64_t)total;
+    if (++g_uploadSummaryFrames >= 600) {
+        fprintf(stderr,
+                "[WATER_FAST v1] event=upload_summary frames=%u "
+                "narrowed=%llu full_walk=%llu narrow_enabled=%d\n",
+                g_uploadSummaryFrames,
+                (unsigned long long)g_uploadSummaryNarrowQuads,
+                (unsigned long long)g_uploadSummaryFullWalkQuads,
+                narrow ? 1 : 0);
+        fflush(stderr);
+        g_uploadSummaryFrames = 0;
+        g_uploadSummaryNarrowQuads = 0;
+        g_uploadSummaryFullWalkQuads = 0;
+    }
+
+    // Walk candidates. For each water-bearing quad, look up its stable
+    // recipe by top-left-vertex `vertexNum` and emit a thin record carrying
+    // live light/fog/pzValid.
     g_thinStaging.clear();
-    g_thinStaging.reserve((size_t)total);
+    g_thinStaging.reserve((size_t)iterCount);
+
+    // B4 Stage 1c: zero parity mask before rebuilding it this frame.
+    memset(s_waterParityMask, 0, sizeof(s_waterParityMask));
 
     uint32_t pzValidCount = 0;
-    for (long i = 0; i < total; ++i) {
-        const TerrainQuad& q = quads[i];
+    uint32_t waterHandleCount = 0;
+    uint32_t recipeMissCount = 0;
+    uint32_t pzDropCount = 0;
+    for (long i = 0; i < iterCount; ++i) {
+        const TerrainQuad& q = narrowArr ? *narrowArr[i] : quads[i];
+        // Re-check the eligibility gate even on the narrow path. The narrow
+        // appender uses the SAME predicate, so this is a no-op there; the
+        // legacy walk needs it. Cost is two compares + a load on the narrow
+        // path (negligible) and keeps the walk semantically identical.
         if (!q.vertices[0] || !q.vertices[1] ||
             !q.vertices[2] || !q.vertices[3]) continue;
         // Skip quads where ANY corner is the map-edge blankVertex (vertexNum < 0).
@@ -321,11 +495,36 @@ uint32_t UploadAndBindThinRecords() {
             q.vertices[2]->vertexNum < 0 || q.vertices[3]->vertexNum < 0) continue;
         // Outer gate: legacy water emit at quad.cpp:2742. Skip non-water quads
         // and quads where setupTextures decided no water emission this frame.
-        if (q.waterHandle == 0xffffffffu) continue;
-
+        // Fix A (staircase): also include submerged tiles that lack water&1.
+        // setupTextures never sets waterHandle for those (quad.cpp:973 gate),
+        // but the GPU FS handles them via WaterThickness/shore smoothstep.
+        // Recipe lookup is hoisted here so the submerged check and main path
+        // share a single find(). On the narrow path all entries are either
+        // water-flagged or submerged (terrain.cpp append predicate mirrors this),
+        // so the lookup cost is bounded.
         const uint32_t topLeftVN = (uint32_t)q.vertices[0]->vertexNum;
         auto it = g_vertexNumToRecipe.find(topLeftVN);
-        if (it == g_vertexNumToRecipe.end()) continue;
+
+        bool submergedSandTile = false;
+        if (q.waterHandle == 0xffffffffu) {
+            if (it == g_vertexNumToRecipe.end()) continue;
+            const WaterRecipe& recS = g_recipes[it->second];
+            const float we = Terrain::waterElevation;
+            // Shore-extension: keep tiles slightly above waterElevation (VS sits them
+            // on terrain surface; FS fades via negative-WaterThickness smoothstep).
+            const float shoreExt = MapData::alphaDepth * 0.5f > 0.0f
+                                   ? MapData::alphaDepth * 0.5f : 15.0f;
+            if (recS.v0e >= we + shoreExt && recS.v1e >= we + shoreExt &&
+                recS.v2e >= we + shoreExt && recS.v3e >= we + shoreExt)
+                continue;
+            submergedSandTile = true;
+        }
+        ++waterHandleCount;
+
+        if (it == g_vertexNumToRecipe.end()) {
+            ++recipeMissCount;
+            continue;
+        }
 
         // Per-triangle pz validity. For each triangle (BOTTOMRIGHT or
         // BOTTOMLEFT diagonal) check that ALL THREE corners' wz ∈ [0,1).
@@ -345,7 +544,12 @@ uint32_t UploadAndBindThinRecords() {
         const bool ok3 = pzOk(wz3);
 
         bool pzTri1, pzTri2;
-        if (q.uvMode == BOTTOMRIGHT) {
+        if (submergedSandTile) {
+            // No CPU-side wz for tiles outside water&1 path. VS computes its
+            // own clip position from the recipe; let HW near-plane clipping
+            // handle any off-frustum vertices.
+            pzTri1 = pzTri2 = true;
+        } else if (q.uvMode == BOTTOMRIGHT) {
             // tri1=corners[0,1,2], tri2=corners[0,2,3]
             pzTri1 = ok0 && ok1 && ok2;
             pzTri2 = ok0 && ok2 && ok3;
@@ -354,7 +558,10 @@ uint32_t UploadAndBindThinRecords() {
             pzTri1 = ok0 && ok1 && ok3;
             pzTri2 = ok1 && ok2 && ok3;
         }
-        if (!pzTri1 && !pzTri2) continue;  // entire quad fails — drop record
+        if (!pzTri1 && !pzTri2) {
+            ++pzDropCount;
+            continue;  // entire quad fails - drop record
+        }
 
         WaterThinRecord tr{};
         tr.recipeIdx = it->second;
@@ -383,6 +590,33 @@ uint32_t UploadAndBindThinRecords() {
         tr.fogRGB2   = (q.vertices[2]->fogRGB & 0xFFFFFF00u) | m2;
         tr.fogRGB3   = (q.vertices[3]->fogRGB & 0xFFFFFF00u) | m3;
         g_thinStaging.push_back(tr);
+
+        // B4 Stage 1c: set parity mask bit (topLeftVN is the corner-0 vertexNum).
+        if (topLeftVN < (uint32_t)(kWaterParityMaskWords * 32))
+            s_waterParityMask[topLeftVN >> 5] |= (1u << (topLeftVN & 31u));
+    }
+
+    {
+        static bool s_haveLast = false;
+        static uint32_t s_lastThin = 0;
+        static uint32_t s_lastWaterHandles = 0;
+        const uint32_t thinCountNow = (uint32_t)g_thinStaging.size();
+        const bool disappeared = (waterHandleCount > 0 && thinCountNow == 0);
+        const bool recovered = (s_haveLast && s_lastThin == 0 && thinCountNow > 0);
+        if (disappeared || recovered || !s_haveLast) {
+            fprintf(stderr,
+                    "[WATER_STREAM v1] event=thin_summary total_quads=%ld "
+                    "water_handles=%u thin=%u pz_valid=%u recipe_miss=%u "
+                    "pz_drop=%u state=%s prev_water_handles=%u prev_thin=%u\n",
+                    total, waterHandleCount, thinCountNow, pzValidCount,
+                    recipeMissCount, pzDropCount,
+                    disappeared ? "disappeared" : (recovered ? "recovered" : "initial"),
+                    s_lastWaterHandles, s_lastThin);
+            fflush(stderr);
+        }
+        s_haveLast = true;
+        s_lastThin = thinCountNow;
+        s_lastWaterHandles = waterHandleCount;
     }
 
     const uint32_t thinCount = (uint32_t)g_thinStaging.size();
@@ -447,6 +681,11 @@ bool s_parityEnabled      = false;
 uint64_t s_parityFrameCounter   = 0;
 uint64_t s_parityQuadsChecked   = 0;
 uint64_t s_parityMismatchTotal  = 0;
+
+// GPU-driven parity counters — gated by gpu_driven::IsParityEnabled()
+static uint64_t s_gpuParityFrames    = 0;
+static uint64_t s_gpuParityQuads     = 0;
+static uint64_t s_gpuParityMismatches = 0;
 
 constexpr uint32_t kMaxMismatchPrintsPerFrame = 16;
 constexpr uint64_t kSummaryEveryFrames        = 600;
@@ -917,6 +1156,678 @@ void CheckParityFrame(const ParityFrameUniforms& u) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase C Stage 1 implementation
+// ---------------------------------------------------------------------------
+
+// BuildQuadWindowSSBO — populate per-frame recipe-index window for the GPU compute dispatch.
+//
+// When SOLID is armed (IsFrameSolidArmed() == true): setupTextures is gated off,
+// so waterHandle is never set. terrain.cpp populates g_narrowQuadsThisFrame using
+// the pVertex->water & 1 primary gate (same predicate as quad.cpp:956-959 water block
+// entry). The GPU compute shader's pzOk gate (gpu_driven_water.comp:236) handles the
+// secondary clip-range check, replacing the clipped1||clipped2 gate in setupTextures.
+//
+// When SOLID is NOT armed (legacy path): use the per-frame narrow walk filtered by
+// waterHandle, matching UploadAndBindThinRecords' gate exactly.
+//
+// Returns the count of window entries written (0 if none).
+static uint32_t BuildQuadWindowSSBO() {
+    if (!g_ready || g_recipes.empty()) return 0;
+
+    g_quadWindowStaging.clear();
+
+    if (gos_terrain_indirect::IsFrameSolidArmed()) {
+        // Armed path: narrow list populated by terrain.cpp via clipInfo gate.
+        // No waterHandle check — GPU pz gate (gpu_driven_water.comp:236) handles it.
+        const long iterCount = (long)g_narrowQuadsThisFrame.size();
+        g_quadWindowStaging.reserve((size_t)iterCount);
+        for (long i = 0; i < iterCount; ++i) {
+            const TerrainQuad& q = *g_narrowQuadsThisFrame[(size_t)i];
+            if (!q.vertices[0] || q.vertices[0]->vertexNum < 0) continue;
+            const uint32_t topLeftVN = (uint32_t)q.vertices[0]->vertexNum;
+            auto it = g_vertexNumToRecipe.find(topLeftVN);
+            if (it == g_vertexNumToRecipe.end()) continue;
+            g_quadWindowStaging.push_back(it->second);
+        }
+    } else {
+        const TerrainPtr terrainPtr = land;
+        const TerrainQuadPtr quads  = terrainPtr ? terrainPtr->getQuadList()  : nullptr;
+        const long total            = terrainPtr ? terrainPtr->getNumQuads()  : 0;
+        if (!quads || total <= 0) return 0;
+
+        const bool narrow   = NarrowEnabledImpl();
+        const TerrainQuadPtr* narrowArr = narrow && !g_narrowQuadsThisFrame.empty()
+                                          ? g_narrowQuadsThisFrame.data() : nullptr;
+        const long iterCount = narrow ? (long)g_narrowQuadsThisFrame.size() : total;
+
+        g_quadWindowStaging.reserve((size_t)iterCount);
+
+        for (long i = 0; i < iterCount; ++i) {
+            const TerrainQuad& q = narrowArr ? *narrowArr[i] : quads[i];
+            if (!q.vertices[0] || !q.vertices[1] ||
+                !q.vertices[2] || !q.vertices[3]) continue;
+            if (q.vertices[0]->vertexNum < 0 || q.vertices[1]->vertexNum < 0 ||
+                q.vertices[2]->vertexNum < 0 || q.vertices[3]->vertexNum < 0) continue;
+            if (q.waterHandle == 0xffffffffu) continue;
+
+            const uint32_t topLeftVN = (uint32_t)q.vertices[0]->vertexNum;
+            auto it = g_vertexNumToRecipe.find(topLeftVN);
+            if (it == g_vertexNumToRecipe.end()) continue;
+
+            g_quadWindowStaging.push_back(it->second);
+        }
+    }
+
+    const uint32_t windowCount = (uint32_t)g_quadWindowStaging.size();
+    if (windowCount == 0) return 0;
+
+    // Grow g_quadWindowSsbo lazily if capacity is too small.
+    // Capacity is sized to the recipe count (all water quads simultaneously).
+    // Use the CPU-side g_quadWindowSsboCapacity mirror to avoid a
+    // glGetBufferParameteriv GPU round-trip every frame.
+    if (g_quadWindowSsbo != 0 &&
+        g_quadWindowSsboCapacity < windowCount * (uint32_t)sizeof(uint32_t)) {
+        glDeleteBuffers(1, &g_quadWindowSsbo);
+        g_quadWindowSsbo = 0;
+        g_quadWindowSsboCapacity = 0;
+    }
+    if (g_quadWindowSsbo == 0) {
+        const uint32_t cap = (uint32_t)(g_recipes.size() * sizeof(uint32_t));
+        glGenBuffers(1, &g_quadWindowSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_quadWindowSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)cap, nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        g_quadWindowSsboCapacity = cap;
+    }
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_quadWindowSsbo);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                    (GLsizeiptr)(windowCount * sizeof(uint32_t)),
+                    g_quadWindowStaging.data());
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    return windowCount;
+}
+
+bool ComputeDispatchAndBindThinRecords(float frameCos) {
+    g_waterGpuDrivenArmed = false;
+
+    if (!gpu_driven::IsWaterEnabled()) return false;
+
+    // Lazy-build compute programs and GPU resources on first call.
+    if (g_waterComputeProgram == 0) {
+        g_waterComputeProgram = gpu_driven::BuildComputeProgramFromFile(
+            "shaders/gpu_driven_water.comp", nullptr, 0, "gpu_driven_water");
+        g_cmdPatchProgram = gpu_driven::BuildComputeProgramFromFile(
+            "shaders/gpu_driven_cmd_patch.comp", nullptr, 0, "gpu_driven_cmd_patch");
+        if (!g_waterComputeProgram || !g_cmdPatchProgram) {
+            // Don't leave partial state.
+            if (g_waterComputeProgram) { glDeleteProgram(g_waterComputeProgram); g_waterComputeProgram = 0; }
+            if (g_cmdPatchProgram)     { glDeleteProgram(g_cmdPatchProgram);     g_cmdPatchProgram = 0; }
+            return false;
+        }
+
+        // Bucket header: 16 B GpuDrivenBucketHeader (visibleCount + 3 pads).
+        glGenBuffers(1, &g_waterBucketHeaderSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_waterBucketHeaderSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, 16, nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        // Indirect cmd buffer: 2 × DrawArraysIndirectCommand = 2 × 16 B = 32 B.
+        glGenBuffers(1, &g_waterIndirectCmdBuffer);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, g_waterIndirectCmdBuffer);
+        glBufferData(GL_DRAW_INDIRECT_BUFFER, 32, nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    }
+
+    // Ensure recipe SSBO is ready.
+    if (!EnsureRecipeBufferUploaded()) return false;
+    if (g_recipeBuffer == 0) return false;
+
+    // Ensure thin-record SSBO is allocated (UploadAndBindThinRecords creates it lazily;
+    // on the GPU path we may skip that function, so we ensure the buffer exists here).
+    // The thin buffer must have at least one slot large enough for g_recipes.size() records.
+    const uint32_t maxThinRecords = (uint32_t)g_recipes.size();
+    if (maxThinRecords == 0) return false;
+
+    // M1 guard: lighting SSBO must be ready before water compute reads it (binding 1).
+    // GetOutputSsbo() returns 0 until the lighting compute has run (mission_init path).
+    // Binding GL name 0 → reads return driver-defined values, usually zero → black water
+    // with correct geometry — a silent-wrong-render that passes smoke gates.
+    {
+        static bool s_warnedLightSsbo = false;
+        const GLuint lightSsbo = gos_terrain_lighting::GetOutputSsbo();
+        if (lightSsbo == 0) {
+            if (!s_warnedLightSsbo) {
+                printf("[GPU_DRIVEN_WATER v1] event=warn msg=lighting_ssbo_not_ready frame=deferred_to_cpu\n");
+                fflush(stdout);
+                s_warnedLightSsbo = true;
+            }
+            return false;
+        }
+        s_warnedLightSsbo = false; // reset so it re-warns if SSBO goes away again
+    }
+
+    const GLsizeiptr thinSlotBytes = (GLsizeiptr)(maxThinRecords * sizeof(WaterThinRecord));
+    if (g_thinBuffer == 0) {
+        glGenBuffers(1, &g_thinBuffer);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinBuffer);
+        glBufferData(GL_SHADER_STORAGE_BUFFER,
+                     thinSlotBytes * (GLsizeiptr)kThinRingSlots,
+                     nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        g_thinSlotCapacity = (uint32_t)thinSlotBytes;
+        g_thinSlot = 0;
+    }
+    // Build and upload per-frame quad window SSBO.
+    const uint32_t windowCount = BuildQuadWindowSSBO();
+    if (windowCount == 0) return false;
+
+    // Advance ring slot so GPU write doesn't stomp a slot the GPU is still consuming.
+    // Must happen AFTER the windowCount==0 early-return so we don't burn a slot
+    // on frames where no water quads are visible (stale-data draw on the next frame).
+    g_thinSlot = (g_thinSlot + 1) % kThinRingSlots;
+    const GLintptr thinSlotOffset = (GLintptr)(g_thinSlot * g_thinSlotCapacity);
+
+    // Zero the bucket header (reset visibleCount to 0) before each dispatch.
+    {
+        const uint32_t zero = 0u;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_waterBucketHeaderSsbo);
+        glClearBufferSubData(GL_SHADER_STORAGE_BUFFER, GL_R32UI, 0, 16,
+                             GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // Bind the thin-record ring slot for GPU output.
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, kWaterThinSsboBinding,
+                      g_thinBuffer, thinSlotOffset, thinSlotBytes);
+
+    // ------------------------------------------------------------------
+    // DISPATCH 1: cull/pack (gpu_driven_water.comp)
+    // Bindings: 0=recipe, 1=lighting, 2=quadWindow, 3=thin, 6=header
+    // ------------------------------------------------------------------
+    glUseProgram(g_waterComputeProgram);
+
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, g_recipeBuffer);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, gos_terrain_lighting::GetOutputSsbo());
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, g_quadWindowSsbo);
+    // Slot 3 (thin output, compute-only): the compute shader writes thin records
+    // here. kWaterThinSsboBinding (= 6) is the DRAW-phase binding where the VS
+    // reads thin records; they are different slots. The compute shader ALSO uses
+    // binding 6 for the bucket header (coherent buffer Header). After both
+    // dispatches finish, binding 6 must be restored to the thin-record range for
+    // the VS draw (see re-bind after final glMemoryBarrier below).
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 3,
+                      g_thinBuffer, thinSlotOffset, thinSlotBytes);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, g_waterBucketHeaderSsbo);
+
+    // Uniforms for gpu_driven_water.comp.
+    const GLint locWindowCount = glGetUniformLocation(g_waterComputeProgram, "u_windowCount");
+    const GLint locMaxThin     = glGetUniformLocation(g_waterComputeProgram, "u_maxThinRecords");
+    const GLint locWaterElev   = glGetUniformLocation(g_waterComputeProgram, "u_waterElevation");
+    const GLint locFrameCos    = glGetUniformLocation(g_waterComputeProgram, "u_frameCos");
+    const GLint locMapSide     = glGetUniformLocation(g_waterComputeProgram, "u_mapSide");
+    const GLint locMVP         = glGetUniformLocation(g_waterComputeProgram, "u_worldToClipGL");
+
+    if (locWindowCount < 0) {
+        fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_windowCount_not_found\n");
+        fflush(stderr);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
+        glUseProgram(0);
+        return false;
+    }
+    glUniform1i(locWindowCount, (int)windowCount);
+
+    if (locMaxThin < 0) {
+        fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_maxThinRecords_not_found\n");
+        fflush(stderr);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
+        glUseProgram(0);
+        return false;
+    }
+    glUniform1i(locMaxThin, (int)maxThinRecords);
+
+    if (locWaterElev < 0) {
+        fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_waterElevation_not_found\n");
+        fflush(stderr);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
+        glUseProgram(0);
+        return false;
+    }
+    glUniform1f(locWaterElev, Terrain::waterElevation);
+
+    // u_frameCos: per-vertex wave Z-lift for pz gate. Not required to abort if
+    // missing — shader defaults to 0, degrading to the old approximation rather
+    // than producing a wrong cull pass.
+    if (locFrameCos >= 0) glUniform1f(locFrameCos, frameCos);
+
+    if (locMapSide < 0) {
+        fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_mapSide_not_found\n");
+        fflush(stderr);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
+        glUseProgram(0);
+        return false;
+    }
+    glUniform1i(locMapSide, (int)Terrain::realVerticesMapSide);
+
+    if (locMVP < 0) {
+        // Uniform not found in shader — dispatching with a zeroed MVP would
+        // produce a fully-culled or garbage cull pass. Abort instead.
+        fprintf(stderr, "[GPU_DRIVEN_WATER v1] event=warn msg=u_terrainMVP_not_found\n");
+        fflush(stderr);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);  // unbind stale thin slot
+        glUseProgram(0);
+        return false;
+    }
+    {
+        // Water-consistency fix (2026-05-17): when SOLID is armed the drawn
+        // terrain is terrain-solid's Fix-B clipPos, baked EARLIER this frame
+        // with terrain-solid's dispatch MVP. terrain_mvp_ is updated between
+        // that bake point and here, so gos_GetTerrainMVPMat4() returns a
+        // one-frame-newer matrix -> water projects a frame ahead of terrain ->
+        // shoreline recede/flicker/vanish under zoom/elevation/motion
+        // ([WATER_DEPTHPROBE v1] proved the exact 1-frame lag; static was
+        // already bit-identical). Project water with the SAME dispatch MVP so
+        // water is bit-consistent with the drawn terrain (both share terrain's
+        // long-standing, accepted ~1-frame dispatch lag). Unarmed: terrain is
+        // NOT the clipPos path, so the legacy live MVP is correct (pre-fix
+        // behavior). ring_slot_state_must_travel_with_slot.md.
+        const float* mvp =
+            gos_terrain_indirect::IsFrameSolidArmed()
+                ? gos_terrain_indirect_getDispatchMvp16()
+                : gos_GetTerrainMVPMat4();
+        if (!mvp) mvp = gos_GetTerrainMVPMat4();  // safety: pre-arm/first frame
+        if (mvp) {
+            // GL_FALSE: row-major upload. See memory/terrain_mvp_gl_false.md.
+            glUniformMatrix4fv(locMVP, 1, GL_FALSE, mvp);
+            // [WATER_DEPTHPROBE v1] RETAINED verification instrument (env-gated
+            // MC2_WATER_DEPTHPROBE, silent by default; demote-not-delete per
+            // the debug-instrumentation rule). It diagnosed the water/terrain
+            // 1-frame MVP divergence (terrain_solid_fp[N]==water_fp[N-1] under
+            // motion) that caused the shoreline recede/flicker/intro-pan-vanish;
+            // the 2026-05-17 water-consistency fix (water reads terrain-solid's
+            // dispatch MVP via gos_terrain_indirect_getDispatchMvp16) closed it.
+            // INVARIANT this now proves: with the fix in place equal==1 on
+            // EVERY frame incl. camera motion. A regression here (equal==0 on
+            // moved frames) means the MVP-consistency contract broke again.
+            // FNV-1a over the water-uploaded MVP's first 12 floats, byte-
+            // identical to gos_terrain_indirect.cpp Probe 8.
+            static const bool s_waterDepthProbe =
+                (getenv("MC2_WATER_DEPTHPROBE") != nullptr);
+            if (s_waterDepthProbe) {
+                uint32_t wfp = 2166136261u;
+                for (int k = 0; k < 12; ++k) {
+                    uint32_t bits = 0;
+                    memcpy(&bits, &mvp[k], sizeof(bits));
+                    wfp ^= bits; wfp *= 16777619u;
+                }
+                const uint32_t tfp =
+                    gos_terrain_indirect_getDispatchMvpFp();
+                const uint64_t tfi =
+                    gos_terrain_indirect_getDispatchMvpFrameIdx();
+                // v2: un-armed intro-pan coverage + cause discriminator.
+                // The v1 `f > 120` warmup SKIPPED the intro pan entirely (it
+                // is the early frames) — that is why we had zero intro-pan
+                // data. v2 always prints in the un-armed phase. Extra fields
+                // separate the two possible un-armed causes:
+                //  - wstream_ready==0 || recipe_count==0  => water simply NOT
+                //    produced yet (WaterStream not built during early intro);
+                //    a readiness issue, NOT an MVP problem — no MVP fix helps.
+                //  - ready==1 && recipe>0 && armed==0      => water IS produced
+                //    un-armed; livecam_fp vs water_fp + moved shows whether the
+                //    un-armed projection is itself frame-divergent.
+                const bool armed =
+                    gos_terrain_indirect::IsFrameSolidArmed();
+                const bool wready = IsReady();
+                const uint32_t rc = GetRecipeCount();
+                uint32_t lcfp = 2166136261u;
+                if (const float* lc = gos_GetTerrainMVPMat4()) {
+                    for (int k = 0; k < 12; ++k) {
+                        uint32_t b = 0;
+                        memcpy(&b, &lc[k], sizeof(b));
+                        lcfp ^= b; lcfp *= 16777619u;
+                    }
+                } else {
+                    lcfp = 0u;
+                }
+                static uint64_t s_wframe  = 0;
+                static uint32_t s_prevWfp = 0;
+                const uint64_t f = ++s_wframe;
+                const bool moved = (s_prevWfp != 0 && wfp != s_prevWfp);
+                // Cadence: ALWAYS print while un-armed (the intro/deployment
+                // pan — the regime under investigation, no warmup gate), PLUS
+                // the armed regime's post-warmup first-8 / moved / 240-static
+                // baseline. Demote-not-delete; silent unless env set.
+                const bool emit =
+                    !armed
+                    || (f > 120 && (f <= 128 || moved || (f % 240 == 0)));
+                if (emit) {
+                    printf("[WATER_DEPTHPROBE v2] event=mvp_pair wframe=%llu "
+                           "armed=%d wstream_ready=%d recipe_count=%u "
+                           "water_fp=%08x terrain_solid_fp=%08x "
+                           "livecam_fp=%08x equal=%d w_eq_livecam=%d "
+                           "moved=%d terrain_solid_frameidx=%llu "
+                           "w_mvp0=%.6f\n",
+                           (unsigned long long)f, armed ? 1 : 0,
+                           wready ? 1 : 0, (unsigned)rc, wfp, tfp, lcfp,
+                           (wfp == tfp) ? 1 : 0, (wfp == lcfp) ? 1 : 0,
+                           moved ? 1 : 0, (unsigned long long)tfi,
+                           (double)mvp[0]);
+                    fflush(stdout);
+                }
+                s_prevWfp = wfp;
+            }
+            // [WATER_RENDERPROBE v1] Fix B matrix-share release gate. Env-gated
+            // (MC2_WATER_RENDERPROBE), silent by default, demote-not-delete.
+            // Invariant A (TRIPWIRE, trivially-true today): every armed frame the
+            // water cull-feed matrix FP == terrain dispatch FP. The render binds
+            // (gameos_graphics.cpp water + the 3 overlay/decal callers) inline the
+            // byte-identical symmetric-mirror expression this cull-feed uses, and
+            // terrain_mvp_ has a single per-frame writer (gamecam.cpp gos_SetWorldToClipGL)
+            // before all consumers, so wfp is a faithful render-bind-FP proxy. A==0 on
+            // an armed frame ONLY if a future change mutates terrain_mvp_ mid-frame
+            // (the one residual hazard). It does NOT by itself prove correctness.
+            // Invariant B (RELEASE GATE): on the arming-transition frame (armed flips
+            // vs prev frame) water-bind FP must == terrain's this-frame source FP
+            // (dispatch FP if armed, live-cam FP if un-armed). RenderDoc cannot catch
+            // this 1-frame transient; passing B on a captured transition frame is the
+            // gate. Latched: printed exactly once.
+            // NOTE: wfp/tfp/tfi/lcfp/armed/f are scoped inside if(s_waterDepthProbe)
+            // above and are not visible here; all are recomputed locally using the
+            // identical FNV-1a idiom so this block is fully self-contained.
+            static const bool s_waterRenderProbe =
+                (getenv("MC2_WATER_RENDERPROBE") != nullptr);
+            if (s_waterRenderProbe) {
+                uint32_t wfp2 = 2166136261u;
+                for (int k = 0; k < 12; ++k) {
+                    uint32_t bits = 0;
+                    memcpy(&bits, &mvp[k], sizeof(bits));
+                    wfp2 ^= bits; wfp2 *= 16777619u;
+                }
+                const uint32_t tfp2 =
+                    gos_terrain_indirect_getDispatchMvpFp();
+                const uint64_t tfi2 =
+                    gos_terrain_indirect_getDispatchMvpFrameIdx();
+                const bool armed2 =
+                    gos_terrain_indirect::IsFrameSolidArmed();
+                uint32_t lcfp2 = 2166136261u;
+                if (const float* lc2 = gos_GetTerrainMVPMat4()) {
+                    for (int k = 0; k < 12; ++k) {
+                        uint32_t b = 0;
+                        memcpy(&b, &lc2[k], sizeof(b));
+                        lcfp2 ^= b; lcfp2 *= 16777619u;
+                    }
+                } else {
+                    lcfp2 = 0u;
+                }
+                static uint64_t s_rpFrame = 0;
+                const uint64_t f2 = ++s_rpFrame;
+                static int  s_rpPrevArmed = -1;            // -1 = no prior PROBE frame (includes frames skipped while
+                                                           //   mvp==null or the env var is off); a transition that
+                                                           //   occurs before the first mvp-non-null probe frame is not
+                                                           //   caught -- acceptable: the release gate fires on a
+                                                           //   running mission where mvp is reliably non-null.
+                static bool s_rpInvBLatched = false;
+                const int   armedI = armed2 ? 1 : 0;
+                // Invariant A: armed-frame tripwire (trivially-true; A==0 => mid-frame
+                // terrain_mvp_ mutation regression).
+                if (armed2) {
+                    printf("[WATER_RENDERPROBE v1] event=invA wframe=%llu "
+                           "water_fp=%08x terrain_dispatch_fp=%08x equal=%d "
+                           "terrain_dispatch_frameidx=%llu\n",
+                           (unsigned long long)f2, wfp2, tfp2,
+                           (wfp2 == tfp2) ? 1 : 0,
+                           (unsigned long long)tfi2);
+                    fflush(stdout);
+                }
+                // Invariant B: first arming-transition frame only, printed once.
+                if (s_rpPrevArmed != -1 && s_rpPrevArmed != armedI
+                    && !s_rpInvBLatched) {
+                    const uint32_t srcFp = armed2 ? tfp2 : lcfp2;
+                    printf("[WATER_RENDERPROBE v1] event=invB_transition wframe=%llu "
+                           "armed=%d prev_armed=%d water_fp=%08x terrain_src_fp=%08x "
+                           "equal=%d terrain_dispatch_frameidx=%llu\n",
+                           (unsigned long long)f2, armedI, s_rpPrevArmed, wfp2, srcFp,
+                           (wfp2 == srcFp) ? 1 : 0, (unsigned long long)tfi2);
+                    fflush(stdout);
+                    s_rpInvBLatched = true;
+                }
+                s_rpPrevArmed = armedI;
+            }
+        } else {
+            // MVP not available this frame (terrain not yet rendered). Bail out.
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);  // unbind stale thin slot
+            glUseProgram(0);
+            return false;
+        }
+    }
+
+    const uint32_t groups = (windowCount + 63u) / 64u;
+    glDispatchCompute(groups, 1, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    // ------------------------------------------------------------------
+    // DISPATCH 2: cmd-patch (gpu_driven_cmd_patch.comp)
+    // Bindings: 0=header, 1=indirectCmd
+    // ------------------------------------------------------------------
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, g_waterBucketHeaderSsbo);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, g_waterIndirectCmdBuffer);
+
+    glUseProgram(g_cmdPatchProgram);
+    const GLint locVertsPerElem = glGetUniformLocation(g_cmdPatchProgram, "u_vertsPerElement");
+    const GLint locCmdCount     = glGetUniformLocation(g_cmdPatchProgram, "u_cmdCount");
+    const GLint locMaxThin2     = glGetUniformLocation(g_cmdPatchProgram, "u_maxThinRecords");
+    if (locVertsPerElem >= 0) glUniform1i(locVertsPerElem, 6);
+    if (locCmdCount     >= 0) glUniform1i(locCmdCount, 2);
+    if (locMaxThin2     >= 0) glUniform1i(locMaxThin2, (int)maxThinRecords);
+    glDispatchCompute(1, 1, 1);
+
+    // Final barrier: SSBO writes visible + indirect cmd ready for MDI draw.
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
+
+    glUseProgram(0);
+
+    // M2 fix: restore kWaterThinSsboBinding (6) to thin records for the VS draw.
+    // Dispatch 1 (cull/pack setup) overwrote slot 6 with g_waterBucketHeaderSsbo to
+    // satisfy the compute shader's binding-6 header read. The VS reads thin records
+    // from slot 6, so we must restore the correct binding after both dispatches
+    // and barriers complete.
+    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, kWaterThinSsboBinding,
+                      g_thinBuffer, thinSlotOffset, thinSlotBytes);
+
+    // Unbind compute-only slots (0=recipe, 1=lighting, 2=window, 3=thin-write)
+    // so Stage 2 compute subsystems don't inherit stale bindings on entry.
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, 0);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, 0);
+
+    g_waterGpuDrivenArmed = true;
+    return true;
+}
+
+bool IsGpuDrivenArmed() {
+    return g_waterGpuDrivenArmed;
+}
+
+void ComputeDispatchParity_Check() {
+    if (!gpu_driven::IsParityEnabled()) return;
+    if (!g_waterGpuDrivenArmed) return;
+    if (!g_waterBucketHeaderSsbo || !g_thinBuffer || g_thinSlotCapacity == 0) return;
+    if (g_recipes.empty()) return;
+
+    ++s_gpuParityFrames;
+
+    // Flush GPU thin-record writes to client-visible memory before readback.
+    // ComputeDispatch already issued GL_SHADER_STORAGE_BARRIER_BIT; here we
+    // also need GL_BUFFER_UPDATE_BARRIER_BIT so glGetBufferSubData sees the writes.
+    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+
+    // -----------------------------------------------------------------------
+    // 1. Read back GPU visible count from the bucket header.
+    // -----------------------------------------------------------------------
+    const uint32_t gpuSlot = g_thinSlot;  // the ring slot compute wrote to
+
+    gpu_driven::GpuDrivenBucketHeader hdr{};
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_waterBucketHeaderSsbo);
+    glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)sizeof(hdr), &hdr);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    const uint32_t gpuCount = std::min(hdr.visibleCount, (uint32_t)g_recipes.size());
+
+    // -----------------------------------------------------------------------
+    // 2. Read back GPU thin records from the ring slot compute used.
+    // -----------------------------------------------------------------------
+    std::vector<WaterThinRecord> gpuRecs(gpuCount);
+    if (gpuCount > 0) {
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinBuffer);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                           (GLintptr)(gpuSlot * (GLintptr)g_thinSlotCapacity),
+                           (GLsizeiptr)(gpuCount * sizeof(WaterThinRecord)),
+                           gpuRecs.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // 3. Run the CPU thin-record pack (UploadAndBindThinRecords advances the
+    //    ring to a new slot; GPU output is left intact at gpuSlot).
+    // -----------------------------------------------------------------------
+    const uint32_t cpuCount = UploadAndBindThinRecords();
+    const uint32_t cpuSlot  = g_thinSlot;  // UploadAndBind advanced this
+
+    // -----------------------------------------------------------------------
+    // 4. Read back CPU thin records from the slot UploadAndBind wrote to.
+    // -----------------------------------------------------------------------
+    std::vector<WaterThinRecord> cpuRecs(cpuCount);
+    if (cpuCount > 0) {
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_thinBuffer);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,
+                           (GLintptr)(cpuSlot * (GLintptr)g_thinSlotCapacity),
+                           (GLsizeiptr)(cpuCount * sizeof(WaterThinRecord)),
+                           cpuRecs.data());
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. Sort both by recipeIdx for order-agnostic comparison (GPU atomicAdd
+    //    output order is non-deterministic; CPU pack order follows quadList).
+    // -----------------------------------------------------------------------
+    auto byRecipeIdx = [](const WaterThinRecord& a, const WaterThinRecord& b) {
+        return a.recipeIdx < b.recipeIdx;
+    };
+    std::sort(gpuRecs.begin(), gpuRecs.end(), byRecipeIdx);
+    std::sort(cpuRecs.begin(), cpuRecs.end(), byRecipeIdx);
+
+    // -----------------------------------------------------------------------
+    // 6. Walk merged sorted lists and compare field-by-field.
+    // -----------------------------------------------------------------------
+    MismatchPrintBudget budget;
+    uint32_t quadsChecked = 0;
+    uint32_t frameMismatches = 0;
+    uint32_t gi = 0, ci = 0;
+
+    while (gi < gpuCount || ci < cpuCount) {
+        const uint32_t gpuIdx = (gi < gpuCount) ? gpuRecs[gi].recipeIdx : UINT32_MAX;
+        const uint32_t cpuIdx = (ci < cpuCount) ? cpuRecs[ci].recipeIdx : UINT32_MAX;
+
+        if (gpuIdx < cpuIdx) {
+            // GPU record not in CPU output
+            if (budget.canPrint()) {
+                budget.note();
+                fprintf(stderr,
+                        "[GPU_DRIVEN_WATER_PARITY v1] event=mismatch "
+                        "frame=%llu recipe=%u gpu_only=1\n",
+                        (unsigned long long)s_gpuParityFrames, (unsigned)gpuIdx);
+                fflush(stderr);
+            }
+            ++frameMismatches;
+            ++gi;
+        } else if (cpuIdx < gpuIdx) {
+            // CPU record not in GPU output
+            if (budget.canPrint()) {
+                budget.note();
+                fprintf(stderr,
+                        "[GPU_DRIVEN_WATER_PARITY v1] event=mismatch "
+                        "frame=%llu recipe=%u cpu_only=1\n",
+                        (unsigned long long)s_gpuParityFrames, (unsigned)cpuIdx);
+                fflush(stderr);
+            }
+            ++frameMismatches;
+            ++ci;
+        } else {
+            // Same recipeIdx — compare field by field.
+            const WaterThinRecord& g = gpuRecs[gi];
+            const WaterThinRecord& c = cpuRecs[ci];
+            ++quadsChecked;
+
+            if (g.flags != c.flags) {
+                ++frameMismatches;
+                if (budget.canPrint()) {
+                    budget.note();
+                    fprintf(stderr,
+                            "[GPU_DRIVEN_WATER_PARITY v1] event=mismatch "
+                            "frame=%llu recipe=%u field=flags gpu=0x%x cpu=0x%x\n",
+                            (unsigned long long)s_gpuParityFrames,
+                            (unsigned)gpuIdx, (unsigned)g.flags, (unsigned)c.flags);
+                    fflush(stderr);
+                }
+            }
+            if (g.lightRGB0 != c.lightRGB0 || g.lightRGB1 != c.lightRGB1 ||
+                g.lightRGB2 != c.lightRGB2 || g.lightRGB3 != c.lightRGB3) {
+                ++frameMismatches;
+                if (budget.canPrint()) {
+                    budget.note();
+                    fprintf(stderr,
+                            "[GPU_DRIVEN_WATER_PARITY v1] event=mismatch "
+                            "frame=%llu recipe=%u field=lightRGB "
+                            "gpu=[0x%x,0x%x,0x%x,0x%x] cpu=[0x%x,0x%x,0x%x,0x%x]\n",
+                            (unsigned long long)s_gpuParityFrames, (unsigned)gpuIdx,
+                            (unsigned)g.lightRGB0, (unsigned)g.lightRGB1,
+                            (unsigned)g.lightRGB2, (unsigned)g.lightRGB3,
+                            (unsigned)c.lightRGB0, (unsigned)c.lightRGB1,
+                            (unsigned)c.lightRGB2, (unsigned)c.lightRGB3);
+                    fflush(stderr);
+                }
+            }
+            if (g.fogRGB0 != c.fogRGB0 || g.fogRGB1 != c.fogRGB1 ||
+                g.fogRGB2 != c.fogRGB2 || g.fogRGB3 != c.fogRGB3) {
+                ++frameMismatches;
+                if (budget.canPrint()) {
+                    budget.note();
+                    fprintf(stderr,
+                            "[GPU_DRIVEN_WATER_PARITY v1] event=mismatch "
+                            "frame=%llu recipe=%u field=fogRGB "
+                            "gpu=[0x%x,0x%x,0x%x,0x%x] cpu=[0x%x,0x%x,0x%x,0x%x]\n",
+                            (unsigned long long)s_gpuParityFrames, (unsigned)gpuIdx,
+                            (unsigned)g.fogRGB0, (unsigned)g.fogRGB1,
+                            (unsigned)g.fogRGB2, (unsigned)g.fogRGB3,
+                            (unsigned)c.fogRGB0, (unsigned)c.fogRGB1,
+                            (unsigned)c.fogRGB2, (unsigned)c.fogRGB3);
+                    fflush(stderr);
+                }
+            }
+            ++gi; ++ci;
+        }
+    }
+
+    s_gpuParityQuads      += quadsChecked;
+    s_gpuParityMismatches += frameMismatches;
+
+    if (s_gpuParityFrames % kSummaryEveryFrames == 0) {
+        fprintf(stderr,
+                "[GPU_DRIVEN_WATER_PARITY v1] event=summary "
+                "frames=%llu quads_checked=%llu total_mismatches=%llu\n",
+                (unsigned long long)s_gpuParityFrames,
+                (unsigned long long)s_gpuParityQuads,
+                (unsigned long long)s_gpuParityMismatches);
+        fflush(stderr);
+    }
+}
+
+GLuint GetIndirectCmdBuffer() {
+    return g_waterIndirectCmdBuffer;
+}
+
 // ----------------------------------------------------------------------------
 
 void ReleaseGlResources() {
@@ -933,6 +1844,32 @@ void ReleaseGlResources() {
     g_thinSlot = 0;
     g_thinStaging.clear();
     g_thinStaging.shrink_to_fit();
+
+    // Phase C Stage 1 resources.
+    if (g_waterComputeProgram != 0) {
+        glDeleteProgram(g_waterComputeProgram);
+        g_waterComputeProgram = 0;
+    }
+    if (g_cmdPatchProgram != 0) {
+        glDeleteProgram(g_cmdPatchProgram);
+        g_cmdPatchProgram = 0;
+    }
+    if (g_quadWindowSsbo != 0) {
+        glDeleteBuffers(1, &g_quadWindowSsbo);
+        g_quadWindowSsbo = 0;
+        g_quadWindowSsboCapacity = 0;
+    }
+    if (g_waterBucketHeaderSsbo != 0) {
+        glDeleteBuffers(1, &g_waterBucketHeaderSsbo);
+        g_waterBucketHeaderSsbo = 0;
+    }
+    if (g_waterIndirectCmdBuffer != 0) {
+        glDeleteBuffers(1, &g_waterIndirectCmdBuffer);
+        g_waterIndirectCmdBuffer = 0;
+    }
+    g_waterGpuDrivenArmed = false;
+    g_quadWindowStaging.clear();
+    g_quadWindowStaging.shrink_to_fit();
 
     if (s_parityEnabled) {
         fprintf(stderr,

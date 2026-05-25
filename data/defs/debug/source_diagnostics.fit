@@ -2,10 +2,19 @@
  * FILENAME: source_diagnostics.fit
  * DESCRIPTION: Debug and diagnostic source strings parked outside localized runtime text.
  *
- * CREATED BY: Methuselas
+ * AUTHOR: Microsoft / FASA source data
  * CREATED: Unknown
  *
+ * UPDATED BY: Methuselas
+ * UPDATED: 2026-05-05
+ *
+ * CHANGES:
+ * - Built collapsed exact-text source string candidates; existing text keys reused when exact text already exists.
  ***************************************************************/
+
+// Generated for MC2R data/defs master FIT set.
+// Exact duplicate visible text is collapsed to one String key.
+// Legacy/resource/menu/control identity is preserved in alias/binding FITs.
 
 String {
     key = "debug.source.dst_hex_value_plus"

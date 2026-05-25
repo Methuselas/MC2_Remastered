@@ -17,6 +17,15 @@ CMakeFiles/
 *.exe
 *.cfg
 *.tga
+# MFC Mission Editor is real source: force its whole tree (incl. the
+# *.rc resource script + the *.ico/*.bmp/*.cur it #includes) to be
+# tracked, overriding the generic binary ignores above. The old bare
+# `Editor` + global `*.rc` rules silently kept the editor resource
+# script untracked (it builds, but LoadFrame(IDR_EDITOR_MENU) fails).
+!editor/
+!editor/**
+data/*
+!data/defs/
 unpacked_data
 unpacked_data--
 data-orig
@@ -37,7 +46,7 @@ text_tool
 .ycm_extra_conf.py
 .ycm_extra_conf.pyc
 *.ico
-*.rc
+# *.rc: editor/resource.rc is tracked via !editor/** above
 vidcard.csv
 *.s14
 .gdb_history
@@ -89,4 +98,35 @@ validate*.tga
 
 # Smoke test runtime artifacts
 tests/smoke/artifacts/
+tests/smoke/captures/
+
+# Internal planning + observation docs (process noise, not shipped)
+docs/superpowers/
+docs/observations/
+docs/beta/
+docs/micro_scene_spec.md
+
+# Stable seam ledger (internal, not shipped)
+STABLE-SEAMS.md
+
+# Claude tooling not for ship
+.claude/agents/
+.claude/snap_*.png
+.claude/dump_*.py
+.claude/verify_bias.py
+.claude/explorations/
+.claude/STEERING.md
+
+# Release pack outputs
+release_assets/
+
+# Editor IDE state + scratch
+editor/.vs/
+artifacts/
+dev/squelch/
+
+# Misc dev junk
+ucrt-list.txt
+*.safetensors
+*.pth
 

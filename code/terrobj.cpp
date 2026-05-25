@@ -20,6 +20,7 @@
 #endif
 
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
+#include "../GameOS/gameos/gpu_cull_readback.h"  // Task 5/6: per-actor GPU visibility readback
 
 #ifndef GAMESOUND_H
 #include"gamesound.h"
@@ -62,6 +63,203 @@
 #endif
 
 #include"objectappearance.h"
+#include "static_update_counters.h"
+
+//---------------------------------------------------------------------------
+// Slice 3 Static-Update Bypass instrumentation (worktree CLAUDE.md
+// §"Tier-1 Instrumentation Env Vars" pattern; mirrors MC2_DESTROY_TRACE in
+// gameobj.cpp:104). Counters defined here because the gate lives in this TU;
+// objmgr.cpp reads them via the accessors declared in static_update_counters.h.
+//---------------------------------------------------------------------------
+extern uint32_t g_mc2FrameCounter;  // defined in mclib/tgl.cpp:3718
+
+// Env bool parser: unset returns `def`; "0"/"false"/"off"/"no" disable;
+// everything else enables. Do NOT regress to `getenv(...) != nullptr` —
+// that would treat MC2_STATIC_UPDATE_SKIP=0 as ENABLED (this is the
+// GPU_OBJECTS class of bug the user explicitly told us to avoid).
+static bool ParseEnvBool(const char* name, bool def = false) {
+    const char* v = getenv(name);
+    if (!v || !*v) return def;
+    if (v[0]=='0' && !v[1]) return false;
+    if (!_stricmp(v, "false") || !_stricmp(v, "off") || !_stricmp(v, "no")) return false;
+    return true;
+}
+
+static const bool s_staticUpdateTrace = ParseEnvBool("MC2_STATIC_UPDATE_TRACE");
+// 2026-05-11: default-on after the per-instance lightDataIndex fix
+// (commit e568985) retired the wrong-RGB-during-motion residual under
+// UPDATE_SKIP=1. Set MC2_STATIC_UPDATE_SKIP=0 to opt back into the
+// historical full-update path.
+static const bool s_staticUpdateSkip  = ParseEnvBool("MC2_STATIC_UPDATE_SKIP", true);
+
+namespace {
+struct StaticUpdateCounters {
+    uint32_t objects_seen;       // TerrainObject::update() entries with appearance && inView
+    uint32_t updates_run;        // appearance->update() actually called
+    uint32_t updates_skipped;    // appearance->update() short-circuited by IsStaticNow()
+    uint32_t dyn_falling;        // appearance class said static, but OBJECT_FLAG_FALLING set
+    uint32_t dyn_other;          // reserved for Stage 3.D building disqualifiers
+};
+StaticUpdateCounters g_staticUpdateCounters = {};
+StaticUpdateCounters g_staticUpdateLastSummary = {};
+uint32_t g_staticUpdateLastSummaryFrame = 0;
+
+// [APPEAR_ROUTE v1] Per-appearance-class routing coverage map.
+// Bucketed by AppearanceType::getAppearanceClass() (high byte of appearanceNum).
+// Tracks how many touch (skip) vs update (full) events each class accumulates.
+// Use case: under MC2_STATIC_UPDATE_SKIP=1 + MC2_FORCE_DYNAMIC_TREES=1 +
+// MC2_FORCE_DYNAMIC_BUILDINGS=1, this map shows whether the FORCE_DYNAMIC envs
+// actually bypassed those classes, AND which OTHER classes are still hitting
+// the touch path (potential sources of "still black" symptoms).
+// Class IDs: see mclib/daprtype.h (BLDG_TYPE=0x0e, BUILDING_APPR_TYPE=0x10,
+// TREE_APPR_TYPE=0x11, GENERIC_APPR_TYPE=0x14, etc.).
+// Always-on (cheap: two array increments per gate event); summary emitted by
+// g_staticUpdateEmitSummary every 600 frames.
+uint64_t g_routeTouchByClass[256]  = {0};
+uint64_t g_routeUpdateByClass[256] = {0};
+}  // namespace
+
+// External accessors declared in code/static_update_counters.h. Definitions live
+// here because the counter state is file-private to this TU.
+uint32_t g_staticUpdateRunCount()      { return g_staticUpdateCounters.updates_run; }
+uint32_t g_staticUpdateSkipCount()     { return g_staticUpdateCounters.updates_skipped; }
+uint32_t g_staticUpdateSeenCount()     { return g_staticUpdateCounters.objects_seen; }
+uint32_t g_staticUpdateFallingCount()  { return g_staticUpdateCounters.dyn_falling; }
+
+uint32_t g_staticUpdateLastSummaryFrame_get() { return g_staticUpdateLastSummaryFrame; }
+
+void g_staticUpdateEmitSummary(uint32_t frame) {
+    const StaticUpdateCounters& cur  = g_staticUpdateCounters;
+    const StaticUpdateCounters& prev = g_staticUpdateLastSummary;
+    char buf[256];
+    snprintf(buf, sizeof(buf),
+        "[STATIC_UPDATE v1] frame=%u seen=%u run=%u skip=%u "
+        "dyn_falling=%u dyn_other=%u "
+        "delta_seen=%u delta_run=%u delta_skip=%u",
+        frame,
+        cur.objects_seen, cur.updates_run, cur.updates_skipped,
+        cur.dyn_falling, cur.dyn_other,
+        cur.objects_seen   - prev.objects_seen,
+        cur.updates_run    - prev.updates_run,
+        cur.updates_skipped - prev.updates_skipped);
+    puts(buf);
+    fflush(stdout);
+
+    // [APPEAR_ROUTE v1] Per-class coverage map. One line per non-zero class.
+    // class=0x0e (BLDG_TYPE), 0x10 (BUILDING_APPR_TYPE), 0x11 (TREE_APPR_TYPE),
+    // 0x12 (VEHICLE_APPR_TYPE), 0x13 (MECH_APPR_TYPE), 0x14 (GENERIC_APPR_TYPE),
+    // 0x05 (GV_TYPE), 0x0d (MECH_TYPE), 0xFF (no AppearanceType resolved).
+    for (int c = 0; c < 256; ++c) {
+        if (g_routeTouchByClass[c] || g_routeUpdateByClass[c]) {
+            printf("[APPEAR_ROUTE v1] frame=%u class=0x%02x touch=%llu update=%llu\n",
+                frame, c,
+                (unsigned long long)g_routeTouchByClass[c],
+                (unsigned long long)g_routeUpdateByClass[c]);
+        }
+    }
+    fflush(stdout);
+
+    g_staticUpdateLastSummary = cur;
+    g_staticUpdateLastSummaryFrame = frame;
+}
+
+// [TOBJSPLIT v1] env-gated RDTSC cost split for the recalcBounds slice.
+// MC2_TOBJ_COST_SPLIT=1 -> partition GameLogic.Units.TerrainObjects into
+// ANGULAR (kept coarse clip) / PROJ (to-delete projection body) / UPDATE
+// (appearance->update refill). RDTSC only; chrono per-call is observer-effect
+// dominated here (cost_split_instrumentation_is_observer_effect_dominated.md).
+// RDTSC per-leaf bracket is a deliberate sanctioned exception to the Tracy
+// 100ns-floor prohibition (same class as [SLIMSPLIT v1] in terrain.cpp and
+// [LIGHT_COST_SPLIT v1] in tgl.cpp): these per-object hot-loop costs are too
+// fine-grained for a Tracy zone but the RDTSC pairs are ~5-10ns and gated.
+// Demote-not-delete after the attribution lands (debug_instrumentation_rule.md).
+// Accumulators defined here (terrobj.cpp) so objmgr.cpp can call the once-
+// per-frame roll via g_tobjSplitRollAndMaybeEmit() (static_update_counters.h).
+// Probe points in mclib/bdactor.cpp use extern-declarations to reach these.
+#include <intrin.h>
+#include <stdlib.h>
+#include <stdio.h>
+static bool s_tobjSplitEnabled = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
+unsigned long long g_tobjAngularCyc = 0ULL;
+unsigned long long g_tobjProjCyc    = 0ULL;
+unsigned long long g_tobjUpdateCyc  = 0ULL;
+static unsigned long long g_tobjFrameCount = 0ULL;
+
+void g_tobjSplitRollAndMaybeEmit() {
+    if (!s_tobjSplitEnabled) return;
+    // 120-frame interval (not 600): the smoke is hard-capped at 30s; a 600-frame
+    // window requires ~10s+ and may not complete in a short mission segment.
+    // 120 frames (~2s at 60fps) guarantees several summary lines per 30s run.
+    // SLIMSPLIT precedent uses 600 (long uninterrupted missions); here the probe
+    // runs under a time-bounded smoke gate so the interval is shortened.
+    if (++g_tobjFrameCount % 120ULL == 0ULL) {
+        // Per-frame normalization matches SLIMSPLIT (terrain.cpp:1492-1498):
+        // raw N-frame integrals are uninterpretable without the window and not
+        // comparable across different interval sizes; dividing by the fixed
+        // window makes values legible and SLIMSPLIT-comparable. The PROJ/
+        // (ANGULAR+PROJ+UPDATE) ratio is interval-invariant so this does NOT
+        // alter the Stage-0.5 gate result -- it only makes future captures
+        // legible.
+        const double f = 120.0;
+        fprintf(stderr, "[TOBJSPLIT v1] event=summary frames=120 "
+               "angular_cyc_per_frame=%.0f proj_cyc_per_frame=%.0f update_cyc_per_frame=%.0f\n",
+               (double)g_tobjAngularCyc / f,
+               (double)g_tobjProjCyc / f,
+               (double)g_tobjUpdateCyc / f);
+        fflush(stderr);
+        g_tobjAngularCyc = g_tobjProjCyc = g_tobjUpdateCyc = 0ULL;
+    }
+}
+
+// [TOBJPARITY v1] env-gated STANDALONE readback-vs-coarse superset-parity
+// instrument. NOT a passing gate for any shipped slice -- the readback
+// render/shadow repoint was REVERTED (de-risk): Task 7 empirically proved
+// the GPU readback is NOT a superset of the coarse visible set (it drops
+// 10-60% of in-view terrain statics), so gating render/shadow on it is
+// unsound. Render/shadow run on the coarse canBeSeen()/inView path again.
+//
+// This probe survives, demoted-not-deleted, purely to QUANTIFY that
+// readback non-superset for the separately-tracked GPU-path meta-fix
+// task (make the GPU cull authoritative and delete the CPU approximation
+// gate). MC2_TOBJ_PARITY=1 -> per terrain static per frame, in
+// TerrainObject::update(), inlining the per-actor lagged readback
+// expression (fail-open when readback disabled) and comparing it to the
+// LOCAL coarse `inView` from recalcBounds():
+//   samples    = terrain statics where coarse inView is true (denominator).
+//   violations = coarseInView && !readbackVisible (the dropped-prop class
+//                the deferred GPU-path meta-fix must eliminate).
+//
+// Legitimate over-inclusion (readbackVisible && !coarseInView) is fine and
+// NOT a violation. Counter never chrono; no std::chrono, no RDTSC -- pure
+// event count (cost_split_instrumentation_is_observer_effect_dominated.md).
+//
+// Transitive-dependency note: this probe measures readback-vs-coarse
+// (readback >= coarse). Coarse >= projected is independently proven -- the
+// deleted projection block (Tasks 2/3) was entirely `if(inView)`-gated and
+// could only narrow the visible set, never widen it. The known result here
+// is NON-zero violations (readback is a non-superset by Task 7); the probe
+// quantifies the magnitude for the meta-fix task. It is NOT a pass/fail
+// gate for this de-risked slice.
+//
+// Demote-not-delete (debug_instrumentation_rule.md).
+// Mirrors [TOBJSPLIT v1]: file-static enable flag, same 120-frame roll
+// interval, accumulators defined here, roll called from objmgr.cpp.
+static bool s_tobjParityEnabled = (getenv("MC2_TOBJ_PARITY") != nullptr);
+static unsigned long long g_tobjParitySamples   = 0ULL;
+static unsigned long long g_tobjParityViolation = 0ULL;
+static unsigned long long g_tobjParityFrameCount = 0ULL;
+
+void g_tobjParityRollAndMaybeEmit() {
+    if (!s_tobjParityEnabled) return;
+    // 120-frame interval: matches [TOBJSPLIT v1] (see rationale above).
+    if (++g_tobjParityFrameCount % 120ULL == 0ULL) {
+        fprintf(stderr, "[TOBJPARITY v1] event=summary samples=%llu violations=%llu\n",
+                g_tobjParitySamples, g_tobjParityViolation);
+        fflush(stderr);
+        g_tobjParitySamples   = 0ULL;
+        g_tobjParityViolation = 0ULL;
+    }
+}
 
 extern unsigned long NextIdNumber;
 extern float worldUnitsPerMeter;
@@ -458,10 +656,11 @@ static long terrainObjectHomeRelation (long teamId)
 
 void TerrainObject::primeAppearanceForMissionLoad (void)
 {
-	ZoneScopedN("TerrainObject::primeAppearanceForMissionLoad");
-	if (getFlag(OBJECT_FLAG_JUSTCREATED)) 
+	// PERF 2026-05-07: stripped high-frequency Tracy zones from TerrainObject:
+	// primeAppearanceForMissionLoad, justCreated, appearanceSetup, recalcBounds;
+	// update, justCreated, appearanceSetup, recalcBounds, appearanceUpdate, dustEffect.
+	if (getFlag(OBJECT_FLAG_JUSTCREATED))
 	{
-		ZoneScopedN("TerrainObject::primeAppearanceForMissionLoad justCreated");
 		setFlag(OBJECT_FLAG_JUSTCREATED, false);
 		setFlag(OBJECT_FLAG_TILECHANGED, false);
 
@@ -507,14 +706,12 @@ void TerrainObject::primeAppearanceForMissionLoad (void)
 		return;
 
 	{
-		ZoneScopedN("TerrainObject::primeAppearanceForMissionLoad appearanceSetup");
 		appearance->setObjectParameters(position,rotation,FALSE,getTeamId(),terrainObjectHomeRelation(getTeamId()));
 		appearance->setMoverParameters(pitchAngle);
 	}
 
 	bool inView = false;
 	{
-		ZoneScopedN("TerrainObject::primeAppearanceForMissionLoad recalcBounds");
 		inView = appearance->recalcBounds();
 	}
 	appearance->setInView(inView);
@@ -522,10 +719,8 @@ void TerrainObject::primeAppearanceForMissionLoad (void)
 
 long TerrainObject::update (void) {
 
-	ZoneScopedN("TerrainObject::update");
-	if (getFlag(OBJECT_FLAG_JUSTCREATED)) 
+	if (getFlag(OBJECT_FLAG_JUSTCREATED))
 	{
-		ZoneScopedN("TerrainObject::update justCreated");
 		setFlag(OBJECT_FLAG_JUSTCREATED, false);
 		setFlag(OBJECT_FLAG_TILECHANGED, false);
 
@@ -590,27 +785,102 @@ long TerrainObject::update (void) {
 		}
 
 		{
-			ZoneScopedN("TerrainObject::update appearanceSetup");
 			appearance->setObjectParameters(position,rotation,FALSE,getTeamId(),terrainObjectHomeRelation(getTeamId()));
 			appearance->setMoverParameters(pitchAngle);
 		}
 		bool inView = false;
 		{
-			ZoneScopedN("TerrainObject::update recalcBounds");
 			inView = appearance->recalcBounds();
 		}
-
-		if (inView)
+		// Extend update() to fire when GPU readback says visible but coarse angular
+		// does not — prevents split-gate stale cachedGpuLightIndex_ when render()
+		// fires via readback but update() was skipped (1-frame lag edge case).
+		// windowsVisible stamp below is still guarded by inView (pick-path contract).
+		const bool gpuVisible = gpu_cull::readback_isEnabled()
+			? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+			: false;
+		if (inView || gpuVisible)
 		{
+			// MOUSE-PICK PATH DEPENDENCY (objmgr consumer). This
+			// `windowsVisible = turn;` stamp is read by
+			// GameObjectManager::findTerrainObjectByMouse via the
+			// `getWindowsVisible() == (turn - VISIBLE_THRESHOLD)`
+			// equality (code/objmgr.cpp). Post-Task-2/3 the
+			// recalcBounds projection body is DELETED, so `inView`
+			// here is now COARSE-ANGULAR-ONLY -- a strict SUPERSET of
+			// the old on-screen set. That is intentional and load-
+			// bearing: the stamp must still fire for every pick-
+			// eligible object so the equality holds; the precise
+			// screen-rect filtering moved to a lazy per-click
+			// projection + geometry-space PerPolySelect on the
+			// consumer side. DO NOT gate this stamp narrower than
+			// `inView` (e.g. do not reintroduce a screen-rect or
+			// projection test here) -- doing so silently drops
+			// pick-eligible buildings/props from selection.
 			windowsVisible = turn;
 			{
-				ZoneScopedN("TerrainObject::update appearanceUpdate");
-				appearance->update();
+				++g_staticUpdateCounters.objects_seen;
+
+				// Stage 3.B static-update bypass.
+				//
+				// Composition: appearance->IsStaticNow() (type-time appearance claim)
+				// AND !getFlag(OBJECT_FLAG_FALLING) (owner-side instance state).
+				//
+				// The owner-side check is MANDATORY: OBJECT_FLAG_FALLING is set
+				// externally by collision callbacks (terrobj.cpp:352-353 for trees,
+				// bldng.cpp:1453-1455 for buildings). A predicate-only gate silently
+				// skips the impact frame's fall-animation setup.
+				//
+				// Stage 3.D will extend this with damage/power/effect checks for
+				// BldgAppearance. Keep this composition pattern explicit here.
+				const bool appearanceClaimsStatic = appearance->IsStaticNow();
+				const bool ownerForcesDynamic     = getFlag(OBJECT_FLAG_FALLING);
+				// Renderer-session guard: skip only when a GPU static/object path is
+				// enabled. This does not prove this individual appearance was submitted
+				// successfully; TreeAppearance::IsStaticNow() also checks
+				// needsFullBakeNextFrame so late registration/recovery frames continue
+				// to run update(). Note: g_useGpuObjects defaults ON since commit
+				// 61f6a66; g_useGpuStaticProps (RAlt+0 killswitch) remains default-off.
+				const bool gpuPath = g_useGpuObjects || g_useGpuStaticProps;
+
+				// Stage 3.C: clear static registration on dynamic transition so the
+				// first post-fall frame gets a full bake and re-registers the final pose.
+				if (ownerForcesDynamic)
+					appearance->invalidateStaticRegistration();
+
+				// [APPEAR_ROUTE v1] resolve appearance class once per gate event.
+				// 0xFF means "no AppearanceType" (shouldn't happen, but harmless).
+				unsigned long _apprClass = 0xFF;
+				{
+					AppearanceTypePtr _aType = appearance->getAppearanceType();
+					if (_aType) _apprClass = _aType->getAppearanceClass() & 0xFF;
+				}
+
+				if (s_staticUpdateSkip && gpuPath && appearanceClaimsStatic && !ownerForcesDynamic) {
+					++g_staticUpdateCounters.updates_skipped;
+					++g_routeTouchByClass[_apprClass];
+					if (s_staticUpdateTrace) {
+						printf("[STATIC_UPDATE v1] event=skip frame=%u obj=%p class=0x%02lx\n",
+							g_mc2FrameCounter, (void*)this, _apprClass);
+						fflush(stdout);
+					}
+					appearance->touch();  // Stage 3.C: advance lastTurnTransformed
+				} else {
+					++g_staticUpdateCounters.updates_run;
+					++g_routeUpdateByClass[_apprClass];
+					if (ownerForcesDynamic && appearanceClaimsStatic)
+						++g_staticUpdateCounters.dyn_falling;
+					// [TOBJSPLIT v1] UPDATE bracket
+					{
+						unsigned long long _tsU = s_tobjSplitEnabled ? __rdtsc() : 0ULL;
+						appearance->update();
+						if (s_tobjSplitEnabled) g_tobjUpdateCyc += __rdtsc() - _tsU;
+					}
+				}
 			}
 
 			if (bldgDustPoofEffect && bldgDustPoofEffect->IsExecuted())
 			{
-				ZoneScopedN("TerrainObject::update dustEffect");
 				Stuff::Point3D			actualPosition;
 				Stuff::LinearMatrix4D 	shapeOrigin;
 				Stuff::LinearMatrix4D 	localToWorld;
@@ -634,6 +904,24 @@ long TerrainObject::update (void) {
 				}
 			}
 		}
+
+		// [TOBJPARITY v1] readback-vs-coarse superset-parity instrument
+		// (env-gated MC2_TOBJ_PARITY=1). Render/shadow are NOW gated on
+		// readback (Item 3 repoint above). This probe remains to QUANTIFY
+		// residual violation rate (coarseInView && !readbackVisible) after
+		// the projScale + getRadius() fixes. Violations = objects that the
+		// coarse angular cone sees but GPU cull culls; with dilation these
+		// should be near zero on a stationary camera and spike only on
+		// rapid pan (1-frame readback lag). Demote-don't-delete once the
+		// GPU cull is confirmed authoritative for a full release cycle.
+		if (s_tobjParityEnabled && inView) {
+			bool readbackVisible = gpu_cull::readback_isEnabled()
+				? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+				: true;
+			++g_tobjParitySamples;
+			if (!readbackVisible)
+				++g_tobjParityViolation;
+		}
 	}
 
 	return(1);
@@ -647,9 +935,13 @@ void TerrainObject::render (void) {
 	{
 	}
 
-	// GPU static-prop path bypasses canBeSeen() for the same reason as
-	// Building::render — the legacy angular cull is too aggressive.
-	if (appearance->canBeSeen() || g_useGpuStaticProps)
+	// Item 3 gate repoint: GPU readback is authoritative when enabled (projScale +
+	// getRadius() fixes make readback a reliable superset); fallback to canBeSeen()
+	// keeps behaviour identical when readback is off.
+	const bool readbackVisible = gpu_cull::readback_isEnabled()
+		? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+		: appearance->canBeSeen();
+	if (readbackVisible || g_useGpuStaticProps)
 	{
 		if (getSelected())
 		{
@@ -719,7 +1011,10 @@ void TerrainObject::renderShadows (void)
 	if (getFlag(OBJECT_FLAG_FALLING) || getFlag(OBJECT_FLAG_FALLEN))
 		return;			//No shadows on fallen trees.
 		
-	if (appearance->canBeSeen())
+	const bool readbackVisible = gpu_cull::readback_isEnabled()
+		? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
+		: appearance->canBeSeen();
+	if (readbackVisible)
 	{
 		appearance->renderShadows();
 	}

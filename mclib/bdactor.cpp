@@ -12,8 +12,36 @@
 #include"bdactor.h"
 #endif
 
+// [TOBJSPLIT v1] RDTSC includes for the BldgAppearance/TreeAppearance probe
+// points. __rdtsc() overhead ~5-10ns (cost_split_instrumentation_is_observer_
+// effect_dominated.md). Accumulators defined in code/terrobj.cpp.
+#include <intrin.h>
+#include <stdlib.h>
+// File-scope gate: one getenv per TU, process-start-constant, shared across
+// BldgAppearance::recalcBounds and TreeAppearance::recalcBounds. Matches the
+// file-scope pattern in code/terrobj.cpp:176.
+static bool s_tobjSplitBdOn = (getenv("MC2_TOBJ_COST_SPLIT") != nullptr);
+
+// T1.15 SpotLight_ illumination diagnostic — registration probe (bldg class).
+// Env-gated per Debug Instrumentation Rule. First-hit is always-on (one stderr
+// line per BldgAppearance instance that walks the lazy-init block). Periodic
+// summary emits every 600 update() calls when env=1. Demote-not-delete.
+static const bool s_spotDiagBldgEnabled = (getenv("MC2_SPOT_DIAG") != nullptr);
+static unsigned long s_spotDiagBldgRegistered = 0;   // total lights added
+static unsigned long s_spotDiagBldgOverflows  = 0;   // pool-overflow count
+static unsigned long s_spotDiagBldgActors     = 0;   // actor first-hits
+static unsigned long s_spotDiagBldgCalls      = 0;   // update() call counter
+
 #include "gos_static_prop_killswitch.h"
 #include "gos_static_prop_batcher.h"
+#include "gos_static_prop_registry.h"  // Stage 3.C: static-registry fast path
+#include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 RenderWorld Tasks 8-11
+#include <unordered_map>  // LODBUG probe: tracks per-actor previous bldgShape*
+#include "gos_object_parity_query.h"  // IsDualEmitArmed — Stage 2.D.2 dual-emit hook
+#include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon-zero
+#include "cpu_proj_cost_split.h"      // F3 CPU projection cost-baseline (RAII scope)
+#include "spotlight_diag.h"  // T1.16 — (E)-owned slot tagging for per-slot probe
+#include "gos_profiler.h"  // PERF DIAGNOSTIC 2026-05-06: ZoneScopedN for per-update breakdown
 
 #ifndef CAMERA_H
 #include"camera.h"
@@ -64,6 +92,7 @@
 #endif
 
 #include "../code/unitdesg.h" /* just for definition of MIN_TERRAIN_PART_ID and MAX_MAP_CELL_WIDTH */
+#include "../code/static_update_counters.h" /* [TOBJSPLIT v1] g_tobjAngularCyc / g_tobjProjCyc extern decls */
 #include "gos_static_prop_batcher.h"
 //******************************************************************************************
 extern float	worldUnitsPerMeter;
@@ -73,13 +102,15 @@ extern bool		useFog;
 extern long 	mechRGBLookup[];
 extern long 	mechRGBLookup2[];
 
-extern int		ObjectTextureSize;
+// NS3 boundary: engine-canonical definitions (sole consumer is this TU + editor).
+// Previously redefined in every game/tool main. Now defined here so the editor
+// can link mclib directly without code/mechcmd2.cpp.
+int ObjectTextureSize = 128;
+bool reloadBounds = false;
+MidLevelRenderer::MLRClipper * theClipper = NULL;
 
-extern bool		reloadBounds;
 extern float	metersPerWorldUnit;
 extern bool		useShadows;
-
-extern MidLevelRenderer::MLRClipper * theClipper;
 
 extern bool useNonWeaponEffects;
 extern bool useHighObjectDetail;
@@ -204,20 +235,7 @@ void BldgAppearanceType::init (const char * fileName)
 		bldgShape[0]->LoadTGMultiShapeFromASE(bldgName);
 	}
 
-	result = iniFile.readIdString("ShadowName",aseFileName,511);
-	if (result == NO_ERR)
-	{
-		//----------------------------------------------
-		// Base Shadow shape.
-		bldgShadowShape = new TG_TypeMultiShape;
-		gosASSERT(bldgShadowShape != NULL);
-	
-		FullPathFileName bldgName;
-		bldgName.init(tglPath,aseFileName,".ase");
-	
-		bldgShadowShape->LoadTGMultiShapeFromASE(bldgName);
-	}
- 
+
 	//destroyed state.
 	result = iniFile.seekBlock("TGLDamage");
 	if (result == NO_ERR)
@@ -238,31 +256,61 @@ void BldgAppearanceType::init (const char * fileName)
 			delete bldgDmgShape;
 			bldgDmgShape = NULL;
 		}
-		
-		//Shadow for destroyed state.
-		result = iniFile.readIdString("ShadowName",aseFileName,511);
-		if (result == NO_ERR)
+		else
 		{
-			//----------------------------------------------
-			// Base Shadow shape.
-			bldgDmgShadowShape = new TG_TypeMultiShape;
-			gosASSERT(bldgDmgShadowShape != NULL);
-		
-			FullPathFileName bldgName;
-			bldgName.init(tglPath,aseFileName,".ase");
-		
-			bldgDmgShadowShape->LoadTGMultiShapeFromASE(bldgName);
-			if (!bldgDmgShadowShape->GetNumShapes())
+			// 2026-05-11 force-load damage-shape textures at appearType init.
+			// LoadTGMultiShapeFromASE only sets texture NAMES, not handles —
+			// the per-instance texture-load loop in setObjStatus only fires
+			// when destruction happens at runtime. That's too late for
+			// GpuStaticPropBatcher::finalizeGeometry, which builds its
+			// per-packet texture array at mission-load. Without this loop,
+			// damage-shape packets get layerForPacket=-1 and either render
+			// with the wrong texture (orange-rectangle ghost) or get culled
+			// from the multidraw, leaving destroyed buildings invisible.
+			// Mirror the per-instance loop (bdactor.cpp:618-653) at the
+			// type-level: load textures into mcTextureManager, set the
+			// handles + alpha bits on the shared TG_TypeMultiShape so
+			// every per-instance clone via CreateFrom inherits them.
+			for (long i = 0; i < bldgDmgShape->GetNumTextures(); i++)
 			{
-				delete bldgDmgShadowShape;
-				bldgDmgShadowShape = NULL;
+				char txmName[1024];
+				bldgDmgShape->GetTextureName(i, txmName, 256);
+				char texturePath[1024];
+				sprintf(texturePath, "%s%d" PATH_SEPARATOR, tglPath, ObjectTextureSize);
+				FullPathFileName textureName;
+				textureName.init(texturePath, txmName, "");
+				if (fileExists(textureName))
+				{
+					if (S_strnicmp(txmName, "a_", 2) == 0)
+					{
+						DWORD gosHandle = mcTextureManager->loadTexture(
+							textureName, gos_Texture_Alpha,
+							gosHint_DisableMipmap | gosHint_DontShrink);
+						gosASSERT(gosHandle != 0xffffffff);
+						bldgDmgShape->SetTextureHandle(i, gosHandle);
+						bldgDmgShape->SetTextureAlpha(i, true);
+					}
+					else
+					{
+						DWORD gosHandle = mcTextureManager->loadTexture(
+							textureName, gos_Texture_Solid,
+							gosHint_DisableMipmap | gosHint_DontShrink);
+						gosASSERT(gosHandle != 0xffffffff);
+						bldgDmgShape->SetTextureHandle(i, gosHandle);
+						bldgDmgShape->SetTextureAlpha(i, false);
+					}
+				}
+				else
+				{
+					bldgDmgShape->SetTextureHandle(i, 0xffffffff);
+				}
 			}
 		}
+		
 	}
 	else
 	{
 		bldgDmgShape = NULL;
-		bldgDmgShadowShape = NULL;
 	}
 
 	result = iniFile.seekBlock("TGLDestructEffect");
@@ -404,22 +452,10 @@ void BldgAppearanceType::destroy (void)
 		}
 	}
 
-	if (bldgShadowShape)
-	{
-		delete bldgShadowShape;
-		bldgShadowShape = NULL;
-	}
-	
  	if (bldgDmgShape)
 	{
 		delete bldgDmgShape;
 		bldgDmgShape = NULL;
-	}
-	
-	if (bldgDmgShadowShape)
-	{
-		delete bldgDmgShadowShape;
-		bldgDmgShadowShape = NULL;
 	}
 	
  	for (int i=0;i<MAX_BD_ANIMATIONS;i++)
@@ -559,7 +595,13 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	isLooping = false;
 	setFirstFrame = false;
 	canTransition = true;
-	
+
+	// Slice 2 (object-offload) substrate: never set true in Stage 2.A.
+	needsFullBakeNextFrame = false;
+
+	// Stage 3.D: zero-init static-registry state (mirror of TreeAppearance::init).
+	staticReg = {};
+
 	paintScheme = -1;
 	objectNameId = 30469;
 	hazeFactor = 0.0f;
@@ -574,6 +616,12 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	pointLight = NULL;
 	lightId = 0xffffffff;
 	forceLightsOut = false;
+
+	// (E) T1.4: lazy-init key for SpotLight_ children. Vectors default-init
+	// to empty; the first-night-visibility check in update() switches this
+	// to true after the one-shot bldgShape walk. World position is invalid
+	// (zero) at init() time per C-r1 C1, so registration is deferred.
+	spotlightsRegistered_ = false;
 	
 	screenPos.x = screenPos.y = screenPos.z = screenPos.w = -999.0f;
 	position.Zero();
@@ -642,51 +690,6 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 			}
 		}
 		
-		if (appearType->bldgShadowShape)
-		{
-			bldgShadowShape = appearType->bldgShadowShape->CreateFrom();
-	
-			//-------------------------------------------------
-			// Load the texture and store its handle.
-			for (long i=0;i<bldgShadowShape->GetNumTextures();i++)
-			{
-				char txmName[1024];
-				bldgShadowShape->GetTextureName(i,txmName,256);
-		
-				char texturePath[1024];
-				sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-		
-				FullPathFileName textureName;
-				textureName.init(texturePath,txmName,"");
-		
-				if (fileExists(textureName))
-				{
-					if (S_strnicmp(txmName,"a_",2) == 0)
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						bldgShadowShape->SetTextureHandle(i,gosTextureHandle);
-						bldgShadowShape->SetTextureAlpha(i,true);
-					}
-					else
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						bldgShadowShape->SetTextureHandle(i,gosTextureHandle);
-						bldgShadowShape->SetTextureAlpha(i,false);
-					}
-				}
-				else
-				{
-					bldgShadowShape->SetTextureHandle(i,0xffffffff);
-				}
-			}
-		}
-		else
-		{
-			bldgShadowShape = NULL;
-		}
- 		
 		Stuff::Vector3D boxCoords[8];
 		Stuff::Vector3D nodeCenter = bldgShape->GetRootNodeCenter();
 
@@ -767,9 +770,7 @@ void BldgAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 		// handles are resolved so packets capture the correct GL handle.
 		for (int i = 0; i < MAX_LODS; ++i)
 			GpuStaticPropBatcher::instance().registerMultiShape(appearType->bldgShape[i]);
-		GpuStaticPropBatcher::instance().registerMultiShape(appearType->bldgShadowShape);
 		GpuStaticPropBatcher::instance().registerMultiShape(appearType->bldgDmgShape);
-		GpuStaticPropBatcher::instance().registerMultiShape(appearType->bldgDmgShadowShape);
 	}
 }
 
@@ -797,24 +798,6 @@ void BldgAppearance::setObjStatus (long oStatus)
 				currentLOD = 0;
 			}
 			
-			if (appearType->bldgDmgShadowShape)
-			{
-				if (bldgShadowShape)
-				{
-					bldgShadowShape->ClearAnimation();
-					delete bldgShadowShape;
-					bldgShadowShape = NULL;
-				}
-				
-				bldgShadowShape = appearType->bldgDmgShadowShape->CreateFrom();
-				
-				//Do shadows need to animate??
-				//if (bdAnimationState != -1)
-					//appearType->setAnimation(bldgShadowShape,bdAnimationState);
-				
-				beenInView = false; 
-			}
-
 			stopActivity();
 		}
 		
@@ -836,25 +819,8 @@ void BldgAppearance::setObjStatus (long oStatus)
 				beenInView = false; 
 			}
 			
-			if (appearType->bldgShadowShape)
-			{
-				if (bldgShadowShape)
-				{
-					bldgShadowShape->ClearAnimation();
-					delete bldgShadowShape;
-					bldgShadowShape = NULL;
-				}
-				
-				bldgShadowShape = appearType->bldgShadowShape->CreateFrom();
-				
-				//Do shadows need to animate??
-//				if (bdAnimationState != -1)
-					//appearType->setAnimation(bldgShadowShape,bdAnimationState);
-				
-				beenInView = false; 
-			}
 		}
-		
+
 		if (bldgShape)
 		{
 			//-------------------------------------------------
@@ -895,46 +861,8 @@ void BldgAppearance::setObjStatus (long oStatus)
 			}
 		}
 
-		if (bldgShadowShape)
-		{
-			//-------------------------------------------------
-			// Load the texture for the shadow and store its handle.
-			for (long i=0;i<bldgShadowShape->GetNumTextures();i++)
-			{
-				char txmName[1024];
-				bldgShadowShape->GetTextureName(i,txmName,256);
-	
-				char texturePath[1024];
-				sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-		
-				FullPathFileName textureName;
-				textureName.init(texturePath,txmName,"");
-		
-				if (fileExists(textureName))
-				{
-					if (S_strnicmp(txmName,"a_",2) == 0)
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						bldgShadowShape->SetTextureHandle(i,gosTextureHandle);
-						bldgShadowShape->SetTextureAlpha(i,true);
-					}
-					else
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						bldgShadowShape->SetTextureHandle(i,gosTextureHandle);
-						bldgShadowShape->SetTextureAlpha(i,false);
-					}
-				}
-				else
-				{
-					bldgShadowShape->SetTextureHandle(i,0xffffffff);
-				}
-			}
-		}
 	}
-	
+
 	status = oStatus;
 }
 
@@ -1090,17 +1018,27 @@ bool BldgAppearance::isMouseOver (float px, float py)
 //-----------------------------------------------------------------------------
 bool BldgAppearance::recalcBounds (void)
 {
-	Stuff::Vector4D tempPos;
-	inView = false;
+	// F3 CPU projection cost-baseline: aggregate per-actor scope into the
+	// recalcBounds_perframe bucket. No-op when env OFF.
+	::mc2_cpu_proj_cost::Scope _f3_recalcBounds_scope(
+	    ::mc2_cpu_proj_cost::BUCKET_RECALCBOUNDS_PERFRAME);
+	::mc2_cpu_proj_cost::add_workload_recalcbounds(1);
+	// [TOBJSPLIT v1] accumulators declared in code/static_update_counters.h
+	// (included above via ../code/static_update_counters.h).
+	// Gate: file-scope s_tobjSplitBdOn (defined above, shared with TreeAppearance).
 
-	float distanceToEye = 0.0f;
-	
+	setVisibilityGatesFromLegacy(false);
+
 	if (eye)
 	{
 		//-------------------------------------------------------------------
 		//NEW METHOD from the WAY BACK Days
-		inView = true;
-		
+		setVisibilityGatesFromLegacy(true);
+
+		// [TOBJSPLIT v1] ANGULAR bracket: matrix-free sphere angular clip.
+		// Reads cycle counter immediately before/after.
+		{
+		unsigned long long _tsA = s_tobjSplitBdOn ? __rdtsc() : 0ULL;
 		if (eye->usePerspective)
 		{
 			Stuff::Vector3D cameraPos;
@@ -1108,14 +1046,14 @@ bool BldgAppearance::recalcBounds (void)
 			cameraPos.y = eye->getCameraOrigin().z;
 			cameraPos.z = eye->getCameraOrigin().y;
 			float vClipConstant = eye->verticalSphereClipConstant;
-			float hClipConstant = eye->horizontalSphereClipConstant; 
-	
+			float hClipConstant = eye->horizontalSphereClipConstant;
+
 			Stuff::Vector3D objectCenter;
 			objectCenter.Subtract(position,cameraPos);
 			Camera::cameraFrame.trans_to_frame(objectCenter);
-			distanceToEye = objectCenter.GetApproximateLength();
+			float distanceToEye = objectCenter.GetApproximateLength();
 			float clip_distance = fabs(1.0f / objectCenter.y);
-			
+
 			//Is vertex on Screen OR close enough to screen that its triangle MAY be visible?
 			// WE have removed the atans here by simply taking the tan of the angle we want above.
 			float object_angle = fabs(objectCenter.z) * clip_distance;
@@ -1123,7 +1061,7 @@ bool BldgAppearance::recalcBounds (void)
 			if (object_angle > (vClipConstant + extent_angle))
 			{
 				//In theory, we would return here.  Object is NOT on screen.
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 			else
 			{
@@ -1131,357 +1069,30 @@ bool BldgAppearance::recalcBounds (void)
 				if (object_angle > (hClipConstant + extent_angle))
 				{
 					//In theory, we would return here.  Object is NOT on screen.
-					inView = false;
+					setVisibilityGatesFromLegacy(false);
 				}
 			}
 		}
-		
-		//Can we be seen at all?
-		// If yes, check if we are behind fog plane.
-		if (inView)
-		{
-			//ALWAYS need to do this or select is YAYA
-			// But now inView is correct!!
-			// [PROJECTZ:ScreenXYOracle id=bdactor_screen_pos_a]
-			eye->projectForScreenXY(position,screenPos);
+		if (s_tobjSplitBdOn) g_tobjAngularCyc += __rdtsc() - _tsA;
+		}  // end ANGULAR bracket
 
-			if (eye->usePerspective)
-			{
-				if (distanceToEye > Camera::MaxClipDistance)
-				{
-					hazeFactor = 1.0f;
-					inView = false;
-				}
-				else if (distanceToEye > Camera::MinHazeDistance)
-				{
-					Camera::HazeFactor = (distanceToEye - Camera::MinHazeDistance) * Camera::DistanceFactor;
-					inView = true;
-				}
-				else
-				{
-					Camera::HazeFactor = 0.0f;
-					inView = true;
-				}
-			}
-			else
-			{
-				Camera::HazeFactor = 0.0f;
-				inView = true;
-			}
-		}
-		
-		//If we were not behind fog plane, do a bunch O math we need later!!
-		if (inView)
-		{
-			if (reloadBounds)
-				appearType->reinit();
-
-			appearType->boundsLowerRightY = (OBBRadius * eye->getTiltFactor() * 2.0f);
-			
-			//-------------------------------------------------------------------------
-			// do a rough check if on screen.  If no where near, do NOT do the below.
-			// Mighty mighty slow!!!!
-			// Use the original check done before all this 3D madness.  Dig out sourceSafe tomorrow!
-			tempPos = screenPos;
-			upperLeft.x = tempPos.x;
-			upperLeft.y = tempPos.y;
-			
-			lowerRight.x = tempPos.x;
-			lowerRight.y = tempPos.y;
-			
-			upperLeft.x += (appearType->boundsUpperLeftX * eye->getScaleFactor());
-			upperLeft.y += (appearType->boundsUpperLeftY * eye->getScaleFactor());
-	
-			lowerRight.x += (appearType->boundsLowerRightX * eye->getScaleFactor());
-			lowerRight.y += (appearType->boundsLowerRightY * eye->getScaleFactor());
-
-			if ((lowerRight.x >= 0) && (lowerRight.y >= 0) &&
-				(upperLeft.x <= eye->getScreenResX()) &&
-				(upperLeft.y <= eye->getScreenResY()))
-			{
-				//We are on screen.  Figure out selection box.
-				Stuff::Vector3D boxCoords[8];
-				Stuff::Vector4D bcsp[8];
-
-				Stuff::Vector3D boxStart;
-				boxStart.x = -appearType->typeUpperLeft.x;
-				boxStart.y = appearType->typeUpperLeft.z;
-				boxStart.z = appearType->typeUpperLeft.y;
-
-				Stuff::Vector3D boxEnd;
-				boxEnd.x = -appearType->typeLowerRight.x;
-				boxEnd.y = appearType->typeLowerRight.z;
-				boxEnd.z = appearType->typeLowerRight.y;
-				
-				Stuff::Vector3D addCoords;
-		
-				addCoords.x = boxStart.x;
-				addCoords.y = boxStart.y;
-				addCoords.z = boxEnd.z;
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[0].Add(position,addCoords);
-		
-				addCoords.x = boxStart.x;
-				addCoords.y = boxEnd.y;  
-				addCoords.z = boxEnd.z;  		
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[1].Add(position,addCoords);
-		
-				addCoords.x = boxEnd.x; 
-				addCoords.y = boxEnd.y; 
-				addCoords.z = boxEnd.z; 		
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[2].Add(position,addCoords);
-				
-				addCoords.x = boxEnd.x;   
-				addCoords.y = boxStart.y; 
-				addCoords.z = boxEnd.z;   		
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[3].Add(position,addCoords);
-				
-				addCoords.x = boxStart.x;
-				addCoords.y = boxStart.y; 
-				addCoords.z = boxStart.z; 		
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[4].Add(position,addCoords);
-							  
-				addCoords.x = boxEnd.x;   
-				addCoords.y = boxStart.y;   
-				addCoords.z = boxStart.z; 
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[5].Add(position,addCoords);
-				
-				addCoords.x = boxEnd.x;   
-				addCoords.y = boxEnd.y;   
-				addCoords.z = boxStart.z; 
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[6].Add(position,addCoords);
-				
-				addCoords.x = boxStart.x; 
-				addCoords.y = boxEnd.y;   
-				addCoords.z = boxStart.z; 
-				if (rotation != 0.0f)
-					Rotate(addCoords,-rotation);
-				
-				boxCoords[7].Add(position,addCoords);
-				
-				float maxX = 0.0f, maxY = 0.0f;
-				float minX = 0.0f, minY = 0.0f;
-
-				for (long i=0;i<8;i++)
-				{
-					// [PROJECTZ:ScreenXYOracle id=bdactor_box_rect_a]
-					eye->projectForScreenXY(boxCoords[i],bcsp[i]);
-					if (!i)
-					{
-						maxX = minX = bcsp[i].x;
-						maxY = minY = bcsp[i].y;
-					}
-
-					if (i)
-					{
-						if (bcsp[i].x > maxX)
-							maxX = bcsp[i].x;
-
-						if (bcsp[i].x < minX)
-							minX = bcsp[i].x;
-
-						if (bcsp[i].y > maxY)
-							maxY = bcsp[i].y;
-						
-						if (bcsp[i].y < minY)
-							minY = bcsp[i].y;
-					}
-				}
-		
-				upperLeft.x = minX;
-				upperLeft.y = minY;
-				lowerRight.x = maxX;
-				lowerRight.y = maxY;
-				
-				if ((lowerRight.x >= 0) && (lowerRight.y >= 0) &&
-					(upperLeft.x <= eye->getScreenResX()) &&
-					(upperLeft.y <= eye->getScreenResY()))
-				{
-					inView = true;
-
-					if ((status != OBJECT_STATUS_DESTROYED) && (status != OBJECT_STATUS_DISABLED))
-					{
-						//-------------------------------------------------------------------------------
-						//Set LOD of Model here because we have the distance and we KNOW we can see it!
-						bool baseLOD = true;
-						DWORD selectLOD = 0;
-						// Animated buildings (turrets, gates, dropships) must stay at LOD 0.
-						// TG_AnimateShape caches node-name -> shape-index after first
-						// SetAnimationState (msl.cpp:2559) and writes the index into shared
-						// per-type state. The animation data is loaded against LOD 0 only
-						// (bdactor.cpp:322), so an LOD swap drives the retract animation
-						// against LOD 1's possibly-different sub-shape ordering -- the
-						// turret body never lowers. Suppressing LOD swap costs a few
-						// extra vertices per animated building (small set per map).
-						bool hasAnimations = false;
-						for (long ai = 0; ai < MAX_BD_ANIMATIONS; ++ai)
-						{
-							if (appearType->bdAnimData[ai])
-							{
-								hasAnimations = true;
-								break;
-							}
-						}
-						if (!hasAnimations)
-						{
-							if (useHighObjectDetail)
-							{
-								for (long i=1;i<MAX_LODS;i++)
-								{
-									if (appearType->bldgShape[i] && (distanceToEye > appearType->lodDistance[i]))
-									{
-										baseLOD = false;
-										selectLOD = i;
-									}
-								}
-							}
-							else	//We always want to use the lowest LOD!!
-							{
-								if (appearType->bldgShape[1])
-								{
-									baseLOD = false;
-									selectLOD = 1;
-								}
-							}
-						}
-						
-						// we are at this LOD level.
-						if (selectLOD != currentLOD)
-						{
-							currentLOD = selectLOD;
-
-							bldgShape->ClearAnimation();
-							delete bldgShape;
-							bldgShape = NULL;
-
-							bldgShape = appearType->bldgShape[currentLOD]->CreateFrom();
-							if (bdAnimationState != -1)
-								appearType->setAnimation(bldgShape,bdAnimationState);
-
-							//-------------------------------------------------
-							// Load the texture and store its handle.
-							for (long j=0;j<bldgShape->GetNumTextures();j++)
-							{
-								char txmName[1024];
-								bldgShape->GetTextureName(j,txmName,256);
-
-								char texturePath[1024];
-								sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-
-								FullPathFileName textureName;
-								textureName.init(texturePath,txmName,"");
-
-								if (fileExists(textureName))
-								{
-									if (S_strnicmp(txmName,"a_",2) == 0)
-									{
-										DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-										gosASSERT(gosTextureHandle != 0xffffffff);
-										bldgShape->SetTextureHandle(j,gosTextureHandle);
-										bldgShape->SetTextureAlpha(j,true);
-									}
-									else
-									{
-										DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-										gosASSERT(gosTextureHandle != 0xffffffff);
-										bldgShape->SetTextureHandle(j,gosTextureHandle);
-										bldgShape->SetTextureAlpha(j,false);
-									}
-								}
-								else
-								{
-									//PAUSE(("Warning: %s texture name not found",textureName));
-									bldgShape->SetTextureHandle(j,0xffffffff);
-								}
-							}
-						}
-
-						//ONLY change if we need
-						if (currentLOD && baseLOD)
-						{
-						// we are at the Base LOD level.
-							currentLOD = 0;
-							
-							bldgShape->ClearAnimation();
-							delete bldgShape;
-							bldgShape = NULL;
-							
-							bldgShape = appearType->bldgShape[currentLOD]->CreateFrom();
-							if (bdAnimationState != -1)
-								appearType->setAnimation(bldgShape,bdAnimationState);
-							
-							//-------------------------------------------------
-							// Load the texture and store its handle.
-							for (long i=0;i<bldgShape->GetNumTextures();i++)
-							{
-								char txmName[1024];
-								bldgShape->GetTextureName(i,txmName,256);
-										
-								char texturePath[1024];
-								sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-						
-								FullPathFileName textureName;
-								textureName.init(texturePath,txmName,"");
-										
-								if (fileExists(textureName))
-								{
-									if (S_strnicmp(txmName,"a_",2) == 0)
-									{
-										DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-										gosASSERT(gosTextureHandle != 0xffffffff);
-										bldgShape->SetTextureHandle(i,gosTextureHandle);
-										bldgShape->SetTextureAlpha(i,true);
-									}
-									else
-									{
-										DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-										gosASSERT(gosTextureHandle != 0xffffffff);
-										bldgShape->SetTextureHandle(i,gosTextureHandle);
-										bldgShape->SetTextureAlpha(i,false);
-									}
-								}
-								else
-								{
-									//PAUSE(("Warning: %s texture name not found",textureName));
-									bldgShape->SetTextureHandle(i,0xffffffff);
-								}
-							}
-						}
-					}
-				}
-				else
-				{
-					inView = false;		//Did alot of extra work checking this, but WHY draw and insult to injury?
-				}
-			}
-			else
-			{
-				inView = false;
-			}
-		}
+		// recalcBounds projection body deleted 2026-05-18 (Task 2): the GPU
+		// compute cull (gpu_cull::readback_isActorVisibleLagged) is the
+		// substitutive twin of the per-frame screen projection. inView is now
+		// coarse-angular-only -- a strict superset of the old projected value;
+		// over-inclusion is correctness-safe (cull_gates_are_load_bearing.md).
+		// screenPos/upperLeft/lowerRight are computed lazily at pick time
+		// (objmgr.cpp findTerrainObjectByMouse, Task 4).
+		// LATENT HAZARD: the deleted block also held the per-LOD-swap texture
+		// (re)loader, dead today under the 2026-05-12 TEMP LOD-0 pin
+		// (selectLOD forced 0 / (void)useHighObjectDetail in this function).
+		// If that pin is reverted (when the LOD-1 invisibility root cause is
+		// fixed), LOD selection + the per-LOD texture loader MUST be re-homed
+		// BEFORE the revert lands -- BldgAppearance::init loads LOD-0 textures
+		// ONLY; LOD-1+ would be unloaded after any LOD swap.
 	}
 
-	
+
 	return(inView);
 }
 
@@ -1576,13 +1187,158 @@ long BldgAppearance::render (long depthFixup)
 		
 		//---------------------------------------------
 		// Call Multi-shape render stuff here.
+		// Slice 1 path (g_useGpuObjects). No cull bypass; submitMultiShape
+		// is per-child Layer-B by construction. Returns false only when
+		// EVERY child is ineligible.
+		//
+		// Caller-side accounting: recordEligibleActor() fires unconditionally
+		// when slice 1 reaches this site (so a null shape or skipped submit
+		// still counts toward eligible_actors). recordCpuFallback() fires
+		// when no submit succeeded.
 		bool submittedToGpu = false;
-		if (g_useGpuStaticProps && bldgShape)
+		if (g_useGpuObjects)
 		{
-			// Layer B: if any child type was never registered, submitMultiShape
-			// returns false and we fall the WHOLE multishape back to the CPU
-			// path for this frame so the visual stays self-consistent.
-			submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(bldgShape);
+			GpuStaticPropBatcher::instance().recordEligibleActor(
+				GpuStaticPropPopulation::Building);
+
+			// Stage 3.D: static registry fast path (mirror of TreeAppearance
+			// at bdactor.cpp:4123). Set MC2_FORCE_DYNAMIC_BUILDINGS=1 to force
+			// fallback to dynamic submitMultiShape for boundary diagnosis.
+			// 2026-05-10 diag: per-frame counters to localise buildings-don't-
+			// render bug (substrate=ON misses buildings; killswitch shows them).
+			static uint64_t s_diag_render_calls = 0;
+			static uint64_t s_diag_static_now_true = 0;
+			static uint64_t s_diag_lightidx_uintmax = 0;
+			static uint64_t s_diag_markVisible = 0;
+			static uint64_t s_diag_static_now_false_reg = 0;
+			static uint64_t s_diag_static_now_false_eligible = 0;
+			static uint64_t s_diag_static_now_false_other = 0;
+			static uint64_t s_diag_dyn_submit = 0;
+			++s_diag_render_calls;
+			const bool isnow = IsStaticNow();
+			if (isnow) ++s_diag_static_now_true;
+			else {
+				if (!staticReg.registered) ++s_diag_static_now_false_reg;
+				else if (!isStaticEligible()) ++s_diag_static_now_false_eligible;
+				else ++s_diag_static_now_false_other;
+			}
+			if (isnow) {
+				static const bool s_forceDynamicBldgs =
+				    (getenv("MC2_FORCE_DYNAMIC_BUILDINGS") != nullptr);
+				if (s_forceDynamicBldgs) {
+					invalidateStaticRegistration();
+					// Fall through to the dynamic path below.
+				} else if (bldgShape && bldgShape->getCachedGpuLightIndex() == UINT32_MAX) {
+					// Light gather failed this frame — invalidate so dynamic
+					// path re-runs and re-registers next frame.
+					++s_diag_lightidx_uintmax;
+					invalidateStaticRegistration();
+				} else {
+					// 2026-05-11: pass per-actor captured lightDataIndex so
+					// flush() can read it (when MC2_STATIC_PER_INSTANCE_LIGHT=1)
+					// instead of multi->getCachedGpuLightIndex() — the per-multi
+					// scratch slot is last-writer-wins across sibling instances.
+					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex,
+					                                  staticReg.lightDataIndex,
+					                                  bldgShape ? bldgShape->GetExtentRadius() : 0.0f);
+					++s_diag_markVisible;
+					submittedToGpu = true;
+				}
+			}
+			static const bool s_bldgDiagTrace = (getenv("MC2_BLDG_DIAG_TRACE") != nullptr);
+			if (s_bldgDiagTrace && (s_diag_render_calls % 600) == 0) {
+				fprintf(stderr,
+					"[BLDG_DIAG v1] event=summary calls=%llu staticNow=%llu "
+					"notreg=%llu notelig=%llu other=%llu lightidxUM=%llu markVis=%llu dynSubmit=%llu\n",
+					(unsigned long long)s_diag_render_calls,
+					(unsigned long long)s_diag_static_now_true,
+					(unsigned long long)s_diag_static_now_false_reg,
+					(unsigned long long)s_diag_static_now_false_eligible,
+					(unsigned long long)s_diag_static_now_false_other,
+					(unsigned long long)s_diag_lightidx_uintmax,
+					(unsigned long long)s_diag_markVisible,
+					(unsigned long long)s_diag_dyn_submit);
+				fflush(stderr);
+			}
+			(void)s_diag_dyn_submit;  // updated below if we go to the dyn path
+
+			if (!submittedToGpu && bldgShape)
+			{
+				// Stage 3.D: shape-swap invalidation. IsStaticNow's
+				// staticReg.shape==bldgShape check routed us here when
+				// bldgShape was reassigned (LOD swap, damage→bldgDmgShape),
+				// but staticReg.registered=true still blocks the registration
+				// block below. Invalidate the stale entry first.
+				// PERF DIAGNOSTIC 2026-05-07: see TreeAppearance::render for the
+				// per-frame churn analysis. Buildings have damage-state swaps
+				// (intact → dmg shape) but typically no LOD swap; this rate
+				// should be much lower than the tree counterpart.
+				if (staticReg.registered && staticReg.shape != bldgShape) {
+					invalidateStaticRegistration();
+				}
+
+				// Slice 2 (object-offload) — Stage 2.C+: pass appearType->name
+				// as callerName so [OBJBATCHER v1] event=late_register can
+				// identify which actor class owns the unregistered type.
+				const char* callerName = (appearType ? appearType->name : nullptr);
+				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
+					bldgShape, GpuStaticPropPopulation::Building, callerName);
+				if (submittedToGpu) ++s_diag_dyn_submit;
+				// Slice 2 (object-offload) — Stage 2.B: late-registration
+				// recovery flag. When submitMultiShape failed because a leaf
+				// type was unregistered, mark the actor for full-bake on the
+				// NEXT update — defensive hygiene that ensures positions-only
+				// is never run on this actor before its type registers.
+				if (!submittedToGpu &&
+				    GpuStaticPropBatcher::instance().wasLastFailureLateRegistration())
+				{
+					needsFullBakeNextFrame = true;
+					invalidateStaticRegistration();  // clear any stale registration
+				}
+
+				// Stage 3.D: registration block. On the first successful full-bake
+				// submission with no late-reg flag AND with this instance currently
+				// static-eligible, snapshot the leaf batch into the registry.
+				// Subsequent frames use the static path above.
+				if (submittedToGpu && !staticReg.registered
+				        && GpuStaticPropRegistry::isEnabled()
+				        && !needsFullBakeNextFrame
+				        && isStaticEligible()) {
+					const auto& batch =
+						GpuStaticPropBatcher::instance().getLastBuiltBatch();
+					// M1 RenderWorld route (Slice M1 Task 8). Adapter performs
+					// sentinel translation; staticReg.recipeIndex remains int32_t
+					// per plan Decision D4 (slot-side storage stays legacy in M1).
+					int32_t legacyIdx = -1;
+					(void)GameAdapters::StaticProp::syncStaticProp(
+						bldgShape, batch.data(), batch.size(), &legacyIdx);
+					staticReg.recipeIndex = legacyIdx;
+					staticReg.registered  = (staticReg.recipeIndex >= 0);
+					staticReg.shape       = bldgShape;
+					if (staticReg.registered) {
+						// H4 follow-up (2026-05-07): per-frame re-registration
+						// after damage/shape swap has the same lightData_ gap as
+						// mission-load registerStatic(). Force one full update()
+						// so touch() cannot resubmit default-zero lightData_.
+						// Spec: docs/superpowers/specs/2026-05-07-lod-swap-static-registry-churn.md
+						needsFullBakeNextFrame = true;
+					}
+				}
+			}
+			if (!submittedToGpu)
+			{
+				GpuStaticPropBatcher::instance().recordCpuFallback(
+					GpuStaticPropPopulation::Building);
+			}
+		}
+		// Legacy bypass-cull path (g_useGpuStaticProps). Mutually exclusive
+		// with slice 1 — gated on !g_useGpuObjects so the two paths cannot
+		// coexist. Tagged Legacy so Gate F's fallback-rate is computed only
+		// over slice-1 populations. See spec R1.
+		if (!submittedToGpu && !g_useGpuObjects && g_useGpuStaticProps && bldgShape)
+		{
+			submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
+				bldgShape, GpuStaticPropPopulation::Legacy);
 		}
 		if (!submittedToGpu)
 		{
@@ -1594,6 +1350,36 @@ long BldgAppearance::render (long depthFixup)
 				bldgShape->Render(false,0.9999999f);
 			else if (depthFixup < 0)
 				bldgShape->Render(false,0.00001f);
+		}
+
+		// LODBUG probe — post-swap submit observation.  When the actor's
+		// bldgShape pointer changed since the last render() call for this
+		// actor, log the submit outcome.  Almost all shape-pointer changes
+		// are LOD swaps (recalcBounds:1437/1450 reassigns bldgShape via
+		// CreateFrom); damage swaps would also trigger but are rare during
+		// 30s passive smoke.  Off by default — env-gated.  Tracks state via
+		// a static unordered_map keyed on the actor pointer so we don't
+		// touch the BldgAppearance class layout.
+		{
+			static const bool s_lodBugTrace =
+				(getenv("MC2_LODBUG_TRACE") != nullptr);
+			if (s_lodBugTrace) {
+				static std::unordered_map<BldgAppearance*, TG_MultiShape*>
+					s_prevShape;
+				auto it = s_prevShape.find(this);
+				TG_MultiShape* prev =
+					(it != s_prevShape.end()) ? it->second : nullptr;
+				if (prev && prev != bldgShape) {
+					printf("[LODBUG v1] event=post_swap_render actor=%p "
+					       "prevShape=%p newShape=%p currentLOD=%u "
+					       "inView=%d submittedToGpu=%d\n",
+					       (void*)this, (void*)prev, (void*)bldgShape,
+					       (unsigned)currentLOD, (int)inView,
+					       (int)submittedToGpu);
+					fflush(stdout);
+				}
+				s_prevShape[this] = bldgShape;
+			}
 		}
 
 		if (selected & DRAW_BARS)
@@ -1912,25 +1698,68 @@ long BldgAppearance::render (long depthFixup)
 //-----------------------------------------------------------------------------
 long BldgAppearance::renderShadows (void)
 {
-	// Skip legacy blob shadows when shadow maps are active
-	if (gos_IsTerrainTessellationActive())
-		return NO_ERR;
-
-	if (inView && visible && !appearType->spinMe)
-	{
-		//---------------------------------------------
-		// Call Multi-shape render stuff here.
-		if (bldgShadowShape)
-			bldgShadowShape->RenderShadows();
-		else
-			bldgShape->RenderShadows();
-	}
 	return NO_ERR;
 }
 
 //-----------------------------------------------------------------------------
-long BldgAppearance::update (bool animate) 
+// [LIGHTBAKE v1] Static-actor lighting mission-load bake gate. Replaces
+// the raw shape->CacheGpuLightData() at the 4 static (bldg/tree) call
+// sites. The trailing staticReg.lightDataIndex =
+// shape->getCachedGpuLightIndex() per-instance capture is UNCHANGED
+// (both CacheGpuLightData and EmitBakedGpuLightData set
+// cachedGpuLightIndex_). Key = monotonic-never-reused registry
+// recipeIndex; invalidate (destruction/LOD swap) routes through
+// invalidateStaticRegistration -> GpuStaticPropRegistry::invalidate ->
+// mc2EraseBakedStaticLight -> lazy re-bake of the same position-derived
+// constant. Kill-switch MC2_LIGHTBAKE (=0 -> unchanged D2 path
+// bit-for-bit). Mechs never reach this (mech3d.cpp calls
+// CacheGpuLightData directly); generic props take the no-actor-light
+// path. C++-only. See docs/superpowers/plans/
+// 2026-05-17-static-lighting-bake-SIMPLIFIED.md
+static void mc2CacheOrBakeStaticGpuLight(TG_MultiShape* shape,
+                                         bool registered, int32_t recipeIndex)
 {
+	extern bool mc2LightBakeEnabled();
+	extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
+	extern void mc2SetBakedStaticLight(int32_t, const TG_HWLightsData&);
+	extern void mc2WriteStaticLightSlot(int32_t, const TG_HWLightsData&);  // [LIGHTBAKE v2]
+	if (!shape) return;
+	if (!mc2LightBakeEnabled() || !registered || recipeIndex < 0) {
+		shape->CacheGpuLightData();                  // unchanged D2/legacy path
+		return;
+	}
+	TG_HWLightsData baked;
+	if (mc2GetBakedStaticLight(recipeIndex, baked)) {
+		shape->EmitBakedGpuLightData(recipeIndex, baked);    // HIT: recompute retired
+	} else {
+		shape->CacheGpuLightData();                          // MISS: real gather (frame 1 / post-invalidate)
+		// C1 (adversarial review): CacheGpuLightData early-returns when
+		// !g_useGpuObjects && !g_useGpuMechs (supported MC2_GPU_OBJECTS=0
+		// operator config), leaving cachedGpuLightIndex_ at the
+		// 0xFFFFFFFF sentinel and leaf->lightData_ stale. Only persist
+		// the bake if the gather actually ran (valid index) -- else leave
+		// uncached so it retries next frame; never persist a no-op
+		// snapshot (would poison s_bakedStaticLight until invalidate).
+		const TG_HWLightsData* leaf = shape->peekCachedLeafLightData();
+		if (leaf && shape->getCachedGpuLightIndex() != 0xFFFFFFFFu) {
+			mc2SetBakedStaticLight(recipeIndex, *leaf);      // mission source-of-truth (re-bake/invalidate)
+			// [LIGHTBAKE v2] write the PERMANENT static slot once
+			// (lightData_[recipeIndex] CPU mirror + advance S), then
+			// point this multi at it -- identical end-state to the HIT
+			// path, so from this frame on there is NO per-frame
+			// addLightDataStructure for this recipe.
+			mc2WriteStaticLightSlot(recipeIndex, *leaf);
+			shape->EmitBakedGpuLightData(recipeIndex, *leaf);
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+long BldgAppearance::update (bool animate)
+{
+	::mc2_object_recon::Scope _recon_bldg_(
+		&::mc2_object_recon::g_per_frame.bldg_update_ns,
+		&::mc2_object_recon::g_per_frame.bldg_update_calls);
 	Stuff::Point3D xlatPosition;
 	Stuff::UnitQuaternion rot;
 
@@ -1988,6 +1817,129 @@ long BldgAppearance::update (bool animate)
 			eye->removeWorldLight(lightId,pointLight);
 			free(pointLight);
 			pointLight = NULL;
+		}
+	}
+
+	// (E) T3.1: SpotLight_-child illumination. Distinct from the per-building
+	// terrain pointLight above (R7). World position is valid here in update()
+	// (not in init() per C-r1 C1). Lazy first-night register; subsequent frames
+	// do per-frame SetPosition + active toggle ONLY (R3: no per-frame add/remove).
+	// Gate retired in T3.1 (Stage 3 substitutive completion); behavior is now
+	// unconditional. See docs/superpowers/plans/2026-05-20-spotlight-real-illumination-plan.md
+	if (bldgShape)
+	{
+		if (!spotlightsRegistered_ && eye && eye->isNight)
+		{
+			// Public accessors (msl.h:431 GetNumShapes, msl.h:438 GetShapeRec)
+			// because BldgAppearance is NOT in the TG_MultiShape friend list at
+			// msl.h:251-256 (C-r4 C1 fix).
+			// [SPOT_DIAG v1] T1.15 per-actor registration counters.
+			int diagChildrenWalked = 0;
+			int diagSpotlightsFound = 0;
+			int diagRegistered = 0;
+			int diagOverflow = 0;
+			for (int i = 0; i < bldgShape->GetNumShapes(); ++i)
+			{
+				const TG_ShapeRec* recp = bldgShape->GetShapeRec(i);
+				if (!recp) continue;
+				TG_Shape* child = recp->node;
+				// Mirror canonical batcher guards at
+				// gos_static_prop_batcher.cpp:2477 (C-r3 M1).
+				if (!child || !recp->processMe) continue;
+				++diagChildrenWalked;
+				if (!child->GetIsSpotlight()) continue;  // tgl.h:951
+				++diagSpotlightsFound;
+
+				// Resolve node-NAME id (NOT listOfShapes index) per the anubis
+				// pattern at mech3d.cpp:3336-3338 (C-r3 C1).
+				const char* nodeName = child->getNodeName();  // tgl.h:964
+				if (!nodeName) continue;
+				long nodeId = bldgShape->GetNodeNameId(nodeName);
+				if (nodeId == -1) continue;
+
+				TG_LightPtr light = (TG_LightPtr)malloc(sizeof(TG_Light));
+				light->init(TG_LIGHT_POINT);            // v1 — POINT (OQ2)
+				light->SetaRGB(0xffe8c870);             // OQ3 warm hardcoded
+				light->SetIntensity(0.5f);              // OQ4 initial
+				light->SetFalloffDistances(20.0f, 80.0f); // OQ4
+
+				long slotId = eye->addWorldLight(light);  // camera.h:805
+				if (slotId < 0) { free(light); continue; }  // pool overflow
+
+				spotlightLights_.push_back(light);
+				spotlightSlotIds_.push_back(static_cast<DWORD>(slotId));
+				spotlightNodeIds_.push_back(static_cast<int>(nodeId));
+				// T1.16 — tag this slot as (E)-owned, source=Bldg, so the
+				// Camera::updateLights per-slot probe can recognize it.
+				mc2_spotlight_diag::tag_slot(slotId, mc2_spotlight_diag::Bldg);
+				++diagRegistered;
+			}
+			// Pool overflow detection: any spotlight found but not registered
+			// where node-id resolution succeeded is treated as overflow signal.
+			// Simpler: overflow = spotlights_found - registered (under-counts
+			// nodeName misses; honest enough for the H1 disambiguation).
+			diagOverflow = diagSpotlightsFound - diagRegistered;
+			if (diagOverflow < 0) diagOverflow = 0;
+			s_spotDiagBldgRegistered += (unsigned long)diagRegistered;
+			s_spotDiagBldgOverflows  += (unsigned long)diagOverflow;
+			++s_spotDiagBldgActors;
+			// First-hit per actor — always-on (one stderr line per actor that
+			// walks lazy-init, regardless of env). Cap noise by emitting only
+			// for the first 8 actors to avoid log flood; cap is generous enough
+			// to confirm registration is firing across distinct buildings.
+			if (s_spotDiagBldgActors <= 8) {
+				std::fprintf(stderr,
+					"[SPOT_DIAG v1] event=first_register class=bldg actor_id=%p "
+					"children_walked=%d spotlights_found=%d registered=%d overflow=%d\n",
+					(void*)this, diagChildrenWalked, diagSpotlightsFound,
+					diagRegistered, diagOverflow);
+				std::fflush(stderr);
+			}
+			spotlightsRegistered_ = true;
+		}
+		// [SPOT_DIAG v1] T1.15 per-summary registration aggregate (bldg).
+		// Increments every BldgAppearance::update() call; emit every 600 calls
+		// when env=1. `calls=N` rather than `frames=N` because update() runs per
+		// actor per frame (many actors -> many calls per frame).
+		if (s_spotDiagBldgEnabled) {
+			++s_spotDiagBldgCalls;
+			if ((s_spotDiagBldgCalls % 600) == 0) {
+				std::fprintf(stderr,
+					"[SPOT_DIAG v1] event=registration_summary class=bldg "
+					"calls=%lu actors_first_hit=%lu lights_registered=%lu overflows=%lu\n",
+					s_spotDiagBldgCalls, s_spotDiagBldgActors,
+					s_spotDiagBldgRegistered, s_spotDiagBldgOverflows);
+				std::fflush(stderr);
+			}
+		}
+
+		// Per-frame in-place update. Runs UNCONDITIONALLY once registered
+		// (NOT inside the isNight gate above) — C-r2 C2: day->night->day
+		// transitions toggle active via the gate below; lights stay allocated.
+		for (size_t k = 0; k < spotlightLights_.size(); ++k)
+		{
+			Stuff::Vector3D childPos =
+				getNodeIdPosition(spotlightNodeIds_[k]);
+			spotlightLights_[k]->SetPosition(&childPos);
+			// Rule-2 correctness fix: lightToWorld is consumed at
+			// msl.cpp:1659 (s_lightToShape = lightToWorld * worldToShape).
+			// Without setting it, lightToShape collapses to worldToShape
+			// alone and the light's effective world position falls back to
+			// origin regardless of the `position` field for some consumers.
+			// Anubis sets this same matrix; existing per-building pointLight
+			// at bdactor.cpp:1955 also sets it. Translation-only suffices
+			// for POINT lights (matches the anubis/terrain-light pattern).
+			Stuff::LinearMatrix4D lightToWorldMatrix;
+			Stuff::Point3D childPosP;
+			childPosP.x = childPos.x; childPosP.y = childPos.y; childPosP.z = childPos.z;
+			lightToWorldMatrix.BuildTranslation(childPosP);
+			lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(0.0f, 0.0f, 0.0f));
+			spotlightLights_[k]->SetLightToWorld(&lightToWorldMatrix);
+			// eye->isNight is a bare field at camera.h:272 (C-r3 C2). visible
+			// matches anubis at mech3d.cpp:3353 (C-r1 C5). forceLightsOut
+			// matches the existing per-building pointLight gate at :1933.
+			spotlightLights_[k]->active =
+				(eye && eye->isNight && visible && !forceLightsOut);
 		}
 	}
 
@@ -2161,22 +2113,91 @@ long BldgAppearance::update (bool animate)
 	// memcpy from shape->listOfColors during submit().
 	if (inView || g_useGpuStaticProps)
 	{
-		bool checkShadows = ((!beenInView) || (appearType->spinMe) || (eye->forceShadowRecalc) || (currentFrame != oldFrame));
-		if (bldgShadowShape)
-			bldgShape->SetUseShadow(false);
-		else
-			bldgShape->SetRecalcShadows(checkShadows);
+		bldgShape->SetUseShadow(false);
 
 		bldgShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-		bldgShape->TransformMultiShape (&xlatPosition,&rot);
-		
-		if (bldgShadowShape && useShadows)
+		// Slice 2 (object-offload) — Stage 2.B: eligibility hoist.
+		// Branch lives INSIDE the existing inView||g_useGpuStaticProps cull
+		// gate to preserve slice 1's R1 invariant (no cull bypass).
+		// Run positions-only when:
+		//   - g_useGpuObjects is on, AND
+		//   - this actor did not hit a late-registration recovery last frame
+		//     (needsFullBakeNextFrame is a NEW bool from Stage 2.A; set by
+		//     BldgAppearance::render when submitMultiShape returns false with
+		//     wasLastFailureLateRegistration() true), AND
+		//   - the multi-shape's leaves are all registered with the slice 1
+		//     batcher (isMultiShapeEligibleForGpuObjects mirrors slice 1's
+		//     render-time per-child gates EXCEPT late-reg, which is handled
+		//     via the recovery flag above).
+		// Otherwise full bake. The full bake clears the recovery flag —
+		// re-establishing valid .argb before render reads it.
+		// PERF DIAGNOSTIC 2026-05-06: Tracy zones to attribute the 9.52 µs/call
+		// observed in TerrainObject::update appearanceUpdate. Six theories under
+		// investigation; these zones discriminate between them. Demote to silent
+		// (or remove) once the regression is identified.
+		bool gpuEligible;
 		{
-			bldgShadowShape->SetRecalcShadows(checkShadows);
-			bldgShadowShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-			bldgShadowShape->TransformMultiShape (&xlatPosition,&rot);
+			gpuEligible = g_useGpuObjects &&
+			              !needsFullBakeNextFrame &&
+			              GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(bldgShape);
 		}
- 		
+
+		if (gpuEligible)
+		{
+			// Stage 2.D.2 fix: cache GPU light data NOW, while worldLights[0]->aRGB
+			// is the per-actor terrain-scaled value set at line 2144 above.
+			// By the time submitMultiShape() runs (during renderLists()), later
+			// actors have overwritten worldLights[0]->aRGB for their positions.
+			{
+				mc2CacheOrBakeStaticGpuLight(bldgShape, staticReg.registered, staticReg.recipeIndex);
+				// 2026-05-11 per-instance capture: snapshot the multi's just-written
+				// cache slot for THIS actor before sibling actors of the same
+				// multi-type overwrite it. Ferried to RecipeRange via markVisible().
+				staticReg.lightDataIndex = bldgShape->getCachedGpuLightIndex();
+			}
+			{
+				bldgShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+			}
+			// Stage 2.D.2: on the dual-emit frame (latch Armed), also run
+			// the full bake so listOfTriangles[].aRGBLight is populated for
+			// the parity snapshot captured in submit(). This call is a pure
+			// CPU-side data write; it does NOT affect GPU output (the shader
+			// uses a_aRGBLight from the type-level VBO, not listOfVertices.argb).
+			// No addRenderShape: GPU-eligible actors reach this branch only
+			// when g_useGpuObjects is true. The legacy Render() path (which
+			// calls addTriangle) is bypassed because submitMultiShape()
+			// handles the GPU draw instead. In Renderer 3 (GL 4.3), the
+			// addTriangle queue is never flushed to hardware — only the GPU
+			// batcher's direct draw is visible. So calling TransformMultiShape
+			// here (for the parity snapshot) does NOT result in double-draw.
+			// Stage 2.D.3: per-actor gate. Bootstrap arm returns true for
+			// every shape; sample arm returns true only for the picked actor.
+			if (gos_object_parity::IsDualEmitArmedForActor(bldgShape)) {
+				bldgShape->TransformMultiShape (&xlatPosition,&rot);
+			}
+		}
+		else
+		{
+			bldgShape->TransformMultiShape (&xlatPosition,&rot);
+			// 2026-05-10: also seed cachedGpuLightIndex_ in the full-bake
+			// branch. Without this, the first-frame transition out of the
+			// H4 latch (set by registerStatic at :2754) leaves the index
+			// at UINT32_MAX, and the static-path render gate at :1612
+			// (`getCachedGpuLightIndex() == UINT32_MAX → invalidate`)
+			// invalidates the registration on the very next render —
+			// markVisible() never fires, registry::flush() short-circuits,
+			// substrate gets no static-prop records, and the cull writes
+			// 0 to all bucketCountData. The fix mirrors the gpuEligible
+			// branch's CacheGpuLightData call at :2314 so any path
+			// through update() seeds the light index. Cheap: same call
+			// already runs unconditionally in submitMultiShape; here we
+			// just hoist its effect to be visible to render() this frame.
+			mc2CacheOrBakeStaticGpuLight(bldgShape, staticReg.registered, staticReg.recipeIndex);
+			// 2026-05-11 per-instance capture: see gpuEligible branch above.
+			staticReg.lightDataIndex = bldgShape->getCachedGpuLightIndex();
+			needsFullBakeNextFrame = false;
+		}
+
 		if ((turn > 3) && useShadows)
 			beenInView = true;
 			
@@ -2470,18 +2491,208 @@ void BldgAppearance::flashBuilding (float dur, float fDuration, DWORD color)
 }
 
 //-----------------------------------------------------------------------------
+// Stage 3.D: BldgAppearance static-registry path. Mirror of TreeAppearance's
+// IsStaticNow / touch / invalidateStaticRegistration / isStaticEligible.
+// Registry-replay eligibility for buildings is stricter than for trees because
+// buildings have many dynamic states (animation, spin, flash, destruct FX).
+// memory/bldg_animation_lod_swap_unsafe.md is the load-bearing reason: animated
+// types share LOD-0 node-index state across instances, so replaying a recipe
+// for an animated building drives the wrong node when LOD swaps.
+
+namespace {
+	// Type-level "any animation defined for this building type". Even if the
+	// current instance isn't actively animating, an animated TYPE is excluded
+	// from the static path because LOD swap could surface the animation later
+	// and break the cached recipe.
+	bool bldgTypeHasAnimations(const BldgAppearanceType* t) {
+		if (!t) return false;
+		for (long i = 0; i < MAX_BD_ANIMATIONS; ++i) {
+			if (t->bdAnimData[i] != nullptr) return true;
+		}
+		return false;
+	}
+} // anon namespace
+
+bool BldgAppearance::isStaticEligible() const
+{
+	// Type-level disqualifiers: this building TYPE is dynamic by design.
+	if (!appearType)                          return false;
+	if (appearType->spinMe)                   return false;
+	if (bldgTypeHasAnimations(appearType))    return false;
+	// Instance-level disqualifiers: this PARTICULAR building is currently
+	// mutating in a way the cached recipe can't reflect.
+	if (drawFlash)                            return false;
+	if (destructFX)                           return false;
+	if (activity)                             return false;
+	if (activity1)                            return false;
+	if (bdAnimationState != -1)               return false;  // currently animating
+	return true;
+}
+
+// Task 5 (Track B): mission-load bulk static-prop registration.
+// Called from GameObjectManager::registerStaticPropsForMissionLoad() after
+// primeTerrainObjectsForMissionLoad() has set position/rotation on every
+// actor. Populates shapeToWorld matrices via TransformMultiShape_PositionsOnly,
+// builds a recipe batch per leaf via buildRecipeFromShape, and registers with
+// GpuStaticPropRegistry. HC-1: writes directly to typed staticReg member.
+void BldgAppearance::registerStatic() {
+	if (staticReg.registered) return;
+	if (!bldgShape)           return;
+	if (!GpuStaticPropRegistry::isEnabled()) return;
+	if (!isStaticEligible())  return;
+
+	// Compute transform — same coordinate convention as BldgAppearance::update().
+	// At mission-load time position.z may not yet hold terrain elevation (set by
+	// bldng.cpp:810 on first update), so use getTerrainElevation() directly.
+	float yaw = rotation * DEGREES_TO_RADS;
+	Stuff::UnitQuaternion rot;
+	rot = Stuff::EulerAngles(0.0f, yaw, 0.0f);
+	Stuff::Point3D xlatPosition;
+	xlatPosition.x = -position.x;
+	xlatPosition.y = land ? land->getTerrainElevation(position) : 0.0f;
+	xlatPosition.z = position.y;
+	bldgShape->TransformMultiShape_BuildRecipe(&xlatPosition, &rot);
+
+	// Build per-leaf recipe batch.
+	// Use public GetNumShapes()/GetShapeRec() — numTG_Shapes/listOfShapes are protected.
+	std::vector<GpuStaticPropInstance> batch;
+	const int numShapes = static_cast<int>(bldgShape->GetNumShapes());
+	batch.reserve(numShapes);
+	// 2026-05-10 diag: count outcomes for buildings to see why so few reach count>1.
+	int diag_total = 0, diag_skip_processMe = 0, diag_skip_helper = 0,
+	    diag_skip_unreg = 0, diag_added = 0;
+	for (int i = 0; i < numShapes; ++i) {
+		++diag_total;
+		const TG_ShapeRec* rec = bldgShape->GetShapeRec(i);
+		if (!rec || !rec->processMe || !rec->node) { ++diag_skip_processMe; continue; }
+		TG_Shape* child = rec->node;
+		// 2026-05-10 fix: skip non-SHAPE_NODE children (helpers, spotlight
+		// emitters, animation roots) — mirrors GpuStaticPropBatcher::submitMultiShape
+		// at gos_static_prop_batcher.cpp:2047. Without this, the loop hits a
+		// helper, buildRecipeFromShape's static_cast<TG_TypeShape*>(myType)
+		// produces a pointer that isn't in s_typeIndex, returns false, and
+		// the entire building registration aborts on its FIRST helper. This
+		// is why mc2_10 buildings (warehouses, S_admin, control) previously
+		// failed registerStatic and never reached the substrate.
+		if (!child->IsShapeNode()) { ++diag_skip_helper; continue; }
+		uint32_t flags = 0;
+		if (child->GetLightsOut())   flags |= (1u << 0);
+		if (child->GetIsWindow())    flags |= (1u << 1);
+		if (child->GetIsSpotlight()) flags |= (1u << 2);
+		// rec->shapeToWorld is LinearMatrix4D; convert to Matrix4D for buildRecipeFromShape().
+		Stuff::Matrix4D xform(rec->shapeToWorld);
+		GpuStaticPropInstance inst;
+		if (!GpuStaticPropBatcher::instance().buildRecipeFromShape(
+				child, xform,
+				static_cast<uint32_t>(child->GetARGBHighlight()),
+				static_cast<uint32_t>(child->GetFogRGB()),
+				flags, &inst)) {
+			++diag_skip_unreg;
+			return;  // unregistered type — abort; first-render fallback covers it
+		}
+		batch.push_back(inst);
+		++diag_added;
+	}
+	// 2026-05-10 diag: env-gated per-building outcome. MC2_BLDG_REG_TRACE=1.
+	{
+		static const bool s_trace = (getenv("MC2_BLDG_REG_TRACE") != nullptr);
+		static int s_loggedCount = 0;
+		if (s_trace && s_loggedCount < 80) {
+			++s_loggedCount;
+			fprintf(stderr,
+				"[BLDG_REG_DIAG v1] appearType=%s numShapes=%d total=%d processMe_skip=%d "
+				"helper_skip=%d unreg_skip=%d added=%d\n",
+				(appearType ? appearType->name : "<null>"),
+				numShapes, diag_total, diag_skip_processMe, diag_skip_helper,
+				diag_skip_unreg, diag_added);
+			fflush(stderr);
+		}
+		(void)diag_total; (void)diag_skip_processMe; (void)diag_skip_helper;
+		(void)diag_skip_unreg; (void)diag_added;
+	}
+	if (batch.empty()) return;
+
+	int32_t regIdx = -1;
+	(void)GameAdapters::StaticProp::syncStaticProp(
+		bldgShape, batch.data(), batch.size(), &regIdx);
+	if (regIdx >= 0) {
+		staticReg.registered  = true;
+		staticReg.shape       = bldgShape;
+		staticReg.recipeIndex = regIdx;
+		// H4 fix (2026-05-06): registerStatic only ran TransformMultiShape_BuildRecipe
+		// (positions only); leaf TG_Shape::lightData_ is still default/zero. Without
+		// this flag, IsStaticNow() returns true on the very next frame, UPDATE_SKIP
+		// fires, touch() re-submits the empty lightData_ via addLightDataStructure
+		// → all-zero lighting slot → black actor. Setting needsFullBakeNextFrame
+		// uses the existing late-reg recovery mechanism: IsStaticNow() returns
+		// false until the next update() runs a full TransformMultiShape and clears
+		// the flag (bdactor.cpp:2313). One-time cost of one extra update() per
+		// mission-load-registered actor; recovers the UPDATE_SKIP perf win
+		// every frame thereafter. Spec:
+		// docs/superpowers/specs/2026-05-06-update-skip-touch-residual-debug-strategy.md
+		needsFullBakeNextFrame = true;
+	}
+}
+
+bool BldgAppearance::isStaticRegistered() const { return staticReg.registered; }
+
+int32_t BldgAppearance::getStaticRecipeIndex() const {
+    return staticReg.registered ? staticReg.recipeIndex : -1;
+}
+
+bool BldgAppearance::IsStaticNow() const
+{
+	return staticReg.registered
+		&& staticReg.shape == bldgShape
+		&& !needsFullBakeNextFrame
+		&& isStaticEligible();
+}
+
+void BldgAppearance::touch()
+{
+	// MC2_STATIC_UPDATE_SKIP defaults TRUE (terrobj.cpp:92); touch() is the
+	// DEFAULT path. update() runs only when the env var is explicitly cleared.
+	if (bldgShape) {
+		// [LIGHTBRIDGE v1] C6 retirement: repoint to the primed 38d8720 slot
+		// (zero FNV/memcmp; cachedFrame_ stamped). MISS keeps the legacy
+		// resubmit (NOT CacheGpuLightData -- terrain-color-staleness,
+		// msl.cpp:1874-1887). MC2_LIGHTBAKE=0 -> legacy path bit-for-bit.
+		extern bool mc2LightBakeEnabled();
+		extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
+		TG_HWLightsData baked;
+		if (mc2LightBakeEnabled()
+		    && staticReg.registered && staticReg.recipeIndex >= 0
+		    && mc2GetBakedStaticLight(staticReg.recipeIndex, baked)) {
+			bldgShape->EmitBakedGpuLightData(staticReg.recipeIndex, baked);
+		} else {
+			bldgShape->ResubmitCachedGpuLightData();
+		}
+		// 2026-05-11 per-instance capture: snapshot the just-resubmitted slot
+		// for THIS actor before sibling instances of the same multi-type
+		// overwrite multi->cachedGpuLightIndex_ in the same update phase.
+		staticReg.lightDataIndex = bldgShape->getCachedGpuLightIndex();
+		bldgShape->Touch();
+	}
+}
+
+void BldgAppearance::invalidateStaticRegistration()
+{
+	if (staticReg.registered && staticReg.recipeIndex >= 0)
+		GpuStaticPropRegistry::invalidate(staticReg.recipeIndex);
+	staticReg = {};
+}
+
+//-----------------------------------------------------------------------------
 void BldgAppearance::destroy (void)
 {
+	// Stage 3.D: NULL the registry's RecipeRange::multi pointer before
+	// bldgShape is freed below. Mirrors TreeAppearance::destroy ordering.
+	invalidateStaticRegistration();
+
 	if ( bldgShape )
 	{
 		delete bldgShape;
 		bldgShape = NULL;
-	}
-
-	if (bldgShadowShape)
-	{
-		delete bldgShadowShape;
-		bldgShadowShape = NULL;
 	}
 
 	if (destructFX)
@@ -2501,6 +2712,26 @@ void BldgAppearance::destroy (void)
 		free(pointLight);
 		pointLight = NULL;
 	}
+
+	// (E) T1.5: paired cleanup for SpotLight_-child illumination from T1.4.
+	// IMPORTANT (C-r2 M5): bldgShape was deleted above; do NOT call
+	// getNodeIdPosition or any bldgShape method here. Use CACHED state
+	// (spotlightLights_/spotlightSlotIds_/spotlightNodeIds_) only. Unlike
+	// `pointLight` (alloc/free per night/day boundary), spotlightLights_
+	// stay allocated for the building's lifetime — this destroy hook is the
+	// only cleanup site.
+	for (size_t k = 0; k < spotlightLights_.size(); ++k)
+	{
+		if (eye)
+			eye->removeWorldLight(spotlightSlotIds_[k], spotlightLights_[k]);
+		// T1.16 — pair untag with removeWorldLight before free().
+		mc2_spotlight_diag::untag_slot(static_cast<long>(spotlightSlotIds_[k]));
+		free(spotlightLights_[k]);
+	}
+	spotlightLights_.clear();
+	spotlightSlotIds_.clear();
+	spotlightNodeIds_.clear();
+	spotlightsRegistered_ = false;
 
 	if (activity)
 	{
@@ -3182,25 +3413,6 @@ void TreeAppearanceType::init (const char * fileName)
 		treeShape[0]->SetFilter(true);
 	}
 
-	result = iniFile.readIdString("ShadowName",aseFileName,511);
-	if (result == NO_ERR)
-	{
-		//----------------------------------------------
-		// Base Shadow shape.
-		treeShadowShape = new TG_TypeMultiShape;
-		gosASSERT(treeShadowShape != NULL);
-	
-		FullPathFileName treeName;
-		treeName.init(tglPath,aseFileName,".ase");
-	
-		treeShadowShape->LoadTGMultiShapeFromASE(treeName);
-		
-		//---------------------------------------------------------
-		// Should only be necessary for trees.  Easy to data drive
-		treeShadowShape->SetAlphaTest(true);
-		treeShadowShape->SetFilter(true);
-	}
-	
 	result = iniFile.seekBlock("TGLDamage");
 	if (result == NO_ERR)
 	{
@@ -3221,30 +3433,10 @@ void TreeAppearanceType::init (const char * fileName)
 			treeDmgShape = NULL;
 		}
 		
-		//Shadow for destroyed state.
-		result = iniFile.readIdString("ShadowName",aseFileName,511);
-		if (result == NO_ERR)
-		{
-			//----------------------------------------------
-			// Base Shadow shape.
-			treeDmgShadowShape = new TG_TypeMultiShape;
-			gosASSERT(treeDmgShadowShape != NULL);
-		
-			FullPathFileName treeName;
-			treeName.init(tglPath,aseFileName,".ase");
-		
-			treeDmgShadowShape->LoadTGMultiShapeFromASE(treeName);
-			if (!treeDmgShadowShape->GetNumShapes())
-			{
-				delete treeDmgShadowShape;
-				treeDmgShadowShape = NULL;
-			}
-		}
 	}
 	else
 	{
 		treeDmgShape = NULL;
-		treeDmgShadowShape = NULL;
 	}
 
  	//No Animations at present.
@@ -3270,17 +3462,6 @@ void TreeAppearanceType::destroy (void)
 		treeDmgShape = NULL;
 	}
 	
-	if (treeDmgShadowShape)
-	{
-		delete treeDmgShadowShape;
-		treeDmgShadowShape = NULL;
-	}
-	
- 	if (treeShadowShape)
-	{
-		delete treeShadowShape;
-		treeShadowShape = NULL;
-	}
 }
 
 //-----------------------------------------------------------------------------
@@ -3318,8 +3499,12 @@ void TreeAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	lightRGB = fogRGB = 0xffffffff;
 
     // sebi: init so will not be garbage
-    status = OBJECT_STATUS_NORMAL; 
+    status = OBJECT_STATUS_NORMAL;
     forceLightsOut = false;
+    // Slice 2 (object-offload) substrate flag; set true by GPU batcher on late
+    // registration to force a full TransformMultiShape next frame.
+    needsFullBakeNextFrame = false;
+    staticReg = {};  // Stage 3.C: zero-init StaticRegistration
     treeShape = NULL;
     //
 
@@ -3362,51 +3547,6 @@ void TreeAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 				//PAUSE(("Warning: %s texture name not found",textureName));
 				treeShape->SetTextureHandle(i,0xffffffff);
 			}
-		}
-		
-		if (appearType->treeShadowShape)
-		{
-			treeShadowShape = appearType->treeShadowShape->CreateFrom();
-	
-			//-------------------------------------------------
-			// Load the texture and store its handle.
-			for (long i=0;i<treeShadowShape->GetNumTextures();i++)
-			{
-				char txmName[1024];
-				treeShadowShape->GetTextureName(i,txmName,256);
-		
-				char texturePath[1024];
-				sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-		
-				FullPathFileName textureName;
-				textureName.init(texturePath,txmName,"");
-		
-				if (fileExists(textureName))
-				{
-					if (S_strnicmp(txmName,"a_",2) == 0)
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						treeShadowShape->SetTextureHandle(i,gosTextureHandle);
-						treeShadowShape->SetTextureAlpha(i,true);
-					}
-					else
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						treeShadowShape->SetTextureHandle(i,gosTextureHandle);
-						treeShadowShape->SetTextureAlpha(i,false);
-					}
-				}
-				else
-				{
-					treeShadowShape->SetTextureHandle(i,0xffffffff);
-				}
-			}
-		}
-		else
-		{
-			treeShadowShape = NULL;
 		}
 		
 		Stuff::Vector3D boxCoords[8];
@@ -3469,9 +3609,7 @@ void TreeAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 		// GPU static-prop batcher: register this tree's type shapes + variants.
 		for (int i = 0; i < MAX_LODS; ++i)
 			GpuStaticPropBatcher::instance().registerMultiShape(appearType->treeShape[i]);
-		GpuStaticPropBatcher::instance().registerMultiShape(appearType->treeShadowShape);
 		GpuStaticPropBatcher::instance().registerMultiShape(appearType->treeDmgShape);
-		GpuStaticPropBatcher::instance().registerMultiShape(appearType->treeDmgShadowShape);
 	}
 
 	pitch = yaw = 0.0f;
@@ -3497,21 +3635,8 @@ void TreeAppearance::setObjStatus (long oStatus)
 				beenInView = false; 
 			}
 			
-			if (appearType->treeDmgShadowShape)
-			{
-				if (treeShadowShape)
-				{
-					treeShadowShape->ClearAnimation();
-					delete treeShadowShape;
-					treeShadowShape = NULL;
-				}
-				
-				treeShadowShape = appearType->treeDmgShadowShape->CreateFrom();
-				
-				beenInView = false; 
-			}
 		}
-		
+
 		if (oStatus == OBJECT_STATUS_NORMAL)
 		{
 			if (appearType->treeShape[0])
@@ -3527,21 +3652,8 @@ void TreeAppearance::setObjStatus (long oStatus)
 				beenInView = false; 
 			}
 			
-			if (appearType->treeShadowShape)
-			{
-				if (treeShadowShape)
-				{
-					treeShadowShape->ClearAnimation();
-					delete treeShadowShape;
-					treeShadowShape = NULL;
-				}
-				
-				treeShadowShape = appearType->treeShadowShape->CreateFrom();
-				
-				beenInView = false;
-			}
 		}
-		
+
 		//-------------------------------------------------
 		// Load the texture and store its handle.
 		if (treeShape)
@@ -3582,47 +3694,8 @@ void TreeAppearance::setObjStatus (long oStatus)
 			}
 		}
 
-		if (treeShadowShape)
-		{
-			//-------------------------------------------------
-			// Load the texture and store its handle.
-			for (long i=0;i<treeShadowShape->GetNumTextures();i++)
-			{
-				char txmName[1024];
-				treeShadowShape->GetTextureName(i,txmName,256);
-		
-				char texturePath[1024];
-				sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-		
-				FullPathFileName textureName;
-				textureName.init(texturePath,txmName,"");
-		
-				if (fileExists(textureName))
-				{
-					if (S_strnicmp(txmName,"a_",2) == 0)
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						treeShadowShape->SetTextureHandle(i,gosTextureHandle);
-						treeShadowShape->SetTextureAlpha(i,true);
-					}
-					else
-					{
-						DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-						gosASSERT(gosTextureHandle != 0xffffffff);
-						treeShadowShape->SetTextureHandle(i,gosTextureHandle);
-						treeShadowShape->SetTextureAlpha(i,false);
-					}
-				}
-				else
-				{
-					//PAUSE(("Warning: %s texture name not found",textureName));
-					treeShadowShape->SetTextureHandle(i,0xffffffff);
-				}
-			}
-		}
 	}
-	
+
 	status = oStatus;
 }
 
@@ -3646,7 +3719,7 @@ void TreeAppearance::setMoverParameters (float pitchAngle, float lArmRot, float 
 {
 	pitch = pitchAngle;
 }
-		
+
 //-----------------------------------------------------------------------------
 bool TreeAppearance::isMouseOver (float px, float py)
 {
@@ -3670,16 +3743,27 @@ bool TreeAppearance::isMouseOver (float px, float py)
 //-----------------------------------------------------------------------------
 bool TreeAppearance::recalcBounds (void)
 {
-	Stuff::Vector4D tempPos;
-	inView = false;
-	
-	float distanceToEye = 0.0f;
+	// F3 CPU projection cost-baseline: aggregate per-actor scope into the
+	// recalcBounds_perframe bucket. No-op when env OFF.
+	::mc2_cpu_proj_cost::Scope _f3_recalcBounds_scope(
+	    ::mc2_cpu_proj_cost::BUCKET_RECALCBOUNDS_PERFRAME);
+	::mc2_cpu_proj_cost::add_workload_recalcbounds(1);
+	// [TOBJSPLIT v1] accumulators declared in code/static_update_counters.h
+	// (included above via ../code/static_update_counters.h).
+	// Gate: file-scope s_tobjSplitBdOn (defined above, shared with BldgAppearance).
+
+	setVisibilityGatesFromLegacy(false);
 
 	if (eye)
 	{
 		//-------------------------------------------------------------------
 		//NEW METHOD from the WAY BACK Days
-		inView = true;
+		setVisibilityGatesFromLegacy(true);
+
+		// [TOBJSPLIT v1] ANGULAR bracket: matrix-free sphere angular clip.
+		// Reads cycle counter immediately before/after.
+		{
+		unsigned long long _tsA = s_tobjSplitBdOn ? __rdtsc() : 0ULL;
 		if (eye->usePerspective)
 		{
 			Stuff::Vector3D cameraPos;
@@ -3687,14 +3771,14 @@ bool TreeAppearance::recalcBounds (void)
 			cameraPos.y = eye->getCameraOrigin().z;
 			cameraPos.z = eye->getCameraOrigin().y;
 			float vClipConstant = eye->verticalSphereClipConstant;
-			float hClipConstant = eye->horizontalSphereClipConstant; 
-	
+			float hClipConstant = eye->horizontalSphereClipConstant;
+
 			Stuff::Vector3D objectCenter;
 			objectCenter.Subtract(position,cameraPos);
 			Camera::cameraFrame.trans_to_frame(objectCenter);
-			distanceToEye = objectCenter.GetApproximateLength();
+			float distanceToEye = objectCenter.GetApproximateLength();
 			float clip_distance = fabs(1.0f / objectCenter.y);
-			
+
 			//Is vertex on Screen OR close enough to screen that its triangle MAY be visible?
 			// WE have removed the atans here by simply taking the tan of the angle we want above.
 			float object_angle = fabs(objectCenter.z) * clip_distance;
@@ -3702,7 +3786,7 @@ bool TreeAppearance::recalcBounds (void)
 			if (object_angle > (vClipConstant + extent_angle))
 			{
 				//In theory, we would return here.  Object is NOT on screen.
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 			else
 			{
@@ -3710,273 +3794,30 @@ bool TreeAppearance::recalcBounds (void)
 				if (object_angle > (hClipConstant + extent_angle))
 				{
 					//In theory, we would return here.  Object is NOT on screen.
-					inView = false;
+					setVisibilityGatesFromLegacy(false);
 				}
 			}
 		}
-		
-		//Can we be seen at all?
-		// If yes, check if we are behind fog plane.
-		if (inView)
-		{
-			//ALWAYS need to do this or select is YAYA
-			// But now inView is correct.
-			// [PROJECTZ:ScreenXYOracle id=bdactor_screen_pos_b]
-			eye->projectForScreenXY(position,screenPos);
-		
-			if (eye->usePerspective)
-			{
-				if (distanceToEye > Camera::MaxClipDistance)
-				{
-					hazeFactor = 1.0f;
-					inView = false;
-				}
-				else if (distanceToEye > Camera::MinHazeDistance)
-				{
-					Camera::HazeFactor = (distanceToEye - Camera::MinHazeDistance) * Camera::DistanceFactor;
-					inView = true;
-				}
-				else
-				{
-					Camera::HazeFactor = 0.0f;
-					inView = true;
-				}
-			
-			}
-			else
-			{
-				Camera::HazeFactor = 0.0f;
-				inView = true;
-			}
-		}
-		
-		//If we were not behind fog plane, do a bunch O math we need later!!
-		if (inView)
-		{
-			//We are on screen.  Figure out selection box.
-			Stuff::Vector3D boxCoords[8];
-			Stuff::Vector4D bcsp[8];
+		if (s_tobjSplitBdOn) g_tobjAngularCyc += __rdtsc() - _tsA;
+		}  // end ANGULAR bracket
 
-			Stuff::Vector3D minBox;
-			minBox.x = -appearType->typeUpperLeft.x;
-			minBox.y = appearType->typeUpperLeft.z;
-			minBox.z = appearType->typeUpperLeft.y;
-
-			Stuff::Vector3D maxBox;
-			maxBox.x = -appearType->typeLowerRight.x;
-			maxBox.y = appearType->typeLowerRight.z;
-			maxBox.z = appearType->typeLowerRight.y;
-
-			if (rotation != 0.0f)
-				Rotate(minBox,-rotation);
-
-			if (rotation != 0.0f)
-				Rotate(maxBox,-rotation);
-
-			boxCoords[0].x = position.x + minBox.x;
-			boxCoords[0].y = position.y + minBox.y;
-			boxCoords[0].z = position.z + minBox.z;
-
-			boxCoords[1].x = position.x + minBox.x;
-			boxCoords[1].y = position.y + maxBox.y;
-			boxCoords[1].z = position.z + minBox.z;
-
-			boxCoords[2].x = position.x + maxBox.x;
-			boxCoords[2].y = position.y + minBox.y;
-			boxCoords[2].z = position.z + minBox.z;
-
-			boxCoords[3].x = position.x + maxBox.x;
-			boxCoords[3].y = position.y + maxBox.y;
-			boxCoords[3].z = position.z + minBox.z;
-
-			boxCoords[4].x = position.x + maxBox.x;
-			boxCoords[4].y = position.y + maxBox.y;
-			boxCoords[4].z = position.z + maxBox.z;
-
-			boxCoords[5].x = position.x + maxBox.x;
-			boxCoords[5].y = position.y + minBox.y;
-			boxCoords[5].z = position.z + maxBox.z;
-
-			boxCoords[6].x = position.x + minBox.x;
-			boxCoords[6].y = position.y + maxBox.y;
-			boxCoords[6].z = position.z + maxBox.z;
-
-			boxCoords[7].x = position.x + minBox.x;
-			boxCoords[7].y = position.y + minBox.y;
-			boxCoords[7].z = position.z + maxBox.z;
-
-			float maxX = 0.0f, maxY = 0.0f;
-			float minX = 0.0f, minY = 0.0f;
-
-			for (long i=0;i<8;i++)
-			{
-				// [PROJECTZ:ScreenXYOracle id=bdactor_box_rect_b]
-				eye->projectForScreenXY(boxCoords[i],bcsp[i]);
-				if (!i)
-				{
-					maxX = minX = bcsp[i].x;
-					maxY = minY = bcsp[i].y;
-				}
-				
-				if (i)
-				{
-					if (bcsp[i].x > maxX)
-						maxX = bcsp[i].x;
-					
-					if (bcsp[i].x < minX)
-						minX = bcsp[i].x;
-						
-					if (bcsp[i].y > maxY)
-						maxY = bcsp[i].y;
-					
-					if (bcsp[i].y < minY)
-						minY = bcsp[i].y;
-				}
-			}
-	
-			upperLeft.x = minX;
-			upperLeft.y = minY;
-			lowerRight.x = maxX;
-			lowerRight.y = maxY;
-			
-			if ((lowerRight.x >= 0) && (lowerRight.y >= 0) &&
-				(upperLeft.x <= eye->getScreenResX()) &&
-				(upperLeft.y <= eye->getScreenResY()))
-			{
-				inView = true;
-		
-				if ((status != OBJECT_STATUS_DESTROYED) && (status != OBJECT_STATUS_DISABLED))
-				{
-					//-------------------------------------------------------------------------------
-					//Set LOD of Model here because we have the distance and we KNOW we can see it!
-					bool baseLOD = true;
-					DWORD selectLOD = 0;
-					if (useHighObjectDetail)
-					{
-						for (long i=1;i<MAX_LODS;i++)
-						{
-							if (appearType->treeShape[i] && (distanceToEye > appearType->lodDistance[i]))
-							{
-								baseLOD = false;
-								selectLOD = i;
-							}
-						}
-					}
-					else	//We always want to use the lowest LOD!!
-					{
-						if (appearType->treeShape[1])
-						{
-							baseLOD = false;
-							selectLOD = 1;
-						}
-					}
-					
-					// we are at this LOD level.
-					if (selectLOD != currentLOD)
-					{
-						currentLOD = selectLOD;
-
-						treeShape->ClearAnimation();
-						delete treeShape;
-						treeShape = NULL;
-
-						treeShape = appearType->treeShape[currentLOD]->CreateFrom();
-						//-------------------------------------------------
-						// Load the texture and store its handle.
-						for (long j=0;j<treeShape->GetNumTextures();j++)
-						{
-							char txmName[1024];
-							treeShape->GetTextureName(j,txmName,256);
-
-							char texturePath[1024];
-							sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-
-							FullPathFileName textureName;
-							textureName.init(texturePath,txmName,"");
-
-							if (fileExists(textureName))
-							{
-								if (S_strnicmp(txmName,"a_",2) == 0)
-								{
-									DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-									gosASSERT(gosTextureHandle != 0xffffffff);
-									treeShape->SetTextureHandle(j,gosTextureHandle);
-									treeShape->SetTextureAlpha(j,true);
-								}
-								else
-								{
-									DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-									gosASSERT(gosTextureHandle != 0xffffffff);
-									treeShape->SetTextureHandle(j,gosTextureHandle);
-									treeShape->SetTextureAlpha(j,false);
-								}
-							}
-							else
-							{
-								//PAUSE(("Warning: %s texture name not found",textureName));
-								treeShape->SetTextureHandle(j,0xffffffff);
-							}
-						}
-					}
-						
-					//ONLY change if we need
-					if (currentLOD && baseLOD)
-					{
-					// we are at the Base LOD level.
-						currentLOD = 0;
-						
-						treeShape->ClearAnimation();
-						delete treeShape;
-						treeShape = NULL;
-						
-						treeShape = appearType->treeShape[currentLOD]->CreateFrom();
-						
-						//-------------------------------------------------
-						// Load the texture and store its handle.
-						for (long i=0;i<treeShape->GetNumTextures();i++)
-						{
-							char txmName[1024];
-							treeShape->GetTextureName(i,txmName,256);
-									
-							char texturePath[1024];
-							sprintf(texturePath,"%s%d" PATH_SEPARATOR,tglPath,ObjectTextureSize);
-					
-							FullPathFileName textureName;
-							textureName.init(texturePath,txmName,"");
-									
-							if (fileExists(textureName))
-							{
-								if (S_strnicmp(txmName,"a_",2) == 0)
-								{
-									DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Alpha,gosHint_DisableMipmap | gosHint_DontShrink);
-									gosASSERT(gosTextureHandle != 0xffffffff);
-									treeShape->SetTextureHandle(i,gosTextureHandle);
-									treeShape->SetTextureAlpha(i,true);
-								}
-								else
-								{
-									DWORD gosTextureHandle = mcTextureManager->loadTexture(textureName,gos_Texture_Solid,gosHint_DisableMipmap | gosHint_DontShrink);
-									gosASSERT(gosTextureHandle != 0xffffffff);
-									treeShape->SetTextureHandle(i,gosTextureHandle);
-									treeShape->SetTextureAlpha(i,false);
-								}
-							}
-							else
-							{
-								//PAUSE(("Warning: %s texture name not found",textureName));
-								treeShape->SetTextureHandle(i,0xffffffff);
-							}
-						}
-					}
-				}
-			}
-			else
-			{
-				inView = false;		//Did alot of extra work checking this, but WHY draw and insult to injury?
-			}
-		}
+		// recalcBounds projection body deleted 2026-05-18 (Task 3, Tree mirror of Task 2):
+		// the GPU compute cull (gpu_cull::readback_isActorVisibleLagged) is the
+		// substitutive twin of the per-frame screen projection. inView is now
+		// coarse-angular-only -- a strict superset of the old projected value;
+		// over-inclusion is correctness-safe (cull_gates_are_load_bearing.md).
+		// Trees are never pick targets (objmgr.cpp findObjectByMouse skips
+		// getObjectClass()==TREE), so screenPos/upperLeft/lowerRight have no
+		// pick-path consumer -- no Task-4 re-home needed for Tree.
+		// LATENT HAZARD: the deleted block also held the per-LOD-swap texture
+		// (re)loader, dead today under the 2026-05-12 TEMP LOD-0 pin
+		// (selectLOD forced 0 in this function).
+		// If that pin is reverted (when the LOD-1 invisibility root cause is
+		// fixed), LOD selection + the per-LOD texture loader MUST be re-homed
+		// BEFORE the revert lands -- TreeAppearance::init loads LOD-0 textures
+		// ONLY; LOD-1+ would be unloaded after any LOD swap.
 	}
-	
+
 	return(inView);
 }
 
@@ -3998,10 +3839,114 @@ long TreeAppearance::render (long depthFixup)
 		}
 		//---------------------------------------------
 		// Call Multi-shape render stuff here.
+		// Slice 1 path (g_useGpuObjects). Same shape as BldgAppearance::render.
 		bool submittedToGpu = false;
-		if (g_useGpuStaticProps && treeShape)
+		if (g_useGpuObjects)
 		{
-			submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(treeShape);
+			GpuStaticPropBatcher::instance().recordEligibleActor(
+				GpuStaticPropPopulation::Tree);
+
+			// Stage 3.C: static registry fast path. If this tree's instance was
+			// previously registered and position/shape are stable, inject it into
+			// the batcher via markVisible() (processed at registry flush) instead of
+			// running the full submitMultiShape() compute path.
+			// CacheGpuLightData() is called here (not in touch()) so the light-index
+			// refresh is co-located with the render-side emission that needs it.
+			// The UINT32_MAX guard handles the degenerate case where no light data
+			// is available: invalidate and fall through to the dynamic path.
+			// Does NOT return early — selection visualization (drawBars/drawBrackets)
+			// at lines 4141-4161 must still run if selected is non-zero.
+			if (IsStaticNow()) {
+				// Diagnostic 2026-05-05 (advisor-recommended boundary test): set
+				// MC2_FORCE_DYNAMIC_TREES=1 to force the static path to fall back
+				// to dynamic submitMultiShape. If "black billboard square" trees
+				// disappear with the env var set, the static replay path is the
+				// failing boundary. If they remain, shared draw/material/global
+				// state is guilty. Revert by unsetting the env var (no rebuild).
+				static const bool s_forceDynamicTrees =
+				    (getenv("MC2_FORCE_DYNAMIC_TREES") != nullptr);
+				if (s_forceDynamicTrees) {
+					invalidateStaticRegistration();
+					// Fall through to the dynamic path below.
+				} else if (treeShape->getCachedGpuLightIndex() == UINT32_MAX) {
+					// Light-data gather failed this frame — invalidate so the dynamic
+					// path re-runs and re-registers next frame with correct lights.
+					invalidateStaticRegistration();
+					// Fall through to the if (!submittedToGpu && treeShape) dynamic path below.
+				} else {
+					// 2026-05-11: see BldgAppearance::render markVisible site.
+					GpuStaticPropRegistry::markVisible(staticReg.recipeIndex,
+					                                  staticReg.lightDataIndex,
+					                                  treeShape ? treeShape->GetExtentRadius() : 0.0f);
+					submittedToGpu = true;
+				}
+			}
+			if (!submittedToGpu && treeShape)
+			{
+				// Stage 3.C / M1: shape-swap invalidation. IsStaticNow()'s
+				// staticReg.shape==treeShape check routes us here when treeShape was
+				// reassigned (LOD swap at bdactor.cpp:3984, damage at ~3596/3626), but
+				// staticReg.registered==true still blocks the registration block below.
+				// Invalidate the stale entry first so the new shape gets registered.
+				// PERF DIAGNOSTIC 2026-05-07: count this branch — per capture 3
+				// analysis, LOD-swap-driven invalidate+re-register on trees was
+				// running tens of times per frame, leaking recipe slots and
+				// pin-count churn. Tracy zone makes the rate visible per-frame.
+				if (staticReg.registered && staticReg.shape != treeShape) {
+					invalidateStaticRegistration();
+				}
+
+				// Stage 2.C+: see BldgAppearance::render for callerName intent.
+				const char* callerName = (appearType ? appearType->name : nullptr);
+				submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
+					treeShape, GpuStaticPropPopulation::Tree, callerName);
+				// Slice 2 (object-offload) — Stage 2.B: see BldgAppearance::render
+				// for full rationale on the late-reg recovery flag.
+				if (!submittedToGpu &&
+				    GpuStaticPropBatcher::instance().wasLastFailureLateRegistration())
+				{
+					needsFullBakeNextFrame = true;
+					invalidateStaticRegistration();  // clear stale registration if any
+				}
+				// Stage 3.C: registration block. On the first successful full-bake
+				// submission with no late-reg flag, snapshot the leaf batch into the
+				// registry. Subsequent frames use the static path above.
+				// Pass treeShape as multi so flush() can patch lightDataIndex each frame.
+				if (submittedToGpu && !staticReg.registered
+				        && GpuStaticPropRegistry::isEnabled()
+				        && !needsFullBakeNextFrame) {
+					const auto& batch =
+						GpuStaticPropBatcher::instance().getLastBuiltBatch();
+					// M1 RenderWorld route (Slice M1 Task 10).
+					int32_t legacyIdx = -1;
+					(void)GameAdapters::StaticProp::syncStaticProp(
+						treeShape, batch.data(), batch.size(), &legacyIdx);
+					staticReg.recipeIndex = legacyIdx;
+					staticReg.registered  = (staticReg.recipeIndex >= 0);
+					staticReg.shape        = treeShape;
+					if (staticReg.registered) {
+						// H4 follow-up (2026-05-07): per-frame re-registration
+						// after LOD/shape swap has the same lightData_ gap as
+						// mission-load registerStatic(). Force one full update()
+						// so touch() cannot resubmit default-zero lightData_.
+						// Spec: docs/superpowers/specs/2026-05-07-lod-swap-static-registry-churn.md
+						needsFullBakeNextFrame = true;
+					}
+				}
+			}
+			if (!submittedToGpu)
+			{
+				GpuStaticPropBatcher::instance().recordCpuFallback(
+					GpuStaticPropPopulation::Tree);
+			}
+		}
+		// Legacy bypass-cull path. Mutually exclusive with slice 1 — gated on
+		// !g_useGpuObjects. Tagged Legacy so Gate F's fallback-rate is computed
+		// only over slice-1 populations. See spec R1.
+		if (!submittedToGpu && !g_useGpuObjects && g_useGpuStaticProps && treeShape)
+		{
+			submittedToGpu = GpuStaticPropBatcher::instance().submitMultiShape(
+				treeShape, GpuStaticPropPopulation::Legacy);
 		}
 		if (!submittedToGpu)
 			treeShape->Render();
@@ -4143,26 +4088,15 @@ long TreeAppearance::render (long depthFixup)
 //-----------------------------------------------------------------------------
 long TreeAppearance::renderShadows (void)
 {
-	// Skip legacy blob shadows when shadow maps are active
-	if (gos_IsTerrainTessellationActive())
-		return NO_ERR;
-
-	if (inView && visible)
-	{
-		//---------------------------------------------
-		// Call Multi-shape render stuff here.
-		if (treeShadowShape)
-			treeShadowShape->RenderShadows();
-		else
-			treeShape->RenderShadows();
-	}
-	
 	return NO_ERR;
 }
 
 //-----------------------------------------------------------------------------
-long TreeAppearance::update (bool animate) 
+long TreeAppearance::update (bool animate)
 {
+	::mc2_object_recon::Scope _recon_tree_(
+		&::mc2_object_recon::g_per_frame.tree_update_ns,
+		&::mc2_object_recon::g_per_frame.tree_update_calls);
 	if (rotation > 180)
 		rotation -= 360;
 
@@ -4247,28 +4181,58 @@ long TreeAppearance::update (bool animate)
 	// read shape->listOfVertices during submit().
 	if (inView || g_useGpuStaticProps)
 	{
-		bool checkShadows = ((!beenInView) || (eye->forceShadowRecalc));
-
-		if (treeShadowShape)
-			treeShape->SetUseShadow(false);
-		else
-			treeShape->SetRecalcShadows(checkShadows);
+		treeShape->SetUseShadow(false);
 
 		TG_LightPtr light = eye->getWorldLight(0);
 		light->active = false;
 
 		treeShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-		treeShape->TransformMultiShape (&xlatPosition,&rot);
-		
+		// Slice 2 (object-offload) — Stage 2.B: eligibility hoist.
+		// See BldgAppearance::update for the full rationale; same shape.
+		// Branch lives INSIDE the existing inView||g_useGpuStaticProps cull
+		// gate to preserve slice 1's R1 invariant.
+		// PERF DIAGNOSTIC 2026-05-06: Tracy zones — see BldgAppearance::update
+		// for the same instrumentation set. Same theories under investigation.
+		bool gpuEligible;
+		{
+			gpuEligible = g_useGpuObjects &&
+			              !needsFullBakeNextFrame &&
+			              GpuStaticPropBatcher::instance().isMultiShapeEligibleForGpuObjects(treeShape);
+		}
+
+		if (gpuEligible)
+		{
+			// Stage 2.D.2 fix: cache GPU light data while lights are per-actor-correct.
+			{
+				mc2CacheOrBakeStaticGpuLight(treeShape, staticReg.registered, staticReg.recipeIndex);
+				// 2026-05-11 per-instance capture (mirror of BldgAppearance::update).
+				staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
+			}
+			{
+				treeShape->TransformMultiShape_PositionsOnly (&xlatPosition,&rot);
+			}
+			// Stage 2.D.2: dual-emit full bake — same rationale as BldgAppearance
+			// above. Populates listOfTriangles[].aRGBLight for snapshot in submit().
+			// Stage 2.D.3: per-actor gate (see BldgAppearance::update above).
+			if (gos_object_parity::IsDualEmitArmedForActor(treeShape)) {
+				treeShape->TransformMultiShape (&xlatPosition,&rot);
+			}
+		}
+		else
+		{
+			treeShape->TransformMultiShape (&xlatPosition,&rot);
+			// 2026-05-10: mirror of the BldgAppearance fix at :2339-2341.
+			// Seed cachedGpuLightIndex_ in the full-bake branch so the
+			// next render() doesn't fail the UINT32_MAX gate at :4341
+			// and invalidate the freshly-set staticReg.
+			mc2CacheOrBakeStaticGpuLight(treeShape, staticReg.registered, staticReg.recipeIndex);
+			// 2026-05-11 per-instance capture (mirror of gpuEligible branch).
+			staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
+			needsFullBakeNextFrame = false;
+		}
+
 		light->active = true;
 
-		if (treeShadowShape && useShadows)
-		{
-			treeShadowShape->SetRecalcShadows(checkShadows);
-			treeShadowShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-			treeShadowShape->TransformMultiShape (&xlatPosition,&rot);
-		}
-		
 		if ((turn > 3) && useShadows)
 			beenInView = true;
 	}
@@ -4401,8 +4365,147 @@ void TreeAppearance::markLOS (bool clearIt)
 
 //-----------------------------------------------------------------------------
 
+bool TreeAppearance::IsStaticNow() const
+{
+	return staticReg.registered
+		&& staticReg.shape == treeShape
+		&& !needsFullBakeNextFrame;
+}
+
+void TreeAppearance::touch()
+{
+	// Stage 3.C: called by the outer-skip gate instead of update() when this
+	// tree is registered and stable. Re-submits the cached lightData_ (set
+	// during the last update() call) to get a fresh UBO slot index for this
+	// frame — no s_listOfLights dependency, no terrain lookup needed.
+	// Touch() advances lastTurnTransformed so TG_Shape::Render()'s staleness
+	// guard doesn't suppress the legacy fallback path.
+	if (treeShape) {
+		// [LIGHTBRIDGE v1] C6 retirement: repoint to the primed 38d8720 slot
+		// (zero FNV/memcmp; cachedFrame_ stamped). MISS keeps the legacy
+		// resubmit (NOT CacheGpuLightData -- terrain-color-staleness,
+		// msl.cpp:1874-1887). MC2_LIGHTBAKE=0 -> legacy path bit-for-bit.
+		extern bool mc2LightBakeEnabled();
+		extern bool mc2GetBakedStaticLight(int32_t, TG_HWLightsData&);
+		TG_HWLightsData baked;
+		if (mc2LightBakeEnabled()
+		    && staticReg.registered && staticReg.recipeIndex >= 0
+		    && mc2GetBakedStaticLight(staticReg.recipeIndex, baked)) {
+			treeShape->EmitBakedGpuLightData(staticReg.recipeIndex, baked);
+		} else {
+			treeShape->ResubmitCachedGpuLightData();
+		}
+		// 2026-05-11 per-instance capture: see BldgAppearance::touch.
+		staticReg.lightDataIndex = treeShape->getCachedGpuLightIndex();
+		treeShape->Touch();
+	}
+}
+
+void TreeAppearance::invalidateStaticRegistration()
+{
+	if (staticReg.registered && staticReg.recipeIndex >= 0)
+		GpuStaticPropRegistry::invalidate(staticReg.recipeIndex);
+	staticReg = {};
+}
+
+// Task 5 (Track B): mission-load bulk static-prop registration (mirror of
+// BldgAppearance::registerStatic). HC-1: writes directly to typed staticReg.
+void TreeAppearance::registerStatic() {
+	if (staticReg.registered) return;
+	if (!treeShape)           return;
+	if (!GpuStaticPropRegistry::isEnabled()) return;
+
+	// Compute transform — same coordinate convention as TreeAppearance::update().
+	// yaw includes the per-instance yaw offset (matches first-render path exactly).
+	float yawAngle = (rotation * DEGREES_TO_RADS) + (yaw * DEGREES_TO_RADS);
+	float pitchAngle = (pitch * DEGREES_TO_RADS);
+	Stuff::UnitQuaternion rot;
+	rot = Stuff::EulerAngles(pitchAngle, yawAngle, 0.0f);
+	Stuff::Point3D xlatPosition;
+	xlatPosition.x = -position.x;
+	xlatPosition.y = land ? land->getTerrainElevation(position) : 0.0f;
+	xlatPosition.z = position.y;
+	treeShape->TransformMultiShape_BuildRecipe(&xlatPosition, &rot);
+
+	// Build per-leaf recipe batch.
+	// Use public GetNumShapes()/GetShapeRec() — numTG_Shapes/listOfShapes are protected.
+	std::vector<GpuStaticPropInstance> batch;
+	const int numShapes = static_cast<int>(treeShape->GetNumShapes());
+	batch.reserve(numShapes);
+	int t_diag_total=0,t_diag_skip_pm=0,t_diag_skip_h=0,t_diag_skip_unreg=0,t_diag_added=0;
+	for (int i = 0; i < numShapes; ++i) {
+		++t_diag_total;
+		const TG_ShapeRec* rec = treeShape->GetShapeRec(i);
+		if (!rec || !rec->processMe || !rec->node) { ++t_diag_skip_pm; continue; }
+		TG_Shape* child = rec->node;
+		// 2026-05-10 fix: skip non-SHAPE_NODE helpers (mirror of submitMultiShape's
+		// filter) — see BldgAppearance::registerStatic for full rationale.
+		if (!child->IsShapeNode()) { ++t_diag_skip_h; continue; }
+		uint32_t flags = 0;
+		if (child->GetLightsOut())   flags |= (1u << 0);
+		if (child->GetIsWindow())    flags |= (1u << 1);
+		if (child->GetIsSpotlight()) flags |= (1u << 2);
+		Stuff::Matrix4D xform(rec->shapeToWorld);
+		GpuStaticPropInstance inst;
+		if (!GpuStaticPropBatcher::instance().buildRecipeFromShape(
+				child, xform,
+				static_cast<uint32_t>(child->GetARGBHighlight()),
+				static_cast<uint32_t>(child->GetFogRGB()),
+				flags, &inst)) {
+			++t_diag_skip_unreg;
+			return;  // unregistered type — abort; first-render fallback covers it
+		}
+		batch.push_back(inst);
+		++t_diag_added;
+	}
+	{
+		static const bool s_trace = (getenv("MC2_TREE_REG_TRACE") != nullptr);
+		static int s_treeRegLogged = 0;
+		if (s_trace && s_treeRegLogged < 80) {
+			++s_treeRegLogged;
+			fprintf(stderr,
+				"[TREE_REG_DIAG v1] appearType=%s numShapes=%d total=%d pm_skip=%d "
+				"h_skip=%d unreg_skip=%d added=%d\n",
+				(appearType ? appearType->name : "<null>"),
+				numShapes, t_diag_total, t_diag_skip_pm, t_diag_skip_h,
+				t_diag_skip_unreg, t_diag_added);
+			fflush(stderr);
+		}
+		(void)t_diag_total; (void)t_diag_skip_pm; (void)t_diag_skip_h;
+		(void)t_diag_skip_unreg; (void)t_diag_added;
+	}
+	if (batch.empty()) return;
+
+	int32_t regIdx = -1;
+	(void)GameAdapters::StaticProp::syncStaticProp(
+		treeShape, batch.data(), batch.size(), &regIdx);
+	if (regIdx >= 0) {
+		staticReg.registered  = true;
+		staticReg.shape       = treeShape;
+		staticReg.recipeIndex = regIdx;
+		// H4 fix (2026-05-06): see BldgAppearance::registerStatic for full
+		// rationale. registerStatic only ran TransformMultiShape_BuildRecipe
+		// (positions only); leaf TG_Shape::lightData_ is still default/zero.
+		// needsFullBakeNextFrame = true forces the first post-registration
+		// frame through full update() (populating lightData_); subsequent
+		// frames proceed via UPDATE_SKIP / static-replay with valid cached data.
+		// Spec: docs/superpowers/specs/2026-05-06-update-skip-touch-residual-debug-strategy.md
+		needsFullBakeNextFrame = true;
+	}
+}
+
+bool TreeAppearance::isStaticRegistered() const { return staticReg.registered; }
+
+int32_t TreeAppearance::getStaticRecipeIndex() const {
+    return staticReg.registered ? staticReg.recipeIndex : -1;
+}
+
+//-----------------------------------------------------------------------------
+
 void TreeAppearance::destroy (void)
 {
+	invalidateStaticRegistration(); // Stage 3.C: NULL RecipeRange::multi before treeShape is freed
+
 	if ( treeShape )
 	{
 		delete treeShape;

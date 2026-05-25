@@ -1,0 +1,47 @@
+// shaders/include/material_gpu.hglsl
+//
+// GLSL std430 mirror of RenderCore::MaterialGpu.
+// Included by static_prop.frag at binding 5 since MaterialGpu-3.
+//
+// C++ authoritative definition: RenderCore/MaterialGpu.h
+// Mirror gate: scripts/check-material-gpu-mirror.sh
+// CHANGING EITHER FILE REQUIRES CHANGING THE OTHER IN LOCKSTEP.
+//
+// Usage (when wired in MaterialGpu-2+):
+//
+//   #include <include/material_gpu.hglsl>
+//
+//   layout(std430, binding = N) readonly buffer MaterialTable {
+//       MaterialGpu materials[];
+//   } materialTable_;
+//
+//   MaterialGpu mat = materialTable_.materials[drawMaterialIdx];
+//   if (mat.albedoTex != kMatTexAbsent) { /* sample */ }
+//
+// Binding 5 (active since MaterialGpu-3) in static_prop.frag coalesce variant.
+// See tools/material_cook/reflect_expected_layout.md for the
+// reflect-golden contract this will produce.
+
+// Texture slot absent sentinel (must match kMaterialTexAbsent in C++).
+const uint kMatTexAbsent = 0xFFFFFFFFu;
+
+// MaterialFlags bit positions — mirror of RenderCore::MaterialFlags.
+const uint kMatFlagAlphaTest         = 1u << 0;
+const uint kMatFlagNormalMap         = 1u << 1;
+const uint kMatFlagMetallicRoughness = 1u << 2;
+const uint kMatFlagEmissive          = 1u << 3;
+const uint kMatFlagDoubleSided       = 1u << 4;
+const uint kMatFlagWindow            = 1u << 5;
+
+// std430 struct — 32 bytes, stride 32.
+// Field order and byte offsets MUST match RenderCore::MaterialGpu exactly.
+struct MaterialGpu {
+    uint  albedoTex;             //  0
+    uint  normalTex;             //  4
+    uint  metallicRoughnessTex;  //  8
+    uint  emissiveTex;           // 12
+    uint  flags;                 // 16
+    float baseColorFactor;       // 20
+    float metallicFactor;        // 24
+    float roughnessFactor;       // 28
+};  // size = 32 bytes in std430

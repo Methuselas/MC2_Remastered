@@ -35,6 +35,7 @@
 #include<algorithm>
 
 #include"../GameOS/gameos/gos_terrain_indirect.h"
+#include"../GameOS/gameos/gos_terrain_surface.h"  // PR-1: continuous-surface regen on recipe rebuild
 
 //---------------------------------------------------------------------------
 // c'tors for postCompVertex
@@ -921,6 +922,15 @@ void MapData::calcLight (void)
 	// InvalidateAllRecipes is a no-op when g_denseRecipes.empty() (i.e., when
 	// neither MC2_TERRAIN_INDIRECT nor MC2_TERRAIN_INDIRECT_PARITY_CHECK is set).
 	gos_terrain_indirect::InvalidateAllRecipes();
+	// PR-1 (terrain continuous-surface): the dense recipe was just rebuilt
+	// in-gameplay (normals recomputed -> light-direction change). Regenerate
+	// the surface from the fresh recipe so it stays in sync. No-op when the
+	// MC2_TERRAIN_SURFACE kill-switch is OFF. The mission-load build is the
+	// primeMissionTerrainCache path; this is the only in-gameplay recipe
+	// rebuild that runs with the recipe populated (the MapData::destroy /
+	// newInit InvalidateAllRecipes sites tear the recipe down and are handled
+	// by the next primeMissionTerrainCache GenerateForMission).
+	gos_terrain_surface::RegenerateForMission();
 }
 
 //---------------------------------------------------------------------------
@@ -1146,6 +1156,12 @@ void MapData::makeLists (VertexPtr vertexList, long &numVerts, TerrainQuadPtr qu
 			currentVertex->calcThisFrame = 0;
 			currentVertex->px = currentVertex->py = -99999.0f;
 			currentVertex->clipInfo = false;
+			// VPL retirement Step 8c-part-2: the deleted VertexProjectLoop
+			// body was the SOLE writer of terrain Vertex::hazeFactor.
+			// Defensive zero-init so any stray surviving reader degrades to
+			// "no fog" (stock-playable), never stale/garbage. v3.5 plan
+			// amendment MAJOR-c + memory/stock_install_must_remain_playable.md.
+			currentVertex->hazeFactor = 0.0f;
 
 			currentVertex++;
 			numVerts++;
@@ -1247,6 +1263,100 @@ void MapData::makeLists (VertexPtr vertexList, long &numVerts, TerrainQuadPtr qu
 		// to point to first vertex in next row.
 		currentVertex++;
 		}
+	}
+}
+
+//---------------------------------------------------------------------------
+// VPL-#shadow Phase 1+2 (arch-doc docs/plans/static-terrain-shadow-architecture.md):
+// build the static terrain shadow from the FULL map ONCE, not the
+// camera-windowed masterVertexNodes subset. Root cause was feed-scope:
+// the world-fixed ortho light matrix is correct and built-once
+// ([SHADOWFRUSTUM v1] n=1 mapHalfExtent=6400 orthoHalf=9503.5), but the
+// FBO was fed only ~110 visible nodes -> near-empty depth atlas -> soft
+// half-map shadow wash. This walks the whole blocks[] heightfield.
+//
+// M-1 (winding parity, SOLVED BY CONSTRUCTION): makeLists chooses the
+// quad split via (x&1)^(topLeftX&1) which == absolute-tile parity
+// (a+b)&1 == (a&1)^(b&1). So iterating absolute coords with
+// br = ((ax&1)==(ay&1)) yields per-tile diagonals byte-identical to
+// what the scene draws at ANY camera position. Triangle order mirrors
+// TerrainQuad::draw: BR -> (v0,v1,v2)+(v0,v2,v3); BL -> (v0,v1,v3)+
+// (v1,v2,v3); corners v0=(ax,ay) v1=(ax+1,ay) v2=(ax+1,ay+1)
+// v3=(ax,ay+1) (makeLists currentVertex / +1 / +stride+1 / +stride).
+// gos_TERRAIN_EXTRA math is identical to fillTerrainExtra (the
+// shadow_terrain.tese reads worldPos/worldNorm from EXTRA; gos_VERTEX
+// is base-VS passthrough only). Depth-only pass: shadow_terrain.tese is
+// plain lightSpaceMatrix*worldPos (shader-expert grep-confirmed) so the
+// colormap is not sampled for depth -> no per-texture grouping needed,
+// one valid texHandle bind suffices. M-2: chunk cap < 60000 verts /
+// 65535 indices (gosMesh indexed_tris_ cap; addVertices silently drops
+// on overflow).
+void MapData::renderStaticTerrainShadowFullMap (WORD* idxArray, unsigned long texHandle)
+{
+	const long RV = Terrain::realVerticesMapSide;
+	if (!blocks || RV <= 1 || !idxArray)
+		return;  // stock-safe: caller falls back to prior behavior
+
+	const long  HALF = Terrain::halfVerticesMapSide;
+	const float WUPV = Terrain::worldUnitsPerVertex;
+
+	// 6 verts / quad. 59994 = 6*9999 < 60000 (gosMesh cap) and < 65535
+	// (16-bit index). ~3.3MB static buffers -- intentionally not RAM-
+	// optimized per memory/feedback_ram_cost_not_a_concern_below_500mb.md.
+	static const int CHUNK = 59994;
+	static gos_VERTEX        s_vbuf[CHUNK];
+	static gos_TERRAIN_EXTRA s_ebuf[CHUNK];
+	int n = 0;
+	unsigned long maxChunkVerts = 0, quads = 0;
+
+	gos_SetRenderState(gos_State_Texture, texHandle);
+
+	#define MC2_SHFM_EMIT(AX,AY) do {                                       \
+		const PostcompVertex* _pv = &blocks[(AX) + (AY) * RV];              \
+		const float _wx = float((AX) - HALF) * WUPV;                        \
+		const float _wy = float(HALF - (AY)) * WUPV;                        \
+		const float _wz = _pv->elevation;                                   \
+		gos_VERTEX& _gv = s_vbuf[n];                                        \
+		_gv.x = _wx; _gv.y = _wy; _gv.z = _wz; _gv.rhw = 1.0f;              \
+		_gv.argb = 0xffffffff; _gv.frgb = 0; _gv.u = 0.0f; _gv.v = 0.0f;    \
+		gos_TERRAIN_EXTRA& _ge = s_ebuf[n];                                 \
+		_ge.wx = _wx; _ge.wy = _wy; _ge.wz = _wz;                           \
+		_ge.nx = _pv->vertexNormal.x; _ge.ny = _pv->vertexNormal.y;         \
+		_ge.nz = _pv->vertexNormal.z;                                       \
+		++n;                                                                \
+	} while (0)
+
+	for (long ay = 0; ay < RV - 1; ++ay) {
+		for (long ax = 0; ax < RV - 1; ++ax) {
+			if (n + 6 > CHUNK) {                       // M-2 flush
+				if ((unsigned long)n > maxChunkVerts) maxChunkVerts = (unsigned long)n;
+				gos_DrawShadowBatchTessellated(s_vbuf, n, idxArray, n, s_ebuf, n);
+				n = 0;
+			}
+			const bool br = ((ax & 1) == (ay & 1));   // uvMode==BOTTOMRIGHT
+			if (br) {
+				MC2_SHFM_EMIT(ax,   ay  ); MC2_SHFM_EMIT(ax+1, ay  ); MC2_SHFM_EMIT(ax+1, ay+1);
+				MC2_SHFM_EMIT(ax,   ay  ); MC2_SHFM_EMIT(ax+1, ay+1); MC2_SHFM_EMIT(ax,   ay+1);
+			} else {
+				MC2_SHFM_EMIT(ax,   ay  ); MC2_SHFM_EMIT(ax+1, ay  ); MC2_SHFM_EMIT(ax,   ay+1);
+				MC2_SHFM_EMIT(ax+1, ay  ); MC2_SHFM_EMIT(ax+1, ay+1); MC2_SHFM_EMIT(ax,   ay+1);
+			}
+			++quads;
+		}
+	}
+	if (n > 0) {
+		if ((unsigned long)n > maxChunkVerts) maxChunkVerts = (unsigned long)n;
+		gos_DrawShadowBatchTessellated(s_vbuf, n, idxArray, n, s_ebuf, n);
+	}
+	#undef MC2_SHFM_EMIT
+
+	if (getenv("MC2_DEBUG_SHADOW_STATIC") != nullptr) {
+		const float ext = float(HALF) * WUPV;
+		fprintf(stderr,
+			"[SHADOWSTATIC v1] event=fullmap_build builds=1 RV=%ld quads=%lu "
+			"tris=%lu verts=%lu bboxXY=[-%.0f..%.0f] mapHalfWorld=%.0f "
+			"maxChunkVerts=%lu\n",
+			RV, quads, quads * 2u, quads * 6u, ext, ext, ext, maxChunkVerts);
 	}
 }
 

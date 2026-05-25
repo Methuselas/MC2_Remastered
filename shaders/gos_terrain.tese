@@ -21,9 +21,7 @@ flat out uint RecordIdx;  // matches gos_terrain_thin.vert; legacy chain has no 
 
 uniform vec4 tessDisplace;      // x=phongAlpha, y=displaceScale
 uniform vec4 tessDebug;         // x debug mode; -2 = screen-space projection probe
-uniform mat4 terrainMVP;        // axisSwap * worldToClip (clip-space transform)
-uniform vec4 terrainViewport;   // (vmx, vmy, vax, vay) for perspective projection
-uniform mat4 mvp;               // projection_ : screen pixels -> NDC
+uniform mat4 u_worldToClipGL;   // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 
 // Textures for displacement sampling (shared with fragment shader)
 uniform sampler2D tex1;         // colormap (for material classification)
@@ -34,6 +32,7 @@ uniform sampler2D matNormal3;   // concrete normal+disp
 uniform vec4 detailNormalTiling; // .x = base tiling multiplier
 
 #include <include/terrain_common.hglsl>
+#include <include/terrain_depth_bias.hglsl>  // single-source TERRAIN/WATER_DEPTH_FUDGE
 
 void main()
 {
@@ -90,8 +89,9 @@ void main()
     vec3 undisplacedWorldPos = bary.x * tcs_WorldPos[0]
                              + bary.y * tcs_WorldPos[1]
                              + bary.z * tcs_WorldPos[2];
-    vec4 uclip = terrainMVP * vec4(undisplacedWorldPos, 1.0);
-    UndisplacedDepth = (uclip.z / uclip.w) * 0.5 + 0.5;
+    vec4 uclip = u_worldToClipGL * vec4(undisplacedWorldPos, 1.0);
+    // glClipControl(ZERO_TO_ONE) makes NDC z native [0, 1]; no remap needed.
+    UndisplacedDepth = uclip.z / uclip.w;
 
     // --- Phong tessellation smoothing ---
     float alpha = tessDisplace.x;  // phongAlpha
@@ -120,19 +120,8 @@ void main()
     WorldNorm = worldNorm;
     WorldPos = worldPos;
 
-    // --- Projection of DISPLACED position (visual rendering) ---
-    vec4 clip = terrainMVP * vec4(worldPos, 1.0);
-    float rhw = 1.0 / clip.w;
-    vec3 screen;
-    screen.x = clip.x * rhw * terrainViewport.x + terrainViewport.z;
-    screen.y = clip.y * rhw * terrainViewport.y + terrainViewport.w;
-    // Match legacy CPU emit's TERRAIN_DEPTH_FUDGE=0.001 (mclib/quad.cpp:2004 etc.)
-    // so decals/GpuStaticProps/water-on-terrain at coincident depth win the
-    // GL_LEQUAL tie. Precedent: gos_terrain_water_fast.vert:332.
-    screen.z = clip.z * rhw + 0.001;
-    vec4 ndc = mvp * vec4(screen, 1.0);
-    float absW = abs(clip.w);
-    gl_Position = vec4(ndc.xyz * absW, absW);
+    // --- Projection of DISPLACED position (F1 Stage A: direct GL clip emit) ---
+    gl_Position = u_worldToClipGL * vec4(worldPos, 1.0);
 
     // Seam expansion removed. All worldPos.xy variants changed the surface gradient
     // at edge triangles (shifting shadow coords, fwidth derivatives, fwConcrete AA),

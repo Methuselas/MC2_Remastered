@@ -932,13 +932,14 @@ void ControlGui::update( bool bPaused, bool bLOS )
 	mouseInVehicleStopButton = 0;
 	bool bMouseInButton = 0;
 
-	showServerMissing();
+	{ ZoneScopedN("CGui.ServerMissing"); showServerMissing(); }
 
 	if ( bPaused )
-		pauseWnd->update();
+	{ ZoneScopedN("CGui.PauseWnd"); pauseWnd->update(); }
 
 	if (moviePlaying && bMovie)
 	{
+		ZoneScopedN("CGui.Movie");
 		bool result = bMovie->update();
 		if (result)
 		{
@@ -956,14 +957,15 @@ void ControlGui::update( bool bPaused, bool bLOS )
 	{
 		getButton( idToUnPress )->press( false );
 	}
-	
+
 	float mouseX = userInput->getMouseX();
 	float mouseY = userInput->getMouseY();
 
 	
 	// also going to initialize buttons here
+	{ ZoneScopedN("CGui.ButtonHover");
 	for ( int i = LAST_COMMAND - 1; i > -1; i-- )
-	{		
+	{
 		if ( buttons[i].location[0].x <= mouseX && mouseX <= buttons[i].location[2].x
 				&& mouseY >= buttons[i].location[0].y && mouseY <= buttons[i].location[1].y  )
 		{
@@ -991,8 +993,9 @@ void ControlGui::update( bool bPaused, bool bLOS )
 				}
 			}
 		}
-	}	
-	
+	}
+	} // CGui.ButtonHover
+
 	if ((buttonToPress != -1) && getButton(buttonToPress))
 	{
 		getButton(buttonToPress)->press(true);
@@ -1018,7 +1021,8 @@ void ControlGui::update( bool bPaused, bool bLOS )
 
 	Mover* pSelectedMover = 0;
 	int holdPositionCount = 0;
-	
+
+	{ ZoneScopedN("CGui.RosterScan");
 	for (int i = 0; i < pTeam->getRosterSize(); ++i )
 	{
 		Mover* pMover = (Mover*)pTeam->getMover( i );
@@ -1063,6 +1067,9 @@ void ControlGui::update( bool bPaused, bool bLOS )
 
 		}
 	}
+	} // CGui.RosterScan
+
+	{ ZoneScopedN("CGui.MoverState");
 
 	if ( !holdPositionCount )
 	{
@@ -1183,6 +1190,8 @@ void ControlGui::update( bool bPaused, bool bLOS )
 	else
 		getButton( FIRE_FROM_CURRENT_POS )->press( false );
 
+	} // CGui.MoverState
+
 	bool bMouseInsideTacArea = 0;
 
 	if ( rectInfos[0].rect.left <= userInput->getMouseX()
@@ -1195,6 +1204,7 @@ void ControlGui::update( bool bPaused, bool bLOS )
 	
 	if ( getButton( TACMAP_TAB )->state & ControlButton::PRESSED )
 	{
+		ZoneScopedN("CGui.TacMap");
 		tacMap.update();
 		if ( bMouseInsideTacArea )
 		{
@@ -1204,6 +1214,7 @@ void ControlGui::update( bool bPaused, bool bLOS )
 	}
 	else if ( getButton( INFO_TAB )->state & ControlButton::PRESSED )
 	{
+		ZoneScopedN("CGui.InfoWnd");
 		infoWnd->update();
 		if ( bMouseInsideTacArea )
 		{
@@ -1217,16 +1228,16 @@ void ControlGui::update( bool bPaused, bool bLOS )
 		helpTextID = IDS_VEHICLE_TAB_DESC;
 	}
 
-	updateVehicleTab( mouseX, mouseY, bLOS );
+	{ ZoneScopedN("CGui.VehicleTab");  updateVehicleTab( mouseX, mouseY, bLOS ); }
 
 
 
 	if ( renderObjectives )
 		getButton( OBJECTIVES_COMMAND )->press( true );
-	else 
+	else
 		getButton( OBJECTIVES_COMMAND )->press( false );
 
-	forceGroupBar.update();
+	{ ZoneScopedN("CGui.ForceGroupBar"); forceGroupBar.update(); }
 
 	getButton( DEFAULT_RANGE )->hide(true);
 	getButton( SHORT_RANGE )->hide(true);

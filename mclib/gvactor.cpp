@@ -10,6 +10,8 @@
 
 #ifndef GVACTOR_H
 #include"gvactor.h"
+#include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
+#include "spotlight_diag.h"  // T1.16 — (E)-owned slot tagging for per-slot probe
 #endif
 
 #ifndef CAMERA_H
@@ -70,6 +72,49 @@
 
 #include "gos_static_prop_batcher.h"
 #include "gos_static_prop_killswitch.h"  // g_useGpuStaticProps
+#include "../GameOS/gameos/gpu_cull_readback.h"  // C3: GPU visibility queries
+#include "../code/gameobj.h"  // C3: full GameObject definition for obj->getHandle() in init()
+
+// C3: env-gated lifecycle routing killswitch (same env var as objmgr.cpp).
+// MC2_GPU_CULL_LIFECYCLE=1 enables GPU visibility-based node-position early-outs.
+static const bool s_gpuCullLifecycle = (getenv("MC2_GPU_CULL_LIFECYCLE") != nullptr);
+
+// MC2_GPU_CULL_LIFECYCLE_TRACE=1: verbose per-actor lifecycle boundary prints.
+static const bool s_lcTraceGV = (getenv("MC2_GPU_CULL_LIFECYCLE_TRACE") != nullptr);
+static uint32_t s_lcSkipCountGV = 0u;
+#define LCGV_TRACE(fmt, ...) \
+    do { if (s_lcTraceGV) { printf("[GPU_CULL_LIFECYCLE v1] gvactor " fmt "\n", ##__VA_ARGS__); fflush(stdout); } } while(0)
+
+// Slice GV-shadow-skip (2026-05-09): skip gvShadowShape->TransformMultiShape
+// when modern engine has terrain tessellation active. Mirrors mech D-shadow-skip
+// (mech3d.cpp:3398-3404). Recon: every byte produced by that call has zero
+// consumer in modern + tessellation path:
+//   - GVAppearance::renderShadows early-returns on tessellation (gvactor.cpp:2068),
+//     making gvShadowShape->RenderShadows(true) at gvactor.cpp:2082 unreachable.
+//   - GpuStaticPropBatcher::registerMultiShape(appearType->gvShadowShape) at
+//     gvactor.cpp:1068 is TYPE-level template registration only; per-actor
+//     instance state mutated by TransformMultiShape is NOT fed into the batcher
+//     (verified at gos_static_prop_batcher.cpp:660-689 — registers leaf
+//     TG_TypeShape templates and primes texture handles, no per-frame state).
+// Default-on per the post-mech-flip convention. Opt out: MC2_GPU_GV_SHADOW_SKIP=0.
+// Tessellation gate is belt-and-suspenders: if a user disables tessellation,
+// the legacy RenderShadows path becomes reachable and would need
+// TransformMultiShape outputs.
+static bool gvEnvFlagDefaultOn(const char* name) {
+    const char* v = getenv(name);
+    if (v == nullptr) return true;                  // unset → on (new default)
+    if (v[0] == '0' && v[1] == '\0') return false;  // exactly "0" → off
+    return true;                                     // any other value → on
+}
+static const bool g_useGpuGVShadowSkip = gvEnvFlagDefaultOn("MC2_GPU_GV_SHADOW_SKIP");
+
+// T1.15 SpotLight_ illumination diagnostic — registration probe (gv class).
+// First-hit always-on; per-summary every 600 updateGeometry calls when env=1.
+static const bool s_spotDiagGvEnabled = (getenv("MC2_SPOT_DIAG") != nullptr);
+static unsigned long s_spotDiagGvRegistered = 0;
+static unsigned long s_spotDiagGvOverflows  = 0;
+static unsigned long s_spotDiagGvActors     = 0;
+static unsigned long s_spotDiagGvCalls      = 0;
 
 //******************************************************************************************
 extern float	worldUnitsPerMeter;
@@ -447,9 +492,20 @@ Stuff::Vector3D GVAppearance::getWeaponNodePosition (long nodeId)
 	Stuff::Vector3D result = position;
 	if ((nodeId < appearType->numSmokeNodes) || (nodeId >= (appearType->numSmokeNodes+appearType->numWeaponNodes)))
 		return result;
-	
-	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	// 1-frame weapon-spawn-root artifact on visibility transition: accepted by design.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_))) {
+			++s_lcSkipCountGV;
+			if (s_lcSkipCountGV == 1u || (s_lcSkipCountGV % 600u) == 0u)
+				LCGV_TRACE("event=node_skip actorHandle=%ld total=%u", actorHandle_, s_lcSkipCountGV);
+			return result;
+		}
+	} else {
+		if (!inView)
+			return result;
+	}
 
 	//We already know we are using this node.  Do NOT increment recycle or nodeUsed!
 	
@@ -496,9 +552,15 @@ Stuff::Vector3D GVAppearance::getSmokeNodePosition (long nodeId)
 	Stuff::Vector3D result = position;
 	if ((nodeId < 0) || (nodeId >= appearType->numSmokeNodes))
 		return result;
-	
- 	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
 	//-------------------------------------------
    	// Create Matrix to conform to.
@@ -529,9 +591,15 @@ Stuff::Vector3D GVAppearance::getDustNodePosition (long nodeId)
 	Stuff::Vector3D result = position;
 	if ((nodeId < 0) || (nodeId >= appearType->numFootNodes))
 		return result;
-	
-	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
    	//-------------------------------------------
    	// Create Matrix to conform to.
@@ -683,6 +751,10 @@ void GVAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	Appearance::init(tree,obj);
 	appearType = (GVAppearanceType *)tree;
 
+	// C3: cache owner handle for GPU-cull node-position early-outs.
+	actorHandle_ = (obj != nullptr) ? obj->getHandle() : -1;
+	LCGV_TRACE("event=init actorHandle=%ld lifecycle=%d", actorHandle_, (int)s_gpuCullLifecycle);
+
 	shapeMin.x = shapeMin.y = -25;
 	shapeMax.x = shapeMax.y = 50;
 	
@@ -697,6 +769,10 @@ void GVAppearance::init (AppearanceTypePtr tree, GameObjectPtr obj)
 	
 	rotationalNodeIndex = -1;
 	dustNodeIndex = activityNodeIndex = hitNodeId = weaponNodeId[0] = weaponNodeId[1] = weaponNodeId[2] = weaponNodeId[3] = -1;
+
+	// (E) T1.10: lazy-init key for SpotLight_ children. Vectors default-init
+	// to empty. GVAppearance has no legacy pointLight pair to reset.
+	spotlightsRegistered_ = false;
 
 	screenPos.x = screenPos.y = screenPos.z = screenPos.w = -999.0f;
 	position.Zero();
@@ -1551,8 +1627,13 @@ bool GVAppearance::isMouseOver (float px, float py)
 //-----------------------------------------------------------------------------
 bool GVAppearance::recalcBounds (void)
 {
+	// F3 CPU projection cost-baseline: aggregate per-actor scope into the
+	// recalcBounds_perframe bucket. No-op when env OFF.
+	::mc2_cpu_proj_cost::Scope _f3_recalcBounds_scope(
+	    ::mc2_cpu_proj_cost::BUCKET_RECALCBOUNDS_PERFRAME);
+	::mc2_cpu_proj_cost::add_workload_recalcbounds(1);
 	Stuff::Vector4D tempPos;
-	inView = false;
+	setVisibilityGatesFromLegacy(false);
 
 	float eyeDistance = 0.0f;
 
@@ -1579,17 +1660,17 @@ bool GVAppearance::recalcBounds (void)
 			if (eyeDistance > Camera::MaxClipDistance)
 			{
 				hazeFactor = 1.0f;
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 			else if (eyeDistance > Camera::MinHazeDistance)
 			{
 				Camera::HazeFactor = (eyeDistance - Camera::MinHazeDistance) * Camera::DistanceFactor;
-				inView = true;
+				setVisibilityGatesFromLegacy(true);
 			}
 			else
 			{
 				Camera::HazeFactor = 0.0f;
-				inView = true;
+				setVisibilityGatesFromLegacy(true);
 			}
 			
 			//-----------------------------------------------------------------
@@ -1610,15 +1691,15 @@ bool GVAppearance::recalcBounds (void)
 				
 				float cosine = Distance * eye->getLookVector();
  				if (cosine > eye->cosHalfFOV)
-					inView = true;
+					setVisibilityGatesFromLegacy(true);
 				else
-					inView = false;
+					setVisibilityGatesFromLegacy(false);
 			}
 		}
 		else
 		{
 			Camera::HazeFactor = 0.0f;
-			inView = true;
+			setVisibilityGatesFromLegacy(true);
 		}
 		
 		if (inView)
@@ -1739,7 +1820,7 @@ bool GVAppearance::recalcBounds (void)
 					(upperLeft.x <= eye->getScreenResX()) &&
 					(upperLeft.y <= eye->getScreenResY()))
 				{
-					inView = true;
+					setVisibilityGatesFromLegacy(true);
 					if ((status != OBJECT_STATUS_DESTROYED) && (status != OBJECT_STATUS_DISABLED))
 					{
 						//-------------------------------------------------------------------------------
@@ -1882,12 +1963,12 @@ bool GVAppearance::recalcBounds (void)
 				}
 				else
 				{
-					inView = false;		//Did alot of extra work checking this, but WHY draw and insult to injury?
+					setVisibilityGatesFromLegacy(false);		//Did alot of extra work checking this, but WHY draw and insult to injury?
 				}
 			}
 			else
 			{
-				inView = false;
+				setVisibilityGatesFromLegacy(false);
 			}
 		}
 	}
@@ -1942,9 +2023,15 @@ bool GVAppearance::playDestruction (void)
 Stuff::Vector3D GVAppearance::getNodeNamePosition (const char *nodeName)
 {
 	Stuff::Vector3D result = position;
-	
-	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
    	//-------------------------------------------
    	// Create Matrix to conform to.
@@ -1978,9 +2065,15 @@ Stuff::Vector3D GVAppearance::getNodeNamePosition (const char *nodeName)
 Stuff::Vector3D GVAppearance::getNodeIdPosition (long nodeId)
 {
 	Stuff::Vector3D result = position;
-	
-	if (!inView)
-		return result;
+
+	// C3: route to GPU-lagged visibility when killswitch is enabled.
+	if (s_gpuCullLifecycle) {
+		if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)))
+			return result;
+	} else {
+		if (!inView)
+			return result;
+	}
 
    	//-------------------------------------------
    	// Create Matrix to conform to.
@@ -2019,7 +2112,11 @@ long GVAppearance::renderShadows (void)
 
 	gvShape->SetTextureHandle(0,localTextureHandle);
 	
-	if (inView && visible)
+	// C3: route renderShadows gate to GPU-lagged visibility when killswitch is enabled.
+	const bool gvShadowVisible = s_gpuCullLifecycle
+		? (gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)) && visible)
+		: (inView && visible);
+	if (gvShadowVisible)
 	{
 		//---------------------------------------------
 		// Call Multi-shape render stuff here.
@@ -2036,7 +2133,12 @@ long GVAppearance::render (long depthFixup)
 {
 	gvShape->SetTextureHandle(0,localTextureHandle);
 
-	if (inView || g_useGpuStaticProps)
+	// C3: render gate — GPU-lagged visibility when killswitch is enabled.
+	// Preserve g_useGpuStaticProps fallback for static-prop path.
+	const bool gvShouldRender = s_gpuCullLifecycle
+		? (gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_)) || g_useGpuStaticProps)
+		: (inView || g_useGpuStaticProps);
+	if (gvShouldRender)
 	{
 		uint32_t color = SD_BLUE;
 		uint32_t highLight = 0x007f7f7f;
@@ -2426,12 +2528,136 @@ void GVAppearance::updateGeometry (void)
 		if (gvShadowShape && useShadows)
 		{
 			gvShadowShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
-			gvShadowShape->TransformMultiShape (&xlatPosition,&rot);
+			// Slice GV-shadow-skip: when modern engine has tessellation active,
+			// downstream gvShadowShape->RenderShadows(true) (gvactor.cpp:2082) is
+			// unreachable so the transform's outputs go unused. See block comment
+			// at top of file for full consumer enumeration.
+			const bool skipShadowXform = g_useGpuGVShadowSkip && gos_IsTerrainTessellationActive();
+			if (!skipShadowXform)
+				gvShadowShape->TransformMultiShape (&xlatPosition,&rot);
 		}
 		
 //		Camera::HazeFactor = hazeFactor;
 		gvShape->SetLightList(eye->getWorldLights(),eye->getNumLights());
 		gvShape->TransformMultiShape (&xlatPosition,&totalRotation);
+
+		// (E) T1.11: generalised SpotLight_-child illumination on ground
+		// vehicles. Mirrors the Mech3DAppearance T1.6/T1.7 block in
+		// mech3d.cpp ~:3392-3452 and the BldgAppearance T1.4/T1.5 block in
+		// bdactor.cpp ~:1986-2055. Lazy first-night register, per-frame
+		// in-place update afterwards (no per-frame pool churn). Public
+		// accessors (GetNumShapes/GetShapeRec/GetIsSpotlight) because
+		// GVAppearance is NOT in TG_MultiShape's friend list (msl.h
+		// ~:251-256).
+		// (E) T3.1: gate retired; behavior is now unconditional.
+		if (gvShape)
+		{
+			if (!spotlightsRegistered_ && eye->isNight)
+			{
+				// [SPOT_DIAG v1] T1.15 per-actor registration counters.
+				int diagChildrenWalked = 0;
+				int diagSpotlightsFound = 0;
+				int diagRegistered = 0;
+				int diagOverflow = 0;
+				for (int i = 0; i < gvShape->GetNumShapes(); ++i)
+				{
+					const TG_ShapeRec* recp = gvShape->GetShapeRec(i);
+					if (!recp) continue;
+					TG_Shape* c = recp->node;
+					if (!c || !recp->processMe) continue;
+					++diagChildrenWalked;
+					if (!c->GetIsSpotlight()) continue;
+					++diagSpotlightsFound;
+
+					const char* nodeName = c->getNodeName();
+					if (!nodeName) continue;
+					long nodeId = gvShape->GetNodeNameId(nodeName);
+					if (nodeId == -1) continue;
+
+					TG_LightPtr light = (TG_LightPtr)malloc(sizeof(TG_Light));
+					light->init(TG_LIGHT_POINT);              // v1 (OQ2/M6) — POINT
+					light->SetaRGB(0xffffff00);                // anubis-equiv default
+					light->SetIntensity(0.15f);                // anubis default
+					light->SetFalloffDistances(50.0f, 250.0f); // anubis default
+
+					long slotId = eye->addWorldLight(light);
+					if (slotId < 0) { free(light); continue; }
+					spotlightNodeIds_.push_back(nodeId);
+					spotlightLights_.push_back(light);
+					spotlightSlotIds_.push_back(static_cast<DWORD>(slotId));
+					// T1.16 — tag this slot as (E)-owned, source=Gv.
+					mc2_spotlight_diag::tag_slot(slotId, mc2_spotlight_diag::Gv);
+					++diagRegistered;
+
+					// First-hit trace (gv-side) — one stderr line per
+					// successful GV spotlight registration, matching the
+					// MC2_SPOTLIGHT_REAL_TRACE schema. Kept post-T3.1 per the
+					// Debug Instrumentation Rule (demote, don't delete).
+					fprintf(stderr,
+						"[SPOTLIGHT_REAL_TRACE v1] event=gv_first_hit"
+						" actorHandle=%ld node=%s slot=%ld\n",
+						actorHandle_, nodeName, slotId);
+				}
+				diagOverflow = diagSpotlightsFound - diagRegistered;
+				if (diagOverflow < 0) diagOverflow = 0;
+				s_spotDiagGvRegistered += (unsigned long)diagRegistered;
+				s_spotDiagGvOverflows  += (unsigned long)diagOverflow;
+				++s_spotDiagGvActors;
+				if (s_spotDiagGvActors <= 8) {
+					std::fprintf(stderr,
+						"[SPOT_DIAG v1] event=first_register class=gv actor_id=%ld "
+						"children_walked=%d spotlights_found=%d registered=%d overflow=%d\n",
+						actorHandle_, diagChildrenWalked, diagSpotlightsFound,
+						diagRegistered, diagOverflow);
+					std::fflush(stderr);
+				}
+				spotlightsRegistered_ = true;  // register-once flag
+			}
+			// [SPOT_DIAG v1] T1.15 per-summary registration aggregate (gv).
+			if (s_spotDiagGvEnabled) {
+				++s_spotDiagGvCalls;
+				if ((s_spotDiagGvCalls % 600) == 0) {
+					std::fprintf(stderr,
+						"[SPOT_DIAG v1] event=registration_summary class=gv "
+						"calls=%lu actors_first_hit=%lu lights_registered=%lu overflows=%lu\n",
+						s_spotDiagGvCalls, s_spotDiagGvActors,
+						s_spotDiagGvRegistered, s_spotDiagGvOverflows);
+					std::fflush(stderr);
+				}
+			}
+
+			// Per-frame in-place update. UNCONDITIONAL once registered
+			// (lights stay allocated across day/night; toggle active).
+			// active gate matches the mech/building pattern verbatim:
+			// visible && (sensorLevel > 4) && !InEditor, plus isNight.
+			for (size_t k = 0; k < spotlightLights_.size(); ++k)
+			{
+				Stuff::Vector3D childPos =
+					getNodeIdPosition(spotlightNodeIds_[k]);
+				spotlightLights_[k]->SetPosition(&childPos);
+				// lightToWorld is consumed at msl.cpp:1659; without it the
+				// precomputed s_lightToShape collapses to worldToShape
+				// alone and the light's effective world position is lost.
+				// Translation-only matrix matches the canonical pattern at
+				// mech3d.cpp:3373-3377 and bdactor.cpp:1955-1959.
+				Stuff::LinearMatrix4D lightToWorldMatrix;
+				Stuff::Point3D childPosP;
+				childPosP.x = childPos.x; childPosP.y = childPos.y; childPosP.z = childPos.z;
+				lightToWorldMatrix.BuildTranslation(childPosP);
+				lightToWorldMatrix.BuildRotation(Stuff::EulerAngles(0.0f, 0.0f, 0.0f));
+				spotlightLights_[k]->SetLightToWorld(&lightToWorldMatrix);
+				// T1.13: dropped (sensorLevel > 4) gate. The original gate
+				// was copied verbatim from the anubis searchlight pattern at
+				// mech3d.cpp:3358 where it correctly restricts to sensor-locked
+				// enemy mechs. For GVs the gate is *impossible*: every
+				// code/gvehicl.cpp setSensorLevel(N) caller passes 0..4, so
+				// (sensorLevel > 4) is never true and all 39 GV spotlight
+				// registrations were stuck active=false. Generalized SpotLight_
+				// illumination should fire for any visible GV at night.
+				spotlightLights_[k]->active =
+					(eye->isNight && visible && !InEditor);
+			}
+		}
 	//}
 	
 	//------------------------------------------------
@@ -2708,8 +2934,15 @@ long GVAppearance::update (bool animate)
 	// screen. Without this, TG_Shape::Render silently returns on
 	// stale listOfVertices and the vehicle geometry disappears while
 	// its bar/UI keeps drawing.
-	if ((turn < 3) || inView || g_useGpuStaticProps)
-		updateGeometry();
+	// C3: route inView input to GPU-lagged visibility when killswitch is enabled.
+	// PRESERVE cascade gate structure: turn<3 condition is unchanged.
+	{
+		const bool gpuVis = s_gpuCullLifecycle
+			? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_))
+			: inView;
+		if ((turn < 3) || gpuVis || g_useGpuStaticProps)
+			updateGeometry();
+	}
 		
 	return TRUE;
 }
@@ -2717,6 +2950,26 @@ long GVAppearance::update (bool animate)
 //-----------------------------------------------------------------------------
 void GVAppearance::destroy (void)
 {
+	// (E) T1.12: paired cleanup for SpotLight_-child illumination from
+	// T1.11. Walks CACHED state only (spotlightLights_/spotlightSlotIds_);
+	// does NOT call getNodeIdPosition or any gvShape method — same
+	// destroy-ordering discipline as mech3d.cpp T1.8 and bdactor.cpp T1.5.
+	// Unlike Mech3DAppearance there is no pre-existing pointLight pair to
+	// worry about leaking; GVAppearance had no legacy spotlight wiring
+	// before T1.10.
+	for (size_t k = 0; k < spotlightLights_.size(); ++k)
+	{
+		if (eye)
+			eye->removeWorldLight(spotlightSlotIds_[k], spotlightLights_[k]);
+		// T1.16 — pair untag with removeWorldLight.
+		mc2_spotlight_diag::untag_slot(static_cast<long>(spotlightSlotIds_[k]));
+		free(spotlightLights_[k]);
+	}
+	spotlightLights_.clear();
+	spotlightSlotIds_.clear();
+	spotlightNodeIds_.clear();
+	spotlightsRegistered_ = false;
+
 	if (gvShape)
 	{
 		delete gvShape;

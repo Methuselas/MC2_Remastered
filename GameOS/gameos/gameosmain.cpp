@@ -1,7 +1,9 @@
 #include "gameos.hpp"
 #include "gos_render.h"
+#include "render_snapshot.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <cstring>
 #include <time.h>
 
 // sebi 2026-04-22: unhandled-exception filter that symbolizes the stack via
@@ -102,6 +104,9 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "gos_postprocess.h"
 #include "gos_validate.h"
 #include "gos_static_prop_killswitch.h"
+#include "gos_static_prop_registry.h"  // Stage 3.C: isEnabled() for [INSTR v1]
+#include "../../RenderWorld/RenderWorld.h"  // M1 Task 14
+#include "../../mclib/render_contract.h"   // Phase 2 assert init
 #include "asset_scale.h"
 #include "gos_crashbundle.h"
 #include "gos_smoke.h"
@@ -109,9 +114,20 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include <signal.h>
 #include "gos_profiler.h"
 #include "tgl.h"   // drainTglPoolStats / drainTglPoolStatsOnShutdown (Tier-1 instr)
+#include "gos_object_recon_tracy.h"  // [OBJECT_RECON v1] slice-2 recon zero (env-gated)
 #include "projectz_trace.h"  // projectz_trace_init/frame_tick/shutdown (PROJECTZ v1)
 #include "projectz_overlay.h" // RAlt+P debug overlay (commit 4)
+#include "gos_visual_diff.h"  // Stage 2.E pre-HUD capture + Ctrl+Shift+P record
+#include "gos_rdoc_capture.h"  // Tier 5: env-gated in-process RenderDoc capture
 #include "gos_terrain_indirect.h"  // [INSTR v1] banner: terrain_indirect{,_parity} fields
+#include "terrain_surface_trace.h" // [INSTR v1] banner: terrain_surface_trace field (PR-0)
+#include "gpu_cull_record.h"       // C0-1: GpuActorRecord schema selftest
+#include "gpu_cull_readback.h"    // C2: async readback ring buffer selftest
+#include "object_admission_predicate.h"  // Track A1: init probe + selftest gate
+#ifdef MC2_IMGUI
+#include "../../GuiRuntime/GuiRuntime.h"
+#include "imgui_impl_sdl2.h"
+#endif
 
 // Tier-1 instrumentation (stability spec §5.1): single source of truth for
 // the frame=... field used by TGL_POOL, DESTROY, and GL_ERROR log lines.
@@ -151,6 +167,12 @@ extern void gos_DestroyAudio();
 
 static bool g_exit = false;
 static bool g_focus_lost = false;
+
+// Owned by gos_render.cpp; needed here to query SDL_WINDOW_MINIMIZED so the
+// background-throttle path can distinguish "window invisible" from merely
+// "another window has keyboard focus" (which is normal during gameplay when
+// the user clicks a chat / browser / profiler window).
+extern SDL_Window* g_sdl_window;
 
 // Global runtime toggle for the GPU static-prop renderer.
 // Definition lives in gos_static_prop_batcher.cpp (in the gameos lib) so
@@ -215,6 +237,20 @@ static void handle_key_down( SDL_Keysym* keysym ) {
                 fprintf(stderr, "Terrain Draw: %s\n", !cur ? "ON" : "OFF");
             }
             break;
+        case SDLK_1:
+            if (alt_debug) {
+                // Toggle cement-word diagnostic visualization (terrain frag
+                // mode 8).  R = CEMENT_LAYER_VALID bit, G = layer index low
+                // byte, B = useCementAtlas == 0.  See gos_terrain.frag.
+                float cur = gos_GetTerrainDebugMode();
+                float next = (cur > 7.5f) ? 0.0f : 8.0f;
+                gos_SetTerrainDebugMode(next);
+                fprintf(stderr, "Surface Debug: %s\n",
+                    (next > 7.5f)
+                        ? "CEMENT-WORD VIZ (R=valid, G=layer&0xFF, B=!useCementAtlas)"
+                        : "OFF");
+            }
+            break;
         case SDLK_4:
             if (alt_debug) {
                 gosPostProcess* pp = getGosPostProcess();
@@ -252,9 +288,9 @@ static void handle_key_down( SDL_Keysym* keysym ) {
             break;
         case SDLK_9:
             if (alt_debug) {
-                // Repurposed from SSAO toggle to GPU static prop frag debug
-                // cycle. SSAO infrastructure is preserved in code; rebind
-                // elsewhere if needed.
+                // Repurposed from SSAO toggle to GPU static prop frag debug cycle.
+                // SSAO infrastructure removed entirely in F1 unified-projection
+                // retirement (2026-05-22 spec). Key no longer toggles SSAO.
                 gos_GpuPropsCycleDebugMode();
                 int m = gos_GpuPropsGetDebugMode();
                 const char* name = "?";
@@ -303,9 +339,21 @@ static void handle_key_down( SDL_Keysym* keysym ) {
             break;
         case SDLK_0:
             if (alt_debug) {
-                g_useGpuStaticProps = !g_useGpuStaticProps;
-                fprintf(stderr, "GPU Static Props: %s\n",
-                        g_useGpuStaticProps ? "ON" : "OFF");
+                if (g_useGpuObjects) {
+                    // Slice 1 is active — legacy killswitch is mutually
+                    // exclusive (spec R1). Ignore the toggle and log once.
+                    static bool s_loggedBlock = false;
+                    if (!s_loggedBlock) {
+                        fprintf(stderr, "[OBJBATCHER v1] event=legacy_toggle_blocked "
+                                        "reason=g_useGpuObjects_active\n");
+                        fflush(stderr);
+                        s_loggedBlock = true;
+                    }
+                } else {
+                    g_useGpuStaticProps = !g_useGpuStaticProps;
+                    fprintf(stderr, "GPU Static Props: %s\n",
+                            g_useGpuStaticProps ? "ON" : "OFF");
+                }
             }
             break;
         case 'p':
@@ -333,6 +381,11 @@ static void process_events( void ) {
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+#ifdef MC2_IMGUI
+        if (g_imguiInitialized) {
+            ImGui_ImplSDL2_ProcessEvent(&event);
+        }
+#endif
         // While unfocused, drop input events but let window events through
         // so FOCUS_GAINED can propagate to the switch below and clear the
         // flag. The prior form compared event.type against a subevent value
@@ -433,6 +486,7 @@ static void draw_screen( void )
     }
 
     glViewport(0, 0, viewport_w, viewport_h);
+    glClearDepth(0.0f);   // reverse-Z (U2): far plane = depth 0
     glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 #if 0
     mat4 proj;
@@ -480,6 +534,7 @@ static void draw_screen( void )
         else
             glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     }
+    glClearDepth(0.0f);   // reverse-Z (U2): far plane = depth 0
     glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT );
 
     // F3: overwrite attachment 1 (GBuffer1) with the post-shadow-eligible sentinel.
@@ -493,9 +548,10 @@ static void draw_screen( void )
 
     {
         ZoneScopedN("Camera.UpdateRenderers");
-        gos_RendererBeginFrame();
+        { ZoneScopedN("Camera.UpdateRenderers gos_RendererBeginFrame"); gos_RendererBeginFrame(); }
         Environment.UpdateRenderers();
-        gos_RendererEndFrame();
+        { ZoneScopedN("Camera.UpdateRenderers gos_RendererEndFrame"); gos_RendererEndFrame(); }
+        RenderWorld::frameBannerTick();  // M1 Task 14 (m2 fix: post-EndFrame)
     }
 
     glUseProgram(0);
@@ -504,6 +560,18 @@ static void draw_screen( void )
     if (pp) {
         pp->endScene();
     }
+
+    // Stage 2.E visual-diff capture hook. Must fire AFTER pp->endScene() so the
+    // default framebuffer holds scene+post-process, but BEFORE projectz_overlay
+    // and HUD replay so neither leaks into the captured TGA. Default-off
+    // (early-return when MC2_VISUAL_DIFF_CAPTURE is unset).
+    VisualDiff::onFrameTick(Environment.drawableWidth, Environment.drawableHeight);
+
+    // Tier 5: in-process RenderDoc capture trigger. Default-off; activates
+    // only when MC2_RDC_CAPTURE_FRAME is set. Shares the post-PP / pre-HUD
+    // seam with VisualDiff so the captured frame matches visual-diff
+    // semantics (intro-complete + N frames). See gos_rdoc_capture.h.
+    RdocCapture::onFrameTick();
 
     // ProjectZ debug overlay (RAlt+P): drawn on the default framebuffer
     // AFTER post-process composite and BEFORE HUD replay so it sits over the
@@ -514,6 +582,9 @@ static void draw_screen( void )
     gos_RendererFlushHUDBatch();
     drainGLErrors("hud");
     //CHECK_GL_ERROR;
+#ifdef MC2_IMGUI
+    GuiRuntime::Render();
+#endif
 }
 
 extern float frameRate;
@@ -618,6 +689,22 @@ void GLAPIENTRY OpenGLDebugLog(GLenum source, GLenum type, GLuint id, GLenum sev
 		);
 		printf("Message : %s\n", message);
 	}
+	// Tier 1.2 (docs/testing-strategy.md): opt-in fatal abort on GL_DEBUG_SEVERITY_HIGH.
+	// Default behavior unchanged. Catches the GL state-leak / sampler-inheritance /
+	// depth-state-inheritance bug class documented in
+	// memory/{blend,sampler,gpu_direct_depth}_state_inheritance.md.
+	// MEDIUM/LOW are too noisy on AMD (perf warnings on every TGL stream).
+	// Function-scope static: 99.9% of callback invocations are a single load+branch.
+	static const bool s_glDebugFatal = (std::getenv("MC2_GL_DEBUG_FATAL") != nullptr);
+	if (s_glDebugFatal && severity == GL_DEBUG_SEVERITY_HIGH)
+	{
+		std::fprintf(stderr,
+			"[MC2_GL_DEBUG_FATAL] severity=HIGH source=0x%x type=0x%x "
+			"id=%u\n  %.*s\n",
+			source, type, id, (int)length, message);
+		std::fflush(stderr);
+		std::abort();
+	}
 }
 
 #ifndef DISABLE_GAMEOS_MAIN
@@ -632,6 +719,33 @@ int main(int argc, char** argv)
     // Tier-1 instrumentation: one-line banner so every log file is
     // self-describing about which traces are enabled.
     projectz_trace_init();
+    // Track A1: probe object-admission mode; emit [INSTR v1] object_admission_mode= line.
+    objectAdmissionPredicate_init();
+    // Track A2: probe effect-admission mode; emit [INSTR v1] effect_admission_mode= line.
+    effectAdmissionPredicate_init();
+    // F3 T1: probe lighting/shadow mode; emit [OBJECT_ADMISSION_PREDICATE v1] mode_select line.
+    lightingShadowPredicate_init();
+    // F3 T2: probe debug-overlay + selection-picking modes; emit mode_select lines.
+    debugOverlayPredicate_init();
+    selectionPickingPredicate_init();
+    // Optional startup selftest — hard-fails on any boundary violation so the
+    // operator knows immediately if the predicate body has a regression.
+    if (const char* st = std::getenv("MC2_OBJECT_ADMISSION_SELFTEST")) {
+        if (std::strcmp(st, "1") == 0) {
+            int fails = objectAdmissionPredicate_selftest();
+            std::printf("[OBJECT_ADMISSION v1] event=selftest_summary fails=%d\n", fails);
+            std::fflush(stdout);
+            if (fails != 0) {
+                // Hard fail — selftest is opt-in (env-gated); when an operator
+                // turned it on and a case failed, the predicate body has a real
+                // boundary error and we must NOT continue into rendering.
+                // Failing loudly here surfaces the bug; smoke runner reports
+                // the abort as a failed mission.
+                gosASSERT(false);
+                std::abort();
+            }
+        }
+    }
     {
         const bool tgl     = (getenv("MC2_TGL_POOL_TRACE")       != nullptr);
         const bool destr   = (getenv("MC2_DESTROY_TRACE")        != nullptr);
@@ -642,8 +756,54 @@ int main(int argc, char** argv)
         const bool waterPc = (getenv("MC2_RENDER_WATER_PARITY_CHECK") != nullptr);
         const bool vpFast  = (getenv("MC2_VERTEX_PROJECT_FAST")       != nullptr);
         const bool vpPar   = (getenv("MC2_VERTEX_PROJECT_PARITY")     != nullptr);
+        // MC2_GPU_OBJECTS env override: "0" disables (opt-out from the
+        // 2026-05-04 default-on flip), any other value (including "1")
+        // enables. Unset leaves the compile-time default (true).
+        // Slice 1 invariant: mutually exclusive with legacy killswitch.
+        // Setting g_useGpuObjects at startup here happens before any code
+        // path can read it; legacy g_useGpuStaticProps starts false.
+        const char* gpuObjEnv = getenv("MC2_GPU_OBJECTS");
+        if (gpuObjEnv) {
+            g_useGpuObjects = (gpuObjEnv[0] != '0');
+        }
+        const bool gpuObj = g_useGpuObjects;
+        // [OBJECT_RECON v1] read MC2_OBJECT_RECON_TRACY here so the gate is
+        // live before any update kernel runs. drainPerFrame() lazy-inits
+        // too, but eager init avoids missing the very-first-frame data.
+        mc2_object_recon::initFromEnv();
+        const bool objRecon = mc2_object_recon::g_enabled;
         const bool tInd    = gos_terrain_indirect::IsEnabled();
         const bool tIndP   = gos_terrain_indirect::IsParityCheckEnabled();
+        const bool tIndM   = gos_terrain_indirect::IsMineEnabled();   // PR2c
+        const bool tIndO   = gos_terrain_indirect::IsOverlayEnabled();  // PR2b
+        const bool tIndOP  = gos_terrain_indirect::IsOverlayParityCheckEnabled();  // PR2b
+        // ParseEnvBool semantics: "0"/"false"/"off"/"no" → false, anything else → true.
+        // Must match the ParseEnvBool logic in code/terrobj.cpp so the banner
+        // accurately reflects the actual gate state (getenv!=nullptr would report
+        // MC2_STATIC_UPDATE_SKIP=0 as enabled, breaking operator trust in the banner).
+        auto suParseBool = [](const char* name, bool def = false) -> bool {
+            const char* v = getenv(name);
+            if (!v || !*v) return def;
+            if (v[0] == '0' && !v[1]) return false;
+            if (!_stricmp(v, "false") || !_stricmp(v, "off") || !_stricmp(v, "no")) return false;
+            return true;
+        };
+        const bool suTrace = suParseBool("MC2_STATIC_UPDATE_TRACE");
+        // 2026-05-11: MC2_STATIC_UPDATE_SKIP defaults ON; mirror in terrobj.cpp:88.
+        const bool suSkip  = suParseBool("MC2_STATIC_UPDATE_SKIP", true);
+        // Default ON; MC2_GPU_CULL_SUBSTRATE=0 opts out.
+        const char* _gcs = getenv("MC2_GPU_CULL_SUBSTRATE");
+        bool gpuCullSubstrate = (_gcs == nullptr || _gcs[0] != '0');
+        bool gpuCullParity    = (getenv("MC2_GPU_CULL_AABB_PARITY") != nullptr && getenv("MC2_GPU_CULL_AABB_PARITY")[0] != '0');
+        const bool shrHR      = (getenv("MC2_SHADER_HOT_RELOAD")    != nullptr);
+        const bool revZ       = (getenv("MC2_REVERSE_Z_TRACE")      != nullptr);
+        // PR-0: dormant [TERRAIN_SURFACE v1] lifecycle channel gate. Trace-only,
+        // default-OFF, separate from the MC2_TERRAIN_SURFACE path-select switch.
+        const bool tSurfTrc   = mc2_terrain_surface_trace::enabled();
+        // T3.1: (E) SpotLight_ -> real illumination env gate deleted. The
+        // new TG_Light registration path is the unconditional production
+        // behavior. MC2_SPOTLIGHT_REAL_TRACE counters remain (Debug
+        // Instrumentation Rule: demote, don't delete) for future diagnostics.
         const char* build  =
 #ifdef MC2_BUILD_HASH
             MC2_BUILD_HASH
@@ -651,18 +811,101 @@ int main(int argc, char** argv)
             "UNKNOWN"
 #endif
             ;
-        // Grew 384 -> 512 to absorb terrain_indirect{,_parity} fields without
-        // truncation. Sized for the next 1-2 banner extensions too.
-        char _cbbuf[512];
+        // Grew 384 -> 512 -> 640 to absorb terrain_indirect{,_parity}
+        // and gpu_objects fields without truncation.
+        // Grew 640 -> 720 to absorb gpu_cull_substrate and gpu_cull_aabb_parity.
+        // Grew 720 -> 768 to absorb terrain_indirect_mine (PR2c Stage 0c).
+        // Grew 768 -> 832 to absorb terrain_indirect_overlay{,_parity} (PR2b).
+        // Grew 832 -> 896 to absorb reverse_z_trace (reverse-Z float depth).
+        // Grew 896 -> 960 to absorb terrain_surface_trace (PR-0 Wave 0).
+        // Grew 960 -> 1024 to absorb spotlight_real (T1.2, (E) SpotLight_ -> real).
+        // Shrank back to 960 effective use post-T3.1 (spotlight_real field
+        // removed); buffer kept at 1024 for future absorbers.
+        // (water_skip_env field was tentatively added during the closed
+        // water-projection-skip slice attempt; removed when the slice
+        // closed — premise invalidated by Stage 0 M3 audit.)
+        char _cbbuf[1024];
         snprintf(_cbbuf, sizeof(_cbbuf),
             "[INSTR v1] enabled: tgl_pool=%d destroy=%d gl_error_print=%d "
             "smoke=%d water_fp=%d water_parity=%d vp_fast=%d vp_parity=%d "
-            "terrain_indirect=%d terrain_indirect_parity=%d build=%s",
+            "terrain_indirect=%d terrain_indirect_parity=%d terrain_indirect_mine=%d "
+            "terrain_indirect_overlay=%d terrain_indirect_overlay_parity=%d "
+            "gpu_objects=%d obj_recon_tracy=%d "
+            "static_update_trace=%d static_update_skip=%d "
+            "static_prop_registry=%d "
+            "gpu_cull_substrate=%d gpu_cull_aabb_parity=%d "
+            "shader_hot_reload=%d "
+            "reverse_z_trace=%d "
+            "terrain_surface_trace=%d "
+            "camera_motion=1 "
+            "build=%s",
             tgl ? 1 : 0, destr ? 1 : 0, glprint ? 1 : 0, smoke ? 1 : 0,
             waterFp ? 1 : 0, waterPc ? 1 : 0, vpFast ? 1 : 0, vpPar ? 1 : 0,
-            tInd ? 1 : 0, tIndP ? 1 : 0, build);
+            tInd ? 1 : 0, tIndP ? 1 : 0, tIndM ? 1 : 0,
+            tIndO ? 1 : 0, tIndOP ? 1 : 0,
+            gpuObj ? 1 : 0, objRecon ? 1 : 0,
+            suTrace ? 1 : 0, suSkip ? 1 : 0,
+            GpuStaticPropRegistry::isEnabled() ? 1 : 0,
+            gpuCullSubstrate ? 1 : 0, gpuCullParity ? 1 : 0,
+            shrHR ? 1 : 0,
+            revZ ? 1 : 0,
+            tSurfTrc ? 1 : 0,
+            build);
         puts(_cbbuf);
         crashbundle_append(_cbbuf);
+
+        // [MATERIAL_GPU v1] startup banner — separate from [INSTR v1] to keep
+        // that buffer size stable. Duplicates the getenv check because
+        // s_materialGpuEnabled is a private file-scope static in the batcher
+        // (not accessible cross-TU — Option A from MaterialGpu-2 spec §3).
+        {
+            const bool matGpuOn    = (getenv("MC2_MATERIAL_GPU")        != nullptr);
+            const bool matSampleOn = (getenv("MC2_MATERIAL_GPU_SAMPLE") != nullptr);
+            char buf[64];
+            std::snprintf(buf, sizeof(buf),
+                          "[MATERIAL_GPU v1] enabled=%d sample=%d binding=5\n",
+                          (int)matGpuOn, (int)matSampleOn);
+            std::fputs(buf, stderr);
+        }
+
+        // [UNIFIED_PROJ v1] Warn when MC2_DISABLE_GOSFX=0 dev-override is active
+        // under unified projection. Default MC2_DISABLE_GOSFX=1 is unaffected.
+        {
+            const char* gosfxEnv = getenv("MC2_DISABLE_GOSFX");
+            if (gosfxEnv != nullptr && strcmp(gosfxEnv, "0") == 0) {
+                fprintf(stderr,
+                    "[UNIFIED_PROJ v1] WARN: MC2_DISABLE_GOSFX=0 active under unified "
+                    "projection. gosFX particles will render incorrectly (MLR clipper "
+                    "uses stale convention). See CLAUDE.md Known Issues.\n");
+            }
+        }
+
+        // GPU cull record schema selftest.
+        {
+            int gcFail = gpu_cull::gpu_cull_record_selftest();
+            if (gcFail > 0) {
+                fprintf(stderr, "[GPU_CULL v1] FATAL: selftest failed (%d); "
+                                "GpuActorRecord layout corrupt, see log above.\n", gcFail);
+                fflush(stderr);
+                gosASSERT(false);
+                abort();
+            }
+        }
+
+        // C2: readback ring buffer three-tier selftest is called from within
+        // readback_init() (at mission load) — not here. readback_init() requires GL
+        // context + a valid maxActors count, so it cannot run at engine startup.
+        // The selftest emits [GPU_CULL v1] event=readback_selftest pass=3 fail=0
+        // to the mission log when MC2_GPU_CULL_READBACK=1 is set.
+        // (No call needed here — readback_selftest() in readback.cpp is self-contained.)
+
+        if (getenv("MC2_STATIC_PROP_BAKE_SELFTEST")) {
+            // Stub: full self-test wired in Task 5 after buildRecipeFromShape
+            // has callers and a registered type to test against.
+            fprintf(stderr, "[STATIC_PROP_BAKE v1] event=selftest_stub note=full_test_wired_task5\n");
+            fflush(stderr);
+        }
+
         if (g_pzTrace) {
             char _pzbuf[256];
             snprintf(_pzbuf, sizeof(_pzbuf),
@@ -737,6 +980,16 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    render_contract::initRenderContractAssert();
+
+    if (GLEW_ARB_parallel_shader_compile) {
+        glMaxShaderCompilerThreadsARB(0xFFFFFFFF);
+        printf("[INSTR v1] parallel_shader_compile=enabled\n");
+    } else {
+        printf("[INSTR v1] parallel_shader_compile=unsupported\n");
+    }
+    fflush(stdout);
+
 	// Install GL debug callback only when MC2_GL_DEBUG is set. In shipping
 	// builds this keeps stdout free of harmless driver warnings (esp. the
 	// AMD ~glsl_program double-detach chatter) and saves the sync-debug
@@ -748,6 +1001,33 @@ int main(int argc, char** argv)
 		glDebugMessageCallbackARB((GLDEBUGPROC)&OpenGLDebugLog, NULL);
 	}
 
+    // GL_ARB_clip_control: align hardware depth convention with engine's
+    // existing D3D-style projection matrices. cameraToClip
+    // (mclib/camera.cpp:1942-1965) produces clip-space [0, w] by deliberate
+    // design; without clip control, hardware default expects [-w, w] and
+    // compresses our output into window depth [0.5, 1.0] — half precision
+    // wasted. With ZERO_TO_ONE, hardware natively expects [0, w], NDC z is
+    // [0, 1], window depth uses full [0, 1] range.
+    //
+    // **Fail-closed contract:** the four shader edits in this slice
+    // (gos_terrain.tese, gos_terrain_thin.vert, shadow_screen.frag,
+    // ssao.frag) remove their depth-range workaround remaps unconditionally.
+    // Running without glClipControl(GL_ZERO_TO_ONE) would feed [0,1] NDC z
+    // to hardware expecting [-1,1] and produce garbage depth. So if the
+    // extension is somehow unavailable at runtime, we MUST refuse to start
+    // rather than ship broken rendering.
+    //
+    // Plan: docs/superpowers/plans/2026-05-06-clip-control-adoption.md
+    if (GLEW_ARB_clip_control || GLEW_VERSION_4_5) {
+        glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
+        printf("[INSTR v1] clip_control=enabled origin=lower_left depth=zero_to_one\n");
+        fflush(stdout);
+    } else {
+        printf("[INSTR v1] clip_control=unsupported fatal=1\n");
+        fflush(stdout);
+        gosASSERT(false);
+        abort();
+    }
 
     SPEW(("GRAPHICS", "Status: Using GLEW %s\n", glewGetString(GLEW_VERSION)));
     //if ((!GLEW_ARB_vertex_program || !GLEW_ARB_fragment_program))
@@ -780,6 +1060,9 @@ int main(int argc, char** argv)
 
     gos_CreateRenderer(ctx, win, w, h);
     startup_phase("renderer_created");
+#ifdef MC2_IMGUI
+    GuiRuntime::Init();
+#endif
     if(!gos_CreateAudio())
     {   // not an error
         SPEW(("AUDIO", "Failed to create audio\n"));
@@ -826,10 +1109,26 @@ int main(int argc, char** argv)
 
 		uint64_t start_tick = timing::gettickcount();
 
-        if (g_focus_lost) {
+        // Throttle when the window is actually invisible (minimized / hidden),
+        // NOT merely when it lacks keyboard focus. Plain focus loss happens
+        // constantly during normal play (clicking a chat window, opening
+        // Tracy, Windows shifting focus to a notification) and the loop must
+        // keep running at full speed in those cases. g_focus_lost is still
+        // used as the *input filter* below — different concern, same SDL event
+        // source, but they want different predicates.
+        bool windowInvisible = false;
+        if (g_sdl_window) {
+            Uint32 flags = SDL_GetWindowFlags(g_sdl_window);
+            windowInvisible = (flags & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN)) != 0;
+        }
+        if (windowInvisible) {
             ZoneScopedN("Frame.BackgroundThrottle");
             timing::sleep(10 * 1000000);
         }
+
+#ifdef MC2_IMGUI
+        GuiRuntime::NewFrame();
+#endif
 
         {
             ZoneScopedN("GameLogic");
@@ -851,6 +1150,11 @@ int main(int argc, char** argv)
         }
 
         {
+            ZoneScopedN("ExtractRenderSnapshot");
+            ExtractRenderSnapshot();
+        }
+
+        {
             ZoneScopedN("DrawScreen");
             graphics::make_current_context(ctx);
             draw_screen();
@@ -863,6 +1167,9 @@ int main(int argc, char** argv)
             ZoneScopedN("Frame.DrainTglPoolStats");
             g_mc2FrameCounter++;
             drainTglPoolStats();
+            // [OBJECT_RECON v1] slice-2 recon-zero accumulator drain.
+            // No-op cost (~1 cmp + 1 branch) when env not set.
+            mc2_object_recon::drainPerFrame(g_mc2FrameCounter);
             projectz_frame_tick();
             projectz_overlay_begin_frame();
             drainGLErrors("frame");
@@ -915,7 +1222,16 @@ int main(int argc, char** argv)
         // Skipped when vsync is active (vsync already owns pacing).
         // Uses mission-state-aware cap: 90 FPS in menus, 165 FPS in missions.
         if (!s_vsync_active) {
-            int cap = SmokeMode::missionHasStarted() ? s_fps_cap_mission : s_fps_cap_menu;
+            bool inMission = SmokeMode::missionHasStarted();
+            int cap = inMission ? s_fps_cap_mission : s_fps_cap_menu;
+            static bool s_capTraceLast = !inMission;
+            static const bool s_capTrace = (getenv("MC2_FRAMECAP_TRACE") != nullptr);
+            if (s_capTrace && s_capTraceLast != inMission) {
+                fprintf(stderr, "[FRAMECAP] cap switched: inMission=%d cap=%d\n",
+                        (int)inMission, cap);
+                fflush(stderr);
+                s_capTraceLast = inMission;
+            }
             if (cap > 0) {
                 ZoneScopedN("Frame.FrameCap");
                 uint64_t target_ms = 1000u / (uint64_t)cap;
@@ -972,11 +1288,15 @@ int main(int argc, char** argv)
     // Tier-1 instrumentation (stability spec §2.5): final monotonic summary
     // before tearing down render/audio. Always emitted regardless of env gate.
     drainTglPoolStatsOnShutdown();
+    mc2_object_recon::drainOnShutdown();
     projectz_shutdown();
 
     Environment.TerminateGameEngine();
     AssetScale::shutdown();
 
+#ifdef MC2_IMGUI
+    GuiRuntime::Shutdown();
+#endif
     gos_DestroyRenderer();
 
     graphics::destroy_render_context(ctx);

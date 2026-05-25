@@ -22,7 +22,7 @@ uniform PREC vec4 fog_color;
 
 void main(void)
 {
-    PREC vec4 c = Color;
+    PREC vec4 c = Color.bgra;
 #ifdef ENABLE_TEXTURE1
     c *= texture(tex1, Texcoord);
 #endif

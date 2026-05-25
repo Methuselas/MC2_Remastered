@@ -25,6 +25,7 @@
 #endif
 
 #include"gos_profiler.h"
+#include"../GameOS/gameos/gos_terrain_indirect.h"  // PR2c Stage 1c — MarkMineDirty
 
 //---------------------------------------------------------------------------
 // Bounded readPacket helper for GlobalMap::init — refuses to read a packet
@@ -885,6 +886,10 @@ void MissionMap::rebuildTileMineCounts (void) {
 			}
 		}
 	}
+	// PR2c Stage 1c — packet-load bypass setMine, so mark the static VBO
+	// dirty after the rebuild completes so the next paint cycle re-emits
+	// geometry from the freshly-rebuilt cell state.
+	gos_terrain_indirect::MarkMineDirty();
 }
 
 //---------------------------------------------------------------------------

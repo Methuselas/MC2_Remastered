@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT))
 from scripts.smoke_lib import baselines, manifest, report
 from scripts.smoke_lib.runner import RunConfig, run_one
 
-DEFAULT_EXE = Path(r"A:/Games/mc2-opengl/mc2-win64-v0.2/mc2.exe")
+DEFAULT_EXE = Path(r"A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe")
 ARTIFACT_ROOT = ROOT / "tests" / "smoke" / "artifacts"
 MANIFEST_PATH = ROOT / "tests" / "smoke" / "smoke_missions.txt"
 BASELINE_PATH = ROOT / "tests" / "smoke" / "baselines.json"
@@ -87,7 +87,10 @@ def _run_menu_canary(exe: Path, script_path: Path, artifact_dir: Path,
 
     game_alive = proc.poll() is None
     if game_alive:
-        proc.wait(timeout=max(1, settle_s))
+        try:
+            proc.wait(timeout=max(1, settle_s))
+        except subprocess.TimeoutExpired:
+            proc.kill()
     try:
         stdout, _ = proc.communicate(timeout=5)
     except subprocess.TimeoutExpired:
@@ -157,7 +160,22 @@ def main():
     ap.add_argument("--duration", type=int)
     ap.add_argument("--profile", default="stock")
     ap.add_argument("--exe", default=str(DEFAULT_EXE))
+    # Tier 1.2 (docs/testing-strategy.md): opt-in safety net that promotes
+    # GL_DEBUG_SEVERITY_HIGH from a silent log to abort(). Off by default.
+    ap.add_argument("--gl-debug-fatal", action="store_true",
+                    help="set MC2_GL_DEBUG_FATAL=1 (abort on GL_DEBUG_SEVERITY_HIGH)")
     args = ap.parse_args()
+    if args.gl_debug_fatal:
+        os.environ["MC2_GL_DEBUG_FATAL"] = "1"
+
+    # F1 unified-projection: forbid MC2_DISABLE_GOSFX=0 in smoke runs.
+    # Visual regression accepted only in dev-override sessions; smoke must
+    # represent shipped default state.
+    if os.environ.get("MC2_DISABLE_GOSFX") == "0":
+        print("[run_smoke] FATAL: MC2_DISABLE_GOSFX=0 conflicts with unified "
+              "projection; smoke would record regressed visuals. Unset or set =1.",
+              file=sys.stderr)
+        sys.exit(2)
 
     # Existing-process safety.
     pids = _running_mc2()
@@ -250,9 +268,129 @@ def main():
                             "MC2_TERRAIN_INDIRECT",
                             "MC2_TERRAIN_INDIRECT_PARITY_CHECK",
                             "MC2_TERRAIN_INDIRECT_TRACE",
-                            "MC2_TERRAIN_COST_SPLIT")},
+                            # Decal static-bake (drawPass-retirement Slice A) kill-switch
+                            "MC2_TERRAIN_INDIRECT_OVERLAY",
+                            # Ring-buffer hazard probe (raster-triangle bug)
+                            "MC2_RING_TRACE",
+                            # Probe 7: force glFinish() between compute and draw
+                            "MC2_RING_FORCE_FINISH",
+                            # GPU object batcher gate (bisect partner for terrain bug)
+                            "MC2_GPU_OBJECTS",
+                            # Mask-dispatch (pre-bake-terrain merge)
+                            "MC2_TERRAIN_MASK_DISPATCH",
+                            "MC2_TERRAIN_MASK_DISPATCH_PARITY",
+                            "MC2_TERRAIN_INDIRECT_MINE",
+                            "MC2_TERRAIN_INDIRECT_OVERLAY",
+                            "MC2_TERRAIN_INDIRECT_OVERLAY_PARITY_CHECK",
+                            "MC2_TERRAIN_COST_SPLIT",
+                            "MC2_LIGHT_COST_SPLIT",
+                            "MC2_SLIM_COST_SPLIT",
+                            "MC2_TOBJ_COST_SPLIT",
+                            # Task 7 — superset-parity counter probe (proof-gate #2)
+                            "MC2_TOBJ_PARITY",
+                            # alpha-Stage 1 §5 Stage 0 — candidate-predicate
+                            # disagreement probe for inView unconflation.
+                            "MC2_INVIEW_CONFLATION_TRACE",
+                            "MC2_GPUPROPS_TRACE",
+                            "MC2_MECH_RESTORE_TRACE",
+                            # Phase 1 — terrain lighting GPU compute
+                            "MC2_TERRAIN_LIGHTING_GPU",
+                            "MC2_TERRAIN_LIGHTING_PARITY",
+                            "MC2_TERRAIN_LIGHTING_GPU_TRACE",
+                            # Track A1 — object admission predicate + trace
+                            "MC2_OBJECT_ADMISSION_PREDICATE",
+                            "MC2_PROJECTZ_TRACE",
+                            "MC2_PROJECTZ_HEATMAP",
+                            "MC2_PROJECTZ_SUMMARY",
+                            "MC2_PROJECTZ_GUARD_PX",
+                            # Task 7 — cascade-safety DESTROY trace
+                            "MC2_DESTROY_TRACE",
+                            # Track C0/C1a — GPU cull substrate + AABB parity + compute dispatch
+                            "MC2_GPU_CULL_SUBSTRATE",
+                            "MC2_GPU_CULL_AABB_PARITY",
+                            "MC2_GPU_CULL_SUBSTRATE_TRACE",
+                            "MC2_GPU_CULL",
+                            "MC2_GPU_CULL_COMPUTE_TRACE",
+                            # Track C2 — async readback ring buffer
+                            "MC2_GPU_CULL_READBACK",
+                            "MC2_GPU_CULL_FORCE_FENCE_NOT_READY",
+                            "MC2_GPU_CULL_READBACK_TRACE",
+                            # Track C3 — lifecycle gates (mech3d/gvactor/objmgr routing)
+                            # m-4: missing permutation: LIFECYCLE=1+READBACK=1 and
+                            # LIFECYCLE=1+READBACK=0 (fail-open regression) smoke runs.
+                            # Both require --with-env overrides; not automated yet.
+                            "MC2_GPU_CULL_LIFECYCLE",
+                            "MC2_GPU_CULL_LIFECYCLE_TRACE",
+                            # Phase C — GPU-driven unified path
+                            "MC2_GPU_DRIVEN",
+                            "MC2_GPU_DRIVEN_WATER",
+                            "MC2_GPU_DRIVEN_TERRAIN_SOLID",
+                            "MC2_GPU_DRIVEN_OVERLAY",
+                            "MC2_GPU_DRIVEN_PARITY",
+                            "MC2_GPU_DRIVEN_TRACE",
+                            # Reverse-Z depth verification probes (2026-05-18):
+                            # depth-transition zoom-pop, water render/depth
+                            # parity, reverse-Z proj-matrix lifecycle trace.
+                            "MC2_DEPTH_TRANSITION_PROBE",
+                            "MC2_WATER_RENDERPROBE",
+                            "MC2_WATER_DEPTHPROBE",
+                            "MC2_REVERSE_Z_TRACE",
+                            # Terrain continuous-surface producer (2026-05-18):
+                            # MC2_TERRAIN_SURFACE = path-select kill-switch
+                            # (PR-1+, default-OFF); MC2_TERRAIN_SURFACE_TRACE =
+                            # the PR-0 [TERRAIN_SURFACE v1] lifecycle trace gate
+                            # (trace-only, default-OFF). Without these in the
+                            # allowlist subprocess.Popen drops them and the
+                            # forced-ON / trace smoke states are meaningless.
+                            "MC2_TERRAIN_SURFACE",
+                            "MC2_TERRAIN_SURFACE_TRACE",
+                            # quadSetupTextures-retirement recon (2026-05-19):
+                            # MC2_WATER_INVPROJ_PARITY = the [WATER_INVPROJ v1]
+                            # snapshot-A-vs-B 6-tuple parity probe (terrain.cpp;
+                            # trace-only, default-OFF). Decides whether the
+                            # setupTextures water block contributes unique
+                            # extrema beyond slimReduce. Without this in the
+                            # allowlist subprocess.Popen drops it and the probe
+                            # never fires.
+                            "MC2_WATER_INVPROJ_PARITY",
+                            # F3 CPU-projection cost-split (2026-05-20):
+                            # MC2_CPU_PROJ_COST_SPLIT = master env gate for the
+                            # measurement-only bucket/sidecar instrumentation
+                            # (mclib/cpu_proj_cost_split.{h,cpp}). Without this
+                            # in the allowlist subprocess.Popen drops it and
+                            # tier1 captures emit "[CPU_PROJ v1 disabled]".
+                            "MC2_CPU_PROJ_COST_SPLIT",
+                            # Tier 1.2 — KHR_debug fatal-on-HIGH opt-in
+                            # (docs/testing-strategy.md). Forwarded so
+                            # --gl-debug-fatal reaches the engine subprocess.
+                            "MC2_GL_DEBUG_FATAL",
+                            # Integrated gosFX-retirement / GPU-particles plan
+                            # (2026-05-20-integrated-gosfx-retirement-*):
+                            # MC2_FX_TRACE = neutral fx invocation counter
+                            # (mclib/fx_trace; default-OFF). Without this in
+                            # the allowlist subprocess.Popen drops it and the
+                            # Stage 0' content-recon trace never fires.
+                            # MC2_DISABLE_GOSFX = A1 MLR work-leaf gate
+                            # (default-ON since A2). Forwarded so Stage 0'
+                            # captures can opt back to legacy-gosFX-ON for
+                            # the histogram-baseline run only.
+                            "MC2_FX_TRACE",
+                            "MC2_DISABLE_GOSFX",
+                            # B1 Stage 1'+: GPU particle batcher opt-in gate.
+                            # (default-OFF; flipped ON for Stage 1' canaries.)
+                            "MC2_GPU_PARTICLES")},
             },
         )
+        # Clear the file-sink probe log next to mc2.exe before each mission
+        # so each run captures its own probe events.  See gos_terrain_indirect
+        # PROBE_LOG / RING_SINK in the engine: ring-buffer / cmd-patch /
+        # overshoot / near-clip-w / recipe-spread tripwires.
+        ring_sink_path = Path(cfg.exe[0]).resolve().parent / "ring_trace.log"
+        try:
+            ring_sink_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
         print(f"[runner] running {e.stem} (tier={tier} duration={duration})",
               file=sys.stderr)
         result = run_one(cfg)
@@ -265,6 +403,15 @@ def main():
 
         if not result.verdict.passed or args.keep_logs:
             (artifact_dir / f"{e.stem}.log").write_text(result.stdout_text, encoding="utf-8", errors="replace")
+            # Snapshot the probe file-sink alongside the regular log.  Survives
+            # across runs (the per-mission unlink above resets it for next).
+            try:
+                if ring_sink_path.exists():
+                    (artifact_dir / f"{e.stem}.ring_trace.log").write_text(
+                        ring_sink_path.read_text(encoding="utf-8", errors="replace"),
+                        encoding="utf-8", errors="replace")
+            except Exception as exc:
+                print(f"[runner] could not snapshot ring_trace.log: {exc}", file=sys.stderr)
         if args.baseline_update and result.verdict.passed:
             baseline_data.setdefault(key, {})["destroys"] = {
                 "mean": result.summary.destroys, "stddev": 0, "samples": 1,

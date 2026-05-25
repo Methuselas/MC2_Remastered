@@ -33,7 +33,7 @@
 #define NO_ERR			0
 #endif
 
-#define HUD_DEPTH		0.0001f			//HUD Objects draw over everything else.
+#define HUD_DEPTH		0.9999f			//HUD Objects draw over everything else (reverse-Z: near=1, far=0).
 
 #define WIDTH			19				// really half the width...
 #define HEIGHT			4
@@ -69,6 +69,18 @@ class Appearance
 	public:
 
 		bool						inView;			//Can I be Seen?
+		// alpha-Stage 1 v3 §4: producer-side decomposed gates. Set by
+		// recalcBounds() via setVisibilityGatesFromLegacy(). Stage 1 ships
+		// them with byte-identical semantics (all four = inView per the
+		// helper); later stages migrate per-concern consumers to read
+		// the concern-specific bool. lifecycleAlive is EVENT-DRIVEN, NOT
+		// camera-driven: set TRUE in init(), cleared only by destroy
+		// events (NOT by recalcBounds, NOT by setInView). Spec:
+		// docs/superpowers/specs/2026-05-20-appearance-inview-unconflation-design.md
+		bool						renderVisible;
+		bool						simActive;
+		bool						lifecycleAlive;
+		bool						aiPresentable;
 		Stuff::Vector4D				upperLeft;		//used to draw select boxes.  Can be 3D Now!
 		Stuff::Vector4D				lowerRight;		//used to draw select boxes.
 		
@@ -85,6 +97,15 @@ class Appearance
 		Appearance (void)
 		{
 			inView = FALSE;
+			// alpha-Stage 1 v3 §5 Stage 1 ctor zero-init contract:
+			// renderVisible/simActive/aiPresentable default FALSE (will
+			// be overwritten by first recalcBounds via helper).
+			// lifecycleAlive defaults TRUE — actor exists at construction
+			// time; cleared only by destroy events.
+			renderVisible   = FALSE;
+			simActive       = FALSE;
+			lifecycleAlive  = TRUE;
+			aiPresentable   = FALSE;
 			screenPos.x = screenPos.y = screenPos.z = screenPos.w = -999.0f;
 			upperLeft.x = upperLeft.y = upperLeft.z = upperLeft.w = -999.0f;
 			lowerRight.x = lowerRight.y = lowerRight.z = lowerRight.w = -999.0f;
@@ -93,10 +114,16 @@ class Appearance
 
 			visible = seen = false;
 		}
-		
+
 		virtual void init (AppearanceTypePtr tree = NULL, GameObjectPtr obj = NULL)
 		{
 			inView = FALSE;
+			// alpha-Stage 1 v3 §5 Stage 1 init zero-init contract
+			// (mirror of ctor — see Appearance() above for rationale).
+			renderVisible   = FALSE;
+			simActive       = FALSE;
+			lifecycleAlive  = TRUE;
+			aiPresentable   = FALSE;
 			screenPos.x = screenPos.y = screenPos.z = screenPos.w = -999.0f;
 			upperLeft.x = upperLeft.y = upperLeft.z = upperLeft.w = -999.0f;
 			lowerRight.x = lowerRight.y = lowerRight.z = lowerRight.w = -999.0f;
@@ -125,7 +152,42 @@ class Appearance
 			//Perform any frame by frame tasks.  Animations, etc.
 			return NO_ERR;
 		}
-		
+
+		// Slice 3 (static-update bypass): return true ONLY when this appearance
+		// has no per-frame work this frame. Default false = always run update().
+		// Per-class overrides supply the actual logic.
+		//
+		// CONTRACT (load-bearing for Stage 3.D): this predicate must NOT inspect
+		// the owning GameObject/TerrainObject — the appearance has no back-pointer.
+		// Owner-side transient state (OBJECT_FLAG_FALLING, damage, power-supply,
+		// active GOSFX) must be composed at the call site in code/terrobj.cpp.
+		// Violating this will silently skip the impact frame for falling trees.
+		virtual bool IsStaticNow (void) const
+		{
+			return false;
+		}
+
+		// Stage 3.C: stamp-advance path for static registry. Default no-op.
+		// Override in TreeAppearance calls TG_MultiShape::Touch() without
+		// running the full vertex transform.
+		virtual void touch() {}
+
+		// Stage 3.C: clear static registration when the owner transitions to
+		// dynamic (falling, damage, override). Default no-op. Override in
+		// TreeAppearance calls GpuStaticPropRegistry::invalidate() internally.
+		virtual void invalidateStaticRegistration() {}
+
+		// Task 5 (Track B): mission-load bulk registration. Default no-ops; each
+		// concrete appearance class that participates in the static-prop registry
+		// overrides these and writes directly to its own typed staticReg member
+		// (HC-1: no void* cast, no shared interface).
+		virtual void registerStatic()               {}
+		virtual bool isStaticRegistered()  const    { return false; }
+		// m5 fix (RenderWorld Slice M1): late-spawn path readback. Base
+		// returns -1 (no recipe); BldgAppearance / TreeAppearance override
+		// to return staticReg.recipeIndex when registered, else -1.
+		virtual int32_t getStaticRecipeIndex() const { return -1; }
+
 		virtual long render (long depthFixup = 0)
 		{
 			//Decide whether or not I can be seen and add me to render list.
@@ -146,10 +208,35 @@ class Appearance
 		{
 			return(inView);
 		}
-		
+
+		// alpha-Stage 1 v3 §4.4: producer-side helper. recalcBounds()
+		// overrides call this with the computed visibility bit; it sets
+		// inView + the 3 new camera-driven gates (renderVisible /
+		// simActive / aiPresentable) in lockstep. lifecycleAlive is
+		// EXCLUDED — it is event-driven (init/destroy), never
+		// camera-cleared. Stage 1 ships with byte-identical semantics:
+		// the 3 new bools all equal inView. Stages 2-5 migrate
+		// consumers to read their concern-specific bool; Stage 3
+		// widens simActive with hysteresis; Stage 6 widens
+		// renderVisible with sticky-bit admit.
+		void setVisibilityGatesFromLegacy (bool v)
+		{
+			inView         = v;
+			renderVisible  = v;
+			simActive      = v;
+			aiPresentable  = v;
+			// lifecycleAlive intentionally NOT touched — event-driven only.
+		}
+
 		void setInView (bool viewStatus)
 		{
-			inView = viewStatus;
+			// alpha-Stage 1 v3 §5 Stage 1: the 8 force-true callsites
+			// (gamecam compass/sky, gate, turret, missiongui HUD-VTOL,
+			// mover LOS save/restore) genuinely want the actor to behave
+			// as visible across all concerns. Route through the helper
+			// so all 4 camera-driven gates stay coherent. lifecycleAlive
+			// remains untouched (helper excludes it).
+			setVisibilityGatesFromLegacy(viewStatus);
 		}
 				
 		Stuff::Vector4D getScreenPos (void)
@@ -178,7 +265,10 @@ class Appearance
 		{
 			//-------------------------------------------------------
 			// returns TRUE is this appearance is Visible this frame
-			inView = FALSE;
+			// alpha-Stage 1 v3: route through helper for gate coherence
+			// (sets renderVisible/simActive/aiPresentable = FALSE in
+			// lockstep with inView; lifecycleAlive untouched).
+			setVisibilityGatesFromLegacy(FALSE);
 			return inView;
 		}
 
