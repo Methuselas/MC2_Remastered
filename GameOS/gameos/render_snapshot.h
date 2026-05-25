@@ -133,3 +133,8 @@ struct RenderSnapshot {
     std::unique_ptr<RenderFrameArena> arena;
     bool arenaOverflow = false;
 };
+
+// Extraction entry point — implemented in render_snapshot.cpp.
+// Called once per frame between DoGameLogic() and draw_screen().
+// Returns a snapshot backed by a frame-lifetime arena (snap.arena).
+RenderSnapshot ExtractRenderSnapshot();

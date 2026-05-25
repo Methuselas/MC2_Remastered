@@ -40,6 +40,7 @@ set(SOURCES ${SOURCES}
     gpu_cull_parity.cpp
     gpu_cull_compute.cpp
     gpu_cull_readback.cpp
+    render_snapshot.cpp
 
     utils/stream.cpp
     utils/camera.cpp
