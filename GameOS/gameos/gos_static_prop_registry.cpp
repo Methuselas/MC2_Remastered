@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <climits>
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <set>
@@ -141,6 +142,13 @@ static std::vector<RecipeRange>           s_recipeRanges;
 // v1.1: per-typeID primary material cache. Populated by finalizeGeometry().
 // Indexed by typeID (dense); resized as needed by staticPropCacheTypePrimaryMaterial.
 static std::vector<GpuStaticPropRegistry::StaticPropTypeMaterialCache> s_typeMatCache;
+
+// v2: tracks whether flush() called substrate_appendStaticPropRecord for each recipe.
+// Indexed by recipeIndex (parallel to s_recipeRanges). Reset to 0 at flush() start;
+// set to 1 after substrate_appendStaticPropRecord in the flush loop.
+// Cleared entirely in destroy() (see the ClearCullSubmissionState helper below).
+// Do NOT clear in staticPropRegistryClearMaterialCache() — different lifecycle.
+static std::vector<uint8_t> s_recipeHasSubstrateRecord;
 
 // M1.5 C1 fix: typeID -> recipeIndex side-map. Populated by
 // registerRecipe(); set to -1 on invalidate(). Lookup returns -1
@@ -302,6 +310,7 @@ void destroy() {
     s_recipeRanges.clear();     s_recipeRanges.shrink_to_fit();
     s_liveRangeIndices.clear(); s_liveRangeIndices.shrink_to_fit();
     s_typeMatCache.clear();          s_typeMatCache.shrink_to_fit();
+    staticPropRegistryClearCullSubmissionState();
     // unordered_map has no shrink_to_fit(); swap with empty to release bucket
     // allocation back to the heap, matching the intent of the surrounding
     // vector .clear()+.shrink_to_fit() pattern. Mission 2 may register a
@@ -335,6 +344,7 @@ int32_t registerRecipe(TG_MultiShape* multi,
     s_recipes.insert(s_recipes.end(), batch.begin(), batch.end());
     const int32_t regIdx = static_cast<int32_t>(s_recipeRanges.size());
     s_recipeRanges.push_back(rng);
+    s_recipeHasSubstrateRecord.push_back(0u); // v2: one slot per recipe, parallel to s_recipeRanges
     // M1.5 C1: maintain typeID -> recipeIndex side-map for the
     // batcher's objectIdRaw producer. All instances in `batch` share
     // the same typeID in practice (one recipe = one multi-shape =
@@ -411,6 +421,9 @@ void invalidate(int32_t regIdx) {
         s_recipes[rng.first + i] = GpuStaticPropInstance{};
     SP_TRACE("invalidate regIdx=%d (was count=%u)", regIdx, rng.count);
     rng.count = 0;
+    // v2: zero-out substrate tracking (don't erase — keeps index stable).
+    if (static_cast<size_t>(regIdx) < s_recipeHasSubstrateRecord.size())
+        s_recipeHasSubstrateRecord[static_cast<size_t>(regIdx)] = 0u;
     rng.multi  = nullptr;
     rng.lightDataIndex = 0xFFFFFFFFu;  // 2026-05-11 reset capture on invalidate
     rng.extentRadius   = 0.0f;         // 2026-05-22 F4 T3 reset extent radius
@@ -455,6 +468,10 @@ void flush() {
     static uint64_t s_diag_total_ns = 0;
     const auto _flush_t0 = std::chrono::steady_clock::now();
     ++s_diag_flush_calls;
+    // v2: reset per-recipe cull-submission tracking for this frame.
+    // Timing: flush(N) clears → sets bits; extraction(N+1) reads before flush(N+1).
+    // So extraction always sees frame N state, NOT the current frame being built.
+    std::fill(s_recipeHasSubstrateRecord.begin(), s_recipeHasSubstrateRecord.end(), 0u);
     for (uint32_t regIdx : s_liveRangeIndices) {
         RecipeRange& rng = s_recipeRanges[regIdx];
         ++s_diag_ranges_total;
@@ -699,6 +716,9 @@ void flush() {
                 }
                 gpu_cull::substrate_appendStaticPropRecord(gpuRec);
                 ++s_diag_leaves_appended;
+                // v2: record substrate submission for this recipe (extraction reads previous frame's state).
+                if (regIdx < static_cast<uint32_t>(s_recipeHasSubstrateRecord.size()))
+                    s_recipeHasSubstrateRecord[regIdx] = 1u;
                 // 2026-05-10 diag: typeID histogram. MC2_REGFLUSH_TYPEHIST=1 to enable.
                 {
                     static const bool s_th = (getenv("MC2_REGFLUSH_TYPEHIST") != nullptr);
@@ -810,6 +830,20 @@ void staticPropCacheTypePrimaryMaterial(uint32_t typeID,
 
 void staticPropRegistryClearMaterialCache() {
     s_typeMatCache.clear();
+}
+
+void staticPropRegistryClearCullSubmissionState() {
+    s_recipeHasSubstrateRecord.clear();
+    s_recipeHasSubstrateRecord.shrink_to_fit();
+}
+
+bool staticPropGetHasCullRecord(int32_t recipeIndex, bool* out) {
+    if (!out) return false;
+    *out = false;
+    if (!recipeValid(recipeIndex)) return false;
+    if (static_cast<size_t>(recipeIndex) < s_recipeHasSubstrateRecord.size())
+        *out = (s_recipeHasSubstrateRecord[static_cast<size_t>(recipeIndex)] != 0u);
+    return true;
 }
 
 bool staticPropGetTexArrayLayer(int32_t recipeIndex, int32_t* out) {

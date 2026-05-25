@@ -170,6 +170,17 @@ void staticPropCacheTypePrimaryMaterial(uint32_t typeID,
 //   - GpuStaticPropBatcher::onMapUnload()
 void staticPropRegistryClearMaterialCache();
 
+// Clears s_recipeHasSubstrateRecord entirely (called from destroy() only).
+// Per-frame reset (fill to 0) happens inside flush() — NOT via this function.
+// NOT called from finalizeGeometry() or staticPropRegistryClearMaterialCache().
+void staticPropRegistryClearCullSubmissionState();
+
+// Returns false + *out=false if recipeIndex is invalid, tombstoned, or out is null.
+// *out is true iff substrate_appendStaticPropRecord was called for this recipe
+// in the most recent PREVIOUS render frame's flush() pass.
+// NOTE: ExtractRenderSnapshot() runs BEFORE flush() — this reflects the prior frame.
+bool staticPropGetHasCullRecord(int32_t recipeIndex, bool* out);
+
 // Returns false + sets *out to sentinel if recipeIndex invalid/tombstoned or !hasPrimary.
 bool staticPropGetTexArrayLayer(int32_t recipeIndex, int32_t* out);
 bool staticPropGetMaterialIdx(int32_t recipeIndex, uint32_t* out);
