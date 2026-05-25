@@ -45,6 +45,7 @@
 #include "../GameOS/gameos/gos_static_prop_registry.h"  // Stage 3.C: frameBegin()
 #include "particles/batcher.h"  // B1 Stage 1' Commit 3: GPU particle batcher flush hook
 #include "../GameOS/gameos/debug_renderer.h"
+#include "../GuiRuntime/EditorInspector.h"  // IMG-INSPECT-3 flushDebugHighlight
 
 //---------------------------------------------------------------------------
 CameraPtr eye = NULL;
@@ -320,6 +321,9 @@ void GameCamera::render (void)
 		// No-op when MC2_DEBUG_RENDERER is unset.
 		{
 			ZoneScopedN("GameCamera::render debugRendererFlushWorldPrims");
+#ifdef MC2_IMGUI
+			EditorInspector::flushDebugHighlight();  // IMG-INSPECT-3: queue highlight prims same-frame
+#endif
 			DebugRenderer::flushWorldPrims();
 		}
 	}

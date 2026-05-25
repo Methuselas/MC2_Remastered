@@ -2,6 +2,7 @@
 #include "imgui.h"
 #include <cstdio>    // snprintf
 #include <cstdlib>   // getenv
+#include "../GameOS/gameos/debug_renderer.h"  // IMG-INSPECT-3
 
 namespace {
 
@@ -363,4 +364,39 @@ void EditorInspector::drawImGui() {
     }
 
     ImGui::End();
+}
+
+void EditorInspector::flushDebugHighlight() {
+    if (!isEnabled()) return;
+    if (!s_open)      return;
+    if (!s_selection.hasSelection) return;
+
+    // 0xRRGGBBAA, opaque.
+    constexpr uint32_t kStaticPropCol = 0xFFFFFFFFu;  // white
+    constexpr uint32_t kMechCol       = 0xFFFF00FFu;  // yellow
+    constexpr uint32_t kTerrainCol    = 0x44FF88FFu;  // green
+
+    const auto pk = s_selection.pickKind;
+
+    if ((pk == InspectorPickKind::StaticProp || pk == InspectorPickKind::Mech)
+            && s_selection.valid) {
+        const float radius   = (pk == InspectorPickKind::Mech) ? 4.f : 2.f;
+        const uint32_t col   = (pk == InspectorPickKind::Mech) ? kMechCol : kStaticPropCol;
+        DebugRenderer::Vec3 c{
+            s_selection.lookup.worldX,
+            s_selection.lookup.worldY,
+            s_selection.lookup.worldZ
+        };
+        DebugRenderer::drawRingWorld(c, radius, 16, col);
+
+    } else if (pk == InspectorPickKind::Terrain && s_terrainData.populated) {
+        // Flat X/Z crosshair at terrain hit. No vertical arm - terrain
+        // marker should look flush with the ground, not like an object bracket.
+        const float x   = s_terrainData.worldX;
+        const float y   = s_terrainData.worldY;
+        const float z   = s_terrainData.worldZ;
+        const float arm = 5.f;
+        DebugRenderer::drawLineWorld({ x-arm, y, z     }, { x+arm, y, z     }, kTerrainCol);
+        DebugRenderer::drawLineWorld({ x,     y, z-arm }, { x,     y, z+arm }, kTerrainCol);
+    }
 }
