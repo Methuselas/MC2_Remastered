@@ -34,6 +34,11 @@ RenderSnapshot ExtractRenderSnapshot()
     RenderSnapshot snap;
     snap.frameIndex    = ++s_frameIndex;
     snap.arenaOverflow = false;
+    // TODO(extraction-v2): This allocates a fresh 1 MiB arena every frame.
+    // The spec (v0) called for a module-static ping-pong design (two persistent arenas
+    // alternating via reset()) to avoid 60 MiB/s of allocator churn at render frequency.
+    // Acceptable in v1 (observational, not on hot render path) but must be fixed before
+    // this path drives rendering. Track as extraction-v2 follow-up.
     snap.arena         = std::make_unique<RenderFrameArena>();
     // Arena is fresh (used=0) from make_unique.
 
@@ -64,7 +69,12 @@ RenderSnapshot ExtractRenderSnapshot()
         // Handle growth between getStaticPropSlotCount() and fill (rare race).
         if (total > slotCount) {
             views.resize(total);
-            RenderWorld::fillStaticPropSlots(views.data(), total);
+            const uint32_t total2 = RenderWorld::fillStaticPropSlots(views.data(), total);
+            if (total2 > total) {
+                // Slot count grew again between retries (extremely unlikely, not worth looping).
+                // Process what we have; sp_fail will reflect any misses from the shortened view.
+                // The mismatch will appear as sp_vis_delta in the log.
+            }
         }
 
         // Count alive records for arena allocation.
