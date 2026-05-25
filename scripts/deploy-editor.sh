@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# deploy-editor.sh -- copy a freshly-built Mission Editor + its overlay assets
+# into the v0.4 install so the editor lives alongside the game and modders
+# can run both from one install.
+#
+# Why this script exists: editor used to deploy into A:/Games/mc2-opengl/mc2-editor/
+# (a separate clone of v0.4 with overlays). 2026-05-25 we collapsed that into a
+# single install. Editor's CMake POST_BUILD targets stay relative to
+# build64/out/editor/... (it should not know about deploy paths); this script
+# bridges the gap.
+#
+# Inputs:
+#   $BUILD_CFG -- which configuration to deploy from. Default RelWithDebInfo
+#                 (matches what mc2-editor was previously seeded from on
+#                 2026-05-25 14:03). Use Release for stripped editor.
+#   $BUILD     -- build root. Default <repo>/build64
+#   $DEPLOY    -- target install. Default A:/Games/mc2-opengl/mc2-win64-v0.4
+#
+# What ships:
+#   - Mission Editor.exe (+ .pdb if it exists) at $DEPLOY/
+#   - data/art/Buildings.csv -- v0.1.1 stock; editor needs fitID coupling with
+#                               Object2.pak; game (mc2.exe) never reads it
+#   - esplash.bmp + tacsplash.bmp -- CMake POST_BUILD already drops these next
+#                                    to the exe; we mirror to $DEPLOY/
+#
+# Re-running is safe: copy_if_different semantics via cmp.
+
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD="${BUILD:-$REPO/build64}"
+BUILD_CFG="${BUILD_CFG:-RelWithDebInfo}"
+DEPLOY="${DEPLOY:-A:/Games/mc2-opengl/mc2-win64-v0.4}"
+
+EDITOR_OUT="$BUILD/out/editor/$BUILD_CFG"
+EDITOR_EXE="$EDITOR_OUT/Mission Editor.exe"
+EDITOR_PDB="$EDITOR_OUT/Mission Editor.pdb"
+
+[ -f "$EDITOR_EXE" ] || { echo "deploy-editor: missing $EDITOR_EXE -- build EditRel first"; exit 1; }
+[ -d "$DEPLOY" ]     || { echo "deploy-editor: DEPLOY not found: $DEPLOY"; exit 1; }
+
+copy_if_diff() {
+    local src="$1" dst="$2"
+    if [ ! -f "$dst" ] || ! cmp -s "$src" "$dst"; then
+        cp -f "$src" "$dst"
+        echo "  -> $(basename "$dst")"
+    fi
+}
+
+echo "[deploy-editor] from $EDITOR_OUT -> $DEPLOY"
+
+copy_if_diff "$EDITOR_EXE" "$DEPLOY/Mission Editor.exe"
+[ -f "$EDITOR_PDB" ] && copy_if_diff "$EDITOR_PDB" "$DEPLOY/Mission Editor.pdb" || true
+
+# Splashes -- CMake POST_BUILD already drops these next to the built exe.
+for splash in esplash.bmp tacsplash.bmp; do
+    if [ -f "$EDITOR_OUT/$splash" ]; then
+        copy_if_diff "$EDITOR_OUT/$splash" "$DEPLOY/$splash"
+    fi
+done
+
+# Buildings.csv -- v0.1.1 stock; required by EditorInterface.cpp:596.
+# Source: $REPO/data/art/editor/Buildings.csv if present, else mc2srcdata stock.
+BLDGS_SRC=""
+for candidate in \
+    "$REPO/data/art/editor/Buildings.csv" \
+    "$REPO/data/art/Buildings.csv" \
+    "A:/Games/mc2-opengl/mc2-editor/data/art/Buildings.csv"; do
+    if [ -f "$candidate" ]; then
+        BLDGS_SRC="$candidate"
+        break
+    fi
+done
+if [ -n "$BLDGS_SRC" ]; then
+    copy_if_diff "$BLDGS_SRC" "$DEPLOY/data/art/Buildings.csv"
+else
+    echo "  (warn) Buildings.csv source not found; editor will fall back to art.fst"
+fi
+
+echo "[deploy-editor] done"
