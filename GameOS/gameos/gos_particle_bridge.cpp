@@ -42,6 +42,14 @@ extern void gos_RendererRebindVAO();
 
 namespace {
 
+// B2 P1: active camera basis — set by GameCamera::render() before flush.
+// Defaults to identity (right=+X, up=+Y) so particles still appear if the
+// caller forgets to call gos_SetActiveCamera (produces east-up orientation,
+// same as the pre-B2 fixed-axis behaviour).
+float g_cam_right[3]        = {1.0f, 0.0f, 0.0f};
+float g_cam_up[3]           = {0.0f, 1.0f, 0.0f};
+bool  g_cam_set_this_frame  = false;
+
 GLuint s_ssbo          = 0;   // GpuParticle SSBO at binding=14
 GLsizei s_ssboCapacity = 0;   // current GL buffer-data size in records
 GLuint s_vao           = 0;   // empty VAO (gl_VertexID-driven draw)
@@ -141,6 +149,30 @@ void ensureSsboCapacity(GLsizei needRecords) {
 
 }  // namespace
 
+extern "C" void gos_SetActiveCamera(const float right_xyz[3], const float up_xyz[3])
+{
+    for (int i = 0; i < 3; ++i) {
+        g_cam_right[i] = right_xyz[i];
+        g_cam_up[i]    = up_xyz[i];
+    }
+    g_cam_set_this_frame = true;
+}
+
+extern "C" void gos_GetCameraRight(float out_xyz[3])
+{
+    for (int i = 0; i < 3; ++i) out_xyz[i] = g_cam_right[i];
+}
+
+extern "C" void gos_GetCameraUp(float out_xyz[3])
+{
+    for (int i = 0; i < 3; ++i) out_xyz[i] = g_cam_up[i];
+}
+
+extern "C" void gos_ClearActiveCamera(void)
+{
+    g_cam_set_this_frame = false;
+}
+
 extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* records,
                                           unsigned int                       count,
                                           const mc2::particles::GroupInfo*   groups,
@@ -187,6 +219,17 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
                     g.blendMode == 1 ? "additive" : "alpha");
             }
             std::fflush(stderr);
+        }
+    }
+
+    // B2 P1: warn once if the caller never called gos_SetActiveCamera this frame.
+    // Gated behind MC2_GOSFX_GROUP_LOG=1 to avoid log noise in normal runs.
+    if (!g_cam_set_this_frame) {
+        static bool warned = false;
+        if (!warned) {
+            if (groupLogEnabled())
+                std::fprintf(stderr, "[B2] gos_particle_bridge: flush without gos_SetActiveCamera; using last-known basis\n");
+            warned = true;
         }
     }
 
