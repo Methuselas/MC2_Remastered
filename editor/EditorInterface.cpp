@@ -29,6 +29,15 @@
 #include "EditorData.h"
 #endif
 
+// S2.9: gpu_cull::substrate_frameBegin() hoist into editor's per-tick update.
+// Mirrors game commit f8d6b171's fix in code/mission.cpp (~line 527): substrate
+// must reset every tick regardless of pause/active state, or render-time
+// submitMultiShape calls accumulate records across an un-reset ring slot,
+// inflating per-bucket instanceCount in compute cull and causing coalesce
+// MDI sub-draws to read adjacent types' modelMatrices — each prop's origin
+// renders layered copies of other types' geometry.
+#include "../GameOS/gameos/gpu_cull_substrate.h"
+
 #ifndef OVERLAYBRUSH_H
 #include "OverlayBrush.h"
 #endif
@@ -637,6 +646,20 @@ void Editor::render()
 
 void Editor::update()
 {
+	// S2.9 — Editor's analog to code/mission.cpp Mission::update pre-pause-branch
+	// substrate_frameBegin (commit f8d6b171). Editor::update() is invoked
+	// unconditionally from DoGameLogic() every tick (Editor.cpp:198) — no
+	// pause/active/turn gate — so this fires every frame. Render-time
+	// BldgAppearance/Mech3DAppearance::render() calls (driven from
+	// EditorObjectMgr::render) append GpuActorRecords into the substrate ring;
+	// without a per-frame reset the ring slot, per-frame counter, and bucket
+	// counts grow unbounded and coalesced MDI sub-draws overrun their type
+	// bucket, layering other props' geometry at every prop's origin.
+	// Calling without isEnabled gating is safe: substrate_frameBegin()
+	// internally checks isEnabled() and is a no-op when disabled. ONE call
+	// site by design — function is not double-call-safe.
+	gpu_cull::substrate_frameBegin();
+
 	if (windowSizeChanged)
 	{
 		windowSizeChanged = false;
