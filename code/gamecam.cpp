@@ -267,6 +267,7 @@ void GameCamera::render (void)
 			// SpawnCard*/SpawnCardCloud paths.
 			{
 				ZoneScopedN("GameCamera::render particlesFlush");
+				::mc2::particles::Batcher::Instance().ResolveTextures();  // resolve MLR->GOS after renderLists
 				::mc2::particles::Batcher::Instance().Flush();
 			}
 		}

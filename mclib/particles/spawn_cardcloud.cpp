@@ -109,27 +109,13 @@ void SpawnCardCloud(const gosFX::CardCloud__Specification* spec,
         parent_origin = Stuff::Point3D(*parentToWorld);
     }
 
-    // P1-2: resolve the GOS texture handle from the effect spec so we can
-    // hand it to the GPU bridge for per-texture batching.  The spec carries
-    // an MLRState whose texture field is an index into MLRTexturePool; pool
-    // index 0 means "no texture".  We walk pool[mlrHandle]->GetImage()->
-    // GetHandle() to reach the DWORD gos handle and cast it to uint32_t for
-    // storage in atlasIndex.  Any step that returns 0/null produces
-    // gosHandle=0, which the bridge maps to a missing-texture log + skip.
-    uint32_t gosTexHandle = 0u;
+    // Store raw MLR pool index; resolved to GOS handle at flush time (post-renderLists)
+    // by Batcher::ResolveTextures(). At spawn time GOSImage::GetHandle() returns 0
+    // because MLRTexturePool::LoadImages() has not yet been called.
+    uint32_t mlrTexHandle = 0u;
     {
-        const unsigned mlrHandle = mut_spec->m_state.GetTextureHandle();
-        if (mlrHandle > 0 && MidLevelRenderer::MLRTexturePool::Instance) {
-            MidLevelRenderer::MLRTexture* mlrTex =
-                (*MidLevelRenderer::MLRTexturePool::Instance)[static_cast<int>(mlrHandle)];
-            if (mlrTex) {
-                MidLevelRenderer::GOSImage* img = mlrTex->GetImage();
-                if (img) {
-                    DWORD h = img->GetHandle();
-                    gosTexHandle = static_cast<uint32_t>(h);
-                }
-            }
-        }
+        const unsigned h = mut_spec->m_state.GetTextureHandle();
+        mlrTexHandle = static_cast<uint32_t>(h);
     }
 
     // P2-1: Read the UV sub-rect from the spec for the first atlas frame.
@@ -180,7 +166,7 @@ void SpawnCardCloud(const gosFX::CardCloud__Specification* spec,
     // Register a group with the batcher so the bridge knows which texture,
     // UV rect, and blend mode to use for this cloud's particles.
     Batcher& batcher = Batcher::Instance();
-    batcher.BeginGroup(gosTexHandle, u0, v0,
+    batcher.BeginGroup(mlrTexHandle, u0, v0,
                        (uSize > 0.0f ? uSize : 1.0f),
                        (vSize > 0.0f ? vSize : 1.0f),
                        blendMode);
@@ -273,16 +259,16 @@ void SpawnCardCloud(const gosFX::CardCloud__Specification* spec,
         p.lifetime    = (float)lifetime;
         p.age         = 0.0f;
         // P2-1/P2-2: UV sub-rect and animated frame handled above via
-        // BeginGroup(gosTexHandle, u0, v0, us, vs). The GpuParticle schema
+        // BeginGroup(mlrTexHandle, u0, v0, us, vs). The GpuParticle schema
         // carries atlasIndex for texture routing; the UV rect is per-group
         // metadata in GroupInfo, not per-particle.
         // Remaining B2 polish debt: per-particle rotation (m_localRotation
         // from SpinningCloud) is not in the 64-byte schema; quads are
         // camera-facing axis-aligned.
         p.size        = (float)size;
-        // P1-2: atlasIndex carries the gos_TextureHandle cast to uint32.
-        // Resolved to a raw GLuint at flush time by gos_GetGLTextureName().
-        p.atlasIndex  = gosTexHandle;
+        // atlasIndex carries the raw MLR pool index; Batcher::ResolveTextures()
+        // converts it to a gos_TextureHandle after renderLists() / LoadImages().
+        p.atlasIndex  = mlrTexHandle;
 
         batcher.Emit(p);
     }

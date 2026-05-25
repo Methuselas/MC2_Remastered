@@ -7,6 +7,8 @@
 
 #include "batcher.h"
 
+#include <mlr/mlr.hpp>
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -125,6 +127,22 @@ void Batcher::Emit(const GpuParticle& p) {
     }
     impl_->staging.push_back(p);
     ++g_emit_total;
+}
+
+void Batcher::ResolveTextures()
+{
+    if (!impl_) return;
+    for (auto& grp : impl_->groups) {
+        if (grp.handle == 0) continue;
+        if (!MidLevelRenderer::MLRTexturePool::Instance) continue;
+        MidLevelRenderer::MLRTexture* mlrTex =
+            (*MidLevelRenderer::MLRTexturePool::Instance)[static_cast<int>(grp.handle)];
+        if (!mlrTex) continue;
+        MidLevelRenderer::GOSImage* img = mlrTex->GetImage();
+        if (!img) continue;
+        DWORD gosHandle = img->GetHandle();
+        grp.handle = static_cast<uint32_t>(gosHandle);
+    }
 }
 
 void Batcher::Flush() {

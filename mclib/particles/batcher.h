@@ -38,7 +38,7 @@ namespace particles {
 // and us/vs are the frame size as returned by spec m_UOffset/m_VOffset/
 // m_USize/m_VSize.
 struct GroupInfo {
-    uint32_t handle;    // gos_TextureHandle (resolved to GLuint at flush time)
+    uint32_t handle;    // MLR pool index at spawn; resolved to gos_TextureHandle by ResolveTextures()
     float    u0;        // UV sub-rect origin X (0..1)
     float    v0;        // UV sub-rect origin Y (0..1)
     float    us;        // UV sub-rect width    (0..1)
@@ -65,7 +65,7 @@ class Batcher {
     // before the first Emit; closing the previous group is automatic.
     //
     // Parameters:
-    //   handle         gos_TextureHandle cast to uint32 (from spec at spawn)
+    //   handle         MLR pool index from spec->m_state.GetTextureHandle() (resolved to GOS handle by ResolveTextures)
     //   u0, v0         atlas sub-rect origin (0..1)
     //   us, vs         atlas sub-rect size   (0..1)
     //
@@ -82,6 +82,11 @@ class Batcher {
     // (returns immediately without staging). Particle is appended to the
     // currently-open group (most recent BeginGroup call).
     void Emit(const GpuParticle& p);
+
+    // Resolve MLR pool indices in each GroupInfo to GOS texture handles.
+    // Must be called AFTER renderLists() (which triggers LoadImages()) and
+    // BEFORE Flush(). mclib/particles can include MLR headers; GameOS cannot.
+    void ResolveTextures();
 
     // Upload staging to the SSBO and issue the billboard draw. Must run
     // AFTER mcTextureManager->renderLists() (per gpu_direct_renderer_

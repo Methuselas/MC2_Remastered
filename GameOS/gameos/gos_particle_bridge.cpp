@@ -19,6 +19,7 @@
 #include "utils/shader_builder.h"
 
 #include <cstdio>
+#include <unordered_set>
 
 // terrainMVP getter — same accessor used by gos_terrain_bridge_renderWaterFast
 // at gameos_graphics.cpp:2171. C linkage upstream.
@@ -266,9 +267,13 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
             // Resolve handle to GL texture name.
             const GLuint glTex = (GLuint)gos_GetGLTextureName(grp.handle);
             if (glTex == 0) {
-                std::fprintf(stderr,
-                    "[GOSFX_GPU v1] ERROR missing_texture handle=%u\n", grp.handle);
-                std::fflush(stderr);
+                // Log missing texture once per unique handle (not every frame)
+                static std::unordered_set<uint32_t> s_loggedMissingHandles;
+                if (s_loggedMissingHandles.insert(grp.handle).second) {
+                    std::fprintf(stderr,
+                        "[GOSFX_GPU v1] ERROR missing_texture handle=%u\n", grp.handle);
+                    std::fflush(stderr);
+                }
                 continue;
             }
 
