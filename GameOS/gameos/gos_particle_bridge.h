@@ -26,3 +26,12 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
                                           unsigned int                       count,
                                           const mc2::particles::GroupInfo*   groups,
                                           unsigned int                       numGroups);
+
+/* B2: active camera bridge — temporary stop-gap until RenderFrameContext lands.
+ * Set by GameCamera::render() immediately before particle flush; cleared after.
+ * If never set this frame, accessors return last-known basis (identity at boot).
+ */
+extern "C" void gos_SetActiveCamera(const float right_xyz[3], const float up_xyz[3]);
+extern "C" void gos_GetCameraRight(float out_xyz[3]);
+extern "C" void gos_GetCameraUp(float out_xyz[3]);
+extern "C" void gos_ClearActiveCamera(void);
