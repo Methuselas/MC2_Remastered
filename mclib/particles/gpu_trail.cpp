@@ -48,12 +48,12 @@ const GpuTrailTuning kTuningTable[] = {
     /* [MissileSmoke] */
     {
         {0.f, 0.f, 0.f, 0.f},      // head_color: no head sprite
-        {1.0f, 1.0f, 1.0f, 0.8f},  // trail_color: white, 80% alpha (was 0.5 — bump)
+        {1.0f, 1.0f, 1.0f, 0.7f},  // trail_color: white, 70% (additive accumulates — lower than alpha)
         0.0f,                       // head_size: none
-        5.0f,                       // trail_particle_size (world units) — was 1.5, BIG bump
-        0.05f,                      // trail_lifetime_s: 1 frame (was 1.2 — meaningless with per-frame clearing)
-        2.0f,                       // trail_density_per_meter: was 8 — drop to 2/m
-        0,                          // alpha blend
+        5.0f,                       // trail_particle_size (world units)
+        0.05f,                      // trail_lifetime_s: 1 frame (per-frame clearing)
+        2.0f,                       // trail_density_per_meter
+        1,                          // additive blend (was 0/alpha — caused opaque white squares)
         kMissileSmokeTexId,         // handle 41 (smoke)
     },
     // PpcBolt entry added in P3
