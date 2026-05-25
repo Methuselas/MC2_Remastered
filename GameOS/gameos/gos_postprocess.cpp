@@ -1047,8 +1047,8 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
 
     // Bind shader + uniforms + texture.
     hdriSkyboxProg_->begin();
-    hdriSkyboxProg_->setMatrix4("invProj", invProjArray);
-    hdriSkyboxProg_->setMatrix3("invViewRot", invViewRot);
+    hdriSkyboxProg_->setMat4("invProj", invProjArray);
+    hdriSkyboxProg_->setMat3("invViewRot", invViewRot);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, hdriTex_);
     hdriSkyboxProg_->setInt("u_hdri", 0);
