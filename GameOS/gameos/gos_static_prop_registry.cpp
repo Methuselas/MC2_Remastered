@@ -734,4 +734,39 @@ void flush() {
     // batcher.flush() is called by txmmgr.cpp immediately after compute_dispatch().
 }
 
+// --- Extraction v1: per-recipe read-only accessors ---
+
+static bool recipeValid(int32_t recipeIndex) {
+    if (recipeIndex < 0 || recipeIndex >= static_cast<int32_t>(s_recipeRanges.size()))
+        return false;
+    return s_recipeRanges[static_cast<size_t>(recipeIndex)].count > 0; // count==0 = tombstone
+}
+
+bool staticPropGetModelMatrix(int32_t recipeIndex, float out[16]) {
+    if (!recipeValid(recipeIndex)) return false;
+    const RecipeRange& rng = s_recipeRanges[static_cast<size_t>(recipeIndex)];
+    memcpy(out, s_recipes[rng.first].modelMatrix, sizeof(float) * 16);
+    return true;
+}
+
+bool staticPropGetTypeId(int32_t recipeIndex, uint32_t* out) {
+    if (!recipeValid(recipeIndex)) return false;
+    const RecipeRange& rng = s_recipeRanges[static_cast<size_t>(recipeIndex)];
+    *out = s_recipes[rng.first].typeID;
+    return true;
+}
+
+bool staticPropGetExtentRadius(int32_t recipeIndex, float* out) {
+    if (!recipeValid(recipeIndex)) return false;
+    *out = s_recipeRanges[static_cast<size_t>(recipeIndex)].extentRadius;
+    return true;
+}
+
+bool staticPropGetLightDataIndex(int32_t recipeIndex, uint32_t* out) {
+    if (!recipeValid(recipeIndex)) return false;
+    *out = s_recipeRanges[static_cast<size_t>(recipeIndex)].lightDataIndex;
+    return true;
+}
+
+
 } // namespace GpuStaticPropRegistry

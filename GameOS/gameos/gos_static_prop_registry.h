@@ -112,4 +112,22 @@ uint32_t getActiveCount();
 // worktree once Task 12 migrates warrior.cpp.
 int32_t registerStaticPropAndReturnRecipe(Appearance* app);
 
+// --- Extraction v1: per-recipe read-only accessors ---
+// All return false if recipeIndex is out of range or the recipe is tombstoned (count==0).
+
+// Copies modelMatrix[16] (row-major) for the first instance of the recipe.
+// Translation indices: [3]=east, [7]=elevation, [11]=north (Stuff-space; see
+// gos_static_prop_registry.cpp:550-555 for the canonical axis-swap pattern).
+bool staticPropGetModelMatrix(int32_t recipeIndex, float out[16]);
+
+// Returns the typeID field from the first instance of the recipe.
+bool staticPropGetTypeId(int32_t recipeIndex, uint32_t* out);
+
+// Returns RecipeRange::extentRadius. Value is from the previous frame's markVisible()
+// call; 0.0f if markVisible was never called for this recipe.
+bool staticPropGetExtentRadius(int32_t recipeIndex, float* out);
+
+// Returns RecipeRange::lightDataIndex.
+bool staticPropGetLightDataIndex(int32_t recipeIndex, uint32_t* out);
+
 } // namespace GpuStaticPropRegistry
