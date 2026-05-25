@@ -29,8 +29,16 @@ layout(std430, binding = 14) readonly buffer Particles {
 
 uniform mat4 u_worldToClipGL;  // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 
-// Atlas UVs for the four billboard corners.
-// Stage 1' Card test effect uses the full atlas page (0..1).
+// P2-1 UV sub-rect: atlas origin and size for this draw group.
+// Set per draw call by the bridge (gos_particle_bridge.cpp).
+// Default full-page: u_uvOffset=(0,0), u_uvSize=(1,1).
+// For an atlas sub-rect (animated card): u_uvOffset=(col*uSize, row*vSize),
+// u_uvSize=(uSize, vSize) as read from spec m_UOffset/m_VOffset/m_USize/m_VSize.
+uniform vec2 u_uvOffset;
+uniform vec2 u_uvSize;
+
+// Atlas UVs for the four billboard corners (normalized [0,1] within the sub-rect).
+// The final UV is: u_uvOffset + kCornerUv[i] * u_uvSize.
 const vec2 kCornerUv[4] = vec2[](
     vec2(0.0, 0.0),
     vec2(1.0, 0.0),
@@ -83,6 +91,7 @@ void main() {
     // F1 Stage A: direct GL clip emit.
     gl_Position = u_worldToClipGL * vec4(worldPos, 1.0);
 
-    v_uv    = kCornerUv[cornerIdx];
+    // P2-1: apply UV sub-rect so each billboard samples the correct atlas frame.
+    v_uv    = u_uvOffset + kCornerUv[cornerIdx] * u_uvSize;
     v_color = p.color;
 }

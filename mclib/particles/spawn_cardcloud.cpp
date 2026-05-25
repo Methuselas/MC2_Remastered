@@ -22,14 +22,13 @@
 //   - Legacy Draw() fires DrawEffect once per cloud (effect.cpp:697); we    //
 //     match by firing FX_TRACE_DRAW once per SpawnCardCloud call.           //
 //                                                                           //
-// Schema-fidelity note (B2 polish debt):                                    //
-//   - m_pIndex / m_animated / m_U/VOffset / m_U/VSize / m_width describe   //
-//     per-particle UV-atlas animation. GpuParticle has only atlasIndex      //
-//     (uint), no UV sub-rect. The billboard pass renders the full atlas     //
-//     page; animated cards will visually degrade to a single frame.         //
+// Schema-fidelity note:                                                      //
+//   - m_pIndex / m_animated / m_U/VOffset / m_U/VSize / m_width: DONE as   //
+//     FX-GPU-1 Phase 2. UV sub-rect + animated first frame stored as        //
+//     per-group GroupInfo metadata via BeginGroup; GpuParticle 64-byte      //
+//     schema is unchanged. Per-particle frame variation remains B2 debt.    //
 //   - m_localRotation (per-particle spin from SpinningCloud) is not in the  //
-//     schema. Quads are camera-facing axis-aligned.                         //
-//   Both deferrals match the C5 ShardCloud precedent.                       //
+//     schema. Quads are camera-facing axis-aligned. B2 polish debt.         //
 //                                                                           //
 // CPU projection invariant: this file MUST NOT include or reference any    //
 // of the forbidden projection wrappers — the authoritative list lives      //
@@ -133,7 +132,43 @@ void SpawnCardCloud(const gosFX::CardCloud__Specification* spec,
         }
     }
 
+    // P2-1: Read the UV sub-rect from the spec for the first atlas frame.
+    // m_UOffset / m_VOffset / m_USize / m_VSize are ConstantCurves; we
+    // sample them at (parent_age, parent_seed) — the same sample point used
+    // for all other per-cloud attributes. For non-animated specs these values
+    // are typically 0,0,1,1 (full page); for atlas sprites they describe the
+    // first frame.
+    //
+    // P2-2: Animated atlas frame selection.
+    // If spec->m_animated, compute the first-frame column/row from
+    // m_pIndex at (parent_age, child_seed=parent_seed) and m_width, then
+    // offset the UV origin by (col * uSize, row * vSize). We use
+    // child_seed=parent_seed as a representative sample; per-particle
+    // variation is a B2 polish item (requires per-particle BeginGroup calls).
+    const float uSize = mut_spec->m_USize  .ComputeValue(parent_age, parent_seed);
+    const float vSize = mut_spec->m_VSize  .ComputeValue(parent_age, parent_seed);
+    float u0 = mut_spec->m_UOffset.ComputeValue(parent_age, parent_seed);
+    float v0 = mut_spec->m_VOffset.ComputeValue(parent_age, parent_seed);
+
+    if (mut_spec->m_animated && mut_spec->m_width > 0) {
+        // Sample the frame index curve at (parent_age, parent_seed).
+        // m_pIndex is a SeededCurveOf returning a scalar frame index.
+        Stuff::Scalar frameF =
+            mut_spec->m_pIndex.ComputeValue(parent_age, parent_seed);
+        if (frameF < 0.0f) frameF = 0.0f;
+        const int frame  = static_cast<int>(frameF);
+        const int col    = frame % static_cast<int>(mut_spec->m_width);
+        const int row    = frame / static_cast<int>(mut_spec->m_width);
+        u0 += col * uSize;
+        v0 += row * vSize;
+    }
+
+    // Register a group with the batcher so the bridge knows which texture
+    // and UV rect to use for this cloud's particles.
     Batcher& batcher = Batcher::Instance();
+    batcher.BeginGroup(gosTexHandle, u0, v0,
+                       (uSize > 0.0f ? uSize : 1.0f),
+                       (vSize > 0.0f ? vSize : 1.0f));
 
     for (int i = 0; i < population; ++i) {
         // Per-particle seed in [min_seed, min_seed + seed_range], clamped
@@ -222,12 +257,13 @@ void SpawnCardCloud(const gosFX::CardCloud__Specification* spec,
         p.velocity[2] = world_velocity.z;
         p.lifetime    = (float)lifetime;
         p.age         = 0.0f;
-        // B2 polish debt: per-particle UV-atlas animation
-        // (m_pIndex / m_animated / m_U/VOffset / m_U/VSize) and
-        // per-particle rotation (m_localRotation) are not representable in
-        // the current 64-byte GpuParticle schema. The billboard pass
-        // renders camera-facing axis-aligned quads on the full texture page;
-        // animated cards visually degrade to a single frame.
+        // P2-1/P2-2: UV sub-rect and animated frame handled above via
+        // BeginGroup(gosTexHandle, u0, v0, us, vs). The GpuParticle schema
+        // carries atlasIndex for texture routing; the UV rect is per-group
+        // metadata in GroupInfo, not per-particle.
+        // Remaining B2 polish debt: per-particle rotation (m_localRotation
+        // from SpinningCloud) is not in the 64-byte schema; quads are
+        // camera-facing axis-aligned.
         p.size        = (float)size;
         // P1-2: atlasIndex carries the gos_TextureHandle cast to uint32.
         // Resolved to a raw GLuint at flush time by gos_GetGLTextureName().

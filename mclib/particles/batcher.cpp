@@ -2,6 +2,7 @@
 // File:    batcher.cpp                                                      //
 // Contents: GPU particle batcher implementation.                            //
 //           Plan v5 §5.4 B1 Stage 1' Commit 1.                              //
+//           FX-GPU-1 Phase 2: BeginGroup / per-group UV sub-rect.           //
 //===========================================================================//
 
 #include "batcher.h"
@@ -16,17 +17,23 @@
 // one-way dependency rule (see batcher.h doc comment) is enforced at the
 // include level. Stage 1' Commit 4 wires the bridge.
 extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* records,
-                                          unsigned int                       count);
+                                          unsigned int                       count,
+                                          const mc2::particles::GroupInfo*   groups,
+                                          unsigned int                       numGroups);
 
 namespace mc2 {
 namespace particles {
 
 struct Batcher::Impl {
     std::vector<GpuParticle> staging;
+    std::vector<GroupInfo>   groups;
     unsigned int             budget;
     bool                     overflowReported;
-    Impl(unsigned int b) : staging(), budget(b), overflowReported(false) {
+    bool                     hasOpenGroup;   // true iff BeginGroup was called this frame
+    Impl(unsigned int b)
+        : staging(), groups(), budget(b), overflowReported(false), hasOpenGroup(false) {
         staging.reserve(b);
+        groups.reserve(64);
     }
 };
 
@@ -83,6 +90,25 @@ Batcher::Batcher(unsigned int perFrameBudget)
 
 Batcher::~Batcher() { delete impl_; }
 
+void Batcher::BeginGroup(uint32_t handle, float u0, float v0, float us, float vs) {
+    if (!is_enabled()) return;
+    // Close the previous open group by recording its count.
+    if (impl_->hasOpenGroup && !impl_->groups.empty()) {
+        GroupInfo& prev = impl_->groups.back();
+        prev.count = (unsigned)impl_->staging.size() - prev.start;
+    }
+    GroupInfo gi;
+    gi.handle = handle;
+    gi.u0     = u0;
+    gi.v0     = v0;
+    gi.us     = us;
+    gi.vs     = vs;
+    gi.start  = (unsigned)impl_->staging.size();
+    gi.count  = 0;
+    impl_->groups.push_back(gi);
+    impl_->hasOpenGroup = true;
+}
+
 void Batcher::Emit(const GpuParticle& p) {
     if (!is_enabled()) return;
     if (impl_->staging.size() >= impl_->budget) {
@@ -102,7 +128,16 @@ void Batcher::Emit(const GpuParticle& p) {
 void Batcher::Flush() {
     if (!is_enabled()) return;
     ++g_flush_total;
-    if (impl_->staging.empty()) return;
+    if (impl_->staging.empty()) {
+        impl_->groups.clear();
+        impl_->hasOpenGroup = false;
+        return;
+    }
+    // Close the last open group.
+    if (impl_->hasOpenGroup && !impl_->groups.empty()) {
+        GroupInfo& last = impl_->groups.back();
+        last.count = (unsigned)impl_->staging.size() - last.start;
+    }
     const unsigned int n = (unsigned int)impl_->staging.size();
     ++g_nonempty_flush_total;
     g_records_flushed_total += n;
@@ -110,12 +145,17 @@ void Batcher::Flush() {
     if (!g_first_flush_reported) {
         g_first_flush_reported = true;
         std::fprintf(stderr,
-                     "[GPU_PARTICLES v1] event=first_flush records=%u\n", n);
+                     "[GPU_PARTICLES v1] event=first_flush records=%u groups=%u\n",
+                     n, (unsigned)impl_->groups.size());
         std::fflush(stderr);
     }
-    gos_particle_bridge_flush(impl_->staging.data(), n);
+    gos_particle_bridge_flush(impl_->staging.data(), n,
+                              impl_->groups.empty() ? nullptr : impl_->groups.data(),
+                              (unsigned)impl_->groups.size());
     impl_->staging.clear();
+    impl_->groups.clear();
     impl_->overflowReported = false;
+    impl_->hasOpenGroup = false;
 }
 
 Batcher& Batcher::Instance() {

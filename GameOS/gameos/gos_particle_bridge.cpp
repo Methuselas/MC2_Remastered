@@ -2,15 +2,17 @@
 // File:    gos_particle_bridge.cpp                                          //
 // Contents: GameOS-side GL bridge for the GPU particle batcher. Owns the   //
 //           SSBO (binding=14), the empty draw VAO, the billboard shader    //
-//           program, and the per-texture draw loop. Implements all 10 GPU- //
+//           program, and the per-group draw loop. Implements all 10 GPU-   //
 //           direct bring-up traps per memory/gpu_direct_renderer_bringup_  //
 //           checklist.md.                                                  //
 //           FX-GPU-1 Phase 1: real per-effect texture binding.             //
+//           FX-GPU-1 Phase 2: per-group UV sub-rect uniforms.              //
 //===========================================================================//
 
 #include "gos_particle_bridge.h"
 
 #include "particles/spec.h"
+#include "particles/batcher.h"  // GroupInfo
 
 #include <gameos.hpp>
 #include <GL/glew.h>
@@ -53,6 +55,9 @@ bool s_initFailed = false;
 GLint s_loc_worldToClipGL = -2;
 GLint s_loc_mvp           = -2;
 GLint s_loc_uAtlas        = -2;
+// P2-1: UV sub-rect uniforms — set per draw group.
+GLint s_loc_uvOffset      = -2;
+GLint s_loc_uvSize        = -2;
 
 void ensureInitialized() {
     if (s_initFailed) return;
@@ -96,6 +101,9 @@ void ensureInitialized() {
         s_loc_worldToClipGL = glGetUniformLocation(s_prog->shp_, "u_worldToClipGL");
         s_loc_mvp           = glGetUniformLocation(s_prog->shp_, "u_mvp");
         s_loc_uAtlas        = glGetUniformLocation(s_prog->shp_, "uAtlas");
+        // P2-1: UV sub-rect uniforms.
+        s_loc_uvOffset      = glGetUniformLocation(s_prog->shp_, "u_uvOffset");
+        s_loc_uvSize        = glGetUniformLocation(s_prog->shp_, "u_uvSize");
     }
 }
 
@@ -119,7 +127,9 @@ void ensureSsboCapacity(GLsizei needRecords) {
 }  // namespace
 
 extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* records,
-                                          unsigned int                       count) {
+                                          unsigned int                       count,
+                                          const mc2::particles::GroupInfo*   groups,
+                                          unsigned int                       numGroups) {
     if (count == 0 || records == nullptr) return;
 
     ensureInitialized();
@@ -136,42 +146,30 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     }
     if (s_prog == nullptr || s_prog->shp_ == 0) return;
 
-    // ── Collect unique texture handles (no heap allocation) ──────────
-    // Linear scan over all records. At most kMaxTexGroups unique handles
-    // per flush; any overflow entries are dropped with a one-time warning.
-    static const int kMaxTexGroups = 64;
-    uint32_t uniqueHandles[kMaxTexGroups];
-    int      numUnique = 0;
-    for (unsigned i = 0; i < count; ++i) {
-        const uint32_t h = records[i].atlasIndex;
-        bool found = false;
-        for (int j = 0; j < numUnique; ++j) {
-            if (uniqueHandles[j] == h) { found = true; break; }
-        }
-        if (!found) {
-            if (numUnique < kMaxTexGroups) {
-                uniqueHandles[numUnique++] = h;
-            } else {
-                static bool s_overflowWarned = false;
-                if (!s_overflowWarned) {
-                    s_overflowWarned = true;
-                    std::fprintf(stderr,
-                        "[GOSFX_GPU v1] WARN tex_group_overflow max=%d — excess groups dropped\n",
-                        kMaxTexGroups);
-                    std::fflush(stderr);
-                }
-            }
-        }
-    }
-
     // P1-5: first-call banner — once only.
     {
         static bool s_bannerEmitted = false;
         if (!s_bannerEmitted) {
             s_bannerEmitted = true;
             std::fprintf(stderr,
-                         "[GOSFX_GPU v1] enabled=1 sprites=%u draws=%d textures=%d blendMode=straight\n",
-                         count, numUnique, numUnique);
+                         "[GOSFX_GPU v1] enabled=1 sprites=%u draws=%u textures=%u blendMode=straight\n",
+                         count, numGroups, numGroups);
+            std::fflush(stderr);
+        }
+    }
+
+    // P2-3: per-group UV debug log on first flush — shows UV rects being
+    // propagated from spawn through to the bridge.
+    {
+        static bool s_uvDumpDone = false;
+        if (!s_uvDumpDone && numGroups > 0) {
+            s_uvDumpDone = true;
+            for (unsigned gi = 0; gi < numGroups; ++gi) {
+                const mc2::particles::GroupInfo& g = groups[gi];
+                std::fprintf(stderr,
+                    "[GOSFX_GPU v1] group %u: tex=%u uv=(%.2f,%.2f)+(%.2f,%.2f) count=%u\n",
+                    gi, g.handle, g.u0, g.v0, g.us, g.vs, g.count);
+            }
             std::fflush(stderr);
         }
     }
@@ -231,55 +229,64 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // ── Per-texture draw loop ─────────────────────────────────────────
-    // P1-3: For each unique texture handle group:
-    //   1. Collect this group's records into a temporary SSBO upload.
-    //   2. Resolve the gos handle to a GLuint via gos_GetGLTextureName.
-    //   3. Bind the resolved texture; skip the group if not resident.
-    //   4. Upload only this group's records to SSBO offset 0.
-    //   5. Draw 6 vertices per particle (gl_VertexID-driven billboard).
-    //
-    // Using a static staging buffer (avoids large stack allocation).
-    // Groups larger than kStagingMax are truncated; real particle counts
-    // per effect are small (< 1024) so this is not a concern in practice.
-    static const unsigned kStagingMax = 4096;
-    static mc2::particles::GpuParticle stagingBuf[kStagingMax];
-
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_ssbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, /*binding=*/14, s_ssbo);
 
-    for (int gi = 0; gi < numUnique; ++gi) {
-        const uint32_t gosHandle = uniqueHandles[gi];
-
-        // Resolve handle to GL texture name.
-        const GLuint glTex = (GLuint)gos_GetGLTextureName(gosHandle);
-        if (glTex == 0) {
+    if (numGroups == 0 || groups == nullptr) {
+        // Fallback: no group metadata — treat entire buffer as one group,
+        // full UV rect, handle from first record. Should not occur after
+        // Phase 2 callers always call BeginGroup; kept for robustness.
+        const uint32_t gosHandle = records[0].atlasIndex;
+        const GLuint   glTex     = (GLuint)gos_GetGLTextureName(gosHandle);
+        if (glTex != 0) {
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                            (GLsizeiptr)(count * sizeof(mc2::particles::GpuParticle)),
+                            records);
+            glBindTexture(GL_TEXTURE_2D, glTex);
+            if (s_loc_uvOffset >= 0) glUniform2f(s_loc_uvOffset, 0.0f, 0.0f);
+            if (s_loc_uvSize   >= 0) glUniform2f(s_loc_uvSize,   1.0f, 1.0f);
+            glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(count * 6u));
+        } else {
             std::fprintf(stderr,
                 "[GOSFX_GPU v1] ERROR missing_texture handle=%u\n", gosHandle);
             std::fflush(stderr);
-            continue;
         }
+    } else {
+        // ── Per-group draw loop (P2-1) ────────────────────────────────
+        // For each group produced by Batcher::BeginGroup:
+        //   1. Resolve the gos handle to a GLuint; skip if not resident.
+        //   2. Upload only this group's records to SSBO offset 0.
+        //   3. Set the UV sub-rect uniforms for the billboard VS.
+        //   4. Bind the resolved texture and draw.
+        for (unsigned gi = 0; gi < numGroups; ++gi) {
+            const mc2::particles::GroupInfo& grp = groups[gi];
+            if (grp.count == 0) continue;
 
-        // Collect records for this handle into the staging buffer.
-        unsigned groupCount = 0;
-        for (unsigned i = 0; i < count && groupCount < kStagingMax; ++i) {
-            if (records[i].atlasIndex == gosHandle) {
-                stagingBuf[groupCount++] = records[i];
+            // Resolve handle to GL texture name.
+            const GLuint glTex = (GLuint)gos_GetGLTextureName(grp.handle);
+            if (glTex == 0) {
+                std::fprintf(stderr,
+                    "[GOSFX_GPU v1] ERROR missing_texture handle=%u\n", grp.handle);
+                std::fflush(stderr);
+                continue;
             }
+
+            // Upload this group's contiguous records to SSBO offset 0.
+            const mc2::particles::GpuParticle* groupRecords = records + grp.start;
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                            (GLsizeiptr)(grp.count * sizeof(mc2::particles::GpuParticle)),
+                            groupRecords);
+
+            // P2-1: set UV sub-rect uniforms per group.
+            if (s_loc_uvOffset >= 0) glUniform2f(s_loc_uvOffset, grp.u0, grp.v0);
+            if (s_loc_uvSize   >= 0) glUniform2f(s_loc_uvSize,   grp.us, grp.vs);
+
+            // Bind the resolved texture.
+            glBindTexture(GL_TEXTURE_2D, glTex);
+
+            // Draw: 6 vertices per particle, gl_VertexID-driven.
+            glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(grp.count * 6u));
         }
-        if (groupCount == 0) continue;
-
-        // Upload this group's records to SSBO offset 0.
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                        (GLsizeiptr)(groupCount * sizeof(mc2::particles::GpuParticle)),
-                        stagingBuf);
-
-        // Bind the resolved texture (state restore covers GL_TEXTURE_BINDING_2D
-        // on unit 0 since savedTex2D0 was captured before this loop).
-        glBindTexture(GL_TEXTURE_2D, glTex);
-
-        // Draw: 6 vertices per particle, gl_VertexID-driven.
-        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(groupCount * 6u));
     }
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
