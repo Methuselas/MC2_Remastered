@@ -1,5 +1,6 @@
 #include "gameos.hpp"
 #include "gos_render.h"
+#include "render_snapshot.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <cstring>
@@ -1146,6 +1147,11 @@ int main(int argc, char** argv)
         {
             ZoneScopedN("Frame.RendererHandleEvents");
 		    gos_RendererHandleEvents();
+        }
+
+        {
+            ZoneScopedN("ExtractRenderSnapshot");
+            ExtractRenderSnapshot();
         }
 
         {
