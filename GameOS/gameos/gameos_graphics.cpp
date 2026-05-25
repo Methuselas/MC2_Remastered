@@ -7103,6 +7103,13 @@ void gos_GetTerrainCameraPos(float* x, float* y, float* z) {
 // cache, not here. R-clipw polarity is baked into the matrix
 // itself via kAxisSwapMC2toGL (Task 7g); shader-visible clip.w > 0
 // for in-front MC2 verts.
+// [MVP_DIAG v1] S2.7 — shared frame counter incremented at the
+// canonical world-to-clip set site. Read by gos_GetTerrainMVPMat4
+// and the static-prop coalesce uploader (extern in
+// gos_static_prop_batcher.cpp). Kept past S2.7 because every probe
+// is throttled (frames {1,5,30,120}) — silent at steady state.
+long g_mvpDiagFrame = 0;
+
 void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat)
 {
     if (!g_gos_renderer) return;
@@ -7117,6 +7124,18 @@ void __stdcall gos_SetWorldToClipGL(const Stuff::Matrix4D& mat)
             M[i*4 + j] = WTC(i, j);
     #undef WTC
     g_gos_renderer->setTerrainMVP(M);
+
+    // [MVP_DIAG v1] S2.7 — log set_mvp entry. Throttled to frames
+    // {1,5,30,120}. row0 is M[0..3] AFTER the column->row repack.
+    ++g_mvpDiagFrame;
+    if (g_mvpDiagFrame == 1 || g_mvpDiagFrame == 5 ||
+        g_mvpDiagFrame == 30 || g_mvpDiagFrame == 120) {
+        fprintf(stderr,
+                "[MVP_DIAG v1] event=set_mvp frame=%ld renderer=%p row0=[%g %g %g %g]\n",
+                g_mvpDiagFrame, (void*)g_gos_renderer,
+                M[0], M[1], M[2], M[3]);
+        fflush(stderr);
+    }
 }
 // gos_SetTerrainMVP / gos_SetTerrainViewport: raw-float counterparts to
 // gos_SetWorldToClipGL. Used by EditorCamera.h which builds the matrix
@@ -7704,8 +7723,29 @@ const float* gos_GetProj2ScreenMat4() {
 }
 
 const float* gos_GetTerrainMVPMat4() {
-    if (!g_gos_renderer || !g_gos_renderer->isTerrainMVPValid()) return nullptr;
-    return (const float*)&g_gos_renderer->getTerrainMVP();
+    const bool rendererOk = (g_gos_renderer != nullptr);
+    const bool valid      = rendererOk && g_gos_renderer->isTerrainMVPValid();
+    const float* p        = valid ? (const float*)&g_gos_renderer->getTerrainMVP() : nullptr;
+
+    // [MVP_DIAG v1] S2.7 — log get_mvp entry, throttled. If valid,
+    // also dump row0 from the cache to compare against set_mvp row0.
+    if (g_mvpDiagFrame == 1 || g_mvpDiagFrame == 5 ||
+        g_mvpDiagFrame == 30 || g_mvpDiagFrame == 120) {
+        static long s_lastLogged = -1;
+        if (s_lastLogged != g_mvpDiagFrame) {
+            s_lastLogged = g_mvpDiagFrame;
+            fprintf(stderr,
+                    "[MVP_DIAG v1] event=get_mvp frame=%ld renderer=%p valid=%d ptr=%p\n",
+                    g_mvpDiagFrame, (void*)g_gos_renderer, valid ? 1 : 0, (void*)p);
+            if (p) {
+                fprintf(stderr,
+                        "[MVP_DIAG v1] event=get_mvp_row0 frame=%ld row0=[%g %g %g %g]\n",
+                        g_mvpDiagFrame, p[0], p[1], p[2], p[3]);
+            }
+            fflush(stderr);
+        }
+    }
+    return p;
 }
 
 // gos_GetTerrainTeseProgram removed in Task 7b (UBO pivot).

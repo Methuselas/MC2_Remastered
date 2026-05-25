@@ -3607,8 +3607,33 @@ void GpuStaticPropBatcher::flush() {
         // values match the existing legacy upload sites; -1 cached
         // locations are skipped (legacy-only uniforms removed under
         // MC2_COALESCE).
-        if (s_locsCoalesce.terrainMVP      >= 0)
-            glUniformMatrix4fv(s_locsCoalesce.terrainMVP,    1, GL_FALSE, gos_GetTerrainMVPMat4());
+        // [MVP_DIAG v1] S2.7 — null-guard the coalesce MVP upload to match
+        // the legacy path at line ~3284. RenderDoc capture (frame 488, EID
+        // 7714) showed gl_Position = NaN/0 with $Globals.terrainMVP = all
+        // zeros while the legacy path's u_mvp uploaded correctly; AMD
+        // driver appears to zero the uniform when handed nullptr. Capture
+        // pointer once, branch on it. Probe logs row0 (or "null") throttled
+        // to frames {1,5,30,120} to keep silent at steady state.
+        {
+            extern long g_mvpDiagFrame;
+            const float* mvpPtr = gos_GetTerrainMVPMat4();
+            if (g_mvpDiagFrame == 1 || g_mvpDiagFrame == 5 ||
+                g_mvpDiagFrame == 30 || g_mvpDiagFrame == 120) {
+                if (mvpPtr) {
+                    fprintf(stderr,
+                            "[MVP_DIAG v1] event=coalesce_upload frame=%ld loc=%d ptr=%p row0=[%g %g %g %g]\n",
+                            g_mvpDiagFrame, (int)s_locsCoalesce.terrainMVP,
+                            (void*)mvpPtr, mvpPtr[0], mvpPtr[1], mvpPtr[2], mvpPtr[3]);
+                } else {
+                    fprintf(stderr,
+                            "[MVP_DIAG v1] event=coalesce_upload frame=%ld loc=%d ptr=%p row0=null\n",
+                            g_mvpDiagFrame, (int)s_locsCoalesce.terrainMVP, (void*)mvpPtr);
+                }
+                fflush(stderr);
+            }
+            if (s_locsCoalesce.terrainMVP >= 0 && mvpPtr)
+                glUniformMatrix4fv(s_locsCoalesce.terrainMVP, 1, GL_FALSE, mvpPtr);
+        }
         if (s_locsCoalesce.mvp             >= 0)
             glUniformMatrix4fv(s_locsCoalesce.mvp,           1, GL_TRUE,  gos_GetProj2ScreenMat4());
         if (s_locsCoalesce.fogValue        >= 0)
