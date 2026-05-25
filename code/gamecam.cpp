@@ -43,7 +43,7 @@
 #include <tracy/Tracy.hpp>
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
 #include "../GameOS/gameos/gos_static_prop_registry.h"  // Stage 3.C: frameBegin()
-#include "particles/batcher.h"  // B1 Stage 1' Commit 3: GPU particle batcher flush hook
+#include "particles/batcher.h"  // GPU particle batcher flush (Stage 2' and beyond)
 #include "../GameOS/gameos/debug_renderer.h"
 #include "../GuiRuntime/EditorInspector.h"  // IMG-INSPECT-3 flushDebugHighlight
 
@@ -257,39 +257,16 @@ void GameCamera::render (void)
 				land->renderWaterFastPath();
 			}
 
-			// B1 Stage 1' Commit 3 — GPU particle batcher flush.
+			// GPU particle batcher flush — Stage 2' and beyond.
 			// MUST run after renderLists() so the scene depth buffer is
 			// populated before alpha-blended billboards composite on top
 			// (memory/gpu_direct_renderer_bringup_checklist.md trap #6).
-			// No-op when MC2_GPU_PARTICLES is unset (default OFF). When
-			// the env gate is on, also emits a hardcoded Card test
-			// effect once per frame so the 10-trap bring-up validates
-			// end-to-end before any producer is migrated in Stage 2'.
+			// No-op when MC2_GPU_PARTICLES is unset (default OFF).
+			// Stage 1' canary (hardcoded orange billboard) removed now
+			// that real gosFX producers call BeginGroup+Emit via the
+			// SpawnCard*/SpawnCardCloud paths.
 			{
 				ZoneScopedN("GameCamera::render particlesFlush");
-				if (::mc2::particles::Batcher::is_enabled()) {
-					// Stage 1' canary: emit one test billboard near the
-					// world origin offset toward the typical mission
-					// camera target. World position is intentionally
-					// well-inside any tier1 mission's playfield so the
-					// canary is visible from the smoke camera without
-					// per-mission tuning. Stage 2' replaces this with
-					// producer-side Spawn() calls from the migrated fx
-					// callers.
-					::mc2::particles::GpuParticle p = {};
-					p.position[0] = 0.0f;
-					p.position[1] = 0.0f;
-					p.position[2] = 50.0f;   // above terrain so it's visible
-					p.color[0]    = 1.0f;
-					p.color[1]    = 0.4f;
-					p.color[2]    = 0.0f;    // bright orange — easy to spot
-					p.color[3]    = 1.0f;
-					p.size        = 25.0f;   // large enough to see in tier1
-					p.lifetime    = 1.0f;
-					p.age         = 0.0f;
-					p.atlasIndex  = 0u;
-					::mc2::particles::Batcher::Instance().Emit(p);
-				}
 				::mc2::particles::Batcher::Instance().Flush();
 			}
 		}
