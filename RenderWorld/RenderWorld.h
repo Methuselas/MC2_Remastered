@@ -365,19 +365,28 @@ VisibilityResult queryVisibility(VisibilityRequest req);
 
 struct StaticPropRecordView {
     RenderCore::RenderObjectHandle handle;          // invalid() if slot is dead
-    int32_t                        recipeIndex;     // == handle.index() by construction; -1 if dead
+    int32_t                        recipeIndex;     // == handle.index() == slot index in s_objectRecords.
+                                                     // Equals the GpuStaticPropRegistry recipeIndex by construction
+                                                     // (handleToRecipeIndex is an identity mapping per RenderWorld.cpp:85-88).
+                                                     // -1 if dead.
     bool                           alive;           // true iff flags bit 0 is set
-    bool                           generationValid; // true for live records (handle constructed from current generation)
+    bool                           generationValid; // invariant: always equals alive (handle is constructed from
+                                                     // current record generation, so it is self-consistent for live slots)
 };
 
 // Returns current allocated StaticProp slot count (alive + dead).
+// WARNING: The count can change between this call and fillStaticPropSlots().
+// Use for initial buffer sizing only. Always check fillStaticPropSlots() return
+// value: if total > capacity, resize and retry.
 uint32_t getStaticPropSlotCount();
 
 // One-pass fill: writes up to `capacity` StaticProp slots into out[0..].
 // Returns TOTAL matching StaticProp slot count (may exceed capacity if buffer
-// is too small — caller detects truncation via: total > capacity).
-// Handles are generation-validated by this function — callers must not re-read
-// s_objectRecords. Only processes slots where kind == StaticProp.
+// is too small). Caller detects truncation via: total > capacity — in that case,
+// resize buffer to `total` and call again. Mutex is held for the duration of
+// the fill but NOT between getStaticPropSlotCount() and this call.
+// Handles are generation-validated internally; callers must not re-read s_objectRecords.
+// Only processes slots where kind == StaticProp.
 uint32_t fillStaticPropSlots(StaticPropRecordView* out, uint32_t capacity);
 
 } // namespace RenderWorld
