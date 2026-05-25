@@ -26,17 +26,21 @@ REM Keep this on so logs are always captured.
 
 set MC2_EDITOR_TRACE=1
 set MC2_EDITOR_BYPASS_BLDG_CULL=1
+REM MC2_STATIC_PROP_REGISTRY=0 (restored 2026-05-25 E4f):
+REM   With registry enabled, building instances are not reaching
+REM   GpuStaticPropRegistry::markVisible() in editor (mark_visible=0
+REM   at session end despite types registered + flush armed). Root
+REM   cause is an unidentified precondition inside BldgAppearance::
+REM   render::IsStaticNow() returning false in editor. Until that's
+REM   isolated, route buildings through the direct submitMultiShape
+REM   path (proven working in E4). Filed as deferred debt.
+set MC2_STATIC_PROP_REGISTRY=0
 REM MC2_GPU_DRIVEN=0 retired 2026-05-25 -- editor terrain MVP publish
 REM converged to gos_SetWorldToClipGL (commit 2160fc9c); GPU cull-compute
 REM now fires correctly. Editor is a GPU-only test bed per
 REM memory/editor_is_gpu_only_testbed.md.
 REM MC2_GPU_OBJECTS=0 retired 2026-05-24 -- editor now wires GPU static-prop batcher
 REM MC2_GPU_MECHS=0   retired 2026-05-24 -- editor now wires GPU mech batcher
-REM Retired 2026-05-25 (E4c):
-REM   MC2_STATIC_PROP_REGISTRY=0  -- editor now wires GpuStaticPropRegistry
-REM                                  init/destroy/frameBegin (this commit).
-REM                                  Editor on same GPU path as game per
-REM                                  memory/editor_is_gpu_only_testbed.md.
 REM See docs/superpowers/plans/2026-05-24-editor-object-loop-gpu-port.md
 
 cd /d "A:\Games\mc2-opengl\mc2-editor"
