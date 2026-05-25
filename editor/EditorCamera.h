@@ -193,6 +193,16 @@ public:
 
 			gos_SetWorldToClipGL(eye->worldToClipGL());        // step 1 — game line 176
 
+			// S2.10: terrain shader needs camera position (distance LOD in TCS)
+			// and light direction (PBR lighting in FS). Without these the
+			// terrain_camera_pos_ / terrain_light_dir_ uniforms remain at their
+			// zero-initialized defaults, breaking distance-based tessellation
+			// admission and producing the "GPU path renders zero / falls back to
+			// CPU look" symptom. Mirrors code/gamecam.cpp:178-185 exactly.
+			Stuff::Vector3D camOrig = getCameraOrigin();
+			gos_SetTerrainCameraPos(camOrig.x, camOrig.y, camOrig.z);
+			gos_SetTerrainLightDir(lightDirection.x, lightDirection.y, lightDirection.z);
+
 			if (theSky)
 				theSky->render(1);
 
