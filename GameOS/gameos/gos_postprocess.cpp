@@ -1,6 +1,8 @@
 #include "gos_postprocess.h"
 #include "utils/shader_builder.h"
 #include "utils/gl_utils.h"
+#include "utils/vec.h"
+#include "gos_hdri.h"
 #include "gos_profiler.h"
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "gameos.hpp"      // gos_InvalidateRenderStateCache (RENDER_STATES v1)
@@ -174,6 +176,39 @@ void gosPostProcess::init(int w, int h)
     if (!skyboxProg_ || !skyboxProg_->is_valid())
         fprintf(stderr, "gosPostProcess: failed to compile skybox shader\n");
 
+    // HDRI-SKY-1 init. Gate read once; default enabled unless env var == "0".
+    {
+        const char* gateEnv = getenv("MC2_HDRI_SKY");
+        hdriEnabled_ = !(gateEnv && gateEnv[0] == '0' && gateEnv[1] == '\0');
+
+        if (hdriEnabled_) {
+            const char* hdrPath = "data/hdr/DaySkyHDRI063B_4K.exr";
+            hdriTex_ = loadHdriTexture(hdrPath);  // logs failures internally
+
+            hdriSkyboxProg_ = glsl_program::makeProgram(
+                "hdri_skybox",
+                "shaders/hdri_skybox.vert",
+                "shaders/hdri_skybox.frag",
+                kShaderPrefix
+            );
+
+            hdriReady_ = (hdriTex_ != 0)
+                      && (hdriSkyboxProg_ != nullptr)
+                      && hdriSkyboxProg_->is_valid();
+
+            if (!hdriReady_) {
+                std::fprintf(stderr,
+                    "[HDRI_SKY v1] enabled=0 reason=init_failed "
+                    "tex=%u prog=%p valid=%d\n",
+                    hdriTex_, (void*)hdriSkyboxProg_,
+                    hdriSkyboxProg_ ? (int)hdriSkyboxProg_->is_valid() : 0);
+            }
+        } else {
+            std::fprintf(stderr,
+                "[HDRI_SKY v1] enabled=0 reason=env_gate MC2_HDRI_SKY=0\n");
+        }
+    }
+
     bloomThresholdProg_ = glsl_program::makeProgram("bloom_threshold",
         "shaders/postprocess.vert", "shaders/bloom_threshold.frag", kShaderPrefix);
     if (!bloomThresholdProg_ || !bloomThresholdProg_->is_valid())
@@ -228,6 +263,21 @@ void gosPostProcess::destroy()
         glsl_program::deleteProgram("skybox");
         skyboxProg_ = nullptr;
     }
+
+    if (hdriSkyboxProg_) {
+        delete hdriSkyboxProg_;
+        hdriSkyboxProg_ = nullptr;
+    }
+    if (hdriTex_) {
+        glDeleteTextures(1, &hdriTex_);
+        hdriTex_ = 0;
+    }
+    if (hdriDummyVao_) {
+        glDeleteVertexArrays(1, &hdriDummyVao_);
+        hdriDummyVao_ = 0;
+    }
+    hdriReady_ = false;
+    hdriEnabled_ = false;
 
     if (bloomThresholdProg_) {
         glsl_program::deleteProgram("bloom_threshold");
@@ -926,6 +976,113 @@ void gosPostProcess::renderSkybox(float sunDirX, float sunDirY, float sunDirZ)
             sunScreenPos_[1] = (clip[1] / clip[3]) * 0.5f + 0.5f;
         }
     }
+}
+
+void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat)
+{
+    if (!hdriReady_ || !hdriSkyboxProg_ || !hdriSkyboxProg_->is_valid()
+        || !hdriTex_ || !viewMat || !projMat) {
+        return;  // no-op: black sky baseline
+    }
+
+    // Compute the inverse projection. Convert float arrays to mat4 structs.
+    // mat4 constructor takes column-major order; projMat is already column-major.
+    mat4 projMat4;
+    memcpy(&projMat4.elem[0][0], projMat, 16 * sizeof(float));
+    mat4 invProj = inverseMat4(projMat4);
+    float invProjArray[16];
+    memcpy(invProjArray, &invProj.elem[0][0], 16 * sizeof(float));
+
+    // Extract upper 3x3 of column-major viewMat and transpose
+    // (transpose-of-rotation = inverse-of-rotation). Translation is
+    // intentionally excluded so the sky does not parallax with the camera.
+    float invViewRot[9] = {
+        viewMat[0], viewMat[4], viewMat[8],
+        viewMat[1], viewMat[5], viewMat[9],
+        viewMat[2], viewMat[6], viewMat[10]
+    };
+
+    // Query runtime cap on color attachments so save/mask/restore
+    // adapts to whichever buffers are bound (ObjectID attachment 2
+    // only exists when MC2_OBJECT_ID_BUFFER is set).
+    GLint maxDrawBuffers = 0;
+    glGetIntegerv(GL_MAX_DRAW_BUFFERS, &maxDrawBuffers);
+    const int nAtt = (maxDrawBuffers < 3) ? maxDrawBuffers : 3;
+
+    // --- Save state ---
+    GLboolean prevDepthMask = GL_TRUE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &prevDepthMask);
+    GLboolean prevDepthTest  = glIsEnabled(GL_DEPTH_TEST);
+    GLboolean prevBlend      = glIsEnabled(GL_BLEND);
+    GLboolean prevCull       = glIsEnabled(GL_CULL_FACE);
+    GLint     prevActiveTex  = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveTex);
+    glActiveTexture(GL_TEXTURE0);
+    GLint     prevTex2DBind  = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex2DBind);
+    GLint     prevProgram    = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
+    GLint     prevVAO        = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
+
+    // Save per-attachment color masks for whichever attachments exist.
+    GLboolean prevMask[3][4] = {
+        { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE },
+        { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE },
+        { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE },
+    };
+    for (int i = 0; i < nAtt; ++i) {
+        glGetBooleani_v(GL_COLOR_WRITEMASK, (GLuint)i, prevMask[i]);
+    }
+
+    // Mask writes to attachments 1..2 (preserve normals + ObjectID).
+    if (nAtt > 0) glColorMaski(0, GL_TRUE,  GL_TRUE,  GL_TRUE,  GL_TRUE);
+    if (nAtt > 1) glColorMaski(1, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    if (nAtt > 2) glColorMaski(2, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
+    glDepthMask(GL_FALSE);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+
+    // Bind shader + uniforms + texture.
+    hdriSkyboxProg_->begin();
+    hdriSkyboxProg_->setMatrix4("invProj", invProjArray);
+    hdriSkyboxProg_->setMatrix3("invViewRot", invViewRot);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, hdriTex_);
+    hdriSkyboxProg_->setInt("u_hdri", 0);
+
+    // Fullscreen triangle. Core profile requires a non-zero VAO bound.
+    if (quadVAO_ != 0) {
+        glBindVertexArray(quadVAO_);
+    } else {
+        if (hdriDummyVao_ == 0) glGenVertexArrays(1, &hdriDummyVao_);
+        glBindVertexArray(hdriDummyVao_);
+    }
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    hdriSkyboxProg_->end();
+
+    // --- Restore state (exact) ---
+    glBindVertexArray(prevVAO);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)prevTex2DBind);
+    glActiveTexture(prevActiveTex);
+    glUseProgram(prevProgram);
+
+    for (int i = 0; i < nAtt; ++i) {
+        glColorMaski((GLuint)i,
+            prevMask[i][0], prevMask[i][1], prevMask[i][2], prevMask[i][3]);
+    }
+
+    glDepthMask(prevDepthMask);
+    if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    if (prevBlend)     glEnable(GL_BLEND);      else glDisable(GL_BLEND);
+    if (prevCull)      glEnable(GL_CULL_FACE);  else glDisable(GL_CULL_FACE);
+
+    // Note: do NOT call glDrawBuffers anywhere in this function.
+    // setSceneDrawBuffers owns the FBO draw-buffer array.
 }
 
 void gosPostProcess::initShadows()

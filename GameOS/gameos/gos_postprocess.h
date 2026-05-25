@@ -22,6 +22,13 @@ public:
 
     void renderSkybox(float sunDirX, float sunDirY, float sunDirZ);
 
+    bool isHdriReady() const { return hdriReady_; }
+
+    // Renders the HDRI background as a fullscreen triangle.
+    // Assumes scene FBO is bound. Writes only color attachment 0.
+    // viewMat, projMat are column-major 4x4 floats (16 floats each).
+    void renderHdriSkybox(const float* viewMat, const float* projMat);
+
     void runBloom();
 
     // Shadow mapping
@@ -137,6 +144,14 @@ private:
 
     // Skybox
     glsl_program* skyboxProg_;
+
+    // HDRI-SKY-1: background sky from a single equirect HDRI.
+    // All HDRI state is null/false when MC2_HDRI_SKY=0 or load fails.
+    GLuint        hdriTex_         = 0;
+    glsl_program* hdriSkyboxProg_  = nullptr;
+    bool          hdriEnabled_     = false;  // resolved once from env at init
+    bool          hdriReady_       = false;  // true iff tex + program both valid
+    GLuint        hdriDummyVao_    = 0;      // fallback when quadVAO_ unavailable
 
     // Bloom shaders
     glsl_program* bloomThresholdProg_;
