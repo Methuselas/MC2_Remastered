@@ -435,6 +435,17 @@ bool EditorData::initTerrainFromPCV( const char* fileName )
 	EditorObjectMgr::instance()->load( pFile, 1 );
 	EditorDataTrace("EditorData::initTerrainFromPCV: after EditorObjectMgr::load");
 
+	// GPU-batcher geometry finalization. All TG_TypeMultiShape instances
+	// created during EditorObjectMgr::load() above have been registered via
+	// BldgAppearance::init() against the armed batcher state (Task 1 ran
+	// onMapLoad/beginMission before this load call). finalizeGeometry() now
+	// uploads the immutable VBO/IBO. submitMultiShape() fast-rejects until
+	// this fires. Watch editor-startup.log for:
+	//   "[GPUPROPS] finalize: N types, M packets"   -- N > 0 required
+	GpuStaticPropBatcher::instance().finalizeGeometry();
+	GpuMechBatcher::instance().finalizeGeometry();
+	EditorDataTrace("EditorData::initTerrainFromPCV: GPU batchers finalized");
+
 	{
 		long result = 0;
 		result = file.seekBlock("MissionSettings");
