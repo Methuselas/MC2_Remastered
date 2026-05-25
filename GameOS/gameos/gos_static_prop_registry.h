@@ -160,7 +160,7 @@ struct MaterialCacheStats {
 // Called by GpuStaticPropBatcher::finalizeGeometry() only.
 // First-time-wins per typeID with prefer-alpha-off upgrade.
 // alphaClass/packetCount/firstPacket: written unconditionally before primary-selection
-// logic (idempotent — same type always has same values). Defaults for backward compat.
+// logic (idempotent — same type always has same values). Required — no defaults.
 void staticPropCacheTypePrimaryMaterial(uint32_t typeID,
                                         int32_t  texArrayLayer,
                                         uint32_t materialIdx,
