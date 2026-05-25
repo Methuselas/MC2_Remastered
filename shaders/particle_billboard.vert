@@ -29,6 +29,12 @@ layout(std430, binding = 14) readonly buffer Particles {
 
 uniform mat4 u_worldToClipGL;  // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 
+// B2 P1: view-aligned billboard basis. Set per-flush by gos_particle_bridge
+// via gos_SetActiveCamera(). Default identity (right=+X, up=+Y) keeps the
+// pre-B2 east-up fixed-axis behaviour if the caller never sets them.
+uniform vec3 u_cameraRight;
+uniform vec3 u_cameraUp;
+
 // P2-1 UV sub-rect: atlas origin and size for this draw group.
 // Set per draw call by the bridge (gos_particle_bridge.cpp).
 // Default full-page: u_uvOffset=(0,0), u_uvSize=(1,1).
@@ -63,29 +69,25 @@ void main() {
 
     Particle p = particles[particleId];
 
-    // Billboard orientation: extend in Stuff-X (east) and Stuff-Z (elevation/up).
-    // After the axis swap below, Stuff-X → GL-X and Stuff-Z → GL-Y, which is
-    // the screen plane for the default north-facing MC2 camera. This replaces
-    // the original XY (east-north / ground-plane) offset that foreshortened
-    // particles to near-invisible slivers at the ~45° gamecam angle.
+    // B2 P1: view-aligned billboard using camera right/up uniforms.
+    // corner_offset.xy is in [-0.5, +0.5]; multiply by 2*effSize to get
+    // half-extents in each direction. u_cameraRight and u_cameraUp are
+    // already in GL world space (axis-swapped by the C++ caller), so
+    // worldPos is directly in the same space as terrainMVP expects.
     //
-    // Stage 2' upgrade: true view-aligned billboard using camera right/up
-    // uniforms (avoids the east-west thin-strip artifact when camera rotates
-    // 90° so it looks along the east axis).
-    float effSize = max(p.size, 8.0);
-    vec2 corner    = (kCornerUv[cornerIdx] - vec2(0.5, 0.5)) * (2.0 * effSize);
-    vec3 worldStuff = p.position.xyz + vec3(corner.x, 0.0, corner.y);
-
-    // MC2 axis swap (load-bearing): gosFX SpawnCard emits world position in
-    // Stuff::Point3D coords (stuff-space); terrainMVP is composed against the
-    // MC2 terrain axis convention. Without this swap, world.y (elev) gets
-    // read by terrainMVP as MC2 north and world.z (south distance) as MC2
-    // elev — particles fly to wrong-axis positions (canonical "trees in the
-    // sky" failure mode, see static_prop.vert:139-144 for the same fix in
-    // the static-prop path). The canary at (0,0,50) is special-cased only
-    // because two axes are zero — invisible nonetheless because either MC2
-    // interpretation lands far from any tier1 mission's SPOT_DIAG range.
-    vec3 worldPos = vec3(-worldStuff.x, worldStuff.z, worldStuff.y);
+    // This replaces the B1 fixed-axis approach (Stuff-X east + Stuff-Z up
+    // with an axis swap) which produced a thin-strip artifact when the camera
+    // rotates to face east or west.
+    float effSize     = max(p.size, 8.0);
+    vec2  corner      = (kCornerUv[cornerIdx] - vec2(0.5, 0.5)) * (2.0 * effSize);
+    // Particle center is in Stuff/MC2 world space; apply the same axis swap
+    // (GL_x=-Stuff_x, GL_y=Stuff_z, GL_z=Stuff_y) used pre-B2 so the center
+    // lands correctly, then add the view-aligned offsets in GL world space.
+    vec3 stuffCenter  = p.position.xyz;
+    vec3 glCenter     = vec3(-stuffCenter.x, stuffCenter.z, stuffCenter.y);
+    vec3 worldPos     = glCenter
+                      + u_cameraRight * corner.x
+                      + u_cameraUp    * corner.y;
 
     // F1 Stage A: direct GL clip emit.
     gl_Position = u_worldToClipGL * vec4(worldPos, 1.0);

@@ -81,6 +81,9 @@ GLint s_loc_uAtlas        = -2;
 // P2-1: UV sub-rect uniforms — set per draw group.
 GLint s_loc_uvOffset      = -2;
 GLint s_loc_uvSize        = -2;
+// B2 P1: camera-basis uniforms — looked up once, bound per flush.
+GLint s_loc_cameraRight   = -2;
+GLint s_loc_cameraUp      = -2;
 
 void ensureInitialized() {
     if (s_initFailed) return;
@@ -127,6 +130,17 @@ void ensureInitialized() {
         // P2-1: UV sub-rect uniforms.
         s_loc_uvOffset      = glGetUniformLocation(s_prog->shp_, "u_uvOffset");
         s_loc_uvSize        = glGetUniformLocation(s_prog->shp_, "u_uvSize");
+        // B2 P1: camera-basis uniforms.
+        // A -1 is a legitimate "not in the program" result (driver stripped a
+        // uniform that's unused after dead-code elim). Do NOT retry the lookup
+        // every frame — that hides shader bugs and wastes GL calls.
+        s_loc_cameraRight   = glGetUniformLocation(s_prog->shp_, "u_cameraRight");
+        s_loc_cameraUp      = glGetUniformLocation(s_prog->shp_, "u_cameraUp");
+        if (s_loc_cameraRight < 0 || s_loc_cameraUp < 0) {
+            if (groupLogEnabled())
+                std::fprintf(stderr, "[B2] gos_particle_bridge: uniform locations missing — right=%d up=%d\n",
+                             s_loc_cameraRight, s_loc_cameraUp);
+        }
     }
 }
 
@@ -276,6 +290,10 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     {
         if (s_loc_uAtlas >= 0) glUniform1i(s_loc_uAtlas, 0);
     }
+    // B2 P1: bind camera basis uniforms. g_cam_right/up are already in GL
+    // world space (axis-swapped by gamecam.cpp before calling gos_SetActiveCamera).
+    if (s_loc_cameraRight >= 0) glUniform3fv(s_loc_cameraRight, 1, g_cam_right);
+    if (s_loc_cameraUp    >= 0) glUniform3fv(s_loc_cameraUp,    1, g_cam_up);
 
     // ── Sampler on unit 0 (trap #5: sampler inheritance) ─────────────
     glBindSampler(0, s_sampler);
