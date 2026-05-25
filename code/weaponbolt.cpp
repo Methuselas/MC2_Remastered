@@ -1608,7 +1608,16 @@ long WeaponBolt::update (void)
 	// CPU trailEffect (gosEffect) still runs in parallel — suppression is P4.
 	if (gpu_trail_kind != mc2::particles::GpuTrailKind::None) {
 		// Push current position into ring buffer.
-		trail_history[trail_head] = position;
+		// B2 P2 fix: use laserPosition (the integrated in-flight world position),
+		// NOT position (which tracks the launcher hotspot via getPositionFromHS).
+		// Apply the same Stuff->render axis swap that gosFX uses at lines ~411-413,
+		// so the trail particles land in the render-space coordinate system the
+		// shader expects (matches the swap baked into parentToWorld for spawn_card).
+		Stuff::Vector3D swapped;
+		swapped.x = -laserPosition.x;
+		swapped.y =  laserPosition.z;
+		swapped.z =  laserPosition.y;
+		trail_history[trail_head] = swapped;
 		trail_head = static_cast<uint8_t>((trail_head + 1) % kTrailHistoryMax);
 		if (trail_count < kTrailHistoryMax) ++trail_count;
 
