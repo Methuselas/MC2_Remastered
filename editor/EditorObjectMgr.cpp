@@ -1196,9 +1196,112 @@ void EditorObjectMgr::update()
 //*************************************************************************************************
 void EditorObjectMgr::render()
 {
-	// REBUILD 2026-05-25: hand-forked render loop deleted.
-	// Game render path runs externally via initTerrainFromPCV chain (S2).
-	// See docs/superpowers/plans/2026-05-25-editor-rebuild.md
+	// S2.5 (2026-05-25): actor walk only. Frame-level orchestration
+	// (renderLists, MVP, batcher flush, terrain dispatch) lives in the
+	// canonical game render-world chain wired by S2 -- DO NOT re-add here.
+	// Each appearance()->render() enqueues into the static-prop / mech
+	// batcher; the flush happens later via mcTextureManager->renderLists().
+	// See docs/superpowers/plans/2026-05-25-editor-rebuild.md S2 followup.
+
+	static long s_emrFrame = 0;
+	++s_emrFrame;
+	const bool s_emrLog = (s_emrFrame == 1 || s_emrFrame == 5 || s_emrFrame == 30 || s_emrFrame == 120);
+	if (s_emrLog)
+		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld renderObjects=%d renderTrees=%d buildings=%ld units=%ld links=%ld dropZones=%ld",
+			s_emrFrame, renderObjects ? 1 : 0, renderTrees ? 1 : 0,
+			(long)buildings.Count(), (long)units.Count(),
+			(long)links.Count(), (long)dropZones.Count());
+
+	long bTreeFiltered = 0;
+	long bRecalcPassed = 0;
+	long bRendered = 0;
+	if (renderObjects)
+	{
+		if (s_emrLog)
+			EditorObjMgrTrace("EditorObjectMgr::render frame=%ld buildings-loop enter count=%ld",
+				s_emrFrame, (long)buildings.Count());
+		for ( BUILDING_LIST::EIterator iter = buildings.Begin();
+			!iter.IsDone(); iter++ )
+		{
+			currentFloatHelp = 0;
+			if (renderTrees || (!renderTrees && ((*iter)->appearance()->getAppearanceClass() != TREE_APPR_TYPE)))
+			{
+				++bTreeFiltered;
+				if ( (*iter)->appearance()->recalcBounds() )
+				{
+					++bRecalcPassed;
+					if ( (*iter)->getDamage() )
+						(*iter)->appearance()->drawBars();
+					// BldgAppearance::render() submits into the static-prop batcher's
+					// per-frame buckets via submitMultiShape() (bdactor.cpp).
+					// Flush is issued later from mcTextureManager->renderLists().
+					(*iter)->appearance()->render();
+					++bRendered;
+					if ( (*iter)->getColor() & 0xff000000 )
+						(*iter)->appearance()->drawSelectBrackets( (*iter)->getColor() );
+				}
+			}
+		}
+		if (s_emrLog)
+			EditorObjMgrTrace("EditorObjectMgr::render frame=%ld buildings-loop exit treeFiltered=%ld recalcPassed=%ld rendered=%ld",
+				s_emrFrame, bTreeFiltered, bRecalcPassed, bRendered);
+	}
+	else if (s_emrLog)
+	{
+		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld buildings-loop SKIPPED (renderObjects=false)", s_emrFrame);
+	}
+
+	// Always draw the Mechs/Vehicles
+	long uRecalcPassed = 0;
+	long uRendered = 0;
+	if (s_emrLog)
+		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld units-loop enter count=%ld",
+			s_emrFrame, (long)units.Count());
+	for ( UNIT_LIST::EIterator mIter = units.Begin();
+		!mIter.IsDone(); mIter++ )
+	{
+		EditorObject* pObj = (*mIter);
+		currentFloatHelp = 0;
+		if ( pObj->appearance()->recalcBounds() )
+		{
+			++uRecalcPassed;
+			// Mech3DAppearance::render() submits into the mech batcher via
+			// submitActor() (mech3d.cpp). Flush is via renderLists().
+			pObj->appearance()->render();
+			++uRendered;
+			if ( (*mIter)->getDamage() )
+				pObj->appearance()->drawBars();
+			if ( (*mIter)->getColor() & 0xff000000 )
+				pObj->appearance()->drawSelectBrackets( pObj->getColor() );
+		}
+	}
+	if (s_emrLog)
+		EditorObjMgrTrace("EditorObjectMgr::render frame=%ld units-loop exit recalcPassed=%ld rendered=%ld",
+			s_emrFrame, uRecalcPassed, uRendered);
+
+	// Building links -- 2D overlay, NOT batcher scope.
+	for ( LINK_LIST::EIterator lIter = links.Begin();
+		!lIter.IsDone(); lIter++ )
+	{
+		(*lIter)->render();
+	}
+
+	// Drop zones -- 2D overlay, NOT batcher scope.
+	for ( DROP_LIST::EIterator dIter = dropZones.Begin();
+		!dIter.IsDone(); dIter++ )
+	{
+		Stuff::Vector3D pos = (*dIter)->getPosition();
+		Stuff::Vector4D screen;
+
+		eye->projectZ( pos, screen );
+
+		GUI_RECT Rect;
+		Rect.top = screen.y - 3;
+		Rect.left = screen.x - 3;
+		Rect.bottom = screen.y + 3;
+		Rect.right = screen.x + 3;
+		drawRect( Rect, (*dIter)->isVTol() ? 0xff0000ff : 0xffffff00 );
+	}
 }
 
 //*************************************************************************************************
