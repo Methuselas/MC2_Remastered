@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 static constexpr uint16_t kMissileSmokeTexId = 41;
@@ -47,13 +48,13 @@ const GpuTrailTuning kTuningTable[] = {
     /* [MissileSmoke] */
     {
         {0.f, 0.f, 0.f, 0.f},      // head_color: no head sprite
-        {1.0f, 1.0f, 1.0f, 0.5f},  // trail_color: white, 50% alpha
-        0.0f,                       // head_size: none (no head sprite for missile)
-        1.5f,                       // trail_particle_size (world units)
-        1.2f,                       // trail_lifetime_s
-        8.0f,                       // trail_density_per_meter
-        0,                          // blend_mode: standard alpha
-        kMissileSmokeTexId,         // texture_id: MLR pool handle 41 (smoke)
+        {1.0f, 1.0f, 1.0f, 0.8f},  // trail_color: white, 80% alpha (was 0.5 — bump)
+        0.0f,                       // head_size: none
+        5.0f,                       // trail_particle_size (world units) — was 1.5, BIG bump
+        0.05f,                      // trail_lifetime_s: 1 frame (was 1.2 — meaningless with per-frame clearing)
+        2.0f,                       // trail_density_per_meter: was 8 — drop to 2/m
+        0,                          // alpha blend
+        kMissileSmokeTexId,         // handle 41 (smoke)
     },
     // PpcBolt entry added in P3
 };
@@ -87,6 +88,29 @@ void GpuTrailEmitter::Spawn(GpuTrailKind kind,
 {
     if (kind == GpuTrailKind::None) return;
     if (trail_disabled()) return;
+
+    {
+        static bool probed = false;
+        if (!probed) {
+            const char* v = std::getenv("MC2_GPU_PARTICLES_LOG");
+            if (v && v[0] == '1') {
+                std::fprintf(stderr,
+                    "[B2 TRAIL_PROBE] first spawn: kind=%u prev=(%.2f,%.2f,%.2f) cur=(%.2f,%.2f,%.2f) deltaT=%.4f len=%.3f\n",
+                    (unsigned)kind,
+                    prev_world.x, prev_world.y, prev_world.z,
+                    cur_world.x, cur_world.y, cur_world.z,
+                    deltaT,
+                    std::sqrt(
+                        (cur_world.x - prev_world.x)*(cur_world.x - prev_world.x) +
+                        (cur_world.y - prev_world.y)*(cur_world.y - prev_world.y) +
+                        (cur_world.z - prev_world.z)*(cur_world.z - prev_world.z))
+                );
+                std::fflush(stderr);
+            }
+            probed = true;
+        }
+    }
+
     if (!Batcher::is_enabled()) return;
 
     const GpuTrailTuning& t = tuning_for(kind);

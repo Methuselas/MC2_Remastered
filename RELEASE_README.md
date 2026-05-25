@@ -6,13 +6,13 @@ and modern post-processing. Original gameplay and missions are unchanged.
 ## Requirements
 
 - Windows 10 or 11 (64-bit)
-- GPU with OpenGL 4.3 support (any discrete GPU from 2012 or later)
+- GPU with OpenGL 4.3 support (NVIDIA GTX 900 series or later, AMD RX 400 series or later, or Intel Iris Xe)
 - ~4 GB free disk space
 
 ## Install
 
-Download all five zips and extract each into the **same folder**. Folder contents
-merge — do not extract into subfolders.
+Create a new empty folder, then download all five zips and extract each into that
+folder. Folder contents merge — do not extract into subfolders.
 
 | Zip | Contents |
 |-----|----------|
@@ -48,7 +48,7 @@ These work at any time during gameplay:
 | RAlt+F2 | Shadow debug overlay |
 | RAlt+F3 | Toggle shadows |
 | RAlt+F5 | Terrain draw killswitch |
-| RAlt+5 | Toggle GPU grass |
+| RAlt+5 | Cycle HUD scale (1.0 -> 0.90 -> 0.85 -> 0.80) |
 
 ## Known Issues
 

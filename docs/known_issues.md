@@ -1,5 +1,25 @@
 # Known issues (current)
 
+To report a new issue: [GitHub Issues](https://github.com/ThranduilsRing/mc2-opengl-remastered/issues)
+
+---
+
+## Player-visible issues
+
+Known bugs that affect anyone running the game. Full detail in the beta doc:
+[docs/beta/known_issues.md](beta/known_issues.md)
+
+- **Shadow stutter** when the camera jumps more than ~500 units in one move. Panning is smooth; only large instant jumps trigger it.
+- **Shadow banding** shifts slightly with camera rotation due to view-dependent tessellation.
+- **Water shoreline z-fight** visible when zooming in or changing elevation (not on pan).
+- **First-launch black terrain** (intermittent) — relaunch the mission; second load is normal.
+- **Options menu writes bad resolution** to `options.cfg` on 4K displays. Delete `<game-deploy-dir>\options.cfg` to reset.
+- **Bloom/FXAA/tonemapping apply to HUD** — scene and HUD share the same framebuffer.
+
+---
+
+## Developer / Internal
+
 Extracted from CLAUDE.md 2026-05-24. Issues here are KNOWN — don't re-discover
 them. Add new findings as new bullets; remove fixed ones outright (don't append
 "FIXED" — delete the bullet).

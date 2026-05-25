@@ -25,7 +25,7 @@ namespace RenderCore {
 // [31:16]  material id     (16-bit hash bucket per spec MINOR m1)
 // [15:0]   depth bucket    (alpha back-to-front; opaque inverted)
 struct DrawPacket {
-    uint32_t       pipelineId;    // PipelineDesc cache key (Phase 1: opaque)
+    uint32_t       pipelineId;    // PipelineDesc::glProgramName used as cache key (Phase 1: opaque)
     MeshHandle     mesh;
     MaterialHandle material;
     uint32_t       objectIndex;

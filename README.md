@@ -8,7 +8,7 @@ A visual remaster of MechCommander 2, built on top of [alariq's OpenGL port](htt
 
 ### Install (from release)
 
-Download all five zips and extract each into the **same folder** (contents merge without overwriting):
+Create a new empty folder (e.g. `C:\mc2-opengl\`), then download all five zips and extract each into that folder (contents merge without overwriting):
 
 1. **`mc2-remastered-engine.zip`** — engine, shaders, runtime DLLs, asset tools
 2. **`mc2-gamedata.zip`** — `.fst` archives + `data/sound`, `data/movies`, `data/objects`, stock-resolution loose files
@@ -16,7 +16,7 @@ Download all five zips and extract each into the **same folder** (contents merge
 4. **`mc2-art.zip`** — 4× upscaled PBR art overrides (`data/art/`)
 5. **`mc2-tgl.zip`** — 4× upscaled PBR terrain model overrides (`data/tgl/`)
 
-Run `mc2.exe`. No original MC2 install required.
+Run `mc2.exe`. No original MC2 install required. If you hit a problem, `run-with-log.bat` (included in the release) captures a `stderr.log` next to the exe — see RELEASE_README.md for troubleshooting steps.
 
 **Optional:** **`mc2-load-points.zip`** (53 KB) — 24 pre-built save games, one per campaign mission, each with a full pilot roster and 1,000,000 CBills. Extract into `%USERPROFILE%\.mechcommander2\savegame\` (create the folder if it doesn't exist). Then pick one from the **Load Game** menu to jump straight to any mission.
 
@@ -36,7 +36,7 @@ MechCommander 2 was released by Microsoft/FASA Interactive in 2001 and its sourc
 - **Terrain grain** fades by projected screen frequency (no grain noise at high zoom)
 
 ### Lighting and Shadows
-- **Static terrain shadow map** (8192x8192), rendered once on the first frame
+- **Static terrain shadow map** (4096x4096), rendered once on the first frame
 - **Dynamic mech shadows** (4096x4096) with Poisson disk PCF (16-sample)
 - **Post-process shadow pass** -- shadows on all geometry via depth reconstruction
 - **G-buffer MRT** -- normal buffer for deferred shadow/lighting decisions
@@ -84,7 +84,7 @@ For detailed build and dependency information, see [BUILD-WIN.md](BUILD-WIN.md).
 
 ```bash
 mc2.exe                     # normal gameplay
-mc2.exe -mission mis0101    # skip menus, load directly into a mission
+mc2.exe -mission mc2_01     # skip menus, load directly into a mission
 ```
 
 ## Improvements over vanilla
@@ -99,16 +99,19 @@ mc2.exe -mission mis0101    # skip menus, load directly into a mission
 - Configurable FPS cap via `MC2_FPS_CAP` env var (default 165 in-mission, 90 in menus)
 - Runs at **4K with 30+ FPS zoomed out, ~90 FPS zoomed in** on mid-range hardware
 
-(Plus alariq's extensive upstream bug fixes over the original engine.)
+(Plus [alariq's extensive upstream bug fixes](https://github.com/alariq/mc2) over the original engine.)
 
 ## Known Issues
 
 - **Shadow map stutter** when the camera moves more than ~500 units; a world-fixed static shadow design is ready but not yet implemented
 - **Shadow banding** shifts with camera rotation due to view-dependent terrain geometry
 
+See [docs/known_issues.md](docs/known_issues.md) for the full current list. To file a bug: [GitHub Issues](https://github.com/ThranduilsRing/mc2-opengl-remastered/issues).
+
 ## Documentation
 
-- **[Modding Guide](docs/modding-guide.md)** -- rendering pipeline, shader editing, texture upscaling, debug hotkeys, autonomous development
+- **[Modding Guide](docs/modding-guide.md)** -- rendering pipeline, shader editing, texture upscaling, debug hotkeys
+- **[Beta Modder Reference](docs/beta/README_modder_beta.md)** -- launch guide, inspector, env vars, build instructions for new contributors
 - **[Changelog](CHANGELOG.md)** -- all rendering features added over vanilla MC2
 
 ## License

@@ -28,8 +28,12 @@ Output: `build64/RelWithDebInfo/mc2.exe`
 
 The game runs from a separate deployment directory, not the source tree. Deploy individual files with verification:
 
+Set `DEPLOY` to the folder where you extracted the game release (e.g. `C:/mc2-opengl/mc2-win64-v0.4`).
+
+> These commands require Git Bash or MSYS2. In PowerShell, use `Copy-Item` and `Compare-Object` instead.
+
 ```bash
-DEPLOY="A:/Games/mc2-opengl/mc2-win64-v0.1.1"
+DEPLOY="<deploy-dir>"
 cp -f build64/RelWithDebInfo/mc2.exe "$DEPLOY/"
 diff -q build64/RelWithDebInfo/mc2.exe "$DEPLOY/mc2.exe"
 ```
@@ -47,9 +51,9 @@ done
 ### Run
 
 ```bash
-cd "A:/Games/mc2-opengl/mc2-win64-v0.1.1"
+cd "<deploy-dir>"
 ./mc2.exe                          # normal gameplay
-./mc2.exe -mission mis0101         # skip menus, load mission directly
+./mc2.exe -mission mc2_01          # skip menus, load mission directly
 ./mc2.exe --validate --frames 60   # validation mode (see Section 7)
 ```
 
@@ -64,7 +68,7 @@ Each frame renders in this order:
 1. **Skybox** -- procedural gradient with sun disc (`skybox.frag`)
 2. **Terrain** -- tessellated PBR splatting (`gos_terrain.frag`, `.vert`, `.tcs`, `.tes`)
 3. **Overlays** -- roads, cement, decals (`gos_tex_vertex.frag`)
-4. **Water** -- separate overlay, not part of terrain splatting (`gos_tex_vertex.frag`)
+4. **Water** -- separate overlay, not part of terrain splatting (`gos_tex_vertex.frag`). Water uses the same generic shader as roads/decals and is rendered as an alpha-blended quad on top of terrain -- it does **not** participate in the PBR splat map and does not write the normal buffer's "is terrain" alpha flag.
 5. **3D Objects** -- mechs, buildings, vehicles (`gos_tex_vertex_lighted.frag`); static props (`static_prop.frag`)
 6. **Particles** -- gosFX effects (`gos_tex_vertex.frag`)
 7. **Post-processing** -- bloom, shadow pass, FXAA, tonemapping (`postprocess.frag`, etc.)
@@ -88,7 +92,7 @@ Two independent shadow maps:
 - Re-renders when camera moves >100 units from last render position
 - Ortho size uses `sqrt(2) * 1.05` factor for diagonal coverage
 
-**Dynamic mech shadows** (2048x2048):
+**Dynamic mech shadows** (4096x4096):
 - Centered on ray-ground intersection point with 0.80 bias toward camera, radius 1200
 - Direct GPU draw via `glUseProgram` + `glDrawElements` (bypasses material system)
 - Forces `glDepthMask(GL_TRUE)` after shader bind (material system would override this)
@@ -180,10 +184,10 @@ All debug toggles use Right Alt as modifier to avoid conflicts with game control
 | RAlt+F3 | Toggle shadows on/off |
 | RAlt+F5 | Toggle terrain draw (killswitch) |
 | RAlt+4 | Cycle screen shadow modes |
-| RAlt+5 | Toggle GPU grass |
+| RAlt+5 | Cycle HUD scale (1.0 -> 0.90 -> 0.85 -> 0.80 -> 1.0) |
 | RAlt+6 | Toggle god rays |
 | RAlt+7 | Toggle shoreline foam |
-| RAlt+9 | Toggle SSAO |
+| RAlt+9 | Cycle GPU static-prop fragment debug modes (addr-gradient / addr-hash / WHITE / ARGB-only / TEX-only / HIGHLIGHT-only / normal) |
 | RAlt+D | Toggle debug draw calls |
 | RAlt+Escape | Quit |
 | F6-F12 | Tessellation parameters (no modifier needed) |

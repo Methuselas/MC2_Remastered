@@ -1,139 +1,89 @@
 Building from source on Windows
 ===============================
 
-**Just want to play?** You don't need this file. Grab the four zips from the [latest release](https://github.com/ThranduilsRing/mc2-opengl-remastered/releases/latest), extract them into the same folder, and run `mc2.exe`. This document is for developers building the engine from source.
+**Just want to play?** You don't need this file. Grab the five zips from the [latest release](https://github.com/ThranduilsRing/mc2-opengl-remastered/releases/latest), create a new empty folder, extract all five into it, and run `mc2.exe`. This document is for developers building the engine from source.
 
-Quick build (using the vendored `3rdparty.zip`)
------------------------------------------------
+## Quick build (using the vendored `3rdparty.zip`)
 
 This is the fast path — verified end-to-end from a fresh clone.
 
-1. Install **Visual Studio 2022 Build Tools** with the **MSVC v143** workload.
-2. Clone the repo. Git LFS will pull `3rdparty.zip` automatically.
-3. Extract `3rdparty.zip` at the repo root (creates `3rdparty/{cmake,include,lib,tracy}`).
-4. Configure and build with an **absolute** path to the `3rdparty/` folder:
+**Prerequisites:**
+- Visual Studio 2022 Build Tools with the **MSVC v143** workload
+- Git with Git LFS — run `git lfs install` once after installing Git. Without this, `3rdparty.zip` will clone as a ~134-byte pointer stub and the build will fail to find headers. If that happens, run `git lfs pull`.
 
-```bash
+1. Clone the repo. Git LFS will pull `3rdparty.zip` automatically.
+2. Extract `3rdparty.zip` at the repo root (creates `3rdparty/{cmake,include,lib,tracy}`).
+3. Configure and build with an **absolute** path to the `3rdparty/` folder:
+
+```bat
 cmake -G "Visual Studio 17 2022" -DCMAKE_PREFIX_PATH=C:/absolute/path/to/repo/3rdparty -DCMAKE_LIBRARY_ARCHITECTURE=x64 -B build64
 cmake --build build64 --config RelWithDebInfo --target mc2
 ```
 
-Output is `build64/RelWithDebInfo/mc2.exe`.
+Output: `build64/RelWithDebInfo/mc2.exe`
 
-**Always use `RelWithDebInfo`** — `Release` builds crash on GL debug callback registration.
+**Always use `RelWithDebInfo`.** `Release` builds crash on GL debug callback registration.
 
-Why the absolute path? The root `CMakeLists.txt` uses `${CMAKE_PREFIX_PATH}/include` literally when setting include directories; relative paths don't resolve correctly from the build directory and the headers silently fail to be found at compile time.
+**Why the absolute path?** `CMakeLists.txt` expands `${CMAKE_PREFIX_PATH}/include` literally when setting include directories. Relative paths do not resolve correctly from the build directory, causing headers to silently fail to be found at compile time.
 
-The rest of this document describes the longer manual path (building each 3rdparty from source) plus building the game data archives. Skip down to the relevant section.
+### Deploy
+
+Copy `build64/RelWithDebInfo/mc2.exe` to your game deploy directory.
+
+If you changed any shaders, copy the updated files from `shaders/` to `<game-deploy-dir>/shaders/`.
 
 ---
 
-Preparing 3rdparties (manual):
-==============================
+## Manual 3rdparty build (optional)
 
-One can also use 3rdparty.zip package in the repo for simpler setup, it contains all needed 3rdparty libraries
-If you select to do it then skip directly to **Compiling mc2**
+Use this section only if you need to rebuild the 3rdparty libraries from source instead of using `3rdparty.zip`.
 
-zlib
-----
+### zlib
 
-1. Download zlib sources from here: 
-https://gnuwin32.sourceforge.net/packages/zlib.htm
-direct link: https://gnuwin32.sourceforge.net/downlinks/zlib-src-zip.php
-2. Download unistd.h for windows here:
-https://gist.githubusercontent.com/mbikovitsky/39224cf521bfea7eabe9/raw/69e4852c06452a368a174ca1f0f33ce87bb52985/unistd.h
-2b. Open it and comment out: `#include <getopt.h>` also comment integer types typedefs at the end
-3. put it where zlib sourse files are located then open zconf.h and change `#include <unistd.h>` for `#include "unistd.h"` (or see 4.)
-4. (alternative to 3) Put unistd.h to place where your compiler system headers are.
-5. Open x86 Native Tools command prompt for VS2022 and cd to zlib
+1. Download zlib sources: https://gnuwin32.sourceforge.net/downlinks/zlib-src-zip.php
+2. Download `unistd.h` for Windows: https://gist.githubusercontent.com/mbikovitsky/39224cf521bfea7eabe9/raw/69e4852c06452a368a174ca1f0f33ce87bb52985/unistd.h
+3. Open `unistd.h` and comment out `#include <getopt.h>` and the integer typedef block at the end.
+4. Place `unistd.h` next to the zlib source files, then open `zconf.h` and change `#include <unistd.h>` to `#include "unistd.h"`. (Alternative: put `unistd.h` in your compiler's system include path.)
+5. Open an **x86 Native Tools Command Prompt for VS 2022** and `cd` to the zlib directory.
 6. `nmake -f win32\Makefile.msc`
-7. copy resulting .dll & .lib files to your 3rdparty folder: e.g. 3rdparty\lib\x86\
-8. delete compilation files because we will now do same steps starting from step 5 but in x64 Native Tools (copy them to 3rdparty\lib\x64
-9. Copy that unistd.h file to 3rdparty include folder
+7. Copy the resulting `.dll` and `.lib` to `3rdparty\lib\x86\`.
+8. Repeat steps 5–7 in an **x64 Native Tools Command Prompt**; copy results to `3rdparty\lib\x64\`.
+9. Copy `unistd.h` to `3rdparty\include\`.
 
-SDL
----
+### SDL2, SDL2\_mixer, SDL2\_ttf
 
-1. Download SLD x864 & x64 here: https://github.com/libsdl-org/SDL/releases/tag/release-2.30.11
-direct link: https://github.com/libsdl-org/SDL/releases/download/release-2.30.11/SDL2-devel-2.30.11-VC.zip
-2. copy libraries to corresponding x86 and x64 folders 
-3. copy headers to 3rdparty\include\SDL2 folder
-4. copy files from cmake folder to 3rdparty\cmake
+| Library | Release page | Direct download |
+|---|---|---|
+| SDL2 | https://github.com/libsdl-org/SDL/releases/tag/release-2.30.11 | [SDL2-devel-2.30.11-VC.zip](https://github.com/libsdl-org/SDL/releases/download/release-2.30.11/SDL2-devel-2.30.11-VC.zip) |
+| SDL2\_mixer | https://github.com/libsdl-org/SDL_mixer/releases | [SDL2\_mixer-devel-2.8.0-VC.zip](https://github.com/libsdl-org/SDL_mixer/releases/download/release-2.8.0/SDL2_mixer-devel-2.8.0-VC.zip) |
+| SDL2\_ttf | https://github.com/libsdl-org/SDL_ttf/releases/tag/release-2.24.0 | [SDL2\_ttf-devel-2.24.0-VC.zip](https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.24.0/SDL2_ttf-devel-2.24.0-VC.zip) |
 
-4. Download SLD_mixer here: https://github.com/libsdl-org/SDL_mixer/releases
-direct link: https://github.com/libsdl-org/SDL_mixer/releases/download/release-2.8.0/SDL2_mixer-devel-2.8.0-VC.zip
-5. do same with lib/dll and headers as with SDL (headers should also go to 3rdparty\include\SDL2\ folder)
-6. copy files from cmake folder to 3rdparty\cmake
+For each package:
+- Copy x86 and x64 libs/DLLs to the corresponding `3rdparty\lib\x86\` and `3rdparty\lib\x64\` folders.
+- Copy headers to `3rdparty\include\SDL2\`.
+- Copy the `cmake\` folder contents to `3rdparty\cmake\`.
 
-7 Download SDL2_ttf here: https://github.com/libsdl-org/SDL_ttf/releases/tag/release-2.24.0
-direct link: https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.24.0/SDL2_ttf-devel-2.24.0-VC.zip
-8. do same with lib/dll and headers as with SDL (headers should also go to 3rdparty\include\SDL2\ folder)
-9. copy files from cmake folder to 3rdparty\cmake
+### GLEW
 
+From binaries (recommended): https://glew.sourceforge.net/
 
-glew
-----
-From sources:
-1. Download glew here: https://sourceforge.net/projects/glew/files/glew/snapshots/glew-20190928.tgz/download
-2. unzip and open build\vs12\glew.sln file
-3. build for x64 and Win32
+From source:
+1. Download: https://sourceforge.net/projects/glew/files/glew/snapshots/glew-20190928.tgz/download
+2. Open `build\vs12\glew.sln` and build for both x64 and Win32.
 
-Binaries:
-2. Or download prebuilt lib/dlls from this page: https://glew.sourceforge.net/ 
-3. Put lib/dll/headers accordingly to x86/x64 (headers go into 3rdparty\include\GL)
+Copy libs/DLLs to `3rdparty\lib\x86\` and `3rdparty\lib\x64\`; copy headers to `3rdparty\include\GL\`.
 
+### Compiling mc2 against manually-built 3rdparty
 
-Compiling mc2
-=============
-```
-git clone https://github.com/alariq/mc2.git
-cd mc2
-md build64
-cd build64
-cmake.exe -G "Visual Studio 17 2022" -DCMAKE_PREFIX_PATH=c:/path_to_3rdparty_folder/ -DCMAKE_LIBRARY_ARCHITECTURE=x64 ..
-```
-(use absolute path to 3rdparty folder)
-Copy mc2.exe to your executable folder of preference (say mc2exe)
-```
-cd res
-md build64
-cd build 64
-cmake.exe -G "Visual Studio 17 2022" -DCMAKE_LIBRARY_ARCHITECTURE=x64 ..
-```
-Copy mc2res.dll/pdb to your executable folder of preference (say mc2exe)
-
-
-Building data
-=============
-```
-git clone https://github.com/alariq/mc2srcdata.git
-cd mc2srcdata
+```bat
+cmake -G "Visual Studio 17 2022" -DCMAKE_PREFIX_PATH=C:/absolute/path/to/3rdparty -DCMAKE_LIBRARY_ARCHITECTURE=x64 -B build64
+cmake --build build64 --config RelWithDebInfo --target mc2
 ```
 
-1. Read `README.md` in `build_scripts` folder
+Output: `build64/RelWithDebInfo/mc2.exe`
 
-If you did not here are the steps:
-1. copy tools from the exe solution to build_scripts folder 
-(better copy Release version of these to make things faster)
-    aseconv
-    makefst
-    makersp
-    pak
-    text_tool
-1a. Copy glew32.dll there as well (x86 or x64 depending on what version of tools you've built)
-2. launch some console which has `make` in its path (needs GNUMake)
-(you can install it from here: https://gnuwin32.sourceforge.net/packages/make.htm)
-3. `cd build_scripts`
-4. `make all` (or `>c:\path_to_gnumake\bin\make all`)
-5. copy assets & data folder to your exe folder of preference
-6. copy `*.cfg, *.fst, testtxm.tga` to your exe folder of preference
+### Deploy
 
+Copy `build64/RelWithDebInfo/mc2.exe` to your game deploy directory.
 
-Final steps:
------------
-Copy all required dlls to your exe folder of preference
-
-Run the game!
-
-.. and, hopefully, enjoy
-
+All runtime DLLs (SDL2, GLEW, FFmpeg) are included in `mc2-remastered-engine.zip` from the release. If building entirely from scratch, copy the DLLs from `3rdparty\lib\x64\` to the same folder as `mc2.exe`.

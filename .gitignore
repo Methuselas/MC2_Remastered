@@ -98,4 +98,35 @@ validate*.tga
 
 # Smoke test runtime artifacts
 tests/smoke/artifacts/
+tests/smoke/captures/
+
+# Internal planning + observation docs (process noise, not shipped)
+docs/superpowers/
+docs/observations/
+docs/beta/
+docs/micro_scene_spec.md
+
+# Stable seam ledger (internal, not shipped)
+STABLE-SEAMS.md
+
+# Claude tooling not for ship
+.claude/agents/
+.claude/snap_*.png
+.claude/dump_*.py
+.claude/verify_bias.py
+.claude/explorations/
+.claude/STEERING.md
+
+# Release pack outputs
+release_assets/
+
+# Editor IDE state + scratch
+editor/.vs/
+artifacts/
+dev/squelch/
+
+# Misc dev junk
+ucrt-list.txt
+*.safetensors
+*.pth
 

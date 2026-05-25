@@ -263,8 +263,11 @@ RenderSnapshot ExtractRenderSnapshot()
     }
 
     // -----------------------------------------------------------------------
-    // Per-frame log line (v1)
+    // Per-frame log line (v1) — gated: MC2_RENDER_SNAPSHOT_LOG=1 to enable
     // -----------------------------------------------------------------------
+    static const bool s_logEnabled = []{ const char* v = std::getenv("MC2_RENDER_SNAPSHOT_LOG"); return v && v[0] == '1'; }();
+    if (!s_logEnabled) return snap;
+
     std::fprintf(stderr,
         "[RENDER_SNAPSHOT v1] frame=%llu mechs=%u static_props=%u lights=%u "
         "bytes=%zu overflow=%d\n"
