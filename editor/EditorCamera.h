@@ -33,6 +33,8 @@ EditorCamera.h			: Interface for the EditorCamera component.
 #include "objstatus.h"
 #endif
 
+#include "../GameOS/gameos/gos_static_prop_registry.h"
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -178,22 +180,35 @@ public:
 				s_ecrFrame, (active && turn > 1) ? 1 : 0);
 		if (active && turn > 1)
 		{
-			// REBUILD 2026-05-25: hand-forked per-frame chain deleted.
-			// Manual mcTextureManager->renderLists() orchestration and the
-			// hand-forked terrain MVP swap (gos_SetTerrainViewport,
-			// gos_SetTerrainCameraPos, gos_SetTerrainLightDir) are gone.
-			// land->render(), EditorObjectMgr->render/renderShadows(),
-			// land->renderWater(), and the renderLists() calls were a
-			// partial gamecam.cpp mirror; the canonical chain will be
-			// re-wired in S2 (mirrors gamecam.cpp:176-257 exactly).
-			// See docs/superpowers/plans/2026-05-25-editor-rebuild.md §S2.
-			//
-			// KEPT: gos_SetWorldToClipGL (S0 §5 step 1; canonical first
-			// per-frame call), sky/compass/EditorInterface ImGui glue.
-			gos_SetWorldToClipGL(eye->worldToClipGL());
+			// S2 per-frame chain — mirrors code/gamecam.cpp:176-257 exactly.
+			// Canonical order locked by docs/superpowers/plans/2026-05-25-editor-rebuild-S0-contract.md.
+			// DO NOT call GpuStaticPropBatcher::flush() directly; the only legal dispatch
+			// path is through mcTextureManager->renderLists() (txmmgr.cpp:2164).
+
+			gos_SetWorldToClipGL(eye->worldToClipGL());        // step 1 — game line 176
 
 			if (theSky)
 				theSky->render(1);
+
+			GpuStaticPropRegistry::frameBegin();               // step 2 — game line 198
+			if (land)
+				land->render();                                // step 3 — game line 199
+
+			// step 4 — game line 214: ObjectManager->render(...)
+			// TODO(S2): editor has no GameObjectManager (ObjectManager == nullptr —
+			// see editor/EditorGlobals.cpp). EditorObjectMgr::render() is a no-op
+			// stub post-S1 carve. Buildings/mechs/trees will not register per-frame
+			// visibility until an editor-side render walk is restored (out of S2
+			// scope per plan; see report).
+			if (!s_bSensorMapEnabled)
+				EditorObjectMgr::instance()->render();
+
+			if (land)
+				land->renderWater();                           // step 5 — game line 219
+
+			// step 6 — game line 225: ObjectManager->renderShadows(...)
+			// TODO(S2): same gap as step 4. EditorObjectMgr::renderShadows() was
+			// deleted in S1 carve. Shadow visibility for actors deferred.
 
 			if (!drawOldWay)
 			{
@@ -207,6 +222,12 @@ public:
 			{
 				EditorInterface::instance()->render();
 			}
+
+			if (mcTextureManager)
+				mcTextureManager->renderLists();               // step 7 — game line 246 (drives GpuStaticPropBatcher::flush at txmmgr.cpp:2164)
+
+			if (land)
+				land->renderWaterFastPath();                   // step 8 — game line 257
 		}
 	
 	 	//-----------------------------------------------------

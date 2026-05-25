@@ -24,6 +24,12 @@
 
 #include "../GameOS/gameos/gos_static_prop_batcher.h"
 #include "../GameOS/gameos/gos_mech_batcher.h"
+#include "../GameOS/gameos/gos_static_prop_registry.h"
+#include "../GameOS/gameos/gpu_cull_substrate.h"
+#include "../GameOS/gameos/gpu_cull_compute.h"
+#include "../GameOS/gameos/gpu_cull_readback.h"
+#include "../GameOS/gameos/gos_terrain_lighting.h"
+#include <gameos.hpp>  // gos_ResetStaticShadowPriming
 #include "../GameAdapters/StaticPropRenderAdapter.h"
 #include "../GameAdapters/MechRenderAdapter.h"
 
@@ -150,11 +156,16 @@ bool EditorData::clear()
 		land = NULL;
 	}
 
-	// Editor GPU-batcher map-unload lifecycle (mirrors code/mission.cpp:~3279).
+	// S2 mission-unload chain — mirrors code/mission.cpp:3272-3283.
+	// Canonical order locked by docs/superpowers/plans/2026-05-25-editor-rebuild-S0-contract.md.
 	// Must run BEFORE EditorObjectMgr::clear() so batcher state tears down
 	// while actor TG_MultiShape pointers are still valid.
-	GpuStaticPropBatcher::instance().onMapUnload();
-	GpuMechBatcher::instance().onMapUnload();
+	gpu_cull::readback_shutdown();                             // step 1 — game line 3272
+	gpu_cull::compute_shutdown();                              // step 2 — game line 3274
+	gpu_cull::substrate_shutdown();                            // step 3 — game line 3277
+	GpuStaticPropBatcher::instance().onMapUnload();            // step 4 — game line 3281
+	GpuMechBatcher::instance().onMapUnload();                  // step 5 — game line 3282
+	GpuStaticPropRegistry::destroy();                          // step 6 — game line 3283
 	GameAdapters::StaticProp::endMission();
 	GameAdapters::Mech::endMission();
 
@@ -421,30 +432,52 @@ bool EditorData::initTerrainFromPCV( const char* fileName )
 	EditorDataTrace("EditorData::initTerrainFromPCV: before recalcWater");
 	land->recalcWater();
 	EditorDataTrace("EditorData::initTerrainFromPCV: before EditorObjectMgr::load");
-	// Editor GPU-batcher map-load lifecycle. Mirrors code/mission.cpp:1693-1697
-	// EXACTLY. Must run BEFORE EditorObjectMgr::load() so BldgAppearance::init()
-	// registrations land against an armed batcher state, not torn-down state.
-	// clear() ran at the top of this function (~line 315), which already ran
-	// onMapUnload/endMission for any prior session.
-	GpuStaticPropBatcher::instance().onMapLoad();
-	GpuMechBatcher::instance().onMapLoad();
+	// S2 mission-load chain — mirrors code/mission.cpp:1693-1695 + 2804-2839 + 3136-3143.
+	// Canonical order locked by docs/superpowers/plans/2026-05-25-editor-rebuild-S0-contract.md.
+	// Must run BEFORE EditorObjectMgr::load() so BldgAppearance::init()
+	// registrations land against an armed batcher + registry state.
+	// clear() ran at the top of this function, which already ran
+	// onMapUnload/endMission/destroy for any prior session.
+
+	// Steps 1-3 (game lines 1693-1695): batchers + registry init.
+	GpuStaticPropBatcher::instance().onMapLoad();              // step 1 — game line 1693
+	GpuMechBatcher::instance().onMapLoad();                    // step 2 — game line 1694
+	GpuStaticPropRegistry::init();                             // step 3 — game line 1695
 	GameAdapters::StaticProp::beginMission();
 	GameAdapters::Mech::beginMission();
-	EditorDataTrace("EditorData::initTerrainFromPCV: GPU batchers armed for map load");
+	EditorDataTrace("EditorData::initTerrainFromPCV: GPU batchers + registry armed for map load");
 
+	// Steps 4-9 (game lines 2804-2839): GPU cull substrate / compute / readback / lighting / shadow priming.
+	// Editor has no GameObjectManager (ObjectManager == nullptr — see editor/EditorGlobals.cpp);
+	// step 4 (setNumObjects) is skipped. Substrate / readback are sized from an editor
+	// max-actor constant equivalent to a generous game-mission worst case.
+	const uint32_t kEditorMaxActors = 2048u;
+	const uint32_t kStaticPropHeadroom = 8192u;
+	gpu_cull::substrate_init(kEditorMaxActors + kEditorMaxActors / 4u + kStaticPropHeadroom); // step 5 — game line 2815
+	gpu_cull::compute_init();                                                                 // step 6 — game line 2819
+	gos_terrain_lighting::mission_init(
+		static_cast<uint32_t>(Terrain::realVerticesMapSide * Terrain::realVerticesMapSide),
+		64u);                                                                                 // step 7 — game line 2825
+	gpu_cull::readback_init(kEditorMaxActors + kEditorMaxActors / 4u + kStaticPropHeadroom);  // step 8 — game line 2834
+	gos_ResetStaticShadowPriming();                                                           // step 9 — game line 2839
+	EditorDataTrace("EditorData::initTerrainFromPCV: gpu_cull substrate/compute/readback + terrain_lighting + shadow priming initialized");
+
+	// Step 10 — editor's only inserted step (actor spawn).
 	EditorObjectMgr::instance()->load( pFile, 1 );
 	EditorDataTrace("EditorData::initTerrainFromPCV: after EditorObjectMgr::load");
 
-	// GPU-batcher geometry finalization. All TG_TypeMultiShape instances
-	// created during EditorObjectMgr::load() above have been registered via
-	// BldgAppearance::init() against the armed batcher state (Task 1 ran
-	// onMapLoad/beginMission before this load call). finalizeGeometry() now
-	// uploads the immutable VBO/IBO. submitMultiShape() fast-rejects until
-	// this fires. Watch editor-startup.log for:
+	// Steps 11-13 (game lines 3136-3143): finalize batcher geometry, then build indirect buffer.
+	// All TG_TypeMultiShape instances created during EditorObjectMgr::load() above have been
+	// registered via BldgAppearance::init() against the armed batcher state. finalizeGeometry()
+	// uploads the immutable VBO/IBO. submitMultiShape() fast-rejects until this fires.
+	// Watch editor-startup.log for:
 	//   "[GPUPROPS] finalize: N types, M packets"   -- N > 0 required
-	GpuStaticPropBatcher::instance().finalizeGeometry();
-	GpuMechBatcher::instance().finalizeGeometry();
-	EditorDataTrace("EditorData::initTerrainFromPCV: GPU batchers finalized");
+	GpuStaticPropBatcher::instance().finalizeGeometry();       // step 11 — game line 3136
+	GpuMechBatcher::instance().finalizeGeometry();             // step 12 — game line 3137
+	if (gpu_cull::compute_isEnabled()) {
+		gpu_cull::compute_buildIndirectBuffer(batcher_getTypeCount()); // step 13 — game line 3143
+	}
+	EditorDataTrace("EditorData::initTerrainFromPCV: GPU batchers finalized + indirect buffer built");
 
 	{
 		long result = 0;
