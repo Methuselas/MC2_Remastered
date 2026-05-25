@@ -32,11 +32,11 @@ REM now fires correctly. Editor is a GPU-only test bed per
 REM memory/editor_is_gpu_only_testbed.md.
 REM MC2_GPU_OBJECTS=0 retired 2026-05-24 -- editor now wires GPU static-prop batcher
 REM MC2_GPU_MECHS=0   retired 2026-05-24 -- editor now wires GPU mech batcher
-REM Editor stays on dynamic submitMultiShape path. Static-prop registry fast-path
-REM requires GpuStaticPropRegistry::frameBegin/init/destroy wiring the editor
-REM frame loop does not yet have (filed as deferred debt). Sidestepping here
-REM keeps the editor on the per-frame submit path.
-set MC2_STATIC_PROP_REGISTRY=0
+REM Retired 2026-05-25 (E4c):
+REM   MC2_STATIC_PROP_REGISTRY=0  -- editor now wires GpuStaticPropRegistry
+REM                                  init/destroy/frameBegin (this commit).
+REM                                  Editor on same GPU path as game per
+REM                                  memory/editor_is_gpu_only_testbed.md.
 REM See docs/superpowers/plans/2026-05-24-editor-object-loop-gpu-port.md
 
 cd /d "A:\Games\mc2-opengl\mc2-editor"

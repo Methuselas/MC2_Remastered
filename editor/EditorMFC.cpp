@@ -20,7 +20,6 @@ static void editor_set_default_env_vars()
     if (!getenv("MC2_EDITOR_TRACE"))            _putenv_s("MC2_EDITOR_TRACE",              "1");
     if (!getenv("MC2_GPU_DRIVEN"))              _putenv_s("MC2_GPU_DRIVEN",                "1");
     if (!getenv("MC2_EDITOR_BYPASS_BLDG_CULL")) _putenv_s("MC2_EDITOR_BYPASS_BLDG_CULL",   "1");
-    if (!getenv("MC2_STATIC_PROP_REGISTRY"))    _putenv_s("MC2_STATIC_PROP_REGISTRY",      "0");
 }
 
 static void EarlyTrace(const char* msg)

@@ -23,6 +23,7 @@
 #include "ECharString.h"
 
 #include "../GameOS/gameos/gos_static_prop_batcher.h"
+#include "../GameOS/gameos/gos_static_prop_registry.h"
 #include "../GameOS/gameos/gos_mech_batcher.h"
 #include "../GameAdapters/StaticPropRenderAdapter.h"
 #include "../GameAdapters/MechRenderAdapter.h"
@@ -155,6 +156,7 @@ bool EditorData::clear()
 	// while actor TG_MultiShape pointers are still valid.
 	GpuStaticPropBatcher::instance().onMapUnload();
 	GpuMechBatcher::instance().onMapUnload();
+	GpuStaticPropRegistry::destroy();
 	GameAdapters::StaticProp::endMission();
 	GameAdapters::Mech::endMission();
 
@@ -428,6 +430,7 @@ bool EditorData::initTerrainFromPCV( const char* fileName )
 	// onMapUnload/endMission for any prior session.
 	GpuStaticPropBatcher::instance().onMapLoad();
 	GpuMechBatcher::instance().onMapLoad();
+	GpuStaticPropRegistry::init();
 	GameAdapters::StaticProp::beginMission();
 	GameAdapters::Mech::beginMission();
 	EditorDataTrace("EditorData::initTerrainFromPCV: GPU batchers armed for map load");

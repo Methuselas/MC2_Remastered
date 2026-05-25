@@ -33,6 +33,8 @@ EditorCamera.h			: Interface for the EditorCamera component.
 #include "objstatus.h"
 #endif
 
+#include "../GameOS/gameos/gos_static_prop_registry.h"
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -215,6 +217,11 @@ public:
 			if (theSky)
 				theSky->render(1);
 				
+			// Reset per-frame static-prop live-instance list before any
+			// BldgAppearance::render submits via markVisible() during land->render.
+			// Mirrors code/gamecam.cpp:198.
+			GpuStaticPropRegistry::frameBegin();
+
 			land->render();								//render the Terrain
 	
 			//If you ever want craters in the editor, just turn this on.  No way to save 'em though!
@@ -246,6 +253,12 @@ public:
 				if (s_ecrLog)
 					EditorCameraTrace("EditorCamera::render frame=%ld after  mcTextureManager->renderLists() returned",
 						s_ecrFrame);
+
+				// GPU water fast-path. Must run after renderLists() so terrain has
+				// flushed and depth-written. Mirrors code/gamecam.cpp:257.
+				// land->renderWater() above populated the SSBOs; this dispatches them.
+				// Guards internally via WaterStream::IsReady().
+				land->renderWaterFastPath();
 			}
 			else if (s_ecrLog)
 			{
