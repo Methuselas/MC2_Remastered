@@ -517,6 +517,10 @@ long WeaponBolt::update (void)
 		goalHeight *= 10.0f;
 	}
 
+	// B2 P2: snapshot position from last frame before owner HS overwrites it.
+	// Read again at end of update() to stamp the GPU trail segment.
+	prev_position = position;
+
 	//-------------------------------------------------------------
 	// Update position relative to my owner
 	GameObjectPtr myOwner = ObjectManager->getByWatchID(ownerWID);
@@ -1598,6 +1602,13 @@ long WeaponBolt::update (void)
 			inView = false;
 	}
 	
+	// B2 P2: GPU trail spawn. Segment-stamps particles along prev->cur each frame.
+	// CPU trailEffect (gosEffect) still runs in parallel — suppression is P4.
+	if (gpu_trail_kind != mc2::particles::GpuTrailKind::None) {
+		mc2::particles::GpuTrailEmitter::Spawn(
+			gpu_trail_kind, prev_position, position, frameLength);
+	}
+
 	return (inView);
 }
 
@@ -2505,7 +2516,12 @@ void WeaponBolt::init (bool create, ObjectTypePtr _type)
 		mcTextureHandle = 0;
 		gosTextureHandle = 0xffffffff;
 	}
-}	
+
+	// B2 P2 TEST MAPPING: every bolt = MissileSmoke. No CPU suppression in this
+	// phase — both CPU and GPU trails run in parallel; that's the success signal.
+	// P3 replaces this with a real INI-name -> kind table.
+	gpu_trail_kind = mc2::particles::GpuTrailKind::MissileSmoke;
+}
 
 //---------------------------------------------------------------------------
 void WeaponBolt::setOwner (GameObjectPtr who)
