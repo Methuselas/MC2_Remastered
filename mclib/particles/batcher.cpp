@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unordered_set>
 #include <vector>
 
 // Bridge entry point implemented in GameOS/gameos/gos_particle_bridge.cpp.
@@ -42,6 +43,7 @@ struct Batcher::Impl {
 namespace {
 bool g_enabled_initialized = false;
 bool g_enabled_value       = false;
+bool g_log_value           = false;   // MC2_GPU_PARTICLES_LOG=1
 
 // C12 diagnostic counters. Process-lifetime aggregates; dumped at atexit.
 // Three diagnostic categories:
@@ -70,9 +72,12 @@ void initialize_env() {
     if (g_enabled_initialized) return;
     const char* v = std::getenv("MC2_GPU_PARTICLES");
     g_enabled_value = (v && v[0] == '1');
+    const char* vl = std::getenv("MC2_GPU_PARTICLES_LOG");
+    g_log_value = (vl && vl[0] == '1');
     g_enabled_initialized = true;
     if (g_enabled_value) {
-        std::fprintf(stderr, "[INSTR v1] enabled: gpu_particles\n");
+        std::fprintf(stderr, "[INSTR v1] enabled: gpu_particles log=%d\n",
+                     (int)g_log_value);
         std::fflush(stderr);
         if (!g_atexit_registered) {
             std::atexit(dump_summary);
@@ -85,6 +90,11 @@ void initialize_env() {
 bool Batcher::is_enabled() {
     if (!g_enabled_initialized) initialize_env();
     return g_enabled_value;
+}
+
+bool Batcher::is_log_enabled() {
+    if (!g_enabled_initialized) initialize_env();
+    return g_log_value;
 }
 
 Batcher::Batcher(unsigned int perFrameBudget)
@@ -132,15 +142,56 @@ void Batcher::Emit(const GpuParticle& p) {
 void Batcher::ResolveTextures()
 {
     if (!impl_) return;
+    // Force-load all pool textures unconditionally (ForceLoadImages sets
+    // unLoadedImages=true before calling LoadImages so the early-exit is
+    // bypassed). This handles the common case where gosFX textures were added
+    // to the pool AFTER the normal actor-init LoadImages() window, leaving
+    // unLoadedImages=false with mcTextureNodeIndex still 0xffffffff.
+    if (MidLevelRenderer::MLRTexturePool::Instance)
+        MidLevelRenderer::MLRTexturePool::Instance->ForceLoadImages();
+
+    // MC2_GPU_PARTICLES_LOG=1 gated: per-handle RESOLVE_PROBE output.
+    // Normal runs see only the first-flush banner; probes require opt-in.
+    const bool logEnabled = is_log_enabled();
+
+    // Once-only diagnostic (gated): group/staging counts on first non-empty frame.
+    if (logEnabled) {
+        static bool s_reported = false;
+        if (!s_reported && !impl_->groups.empty()) {
+            s_reported = true;
+            std::fprintf(stderr,
+                         "[RESOLVE_PROBE] first_nonempty groups=%u staging=%u\n",
+                         (unsigned)impl_->groups.size(),
+                         (unsigned)impl_->staging.size());
+            std::fflush(stderr);
+        }
+    }
+
+    static std::unordered_set<uint32_t> s_probed;
     for (auto& grp : impl_->groups) {
         if (grp.handle == 0) continue;
-        if (!MidLevelRenderer::MLRTexturePool::Instance) continue;
+        if (!MidLevelRenderer::MLRTexturePool::Instance) {
+            if (logEnabled && s_probed.insert(grp.handle).second)
+                std::fprintf(stderr, "[RESOLVE_PROBE] handle=%u POOL_NULL\n", grp.handle);
+            continue;
+        }
         MidLevelRenderer::MLRTexture* mlrTex =
             (*MidLevelRenderer::MLRTexturePool::Instance)[static_cast<int>(grp.handle)];
-        if (!mlrTex) continue;
+        if (!mlrTex) {
+            if (logEnabled && s_probed.insert(grp.handle).second)
+                std::fprintf(stderr, "[RESOLVE_PROBE] handle=%u TEX_NULL\n", grp.handle);
+            continue;
+        }
         MidLevelRenderer::GOSImage* img = mlrTex->GetImage();
-        if (!img) continue;
+        if (!img) {
+            if (logEnabled && s_probed.insert(grp.handle).second)
+                std::fprintf(stderr, "[RESOLVE_PROBE] handle=%u IMG_NULL\n", grp.handle);
+            continue;
+        }
         DWORD gosHandle = img->GetHandle();
+        if (logEnabled && s_probed.insert(grp.handle).second)
+            std::fprintf(stderr, "[RESOLVE_PROBE] handle=%u img=%p isLoaded=%d gosHandle=%u\n",
+                grp.handle, (void*)img, (int)img->IsLoaded(), (unsigned)gosHandle);
         grp.handle = static_cast<uint32_t>(gosHandle);
     }
 }

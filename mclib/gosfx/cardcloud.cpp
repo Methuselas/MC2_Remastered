@@ -489,12 +489,19 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 	Check_Object(this);
 	Check_Object(info);
 
-	// P0-1 double-draw gate: GPU batcher owns rendering when enabled; skip
-	// the legacy MLR draw submission so particles are not rendered twice.
-	// Per-particle state (m_P_vertices, m_P_color, m_P_uvs) is still updated
-	// by AnimateParticle above, which is fine — the destructor and TurnOff
-	// paths walk those arrays regardless of the render gate.
+	// GPU render path (Stage 2'): re-emit current cloud to the batcher on
+	// every Draw() call. This matches the legacy path which submits card
+	// geometry to MLR render lists each frame. SpawnCardCloud samples spec
+	// curves at parent_age=0.5 so positions are consistent frame-to-frame
+	// (per-frame CPU-animated positions are a B2 polish item).
+	// SpinningCloud::Draw propagates up the chain for EffectCloud children;
+	// it does not render card geometry.
+	//
+	// NOTE: GPU spawn moved from Start() to here. Start()-based emission only
+	// filled the batcher for one frame (until the first Flush()), leaving the
+	// batcher empty for all subsequent frames.
 	if (mc2::particles::Batcher::is_enabled()) {
+		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed);
 		SpinningCloud::Draw(info);
 		return;
 	}
@@ -916,7 +923,7 @@ void
 	// because the destructor and legacy Execute walk garbage memory.
 	SpinningCloud::Start(info);
 
-	if (mc2::particles::Batcher::is_enabled()) {
-		(void)mc2::particles::Spawn(m_specification, &m_localToWorld, (float)m_seed);
-	}
+	// GPU spawn moved to Draw() for per-frame emission. Start()-based spawning
+	// only filled the batcher for a single frame; Draw() re-emits each frame
+	// while the effect is alive, matching the legacy MLR submission cadence.
 }

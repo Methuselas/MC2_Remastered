@@ -63,19 +63,18 @@ void main() {
 
     Particle p = particles[particleId];
 
-    // Stage 1' billboard: world-axis-aligned quad in the XY plane around the
-    // particle position. A true view-aligned billboard requires the camera
-    // basis uniform; Stage 2' adds that. For the Card test effect the
-    // distinction is invisible (single quad at one position).
-    // Visibility floor: real gosFX spec halfHeight peaks are often a few world
-    // units, which renders sub-pixel at typical mc2 mission camera distances.
-    // 8.0 world units is roughly the gamecam canary scale and renders as a
-    // visible sprite. Stage 2' polish: respect true spec sizes once the shader
-    // does per-frame curve evaluation and the projection stays accurate at
-    // smaller pixel coverage.
+    // Billboard orientation: extend in Stuff-X (east) and Stuff-Z (elevation/up).
+    // After the axis swap below, Stuff-X → GL-X and Stuff-Z → GL-Y, which is
+    // the screen plane for the default north-facing MC2 camera. This replaces
+    // the original XY (east-north / ground-plane) offset that foreshortened
+    // particles to near-invisible slivers at the ~45° gamecam angle.
+    //
+    // Stage 2' upgrade: true view-aligned billboard using camera right/up
+    // uniforms (avoids the east-west thin-strip artifact when camera rotates
+    // 90° so it looks along the east axis).
     float effSize = max(p.size, 8.0);
-    vec2 cornerXY = (kCornerUv[cornerIdx] - vec2(0.5, 0.5)) * (2.0 * effSize);
-    vec3 worldStuff = p.position.xyz + vec3(cornerXY, 0.0);
+    vec2 corner    = (kCornerUv[cornerIdx] - vec2(0.5, 0.5)) * (2.0 * effSize);
+    vec3 worldStuff = p.position.xyz + vec3(corner.x, 0.0, corner.y);
 
     // MC2 axis swap (load-bearing): gosFX SpawnCard emits world position in
     // Stuff::Point3D coords (stuff-space); terrainMVP is composed against the

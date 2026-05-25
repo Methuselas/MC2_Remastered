@@ -60,6 +60,12 @@ class Batcher {
     // Returns true iff MC2_GPU_PARTICLES=1.
     static bool is_enabled();
 
+    // Returns true iff MC2_GPU_PARTICLES_LOG=1.
+    // Gates verbose per-spec/per-handle SPAWN_PROBE and RESOLVE_PROBE output.
+    // Normal runs (is_enabled=1, is_log_enabled=0) produce only first-flush
+    // banners and error/overflow one-shots.
+    static bool is_log_enabled();
+
     // Open a new texture group before emitting a batch of particles that
     // share the same texture and UV sub-rect. Must be called at least once
     // before the first Emit; closing the previous group is automatic.

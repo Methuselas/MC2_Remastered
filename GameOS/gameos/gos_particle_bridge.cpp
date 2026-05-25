@@ -50,6 +50,20 @@ const ::glsl_program* s_prog = nullptr;
 
 bool s_initFailed = false;
 
+// Lazy-init env gate for verbose group/texture diagnostics.
+// MC2_GOSFX_GROUP_LOG=1 enables: UV rect dump (first flush) + missing-texture errors.
+// Normal runs see only the first-flush banner; set this flag for texture debug sessions.
+bool s_groupLog_initialized = false;
+bool s_groupLog_value       = false;
+bool groupLogEnabled() {
+    if (!s_groupLog_initialized) {
+        const char* v = std::getenv("MC2_GOSFX_GROUP_LOG");
+        s_groupLog_value       = (v && v[0] == '1');
+        s_groupLog_initialized = true;
+    }
+    return s_groupLog_value;
+}
+
 // P0-4: Cached uniform locations — populated once in ensureInitialized()
 // after the program links. -2 = not yet queried; -1 = not found (GLSL may
 // strip unused uniforms); >= 0 = valid location.
@@ -159,9 +173,9 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
         }
     }
 
-    // P2-3: per-group UV debug log on first flush — shows UV rects and blend
-    // modes being propagated from spawn through to the bridge.
-    {
+    // P2-3: per-group UV debug log on first flush — gated behind MC2_GOSFX_GROUP_LOG=1.
+    // Shows UV rects and blend modes being propagated from spawn through to the bridge.
+    if (groupLogEnabled()) {
         static bool s_uvDumpDone = false;
         if (!s_uvDumpDone && numGroups > 0) {
             s_uvDumpDone = true;
@@ -249,9 +263,11 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
             if (s_loc_uvSize   >= 0) glUniform2f(s_loc_uvSize,   1.0f, 1.0f);
             glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(count * 6u));
         } else {
-            std::fprintf(stderr,
-                "[GOSFX_GPU v1] ERROR missing_texture handle=%u\n", gosHandle);
-            std::fflush(stderr);
+            if (groupLogEnabled()) {
+                std::fprintf(stderr,
+                    "[GOSFX_GPU v1] ERROR missing_texture handle=%u\n", gosHandle);
+                std::fflush(stderr);
+            }
         }
     } else {
         // ── Per-group draw loop (P2-1) ────────────────────────────────
@@ -267,12 +283,30 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
             // Resolve handle to GL texture name.
             const GLuint glTex = (GLuint)gos_GetGLTextureName(grp.handle);
             if (glTex == 0) {
-                // Log missing texture once per unique handle (not every frame)
-                static std::unordered_set<uint32_t> s_loggedMissingHandles;
-                if (s_loggedMissingHandles.insert(grp.handle).second) {
-                    std::fprintf(stderr,
-                        "[GOSFX_GPU v1] ERROR missing_texture handle=%u\n", grp.handle);
-                    std::fflush(stderr);
+                if (grp.handle == 0) {
+                    // handle=0: B2 debt — point/shard/tube emitters not yet
+                    // texture-wired via BeginGroup. Log once under MC2_GOSFX_GROUP_LOG=1.
+                    if (groupLogEnabled()) {
+                        static bool s_b2DebtWarned = false;
+                        if (!s_b2DebtWarned) {
+                            s_b2DebtWarned = true;
+                            std::fprintf(stderr,
+                                "[GOSFX_GPU v1] NOTE handle=0 groups present (B2 debt: point/shard/tube emitters not yet texture-wired)\n");
+                            std::fflush(stderr);
+                        }
+                    }
+                } else {
+                    // Non-zero handle that failed to resolve — real error.
+                    // Gated behind MC2_GOSFX_GROUP_LOG=1 to avoid spew on first
+                    // frames before ForceLoadImages() completes.
+                    if (groupLogEnabled()) {
+                        static std::unordered_set<uint32_t> s_loggedMissingHandles;
+                        if (s_loggedMissingHandles.insert(grp.handle).second) {
+                            std::fprintf(stderr,
+                                "[GOSFX_GPU v1] ERROR missing_texture handle=%u\n", grp.handle);
+                            std::fflush(stderr);
+                        }
+                    }
                 }
                 continue;
             }
