@@ -223,11 +223,24 @@ class WeaponBolt : public GameObject
 			float				goalHeight;
 
 			// B2 P2: per-frame position snapshot for GPU trail segment stamping.
+			// No longer used by the trail path after the ring-buffer fix; kept
+			// for potential future velocity-based shader fades.
 			Stuff::Vector3D		prev_position;
 
 			// B2 P2: which GPU trail kind this bolt drives.  Hardcoded to
 			// MissileSmoke during P2 test pass; replaced by INI table in P3.
 			mc2::particles::GpuTrailKind gpu_trail_kind = mc2::particles::GpuTrailKind::None;
+
+			// B2 P2 fix: per-bolt trail history ring buffer. Stores last K world
+			// positions; each frame the full trail is re-stamped between consecutive
+			// pairs. Required because Batcher::Flush() clears staging each frame —
+			// without persistent particles, a per-frame segment vanishes instantly.
+			// K=64 ≈ 0.47s of history at 137 fps; enough to read as a smoke ribbon
+			// behind a moving missile. Tune up if trails look short, down if too long.
+			static constexpr int kTrailHistoryMax = 64;
+			Stuff::Vector3D trail_history[kTrailHistoryMax];
+			uint8_t trail_head     = 0;   // index of next slot to write
+			uint8_t trail_count    = 0;   // how many slots are populated (clamped to kTrailHistoryMax)
 
 	//Member Functions
 	//-----------------
@@ -276,6 +289,9 @@ class WeaponBolt : public GameObject
 
 			prev_position.Zero();
 			gpu_trail_kind = mc2::particles::GpuTrailKind::None;
+			for (int _i = 0; _i < kTrailHistoryMax; ++_i) trail_history[_i].Zero();
+			trail_head = 0;
+			trail_count = 0;
 		}
 
 		~WeaponBolt (void)
