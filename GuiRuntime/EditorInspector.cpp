@@ -15,6 +15,7 @@ static bool isEnabled() {
 static EditorInspector::InspectorSelection     s_selection;
 static EditorInspector::StaticPropInspectorData s_staticPropData;
 static EditorInspector::MechInspectorData       s_mechData;
+static EditorInspector::TerrainInspectorData    s_terrainData;
 static bool s_open = false;
 
 }  // namespace
@@ -26,6 +27,7 @@ void EditorInspector::onCtrlShiftClick(int mouseX, int mouseY) {
     s_selection      = InspectorSelection{};
     s_staticPropData = StaticPropInspectorData{};
     s_mechData       = MechInspectorData{};
+    s_terrainData    = TerrainInspectorData{};
     s_selection.screenX = mouseX;
     s_selection.screenY = mouseY;
     s_open = true;
@@ -37,6 +39,7 @@ void EditorInspector::setPickResult(int mouseX, int mouseY,
     s_selection      = InspectorSelection{};
     s_staticPropData = StaticPropInspectorData{};
     s_mechData       = MechInspectorData{};
+    s_terrainData    = TerrainInspectorData{};
     s_selection.screenX = mouseX;
     s_selection.screenY = mouseY;
     s_selection.valid   = lookup.isValid;
@@ -44,6 +47,13 @@ void EditorInspector::setPickResult(int mouseX, int mouseY,
     if (lookup.isValid) {
         s_selection.kind   = lookup.kind;
         s_selection.handle = lookup.handle;
+        s_selection.hasSelection = true;
+        if (lookup.kind == RenderWorld::RenderObjectKind::StaticProp)
+            s_selection.pickKind = InspectorPickKind::StaticProp;
+        else if (lookup.kind == RenderWorld::RenderObjectKind::Mech)
+            s_selection.pickKind = InspectorPickKind::Mech;
+        else
+            s_selection.pickKind = InspectorPickKind::None;
     }
     s_open = true;
 }
@@ -56,10 +66,23 @@ void EditorInspector::setMechData(const MechInspectorData& md) {
     s_mechData = md;
 }
 
+void EditorInspector::setTerrainData(const TerrainInspectorData& td) {
+    if (!isEnabled()) return;
+    s_terrainData = td;
+    s_selection.hasSelection     = td.populated;
+    s_selection.pickKind         = InspectorPickKind::Terrain;
+    s_selection.lookup.worldX      = td.worldX;
+    s_selection.lookup.worldY      = td.worldY;
+    s_selection.lookup.worldZ      = td.worldZ;
+    s_selection.lookup.worldPosValid = td.populated;
+    // NB: s_selection.valid stays false (no RenderWorld lookup).
+}
+
 void EditorInspector::clear() {
     s_selection      = InspectorSelection{};
     s_staticPropData = StaticPropInspectorData{};
     s_mechData       = MechInspectorData{};
+    s_terrainData    = TerrainInspectorData{};
     s_open = false;
 }
 
