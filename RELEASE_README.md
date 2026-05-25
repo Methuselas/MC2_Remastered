@@ -14,7 +14,7 @@ small number of asset-side glitches remain. See **Known Issues** below.
 
 ## Install
 
-Create a new empty folder, then download all seven zips and extract each into that
+Create a new empty folder, then download all six zips and extract each into that
 folder. Folder contents merge — do not extract into subfolders.
 
 | Zip | Contents |
@@ -25,11 +25,13 @@ folder. Folder contents merge — do not extract into subfolders.
 | `mc2-burnins-4x-pt1.zip` | 4× upscaled mission lightmaps (campaign A + tutorials) |
 | `mc2-burnins-4x-pt2.zip` | 4× upscaled mission lightmaps (campaign M + e3demo) |
 | `mc2-art.zip` | 4× upscaled UI and art textures |
-| `mc2-tgl.zip` | 4× upscaled 3D model textures |
 
 The `burnins-4x` zips are technically optional — the game falls back to stock-resolution
 lightmaps inside the FST archives — but terrain colormaps look noticeably blurry without
 them.
+
+> **Note:** v0.4 beta ships 4× upscaled terrain colormaps, lightmaps, and UI art.
+> 3D-model textures (TGL) remain at stock resolution this release; upscale pass deferred.
 
 No original MC2 install required.
 
