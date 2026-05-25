@@ -9,6 +9,7 @@
 ****************************************************************/
 
 #include <cstdio>
+#include <string>
 #include "stdafx.h"
 #include "EditorInterface.h"
 #include "dstd.h"
@@ -246,6 +247,16 @@ void Editor::init( char* loader )
 
 	FullPathFileName mPath;
 	mPath.init(missionPath,missionName,".pak");
+
+	// S-CLI override: if -mission was passed on the command line, use that path
+	// directly instead of (missionPath, missionName, ".pak"). This must happen
+	// BEFORE the fileExists check so the NewSingleMission modal dialog (below)
+	// is skipped -- the dialog has its own message pump and OnIdle never fires
+	// during it, so the auto-load OnIdle hook can never run.
+	extern std::string g_cliMissionPath;
+	if (!g_cliMissionPath.empty()) {
+		mPath.init("", g_cliMissionPath.c_str(), "");
+	}
 
 	bool bCanceled = false;
 	if (!justResaveAllMaps)
