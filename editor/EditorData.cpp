@@ -431,6 +431,19 @@ bool EditorData::initTerrainFromPCV( const char* fileName )
 	EditorDataTrace("EditorData::initTerrainFromPCV: after land->load bRetVal=%d", bRetVal ? 1 : 0);
 	EditorDataTrace("EditorData::initTerrainFromPCV: before recalcWater");
 	land->recalcWater();
+
+	// S2.8 — mirrors code/mission.cpp:2271. Builds water stream, dense terrain
+	// recipe SSBO (BuildDenseRecipe → sets gos_terrain_indirect::g_recipeReady=true),
+	// terrain surface generation, mask dispatch init. Without this the GPU terrain
+	// dispatch fails preflight (reason=recipe_not_ready) and terrain renders black.
+	// Editor has no overall load-progress variable; use a local dummy.
+	{
+		volatile float editorLoadProgress = 36.0f;
+		EditorDataTrace("EditorData::initTerrainFromPCV: before primeMissionTerrainCache");
+		land->primeMissionTerrainCache(editorLoadProgress, 4.0f);
+		EditorDataTrace("EditorData::initTerrainFromPCV: after primeMissionTerrainCache");
+	}
+
 	EditorDataTrace("EditorData::initTerrainFromPCV: before EditorObjectMgr::load");
 	// S2 mission-load chain — mirrors code/mission.cpp:1693-1695 + 2804-2839 + 3136-3143.
 	// Canonical order locked by docs/superpowers/plans/2026-05-25-editor-rebuild-S0-contract.md.
