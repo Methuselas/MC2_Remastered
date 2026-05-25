@@ -44,6 +44,7 @@
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
 #include "../GameOS/gameos/gos_static_prop_registry.h"  // Stage 3.C: frameBegin()
 #include "particles/batcher.h"  // GPU particle batcher flush (Stage 2' and beyond)
+#include "../GameOS/gameos/gos_particle_bridge.h"  // B2 P1: camera basis bridge
 #include "../GameOS/gameos/debug_renderer.h"
 #include "../GuiRuntime/EditorInspector.h"  // IMG-INSPECT-3 flushDebugHighlight
 
@@ -267,8 +268,26 @@ void GameCamera::render (void)
 			// SpawnCard*/SpawnCardCloud paths.
 			{
 				ZoneScopedN("GameCamera::render particlesFlush");
+
+				// B2 P1: publish current camera basis to particle bridge before flush.
+				// cameraOrigin is the camera's world transform (LinearMatrix4D);
+				// GetLocalRightInWorld / GetLocalUpInWorld return vectors in MC2/Stuff
+				// world space (x=east, y=north, z=elevation).  Apply the same axis swap
+				// used in particle_billboard.vert (GL_x=-Stuff_x, GL_y=Stuff_z, GL_z=Stuff_y)
+				// so the bridge vectors land in the same space as worldPos in the shader.
+				{
+					Stuff::UnitVector3D stuffRight, stuffUp;
+					cameraOrigin.GetLocalRightInWorld(&stuffRight);
+					cameraOrigin.GetLocalUpInWorld(&stuffUp);
+					float camRight[3] = { -stuffRight.x,  stuffRight.z,  stuffRight.y };
+					float camUp[3]    = { -stuffUp.x,     stuffUp.z,     stuffUp.y    };
+					gos_SetActiveCamera(camRight, camUp);
+				}
+
 				::mc2::particles::Batcher::Instance().ResolveTextures();  // resolve MLR->GOS after renderLists
 				::mc2::particles::Batcher::Instance().Flush();
+
+				gos_ClearActiveCamera();
 			}
 		}
 
