@@ -2410,7 +2410,7 @@ void WeaponBolt::destroy (void)
 //   effectName="lrm_trail"      (id 9=LRM)                       -> MissileSmoke
 //   effectName="Swarm_lrm_trail"(id 74=Swarm LRM)                -> MissileSmoke
 //   effectName="TBolt_trail"    (id 27=Thunderbolt)               -> MissileSmoke
-//   effectName="flamer_trail"   (id 3=Flamer bolt)                -> MissileSmoke
+//   effectName="flamer_trail"   (id 3=Flamer bolt)                -> None (CPU gosFX; not proven)
 //   anything else (lasers, ACs, gauss, MG, NONE, ...)             -> None
 // Survey saved to docs/superpowers/specs/2026-05-26-fx-gpu-b3-weapon-ini-survey.md
 static mc2::particles::GpuTrailKind gpuTrailKindFromEffectId(int32_t eid)
@@ -2426,9 +2426,9 @@ static mc2::particles::GpuTrailKind gpuTrailKindFromEffectId(int32_t eid)
     if (S_stricmp(name, "srm_trail")       == 0 ||
         S_stricmp(name, "lrm_trail")       == 0 ||
         S_stricmp(name, "Swarm_lrm_trail") == 0 ||
-        S_stricmp(name, "TBolt_trail")     == 0 ||
-        S_stricmp(name, "flamer_trail")    == 0)
+        S_stricmp(name, "TBolt_trail")     == 0)
         return GpuTrailKind::MissileSmoke;
+    // flamer_trail → None: flamer GPU visual not proven; CPU gosFX fallback preserved.
     return GpuTrailKind::None;
 }
 
