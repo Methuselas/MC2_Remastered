@@ -1173,173 +1173,90 @@ void EditorObjectMgr::update()
 //*************************************************************************************************
 void EditorObjectMgr::render()
 {
-	//--------------------------------
-	//Set States for Software Renderer
-	if (Environment.Renderer == 3)
-	{
-		gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_OneZero);
-
-		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeGouraud);
-		gos_SetRenderState( gos_State_MonoEnable, 1);
-		gos_SetRenderState( gos_State_Perspective, 0);
-		gos_SetRenderState( gos_State_Clipping, 1);
-		gos_SetRenderState( gos_State_Specular, 0);
-		gos_SetRenderState( gos_State_Dither, 0);
-		gos_SetRenderState( gos_State_TextureMapBlend, gos_BlendModulate);
-		gos_SetRenderState( gos_State_Filter, gos_FilterNone);
-		gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
-		gos_SetRenderState( gos_State_ZCompare, 1);
-		gos_SetRenderState(	gos_State_ZWrite, 1);
-	}
-	//--------------------------------
-	//Set States for Hardware Renderer	
-	else
-	{
-		gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_OneZero);
-		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeGouraud);
-		gos_SetRenderState( gos_State_MonoEnable, 0);
-		gos_SetRenderState( gos_State_Perspective, 1);
-		gos_SetRenderState( gos_State_Clipping, 1);
-		gos_SetRenderState( gos_State_Specular, 1);
-		gos_SetRenderState( gos_State_Dither, 1);
-		gos_SetRenderState( gos_State_TextureMapBlend, gos_BlendModulate);
-		gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
-		gos_SetRenderState( gos_State_ZCompare, 1);
-		gos_SetRenderState(	gos_State_ZWrite, 1);
-	}
+	// gos_SetRenderState blocks removed. The GPU batcher path manages its own
+	// GL state internally during flush(). The legacy Software-Renderer path
+	// (Environment.Renderer==3) is unsupported under the GPU batcher; the
+	// hardware-renderer state block is also removed because batcher flush()
+	// sets the necessary GL state.
 
 	if (renderObjects)
 	{
 		for ( BUILDING_LIST::EIterator iter = buildings.Begin();
 			!iter.IsDone(); iter++ )
+		{
+			currentFloatHelp = 0;
+			if (renderTrees || (!renderTrees && ((*iter)->appearance()->getAppearanceClass() != TREE_APPR_TYPE)))
 			{
-				currentFloatHelp = 0;
-				if (renderTrees || (!renderTrees && ((*iter)->appearance()->getAppearanceClass() != TREE_APPR_TYPE)))
+				if ( (*iter)->appearance()->recalcBounds() )
 				{
-					if ( (*iter)->appearance()->recalcBounds() )
-					{
-						if ( (*iter)->getDamage() )
-							(*iter)->appearance()->drawBars();
-						(*iter)->appearance()->render();
-						if ( (*iter)->getColor() & 0xff000000 )
-							(*iter)->appearance()->drawSelectBrackets( (*iter)->getColor() );
-					}
+					if ( (*iter)->getDamage() )
+						(*iter)->appearance()->drawBars();
+					// BldgAppearance::render() submits into the static-prop batcher's
+					// per-frame buckets via submitMultiShape() (bdactor.cpp ~1199/1241).
+					// The flush is issued later from mcTextureManager->renderLists()
+					// at EditorCamera.h:239 -- NOT here.
+					(*iter)->appearance()->render();
+					if ( (*iter)->getColor() & 0xff000000 )
+						(*iter)->appearance()->drawSelectBrackets( (*iter)->getColor() );
 				}
 			}
+		}
 	}
 
-	//Always draw the Mechs/Vehicles
-		for ( UNIT_LIST::EIterator mIter = units.Begin();
+	// Always draw the Mechs/Vehicles
+	for ( UNIT_LIST::EIterator mIter = units.Begin();
 		!mIter.IsDone(); mIter++ )
+	{
+		EditorObject* pObj = (*mIter);
+		currentFloatHelp = 0;
+		if ( pObj->appearance()->recalcBounds() )
 		{
-			EditorObject* pObj = (*mIter);
-			currentFloatHelp = 0;
-			if ( pObj->appearance()->recalcBounds() )
-			{
-				pObj->appearance()->render();
-				if ( (*mIter)->getDamage() )
-						pObj->appearance()->drawBars();
-				if ( (*mIter)->getColor() & 0xff000000 )
-						pObj->appearance()->drawSelectBrackets( pObj->getColor() );
-			}
+			// Mech3DAppearance::render() submits into the mech batcher via
+			// submitActor() (mech3d.cpp). Flush is via renderLists(), not here.
+			pObj->appearance()->render();
+			if ( (*mIter)->getDamage() )
+				pObj->appearance()->drawBars();
+			if ( (*mIter)->getColor() & 0xff000000 )
+				pObj->appearance()->drawSelectBrackets( pObj->getColor() );
 		}
+	}
 
-	// draw the building links
-		for ( LINK_LIST::EIterator lIter = links.Begin();
+	// Building links -- 2D overlay, unchanged, NOT batcher scope.
+	for ( LINK_LIST::EIterator lIter = links.Begin();
 		!lIter.IsDone(); lIter++ )
-		{
-			(*lIter)->render();
-		}
+	{
+		(*lIter)->render();
+	}
 
-	// draw the drop zones -- this will change as soon as we get art
-		for ( DROP_LIST::EIterator dIter = dropZones.Begin();
+	// Drop zones -- 2D overlay, unchanged, NOT batcher scope.
+	for ( DROP_LIST::EIterator dIter = dropZones.Begin();
 		!dIter.IsDone(); dIter++ )
-		{
-			Stuff::Vector3D pos = (*dIter)->getPosition();
-			Stuff::Vector4D screen;
-			
-			eye->projectZ( pos, screen );
-			
-			GUI_RECT Rect;
-			Rect.top = screen.y - 3;
-			Rect.left = screen.x - 3;
-			Rect.bottom = screen.y + 3;
-			Rect.right = screen.x + 3;
-			drawRect( Rect, (*dIter)->isVTol() ? 0xff0000ff : 0xffffff00 );
-			
-		}
+	{
+		Stuff::Vector3D pos = (*dIter)->getPosition();
+		Stuff::Vector4D screen;
 
+		eye->projectZ( pos, screen );
+
+		GUI_RECT Rect;
+		Rect.top = screen.y - 3;
+		Rect.left = screen.x - 3;
+		Rect.bottom = screen.y + 3;
+		Rect.right = screen.x + 3;
+		drawRect( Rect, (*dIter)->isVTol() ? 0xff0000ff : 0xffffff00 );
+	}
 }
 
 //*************************************************************************************************
 void EditorObjectMgr::renderShadows()
 {
-	//-----------------------------------------------------
-	//Set render states as few times as possible.
-
-	//--------------------------------
-	//Set States for Software Renderer
-	if (Environment.Renderer == 3)
-	{
-		gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_OneZero);
-		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeFlat);
-		gos_SetRenderState( gos_State_MonoEnable, 1);
-		gos_SetRenderState( gos_State_Perspective, 0);
-		gos_SetRenderState( gos_State_Clipping, 1);
-		gos_SetRenderState( gos_State_AlphaTest, 0);
-		gos_SetRenderState( gos_State_Specular, 0);
-		gos_SetRenderState( gos_State_Dither, 0);
-		gos_SetRenderState( gos_State_TextureMapBlend, gos_BlendDecal);
-		gos_SetRenderState( gos_State_Filter, gos_FilterNone);
-		gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
-		gos_SetRenderState( gos_State_ZCompare, 0);
-		gos_SetRenderState(	gos_State_ZWrite, 0);
-	}
-	//--------------------------------
-	//Set States for Hardware Renderer	
-	else
-	{
-		gos_SetRenderState( gos_State_AlphaMode, gos_Alpha_AlphaInvAlpha);
-		gos_SetRenderState( gos_State_ShadeMode, gos_ShadeFlat);
-		gos_SetRenderState( gos_State_MonoEnable, 1);
-		gos_SetRenderState( gos_State_Perspective, 0);
-		gos_SetRenderState( gos_State_Clipping, 1);
-		gos_SetRenderState( gos_State_AlphaTest, 1);
-		gos_SetRenderState( gos_State_Specular, 0);
-		gos_SetRenderState( gos_State_Dither, 1);
-		gos_SetRenderState( gos_State_TextureMapBlend, gos_BlendModulate);
-		gos_SetRenderState( gos_State_Filter, gos_FilterNone);
-		gos_SetRenderState( gos_State_TextureAddress, gos_TextureWrap );
-		gos_SetRenderState( gos_State_ZCompare, 1);
-		gos_SetRenderState(	gos_State_ZWrite, 1);
-	}
-
-	if (renderObjects)
-	{
-		for ( BUILDING_LIST::EIterator iter = buildings.Begin(); !iter.IsDone(); iter++ )
-		{
-			if (renderTrees || (!renderTrees && ((*iter)->appearance()->getAppearanceClass() != TREE_APPR_TYPE)))
-			{
-				if ( (*iter)->appearance()->recalcBounds() )
-				{
-					//(*iter)->appearance()->update();
-					//(*iter)->appearance()->setVisibility(true,true);
-					(*iter)->appearance()->renderShadows();
-					//(*iter)->appearance()->render();
-				}
-			}
-		}
-	}
-
-	//Always draw the Mechs/Vehicles
-		for ( UNIT_LIST::EIterator mIter = units.Begin();
-		!mIter.IsDone(); mIter++ )
-		{
-			if ( (*mIter)->appearance()->recalcBounds() )
-			{
-				(*mIter)->appearance()->renderShadows();
-			}
-		}
+	// No-op: editor skips static shadow bake.
+	// - Static prop shadows: finalizeGeometry() was never called for shadow
+	//   registration on the legacy path; no regression vs prior behavior.
+	// - Dynamic mech shadows: covered by GpuMechBatcher::flushShadow() from
+	//   the shadow pre-pass in gameos_graphics.cpp; no editor-side call needed.
+	// The legacy gos_SetRenderState + per-object renderShadows() loop is
+	// removed to avoid driving GL state that conflicts with the GPU batcher.
+	(void)0;
 }
 
 //*************************************************************************************************
