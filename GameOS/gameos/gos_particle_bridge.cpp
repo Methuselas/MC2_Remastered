@@ -158,8 +158,8 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
         }
     }
 
-    // P2-3: per-group UV debug log on first flush — shows UV rects being
-    // propagated from spawn through to the bridge.
+    // P2-3: per-group UV debug log on first flush — shows UV rects and blend
+    // modes being propagated from spawn through to the bridge.
     {
         static bool s_uvDumpDone = false;
         if (!s_uvDumpDone && numGroups > 0) {
@@ -167,8 +167,9 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
             for (unsigned gi = 0; gi < numGroups; ++gi) {
                 const mc2::particles::GroupInfo& g = groups[gi];
                 std::fprintf(stderr,
-                    "[GOSFX_GPU v1] group %u: tex=%u uv=(%.2f,%.2f)+(%.2f,%.2f) count=%u\n",
-                    gi, g.handle, g.u0, g.v0, g.us, g.vs, g.count);
+                    "[GOSFX_GPU v1] group %u: tex=%u uv=(%.2f,%.2f)+(%.2f,%.2f) count=%u blend=%s\n",
+                    gi, g.handle, g.u0, g.v0, g.us, g.vs, g.count,
+                    g.blendMode == 1 ? "additive" : "alpha");
             }
             std::fflush(stderr);
         }
@@ -280,6 +281,15 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
             // P2-1: set UV sub-rect uniforms per group.
             if (s_loc_uvOffset >= 0) glUniform2f(s_loc_uvOffset, grp.u0, grp.v0);
             if (s_loc_uvSize   >= 0) glUniform2f(s_loc_uvSize,   grp.us, grp.vs);
+
+            // Per-group blend mode from MLRState (saved state restored after loop).
+            // 0 = standard alpha blend: GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
+            // 1 = additive:             GL_SRC_ALPHA, GL_ONE
+            if (grp.blendMode == 1) {
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            } else {
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            }
 
             // Bind the resolved texture.
             glBindTexture(GL_TEXTURE_2D, glTex);

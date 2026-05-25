@@ -45,6 +45,8 @@ struct GroupInfo {
     float    vs;        // UV sub-rect height   (0..1)
     unsigned start;     // index of first record in staging buffer
     unsigned count;     // number of records in this group
+    int      blendMode; // 0 = standard alpha (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+                        // 1 = additive       (GL_SRC_ALPHA, GL_ONE)
 };
 
 class Batcher {
@@ -69,7 +71,9 @@ class Batcher {
     //
     // Use u0=0, v0=0, us=1, vs=1 for full-page textures.
     // No-op when is_enabled() is false.
-    void BeginGroup(uint32_t handle, float u0, float v0, float us, float vs);
+    // blendMode: 0 = standard alpha, 1 = additive (from MLRState AlphaMode).
+    void BeginGroup(uint32_t handle, float u0, float v0, float us, float vs,
+                    int blendMode = 0);
 
     // Push one particle record into the per-frame staging buffer. Bounds-
     // checked against perFrameBudget; on overflow the record is dropped and

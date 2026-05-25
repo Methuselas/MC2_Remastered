@@ -163,12 +163,27 @@ void SpawnCardCloud(const gosFX::CardCloud__Specification* spec,
         v0 += row * vSize;
     }
 
-    // Register a group with the batcher so the bridge knows which texture
-    // and UV rect to use for this cloud's particles.
+    // Determine blend mode from the spec's MLRState alpha mode.
+    // OneOneMode  (SRC_ONE,   DST_ONE)   = additive (sparks, laser trails)
+    // AlphaOneMode (SRC_ALPHA, DST_ONE)  = additive with alpha modulation
+    // All other modes (AlphaInvAlphaMode etc.) = standard alpha blend.
+    int blendMode = 0;
+    {
+        const MidLevelRenderer::MLRState::AlphaMode alphaMode =
+            mut_spec->m_state.GetAlphaMode();
+        if (alphaMode == MidLevelRenderer::MLRState::OneOneMode ||
+            alphaMode == MidLevelRenderer::MLRState::AlphaOneMode) {
+            blendMode = 1;
+        }
+    }
+
+    // Register a group with the batcher so the bridge knows which texture,
+    // UV rect, and blend mode to use for this cloud's particles.
     Batcher& batcher = Batcher::Instance();
     batcher.BeginGroup(gosTexHandle, u0, v0,
                        (uSize > 0.0f ? uSize : 1.0f),
-                       (vSize > 0.0f ? vSize : 1.0f));
+                       (vSize > 0.0f ? vSize : 1.0f),
+                       blendMode);
 
     for (int i = 0; i < population; ++i) {
         // Per-particle seed in [min_seed, min_seed + seed_range], clamped

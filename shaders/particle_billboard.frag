@@ -23,5 +23,9 @@ out vec4 outColor;
 
 void main() {
     vec4 tex = textureLod(uAtlas, v_uv, 0.0);
+    // Discard colorkey pixels (MC2 particle textures use magenta 0xFF00FF as transparent)
+    if (tex.r > 0.9 && tex.g < 0.1 && tex.b > 0.9) discard;
     outColor = tex * v_color;
+    // Also discard genuinely transparent pixels
+    if (outColor.a < 0.01) discard;
 }
