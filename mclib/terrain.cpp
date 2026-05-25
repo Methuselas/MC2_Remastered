@@ -1613,8 +1613,21 @@ void Terrain::geometry (void)
 	cameraPos.z = eye->getCameraOrigin().y;
 
 	float vClipConstant = eye->verticalSphereClipConstant;
-	float hClipConstant = eye->horizontalSphereClipConstant; 
-	
+	float hClipConstant = eye->horizontalSphereClipConstant;
+
+	// S2.13: MC2_TERRAIN_CULL_WIDE=1 forces the angular sphere cull to
+	// admit-all (constants set to 1e9). Investigation revealed editor
+	// terrain coverage at ~25% of map vertices passing the angular cull
+	// (885/3474 verts on mc2_01 default camera). Whether this matches
+	// game-side behavior is unverified; this gate exists as an opt-in
+	// workaround so visual A/B can confirm or refute the cull as root cause
+	// of the "terrain clips to small center region in editor" symptom.
+	// Default OFF: bit-identical legacy behavior. See handoff S2.13.
+	if (getenv("MC2_TERRAIN_CULL_WIDE") != NULL) {
+		vClipConstant = 1.0e9f;
+		hClipConstant = 1.0e9f;
+	}
+
 
 	// VPL retirement: the MC2_VPL_CULL / MC2_VPL_REDUCE getenv reads are
 	// KEPT solely to gate the one-shot event=retired lifecycle lines
