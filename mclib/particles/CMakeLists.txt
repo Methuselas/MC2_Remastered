@@ -16,6 +16,7 @@ set(SOURCES
     spawn_shard.cpp
     spawn_tube.cpp
     spawn.cpp
+    gpu_trail.cpp
 )
 
 include_directories(${COMMON_INCLUDE_DIRS} "../../" "../../mclib" "./")

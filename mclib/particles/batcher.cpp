@@ -27,6 +27,10 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
 namespace mc2 {
 namespace particles {
 
+// Trail-spawn counters (see batcher.h declaration; incremented by gpu_trail.cpp).
+unsigned long long Batcher::s_trail_spawn_total = 0;
+unsigned long long Batcher::s_trail_head_total  = 0;
+
 struct Batcher::Impl {
     std::vector<GpuParticle> staging;
     std::vector<GroupInfo>   groups;
@@ -62,9 +66,11 @@ void dump_summary() {
     std::fprintf(stderr,
                  "[GPU_PARTICLES v1] event=summary emit_total=%llu flush_total=%llu "
                  "nonempty_flush_total=%llu records_flushed_total=%llu "
-                 "records_per_flush_max=%u\n",
+                 "records_per_flush_max=%u trail_spawn=%llu trail_head=%llu\n",
                  g_emit_total, g_flush_total, g_nonempty_flush_total,
-                 g_records_flushed_total, g_records_per_flush_max);
+                 g_records_flushed_total, g_records_per_flush_max,
+                 Batcher::s_trail_spawn_total,
+                 Batcher::s_trail_head_total);
     std::fflush(stderr);
 }
 

@@ -105,6 +105,12 @@ class Batcher {
     // Stage 2' (per-type Spawn) may sharded if budget breakdown demands.
     static Batcher& Instance();
 
+ // Trail-spawn diagnostic counters. Incremented by GpuTrailEmitter::Spawn()
+ // and printed by dump_summary() at atexit. Public so gpu_trail.cpp can
+ // reach them without a friend declaration.
+ static unsigned long long s_trail_spawn_total;
+ static unsigned long long s_trail_head_total;
+
  private:
     struct Impl;
     Impl* impl_;
