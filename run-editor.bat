@@ -15,6 +15,11 @@ REM   data/effects/mc2.fx
 REM   data/art/editorGui.fit
 REM   system.cfg
 REM
+REM MC2_GPU_DRIVEN=0: editor render loop (EditorCamera.h) does NOT call
+REM land->renderWaterFastPath(); GPU-driven default-ON arms fast paths in
+REM terrain.cpp + quad.cpp that self-disable the legacy CPU paths the editor
+REM loop DOES drive.  Set to 0 to keep legacy CPU terrain/water/overlay active.
+REM
 REM MC2_EDITOR_BYPASS_BLDG_CULL=1: recalcBounds in bdactor.cpp has ~87%
 REM false-negative rate at zoomed-out camera after the 2026-05-18 projected-
 REM body deletion.  The game survives via GPU compute cull; the editor has
@@ -25,22 +30,15 @@ REM MC2_EDITOR_TRACE=1: writes editor-startup.log to CWD for launch debugging.
 REM Keep this on so logs are always captured.
 
 set MC2_EDITOR_TRACE=1
+set MC2_GPU_DRIVEN=0
 set MC2_EDITOR_BYPASS_BLDG_CULL=1
-REM MC2_STATIC_PROP_REGISTRY=0 (restored 2026-05-25 E4f):
-REM   With registry enabled, building instances are not reaching
-REM   GpuStaticPropRegistry::markVisible() in editor (mark_visible=0
-REM   at session end despite types registered + flush armed). Root
-REM   cause is an unidentified precondition inside BldgAppearance::
-REM   render::IsStaticNow() returning false in editor. Until that's
-REM   isolated, route buildings through the direct submitMultiShape
-REM   path (proven working in E4). Filed as deferred debt.
-set MC2_STATIC_PROP_REGISTRY=0
-REM MC2_GPU_DRIVEN=0 retired 2026-05-25 -- editor terrain MVP publish
-REM converged to gos_SetWorldToClipGL (commit 2160fc9c); GPU cull-compute
-REM now fires correctly. Editor is a GPU-only test bed per
-REM memory/editor_is_gpu_only_testbed.md.
 REM MC2_GPU_OBJECTS=0 retired 2026-05-24 -- editor now wires GPU static-prop batcher
 REM MC2_GPU_MECHS=0   retired 2026-05-24 -- editor now wires GPU mech batcher
+REM Editor stays on dynamic submitMultiShape path. Static-prop registry fast-path
+REM requires GpuStaticPropRegistry::frameBegin/init/destroy wiring the editor
+REM frame loop does not yet have (filed as deferred debt). Sidestepping here
+REM keeps the editor on the per-frame submit path.
+set MC2_STATIC_PROP_REGISTRY=0
 REM See docs/superpowers/plans/2026-05-24-editor-object-loop-gpu-port.md
 
 cd /d "A:\Games\mc2-opengl\mc2-editor"

@@ -13,22 +13,13 @@
 
 static void editor_set_default_env_vars()
 {
-    // Bake editor-preferred defaults. Editor is a GPU-only test bed
-    // (memory/editor_is_gpu_only_testbed.md); these are the correct
-    // permanent defaults. Bat overrides still work because we only set
-    // when unset.
+    // Bake editor-preferred defaults so RenderDoc and other tools can launch
+    // the exe directly without a .bat. Bat overrides still work because we
+    // only set when unset.
     if (!getenv("MC2_EDITOR_TRACE"))            _putenv_s("MC2_EDITOR_TRACE",              "1");
     if (!getenv("MC2_GPU_DRIVEN"))              _putenv_s("MC2_GPU_DRIVEN",                "1");
     if (!getenv("MC2_EDITOR_BYPASS_BLDG_CULL")) _putenv_s("MC2_EDITOR_BYPASS_BLDG_CULL",   "1");
-    // MC2_STATIC_PROP_REGISTRY=0 (restored 2026-05-25 E4f):
-    //   With registry enabled, building instances never reach
-    //   GpuStaticPropRegistry::markVisible() in editor (mark_visible=0
-    //   at session end despite types registered + flush armed). Root
-    //   cause is an unidentified precondition inside
-    //   BldgAppearance::render::IsStaticNow() returning false in
-    //   editor. Until that's isolated, route buildings through the
-    //   direct submitMultiShape path (proven working in E4).
-    if (!getenv("MC2_STATIC_PROP_REGISTRY")) _putenv_s("MC2_STATIC_PROP_REGISTRY", "0");
+    if (!getenv("MC2_STATIC_PROP_REGISTRY"))    _putenv_s("MC2_STATIC_PROP_REGISTRY",      "0");
 }
 
 static void EarlyTrace(const char* msg)
