@@ -302,7 +302,13 @@ void destroy() {
     s_recipeRanges.clear();     s_recipeRanges.shrink_to_fit();
     s_liveRangeIndices.clear(); s_liveRangeIndices.shrink_to_fit();
     s_typeMatCache.clear();          s_typeMatCache.shrink_to_fit();
-    s_typeIDToRecipeIndex.clear();   // unordered_map has no shrink_to_fit
+    // unordered_map has no shrink_to_fit(); swap with empty to release bucket
+    // allocation back to the heap, matching the intent of the surrounding
+    // vector .clear()+.shrink_to_fit() pattern. Mission 2 may register a
+    // completely different set of type IDs, so retaining mission 1's bucket
+    // layout would just waste memory.
+    s_typeIDToRecipeIndex.clear();
+    std::unordered_map<uint32_t, int32_t>().swap(s_typeIDToRecipeIndex);
     // [LIGHTBAKE v1] recipeIndex restarts next mission -> stale baked
     // entries would alias a different actor. Drop the mission-scoped map.
     ::mc2ClearAllBakedStaticLight();
