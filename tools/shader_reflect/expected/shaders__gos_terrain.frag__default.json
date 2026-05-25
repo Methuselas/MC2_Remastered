@@ -17,7 +17,7 @@
           "matrix_stride": null,
           "name": "thinRecsFrag",
           "offset": 0,
-          "type": "_1345"
+          "type": "_1349"
         }
       ],
       "name": "ThinRecordBufFrag"
