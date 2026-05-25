@@ -119,6 +119,49 @@ set_target_properties(EditRel PROPERTIES
     OUTPUT_NAME "Mission Editor"
 )
 
+# Runtime DLLs — must sit next to Mission Editor.exe. Without these the
+# editor launches with a missing-DLL system error and the deploy script
+# is the only thing currently making it runnable. CMake 3.21+ has
+# TARGET_RUNTIME_DLLS, but root floor is 3.10 (see top-level
+# CMakeLists.txt), so we use TARGET_FILE generator expressions for
+# imported targets whose IMPORTED_LOCATION is the .dll (SDL2/SDL2_mixer/
+# SDL2_ttf/mc2res) and explicit filenames for the rest (GLEW/ZLIB
+# expose only the .lib via IMPORTED_LOCATION). All vcpkg DLLs are
+# colocated next to SDL2.dll, so anchor on $<TARGET_FILE_DIR:SDL2::SDL2>.
+set(_editor_runtime_dll_targets
+    SDL2::SDL2
+    SDL2_mixer::SDL2_mixer
+    SDL2_ttf::SDL2_ttf
+    mc2res_64
+)
+foreach(_t IN LISTS _editor_runtime_dll_targets)
+    add_custom_command(TARGET EditRel POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:${_t}>" "$<TARGET_FILE_DIR:EditRel>"
+        VERBATIM
+    )
+endforeach()
+
+foreach(_dll_name glew32.dll zlib1.dll)
+    add_custom_command(TARGET EditRel POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE_DIR:SDL2::SDL2>/${_dll_name}"
+                "$<TARGET_FILE_DIR:EditRel>"
+        VERBATIM
+    )
+endforeach()
+
+# FFmpeg runtime DLLs — absolute paths resolved by the FFmpegLGPL helper
+# at root scope (CMakeLists.txt:332). Editor uses the same delay-load
+# pattern via shared engine code, so it needs the same DLL set.
+foreach(_dll ${FFmpegLGPL_RUNTIME_DLLS})
+    add_custom_command(TARGET EditRel POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_dll}" "$<TARGET_FILE_DIR:EditRel>"
+        VERBATIM
+    )
+endforeach()
+
 add_custom_command(TARGET EditRel POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:EditRel>"

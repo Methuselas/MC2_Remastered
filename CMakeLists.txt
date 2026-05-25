@@ -336,6 +336,36 @@ foreach(_dll ${FFmpegLGPL_RUNTIME_DLLS})
 endforeach()
 install(FILES ${FFmpegLGPL_RUNTIME_DLLS} DESTINATION ".")
 
+# Other runtime DLLs (SDL2/GLEW/ZLIB/mc2res). Same rationale as the
+# editor target — without these mc2.exe fails at launch with a
+# missing-DLL error after a clean build. Root floor is CMake 3.10, so
+# TARGET_RUNTIME_DLLS (3.21+) is unavailable; we use TARGET_FILE for
+# imported targets whose IMPORTED_LOCATION is the .dll (SDL2/SDL2_mixer/
+# mc2res) and explicit filenames for GLEW/ZLIB (their IMPORTED_LOCATION
+# points at the .lib import library). vcpkg colocates all DLLs next to
+# SDL2.dll, so anchor on $<TARGET_FILE_DIR:SDL2::SDL2>.
+set(_mc2_runtime_dll_targets
+    SDL2::SDL2
+    SDL2_mixer::SDL2_mixer
+    mc2res_64
+)
+foreach(_t IN LISTS _mc2_runtime_dll_targets)
+    add_custom_command(TARGET mc2 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:${_t}>" "$<TARGET_FILE_DIR:mc2>"
+        VERBATIM
+    )
+endforeach()
+
+foreach(_dll_name glew32.dll zlib1.dll)
+    add_custom_command(TARGET mc2 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE_DIR:SDL2::SDL2>/${_dll_name}"
+                "$<TARGET_FILE_DIR:mc2>"
+        VERBATIM
+    )
+endforeach()
+
 # ASan runtime DLL must sit next to mc2.exe. Without it the exe fails to
 # launch with status 0xC0000139 (entry point not found). The DLL ships with
 # the MSVC toolset, so we resolve it relative to the selected compiler
