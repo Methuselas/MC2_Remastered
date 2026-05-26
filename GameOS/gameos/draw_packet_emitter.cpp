@@ -182,18 +182,36 @@ DrawPacketEmitStats emitStaticPropDrawPackets(const RenderSnapshot&          sna
             (void)baseVtx;
             (void)ownType;
 
+            // v2: per-packet pipeline ID from material flags.
+            // No assert — diagnostic slice must not abort release smoke.
+            // OOB pi is a bug in the emitter; pipelineId=Invalid lets compare count it.
+            uint32_t packetMatFlags = 0u;
+            RenderCore::PipelineId packetPipelineId = RenderCore::PipelineId::Invalid;
+            if (!batcher_getPacketMaterialFlags(pi, &packetMatFlags)) {
+                std::fprintf(stderr,
+                    "[DRAW_PACKET v2] batcher_getPacketMaterialFlags OOB pi=%u\n", pi);
+                packetMatFlags = 0u;
+            } else {
+                const bool alpha = (packetMatFlags & STATIC_PROP_FLAG_ALPHA_TEST) != 0;
+                packetPipelineId = alpha
+                    ? RenderCore::PipelineId::StaticPropAlphaTest
+                    : RenderCore::PipelineId::StaticPropOpaque;
+            }
+
             // stats.emitted is both the write index and the running count.
             // The overflow guard above ensures emitted < maxPackets here.
             out[stats.emitted++] = StaticPropDrawPacketCandidate{
-                tid,       // typeId
-                pi,        // globalPacketIdx
-                ic,        // instanceCount
-                firstIdx,  // firstIndex
-                idxCount,  // indexCount
-                mat,       // material (generation=0 debug wrapper)
-                mesh,      // mesh (invalid v0 stub)
-                alphaPass, // alphaPass
-                sortKey    // sortKey
+                tid,              // typeId
+                pi,               // globalPacketIdx
+                ic,               // instanceCount
+                firstIdx,         // firstIndex
+                idxCount,         // indexCount
+                mat,              // material (generation=0 debug wrapper)
+                mesh,             // mesh (invalid v0 stub)
+                alphaPass,        // alphaPass (transitional — from desc.alphaClass)
+                sortKey,          // sortKey
+                packetPipelineId, // pipelineId (v2 — per-packet, from materialFlags)
+                packetMatFlags    // cachedMaterialFlags (v2 — cached for compare round-trip)
             };
         }
     }
