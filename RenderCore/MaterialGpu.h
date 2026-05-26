@@ -1,14 +1,13 @@
 // RenderCore/MaterialGpu.h
 //
-// GPU-visible material record. Schema + offline prototype only.
+// GPU-visible material record.
 //
-// *** RUNTIME STATUS: NOT WIRED ***
-//   No runtime code reads MaterialGpu yet.
-//   No shader includes material_gpu.hglsl yet.
-//   No SSBO binding is allocated yet.
-//   No texture binding behavior is changed.
-//   MaterialGpu-1 (reflect/contract fixture) and MaterialGpu-2
-//   (first runtime upload) are future slices, gated on C++17 upgrade.
+// *** RUNTIME STATUS: LIVE ***
+//   Static props: table upload default-ON, albedo sampling default-ON (as of 2026-05-26, v5/v7)
+//   Mechs:        per-instance materialIdx substrate live (Mech-1, 2026-05-26), shader sampling
+//                 pending texture model decision (see docs/superpowers/specs/2026-05-26-mech-material-gpu-mech2-decision.md)
+//   Kill switches: MC2_MATERIAL_GPU=0 (disable table upload/bind/compare)
+//                  MC2_MATERIAL_GPU_SAMPLE=0 (disable static-prop shader sampling)
 //
 // GLSL mirror: shaders/include/material_gpu.hglsl
 // Manifest:    tools/material_cook/material_manifest.schema.json

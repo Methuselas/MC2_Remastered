@@ -100,7 +100,8 @@ enum class RendererFeature : int {
     MaterialGpu         = 9,   // MC2_MATERIAL_GPU
     MaterialGpuSample   = 10,  // MC2_MATERIAL_GPU_SAMPLE
     StaticPropRegistry  = 11,  // MC2_STATIC_PROP_REGISTRY
-    COUNT               = 12,
+    MaterialKtx         = 12,  // MC2_MATERIAL_KTX
+    COUNT               = 13,
 };
 
 // ---------------------------------------------------------------------------
@@ -187,16 +188,16 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         "MC2_FEATURE_MATERIAL_GPU",
         "MC2_MATERIAL_GPU",
         EnvVarKind::Feature,
-        false,
-        "GPU material system path in static-prop batcher (gos_static_prop_batcher.cpp). Default-off opt-in."
+        true,
+        "GPU material table upload/bind/compare for static props (default-ON as of v5, 2026-05-26). Set =0 to disable."
     },
     // MaterialGpuSample
     {
         "MC2_FEATURE_MATERIAL_GPU_SAMPLE",
         "MC2_MATERIAL_GPU_SAMPLE",
         EnvVarKind::Feature,
-        false,
-        "GPU material sampler sub-path (gos_static_prop_batcher.cpp + gameosmain.cpp). Requires MC2_MATERIAL_GPU."
+        true,
+        "GPU material albedo sampling in static_prop.frag (default-ON as of v7, 2026-05-26). Set =0 to fall back to texArrayLayer. Requires MC2_MATERIAL_GPU."
     },
     // StaticPropRegistry
     {
@@ -205,6 +206,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         true,
         "GpuStaticPropRegistry enable. Default-on; editor sets =0 (EditorMFC.cpp) to bypass registry for edit-time mutations."
+    },
+    // MaterialKtx
+    {
+        "MC2_FEATURE_MATERIAL_KTX",
+        "MC2_MATERIAL_KTX",
+        EnvVarKind::Feature,
+        false,
+        "KTX2 sidecar loader for static-prop textures (RenderCore/KtxLoader). Phase 0: RGBA8 only. Default-off; =1 enables. Requires MC2_COALESCE=1."
     },
 };
 

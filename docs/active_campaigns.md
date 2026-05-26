@@ -12,6 +12,31 @@ For the RenderWorld arc specifically, see also:
 
 ---
 
+## MaterialGpu arc — static-prop complete, Mech-1 substrate done (2026-05-26)
+
+- **MaterialGpu static-prop arc v4–v7** (SHIPPED 2026-05-26): Static props fully
+  table-driven for albedo by default. Four commits: v5 (c38c8426) default-ON upload,
+  v6 (06962919) docs/invariants locked, v7 (ae2152cd) default-ON shader sampling.
+  MC2_MATERIAL_GPU=0 disables upload/bind/compare; MC2_MATERIAL_GPU_SAMPLE=0 disables
+  shader sampling and falls back to texArrayLayer. texArrayLayer retained as compare
+  authority. Log tag: `[MATERIAL_GPU v4]`. Tier1 5/5 PASS all gates.
+  Handoffs: `memory/HANDOFF_2026_05_26_material_gpu_static_prop_complete.md` (v4-v7),
+  `memory/HANDOFF_2026_05_26_material_gpu_arc_checkpoint.md` (full arc).
+
+- **MaterialGpu Mech-1** (SHIPPED 2026-05-26): `GpuMechInstance.materialIdx` at byte 52
+  (replaces `_pad1`), compare invariant proven (mismatches=0), `[MECH_MATERIAL_GPU v1]`
+  log tag. HEAD c2dd0a33. Shader sampling NOT yet wired — pending Mech-2 decision.
+
+- **MaterialGpu Mech-2** (BLOCKED — texture model decision required): texHandle is not
+  shader-actionable in the current mech pipeline. Decision doc:
+  `docs/superpowers/specs/2026-05-26-mech-material-gpu-mech2-decision.md`.
+
+- **Static-prop pipeline binder** (STARTED 2026-05-26, commit 9f958536):
+  `applyPipeline` wired in `GpuStaticPropBatcher::flush()`. PipelineDesc v1
+  (depthFunc/reverse-Z encoding, DrawPacket pipelineId wiring) is the next slice.
+
+---
+
 ## In flight / ready to execute
 
 - **Unified-projection F1** (design + plan complete; ready for execution):
