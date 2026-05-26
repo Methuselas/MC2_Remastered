@@ -70,7 +70,10 @@ static const bool s_v5Enabled = [] {
 
 Extension check (at coalesce-arm time or first gate-ON flush):
 ```cpp
-static const bool s_baseInstanceSupported = GLEW_ARB_base_instance || (/* GL version >= 4.2 */);
+// GLEW_ARB_base_instance is a GLboolean flag (0/1, not an enum).
+// GL 4.2 core mandates ARB_base_instance, so GLEW_ARB_base_instance == GL_TRUE
+// on any 4.2+ context — no separate version check needed.
+static const bool s_baseInstanceSupported = (GLEW_ARB_base_instance == GL_TRUE);
 ```
 
 If `!s_v5Enabled || !s_baseInstanceSupported`:
@@ -78,6 +81,8 @@ If `!s_v5Enabled || !s_baseInstanceSupported`:
 - Fall through to existing `glMultiDrawElementsIndirect` calls — no suppression, no regression.
 
 If `s_v5Enabled && s_baseInstanceSupported`:
+- Run gate-arm checks: `s_baseInstanceByCmdMap != nullptr`, `s_locsCoalesce.drawIDBase != -1`
+  (both disarm v5 for session if failed — see §5 and §7)
 - Skip the two `glMultiDrawElementsIndirect` calls
 - Run v5 per-draw loop
 
@@ -111,22 +116,32 @@ in a prior frame but not this frame may still appear in the coalesce layout). Th
 
 ## 5. Base Instance Authority
 
-Source: `s_baseInstanceByCmdMap` — the CPU-mapped pointer of `s_baseInstanceByCmdSsbo`.
+Source: `s_baseInstanceByCmdMap` — the CPU-mapped `void*` of `s_baseInstanceByCmdSsbo`.
 
 `s_baseInstanceByCmdSsbo` is allocated with `GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT`.
 The CPU write in `batcher_prepareBaseInstanceTable()` (called before flush()) is coherent;
 no `glMemoryBarrier` or fence needed before CPU reads in the v5 loop.
 
-Access pattern (file-local, no public accessor):
+**Ring-slot byte arithmetic (exact — do not use index arithmetic):**
 ```cpp
-const uint32_t totalCmds = s_alphaOffCmdCount + s_alphaOnCmdCount;
-const uint32_t* baseInstanceMap = /* CPU-mapped pointer for current ring slot */;
-// Use the same pointer the patch shader writes via prepareBaseInstanceTable().
+// s_baseInstanceByCmdMap is void* mapped at SSBO start.
+// Each ring slot occupies s_baseInstanceByCmdBytesPerFrame bytes.
+// Use the same arithmetic as prepareBaseInstanceTable():
+const size_t fr_off = s_coalesceFrameSlot * s_baseInstanceByCmdBytesPerFrame;  // bytes
+const uint32_t* baseInstanceMap = reinterpret_cast<const uint32_t*>(
+    static_cast<const uint8_t*>(s_baseInstanceByCmdMap) + fr_off);
+// Then access: baseInstanceMap[i]  for slot i in [0, totalCmds)
 ```
 
-If `baseInstanceMap == nullptr` or `sortedSlot >= totalCmds`: increment `base_instance_missing`;
-continue (skip draw). Do NOT return 0 as a valid base instance — 0 is a legitimate value for
-slot 0; silence corrupts the first draw.
+**Gate-arm null check (CRITICAL — run once at arm time, not per-slot):**
+Under `MC2_STATIC_PROP_GLOBAL_POOL_LEGACY=1`, `s_baseInstanceByCmdSsbo` is never allocated and
+`s_baseInstanceByCmdMap` stays `nullptr`. If `s_baseInstanceByCmdMap == nullptr` at gate-arm time:
+log `event=unsupported reason=legacy_pool_no_baseinst_map`, set `s_v5Enabled = false` for the
+session, fall through to legacy multidraw. Do NOT detect this per-slot — that silently drops all
+draws (ok=0, user sees blank world) and hides the real problem.
+
+**Per-slot bounds guard:** If `i >= totalCmds`: increment `base_instance_missing`; continue.
+Do NOT treat `baseInstanceMap[0]` = 0 as a null sentinel — 0 is a valid base instance for slot 0.
 
 ---
 
@@ -135,8 +150,17 @@ slot 0; silence corrupts the first draw.
 ```
 sorted_count = s_alphaOffCmdCount + s_alphaOnCmdCount
 
-// Bind alpha-OFF texture array (already done by prologue at L3886)
-// u_drawIDBase already set to 0 by prologue at L3873
+// SSBO binding 0 precondition:
+// The coalesce prologue binds slot 0 (s_coalesceInstanceSsbo) ONLY inside
+// if (s_alphaOffCmdCount > 0u). If OFF count is 0 (all props alpha-ON),
+// slot 0 is unbound from a prior frame. The v5 implementation MUST bind
+// SSBO slot 0 unconditionally here (using the same bind call as the prologue)
+// before entering the loop. The multidraw path shares this latent risk.
+// In practice s_alphaOffCmdCount > 0 on all tier1 missions, but do not rely on this.
+glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo, <ring_offset>, <ring_size>)
+
+// Bind alpha-OFF texture array (already done by prologue at L3886; redundant here if OFF>0 but safe)
+// u_drawIDBase: v5 sets per draw via glUniform1i — no prologue value relied upon
 
 for i in [0, sorted_count):
     // Bounds guard
@@ -159,10 +183,11 @@ for i in [0, sorted_count):
     if instanceCount == 0:
         ++zero_instance_skips; continue
 
-    if baseInstanceMap == nullptr or i >= totalCmds:
+    // baseInstanceMap guaranteed non-null at this point (gate-arm check above)
+    if i >= totalCmds:
         ++base_instance_missing; continue
 
-    baseInstance = baseInstanceMap[<ring slot offset> + i]
+    baseInstance = baseInstanceMap[i]   // index within current ring slot
 
     // Group boundary: switch texture array when entering alpha-ON group
     if i == s_alphaOffCmdCount:
@@ -224,17 +249,23 @@ When v5 loop runs, the following state is already set by the coalesce prologue (
 |---|---|
 | `GL_CURRENT_PROGRAM` | `s_staticPropProgramCoalesce` (set at L3754) |
 | VAO | `s_sharedVao` |
-| SSBO binding 0 | `s_coalesceInstanceSsbo` covering the current ring slot's both groups |
+| SSBO binding 0 | `s_coalesceInstanceSsbo` ring-slot range — v5 **rebinds unconditionally** before loop (prologue only binds inside `if (s_alphaOffCmdCount > 0u)`) |
 | SSBO binding 4 | `s_perDrawSsbo` (PerDrawEntry data, one entry per sorted slot) |
-| SSBO binding 7 | `s_cmdToBucketSsbo` (typeID per slot) |
-| Texture unit 0 | `s_texArrayOff` (alpha-OFF texture array) |
+| Texture unit 0 | `s_texArrayOff` (alpha-OFF texture array, set at L3886) |
 | `GL_DRAW_INDIRECT_BUFFER` | indirect command buffer (GPU-cull written; not used by per-draw-call) |
-| `u_drawIDBase` | 0 (set by prologue at L3873) |
 | Various uniforms | MVPs, fog, etc. |
+
+Note: SSBO binding 7 is NOT a prologue-inherited state for the draw pass. It is bound only during
+the compute patch pass (`gpu_cull_compute.cpp`) and restored immediately. The static_prop shaders
+do not declare binding 7. Do not rely on binding 7 being set when v5 loop runs.
+
+Note: `u_drawIDBase` prologue value (L3873) is conditional on `s_alphaOffCmdCount > 0`. V5 sets
+`u_drawIDBase` unconditionally per draw via `glUniform1i` — no prologue value is relied upon.
 
 v5 loop mutates:
 - `u_drawIDBase` per packet — no restore needed; next frame prologue resets it.
 - `GL_TEXTURE_2D_ARRAY` binding at the group boundary — restore to `s_texArrayOff` after loop.
+- SSBO binding 0 — rebind before loop; epilogue restores overall state.
 
 v5 does NOT unbind `GL_DRAW_INDIRECT_BUFFER` — the existing epilogue handles this.
 
@@ -312,19 +343,23 @@ than the multidraw path, but no under-draw).
 | R3 | `ARB_base_instance` absent | Explicit check; fall through to legacy multidraw (no suppression). Log `event=unsupported`. |
 | R4 | `glUniform1i(s_locsCoalesce.drawIDBase, ...)` location is -1 | Log WARNING at arm time. GL no-ops the call but draw reads wrong PerDrawEntry. Must fix shader or confirm uniform present. |
 | R5 | `firstIndex * sizeof(uint32_t)` overflow for large meshes | firstIndex is uint32; sizeof(uint32_t) = 4; product is uint64 max for firstIndex=1B. Cast to `uintptr_t` first. |
-| R6 | base instance map ring-slot offset calculation | Confirm the exact pointer arithmetic used by `prepareBaseInstanceTable()`. Ring slot × entries-per-slot must match. |
+| R6 | base instance map ring-slot offset calculation | Arithmetic is in **bytes**: `s_coalesceFrameSlot * s_baseInstanceByCmdBytesPerFrame`. Cast to `uint8_t*`, add offset, then cast to `uint32_t*`. Do NOT use index arithmetic — `s_baseInstanceByCmdMap` is `void*`. |
 | R7 | `s_texArrayOff` restore after loop | If loop runs alpha-ON group, leaves texture bound to `s_texArrayOn`. Must restore to `s_texArrayOff` for existing epilogue. |
+| R8 | `s_baseInstanceByCmdMap` is nullptr under `s_globalPoolLegacy` | Check at gate-arm time (not per-slot). If nullptr, disarm v5 for session, fall through to multidraw. Per-slot null check masks this as 753× base_instance_missing. |
+| R9 | SSBO binding 0 not set when `s_alphaOffCmdCount == 0` | v5 must rebind SSBO 0 unconditionally before loop. Prologue only binds inside `if (s_alphaOffCmdCount > 0u)`. |
 
 ---
 
 ## 12. Assumptions Requiring Verification Before Coding
 
-1. `GpuStaticPropPacket` struct field names — grep and confirm.
-2. `s_typeRanges` populates before the coalesce branch at the insertion point.
-3. The base instance persistent-map pointer and ring-slot offset calculation — grep `prepareBaseInstanceTable()` exactly.
-4. `s_locsCoalesce.drawIDBase` is non-(-1) — confirm uniform exists in coalesce shader.
-5. `GLEW_ARB_base_instance` or equivalent GL version check is available in the TU.
-6. Confirm `s_texArrayOff` / `s_texArrayOn` are the correct identifiers (not `s_texArrOff`, etc.).
+1. `GpuStaticPropPacket` struct field names — grep `gos_static_prop_batcher.h`. Confirmed by adversarial: `firstIndex`, `indexCount`, `baseVertex`, `owningTypeID` all present.
+2. `s_typeRanges` populates before the coalesce branch — `uploadAllBucketsIfNeeded()` at L3215 before coalesce branch. Confirmed.
+3. Ring-slot byte arithmetic — `s_coalesceFrameSlot * s_baseInstanceByCmdBytesPerFrame` (bytes). Grep `prepareBaseInstanceTable()` to confirm `s_coalesceFrameSlot` and `s_baseInstanceByCmdBytesPerFrame` identifiers. Spec §5 shows exact arithmetic.
+4. `s_locsCoalesce.drawIDBase` is non-(-1) — confirmed field at L416; populated at L634. Confirm the coalesce shader declares `u_drawIDBase` uniform.
+5. `GLEW_ARB_base_instance` is available — confirmed: `<GL/glew.h>` included at L20 of batcher.cpp.
+6. `s_texArrayOff` / `s_texArrayOn` — confirmed at L298-299.
+7. `s_baseInstanceByCmdMap` is non-null at gate-arm — confirm `MC2_STATIC_PROP_GLOBAL_POOL_LEGACY` is NOT set in the test environment. Adversarial finding: if it IS set, v5 must disarm.
+8. `s_coalesceFrameSlot` and `s_baseInstanceByCmdBytesPerFrame` exist as file-local variables — grep before coding.
 
 ---
 
