@@ -403,20 +403,10 @@ bool batcher_getMaterialGpuEntry(uint32_t index, RenderCore::MaterialGpu* out);
 // Sidecar is populated at finalizeGeometry() and valid until onMapUnload().
 bool batcher_getPacketTexArrayLayer(uint32_t globalPacketIdx, int32_t* out);
 
-// v2.1 extraction: per-slot data filled by batcher_getDrawSlotEntry().
-// Full definition lives here so batcher.cpp can write members without including
-// render_snapshot.h. render_snapshot.h includes this header to obtain the type.
-struct ExtractedStaticPropPacket {
-    uint32_t sortedSlot;       // position in s_sortedPacketOrder
-    uint32_t globalPacketIdx;  // index into s_packets[]
-    uint32_t typeId;           // owningTypeID of the packet
-    uint32_t pipelineId;       // 0=StaticPropOpaque, 1=StaticPropAlphaTest
-    uint32_t materialIdx;      // index into MaterialGpu table; 0xFFFFFFFFu if sidecar invalid
-    uint32_t instanceCount;    // previous-frame instance count (0 on frame 1)
-};
-
-static_assert(sizeof(ExtractedStaticPropPacket) == 24,
-    "ExtractedStaticPropPacket layout changed — update v2.1 extraction consumers");
+// v2.1 extraction: full definition in render_snapshot.h.
+// batcher_getDrawSlotEntry requires the caller to include render_snapshot.h for the complete type.
+// batcher.cpp includes render_snapshot.h directly so it can write struct members.
+struct ExtractedStaticPropPacket;
 
 // v2.1 extraction: draw-slot accessors.
 // "Draw slot" = position i in s_sortedPacketOrder; [0, alphaOffCmdCount) = opaque,

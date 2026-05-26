@@ -15,7 +15,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
-#include "gos_static_prop_batcher.h"
 
 // Frame arena management: persistent allocator with per-frame reset.
 // Two module-static instances live in render_snapshot.cpp; ExtractRenderSnapshot()
@@ -114,6 +113,25 @@ struct ExtractedStaticProp {
 
 static_assert(sizeof(ExtractedStaticProp) <= 256,
     "ExtractedStaticProp exceeded 256-byte budget; adjust arena sizing");
+
+// --- v2.1: per-draw-slot packet snapshot record ---
+// One entry per draw slot in s_sortedPacketOrder (geometry-stable after finalizeGeometry).
+// sortedSlot: index i in the batcher's sorted draw command array.
+// globalPacketIdx: s_sortedPacketOrder[sortedSlot] — index into s_packets[].
+// pipelineId: 0=StaticPropOpaque, 1=StaticPropAlphaTest (derived from alphaOffCmdCount).
+// materialIdx: s_packetMaterialIdx[sortedSlot]; 0xFFFFFFFFu if MC2_MATERIAL_GPU sidecar invalid.
+// instanceCount: previous-frame per-type instance count from flush(); 0 on frame 1.
+struct ExtractedStaticPropPacket {
+    uint32_t sortedSlot;       // draw-slot index in s_sortedPacketOrder
+    uint32_t globalPacketIdx;  // s_sortedPacketOrder[sortedSlot]
+    uint32_t typeId;           // s_packets[globalPacketIdx].owningTypeID
+    uint32_t pipelineId;       // 0=opaque, 1=alpha-test
+    uint32_t materialIdx;      // s_packetMaterialIdx[slot]; 0xFFFFFFFFu sentinel if sidecar invalid
+    uint32_t instanceCount;    // previous-frame; 0 on frame 1 or no visible instances
+};
+
+static_assert(sizeof(ExtractedStaticPropPacket) == 24,
+    "ExtractedStaticPropPacket layout changed — update v2.1 extraction consumers");
 
 // Simple span wrapper for array views.
 template <typename T>

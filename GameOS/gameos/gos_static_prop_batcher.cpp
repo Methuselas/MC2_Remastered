@@ -1,4 +1,5 @@
 #include "gos_static_prop_batcher.h"
+#include "render_snapshot.h"             // ExtractedStaticPropPacket full definition for batcher_getDrawSlotEntry
 #include "gos_static_prop_registry.h"    // M1.5: getRecipeIndexForType
 #include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled + objectIdRawForStaticPropRecipe
 #include "../../RenderCore/MaterialGpu.h"   // MaterialGpu-2: sidecar upload
