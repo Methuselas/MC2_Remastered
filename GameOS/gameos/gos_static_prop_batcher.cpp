@@ -1666,7 +1666,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
     {
         s_typeDescTable.clear();
         s_typeDescTable.reserve(s_types.size());
-        uint32_t invalid = 0u;
+        uint32_t noGeom = 0u;
         uint32_t alphaOn = 0u;
         for (uint32_t i = 0u; i < static_cast<uint32_t>(s_types.size()); ++i) {
             const GpuStaticPropType& t = s_types[i];
@@ -1675,16 +1675,16 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             desc.firstPacket = t.firstPacket;
             desc.packetCount = t.packetCount;
             desc.alphaClass  = static_cast<uint32_t>(t.alphaClass);
-            if (t.packetCount == 0u) { ++invalid; }
+            if (t.packetCount == 0u) { ++noGeom; } // non-visual type (collision, trigger, sound) — expected
             if (t.alphaClass  == 1u) { ++alphaOn; }
             s_typeDescTable.push_back(desc);
         }
         std::fprintf(stderr,
             "[STATIC_PROP_TYPE_TABLE v0] types=%u packet_ranges=%u"
-            " alpha_on=%u invalid=%u\n",
+            " alpha_on=%u noGeom=%u\n",
             static_cast<uint32_t>(s_typeDescTable.size()),
             static_cast<uint32_t>(s_packets.size()),
-            alphaOn, invalid);
+            alphaOn, noGeom);
     }
 
     {
