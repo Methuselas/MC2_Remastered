@@ -41,12 +41,17 @@ static_assert(sizeof(StaticPropDrawPacketCandidate) <= 64,
 //   overflow == false
 // ---------------------------------------------------------------------------
 struct DrawPacketEmitStats {
-    uint32_t emitted;          // candidates written to out[]
-    uint32_t distinctTypes;    // unique typeIds found in snapshot
-    uint32_t expectedPackets;  // sum of prop.packetCount over distinct typeIds with valid ranges
-    uint32_t skippedRanges;    // distinct types skipped due to sentinel/overflow packet ranges
-    uint32_t invalidRanges;    // batcher_getPacketDrawInfo returned false for a valid-range packet
-    bool     overflow;         // emitted hit maxPackets cap before completing
+    uint32_t emitted;              // candidates written to out[]
+    uint32_t distinctTypes;        // unique typeIds with instanceCount > 0 this frame
+    uint32_t expectedPackets;      // type-table derived: sum(desc.packetCount) for visible types
+    uint32_t oldExpected;          // cross-check: sum(prop.packetCount) from representative snapshot scan;
+                                   // must equal expectedPackets each frame
+    uint32_t skippedRanges;        // types skipped: packetCount==0, sentinel firstPacket, or
+                                   // arithmetic overflow in both old and new paths
+    uint32_t invalidRanges;        // batcher_getPacketDrawInfo returned false, OR desc.typeId != row index
+    uint32_t materialMismatches;   // types where two snapshot instances disagreed on materialIdx;
+                                   // expected 0 while materialIdx is per-type (v1); WARN-only
+    bool     overflow;             // emitted hit maxPackets cap before all visible types processed
 };
 
 // ---------------------------------------------------------------------------
