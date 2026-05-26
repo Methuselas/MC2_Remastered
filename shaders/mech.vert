@@ -39,7 +39,7 @@ struct GpuMechInstance {
     vec4  aRGBHighlight;
     vec4  fogRGB;
     uint  objectIdRaw;
-    uint  _pad1;
+    uint  materialIdx;   // 52  -- was _pad1; reserved for MaterialGpu Mech-2
     uint  _pad2;
     uint  _pad3;
 };

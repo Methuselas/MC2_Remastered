@@ -46,7 +46,8 @@ struct alignas(16) GpuMechInstance {
     uint32_t objectIdRaw;         // 48
     // Per Q2 resolved: generic _padN names; only the consumed slot is
     // named. Future slices (M3 terrain chunk, M4 VFX) rename in place.
-    uint32_t _pad1;               // 52
+    // Mech-1: _pad1 renamed to materialIdx (byte 52). Stride unchanged.
+    uint32_t materialIdx;         // 52  -- index into s_mechMaterialTable; 0 = not assigned
     uint32_t _pad2;               // 56
     uint32_t _pad3;               // 60
 };
@@ -60,6 +61,7 @@ static_assert(offsetof(GpuMechInstance, renderFlags)        == 12);
 static_assert(offsetof(GpuMechInstance, aRGBHighlight)      == 16);
 static_assert(offsetof(GpuMechInstance, fogRGB)             == 32);
 static_assert(offsetof(GpuMechInstance, objectIdRaw)        == 48);
+static_assert(offsetof(GpuMechInstance, materialIdx)        == 52, "materialIdx offset");
 
 // Bone matrix: 4 explicit rows to avoid GLSL column-major confusion.
 // Upload rows as row0..row3; GLSL mat4(row0,row1,row2,row3) fills COLUMNS from

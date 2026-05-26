@@ -248,6 +248,21 @@ static bool     s_spotlightReal_firstHitTypeNode = false;
 static bool     s_spotlightReal_firstHitDraw     = false;
 
 // ---------------------------------------------------------------------------
+// MaterialGpu Mech-1 substrate
+// MC2_MATERIAL_GPU defaults ON. Set MC2_MATERIAL_GPU=0 to disable.
+// ---------------------------------------------------------------------------
+#include "../../RenderCore/MaterialGpu.h"
+static const bool s_mechMaterialGpuEnabled = []() {
+    const char* v = getenv("MC2_MATERIAL_GPU");
+    return v == nullptr || (v[0] != '0');
+}();
+static std::vector<RenderCore::MaterialGpu>        s_mechMaterialTable;
+static std::unordered_map<uint32_t, uint32_t>      s_mechHandleToMaterialIdx;
+static std::vector<uint32_t>                       s_mechDrawMaterialIdx;
+static GLuint                                      s_mechMaterialSsbo          = 0;
+static uint32_t                                    s_mechMaterialGpuFrameCount = 0;
+
+// ---------------------------------------------------------------------------
 // Shader load
 // ---------------------------------------------------------------------------
 static void loadProgramsIfNeeded() {
@@ -408,6 +423,15 @@ void GpuMechBatcher::onMapLoad() {
     s_lastDrawCalls.clear();
     s_lastTotalInstances = 0;
     s_lastTotalBones     = 0;
+    // Mech-1: reset MaterialGpu SSBO and tables on map load
+    if (s_mechMaterialSsbo != 0) {
+        glDeleteBuffers(1, &s_mechMaterialSsbo);
+        s_mechMaterialSsbo = 0;
+    }
+    s_mechMaterialTable.clear();
+    s_mechHandleToMaterialIdx.clear();
+    s_mechDrawMaterialIdx.clear();
+    s_mechMaterialGpuFrameCount = 0;
     std::fprintf(stderr, "[MECHBATCHER v1] event=map_load\n");
 }
 
@@ -449,6 +473,14 @@ void GpuMechBatcher::onMapUnload() {
     s_boneCapacity      = 0;
     s_geometryFinalized = false;
     s_pendingSubmits.clear();
+    // Mech-1: teardown MaterialGpu SSBO and tables
+    if (s_mechMaterialSsbo != 0) {
+        glDeleteBuffers(1, &s_mechMaterialSsbo);
+        s_mechMaterialSsbo = 0;
+    }
+    s_mechMaterialTable.clear();
+    s_mechHandleToMaterialIdx.clear();
+    s_mechDrawMaterialIdx.clear();
     std::fprintf(stderr, "[MECHBATCHER v1] event=map_unload\n");
 }
 
@@ -1135,6 +1167,45 @@ void GpuMechBatcher::flush() {
             boneDst[boneHead++] = b;
     }
 
+    // Step 2.5: Build mech MaterialGpu table (same bucket iteration order as Step 5).
+    s_mechMaterialTable.clear();
+    s_mechHandleToMaterialIdx.clear();
+    s_mechDrawMaterialIdx.clear();
+    if (s_mechMaterialGpuEnabled) {
+        s_mechMaterialTable.push_back(RenderCore::MaterialGpu{}); // index 0 = sentinel/not-assigned
+        for (const auto& kv : buckets) {
+            const uint32_t texHandle = kv.first.texHandle;
+            uint32_t mIdx = 0u;
+            auto it = s_mechHandleToMaterialIdx.find(texHandle);
+            if (it != s_mechHandleToMaterialIdx.end()) {
+                mIdx = it->second;
+            } else {
+                mIdx = static_cast<uint32_t>(s_mechMaterialTable.size());
+                RenderCore::MaterialGpu entry{};
+                entry.albedoTex = texHandle;
+                s_mechMaterialTable.push_back(entry);
+                s_mechHandleToMaterialIdx[texHandle] = mIdx;
+            }
+            s_mechDrawMaterialIdx.push_back(mIdx);
+        }
+        // Upload table to SSBO at binding 2
+        const size_t byteSize = s_mechMaterialTable.size() * sizeof(RenderCore::MaterialGpu);
+        if (s_mechMaterialSsbo == 0) glGenBuffers(1, &s_mechMaterialSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_mechMaterialSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, static_cast<GLsizeiptr>(byteSize),
+                     s_mechMaterialTable.data(), GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    }
+    // Throttled table_link log (first flush + every 600th)
+    ++s_mechMaterialGpuFrameCount;
+    if (s_mechMaterialGpuFrameCount % 600 == 1) {
+        char buf[96];
+        std::snprintf(buf, sizeof(buf),
+            "[MECH_MATERIAL_GPU v1] event=table_link materials=%u\n",
+            static_cast<uint32_t>(s_mechMaterialTable.size()));
+        std::fputs(buf, stderr);
+    }
+
     // Step 5: Write instance SSBO in bucket order; collect draw calls.
     struct DrawCall {
         uint32_t globalPacketIdx;
@@ -1154,6 +1225,7 @@ void GpuMechBatcher::flush() {
     };
 
     uint32_t instHead = 0;
+    uint32_t dcIdx    = 0;
     for (const auto& kv : buckets) {
         const BucketKey& key              = kv.first;
         const std::vector<uint32_t>& subs = kv.second;
@@ -1185,10 +1257,49 @@ void GpuMechBatcher::flush() {
             if (d.objectIdRaw != 0u) {
                 ++s_gpuMechIdWritesThisMission;
             }
+            // Mech-1: per-instance materialIdx from parallel s_mechDrawMaterialIdx table
+            inst.materialIdx = (s_mechMaterialGpuEnabled && dcIdx < s_mechDrawMaterialIdx.size())
+                ? s_mechDrawMaterialIdx[dcIdx]
+                : 0u;
             instDst[instHead++]     = inst;
         }
         drawCalls.push_back(dc);
+        ++dcIdx;
     }
+
+    // Task 5: Compare validation — verify albedoTex == texHandle per draw call
+    if (s_mechMaterialGpuEnabled) {
+        int mismatches = 0;
+        for (uint32_t i = 0; i < (uint32_t)drawCalls.size(); ++i) {
+            const uint32_t mIdx = (i < (uint32_t)s_mechDrawMaterialIdx.size()) ? s_mechDrawMaterialIdx[i] : 0u;
+            if (mIdx == 0u || mIdx >= (uint32_t)s_mechMaterialTable.size()) continue;
+            const uint32_t albedo   = s_mechMaterialTable[mIdx].albedoTex;
+            const uint32_t expected = drawCalls[i].texHandle;
+            if (albedo != expected) {
+                if (mismatches < 10) {
+                    char buf[128];
+                    std::snprintf(buf, sizeof(buf),
+                        "[MECH_MATERIAL_GPU v1] MISMATCH dc=%u materialIdx=%u albedo=%u expected=%u\n",
+                        i, mIdx, albedo, expected);
+                    std::fputs(buf, stderr);
+                }
+                ++mismatches;
+            }
+        }
+        if (s_mechMaterialGpuFrameCount % 600 == 1) {
+            char buf[128];
+            std::snprintf(buf, sizeof(buf),
+                "[MECH_MATERIAL_GPU v1] event=compare frame=%u mechs=%u mismatches=%d\n",
+                s_mechMaterialGpuFrameCount,
+                static_cast<uint32_t>(drawCalls.size()),
+                mismatches);
+            std::fputs(buf, stderr);
+        }
+    }
+
+    // Mech-1: save binding 2 before Step 6 mutates it
+    GLint prevSsbo2 = 0;
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 2, &prevSsbo2);
 
     // Step 6: Bind SSBOs (whole per-frame slices; shader indexes via u_instanceBase).
     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
@@ -1197,6 +1308,10 @@ void GpuMechBatcher::flush() {
     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, s_boneSsbo,
         (GLintptr) (s_frameSlot * s_boneCapacity * sizeof(GpuMechBone)),
         (GLsizeiptr)(totalBones * sizeof(GpuMechBone)));
+    // Mech-1: bind MaterialGpu table SSBO at binding 2
+    if (s_mechMaterialGpuEnabled && s_mechMaterialSsbo != 0) {
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, s_mechMaterialSsbo);
+    }
 
     // Save prior GL state. The mech flush bypasses applyRenderStates'
     // tracked slot set, so the engine's render-state cache becomes
@@ -1385,6 +1500,7 @@ void GpuMechBatcher::flush() {
     // Restore prior state in reverse order of save.
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, (GLuint)prevSsbo1);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, (GLuint)prevSsbo2);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexUnit0);
     glActiveTexture((GLenum)prevActiveTex);
