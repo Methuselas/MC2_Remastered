@@ -13,6 +13,7 @@
 #include "render_snapshot.h"
 #include <cstdint>
 #include "../../RenderCore/PipelineRegistry.h"  // PipelineId enum, getPipelineDesc
+#include "../../RenderCore/DrawPacket.h"
 
 // ---------------------------------------------------------------------------
 // v0 candidate: one entry per (typeId, globalPacketIdx).
@@ -59,6 +60,28 @@ struct DrawPacketEmitStats {
                                    // expected 0 while materialIdx is per-type (v1); WARN-only
     bool     overflow;             // emitted hit maxPackets cap before all visible types processed
 };
+
+// ---------------------------------------------------------------------------
+// Per-frame debug snapshot — written by gameosmain after each emit call,
+// read by GuiRuntime/GraphicsOptionsWindow (DrawPackets panel).
+//
+// Thread-safety: writer (render loop) and reader (ImGui) are both on the
+// render thread — no mutex needed; serial execution guarantees coherence.
+// Zero-init = "no data yet" (before first emit / before mission load).
+// ---------------------------------------------------------------------------
+struct DrawPacketsDebugSnapshot {
+    uint64_t frame              = 0;
+    uint32_t emitted            = 0;
+    uint32_t expected           = 0;   // = stats.expectedPackets
+    uint32_t distinctTypes      = 0;
+    uint32_t invalidRanges      = 0;
+    uint32_t skippedRanges      = 0;
+    uint32_t materialMismatches = 0;
+    bool     overflow           = false;
+    uint32_t typeDescCount      = 0;   // batcher_getStaticPropTypeDescCount() at emit time
+};
+
+extern DrawPacketsDebugSnapshot g_dpSnapshot;
 
 // ---------------------------------------------------------------------------
 // Compare result. Returned by comparePacketsToLegacy().
@@ -117,3 +140,26 @@ DrawPacketCompareResult comparePacketsToLegacy(
     const StaticPropDrawPacketCandidate* candidates,
     uint32_t                             count,
     uint32_t                             frameIndex);
+
+// ---------------------------------------------------------------------------
+// DrawPacket v3 — candidate → RenderCore::DrawPacket ABI promotion.
+// Call buildStaticPropDrawPackets() after comparePacketsToLegacy() to convert
+// emitted candidates into canonical DrawPackets. No GL state mutation.
+// ---------------------------------------------------------------------------
+struct DrawPacketBuildStats {
+    uint32_t inputCandidates;
+    uint32_t emitted;
+    uint32_t invalidPipeline;          // pipelineId == Invalid
+    uint32_t pipelineOutOfRange;       // pipelineId outside [1, Count_) — enum value out of range
+    uint32_t invalidIndexCount;        // indexCount == 0
+    uint32_t invalidInstanceCount;     // instanceCount == 0
+    uint32_t overflow;                 // candidates exceeded maxPackets (should be 0; see call site)
+    uint32_t objectIndexSentinelCount; // audit: always == emitted
+    uint32_t lightIndexSentinelCount;  // audit: always == emitted
+};
+
+DrawPacketBuildStats buildStaticPropDrawPackets(
+    const StaticPropDrawPacketCandidate* candidates,
+    uint32_t                             candidateCount,
+    RenderCore::DrawPacket*              out,
+    uint32_t                             maxPackets);

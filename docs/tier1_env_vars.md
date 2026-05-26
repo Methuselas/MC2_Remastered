@@ -72,6 +72,7 @@ Three CI scripts that lock the RenderWorld arc invariants — see `docs/renderwo
 
 - `MC2_DRAW_PACKET_COMPARE=1` — per-frame candidate vs batcher field check (summary log). Emits one `[DRAW_PACKET_COMPARE v1]` line per frame to stderr: `frame=%u packets=%u pipeline_invalid=%u pipeline_oob=%u geom_mismatch=%u type_mismatch=%u alpha_mismatch=%u`. Default OFF. Log tag `v1`; increment if fields are added/removed in future slices. Cached at process start (static initializer); must be set before launching mc2.exe.
 - `MC2_DRAW_PACKET_COMPARE_VERBOSE=1` — also emit per-mismatch detail lines (`[DRAW_PACKET_COMPARE detail]`) for firstIndex, indexCount, owningType, and alpha disagreements. Requires `MC2_DRAW_PACKET_COMPARE=1` to have any effect (compare must be enabled for the per-candidate loop to run). Valid values: `1` to enable; omit or set to any other value to disable. Cached at process start (static initializer); must be set before launching mc2.exe.
+- `MC2_DRAW_PACKET_V3=1` — enable DrawPacket v3 conversion + build log — diagnostic only; no GL state mutation, no pixel change. Emits one `[DRAW_PACKET v3]` line per frame to stderr with 9 build counters (input, emitted, invalid_pipeline, pipeline_oor, invalid_index, invalid_instance, overflow, object_sentinel, light_sentinel) plus sorted_packet_cap.
 
 ## SSBO binding registry
 

@@ -1176,8 +1176,65 @@ int main(int argc, char** argv)
             if (s_candidates.size() < static_cast<size_t>(kMaxPackets))
                 s_candidates.resize(kMaxPackets);
 
+            // Static storage reused every frame; contents are frame-local and invalid
+            // after the current frame path. Sized to kMaxPackets on first resize, same
+            // as s_candidates — overflow is structurally impossible.
+            // sorted_packet_cap observed in tier1 smoke: mc2_01=134, mc2_03=359,
+            // mc2_10=417, mc2_17=312, mc2_24=753 (all well under 4096 fallback).
+            static std::vector<RenderCore::DrawPacket> s_drawPackets;
+            if (s_drawPackets.size() < static_cast<size_t>(kMaxPackets))
+                s_drawPackets.resize(kMaxPackets);
+
             const DrawPacketEmitStats stats =
                 emitStaticPropDrawPackets(snap, s_candidates.data(), kMaxPackets);
+
+            // DrawPacket v2: per-frame field compare. Set MC2_DRAW_PACKET_COMPARE=1 to enable.
+            static const bool s_dpCompareEnabled = [] {
+                const char* v = std::getenv("MC2_DRAW_PACKET_COMPARE");
+                return v && v[0] == '1';
+            }();
+            if (s_dpCompareEnabled) {
+                comparePacketsToLegacy(s_candidates.data(), stats.emitted,
+                    static_cast<uint32_t>(snap.frameIndex));
+            }
+
+            // DrawPacket v3: candidate → RenderCore::DrawPacket[] ABI promotion.
+            // No dispatch; legacy flush() unchanged. Set MC2_DRAW_PACKET_V3=1 to enable.
+            static const bool s_v3Enabled = [] {
+                const char* v = std::getenv("MC2_DRAW_PACKET_V3");
+                return v && v[0] == '1';
+            }();
+            static bool s_finalizeWarnedOnce = false;
+
+            if (s_v3Enabled) {
+                // Warn once if finalizeGeometry hasn't run yet. Once-only to avoid per-frame log spam.
+                if (totalPackets == 0 && !s_finalizeWarnedOnce) {
+                    s_finalizeWarnedOnce = true;
+                    std::fprintf(stderr,
+                        "[DRAW_PACKET v3] WARNING (once): totalPackets=0"
+                        " (finalizeGeometry not yet run, fallback kMaxPackets=4096)\n");
+                }
+
+                // candidateCount = stats.emitted, not kMaxPackets: only the v2-emitted slots are
+                // initialized; trailing s_candidates entries are stale from prior frames.
+                const DrawPacketBuildStats bstats = buildStaticPropDrawPackets(
+                    s_candidates.data(), stats.emitted,
+                    s_drawPackets.data(), static_cast<uint32_t>(s_drawPackets.size()));
+                // maxPackets == s_drawPackets.size() == kMaxPackets >= stats.emitted: overflow impossible
+
+                std::fprintf(stderr,
+                    "[DRAW_PACKET v3] frame=%u input=%u emitted=%u"
+                    " invalid_pipeline=%u pipeline_oor=%u invalid_index=%u"
+                    " invalid_instance=%u overflow=%u"
+                    " object_sentinel=%u light_sentinel=%u sorted_packet_cap=%u\n",
+                    static_cast<uint32_t>(snap.frameIndex),
+                    bstats.inputCandidates, bstats.emitted,
+                    bstats.invalidPipeline, bstats.pipelineOutOfRange,
+                    bstats.invalidIndexCount, bstats.invalidInstanceCount,
+                    bstats.overflow,
+                    bstats.objectIndexSentinelCount, bstats.lightIndexSentinelCount,
+                    totalPackets);
+            }
 
             // Hard gate — anomalies only. skippedRanges is logged under s_logEnabled.
             if (stats.overflow
@@ -1217,6 +1274,17 @@ int main(int argc, char** argv)
                     stats.materialMismatches,
                     stats.overflow ? 1 : 0);
             }
+
+            // Feed ImGui DrawPackets panel (read in GraphicsOptionsWindow::draw).
+            g_dpSnapshot.frame              = snap.frameIndex;
+            g_dpSnapshot.emitted            = stats.emitted;
+            g_dpSnapshot.expected           = stats.expectedPackets;
+            g_dpSnapshot.distinctTypes      = stats.distinctTypes;
+            g_dpSnapshot.invalidRanges      = stats.invalidRanges;
+            g_dpSnapshot.skippedRanges      = stats.skippedRanges;
+            g_dpSnapshot.materialMismatches = stats.materialMismatches;
+            g_dpSnapshot.overflow           = stats.overflow;
+            g_dpSnapshot.typeDescCount      = batcher_getStaticPropTypeDescCount();
 
             (void)stats;  // v0: no dispatch
         }

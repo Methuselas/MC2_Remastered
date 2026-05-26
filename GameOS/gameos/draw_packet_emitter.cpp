@@ -17,6 +17,9 @@
 #include <cstdlib>
 // <climits> not needed: UINT32_MAX comes from <cstdint> already included via draw_packet_emitter.h
 
+// Global debug snapshot — written each frame by gameosmain, read by ImGui panel.
+DrawPacketsDebugSnapshot g_dpSnapshot;
+
 DrawPacketEmitStats emitStaticPropDrawPackets(const RenderSnapshot&          snap,
                                               StaticPropDrawPacketCandidate* out,
                                               uint32_t                       maxPackets) {
@@ -330,4 +333,57 @@ DrawPacketCompareResult comparePacketsToLegacy(
         r.geomMismatch, r.typeMismatch, r.alphaMismatch);
 
     return r;
+}
+
+// ---------------------------------------------------------------------------
+// DrawPacket v3 — candidate → RenderCore::DrawPacket ABI promotion.
+// ---------------------------------------------------------------------------
+
+DrawPacketBuildStats buildStaticPropDrawPackets(
+    const StaticPropDrawPacketCandidate* candidates,
+    uint32_t                             candidateCount,
+    RenderCore::DrawPacket*              out,
+    uint32_t                             maxPackets)
+{
+    DrawPacketBuildStats stats{};
+    stats.inputCandidates = candidateCount;
+
+    for (uint32_t i = 0; i < candidateCount; ++i) {
+        if (stats.emitted >= maxPackets) { ++stats.overflow; continue; }
+
+        const auto& c  = candidates[i];
+        const RenderCore::PipelineId id = c.pipelineId;
+
+        if (id == RenderCore::PipelineId::Invalid) {
+            ++stats.invalidPipeline; continue;
+        }
+        if (static_cast<uint32_t>(id) >= static_cast<uint32_t>(RenderCore::PipelineId::Count_)) {
+            ++stats.pipelineOutOfRange; continue;
+        }
+        // Prove descriptor lookup is safe for in-range IDs; (void) avoids unused-variable warning.
+        // getPipelineDesc() asserts on Invalid/OOB — both are already excluded above.
+        { const RenderCore::PipelineDesc& desc = RenderCore::getPipelineDesc(id); (void)desc; }
+        if (c.indexCount == 0) {
+            ++stats.invalidIndexCount; continue;
+        }
+        if (c.instanceCount == 0) {
+            ++stats.invalidInstanceCount; continue;
+        }
+
+        RenderCore::DrawPacket& p = out[stats.emitted++];
+        p.pipelineId    = static_cast<uint32_t>(id);
+        p.mesh          = c.mesh;
+        p.material      = c.material;
+        p.objectIndex   = 0xFFFFFFFFu;   // sentinel: no per-object identity at type-packet level
+        p.lightIndex    = 0xFFFFFFFFu;   // sentinel: no per-packet light index yet
+        p.firstIndex    = c.firstIndex;
+        p.indexCount    = c.indexCount;
+        p.instanceCount = c.instanceCount;
+        p.sortKey       = c.sortKey;
+
+        ++stats.objectIndexSentinelCount;
+        ++stats.lightIndexSentinelCount;
+    }
+
+    return stats;
 }

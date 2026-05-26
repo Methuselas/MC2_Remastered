@@ -385,7 +385,15 @@ def main():
                             # MC2_TYPE_TABLE_CAND_VERBOSE=1 also enables per-packet
                             # detail lines every frame (not just first-frame).
                             "MC2_TYPE_TABLE_CAND_LOG",
-                            "MC2_TYPE_TABLE_CAND_VERBOSE")},
+                            "MC2_TYPE_TABLE_CAND_VERBOSE",
+                            # DrawPacket v2 per-frame field compare gate.
+                            # MC2_DRAW_PACKET_COMPARE=1 enables [DRAW_PACKET_COMPARE v1]
+                            # summary lines. MC2_DRAW_PACKET_COMPARE_VERBOSE=1 adds per-packet detail.
+                            "MC2_DRAW_PACKET_COMPARE",
+                            "MC2_DRAW_PACKET_COMPARE_VERBOSE",
+                            # DrawPacket v3 ABI-promotion probe gate.
+                            # MC2_DRAW_PACKET_V3=1 enables [DRAW_PACKET v3] build-stats line per frame.
+                            "MC2_DRAW_PACKET_V3")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
