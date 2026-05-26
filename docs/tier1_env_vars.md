@@ -54,6 +54,10 @@ Three CI scripts that lock the RenderWorld arc invariants — see `docs/renderwo
 - `sh scripts/check-no-raw-gl-from-game.sh` — game-side raw GL prohibition (M6)
 - `sh scripts/check-vfx-no-objectid.sh` — VFX attachment-2 prohibition (M4)
 
+## MaterialKtx sidecar (Phase 0)
+
+- `MC2_MATERIAL_KTX=1` — KTX2 sidecar loader: try `.ktx2` alongside `.tga` when building static-prop texture array. Phase 0: RGBA8 (VK_FORMAT_R8G8B8A8_UNORM/SRGB) only; compressed/supercompressed formats return false silently. Default OFF. Requires `MC2_COALESCE=1`. Implementation: `RenderCore/KtxLoader.{h,cpp}`. Call site: `RenderCore::ktxLoadRgba8(path, out)` in `gos_static_prop_batcher.cpp`.
+
 ## MaterialGpu sidecar (MaterialGpu-2)
 
 - `MC2_MATERIAL_GPU=1` — enable static-prop MaterialGpu sidecar: builds table from `texArrayLayer`, uploads mission-lifetime SSBO at binding 5, binds in `flush()`, compares `albedoTex` vs legacy layer. Default OFF. Log prefix: `[MATERIAL_GPU v1]`. Emits: `event=table_upload materials=N bytes=B emitted=M`, `event=compare emitted=M mismatches=0`, `event=unload materials=N bytes=B`. No visual change. No shader consumer until MaterialGpu-3.
@@ -63,6 +67,11 @@ Three CI scripts that lock the RenderWorld arc invariants — see `docs/renderwo
   instead of `PerDrawEntry.texArrayLayer`. Expected result: zero pixel delta (same layer index).
   Log: `event=sample_mode enabled=1 loc=N` (once per flush). Diagnostic reason codes:
   `upload_env_off | sample_env_off | no_ssbo | sidecar_invalid | uniform_missing`.
+
+## DrawPacket v2 compare
+
+- `MC2_DRAW_PACKET_COMPARE=1` — per-frame candidate vs batcher field check (summary log). Emits one `[DRAW_PACKET_COMPARE v1]` line per frame to stderr: `frame=%u packets=%u pipeline_invalid=%u pipeline_oob=%u geom_mismatch=%u type_mismatch=%u alpha_mismatch=%u`. Default OFF. Log tag `v1`; increment if fields are added/removed in future slices.
+- `MC2_DRAW_PACKET_COMPARE_VERBOSE=1` — also emit per-mismatch detail lines (`[DRAW_PACKET_COMPARE detail]`) for firstIndex, indexCount, owningType, and alpha disagreements. Requires `MC2_DRAW_PACKET_COMPARE=1` to have any effect (compare must be enabled for the per-candidate loop to run). Valid values: `1` to enable; omit or set to any other value to disable.
 
 ## SSBO binding registry
 
