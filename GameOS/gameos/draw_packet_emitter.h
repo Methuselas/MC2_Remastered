@@ -22,12 +22,12 @@ struct StaticPropDrawPacketCandidate {
     uint32_t                   typeId;           // owning type (group key)
     uint32_t                   globalPacketIdx;  // source packet index in batcher global array
     uint32_t                   instanceCount;    // visible instances this frame
-    uint32_t                   firstIndex;       // IBO byte offset
+    uint32_t                   firstIndex;       // IBO element index (NOT byte offset)
     uint32_t                   indexCount;       // index count for glDrawElements (triangle count x 3)
     RenderCore::MaterialHandle material;         // generation=0 debug wrapper; not a registry handle
                                                  // invalid() when MC2_MATERIAL_GPU=0
     RenderCore::MeshHandle     mesh;             // invalid() — v0 stub; no mesh registry yet
-    uint8_t                    alphaPass;        // 0=opaque, 8=alpha-test (sortKey pass bits)
+    uint8_t                    alphaPass;        // 0=opaque, 8=alpha (enum value into sortKey [63:60])
     uint64_t                   sortKey;          // packed per DrawPacket.h spec section 6
 };
 
