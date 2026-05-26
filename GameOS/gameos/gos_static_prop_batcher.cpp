@@ -3378,6 +3378,90 @@ void GpuStaticPropBatcher::flush() {
     // convention). Revisit if distance fog needs to attenuate props.
     glUniform1f(glGetUniformLocation(s_staticPropProgram, "u_fogValue"),      1.0f);
 
+    // v4A: substitutive opaque dispatch — non-coalesce, all-opaque types only.
+    // All uniforms (u_worldToClipGL, u_mvp, u_tex, u_fogValue) valid at this point (L3358-3371).
+    //
+    // Consume-and-clear: capture the per-frame registration and null it immediately.
+    // This guards against stale pointer reuse if flush() is called again later (e.g., shadow pass),
+    // and handles the case where the setter was never called (pointer was already null).
+    const StaticPropOpaquePacketView* v4Candidates     = s_opaqueDispatchCandidates;
+    const size_t                      v4CandidateCount = s_opaqueDispatchCandidateCount;
+    s_opaqueDispatchCandidates     = nullptr;
+    s_opaqueDispatchCandidateCount = 0u;
+
+    s_v4TypeDrawCount.assign(s_types.size(), 0u);
+
+    bool     v4DispatchAttempted  = (v4CandidateCount > 0u);
+    uint32_t v4OpaqueDraws        = 0u;
+    uint32_t v4MixedTypeDeferred  = 0u;
+    uint32_t v4Invalid            = 0u;
+    uint32_t v4DuplicatePacket    = 0u;
+
+    if (v4DispatchAttempted) {
+        if (IsCoalesceEnabled()) {
+            if (s_counters.frame_count % 600 == 0) {
+                std::fprintf(stderr, "[DRAW_PACKET_DISPATCH v1 frame=%llu event=coalesce_noop candidates=%zu]\n",
+                    (unsigned long long)s_counters.frame_count, v4CandidateCount);  // use captured local; statics already cleared
+            }
+        } else {
+            for (size_t i = 0; i < v4CandidateCount; ++i) {
+                const StaticPropOpaquePacketView& v = v4Candidates[i];
+
+                if (v.typeId >= s_types.size())                                    { ++v4Invalid;          continue; }
+                if (s_types[v.typeId].alphaClass != 0u)                            { ++v4MixedTypeDeferred; continue; }
+                if (v.pipelineId != static_cast<uint32_t>(RenderCore::PipelineId::StaticPropOpaque))
+                                                                                    { ++v4Invalid;          continue; }
+                // Duplicate guard: if count would exceed packetCount, this candidate is a duplicate.
+                if (s_v4TypeDrawCount[v.typeId] >= s_types[v.typeId].packetCount)  { ++v4DuplicatePacket;  continue; }
+
+                auto it = s_typeRanges.find(v.typeId);
+                if (it == s_typeRanges.end()                                )       { ++v4Invalid;          continue; }
+                const TypeRangeSsbo& tr = it->second;
+
+                if (v.globalPacketIdx >= s_packets.size())                          { ++v4Invalid;          continue; }
+                const int32_t baseVertex = s_packets[v.globalPacketIdx].baseVertex;
+
+                // Per-type SSBO sub-range bind — matches legacy per-type bind pattern (~L3877-3882).
+                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
+                    (GLintptr)tr.instanceByteOffset, (GLsizeiptr)tr.instanceByteSize);
+
+                // Uniforms: shader declares int (not uint) — glUniform1i throughout.
+                // Use s_locsLegacy (populated at shader link L595-597).
+                const int maxVtxID = (s_types[v.typeId].vertexCount > 0u)
+                    ? (int)(s_types[v.typeId].vertexCount - 1u) : 0;
+                glUniform1i(s_locsLegacy.maxLocalVertexID, maxVtxID);
+                glUniform1i(s_locsLegacy.materialFlags,    (GLint)v.cachedMaterialFlags);
+                // u_packetID == globalPacketIdx == type.firstPacket + p (legacy line 4010 semantics).
+                glUniform1i(s_locsLegacy.packetID,         (GLint)v.globalPacketIdx);
+
+                glDrawElementsBaseVertex(GL_TRIANGLES, (GLsizei)v.indexCount, GL_UNSIGNED_INT,
+                    reinterpret_cast<void*>((uintptr_t)v.firstIndex * sizeof(uint32_t)), baseVertex);
+
+                ++s_v4TypeDrawCount[v.typeId];
+                ++v4OpaqueDraws;
+            }
+
+            // Three-way invariant counters (type-table-derived, not candidate-derived).
+            uint32_t v4EligibleOpaquePkts  = 0u;
+            uint32_t v4PartialTypeDispatch = 0u;
+            for (uint32_t t = 0; t < (uint32_t)s_types.size(); ++t) {
+                if (s_v4TypeDrawCount[t] == 0u || s_types[t].alphaClass != 0u) continue;
+                v4EligibleOpaquePkts += s_types[t].packetCount;
+                if (s_v4TypeDrawCount[t] != s_types[t].packetCount) ++v4PartialTypeDispatch;
+            }
+
+            if (s_counters.frame_count % 600 == 0) {
+                std::fprintf(stderr,
+                    "[DRAW_PACKET_DISPATCH v1 frame=%llu candidates=%zu "
+                    "eligible_opaque_pkts=%u opaque_draws=%u mixed_deferred=%u "
+                    "partial_type=%u duplicate=%u invalid=%u]\n",
+                    (unsigned long long)s_counters.frame_count, v4CandidateCount,
+                    v4EligibleOpaquePkts, v4OpaqueDraws,
+                    v4MixedTypeDeferred, v4PartialTypeDispatch, v4DuplicatePacket, v4Invalid);
+            }
+        }
+    }
+
     // Slice 2 (object-offload) — Stage 2.C.2: bind per-type hot-color SSBO
     // once for the whole flush. The data is per-map immutable so a single
     // bind covers every typeID in the per-type loop below — static_prop.vert
@@ -3870,7 +3954,16 @@ void GpuStaticPropBatcher::flush() {
         }
     } else {
         // ---- Step 11.8 legacy per-type/per-packet draw loop (unchanged) ----
+    uint32_t v4OpaquePacketsSuppressed = 0u;  // declared before loop
     for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {
+        // v4A: suppress all-opaque type only if ALL its packets were dispatched (no partial substitution).
+        if (s_types[typeID].alphaClass == 0u
+                && typeID < (uint32_t)s_v4TypeDrawCount.size()
+                && s_types[typeID].packetCount > 0u
+                && s_v4TypeDrawCount[typeID] == s_types[typeID].packetCount) {
+            v4OpaquePacketsSuppressed += s_types[typeID].packetCount;
+            continue;
+        }
         auto rit = s_typeRanges.find(typeID);
         if (rit == s_typeRanges.end()) continue;
         const TypeRangeSsbo& r = rit->second;
@@ -4052,6 +4145,11 @@ void GpuStaticPropBatcher::flush() {
         if (wroteParityThisDraw && locParityWrite >= 0) {
             glUniform1i(locParityWrite, 0);
         }
+    }
+    if (s_counters.frame_count % 600 == 0 && v4DispatchAttempted) {
+        std::fprintf(stderr,
+            "[DRAW_PACKET_SUPPRESS v1 frame=%llu legacy_opaque_packets_suppressed=%u]\n",
+            (unsigned long long)s_counters.frame_count, v4OpaquePacketsSuppressed);
     }
     } // end Step 11.8 else (!IsCoalesceEnabled() legacy draw loop)
 
