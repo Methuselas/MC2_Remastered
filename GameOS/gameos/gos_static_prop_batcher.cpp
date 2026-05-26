@@ -738,6 +738,14 @@ void loadProgramsIfNeeded() {
             // is texture-array + shader discard, not a separate program).
             RenderCore::bindProgram(RenderCore::PipelineId::StaticPropOpaque,    s_staticPropProgramCoalesce);
             RenderCore::bindProgram(RenderCore::PipelineId::StaticPropAlphaTest, s_staticPropProgramCoalesce);
+            // Re-cache parity uniform locations from the coalesce program.
+            // s_loc_u_parity* were initially cached from s_staticPropProgram, but
+            // applyPipeline() now binds s_staticPropProgramCoalesce — the locations
+            // are program-specific, so calling glUniform1i with a location from the
+            // wrong program yields GL_INVALID_OPERATION (0x502).
+            s_loc_u_parityWrite        = glGetUniformLocation(s_staticPropProgramCoalesce, "u_parityWrite");
+            s_loc_u_parityVertsPerType = glGetUniformLocation(s_staticPropProgramCoalesce, "u_parityVertsPerType");
+            s_loc_u_parityBaseVertex   = glGetUniformLocation(s_staticPropProgramCoalesce, "u_parityBaseVertex");
         } else {
             // Compile/link failure — leave handle zero. Legacy path is
             // unaffected; finalizeGeometry's Step 5.5 will see
@@ -3368,17 +3376,6 @@ void GpuStaticPropBatcher::flush() {
     }
     s_parityBytesUsedThisFrame = 0;
 
-    // Drain any pre-existing errors at flush() entry so downstream checks are clean.
-    {
-        GLenum flushEntryErr;
-        while ((flushEntryErr = glGetError()) != GL_NO_ERROR) {
-            char buf[96];
-            std::snprintf(buf, sizeof(buf),
-                          "[MATERIAL_GPU v4] stale GL error at flush entry: 0x%x\n", flushEntryErr);
-            std::fputs(buf, stderr);
-        }
-    }
-
     // Save ALL GL state we'll mutate so we can restore it at the end.
     // This is the defensive-save approach — the engine's MLR/HUD paths
     // under 4.3 core are fragile about inherited bindings, so we behave
@@ -3579,7 +3576,11 @@ void GpuStaticPropBatcher::flush() {
                         bucket.instances.size() * sizeof(GpuStaticPropInstance));
             groupCursor[group] += static_cast<uint32_t>(bucket.instances.size());
         }
-    } else if (IsCoalesceEnabled() && s_globalPoolLegacy) {
+    }
+
+
+
+    if (IsCoalesceEnabled() && s_globalPoolLegacy) {
         // Legacy per-type-cap path (unchanged from substrate-coalesce). Uses s_coalesceFrameSlot
         // (which mirrors s_frameSlot under legacy mode — set at the :2644 advance site).
         const size_t fr_off_bytes =
