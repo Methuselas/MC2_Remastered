@@ -26,6 +26,28 @@ named area, not as part of post-hoc debugging.
 
 - **GPU cull predicate is HELPER** (`memory/gpu_cull_predicate_is_helper_real_consumer_is_cullubo.md`): `shaders/gpu_cull_predicate.glsl` declares no uniforms; takes `vec4 clip` as input. Real matrix consumer is `CullUBO.viewProj` at `gpu_cull.comp:169-170`, written from `gpu_cull_compute.cpp:831` via cache. Migration work targeting the predicate file is fictional.
 
+## MaterialGpu / DrawPacket producer-consumer (read before touching albedo wiring)
+
+`albedoTex` is an **overloaded, transitional field** — its meaning differs by subsystem:
+
+| Subsystem | `albedoTex` meaning | Shader-actionable? |
+|---|---|---|
+| **Static props** | Texture array layer index | YES — `static_prop.frag` samples `u_texArray[albedoTex]` via MaterialGpu by default |
+| **Mechs** | `mcTextureManager` texHandle/slot | NO — compare-only; NOT usable as array index in `mech.frag` |
+
+**Static-prop pipeline (DEFAULT-ON as of v7):**
+- Producer: `GpuStaticPropBatcher::finalizeGeometry` → builds `MaterialGpu` table
+- Dispatch: `DrawPacket[]` + `StaticPropDispatchMeta[]` per flush; kill-switch `MC2_STATIC_PROP_LEGACY_DISPATCH=1`
+- Consumer: `static_prop.frag` — samples `materials[materialIdx].albedoTex` as array layer
+- Fallback compare authority: `texArrayLayer` (retained for kill-switch path + invariant checks)
+- Kill switches: `MC2_STATIC_PROP_LEGACY_DISPATCH=1` (dispatch), `MC2_MATERIAL_GPU=0` (table upload), `MC2_MATERIAL_GPU_SAMPLE=0` (shader sampling)
+
+**Mech pipeline (Mech-2 BLOCKED):**
+- Producer: `GpuMechInstance.materialIdx` at byte 52 — holds compare value only
+- Consumer: `mech.frag` still uses legacy `sampler2D u_tex` (NOT MaterialGpu table)
+- Mech-2 requires a texture model decision before shader sampling can proceed
+- Do NOT copy the static-prop shader switch directly — `albedoTex` is a texHandle/slot here, not an array layer
+
 ## Stock-install / build platform
 
 - **Stock install must remain playable** (`memory/stock_install_must_remain_playable.md`): renderer modernization data must degrade to stock-compatible; no savegame depends on render caches.

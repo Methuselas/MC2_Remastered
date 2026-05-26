@@ -37,6 +37,32 @@ For the RenderWorld arc specifically, see also:
 
 ---
 
+## DrawPacket arc — v7+v7.1 SHIPPED, default-ON (2026-05-26)
+
+- **DrawPacket v7** (SHIPPED 2026-05-26): Default-ON flip. `s_v6Enabled` true by
+  default. Kill-switch: `MC2_STATIC_PROP_LEGACY_DISPATCH=1` reverts to legacy
+  `glMultiDrawElementsIndirect`. `run_smoke.py` propagation tuple updated. Tier1
+  5/5 PASS both gates. Log tag `[DRAW_PACKET_V6]` fires by default — NOT opt-in.
+
+- **DrawPacket v7.1** (SHIPPED 2026-05-26, HEAD `f780949f`): Dead-code removal.
+  Deleted: `StaticPropOpaquePacketView` struct, `batcher_setOpaqueDispatchCandidates()`,
+  `s_opaqueDispatchCandidates`/`s_opaqueDispatchCandidateCount`/`s_v4TypeDrawCount` statics,
+  v4A flush block (~90 lines), v4A legacy-path suppression guard + `[DRAW_PACKET_SUPPRESS v1]` log,
+  v4B coverage-compare block (~80 lines), v4C slot-coverage block (~70 lines),
+  deprecated `MC2_DRAW_PACKET_STATIC_PROP_V6` gate plumbing. Net -291 lines.
+  `s_v6Enabled` lambda simplified to kill-switch only. Dispatch hierarchy table
+  added to `docs/tier1_env_vars.md`. Tier1 5/5 PASS post-cleanup.
+  Handoff: `memory/HANDOFF_2026_05_26_drawpacket_v7_shipped.md`.
+
+- **DrawPacket v7.2** (PENDING — 1+ week soak): Remove `MC2_DRAW_PACKET_COALESCE_V5`
+  gate plumbing after confirming no disarms. Not yet started.
+
+- **DrawPacket v8** (DEFERRED): Shadow-pass packet dispatch, GPU-cull count
+  integration, sortKey population, mech/terrain packets, log-tag normalization
+  `[STATIC_PROP_PACKET_DISPATCH v1]`. No spec yet.
+
+---
+
 ## In flight / ready to execute
 
 - **Unified-projection F1** (design + plan complete; ready for execution):

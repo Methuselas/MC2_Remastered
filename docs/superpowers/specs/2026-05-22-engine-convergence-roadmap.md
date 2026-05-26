@@ -22,6 +22,35 @@ recommendation.
 
 ## Update log (post-2026-05-22 ships)
 
+**2026-05-26 DrawPacket arc + infra ships.** Item 11 advances from
+"implicit in enqueuers" to a working v0→v4A substitutive dispatch.
+Full details in item 11 below. Other ships:
+
+- **DrawPacket v0→v4A** (commits `2503d1ab`→`f070ac49`) — explicit
+  `DrawPacket` struct in `draw_packet_emitter.h`; v4A delivers first
+  substitutive dispatch for all-opaque static-prop types in
+  non-coalesce mode. Gated `MC2_DRAWPACKET_STATIC_PROP_OPAQUE=1`
+  (default OFF). Tier1 5/5 PASS; three-way invariant confirmed
+  (`invalid=0`, `duplicate=0`, `partial_type=0`). Coalesce mode (v4B)
+  and alpha types remain on legacy path.
+- **StaticPropTypeDesc** (commits `b94585c7`→`509b1433`) —
+  `RenderCore::StaticPropTypeDesc` 16-byte immutable per-type
+  descriptor; `s_typeDescTable` populated in `finalizeGeometry`;
+  accessor trio in `batcher.h`.
+- **HDRI sky** (`hdri-sky-1` arc, commits `e3a29a86`→`b06dff00`) —
+  `SkyRenderAdapter` bridge (RenderWorld firewall), tinyexr EXR loader,
+  equirect fragment shader, CC0 4K HDR asset. Tier 2 Track V partial
+  start; replaces procedural skybox.
+- **FX-GPU B3** (commits `c55f7176`→`7918dbf0`) — B3a MissileSmoke
+  additive blend fix (was opaque white squares); B3b PpcBolt kind +
+  schema bump + INI-driven gpu_trail_kind mapping (lockstep deploy);
+  B3c CPU trailEffect suppression + `MC2_GPU_PARTICLES` default flipped
+  ON. GPU particles now ship default-enabled.
+- **Block-level AABB frustum fallback** (`f253f3b1`) — static-prop
+  pop-in fix; no roadmap item but closes a visual regression.
+
+---
+
 **2026-05-24 mega-update.** The RenderWorld arc went from "design
 direction" to "engine surface that exists, with three CI scripts
 enforcing its boundary." Per-item status changes are reflected in the
@@ -219,28 +248,35 @@ useful for the design documents, not necessarily the C++ type.
 
 ### 5. Bindless-style resource model
 
-**Status: ADVANCED — MaterialGpu SSBO landed (2026-05-24 parallel session).**
+**Status: ADVANCED — MaterialGpu static-prop arc v4–v7 DEFAULT-ON (2026-05-26).**
 
 Terrain: `nodeId → gosHandle` LUT (per-frame upload,
 `gpu_driven_terrain_solid.comp` binding 2).
 Static props: `GpuStaticPropRegistry` index-based GPU access.
 Lights: `LightsData` SSBO slot-indexed.
-**Material:** `RenderCore/MaterialGpu.h` + `shaders/include/material_gpu.hglsl`
-land the `MaterialGpu { albedoIndex, normalIndex, flags, ... }` SSBO
-schema (currently untracked in this worktree; parallel session).
-`scripts/check-material-gpu-mirror.sh` enforces C++/GLSL field-order
-mirror (passes: "MaterialGpu field order matches (8 fields)").
+**Material (static props — COMPLETE):** `RenderCore/MaterialGpu.h` +
+`shaders/include/material_gpu.hglsl` — `MaterialGpu { albedoIndex, normalIndex,
+flags, ... }` SSBO schema. Default-ON upload, bind, compare, and shader
+sampling as of v7 (HEAD `ae2152cd`). Kill switches: `MC2_MATERIAL_GPU=0`
+disables upload/bind/compare; `MC2_MATERIAL_GPU_SAMPLE=0` disables shader
+sampling and falls back to `texArrayLayer`. Log tag: `[MATERIAL_GPU v4]`.
+Tier1 5/5 PASS all gates. `scripts/check-material-gpu-mirror.sh` enforces
+C++/GLSL field-order mirror.
 
-Gap (residual): TextureArray[] indexing in shaders is still
-per-subsystem. The MaterialGpu SSBO defines the schema; per-pass
-adoption (mech.frag, static_prop.frag consuming material indices
-instead of per-draw binds) is the follow-up.
+**Material (mechs — PARTIAL):** `GpuMechInstance.materialIdx` field at byte 52
+(HEAD `c2dd0a33`). Compare invariant proven (`mismatches=0`), log tag
+`[MECH_MATERIAL_GPU v1]`. Shader sampling NOT yet wired.
 
-**Next step:** consume MaterialGpu indices in mech.frag +
-static_prop.frag (replace per-draw `glBindTexture` with
-`materials[inst.materialIdx].albedoIdx` shader-side lookup). Terrain's
-per-fragment `floor(WorldPos→tile)` material path is the reference
-shape.
+Gap (residual): Mech shader sampling (Mech-2) is BLOCKED — `albedoTex` on
+`GpuMechInstance` holds a `texHandle`/slot (compare-only; NOT shader-actionable
+in the current mech pipeline). Requires a texture model decision before
+`mech.frag` can consume MaterialGpu indices. Decision doc:
+`docs/superpowers/specs/2026-05-26-mech-material-gpu-mech2-decision.md`.
+Terrain material path deferred (separate arc).
+
+**Next step (Mech-2):** texture model decision → wire `mech.frag` albedo through
+MaterialGpu table. NOT a direct copy of the static-prop switch — `albedoTex`
+semantic differs.
 
 ---
 
@@ -404,19 +440,55 @@ without adding new substrate.
 
 ### 11. Draw packets / render packets
 
-**Status: IMPLICIT IN ENQUEUERS, NOT AN EXPLICIT TYPE.**
+**Status: v7+v7.1 SHIPPED — DrawPacket canonical dispatch DEFAULT-ON (2026-05-26). HEAD `f780949f`.**
 
-The existing `masterVertexNodes` / `masterHardwareVertexNodes` enqueue
-architecture is a packet queue — but the "packet" is not an explicit
-type. `GpuStaticPropBatcher::flush()` is the closest: it dequeues
-batched prop records and submits `glDrawElementsIndirect`.
+The DrawPacket arc makes the rendering intent explicit in a data structure that
+outlives the draw-call submission window, enabling sort, cull, and multi-pass
+dispatch, replacing the old "implicit in enqueuers" state:
 
-Gap: no `DrawPacket { PipelineId, MeshHandle, MaterialHandle, objectIndex, sortKey }` struct. Per-draw sort keys, pipeline-change costs, and cross-pass draw-list reuse are not modeled.
+**Arc summary:**
+- **v0** (`2503d1ab`): `draw_packet_emitter.h` — `DrawPacket` struct +
+  `DrawPacketCandidate`; two-phase emit after `ExtractRenderSnapshot`.
+- **v1** (`ff8bdc7c`): `[DRAW_PACKET v1]` log tag, materialMismatches
+  cross-check gate.
+- **v2** (`f2546c55`): `pipelineId` + `cachedMaterialFlags` on
+  candidate; `comparePacketsToLegacy` with categorized counters.
+- **v3** (`6eab374a`): candidate→`DrawPacket` ABI promotion; struct
+  promoted as engine type (no dispatch yet).
+- **v4A–v4C + v5** (SHIPPED then REMOVED in v7.1): substitutive dispatch
+  coverage probes. All gate scaffolding deleted; historical archaeology only.
+- **v6** (`57e62dbb`): canonical `DrawPacket[]` + `StaticPropDispatchMeta[]`
+  dispatch. `StaticPropDispatchMeta` 32B pod per draw slot. Three-guard
+  builder. `ok=1` all tier1 missions.
+- **v7** (default-ON flip): `s_v6Enabled` true by default; kill-switch
+  `MC2_STATIC_PROP_LEGACY_DISPATCH=1` reverts to legacy multidraw.
+  Tier1 5/5 PASS both gates.
+- **v7.1** (HEAD `f780949f`): dead-code removal. `StaticPropOpaquePacketView`,
+  `batcher_setOpaqueDispatchCandidates`, v4A/v4B/v4C flush blocks,
+  deprecated V6 gate plumbing removed. Net -291 lines. Lambda simplified
+  to kill-switch only.
 
-**Sequencing note:** design draw packets as part of the
-`RenderWorld` / render-pass integration (items 1, 2, 20). This is
-the piece that makes "game object → renderable → draw packet → API
-call" a clean chain.
+**Dispatch hierarchy (v7, current):**
+
+| Path | Trigger | Log tag |
+|---|---|---|
+| **Primary** — `DrawPacket[]` + `StaticPropDispatchMeta[]` | Default ON | `[DRAW_PACKET_V6]` |
+| **Fallback** — legacy `glMultiDrawElementsIndirect` | `MC2_STATIC_PROP_LEGACY_DISPATCH=1` | none |
+| **Diagnostic** — v5 per-draw-call loop | `MC2_DRAW_PACKET_COALESCE_V5=1` (deprecated) | `[DRAW_PACKET_V5]` |
+| **Historical** — v4A/v4B/v4C probes | Removed in v7.1 | n/a |
+
+**Supporting infra:**
+- `RenderCore::StaticPropTypeDesc` 16-byte immutable per-type descriptor.
+- `MC2_DRAW_PACKET_COMPARE` + verbose env-vars still active (see `docs/tier1_env_vars.md`).
+- `scripts/run_smoke.py` propagation tuple includes `MC2_STATIC_PROP_LEGACY_DISPATCH`.
+
+**Gap (residual):** no sort keys, no pipeline-change cost model, no cross-pass
+draw-list reuse. `PipelineId` exists on struct; `MeshHandle`/`MaterialHandle`
+layout reserved.
+
+**Next steps (v8):** shadow-pass packet dispatch (`flushShadow` currently
+legacy), GPU-cull count integration, `sortKey` population, mech/terrain
+packets, log-tag normalization `[STATIC_PROP_PACKET_DISPATCH v1]`.
 
 ---
 
@@ -682,32 +754,42 @@ extends `RenderWorld` SCOPE, not its existence.
 Ordered by: (1) unblocks other items, (2) low blast radius, (3) NS alignment.
 
 ```
-Already in execution:
-  F1 (unified-projection ViewUniforms UBO)     — closes item 1 foundation
+Already in execution / recently shipped:
+  DrawPacket v4A                                — item 11 partial; opaque non-coalesce dispatch proven
+  F1 (unified-projection ViewUniforms UBO)      — Phase 0+1 done; Phase 2+3 (atomic flip) pending
   quadSetupTextures retirement                  — clean Tracy gate for NS2/terrain
+  HDRI sky (SkyRenderAdapter)                   — Track V Tier 2 partial start
+  FX-GPU B3 (GPU particles default ON)          — Track V Tier 2 GPU VFX partial start
 
 Sequence A — engine API boundary (items 1, 2, 12, 20):
-  A1. Write RenderWorld boundary spec (doc only, no code)
-  A2. Extend render_contract.h Phase 2 (debug assertions)
-  A3. Extend PassStateContract → PipelineDesc runtime type
-  A4. RendererFeatureRegistry header (existing flags, no behavior change)
+  A1. Write RenderWorld boundary spec (doc only, no code)    ← DONE (renderworld_arc_status.md)
+  A2. Extend render_contract.h Phase 2 (debug assertions)   ← SHIPPED (commit 137dc70)
+  A3. Extend PassStateContract → PipelineDesc runtime type  ← NOT STARTED
+  A4. RendererFeatureRegistry header (existing flags)        ← SHIPPED (RendererFeatureRegistry.h)
 
 Sequence B — mesh geometry tier (items 8, 5, 19, 9):
-  B1. Assimp import phase 0 (prerequisite: cluster-LOD PoC Phase 0)
-  B2. Offline meshOptimizer cook step → .cdag sidecar
-  B3. MaterialGpu SSBO + shader-side indexing (static-prop first)
-  B4. MeshCapability flags at import time
-  B5. Renderable archetype design (feeds RenderWorld item 20)
+  B1. Assimp import phase 0                ← VENDOR DONE (889cebff); cooker off
+  B2. Offline meshOptimizer cook step      ← VENDOR DONE (774f074a); cook not wired
+  B3. MaterialGpu SSBO + shader-side       ← SCHEMA SHIPPED (MaterialGpu.h); per-pass adoption pending
+  B4. MeshCapability flags at import time  ← NOT STARTED
+  B5. Renderable archetype design          ← NOT STARTED
 
 Sequence C — visibility + debug tier (items 6, 10, 16, 18):
-  C1. VisibilityRequest/Result wrapper over existing cull dispatches
-  C2. R32_UINT object-ID buffer (MC2_OBJECT_ID_BUFFER, default OFF)
-  C3. DebugRenderer namespace
-  C4. [RENDER_WORLD v1] frame summary banner
+  C1. VisibilityRequest/Result wrapper     ← V0 SHIPPED (VisibilityRequest.h)
+  C2. R32_UINT object-ID buffer            ← FULLY REALIZED (M1.5+M2.5+M2.6)
+  C3. DebugRenderer namespace              ← M1 SHIPPED (flushWorldPrims)
+  C4. [RENDER_WORLD v1] frame summary      ← SHIPPED
+
+Sequence D — draw packet path (item 11):
+  D1. DrawPacket explicit type             ← SHIPPED (v0→v3)
+  D2. Opaque non-coalesce dispatch         ← SHIPPED (v4A, gated off by default)
+  D3. Coalesce-mode integration            ← NEXT (v4B)
+  D4. Default flip + legacy loop retire    ← v5 (after v4B tier1 PASS)
+  D5. Sort keys + cross-type ordering      ← after v5
 
 Deferred (items 3, 7, 13, 15, 17):
   Extraction phase     — after RenderWorld boundary is designed
-  Multi-view model     — after F1 ships + RenderWorld boundary
+  Multi-view model     — after F1 atomic flip + RenderWorld boundary
   Frame allocator      — retrofit on next new compute pass
   Residency/streaming  — after meshlet LOD ships
   Sim/render interp    — after extraction phase
@@ -1236,14 +1318,15 @@ features from becoming spaghetti.
 ### Tier 2 — UE4/MW5 visual baseline
 
 ```
-PBR MaterialGpu contract (static props first)
-HDR scene color buffer
-Tonemap + bloom post stack
-Stable CSM shadows
-Clean SSAO/GTAO-lite (new path, not the deleted one)
-Decal system v1
-GPU particle/VFX substrate
-Terrain material modernization
+PBR MaterialGpu contract (static props first)    ← schema shipped; per-pass adoption pending
+HDR scene color buffer                            ← not started
+Tonemap + bloom post stack                        ← not started
+Stable CSM shadows                               ← terrain wired (af43ab0b); stability WIP
+HDRI sky                                          ← SHIPPED (SkyRenderAdapter + tinyexr EXR)
+Clean SSAO/GTAO-lite (new path, not deleted one) ← not started
+Decal system v1                                   ← not started
+GPU particle/VFX substrate                        ← PARTIAL (FX-GPU B3c: default ON; B3a/b blend+schema)
+Terrain material modernization                    ← not started
 ```
 
 Full Track V spec: `docs/superpowers/specs/2026-05-22-visual-fidelity-roadmap.md`.
