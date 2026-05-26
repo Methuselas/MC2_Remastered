@@ -3995,26 +3995,23 @@ void GpuStaticPropBatcher::flush() {
                 }
                 const GpuStaticPropPacket& pkt = s_packets[globalPktIdx];
 
-                const auto typeIt = s_typeRanges.find(pkt.owningTypeID);
-                if (typeIt == s_typeRanges.end()) {
+                // Genuine OOB: owningTypeID outside the static type table.
+                if (pkt.owningTypeID >= static_cast<uint32_t>(s_types.size())) {
                     if (s_v5TraceEnabled)
                         std::fprintf(stderr, "[DRAW_PACKET_V5] event=skip slot=%u reason=type_oob\n", i);
                     ++s_v5FrameTypeOob;
                     continue;
                 }
-                const uint32_t instanceCount = typeIt->second.instanceCount;
+                // s_typeRanges only has snapshot (instance-bearing) types.
+                // Missing = zero instances this frame; not an error.
+                const auto typeIt = s_typeRanges.find(pkt.owningTypeID);
+                const uint32_t instanceCount =
+                    (typeIt != s_typeRanges.end()) ? typeIt->second.instanceCount : 0u;
 
                 if (instanceCount == 0u) {
                     if (s_v5TraceEnabled)
                         std::fprintf(stderr, "[DRAW_PACKET_V5] event=skip slot=%u reason=zero_inst\n", i);
                     ++s_v5FrameZeroInstSkips;
-                    continue;
-                }
-
-                if (i >= totalCmds) {
-                    if (s_v5TraceEnabled)
-                        std::fprintf(stderr, "[DRAW_PACKET_V5] event=skip slot=%u reason=base_missing\n", i);
-                    ++s_v5FrameBaseInstMissing;
                     continue;
                 }
                 const GLuint baseInstance = baseInstanceMap[i];
