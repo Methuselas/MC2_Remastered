@@ -18,7 +18,7 @@
 #include <vector>
 #include <cstdint>
 #include <cstdio>
-#include <climits>  // UINT32_MAX
+// <climits> not needed: UINT32_MAX comes from <cstdint> already included via draw_packet_emitter.h
 
 DrawPacketEmitStats emitStaticPropDrawPackets(const RenderSnapshot&          snap,
                                               StaticPropDrawPacketCandidate* out,
@@ -119,6 +119,8 @@ DrawPacketEmitStats emitStaticPropDrawPackets(const RenderSnapshot&          sna
             (void)baseVtx;  // consumed by batcher internally; not needed in candidate
             (void)ownType;  // redundant with tid
 
+            // stats.emitted is both the write index and the running count.
+            // The overflow guard above ensures emitted < maxPackets here.
             out[stats.emitted++] = StaticPropDrawPacketCandidate{
                 tid,       // typeId
                 pi,        // globalPacketIdx
