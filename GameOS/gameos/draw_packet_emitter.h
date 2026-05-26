@@ -12,6 +12,7 @@
 #include "../RenderCore/Handle.h"
 #include "render_snapshot.h"
 #include <cstdint>
+#include "../../RenderCore/PipelineRegistry.h"  // PipelineId enum, getPipelineDesc
 
 // ---------------------------------------------------------------------------
 // v0 candidate: one entry per (typeId, globalPacketIdx).
@@ -27,8 +28,13 @@ struct StaticPropDrawPacketCandidate {
     RenderCore::MaterialHandle material;         // generation=0 debug wrapper; not a registry handle
                                                  // invalid() when MC2_MATERIAL_GPU=0
     RenderCore::MeshHandle     mesh;             // invalid() — v0 stub; no mesh registry yet
-    uint8_t                    alphaPass;        // 0=opaque, 8=alpha (enum value into sortKey [63:60])
+    uint8_t                    alphaPass;        // TRANSITIONAL/debug-only; NOT authoritative v2+
     uint64_t                   sortKey;          // packed per DrawPacket.h spec section 6
+    // v2 additions:
+    RenderCore::PipelineId     pipelineId;       // per-packet pipeline; authoritative v2+
+    uint32_t                   cachedMaterialFlags; // TRANSITIONAL: raw flags from batcher at emit;
+                                                    // used by comparePacketsToLegacy to verify
+                                                    // pipelineId assignment; remove when dispatch-ready
 };
 
 static_assert(sizeof(StaticPropDrawPacketCandidate) <= 64,
@@ -52,6 +58,19 @@ struct DrawPacketEmitStats {
     uint32_t materialMismatches;   // types where two snapshot instances disagreed on materialIdx;
                                    // expected 0 while materialIdx is per-type (v1); WARN-only
     bool     overflow;             // emitted hit maxPackets cap before all visible types processed
+};
+
+// ---------------------------------------------------------------------------
+// Compare result. Returned by comparePacketsToLegacy().
+// All mismatch counters must be zero for the dispatch flip gate to open.
+// ---------------------------------------------------------------------------
+struct DrawPacketCompareResult {
+    uint32_t packets;            // total candidates compared; must be > 0 (finalize ran)
+    uint32_t pipelineInvalid;    // pipelineId == Invalid (batcher_getPacketMaterialFlags OOB at emit)
+    uint32_t pipelineOob;        // pipelineId outside [1, Count_) — enum out of range
+    uint32_t geomMismatch;       // firstIndex or indexCount differs from batcher ground truth
+    uint32_t typeMismatch;       // owningTypeID from batcher != candidate.typeId
+    uint32_t alphaMismatch;      // pipelineId alpha class disagrees with cachedMaterialFlags
 };
 
 // ---------------------------------------------------------------------------
@@ -87,3 +106,14 @@ inline uint64_t buildSortKey(uint8_t  pass,
 DrawPacketEmitStats emitStaticPropDrawPackets(const RenderSnapshot&          snap,
                                               StaticPropDrawPacketCandidate* out,
                                               uint32_t                       maxPackets);
+
+// ---------------------------------------------------------------------------
+// Compare emitted candidates against batcher ground truth.
+// Env-gated: call only when MC2_DRAW_PACKET_COMPARE=1 (use s_compareEnabled).
+// Logs one [DRAW_PACKET_COMPARE v1] summary line to stderr.
+// Per-candidate details gated on MC2_DRAW_PACKET_COMPARE_VERBOSE=1.
+// ---------------------------------------------------------------------------
+DrawPacketCompareResult comparePacketsToLegacy(
+    const StaticPropDrawPacketCandidate* candidates,
+    uint32_t                             count,
+    uint32_t                             frameIndex);
