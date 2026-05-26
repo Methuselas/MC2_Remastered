@@ -420,3 +420,11 @@ bool batcher_getStaticPropTypeDesc(uint32_t typeId, RenderCore::StaticPropTypeDe
 // Pointer is valid until the next onMapUnload(). outCount must not be null.
 // Returns nullptr if geometry not finalized or table is empty.
 const RenderCore::StaticPropTypeDesc* batcher_getStaticPropTypeDescTable(uint32_t* outCount);
+
+// Emit candidate draw log derived from the type desc table.
+// Per-frame: always logs a one-line [DRAW_CAND v0] summary (emitted/invalid/expected).
+// Detailed per-packet [DRAW_CAND v0 detail] lines: first-frame only,
+// OR every frame when MC2_TYPE_TABLE_CAND_VERBOSE=1.
+// Does NOT issue GL calls; does NOT modify any state.
+// gate: MC2_TYPE_TABLE_CAND_LOG=1
+void batcher_buildCandidateLog();

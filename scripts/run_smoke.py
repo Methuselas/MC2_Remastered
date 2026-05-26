@@ -378,7 +378,14 @@ def main():
                             "MC2_DISABLE_GOSFX",
                             # B1 Stage 1'+: GPU particle batcher opt-in gate.
                             # (default-OFF; flipped ON for Stage 1' canaries.)
-                            "MC2_GPU_PARTICLES")},
+                            "MC2_GPU_PARTICLES",
+                            # StaticPropTypeTable v0 Task 5: candidate draw log
+                            # proof gate. MC2_TYPE_TABLE_CAND_LOG=1 enables the
+                            # [DRAW_CAND v0] summary line every frame.
+                            # MC2_TYPE_TABLE_CAND_VERBOSE=1 also enables per-packet
+                            # detail lines every frame (not just first-frame).
+                            "MC2_TYPE_TABLE_CAND_LOG",
+                            "MC2_TYPE_TABLE_CAND_VERBOSE")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

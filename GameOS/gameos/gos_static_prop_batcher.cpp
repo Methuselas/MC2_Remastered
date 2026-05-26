@@ -3247,6 +3247,8 @@ void GpuStaticPropBatcher::flush() {
         return;
     }
 
+    batcher_buildCandidateLog();
+
     // Slice 2 (object-offload) — Stage 2.D.1: parity readback handshake.
     //
     // uploadAllBucketsIfNeeded() above just glClientWaitSync'd on
@@ -4621,6 +4623,60 @@ const RenderCore::StaticPropTypeDesc* batcher_getStaticPropTypeDescTable(uint32_
     *outCount = static_cast<uint32_t>(s_typeDescTable.size());
     if (s_typeDescTable.empty()) return nullptr;
     return s_typeDescTable.data();
+}
+
+void batcher_buildCandidateLog() {
+    static const bool gate    = (getenv("MC2_TYPE_TABLE_CAND_LOG")     != nullptr);
+    static const bool verbose = (getenv("MC2_TYPE_TABLE_CAND_VERBOSE") != nullptr);
+    if (!gate) return;
+
+    if (s_typeDescTable.empty()) {
+        std::fprintf(stderr, "[DRAW_CAND v0] table_empty\n");
+        return;
+    }
+
+    // Compute expected: sum of packetCount over all non-zero-packet entries.
+    uint32_t expected = 0u;
+    for (const auto& d : s_typeDescTable) { expected += d.packetCount; }
+
+    static bool s_detailDone = false;
+    const bool doDetail = verbose || !s_detailDone;
+
+    uint32_t emitted = 0u;
+    uint32_t invalid = 0u;
+    for (const RenderCore::StaticPropTypeDesc& desc : s_typeDescTable) {
+        if (desc.packetCount == 0u) { ++invalid; continue; }
+        for (uint32_t p = 0u; p < desc.packetCount; ++p) {
+            const uint32_t pktIdx = desc.firstPacket + p;
+            if (pktIdx >= static_cast<uint32_t>(s_packets.size())) {
+                if (doDetail) {
+                    std::fprintf(stderr,
+                        "[DRAW_CAND v0 detail] typeId=%u pkt=%u BOUNDS_OVERFLOW\n",
+                        desc.typeId, p);
+                }
+                ++invalid;
+                continue;
+            }
+            if (doDetail) {
+                const GpuStaticPropPacket& pkt = s_packets[pktIdx];
+                std::fprintf(stderr,
+                    "[DRAW_CAND v0 detail] typeId=%u pkt=%u firstIndex=%u"
+                    " indexCount=%u baseVertex=%d alphaClass=%u\n",
+                    desc.typeId, p,
+                    pkt.firstIndex, pkt.indexCount, pkt.baseVertex,
+                    desc.alphaClass);
+            }
+            ++emitted;
+        }
+    }
+    s_detailDone = true;
+
+    // Summary line emitted every frame.
+    // Gate: emitted==expected, invalid==0, no BOUNDS_OVERFLOW.
+    std::fprintf(stderr,
+        "[DRAW_CAND v0] emitted=%u expected=%u invalid=%u%s\n",
+        emitted, expected, invalid,
+        (emitted == expected && invalid == 0) ? " OK" : " MISMATCH");
 }
 
 // Saved slot-16 GL buffer object. Slot 16 is reserved to this feature.
