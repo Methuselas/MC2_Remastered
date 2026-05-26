@@ -3368,6 +3368,17 @@ void GpuStaticPropBatcher::flush() {
     }
     s_parityBytesUsedThisFrame = 0;
 
+    // Drain any pre-existing errors at flush() entry so downstream checks are clean.
+    {
+        GLenum flushEntryErr;
+        while ((flushEntryErr = glGetError()) != GL_NO_ERROR) {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf),
+                          "[MATERIAL_GPU v4] stale GL error at flush entry: 0x%x\n", flushEntryErr);
+            std::fputs(buf, stderr);
+        }
+    }
+
     // Save ALL GL state we'll mutate so we can restore it at the end.
     // This is the defensive-save approach — the engine's MLR/HUD paths
     // under 4.3 core are fragile about inherited bindings, so we behave
@@ -3771,12 +3782,13 @@ void GpuStaticPropBatcher::flush() {
         // that is not a conflict (terrain re-binds WaterRecipeBuf before its own draw).
         // prevSsbo5 is saved at flush() entry and restored at flush() exit.
         if (s_materialGpuEnabled && s_materialGpuSsbo != 0) {
+            while (glGetError() != GL_NO_ERROR) {}  // drain stale before bind check
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, s_materialGpuSsbo);
-            const GLenum bindErr = glGetError();    // sample AFTER
+            const GLenum bindErr = glGetError();
             if (bindErr != GL_NO_ERROR) {
                 char buf[96];
                 std::snprintf(buf, sizeof(buf),
-                              "[MATERIAL_GPU v4] GL ERROR after bind: 0x%x\n", bindErr);
+                              "[MATERIAL_GPU v4] GL ERROR after bind (real): 0x%x\n", bindErr);
                 std::fputs(buf, stderr);
             }
         }
