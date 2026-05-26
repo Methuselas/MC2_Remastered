@@ -938,6 +938,16 @@ class Camera
 		// 2026-05-22 §0.1 invariant.
 		Stuff::Matrix4D worldToClipGL() const;
 
+		// HDRI-SKY-1: expose view matrix component (worldToCameraMatrix) separately
+		// for sky rendering. Used by GameAdapters::Sky::renderHdri alongside
+		// cameraToClipGL_const(). See docs/superpowers/explorations/2026-05-25-hdri-sky-matrix-source.md.
+		const Stuff::LinearMatrix4D& worldToCameraGL() const { return worldToCameraMatrix; }
+
+		// HDRI-SKY-1: expose projection matrix component separately for sky rendering.
+		// Used by GameAdapters::Sky::renderHdri alongside worldToCameraGL(). Both
+		// matrices are column-major (GL convention) and safe to cast to float* for GPU.
+		const Stuff::Matrix4D& cameraToClipGL_const() const { return cameraToClipGL; }
+
 		// F4 projectZ-bypass helper. Computes clip directly via worldToClipGL()
 		// for a single world point. Used by the 5 Modern-default wrappers when
 		// MC2_PROJECTZ_BYPASS_MODE = Compare or Bypass. Does NOT touch
