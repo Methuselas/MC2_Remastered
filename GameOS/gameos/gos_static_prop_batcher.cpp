@@ -721,6 +721,8 @@ void loadProgramsIfNeeded() {
             // here so the per-frame draw branch only needs to bind the
             // texture handle, not re-issue glUniform1i.
             if (s_locsCoalesce.texArr >= 0) {
+                // INIT-ONLY: bind sampler uniform once here so per-frame flush()
+                // only needs to bind the texture handle. Not a flush-path state switch.
                 glUseProgram(s_staticPropProgramCoalesce);
                 glUniform1i(s_locsCoalesce.texArr, 0);
                 glUseProgram(0);
@@ -3458,9 +3460,9 @@ void GpuStaticPropBatcher::flush() {
     //
     // State setup for C1b: three inheritance traps (gpu_direct_renderer_bringup_checklist.md):
     //   1. Sampler state: bind REPEAT/LINEAR before first C1b draw (below).
-    //   2. Depth state:   glEnable(GL_DEPTH_TEST) + GL_LEQUAL — already set above.
-    //   3. Blend state:   glDisable(GL_BLEND) — already set above.
-    // Verified: depth and blend are set unconditionally above regardless of C1b path.
+    //   2. Depth state:   glEnable(GL_DEPTH_TEST) + GL_GEQUAL (reverse-Z) — set by applyPipeline() above.
+    //   3. Blend state:   glDisable(GL_BLEND) — set by applyPipeline() above.
+    // Verified: depth and blend are set unconditionally by applyPipeline() regardless of C1b path.
     const bool useC1bIndirect = gpu_cull::compute_isEnabled() &&
                                 (gpu_cull::compute_getIndirectCmdBuf() != 0) &&
                                 (gpu_cull::compute_getBucketCount() == s_types.size());
