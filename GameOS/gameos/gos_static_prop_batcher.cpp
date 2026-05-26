@@ -4554,6 +4554,14 @@ bool batcher_getPacketDrawInfo(uint32_t globalPacketIdx,
     return true;
 }
 
+bool batcher_getPacketMaterialFlags(uint32_t globalPacketIdx,
+                                     uint32_t* outMaterialFlags) {
+    if (!s_geometryFinalized) return false;
+    if (globalPacketIdx >= s_packets.size()) return false;
+    if (outMaterialFlags) *outMaterialFlags = s_packets[globalPacketIdx].materialFlags;
+    return true;
+}
+
 uint32_t batcher_getInstanceCap(uint32_t typeID) {
     if (!s_geometryFinalized || typeID >= s_types.size()) return 0;
     return s_types[typeID].instanceCap;

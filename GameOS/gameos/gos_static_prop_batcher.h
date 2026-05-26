@@ -344,6 +344,11 @@ bool batcher_getPacketDrawInfo(uint32_t globalPacketIdx,
                                 int32_t*  outBaseVertex,
                                 uint32_t* outOwningTypeID);
 
+// Per-packet material flags. Returns false for out-of-range index.
+// Does NOT expose GpuStaticPropPacket outside the batcher TU.
+bool batcher_getPacketMaterialFlags(uint32_t globalPacketIdx,
+                                     uint32_t* outMaterialFlags);
+
 // Per-type instance capacity (§5.1 formula). 0 if typeID out of range.
 uint32_t batcher_getInstanceCap(uint32_t typeID);
 
