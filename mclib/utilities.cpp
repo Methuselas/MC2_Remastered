@@ -6,6 +6,7 @@ Utilities.cpp			: Implementation of the Utilities component.
 //===========================================================================//
 \*************************************************************************************************/
 #include"utilities.h"
+#include <cctype>
 
 // NS3 boundary: the GOS string-resource handle belongs to the utilities
 // subsystem, not to whatever game/tool main links it. extern'd for all
@@ -256,6 +257,41 @@ void StaticInfo::getData(unsigned char * buffer)
 	}
 }
 
+
+namespace
+{
+	bool StaticInfoHasKnownImageExtension(const char* fileName)
+	{
+		if (!fileName)
+			return false;
+
+		const char* dot = strrchr(fileName, '.');
+		if (!dot)
+			return false;
+
+		const char* slash = strrchr(fileName, '/');
+		const char* backslash = strrchr(fileName, '\\');
+		const char* lastSep = slash > backslash ? slash : backslash;
+		if (lastSep && dot < lastSep)
+			return false;
+
+		++dot;
+		char ext[8] = {0};
+		size_t i = 0;
+		while (dot[i] && i + 1 < sizeof(ext))
+		{
+			ext[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(dot[i])));
+			++i;
+		}
+
+		return strcmp(ext, "tga") == 0
+			|| strcmp(ext, "png") == 0
+			|| strcmp(ext, "jpg") == 0
+			|| strcmp(ext, "jpeg") == 0
+			|| strcmp(ext, "bmp") == 0;
+	}
+}
+
 void StaticInfo::init( FitIniFile& file, const char* blockName, long hiResOffsetX, long hiResOffsetY, DWORD neverFlush )
 {
 	ZoneScopedN("StaticInfo::init");
@@ -294,7 +330,7 @@ void StaticInfo::init( FitIniFile& file, const char* blockName, long hiResOffset
 	{
 		FullPathFileName fullPath;
 		S_strlwr( fileName );
-		fullPath.init( artPath, fileName, ".tga" );
+		fullPath.init( artPath, fileName, StaticInfoHasKnownImageExtension(fileName) ? "" : ".tga" );
 		int ID;
 		{
 			ZoneScopedN("StaticInfo::init loadTexture");

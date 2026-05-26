@@ -996,7 +996,7 @@ bool gosTexture::createHardwareTexture() {
         // TODO: this is texture from memory, so maybe do not load it from file eh?
 
         Image img;
-        if(!img.loadTGA(pcompdata_, size_)) {
+        if(!img.loadFromMemoryEncoded(pcompdata_, size_, filename_ ? filename_ : texname_)) {
             SPEW(("DBG", "failed to load texture from data, filename: %s, texname: %s\n", filename_? filename_ : "NO FILENAME", texname_?texname_:"NO TEXNAME"));
             return false;
         }

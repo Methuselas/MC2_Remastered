@@ -31,8 +31,22 @@ endif("${CMAKE_SIZEOF_VOID_P}" EQUAL "8")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS "ON")
 
-list(APPEND CMAKE_MODULE_PATH ${CMAKE_PREFIX_PATH}/cmake)
-list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/sdl2)
+# Normalize paths before appending them to CMAKE_MODULE_PATH.  Raw Windows
+# backslashes inherited by try_compile() can be parsed as CMake escapes
+# (for example, D:\Repos -> invalid "\R").
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}" MC2_SOURCE_DIR_CMAKE)
+
+foreach(MC2_PREFIX_PATH_ENTRY IN LISTS CMAKE_PREFIX_PATH)
+    if(NOT "${MC2_PREFIX_PATH_ENTRY}" STREQUAL "")
+        file(TO_CMAKE_PATH "${MC2_PREFIX_PATH_ENTRY}" MC2_PREFIX_PATH_ENTRY_CMAKE)
+        list(APPEND CMAKE_MODULE_PATH "${MC2_PREFIX_PATH_ENTRY_CMAKE}/cmake")
+    endif()
+endforeach()
+
+list(APPEND CMAKE_MODULE_PATH
+    "${MC2_SOURCE_DIR_CMAKE}/3rdparty/cmake"
+    "${MC2_SOURCE_DIR_CMAKE}/cmake/sdl2"
+)
 # may have to help find_package bydetting path to FindSDL2.cmake
 #set(SDL2_DIR "${CMAKE_PREFIX_PATH}/cmake")
 
@@ -142,7 +156,7 @@ find_package(GLEW REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(ZLIB REQUIRED)
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+list(APPEND CMAKE_MODULE_PATH "${MC2_SOURCE_DIR_CMAKE}/cmake")
 find_package(FFmpegLGPL REQUIRED)
 # Exposes MC2_VIDEO_DLL_LIST (C string array) in ${CMAKE_BINARY_DIR}/generated/mc2video_dlls.h
 include_directories("${CMAKE_BINARY_DIR}/generated")
@@ -230,6 +244,13 @@ add_subdirectory("./GameOS/gameos" "./out/GameOS/gameos")
 add_subdirectory("./GameOS/src" "./out/windows")
 add_subdirectory("3rdparty/imgui")
 add_subdirectory("GuiRuntime")
+# Standalone ImGui UI Editor.
+# Guarded so source snapshots that carry only metadata files do not break
+# configure, while full local UI Editor trees produce ui_editor.vcxproj.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ui_editor/CMakeLists.txt")
+    add_subdirectory("./ui_editor" "./out/ui_editor")
+endif()
+
 
 set(SOURCES 
     "code/dw.cpp"

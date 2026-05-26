@@ -1,0 +1,2232 @@
+/***************************************************************
+ * FILENAME: vehicles.fit
+ * DESCRIPTION: Vehicle, copter, infantry, and support-unit names/descriptions.
+ * GENERATED: 2026-05-18
+ * SOURCE: MC2_Remastered.zip / data/defs/text/en_us/mc2res_legacy.fit
+ * PHASE: Phase 3 shared Mechlopedia text FIT setup
+ * NOTE: FIT owns the words. Legacy IDs are preserved for bridge lookup.
+ ***************************************************************/
+
+// -----------------------------------------------------------------------------
+// Group: AeroSpotter [aerospotter]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.aerospotter"
+    type = "vehicle"
+    groupKey = "aerospotter"
+    groupName = "AeroSpotter"
+    roles = "description,name"
+    legacyIds = "30618,45215"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.aerospotter.name"
+    text = "AeroSpotter"
+    legacyId = 30618
+    legacySymbol = "IDS_OBJECT_618"
+    legacyKey = "legacy.mc2res.30618"
+    source = "mechlopedia"
+    sourceKey = "object.618"
+    originalKey = "mechlopedia.vehicle.aerospotter.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "aerospotter"
+    groupName = "AeroSpotter"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.aerospotter.description"
+    text = "The Aerospotter is a lightly armed and armored combat vehicle that carries extensive positioning and communication equipment. Its main threat lies in the ability to electronically paint targets for aerial bombardment from aerospace fighter bombers."
+    legacyId = 45215
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_15"
+    legacyKey = "legacy.mc2res.45215"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.15"
+    originalKey = "mechlopedia.vehicle.aerospotter.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "aerospotter"
+    groupName = "AeroSpotter"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: APC [apc]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.apc"
+    type = "vehicle"
+    groupKey = "apc"
+    groupName = "APC"
+    roles = "description,name"
+    legacyIds = "30274,45227"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.apc.name"
+    text = "APC"
+    legacyId = 30274
+    legacySymbol = "IDS_OBJECT_274"
+    legacyKey = "legacy.mc2res.30274"
+    source = "mechlopedia"
+    sourceKey = "object.274"
+    originalKey = "mechlopedia.vehicle.apc.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "apc"
+    groupName = "APC"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.apc.description"
+    text = "A crucial element of every commander's deployment teams, Armored Personnel Carriers (APCs) of one sort or another have been through nearly every battle in known space.\n\nOn Carver V they occasionally make their way onto the battlefield as a means of ferrying pilots from place to place or to house pilots with some degree of safety. No armed APCs are deployed on Carver V."
+    paragraphCount = 2
+    paragraph0 = "A crucial element of every commander's deployment teams, Armored Personnel Carriers (APCs) of one sort or another have been through nearly every battle in known space."
+    paragraph1 = "On Carver V they occasionally make their way onto the battlefield as a means of ferrying pilots from place to place or to house pilots with some degree of safety. No armed APCs are deployed on Carver V."
+    legacyId = 45227
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_27"
+    legacyKey = "legacy.mc2res.45227"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.27"
+    originalKey = "mechlopedia.vehicle.apc.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "apc"
+    groupName = "APC"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Armored Car [armored_car]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.armored_car"
+    type = "vehicle"
+    groupKey = "armored_car"
+    groupName = "Armored Car"
+    roles = "description,name"
+    legacyIds = "30302,45200"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.armored_car.name"
+    text = "Armored Car"
+    legacyId = 30302
+    legacySymbol = "IDS_OBJECT_302"
+    legacyKey = "legacy.mc2res.30302"
+    source = "mechlopedia"
+    sourceKey = "object.302"
+    originalKey = "mechlopedia.vehicle.armored_car.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "armored_car"
+    groupName = "Armored Car"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.armored_car.description"
+    text = "An Armored Car may carry command personnel or intelligence operatives. Its Machine Gun Array and light armor make it an easy target for anything heavier than infantry."
+    legacyId = 45200
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_0"
+    legacyKey = "legacy.mc2res.45200"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.0"
+    originalKey = "mechlopedia.vehicle.armored_car.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "armored_car"
+    groupName = "Armored Car"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Attack 'Copter [attack_copter]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.attack_copter"
+    type = "vehicle"
+    groupKey = "attack_copter"
+    groupName = "Attack 'Copter"
+    roles = "description,name"
+    legacyIds = "30372,45214"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.attack_copter.name"
+    text = "Attack 'Copter"
+    legacyId = 30372
+    legacySymbol = "IDS_OBJECT_372"
+    legacyKey = "legacy.mc2res.30372"
+    source = "mechlopedia"
+    sourceKey = "object.372"
+    originalKey = "mechlopedia.vehicle.attack_copter.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "attack_copter"
+    groupName = "Attack 'Copter"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.attack_copter.description"
+    text = "The Attack 'Copter serves as a fast, mobile attack vehicle that can operate in any terrain. Armed with a Medium Autocannon, it carries little armor but makes swift and hard-hitting first strikes rather than extended engagements."
+    legacyId = 45214
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_14"
+    legacyKey = "legacy.mc2res.45214"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.14"
+    originalKey = "mechlopedia.vehicle.attack_copter.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "attack_copter"
+    groupName = "Attack 'Copter"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Cargo Truck [cargo_truck]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.cargo_truck"
+    type = "vehicle"
+    groupKey = "cargo_truck"
+    groupName = "Cargo Truck"
+    roles = "description,name"
+    legacyIds = "30307,45222"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.cargo_truck.name"
+    text = "Cargo Truck"
+    legacyId = 30307
+    legacySymbol = "IDS_OBJECT_307"
+    legacyKey = "legacy.mc2res.30307"
+    source = "mechlopedia"
+    sourceKey = "object.307"
+    originalKey = "mechlopedia.vehicle.cargo_truck.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "cargo_truck"
+    groupName = "Cargo Truck"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.cargo_truck.description"
+    text = "A Cargo Truck is unarmed and often found in convoys, on its way to a base for delivery of nonincendiary supplies."
+    legacyId = 45222
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_22"
+    legacyKey = "legacy.mc2res.45222"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.22"
+    originalKey = "mechlopedia.vehicle.cargo_truck.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "cargo_truck"
+    groupName = "Cargo Truck"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Centipede [centipede]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.centipede"
+    type = "vehicle"
+    groupKey = "centipede"
+    groupName = "Centipede"
+    roles = "description,name"
+    legacyIds = "30470,45208"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.centipede.name"
+    text = "Centipede"
+    legacyId = 30470
+    legacySymbol = "IDS_OBJECT_470"
+    legacyKey = "legacy.mc2res.30470"
+    source = "mechlopedia"
+    sourceKey = "object.470"
+    originalKey = "mechlopedia.vehicle.centipede.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "centipede"
+    groupName = "Centipede"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.centipede.description"
+    text = "Dr. Vanessa England revolutionized scout vehicles with the creation of the hovercraft Centipede scout car in 3052. Armed with a medium-range Defiance B3M Laser, the Centipede can deliver jolts of light offensive fire to any units that catch it unawares on a scout mission and then flee quickly thanks to the velocity created by the hover powerplant."
+    legacyId = 45208
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_8"
+    legacyKey = "legacy.mc2res.45208"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.8"
+    originalKey = "mechlopedia.vehicle.centipede.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/mission.fit"
+    originalCategory = "mission"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "centipede"
+    groupName = "Centipede"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Drillson [drillson]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.drillson"
+    type = "vehicle"
+    groupKey = "drillson"
+    groupName = "Drillson"
+    roles = "description,name"
+    legacyIds = "30472,45211"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.drillson.name"
+    text = "Drillson"
+    legacyId = 30472
+    legacySymbol = "IDS_OBJECT_472"
+    legacyKey = "legacy.mc2res.30472"
+    source = "mechlopedia"
+    sourceKey = "object.472"
+    originalKey = "mechlopedia.vehicle.drillson.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "drillson"
+    groupName = "Drillson"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.drillson.description"
+    text = "The Drillson is well equipped for its role as a combat hovercraft because of its exceptional armor. Able to traverse over water and land, this mobile vehicle is well armed with multiple Streak Short-Range Missle Packs.\n\nShort range and comparatively slow speed, however, make the Drillson an easy target at long range."
+    paragraphCount = 2
+    paragraph0 = "The Drillson is well equipped for its role as a combat hovercraft because of its exceptional armor. Able to traverse over water and land, this mobile vehicle is well armed with multiple Streak Short-Range Missle Packs."
+    paragraph1 = "Short range and comparatively slow speed, however, make the Drillson an easy target at long range."
+    legacyId = 45211
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_11"
+    legacyKey = "legacy.mc2res.45211"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.11"
+    originalKey = "mechlopedia.vehicle.drillson.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "drillson"
+    groupName = "Drillson"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Fixed Artillery [fixed_artillery]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.fixed_artillery"
+    type = "vehicle"
+    groupKey = "fixed_artillery"
+    groupName = "Fixed Artillery"
+    roles = "description,name"
+    legacyIds = "30557,45216"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.fixed_artillery.name"
+    text = "Fixed Artillery"
+    legacyId = 30557
+    legacySymbol = "IDS_OBJECT_557"
+    legacyKey = "legacy.mc2res.30557"
+    source = "mechlopedia"
+    sourceKey = "object.557"
+    originalKey = "mechlopedia.vehicle.fixed_artillery.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "fixed_artillery"
+    groupName = "Fixed Artillery"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.fixed_artillery.description"
+    text = "Placeholder text Long Tom Artillery:"
+    legacyId = 45216
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_16"
+    legacyKey = "legacy.mc2res.45216"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.16"
+    originalKey = "mechlopedia.vehicle.fixed_artillery.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "fixed_artillery"
+    groupName = "Fixed Artillery"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Fuel Truck [fuel_truck]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.fuel_truck"
+    type = "vehicle"
+    groupKey = "fuel_truck"
+    groupName = "Fuel Truck"
+    roles = "description,name"
+    legacyIds = "30305,45228"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.fuel_truck.name"
+    text = "Fuel Truck"
+    legacyId = 30305
+    legacySymbol = "IDS_OBJECT_305"
+    legacyKey = "legacy.mc2res.30305"
+    source = "mechlopedia"
+    sourceKey = "object.305"
+    originalKey = "mechlopedia.vehicle.fuel_truck.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "fuel_truck"
+    groupName = "Fuel Truck"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.fuel_truck.description"
+    text = "A Fuel Truck is often found in a convoy or parked on a base. The truck is useful as a mobile incendiary device; just wait for it to reach your target, or your target to approach it, and then destroy the truck."
+    legacyId = 45228
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_28"
+    legacyKey = "legacy.mc2res.45228"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.28"
+    originalKey = "mechlopedia.vehicle.fuel_truck.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/mission.fit"
+    originalCategory = "mission"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "fuel_truck"
+    groupName = "Fuel Truck"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Harasser [harasser]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.harasser"
+    type = "vehicle"
+    groupKey = "harasser"
+    groupName = "Harasser"
+    roles = "description,name"
+    legacyIds = "30275,45209"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.harasser.name"
+    text = "Harasser"
+    legacyId = 30275
+    legacySymbol = "IDS_OBJECT_275"
+    legacyKey = "legacy.mc2res.30275"
+    source = "mechlopedia"
+    sourceKey = "object.275"
+    originalKey = "mechlopedia.vehicle.harasser.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "harasser"
+    groupName = "Harasser"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.harasser.description"
+    text = "The Harasser more than lives up to its name, striking quickly and unleashing missile fire before many 'Mechs can react. If it enters the field of battle undetected, it can introduce a great deal of mayhem for its 20 tons.\n\nWhen moving at full throttle, it is difficult for most vehicles and even most 'Mechs to gain target lock on the Harasser. It is best caught at long range before it can begin its strafing runs, when one shot from a heavy weapon can penetrate its light armor and obliterate the vehicle."
+    paragraphCount = 2
+    paragraph0 = "The Harasser more than lives up to its name, striking quickly and unleashing missile fire before many 'Mechs can react. If it enters the field of battle undetected, it can introduce a great deal of mayhem for its 20 tons."
+    paragraph1 = "When moving at full throttle, it is difficult for most vehicles and even most 'Mechs to gain target lock on the Harasser. It is best caught at long range before it can begin its strafing runs, when one shot from a heavy weapon can penetrate its light armor and obliterate the vehicle."
+    legacyId = 45209
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_9"
+    legacyKey = "legacy.mc2res.45209"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.9"
+    originalKey = "mechlopedia.vehicle.harasser.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "harasser"
+    groupName = "Harasser"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Heavy 'Copter [heavy_copter]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.heavy_copter"
+    type = "vehicle"
+    groupKey = "heavy_copter"
+    groupName = "Heavy 'Copter"
+    roles = "description,name"
+    legacyIds = "30501,45213"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.heavy_copter.name"
+    text = "Heavy 'Copter"
+    legacyId = 30501
+    legacySymbol = "IDS_OBJECT_501"
+    legacyKey = "legacy.mc2res.30501"
+    source = "mechlopedia"
+    sourceKey = "object.501"
+    originalKey = "mechlopedia.vehicle.heavy_copter.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "heavy_copter"
+    groupName = "Heavy 'Copter"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.heavy_copter.description"
+    text = "The Heavy 'Copter is a heavily armored mobile weapons platform used by commanders when they must operate in difficult terrain but must also withstand enemy fire. Outfitted with Streak Short-Range Missile Packs and Pulse Lasers, the Heavy 'Copter is more than capable of holding its own against smaller 'Mechs."
+    legacyId = 45213
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_13"
+    legacyKey = "legacy.mc2res.45213"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.13"
+    originalKey = "mechlopedia.vehicle.heavy_copter.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "heavy_copter"
+    groupName = "Heavy 'Copter"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Hetzer [hetzer]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.hetzer"
+    type = "vehicle"
+    groupKey = "hetzer"
+    groupName = "Hetzer"
+    roles = "description,name"
+    legacyIds = "30366,45202"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.hetzer.name"
+    text = "Hetzer"
+    legacyId = 30366
+    legacySymbol = "IDS_OBJECT_366"
+    legacyKey = "legacy.mc2res.30366"
+    source = "mechlopedia"
+    sourceKey = "object.366"
+    originalKey = "mechlopedia.vehicle.hetzer.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "hetzer"
+    groupName = "Hetzer"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.hetzer.description"
+    text = "Commanders do well to heed the advice that the Hetzer wheeled assault gun is best destroyed from long range before it can engage its Heavy Autocannon. The prospect of facing down the torrential barrage of the Heavy Autocannon delivered from such a nimble platform should command the attention of every 'Mech pilot as soon as this vehicle shows up on sensor readouts.\n\nRelatively maneuverable and impervious to a first or even second direct hit, the Hetzer can knock 'Mechs out of commission if ignored too long."
+    paragraphCount = 2
+    paragraph0 = "Commanders do well to heed the advice that the Hetzer wheeled assault gun is best destroyed from long range before it can engage its Heavy Autocannon. The prospect of facing down the torrential barrage of the Heavy Autocannon delivered from such a nimble platform should command the attention of every 'Mech pilot as soon as this vehicle shows up on sensor readouts."
+    paragraph1 = "Relatively maneuverable and impervious to a first or even second direct hit, the Hetzer can knock 'Mechs out of commission if ignored too long."
+    legacyId = 45202
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_2"
+    legacyKey = "legacy.mc2res.45202"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.2"
+    originalKey = "mechlopedia.vehicle.hetzer.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "hetzer"
+    groupName = "Hetzer"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Hunter [hunter]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.hunter"
+    type = "vehicle"
+    groupKey = "hunter"
+    groupName = "Hunter"
+    roles = "description,name"
+    legacyIds = "30303,45201"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.hunter.name"
+    text = "Hunter"
+    legacyId = 30303
+    legacySymbol = "IDS_OBJECT_303"
+    legacyKey = "legacy.mc2res.30303"
+    source = "mechlopedia"
+    sourceKey = "object.303"
+    originalKey = "mechlopedia.vehicle.hunter.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "hunter"
+    groupName = "Hunter"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.hunter.description"
+    text = "The Hunter brings long-range missile (LRM) support to the battlefield but, unlike the LRM Carrier, this vehicle is tracked, giving it increased mobility over rough terrain. It carries more armor than the LRM Carrier but carries fewer racks, so it performs best as base defense or on patrol.\n\nThe best way to defeat a Hunter is to rush inside the minimum range of its LRMs. Once upon the Hunter, enemies will find that it has no way to defend itself."
+    paragraphCount = 2
+    paragraph0 = "The Hunter brings long-range missile (LRM) support to the battlefield but, unlike the LRM Carrier, this vehicle is tracked, giving it increased mobility over rough terrain. It carries more armor than the LRM Carrier but carries fewer racks, so it performs best as base defense or on patrol."
+    paragraph1 = "The best way to defeat a Hunter is to rush inside the minimum range of its LRMs. Once upon the Hunter, enemies will find that it has no way to defend itself."
+    legacyId = 45201
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_1"
+    legacyKey = "legacy.mc2res.45201"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.1"
+    originalKey = "mechlopedia.vehicle.hunter.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "hunter"
+    groupName = "Hunter"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Infantry [infantry]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.infantry"
+    type = "vehicle"
+    groupKey = "infantry"
+    groupName = "Infantry"
+    roles = "description,name"
+    legacyIds = "30395,45225"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.infantry.name"
+    text = "Infantry"
+    legacyId = 30395
+    legacySymbol = "IDS_OBJECT_395"
+    legacyKey = "legacy.mc2res.30395"
+    source = "mechlopedia"
+    sourceKey = "object.395"
+    originalKey = "mechlopedia.vehicle.infantry.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "infantry"
+    groupName = "Infantry"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.infantry.description"
+    text = "Exposed infantry on the combat floor are vulnerable to absolutely everything else in the fire zone. Light 'Mechs with Machine Gun Arrays can mop up infantry, as can any armed vehicles. Sensors will not detect or register infantry presence on the battlefield."
+    legacyId = 45225
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_25"
+    legacyKey = "legacy.mc2res.45225"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.25"
+    originalKey = "mechlopedia.vehicle.infantry.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "infantry"
+    groupName = "Infantry"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Jeep [jeep]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.jeep"
+    type = "vehicle"
+    groupKey = "jeep"
+    groupName = "Jeep"
+    roles = "description,name"
+    legacyIds = "30336,45229"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.jeep.name"
+    text = "Jeep"
+    legacyId = 30336
+    legacySymbol = "IDS_OBJECT_336"
+    legacyKey = "legacy.mc2res.30336"
+    source = "mechlopedia"
+    sourceKey = "object.336"
+    originalKey = "mechlopedia.vehicle.jeep.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "jeep"
+    groupName = "Jeep"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.jeep.description"
+    text = "A Jeep may or may not carry command or intelligence personnel. It is an auxiliary rather than a combat vehicle."
+    legacyId = 45229
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_29"
+    legacyKey = "legacy.mc2res.45229"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.29"
+    originalKey = "mechlopedia.vehicle.jeep.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "jeep"
+    groupName = "Jeep"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Legion [legion]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.legion"
+    type = "vehicle"
+    groupKey = "legion"
+    groupName = "Legion"
+    roles = "description,name"
+    legacyIds = "30301,45207"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.legion.name"
+    text = "Legion"
+    legacyId = 30301
+    legacySymbol = "IDS_OBJECT_301"
+    legacyKey = "legacy.mc2res.30301"
+    source = "mechlopedia"
+    sourceKey = "object.301"
+    originalKey = "mechlopedia.vehicle.legion.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "legion"
+    groupName = "Legion"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.legion.description"
+    text = "With prototyped weapons already deep into beta testing on live battlefields, the Legion offers armored cavalry divisions the chance to go toe to toe with 'Mechs. Heavily armored and bristling with heavy long-range weapons, the Legion is unlike any other vehicle in the combat theater.\n\nA distinctive target, the Legion is also a formidable foe. It announces its presence with authority via the long-range Gauss Rifle, and by the time 'Mechs are upon it their armor is already depleted. Then the Legion can open fire with SRMs (short range missiles) and its short-range Lasers.\n\nThe Legion is not a difficult vehicle to overtake on the chase, but if it takes high ground and maintains the element of surprise it is a more than worthy adversary for any 'Mech."
+    paragraphCount = 3
+    paragraph0 = "With prototyped weapons already deep into beta testing on live battlefields, the Legion offers armored cavalry divisions the chance to go toe to toe with 'Mechs. Heavily armored and bristling with heavy long-range weapons, the Legion is unlike any other vehicle in the combat theater."
+    paragraph1 = "A distinctive target, the Legion is also a formidable foe. It announces its presence with authority via the long-range Gauss Rifle, and by the time 'Mechs are upon it their armor is already depleted. Then the Legion can open fire with SRMs (short range missiles) and its short-range Lasers."
+    paragraph2 = "The Legion is not a difficult vehicle to overtake on the chase, but if it takes high ground and maintains the element of surprise it is a more than worthy adversary for any 'Mech."
+    legacyId = 45207
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_7"
+    legacyKey = "legacy.mc2res.45207"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.7"
+    originalKey = "mechlopedia.vehicle.legion.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "legion"
+    groupName = "Legion"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: LRM Carrier [lrm_carrier]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.lrm_carrier"
+    type = "vehicle"
+    groupKey = "lrm_carrier"
+    groupName = "LRM Carrier"
+    roles = "description,name"
+    legacyIds = "30342,45203"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.lrm_carrier.name"
+    text = "LRM Carrier"
+    legacyId = 30342
+    legacySymbol = "IDS_OBJECT_342"
+    legacyKey = "legacy.mc2res.30342"
+    source = "mechlopedia"
+    sourceKey = "object.342"
+    originalKey = "mechlopedia.vehicle.lrm_carrier.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "lrm_carrier"
+    groupName = "LRM Carrier"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.lrm_carrier.description"
+    text = "The LRM Carrier is outfitted with multiple racks of long-range missiles, providing the maximum amount of firepower for a vehicle in this weight class. 'Mech pilots usually target this vehicle immediately before it can attack.\n\nLRM Carriers often provide support for short- and medium-range units, softening up enemies before they can close. Their role, however, is not limited to support. LRM Carriers may be brought onto the battlefield to serve as a mobile base defense where the construction of guard turrets may take too much time or be otherwise impractical.\n\nCommanders often bolster an existing base's defenses by placing LRM Carriers within its walls. More than one 'Mech pilot has been surprised after destroying a base's turret generators to witness a barrage of missiles streak over the walls toward him.\n\nBecause of their large weapon load and relatively light armor, commanders are wise to eliminate them from combat quickly before they can do real damage."
+    paragraphCount = 4
+    paragraph0 = "The LRM Carrier is outfitted with multiple racks of long-range missiles, providing the maximum amount of firepower for a vehicle in this weight class. 'Mech pilots usually target this vehicle immediately before it can attack."
+    paragraph1 = "LRM Carriers often provide support for short- and medium-range units, softening up enemies before they can close. Their role, however, is not limited to support. LRM Carriers may be brought onto the battlefield to serve as a mobile base defense where the construction of guard turrets may take too much time or be otherwise impractical."
+    paragraph2 = "Commanders often bolster an existing base's defenses by placing LRM Carriers within its walls. More than one 'Mech pilot has been surprised after destroying a base's turret generators to witness a barrage of missiles streak over the walls toward him."
+    paragraph3 = "Because of their large weapon load and relatively light armor, commanders are wise to eliminate them from combat quickly before they can do real damage."
+    legacyId = 45203
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_3"
+    legacyKey = "legacy.mc2res.45203"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.3"
+    originalKey = "mechlopedia.vehicle.lrm_carrier.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "lrm_carrier"
+    groupName = "LRM Carrier"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Minelayer [minelayer]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.minelayer"
+    type = "vehicle"
+    groupKey = "minelayer"
+    groupName = "Minelayer"
+    roles = "description,name"
+    legacyIds = "30277,45219"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.minelayer.name"
+    text = "Minelayer"
+    legacyId = 30277
+    legacySymbol = "IDS_OBJECT_277"
+    legacyKey = "legacy.mc2res.30277"
+    source = "mechlopedia"
+    sourceKey = "object.277"
+    originalKey = "mechlopedia.vehicle.minelayer.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "minelayer"
+    groupName = "Minelayer"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.minelayer.description"
+    text = "A Minelayer does not carry direct offensive weapons, but its mine bays carry enough ordnance to topple several opposing 'Mechs. Its anti-'Mech mines are powerful enough to cripple Assault 'Mechs; smaller units, however, such as light vehicles and Light 'Mechs, are not heavy enough to trigger the mines.\n\nEspecially effective when laying ambush or complicating long-range maneuvers for pursuers, the Minelayer can be called in as a support vehicle."
+    paragraphCount = 2
+    paragraph0 = "A Minelayer does not carry direct offensive weapons, but its mine bays carry enough ordnance to topple several opposing 'Mechs. Its anti-'Mech mines are powerful enough to cripple Assault 'Mechs; smaller units, however, such as light vehicles and Light 'Mechs, are not heavy enough to trigger the mines."
+    paragraph1 = "Especially effective when laying ambush or complicating long-range maneuvers for pursuers, the Minelayer can be called in as a support vehicle."
+    legacyId = 45219
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_19"
+    legacyKey = "legacy.mc2res.45219"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.19"
+    originalKey = "mechlopedia.vehicle.minelayer.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "minelayer"
+    groupName = "Minelayer"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Partisan [partisan]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.partisan"
+    type = "vehicle"
+    groupKey = "partisan"
+    groupName = "Partisan"
+    roles = "description,name"
+    legacyIds = "30278,45206"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.partisan.name"
+    text = "Partisan"
+    legacyId = 30278
+    legacySymbol = "IDS_OBJECT_278"
+    legacyKey = "legacy.mc2res.30278"
+    source = "mechlopedia"
+    sourceKey = "object.278"
+    originalKey = "mechlopedia.vehicle.partisan.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "partisan"
+    groupName = "Partisan"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.partisan.description"
+    text = "A well-armored and powerful non-'Mech opponent, the Partisan's multiple rapid-firing Light Autocannons can inflict moderate damage on most 'Mechs.\n\nRelatively slow at 80 tons, the Partisan makes up for its late arrival and slow departure with well-stocked autocannon ammunition stores. Capable of delivering heavy fire support that can distract if not destroy 'Mechs as well as airborne threats, the Partisan acquits the armored cavalry well."
+    paragraphCount = 2
+    paragraph0 = "A well-armored and powerful non-'Mech opponent, the Partisan's multiple rapid-firing Light Autocannons can inflict moderate damage on most 'Mechs."
+    paragraph1 = "Relatively slow at 80 tons, the Partisan makes up for its late arrival and slow departure with well-stocked autocannon ammunition stores. Capable of delivering heavy fire support that can distract if not destroy 'Mechs as well as airborne threats, the Partisan acquits the armored cavalry well."
+    legacyId = 45206
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_6"
+    legacyKey = "legacy.mc2res.45206"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.6"
+    originalKey = "mechlopedia.vehicle.partisan.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "partisan"
+    groupName = "Partisan"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Powered Armor [powered_armor]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.powered_armor"
+    type = "vehicle"
+    groupKey = "powered_armor"
+    groupName = "Powered Armor"
+    roles = "description,name"
+    legacyIds = "30396,45226"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.powered_armor.name"
+    text = "Powered Armor"
+    legacyId = 30396
+    legacySymbol = "IDS_OBJECT_396"
+    legacyKey = "legacy.mc2res.30396"
+    source = "mechlopedia"
+    sourceKey = "object.396"
+    originalKey = "mechlopedia.vehicle.powered_armor.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "powered_armor"
+    groupName = "Powered Armor"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.powered_armor.description"
+    text = "This is a single individual in power armor. Sensors will not detect or register powered armor, and more than a Machine Gun Array may be required to dispatch the infantryman contained in the armor."
+    legacyId = 45226
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_26"
+    legacyKey = "legacy.mc2res.45226"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.26"
+    originalKey = "mechlopedia.vehicle.powered_armor.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "powered_armor"
+    groupName = "Powered Armor"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Repair Truck [repair_truck]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.repair_truck"
+    type = "vehicle"
+    groupKey = "repair_truck"
+    groupName = "Repair Truck"
+    roles = "description,name"
+    legacyIds = "30337,45220"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.repair_truck.name"
+    text = "Repair Truck"
+    legacyId = 30337
+    legacySymbol = "IDS_OBJECT_337"
+    legacyKey = "legacy.mc2res.30337"
+    source = "mechlopedia"
+    sourceKey = "object.337"
+    originalKey = "mechlopedia.vehicle.repair_truck.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "repair_truck"
+    groupName = "Repair Truck"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.repair_truck.description"
+    text = "Transported into hostile combat situations via VTOL, the Repair Truck specializes in performing high-speed repairs to 'Mech armor and internal structures as well as restocking all weapons with ammunition. The Repair Truck, however, cannot subsititute for an actual BattleMech facility and cannot repair damaged weapons or restore blown-off 'Mech arms. It can jury-rig leg actuators well enough to restore full walking and running speed to crippled 'Mechs."
+    legacyId = 45220
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_20"
+    legacyKey = "legacy.mc2res.45220"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.20"
+    originalKey = "mechlopedia.vehicle.repair_truck.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/multiplayer.fit"
+    originalCategory = "multiplayer"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "repair_truck"
+    groupName = "Repair Truck"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Resource Truck [resource_truck]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.resource_truck"
+    type = "vehicle"
+    groupKey = "resource_truck"
+    groupName = "Resource Truck"
+    roles = "description,name"
+    legacyIds = "30308,45230"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.resource_truck.name"
+    text = "Resource Truck"
+    legacyId = 30308
+    legacySymbol = "IDS_OBJECT_308"
+    legacyKey = "legacy.mc2res.30308"
+    source = "mechlopedia"
+    sourceKey = "object.308"
+    originalKey = "mechlopedia.vehicle.resource_truck.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "resource_truck"
+    groupName = "Resource Truck"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.resource_truck.description"
+    text = "When a Resource Truck is captured, resource points are earned, which can then be exchanged for tactical support. Resource points can only be used in the current mission and are not saved for use in any subsequent missions."
+    legacyId = 45230
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_30"
+    legacyKey = "legacy.mc2res.45230"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.30"
+    originalKey = "mechlopedia.vehicle.resource_truck.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/mission.fit"
+    originalCategory = "mission"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "resource_truck"
+    groupName = "Resource Truck"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Salvage Craft [salvage_craft]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.salvage_craft"
+    type = "vehicle"
+    groupKey = "salvage_craft"
+    groupName = "Salvage Craft"
+    roles = "description,name"
+    legacyIds = "30077,45221"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.salvage_craft.name"
+    text = "Salvage Craft"
+    legacyId = 30077
+    legacySymbol = "IDS_BDLG1"
+    legacyKey = "legacy.mc2res.30077"
+    source = "mechlopedia"
+    sourceKey = "logistics.salvage.vehicle"
+    originalKey = "mechlopedia.vehicle.salvage_craft.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/logistics.fit"
+    originalCategory = "logistics"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "salvage_craft"
+    groupName = "Salvage Craft"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.salvage_craft.description"
+    text = "Placeholder text:  This vehicle can be summoned as Vehicle Support (via the Support Tab).  It allows the salvage (in-mission) of a single disabled 'Mech.  After the salvage, the Recovery Vehicle becomes useless."
+    legacyId = 45221
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_21"
+    legacyKey = "legacy.mc2res.45221"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.21"
+    originalKey = "mechlopedia.vehicle.salvage_craft.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "salvage_craft"
+    groupName = "Salvage Craft"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Scimitar [scimitar]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.scimitar"
+    type = "vehicle"
+    groupKey = "scimitar"
+    groupName = "Scimitar"
+    roles = "description,name"
+    legacyIds = "30300,45210"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.scimitar.name"
+    text = "Scimitar"
+    legacyId = 30300
+    legacySymbol = "IDS_OBJECT_300"
+    legacyKey = "legacy.mc2res.30300"
+    source = "mechlopedia"
+    sourceKey = "object.300"
+    originalKey = "mechlopedia.vehicle.scimitar.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "scimitar"
+    groupName = "Scimitar"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.scimitar.description"
+    text = "A heavily armored hovercraft, the Scimitar can briefly withstand close combat with most 'Mechs. Its lack of firepower, however, is the Scimitar's weakness.\n\nTVR Hovercraft technology makes the Scimitar a rapid-deployment, light fire support unit; its Flamer Arrays can play havoc with infantry and other light opposition."
+    paragraphCount = 2
+    paragraph0 = "A heavily armored hovercraft, the Scimitar can briefly withstand close combat with most 'Mechs. Its lack of firepower, however, is the Scimitar's weakness."
+    paragraph1 = "TVR Hovercraft technology makes the Scimitar a rapid-deployment, light fire support unit; its Flamer Arrays can play havoc with infantry and other light opposition."
+    legacyId = 45210
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_10"
+    legacyKey = "legacy.mc2res.45210"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.10"
+    originalKey = "mechlopedia.vehicle.scimitar.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "scimitar"
+    groupName = "Scimitar"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Scout 'Copter [scout_copter]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.scout_copter"
+    type = "vehicle"
+    groupKey = "scout_copter"
+    groupName = "Scout 'Copter"
+    roles = "description,name"
+    legacyIds = "30502,45212"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.scout_copter.name"
+    text = "Scout 'Copter"
+    legacyId = 30502
+    legacySymbol = "IDS_OBJECT_502"
+    legacyKey = "legacy.mc2res.30502"
+    source = "mechlopedia"
+    sourceKey = "object.502"
+    originalKey = "mechlopedia.vehicle.scout_copter.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "scout_copter"
+    groupName = "Scout 'Copter"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.scout_copter.description"
+    text = "As the lightest available helicopter, the Scout 'Copter is capable of gathering intelligence data quickly. It is an auxiliary support vehicle rather than a combat vehicle."
+    legacyId = 45212
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_12"
+    legacyKey = "legacy.mc2res.45212"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.12"
+    originalKey = "mechlopedia.vehicle.scout_copter.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "scout_copter"
+    groupName = "Scout 'Copter"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Shilone Bomber [shilone_bomber]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.shilone_bomber"
+    type = "vehicle"
+    groupKey = "shilone_bomber"
+    groupName = "Shilone Bomber"
+    roles = "description,name"
+    legacyIds = "45391,45224"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.shilone_bomber.name"
+    text = "Shilone Bomber"
+    legacyId = 45391
+    legacySymbol = "IDS_SHILONE"
+    legacyKey = "legacy.mc2res.45391"
+    source = "mechlopedia"
+    sourceKey = "unclassified.shilone"
+    originalKey = "mechlopedia.vehicle.shilone_bomber.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "shilone_bomber"
+    groupName = "Shilone Bomber"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.shilone_bomber.description"
+    text = "The Shilone Bomber delivers an airstrike to any location chosen by the commander. Stealth technology allows the Shilone to enter battlefield airspace undetected and deliver enormous payloads before combatants can respond.\n\nThe Shilone drops multiple bomblets but requires a spotter with line of sight to accurately target moving or fixed enemy positions. Without line of sight, the Shilone's bomblets will spread and saturate an area rather than unleash the greatest damage to a specific target.\n\nCompact design and extraordinary maneuverability have allowed the Shilone to elude all offensive efforts to date. Not a single Shilone has been downed in the Carver system since its introduction 3 years ago.\n\nWith an extremely low-profile fuselage design, the Shilone has proven to be undetectable at any range."
+    paragraphCount = 4
+    paragraph0 = "The Shilone Bomber delivers an airstrike to any location chosen by the commander. Stealth technology allows the Shilone to enter battlefield airspace undetected and deliver enormous payloads before combatants can respond."
+    paragraph1 = "The Shilone drops multiple bomblets but requires a spotter with line of sight to accurately target moving or fixed enemy positions. Without line of sight, the Shilone's bomblets will spread and saturate an area rather than unleash the greatest damage to a specific target."
+    paragraph2 = "Compact design and extraordinary maneuverability have allowed the Shilone to elude all offensive efforts to date. Not a single Shilone has been downed in the Carver system since its introduction 3 years ago."
+    paragraph3 = "With an extremely low-profile fuselage design, the Shilone has proven to be undetectable at any range."
+    legacyId = 45224
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_24"
+    legacyKey = "legacy.mc2res.45224"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.24"
+    originalKey = "mechlopedia.vehicle.shilone_bomber.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "shilone_bomber"
+    groupName = "Shilone Bomber"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Storm [storm]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.storm"
+    type = "vehicle"
+    groupKey = "storm"
+    groupName = "Storm"
+    roles = "description,name"
+    legacyIds = "30341,45205"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.storm.name"
+    text = "Storm"
+    legacyId = 30341
+    legacySymbol = "IDS_OBJECT_341"
+    legacyKey = "legacy.mc2res.30341"
+    source = "mechlopedia"
+    sourceKey = "object.341"
+    originalKey = "mechlopedia.vehicle.storm.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "storm"
+    groupName = "Storm"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.storm.description"
+    text = "One of the few tanks that can pose a real threat to 'Mechs, the Storm fields two Particle Projection Cannons and enough armor to withstand fire from most 'Mechs. Slow speed limits its use to defense and garrison duties and also makes it vulnerable to fast or long-range 'Mechs."
+    legacyId = 45205
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_5"
+    legacyKey = "legacy.mc2res.45205"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.5"
+    originalKey = "mechlopedia.vehicle.storm.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "storm"
+    groupName = "Storm"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Swarm LRM Carrier [swarm_lrm_carrier]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.swarm_lrm_carrier"
+    type = "vehicle"
+    groupKey = "swarm_lrm_carrier"
+    groupName = "Swarm LRM Carrier"
+    roles = "description,name"
+    legacyIds = "30643,45217"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.swarm_lrm_carrier.name"
+    text = "Swarm LRM Carrier"
+    legacyId = 30643
+    legacySymbol = "IDS_RELEASE_VERSION"
+    legacyKey = "legacy.mc2res.30643"
+    source = "mechlopedia"
+    sourceKey = "unclassified.release.version"
+    originalKey = "mechlopedia.vehicle.swarm_lrm_carrier.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "swarm_lrm_carrier"
+    groupName = "Swarm LRM Carrier"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.swarm_lrm_carrier.description"
+    text = "Lightly armored and slow even at top speed, the Swarm Long-Range Missile (LRM) Carrier is easily disposed of, but it must be located first. It does much of its damage from distant locations, functioning as a mobile heavy sniper. It hides behind base walls, hills, and thickets of trees and then opens fire with its area-effect LRMs.\n\nMore than a nuisance, this vehicle offers an added 'Mech-crippling threat to every battle it joins."
+    paragraphCount = 2
+    paragraph0 = "Lightly armored and slow even at top speed, the Swarm Long-Range Missile (LRM) Carrier is easily disposed of, but it must be located first. It does much of its damage from distant locations, functioning as a mobile heavy sniper. It hides behind base walls, hills, and thickets of trees and then opens fire with its area-effect LRMs."
+    paragraph1 = "More than a nuisance, this vehicle offers an added 'Mech-crippling threat to every battle it joins."
+    legacyId = 45217
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_17"
+    legacyKey = "legacy.mc2res.45217"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.17"
+    originalKey = "mechlopedia.vehicle.swarm_lrm_carrier.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "swarm_lrm_carrier"
+    groupName = "Swarm LRM Carrier"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Troop Transport [troop_transport]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.troop_transport"
+    type = "vehicle"
+    groupKey = "troop_transport"
+    groupName = "Troop Transport"
+    roles = "description,name"
+    legacyIds = "30376,45218"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.troop_transport.name"
+    text = "Troop Transport"
+    legacyId = 30376
+    legacySymbol = "IDS_OBJECT_376"
+    legacyKey = "legacy.mc2res.30376"
+    source = "mechlopedia"
+    sourceKey = "object.376"
+    originalKey = "mechlopedia.vehicle.troop_transport.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "troop_transport"
+    groupName = "Troop Transport"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.troop_transport.description"
+    text = "Unarmed but more heavily armored than the Armored Personnel Carrier, the Troop Transport carries infantry squadrons into battle, sometimes carrying infantry wearing Powered Armor. The Troop Transport offers more durability but at the cost of speed."
+    legacyId = 45218
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_18"
+    legacyKey = "legacy.mc2res.45218"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.18"
+    originalKey = "mechlopedia.vehicle.troop_transport.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "troop_transport"
+    groupName = "Troop Transport"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Vedette [vedette]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.vedette"
+    type = "vehicle"
+    groupKey = "vedette"
+    groupName = "Vedette"
+    roles = "description,name"
+    legacyIds = "30280,45204"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.vedette.name"
+    text = "Vedette"
+    legacyId = 30280
+    legacySymbol = "IDS_OBJECT_280"
+    legacyKey = "legacy.mc2res.30280"
+    source = "mechlopedia"
+    sourceKey = "object.280"
+    originalKey = "mechlopedia.vehicle.vedette.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "vehicle"
+    role = "name"
+    groupKey = "vedette"
+    groupName = "Vedette"
+    codeReference = "code/mechlopedia.cpp:275-355,450-476 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known legacy vehicle/copter name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.vedette.description"
+    text = "Another useful addition to a garrison guard or patrol team, the Vedette boasts an autocannon that can cripple opposing 'Mechs if allowed to fire enough volleys at its legs.\n\nWell-armored for a 50-ton tank, the Vedette is nevertheless not to be regarded as a 'Mech-breaker on its own. Deployed in force as an auxiliary cavalry platoon in support of 'Mech groups, Vedettes can mount overwhelming ambushes, especially when given the high ground.\n\nWhen the St. Ives compact hired mercenary units to break McCarron's Armored Cavalry on Harloc, Christobal's Regiment lined a mountain pass with the Vedettes and, in a classic turn-and-fire chase, led the mercenary 'Mechs up into the mountains. The Regiment 'Mechs found a plateau, turned, and descended on the mercenaries, trapping them between the jaws of the Vedette cavalry.\n\nFacing fire from three sides and a tumble down the mountain on the fourth side, the mercenaries engaged the tanks, barely managing to go one round blow for blow with the Vedettes before succumbing. The Regiment lost seven Vedettes but took an equal number of âMechs twice their tonnage."
+    paragraphCount = 4
+    paragraph0 = "Another useful addition to a garrison guard or patrol team, the Vedette boasts an autocannon that can cripple opposing 'Mechs if allowed to fire enough volleys at its legs."
+    paragraph1 = "Well-armored for a 50-ton tank, the Vedette is nevertheless not to be regarded as a 'Mech-breaker on its own. Deployed in force as an auxiliary cavalry platoon in support of 'Mech groups, Vedettes can mount overwhelming ambushes, especially when given the high ground."
+    paragraph2 = "When the St. Ives compact hired mercenary units to break McCarron's Armored Cavalry on Harloc, Christobal's Regiment lined a mountain pass with the Vedettes and, in a classic turn-and-fire chase, led the mercenary 'Mechs up into the mountains. The Regiment 'Mechs found a plateau, turned, and descended on the mercenaries, trapping them between the jaws of the Vedette cavalry."
+    paragraph3 = "Facing fire from three sides and a tumble down the mountain on the fourth side, the mercenaries engaged the tanks, barely managing to go one round blow for blow with the Vedettes before succumbing. The Regiment lost seven Vedettes but took an equal number of âMechs twice their tonnage."
+    legacyId = 45204
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_4"
+    legacyKey = "legacy.mc2res.45204"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.4"
+    originalKey = "mechlopedia.vehicle.vedette.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "vedette"
+    groupName = "Vedette"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Vehicle Placeholder 31 [vehicle_placeholder_31]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.vehicle_placeholder_31"
+    type = "vehicle"
+    groupKey = "vehicle_placeholder_31"
+    groupName = "Vehicle Placeholder 31"
+    roles = "description"
+    legacyIds = "45231"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.vehicle_placeholder_31.description"
+    text = "Vehicle needs descripton"
+    legacyId = 45231
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_31"
+    legacyKey = "legacy.mc2res.45231"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.31"
+    originalKey = "mechlopedia.vehicle.vehicle_placeholder_31.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "vehicle_placeholder_31"
+    groupName = "Vehicle Placeholder 31"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Legacy vehicle encyclopedia placeholder retained for full ID coverage."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Vehicle Placeholder 32 [vehicle_placeholder_32]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.vehicle_placeholder_32"
+    type = "vehicle"
+    groupKey = "vehicle_placeholder_32"
+    groupName = "Vehicle Placeholder 32"
+    roles = "description"
+    legacyIds = "45232"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.vehicle_placeholder_32.description"
+    text = "Vehicle needs descripton"
+    legacyId = 45232
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_32"
+    legacyKey = "legacy.mc2res.45232"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.32"
+    originalKey = "mechlopedia.vehicle.vehicle_placeholder_32.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "vehicle_placeholder_32"
+    groupName = "Vehicle Placeholder 32"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Legacy vehicle encyclopedia placeholder retained for full ID coverage."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Vehicle Placeholder 33 [vehicle_placeholder_33]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.vehicle_placeholder_33"
+    type = "vehicle"
+    groupKey = "vehicle_placeholder_33"
+    groupName = "Vehicle Placeholder 33"
+    roles = "description"
+    legacyIds = "45233"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.vehicle_placeholder_33.description"
+    text = "Vehicle needs descripton"
+    legacyId = 45233
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_33"
+    legacyKey = "legacy.mc2res.45233"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.33"
+    originalKey = "mechlopedia.vehicle.vehicle_placeholder_33.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "vehicle_placeholder_33"
+    groupName = "Vehicle Placeholder 33"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Legacy vehicle encyclopedia placeholder retained for full ID coverage."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Vehicle Placeholder 34 [vehicle_placeholder_34]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.vehicle_placeholder_34"
+    type = "vehicle"
+    groupKey = "vehicle_placeholder_34"
+    groupName = "Vehicle Placeholder 34"
+    roles = "description"
+    legacyIds = "45234"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.vehicle_placeholder_34.description"
+    text = "Vehicle needs descripton"
+    legacyId = 45234
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_34"
+    legacyKey = "legacy.mc2res.45234"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.34"
+    originalKey = "mechlopedia.vehicle.vehicle_placeholder_34.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "vehicle_placeholder_34"
+    groupName = "Vehicle Placeholder 34"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Legacy vehicle encyclopedia placeholder retained for full ID coverage."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Vehicle Placeholder 35 [vehicle_placeholder_35]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.vehicle_placeholder_35"
+    type = "vehicle"
+    groupKey = "vehicle_placeholder_35"
+    groupName = "Vehicle Placeholder 35"
+    roles = "description"
+    legacyIds = "45235"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.vehicle_placeholder_35.description"
+    text = "Vehicle needs descripton"
+    legacyId = 45235
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_35"
+    legacyKey = "legacy.mc2res.45235"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.35"
+    originalKey = "mechlopedia.vehicle.vehicle_placeholder_35.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "vehicle_placeholder_35"
+    groupName = "Vehicle Placeholder 35"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Legacy vehicle encyclopedia placeholder retained for full ID coverage."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Vehicle Placeholder 36 [vehicle_placeholder_36]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.vehicle_placeholder_36"
+    type = "vehicle"
+    groupKey = "vehicle_placeholder_36"
+    groupName = "Vehicle Placeholder 36"
+    roles = "description"
+    legacyIds = "45236"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.vehicle_placeholder_36.description"
+    text = "Vehicle needs descripton"
+    legacyId = 45236
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_36"
+    legacyKey = "legacy.mc2res.45236"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.36"
+    originalKey = "mechlopedia.vehicle.vehicle_placeholder_36.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "vehicle_placeholder_36"
+    groupName = "Vehicle Placeholder 36"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Legacy vehicle encyclopedia placeholder retained for full ID coverage."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Vehicle Placeholder 37 [vehicle_placeholder_37]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.vehicle_placeholder_37"
+    type = "vehicle"
+    groupKey = "vehicle_placeholder_37"
+    groupName = "Vehicle Placeholder 37"
+    roles = "description"
+    legacyIds = "45237"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.vehicle_placeholder_37.description"
+    text = "Vehicle needs descripton"
+    legacyId = 45237
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_37"
+    legacyKey = "legacy.mc2res.45237"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.37"
+    originalKey = "mechlopedia.vehicle.vehicle_placeholder_37.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "vehicle_placeholder_37"
+    groupName = "Vehicle Placeholder 37"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Legacy vehicle encyclopedia placeholder retained for full ID coverage."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Vehicle Placeholder 38 [vehicle_placeholder_38]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.vehicle_placeholder_38"
+    type = "vehicle"
+    groupKey = "vehicle_placeholder_38"
+    groupName = "Vehicle Placeholder 38"
+    roles = "description"
+    legacyIds = "45238"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.vehicle_placeholder_38.description"
+    text = "Vehicle needs descripton"
+    legacyId = 45238
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_38"
+    legacyKey = "legacy.mc2res.45238"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.38"
+    originalKey = "mechlopedia.vehicle.vehicle_placeholder_38.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "vehicle_placeholder_38"
+    groupName = "Vehicle Placeholder 38"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Legacy vehicle encyclopedia placeholder retained for full ID coverage."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Vehicle Placeholder 39 [vehicle_placeholder_39]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.vehicle_placeholder_39"
+    type = "vehicle"
+    groupKey = "vehicle_placeholder_39"
+    groupName = "Vehicle Placeholder 39"
+    roles = "description"
+    legacyIds = "45239"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.vehicle_placeholder_39.description"
+    text = "Vehicle needs descripton"
+    legacyId = 45239
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_39"
+    legacyKey = "legacy.mc2res.45239"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.39"
+    originalKey = "mechlopedia.vehicle.vehicle_placeholder_39.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "vehicle_placeholder_39"
+    groupName = "Vehicle Placeholder 39"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Legacy vehicle encyclopedia placeholder retained for full ID coverage."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Vehicle Placeholder 40 [vehicle_placeholder_40]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.vehicle_placeholder_40"
+    type = "vehicle"
+    groupKey = "vehicle_placeholder_40"
+    groupName = "Vehicle Placeholder 40"
+    roles = "description"
+    legacyIds = "45240"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.vehicle_placeholder_40.description"
+    text = "Vehicle needs descripton"
+    legacyId = 45240
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_40"
+    legacyKey = "legacy.mc2res.45240"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.40"
+    originalKey = "mechlopedia.vehicle.vehicle_placeholder_40.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "vehicle_placeholder_40"
+    groupName = "Vehicle Placeholder 40"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Legacy vehicle encyclopedia placeholder retained for full ID coverage."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Vtol [vtol]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.vehicle.vtol"
+    type = "vehicle"
+    groupKey = "vtol"
+    groupName = "Vtol"
+    roles = "description"
+    legacyIds = "45223"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.vehicle.vtol.description"
+    text = "Placeholder text:  The VTOL is a large flying transport capable of carrying the Repair Vehicle and other units summoned for reinforcements and repair.  It has a large bay door that opens and allows vehicles to roll out.  VTOLs may be destroyed either during travel or on the ground.  If the VTOL is destroyed while the summoned vehicle is rolling out then the vehicle is destroyed as well.  If the VTOL is destroyed after the summoned vehicle has rolled out, the vehicle is not affected by the VTOL's destruction."
+    legacyId = 45223
+    legacySymbol = "IDS_VEHICLE_DESCRIPTION_23"
+    legacyKey = "legacy.mc2res.45223"
+    source = "mechlopedia"
+    sourceKey = "unit.vehicle.description.23"
+    originalKey = "mechlopedia.vehicle.vtol.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/vehicles.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "vehicle"
+    role = "description"
+    groupKey = "vtol"
+    groupName = "Vtol"
+    codeReference = "code/mechlopedia.cpp:455-466"
+    notes = "Description ID inferred from IDS_VEHICLE_DESCRIPTION_* text and runtime getEncyclopediaID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+

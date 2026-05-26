@@ -15,12 +15,57 @@ target_include_directories(imgui PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/backends
 )
 
-# SDL2 headers needed by imgui_impl_sdl2
-# imgui_impl_sdl2 uses #include <SDL.h>; add SDL2 subdir from the 3rdparty prefix
-target_include_directories(imgui PRIVATE
-    ${THIRDPARTY_INCLUDE_DIRS}
-    ${CMAKE_PREFIX_PATH}/include/SDL2
-)
+# SDL2 headers needed by imgui_impl_sdl2.cpp.
+# That backend uses #include <SDL.h>, so the include path must point directly
+# at the directory containing SDL.h, commonly <prefix>/include/SDL2.
+set(IMGUI_SDL2_INCLUDE_DIRS "")
+
+if(TARGET SDL2::SDL2)
+    target_link_libraries(imgui PUBLIC SDL2::SDL2)
+
+    get_target_property(_imgui_sdl2_target_includes SDL2::SDL2 INTERFACE_INCLUDE_DIRECTORIES)
+    if(_imgui_sdl2_target_includes)
+        list(APPEND IMGUI_SDL2_INCLUDE_DIRS ${_imgui_sdl2_target_includes})
+    endif()
+endif()
+
+if(DEFINED SDL2_INCLUDE_DIRS)
+    list(APPEND IMGUI_SDL2_INCLUDE_DIRS ${SDL2_INCLUDE_DIRS})
+endif()
+
+if(DEFINED SDL2_INCLUDE_DIR)
+    list(APPEND IMGUI_SDL2_INCLUDE_DIRS ${SDL2_INCLUDE_DIR})
+endif()
+
+foreach(_prefix IN LISTS CMAKE_PREFIX_PATH)
+    if(NOT "${_prefix}" STREQUAL "")
+        file(TO_CMAKE_PATH "${_prefix}" _prefix_cmake)
+        if(EXISTS "${_prefix_cmake}/include/SDL2/SDL.h")
+            list(APPEND IMGUI_SDL2_INCLUDE_DIRS "${_prefix_cmake}/include/SDL2")
+        endif()
+        if(EXISTS "${_prefix_cmake}/include/SDL.h")
+            list(APPEND IMGUI_SDL2_INCLUDE_DIRS "${_prefix_cmake}/include")
+        endif()
+    endif()
+endforeach()
+
+foreach(_repo_sdl2_candidate
+        "${CMAKE_SOURCE_DIR}/3rdparty/include/SDL2"
+        "${CMAKE_SOURCE_DIR}/3rdparty/include")
+    if(EXISTS "${_repo_sdl2_candidate}/SDL.h")
+        list(APPEND IMGUI_SDL2_INCLUDE_DIRS "${_repo_sdl2_candidate}")
+    endif()
+endforeach()
+
+list(REMOVE_DUPLICATES IMGUI_SDL2_INCLUDE_DIRS)
+
+if(IMGUI_SDL2_INCLUDE_DIRS)
+    target_include_directories(imgui PUBLIC ${IMGUI_SDL2_INCLUDE_DIRS})
+    message(STATUS "imgui SDL2 include dirs: ${IMGUI_SDL2_INCLUDE_DIRS}")
+else()
+    message(FATAL_ERROR "imgui SDL2 backend requires SDL.h, but no SDL2 include directory containing SDL.h was found.")
+endif()
+
 
 # Suppress warnings in vendored code
 if(MSVC)

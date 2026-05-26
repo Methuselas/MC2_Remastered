@@ -56,6 +56,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
 #include <unordered_map>
 #include <unordered_set>
 #include <chrono>   // [LIGHTBRIDGE v1] coarse per-frame populate sizing
@@ -219,6 +220,106 @@ static bool tryReadTgaLogicalSize(File& textureFile, DWORD uvScale, DWORD& logic
 	logicalHeight = static_cast<DWORD>(header.height) / scale;
 	return logicalWidth && logicalHeight;
 }
+
+
+static bool equalsIgnoreCase(const char* a, const char* b)
+{
+	if (!a || !b)
+		return false;
+
+	while (*a && *b)
+	{
+		const int ca = std::tolower(static_cast<unsigned char>(*a));
+		const int cb = std::tolower(static_cast<unsigned char>(*b));
+		if (ca != cb)
+			return false;
+
+		++a;
+		++b;
+	}
+
+	return *a == '\0' && *b == '\0';
+}
+
+static const char* findExtension(const char* path)
+{
+	if (!path)
+		return NULL;
+
+	const char* slash = strrchr(path, '/');
+	const char* backslash = strrchr(path, '\\');
+	const char* lastSep = slash > backslash ? slash : backslash;
+	const char* dot = strrchr(path, '.');
+
+	return (dot && (!lastSep || dot > lastSep)) ? dot : NULL;
+}
+
+static bool isSupportedImageExtension(const char* ext)
+{
+	return equalsIgnoreCase(ext, ".tga")
+		|| equalsIgnoreCase(ext, ".png")
+		|| equalsIgnoreCase(ext, ".jpg")
+		|| equalsIgnoreCase(ext, ".jpeg")
+		|| equalsIgnoreCase(ext, ".bmp");
+}
+
+static void copyResolvedTexturePath(char* outPath, size_t outPathSize, const char* inPath)
+{
+	if (!outPath || outPathSize == 0)
+		return;
+
+	if (!inPath)
+		inPath = "";
+
+	strncpy(outPath, inPath, outPathSize - 1);
+	outPath[outPathSize - 1] = '\0';
+}
+
+static bool canOpenTexturePath(const char* path)
+{
+	File probe;
+	const long result = probe.open(path);
+	probe.close();
+	return result == NO_ERR;
+}
+
+static bool resolveTexturePathWithAlternates(const char* requestedPath, char* resolvedPath, size_t resolvedPathSize)
+{
+	copyResolvedTexturePath(resolvedPath, resolvedPathSize, requestedPath);
+
+	if (canOpenTexturePath(requestedPath))
+		return true;
+
+	const char* ext = findExtension(requestedPath);
+	if (!ext)
+		return false;
+
+	const char* supportedExtensions[] = { ".tga", ".png", ".jpg", ".jpeg", ".bmp" };
+	char candidate[2048];
+
+	for (size_t i = 0; i < sizeof(supportedExtensions) / sizeof(supportedExtensions[0]); ++i)
+	{
+		const char* candidateExt = supportedExtensions[i];
+		if (equalsIgnoreCase(ext, candidateExt))
+			continue;
+
+		const size_t baseLen = static_cast<size_t>(ext - requestedPath);
+		if (baseLen + strlen(candidateExt) >= sizeof(candidate))
+			continue;
+
+		memcpy(candidate, requestedPath, baseLen);
+		strcpy(candidate + baseLen, candidateExt);
+
+		if (canOpenTexturePath(candidate))
+		{
+			copyResolvedTexturePath(resolvedPath, resolvedPathSize, candidate);
+			return true;
+		}
+	}
+
+	return false;
+}
+
 
 #define MAX_SENDDOWN		10002
 
@@ -2928,11 +3029,18 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 	ZoneScopedN("MC_TextureManager::loadTexture");
 	long i=0;
 
+	char resolvedTextureFullPathName[2048];
+	const bool texturePathResolved = resolveTexturePathWithAlternates(textureFullPathName,
+		resolvedTextureFullPathName, sizeof(resolvedTextureFullPathName));
+	gosASSERT(texturePathResolved);
+
+	const char* textureCacheKey = texturePathResolved ? resolvedTextureFullPathName : textureFullPathName;
+
 	//--------------------------------------
 	// Is this texture already Loaded?
 	for (i=0;i<MC_MAXTEXTURES;i++)
 	{
-		if (masterTextureNodes[i].nodeName && (S_stricmp(masterTextureNodes[i].nodeName,textureFullPathName) == 0))
+		if (masterTextureNodes[i].nodeName && (S_stricmp(masterTextureNodes[i].nodeName,textureCacheKey) == 0))
 		{
 			if (uniqueInstance == masterTextureNodes[i].uniqueInstance)
 			{
@@ -2975,10 +3083,10 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 	// New Method.  Just store memory footprint of texture.
 	// DO NOT create GOS handle until we need it.
  	masterTextureNodes[i].gosTextureHandle = CACHED_OUT_HANDLE;
-	masterTextureNodes[i].nodeName = (char *)textureStringHeap->Malloc(strlen(textureFullPathName) + 1);
+	masterTextureNodes[i].nodeName = (char *)textureStringHeap->Malloc(strlen(textureCacheKey) + 1);
 	gosASSERT(masterTextureNodes[i].nodeName != NULL);
 
-	strcpy(masterTextureNodes[i].nodeName,textureFullPathName);
+	strcpy(masterTextureNodes[i].nodeName,textureCacheKey);
 	masterTextureNodes[i].numUsers = 1;
 	masterTextureNodes[i].key = key;
 	masterTextureNodes[i].hints = hints;
@@ -2995,7 +3103,7 @@ DWORD MC_TextureManager::loadTexture (const char *textureFullPathName, gos_Textu
 #ifdef _DEBUG
 	long textureFileOpenResult = 
 #endif
-		textureFile.open(textureFullPathName);
+		textureFile.open(textureCacheKey);
 	gosASSERT(textureFileOpenResult == NO_ERR);
 
 	if (textureFile.isLoadedFromDisk())

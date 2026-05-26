@@ -5,6 +5,22 @@
 #include <stdlib.h>
 #include <cassert>
 
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#if defined(__has_include)
+#  if __has_include("stb_image.h")
+#    include "stb_image.h"
+#  elif __has_include("../../../3rdparty/stb/stb_image.h")
+#    include "../../../3rdparty/stb/stb_image.h"
+#  elif __has_include("../../../3rdparty/assimp/contrib/stb/stb_image.h")
+#    include "../../../3rdparty/assimp/contrib/stb/stb_image.h"
+#  else
+#    error "stb_image.h not found for GameOS Image loader"
+#  endif
+#else
+#  include "../../../3rdparty/assimp/contrib/stb/stb_image.h"
+#endif
+
 //#include "math/vec.h"
 //#include "system/types.h"
 //#include "system/defines.h"
@@ -127,6 +143,79 @@ unsigned char *Image::create(const FORMAT fmt, const int w, const int h){
 	return pixels;
 }
 
+namespace
+{
+	bool LoadStbPixelsFromFile(const char* fileName, unsigned char*& outPixels, long& outWidth, long& outHeight, FORMAT& outFormat)
+	{
+		outPixels = 0;
+		outWidth = 0;
+		outHeight = 0;
+		outFormat = FORMAT_NONE;
+
+		int width = 0;
+		int height = 0;
+		int components = 0;
+		unsigned char* decoded = stbi_load(fileName, &width, &height, &components, 4);
+		if (!decoded || width <= 0 || height <= 0)
+		{
+			if (decoded)
+				stbi_image_free(decoded);
+			return false;
+		}
+
+		const size_t byteCount = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
+		outPixels = new unsigned char[byteCount];
+		memcpy(outPixels, decoded, byteCount);
+		stbi_image_free(decoded);
+
+		outWidth = width;
+		outHeight = height;
+		outFormat = FORMAT_RGBA8;
+		return true;
+	}
+
+	bool LoadStbPixelsFromMemory(const unsigned char* mem, size_t len, unsigned char*& outPixels, long& outWidth, long& outHeight, FORMAT& outFormat)
+	{
+		outPixels = 0;
+		outWidth = 0;
+		outHeight = 0;
+		outFormat = FORMAT_NONE;
+
+		if (!mem || len == 0)
+			return false;
+
+		int width = 0;
+		int height = 0;
+		int components = 0;
+		unsigned char* decoded = stbi_load_from_memory(mem, static_cast<int>(len), &width, &height, &components, 4);
+		if (!decoded || width <= 0 || height <= 0)
+		{
+			if (decoded)
+				stbi_image_free(decoded);
+			return false;
+		}
+
+		const size_t byteCount = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
+		outPixels = new unsigned char[byteCount];
+		memcpy(outPixels, decoded, byteCount);
+		stbi_image_free(decoded);
+
+		outWidth = width;
+		outHeight = height;
+		outFormat = FORMAT_RGBA8;
+		return true;
+	}
+
+	bool HasExtension(const char* fileName, const char* ext)
+	{
+		if (!fileName || !ext)
+			return false;
+
+		const char* dot = strrchr(fileName, '.');
+		return dot && stricmp(dot + 1, ext) == 0;
+	}
+}
+
 bool Image::loadFromFile(const char *fileName){
 	const char *ext = strrchr(fileName, '.');
 	if (ext == NULL) return false;
@@ -134,14 +223,67 @@ bool Image::loadFromFile(const char *fileName){
 	ext++;
 	if (stricmp(ext, "tga") == 0)
 	{
-		return loadTGA(fileName);
+		if (loadTGA(fileName))
+			return true;
 	}
 	else if (stricmp(ext, "bmp") == 0)
 	{
-		return loadBMP(fileName);
+		if (loadBMP(fileName))
+			return true;
 	}
+
+	clear();
+
+	unsigned char* decodedPixels = 0;
+	long decodedWidth = 0;
+	long decodedHeight = 0;
+	FORMAT decodedFormat = FORMAT_NONE;
+	if (!LoadStbPixelsFromFile(fileName, decodedPixels, decodedWidth, decodedHeight, decodedFormat))
+		return false;
+
+	pixels = decodedPixels;
+	width = decodedWidth;
+	height = decodedHeight;
+	format = decodedFormat;
+	return true;
+}
+
+bool Image::loadFromMemoryEncoded(const unsigned char* mem, size_t len, const char* fileNameHint)
+{
+	clear();
+
+	// Preserve the legacy TGA loader first for old MC2 packed assets.
+	if (HasExtension(fileNameHint, "tga"))
+	{
+		if (loadTGA(mem, len))
+			return true;
+		clear();
+	}
+
+	unsigned char* decodedPixels = 0;
+	long decodedWidth = 0;
+	long decodedHeight = 0;
+	FORMAT decodedFormat = FORMAT_NONE;
+	if (LoadStbPixelsFromMemory(mem, len, decodedPixels, decodedWidth, decodedHeight, decodedFormat))
+	{
+		pixels = decodedPixels;
+		width = decodedWidth;
+		height = decodedHeight;
+		format = decodedFormat;
+		return true;
+	}
+
+	// Last fallback for extensionless legacy callers that still hand us TGA data.
+	if (!HasExtension(fileNameHint, "tga"))
+	{
+		clear();
+		if (loadTGA(mem, len))
+			return true;
+	}
+
+	clear();
 	return false;
-} 
+}
 
 bool Image::loadTGA(const char *fileName){
 	clear();

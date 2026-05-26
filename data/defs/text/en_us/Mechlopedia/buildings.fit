@@ -1,0 +1,2049 @@
+/***************************************************************
+ * FILENAME: buildings.fit
+ * DESCRIPTION: Building, gate, wall, turret, and field-object names/descriptions.
+ * GENERATED: 2026-05-18
+ * SOURCE: MC2_Remastered.zip / data/defs/text/en_us/mc2res_legacy.fit
+ * PHASE: Phase 3 shared Mechlopedia text FIT setup
+ * NOTE: FIT owns the words. Legacy IDs are preserved for bridge lookup.
+ ***************************************************************/
+
+// -----------------------------------------------------------------------------
+// Group: Ammo Crates [ammo_crates]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.ammo_crates"
+    type = "building"
+    groupKey = "ammo_crates"
+    groupName = "Ammo Crates"
+    roles = "description,name"
+    legacyIds = "30392,45432"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.ammo_crates.name"
+    text = "Ammo Crates"
+    legacyId = 30392
+    legacySymbol = "IDS_OBJECT_392"
+    legacyKey = "legacy.mc2res.30392"
+    source = "mechlopedia"
+    sourceKey = "object.392"
+    originalKey = "mechlopedia.building.ammo_crates.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "ammo_crates"
+    groupName = "Ammo Crates"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.ammo_crates.description"
+    text = "Ammo Crates hold ammunition. They can be targeted and destroyed to create collateral damage."
+    legacyId = 45432
+    legacySymbol = "IDS_BUILDING_ENCYCLO32"
+    legacyKey = "legacy.mc2res.45432"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo32"
+    originalKey = "mechlopedia.building.ammo_crates.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/mission.fit"
+    originalCategory = "mission"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "ammo_crates"
+    groupName = "Ammo Crates"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Ammo Dump [ammo_dump]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.ammo_dump"
+    type = "building"
+    groupKey = "ammo_dump"
+    groupName = "Ammo Dump"
+    roles = "description,name"
+    legacyIds = "30200,45400"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.ammo_dump.name"
+    text = "Ammo Dump"
+    legacyId = 30200
+    legacySymbol = "IDS_OBJECT_200"
+    legacyKey = "legacy.mc2res.30200"
+    source = "mechlopedia"
+    sourceKey = "object.200"
+    originalKey = "mechlopedia.building.ammo_dump.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/debug.fit"
+    originalCategory = "debug"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "ammo_dump"
+    groupName = "Ammo Dump"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.ammo_dump.description"
+    text = "Ammo Dumps are lightly armored repositories for ammunition of every sort.\n\nAny Ammo Dump, regardless of controlling forces, can be targeted and destroyed to create significant collateral damage."
+    paragraphCount = 2
+    paragraph0 = "Ammo Dumps are lightly armored repositories for ammunition of every sort."
+    paragraph1 = "Any Ammo Dump, regardless of controlling forces, can be targeted and destroyed to create significant collateral damage."
+    legacyId = 45400
+    legacySymbol = "IDS_BUILDING_ENCYCLO0"
+    legacyKey = "legacy.mc2res.45400"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo0"
+    originalKey = "mechlopedia.building.ammo_dump.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "ammo_dump"
+    groupName = "Ammo Dump"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Building Placeholder 34 [building_placeholder_34]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.building_placeholder_34"
+    type = "building"
+    groupKey = "building_placeholder_34"
+    groupName = "Building Placeholder 34"
+    roles = "description"
+    legacyIds = "45434"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.building_placeholder_34.description"
+    text = "Placeholder text: "
+    legacyId = 45434
+    legacySymbol = "IDS_BUILDING_ENCYCLO34"
+    legacyKey = "legacy.mc2res.45434"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo34"
+    originalKey = "mechlopedia.building.building_placeholder_34.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "building_placeholder_34"
+    groupName = "Building Placeholder 34"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Building Placeholder 35 [building_placeholder_35]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.building_placeholder_35"
+    type = "building"
+    groupKey = "building_placeholder_35"
+    groupName = "Building Placeholder 35"
+    roles = "description"
+    legacyIds = "45435"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.building_placeholder_35.description"
+    text = "Placeholder text: "
+    legacyId = 45435
+    legacySymbol = "IDS_BUILDING_ENCYCLO35"
+    legacyKey = "legacy.mc2res.45435"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo35"
+    originalKey = "mechlopedia.building.building_placeholder_35.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "building_placeholder_35"
+    groupName = "Building Placeholder 35"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Gate Control [gate_control]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.gate_control"
+    type = "building"
+    groupKey = "gate_control"
+    groupName = "Gate Control"
+    roles = "description,name"
+    legacyIds = "30204,45402"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.gate_control.name"
+    text = "Gate Control"
+    legacyId = 30204
+    legacySymbol = "IDS_OBJECT_204"
+    legacyKey = "legacy.mc2res.30204"
+    source = "mechlopedia"
+    sourceKey = "object.204"
+    originalKey = "mechlopedia.building.gate_control.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "gate_control"
+    groupName = "Gate Control"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.gate_control.description"
+    text = "A Gate Control links to one or more gates, determining whether they open for friendly units or remain closed for enemy units. Gate Controls serve as the secondary target in base attacks; Turret Controls are always the first priority. Capture of a Gate Control changes the alignment of all the linked gates to the alignment of the capturing unit. Destruction of a Gate Control deactivates all of the linked gates.\n\nDestroying a Gate Control Generator leaves linked gates stuck in their position at the time the Gate Control was destroyed: Closed gates will stay closed, and open gates will remain open.\n\n'Mechs equipped with jump jets can vault into bases, capture the Gate Control, and open the gates for other units."
+    paragraphCount = 3
+    paragraph0 = "A Gate Control links to one or more gates, determining whether they open for friendly units or remain closed for enemy units. Gate Controls serve as the secondary target in base attacks; Turret Controls are always the first priority. Capture of a Gate Control changes the alignment of all the linked gates to the alignment of the capturing unit. Destruction of a Gate Control deactivates all of the linked gates."
+    paragraph1 = "Destroying a Gate Control Generator leaves linked gates stuck in their position at the time the Gate Control was destroyed: Closed gates will stay closed, and open gates will remain open."
+    paragraph2 = "'Mechs equipped with jump jets can vault into bases, capture the Gate Control, and open the gates for other units."
+    legacyId = 45402
+    legacySymbol = "IDS_BUILDING_ENCYCLO2"
+    legacyKey = "legacy.mc2res.45402"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo2"
+    originalKey = "mechlopedia.building.gate_control.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "gate_control"
+    groupName = "Gate Control"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Gauss Turret [gauss_turret]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.gauss_turret"
+    type = "building"
+    groupKey = "gauss_turret"
+    groupName = "Gauss Turret"
+    roles = "description,name"
+    legacyIds = "30323,45427"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.gauss_turret.name"
+    text = "Gauss Turret"
+    legacyId = 30323
+    legacySymbol = "IDS_OBJECT_323"
+    legacyKey = "legacy.mc2res.30323"
+    source = "mechlopedia"
+    sourceKey = "object.323"
+    originalKey = "mechlopedia.building.gauss_turret.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "gauss_turret"
+    groupName = "Gauss Turret"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.gauss_turret.description"
+    text = "Troublesome when encountered during missions, the Gauss Turret locks on targets from long range and, when enjoying a direct line of sight, can lay waste to Light 'Mechs with one shot and significantly reduce the armor of larger 'Mechs. This turret is encountered only in Davion territories.\n\nGauss Turrets are effective at great distances and produce immense violence when they find their target. They often start damaging approaching 'Mechs before the opposing pilots even know they are there. They are most easily defeated at close range unless your 'Mech team can call in an airstrike or respond with a Gauss Rifle of its own. If they can be captured, Gauss Turrets offer a great strategic advantage to the MechCommander with large territories under control.\n\nA group of Gauss Turrets depends on a Turret Generator and a Turret Control to function. Destroy the generator to cripple the turrets, or capture the control to align the turrets with your own team."
+    paragraphCount = 3
+    paragraph0 = "Troublesome when encountered during missions, the Gauss Turret locks on targets from long range and, when enjoying a direct line of sight, can lay waste to Light 'Mechs with one shot and significantly reduce the armor of larger 'Mechs. This turret is encountered only in Davion territories."
+    paragraph1 = "Gauss Turrets are effective at great distances and produce immense violence when they find their target. They often start damaging approaching 'Mechs before the opposing pilots even know they are there. They are most easily defeated at close range unless your 'Mech team can call in an airstrike or respond with a Gauss Rifle of its own. If they can be captured, Gauss Turrets offer a great strategic advantage to the MechCommander with large territories under control."
+    paragraph2 = "A group of Gauss Turrets depends on a Turret Generator and a Turret Control to function. Destroy the generator to cripple the turrets, or capture the control to align the turrets with your own team."
+    legacyId = 45427
+    legacySymbol = "IDS_BUILDING_ENCYCLO27"
+    legacyKey = "legacy.mc2res.45427"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo27"
+    originalKey = "mechlopedia.building.gauss_turret.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "gauss_turret"
+    groupName = "Gauss Turret"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Headquarters [headquarters]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.headquarters"
+    type = "building"
+    groupKey = "headquarters"
+    groupName = "Headquarters"
+    roles = "description,name"
+    legacyIds = "30570,45406"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.headquarters.name"
+    text = "Headquarters"
+    legacyId = 30570
+    legacySymbol = "IDS_OBJECT_570"
+    legacyKey = "legacy.mc2res.30570"
+    source = "mechlopedia"
+    sourceKey = "object.570"
+    originalKey = "mechlopedia.building.headquarters.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "headquarters"
+    groupName = "Headquarters"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.headquarters.description"
+    text = "A Headquarters, or HQ, is the command and communication center for remote bases. These buildings often serve as the target for assault operations, in the hopes of occupying the base for future use."
+    legacyId = 45406
+    legacySymbol = "IDS_BUILDING_ENCYCLO6"
+    legacyKey = "legacy.mc2res.45406"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo6"
+    originalKey = "mechlopedia.building.headquarters.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/ui_common.fit"
+    originalCategory = "ui_common"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "headquarters"
+    groupName = "Headquarters"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Heavy Gate [heavy_gate]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.heavy_gate"
+    type = "building"
+    groupKey = "heavy_gate"
+    groupName = "Heavy Gate"
+    roles = "description,name"
+    legacyIds = "30314,45405"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.heavy_gate.name"
+    text = "Heavy Gate"
+    legacyId = 30314
+    legacySymbol = "IDS_OBJECT_314_LIAO"
+    legacyKey = "legacy.mc2res.30314"
+    source = "mechlopedia"
+    sourceKey = "object.314.liao"
+    originalKey = "mechlopedia.building.heavy_gate.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "heavy_gate"
+    groupName = "Heavy Gate"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.heavy_gate.description"
+    text = "Placeholder text: Heavy Gate  "
+    legacyId = 45405
+    legacySymbol = "IDS_BUILDING_ENCYCLO5"
+    legacyKey = "legacy.mc2res.45405"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo5"
+    originalKey = "mechlopedia.building.heavy_gate.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "heavy_gate"
+    groupName = "Heavy Gate"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Heavy Wall [heavy_wall]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.heavy_wall"
+    type = "building"
+    groupKey = "heavy_wall"
+    groupName = "Heavy Wall"
+    roles = "description,name"
+    legacyIds = "30313,45422"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.heavy_wall.name"
+    text = "Heavy Wall"
+    legacyId = 30313
+    legacySymbol = "IDS_OBJECT_313"
+    legacyKey = "legacy.mc2res.30313"
+    source = "mechlopedia"
+    sourceKey = "object.313"
+    originalKey = "mechlopedia.building.heavy_wall.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "heavy_wall"
+    groupName = "Heavy Wall"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.heavy_wall.description"
+    text = "Considerably more resistant to firepower than a Medium Wall, a Heavy Wall is tall enough to block the line of sight of even an Assault 'Mech and is susceptible only to prolonged poundings. Long-range missiles, however, can easily clear the Heavy Wall and destroy targets behind it."
+    legacyId = 45422
+    legacySymbol = "IDS_BUILDING_ENCYCLO22"
+    legacyKey = "legacy.mc2res.45422"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo22"
+    originalKey = "mechlopedia.building.heavy_wall.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/mission.fit"
+    originalCategory = "mission"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "heavy_wall"
+    groupName = "Heavy Wall"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Large Fuel Tank [large_fuel_tank]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.large_fuel_tank"
+    type = "building"
+    groupKey = "large_fuel_tank"
+    groupName = "Large Fuel Tank"
+    roles = "description,name"
+    legacyIds = "30339,45401"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.large_fuel_tank.name"
+    text = "Large Fuel Tank"
+    legacyId = 30339
+    legacySymbol = "IDS_OBJECT_339"
+    legacyKey = "legacy.mc2res.30339"
+    source = "mechlopedia"
+    sourceKey = "object.339"
+    originalKey = "mechlopedia.building.large_fuel_tank.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "large_fuel_tank"
+    groupName = "Large Fuel Tank"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.large_fuel_tank.description"
+    text = "Large Fuel Tanks dot several battle theaters. All sides in the battle for Carver V have taken great care to ensure deep redundancies in their fuel storage systems, so almost any fuel tank you encounter on the field is certain to be an attractive target with no consequences for you or your employers.\n\nThe intriguing aspect to the presence of Large Fuel Tanks is their unintended utility as spare ordnance on the field; lure opponents within range of the collateral damage of a tank, and then blast the tank for a crude incendiary device."
+    paragraphCount = 2
+    paragraph0 = "Large Fuel Tanks dot several battle theaters. All sides in the battle for Carver V have taken great care to ensure deep redundancies in their fuel storage systems, so almost any fuel tank you encounter on the field is certain to be an attractive target with no consequences for you or your employers."
+    paragraph1 = "The intriguing aspect to the presence of Large Fuel Tanks is their unintended utility as spare ordnance on the field; lure opponents within range of the collateral damage of a tank, and then blast the tank for a crude incendiary device."
+    legacyId = 45401
+    legacySymbol = "IDS_BUILDING_ENCYCLO1"
+    legacyKey = "legacy.mc2res.45401"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo1"
+    originalKey = "mechlopedia.building.large_fuel_tank.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "large_fuel_tank"
+    groupName = "Large Fuel Tank"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Large Pulse Laser Turret [large_pulse_laser_turret]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.large_pulse_laser_turret"
+    type = "building"
+    groupKey = "large_pulse_laser_turret"
+    groupName = "Large Pulse Laser Turret"
+    roles = "description,name"
+    legacyIds = "30326,45430"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.large_pulse_laser_turret.name"
+    text = "Large Pulse Laser Turret"
+    legacyId = 30326
+    legacySymbol = "IDS_OBJECT_326"
+    legacyKey = "legacy.mc2res.30326"
+    source = "mechlopedia"
+    sourceKey = "object.326"
+    originalKey = "mechlopedia.building.large_pulse_laser_turret.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "large_pulse_laser_turret"
+    groupName = "Large Pulse Laser Turret"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.large_pulse_laser_turret.description"
+    text = "The Large Pulse Laser mounted on a turret does not fire a devastating individual blow, but if left alone for any length of time the Large Pulse Laser Turret, with its impressive rate of fire, will begin to crumple even heavy armor. Encountered only in Liao territory, this turret is effective to medium range.\n\nA group of Large Pulse Laser Turrets depends on a Turret Generator and a Turret Control to function. Destroy the generator to cripple the turrets, or capture the control to align the turrets with your own team."
+    paragraphCount = 2
+    paragraph0 = "The Large Pulse Laser mounted on a turret does not fire a devastating individual blow, but if left alone for any length of time the Large Pulse Laser Turret, with its impressive rate of fire, will begin to crumple even heavy armor. Encountered only in Liao territory, this turret is effective to medium range."
+    paragraph1 = "A group of Large Pulse Laser Turrets depends on a Turret Generator and a Turret Control to function. Destroy the generator to cripple the turrets, or capture the control to align the turrets with your own team."
+    legacyId = 45430
+    legacySymbol = "IDS_BUILDING_ENCYCLO30"
+    legacyKey = "legacy.mc2res.45430"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo30"
+    originalKey = "mechlopedia.building.large_pulse_laser_turret.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "large_pulse_laser_turret"
+    groupName = "Large Pulse Laser Turret"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Light Gate [light_gate]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.light_gate"
+    type = "building"
+    groupKey = "light_gate"
+    groupName = "Light Gate"
+    roles = "description,name"
+    legacyIds = "30310,45403"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.light_gate.name"
+    text = "Light Gate"
+    legacyId = 30310
+    legacySymbol = "IDS_OBJECT_310"
+    legacyKey = "legacy.mc2res.30310"
+    source = "mechlopedia"
+    sourceKey = "object.310.liao"
+    originalKey = "mechlopedia.building.light_gate.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "light_gate"
+    groupName = "Light Gate"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.light_gate.description"
+    text = "Placeholder text: Light Gate"
+    legacyId = 45403
+    legacySymbol = "IDS_BUILDING_ENCYCLO3"
+    legacyKey = "legacy.mc2res.45403"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo3"
+    originalKey = "mechlopedia.building.light_gate.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "light_gate"
+    groupName = "Light Gate"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Light Wall [light_wall]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.light_wall"
+    type = "building"
+    groupKey = "light_wall"
+    groupName = "Light Wall"
+    roles = "description,name"
+    legacyIds = "30309,45420"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.light_wall.name"
+    text = "Light Wall"
+    legacyId = 30309
+    legacySymbol = "IDS_OBJECT_309"
+    legacyKey = "legacy.mc2res.30309"
+    source = "mechlopedia"
+    sourceKey = "object.309"
+    originalKey = "mechlopedia.building.light_wall.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "light_wall"
+    groupName = "Light Wall"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.light_wall.description"
+    text = "A Light Wall prevents vehicles and 'Mechs from direct entry onto a base, but it can be destroyed with repeated salvos from energy or ballistic weaponry. A Light Wall is not tall enough to block the line of sight of Heavy and Assault 'Mechs."
+    legacyId = 45420
+    legacySymbol = "IDS_BUILDING_ENCYCLO20"
+    legacyKey = "legacy.mc2res.45420"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo20"
+    originalKey = "mechlopedia.building.light_wall.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/mission.fit"
+    originalCategory = "mission"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "light_wall"
+    groupName = "Light Wall"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Long Tom Turret [long_tom_turret]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.long_tom_turret"
+    type = "building"
+    groupKey = "long_tom_turret"
+    groupName = "Long Tom Turret"
+    roles = "description,name"
+    legacyIds = "30327,45428"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.long_tom_turret.name"
+    text = "Long Tom Turret"
+    legacyId = 30327
+    legacySymbol = "IDS_OBJECT_327"
+    legacyKey = "legacy.mc2res.30327"
+    source = "mechlopedia"
+    sourceKey = "object.327"
+    originalKey = "mechlopedia.building.long_tom_turret.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "long_tom_turret"
+    groupName = "Long Tom Turret"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.long_tom_turret.description"
+    text = "Long Tom Cannons mounted on turrets are capable of devastating even the most heavily armored targets at long range and over obstacles between the turret itself and the approaching enemy.\n\nA group of Long Tom Turrets depends on a Turret Generator and a Turret Control to function. Destroy the generator to cripple the turrets, or capture the control to align the turrets with your own team."
+    paragraphCount = 2
+    paragraph0 = "Long Tom Cannons mounted on turrets are capable of devastating even the most heavily armored targets at long range and over obstacles between the turret itself and the approaching enemy."
+    paragraph1 = "A group of Long Tom Turrets depends on a Turret Generator and a Turret Control to function. Destroy the generator to cripple the turrets, or capture the control to align the turrets with your own team."
+    legacyId = 45428
+    legacySymbol = "IDS_BUILDING_ENCYCLO28"
+    legacyKey = "legacy.mc2res.45428"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo28"
+    originalKey = "mechlopedia.building.long_tom_turret.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "long_tom_turret"
+    groupName = "Long Tom Turret"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Lookout Tower [lookout_tower]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.lookout_tower"
+    type = "building"
+    groupKey = "lookout_tower"
+    groupName = "Lookout Tower"
+    roles = "description,name"
+    legacyIds = "30208,45408"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.lookout_tower.name"
+    text = "Lookout Tower"
+    legacyId = 30208
+    legacySymbol = "IDS_OBJECT_208_LIAO"
+    legacyKey = "legacy.mc2res.30208"
+    source = "mechlopedia"
+    sourceKey = "object.208.liao"
+    originalKey = "mechlopedia.building.lookout_tower.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "lookout_tower"
+    groupName = "Lookout Tower"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.lookout_tower.description"
+    text = "A Lookout Tower augments the battle readiness of a Turret Control. Crippling a Lookout Tower may severely hamper a control's turrets for long-range targeting. Without a Lookout Tower, intelligence reports indicate that turrets may depend exclusively on line-of-sight target acquisition."
+    legacyId = 45408
+    legacySymbol = "IDS_BUILDING_ENCYCLO8"
+    legacyKey = "legacy.mc2res.45408"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo8"
+    originalKey = "mechlopedia.building.lookout_tower.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "lookout_tower"
+    groupName = "Lookout Tower"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: LRM Turret [lrm_turret]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.lrm_turret"
+    type = "building"
+    groupKey = "lrm_turret"
+    groupName = "LRM Turret"
+    roles = "description,name"
+    legacyIds = "30325,45425"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.lrm_turret.name"
+    text = "LRM Turret"
+    legacyId = 30325
+    legacySymbol = "IDS_OBJECT_325"
+    legacyKey = "legacy.mc2res.30325"
+    source = "mechlopedia"
+    sourceKey = "object.325"
+    originalKey = "mechlopedia.building.lrm_turret.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "lrm_turret"
+    groupName = "LRM Turret"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.lrm_turret.description"
+    text = "Long-Range Missile (LRM) Turrets offer significant long-range firepower to bases and in defense of other fixed structures. Without requiring the attention of a pilot, LRM Turrets can lock on targets and inflict damage on approaching 'Mechs, in some cases even crippling Light 'Mechs.\n\nA group of LRM Turrets depends on a Turret Generator and a Turret Control to function. Destroy the generator to cripple the turrets, or capture the control to align the turrets with your own team."
+    paragraphCount = 2
+    paragraph0 = "Long-Range Missile (LRM) Turrets offer significant long-range firepower to bases and in defense of other fixed structures. Without requiring the attention of a pilot, LRM Turrets can lock on targets and inflict damage on approaching 'Mechs, in some cases even crippling Light 'Mechs."
+    paragraph1 = "A group of LRM Turrets depends on a Turret Generator and a Turret Control to function. Destroy the generator to cripple the turrets, or capture the control to align the turrets with your own team."
+    legacyId = 45425
+    legacySymbol = "IDS_BUILDING_ENCYCLO25"
+    legacyKey = "legacy.mc2res.45425"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo25"
+    originalKey = "mechlopedia.building.lrm_turret.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "lrm_turret"
+    groupName = "LRM Turret"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Mech Warrior Barracks [mech_warrior_barracks]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.mech_warrior_barracks"
+    type = "building"
+    groupKey = "mech_warrior_barracks"
+    groupName = "Mech Warrior Barracks"
+    roles = "description"
+    legacyIds = "45409"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.mech_warrior_barracks.description"
+    text = "Placeholder text:  Mech Warrior Barracks"
+    legacyId = 45409
+    legacySymbol = "IDS_BUILDING_ENCYCLO9"
+    legacyKey = "legacy.mc2res.45409"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo9"
+    originalKey = "mechlopedia.building.mech_warrior_barracks.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "mech_warrior_barracks"
+    groupName = "Mech Warrior Barracks"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Medium Autocannon Turret [autocannon_turret]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.autocannon_turret"
+    type = "building"
+    groupKey = "autocannon_turret"
+    groupName = "Medium Autocannon Turret"
+    roles = "description,name"
+    legacyIds = "30329,45426"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.autocannon_turret.name"
+    text = "Medium Autocannon Turret"
+    legacyId = 30329
+    legacySymbol = "IDS_OBJECT_329"
+    legacyKey = "legacy.mc2res.30329"
+    source = "mechlopedia"
+    sourceKey = "object.329"
+    originalKey = "mechlopedia.building.autocannon_turret.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "autocannon_turret"
+    groupName = "Medium Autocannon Turret"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.autocannon_turret.description"
+    text = "The Autocannon Turret is capable of damaging vehicles and 'Mechs alike and severely damaging or even disabling Light 'Mechs. Autocannons are effective to medium range, and even when confronted with relatively few turrets the best tactic against them is to take the Turret Control, or at the very least destroy every turret as soon as possible.\n\nA group of Autocannon Turrets depends on a Turret Generator and a Turret Control to function. Destroy the generator to cripple the turrets, or capture the control to align the turrets with your own team."
+    paragraphCount = 2
+    paragraph0 = "The Autocannon Turret is capable of damaging vehicles and 'Mechs alike and severely damaging or even disabling Light 'Mechs. Autocannons are effective to medium range, and even when confronted with relatively few turrets the best tactic against them is to take the Turret Control, or at the very least destroy every turret as soon as possible."
+    paragraph1 = "A group of Autocannon Turrets depends on a Turret Generator and a Turret Control to function. Destroy the generator to cripple the turrets, or capture the control to align the turrets with your own team."
+    legacyId = 45426
+    legacySymbol = "IDS_BUILDING_ENCYCLO26"
+    legacyKey = "legacy.mc2res.45426"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo26"
+    originalKey = "mechlopedia.building.autocannon_turret.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "autocannon_turret"
+    groupName = "Medium Autocannon Turret"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Medium Gate [medium_gate]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.medium_gate"
+    type = "building"
+    groupKey = "medium_gate"
+    groupName = "Medium Gate"
+    roles = "description,name"
+    legacyIds = "30312,45404"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.medium_gate.name"
+    text = "Medium Gate"
+    legacyId = 30312
+    legacySymbol = "IDS_OBJECT_312"
+    legacyKey = "legacy.mc2res.30312"
+    source = "mechlopedia"
+    sourceKey = "object.312.liao"
+    originalKey = "mechlopedia.building.medium_gate.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "medium_gate"
+    groupName = "Medium Gate"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.medium_gate.description"
+    text = "Once a base's defenses are neutralized, its gates become the next priority. Any gate is almost always better controlled than destroyed if you can send a jump jet-equipped 'Mech into the base to capture the Gate Control and permit access for other 'Mechs. A Medium Gate can interfere with target acquisition while closed, but all gates can be worn down to rubble with prolonged offensive strikes."
+    legacyId = 45404
+    legacySymbol = "IDS_BUILDING_ENCYCLO4"
+    legacyKey = "legacy.mc2res.45404"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo4"
+    originalKey = "mechlopedia.building.medium_gate.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "medium_gate"
+    groupName = "Medium Gate"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Medium Wall [medium_wall]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.medium_wall"
+    type = "building"
+    groupKey = "medium_wall"
+    groupName = "Medium Wall"
+    roles = "description,name"
+    legacyIds = "30311,45421"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.medium_wall.name"
+    text = "Medium Wall"
+    legacyId = 30311
+    legacySymbol = "IDS_OBJECT_311"
+    legacyKey = "legacy.mc2res.30311"
+    source = "mechlopedia"
+    sourceKey = "object.311.liao"
+    originalKey = "mechlopedia.building.medium_wall.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "medium_wall"
+    groupName = "Medium Wall"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.medium_wall.description"
+    text = "The Medium Wall is significantly tougher than the Light Wall but still less resistant to ordnance than the Heavy Wall. It is tall enough to block the line of sight of smaller 'Mechs and interfere with target acquisition."
+    legacyId = 45421
+    legacySymbol = "IDS_BUILDING_ENCYCLO21"
+    legacyKey = "legacy.mc2res.45421"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo21"
+    originalKey = "mechlopedia.building.medium_wall.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "medium_wall"
+    groupName = "Medium Wall"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Perimeter Alarm [perimeter_alarm]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.perimeter_alarm"
+    type = "building"
+    groupKey = "perimeter_alarm"
+    groupName = "Perimeter Alarm"
+    roles = "description,name"
+    legacyIds = "30211,45410"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.perimeter_alarm.name"
+    text = "Perimeter Alarm"
+    legacyId = 30211
+    legacySymbol = "IDS_OBJECT_211"
+    legacyKey = "legacy.mc2res.30211"
+    source = "mechlopedia"
+    sourceKey = "object.211"
+    originalKey = "mechlopedia.building.perimeter_alarm.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "perimeter_alarm"
+    groupName = "Perimeter Alarm"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.perimeter_alarm.description"
+    text = "The Perimeter Alarm detects any enemy unit. Its shrill claxons may summon unseen defenders, and it should be disabled before it can sound. Fortunately, it is not armored and is quickly dispatched."
+    legacyId = 45410
+    legacySymbol = "IDS_BUILDING_ENCYCLO10"
+    legacyKey = "legacy.mc2res.45410"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo10"
+    originalKey = "mechlopedia.building.perimeter_alarm.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "perimeter_alarm"
+    groupName = "Perimeter Alarm"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Power Generator [power_generator]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.power_generator"
+    type = "building"
+    groupKey = "power_generator"
+    groupName = "Power Generator"
+    roles = "description,name"
+    legacyIds = "30235,45412"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.power_generator.name"
+    text = "Power Generator"
+    legacyId = 30235
+    legacySymbol = "IDS_OBJECT_235"
+    legacyKey = "legacy.mc2res.30235"
+    source = "mechlopedia"
+    sourceKey = "object.235"
+    originalKey = "mechlopedia.building.power_generator.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "power_generator"
+    groupName = "Power Generator"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.power_generator.description"
+    text = "A Power Generator links to gates, bridges, spotlights, and other noncritical base functions. As long as the generator is intact, all linked buildings are considered active and behave normally. As soon as a generator is destroyed, all linked buildings are considered inactive, but the effect is minimal, as turrets are linked to their own dedicated controls and generators."
+    legacyId = 45412
+    legacySymbol = "IDS_BUILDING_ENCYCLO12"
+    legacyKey = "legacy.mc2res.45412"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo12"
+    originalKey = "mechlopedia.building.power_generator.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "power_generator"
+    groupName = "Power Generator"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Prison [prison]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.prison"
+    type = "building"
+    groupKey = "prison"
+    groupName = "Prison"
+    roles = "description,name"
+    legacyIds = "30616,45431"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.prison.name"
+    text = "Prison"
+    legacyId = 30616
+    legacySymbol = "IDS_OBJECT_616"
+    legacyKey = "legacy.mc2res.30616"
+    source = "mechlopedia"
+    sourceKey = "object.616"
+    originalKey = "mechlopedia.building.prison.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "prison"
+    groupName = "Prison"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.prison.description"
+    text = "A Prison houses prisoners of war. Captured 'Mech pilots make up most of the inmate population, and capturing prisons can at times liberate 'Mech pilots who, out of gratitude, will make themselves available for your subsequent missions."
+    legacyId = 45431
+    legacySymbol = "IDS_BUILDING_ENCYCLO31"
+    legacyKey = "legacy.mc2res.45431"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo31"
+    originalKey = "mechlopedia.building.prison.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/pilots.fit"
+    originalCategory = "pilots"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "prison"
+    groupName = "Prison"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Repair Bay [repair_bay]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.repair_bay"
+    type = "building"
+    groupKey = "repair_bay"
+    groupName = "Repair Bay"
+    roles = "description,name"
+    legacyIds = "30213,45413"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.repair_bay.name"
+    text = "Repair Bay"
+    legacyId = 30213
+    legacySymbol = "IDS_OBJECT_213"
+    legacyKey = "legacy.mc2res.30213"
+    source = "mechlopedia"
+    sourceKey = "object.liao"
+    originalKey = "mechlopedia.building.repair_bay.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "repair_bay"
+    groupName = "Repair Bay"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.repair_bay.description"
+    text = "Capturing a Repair Bay can repair a 'Mech's armor and internal structure. It can also repair damaged legs but not replace arms blown off a 'Mech. The Repair Bay will also resupply a 'Mech's ammunition, but destroyed weapons and components cannot be replaced.\n\nThe bay's status bar indicates its remaining capacity to make repairs. As this bar decreases, the resources of the bay are exhausted and no further repairs are possible."
+    paragraphCount = 2
+    paragraph0 = "Capturing a Repair Bay can repair a 'Mech's armor and internal structure. It can also repair damaged legs but not replace arms blown off a 'Mech. The Repair Bay will also resupply a 'Mech's ammunition, but destroyed weapons and components cannot be replaced."
+    paragraph1 = "The bay's status bar indicates its remaining capacity to make repairs. As this bar decreases, the resources of the bay are exhausted and no further repairs are possible."
+    legacyId = 45413
+    legacySymbol = "IDS_BUILDING_ENCYCLO13"
+    legacyKey = "legacy.mc2res.45413"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo13"
+    originalKey = "mechlopedia.building.repair_bay.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "repair_bay"
+    groupName = "Repair Bay"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Resource Building [resource_building]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.resource_building"
+    type = "building"
+    groupKey = "resource_building"
+    groupName = "Resource Building"
+    roles = "description,name"
+    legacyIds = "30494,45414"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.resource_building.name"
+    text = "Resource Building"
+    legacyId = 30494
+    legacySymbol = "IDS_OBJECT_494"
+    legacyKey = "legacy.mc2res.30494"
+    source = "mechlopedia"
+    sourceKey = "object.494"
+    originalKey = "mechlopedia.building.resource_building.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "resource_building"
+    groupName = "Resource Building"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.resource_building.description"
+    text = "When a Resource Building is captured, resource points are earned, which can than be exchanged for tactical support. Resource points can only be used in the current mission and are not saved for use in any subsequent missions."
+    legacyId = 45414
+    legacySymbol = "IDS_BUILDING_ENCYCLO14"
+    legacyKey = "legacy.mc2res.45414"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo14"
+    originalKey = "mechlopedia.building.resource_building.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/mission.fit"
+    originalCategory = "mission"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "resource_building"
+    groupName = "Resource Building"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Sensor Control [sensor_control]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.sensor_control"
+    type = "building"
+    groupKey = "sensor_control"
+    groupName = "Sensor Control"
+    roles = "description,name"
+    legacyIds = "30216,45415"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.sensor_control.name"
+    text = "Sensor Control"
+    legacyId = 30216
+    legacySymbol = "IDS_OBJECT_216"
+    legacyKey = "legacy.mc2res.30216"
+    source = "mechlopedia"
+    sourceKey = "object.216"
+    originalKey = "mechlopedia.building.sensor_control.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "sensor_control"
+    groupName = "Sensor Control"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.sensor_control.description"
+    text = "A Sensor Control manages a network of Sensor Towers, which relay sensor data on the enemy to Headquarters or directly to 'Mechs in the field.\n\nCapture an enemy Sensor Control to align the towers with your team, depriving foes of their intelligence channels and boosting the effectiveness of your own reconnaissance."
+    paragraphCount = 2
+    paragraph0 = "A Sensor Control manages a network of Sensor Towers, which relay sensor data on the enemy to Headquarters or directly to 'Mechs in the field."
+    paragraph1 = "Capture an enemy Sensor Control to align the towers with your team, depriving foes of their intelligence channels and boosting the effectiveness of your own reconnaissance."
+    legacyId = 45415
+    legacySymbol = "IDS_BUILDING_ENCYCLO15"
+    legacyKey = "legacy.mc2res.45415"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo15"
+    originalKey = "mechlopedia.building.sensor_control.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "sensor_control"
+    groupName = "Sensor Control"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Sensor Tower [sensor_tower]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.sensor_tower"
+    type = "building"
+    groupKey = "sensor_tower"
+    groupName = "Sensor Tower"
+    roles = "description,name"
+    legacyIds = "30217,45416"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.sensor_tower.name"
+    text = "Sensor Tower"
+    legacyId = 30217
+    legacySymbol = "IDS_OBJECT_217"
+    legacyKey = "legacy.mc2res.30217"
+    source = "mechlopedia"
+    sourceKey = "object.217"
+    originalKey = "mechlopedia.building.sensor_tower.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "sensor_tower"
+    groupName = "Sensor Tower"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.sensor_tower.description"
+    text = "A Sensor Tower monitors the surrounding area with sensor equipment similar to that carried by 'Mechs. To commandeer this equipment, the local Sensor Control must be captured."
+    legacyId = 45416
+    legacySymbol = "IDS_BUILDING_ENCYCLO16"
+    legacyKey = "legacy.mc2res.45416"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo16"
+    originalKey = "mechlopedia.building.sensor_tower.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/mission.fit"
+    originalCategory = "mission"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "sensor_tower"
+    groupName = "Sensor Tower"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Short Pipe [short_pipe]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.short_pipe"
+    type = "building"
+    groupKey = "short_pipe"
+    groupName = "Short Pipe"
+    roles = "description,name"
+    legacyIds = "30484,45411"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.short_pipe.name"
+    text = "Short Pipe"
+    legacyId = 30484
+    legacySymbol = "IDS_OBJECT_484"
+    legacyKey = "legacy.mc2res.30484"
+    source = "mechlopedia"
+    sourceKey = "object.484.straight1"
+    originalKey = "mechlopedia.building.short_pipe.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "short_pipe"
+    groupName = "Short Pipe"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.short_pipe.description"
+    text = "Short Pipes crisscross several battle theaters. All sides stand to suffer from the loss of fuel transport, but the web of pipelines and other transport alternatives is labyrinthine, and all sides seem able to withstand the loss of some pipelines.\n\nThe intriguing aspect to the presence of Short Pipes is their unintended utility as spare ordnance on the field; lure opponents within range of the collateral damage of a pipe, and then blast the pipe for a crude incendiary device."
+    paragraphCount = 2
+    paragraph0 = "Short Pipes crisscross several battle theaters. All sides stand to suffer from the loss of fuel transport, but the web of pipelines and other transport alternatives is labyrinthine, and all sides seem able to withstand the loss of some pipelines."
+    paragraph1 = "The intriguing aspect to the presence of Short Pipes is their unintended utility as spare ordnance on the field; lure opponents within range of the collateral damage of a pipe, and then blast the pipe for a crude incendiary device."
+    legacyId = 45411
+    legacySymbol = "IDS_BUILDING_ENCYCLO11"
+    legacyKey = "legacy.mc2res.45411"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo11"
+    originalKey = "mechlopedia.building.short_pipe.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "short_pipe"
+    groupName = "Short Pipe"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Small Fuel Tank [small_fuel_tank]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.small_fuel_tank"
+    type = "building"
+    groupKey = "small_fuel_tank"
+    groupName = "Small Fuel Tank"
+    roles = "description,name"
+    legacyIds = "30340,45433"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.small_fuel_tank.name"
+    text = "Small Fuel Tank"
+    legacyId = 30340
+    legacySymbol = "IDS_OBJECT_340"
+    legacyKey = "legacy.mc2res.30340"
+    source = "mechlopedia"
+    sourceKey = "object.340"
+    originalKey = "mechlopedia.building.small_fuel_tank.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "small_fuel_tank"
+    groupName = "Small Fuel Tank"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.small_fuel_tank.description"
+    text = "Small Fuel Tanks dot several battle theaters. All sides in the battle for Carver V have taken great care to ensure deep redundancies in their fuel storage systems, so almost any fuel tank you encounter on the field is certain to be an attractive target with no consequences for you or your employers.\n\nThe intriguing aspect to the presence of Small Fuel Tanks is their unintended utility as spare ordnance on the field; lure opponents within range of the collateral damage of a tank, and then blast the tank for a crude incendiary device."
+    paragraphCount = 2
+    paragraph0 = "Small Fuel Tanks dot several battle theaters. All sides in the battle for Carver V have taken great care to ensure deep redundancies in their fuel storage systems, so almost any fuel tank you encounter on the field is certain to be an attractive target with no consequences for you or your employers."
+    paragraph1 = "The intriguing aspect to the presence of Small Fuel Tanks is their unintended utility as spare ordnance on the field; lure opponents within range of the collateral damage of a tank, and then blast the tank for a crude incendiary device."
+    legacyId = 45433
+    legacySymbol = "IDS_BUILDING_ENCYCLO33"
+    legacyKey = "legacy.mc2res.45433"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo33"
+    originalKey = "mechlopedia.building.small_fuel_tank.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "small_fuel_tank"
+    groupName = "Small Fuel Tank"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Spotlight Control [spotlight_control]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.spotlight_control"
+    type = "building"
+    groupKey = "spotlight_control"
+    groupName = "Spotlight Control"
+    roles = "description,name"
+    legacyIds = "30220,45407"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.spotlight_control.name"
+    text = "Spotlight Control"
+    legacyId = 30220
+    legacySymbol = "IDS_OBJECT_220"
+    legacyKey = "legacy.mc2res.30220"
+    source = "mechlopedia"
+    sourceKey = "object.220"
+    originalKey = "mechlopedia.building.spotlight_control.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "spotlight_control"
+    groupName = "Spotlight Control"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.spotlight_control.description"
+    text = "A night battle often plays out under the glare of a spotlight system operated by a Spotlight Control. This control serves only a spotlight system and does not augment sensor function even at night."
+    legacyId = 45407
+    legacySymbol = "IDS_BUILDING_ENCYCLO7"
+    legacyKey = "legacy.mc2res.45407"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo7"
+    originalKey = "mechlopedia.building.spotlight_control.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/ui_common.fit"
+    originalCategory = "ui_common"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "spotlight_control"
+    groupName = "Spotlight Control"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Spotlight Control [spotlight_control_alt]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.spotlight_control_alt"
+    type = "building"
+    groupKey = "spotlight_control_alt"
+    groupName = "Spotlight Control"
+    roles = "description,name"
+    legacyIds = "30220,45417"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.spotlight_control_alt.name"
+    text = "Spotlight Control"
+    legacyId = 30220
+    legacySymbol = "IDS_OBJECT_220"
+    legacyKey = "legacy.mc2res.30220"
+    source = "mechlopedia"
+    sourceKey = "object.220"
+    originalKey = "mechlopedia.building.spotlight_control_alt.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "spotlight_control_alt"
+    groupName = "Spotlight Control"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.spotlight_control_alt.description"
+    text = "A night battle often plays out under the glare of a spotlight system operated by a Spotlight Control. This control serves only a spotlight system."
+    legacyId = 45417
+    legacySymbol = "IDS_BUILDING_ENCYCLO17"
+    legacyKey = "legacy.mc2res.45417"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo17"
+    originalKey = "mechlopedia.building.spotlight_control_alt.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/ui_common.fit"
+    originalCategory = "ui_common"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "spotlight_control_alt"
+    groupName = "Spotlight Control"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: SRM Turret [srm_turret]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.srm_turret"
+    type = "building"
+    groupKey = "srm_turret"
+    groupName = "SRM Turret"
+    roles = "description,name"
+    legacyIds = "30330,45424"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.srm_turret.name"
+    text = "SRM Turret"
+    legacyId = 30330
+    legacySymbol = "IDS_OBJECT_330"
+    legacyKey = "legacy.mc2res.30330"
+    source = "mechlopedia"
+    sourceKey = "object.330"
+    originalKey = "mechlopedia.building.srm_turret.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "srm_turret"
+    groupName = "SRM Turret"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.srm_turret.description"
+    text = "Although the weakest of all turret types, enough Short-Range Missile (SRM) Turrets clustered around a key position can shred a 'Mech team all too quickly, which makes them an inviting target for capture or destruction.\n\nA group of SRM Turrets depends on a Turret Generator and a Turret Control to function. Destroy the generator to cripple the turrets, or capture the control to align the turrets with your own team."
+    paragraphCount = 2
+    paragraph0 = "Although the weakest of all turret types, enough Short-Range Missile (SRM) Turrets clustered around a key position can shred a 'Mech team all too quickly, which makes them an inviting target for capture or destruction."
+    paragraph1 = "A group of SRM Turrets depends on a Turret Generator and a Turret Control to function. Destroy the generator to cripple the turrets, or capture the control to align the turrets with your own team."
+    legacyId = 45424
+    legacySymbol = "IDS_BUILDING_ENCYCLO24"
+    legacyKey = "legacy.mc2res.45424"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo24"
+    originalKey = "mechlopedia.building.srm_turret.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "srm_turret"
+    groupName = "SRM Turret"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Turret Control [turret_control]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.turret_control"
+    type = "building"
+    groupKey = "turret_control"
+    groupName = "Turret Control"
+    roles = "description,name"
+    legacyIds = "30221,45418"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.turret_control.name"
+    text = "Turret Control"
+    legacyId = 30221
+    legacySymbol = "IDS_OBJECT_221"
+    legacyKey = "legacy.mc2res.30221"
+    source = "mechlopedia"
+    sourceKey = "object.221"
+    originalKey = "mechlopedia.building.turret_control.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "turret_control"
+    groupName = "Turret Control"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.turret_control.description"
+    text = "A Turret Control links to one or several turrets. Capture of a Turret Control changes the alignment of all its linked turrets to your team. Destruction of a Turret Control deactivates all of its linked turrets."
+    legacyId = 45418
+    legacySymbol = "IDS_BUILDING_ENCYCLO18"
+    legacyKey = "legacy.mc2res.45418"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo18"
+    originalKey = "mechlopedia.building.turret_control.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/mission.fit"
+    originalCategory = "mission"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "turret_control"
+    groupName = "Turret Control"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Turret Generator [turret_generator]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.turret_generator"
+    type = "building"
+    groupKey = "turret_generator"
+    groupName = "Turret Generator"
+    roles = "description,name"
+    legacyIds = "30222,45419"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.turret_generator.name"
+    text = "Turret Generator"
+    legacyId = 30222
+    legacySymbol = "IDS_OBJECT_222"
+    legacyKey = "legacy.mc2res.30222"
+    source = "mechlopedia"
+    sourceKey = "object.222"
+    originalKey = "mechlopedia.building.turret_generator.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "turret_generator"
+    groupName = "Turret Generator"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.turret_generator.description"
+    text = "A Turret Generator provides power for all linked defensive turrets. While the generator is intact, all linked turrets are active and fire normally. If a generator is destroyed, all linked turrets become inactive."
+    legacyId = 45419
+    legacySymbol = "IDS_BUILDING_ENCYCLO19"
+    legacyKey = "legacy.mc2res.45419"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo19"
+    originalKey = "mechlopedia.building.turret_generator.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/mission.fit"
+    originalCategory = "mission"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "turret_generator"
+    groupName = "Turret Generator"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Weapons Facility [weapons_facility]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.building.weapons_facility"
+    type = "building"
+    groupKey = "weapons_facility"
+    groupName = "Weapons Facility"
+    roles = "description,name"
+    legacyIds = "30559,45423"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.weapons_facility.name"
+    text = "Weapons Facility"
+    legacyId = 30559
+    legacySymbol = "IDS_OBJECT_559"
+    legacyKey = "legacy.mc2res.30559"
+    source = "mechlopedia"
+    sourceKey = "object.559"
+    originalKey = "mechlopedia.building.weapons_facility.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/components.fit"
+    originalCategory = "components"
+    mechlopediaType = "building"
+    role = "name"
+    groupKey = "weapons_facility"
+    groupName = "Weapons Facility"
+    codeReference = "code/mechlopedia.cpp:1093-1175 + data/art/gui/Buildings.csv"
+    notes = "NameID observed in current Buildings.csv or known gate/turret legacy name ID."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.building.weapons_facility.description"
+    text = "When a Weapons Facility is captured, the technology being researched there is obtained, and all weapons and components associated with that technology can be manufactured. Technology acquisition is a permanent status and carries over into the logistics phase of any future mission."
+    legacyId = 45423
+    legacySymbol = "IDS_BUILDING_ENCYCLO23"
+    legacyKey = "legacy.mc2res.45423"
+    source = "mechlopedia"
+    sourceKey = "object.building.encyclo23"
+    originalKey = "mechlopedia.building.weapons_facility.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/buildings.fit"
+    legacySourceFile = "data/defs/text/en_us/objects.fit"
+    originalCategory = "objects"
+    mechlopediaType = "building"
+    role = "description"
+    groupKey = "weapons_facility"
+    groupName = "Weapons Facility"
+    codeReference = "code/mechlopedia.cpp:1161-1175"
+    notes = "Description ID from IDS_BUILDING_ENCYCLO* and runtime Building::encycloID path."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+

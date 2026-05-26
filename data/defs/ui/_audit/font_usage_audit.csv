@@ -1,0 +1,967 @@
+file,blockType,key,legacySection,font,fontStyle,fontSize,bold,italic,legacyFontId,legacyFontComment,knownFontCatalogEntry,needsReview
+data/defs/ui/packages/legacy_imgui/editor/editorgui.fit,GuiText,editor.editor_shell.text.text,Element0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiText,game.buttonlayout1024.text.help,HelpText,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.default_attack_defunct,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.short_range_attack_defunct,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.medium_attack_defunct,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.l_attack_defunct,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.jump,Button4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.run,Button5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.guard,Button6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.fire_from_current_pos,Button7,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.stop,Button8,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.info,Button9,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.objectives,Button10,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.pause_button_com_palette,Button11,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.tac_map_tab,Button12,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.info_tab,Button13,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.support_tab,Button14,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.minelayer,Button15,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.repair,Button16,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.salvage,Button17,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.artillery_piece_supression_fire,Button18,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.hold_position,Button19,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.filler_button,Button20,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.button,ScrollButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.scroll_up,InfoButton0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.scroll_down,InfoButton1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.obj,PauseButton0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.inmissionsave,PauseButton1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.inmissionload,PauseButton2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.options,PauseButton3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.restart_mission,PauseButton4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.exit,PauseButton5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiButton,game.buttonlayout1024.button.return_to_game,PauseButton6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiText,game.buttonlayout1024.text.pause_menu_text_header_goes_here,PauseText,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiText,game.buttonlayout1024.text.text_gets_centered_in_this_box_arialnarrow8_all_caps,VideoTextBox,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiText,game.buttonlayout1024.text.text_gets_centered_in_this_box_agencyfb17_all_caps,ResultsTextBox,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1024.fit,GuiText,game.buttonlayout1024.text.text,ChatTextRect,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiText,game.buttonlayout1280.text.help,HelpText,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.default_attack_defunct,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.short_range_attack_defunct,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.medium_attack_defunct,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.l_attack_defunct,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.jump,Button4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.run,Button5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.guard,Button6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.fire_from_current_pos,Button7,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.stop,Button8,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.info,Button9,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.objectives,Button10,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.pause_button_com_palette,Button11,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.tac_map_tab,Button12,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.info_tab,Button13,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.support_tab,Button14,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.minelayer,Button15,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.repair,Button16,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.salvage,Button17,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.artillery_piece_supression_fire,Button18,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.hold_position,Button19,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.filler_button,Button20,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.button,ScrollButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.scroll_up,InfoButton0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.scroll_down,InfoButton1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.obj,PauseButton0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.inmissionsave,PauseButton1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.inmissionload,PauseButton2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.options,PauseButton3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.restart_mission,PauseButton4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.exit,PauseButton5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiButton,game.buttonlayout1280.button.return_to_game,PauseButton6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiText,game.buttonlayout1280.text.pause_menu_text_header_goes_here,PauseText,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiText,game.buttonlayout1280.text.text_gets_centered_in_this_box_arialnarrow8_all_caps,VideoTextBox,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiText,game.buttonlayout1280.text.text_gets_centered_in_this_box_agencyfb17_all_caps,ResultsTextBox,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1280.fit,GuiText,game.buttonlayout1280.text.text,ChatTextRect,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiText,game.buttonlayout1600.text.help,HelpText,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.default_attack_defunct,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.short_range_attack_defunct,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.medium_attack_defunct,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.l_attack_defunct,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.jump,Button4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.run,Button5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.guard,Button6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.fire_from_current_pos,Button7,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.stop,Button8,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.info,Button9,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.objectives,Button10,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.pause_button_com_palette,Button11,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.tac_map_tab,Button12,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.info_tab,Button13,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.support_tab,Button14,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.minelayer,Button15,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.repair,Button16,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.salvage,Button17,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.artillery_piece_supression_fire,Button18,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.hold_position,Button19,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.button,ScrollButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.scroll_up,InfoButton0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.scroll_down,InfoButton1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.obj,PauseButton0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.inmissionsave,PauseButton1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.inmissionload,PauseButton2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.options,PauseButton3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.restart_mission,PauseButton4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.exit,PauseButton5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiButton,game.buttonlayout1600.button.return_to_game,PauseButton6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiText,game.buttonlayout1600.text.pause_menu_text_header_goes_here,PauseText,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiText,game.buttonlayout1600.text.text_gets_centered_in_this_box_arialnarrow8_all_caps,VideoTextBox,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiText,game.buttonlayout1600.text.text_gets_centered_in_this_box_agencyfb17_all_caps,ResultsTextBox,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout1600.fit,GuiText,game.buttonlayout1600.text.text,ChatTextRect,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiText,game.buttonlayout640.text.help,HelpText,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.default_attack_defunct,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.short_range_attack_defunct,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.medium_attack_defunct,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.l_attack_defunct,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.jump,Button4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.run,Button5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.guard,Button6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.fire_from_current_pos,Button7,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.stop,Button8,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.info,Button9,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.objectives,Button10,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.pause_menu,Button11,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.tac_map,Button12,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.info_tab,Button13,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.vehicle_tab,Button14,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.minelayer,Button15,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.repair,Button16,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.salvage,Button17,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.artillery_piece_suppression_fire,Button18,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.hold_position,Button19,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.button,ScrollButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.scroll_up,InfoButton0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.scroll_down,InfoButton1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.obj,PauseButton0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.inmissionsave,PauseButton1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.inmissionload,PauseButton2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.options,PauseButton3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.restart_mission,PauseButton4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.exit,PauseButton5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiButton,game.buttonlayout640.button.return_to_game,PauseButton6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiText,game.buttonlayout640.text.pause_menu_text_header_goes_here,PauseText,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiText,game.buttonlayout640.text.text_gets_centered_in_this_box_arialnarrow8_all_caps,VideoTextBox,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiText,game.buttonlayout640.text.text_gets_centered_in_this_box_agencyfb17_all_caps,ResultsTextBox,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout640.fit,GuiText,game.buttonlayout640.text.text,ChatTextRect,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiText,game.buttonlayout800.text.help,HelpText,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.default_attack,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.short_range_attack,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.medium_attack,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.l_attack,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.jump,Button4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.run,Button5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.guard,Button6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.fire_from_current_pos,Button7,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.stop,Button8,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.info,Button9,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.objectives,Button10,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.pause_window,Button11,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.tac_map,Button12,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.info_tab,Button13,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.vehicle_tab,Button14,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.minelayer,Button15,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.repair,Button16,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.salvage,Button17,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.artillery_piece_suppression_fire,Button18,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.hold_position,Button19,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.button,ScrollButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.scroll_up,InfoButton0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.scroll_down,InfoButton1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.obj,PauseButton0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.inmissionsave,PauseButton1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.inmissionload,PauseButton2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.options,PauseButton3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.restart_mission,PauseButton4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.exit,PauseButton5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiButton,game.buttonlayout800.button.return_to_game,PauseButton6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiText,game.buttonlayout800.text.pause_menu_text_header_goes_here,PauseText,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiText,game.buttonlayout800.text.text_gets_centered_in_this_box_arialnarrow8_all_caps,VideoTextBox,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiText,game.buttonlayout800.text.text_gets_centered_in_this_box_agencyfb17_all_caps,ResultsTextBox,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/buttonlayout800.fit,GuiText,game.buttonlayout800.text.text,ChatTextRect,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_choosecampaign.fit,GuiButton,game.choose_campaign.button.cancel_button,Button0,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_choosecampaign.fit,GuiButton,game.choose_campaign.button.accept_button,Button1,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_choosecampaign.fit,GuiText,game.choose_campaign.text.main_header_text_choose_campaign,Text0,Agency Regular,Regular,14,false,false,27655,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_choosecampaign.fit,GuiText,game.choose_campaign.text.text_above_info_text_box_reads_choose_a_campaign,Text1,Agency Regular,Regular,11,false,false,27655,this needs to be agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_choosecampaign.fit,GuiEditBox,game.choose_campaign.editbox.editable_text_for_campaign_name_goes_here,Edit0,Agency Regular,Regular,14,false,false,27656,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiButton,game.mission_selection.button.next_button_in_lower_right_corner,CMButton0,Agency Regular,Regular,17,false,false,27418,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiButton,game.mission_selection.button.main_menubutton_in_upper_right_corner,CMButton1,Agency Regular,Regular,14,false,false,27417,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiButton,game.mission_selection.button.play_button_for_video_window,CMButton2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiButton,game.mission_selection.button.pause_button_for_video_window,CMButton3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiButton,game.mission_selection.button.stop_button_for_video_window,CMButton4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiText,game.mission_selection.text.big_header,CMTextEntry0,Agency Regular,Regular,14,false,false,27401,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiText,game.mission_selection.text.video_area_header,CMTextEntry1,Agency Regular,Regular,14,false,false,27403,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiText,game.mission_selection.text.map_window_header,CMTextEntry2,Agency Regular,Regular,14,false,false,27405,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiText,game.mission_selection.text.help_text_area,CMTextEntry3,Liberation Sans,Regular,8,false,false,27322,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiText,game.mission_selection.text.cbills_readout,CMTextEntry4,Agency Regular,Regular,14,false,false,27408,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiText,game.mission_selection.runtime_text.mission_description_divider_top,,Agency Regular,Regular,11,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiText,game.mission_selection.runtime_text.current_mission_name,,Agency Regular,Regular,11,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiText,game.mission_selection.runtime_text.mission_description_divider_bottom,,Agency Regular,Regular,11,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_layout.fit,GuiText,game.mission_selection.runtime_text.current_mission_blurb,,Agency Regular,Regular,11,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_1.fit,GuiButton,game.mcl_cm_op1_1.button.mission_1,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_1.fit,GuiText,game.mcl_cm_op1_1.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_2.fit,GuiButton,game.mcl_cm_op1_2.button.mission_2,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_2.fit,GuiText,game.mcl_cm_op1_2.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_3.fit,GuiButton,game.mcl_cm_op1_3.button.mission_3,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_3.fit,GuiText,game.mcl_cm_op1_3.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_4.fit,GuiButton,game.mcl_cm_op1_4.button.mission_4,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_4.fit,GuiText,game.mcl_cm_op1_4.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_5.fit,GuiButton,game.mcl_cm_op1_5.button.mission_5,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_5.fit,GuiText,game.mcl_cm_op1_5.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_6.fit,GuiButton,game.mcl_cm_op1_6.button.mission_6,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_6.fit,GuiButton,game.mcl_cm_op1_6.button.mission_7,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_6.fit,GuiButton,game.mcl_cm_op1_6.button.mission_8,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_6.fit,GuiButton,game.mcl_cm_op1_6.button.mission_9,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op1_6.fit,GuiText,game.mcl_cm_op1_6.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_1.fit,GuiButton,game.mcl_cm_op2_1.button.mission_10,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_1.fit,GuiText,game.mcl_cm_op2_1.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_2.fit,GuiButton,game.mcl_cm_op2_2.button.mission_11,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_2.fit,GuiButton,game.mcl_cm_op2_2.button.mission_12,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_2.fit,GuiButton,game.mcl_cm_op2_2.button.mission_13,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_2.fit,GuiText,game.mcl_cm_op2_2.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_3.fit,GuiButton,game.mcl_cm_op2_3.button.mission_14,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_3.fit,GuiButton,game.mcl_cm_op2_3.button.mission_15,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_3.fit,GuiButton,game.mcl_cm_op2_3.button.mission_16,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_3.fit,GuiButton,game.mcl_cm_op2_3.button.mission_17,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op2_3.fit,GuiText,game.mcl_cm_op2_3.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_1.fit,GuiButton,game.mcl_cm_op3_1.button.mission_18,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_1.fit,GuiText,game.mcl_cm_op3_1.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_2.fit,GuiButton,game.mcl_cm_op3_2.button.mission_19,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_2.fit,GuiButton,game.mcl_cm_op3_2.button.mission_20,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_2.fit,GuiButton,game.mcl_cm_op3_2.button.mission_21,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_2.fit,GuiButton,game.mcl_cm_op3_2.button.mission_22,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_2.fit,GuiText,game.mcl_cm_op3_2.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_3.fit,GuiButton,game.mcl_cm_op3_3.button.mission_23,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_3.fit,GuiText,game.mcl_cm_op3_3.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_4.fit,GuiButton,game.mcl_cm_op3_4.button.mission_24,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op3_4.fit,GuiText,game.mcl_cm_op3_4.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample.fit,GuiButton,game.mcl_cm_op_sample.button.mission1,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample.fit,GuiButton,game.mcl_cm_op_sample.button.mission2,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample.fit,GuiButton,game.mcl_cm_op_sample.button.mission3,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample.fit,GuiButton,game.mcl_cm_op_sample.button.mission4,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample.fit,GuiButton,game.mcl_cm_op_sample.button.mission5,Button4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample.fit,GuiText,game.mcl_cm_op_sample.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_1_mission.fit,GuiButton,game.mcl_cm_op_sample_1_mission.button.mission_2,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_1_mission.fit,GuiText,game.mcl_cm_op_sample_1_mission.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_2_missions.fit,GuiButton,game.mcl_cm_op_sample_2_missions.button.button,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_2_missions.fit,GuiButton,game.mcl_cm_op_sample_2_missions.button.button_01,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_2_missions.fit,GuiText,game.mcl_cm_op_sample_2_missions.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_3_missions.fit,GuiButton,game.mcl_cm_op_sample_3_missions.button.mission_19,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_3_missions.fit,GuiButton,game.mcl_cm_op_sample_3_missions.button.mission_20,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_3_missions.fit,GuiButton,game.mcl_cm_op_sample_3_missions.button.mission_21,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_3_missions.fit,GuiText,game.mcl_cm_op_sample_3_missions.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_4_missions.fit,GuiButton,game.mcl_cm_op_sample_4_missions.button.mission_14,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_4_missions.fit,GuiButton,game.mcl_cm_op_sample_4_missions.button.mission_15,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_4_missions.fit,GuiButton,game.mcl_cm_op_sample_4_missions.button.mission_16,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_4_missions.fit,GuiButton,game.mcl_cm_op_sample_4_missions.button.mission_17,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_op_sample_4_missions.fit,GuiText,game.mcl_cm_op_sample_4_missions.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_1.fit,GuiButton,game.mcl_cm_opgeneric_1.button.mission_2,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_1.fit,GuiText,game.mcl_cm_opgeneric_1.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_2.fit,GuiButton,game.mcl_cm_opgeneric_2.button.button,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_2.fit,GuiButton,game.mcl_cm_opgeneric_2.button.button_01,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_2.fit,GuiText,game.mcl_cm_opgeneric_2.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_3.fit,GuiButton,game.mcl_cm_opgeneric_3.button.mission_19,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_3.fit,GuiButton,game.mcl_cm_opgeneric_3.button.mission_20,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_3.fit,GuiButton,game.mcl_cm_opgeneric_3.button.mission_21,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_3.fit,GuiText,game.mcl_cm_opgeneric_3.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_4.fit,GuiButton,game.mcl_cm_opgeneric_4.button.mission_14,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_4.fit,GuiButton,game.mcl_cm_opgeneric_4.button.mission_15,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_4.fit,GuiButton,game.mcl_cm_opgeneric_4.button.mission_16,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_4.fit,GuiButton,game.mcl_cm_opgeneric_4.button.mission_17,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opgeneric_4.fit,GuiText,game.mcl_cm_opgeneric_4.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opplayer.fit,GuiButton,game.mcl_cm_opplayer.button.mission1,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opplayer.fit,GuiButton,game.mcl_cm_opplayer.button.mission2,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opplayer.fit,GuiButton,game.mcl_cm_opplayer.button.mission3,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opplayer.fit,GuiButton,game.mcl_cm_opplayer.button.mission4,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opplayer.fit,GuiButton,game.mcl_cm_opplayer.button.mission5,Button4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_opplayer.fit,GuiText,game.mcl_cm_opplayer.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_optutorials.fit,GuiButton,game.mcl_cm_optutorials.button.tutorial_1,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_optutorials.fit,GuiButton,game.mcl_cm_optutorials.button.tutorial_2,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_optutorials.fit,GuiButton,game.mcl_cm_optutorials.button.tutorial_3,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_optutorials.fit,GuiButton,game.mcl_cm_optutorials.button.tutorial_4,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_optutorials.fit,GuiButton,game.mcl_cm_optutorials.button.tutorial_5,Button4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_optutorials.fit,GuiText,game.mcl_cm_optutorials.text.text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_standinop.fit,GuiButton,game.mcl_cm_standinop.button.first_standin_button_for_mission_selection,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_standinop.fit,GuiButton,game.mcl_cm_standinop.button.second_standin_button_for_mission_selection,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_standinop.fit,GuiButton,game.mcl_cm_standinop.button.third_standin_button_for_mission_selection,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_cm_standinop.fit,GuiText,game.mcl_cm_standinop.text.mission_name_for_rollover_goes_here_only_draw_during_highlight,Text0,Agency Regular,Regular,11,false,false,27801,agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog.fit,GuiButton,game.mcl_dialog.button.cancel_button,Button0,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog.fit,GuiButton,game.mcl_dialog.button.okay_button,Button1,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog.fit,GuiText,game.mcl_dialog.text.text,Text0,Agency Regular,Regular,14,false,false,27656,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog_edit.fit,GuiButton,game.mcl_dialog_edit.button.cancel_button,Button0,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog_edit.fit,GuiButton,game.mcl_dialog_edit.button.okay_button,Button1,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog_edit.fit,GuiText,game.mcl_dialog_edit.text.explanation_text,Text0,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog_edit.fit,GuiText,game.mcl_dialog_edit.text.text,Text1,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog_onebutton.fit,GuiButton,game.mcl_dialog_onebutton.button.cancel_okay_whatever_button,Button0,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_dialog_onebutton.fit,GuiText,game.mcl_dialog_onebutton.text.text,Text0,Agency Regular,Regular,14,false,false,27656,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_dialoglegal.fit,GuiButton,game.mcl_dialoglegal.button.accept_button,Button0,Agency Regular,Regular,17,false,false,27207,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_dialoglegal.fit,GuiText,game.mcl_dialoglegal.text.legal_info,Text0,Agency Regular,Regular,11,false,false,27656,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_dialoglegal.fit,GuiText,game.mcl_dialoglegal.text.main_header,Text0,Agency Regular,Regular,17,false,false,26251,use agency fb 17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,GuiButton,game.mcl_en.button.mech_category_button,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,GuiButton,game.mcl_en.button.buildings_category_button,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,GuiButton,game.mcl_en.button.vehicles,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,GuiButton,game.mcl_en.button.weapons,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,GuiButton,game.mcl_en.button.personalities,Button4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,GuiButton,game.mcl_en.button.history,Button5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,GuiButton,game.mcl_en.button.close_button,Button6,Agency Regular,Regular,17,false,false,27709,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,GuiText,game.mcl_en.text.encyclopedia,Text0,Agency Regular,Regular,17,false,false,27701,use agency fb 17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en.fit,GuiText,game.mcl_en.text.help_text,Text1,Agency Regular,Regular,8,false,false,27322,arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_bldg.fit,GuiText,game.mcl_en_bldg.text.building_name_header,Text0,Agency Regular,Regular,14,false,false,27712,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_bldg.fit,GuiText,game.mcl_en_bldg.text.structure_readout,Text1,Agency Regular,Regular,11,false,false,27733,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_bldg.fit,GuiText,game.mcl_en_bldg.text.weapons_loadout_header,Text2,Agency Regular,Regular,11,false,false,27733,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_history.fit,GuiText,game.mcl_en_person.text.personality_or_history_name,Text0,Agency Regular,Regular,14,false,false,27735,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_mechs.fit,GuiText,game.mcl_en_mechs.text.mech_or_vehicle_name_header,Text0,Agency Regular,Regular,14,false,false,27712,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_mechs.fit,GuiText,game.mcl_en_mechs.text.mech_stats_header,Text1,Agency Regular,Regular,14,false,false,27714,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_mechs.fit,GuiText,game.mcl_en_mechs.text.weapons_loadout_header,Text2,Agency Regular,Regular,14,false,false,27716,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_person.fit,GuiText,game.mcl_en_person.text.personality_or_history_name,Text0,Agency Regular,Regular,14,false,false,27735,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_sub.fit,GuiText,game.mcl_en_sub.text.sub_unit_name,Text0,Agency Regular,Regular,11,false,false,40012,AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_vehicles.fit,GuiText,game.mcl_en_mechs.text.mech_or_vehicle_name_header,Text0,Agency Regular,Regular,14,false,false,27712,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_vehicles.fit,GuiText,game.mcl_en_mechs.text.mech_stats_header,Text1,Agency Regular,Regular,14,false,false,27714,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_vehicles.fit,GuiText,game.mcl_en_mechs.text.weapons_loadout_header,Text2,Agency Regular,Regular,14,false,false,27716,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_wep.fit,GuiText,game.mcl_en_wep.text.weapon_name,Text0,Agency Regular,Regular,14,false,false,27724,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_en_wep.fit,GuiText,game.mcl_en_wep.text.weapon_stats_header,Text1,Agency Regular,Regular,14,false,false,27724,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_gn_availablemechentry.fit,GuiText,game.mcl_gn_availablemechentry.text.mech_name,Text0,Agency Regular,Regular,11,false,false,27850,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_gn_availablemechentry.fit,GuiText,game.mcl_gn_availablemechentry.text.weight_of_mech_text,Text1,Agency Regular,Regular,8,false,false,27851,ArialNarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_gn_availablemechentry.fit,GuiText,game.mcl_gn_availablemechentry.text.number_of_mechs_available,Text2,Agency Regular,Regular,8,false,false,27852,ArialNarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_gn_availablemechentry.fit,GuiText,game.mcl_gn_availablemechentry.text.variant_name,Text3,Agency Regular,Regular,8,false,false,27853,ArialNarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_gn_availablemechentry.fit,GuiText,game.mcl_gn_availablemechentry.text.cost_of_mech,Text4,Agency Regular,Regular,8,false,false,27854,ArialNarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_gn_deploymentteams.fit,GuiText,game.mcl_gn_deploymentteams.text.this_reads_empty_if_no_mech_is_assigned,MechNameText,Agency Regular,Regular,8,false,false,27855,Use ArialNarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_gn_deploymentteams.fit,GuiText,game.mcl_gn_deploymentteams.text.this_reads_no_pilot_if_no_pilot_is_assigned,PilotNameText,Agency Regular,Regular,8,false,false,27856,Use ArialNarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiButton,game.mcl_mb_layout.button.back_button,MechBayButton0,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiButton,game.mcl_mb_layout.button.next_button,MechBayButton1,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiButton,game.mcl_mb_layout.button.add_mech_button,MechBayButton2,Agency Regular,Regular,14,false,false,27110,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiButton,game.mcl_mb_layout.button.remove_mech_button,MechBayButton3,Agency Regular,Regular,14,false,false,27110,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiButton,game.mcl_mb_layout.button.main_menu_button,MechBayButton4,Agency Regular,Regular,14,false,false,27110,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiButton,game.mcl_mb_layout.button.change_weapons_button,MechBayButton5,Agency Regular,Regular,14,false,false,27127,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiButton,game.mcl_mb_layout.button.purchase_mechs_button,MechBayButton6,Agency Regular,Regular,14,false,false,27127,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.mech_bay_header,MechBayTextEntry0,Agency Regular,Regular,14,false,false,27116,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.cbills_text,MechBayTextEntry1,Agency Regular,Regular,14,false,false,27121,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.deployment_teams_header,MechBayTextEntry2,Agency Regular,Regular,14,false,false,27127,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.mech_storage_header,MechBayTextEntry3,Agency Regular,Regular,14,false,false,27127,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.team_weight_limit_header,MechBayTextEntry4,Agency Regular,Regular,14,false,false,27123,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.current_team_weight_header,MechBayTextEntry5,Agency Regular,Regular,14,false,false,27125,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.team_weight_readout,MechBayTextEntry6,Agency Regular,Regular,14,false,false,27126,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.mech_info_tonnage,MechBayTextEntry7,Agency Regular,Regular,14,false,false,27127,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.mech_info_armor,MechBayTextEntry8,Agency Regular,Regular,14,false,false,27127,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.mech_info_speed,MechBayTextEntry9,Agency Regular,Regular,14,false,false,27127,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.mech_info_jump_dist,MechBayTextEntry10,Agency Regular,Regular,14,false,false,27127,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.mech_name_header,MechBayTextEntry11,Agency Regular,Regular,14,false,false,27128,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.variant_name_header,MechBayTextEntry12,Agency Regular,Regular,14,false,false,27129,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.help_text,MechBayTextEntry13,Liberation Sans,Regular,8,false,false,27322,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiText,game.mcl_mb_layout.text.mech_info_range_text,MechBayTextEntry14,Agency Regular,Regular,14,false,false,27127,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mb_layout.fit,GuiList,game.mcl_mb_layout.list.list,DropWeightMeter,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiButton,game.mcl_mc.button.cancel_button,Button0,Agency Regular,Regular,17,false,false,27301,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiButton,game.mcl_mc.button.accept_button,Button1,Agency Regular,Regular,17,false,false,27301,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiButton,game.mcl_mc.button.add_component_button,Button2,Agency Regular,Regular,14,false,false,27306,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiButton,game.mcl_mc.button.remove_component_button,Button3,Agency Regular,Regular,14,false,false,27306,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiButton,game.mcl_mc.button.main_menu_button,Button4,Agency Regular,Regular,17,false,false,27336,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiButton,game.mcl_mc.button.ballistic_tab,Button5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiButton,game.mcl_mc.button.energy_tab,Button6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiButton,game.mcl_mc.button.missile_tab,Button7,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiButton,game.mcl_mc.button.heat_and_jump_jet_tab,Button8,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.mech_lab_header,Text0,Agency Regular,Regular,17,false,false,27316,use agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.cbills_text,Text1,Agency Regular,Regular,17,false,false,27317,use agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.available_components_header,Text2,Agency Regular,Regular,14,false,false,27319,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.mech_name,Text3,Agency Regular,Regular,17,false,false,27320,use agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.cost_of_changes_header,Text4,Agency Regular,Regular,8,false,false,27322,use arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.cost_of_changes_readout,Text5,Agency Regular,Regular,14,false,false,27323,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.weapon_info_header,Text6,Agency Regular,Regular,11,false,false,27325,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.weapon_info_range_readout,Text7,Agency Regular,Regular,11,false,false,27326,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.weapon_info_damage_readout,Text8,Agency Regular,Regular,14,false,false,27327,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.weapon_info_recycle_readout,Text9,Agency Regular,Regular,11,false,false,27327,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.weapon_info_heat_readout,Text10,Agency Regular,Regular,11,false,false,27327,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.armor_limit_readout,Text11,Agency Regular,Regular,14,false,false,27319,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.heat_limit_readout,Text12,Agency Regular,Regular,14,false,false,27319,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.weapon_info_ammo_text_readout,Text13,Agency Regular,Regular,11,false,false,27331,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.help_text,Text14,Agency Regular,Regular,8,false,false,27322,arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.jump_jet_heat_readout,Text15,Agency Regular,Regular,14,false,false,27327,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.heat_sink_heat_readout,Text16,Agency Regular,Regular,11,false,false,27326,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.text,ComponentNameText,Agency Regular,Regular,11,false,false,27325,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.text_01,ComponentCostText,Agency Regular,Regular,11,false,false,27325,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.text_02,ComponentHeatText,Agency Regular,Regular,11,false,false,27325,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc.fit,GuiText,game.mcl_mc.text.text_03,ComponentDisabledText,Agency Regular,Regular,17,false,false,27316,use agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc_combobox0.fit,GuiButton,game.mcl_mc_combobox0.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mc_combobox0.fit,GuiText,game.mcl_mc_combobox0.text.variant_name_for_list_box,Text0,Agency Regular,Regular,11,false,false,27333,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,GuiButton,game.mcl_mdollar.button.main_menu_button,Button0,Agency Regular,Regular,14,false,false,27223,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,GuiButton,game.mcl_mdollar.button.buy_button,Button1,Agency Regular,Regular,14,false,false,27202,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,GuiButton,game.mcl_mdollar.button.sell_button,Button2,Agency Regular,Regular,14,false,false,27202,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,GuiButton,game.mcl_mdollar.button.cancel_button,Button3,Agency Regular,Regular,17,false,false,27207,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,GuiButton,game.mcl_mdollar.button.accept_button,Button4,Agency Regular,Regular,17,false,false,27207,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,GuiText,game.mcl_mdollar.text.main_header,Text0,Agency Regular,Regular,17,false,false,27212,agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,GuiText,game.mcl_mdollar.text.cbills,Text1,Agency Regular,Regular,17,false,false,27214,agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,GuiText,game.mcl_mdollar.text.mech_storage_header,Text2,Agency Regular,Regular,14,false,false,27216,agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,GuiText,game.mcl_mdollar.text.available_mechs_header,Text3,Agency Regular,Regular,14,false,false,27218,agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mdollar.fit,GuiText,game.mcl_mdollar.text.help_text,Text4,Agency Regular,Regular,8,false,false,27322,arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mechinfo.fit,GuiText,game.mcl_mechinfo.text.mech_info_name_header_above_mech_animation,Text0,Agency Regular,Regular,17,false,false,27219,agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mechinfo.fit,GuiText,game.mcl_mechinfo.text.variant_name_header_above_weapon_rect,Text1,Agency Regular,Regular,14,false,false,27220,agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mechinfo.fit,GuiText,game.mcl_mechinfo.text.for_mech_range,Text2,Agency Regular,Regular,14,false,false,27221,agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mechinfo.fit,GuiText,game.mcl_mechinfo.text.for_mech_weight,Text3,Agency Regular,Regular,14,false,false,27221,agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mechinfo.fit,GuiText,game.mcl_mechinfo.text.for_mech_armor,Text4,Agency Regular,Regular,14,false,false,27221,agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mechinfo.fit,GuiText,game.mcl_mechinfo.text.for_mech_speed,Text5,Agency Regular,Regular,14,false,false,27221,agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mechinfo.fit,GuiText,game.mcl_mechinfo.text.for_mech_jump_range,Text6,Agency Regular,Regular,14,false,false,27221,agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mechinfo.fit,GuiText,game.mcl_mechinfo.text.help_text,Text7,Agency Regular,Regular,8,false,false,27322,arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,GuiButton,game.mcl_mm.button.start_new_campaign,Button0,Agency Regular,Regular,17,false,false,27616,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,GuiButton,game.mcl_mm.button.load_game,Button1,Agency Regular,Regular,17,false,false,27621,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,GuiButton,game.mcl_mm.button.save_game,Button2,Agency Regular,Regular,17,false,false,27622,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,GuiButton,game.mcl_mm.button.multiplayer,Button3,Agency Regular,Regular,17,false,false,27623,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,GuiButton,game.mcl_mm.button.return_to_game,Button4,Agency Regular,Regular,17,false,false,27624,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,GuiButton,game.mcl_mm.button.options,Button5,Agency Regular,Regular,17,false,false,27625,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,GuiButton,game.mcl_mm.button.encyclopedia,Button6,Agency Regular,Regular,17,false,false,27626,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,GuiButton,game.mcl_mm.button.exit,Button7,Agency Regular,Regular,17,false,false,27627,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,GuiButton,game.mcl_mm.button.skirmish,Button8,Agency Regular,Regular,17,false,false,27628,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,GuiButton,game.mcl_mm.button.info_legalese_button,Button9,Agency Regular,Regular,17,false,false,27627,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,GuiText,game.mcl_mm.text.help_text_area,Text0,Agency Regular,Regular,11,false,false,27630,use aGENCY FB 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mm.fit,GuiText,game.mcl_mm.text.indicia,Text1,Agency Regular,Regular,8,false,false,60019,use arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,GuiButton,game.mcl_mn.button.main_menu_button,Button0,Agency Regular,Regular,17,false,false,27520,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,GuiButton,game.mcl_mn.button.play_button,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,GuiButton,game.mcl_mn.button.pause_button,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,GuiButton,game.mcl_mn.button.stop_button,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,GuiButton,game.mcl_mn.button.back_button,Button4,Agency Regular,Regular,17,false,false,27521,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,GuiButton,game.mcl_mn.button.next_button,Button5,Agency Regular,Regular,17,false,false,27521,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,GuiText,game.mcl_mn.text.main_header_mission_briefing,Text0,Agency Regular,Regular,17,false,false,27501,use agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,GuiText,game.mcl_mn.text.cbills_text,Text1,Agency Regular,Regular,17,false,false,27502,use agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,GuiText,game.mcl_mn.text.mission_map_header,Text2,Agency Regular,Regular,14,false,false,27504,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,GuiText,game.mcl_mn.text.text_information_header,Text3,Agency Regular,Regular,14,false,false,27506,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mn.fit,GuiText,game.mcl_mn.text.help_text,Text4,Agency Regular,Regular,11,false,false,27522,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai.fit,GuiButton,game.mcl_mp_addai.button.cancel_button,Button0,Agency Regular,Regular,17,false,false,27207,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai.fit,GuiButton,game.mcl_mp_addai.button.accept_button,Button1,Agency Regular,Regular,17,false,false,27207,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai.fit,GuiText,game.mcl_mp_addai.text.main_header,Text0,Agency Regular,Regular,17,false,false,26251,use agency fb 17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai.fit,GuiText,game.mcl_mp_addai.text.name_entry_header,Text1,Agency Regular,Regular,14,false,false,27656,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai.fit,GuiText,game.mcl_mp_addai.text.experience_header,Text2,Agency Regular,Regular,14,false,false,27656,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai.fit,GuiText,game.mcl_mp_addai.text.faction_header,Text3,Agency Regular,Regular,14,false,false,27656,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai.fit,GuiText,game.mcl_mp_addai.text.ai_player_mech_slots,Text4,Agency Regular,Regular,14,false,false,27656,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai.fit,GuiText,game.mcl_mp_addai.text.help_text,Text5,Agency Regular,Regular,8,false,false,40012,use arial narrow 8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai_combobox0.fit,GuiButton,game.mcl_mp_addai_combobox0.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai_combobox0.fit,GuiText,game.mcl_mp_addai_combobox0.text.list_box_text,Text0,Agency Regular,Regular,11,false,false,27333,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai_combobox1.fit,GuiButton,game.mcl_mp_addai_combobox1.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai_combobox1.fit,GuiText,game.mcl_mp_addai_combobox1.text.list_box_text,Text0,Agency Regular,Regular,11,false,false,27333,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai_combobox2.fit,GuiButton,game.mcl_mp_addai_combobox2.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai_combobox2.fit,GuiText,game.mcl_mp_addai_combobox2.text.list_box_text,Text0,Agency Regular,Regular,11,false,false,27333,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai_combobox3.fit,GuiButton,game.mcl_mp_addai_combobox3.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_addai_combobox3.fit,GuiText,game.mcl_mp_addai_combobox3.text.list_box_text,Text0,Agency Regular,Regular,11,false,false,27333,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_chatwidget.fit,GuiButton,game.mcl_mp_chatwidget.button.help_chat_toggle,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_chatwidget.fit,GuiButton,game.mcl_mp_chatwidget.button.toggle_up_down_state_button,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_chatwidget.fit,GuiButton,game.mcl_mp_chatwidget.button.toggle_chat_team_only_chat_all,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_chatwidget.fit,GuiEditBox,game.mcl_mp_chatwidget.editbox.edit_box,Edit0,Agency Regular,Regular,8,false,false,25999,arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_chatwidget.fit,GuiText,game.mcl_mp_chatwidget.text.help,Text0,Agency Regular,Regular,9,false,false,25998,use arial narrow 9,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_connectiontype.fit,GuiButton,game.mcl_mp_connectiontype.button.main_menu_button,Button0,Agency Regular,Regular,17,false,false,26020,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_connectiontype.fit,GuiButton,game.mcl_mp_connectiontype.button.internet_radio_button,Button1,Agency Regular,Regular,17,false,false,26021,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_connectiontype.fit,GuiButton,game.mcl_mp_connectiontype.button.lan_radio_button,Button2,Agency Regular,Regular,17,false,false,26022,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_connectiontype.fit,GuiButton,game.mcl_mp_connectiontype.button.direct_tcp_ip_radio_button,Button3,Agency Regular,Regular,17,false,false,26023,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_connectiontype.fit,GuiText,game.mcl_mp_connectiontype.text.connection_type_header,Text0,Agency Regular,Regular,17,false,false,26024,use agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_connectiontype.fit,GuiText,game.mcl_mp_connectiontype.text.secondary_connection_type_header,Text1,Agency Regular,Regular,14,false,false,26026,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_connectiontype.fit,GuiText,game.mcl_mp_connectiontype.text.help_text,Text2,Agency Regular,Regular,8,false,false,26025,arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_lan.fit,GuiButton,game.mcl_mp_contype_lan.button.go_to_lan_browser_button,Button0,Agency Regular,Regular,17,false,false,26027,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_lan.fit,GuiButton,game.mcl_mp_contype_lan.button.host_game_button,Button1,Agency Regular,Regular,17,false,false,26028,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_lan.fit,GuiText,game.mcl_mp_contype_lan.text.help_text_area,Text0,Agency Regular,Regular,11,false,false,26029,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_modem.fit,GuiButton,game.mcl_mp_contype_modem.button.join_game_button,Button0,Agency Regular,Regular,17,false,false,26030,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_modem.fit,GuiButton,game.mcl_mp_contype_modem.button.host_game_button,Button0,Agency Regular,Regular,17,false,false,26031,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_modem.fit,GuiText,game.mcl_mp_contype_modem.text.help_text_area,Text0,Agency Regular,Regular,11,false,false,26029,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_modem.fit,GuiText,game.mcl_mp_contype_modem.text.phone_number,Text1,Agency Regular,Regular,14,false,false,26032,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_modem.fit,GuiText,game.mcl_mp_contype_modem.text.modem,Text2,Agency Regular,Regular,14,false,false,26033,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_tcpip.fit,GuiButton,game.mcl_mp_contype_tcpip.button.join_game_button,Button0,Agency Regular,Regular,17,false,false,26030,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_tcpip.fit,GuiButton,game.mcl_mp_contype_tcpip.button.host_game_button,Button1,Agency Regular,Regular,17,false,false,26028,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_tcpip.fit,GuiText,game.mcl_mp_contype_tcpip.text.help_text_area,Text0,Agency Regular,Regular,11,false,false,26029,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_tcpip.fit,GuiText,game.mcl_mp_contype_tcpip.text.ip_address,Text1,Agency Regular,Regular,14,false,false,26034,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_zone.fit,GuiButton,game.mcl_mp_contype_zone.button.go_to_zone_button,Button0,Agency Regular,Regular,17,false,false,26034,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_contype_zone.fit,GuiText,game.mcl_mp_contype_zone.text.help_text_area,Text0,Agency Regular,Regular,11,false,false,26029,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgame.fit,GuiButton,game.mcl_mp_hostgame.button.cancel_button,Button0,Agency Regular,Regular,17,false,false,26104,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgame.fit,GuiButton,game.mcl_mp_hostgame.button.accept_button,Button1,Agency Regular,Regular,17,false,false,26105,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgame.fit,GuiButton,game.mcl_mp_hostgame.button.check_box_for_allow_all_technologies,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgame.fit,GuiText,game.mcl_mp_hostgame.text.main_header,Text0,Agency Regular,Regular,17,false,false,26106,use agency fb 17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgame.fit,GuiText,game.mcl_mp_hostgame.text.name_entry_header,Text1,Agency Regular,Regular,14,false,false,26107,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgame.fit,GuiText,game.mcl_mp_hostgame.text.allow_all_technologies,Text2,Agency Regular,Regular,14,false,false,26108,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgame.fit,GuiText,game.mcl_mp_hostgame.text.maximum_number_of_players,Text3,Agency Regular,Regular,14,false,false,26109,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgame.fit,GuiText,game.mcl_mp_hostgame.text.help_text,Text4,Agency Regular,Regular,8,false,false,26110,use arial narrow 8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgamedialog.fit,GuiButton,game.mcl_mp_hostgamedialog.button.cancel_button,Button0,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgamedialog.fit,GuiButton,game.mcl_mp_hostgamedialog.button.save_button,Button1,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgamedialog.fit,GuiText,game.mcl_mp_hostgamedialog.text.main_header_text_save_variant,Text0,Agency Regular,Regular,17,false,false,26106,agency fb 17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgamedialog.fit,GuiText,game.mcl_mp_hostgamedialog.text.enter_a_name_for_your_new_game,Text1,Agency Regular,Regular,11,false,false,26110,Agency Fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgamedialog.fit,GuiEditBox,game.mcl_mp_hostgamedialog.editbox.editable_text_for_new_game_name_goes_here,Edit0,Agency Regular,Regular,14,false,false,27656,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgamedialog_combobox0.fit,GuiButton,game.mcl_mp_hostgamedialog_combobox0.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgamedialog_combobox0.fit,GuiText,game.mcl_mp_hostgamedialog_combobox0.text.number_of_players_allowed,Text0,Agency Regular,Regular,11,false,false,27333,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgami_droplist0.fit,GuiList,game.mcl_mp_hostgami_droplist0.list.list,NumPlayersDropList,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgami_droplist0.fit,GuiButton,game.mcl_mp_hostgami_droplist0.button.down_triangle,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgami_droplist0.fit,GuiText,game.mcl_mp_hostgami_droplist0.text.text_in_main_rect,Text0,Agency Regular,Regular,11,false,false,26112,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_hostgami_droplist0.fit,GuiText,game.mcl_mp_hostgami_droplist0.text.text_for_list_box,Text1,Agency Regular,Regular,11,false,false,26112,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiButton,game.mcl_mp_lanbrowser.button.main_menu,Button0,Agency Regular,Regular,17,false,false,26057,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiButton,game.mcl_mp_lanbrowser.button.join_game,Button1,Agency Regular,Regular,17,false,false,26058,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiButton,game.mcl_mp_lanbrowser.button.host_game,Button2,Agency Regular,Regular,17,false,false,26059,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiButton,game.mcl_mp_lanbrowser.button.back_button,Button3,Agency Regular,Regular,17,false,false,26060,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiButton,game.mcl_mp_lanbrowser.button.sort_by_locked_game,Button4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiButton,game.mcl_mp_lanbrowser.button.sort_by_game_name,Button5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiButton,game.mcl_mp_lanbrowser.button.sort_by_players,Button6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiButton,game.mcl_mp_lanbrowser.button.sort_by_map_name,Button7,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiButton,game.mcl_mp_lanbrowser.button.sort_by_ping,Button8,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiText,game.mcl_mp_lanbrowser.text.main_header,Text0,Agency Regular,Regular,17,false,false,26061,use agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiText,game.mcl_mp_lanbrowser.text.game_name_header,Text1,Agency Regular,Regular,14,false,false,26062,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiText,game.mcl_mp_lanbrowser.text.number_of_players_header,Text2,Agency Regular,Regular,14,false,false,26063,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiText,game.mcl_mp_lanbrowser.text.map_name_header,Text3,Agency Regular,Regular,14,false,false,26064,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiText,game.mcl_mp_lanbrowser.text.ping_header,Text4,Agency Regular,Regular,14,false,false,26065,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowser.fit,GuiText,game.mcl_mp_lanbrowser.text.help_text,Text5,Agency Regular,Regular,8,false,false,26066,use arialnarrow 8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowsercombobox0.fit,GuiList,game.mcl_mp_lanbrowsercombobox0.list.list,GameList,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowsercombobox0.fit,GuiText,game.mcl_mp_lanbrowsercombobox0.text.game_name,Text0,Agency Regular,Regular,11,false,false,26067,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowsercombobox0.fit,GuiText,game.mcl_mp_lanbrowsercombobox0.text.of_players,Text1,Agency Regular,Regular,11,false,false,26067,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowsercombobox0.fit,GuiText,game.mcl_mp_lanbrowsercombobox0.text.map_name,Text2,Agency Regular,Regular,11,false,false,26067,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_lanbrowsercombobox0.fit,GuiText,game.mcl_mp_lanbrowsercombobox0.text.ping_number,Text3,Agency Regular,Regular,11,false,false,26067,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_loadmap.fit,GuiButton,game.mcl_mp_loadmap.button.cancel_button,Button0,Agency Regular,Regular,17,false,false,27207,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_loadmap.fit,GuiButton,game.mcl_mp_loadmap.button.accept_button,Button1,Agency Regular,Regular,17,false,false,27207,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_loadmap.fit,GuiText,game.mcl_mp_loadmap.text.main_header,Text0,Agency Regular,Regular,17,false,false,26301,use agency fb 17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_loadmap.fit,GuiText,game.mcl_mp_loadmap.text.map_list_header,Text1,Agency Regular,Regular,14,false,false,26303,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_loadmap.fit,GuiText,game.mcl_mp_loadmap.text.maximum_players,Text2,Agency Regular,Regular,11,false,false,26305,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_loadmap.fit,GuiText,game.mcl_mp_loadmap.text.map_name_header,Text3,Agency Regular,Regular,11,false,false,26307,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_loadmap.fit,GuiText,game.mcl_mp_loadmap.text.mission_type,Text4,Agency Regular,Regular,11,false,false,26309,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_loadmap.fit,GuiText,game.mcl_mp_loadmap.text.map_info,Text5,Agency Regular,Regular,11,false,false,26311,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_loadmap.fit,GuiText,game.mcl_mp_loadmap.text.help_text,Text6,Agency Regular,Regular,8,false,false,26312,use arial narrow 8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_loadmap_list0.fit,GuiList,game.mcl_mp_loadmap_list0.list.map,MapList,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_loadmap_list0.fit,GuiText,game.mcl_mp_loadmap_list0.text.text_for_game_name,Text0,Agency Regular,Regular,11,false,false,26307,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_mapinfo.fit,GuiButton,game.mcl_mp_mapinfo.button.close_button,Button0,Agency Regular,Regular,17,false,false,26231,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_mapinfo.fit,GuiText,game.mcl_mp_mapinfo.text.main_header_text_map_info,Text0,Agency Regular,Regular,17,false,false,26229,use agency fb 17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_mapinfo.fit,GuiText,game.mcl_mp_mapinfo.text.actual_map_info_text,Text1,Agency Regular,Regular,11,false,false,26232,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_mapinfo.fit,GuiText,game.mcl_mp_mapinfo.text.blurb_text,Text2,Agency Regular,Regular,11,false,false,26232,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem.fit,GuiButton,game.mcl_mp_modem.button.main_menu,Button0,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem.fit,GuiButton,game.mcl_mp_modem.button.join_game,Button1,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem.fit,GuiButton,game.mcl_mp_modem.button.host_game,Button2,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem.fit,GuiButton,game.mcl_mp_modem.button.back_button,Button3,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem.fit,GuiText,game.mcl_mp_modem.text.main_header,Text0,Agency Regular,Regular,17,false,false,40012,use agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem.fit,GuiText,game.mcl_mp_modem.text.serial_port_drop_down_header,Text1,Agency Regular,Regular,14,false,false,,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem.fit,GuiText,game.mcl_mp_modem.text.phone_number_drop_down_header,Text2,Agency Regular,Regular,14,false,false,,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem.fit,GuiText,game.mcl_mp_modem.text.explanatory_text,Text3,Agency Regular,Regular,14,false,false,40012,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem.fit,GuiText,game.mcl_mp_modem.text.help_text,Text4,Agency Regular,Regular,8,false,false,40012,use arialnarrow 8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem_combobox0.fit,GuiButton,game.mcl_mp_modem_combobox0.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem_combobox0.fit,GuiText,game.mcl_mp_modem_combobox0.text.variant_name_for_list_box,Text0,Agency Regular,Regular,11,false,false,27333,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem_combobox1.fit,GuiButton,game.mcl_mp_modem_combobox1.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_modem_combobox1.fit,GuiText,game.mcl_mp_modem_combobox1.text.variant_name_for_list_box,Text0,Agency Regular,Regular,11,false,false,27333,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiEditBox,game.mcl_mp_param.editbox.dropweight_under_map,Edit0,Agency Regular,Regular,17,false,false,26233,agencyfb,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiEditBox,game.mcl_mp_param.editbox.cbills_under_map,Edit1,Agency Regular,Regular,8,false,false,26233,arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiEditBox,game.mcl_mp_param.editbox.time_limit,Edit2,Agency Regular,Regular,8,false,false,26233,arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiEditBox,game.mcl_mp_param.editbox.resource_points,Edit3,Agency Regular,Regular,8,false,false,26233,arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.main_menu_button,Button0,Agency Regular,Regular,17,false,false,26176,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.load_map_button,Button1,Agency Regular,Regular,17,false,false,26177,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.map_info_button,Button2,Agency Regular,Regular,17,false,false,26178,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.up_button_arrow_for_map_info_cbills,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.down_arrow_button_for_map_info_cbills,Button4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.up_button_arrow_for_map_info_time_limit,Button5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.down_arrow_button_for_map_info_cbills_01,Button6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.up_button_arrow_for_map_info_cbills_01,Button7,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.down_arrow_button_for_map_info_cbills_02,Button8,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.check_box_for_airstrikes,Button9,Agency Regular,Regular,11,false,false,26179,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.check_box_for_sensor_probe,Button10,Agency Regular,Regular,11,false,false,26180,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.check_box_for_minelayers,Button11,Agency Regular,Regular,11,false,false,26181,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.check_box_for_repair_vehicles,Button12,Agency Regular,Regular,11,false,false,26182,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.lock_game_button,Button13,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.remove_player,Button14,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.check_box_for_scouts,Button15,Agency Regular,Regular,11,false,false,26183,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.check_box_for_recovery_team,Button16,Agency Regular,Regular,11,false,false,26184,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.check_box_for_guard_towers,Button17,Agency Regular,Regular,11,false,false,26185,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.check_box_for_resource_buildings,Button18,Agency Regular,Regular,11,false,false,26186,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.check_box_for_unlimited_ammo,Button19,Agency Regular,Regular,11,false,false,26187,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.check_box_for_variants,Button20,Agency Regular,Regular,11,false,false,26188,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.check_box_for_all_tech,Button21,Agency Regular,Regular,11,false,false,26189,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.use_quickstart_button,Button22,Agency Regular,Regular,17,false,false,26190,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.back_button,Button23,Agency Regular,Regular,17,false,false,26191,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.next_button,Button24,Agency Regular,Regular,17,false,false,26191,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.player_prefs_button,Button25,Agency Regular,Regular,17,false,false,26192,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.check_box_for_rp_s_for_kills,Button26,Agency Regular,Regular,11,false,false,26223,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.up_button_arrow_for_map_info_drop_weight,Button27,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.down_arrow_button_for_map_info_drop_weight,Button28,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.main_header,Text0,Agency Regular,Regular,17,false,false,26193,use agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.map_name_header,Text1,Agency Regular,Regular,14,false,false,26194,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.player_header,Text2,Agency Regular,Regular,14,false,false,26195,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.team_header,Text3,Agency Regular,Regular,11,false,false,26196,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.faction_header,Text4,Agency Regular,Regular,11,false,false,26197,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.cbills_header,Text5,Agency Regular,Regular,11,false,false,26198,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.ready_header,Text6,Agency Regular,Regular,11,false,false,26199,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.mission_type_whatever_the_mission_type_is_defunct,Text7,Agency Regular,Regular,11,false,false,26200,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.c_bills_map_info_header,Text8,Agency Regular,Regular,11,false,false,26202,use agency fb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.time_limit_map_info_header,Text9,Agency Regular,Regular,11,false,false,26203,use agency fb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.resource_pts_header,Text10,Agency Regular,Regular,11,false,false,26206,use agency fb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.host_ip_address_readout,Text11,Agency Regular,Regular,11,false,false,26207,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.help_text,Text12,Agency Regular,Regular,14,false,false,26208,support available header,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.drop_weight_readout,Text13,Agency Regular,Regular,11,false,false,26225,use agency fb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiEditBox,game.mcl_mp_param.editbox.player_param_cbills,playerparamEdit0,Agency Regular,Regular,17,false,false,26233,agencyfb,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.up_arrow_button_for_cbills_gadget,PlayerParamsCBillsSpinnerUpButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.down_arrow_for_c_bills_gadget,PlayerParamsCBillsSpinnerDownButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiButton,game.mcl_mp_param.button.check_box_for_player_ready,PlayerParamsReadyButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.player_name,PlayerParamsText0,Agency Regular,Regular,11,false,false,26209,use agencyfb11 - needs to have drop shadow,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param.fit,GuiText,game.mcl_mp_param.text.unit_name,PlayerParamsText1,Agency Regular,Regular,8,false,false,26211,use arialnarrow8- needs drop shadow,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_combobox0.fit,GuiButton,game.mcl_mp_param_combobox0.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_combobox0.fit,GuiText,game.mcl_mp_param_combobox0.text.variant_name_for_list_box,Text0,Agency Regular,Regular,11,false,false,26212,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_combobox1.fit,GuiButton,game.mcl_mp_param_combobox1.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_combobox1.fit,GuiText,game.mcl_mp_param_combobox1.text.variant_name_for_list_box,Text0,Agency Regular,Regular,11,false,false,26212,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist0.fit,GuiList,game.mcl_mp_param_droplist0.list.list,TimeLimitDropList,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist0.fit,GuiButton,game.mcl_mp_param_droplist0.button.down_triangle,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist0.fit,GuiText,game.mcl_mp_param_droplist0.text.selected_time_in_main_rect,Text0,Agency Regular,Regular,11,false,false,26213,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist0.fit,GuiText,game.mcl_mp_param_droplist0.text.selectable_time_in_list_box,Text1,Agency Regular,Regular,11,false,false,26213,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist1.fit,GuiList,game.mcl_mp_param_droplist1.list.list,VariantToggleDropList,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist1.fit,GuiButton,game.mcl_mp_param_droplist1.button.down_triangle,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist1.fit,GuiText,game.mcl_mp_param_droplist1.text.variants_allowed_readout,Text0,Agency Regular,Regular,11,false,false,26213,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist1.fit,GuiText,game.mcl_mp_param_droplist1.text.text_for_list_box,Text1,Agency Regular,Regular,11,false,false,26213,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist2.fit,GuiList,game.mcl_mp_param_droplist2.list.list,AmmoToggleDropList,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist2.fit,GuiButton,game.mcl_mp_param_droplist2.button.down_triangle,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist2.fit,GuiText,game.mcl_mp_param_droplist2.text.ammo_yes_no_readout,Text0,Agency Regular,Regular,11,false,false,26213,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist2.fit,GuiText,game.mcl_mp_param_droplist2.text.text_for_list_box,Text1,Agency Regular,Regular,11,false,false,26213,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist3.fit,GuiList,game.mcl_mp_param_droplist3.list.list,TeamNumberDropList,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist3.fit,GuiButton,game.mcl_mp_param_droplist3.button.down_triangle,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist3.fit,GuiText,game.mcl_mp_param_droplist3.text.team_number_in_main_rect,Text0,Agency Regular,Regular,11,false,false,26213,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist3.fit,GuiText,game.mcl_mp_param_droplist3.text.team_number_for_list_box,Text1,Agency Regular,Regular,11,false,false,26213,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist4.fit,GuiList,game.mcl_mp_param_droplist4.list.list,FactionTypeDropList,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist4.fit,GuiButton,game.mcl_mp_param_droplist4.button.down_triangle,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist4.fit,GuiText,game.mcl_mp_param_droplist4.text.team_number_in_main_rect,Text0,Agency Regular,Regular,11,false,false,26213,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_param_droplist4.fit,GuiText,game.mcl_mp_param_droplist4.text.team_number_for_list_box,Text1,Agency Regular,Regular,11,false,false,26213,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.main_menu_button,Button0,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.check_box_for_player_ready,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.map_info_button,Button2,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.check_box_for_airstrikes_non_clickable,Button3,Agency Regular,Regular,11,false,false,27107,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.check_box_for_sensor_probe,Button4,Agency Regular,Regular,11,false,false,27107,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.check_box_for_minelayers,Button5,Agency Regular,Regular,11,false,false,27107,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.check_box_for_repair_vehicles,Button6,Agency Regular,Regular,11,false,false,27107,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.check_box_for_scouts,Button7,Agency Regular,Regular,11,false,false,27107,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.check_box_for_recovery_team,Button8,Agency Regular,Regular,11,false,false,27107,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.check_box_for_guard_towers,Button9,Agency Regular,Regular,11,false,false,27107,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.check_box_for_resource_buildings,Button10,Agency Regular,Regular,11,false,false,27107,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.check_box_for_unlimited_ammo,Button11,Agency Regular,Regular,11,false,false,27107,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.check_box_for_variants,Button12,Agency Regular,Regular,11,false,false,27107,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.check_box_for_all_tech,Button13,Agency Regular,Regular,11,false,false,27107,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.use_quickstart_button,Button14,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.back_button,Button15,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.chat_button,Button16,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.main_header,Text0,Agency Regular,Regular,17,false,false,40012,use agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.map_name_header,Text1,Agency Regular,Regular,14,false,false,40012,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.player_header,Text2,Agency Regular,Regular,14,false,false,40012,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.team_header,Text3,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.faction_header,Text4,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.cbills_header,Text5,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.ready_header,Text6,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.mission_type_whatever_the_mission_type_is,Text7,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.player_name,Text8,Agency Regular,Regular,11,false,false,40012,use agencyfb11 - needs to have drop shadow,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.cbills_readout,Text9,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.unit_name,Text10,Agency Regular,Regular,8,false,false,40012,use arialnarrow8- needs drop shadow,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.cbills_readout_01,Text11,Agency Regular,Regular,11,false,false,40012,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.c_bills_map_info_header,Text12,Agency Regular,Regular,11,false,false,40012,use agency fb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.time_limit_map_info_header,Text13,Agency Regular,Regular,11,false,false,40012,use agency fb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.time_limit_readout,Text14,Agency Regular,Regular,11,false,false,40012,use agency fb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.host_ip_address_readout,Text15,Agency Regular,Regular,11,false,false,40012,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.resource_pts_readout,Text16,Agency Regular,Regular,11,false,false,40012,use agency fb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.resource_pts_header,Text17,Agency Regular,Regular,11,false,false,40012,use agency fb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.help_text,Text18,Agency Regular,Regular,11,false,false,40012,support available header,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.up_arrow_button_for_cbills_gadget,PlayerParamsCBillsSpinnerUpButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.down_arrow_for_c_bills_gadget,PlayerParamsCBillsSpinnerDownButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiButton,game.mcl_mp_paramplay.button.check_box_for_player_ready_01,PlayerParamsReadyButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.player_name_01,PlayerParamsText0,Agency Regular,Regular,11,false,false,40012,use agencyfb11 - needs to have drop shadow,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.cbills_readout_02,PlayerParamsText1,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_paramplay.fit,GuiText,game.mcl_mp_paramplay.text.unit_name_01,PlayerParamsText2,Agency Regular,Regular,8,false,false,40012,use arialnarrow8- needs drop shadow,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,GuiButton,game.mcl_mp_playerprefs.button.main_menu,Button0,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,GuiButton,game.mcl_mp_playerprefs.button.base_color_tab,Button1,Agency Regular,Regular,11,false,false,26335,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,GuiButton,game.mcl_mp_playerprefs.button.stripe_color_tab,Button2,Agency Regular,Regular,11,false,false,26337,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,GuiButton,game.mcl_mp_playerprefs.button.cancel_button,Button5,Agency Regular,Regular,17,false,false,27301,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,GuiButton,game.mcl_mp_playerprefs.button.accept_button,Button3,Agency Regular,Regular,17,false,false,27301,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,GuiText,game.mcl_mp_playerprefs.text.help_text,Text0,Agency Regular,Regular,8,false,false,26333,arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,GuiText,game.mcl_mp_playerprefs.text.player_preferences_header,Text1,Agency Regular,Regular,17,false,false,26324,use agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,GuiText,game.mcl_mp_playerprefs.text.player_name_header,Text2,Agency Regular,Regular,14,false,false,26326,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,GuiText,game.mcl_mp_playerprefs.text.unit_name_header,Text3,Agency Regular,Regular,14,false,false,26328,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,GuiText,game.mcl_mp_playerprefs.text.unit_insignia_header,Text4,Agency Regular,Regular,14,false,false,26330,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs.fit,GuiText,game.mcl_mp_playerprefs.text.player_colors_header,Text5,Agency Regular,Regular,14,false,false,26332,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs_combobox1.fit,GuiButton,game.mcl_mp_playerprefs_combobox1.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs_combobox1.fit,GuiText,game.mcl_mp_playerprefs_combobox1.text.variant_name_for_list_box,Text0,Agency Regular,Regular,11,false,false,27333,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs_combobox2.fit,GuiButton,game.mcl_mp_playerprefs_combobox2.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs_combobox2.fit,GuiText,game.mcl_mp_playerprefs_combobox2.text.variant_name_for_list_box,Text0,Agency Regular,Regular,11,false,false,27333,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs_combobox3.fit,GuiButton,game.mcl_mp_playerprefs_combobox3.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_playerprefs_combobox3.fit,GuiText,game.mcl_mp_playerprefs_combobox3.text.variant_name_for_list_box,Text0,Agency Regular,Regular,11,false,false,27333,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_scoreboard.fit,GuiText,game.mcl_mp_scoreboard.text.player,Text0,Agency Regular,Regular,11,false,false,26354,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_scoreboard.fit,GuiText,game.mcl_mp_scoreboard.text.team,Text1,Agency Regular,Regular,11,false,false,26354,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_scoreboard.fit,GuiText,game.mcl_mp_scoreboard.text.score,Text2,Agency Regular,Regular,11,false,false,26354,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_scoreboard.fit,GuiText,game.mcl_mp_scoreboard.text.kills,Text3,Agency Regular,Regular,11,false,false,26354,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_scoreboard.fit,GuiText,game.mcl_mp_scoreboard.text.losses,Text4,Agency Regular,Regular,11,false,false,26354,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_combobox0.fit,GuiButton,game.mcl_mp_setup_combobox0.button.down_triangle,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_combobox0.fit,GuiText,game.mcl_mp_setup_combobox0.text.variant_name_in_main_rect,Text0,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_combobox0.fit,GuiText,game.mcl_mp_setup_combobox0.text.variant_name_for_list_box,Text1,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_combobox1.fit,GuiButton,game.mcl_mp_setup_combobox1.button.down_triangle,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_combobox1.fit,GuiText,game.mcl_mp_setup_combobox1.text.variant_name_in_main_rect,Text0,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_combobox1.fit,GuiText,game.mcl_mp_setup_combobox1.text.variant_name_for_list_box,Text1,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiButton,game.mcl_mp_setup_droplist0.button.down_triangle,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiList,game.mcl_mp_setup_droplist0.list.list,ListItem0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiText,game.mcl_mp_setup_droplist0.text.text,ListItem0Text,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiList,game.mcl_mp_setup_droplist0.list.list_01,ListItem1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiText,game.mcl_mp_setup_droplist0.text.text_01,ListItem1Text,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiList,game.mcl_mp_setup_droplist0.list.list_02,ListItem2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiText,game.mcl_mp_setup_droplist0.text.text_02,ListItem2Text,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiList,game.mcl_mp_setup_droplist0.list.list_03,ListItem3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiText,game.mcl_mp_setup_droplist0.text.text_03,ListItem3Text,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiList,game.mcl_mp_setup_droplist0.list.list_04,ListItem4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiText,game.mcl_mp_setup_droplist0.text.text_04,ListItem4Text,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiList,game.mcl_mp_setup_droplist0.list.list_05,ListItem5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiText,game.mcl_mp_setup_droplist0.text.text_05,ListItem5Text,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiList,game.mcl_mp_setup_droplist0.list.list_06,ListItem6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiText,game.mcl_mp_setup_droplist0.text.text_06,ListItem6Text,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiList,game.mcl_mp_setup_droplist0.list.list_07,ListItem7,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiText,game.mcl_mp_setup_droplist0.text.text_07,ListItem7Text,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiList,game.mcl_mp_setup_droplist0.list.list_08,ListItem8,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiText,game.mcl_mp_setup_droplist0.text.text_08,ListItem8Text,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiList,game.mcl_mp_setup_droplist0.list.list_09,ListItem9,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiText,game.mcl_mp_setup_droplist0.text.text_09,ListItem9Text,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiList,game.mcl_mp_setup_droplist0.list.list_10,ListItem10,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setup_droplist0.fit,GuiText,game.mcl_mp_setup_droplist0.text.text_10,ListItem10Text,Agency Regular,Regular,11,false,false,40012,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiButton,game.mcl_mp_setuplayout.button.done_button_in_lower_right_corner,Button0,Agency Regular,Regular,14,false,false,26020,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiButton,game.mcl_mp_setuplayout.button.main_menubutton_in_upper_right_hand_corner,Button1,Agency Regular,Regular,14,false,false,26021,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiButton,game.mcl_mp_setuplayout.button.radio_button_for_internet_zone,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiButton,game.mcl_mp_setuplayout.button.radio_button_for_lan,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiButton,game.mcl_mp_setuplayout.button.radio_button_for_direct_tcp_ip,Button4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiButton,game.mcl_mp_setuplayout.button.radio_button_for_modem_to_modem,Button5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiText,game.mcl_mp_setuplayout.text.big_title_text,Text0,Agency Regular,Regular,14,false,false,40036,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiText,game.mcl_mp_setuplayout.text.player_name_header,Text1,Agency Regular,Regular,14,false,false,40038,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiText,game.mcl_mp_setuplayout.text.unit_name_header,Text2,Agency Regular,Regular,14,false,false,40038,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiText,game.mcl_mp_setuplayout.text.unit_insignia_header,Text3,Agency Regular,Regular,14,false,false,40038,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiText,game.mcl_mp_setuplayout.text.player_colors_header,Text4,Agency Regular,Regular,14,false,false,40038,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiText,game.mcl_mp_setuplayout.text.help_text_area,Text5,Agency Regular,Regular,14,false,false,40035,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiText,game.mcl_mp_setuplayout.text.connection_type_header,Text6,Agency Regular,Regular,14,false,false,40038,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiText,game.mcl_mp_setuplayout.text.description_of_connection_type,Text7,Agency Regular,Regular,14,false,false,40035,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiText,game.mcl_mp_setuplayout.text.tab_text_info_use_font_agencyfb11,Tab0Text,Agency Regular,Regular,11,false,false,40035,Use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiButton,game.mcl_mp_setuplayout.button.button,Tab0Button,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiText,game.mcl_mp_setuplayout.text.tab_text_info_use_font_agencyfb11_01,Tab1Text,Agency Regular,Regular,11,false,false,40035,Use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_setuplayout.fit,GuiButton,game.mcl_mp_setuplayout.button.button_01,Tab1Button,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats.fit,GuiButton,game.mcl_mp_stats.button.close_button,Button0,Agency Regular,Regular,17,false,false,27207,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats.fit,GuiButton,game.mcl_mp_stats.button.chat_button,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats.fit,GuiText,game.mcl_mp_stats.text.stats_recap_main_header,Text0,Agency Regular,Regular,17,false,false,26351,use agency fb 17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats.fit,GuiText,game.mcl_mp_stats.text.map_name,Text1,Agency Regular,Regular,14,false,false,26355,Use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats.fit,GuiText,game.mcl_mp_stats.text.player_name_header,Text2,Agency Regular,Regular,14,false,false,26353,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats.fit,GuiText,game.mcl_mp_stats.text.score_header,Text3,Agency Regular,Regular,11,false,false,26357,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats.fit,GuiText,game.mcl_mp_stats.text.kills_header,Text4,Agency Regular,Regular,11,false,false,26359,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats.fit,GuiText,game.mcl_mp_stats.text.losses_header,Text5,Agency Regular,Regular,11,false,false,26361,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats.fit,GuiText,game.mcl_mp_stats.text.mission_type,Text6,Agency Regular,Regular,11,false,false,26362,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats.fit,GuiText,game.mcl_mp_stats.text.max_players_number,Text7,Agency Regular,Regular,11,false,false,26362,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats.fit,GuiText,game.mcl_mp_stats.text.help_text,Text8,Agency Regular,Regular,8,false,false,26366,use arial narrow 8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats_entry.fit,GuiText,game.mcl_mp_stats_entry.text.score_number,Text0,Agency Regular,Regular,11,false,false,26368,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats_entry.fit,GuiText,game.mcl_mp_stats_entry.text.kills_number,Text1,Agency Regular,Regular,11,false,false,26368,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats_entry.fit,GuiText,game.mcl_mp_stats_entry.text.losses_number,Text2,Agency Regular,Regular,11,false,false,26368,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats_entry.fit,GuiText,game.mcl_mp_stats_entry.text.player_name,Text3,Agency Regular,Regular,11,false,false,26368,"use agency fb 11, with black drop shadow",true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats_entry.fit,GuiText,game.mcl_mp_stats_entry.text.unit_name_text,Text4,Agency Regular,Regular,8,false,false,26377,"use arial narrow 8, with black drop shadow",true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_stats_entry.fit,GuiText,game.mcl_mp_stats_entry.text.ranking_number,Text5,Agency Regular,Regular,11,false,false,26368,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip.fit,GuiButton,game.mcl_mp_tcpip.button.main_menu,Button0,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip.fit,GuiButton,game.mcl_mp_tcpip.button.join_game,Button1,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip.fit,GuiButton,game.mcl_mp_tcpip.button.host_game,Button2,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip.fit,GuiButton,game.mcl_mp_tcpip.button.back_button,Button3,Agency Regular,Regular,17,false,false,27107,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip.fit,GuiText,game.mcl_mp_tcpip.text.main_header,Text0,Agency Regular,Regular,17,false,false,40012,use agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip.fit,GuiText,game.mcl_mp_tcpip.text.ip_address_drop_down_header,Text1,Agency Regular,Regular,14,false,false,40012,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip.fit,GuiText,game.mcl_mp_tcpip.text.explanatory_text,Text2,Agency Regular,Regular,14,false,false,40012,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip.fit,GuiText,game.mcl_mp_tcpip.text.help_text,Text3,Agency Regular,Regular,8,false,false,40012,use arialnarrow 8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip_combobox0.fit,GuiButton,game.mcl_mp_tcpip_combobox0.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_mp_tcpip_combobox0.fit,GuiText,game.mcl_mp_tcpip_combobox0.text.variant_name_for_list_box,Text0,Agency Regular,Regular,11,false,false,26048,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,GuiButton,game.mcl_options.button.graphics_tab,Button0,Agency Regular,Regular,11,false,false,26503,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,GuiButton,game.mcl_options.button.audio_tab,Button1,Agency Regular,Regular,11,false,false,26505,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,GuiButton,game.mcl_options.button.gameplay_tab,Button2,Agency Regular,Regular,11,false,false,26507,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,GuiButton,game.mcl_options.button.hotkey_tab,Button3,Agency Regular,Regular,11,false,false,26509,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,GuiButton,game.mcl_options.button.cancel_button,Button4,Agency Regular,Regular,14,false,false,26501,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,GuiButton,game.mcl_options.button.accept_button,Button5,Agency Regular,Regular,14,false,false,26501,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,GuiText,game.mcl_options.text.options_header,Text0,Agency Regular,Regular,14,false,false,26501,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options.fit,GuiText,game.mcl_options.text.help_text,Text1,Agency Regular,Regular,11,false,false,26562,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options_combobox0.fit,GuiButton,game.mcl_options_combobox0.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options_combobox0.fit,GuiText,game.mcl_options_combobox0.text.list_box_text,Text0,Agency Regular,Regular,11,false,false,27333,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options_combobox1.fit,GuiText,game.mcl_options_combobox1.text.command,Text0,Agency Regular,Regular,11,false,false,26591,AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options_combobox1.fit,GuiText,game.mcl_options_combobox1.text.hotkey_this_entry_changes_depending_on_what_player_wants,Text1,Agency Regular,Regular,11,false,false,26591,AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options_combobox2.fit,GuiButton,game.mcl_options_combobox2.button.button,ExpandButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_options_combobox2.fit,GuiText,game.mcl_options_combobox2.text.list_box_text,Text0,Agency Regular,Regular,11,false,false,27333,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.master_digital_low_vol,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.master_digital_high_vol,Button1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.music_low_vol,Button2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.music_high_vol,Button3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.sfx_low_vol,Button4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.sfx_high_vol,Button5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.radio_low_vol,Button6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.radio_high_vol,Button7,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.computer_message_low_vol,Button8,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.computer_message_high_vol,Button9,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.reset_button,Button10,Agency Regular,Regular,14,false,false,26537,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.master_digital_slider,Button11,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.music_slider,Button12,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.sfx_slider,Button13,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.radio_slider,Button14,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiButton,game.mcl_optionsaudio.button.computer_message_slider,Button15,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.master_digital_volume,Text0,Agency Regular,Regular,11,false,false,26549,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.low_for_master_digital_volume,Text1,Agency Regular,Regular,11,false,false,26559,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.high_for_master_digital_volume,Text2,Agency Regular,Regular,11,false,false,26561,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.music_volume,Text3,Agency Regular,Regular,11,false,false,26551,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.low_for_music_vol,Text4,Agency Regular,Regular,11,false,false,26559,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.high_for_music_vol,Text5,Agency Regular,Regular,11,false,false,26561,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.sfx_volume,Text6,Agency Regular,Regular,11,false,false,26553,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.low_for_sfx_vol,Text7,Agency Regular,Regular,11,false,false,26559,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.high_for_sfx_vol,Text8,Agency Regular,Regular,11,false,false,26561,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.radio_volume,Text9,Agency Regular,Regular,11,false,false,26555,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.low_for_radio,Text10,Agency Regular,Regular,11,false,false,26559,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.high_for_radio,Text11,Agency Regular,Regular,11,false,false,26561,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.computer_volume,Text12,Agency Regular,Regular,11,false,false,26557,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.low_for_computer,Text13,Agency Regular,Regular,11,false,false,26559,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.high_for_computer,Text14,Agency Regular,Regular,11,false,false,26561,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsaudio.fit,GuiText,game.mcl_optionsaudio.text.help_text,Text15,Agency Regular,Regular,11,false,false,26562,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,GuiButton,game.mcl_optionsgameplay.button.check_box_unlimited_ammo,Button0,Agency Regular,Regular,11,false,false,26586,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,GuiButton,game.mcl_optionsgameplay.button.difficulty_level_radio_green,Button1,Agency Regular,Regular,11,false,false,26566,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,GuiButton,game.mcl_optionsgameplay.button.check_box_left_click_right_click,Button2,Agency Regular,Regular,11,false,false,26580,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,GuiButton,game.mcl_optionsgameplay.button.difficulty_level_radio_regular,Button3,Agency Regular,Regular,11,false,false,26568,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,GuiButton,game.mcl_optionsgameplay.button.difficulty_level_radio_veteran,Button4,Agency Regular,Regular,11,false,false,26570,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,GuiButton,game.mcl_optionsgameplay.button.difficulty_level_radio_elite,Button5,Agency Regular,Regular,11,false,false,26572,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,GuiButton,game.mcl_optionsgameplay.button.base_color_tab,Button6,Agency Regular,Regular,11,false,false,26576,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,GuiButton,game.mcl_optionsgameplay.button.accent_color_tab,Button7,Agency Regular,Regular,11,false,false,26578,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,GuiButton,game.mcl_optionsgameplay.button.reset_button,Button8,Agency Regular,Regular,14,false,false,26537,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,GuiText,game.mcl_optionsgameplay.text.difficulty_level_header_for_radio_buttons,Text0,Agency Regular,Regular,11,false,false,26564,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,GuiText,game.mcl_optionsgameplay.text.unit_colors_header_for_color_picker,Text1,Agency Regular,Regular,14,false,false,26574,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgameplay.fit,GuiText,game.mcl_optionsgameplay.text.help_text,Text2,Agency Regular,Regular,11,false,false,26562,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,GuiButton,game.mcl_optionsgraphics.button.check_box_pilot_videos,Button0,Agency Regular,Regular,11,false,false,26511,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,GuiButton,game.mcl_optionsgraphics.button.check_box_terrain_detail,Button1,Agency Regular,Regular,11,false,false,26521,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,GuiButton,game.mcl_optionsgraphics.button.check_box_shadows,Button2,Agency Regular,Regular,11,false,false,26513,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,GuiButton,game.mcl_optionsgraphics.button.check_box_high_object_detail,Button3,Agency Regular,Regular,11,false,false,26523,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,GuiButton,game.mcl_optionsgraphics.button.check_box_local_shadows,Button4,Agency Regular,Regular,11,false,false,26515,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,GuiButton,game.mcl_optionsgraphics.button.check_box_non_weapon_fx,Button5,Agency Regular,Regular,11,false,false,26525,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,GuiButton,game.mcl_optionsgraphics.button.check_box_hardware_rasterizer,Button6,Agency Regular,Regular,11,false,false,26517,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,GuiButton,game.mcl_optionsgraphics.button.check_box_use_async_mouse,Button7,Agency Regular,Regular,11,false,false,26527,use AgencyFB11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,GuiButton,game.mcl_optionsgraphics.button.reset_button,Button8,Agency Regular,Regular,14,false,false,26537,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,GuiText,game.mcl_optionsgraphics.text.resolution_header,Text0,Agency Regular,Regular,11,false,false,26529,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,GuiText,game.mcl_optionsgraphics.text.help_text,Text1,Agency Regular,Regular,11,false,false,26562,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionsgraphics.fit,GuiText,game.mcl_optionsgraphics.text.video_card_header,Text2,Agency Regular,Regular,11,false,false,26624,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionshotkeys.fit,GuiButton,game.mcl_optionshotkeys.button.reset_button,Button0,Agency Regular,Regular,14,false,false,26537,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionshotkeys.fit,GuiText,game.mcl_optionshotkeys.text.command_header,Text0,Agency Regular,Regular,11,false,false,26588,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionshotkeys.fit,GuiText,game.mcl_optionshotkeys.text.hotkey_header,Text1,Agency Regular,Regular,11,false,false,26590,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_optionshotkeys.fit,GuiText,game.mcl_optionshotkeys.text.help_text,Text2,Agency Regular,Regular,11,false,false,26562,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_availablepilotentry.fit,GuiText,game.mcl_pr_availablepilotentry.text.text,Text0,Agency Regular,Regular,11,false,false,27172,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_availablepilotentry.fit,GuiText,game.mcl_pr_availablepilotentry.text.text_01,Text1,Agency Regular,Regular,8,false,false,27173,Use ArialNarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiButton,game.mcl_pr_layout.button.back_button,PilotReadyButton0,Agency Regular,Regular,17,false,false,27175,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiButton,game.mcl_pr_layout.button.launch_button,PilotReadyButton1,Agency Regular,Regular,17,false,false,27175,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiButton,game.mcl_pr_layout.button.add_pilot_button,PilotReadyButton2,Agency Regular,Regular,14,false,false,27153,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiButton,game.mcl_pr_layout.button.remove_pilot_button,PilotReadyButton3,Agency Regular,Regular,14,false,false,27156,use AgencyFB14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiButton,game.mcl_pr_layout.button.main_menu_button,PilotReadyButton4,Agency Regular,Regular,17,false,false,27174,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.pilot_ready_area_header,PilotReadyTextEntry0,Agency Regular,Regular,14,false,false,27159,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.cbills_text,PilotReadyTextEntry1,Agency Regular,Regular,17,false,false,27161,agencyfb17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.deployment_teams_header,PilotReadyTextEntry2,Agency Regular,Regular,14,false,false,27163,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.available_pilots_header,PilotReadyTextEntry3,Agency Regular,Regular,14,false,false,27165,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.pilot_info_rank,PilotReadyTextEntry4,Agency Regular,Regular,14,false,false,27166,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.pilot_info_targeting_number,PilotReadyTextEntry5,Agency Regular,Regular,14,false,false,27176,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.pilot_info_piloting_number,PilotReadyTextEntry6,Agency Regular,Regular,14,false,false,27176,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.pilot_info_kills_number,PilotReadyTextEntry7,Agency Regular,Regular,14,false,false,27176,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.pilot_name_header,PilotReadyTextEntry8,Agency Regular,Regular,14,false,false,27167,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.special_skill_1,PilotReadyTextEntry9,Agency Regular,Regular,14,false,false,27168,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.special_skill_2,PilotReadyTextEntry10,Agency Regular,Regular,14,false,false,27168,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.special_skill_3,PilotReadyTextEntry11,Agency Regular,Regular,14,false,false,27168,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.special_skill_4,PilotReadyTextEntry12,Agency Regular,Regular,14,false,false,27168,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_pr_layout.fit,GuiText,game.mcl_pr_layout.text.help_text,PilotReadyTextEntry13,Agency Regular,Regular,8,false,false,27177,arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sm.fit,GuiButton,game.mcl_sm.button.delete_button,Button0,Agency Regular,Regular,17,false,false,27658,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sm.fit,GuiButton,game.mcl_sm.button.cancel_button,Button1,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sm.fit,GuiButton,game.mcl_sm.button.save_button_this_should_say_load_for_load_mission_dialog,Button2,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sm.fit,GuiText,game.mcl_sm.text.main_header_text_save_game_should_say_load_game_for_load_game_dialog,Text0,Agency Regular,Regular,14,false,false,27655,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sm.fit,GuiText,game.mcl_sm.text.text_above_saved_game_list_reads_saved_game_list,Text1,Agency Regular,Regular,14,false,false,27658,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sm.fit,GuiText,game.mcl_sm.text.info_for_saved_game_goes_in_here,Text2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sm.fit,GuiText,game.mcl_sm.text.variant_name_for_list_box,AnimText,Agency Regular,Regular,11,false,false,27675,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sm.fit,GuiEditBox,game.mcl_sm.editbox.editable_text_for_saved_game_name_goes_here,Edit0,Agency Regular,Regular,14,false,false,27656,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sv.fit,GuiButton,game.mcl_sv.button.delete_button,Button0,Agency Regular,Regular,17,false,false,27658,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sv.fit,GuiButton,game.mcl_sv.button.cancel_button,Button1,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sv.fit,GuiButton,game.mcl_sv.button.save_button,Button2,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sv.fit,GuiText,game.mcl_sv.text.main_header_text_save_variant,Text0,Agency Regular,Regular,14,false,false,27655,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sv.fit,GuiText,game.mcl_sv.text.text_above_saved_variant_list_reads_variant_list,Text1,Agency Regular,Regular,14,false,false,27656,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sv.fit,GuiText,game.mcl_sv.text.variant_name_for_list_box,AnimText,Agency Regular,Regular,11,false,false,27656,use agencyfb11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sv.fit,GuiEditBox,game.mcl_sv.editbox.editable_text_for_saved_game_name_goes_here,Edit0,Agency Regular,Regular,14,false,false,27656,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sv_acceptchanges.fit,GuiButton,game.mcl_sv_acceptchanges.button.cancel_button,Button0,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sv_acceptchanges.fit,GuiButton,game.mcl_sv_acceptchanges.button.accept_button,Button1,Agency Regular,Regular,17,false,false,27655,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sv_acceptchanges.fit,GuiText,game.mcl_sv_acceptchanges.text.main_header_text_accept_changes,Text0,Agency Regular,Regular,14,false,false,27655,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sv_acceptchanges.fit,GuiText,game.mcl_sv_acceptchanges.text.text_above_info_text_box_reads_enter_a_name_for_this_particular_mech,Text1,Agency Regular,Regular,11,false,false,27672,this needs to be agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sv_acceptchanges.fit,GuiText,game.mcl_sv_acceptchanges.text.text_for_accept_changes_info,Text2,Agency Regular,Regular,11,false,false,27672,this needs to be agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcl_sv_acceptchanges.fit,GuiEditBox,game.mcl_sv_acceptchanges.editbox.editable_text_for_saved_game_name_goes_here,Edit0,Agency Regular,Regular,14,false,false,27656,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_1024.fit,GuiButton,game.mcui_keyref_1024.button.close_keyref_close_reference,Button0,Agency Regular,Regular,17,false,false,27621,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_1024.fit,GuiText,game.mcui_keyref_1024.text.main_header_text_keyboard_reference,Text0,Agency Regular,Regular,14,false,false,27655,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_1280.fit,GuiButton,game.mcui_keyref_1280.button.close_keyref_close_reference,Button0,Agency Regular,Regular,17,false,false,27621,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_1280.fit,GuiText,game.mcui_keyref_1280.text.main_header_text_keyboard_reference,Text0,Agency Regular,Regular,14,false,false,27655,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_1600.fit,GuiButton,game.mcui_keyref_1600.button.close_keyref_close_reference,Button0,Agency Regular,Regular,17,false,false,27621,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_1600.fit,GuiText,game.mcui_keyref_1600.text.main_header_text_keyboard_reference,Text0,Agency Regular,Regular,14,false,false,27655,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_640.fit,GuiButton,game.mcui_keyref_640.button.close_keyref_close_reference,Button0,Agency Regular,Regular,17,false,false,27621,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_640.fit,GuiText,game.mcui_keyref_640.text.main_header_text_keyboard_reference,Text0,Agency Regular,Regular,14,false,false,27655,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_800.fit,GuiButton,game.mcui_keyref_800.button.close_keyref_close_reference,Button0,Agency Regular,Regular,17,false,false,27621,use AgencyFB17,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_800.fit,GuiText,game.mcui_keyref_800.text.main_header_text_keyboard_reference,Text0,Agency Regular,Regular,14,false,false,27655,use agency fb 14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_entry.fit,GuiText,game.mcui_keyref_entry.text.key_s_all_caps,Text0,Agency Regular,Regular,11,false,false,27655,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_keyref_entry.fit,GuiText,game.mcui_keyref_entry.text.description_of_result,Text1,Agency Regular,Regular,11,false,false,27655,use agency fb 11,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text,MechNameText,Agency Regular,Regular,14,false,false,28000,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_01,VariantNameText,Agency Regular,Regular,14,false,false,28001,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_02,WeightText,Agency Regular,Regular,14,false,false,28002,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_03,CBillsText,Agency Regular,Regular,14,false,false,28003,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiButton,game.mcui_mr_layout.button.this_is_the_check_box_for_the_salvageable_mechs,SalvageAreaCheckBoxButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiButton,game.mcui_mr_layout.button.done_button_in_lower_right_corner,SalvageAreaButton0,Agency Regular,Regular,14,false,false,28004,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.big_title_text,SalvageAreaText0,Agency Regular,Regular,14,false,false,28005,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.check_the_mechs_you_wish_to_salvage,SalvageAreaText1,Agency Regular,Regular,14,false,false,28006,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.help_text,SalvageAreaText2,Agency Regular,Regular,14,false,false,28007,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.cbills_readout,SalvageAreaText3,Agency Regular,Regular,14,false,false,28008,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.mech_name,SalvageAreaMechText0,Agency Regular,Regular,14,false,false,28009,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.mech_payload,SalvageAreaMechText1,Agency Regular,Regular,14,false,false,28010,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.weight_number,SalvageAreaMechText2,Agency Regular,Regular,14,false,false,28011,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.armor_number,SalvageAreaMechText3,Agency Regular,Regular,14,false,false,28012,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.speed_number,SalvageAreaMechText4,Agency Regular,Regular,14,false,false,28013,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.jump_distance_number,SalvageAreaMechText5,Agency Regular,Regular,14,false,false,28014,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.range_short_med_or_long,SalvageAreaMechText6,Agency Regular,Regular,14,false,false,28015,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiButton,game.mcui_mr_layout.button.done_button_in_lower_right_corner_01,PilotReviewButton0,Agency Regular,Regular,14,false,false,28016,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.big_title_text_pilot_review,PilotReviewText0,Agency Regular,Regular,14,false,false,28017,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_04,PilotReviewMisc,Agency Regular,Regular,14,false,false,28018,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_05,KIAPilotNameText,Agency Regular,Regular,14,false,false,28019,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_06,KIARankText,Agency Regular,Regular,14,false,false,28020,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_07,KIAMissionsText,Agency Regular,Regular,14,false,false,28021,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_08,KIAKillsText,Agency Regular,Regular,14,false,false,28022,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_09,ActivePilotNameText,Agency Regular,Regular,14,false,false,28023,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_10,ActiveMissionsText,Agency Regular,Regular,14,false,false,28024,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_11,ActiveRankText,Agency Regular,Regular,14,false,false,28025,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_12,ActiveGunneryText,Agency Regular,Regular,14,false,false,28026,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_13,ActivePilotingText,Agency Regular,Regular,14,false,false,28027,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_14,ActiveKillsNameText,Agency Regular,Regular,14,false,false,28028,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.title,MedalAwardedHeader,Agency Regular,Regular,14,false,false,28029,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_15,MedalDescriptionText,Agency Regular,Regular,14,false,false,28030,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.title_01,PromotionHeader,Agency Regular,Regular,14,false,false,28031,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.title_bar,PromoteGadgetLeftText0,Agency Regular,Regular,14,false,false,28031,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.pilot_info_area_pilot_name,PromoteGadgetLeftText1,Agency Regular,Regular,14,false,false,28032,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.pilot_info_missions_entry,PromoteGadgetLeftText2,Agency Regular,Regular,14,false,false,28033,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.rank_title,PromoteGadgetLeftText3,Agency Regular,Regular,14,false,false,28034,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.gunnery_skill_number,PromoteGadgetLeftText4,Agency Regular,Regular,14,false,false,28035,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.piloting_skill_number,PromoteGadgetLeftText5,Agency Regular,Regular,14,false,false,28036,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.specialty_skill_entry_4,PromoteGadgetLeftText6,Agency Regular,Regular,14,false,false,28037,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.specialty_skill_header,PromoteGadgetLeftText7,Agency Regular,Regular,14,false,false,28037,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.specialty_skill_entry_1,PromoteGadgetLeftText8,Agency Regular,Regular,14,false,false,28037,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.specialty_skill_entry_2,PromoteGadgetLeftText9,Agency Regular,Regular,14,false,false,28037,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.specialty_skill_entry_3,PromoteGadgetLeftText10,Agency Regular,Regular,14,false,false,28037,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.specialty_skill_entry_4_01,PromoteGadgetLeftText11,Agency Regular,Regular,14,false,false,28037,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiButton,game.mcui_mr_layout.button.confirm_button_in_lower_right_corner,PromoteGadgetRightButton0,Agency Regular,Regular,14,false,false,28038,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiButton,game.mcui_mr_layout.button.this_is_the_radio_button_for_the_skill_entries,PromoteGadgetRightRadioButton,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.select_one_specialty_skill_from_below,PromoteGadgetRightText0,Agency Regular,Regular,14,false,false,28039,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_layout.fit,GuiText,game.mcui_mr_layout.text.text_16,SkillDescriptionText,Agency Regular,Regular,14,false,false,28040,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_salvageareaentrybox.fit,GuiButton,game.mcui_mr_salvageareaentrybox.button.this_is_the_check_box_for_the_salvageable_mechs,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_salvageareaentrybox.fit,GuiText,game.mcui_mr_salvageareaentrybox.text.mechnametext,Text0,Agency Regular,Regular,14,false,false,28000,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_salvageareaentrybox.fit,GuiText,game.mcui_mr_salvageareaentrybox.text.variantnametext,Text1,Agency Regular,Regular,14,false,false,28001,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_salvageareaentrybox.fit,GuiText,game.mcui_mr_salvageareaentrybox.text.weighttext,Text2,Agency Regular,Regular,14,false,false,28002,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_salvageareaentrybox.fit,GuiText,game.mcui_mr_salvageareaentrybox.text.cbillstext,Text3,Agency Regular,Regular,14,false,false,28003,use agencyfb14,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_specialtyskillsentrybox.fit,GuiButton,game.mcui_mr_specialtyskillsentrybox.button.this_is_the_radio_button_for_the_pilot_skill_entry_box,Button0,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/mcui_mr_specialtyskillsentrybox.fit,GuiText,game.mcui_mr_specialtyskillsentrybox.text.skill_header_and_info_text,Text0,Agency Regular,Regular,8,false,false,28041,use arialnarrow8,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.done_button_in_lower_right_corner,OptionsAreaButton0,Agency Regular,Regular,14,false,false,40036,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box,OptionsAreaButton1,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_01,OptionsAreaButton2,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_02,OptionsAreaButton3,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_03,OptionsAreaButton4,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_04,OptionsAreaButton5,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_05,OptionsAreaButton6,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_06,OptionsAreaButton7,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_07,OptionsAreaButton8,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_08,OptionsAreaButton9,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_09,OptionsAreaButton10,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_10,OptionsAreaButton11,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_11,OptionsAreaButton12,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_12,OptionsAreaButton13,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_13,OptionsAreaButton14,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_14,OptionsAreaButton15,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.this_is_the_check_box_15,OptionsAreaButton16,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiButton,game.options_layout.button.cancel_button,OptionsAreaButton17,Agency Regular,Regular,14,false,false,40036,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiText,game.options_layout.text.text,OptionsAreaText,Agency Regular,Regular,14,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiText,game.options_layout.text.text_01,OptionsTextEntry0,Agency Regular,Regular,14,false,false,40036,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiText,game.options_layout.text.text_02,OptionsTextEntry1,Agency Regular,Regular,14,false,false,40036,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiText,game.options_layout.text.text_03,OptionsTextEntry2,Agency Regular,Regular,14,false,false,40036,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiText,game.options_layout.text.text_04,OptionsTextEntry3,Agency Regular,Regular,14,false,false,40036,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiText,game.options_layout.text.text_05,OptionsTextEntry4,Agency Regular,Regular,14,false,false,40036,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiText,game.options_layout.text.text_06,OptionsTextEntry5,Agency Regular,Regular,14,false,false,40036,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiText,game.options_layout.text.text_07,OptionsTextEntry6,Agency Regular,Regular,14,false,false,40036,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiText,game.options_layout.text.text_08,OptionsTextEntry7,Agency Regular,Regular,14,false,false,40036,,true,false
+data/defs/ui/packages/legacy_imgui/game/options_layout.fit,GuiText,game.options_layout.text.text_09,OptionsTextEntry8,Agency Regular,Regular,14,false,false,40036,,true,false
+data/defs/ui/packages/legacy_imgui/mechlopedia/content_styles.fit,MechlopediaContentStyle,,,Agency Bold,Regular,14,false,false,,,false,true
+data/defs/ui/packages/legacy_imgui/mechlopedia/content_styles.fit,MechlopediaContentStyle,,,Agency Bold,Regular,12,false,false,,,false,true
+data/defs/ui/packages/legacy_imgui/mechlopedia/content_styles.fit,MechlopediaContentStyle,,,Agency Bold,Regular,17,false,false,,,false,true
+data/defs/ui/packages/legacy_imgui/mechlopedia/content_styles.fit,MechlopediaContentStyle,,,Agency Bold,Regular,15,false,false,,,false,true
+data/defs/ui/packages/legacy_imgui/mechlopedia/content_styles.fit,MechlopediaContentStyle,,,Liberation Sans,Regular,12,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/mechlopedia/content_styles.fit,MechlopediaContentStyle,,,Liberation Sans,Regular,11,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/mechlopedia/content_styles.fit,MechlopediaContentStyle,,,Liberation Sans,Regular,11,false,false,,,true,false
+data/defs/ui/packages/legacy_imgui/mechlopedia/content_styles.fit,MechlopediaContentStyle,,,Liberation Sans,Regular,11,false,false,,,true,false

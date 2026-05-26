@@ -1,0 +1,751 @@
+// MC2R ImGui FIT generated from legacy UI FIT.
+// Source: data/defs/ui/legacy/game/mcl_loadingscreen.fit
+// Legacy files remain source truth only; edit the generated ImGui FIT.
+
+GuiPage {
+    key = "game.mcl_loadingscreen"
+    title = "Game Mcl Loadingscreen"
+    sourceLegacyFit = "data/defs/ui/legacy/game/mcl_loadingscreen.fit"
+    sourceSystem = "game"
+    sourceScreen = "mcl_loadingscreen"
+    sourceKind = "legacy_screen"
+    layout = "absolute"
+    coordinateSpace = "screen_absolute"
+    localWidth = 800
+    localHeight = 600
+    mountOffset = "0,0"
+    editableSource = "generated_imgui_only"
+}
+
+GuiMeter {
+    key = "game.mcl_loadingscreen.meter.meter"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "LoadingBar"
+    legacyContext = "LOADING/WAIT SCREEN | for loading bar"
+    role = "meter"
+    layer = "control"
+    aliasOverride = "meter"
+    sourceControlType = "LoadingBar"
+    rect = "251,203,297,32"
+    legacyLocalRect = "251,203,297,32"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/MCL_LoadingScreen_014.png"
+    legacyTexture = "MCL_LoadingScreen_014.tga"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "251,203,297,32"
+    artRect = "251,203,297,32"
+    artLayer = "control_art"
+    uvX = 0
+    uvY = 0
+    uvWidth = 297
+    uvHeight = 32
+}
+
+GuiImage {
+    key = "game.mcl_loadingscreen.image.mcl_loadingscreen_15"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "WaitImage"
+    legacyContext = "for mp wait image"
+    role = "image"
+    layer = "art"
+    aliasOverride = "mcl_loadingscreen_15"
+    sourceControlType = "WaitImage"
+    rect = "244,165,312,80"
+    legacyLocalRect = "244,165,312,80"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_15.png"
+    legacyTexture = "mcl_loadingscreen_15.tga"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "244,165,312,80"
+    artRect = "244,165,312,80"
+    artLayer = "control_art"
+    uvX = 0
+    uvY = 0
+    uvWidth = 312
+    uvHeight = 80
+}
+
+GuiMetadata {
+    key = "game.mcl_loadingscreen.metadata.metadata"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObjects"
+    legacyContext = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    role = "metadata"
+    layer = "metadata"
+    aliasOverride = "metadata"
+    sourceControlType = "AnimObjects"
+    rect = "0,0,0,0"
+    legacyLocalRect = "0,0,0,0"
+    legacyRectSource = "xywh"
+    visible = false
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationtopin"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject0"
+    legacyComment = "(static) top"
+    legacyContext = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationTopIn"
+    sourceControlType = "AnimObject0"
+    rect = "0,0,256,256"
+    legacyLocalRect = "0,0,256,256"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_1.png"
+    legacyTexture = "mcl_loadingscreen_1"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "0,0,256,256"
+    artRect = "0,0,256,256"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationTopIn"
+    animationKeyframes = 2
+    animationLoops = false
+    animationInitialPos = "0,-360"
+    previewFrame = 0
+    uvX = 0
+    uvY = 0
+    uvWidth = 256
+    uvHeight = 256
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationtopin_01"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject1"
+    legacyComment = "(static) top"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationTopIn"
+    sourceControlType = "AnimObject1"
+    rect = "256,0,256,256"
+    legacyLocalRect = "256,0,256,256"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_2.png"
+    legacyTexture = "mcl_loadingscreen_2"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "256,0,256,256"
+    artRect = "256,0,256,256"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationTopIn"
+    animationKeyframes = 2
+    animationLoops = false
+    animationInitialPos = "0,-360"
+    previewFrame = 0
+    uvX = 0
+    uvY = 0
+    uvWidth = 256
+    uvHeight = 256
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationtopin_02"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject2"
+    legacyComment = "(static) top"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationTopIn"
+    sourceControlType = "AnimObject2"
+    rect = "512,0,256,256"
+    legacyLocalRect = "512,0,256,256"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_3.png"
+    legacyTexture = "mcl_loadingscreen_3"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "512,0,256,256"
+    artRect = "512,0,256,256"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationTopIn"
+    animationKeyframes = 2
+    animationLoops = false
+    animationInitialPos = "0,-360"
+    previewFrame = 0
+    uvX = 0
+    uvY = 0
+    uvWidth = 256
+    uvHeight = 256
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationtopin_03"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject3"
+    legacyComment = "(static) top"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationTopIn"
+    sourceControlType = "AnimObject3"
+    rect = "768,0,32,36"
+    legacyLocalRect = "768,0,32,36"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_4.png"
+    legacyTexture = "mcl_loadingscreen_4"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "768,0,32,36"
+    artRect = "768,0,32,36"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationTopIn"
+    animationKeyframes = 2
+    animationLoops = false
+    animationInitialPos = "0,-360"
+    previewFrame = 0
+    uvX = 122
+    uvY = 104
+    uvWidth = 32
+    uvHeight = 36
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationtopin_04"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject4"
+    legacyComment = "(static) top"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationTopIn"
+    sourceControlType = "AnimObject4"
+    rect = "134,256,122,104"
+    legacyLocalRect = "134,256,122,104"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_4.png"
+    legacyTexture = "mcl_loadingscreen_4"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "134,256,122,104"
+    artRect = "134,256,122,104"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationTopIn"
+    animationKeyframes = 2
+    animationLoops = false
+    animationInitialPos = "0,-360"
+    previewFrame = 0
+    uvX = 0
+    uvY = 104
+    uvWidth = 122
+    uvHeight = 104
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationtopin_05"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject5"
+    legacyComment = "(static) top"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationTopIn"
+    sourceControlType = "AnimObject5"
+    rect = "256,256,256,104"
+    legacyLocalRect = "256,256,256,104"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_4.png"
+    legacyTexture = "mcl_loadingscreen_4"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "256,256,256,104"
+    artRect = "256,256,256,104"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationTopIn"
+    animationKeyframes = 2
+    animationLoops = false
+    animationInitialPos = "0,-360"
+    previewFrame = 0
+    uvX = 0
+    uvY = 0
+    uvWidth = 256
+    uvHeight = 104
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationtopin_06"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject6"
+    legacyComment = "(static) top"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationTopIn"
+    sourceControlType = "AnimObject6"
+    rect = "512,256,154,104"
+    legacyLocalRect = "512,256,154,104"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_5.png"
+    legacyTexture = "mcl_loadingscreen_5"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "512,256,154,104"
+    artRect = "512,256,154,104"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationTopIn"
+    animationKeyframes = 2
+    animationLoops = false
+    animationInitialPos = "0,-360"
+    previewFrame = 0
+    uvX = 0
+    uvY = 0
+    uvWidth = 154
+    uvHeight = 104
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationbottomin"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject7"
+    legacyComment = "(static) bottom"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationBottomIn"
+    sourceControlType = "AnimObject7"
+    rect = "0,344,256,256"
+    legacyLocalRect = "0,344,256,256"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_6.png"
+    legacyTexture = "mcl_loadingscreen_6"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "0,344,256,256"
+    artRect = "0,344,256,256"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationBottomIn"
+    animationKeyframes = 2
+    animationLoops = false
+    animationInitialPos = "0,344"
+    previewFrame = 0
+    uvX = 0
+    uvY = 0
+    uvWidth = 256
+    uvHeight = 256
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationbottomin_01"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject8"
+    legacyComment = "(static) bottom"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationBottomIn"
+    sourceControlType = "AnimObject8"
+    rect = "256,344,256,256"
+    legacyLocalRect = "256,344,256,256"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_7.png"
+    legacyTexture = "mcl_loadingscreen_7"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "256,344,256,256"
+    artRect = "256,344,256,256"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationBottomIn"
+    animationKeyframes = 2
+    animationLoops = false
+    animationInitialPos = "0,344"
+    previewFrame = 0
+    uvX = 0
+    uvY = 0
+    uvWidth = 256
+    uvHeight = 256
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationbottomin_02"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject9"
+    legacyComment = "(static) bottom"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationBottomIn"
+    sourceControlType = "AnimObject9"
+    rect = "512,344,256,256"
+    legacyLocalRect = "512,344,256,256"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_8.png"
+    legacyTexture = "mcl_loadingscreen_8"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "512,344,256,256"
+    artRect = "512,344,256,256"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationBottomIn"
+    animationKeyframes = 2
+    animationLoops = false
+    animationInitialPos = "0,344"
+    previewFrame = 0
+    uvX = 0
+    uvY = 0
+    uvWidth = 256
+    uvHeight = 256
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationbottomin_03"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject10"
+    legacyComment = "(static) bottom"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationBottomIn"
+    sourceControlType = "AnimObject10"
+    rect = "768,558,32,42"
+    legacyLocalRect = "768,558,32,42"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_4.png"
+    legacyTexture = "mcl_loadingscreen_4"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "768,558,32,42"
+    artRect = "768,558,32,42"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationBottomIn"
+    animationKeyframes = 2
+    animationLoops = false
+    animationInitialPos = "0,344"
+    previewFrame = 0
+    uvX = 154
+    uvY = 104
+    uvWidth = 32
+    uvHeight = 42
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationleftin"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject11"
+    legacyComment = "(static) left"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationLeftIn"
+    sourceControlType = "AnimObject11"
+    rect = "0,0,193,256"
+    legacyLocalRect = "0,0,193,256"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_10.png"
+    legacyTexture = "mcl_loadingscreen_10"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "0,0,193,256"
+    artRect = "0,0,193,256"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationLeftIn"
+    animationKeyframes = 4
+    animationLoops = false
+    animationInitialPos = "-193,0"
+    previewFrame = 0
+    uvX = 0
+    uvY = 0
+    uvWidth = 193
+    uvHeight = 256
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationleftin_01"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject12"
+    legacyComment = "(static) left"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationLeftIn"
+    sourceControlType = "AnimObject12"
+    rect = "0,256,193,256"
+    legacyLocalRect = "0,256,193,256"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_11.png"
+    legacyTexture = "mcl_loadingscreen_11"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "0,256,193,256"
+    artRect = "0,256,193,256"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationLeftIn"
+    animationKeyframes = 4
+    animationLoops = false
+    animationInitialPos = "-193,0"
+    previewFrame = 0
+    uvX = 0
+    uvY = 0
+    uvWidth = 193
+    uvHeight = 256
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationleftin_02"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject13"
+    legacyComment = "(static) left"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationLeftIn"
+    sourceControlType = "AnimObject13"
+    rect = "0,512,193,88"
+    legacyLocalRect = "0,512,193,88"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_5.png"
+    legacyTexture = "mcl_loadingscreen_5"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "0,512,193,88"
+    artRect = "0,512,193,88"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationLeftIn"
+    animationKeyframes = 4
+    animationLoops = false
+    animationInitialPos = "-193,0"
+    previewFrame = 0
+    uvX = 0
+    uvY = 104
+    uvWidth = 193
+    uvHeight = 88
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationrightin"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject14"
+    legacyComment = "(static) right"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationRightIn"
+    sourceControlType = "AnimObject14"
+    rect = "607,0,193,256"
+    legacyLocalRect = "607,0,193,256"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_12.png"
+    legacyTexture = "mcl_loadingscreen_12"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "607,0,193,256"
+    artRect = "607,0,193,256"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationRightIn"
+    animationKeyframes = 4
+    animationLoops = false
+    animationInitialPos = "193,0"
+    previewFrame = 0
+    uvX = 0
+    uvY = 0
+    uvWidth = 193
+    uvHeight = 256
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationrightin_01"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject15"
+    legacyComment = "(static) right"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationRightIn"
+    sourceControlType = "AnimObject15"
+    rect = "607,256,193,256"
+    legacyLocalRect = "607,256,193,256"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_9.png"
+    legacyTexture = "mcl_loadingscreen_9"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "607,256,193,256"
+    artRect = "607,256,193,256"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationRightIn"
+    animationKeyframes = 4
+    animationLoops = false
+    animationInitialPos = "193,0"
+    previewFrame = 0
+    uvX = 0
+    uvY = 0
+    uvWidth = 193
+    uvHeight = 256
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationrightin_02"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject16"
+    legacyComment = "(static) right"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationRightIn"
+    sourceControlType = "AnimObject16"
+    rect = "607,512,193,40"
+    legacyLocalRect = "607,512,193,40"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_4.png"
+    legacyTexture = "mcl_loadingscreen_4"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "607,512,193,40"
+    artRect = "607,512,193,40"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationRightIn"
+    animationKeyframes = 4
+    animationLoops = false
+    animationInitialPos = "193,0"
+    previewFrame = 0
+    uvX = 0
+    uvY = 208
+    uvWidth = 193
+    uvHeight = 40
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationrightin_03"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject17"
+    legacyComment = "(static) right"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationRightIn"
+    sourceControlType = "AnimObject17"
+    rect = "607,552,193,48"
+    legacyLocalRect = "607,552,193,48"
+    legacyRectSource = "xywh"
+    texture = "data/art/gui/mcl_loadingscreen_5.png"
+    legacyTexture = "mcl_loadingscreen_5"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "607,552,193,48"
+    artRect = "607,552,193,48"
+    artLayer = "control_art"
+    legacyAnimation = "AnimationRightIn"
+    animationKeyframes = 4
+    animationLoops = false
+    animationInitialPos = "193,0"
+    previewFrame = 0
+    uvX = 0
+    uvY = 192
+    uvWidth = 193
+    uvHeight = "48d"
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationtop2in"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject18"
+    legacyComment = "(text)- \"LOADING... XXX%\""
+    legacyContext = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationTop2In"
+    sourceControlType = "AnimObject18"
+    rect = "249,171,296,24"
+    legacyLocalRect = "249,171,296,24"
+    legacyRectSource = "xywh"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "249,171,296,24"
+    legacyAnimation = "AnimationTop2In"
+    animationKeyframes = 2
+    animationLoops = false
+    animationInitialPos = "0,-360"
+    previewFrame = 0
+    textLegacyId = 27780
+    textKey = "legacy.mc2res.27780"
+    visibleText = "LOADING..."
+    textLegacySymbol = "IDS_LS_LOADING"
+    textSource = "mc2res"
+    textMissing = false
+    legacyColor = 0xff005392
+    outline = "FALSE"
+    legacyAlignment = 0
+    legacyFontComment = "use agency fb 17"
+}
+
+GuiAnimation {
+    key = "game.mcl_loadingscreen.animation.animationtop2in_01"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimObject19"
+    legacyComment = "(attribute meter)"
+    legacyContext = "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+    role = "animation"
+    layer = "art"
+    aliasOverride = "AnimationTop2In"
+    sourceControlType = "AnimObject19"
+    rect = "251,203,297,32"
+    legacyLocalRect = "251,203,297,32"
+    legacyRectSource = "xywh"
+    uiPackage = "legacy_imgui"
+    rectModel = "legacy_imgui.modern_rect_v1"
+    controlRect = "251,203,297,32"
+    legacyAnimation = "AnimationTop2In"
+    animationKeyframes = 2
+    animationLoops = false
+    animationInitialPos = "0,-360"
+    previewFrame = 0
+    legacyColor = 0xff43311C
+}
+
+GuiMetadata {
+    key = "game.mcl_loadingscreen.metadata.metadata_01"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimationTopOut"
+    role = "metadata"
+    layer = "metadata"
+    aliasOverride = "metadata"
+    sourceControlType = "AnimationTopOut"
+    rect = "0,0,0,0"
+    legacyLocalRect = "0,0,0,0"
+    legacyRectSource = "xywh"
+    visible = false
+}
+
+GuiMetadata {
+    key = "game.mcl_loadingscreen.metadata.metadata_02"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimationTop2Out"
+    role = "metadata"
+    layer = "metadata"
+    aliasOverride = "metadata"
+    sourceControlType = "AnimationTop2Out"
+    rect = "0,0,0,0"
+    legacyLocalRect = "0,0,0,0"
+    legacyRectSource = "xywh"
+    visible = false
+}
+
+GuiMetadata {
+    key = "game.mcl_loadingscreen.metadata.metadata_03"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimationBottomOut"
+    role = "metadata"
+    layer = "metadata"
+    aliasOverride = "metadata"
+    sourceControlType = "AnimationBottomOut"
+    rect = "0,0,0,0"
+    legacyLocalRect = "0,0,0,0"
+    legacyRectSource = "xywh"
+    visible = false
+}
+
+GuiMetadata {
+    key = "game.mcl_loadingscreen.metadata.metadata_04"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimationLeftOut"
+    role = "metadata"
+    layer = "metadata"
+    aliasOverride = "metadata"
+    sourceControlType = "AnimationLeftOut"
+    rect = "0,0,0,0"
+    legacyLocalRect = "0,0,0,0"
+    legacyRectSource = "xywh"
+    visible = false
+}
+
+GuiMetadata {
+    key = "game.mcl_loadingscreen.metadata.metadata_05"
+    pageKey = "game.mcl_loadingscreen"
+    legacySection = "AnimationRightOut"
+    role = "metadata"
+    layer = "metadata"
+    aliasOverride = "metadata"
+    sourceControlType = "AnimationRightOut"
+    rect = "0,0,0,0"
+    legacyLocalRect = "0,0,0,0"
+    legacyRectSource = "xywh"
+    visible = false
+}

@@ -1,0 +1,1838 @@
+/***************************************************************
+ * FILENAME: mechs.fit
+ * DESCRIPTION: Mech names and encyclopedia descriptions.
+ * GENERATED: 2026-05-18
+ * SOURCE: MC2_Remastered.zip / data/defs/text/en_us/mc2res_legacy.fit
+ * PHASE: Phase 3 shared Mechlopedia text FIT setup
+ * NOTE: FIT owns the words. Legacy IDs are preserved for bridge lookup.
+ ***************************************************************/
+
+// -----------------------------------------------------------------------------
+// Group: Anubis [anubis]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.anubis"
+    type = "mech"
+    groupKey = "anubis"
+    groupName = "Anubis"
+    roles = "description,name"
+    legacyIds = "28922,28956"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.anubis.name"
+    text = "ANUBIS"
+    legacyId = 28922
+    legacySymbol = "IDS_MECH_ANUBIS"
+    legacyKey = "legacy.mc2res.28922"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.anubis"
+    originalKey = "mechlopedia.mech.anubis.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "anubis"
+    groupName = "Anubis"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.anubis.description"
+    text = "House Liao deploys the Anubis, one of the fastest 'Mechs in production, as a scout. The Anubis is well equipped for skirmish tactics, using its Jump Jets and Long-Range Missiles to soften enemy forces from a safe distance.\n\nThe Anubis is not an effective choice for extended combat, but it can exact harsh retribution on commanders foolhardy enough to ignore it."
+    paragraphCount = 2
+    paragraph0 = "House Liao deploys the Anubis, one of the fastest 'Mechs in production, as a scout. The Anubis is well equipped for skirmish tactics, using its Jump Jets and Long-Range Missiles to soften enemy forces from a safe distance."
+    paragraph1 = "The Anubis is not an effective choice for extended combat, but it can exact harsh retribution on commanders foolhardy enough to ignore it."
+    legacyId = 28956
+    legacySymbol = "IDS_MECH_ANUBIS2"
+    legacyKey = "legacy.mc2res.28956"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.anubis2"
+    originalKey = "mechlopedia.mech.anubis.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "anubis"
+    groupName = "Anubis"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Atlas [atlas]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.atlas"
+    type = "mech"
+    groupKey = "atlas"
+    groupName = "Atlas"
+    roles = "description,name"
+    legacyIds = "28919,28953"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.atlas.name"
+    text = "ATLAS"
+    legacyId = 28919
+    legacySymbol = "IDS_MECH_ATLAS"
+    legacyKey = "legacy.mc2res.28919"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.atlas"
+    originalKey = "mechlopedia.mech.atlas.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "atlas"
+    groupName = "Atlas"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.atlas.description"
+    text = "Created from specs set down by General Kerensky himself, the Atlas was a powerful weapon in the arsenal of the Star League before the rise of the House Lords. Having seen combat action for several centuries, this design has been a dominant force in shaping Inner Sphere history.\n\nWeighing 100 tons, the Atlas shares the title with a few other 'Mechs of being the largest BattleMech in existence. Unsurpassed armor capacity and potent weaponry make it a tactical nightmare. To compensate for its slow speed, the Atlas carries powerful short- and long-range weapons, making it well prepared for any type of engagement."
+    paragraphCount = 2
+    paragraph0 = "Created from specs set down by General Kerensky himself, the Atlas was a powerful weapon in the arsenal of the Star League before the rise of the House Lords. Having seen combat action for several centuries, this design has been a dominant force in shaping Inner Sphere history."
+    paragraph1 = "Weighing 100 tons, the Atlas shares the title with a few other 'Mechs of being the largest BattleMech in existence. Unsurpassed armor capacity and potent weaponry make it a tactical nightmare. To compensate for its slow speed, the Atlas carries powerful short- and long-range weapons, making it well prepared for any type of engagement."
+    legacyId = 28953
+    legacySymbol = "IDS_MECH_ATLAS2"
+    legacyKey = "legacy.mc2res.28953"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.atlas2"
+    originalKey = "mechlopedia.mech.atlas.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "atlas"
+    groupName = "Atlas"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Blood Asp [blood_asp]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.blood_asp"
+    type = "mech"
+    groupKey = "blood_asp"
+    groupName = "Blood Asp"
+    roles = "description,name"
+    legacyIds = "28911,28945"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.blood_asp.name"
+    text = "BLOOD ASP"
+    legacyId = 28911
+    legacySymbol = "IDS_MECH_BLOODASP"
+    legacyKey = "legacy.mc2res.28911"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.bloodasp"
+    originalKey = "mechlopedia.mech.blood_asp.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "blood_asp"
+    groupName = "Blood Asp"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.blood_asp.description"
+    text = "Virtually unknown to the Inner Sphere, the Blood Asp was introduced recently by Clan Star Adder. Only a handful of these 'Mechs are known to be in Davion ownership, acquired during the assault on the Clan homeworld.\n\nOne of the first 'Mechs to field breakthrough Heavy Laser technology, the Blood Asp proves to be an offensive powerhouse. Delivering incredible damage at all ranges, the Blood Asp makes short work of any enemy regardless of size. All this firepower comes at the cost of mediocre armor protection, something that must be noted by commanders used to the durability of other assault 'Mechs."
+    paragraphCount = 2
+    paragraph0 = "Virtually unknown to the Inner Sphere, the Blood Asp was introduced recently by Clan Star Adder. Only a handful of these 'Mechs are known to be in Davion ownership, acquired during the assault on the Clan homeworld."
+    paragraph1 = "One of the first 'Mechs to field breakthrough Heavy Laser technology, the Blood Asp proves to be an offensive powerhouse. Delivering incredible damage at all ranges, the Blood Asp makes short work of any enemy regardless of size. All this firepower comes at the cost of mediocre armor protection, something that must be noted by commanders used to the durability of other assault 'Mechs."
+    legacyId = 28945
+    legacySymbol = "IDS_MECH_BLOODASP2"
+    legacyKey = "legacy.mc2res.28945"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.bloodasp2"
+    originalKey = "mechlopedia.mech.blood_asp.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "blood_asp"
+    groupName = "Blood Asp"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Bushwacker [bushwacker]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.bushwacker"
+    type = "mech"
+    groupKey = "bushwacker"
+    groupName = "Bushwacker"
+    roles = "description,name"
+    legacyIds = "28915,28949"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.bushwacker.name"
+    text = "BUSHWACKER"
+    legacyId = 28915
+    legacySymbol = "IDS_MECH_BUSHWACKER"
+    legacyKey = "legacy.mc2res.28915"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.bushwacker"
+    originalKey = "mechlopedia.mech.bushwacker.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "bushwacker"
+    groupName = "Bushwacker"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.bushwacker.description"
+    text = "Designed with flexibility in mind, the Bushwacker is often called the \"Jack-of-all-trades.\" Most commanders deploy it with an assortment of weapons in all ranges. Fast and maneuverable, it is ideal for reconnaissance missions.\n\nThe Bushwacker also offers intriguing possibilities in combat scenarios. With a variety of ballistic and energy weapons across all targeting ranges, the Bushwacker serves its pilots well on a variety of missions."
+    paragraphCount = 2
+    paragraph0 = "Designed with flexibility in mind, the Bushwacker is often called the \"Jack-of-all-trades.\" Most commanders deploy it with an assortment of weapons in all ranges. Fast and maneuverable, it is ideal for reconnaissance missions."
+    paragraph1 = "The Bushwacker also offers intriguing possibilities in combat scenarios. With a variety of ballistic and energy weapons across all targeting ranges, the Bushwacker serves its pilots well on a variety of missions."
+    legacyId = 28949
+    legacySymbol = "IDS_MECH_BUSHWACKER2"
+    legacyKey = "legacy.mc2res.28949"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.bushwacker2"
+    originalKey = "mechlopedia.mech.bushwacker.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "bushwacker"
+    groupName = "Bushwacker"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Catapult [catapult]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.catapult"
+    type = "mech"
+    groupKey = "catapult"
+    groupName = "Catapult"
+    roles = "description,name"
+    legacyIds = "28925,28959"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.catapult.name"
+    text = "CATAPULT"
+    legacyId = 28925
+    legacySymbol = "IDS_MECH_CATAPULT"
+    legacyKey = "legacy.mc2res.28925"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.catapult"
+    originalKey = "mechlopedia.mech.catapult.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "catapult"
+    groupName = "Catapult"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.catapult.description"
+    text = "The Catapult is the prototypical support 'Mech, carrying maximum long-range firepower, and is best used with other 'Mechs on the front lines. Its weak short-range weaponry and comparatively weak armor for a Heavy 'Mech make it vulnerable.\n\nA classic design, the Catapult loadout includes Long-Range Missile Racks, which can devastate opponents from a distance without the risk of opposing fire.\n\nJump jets and an effective complement of lasers make the Catapult flexible but slow on the battlefield. Capable of jumping out of range of short-range weapons or returning close volleys with laser blasts, few 'Mechs match the Catapult's deadly stalking prowess.\n\nWhen left alone too long, even against much smaller opponents, the Catapult's lack of defensive capabilities can become all too apparent."
+    paragraphCount = 4
+    paragraph0 = "The Catapult is the prototypical support 'Mech, carrying maximum long-range firepower, and is best used with other 'Mechs on the front lines. Its weak short-range weaponry and comparatively weak armor for a Heavy 'Mech make it vulnerable."
+    paragraph1 = "A classic design, the Catapult loadout includes Long-Range Missile Racks, which can devastate opponents from a distance without the risk of opposing fire."
+    paragraph2 = "Jump jets and an effective complement of lasers make the Catapult flexible but slow on the battlefield. Capable of jumping out of range of short-range weapons or returning close volleys with laser blasts, few 'Mechs match the Catapult's deadly stalking prowess."
+    paragraph3 = "When left alone too long, even against much smaller opponents, the Catapult's lack of defensive capabilities can become all too apparent."
+    legacyId = 28959
+    legacySymbol = "IDS_MECH_CATAPULT2"
+    legacyKey = "legacy.mc2res.28959"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.catapult2"
+    originalKey = "mechlopedia.mech.catapult.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "catapult"
+    groupName = "Catapult"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Cougar [cougar]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.cougar"
+    type = "mech"
+    groupKey = "cougar"
+    groupName = "Cougar"
+    roles = "description"
+    legacyIds = "28967"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.cougar.description"
+    text = "A redesign for the Clan Puma-class 'Mech, the Cougar has reduced acceleration compared to its predecessor but significantly increased firepower. Some opponents may mistake the Cougar for the original Puma, although few live to learn from their mistake.\n\nTypically outfitted with Large Pulse Lasers and Long-Range Missiles, the Cougar excels as a fire support platform. Weighing in at only 35 tons, multiple Cougars can inflict heavy damage if defended properly."
+    paragraphCount = 2
+    paragraph0 = "A redesign for the Clan Puma-class 'Mech, the Cougar has reduced acceleration compared to its predecessor but significantly increased firepower. Some opponents may mistake the Cougar for the original Puma, although few live to learn from their mistake."
+    paragraph1 = "Typically outfitted with Large Pulse Lasers and Long-Range Missiles, the Cougar excels as a fire support platform. Weighing in at only 35 tons, multiple Cougars can inflict heavy damage if defended properly."
+    legacyId = 28967
+    legacySymbol = "IDS_COUGAR"
+    legacyKey = "legacy.mc2res.28967"
+    source = "mechlopedia"
+    sourceKey = "unclassified.cougar"
+    originalKey = "mechlopedia.mech.cougar.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "cougar"
+    groupName = "Cougar"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "description_only; no paired name ID found in current legacy block"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Cougar Legacy Uller2 [cougar_legacy_uller2]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.cougar_legacy_uller2"
+    type = "mech"
+    groupKey = "cougar_legacy_uller2"
+    groupName = "Cougar Legacy Uller2"
+    roles = "description"
+    legacyIds = "28930"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.cougar_legacy_uller2.description"
+    text = "A redesign for the Clan Puma-class 'Mech, the Cougar has reduced acceleration compared to its predecessor but significantly increased firepower. Some opponents may mistake the Cougar for the original Puma, although few live to learn from their mistake.\n\nThe Cougar's excellent heat dissipation system allows it to mount extensive laser and missile weaponry, making this 'Mech a potent and lightweight fire support unit."
+    paragraphCount = 2
+    paragraph0 = "A redesign for the Clan Puma-class 'Mech, the Cougar has reduced acceleration compared to its predecessor but significantly increased firepower. Some opponents may mistake the Cougar for the original Puma, although few live to learn from their mistake."
+    paragraph1 = "The Cougar's excellent heat dissipation system allows it to mount extensive laser and missile weaponry, making this 'Mech a potent and lightweight fire support unit."
+    legacyId = 28930
+    legacySymbol = "IDS_MECH_ULLER2"
+    legacyKey = "legacy.mc2res.28930"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.uller2"
+    originalKey = "mechlopedia.mech.cougar_legacy_uller2.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "cougar_legacy_uller2"
+    groupName = "Cougar Legacy Uller2"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "description_only; no paired name in current 289xx name block"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Cyclops [cyclops]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.cyclops"
+    type = "mech"
+    groupKey = "cyclops"
+    groupName = "Cyclops"
+    roles = "description,name"
+    legacyIds = "28927,28961"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.cyclops.name"
+    text = "CYCLOPS"
+    legacyId = 28927
+    legacySymbol = "IDS_MECH_CYCLOPS"
+    legacyKey = "legacy.mc2res.28927"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.cyclops"
+    originalKey = "mechlopedia.mech.cyclops.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "cyclops"
+    groupName = "Cyclops"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.cyclops.description"
+    text = "House Liao's designers have updated the venerable Cyclops BattleMech with the most advanced communications and sensor hardware available. Able to tap into Liao's sophisticated satellite array even during combat situations, the Cyclops acts as the nerve center of a battle and mobile command center.\n\nIn combat, the Cyclops strikes strategically important targets from long range. Its weapons payload is not as impressive as that of other Assault-class 'Mechs but is more than adequate to handle most situations. "
+    paragraphCount = 2
+    paragraph0 = "House Liao's designers have updated the venerable Cyclops BattleMech with the most advanced communications and sensor hardware available. Able to tap into Liao's sophisticated satellite array even during combat situations, the Cyclops acts as the nerve center of a battle and mobile command center."
+    paragraph1 = "In combat, the Cyclops strikes strategically important targets from long range. Its weapons payload is not as impressive as that of other Assault-class 'Mechs but is more than adequate to handle most situations."
+    legacyId = 28961
+    legacySymbol = "IDS_MECH_CYCLOPS2"
+    legacyKey = "legacy.mc2res.28961"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.cyclops2"
+    originalKey = "mechlopedia.mech.cyclops.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "cyclops"
+    groupName = "Cyclops"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Enfield [enfield]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.enfield"
+    type = "mech"
+    groupKey = "enfield"
+    groupName = "Enfield"
+    roles = "description,name"
+    legacyIds = "28907,28941"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.enfield.name"
+    text = "ENFIELD"
+    legacyId = 28907
+    legacySymbol = "IDS_MECH_ENFEILD"
+    legacyKey = "legacy.mc2res.28907"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.enfeild"
+    originalKey = "mechlopedia.mech.enfield.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "enfield"
+    groupName = "Enfield"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.enfield.description"
+    text = "An effective medium-range fire-support 'Mech, the Enfield delivers a heavy blow in tandem with other 'Mechs. Commanders sacrifice relatively little drop weight to put an Enfield into battle and gain a nimble 'Mech with good weight-to-firepower ratio.\n\nMore than one battle team on Twycross praised the awesome combination of ballistic and energy firepower the Enfield adds to teams looking to maintain pace on medium-range missions."
+    paragraphCount = 2
+    paragraph0 = "An effective medium-range fire-support 'Mech, the Enfield delivers a heavy blow in tandem with other 'Mechs. Commanders sacrifice relatively little drop weight to put an Enfield into battle and gain a nimble 'Mech with good weight-to-firepower ratio."
+    paragraph1 = "More than one battle team on Twycross praised the awesome combination of ballistic and energy firepower the Enfield adds to teams looking to maintain pace on medium-range missions."
+    legacyId = 28941
+    legacySymbol = "IDS_MECH_ENFEILD2"
+    legacyKey = "legacy.mc2res.28941"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.enfeild2"
+    originalKey = "mechlopedia.mech.enfield.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "enfield"
+    groupName = "Enfield"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Fire Ant [fire_ant]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.fire_ant"
+    type = "mech"
+    groupKey = "fire_ant"
+    groupName = "Fire Ant"
+    roles = "description,name"
+    legacyIds = "28968,28969"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.fire_ant.name"
+    text = "FIRE ANT"
+    legacyId = 28968
+    legacySymbol = "IDS_FIREANT"
+    legacyKey = "legacy.mc2res.28968"
+    source = "mechlopedia"
+    sourceKey = "unclassified.fireant"
+    originalKey = "mechlopedia.mech.fire_ant.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "fire_ant"
+    groupName = "Fire Ant"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.fire_ant.description"
+    text = "Light, fast, and when deployed in number, the Fire Ant brings its Flamer Arrays to bear on 'Mech teams attacking fixed bases. Used extensively as a sentry, the Fire Ant fights relentlessly but rarely with the support of heavily armed 'Mechs.\n\nKeating Armaments took the contract to produce the Fire Ant and sprung a unique design. By conserving space and materials, Keating engineered an inexpensive 'Mech that could be produced in vast quantity and without depleting the armories of its customers. The equally inexpensive Flamer and Machine Gun Arrays arm the swarms of Fire Ants deployed in base defense."
+    paragraphCount = 2
+    paragraph0 = "Light, fast, and when deployed in number, the Fire Ant brings its Flamer Arrays to bear on 'Mech teams attacking fixed bases. Used extensively as a sentry, the Fire Ant fights relentlessly but rarely with the support of heavily armed 'Mechs."
+    paragraph1 = "Keating Armaments took the contract to produce the Fire Ant and sprung a unique design. By conserving space and materials, Keating engineered an inexpensive 'Mech that could be produced in vast quantity and without depleting the armories of its customers. The equally inexpensive Flamer and Machine Gun Arrays arm the swarms of Fire Ants deployed in base defense."
+    legacyId = 28969
+    legacySymbol = "IDS_FIREANT2"
+    legacyKey = "legacy.mc2res.28969"
+    source = "mechlopedia"
+    sourceKey = "unclassified.fireant2"
+    originalKey = "mechlopedia.mech.fire_ant.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "fire_ant"
+    groupName = "Fire Ant"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Highlander [highlander]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.highlander"
+    type = "mech"
+    groupKey = "highlander"
+    groupName = "Highlander"
+    roles = "description,name"
+    legacyIds = "28918,28952"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.highlander.name"
+    text = "HIGHLANDER"
+    legacyId = 28918
+    legacySymbol = "IDS_MECH_HIGHLANDER"
+    legacyKey = "legacy.mc2res.28918"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.highlander"
+    originalKey = "mechlopedia.mech.highlander.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "highlander"
+    groupName = "Highlander"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.highlander.description"
+    text = "The Highlander is an older Assault 'Mech equipped, surprisingly, with jump jets. For decades many Inner Sphere houses have used the Highlander as the backbone of countless mobile assaults. Though slow moving, its jump jets can carry it over almost any obstacle.\n\nMobility and diverse weaponry give the Highlander an advantage in many battle scenarios, from urban to barren. Jump jets permit quick tactical adjustments against forces strong in number, and the prospect of a combined laser and short-range missile barrage from one heavily armored 'Mech quickly complicates enemy strategy.\n\nThe Highlander's Gauss Rifle can seriously attenuate sentry or reconnaissance forces before the 'Mech enters the fray in earnest. The Highlander even handles harassing short-range units capably with the Machine Gun Array. Few 'Mechs perform so effectively on so many different battlefields."
+    paragraphCount = 3
+    paragraph0 = "The Highlander is an older Assault 'Mech equipped, surprisingly, with jump jets. For decades many Inner Sphere houses have used the Highlander as the backbone of countless mobile assaults. Though slow moving, its jump jets can carry it over almost any obstacle."
+    paragraph1 = "Mobility and diverse weaponry give the Highlander an advantage in many battle scenarios, from urban to barren. Jump jets permit quick tactical adjustments against forces strong in number, and the prospect of a combined laser and short-range missile barrage from one heavily armored 'Mech quickly complicates enemy strategy."
+    paragraph2 = "The Highlander's Gauss Rifle can seriously attenuate sentry or reconnaissance forces before the 'Mech enters the fray in earnest. The Highlander even handles harassing short-range units capably with the Machine Gun Array. Few 'Mechs perform so effectively on so many different battlefields."
+    legacyId = 28952
+    legacySymbol = "IDS_MECH_HIGHLANDER2"
+    legacyKey = "legacy.mc2res.28952"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.highlander2"
+    originalKey = "mechlopedia.mech.highlander.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "highlander"
+    groupName = "Highlander"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Hollander [hollander]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.hollander"
+    type = "mech"
+    groupKey = "hollander"
+    groupName = "Hollander"
+    roles = "description,name"
+    legacyIds = "28913,28947"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.hollander.name"
+    text = "HOLLANDER"
+    legacyId = 28913
+    legacySymbol = "IDS_MECH_HOLLANDER"
+    legacyKey = "legacy.mc2res.28913"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.hollander"
+    originalKey = "mechlopedia.mech.hollander.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "hollander"
+    groupName = "Hollander"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.hollander.description"
+    text = "Commanders who can afford to spare a last few tons in their dropships take advantage of the unique features offered by the Hollander. Often called the \"'Mech built around a gun,\" the Hollander weighs only 35 tons but boasts the accurate long-range devastation of a Dragon Fire Gauss Rifle on its right shoulder.\n\nPayload restrictions limit the armor and support weapons the Hollander can carry, so it's most useful when a battle group lacks long-range sniper power. With a small investment in weight and resources, commanders can put teams of enemy 'Mechs out of commission after just a few salvos. Even Assault 'Mechs reel under a Hollander barrage, weakened and vulnerable to attack from the Hollander's mates."
+    paragraphCount = 2
+    paragraph0 = "Commanders who can afford to spare a last few tons in their dropships take advantage of the unique features offered by the Hollander. Often called the \"'Mech built around a gun,\" the Hollander weighs only 35 tons but boasts the accurate long-range devastation of a Dragon Fire Gauss Rifle on its right shoulder."
+    paragraph1 = "Payload restrictions limit the armor and support weapons the Hollander can carry, so it's most useful when a battle group lacks long-range sniper power. With a small investment in weight and resources, commanders can put teams of enemy 'Mechs out of commission after just a few salvos. Even Assault 'Mechs reel under a Hollander barrage, weakened and vulnerable to attack from the Hollander's mates."
+    legacyId = 28947
+    legacySymbol = "IDS_MECH_HOLLANDER2"
+    legacyKey = "legacy.mc2res.28947"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.hollander2"
+    originalKey = "mechlopedia.mech.hollander.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "hollander"
+    groupName = "Hollander"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Hunchback [hunchback]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.hunchback"
+    type = "mech"
+    groupKey = "hunchback"
+    groupName = "Hunchback"
+    roles = "description,name"
+    legacyIds = "28914,28948"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.hunchback.name"
+    text = "HUNCHBACK"
+    legacyId = 28914
+    legacySymbol = "IDS_MECH_HUNCHBACK"
+    legacyKey = "legacy.mc2res.28914"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.hunchback"
+    originalKey = "mechlopedia.mech.hunchback.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "hunchback"
+    groupName = "Hunchback"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.hunchback.description"
+    text = "The Hunchback has an impressive record for tightly staged urban fighting, where its Heavy Autocannon is lethal at short range. Its armor is adequate for its weight class, but it is not sufficient for extended toe-to-toe combat with Heavy or Assault 'Mechs.\n\nIn the 3012 battle for the city of Paramus, Hunchbacks led the sweep-and-clear maneuvers that preceded entry of the main invasion force. More than capable of obliterating light garrison 'Mechs and establishing a beachhead while slower and more powerful 'Mechs closed in on the battle theater, the Hunchbacks acquitted themselves admirably against their foes.\n\nHunchbacks make an excellent 'Mech to fire the opening salvos of battle, especially when camouflage positions behind buildings can obscure them from long-range weapons fire."
+    paragraphCount = 3
+    paragraph0 = "The Hunchback has an impressive record for tightly staged urban fighting, where its Heavy Autocannon is lethal at short range. Its armor is adequate for its weight class, but it is not sufficient for extended toe-to-toe combat with Heavy or Assault 'Mechs."
+    paragraph1 = "In the 3012 battle for the city of Paramus, Hunchbacks led the sweep-and-clear maneuvers that preceded entry of the main invasion force. More than capable of obliterating light garrison 'Mechs and establishing a beachhead while slower and more powerful 'Mechs closed in on the battle theater, the Hunchbacks acquitted themselves admirably against their foes."
+    paragraph2 = "Hunchbacks make an excellent 'Mech to fire the opening salvos of battle, especially when camouflage positions behind buildings can obscure them from long-range weapons fire."
+    legacyId = 28948
+    legacySymbol = "IDS_MECH_HUNCHBACK2"
+    legacyKey = "legacy.mc2res.28948"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.hunchback2"
+    originalKey = "mechlopedia.mech.hunchback.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "hunchback"
+    groupName = "Hunchback"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Jagermech [jagermech]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.jagermech"
+    type = "mech"
+    groupKey = "jagermech"
+    groupName = "Jagermech"
+    roles = "description,name"
+    legacyIds = "28909,28943"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.jagermech.name"
+    text = "JAGERMECH"
+    legacyId = 28909
+    legacySymbol = "IDS_MECH_JAGERMECH"
+    legacyKey = "legacy.mc2res.28909"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.jagermech"
+    originalKey = "mechlopedia.mech.jagermech.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "jagermech"
+    groupName = "Jagermech"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.jagermech.description"
+    text = "The JagerMech has a prestigious heritage and a stable, if somewhat antiquated, design. As a long-range fire-support 'Mech, it rarely closes with its enemies, preferring to remain at long distances firing its Ultra Light Autocannons.\n\nCommanders often exploit a crushing barrage of JagerMech autocannon fire to open the door for lighter, nimbler 'Mechs or to rip open a seam on the battlefield in a concentrated heavyweight melee. Rarely outgunned and vulnerable principally when caught off guard in a face-to-face assault, the JagerMech is also a deadly defensive marksman against helicopter attack. Its fast-firing weapons change targets quickly and easily, making it effective against light vehicle swarms.\n\nWhen deployed without good short-range fire support, however, the JagerMech can be reduced to a nonentity on the battlefield. If deployed alone, it serves commanders best when kept well behind the lines."
+    paragraphCount = 3
+    paragraph0 = "The JagerMech has a prestigious heritage and a stable, if somewhat antiquated, design. As a long-range fire-support 'Mech, it rarely closes with its enemies, preferring to remain at long distances firing its Ultra Light Autocannons."
+    paragraph1 = "Commanders often exploit a crushing barrage of JagerMech autocannon fire to open the door for lighter, nimbler 'Mechs or to rip open a seam on the battlefield in a concentrated heavyweight melee. Rarely outgunned and vulnerable principally when caught off guard in a face-to-face assault, the JagerMech is also a deadly defensive marksman against helicopter attack. Its fast-firing weapons change targets quickly and easily, making it effective against light vehicle swarms."
+    paragraph2 = "When deployed without good short-range fire support, however, the JagerMech can be reduced to a nonentity on the battlefield. If deployed alone, it serves commanders best when kept well behind the lines."
+    legacyId = 28943
+    legacySymbol = "IDS_MECH_JAGERMECH2"
+    legacyKey = "legacy.mc2res.28943"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.jagermech2"
+    originalKey = "mechlopedia.mech.jagermech.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "jagermech"
+    groupName = "Jagermech"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Lao Hu [lao_hu]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.lao_hu"
+    type = "mech"
+    groupKey = "lao_hu"
+    groupName = "Lao Hu"
+    roles = "description,name"
+    legacyIds = "28926,28960"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.lao_hu.name"
+    text = "LAO HU"
+    legacyId = 28926
+    legacySymbol = "IDS_MECH_LAOHU"
+    legacyKey = "legacy.mc2res.28926"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.laohu"
+    originalKey = "mechlopedia.mech.lao_hu.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "lao_hu"
+    groupName = "Lao Hu"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.lao_hu.description"
+    text = "A relatively new design drafted at the Victoria Academy of Arms and Technology, the Lao Hu first entered service in 3062 during the St. Ives conflict. Its outstanding performance sealed its role as a powerful new weapon for House Liao.\n\nCombining excellent mobility, jump capability, and state-of-the-art heat dissipation technology, the Lao Hu is an aggressive and deadly fighter. Commanders often assign this unit to the front line, an area where many Liao 'Mechs do not excel."
+    paragraphCount = 2
+    paragraph0 = "A relatively new design drafted at the Victoria Academy of Arms and Technology, the Lao Hu first entered service in 3062 during the St. Ives conflict. Its outstanding performance sealed its role as a powerful new weapon for House Liao."
+    paragraph1 = "Combining excellent mobility, jump capability, and state-of-the-art heat dissipation technology, the Lao Hu is an aggressive and deadly fighter. Commanders often assign this unit to the front line, an area where many Liao 'Mechs do not excel."
+    legacyId = 28960
+    legacySymbol = "IDS_MECH_LAOHU2"
+    legacyKey = "legacy.mc2res.28960"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.laohu2"
+    originalKey = "mechlopedia.mech.lao_hu.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "lao_hu"
+    groupName = "Lao Hu"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Mad Cat [mad_cat]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.mad_cat"
+    type = "mech"
+    groupKey = "mad_cat"
+    groupName = "Mad Cat"
+    roles = "description,name"
+    legacyIds = "28910,28944"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.mad_cat.name"
+    text = "MAD CAT"
+    legacyId = 28910
+    legacySymbol = "IDS_MECH_MADCAT"
+    legacyKey = "legacy.mc2res.28910"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.madcat"
+    originalKey = "mechlopedia.mech.mad_cat.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "mad_cat"
+    groupName = "Mad Cat"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.mad_cat.description"
+    text = "Upon its first appearance to the Inner Sphere in the Oberon Confederation, ComStar named this impressive 'Mech the Mad Cat because it shares its hunched torso chassis with the old Marauder as well as the Catapult. Soon after, the Mad Cat gained an infamous reputation as a devastating opponent.\n\nA powerful mix of long-range weapons and speed; the Mad Cat often cripples enemies before they can even engage properly. Rushing tactics employed against other long-range 'Mechs prove suicidal against the Mad Cat, due to its excellent armor protection and arsenal of machine guns and lasers.\n\nMost closely associated with Clan Wolf, the Mad Cat has long been a symbol of Clan martial superiority. Although the fall of their homeworld has eliminated any immediate threat from the Clans, the appearance of the Mad Cat on a battlefield still unnerves even the most hardened mechwarrior."
+    paragraphCount = 3
+    paragraph0 = "Upon its first appearance to the Inner Sphere in the Oberon Confederation, ComStar named this impressive 'Mech the Mad Cat because it shares its hunched torso chassis with the old Marauder as well as the Catapult. Soon after, the Mad Cat gained an infamous reputation as a devastating opponent."
+    paragraph1 = "A powerful mix of long-range weapons and speed; the Mad Cat often cripples enemies before they can even engage properly. Rushing tactics employed against other long-range 'Mechs prove suicidal against the Mad Cat, due to its excellent armor protection and arsenal of machine guns and lasers."
+    paragraph2 = "Most closely associated with Clan Wolf, the Mad Cat has long been a symbol of Clan martial superiority. Although the fall of their homeworld has eliminated any immediate threat from the Clans, the appearance of the Mad Cat on a battlefield still unnerves even the most hardened mechwarrior."
+    legacyId = 28944
+    legacySymbol = "IDS_MECH_MADCAT2"
+    legacyKey = "legacy.mc2res.28944"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.madcat2"
+    originalKey = "mechlopedia.mech.mad_cat.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "mad_cat"
+    groupName = "Mad Cat"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Men Shen [men_shen]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.men_shen"
+    type = "mech"
+    groupKey = "men_shen"
+    groupName = "Men Shen"
+    roles = "description,name"
+    legacyIds = "28924,28958"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.men_shen.name"
+    text = "MEN SHEN"
+    legacyId = 28924
+    legacySymbol = "IDS_MECH_MENSHEN"
+    legacyKey = "legacy.mc2res.28924"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.menshen"
+    originalKey = "mechlopedia.mech.men_shen.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "men_shen"
+    groupName = "Men Shen"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.men_shen.description"
+    text = "Centuries ago, Men Shen were the door guards of Chinese mythology said to protect a house from evil. Today the Men Shen is a more than formidable sentry as well as an accomplished combatant.\n\nSome pilots call this 'Mech a \"Raven on steroids,\" as it has all of the Raven's electronic countermeasures (ECM) and sensor capabilities as well as considerably more firepower and superior armor. With advanced sensors, Men Shen can detect and even identify enemy forces long before they show up on enemy sensors, and with the ECM suite Men Shen can \"jam\" enemy sensors and escape detection completely. As with most Liao designs, the Men Shen is fast compared to other 'Mechs of similar weight.\n\nUnlike many scouts, the Men Shen will hold its own for some time in a stand-up fight. Deadly to many 'Mechs especially at long ranges with Pulse Lasers and long-range missiles aboard, it can track enemies at great length, jam their sensors, and arrive unannounced for a quick kill.\n\nMany commanders deploy the Men Shen as a solo reconnaissance unit or as a point 'Mech, forging ahead for engagement when part of a team."
+    paragraphCount = 4
+    paragraph0 = "Centuries ago, Men Shen were the door guards of Chinese mythology said to protect a house from evil. Today the Men Shen is a more than formidable sentry as well as an accomplished combatant."
+    paragraph1 = "Some pilots call this 'Mech a \"Raven on steroids,\" as it has all of the Raven's electronic countermeasures (ECM) and sensor capabilities as well as considerably more firepower and superior armor. With advanced sensors, Men Shen can detect and even identify enemy forces long before they show up on enemy sensors, and with the ECM suite Men Shen can \"jam\" enemy sensors and escape detection completely. As with most Liao designs, the Men Shen is fast compared to other 'Mechs of similar weight."
+    paragraph2 = "Unlike many scouts, the Men Shen will hold its own for some time in a stand-up fight. Deadly to many 'Mechs especially at long ranges with Pulse Lasers and long-range missiles aboard, it can track enemies at great length, jam their sensors, and arrive unannounced for a quick kill."
+    paragraph3 = "Many commanders deploy the Men Shen as a solo reconnaissance unit or as a point 'Mech, forging ahead for engagement when part of a team."
+    legacyId = 28958
+    legacySymbol = "IDS_MECH_MENSHEN2"
+    legacyKey = "legacy.mc2res.28958"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.menshen2"
+    originalKey = "mechlopedia.mech.men_shen.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "men_shen"
+    groupName = "Men Shen"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Raven [raven]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.raven"
+    type = "mech"
+    groupKey = "raven"
+    groupName = "Raven"
+    roles = "description,name"
+    legacyIds = "28921,28955"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.raven.name"
+    text = "RAVEN"
+    legacyId = 28921
+    legacySymbol = "IDS_MECH_RAVEN"
+    legacyKey = "legacy.mc2res.28921"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.raven"
+    originalKey = "mechlopedia.mech.raven.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "raven"
+    groupName = "Raven"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.raven.description"
+    text = "The Raven is a mobile sensor and electronic warfare specialist, carrying equipment to detect enemies at extreme ranges while blinding hostile sensor frequencies with its electronic countermeasures (ECM) suit. It is almost always accompanied by a team of 'Mechs, as it has limited offensive and defensive capabilities.\n\nHellespont Industries on the planet Sian perfected the Raven with the introduction of the Hermes 210 XL engine. Space saved with the smaller engine permits the Raven to carry the target acquisition and interference electronics that turn the tide of battle to its team.\n\nAlthough in combat it cannot offer much more than light firepower, the Raven's auxilary capabilities make this unit as valuable as any Assault-class 'Mech."
+    paragraphCount = 3
+    paragraph0 = "The Raven is a mobile sensor and electronic warfare specialist, carrying equipment to detect enemies at extreme ranges while blinding hostile sensor frequencies with its electronic countermeasures (ECM) suit. It is almost always accompanied by a team of 'Mechs, as it has limited offensive and defensive capabilities."
+    paragraph1 = "Hellespont Industries on the planet Sian perfected the Raven with the introduction of the Hermes 210 XL engine. Space saved with the smaller engine permits the Raven to carry the target acquisition and interference electronics that turn the tide of battle to its team."
+    paragraph2 = "Although in combat it cannot offer much more than light firepower, the Raven's auxilary capabilities make this unit as valuable as any Assault-class 'Mech."
+    legacyId = 28955
+    legacySymbol = "IDS_MECH_RAVEN2"
+    legacyKey = "legacy.mc2res.28955"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.raven2"
+    originalKey = "mechlopedia.mech.raven.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "raven"
+    groupName = "Raven"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Razorback [razorback]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.razorback"
+    type = "mech"
+    groupKey = "razorback"
+    groupName = "Razorback"
+    roles = "description,name"
+    legacyIds = "28912,28946"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.razorback.name"
+    text = "RAZORBACK"
+    legacyId = 28912
+    legacySymbol = "IDS_MECH_WEREWOLF28912"
+    legacyKey = "legacy.mc2res.28912"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.werewolf28912"
+    originalKey = "mechlopedia.mech.razorback.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "razorback"
+    groupName = "Razorback"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.razorback.description"
+    text = "The Razorback serves as a scout 'Mech for Steiner forces throughout the Inner Sphere. Fast and jump capable, this unit combines mobility with enough firepower to hold its own against other Light-class 'Mechs.\n\nTypically seen in advance of the main forces, the Razorback tracks enemies with its sensor equipment and directs the more powerful units toward their targets. It also serves as a base infiltration unit,  jumping over base walls to capture vulnerable control buildings inside, thus weakening the base for the main assault."
+    paragraphCount = 2
+    paragraph0 = "The Razorback serves as a scout 'Mech for Steiner forces throughout the Inner Sphere. Fast and jump capable, this unit combines mobility with enough firepower to hold its own against other Light-class 'Mechs."
+    paragraph1 = "Typically seen in advance of the main forces, the Razorback tracks enemies with its sensor equipment and directs the more powerful units toward their targets. It also serves as a base infiltration unit,  jumping over base walls to capture vulnerable control buildings inside, thus weakening the base for the main assault."
+    legacyId = 28946
+    legacySymbol = "IDS_MECH_WEREWOLF28913"
+    legacyKey = "legacy.mc2res.28946"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.werewolf28913"
+    originalKey = "mechlopedia.mech.razorback.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "razorback"
+    groupName = "Razorback"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Ryoken [ryoken]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.ryoken"
+    type = "mech"
+    groupKey = "ryoken"
+    groupName = "Ryoken"
+    roles = "description"
+    legacyIds = "28966"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.ryoken.description"
+    text = "Extended-Range Lasers make the Ryoken a powerful fire platform. If given the chance to establish a secure position where it can open fire on exposed targets in support of its mates, the Ryoken can easily command a battlefield.\n\nHistorically a multifaceted 'Mech for Clan Smoke Jaguar and other clans, the Ryoken now offers commanders a wealth of deployment options. It is capable of covering a fair amount of territory and is devastatingly effective when given the advantage of surprise.\n\nEven-tempered pilots can turn the tables on this 'Mech if they face down the heavy opening barrage it delivers and then place their shots carefully."
+    paragraphCount = 3
+    paragraph0 = "Extended-Range Lasers make the Ryoken a powerful fire platform. If given the chance to establish a secure position where it can open fire on exposed targets in support of its mates, the Ryoken can easily command a battlefield."
+    paragraph1 = "Historically a multifaceted 'Mech for Clan Smoke Jaguar and other clans, the Ryoken now offers commanders a wealth of deployment options. It is capable of covering a fair amount of territory and is devastatingly effective when given the advantage of surprise."
+    paragraph2 = "Even-tempered pilots can turn the tables on this 'Mech if they face down the heavy opening barrage it delivers and then place their shots carefully."
+    legacyId = 28966
+    legacySymbol = "IDS_RYOKEN"
+    legacyKey = "legacy.mc2res.28966"
+    source = "mechlopedia"
+    sourceKey = "unclassified.ryoken"
+    originalKey = "mechlopedia.mech.ryoken.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "ryoken"
+    groupName = "Ryoken"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "description_only; no paired name ID found in current legacy block"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Sha Yu [sha_yu]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.sha_yu"
+    type = "mech"
+    groupKey = "sha_yu"
+    groupName = "Sha Yu"
+    roles = "description,name"
+    legacyIds = "28920,28954"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.sha_yu.name"
+    text = "SHA YU"
+    legacyId = 28920
+    legacySymbol = "IDS_MECH_SHAYU"
+    legacyKey = "legacy.mc2res.28920"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.shayu"
+    originalKey = "mechlopedia.mech.sha_yu.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "sha_yu"
+    groupName = "Sha Yu"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.sha_yu.description"
+    text = "The lightning-quick Sha Yu reaches an impressive maximum speed of 119 kilometers per hour, making it one of the fastest 'Mechs in its weight class. Combined with jump capability, the Sha Yu offers unequal mobility without sacrificing combat effectiveness. With a blend of firepower and speed, this unit sees much of its action as an interceptor or emergency reinforcement.\n\nA new addition to Liao forces, the Sha Yu remains largely unrecognized on the battlefield. Unsure of its capabilities, many MechWarriors are left guessing on how to deal with it. Some theorize that House Liao has kept Sha Yu production numbers purposely low in order to take maximum advantage of the element of suprise."
+    paragraphCount = 2
+    paragraph0 = "The lightning-quick Sha Yu reaches an impressive maximum speed of 119 kilometers per hour, making it one of the fastest 'Mechs in its weight class. Combined with jump capability, the Sha Yu offers unequal mobility without sacrificing combat effectiveness. With a blend of firepower and speed, this unit sees much of its action as an interceptor or emergency reinforcement."
+    paragraph1 = "A new addition to Liao forces, the Sha Yu remains largely unrecognized on the battlefield. Unsure of its capabilities, many MechWarriors are left guessing on how to deal with it. Some theorize that House Liao has kept Sha Yu production numbers purposely low in order to take maximum advantage of the element of suprise."
+    legacyId = 28954
+    legacySymbol = "IDS_MECH_SHAYU2"
+    legacyKey = "legacy.mc2res.28954"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.shayu2"
+    originalKey = "mechlopedia.mech.sha_yu.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "sha_yu"
+    groupName = "Sha Yu"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Shadow Cat [shadow_cat]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.shadow_cat"
+    type = "mech"
+    groupKey = "shadow_cat"
+    groupName = "Shadow Cat"
+    roles = "description,name"
+    legacyIds = "28906,28940"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.shadow_cat.name"
+    text = "SHADOW CAT"
+    legacyId = 28906
+    legacySymbol = "IDS_MECH_SHADOWCAT"
+    legacyKey = "legacy.mc2res.28906"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.shadowcat"
+    originalKey = "mechlopedia.mech.shadow_cat.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "shadow_cat"
+    groupName = "Shadow Cat"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.shadow_cat.description"
+    text = "Few other Medium 'Mechs boast a design honed so close to perfection as the Shadow Cat. It carries a Gauss Rifle, which is surprising for a 'Mech this light, along with good support weapons. With adequate armor and unusually fast acceleration, this 'Mech is ideal for reconnaissance missions.\n\nOn Luthien, outposts relayed news of approaching enemy forces led by Shadow Cats, only to be destroyed before their transmissions could finish. The Shadow Cat's top speed is tough to match for almost any other 'Mech.\n\nWith long-range weapons, jump jets, and blistering top speed, the Shadow Cat not only serves commanders well as an information-gathering 'Mech when sent to reconnoiter enemy positions, but it also can lay waste to structures and small groups of Light 'Mechs used as sentries.\n\nMany commanders have boasted in victory that the Shadow Cat devalues its own intelligence data, by destroying the very units it identifies for reports to headquarters."
+    paragraphCount = 4
+    paragraph0 = "Few other Medium 'Mechs boast a design honed so close to perfection as the Shadow Cat. It carries a Gauss Rifle, which is surprising for a 'Mech this light, along with good support weapons. With adequate armor and unusually fast acceleration, this 'Mech is ideal for reconnaissance missions."
+    paragraph1 = "On Luthien, outposts relayed news of approaching enemy forces led by Shadow Cats, only to be destroyed before their transmissions could finish. The Shadow Cat's top speed is tough to match for almost any other 'Mech."
+    paragraph2 = "With long-range weapons, jump jets, and blistering top speed, the Shadow Cat not only serves commanders well as an information-gathering 'Mech when sent to reconnoiter enemy positions, but it also can lay waste to structures and small groups of Light 'Mechs used as sentries."
+    paragraph3 = "Many commanders have boasted in victory that the Shadow Cat devalues its own intelligence data, by destroying the very units it identifies for reports to headquarters."
+    legacyId = 28940
+    legacySymbol = "IDS_MECH_SHADOWCAT2"
+    legacyKey = "legacy.mc2res.28940"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.shadowcat2"
+    originalKey = "mechlopedia.mech.shadow_cat.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "shadow_cat"
+    groupName = "Shadow Cat"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Shootist [shootist]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.shootist"
+    type = "mech"
+    groupKey = "shootist"
+    groupName = "Shootist"
+    roles = "description,name"
+    legacyIds = "28916,28950"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.shootist.name"
+    text = "SHOOTIST"
+    legacyId = 28916
+    legacySymbol = "IDS_SHOOTIST"
+    legacyKey = "legacy.mc2res.28916"
+    source = "mechlopedia"
+    sourceKey = "unclassified.shootist"
+    originalKey = "mechlopedia.mech.shootist.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/pilots.fit"
+    originalCategory = "pilots"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "shootist"
+    groupName = "Shootist"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.shootist.description"
+    text = "The name Shootist is somewhat misleading for this 'Mech, because it boasts superior armor protection as well as abundant firepower. The Shootist is clearly designed to withstand enough punishment to close in with their target and destroy them with powerful short range weaponry. Every location on the Shootist chassis is extremely well protected, although a concentrated salvo could breach the rear torso.\n\nBut the biggest advantage the Shootist affords commanders may not be in its ample armor or weapons, but in its low cost. Economic design considerations keep the Shootist priced well below other 'Mechs its size. "
+    paragraphCount = 2
+    paragraph0 = "The name Shootist is somewhat misleading for this 'Mech, because it boasts superior armor protection as well as abundant firepower. The Shootist is clearly designed to withstand enough punishment to close in with their target and destroy them with powerful short range weaponry. Every location on the Shootist chassis is extremely well protected, although a concentrated salvo could breach the rear torso."
+    paragraph1 = "But the biggest advantage the Shootist affords commanders may not be in its ample armor or weapons, but in its low cost. Economic design considerations keep the Shootist priced well below other 'Mechs its size."
+    legacyId = 28950
+    legacySymbol = "IDS_SHOOTIST2"
+    legacyKey = "legacy.mc2res.28950"
+    source = "mechlopedia"
+    sourceKey = "unclassified.shootist2"
+    originalKey = "mechlopedia.mech.shootist.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/pilots.fit"
+    originalCategory = "pilots"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "shootist"
+    groupName = "Shootist"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Starslayer [starslayer]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.starslayer"
+    type = "mech"
+    groupKey = "starslayer"
+    groupName = "Starslayer"
+    roles = "description,name"
+    legacyIds = "28923,28957"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.starslayer.name"
+    text = "STARSLAYER"
+    legacyId = 28923
+    legacySymbol = "IDS_MECH_STARSLAYER"
+    legacyKey = "legacy.mc2res.28923"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.starslayer"
+    originalKey = "mechlopedia.mech.starslayer.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "starslayer"
+    groupName = "Starslayer"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.starslayer.description"
+    text = "An aging design dating back to 2765, this BattleMech still sees service today with upgraded equipment. Dependable and resilient, the Starslayer has shown itself to be a work horse capable of various duties.\n\nHousing mostly energy weapons and excellent armor, the Starslayer is more than capable of winning extended firefights. And with the added mobility of its jump jets, the Starslayer performs well in most situations."
+    paragraphCount = 2
+    paragraph0 = "An aging design dating back to 2765, this BattleMech still sees service today with upgraded equipment. Dependable and resilient, the Starslayer has shown itself to be a work horse capable of various duties."
+    paragraph1 = "Housing mostly energy weapons and excellent armor, the Starslayer is more than capable of winning extended firefights. And with the added mobility of its jump jets, the Starslayer performs well in most situations."
+    legacyId = 28957
+    legacySymbol = "IDS_MECH_STARSLAYER2"
+    legacyKey = "legacy.mc2res.28957"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.starslayer2"
+    originalKey = "mechlopedia.mech.starslayer.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "starslayer"
+    groupName = "Starslayer"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Thor [thor]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.thor"
+    type = "mech"
+    groupKey = "thor"
+    groupName = "Thor"
+    roles = "description"
+    legacyIds = "28965"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.thor.description"
+    text = "Often employed by the Clanners of Jade Falcon, the Thor is a favorite among aggressive mechwarriors who require a 'Mech capable of closing quickly and finishing an opponent. Possessing a powerful engine and jump capable, the Thor performs its duties easily with the aid of an Ultra Heavy Autocannon and Streak Short-Range Missiles.\n\nThe Thor sees use in numerous roles by commanders, from fire support to shock trooper. But in all of its configurations, the Thor is known for excellent mobility and relentless weapon fire. "
+    paragraphCount = 2
+    paragraph0 = "Often employed by the Clanners of Jade Falcon, the Thor is a favorite among aggressive mechwarriors who require a 'Mech capable of closing quickly and finishing an opponent. Possessing a powerful engine and jump capable, the Thor performs its duties easily with the aid of an Ultra Heavy Autocannon and Streak Short-Range Missiles."
+    paragraph1 = "The Thor sees use in numerous roles by commanders, from fire support to shock trooper. But in all of its configurations, the Thor is known for excellent mobility and relentless weapon fire."
+    legacyId = 28965
+    legacySymbol = "IDS_THOR"
+    legacyKey = "legacy.mc2res.28965"
+    source = "mechlopedia"
+    sourceKey = "unclassified.thor"
+    originalKey = "mechlopedia.mech.thor.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "thor"
+    groupName = "Thor"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "description_only; no paired name ID found in current legacy block"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Uller [uller]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.uller"
+    type = "mech"
+    groupKey = "uller"
+    groupName = "Uller"
+    roles = "description,name"
+    legacyIds = "28904,28962"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.uller.name"
+    text = "ULLER"
+    legacyId = 28904
+    legacySymbol = "IDS_MECH_ULLER"
+    legacyKey = "legacy.mc2res.28904"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.uller"
+    originalKey = "mechlopedia.mech.uller.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "uller"
+    groupName = "Uller"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.uller.description"
+    text = "Named after the Norse god of archery, the Uller is one of the few Light 'Mechs that can hold its own against Medium 'Mechs. With a weapons loadout of mixed ranges and impressive speed, the Uller is one of the most versatile 'Mechs available.\n\nOften seen in the field with surprisingly heavy weapons, some commanders count on the Uller to level other Light 'Mechs quickly.\n\nClose fighting with multiple 'Mechs of any tonnage will quickly wear out the Uller's armor and ammunition, but when scouting, providing long-range fire support in spot duty, or offering other combat support it serves its commanders well."
+    paragraphCount = 3
+    paragraph0 = "Named after the Norse god of archery, the Uller is one of the few Light 'Mechs that can hold its own against Medium 'Mechs. With a weapons loadout of mixed ranges and impressive speed, the Uller is one of the most versatile 'Mechs available."
+    paragraph1 = "Often seen in the field with surprisingly heavy weapons, some commanders count on the Uller to level other Light 'Mechs quickly."
+    paragraph2 = "Close fighting with multiple 'Mechs of any tonnage will quickly wear out the Uller's armor and ammunition, but when scouting, providing long-range fire support in spot duty, or offering other combat support it serves its commanders well."
+    legacyId = 28962
+    legacySymbol = "IDS_MECH_ULLER3"
+    legacyKey = "legacy.mc2res.28962"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.uller3"
+    originalKey = "mechlopedia.mech.uller.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "uller"
+    groupName = "Uller"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Urbanmech [urbanmech]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.urbanmech"
+    type = "mech"
+    groupKey = "urbanmech"
+    groupName = "Urbanmech"
+    roles = "description,name"
+    legacyIds = "28970,28963"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.urbanmech.name"
+    text = "URBANMECH"
+    legacyId = 28970
+    legacySymbol = "IDS_MECH_URBANMECH"
+    legacyKey = "legacy.mc2res.28970"
+    source = "mechlopedia"
+    sourceKey = "unclassified.urbanmech"
+    originalKey = "mechlopedia.mech.urbanmech.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "urbanmech"
+    groupName = "Urbanmech"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.urbanmech.description"
+    text = "Short and armless, the UrbanMech presents a difficult profile to target acquisition systems. Especially effective in crowded urban environments, as its name implies, the UrbanMech can leap from place to place between buildings and unleash the potent Imperator-B Autocannon on unsuspecting 'Mechs.\n\nHistorically used in groups deployed in wide array, the UrbanMech takes quick cover, snipes relentlessly at opponents, and regroups at the next skirmish line. The low cost of this unit allows commanders to field large numbers of these units without problem."
+    paragraphCount = 2
+    paragraph0 = "Short and armless, the UrbanMech presents a difficult profile to target acquisition systems. Especially effective in crowded urban environments, as its name implies, the UrbanMech can leap from place to place between buildings and unleash the potent Imperator-B Autocannon on unsuspecting 'Mechs."
+    paragraph1 = "Historically used in groups deployed in wide array, the UrbanMech takes quick cover, snipes relentlessly at opponents, and regroups at the next skirmish line. The low cost of this unit allows commanders to field large numbers of these units without problem."
+    legacyId = 28963
+    legacySymbol = "IDS_URBANMECH2"
+    legacyKey = "legacy.mc2res.28963"
+    source = "mechlopedia"
+    sourceKey = "unclassified.urbanmech2"
+    originalKey = "mechlopedia.mech.urbanmech.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/messages.fit"
+    originalCategory = "messages"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "urbanmech"
+    groupName = "Urbanmech"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Vulture [vulture]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.vulture"
+    type = "mech"
+    groupKey = "vulture"
+    groupName = "Vulture"
+    roles = "description,name"
+    legacyIds = "28908,28942"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.vulture.name"
+    text = "VULTURE"
+    legacyId = 28908
+    legacySymbol = "IDS_MECH_VULTURE"
+    legacyKey = "legacy.mc2res.28908"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.vulture"
+    originalKey = "mechlopedia.mech.vulture.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "vulture"
+    groupName = "Vulture"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.vulture.description"
+    text = "The fire-support Vulture can pound enemies from a distance with its long-range missile (LRM) pods. If anything survives, it can finish the job with its ample laser weaponry. Methodical 'Mech pilots can exploit the massive missile racks on the Vulture's shoulders.\n\nWhen raging battles prevent opposing forces from targeting it, the Vulture can stay out of range of smaller guns on an overlooking ridge and shower ordnance on its foes. When it can escape detection long enough to launch volleys, its missiles can wreak havoc on 'Mech battle groups on the march.\n\nWhen armed with Clan Large Pulse Lasers and Machine Gun (MG) Arrays in addition to the LRM Racks, the Vulture can handle mop-up duty on the battlefield. Without heavy short-range weaponry, however, the Vulture remains vulnerable to rushing tactics from opposing forces that fight through the missile and laser fire."
+    paragraphCount = 3
+    paragraph0 = "The fire-support Vulture can pound enemies from a distance with its long-range missile (LRM) pods. If anything survives, it can finish the job with its ample laser weaponry. Methodical 'Mech pilots can exploit the massive missile racks on the Vulture's shoulders."
+    paragraph1 = "When raging battles prevent opposing forces from targeting it, the Vulture can stay out of range of smaller guns on an overlooking ridge and shower ordnance on its foes. When it can escape detection long enough to launch volleys, its missiles can wreak havoc on 'Mech battle groups on the march."
+    paragraph2 = "When armed with Clan Large Pulse Lasers and Machine Gun (MG) Arrays in addition to the LRM Racks, the Vulture can handle mop-up duty on the battlefield. Without heavy short-range weaponry, however, the Vulture remains vulnerable to rushing tactics from opposing forces that fight through the missile and laser fire."
+    legacyId = 28942
+    legacySymbol = "IDS_MECH_VULTURE2"
+    legacyKey = "legacy.mc2res.28942"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.vulture2"
+    originalKey = "mechlopedia.mech.vulture.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "vulture"
+    groupName = "Vulture"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Wolfhound [wolfhound]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.wolfhound"
+    type = "mech"
+    groupKey = "wolfhound"
+    groupName = "Wolfhound"
+    roles = "description,name"
+    legacyIds = "28905,28939"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.wolfhound.name"
+    text = "WOLFHOUND"
+    legacyId = 28905
+    legacySymbol = "IDS_MECH_WOLFHOUND"
+    legacyKey = "legacy.mc2res.28905"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.wolfhound"
+    originalKey = "mechlopedia.mech.wolfhound.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "wolfhound"
+    groupName = "Wolfhound"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.wolfhound.description"
+    text = "A Light 'Mech built more for combat than scouting, the Wolfhound design complements an array of energy weapons with excellent armor for a 'Mech in its class.\n\nTough, fast, and jump capable, the Wolfhound excels at base assault operations and combat in rugged terrain. Multiple lasers allow it to dispatch tanks and combat vehicles quickly, while the Large Laser allows it to combat 'Mech threats.\n\nConsidered by many experts as a high-performance unit, the Wolfhound is employed by some of the most famous mercenaries in the Inner Sphere, including the notorious Wolf's Dragoons."
+    paragraphCount = 3
+    paragraph0 = "A Light 'Mech built more for combat than scouting, the Wolfhound design complements an array of energy weapons with excellent armor for a 'Mech in its class."
+    paragraph1 = "Tough, fast, and jump capable, the Wolfhound excels at base assault operations and combat in rugged terrain. Multiple lasers allow it to dispatch tanks and combat vehicles quickly, while the Large Laser allows it to combat 'Mech threats."
+    paragraph2 = "Considered by many experts as a high-performance unit, the Wolfhound is employed by some of the most famous mercenaries in the Inner Sphere, including the notorious Wolf's Dragoons."
+    legacyId = 28939
+    legacySymbol = "IDS_MECH_WOLFHOUND2"
+    legacyKey = "legacy.mc2res.28939"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.wolfhound2"
+    originalKey = "mechlopedia.mech.wolfhound.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "wolfhound"
+    groupName = "Wolfhound"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Wolfhound Duplicate [wolfhound_duplicate]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.wolfhound_duplicate"
+    type = "mech"
+    groupKey = "wolfhound_duplicate"
+    groupName = "Wolfhound Duplicate"
+    roles = "description"
+    legacyIds = "28964"
+    recordCount = 1
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.wolfhound_duplicate.description"
+    text = "A light 'Mech built more for combat than scouting, the Wolfhound design complements an array of energy weapons with excellent armor for a 'Mech in its class.\n\nTough, fast, and jump capable; the Wolfhound excels at base assault operations and combat in rugged terrain. Multiple lasers allow it to dispatch tanks and combat vehicles quickly, while the Large Laser is allow it to combat 'Mech threats.\n\nConsidered by many experts as a high performance unit, the Wolfhound is employed by some of the most famous mercenaries in the Inner Sphere, including the notorious Wolf's Dragoons."
+    paragraphCount = 3
+    paragraph0 = "A light 'Mech built more for combat than scouting, the Wolfhound design complements an array of energy weapons with excellent armor for a 'Mech in its class."
+    paragraph1 = "Tough, fast, and jump capable; the Wolfhound excels at base assault operations and combat in rugged terrain. Multiple lasers allow it to dispatch tanks and combat vehicles quickly, while the Large Laser is allow it to combat 'Mech threats."
+    paragraph2 = "Considered by many experts as a high performance unit, the Wolfhound is employed by some of the most famous mercenaries in the Inner Sphere, including the notorious Wolf's Dragoons."
+    legacyId = 28964
+    legacySymbol = "IDS_WOLFHOUND"
+    legacyKey = "legacy.mc2res.28964"
+    source = "mechlopedia"
+    sourceKey = "unclassified.wolfhound"
+    originalKey = "mechlopedia.mech.wolfhound_duplicate.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "wolfhound_duplicate"
+    groupName = "Wolfhound Duplicate"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "description_only duplicate/variant text"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Zeus [zeus]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.mech.zeus"
+    type = "mech"
+    groupKey = "zeus"
+    groupName = "Zeus"
+    roles = "description,name"
+    legacyIds = "28917,28951"
+    recordCount = 2
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.zeus.name"
+    text = "ZEUS"
+    legacyId = 28917
+    legacySymbol = "IDS_MECH_ZEUS"
+    legacyKey = "legacy.mc2res.28917"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.zeus"
+    originalKey = "mechlopedia.mech.zeus.name"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "name"
+    groupKey = "zeus"
+    groupName = "Zeus"
+    codeReference = "code/mechlopedia.cpp:357-390,540-565"
+    notes = "Pair inferred from legacy IDS_MECH_* name block and IDS_MECH_*2/3 description block; runtime IDs originate in chassis CSV data."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.mech.zeus.description"
+    text = "Despite an accelerated prototype cycle and early battle deployment, the Zeus has proven from its first tours of duty to be one of the most versatile of Assault-class 'Mechs. House Steiner requested an 80-ton unit with hit-and-run capability, and these BattleMechs rolled off the production line 3 years later literally to defend the very factories where the first ones were made.\n\nDesigned to lay down continual barrages of missile and energy weapons fire, the Zeus houses one of the best heat dissipation systems found in any 'Mech. The effectiveness of the initial design has carried the Zeus through history with relatively little change. The current Zeus models still bear the PPC and Long-Range Missiles of its predecessor.\n\nLinked for years with the Lyran Commonwealth, the Zeus still sees extensive duty under House Steiner."
+    paragraphCount = 3
+    paragraph0 = "Despite an accelerated prototype cycle and early battle deployment, the Zeus has proven from its first tours of duty to be one of the most versatile of Assault-class 'Mechs. House Steiner requested an 80-ton unit with hit-and-run capability, and these BattleMechs rolled off the production line 3 years later literally to defend the very factories where the first ones were made."
+    paragraph1 = "Designed to lay down continual barrages of missile and energy weapons fire, the Zeus houses one of the best heat dissipation systems found in any 'Mech. The effectiveness of the initial design has carried the Zeus through history with relatively little change. The current Zeus models still bear the PPC and Long-Range Missiles of its predecessor."
+    paragraph2 = "Linked for years with the Lyran Commonwealth, the Zeus still sees extensive duty under House Steiner."
+    legacyId = 28951
+    legacySymbol = "IDS_MECH_ZEUS2"
+    legacyKey = "legacy.mc2res.28951"
+    source = "mechlopedia"
+    sourceKey = "unit.mech.zeus2"
+    originalKey = "mechlopedia.mech.zeus.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/mechs.fit"
+    legacySourceFile = "data/defs/text/en_us/units.fit"
+    originalCategory = "units"
+    mechlopediaType = "mech"
+    role = "description"
+    groupKey = "zeus"
+    groupName = "Zeus"
+    codeReference = "code/mechlopedia.cpp:545-550"
+    notes = "Description ID used by LogisticsVariant::getEncyclopediaID at runtime."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+

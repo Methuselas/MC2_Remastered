@@ -1,0 +1,431 @@
+/***************************************************************
+ * FILENAME: history.fit
+ * DESCRIPTION: History article titles, descriptions, and image references.
+ * GENERATED: 2026-05-18
+ * SOURCE: MC2_Remastered.zip / data/defs/text/en_us/mc2res_legacy.fit
+ * PHASE: Phase 3 shared Mechlopedia text FIT setup
+ * NOTE: FIT owns the words. Legacy IDs are preserved for bridge lookup.
+ ***************************************************************/
+
+// -----------------------------------------------------------------------------
+// Group: Inner Sphere Civil War Returns [inner_sphere_civil_war_returns]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.history.inner_sphere_civil_war_returns"
+    type = "history"
+    groupKey = "inner_sphere_civil_war_returns"
+    groupName = "Inner Sphere Civil War Returns"
+    roles = "description,image_ref,title"
+    legacyIds = "45363,45374,45384"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.inner_sphere_civil_war_returns.title"
+    text = "Inner Sphere Civil War Returns"
+    legacyId = 45363
+    legacySymbol = "IDS_HISTORY_3"
+    legacyKey = "legacy.mc2res.45363"
+    source = "mechlopedia"
+    sourceKey = "lore.history.3"
+    originalKey = "mechlopedia.history.inner_sphere_civil_war_returns.title"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "title"
+    groupKey = "inner_sphere_civil_war_returns"
+    groupName = "Inner Sphere Civil War Returns"
+    codeReference = "code/mechlopedia.cpp:916-924"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.inner_sphere_civil_war_returns.description"
+    text = "With the Clan threat diminished, the Houses of the Inner Sphere once again allowed their long-buried conflicts to rise to the surface, shattering their unsteady alliances.\n\nBy 3063, the Capellan Confederation had conquered its errant Commonality, the St. Ives Compact, while allying itself with the two largest Periphery realms--the Magistracy of Canopus and Taurian Concordat--becoming strong for the first time in centuries.\n\nKatherine Steiner-Davion (who now called herself Katrina Steiner) took unsteady command of the Federated Commonwealth's military forces in 3060 while her brother Victor was dealing with the Clan threat, raising questions of her loyalty to her brother.\n\nBy 3063, this move has, along with other acts of greed and aggression, shattered the fabulously powerful Federated Commonwealth; a full-fledged civil war between the Lyran Alliance and Federated Suns, spanning more then 800 worlds and a thousand light-years, has begun!"
+    paragraphCount = 4
+    paragraph0 = "With the Clan threat diminished, the Houses of the Inner Sphere once again allowed their long-buried conflicts to rise to the surface, shattering their unsteady alliances."
+    paragraph1 = "By 3063, the Capellan Confederation had conquered its errant Commonality, the St. Ives Compact, while allying itself with the two largest Periphery realms--the Magistracy of Canopus and Taurian Concordat--becoming strong for the first time in centuries."
+    paragraph2 = "Katherine Steiner-Davion (who now called herself Katrina Steiner) took unsteady command of the Federated Commonwealth's military forces in 3060 while her brother Victor was dealing with the Clan threat, raising questions of her loyalty to her brother."
+    paragraph3 = "By 3063, this move has, along with other acts of greed and aggression, shattered the fabulously powerful Federated Commonwealth; a full-fledged civil war between the Lyran Alliance and Federated Suns, spanning more then 800 worlds and a thousand light-years, has begun!"
+    legacyId = 45374
+    legacySymbol = "IDS_HISTORY_DESCRIPTION_3"
+    legacyKey = "legacy.mc2res.45374"
+    source = "mechlopedia"
+    sourceKey = "lore.history.description.3"
+    originalKey = "mechlopedia.history.inner_sphere_civil_war_returns.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "description"
+    groupKey = "inner_sphere_civil_war_returns"
+    groupName = "Inner Sphere Civil War Returns"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.inner_sphere_civil_war_returns.image_ref"
+    text = "mcl_en_history_clandefeat.tga"
+    legacyId = 45384
+    legacySymbol = "IDS_HISTORY_PICTURE3"
+    legacyKey = "legacy.mc2res.45384"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.history.picture3"
+    originalKey = "mechlopedia.history.inner_sphere_civil_war_returns.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "image_ref"
+    groupKey = "inner_sphere_civil_war_returns"
+    groupName = "Inner Sphere Civil War Returns"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the title/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Return of the Clans [return_of_the_clans]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.history.return_of_the_clans"
+    type = "history"
+    groupKey = "return_of_the_clans"
+    groupName = "Return of the Clans"
+    roles = "description,image_ref,title"
+    legacyIds = "45362,45373,45383"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.return_of_the_clans.title"
+    text = "Return of the Clans"
+    legacyId = 45362
+    legacySymbol = "IDS_HISTORY_2"
+    legacyKey = "legacy.mc2res.45362"
+    source = "mechlopedia"
+    sourceKey = "lore.history.2"
+    originalKey = "mechlopedia.history.return_of_the_clans.title"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "title"
+    groupKey = "return_of_the_clans"
+    groupName = "Return of the Clans"
+    codeReference = "code/mechlopedia.cpp:916-924"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.return_of_the_clans.description"
+    text = "In 3050, a mysterious invading force struck the coreward region of the Inner Sphere, attacking the Federated Commonwealth, Free Rasalhague Republic, and Draconis Combine. The invaders, called the Clans, were the descendants of Kerenskyâs SLDF troops, forged into a warrior society dedicated to becoming the greatest fighting force in history; they intended to capture Terra and reestablish the Star League. With vastly superior technology and fanatical warriors, the Clans conquered world after world until troops belonging to ComStar, the quasi-religious organization that controls all communication within the Inner Sphere, halted their advance in the pivotal Battle of Tukayyid in 3052. The truce signed after that conflict stopped the Clan advance for fifteen years.\n\nIn 3057, the Free Worlds League and the Capellan Confederation launched a war of aggression against the Federated Commonwealth's Sarna March, the worlds taken from them during the Fourth Succession War. Many worlds were conquered once more, whereas others declared their independence from any of the Great Houses. Katherine Steiner-Davion pulled the Lyran half of the Federated Commonwealth out of the union in this \"emergency\" and formed the Lyran Alliance.\n\nOn Tharkad in 3058, leaders from throughout the Inner Sphere, in an effort to avoid another war like that of the previous year and to focus on the menace of the Clans, formally declared peace and joined forces to attack the Clans. After centuries of war, the Star League was finally reborn, although to fight Nicholas Kerenskyâs legacy rather than to honor it.\n\nThe new Star League decided to attack one Clan first to prove their military might. The combined forces overran the Clan Smoke Jaguar occupation zone, decimated its warrior caste, and leveled its homeworld.\n\nPrince Victor carried on the fight to Strana Mechty, the cradle of Clan culture and civilization. In the bloody Trial of Refusal, the Inner Sphere defeated the Crusader Clans."
+    paragraphCount = 5
+    paragraph0 = "In 3050, a mysterious invading force struck the coreward region of the Inner Sphere, attacking the Federated Commonwealth, Free Rasalhague Republic, and Draconis Combine. The invaders, called the Clans, were the descendants of Kerenskyâs SLDF troops, forged into a warrior society dedicated to becoming the greatest fighting force in history; they intended to capture Terra and reestablish the Star League. With vastly superior technology and fanatical warriors, the Clans conquered world after world until troops belonging to ComStar, the quasi-religious organization that controls all communication within the Inner Sphere, halted their advance in the pivotal Battle of Tukayyid in 3052. The truce signed after that conflict stopped the Clan advance for fifteen years."
+    paragraph1 = "In 3057, the Free Worlds League and the Capellan Confederation launched a war of aggression against the Federated Commonwealth's Sarna March, the worlds taken from them during the Fourth Succession War. Many worlds were conquered once more, whereas others declared their independence from any of the Great Houses. Katherine Steiner-Davion pulled the Lyran half of the Federated Commonwealth out of the union in this \"emergency\" and formed the Lyran Alliance."
+    paragraph2 = "On Tharkad in 3058, leaders from throughout the Inner Sphere, in an effort to avoid another war like that of the previous year and to focus on the menace of the Clans, formally declared peace and joined forces to attack the Clans. After centuries of war, the Star League was finally reborn, although to fight Nicholas Kerenskyâs legacy rather than to honor it."
+    paragraph3 = "The new Star League decided to attack one Clan first to prove their military might. The combined forces overran the Clan Smoke Jaguar occupation zone, decimated its warrior caste, and leveled its homeworld."
+    paragraph4 = "Prince Victor carried on the fight to Strana Mechty, the cradle of Clan culture and civilization. In the bloody Trial of Refusal, the Inner Sphere defeated the Crusader Clans."
+    legacyId = 45373
+    legacySymbol = "IDS_HISTORY_DESCRIPTION_2"
+    legacyKey = "legacy.mc2res.45373"
+    source = "mechlopedia"
+    sourceKey = "lore.history.description.2"
+    originalKey = "mechlopedia.history.return_of_the_clans.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "description"
+    groupKey = "return_of_the_clans"
+    groupName = "Return of the Clans"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.return_of_the_clans.image_ref"
+    text = "mcl_en_history_clanreturn.tga"
+    legacyId = 45383
+    legacySymbol = "IDS_HISTORY_PICTURE2"
+    legacyKey = "legacy.mc2res.45383"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.history.picture2"
+    originalKey = "mechlopedia.history.return_of_the_clans.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "image_ref"
+    groupKey = "return_of_the_clans"
+    groupName = "Return of the Clans"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the title/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Star League Rise and Collapse [star_league_rise_and_collapse]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.history.star_league_rise_and_collapse"
+    type = "history"
+    groupKey = "star_league_rise_and_collapse"
+    groupName = "Star League Rise and Collapse"
+    roles = "description,image_ref,title"
+    legacyIds = "45360,45371,45381"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.star_league_rise_and_collapse.title"
+    text = "Star League Rise and Collapse"
+    legacyId = 45360
+    legacySymbol = "IDS_HISTORY_0"
+    legacyKey = "legacy.mc2res.45360"
+    source = "mechlopedia"
+    sourceKey = "lore.history.0"
+    originalKey = "mechlopedia.history.star_league_rise_and_collapse.title"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "title"
+    groupKey = "star_league_rise_and_collapse"
+    groupName = "Star League Rise and Collapse"
+    codeReference = "code/mechlopedia.cpp:916-924"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.star_league_rise_and_collapse.description"
+    text = "The advent of faster-than-light travel in 2108 allowed mankind to quickly colonize hundreds of new solar systems. This populated region would eventually span more than a thousand light-years in diameter and would become known as the Inner Sphere.\n\nIn 2271, the Treaty of Marik was signed, signaling the formation of the Free Worlds League: the first of the Great Houses that would each ultimately control hundreds of worlds. Within a century, four other powerful planetary alliances declared independence from Terra and the Terran Hegemony government; these states would become the star empires known as the Draconis Combine, Federated Suns, Capellan Confederation, and Lyran Commonwealth.\n\nAs the human race spread, however, they carried with them their desire for conflict. Petty brushfire wars raged throughout the Inner Sphere for centuries.\n\nIn 2571, humanity earned a respite from this tide of conflict. The Star League was formed and ushered in a golden age. For 200 years, the Star League gave its citizens peace and prosperity. Although it could not completely quell the seemingly essential human need for violence, it kept disputes between member-states under firm control.\n\nIn 2766, Stefan Amaris of the Rim Worlds Republic launched a coup and declared himself First Lord of the Star League. General Aleksandr Kerensky, commander of the Star League Defense Forces (SLDF), launched a 13-year war to unseat the usurper. Although he succeeded, the rulers of the Great Houses could not agree on a new leader and dissolved the Star League High Council in 2781. Rather than watch his beloved Star League crumble, Kerensky departed known space in 2784, taking with him 80 percent of the SLDF in an event later known as the Exodus, an apparent attempt to salvage the spirit of the Star League.\n\nBy 2787, each House Lord declared himself the \"rightful\" First Lord, as the Great Houses savagely attacked one another in the first of the Succession Wars. These conflicts would last for 200 years."
+    paragraphCount = 6
+    paragraph0 = "The advent of faster-than-light travel in 2108 allowed mankind to quickly colonize hundreds of new solar systems. This populated region would eventually span more than a thousand light-years in diameter and would become known as the Inner Sphere."
+    paragraph1 = "In 2271, the Treaty of Marik was signed, signaling the formation of the Free Worlds League: the first of the Great Houses that would each ultimately control hundreds of worlds. Within a century, four other powerful planetary alliances declared independence from Terra and the Terran Hegemony government; these states would become the star empires known as the Draconis Combine, Federated Suns, Capellan Confederation, and Lyran Commonwealth."
+    paragraph2 = "As the human race spread, however, they carried with them their desire for conflict. Petty brushfire wars raged throughout the Inner Sphere for centuries."
+    paragraph3 = "In 2571, humanity earned a respite from this tide of conflict. The Star League was formed and ushered in a golden age. For 200 years, the Star League gave its citizens peace and prosperity. Although it could not completely quell the seemingly essential human need for violence, it kept disputes between member-states under firm control."
+    paragraph4 = "In 2766, Stefan Amaris of the Rim Worlds Republic launched a coup and declared himself First Lord of the Star League. General Aleksandr Kerensky, commander of the Star League Defense Forces (SLDF), launched a 13-year war to unseat the usurper. Although he succeeded, the rulers of the Great Houses could not agree on a new leader and dissolved the Star League High Council in 2781. Rather than watch his beloved Star League crumble, Kerensky departed known space in 2784, taking with him 80 percent of the SLDF in an event later known as the Exodus, an apparent attempt to salvage the spirit of the Star League."
+    paragraph5 = "By 2787, each House Lord declared himself the \"rightful\" First Lord, as the Great Houses savagely attacked one another in the first of the Succession Wars. These conflicts would last for 200 years."
+    legacyId = 45371
+    legacySymbol = "IDS_HISTORY_DESCRIPTION_0"
+    legacyKey = "legacy.mc2res.45371"
+    source = "mechlopedia"
+    sourceKey = "lore.history.description.0"
+    originalKey = "mechlopedia.history.star_league_rise_and_collapse.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "description"
+    groupKey = "star_league_rise_and_collapse"
+    groupName = "Star League Rise and Collapse"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.star_league_rise_and_collapse.image_ref"
+    text = "mcl_en_history_starleague.tga"
+    legacyId = 45381
+    legacySymbol = "IDS_HISTORY_PICTURE0"
+    legacyKey = "legacy.mc2res.45381"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.history.picture0"
+    originalKey = "mechlopedia.history.star_league_rise_and_collapse.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "image_ref"
+    groupKey = "star_league_rise_and_collapse"
+    groupName = "Star League Rise and Collapse"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the title/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: War on Carver V [war_on_carver_v]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.history.war_on_carver_v"
+    type = "history"
+    groupKey = "war_on_carver_v"
+    groupName = "War on Carver V"
+    roles = "description,image_ref,title"
+    legacyIds = "45364,45375,45385"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.war_on_carver_v.title"
+    text = "War on Carver V"
+    legacyId = 45364
+    legacySymbol = "IDS_HISTORY_4"
+    legacyKey = "legacy.mc2res.45364"
+    source = "mechlopedia"
+    sourceKey = "lore.history.4"
+    originalKey = "mechlopedia.history.war_on_carver_v.title"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "title"
+    groupKey = "war_on_carver_v"
+    groupName = "War on Carver V"
+    codeReference = "code/mechlopedia.cpp:916-924"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.war_on_carver_v.description"
+    text = "In the midst of the Sarna March, now dubbed Chaos March, the battle for House supremacy rages anew among Davion, Steiner, Liao, Marik, and other loyalist forces throughout the Inner Sphere. The battle here on the world of Carver V is but a skirmish in the imbroglio across the Inner Sphere.\n\nBattles between Liao and Davion ended the life of Mandarin Cho, leaving his widow at the helm of House Liaoâs forces on Carver V. Her desire for vengeance must indeed burn more fiercely than that of any commander who has tasted mere defeat.\n\nDavion and Steiner forces continue their alliance, although even after numerous historical victories their union is not a perfect one, particularly in the face of civil war spreading fast throughout their respective realms. Both maintain forces on Carver V, and their cooperation could create a juggernaut.\n\nMarik, Kurita, and other notable military entities of the 31st century have not yet shown their hand on Carver V. Aboriginal movements of Carver citizens as well as more shadowy armed bandits on planet have definitely made their presence known, even if their identities and influence have yet to become clear.\n\nAs the wars of 3062 rage on, the future of Carver V is very much undecided."
+    paragraphCount = 5
+    paragraph0 = "In the midst of the Sarna March, now dubbed Chaos March, the battle for House supremacy rages anew among Davion, Steiner, Liao, Marik, and other loyalist forces throughout the Inner Sphere. The battle here on the world of Carver V is but a skirmish in the imbroglio across the Inner Sphere."
+    paragraph1 = "Battles between Liao and Davion ended the life of Mandarin Cho, leaving his widow at the helm of House Liaoâs forces on Carver V. Her desire for vengeance must indeed burn more fiercely than that of any commander who has tasted mere defeat."
+    paragraph2 = "Davion and Steiner forces continue their alliance, although even after numerous historical victories their union is not a perfect one, particularly in the face of civil war spreading fast throughout their respective realms. Both maintain forces on Carver V, and their cooperation could create a juggernaut."
+    paragraph3 = "Marik, Kurita, and other notable military entities of the 31st century have not yet shown their hand on Carver V. Aboriginal movements of Carver citizens as well as more shadowy armed bandits on planet have definitely made their presence known, even if their identities and influence have yet to become clear."
+    paragraph4 = "As the wars of 3062 rage on, the future of Carver V is very much undecided."
+    legacyId = 45375
+    legacySymbol = "IDS_HISTORY_DESCRIPTION_4"
+    legacyKey = "legacy.mc2res.45375"
+    source = "mechlopedia"
+    sourceKey = "lore.history.description.4"
+    originalKey = "mechlopedia.history.war_on_carver_v.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "description"
+    groupKey = "war_on_carver_v"
+    groupName = "War on Carver V"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.war_on_carver_v.image_ref"
+    text = "mcl_en_history_ishousefight.tga"
+    legacyId = 45385
+    legacySymbol = "IDS_HISTORY_PICTURE4"
+    legacyKey = "legacy.mc2res.45385"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.history.picture4"
+    originalKey = "mechlopedia.history.war_on_carver_v.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "image_ref"
+    groupKey = "war_on_carver_v"
+    groupName = "War on Carver V"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the title/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+// -----------------------------------------------------------------------------
+// Group: Warring Houses [warring_houses]
+// -----------------------------------------------------------------------------
+
+MechlopediaTextGroup {
+    key = "mechlopedia.history.warring_houses"
+    type = "history"
+    groupKey = "warring_houses"
+    groupName = "Warring Houses"
+    roles = "description,image_ref,title"
+    legacyIds = "45361,45372,45382"
+    recordCount = 3
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.warring_houses.title"
+    text = "Warring Houses"
+    legacyId = 45361
+    legacySymbol = "IDS_HISTORY_1"
+    legacyKey = "legacy.mc2res.45361"
+    source = "mechlopedia"
+    sourceKey = "lore.history.1"
+    originalKey = "mechlopedia.history.warring_houses.title"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "title"
+    groupKey = "warring_houses"
+    groupName = "Warring Houses"
+    codeReference = "code/mechlopedia.cpp:916-924"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.warring_houses.description"
+    text = "During three successive Succession Wars that ground humanity down and resulted in the net loss of many technologies, no significant territory was won or lost by any single House, leaving the borders relatively unchanged through two centuries of conflict.\n\nIn 3028, however, the marriage of First Prince Hanse Davion of the Federated Suns to Archon-Designate Melissa Steiner of the Lyran Commonwealth unified the two largest states in the Inner Sphere. The newborn Federated Commonwealth immediately launched the Fourth Succession War, conquering more worlds in two years than in all the wars of the previous two centuries."
+    paragraphCount = 2
+    paragraph0 = "During three successive Succession Wars that ground humanity down and resulted in the net loss of many technologies, no significant territory was won or lost by any single House, leaving the borders relatively unchanged through two centuries of conflict."
+    paragraph1 = "In 3028, however, the marriage of First Prince Hanse Davion of the Federated Suns to Archon-Designate Melissa Steiner of the Lyran Commonwealth unified the two largest states in the Inner Sphere. The newborn Federated Commonwealth immediately launched the Fourth Succession War, conquering more worlds in two years than in all the wars of the previous two centuries."
+    legacyId = 45372
+    legacySymbol = "IDS_HISTORY_DESCRIPTION_1"
+    legacyKey = "legacy.mc2res.45372"
+    source = "mechlopedia"
+    sourceKey = "lore.history.description.1"
+    originalKey = "mechlopedia.history.warring_houses.description"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "description"
+    groupKey = "warring_houses"
+    groupName = "Warring Houses"
+    codeReference = "code/mechlopedia.cpp:971-979"
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+
+String {
+    key = "mechlopedia.history.warring_houses.image_ref"
+    text = "mcl_en_history_warringhouses.tga"
+    legacyId = 45382
+    legacySymbol = "IDS_HISTORY_PICTURE1"
+    legacyKey = "legacy.mc2res.45382"
+    source = "mechlopedia"
+    sourceKey = "asset.ref.history.picture1"
+    originalKey = "mechlopedia.history.warring_houses.image_ref"
+    originalSource = "mc2res"
+    sourceFile = "data/defs/text/en_us/Mechlopedia/history.fit"
+    legacySourceFile = "data/defs/text/en_us/lore.fit"
+    originalCategory = "lore"
+    mechlopediaType = "history"
+    role = "image_ref"
+    groupKey = "warring_houses"
+    groupName = "Warring Houses"
+    codeReference = "code/mechlopedia.cpp:971-990"
+    notes = "Legacy asset reference kept beside the title/description for editing and Viewer hookup."
+    migrationState = "phase3_shared_mechlopedia_text"
+}
+

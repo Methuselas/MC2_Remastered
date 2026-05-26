@@ -1,0 +1,26 @@
+/***************************************************************
+ * FILENAME: default_ui_package.fit
+ * DESCRIPTION: Current MC2R UI package selection baseline.
+ *
+ * AUTHOR: Methuselas
+ * CREATED: 2026-05-25
+ *
+ * UPDATED BY: Methuselas
+ * UPDATED: 2026-05-25
+ *
+ * CHANGES:
+ * - Registered legacy_imgui as the default shippable ImGui UI package.
+ ***************************************************************/
+
+UiDefaultPackage {
+    key = "ui.default_package"
+    activePackage = "legacy_imgui"
+    source = "data/defs/ui/packages/legacy_imgui/package.fit"
+    reason = "Current shippable default UI is the GameOS-derived ImGui migration."
+}
+
+UiPackageSearchRoot {
+    key = "ui.package_search.packages"
+    path = "data/defs/ui/packages"
+    purpose = "Built-in UI package roots. Mod package roots can be added later when the mod system is ready."
+}

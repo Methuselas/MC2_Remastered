@@ -15,6 +15,7 @@ set(VIEWER_SOURCES
     "../code/simplecomponentlistbox.cpp"
     #    "../strings.res.cpp"
     "View.cpp"
+    "ViewerHostGlobals.cpp"
     )
 
 add_definitions(-DVIEWER=1)
@@ -25,5 +26,25 @@ include_directories("./window" ${COMMON_INCLUDE_DIRS} "../mclib" "../gui" "../co
 include_directories(${CMAKE_PREFIX_PATH}/include)
 
 add_executable(viewer ${VIEWER_SOURCES})
-target_link_libraries(viewer mclib gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL)
+target_link_libraries(viewer
+    mclib
+    fx_trace
+    particles
+    gosfx
+    mlr
+    stuff
+    gui
+    gameos
+    gameos_main
+    windows
+    rendercore
+    renderworld
+    gameadapters
+    ZLIB::ZLIB
+    ${SDL2_LIBRARIES}
+    GLEW::GLEW
+    SDL2_mixer::SDL2_mixer
+    ${ADDITIONAL_LIBS}
+    OpenGL::GL
+)
 
