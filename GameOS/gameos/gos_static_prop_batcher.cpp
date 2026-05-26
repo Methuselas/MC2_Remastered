@@ -4011,6 +4011,144 @@ void GpuStaticPropBatcher::flush() {
         // counts (s_alphaOffCmdCount / s_alphaOnCmdCount). The PerDrawEntry
         // SSBO is also per-packet, indexed by gl_DrawID = sorted-packet slot.
 
+        // DrawPacket v6: build packet+meta arrays then validate before dispatch.
+        const bool runV6 = s_v6Enabled && !s_v6Disarmed;
+
+        static std::vector<RenderCore::DrawPacket>  v6Packets;
+        static std::vector<StaticPropDispatchMeta>  v6Meta;
+        uint32_t v6LockstepViolations = 0u;
+
+        if (runV6) {
+            s_v6FrameDrawsIssued        = 0u;
+            s_v6FrameZeroInstSkips      = 0u;
+            s_v6FrameSortedOob          = 0u;
+            s_v6FramePacketOob          = 0u;
+            s_v6FrameTypeOob            = 0u;
+            s_v6FrameLockstepViolations = 0u;
+            s_v6FrameGlErrors           = 0u;
+            ++s_v6TotalFrameCount;
+
+            const uint32_t totalCmds = s_alphaOffCmdCount + s_alphaOnCmdCount;
+            v6Packets.resize(totalCmds);
+            v6Meta.resize(totalCmds);
+
+            // Ring-slot base-instance map pointer (same arithmetic as v5).
+            const size_t fr_off_bi_v6 =
+                static_cast<size_t>(s_coalesceFrameSlot) * s_baseInstanceByCmdBytesPerFrame;
+            const uint32_t* baseInstanceMap = reinterpret_cast<const uint32_t*>(
+                static_cast<const uint8_t*>(s_baseInstanceByCmdMap) + fr_off_bi_v6);
+
+            constexpr uint32_t kNoObjectIndex = 0xFFFFFFFFu;
+
+            // --- Builder loop ---
+            for (uint32_t i = 0u; i < totalCmds; ++i) {
+                // Guard 1: sorted_oob — i must be valid index into s_sortedPacketOrder
+                if (i >= static_cast<uint32_t>(s_sortedPacketOrder.size())) {
+                    ++s_v6FrameSortedOob;
+                    v6Meta[i]    = {};
+                    v6Packets[i] = {};
+                    continue;
+                }
+                const uint32_t globalPktIdx = s_sortedPacketOrder[i];
+
+                // Guard 2: packet_oob — globalPktIdx must be valid index into s_packets
+                if (globalPktIdx >= static_cast<uint32_t>(s_packets.size())) {
+                    ++s_v6FramePacketOob;
+                    v6Meta[i]    = {};
+                    v6Packets[i] = {};
+                    continue;
+                }
+                const GpuStaticPropPacket& pkt = s_packets[globalPktIdx];
+
+                // Guard 3: type_oob — owningTypeID outside static all-types table
+                if (pkt.owningTypeID >= static_cast<uint32_t>(s_types.size())) {
+                    ++s_v6FrameTypeOob;
+                    v6Meta[i]    = {};
+                    v6Packets[i] = {};
+                    continue;
+                }
+
+                const auto typeIt = s_typeRanges.find(pkt.owningTypeID);
+                const uint32_t instCount =
+                    (typeIt != s_typeRanges.end()) ? typeIt->second.instanceCount : 0u;
+
+                const uint32_t grp = (i < s_alphaOffCmdCount) ? 0u : 1u;
+
+                v6Meta[i].sortedSlot      = i;
+                v6Meta[i].globalPacketIdx = globalPktIdx;
+                v6Meta[i].typeId          = pkt.owningTypeID;
+                v6Meta[i].group           = grp;
+                v6Meta[i].instanceCount   = instCount;
+                v6Meta[i].baseInstance    = baseInstanceMap[i];
+                v6Meta[i].drawIDBase      = i;
+                v6Meta[i].baseVertex      = pkt.baseVertex;
+
+                v6Packets[i].pipelineId    = static_cast<uint32_t>(
+                    grp == 0u ? RenderCore::PipelineId::StaticPropOpaque
+                              : RenderCore::PipelineId::StaticPropAlphaTest);
+                v6Packets[i].mesh          = {};
+                v6Packets[i].material      = {};
+                v6Packets[i].objectIndex   = kNoObjectIndex;
+                v6Packets[i].lightIndex    = kNoObjectIndex;
+                v6Packets[i].firstIndex    = pkt.firstIndex;
+                v6Packets[i].indexCount    = pkt.indexCount;
+                v6Packets[i].instanceCount = instCount;
+                v6Packets[i].sortKey       = 0u;
+            }
+
+            // --- Lockstep validator (ALL checks before any glDraw) ---
+            if (v6Packets.size() != v6Meta.size()) {
+                std::fprintf(stderr,
+                    "[DRAW_PACKET_V6] frame=%u event=lockstep_violation"
+                    " slot=- field=array_size expected=%zu got=%zu\n",
+                    s_v6TotalFrameCount, v6Meta.size(), v6Packets.size());
+                ++v6LockstepViolations;
+            }
+
+            for (uint32_t i = 0u; i < totalCmds; ++i) {
+                // Skip slots zeroed by builder guard continues (sorted/packet/type OOB).
+                if (i >= static_cast<uint32_t>(s_sortedPacketOrder.size())) continue;
+                const uint32_t gIdx = s_sortedPacketOrder[i];
+                if (gIdx >= static_cast<uint32_t>(s_packets.size())) continue;
+                const GpuStaticPropPacket& p = s_packets[gIdx];
+                if (p.owningTypeID >= static_cast<uint32_t>(s_types.size())) continue;
+
+                const uint32_t grp = (i < s_alphaOffCmdCount) ? 0u : 1u;
+                const uint32_t expectedPipelineId = static_cast<uint32_t>(
+                    grp == 0u ? RenderCore::PipelineId::StaticPropOpaque
+                              : RenderCore::PipelineId::StaticPropAlphaTest);
+
+#define V6_CHECK(field, expected_expr, got_expr) \
+    if ((expected_expr) != (got_expr)) { \
+        std::fprintf(stderr, \
+            "[DRAW_PACKET_V6] frame=%u event=lockstep_violation slot=%u" \
+            " field=" #field " expected=%u got=%u\n", \
+            s_v6TotalFrameCount, i, \
+            static_cast<unsigned>(expected_expr), \
+            static_cast<unsigned>(got_expr)); \
+        ++v6LockstepViolations; \
+    }
+                V6_CHECK(sortedSlot,     i,                  v6Meta[i].sortedSlot)
+                V6_CHECK(globalPacketIdx, gIdx,              v6Meta[i].globalPacketIdx)
+                V6_CHECK(drawIDBase,     i,                  v6Meta[i].drawIDBase)
+                V6_CHECK(typeId,         p.owningTypeID,     v6Meta[i].typeId)
+                V6_CHECK(group,          grp,                v6Meta[i].group)
+                V6_CHECK(pipelineId,     expectedPipelineId, v6Packets[i].pipelineId)
+                V6_CHECK(indexCount,     p.indexCount,       v6Packets[i].indexCount)
+                V6_CHECK(firstIndex,     p.firstIndex,       v6Packets[i].firstIndex)
+                V6_CHECK(instanceCount,  v6Meta[i].instanceCount, v6Packets[i].instanceCount)
+#undef V6_CHECK
+                if (v6Meta[i].baseVertex != p.baseVertex) {
+                    std::fprintf(stderr,
+                        "[DRAW_PACKET_V6] frame=%u event=lockstep_violation slot=%u"
+                        " field=baseVertex expected=%d got=%d\n",
+                        s_v6TotalFrameCount, i, p.baseVertex, v6Meta[i].baseVertex);
+                    ++v6LockstepViolations;
+                }
+            }
+            s_v6FrameLockstepViolations = v6LockstepViolations;
+        }
+
         // DrawPacket v5: per-draw-call dispatch (MC2_DRAW_PACKET_COALESCE_V5=1).
         // When active, replaces both glMultiDrawElementsIndirect calls with a
         // per-slot glDrawElementsInstancedBaseVertexBaseInstance loop.
