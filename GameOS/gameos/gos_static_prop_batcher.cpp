@@ -4,6 +4,8 @@
 #include "../../RenderCore/MaterialGpu.h"   // MaterialGpu-2: sidecar upload
 #include "../../RenderCore/StaticPropTypeDesc.h"  // v0: cross-seam immutable type table
 #include "../../RenderCore/KtxLoader.h"    // KTX2 sidecar loading (MC2_MATERIAL_KTX=1)
+#include "draw_packet_emitter.h"
+#include "../../RenderCore/PipelineRegistry.h"   // direct include; do not rely on transitive
 #include "gos_postprocess.h"             // getGosPostProcess, getDynamicLightSpaceMatrix
 #include "gos_static_prop_killswitch.h"  // gos_GetGLTextureId
 #include "gos_profiler.h"
@@ -216,6 +218,12 @@ static std::vector<uint32_t> s_perTypePeak;
 // non-legacy mode; mirrors s_frameSlot under legacy mode. Reset per-mission
 // in onMapLoad() for hygiene.
 static uint32_t s_coalesceFrameSlot = 0;
+
+// v4A: per-frame opaque dispatch candidate registration.
+// Registered by batcher_setOpaqueDispatchCandidates(); consumed and cleared inside flush().
+static const StaticPropOpaquePacketView* s_opaqueDispatchCandidates    = nullptr;
+static size_t                            s_opaqueDispatchCandidateCount = 0u;
+static std::vector<uint16_t>            s_v4TypeDrawCount;  // per-frame per-type; resized lazily
 
 // CPU-side staging during registration (cleared after finalizeGeometry).
 std::vector<uint8_t>  s_stagingVbo;
@@ -4807,4 +4815,10 @@ void batcher_prepareBaseInstanceTable() {
     s_offGroupBytesThisFrame  = offGroupCount * sizeof(GpuStaticPropInstance);
     s_onGroupBytesThisFrame   = (totalCount - offGroupCount) * sizeof(GpuStaticPropInstance);
     s_totalUsedBytesThisFrame = totalCount * sizeof(GpuStaticPropInstance);
+}
+
+void batcher_setOpaqueDispatchCandidates(const StaticPropOpaquePacketView* views, size_t count) {
+    static bool s_gateEnabled = (getenv("MC2_DRAWPACKET_STATIC_PROP_OPAQUE") != nullptr);
+    s_opaqueDispatchCandidates     = (s_gateEnabled && count > 0u) ? views : nullptr;
+    s_opaqueDispatchCandidateCount = (s_gateEnabled && count > 0u) ? count : 0u;
 }
