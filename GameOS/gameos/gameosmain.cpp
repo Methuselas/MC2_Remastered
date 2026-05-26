@@ -1179,16 +1179,21 @@ int main(int argc, char** argv)
             const DrawPacketEmitStats stats =
                 emitStaticPropDrawPackets(snap, s_candidates.data(), kMaxPackets);
 
-            // Hard gate — anomalies only (skippedRanges is design-normal in v0; logged under s_logEnabled).
-            if (stats.overflow || stats.invalidRanges > 0) {
+            // Hard gate — anomalies only. skippedRanges is logged under s_logEnabled.
+            if (stats.overflow
+                    || stats.invalidRanges > 0
+                    || stats.oldExpected != stats.expectedPackets
+                    || stats.materialMismatches > 0) {
                 std::fprintf(stderr,
-                    "[DRAW_PACKET v0] WARNING: overflow=%d invalid=%u skipped=%u "
-                    "emitted=%u expected=%u\n",
+                    "[DRAW_PACKET v1] WARNING: overflow=%d invalidRanges=%u"
+                    " skippedRanges=%u old_expected=%u new_expected=%u"
+                    " materialMismatches=%u\n",
                     stats.overflow ? 1 : 0,
                     stats.invalidRanges,
                     stats.skippedRanges,
-                    stats.emitted,
-                    stats.expectedPackets);
+                    stats.oldExpected,
+                    stats.expectedPackets,
+                    stats.materialMismatches);
             }
 
             // Full log line under MC2_RENDER_SNAPSHOT_LOG=1.
@@ -1198,15 +1203,18 @@ int main(int argc, char** argv)
             }();
             if (s_logEnabled) {
                 std::fprintf(stderr,
-                    "[DRAW_PACKET v0] frame=%llu emitted=%u expected=%u "
-                    "distinct_types=%u static_props=%u invalid=%u skipped=%u overflow=%d\n",
+                    "[DRAW_PACKET v1] frame=%llu emitted=%u expected=%u"
+                    " old_expected=%u distinct_types=%u static_props=%u"
+                    " invalid=%u skipped=%u mat_mismatch=%u overflow=%d\n",
                     static_cast<unsigned long long>(snap.frameIndex),
                     stats.emitted,
                     stats.expectedPackets,
+                    stats.oldExpected,
                     stats.distinctTypes,
                     static_cast<uint32_t>(snap.staticProps.size()),
                     stats.invalidRanges,
                     stats.skippedRanges,
+                    stats.materialMismatches,
                     stats.overflow ? 1 : 0);
             }
 
