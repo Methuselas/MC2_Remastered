@@ -1300,6 +1300,87 @@ int main(int argc, char** argv)
                                     (uint32_t)c.pipelineId, c.firstIndex, c.indexCount};
             }
             batcher_setOpaqueDispatchCandidates(s_opaqueViews.data(), stats.emitted);
+
+            // DrawPacket v4B: coalesce alpha-off packet coverage compare.
+            // Compares batcher coalesce layout cmd counts vs candidate alpha groups.
+            // No GL calls, no batcher mutations, no pixel change.
+            static const bool s_coalesceCmpEnabled = [] {
+                const char* v = std::getenv("MC2_DRAW_PACKET_COALESCE_COMPARE");
+                return v && v[0] == '1';
+            }();
+            static const bool s_coalesceCmpVerbose = [] {
+                const char* v = std::getenv("MC2_DRAW_PACKET_COALESCE_VERBOSE");
+                return v && v[0] == '1';
+            }();
+
+            if (s_coalesceCmpEnabled && batcher_isCoalesceLayoutReady()) {
+                static bool s_finalizeSnapDone = false;
+                if (!s_finalizeSnapDone) {
+                    s_finalizeSnapDone = true;
+                    const uint32_t offCmds = batcher_getAlphaOffCmdCount();
+                    const uint32_t onCmds  = batcher_getAlphaOnCmdCount();
+                    std::fprintf(stderr,
+                        "[DRAW_PACKET_COALESCE_COMPARE v1]"
+                        " event=finalize_snapshot off_cmds=%u on_cmds=%u total_cmds=%u\n",
+                        offCmds, onCmds, offCmds + onCmds);
+                }
+
+                // Count candidates per alpha group. alphaPass==0 = alpha-OFF (alphaClass=0 type).
+                // Do NOT cross-check cachedMaterialFlags — different axes (spec Risk 1).
+                // Iterate [0, stats.emitted) NOT s_candidates.size() (buffer capacity).
+                uint32_t candidateOffPkts = 0u;
+                uint32_t candidateOnPkts  = 0u;
+                for (uint32_t i = 0u; i < stats.emitted; ++i) {
+                    if (s_candidates[i].alphaPass == 0)
+                        ++candidateOffPkts;
+                    else
+                        ++candidateOnPkts;
+                }
+
+                // Verbose per-slot: fires ONCE per process (latch s_verboseDone).
+                static bool s_verboseDone = false;
+                if (s_coalesceCmpVerbose && !s_verboseDone) {
+                    s_verboseDone = true;
+                    const uint32_t  offCmds     = batcher_getAlphaOffCmdCount();
+                    const uint32_t* sortedOrder = batcher_getSortedPacketOrder();
+                    const uint32_t  sortedCount = batcher_getSortedPacketCount();
+                    for (uint32_t slot = 0u; slot < offCmds && slot < sortedCount; ++slot) {
+                        const uint32_t globalPktIdx = sortedOrder[slot];
+                        bool found = false;
+                        for (uint32_t ci = 0u; ci < stats.emitted && !found; ++ci) {
+                            if (s_candidates[ci].alphaPass == 0 &&
+                                s_candidates[ci].globalPacketIdx == globalPktIdx)
+                                found = true;
+                        }
+                        std::fprintf(stderr,
+                            "[DRAW_PACKET_COALESCE_COMPARE v1]"
+                            " event=slot_off slot=%u coalesce_pkt=%u candidate_match=%d\n",
+                            slot, globalPktIdx, found ? 1 : 0);
+                    }
+                }
+
+                // Throttled summary (snap.frameIndex — NOT g_mc2FrameCounter, stale-by-1 here).
+                if (snap.frameIndex % 600u == 0u) {
+                    const uint32_t offCmds = batcher_getAlphaOffCmdCount();
+                    const uint32_t onCmds  = batcher_getAlphaOnCmdCount();
+                    // skip_delta = coalesce - candidate: positive = non-visible types in coalesce (expected);
+                    // negative = emitter emits more than coalesce = emitter/layout divergence = FAIL.
+                    const int skipDeltaOff = static_cast<int>(offCmds)  - static_cast<int>(candidateOffPkts);
+                    const int skipDeltaOn  = static_cast<int>(onCmds)   - static_cast<int>(candidateOnPkts);
+                    // ok=1: coalesce covers all candidates (superset); negative delta = FAIL.
+                    const int ok = (skipDeltaOff >= 0 && skipDeltaOn >= 0) ? 1 : 0;
+                    std::fprintf(stderr,
+                        "[DRAW_PACKET_COALESCE_COMPARE v1]"
+                        " frame=%u event=coverage_check"
+                        " coalesce_off_cmds=%u coalesce_on_cmds=%u"
+                        " candidate_off_pkts=%u candidate_on_pkts=%u"
+                        " skip_delta_off=%d skip_delta_on=%d ok=%d\n",
+                        static_cast<uint32_t>(snap.frameIndex),
+                        offCmds, onCmds,
+                        candidateOffPkts, candidateOnPkts,
+                        skipDeltaOff, skipDeltaOn, ok);
+                }
+            } // end v4B coalesce compare
         }
 
         {
