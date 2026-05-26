@@ -117,6 +117,7 @@ static void EditorObjMgrTrace(const char* fmt, ...)
 #include "EditorResourceFallback.h"
 #include "EditorResourceCatalog.h"
 #include "../GameOS/gameos/gos_static_prop_registry.h"
+#include "../GameAdapters/MechRenderAdapter.h"
 using namespace Microsoft::Xna::Arm;
 
 EditorObjectMgr*	EditorObjectMgr::s_instance = NULL;
@@ -2004,7 +2005,10 @@ bool  EditorObjectMgr::loadMechs( FitIniFile& file )
 
 		gosASSERT( dynamic_cast<Unit*>(pObject)  );
 
-		pObject->load( &file, i );		
+		pObject->load( &file, i );
+
+		if (Mech3DAppearance* m3d = dynamic_cast<Mech3DAppearance*>(pObject->appearance()))
+			GameAdapters::Mech::syncSpawn(*m3d, 0u);
 
 		alternativeInstancesCounter += 1;
 		int tmpI = ((Unit *)(pObject))->tmpAlternativeStartIndex;
