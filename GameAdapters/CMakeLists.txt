@@ -6,6 +6,7 @@
 add_library(gameadapters STATIC
     StaticPropRenderAdapter.cpp
     MechRenderAdapter.cpp
+    SkyRenderAdapter.cpp
 )
 
 target_link_libraries(gameadapters PUBLIC rendercore renderworld)
