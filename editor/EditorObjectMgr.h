@@ -25,6 +25,7 @@
 #endif
 
 #include "mclib.h"
+#include "../RenderCore/Handle.h"
 
 
 class ObjectAppearance;
@@ -237,6 +238,10 @@ public:
 	// Mirrors GameObjectManager::registerStaticPropsForMissionLoad().
 	// Call after load() and before GpuStaticPropBatcher::finalizeGeometry().
 	void registerStaticPropsForMissionLoad();
+
+	// Returns the Unit whose Mech3DAppearance was registered with the given
+	// RenderWorld handle via syncSpawn. Used by the ImGui mech inspector fallback.
+	Unit* findUnitByMechHandle(RenderCore::RenderObjectHandle h);
 
 	int getNextAvailableForestID();
 	long createForest( const Forest& settings );

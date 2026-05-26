@@ -3032,6 +3032,25 @@ void EditorObjectMgr::registerSquadNum(unsigned long squadNum)
 	}
 }
 
+Unit* EditorObjectMgr::findUnitByMechHandle(RenderCore::RenderObjectHandle h)
+{
+	for (BUILDING_LIST::EIterator iter = buildings.Begin(); !iter.IsDone(); iter++)
+	{
+		EditorObject* obj = *iter;
+		if (!obj || !obj->appearance())
+			continue;
+		Unit* unit = dynamic_cast<Unit*>(obj);
+		if (!unit)
+			continue;
+		if (Mech3DAppearance* m3d = dynamic_cast<Mech3DAppearance*>(unit->appearance()))
+		{
+			if (m3d->getRenderWorldHandle().bits == h.bits)
+				return unit;
+		}
+	}
+	return nullptr;
+}
+
 void EditorObjectMgr::registerStaticPropsForMissionLoad()
 {
 	if (!GpuStaticPropRegistry::isMissionLoadRegEnabled())

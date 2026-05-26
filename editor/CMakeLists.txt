@@ -19,6 +19,11 @@ file(GLOB EDITOR_HEADERS CONFIGURE_DEPENDS
 
 set(EDITOR_BRIDGE_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/EditorGosRender.cpp"
+    # gameplay_pick.cpp: shared pick spine (coord transform + glReadPixels).
+    # No game-object deps; compiles cleanly against gameos + renderworld +
+    # gui_runtime which the editor already links.  Needed so OnLButtonUp can
+    # call tryGameplayPick for the Ctrl+Shift+LMB inspector pick.
+    "${CMAKE_SOURCE_DIR}/code/gameplay_pick.cpp"
 )
 
 foreach(_editor_bridge_source IN LISTS EDITOR_BRIDGE_SOURCES)
@@ -108,6 +113,16 @@ target_link_libraries(EditRel PRIVATE
     # Tracy uses Windows process inspection APIs from Psapi.lib.
     Psapi
 )
+
+if(MC2_IMGUI)
+    target_compile_definitions(EditRel PRIVATE MC2_IMGUI=1 MC2_IS_EDITOR=1)
+    target_include_directories(EditRel PRIVATE
+        "${CMAKE_SOURCE_DIR}/3rdparty/imgui"
+        "${CMAKE_SOURCE_DIR}/3rdparty/imgui/backends"
+        "${CMAKE_SOURCE_DIR}/GuiRuntime"
+    )
+    target_link_libraries(EditRel PRIVATE imgui gui_runtime)
+endif()
 
 add_custom_command(TARGET EditRel POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

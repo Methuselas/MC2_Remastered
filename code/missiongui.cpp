@@ -34,6 +34,9 @@
 #include "../RenderWorld/RenderWorld.h"
 #include "gameplay_pick.h"  // M2-pre: tryGameplayPick spine + GameplayPickRequest
 #include "../GameAdapters/MechRenderAdapter.h"  // M2.6: findMechByHandle (forward-decls BattleMech)
+#ifdef MC2_IS_EDITOR
+#include "../editor/EditorObjectMgr.h"
+#endif
 #ifdef MC2_IMGUI
 #include "../GuiRuntime/EditorInspector.h"  // Task 7: Ctrl+Shift+LMB inspector bridge
 #include "../GameAdapters/StaticPropRenderAdapter.h"  // inspector: getRecipeShapeName
@@ -1540,9 +1543,16 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 	// Task 7: Ctrl+Shift+LMB inspector pick. Runs before the legacy
 	// gameplay picks so the inspector can claim the click first.
 	// Priority: ImGui window capture > inspector > existing gameplay picks.
+	//
+	// Gate uses IsWindowHovered(AnyWindow) rather than WantCaptureMouse.
+	// WantCaptureMouse is tainted by mouse_any_down (true whenever any button
+	// is held, even over the viewport) and would suppress the pick during the
+	// entire duration of every click.  IsWindowHovered is purely spatial --
+	// true only when the cursor is physically over an ImGui window -- so it
+	// correctly blocks the pick only when the user is interacting with ImGui.
 	bool pickedByInspector = false;
 #ifdef MC2_IMGUI
-	if (ctrlDn && shiftDn && leftClicked && !ImGui::GetIO().WantCaptureMouse) {
+	if (ctrlDn && shiftDn && leftClicked && !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
 		GameplayPickRequest inspReq;
 		inspReq.mouseX               = mouseX;
 		inspReq.mouseY               = mouseY;
@@ -1596,6 +1606,18 @@ void MissionInterfaceManager::updateOldStyle( bool shiftDn, bool altDn, bool ctr
 						strncpy_s(md.pilotName, sizeof(md.pilotName), pilot->getName(), _TRUNCATE);
 					EditorInspector::setMechData(md);
 				}
+#ifdef MC2_IS_EDITOR
+				else if (Unit* u = EditorObjectMgr::instance()->findUnitByMechHandle(inspResult.lookup.handle)) {
+					EditorInspector::MechInspectorData md;
+					md.populated = true;
+					strncpy_s(md.variantName, sizeof(md.variantName), u->getDisplayName(), _TRUNCATE);
+					md.teamId    = u->getAlignment();
+					Pilot* ep    = u->getPilot();
+					if (ep)
+						strncpy_s(md.pilotName, sizeof(md.pilotName), ep->getName(), _TRUNCATE);
+					EditorInspector::setMechData(md);
+				}
+#endif
 			}
 		}
 		// IMG-INSPECT-2: terrain CPU fallback when object-ID misses.
@@ -1879,9 +1901,16 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 	// Task 7: Ctrl+Shift+LMB inspector pick. Runs before the legacy
 	// gameplay picks so the inspector can claim the click first.
 	// Priority: ImGui window capture > inspector > existing gameplay picks.
+	//
+	// Gate uses IsWindowHovered(AnyWindow) rather than WantCaptureMouse.
+	// WantCaptureMouse is tainted by mouse_any_down (true whenever any button
+	// is held, even over the viewport) and would suppress the pick during the
+	// entire duration of every click.  IsWindowHovered is purely spatial --
+	// true only when the cursor is physically over an ImGui window -- so it
+	// correctly blocks the pick only when the user is interacting with ImGui.
 	bool pickedByInspector = false;
 #ifdef MC2_IMGUI
-	if (ctrlDn && shiftDn && leftClicked && !ImGui::GetIO().WantCaptureMouse) {
+	if (ctrlDn && shiftDn && leftClicked && !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
 		GameplayPickRequest inspReq;
 		inspReq.mouseX               = mouseX;
 		inspReq.mouseY               = mouseY;
@@ -1935,6 +1964,18 @@ void MissionInterfaceManager::updateAOEStyle(bool shiftDn, bool altDn, bool ctrl
 						strncpy_s(md.pilotName, sizeof(md.pilotName), pilot->getName(), _TRUNCATE);
 					EditorInspector::setMechData(md);
 				}
+#ifdef MC2_IS_EDITOR
+				else if (Unit* u = EditorObjectMgr::instance()->findUnitByMechHandle(inspResult.lookup.handle)) {
+					EditorInspector::MechInspectorData md;
+					md.populated = true;
+					strncpy_s(md.variantName, sizeof(md.variantName), u->getDisplayName(), _TRUNCATE);
+					md.teamId    = u->getAlignment();
+					Pilot* ep    = u->getPilot();
+					if (ep)
+						strncpy_s(md.pilotName, sizeof(md.pilotName), ep->getName(), _TRUNCATE);
+					EditorInspector::setMechData(md);
+				}
+#endif
 			}
 		}
 		// IMG-INSPECT-2: terrain CPU fallback when object-ID misses.
