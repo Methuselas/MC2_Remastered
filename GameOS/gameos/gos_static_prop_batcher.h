@@ -12,6 +12,7 @@
 // MaterialGpu-3: forward declare RenderCore::MaterialGpu so batcher_getMaterialGpuEntry
 // can be declared without pulling in the full MaterialGpu.h into every TU that includes this header.
 namespace RenderCore { struct MaterialGpu; }
+namespace RenderCore { struct StaticPropTypeDesc; }
 
 // Per-instance shader-visible struct.
 // Layout mirror of the GLSL std430 struct in shaders/static_prop.vert.

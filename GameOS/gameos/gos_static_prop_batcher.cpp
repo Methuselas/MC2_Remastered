@@ -2,6 +2,8 @@
 #include "gos_static_prop_registry.h"    // M1.5: getRecipeIndexForType
 #include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled + objectIdRawForStaticPropRecipe
 #include "../../RenderCore/MaterialGpu.h"   // MaterialGpu-2: sidecar upload
+#include "../../RenderCore/StaticPropTypeDesc.h"  // v0: cross-seam immutable type table
+#include "../../RenderCore/KtxLoader.h"    // KTX2 sidecar loading (MC2_MATERIAL_KTX=1)
 #include "gos_postprocess.h"             // getGosPostProcess, getDynamicLightSpaceMatrix
 #include "gos_static_prop_killswitch.h"  // gos_GetGLTextureId
 #include "gos_profiler.h"
@@ -194,6 +196,7 @@ struct TypeRangeSsbo {
 std::vector<GpuStaticPropPacket>                   s_packets;
 std::vector<GpuStaticPropType>                     s_types;
 std::unordered_map<const TG_TypeShape*, uint32_t>  s_typeIndex;
+std::vector<RenderCore::StaticPropTypeDesc>        s_typeDescTable; // v0: cross-seam mirror
 
 // [GPUPROPS v1] setup-path instrumentation (internal; path tag lives at file scope).
 static bool s_gpuPropsTrace = (getenv("MC2_GPUPROPS_TRACE") != nullptr);
@@ -269,6 +272,8 @@ static const bool s_materialGpuEnabled =
     (getenv("MC2_MATERIAL_GPU") != nullptr);
 static const bool s_materialGpuSampleEnabled =
     (getenv("MC2_MATERIAL_GPU_SAMPLE") != nullptr);
+static bool s_materialKtxEnabled = (std::getenv("MC2_MATERIAL_KTX") != nullptr &&
+                                     std::getenv("MC2_MATERIAL_KTX")[0] != '0');   // MC2_MATERIAL_KTX=1
 // Tracks whether finalizeGeometry() produced a correctly-sized sidecar.
 // Reset to false at the start of every finalizeGeometry() call; set to true
 // only after the sidecar loop completes with size == emitted count.
@@ -1044,6 +1049,7 @@ void GpuStaticPropBatcher::onMapLoad() {
     s_perTypePeak.clear();
     s_coalesceFrameSlot = 0;  // reset coalesce ring slot per-mission for hygiene
     s_typeIndex.clear();
+    s_typeDescTable.clear();
     s_stagingVbo.clear();
     s_stagingIbo.clear();
     s_failedTypes.clear();
@@ -1076,6 +1082,7 @@ void GpuStaticPropBatcher::onMapLoad() {
 void GpuStaticPropBatcher::onMapUnload() {
     GpuStaticPropRegistry::staticPropRegistryClearMaterialCache();
     s_packetTexArrayLayer.clear();  // v2: sidecar is per-map; clear on unload
+    s_typeDescTable.clear();        // v0: cross-seam mirror is per-map
     if (s_sharedVbo) { glDeleteBuffers(1, &s_sharedVbo); s_sharedVbo = 0; }
     if (s_sharedIbo) { glDeleteBuffers(1, &s_sharedIbo); s_sharedIbo = 0; }
     if (s_sharedVao) { glDeleteVertexArrays(1, &s_sharedVao); s_sharedVao = 0; }
@@ -1808,6 +1815,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         GLuint glTexId;
         GLint  w;
         GLint  h;
+        DWORD  nodeIdx;   // MC_TextureManager node index for KTX2 sidecar lookup
     };
 
     for (uint8_t group = 0; group <= 1; ++group) {
@@ -1926,7 +1934,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             // v3.8 mixed-size: append unique with its actual W,H.
             // Array allocation uses max(W,H) across all uniques.
             const int32_t layer = static_cast<int32_t>(uniques.size());
-            uniques.push_back({glTexId, W, H});
+            uniques.push_back({glTexId, W, H, nodeIdx});
             glTexIdToLayer[glTexId] = layer;
             layerForPacket[globalPktIdx] = layer;
             if (pIdx == 0) layerForType[typeID] = layer;
@@ -1979,16 +1987,55 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         std::vector<uint8_t> pixelBuf(maxBytes);
         for (size_t k = 0; k < uniques.size(); ++k) {
             const auto& u = uniques[k];
-            glBindTexture(GL_TEXTURE_2D, u.glTexId);
-            const size_t need = static_cast<size_t>(u.w) *
-                                static_cast<size_t>(u.h) * 4u;
-            if (pixelBuf.size() < need) pixelBuf.resize(need);
-            glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, pixelBuf.data());
-            glBindTexture(GL_TEXTURE_2D_ARRAY, outArray);
-            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0,
-                            0, 0, static_cast<GLint>(k),
-                            u.w, u.h, 1,
-                            GL_BGRA, GL_UNSIGNED_BYTE, pixelBuf.data());
+            bool ktxUsed = false;
+            if (s_materialKtxEnabled && u.nodeIdx != 0xFFFFFFFFu && mcTextureManager) {
+                const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
+                if (srcName && *srcName) {
+                    // Derive .ktx2 sidecar path by replacing extension.
+                    std::string ktxPath(srcName);
+                    const auto dot = ktxPath.rfind('.');
+                    if (dot != std::string::npos) {
+                        ktxPath.replace(dot, std::string::npos, ".ktx2");
+                    } else {
+                        ktxPath += ".ktx2";
+                    }
+                    RenderCore::KtxImage ktxImg;
+                    const bool ktxOk = RenderCore::ktxLoadRgba8(ktxPath.c_str(), ktxImg);
+                    const bool dimOk = ktxOk && ktxImg.width == u.w && ktxImg.height == u.h;
+                    // Always-on debug: log attempt result so we can diagnose path/dim issues.
+                    std::fprintf(stderr,
+                        "[KTX_SIDECAR] node=%lu srcName=%s path=%s "
+                        "load=%d ktxDims=%dx%d glDims=%dx%d match=%d\n",
+                        (unsigned long)u.nodeIdx, srcName, ktxPath.c_str(),
+                        (int)ktxOk,
+                        ktxOk ? ktxImg.width : 0, ktxOk ? ktxImg.height : 0,
+                        u.w, u.h, (int)dimOk);
+                    std::fflush(stderr);
+                    if (dimOk) {
+                        // KTX2 pixels are RGBA order; GL_RGBA matches.
+                        glBindTexture(GL_TEXTURE_2D_ARRAY, outArray);
+                        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0,
+                                        0, 0, static_cast<GLint>(k),
+                                        u.w, u.h, 1,
+                                        GL_RGBA, GL_UNSIGNED_BYTE, ktxImg.pixels.data());
+                        ktxUsed = true;
+                        COALESCE_TRACE("ktx_sidecar_hit type=? node=%lu path=%s",
+                                       (unsigned long)u.nodeIdx, ktxPath.c_str());
+                    }
+                }
+            }
+            if (!ktxUsed) {
+                glBindTexture(GL_TEXTURE_2D, u.glTexId);
+                const size_t need = static_cast<size_t>(u.w) *
+                                    static_cast<size_t>(u.h) * 4u;
+                if (pixelBuf.size() < need) pixelBuf.resize(need);
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, pixelBuf.data());
+                glBindTexture(GL_TEXTURE_2D_ARRAY, outArray);
+                glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0,
+                                0, 0, static_cast<GLint>(k),
+                                u.w, u.h, 1,
+                                GL_BGRA, GL_UNSIGNED_BYTE, pixelBuf.data());
+            }
         }
 
         // 5.10.f — mipmap + sampler params (forestall AMD strict-fail).
