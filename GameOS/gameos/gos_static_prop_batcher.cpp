@@ -77,6 +77,24 @@ static const bool s_globalPoolLegacy = []() {
     const char* v = getenv("MC2_STATIC_PROP_GLOBAL_POOL_LEGACY");
     return v != nullptr && v[0] != '0';
 }();
+
+// DrawPacket v5: per-draw-call substitutive dispatch.
+// Gate: MC2_DRAW_PACKET_COALESCE_V5=1
+// Extension: ARB_base_instance (GL 4.2 core, available on all tier1 GPUs).
+static const bool s_v5Enabled = []() -> bool {
+    const char* v = std::getenv("MC2_DRAW_PACKET_COALESCE_V5");
+    return v && v[0] == '1';
+}();
+static const bool s_v5TraceEnabled = []() -> bool {
+    const char* v = std::getenv("MC2_DRAW_PACKET_COALESCE_V5_TRACE");
+    return v && v[0] == '1';
+}();
+// GLboolean: GL_TRUE on any GL 4.2+ context. Evaluated lazily via GLEW at first use.
+// Safe: GLEW is initialized before any batcher code runs (gos_Init() order).
+static bool s_baseInstanceSupported = false;  // set on first gate-ON flush
+static bool s_v5Armed      = false;  // true once gate-arm checks have run
+static bool s_v5Disarmed   = false;  // true if gate-arm check failed for session
+
 #define TREE_DIAG(fmt, ...) \
     do { if (s_treeDiagTrace) { fprintf(stderr, "[TREE_DIAG] " fmt "\n", ##__VA_ARGS__); fflush(stderr); } } while (0)
 
