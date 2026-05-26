@@ -93,20 +93,26 @@ If `s_v5Enabled && s_baseInstanceSupported`:
 **v5 uses CPU-snapshot instance counts only.** Do not reason about GPU-cull counts.
 
 Source: `s_typeRanges[typeId].instanceCount` (file-local `std::unordered_map<uint32_t, TypeRangeSsbo>`
-inside batcher.cpp anonymous namespace). This is populated by `uploadAllBucketsIfNeeded()` before
-the coalesce branch is entered — valid at insertion point.
+inside batcher.cpp anonymous namespace). Populated by `uploadAllBucketsIfNeeded()` before the
+coalesce branch — **snapshot types only** (types with instances this frame). Types with zero
+instances are NOT inserted; querying them yields `s_typeRanges.end()`.
 
 `TypeRangeSsbo::instanceCount` = `s_bucketsByType[typeId].instances.size()` = number of snapshot
 instances submitted for that type this frame. This is the same source used by the legacy per-type
 loop. Zero means the type has no instances in the current snapshot.
+
+**Important:** `s_sortedPacketOrder` includes ALL texture-assigned packets built at coalesce
+finalization (map-load time), including many types with no instances in the current snapshot.
+A miss on `s_typeRanges.find()` is NOT a type-OOB error — it means zero instances this frame.
+Genuine OOB is checked against `s_types.size()` (the static all-types table).
 
 **Not used:**
 - GPU cull indirect buffer instance counts (GPU-write-only, no CPU copy without stall)
 - `s_offGroupCountThisFrame` (global accumulator, not per-type)
 - Any emitter candidate `instanceCount` field (not passed into batcher.cpp)
 
-**Zero-instance skip:** If `typeRange.instanceCount == 0`, skip the draw — no GL call for that
-slot. This is the CPU-snapshot analogue to the GPU-cull producing instanceCount=0. The slot is
+**Zero-instance skip:** If type not in `s_typeRanges` OR `instanceCount == 0`, skip the draw.
+This is the CPU-snapshot analogue to the GPU-cull producing instanceCount=0. The slot is
 counted in `zero_instance_skips`.
 
 Zero-instance types in `s_sortedPacketOrder` are valid and expected (types that had submissions
@@ -175,17 +181,17 @@ for i in [0, sorted_count):
     packet = s_packets[globalPktIdx]   // GpuStaticPropPacket
 
     typeId = packet.owningTypeID
-    if typeId >= /* type count */ or typeId not in s_typeRanges:
+    // Genuine OOB: typeId outside the static all-types table (s_types).
+    if typeId >= s_types.size():
         ++type_oob; continue
 
-    instanceCount = s_typeRanges[typeId].instanceCount
+    // s_typeRanges only has snapshot (instance-bearing) types.
+    // Missing from s_typeRanges = zero instances this frame; not an error.
+    typeIt = s_typeRanges.find(typeId)
+    instanceCount = typeIt->instanceCount if typeIt != s_typeRanges.end() else 0
 
     if instanceCount == 0:
         ++zero_instance_skips; continue
-
-    // baseInstanceMap guaranteed non-null at this point (gate-arm check above)
-    if i >= totalCmds:
-        ++base_instance_missing; continue
 
     baseInstance = baseInstanceMap[i]   // index within current ring slot
 
