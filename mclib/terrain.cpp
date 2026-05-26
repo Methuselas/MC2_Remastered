@@ -1713,7 +1713,11 @@ void Terrain::geometry (void)
 	// F6 T1/T2: cache frustum planes once per frame (O(1)) into Camera member.
 	// Both slimReduce below AND quad.cpp::setupTextures water-corner sites read
 	// via eye->getCachedFrustumPlanes(). Single extraction shared across all sites.
-	if (s_admissionModern) {
+	// MC2_BLOCK_FRUSTUM_FALLBACK also needs planes; cache unconditionally when
+	// either feature is active so both share the single extraction.
+	static const bool s_blockFrustumFallback =
+		(getenv("MC2_BLOCK_FRUSTUM_FALLBACK") != nullptr);
+	if (s_admissionModern || s_blockFrustumFallback) {
 		eye->cacheFrustumPlanes();
 	}
 
@@ -1943,6 +1947,49 @@ void Terrain::geometry (void)
 			if (ssOn) g_ssRedCyc += __rdtsc() - _ssR;  // [SLIMSPLIT v1] RED end
 		}
 		SlimSplitRollAndMaybeEmit();  // [SLIMSPLIT v1] once/frame (slimReduce is 1/frame)
+	}
+
+	// MC2_BLOCK_FRUSTUM_FALLBACK: post-slimReduce block-level frustum AABB pass.
+	// Widens object-block admission for cameras where the per-vertex angular cull
+	// incorrectly rejects in-frustum blocks (wolfman / low-angle view). Additive
+	// only — never deactivates a block the legacy vertex pass already activated.
+	// Sets both objBlockInfo[b].active AND objVertexActive[vertNum] so the
+	// per-object gate in objmgr (objVertexActive[obj->getVertexNum()]) also passes.
+	// CRIT-1 superset invariant preserved: new active set = old ∪ aabb_activated.
+	if (s_blockFrustumFallback) {
+		const float (*planes)[4] = eye->getCachedFrustumPlanes();
+		const long ssNumActiveVerts = realVerticesMapSide * realVerticesMapSide;
+		static constexpr float kBlockZMin = -200.0f;
+		static constexpr float kBlockZMax = 2500.0f;
+		for (long b = 0; b < numObjBlocks; ++b) {
+			if (objBlockInfo[b].active) continue;
+			const long bx = b % blocksMapSide;
+			const long by = b / blocksMapSide;
+			Stuff::Vector3D mn(
+				float(bx * verticesBlockSide - halfVerticesMapSide) * worldUnitsPerVertex,
+				float(halfVerticesMapSide - (by + 1) * verticesBlockSide) * worldUnitsPerVertex,
+				kBlockZMin);
+			Stuff::Vector3D mx(
+				mn.x + worldUnitsBlockSide,
+				mn.y + worldUnitsBlockSide,
+				kBlockZMax);
+			if (!eye->quadAabbInFrustum(planes, mn, mx)) continue;
+			objBlockInfo[b].active = true;
+			// Propagate to per-vertex active flags: objmgr checks
+			// objVertexActive[obj->getVertexNum()] as a second per-object gate.
+			// Assumes row-major vertex storage: vertexNum = row*realVMS + col.
+			const long rowStart = by * verticesBlockSide;
+			const long rowEnd   = rowStart + verticesBlockSide;
+			const long colStart = bx * verticesBlockSide;
+			const long colEnd   = colStart + verticesBlockSide;
+			for (long row = rowStart; row < rowEnd && row < realVerticesMapSide; ++row) {
+				for (long col = colStart; col < colEnd && col < realVerticesMapSide; ++col) {
+					const long vn = row * realVerticesMapSide + col;
+					if (vn < ssNumActiveVerts)
+						objVertexActive[vn] = true;
+				}
+			}
+		}
 	}
 
 	//-----------------------------------
