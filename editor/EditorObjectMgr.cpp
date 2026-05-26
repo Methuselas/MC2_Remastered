@@ -116,6 +116,7 @@ static void EditorObjMgrTrace(const char* fmt, ...)
 #include "../ARM/Microsoft.Xna.Arm.h"
 #include "EditorResourceFallback.h"
 #include "EditorResourceCatalog.h"
+#include "../GameOS/gameos/gos_static_prop_registry.h"
 using namespace Microsoft::Xna::Arm;
 
 EditorObjectMgr*	EditorObjectMgr::s_instance = NULL;
@@ -3025,6 +3026,31 @@ void EditorObjectMgr::registerSquadNum(unsigned long squadNum)
 	{
 		nextAvailableSquadNum = squadNum + 1;
 	}
+}
+
+void EditorObjectMgr::registerStaticPropsForMissionLoad()
+{
+	if (!GpuStaticPropRegistry::isMissionLoadRegEnabled())
+		return;
+	static const long homeRelations[9] = {0, 0, 2, 1, 1, 1, 1, 1, 1};
+	int total = 0, registered = 0;
+	for (BUILDING_LIST::EIterator iter = buildings.Begin(); !iter.IsDone(); iter++)
+	{
+		EditorObject* obj = *iter;
+		if (!obj || !obj->appearance())
+			continue;
+		++total;
+		ObjectAppearance* app = obj->appearance();
+		int teamIdx = (app->teamId + 1 >= 0 && app->teamId + 1 < 9) ? app->teamId + 1 : 0;
+		app->setObjectParameters(app->position, app->rotation, app->selected,
+		                         app->teamId, homeRelations[teamIdx]);
+		app->registerStatic();
+		if (app->isStaticRegistered())
+			++registered;
+	}
+	fprintf(stderr, "[STATIC_PROP_REG v1] event=editor_load enumerated=%d registered=%d skipped=%d\n",
+	        total, registered, total - registered);
+	fflush(stderr);
 }
 
 //*************************************************************************************************

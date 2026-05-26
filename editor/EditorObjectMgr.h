@@ -234,6 +234,10 @@ public:
 	void unregisterSquadNum(unsigned long squadNum) {}
 	void resetAvailableSquadNums() { nextAvailableSquadNum = 1; }
 
+	// Mirrors GameObjectManager::registerStaticPropsForMissionLoad().
+	// Call after load() and before GpuStaticPropBatcher::finalizeGeometry().
+	void registerStaticPropsForMissionLoad();
+
 	int getNextAvailableForestID();
 	long createForest( const Forest& settings );
 	void editForest( long& ID,  const Forest& newSettings );

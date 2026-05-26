@@ -493,6 +493,13 @@ bool EditorData::initTerrainFromPCV( const char* fileName )
 	EditorObjectMgr::instance()->load( pFile, 1 );
 	EditorDataTrace("EditorData::initTerrainFromPCV: after EditorObjectMgr::load");
 
+	// Mirrors Mission::init Track B — must run after load() (types registered) and
+	// before finalizeGeometry() (VBO upload). Sets per-instance position/rotation in
+	// GpuStaticPropRegistry so objectIdRaw is nonzero and static_prop.frag can write
+	// to COLOR_ATTACHMENT2 for ImGui OID picking.
+	EditorObjectMgr::instance()->registerStaticPropsForMissionLoad();
+	EditorDataTrace("EditorData::initTerrainFromPCV: after registerStaticPropsForMissionLoad");
+
 	// Steps 11-13 (game lines 3136-3143): finalize batcher geometry, then build indirect buffer.
 	// All TG_TypeMultiShape instances created during EditorObjectMgr::load() above have been
 	// registered via BldgAppearance::init() against the armed batcher state. finalizeGeometry()
