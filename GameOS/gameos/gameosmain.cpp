@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <vector>
+#include <unordered_set>
 #include <cstring>
 #include <time.h>
 
@@ -1381,6 +1382,77 @@ int main(int argc, char** argv)
                         skipDeltaOff, skipDeltaOn, ok);
                 }
             } // end v4B coalesce compare
+
+            // DrawPacket v4C: coalesce slot-level coverage soak.
+            // For each candidate, verify globalPacketIdx is in sorted packet order for correct alpha group.
+            // No GL calls, no dispatch change.
+            static const bool s_coalesceV4CEnabled = [] {
+                const char* v = std::getenv("MC2_DRAW_PACKET_COALESCE_V4C");
+                return v && v[0] == '1';
+            }();
+
+            if (s_coalesceV4CEnabled && batcher_isCoalesceLayoutReady()) {
+                const uint32_t  offCount    = batcher_getAlphaOffCmdCount();
+                const uint32_t  onCount     = batcher_getAlphaOnCmdCount();
+                const uint32_t* sortedOrder = batcher_getSortedPacketOrder();
+                const uint32_t  sortedCount = batcher_getSortedPacketCount();
+
+                // Build per-frame presence sets keyed by globalPacketIdx.
+                // unordered_set avoids the index-bound trap: globalPacketIdx indexes s_packets[]
+                // which can exceed sortedCount when damage-shape packets are excluded.
+                static std::unordered_set<uint32_t> s_offSet;
+                static std::unordered_set<uint32_t> s_onSet;
+                s_offSet.clear(); s_onSet.clear();
+                for (uint32_t i = 0u; i < offCount && i < sortedCount; ++i)
+                    s_offSet.insert(sortedOrder[i]);
+                for (uint32_t i = offCount; i < sortedCount; ++i)
+                    s_onSet.insert(sortedOrder[i]);
+
+                uint32_t matchedOff = 0u, unmatchedOff = 0u;
+                uint32_t matchedOn  = 0u, unmatchedOn  = 0u;
+                bool firstMissPrinted = false;
+
+                for (uint32_t i = 0u; i < stats.emitted; ++i) {
+                    const StaticPropDrawPacketCandidate& c = s_candidates[i];
+                    if (c.alphaPass == 0) {
+                        if (s_offSet.count(c.globalPacketIdx)) { ++matchedOff; }
+                        else {
+                            ++unmatchedOff;
+                            if (!firstMissPrinted) {
+                                firstMissPrinted = true;
+                                std::fprintf(stderr,
+                                    "[DRAW_PACKET_COALESCE_SOAK v1]"
+                                    " event=slot_miss group=off candidate_pkt=%u typeId=%u\n",
+                                    c.globalPacketIdx, c.typeId);
+                            }
+                        }
+                    } else {
+                        if (s_onSet.count(c.globalPacketIdx)) { ++matchedOn; }
+                        else {
+                            ++unmatchedOn;
+                            if (!firstMissPrinted) {
+                                firstMissPrinted = true;
+                                std::fprintf(stderr,
+                                    "[DRAW_PACKET_COALESCE_SOAK v1]"
+                                    " event=slot_miss group=on candidate_pkt=%u typeId=%u\n",
+                                    c.globalPacketIdx, c.typeId);
+                            }
+                        }
+                    }
+                }
+
+                if (snap.frameIndex % 600u == 0u) {
+                    const int ok = (unmatchedOff == 0u && unmatchedOn == 0u) ? 1 : 0;
+                    std::fprintf(stderr,
+                        "[DRAW_PACKET_COALESCE_SOAK v1]"
+                        " frame=%u event=slot_coverage"
+                        " matched_off=%u unmatched_off=%u"
+                        " matched_on=%u unmatched_on=%u ok=%d\n",
+                        static_cast<uint32_t>(snap.frameIndex),
+                        matchedOff, unmatchedOff,
+                        matchedOn, unmatchedOn, ok);
+                }
+            } // end v4C coalesce slot coverage soak
         }
 
         {
