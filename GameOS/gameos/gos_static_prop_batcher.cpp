@@ -96,6 +96,30 @@ static bool s_baseInstanceSupported = false;  // set on first gate-ON flush
 static bool s_v5Armed      = false;  // true once gate-arm checks have run
 static bool s_v5Disarmed   = false;  // true if gate-arm check failed for session
 
+// DrawPacket v6: canonical packet+meta array dispatch.
+// Gate: MC2_DRAW_PACKET_STATIC_PROP_V6=1
+// Requires: ARB_base_instance (checked independently of v5 arm block).
+static const bool s_v6Enabled = []() -> bool {
+    const char* v = std::getenv("MC2_DRAW_PACKET_STATIC_PROP_V6");
+    return v && v[0] == '1';
+}();
+static const bool s_v6TraceEnabled = []() -> bool {
+    const char* v = std::getenv("MC2_DRAW_PACKET_STATIC_PROP_V6_TRACE");
+    return v && v[0] == '1';
+}();
+static bool s_v6Armed    = false;
+static bool s_v6Disarmed = false;
+
+// v6 per-frame counters (reset each v6-active flush).
+static uint32_t s_v6FrameDrawsIssued        = 0u;
+static uint32_t s_v6FrameZeroInstSkips      = 0u;
+static uint32_t s_v6FrameSortedOob          = 0u;
+static uint32_t s_v6FramePacketOob          = 0u;
+static uint32_t s_v6FrameTypeOob            = 0u;
+static uint32_t s_v6FrameLockstepViolations = 0u;
+static uint32_t s_v6FrameGlErrors           = 0u;
+static uint32_t s_v6TotalFrameCount         = 0u;
+
 // v5 per-frame counters (reset at start of each v5-active flush).
 static uint32_t s_v5FrameDrawsIssued     = 0u;
 static uint32_t s_v5FrameZeroInstSkips   = 0u;
@@ -3926,6 +3950,58 @@ void GpuStaticPropBatcher::flush() {
                     " drawid_loc=%d\n",
                     totalSlots,
                     static_cast<int>(s_baseInstanceSupported),
+                    static_cast<int>(s_locsCoalesce.drawIDBase));
+            }
+        }
+
+        // DrawPacket v6: gate-arm checks (run once per process on first gate-ON flush).
+        if (s_v6Enabled && !s_v6Armed && !s_v6Disarmed) {
+            s_v6Armed = true;
+            bool disarm = false;
+            const char* disarmReason = nullptr;
+
+            // Check ARB_base_instance independently — do NOT read s_baseInstanceSupported
+            // (written only inside v5 arm block; may be false if v5 gate is OFF).
+            if (GLEW_ARB_base_instance != GL_TRUE) {
+                disarmReason = "base_instance_ext_missing";
+                disarm = true;
+            }
+
+            if (!disarm && s_baseInstanceByCmdMap == nullptr) {
+                disarmReason = "legacy_pool_no_baseinst_map";
+                disarm = true;
+            }
+
+            if (!disarm && s_locsCoalesce.drawIDBase < 0) {
+                disarmReason = "drawid_loc_missing";
+                disarm = true;
+            }
+
+            if (!disarm &&
+                static_cast<uint32_t>(RenderCore::PipelineId::StaticPropOpaque) >=
+                static_cast<uint32_t>(RenderCore::PipelineId::Count_)) {
+                disarmReason = "pipeline_enum_stale_opaque";
+                disarm = true;
+            }
+
+            if (!disarm &&
+                static_cast<uint32_t>(RenderCore::PipelineId::StaticPropAlphaTest) >=
+                static_cast<uint32_t>(RenderCore::PipelineId::Count_)) {
+                disarmReason = "pipeline_enum_stale_alphatest";
+                disarm = true;
+            }
+
+            if (disarm) {
+                s_v6Disarmed = true;
+                std::fprintf(stderr,
+                    "[DRAW_PACKET_V6] event=disarmed reason=%s\n",
+                    disarmReason);
+            } else {
+                const uint32_t totalSlots = s_alphaOffCmdCount + s_alphaOnCmdCount;
+                std::fprintf(stderr,
+                    "[DRAW_PACKET_V6] event=armed slots=%u alpha_off=%u alpha_on=%u"
+                    " ext_supported=1 drawid_loc=%d\n",
+                    totalSlots, s_alphaOffCmdCount, s_alphaOnCmdCount,
                     static_cast<int>(s_locsCoalesce.drawIDBase));
             }
         }
