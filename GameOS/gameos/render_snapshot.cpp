@@ -252,6 +252,38 @@ RenderSnapshot ExtractRenderSnapshot()
     }
 
     // -----------------------------------------------------------------------
+    // Extraction v2.1: per-draw-slot packet snapshot
+    // -----------------------------------------------------------------------
+    {
+        const uint32_t slotCount = batcher_getDrawSlotCount();
+        ExtractedStaticPropPacket* pktBuf =
+            snap.arena->alloc<ExtractedStaticPropPacket>(slotCount);
+        if (!pktBuf && slotCount > 0u) {
+            snap.arenaOverflow = true;
+        } else {
+            uint32_t pktWrite   = 0u;
+            uint32_t pktInvalid = 0u;
+            for (uint32_t slot = 0u; slot < slotCount; ++slot) {
+                ExtractedStaticPropPacket pkt{};
+                if (!batcher_getDrawSlotEntry(slot, &pkt)) {
+                    ++pktInvalid;
+                    continue;
+                }
+                pktBuf[pktWrite++] = pkt;
+            }
+            snap.staticPropPackets       = Span<ExtractedStaticPropPacket>(pktBuf, pktWrite);
+            snap.staticPropPacketCount   = pktWrite;
+            snap.staticPropPacketInvalid = pktInvalid;
+        }
+    }
+
+    // v2.1 hard gate — 1 iff all failure/overflow counters are zero.
+    snap.ok = (snap.staticPropValidationFail  == 0u &&
+               snap.staticPropPacketRangesFail == 0u &&
+               snap.staticPropPacketInvalid    == 0u &&
+               !snap.arenaOverflow) ? 1u : 0u;
+
+    // -----------------------------------------------------------------------
     // Visibility query for log line
     // -----------------------------------------------------------------------
     uint32_t visibilityStaticPropsCount = 0;
@@ -270,13 +302,14 @@ RenderSnapshot ExtractRenderSnapshot()
 
     std::fprintf(stderr,
         "[RENDER_SNAPSHOT v1] frame=%llu mechs=%u static_props=%u lights=%u "
-        "bytes=%zu overflow=%d\n"
+        "bytes=%zu overflow=%d ok=%u\n"
         "  sp_fail=%u sp_sentinel_mat=%u sp_sentinel_cull=%u sizeof_static_prop=%zu\n"
         "  sp_tex_wired=%u sp_tex_sentinel=%u sp_mat_wired=%u sp_mat_sentinel=%u\n"
         "  sp_primary_alpha_on=%u sp_multi_packet=%u\n"
         "  sp_cull_submitted=%u sp_cull_missing=%u sp_has_bounds=%u\n"
         "  sp_alpha_on=%u sp_has_shape_name=%u\n"
         "  sp_packet_ranges_ok=%u sp_packet_ranges_invalid=%u\n"
+        "  sp_packets=%u sp_packet_invalid=%u\n"
         "  visibility_static_props=%u sp_vis_delta=%d\n",
         static_cast<unsigned long long>(snap.frameIndex),
         static_cast<uint32_t>(snap.mechs.size()),
@@ -284,6 +317,7 @@ RenderSnapshot ExtractRenderSnapshot()
         static_cast<uint32_t>(snap.lights.size()),
         snap.arena->bytesUsed(),
         snap.arenaOverflow ? 1 : 0,
+        snap.ok,
         snap.staticPropValidationFail,
         snap.staticPropSentinelMat,
         snap.staticPropSentinelCull,
@@ -301,6 +335,8 @@ RenderSnapshot ExtractRenderSnapshot()
         snap.staticPropHasShapeName,
         snap.staticPropPacketRangesOk,
         snap.staticPropPacketRangesFail,
+        snap.staticPropPacketCount,
+        snap.staticPropPacketInvalid,
         visibilityStaticPropsCount,
         static_cast<int32_t>(snap.staticProps.size()) -
             static_cast<int32_t>(visibilityStaticPropsCount));
