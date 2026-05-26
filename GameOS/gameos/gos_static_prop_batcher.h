@@ -433,3 +433,18 @@ const RenderCore::StaticPropTypeDesc* batcher_getStaticPropTypeDescTable(uint32_
 // Does NOT issue GL calls; does NOT modify any state.
 // gate: MC2_TYPE_TABLE_CAND_LOG=1
 void batcher_buildCandidateLog();
+
+// Batcher-owned view of a candidate opaque packet for v4A dispatch.
+// Caller (gameosmain.cpp) converts from StaticPropDrawPacketCandidate; no emitter type here.
+// cachedMaterialFlags: TRANSITIONAL field from emitter v2; v4A depends on current semantics.
+// If cachedMaterialFlags semantics change, update v4A dispatch block in same commit.
+struct StaticPropOpaquePacketView {
+    uint32_t typeId;
+    uint32_t globalPacketIdx;
+    uint32_t cachedMaterialFlags;
+    uint32_t pipelineId;   // cast from RenderCore::PipelineId at call site
+    uint32_t firstIndex;
+    uint32_t indexCount;
+};
+
+void batcher_setOpaqueDispatchCandidates(const StaticPropOpaquePacketView* views, size_t count);
