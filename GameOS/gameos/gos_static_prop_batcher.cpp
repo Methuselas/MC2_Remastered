@@ -326,12 +326,19 @@ GLuint s_perDrawSsbo               = 0;  // PerDrawEntry per type, sorted (bindi
 // s_packetMaterialIdx[i] maps draw slot i (= s_sortedPacketOrder[i] position)
 // to its entry in s_materialGpuTable.
 // Size invariant: s_packetMaterialIdx.size() == s_sortedPacketOrder.size().
-// MC2_MATERIAL_GPU defaults ON. Set MC2_MATERIAL_GPU=0 to disable.
+
+// MC2_MATERIAL_GPU — defaults ON.
+// Set MC2_MATERIAL_GPU=0 to disable table upload, SSBO bind, and compare.
+// Upload gate: active by default; powers compare invariant (albedoTex == texArrayLayer).
 static const bool s_materialGpuEnabled = []() {
     const char* v = getenv("MC2_MATERIAL_GPU");
     return v == nullptr || (v[0] != '0');
 }();
-// MC2_MATERIAL_GPU_SAMPLE remains opt-in (gated OFF for soak).
+
+// MC2_MATERIAL_GPU_SAMPLE — opt-in shader sampling gate.
+// Set MC2_MATERIAL_GPU_SAMPLE=1 to route static-prop albedo through MaterialGpu table.
+// Without this, static_prop.frag uses texArrayLayer (legacy fallback / compare authority).
+// Invariant: materials[materialIdx].albedoTex == texArrayLayer must hold while both paths live.
 static const bool s_materialGpuSampleEnabled =
     (getenv("MC2_MATERIAL_GPU_SAMPLE") != nullptr);
 static bool s_materialKtxEnabled = (std::getenv("MC2_MATERIAL_KTX") != nullptr &&
@@ -2282,9 +2289,10 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             }
 
             // --- Debug compare ---
-            // For each draw slot i: materials[s_packetMaterialIdx[i]].albedoTex
-            // must equal layerForPacket[s_sortedPacketOrder[i]].
-            // mismatches > 0 means the sidecar is wrong; execution continues for log collection.
+            // Load-bearing invariant check: MaterialGpu[materialIdx].albedoTex == texArrayLayer.
+            // texArrayLayer is the compare authority until it is deliberately retired.
+            // mismatches > 0 means the MaterialGpu table has diverged from the legacy path.
+            // This check runs by default (s_materialGpuEnabled is default-ON).
             int mismatches = 0;
             for (uint32_t i = 0; i < emittedCount; ++i) {
                 const uint32_t globalPktIdx = s_sortedPacketOrder[i];
@@ -3781,8 +3789,9 @@ void GpuStaticPropBatcher::flush() {
         }
 
         // MaterialGpu-3: compute sampleOn once per flush.
-        // Five conditions — all must be true for shader sampling to occur.
-        // Including loc >= 0 as condition 5 prevents misleading "enabled=1 loc=-1" logs.
+        // sampleOn: all five conditions required.
+        // s_materialGpuEnabled is default-ON; s_materialGpuSampleEnabled requires MC2_MATERIAL_GPU_SAMPLE=1.
+        // When sampleOn=0, static_prop.frag falls back to texArrayLayer (no pixel change).
         const bool sampleOn = s_materialGpuEnabled
                            && s_materialGpuSampleEnabled
                            && s_materialGpuSsbo != 0

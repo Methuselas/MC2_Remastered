@@ -58,15 +58,22 @@ Three CI scripts that lock the RenderWorld arc invariants — see `docs/renderwo
 
 - `MC2_MATERIAL_KTX=1` — KTX2 sidecar loader: try `.ktx2` alongside `.tga` when building static-prop texture array. Phase 0: RGBA8 (VK_FORMAT_R8G8B8A8_UNORM/SRGB) only; compressed/supercompressed formats return false silently. Default OFF. Requires `MC2_COALESCE=1`. Implementation: `RenderCore/KtxLoader.{h,cpp}`. Call site: `RenderCore::ktxLoadRgba8(path, out)` in `gos_static_prop_batcher.cpp`.
 
-## MaterialGpu sidecar (MaterialGpu-2)
+## MC2_MATERIAL_GPU
 
-- `MC2_MATERIAL_GPU=1` — enable static-prop MaterialGpu sidecar: builds table from `texArrayLayer`, uploads mission-lifetime SSBO at binding 5, binds in `flush()`, compares `albedoTex` vs legacy layer. Default OFF. Log prefix: `[MATERIAL_GPU v1]`. Emits: `event=table_upload materials=N bytes=B emitted=M`, `event=compare emitted=M mismatches=0`, `event=unload materials=N bytes=B`. No visual change. No shader consumer until MaterialGpu-3.
-- `MC2_MATERIAL_GPU_SAMPLE=1` — enable MaterialGpu shader sampling (MaterialGpu-3).
-  Requires `MC2_MATERIAL_GPU=1` to have any effect (both required for `u_materialGpuSample=1`).
-  Default OFF. When both active: `static_prop.frag` reads `materials[materialIdx].albedoTex`
-  instead of `PerDrawEntry.texArrayLayer`. Expected result: zero pixel delta (same layer index).
-  Log: `event=sample_mode enabled=1 loc=N` (once per flush). Diagnostic reason codes:
-  `upload_env_off | sample_env_off | no_ssbo | sidecar_invalid | uniform_missing`.
+Default: **ON** (set `MC2_MATERIAL_GPU=0` to disable).
+
+Controls static-prop MaterialGpu table upload, SSBO bind, and compare validation.
+When enabled, every flush validates `materials[materialIdx].albedoTex == texArrayLayer` (load-bearing invariant).
+
+## MC2_MATERIAL_GPU_SAMPLE
+
+Default: **OFF** (set `MC2_MATERIAL_GPU_SAMPLE=1` to enable).
+
+Activates shader sampling from MaterialGpu in `static_prop.frag`.
+Without this flag, the shader uses `texArrayLayer` (legacy fallback path).
+Enable after confirming `mismatches=0` across tier1.
+
+Log tag: `[MATERIAL_GPU v4]`
 
 ## Static-prop dispatch hierarchy (v7)
 

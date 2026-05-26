@@ -52,13 +52,13 @@ struct PerDrawEntry {
     int32_t packetID;          //  0 — index into s_packets[]
     int32_t materialFlags;     //  4 — 0 or STATIC_PROP_FLAG_ALPHA_TEST
     int32_t maxLocalVertexID;  //  8 — type.vertexCount - 1
-    int32_t texArrayLayer;     // 12 — group-relative layer in s_texArrayOff/On
+    int32_t texArrayLayer;     // 12 — legacy texture array layer; compare authority until
+                               //      MaterialGpu fully retired (must equal materials[materialIdx].albedoTex)
     float   uvScaleX;          // 16 — 1.0f for Stage A
     float   uvScaleY;          // 20 — 1.0f for Stage A
     int32_t  objectIdRaw;      // 24 — M1.5: handle.raw() when MC2_OBJECT_ID_BUFFER=1, else 0
-    uint32_t materialIdx;      // 28 — MaterialGpu-3: index into s_materialGpuTable
-                               //      (was _pad1; filled from s_packetMaterialIdx[slot]
-                               //       when MC2_MATERIAL_GPU=1 and sidecar valid, else 0u)
+    uint32_t materialIdx;      // 28 — index into MaterialGpu table (s_materialGpuTable[]).
+                               //      albedoTex at this index must equal texArrayLayer (compare invariant).
 };
 static_assert(sizeof(PerDrawEntry) == 32, "PerDrawEntry std430 size");
 static_assert(offsetof(PerDrawEntry, packetID)         ==  0, "packetID offset");

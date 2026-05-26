@@ -117,11 +117,10 @@ void main() {
     float uvScaleY   = perDraw_.entries[v_drawID + uint(u_drawIDBase)].uvScaleY;
     uint  materialIdx = perDraw_.entries[v_drawID + uint(u_drawIDBase)].materialIdx;
     vec2  uvSampled = fract(v_uv) * vec2(uvScaleX, uvScaleY);
-    // MaterialGpu-3: runtime switch between legacy layer and material table.
-    // u_materialGpuSample is a pass-wide (not per-fragment) uniform —
-    // the branch collapses to a single predicate on AMD hardware.
-    // materialTable_.materials[] is only accessed when u_materialGpuSample != 0,
-    // enforcing the render contract above (binding 5 must be set when sampling).
+    // MaterialGpu sampling switch (u_materialGpuSample uniform).
+    // Default path (u_materialGpuSample=0): effectiveLayer = texArrayLayer (legacy fallback).
+    // Sample path (u_materialGpuSample=1): effectiveLayer = MaterialGpu[materialIdx].albedoTex.
+    // Invariant: both paths produce the same layer while albedoTex == texArrayLayer holds.
     int effectiveLayer = texArrayLayer;
     if (u_materialGpuSample != 0) {
         uint albedo = materialTable_.materials[materialIdx].albedoTex;
