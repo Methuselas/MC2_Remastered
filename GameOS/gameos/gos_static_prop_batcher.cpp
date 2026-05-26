@@ -6,6 +6,7 @@
 #include "../../RenderCore/KtxLoader.h"    // KTX2 sidecar loading (MC2_MATERIAL_KTX=1)
 #include "draw_packet_emitter.h"
 #include "../../RenderCore/PipelineRegistry.h"   // direct include; do not rely on transitive
+#include "static_prop_dispatch_meta.h"
 #include "gos_postprocess.h"             // getGosPostProcess, getDynamicLightSpaceMatrix
 #include "gos_static_prop_killswitch.h"  // gos_GetGLTextureId
 #include "gos_profiler.h"
