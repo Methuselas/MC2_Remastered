@@ -1660,6 +1660,33 @@ void GpuStaticPropBatcher::finalizeGeometry() {
     s_alphaOnCount = static_cast<uint32_t>(s_sortedTypeOrder.size())
                    - s_alphaOffCount;
 
+    // v0: Populate cross-seam type desc table.
+    // Must run AFTER alpha-class OR-reduce (Step 5.6, line ~1621)
+    // and sort (Step 5.7, line ~1647-1657) so all s_types[i] fields are stable.
+    {
+        s_typeDescTable.clear();
+        s_typeDescTable.reserve(s_types.size());
+        uint32_t invalid = 0u;
+        uint32_t alphaOn = 0u;
+        for (uint32_t i = 0u; i < static_cast<uint32_t>(s_types.size()); ++i) {
+            const GpuStaticPropType& t = s_types[i];
+            RenderCore::StaticPropTypeDesc desc{};
+            desc.typeId      = i;
+            desc.firstPacket = t.firstPacket;
+            desc.packetCount = t.packetCount;
+            desc.alphaClass  = static_cast<uint32_t>(t.alphaClass);
+            if (t.packetCount == 0u) { ++invalid; }
+            if (t.alphaClass  == 1u) { ++alphaOn; }
+            s_typeDescTable.push_back(desc);
+        }
+        std::fprintf(stderr,
+            "[STATIC_PROP_TYPE_TABLE v0] types=%u packet_ranges=%u"
+            " alpha_on=%u invalid=%u\n",
+            static_cast<uint32_t>(s_typeDescTable.size()),
+            static_cast<uint32_t>(s_packets.size()),
+            alphaOn, invalid);
+    }
+
     {
         size_t offByteCursor = 0;
         size_t onByteCursor  = 0;
