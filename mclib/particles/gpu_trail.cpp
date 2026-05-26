@@ -33,6 +33,7 @@
 #include <cstdlib>
 
 static constexpr uint16_t kMissileSmokeTexId = 41;
+static constexpr uint16_t kPpcBoltTexId      = 33;  // MLR handle 33 = lozenge/flare atlas (energy-bolt)
 
 namespace mc2 { namespace particles {
 
@@ -65,7 +66,7 @@ const GpuTrailTuning kTuningTable[] = {
         0.05f,                       // trail_lifetime_s (per-frame clearing)
         4.0f,                        // trail_density_per_meter
         1,                           // additive blend
-        kMissileSmokeTexId,          // placeholder — same texture as missile until PPC-specific surveyed
+        kPpcBoltTexId,               // handle 33 = lozenge/flare atlas (CPU PPC_Trail EffectCloud child)
     },
 };
 

@@ -43,6 +43,7 @@
 #endif
 
 #include<gameos.hpp>
+#include "../mclib/particles/batcher.h"
 
 //---------------------------------------------------------------------------
 extern bool hasGuardBand;
@@ -2468,8 +2469,10 @@ void WeaponBolt::init (bool create, ObjectTypePtr _type)
 		mc2::particles::GpuTrailKind init_gpu_kind = gpuTrailKindFromEffectId(effectId);
 		bool gpu_owns_trail = false;
 		if (gpuTrailKindProven(init_gpu_kind)) {
-			const char* v = std::getenv("MC2_GPU_PARTICLES");
-			gpu_owns_trail = (v && v[0] == '1');
+			// Use Batcher::is_enabled() as single source of truth.
+			// Reading getenv directly misses the B3c-2 default-ON case
+			// (v==nullptr -> false), causing double trails on normal runs.
+			gpu_owns_trail = mc2::particles::Batcher::is_enabled();
 		}
 		if (!gpu_owns_trail && strcmp(weaponEffects->GetEffectName(effectId),"NONE") != 0)
 		{
