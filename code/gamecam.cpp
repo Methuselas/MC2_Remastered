@@ -47,6 +47,7 @@
 #include "../GameOS/gameos/gos_particle_bridge.h"  // B2 P1: camera basis bridge
 #include "../GameOS/gameos/debug_renderer.h"
 #include "../GuiRuntime/EditorInspector.h"  // IMG-INSPECT-3 flushDebugHighlight
+#include "../GameAdapters/SkyRenderAdapter.h"  // HDRI-SKY-1: firewall-clean sky rendering
 
 //---------------------------------------------------------------------------
 CameraPtr eye = NULL;
@@ -191,7 +192,18 @@ void GameCamera::render (void)
 		if (Environment.Renderer != 3)
 		{
 			ZoneScopedN("GameCamera::render sky");
-			theSky->render(1);
+			if (GameAdapters::Sky::isHdriReady()) {
+				// Both matrices column-major; LinearMatrix4D is 12-float affine
+				// and Matrix4D is 16-float full 4x4 — renderHdri only
+				// reads indices 0..10 (upper 3x3 of view) and the full 16 of proj.
+				const Stuff::LinearMatrix4D& view = eye->worldToCameraGL();
+				const Stuff::Matrix4D& proj = eye->cameraToClipGL_const();
+				GameAdapters::Sky::renderHdri(
+					reinterpret_cast<const float*>(&view.entries[0]),
+					reinterpret_cast<const float*>(&proj.entries[0])
+				);
+			}
+			// else: black sky baseline (no fallback to theSky per SPEC).
 		}
 
 		{
