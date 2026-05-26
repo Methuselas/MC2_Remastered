@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include "gos_static_prop_batcher.h"
 
 // Frame arena management: persistent allocator with per-frame reset.
 // Two module-static instances live in render_snapshot.cpp; ExtractRenderSnapshot()
@@ -162,6 +163,15 @@ struct RenderSnapshot {
     uint32_t staticPropHasShapeName       = 0;  // shapeName[0] != '\0'
     uint32_t staticPropPacketRangesOk     = 0;  // firstPacket + packetCount within sidecar
     uint32_t staticPropPacketRangesFail   = 0;  // firstPacket + packetCount out of range
+
+    // --- v2.1: per-draw-slot packet snapshot ---
+    Span<ExtractedStaticPropPacket> staticPropPackets; // one per draw slot
+    uint32_t staticPropPacketCount   = 0;  // packets successfully captured
+    uint32_t staticPropPacketInvalid = 0;  // batcher_getDrawSlotEntry failures
+
+    // v2.1 hard gate: 1 iff sp_fail==0 && sp_packet_ranges_invalid==0
+    //                       && sp_packet_invalid==0 && !arenaOverflow
+    uint32_t ok = 0u;
 
     // Non-owning pointer to the current frame's ping-pong arena.
     // Owned by module statics in render_snapshot.cpp; valid for this frame only.
