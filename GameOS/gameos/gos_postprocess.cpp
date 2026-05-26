@@ -265,7 +265,7 @@ void gosPostProcess::destroy()
     }
 
     if (hdriSkyboxProg_) {
-        delete hdriSkyboxProg_;
+        glsl_program::deleteProgram("hdri_skybox");
         hdriSkyboxProg_ = nullptr;
     }
     if (hdriTex_) {
@@ -1046,7 +1046,7 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
     glDisable(GL_CULL_FACE);
 
     // Bind shader + uniforms + texture.
-    hdriSkyboxProg_->begin();
+    hdriSkyboxProg_->apply();
     hdriSkyboxProg_->setMat4("invProj", invProjArray);
     hdriSkyboxProg_->setMat3("invViewRot", invViewRot);
     glActiveTexture(GL_TEXTURE0);
@@ -1061,8 +1061,6 @@ void gosPostProcess::renderHdriSkybox(const float* viewMat, const float* projMat
         glBindVertexArray(hdriDummyVao_);
     }
     glDrawArrays(GL_TRIANGLES, 0, 3);
-
-    hdriSkyboxProg_->end();
 
     // --- Restore state (exact) ---
     glBindVertexArray(prevVAO);
