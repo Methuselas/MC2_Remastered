@@ -3880,6 +3880,45 @@ void GpuStaticPropBatcher::flush() {
             std::fputs(buf, stderr);
         }
 
+        // DrawPacket v5: gate-arm checks (run once per process on first gate-ON flush).
+        if (s_v5Enabled && !s_v5Armed && !s_v5Disarmed) {
+            s_v5Armed = true;
+            s_baseInstanceSupported = (GLEW_ARB_base_instance == GL_TRUE);
+            bool disarm = false;
+
+            // Precondition 1: base-instance map must be non-null.
+            // Under MC2_STATIC_PROP_GLOBAL_POOL_LEGACY=1, s_baseInstanceByCmdSsbo is
+            // never allocated and s_baseInstanceByCmdMap stays nullptr.
+            // Check here (not per-slot) to avoid 753x base_instance_missing masking root cause.
+            if (s_baseInstanceByCmdMap == nullptr) {
+                std::fprintf(stderr,
+                    "[DRAW_PACKET_V5] event=disarmed reason=legacy_pool_no_baseinst_map\n");
+                disarm = true;
+            }
+
+            // Precondition 2: u_drawIDBase uniform location must be valid.
+            // If -1, glUniform1i is a GL no-op and the shader reads the wrong PerDrawEntry.
+            if (!disarm && s_locsCoalesce.drawIDBase < 0) {
+                std::fprintf(stderr,
+                    "[DRAW_PACKET_V5] WARNING event=disarmed reason=drawid_loc_missing"
+                    " loc=%d\n",
+                    static_cast<int>(s_locsCoalesce.drawIDBase));
+                disarm = true;
+            }
+
+            if (disarm) {
+                s_v5Disarmed = true;
+            } else {
+                const uint32_t totalSlots = s_alphaOffCmdCount + s_alphaOnCmdCount;
+                std::fprintf(stderr,
+                    "[DRAW_PACKET_V5] event=armed slots=%u ext_supported=%d"
+                    " drawid_loc=%d\n",
+                    totalSlots,
+                    static_cast<int>(s_baseInstanceSupported),
+                    static_cast<int>(s_locsCoalesce.drawIDBase));
+            }
+        }
+
         // 2026-05-11 per-packet rework: each indirect cmd is per-PACKET, so
         // the multidraw counts and the alpha-ON byte offset use per-PACKET
         // counts (s_alphaOffCmdCount / s_alphaOnCmdCount). The PerDrawEntry
