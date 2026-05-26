@@ -404,7 +404,9 @@ def main():
                             "MC2_DRAW_PACKET_COALESCE_V5_TRACE",
                             # DrawPacket v6 canonical packet+meta array dispatch.
                             "MC2_DRAW_PACKET_STATIC_PROP_V6",
-                            "MC2_DRAW_PACKET_STATIC_PROP_V6_TRACE")},
+                            "MC2_DRAW_PACKET_STATIC_PROP_V6_TRACE",
+                            # DrawPacket v7 kill-switch (reverts to legacy multidraw).
+                            "MC2_STATIC_PROP_LEGACY_DISPATCH")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

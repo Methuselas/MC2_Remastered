@@ -96,12 +96,21 @@ static bool s_baseInstanceSupported = false;  // set on first gate-ON flush
 static bool s_v5Armed      = false;  // true once gate-arm checks have run
 static bool s_v5Disarmed   = false;  // true if gate-arm check failed for session
 
-// DrawPacket v6: canonical packet+meta array dispatch.
-// Gate: MC2_DRAW_PACKET_STATIC_PROP_V6=1
+// DrawPacket v7: canonical packet+meta array dispatch — DEFAULT ON.
+// Kill-switch: MC2_STATIC_PROP_LEGACY_DISPATCH=1 reverts to legacy multidraw.
+// MC2_DRAW_PACKET_STATIC_PROP_V6 is a no-op legacy alias (logs deprecation notice if set).
 // Requires: ARB_base_instance (checked independently of v5 arm block).
 static const bool s_v6Enabled = []() -> bool {
-    const char* v = std::getenv("MC2_DRAW_PACKET_STATIC_PROP_V6");
-    return v && v[0] == '1';
+    const char* kill = std::getenv("MC2_STATIC_PROP_LEGACY_DISPATCH");
+    if (kill && kill[0] == '1') return false;
+    const char* legacy = std::getenv("MC2_DRAW_PACKET_STATIC_PROP_V6");
+    if (legacy && legacy[0] == '1') {
+        std::fprintf(stderr,
+            "[DRAW_PACKET_V6] event=deprecated_env_var"
+            " MC2_DRAW_PACKET_STATIC_PROP_V6 is a no-op in v7;"
+            " v6 path is now default-ON\n");
+    }
+    return true;
 }();
 static const bool s_v6TraceEnabled = []() -> bool {
     const char* v = std::getenv("MC2_DRAW_PACKET_STATIC_PROP_V6_TRACE");
@@ -4000,7 +4009,7 @@ void GpuStaticPropBatcher::flush() {
                 const uint32_t totalSlots = s_alphaOffCmdCount + s_alphaOnCmdCount;
                 std::fprintf(stderr,
                     "[DRAW_PACKET_V6] event=armed slots=%u alpha_off=%u alpha_on=%u"
-                    " ext_supported=1 drawid_loc=%d\n",
+                    " ext_supported=1 drawid_loc=%d default=1\n",
                     totalSlots, s_alphaOffCmdCount, s_alphaOnCmdCount,
                     static_cast<int>(s_locsCoalesce.drawIDBase));
             }
