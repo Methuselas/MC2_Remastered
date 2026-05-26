@@ -33,6 +33,11 @@ enum class BlendMode : uint8_t { Opaque, AlphaBlend, AlphaTest, Additive };
 
 enum class CullMode  : uint8_t { None, Back, Front };
 
+// Depth comparison function. Matches GL_LESS / GL_GEQUAL etc. without
+// pulling in GL headers. LessEqual is the conventional forward-Z default;
+// GreaterEqual is the reverse-Z default used throughout MC2.
+enum class DepthFunc : uint8_t { LessEqual, GreaterEqual, Always, Equal };
+
 // Which GL_COLOR_ATTACHMENTx slots must be non-NONE in the active FBO.
 // Mirrors render_contract::RequiredAttachments; kept separate to avoid an
 // mclib → rendercore include cycle.
@@ -51,6 +56,7 @@ struct PipelineDesc {
     BlendMode           blend;
     bool                depthTestEnable;
     bool                depthWriteEnable;
+    DepthFunc           depthFunc;   // applied by applyPipeline(); GreaterEqual = reverse-Z
     CullMode            cullMode;
 
     ColorAttachmentMask colorAttachments;
@@ -64,7 +70,10 @@ struct PipelineDesc {
     uint32_t            ssboBindingsMask;
 };
 
-static_assert(sizeof(PipelineDesc) <= 16,
+// v1 added DepthFunc (1 byte after depthWriteEnable) which pushes
+// ssboBindingsMask to offset 16 after natural padding.  20 bytes is the
+// intentional new budget; keep repacking off unless the struct grows further.
+static_assert(sizeof(PipelineDesc) <= 20,
               "PipelineDesc must stay small; it lives in hot-path cache entries.");
 
 } // namespace RenderCore

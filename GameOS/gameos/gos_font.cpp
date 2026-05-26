@@ -255,19 +255,19 @@ bool parse_v4(FILE* f, gosGlyphInfo& gi, gosD3FAtlas& atlas)
     if(!read_bytes(f, cC, 256))          return false;
 
     if(iTextureCount != 1) {
-        SPEW(("d3f v4 with iTextureCount=%d not supported (need 1)\n",
+        SPEW(("d3f", "d3f v4 with iTextureCount=%d not supported (need 1)\n",
               iTextureCount));
         return false;
     }
     if(dwFontHeight == 0 || dwFontHeight > D3F_MAX_ATLAS_DIM) {
-        SPEW(("d3f v4 implausible dwFontHeight=%u\n", dwFontHeight));
+        SPEW(("d3f", "d3f v4 implausible dwFontHeight=%u\n", dwFontHeight));
         return false;
     }
 
     uint32_t dwSize = 0;
     if(!read_u32(f, &dwSize))                  return false;
     if(dwSize == 0 || dwSize > D3F_MAX_ATLAS_DIM) {
-        SPEW(("d3f v4 implausible atlas dim=%u\n", dwSize));
+        SPEW(("d3f", "d3f v4 implausible atlas dim=%u\n", dwSize));
         return false;
     }
 
@@ -329,7 +329,7 @@ bool parse_v1(FILE* f, gosGlyphInfo& gi, gosD3FAtlas& atlas)
        dwHeight == 0 || dwHeight > D3F_MAX_ATLAS_DIM ||
        dwFontHeight == 0 || dwFontHeight > dwHeight)
     {
-        SPEW(("d3f v1 implausible header w=%u h=%u fh=%u\n",
+        SPEW(("d3f", "d3f v1 implausible header w=%u h=%u fh=%u\n",
               dwWidth, dwHeight, dwFontHeight));
         return false;
     }
@@ -420,7 +420,7 @@ bool gos_load_d3f(const char* d3fFile, gosGlyphInfo& gi, gosD3FAtlas& atlas)
     } else if(sig == D3F_SIG_V1) {
         ok = parse_v1(f, gi, atlas);
     } else {
-        SPEW(("d3f: unrecognized signature 0x%08x in %s\n", sig, d3fFile));
+        SPEW(("d3f", "d3f: unrecognized signature 0x%08x in %s\n", sig, d3fFile));
     }
 
     fclose(f);

@@ -43,6 +43,7 @@ set(SOURCES ${SOURCES}
     gpu_cull_readback.cpp
     render_snapshot.cpp
     draw_packet_emitter.cpp
+    pipeline_binder.cpp
 
     utils/stream.cpp
     utils/camera.cpp

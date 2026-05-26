@@ -729,6 +729,13 @@ void loadProgramsIfNeeded() {
                          "loc_drawIDBase=%d loc_texArr=%d\n",
                          s_staticPropProgramCoalesce,
                          s_locsCoalesce.drawIDBase, s_locsCoalesce.texArr);
+
+            // v1: coalesce path is active — overwrite PipelineRegistry with
+            // the coalesce program so applyPipeline() binds the right handle.
+            // Both IDs share the same coalesce program object (alpha distinction
+            // is texture-array + shader discard, not a separate program).
+            RenderCore::bindProgram(RenderCore::PipelineId::StaticPropOpaque,    s_staticPropProgramCoalesce);
+            RenderCore::bindProgram(RenderCore::PipelineId::StaticPropAlphaTest, s_staticPropProgramCoalesce);
         } else {
             // Compile/link failure — leave handle zero. Legacy path is
             // unaffected; finalizeGeometry's Step 5.5 will see
@@ -3396,31 +3403,12 @@ void GpuStaticPropBatcher::flush() {
     // Uses StaticPropOpaque — both alpha and opaque packets share the same
     // program and fixed-function state; the alpha distinction is texture-array
     // selection and shader discard, not a different GL pipeline state.
+    // applyPipeline: binds program, depth (test+write+func=GL_GEQUAL), blend, cull.
+    // PipelineDesc v1: DepthFunc::GreaterEqual encoded in the table row — no
+    // explicit glDepthFunc() call needed here any more.
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropOpaque));
     glBindVertexArray(s_sharedVao);
-    // Reverse-Z depth compare is not encoded in PipelineDesc v0 yet.
-    // Keep this explicit until PipelineDesc grows a depthFunc field.
-    glDepthFunc(GL_GEQUAL);
-
-    // Direct uniforms. Static props use the same CPU-composed terrainMVP as
-    // terrain/terrain_overlay.vert: axisSwap * worldToClip, row-major
-    // rewritten in gamecam.cpp and uploaded GL_FALSE.
-    const GLint locTerrainMVP = glGetUniformLocation(s_staticPropProgram, "u_worldToClipGL");
-    const float* terrainMVP = gos_GetTerrainMVPMat4();
-    if (locTerrainMVP >= 0 && terrainMVP)
-        glUniformMatrix4fv(locTerrainMVP, 1, GL_FALSE, terrainMVP);
-    const GLint locMVP = glGetUniformLocation(s_staticPropProgram, "u_mvp");
-    const float* mm = gos_GetProj2ScreenMat4();
-    if (locMVP >= 0 && mm) glUniformMatrix4fv(locMVP, 1, GL_TRUE, mm);
-    glUniform1i(glGetUniformLocation(s_staticPropProgram, "u_tex"),           0);
-    glUniform1i(glGetUniformLocation(s_staticPropProgram, "u_debugAddrMode"), debugAddrMode_);
-    // FIXME(task-10): no clean per-scene global fog scalar source available
-    // for static props; per-instance fog color is already on v_fog. 1.0 ==
-    // "clear" per shader convention (matches gos_tex_vertex.frag non-overlay
-    // convention). Revisit if distance fog needs to attenuate props.
-    glUniform1f(glGetUniformLocation(s_staticPropProgram, "u_fogValue"),      1.0f);
-
 
     // Slice 2 (object-offload) — Stage 2.C.2: bind per-type hot-color SSBO
     // once for the whole flush. The data is per-map immutable so a single
@@ -3728,8 +3716,9 @@ void GpuStaticPropBatcher::flush() {
         // 11.7.b — legacy prologue at lines ~2192-2247 ran unconditionally
         // (slot 2 perTypeSsbo bind inherited). Verified by inspection.
 
-        // 11.7.c — switch to coalesce program.
-        glUseProgram(s_staticPropProgramCoalesce);
+        // 11.7.c — program already bound by applyPipeline() above (v1: PipelineRegistry
+        // holds s_staticPropProgramCoalesce after loadProgramsIfNeeded; no explicit
+        // glUseProgram needed here).
 
         // 11.7.d — upload shared uniforms to the coalesce program. Source
         // values match the existing legacy upload sites; -1 cached
@@ -4385,6 +4374,30 @@ void GpuStaticPropBatcher::flush() {
         }
     } else {
         // ---- Step 11.8 legacy per-type/per-packet draw loop (unchanged) ----
+
+        // v1: applyPipeline() above bound the coalesce program (if available).
+        // Restore the legacy program before issuing legacy uniform uploads and draws.
+        glUseProgram(s_staticPropProgram);
+
+        // Direct uniforms for the legacy path. Static props use the same
+        // CPU-composed terrainMVP as terrain/terrain_overlay.vert: axisSwap *
+        // worldToClip, row-major rewritten in gamecam.cpp, uploaded GL_FALSE.
+        {
+            const GLint locTerrainMVP = glGetUniformLocation(s_staticPropProgram, "u_worldToClipGL");
+            const float* terrainMVP = gos_GetTerrainMVPMat4();
+            if (locTerrainMVP >= 0 && terrainMVP)
+                glUniformMatrix4fv(locTerrainMVP, 1, GL_FALSE, terrainMVP);
+            const GLint locMVP = glGetUniformLocation(s_staticPropProgram, "u_mvp");
+            const float* mm = gos_GetProj2ScreenMat4();
+            if (locMVP >= 0 && mm) glUniformMatrix4fv(locMVP, 1, GL_TRUE, mm);
+            glUniform1i(glGetUniformLocation(s_staticPropProgram, "u_tex"),           0);
+            glUniform1i(glGetUniformLocation(s_staticPropProgram, "u_debugAddrMode"), debugAddrMode_);
+            // FIXME(task-10): no clean per-scene global fog scalar source
+            // available for static props; per-instance fog color is on v_fog.
+            // 1.0 == "clear" per shader convention. Revisit for distance fog.
+            glUniform1f(glGetUniformLocation(s_staticPropProgram, "u_fogValue"),      1.0f);
+        }
+
     for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {
         auto rit = s_typeRanges.find(typeID);
         if (rit == s_typeRanges.end()) continue;
