@@ -4601,6 +4601,28 @@ bool batcher_isGlobalPoolLegacy() { return s_globalPoolLegacy; }
 uint32_t batcher_getGlobalInstanceCap() { return s_globalInstanceCap; }
 uint32_t batcher_getCoalesceFrameSlot() { return s_coalesceFrameSlot; }  // diagnostic
 
+// ---------------------------------------------------------------------------
+// Type-desc table accessors (v0)
+// ---------------------------------------------------------------------------
+
+uint32_t batcher_getStaticPropTypeDescCount() {
+    return static_cast<uint32_t>(s_typeDescTable.size());
+}
+
+bool batcher_getStaticPropTypeDesc(uint32_t typeId, RenderCore::StaticPropTypeDesc* out) {
+    if (!out) return false;
+    if (typeId >= static_cast<uint32_t>(s_typeDescTable.size())) return false;
+    *out = s_typeDescTable[typeId];
+    return true;
+}
+
+const RenderCore::StaticPropTypeDesc* batcher_getStaticPropTypeDescTable(uint32_t* outCount) {
+    if (!outCount) return nullptr;
+    *outCount = static_cast<uint32_t>(s_typeDescTable.size());
+    if (s_typeDescTable.empty()) return nullptr;
+    return s_typeDescTable.data();
+}
+
 // Saved slot-16 GL buffer object. Slot 16 is reserved to this feature.
 static GLint s_savedSsbo16 = 0;
 

@@ -397,3 +397,26 @@ bool batcher_getMaterialGpuEntry(uint32_t index, RenderCore::MaterialGpu* out);
 // Returns false + *out=-1 if out of range (sidecar empty or packet index invalid).
 // Sidecar is populated at finalizeGeometry() and valid until onMapUnload().
 bool batcher_getPacketTexArrayLayer(uint32_t globalPacketIdx, int32_t* out);
+
+// ---------------------------------------------------------------------------
+// Type-desc table accessors (v0: CPU-side only, no SSBO).
+// All functions return safe sentinels (0 / nullptr / false) before
+// GpuStaticPropBatcher::finalizeGeometry() runs or after onMapUnload().
+// See: RenderCore/StaticPropTypeDesc.h for struct definition.
+// See: docs/observations/2026-05-25-static-prop-type-table-design.md
+// ---------------------------------------------------------------------------
+
+// Number of entries in the type desc table (equals batcher_getTypeCount() post-finalize).
+// Returns 0 if geometry not yet finalized.
+uint32_t batcher_getStaticPropTypeDescCount();
+
+// Copy one descriptor by typeId. typeId must be in [0, batcher_getStaticPropTypeDescCount()).
+// Returns false if typeId is out of range or the table is empty.
+// Returns the desc as-is regardless of packetCount (caller validates).
+// out must not be null.
+bool batcher_getStaticPropTypeDesc(uint32_t typeId, RenderCore::StaticPropTypeDesc* out);
+
+// Direct read-only pointer to the entire table. outCount receives the entry count.
+// Pointer is valid until the next onMapUnload(). outCount must not be null.
+// Returns nullptr if geometry not finalized or table is empty.
+const RenderCore::StaticPropTypeDesc* batcher_getStaticPropTypeDescTable(uint32_t* outCount);
