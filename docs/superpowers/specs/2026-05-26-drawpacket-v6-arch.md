@@ -59,20 +59,22 @@ static_assert(sizeof(StaticPropDispatchMeta) == 32,
 sorted packets, the meta array is 753 × 32 = ~24 KB. This fits comfortably in
 L1 for the dispatch loop.
 
-**Fields `instanceByteOffset` / `instanceByteSize`:** These carry the legacy
-SSBO range (from `TypeRangeSsbo`) for the legacy-path fallback case. In pure
-coalesce + v6 default-ON mode they are unused. They are included so the struct
-supports a graceful coalesce-disarm fallback without separate code paths for
-field lookup.
+**Fields `instanceByteOffset` / `instanceByteSize`:** These belong to the
+fallback-only path. They carry the legacy SSBO range (from `TypeRangeSsbo`)
+needed when the legacy loop serves as the fallback branch. In the primary v6
+coalesce dispatch path they are not consumed. Do NOT use them in the v6 dispatch
+loop — they exist so the struct can service both paths without a separate
+lookup at the fallback site.
 
 **`drawIDBase` == `sortedSlot`:** True by design (see v5 §8). The two fields
 are kept separate to avoid confusion at the call site — `sortedSlot` is for
 lookups; `drawIDBase` is what gets uploaded as a uniform.
 
 **OPEN — v5.5 decision:** Lock in this struct layout after v5 is working so
-the emitter changes for v6 can be designed precisely. If v5 reveals that
-`instanceByteOffset/Size` are never consumed, consider trimming to 6 fields
-(24 bytes).
+the emitter changes for v6 can be designed precisely. If v5 + v5.5 confirm that
+`instanceByteOffset/Size` are consumed ONLY in the fallback branch, annotate
+them explicitly `/* fallback-only — not read by primary v6 dispatch loop */`.
+Trim to 6 fields (24 bytes) only after the legacy loop is deleted (cleanup phase).
 
 ---
 
@@ -135,20 +137,21 @@ for machines without `ARB_draw_parameters`.
 geometry from `DrawPacket` / `StaticPropDispatchMeta`; coalesce path reads the
 same. Two dispatch loops, both DrawPacket-driven.
 
-**Option B (RECOMMENDED):** Retire the legacy loop from `flush()`. Force
-coalesce as the only dispatch path when `DrawPacket[]` is present. Coalesce is
-currently armed on all test maps; disarming it falls back gracefully (the
-existing disarm path suppresses flush entirely — which is preferable to
-maintaining two codebases). Machines without `ARB_draw_parameters` already
-disable coalesce via `s_hasShaderDrawParams` check in the coalesce-arm path;
-those machines stay on the legacy loop until it is retired (a separate cleanup
-task after v6).
+**Option B (RECOMMENDED — with demotion-first approach):** Do not delete the
+legacy loop immediately. Instead, demote it to a named fallback branch
+(`DrawPacket dispatch unavailable → fallback to legacy loop`) behind a clear
+guard with a log line. Actual code deletion happens in a follow-up cleanup commit
+after the fallback branch has been confirmed unreachable in all tier1 smoke runs.
+This preserves bisect hygiene and gives an escape hatch if v6 has bugs.
 
-**Rationale for B:** The legacy loop and coalesce draw path have diverged
-significantly (different program, uniform upload, SSBO binding, indirect buffer
-handling). Maintaining two DrawPacket consumers doubles the test surface. With
-coalesce armed on all 5 tier1 missions and the env gate infrastructure in
-place, Option B is lower risk.
+Machines without `ARB_draw_parameters` already disable coalesce via
+`s_hasShaderDrawParams`; those machines continue using the legacy loop as their
+primary path — the demotion makes this explicit rather than implicit.
+
+**Rationale:** The legacy loop and coalesce draw path have diverged significantly.
+Maintaining two DrawPacket consumers doubles the test surface long-term, but
+immediate deletion is a single point of failure. Demotion first, deletion after
+smoke confirms the fallback is never hit.
 
 ### 5.2 `batcher_setOpaqueDispatchCandidates()` retirement
 
@@ -165,22 +168,27 @@ This is a straightforward deletion; no logic is replaced (v6 dispatch supersedes
 
 ## 6. Default-ON Flip
 
+**Timing is not decided here.** Do not decide default-on timing until v5 proves
+dispatch parity. Premature flip timing embedded in arch docs creates false
+urgency. The flip prerequisites are listed for completeness; the decision belongs
+in the v6 plan after v5 is confirmed.
+
 v6 ships behind `MC2_DRAW_PACKET_COALESCE_V6=1`. The default-ON flip
-(removing the env gate and making DrawPacket dispatch unconditional) happens
-when all of the following are satisfied:
+(removing the env gate and making DrawPacket dispatch unconditional) is a
+**separate commit** from the v6 implementation, after all of the following are
+satisfied:
 
 | Prerequisite | Verification method |
 |---|---|
 | v5 confirmed correct | Tier1 5/5 PASS with v5 gate ON |
+| v6 visual parity confirmed | Screenshot comparison vs gate-OFF baseline on mc2_01, mc2_24 |
 | StaticPropDispatchMeta struct agreed | Code review, static_assert in place |
-| Emitter produces lockstep meta array | Unit test: `meta.count == packet.count`, `meta[i].typeId == packets[i].typeId` for all `i` |
-| Visual parity confirmed | Screenshot comparison (existing parity tool or manual) vs gate-OFF baseline on mc2_01, mc2_24 |
-| Tier1 5/5 PASS with gate OFF also | After flip, old path gate is OFF; confirm smoke gate still passes |
+| Emitter produces lockstep meta array | Unit test: `meta.count == packet.count`, `meta[i].typeId == packets[i].typeId` |
+| Tier1 5/5 PASS with gate OFF also | After flip, old path gate is OFF; smoke gate still passes |
 | No GL errors on any tier1 mission | `glGetError()` probe in v6 logging |
 
-The flip is a one-line change (remove the env gate check) plus a deletion of
-the dead code paths. It should be a separate commit from the v6 implementation
-to make bisecting regressions easier.
+The flip is a one-line change (remove the env gate check) plus deletion of
+dead code. Its commit message will reference the verification data that justified it.
 
 ---
 

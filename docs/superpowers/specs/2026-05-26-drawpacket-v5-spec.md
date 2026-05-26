@@ -1,333 +1,337 @@
 # DrawPacket v5 — Substitutive Coalesce Dispatch Spec
 
 **Date:** 2026-05-26
-**Status:** SPEC (pre-implementation)
+**Status:** SPEC (pre-implementation; requires render-spine-advisor + adversarial review)
 **Env gate:** `MC2_DRAW_PACKET_COALESCE_V5=1`
 **Predecessor specs:**
-- v4A: `2026-05-25-draw-packet-v0-spec.md` (opaque-only legacy path proof)
-- v4B: `2026-05-26-drawpacket-v4b-spec.md` (count coverage soak)
-- v4C: `2026-05-26-drawpacket-v4c-spec.md` (slot coverage soak)
+- v4B: `2026-05-26-drawpacket-v4b-spec.md` (count coverage soak, shipped da7eb1e3)
+- v4C: `2026-05-26-drawpacket-v4c-spec.md` (slot coverage soak, shipped 64254839)
 
 ---
 
 ## 1. Goal
 
-Replace the two `glMultiDrawElementsIndirect` calls in `flush()` (alpha-OFF
-group at L3888, alpha-ON at L3910 of `gos_static_prop_batcher.cpp`) with a
-per-draw-call loop driven by `StaticPropDrawPacketCandidate[]` candidates and
-CPU-side instance counts.
+Replace the two `glMultiDrawElementsIndirect` calls in `flush()` (alpha-OFF at ~L3888,
+alpha-ON at ~L3910 of `gos_static_prop_batcher.cpp`) with a per-draw-call loop when
+`MC2_DRAW_PACKET_COALESCE_V5=1`. v5 runs entirely inside `gos_static_prop_batcher.cpp`
+— no gameosmain changes, no new batcher public API.
 
-This is the first dispatch slice that **replaces** GL draw calls (not merely
-observes). It proves the full dispatch path — program, uniform, SSBO bindings,
-instance count source, base-instance source — before multidraw optimization in v6.
+This is the first dispatch-changing slice. It proves: program, uniform, SSBO bindings,
+instance count source, base-instance source, and texture array group boundary — before
+multidraw optimization in v6.
 
-**Anti-goals for v5:**
+**Anti-goals:**
 - No multidraw (defer to v6 if perf demands).
 - No GPU-cull instance count integration (CPU-snapshot counts only; same as legacy path).
-- No new shader programs (reuse `s_staticPropProgramCoalesce`).
-- No change to SSBO layout, texture arrays, or ring-buffer geometry.
-- No shadow-pass changes (`GpuStaticPropBatcher::flushShadow()` is always legacy; exclude from v5).
+- No new shader programs, no SSBO layout changes, no texture array changes.
+- No new public batcher accessors (v5 reads file-local state inside batcher.cpp directly).
+- No shadow-pass changes (`GpuStaticPropBatcher::flushShadow()` excluded).
+- No `StaticPropDispatchMeta` sidecar (defined in v5.5 after v5 proves which fields are needed).
 
 ---
 
 ## 2. Classification
 
-**Dispatch-changing.** This slice:
-- Issues GL draw calls from a new code path
-- Suppresses the coalesce `glMultiDrawElementsIndirect` when the gate is ON
-- May produce different per-draw instance counts (CPU-snapshot vs GPU-cull)
-- Must save/restore any GL state it mutates beyond what the coalesce path already restores
+| Axis | Value |
+|---|---|
+| Kind | Dispatch-changing |
+| Pixels changed | Yes (may render more instances than GPU-cull path; same as legacy mode) |
+| GL calls added | Yes (one `glDrawElementsInstancedBaseVertexBaseInstance` + one `glUniform1i` per slot) |
+| GL calls replaced | Yes (suppresses `glMultiDrawElementsIndirect` when gate ON) |
+| Files changed | 1 (`gos_static_prop_batcher.cpp`) |
+| New public batcher API | None — all state is file-local |
+| New env vars | `MC2_DRAW_PACKET_COALESCE_V5`, `MC2_DRAW_PACKET_COALESCE_V5_TRACE` |
 
 ---
 
 ## 3. Insertion Point
 
-`flush()` inside `gos_static_prop_batcher.cpp`, within the coalesce draw branch
-(the block entered when `IsCoalesceEnabled()` is true, roughly L3727–3936).
+Inside `flush()` → coalesce branch (`IsCoalesceEnabled()` == true) → after the full coalesce
+prologue has run (program switch, uniform upload, SSBO bindings, texture bindings).
 
-The two existing multidraw calls:
-
+Target replacement lines (approximate; grep to confirm):
 ```
-// alpha-OFF (L3888):
-glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
-    reinterpret_cast<const void*>(0u),
-    static_cast<GLsizei>(s_alphaOffCmdCount), 0);
+// alpha-OFF multidraw (~L3888):
+glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, (void*)0u,
+    (GLsizei)s_alphaOffCmdCount, 0);
 
-// alpha-ON (L3910):
-glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
-    reinterpret_cast<const void*>(alphaOnOffset),
-    static_cast<GLsizei>(s_alphaOnCmdCount), 0);
+// alpha-ON multidraw (~L3910):
+glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, (void*)alphaOnOffset,
+    (GLsizei)s_alphaOnCmdCount, 0);
 ```
 
-When `MC2_DRAW_PACKET_COALESCE_V5=1`, these two calls are replaced by a
-per-draw-call loop. All surrounding setup (program switch, uniform upload,
-SSBO bindings, texture binding, indirect buffer) is inherited from the
-existing coalesce prologue code (L3753–3886). The v5 loop runs in place of
-the two `glMultiDrawElementsIndirect` calls only.
-
----
-
-## 4. Dispatch Source
-
-The caller (gameosmain.cpp) already produces `StaticPropDrawPacketCandidate[]`
-via `emitStaticPropDrawPackets()` before calling into the batcher. Currently
-gameosmain converts these to `StaticPropOpaquePacketView[]` for v4A. For v5,
-the full candidate array (all alpha groups, all packets) must be passed to a
-new batcher entry point, or the coalesce draw path must be able to iterate the
-sorted packet order directly.
-
-**Decision (DECIDED):** v5 dispatch loop iterates `s_sortedPacketOrder[]`
-directly (file-scope batcher state, already populated by `finalizeGeometry()`
-+ the per-frame packet-sort in `flush()`'s Step 5.7). The candidate array from
-gameosmain provides the authoritative `instanceCount` per type; it is consumed
-via the new accessor `batcher_getTypeInstanceCount(typeId)`. No new batcher
-registration call is required for v5.
-
----
-
-## 5. Per-Draw Dispatch Strategy
-
-For each sorted slot `i` in `[0, s_alphaOffCmdCount + s_alphaOnCmdCount)`:
-
-```
-globalPktIdx  = s_sortedPacketOrder[i]
-packet        = s_packets[globalPktIdx]          // GpuStaticPropPacket (geometry)
-typeId        = packet.owningTypeID
-instanceCount = batcher_getTypeInstanceCount(typeId)   // CPU-snapshot count
-baseInstance  = batcher_getBaseInstanceForSlot(i)      // prefix-sum from persistent map
-drawIDBase    = i                                       // for u_drawIDBase uniform
-
-if instanceCount == 0: skip (no instances this frame for this type)
-
-// Set drawIDBase for this packet's PerDrawEntry lookup:
-glUniform1i(s_locsCoalesce.drawIDBase, (GLint)drawIDBase);
-
-glDrawElementsInstancedBaseVertexBaseInstance(
-    GL_TRIANGLES,
-    (GLsizei)packet.indexCount,
-    GL_UNSIGNED_INT,
-    (const void*)(uintptr_t)(packet.firstIndex * sizeof(uint32_t)),  // byte offset into IBO
-    (GLsizei)instanceCount,
-    (GLint)packet.baseVertex,           // baseVertex from GpuStaticPropPacket
-    (GLuint)baseInstance);
-```
-
-**Alpha group boundary:** The texture array switch happens at the group
-boundary, not per packet. Before the loop begins, bind `s_texArrayOff`. When
-`i == s_alphaOffCmdCount`, switch to `s_texArrayOn`. Set `u_drawIDBase`
-per packet (not once per group), because `gl_DrawID` is always 0 in a
-non-multidraw call — the draw ID must come entirely from `u_drawIDBase`.
-
----
-
-## 6. Required New Batcher Accessors
-
-These three functions are **new batcher-public API** to be added in v5.
-
-### 6.1 `batcher_getTypeInstanceCount(uint32_t typeId)`
-
+Gate placement:
 ```cpp
-// Returns s_typeRanges[typeId].instanceCount.
-// TypeRangeSsbo::instanceCount is populated by uploadAllBucketsIfNeeded()
-// (the per-frame SSBO upload) from s_bucketsByType[typeId].instances.size().
-// Guard: if typeId not in s_typeRanges, returns 0.
-uint32_t batcher_getTypeInstanceCount(uint32_t typeId);
+static const bool s_v5Enabled = [] {
+    const char* v = std::getenv("MC2_DRAW_PACKET_COALESCE_V5");
+    return v && v[0] == '1';
+}();
 ```
 
-**Source:** `s_typeRanges` is an `std::unordered_map<uint32_t, TypeRangeSsbo>`
-defined at file scope in the anonymous namespace around flush(). It is
-populated by `uploadAllBucketsIfNeeded()` which is called early in flush()
-before the coalesce draw branch.
-
-**Correctness:** `TypeRangeSsbo::instanceCount` = number of snapshot instances
-for this type. It includes all instances in `s_bucketsByType[typeId]`, not just
-GPU-cull-surviving instances. This matches the semantics of the legacy
-`s_bucketsByType[typeId].instances.size()` draw. Accept this for v5.
-
-### 6.2 `batcher_getBaseInstanceForSlot(uint32_t sortedSlot)`
-
+Extension check (at coalesce-arm time or first gate-ON flush):
 ```cpp
-// Returns s_baseInstanceByCmdMap[coalesceFrameSlot * bytesPerFrame + sortedSlot].
-// CPU read from the persistent-mapped SSBO (coherent; no stall).
-// Guard: if sortedSlot >= (s_alphaOffCmdCount + s_alphaOnCmdCount), returns 0.
-// Guard: if s_baseInstanceByCmdMap == nullptr, returns 0.
-uint32_t batcher_getBaseInstanceForSlot(uint32_t sortedSlot);
+static const bool s_baseInstanceSupported = GLEW_ARB_base_instance || (/* GL version >= 4.2 */);
 ```
 
-**Source:** `s_baseInstanceByCmdSsbo` is allocated with
-`GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT`
-(confirmed at L727 of batcher.cpp). The CPU write in
-`batcher_prepareBaseInstanceTable()` is coherent; no `glMemoryBarrier` or
-fence is needed before a CPU read in the same frame. The GPU reads this SSBO
-via the patch shader BEFORE flush(), so by flush() time the CPU write is
-already fenced by the same `glClientWaitSync` that guards the coalesce ring
-slot. Reads in the v5 loop are safe without additional synchronization.
+If `!s_v5Enabled || !s_baseInstanceSupported`:
+- Log once: `[DRAW_PACKET_V5] event=unsupported` (if v5 requested but extension absent)
+- Fall through to existing `glMultiDrawElementsIndirect` calls — no suppression, no regression.
 
-**Binding:** `s_baseInstanceByCmdSsbo` is bound at `BASE_INSTANCE_SSBO_BINDING`
-(= 16) for the GPU patch shader. The v5 per-draw loop reads from the CPU-mapped
-pointer only; it does NOT need to rebind the SSBO for this purpose.
-
-### 6.3 `batcher_getCoalesceProgram()`
-
-```cpp
-// Returns s_staticPropProgramCoalesce (the GL program handle).
-// 0 if coalesce program failed to link or is disabled.
-GLuint batcher_getCoalesceProgram();
-```
-
-v5 runs INSIDE the existing coalesce draw branch, which has already called
-`glUseProgram(s_staticPropProgramCoalesce)`. This accessor is included for
-completeness and diagnostic use, but the v5 loop does not need to call
-`glUseProgram` again.
+If `s_v5Enabled && s_baseInstanceSupported`:
+- Skip the two `glMultiDrawElementsIndirect` calls
+- Run v5 per-draw loop
 
 ---
 
-## 7. GL State Setup for the v5 Loop
+## 4. Instance Count Authority
 
-The existing coalesce prologue (L3740–3886) runs unconditionally when the
-coalesce branch is entered. By the time the v5 loop runs, the following state
-is already established:
+**v5 uses CPU-snapshot instance counts only.** Do not reason about GPU-cull counts.
 
-| State | Value | Set by |
+Source: `s_typeRanges[typeId].instanceCount` (file-local `std::unordered_map<uint32_t, TypeRangeSsbo>`
+inside batcher.cpp anonymous namespace). This is populated by `uploadAllBucketsIfNeeded()` before
+the coalesce branch is entered — valid at insertion point.
+
+`TypeRangeSsbo::instanceCount` = `s_bucketsByType[typeId].instances.size()` = number of snapshot
+instances submitted for that type this frame. This is the same source used by the legacy per-type
+loop. Zero means the type has no instances in the current snapshot.
+
+**Not used:**
+- GPU cull indirect buffer instance counts (GPU-write-only, no CPU copy without stall)
+- `s_offGroupCountThisFrame` (global accumulator, not per-type)
+- Any emitter candidate `instanceCount` field (not passed into batcher.cpp)
+
+**Zero-instance skip:** If `typeRange.instanceCount == 0`, skip the draw — no GL call for that
+slot. This is the CPU-snapshot analogue to the GPU-cull producing instanceCount=0. The slot is
+counted in `zero_instance_skips`.
+
+Zero-instance types in `s_sortedPacketOrder` are valid and expected (types that had submissions
+in a prior frame but not this frame may still appear in the coalesce layout). They are NOT bugs.
+
+---
+
+## 5. Base Instance Authority
+
+Source: `s_baseInstanceByCmdMap` — the CPU-mapped pointer of `s_baseInstanceByCmdSsbo`.
+
+`s_baseInstanceByCmdSsbo` is allocated with `GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT`.
+The CPU write in `batcher_prepareBaseInstanceTable()` (called before flush()) is coherent;
+no `glMemoryBarrier` or fence needed before CPU reads in the v5 loop.
+
+Access pattern (file-local, no public accessor):
+```cpp
+const uint32_t totalCmds = s_alphaOffCmdCount + s_alphaOnCmdCount;
+const uint32_t* baseInstanceMap = /* CPU-mapped pointer for current ring slot */;
+// Use the same pointer the patch shader writes via prepareBaseInstanceTable().
+```
+
+If `baseInstanceMap == nullptr` or `sortedSlot >= totalCmds`: increment `base_instance_missing`;
+continue (skip draw). Do NOT return 0 as a valid base instance — 0 is a legitimate value for
+slot 0; silence corrupts the first draw.
+
+---
+
+## 6. Per-Draw Loop Structure
+
+```
+sorted_count = s_alphaOffCmdCount + s_alphaOnCmdCount
+
+// Bind alpha-OFF texture array (already done by prologue at L3886)
+// u_drawIDBase already set to 0 by prologue at L3873
+
+for i in [0, sorted_count):
+    // Bounds guard
+    if i >= s_sortedPacketOrder.size():
+        ++sorted_oob; continue
+
+    globalPktIdx = s_sortedPacketOrder[i]
+
+    if globalPktIdx >= s_packets.size():
+        ++packet_oob; continue
+
+    packet = s_packets[globalPktIdx]   // GpuStaticPropPacket
+
+    typeId = packet.owningTypeID
+    if typeId >= /* type count */ or typeId not in s_typeRanges:
+        ++type_oob; continue
+
+    instanceCount = s_typeRanges[typeId].instanceCount
+
+    if instanceCount == 0:
+        ++zero_instance_skips; continue
+
+    if baseInstanceMap == nullptr or i >= totalCmds:
+        ++base_instance_missing; continue
+
+    baseInstance = baseInstanceMap[<ring slot offset> + i]
+
+    // Group boundary: switch texture array when entering alpha-ON group
+    if i == s_alphaOffCmdCount:
+        glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn)
+        // u_drawIDBase will be set below for this slot
+
+    // Per-draw uniform: absolute sorted slot (gl_DrawID is always 0 in non-multidraw)
+    glUniform1i(s_locsCoalesce.drawIDBase, (GLint)i)
+
+    glDrawElementsInstancedBaseVertexBaseInstance(
+        GL_TRIANGLES,
+        (GLsizei)packet.indexCount,
+        GL_UNSIGNED_INT,
+        (const void*)(uintptr_t)(packet.firstIndex * sizeof(uint32_t)),  // byte offset
+        (GLsizei)instanceCount,
+        (GLint)packet.baseVertex,
+        (GLuint)baseInstance)
+
+    ++draws_issued
+
+// Restore texture array to alpha-OFF state if loop ran the ON group
+// (existing epilogue handles other state; u_drawIDBase doesn't need restore —
+//  next frame's prologue sets it fresh from L3873)
+if s_alphaOnCmdCount > 0:
+    glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff)  // restore for consistency
+
+// GL error check (gate-ON only)
+GLenum err = glGetError()
+if err != GL_NO_ERROR: ++gl_errors; log immediately
+```
+
+---
+
+## 7. `u_drawIDBase` Uniform Protocol
+
+Critical correctness point. The coalesce shader reads `entries[gl_DrawID + u_drawIDBase]`.
+
+| Path | gl_DrawID | u_drawIDBase |
 |---|---|---|
-| `GL_CURRENT_PROGRAM` | `s_staticPropProgramCoalesce` | L3754 `glUseProgram` |
-| `GL_VERTEX_ARRAY_BINDING` | `s_sharedVao` | earlier in flush() |
-| SSBO binding 0 | `s_coalesceInstanceSsbo` (covering both groups in global-pool mode) | L3881 `glBindBufferRange` |
-| SSBO binding 4 | `s_perDrawSsbo` | L3799 `glBindBufferBase` |
-| `GL_TEXTURE0` / `GL_TEXTURE_2D_ARRAY` | `s_texArrayOff` | L3886 `glBindTexture` |
-| `GL_DRAW_INDIRECT_BUFFER` | `gpu_cull::compute_getIndirectCmdBuf()` | L3887 `glBindBuffer` |
-| `u_drawIDBase` uniform | 0 (alpha-OFF group) | L3873 `glUniform1i` |
-| Various MVP/fog uniforms | uploaded | L3757–3795 |
+| Multidraw (existing) | within-group index [0, N) | 0 for OFF group; `s_alphaOffCmdCount` for ON group |
+| Per-draw-call (v5) | always 0 | absolute sorted slot `i` |
 
-The v5 loop adds one `glUniform1i` per packet (for `u_drawIDBase`) and one
-`glBindTexture` at the group boundary (when `i == s_alphaOffCmdCount`). The
-existing `glBindBuffer(GL_DRAW_INDIRECT_BUFFER, ...)` remains from the prologue
-but is irrelevant for the per-draw-call loop (indirect buffer is not read by
-`glDrawElementsInstancedBaseVertexBaseInstance`). v5 does NOT unbind it — the
-existing restore at L3917 handles cleanup.
+In v5: `u_drawIDBase = i` for every packet. One `glUniform1i` per packet.
+On mc2_24 (753 total packets): 753 `glUniform1i` calls per frame — negligible for correctness proof.
 
-**State the v5 loop adds that needs save/restore:**
-- `u_drawIDBase` uniform: set once per packet. The existing restore path
-  (L3919–3923) restores SSBO slots 4 and texture, but does NOT restore the
-  uniform to 0. Since the coalesce epilogue doesn't re-use `u_drawIDBase`,
-  this is acceptable — the next flush will set it correctly from the prologue.
-  No additional save/restore needed.
+The uniform location `s_locsCoalesce.drawIDBase` must exist. If it is `-1` (absent from shader),
+`glUniform1i(-1, x)` is a no-op per GL spec — the draw reads wrong entry data silently.
+Verify `s_locsCoalesce.drawIDBase != -1` at gate-arm time; log a WARNING if absent.
 
 ---
 
-## 8. `u_drawIDBase` Uniform Protocol
+## 8. GL State Inherited from Prologue
 
-This is the most important v5 correctness invariant.
+When v5 loop runs, the following state is already set by the coalesce prologue (L3740–3886):
 
-**In multidraw mode:** `gl_DrawID` = within-group draw index (0..N-1). The
-uniform is set once per group: 0 for alpha-OFF, `s_alphaOffCmdCount` for
-alpha-ON. The shader reads `entries[gl_DrawID + u_drawIDBase]`.
+| State | Value |
+|---|---|
+| `GL_CURRENT_PROGRAM` | `s_staticPropProgramCoalesce` (set at L3754) |
+| VAO | `s_sharedVao` |
+| SSBO binding 0 | `s_coalesceInstanceSsbo` covering the current ring slot's both groups |
+| SSBO binding 4 | `s_perDrawSsbo` (PerDrawEntry data, one entry per sorted slot) |
+| SSBO binding 7 | `s_cmdToBucketSsbo` (typeID per slot) |
+| Texture unit 0 | `s_texArrayOff` (alpha-OFF texture array) |
+| `GL_DRAW_INDIRECT_BUFFER` | indirect command buffer (GPU-cull written; not used by per-draw-call) |
+| `u_drawIDBase` | 0 (set by prologue at L3873) |
+| Various uniforms | MVPs, fog, etc. |
 
-**In per-draw-call mode:** `gl_DrawID` is always 0 (only one draw at a time).
-The uniform must be set to the absolute sorted slot for each packet:
+v5 loop mutates:
+- `u_drawIDBase` per packet — no restore needed; next frame prologue resets it.
+- `GL_TEXTURE_2D_ARRAY` binding at the group boundary — restore to `s_texArrayOff` after loop.
 
-```
-// alpha-OFF slot i (i in [0, s_alphaOffCmdCount)):
-u_drawIDBase = i         (absolute slot = i + 0)
-
-// alpha-ON slot j (j in [0, s_alphaOnCmdCount)):
-u_drawIDBase = s_alphaOffCmdCount + j   (absolute slot)
-```
-
-The loop variable is the absolute sorted slot, so `u_drawIDBase = loop_index`
-for every packet. One `glUniform1i` per packet — this is the primary per-packet
-overhead cost versus multidraw.
-
----
-
-## 9. Risks
-
-| # | Risk | Mitigation / Investigation needed |
-|---|---|---|
-| R1 | `s_typeRanges` not yet populated when v5 loop accesses it | `uploadAllBucketsIfNeeded()` is called before the coalesce branch; `s_typeRanges` is valid by L3727. Verify at insertion point. |
-| R2 | `batcher_getBaseInstanceForSlot` coherency | SSBO mapped coherent — no stall needed. Verified at L727: `GL_MAP_COHERENT_BIT`. |
-| R3 | `glDrawElementsInstancedBaseVertexBaseInstance` not available | Requires GL 4.2 or `ARB_base_instance`. The coalesce path already requires `ARB_draw_parameters` (for `gl_DrawIDARB`). Add explicit extension check; fail gracefully to multidraw if absent. |
-| R4 | `packet.baseVertex` field name | `GpuStaticPropPacket` struct fields must be confirmed. If field is named differently (e.g. `baseVertexOffset`), the call is wrong. Grep `GpuStaticPropPacket` before coding. |
-| R5 | `packet.firstIndex` is an element index, not a byte offset | `glDrawElementsInstancedBaseVertexBaseInstance` offset parameter is a byte offset into the IBO. Must multiply by `sizeof(uint32_t)`. Confirmed from `StaticPropDrawPacketCandidate::firstIndex` doc: "IBO element index (NOT byte offset)". |
-| R6 | GPU cull count divergence | When v5 gate is ON, GPU cull benefit is lost (draws all snapshot instances). This is documented and accepted. Smoke gate must confirm visual parity (all instances rendered; same pixel output when frustum matches snapshot). |
-| R7 | `u_drawIDBase` one-per-draw overhead | On mc2_01 with 134 packets, this is 134 `glUniform1i` calls per frame. Negligible for v5 correctness proof. |
-| R8 | Instance data binding in legacy mode | v5 only runs inside the coalesce branch (`IsCoalesceEnabled()`). Legacy mode (s_globalPoolLegacy) uses per-group binding. The existing prologue at L3874 handles this correctly before v5 loop runs. v5 inherits the correct binding. |
+v5 does NOT unbind `GL_DRAW_INDIRECT_BUFFER` — the existing epilogue handles this.
 
 ---
 
-## 10. Assumptions Requiring Verification Before Coding
+## 9. Diagnostics / Logging
 
-1. **`GpuStaticPropPacket` struct fields:** Confirm field names `baseVertex`,
-   `firstIndex`, `indexCount`, `owningTypeID`. Grep `struct GpuStaticPropPacket`.
-
-2. **`s_typeRanges` is the correct count source:** `TypeRangeSsbo::instanceCount`
-   = `s_bucketsByType[typeId].instances.size()`. Confirm at the
-   `uploadAllBucketsIfNeeded()` populate site. There must not be a second
-   per-packet instance count that differs from this.
-
-3. **Coalesce branch entry condition:** The v5 code path is only reached when
-   `IsCoalesceEnabled()` returns true AND `s_staticPropProgramCoalesce != 0`.
-   Confirm that `s_typeRanges` is always populated by the time the branch executes
-   (even on first frame before any draws).
-
-4. **`drawIDBase` uniform name and location:** Confirmed as `u_drawIDBase`
-   cached in `s_locsCoalesce.drawIDBase`. `-1` if absent in shader — calls to
-   `glUniform1i(-1, ...)` are no-ops per GL spec.
-
----
-
-## 11. Diagnostics / Logging
-
-v5 adds one stderr log per gate-ON first flush:
+### Gate-arm log (once per process on first gate-ON flush)
 
 ```
-[DRAW_PACKET_V5] event=armed draws_off=%u draws_on=%u total_draws=%u
+[DRAW_PACKET_V5] event=armed slots=%u ext_supported=%d drawid_loc=%d
 ```
 
-Per-frame diagnostics are gated behind `MC2_DRAW_PACKET_COALESCE_V5_TRACE=1`:
+### Per-frame summary (every 600 frames, gate-ON)
+
+```
+[DRAW_PACKET_V5] frame=%u event=dispatch_summary
+  slots_considered=%u draws_issued=%u zero_instance_skips=%u
+  sorted_oob=%u packet_oob=%u type_oob=%u base_instance_missing=%u
+  gl_errors=%u ok=%d
+```
+
+`ok=1` iff all error counters are 0.
+
+### Per-slot trace (every frame, `MC2_DRAW_PACKET_COALESCE_V5_TRACE=1`)
 
 ```
 [DRAW_PACKET_V5] slot=%u type=%u inst=%u base_inst=%u draw_id_base=%u
-[DRAW_PACKET_V5] event=skip_zero_inst slot=%u type=%u
-[DRAW_PACKET_V5] gl_error=%u (only logged if nonzero)
+[DRAW_PACKET_V5] event=skip slot=%u reason=<zero_inst|base_missing|packet_oob|type_oob>
 ```
 
+Verbose gate fires only when master gate is also on.
+
 ---
 
-## 12. Hard Invariants (Smoke Gate Shape)
+## 10. Hard Invariants (Smoke Gate Shape)
 
-All five must hold after v5 implementation is complete:
+### Gate OFF (default)
 
-| Invariant | Formula | Expected value |
+- `tier1 5/5 PASS`
+- No `[DRAW_PACKET_V5]` lines in smoke logs
+
+### Gate ON
+
+```
+slots_considered == s_alphaOffCmdCount + s_alphaOnCmdCount
+draws_issued + zero_instance_skips == slots_considered
+sorted_oob == 0
+packet_oob == 0
+type_oob == 0
+base_instance_missing == 0
+gl_errors == 0
+ok == 1
+tier1 5/5 PASS
+```
+
+Note: `draws_issued <= slots_considered` is always true (zero-instance slots are skipped).
+`draws_issued == slots_considered` only if ALL types have ≥1 snapshot instance this frame,
+which is unlikely on large missions. Do NOT require equality.
+
+### Optional visual gate (non-blocking for smoke, but verify manually)
+
+On mc2_01 and mc2_24: all props visible, no alpha-test fence/building flicker, no missing
+geometry. Accept that GPU-cull instance count benefit is lost (may draw slightly more instances
+than the multidraw path, but no under-draw).
+
+---
+
+## 11. Risks
+
+| # | Risk | Mitigation |
 |---|---|---|
-| Draw count | `v5_draws_issued == s_alphaOffCmdCount + s_alphaOnCmdCount` | Total sorted packets (0-instance slots count as draws; see R6 — or skip them: then `v5_draws_issued <= total`) |
-| GL error | `glGetError()` after both groups | `GL_NO_ERROR` |
-| Invalid slot | `batcher_getBaseInstanceForSlot(i) returns 0 only for i >= total_cmds` | `invalid_slot_count == 0` |
-| Tier1 | 5/5 missions PASS | All missions |
-| No visual regression | Screenshot compare (or manual inspection) vs gate-OFF baseline | Same props rendered |
-
-**Note on zero-instance draws:** If `instanceCount == 0` for a slot, the v5
-loop should skip the draw (emit no GL call for that slot). This is safe because
-the multidraw path uses GPU-cull counts which can be zero for invisible types;
-the per-draw skip is the correct analogue. Adjust the draw-count invariant
-accordingly: `v5_draws_issued <= total_cmds`.
+| R1 | `GpuStaticPropPacket` field names differ from spec | Grep `struct GpuStaticPropPacket` before coding. Confirm `baseVertex`, `firstIndex`, `indexCount`, `owningTypeID`. |
+| R2 | `s_typeRanges` not populated at insertion point | `uploadAllBucketsIfNeeded()` runs before coalesce branch; verify at insertion point. |
+| R3 | `ARB_base_instance` absent | Explicit check; fall through to legacy multidraw (no suppression). Log `event=unsupported`. |
+| R4 | `glUniform1i(s_locsCoalesce.drawIDBase, ...)` location is -1 | Log WARNING at arm time. GL no-ops the call but draw reads wrong PerDrawEntry. Must fix shader or confirm uniform present. |
+| R5 | `firstIndex * sizeof(uint32_t)` overflow for large meshes | firstIndex is uint32; sizeof(uint32_t) = 4; product is uint64 max for firstIndex=1B. Cast to `uintptr_t` first. |
+| R6 | base instance map ring-slot offset calculation | Confirm the exact pointer arithmetic used by `prepareBaseInstanceTable()`. Ring slot × entries-per-slot must match. |
+| R7 | `s_texArrayOff` restore after loop | If loop runs alpha-ON group, leaves texture bound to `s_texArrayOn`. Must restore to `s_texArrayOff` for existing epilogue. |
 
 ---
 
-## 13. Prerequisites
+## 12. Assumptions Requiring Verification Before Coding
 
-- v4C PASS: slot-level coverage soak confirmed `unmatched=0` on all 5 missions.
-- `batcher_getBaseInstanceForSlot()` accessor added and unit-validated against
-  known v4C slot values before wiring into GL dispatch.
-- `GpuStaticPropPacket` field names confirmed by code inspection.
-- `ARB_base_instance` extension check added to the coalesce-arm path.
+1. `GpuStaticPropPacket` struct field names — grep and confirm.
+2. `s_typeRanges` populates before the coalesce branch at the insertion point.
+3. The base instance persistent-map pointer and ring-slot offset calculation — grep `prepareBaseInstanceTable()` exactly.
+4. `s_locsCoalesce.drawIDBase` is non-(-1) — confirm uniform exists in coalesce shader.
+5. `GLEW_ARB_base_instance` or equivalent GL version check is available in the TU.
+6. Confirm `s_texArrayOff` / `s_texArrayOn` are the correct identifiers (not `s_texArrOff`, etc.).
 
 ---
 
-## 14. Out of Scope for v5
+## 13. Out of Scope
 
-- Multidraw (v6+).
-- GPU-cull instance count integration (v6.1 potential).
-- Shadow pass (`GpuStaticPropBatcher::flushShadow()` always uses legacy per-type loop; not changed here).
-- `StaticPropDispatchMeta` sidecar struct (introduced in v5.5 between v5 and v6; see v6 arch doc).
-- `batcher_setOpaqueDispatchCandidates()` retirement (v6).
+- Multidraw (v6+)
+- GPU-cull instance count integration (v6.1 potential)
+- Shadow pass (`flushShadow()`)
+- `StaticPropDispatchMeta` sidecar struct (v5.5)
+- `batcher_setOpaqueDispatchCandidates()` retirement (v6)
+- Any new public batcher accessors (file-local only in v5)
+- Default-on gate flip (separate follow-up commit after soak)
