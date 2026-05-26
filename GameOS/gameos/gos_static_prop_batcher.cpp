@@ -98,19 +98,11 @@ static bool s_v5Disarmed   = false;  // true if gate-arm check failed for sessio
 
 // DrawPacket v7: canonical packet+meta array dispatch — DEFAULT ON.
 // Kill-switch: MC2_STATIC_PROP_LEGACY_DISPATCH=1 reverts to legacy multidraw.
-// MC2_DRAW_PACKET_STATIC_PROP_V6 is a no-op legacy alias (logs deprecation notice if set).
+// MC2_DRAW_PACKET_STATIC_PROP_V6 (old opt-in) is a no-op; gate plumbing removed in v7.1.
 // Requires: ARB_base_instance (checked independently of v5 arm block).
 static const bool s_v6Enabled = []() -> bool {
     const char* kill = std::getenv("MC2_STATIC_PROP_LEGACY_DISPATCH");
-    if (kill && kill[0] == '1') return false;
-    const char* legacy = std::getenv("MC2_DRAW_PACKET_STATIC_PROP_V6");
-    if (legacy && legacy[0] == '1') {
-        std::fprintf(stderr,
-            "[DRAW_PACKET_V6] event=deprecated_env_var"
-            " MC2_DRAW_PACKET_STATIC_PROP_V6 is a no-op in v7;"
-            " v6 path is now default-ON\n");
-    }
-    return true;
+    return !(kill && kill[0] == '1');
 }();
 static const bool s_v6TraceEnabled = []() -> bool {
     const char* v = std::getenv("MC2_DRAW_PACKET_STATIC_PROP_V6_TRACE");
@@ -281,11 +273,6 @@ static std::vector<uint32_t> s_perTypePeak;
 // in onMapLoad() for hygiene.
 static uint32_t s_coalesceFrameSlot = 0;
 
-// v4A: per-frame opaque dispatch candidate registration.
-// Registered by batcher_setOpaqueDispatchCandidates(); consumed and cleared inside flush().
-static const StaticPropOpaquePacketView* s_opaqueDispatchCandidates    = nullptr;
-static size_t                            s_opaqueDispatchCandidateCount = 0u;
-static std::vector<uint16_t>            s_v4TypeDrawCount;  // per-frame per-type; resized lazily
 
 // CPU-side staging during registration (cleared after finalizeGeometry).
 std::vector<uint8_t>  s_stagingVbo;
@@ -3414,97 +3401,6 @@ void GpuStaticPropBatcher::flush() {
     // convention). Revisit if distance fog needs to attenuate props.
     glUniform1f(glGetUniformLocation(s_staticPropProgram, "u_fogValue"),      1.0f);
 
-    // v4A: substitutive opaque dispatch — non-coalesce, all-opaque types only.
-    // All uniforms (u_worldToClipGL, u_mvp, u_tex, u_fogValue) valid at this point (L3358-3371).
-    //
-    // Consume-and-clear: capture the per-frame registration and null it immediately.
-    // This guards against stale pointer reuse if flush() is called again later (e.g., shadow pass),
-    // and handles the case where the setter was never called (pointer was already null).
-    const StaticPropOpaquePacketView* v4Candidates     = s_opaqueDispatchCandidates;
-    const size_t                      v4CandidateCount = s_opaqueDispatchCandidateCount;
-    s_opaqueDispatchCandidates     = nullptr;
-    s_opaqueDispatchCandidateCount = 0u;
-
-    s_v4TypeDrawCount.assign(s_types.size(), 0u);
-
-    bool     v4DispatchAttempted  = (v4CandidateCount > 0u);
-    uint32_t v4OpaqueDraws        = 0u;
-    uint32_t v4MixedTypeDeferred  = 0u;
-    uint32_t v4Invalid            = 0u;
-    uint32_t v4DuplicatePacket    = 0u;
-    // v4NoRange: candidate has no SSBO range — prop went through CPU-fallback path,
-    // so submit() was never called for it. Expected when some types fail batcher submission.
-    // NOT a hard gate — these props render correctly via CPU fallback.
-    // v4Invalid: genuine bugs — typeId OOB, wrong pipelineId, packetIdx OOB. Hard gate = 0.
-    uint32_t v4NoRange            = 0u;
-
-    if (v4DispatchAttempted) {
-        if (IsCoalesceEnabled()) {
-            if (s_counters.frame_count % 600 == 0) {
-                std::fprintf(stderr, "[DRAW_PACKET_DISPATCH v1 frame=%llu event=coalesce_noop candidates=%zu]\n",
-                    (unsigned long long)s_counters.frame_count, v4CandidateCount);  // use captured local; statics already cleared
-            }
-        } else {
-            for (size_t i = 0; i < v4CandidateCount; ++i) {
-                const StaticPropOpaquePacketView& v = v4Candidates[i];
-
-                if (v.typeId >= s_types.size())                                    { ++v4Invalid;          continue; }
-                if (s_types[v.typeId].alphaClass != 0u)                            { ++v4MixedTypeDeferred; continue; }
-                if (v.pipelineId != static_cast<uint32_t>(RenderCore::PipelineId::StaticPropOpaque))
-                                                                                    { ++v4Invalid;          continue; }
-                // Duplicate guard: if count would exceed packetCount, this candidate is a duplicate.
-                if (s_v4TypeDrawCount[v.typeId] >= s_types[v.typeId].packetCount)  { ++v4DuplicatePacket;  continue; }
-
-                auto it = s_typeRanges.find(v.typeId);
-                // No range = type went through CPU-fallback path (submit() was rejected).
-                // Not a dispatch bug; these props render via game-object CPU path.
-                if (it == s_typeRanges.end())                                       { ++v4NoRange;          continue; }
-                const TypeRangeSsbo& tr = it->second;
-
-                if (v.globalPacketIdx >= s_packets.size())                          { ++v4Invalid;          continue; }
-                const int32_t baseVertex = s_packets[v.globalPacketIdx].baseVertex;
-
-                // Per-type SSBO sub-range bind — matches legacy per-type bind pattern (~L3877-3882).
-                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_instanceSsbo,
-                    (GLintptr)tr.instanceByteOffset, (GLsizeiptr)tr.instanceByteSize);
-
-                // Uniforms: shader declares int (not uint) — glUniform1i throughout.
-                // Use s_locsLegacy (populated at shader link L595-597).
-                const int maxVtxID = (s_types[v.typeId].vertexCount > 0u)
-                    ? (int)(s_types[v.typeId].vertexCount - 1u) : 0;
-                glUniform1i(s_locsLegacy.maxLocalVertexID, maxVtxID);
-                glUniform1i(s_locsLegacy.materialFlags,    (GLint)v.cachedMaterialFlags);
-                // u_packetID == globalPacketIdx == type.firstPacket + p (legacy line 4010 semantics).
-                glUniform1i(s_locsLegacy.packetID,         (GLint)v.globalPacketIdx);
-
-                glDrawElementsBaseVertex(GL_TRIANGLES, (GLsizei)v.indexCount, GL_UNSIGNED_INT,
-                    reinterpret_cast<void*>((uintptr_t)v.firstIndex * sizeof(uint32_t)), baseVertex);
-
-                ++s_v4TypeDrawCount[v.typeId];
-                ++v4OpaqueDraws;
-            }
-
-            // Three-way invariant counters (type-table-derived, not candidate-derived).
-            uint32_t v4EligibleOpaquePkts  = 0u;
-            uint32_t v4PartialTypeDispatch = 0u;
-            for (uint32_t t = 0; t < (uint32_t)s_types.size(); ++t) {
-                if (s_v4TypeDrawCount[t] == 0u || s_types[t].alphaClass != 0u) continue;
-                v4EligibleOpaquePkts += s_types[t].packetCount;
-                if (s_v4TypeDrawCount[t] != s_types[t].packetCount) ++v4PartialTypeDispatch;
-            }
-
-            if (s_counters.frame_count % 600 == 0) {
-                std::fprintf(stderr,
-                    "[DRAW_PACKET_DISPATCH v1 frame=%llu candidates=%zu "
-                    "eligible_opaque_pkts=%u opaque_draws=%u mixed_deferred=%u "
-                    "partial_type=%u duplicate=%u invalid=%u no_range=%u]\n",
-                    (unsigned long long)s_counters.frame_count, v4CandidateCount,
-                    v4EligibleOpaquePkts, v4OpaqueDraws,
-                    v4MixedTypeDeferred, v4PartialTypeDispatch, v4DuplicatePacket,
-                    v4Invalid, v4NoRange);
-            }
-        }
-    }
 
     // Slice 2 (object-offload) — Stage 2.C.2: bind per-type hot-color SSBO
     // once for the whole flush. The data is per-map immutable so a single
@@ -4468,16 +4364,7 @@ void GpuStaticPropBatcher::flush() {
         }
     } else {
         // ---- Step 11.8 legacy per-type/per-packet draw loop (unchanged) ----
-    uint32_t v4OpaquePacketsSuppressed = 0u;  // declared before loop
     for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {
-        // v4A: suppress all-opaque type only if ALL its packets were dispatched (no partial substitution).
-        if (s_types[typeID].alphaClass == 0u
-                && typeID < (uint32_t)s_v4TypeDrawCount.size()
-                && s_types[typeID].packetCount > 0u
-                && s_v4TypeDrawCount[typeID] == s_types[typeID].packetCount) {
-            v4OpaquePacketsSuppressed += s_types[typeID].packetCount;
-            continue;
-        }
         auto rit = s_typeRanges.find(typeID);
         if (rit == s_typeRanges.end()) continue;
         const TypeRangeSsbo& r = rit->second;
@@ -4659,11 +4546,6 @@ void GpuStaticPropBatcher::flush() {
         if (wroteParityThisDraw && locParityWrite >= 0) {
             glUniform1i(locParityWrite, 0);
         }
-    }
-    if (s_counters.frame_count % 600 == 0 && v4DispatchAttempted) {
-        std::fprintf(stderr,
-            "[DRAW_PACKET_SUPPRESS v1 frame=%llu legacy_opaque_packets_suppressed=%u]\n",
-            (unsigned long long)s_counters.frame_count, v4OpaquePacketsSuppressed);
     }
     } // end Step 11.8 else (!IsCoalesceEnabled() legacy draw loop)
 
@@ -5429,8 +5311,3 @@ void batcher_prepareBaseInstanceTable() {
     s_totalUsedBytesThisFrame = totalCount * sizeof(GpuStaticPropInstance);
 }
 
-void batcher_setOpaqueDispatchCandidates(const StaticPropOpaquePacketView* views, size_t count) {
-    static bool s_gateEnabled = (getenv("MC2_DRAWPACKET_STATIC_PROP_OPAQUE") != nullptr);
-    s_opaqueDispatchCandidates     = (s_gateEnabled && count > 0u) ? views : nullptr;
-    s_opaqueDispatchCandidateCount = (s_gateEnabled && count > 0u) ? count : 0u;
-}

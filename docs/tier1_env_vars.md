@@ -68,18 +68,30 @@ Three CI scripts that lock the RenderWorld arc invariants — see `docs/renderwo
   Log: `event=sample_mode enabled=1 loc=N` (once per flush). Diagnostic reason codes:
   `upload_env_off | sample_env_off | no_ssbo | sidecar_invalid | uniform_missing`.
 
+## Static-prop dispatch hierarchy (v7)
+
+As of v7 the static-prop draw path is:
+
+| Path | Trigger | Log tag |
+|---|---|---|
+| **Primary** — `DrawPacket[] + StaticPropDispatchMeta[]` | Default ON; `event=armed ... default=1` at process start | `[DRAW_PACKET_V6]` |
+| **Fallback** — legacy `glMultiDrawElementsIndirect` coalesce | `MC2_STATIC_PROP_LEGACY_DISPATCH=1` | none |
+| **Diagnostic** — v5 per-draw-call loop | `MC2_DRAW_PACKET_COALESCE_V5=1` (deprecated opt-in) | `[DRAW_PACKET_V5]` |
+| **Historical** — v4A/v4B/v4C coverage probes | Removed in v7.1 | n/a |
+
+`[DRAW_PACKET_V6]` is the live log tag for the primary dispatch path as of v7. It fires by
+default — it is not an opt-in tag. The old `MC2_DRAW_PACKET_STATIC_PROP_V6` opt-in env var
+is fully inert; gate plumbing removed in v7.1. Future path: v8 will normalize the tag to
+`[STATIC_PROP_PACKET_DISPATCH v1]` if/when shadow-pass dispatch is added.
+
 ## DrawPacket v2 compare
 
 - `MC2_DRAW_PACKET_COMPARE=1` — per-frame candidate vs batcher field check (summary log). Emits one `[DRAW_PACKET_COMPARE v1]` line per frame to stderr: `frame=%u packets=%u pipeline_invalid=%u pipeline_oob=%u geom_mismatch=%u type_mismatch=%u alpha_mismatch=%u`. Default OFF. Log tag `v1`; increment if fields are added/removed in future slices. Cached at process start (static initializer); must be set before launching mc2.exe.
 - `MC2_DRAW_PACKET_COMPARE_VERBOSE=1` — also emit per-mismatch detail lines (`[DRAW_PACKET_COMPARE detail]`) for firstIndex, indexCount, owningType, and alpha disagreements. Requires `MC2_DRAW_PACKET_COMPARE=1` to have any effect (compare must be enabled for the per-candidate loop to run). Valid values: `1` to enable; omit or set to any other value to disable. Cached at process start (static initializer); must be set before launching mc2.exe.
 - `MC2_DRAW_PACKET_V3=1` — enable DrawPacket v3 conversion + build log — diagnostic only; no GL state mutation, no pixel change. Emits one `[DRAW_PACKET v3]` line per frame to stderr with 9 build counters (input, emitted, invalid_pipeline, pipeline_oor, invalid_index, invalid_instance, overflow, object_sentinel, light_sentinel) plus sorted_packet_cap.
-- `MC2_DRAWPACKET_STATIC_PROP_OPAQUE` — enables v4A substitutive opaque dispatch for all-opaque static-prop types. Active only when `IsCoalesceEnabled()==false`; coalesce mode logs `event=coalesce_noop`. Requires: no v3 gate needed (uses v0 emit candidates directly). Gate latched at first `batcher_setOpaqueDispatchCandidates()` call; process restart to change. Default: OFF. Logs: `[DRAW_PACKET_DISPATCH v1]` + `[DRAW_PACKET_SUPPRESS v1]` at 600-frame cadence. `cachedMaterialFlags`: TRANSITIONAL field dependency — update v4A if semantics change.
-- `MC2_DRAW_PACKET_COALESCE_COMPARE=1` — master gate for DrawPacket v4B. Emits `[DRAW_PACKET_COALESCE_COMPARE v1]` to stderr: one `event=finalize_snapshot` line on first frame coalesce layout is ready, then one `event=coverage_check` line every 600 frames reporting `coalesce_off_cmds`, `coalesce_on_cmds`, `candidate_off_pkts`, `candidate_on_pkts`, `skip_delta_off`, `skip_delta_on`, `ok`. `ok=1` means candidate counts cover coalesce cmd counts (`candidate >= coalesce`). `skip_delta < 0` expected on destruction missions. `skip_delta > 0` = coverage gap = FAIL in clean smoke. Default OFF. Cached at process start.
-- `MC2_DRAW_PACKET_COALESCE_VERBOSE=1` — per-slot verbose for the alpha-OFF coalesce group. Fires ONCE per process lifetime (latch `s_verboseDone`). Emits one `event=slot_off` line per OFF slot: `slot`, `coalesce_pkt` (globalPacketIdx from sorted order), `candidate_match` (1 if found in candidate buffer). Requires `MC2_DRAW_PACKET_COALESCE_COMPARE=1`. Default OFF. Cached at process start.
-- `MC2_DRAW_PACKET_COALESCE_V4C=1` — master gate for DrawPacket v4C slot-level coverage soak. Emits `[DRAW_PACKET_COALESCE_SOAK v1]` to stderr: one `event=slot_coverage` line every 600 frames with `matched_off`, `unmatched_off`, `matched_on`, `unmatched_on`, `ok`. On any `unmatched > 0`: also emits `event=slot_miss` immediately with `candidate_pkt` and `typeId`. Hard gate: `unmatched_off==0 && unmatched_on==0` → `ok=1`. Verifies that every DrawPacket candidate's `globalPacketIdx` appears in the batcher's sorted packet order for the correct alpha group. No GL mutation, no dispatch change. Default OFF. Cached at process start.
 - `MC2_DRAW_PACKET_COALESCE_V5=1` — master gate for DrawPacket v5 substitutive per-draw-call dispatch. Replaces the two `glMultiDrawElementsIndirect` calls in `flush()` coalesce branch with a per-slot `glDrawElementsInstancedBaseVertexBaseInstance` loop. Requires `ARB_base_instance`; falls through to legacy multidraw if absent (logs `event=unsupported`). Emits `[DRAW_PACKET_V5]` to stderr: `event=armed` once at gate-on, `event=dispatch_summary` every 600 frames (slots_considered, draws_issued, zero_instance_skips, sorted_oob, packet_oob, type_oob, base_instance_missing, gl_errors, ok). `ok=1` iff all error counters are 0. Default OFF. Cached at process start. Implementation: `gos_static_prop_batcher.cpp` only — no gameosmain changes.
 - `MC2_DRAW_PACKET_COALESCE_V5_TRACE=1` — per-slot verbose trace for v5. Emits one line per issued draw and one line per skip with reason. Requires `MC2_DRAW_PACKET_COALESCE_V5=1`. Default OFF. Cached at process start.
-- `MC2_DRAW_PACKET_STATIC_PROP_V6=1` — **DEPRECATED no-op in v7.** The v6 path is now default-ON. Setting this var prints a deprecation notice to stderr but has no other effect. Kill-switch to revert: `MC2_STATIC_PROP_LEGACY_DISPATCH=1`. See `MC2_STATIC_PROP_LEGACY_DISPATCH` below.
+- `MC2_DRAW_PACKET_STATIC_PROP_V6=1` — **REMOVED in v7.1.** Gate plumbing deleted; setting this var has no effect whatsoever. Kill-switch for the primary path: `MC2_STATIC_PROP_LEGACY_DISPATCH=1`.
 - `MC2_DRAW_PACKET_STATIC_PROP_V6_TRACE=1` — per-slot verbose trace for v6. Emits one `[DRAW_PACKET_V6] slot=S pkt=P type=T group=G inst=I base=B drawID=D first=F count=C baseV=V` line per issued draw. Requires v6 path active (default in v7; no explicit env var needed). Default OFF. Cached at process start.
 - `MC2_STATIC_PROP_LEGACY_DISPATCH=1` — v7 kill-switch. Reverts the v6 packet+meta dispatch path to legacy `glMultiDrawElementsIndirect` for this process. Use to isolate v6-specific rendering regressions. When set, `s_v6Enabled` returns false at process start; no `[DRAW_PACKET_V6]` lines appear in logs. Default OFF. Cached at process start.
 
