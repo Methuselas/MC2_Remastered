@@ -415,6 +415,9 @@ struct ExtractedStaticPropPacket {
     uint32_t instanceCount;    // previous-frame instance count (0 on frame 1)
 };
 
+static_assert(sizeof(ExtractedStaticPropPacket) == 24,
+    "ExtractedStaticPropPacket layout changed — update v2.1 extraction consumers");
+
 // v2.1 extraction: draw-slot accessors.
 // "Draw slot" = position i in s_sortedPacketOrder; [0, alphaOffCmdCount) = opaque,
 // [alphaOffCmdCount, totalCmds) = alpha-test.
