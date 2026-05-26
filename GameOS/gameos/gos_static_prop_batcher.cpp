@@ -4154,7 +4154,93 @@ void GpuStaticPropBatcher::flush() {
         // per-slot glDrawElementsInstancedBaseVertexBaseInstance loop.
         const bool runV5 = s_v5Enabled && s_baseInstanceSupported && !s_v5Disarmed;
 
-        if (runV5) {
+        if (runV6 && v6LockstepViolations == 0u) {
+            const uint32_t totalCmds = s_alphaOffCmdCount + s_alphaOnCmdCount;
+
+            // Unconditionally bind SSBO slot 0 (same as v5).
+            {
+                const size_t totalUsed = s_totalUsedBytesThisFrame;
+                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
+                                  static_cast<GLintptr>(fr_off_bytes_d),
+                                  static_cast<GLsizeiptr>(
+                                      totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)));
+            }
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
+            bool enteredOnGroup = false;
+
+            for (uint32_t i = 0u; i < totalCmds; ++i) {
+                const StaticPropDispatchMeta& m  = v6Meta[i];
+                const RenderCore::DrawPacket&  dp = v6Packets[i];
+
+                if (m.instanceCount == 0u) {
+                    ++s_v6FrameZeroInstSkips;
+                    continue;
+                }
+
+                if (m.group == 1u && !enteredOnGroup) {
+                    glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn);
+                    enteredOnGroup = true;
+                }
+
+                glUniform1i(s_locsCoalesce.drawIDBase, static_cast<GLint>(m.drawIDBase));
+
+                glDrawElementsInstancedBaseVertexBaseInstance(
+                    GL_TRIANGLES,
+                    static_cast<GLsizei>(dp.indexCount),
+                    GL_UNSIGNED_INT,
+                    reinterpret_cast<const void*>(
+                        static_cast<uintptr_t>(dp.firstIndex) * sizeof(uint32_t)),
+                    static_cast<GLsizei>(m.instanceCount),
+                    m.baseVertex,
+                    m.baseInstance);
+
+                if (s_v6TraceEnabled)
+                    std::fprintf(stderr,
+                        "[DRAW_PACKET_V6] slot=%u pkt=%u type=%u group=%u"
+                        " inst=%u base=%u drawID=%u first=%u count=%u baseV=%d\n",
+                        m.sortedSlot, m.globalPacketIdx, m.typeId, m.group,
+                        m.instanceCount, m.baseInstance, m.drawIDBase,
+                        dp.firstIndex, dp.indexCount, m.baseVertex);
+
+                ++s_v6FrameDrawsIssued;
+            }
+
+            if (enteredOnGroup)
+                glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
+
+            {
+                const GLenum err = glGetError();
+                if (err != GL_NO_ERROR) {
+                    ++s_v6FrameGlErrors;
+                    std::fprintf(stderr,
+                        "[DRAW_PACKET_V6] event=gl_error frame=%u err=0x%x\n",
+                        s_v6TotalFrameCount, static_cast<unsigned>(err));
+                }
+            }
+
+            if ((s_v6TotalFrameCount % 600u) == 0u) {
+                const uint32_t slotsConsidered = totalCmds;
+                const int ok = (s_v6FrameSortedOob          == 0u &&
+                                s_v6FramePacketOob           == 0u &&
+                                s_v6FrameTypeOob             == 0u &&
+                                s_v6FrameLockstepViolations  == 0u &&
+                                s_v6FrameGlErrors            == 0u &&
+                                (s_v6FrameDrawsIssued + s_v6FrameZeroInstSkips) == slotsConsidered)
+                               ? 1 : 0;
+                std::fprintf(stderr,
+                    "[DRAW_PACKET_V6] frame=%u event=dispatch_summary"
+                    " slots_considered=%u draws_issued=%u zero_instance_skips=%u"
+                    " sorted_oob=%u packet_oob=%u type_oob=%u lockstep_violations=%u"
+                    " gl_errors=%u ok=%d\n",
+                    s_v6TotalFrameCount, slotsConsidered,
+                    s_v6FrameDrawsIssued, s_v6FrameZeroInstSkips,
+                    s_v6FrameSortedOob, s_v6FramePacketOob, s_v6FrameTypeOob,
+                    s_v6FrameLockstepViolations, s_v6FrameGlErrors, ok);
+            }
+
+        } else if (runV5) {
             s_v5FrameDrawsIssued     = 0u;
             s_v5FrameZeroInstSkips   = 0u;
             s_v5FrameSortedOob       = 0u;
