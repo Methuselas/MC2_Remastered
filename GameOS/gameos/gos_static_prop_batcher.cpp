@@ -4635,7 +4635,7 @@ void batcher_buildCandidateLog() {
         return;
     }
 
-    // Compute expected: sum of packetCount over all non-zero-packet entries.
+    // Compute expected: sum of packetCount over all table entries (zero-packet entries contribute 0).
     uint32_t expected = 0u;
     for (const auto& d : s_typeDescTable) { expected += d.packetCount; }
 
@@ -4643,9 +4643,10 @@ void batcher_buildCandidateLog() {
     const bool doDetail = verbose || !s_detailDone;
 
     uint32_t emitted = 0u;
-    uint32_t invalid = 0u;
+    uint32_t emptyTypes = 0u;
+    uint32_t boundsErrors = 0u;
     for (const RenderCore::StaticPropTypeDesc& desc : s_typeDescTable) {
-        if (desc.packetCount == 0u) { ++invalid; continue; }
+        if (desc.packetCount == 0u) { ++emptyTypes; continue; }
         for (uint32_t p = 0u; p < desc.packetCount; ++p) {
             const uint32_t pktIdx = desc.firstPacket + p;
             if (pktIdx >= static_cast<uint32_t>(s_packets.size())) {
@@ -4654,7 +4655,7 @@ void batcher_buildCandidateLog() {
                         "[DRAW_CAND v0 detail] typeId=%u pkt=%u BOUNDS_OVERFLOW\n",
                         desc.typeId, p);
                 }
-                ++invalid;
+                ++boundsErrors;
                 continue;
             }
             if (doDetail) {
@@ -4672,11 +4673,12 @@ void batcher_buildCandidateLog() {
     s_detailDone = true;
 
     // Summary line emitted every frame.
-    // Gate: emitted==expected, invalid==0, no BOUNDS_OVERFLOW.
+    // OK gate: emitted==expected (all reachable packets walked), boundsErrors==0.
+    // emptyTypes is informational; a type may be registered with no geometry.
     std::fprintf(stderr,
-        "[DRAW_CAND v0] emitted=%u expected=%u invalid=%u%s\n",
-        emitted, expected, invalid,
-        (emitted == expected && invalid == 0) ? " OK" : " MISMATCH");
+        "[DRAW_CAND v0] emitted=%u expected=%u emptyTypes=%u boundsErrors=%u%s\n",
+        emitted, expected, emptyTypes, boundsErrors,
+        (emitted == expected && boundsErrors == 0) ? " OK" : " MISMATCH");
 }
 
 // Saved slot-16 GL buffer object. Slot 16 is reserved to this feature.
