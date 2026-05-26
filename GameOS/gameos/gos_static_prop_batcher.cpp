@@ -3770,7 +3770,6 @@ void GpuStaticPropBatcher::flush() {
         // that is not a conflict (terrain re-binds WaterRecipeBuf before its own draw).
         // prevSsbo5 is saved at flush() entry and restored at flush() exit.
         if (s_materialGpuEnabled && s_materialGpuSsbo != 0) {
-            while (glGetError() != GL_NO_ERROR) {}  // drain stale BEFORE
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, s_materialGpuSsbo);
             const GLenum bindErr = glGetError();    // sample AFTER
             if (bindErr != GL_NO_ERROR) {
@@ -3791,7 +3790,6 @@ void GpuStaticPropBatcher::flush() {
                            && s_locsCoalesce.materialGpuSample >= 0;
 
         if (s_locsCoalesce.materialGpuSample >= 0) {
-            while (glGetError() != GL_NO_ERROR) {}  // drain stale BEFORE
             glUniform1i(s_locsCoalesce.materialGpuSample, sampleOn ? 1 : 0);
             const GLenum uniformErr = glGetError();  // sample AFTER
             if (uniformErr != GL_NO_ERROR) {
@@ -3804,10 +3802,12 @@ void GpuStaticPropBatcher::flush() {
         }
         // If loc == -1: M3 error already logged at loadProgramsIfNeeded(); no-op here.
 
-        // M2: required diagnostic log — once per flush, so gate interaction is observable.
+        // M2: diagnostic log — first frame + every 600 frames (mirrors accumulateMonotonicAndMaybeEmit cadence).
         // C1: guard fires on every run now that s_materialGpuEnabled is default-ON (v5).
         // Set MC2_MATERIAL_GPU=0 to silence. reason cascade mirrors sampleOn condition order.
-        if (s_materialGpuEnabled || s_materialGpuSampleEnabled) {
+        if ((s_materialGpuEnabled || s_materialGpuSampleEnabled)
+                && (s_counters.frame_count == 1
+                    || (s_counters.frame_count % 600 == 0 && s_counters.frame_count > 0))) {
             const char* reason = "ok";
             if (!s_materialGpuEnabled)                    reason = "upload_env_off";
             else if (!s_materialGpuSampleEnabled)          reason = "sample_env_off";
