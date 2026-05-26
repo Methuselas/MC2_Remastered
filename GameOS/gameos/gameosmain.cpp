@@ -1287,6 +1287,19 @@ int main(int argc, char** argv)
             g_dpSnapshot.typeDescCount      = batcher_getStaticPropTypeDescCount();
 
             (void)stats;  // v0: no dispatch
+
+            // v4A: convert candidates to batcher-owned view type; register for substitutive dispatch.
+            // Uses stats.emitted (valid count), NOT s_candidates.size() (buffer capacity = kMaxPackets).
+            // s_opaqueViews is function-local static; reuses allocation each frame.
+            // Gate is env-latched in setter; no-op when MC2_DRAWPACKET_STATIC_PROP_OPAQUE absent.
+            static std::vector<StaticPropOpaquePacketView> s_opaqueViews;
+            s_opaqueViews.resize(stats.emitted);
+            for (uint32_t i = 0; i < stats.emitted; ++i) {
+                const StaticPropDrawPacketCandidate& c = s_candidates[i];
+                s_opaqueViews[i] = {c.typeId, c.globalPacketIdx, c.cachedMaterialFlags,
+                                    (uint32_t)c.pipelineId, c.firstIndex, c.indexCount};
+            }
+            batcher_setOpaqueDispatchCandidates(s_opaqueViews.data(), stats.emitted);
         }
 
         {
