@@ -321,13 +321,17 @@ static bool IsCoalesceEnabled();
 GLuint s_coalesceInstanceSsbo      = 0;  // ring-buffered, persistent-mapped
 GLuint s_perDrawSsbo               = 0;  // PerDrawEntry per type, sorted (binding 4)
 
-// MaterialGpu-2 sidecar — active only when MC2_MATERIAL_GPU=1.
+// MaterialGpu-2 sidecar — active by default (v5: default-ON).
 // No shader consumer until MaterialGpu-3.
 // s_packetMaterialIdx[i] maps draw slot i (= s_sortedPacketOrder[i] position)
 // to its entry in s_materialGpuTable.
 // Size invariant: s_packetMaterialIdx.size() == s_sortedPacketOrder.size().
-static const bool s_materialGpuEnabled =
-    (getenv("MC2_MATERIAL_GPU") != nullptr);
+// MC2_MATERIAL_GPU defaults ON. Set MC2_MATERIAL_GPU=0 to disable.
+static const bool s_materialGpuEnabled = []() {
+    const char* v = getenv("MC2_MATERIAL_GPU");
+    return v == nullptr || (v[0] != '0');
+}();
+// MC2_MATERIAL_GPU_SAMPLE remains opt-in (gated OFF for soak).
 static const bool s_materialGpuSampleEnabled =
     (getenv("MC2_MATERIAL_GPU_SAMPLE") != nullptr);
 static bool s_materialKtxEnabled = (std::getenv("MC2_MATERIAL_KTX") != nullptr &&
@@ -696,7 +700,7 @@ void loadProgramsIfNeeded() {
             // but the error makes the failure observable without a debugger.
             if (s_materialGpuEnabled && s_materialGpuSampleEnabled &&
                 s_locsCoalesce.materialGpuSample < 0) {
-                std::fputs("[MATERIAL_GPU v1] ERROR uniform_missing name=u_materialGpuSample\n",
+                std::fputs("[MATERIAL_GPU v4] ERROR uniform_missing name=u_materialGpuSample\n",
                            stderr);
             }
 
@@ -1216,7 +1220,7 @@ void GpuStaticPropBatcher::onMapUnload() {
             s_materialGpuTable.size() * sizeof(RenderCore::MaterialGpu);
         char buf[96];
         std::snprintf(buf, sizeof(buf),
-                      "[MATERIAL_GPU v1] event=unload materials=%zu bytes=%zu\n",
+                      "[MATERIAL_GPU v4] event=unload materials=%zu bytes=%zu\n",
                       s_materialGpuTable.size(), byteSize);
         std::fputs(buf, stderr);
         glDeleteBuffers(1, &s_materialGpuSsbo);
@@ -2255,7 +2259,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 if (uploadErr != GL_NO_ERROR) {
                     char buf[128];
                     std::snprintf(buf, sizeof(buf),
-                                  "[MATERIAL_GPU v1] GL ERROR after upload: 0x%x — buffer deleted, sampling disabled\n",
+                                  "[MATERIAL_GPU v4] GL ERROR after upload: 0x%x — buffer deleted, sampling disabled\n",
                                   uploadErr);
                     std::fputs(buf, stderr);
                     // Delete the corrupt/incomplete buffer so s_materialGpuSsbo returns to 0.
@@ -2271,7 +2275,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             {
                 char buf[160];
                 std::snprintf(buf, sizeof(buf),
-                              "[MATERIAL_GPU v1] event=table_upload"
+                              "[MATERIAL_GPU v4] event=table_upload"
                               " materials=%zu bytes=%zu emitted=%u\n",
                               s_materialGpuTable.size(), byteSize, emittedCount);
                 std::fputs(buf, stderr);
@@ -2292,7 +2296,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                     if (mismatches < 10) {  // first-10-only: throttle per-slot noise
                         char buf[128];
                         std::snprintf(buf, sizeof(buf),
-                                      "[MATERIAL_GPU v1] MISMATCH slot=%u pkt=%u"
+                                      "[MATERIAL_GPU v4] MISMATCH slot=%u pkt=%u"
                                       " materialIdx=%u albedoTex=%u expected=%u\n",
                                       i, globalPktIdx, idx, albedo, expected);
                         std::fputs(buf, stderr);
@@ -2303,7 +2307,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             {
                 char buf[96];
                 std::snprintf(buf, sizeof(buf),
-                              "[MATERIAL_GPU v1] event=compare emitted=%u mismatches=%d\n",
+                              "[MATERIAL_GPU v4] event=compare emitted=%u mismatches=%d\n",
                               emittedCount, mismatches);
                 std::fputs(buf, stderr);
             }
@@ -2317,7 +2321,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             if (!s_materialGpuSidecarValid) {
                 char buf[128];
                 std::snprintf(buf, sizeof(buf),
-                              "[MATERIAL_GPU v1] ERROR materialIdx sidecar size mismatch"
+                              "[MATERIAL_GPU v4] ERROR materialIdx sidecar size mismatch"
                               " emitted=%zu sidecar=%zu sample_forced=0\n",
                               s_sortedPacketOrder.size(), s_packetMaterialIdx.size());
                 std::fputs(buf, stderr);
@@ -2413,7 +2417,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             }
             char buf[96];
             std::snprintf(buf, sizeof(buf),
-                          "[MATERIAL_GPU v1] event=entry_material_idx emitted=%u mismatches=%d\n",
+                          "[MATERIAL_GPU v4] event=entry_material_idx emitted=%u mismatches=%d\n",
                           emittedCount2, entryMismatches);
             std::fputs(buf, stderr);
         }
@@ -3772,7 +3776,7 @@ void GpuStaticPropBatcher::flush() {
             if (bindErr != GL_NO_ERROR) {
                 char buf[96];
                 std::snprintf(buf, sizeof(buf),
-                              "[MATERIAL_GPU v1] GL ERROR after bind: 0x%x\n", bindErr);
+                              "[MATERIAL_GPU v4] GL ERROR after bind: 0x%x\n", bindErr);
                 std::fputs(buf, stderr);
             }
         }
@@ -3793,7 +3797,7 @@ void GpuStaticPropBatcher::flush() {
             if (uniformErr != GL_NO_ERROR) {
                 char buf[96];
                 std::snprintf(buf, sizeof(buf),
-                              "[MATERIAL_GPU v1] GL ERROR after sample uniform: 0x%x\n",
+                              "[MATERIAL_GPU v4] GL ERROR after sample uniform: 0x%x\n",
                               uniformErr);
                 std::fputs(buf, stderr);
             }
@@ -3801,8 +3805,8 @@ void GpuStaticPropBatcher::flush() {
         // If loc == -1: M3 error already logged at loadProgramsIfNeeded(); no-op here.
 
         // M2: required diagnostic log — once per flush, so gate interaction is observable.
-        // C1: guard prevents log noise on default both-gates-OFF runs (tier1 baseline stays clean).
-        // reason cascade mirrors the sampleOn condition order exactly.
+        // C1: guard fires on every run now that s_materialGpuEnabled is default-ON (v5).
+        // Set MC2_MATERIAL_GPU=0 to silence. reason cascade mirrors sampleOn condition order.
         if (s_materialGpuEnabled || s_materialGpuSampleEnabled) {
             const char* reason = "ok";
             if (!s_materialGpuEnabled)                    reason = "upload_env_off";
@@ -3816,11 +3820,11 @@ void GpuStaticPropBatcher::flush() {
             if (sampleOn) {
                 // sampleOn=true guarantees loc >= 0, so loc is always valid here.
                 std::snprintf(buf, sizeof(buf),
-                              "[MATERIAL_GPU v1] event=sample_mode enabled=1 loc=%d\n",
+                              "[MATERIAL_GPU v4] event=sample_mode enabled=1 loc=%d\n",
                               s_locsCoalesce.materialGpuSample);
             } else {
                 std::snprintf(buf, sizeof(buf),
-                              "[MATERIAL_GPU v1] event=sample_mode enabled=0 reason=%s\n",
+                              "[MATERIAL_GPU v4] event=sample_mode enabled=0 reason=%s\n",
                               reason);
             }
             std::fputs(buf, stderr);

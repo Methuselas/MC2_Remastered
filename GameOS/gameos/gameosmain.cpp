@@ -858,16 +858,18 @@ int main(int argc, char** argv)
         puts(_cbbuf);
         crashbundle_append(_cbbuf);
 
-        // [MATERIAL_GPU v1] startup banner — separate from [INSTR v1] to keep
+        // [MATERIAL_GPU v4] startup banner — separate from [INSTR v1] to keep
         // that buffer size stable. Duplicates the getenv check because
         // s_materialGpuEnabled is a private file-scope static in the batcher
         // (not accessible cross-TU — Option A from MaterialGpu-2 spec §3).
+        // v5: MC2_MATERIAL_GPU defaults ON; set to "0" to disable.
         {
-            const bool matGpuOn    = (getenv("MC2_MATERIAL_GPU")        != nullptr);
-            const bool matSampleOn = (getenv("MC2_MATERIAL_GPU_SAMPLE") != nullptr);
-            char buf[64];
+            const char* matGpuEnv  = getenv("MC2_MATERIAL_GPU");
+            const bool  matGpuOn   = (matGpuEnv == nullptr || matGpuEnv[0] != '0');
+            const bool  matSampleOn = (getenv("MC2_MATERIAL_GPU_SAMPLE") != nullptr);
+            char buf[96];
             std::snprintf(buf, sizeof(buf),
-                          "[MATERIAL_GPU v1] enabled=%d sample=%d binding=5\n",
+                          "[MATERIAL_GPU v4] enabled=%d sample=%d binding=5 (default-ON; MC2_MATERIAL_GPU=0 disables)\n",
                           (int)matGpuOn, (int)matSampleOn);
             std::fputs(buf, stderr);
         }
@@ -1286,6 +1288,67 @@ int main(int argc, char** argv)
             g_dpSnapshot.materialMismatches = stats.materialMismatches;
             g_dpSnapshot.overflow           = stats.overflow;
             g_dpSnapshot.typeDescCount      = batcher_getStaticPropTypeDescCount();
+
+            // Selected-prop packet inspector (DrawPackets panel "Selected Prop" section).
+            // g_dpSelectedRecipeIndex is written by EditorInspector on Ctrl+Shift+Click;
+            // -1 = no selection. Render thread only — no mutex needed.
+            {
+                DrawPacketSelectedPropSnapshot sel{};
+                const int32_t selRecipe = g_dpSelectedRecipeIndex;
+                if (selRecipe >= 0) {
+                    // Phase 1: find the first snapshot entry with matching recipeIndex.
+                    const ExtractedStaticProp* found = nullptr;
+                    for (const auto& sp : snap.staticProps) {
+                        if (sp.recipeIndex == selRecipe) { found = &sp; break; }
+                    }
+                    if (found) {
+                        const uint32_t selTypeId = found->typeId;
+
+                        // Phase 2: count visible instances of the same typeId.
+                        uint32_t instCount = 0u;
+                        for (const auto& sp : snap.staticProps)
+                            if (sp.typeId == selTypeId) ++instCount;
+
+                        sel.valid         = true;
+                        sel.recipeIndex   = selRecipe;
+                        sel.typeId        = selTypeId;
+                        sel.firstPacket   = found->firstPacket;
+                        sel.packetCount   = found->packetCount;
+                        sel.instanceCount = instCount;
+                        sel.materialIdx   = found->materialIdx;
+                        sel.alphaClass    = found->alphaClass;
+                        static_assert(sizeof(sel.shapeName) == sizeof(found->shapeName),
+                            "shapeName size mismatch");
+                        std::memcpy(sel.shapeName, found->shapeName, sizeof(sel.shapeName));
+                        sel.shapeName[sizeof(sel.shapeName) - 1] = '\0';
+
+                        // Per-packet rows.
+                        const uint32_t rowCap = DrawPacketSelectedPropSnapshot::kMaxRows;
+                        const uint32_t pktEnd = found->firstPacket + found->packetCount;
+                        for (uint32_t pi = found->firstPacket;
+                                      pi < pktEnd && sel.rowCount < rowCap; ++pi) {
+                            DrawPacketPropRow& row = sel.rows[sel.rowCount];
+                            row.globalPacketIdx = pi;
+                            uint32_t idxCount = 0u, firstIdx = 0u, owningType = 0u;
+                            int32_t  baseVtx = 0;
+                            if (batcher_getPacketDrawInfo(pi, &idxCount, &firstIdx,
+                                                          &baseVtx, &owningType)) {
+                                row.indexCount = idxCount;
+                                row.firstIndex = firstIdx;
+                                row.baseVertex = baseVtx;
+                            }
+                            uint32_t matFlags = 0u;
+                            if (batcher_getPacketMaterialFlags(pi, &matFlags)) {
+                                row.materialFlags = matFlags;
+                                row.pipelineId    = (matFlags & STATIC_PROP_FLAG_ALPHA_TEST)
+                                                    ? 2u : 1u;
+                            }
+                            ++sel.rowCount;
+                        }
+                    }
+                }
+                g_dpSelProp = sel;
+            }
 
         }
 
