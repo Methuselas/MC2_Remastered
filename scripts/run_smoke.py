@@ -13,6 +13,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import atexit
 import datetime as dt
 import json
 import os
@@ -176,6 +177,39 @@ def main():
               "projection; smoke would record regressed visuals. Unset or set =1.",
               file=sys.stderr)
         sys.exit(2)
+
+    # Concurrency lock: prevent two smoke runners from stepping on each other.
+    # A second invocation with --kill-existing would taskkill the first run's
+    # owned mc2.exe (image-name kill, not PID-specific), producing crash_silent
+    # for whichever mission was in flight.  The lock is a flat file next to the
+    # artifact root; open(..., 'x') is atomic on Windows (CreateFile CREATE_NEW).
+    _LOCK_PATH = ARTIFACT_ROOT / "smoke.lock"
+    _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _lf = open(_LOCK_PATH, 'x')
+        _lf.write(str(os.getpid()))
+        _lf.flush()
+        atexit.register(lambda: _LOCK_PATH.unlink(missing_ok=True))
+    except FileExistsError:
+        # May be stale (previous run crashed without cleanup). Check the PID.
+        try:
+            _stale_pid = int(_LOCK_PATH.read_text().strip())
+            _still_alive = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {_stale_pid}", "/NH", "/FO", "CSV"],
+                capture_output=True, text=True).stdout.count(str(_stale_pid)) > 0
+        except Exception:
+            _still_alive = False
+        if _still_alive:
+            print(f"[runner] ERROR: another smoke run is already in progress "
+                  f"(PID {_stale_pid}); wait for it to finish or remove "
+                  f"{_LOCK_PATH} if it is stale.", file=sys.stderr)
+            sys.exit(5)
+        # Stale lock — re-acquire.
+        _LOCK_PATH.unlink(missing_ok=True)
+        _lf = open(_LOCK_PATH, 'x')
+        _lf.write(str(os.getpid()))
+        _lf.flush()
+        atexit.register(lambda: _LOCK_PATH.unlink(missing_ok=True))
 
     # Existing-process safety.
     pids = _running_mc2()
