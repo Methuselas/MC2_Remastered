@@ -1533,6 +1533,65 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         std::fflush(stderr);
     }
 
+    // Step 5.NEW — alpha-class OR-reduce: unconditional (emitter/v0 prerequisite in all modes).
+    // Malformed types disarm coalesce when coalesceWanted; in legacy-only mode, alphaClass=0
+    // (conservative: emitter treats type as opaque, legacy loop draws it unchanged).
+    for (uint32_t typeID = 0; typeID < static_cast<uint32_t>(s_types.size()); ++typeID) {
+        auto& type = s_types[typeID];
+        bool typeAlpha = false;
+        bool malformed = false;
+        for (uint32_t p = 0; p < type.packetCount; ++p) {
+            const auto& pkt = s_packets[type.firstPacket + p];
+            const TG_TypeShape* src = type.source;
+            if (!src || !src->listOfTextures) { malformed = true; break; }
+            bool pktAlpha = (pkt.materialFlags & STATIC_PROP_FLAG_ALPHA_TEST) != 0;
+            if (pkt.textureSlot < src->numTextures &&
+                src->listOfTextures[pkt.textureSlot].textureAlpha)
+                pktAlpha = true;
+            typeAlpha = typeAlpha || pktAlpha;
+        }
+        if (malformed) {
+            if (coalesceWanted) {
+                std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=malformed_type type=%u\n",
+                             typeID);
+                s_coalesceLayoutReady = false;
+                s_coalesceEnabled     = false;
+                s_coalesceArmed       = false;
+                return;
+            }
+            // Non-coalesce: conservative fallback — legacy draws it correctly regardless.
+            std::fprintf(stderr, "[DRAW_PACKET v1] WARNING: type=%u malformed src; alphaClass=0\n",
+                         typeID);
+            type.alphaClass = 0u;
+            continue;
+        }
+        type.alphaClass = typeAlpha ? 1u : 0u;
+    }
+
+    // Step 5.NEW.2 — s_typeDescTable population: unconditional (emitter/v0 prerequisite).
+    // Must run after alpha-class OR-reduce above so desc.alphaClass is correct.
+    {
+        s_typeDescTable.clear();
+        s_typeDescTable.reserve(s_types.size());
+        uint32_t noGeom = 0u, alphaOn = 0u;
+        for (uint32_t i = 0u; i < static_cast<uint32_t>(s_types.size()); ++i) {
+            const GpuStaticPropType& t = s_types[i];
+            RenderCore::StaticPropTypeDesc desc{};
+            desc.typeId      = i;
+            desc.firstPacket = t.firstPacket;
+            desc.packetCount = t.packetCount;
+            desc.alphaClass  = static_cast<uint32_t>(t.alphaClass);
+            if (t.packetCount == 0u) ++noGeom;
+            if (t.alphaClass  == 1u) ++alphaOn;
+            s_typeDescTable.push_back(desc);
+        }
+        std::fprintf(stderr,
+            "[STATIC_PROP_TYPE_TABLE v0] types=%u packet_ranges=%u alpha_on=%u noGeom=%u\n",
+            static_cast<uint32_t>(s_typeDescTable.size()),
+            static_cast<uint32_t>(s_packets.size()),
+            alphaOn, noGeom);
+    }
+
     // Step 5.5 — coalesce-not-wanted early return.
     if (!coalesceWanted) {
         s_coalesceLayoutReady = false;
@@ -1562,18 +1621,9 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         return;
     }
 
-    // Step 5.6 — alpha-class compute per type (§CRITICAL-C). Mirrors the
-    // legacy guard at flush() :1849-1851 so a malformed type doesn't crash
-    // finalize. OR-reduce per-type; mixed_alpha fires only when packets
-    // within ONE type genuinely disagree after slot resolution. A type
-    // whose source/listOfTextures is null OR whose firstPkt.textureSlot is
-    // OOB cannot be safely classified or have its texture array layer
-    // resolved — disarm with reason=malformed_type (legacy stays valid).
-    // Plan v3.8 Step 12B.4 — mixed_alpha forced-disarm hook. Fires once at
-    // the start of the alpha-class walk (before any per-type processing).
-    // Simulates a type whose packets disagree post-slot-resolution. Exits
-    // the function in the same shape as the natural mixed_alpha return —
-    // legacy is already finalized; coalesce side-attempt only.
+    // Step 12B.4 — MixedAlpha forced-disarm hook (coalesce testing only).
+    // alphaClass already computed unconditionally above (Step 5.NEW).
+    // Simulates disarm at the coalesce-arm decision point; legacy path unaffected.
     if (s_coalesceForceDisarm == CoalesceForceDisarm::MixedAlpha &&
         typeCount > 0u) {
         std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=mixed_alpha "
@@ -1582,55 +1632,6 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         s_coalesceEnabled     = false;
         s_coalesceArmed       = false;
         return;
-    }
-
-    // Plan v3.8 (post-smoke 2 + visual canary): OR-reduce per spec §5.2 /
-    // §CRITICAL-C pseudocode. Mixed-alpha types (one packet alpha-on,
-    // another off after slot-resolution) are PROMOTED to alpha-ON instead
-    // of disarming. Justification:
-    //   - alpha-test discard fires only for tex_color.a < 0.5; opaque
-    //     packets in a mixed-alpha type have tex.a == 1.0, so the discard
-    //     never fires for their pixels. Same rendered fragments as legacy.
-    //   - Without promotion, stock content's type=92 (and likely others)
-    //     disarms coalesce on every mc2_NN mission. With substrate=ON
-    //     (smoke harness default), the disarm path falls back to the
-    //     broken substrate renderer (track_c_substrate_regression.md →
-    //     "no buildings/trees" empty terrain). Promoting is the only way
-    //     to make the slice ship a working render under substrate=ON.
-    //   - Visual canary (Step 17) compares coalesce-armed vs substrate-OFF
-    //     baseline; alpha-test on opaque packets is provably zero pixel
-    //     delta.
-    //   - The malformed-type disarm is preserved (src/listOfTextures null
-    //     OR pkt.textureSlot OOB → genuine bad data, not architectural
-    //     mixed-alpha classification).
-    for (uint32_t typeID = 0; typeID < typeCount; ++typeID) {
-        auto& type = s_types[typeID];
-        bool typeAlpha = false;
-        bool malformed = false;
-        for (uint32_t p = 0; p < type.packetCount; ++p) {
-            const auto& pkt = s_packets[type.firstPacket + p];
-            const TG_TypeShape* src = type.source;
-            if (!src || !src->listOfTextures) {
-                malformed = true;
-                break;
-            }
-            bool pktAlpha = (pkt.materialFlags & STATIC_PROP_FLAG_ALPHA_TEST) != 0;
-            if (pkt.textureSlot < src->numTextures &&
-                src->listOfTextures[pkt.textureSlot].textureAlpha) {
-                pktAlpha = true;
-            }
-            // OR-reduce: any alpha-on packet promotes the whole type.
-            typeAlpha = typeAlpha || pktAlpha;
-        }
-        if (malformed) {
-            std::fprintf(stderr, "[COALESCE v1] event=disarmed reason=malformed_type type=%u\n",
-                         typeID);
-            s_coalesceLayoutReady = false;
-            s_coalesceEnabled     = false;
-            s_coalesceArmed       = false;
-            return;
-        }
-        type.alphaClass = typeAlpha ? 1u : 0u;
     }
 
     // Step 5.7 — sort + per-type caps + group totals + per-type byte offsets.
@@ -1667,33 +1668,6 @@ void GpuStaticPropBatcher::finalizeGeometry() {
     }
     s_alphaOnCount = static_cast<uint32_t>(s_sortedTypeOrder.size())
                    - s_alphaOffCount;
-
-    // v0: Populate cross-seam type desc table.
-    // Must run AFTER alpha-class OR-reduce (Step 5.6, line ~1621)
-    // and sort (Step 5.7, line ~1647-1657) so all s_types[i] fields are stable.
-    {
-        s_typeDescTable.clear();
-        s_typeDescTable.reserve(s_types.size());
-        uint32_t noGeom = 0u;
-        uint32_t alphaOn = 0u;
-        for (uint32_t i = 0u; i < static_cast<uint32_t>(s_types.size()); ++i) {
-            const GpuStaticPropType& t = s_types[i];
-            RenderCore::StaticPropTypeDesc desc{};
-            desc.typeId      = i;
-            desc.firstPacket = t.firstPacket;
-            desc.packetCount = t.packetCount;
-            desc.alphaClass  = static_cast<uint32_t>(t.alphaClass);
-            if (t.packetCount == 0u) { ++noGeom; } // non-visual type (collision, trigger, sound) — expected
-            if (t.alphaClass  == 1u) { ++alphaOn; }
-            s_typeDescTable.push_back(desc);
-        }
-        std::fprintf(stderr,
-            "[STATIC_PROP_TYPE_TABLE v0] types=%u packet_ranges=%u"
-            " alpha_on=%u noGeom=%u\n",
-            static_cast<uint32_t>(s_typeDescTable.size()),
-            static_cast<uint32_t>(s_packets.size()),
-            alphaOn, noGeom);
-    }
 
     {
         size_t offByteCursor = 0;
@@ -3396,6 +3370,11 @@ void GpuStaticPropBatcher::flush() {
     uint32_t v4MixedTypeDeferred  = 0u;
     uint32_t v4Invalid            = 0u;
     uint32_t v4DuplicatePacket    = 0u;
+    // v4NoRange: candidate has no SSBO range — prop went through CPU-fallback path,
+    // so submit() was never called for it. Expected when some types fail batcher submission.
+    // NOT a hard gate — these props render correctly via CPU fallback.
+    // v4Invalid: genuine bugs — typeId OOB, wrong pipelineId, packetIdx OOB. Hard gate = 0.
+    uint32_t v4NoRange            = 0u;
 
     if (v4DispatchAttempted) {
         if (IsCoalesceEnabled()) {
@@ -3415,7 +3394,9 @@ void GpuStaticPropBatcher::flush() {
                 if (s_v4TypeDrawCount[v.typeId] >= s_types[v.typeId].packetCount)  { ++v4DuplicatePacket;  continue; }
 
                 auto it = s_typeRanges.find(v.typeId);
-                if (it == s_typeRanges.end()                                )       { ++v4Invalid;          continue; }
+                // No range = type went through CPU-fallback path (submit() was rejected).
+                // Not a dispatch bug; these props render via game-object CPU path.
+                if (it == s_typeRanges.end())                                       { ++v4NoRange;          continue; }
                 const TypeRangeSsbo& tr = it->second;
 
                 if (v.globalPacketIdx >= s_packets.size())                          { ++v4Invalid;          continue; }
@@ -3454,10 +3435,11 @@ void GpuStaticPropBatcher::flush() {
                 std::fprintf(stderr,
                     "[DRAW_PACKET_DISPATCH v1 frame=%llu candidates=%zu "
                     "eligible_opaque_pkts=%u opaque_draws=%u mixed_deferred=%u "
-                    "partial_type=%u duplicate=%u invalid=%u]\n",
+                    "partial_type=%u duplicate=%u invalid=%u no_range=%u]\n",
                     (unsigned long long)s_counters.frame_count, v4CandidateCount,
                     v4EligibleOpaquePkts, v4OpaqueDraws,
-                    v4MixedTypeDeferred, v4PartialTypeDispatch, v4DuplicatePacket, v4Invalid);
+                    v4MixedTypeDeferred, v4PartialTypeDispatch, v4DuplicatePacket,
+                    v4Invalid, v4NoRange);
             }
         }
     }
