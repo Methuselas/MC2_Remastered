@@ -6,6 +6,7 @@
 #include "../../RenderCore/KtxLoader.h"    // KTX2 sidecar loading (MC2_MATERIAL_KTX=1)
 #include "draw_packet_emitter.h"
 #include "../../RenderCore/PipelineRegistry.h"   // direct include; do not rely on transitive
+#include "pipeline_binder.h"                     // applyPipeline — GL state from PipelineDesc
 #include "static_prop_dispatch_meta.h"
 #include "gos_postprocess.h"             // getGosPostProcess, getDynamicLightSpaceMatrix
 #include "gos_static_prop_killswitch.h"  // gos_GetGLTextureId
@@ -624,6 +625,11 @@ void loadProgramsIfNeeded() {
         return;
     }
     s_staticPropProgram = s_staticPropProgramObj->shp_;
+    // Wire GL program name into PipelineRegistry so applyPipeline() can bind it.
+    // Both IDs share the same program — alpha distinction is texture-array + shader
+    // discard, not a separate program object.
+    RenderCore::bindProgram(RenderCore::PipelineId::StaticPropOpaque,    s_staticPropProgram);
+    RenderCore::bindProgram(RenderCore::PipelineId::StaticPropAlphaTest, s_staticPropProgram);
     // Stage 2.D.1.1 (Item 2): cache parity uniform locations once at link time.
     s_loc_u_parityWrite        = glGetUniformLocation(s_staticPropProgram, "u_parityWrite");
     s_loc_u_parityVertsPerType = glGetUniformLocation(s_staticPropProgram, "u_parityVertsPerType");
@@ -3372,16 +3378,16 @@ void GpuStaticPropBatcher::flush() {
     glGetIntegerv(GL_CULL_FACE_MODE, &prevCullMode);
     prevBlend = glIsEnabled(GL_BLEND);
 
-    glUseProgram(s_staticPropProgram);
+    // Bind program + depth/blend/cull via PipelineDesc.
+    // Uses StaticPropOpaque — both alpha and opaque packets share the same
+    // program and fixed-function state; the alpha distinction is texture-array
+    // selection and shader discard, not a different GL pipeline state.
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropOpaque));
     glBindVertexArray(s_sharedVao);
-
-    // Explicit state for our pass.
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
-    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene static-prop/building draw)
-    glDisable(GL_BLEND);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
+    // Reverse-Z depth compare is not encoded in PipelineDesc v0 yet.
+    // Keep this explicit until PipelineDesc grows a depthFunc field.
+    glDepthFunc(GL_GEQUAL);
 
     // Direct uniforms. Static props use the same CPU-composed terrainMVP as
     // terrain/terrain_overlay.vert: axisSwap * worldToClip, row-major
