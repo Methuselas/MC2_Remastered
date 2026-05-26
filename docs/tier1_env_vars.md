@@ -67,11 +67,11 @@ When enabled, every flush validates `materials[materialIdx].albedoTex == texArra
 
 ## MC2_MATERIAL_GPU_SAMPLE
 
-Default: **OFF** (set `MC2_MATERIAL_GPU_SAMPLE=1` to enable).
+Default: **ON** (set `MC2_MATERIAL_GPU_SAMPLE=0` to disable shader sampling).
 
-Activates shader sampling from MaterialGpu in `static_prop.frag`.
-Without this flag, the shader uses `texArrayLayer` (legacy fallback path).
-Enable after confirming `mismatches=0` across tier1.
+Routes static-prop albedo through the MaterialGpu table in `static_prop.frag`.
+Set `=0` to fall back to `texArrayLayer` (legacy fallback / compare authority).
+Requires `MC2_MATERIAL_GPU` also active (sampleOn gate checks both).
 
 Log tag: `[MATERIAL_GPU v4]`
 

@@ -866,7 +866,8 @@ int main(int argc, char** argv)
         {
             const char* matGpuEnv  = getenv("MC2_MATERIAL_GPU");
             const bool  matGpuOn   = (matGpuEnv == nullptr || matGpuEnv[0] != '0');
-            const bool  matSampleOn = (getenv("MC2_MATERIAL_GPU_SAMPLE") != nullptr);
+            const char* matSampleEnv = getenv("MC2_MATERIAL_GPU_SAMPLE");
+            const bool  matSampleOn  = (matSampleEnv == nullptr || matSampleEnv[0] != '0');
             char buf[96];
             std::snprintf(buf, sizeof(buf),
                           "[MATERIAL_GPU v4] enabled=%d sample=%d binding=5 (default-ON; MC2_MATERIAL_GPU=0 disables)\n",

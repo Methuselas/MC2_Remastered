@@ -335,12 +335,14 @@ static const bool s_materialGpuEnabled = []() {
     return v == nullptr || (v[0] != '0');
 }();
 
-// MC2_MATERIAL_GPU_SAMPLE — opt-in shader sampling gate.
-// Set MC2_MATERIAL_GPU_SAMPLE=1 to route static-prop albedo through MaterialGpu table.
-// Without this, static_prop.frag uses texArrayLayer (legacy fallback / compare authority).
+// MC2_MATERIAL_GPU_SAMPLE — defaults ON (shader sampling active by default).
+// Set MC2_MATERIAL_GPU_SAMPLE=0 to disable shader sampling and fall back to texArrayLayer.
+// sampleOn requires s_materialGpuEnabled (MC2_MATERIAL_GPU) also active — see sampleOn gate.
 // Invariant: materials[materialIdx].albedoTex == texArrayLayer must hold while both paths live.
-static const bool s_materialGpuSampleEnabled =
-    (getenv("MC2_MATERIAL_GPU_SAMPLE") != nullptr);
+static const bool s_materialGpuSampleEnabled = []() {
+    const char* v = getenv("MC2_MATERIAL_GPU_SAMPLE");
+    return v == nullptr || (v[0] != '0');
+}();
 static bool s_materialKtxEnabled = (std::getenv("MC2_MATERIAL_KTX") != nullptr &&
                                      std::getenv("MC2_MATERIAL_KTX")[0] != '0');   // MC2_MATERIAL_KTX=1
 // Tracks whether finalizeGeometry() produced a correctly-sized sidecar.
@@ -3790,7 +3792,7 @@ void GpuStaticPropBatcher::flush() {
 
         // MaterialGpu-3: compute sampleOn once per flush.
         // sampleOn: all five conditions required.
-        // s_materialGpuEnabled is default-ON; s_materialGpuSampleEnabled requires MC2_MATERIAL_GPU_SAMPLE=1.
+        // s_materialGpuEnabled is default-ON; s_materialGpuSampleEnabled is default-ON (set MC2_MATERIAL_GPU_SAMPLE=0 to disable).
         // When sampleOn=0, static_prop.frag falls back to texArrayLayer (no pixel change).
         const bool sampleOn = s_materialGpuEnabled
                            && s_materialGpuSampleEnabled

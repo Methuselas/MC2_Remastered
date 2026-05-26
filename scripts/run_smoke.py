@@ -440,7 +440,11 @@ def main():
                             "MC2_DRAW_PACKET_STATIC_PROP_V6",
                             "MC2_DRAW_PACKET_STATIC_PROP_V6_TRACE",
                             # DrawPacket v7 kill-switch (reverts to legacy multidraw).
-                            "MC2_STATIC_PROP_LEGACY_DISPATCH")},
+                            "MC2_STATIC_PROP_LEGACY_DISPATCH",
+                            # MaterialGpu v7 kill-switch (set =0 to disable shader sampling).
+                            "MC2_MATERIAL_GPU_SAMPLE",
+                            # MaterialGpu master kill-switch (set =0 to disable table upload).
+                            "MC2_MATERIAL_GPU")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
