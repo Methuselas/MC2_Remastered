@@ -4,9 +4,11 @@ Single-header OpenEXR loader vendored from upstream:
 https://github.com/syoyo/tinyexr
 
 - Files:
-  - tinyexr.h  — the loader (single-header)
-  - miniz.h    — miniz public header (deps/miniz/miniz.h upstream)
-  - miniz.c    — miniz implementation (deps/miniz/miniz.c upstream)
+  - tinyexr.h      — the loader (single-header)
+  - exr_reader.hh  — EXR Reader helper class (included by tinyexr.h impl section)
+  - streamreader.hh — StreamReader helper (included by exr_reader.hh)
+  - miniz.h        — miniz public header (deps/miniz/miniz.h upstream)
+  - miniz.c        — miniz implementation (deps/miniz/miniz.c upstream)
 - Version: tinyexr (no formal version string; based on upstream release branch)
 - Upstream commit: 4946b5d92e13bcc8102ac2c8efd129596a90bf75 (release branch)
 - Vendored: 2026-05-25

@@ -11,6 +11,7 @@ set(SOURCES ${SOURCES}
     gameos_debugging.cpp
     gameos_sound.cpp
     gos_render.cpp
+    gos_hdri.cpp
     gos_postprocess.cpp
     gos_static_prop_batcher.cpp
     gos_static_prop_registry.cpp
@@ -53,9 +54,15 @@ set(SOURCES ${SOURCES}
     utils/vec.cpp
     utils/timing.cpp
     ${CMAKE_SOURCE_DIR}/3rdparty/tracy/TracyClient.cpp
+    ${CMAKE_SOURCE_DIR}/3rdparty/tinyexr/miniz.c
     utils/string_utils.cpp
     utils/file_utils.cpp
     )
+
+set_source_files_properties(
+    ${CMAKE_SOURCE_DIR}/3rdparty/tinyexr/miniz.c
+    PROPERTIES LANGUAGE C
+)
 
 set(MAIN_SRC gameosmain.cpp)
 
@@ -66,6 +73,8 @@ include_directories("../include"  ".")
 include_directories(${THIRDPARTY_INCLUDE_DIRS})
 # gos_static_prop_batcher.cpp pulls tgl.h / msl.h / Stuff from mclib.
 include_directories("${CMAKE_SOURCE_DIR}/mclib" "${CMAKE_SOURCE_DIR}/mclib/stuff")
+# gos_hdri.cpp needs tinyexr.h (defines TINYEXR_IMPLEMENTATION).
+include_directories("${CMAKE_SOURCE_DIR}/3rdparty/tinyexr")
 
 add_library(gameos ${SOURCES})
 
