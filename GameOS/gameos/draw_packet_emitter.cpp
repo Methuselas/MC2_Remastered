@@ -14,6 +14,7 @@
 #include <vector>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 // <climits> not needed: UINT32_MAX comes from <cstdint> already included via draw_packet_emitter.h
 
 DrawPacketEmitStats emitStaticPropDrawPackets(const RenderSnapshot&          snap,
@@ -217,4 +218,113 @@ DrawPacketEmitStats emitStaticPropDrawPackets(const RenderSnapshot&          sna
     }
 
     return stats;
+}
+
+// ---------------------------------------------------------------------------
+// DrawPacket v2 — compare
+// ---------------------------------------------------------------------------
+
+// s_compareEnabled lives at the CALL SITE (Task 5), not here — this function is only
+// invoked when that gate fires. s_verboseEnabled lives here because it is read inside
+// the loop; evaluating getenv() per candidate would be a syscall loop.
+static const bool s_verboseEnabled = [] {
+    const char* v = std::getenv("MC2_DRAW_PACKET_COMPARE_VERBOSE");
+    return v && v[0] == '1';
+}();
+
+DrawPacketCompareResult comparePacketsToLegacy(
+    const StaticPropDrawPacketCandidate* candidates,
+    uint32_t                             count,
+    uint32_t                             frameIndex) {
+
+    DrawPacketCompareResult r{};
+    r.packets = count;
+
+    for (uint32_t i = 0u; i < count; ++i) {
+        const StaticPropDrawPacketCandidate& c = candidates[i];
+        const RenderCore::PipelineId id = c.pipelineId;
+
+        // 1. Invalid: accessor failed during assignment.
+        if (id == RenderCore::PipelineId::Invalid) {
+            ++r.pipelineInvalid;
+            continue;
+        }
+
+        // 2. OOB: must check before calling getPipelineDesc() — it asserts on OOB.
+        if (static_cast<uint32_t>(id) >=
+            static_cast<uint32_t>(RenderCore::PipelineId::Count_)) {
+            ++r.pipelineOob;
+            continue;
+        }
+
+        // safe to call getPipelineDesc(); result unused here — just validates no assert.
+        (void)RenderCore::getPipelineDesc(id);
+
+        // 3 + 4. Geometry + owning-type check via batcher_getPacketDrawInfo.
+        {
+            uint32_t bIdxCount = 0u, bFirstIdx = 0u;
+            int32_t  bBaseVtx  = 0;
+            uint32_t bOwnType  = 0u;
+            if (batcher_getPacketDrawInfo(c.globalPacketIdx,
+                                          &bIdxCount, &bFirstIdx,
+                                          &bBaseVtx,  &bOwnType)) {
+                if (c.firstIndex != bFirstIdx || c.indexCount != bIdxCount) {
+                    ++r.geomMismatch;
+                    if (s_verboseEnabled) {
+                        if (c.firstIndex != bFirstIdx)
+                            std::fprintf(stderr,
+                                "[DRAW_PACKET_COMPARE detail] typeId=%u globalIdx=%u"
+                                " check=firstIndex cand=%u batcher=%u\n",
+                                c.typeId, c.globalPacketIdx, c.firstIndex, bFirstIdx);
+                        if (c.indexCount != bIdxCount)
+                            std::fprintf(stderr,
+                                "[DRAW_PACKET_COMPARE detail] typeId=%u globalIdx=%u"
+                                " check=indexCount cand=%u batcher=%u\n",
+                                c.typeId, c.globalPacketIdx, c.indexCount, bIdxCount);
+                    }
+                }
+                if (c.typeId != bOwnType) {
+                    ++r.typeMismatch;
+                    if (s_verboseEnabled)
+                        std::fprintf(stderr,
+                            "[DRAW_PACKET_COMPARE detail] typeId=%u globalIdx=%u"
+                            " check=owningType cand=%u batcher=%u\n",
+                            c.typeId, c.globalPacketIdx, c.typeId, bOwnType);
+                }
+            }
+            // if batcher_getPacketDrawInfo returns false: globalPacketIdx was valid at
+            // emit (emitter increments invalidRanges otherwise), so a false here means
+            // a batcher state change mid-frame. Skip silently — not a candidate bug.
+        }
+
+        // 5. Alpha self-consistency: pipelineId vs cachedMaterialFlags.
+        // This is a round-trip check of the assignment logic, NOT independent corroboration
+        // (both values come from the same batcher_getPacketMaterialFlags call at emit time).
+        {
+            const bool pipelineIsAlpha = (id == RenderCore::PipelineId::StaticPropAlphaTest);
+            const bool flagsIsAlpha =
+                (c.cachedMaterialFlags & STATIC_PROP_FLAG_ALPHA_TEST) != 0;
+            if (pipelineIsAlpha != flagsIsAlpha) {
+                ++r.alphaMismatch;
+                if (s_verboseEnabled)
+                    std::fprintf(stderr,
+                        "[DRAW_PACKET_COMPARE detail] typeId=%u globalIdx=%u"
+                        " check=alpha pipelineId=%u flags=0x%08x\n",
+                        c.typeId, c.globalPacketIdx,
+                        static_cast<uint32_t>(id), c.cachedMaterialFlags);
+            }
+        }
+    }
+
+    // One summary line per frame — schema v1.
+    // INCREMENT TAG if fields are added/removed in future slices.
+    std::fprintf(stderr,
+        "[DRAW_PACKET_COMPARE v1] frame=%u packets=%u"
+        " pipeline_invalid=%u pipeline_oob=%u"
+        " geom_mismatch=%u type_mismatch=%u alpha_mismatch=%u\n",
+        frameIndex, r.packets,
+        r.pipelineInvalid, r.pipelineOob,
+        r.geomMismatch, r.typeMismatch, r.alphaMismatch);
+
+    return r;
 }
