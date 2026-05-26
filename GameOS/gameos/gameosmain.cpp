@@ -1,8 +1,11 @@
 #include "gameos.hpp"
 #include "gos_render.h"
 #include "render_snapshot.h"
+#include "draw_packet_emitter.h"       // DrawPacket v0
+#include "gos_static_prop_batcher.h"   // batcher_getSortedPacketCount — explicit, do not rely on transitive
 #include <stdio.h>
 #include <stdlib.h>
+#include <vector>
 #include <cstring>
 #include <time.h>
 
@@ -1149,9 +1152,65 @@ int main(int argc, char** argv)
 		    gos_RendererHandleEvents();
         }
 
+        // RenderSnapshot is a shallow struct — spans are (ptr, count) into the
+        // ping-pong arena. Copy is safe: arena is not reset until the next
+        // ExtractRenderSnapshot() call. Emit must complete before any second extraction.
+        RenderSnapshot snap;
         {
             ZoneScopedN("ExtractRenderSnapshot");
-            ExtractRenderSnapshot();
+            snap = ExtractRenderSnapshot();
+        }
+        {
+            ZoneScopedN("EmitDrawPackets");
+
+            // Size the candidate buffer to the exact total packet count.
+            // batcher_getSortedPacketCount() returns s_sortedPacketOrder.size() — a
+            // permutation over global s_packets[], same total count. Falls back to
+            // 4096 before finalizeGeometry runs (returns 0 at that point).
+            const uint32_t totalPackets = batcher_getSortedPacketCount();
+            const uint32_t kMaxPackets  = totalPackets > 0u ? totalPackets : 4096u;
+
+            // Module-static candidate buffer, resized on demand.
+            // v0: population only — candidates are emitted but not dispatched.
+            static std::vector<StaticPropDrawPacketCandidate> s_candidates;
+            if (static_cast<uint32_t>(s_candidates.size()) < kMaxPackets)
+                s_candidates.resize(kMaxPackets);
+
+            const DrawPacketEmitStats stats =
+                emitStaticPropDrawPackets(snap, s_candidates.data(), kMaxPackets);
+
+            // Hard gate — always log on any anomaly.
+            if (stats.overflow || stats.invalidRanges > 0 || stats.skippedRanges > 0) {
+                std::fprintf(stderr,
+                    "[DRAW_PACKET v0] WARNING: overflow=%d invalid=%u skipped=%u "
+                    "emitted=%u expected=%u\n",
+                    stats.overflow ? 1 : 0,
+                    stats.invalidRanges,
+                    stats.skippedRanges,
+                    stats.emitted,
+                    stats.expectedPackets);
+            }
+
+            // Full log line under MC2_RENDER_SNAPSHOT_LOG=1.
+            static const bool s_logEnabled = []{
+                const char* v = std::getenv("MC2_RENDER_SNAPSHOT_LOG");
+                return v && v[0] == '1';
+            }();
+            if (s_logEnabled) {
+                std::fprintf(stderr,
+                    "[DRAW_PACKET v0] frame=%llu emitted=%u expected=%u "
+                    "distinct_types=%u static_props=%u invalid=%u skipped=%u overflow=%d\n",
+                    static_cast<unsigned long long>(snap.frameIndex),
+                    stats.emitted,
+                    stats.expectedPackets,
+                    stats.distinctTypes,
+                    static_cast<uint32_t>(snap.staticProps.size()),
+                    stats.invalidRanges,
+                    stats.skippedRanges,
+                    stats.overflow ? 1 : 0);
+            }
+
+            (void)stats;  // v0: no dispatch
         }
 
         {
