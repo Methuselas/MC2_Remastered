@@ -95,6 +95,16 @@ static bool s_baseInstanceSupported = false;  // set on first gate-ON flush
 static bool s_v5Armed      = false;  // true once gate-arm checks have run
 static bool s_v5Disarmed   = false;  // true if gate-arm check failed for session
 
+// v5 per-frame counters (reset at start of each v5-active flush).
+static uint32_t s_v5FrameDrawsIssued     = 0u;
+static uint32_t s_v5FrameZeroInstSkips   = 0u;
+static uint32_t s_v5FrameSortedOob       = 0u;
+static uint32_t s_v5FramePacketOob       = 0u;
+static uint32_t s_v5FrameTypeOob         = 0u;
+static uint32_t s_v5FrameBaseInstMissing = 0u;
+static uint32_t s_v5FrameGlErrors        = 0u;
+static uint32_t s_v5TotalFrameCount      = 0u;
+
 #define TREE_DIAG(fmt, ...) \
     do { if (s_treeDiagTrace) { fprintf(stderr, "[TREE_DIAG] " fmt "\n", ##__VA_ARGS__); fflush(stderr); } } while (0)
 
@@ -3923,51 +3933,209 @@ void GpuStaticPropBatcher::flush() {
         // the multidraw counts and the alpha-ON byte offset use per-PACKET
         // counts (s_alphaOffCmdCount / s_alphaOnCmdCount). The PerDrawEntry
         // SSBO is also per-packet, indexed by gl_DrawID = sorted-packet slot.
-        // 11.7.g — alpha-OFF group draw.
-        // Step 4.8: under global-pool mode bind once covering both groups; under legacy bind per-group.
-        if (s_alphaOffCmdCount > 0u) {
-            if (s_locsCoalesce.drawIDBase >= 0)
-                glUniform1i(s_locsCoalesce.drawIDBase, 0);
-            if (s_globalPoolLegacy) {
-                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
-                                  static_cast<GLintptr>(fr_off_bytes_d + 0u),
-                                  static_cast<GLsizeiptr>(off_total_bytes));
-            } else {
-                // Single bind covering both alpha groups (contiguous global pool).
+
+        // DrawPacket v5: per-draw-call dispatch (MC2_DRAW_PACKET_COALESCE_V5=1).
+        // When active, replaces both glMultiDrawElementsIndirect calls with a
+        // per-slot glDrawElementsInstancedBaseVertexBaseInstance loop.
+        const bool runV5 = s_v5Enabled && s_baseInstanceSupported && !s_v5Disarmed;
+
+        if (runV5) {
+            s_v5FrameDrawsIssued     = 0u;
+            s_v5FrameZeroInstSkips   = 0u;
+            s_v5FrameSortedOob       = 0u;
+            s_v5FramePacketOob       = 0u;
+            s_v5FrameTypeOob         = 0u;
+            s_v5FrameBaseInstMissing = 0u;
+            s_v5FrameGlErrors        = 0u;
+            ++s_v5TotalFrameCount;
+
+            const uint32_t totalCmds = s_alphaOffCmdCount + s_alphaOnCmdCount;
+
+            // Compute base-instance map pointer for this ring slot.
+            // Arithmetic is in BYTES: multiply ring-slot index by bytes-per-frame,
+            // byte-cast the void*, then reinterpret as uint32_t*.
+            // Do NOT use index arithmetic on the void* base directly.
+            const size_t fr_off_bi =
+                static_cast<size_t>(s_coalesceFrameSlot) * s_baseInstanceByCmdBytesPerFrame;
+            const uint32_t* baseInstanceMap = reinterpret_cast<const uint32_t*>(
+                static_cast<const uint8_t*>(s_baseInstanceByCmdMap) + fr_off_bi);
+
+            // Unconditionally bind SSBO slot 0 before the loop.
+            // The prologue only binds inside if(s_alphaOffCmdCount > 0u).
+            // If all props are alpha-ON (OFF count == 0), slot 0 is stale.
+            // v5 only runs in global-pool mode (legacy mode disarms at gate-arm).
+            {
                 const size_t totalUsed = s_totalUsedBytesThisFrame;
                 glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
                                   static_cast<GLintptr>(fr_off_bytes_d),
-                                  static_cast<GLsizeiptr>(totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)));
+                                  static_cast<GLsizeiptr>(
+                                      totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)));
             }
+
+            // Bind alpha-OFF texture array before loop.
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
-            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpu_cull::compute_getIndirectCmdBuf());
-            glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
-                reinterpret_cast<const void*>(static_cast<uintptr_t>(0)),
-                static_cast<GLsizei>(s_alphaOffCmdCount),
-                0);
-        }
 
-        // 11.7.h — alpha-ON group draw.
-        if (s_alphaOnCmdCount > 0u) {
-            if (s_locsCoalesce.drawIDBase >= 0)
-                glUniform1i(s_locsCoalesce.drawIDBase, static_cast<GLint>(s_alphaOffCmdCount));
-            if (s_globalPoolLegacy) {
-                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
-                                  static_cast<GLintptr>(fr_off_bytes_d + off_total_bytes),
-                                  static_cast<GLsizeiptr>(on_total_bytes));
+            bool enteredOnGroup = false;
+
+            for (uint32_t i = 0u; i < totalCmds; ++i) {
+                if (i >= static_cast<uint32_t>(s_sortedPacketOrder.size())) {
+                    if (s_v5TraceEnabled)
+                        std::fprintf(stderr, "[DRAW_PACKET_V5] event=skip slot=%u reason=sorted_oob\n", i);
+                    ++s_v5FrameSortedOob;
+                    continue;
+                }
+                const uint32_t globalPktIdx = s_sortedPacketOrder[i];
+
+                if (globalPktIdx >= static_cast<uint32_t>(s_packets.size())) {
+                    if (s_v5TraceEnabled)
+                        std::fprintf(stderr, "[DRAW_PACKET_V5] event=skip slot=%u reason=packet_oob\n", i);
+                    ++s_v5FramePacketOob;
+                    continue;
+                }
+                const GpuStaticPropPacket& pkt = s_packets[globalPktIdx];
+
+                const auto typeIt = s_typeRanges.find(pkt.owningTypeID);
+                if (typeIt == s_typeRanges.end()) {
+                    if (s_v5TraceEnabled)
+                        std::fprintf(stderr, "[DRAW_PACKET_V5] event=skip slot=%u reason=type_oob\n", i);
+                    ++s_v5FrameTypeOob;
+                    continue;
+                }
+                const uint32_t instanceCount = typeIt->second.instanceCount;
+
+                if (instanceCount == 0u) {
+                    if (s_v5TraceEnabled)
+                        std::fprintf(stderr, "[DRAW_PACKET_V5] event=skip slot=%u reason=zero_inst\n", i);
+                    ++s_v5FrameZeroInstSkips;
+                    continue;
+                }
+
+                if (i >= totalCmds) {
+                    if (s_v5TraceEnabled)
+                        std::fprintf(stderr, "[DRAW_PACKET_V5] event=skip slot=%u reason=base_missing\n", i);
+                    ++s_v5FrameBaseInstMissing;
+                    continue;
+                }
+                const GLuint baseInstance = baseInstanceMap[i];
+
+                // Group boundary: switch texture array when entering alpha-ON group.
+                if (i == s_alphaOffCmdCount) {
+                    glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn);
+                    enteredOnGroup = true;
+                }
+
+                // Per-draw uniform: u_drawIDBase = absolute sorted slot.
+                // In multidraw: u_drawIDBase = group-start, gl_DrawID = within-group index.
+                // In per-draw:  u_drawIDBase = i,           gl_DrawID = always 0.
+                // Net shader index (gl_DrawID + u_drawIDBase) is identical in both paths.
+                glUniform1i(s_locsCoalesce.drawIDBase, static_cast<GLint>(i));
+
+                // firstIndex is uint32_t; multiply in uintptr_t space to avoid 32-bit overflow.
+                glDrawElementsInstancedBaseVertexBaseInstance(
+                    GL_TRIANGLES,
+                    static_cast<GLsizei>(pkt.indexCount),
+                    GL_UNSIGNED_INT,
+                    reinterpret_cast<const void*>(
+                        static_cast<uintptr_t>(pkt.firstIndex) * sizeof(uint32_t)),
+                    static_cast<GLsizei>(instanceCount),
+                    static_cast<GLint>(pkt.baseVertex),
+                    baseInstance);
+
+                if (s_v5TraceEnabled)
+                    std::fprintf(stderr,
+                        "[DRAW_PACKET_V5] slot=%u type=%u inst=%u base_inst=%u draw_id_base=%u\n",
+                        i, pkt.owningTypeID, instanceCount, static_cast<unsigned>(baseInstance), i);
+
+                ++s_v5FrameDrawsIssued;
             }
-            // else: single bind from alpha-OFF draw still covers alpha-ON (same range).
-            glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn);
-            // First-time bind of indirect buffer if alpha-OFF skipped.
-            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpu_cull::compute_getIndirectCmdBuf());
-            const uintptr_t alphaOnOffset =
-                static_cast<uintptr_t>(s_alphaOffCmdCount) *
-                static_cast<uintptr_t>(gpu_cull::kDrawElementsIndirectCommandSize);
-            glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
-                reinterpret_cast<const void*>(alphaOnOffset),
-                static_cast<GLsizei>(s_alphaOnCmdCount),
-                0);
+
+            // Restore texture array if loop entered the alpha-ON group.
+            if (enteredOnGroup) {
+                glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
+            }
+
+            // GL error check (one glGetError per v5-active flush).
+            {
+                const GLenum err = glGetError();
+                if (err != GL_NO_ERROR) {
+                    ++s_v5FrameGlErrors;
+                    std::fprintf(stderr,
+                        "[DRAW_PACKET_V5] event=gl_error frame=%u err=0x%x\n",
+                        s_v5TotalFrameCount, static_cast<unsigned>(err));
+                }
+            }
+
+            // Per-frame summary log: every 600 frames.
+            if ((s_v5TotalFrameCount % 600u) == 0u) {
+                const int ok = (s_v5FrameSortedOob       == 0u &&
+                                s_v5FramePacketOob        == 0u &&
+                                s_v5FrameTypeOob          == 0u &&
+                                s_v5FrameBaseInstMissing  == 0u &&
+                                s_v5FrameGlErrors         == 0u) ? 1 : 0;
+                std::fprintf(stderr,
+                    "[DRAW_PACKET_V5] frame=%u event=dispatch_summary"
+                    " slots_considered=%u draws_issued=%u zero_instance_skips=%u"
+                    " sorted_oob=%u packet_oob=%u type_oob=%u base_instance_missing=%u"
+                    " gl_errors=%u ok=%d\n",
+                    s_v5TotalFrameCount,
+                    s_alphaOffCmdCount + s_alphaOnCmdCount,
+                    s_v5FrameDrawsIssued,
+                    s_v5FrameZeroInstSkips,
+                    s_v5FrameSortedOob,
+                    s_v5FramePacketOob,
+                    s_v5FrameTypeOob,
+                    s_v5FrameBaseInstMissing,
+                    s_v5FrameGlErrors,
+                    ok);
+            }
+
+        } else {
+            // ---- Existing multidraw path (unchanged) ----
+            // 11.7.g — alpha-OFF group draw.
+            // Step 4.8: under global-pool mode bind once covering both groups; under legacy bind per-group.
+            if (s_alphaOffCmdCount > 0u) {
+                if (s_locsCoalesce.drawIDBase >= 0)
+                    glUniform1i(s_locsCoalesce.drawIDBase, 0);
+                if (s_globalPoolLegacy) {
+                    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
+                                      static_cast<GLintptr>(fr_off_bytes_d + 0u),
+                                      static_cast<GLsizeiptr>(off_total_bytes));
+                } else {
+                    const size_t totalUsed = s_totalUsedBytesThisFrame;
+                    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
+                                      static_cast<GLintptr>(fr_off_bytes_d),
+                                      static_cast<GLsizeiptr>(totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)));
+                }
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
+                glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpu_cull::compute_getIndirectCmdBuf());
+                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
+                    reinterpret_cast<const void*>(static_cast<uintptr_t>(0)),
+                    static_cast<GLsizei>(s_alphaOffCmdCount),
+                    0);
+            }
+
+            // 11.7.h — alpha-ON group draw.
+            if (s_alphaOnCmdCount > 0u) {
+                if (s_locsCoalesce.drawIDBase >= 0)
+                    glUniform1i(s_locsCoalesce.drawIDBase, static_cast<GLint>(s_alphaOffCmdCount));
+                if (s_globalPoolLegacy) {
+                    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
+                                      static_cast<GLintptr>(fr_off_bytes_d + off_total_bytes),
+                                      static_cast<GLsizeiptr>(on_total_bytes));
+                }
+                // else: single bind from alpha-OFF draw still covers alpha-ON (same range).
+                glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn);
+                glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpu_cull::compute_getIndirectCmdBuf());
+                const uintptr_t alphaOnOffset =
+                    static_cast<uintptr_t>(s_alphaOffCmdCount) *
+                    static_cast<uintptr_t>(gpu_cull::kDrawElementsIndirectCommandSize);
+                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
+                    reinterpret_cast<const void*>(alphaOnOffset),
+                    static_cast<GLsizei>(s_alphaOnCmdCount),
+                    0);
+            }
         }
 
         // 11.7.i — restore indirect-buffer binding.
