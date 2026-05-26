@@ -250,7 +250,10 @@ DrawPacketCompareResult comparePacketsToLegacy(
             continue;
         }
 
-        // 2. OOB: must check before calling getPipelineDesc() — it asserts on OOB.
+        // 2. OOB: pipelineId outside valid range [1, Count_); count as anomaly.
+        // getPipelineDesc() returns a zeroed sentinel for OOB rather than asserting,
+        // but the guard is kept to isolate pipelineOob from pipelineInvalid (0)
+        // and to give a clean diagnostic counter independent of accessor behavior.
         if (static_cast<uint32_t>(id) >=
             static_cast<uint32_t>(RenderCore::PipelineId::Count_)) {
             ++r.pipelineOob;
