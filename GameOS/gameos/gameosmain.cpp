@@ -1173,14 +1173,14 @@ int main(int argc, char** argv)
             // Module-static candidate buffer, resized on demand.
             // v0: population only — candidates are emitted but not dispatched.
             static std::vector<StaticPropDrawPacketCandidate> s_candidates;
-            if (static_cast<uint32_t>(s_candidates.size()) < kMaxPackets)
+            if (s_candidates.size() < static_cast<size_t>(kMaxPackets))
                 s_candidates.resize(kMaxPackets);
 
             const DrawPacketEmitStats stats =
                 emitStaticPropDrawPackets(snap, s_candidates.data(), kMaxPackets);
 
-            // Hard gate — always log on any anomaly.
-            if (stats.overflow || stats.invalidRanges > 0 || stats.skippedRanges > 0) {
+            // Hard gate — anomalies only (skippedRanges is design-normal in v0; logged under s_logEnabled).
+            if (stats.overflow || stats.invalidRanges > 0) {
                 std::fprintf(stderr,
                     "[DRAW_PACKET v0] WARNING: overflow=%d invalid=%u skipped=%u "
                     "emitted=%u expected=%u\n",
