@@ -356,6 +356,11 @@ static std::vector<RenderCore::MaterialGpu> s_materialGpuTable;   // deduplicate
 // Copied from layerForPacket[] in finalizeGeometry() before that local is discarded.
 // Valid until next finalizeGeometry() or onMapUnload(). -1 for unavailable packets.
 static std::vector<int32_t> s_packetTexArrayLayer;
+// v2.1: per-type instance count snapshot from the most recent flush().
+// Keyed by typeID. Cleared in onMapUnload().
+// Same prior-frame semantics as s_recipeHasSubstrateRecord / hasCullRecord:
+//   flush(frame N) snapshots -> extraction(frame N+1) reads -> 0 on frame 1.
+static std::unordered_map<uint32_t, uint32_t> s_typeInstanceCountPrevFrame;
 static GLuint                               s_materialGpuSsbo = 0;
 
 GLuint s_texArrayOff               = 0;  // alpha-OFF group GL_TEXTURE_2D_ARRAY
@@ -1175,6 +1180,7 @@ void GpuStaticPropBatcher::onMapLoad() {
 void GpuStaticPropBatcher::onMapUnload() {
     GpuStaticPropRegistry::staticPropRegistryClearMaterialCache();
     s_packetTexArrayLayer.clear();  // v2: sidecar is per-map; clear on unload
+    s_typeInstanceCountPrevFrame.clear(); // v2.1: per-map; clear on unload
     s_typeDescTable.clear();        // v0: cross-seam mirror is per-map
     if (s_sharedVbo) { glDeleteBuffers(1, &s_sharedVbo); s_sharedVbo = 0; }
     if (s_sharedIbo) { glDeleteBuffers(1, &s_sharedIbo); s_sharedIbo = 0; }
@@ -4674,6 +4680,14 @@ void GpuStaticPropBatcher::flush() {
     // 2026-05-08 adversarial review of the state-equality early-out.
     gos_InvalidateRenderStateCache();
 
+    // v2.1: snapshot per-type instance counts for next-frame extraction.
+    // s_typeRanges is module-static and holds this frame's counts.
+    // Reading here (before s_bucketsByType.clear) gives prior-frame
+    // semantics to batcher_getDrawSlotEntry() called from ExtractRenderSnapshot().
+    s_typeInstanceCountPrevFrame.clear();
+    for (const auto& kv : s_typeRanges)
+        s_typeInstanceCountPrevFrame[kv.first] = kv.second.instanceCount;
+
     // 2026-05-11 perf diag: flush() total + coalesce sub-stage timings.
     {
         const auto _btf_tEnd = std::chrono::steady_clock::now();
@@ -5151,6 +5165,37 @@ bool batcher_getPacketTexArrayLayer(uint32_t globalPacketIdx, int32_t* out) {
     if (globalPacketIdx >= static_cast<uint32_t>(s_packetTexArrayLayer.size()))
         return false;
     *out = s_packetTexArrayLayer[globalPacketIdx];
+    return true;
+}
+
+uint32_t batcher_getDrawSlotCount() {
+    return static_cast<uint32_t>(s_sortedPacketOrder.size());
+}
+
+bool batcher_getDrawSlotEntry(uint32_t slot, ExtractedStaticPropPacket* out) {
+    if (!out) return false;
+    if (slot >= static_cast<uint32_t>(s_sortedPacketOrder.size())) return false;
+
+    const uint32_t globalPktIdx = s_sortedPacketOrder[slot];
+    if (globalPktIdx >= static_cast<uint32_t>(s_packets.size())) return false;
+
+    out->sortedSlot      = slot;
+    out->globalPacketIdx = globalPktIdx;
+    out->typeId          = s_packets[globalPktIdx].owningTypeID;
+    out->pipelineId      = (slot < static_cast<uint32_t>(s_alphaOffCmdCount)) ? 0u : 1u;
+
+    // materialIdx from per-slot sidecar; sentinel if sidecar was not valid at finalize time
+    if (s_materialGpuSidecarValid &&
+        slot < static_cast<uint32_t>(s_packetMaterialIdx.size())) {
+        out->materialIdx = s_packetMaterialIdx[slot];
+    } else {
+        out->materialIdx = 0xFFFFFFFFu;
+    }
+
+    // instanceCount from previous frame's flush() snapshot
+    const auto it = s_typeInstanceCountPrevFrame.find(out->typeId);
+    out->instanceCount = (it != s_typeInstanceCountPrevFrame.end()) ? it->second : 0u;
+
     return true;
 }
 

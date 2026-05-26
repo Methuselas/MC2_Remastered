@@ -403,6 +403,31 @@ bool batcher_getMaterialGpuEntry(uint32_t index, RenderCore::MaterialGpu* out);
 // Sidecar is populated at finalizeGeometry() and valid until onMapUnload().
 bool batcher_getPacketTexArrayLayer(uint32_t globalPacketIdx, int32_t* out);
 
+// v2.1 extraction: per-slot data filled by batcher_getDrawSlotEntry().
+// Full definition lives here so batcher.cpp can write members without including
+// render_snapshot.h. render_snapshot.h includes this header to obtain the type.
+struct ExtractedStaticPropPacket {
+    uint32_t sortedSlot;       // position in s_sortedPacketOrder
+    uint32_t globalPacketIdx;  // index into s_packets[]
+    uint32_t typeId;           // owningTypeID of the packet
+    uint32_t pipelineId;       // 0=StaticPropOpaque, 1=StaticPropAlphaTest
+    uint32_t materialIdx;      // index into MaterialGpu table; 0xFFFFFFFFu if sidecar invalid
+    uint32_t instanceCount;    // previous-frame instance count (0 on frame 1)
+};
+
+// v2.1 extraction: draw-slot accessors.
+// "Draw slot" = position i in s_sortedPacketOrder; [0, alphaOffCmdCount) = opaque,
+// [alphaOffCmdCount, totalCmds) = alpha-test.
+// Populated once per map in finalizeGeometry(); 0 before first finalizeGeometry().
+uint32_t batcher_getDrawSlotCount();
+
+// Fills *out with per-slot data. Returns false if slot >= getDrawSlotCount() or out==nullptr.
+// pipelineId: 0=StaticPropOpaque, 1=StaticPropAlphaTest.
+// instanceCount: previous-frame value (same prior-frame semantics as hasCullRecord);
+//   0 on frame 1 or if the type had no visible instances last frame.
+// materialIdx: 0xFFFFFFFFu if MC2_MATERIAL_GPU sidecar was not valid at finalizeGeometry().
+bool batcher_getDrawSlotEntry(uint32_t slot, ExtractedStaticPropPacket* out);
+
 // ---------------------------------------------------------------------------
 // Type-desc table accessors (v0: CPU-side only, no SSBO).
 // All functions return safe sentinels (0 / nullptr / false) before
