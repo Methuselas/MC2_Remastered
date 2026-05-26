@@ -54,6 +54,11 @@ static bool envFlagDefaultOn(const char* name) {
     return true;                                     // any other value → on
 }
 
+// ImGui visibility kill-switch. Always true at startup; toggled by the
+// Graphics Options panel "Draw Mechs" checkbox. When false, both the GPU
+// batcher submit and the CPU Render(true) fallback are skipped.
+bool g_drawMechs = true;
+
 // Slice A: GPU mech batcher. Foundation for the entire stack.
 // Opt-out: MC2_GPU_MECHS=0
 bool g_useGpuMechs = envFlagDefaultOn("MC2_GPU_MECHS");
