@@ -22,17 +22,24 @@ void main()
     vec3 viewDir = (invProj * clip).xyz;
     vec3 worldDir = normalize(invViewRot * viewDir);
 
-    // Equirect mapping. atan(z,x) maps the horizontal plane onto u.
-    // asin(y) maps elevation onto v.
+    // Equirect mapping IN MC2 WORLD AXES (NOT GL axes).
     //
-    // V-flip: EXR scanlines are top-to-bottom (row 0 = sky zenith);
-    // glTexImage2D uploads row 0 as v=0 (bottom of texture). Without
-    // a flip, looking UP samples the BOTTOM of the image and the sky
-    // appears upside-down. Flip uv.y to compensate. Confirmed visually
-    // 2026-05-25 during T9-T10 integration.
+    // Camera::worldToCameraMatrix is in Stuff/MC2 space. The documented
+    // MC2->GL axis swap (camera.cpp:77-89) is:
+    //   GL.x = -MC2.x   GL.y = MC2.z (up)   GL.z = MC2.y (forward)
+    //
+    // Our worldDir = invViewRot * viewDir comes out in MC2 axes, so:
+    //   MC2.x = horizontal axis 1
+    //   MC2.y = ground/forward (horizontal axis 2)
+    //   MC2.z = elevation / UP
+    //
+    // Therefore azimuth = atan(MC2.y, MC2.x), elevation = asin(MC2.z).
+    // First v0 of the shader (commit a2c3ef3f) sampled MC2.y as elevation,
+    // which manifested as "sky upside-down" because the forward axis was
+    // mapping to vertical UV. Confirmed visually 2026-05-25.
     vec2 uv = vec2(
-        atan(worldDir.z, worldDir.x) / (2.0 * PI) + 0.5,
-        1.0 - (asin(clamp(worldDir.y, -1.0, 1.0)) / PI + 0.5)
+        atan(worldDir.y, worldDir.x) / (2.0 * PI) + 0.5,
+        asin(clamp(worldDir.z, -1.0, 1.0)) / PI + 0.5
     );
 
     FragColor = vec4(texture(u_hdri, uv).rgb, 1.0);
