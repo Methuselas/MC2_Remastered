@@ -393,7 +393,18 @@ def main():
                             "MC2_DRAW_PACKET_COMPARE_VERBOSE",
                             # DrawPacket v3 ABI-promotion probe gate.
                             # MC2_DRAW_PACKET_V3=1 enables [DRAW_PACKET v3] build-stats line per frame.
-                            "MC2_DRAW_PACKET_V3")},
+                            "MC2_DRAW_PACKET_V3",
+                            # DrawPacket v4B count-level coalesce coverage compare.
+                            "MC2_DRAW_PACKET_COALESCE_COMPARE",
+                            "MC2_DRAW_PACKET_COALESCE_VERBOSE",
+                            # DrawPacket v4C slot-level coalesce coverage soak.
+                            "MC2_DRAW_PACKET_COALESCE_V4C",
+                            # DrawPacket v5 substitutive per-draw-call dispatch.
+                            "MC2_DRAW_PACKET_COALESCE_V5",
+                            "MC2_DRAW_PACKET_COALESCE_V5_TRACE",
+                            # DrawPacket v6 canonical packet+meta array dispatch.
+                            "MC2_DRAW_PACKET_STATIC_PROP_V6",
+                            "MC2_DRAW_PACKET_STATIC_PROP_V6_TRACE")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
