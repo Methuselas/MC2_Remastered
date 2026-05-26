@@ -27,10 +27,22 @@ foreach(_editor_bridge_source IN LISTS EDITOR_BRIDGE_SOURCES)
     endif()
 endforeach()
 
+set(IMGUI_ROOT "${CMAKE_SOURCE_DIR}/3rdparty/imgui")
+
+set(IMGUI_SOURCES
+    "${IMGUI_ROOT}/imgui.cpp"
+    "${IMGUI_ROOT}/imgui_draw.cpp"
+    "${IMGUI_ROOT}/imgui_tables.cpp"
+    "${IMGUI_ROOT}/imgui_widgets.cpp"
+    "${IMGUI_ROOT}/backends/imgui_impl_sdl2.cpp"
+    "${IMGUI_ROOT}/backends/imgui_impl_opengl3.cpp"
+)
+
 add_executable(EditRel WIN32
     ${EDITOR_SOURCES}
     ${EDITOR_HEADERS}
     ${EDITOR_BRIDGE_SOURCES}
+    ${IMGUI_SOURCES}	
 )
 
 # MFC setup
@@ -62,7 +74,10 @@ target_include_directories(EditRel PRIVATE
     "${CMAKE_SOURCE_DIR}/mclib"
     "${CMAKE_SOURCE_DIR}/GameOS/include"
     "${CMAKE_SOURCE_DIR}/GameOS/gameos"
-    ${THIRDPARTY_INCLUDE_DIRS}
+    "${THIRDPARTY_INCLUDE_DIRS}"
+    "${CMAKE_SOURCE_DIR}/3rdparty/include/SDL2"
+    "${IMGUI_ROOT}"
+    "${IMGUI_ROOT}/backends"
 )
 
 # --- Dependencies ---

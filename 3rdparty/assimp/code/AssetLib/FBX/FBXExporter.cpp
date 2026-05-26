@@ -840,7 +840,11 @@ void FBXExporter::WriteDefinitions () {
     // TODO: support Maya's Stingray PBS material
     count = mScene->mNumMaterials;
     if (count) {
+<<<<<<< Updated upstream
         bool has_phong = has_phong_mat(mScene);
+=======
+          bool has_phong = has_phong_mat(mScene);
+>>>>>>> Stashed changes
         n = FBX::Node("ObjectType", "Material");
         n.AddChild("Count", count);
         pt = FBX::Node("PropertyTemplate");
@@ -1361,6 +1365,7 @@ void FBXExporter::WriteObjects () {
         FBX::Node le;
 
 		if (!normal_data.empty()) {
+<<<<<<< Updated upstream
 		  le = FBX::Node("LayerElement");
 		  le.AddChild("Type", "LayerElementNormal");
 		  le.AddChild("TypedIndex", int32_t(0));
@@ -1372,6 +1377,19 @@ void FBXExporter::WriteObjects () {
 		  le.AddChild("Type", "LayerElementColor");
 		  le.AddChild("TypedIndex", int32_t(0));
 		  layer.AddChild(le);
+=======
+		    le = FBX::Node("LayerElement");
+		    le.AddChild("Type", "LayerElementNormal");
+		    le.AddChild("TypedIndex", int32_t(0));
+		    layer.AddChild(le);
+        }
+
+		if (!color_data.empty()) {
+		    le = FBX::Node("LayerElement");
+		    le.AddChild("Type", "LayerElementColor");
+		    le.AddChild("TypedIndex", int32_t(0));
+		    layer.AddChild(le);
+>>>>>>> Stashed changes
         }
 
         le = FBX::Node("LayerElement");
@@ -1553,6 +1571,17 @@ void FBXExporter::WriteObjects () {
             p.AddP70double("Reflectivity", f*f*((c.r+c.g+c.b)/3.0));
         }
 
+<<<<<<< Updated upstream
+=======
+        aiTextureMapMode mapU, mapV;
+        if (aiGetMaterialInteger(m, AI_MATKEY_MAPPINGMODE_U(aiTextureType_DIFFUSE, 0), (int *)&mapU) == AI_SUCCESS) {
+            p.AddP70enum("TextureU", mapU);
+        }
+        if (aiGetMaterialInteger(m, AI_MATKEY_MAPPINGMODE_V(aiTextureType_DIFFUSE, 0), (int *)&mapV) == AI_SUCCESS) {
+            p.AddP70enum("TextureV", mapV);
+        }
+
+>>>>>>> Stashed changes
         n.AddChild(p);
 
         n.Dump(outstream, binary, indent);

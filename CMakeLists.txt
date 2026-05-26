@@ -492,8 +492,11 @@ endif()
 add_subdirectory("./res" "./out/res")
 add_subdirectory("./data_tools" "./out/data_tools")
 add_subdirectory("./text_tool" "./out/text_tool")
-add_subdirectory("./Viewer" "./out/Viewer")
 
+add_subdirectory("./Viewer" "./out/Viewer")
+add_subdirectory("./ui_editor" "./out/ui_editor")
+
+<<<<<<< Updated upstream
 # MC2 Mission Editor (MFC/Windows-only). editor/CMakeLists.txt guards
 # itself with if(NOT MSVC) return() so this is safe on all platforms.
 # Scoped import from PR #36: editor tree + gameos_editor only; PR's
@@ -542,3 +545,9 @@ if(MC2_BUILD_ENGINE_STANDALONE)
             /WHOLEARCHIVE:windows)
     endif()
 endif()
+=======
+# MC2 Mission Editor (MFC/Windows-only). The CMakeLists inside
+# editor/ guards itself with if(NOT MSVC) return() so this is
+# safe on all platforms.
+ add_subdirectory("./editor" "./out/editor")
+>>>>>>> Stashed changes

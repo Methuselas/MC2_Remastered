@@ -73,14 +73,21 @@
  * - Updated UI Editor SemVer for v0.5.3w viewer/text-rect/browser cleanup.
  * - Updated UI Editor SemVer for v0.5.3v package-local UI folder consolidation.
  * - Updated UI Editor SemVer for v0.5.3x viewer UV/text-rect/browser hotfix.
+<<<<<<< Updated upstream
  * - Updated UI Editor SemVer for v0.5.3y Viewer button-state adapter cleanup.
+=======
+>>>>>>> Stashed changes
  ***************************************************************/
 
 #include "UiEditorVersion.h"
 
 const char* UiEditorVersion_GetSemVer()
 {
+<<<<<<< Updated upstream
     return "0.5.3y";
+=======
+    return "0.5.3x";
+>>>>>>> Stashed changes
 }
 
 const char* UiEditorVersion_GetApplicationName()
@@ -90,5 +97,9 @@ const char* UiEditorVersion_GetApplicationName()
 
 const char* UiEditorVersion_GetWindowTitle()
 {
+<<<<<<< Updated upstream
     return "MC2R UI Editor 0.5.3y";
+=======
+    return "MC2R UI Editor 0.5.3x";
+>>>>>>> Stashed changes
 }

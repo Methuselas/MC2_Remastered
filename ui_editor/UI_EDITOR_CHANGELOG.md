@@ -1,5 +1,6 @@
 # UI Editor Changelog
 
+<<<<<<< Updated upstream
 ## 0.5.3y - 2026-05-25
 
 ### Fixed
@@ -10,6 +11,8 @@
 ### Notes
 - Viewer still uses the shared `legacy_imgui` package. This patch strengthens the Viewer adapter instead of creating a separate Viewer UI set.
 
+=======
+>>>>>>> Stashed changes
 ## 0.5.3x - 2026-05-25
 
 ### Fixed

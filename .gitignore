@@ -17,6 +17,7 @@ CMakeFiles/
 *.exe
 *.cfg
 *.tga
+<<<<<<< Updated upstream
 # MFC Mission Editor is real source: force its whole tree (incl. the
 # *.rc resource script + the *.ico/*.bmp/*.cur it #includes) to be
 # tracked, overriding the generic binary ignores above. The old bare
@@ -26,6 +27,10 @@ CMakeFiles/
 !editor/**
 data/*
 !data/defs/
+=======
+Editor
+data
+>>>>>>> Stashed changes
 unpacked_data
 unpacked_data--
 data-orig
