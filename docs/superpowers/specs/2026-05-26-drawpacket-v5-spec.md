@@ -210,7 +210,9 @@ On mc2_24 (753 total packets): 753 `glUniform1i` calls per frame — negligible 
 
 The uniform location `s_locsCoalesce.drawIDBase` must exist. If it is `-1` (absent from shader),
 `glUniform1i(-1, x)` is a no-op per GL spec — the draw reads wrong entry data silently.
-Verify `s_locsCoalesce.drawIDBase != -1` at gate-arm time; log a WARNING if absent.
+Verify `s_locsCoalesce.drawIDBase != -1` at gate-arm time. **If -1: log WARNING, set `s_v5Enabled
+= false` for the session, and fall through to legacy multidraw permanently.** Do not proceed with
+v5 draws when this location is missing — silent SSBO entry corruption is not acceptable.
 
 ---
 
