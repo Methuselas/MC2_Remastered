@@ -19,6 +19,25 @@ extern "C" uint32_t gos_getMechShadowInstDrawn();
 extern "C" uint32_t gos_getStaticPropShadowTypesDrawn();
 extern "C" uint32_t gos_getStaticPropShadowInstDrawn();
 
+// VFX-SPINE-0: C-linkage accessors from the particle bridge + batcher TUs.
+// Same file-scope rule as the shadow accessors above (extern "C" cannot live
+// at block scope). Read-only — these only return file-static counters.
+extern "C" unsigned int       gos_vfx_getParticleProgramId();
+extern "C" unsigned int       gos_vfx_getSsboCapacity();
+extern "C" int                gos_vfx_getInitFailed();
+extern "C" int                gos_vfx_getCameraSetThisFrame();
+extern "C" int                mc2_vfx_isEnabled();
+extern "C" int                mc2_vfx_isLogEnabled();
+extern "C" unsigned int       mc2_vfx_getBudget();
+extern "C" int                mc2_vfx_getOverflowReported();
+extern "C" unsigned long long mc2_vfx_getEmitTotal();
+extern "C" unsigned long long mc2_vfx_getFlushTotal();
+extern "C" unsigned long long mc2_vfx_getNonemptyFlushTotal();
+extern "C" unsigned long long mc2_vfx_getRecordsFlushedTotal();
+extern "C" unsigned int       mc2_vfx_getRecordsPerFlushMax();
+extern "C" unsigned long long mc2_vfx_getTrailSpawnTotal();
+extern "C" unsigned long long mc2_vfx_getTrailHeadTotal();
+
 // sebi 2026-04-22: unhandled-exception filter that symbolizes the stack via
 // DbgHelp (PDB-based). Needed because release/RelWithDebInfo builds otherwise
 // die silently with "read violation at 0xNN" and no frames — Tracy only resolves
@@ -1432,6 +1451,31 @@ int main(int argc, char** argv)
                 // v1: shadow shaders do not consume ViewUniforms (binding=3).
                 sp.viewUniformsBoundForShadow  = false;
                 EditorInspector::setShadowPassSnapshot(sp);
+            }
+
+            // VFX-SPINE-0: pass-level snapshot of the GPU particle / VFX
+            // render spine. Mirrors the shadow block above. Read-only — no
+            // GL state touched, no VFX mutation, no object-IDs.
+            {
+                EditorInspector::VfxPassSnapshot vs;
+                vs.particleProgramId          = (uint32_t)gos_vfx_getParticleProgramId();
+                vs.gpuParticlesEnabled        = (mc2_vfx_isEnabled() != 0);
+                vs.gpuParticlesLogEnabled     = (mc2_vfx_isLogEnabled() != 0);
+                vs.initFailed                 = (gos_vfx_getInitFailed() != 0);
+                vs.cameraSetThisFrame         = (gos_vfx_getCameraSetThisFrame() != 0);
+                vs.perFrameBudget             = (uint32_t)mc2_vfx_getBudget();
+                vs.ssboCapacityRecords        = (uint32_t)gos_vfx_getSsboCapacity();
+                vs.overflowReported           = (mc2_vfx_getOverflowReported() != 0);
+                vs.emitTotal                  = mc2_vfx_getEmitTotal();
+                vs.flushTotal                 = mc2_vfx_getFlushTotal();
+                vs.nonemptyFlushTotal         = mc2_vfx_getNonemptyFlushTotal();
+                vs.recordsFlushedTotal        = mc2_vfx_getRecordsFlushedTotal();
+                vs.recordsPerFlushMax         = (uint32_t)mc2_vfx_getRecordsPerFlushMax();
+                vs.trailSpawnTotal            = mc2_vfx_getTrailSpawnTotal();
+                vs.trailHeadTotal             = mc2_vfx_getTrailHeadTotal();
+                // v1: VFX shaders do not consume ViewUniforms (binding=3).
+                vs.viewUniformsBoundForVfx    = false;
+                EditorInspector::setVfxPassSnapshot(vs);
             }
 
         }

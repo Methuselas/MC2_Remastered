@@ -105,6 +105,12 @@ class Batcher {
     // Stage 2' (per-type Spawn) may sharded if budget breakdown demands.
     static Batcher& Instance();
 
+    // VFX-SPINE-0: read-only inspector getters for the per-frame budget and
+    // overflow latch. Public so extern "C" accessors in this TU can read them
+    // without a friend declaration. No mutation; safe at any time.
+    unsigned int inspect_budget() const;
+    bool         inspect_overflowReported() const;
+
  // Trail-spawn diagnostic counters. Incremented by GpuTrailEmitter::Spawn()
  // and printed by dump_summary() at atexit. Public so gpu_trail.cpp can
  // reach them without a friend declaration.

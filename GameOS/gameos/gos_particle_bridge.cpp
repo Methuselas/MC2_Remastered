@@ -414,3 +414,23 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     glUseProgram((GLuint)savedProgram);
     glBindVertexArray((GLuint)savedVAO);
 }
+
+// VFX-SPINE-0: read-only accessors for the Object Inspector. Pure getters
+// over file-static state (SSBO capacity, linked program id, init-failure flag,
+// per-frame camera-basis "set" flag). No GL calls, no mutation.
+extern "C" unsigned int gos_vfx_getParticleProgramId()
+{
+    return (s_prog && s_prog->shp_) ? (unsigned int)s_prog->shp_ : 0u;
+}
+extern "C" unsigned int gos_vfx_getSsboCapacity()
+{
+    return (unsigned int)s_ssboCapacity;
+}
+extern "C" int gos_vfx_getInitFailed()
+{
+    return s_initFailed ? 1 : 0;
+}
+extern "C" int gos_vfx_getCameraSetThisFrame()
+{
+    return g_cam_set_this_frame ? 1 : 0;
+}

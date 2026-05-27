@@ -39,6 +39,7 @@ static EditorInspector::MechInspectorData       s_mechData;
 static EditorInspector::TerrainInspectorData    s_terrainData;
 static EditorInspector::TerrainPassSnapshot     s_terrainPass;   // TERRAIN-SPINE-0
 static EditorInspector::ShadowPassSnapshot      s_shadowPass;    // SHADOW-SPINE-0
+static EditorInspector::VfxPassSnapshot         s_vfxPass;       // VFX-SPINE-0
 static bool s_open = false;
 static bool s_featuresOpen = false;
 
@@ -118,6 +119,11 @@ void EditorInspector::setTerrainPassSnapshot(const TerrainPassSnapshot& ts) {
 void EditorInspector::setShadowPassSnapshot(const ShadowPassSnapshot& sp) {
     // SHADOW-SPINE-0: same always-accept policy as the terrain snapshot.
     s_shadowPass = sp;
+}
+
+void EditorInspector::setVfxPassSnapshot(const VfxPassSnapshot& vs) {
+    // VFX-SPINE-0: same always-accept policy as the terrain / shadow snapshots.
+    s_vfxPass = vs;
 }
 
 void EditorInspector::clear() {
@@ -820,6 +826,69 @@ void EditorInspector::drawImGui() {
                           sp.staticPropShadowTypesDrawn, sp.staticPropShadowInstDrawn);
         ImGui::Separator();
         ImGui::TextDisabled("PipelineDesc: legacy (shadow pass not on registry)");
+    }
+
+    // VFX-SPINE-0: pass-level view of the GPU particle / VFX render spine.
+    // Mirrors the Shadow Pass header above. Read-only — no GL state, no VFX
+    // mutation. VFX object-IDs are prohibited and intentionally absent.
+    if (ImGui::CollapsingHeader("VFX Pass##vfx", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const VfxPassSnapshot& vs = s_vfxPass;
+        // GPU particles enabled status (driven by MC2_GPU_PARTICLES env var).
+        if (vs.gpuParticlesEnabled) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                "GPU particles: enabled (MC2_GPU_PARTICLES default ON)");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                "GPU particles: DISABLED (MC2_GPU_PARTICLES=0 — legacy CPU FX only)");
+        }
+        ImGui::Text("Verbose log gate (MC2_GPU_PARTICLES_LOG): %s",
+                    vs.gpuParticlesLogEnabled ? "ON" : "off");
+        if (vs.initFailed) {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+                "Bridge init: FAILED (program compile/link error)");
+        }
+        ImGui::Text("Camera basis set this frame: %s",
+                    vs.cameraSetThisFrame ? "yes" : "no (using last-known)");
+        if (vs.viewUniformsBoundForVfx) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                "ViewUniforms (binding=3): consumed");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                "ViewUniforms (binding=3): NOT consumed (legacy gosFX path)");
+        }
+        ImGui::Separator();
+        ImGui::Text("Program:");
+        ImGui::BulletText("particle_billboard: %u", vs.particleProgramId);
+        ImGui::Separator();
+        ImGui::Text("Blend modes (per-group): alpha (0) or additive (1) — set per BeginGroup");
+        ImGui::Separator();
+        ImGui::Text("Particle buffers:");
+        ImGui::BulletText("CPU staging budget:   %u records", vs.perFrameBudget);
+        ImGui::BulletText("GL SSBO capacity:     %u records (binding=14)", vs.ssboCapacityRecords);
+        if (vs.overflowReported) {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+                "OVERFLOW reported (staging exceeded budget — record dropped)");
+        }
+        ImGui::Separator();
+        ImGui::Text("Process-lifetime aggregates:");
+        ImGui::BulletText("emit total:                %llu", vs.emitTotal);
+        ImGui::BulletText("flush total:               %llu", vs.flushTotal);
+        ImGui::BulletText("non-empty flushes:         %llu", vs.nonemptyFlushTotal);
+        ImGui::BulletText("records flushed total:     %llu", vs.recordsFlushedTotal);
+        ImGui::BulletText("records per flush (max):   %u",   vs.recordsPerFlushMax);
+        ImGui::BulletText("trail spawn total:         %llu", vs.trailSpawnTotal);
+        ImGui::BulletText("trail head total:          %llu", vs.trailHeadTotal);
+        ImGui::Separator();
+        ImGui::Text("Active particle kinds (GpuTrailKind enum):");
+        // TODO: wire per-kind draw counts — not currently tracked by Batcher.
+        // gosFX legacy specs use distinct names (Card/PertCloud/PointCloud/etc.)
+        // but the GPU path collapses them into a single SSBO; per-kind counts
+        // would require a new counter and are out of scope for VFX-SPINE-0.
+        ImGui::BulletText("None         (no trail)         draws: n/a");
+        ImGui::BulletText("MissileSmoke (handle 41)         draws: n/a");
+        ImGui::BulletText("PpcBolt      (handle 33)         draws: n/a");
+        ImGui::Separator();
+        ImGui::TextDisabled("PipelineDesc: legacy (VFX not on registry; object-IDs prohibited)");
     }
 
     // Material — shown for any kind; GPU fields only when MC2_MATERIAL_GPU active.

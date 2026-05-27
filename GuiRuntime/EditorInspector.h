@@ -114,6 +114,38 @@ struct ShadowPassSnapshot {
     bool     viewUniformsBoundForShadow = false;
 };
 void setShadowPassSnapshot(const ShadowPassSnapshot& sp);  // SHADOW-SPINE-0
+
+// VFX-SPINE-0: pass-level snapshot of the GPU particle / VFX render spine.
+// Filled per frame in gameosmain; displayed in the Object Inspector window.
+// Read-only — no GL state, no mutation of any VFX path, no object-IDs.
+struct VfxPassSnapshot {
+    // Program (raw GL program object id for the billboard shader; 0 until linked).
+    uint32_t particleProgramId          = 0;
+    // Env-gate state.
+    bool     gpuParticlesEnabled        = false;   // MC2_GPU_PARTICLES (default ON)
+    bool     gpuParticlesLogEnabled     = false;   // MC2_GPU_PARTICLES_LOG
+    bool     initFailed                 = false;   // bridge init/compile failed
+    bool     cameraSetThisFrame         = false;   // gos_SetActiveCamera fired this frame
+    // Buffer state (Batcher CPU staging + GL SSBO at binding=14).
+    uint32_t perFrameBudget             = 0;       // CPU staging budget (records)
+    uint32_t ssboCapacityRecords        = 0;       // current GL SSBO capacity (records)
+    bool     overflowReported           = false;   // last frame staging overflowed
+    // Process-lifetime aggregates (from anonymous-namespace counters in batcher.cpp).
+    // Per-frame counts are not exposed by the existing instrumentation — would
+    // require a new counter and is out of scope for VFX-SPINE-0.
+    unsigned long long emitTotal             = 0;
+    unsigned long long flushTotal            = 0;
+    unsigned long long nonemptyFlushTotal    = 0;
+    unsigned long long recordsFlushedTotal   = 0;
+    uint32_t           recordsPerFlushMax    = 0;
+    unsigned long long trailSpawnTotal       = 0;
+    unsigned long long trailHeadTotal        = 0;
+    // v1: VFX shaders do NOT consume ViewUniforms (binding=3). Hard-coded so
+    // the closure-audit gap is visible in the inspector.
+    bool     viewUniformsBoundForVfx    = false;
+};
+void setVfxPassSnapshot(const VfxPassSnapshot& vs);  // VFX-SPINE-0
+
 void flushDebugHighlight();
 void drawImGui();                                 // called by GuiRuntime::Render() each frame
 void clear();                                     // clear selection

@@ -262,5 +262,23 @@ Batcher& Batcher::Instance() {
     return *s_instance;
 }
 
+// VFX-SPINE-0: read-only C-linkage accessors for the Object Inspector.
+// Defined inside the mc2::particles namespace so they can reach Batcher::Impl
+// and the anonymous-namespace counters. No mutation, no new counters added.
+extern "C" unsigned long long mc2_vfx_getEmitTotal()           { return g_emit_total; }
+extern "C" unsigned long long mc2_vfx_getFlushTotal()          { return g_flush_total; }
+extern "C" unsigned long long mc2_vfx_getNonemptyFlushTotal()  { return g_nonempty_flush_total; }
+extern "C" unsigned long long mc2_vfx_getRecordsFlushedTotal() { return g_records_flushed_total; }
+extern "C" unsigned int       mc2_vfx_getRecordsPerFlushMax()  { return g_records_per_flush_max; }
+extern "C" unsigned long long mc2_vfx_getTrailSpawnTotal()     { return Batcher::s_trail_spawn_total; }
+extern "C" unsigned long long mc2_vfx_getTrailHeadTotal()      { return Batcher::s_trail_head_total; }
+extern "C" int                mc2_vfx_isEnabled()              { return Batcher::is_enabled() ? 1 : 0; }
+extern "C" int                mc2_vfx_isLogEnabled()           { return Batcher::is_log_enabled() ? 1 : 0; }
+extern "C" unsigned int       mc2_vfx_getBudget()              { return Batcher::Instance().inspect_budget(); }
+extern "C" int                mc2_vfx_getOverflowReported()    { return Batcher::Instance().inspect_overflowReported() ? 1 : 0; }
+
+unsigned int Batcher::inspect_budget() const           { return impl_ ? impl_->budget           : 0u; }
+bool         Batcher::inspect_overflowReported() const { return impl_ ? impl_->overflowReported : false; }
+
 }  // namespace particles
 }  // namespace mc2
