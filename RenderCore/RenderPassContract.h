@@ -18,7 +18,9 @@
 // constexpr.
 //
 // Adding a pass:
-//   1. Append a new RenderPassId enum value before COUNT (never renumber).
+//   1. Append a new RenderPassId enum value BEFORE _SentinelLast (never
+//      renumber). The sentinel auto-tracks the count -- no hand-set COUNT
+//      to forget to update.
 //   2. Append a kRenderPassContracts[] entry with the same id, in the same
 //      order. The static_assert at the bottom enforces parity.
 //   3. Fill all fields with current shipped state -- DO NOT aspirational-flag.
@@ -33,7 +35,13 @@ namespace RenderCore {
 // ---------------------------------------------------------------------------
 // Pass ids
 // ---------------------------------------------------------------------------
-// Values are stable -- never renumber, only append before COUNT.
+// Values are stable -- never renumber, only append before _SentinelLast.
+//
+// Sentinel-after-last pattern: the count is derived from _SentinelLast's
+// position, so appending a new pass id cannot silently desync a hand-set
+// COUNT. The static_assert below still enforces that kRenderPassContracts[]
+// length matches; this enum change closes the orthogonal "enum-value drift"
+// hole.
 
 enum class RenderPassId : uint32_t {
     StaticPropOpaque = 1,
@@ -41,8 +49,14 @@ enum class RenderPassId : uint32_t {
     MechOpaque       = 3,
     Shadow           = 4,
     VFX              = 5,
-    COUNT            = 5,
+    // KEEP _SentinelLast AT THE END. New pass ids must be added BEFORE it.
+    _SentinelLast,
 };
+
+// Derived count of real (non-sentinel) pass ids. Pass ids start at 1, so
+// subtract 1 from the sentinel's underlying value.
+constexpr uint32_t kRenderPassIdCount =
+    static_cast<uint32_t>(RenderPassId::_SentinelLast) - 1u;
 
 // ---------------------------------------------------------------------------
 // Contract entry (descriptive)
@@ -66,6 +80,16 @@ struct RenderPassContract {
 // Values reflect SHIPPED state at branch tip 1d7b9ea6. Update when a pass
 // flips a closure axis (e.g. when terrain ViewUniforms ships, set
 // viewUniformsBound=true here in the same slice).
+//
+// CONTRIBUTOR NOTE:
+//   When a closure axis flips for an existing pass (e.g. terrain begins
+//   consuming ViewUniforms, a pass gains a kill-switch env var, or a pass
+//   migrates from live state to snapshot-authoritative dispatch), update
+//   the corresponding row in kRenderPassContracts in the SAME commit that
+//   makes the change. Stale booleans here will silently mis-report closure
+//   state in the editor inspector and in docs/engine-closure-audit.md.
+//   The static_assert below catches array-length drift but NOT field-value
+//   staleness -- that is on you.
 
 static constexpr RenderPassContract kRenderPassContracts[] = {
     {
@@ -129,7 +153,8 @@ static constexpr int kRenderPassContractCount =
     sizeof(kRenderPassContracts) / sizeof(kRenderPassContracts[0]);
 
 static_assert(
-    kRenderPassContractCount == static_cast<int>(RenderPassId::COUNT),
-    "kRenderPassContracts length must match RenderPassId::COUNT");
+    kRenderPassContractCount == static_cast<int>(kRenderPassIdCount),
+    "kRenderPassContracts length must match kRenderPassIdCount "
+    "(append the new RenderPassContract row when you append a RenderPassId).");
 
 } // namespace RenderCore
