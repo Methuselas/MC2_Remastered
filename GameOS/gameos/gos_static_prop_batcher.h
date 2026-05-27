@@ -446,6 +446,17 @@ void batcher_compareSnapshotPackets(RenderSnapshot* snap);
 //   slotMismatch is included in the RenderSnapshot ok gate; the others are informational.
 void batcher_getSnapCullStats(uint32_t* skipped, uint32_t* active, uint32_t* slotMismatch);
 
+// v3 snapshot build: read counters written by the most recent flush().
+// All output pointers may be nullptr (individual fields skipped).
+// attempted:      1 if snapshot build gate check ran this flush.
+// countMismatch:  snap.count != totalCmds.
+// packetMismatch: DrawPacket field divergence count (accumulated per-slot).
+// metaMismatch:   DispatchMeta field divergence count (accumulated per-slot).
+// fallback:       gate enabled/attempted but snapshot arrays not dispatched this flush.
+void batcher_getSnapshotBuildStats(uint32_t* attempted, uint32_t* countMismatch,
+                                   uint32_t* packetMismatch, uint32_t* metaMismatch,
+                                   uint32_t* fallback);
+
 // ---------------------------------------------------------------------------
 // Type-desc table accessors (v0: CPU-side only, no SSBO).
 // All functions return safe sentinels (0 / nullptr / false) before
