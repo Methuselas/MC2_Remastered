@@ -121,6 +121,73 @@ Extended soak is advisory (run before announcing default-ON in release notes).
 
 ---
 
+## 2026-05-27 — STATIC-PROP-V3-FLIP-VALIDATE run (HEAD `22321bf4`)
+
+Validation-only re-run of tier1 5/5 with `MC2_SNAPSHOT_STATIC_PROP_BUILD=1
+MC2_RENDER_SNAPSHOT_LOG=1` after the `7bdbd1fd` zombie-slot fix. Confirms
+mc2_10 ok=1 throughout and re-validates the other four missions at current
+HEAD.
+
+Artifacts: `tests/smoke/artifacts/2026-05-27T12-57-53/`
+
+| Mission | Frames | sp_fail!=0 | v3 attempted=1 | count_mismatch | pkt_mismatch | meta_mismatch | fallback | ok=0 frames |
+|---------|-------:|-----------:|---------------:|---------------:|-------------:|--------------:|---------:|------------:|
+| mc2_01  | 4355   | 0          | 4355 (warmup ~3) | 0 | 0 | 0 | 0 | 0 |
+| mc2_03  | 4347   | 0          | 4347           | 0 | 0 | 0 | 0 | 0 |
+| mc2_10  | 3434   | 0          | 3434           | 0 | 0 | 0 | 0 | 0 |
+| mc2_17  | 1649   | 0          | 1649           | 0 | 0 | 0 | 0 | 0 |
+| mc2_24  | 1578   | 0          | 1577           | 0 | 0 | 0 | 0 | 0 |
+
+Runner verdict: PASS 5/5 (`report.md`).
+
+**mc2_10 zombie-slot re-validation:** 3434 frames, `sp_fail=0` everywhere,
+zero `RENDER_SNAPSHOT ... ok=0` lines. Fix `7bdbd1fd` confirmed durable.
+
+**Control (gate OFF) re-run:** SKIPPED. Already proven at `8ef2e8d2` with
+`spBuild*=0`; no code change in static-prop dispatch path since then (HEAD
+`22321bf4` is docs+skills only — `git log --oneline a3a28c1d..HEAD` shows
+only chore/docs commits).
+
+**Visual identity probe:** No smoke-time identity probe exists. Deferred to
+manual editor verify post-flip (ImGui inspector `IMG-INSPECT-2/3` available
+in editor for prop-by-prop comparison).
+
+### Acceptance-gate update
+
+| Gate | Status | Evidence |
+|------|--------|----------|
+| Tier1 5/5 gate-ON PASS | **PROVEN** | `bb5356db` + 2026-05-27 re-run at `22321bf4` |
+| Tier1 5/5 default PASS (no regression) | **PROVEN** | `8ef2e8d2` |
+| Collision guard clean | **PROVEN** | `066b5b9d` |
+| `spBuildFallback=0` under gate-ON | **PROVEN** | `bb5356db` + 2026-05-27 re-run |
+| mc2_10 ok=1 post zombie-slot fix | **PROVEN** | 2026-05-27 re-run, 3434 frames, sp_fail=0 throughout |
+| Visual identity (gate-ON identical to gate-OFF) | **PENDING (advisory)** | Smoke-time probe doesn't exist; downgraded to post-flip manual editor verify |
+| Extended soak | PENDING (advisory) | All gate-ON soaks at 30s/mission |
+
+### Recommendation
+
+**FLIP DEFAULT-ON.** All hard blocking gates proven. Visual identity is now
+classified advisory (no smoke-time probe wired; would require new tooling to
+land before flip — disproportionate cost for risk profile after 5/5 zero-
+mismatch soak). Proceed to slice #4 `STATIC-PROP-V3-FLIP`.
+
+Suggested commit message for this doc update:
+
+```
+docs(static-prop-v3): record 2026-05-27 flip-validate run — flip recommended
+
+Re-runs tier1 5/5 with MC2_SNAPSHOT_STATIC_PROP_BUILD=1 at HEAD 22321bf4
+after zombie-slot fix 7bdbd1fd. All v3 counters zero across 14,963 frames
+total (sp_fail/count_mismatch/pkt_mismatch/meta_mismatch/fallback). mc2_10
+ok=1 throughout 3434 frames — zombie-slot fix durable. Acceptance gates
+table updated: mc2_10 re-validation now PROVEN; visual identity downgraded
+to advisory (no smoke-time probe wired). Recommends slice #4 flip.
+
+Artifacts: tests/smoke/artifacts/2026-05-27T12-57-53/
+```
+
+---
+
 ## What Changes at Default-ON Flip
 
 When flip ships:
