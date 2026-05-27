@@ -3,6 +3,7 @@
 #include <cstdio>    // snprintf
 #include <cstdlib>   // getenv
 #include "../GameOS/gameos/debug_renderer.h"  // IMG-INSPECT-3
+#include "draw_packet_emitter.h"              // g_dpSelectedRecipeIndex
 
 namespace {
 
@@ -42,6 +43,7 @@ void EditorInspector::onCtrlShiftClick(int mouseX, int mouseY) {
     s_terrainData    = TerrainInspectorData{};
     s_selection.screenX = mouseX;
     s_selection.screenY = mouseY;
+    g_dpSelectedRecipeIndex = -1;  // cleared until setStaticPropData confirms
     s_open = true;
 }
 
@@ -56,6 +58,9 @@ void EditorInspector::setPickResult(int mouseX, int mouseY,
     s_selection.screenY = mouseY;
     s_selection.valid   = lookup.isValid;
     s_selection.lookup  = lookup;
+    // Clear bridge until setStaticPropData fires with the confirmed recipeIndex.
+    // Non-StaticProp picks never call setStaticPropData, so they stay at -1.
+    g_dpSelectedRecipeIndex = -1;
     if (lookup.isValid) {
         s_selection.kind   = lookup.kind;
         s_selection.handle = lookup.handle;
@@ -72,6 +77,8 @@ void EditorInspector::setPickResult(int mouseX, int mouseY,
 
 void EditorInspector::setStaticPropData(const StaticPropInspectorData& sd) {
     s_staticPropData = sd;
+    // Publish recipeIndex so gameosmain can fill g_dpSelProp each frame.
+    g_dpSelectedRecipeIndex = sd.populated ? sd.recipeIndex : -1;
 }
 
 void EditorInspector::setMechData(const MechInspectorData& md) {
@@ -95,6 +102,7 @@ void EditorInspector::clear() {
     s_staticPropData = StaticPropInspectorData{};
     s_mechData       = MechInspectorData{};
     s_terrainData    = TerrainInspectorData{};
+    g_dpSelectedRecipeIndex = -1;
     s_open = false;
 }
 
@@ -227,6 +235,107 @@ void EditorInspector::drawImGui() {
     }
     ImGui::Separator();
 
+    // Render Explain — consolidated one-line-per-fact render path summary.
+    // Shown only for valid RenderWorld picks (not terrain). Detailed panels below.
+    if (s_selection.valid) {
+        if (ImGui::CollapsingHeader("Render Explain##re", ImGuiTreeNodeFlags_DefaultOpen)) {
+            // Object
+            const char* kindStr = (s_selection.kind == RenderWorld::RenderObjectKind::Mech)
+                                  ? "Mech" : "StaticProp";
+            ImGui::Text("Object:  %s  handle 0x%08X", kindStr, s_selection.handle.raw());
+
+            // Fresh handle-direct probe — independent of pixel-pick data age.
+            RenderWorld::ObjectRecordView rv{};
+            const bool rvOk = RenderWorld::getObjectRecordView(s_selection.handle, &rv);
+            if (!rvOk) {
+                ImGui::TextColored(ImVec4(1.f, 0.55f, 0.3f, 1.f),
+                                   "  (handle stale -- object may be destroyed)");
+            }
+
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Path:");
+
+            // DrawPacket dispatch status (StaticProp only).
+            if (s_selection.kind == RenderWorld::RenderObjectKind::StaticProp) {
+                const DrawPacketSelectedPropSnapshot& rs = g_dpSelProp;
+                if (rs.valid) {
+                    ImGui::TextColored(ImVec4(0.4f, 1.f, 0.4f, 1.f),
+                                       "  dispatch       DrawPacket default ON");
+                } else {
+                    ImGui::TextDisabled("  dispatch       (no Render Spine data -- pick not resolved?)");
+                }
+            } else {
+                ImGui::TextDisabled("  dispatch       (Mech batcher path)");
+            }
+
+            // Pipeline name. Prefer Render Spine row (authoritative) over stale
+            // lk.pipelineId (which is 0/unknown for static props in M1.5 lookup).
+            {
+                const DrawPacketSelectedPropSnapshot& rs = g_dpSelProp;
+                const uint32_t pipeId =
+                    (s_selection.kind == RenderWorld::RenderObjectKind::StaticProp
+                     && rs.valid && rs.rowCount > 0)
+                    ? rs.rows[0].pipelineId
+                    : static_cast<uint32_t>(lk.pipelineId);
+                char pipeBuf[48];
+                switch (pipeId) {
+                    case 0:  std::snprintf(pipeBuf, sizeof(pipeBuf), "(unknown)"); break;
+                    case 1:  std::snprintf(pipeBuf, sizeof(pipeBuf), "StaticPropOpaque (1)"); break;
+                    case 2:  std::snprintf(pipeBuf, sizeof(pipeBuf), "StaticPropAlphaTest (2)"); break;
+                    default: std::snprintf(pipeBuf, sizeof(pipeBuf), "?(%u)", pipeId); break;
+                }
+                ImGui::Text("  pipeline       %s", pipeBuf);
+            }
+
+            // Material summary (StaticProp + GPU material populated).
+            if (s_selection.kind == RenderWorld::RenderObjectKind::StaticProp
+                    && s_staticPropData.populated
+                    && s_staticPropData.materialGpuPopulated) {
+                const DrawPacketSelectedPropSnapshot& rs = g_dpSelProp;
+                const int32_t layer = (rs.valid && rs.rowCount > 0)
+                                      ? rs.rows[0].texArrayLayer : -1;
+                const bool matchOk  = (rs.valid && rs.rowCount > 0)
+                                      && (rs.rows[0].albedoTex != 0xFFFFFFFFu)
+                                      && (layer >= 0)
+                                      && rs.rows[0].materialMatchesLegacy;
+                char matBuf[128];
+                std::snprintf(matBuf, sizeof(matBuf),
+                    "MaterialGpu  idx %u  albedo %u  layer %d  %s",
+                    s_staticPropData.materialIdx,
+                    s_staticPropData.materialGpu.albedoTex,
+                    layer,
+                    matchOk ? "OK" : "(mismatch)");
+                ImGui::Text("  material       %s", matBuf);
+            } else if (s_selection.kind == RenderWorld::RenderObjectKind::StaticProp) {
+                ImGui::TextDisabled("  material       (no GPU material data)");
+            }
+
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Fallbacks:");
+
+            // Key kill-switches / feature gates relevant to the static-prop path.
+            struct FallbackRow { const char* label; const char* envVar; bool defaultOn; };
+            static const FallbackRow kFallbacks[] = {
+                { "legacy kill-switch",  "MC2_STATIC_PROP_LEGACY_DISPATCH", false },
+                { "material sample",     "MC2_MATERIAL_GPU_SAMPLE",         true  },
+                { "object-ID buffer",    "MC2_OBJECT_ID_BUFFER",            true  },
+            };
+            for (const auto& fb : kFallbacks) {
+                const char* v = std::getenv(fb.envVar);
+                bool on;
+                if (!v)               on = fb.defaultOn;
+                else if (v[0] == '0') on = false;
+                else                  on = true;
+                ImGui::Text("  %-22s", fb.label);
+                ImGui::SameLine(0.f, 4.f);
+                if (on)
+                    ImGui::TextColored(ImVec4(0.4f, 1.f, 0.4f, 1.f), "ON");
+                else
+                    ImGui::TextColored(ImVec4(1.f, 0.55f, 0.3f, 1.f), "OFF");
+            }
+        }
+    }
+
     // LookupResult
     if (ImGui::CollapsingHeader("Lookup", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Text("Mesh bits:     0x%08X", lk.meshHandleBits);
@@ -247,6 +356,152 @@ void EditorInspector::drawImGui() {
                 ImGui::Text("Recipe idx: %d", s_staticPropData.recipeIndex);
                 ImGui::Text("Shape:      %s",
                     s_staticPropData.shapeName[0] ? s_staticPropData.shapeName : "(unknown)");
+            }
+        }
+
+        // Render Spine — reads from g_dpSelProp (filled by gameosmain each frame).
+        if (ImGui::CollapsingHeader("Render Spine##rs", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const DrawPacketSelectedPropSnapshot& rs = g_dpSelProp;
+            if (!rs.valid) {
+                ImGui::TextDisabled("(not populated -- pick not resolved or no packet data)");
+            } else {
+                char buf[64];
+
+                // Header summary
+                if (ImGui::BeginTable("##rssum", 2,
+                        ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
+                    ImGui::TableSetupColumn("##rsk", ImGuiTableColumnFlags_WidthFixed, 100.f);
+                    ImGui::TableSetupColumn("##rsv", ImGuiTableColumnFlags_WidthStretch);
+
+                    auto row2 = [&](const char* k, const char* v) {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(k);
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(v);
+                    };
+
+                    std::snprintf(buf, sizeof(buf), "%u", rs.typeId);
+                    row2("typeId", buf);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Batcher type slot (0..typeCount-1). Groups all\n"
+                                          "instances that share geometry + pipeline.");
+
+                    std::snprintf(buf, sizeof(buf), "%d", rs.recipeIndex);
+                    row2("recipeIndex", buf);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Static-prop recipe/type index — NOT the\n"
+                                          "RenderWorld instance slot (Handle idx).\n"
+                                          "Multiple Handle slots share one recipeIndex.");
+
+                    std::snprintf(buf, sizeof(buf), "%u", rs.packetCount);
+                    row2("packetCount", buf);
+                    std::snprintf(buf, sizeof(buf), "%u", rs.instanceCount);
+                    row2("instances", buf);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Visible instances of this typeId this frame\n"
+                                          "(count of snapshot entries with matching typeId).");
+
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("dispatch");
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextColored(ImVec4(0.4f,1.f,0.4f,1.f), "DrawPacket default ON");
+
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted("materialIdx");
+                    ImGui::TableSetColumnIndex(1);
+                    if (rs.materialIdx == 0xFFFFFFFFu)
+                        ImGui::TextDisabled("(sentinel)");
+                    else {
+                        std::snprintf(buf, sizeof(buf), "%u", rs.materialIdx);
+                        ImGui::TextUnformatted(buf);
+                    }
+
+                    ImGui::EndTable();
+                }
+
+                // Per-packet rows
+                if (rs.rowCount > 0) {
+                    ImGui::Spacing();
+                    ImGui::TextUnformatted("Packets:");
+                    if (ImGui::BeginTable("##rspkts", 8,
+                            ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg
+                            | ImGuiTableFlags_BordersInnerV)) {
+                        ImGui::TableSetupColumn("pkt",      ImGuiTableColumnFlags_WidthFixed, 36.f);
+                        ImGui::TableSetupColumn("pipeline", ImGuiTableColumnFlags_WidthFixed, 68.f);
+                        ImGui::TableSetupColumn("matIdx",   ImGuiTableColumnFlags_WidthFixed, 52.f);
+                        ImGui::TableSetupColumn("albedo",   ImGuiTableColumnFlags_WidthFixed, 52.f);
+                        ImGui::TableSetupColumn("layer",    ImGuiTableColumnFlags_WidthFixed, 40.f);
+                        ImGui::TableSetupColumn("match",    ImGuiTableColumnFlags_WidthFixed, 44.f);
+                        ImGui::TableSetupColumn("baseV",    ImGuiTableColumnFlags_WidthFixed, 52.f);
+                        ImGui::TableSetupColumn("baseInst", ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableHeadersRow();
+
+                        for (uint32_t r = 0; r < rs.rowCount; ++r) {
+                            const DrawPacketPropRow& pr = rs.rows[r];
+                            ImGui::TableNextRow();
+
+                            ImGui::TableSetColumnIndex(0);
+                            std::snprintf(buf, sizeof(buf), "%u", pr.globalPacketIdx);
+                            ImGui::TextUnformatted(buf);
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Global packet index in batcher sorted array.\n"
+                                                  "Not a RenderWorld drawPacketIndex.");
+
+                            ImGui::TableSetColumnIndex(1);
+                            switch (pr.pipelineId) {
+                                case 0:  ImGui::TextDisabled("invalid");      break;
+                                case 1:  ImGui::TextUnformatted("opaque");    break;
+                                case 2:  ImGui::TextColored(ImVec4(1.f,0.85f,0.3f,1.f), "alpha_test"); break;
+                                default:
+                                    std::snprintf(buf, sizeof(buf), "?(%u)", pr.pipelineId);
+                                    ImGui::TextColored(ImVec4(1.f,0.5f,0.3f,1.f), "%s", buf);
+                                    break;
+                            }
+
+                            ImGui::TableSetColumnIndex(2);
+                            if (rs.materialIdx == 0xFFFFFFFFu)
+                                ImGui::TextDisabled("--");
+                            else {
+                                std::snprintf(buf, sizeof(buf), "%u", rs.materialIdx);
+                                ImGui::TextUnformatted(buf);
+                            }
+
+                            ImGui::TableSetColumnIndex(3);
+                            if (pr.albedoTex == 0xFFFFFFFFu)
+                                ImGui::TextDisabled("--");
+                            else {
+                                std::snprintf(buf, sizeof(buf), "%u", pr.albedoTex);
+                                ImGui::TextUnformatted(buf);
+                            }
+
+                            ImGui::TableSetColumnIndex(4);
+                            if (pr.texArrayLayer < 0)
+                                ImGui::TextDisabled("--");
+                            else {
+                                std::snprintf(buf, sizeof(buf), "%d", pr.texArrayLayer);
+                                ImGui::TextUnformatted(buf);
+                            }
+
+                            ImGui::TableSetColumnIndex(5);
+                            if (pr.albedoTex == 0xFFFFFFFFu || pr.texArrayLayer < 0)
+                                ImGui::TextDisabled("n/a");
+                            else if (pr.materialMatchesLegacy)
+                                ImGui::TextColored(ImVec4(0.4f,1.f,0.4f,1.f), "OK");
+                            else
+                                ImGui::TextColored(ImVec4(1.f,0.4f,0.3f,1.f), "DIFF");
+
+                            ImGui::TableSetColumnIndex(6);
+                            std::snprintf(buf, sizeof(buf), "%d", pr.baseVertex);
+                            ImGui::TextUnformatted(buf);
+
+                            ImGui::TableSetColumnIndex(7);
+                            ImGui::TextDisabled("--");
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Deferred — only valid during dispatch (v1+).\n"
+                                                  "Not available at emit time.");
+                        }
+                        ImGui::EndTable();
+                    }
+                }
             }
         }
     } else if (s_selection.pickKind == InspectorPickKind::Mech) {
@@ -310,11 +565,17 @@ void EditorInspector::drawImGui() {
     }
 
     // Material — shown for any kind; GPU fields only when MC2_MATERIAL_GPU active.
-    if (ImGui::CollapsingHeader("Material")) {
+    // For static props: handle bits come from RenderWorld lookup (currently unpopulated →
+    // handle=0). Use Render Spine above for authoritative materialIdx + albedoTex.
+    if (ImGui::CollapsingHeader("Material (RW handle lookup)")) {
         RenderCore::MaterialHandle mh;
         mh.bits = lk.materialHandleBits;
         if (mh.bits == 0u) {
             ImGui::TextDisabled("Handle:        (unknown)");
+            // For static props: handle bits are not yet populated by the RenderWorld
+            // lookup path. Render Spine materialIdx is the authoritative source.
+            if (s_selection.pickKind == InspectorPickKind::StaticProp)
+                ImGui::TextDisabled("  (use Render Spine for authoritative materialIdx)");
         } else {
             ImGui::Text("Handle idx:    %u", mh.index());
             ImGui::Text("Handle gen:    %u", mh.generation());
@@ -329,7 +590,7 @@ void EditorInspector::drawImGui() {
             } else if (!s_staticPropData.materialGpuPopulated) {
                 ImGui::TextColored(ImVec4(1.f,0.55f,0.3f,1.f),
                     "Source:        MaterialGpu");
-                ImGui::TextDisabled("  idx out of range");
+                ImGui::TextDisabled("  handle bits unpopulated (see Render Spine)");
             } else {
                 const auto& mg = s_staticPropData.materialGpu;
                 ImGui::Text("Source:        MaterialGpu");
