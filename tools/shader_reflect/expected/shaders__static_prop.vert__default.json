@@ -128,6 +128,13 @@
           "name": "u_parityBaseLightDebugMode",
           "offset": 80,
           "type": "int"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_ambientV1Strength",
+          "offset": 84,
+          "type": "float"
         }
       ],
       "name": "gl_DefaultUniformBlock"

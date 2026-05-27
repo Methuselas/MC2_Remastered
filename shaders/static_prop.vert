@@ -113,9 +113,6 @@ uniform int u_parityBaseLightDebugMode;
 // Window-flag nodes skip this term (they are magic-color only — matches
 // existing window-skip of calc_light).
 uniform float u_ambientV1Strength;
-// TODO(V-AMBIENT-STATIC-1): shader_reflect goldens deferred; regen
-// in a fresh worktree after this slice lands (per
-// memory/shader_reflect_regen_must_be_clean_worktree.md).
 
 out vec3  v_normal;
 out vec2  v_uv;
