@@ -51,7 +51,7 @@ them. Add new findings as new bullets; remove fixed ones outright (don't append
 
 ## RenderSnapshot ok gate
 
-- **mc2_10 `ok=0` under `MC2_RENDER_SNAPSHOT_LOG=1` due to pre-existing `staticPropValidationFail` (`sp_fail=1`).** Not caused by mech extraction; all 5 promoted mech counters (`mechCountMismatch` / `mechHandleMismatch` / `mechObjectIdMismatch` / `mechTexHandleMismatch` / `mechMaterialIdxMismatch`) are zero. First observed in the MECH-EXTRACTION-4 tier1 gate-ON run (2026-05-27). `sp_fail` fires at frame ~1623 in a 3326-frame run, persists to end. Since `RenderSnapshot::ok` is now a shared trust gate for both static-prop and mech extraction, a persistent failing mission in tier1 weakens the gate signal. Investigate root cause before adding further consumers to `ok`. Repro: `MC2_SNAPSHOT_MECH_EXTRACT=1 MC2_RENDER_SNAPSHOT_LOG=1 py -3 scripts/run_smoke.py --mission mc2_10 --duration 30`.
+- ~~**mc2_10 `ok=0` due to `staticPropValidationFail` (`sp_fail=1`).**~~ **FIXED `7bdbd1fd`.** `invalidateStaticRegistration()` tombstoned the registry recipe but never called `retireRecord` on the matching `s_objectRecords` slot; the slot stayed `alive=true` with a tombstoned recipe, causing `sp_fail=1` from frame ~1706 onward. Fix: `retireRecord` call added. Requires re-validation of mc2_10 with `MC2_RENDER_SNAPSHOT_LOG=1` to confirm ok=1 throughout.
 
 ## RenderWorld arc residuals
 
