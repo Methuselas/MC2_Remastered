@@ -227,6 +227,38 @@ struct LookupResult {
     const char*                     lookupFailReason = nullptr;
 };
 
+// MODDER-DEBUG-1: handle-direct object record query.
+//
+// Returns a snapshot copy of the CPU-side record for `handle`. No GPU read-back,
+// no pixel stall. Returns true and fills `*out` on success.
+// Returns false on null out-pointer (no fill). Zero-fills `*out` on non-null
+// failure (invalid handle, generation mismatch, dead slot).
+//
+// Rules:
+//   - Generation check required. Stale handles (destroyed objects) return false.
+//   - Returns by value copy only — no reference to internal RenderObjectRecord.
+//   - No GL calls. No batcher internals. Pure CPU table read under mutex.
+//   - Intended for: ImGui inspector, editor queries, scripting, log output.
+//   - NOT a per-frame call. Use at click/inspect rate only.
+//
+// Field types: all integer fields are uint32_t regardless of the underlying
+// record storage width (uint8_t lod, uint16_t pipelineId) — normalized for
+// API uniformity and ImGui display. Sentinel values are preserved exactly.
+struct ObjectRecordView {
+    bool             valid;             // false on any error (check this first)
+    RenderObjectKind kind;              // valid only when valid=true
+    RenderCore::RenderObjectHandle handle;
+    uint32_t         meshHandleBits;   // RenderCore::MeshHandle bits; 0 = unknown
+    uint32_t         materialHandleBits; // RenderCore::MaterialHandle bits; 0 = unknown
+    uint32_t         lod;              // 0 = highest; 0xFF = unknown
+    uint32_t         pipelineId;       // 0 = unknown; 1 = Opaque; 2 = AlphaTest
+    uint32_t         drawPacketIndex;  // 0xFFFFFFFF = not yet assigned
+    uint32_t         pathReasonCode;   // path-specific debug code; 0 = none/legacy default
+    uint32_t         gameObjId;        // engine-side cookie; 0 = not set
+};
+
+bool getObjectRecordView(RenderCore::RenderObjectHandle handle, ObjectRecordView* out);
+
 // M1.5: synchronous pixel -> handle lookup. screenX/Y in GL convention
 // (origin bottom-left). Returns LookupResult{isValid=false} when env-OFF,
 // FBO not initialized, pixel==0, or generation mismatch. Stalls the GPU
