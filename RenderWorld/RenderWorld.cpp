@@ -879,6 +879,32 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
     return out;
 }
 
+bool RenderWorld::getObjectRecordView(RenderCore::RenderObjectHandle handle,
+                                      ObjectRecordView* out) {
+    if (!out) return false;
+    *out = ObjectRecordView{};
+    if (!handle.isValid()) return false;
+
+    std::lock_guard<std::mutex> guard(s_objectRecordsMutex);
+    const uint32_t idx = handle.index();
+    if (idx >= s_objectRecords.size()) return false;
+    const RenderObjectRecord& rec = s_objectRecords[idx];
+    if (rec.generation != handle.generation()) return false;
+    if (!(rec.flags & kRenderObjectFlagAlive)) return false;
+
+    out->valid              = true;
+    out->kind               = rec.kind;
+    out->handle             = handle;
+    out->meshHandleBits     = rec.meshHandleBits;
+    out->materialHandleBits = rec.materialHandleBits;
+    out->lod                = static_cast<uint32_t>(rec.lodLevel);
+    out->pipelineId         = static_cast<uint32_t>(rec.pipelineId);
+    out->drawPacketIndex    = rec.drawPacketIndex;
+    out->pathReasonCode     = rec.pathReasonCode;
+    out->gameObjId          = rec.gameObjectId;
+    return true;
+}
+
 void setLastGameplayPick(RenderObjectKind kind,
                          const LookupResult& res,
                          int32_t mouseX, int32_t mouseY,

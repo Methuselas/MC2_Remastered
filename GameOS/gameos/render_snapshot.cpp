@@ -30,6 +30,21 @@ static RenderFrameArena s_arenas[2];
 static uint32_t         s_arenaIndex = 0;
 
 // ---------------------------------------------------------------------------
+// v2.3: last-produced snapshot, valid for one full frame.
+// Written by ExtractRenderSnapshot() just before return; read by getLastRenderSnapshot()
+// which is called from flush() in the same frame. The Span pointers inside are backed
+// by the ping-pong arena — valid until the next ExtractRenderSnapshot() call.
+// s_hasLastSnapshot is false until the first extraction completes; getLastRenderSnapshot()
+// returns nullptr before that, so flush() on frame 1 safely gets null and skips snap-cull.
+// ---------------------------------------------------------------------------
+static RenderSnapshot s_lastSnapshot;
+static bool           s_hasLastSnapshot = false;
+
+const RenderSnapshot* getLastRenderSnapshot() {
+    return s_hasLastSnapshot ? &s_lastSnapshot : nullptr;
+}
+
+// ---------------------------------------------------------------------------
 // ExtractRenderSnapshot
 //
 // Called once per frame between DoGameLogic() and draw_screen().
@@ -313,60 +328,64 @@ RenderSnapshot ExtractRenderSnapshot()
     // Per-frame log line (v1) — gated: MC2_RENDER_SNAPSHOT_LOG=1 to enable
     // -----------------------------------------------------------------------
     static const bool s_logEnabled = []{ const char* v = std::getenv("MC2_RENDER_SNAPSHOT_LOG"); return v && v[0] == '1'; }();
-    if (!s_logEnabled) return snap;
+    if (s_logEnabled) {
+        std::fprintf(stderr,
+            "[RENDER_SNAPSHOT v2.2] frame=%llu mechs=%u static_props=%u lights=%u "
+            "bytes=%zu overflow=%d ok=%u\n"
+            "  sp_fail=%u sp_sentinel_mat=%u sp_sentinel_cull=%u sizeof_static_prop=%zu\n"
+            "  sp_tex_wired=%u sp_tex_sentinel=%u sp_mat_wired=%u sp_mat_sentinel=%u\n"
+            "  sp_primary_alpha_on=%u sp_multi_packet=%u\n"
+            "  sp_cull_submitted=%u sp_cull_missing=%u sp_has_bounds=%u\n"
+            "  sp_alpha_on=%u sp_has_shape_name=%u\n"
+            "  sp_packet_ranges_ok=%u sp_packet_ranges_invalid=%u\n"
+            "  sp_packets=%u sp_packet_invalid=%u\n"
+            "  visibility_static_props=%u sp_vis_delta=%d\n"
+            "  [v2.2 compare] snapshot_count=%u live_count=%u count_mismatch=%u\n"
+            "  sorted_slot_mismatch=%u global_packet_mismatch=%u pipeline_mismatch=%u\n"
+            "  material_idx_mismatch=%u instance_count_mismatch=%u tex_layer_mismatch=%u\n",
+            static_cast<unsigned long long>(snap.frameIndex),
+            static_cast<uint32_t>(snap.mechs.size()),
+            static_cast<uint32_t>(snap.staticProps.size()),
+            static_cast<uint32_t>(snap.lights.size()),
+            snap.arena->bytesUsed(),
+            snap.arenaOverflow ? 1 : 0,
+            snap.ok,
+            snap.staticPropValidationFail,
+            snap.staticPropSentinelMat,
+            snap.staticPropSentinelCull,
+            sizeof(ExtractedStaticProp),
+            snap.staticPropTexWired,
+            snap.staticPropTexSentinel,
+            snap.staticPropMatWired,
+            snap.staticPropMatSentinel,
+            snap.staticPropPrimaryAlphaOn,
+            snap.staticPropMultiPacket,
+            snap.staticPropCullSubmitted,
+            snap.staticPropCullMissing,
+            snap.staticPropHasBounds,
+            snap.staticPropAlphaOn,
+            snap.staticPropHasShapeName,
+            snap.staticPropPacketRangesOk,
+            snap.staticPropPacketRangesFail,
+            snap.staticPropPacketCount,
+            snap.staticPropPacketInvalid,
+            visibilityStaticPropsCount,
+            static_cast<int32_t>(snap.staticProps.size()) -
+                static_cast<int32_t>(visibilityStaticPropsCount),
+            snap.spCompareSnapshotCount,
+            snap.spCompareLiveCount,
+            snap.spCountMismatch,
+            snap.spSortedSlotMismatch,
+            snap.spGlobalPacketMismatch,
+            snap.spPipelineMismatch,
+            snap.spMaterialIdxMismatch,
+            snap.spInstanceCountMismatch,
+            snap.spTexLayerMismatch);
+    }
 
-    std::fprintf(stderr,
-        "[RENDER_SNAPSHOT v2.2] frame=%llu mechs=%u static_props=%u lights=%u "
-        "bytes=%zu overflow=%d ok=%u\n"
-        "  sp_fail=%u sp_sentinel_mat=%u sp_sentinel_cull=%u sizeof_static_prop=%zu\n"
-        "  sp_tex_wired=%u sp_tex_sentinel=%u sp_mat_wired=%u sp_mat_sentinel=%u\n"
-        "  sp_primary_alpha_on=%u sp_multi_packet=%u\n"
-        "  sp_cull_submitted=%u sp_cull_missing=%u sp_has_bounds=%u\n"
-        "  sp_alpha_on=%u sp_has_shape_name=%u\n"
-        "  sp_packet_ranges_ok=%u sp_packet_ranges_invalid=%u\n"
-        "  sp_packets=%u sp_packet_invalid=%u\n"
-        "  visibility_static_props=%u sp_vis_delta=%d\n"
-        "  [v2.2 compare] snapshot_count=%u live_count=%u count_mismatch=%u\n"
-        "  sorted_slot_mismatch=%u global_packet_mismatch=%u pipeline_mismatch=%u\n"
-        "  material_idx_mismatch=%u instance_count_mismatch=%u tex_layer_mismatch=%u\n",
-        static_cast<unsigned long long>(snap.frameIndex),
-        static_cast<uint32_t>(snap.mechs.size()),
-        static_cast<uint32_t>(snap.staticProps.size()),
-        static_cast<uint32_t>(snap.lights.size()),
-        snap.arena->bytesUsed(),
-        snap.arenaOverflow ? 1 : 0,
-        snap.ok,
-        snap.staticPropValidationFail,
-        snap.staticPropSentinelMat,
-        snap.staticPropSentinelCull,
-        sizeof(ExtractedStaticProp),
-        snap.staticPropTexWired,
-        snap.staticPropTexSentinel,
-        snap.staticPropMatWired,
-        snap.staticPropMatSentinel,
-        snap.staticPropPrimaryAlphaOn,
-        snap.staticPropMultiPacket,
-        snap.staticPropCullSubmitted,
-        snap.staticPropCullMissing,
-        snap.staticPropHasBounds,
-        snap.staticPropAlphaOn,
-        snap.staticPropHasShapeName,
-        snap.staticPropPacketRangesOk,
-        snap.staticPropPacketRangesFail,
-        snap.staticPropPacketCount,
-        snap.staticPropPacketInvalid,
-        visibilityStaticPropsCount,
-        static_cast<int32_t>(snap.staticProps.size()) -
-            static_cast<int32_t>(visibilityStaticPropsCount),
-        snap.spCompareSnapshotCount,
-        snap.spCompareLiveCount,
-        snap.spCountMismatch,
-        snap.spSortedSlotMismatch,
-        snap.spGlobalPacketMismatch,
-        snap.spPipelineMismatch,
-        snap.spMaterialIdxMismatch,
-        snap.spInstanceCountMismatch,
-        snap.spTexLayerMismatch);
-
+    // v2.3: store for getLastRenderSnapshot() before returning.
+    // The snapshot's Span pointers are valid until the next ExtractRenderSnapshot() call.
+    s_lastSnapshot    = snap;
+    s_hasLastSnapshot = true;
     return snap;
 }

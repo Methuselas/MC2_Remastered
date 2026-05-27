@@ -222,3 +222,8 @@ struct RenderSnapshot {
 // Called once per frame between DoGameLogic() and draw_screen().
 // Returns a snapshot backed by a frame-lifetime arena (snap.arena).
 RenderSnapshot ExtractRenderSnapshot();
+
+// v2.3: returns a non-owning pointer to the most recently produced snapshot.
+// Valid until the next ExtractRenderSnapshot() call (same frame lifetime as the arena).
+// Returns nullptr before the first extraction — callers must null-check before use.
+const RenderSnapshot* getLastRenderSnapshot();
