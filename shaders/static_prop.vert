@@ -67,7 +67,7 @@ layout(std430, binding = 2) readonly buffer PerType   { PerTypeData  t[]; } perT
 layout(std430, binding = 3) buffer ParityOut { uint parityOut[]; } parityOut_;
 
 #ifdef MC2_USE_VIEW_UNIFORMS
-#include "include/view_uniforms.hglsl"
+#include <include/view_uniforms.hglsl>
 #else
 uniform mat4 u_worldToClipGL;  // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
 #endif

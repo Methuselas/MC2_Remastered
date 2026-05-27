@@ -1,6 +1,6 @@
 // shaders/include/view_uniforms.hglsl
 //
-// GLSL std430 mirror of RenderCore::ViewUniforms.
+// GLSL std140 UBO mirror of RenderCore::ViewUniforms.
 // SHADER-SCHEMA-2: ABI locked. Do not change field order or types
 // without updating RenderCore/ViewUniforms.h and regenerating goldens.
 //
@@ -15,7 +15,7 @@ struct ViewUniforms {
     mat4 worldToClipGL;    //   0 — world → GL clip
     mat4 worldToViewGL;    //  64 — world → view
     vec4 cameraWorldPos;   // 128 — world-space camera position
-};  // size = 144 bytes in std430
+};  // size = 144 bytes (std140 == std430 for mat4+mat4+vec4)
 
 #ifdef MC2_USE_VIEW_UNIFORMS
 // Runtime UBO binding. Keep in sync with RenderCore::kViewUniformsBinding.
