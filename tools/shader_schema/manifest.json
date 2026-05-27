@@ -1,0 +1,34 @@
+{
+  "interfaces": [
+    {
+      "name": "MaterialGpu",
+      "kind": "ssbo_struct",
+      "cppHeader": "RenderCore/MaterialGpu.h",
+      "cppType": "MaterialGpu",
+      "glslSource": "shaders/include/material_gpu.hglsl",
+      "glslType": "MaterialGpu",
+      "expectedSize": 32,
+      "goldenShader": "shaders/fixtures/material_gpu_contract.frag",
+      "goldenVariant": "default",
+      "requiredShaders": [
+        "shaders/static_prop.frag",
+        "shaders/mech.frag"
+      ]
+    },
+    {
+      "name": "GpuMechInstance",
+      "kind": "ssbo_struct",
+      "cppHeader": "GameOS/gameos/gos_mech_batcher.h",
+      "cppType": "GpuMechInstance",
+      "glslSource": "shaders/mech.vert",
+      "glslType": "GpuMechInstance",
+      "expectedSize": 64,
+      "goldenShader": "shaders/mech.vert",
+      "goldenVariant": "default",
+      "requiredShaders": [
+        "shaders/mech.vert",
+        "shaders/mech.frag"
+      ]
+    }
+  ]
+}

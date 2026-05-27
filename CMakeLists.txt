@@ -521,3 +521,45 @@ if(MC2_BUILD_ENGINE_STANDALONE)
             /WHOLEARCHIVE:windows)
     endif()
 endif()
+
+# ---------------------------------------------------------------------------
+# env_registry: MC2_* env-var coverage gate
+#
+# Runs scripts/check-env-registry.sh, which verifies every MC2_* env var
+# used in source is either registered in RenderCore/RendererFeatureRegistry.h
+# or explicitly allowlisted. Exits nonzero on unknowns.
+#
+# Run manually: cmake --build build64 --target env_registry
+# ---------------------------------------------------------------------------
+# Prefer Git-bundled bash over the WSL stub in System32.
+find_program(BASH_EXECUTABLE
+    NAMES bash
+    HINTS "C:/Program Files/Git/bin" "C:/Program Files/Git/usr/bin"
+    DOC "Git bash (preferred over WSL stub)"
+)
+if(BASH_EXECUTABLE)
+    add_custom_target(env_registry
+        COMMAND ${BASH_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check-env-registry.sh
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "MC2_* env-var registry coverage gate (RendererFeatureRegistry.h)"
+        VERBATIM
+    )
+endif()
+
+# ---------------------------------------------------------------------------
+# shader_schema: C++/GLSL ABI validation gate (SHADER-SCHEMA-1)
+#
+# Validates SSBO struct layout contracts against shader_reflect golden JSON.
+# Checks struct sizes and field offsets for high-risk C++/GLSL interfaces.
+# Requires shader_reflect goldens to exist (run shader_reflect --update first).
+#
+# Run manually: cmake --build build64 --target shader_schema
+# ---------------------------------------------------------------------------
+if(Python3_FOUND AND BASH_EXECUTABLE)
+    add_custom_target(shader_schema
+        COMMAND ${BASH_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check-shader-schema.sh
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Shader ABI validation — C++/GLSL layout contract gate"
+        VERBATIM
+    )
+endif()
