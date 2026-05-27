@@ -113,6 +113,7 @@ is fully inert; gate plumbing removed in v7.1. Future path: v8 will normalize th
 ## Snapshot-assisted dispatch (Extraction v2.3)
 
 - `MC2_SNAP_CULL=1` — opt-in snapshot-assisted static-prop snap-cull. When enabled, the v6 dispatch loop uses the previous frame's RenderSnapshot to skip draw slots whose instanceCount was zero. Requires `snap->ok==1` and count-match validation. Warmup guard prevents frame-1 blank artifact. `spSnapCullSlotMismatch` is in the `ok` gate. Smoke tier1 passes with this set; skipped counts vary by mission density. Default OFF. Cached at process start. Implementation: `gos_static_prop_batcher.cpp` only.
+- `MC2_SNAPSHOT_STATIC_PROP_BUILD=1` — opt-in snapshot-owned slot identity dispatch (Extraction v3). When enabled, builds a second set of dispatch arrays (`s_snapV6Packets`/`s_snapV6Meta`) from the previous frame's `RenderSnapshot` rows, compares against live-built arrays field-by-field, and dispatches snapshot-built arrays if compare passes (zero mismatch). Falls back to live arrays on any mismatch. Incompatible with `MC2_SNAP_CULL=1` (collision → live dispatch + log line). Counters: `spBuildAttempted`/`spBuildFallback` informational; `spBuildCountMismatch`/`spBuildPacketMismatch`/`spBuildMetaMismatch` in `ok` gate. Default OFF. Cached at process start. Implementation: `gos_static_prop_batcher.cpp`; accessor `batcher_getSnapshotBuildStats()`.
 
 ## SSBO binding registry
 
