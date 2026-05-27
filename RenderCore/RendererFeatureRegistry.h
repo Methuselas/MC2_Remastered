@@ -117,7 +117,10 @@ enum class RendererFeature : int {
     // Default-OFF; strength uniform = 0.0 when env unset/0 -> byte-identical
     // to pre-slice output.
     StaticPropAmbientV1      = 19,  // MC2_STATIC_PROP_AMBIENT_V1
-    COUNT                    = 20,
+    // V-MATERIAL-DEBUG-1: per-fragment material debug view (StaticPropOpaque).
+    // Default-OFF; 0 = byte-identical to legacy output (shader short-circuit).
+    StaticPropDebugMaterial  = 20,  // MC2_STATIC_PROP_DEBUG_MATERIAL
+    COUNT                    = 21,
 };
 
 // ---------------------------------------------------------------------------
@@ -286,6 +289,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "V-AMBIENT-STATIC-1: hemisphere ambient fill on StaticPropOpaque lane (static_prop.vert). Default-off; =1 enables (uniform u_ambientV1Strength=1.0). When OFF, strength=0.0 -> byte-identical to legacy output. Skips window-flag nodes."
+    },
+    // StaticPropDebugMaterial
+    {
+        "MC2_FEATURE_STATIC_PROP_DEBUG_MATERIAL",
+        "MC2_STATIC_PROP_DEBUG_MATERIAL",
+        EnvVarKind::Feature,
+        false,
+        "V-MATERIAL-DEBUG-1: per-fragment material debug view on StaticPropOpaque lane (static_prop.frag). Default 0 = OFF (byte-identical via `if (u_debugMaterialMode != 0) return;` short-circuit). Modes 1=albedo, 2=materialIdx-palette, 3=worldNormal, 4=texArrayLayer-palette. Set MC2_STATIC_PROP_DEBUG_MATERIAL=N (1..4)."
     },
 };
 

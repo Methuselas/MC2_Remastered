@@ -483,6 +483,30 @@ void EditorInspector::drawImGui() {
                                       "static_prop.vert (skips window-flag nodes).\n"
                                       "Gate: MC2_STATIC_PROP_AMBIENT_V1=1.\n"
                                       "OFF -> u_ambientV1Strength=0.0 (byte-identical).");
+
+                // V-MATERIAL-DEBUG-1: per-fragment material debug view mode.
+                // Inspect env directly (cheap; panel only runs when inspector on).
+                const char* dbgMatEnv = std::getenv("MC2_STATIC_PROP_DEBUG_MATERIAL");
+                int dbgMatMode = 0;
+                if (dbgMatEnv != nullptr && dbgMatEnv[0] != '\0') {
+                    dbgMatMode = atoi(dbgMatEnv);
+                    if (dbgMatMode < 0) dbgMatMode = 0;
+                    if (dbgMatMode > 4) dbgMatMode = 4;
+                }
+                const char* dbgMatLabel =
+                    (dbgMatMode == 0) ? "off" :
+                    (dbgMatMode == 1) ? "albedo" :
+                    (dbgMatMode == 2) ? "materialIdx" :
+                    (dbgMatMode == 3) ? "normal" :
+                    (dbgMatMode == 4) ? "texArrayLayer" : "?";
+                ImGui::Text("  debug view     %s", dbgMatLabel);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("V-MATERIAL-DEBUG-1 per-fragment material debug view\n"
+                                      "in static_prop.frag. Modes:\n"
+                                      "  0=off (byte-identical)\n"
+                                      "  1=albedo  2=materialIdx\n"
+                                      "  3=normal  4=texArrayLayer\n"
+                                      "Gate: MC2_STATIC_PROP_DEBUG_MATERIAL=N (1..4).");
             }
 
             ImGui::Spacing();
@@ -495,6 +519,7 @@ void EditorInspector::drawImGui() {
                 { "material sample",     "MC2_MATERIAL_GPU_SAMPLE",         true  },
                 { "object-ID buffer",    "MC2_OBJECT_ID_BUFFER",            true  },
                 { "ambient v1",          "MC2_STATIC_PROP_AMBIENT_V1",      false },
+                { "debug material",      "MC2_STATIC_PROP_DEBUG_MATERIAL",  false },
             };
             for (const auto& fb : kFallbacks) {
                 const char* v = std::getenv(fb.envVar);

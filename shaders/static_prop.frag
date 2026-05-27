@@ -77,6 +77,19 @@ uniform int       u_objectIdRaw;
 uniform float u_fogValue;        // 1.0 = clear, 0.0 = fully fogged
 uniform int   u_debugAddrMode;   // 0 normal, 1 gradient, 2 hash, 3 white, 4 argb-only, 5 tex-only, 6 highlight-only, 7 tex+highlight
 
+// V-MATERIAL-DEBUG-1: per-fragment material debug view (StaticPropOpaque lane).
+// Default 0 = OFF; CPU uploads 0 unless MC2_STATIC_PROP_DEBUG_MATERIAL is set.
+// Modes:
+//   0 off          (no visual change — guarded by `if (mode != 0) { ...; return; }`)
+//   1 albedo       (raw sampled albedo, no lighting/fog/highlight)
+//   2 materialIdx  (hashed-palette color from materialIdx)
+//   3 normal       (worldNormal mapped to [0,1])
+//   4 texArrayLayer(hashed-palette color from texArrayLayer)
+// Legacy (non-MC2_COALESCE) lane has no materialIdx / texArrayLayer locals; in
+// those branches materialIdx/texArrayLayer are 0 (visualizes as a single hue).
+// TODO(V-MATERIAL-DEBUG-1): shader_reflect goldens deferred; regen in fresh worktree.
+uniform int   u_debugMaterialMode;
+
 layout(location = 0) out vec4 FragColor;
 layout(location = 1) out vec4 GBuffer1;
 #ifdef MC2_OBJECT_ID_BUFFER
@@ -92,6 +105,19 @@ uint hash_u(uint x) {
     x ^= x >> 15; x *= 0x846ca68bu;
     x ^= x >> 16;
     return x;
+}
+
+// V-MATERIAL-DEBUG-1: hash-based deterministic palette for index visualization.
+// Maps an integer key to a distinguishable RGB color in [0,1]. Cheap (one
+// hash_u + 3 byte extracts). Used by debug modes 2 (materialIdx) and 4
+// (texArrayLayer). Only invoked when u_debugMaterialMode != 0 so the default
+// path pays nothing.
+vec3 debug_palette(uint key) {
+    uint h = hash_u(key * 2654435761u + 1u);
+    return vec3(
+        float((h >>  0) & 0xFFu) / 255.0,
+        float((h >>  8) & 0xFFu) / 255.0,
+        float((h >> 16) & 0xFFu) / 255.0);
 }
 
 void main() {
@@ -148,6 +174,44 @@ void main() {
     // existing tree-card / alpha-test diagnostics are unchanged.
     if (u_debugAddrMode != 8 && (materialFlags & ALPHA_TEST_BIT) != 0 && tex_color.a < 0.5) {
         discard;
+    }
+
+    // V-MATERIAL-DEBUG-1: per-fragment material debug view.
+    // PIXEL-INVARIANT PROOF: when u_debugMaterialMode == 0 (default; CPU
+    // uploads 0 unless MC2_STATIC_PROP_DEBUG_MATERIAL is set non-zero), this
+    // entire block is skipped via the `!= 0` guard, control flow returns to
+    // the existing pipeline at the next line, and the output is byte-identical
+    // to pre-slice f005f7ce. Alpha-test discard above already ran exactly as
+    // before, so discard behavior is unchanged.
+    if (u_debugMaterialMode != 0) {
+        vec3 dbg;
+#ifdef MC2_COALESCE
+        uint dbgMaterialIdx   = materialIdx;
+        uint dbgTexArrayLayer = uint(texArrayLayer);
+#else
+        // Legacy non-coalesce lane has no per-draw materialIdx / texArrayLayer;
+        // collapse to 0 so debug modes 2/4 still produce a deterministic color
+        // (single hue), which is enough to confirm the lane is exercised.
+        uint dbgMaterialIdx   = 0u;
+        uint dbgTexArrayLayer = 0u;
+#endif
+        if      (u_debugMaterialMode == 1) dbg = tex_color.rgb;
+        else if (u_debugMaterialMode == 2) dbg = debug_palette(dbgMaterialIdx);
+        else if (u_debugMaterialMode == 3) dbg = normalize(v_normal) * 0.5 + 0.5;
+        else if (u_debugMaterialMode == 4) dbg = debug_palette(dbgTexArrayLayer);
+        else                               dbg = vec3(1.0, 0.0, 1.0);  // unknown mode -> hot pink
+        FragColor = vec4(dbg, 1.0);
+        GBuffer1  = rc_gbuffer1_legacyDebugSentinelScreenShadowEligible();
+#ifdef MC2_OBJECT_ID_BUFFER
+        // Debug views also emit object-id (matches mode 8 / other debug modes
+        // implicit behavior: object picking still works in debug views).
+#ifdef MC2_COALESCE
+        v_objectId = uint(perDraw_.entries[v_drawID + uint(u_drawIDBase)].objectIdRaw);
+#else
+        v_objectId = uint(u_objectIdRaw);
+#endif
+#endif
+        return;
     }
 
     if (u_debugAddrMode == 1) {

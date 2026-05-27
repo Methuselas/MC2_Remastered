@@ -397,6 +397,26 @@ static const bool s_staticPropAmbientV1Enabled = []() {
     const char* v = getenv("MC2_STATIC_PROP_AMBIENT_V1");
     return v != nullptr && v[0] != '0' && v[0] != '\0';
 }();
+
+// V-MATERIAL-DEBUG-1: per-fragment material debug view mode for the
+// StaticPropOpaque lane. Default 0 = OFF (byte-identical to legacy output —
+// shader short-circuits via `if (u_debugMaterialMode != 0) { ...; return; }`).
+// Env var MC2_STATIC_PROP_DEBUG_MATERIAL accepts integer 0..N:
+//   0 = off (default)
+//   1 = albedo (raw texture)
+//   2 = materialIdx (hashed palette)
+//   3 = normal (worldNormal as RGB)
+//   4 = texArrayLayer (hashed palette)
+// Values outside the implemented range render as hot-pink in the shader.
+// Resolved once at process start (atoi semantics: invalid -> 0).
+static const int s_staticPropDebugMaterialMode = []() {
+    const char* v = getenv("MC2_STATIC_PROP_DEBUG_MATERIAL");
+    if (v == nullptr || v[0] == '\0') return 0;
+    int m = atoi(v);
+    if (m < 0) m = 0;
+    if (m > 4) m = 4;  // clamp to known range; future modes bump this ceiling
+    return m;
+}();
 static bool s_materialKtxEnabled = (std::getenv("MC2_MATERIAL_KTX") != nullptr &&
                                      std::getenv("MC2_MATERIAL_KTX")[0] != '0');   // MC2_MATERIAL_KTX=1
 // Tracks whether finalizeGeometry() produced a correctly-sized sidecar.
@@ -542,6 +562,7 @@ struct ProgramLocs {
     GLint texArr              = -1;
     GLint materialGpuSample   = -1;   // MaterialGpu-3: u_materialGpuSample
     GLint ambientV1Strength   = -1;   // V-AMBIENT-STATIC-1: u_ambientV1Strength
+    GLint debugMaterialMode   = -1;   // V-MATERIAL-DEBUG-1: u_debugMaterialMode
 };
 static ProgramLocs s_locsLegacy;
 static ProgramLocs s_locsCoalesce;
@@ -750,6 +771,8 @@ void loadProgramsIfNeeded() {
     s_locsLegacy.packetID          = glGetUniformLocation(s_staticPropProgram, "u_packetID");
     // V-AMBIENT-STATIC-1: hemisphere ambient strength uniform (default 0.0 = OFF).
     s_locsLegacy.ambientV1Strength = glGetUniformLocation(s_staticPropProgram, "u_ambientV1Strength");
+    // V-MATERIAL-DEBUG-1: per-fragment material debug view mode (default 0 = OFF).
+    s_locsLegacy.debugMaterialMode = glGetUniformLocation(s_staticPropProgram, "u_debugMaterialMode");
     // s_locsLegacy.drawIDBase / texArr stay -1 (coalesce-only; legacy
     // shader has no such uniforms).
 
@@ -783,6 +806,8 @@ void loadProgramsIfNeeded() {
             s_locsCoalesce.materialGpuSample = glGetUniformLocation(s_staticPropProgramCoalesce, "u_materialGpuSample");
             // V-AMBIENT-STATIC-1: hemisphere ambient strength uniform (default 0.0 = OFF).
             s_locsCoalesce.ambientV1Strength = glGetUniformLocation(s_staticPropProgramCoalesce, "u_ambientV1Strength");
+            // V-MATERIAL-DEBUG-1: per-fragment material debug view mode (default 0 = OFF).
+            s_locsCoalesce.debugMaterialMode = glGetUniformLocation(s_staticPropProgramCoalesce, "u_debugMaterialMode");
 
             // M3 fix: if both gates are ON and the uniform is absent, log an error.
             // This can only happen if the shader wasn't recompiled with v3 changes.
@@ -3918,6 +3943,12 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         if (s_locsCoalesce.ambientV1Strength >= 0)
             glUniform1f       (s_locsCoalesce.ambientV1Strength,
                                s_staticPropAmbientV1Enabled ? 1.0f : 0.0f);
+        // V-MATERIAL-DEBUG-1: per-frag material debug view. Default 0 = OFF;
+        // shader skips entire debug branch when uniform == 0 (byte-identical
+        // pixel invariant — proof at static_prop.frag `if (u_debugMaterialMode != 0)`).
+        if (s_locsCoalesce.debugMaterialMode >= 0)
+            glUniform1i       (s_locsCoalesce.debugMaterialMode,
+                               s_staticPropDebugMaterialMode);
 
         // 11.7.e — slot 1 is NOT bound (per v2r18 §3.X.1: colors_.c[]
         // unread in any live shader path; coalesce branch does not bind
@@ -4773,6 +4804,11 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             if (s_locsLegacy.ambientV1Strength >= 0)
                 glUniform1f(s_locsLegacy.ambientV1Strength,
                             s_staticPropAmbientV1Enabled ? 1.0f : 0.0f);
+            // V-MATERIAL-DEBUG-1: per-frag material debug view (legacy program).
+            // Default 0 = OFF; shader skips entire debug branch when 0.
+            if (s_locsLegacy.debugMaterialMode >= 0)
+                glUniform1i(s_locsLegacy.debugMaterialMode,
+                            s_staticPropDebugMaterialMode);
         }
 
     for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {
