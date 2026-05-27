@@ -248,8 +248,8 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         "MC2_FEATURE_RENDER_SNAPSHOT_BUILD",
         "MC2_SNAPSHOT_STATIC_PROP_BUILD",
         EnvVarKind::Feature,
-        false,
-        "Extraction v3: build v6Packets+meta from RenderSnapshot rows instead of live batcher state (gos_static_prop_batcher.cpp). Default-off; =1 enables."
+        true,
+        "Extraction v3: build v6Packets+meta from RenderSnapshot rows instead of live batcher state (gos_static_prop_batcher.cpp). Default-ON as of STATIC-PROP-V3-FLIP (2026-05-27). Kill-switch: =0 forces OFF and falls back to live builder authority."
     },
     // SnapCull
     {

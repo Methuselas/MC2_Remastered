@@ -119,9 +119,11 @@ static std::vector<RenderCore::DrawPacket> s_snapV6Packets;
 static std::vector<StaticPropDispatchMeta> s_snapV6Meta;
 
 // v3 env gate. File-local — not exported in header. Cached at process start.
+// DEFAULT ON (STATIC-PROP-V3-FLIP, 2026-05-27). Kill-switch: MC2_SNAPSHOT_STATIC_PROP_BUILD=0.
+// Unset or any value other than literal '0' = ON. Live builder + compare authority retained as fallback.
 static const bool s_snapshotBuildEnabled = []() -> bool {
     const char* v = std::getenv("MC2_SNAPSHOT_STATIC_PROP_BUILD");
-    return v && v[0] == '1';
+    return !(v && v[0] == '0');
 }();
 
 // v3 per-flush counters. Reset each flush by the runV6 block.
