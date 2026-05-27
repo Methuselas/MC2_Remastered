@@ -149,7 +149,7 @@ for i in 0..totalCmds:
         zero-fill; continue
 
     instCount = s_typeRanges[row.typeId].instanceCount   // current-frame live
-    baseInst  = baseInstanceMap[i]                        // per-frame live
+    baseInst  = v6Meta[i].baseInstance                   // per-frame live (baseInstanceMap out of scope in dispatch block)
 
     s_snapV6Meta[i] = {
         .sortedSlot      = row.sortedSlot,    // from snapshot, verified == i above
