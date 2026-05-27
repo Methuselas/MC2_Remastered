@@ -201,7 +201,18 @@ void GameCamera::render (void)
 					vu.cameraWorldPos[1] = orig.y;
 					vu.cameraWorldPos[2] = orig.z;
 					vu.cameraWorldPos[3] = 1.0f;
-					RenderCore::uploadViewUniforms(vu);
+					{
+						RenderCore::EngineView mainView{};
+						mainView.id = RenderCore::kMainSceneViewId;
+						mainView.viewUniforms = vu;
+						mainView.viewport[0] = 0;
+						mainView.viewport[1] = 0;
+						mainView.viewport[2] = Environment.drawableWidth;
+						mainView.viewport[3] = Environment.drawableHeight;
+						mainView.renderMask = 0xFFFFFFFF;
+						mainView.debugName = "MainScene";
+						RenderCore::setCurrentView(mainView);
+					}
 
 					// F1-3C: compare ViewUniforms.worldToClipGL against legacy terrain MVP upload
 					{

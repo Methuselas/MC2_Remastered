@@ -15,8 +15,9 @@
 #include <cstdlib>
 
 // Renderer-lifetime persistent. Pattern: static GLuint, zero == not yet allocated.
-static GLuint s_viewUniformsUbo = 0;
-static int    s_vuFrame         = 0;
+static GLuint            s_viewUniformsUbo = 0;
+static int               s_vuFrame         = 0;
+static RenderCore::EngineView s_currentView{};
 
 void RenderCore::initViewUniformsUbo() {
     glGenBuffers(1, &s_viewUniformsUbo);
@@ -45,4 +46,21 @@ void RenderCore::uploadViewUniforms(const RenderCore::ViewUniforms& vu) {
                 sizeof(RenderCore::ViewUniforms));
         fflush(stderr);
     }
+}
+
+void RenderCore::setCurrentView(const RenderCore::EngineView& view) {
+    s_currentView = view;
+    uploadViewUniforms(view.viewUniforms);
+    // rate-limited log: frame 1 + every 600
+    static int s_evFrame = 0;
+    ++s_evFrame;
+    if (s_evFrame == 1 || s_evFrame % 600 == 0) {
+        fprintf(stderr, "[ENGINE_VIEW v1] frame=%d id=%u name=%s\n",
+                s_evFrame, view.id, view.debugName ? view.debugName : "?");
+        fflush(stderr);
+    }
+}
+
+const RenderCore::EngineView& RenderCore::getCurrentView() {
+    return s_currentView;
 }
