@@ -9,7 +9,7 @@ start. Grep schema versions with `\[SUBSYS v[0-9]+\]`.
 
 ## Feature gates (registered in RendererFeatureRegistry.h kFeatureTable)
 
-- `MC2_VIEW_UNIFORMS=1` — upload ViewUniforms UBO (binding=3) once per frame from game camera. F1-3A: upload only, no shader consumption. F1-3B shader consumption requires process restart (shaders compiled at startup). Log tag: `[VIEW_UNIFORMS v1]`. Default OFF.
+- `MC2_VIEW_UNIFORMS=1` — upload ViewUniforms UBO (binding=3) once per frame from game camera, AND compile `static_prop.vert` with `#define MC2_USE_VIEW_UNIFORMS 1` so it consumes the UBO instead of the legacy standalone `uniform mat4 u_worldToClipGL`. **Requires process restart** — shaders are compiled once at startup; toggling after launch has no effect. Only `static_prop.vert` is affected (not shadow, mech, or terrain shaders). Log tag: `[VIEW_UNIFORMS v1]`. Default OFF.
 - `MC2_SHADOW_ENABLE=1` — enable shadow-map pre-pass and PCF sampling in mech/static-prop paths. Default OFF.
 - `MC2_IMGUI=1` — enable ImGui overlay (GuiRuntime/GuiRuntime.cpp). Default OFF. Editor sets this automatically.
 - `MC2_IMGUI_INSPECTOR=1` — enable ImGui inspector panel (GuiRuntime/EditorInspector.cpp). Default OFF. Requires `MC2_IMGUI`.

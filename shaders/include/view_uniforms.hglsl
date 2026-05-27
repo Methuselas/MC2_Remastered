@@ -16,3 +16,14 @@ struct ViewUniforms {
     mat4 worldToViewGL;    //  64 — world → view
     vec4 cameraWorldPos;   // 128 — world-space camera position
 };  // size = 144 bytes in std430
+
+#ifdef MC2_USE_VIEW_UNIFORMS
+// Runtime UBO binding. Keep in sync with RenderCore::kViewUniformsBinding.
+// The shader_reflect ABI fixture may use a separate contract-only block.
+layout(binding = 3, std140) uniform ViewUniformsBlock {
+    mat4 u_worldToClipGL;
+    mat4 u_worldToViewGL;
+    vec4 u_cameraWorldPos;
+};
+// anonymous block — names visible directly in shader scope
+#endif

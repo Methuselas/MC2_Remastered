@@ -66,7 +66,11 @@ layout(std430, binding = 2) readonly buffer PerType   { PerTypeData  t[]; } perT
 // entries, so writes never overflow.
 layout(std430, binding = 3) buffer ParityOut { uint parityOut[]; } parityOut_;
 
+#ifdef MC2_USE_VIEW_UNIFORMS
+#include "include/view_uniforms.hglsl"
+#else
 uniform mat4 u_worldToClipGL;  // world -> GL clip (kAxisSwapMC2toGL * worldToClip)
+#endif
 // Slice 2 (object-offload) — Stage 2.D.1: parity write gate.
 // 0 (default) = no write to parityOut_; nonzero = write per-vertex lit ARGB.
 // 'uniform uint' crashes this engine's shader compile (memory/uniform_uint_crash.md)

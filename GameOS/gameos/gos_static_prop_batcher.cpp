@@ -660,6 +660,17 @@ void loadProgramsIfNeeded() {
     if (RenderWorld::IsObjectIdBufferEnabled()) {
         legacyPrefix += "#define MC2_OBJECT_ID_BUFFER 1\n";
     }
+    // F1-3B: inject MC2_USE_VIEW_UNIFORMS when MC2_VIEW_UNIFORMS=1 so
+    // static_prop.vert consumes the ViewUniforms UBO instead of the legacy
+    // standalone uniform. Gate is process-lifetime: shaders are compiled once
+    // at startup. Changing MC2_VIEW_UNIFORMS requires a process restart.
+    // Only static_prop.vert is affected — do NOT add to shadow or mech prefixes.
+    static const bool s_viewUniformsShaderEnabled =
+        (std::getenv("MC2_VIEW_UNIFORMS") != nullptr &&
+         std::getenv("MC2_VIEW_UNIFORMS")[0] == '1');
+    if (s_viewUniformsShaderEnabled) {
+        legacyPrefix += "#define MC2_USE_VIEW_UNIFORMS 1\n";
+    }
 
     std::string coalescePrefix =
         "#version 430\n"
@@ -667,6 +678,9 @@ void loadProgramsIfNeeded() {
         "#define MC2_COALESCE 1\n";
     if (RenderWorld::IsObjectIdBufferEnabled()) {
         coalescePrefix += "#define MC2_OBJECT_ID_BUFFER 1\n";
+    }
+    if (s_viewUniformsShaderEnabled) {
+        coalescePrefix += "#define MC2_USE_VIEW_UNIFORMS 1\n";
     }
 
     // Step 7.3 — legacy program (unchanged identity / no rename).
