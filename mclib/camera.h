@@ -948,6 +948,15 @@ class Camera
 		// matrices are column-major (GL convention) and safe to cast to float* for GPU.
 		const Stuff::Matrix4D& cameraToClipGL_const() const { return cameraToClipGL; }
 
+		// F1-3A ViewUniforms: view matrix without projection component.
+		//   = kAxisSwapMC2toGL * worldToCameraMatrix
+		// Parallel to worldToClipGL() but stops before multiplying cameraToClipGL.
+		Stuff::Matrix4D worldToViewGL() const;
+
+		// F1-3A ViewUniforms: camera world position in GL coordinate space.
+		// Applies the MC2->GL axis swap (x'=-x, y'=z, z'=y) to physicalPos.
+		Stuff::Vector3D cameraOriginGL() const;
+
 		// F4 projectZ-bypass helper. Computes clip directly via worldToClipGL()
 		// for a single world point. Used by the 5 Modern-default wrappers when
 		// MC2_PROJECTZ_BYPASS_MODE = Compare or Bypass. Does NOT touch

@@ -101,7 +101,17 @@ enum class RendererFeature : int {
     MaterialGpuSample   = 10,  // MC2_MATERIAL_GPU_SAMPLE
     StaticPropRegistry  = 11,  // MC2_STATIC_PROP_REGISTRY
     MaterialKtx         = 12,  // MC2_MATERIAL_KTX
-    COUNT               = 13,
+    // v6 DrawPacket+Meta dispatch. MC2_STATIC_PROP_LEGACY_DISPATCH=1 forces legacy fallback (kill-switch).
+    StaticPropPacketDispatch = 13,  // MC2_STATIC_PROP_LEGACY_DISPATCH
+    // [Retired] v6 opt-in gate removed in v7.1; setting this var is inert.
+    DrawPacketStaticPropV6   = 14,  // MC2_DRAW_PACKET_STATIC_PROP_V6
+    // Extraction v3: build v6Packets+meta from RenderSnapshot rows instead of live batcher state.
+    RenderSnapshotBuild      = 15,  // MC2_SNAPSHOT_STATIC_PROP_BUILD
+    // Extraction v2.3: skip prev-frame zero-instance snapshot slots (snap-cull opt-in).
+    SnapCull                 = 16,  // MC2_SNAP_CULL
+    // F1-3A ViewUniforms UBO upload (upload-only; F1-3B adds shader consumption).
+    ViewUniforms             = 17,  // MC2_VIEW_UNIFORMS
+    COUNT                    = 18,
 };
 
 // ---------------------------------------------------------------------------
@@ -214,6 +224,46 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "KTX2 sidecar loader for static-prop textures (RenderCore/KtxLoader). Phase 0: RGBA8 only. Default-off; =1 enables. Requires MC2_COALESCE=1."
+    },
+    // StaticPropPacketDispatch
+    {
+        "MC2_FEATURE_STATIC_PROP_PACKET_DISPATCH",
+        "MC2_STATIC_PROP_LEGACY_DISPATCH",
+        EnvVarKind::Feature,
+        true,
+        "v6 DrawPacket+Meta dispatch (default-ON as of v7). MC2_STATIC_PROP_LEGACY_DISPATCH=1 forces legacy glMultiDrawElementsIndirect fallback. Kill-switch; env var absent = packet path active."
+    },
+    // DrawPacketStaticPropV6 [Retired]
+    {
+        "MC2_FEATURE_DRAW_PACKET_STATIC_PROP_V6",
+        "MC2_DRAW_PACKET_STATIC_PROP_V6",
+        EnvVarKind::Retired,
+        false,
+        "[RETIRED] v6 opt-in gate removed in v7.1. Gate plumbing deleted; setting this var has no effect. Kill-switch is MC2_STATIC_PROP_LEGACY_DISPATCH."
+    },
+    // RenderSnapshotBuild
+    {
+        "MC2_FEATURE_RENDER_SNAPSHOT_BUILD",
+        "MC2_SNAPSHOT_STATIC_PROP_BUILD",
+        EnvVarKind::Feature,
+        false,
+        "Extraction v3: build v6Packets+meta from RenderSnapshot rows instead of live batcher state (gos_static_prop_batcher.cpp). Default-off; =1 enables."
+    },
+    // SnapCull
+    {
+        "MC2_FEATURE_SNAP_CULL",
+        "MC2_SNAP_CULL",
+        EnvVarKind::Feature,
+        false,
+        "Extraction v2.3: skip prev-frame zero-instance slots during snapshot-based dispatch (snap-cull opt-in). Default-off; =1 enables. Requires snapshot path active."
+    },
+    // ViewUniforms
+    {
+        "MC2_FEATURE_VIEW_UNIFORMS",
+        "MC2_VIEW_UNIFORMS",
+        EnvVarKind::Feature,
+        false,
+        "ViewUniforms UBO at binding=3. Uploads per-frame view matrices (worldToClipGL, worldToViewGL, cameraWorldPos). F1-3A: upload only, no shader consumption. F1-3B shader consumption requires process restart (shaders compiled at startup). Default-off; =1 enables."
     },
 };
 

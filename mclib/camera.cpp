@@ -2530,6 +2530,32 @@ Stuff::Matrix4D Camera::worldToClipGL() const
 }
 
 //---------------------------------------------------------------------------
+Stuff::Matrix4D Camera::worldToViewGL() const
+{
+    // F1-3A ViewUniforms: view matrix = kAxisSwapMC2toGL * worldToCameraMatrix.
+    // Mirrors worldToClipGL() but stops before cameraToClipGL multiply.
+    // Uses Matrix4D::Multiply(const AffineMatrix4D&, const Matrix4D&) overload,
+    // valid because LinearMatrix4D inherits AffineMatrix4D.
+    Stuff::Matrix4D out;
+    // Reuse worldToClipGL() intermediate: out = kAxisSwapMC2toGL * worldToCameraMatrix
+    // There is no Multiply(Matrix4D, LinearMatrix4D) directly, but LinearMatrix4D
+    // IS-A AffineMatrix4D, so we produce a temporary Matrix4D first.
+    Stuff::Matrix4D viewM(worldToCameraMatrix); // AffineMatrix4D -> Matrix4D promotion
+    out.Multiply(kAxisSwapMC2toGL, viewM);
+    return out;
+}
+
+//---------------------------------------------------------------------------
+Stuff::Vector3D Camera::cameraOriginGL() const
+{
+    // F1-3A ViewUniforms: camera world position transformed to GL coord space.
+    // kAxisSwapMC2toGL: x' = -x, y' = z, z' = y.
+    // physicalPos holds the camera world position in MC2 space (set in updateCameraInfo
+    // as physicalPos = translation).
+    return Stuff::Vector3D(-physicalPos.x, physicalPos.z, physicalPos.y);
+}
+
+//---------------------------------------------------------------------------
 ModernClipResult Camera::projectModernClipGL(const Stuff::Vector3D& world) const
 {
     // F4 projectZ-bypass helper. Row-vector convention:

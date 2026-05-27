@@ -48,6 +48,7 @@
 #include "../GameOS/gameos/debug_renderer.h"
 #include "../GuiRuntime/EditorInspector.h"  // IMG-INSPECT-3 flushDebugHighlight
 #include "../GameAdapters/SkyRenderAdapter.h"  // HDRI-SKY-1: firewall-clean sky rendering
+#include "../GameOS/gameos/view_uniforms_gl.h"  // F1-3A: ViewUniforms UBO upload
 
 //---------------------------------------------------------------------------
 CameraPtr eye = NULL;
@@ -176,6 +177,32 @@ void GameCamera::render (void)
 			// callers (CullUBO, mech-batcher, static-prop-batcher,
 			// particle-bridge, etc.) inherit transparently.
 			gos_SetWorldToClipGL(eye->worldToClipGL());
+
+			// F1-3A ViewUniforms UBO upload (MC2_VIEW_UNIFORMS=1, default OFF).
+			// No shader consumption yet; binding=3 reserved for F1-3B.
+			{
+				static const char* s_vuEnv = std::getenv("MC2_VIEW_UNIFORMS");
+				if (s_vuEnv && s_vuEnv[0] != '0') {
+					RenderCore::ViewUniforms vu{};
+					// Stuff::Matrix4D stores column-major (entries[c*4+r]).
+					// ViewUniforms wants row-major (GL_FALSE upload convention).
+					// Transpose: row-major[r*4+c] = col-major[c*4+r].
+					auto stuffToRowMajor = [](const Stuff::Matrix4D& m, float out[16]) {
+						const float* col = m.entries;
+						for (int r = 0; r < 4; ++r)
+							for (int c = 0; c < 4; ++c)
+								out[r * 4 + c] = col[c * 4 + r];
+					};
+					stuffToRowMajor(eye->worldToClipGL(), vu.worldToClipGL);
+					stuffToRowMajor(eye->worldToViewGL(), vu.worldToViewGL);
+					const Stuff::Vector3D orig = eye->cameraOriginGL();
+					vu.cameraWorldPos[0] = orig.x;
+					vu.cameraWorldPos[1] = orig.y;
+					vu.cameraWorldPos[2] = orig.z;
+					vu.cameraWorldPos[3] = 1.0f;
+					RenderCore::uploadViewUniforms(vu);
+				}
+			}
 
 			// Camera position in MC2 world space for TCS distance LOD
 			Stuff::Vector3D camOrig = getCameraOrigin();

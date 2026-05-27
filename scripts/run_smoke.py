@@ -463,7 +463,11 @@ def main():
                             "MC2_RENDER_SNAPSHOT_LOG",
                             # MC2_SNAPSHOT_MECH_EXTRACT=1 enables MECH-EXTRACTION-0
                             # persist buffer + compare counters (gate OFF by default).
-                            "MC2_SNAPSHOT_MECH_EXTRACT")},
+                            "MC2_SNAPSHOT_MECH_EXTRACT",
+                            # F1-3A ViewUniforms UBO upload gate (default-OFF).
+                            # MC2_VIEW_UNIFORMS=1 uploads per-frame view matrices
+                            # to UBO at binding=3. No shader consumption yet (F1-3B).
+                            "MC2_VIEW_UNIFORMS")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
