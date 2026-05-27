@@ -113,6 +113,36 @@ static const bool s_v6TraceEnabled = []() -> bool {
 static bool s_v6Armed    = false;
 static bool s_v6Disarmed = false;
 
+// v3 snapshot build: separate dispatch arrays for snapshot-built path.
+// Reused each flush via resize() — no heap alloc after first frame.
+static std::vector<RenderCore::DrawPacket> s_snapV6Packets;
+static std::vector<StaticPropDispatchMeta> s_snapV6Meta;
+
+// v3 env gate. File-local — not exported in header. Cached at process start.
+static const bool s_snapshotBuildEnabled = []() -> bool {
+    const char* v = std::getenv("MC2_SNAPSHOT_STATIC_PROP_BUILD");
+    return v && v[0] == '1';
+}();
+
+// v3 per-flush counters. Reset each flush by the runV6 block.
+// Read by batcher_getSnapshotBuildStats() for render_snapshot.cpp ok gate.
+static uint32_t s_spBuildAttempted      = 0u;
+static uint32_t s_spBuildCountMismatch  = 0u;
+static uint32_t s_spBuildPacketMismatch = 0u;
+static uint32_t s_spBuildMetaMismatch   = 0u;
+static uint32_t s_spBuildFallback       = 0u;
+// Latched on first fallback; never reset. Guards the first-occurrence log line.
+static bool s_spBuildFirstFallbackLogged = false;
+
+// Returns 0 (opaque) or 1 (alpha-test). Returns 0xFFFFFFFFu for unknown pipelineId.
+// Used by snapshot builder to derive group from the snapshot row's stored pipelineId.
+static uint32_t pipelineId_to_group(uint32_t pid) {
+    using P = RenderCore::PipelineId;
+    if (pid == static_cast<uint32_t>(P::StaticPropOpaque))    return 0u;
+    if (pid == static_cast<uint32_t>(P::StaticPropAlphaTest)) return 1u;
+    return 0xFFFFFFFFu;
+}
+
 // v6 per-frame counters (reset each v6-active flush).
 static uint32_t s_v6FrameDrawsIssued        = 0u;
 static uint32_t s_v6FrameZeroInstSkips      = 0u;
@@ -5361,6 +5391,17 @@ void batcher_getSnapCullStats(uint32_t* skipped, uint32_t* active, uint32_t* slo
     if (skipped)      *skipped      = s_snapCullSkipped;
     if (active)       *active       = s_snapCullActive;
     if (slotMismatch) *slotMismatch = s_snapCullSlotMismatch;
+}
+
+void batcher_getSnapshotBuildStats(uint32_t* attempted, uint32_t* countMismatch,
+                                   uint32_t* packetMismatch, uint32_t* metaMismatch,
+                                   uint32_t* fallback)
+{
+    if (attempted)      *attempted      = s_spBuildAttempted;
+    if (countMismatch)  *countMismatch  = s_spBuildCountMismatch;
+    if (packetMismatch) *packetMismatch = s_spBuildPacketMismatch;
+    if (metaMismatch)   *metaMismatch   = s_spBuildMetaMismatch;
+    if (fallback)       *fallback       = s_spBuildFallback;
 }
 
 uint32_t batcher_getPerTypePeakCount(uint32_t typeID) {
