@@ -111,7 +111,9 @@ enum class RendererFeature : int {
     SnapCull                 = 16,  // MC2_SNAP_CULL
     // F1-3A ViewUniforms UBO upload (upload-only; F1-3B adds shader consumption).
     ViewUniforms             = 17,  // MC2_VIEW_UNIFORMS
-    COUNT                    = 18,
+    // MECH-EXTRACTION-0: mech snapshot extraction (observe-only).
+    SnapshotMechExtract      = 18,  // MC2_SNAPSHOT_MECH_EXTRACT
+    COUNT                    = 19,
 };
 
 // ---------------------------------------------------------------------------
@@ -264,6 +266,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "ViewUniforms UBO at binding=3. Uploads per-frame view matrices (worldToClipGL, worldToViewGL, cameraWorldPos). F1-3A: upload only, no shader consumption. F1-3B shader consumption requires process restart (shaders compiled at startup). Default-off; =1 enables."
+    },
+    // SnapshotMechExtract
+    {
+        "MC2_FEATURE_SNAPSHOT_MECH_EXTRACT",
+        "MC2_SNAPSHOT_MECH_EXTRACT",
+        EnvVarKind::Feature,
+        false,
+        "MECH-EXTRACTION-0: mech snapshot extraction (observe-only, no GL mutation). Extracts ExtractedMechPacket[] from RenderSnapshot. Default-off; =1 enables."
     },
 };
 
