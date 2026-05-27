@@ -22,6 +22,44 @@ recommendation.
 
 ## Update log (post-2026-05-22 ships)
 
+**2026-05-26 Extraction arc v2.1–v3 SHIPPED. HEAD `066b5b9d`.**
+
+Item 3 (world snapshot / extraction phase) advances from NOT STARTED to
+"in-progress, snapshot-driven dispatch proven as opt-in gate":
+
+- **Extraction v2.1** (HEAD `4245db18`) — `ExtractedStaticPropPacket` 28-byte
+  per-slot struct in `render_snapshot.h`; per-frame snapshot of batcher draw-slot
+  state via `batcher_getDrawSlotEntry()`; ok hard gate. Tier1 5/5 PASS,
+  `sp_packets=134 ok=1`.
+- **Extraction v2.2** (HEAD `76f63b3f`) — dispatch-fact compare:
+  `sortedSlot / globalPacketIdx / pipelineId / materialIdx / texArrayLayer` all
+  cross-checked snapshot vs live. All structural compare counters zero tier1.
+- **Extraction v2.3** (HEAD `88379448`) — snap-cull opt-in
+  (`MC2_SNAP_CULL=1`): `flush()` skips prev-frame zero-instance slots from
+  snapshot; `spSnapCullSlotMismatch` counter in ok gate; all-zero warmup guard.
+  Default + opt-in: tier1 5/5 `ok=1 slot_mismatch=0`.
+- **Extraction v3** (HEAD `066b5b9d`, `MC2_SNAPSHOT_STATIC_PROP_BUILD=1` opt-in)
+  — snapshot-driven v6 builder: `pipelineId_to_group` map from snapshot rows,
+  `v6Packets` + `v6Meta` rebuilt from snapshot without touching live batcher
+  state. Compare vs live dispatch; `spBuild*` counters in ok gate. Tier1 5/5
+  PASS both gates (default path clean, v3 opt-in collision = 0). This is the
+  authority-flip prerequisite — v3 proves snapshot can fully own packet
+  construction.
+
+**Also shipped (2026-05-26 session):**
+- **RenderWorld::getObjectRecordView()** — handle-direct CPU record snapshot
+  (`ObjectRecordView` struct + accessor); enables external inspection of any
+  handle's live record without raw pointer access.
+- **ImGui Renderer Features window** (`feat(inspector)`) — live `kFeatureTable`
+  status panel; shows every registered `MC2_*` feature default + env-override.
+- **ImGui Render Explain panel** (`feat(inspector)`) — consolidated render-path
+  summary (active gates, subsystem status) in one ImGui window.
+- **ResourceLifetime taxonomy doc** (`P2-1 partial`) — four-tier classification
+  (Persistent / Mission / Frame / PassTransient) with all seven classified
+  resources; see `docs/observations/2026-05-26-resource-lifetime-taxonomy.md`.
+
+---
+
 **2026-05-26 DrawPacket arc + infra ships.** Item 11 advances from
 "implicit in enqueuers" to a working v0→v4A substitutive dispatch.
 Full details in item 11 below. Other ships:
@@ -207,23 +245,37 @@ contracts that replace the imperative `XXX::render()` enqueuers.
 
 ### 3. World snapshot / extraction phase
 
-**Status: NOT STARTED.**
+**Status: IN PROGRESS — extraction arc v2.1–v3 SHIPPED (2026-05-26). Static-prop axis proven; frame-decoupled dispatch opt-in gate live.**
 
 `GameCamera::render` still calls `objectManager->render()` which
-iterates live game objects. Render code reads mutable game state
-directly. Architecture: `land->render()` → `craterManager->render()`
-→ `ObjectManager->render()` → `renderLists()` (from
-`docs/architecture.md`).
+iterates live game objects for ALL subsystems. Render code reads
+mutable game state directly for terrain, mechs, VFX, and water.
 
-A `RenderSnapshot { ViewState, Span<RenderableRecord>, Span<LightRecord>, ... }`
-extraction pass would decouple sim state from render consumption.
+**What shipped (static-prop axis only):**
+- `RenderSnapshot` struct + 2×1 MiB ping-pong arena in
+  `GameOS/gameos/render_snapshot.cpp`. `ExtractRenderSnapshot()`
+  called once per frame between `DoGameLogic()` and `draw_screen()`.
+- `ExtractedStaticPropPacket[]` span: 28-byte per-slot snapshot of
+  batcher draw-slot state (pipelineId, materialIdx, texArrayLayer,
+  sortedSlot, globalPacketIdx). L2 Frame lifetime.
+- v2.2 dispatch-fact compare: cross-checks snapshot vs live batcher
+  on 5 fields per slot. All zero tier1.
+- v2.3 snap-cull: `flush()` skips zero-instance slots from snapshot.
+- v3 (`MC2_SNAPSHOT_STATIC_PROP_BUILD=1`): builds `v6Packets`+`v6Meta`
+  entirely from snapshot rows; compare vs live confirms correctness.
+  Tier1 5/5 PASS. This is the authority-flip prerequisite for making
+  the snapshot the primary render input for static props.
 
-Gap: all 4 main render-path entrypoints still touch live game state.
+**Gap (residual):**
+- v3 is still opt-in gate; authority flip (snapshot-primary) is
+  the next slice.
+- Mechs, terrain, VFX, water: all 4 subsystems still read live
+  game state. No extraction exists for them.
+- No `ViewState` / `Span<LightRecord>` extraction yet.
 
-**Sequencing note:** this is a large structural move. Do not start
-until `RenderWorld` API boundary (item 20) is designed. The
-extraction phase is the mechanism by which game code hands off to
-`RenderWorld::render()`.
+**Next step:** v3 authority flip (snapshot becomes primary for static
+props; live path is fallback). Then extend `RenderSnapshot` to mechs
+(lightest next target: per-frame SSBO already built in `flush()`).
 
 ---
 
@@ -528,19 +580,30 @@ check — just needs the descriptor type.
 
 ### 13. Frame allocator / transient resource system
 
-**Status: PER-SUBSYSTEM RING BUFFERS, NO GENERAL ALLOCATOR.**
+**Status: PER-SUBSYSTEM RING BUFFERS + PING-PONG ARENA EXISTS. TAXONOMY DOC SHIPPED (2026-05-26). NO GENERAL ALLOCATOR YET.**
 
 Terrain thin records, water thin records, and GPU particle SSBOs
-all use purpose-built ring buffers. But there's no general
-`frameAllocator.allocSSBO("VisibleStaticProps", size)` for transient
-cull outputs, sort key buffers, HZB intermediates, etc.
+all use purpose-built ring buffers. `RenderSnapshot`'s 2×1 MiB
+ping-pong arena (Persistent allocation, per-frame `reset()`)
+is the first general-purpose frame arena — currently used only
+for `ExtractedStaticPropPacket[]` spans.
+
+**ResourceLifetime taxonomy** (P2-1 partial) now documented:
+`docs/observations/2026-05-26-resource-lifetime-taxonomy.md`.
+Four tiers classified with all 7 "classify" resources placed:
+- **L0 Persistent:** RenderSnapshot arena, ObjID FBO, mine tex array
+- **L1 Mission:** coalesce SSBOs, tex arrays, materialGpu SSBOs, s_packets
+- **L2 Frame:** `ExtractedStaticPropPacket[]` (already arena-backed)
+- **L3 PassTransient:** `v6Packets`, `v6Meta` (static-vector reuse in flush)
 
 Gap: ad-hoc per-subsystem rings; new GPU passes each build their own.
+No `frameAllocator.alloc<T>(n)` API; the ping-pong arena is module-private.
 
-**Next step:** when adding HZB or new compute passes that need
-transient SSBO output, introduce a lightweight named frame allocator
-instead of building a new purpose-built ring. Retrofit existing
-subsystems as they are next touched.
+**Next step (P2-1 Phase 2):** expose the `RenderSnapshot` ping-pong
+arena as `FrameArena` — a general per-frame typed allocator. Extend to
+cover mech extraction records when the mech extraction arc starts. HZB
+intermediates and sort-key buffers are the compute-pass consumers after Tier 3.
+Retrofit existing per-subsystem rings as they are next touched.
 
 ---
 
@@ -787,12 +850,16 @@ Sequence D — draw packet path (item 11):
   D4. Default flip + legacy loop retire    ← v5 (after v4B tier1 PASS)
   D5. Sort keys + cross-type ordering      ← after v5
 
-Deferred (items 3, 7, 13, 15, 17):
-  Extraction phase     — after RenderWorld boundary is designed
+In progress (items 3, 13):
+  Extraction phase     — v2.1–v3 SHIPPED (static props); authority flip next
+                         Mechs/terrain/VFX extraction not started
+  Frame allocator      — taxonomy doc SHIPPED (P2-1 Phase 1);
+                         expose ping-pong arena as FrameArena API next
+
+Deferred (items 7, 15, 17):
   Multi-view model     — after F1 atomic flip + RenderWorld boundary
-  Frame allocator      — retrofit on next new compute pass
   Residency/streaming  — after meshlet LOD ships
-  Sim/render interp    — after extraction phase
+  Sim/render interp    — after extraction phase (item 3) is broader
 ```
 
 ---
@@ -949,18 +1016,28 @@ Meta-fix principle (verbatim):
 
 ### P2-1. Resource lifetime / ownership taxonomy
 
-Classify every GPU resource into one of four lifetime classes:
+**Status: PHASE 1 DOC SHIPPED (2026-05-26).**
+`docs/observations/2026-05-26-resource-lifetime-taxonomy.md`
+
+Four lifetime tiers classified with all 7 "classify" resources placed:
 
 ```
-Persistent  — mesh buffers, texture arrays, material tables
-Mission     — terrain recipes, static prop registry, light tables
-Frame       — visible lists, draw packets, per-frame thin records
-PassTransient — HZB mips, object-ID target, postprocess intermediates
+L0 Persistent    — RenderSnapshot arena, ObjID FBO, terrain mine tex array
+L1 Mission       — coalesce SSBOs, tex arrays (α-OFF/ON), materialGpu SSBOs
+                   (static props + mechs), s_packets global packet table
+L2 Frame         — ExtractedStaticPropPacket[] (arena-backed ping-pong)
+L3 PassTransient — v6Packets, v6Meta (static-vector reuse in flush())
 ```
 
-The `ResourceLifetime` type is documentary at first (same move as
-`render_contract.h` Phase 1). It becomes enforced at Phase 2 when
-the frame allocator exists.
+Correction note (from review): mech `MaterialGpu` SSBO has a split:
+physical GL buffer = L1 Mission (freed at `onMapUnload`), contents
+populated = L2 Frame-ish (rebuilt each `flush()` with `GL_DYNAMIC_DRAW`).
+The allocator must manage buffer lifetime (L1), not upload cadence (L2).
+
+**Phase 2 (not started):** promote `ResourceLifetime` from documentation
+to a code type. Attach to each GPU resource allocation site. The
+`render_contract.h` Phase 1→2 pattern is the template. Phase 2 is
+gated on the frame allocator (item 13) existing to enforce L2/L3.
 
 Meta-fix goal: no more "who frees this buffer?" or "can this pass
 still read this?" — the same question that caused the ring-slot state

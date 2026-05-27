@@ -138,8 +138,10 @@ for i in 0..totalCmds:
 
     pkt = s_packets[row.globalPacketIdx]
 
-    // Guard s_typeRanges (the array actually indexed for instanceCount).
-    if row.typeId >= s_typeRanges.size():
+    // Guard: typeId must be within s_types (vector, dense by typeId).
+    // s_typeRanges is unordered_map — not a valid OOB bound. Use s_types.size().
+    // s_typeRanges.find() is used below for the actual instance-count lookup.
+    if row.typeId >= s_types.size():
         ++spBuildMetaMismatch
         zero-fill; continue
 

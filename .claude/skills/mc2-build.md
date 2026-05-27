@@ -11,7 +11,15 @@ Build mc2.exe from the current worktree or main repository.
 
 1. **Detect worktree**: Check if CWD is inside a worktree under `.claude/worktrees/`. If so, use that worktree root. Otherwise use `A:/Games/mc2-opengl-src`.
 
-2. **Run CMake build**:
+2. **Verify build tree**: If `<worktree_root>/build64/CMakeCache.txt` exists, grep it for `mc2_SOURCE_DIR:STATIC=`. If the value does NOT end in `/nifty-mendeleev`, print:
+   ```
+   ⚠ BUILD-DIR WARNING: CMakeCache.txt shows mc2_SOURCE_DIR=<actual value>
+     Expected path ending in /nifty-mendeleev. You may be building from the
+     wrong source tree (root checkout is stale terrain-pbr-mod). Proceeding anyway.
+   ```
+   If the file does not exist (unconfigured tree), skip silently.
+
+3. **Run CMake build**:
 ```bash
 CMAKE="C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"
 cd "<worktree_root>" && "$CMAKE" --build build64 --config RelWithDebInfo --target mc2

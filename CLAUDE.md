@@ -48,7 +48,7 @@ CLAUDE.md (this file)
 - **Perf state:** `docs/render-perf-snapshot.md` (bucket map + slice state + deps)
 - **Render contract:** `docs/render-contract.md` (design) + `mclib/render_contract.*` (impl, Phase 2 active under `MC2_RENDER_CONTRACT_ASSERT=1`)
 - **Meta-prompts:** `.claude/prompts/distill-session-into-advisor-agent.md`, `.claude/prompts/dump-render-observations.md`
-- **Skills:** `.claude/skills/` — `/mc2-build`, `/mc2-deploy`, `/mc2-build-deploy`, `/mc2-check`, `/mc2-shader-diff`, `/mc2-amd-shader-review`, `adversarial-plan-review`, `greybeard`
+- **Skills:** `.claude/skills/` — `/mc2-build`, `/mc2-deploy`, `/mc2-build-deploy`, `/mc2-check`, `/mc2-shader-diff`, `/mc2-amd-shader-review`, `/mc2-validate`, `/mc2-render-spine-advisor`, `/mc2-gsd-planner-executor`, `adversarial-plan-review`, `greybeard`, `cost-split-recon-bucket-design`
 - **Steering channel:** `A:/Games/mc2-opengl-src/.claude/STEERING.md` (repo-root; `sh A:/Games/mc2-opengl-src/.claude/steer.sh "..."` blocks next Bash/Agent and injects text; agent runs `ack-steering.sh` to clear)
 
 ## Key paths (inline — every session needs these)

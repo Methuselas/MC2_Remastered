@@ -5,8 +5,51 @@ description: Force a meta-fix vs local-patch ruling before proposing or writing 
 
 # Greybeard
 
-A graybeard graphics engineer does not reach for the local patch. Before
-proposing or writing ANY fix, you produce an explicit ruling: is the obvious
+A graybeard graphics engineer does not reach for the local patch.
+
+## Execution mode
+
+**Default: run as a subagent.** Unless the user explicitly says "run inline", spawn a Sonnet
+subagent to execute this skill. The ruling is reasoning-heavy — no grep phase by default — so
+a single Sonnet call is the right model. Keeps the five-question ruling and its intermediate
+reasoning out of the main session context.
+
+No Haiku workers during reasoning: all five questions require thought, not pattern search.
+Exception: once the Sonnet subagent reaches a subsystem-pin conclusion — "this is not a particle
+bug, it is a texture-binding bug; this is not a water bug, it is a reverse-Z convention leak" —
+it may structure a targeted grep task and spawn one Haiku worker to validate that hypothesis
+with source evidence. The reasoning comes first; the grep confirms it. Haiku does not drive
+the conclusion.
+
+### When to skip subagent
+
+- User says "run inline" → execute in current session
+- You are already a subagent → execute inline, do not nest further.
+
+## Stance
+
+Greybeard is the skeptical "what are we not seeing?" pass. It is invoked before fix design hardens.
+Its job is not to optimize the patch — it is to challenge whether the patch is aimed at the right
+subsystem at all.
+
+Default assumptions:
+- the symptom is real
+- the obvious patch probably works locally
+- the local patch may preserve the mechanism that caused the bug class
+
+Greybeard must ask what upstream deletion, ownership correction, or substitutive path would make
+the symptom impossible. It is permitted — expected — to say:
+
+```
+You are fixing the wrong layer.
+This is not a particle bug; it is a texture-binding / state-inheritance bug.
+This is not an editor bug; it is an extraction seam bug.
+This is not a water bug; it is a reverse-Z convention leak.
+```
+
+Use greybeard when deciding *what problem to solve*. Not when designing the solution.
+
+Before proposing or writing ANY fix, you produce an explicit ruling: is the obvious
 fix a patch on a symptom, or is there a meta-fix that dissolves the cause?
 
 This is a forcing function, not advice. Do not skip it because the patch
@@ -42,11 +85,18 @@ without removing the one it was meant to replace.
 
 5. **Verdict.** Emit exactly one:
    - `META-FIX` - describe the upstream change, its blast radius, and the
-     bug class it retires. Prefer this.
+     bug class it retires. Prefer this. A META-FIX verdict does not
+     automatically authorize implementation in the current slice; it
+     authorizes naming the upstream fix and deciding whether this slice
+     should take it or file it as explicit debt.
    - `PATCH (justified)` - the meta-fix exists but is out of scope NOW.
      State the meta-fix anyway, file the debt explicitly (memory file or
      known-issue), and say what blocking/debt reason defers it. A patch
      with no named meta-fix and no debt justification is not allowed.
+   - `PATCH (beta-blocker)` - for visible regressions blocking a release.
+     Allowed only if: (1) the meta-fix is named, (2) the patch is
+     substitutive enough to remove the visible broken path, (3) the
+     remaining meta-fix debt is filed explicitly before the patch lands.
 
 ## Interactions with existing discipline
 
@@ -63,5 +113,5 @@ without removing the one it was meant to replace.
 ## Output shape
 
 Five numbered answers, then the one-line verdict. Terse. If `PATCH
-(justified)`, the named meta-fix and the deferral reason are mandatory
-fields, not optional prose.
+(justified)` or `PATCH (beta-blocker)`, the named meta-fix and the
+deferral/debt reason are mandatory fields, not optional prose.

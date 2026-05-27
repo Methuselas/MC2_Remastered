@@ -9,14 +9,14 @@ Verify whether the deployed runtime files match the current worktree source. Doe
 
 ## Paths
 - **Source worktree**: Auto-detect from CWD (or `A:/Games/mc2-opengl-src`)
-- **Deploy target**: `A:/Games/mc2-opengl/mc2-win64-v0.1.1`
+- **Deploy target**: `A:/Games/mc2-opengl/mc2-win64-v0.4`
 
 ## Steps
 
 1. **Detect worktree**: Find worktree root from CWD.
 
 2. **Check exe**:
-   - Compare timestamps: `<worktree>/build64/RelWithDebInfo/mc2.exe` vs `A:/Games/mc2-opengl/mc2-win64-v0.1.1/mc2.exe`
+   - Compare timestamps: `<worktree>/build64/RelWithDebInfo/mc2.exe` vs `A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe`
    - Report if source is newer (needs deploy) or if they match
 
 3. **Check ALL shaders**: For every `*.vert`, `*.frag`, `*.tesc`, `*.tese` in `<worktree>/shaders/` and `<worktree>/shaders/include/`:

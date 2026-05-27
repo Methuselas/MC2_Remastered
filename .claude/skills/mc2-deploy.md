@@ -15,9 +15,10 @@ Deploy the built exe and all shader files from the current worktree to the runti
 
 1. **Detect worktree**: Same logic as mc2-build — find worktree root from CWD.
 
-2. **Deploy exe**:
+2. **Deploy exe + PDB** (PDB carries source paths; Tracy shows the wrong worktree if it's stale):
 ```bash
 cp -f "<worktree>/build64/RelWithDebInfo/mc2.exe" "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.exe"
+cp -f "<worktree>/build64/RelWithDebInfo/mc2.pdb" "A:/Games/mc2-opengl/mc2-win64-v0.4/mc2.pdb"
 ```
 
 3. **Deploy FFmpeg DLLs** (copy each DLL individually using `cp -f`, NEVER `cp -r`):
