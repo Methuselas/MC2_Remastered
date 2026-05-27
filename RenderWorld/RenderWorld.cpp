@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "../GameOS/gameos/gos_postprocess.h"
+#include "../GameOS/gameos/view_uniforms_gl.h"
 
 // M2-pre: forward-declare the gameplay-pick self-test entry point.
 // Lives in code/gameplay_pick.h; full include would drag the game-side
@@ -706,10 +707,13 @@ uint32_t objectIdRawForStaticPropRecipe(int32_t recipeIndex) {
     ).raw();
 }
 
-VisibilityResult queryVisibility(VisibilityRequest /*req*/) {
+VisibilityResult queryVisibility(VisibilityRequest req) {
     // V0+V1A: reporting-only. Does not drive culling, draw submission,
     // gameplay selection, or object lifetime.
-    // req.viewId / req.kindMask / req.layerMask present for API stability; unused.
+    // req.kindMask / req.layerMask present for API stability; unused in V0+V1A.
+    // F1-4B: req.viewId resolved via resolveView; logged but does not gate counts.
+    const RenderCore::EngineView* view = RenderCore::resolveView(req.viewId);
+    (void)view;  // resolved for future use; viewValid logged in frameBannerTick
     VisibilityResult r{};
     // V0: lifecycle counts.
     r.static_props = legacy::getStaticPropActiveCount();
@@ -738,7 +742,12 @@ void frameBannerTick() {
     // active-recipe accessor, NOT from the adapter-side delta. Adapter
     // delta drifts if the registry tombstones via paths the adapter
     // never sees; registry count is canonical.
-    const VisibilityResult vis  = queryVisibility(VisibilityRequest{});
+    // F1-4B: always query with kMainSceneViewId so view resolution is exercised.
+    VisibilityRequest visReq{};
+    visReq.viewId = RenderCore::kMainSceneViewId;
+    const VisibilityResult vis  = queryVisibility(visReq);
+    const RenderCore::EngineView* view = RenderCore::resolveView(visReq.viewId);
+    const int viewValid = (view != nullptr) ? 1 : 0;
     const uint64_t total        = vis.static_props + vis.mechs;
     const char* oidTok = IsObjectIdBufferEnabled() ? "on" : "off";
     std::fprintf(stderr,
@@ -751,13 +760,15 @@ void frameBannerTick() {
         "sp_visible=%llu sp_valid=%d "
         "mech_visible=%llu mech_valid=%d "
         "gpu_visible=%llu gpu_valid=%d "
-        "terrain=deferred vfx=prohibited\n",
+        "terrain=deferred vfx=prohibited "
+        "view_id=%u view_valid=%d\n",
         (unsigned long long)f,
         (unsigned long long)vis.static_props,
         (unsigned long long)vis.mechs,
         (unsigned long long)vis.static_props_visible, vis.static_props_visible_valid ? 1 : 0,
         (unsigned long long)vis.mechs_visible,        vis.mechs_visible_valid        ? 1 : 0,
-        (unsigned long long)vis.static_props_gpu_visible, vis.gpu_visible_valid      ? 1 : 0);
+        (unsigned long long)vis.static_props_gpu_visible, vis.gpu_visible_valid      ? 1 : 0,
+        (unsigned)visReq.viewId, viewValid);
 }
 
 LookupResult lookupAtPixel(int screenX, int screenY) {

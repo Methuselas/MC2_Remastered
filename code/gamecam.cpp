@@ -179,59 +179,67 @@ void GameCamera::render (void)
 			// particle-bridge, etc.) inherit transparently.
 			gos_SetWorldToClipGL(eye->worldToClipGL());
 
-			// F1-3A ViewUniforms UBO upload (MC2_VIEW_UNIFORMS=1, default OFF).
-			// No shader consumption yet; binding=3 reserved for F1-3B.
+			// F1-4B: Fill vu and register EngineView unconditionally (pure CPU, no GL).
+			// Upload UBO only when MC2_VIEW_UNIFORMS gate is on.
 			{
-				static const char* s_vuEnv = std::getenv("MC2_VIEW_UNIFORMS");
-				if (s_vuEnv && s_vuEnv[0] != '0') {
-					RenderCore::ViewUniforms vu{};
-					// Stuff::Matrix4D stores column-major (entries[c*4+r]).
-					// ViewUniforms wants row-major (GL_FALSE upload convention).
-					// Transpose: row-major[r*4+c] = col-major[c*4+r].
-					auto stuffToRowMajor = [](const Stuff::Matrix4D& m, float out[16]) {
-						const float* col = m.entries;
-						for (int r = 0; r < 4; ++r)
-							for (int c = 0; c < 4; ++c)
-								out[r * 4 + c] = col[c * 4 + r];
-					};
-					stuffToRowMajor(eye->worldToClipGL(), vu.worldToClipGL);
-					stuffToRowMajor(eye->worldToViewGL(), vu.worldToViewGL);
-					const Stuff::Vector3D orig = eye->cameraOriginGL();
-					vu.cameraWorldPos[0] = orig.x;
-					vu.cameraWorldPos[1] = orig.y;
-					vu.cameraWorldPos[2] = orig.z;
-					vu.cameraWorldPos[3] = 1.0f;
-					{
-						RenderCore::EngineView mainView{};
-						mainView.id = RenderCore::kMainSceneViewId;
-						mainView.viewUniforms = vu;
-						mainView.viewport[0] = 0;
-						mainView.viewport[1] = 0;
-						mainView.viewport[2] = Environment.drawableWidth;
-						mainView.viewport[3] = Environment.drawableHeight;
-						mainView.renderMask = 0xFFFFFFFF;
-						mainView.debugName = "MainScene";
-						RenderCore::setCurrentView(mainView);
-					}
+				RenderCore::ViewUniforms vu{};
+				// Stuff::Matrix4D stores column-major (entries[c*4+r]).
+				// ViewUniforms wants row-major (GL_FALSE upload convention).
+				// Transpose: row-major[r*4+c] = col-major[c*4+r].
+				auto stuffToRowMajor = [](const Stuff::Matrix4D& m, float out[16]) {
+					const float* col = m.entries;
+					for (int r = 0; r < 4; ++r)
+						for (int c = 0; c < 4; ++c)
+							out[r * 4 + c] = col[c * 4 + r];
+				};
+				stuffToRowMajor(eye->worldToClipGL(), vu.worldToClipGL);
+				stuffToRowMajor(eye->worldToViewGL(), vu.worldToViewGL);
+				const Stuff::Vector3D orig = eye->cameraOriginGL();
+				vu.cameraWorldPos[0] = orig.x;
+				vu.cameraWorldPos[1] = orig.y;
+				vu.cameraWorldPos[2] = orig.z;
+				vu.cameraWorldPos[3] = 1.0f;
 
-					// F1-3C: compare ViewUniforms.worldToClipGL against legacy terrain MVP upload
-					{
-						static int s_vuCompareFrame = 0;
-						++s_vuCompareFrame;
-						const float* legacy = gos_GetTerrainMVPMat4();
-						float maxDiff = 0.0f;
-						if (legacy) {
-							for (int i = 0; i < 16; ++i) {
-								float d = vu.worldToClipGL[i] - legacy[i];
-								if (d < 0.0f) d = -d;
-								if (d > maxDiff) maxDiff = d;
+				// Always register EngineView (GL-free, safe unconditionally).
+				// setCurrentView is store-only since F1-4B.
+				{
+					RenderCore::EngineView mainView{};
+					mainView.id = RenderCore::kMainSceneViewId;
+					mainView.viewUniforms = vu;
+					mainView.viewport[0] = 0;
+					mainView.viewport[1] = 0;
+					mainView.viewport[2] = Environment.drawableWidth;
+					mainView.viewport[3] = Environment.drawableHeight;
+					mainView.renderMask = 0xFFFFFFFF;
+					mainView.debugName = "MainScene";
+					RenderCore::setCurrentView(mainView);
+				}
+
+				// Upload UBO and run F1-3C compare only when gated.
+				{
+					static const char* s_vuEnv = std::getenv("MC2_VIEW_UNIFORMS");
+					if (s_vuEnv && s_vuEnv[0] != '0') {
+						RenderCore::uploadViewUniforms(vu);
+
+						// F1-3C: compare ViewUniforms.worldToClipGL against legacy terrain MVP upload
+						{
+							static int s_vuCompareFrame = 0;
+							++s_vuCompareFrame;
+							const float* legacy = gos_GetTerrainMVPMat4();
+							float maxDiff = 0.0f;
+							if (legacy) {
+								for (int i = 0; i < 16; ++i) {
+									float d = vu.worldToClipGL[i] - legacy[i];
+									if (d < 0.0f) d = -d;
+									if (d > maxDiff) maxDiff = d;
+								}
 							}
-						}
-						const int ok = (legacy != nullptr) && (maxDiff <= 1e-5f) ? 1 : 0;
-						if (s_vuCompareFrame <= 10 || ok == 0) {
-							fprintf(stderr, "[VIEW_UNIFORMS v1] compare frame=%d max_diff=%.6f ok=%d\n",
-							        s_vuCompareFrame, maxDiff, ok);
-							fflush(stderr);
+							const int ok = (legacy != nullptr) && (maxDiff <= 1e-5f) ? 1 : 0;
+							if (s_vuCompareFrame <= 10 || ok == 0) {
+								fprintf(stderr, "[VIEW_UNIFORMS v1] compare frame=%d max_diff=%.6f ok=%d\n",
+								        s_vuCompareFrame, maxDiff, ok);
+								fflush(stderr);
+							}
 						}
 					}
 				}

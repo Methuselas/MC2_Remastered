@@ -50,8 +50,8 @@ void RenderCore::uploadViewUniforms(const RenderCore::ViewUniforms& vu) {
 
 void RenderCore::setCurrentView(const RenderCore::EngineView& view) {
     s_currentView = view;
-    uploadViewUniforms(view.viewUniforms);
-    // rate-limited log: frame 1 + every 600
+    // Store-only: does NOT call uploadViewUniforms. Upload is the caller's
+    // responsibility (gated by MC2_VIEW_UNIFORMS). F1-4B decoupling.
     static int s_evFrame = 0;
     ++s_evFrame;
     if (s_evFrame == 1 || s_evFrame % 600 == 0) {
@@ -63,4 +63,10 @@ void RenderCore::setCurrentView(const RenderCore::EngineView& view) {
 
 const RenderCore::EngineView& RenderCore::getCurrentView() {
     return s_currentView;
+}
+
+const RenderCore::EngineView* RenderCore::resolveView(RenderCore::ViewId viewId) {
+    if (viewId == kMainSceneViewId && s_currentView.id == kMainSceneViewId)
+        return &s_currentView;
+    return nullptr;
 }
