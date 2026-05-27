@@ -189,13 +189,15 @@ struct RenderSnapshot {
     uint32_t staticPropPacketCount   = 0;  // packets successfully captured
     uint32_t staticPropPacketInvalid = 0;  // batcher_getDrawSlotEntry failures
 
-    // v2.3 hard gate: extends v2.2. Adds spSnapCullSlotMismatch==0.
-    //   staticPropValidationFail==0, staticPropPacketRangesFail==0,
+    // v3 hard gate — extends v2.3: adds spBuildCountMismatch, spBuildPacketMismatch,
+    //   spBuildMetaMismatch (all three must be zero).
+    // v2.3 gate: staticPropValidationFail==0, staticPropPacketRangesFail==0,
     //   staticPropPacketInvalid==0, !arenaOverflow,
     //   spCountMismatch==0, spSortedSlotMismatch==0, spGlobalPacketMismatch==0,
     //   spPipelineMismatch==0, spMaterialIdxMismatch==0, spTexLayerMismatch==0,
     //   spSnapCullSlotMismatch==0.
-    //   (spInstanceCountMismatch, spSnapCullSkipped, spSnapCullActive are informational.)
+    // Informational (excluded from ok): spInstanceCountMismatch, spSnapCullSkipped,
+    //   spSnapCullActive, spBuildAttempted, spBuildFallback.
     uint32_t ok = 0u;
 
     // --- v2.2: dispatch-fact compare results (filled by batcher_compareSnapshotPackets) ---
@@ -220,6 +222,16 @@ struct RenderSnapshot {
     uint32_t spSnapCullSkipped      = 0u;
     uint32_t spSnapCullActive       = 0u;
     uint32_t spSnapCullSlotMismatch = 0u;
+
+    // --- v3: snapshot build stats (previous-flush; gate: MC2_SNAPSHOT_STATIC_PROP_BUILD=1) ---
+    // Written by batcher_getSnapshotBuildStats(); read by ExtractRenderSnapshot().
+    // spBuildAttempted and spBuildFallback are informational — excluded from ok gate.
+    // spBuildCountMismatch, spBuildPacketMismatch, spBuildMetaMismatch participate in ok gate.
+    uint32_t spBuildAttempted      = 0u;  // 1 if gate check ran this flush
+    uint32_t spBuildCountMismatch  = 0u;  // snap.count != totalCmds
+    uint32_t spBuildPacketMismatch = 0u;  // DrawPacket field divergence (accumulated)
+    uint32_t spBuildMetaMismatch   = 0u;  // DispatchMeta field divergence (accumulated)
+    uint32_t spBuildFallback       = 0u;  // gate enabled/attempted but snapshot arrays NOT dispatched
 
     // Non-owning pointer to the current frame's ping-pong arena.
     // Owned by module statics in render_snapshot.cpp; valid for this frame only.
