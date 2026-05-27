@@ -49,6 +49,10 @@ them. Add new findings as new bullets; remove fixed ones outright (don't append
 
 - **drawPass-retirement decal static-bake (`MC2_TERRAIN_INDIRECT_OVERLAY`): DEFAULT-ON since Stage-6 flip `60f2ef8`** (only `=0` reverts). On default path both SOLID and OVERLAY are armed so per-quad `draw()` loop in `Terrain::render drawPass` is SKIPPED. Slice A+B WIRED & validated 2026-05-17. Remaining endpoint: user-driven substitutive non-COST_SPLIT Tracy proof + decal visual canary. Full state: `memory/drawpass_retirement_decal_bake_state_and_raster_sheet_trap.md`.
 
+## RenderSnapshot ok gate
+
+- **mc2_10 `ok=0` under `MC2_RENDER_SNAPSHOT_LOG=1` due to pre-existing `staticPropValidationFail` (`sp_fail=1`).** Not caused by mech extraction; all 5 promoted mech counters (`mechCountMismatch` / `mechHandleMismatch` / `mechObjectIdMismatch` / `mechTexHandleMismatch` / `mechMaterialIdxMismatch`) are zero. First observed in the MECH-EXTRACTION-4 tier1 gate-ON run (2026-05-27). `sp_fail` fires at frame ~1623 in a 3326-frame run, persists to end. Since `RenderSnapshot::ok` is now a shared trust gate for both static-prop and mech extraction, a persistent failing mission in tier1 weakens the gate signal. Investigate root cause before adding further consumers to `ok`. Repro: `MC2_SNAPSHOT_MECH_EXTRACT=1 MC2_RENDER_SNAPSHOT_LOG=1 py -3 scripts/run_smoke.py --mission mc2_10 --duration 30`.
+
 ## RenderWorld arc residuals
 
 - **MLR-rendered mechs do not write object IDs (M2.5 known gap).** M2.6 pickup will work only for GPU-batched mech pixels. Empirical tier1 data shows `mlr_mech_draws=0` across all 5 missions, so the gap is rare-in-practice. If tier1 ever shows `mlr_mech_draws>0`, M2.6 must preserve mover-first legacy fallback for those mechs and cannot claim full mech GPU-pick coverage. Counter: `[MECHBATCHER v1] event=mlr_mech_summary mlr_mech_draws=M` on per-mission summary.
