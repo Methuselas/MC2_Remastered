@@ -404,6 +404,42 @@ extern int g_lightProbeSetupPath;  // [GPUPROPS v1]
 // and index < table size. Returns false otherwise (out is not modified).
 bool batcher_getMaterialGpuEntry(uint32_t index, RenderCore::MaterialGpu* out);
 
+// V-MATERIAL-STATIC-0 — read-only inventory of the StaticPropOpaque MaterialGpu
+// table. Populated at finalizeGeometry() in lockstep with s_materialGpuTable;
+// cleared in onMapUnload(). NEVER modified at draw time. The inventory captures
+// the source-texture identity (nodeIdx / human-readable name / dimensions) that
+// the MaterialGpu row's albedoTex layer was built from — information that is
+// otherwise local to the per-group texture-array build loop.
+//
+// One entry per row in s_materialGpuTable. Indexed 0..count-1. Materials are
+// deduplicated by texArrayLayer at sidecar-build time, so duplicate texture
+// names are possible only when the same source texture lands in both alpha
+// groups (alphaGroup distinguishes them).
+//
+// Inspector consumer: GuiRuntime/EditorInspector.cpp "Material Inventory" panel.
+// Source: gos_static_prop_batcher.cpp s_materialInventory.
+struct StaticPropMaterialInventoryEntry {
+    uint32_t materialIdx;         // index into s_materialGpuTable (== this entry's position)
+    uint32_t albedoTexLayer;      // texture-array layer (same as MaterialGpu::albedoTex for static-props)
+    uint32_t alphaGroup;          // 0 = alpha-OFF group, 1 = alpha-ON group
+    uint32_t flags;               // mirror of MaterialGpu::flags at build time
+    uint32_t nodeIdx;             // mcTextureManager nodeIdx for the source texture; 0xFFFFFFFF if absent
+    uint32_t textureWidth;        // pixels, from mcTextureManager metadata; 0 if unavailable
+    uint32_t textureHeight;       // pixels; equals width for MC2 (square only)
+    uint32_t usageCount;          // number of draw slots (PerDrawEntry rows) that reference this material
+    char     textureName[64];     // mcTextureManager nodeName; "(unnamed)" / "(absent)" sentinels otherwise
+    bool     placeholder;         // true when nodeIdx==0xFFFFFFFF OR name is null/empty OR dims are zero
+};
+
+// Number of inventory entries. Equals s_materialGpuTable size after finalizeGeometry.
+// Returns 0 before finalize, after onMapUnload, or when MC2_MATERIAL_GPU is disabled.
+uint32_t batcher_getStaticPropMaterialInventoryCount();
+
+// Copy one inventory entry by index. Returns false if idx >= count or out==nullptr.
+// Read-only snapshot — never mutates batcher state.
+bool batcher_getStaticPropMaterialInventoryEntry(uint32_t idx,
+                                                  StaticPropMaterialInventoryEntry* out);
+
 // v2 extraction: per-packet texArrayLayer sidecar accessor.
 // Returns true + fills *out if globalPacketIdx is within the sidecar range.
 // Returns false + *out=-1 if out of range (sidecar empty or packet index invalid).

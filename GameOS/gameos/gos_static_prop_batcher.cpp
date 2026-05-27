@@ -397,6 +397,9 @@ static bool s_materialKtxEnabled = (std::getenv("MC2_MATERIAL_KTX") != nullptr &
 static bool s_materialGpuSidecarValid = false;
 static std::vector<uint32_t>                s_packetMaterialIdx;  // per draw slot
 static std::vector<RenderCore::MaterialGpu> s_materialGpuTable;   // deduplicated
+// V-MATERIAL-STATIC-0: inventory snapshot — one row per s_materialGpuTable entry.
+// Built in lockstep with s_materialGpuTable; cleared in onMapUnload. Read-only.
+static std::vector<StaticPropMaterialInventoryEntry> s_materialInventory;
 // v2: per-packet texArrayLayer sidecar. Indexed by global packet index.
 // Copied from layerForPacket[] in finalizeGeometry() before that local is discarded.
 // Valid until next finalizeGeometry() or onMapUnload(). -1 for unavailable packets.
@@ -1319,6 +1322,7 @@ void GpuStaticPropBatcher::onMapUnload() {
     }
     s_packetMaterialIdx.clear();
     s_materialGpuTable.clear();
+    s_materialInventory.clear();  // V-MATERIAL-STATIC-0
     s_materialGpuSidecarValid = false;  // MAJ-1: reset so flush() cannot sample stale sidecar on reload
     s_sortedPacketOrder.clear();
     s_sortedPacketOrder.shrink_to_fit();
@@ -2295,6 +2299,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             s_materialGpuSidecarValid = false;  // MAJ-1: reset before sidecar loop
             s_packetMaterialIdx.clear();
             s_materialGpuTable.clear();
+            s_materialInventory.clear();  // V-MATERIAL-STATIC-0: rebuild in lockstep
 
             std::unordered_map<int32_t, uint32_t> layerToMaterialIdx;
             const uint32_t emittedCount =
@@ -2319,7 +2324,57 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                     m.metallicFactor       = 0.0f;
                     m.roughnessFactor      = 0.0f;
                     s_materialGpuTable.push_back(m);
+
+                    // V-MATERIAL-STATIC-0: build a parallel inventory row.
+                    // Resolve back to the source TG_TypeShape's listOfTextures
+                    // for nodeIdx / human-readable name / dimensions.
+                    StaticPropMaterialInventoryEntry inv = {};
+                    inv.materialIdx    = static_cast<uint32_t>(s_materialGpuTable.size() - 1);
+                    inv.albedoTexLayer = static_cast<uint32_t>(layer);
+                    inv.alphaGroup     = (i < s_alphaOffCmdCount) ? 0u : 1u;
+                    inv.flags          = m.flags;
+                    inv.nodeIdx        = 0xFFFFFFFFu;
+                    inv.textureWidth   = 0u;
+                    inv.textureHeight  = 0u;
+                    inv.usageCount     = 0u;  // accumulated below
+                    std::snprintf(inv.textureName, sizeof(inv.textureName), "(absent)");
+                    if (globalPktIdx < s_packets.size()) {
+                        const auto& pkt = s_packets[globalPktIdx];
+                        if (pkt.owningTypeID < s_types.size()) {
+                            const TG_TypeShape* src = s_types[pkt.owningTypeID].source;
+                            if (src && src->listOfTextures &&
+                                pkt.textureSlot < src->numTextures) {
+                                const DWORD nodeIdx =
+                                    src->listOfTextures[pkt.textureSlot].mcTextureNodeIndex;
+                                inv.nodeIdx = static_cast<uint32_t>(nodeIdx);
+                                if (mcTextureManager && nodeIdx != 0xFFFFFFFFu) {
+                                    const char* nm = mcTextureManager->getTextureName(nodeIdx);
+                                    if (nm && *nm) {
+                                        std::snprintf(inv.textureName,
+                                                      sizeof(inv.textureName),
+                                                      "%s", nm);
+                                    } else {
+                                        std::snprintf(inv.textureName,
+                                                      sizeof(inv.textureName),
+                                                      "(unnamed)");
+                                    }
+                                    const DWORD w = mcTextureManager->getWidth(nodeIdx);
+                                    if (w != 0xFFFFFFFFu) {
+                                        inv.textureWidth  = static_cast<uint32_t>(w);
+                                        inv.textureHeight = static_cast<uint32_t>(w);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    inv.placeholder = (inv.nodeIdx == 0xFFFFFFFFu)
+                                    || (inv.textureName[0] == '(')
+                                    || (inv.textureWidth == 0u);
+                    s_materialInventory.push_back(inv);
                 }
+                // Per-draw-slot usage counter accumulates on every reference (insert OR hit).
+                if (it->second < s_materialInventory.size())
+                    s_materialInventory[it->second].usageCount += 1u;
                 s_packetMaterialIdx.push_back(it->second);
             }
 
@@ -5449,6 +5504,19 @@ bool batcher_getPacketTexArrayLayer(uint32_t globalPacketIdx, int32_t* out) {
     if (globalPacketIdx >= static_cast<uint32_t>(s_packetTexArrayLayer.size()))
         return false;
     *out = s_packetTexArrayLayer[globalPacketIdx];
+    return true;
+}
+
+// V-MATERIAL-STATIC-0: read-only inventory accessors.
+uint32_t batcher_getStaticPropMaterialInventoryCount() {
+    return static_cast<uint32_t>(s_materialInventory.size());
+}
+
+bool batcher_getStaticPropMaterialInventoryEntry(
+        uint32_t idx, StaticPropMaterialInventoryEntry* out) {
+    if (!out) return false;
+    if (idx >= static_cast<uint32_t>(s_materialInventory.size())) return false;
+    *out = s_materialInventory[idx];
     return true;
 }
 

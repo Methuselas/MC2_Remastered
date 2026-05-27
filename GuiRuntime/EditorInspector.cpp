@@ -7,6 +7,27 @@
 #include "../RenderCore/RendererFeatureRegistry.h"
 #include "../RenderCore/RenderPassContract.h"  // RENDERPASS-CONTRACT-2.5 (descriptive table)
 
+// V-MATERIAL-STATIC-0: forward-declared inventory contract — duplicating the
+// struct keeps gui_runtime independent of gos_static_prop_batcher.h, which
+// transitively pulls Stuff/Stuff.hpp (not visible in this TU). The single
+// source of truth is GameOS/gameos/gos_static_prop_batcher.h; layout must
+// match exactly. Sized-fields verified against that header.
+struct StaticPropMaterialInventoryEntry {
+    uint32_t materialIdx;
+    uint32_t albedoTexLayer;
+    uint32_t alphaGroup;
+    uint32_t flags;
+    uint32_t nodeIdx;
+    uint32_t textureWidth;
+    uint32_t textureHeight;
+    uint32_t usageCount;
+    char     textureName[64];
+    bool     placeholder;
+};
+uint32_t batcher_getStaticPropMaterialInventoryCount();
+bool     batcher_getStaticPropMaterialInventoryEntry(
+             uint32_t idx, StaticPropMaterialInventoryEntry* out);
+
 // MECH-SPINE-1: read-only accessors for mech pass-level state. Defined in
 // gos_mech_batcher.cpp; declared here so the inspector can reference them
 // without including engine-private mech batcher headers.
@@ -918,6 +939,66 @@ void EditorInspector::drawImGui() {
                 ImGui::TableNextColumn(); ImGui::TextUnformatted(c.killSwitchEnv ? c.killSwitchEnv : "(none)");
             }
             ImGui::EndTable();
+        }
+    }
+
+    // V-MATERIAL-STATIC-0: read-only enumeration of the StaticPropOpaque
+    // MaterialGpu table — one row per s_materialGpuTable entry. Sourced from
+    // batcher_getStaticPropMaterialInventory*; never mutates the live table.
+    // Designed for Track V planning: surfaces every distinct static-prop
+    // material (albedo layer, source nodeIdx, texture name, pixel dims,
+    // usage count, placeholder/missing-texture flag).
+    if (ImGui::CollapsingHeader("Material Inventory##matinv")) {
+        const uint32_t invCount = batcher_getStaticPropMaterialInventoryCount();
+        ImGui::TextDisabled("Static-prop lane only -- read-only snapshot.");
+        ImGui::Text("Materials: %u", (unsigned)invCount);
+        if (invCount == 0u) {
+            ImGui::TextDisabled("(empty -- mission not loaded or MC2_MATERIAL_GPU=0)");
+        } else if (ImGui::BeginTable("matinv_table", 8,
+                                     ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                     ImGuiTableFlags_ScrollY | ImGuiTableFlags_Sortable,
+                                     ImVec2(0.f, 240.f))) {
+            ImGui::TableSetupColumn("idx");
+            ImGui::TableSetupColumn("layer");
+            ImGui::TableSetupColumn("grp");
+            ImGui::TableSetupColumn("node");
+            ImGui::TableSetupColumn("name");
+            ImGui::TableSetupColumn("dims");
+            ImGui::TableSetupColumn("uses");
+            ImGui::TableSetupColumn("flags");
+            ImGui::TableHeadersRow();
+            unsigned placeholderCount = 0u;
+            for (uint32_t i = 0; i < invCount; ++i) {
+                StaticPropMaterialInventoryEntry e{};
+                if (!batcher_getStaticPropMaterialInventoryEntry(i, &e)) continue;
+                if (e.placeholder) ++placeholderCount;
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn(); ImGui::Text("%u", e.materialIdx);
+                ImGui::TableNextColumn(); ImGui::Text("%u", e.albedoTexLayer);
+                ImGui::TableNextColumn(); ImGui::Text("%s", e.alphaGroup == 0u ? "OFF" : "ON");
+                ImGui::TableNextColumn();
+                if (e.nodeIdx == 0xFFFFFFFFu) ImGui::TextDisabled("--");
+                else                          ImGui::Text("%u", e.nodeIdx);
+                ImGui::TableNextColumn();
+                if (e.placeholder) ImGui::TextColored(ImVec4(1.f,0.55f,0.3f,1.f),
+                                                       "%s", e.textureName);
+                else               ImGui::TextUnformatted(e.textureName);
+                ImGui::TableNextColumn();
+                if (e.textureWidth == 0u) ImGui::TextDisabled("--");
+                else                      ImGui::Text("%ux%u",
+                                                       e.textureWidth, e.textureHeight);
+                ImGui::TableNextColumn(); ImGui::Text("%u", e.usageCount);
+                ImGui::TableNextColumn(); ImGui::Text("0x%08X", e.flags);
+            }
+            ImGui::EndTable();
+            ImGui::Separator();
+            if (placeholderCount > 0u) {
+                ImGui::TextColored(ImVec4(1.f,0.55f,0.3f,1.f),
+                    "Missing/placeholder textures: %u of %u",
+                    placeholderCount, invCount);
+            } else {
+                ImGui::TextDisabled("Missing/placeholder textures: 0");
+            }
         }
     }
 
