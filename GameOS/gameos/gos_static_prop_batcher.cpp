@@ -5183,7 +5183,10 @@ bool batcher_getDrawSlotEntry(uint32_t slot, ExtractedStaticPropPacket* out) {
     out->sortedSlot      = slot;
     out->globalPacketIdx = globalPktIdx;
     out->typeId          = s_packets[globalPktIdx].owningTypeID;
-    out->pipelineId      = (slot < static_cast<uint32_t>(s_alphaOffCmdCount)) ? 0u : 1u;
+    out->pipelineId      = static_cast<uint32_t>(
+        slot < static_cast<uint32_t>(s_alphaOffCmdCount)
+            ? RenderCore::PipelineId::StaticPropOpaque
+            : RenderCore::PipelineId::StaticPropAlphaTest);
 
     // materialIdx from per-slot sidecar; sentinel if sidecar was not valid at finalize time
     if (s_materialGpuSidecarValid &&
@@ -5196,6 +5199,13 @@ bool batcher_getDrawSlotEntry(uint32_t slot, ExtractedStaticPropPacket* out) {
     // instanceCount from previous frame's flush() snapshot
     const auto it = s_typeInstanceCountPrevFrame.find(out->typeId);
     out->instanceCount = (it != s_typeInstanceCountPrevFrame.end()) ? it->second : 0u;
+
+    // texArrayLayer from per-packet sidecar (v2.2). Sentinel -1 if not available.
+    {
+        int32_t layer = -1;
+        batcher_getPacketTexArrayLayer(globalPktIdx, &layer);
+        out->texArrayLayer = layer;
+    }
 
     return true;
 }

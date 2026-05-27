@@ -114,24 +114,26 @@ struct ExtractedStaticProp {
 static_assert(sizeof(ExtractedStaticProp) <= 256,
     "ExtractedStaticProp exceeded 256-byte budget; adjust arena sizing");
 
-// --- v2.1: per-draw-slot packet snapshot record ---
+// --- v2.2: per-draw-slot packet snapshot record ---
 // One entry per draw slot in s_sortedPacketOrder (geometry-stable after finalizeGeometry).
 // sortedSlot: index i in the batcher's sorted draw command array.
 // globalPacketIdx: s_sortedPacketOrder[sortedSlot] — index into s_packets[].
-// pipelineId: 0=StaticPropOpaque, 1=StaticPropAlphaTest (derived from alphaOffCmdCount).
+// pipelineId: RenderCore::PipelineId cast to uint32_t (StaticPropOpaque or StaticPropAlphaTest).
 // materialIdx: s_packetMaterialIdx[sortedSlot]; 0xFFFFFFFFu if MC2_MATERIAL_GPU sidecar invalid.
 // instanceCount: previous-frame per-type instance count from flush(); 0 on frame 1.
+// texArrayLayer: packet's albedo tex-array layer (v2.2); -1 sentinel if not set.
 struct ExtractedStaticPropPacket {
     uint32_t sortedSlot;       // draw-slot index in s_sortedPacketOrder
     uint32_t globalPacketIdx;  // s_sortedPacketOrder[sortedSlot]
     uint32_t typeId;           // s_packets[globalPacketIdx].owningTypeID
-    uint32_t pipelineId;       // 0=opaque, 1=alpha-test
+    uint32_t pipelineId;       // RenderCore::PipelineId cast to uint32_t (StaticPropOpaque or StaticPropAlphaTest)
     uint32_t materialIdx;      // s_packetMaterialIdx[slot]; 0xFFFFFFFFu sentinel if sidecar invalid
     uint32_t instanceCount;    // previous-frame; 0 on frame 1 or no visible instances
+    int32_t  texArrayLayer;    // packet's albedo tex-array layer (v2.2); -1 sentinel if not set
 };
 
-static_assert(sizeof(ExtractedStaticPropPacket) == 24,
-    "ExtractedStaticPropPacket layout changed — update v2.1 extraction consumers");
+static_assert(sizeof(ExtractedStaticPropPacket) == 28,
+    "ExtractedStaticPropPacket layout changed — update v2.2 extraction consumers");
 
 // Simple span wrapper for array views.
 template <typename T>
