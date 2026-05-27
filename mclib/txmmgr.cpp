@@ -63,6 +63,7 @@
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
 #include "../GameOS/gameos/gos_static_prop_batcher.h"
+#include "../GameOS/gameos/render_snapshot.h"  // getLastRenderSnapshot() for snap-cull (v2.3)
 #include "../GameOS/gameos/gos_static_prop_registry.h"  // Stage 3.C: flush()
 #include "../GameOS/gameos/gos_mech_batcher.h"
 #include "../GameOS/gameos/gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
@@ -2161,7 +2162,7 @@ void MC_TextureManager::renderLists (void)
 				gpu_cull::compute_dispatch();
 			}
 
-			GpuStaticPropBatcher::instance().flush();
+			GpuStaticPropBatcher::instance().flush(getLastRenderSnapshot());
 		}
 
 		// GPU mech batcher Slice A flush — runs after static-prop flush,

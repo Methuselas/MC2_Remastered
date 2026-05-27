@@ -3310,6 +3310,12 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     static const bool s_btf_enabled = (getenv("MC2_BATCHER_FLUSH_TIMING") != nullptr);
     const auto _btf_t0 = std::chrono::steady_clock::now();
 
+    // v2.3 snap-cull: reset per-frame counters unconditionally so batcher_getSnapCullStats()
+    // always returns valid (zero) data even when geometry is not yet finalized or runV6 is false.
+    s_snapCullSkipped      = 0u;
+    s_snapCullActive       = 0u;
+    s_snapCullSlotMismatch = 0u;
+
     if (!s_geometryFinalized || s_fatalRegistrationFailure) {
         s_bucketsByType.clear();
         accumulateMonotonicAndMaybeEmit(/*forceEmit=*/false);
@@ -4117,9 +4123,54 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
             bool enteredOnGroup = false;
 
+            // v2.3 snap-cull: determine whether to use prev-frame snapshot for slot skipping.
+            // Activation requires:
+            //   - MC2_SNAP_CULL=1 and snap non-null
+            //   - snap->ok == 1u (snapshot was structurally valid — v2.2 gates passed)
+            //   - count matches totalCmds (snapshot covers exactly the live draw slots)
+            // Warmup guard: even when all conditions above hold, if ALL instanceCounts are zero
+            // (frame 1 or all-invisible scene) don't cull — avoids frame-1 blank screen.
+            bool snapCullActive = false;
+            uint32_t snapN      = 0u;
+            if (s_snapCullEnabled &&
+                snap != nullptr &&
+                snap->ok == 1u &&
+                snap->staticPropPackets.data != nullptr &&
+                snap->staticPropPackets.count == totalCmds &&
+                snap->staticPropPackets.count > 0u) {
+                bool allZero = true;
+                for (size_t scj = 0; scj < snap->staticPropPackets.count; ++scj) {
+                    if (snap->staticPropPackets.data[scj].instanceCount != 0u) {
+                        allZero = false;
+                        break;
+                    }
+                }
+                snapCullActive = !allZero;
+                snapN          = static_cast<uint32_t>(snap->staticPropPackets.count);
+            }
+
             for (uint32_t i = 0u; i < totalCmds; ++i) {
                 const StaticPropDispatchMeta& m  = v6Meta[i];
                 const RenderCore::DrawPacket&  dp = v6Packets[i];
+
+                // v2.3 snap-cull: skip slots whose prev-frame instanceCount was zero.
+                // Per-row slot identity check guards against any snapshot/live ordering drift.
+                // On identity mismatch: don't skip — count it and fall through to current-frame logic.
+                if (snapCullActive && i < snapN) {
+                    const ExtractedStaticPropPacket& scRow = snap->staticPropPackets.data[i];
+                    if (scRow.sortedSlot != i) {
+                        // Slot identity mismatch — snapshot and live order diverged.
+                        ++s_snapCullSlotMismatch;
+                        // Fall through to current-frame logic.
+                    } else if (scRow.instanceCount == 0u) {
+                        // Prev-frame zero — safe to skip.
+                        ++s_snapCullSkipped;
+                        continue;
+                    } else {
+                        // Prev-frame non-zero — draw; count as snap-cull active.
+                        ++s_snapCullActive;
+                    }
+                }
 
                 if (m.instanceCount == 0u) {
                     ++s_v6FrameZeroInstSkips;
