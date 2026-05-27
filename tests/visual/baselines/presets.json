@@ -1,0 +1,20 @@
+{
+  "_comment": "V-BASELINE-0 camera preset registry. Each preset names a (mission, warmup_s, description) tuple. The 'camera preset' identity is the deterministic state mc2.exe lands in under MC2_SMOKE_MODE=1 + MC2_SMOKE_SEED=0xC0FFEE after `warmup_s` seconds of passive mission load. No in-engine preset hook exists yet; this is the lightweight contract: same mission + same seed + same warmup = same frame.",
+  "schema_version": 1,
+  "default_seed": "0xC0FFEE",
+  "default_resolution": "1920x1080",
+  "presets": {
+    "staticprop_baseline_01": {
+      "mission": "mc2_24",
+      "warmup_s": 28,
+      "duration_s": 30,
+      "description": "StaticPropOpaque-heavy urban scene. tier1 mc2_24 standard load, post-stabilize frame. Use for static-prop pipeline visual regression."
+    },
+    "staticprop_baseline_02": {
+      "mission": "mc2_10",
+      "warmup_s": 28,
+      "duration_s": 30,
+      "description": "StaticPropOpaque mid-density scene. tier1 mc2_10 standard load, post-stabilize frame. Complements baseline_01 with different terrain + prop distribution."
+    }
+  }
+}
