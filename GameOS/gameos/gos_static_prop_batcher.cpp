@@ -4183,9 +4183,154 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 snapN          = static_cast<uint32_t>(snap->staticPropPackets.count);
             }
 
+            // ---------------------------------------------------------------
+            // v3 snapshot builder: activation guard → build → compare
+            // ---------------------------------------------------------------
+            bool snapBuilt = false;
+            s_spBuildAttempted = s_snapshotBuildEnabled ? 1u : 0u;
+
+            if (s_snapshotBuildEnabled) {
+                // Stage 1: snap-cull collision — both gates active → disable v3.
+                if (s_snapCullEnabled) {
+                    std::fprintf(stderr,
+                        "[RENDER_SNAPSHOT v3] frame=%u disabled — MC2_SNAP_CULL collision\n",
+                        s_v6TotalFrameCount);
+                    ++s_spBuildFallback;
+                }
+                // Stage 2: structural guards — snap unusable (no counter).
+                else if (snap == nullptr || snap->ok != 1u ||
+                         snap->staticPropPackets.data == nullptr) {
+                    /* no counter — snap is unusable, not a v3 failure */
+                }
+                // Stage 3: v2.2 structural must be clean.
+                else if (snap->spCountMismatch       != 0u ||
+                         snap->spSortedSlotMismatch  != 0u ||
+                         snap->spGlobalPacketMismatch != 0u ||
+                         snap->spPipelineMismatch     != 0u ||
+                         snap->spMaterialIdxMismatch  != 0u ||
+                         snap->spTexLayerMismatch     != 0u) {
+                    /* no counter — v2.2 gate failed; ordering unreliable */
+                }
+                // Stage 4: count mismatch → record and fall back.
+                else if (snap->staticPropPackets.count != totalCmds) {
+                    ++s_spBuildCountMismatch;
+                    ++s_spBuildFallback;
+                }
+                else {
+                    // All guards passed — build snapshot arrays.
+                    s_snapV6Packets.resize(totalCmds);
+                    s_snapV6Meta.resize(totalCmds);
+
+                    for (uint32_t si = 0u; si < totalCmds; ++si) {
+                        const ExtractedStaticPropPacket& row =
+                            snap->staticPropPackets.data[si];
+
+                        // Snapshot owns slot identity — row must claim this slot.
+                        if (row.sortedSlot != si) {
+                            ++s_spBuildMetaMismatch;
+                            s_snapV6Meta[si]    = {};
+                            s_snapV6Packets[si] = {};
+                            continue;
+                        }
+                        // Guard: globalPacketIdx in bounds.
+                        if (row.globalPacketIdx >=
+                                static_cast<uint32_t>(s_packets.size())) {
+                            ++s_spBuildPacketMismatch;
+                            s_snapV6Meta[si]    = {};
+                            s_snapV6Packets[si] = {};
+                            continue;
+                        }
+                        const GpuStaticPropPacket& spkt = s_packets[row.globalPacketIdx];
+
+                        // Guard: typeId in type table.
+                        if (row.typeId >= static_cast<uint32_t>(s_types.size())) {
+                            ++s_spBuildMetaMismatch;
+                            s_snapV6Meta[si]    = {};
+                            s_snapV6Packets[si] = {};
+                            continue;
+                        }
+                        // Fail closed on unknown pipelineId.
+                        const uint32_t grp = pipelineId_to_group(row.pipelineId);
+                        if (grp == 0xFFFFFFFFu) {
+                            ++s_spBuildMetaMismatch;
+                            s_snapV6Meta[si]    = {};
+                            s_snapV6Packets[si] = {};
+                            continue;
+                        }
+                        // instanceCount from current-frame live (NOT snapshot prev-frame).
+                        const auto typeIt = s_typeRanges.find(row.typeId);
+                        const uint32_t instCount =
+                            (typeIt != s_typeRanges.end())
+                                ? typeIt->second.instanceCount : 0u;
+
+                        s_snapV6Meta[si].sortedSlot      = row.sortedSlot;
+                        s_snapV6Meta[si].globalPacketIdx = row.globalPacketIdx;
+                        s_snapV6Meta[si].typeId          = row.typeId;
+                        s_snapV6Meta[si].group           = grp;
+                        s_snapV6Meta[si].instanceCount   = instCount;
+                        s_snapV6Meta[si].baseInstance    = v6Meta[si].baseInstance;
+                        s_snapV6Meta[si].drawIDBase      = si;
+                        s_snapV6Meta[si].baseVertex      = spkt.baseVertex;
+
+                        s_snapV6Packets[si]            = RenderCore::DrawPacket{};
+                        s_snapV6Packets[si].pipelineId = static_cast<uint32_t>(
+                            grp == 0u ? RenderCore::PipelineId::StaticPropOpaque
+                                      : RenderCore::PipelineId::StaticPropAlphaTest);
+                        s_snapV6Packets[si].firstIndex = spkt.firstIndex;
+                        s_snapV6Packets[si].indexCount = spkt.indexCount;
+                    }
+
+                    // Compare snapshot-built vs live-built, field-by-field per slot.
+                    for (uint32_t ci = 0u; ci < totalCmds; ++ci) {
+                        const StaticPropDispatchMeta& sm = s_snapV6Meta[ci];
+                        const StaticPropDispatchMeta& lm = v6Meta[ci];
+                        const RenderCore::DrawPacket&  sp = s_snapV6Packets[ci];
+                        const RenderCore::DrawPacket&  lp = v6Packets[ci];
+
+                        if (sm.globalPacketIdx != lm.globalPacketIdx) ++s_spBuildMetaMismatch;
+                        if (sm.typeId          != lm.typeId)          ++s_spBuildMetaMismatch;
+                        if (sm.group           != lm.group)           ++s_spBuildMetaMismatch;
+                        if (sm.sortedSlot      != lm.sortedSlot)      ++s_spBuildMetaMismatch;
+                        if (sm.baseVertex      != lm.baseVertex)      ++s_spBuildMetaMismatch;
+                        if (sm.drawIDBase      != lm.drawIDBase)      ++s_spBuildMetaMismatch;
+
+                        if (sp.pipelineId != lp.pipelineId) ++s_spBuildPacketMismatch;
+                        if (sp.firstIndex  != lp.firstIndex)  ++s_spBuildPacketMismatch;
+                        if (sp.indexCount  != lp.indexCount)  ++s_spBuildPacketMismatch;
+                    }
+
+                    snapBuilt = true;
+                }
+            }
+
+            // Dispatch ref-swap: use snapshot arrays only when compare clean.
+            const bool useSnapshot = snapBuilt
+                && s_spBuildPacketMismatch == 0
+                && s_spBuildMetaMismatch   == 0;
+
+            if (snapBuilt && !useSnapshot) {
+                ++s_spBuildFallback;
+                if (!s_spBuildFirstFallbackLogged) {
+                    s_spBuildFirstFallbackLogged = true;
+                    std::fprintf(stderr,
+                        "[RENDER_SNAPSHOT v3] frame=%u first-fallback"
+                        " attempted=1 count_mismatch=%u pkt_mismatch=%u"
+                        " meta_mismatch=%u fallback=1\n",
+                        s_v6TotalFrameCount,
+                        s_spBuildCountMismatch,
+                        s_spBuildPacketMismatch,
+                        s_spBuildMetaMismatch);
+                }
+            }
+
+            const std::vector<RenderCore::DrawPacket>* pDispatchPackets =
+                useSnapshot ? &s_snapV6Packets : &v6Packets;
+            const std::vector<StaticPropDispatchMeta>* pDispatchMeta =
+                useSnapshot ? &s_snapV6Meta    : &v6Meta;
+
             for (uint32_t i = 0u; i < totalCmds; ++i) {
-                const StaticPropDispatchMeta& m  = v6Meta[i];
-                const RenderCore::DrawPacket&  dp = v6Packets[i];
+                const StaticPropDispatchMeta& m  = (*pDispatchMeta)[i];
+                const RenderCore::DrawPacket&  dp = (*pDispatchPackets)[i];
 
                 // v2.3 snap-cull: skip slots whose prev-frame instanceCount was zero.
                 // Per-row slot identity check guards against any snapshot/live ordering drift.
@@ -4270,6 +4415,19 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                     s_v6FrameDrawsIssued, s_v6FrameZeroInstSkips,
                     s_v6FrameSortedOob, s_v6FramePacketOob, s_v6FrameTypeOob,
                     s_v6FrameLockstepViolations, s_v6FrameGlErrors, ok);
+                if (s_snapshotBuildEnabled) {
+                    std::fprintf(stderr,
+                        "[RENDER_SNAPSHOT v3] frame=%u"
+                        " attempted=%u count_mismatch=%u pkt_mismatch=%u"
+                        " meta_mismatch=%u fallback=%u using_snapshot=%d\n",
+                        s_v6TotalFrameCount,
+                        s_spBuildAttempted,
+                        s_spBuildCountMismatch,
+                        s_spBuildPacketMismatch,
+                        s_spBuildMetaMismatch,
+                        s_spBuildFallback,
+                        useSnapshot ? 1 : 0);
+                }
             }
 
         } else if (runV5) {
