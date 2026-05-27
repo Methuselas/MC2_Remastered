@@ -350,7 +350,7 @@ RenderSnapshot ExtractRenderSnapshot()
             "  sp_packet_ranges_ok=%u sp_packet_ranges_invalid=%u\n"
             "  sp_packets=%u sp_packet_invalid=%u\n"
             "  visibility_static_props=%u sp_vis_delta=%d\n"
-            "  [v2.2 compare] snapshot_count=%u live_count=%u count_mismatch=%u\n"
+            "  [v2.3 compare] snapshot_count=%u live_count=%u count_mismatch=%u\n"
             "  sorted_slot_mismatch=%u global_packet_mismatch=%u pipeline_mismatch=%u\n"
             "  material_idx_mismatch=%u instance_count_mismatch=%u tex_layer_mismatch=%u\n"
             "  [v2.3 snap_cull] skipped=%u active=%u slot_mismatch=%u\n",
