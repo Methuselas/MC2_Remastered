@@ -371,8 +371,11 @@ RenderSnapshot ExtractRenderSnapshot()
     // Sync arenaOverflow from FrameArena (definitive; explicit sets above are belt+suspenders).
     snap.arenaOverflow = snap.frameArena.overflowed();
 
-    // v3: extends v2.3 ok gate — adds three spBuild mismatch counters.
-    // spBuildAttempted and spBuildFallback excluded (informational).
+    // v4: extends v3 ok gate — adds 5 mech mismatch counters.
+    // Mech counters are 0 when MC2_SNAPSHOT_MECH_EXTRACT is unset (gate OFF),
+    // so ok is unaffected in default mode.
+    // spBuildAttempted/spBuildFallback and mechSnapshotCount/mechMatValid/
+    // mechMatSentinel excluded (informational).
     snap.ok = (snap.staticPropValidationFail  == 0u &&
                snap.staticPropPacketRangesFail == 0u &&
                snap.staticPropPacketInvalid    == 0u &&
@@ -386,7 +389,12 @@ RenderSnapshot ExtractRenderSnapshot()
                snap.spSnapCullSlotMismatch     == 0u &&
                snap.spBuildCountMismatch       == 0u &&
                snap.spBuildPacketMismatch      == 0u &&
-               snap.spBuildMetaMismatch        == 0u) ? 1u : 0u;
+               snap.spBuildMetaMismatch        == 0u &&
+               snap.mechCountMismatch          == 0u &&
+               snap.mechHandleMismatch         == 0u &&
+               snap.mechObjectIdMismatch       == 0u &&
+               snap.mechTexHandleMismatch      == 0u &&
+               snap.mechMaterialIdxMismatch    == 0u) ? 1u : 0u;
 
     // -----------------------------------------------------------------------
     // Visibility query for log line

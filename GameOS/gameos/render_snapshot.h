@@ -170,15 +170,17 @@ struct RenderSnapshot {
     uint32_t staticPropPacketCount   = 0;  // packets successfully captured
     uint32_t staticPropPacketInvalid = 0;  // batcher_getDrawSlotEntry failures
 
-    // v3 hard gate — extends v2.3: adds spBuildCountMismatch, spBuildPacketMismatch,
-    //   spBuildMetaMismatch (all three must be zero).
+    // v4 hard gate — extends v3: adds 5 mech mismatch counters when
+    //   MC2_SNAPSHOT_MECH_EXTRACT=1; trivially zero (safe) when gate OFF.
+    // v3 gate: adds spBuildCountMismatch, spBuildPacketMismatch, spBuildMetaMismatch.
     // v2.3 gate: staticPropValidationFail==0, staticPropPacketRangesFail==0,
     //   staticPropPacketInvalid==0, !arenaOverflow,
     //   spCountMismatch==0, spSortedSlotMismatch==0, spGlobalPacketMismatch==0,
     //   spPipelineMismatch==0, spMaterialIdxMismatch==0, spTexLayerMismatch==0,
     //   spSnapCullSlotMismatch==0.
     // Informational (excluded from ok): spInstanceCountMismatch, spSnapCullSkipped,
-    //   spSnapCullActive, spBuildAttempted, spBuildFallback.
+    //   spSnapCullActive, spBuildAttempted, spBuildFallback,
+    //   mechSnapshotCount, mechMatValid, mechMatSentinel.
     uint32_t ok = 0u;
 
     // --- v2.2: dispatch-fact compare results (filled by batcher_compareSnapshotPackets) ---
