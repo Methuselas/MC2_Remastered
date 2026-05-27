@@ -879,8 +879,8 @@ LookupResult lookupAtPixel(int screenX, int screenY) {
     return out;
 }
 
-bool RenderWorld::getObjectRecordView(RenderCore::RenderObjectHandle handle,
-                                      ObjectRecordView* out) {
+bool getObjectRecordView(RenderCore::RenderObjectHandle handle,
+                         ObjectRecordView* out) {
     if (!out) return false;
     *out = ObjectRecordView{};
     if (!handle.isValid()) return false;
@@ -889,7 +889,7 @@ bool RenderWorld::getObjectRecordView(RenderCore::RenderObjectHandle handle,
     const uint32_t idx = handle.index();
     if (idx >= s_objectRecords.size()) return false;
     const RenderObjectRecord& rec = s_objectRecords[idx];
-    if (rec.generation != handle.generation()) return false;
+    if (rec.generation != static_cast<uint16_t>(handle.generation())) return false;
     if (!(rec.flags & kRenderObjectFlagAlive)) return false;
 
     out->valid              = true;

@@ -245,16 +245,16 @@ struct LookupResult {
 // record storage width (uint8_t lod, uint16_t pipelineId) — normalized for
 // API uniformity and ImGui display. Sentinel values are preserved exactly.
 struct ObjectRecordView {
-    bool             valid;             // false on any error (check this first)
-    RenderObjectKind kind;              // valid only when valid=true
+    bool             valid              = false;
+    RenderObjectKind kind               = RenderObjectKind::StaticProp;
     RenderCore::RenderObjectHandle handle;
-    uint32_t         meshHandleBits;   // RenderCore::MeshHandle bits; 0 = unknown
-    uint32_t         materialHandleBits; // RenderCore::MaterialHandle bits; 0 = unknown
-    uint32_t         lod;              // 0 = highest; 0xFF = unknown
-    uint32_t         pipelineId;       // 0 = unknown; 1 = Opaque; 2 = AlphaTest
-    uint32_t         drawPacketIndex;  // 0xFFFFFFFF = not yet assigned
-    uint32_t         pathReasonCode;   // path-specific debug code; 0 = none/legacy default
-    uint32_t         gameObjId;        // engine-side cookie; 0 = not set
+    uint32_t         meshHandleBits     = 0;
+    uint32_t         materialHandleBits = 0;
+    uint32_t         lod                = 0xFFu;   // 0 = highest; 0xFF = unknown
+    uint32_t         pipelineId         = 0;       // 0 = unknown; 1 = Opaque; 2 = AlphaTest
+    uint32_t         drawPacketIndex    = 0xFFFFFFFFu;
+    uint32_t         pathReasonCode     = 0;
+    uint32_t         gameObjId          = 0;
 };
 
 bool getObjectRecordView(RenderCore::RenderObjectHandle handle, ObjectRecordView* out);
