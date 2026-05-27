@@ -6,6 +6,13 @@
 #include "draw_packet_emitter.h"              // g_dpSelectedRecipeIndex
 #include "../RenderCore/RendererFeatureRegistry.h"
 
+// MECH-SPINE-1: read-only accessors for mech pass-level state. Defined in
+// gos_mech_batcher.cpp; declared here so the inspector can reference them
+// without including engine-private mech batcher headers.
+extern "C" uint32_t gos_getMechProgramId();
+extern "C" uint32_t gos_getMechShadowProgramId();
+extern "C" const char* gos_getMechTextureNameByNodeIdx(uint32_t nodeIdx);
+
 namespace {
 
 static bool isEnabled() {
@@ -674,6 +681,19 @@ void EditorInspector::drawImGui() {
                         "countMis=0 handleMis=0 objectIdMis=0 texMis=0 matMis=0");
                 }
 
+                // MECH-SPINE-1: pass-level program ids (legacy path — mech
+                // is NOT on the PipelineDesc registry yet; surfacing the gap
+                // here mirrors the TERRAIN-SPINE-0 "ViewUniforms not bound"
+                // red-flag label).
+                ImGui::Separator();
+                const uint32_t mechProg   = gos_getMechProgramId();
+                const uint32_t shadowProg = gos_getMechShadowProgramId();
+                ImGui::Text("mech program       %u", mechProg);
+                ImGui::Text("shadow_mech program %u", shadowProg);
+                ImGui::TextColored(ImVec4(1.f, 0.7f, 0.2f, 1.f),
+                    "PipelineDesc: legacy (not on registry)");
+                ImGui::TextDisabled("pass: opaque + shadow (legacy mech path)");
+
                 // Per-selected-mech row (match by objectIdRaw == handle.raw())
                 ImGui::Separator();
                 const uint32_t selRaw = s_selection.handle.raw();
@@ -682,9 +702,16 @@ void EditorInspector::drawImGui() {
                     const ExtractedMechPacket& row = snap->mechPackets[i];
                     if (row.objectIdRaw != selRaw) continue;
                     rowFound = true;
-                    ImGui::Text("Row %u:", i);
+                    ImGui::Text("Row %u:  (extracted this frame)", i);
                     ImGui::Text("  handle      0x%08X", row.objectIdRaw);
-                    ImGui::Text("  texHandle   %u", row.texHandle);
+                    {
+                        const char* texName =
+                            gos_getMechTextureNameByNodeIdx(row.texHandle);
+                        if (texName && *texName)
+                            ImGui::Text("  texHandle   %u  (%s)", row.texHandle, texName);
+                        else
+                            ImGui::Text("  texHandle   %u", row.texHandle);
+                    }
                     if (row.materialIdx == 0xFFFFFFFFu)
                         ImGui::TextColored(ImVec4(1.f, 0.7f, 0.2f, 1.f),
                             "  materialIdx sentinel (0xFFFFFFFF)");
@@ -695,7 +722,7 @@ void EditorInspector::drawImGui() {
                     break;
                 }
                 if (!rowFound)
-                    ImGui::TextDisabled("  (selected handle not in snapshot)");
+                    ImGui::TextDisabled("  (selected handle NOT in snapshot this frame)");
             }
         }
         } // Mech Snapshot block

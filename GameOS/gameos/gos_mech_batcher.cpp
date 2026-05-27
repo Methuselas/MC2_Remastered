@@ -1680,3 +1680,22 @@ void batcher_compareMechSnapshot(RenderSnapshot* snap) {
         }
     }
 }
+
+// MECH-SPINE-1: read-only free-function accessors for the Object Inspector's
+// Mech Snapshot panel. Mirrors the TERRAIN-SPINE-0 pattern (program-id
+// accessors in gameos_graphics.cpp). Each returns 0 / nullptr when the
+// underlying state is not yet initialized. Read-only — no GL state touched,
+// no draw-path mutation.
+extern "C" uint32_t gos_getMechProgramId() {
+    return (uint32_t)s_mechProgram;
+}
+extern "C" uint32_t gos_getMechShadowProgramId() {
+    auto pit = glsl_program::s_programs.find("shadow_mech");
+    if (pit == glsl_program::s_programs.end() || !pit->second)
+        return 0u;
+    return (uint32_t)pit->second->shp_;
+}
+extern "C" const char* gos_getMechTextureNameByNodeIdx(uint32_t nodeIdx) {
+    if (nodeIdx == 0xFFFFFFFFu || !mcTextureManager) return nullptr;
+    return mcTextureManager->getTextureName((DWORD)nodeIdx);
+}
