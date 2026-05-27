@@ -1,5 +1,6 @@
 // GameOS/gameos/gos_mech_batcher.cpp — GPU mech batcher, Slice A.
 #include "gos_mech_batcher.h"
+#include "render_snapshot.h"  // MECH-EXTRACTION-0: ExtractedMechPacket, RenderSnapshot
 // M2.5: IsObjectIdBufferEnabled() drives the GLSL prefix that gates the
 // mech.frag layout(location=2) write. Mirrors the include shipped by M1.5
 // at gos_static_prop_batcher.cpp:3. GameOS/ is outside the firewall
@@ -1565,4 +1566,43 @@ void GpuMechBatcher::flush() {
     s_pendingSubmits.clear();
     s_eligibleActorsThisFrame = 0;
     std::memset(s_fallbacksThisFrame, 0, sizeof(s_fallbacksThisFrame));
+}
+
+// ---------------------------------------------------------------------------
+// MECH-EXTRACTION-0: snapshot API (gate: MC2_SNAPSHOT_MECH_EXTRACT=1)
+// ---------------------------------------------------------------------------
+
+uint32_t batcher_getMechPendingCount() {
+    return static_cast<uint32_t>(s_pendingSubmits.size());
+}
+
+bool batcher_getMechPendingEntry(uint32_t idx, ExtractedMechPacket* out) {
+    if (!out || idx >= static_cast<uint32_t>(s_pendingSubmits.size()))
+        return false;
+    const PendingSubmit& ps = s_pendingSubmits[idx];
+    out->objectIdRaw  = ps.desc.objectIdRaw;
+    out->instanceIdx  = idx;
+    out->materialIdx  = 0xFFFFFFFFu;  // sentinel — resolved in flush(), not available pre-flush
+    out->texHandle    = ps.desc.slot0TexHandle;
+    out->typeLodIdx   = ps.typeLodIdx;
+    out->renderFlags  = ps.desc.renderFlags;
+    return true;
+}
+
+void batcher_compareMechSnapshot(RenderSnapshot* snap) {
+    if (!snap) return;
+    const uint32_t liveCount = static_cast<uint32_t>(s_pendingSubmits.size());
+    const uint32_t snapCount = static_cast<uint32_t>(snap->mechPackets.size());
+    if (snapCount != liveCount) {
+        snap->mechCountMismatch = 1u;
+    }
+    const uint32_t compareCount = snapCount < liveCount ? snapCount : liveCount;
+    for (uint32_t i = 0u; i < compareCount; ++i) {
+        const ExtractedMechPacket& row = snap->mechPackets[i];
+        const PendingSubmit& ps = s_pendingSubmits[i];
+        if (row.typeLodIdx  != ps.typeLodIdx)          ++snap->mechHandleMismatch;
+        if (row.objectIdRaw != ps.desc.objectIdRaw)    ++snap->mechObjectIdMismatch;
+        if (row.texHandle   != ps.desc.slot0TexHandle) ++snap->mechTexHandleMismatch;
+        // mechMaterialIdxMismatch stays 0 — both sides are 0xFFFFFFFFu sentinel
+    }
 }

@@ -8,13 +8,14 @@
 // v1: static-prop block (identity + transform, observational)
 // v1.1: texArrayLayer/materialIdx wired from per-typeID primary material cache.
 //
-// Arena: module-static ping-pong — two 1 MiB RenderFrameArena instances
-// alternate each frame via reset(). No per-frame heap allocation.
+// Arena: module-static ping-pong — two 1 MiB buffers in BSS, wrapped by
+// RenderCore::FrameArena instances. No per-frame heap allocation.
 
 #include "render_snapshot.h"
 #include "../../RenderWorld/RenderWorld.h"
 #include "gos_static_prop_registry.h"
 #include "gos_static_prop_batcher.h"
+#include "gos_mech_batcher.h"  // MECH-EXTRACTION-0: batcher_getMechPendingCount/Entry/compareMechSnapshot
 
 #include <cstdio>
 #include <cstdint>
@@ -22,12 +23,16 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// Module-static ping-pong arenas (2 × 1 MiB allocated at startup, never freed).
+// Module-static ping-pong arenas (2 × 1 MiB in BSS, never freed).
 // s_arenaIndex flips each call: the incoming frame resets the idle arena and
 // writes into it; the previous frame's data sits untouched in the other slot.
+// FrameArena instances are non-owning wrappers; actual buffers are s_arenaBuffers.
 // ---------------------------------------------------------------------------
-static RenderFrameArena s_arenas[2];
-static uint32_t         s_arenaIndex = 0;
+static constexpr size_t kArenaBytes = 1024u * 1024u;
+alignas(16) static uint8_t s_arenaBuffers[2][kArenaBytes];
+static RenderCore::FrameArena s_frameArenas[2];
+static bool                   s_arenasInited = false;
+static uint32_t               s_arenaIndex   = 0;
 
 // ---------------------------------------------------------------------------
 // v2.3: last-produced snapshot, valid for one full frame.
@@ -59,17 +64,52 @@ RenderSnapshot ExtractRenderSnapshot()
     RenderSnapshot snap;
     snap.frameIndex    = ++s_frameIndex;
     snap.arenaOverflow = false;
+    // Lazy init on first call (avoids static-init order dependency).
+    if (!s_arenasInited) {
+        s_frameArenas[0].init(s_arenaBuffers[0], kArenaBytes);
+        s_frameArenas[1].init(s_arenaBuffers[1], kArenaBytes);
+        s_arenasInited = true;
+    }
     // Ping-pong: flip to the idle arena, reset it, and use it for this frame.
     s_arenaIndex ^= 1u;
-    s_arenas[s_arenaIndex].reset();
-    snap.arena = &s_arenas[s_arenaIndex];
+    s_frameArenas[s_arenaIndex].reset(static_cast<uint32_t>(s_frameIndex));
+    snap.frameArena = s_frameArenas[s_arenaIndex];
 
     // -----------------------------------------------------------------------
-    // v0: mech block
-    // ExtractedMech is an empty struct placeholder in v0.
-    // No arena allocation needed for zero-size structs.
+    // v0: mech placeholder (legacy zero-size struct; kept for log line compat)
     // -----------------------------------------------------------------------
     snap.mechs = Span<ExtractedMech>(nullptr, 0);
+
+    // -----------------------------------------------------------------------
+    // MECH-EXTRACTION-0: per-actor mech snapshot
+    // Gate: MC2_SNAPSHOT_MECH_EXTRACT=1 (default OFF).
+    // Observational only — no GL mutation, no dispatch change.
+    // materialIdx is 0xFFFFFFFFu sentinel in v0 (wired in Mech-1 follow-up).
+    // -----------------------------------------------------------------------
+    static const bool s_mechExtractEnabled = [] {
+        const char* v = std::getenv("MC2_SNAPSHOT_MECH_EXTRACT");
+        return v && v[0] == '1';
+    }();
+    snap.mechPackets = Span<ExtractedMechPacket>(nullptr, 0);
+    if (s_mechExtractEnabled) {
+        const uint32_t mechCount = batcher_getMechPendingCount();
+        RenderCore::Span<ExtractedMechPacket> mechSpan =
+            snap.frameArena.allocArray<ExtractedMechPacket>(mechCount, "ExtractedMechPacket");
+        ExtractedMechPacket* mechBuf = mechSpan.data;
+        if (!mechBuf && mechCount > 0u) {
+            snap.arenaOverflow = true;
+        } else {
+            uint32_t wrote = 0u;
+            for (uint32_t i = 0u; i < mechCount; ++i) {
+                ExtractedMechPacket pkt{};
+                if (batcher_getMechPendingEntry(i, &pkt))
+                    mechBuf[wrote++] = pkt;
+            }
+            snap.mechPackets       = Span<ExtractedMechPacket>(mechBuf, wrote);
+            snap.mechSnapshotCount = wrote;
+        }
+        batcher_compareMechSnapshot(&snap);
+    }
 
     // -----------------------------------------------------------------------
     // v0: light block
@@ -106,11 +146,13 @@ RenderSnapshot ExtractRenderSnapshot()
         }
 
         // Allocate from frame arena.
-        ExtractedStaticProp* propBuf = snap.arena->alloc<ExtractedStaticProp>(aliveCount);
+        RenderCore::Span<ExtractedStaticProp> propSpan =
+            snap.frameArena.allocArray<ExtractedStaticProp>(aliveCount, "ExtractedStaticProp");
+        ExtractedStaticProp* propBuf = propSpan.data;
         if (!propBuf && aliveCount > 0) {
             snap.arenaOverflow = true;
             std::fprintf(stderr,
-                "[RENDER_SNAPSHOT v2.3] WARNING: arena overflow allocating %u ExtractedStaticProp\n",
+                "[RENDER_SNAPSHOT] WARNING: arena overflow allocating %u ExtractedStaticProp\n",
                 aliveCount);
             // Leave staticProps empty; counters remain zero.
         } else {
@@ -271,8 +313,9 @@ RenderSnapshot ExtractRenderSnapshot()
     // -----------------------------------------------------------------------
     {
         const uint32_t slotCount = batcher_getDrawSlotCount();
-        ExtractedStaticPropPacket* pktBuf =
-            snap.arena->alloc<ExtractedStaticPropPacket>(slotCount);
+        RenderCore::Span<ExtractedStaticPropPacket> pktSpan =
+            snap.frameArena.allocArray<ExtractedStaticPropPacket>(slotCount, "ExtractedStaticPropPacket");
+        ExtractedStaticPropPacket* pktBuf = pktSpan.data;
         if (!pktBuf && slotCount > 0u) {
             snap.arenaOverflow = true;
         } else {
@@ -320,6 +363,9 @@ RenderSnapshot ExtractRenderSnapshot()
         snap.spBuildFallback       = fallback;
     }
 
+    // Sync arenaOverflow from FrameArena (definitive; explicit sets above are belt+suspenders).
+    snap.arenaOverflow = snap.frameArena.overflowed();
+
     // v3: extends v2.3 ok gate — adds three spBuild mismatch counters.
     // spBuildAttempted and spBuildFallback excluded (informational).
     snap.ok = (snap.staticPropValidationFail  == 0u &&
@@ -354,7 +400,7 @@ RenderSnapshot ExtractRenderSnapshot()
     static const bool s_logEnabled = []{ const char* v = std::getenv("MC2_RENDER_SNAPSHOT_LOG"); return v && v[0] == '1'; }();
     if (s_logEnabled) {
         std::fprintf(stderr,
-            "[RENDER_SNAPSHOT v3] frame=%llu mechs=%u static_props=%u lights=%u "
+            "[RENDER_SNAPSHOT v3+mech-extract] frame=%llu mechs=%u static_props=%u lights=%u "
             "bytes=%zu overflow=%d ok=%u\n"
             "  sp_fail=%u sp_sentinel_mat=%u sp_sentinel_cull=%u sizeof_static_prop=%zu\n"
             "  sp_tex_wired=%u sp_tex_sentinel=%u sp_mat_wired=%u sp_mat_sentinel=%u\n"
@@ -369,12 +415,15 @@ RenderSnapshot ExtractRenderSnapshot()
             "  material_idx_mismatch=%u instance_count_mismatch=%u tex_layer_mismatch=%u\n"
             "  [v2.3 snap_cull] skipped=%u active=%u slot_mismatch=%u\n"
             "  [v3 build] attempted=%u count_mismatch=%u pkt_mismatch=%u"
-            " meta_mismatch=%u fallback=%u\n",
+            " meta_mismatch=%u fallback=%u\n"
+            "  [v3 arena] used=%zu high_water=%zu allocs=%u overflow=%u\n"
+            "  [mech-extract] gate=%d snapshot=%u count_mismatch=%u handle_mismatch=%u"
+            " objectid_mismatch=%u tex_mismatch=%u\n",
             static_cast<unsigned long long>(snap.frameIndex),
             static_cast<uint32_t>(snap.mechs.size()),
             static_cast<uint32_t>(snap.staticProps.size()),
             static_cast<uint32_t>(snap.lights.size()),
-            snap.arena->bytesUsed(),
+            snap.frameArena.stats().usedBytes,
             snap.arenaOverflow ? 1 : 0,
             snap.ok,
             snap.staticPropValidationFail,
@@ -415,7 +464,17 @@ RenderSnapshot ExtractRenderSnapshot()
             snap.spBuildCountMismatch,
             snap.spBuildPacketMismatch,
             snap.spBuildMetaMismatch,
-            snap.spBuildFallback);
+            snap.spBuildFallback,
+            snap.frameArena.stats().usedBytes,
+            snap.frameArena.stats().highWaterBytes,
+            snap.frameArena.stats().allocCount,
+            snap.frameArena.stats().overflowCount,
+            s_mechExtractEnabled ? 1 : 0,
+            snap.mechSnapshotCount,
+            snap.mechCountMismatch,
+            snap.mechHandleMismatch,
+            snap.mechObjectIdMismatch,
+            snap.mechTexHandleMismatch);
     }
 
     // v2.3: store for getLastRenderSnapshot() before returning.

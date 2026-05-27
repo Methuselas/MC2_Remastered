@@ -184,3 +184,27 @@ public:
     static uint64_t getAllowedLateRegEventCount();
     static uint64_t getDisallowedLateRegEventCount();
 };
+
+// ---------------------------------------------------------------------------
+// MECH-EXTRACTION-0: mech pending-submit snapshot API.
+// Gate: MC2_SNAPSHOT_MECH_EXTRACT=1 (default OFF).
+// Full type definitions in render_snapshot.h; caller must include it.
+// gos_mech_batcher.cpp includes render_snapshot.h directly.
+// ---------------------------------------------------------------------------
+
+// Forward declarations so this header compiles without render_snapshot.h.
+struct ExtractedMechPacket;
+struct RenderSnapshot;
+
+// Returns count of pending submits for the current frame (after DoGameLogic, before flush).
+uint32_t batcher_getMechPendingCount();
+
+// Fills *out with s_pendingSubmits[idx] fields. Returns false if idx out of range.
+// materialIdx is always 0xFFFFFFFFu in v0 (not available pre-flush).
+bool batcher_getMechPendingEntry(uint32_t idx, ExtractedMechPacket* out);
+
+// Compares snap->mechPackets against live s_pendingSubmits.
+// Fills snap->mechCountMismatch, mechHandleMismatch, mechObjectIdMismatch,
+// mechTexHandleMismatch. mechMaterialIdxMismatch stays 0 (sentinel in v0).
+// Called from ExtractRenderSnapshot() under MC2_SNAPSHOT_MECH_EXTRACT gate.
+void batcher_compareMechSnapshot(RenderSnapshot* snap);

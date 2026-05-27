@@ -6,56 +6,40 @@
 // Extraction v1 (2026-05-24): static-prop snapshot populated alongside
 // v0 mech and light records. Arena 1 MiB per slot (2 MiB ping-pong total).
 // v1.1 (2026-05-25): texArrayLayer/materialIdx wired; material cache counters added.
-// Ping-pong: two module-static RenderFrameArena instances alternate each frame;
-// no per-frame heap allocation. Snapshot is valid only for the current frame.
+// FRAMEARENA-L2-1: RenderFrameArena replaced by RenderCore::FrameArena (typed,
+//   stats-tracked, alignment-safe). Ping-pong unchanged: two module-static 1 MiB
+//   buffers in render_snapshot.cpp alternate each frame. Spans valid for one frame.
 
 #pragma once
 
+#include "../RenderCore/FrameArena.h"
 #include "../RenderCore/Handle.h"
 #include <cstdint>
 #include <cstdlib>
-#include <memory>
 
-// Frame arena management: persistent allocator with per-frame reset.
-// Two module-static instances live in render_snapshot.cpp; ExtractRenderSnapshot()
-// flips between them each call. After the flip the idle arena is reset and
-// used for the new frame. Span pointers in RenderSnapshot are valid only for
-// the frame in which they were produced — do not hold them past the call site.
-class RenderFrameArena {
-public:
-    RenderFrameArena() = default;
-    ~RenderFrameArena() = default;
+// Span<T> alias: consumers use the unqualified name; type is RenderCore::Span<T>.
+// uint32_t count (was size_t); size()/begin()/end()/empty()/operator[] all present.
+template <typename T>
+using Span = RenderCore::Span<T>;
 
-    // Allocate n elements of type T from the current arena.
-    // Returns nullptr on overflow (snapshot->arenaOverflow set by caller).
-    template <typename T>
-    T* alloc(size_t count) {
-        size_t bytes = count * sizeof(T);
-        if (m_used + bytes > kArenaBytes) {
-            return nullptr;  // overflow
-        }
-        T* ptr = reinterpret_cast<T*>(m_buffer.get() + m_used);
-        m_used += bytes;
-        return ptr;
-    }
-
-    // Reset for next frame; caller alternates between two instances.
-    void reset() {
-        m_used = 0;
-    }
-
-    size_t bytesUsed() const { return m_used; }
-
-private:
-    static constexpr size_t kArenaBytes = 1024u * 1024u; // 1 MiB per slot; 2 MiB total ping-pong
-    std::unique_ptr<uint8_t[]> m_buffer{new uint8_t[kArenaBytes]};
-    size_t m_used = 0;
+// --- v0: mech extraction record (MECH-EXTRACTION-0) ---
+// Populated when MC2_SNAPSHOT_MECH_EXTRACT=1 (default OFF).
+// materialIdx is a 0xFFFFFFFFu sentinel in v0 — wired in Mech-1 follow-up.
+struct ExtractedMechPacket {
+    uint32_t objectIdRaw;    // GpuMechSubmitDesc::objectIdRaw (RenderObjectHandle.raw())
+    uint32_t instanceIdx;    // index i in this-frame s_pendingSubmits
+    uint32_t materialIdx;    // 0xFFFFFFFFu sentinel (not available pre-flush in v0)
+    uint32_t texHandle;      // GpuMechSubmitDesc::slot0TexHandle (mcTextureManager slot index)
+    uint32_t typeLodIdx;     // PendingSubmit::typeLodIdx (type x LOD record index)
+    uint32_t renderFlags;    // GpuMechSubmitDesc::renderFlags (bit0=ALPHA_TEST, bit1=lightsOut, bit2=highlighted)
 };
+static_assert(sizeof(ExtractedMechPacket) == 24,
+    "ExtractedMechPacket size changed — update extraction consumers");
 
-// --- v0: mech extraction record ---
+// Kept as a zero-size placeholder for code that still references ExtractedMech
+// (light-record TBD; rename ExtractedMech when lights get real fields).
 struct ExtractedMech {
-    // Placeholder for v0 fields; implementation deferred.
-    // Expected fields: handle, typeId, transform, etc.
+    // Placeholder — do not add fields; use ExtractedMechPacket for mech data.
 };
 
 // --- v0: light record ---
@@ -135,31 +119,24 @@ struct ExtractedStaticPropPacket {
 static_assert(sizeof(ExtractedStaticPropPacket) == 28,
     "ExtractedStaticPropPacket layout changed — update v2.2 extraction consumers");
 
-// Simple span wrapper for array views.
-template <typename T>
-struct Span {
-    T* data = nullptr;
-    size_t count = 0;
-
-    Span() = default;
-    Span(T* d, size_t c) : data(d), count(c) {}
-
-    size_t size() const { return count; }
-    bool empty() const { return count == 0; }
-    T* begin() { return data; }
-    T* end() { return data + count; }
-    const T* begin() const { return data; }
-    const T* end() const { return data + count; }
-};
-
 // Per-frame render snapshot: immutable view of extracted engine state.
 struct RenderSnapshot {
     // Frame identity
     uint64_t frameIndex = 0;
 
     // --- v0: mech + light records ---
-    Span<ExtractedMech> mechs;
+    Span<ExtractedMech> mechs;                    // kept for light-record placeholder (zero-size struct)
+    Span<ExtractedMechPacket> mechPackets;         // MECH-EXTRACTION-0 (gate: MC2_SNAPSHOT_MECH_EXTRACT=1)
     Span<LightRecord> lights;
+
+    // --- v0: mech compare counters (gate: MC2_SNAPSHOT_MECH_EXTRACT=1) ---
+    // All informational — NOT included in ok gate in v0.
+    uint32_t mechSnapshotCount       = 0u;  // entries captured this frame
+    uint32_t mechCountMismatch       = 0u;  // 1 if snapshot count != live pending count
+    uint32_t mechHandleMismatch      = 0u;  // rows where typeLodIdx differs from live
+    uint32_t mechObjectIdMismatch    = 0u;  // rows where objectIdRaw differs from live
+    uint32_t mechMaterialIdxMismatch = 0u;  // always 0 in v0 (sentinel); future: real compare
+    uint32_t mechTexHandleMismatch   = 0u;  // rows where texHandle differs from live
 
     // --- v1: static-prop snapshot ---
     Span<ExtractedStaticProp> staticProps;           // populated by ExtractRenderSnapshot v1
@@ -233,10 +210,10 @@ struct RenderSnapshot {
     uint32_t spBuildMetaMismatch   = 0u;  // DispatchMeta field divergence (accumulated)
     uint32_t spBuildFallback       = 0u;  // gate enabled/attempted but snapshot arrays NOT dispatched
 
-    // Non-owning pointer to the current frame's ping-pong arena.
-    // Owned by module statics in render_snapshot.cpp; valid for this frame only.
-    // Do NOT hold this pointer past the frame — the arena is reset on the next call.
-    RenderFrameArena* arena = nullptr;
+    // L2 frame-lifetime arena. Backed by one of two module-static 1 MiB buffers
+    // in render_snapshot.cpp (ping-pong). FrameArena is non-owning: base_ points
+    // into the module-static buffer; valid until the next ExtractRenderSnapshot().
+    RenderCore::FrameArena frameArena;
     bool arenaOverflow = false;
 };
 
