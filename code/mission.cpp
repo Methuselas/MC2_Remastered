@@ -137,6 +137,63 @@
 // Defined in mclib/tgl.cpp; incremented by GameOS frame-end path.
 extern uint32_t g_mc2FrameCounter;
 
+#ifdef LAB_ONLY
+// LAB_ONLY timing globals — defined in mission2.cpp / mover.cpp.
+extern __int64 x;
+extern __int64 x1;
+extern __int64 MCTimeABLLoad;
+extern __int64 MCTimeMiscToTeamLoad;
+extern __int64 MCTimeTeamLoad;
+extern __int64 MCTimeObjectLoad;
+extern __int64 MCTimeTerrainLoad;
+extern __int64 MCTimeMoveLoad;
+extern __int64 MCTimeMissionABLLoad;
+extern __int64 MCTimeWarriorLoad;
+extern __int64 MCTimeMoverPartsLoad;
+extern __int64 MCTimeObjectiveLoad;
+extern __int64 MCTimeCommanderLoad;
+extern __int64 MCTimeMiscLoad;
+extern __int64 MCTimeGUILoad;
+extern __int64 MCTimeMissionTotal;
+extern __int64 MCTimeTerrainUpdate;
+extern __int64 MCTimeCameraUpdate;
+extern __int64 MCTimeWeatherUpdate;
+extern __int64 MCTimePathManagerUpdate;
+extern __int64 MCTimeRunBrainUpdate;
+extern __int64 MCTimePath1Update;
+extern __int64 MCTimePath2Update;
+extern __int64 MCTimePath3Update;
+extern __int64 MCTimePath4Update;
+extern __int64 MCTimePath5Update;
+extern __int64 MCTimeCalcPath1Update;
+extern __int64 MCTimeCalcPath2Update;
+extern __int64 MCTimeCalcPath3Update;
+extern __int64 MCTimeCalcPath4Update;
+extern __int64 MCTimeCalcPath5Update;
+extern __int64 MCTimeCalcGoal1Update;
+extern __int64 MCTimeCalcGoal2Update;
+extern __int64 MCTimeCalcGoal3Update;
+extern __int64 MCTimeCalcGoal4Update;
+extern __int64 MCTimeCalcGoal5Update;
+extern __int64 MCTimeCalcGoal6Update;
+extern __int64 MCTimeTerrainGeometry;
+extern __int64 MCTimeInterfaceUpdate;
+extern __int64 MCTimeCraterUpdate;
+extern __int64 MCTimeTXMManagerUpdate;
+extern __int64 MCTimeSensorUpdate;
+extern __int64 MCTimeLOSUpdate;
+extern __int64 MCTimeCollisionUpdate;
+extern __int64 MCTimeMissionScript;
+extern __int64 MCTimeTerrainObjectsUpdate;
+extern __int64 MCTimeMechsUpdate;
+extern __int64 MCTimeVehiclesUpdate;
+extern __int64 MCTimeTurretsUpdate;
+extern __int64 MCTimeAllElseUpdate;
+extern __int64 MCTimeLOSCalc;
+extern __int64 MCTimeAnimationCalc;
+extern float   OneOverProcessorSpeed;
+#endif
+
 //----------------------------------------------------------------------------------
 // Static globals
 float minFrameRate = 4.0;

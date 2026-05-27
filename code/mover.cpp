@@ -163,6 +163,10 @@ extern void DebugWeaponFireChunk (WeaponFireChunkPtr chunk1, WeaponFireChunkPtr 
 //extern ObjectMapPtr			GameObjectMap;
 extern unsigned long		NextIdNumber;
 
+#ifdef LAB_ONLY
+extern __int64 MCTimeCalcGoal1Update;
+#endif
+
 #ifdef USE_SOUNDS
 extern bool					friendlyDestroyed;
 extern bool					enemyDestroyed;

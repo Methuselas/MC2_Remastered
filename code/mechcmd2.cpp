@@ -87,6 +87,11 @@ extern CPrefs prefs;
 // NS3: systemHeap defined in mclib/heap.cpp (engine boundary).
 UserHeapPtr guiHeap = NULL;
 
+#ifdef LAB_ONLY
+long         currentLineElement = 0;
+LineElement* debugLines[1024];
+#endif
+
 // NS3: fastFiles/numFastFiles/maxFastFiles defined in mclib/fastfile.cpp (engine boundary).
 
 long GameDifficulty = 0;

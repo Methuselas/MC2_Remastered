@@ -58,6 +58,26 @@ __int64 MCTimeMechsTL				= 0;
 __int64 MCTimeVehiclesTL			= 0;
 __int64 MCTimeTurretsTL				= 0;
 
+__int64 x                       = 0;
+__int64 MCTimeAnimationCalc     = 0;
+__int64 MCTimeRunBrainUpdate    = 0;
+__int64 MCTimePath1Update       = 0;
+__int64 MCTimePath2Update       = 0;
+__int64 MCTimePath3Update       = 0;
+__int64 MCTimePath4Update       = 0;
+__int64 MCTimePath5Update       = 0;
+__int64 MCTimeCalcPath1Update   = 0;
+__int64 MCTimeCalcPath2Update   = 0;
+__int64 MCTimeCalcPath3Update   = 0;
+__int64 MCTimeCalcPath4Update   = 0;
+__int64 MCTimeCalcPath5Update   = 0;
+__int64 MCTimeCalcGoal1Update   = 0;
+__int64 MCTimeCalcGoal2Update   = 0;
+__int64 MCTimeCalcGoal3Update   = 0;
+__int64 MCTimeCalcGoal4Update   = 0;
+__int64 MCTimeCalcGoal5Update   = 0;
+__int64 MCTimeCalcGoal6Update   = 0;
+
 extern __int64 MCTimeTerrainGeometry 	; 
 extern __int64 MCTimeCraterUpdate 		; 
 extern __int64 MCTimeTXMManagerUpdate 	; 
@@ -69,8 +89,6 @@ extern __int64 MCTimeInterfaceUpdate 	;
 extern __int64 MCTimeMissionTotal; 
 
 extern __int64 MCTimeLOSCalc;
-
-extern __int64 x;
 
 extern float OneOverProcessorSpeed;
 #endif

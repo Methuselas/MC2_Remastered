@@ -1449,6 +1449,22 @@ class gosRenderer {
         void setTerrainShadowSoftness(float s) { terrain_shadow_softness_ = s; }
         float getTerrainShadowSoftness() const { return terrain_shadow_softness_; }
 
+        // Per-material normal boost + global tint strength
+        void setTerrainMatNormalBoost(float r, float g, float d, float c) {
+            terrain_mat_normal_boost_[0] = r;
+            terrain_mat_normal_boost_[1] = g;
+            terrain_mat_normal_boost_[2] = d;
+            terrain_mat_normal_boost_[3] = c;
+        }
+        void getTerrainMatNormalBoost(float* r, float* g, float* d, float* c) const {
+            *r = terrain_mat_normal_boost_[0];
+            *g = terrain_mat_normal_boost_[1];
+            *d = terrain_mat_normal_boost_[2];
+            *c = terrain_mat_normal_boost_[3];
+        }
+        void  setTerrainTintStrengthScale(float s) { terrain_tint_strength_scale_ = s; }
+        float getTerrainTintStrengthScale() const   { return terrain_tint_strength_scale_; }
+
         // Terrain draw killswitch
         void setTerrainDrawEnabled(bool e) { terrain_draw_enabled_ = e; }
         bool getTerrainDrawEnabled() const { return terrain_draw_enabled_; }
@@ -1690,6 +1706,9 @@ class gosRenderer {
         float terrain_cell_rotation_ = 1.0f;
         float terrain_pom_scale_ = 0.02f;
         float terrain_world_scale_ = 15360.0f;
+        // Per-material normal boost: [rock, grass, dirt, concrete]; matches shader const default.
+        float terrain_mat_normal_boost_[4] = { 0.9f, 1.1f, 1.1f, 2.5f };
+        float terrain_tint_strength_scale_ = 1.0f;  // 0=colormap passthrough, 1=full tint
 
         // Cached uniform locations for terrain shader (avoid per-draw glGetUniformLocation)
         struct TerrainUniformLocs {
@@ -1704,6 +1723,8 @@ class gosRenderer {
             GLint mapHalfExtent = -1;
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
             GLint worldToClipGL = -1;            // F1 Task 7b probe uniform
+            GLint matNormalBoost = -1;           // per-material normal strength (vec4)
+            GLint tintStrengthScale = -1;        // global tint blend scalar
             GLuint program = 0;
         } terrainLocs_;
 
@@ -1720,6 +1741,8 @@ class gosRenderer {
             GLint ssboRecordBase = -1;
             GLint terrainMaterialProfile = -1;  // C1 tactical (mclib/terrain.h)
             GLint tessDebug = -1;               // shader debug-viz mode (frag mode 1..8)
+            GLint matNormalBoost = -1;          // per-material normal strength (vec4)
+            GLint tintStrengthScale = -1;       // global tint blend scalar
             GLuint program = 0;
         } thinTerrainLocs_;
 
@@ -1763,7 +1786,9 @@ class gosRenderer {
             terrainLocs_.mapHalfExtent = glGetUniformLocation(shp, "mapHalfExtent");
             terrainLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
             // F1 Task 7b: probe uniform location (flat uniform, not UBO member).
-            terrainLocs_.worldToClipGL = glGetUniformLocation(shp, "u_worldToClipGL");
+            terrainLocs_.worldToClipGL    = glGetUniformLocation(shp, "u_worldToClipGL");
+            terrainLocs_.matNormalBoost   = glGetUniformLocation(shp, "matNormalBoost");
+            terrainLocs_.tintStrengthScale = glGetUniformLocation(shp, "tintStrengthScale");
         }
 
         void cacheThinTerrainUniformLocations(GLuint shp) {
@@ -1795,6 +1820,8 @@ class gosRenderer {
             thinTerrainLocs_.ssboRecordBase     = glGetUniformLocation(shp, "ssboRecordBase");
             thinTerrainLocs_.terrainMaterialProfile = glGetUniformLocation(shp, "g_terrainMaterialProfile");
             thinTerrainLocs_.tessDebug          = glGetUniformLocation(shp, "tessDebug");
+            thinTerrainLocs_.matNormalBoost     = glGetUniformLocation(shp, "matNormalBoost");
+            thinTerrainLocs_.tintStrengthScale  = glGetUniformLocation(shp, "tintStrengthScale");
         }
 
         void cacheShadowUniformLocations(GLuint shp) {
@@ -2832,6 +2859,8 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
 {
     ZoneScopedN("Terrain::IndirectDraw");
     if (!g_gos_renderer) return false;
+    // Honour the ImGui "Terrain Draw" toggle on the GPU-driven path too.
+    if (!g_gos_renderer->getTerrainDrawEnabled()) return false;
     glsl_program* p = g_gos_renderer->getThinTerrainProgram();
     if (!p || !p->shp_) return false;
     if (thinRecordSSBO == 0 || indirectCmdBuffer == 0) return false;
@@ -3105,8 +3134,11 @@ bool gos_terrain_bridge_drawIndirect(int cmdCount, unsigned int recipeSSBO,
     } }
     // ── end probe 8 ────────────────────────────────────────────────────────
 
-    // ---- Draw --------------------------------------------------------------
+    // ---- Draw (wireframe support mirrors tessellated path at ~5386) ---------
+    const bool indirectWireframe = g_gos_renderer->getTerrainWireframe();
+    if (indirectWireframe) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glMultiDrawArraysIndirect(GL_TRIANGLES, nullptr, (GLsizei)cmdCount, 0);
+    if (indirectWireframe) glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
     // Reset useAtlasColormap so M2 fast path (shares this program) doesn't
     // inherit the atlas-mode flag and sample from AtlasUV against a per-tile
@@ -5040,6 +5072,8 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     if (tl.pomParams >= 0)            glUniform4fv(tl.pomParams, 1, pomP);
     if (tl.terrainWorldScale >= 0)    glUniform4fv(tl.terrainWorldScale, 1, worldScaleV);
     if (tl.cellBombParams >= 0)       glUniform4fv(tl.cellBombParams, 1, cellP);
+    if (tl.matNormalBoost >= 0)       glUniform4fv(tl.matNormalBoost, 1, terrain_mat_normal_boost_);
+    if (tl.tintStrengthScale >= 0)    glUniform1f(tl.tintStrengthScale, terrain_tint_strength_scale_);
     if (tl.time >= 0) {
         float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
         glUniform1f(tl.time, elapsed);
@@ -5151,6 +5185,8 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
     if (tl.pomParams >= 0)            glUniform4fv(tl.pomParams, 1, pomP);
     if (tl.terrainWorldScale >= 0)    glUniform4fv(tl.terrainWorldScale, 1, worldScaleV);
     if (tl.cellBombParams >= 0)       glUniform4fv(tl.cellBombParams, 1, cellP);
+    if (tl.matNormalBoost >= 0)       glUniform4fv(tl.matNormalBoost, 1, terrain_mat_normal_boost_);
+    if (tl.tintStrengthScale >= 0)    glUniform1f(tl.tintStrengthScale, terrain_tint_strength_scale_);
     if (tl.time >= 0) {
         float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
         glUniform1f(tl.time, elapsed);
@@ -5271,6 +5307,8 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
     if (tl.terrainWorldScale >= 0) glUniform4fv(tl.terrainWorldScale, 1, worldScaleV);
     float cellP[4] = { terrain_cell_scale_, terrain_cell_jitter_, terrain_cell_rotation_, 0.0f };
     if (tl.cellBombParams >= 0) glUniform4fv(tl.cellBombParams, 1, cellP);
+    if (tl.matNormalBoost >= 0)       glUniform4fv(tl.matNormalBoost, 1, terrain_mat_normal_boost_);
+    if (tl.tintStrengthScale >= 0)    glUniform1f(tl.tintStrengthScale, terrain_tint_strength_scale_);
     if (tl.time >= 0) {
         float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
         glUniform1f(tl.time, elapsed);
@@ -7280,6 +7318,20 @@ void gos_SetTerrainShadowSoftness(float s) {
 }
 float gos_GetTerrainShadowSoftness() {
     return g_gos_renderer ? g_gos_renderer->getTerrainShadowSoftness() : 2.5f;
+}
+
+void gos_SetTerrainMatNormalBoost(float rock, float grass, float dirt, float concrete) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainMatNormalBoost(rock, grass, dirt, concrete);
+}
+void gos_GetTerrainMatNormalBoost(float* rock, float* grass, float* dirt, float* concrete) {
+    if (g_gos_renderer) g_gos_renderer->getTerrainMatNormalBoost(rock, grass, dirt, concrete);
+    else { *rock = 0.9f; *grass = 1.1f; *dirt = 1.1f; *concrete = 2.5f; }
+}
+void gos_SetTerrainTintStrengthScale(float s) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainTintStrengthScale(s);
+}
+float gos_GetTerrainTintStrengthScale() {
+    return g_gos_renderer ? g_gos_renderer->getTerrainTintStrengthScale() : 1.0f;
 }
 
 void gos_SetTerrainDrawEnabled(bool e) {
