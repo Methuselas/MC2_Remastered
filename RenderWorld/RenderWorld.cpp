@@ -711,9 +711,8 @@ VisibilityResult queryVisibility(VisibilityRequest req) {
     // V0+V1A: reporting-only. Does not drive culling, draw submission,
     // gameplay selection, or object lifetime.
     // req.kindMask / req.layerMask present for API stability; unused in V0+V1A.
-    // F1-4B: req.viewId resolved via resolveView; logged but does not gate counts.
-    const RenderCore::EngineView* view = RenderCore::resolveView(req.viewId);
-    (void)view;  // resolved for future use; viewValid logged in frameBannerTick
+    // F1-4B: req.viewId is accepted but view resolution is intentionally deferred
+    // to the caller (frameBannerTick owns resolveView + view_valid logging).
     VisibilityResult r{};
     // V0: lifecycle counts.
     r.static_props = legacy::getStaticPropActiveCount();
