@@ -1394,34 +1394,56 @@ int main(int argc, char** argv)
                 g_dpSelProp = sel;
             }
 
-            // TERRAIN-SPINE-0: pass-level snapshot for the inspector's
-            // "Terrain Pass" header. Mirrors the g_dpSelProp pattern — fill
-            // here, displayed by EditorInspector. Read-only — no GL state
-            // touched, no mutation of any render path.
+            // TERRAIN-PASS-PACKET-0: promote pass-level terrain facts from
+            // live accessors into the RenderSnapshot. Pass-level only — no
+            // per-tile identity, no new counters introduced. The inspector
+            // (below) becomes a downstream consumer of snap.terrainPass.
+            // Read-only — no GL state touched, no mutation of any render path.
+            //
+            // Free-function accessors defined in gameos_graphics.cpp; full
+            // gosRenderer type is private to that TU.
+            extern uint32_t gos_getTerrainSurfaceProgramId();
+            extern uint32_t gos_getThinTerrainProgramId();
+            extern uint32_t gos_getWaterFastProgramId();
+            extern uint32_t gos_getTerrainOverlayProgramId();
             {
-                // Free-function accessors defined in gameos_graphics.cpp; full
-                // gosRenderer type is private to that TU. Linkage matches the
-                // extern "C" block at the definition site.
-                extern uint32_t gos_getTerrainSurfaceProgramId();
-                extern uint32_t gos_getThinTerrainProgramId();
-                extern uint32_t gos_getWaterFastProgramId();
-                extern uint32_t gos_getTerrainOverlayProgramId();
+                const RenderCore::EngineView& view = RenderCore::getCurrentView();
+                snap.terrainPass.viewId          = view.id;
+                snap.terrainPass.legacyProgramId = gos_getTerrainSurfaceProgramId();
+                snap.terrainPass.drawCallCount   = TerrainPatchStream::getLastFlushBucketCount();
+                uint32_t flags = 0u;
+                // tessellationOn: hard-coded true (matches inspector field semantics).
+                flags |= TerrainPassFacts::kFlagTessellationOn;
+                // viewUniformsBound: terrain shaders don't consume ViewUniforms (binding=3) yet.
+                // (Leave kFlagViewUniformsBound clear.)
+                if (TerrainPatchStream::wasLastFlushOverflowed())
+                    flags |= TerrainPassFacts::kFlagOverflow;
+                snap.terrainPass.flags = flags;
+            }
+
+            // TERRAIN-SPINE-0: inspector filler. Now a downstream consumer of
+            // snap.terrainPass for the pass-level fields promoted in
+            // TERRAIN-PASS-PACKET-0. Per-program ids + per-flush detail fields
+            // that were not promoted to the snapshot continue to read directly
+            // from live accessors (no behavior change for those).
+            {
                 EditorInspector::TerrainPassSnapshot ts;
-                ts.surfaceProgramId   = gos_getTerrainSurfaceProgramId();
+                ts.surfaceProgramId   = snap.terrainPass.legacyProgramId;
                 ts.thinProgramId      = gos_getThinTerrainProgramId();
                 ts.waterFastProgramId = gos_getWaterFastProgramId();
                 ts.overlayProgramId   = gos_getTerrainOverlayProgramId();
-                ts.bucketCount  = TerrainPatchStream::getLastFlushBucketCount();
+                ts.bucketCount  = snap.terrainPass.drawCallCount;
                 ts.vertCount    = TerrainPatchStream::getLastFlushVertCount();
                 ts.thinRecCount = TerrainPatchStream::getLastFlushThinRecCount();
                 ts.recipeCount  = TerrainPatchStream::getLastFlushRecipeCount();
-                ts.overflow     = TerrainPatchStream::wasLastFlushOverflowed();
-                // v1: terrain shaders don't consume the ViewUniforms UBO yet.
-                ts.viewUniformsBoundForTerrain = false;
+                ts.overflow     = (snap.terrainPass.flags & TerrainPassFacts::kFlagOverflow) != 0u;
+                ts.viewUniformsBoundForTerrain =
+                    (snap.terrainPass.flags & TerrainPassFacts::kFlagViewUniformsBound) != 0u;
                 const RenderCore::EngineView& view = RenderCore::getCurrentView();
-                ts.currentViewId   = view.id;
+                ts.currentViewId   = snap.terrainPass.viewId;
                 ts.currentViewName = view.debugName ? view.debugName : "";
-                ts.tessellationOn  = true;
+                ts.tessellationOn  =
+                    (snap.terrainPass.flags & TerrainPassFacts::kFlagTessellationOn) != 0u;
                 EditorInspector::setTerrainPassSnapshot(ts);
             }
 
