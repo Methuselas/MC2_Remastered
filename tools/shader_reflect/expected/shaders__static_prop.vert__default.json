@@ -11,7 +11,7 @@
           "matrix_stride": null,
           "name": "i",
           "offset": 0,
-          "type": "_617"
+          "type": "_719"
         }
       ],
       "name": "Instances"
@@ -37,7 +37,7 @@
           "matrix_stride": null,
           "name": "t",
           "offset": 0,
-          "type": "_715"
+          "type": "_814"
         }
       ],
       "name": "PerType"
@@ -63,7 +63,7 @@
           "matrix_stride": null,
           "name": "light",
           "offset": 0,
-          "type": "_235"
+          "type": "_239"
         }
       ],
       "name": "LightsData"
@@ -79,7 +79,7 @@
           "matrix_stride": null,
           "name": "g_scene",
           "offset": 0,
-          "type": "_182"
+          "type": "_186"
         }
       ],
       "name": "SceneData"
@@ -134,6 +134,20 @@
           "matrix_stride": null,
           "name": "u_ambientV1Strength",
           "offset": 84,
+          "type": "float"
+        },
+        {
+          "array_stride": 16,
+          "matrix_stride": null,
+          "name": "u_iblSh",
+          "offset": 96,
+          "type": "vec3"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_iblShStrength",
+          "offset": 240,
           "type": "float"
         }
       ],

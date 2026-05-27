@@ -127,8 +127,6 @@ uniform float u_ambientV1Strength;
 // Default u_iblShStrength = 0.0 (CPU uploads 0.0 when env unset/0).
 // The `if (u_iblShStrength > 0.0)` guard below short-circuits evalShL2
 // entirely -> byte-identical to pre-slice output.
-// TODO(V-IBL-STATIC-1): shader_reflect goldens deferred; regen in fresh
-// worktree (SHADER-REFLECT-HYGIENE-4 followup).
 uniform vec3  u_iblSh[9];
 uniform float u_iblShStrength;
 
