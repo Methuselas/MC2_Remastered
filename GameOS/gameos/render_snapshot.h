@@ -189,8 +189,12 @@ struct RenderSnapshot {
     uint32_t staticPropPacketCount   = 0;  // packets successfully captured
     uint32_t staticPropPacketInvalid = 0;  // batcher_getDrawSlotEntry failures
 
-    // v2.1 hard gate: 1 iff sp_fail==0 && sp_packet_ranges_invalid==0
-    //                       && sp_packet_invalid==0 && !arenaOverflow
+    // v2.2 hard gate: 1 iff all of:
+    //   staticPropValidationFail==0, staticPropPacketRangesFail==0,
+    //   staticPropPacketInvalid==0, !arenaOverflow,
+    //   spCountMismatch==0, spSortedSlotMismatch==0, spGlobalPacketMismatch==0,
+    //   spPipelineMismatch==0, spMaterialIdxMismatch==0, spTexLayerMismatch==0.
+    //   (spInstanceCountMismatch is informational only — excluded from gate.)
     uint32_t ok = 0u;
 
     // --- v2.2: dispatch-fact compare results (filled by batcher_compareSnapshotPackets) ---
