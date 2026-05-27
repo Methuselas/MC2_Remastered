@@ -14,6 +14,30 @@ enum class ViewKind : uint32_t {
     ShadowDynamic = 3,
 };
 
+// ViewMode: descriptive enum tagging *what kind of output* a view produces.
+// Substrate-only (ENGINEVIEW-VIEWMODE-0); no consumers branch on this field yet.
+// Future slices will wire ObjectIdDebug, sensor modes, etc.
+enum class ViewMode : uint8_t {
+    Visual          = 0,  // normal rendered output
+    ObjectIdDebug   = 1,  // future: object-ID debug overlay (no implementer yet)
+    TacticalOverlay = 2,  // future: tactical/UI overlay view (no implementer yet)
+    Thermal         = 3,  // future: thermal sensor view (no implementer yet)
+    Infrared        = 4,  // future: IR sensor view (no implementer yet)
+    LowLight        = 5,  // future: low-light sensor view (no implementer yet)
+};
+
+inline const char* toString(ViewMode m) {
+    switch (m) {
+        case ViewMode::Visual:          return "Visual";
+        case ViewMode::ObjectIdDebug:   return "ObjectIdDebug";
+        case ViewMode::TacticalOverlay: return "TacticalOverlay";
+        case ViewMode::Thermal:         return "Thermal";
+        case ViewMode::Infrared:        return "Infrared";
+        case ViewMode::LowLight:        return "LowLight";
+    }
+    return "unknown";
+}
+
 // Per-frame view descriptor. GL-free; safe to copy.
 // frustumPlanes not present in F1-4A — added when first consumer needs them.
 struct alignas(16) EngineView {
@@ -22,6 +46,7 @@ struct alignas(16) EngineView {
     int32_t      viewport[4]    = {};  // x, y, w, h in pixels
     uint32_t     renderMask     = 0xFFFFFFFF;
     const char*  debugName      = nullptr;  // must point to a string literal; never heap
+    ViewMode     mode           = ViewMode::Visual;  // descriptive; no consumer branches yet
 };
 
 } // namespace RenderCore

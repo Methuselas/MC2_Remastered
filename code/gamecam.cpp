@@ -212,6 +212,7 @@ void GameCamera::render (void)
 					mainView.viewport[3] = Environment.drawableHeight;
 					mainView.renderMask = 0xFFFFFFFF;
 					mainView.debugName = "MainScene";
+					mainView.mode = RenderCore::ViewMode::Visual;
 					RenderCore::setCurrentView(mainView);
 				}
 

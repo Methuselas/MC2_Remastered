@@ -55,8 +55,9 @@ void RenderCore::setCurrentView(const RenderCore::EngineView& view) {
     static int s_evFrame = 0;
     ++s_evFrame;
     if (s_evFrame == 1 || s_evFrame % 600 == 0) {
-        fprintf(stderr, "[ENGINE_VIEW v1] frame=%d id=%u name=%s\n",
-                s_evFrame, view.id, view.debugName ? view.debugName : "?");
+        fprintf(stderr, "[ENGINE_VIEW v1] frame=%d id=%u name=%s mode=%s\n",
+                s_evFrame, view.id, view.debugName ? view.debugName : "?",
+                RenderCore::toString(view.mode));
         fflush(stderr);
     }
 }
