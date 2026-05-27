@@ -193,6 +193,20 @@ struct RenderSnapshot {
     //                       && sp_packet_invalid==0 && !arenaOverflow
     uint32_t ok = 0u;
 
+    // --- v2.2: dispatch-fact compare results (filled by batcher_compareSnapshotPackets) ---
+    // Called from ExtractRenderSnapshot() after v2.1 packet capture, before ok computation.
+    // spInstanceCountMismatch is informational only — different-frame authority by design.
+    // All other counters are included in the ok gate.
+    uint32_t spCompareSnapshotCount  = 0u;  // snap->staticPropPackets.count at compare time
+    uint32_t spCompareLiveCount      = 0u;  // batcher_getDrawSlotCount() at compare time
+    uint32_t spCountMismatch         = 0u;  // 1 if snapshot_count != live_count
+    uint32_t spSortedSlotMismatch    = 0u;  // rows where snap[i].sortedSlot != i
+    uint32_t spGlobalPacketMismatch  = 0u;  // rows where globalPacketIdx != s_sortedPacketOrder[i]
+    uint32_t spPipelineMismatch      = 0u;  // rows where pipelineId diverges from live alpha split
+    uint32_t spMaterialIdxMismatch   = 0u;  // rows where materialIdx != s_packetMaterialIdx[i]
+    uint32_t spInstanceCountMismatch = 0u;  // rows where prev-frame count != current-frame count
+    uint32_t spTexLayerMismatch      = 0u;  // rows where MaterialGpu.albedoTex != texArrayLayer
+
     // Non-owning pointer to the current frame's ping-pong arena.
     // Owned by module statics in render_snapshot.cpp; valid for this frame only.
     // Do NOT hold this pointer past the frame — the arena is reset on the next call.
