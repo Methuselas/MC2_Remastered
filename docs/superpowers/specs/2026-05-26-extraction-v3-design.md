@@ -1,6 +1,7 @@
 # Extraction v3 Design: Snapshot-Owned Slot Identity
 
 **Date:** 2026-05-26
+**Slice kind:** dispatch-changing (gated) — snapshot arrays drive actual `glDraw*` calls when compare clean; live fallback on mismatch. Not observational/diagnostic.
 **Gate:** `MC2_SNAPSHOT_STATIC_PROP_BUILD=1` (default OFF)
 **Prerequisite HEAD:** `88379448` (v2.3 shipped, tier1 5/5 PASS)
 
@@ -212,7 +213,7 @@ const bool useSnapshot = snapBuilt
     && spBuildMetaMismatch   == 0;
 
 if (!useSnapshot && snapBuilt) {
-    ++s_snapBuildFallback;
+    ++s_spBuildFallback;
     // log: [RENDER_SNAPSHOT v3] fallback pkt_mismatch=N meta_mismatch=N
 }
 
@@ -233,8 +234,13 @@ intact and review simple.
 [RENDER_SNAPSHOT v3] attempted=1 count_mismatch=0 packet_mismatch=0 meta_mismatch=0 fallback=0
 ```
 
-Emitted each flush when `spBuildAttempted == 1` and `s_v6TraceEnabled` is set,
-or always to stderr on first fallback.
+**NOT gated on `s_v6TraceEnabled`** — that gate fires per draw-slot (134+ lines/frame) and would
+DOS logs. Instead emit the v3 summary line:
+- Always, on first fallback/mismatch frame (unconditional)
+- Every 600 frames when `spBuildAttempted == 1` (rate-limited steady-state)
+- Never per-slot
+
+Per-slot verbose tracing remains under the existing `s_v6TraceEnabled` gate and is unaffected.
 
 ---
 
@@ -246,6 +252,7 @@ or always to stderr on first fallback.
 | `GameOS/gameos/render_snapshot.cpp` | Read build stats from batcher; extend ok gate; bump log label v2.3→v3 |
 | `GameOS/gameos/gos_static_prop_batcher.h` | Declare `s_snapshotBuildEnabled` or accessor; update log-version constant |
 | `GameOS/gameos/gos_static_prop_batcher.cpp` | `s_snapV6Packets/Meta` statics; init env gate; snapshot builder loop; compare; dispatch ref-swap |
+| `docs/tier1_env_vars.md` | Add `MC2_SNAPSHOT_STATIC_PROP_BUILD` entry (parallel to `MC2_SNAP_CULL`) |
 
 **Not touched:** shadow pass, `prepareBaseInstanceTable`, any other GPU path.
 
