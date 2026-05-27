@@ -277,11 +277,26 @@ RenderSnapshot ExtractRenderSnapshot()
         }
     }
 
-    // v2.1 hard gate — 1 iff all failure/overflow counters are zero.
+    // -----------------------------------------------------------------------
+    // Extraction v2.2: dispatch-fact compare (batcher internal state vs snapshot rows)
+    // -----------------------------------------------------------------------
+    // Always call — fills spCompareLiveCount even when snapshot data is null (e.g. arena
+    // overflow), so the log always shows live_count and a count_mismatch=1 rather than
+    // silently leaving both zero. batcher_compareSnapshotPackets handles null data internally.
+    batcher_compareSnapshotPackets(&snap);
+
+    // v2.2 hard gate — extends v2.1: 1 iff all structural counters are zero.
+    // spInstanceCountMismatch is EXCLUDED: different-frame authority by design.
     snap.ok = (snap.staticPropValidationFail  == 0u &&
                snap.staticPropPacketRangesFail == 0u &&
                snap.staticPropPacketInvalid    == 0u &&
-               !snap.arenaOverflow) ? 1u : 0u;
+               !snap.arenaOverflow             &&
+               snap.spCountMismatch            == 0u &&
+               snap.spSortedSlotMismatch       == 0u &&
+               snap.spGlobalPacketMismatch     == 0u &&
+               snap.spPipelineMismatch         == 0u &&
+               snap.spMaterialIdxMismatch      == 0u &&
+               snap.spTexLayerMismatch         == 0u) ? 1u : 0u;
 
     // -----------------------------------------------------------------------
     // Visibility query for log line
@@ -301,7 +316,7 @@ RenderSnapshot ExtractRenderSnapshot()
     if (!s_logEnabled) return snap;
 
     std::fprintf(stderr,
-        "[RENDER_SNAPSHOT v1] frame=%llu mechs=%u static_props=%u lights=%u "
+        "[RENDER_SNAPSHOT v2.2] frame=%llu mechs=%u static_props=%u lights=%u "
         "bytes=%zu overflow=%d ok=%u\n"
         "  sp_fail=%u sp_sentinel_mat=%u sp_sentinel_cull=%u sizeof_static_prop=%zu\n"
         "  sp_tex_wired=%u sp_tex_sentinel=%u sp_mat_wired=%u sp_mat_sentinel=%u\n"
@@ -310,7 +325,10 @@ RenderSnapshot ExtractRenderSnapshot()
         "  sp_alpha_on=%u sp_has_shape_name=%u\n"
         "  sp_packet_ranges_ok=%u sp_packet_ranges_invalid=%u\n"
         "  sp_packets=%u sp_packet_invalid=%u\n"
-        "  visibility_static_props=%u sp_vis_delta=%d\n",
+        "  visibility_static_props=%u sp_vis_delta=%d\n"
+        "  [v2.2 compare] snapshot_count=%u live_count=%u count_mismatch=%u\n"
+        "  sorted_slot_mismatch=%u global_packet_mismatch=%u pipeline_mismatch=%u\n"
+        "  material_idx_mismatch=%u instance_count_mismatch=%u tex_layer_mismatch=%u\n",
         static_cast<unsigned long long>(snap.frameIndex),
         static_cast<uint32_t>(snap.mechs.size()),
         static_cast<uint32_t>(snap.staticProps.size()),
@@ -339,7 +357,16 @@ RenderSnapshot ExtractRenderSnapshot()
         snap.staticPropPacketInvalid,
         visibilityStaticPropsCount,
         static_cast<int32_t>(snap.staticProps.size()) -
-            static_cast<int32_t>(visibilityStaticPropsCount));
+            static_cast<int32_t>(visibilityStaticPropsCount),
+        snap.spCompareSnapshotCount,
+        snap.spCompareLiveCount,
+        snap.spCountMismatch,
+        snap.spSortedSlotMismatch,
+        snap.spGlobalPacketMismatch,
+        snap.spPipelineMismatch,
+        snap.spMaterialIdxMismatch,
+        snap.spInstanceCountMismatch,
+        snap.spTexLayerMismatch);
 
     return snap;
 }
