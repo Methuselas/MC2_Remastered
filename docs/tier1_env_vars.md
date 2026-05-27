@@ -53,6 +53,15 @@ Run if you touched the area:
 
 - Object lifecycle: `sh scripts/check-destroy-invariant.sh`
 - UI icon atlas / `code/mechicon.cpp`: `sh scripts/check-asset-scale-callers.sh`
+- Shader ABI (SSBO/UBO layout): `cmake --build build64 --target shader_schema`
+  - Trigger: touched `RenderCore/MaterialGpu.h`, `gos_mech_batcher.h`, their GLSL
+    mirrors, or `tools/shader_schema/manifest.json`
+  - Pass: `[SHADER_SCHEMA v1] PASS interfaces=2`
+  - Failure example (field offset drift): `[SHADER_SCHEMA v1] FAIL interface=GpuMechInstance field=materialIdx cppOffset=52 glslOffset=48`
+  - Failure example (size mismatch): `[SHADER_SCHEMA v1] FAIL interface=MaterialGpu no SSBO with array_stride=32 in ...`
+  - To add an interface: edit `tools/shader_schema/manifest.json`, run
+    `py -3 tools/shader_reflect/reflect.py --update` if adding a new fixture,
+    then verify `shader_schema` passes
 
 ## Firewall / no-raw-GL / VFX-no-objectId
 
