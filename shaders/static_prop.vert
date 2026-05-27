@@ -114,6 +114,63 @@ uniform int u_parityBaseLightDebugMode;
 // existing window-skip of calc_light).
 uniform float u_ambientV1Strength;
 
+// V-IBL-STATIC-1: SH-L2 image-based ambient on StaticPropOpaque lane.
+// Coefficient order (must match projector tools/ibl/project_sh.py +
+// generated header RenderCore/IblShCoeffs.h):
+//   [0]=L00, [1]=L1-1, [2]=L10, [3]=L11,
+//   [4]=L2-2, [5]=L2-1, [6]=L20, [7]=L21, [8]=L22
+// Coefficients are RAW projection integrals C_lm = integral(L * Y_lm dw).
+// The Ramamoorthi-Hanrahan c1..c5 constants below absorb the per-band
+// diffuse cosine-lobe kernel (pi, 2pi/3, pi/4) -- so this evaluator yields
+// IRRADIANCE directly. Do NOT premultiply the kernel in the projector,
+// and do NOT apply additional /pi at the caller -- c1..c5 are pre-convolved.
+// Default u_iblShStrength = 0.0 (CPU uploads 0.0 when env unset/0).
+// The `if (u_iblShStrength > 0.0)` guard below short-circuits evalShL2
+// entirely -> byte-identical to pre-slice output.
+// TODO(V-IBL-STATIC-1): shader_reflect goldens deferred; regen in fresh
+// worktree (SHADER-REFLECT-HYGIENE-4 followup).
+uniform vec3  u_iblSh[9];
+uniform float u_iblShStrength;
+
+// SH-L2 evaluator (Ramamoorthi-Hanrahan 2001 named constants).
+// Axis convention: Y-up world (same as V-AMBIENT-STATIC-1 hemi_t at
+// static_prop.vert:281). worldNormal is Stuff-space Y-up (model normal *
+// mat3(Stuff modelMatrix); the Stuff->MC2 axis swap is applied to position
+// only). Projector tools/ibl/project_sh.py uses the same Y-up basis
+// (n = (sin(theta)*cos(phi), cos(theta), sin(theta)*sin(phi)), theta from
+// +Y) so L20 binds to (3*n.y*n.y - 1) and L22 to (n.x*n.x - n.z*n.z).
+vec3 evalShL2(vec3 n) {
+    // Named Ramamoorthi-Hanrahan c1..c5 (Eq. 13). These constants ARE the
+    // diffuse-kernel-times-basis-normalization-times-polynomial-coefficient
+    // products: c1=0.429043 (band L=2 quadratic terms), c2=0.511664 (band L=1
+    // linear terms), c3=0.743125 (L20 quadratic weight), c4=0.886227 (L00
+    // constant), c5=0.247708 (L20 constant offset). Together they encode
+    // the cosine-lobe kernel (pi, 2pi/3, pi/4) baked into the evaluator,
+    // so the input u_iblSh[i] are RAW projection coefficients and the output
+    // is diffuse irradiance directly.
+    const float kSH_c1 = 0.429043;
+    const float kSH_c2 = 0.511664;
+    const float kSH_c3 = 0.743125;
+    const float kSH_c4 = 0.886227;
+    const float kSH_c5 = 0.247708;
+    // Y-up axis convention: pole on .y. L20 polynomial binds to (3y^2 - 1),
+    // L22 polynomial to (x^2 - z^2). Matches projector basis in
+    // tools/ibl/project_sh.py (n = (sin(theta)*cos(phi), cos(theta),
+    // sin(theta)*sin(phi)) with theta the polar angle from +Y).
+    return (
+          kSH_c1 * u_iblSh[8] * (n.x * n.x - n.z * n.z)         // L22:  x^2 - z^2
+        + kSH_c3 * u_iblSh[6] * (n.y * n.y)                     // L20 quadratic
+        + kSH_c4 * u_iblSh[0]                                   // L00
+        - kSH_c5 * u_iblSh[6]                                   // L20 offset
+        + 2.0 * kSH_c1 * u_iblSh[4] * (n.x * n.y)               // L2-2: xy
+        + 2.0 * kSH_c1 * u_iblSh[5] * (n.y * n.z)               // L2-1: yz
+        + 2.0 * kSH_c1 * u_iblSh[7] * (n.x * n.z)               // L21:  xz
+        + 2.0 * kSH_c2 * u_iblSh[3] * n.x                       // L11:  x
+        + 2.0 * kSH_c2 * u_iblSh[1] * n.y                       // L1-1: y (Y-up pole)
+        + 2.0 * kSH_c2 * u_iblSh[2] * n.z                       // L10:  z
+    );
+}
+
 out vec3  v_normal;
 out vec2  v_uv;
 flat out uint v_flags;
@@ -270,6 +327,16 @@ void main() {
         vec3 ambient_v1 = mix(kAmbientV1Ground, kAmbientV1Sky, hemi_t)
                           * u_ambientV1Strength;
         lit += ambient_v1;
+
+        // V-IBL-STATIC-1: SH-L2 image-based ambient. Strength gate via env
+        // (s_iblShEnabled in batcher); when OFF the CPU uploads 0.0 and the
+        // guard short-circuits evalShL2 entirely -> byte-identical pixel.
+        // worldNormal is Stuff-space Y-up, matching the projector basis
+        // (see tools/ibl/project_sh.py axis-convention block).
+        if (u_iblShStrength > 0.0) {
+            vec3 ibl = evalShL2(normalize(worldNormal));
+            lit += ibl * u_iblShStrength;
+        }
     }
 
     // 6. aRGBHighlight additive contribution — mirrors CPU tgl.cpp:2313-2335.

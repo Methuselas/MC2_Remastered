@@ -3,6 +3,7 @@
 #include "gos_static_prop_registry.h"    // M1.5: getRecipeIndexForType
 #include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled + objectIdRawForStaticPropRecipe
 #include "../../RenderCore/MaterialGpu.h"   // MaterialGpu-2: sidecar upload
+#include "../../RenderCore/IblShCoeffs.h"   // V-IBL-STATIC-1: SH-L2 constants
 #include "../../RenderCore/StaticPropTypeDesc.h"  // v0: cross-seam immutable type table
 #include "../../RenderCore/KtxLoader.h"    // KTX2 sidecar loading (MC2_MATERIAL_KTX=1)
 #include "draw_packet_emitter.h"
@@ -184,6 +185,12 @@ static uint32_t s_v5TotalFrameCount      = 0u;
 // 0=unknown 1=mission_init_firstload 2=ims_objmgr_load 3=sp_logistics_postinit
 // Declared extern in gos_static_prop_batcher.h; set by mission.cpp / saveload.cpp / logistics.cpp.
 int g_lightProbeSetupPath = 0;
+
+// V-IBL-STATIC-1: ImGui slider value (extern decl in ibl_sh_runtime.h).
+// Default 1.0 -> nominal projector output strength when env-gate is on.
+// Defined at file scope (NOT in anonymous namespace) for external linkage
+// so GuiRuntime/EditorInspector.cpp can drive the slider.
+float g_iblShStrength = 1.0f;
 
 namespace {
 
@@ -398,6 +405,26 @@ static const bool s_staticPropAmbientV1Enabled = []() {
     return v != nullptr && v[0] != '0' && v[0] != '\0';
 }();
 
+// V-IBL-STATIC-1: SH-L2 image-based ambient lane.
+//   - env var MC2_STATIC_PROP_IBL_SH is the AUTHORITATIVE GATE
+//     (resolved once at process start; matches V-AMBIENT-STATIC-1 pattern).
+//   - runtime global g_iblShStrength (below) is the ImGui slider value;
+//     it ONLY contributes when the env-gate is on.
+//   - per-frame upload: s_iblShEnabled ? g_iblShStrength : 0.0f.
+//     => env unset/0 -> upload 0.0 -> shader `if (u_iblShStrength > 0.0)`
+//        short-circuits to byte-identical pre-slice output (proof of
+//        default-OFF kill-switch parity, stronger than multiply-by-zero).
+//     => env=1 + slider=0.0 -> upload 0.0 -> visually disabled but the
+//        feature flag IS active in the registry (env-only gate).
+//     => env=1 + slider=N -> upload N (range 0.0..3.0 enforced by slider UI).
+static const bool s_iblShEnabled = []() {
+    const char* v = getenv("MC2_STATIC_PROP_IBL_SH");
+    return v != nullptr && v[0] != '0' && v[0] != '\0';
+}();
+// Note: definition of `g_iblShStrength` lives at file scope above the
+// anonymous namespace (line ~191) so it has external linkage. The lambda-
+// initialized s_iblShEnabled stays local here; the slider value is global.
+
 // V-MATERIAL-DEBUG-1: per-fragment material debug view mode for the
 // StaticPropOpaque lane. Default 0 = OFF (byte-identical to legacy output —
 // shader short-circuits via `if (u_debugMaterialMode != 0) { ...; return; }`).
@@ -563,6 +590,8 @@ struct ProgramLocs {
     GLint materialGpuSample   = -1;   // MaterialGpu-3: u_materialGpuSample
     GLint ambientV1Strength   = -1;   // V-AMBIENT-STATIC-1: u_ambientV1Strength
     GLint debugMaterialMode   = -1;   // V-MATERIAL-DEBUG-1: u_debugMaterialMode
+    GLint iblSh               = -1;   // V-IBL-STATIC-1: u_iblSh[9] (vec3 array)
+    GLint iblShStrength       = -1;   // V-IBL-STATIC-1: u_iblShStrength
 };
 static ProgramLocs s_locsLegacy;
 static ProgramLocs s_locsCoalesce;
@@ -773,6 +802,9 @@ void loadProgramsIfNeeded() {
     s_locsLegacy.ambientV1Strength = glGetUniformLocation(s_staticPropProgram, "u_ambientV1Strength");
     // V-MATERIAL-DEBUG-1: per-fragment material debug view mode (default 0 = OFF).
     s_locsLegacy.debugMaterialMode = glGetUniformLocation(s_staticPropProgram, "u_debugMaterialMode");
+    // V-IBL-STATIC-1: SH-L2 coeffs + strength (default strength 0.0 = OFF).
+    s_locsLegacy.iblSh             = glGetUniformLocation(s_staticPropProgram, "u_iblSh");
+    s_locsLegacy.iblShStrength     = glGetUniformLocation(s_staticPropProgram, "u_iblShStrength");
     // s_locsLegacy.drawIDBase / texArr stay -1 (coalesce-only; legacy
     // shader has no such uniforms).
 
@@ -808,6 +840,9 @@ void loadProgramsIfNeeded() {
             s_locsCoalesce.ambientV1Strength = glGetUniformLocation(s_staticPropProgramCoalesce, "u_ambientV1Strength");
             // V-MATERIAL-DEBUG-1: per-fragment material debug view mode (default 0 = OFF).
             s_locsCoalesce.debugMaterialMode = glGetUniformLocation(s_staticPropProgramCoalesce, "u_debugMaterialMode");
+            // V-IBL-STATIC-1: SH-L2 coeffs + strength (default strength 0.0 = OFF).
+            s_locsCoalesce.iblSh             = glGetUniformLocation(s_staticPropProgramCoalesce, "u_iblSh");
+            s_locsCoalesce.iblShStrength     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_iblShStrength");
 
             // M3 fix: if both gates are ON and the uniform is absent, log an error.
             // This can only happen if the shader wasn't recompiled with v3 changes.
@@ -3949,6 +3984,16 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         if (s_locsCoalesce.debugMaterialMode >= 0)
             glUniform1i       (s_locsCoalesce.debugMaterialMode,
                                s_staticPropDebugMaterialMode);
+        // V-IBL-STATIC-1: SH-L2 image-based ambient. Strength gate is the env
+        // var (s_iblShEnabled); when OFF -> upload 0.0 -> shader short-circuits
+        // before evalShL2 (byte-identical to pre-slice output). When ON, the
+        // ImGui slider g_iblShStrength modulates magnitude (range 0..3).
+        if (s_locsCoalesce.iblSh >= 0)
+            glUniform3fv      (s_locsCoalesce.iblSh, 9,
+                               &RenderCore::kIblShCoeffs[0][0]);
+        if (s_locsCoalesce.iblShStrength >= 0)
+            glUniform1f       (s_locsCoalesce.iblShStrength,
+                               s_iblShEnabled ? g_iblShStrength : 0.0f);
 
         // 11.7.e — slot 1 is NOT bound (per v2r18 §3.X.1: colors_.c[]
         // unread in any live shader path; coalesce branch does not bind
@@ -4809,6 +4854,14 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             if (s_locsLegacy.debugMaterialMode >= 0)
                 glUniform1i(s_locsLegacy.debugMaterialMode,
                             s_staticPropDebugMaterialMode);
+            // V-IBL-STATIC-1: SH-L2 image-based ambient (legacy program). Same
+            // semantics as coalesce site: strength 0.0 default -> byte-identical OFF.
+            if (s_locsLegacy.iblSh >= 0)
+                glUniform3fv(s_locsLegacy.iblSh, 9,
+                             &RenderCore::kIblShCoeffs[0][0]);
+            if (s_locsLegacy.iblShStrength >= 0)
+                glUniform1f(s_locsLegacy.iblShStrength,
+                            s_iblShEnabled ? g_iblShStrength : 0.0f);
         }
 
     for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {

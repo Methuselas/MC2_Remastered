@@ -120,7 +120,13 @@ enum class RendererFeature : int {
     // V-MATERIAL-DEBUG-1: per-fragment material debug view (StaticPropOpaque).
     // Default-OFF; 0 = byte-identical to legacy output (shader short-circuit).
     StaticPropDebugMaterial  = 20,  // MC2_STATIC_PROP_DEBUG_MATERIAL
-    COUNT                    = 21,
+    // V-IBL-STATIC-1: SH-L2 image-based ambient on StaticPropOpaque lane.
+    // Default-OFF; runtime strength uniform = 0.0 when env unset/0 ->
+    // shader `if (u_iblShStrength > 0.0)` short-circuits to byte-identical.
+    // ImGui slider (g_iblShStrength) modulates strength when env=1; the env
+    // var is the authoritative gate.
+    StaticPropIblSh          = 21,  // MC2_STATIC_PROP_IBL_SH
+    COUNT                    = 22,
 };
 
 // ---------------------------------------------------------------------------
@@ -297,6 +303,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "V-MATERIAL-DEBUG-1: per-fragment material debug view on StaticPropOpaque lane (static_prop.frag). Default 0 = OFF (byte-identical via `if (u_debugMaterialMode != 0) return;` short-circuit). Modes 1=albedo, 2=materialIdx-palette, 3=worldNormal, 4=texArrayLayer-palette. Set MC2_STATIC_PROP_DEBUG_MATERIAL=N (1..4)."
+    },
+    // StaticPropIblSh
+    {
+        "MC2_FEATURE_STATIC_PROP_IBL_SH",
+        "MC2_STATIC_PROP_IBL_SH",
+        EnvVarKind::Feature,
+        false,
+        "V-IBL-STATIC-1: SH-L2 image-based ambient on StaticPropOpaque lane (static_prop.vert). Default-OFF; =1 enables. When OFF, u_iblShStrength uploads 0.0 -> shader short-circuits before evalShL2 (byte-identical). Coefficients from RenderCore/IblShCoeffs.h (projected from data/hdr/DaySkyHDRI063B_4K.exr). ImGui slider g_iblShStrength modulates per-frame strength when env=1; env var is authoritative gate."
     },
 };
 

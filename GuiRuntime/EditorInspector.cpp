@@ -3,6 +3,7 @@
 #include <cstdio>    // snprintf
 #include <cstdlib>   // getenv
 #include "../GameOS/gameos/debug_renderer.h"  // IMG-INSPECT-3
+#include "../GameOS/gameos/ibl_sh_runtime.h"   // V-IBL-STATIC-1: g_iblShStrength
 #include "draw_packet_emitter.h"              // g_dpSelectedRecipeIndex
 #include "../RenderCore/RendererFeatureRegistry.h"
 #include "../RenderCore/RenderPassContract.h"  // RENDERPASS-CONTRACT-2.5 (descriptive table)
@@ -507,6 +508,29 @@ void EditorInspector::drawImGui() {
                                       "  1=albedo  2=materialIdx\n"
                                       "  3=normal  4=texArrayLayer\n"
                                       "Gate: MC2_STATIC_PROP_DEBUG_MATERIAL=N (1..4).");
+
+                // V-IBL-STATIC-1: SH-L2 image-based ambient. ENV var is the
+                // authoritative gate (read once at process start by the
+                // batcher's s_iblShEnabled). The slider only modulates the
+                // upload magnitude when the env-gate is on; env-unset always
+                // uploads 0.0 (byte-identical OFF, regardless of slider).
+                const char* iblEnv = std::getenv("MC2_STATIC_PROP_IBL_SH");
+                bool iblOn = (iblEnv != nullptr && iblEnv[0] != '0' && iblEnv[0] != '\0');
+                if (iblOn) {
+                    ImGui::Text("  ibl sh         on (strength=%.2f)", g_iblShStrength);
+                } else {
+                    ImGui::Text("  ibl sh         off (env-gated)");
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("V-IBL-STATIC-1 SH-L2 image-based ambient in\n"
+                                      "static_prop.vert (skips window-flag nodes).\n"
+                                      "Gate: MC2_STATIC_PROP_IBL_SH=1 (env-authoritative).\n"
+                                      "Slider modulates strength when env=1.\n"
+                                      "OFF -> u_iblShStrength=0.0 (byte-identical).");
+                ImGui::BeginDisabled(!iblOn);
+                ImGui::SliderFloat("##ibl_sh_strength", &g_iblShStrength,
+                                   0.0f, 3.0f, "ibl strength %.2f");
+                ImGui::EndDisabled();
             }
 
             ImGui::Spacing();
@@ -520,6 +544,7 @@ void EditorInspector::drawImGui() {
                 { "object-ID buffer",    "MC2_OBJECT_ID_BUFFER",            true  },
                 { "ambient v1",          "MC2_STATIC_PROP_AMBIENT_V1",      false },
                 { "debug material",      "MC2_STATIC_PROP_DEBUG_MATERIAL",  false },
+                { "ibl sh",              "MC2_STATIC_PROP_IBL_SH",          false },
             };
             for (const auto& fb : kFallbacks) {
                 const char* v = std::getenv(fb.envVar);
