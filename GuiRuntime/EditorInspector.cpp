@@ -451,6 +451,28 @@ void EditorInspector::drawImGui() {
                 ImGui::TextDisabled("  material       (no GPU material data)");
             }
 
+            // V-LIGHTING-STATIC-0 — factual lighting-model labels.
+            // Source: docs/static-prop-lighting-audit.md. These are
+            // descriptive of the shader at HEAD 9a9d6eb0; if the static_prop
+            // .frag adds normal/PBR/IBL/emissive sampling, update both the
+            // audit doc and these strings in lockstep.
+            if (s_selection.kind == RenderWorld::RenderObjectKind::StaticProp) {
+                // Lighting model — directional + ambient via LightsData
+                // SSBO 20 (see lighting.hglsl:43-56 + calc_light()).
+                ImGui::Text("  lighting       per-vertex Gouraud (no PBR)");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("calc_light() in shaders/include/lighting.hglsl\n"
+                                      "drives AMBIENT/INFINITE/POINT/SPOT.\n"
+                                      "No specular, no PBR, no IBL.");
+                // Normal source — vertex-interpolated only; .frag does NOT
+                // sample MaterialGpu::normalTex even when the bit is set.
+                ImGui::Text("  normal source  vertex-interpolated (no normal map)");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("static_prop.frag uses normalize(v_normal)\n"
+                                      "only for the GBuffer1 write. normalTex is\n"
+                                      "declared in MaterialGpu but unused today.");
+            }
+
             ImGui::Spacing();
             ImGui::TextUnformatted("Fallbacks:");
 
