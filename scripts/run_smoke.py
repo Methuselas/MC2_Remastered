@@ -444,7 +444,14 @@ def main():
                             # MaterialGpu v7 kill-switch (set =0 to disable shader sampling).
                             "MC2_MATERIAL_GPU_SAMPLE",
                             # MaterialGpu master kill-switch (set =0 to disable table upload).
-                            "MC2_MATERIAL_GPU")},
+                            "MC2_MATERIAL_GPU",
+                            # Extraction v2.3: snapshot-assisted static-prop
+                            # snap-cull gate. MC2_SNAP_CULL=1 enables the v6
+                            # dispatch loop to skip draw slots whose instanceCount
+                            # was zero in the previous frame's RenderSnapshot. Opt-in
+                            # for testing; requires snap->ok==1. Forwarded in the
+                            # allowlist so tier1 smoke runs can use this kill-switch.
+                            "MC2_SNAP_CULL")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

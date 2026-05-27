@@ -7,6 +7,14 @@ default behavior. Add new env-gated probes to this list when shipping.
 Startup banner `[INSTR v1] enabled: ...` enumerates which probes fired at log
 start. Grep schema versions with `\[SUBSYS v[0-9]+\]`.
 
+## Feature gates (registered in RendererFeatureRegistry.h kFeatureTable)
+
+- `MC2_SHADOW_ENABLE=1` — enable shadow-map pre-pass and PCF sampling in mech/static-prop paths. Default OFF.
+- `MC2_IMGUI=1` — enable ImGui overlay (GuiRuntime/GuiRuntime.cpp). Default OFF. Editor sets this automatically.
+- `MC2_IMGUI_INSPECTOR=1` — enable ImGui inspector panel (GuiRuntime/EditorInspector.cpp). Default OFF. Requires `MC2_IMGUI`.
+- `MC2_DEBUG_RENDERER=1` — enable debug overlay renderer (GuiRuntime/EditorInspector.cpp). Default OFF. Requires `MC2_IMGUI_INSPECTOR`.
+- `MC2_STATIC_PROP_REGISTRY=1` — GpuStaticPropRegistry enable (default ON; editor sets `=0` via EditorMFC.cpp to bypass registry for edit-time mutations).
+
 ## Always-on background / safety
 
 - `MC2_TGL_POOL_TRACE=1` — per-frame TGL pool NULL trace; monotonic summary every 600 frames always-on
@@ -101,6 +109,10 @@ is fully inert; gate plumbing removed in v7.1. Future path: v8 will normalize th
 - `MC2_DRAW_PACKET_STATIC_PROP_V6=1` — **REMOVED in v7.1.** Gate plumbing deleted; setting this var has no effect whatsoever. Kill-switch for the primary path: `MC2_STATIC_PROP_LEGACY_DISPATCH=1`.
 - `MC2_DRAW_PACKET_STATIC_PROP_V6_TRACE=1` — per-slot verbose trace for v6. Emits one `[DRAW_PACKET_V6] slot=S pkt=P type=T group=G inst=I base=B drawID=D first=F count=C baseV=V` line per issued draw. Requires v6 path active (default in v7; no explicit env var needed). Default OFF. Cached at process start.
 - `MC2_STATIC_PROP_LEGACY_DISPATCH=1` — v7 kill-switch. Reverts the v6 packet+meta dispatch path to legacy `glMultiDrawElementsIndirect` for this process. Use to isolate v6-specific rendering regressions. When set, `s_v6Enabled` returns false at process start; no `[DRAW_PACKET_V6]` lines appear in logs. Default OFF. Cached at process start.
+
+## Snapshot-assisted dispatch (Extraction v2.3)
+
+- `MC2_SNAP_CULL=1` — opt-in snapshot-assisted static-prop snap-cull. When enabled, the v6 dispatch loop uses the previous frame's RenderSnapshot to skip draw slots whose instanceCount was zero. Requires `snap->ok==1` and count-match validation. Warmup guard prevents frame-1 blank artifact. `spSnapCullSlotMismatch` is in the `ok` gate. Smoke tier1 passes with this set; skipped counts vary by mission density. Default OFF. Cached at process start. Implementation: `gos_static_prop_batcher.cpp` only.
 
 ## SSBO binding registry
 
