@@ -511,6 +511,11 @@ void RunMechObjectIdSelfTest() {
         (unsigned)gen, (unsigned)raw);
 }
 
+// V1A: per-frame mech submit count from GpuMechBatcher::flush() latch.
+// Forward-declared at global scope to avoid including gos_mech_batcher.h
+// (pulls Stuff/tgl/mech3d). Defined in GameOS/gameos/gos_mech_batcher.cpp.
+uint64_t batcher_getLastFlushSubmitCount();
+
 namespace RenderWorld {
 
 void init() {
@@ -702,15 +707,18 @@ uint32_t objectIdRawForStaticPropRecipe(int32_t recipeIndex) {
 }
 
 VisibilityResult queryVisibility(VisibilityRequest /*req*/) {
-    // V0 is reporting-only. It does not drive culling, draw submission,
-    // gameplay selection, or object lifetime. It reads already-computed
-    // counters and returns them; no culling decision is made or altered.
-    //
-    // req.viewId / req.kindMask / req.layerMask are present for API
-    // stability into v1 but are ignored here.
+    // V0+V1A: reporting-only. Does not drive culling, draw submission,
+    // gameplay selection, or object lifetime.
+    // req.viewId / req.kindMask / req.layerMask present for API stability; unused.
     VisibilityResult r{};
+    // V0: lifecycle counts.
     r.static_props = legacy::getStaticPropActiveCount();
     r.mechs        = s_mechs_alive_rw.load(std::memory_order_relaxed);
+    // V1A: per-frame visible/submitted counts from flush-entry latches.
+    r.static_props_visible = legacy::getStaticPropLastFlushLiveCount();
+    r.mechs_visible        = ::batcher_getLastFlushSubmitCount();
+    // gpu_visible_valid stays false (V1B); gpu_visible stays 0.
+    // valid flags default true (set in VisibilityResult initializer).
     return r;
 }
 
@@ -740,10 +748,16 @@ void frameBannerTick() {
         (unsigned long long)vis.static_props, (unsigned long long)vis.mechs, oidTok);
     std::fprintf(stderr,
         "[VISIBILITY v1] frame=%llu static_props=%llu mechs=%llu "
+        "sp_visible=%llu sp_valid=%d "
+        "mech_visible=%llu mech_valid=%d "
+        "gpu_visible=%llu gpu_valid=%d "
         "terrain=deferred vfx=prohibited\n",
         (unsigned long long)f,
         (unsigned long long)vis.static_props,
-        (unsigned long long)vis.mechs);
+        (unsigned long long)vis.mechs,
+        (unsigned long long)vis.static_props_visible, vis.static_props_visible_valid ? 1 : 0,
+        (unsigned long long)vis.mechs_visible,        vis.mechs_visible_valid        ? 1 : 0,
+        (unsigned long long)vis.static_props_gpu_visible, vis.gpu_visible_valid      ? 1 : 0);
 }
 
 LookupResult lookupAtPixel(int screenX, int screenY) {

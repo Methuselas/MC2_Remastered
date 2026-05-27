@@ -163,6 +163,11 @@ static std::unordered_map<uint32_t, int32_t> s_typeIDToRecipeIndex;
 // and patches lightDataIndex from the live TG_MultiShape.
 static std::vector<uint32_t>              s_liveRangeIndices;
 
+// V1A: per-frame visible range count latched at flush() entry (before
+// expansion and before frameBegin() clears the vector next frame).
+// queryVisibility() reads this for static_props_visible.
+static uint64_t                           s_lastFlushLiveCount = 0;
+
 // Pin-call accounting for the [TEX_LIFECYCLE v1] event=pin_summary line
 // emitted in destroy(). leakedPins = totalPinCalls - totalUnpinCalls;
 // non-zero is a refcount imbalance bug. Reset to 0 in destroy() after
@@ -255,6 +260,12 @@ uint32_t getActiveCount() {
         if (rng.count > 0) ++n;
     }
     return n;
+}
+
+uint64_t getLastFlushLiveCount() {
+    // V1A: per-frame visible range count latched at flush() entry.
+    // Returns 0 before the first flush (mission not yet loaded).
+    return s_lastFlushLiveCount;
 }
 
 void init() {
@@ -455,6 +466,9 @@ const char* getRecipeShapeName(int32_t recipeIndex) {
 }
 
 void flush() {
+    // V1A: latch BEFORE any early return so queryVisibility() always sees
+    // a current-frame value (0 when disabled or nothing visible this frame).
+    s_lastFlushLiveCount = static_cast<uint64_t>(s_liveRangeIndices.size());
     if (!s_enabled || s_liveRangeIndices.empty()) return;
     const uint32_t currentFrame = g_mc2FrameCounter;
     GpuStaticPropBatcher& batcher = GpuStaticPropBatcher::instance();

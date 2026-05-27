@@ -103,6 +103,11 @@ uint64_t getStaticFirstFrameSkipCount();
 // adjusted active recipe slot count.
 uint32_t getActiveCount();
 
+// V1A (VisibilityRequest v1A): per-frame visible range count latched at
+// flush() entry. Returns 0 before the first flush (mission not yet loaded).
+// Used by queryVisibility() for static_props_visible in VisibilityResult.
+uint64_t getLastFlushLiveCount();
+
 // m5 fix (RenderWorld Slice M1): late-spawn path needs the recipe
 // index back so the adapter can produce a RenderObjectHandle. Returns
 // the recipe index that registerStaticProp() created via

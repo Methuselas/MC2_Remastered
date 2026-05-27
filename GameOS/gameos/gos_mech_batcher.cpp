@@ -214,6 +214,12 @@ static std::vector<ShadowDrawEntry> s_lastDrawCalls;
 static size_t                       s_lastTotalInstances = 0;
 static size_t                       s_lastTotalBones     = 0;
 
+// V1A: per-frame submit count latched at flush() entry (before any
+// early-return guards clear s_pendingSubmits). Counts GpuMechBatcher
+// submits only — does NOT include MLR fallback draws or alive count.
+// queryVisibility() reads this for mechs_visible in VisibilityResult.
+static uint64_t                     s_lastFlushSubmitCount = 0;
+
 // File-scope counters written by flushShadow() and read by Task 6 probe.
 static int s_shadowTypesDrawn = 0;
 static int s_shadowInstDrawn  = 0;
@@ -1069,6 +1075,10 @@ bool GpuMechBatcher::submitActor(const GpuMechSubmitDesc& desc) {
 // flush (Task 7) — bucket-sorted compaction + draw loop
 // ---------------------------------------------------------------------------
 void GpuMechBatcher::flush() {
+    // V1A: latch BEFORE any early-return guard clears s_pendingSubmits.
+    // Counts GpuMechBatcher submits only (not MLR fallback, not alive count).
+    s_lastFlushSubmitCount = static_cast<uint64_t>(s_pendingSubmits.size());
+
     // [SPOTLIGHT_REAL_TRACE v1] T0.2 (b) — periodic summary at 600-frame
     // cadence. Frame counter advances every flush() regardless of env or
     // pending submits, so the cadence stays stable across missions. Window
@@ -1635,6 +1645,12 @@ bool batcher_getMechPendingEntry(uint32_t idx, ExtractedMechPacket* out) {
     *out = s_mechExtractPersist[idx];
     out->instanceIdx = idx;
     return true;
+}
+
+// V1A: per-frame mech submit count, latched at flush() entry.
+// GpuMechBatcher submits only. Does NOT include MLR fallback draws or alive count.
+uint64_t batcher_getLastFlushSubmitCount() {
+    return s_lastFlushSubmitCount;
 }
 
 void batcher_compareMechSnapshot(RenderSnapshot* snap) {

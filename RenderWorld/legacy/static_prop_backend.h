@@ -33,5 +33,9 @@ bool isReadyStaticProp(int32_t recipeIndex);
 // m4 fix: registry active-recipe count for [RENDER_WORLD v1] objects=.
 uint64_t getStaticPropActiveCount();
 
+// V1A: per-frame visible range count latched at GpuStaticPropRegistry::flush() entry.
+// Returns 0 before the first flush (mission not yet loaded).
+uint64_t getStaticPropLastFlushLiveCount();
+
 } // namespace legacy
 } // namespace RenderWorld

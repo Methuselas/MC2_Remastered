@@ -73,5 +73,9 @@ uint64_t getStaticPropActiveCount() {
     return static_cast<uint64_t>(GpuStaticPropRegistry::getActiveCount());
 }
 
+uint64_t getStaticPropLastFlushLiveCount() {
+    return GpuStaticPropRegistry::getLastFlushLiveCount();
+}
+
 } // namespace legacy
 } // namespace RenderWorld

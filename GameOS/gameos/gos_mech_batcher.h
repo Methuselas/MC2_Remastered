@@ -199,6 +199,11 @@ struct RenderSnapshot;
 // Returns count of pending submits for the current frame (after DoGameLogic, before flush).
 uint32_t batcher_getMechPendingCount();
 
+// V1A: per-frame mech submit count latched at flush() entry (before any guard clears
+// s_pendingSubmits). GpuMechBatcher submits only — does NOT include MLR fallback draws.
+// Returns 0 before the first flush (mission not yet loaded).
+uint64_t batcher_getLastFlushSubmitCount();
+
 // Fills *out with s_pendingSubmits[idx] fields. Returns false if idx out of range.
 // materialIdx is always 0xFFFFFFFFu in v0 (not available pre-flush).
 bool batcher_getMechPendingEntry(uint32_t idx, ExtractedMechPacket* out);

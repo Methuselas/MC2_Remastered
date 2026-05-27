@@ -1,14 +1,20 @@
 // RenderWorld/VisibilityRequest.h
 //
-// Seq C, step 1: VisibilityRequest v0 -- reporting-only cull query.
+// Seq C: VisibilityRequest v0 + V1A.
 //
-// v0 contract (spec in user conversation 2026-05-24):
+// v0 contract: reporting-only, lifecycle counts only.
 //   - wraps existing visibility/cull facts; no new culling decisions
 //   - output: counts by kind only (handles deferred to v1+)
 //   - terrain=deferred, vfx=prohibited, overlay=undefined
 //   - no draw-submission change, no behavior change
 //
-// Forbidden (v0 scope):
+// V1A extension: per-frame visible/submitted counts via flush-entry latches.
+//   - static_props_visible: GpuStaticPropRegistry::getLastFlushLiveCount()
+//   - mechs_visible:        batcher_getLastFlushSubmitCount()
+//   - gpu_visible:          deferred (GPU readback, V1B)
+//   - valid flags always true in V1A-1; GPU valid = false until V1B
+//
+// Forbidden (V1A scope, same as v0):
 //   - replace terrain / mech / static-prop culling
 //   - feed draw submission
 //   - become authoritative visibility
@@ -40,14 +46,39 @@ struct VisibilityRequest {
 };
 
 // Output of queryVisibility().
-// Counts reflect current-frame registered-and-alive objects.
-// terrain/vfx/overlay are not counted in v0 (represented as log tags only).
+//
+// V0 fields: lifecycle counts (registered-and-alive, not per-frame visible).
+// V1A fields: per-frame visible/submitted counts from flush-entry latches.
+//
+// Valid flags:
+//   static_props_visible_valid / mechs_visible_valid — always true in V1A-1;
+//     value is 0 before first flush (mission not loaded), which is genuine.
+//   gpu_visible_valid — false until GPU compute readback is wired (V1B).
 struct VisibilityResult {
-    uint64_t static_props = 0;  // from GpuStaticPropRegistry active count
-    uint64_t mechs        = 0;  // from RenderWorld mech-alive counter
+    // --- V0 fields (lifecycle) ---
+    uint64_t static_props = 0;  // GpuStaticPropRegistry active (alive) count
+    uint64_t mechs        = 0;  // RenderWorld mech-alive counter
+
+    // --- V1A fields (per-frame) ---
+    // static_props_visible: count of recipe ranges admitted by markVisible()
+    //   this frame, latched at GpuStaticPropRegistry::flush() entry.
+    //   Domain: CPU-side frustum+cull gate; not GPU compute readback.
+    uint64_t static_props_visible       = 0;
+    // mechs_visible: count of mech actor submits to GpuMechBatcher this
+    //   frame, latched at GpuMechBatcher::flush() entry.
+    //   Domain: GpuMechBatcher submits ONLY. Excludes MLR fallback draws.
+    uint64_t mechs_visible              = 0;
+    // static_props_gpu_visible: GPU compute readback visible count (deferred).
+    //   Always 0 until V1B wires readback_getLastGoodVisibleCount().
+    uint64_t static_props_gpu_visible   = 0;
+
     // terrain  -> deferred (CPU terrain picking remains canonical)
     // vfx      -> prohibited (no stable object identity)
     // overlay  -> undefined
+
+    bool static_props_visible_valid = true;  // V1A-1: always true; 0 = genuine pre-mission
+    bool mechs_visible_valid        = true;  // V1A-1: always true; 0 = genuine pre-mission
+    bool gpu_visible_valid          = false; // false until V1B; MUST NOT interpret 0 as "zero visible"
 };
 
 } // namespace RenderWorld
