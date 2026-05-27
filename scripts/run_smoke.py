@@ -451,7 +451,16 @@ def main():
                             # was zero in the previous frame's RenderSnapshot. Opt-in
                             # for testing; requires snap->ok==1. Forwarded in the
                             # allowlist so tier1 smoke runs can use this kill-switch.
-                            "MC2_SNAP_CULL")},
+                            "MC2_SNAP_CULL",
+                            # Extraction v3 snapshot build gate + log gate.
+                            # MC2_SNAPSHOT_STATIC_PROP_BUILD=1 enables the v3
+                            # draw-packet builder from snapshot rows. Forwarded so
+                            # tier1 forced-ON canaries work correctly.
+                            # MC2_RENDER_SNAPSHOT_LOG=1 enables the per-frame
+                            # [RENDER_SNAPSHOT v3] + [v3 build] log lines (used
+                            # to verify spBuild* counters in smoke step 2).
+                            "MC2_SNAPSHOT_STATIC_PROP_BUILD",
+                            "MC2_RENDER_SNAPSHOT_LOG")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
