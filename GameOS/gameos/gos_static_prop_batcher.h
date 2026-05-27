@@ -135,6 +135,10 @@ struct GpuStaticPropType {
     uint8_t  alphaClass;                     // §CRITICAL-C 0=alpha-OFF, 1=alpha-ON
 };
 
+// Forward declaration needed for flush() signature (v2.3).
+// Full definition in render_snapshot.h; batcher.cpp includes it directly.
+struct RenderSnapshot;
+
 class GpuStaticPropBatcher {
 public:
     static GpuStaticPropBatcher& instance();
@@ -211,7 +215,10 @@ public:
     bool isMultiShapeEligibleForGpuObjects(const TG_MultiShape* multi) const;
 
     // Per-frame dispatch.
-    void flush();         // main color pass
+    // Main color pass. snap: optional prior-frame RenderSnapshot for snap-cull
+    // (MC2_SNAP_CULL=1). nullptr = no snap-cull (default OFF).
+    // snap pointer is not stored; read only during this call.
+    void flush(const RenderSnapshot* snap = nullptr);
     void flushShadow();   // depth-only into dynamic shadow FBO
 
     // Debug: color-address validation mode. 0=off, 1=gradient, 2=hash.
@@ -430,6 +437,14 @@ bool batcher_getDrawSlotEntry(uint32_t slot, ExtractedStaticPropPacket* out);
 // RenderSnapshot full definition is in render_snapshot.h; batcher.cpp includes it directly.
 struct RenderSnapshot;
 void batcher_compareSnapshotPackets(RenderSnapshot* snap);
+
+// v2.3 snap-cull: read counters written by the most recent flush().
+// All three output pointers may be nullptr (individual fields skipped).
+// skipped:      slots skipped via prev-frame zero-instance check.
+// active:       slots drawn when snap-cull enabled (prev-frame instanceCount > 0).
+// slotMismatch: sortedSlot identity failures — row.sortedSlot != i.
+//   slotMismatch is included in the RenderSnapshot ok gate; the others are informational.
+void batcher_getSnapCullStats(uint32_t* skipped, uint32_t* active, uint32_t* slotMismatch);
 
 // ---------------------------------------------------------------------------
 // Type-desc table accessors (v0: CPU-side only, no SSBO).

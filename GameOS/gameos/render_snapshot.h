@@ -189,12 +189,13 @@ struct RenderSnapshot {
     uint32_t staticPropPacketCount   = 0;  // packets successfully captured
     uint32_t staticPropPacketInvalid = 0;  // batcher_getDrawSlotEntry failures
 
-    // v2.2 hard gate: 1 iff all of:
+    // v2.3 hard gate: extends v2.2. Adds spSnapCullSlotMismatch==0.
     //   staticPropValidationFail==0, staticPropPacketRangesFail==0,
     //   staticPropPacketInvalid==0, !arenaOverflow,
     //   spCountMismatch==0, spSortedSlotMismatch==0, spGlobalPacketMismatch==0,
-    //   spPipelineMismatch==0, spMaterialIdxMismatch==0, spTexLayerMismatch==0.
-    //   (spInstanceCountMismatch is informational only — excluded from gate.)
+    //   spPipelineMismatch==0, spMaterialIdxMismatch==0, spTexLayerMismatch==0,
+    //   spSnapCullSlotMismatch==0.
+    //   (spInstanceCountMismatch, spSnapCullSkipped, spSnapCullActive are informational.)
     uint32_t ok = 0u;
 
     // --- v2.2: dispatch-fact compare results (filled by batcher_compareSnapshotPackets) ---
@@ -210,6 +211,15 @@ struct RenderSnapshot {
     uint32_t spMaterialIdxMismatch   = 0u;  // rows where materialIdx != s_packetMaterialIdx[i]
     uint32_t spInstanceCountMismatch = 0u;  // rows where prev-frame count != current-frame count
     uint32_t spTexLayerMismatch      = 0u;  // rows where MaterialGpu.albedoTex != texArrayLayer
+
+    // --- v2.3: snap-cull counters (populated by flush() of the PREVIOUS frame) ---
+    // spSnapCullSkipped:      draw slots skipped because prev-frame instanceCount==0.
+    // spSnapCullActive:       draw slots drawn with snap-cull enabled (prev-frame count > 0).
+    // spSnapCullSlotMismatch: sortedSlot identity failures (row.sortedSlot != i); included in ok gate.
+    // spSnapCullSkipped and spSnapCullActive are informational — excluded from ok gate.
+    uint32_t spSnapCullSkipped      = 0u;
+    uint32_t spSnapCullActive       = 0u;
+    uint32_t spSnapCullSlotMismatch = 0u;
 
     // Non-owning pointer to the current frame's ping-pong arena.
     // Owned by module statics in render_snapshot.cpp; valid for this frame only.

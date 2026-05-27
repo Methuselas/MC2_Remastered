@@ -120,6 +120,16 @@ static uint32_t s_v6FrameSortedOob          = 0u;
 static uint32_t s_v6FramePacketOob          = 0u;
 static uint32_t s_v6FrameTypeOob            = 0u;
 static uint32_t s_v6FrameLockstepViolations = 0u;
+
+// v2.3 snap-cull: per-frame counters. Reset at top of flush(); read via batcher_getSnapCullStats().
+static uint32_t s_snapCullSkipped      = 0u;
+static uint32_t s_snapCullActive       = 0u;
+static uint32_t s_snapCullSlotMismatch = 0u;
+// Env-var gate: strictly MC2_SNAP_CULL=1. Unset and MC2_SNAP_CULL=0 both leave snap-cull OFF.
+static const bool s_snapCullEnabled = [] {
+    const char* v = std::getenv("MC2_SNAP_CULL");
+    return v && v[0] == '1';
+}();
 static uint32_t s_v6FrameGlErrors           = 0u;
 static uint32_t s_v6TotalFrameCount         = 0u;
 
@@ -3266,7 +3276,7 @@ bool uploadAllBucketsIfNeeded() {
 //   Routes through static_prop.frag which writes
 //   rc_gbuffer1_screenShadowEligible (production) or
 //   rc_gbuffer1_legacyDebugSentinelScreenShadowEligible (debug).
-void GpuStaticPropBatcher::flush() {
+void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     ZoneScopedN("GpuStaticProps.Flush");
     initTraceOnce();
     // LODBUG probe: env-var override for debugAddrMode_.  RAlt+9 cycling is
@@ -5294,6 +5304,12 @@ void batcher_compareSnapshotPackets(RenderSnapshot* snap) {
             }
         }
     }
+}
+
+void batcher_getSnapCullStats(uint32_t* skipped, uint32_t* active, uint32_t* slotMismatch) {
+    if (skipped)      *skipped      = s_snapCullSkipped;
+    if (active)       *active       = s_snapCullActive;
+    if (slotMismatch) *slotMismatch = s_snapCullSlotMismatch;
 }
 
 uint32_t batcher_getPerTypePeakCount(uint32_t typeID) {
