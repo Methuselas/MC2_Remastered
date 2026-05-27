@@ -467,7 +467,22 @@ def main():
                             # F1-3A ViewUniforms UBO upload gate (default-OFF).
                             # MC2_VIEW_UNIFORMS=1 uploads per-frame view matrices
                             # to UBO at binding=3. No shader consumption yet (F1-3B).
-                            "MC2_VIEW_UNIFORMS")},
+                            "MC2_VIEW_UNIFORMS",
+                            # StaticPropAmbientV1 hemisphere ambient term (default-OFF).
+                            # MC2_STATIC_PROP_AMBIENT_V1=1 enables the ambient V1 path.
+                            "MC2_STATIC_PROP_AMBIENT_V1",
+                            # V-MATERIAL-DEBUG-1 gated debug material views
+                            # (default-OFF). 1=albedo, 2=materialIdx, 3=normal,
+                            # 4=texArrayLayer. Clamped 0..4 by CPU.
+                            "MC2_STATIC_PROP_DEBUG_MATERIAL",
+                            # V-IBL-STATIC-1 SH-L2 image-based ambient (default-OFF).
+                            # MC2_STATIC_PROP_IBL_SH=1 enables; ImGui slider
+                            # tunes u_iblShStrength when on.
+                            "MC2_STATIC_PROP_IBL_SH",
+                            # Render-contract Phase 2 assert mode (default-OFF).
+                            # MC2_RENDER_CONTRACT_ASSERT=1 enables runtime GL state
+                            # validation against declared render_contract expectations.
+                            "MC2_RENDER_CONTRACT_ASSERT")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
