@@ -309,8 +309,19 @@ RenderSnapshot ExtractRenderSnapshot()
         snap.spSnapCullSlotMismatch = scMismatch;
     }
 
-    // v2.3 hard gate — extends v2.2: adds spSnapCullSlotMismatch.
-    // spInstanceCountMismatch, spSnapCullSkipped, spSnapCullActive are informational — excluded.
+    // v3: read snapshot build stats from the most recent flush().
+    {
+        uint32_t attempted = 0u, countMis = 0u, pktMis = 0u, metaMis = 0u, fallback = 0u;
+        batcher_getSnapshotBuildStats(&attempted, &countMis, &pktMis, &metaMis, &fallback);
+        snap.spBuildAttempted      = attempted;
+        snap.spBuildCountMismatch  = countMis;
+        snap.spBuildPacketMismatch = pktMis;
+        snap.spBuildMetaMismatch   = metaMis;
+        snap.spBuildFallback       = fallback;
+    }
+
+    // v3: extends v2.3 ok gate — adds three spBuild mismatch counters.
+    // spBuildAttempted and spBuildFallback excluded (informational).
     snap.ok = (snap.staticPropValidationFail  == 0u &&
                snap.staticPropPacketRangesFail == 0u &&
                snap.staticPropPacketInvalid    == 0u &&
@@ -321,7 +332,10 @@ RenderSnapshot ExtractRenderSnapshot()
                snap.spPipelineMismatch         == 0u &&
                snap.spMaterialIdxMismatch      == 0u &&
                snap.spTexLayerMismatch         == 0u &&
-               snap.spSnapCullSlotMismatch     == 0u) ? 1u : 0u;
+               snap.spSnapCullSlotMismatch     == 0u &&
+               snap.spBuildCountMismatch       == 0u &&
+               snap.spBuildPacketMismatch      == 0u &&
+               snap.spBuildMetaMismatch        == 0u) ? 1u : 0u;
 
     // -----------------------------------------------------------------------
     // Visibility query for log line
@@ -340,7 +354,7 @@ RenderSnapshot ExtractRenderSnapshot()
     static const bool s_logEnabled = []{ const char* v = std::getenv("MC2_RENDER_SNAPSHOT_LOG"); return v && v[0] == '1'; }();
     if (s_logEnabled) {
         std::fprintf(stderr,
-            "[RENDER_SNAPSHOT v2.3] frame=%llu mechs=%u static_props=%u lights=%u "
+            "[RENDER_SNAPSHOT v3] frame=%llu mechs=%u static_props=%u lights=%u "
             "bytes=%zu overflow=%d ok=%u\n"
             "  sp_fail=%u sp_sentinel_mat=%u sp_sentinel_cull=%u sizeof_static_prop=%zu\n"
             "  sp_tex_wired=%u sp_tex_sentinel=%u sp_mat_wired=%u sp_mat_sentinel=%u\n"
@@ -353,7 +367,9 @@ RenderSnapshot ExtractRenderSnapshot()
             "  [v2.3 compare] snapshot_count=%u live_count=%u count_mismatch=%u\n"
             "  sorted_slot_mismatch=%u global_packet_mismatch=%u pipeline_mismatch=%u\n"
             "  material_idx_mismatch=%u instance_count_mismatch=%u tex_layer_mismatch=%u\n"
-            "  [v2.3 snap_cull] skipped=%u active=%u slot_mismatch=%u\n",
+            "  [v2.3 snap_cull] skipped=%u active=%u slot_mismatch=%u\n"
+            "  [v3 build] attempted=%u count_mismatch=%u pkt_mismatch=%u"
+            " meta_mismatch=%u fallback=%u\n",
             static_cast<unsigned long long>(snap.frameIndex),
             static_cast<uint32_t>(snap.mechs.size()),
             static_cast<uint32_t>(snap.staticProps.size()),
@@ -394,7 +410,12 @@ RenderSnapshot ExtractRenderSnapshot()
             snap.spTexLayerMismatch,
             snap.spSnapCullSkipped,
             snap.spSnapCullActive,
-            snap.spSnapCullSlotMismatch);
+            snap.spSnapCullSlotMismatch,
+            snap.spBuildAttempted,
+            snap.spBuildCountMismatch,
+            snap.spBuildPacketMismatch,
+            snap.spBuildMetaMismatch,
+            snap.spBuildFallback);
     }
 
     // v2.3: store for getLastRenderSnapshot() before returning.
