@@ -264,8 +264,8 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         "MC2_FEATURE_VIEW_UNIFORMS",
         "MC2_VIEW_UNIFORMS",
         EnvVarKind::Feature,
-        false,
-        "ViewUniforms UBO at binding=3. Uploads per-frame view matrices (worldToClipGL, worldToViewGL, cameraWorldPos). F1-3A: upload only, no shader consumption. F1-3B shader consumption requires process restart (shaders compiled at startup). Default-off; =1 enables."
+        true,
+        "ViewUniforms UBO at binding=3. Default ON. =0 reverts to legacy uniform. Shader consumption (static_prop.vert) requires restart."
     },
     // SnapshotMechExtract
     {
