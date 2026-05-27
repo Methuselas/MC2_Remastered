@@ -113,7 +113,11 @@ enum class RendererFeature : int {
     ViewUniforms             = 17,  // MC2_VIEW_UNIFORMS
     // MECH-EXTRACTION-0: mech snapshot extraction (observe-only).
     SnapshotMechExtract      = 18,  // MC2_SNAPSHOT_MECH_EXTRACT
-    COUNT                    = 19,
+    // V-AMBIENT-STATIC-1: hemisphere ambient fill on StaticPropOpaque lane.
+    // Default-OFF; strength uniform = 0.0 when env unset/0 -> byte-identical
+    // to pre-slice output.
+    StaticPropAmbientV1      = 19,  // MC2_STATIC_PROP_AMBIENT_V1
+    COUNT                    = 20,
 };
 
 // ---------------------------------------------------------------------------
@@ -274,6 +278,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "MECH-EXTRACTION-0: mech snapshot extraction (observe-only, no GL mutation). Extracts ExtractedMechPacket[] from RenderSnapshot. Default-off; =1 enables."
+    },
+    // StaticPropAmbientV1
+    {
+        "MC2_FEATURE_STATIC_PROP_AMBIENT_V1",
+        "MC2_STATIC_PROP_AMBIENT_V1",
+        EnvVarKind::Feature,
+        false,
+        "V-AMBIENT-STATIC-1: hemisphere ambient fill on StaticPropOpaque lane (static_prop.vert). Default-off; =1 enables (uniform u_ambientV1Strength=1.0). When OFF, strength=0.0 -> byte-identical to legacy output. Skips window-flag nodes."
     },
 };
 

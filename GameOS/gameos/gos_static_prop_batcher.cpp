@@ -388,6 +388,15 @@ static const bool s_materialGpuSampleEnabled = []() {
     const char* v = getenv("MC2_MATERIAL_GPU_SAMPLE");
     return v == nullptr || (v[0] != '0');
 }();
+
+// V-AMBIENT-STATIC-1: hemisphere ambient fill. Default-OFF; only ON when
+// MC2_STATIC_PROP_AMBIENT_V1 is set to a non-"0" value. When OFF (default),
+// the uploaded strength is 0.0 so static_prop.vert's hemisphere term is a
+// bitwise no-op and the output is byte-identical to pre-slice af314d22.
+static const bool s_staticPropAmbientV1Enabled = []() {
+    const char* v = getenv("MC2_STATIC_PROP_AMBIENT_V1");
+    return v != nullptr && v[0] != '0' && v[0] != '\0';
+}();
 static bool s_materialKtxEnabled = (std::getenv("MC2_MATERIAL_KTX") != nullptr &&
                                      std::getenv("MC2_MATERIAL_KTX")[0] != '0');   // MC2_MATERIAL_KTX=1
 // Tracks whether finalizeGeometry() produced a correctly-sized sidecar.
@@ -532,6 +541,7 @@ struct ProgramLocs {
     GLint drawIDBase          = -1;
     GLint texArr              = -1;
     GLint materialGpuSample   = -1;   // MaterialGpu-3: u_materialGpuSample
+    GLint ambientV1Strength   = -1;   // V-AMBIENT-STATIC-1: u_ambientV1Strength
 };
 static ProgramLocs s_locsLegacy;
 static ProgramLocs s_locsCoalesce;
@@ -738,6 +748,8 @@ void loadProgramsIfNeeded() {
     s_locsLegacy.maxLocalVertexID  = glGetUniformLocation(s_staticPropProgram, "u_maxLocalVertexID");
     s_locsLegacy.materialFlags     = glGetUniformLocation(s_staticPropProgram, "u_materialFlags");
     s_locsLegacy.packetID          = glGetUniformLocation(s_staticPropProgram, "u_packetID");
+    // V-AMBIENT-STATIC-1: hemisphere ambient strength uniform (default 0.0 = OFF).
+    s_locsLegacy.ambientV1Strength = glGetUniformLocation(s_staticPropProgram, "u_ambientV1Strength");
     // s_locsLegacy.drawIDBase / texArr stay -1 (coalesce-only; legacy
     // shader has no such uniforms).
 
@@ -769,6 +781,8 @@ void loadProgramsIfNeeded() {
             s_locsCoalesce.drawIDBase        = glGetUniformLocation(s_staticPropProgramCoalesce, "u_drawIDBase");
             s_locsCoalesce.texArr            = glGetUniformLocation(s_staticPropProgramCoalesce, "u_texArr");
             s_locsCoalesce.materialGpuSample = glGetUniformLocation(s_staticPropProgramCoalesce, "u_materialGpuSample");
+            // V-AMBIENT-STATIC-1: hemisphere ambient strength uniform (default 0.0 = OFF).
+            s_locsCoalesce.ambientV1Strength = glGetUniformLocation(s_staticPropProgramCoalesce, "u_ambientV1Strength");
 
             // M3 fix: if both gates are ON and the uniform is absent, log an error.
             // This can only happen if the shader wasn't recompiled with v3 changes.
@@ -3897,6 +3911,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             glUniform1f       (s_locsCoalesce.fogValue,      1.0f);
         if (s_locsCoalesce.debugAddrMode   >= 0)
             glUniform1i       (s_locsCoalesce.debugAddrMode, debugAddrMode_);
+        // V-AMBIENT-STATIC-1: hemisphere ambient fill strength. Default 0.0
+        // (env unset or =0) -> shader hemisphere term contributes vec3(0) ->
+        // byte-identical to pre-slice output. =1 -> 1.0 -> visible subtle
+        // fill in shadowed faces. Skipped for window-flag nodes inside .vert.
+        if (s_locsCoalesce.ambientV1Strength >= 0)
+            glUniform1f       (s_locsCoalesce.ambientV1Strength,
+                               s_staticPropAmbientV1Enabled ? 1.0f : 0.0f);
 
         // 11.7.e — slot 1 is NOT bound (per v2r18 §3.X.1: colors_.c[]
         // unread in any live shader path; coalesce branch does not bind
@@ -4747,6 +4768,11 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             // available for static props; per-instance fog color is on v_fog.
             // 1.0 == "clear" per shader convention. Revisit for distance fog.
             glUniform1f(glGetUniformLocation(s_staticPropProgram, "u_fogValue"),      1.0f);
+            // V-AMBIENT-STATIC-1: hemisphere ambient strength (legacy program).
+            // Same semantics as coalesce site: 0.0 default -> byte-identical OFF.
+            if (s_locsLegacy.ambientV1Strength >= 0)
+                glUniform1f(s_locsLegacy.ambientV1Strength,
+                            s_staticPropAmbientV1Enabled ? 1.0f : 0.0f);
         }
 
     for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {

@@ -471,6 +471,18 @@ void EditorInspector::drawImGui() {
                     ImGui::SetTooltip("static_prop.frag uses normalize(v_normal)\n"
                                       "only for the GBuffer1 write. normalTex is\n"
                                       "declared in MaterialGpu but unused today.");
+
+                // V-AMBIENT-STATIC-1: hemisphere ambient fill mode (default-OFF).
+                // Inspect the env var directly (cheap; this panel only runs
+                // when MC2_IMGUI_INSPECTOR is on).
+                const char* ambEnv = std::getenv("MC2_STATIC_PROP_AMBIENT_V1");
+                bool ambOn = (ambEnv != nullptr && ambEnv[0] != '0' && ambEnv[0] != '\0');
+                ImGui::Text("  ambient        %s", ambOn ? "hemisphere_v1" : "off");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("V-AMBIENT-STATIC-1 hemisphere ambient fill in\n"
+                                      "static_prop.vert (skips window-flag nodes).\n"
+                                      "Gate: MC2_STATIC_PROP_AMBIENT_V1=1.\n"
+                                      "OFF -> u_ambientV1Strength=0.0 (byte-identical).");
             }
 
             ImGui::Spacing();
@@ -482,6 +494,7 @@ void EditorInspector::drawImGui() {
                 { "legacy kill-switch",  "MC2_STATIC_PROP_LEGACY_DISPATCH", false },
                 { "material sample",     "MC2_MATERIAL_GPU_SAMPLE",         true  },
                 { "object-ID buffer",    "MC2_OBJECT_ID_BUFFER",            true  },
+                { "ambient v1",          "MC2_STATIC_PROP_AMBIENT_V1",      false },
             };
             for (const auto& fb : kFallbacks) {
                 const char* v = std::getenv(fb.envVar);

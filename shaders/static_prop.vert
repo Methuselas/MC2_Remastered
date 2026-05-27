@@ -102,6 +102,21 @@ uniform int u_parityNumLightsDebugMode;
 // 'uniform uint' crashes engine compile (memory/uniform_uint_crash.md).
 uniform int u_parityBaseLightDebugMode;
 
+// V-AMBIENT-STATIC-1: hemisphere ambient fill (StaticPropOpaque lane only).
+// Strength 0.0 (default) == OFF and is mathematically a no-op (adds vec3(0)
+// to lit). CPU uploads 1.0 when MC2_STATIC_PROP_AMBIENT_V1=1 (default OFF).
+// Sky/ground are subtle neutrals; first improvement intentionally subtle.
+// Axis: worldNormal is in STUFF/model space (a_normal * mat3(inst.modelMatrix)
+// — see line ~226). inst.modelMatrix is Stuff-convention (.x=left, .y=elev,
+// .z=fwd), and the Stuff->MC2 axis swap at line 156 is applied to POSITION
+// ONLY, not to the normal. So Stuff "up" = worldNormal.y here, not .z.
+// Window-flag nodes skip this term (they are magic-color only — matches
+// existing window-skip of calc_light).
+uniform float u_ambientV1Strength;
+// TODO(V-AMBIENT-STATIC-1): shader_reflect goldens deferred; regen
+// in a fresh worktree after this slice lands (per
+// memory/shader_reflect_regen_must_be_clean_worktree.md).
+
 out vec3  v_normal;
 out vec2  v_uv;
 flat out uint v_flags;
@@ -243,6 +258,21 @@ void main() {
         lit = base_light;
     } else {
         lit = calc_light(int(inst.lightDataIndex), worldNormal, worldPos, base_light);
+
+        // V-AMBIENT-STATIC-1: hemisphere fill. Strength=0.0 (default) is a
+        // bitwise no-op (add vec3(0)). Skip for window branch to preserve
+        // hot-color magic behavior exactly. Axis: worldNormal is STUFF-space
+        // (model normal * mat3(Stuff modelMatrix); the Stuff->MC2 swap at
+        // line 156 transforms POSITION only). In Stuff convention .y is
+        // elevation, so +y = up. Using .z here would gradient along the
+        // Stuff fwd axis ("north/depth"), making north-facing walls
+        // brighten instead of rooftops — see reviewer finding pre-fix.
+        const vec3 kAmbientV1Sky    = vec3(0.20, 0.22, 0.28);
+        const vec3 kAmbientV1Ground = vec3(0.10, 0.09, 0.07);
+        float hemi_t = 0.5 + 0.5 * worldNormal.y;
+        vec3 ambient_v1 = mix(kAmbientV1Ground, kAmbientV1Sky, hemi_t)
+                          * u_ambientV1Strength;
+        lit += ambient_v1;
     }
 
     // 6. aRGBHighlight additive contribution — mirrors CPU tgl.cpp:2313-2335.
