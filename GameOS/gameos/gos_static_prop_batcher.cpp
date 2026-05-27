@@ -4011,6 +4011,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             s_v6FrameGlErrors           = 0u;
             ++s_v6TotalFrameCount;
 
+            // v3: reset per-flush build counters so stale stats never persist.
+            s_spBuildAttempted = s_spBuildCountMismatch = s_spBuildPacketMismatch =
+            s_spBuildMetaMismatch = s_spBuildFallback = 0u;
+
             const uint32_t totalCmds = s_alphaOffCmdCount + s_alphaOnCmdCount;
             v6Packets.resize(totalCmds);
             v6Meta.resize(totalCmds);
