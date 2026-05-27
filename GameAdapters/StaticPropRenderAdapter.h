@@ -74,6 +74,20 @@ RenderCore::RenderObjectHandle syncStaticPropLateSpawn(
 // future-slice cleanup). Declared here so the surface is shape-complete.
 void destroyStaticProp(RenderCore::RenderObjectHandle h);
 
+// Destroy by legacy recipe index. Used by BldgAppearance / TreeAppearance
+// invalidateStaticRegistration() to tombstone the registry recipe AND
+// retire the matching RenderWorld slot in one atomic call.
+//
+// Without this, invalidateStaticRegistration only tombstoned the recipe
+// (count=0) but left the s_objectRecords slot alive=true. On the next
+// syncStaticProp the prop re-registered at a new index, leaving a zombie
+// slot that caused sp_fail=1 permanently (ok=0) in snapshot extraction.
+//
+// Constructs a transient handle with generation=1 (sufficient: retireRecord
+// and legacy::invalidateStaticProp use h.index() only; generation is not
+// inspected by either callee). No-op for recipeIndex < 0.
+void destroyStaticPropByIndex(int32_t recipeIndex);
+
 // Inspector bridge: copy shape filename for recipeIndex into out[0..outLen-1].
 // out is null-terminated on return. Writes an empty string when recipeIndex
 // is invalid, tombstoned, or the registry is disabled.

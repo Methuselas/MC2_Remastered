@@ -2678,7 +2678,7 @@ void BldgAppearance::touch()
 void BldgAppearance::invalidateStaticRegistration()
 {
 	if (staticReg.registered && staticReg.recipeIndex >= 0)
-		GpuStaticPropRegistry::invalidate(staticReg.recipeIndex);
+		GameAdapters::StaticProp::destroyStaticPropByIndex(staticReg.recipeIndex);
 	staticReg = {};
 }
 
@@ -4404,7 +4404,7 @@ void TreeAppearance::touch()
 void TreeAppearance::invalidateStaticRegistration()
 {
 	if (staticReg.registered && staticReg.recipeIndex >= 0)
-		GpuStaticPropRegistry::invalidate(staticReg.recipeIndex);
+		GameAdapters::StaticProp::destroyStaticPropByIndex(staticReg.recipeIndex);
 	staticReg = {};
 }
 

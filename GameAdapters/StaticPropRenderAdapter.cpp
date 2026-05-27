@@ -134,6 +134,13 @@ void destroyStaticProp(RenderCore::RenderObjectHandle h) {
     RenderWorld::destroy(h);
 }
 
+void destroyStaticPropByIndex(int32_t recipeIndex) {
+    if (recipeIndex < 0) return;
+    RenderWorld::destroy(
+        RenderCore::RenderObjectHandle::make(
+            static_cast<uint32_t>(recipeIndex), 1u));
+}
+
 void getRecipeShapeName(int32_t recipeIndex, char* out, size_t outLen) {
     if (!out || outLen == 0) return;
     out[0] = '\0';
