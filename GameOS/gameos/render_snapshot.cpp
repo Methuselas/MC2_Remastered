@@ -95,7 +95,7 @@ RenderSnapshot ExtractRenderSnapshot()
         if (!propBuf && aliveCount > 0) {
             snap.arenaOverflow = true;
             std::fprintf(stderr,
-                "[RENDER_SNAPSHOT v1] WARNING: arena overflow allocating %u ExtractedStaticProp\n",
+                "[RENDER_SNAPSHOT v2.2] WARNING: arena overflow allocating %u ExtractedStaticProp\n",
                 aliveCount);
             // Leave staticProps empty; counters remain zero.
         } else {
