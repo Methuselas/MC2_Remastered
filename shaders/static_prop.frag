@@ -87,7 +87,6 @@ uniform int   u_debugAddrMode;   // 0 normal, 1 gradient, 2 hash, 3 white, 4 arg
 //   4 texArrayLayer(hashed-palette color from texArrayLayer)
 // Legacy (non-MC2_COALESCE) lane has no materialIdx / texArrayLayer locals; in
 // those branches materialIdx/texArrayLayer are 0 (visualizes as a single hue).
-// TODO(V-MATERIAL-DEBUG-1): shader_reflect goldens deferred; regen in fresh worktree.
 uniform int   u_debugMaterialMode;
 
 layout(location = 0) out vec4 FragColor;
