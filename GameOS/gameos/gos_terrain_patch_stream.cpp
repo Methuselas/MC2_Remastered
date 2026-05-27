@@ -598,6 +598,14 @@ void TerrainPatchStream::destroy()
 
 bool TerrainPatchStream::isReady()      { return s_killswitch && s_initOk; }
 bool TerrainPatchStream::isOverflowed() { return s_overflow; }
+
+// TERRAIN-SPINE-0: read-only inspector accessors. Match the file-statics
+// declared in the anonymous namespace at the top of this file.
+uint32_t TerrainPatchStream::getLastFlushBucketCount()  { return s_drawBucketCount; }
+uint32_t TerrainPatchStream::getLastFlushVertCount()    { return s_totalVerts; }
+uint32_t TerrainPatchStream::getLastFlushThinRecCount() { return s_thinRecordCount; }
+uint32_t TerrainPatchStream::getLastFlushRecipeCount()  { return s_recipeCount; }
+bool     TerrainPatchStream::wasLastFlushOverflowed()   { return s_overflow; }
 bool TerrainPatchStream::isThinRecordsActive() {
     return s_thinRecordsOn && (s_thinRecordBuf != 0);
 }

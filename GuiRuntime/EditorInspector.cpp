@@ -30,6 +30,7 @@ static EditorInspector::InspectorSelection     s_selection;
 static EditorInspector::StaticPropInspectorData s_staticPropData;
 static EditorInspector::MechInspectorData       s_mechData;
 static EditorInspector::TerrainInspectorData    s_terrainData;
+static EditorInspector::TerrainPassSnapshot     s_terrainPass;   // TERRAIN-SPINE-0
 static bool s_open = false;
 static bool s_featuresOpen = false;
 
@@ -97,6 +98,13 @@ void EditorInspector::setTerrainData(const TerrainInspectorData& td) {
     s_selection.lookup.worldZ      = td.worldZ;
     s_selection.lookup.worldPosValid = td.populated;
     // NB: s_selection.valid stays false (no RenderWorld lookup).
+}
+
+void EditorInspector::setTerrainPassSnapshot(const TerrainPassSnapshot& ts) {
+    // TERRAIN-SPINE-0: pass-level snapshot. Always accept (no enable gate so the
+    // snapshot is current even when the inspector window is closed; drawImGui is
+    // already gated by isEnabled()).
+    s_terrainPass = ts;
 }
 
 void EditorInspector::clear() {
@@ -716,6 +724,39 @@ void EditorInspector::drawImGui() {
             if (!s_drEnabled)
                 ImGui::TextDisabled("Highlight: off (MC2_DEBUG_RENDERER=0)");
         }
+    }
+
+    // TERRAIN-SPINE-0: pass-level (not selection-driven) view of the terrain
+    // render spine. Visible regardless of pick state.
+    if (ImGui::CollapsingHeader("Terrain Pass##tp", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const TerrainPassSnapshot& ts = s_terrainPass;
+        ImGui::Text("View: id=%u (%s)", ts.currentViewId,
+                    ts.currentViewName ? ts.currentViewName : "");
+        if (ts.viewUniformsBoundForTerrain) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                "ViewUniforms (binding=3): consumed");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                "ViewUniforms (binding=3): NOT consumed (legacy uniforms)");
+        }
+        ImGui::Separator();
+        ImGui::Text("Programs:");
+        ImGui::BulletText("surface (solid):      %u", ts.surfaceProgramId);
+        ImGui::BulletText("thin records:         %u", ts.thinProgramId);
+        ImGui::BulletText("water fast:           %u", ts.waterFastProgramId);
+        ImGui::BulletText("overlay:              %u", ts.overlayProgramId);
+        ImGui::Separator();
+        ImGui::Text("Last flush stats:");
+        ImGui::BulletText("draw buckets:    %u", ts.bucketCount);
+        ImGui::BulletText("verts (expanded): %u", ts.vertCount);
+        ImGui::BulletText("thin records:    %u", ts.thinRecCount);
+        ImGui::BulletText("recipes:         %u", ts.recipeCount);
+        if (ts.overflow) {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+                "OVERFLOWED last flush");
+        }
+        ImGui::Separator();
+        ImGui::Text("Tessellation: %s", ts.tessellationOn ? "ON (always)" : "off");
     }
 
     // Material — shown for any kind; GPU fields only when MC2_MATERIAL_GPU active.

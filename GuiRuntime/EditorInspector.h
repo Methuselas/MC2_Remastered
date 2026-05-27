@@ -62,6 +62,26 @@ struct TerrainInspectorData {
     int   terrainType = -1;
 };
 
+// TERRAIN-SPINE-0: pass-level (not selection-level) snapshot of the terrain
+// render spine. Filled per frame in gameosmain; displayed in the Object
+// Inspector window. Read-only — no GL state, no mutation of any render path.
+struct TerrainPassSnapshot {
+    uint32_t surfaceProgramId       = 0;
+    uint32_t thinProgramId          = 0;
+    uint32_t waterFastProgramId     = 0;
+    uint32_t overlayProgramId       = 0;
+    uint32_t bucketCount            = 0;
+    uint32_t vertCount              = 0;
+    uint32_t thinRecCount           = 0;
+    uint32_t recipeCount            = 0;
+    bool     overflow               = false;
+    // v1: hard-coded false — terrain shaders don't consume ViewUniforms (binding=3) yet.
+    bool     viewUniformsBoundForTerrain = false;
+    uint32_t currentViewId          = 0;
+    const char* currentViewName     = "";  // RenderCore-owned string literal
+    bool     tessellationOn         = true;
+};
+
 void onCtrlShiftClick(int mouseX, int mouseY);  // called by missiongui.cpp (Task 7)
 // Task 7 bridge: missiongui.cpp calls tryGameplayPick, then passes the result here.
 // Keeps gui_runtime layering clean (gui_runtime must not link against code/ targets).
@@ -69,6 +89,7 @@ void setPickResult(int mouseX, int mouseY, const RenderWorld::LookupResult& look
 void setStaticPropData(const StaticPropInspectorData& sd);
 void setMechData(const MechInspectorData& md);
 void setTerrainData(const TerrainInspectorData& td);
+void setTerrainPassSnapshot(const TerrainPassSnapshot& ts);  // TERRAIN-SPINE-0
 void flushDebugHighlight();
 void drawImGui();                                 // called by GuiRuntime::Render() each frame
 void clear();                                     // clear selection

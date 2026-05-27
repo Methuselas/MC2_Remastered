@@ -1331,6 +1331,8 @@ class gosRenderer {
         glsl_program* getTerrainSurfaceProgram()   const { return terrain_surface_prog_;     }
         glsl_program* getWaterFastProgram()        const { return water_fast_prog_;           }
         glsl_program* getMineStaticProgram()       const { return mine_static_prog_;          }  // PR2c Stage 2c
+        // TERRAIN-SPINE-0: read-only inspector accessor for the terrain overlay program.
+        glsl_program* getTerrainOverlayProgram()   const { return overlayProg_;                }
         glsl_program* getMaskSolidProgram()        const { return mask_solid_prog_;           }  // B4 Stage 1b — mask-SOLID draw
         glsl_program* getMaskWaterProgram()        const { return mask_water_prog_;           }  // B4 Stage 1c — mask-water draw
         // GPU-driven dynamic sun shadow -- Phase 1 getters.
@@ -1883,6 +1885,35 @@ class gosRenderer {
 };
 
 const std::string gosRenderer::s_Foreground = std::string("Foreground");
+
+// TERRAIN-SPINE-0: free-function program-id accessors for the read-only
+// Terrain Pass inspector. Defined here (after the gosRenderer class body)
+// so other TUs (gameosmain.cpp) can reference them without seeing the full
+// class. Each returns the raw GL program object id, or 0 if not linked.
+uint32_t gos_getTerrainSurfaceProgramId() {
+    gosRenderer* r = getGosRenderer();
+    if (!r) return 0u;
+    glsl_program* p = r->getTerrainSurfaceProgram();
+    return (p && p->shp_) ? (uint32_t)p->shp_ : 0u;
+}
+uint32_t gos_getThinTerrainProgramId() {
+    gosRenderer* r = getGosRenderer();
+    if (!r) return 0u;
+    glsl_program* p = r->getThinTerrainProgram();
+    return (p && p->shp_) ? (uint32_t)p->shp_ : 0u;
+}
+uint32_t gos_getWaterFastProgramId() {
+    gosRenderer* r = getGosRenderer();
+    if (!r) return 0u;
+    glsl_program* p = r->getWaterFastProgram();
+    return (p && p->shp_) ? (uint32_t)p->shp_ : 0u;
+}
+uint32_t gos_getTerrainOverlayProgramId() {
+    gosRenderer* r = getGosRenderer();
+    if (!r) return 0u;
+    glsl_program* p = r->getTerrainOverlayProgram();
+    return (p && p->shp_) ? (uint32_t)p->shp_ : 0u;
+}
 
 // ─── gos_terrain_bridge implementation ────────────────────────────────────
 // Defined here because the full gosRenderer type is visible in this TU.

@@ -131,6 +131,9 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "object_admission_predicate.h"  // Track A1: init probe + selftest gate
 #ifdef MC2_IMGUI
 #include "../../GuiRuntime/GuiRuntime.h"
+#include "../../GuiRuntime/EditorInspector.h"     // TERRAIN-SPINE-0
+#include "gos_terrain_patch_stream.h"             // TERRAIN-SPINE-0
+#include "view_uniforms_gl.h"                     // TERRAIN-SPINE-0: RenderCore::getCurrentView
 #include "imgui_impl_sdl2.h"
 #endif
 
@@ -1362,6 +1365,37 @@ int main(int argc, char** argv)
                     }
                 }
                 g_dpSelProp = sel;
+            }
+
+            // TERRAIN-SPINE-0: pass-level snapshot for the inspector's
+            // "Terrain Pass" header. Mirrors the g_dpSelProp pattern — fill
+            // here, displayed by EditorInspector. Read-only — no GL state
+            // touched, no mutation of any render path.
+            {
+                // Free-function accessors defined in gameos_graphics.cpp; full
+                // gosRenderer type is private to that TU. Linkage matches the
+                // extern "C" block at the definition site.
+                extern uint32_t gos_getTerrainSurfaceProgramId();
+                extern uint32_t gos_getThinTerrainProgramId();
+                extern uint32_t gos_getWaterFastProgramId();
+                extern uint32_t gos_getTerrainOverlayProgramId();
+                EditorInspector::TerrainPassSnapshot ts;
+                ts.surfaceProgramId   = gos_getTerrainSurfaceProgramId();
+                ts.thinProgramId      = gos_getThinTerrainProgramId();
+                ts.waterFastProgramId = gos_getWaterFastProgramId();
+                ts.overlayProgramId   = gos_getTerrainOverlayProgramId();
+                ts.bucketCount  = TerrainPatchStream::getLastFlushBucketCount();
+                ts.vertCount    = TerrainPatchStream::getLastFlushVertCount();
+                ts.thinRecCount = TerrainPatchStream::getLastFlushThinRecCount();
+                ts.recipeCount  = TerrainPatchStream::getLastFlushRecipeCount();
+                ts.overflow     = TerrainPatchStream::wasLastFlushOverflowed();
+                // v1: terrain shaders don't consume the ViewUniforms UBO yet.
+                ts.viewUniformsBoundForTerrain = false;
+                const RenderCore::EngineView& view = RenderCore::getCurrentView();
+                ts.currentViewId   = view.id;
+                ts.currentViewName = view.debugName ? view.debugName : "";
+                ts.tessellationOn  = true;
+                EditorInspector::setTerrainPassSnapshot(ts);
             }
 
         }

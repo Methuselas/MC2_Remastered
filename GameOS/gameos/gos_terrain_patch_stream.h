@@ -152,6 +152,14 @@ public:
     static bool isReady();
     static bool isOverflowed();
 
+    // TERRAIN-SPINE-0: read-only accessors for inspector. Snapshot of last
+    // flush()'s per-frame counters. No mutation, no GL calls.
+    static uint32_t getLastFlushBucketCount();
+    static uint32_t getLastFlushVertCount();
+    static uint32_t getLastFlushThinRecCount();
+    static uint32_t getLastFlushRecipeCount();
+    static bool     wasLastFlushOverflowed();
+
     // Returns true when the thin-record GPU path is initialized and active.
     // When true, quad.cpp skips buildTerrainExtraTriple and appendQuad.
     static bool isThinRecordsActive();
