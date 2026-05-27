@@ -10,7 +10,6 @@ Cubemaps are identified with depth = 0.
 #define _IMAGE_H_
 
 #include <stdio.h>
-#include <stddef.h>
 
 struct TGAHeader;
 
@@ -88,12 +87,13 @@ public:
 	void clear();
 
 	bool loadFromFile(const char *fileName);
-	bool loadFromMemoryEncoded(const unsigned char* mem, size_t len, const char* fileNameHint = 0);
 	void loadFromMemory(void *mem, const FORMAT fmt, const int w, const int h, const int d, const int mipMapCount, bool ownsMemory);
 
 	
 	bool loadTGA(const char *fileName);
 	bool loadBMP(const char *fileName);
+	bool loadJPG(const char *fileName);
+	bool loadPNG(const char *fileName);
 
 	bool loadTGA(FILE* file);
 	bool loadBMP(FILE* file);
@@ -110,6 +110,7 @@ public:
 	unsigned char *getPixels() { return pixels; }
 
 private:
+	bool loadWIC(const char *fileName);
     bool loadTGA(const TGAHeader* header, unsigned char* readPixels);
     bool loadCompressedTGA(const TGAHeader* header, const unsigned char* readPixels, size_t len);
 

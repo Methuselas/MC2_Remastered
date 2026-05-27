@@ -9,7 +9,7 @@
  * UPDATED: 2026-05-19
  *
  * CHANGES:
- * - Added stb_image-backed loading for PNG/JPG/BMP/TGA-style FIT image refs.
+ * - Uses internal GameOS Image decode for PNG/JPG/BMP/TGA-style FIT image refs.
  * - Added executable-relative and repo-relative path probes for MC2R data/art/gui assets.
  * - Removed SDL2_image dependency from UI Editor image previews.
  * - Added extensionless legacy texture probing and GUI basename fallbacks.
@@ -20,8 +20,7 @@
 #include <SDL.h>
 #include <SDL_opengl.h>
 
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include "utils/Image.h"
 
 #include <algorithm>
 #include <cctype>
@@ -195,44 +194,6 @@ namespace
 		return false;
 	}
 
-	bool UploadSurfaceToTexture(SDL_Surface* surface, CachedImage& image)
-	{
-		if (surface == nullptr)
-			return false;
-
-		SDL_Surface* converted = SDL_ConvertSurfaceFormat(surface, SDL_PIXELFORMAT_RGBA32, 0);
-		if (converted == nullptr)
-			return false;
-
-		GLuint glTexture = 0;
-		glGenTextures(1, &glTexture);
-		glBindTexture(GL_TEXTURE_2D, glTexture);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexImage2D(
-			GL_TEXTURE_2D,
-			0,
-			GL_RGBA,
-			converted->w,
-			converted->h,
-			0,
-			GL_RGBA,
-			GL_UNSIGNED_BYTE,
-			converted->pixels);
-
-		image.glTexture = glTexture;
-		image.width = converted->w;
-		image.height = converted->h;
-		image.loaded = true;
-		image.unavailable = false;
-
-		SDL_FreeSurface(converted);
-		return true;
-	}
-
 	bool LoadTextureFromPath(const std::string& rawPath, CachedImage& image)
 	{
 		image.attempted = true;
@@ -245,14 +206,59 @@ namespace
 			return false;
 		}
 
-		int width = 0;
-		int height = 0;
-		int channels = 0;
-		stbi_uc* pixels = stbi_load(resolvedPath.c_str(), &width, &height, &channels, 4);
-		if (pixels == nullptr || width <= 0 || height <= 0)
+		Image decodedImage;
+		if (!decodedImage.loadFromFile(resolvedPath.c_str()) || decodedImage.getWidth() <= 0 || decodedImage.getHeight() <= 0)
 		{
 			image.unavailable = true;
-			g_status = std::string("stb_image failed: ") + resolvedPath;
+			g_status = std::string("GameOS Image decode failed: ") + resolvedPath;
+			return false;
+		}
+
+		const int width = decodedImage.getWidth();
+		const int height = decodedImage.getHeight();
+		const FORMAT format = decodedImage.getFormat();
+		const unsigned char* source = decodedImage.getPixels();
+		std::vector<unsigned char> rgbaPixels(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4, 255);
+
+		if (format == FORMAT_RGBA8)
+		{
+			for (std::size_t i = 0; i < static_cast<std::size_t>(width) * static_cast<std::size_t>(height); ++i)
+			{
+				const std::size_t p = i * 4;
+				rgbaPixels[p + 0] = source[p + 0];
+				rgbaPixels[p + 1] = source[p + 1];
+				rgbaPixels[p + 2] = source[p + 2];
+				rgbaPixels[p + 3] = source[p + 3];
+			}
+		}
+		else if (format == FORMAT_RGB8)
+		{
+			for (std::size_t i = 0; i < static_cast<std::size_t>(width) * static_cast<std::size_t>(height); ++i)
+			{
+				const std::size_t src = i * 3;
+				const std::size_t dst = i * 4;
+				rgbaPixels[dst + 0] = source[src + 0];
+				rgbaPixels[dst + 1] = source[src + 1];
+				rgbaPixels[dst + 2] = source[src + 2];
+				rgbaPixels[dst + 3] = 255;
+			}
+		}
+		else if (format == FORMAT_I8 || format == FORMAT_A8)
+		{
+			for (std::size_t i = 0; i < static_cast<std::size_t>(width) * static_cast<std::size_t>(height); ++i)
+			{
+				const std::size_t dst = i * 4;
+				const unsigned char value = source[i];
+				rgbaPixels[dst + 0] = value;
+				rgbaPixels[dst + 1] = value;
+				rgbaPixels[dst + 2] = value;
+				rgbaPixels[dst + 3] = 255;
+			}
+		}
+		else
+		{
+			image.unavailable = true;
+			g_status = std::string("Unsupported GameOS Image format: ") + resolvedPath;
 			return false;
 		}
 
@@ -273,9 +279,7 @@ namespace
 			0,
 			GL_RGBA,
 			GL_UNSIGNED_BYTE,
-			pixels);
-
-		stbi_image_free(pixels);
+			rgbaPixels.data());
 
 		if (glTexture == 0)
 		{
@@ -308,7 +312,7 @@ UiEditorImageTexture::UiEditorImageTexture()
 
 bool UiEditorImageCache_Initialize()
 {
-	g_status = "stb_image ready.";
+	g_status = "GameOS Image decoder ready.";
 	return true;
 }
 

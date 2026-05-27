@@ -1,20 +1,11 @@
 /***************************************************************
  * FILENAME: mc2res_legacy.fit
- * DESCRIPTION: Coverage-first mc2res.dll legacy string replacement.
+ * DESCRIPTION: Coverage-first mc2res.dll legacy string replacement for transitional fallback lookup.
  *
- * AUTHOR: Microsoft / FASA source data
- * CREATED: Unknown
+ * CREATED BY: Methuselas
+ * CREATED: 2026-04-30
  *
- * UPDATED BY: Methuselas
- * UPDATED: 2026-05-05
- *
- * CHANGES:
- * - Emitted one directly loadable String record for every positive legacy
- *   mc2res string ID so old engine lookups remain coverage-safe.
  ***************************************************************/
-
-// Generated from MC2R_defs_fixed_deploy.zip golden source.
-// Coverage rule: 3994 legacy IDs in, 3994 String records out, no aliases-only coverage.
 
 String {
     key = "legacy.mc2res.10000"

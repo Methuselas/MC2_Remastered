@@ -14,6 +14,10 @@ GuiPage {
     localWidth = 640
     localHeight = 640
     previewLayout = "cursor_grid"
+    cursorAtlasPixels = 1024
+    legacyCursorAtlasPixels = 128
+    cursorAtlasUvScale = 8
+    cursorDisplayScale = 1.0
     mountOffset = "0,0"
     editableSource = "generated_imgui_only"
 }
@@ -51,10 +55,14 @@ GuiImage {
     controlRect = "0,0,31,31"
     artRect = "0,0,31,31"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -76,10 +84,14 @@ GuiImage {
     controlRect = "40,0,32,32"
     artRect = "40,0,32,32"
     artLayer = "control_art"
-    uvX = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -101,10 +113,14 @@ GuiImage {
     controlRect = "80,0,32,32"
     artRect = "80,0,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -126,10 +142,14 @@ GuiImage {
     controlRect = "120,0,32,32"
     artRect = "120,0,32,32"
     artLayer = "control_art"
-    uvX = 96
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -151,10 +171,14 @@ GuiImage {
     controlRect = "160,0,32,32"
     artRect = "160,0,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -176,10 +200,14 @@ GuiImage {
     controlRect = "200,0,32,32"
     artRect = "200,0,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -201,10 +229,14 @@ GuiImage {
     controlRect = "240,0,31,31"
     artRect = "240,0,31,31"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 32
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -226,10 +258,14 @@ GuiImage {
     controlRect = "280,0,31,31"
     artRect = "280,0,31,31"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 32
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -251,10 +287,14 @@ GuiImage {
     controlRect = "320,0,31,31"
     artRect = "320,0,31,31"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 64
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -276,10 +316,14 @@ GuiImage {
     controlRect = "360,0,31,31"
     artRect = "360,0,31,31"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 64
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -301,10 +345,14 @@ GuiImage {
     controlRect = "400,0,31,31"
     artRect = "400,0,31,31"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 64
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -326,10 +374,14 @@ GuiImage {
     controlRect = "440,0,31,31"
     artRect = "440,0,31,31"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 64
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -351,10 +403,14 @@ GuiImage {
     controlRect = "480,0,31,31"
     artRect = "480,0,31,31"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 96
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -376,10 +432,14 @@ GuiImage {
     controlRect = "520,0,31,31"
     artRect = "520,0,31,31"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 96
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -401,10 +461,14 @@ GuiImage {
     controlRect = "560,0,32,32"
     artRect = "560,0,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -426,10 +490,14 @@ GuiImage {
     controlRect = "600,0,31,31"
     artRect = "600,0,31,31"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 96
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -451,10 +519,14 @@ GuiImage {
     controlRect = "0,40,32,32"
     artRect = "0,40,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -476,10 +548,14 @@ GuiImage {
     controlRect = "40,40,31,31"
     artRect = "40,40,31,31"
     artLayer = "control_art"
-    uvX = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -501,10 +577,14 @@ GuiImage {
     controlRect = "80,40,32,32"
     artRect = "80,40,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -526,10 +606,14 @@ GuiImage {
     controlRect = "120,40,31,31"
     artRect = "120,40,31,31"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -551,10 +635,14 @@ GuiImage {
     controlRect = "160,40,32,32"
     artRect = "160,40,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -576,10 +664,14 @@ GuiImage {
     controlRect = "200,40,31,31"
     artRect = "200,40,31,31"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 32
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -601,10 +693,14 @@ GuiImage {
     controlRect = "240,40,31,31"
     artRect = "240,40,31,31"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 32
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -626,10 +722,14 @@ GuiImage {
     controlRect = "280,40,31,31"
     artRect = "280,40,31,31"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 32
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 Gui3DView {
@@ -652,10 +752,14 @@ Gui3DView {
     hitRect = "320,40,31,31"
     artRect = "320,40,31,31"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 64
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
     viewportKind = "legacy_3d_model"
     runtimeOwner = "Mechlopedia camera"
     sourceLine = "camera.init(...) / camera.render()"
@@ -680,10 +784,14 @@ GuiImage {
     controlRect = "360,40,31,31"
     artRect = "360,40,31,31"
     artLayer = "control_art"
-    uvX = 96
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -705,10 +813,14 @@ GuiImage {
     controlRect = "400,40,32,32"
     artRect = "400,40,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -730,10 +842,14 @@ GuiImage {
     controlRect = "440,40,32,32"
     artRect = "440,40,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -755,10 +871,14 @@ GuiImage {
     controlRect = "480,40,31,31"
     artRect = "480,40,31,31"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 96
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -780,10 +900,14 @@ GuiImage {
     controlRect = "520,40,31,31"
     artRect = "520,40,31,31"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 96
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -805,10 +929,14 @@ GuiImage {
     controlRect = "560,40,31,31"
     artRect = "560,40,31,31"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 96
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -830,10 +958,14 @@ GuiImage {
     controlRect = "600,40,31,31"
     artRect = "600,40,31,31"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 96
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -855,10 +987,14 @@ GuiImage {
     controlRect = "0,80,31,31"
     artRect = "0,80,31,31"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -880,10 +1016,14 @@ GuiImage {
     controlRect = "40,80,31,31"
     artRect = "40,80,31,31"
     artLayer = "control_art"
-    uvX = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -905,10 +1045,14 @@ GuiImage {
     controlRect = "80,80,31,31"
     artRect = "80,80,31,31"
     artLayer = "control_art"
-    uvX = 64
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -930,10 +1074,14 @@ GuiImage {
     controlRect = "120,80,32,32"
     artRect = "120,80,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -955,10 +1103,14 @@ GuiImage {
     controlRect = "160,80,31,31"
     artRect = "160,80,31,31"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 32
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -980,10 +1132,14 @@ GuiImage {
     controlRect = "200,80,31,31"
     artRect = "200,80,31,31"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 32
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -1005,10 +1161,14 @@ GuiImage {
     controlRect = "240,80,31,31"
     artRect = "240,80,31,31"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 32
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -1030,10 +1190,14 @@ GuiImage {
     controlRect = "280,80,31,31"
     artRect = "280,80,31,31"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 32
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -1055,10 +1219,14 @@ GuiImage {
     controlRect = "320,80,31,31"
     artRect = "320,80,31,31"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 96
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -1080,10 +1248,14 @@ GuiImage {
     controlRect = "360,80,32,32"
     artRect = "360,80,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1105,10 +1277,14 @@ GuiImage {
     controlRect = "360,80,32,32"
     artRect = "360,80,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1130,10 +1306,14 @@ GuiImage {
     controlRect = "400,80,31,31"
     artRect = "400,80,31,31"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 32
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -1155,10 +1335,14 @@ GuiImage {
     controlRect = "440,80,31,31"
     artRect = "440,80,31,31"
     artLayer = "control_art"
-    uvX = 64
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -1180,10 +1364,14 @@ GuiImage {
     controlRect = "480,80,31,31"
     artRect = "480,80,31,31"
     artLayer = "control_art"
-    uvX = 96
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -1205,10 +1393,14 @@ GuiImage {
     controlRect = "520,80,31,31"
     artRect = "520,80,31,31"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 64
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -1230,10 +1422,14 @@ GuiImage {
     controlRect = "560,80,31,31"
     artRect = "560,80,31,31"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 64
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -1255,10 +1451,14 @@ GuiImage {
     controlRect = "600,80,31,31"
     artRect = "600,80,31,31"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 64
-    uvWidth = 31
-    uvHeight = 31
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 31
+    uvWidth = 248
+    legacyUvHeight = 31
+    uvHeight = 248
 }
 
 GuiImage {
@@ -1280,10 +1480,14 @@ GuiImage {
     controlRect = "0,120,32,32"
     artRect = "0,120,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1305,10 +1509,14 @@ GuiImage {
     controlRect = "40,120,32,32"
     artRect = "40,120,32,32"
     artLayer = "control_art"
-    uvX = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1330,10 +1538,14 @@ GuiImage {
     controlRect = "80,120,32,32"
     artRect = "80,120,32,32"
     artLayer = "control_art"
-    uvX = 64
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1355,10 +1567,14 @@ GuiImage {
     controlRect = "120,120,32,32"
     artRect = "120,120,32,32"
     artLayer = "control_art"
-    uvX = 96
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1380,10 +1596,14 @@ GuiImage {
     controlRect = "160,120,32,32"
     artRect = "160,120,32,32"
     artLayer = "control_art"
-    uvX = 128
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1405,10 +1625,14 @@ GuiImage {
     controlRect = "200,120,32,32"
     artRect = "200,120,32,32"
     artLayer = "control_art"
-    uvX = 160
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1430,10 +1654,14 @@ GuiImage {
     controlRect = "240,120,32,32"
     artRect = "240,120,32,32"
     artLayer = "control_art"
-    uvX = 192
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1455,10 +1683,14 @@ GuiImage {
     controlRect = "280,120,32,32"
     artRect = "280,120,32,32"
     artLayer = "control_art"
-    uvX = 224
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1480,10 +1712,14 @@ GuiImage {
     controlRect = "320,120,32,32"
     artRect = "320,120,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1505,10 +1741,14 @@ GuiImage {
     controlRect = "360,120,32,32"
     artRect = "360,120,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1530,10 +1770,14 @@ GuiImage {
     controlRect = "400,120,32,32"
     artRect = "400,120,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1555,10 +1799,14 @@ GuiImage {
     controlRect = "440,120,32,32"
     artRect = "440,120,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1580,10 +1828,14 @@ GuiImage {
     controlRect = "480,120,32,32"
     artRect = "480,120,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1605,10 +1857,14 @@ GuiImage {
     controlRect = "520,120,32,32"
     artRect = "520,120,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1630,10 +1886,14 @@ GuiImage {
     controlRect = "560,120,32,32"
     artRect = "560,120,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1655,10 +1915,14 @@ GuiImage {
     controlRect = "600,120,32,32"
     artRect = "600,120,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1680,10 +1944,14 @@ GuiImage {
     controlRect = "0,160,32,32"
     artRect = "0,160,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1705,10 +1973,14 @@ GuiImage {
     controlRect = "40,160,32,32"
     artRect = "40,160,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1730,10 +2002,14 @@ GuiImage {
     controlRect = "80,160,32,32"
     artRect = "80,160,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1755,10 +2031,14 @@ GuiImage {
     controlRect = "120,160,32,32"
     artRect = "120,160,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1780,10 +2060,14 @@ GuiImage {
     controlRect = "160,160,32,32"
     artRect = "160,160,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1805,10 +2089,14 @@ GuiImage {
     controlRect = "200,160,32,32"
     artRect = "200,160,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1830,10 +2118,14 @@ GuiImage {
     controlRect = "240,160,32,32"
     artRect = "240,160,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1855,10 +2147,14 @@ GuiImage {
     controlRect = "280,160,32,32"
     artRect = "280,160,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1880,10 +2176,14 @@ GuiImage {
     controlRect = "320,160,32,32"
     artRect = "320,160,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1905,10 +2205,14 @@ GuiImage {
     controlRect = "360,160,32,32"
     artRect = "360,160,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1930,10 +2234,14 @@ GuiImage {
     controlRect = "400,160,32,32"
     artRect = "400,160,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1955,10 +2263,14 @@ GuiImage {
     controlRect = "440,160,32,32"
     artRect = "440,160,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -1980,10 +2292,14 @@ GuiImage {
     controlRect = "480,160,32,32"
     artRect = "480,160,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2005,10 +2321,14 @@ GuiImage {
     controlRect = "520,160,32,32"
     artRect = "520,160,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2030,10 +2350,14 @@ GuiImage {
     controlRect = "560,160,32,32"
     artRect = "560,160,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2055,10 +2379,14 @@ GuiImage {
     controlRect = "600,160,32,32"
     artRect = "600,160,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2080,10 +2408,14 @@ GuiImage {
     controlRect = "0,200,32,32"
     artRect = "0,200,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2105,10 +2437,14 @@ GuiImage {
     controlRect = "40,200,32,32"
     artRect = "40,200,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2130,10 +2466,14 @@ GuiImage {
     controlRect = "80,200,32,32"
     artRect = "80,200,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2155,10 +2495,14 @@ GuiImage {
     controlRect = "120,200,32,32"
     artRect = "120,200,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2180,10 +2524,14 @@ GuiImage {
     controlRect = "160,200,32,32"
     artRect = "160,200,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2205,10 +2553,14 @@ GuiImage {
     controlRect = "200,200,32,32"
     artRect = "200,200,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2230,10 +2582,14 @@ GuiImage {
     controlRect = "240,200,32,32"
     artRect = "240,200,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2255,10 +2611,14 @@ GuiImage {
     controlRect = "280,200,32,32"
     artRect = "280,200,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2280,10 +2640,14 @@ GuiImage {
     controlRect = "320,200,32,32"
     artRect = "320,200,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2305,10 +2669,14 @@ GuiImage {
     controlRect = "360,200,32,32"
     artRect = "360,200,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2330,10 +2698,14 @@ GuiImage {
     controlRect = "400,200,32,32"
     artRect = "400,200,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2355,10 +2727,14 @@ GuiImage {
     controlRect = "440,200,32,32"
     artRect = "440,200,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2380,10 +2756,14 @@ GuiImage {
     controlRect = "480,200,32,32"
     artRect = "480,200,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2405,10 +2785,14 @@ GuiImage {
     controlRect = "520,200,32,32"
     artRect = "520,200,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2430,10 +2814,14 @@ GuiImage {
     controlRect = "560,200,32,32"
     artRect = "560,200,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2455,10 +2843,14 @@ GuiImage {
     controlRect = "600,200,32,32"
     artRect = "600,200,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2480,10 +2872,14 @@ GuiImage {
     controlRect = "0,240,32,32"
     artRect = "0,240,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2505,10 +2901,14 @@ GuiImage {
     controlRect = "40,240,32,32"
     artRect = "40,240,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2530,10 +2930,14 @@ GuiImage {
     controlRect = "80,240,32,32"
     artRect = "80,240,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2555,10 +2959,14 @@ GuiImage {
     controlRect = "120,240,32,32"
     artRect = "120,240,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2580,10 +2988,14 @@ GuiImage {
     controlRect = "160,240,32,32"
     artRect = "160,240,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2605,10 +3017,14 @@ GuiImage {
     controlRect = "200,240,32,32"
     artRect = "200,240,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2630,10 +3046,14 @@ GuiImage {
     controlRect = "240,240,32,32"
     artRect = "240,240,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2655,10 +3075,14 @@ GuiImage {
     controlRect = "280,240,32,32"
     artRect = "280,240,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2680,10 +3104,14 @@ GuiImage {
     controlRect = "320,240,32,32"
     artRect = "320,240,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2705,10 +3133,14 @@ GuiImage {
     controlRect = "360,240,32,32"
     artRect = "360,240,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2730,10 +3162,14 @@ GuiImage {
     controlRect = "400,240,32,32"
     artRect = "400,240,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2755,10 +3191,14 @@ GuiImage {
     controlRect = "440,240,32,32"
     artRect = "440,240,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2780,10 +3220,14 @@ GuiImage {
     controlRect = "480,240,32,32"
     artRect = "480,240,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2805,10 +3249,14 @@ GuiImage {
     controlRect = "520,240,32,32"
     artRect = "520,240,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2830,10 +3278,14 @@ GuiImage {
     controlRect = "560,240,32,32"
     artRect = "560,240,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2855,10 +3307,14 @@ GuiImage {
     controlRect = "600,240,32,32"
     artRect = "600,240,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2880,10 +3336,14 @@ GuiImage {
     controlRect = "0,280,32,32"
     artRect = "0,280,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2905,10 +3365,14 @@ GuiImage {
     controlRect = "40,280,32,32"
     artRect = "40,280,32,32"
     artLayer = "control_art"
-    uvX = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2930,10 +3394,14 @@ GuiImage {
     controlRect = "80,280,32,32"
     artRect = "80,280,32,32"
     artLayer = "control_art"
-    uvX = 64
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2955,10 +3423,14 @@ GuiImage {
     controlRect = "120,280,32,32"
     artRect = "120,280,32,32"
     artLayer = "control_art"
-    uvX = 96
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -2980,10 +3452,14 @@ GuiImage {
     controlRect = "160,280,32,32"
     artRect = "160,280,32,32"
     artLayer = "control_art"
-    uvX = 128
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3005,10 +3481,14 @@ GuiImage {
     controlRect = "200,280,32,32"
     artRect = "200,280,32,32"
     artLayer = "control_art"
-    uvX = 160
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3030,10 +3510,14 @@ GuiImage {
     controlRect = "240,280,32,32"
     artRect = "240,280,32,32"
     artLayer = "control_art"
-    uvX = 192
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3055,10 +3539,14 @@ GuiImage {
     controlRect = "280,280,32,32"
     artRect = "280,280,32,32"
     artLayer = "control_art"
-    uvX = 224
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3080,10 +3568,14 @@ GuiImage {
     controlRect = "320,280,32,32"
     artRect = "320,280,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3105,10 +3597,14 @@ GuiImage {
     controlRect = "360,280,32,32"
     artRect = "360,280,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3130,10 +3626,14 @@ GuiImage {
     controlRect = "400,280,32,32"
     artRect = "400,280,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3155,10 +3655,14 @@ GuiImage {
     controlRect = "440,280,32,32"
     artRect = "440,280,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3180,10 +3684,14 @@ GuiImage {
     controlRect = "480,280,32,32"
     artRect = "480,280,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3205,10 +3713,14 @@ GuiImage {
     controlRect = "520,280,32,32"
     artRect = "520,280,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3230,10 +3742,14 @@ GuiImage {
     controlRect = "560,280,32,32"
     artRect = "560,280,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3255,10 +3771,14 @@ GuiImage {
     controlRect = "600,280,32,32"
     artRect = "600,280,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3280,10 +3800,14 @@ GuiImage {
     controlRect = "0,320,32,32"
     artRect = "0,320,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3305,10 +3829,14 @@ GuiImage {
     controlRect = "40,320,32,32"
     artRect = "40,320,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3330,10 +3858,14 @@ GuiImage {
     controlRect = "80,320,32,32"
     artRect = "80,320,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3355,10 +3887,14 @@ GuiImage {
     controlRect = "120,320,32,32"
     artRect = "120,320,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3380,10 +3916,14 @@ GuiImage {
     controlRect = "160,320,32,32"
     artRect = "160,320,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3405,10 +3945,14 @@ GuiImage {
     controlRect = "200,320,32,32"
     artRect = "200,320,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3430,10 +3974,14 @@ GuiImage {
     controlRect = "240,320,32,32"
     artRect = "240,320,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3455,10 +4003,14 @@ GuiImage {
     controlRect = "280,320,32,32"
     artRect = "280,320,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3480,10 +4032,14 @@ GuiImage {
     controlRect = "320,320,32,32"
     artRect = "320,320,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3505,10 +4061,14 @@ GuiImage {
     controlRect = "360,320,32,32"
     artRect = "360,320,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3530,10 +4090,14 @@ GuiImage {
     controlRect = "400,320,32,32"
     artRect = "400,320,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3555,10 +4119,14 @@ GuiImage {
     controlRect = "440,320,32,32"
     artRect = "440,320,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3580,10 +4148,14 @@ GuiImage {
     controlRect = "480,320,32,32"
     artRect = "480,320,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3605,10 +4177,14 @@ GuiImage {
     controlRect = "520,320,32,32"
     artRect = "520,320,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3630,10 +4206,14 @@ GuiImage {
     controlRect = "560,320,32,32"
     artRect = "560,320,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3655,10 +4235,14 @@ GuiImage {
     controlRect = "600,320,32,32"
     artRect = "600,320,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3680,10 +4264,14 @@ GuiImage {
     controlRect = "0,360,32,32"
     artRect = "0,360,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3705,10 +4293,14 @@ GuiImage {
     controlRect = "40,360,32,32"
     artRect = "40,360,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3730,10 +4322,14 @@ GuiImage {
     controlRect = "80,360,32,32"
     artRect = "80,360,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3755,10 +4351,14 @@ GuiImage {
     controlRect = "120,360,32,32"
     artRect = "120,360,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3780,10 +4380,14 @@ GuiImage {
     controlRect = "160,360,32,32"
     artRect = "160,360,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3805,10 +4409,14 @@ GuiImage {
     controlRect = "200,360,32,32"
     artRect = "200,360,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3830,10 +4438,14 @@ GuiImage {
     controlRect = "240,360,32,32"
     artRect = "240,360,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3855,10 +4467,14 @@ GuiImage {
     controlRect = "280,360,32,32"
     artRect = "280,360,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3880,10 +4496,14 @@ GuiImage {
     controlRect = "320,360,32,32"
     artRect = "320,360,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3905,10 +4525,14 @@ GuiImage {
     controlRect = "360,360,32,32"
     artRect = "360,360,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3930,10 +4554,14 @@ GuiImage {
     controlRect = "400,360,32,32"
     artRect = "400,360,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3955,10 +4583,14 @@ GuiImage {
     controlRect = "440,360,32,32"
     artRect = "440,360,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -3980,10 +4612,14 @@ GuiImage {
     controlRect = "480,360,32,32"
     artRect = "480,360,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4005,10 +4641,14 @@ GuiImage {
     controlRect = "520,360,32,32"
     artRect = "520,360,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4030,10 +4670,14 @@ GuiImage {
     controlRect = "560,360,32,32"
     artRect = "560,360,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4055,10 +4699,14 @@ GuiImage {
     controlRect = "600,360,32,32"
     artRect = "600,360,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4080,10 +4728,14 @@ GuiImage {
     controlRect = "0,400,32,32"
     artRect = "0,400,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4105,10 +4757,14 @@ GuiImage {
     controlRect = "40,400,32,32"
     artRect = "40,400,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4130,10 +4786,14 @@ GuiImage {
     controlRect = "80,400,32,32"
     artRect = "80,400,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4155,10 +4815,14 @@ GuiImage {
     controlRect = "120,400,32,32"
     artRect = "120,400,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4180,10 +4844,14 @@ GuiImage {
     controlRect = "160,400,32,32"
     artRect = "160,400,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4205,10 +4873,14 @@ GuiImage {
     controlRect = "200,400,32,32"
     artRect = "200,400,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4230,10 +4902,14 @@ GuiImage {
     controlRect = "240,400,32,32"
     artRect = "240,400,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4255,10 +4931,14 @@ GuiImage {
     controlRect = "280,400,32,32"
     artRect = "280,400,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4280,10 +4960,14 @@ GuiImage {
     controlRect = "320,400,32,32"
     artRect = "320,400,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4305,10 +4989,14 @@ GuiImage {
     controlRect = "360,400,32,32"
     artRect = "360,400,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4330,10 +5018,14 @@ GuiImage {
     controlRect = "400,400,32,32"
     artRect = "400,400,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4355,10 +5047,14 @@ GuiImage {
     controlRect = "440,400,32,32"
     artRect = "440,400,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4380,10 +5076,14 @@ GuiImage {
     controlRect = "480,400,32,32"
     artRect = "480,400,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4405,10 +5105,14 @@ GuiImage {
     controlRect = "520,400,32,32"
     artRect = "520,400,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4430,10 +5134,14 @@ GuiImage {
     controlRect = "560,400,32,32"
     artRect = "560,400,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4455,10 +5163,14 @@ GuiImage {
     controlRect = "600,400,32,32"
     artRect = "600,400,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4480,10 +5192,14 @@ GuiImage {
     controlRect = "0,440,32,32"
     artRect = "0,440,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4505,10 +5221,14 @@ GuiImage {
     controlRect = "40,440,32,32"
     artRect = "40,440,32,32"
     artLayer = "control_art"
-    uvX = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4530,10 +5250,14 @@ GuiImage {
     controlRect = "80,440,32,32"
     artRect = "80,440,32,32"
     artLayer = "control_art"
-    uvX = 64
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4555,10 +5279,14 @@ GuiImage {
     controlRect = "120,440,32,32"
     artRect = "120,440,32,32"
     artLayer = "control_art"
-    uvX = 96
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4580,10 +5308,14 @@ GuiImage {
     controlRect = "160,440,32,32"
     artRect = "160,440,32,32"
     artLayer = "control_art"
-    uvX = 128
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4605,10 +5337,14 @@ GuiImage {
     controlRect = "200,440,32,32"
     artRect = "200,440,32,32"
     artLayer = "control_art"
-    uvX = 160
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4630,10 +5366,14 @@ GuiImage {
     controlRect = "240,440,32,32"
     artRect = "240,440,32,32"
     artLayer = "control_art"
-    uvX = 192
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4655,10 +5395,14 @@ GuiImage {
     controlRect = "280,440,32,32"
     artRect = "280,440,32,32"
     artLayer = "control_art"
-    uvX = 224
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4680,10 +5424,14 @@ GuiImage {
     controlRect = "320,440,32,32"
     artRect = "320,440,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4705,10 +5453,14 @@ GuiImage {
     controlRect = "360,440,32,32"
     artRect = "360,440,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4730,10 +5482,14 @@ GuiImage {
     controlRect = "400,440,32,32"
     artRect = "400,440,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4755,10 +5511,14 @@ GuiImage {
     controlRect = "440,440,32,32"
     artRect = "440,440,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4780,10 +5540,14 @@ GuiImage {
     controlRect = "480,440,32,32"
     artRect = "480,440,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4805,10 +5569,14 @@ GuiImage {
     controlRect = "520,440,32,32"
     artRect = "520,440,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4830,10 +5598,14 @@ GuiImage {
     controlRect = "560,440,32,32"
     artRect = "560,440,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4855,10 +5627,14 @@ GuiImage {
     controlRect = "600,440,32,32"
     artRect = "600,440,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4880,10 +5656,14 @@ GuiImage {
     controlRect = "0,480,32,32"
     artRect = "0,480,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4905,10 +5685,14 @@ GuiImage {
     controlRect = "40,480,32,32"
     artRect = "40,480,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4930,10 +5714,14 @@ GuiImage {
     controlRect = "80,480,32,32"
     artRect = "80,480,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4955,10 +5743,14 @@ GuiImage {
     controlRect = "120,480,32,32"
     artRect = "120,480,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -4980,10 +5772,14 @@ GuiImage {
     controlRect = "160,480,32,32"
     artRect = "160,480,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5005,10 +5801,14 @@ GuiImage {
     controlRect = "200,480,32,32"
     artRect = "200,480,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5030,10 +5830,14 @@ GuiImage {
     controlRect = "240,480,32,32"
     artRect = "240,480,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5055,10 +5859,14 @@ GuiImage {
     controlRect = "280,480,32,32"
     artRect = "280,480,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5080,10 +5888,14 @@ GuiImage {
     controlRect = "320,480,32,32"
     artRect = "320,480,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5105,10 +5917,14 @@ GuiImage {
     controlRect = "360,480,32,32"
     artRect = "360,480,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5130,10 +5946,14 @@ GuiImage {
     controlRect = "400,480,32,32"
     artRect = "400,480,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5155,10 +5975,14 @@ GuiImage {
     controlRect = "440,480,32,32"
     artRect = "440,480,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5180,10 +6004,14 @@ GuiImage {
     controlRect = "480,480,32,32"
     artRect = "480,480,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5205,10 +6033,14 @@ GuiImage {
     controlRect = "520,480,32,32"
     artRect = "520,480,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5230,10 +6062,14 @@ GuiImage {
     controlRect = "560,480,32,32"
     artRect = "560,480,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5255,10 +6091,14 @@ GuiImage {
     controlRect = "600,480,32,32"
     artRect = "600,480,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 96
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 96
+    uvY = 768
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5280,10 +6120,14 @@ GuiImage {
     controlRect = "0,520,32,32"
     artRect = "0,520,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5305,10 +6149,14 @@ GuiImage {
     controlRect = "40,520,32,32"
     artRect = "40,520,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5330,10 +6178,14 @@ GuiImage {
     controlRect = "80,520,32,32"
     artRect = "80,520,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5355,10 +6207,14 @@ GuiImage {
     controlRect = "120,520,32,32"
     artRect = "120,520,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5380,10 +6236,14 @@ GuiImage {
     controlRect = "160,520,32,32"
     artRect = "160,520,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5405,10 +6265,14 @@ GuiImage {
     controlRect = "200,520,32,32"
     artRect = "200,520,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5430,10 +6294,14 @@ GuiImage {
     controlRect = "240,520,32,32"
     artRect = "240,520,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5455,10 +6323,14 @@ GuiImage {
     controlRect = "280,520,32,32"
     artRect = "280,520,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 128
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 128
+    uvY = 1024
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5480,10 +6352,14 @@ GuiImage {
     controlRect = "320,520,32,32"
     artRect = "320,520,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5505,10 +6381,14 @@ GuiImage {
     controlRect = "360,520,32,32"
     artRect = "360,520,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5530,10 +6410,14 @@ GuiImage {
     controlRect = "400,520,32,32"
     artRect = "400,520,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5555,10 +6439,14 @@ GuiImage {
     controlRect = "440,520,32,32"
     artRect = "440,520,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5580,10 +6468,14 @@ GuiImage {
     controlRect = "480,520,32,32"
     artRect = "480,520,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5605,10 +6497,14 @@ GuiImage {
     controlRect = "520,520,32,32"
     artRect = "520,520,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5630,10 +6526,14 @@ GuiImage {
     controlRect = "560,520,32,32"
     artRect = "560,520,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5655,10 +6555,14 @@ GuiImage {
     controlRect = "600,520,32,32"
     artRect = "600,520,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 160
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 160
+    uvY = 1280
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5680,10 +6584,14 @@ GuiImage {
     controlRect = "0,560,32,32"
     artRect = "0,560,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5705,10 +6613,14 @@ GuiImage {
     controlRect = "40,560,32,32"
     artRect = "40,560,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5730,10 +6642,14 @@ GuiImage {
     controlRect = "80,560,32,32"
     artRect = "80,560,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5755,10 +6671,14 @@ GuiImage {
     controlRect = "120,560,32,32"
     artRect = "120,560,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5780,10 +6700,14 @@ GuiImage {
     controlRect = "160,560,32,32"
     artRect = "160,560,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5805,10 +6729,14 @@ GuiImage {
     controlRect = "200,560,32,32"
     artRect = "200,560,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5830,10 +6758,14 @@ GuiImage {
     controlRect = "240,560,32,32"
     artRect = "240,560,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5855,10 +6787,14 @@ GuiImage {
     controlRect = "280,560,32,32"
     artRect = "280,560,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 192
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 192
+    uvY = 1536
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5880,10 +6816,14 @@ GuiImage {
     controlRect = "320,560,32,32"
     artRect = "320,560,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5905,10 +6845,14 @@ GuiImage {
     controlRect = "360,560,32,32"
     artRect = "360,560,32,32"
     artLayer = "control_art"
-    uvX = 32
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 32
+    uvX = 256
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5930,10 +6874,14 @@ GuiImage {
     controlRect = "400,560,32,32"
     artRect = "400,560,32,32"
     artLayer = "control_art"
-    uvX = 64
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 64
+    uvX = 512
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5955,10 +6903,14 @@ GuiImage {
     controlRect = "440,560,32,32"
     artRect = "440,560,32,32"
     artLayer = "control_art"
-    uvX = 96
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 96
+    uvX = 768
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -5980,10 +6932,14 @@ GuiImage {
     controlRect = "480,560,32,32"
     artRect = "480,560,32,32"
     artLayer = "control_art"
-    uvX = 128
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 128
+    uvX = 1024
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -6005,10 +6961,14 @@ GuiImage {
     controlRect = "520,560,32,32"
     artRect = "520,560,32,32"
     artLayer = "control_art"
-    uvX = 160
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 160
+    uvX = 1280
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -6030,10 +6990,14 @@ GuiImage {
     controlRect = "560,560,32,32"
     artRect = "560,560,32,32"
     artLayer = "control_art"
-    uvX = 192
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 192
+    uvX = 1536
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -6055,10 +7019,14 @@ GuiImage {
     controlRect = "600,560,32,32"
     artRect = "600,560,32,32"
     artLayer = "control_art"
-    uvX = 224
-    uvY = 224
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvX = 224
+    uvX = 1792
+    legacyUvY = 224
+    uvY = 1792
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -6080,10 +7048,14 @@ GuiImage {
     controlRect = "0,600,32,32"
     artRect = "0,600,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
+    legacyUvY = 0
     uvY = 0
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -6105,10 +7077,14 @@ GuiImage {
     controlRect = "40,600,32,32"
     artRect = "40,600,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 32
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 32
+    uvY = 256
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }
 
 GuiImage {
@@ -6130,8 +7106,12 @@ GuiImage {
     controlRect = "80,600,32,32"
     artRect = "80,600,32,32"
     artLayer = "control_art"
+    legacyUvX = 0
     uvX = 0
-    uvY = 64
-    uvWidth = 32
-    uvHeight = 32
+    legacyUvY = 64
+    uvY = 512
+    legacyUvWidth = 32
+    uvWidth = 256
+    legacyUvHeight = 32
+    uvHeight = 256
 }

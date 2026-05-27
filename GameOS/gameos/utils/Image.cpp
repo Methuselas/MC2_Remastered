@@ -5,20 +5,13 @@
 #include <stdlib.h>
 #include <cassert>
 
-#define STB_IMAGE_STATIC
-#define STB_IMAGE_IMPLEMENTATION
-#if defined(__has_include)
-#  if __has_include("stb_image.h")
-#    include "stb_image.h"
-#  elif __has_include("../../../3rdparty/stb/stb_image.h")
-#    include "../../../3rdparty/stb/stb_image.h"
-#  elif __has_include("../../../3rdparty/assimp/contrib/stb/stb_image.h")
-#    include "../../../3rdparty/assimp/contrib/stb/stb_image.h"
-#  else
-#    error "stb_image.h not found for GameOS Image loader"
-#  endif
-#else
-#  include "../../../3rdparty/assimp/contrib/stb/stb_image.h"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <objbase.h>
+#include <wincodec.h>
 #endif
 
 //#include "math/vec.h"
@@ -34,7 +27,7 @@
 
 
 void Image::clear(){
-	delete pixels;
+	delete[] pixels;
 	pixels = NULL;
 	width = height = 0;
 	format = FORMAT_NONE;
@@ -124,6 +117,8 @@ static FORMAT getFormatFromBpp(const unsigned int bpp) {
 Image::Image(void)
 {
 	pixels = 0;
+	width = height = 0;
+	format = FORMAT_NONE;
 }
 
 Image::~Image(void)
@@ -143,79 +138,6 @@ unsigned char *Image::create(const FORMAT fmt, const int w, const int h){
 	return pixels;
 }
 
-namespace
-{
-	bool LoadStbPixelsFromFile(const char* fileName, unsigned char*& outPixels, long& outWidth, long& outHeight, FORMAT& outFormat)
-	{
-		outPixels = 0;
-		outWidth = 0;
-		outHeight = 0;
-		outFormat = FORMAT_NONE;
-
-		int width = 0;
-		int height = 0;
-		int components = 0;
-		unsigned char* decoded = stbi_load(fileName, &width, &height, &components, 4);
-		if (!decoded || width <= 0 || height <= 0)
-		{
-			if (decoded)
-				stbi_image_free(decoded);
-			return false;
-		}
-
-		const size_t byteCount = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
-		outPixels = new unsigned char[byteCount];
-		memcpy(outPixels, decoded, byteCount);
-		stbi_image_free(decoded);
-
-		outWidth = width;
-		outHeight = height;
-		outFormat = FORMAT_RGBA8;
-		return true;
-	}
-
-	bool LoadStbPixelsFromMemory(const unsigned char* mem, size_t len, unsigned char*& outPixels, long& outWidth, long& outHeight, FORMAT& outFormat)
-	{
-		outPixels = 0;
-		outWidth = 0;
-		outHeight = 0;
-		outFormat = FORMAT_NONE;
-
-		if (!mem || len == 0)
-			return false;
-
-		int width = 0;
-		int height = 0;
-		int components = 0;
-		unsigned char* decoded = stbi_load_from_memory(mem, static_cast<int>(len), &width, &height, &components, 4);
-		if (!decoded || width <= 0 || height <= 0)
-		{
-			if (decoded)
-				stbi_image_free(decoded);
-			return false;
-		}
-
-		const size_t byteCount = static_cast<size_t>(width) * static_cast<size_t>(height) * 4u;
-		outPixels = new unsigned char[byteCount];
-		memcpy(outPixels, decoded, byteCount);
-		stbi_image_free(decoded);
-
-		outWidth = width;
-		outHeight = height;
-		outFormat = FORMAT_RGBA8;
-		return true;
-	}
-
-	bool HasExtension(const char* fileName, const char* ext)
-	{
-		if (!fileName || !ext)
-			return false;
-
-		const char* dot = strrchr(fileName, '.');
-		return dot && stricmp(dot + 1, ext) == 0;
-	}
-}
-
 bool Image::loadFromFile(const char *fileName){
 	const char *ext = strrchr(fileName, '.');
 	if (ext == NULL) return false;
@@ -223,66 +145,146 @@ bool Image::loadFromFile(const char *fileName){
 	ext++;
 	if (stricmp(ext, "tga") == 0)
 	{
-		if (loadTGA(fileName))
-			return true;
+		return loadTGA(fileName);
 	}
 	else if (stricmp(ext, "bmp") == 0)
 	{
-		if (loadBMP(fileName))
-			return true;
+		return loadBMP(fileName);
 	}
-
-	clear();
-
-	unsigned char* decodedPixels = 0;
-	long decodedWidth = 0;
-	long decodedHeight = 0;
-	FORMAT decodedFormat = FORMAT_NONE;
-	if (!LoadStbPixelsFromFile(fileName, decodedPixels, decodedWidth, decodedHeight, decodedFormat))
-		return false;
-
-	pixels = decodedPixels;
-	width = decodedWidth;
-	height = decodedHeight;
-	format = decodedFormat;
-	return true;
+	else if (stricmp(ext, "jpg") == 0 || stricmp(ext, "jpeg") == 0)
+	{
+		return loadJPG(fileName);
+	}
+	else if (stricmp(ext, "png") == 0)
+	{
+		return loadPNG(fileName);
+	}
+	return false;
 }
 
-bool Image::loadFromMemoryEncoded(const unsigned char* mem, size_t len, const char* fileNameHint)
+bool Image::loadJPG(const char *fileName)
 {
+	return loadWIC(fileName);
+}
+
+bool Image::loadPNG(const char *fileName)
+{
+	return loadWIC(fileName);
+}
+
+bool Image::loadWIC(const char *fileName)
+{
+#ifdef _WIN32
 	clear();
 
-	// Preserve the legacy TGA loader first for old MC2 packed assets.
-	if (HasExtension(fileNameHint, "tga"))
+	if (!fileName || !fileName[0])
+		return false;
+
+	int wideLength = MultiByteToWideChar(CP_UTF8, 0, fileName, -1, NULL, 0);
+	UINT codePage = CP_UTF8;
+	if (wideLength <= 0)
 	{
-		if (loadTGA(mem, len))
-			return true;
-		clear();
+		codePage = CP_ACP;
+		wideLength = MultiByteToWideChar(codePage, 0, fileName, -1, NULL, 0);
 	}
 
-	unsigned char* decodedPixels = 0;
-	long decodedWidth = 0;
-	long decodedHeight = 0;
-	FORMAT decodedFormat = FORMAT_NONE;
-	if (LoadStbPixelsFromMemory(mem, len, decodedPixels, decodedWidth, decodedHeight, decodedFormat))
+	if (wideLength <= 0)
+		return false;
+
+	wchar_t* wideFileName = new wchar_t[wideLength];
+	if (MultiByteToWideChar(codePage, 0, fileName, -1, wideFileName, wideLength) <= 0)
 	{
-		pixels = decodedPixels;
-		width = decodedWidth;
-		height = decodedHeight;
-		format = decodedFormat;
-		return true;
+		delete[] wideFileName;
+		return false;
 	}
 
-	// Last fallback for extensionless legacy callers that still hand us TGA data.
-	if (!HasExtension(fileNameHint, "tga"))
+	HRESULT comInit = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+	const bool shouldUninitializeCom = SUCCEEDED(comInit);
+	if (comInit == RPC_E_CHANGED_MODE)
+		comInit = S_OK;
+
+	if (FAILED(comInit))
 	{
-		clear();
-		if (loadTGA(mem, len))
-			return true;
+		delete[] wideFileName;
+		return false;
 	}
 
-	clear();
+	IWICImagingFactory* factory = NULL;
+	IWICBitmapDecoder* decoder = NULL;
+	IWICBitmapFrameDecode* frame = NULL;
+	IWICFormatConverter* converter = NULL;
+
+	bool ok = false;
+
+	HRESULT hr = CoCreateInstance(
+		CLSID_WICImagingFactory,
+		NULL,
+		CLSCTX_INPROC_SERVER,
+		IID_PPV_ARGS(&factory));
+
+	if (SUCCEEDED(hr))
+		hr = factory->CreateDecoderFromFilename(
+		wideFileName,
+		NULL,
+		GENERIC_READ,
+		WICDecodeMetadataCacheOnLoad,
+		&decoder);
+
+	if (SUCCEEDED(hr))
+		hr = decoder->GetFrame(0, &frame);
+
+	UINT decodedWidth = 0;
+	UINT decodedHeight = 0;
+	if (SUCCEEDED(hr))
+		hr = frame->GetSize(&decodedWidth, &decodedHeight);
+
+	if (SUCCEEDED(hr))
+		hr = factory->CreateFormatConverter(&converter);
+
+	if (SUCCEEDED(hr))
+		hr = converter->Initialize(
+		frame,
+		GUID_WICPixelFormat32bppRGBA,
+		WICBitmapDitherTypeNone,
+		NULL,
+		0.0,
+		WICBitmapPaletteTypeCustom);
+
+	if (SUCCEEDED(hr) && decodedWidth > 0 && decodedHeight > 0)
+	{
+		const UINT stride = decodedWidth * 4;
+		const UINT imageBytes = stride * decodedHeight;
+		unsigned char* decodedPixels = new unsigned char[imageBytes];
+
+		hr = converter->CopyPixels(NULL, stride, imageBytes, decodedPixels);
+		if (SUCCEEDED(hr))
+		{
+			pixels = decodedPixels;
+			width = decodedWidth;
+			height = decodedHeight;
+			format = FORMAT_RGBA8;
+			ok = true;
+		}
+		else
+		{
+			delete[] decodedPixels;
+		}
+	}
+
+	if (converter) converter->Release();
+	if (frame) frame->Release();
+	if (decoder) decoder->Release();
+	if (factory) factory->Release();
+
+	if (shouldUninitializeCom)
+		CoUninitialize();
+
+	delete[] wideFileName;
+	return ok;
+#else
+	(void)fileName;
 	return false;
+#endif
 }
 
 bool Image::loadTGA(const char *fileName){
@@ -480,39 +482,44 @@ bool Image::loadCompressedTGA(const TGAHeader* header, const unsigned char* mem,
 	int offset = 0;
 	const size_t num_pixels = width * height;
 
-	unsigned char* pixels = new unsigned char[width * height * pixelSize];
+	delete[] pixels;
+	pixels = new unsigned char[width * height * pixelSize];
 
 	while (num_read_pixels < num_pixels) {
 
-		if (len < pixelSize + 1)
+		if (len < pixelSize + 1) {
+			clear();
 			return false;
+		}
 
 		memcpy(p, mem + offset, pixelSize + 1);
 
 		len -= pixelSize + 1;
 		offset += pixelSize + 1;
 
-		mergeBytes(&(pixels[num_read_pixels]), &(p[1]), pixelSize);
+		mergeBytes(&(pixels[num_read_pixels * pixelSize]), &(p[1]), pixelSize);
 		num_read_pixels++;
 
 		unsigned int  j = p[0] & 0x7f;
 		bool is_rle = p[0] & 0x80;
 		if (is_rle) {
-			for (unsigned int i = 0; i < j; i++) {
-				mergeBytes(&(pixels[num_read_pixels]), &(p[1]), pixelSize);
+			for (unsigned int i = 0; i < j && num_read_pixels < num_pixels; i++) {
+				mergeBytes(&(pixels[num_read_pixels * pixelSize]), &(p[1]), pixelSize);
 				num_read_pixels++;
 			}
 		}
 		else {
-			for (unsigned int i = 0; i < j; i++) {
+			for (unsigned int i = 0; i < j && num_read_pixels < num_pixels; i++) {
 
-				if (len < pixelSize)
+				if (len < pixelSize) {
+					clear();
 					return false;
+				}
 				memcpy(p, mem + offset, pixelSize);
 				len -= pixelSize;
 				offset += pixelSize;
 
-				mergeBytes(&(pixels[num_read_pixels]), p, pixelSize);
+				mergeBytes(&(pixels[num_read_pixels * pixelSize]), p, pixelSize);
 				num_read_pixels++;
 			}
 		}

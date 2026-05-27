@@ -66,7 +66,6 @@ else()
     message(FATAL_ERROR "imgui SDL2 backend requires SDL.h, but no SDL2 include directory containing SDL.h was found.")
 endif()
 
-
 # Suppress warnings in vendored code
 if(MSVC)
     target_compile_options(imgui PRIVATE /W0)

@@ -1,8 +1,6 @@
 # MechCommander 2 -- OpenGL Remastered
 
-
-<img width="2141" height="997" alt="image" src="https://github.com/user-attachments/assets/724aa51d-b9ee-44f9-a958-dbf7a7875405" />
-
+![MC2 OpenGL Remastered](screenshots/hero.png)
 
 A visual remaster of MechCommander 2, built on top of [alariq's OpenGL port](https://github.com/alariq/mc2). Rebuilds the rendering pipeline around PBR terrain splatting, real-time shadows, tessellation, and modern post-processing -- while leaving the original gameplay, missions, and systems alone.
 

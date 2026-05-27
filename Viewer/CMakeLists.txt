@@ -1,4 +1,3 @@
-<<<<<<< Updated upstream
 set(VIEWER_SOURCES 
     "../gui/aanimobject.cpp"
     "../code/gamesound.cpp"
@@ -17,56 +16,6 @@ set(VIEWER_SOURCES
     #    "../strings.res.cpp"
     "View.cpp"
     "ViewerHostGlobals.cpp"
-    )
-
-add_definitions(-DVIEWER=1)
-#add_definitions(-D_ARMOR)
-#add_definitions(-D_DEBUG)
-
-include_directories("./window" ${COMMON_INCLUDE_DIRS} "../mclib" "../gui" "../code" "../netlib")
-include_directories(${CMAKE_PREFIX_PATH}/include)
-
-add_executable(viewer ${VIEWER_SOURCES})
-target_link_libraries(viewer
-    mclib
-    fx_trace
-    particles
-    gosfx
-    mlr
-    stuff
-    gui
-    gameos
-    gameos_main
-    windows
-    rendercore
-    renderworld
-    gameadapters
-    ZLIB::ZLIB
-    ${SDL2_LIBRARIES}
-    GLEW::GLEW
-    SDL2_mixer::SDL2_mixer
-    ${ADDITIONAL_LIBS}
-    OpenGL::GL
-)
-
-=======
-set(VIEWER_SOURCES 
-    "../gui/aanimobject.cpp"
-    "../code/gamesound.cpp"
-    "../code/logisticscomponent.cpp"
-    "../code/logisticsdata.cpp"
-    "../code/logisticsmech.cpp"
-    "../code/logisticsmissioninfo.cpp"
-    "../code/logisticspilot.cpp"
-    "../code/logisticsvariant.cpp"
-    "../code/mechlopedia.cpp"
-    "../code/mission2.cpp"
-    "../code/prefs.cpp"
-    "../code/radio.cpp"
-    "../code/simplecamera.cpp"
-    "../code/simplecomponentlistbox.cpp"
-    #    "../strings.res.cpp"
-    "View.cpp"
     "ViewerImgui.cpp"
     "ViewerGuiFit.cpp"
     "ViewerFontCatalog.cpp"
@@ -88,34 +37,8 @@ if(WIN32)
     enable_language(RC)
     target_sources(viewer PRIVATE "Viewer.rc")
 endif()
-target_link_libraries(viewer mclib gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL)
+target_link_libraries(viewer mclib gosfx mlr stuff gui gameos gameos_main windows ZLIB::ZLIB ${SDL2_LIBRARIES} GLEW::GLEW SDL2_mixer::SDL2_mixer ${ADDITIONAL_LIBS} OpenGL::GL fx_trace particles rendercore renderworld gameadapters imgui)
 
-
-set(IMGUI_ROOT "${CMAKE_SOURCE_DIR}/3rdparty/imgui")
-if(EXISTS "${IMGUI_ROOT}/imgui.cpp")
-    target_sources(viewer PRIVATE
-        "${IMGUI_ROOT}/imgui.cpp"
-        "${IMGUI_ROOT}/imgui_draw.cpp"
-        "${IMGUI_ROOT}/imgui_tables.cpp"
-        "${IMGUI_ROOT}/imgui_widgets.cpp"
-        "${IMGUI_ROOT}/backends/imgui_impl_opengl3.cpp"
-    )
-
-    target_include_directories(viewer PRIVATE
-        "${IMGUI_ROOT}"
-        "${IMGUI_ROOT}/backends"
-    )
-else()
-    message(FATAL_ERROR "ImGui source not found at ${IMGUI_ROOT}. Expected 3rdparty/imgui.")
-endif()
-
-
-set(STB_ROOT "${CMAKE_SOURCE_DIR}/3rdparty/stb")
-if(EXISTS "${STB_ROOT}/stb_image.h")
-    target_include_directories(viewer PRIVATE "${STB_ROOT}")
-else()
-    message(FATAL_ERROR "stb_image.h not found at ${STB_ROOT}. Expected 3rdparty/stb.")
-endif()
 
 # Runtime font assets. Fonts are shipped as art assets and referenced by fonts.fit.
 set(MC2R_RUNTIME_FONT_DIR "${CMAKE_SOURCE_DIR}/assets/graphics/fonts")
@@ -164,4 +87,3 @@ if(EXISTS "${MC2R_RUNTIME_ART_DIR}")
         COMMENT "Copying MC2R runtime art for Viewer")
 endif()
 
->>>>>>> Stashed changes

@@ -31,9 +31,9 @@ endif("${CMAKE_SIZEOF_VOID_P}" EQUAL "8")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS "ON")
 
-# Normalize paths before appending them to CMAKE_MODULE_PATH.  Raw Windows
-# backslashes inherited by try_compile() can be parsed as CMake escapes
-# (for example, D:\Repos -> invalid "\R").
+# Normalize CMake module paths before they are inherited by try_compile()
+# projects. Raw Windows backslashes in generated scratch CMakeLists files can
+# be parsed as escapes, e.g. D:\Repos -> invalid "\R".
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}" MC2_SOURCE_DIR_CMAKE)
 
 foreach(MC2_PREFIX_PATH_ENTRY IN LISTS CMAKE_PREFIX_PATH)
@@ -175,7 +175,14 @@ get_filename_component(COM_PATH1 "./GameOS/include" ABSOLUTE)
 get_filename_component(COM_PATH2 "./GameOS/gameos" ABSOLUTE)
 
 set(COMMON_INCLUDE_DIRS  ${COM_PATH1} ${COM_PATH2})
-set(THIRDPARTY_INCLUDE_DIRS "${CMAKE_PREFIX_PATH}/include")
+set(THIRDPARTY_INCLUDE_DIRS "")
+foreach(MC2_PREFIX_PATH_ENTRY IN LISTS CMAKE_PREFIX_PATH)
+    if(NOT "${MC2_PREFIX_PATH_ENTRY}" STREQUAL "")
+        file(TO_CMAKE_PATH "${MC2_PREFIX_PATH_ENTRY}" MC2_PREFIX_PATH_ENTRY_CMAKE)
+        list(APPEND THIRDPARTY_INCLUDE_DIRS "${MC2_PREFIX_PATH_ENTRY_CMAKE}/include")
+    endif()
+endforeach()
+list(APPEND THIRDPARTY_INCLUDE_DIRS "${MC2_SOURCE_DIR_CMAKE}/3rdparty/include")
 # Tracy headers resolve as <tracy/Tracy.hpp>
 list(APPEND THIRDPARTY_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/tracy")
 
@@ -245,8 +252,8 @@ add_subdirectory("./GameOS/src" "./out/windows")
 add_subdirectory("3rdparty/imgui")
 add_subdirectory("GuiRuntime")
 # Standalone ImGui UI Editor.
-# Guarded so source snapshots that carry only metadata files do not break
-# configure, while full local UI Editor trees produce ui_editor.vcxproj.
+# Guarded so source snapshots that carry only changelog/version files do
+# not break configure, while full local UI Editor trees produce ui_editor.vcxproj.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ui_editor/CMakeLists.txt")
     add_subdirectory("./ui_editor" "./out/ui_editor")
 endif()
@@ -355,7 +362,7 @@ if(NOT WIN32)
 	message("Not win32 system")
 else()
 	# winmm for timeGetTime, maybe switch to GetTickCount to remove this dependency
-	set(ADDITIONAL_LIBS winmm ws2_32 dbghelp psapi user32 shell32)
+	set(ADDITIONAL_LIBS winmm ws2_32 dbghelp psapi user32 shell32 ole32 windowscodecs uuid)
 endif()
 
 
@@ -492,11 +499,8 @@ endif()
 add_subdirectory("./res" "./out/res")
 add_subdirectory("./data_tools" "./out/data_tools")
 add_subdirectory("./text_tool" "./out/text_tool")
-
 add_subdirectory("./Viewer" "./out/Viewer")
-add_subdirectory("./ui_editor" "./out/ui_editor")
 
-<<<<<<< Updated upstream
 # MC2 Mission Editor (MFC/Windows-only). editor/CMakeLists.txt guards
 # itself with if(NOT MSVC) return() so this is safe on all platforms.
 # Scoped import from PR #36: editor tree + gameos_editor only; PR's
@@ -545,9 +549,3 @@ if(MC2_BUILD_ENGINE_STANDALONE)
             /WHOLEARCHIVE:windows)
     endif()
 endif()
-=======
-# MC2 Mission Editor (MFC/Windows-only). The CMakeLists inside
-# editor/ guards itself with if(NOT MSVC) return() so this is
-# safe on all platforms.
- add_subdirectory("./editor" "./out/editor")
->>>>>>> Stashed changes

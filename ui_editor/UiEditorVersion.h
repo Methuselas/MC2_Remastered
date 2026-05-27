@@ -45,10 +45,8 @@
  * - Updated UI Editor SemVer for v0.5.3w viewer/text-rect/browser cleanup.
  * - Updated UI Editor SemVer for v0.5.3v package-local UI folder consolidation.
  * - Updated UI Editor SemVer for v0.5.3x viewer UV/text-rect/browser hotfix.
-<<<<<<< Updated upstream
  * - Updated UI Editor SemVer for v0.5.3y Viewer button-state adapter cleanup.
-=======
->>>>>>> Stashed changes
+ * - Updated UI Editor SemVer for v0.5.3z 1K cursor atlas support.
  ***************************************************************/
 
 #pragma once

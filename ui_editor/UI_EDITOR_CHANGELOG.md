@@ -1,6 +1,19 @@
 # UI Editor Changelog
 
-<<<<<<< Updated upstream
+## 0.5.3z - 2026-05-25
+
+### Added
+- Added 1024x1024 cursor atlas support for generated `legacy_imgui` shared cursor pages.
+- Added page-level cursor atlas metadata (`cursorAtlasPixels`, `legacyCursorAtlasPixels`, `cursorAtlasUvScale`, `cursorDisplayScale`) for `cursors.fit` and `cursorsa.fit`.
+
+### Changed
+- Updated `data/art/gui/Cursors*.png` and `data/art/gui/Cursors*a.png` to 1K atlas assets while preserving legacy cursor display sizes.
+- Scaled generated cursor UV fields from legacy 128px atlas coordinates to 1024px atlas coordinates and preserved the original legacy UVs for traceability.
+- Updated the legacy FIT converter so regenerated cursor catalog pages keep 1K atlas UV support.
+
+### Notes
+- Cursor display rects and hotspots remain legacy-sized; only the atlas resolution and UV coordinates were modernized.
+
 ## 0.5.3y - 2026-05-25
 
 ### Fixed
@@ -11,8 +24,6 @@
 ### Notes
 - Viewer still uses the shared `legacy_imgui` package. This patch strengthens the Viewer adapter instead of creating a separate Viewer UI set.
 
-=======
->>>>>>> Stashed changes
 ## 0.5.3x - 2026-05-25
 
 ### Fixed
