@@ -5,6 +5,7 @@
 #include "../GameOS/gameos/debug_renderer.h"  // IMG-INSPECT-3
 #include "draw_packet_emitter.h"              // g_dpSelectedRecipeIndex
 #include "../RenderCore/RendererFeatureRegistry.h"
+#include "../RenderCore/RenderPassContract.h"  // RENDERPASS-CONTRACT-2.5 (descriptive table)
 
 // MECH-SPINE-1: read-only accessors for mech pass-level state. Defined in
 // gos_mech_batcher.cpp; declared here so the inspector can reference them
@@ -889,6 +890,35 @@ void EditorInspector::drawImGui() {
         ImGui::BulletText("PpcBolt      (handle 33)         draws: n/a");
         ImGui::Separator();
         ImGui::TextDisabled("PipelineDesc: legacy (VFX not on registry; object-IDs prohibited)");
+    }
+
+    // RENDERPASS-CONTRACT-2.5: descriptive table of pass-lane closure state.
+    // Mirrors RendererFeatureRegistry: pure data, no scheduling, no callbacks.
+    // Source of truth: RenderCore/RenderPassContract.h (kRenderPassContracts).
+    if (ImGui::CollapsingHeader("Render Pass Contracts##rpc")) {
+        ImGui::TextDisabled("Descriptive only -- imperative dispatch unchanged.");
+        if (ImGui::BeginTable("rpc_table", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("id");
+            ImGui::TableSetupColumn("name");
+            ImGui::TableSetupColumn("owner");
+            ImGui::TableSetupColumn("viewUni");
+            ImGui::TableSetupColumn("pipeDesc");
+            ImGui::TableSetupColumn("snapAuth");
+            ImGui::TableSetupColumn("kill-switch");
+            ImGui::TableHeadersRow();
+            for (int i = 0; i < RenderCore::kRenderPassContractCount; ++i) {
+                const RenderCore::RenderPassContract& c = RenderCore::kRenderPassContracts[i];
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn(); ImGui::Text("%u", (unsigned)c.id);
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(c.name);
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(c.ownerSubsystem);
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(c.viewUniformsBound ? "Y" : "-");
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(c.pipelineDescRegistered ? "Y" : "-");
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(c.snapshotRowAuthoritative ? "Y" : "-");
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(c.killSwitchEnv ? c.killSwitchEnv : "(none)");
+            }
+            ImGui::EndTable();
+        }
     }
 
     // Material — shown for any kind; GPU fields only when MC2_MATERIAL_GPU active.
