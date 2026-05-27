@@ -16,7 +16,15 @@
 //   } materialTable_;
 //
 //   MaterialGpu mat = materialTable_.materials[drawMaterialIdx];
-//   if (mat.albedoTex != kMatTexAbsent) { /* sample */ }
+//
+//   IMPORTANT — albedoTex is KIND-SEMANTIC:
+//     static props : texture array layer (shader-actionable)
+//       int layer = int(mat.albedoTex);
+//       vec4 c = texture(u_texArr, vec3(uv, float(layer)));
+//     mechs : mcTextureManager slot — compare-only; NOT directly sample-able.
+//       CPU binds u_tex per draw; shader samples u_tex as before.
+//       Do NOT use mat.albedoTex as a layer or bindless handle for mechs.
+//   See C++ header for full schema and future MaterialTextureSemantic enum.
 //
 // Binding 5 (active since MaterialGpu-3) in static_prop.frag coalesce variant.
 // See tools/material_cook/reflect_expected_layout.md for the
@@ -36,7 +44,7 @@ const uint kMatFlagWindow            = 1u << 5;
 // std430 struct — 32 bytes, stride 32.
 // Field order and byte offsets MUST match RenderCore::MaterialGpu exactly.
 struct MaterialGpu {
-    uint  albedoTex;             //  0
+    uint  albedoTex;             //  0  — KIND-SEMANTIC: array layer (static props) / texHandle slot (mechs, compare-only)
     uint  normalTex;             //  4
     uint  metallicRoughnessTex;  //  8
     uint  emissiveTex;           // 12

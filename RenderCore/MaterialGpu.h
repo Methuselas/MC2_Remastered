@@ -18,11 +18,35 @@
 //   Struct size = 32 bytes → stride = 32 bytes in a std430 array.
 //   Indexed by MaterialHandle::index() (20-bit; max 1M entries).
 //
-// Texture index convention:
-//   Each *Tex field names a slot in the future bindless/array table.
-//   kMaterialTexAbsent (0xFFFFFFFF) = slot absent; shader uses default.
-//   Static-prop-first table layout: indices 0..N-1 are static props;
-//   mech / VFX materials follow in later slices.
+// Texture field schema — per-consumer semantics
+//
+//   albedoTex
+//     static props : GL_TEXTURE_2D_ARRAY layer index (shader-actionable;
+//                   shader samples via texture(u_texArr, vec3(uv, layer)))
+//     mechs        : mcTextureManager texHandle/slot — compare-only;
+//                   NOT shader-actionable without a dedicated texture-model arc.
+//                   CPU resolves: get_gosTextureHandle(slot) → gos handle → GL tex.
+//     VFX / future : undefined until each consumer defines its own texture identity.
+//
+//   normalTex / metallicRoughnessTex / emissiveTex
+//     Not yet wired for any consumer. kMaterialTexAbsent in all live entries.
+//     Future semantics will match albedoTex once a unified texture model exists.
+//
+//   kMaterialTexAbsent (0xFFFFFFFF) : slot absent; shader uses default.
+//
+// Future direction — typed semantic (not yet implemented):
+//
+//   enum class MaterialTextureSemantic {
+//       TextureArrayLayer,    // static-prop current model
+//       TextureManagerSlot,   // mech current model (compare-only)
+//       BindlessHandle,       // ARB_bindless_texture (needs AMD driver audit)
+//       DescriptorIndex,      // indirection table SSBO index
+//   };
+//
+//   A MaterialTextureSemantic field per consumer type would make the
+//   kind-specific divergence explicit in code rather than in comments.
+//   Prerequisite: mech texture-model arc decision.
+//   See: docs/superpowers/specs/2026-05-26-mech-material-gpu-mech2-decision.md
 //
 // CHANGING THIS STRUCT REQUIRES CHANGING THE GLSL MIRROR IN LOCKSTEP.
 // Invariant enforced by: scripts/check-material-gpu-mirror.sh
@@ -63,7 +87,10 @@ constexpr uint32_t kMaterialTexAbsent = 0xFFFFFFFFu;
 // names and order match between the two files at CI time.
 struct alignas(4) MaterialGpu {
     // --- Texture indices (4 × uint32 = 16 bytes) ---
-    uint32_t albedoTex;             //  0  — diffuse / albedo (required)
+    // Semantics are consumer-specific — see "Texture field schema" above.
+    // Do NOT add a mech shader consumer without first defining a shader-actionable
+    // texture identity for mechs. See decision doc in header comment above.
+    uint32_t albedoTex;             //  0  — diffuse/albedo; KIND-SEMANTIC (see above)
     uint32_t normalTex;             //  4  — tangent-space normal map
     uint32_t metallicRoughnessTex;  //  8  — R=AO  G=roughness  B=metalness
     uint32_t emissiveTex;           // 12  — emissive color map
