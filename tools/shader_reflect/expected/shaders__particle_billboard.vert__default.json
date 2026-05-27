@@ -11,7 +11,7 @@
           "matrix_stride": null,
           "name": "particles",
           "offset": 0,
-          "type": "_39"
+          "type": "_40"
         }
       ],
       "name": "Particles"
@@ -28,6 +28,34 @@
           "name": "u_worldToClipGL",
           "offset": 0,
           "type": "mat4"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_cameraRight",
+          "offset": 64,
+          "type": "vec3"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_cameraUp",
+          "offset": 80,
+          "type": "vec3"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_uvOffset",
+          "offset": 96,
+          "type": "vec2"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_uvSize",
+          "offset": 104,
+          "type": "vec2"
         }
       ],
       "name": "gl_DefaultUniformBlock"
