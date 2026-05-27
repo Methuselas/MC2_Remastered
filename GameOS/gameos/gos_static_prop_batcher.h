@@ -421,6 +421,16 @@ uint32_t batcher_getDrawSlotCount();
 // materialIdx: 0xFFFFFFFFu if MC2_MATERIAL_GPU sidecar was not valid at finalizeGeometry().
 bool batcher_getDrawSlotEntry(uint32_t slot, ExtractedStaticPropPacket* out);
 
+// v2.2 extraction: dispatch-fact compare (extraction-time facts only; baseInstance deferred).
+// Compares snap->staticPropPackets[] against live batcher state (sortedPacketOrder,
+// pipelineId via RenderCore::PipelineId, materialIdx sidecar, texArrayLayer vs albedoTex).
+// Fills snap->spCompare* fields. Call after v2.1 snapshot population, before ok computation.
+// snap->ok from the current extraction must NOT yet be finalized — this fills its inputs.
+// Handles null snap->staticPropPackets.data gracefully (still fills spCompareLiveCount).
+// RenderSnapshot full definition is in render_snapshot.h; batcher.cpp includes it directly.
+struct RenderSnapshot;
+void batcher_compareSnapshotPackets(RenderSnapshot* snap);
+
 // ---------------------------------------------------------------------------
 // Type-desc table accessors (v0: CPU-side only, no SSBO).
 // All functions return safe sentinels (0 / nullptr / false) before

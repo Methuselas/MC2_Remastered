@@ -5210,6 +5210,92 @@ bool batcher_getDrawSlotEntry(uint32_t slot, ExtractedStaticPropPacket* out) {
     return true;
 }
 
+void batcher_compareSnapshotPackets(RenderSnapshot* snap) {
+    if (!snap) return;
+
+    const uint32_t liveCount = batcher_getDrawSlotCount();
+    snap->spCompareSnapshotCount = static_cast<uint32_t>(snap->staticPropPackets.count);
+    snap->spCompareLiveCount     = liveCount;
+
+    // Fill live_count even when snapshot data is null (e.g. arena overflow).
+    if (!snap->staticPropPackets.data) {
+        if (liveCount != 0u) snap->spCountMismatch = 1u;
+        return;
+    }
+
+    if (snap->staticPropPackets.count != liveCount) {
+        snap->spCountMismatch = 1u;
+        return;  // per-slot compare is meaningless when counts diverge
+    }
+
+    const uint32_t n = liveCount;
+    for (uint32_t i = 0u; i < n; ++i) {
+        const ExtractedStaticPropPacket& row = snap->staticPropPackets.data[i];
+
+        // sortedSlot must equal i (guaranteed by ok=1 invariant, but verify explicitly)
+        if (row.sortedSlot != i) {
+            ++snap->spSortedSlotMismatch;
+        }
+
+        // globalPacketIdx: three-guard pattern mirrors v6 builder guards.
+        // Guard 1: i must be a valid index into s_sortedPacketOrder.
+        if (i >= static_cast<uint32_t>(s_sortedPacketOrder.size())) {
+            ++snap->spGlobalPacketMismatch;
+            continue;
+        }
+        const uint32_t livePktIdx = s_sortedPacketOrder[i];
+        // Guard 2: livePktIdx must be a valid index into s_packets.
+        if (livePktIdx >= static_cast<uint32_t>(s_packets.size())) {
+            ++snap->spGlobalPacketMismatch;
+            continue;
+        }
+        if (row.globalPacketIdx != livePktIdx) {
+            ++snap->spGlobalPacketMismatch;
+        }
+
+        // pipelineId must use real RenderCore::PipelineId enum values — NOT raw 0/1.
+        const uint32_t expectedPipeline = static_cast<uint32_t>(
+            i < s_alphaOffCmdCount
+                ? RenderCore::PipelineId::StaticPropOpaque
+                : RenderCore::PipelineId::StaticPropAlphaTest);
+        if (row.pipelineId != expectedPipeline) {
+            ++snap->spPipelineMismatch;
+        }
+
+        // materialIdx from sidecar (only check when sidecar was valid at finalize time)
+        if (s_materialGpuSidecarValid &&
+            i < static_cast<uint32_t>(s_packetMaterialIdx.size())) {
+            if (row.materialIdx != s_packetMaterialIdx[i]) {
+                ++snap->spMaterialIdxMismatch;
+            }
+        }
+
+        // instanceCount: prev-frame snapshot vs current-frame s_typeRanges.
+        // Informational only — different-frame authority by design; NOT in ok gate.
+        {
+            const auto typeIt = s_typeRanges.find(row.typeId);
+            const uint32_t currentInstCount =
+                (typeIt != s_typeRanges.end()) ? typeIt->second.instanceCount : 0u;
+            if (row.instanceCount != currentInstCount) {
+                ++snap->spInstanceCountMismatch;
+            }
+        }
+
+        // texArrayLayer vs MaterialGpu.albedoTex cross-authority check.
+        // Only compare when both materialIdx and texArrayLayer are valid.
+        // A missing MaterialGpu entry when materialIdx is valid is itself a mismatch.
+        if (row.materialIdx != 0xFFFFFFFFu && row.texArrayLayer != -1) {
+            RenderCore::MaterialGpu mat{};
+            if (!batcher_getMaterialGpuEntry(row.materialIdx, &mat)) {
+                // materialIdx valid but entry missing — structural failure.
+                ++snap->spTexLayerMismatch;
+            } else if (mat.albedoTex != static_cast<uint32_t>(row.texArrayLayer)) {
+                ++snap->spTexLayerMismatch;
+            }
+        }
+    }
+}
+
 uint32_t batcher_getPerTypePeakCount(uint32_t typeID) {
     return typeID < s_perTypePeak.size() ? s_perTypePeak[typeID] : 0u;
 }
