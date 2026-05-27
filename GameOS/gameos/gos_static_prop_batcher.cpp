@@ -133,6 +133,8 @@ static uint32_t s_spBuildMetaMismatch   = 0u;
 static uint32_t s_spBuildFallback       = 0u;
 // Latched on first fallback; never reset. Guards the first-occurrence log line.
 static bool s_spBuildFirstFallbackLogged = false;
+// Latched on first snap-cull collision; never reset. Guards the one-shot collision log line.
+static bool s_spBuildCollisionLoggedOnce = false;
 
 // Returns 0 (opaque) or 1 (alpha-test). Returns 0xFFFFFFFFu for unknown pipelineId.
 // Used by snapshot builder to derive group from the snapshot row's stored pipelineId.
@@ -4192,9 +4194,12 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             if (s_snapshotBuildEnabled) {
                 // Stage 1: snap-cull collision — both gates active → disable v3.
                 if (s_snapCullEnabled) {
-                    std::fprintf(stderr,
-                        "[RENDER_SNAPSHOT v3] frame=%u disabled — MC2_SNAP_CULL collision\n",
-                        s_v6TotalFrameCount);
+                    if (!s_spBuildCollisionLoggedOnce) {
+                        s_spBuildCollisionLoggedOnce = true;
+                        std::fprintf(stderr,
+                            "[RENDER_SNAPSHOT v3] frame=%u disabled — MC2_SNAP_CULL collision\n",
+                            s_v6TotalFrameCount);
+                    }
                     ++s_spBuildFallback;
                 }
                 // Stage 2: structural guards — snap unusable (no counter).
