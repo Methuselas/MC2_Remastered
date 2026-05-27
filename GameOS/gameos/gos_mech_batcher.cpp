@@ -1695,6 +1695,14 @@ extern "C" uint32_t gos_getMechShadowProgramId() {
         return 0u;
     return (uint32_t)pit->second->shp_;
 }
+// SHADOW-SPINE-0: read-only accessors for mech shadow caster counts written
+// at the end of flushShadow(). Returns last-frame values; not reset.
+extern "C" uint32_t gos_getMechShadowTypesDrawn() {
+    return (uint32_t)s_shadowTypesDrawn;
+}
+extern "C" uint32_t gos_getMechShadowInstDrawn() {
+    return (uint32_t)s_shadowInstDrawn;
+}
 extern "C" const char* gos_getMechTextureNameByNodeIdx(uint32_t nodeIdx) {
     if (nodeIdx == 0xFFFFFFFFu || !mcTextureManager) return nullptr;
     return mcTextureManager->getTextureName((DWORD)nodeIdx);

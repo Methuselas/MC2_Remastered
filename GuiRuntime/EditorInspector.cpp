@@ -38,6 +38,7 @@ static EditorInspector::StaticPropInspectorData s_staticPropData;
 static EditorInspector::MechInspectorData       s_mechData;
 static EditorInspector::TerrainInspectorData    s_terrainData;
 static EditorInspector::TerrainPassSnapshot     s_terrainPass;   // TERRAIN-SPINE-0
+static EditorInspector::ShadowPassSnapshot      s_shadowPass;    // SHADOW-SPINE-0
 static bool s_open = false;
 static bool s_featuresOpen = false;
 
@@ -112,6 +113,11 @@ void EditorInspector::setTerrainPassSnapshot(const TerrainPassSnapshot& ts) {
     // snapshot is current even when the inspector window is closed; drawImGui is
     // already gated by isEnabled()).
     s_terrainPass = ts;
+}
+
+void EditorInspector::setShadowPassSnapshot(const ShadowPassSnapshot& sp) {
+    // SHADOW-SPINE-0: same always-accept policy as the terrain snapshot.
+    s_shadowPass = sp;
 }
 
 void EditorInspector::clear() {
@@ -784,6 +790,36 @@ void EditorInspector::drawImGui() {
         }
         ImGui::Separator();
         ImGui::Text("Tessellation: %s", ts.tessellationOn ? "ON (always)" : "off");
+    }
+
+    // SHADOW-SPINE-0: pass-level (not selection-driven) view of the shadow
+    // render spine. Mirrors the terrain header above.
+    if (ImGui::CollapsingHeader("Shadow Pass##sp", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const ShadowPassSnapshot& sp = s_shadowPass;
+        ImGui::Text("Shadows enabled: %s", sp.shadowsEnabled ? "yes" : "no");
+        ImGui::Text("Static light matrix built: %s", sp.staticLightMatrixBuilt ? "yes" : "no");
+        ImGui::Text("Shadow map size: %d   Dyn shadow map size: %d",
+                    sp.shadowMapSize, sp.dynShadowMapSize);
+        if (sp.viewUniformsBoundForShadow) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                "ViewUniforms (binding=3): consumed");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+                "ViewUniforms (binding=3): NOT consumed (legacy shadow matrices)");
+        }
+        ImGui::Separator();
+        ImGui::Text("Programs:");
+        ImGui::BulletText("terrain shadow:     %u", sp.terrainShadowProgramId);
+        ImGui::BulletText("mech shadow:        %u", sp.mechShadowProgramId);
+        ImGui::BulletText("static-prop shadow: %u", sp.staticPropShadowProgramId);
+        ImGui::Separator();
+        ImGui::Text("Caster counts (last flushShadow):");
+        ImGui::BulletText("mech         types=%u  instances=%u",
+                          sp.mechShadowTypesDrawn, sp.mechShadowInstDrawn);
+        ImGui::BulletText("static-prop  types=%u  instances=%u",
+                          sp.staticPropShadowTypesDrawn, sp.staticPropShadowInstDrawn);
+        ImGui::Separator();
+        ImGui::TextDisabled("PipelineDesc: legacy (shadow pass not on registry)");
     }
 
     // Material — shown for any kind; GPU fields only when MC2_MATERIAL_GPU active.

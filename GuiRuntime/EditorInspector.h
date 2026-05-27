@@ -90,6 +90,30 @@ void setStaticPropData(const StaticPropInspectorData& sd);
 void setMechData(const MechInspectorData& md);
 void setTerrainData(const TerrainInspectorData& td);
 void setTerrainPassSnapshot(const TerrainPassSnapshot& ts);  // TERRAIN-SPINE-0
+
+// SHADOW-SPINE-0: pass-level snapshot of the shadow-pass render spine. Filled
+// per frame in gameosmain; displayed in the Object Inspector window.
+// Read-only — no GL state, no mutation of any shadow path.
+struct ShadowPassSnapshot {
+    // Programs (raw GL program object ids; 0 if not linked).
+    uint32_t terrainShadowProgramId    = 0;
+    uint32_t mechShadowProgramId       = 0;
+    uint32_t staticPropShadowProgramId = 0;
+    // gosPostProcess state.
+    bool     shadowsEnabled            = false;
+    bool     staticLightMatrixBuilt    = false;
+    int      shadowMapSize             = 0;
+    int      dynShadowMapSize          = 0;
+    // Caster counts written by the most recent flushShadow() per lane.
+    uint32_t mechShadowTypesDrawn        = 0;
+    uint32_t mechShadowInstDrawn         = 0;
+    uint32_t staticPropShadowTypesDrawn  = 0;
+    uint32_t staticPropShadowInstDrawn   = 0;
+    // v1: shadow shaders do NOT consume ViewUniforms (binding=3). Hard-coded
+    // so the closure-audit gap is visible in the inspector.
+    bool     viewUniformsBoundForShadow = false;
+};
+void setShadowPassSnapshot(const ShadowPassSnapshot& sp);  // SHADOW-SPINE-0
 void flushDebugHighlight();
 void drawImGui();                                 // called by GuiRuntime::Render() each frame
 void clear();                                     // clear selection

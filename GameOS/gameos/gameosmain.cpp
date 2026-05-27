@@ -11,6 +11,14 @@
 #include <cstring>
 #include <time.h>
 
+// SHADOW-SPINE-0: C-linkage accessors from batcher TUs. Declared at file
+// scope because `extern "C"` is illegal at function/block scope.
+extern "C" uint32_t gos_getMechShadowProgramId();
+extern "C" uint32_t gos_getMechShadowTypesDrawn();
+extern "C" uint32_t gos_getMechShadowInstDrawn();
+extern "C" uint32_t gos_getStaticPropShadowTypesDrawn();
+extern "C" uint32_t gos_getStaticPropShadowInstDrawn();
+
 // sebi 2026-04-22: unhandled-exception filter that symbolizes the stack via
 // DbgHelp (PDB-based). Needed because release/RelWithDebInfo builds otherwise
 // die silently with "read violation at 0xNN" and no frames — Tracy only resolves
@@ -1396,6 +1404,34 @@ int main(int argc, char** argv)
                 ts.currentViewName = view.debugName ? view.debugName : "";
                 ts.tessellationOn  = true;
                 EditorInspector::setTerrainPassSnapshot(ts);
+            }
+
+            // SHADOW-SPINE-0: pass-level snapshot of the shadow render spine.
+            // Mirrors the terrain block above. Read-only — no GL state touched.
+            {
+                // C++-linkage helpers defined in gameos_graphics.cpp. C-linkage
+                // accessors declared at file scope (top of TU).
+                extern uint32_t gos_getTerrainShadowProgramId();
+                extern uint32_t gos_getStaticPropShadowProgramId();
+                extern bool     gos_getShadowsEnabled();
+                extern bool     gos_StaticLightMatrixBuilt();
+                extern int      gos_getShadowMapSize();
+                extern int      gos_getDynShadowMapSize();
+                EditorInspector::ShadowPassSnapshot sp;
+                sp.terrainShadowProgramId      = gos_getTerrainShadowProgramId();
+                sp.mechShadowProgramId         = gos_getMechShadowProgramId();
+                sp.staticPropShadowProgramId   = gos_getStaticPropShadowProgramId();
+                sp.shadowsEnabled              = gos_getShadowsEnabled();
+                sp.staticLightMatrixBuilt      = gos_StaticLightMatrixBuilt();
+                sp.shadowMapSize               = gos_getShadowMapSize();
+                sp.dynShadowMapSize            = gos_getDynShadowMapSize();
+                sp.mechShadowTypesDrawn        = gos_getMechShadowTypesDrawn();
+                sp.mechShadowInstDrawn         = gos_getMechShadowInstDrawn();
+                sp.staticPropShadowTypesDrawn  = gos_getStaticPropShadowTypesDrawn();
+                sp.staticPropShadowInstDrawn   = gos_getStaticPropShadowInstDrawn();
+                // v1: shadow shaders do not consume ViewUniforms (binding=3).
+                sp.viewUniformsBoundForShadow  = false;
+                EditorInspector::setShadowPassSnapshot(sp);
             }
 
         }

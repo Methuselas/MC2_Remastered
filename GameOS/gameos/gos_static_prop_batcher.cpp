@@ -5145,6 +5145,15 @@ void GpuStaticPropBatcher::flushShadow() {
 
 void GpuStaticPropBatcher::setDebugAddrMode(int mode) { debugAddrMode_ = mode; }
 
+// SHADOW-SPINE-0: read-only accessors for static-prop shadow caster counts
+// written at the end of flushShadow(). Returns last-frame values; not reset.
+extern "C" uint32_t gos_getStaticPropShadowTypesDrawn() {
+    return (uint32_t)s_shadowTypesDrawn;
+}
+extern "C" uint32_t gos_getStaticPropShadowInstDrawn() {
+    return (uint32_t)s_shadowInstDrawn;
+}
+
 // ---------------------------------------------------------------------------
 // Slice 2, Stage 2.A — new method and free-function definitions
 // ---------------------------------------------------------------------------
