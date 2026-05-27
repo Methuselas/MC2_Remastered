@@ -4,6 +4,7 @@
 #include <cstdlib>   // getenv
 #include "../GameOS/gameos/debug_renderer.h"  // IMG-INSPECT-3
 #include "draw_packet_emitter.h"              // g_dpSelectedRecipeIndex
+#include "../RenderCore/RendererFeatureRegistry.h"
 
 namespace {
 
@@ -30,6 +31,7 @@ static EditorInspector::StaticPropInspectorData s_staticPropData;
 static EditorInspector::MechInspectorData       s_mechData;
 static EditorInspector::TerrainInspectorData    s_terrainData;
 static bool s_open = false;
+static bool s_featuresOpen = false;
 
 }  // namespace
 
@@ -113,6 +115,93 @@ void EditorInspector::drawImGui() {
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_I))
         s_open = !s_open;
 
+    // Renderer Features — standalone window. Runs independent of Object Inspector.
+    // Ctrl+Shift+F to toggle. Placed BEFORE if (!s_open) return.
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_F))
+        s_featuresOpen = !s_featuresOpen;
+
+    if (s_featuresOpen) {
+        ImGui::SetNextWindowSize(ImVec2(600, 440), ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Renderer Features", &s_featuresOpen)) {
+            ImGui::TextUnformatted("MC2_* feature gates  --  Ctrl+Shift+F to close");
+            ImGui::TextUnformatted("Hover 'Feature' column for doc string.");
+            ImGui::Separator();
+
+            if (ImGui::BeginTable("##feats", 4,
+                    ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg
+                    | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_ScrollY)) {
+                ImGui::TableSetupScrollFreeze(0, 1);
+                ImGui::TableSetupColumn("Feature",
+                    ImGuiTableColumnFlags_WidthFixed, 210.f);
+                ImGui::TableSetupColumn("Env var",
+                    ImGuiTableColumnFlags_WidthFixed, 210.f);
+                ImGui::TableSetupColumn("Default",
+                    ImGuiTableColumnFlags_WidthFixed,  52.f);
+                ImGui::TableSetupColumn("Status",
+                    ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableHeadersRow();
+
+                for (int i = 0; i < static_cast<int>(RenderCore::RendererFeature::COUNT); ++i) {
+                    const RenderCore::EnvVarDesc& d = RenderCore::kFeatureTable[i];
+                    ImGui::TableNextRow();
+
+                    // Feature column — hover for doc string.
+                    ImGui::TableSetColumnIndex(0);
+                    if (d.kind == RenderCore::EnvVarKind::Retired)
+                        ImGui::TextDisabled("%s", d.featureId);
+                    else
+                        ImGui::TextUnformatted(d.featureId);
+                    if (ImGui::IsItemHovered() && d.doc)
+                        ImGui::SetTooltip("%s", d.doc);
+
+                    // Env var column.
+                    ImGui::TableSetColumnIndex(1);
+                    if (d.envVar)
+                        ImGui::TextDisabled("%s", d.envVar);
+                    else
+                        ImGui::TextDisabled("(none)");
+
+                    // Default column.
+                    ImGui::TableSetColumnIndex(2);
+                    if (d.kind == RenderCore::EnvVarKind::Retired)
+                        ImGui::TextDisabled("--");
+                    else if (!d.envVar)
+                        ImGui::TextDisabled("ON");
+                    else
+                        ImGui::TextDisabled(d.defaultOn ? "ON" : "off");
+
+                    // Status column.
+                    ImGui::TableSetColumnIndex(3);
+                    if (d.kind == RenderCore::EnvVarKind::Retired) {
+                        ImGui::TextDisabled("[retired]");
+                    } else if (!d.envVar) {
+                        ImGui::TextColored(ImVec4(0.4f, 1.f, 0.4f, 1.f), "always-on");
+                    } else {
+                        const char* v = std::getenv(d.envVar);
+                        bool on;
+                        const char* src;
+                        if (!v) {
+                            on  = d.defaultOn;
+                            src = d.defaultOn ? "on (default)" : "off (default)";
+                        } else if (v[0] == '0') {
+                            on  = false;
+                            src = "off (forced)";
+                        } else {
+                            on  = true;
+                            src = "on (forced)";
+                        }
+                        if (on)
+                            ImGui::TextColored(ImVec4(0.4f, 1.f, 0.4f, 1.f), "%s", src);
+                        else
+                            ImGui::TextColored(ImVec4(1.f, 0.55f, 0.3f, 1.f), "%s", src);
+                    }
+                }
+                ImGui::EndTable();
+            }
+        }
+        ImGui::End();
+    }
+
     if (!s_open) return;
 
     ImGui::SetNextWindowSize(ImVec2(440, 500), ImGuiCond_FirstUseEver);
@@ -120,6 +209,9 @@ void EditorInspector::drawImGui() {
         ImGui::End();
         return;
     }
+
+    ImGui::TextDisabled("Ctrl+Shift+F -- Renderer Features");
+    ImGui::Separator();
 
     const auto& lk = s_selection.lookup;
 
