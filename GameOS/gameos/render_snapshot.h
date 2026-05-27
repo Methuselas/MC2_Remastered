@@ -129,14 +129,18 @@ struct RenderSnapshot {
     Span<ExtractedMechPacket> mechPackets;         // MECH-EXTRACTION-0 (gate: MC2_SNAPSHOT_MECH_EXTRACT=1)
     Span<LightRecord> lights;
 
-    // --- v0: mech compare counters (gate: MC2_SNAPSHOT_MECH_EXTRACT=1) ---
-    // All informational — NOT included in ok gate in v0.
+    // --- v0/v1: mech compare counters (gate: MC2_SNAPSHOT_MECH_EXTRACT=1) ---
+    // All informational — NOT included in ok gate.
     uint32_t mechSnapshotCount       = 0u;  // entries captured this frame
     uint32_t mechCountMismatch       = 0u;  // 1 if snapshot count != live pending count
     uint32_t mechHandleMismatch      = 0u;  // rows where typeLodIdx differs from live
     uint32_t mechObjectIdMismatch    = 0u;  // rows where objectIdRaw differs from live
-    uint32_t mechMaterialIdxMismatch = 0u;  // always 0 in v0 (sentinel); future: real compare
+    // v1: independent live compare via s_mechHandleToMaterialIdx; 0 = mismatch free
+    uint32_t mechMaterialIdxMismatch = 0u;  // rows where snap materialIdx != live materialIdx
     uint32_t mechTexHandleMismatch   = 0u;  // rows where texHandle differs from live
+    // v1: materialIdx coverage counters (populated during extraction loop)
+    uint32_t mechMatValid            = 0u;  // rows where materialIdx != 0xFFFFFFFFu
+    uint32_t mechMatSentinel         = 0u;  // rows where materialIdx == 0xFFFFFFFFu
 
     // --- v1: static-prop snapshot ---
     Span<ExtractedStaticProp> staticProps;           // populated by ExtractRenderSnapshot v1

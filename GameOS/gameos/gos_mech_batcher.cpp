@@ -1584,7 +1584,15 @@ void GpuMechBatcher::flush() {
             ExtractedMechPacket pkt{};
             pkt.objectIdRaw = ps.desc.objectIdRaw;
             pkt.instanceIdx = i;
-            pkt.materialIdx = 0xFFFFFFFFu;
+            // MECH-EXTRACTION-1: wire real materialIdx from the handle map populated
+            // in Step 2.5 earlier this flush(). Sentinel when disabled or handle absent.
+            if (s_mechMaterialGpuEnabled) {
+                auto it = s_mechHandleToMaterialIdx.find(ps.desc.slot0TexHandle);
+                pkt.materialIdx = (it != s_mechHandleToMaterialIdx.end())
+                    ? it->second : 0xFFFFFFFFu;
+            } else {
+                pkt.materialIdx = 0xFFFFFFFFu;
+            }
             pkt.texHandle   = ps.desc.slot0TexHandle;
             pkt.typeLodIdx  = ps.typeLodIdx;
             pkt.renderFlags = ps.desc.renderFlags;
@@ -1626,5 +1634,17 @@ void batcher_compareMechSnapshot(RenderSnapshot* snap) {
         if (row.typeLodIdx  != ref.typeLodIdx)  ++snap->mechHandleMismatch;
         if (row.objectIdRaw != ref.objectIdRaw) ++snap->mechObjectIdMismatch;
         if (row.texHandle   != ref.texHandle)   ++snap->mechTexHandleMismatch;
+        // MECH-EXTRACTION-1: independent live materialIdx from s_mechHandleToMaterialIdx
+        // (still valid post-flush; cleared at START of next flush). Stronger than
+        // snapshot-vs-persist self-consistency — map is the same authority the SSBO
+        // upload used, so a divergence here means the persist capture was wrong.
+        {
+            auto it = s_mechHandleToMaterialIdx.find(row.texHandle);
+            const uint32_t liveMat = (s_mechMaterialGpuEnabled &&
+                                      it != s_mechHandleToMaterialIdx.end())
+                ? it->second : 0xFFFFFFFFu;
+            if (row.materialIdx != liveMat)
+                ++snap->mechMaterialIdxMismatch;
+        }
     }
 }

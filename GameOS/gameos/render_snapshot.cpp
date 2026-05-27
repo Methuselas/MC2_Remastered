@@ -102,8 +102,13 @@ RenderSnapshot ExtractRenderSnapshot()
             uint32_t wrote = 0u;
             for (uint32_t i = 0u; i < mechCount; ++i) {
                 ExtractedMechPacket pkt{};
-                if (batcher_getMechPendingEntry(i, &pkt))
+                if (batcher_getMechPendingEntry(i, &pkt)) {
                     mechBuf[wrote++] = pkt;
+                    if (pkt.materialIdx != 0xFFFFFFFFu)
+                        ++snap.mechMatValid;
+                    else
+                        ++snap.mechMatSentinel;
+                }
             }
             snap.mechPackets       = Span<ExtractedMechPacket>(mechBuf, wrote);
             snap.mechSnapshotCount = wrote;
@@ -417,8 +422,9 @@ RenderSnapshot ExtractRenderSnapshot()
             "  [v3 build] attempted=%u count_mismatch=%u pkt_mismatch=%u"
             " meta_mismatch=%u fallback=%u\n"
             "  [v3 arena] used=%zu high_water=%zu allocs=%u overflow=%u\n"
-            "  [mech-extract] gate=%d snapshot=%u count_mismatch=%u handle_mismatch=%u"
-            " objectid_mismatch=%u tex_mismatch=%u\n",
+            "  [mech-extract] gate=%d snapshot=%u mat_valid=%u mat_sentinel=%u"
+            " count_mismatch=%u handle_mismatch=%u objectid_mismatch=%u"
+            " tex_mismatch=%u mat_mismatch=%u\n",
             static_cast<unsigned long long>(snap.frameIndex),
             static_cast<uint32_t>(snap.mechs.size()),
             static_cast<uint32_t>(snap.staticProps.size()),
@@ -471,10 +477,13 @@ RenderSnapshot ExtractRenderSnapshot()
             snap.frameArena.stats().overflowCount,
             s_mechExtractEnabled ? 1 : 0,
             snap.mechSnapshotCount,
+            snap.mechMatValid,
+            snap.mechMatSentinel,
             snap.mechCountMismatch,
             snap.mechHandleMismatch,
             snap.mechObjectIdMismatch,
-            snap.mechTexHandleMismatch);
+            snap.mechTexHandleMismatch,
+            snap.mechMaterialIdxMismatch);
     }
 
     // v2.3: store for getLastRenderSnapshot() before returning.
