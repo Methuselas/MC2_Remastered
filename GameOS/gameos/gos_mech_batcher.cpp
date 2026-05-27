@@ -181,8 +181,24 @@ struct PendingSubmit {
 };
 static std::vector<PendingSubmit> s_pendingSubmits;
 
-// MECH-EXTRACTION-0: per-actor facts persisted just before s_pendingSubmits.clear() in flush().
-// Read by batcher_getMechPendingCount/Entry in ExtractRenderSnapshot (same frame, after flush).
+// MECH-EXTRACTION-0: L2 handoff / persist buffer.
+//
+// Cross-phase lifetime — this MUST remain a std::vector (or equivalent heap storage).
+// It CANNOT be moved to the RenderSnapshot FrameArena.
+//
+// Write path: flush() (inside DoGameLogic()) fills s_mechExtractPersist and then
+//   immediately calls s_pendingSubmits.clear().  At that point the FrameArena for
+//   the current frame has not been allocated yet.
+//
+// Read path: ExtractRenderSnapshot() (after DoGameLogic() returns) calls
+//   batcher_getMechPendingCount/Entry, copies into snap.mechPackets which IS
+//   FrameArena-backed, then calls batcher_compareMechSnapshot().
+//
+// The FrameArena is reset at the top of ExtractRenderSnapshot() — after
+// DoGameLogic() exits — so any pointer written during flush() into the arena
+// would be use-after-reset by the time the read path runs.
+// Keep the batcher-side vector as the authoritative handoff buffer; the
+// FrameArena copy in snap.mechPackets is the consumer-side view.
 static std::vector<ExtractedMechPacket> s_mechExtractPersist;
 
 // Per-frame draw-call snapshot persisted at the END of flush() for use by

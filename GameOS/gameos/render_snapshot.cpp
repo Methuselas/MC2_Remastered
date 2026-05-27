@@ -429,7 +429,8 @@ RenderSnapshot ExtractRenderSnapshot()
             "  [v2.3 snap_cull] skipped=%u active=%u slot_mismatch=%u\n"
             "  [v3 build] attempted=%u count_mismatch=%u pkt_mismatch=%u"
             " meta_mismatch=%u fallback=%u\n"
-            "  [v3 arena] used=%zu high_water=%zu allocs=%u overflow=%u\n"
+            "  [v3 arena] used=%zu high_water=%zu allocs=%u overflow=%u"
+            " mechArenaBytes=%zu mechRows=%u\n"
             "  [mech-extract] gate=%d snapshot=%u mat_valid=%u mat_sentinel=%u"
             " count_mismatch=%u handle_mismatch=%u objectid_mismatch=%u"
             " tex_mismatch=%u mat_mismatch=%u\n",
@@ -483,6 +484,8 @@ RenderSnapshot ExtractRenderSnapshot()
             snap.frameArena.stats().highWaterBytes,
             snap.frameArena.stats().allocCount,
             snap.frameArena.stats().overflowCount,
+            snap.mechPackets.count * sizeof(ExtractedMechPacket),
+            static_cast<uint32_t>(snap.mechPackets.count),
             s_mechExtractEnabled ? 1 : 0,
             snap.mechSnapshotCount,
             snap.mechMatValid,
