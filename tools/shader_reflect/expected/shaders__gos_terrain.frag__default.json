@@ -195,20 +195,6 @@
           "name": "g_terrainMaterialProfile",
           "offset": 344,
           "type": "int"
-        },
-        {
-          "array_stride": null,
-          "matrix_stride": null,
-          "name": "matNormalBoost",
-          "offset": 352,
-          "type": "vec4"
-        },
-        {
-          "array_stride": null,
-          "matrix_stride": null,
-          "name": "tintStrengthScale",
-          "offset": 368,
-          "type": "float"
         }
       ],
       "name": "gl_DefaultUniformBlock"
