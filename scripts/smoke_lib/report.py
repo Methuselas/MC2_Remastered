@@ -22,7 +22,10 @@ def render_markdown(rows: list[Row], *, tier: str, profile: str,
     passed = sum(1 for r in rows if r.verdict.passed)
     total = len(rows)
     head = (f"# Smoke run {timestamp}  tier={tier}  profile={profile}  "
-            f"result={'PASS' if passed == total else 'FAIL'} ({passed}/{total} passed)\n\n")
+            f"result={'PASS' if passed == total else 'FAIL'} ({passed}/{total} passed)\n\n"
+            f"> **FPS note:** game window starts minimized (SW_SHOWMINNOACTIVE). "
+            f"SDL throttles rendering to ~100 fps when minimized; Avg FPS / p1% "
+            f"reflect that cap, not GPU throughput. Not a perf regression.\n\n")
     table = [
         "| Mission | Result | Bucket                 | Frames | Avg FPS | p1% | Load ms | Δ destroys |",
         "|---------|--------|------------------------|--------|---------|-----|---------|-----------|"
@@ -55,6 +58,7 @@ def render_json(rows: list[Row], *, tier: str, profile: str,
         "timestamp": timestamp,
         "tier": tier,
         "profile": profile,
+        "fps_note": "window minimized; SDL throttles rendering; fps reflects ~100fps cap not GPU throughput",
         "rows": [
             {
                 "stem": r.stem,

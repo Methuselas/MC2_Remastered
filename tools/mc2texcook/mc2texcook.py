@@ -168,12 +168,17 @@ _TXM_SIDE = 64
 _TXM_RAW_SIZE = _TXM_SIDE * _TXM_SIDE * 4  # 16384
 
 
-def _read_txm(path: Path):
-    """Decompress a .txm file and return a 64×64 PIL RGBA Image.
+def _read_txm(path: Path, output_size: int = 0):
+    """Decompress a .txm file and return a PIL RGBA Image.
 
     TXM on-disk = Windows LZW-compressed 64×64 BGRA raw pixels (no header).
     We swap B↔R so the output matches GL_RGBA upload order expected by
     gos_static_prop_batcher.cpp's KTX2 sidecar path.
+
+    output_size: if > 0, resize the decoded 64×64 image to output_size × output_size
+    using LANCZOS.  The MC2 game engine upscales TXMs to ObjectTextureSize (typically
+    128) when uploading to GL, so the KTX2 sidecar must match that uploaded size.
+    output_size=0 (default) returns native 64×64.
     """
     try:
         from PIL import Image  # type: ignore
@@ -190,20 +195,25 @@ def _read_txm(path: Path):
     # Raw bytes are BGRA; create as RGBA then swap B↔R channels.
     img_bgra = Image.frombytes("RGBA", (_TXM_SIDE, _TXM_SIDE), pixels)
     b, g, r, a = img_bgra.split()
-    return Image.merge("RGBA", (r, g, b, a))
+    img = Image.merge("RGBA", (r, g, b, a))
+
+    if output_size > 0 and output_size != _TXM_SIDE:
+        img = img.resize((output_size, output_size), Image.LANCZOS)
+    return img
 
 
 # ---------------------------------------------------------------------------
 # Image loading and preset transforms
 # ---------------------------------------------------------------------------
 
-def _load_image(path: Path):
+def _load_image(path: Path, txm_size: int = 0):
     """Load an image via Pillow (TGA/PNG/EXR) or decompress a .txm.
 
+    txm_size: passed to _read_txm as output_size (0 = native 64×64).
     Returns a PIL Image object.
     """
     if path.suffix.lower() == ".txm":
-        return _read_txm(path)
+        return _read_txm(path, output_size=txm_size)
     try:
         from PIL import Image  # type: ignore
     except ImportError:
@@ -391,6 +401,10 @@ def main() -> int:
                     help="Texture usage preset (controls vkFormat and channel packing)")
     ap.add_argument("--output", type=Path, default=None,
                     help="Output path (default: same name as input with .ktx2 extension)")
+    ap.add_argument("--size", type=int, default=0, metavar="N",
+                    help="For .txm input: resize decoded 64x64 pixels to NxN before cooking "
+                         "(use 128 to match MC2's ObjectTextureSize=128 GL upload size). "
+                         "Default 0 = native 64x64.")
     args = ap.parse_args()
 
     in_path: Path = args.input.resolve()
@@ -400,7 +414,7 @@ def main() -> int:
 
     out_path: Path = args.output.resolve() if args.output else in_path.with_suffix(".ktx2")
 
-    img = _load_image(in_path)
+    img = _load_image(in_path, txm_size=args.size)
     rgba, vk_format, dfd = _apply_preset(img, args.preset)
     mips = _generate_mips(rgba)
 

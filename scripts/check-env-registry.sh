@@ -63,6 +63,7 @@ ALLOWLIST=(
     MC2_ASSET_SCALE_SELFTEST    # infra -- startup self-test
     MC2_ASSET_SCALE_TRACE       # trace
     MC2_BATCHER_FLUSH_TIMING    # trace
+    MC2_BLOCK_FRUSTUM_FALLBACK  # feature -- promote-to-registry
     MC2_BLDG_DIAG_TRACE         # trace
     MC2_BLDG_REG_TRACE          # trace
     MC2_BLKIDX_TRACE            # trace
@@ -71,7 +72,9 @@ ALLOWLIST=(
     MC2_COALESCE_FORCE_DISARM   # override
     MC2_COALESCE_GPU_VS_CPU_COUNT_TRACE  # trace
     MC2_CPU_PROJ_COST_SPLIT     # feature -- promote-to-registry
-    MC2_DECAL_GLPROBE           # trace
+    MC2_DRAW_PACKET_COMPARE         # trace
+    MC2_DRAW_PACKET_COMPARE_VERBOSE # trace
+    MC2_DECAL_GLPROBE               # trace
     MC2_DECOR_SHADOW_TRACE      # trace
     MC2_DEBUG_OVERLAY_PREDICATE_MODE  # feature -- promote-to-registry
     MC2_DEBUG_SHADOW_FRUSTUM    # trace
@@ -88,11 +91,15 @@ ALLOWLIST=(
     MC2_EDITOR_TRACE            # trace
     MC2_EFFECT_ADMISSION_PREDICATE  # feature -- promote-to-registry
     MC2_FF_TRACE                # trace
+    MC2_GAMEPLAY_PICK_SELFTEST  # infra -- self-test (uses selftestEnvFlag; covered by grep-pattern extension)
     MC2_FORCE_DYNAMIC_BUILDINGS # override -- dev testing
     MC2_FORCE_DYNAMIC_TREES     # override -- dev testing
     MC2_FPS_CAP                 # infra
     MC2_FRAMECAP_TRACE          # trace
     MC2_FX_TRACE                # trace
+    MC2_GOSFX_GROUP_LOG         # trace
+    MC2_GPU_PARTICLES_LOG       # trace
+    MC2_GPU_TRAIL_DISABLE       # feature -- promote-to-registry
     MC2_GL_DEBUG                # infra -- GL debug context
     MC2_GL_DEBUG_FATAL          # infra -- abort on GL_DEBUG_SEVERITY_HIGH
     MC2_GL_ERROR_DRAIN_SILENT   # infra
@@ -118,6 +125,7 @@ ALLOWLIST=(
     MC2_GPU_DRIVEN_WATER        # feature -- promote-to-registry
     MC2_GPU_PARTICLES           # feature -- promote-to-registry
     MC2_GPU_PROPS_DEBUG_MODE    # trace
+    MC2_HDRI_SKY                # feature -- promote-to-registry
     MC2_HAZE_PARITY             # parity
     MC2_HEARTBEAT               # infra
     MC2_HOTKEY_TRACE            # trace
@@ -171,6 +179,7 @@ ALLOWLIST=(
     MC2_RDC_CAPTURE_FRAME       # infra -- RenderDoc capture
     MC2_RDC_CAPTURE_PATH        # infra -- RenderDoc capture
     MC2_RDC_EXIT_AFTER          # infra -- RenderDoc capture
+    MC2_RENDER_SNAPSHOT_LOG     # trace
     MC2_REGFLUSH_DIAG_TRACE     # trace
     MC2_REGFLUSH_MULTI          # trace
     MC2_REGFLUSH_TYPEHIST       # trace
@@ -206,6 +215,7 @@ ALLOWLIST=(
     MC2_SUBMIT_TYPEHIST         # trace
     MC2_SUBSTRATE_COALESCE_LEGACY  # legacy
     MC2_SUBSTRATE_COALESCE_TRACE  # trace
+    MC2_TERRAIN_CULL_WIDE         # feature -- promote-to-registry
     MC2_TERRAIN_ADMISSION_LEGACY  # legacy
     MC2_TERRAIN_COST_SPLIT      # feature -- promote-to-registry
     MC2_TERRAIN_DEBUG_MODE      # trace
@@ -232,6 +242,8 @@ ALLOWLIST=(
     MC2_TEX_LIFECYCLE_TRACE     # trace
     MC2_TEX_LIFECYCLE_TRACE_VERBOSE  # trace
     MC2_THIN_DEBUG              # trace
+    MC2_TYPE_TABLE_CAND_LOG     # trace
+    MC2_TYPE_TABLE_CAND_VERBOSE # trace
     MC2_TGL_POOL_TRACE          # trace
     MC2_TOBJ_COST_SPLIT         # feature -- promote-to-registry
     MC2_TOBJ_PARITY             # parity
@@ -247,6 +259,7 @@ ALLOWLIST=(
     MC2_VPL_PICK                # feature -- promote-to-registry
     MC2_VPL_REDUCE              # feature -- promote-to-registry
     MC2_VSYNC                   # infra
+    MC2_WATER_GATE_DIAG         # trace
     MC2_WATER_DEBUG             # trace
     MC2_WATER_DEPTHPROBE        # trace
     MC2_WATER_MATERIAL_PROBE    # trace
@@ -293,7 +306,7 @@ for dir in "${SOURCE_DIRS[@]}"; do
         FOUND+=("$name")
     done < <(
         grep -rh --include='*.cpp' --include='*.h' \
-             -oE '(getenv|envFlag)\s*\(\s*"MC2_[A-Z_]+"' "$dir" 2>/dev/null \
+             -oE '(getenv|envFlag|selftestEnvFlag)\s*\(\s*"MC2_[A-Z_]+"' "$dir" 2>/dev/null \
         | grep -oE '"MC2_[A-Z_]+"' \
         | tr -d '"' \
         | sort -u

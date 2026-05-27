@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import queue
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -88,11 +89,21 @@ def run_one(cfg: RunConfig) -> RunResult:
     # against the install directory rather than the runner's working directory.
     # Matches the cwd=GAME_DIR precedent in scripts/game_auto.py.
     exe_dir = str(Path(cfg.exe[0]).resolve().parent)
+    # Start the game window minimized so smoke runs don't steal focus or
+    # interrupt the user's desktop. The game detects SDL_WINDOW_MINIMIZED and
+    # throttles to ~100 fps (10ms sleep) but game logic and stdout logging
+    # keep running, so heartbeat/ok gates are unaffected.
+    startupinfo = None
+    if sys.platform == "win32":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 7  # SW_SHOWMINNOACTIVE
     # t0 must be captured BEFORE spawning the reader thread so both the reader
     # and the main loop share the same monotonic reference point.
     t0 = time.monotonic()
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            env=env, text=True, bufsize=1, cwd=exe_dir)
+                            env=env, text=True, bufsize=1, cwd=exe_dir,
+                            startupinfo=startupinfo)
 
     # Stream lines and record per-line wallclock so freeze detection can use
     # runner walltime rather than engine-emitted elapsed_ms (which is mission-
