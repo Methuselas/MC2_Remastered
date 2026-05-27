@@ -3,6 +3,10 @@
 #include <assert.h>
 #include "gos_input.h"
 
+#ifdef PLATFORM_WINDOWS
+#include <windows.h>   // GetAsyncKeyState, GetSystemMetrics, SM_SWAPBUTTON
+#endif
+
 static input::MouseInfo g_mouse_info;
 static input::KeyboardInfo g_keyboard_info;
 
@@ -91,7 +95,28 @@ void beginUpdateMouseState() {
 void updateMouseState() {
     MouseInfo* mi = &g_mouse_info;
 
+#ifdef PLATFORM_WINDOWS
+    // The editor's GL child HWND uses a custom WndProc (MC2EditorGLChild) that
+    // SDL does not subclass, so SDL_GetMouseState() never reflects clicks on
+    // the GL viewport.  Poll Win32 hardware state directly instead.
+    // This is safe for the game too — GetAsyncKeyState reflects the physical
+    // button state just as SDL_GetMouseState would under normal focus.
+    Uint32 button_state = 0;
+    {
+        // Respect OS left/right button swap setting.
+        const bool swapped = ::GetSystemMetrics(SM_SWAPBUTTON) != 0;
+        const DWORD lBtn = swapped ? VK_RBUTTON : VK_LBUTTON;
+        const DWORD rBtn = swapped ? VK_LBUTTON : VK_RBUTTON;
+        if (::GetAsyncKeyState(lBtn)        & 0x8000) button_state |= SDL_BUTTON(SDL_BUTTON_LEFT);
+        if (::GetAsyncKeyState(VK_MBUTTON)  & 0x8000) button_state |= SDL_BUTTON(SDL_BUTTON_MIDDLE);
+        if (::GetAsyncKeyState(rBtn)        & 0x8000) button_state |= SDL_BUTTON(SDL_BUTTON_RIGHT);
+        if (::GetAsyncKeyState(VK_XBUTTON1) & 0x8000) button_state |= SDL_BUTTON(SDL_BUTTON_X1);
+        if (::GetAsyncKeyState(VK_XBUTTON2) & 0x8000) button_state |= SDL_BUTTON(SDL_BUTTON_X2);
+    }
+#else
     Uint32 button_state = SDL_GetMouseState(NULL, NULL);
+#endif
+
     int buttons[] = {SDL_BUTTON_LEFT, SDL_BUTTON_MIDDLE, SDL_BUTTON_RIGHT, SDL_BUTTON_X1, SDL_BUTTON_X2 };
 
     for(unsigned int b=0; b < sizeof(buttons)/sizeof(buttons[0]); ++b) {
@@ -163,6 +188,38 @@ void updateKeyboardState() {
             ki->first_pressed_ = i;
         }
     }
+
+#ifdef PLATFORM_WINDOWS
+    // SDL_GetKeyboardState only reflects keys for SDL-owned windows. In the
+    // editor, keyboard focus stays on the MFC parent window, so SDL never
+    // processes its WM_KEYDOWN/UP and modifier key states read as KS_FREE.
+    //
+    // Fix: override the modifier key slots with Win32 hardware state.
+    // This runs AFTER the SDL scan so SDL state cannot re-zero them.
+    // We only inject the keys that the GameOS input system queries for the
+    // inspector shortcut (Ctrl, Shift, Alt); the rest remain SDL-sourced.
+    {
+        // Helper: apply one Win32 key state into last_state_[scancode].
+        const int kStateLen = (int)(sizeof(ki->last_state_)/sizeof(ki->last_state_[0]));
+        auto injectModifier = [&](SDL_Scancode sc, DWORD vk) {
+            int idx = (int)sc;
+            if (idx < 0 || idx >= kStateLen) return;
+            uint8_t ls = ki->last_state_[idx];
+            bool down = (::GetAsyncKeyState(vk) & 0x8000) != 0;
+            if (down)
+                ls = (ls==KS_FREE||ls==KS_RELEASED) ? KS_PRESSED : KS_HELD;
+            else
+                ls = (ls==KS_HELD||ls==KS_PRESSED) ? KS_RELEASED : KS_FREE;
+            ki->last_state_[idx] = ls;
+        };
+        injectModifier(SDL_SCANCODE_LCTRL,  VK_LCONTROL);
+        injectModifier(SDL_SCANCODE_RCTRL,  VK_RCONTROL);
+        injectModifier(SDL_SCANCODE_LSHIFT, VK_LSHIFT);
+        injectModifier(SDL_SCANCODE_RSHIFT, VK_RSHIFT);
+        injectModifier(SDL_SCANCODE_LALT,   VK_LMENU);
+        injectModifier(SDL_SCANCODE_RALT,   VK_RMENU);
+    }
+#endif
 }
 
 } // namespace

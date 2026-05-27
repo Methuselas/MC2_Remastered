@@ -3,6 +3,7 @@
 #include "render_snapshot.h"
 #include "draw_packet_emitter.h"       // DrawPacket v0
 #include "gos_static_prop_batcher.h"   // batcher_getSortedPacketCount — explicit, do not rely on transitive
+#include "../../RenderCore/MaterialGpu.h"  // RenderCore::MaterialGpu for g_dpSelProp albedoTex fill
 #include <stdio.h>
 #include <stdlib.h>
 #include <vector>
@@ -1323,6 +1324,12 @@ int main(int argc, char** argv)
                         std::memcpy(sel.shapeName, found->shapeName, sizeof(sel.shapeName));
                         sel.shapeName[sizeof(sel.shapeName) - 1] = '\0';
 
+                        // MaterialGpu lookup — per-type (all packets share same materialIdx).
+                        RenderCore::MaterialGpu mg{};
+                        const bool mgOk = (found->materialIdx != 0xFFFFFFFFu)
+                                          && batcher_getMaterialGpuEntry(found->materialIdx, &mg);
+                        const uint32_t mgAlbedoTex = mgOk ? mg.albedoTex : 0xFFFFFFFFu;
+
                         // Per-packet rows.
                         const uint32_t rowCap = DrawPacketSelectedPropSnapshot::kMaxRows;
                         const uint32_t pktEnd = found->firstPacket + found->packetCount;
@@ -1344,6 +1351,12 @@ int main(int argc, char** argv)
                                 row.pipelineId    = (matFlags & STATIC_PROP_FLAG_ALPHA_TEST)
                                                     ? 2u : 1u;
                             }
+                            // Render-spine v1.1: legacy layer + MaterialGpu albedo + match flag.
+                            row.texArrayLayer         = found->texArrayLayer;
+                            row.albedoTex             = mgAlbedoTex;
+                            row.materialMatchesLegacy = mgOk
+                                && (found->texArrayLayer >= 0)
+                                && (mgAlbedoTex == static_cast<uint32_t>(found->texArrayLayer));
                             ++sel.rowCount;
                         }
                     }

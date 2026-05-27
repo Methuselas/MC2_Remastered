@@ -18,6 +18,14 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <SDL2/SDL.h>
+
+#ifdef MC2_IMGUI
+#include "imgui.h"
+// g_imguiInitialized is defined in GuiRuntime/GuiRuntime.cpp.
+// Declared here rather than pulling in GuiRuntime.h to keep the
+// renderer layer independent of the GUI layer headers.
+extern bool g_imguiInitialized;
+#endif
 #include <SDL2/SDL_syswm.h>
 #include <GL/glew.h>
 #include <GL/gl.h>
@@ -48,6 +56,109 @@ static bool EditorGosRender_ForwardMouseToEditor(HWND childHwnd, UINT msg, WPARA
 {
     if (!g_editor_parent_hwnd || !::IsWindow(g_editor_parent_hwnd))
         return false;
+
+    // ImGui mouse routing
+    //
+    // Mouse position is tracked every frame via GetCursorPos+ScreenToClient in
+    // GuiRuntime::NewFrame, so ImGui always knows hover state before messages arrive.
+    //
+    // Button routing uses IsWindowHovered (spatial, no one-frame lag) rather than
+    // WantCaptureMouse (which is tainted by mouse_any_down across frames):
+    //   - Cursor over ImGui window at DOWN time  -> inject into ImGui, consume (don't
+    //     forward to MFC).  Track flag = false so UP is also consumed.
+    //   - Cursor over viewport at DOWN time      -> inject into ImGui (so its internal
+    //     state stays consistent), forward to MFC.  Track flag = true so UP is forwarded.
+    //   - UP always mirrors DOWN via the tracking flag so press/release are correlated.
+    //
+    // WM_MOUSEWHEEL is always injected because the scroll delta is only available from
+    // the message; GetAsyncKeyState has no wheel equivalent.
+    //
+    // NOTE: injecting button events on viewport clicks sets ImGui's mouse_any_down=true
+    // for the *next* frame, making WantCaptureMouse=true.  The inspector pick gate in
+    // missiongui.cpp uses IsWindowHovered(AnyWindow) -- not WantCaptureMouse -- so it
+    // is unaffected by that transient state.
+#ifdef MC2_IMGUI
+    if (g_imguiInitialized) {
+        // Per-button tracking: true while MFC received the matching button-down.
+        // Ensures button-up is forwarded to MFC iff its button-down was, preventing
+        // orphaned press or release messages in either consumer.
+        static bool s_lbFwdToMfc = false;
+        static bool s_rbFwdToMfc = false;
+        static bool s_mbFwdToMfc = false;
+
+        bool wantMouse = ImGui::GetIO().WantCaptureMouse;
+        ImGuiIO& io    = ImGui::GetIO();
+
+        switch (msg)
+        {
+        case WM_MOUSEWHEEL:
+            io.AddMouseWheelEvent(
+                0.0f, (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA);
+            if (wantMouse) return true;
+            break;
+
+        case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK:
+            io.AddMouseButtonEvent(0, true);
+            if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
+                s_lbFwdToMfc = false;
+                return true;   // ImGui owns this click; do not forward to MFC
+            }
+            s_lbFwdToMfc = true;   // viewport click; forward to MFC below
+            break;
+        case WM_LBUTTONUP:
+            io.AddMouseButtonEvent(0, false);
+            if (!s_lbFwdToMfc) return true;
+            s_lbFwdToMfc = false;
+            break;
+
+        case WM_RBUTTONDOWN: case WM_RBUTTONDBLCLK:
+            io.AddMouseButtonEvent(1, true);
+            if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
+                s_rbFwdToMfc = false;
+                return true;
+            }
+            s_rbFwdToMfc = true;
+            break;
+        case WM_RBUTTONUP:
+            io.AddMouseButtonEvent(1, false);
+            if (!s_rbFwdToMfc) return true;
+            s_rbFwdToMfc = false;
+            break;
+
+        case WM_MBUTTONDOWN: case WM_MBUTTONDBLCLK:
+            io.AddMouseButtonEvent(2, true);
+            if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
+                s_mbFwdToMfc = false;
+                return true;
+            }
+            s_mbFwdToMfc = true;
+            break;
+        case WM_MBUTTONUP:
+            io.AddMouseButtonEvent(2, false);
+            if (!s_mbFwdToMfc) return true;
+            s_mbFwdToMfc = false;
+            break;
+
+        default:
+            break;
+        }
+    }
+#endif
+    // ── SDL mouse-position injection ─────────────────────────────────────────
+    // The GL child uses a custom WndProc, so SDL never generates
+    // SDL_MOUSEMOTION events for it.  Push a synthetic event on every
+    // WM_MOUSEMOVE so the GameOS input system (gos_GetMouseInfo) returns
+    // accurate coordinates — needed by missiongui inspector picks.
+    // This is independent of the ImGui path above.
+    if (msg == WM_MOUSEMOVE) {
+        SDL_Event motionEv = {};
+        motionEv.type = SDL_MOUSEMOTION;
+        motionEv.motion.x = (Sint32)GET_X_LPARAM(lParam);
+        motionEv.motion.y = (Sint32)GET_Y_LPARAM(lParam);
+        SDL_PushEvent(&motionEv);
+    }
+
+    // ── MFC forwarding ───────────────────────────────────────────────────────
 
     LPARAM editorLParam = lParam;
 
@@ -549,6 +660,18 @@ RenderWindow* create_window(const char* pwinname, int width, int height)
     SDL_ShowCursor(SDL_ENABLE);
 
     return rw;
+}
+
+SDL_Window* getSDLWindow() noexcept
+{
+    return g_sdl_window;
+}
+
+SDL_GLContext getSDLGLContext() noexcept
+{
+    // Editor uses WGL (not SDL GL); the SDL2 ImGui backend accepts nullptr
+    // and skips SDL_GL_MakeCurrent — context management is done by EditorGosRender.
+    return nullptr;
 }
 
 //==============================================================================

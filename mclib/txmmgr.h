@@ -560,6 +560,13 @@ class MC_TextureManager
 				return nodeId;
 		}
 
+        const char* getTextureName(DWORD nodeId) const
+        {
+            if (nodeId < MC_MAXTEXTURES)
+                return masterTextureNodes[nodeId].nodeName;
+            return nullptr;
+        }
+
 		bool isTextureNodeResident (DWORD nodeId) const
 		{
 			if ((nodeId == 0xffffffff) || (nodeId == 0))

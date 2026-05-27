@@ -34,9 +34,7 @@ class GameObjectManager;           // fwd-decl; code/objmgr.h defines the class
 GameObjectManager* ObjectManager = nullptr;
 
 // ---- RenderWorld self-test stubs ----
-// RenderWorld::init() calls RunGameplayPickSelfTest() (defined in
-// code/gameplay_pick.cpp) gated by MC2_GAMEPLAY_PICK_SELFTEST=1.
-// The editor does not link code/; stub as no-op.  The mech self-test
+// RunGameplayPickSelfTest() is now compiled directly into the editor via
+// EDITOR_BRIDGE_SOURCES (gameplay_pick.cpp).  The mech self-test
 // (RunMechPickSelfTest) is in GameAdapters/MechRenderAdapter.cpp and
 // resolved via the gameadapters library.
-void RunGameplayPickSelfTest() {}

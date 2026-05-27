@@ -20,6 +20,12 @@
 // Global debug snapshot — written each frame by gameosmain, read by ImGui panel.
 DrawPacketsDebugSnapshot g_dpSnapshot;
 
+// Per-selected-prop snapshot — written by gameosmain when a static prop is selected.
+DrawPacketSelectedPropSnapshot g_dpSelProp;
+
+// Selection bridge — written by EditorInspector on pick/clear events.
+int32_t g_dpSelectedRecipeIndex = -1;
+
 DrawPacketEmitStats emitStaticPropDrawPackets(const RenderSnapshot&          snap,
                                               StaticPropDrawPacketCandidate* out,
                                               uint32_t                       maxPackets) {

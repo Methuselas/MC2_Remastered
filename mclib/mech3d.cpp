@@ -2553,7 +2553,7 @@ long Mech3DAppearance::render (long depthFixup)
 			}
 
 			bool gpuMechSubmitted = false;
-			if (g_useGpuMechs && !mechGpuCullSkip) {
+			if (g_useGpuMechs && !mechGpuCullSkip && g_drawMechs) {
 				// Replicate the highlight selection from the CPU SetARGBHighLight
 				// branches above so the GPU path sees the same color choice.
 				uint32_t gpuHighlightARGB = highLight;
@@ -2637,7 +2637,7 @@ long Mech3DAppearance::render (long depthFixup)
 			// submit AND the CPU fallback. This is the whole point of the
 			// cull — render nothing for this actor this frame. CPU update
 			// (AI, position, animation, damage) has already run.
-			if (!gpuMechSubmitted && !mechGpuCullSkip) {
+			if (!gpuMechSubmitted && !mechGpuCullSkip && g_drawMechs) {
 				// M2.5 (Q6 amendment 2): count MLR/CPU-fallback draws so
 				// the always-on per-mission mlr_mech_summary line reflects
 				// Path-B incidence. M2.6 readiness decision consults this

@@ -35,12 +35,25 @@
 #include <gameos.hpp>          // gos_RendererBeginFrame / EndFrame / HandleEvents
 #include "gos_render.h"        // graphics::make_current_context etc.
 #include "gos_input.h"         // input::beginUpdateMouseState etc.
+#include "gos_postprocess.h"   // gosPostProcess + getGosPostProcess() — needed for
+                               // beginScene/endScene so props render into the scene FBO
+                               // with MRT (COLOR_ATTACHMENT2 = object IDs) enabled.
+                               // Without this the editor rendered directly to FBO 0 and
+                               // lookupAtPixel always read back 0.
 #include "editorinterface.h"
 
 #include <SDL2/SDL.h>
 
+#ifdef MC2_IMGUI
+#include "GuiRuntime.h"
+#include "imgui.h"
+#include "imgui_impl_sdl2.h"
+#include "imgui_impl_opengl3.h"
+#endif
+
 namespace graphics {
     void set_editor_parent_window(void* hwnd);
+    SDL_Window* getSDLWindow() noexcept;
 
     // Editor/MFC render path compatibility:
     // gameos_main expects the renderer layer to provide mouse-grab hooks.
@@ -286,6 +299,12 @@ void __stdcall InitGameOS(HINSTANCE /*hInstance*/, HWND hWindow, char* commandLi
                 gos_CreateRenderer(g_editorRenderContext, g_editorRenderWindow, w, h);
                 EditorGameOSTrace("InitGameOS: after gos_CreateRenderer renderer=%p", getGosRenderer());
 
+#ifdef MC2_IMGUI
+                EditorGameOSTrace("InitGameOS: MC2_IMGUI defined -- before GuiRuntime::Init sdlWin=%p", graphics::getSDLWindow());
+                GuiRuntime::Init();
+                EditorGameOSTrace("InitGameOS: after GuiRuntime::Init g_imguiInitialized=%d", g_imguiInitialized ? 1 : 0);
+#endif
+
                 EditorGameOSTrace("InitGameOS: before gos_CreateAudio");
                 g_editorAudioCreated = gos_CreateAudio();
                 EditorGameOSTrace("InitGameOS: after gos_CreateAudio created=%d", g_editorAudioCreated ? 1 : 0);
@@ -421,6 +440,10 @@ DWORD __stdcall RunGameOSLogic()
     SDL_Event event;
     while (SDL_PollEvent(&event))
     {
+#ifdef MC2_IMGUI
+        if (g_imguiInitialized)
+            ImGui_ImplSDL2_ProcessEvent(&event);
+#endif
         switch (event.type)
         {
         case SDL_KEYDOWN:
@@ -452,6 +475,18 @@ DWORD __stdcall RunGameOSLogic()
 
     const int viewport_w = Environment.drawableWidth;
     const int viewport_h = Environment.drawableHeight;
+
+    // Route rendering through the scene FBO so the object-ID buffer
+    // (COLOR_ATTACHMENT2) is populated — required for Ctrl+Shift+LMB pick.
+    // Without beginScene the editor rendered directly to FBO 0; lookupAtPixel
+    // always read 0 from the scene FBO that was never written.
+    // Mirrors gameosmain.cpp: resize → beginScene → clear → clearGBuffer1.
+    gosPostProcess* pp_editor = getGosPostProcess();
+    if (pp_editor) {
+        pp_editor->resize(viewport_w, viewport_h);
+        pp_editor->beginScene();  // binds sceneFBO_, sets MRT w/ COLOR_ATTACHMENT2
+    }
+
     glViewport(0, 0, viewport_w, viewport_h);
 
     // Minimal per-frame GL state: depth test on and clear buffers.
@@ -463,14 +498,40 @@ DWORD __stdcall RunGameOSLogic()
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_TRUE);
 
+    // When pp_editor->beginScene() ran, the scene FBO is now bound — this
+    // glClear hits the scene FBO's color/depth attachments, not FBO 0.
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // F3 render-contract: stamp GBuffer1 with the post-shadow-eligible
+    // sentinel before any draws run. Required by render-contract coherence
+    // guarantee (docs/superpowers/specs/render-contract-f3-report.md §5A).
+    if (pp_editor) {
+        pp_editor->clearGBuffer1();
+    }
 
     gos_RendererHandleEvents();
 
     // by Methuselas: Editor terrain rendering is sensitive to this frame-order
     // handoff. Do not reorder BeginFrame/DoGameLogic/UpdateRenderers/EndFrame
     // while chasing shader bugs unless the Editor terrain path is revalidated.
+#ifdef MC2_IMGUI
+    {
+        static int s_imguiFrameTrace = 0;
+        ++s_imguiFrameTrace;
+        if (s_imguiFrameTrace == 1)
+            EditorGameOSTrace("RunGameOSLogic: frame=1 g_imguiInitialized=%d", g_imguiInitialized ? 1 : 0);
+    }
+    GuiRuntime::NewFrame();
+    if (g_imguiInitialized) {
+        ImGui::SetNextWindowPos(ImVec2(10.f, 50.f), ImGuiCond_Once);
+        ImGui::SetNextWindowSize(ImVec2(220.f, 60.f), ImGuiCond_Once);
+        ImGui::Begin("MC2 Editor", nullptr,
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
+        ImGui::Text("ImGui live | F=demo  Ctrl+Shift+LMB=pick");
+        ImGui::End();
+    }
+#endif
     gos_RendererBeginFrame();
 
     if (Environment.DoGameLogic)
@@ -481,6 +542,38 @@ DWORD __stdcall RunGameOSLogic()
     Environment.UpdateRenderers();
     gos_RendererEndFrame();
 
+    // Composite scene FBO → default FB (tone-map, FXAA, bloom, shadow overlay).
+    // This is what makes the scene visible on screen; without it the FBO contents
+    // are rendered into but never displayed.  Mirrors gameosmain.cpp line 565.
+    // endScene() internally calls glBindFramebuffer(GL_FRAMEBUFFER, 0), so the
+    // ImGui pass that follows always targets the default FB.
+    if (pp_editor) {
+        pp_editor->endScene();
+    }
+
+#ifdef MC2_IMGUI
+    if (g_imguiInitialized) {
+        // Ensure ImGui renders to the default framebuffer.
+        // Shadow/terrain passes leave non-zero FBOs bound; if we don't reset here
+        // ImGui draw calls go into the last-bound shadow-map texture, not the screen.
+        // endScene() already bound FBO 0 above; this is belt-and-suspenders.
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        // Restore viewport to the full window in case a render pass shrank it
+        // (e.g. shadow atlas pass sets a sub-viewport).
+        int vw = 0, vh = 0;
+        if (SDL_Window* sw = graphics::getSDLWindow())
+            SDL_GetWindowSize(sw, &vw, &vh);
+        if (vw > 0 && vh > 0)
+            glViewport(0, 0, vw, vh);
+        static bool s_renderTrace = false;
+        if (!s_renderTrace) {
+            s_renderTrace = true;
+            EditorGameOSTrace("RunGameOSLogic: first GuiRuntime::Render fbo=0 viewport=%dx%d", vw, vh);
+        }
+    }
+    GuiRuntime::Render();
+#endif
+
     // Do NOT call glUseProgram(0) here.  The Remastered terrain shader program
     // is managed by the gosRenderer; forcibly unbinding it after EndFrame tears
     // down state the renderer expects to persist across the swap.  Let the
@@ -490,6 +583,16 @@ DWORD __stdcall RunGameOSLogic()
     return 0;
 }
 
+
+// ---------------------------------------------------------------------------
+// Context accessor — used by EditorInterface::OnLButtonUp to ensure the
+// WGL context is current before calling tryGameplayPick / glReadPixels.
+// Caller must have verified !IsObjectIdBufferEnabled() gating separately.
+// ---------------------------------------------------------------------------
+graphics::RenderContextHandle EditorGameOS_GetRenderContext()
+{
+    return g_editorRenderContext;
+}
 
 // ---------------------------------------------------------------------------
 // Legacy editor/global compatibility symbols
@@ -517,6 +620,9 @@ void EditorGameOS_Shutdown(void)
 
     if (getGosRenderer())
     {
+#ifdef MC2_IMGUI
+        GuiRuntime::Shutdown();
+#endif
         EditorGameOSTrace("EditorGameOS_Shutdown: before gos_DestroyRenderer");
         gos_DestroyRenderer();
         EditorGameOSTrace("EditorGameOS_Shutdown: after gos_DestroyRenderer");

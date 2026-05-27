@@ -84,6 +84,50 @@ struct DrawPacketsDebugSnapshot {
 extern DrawPacketsDebugSnapshot g_dpSnapshot;
 
 // ---------------------------------------------------------------------------
+// Per-selected-prop packet inspector snapshot.
+// Written by gameosmain each frame when a static prop is selected via
+// EditorInspector (Ctrl+Shift+Click). Read by GraphicsOptionsWindow.
+//
+// Selection bridge: g_dpSelectedRecipeIndex is written by EditorInspector
+// (on setPickResult / setStaticPropData / clear) and read by gameosmain.
+// Both are on the render thread — no mutex needed.
+// ---------------------------------------------------------------------------
+struct DrawPacketPropRow {
+    uint32_t globalPacketIdx = 0;
+    uint32_t firstIndex      = 0;
+    uint32_t indexCount      = 0;
+    int32_t  baseVertex      = 0;
+    uint32_t pipelineId      = 0;   // 0=invalid, 1=opaque, 2=alpha_test
+    uint32_t materialFlags   = 0;   // raw bit field for diagnostics
+    // v1.1 render-spine additions:
+    int32_t  texArrayLayer         = -1;           // legacy layer from ExtractedStaticProp; -1=sentinel
+    uint32_t albedoTex             = 0xFFFFFFFFu;  // MaterialGpu.albedoTex; 0xFFFFFFFF=absent/MC2_MATERIAL_GPU=0
+    bool     materialMatchesLegacy = false;        // albedoTex == (uint32_t)texArrayLayer when both valid
+};
+
+struct DrawPacketSelectedPropSnapshot {
+    bool     valid           = false;
+    int32_t  recipeIndex     = -1;
+    uint32_t typeId          = 0;
+    uint32_t firstPacket     = 0;
+    uint32_t packetCount     = 0;
+    uint32_t instanceCount   = 0;   // visible instances this frame (snapshot count)
+    uint32_t materialIdx     = 0xFFFFFFFFu;
+    uint8_t  alphaClass      = 0;
+    char     shapeName[64]   = {};
+
+    static constexpr uint32_t kMaxRows = 8;
+    DrawPacketPropRow rows[kMaxRows]    = {};
+    uint32_t          rowCount         = 0;
+};
+
+// Selection bridge: written by EditorInspector, read by gameosmain.
+// -1 = no selection; >= 0 = recipeIndex of selected static prop.
+extern int32_t g_dpSelectedRecipeIndex;
+
+extern DrawPacketSelectedPropSnapshot g_dpSelProp;
+
+// ---------------------------------------------------------------------------
 // Compare result. Returned by comparePacketsToLegacy().
 // All mismatch counters must be zero for the dispatch flip gate to open.
 // ---------------------------------------------------------------------------

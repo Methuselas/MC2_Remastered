@@ -22,6 +22,13 @@
 // effectively opts out of the entire GPU mech path.
 // =============================================================================
 
+// ImGui "Draw Mechs" visibility kill-switch. DEFAULT-ON.
+// When false, both the GPU batcher submit AND the CPU Render(true) fallback
+// are suppressed, so mechs are invisible.  Independent of g_useGpuMechs —
+// set this to false to hide mechs entirely; set g_useGpuMechs to false to
+// force the CPU rendering path while still drawing mechs.
+extern bool g_drawMechs;
+
 // Runtime toggle for the GPU mech renderer. DEFAULT-ON.
 // Opt-out: MC2_GPU_MECHS=0 → legacy CPU mech path.
 // Can also be toggled at runtime via RAlt+M (wire in gameosmain.cpp hotkey handler).

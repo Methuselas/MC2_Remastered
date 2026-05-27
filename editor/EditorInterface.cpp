@@ -67,6 +67,22 @@
 #include "SelectionBrush.h"
 #endif
 
+#ifdef MC2_IMGUI
+#include "EditorInspector.h"
+#include "imgui.h"
+#include "gameplay_pick.h"  // tryGameplayPick: shared pick spine, no game-object deps
+#include "gameos.hpp"       // gos_GetViewport, Environment (drawableWidth/Height)
+#include "gos_render.h"     // graphics::make_current_context
+#include "gos_postprocess.h" // gosPostProcess + getGosPostProcess() — OID scan diagnostic
+// g_imguiInitialized is defined in GuiRuntime/GuiRuntime.cpp.
+extern bool g_imguiInitialized;
+// Render context handle for explicit GL context bind before glReadPixels.
+// SDL_PollEvent inside RunGameOSLogic fires before make_current_context;
+// any WM_LBUTTONUP that arrives between RunGameOSLogic iterations needs
+// the context made current before tryGameplayPick calls glReadPixels.
+extern graphics::RenderContextHandle EditorGameOS_GetRenderContext();
+#endif
+
 #ifndef FLATTENBRUSH_H
 #include "FlattenBrush.h"
 #endif
@@ -3509,7 +3525,7 @@ void EditorInterface::UpdateButton( CCmdUI* pButton )
 }
 
 
-void EditorInterface::OnLButtonDown(UINT nFlags, CPoint point) 
+void EditorInterface::OnLButtonDown(UINT nFlags, CPoint point)
 {
 	// by Methuselas: MFC owns mouse capture and tool dispatch for the Editor.
 	// Keep this path free of render-child input shims so the embedded GL HWND
@@ -3523,18 +3539,55 @@ void EditorInterface::OnLButtonDown(UINT nFlags, CPoint point)
 	s_editorLeftDownY = point.y;
 	s_editorLeftButtonTracking = true;
 
+#ifdef MC2_IMGUI
+	// Inject button-down into ImGui.  For normal GL-child clicks this is a
+	// harmless duplicate of what ForwardMouseToEditor already queued; ImGui
+	// deduplicates same-state events.  When MFC has capture from a prior
+	// drag and this WM_LBUTTONDOWN bypassed the GL child entirely, this is
+	// the ONLY injection, ensuring ImGui's state stays coherent.
+	if (g_imguiInitialized)
+		ImGui::GetIO().AddMouseButtonEvent(0, true);
+#endif
+
 	handleLeftButtonDown( point.x, point.y );
 	SPEW( (0, "GotClick"));
 }
 
-void EditorInterface::OnLButtonUp(UINT nFlags, CPoint point) 
+void EditorInterface::OnLButtonUp(UINT nFlags, CPoint point)
 {
-	// TODO: Add your message handler code here and/or call default
 	bool wasClick = s_editorLeftButtonTracking &&
 		EditorInterface_IsClickDistance(s_editorLeftDownX, s_editorLeftDownY, point.x, point.y);
 
+#ifdef MC2_IMGUI
+	// Click-state trace: fires on every LButtonUp so we can see why the
+	// Ctrl+Shift+LMB inspector pick is/isn't triggering.  Remove once pick works.
+	{
+		static int s_clickTrace = 0;
+		if (++s_clickTrace <= 5) {  // cap at 5 to avoid log spam
+			const int ctrl  = (::GetAsyncKeyState(VK_CONTROL) & 0x8000) ? 1 : 0;
+			const int shift = (::GetAsyncKeyState(VK_SHIFT)   & 0x8000) ? 1 : 0;
+			std::fprintf(stderr,
+				"[EDITOR_CLICK #%d] xy=(%d,%d) wasClick=%d tracking=%d ctrl=%d shift=%d imgui=%d\n",
+				s_clickTrace, point.x, point.y,
+				wasClick ? 1 : 0, s_editorLeftButtonTracking ? 1 : 0,
+				ctrl, shift, g_imguiInitialized ? 1 : 0);
+		}
+	}
+#endif
+
 	handleLeftButtonUp( point.x, point.y );
 	ReleaseCapture();
+
+#ifdef MC2_IMGUI
+	// Inject button-up into ImGui.  SetCapture() in OnLButtonDown routes all
+	// WM_LBUTTONUP messages directly to MFC, bypassing EditorGLChildWndProc
+	// and ForwardMouseToEditor.  Without this injection, ImGui's io.MouseDown[0]
+	// stays true permanently after the first viewport click -- every subsequent
+	// click is seen as "button already held", IsMouseClicked(0) never returns
+	// true, and no widget ever activates.
+	if (g_imguiInitialized)
+		ImGui::GetIO().AddMouseButtonEvent(0, false);
+#endif
 
 	if (wasClick && currentBrushID == IDS_SELECT)
 	{
@@ -3555,9 +3608,150 @@ void EditorInterface::OnLButtonUp(UINT nFlags, CPoint point)
 	}
 
 	s_editorLeftButtonTracking = false;
+
+#ifdef MC2_IMGUI
+	// Ctrl+Shift+LMB: run the object inspector pick.
+	// ForwardMouseToEditor already consumed any click landing on an ImGui
+	// window (never forwarded to MFC), so any click reaching here is a
+	// confirmed viewport click -- no additional ImGui hover check needed.
+	if (wasClick && g_imguiInitialized
+		&& (::GetAsyncKeyState(VK_CONTROL) & 0x8000)
+		&& (::GetAsyncKeyState(VK_SHIFT)   & 0x8000))
+	{
+		// Use tryGameplayPick for the full substrate-backed pick path
+		// (coord transform + glReadPixels + handle lookup).
+		// gameplay_pick.cpp has no game-object deps so it compiles cleanly
+		// in the editor's link environment (gameos + renderworld + gui_runtime).
+		// Convert MFC client-pixel coords to the viewport-canvas space that
+		// tryGameplayPick expects.  gos_GetViewport returns vMulX/vMulY in
+		// FBO-pixel units (= drawableWidth/Height for a full-screen viewport).
+		// The MFC view is sized to the SDL child, but drawableWidth was set at
+		// SDL window creation and may differ if the view was ever resized.
+		// Normalising through the window width handles both the match and the
+		// mismatch case: editorMouseX = point.x * vMulX / windowWidth.
+		float vmx = 1.f, vmy = 1.f, vax = 0.f, vay = 0.f;
+		gos_GetViewport(&vmx, &vmy, &vax, &vay);
+		CRect clientRect;
+		GetClientRect(&clientRect);
+		const int winW = clientRect.Width()  > 0 ? clientRect.Width()  : 1;
+		const int winH = clientRect.Height() > 0 ? clientRect.Height() : 1;
+
+		GameplayPickRequest req{};
+		req.mouseX               = (int)((float)point.x / winW * vmx);
+		req.mouseY               = (int)((float)point.y / winH * vmy);
+		req.shiftDn              = true;
+		req.leftClicked          = true;
+		req.bGui                 = false;   // no HUD region in editor
+		req.bLeftDouble          = false;
+		req.moverSelectedThisFrame = false;
+
+		// Guarantee the WGL context is current before glReadPixels.
+		// SDL_PollEvent (inside RunGameOSLogic) fires before make_current_context;
+		// MFC pump can deliver WM_LBUTTONUP in that window, leaving no context bound.
+		graphics::make_current_context(EditorGameOS_GetRenderContext());
+
+		GameplayPickResult result = tryGameplayPick(req);
+
+		// Diagnostic: fires on every pick until a hit is seen.
+		// Scans a coarse grid of the OID attachment to answer: "is ANYTHING
+		// written, or is the whole buffer zero?"  Remove once pick works.
+		static bool s_pickDiagDone = false;
+		if (!s_pickDiagDone) {
+			if (result.outcome == GameplayPickResult::Outcome::hit)
+				s_pickDiagDone = true;  // stop once we see a real hit
+
+			const char* outcomeStr[] = { "skipped", "gated", "miss", "hit" };
+			const int   oi = (int)result.outcome;
+			std::fprintf(stderr,
+				"[EDITOR_PICK diag] outcome=%s winXY=(%d,%d) winWH=(%d,%d) "
+				"vMulXY=(%.0f,%.0f) reqXY=(%d,%d) "
+				"fboXY=(%d,%d) glXY=(%d,%d) dWH=(%d,%d) "
+				"raw=0x%08X reason=%s\n",
+				(oi >= 0 && oi <= 3) ? outcomeStr[oi] : "?",
+				point.x, point.y, winW, winH,
+				vmx, vmy, req.mouseX, req.mouseY,
+				result.ctx.fboX, result.ctx.fboY,
+				result.ctx.glX,  result.ctx.glY,
+				result.ctx.drawableWidth, result.ctx.drawableHeight,
+				result.lookup.rawObjectId,
+				result.lookup.lookupFailReason ? result.lookup.lookupFailReason : "(none)");
+
+			// Scan the OID attachment at a 32x32 grid across the whole FBO.
+			// Reports: whether the FBO / tex exist, and first nonzero pixel found.
+			// Answers definitively: "is the draw path writing object IDs at all?"
+			gosPostProcess* pp_scan = getGosPostProcess();
+			const GLuint scanFBO = pp_scan ? pp_scan->getSceneFBO()        : 0u;
+			const GLuint scanTex = pp_scan ? pp_scan->getSceneObjectIdTex(): 0u;
+			std::fprintf(stderr,
+				"[EDITOR_PICK scan] pp=%p sceneFBO=%u oidTex=%u\n",
+				(void*)pp_scan, scanFBO, scanTex);
+
+			if (scanFBO && scanTex) {
+				const int dw = result.ctx.drawableWidth;
+				const int dh = result.ctx.drawableHeight;
+				if (dw > 0 && dh > 0) {
+					GLint prevReadFbo = 0;
+					glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFbo);
+					glBindFramebuffer(GL_READ_FRAMEBUFFER, scanFBO);
+					glReadBuffer(GL_COLOR_ATTACHMENT2);
+
+					// Sample a 32x32 grid
+					const int steps = 32;
+					uint32_t firstNonzeroVal = 0u;
+					int firstNonzeroX = -1, firstNonzeroY = -1;
+					int totalNonzero = 0;
+					for (int gy = 0; gy < steps && firstNonzeroX < 0; ++gy) {
+						for (int gx = 0; gx < steps; ++gx) {
+							const int px = gx * (dw - 1) / (steps - 1);
+							const int py = gy * (dh - 1) / (steps - 1);
+							uint32_t pval = 0u;
+							glReadPixels(px, py, 1, 1, GL_RED_INTEGER, GL_UNSIGNED_INT, &pval);
+							if (pval != 0u) {
+								if (firstNonzeroX < 0) {
+									firstNonzeroX = px;
+									firstNonzeroY = py;
+									firstNonzeroVal = pval;
+								}
+								++totalNonzero;
+							}
+						}
+					}
+
+					glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prevReadFbo));
+
+					if (firstNonzeroX >= 0) {
+						std::fprintf(stderr,
+							"[EDITOR_PICK scan] OID attachment HAS data: "
+							"first nonzero at GL(%d,%d)=0x%08X totalNonzero=%d/%d\n",
+							firstNonzeroX, firstNonzeroY, firstNonzeroVal,
+							totalNonzero, steps * steps);
+					} else {
+						std::fprintf(stderr,
+							"[EDITOR_PICK scan] OID attachment ALL ZERO across %dx%d grid "
+							"(dWH=%dx%d) — draw path not writing object IDs\n",
+							steps, steps, dw, dh);
+					}
+				}
+			}
+		}
+
+		if (result.outcome == GameplayPickResult::Outcome::hit ||
+			result.outcome == GameplayPickResult::Outcome::miss)
+		{
+			// Pick ran: populate inspector with full lookup data.
+			EditorInspector::setPickResult(point.x, point.y, result.lookup);
+		}
+		else
+		{
+			// Substrate off or out-of-bounds: open inspector at screen coords
+			// so the user sees the window even without object ID data.
+			EditorInspector::onCtrlShiftClick(point.x, point.y);
+		}
+	}
+#endif
 }
 
-void EditorInterface::OnMouseMove(UINT nFlags, CPoint point) 
+void EditorInterface::OnMouseMove(UINT nFlags, CPoint point)
 {
 	// by Methuselas: right-drag camera rotation still lives in handleMouseMove().
 	// EditorGosRender forwards GL-child mouse messages here so this legacy
@@ -3635,7 +3829,7 @@ void EditorInterface::OnKeyUp(UINT nChar, UINT nRepCnt, UINT nFlags)
 	CWnd ::OnKeyUp(nChar, nRepCnt, nFlags);
 }
 
-void EditorInterface::OnRButtonDown(UINT nFlags, CPoint point) 
+void EditorInterface::OnRButtonDown(UINT nFlags, CPoint point)
 {
 	// by Methuselas: right-button capture must stay on the MFC EditorInterface,
 	// not the embedded GL child.  The child forwards the initial down message;
@@ -3646,12 +3840,23 @@ void EditorInterface::OnRButtonDown(UINT nFlags, CPoint point)
 	rightDrag = true;
 	lastRightClickTime = timeGetTime();
 
+#ifdef MC2_IMGUI
+	if (g_imguiInitialized)
+		ImGui::GetIO().AddMouseButtonEvent(1, true);
+#endif
 }
-void EditorInterface::OnRButtonUp(UINT nFlags, CPoint point) 
-{
 
+void EditorInterface::OnRButtonUp(UINT nFlags, CPoint point)
+{
 	rightDrag = false;
 	ReleaseCapture();
+
+#ifdef MC2_IMGUI
+	// Same SetCapture bypass fix as OnLButtonUp -- inject UP so ImGui's
+	// io.MouseDown[1] doesn't get stuck true after right-drag operations.
+	if (g_imguiInitialized)
+		ImGui::GetIO().AddMouseButtonEvent(1, false);
+#endif
 
 	if ( timeGetTime() - lastRightClickTime < 200 )
 	{
