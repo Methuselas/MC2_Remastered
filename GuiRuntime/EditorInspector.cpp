@@ -630,6 +630,68 @@ void EditorInspector::drawImGui() {
                 ImGui::Text("Structure: %.0f / %.0f", s_mechData.totalCurStr,   s_mechData.totalMaxStr);
             }
         }
+
+        // MECH-EXTRACTION-2: mech snapshot panel (gate: MC2_SNAPSHOT_MECH_EXTRACT=1).
+        // Read-only view of RenderSnapshot mech counters + per-selected-mech row detail.
+        {
+        const RenderSnapshot* snap = getLastRenderSnapshot();
+        const bool gateOn = snap && (snap->mechSnapshotCount > 0
+                                     || snap->mechMatValid > 0
+                                     || snap->mechMatSentinel > 0);
+        const ImGuiTreeNodeFlags snapFlags = gateOn
+            ? (ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap)
+            : ImGuiTreeNodeFlags_AllowOverlap;
+        bool msOpen = ImGui::CollapsingHeader("Mech Snapshot##ms", snapFlags);
+        if (msOpen) {
+            if (!snap || !gateOn) {
+                ImGui::TextDisabled("(no data -- set MC2_SNAPSHOT_MECH_EXTRACT=1)");
+            } else {
+                // Frame summary
+                ImGui::Text("rows=%u  mat_valid=%u  mat_sentinel=%u",
+                    snap->mechSnapshotCount, snap->mechMatValid, snap->mechMatSentinel);
+
+                const bool anyMismatch = (snap->mechCountMismatch      != 0u
+                                       || snap->mechHandleMismatch     != 0u
+                                       || snap->mechObjectIdMismatch   != 0u
+                                       || snap->mechTexHandleMismatch  != 0u
+                                       || snap->mechMaterialIdxMismatch != 0u);
+                if (anyMismatch) {
+                    ImGui::TextColored(ImVec4(1.f, 0.4f, 0.3f, 1.f),
+                        "countMis=%u handleMis=%u objectIdMis=%u texMis=%u matMis=%u",
+                        snap->mechCountMismatch, snap->mechHandleMismatch,
+                        snap->mechObjectIdMismatch, snap->mechTexHandleMismatch,
+                        snap->mechMaterialIdxMismatch);
+                } else {
+                    ImGui::TextColored(ImVec4(0.4f, 1.f, 0.4f, 1.f),
+                        "countMis=0 handleMis=0 objectIdMis=0 texMis=0 matMis=0");
+                }
+
+                // Per-selected-mech row (match by objectIdRaw == handle.raw())
+                ImGui::Separator();
+                const uint32_t selRaw = s_selection.handle.raw();
+                bool rowFound = false;
+                for (uint32_t i = 0u; i < snap->mechPackets.size(); ++i) {
+                    const ExtractedMechPacket& row = snap->mechPackets[i];
+                    if (row.objectIdRaw != selRaw) continue;
+                    rowFound = true;
+                    ImGui::Text("Row %u:", i);
+                    ImGui::Text("  handle      0x%08X", row.objectIdRaw);
+                    ImGui::Text("  texHandle   %u", row.texHandle);
+                    if (row.materialIdx == 0xFFFFFFFFu)
+                        ImGui::TextColored(ImVec4(1.f, 0.7f, 0.2f, 1.f),
+                            "  materialIdx sentinel (0xFFFFFFFF)");
+                    else
+                        ImGui::Text("  materialIdx %u", row.materialIdx);
+                    ImGui::Text("  typeLodIdx  %u", row.typeLodIdx);
+                    ImGui::Text("  renderFlags 0x%02X", row.renderFlags);
+                    break;
+                }
+                if (!rowFound)
+                    ImGui::TextDisabled("  (selected handle not in snapshot)");
+            }
+        }
+        } // Mech Snapshot block
+
     } else if (s_selection.pickKind == InspectorPickKind::Terrain) {
         if (ImGui::CollapsingHeader("Terrain", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (!s_terrainData.populated) {
