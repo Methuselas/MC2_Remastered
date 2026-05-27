@@ -181,6 +181,10 @@ struct PendingSubmit {
 };
 static std::vector<PendingSubmit> s_pendingSubmits;
 
+// MECH-EXTRACTION-0: per-actor facts persisted just before s_pendingSubmits.clear() in flush().
+// Read by batcher_getMechPendingCount/Entry in ExtractRenderSnapshot (same frame, after flush).
+static std::vector<ExtractedMechPacket> s_mechExtractPersist;
+
 // Per-frame draw-call snapshot persisted at the END of flush() for use by
 // flushShadow() on the NEXT frame.  flushShadow() runs before this frame's
 // flush(), so it reads last frame's already-fenced SSBO slot (s_frameSlot)
@@ -474,6 +478,7 @@ void GpuMechBatcher::onMapUnload() {
     s_boneCapacity      = 0;
     s_geometryFinalized = false;
     s_pendingSubmits.clear();
+    s_mechExtractPersist.clear();  // MECH-EXTRACTION-0
     // Mech-1: teardown MaterialGpu SSBO and tables
     if (s_mechMaterialSsbo != 0) {
         glDeleteBuffers(1, &s_mechMaterialSsbo);
@@ -1099,6 +1104,8 @@ void GpuMechBatcher::flush() {
         s_pendingSubmits.clear();
         s_eligibleActorsThisFrame = 0;
         std::memset(s_fallbacksThisFrame, 0, sizeof(s_fallbacksThisFrame));
+        // MECH-EXTRACTION-0: persist buffer is retained for frames with no pending submits;
+        // it will be cleared in onMapUnload() or repopulated in the normal flush() path.
         return;
     }
 
@@ -1563,6 +1570,28 @@ void GpuMechBatcher::flush() {
     s_lastTotalInstances = totalInstances;
     s_lastTotalBones     = totalBones;
 
+    // MECH-EXTRACTION-0: persist per-actor facts for batcher_getMechPendingCount/Entry.
+    // Must run before s_pendingSubmits.clear() so ExtractRenderSnapshot can read this frame's data.
+    static const bool s_mechExtractEnabled = [] {
+        const char* v = std::getenv("MC2_SNAPSHOT_MECH_EXTRACT");
+        return v && v[0] == '1';
+    }();
+    if (s_mechExtractEnabled) {
+        s_mechExtractPersist.clear();
+        s_mechExtractPersist.reserve(s_pendingSubmits.size());
+        for (uint32_t i = 0u; i < static_cast<uint32_t>(s_pendingSubmits.size()); ++i) {
+            const PendingSubmit& ps = s_pendingSubmits[i];
+            ExtractedMechPacket pkt{};
+            pkt.objectIdRaw = ps.desc.objectIdRaw;
+            pkt.instanceIdx = i;
+            pkt.materialIdx = 0xFFFFFFFFu;
+            pkt.texHandle   = ps.desc.slot0TexHandle;
+            pkt.typeLodIdx  = ps.typeLodIdx;
+            pkt.renderFlags = ps.desc.renderFlags;
+            s_mechExtractPersist.push_back(pkt);
+        }
+    }
+
     s_pendingSubmits.clear();
     s_eligibleActorsThisFrame = 0;
     std::memset(s_fallbacksThisFrame, 0, sizeof(s_fallbacksThisFrame));
@@ -1573,36 +1602,29 @@ void GpuMechBatcher::flush() {
 // ---------------------------------------------------------------------------
 
 uint32_t batcher_getMechPendingCount() {
-    return static_cast<uint32_t>(s_pendingSubmits.size());
+    return static_cast<uint32_t>(s_mechExtractPersist.size());
 }
 
 bool batcher_getMechPendingEntry(uint32_t idx, ExtractedMechPacket* out) {
-    if (!out || idx >= static_cast<uint32_t>(s_pendingSubmits.size()))
+    if (!out || idx >= static_cast<uint32_t>(s_mechExtractPersist.size()))
         return false;
-    const PendingSubmit& ps = s_pendingSubmits[idx];
-    out->objectIdRaw  = ps.desc.objectIdRaw;
-    out->instanceIdx  = idx;
-    out->materialIdx  = 0xFFFFFFFFu;  // sentinel — resolved in flush(), not available pre-flush
-    out->texHandle    = ps.desc.slot0TexHandle;
-    out->typeLodIdx   = ps.typeLodIdx;
-    out->renderFlags  = ps.desc.renderFlags;
+    *out = s_mechExtractPersist[idx];
+    out->instanceIdx = idx;
     return true;
 }
 
 void batcher_compareMechSnapshot(RenderSnapshot* snap) {
     if (!snap) return;
-    const uint32_t liveCount = static_cast<uint32_t>(s_pendingSubmits.size());
-    const uint32_t snapCount = static_cast<uint32_t>(snap->mechPackets.size());
-    if (snapCount != liveCount) {
+    const uint32_t liveCount  = static_cast<uint32_t>(s_mechExtractPersist.size());
+    const uint32_t snapCount  = static_cast<uint32_t>(snap->mechPackets.size());
+    if (snapCount != liveCount)
         snap->mechCountMismatch = 1u;
-    }
     const uint32_t compareCount = snapCount < liveCount ? snapCount : liveCount;
     for (uint32_t i = 0u; i < compareCount; ++i) {
         const ExtractedMechPacket& row = snap->mechPackets[i];
-        const PendingSubmit& ps = s_pendingSubmits[i];
-        if (row.typeLodIdx  != ps.typeLodIdx)          ++snap->mechHandleMismatch;
-        if (row.objectIdRaw != ps.desc.objectIdRaw)    ++snap->mechObjectIdMismatch;
-        if (row.texHandle   != ps.desc.slot0TexHandle) ++snap->mechTexHandleMismatch;
-        // mechMaterialIdxMismatch stays 0 — both sides are 0xFFFFFFFFu sentinel
+        const ExtractedMechPacket& ref = s_mechExtractPersist[i];
+        if (row.typeLodIdx  != ref.typeLodIdx)  ++snap->mechHandleMismatch;
+        if (row.objectIdRaw != ref.objectIdRaw) ++snap->mechObjectIdMismatch;
+        if (row.texHandle   != ref.texHandle)   ++snap->mechTexHandleMismatch;
     }
 }

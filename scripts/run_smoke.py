@@ -460,7 +460,10 @@ def main():
                             # [RENDER_SNAPSHOT v3] + [v3 build] log lines (used
                             # to verify spBuild* counters in smoke step 2).
                             "MC2_SNAPSHOT_STATIC_PROP_BUILD",
-                            "MC2_RENDER_SNAPSHOT_LOG")},
+                            "MC2_RENDER_SNAPSHOT_LOG",
+                            # MC2_SNAPSHOT_MECH_EXTRACT=1 enables MECH-EXTRACTION-0
+                            # persist buffer + compare counters (gate OFF by default).
+                            "MC2_SNAPSHOT_MECH_EXTRACT")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission
