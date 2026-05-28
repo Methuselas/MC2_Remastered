@@ -42,8 +42,6 @@ flat in uint v_drawID;          // plan v3.8 Step 8.3: forwarded from VS as
 // outputs in name, type, and flat qualifier). v_worldPos is interpolated
 // (per-pixel view vector); v_pbrV1Sun* are flat (constant per ObjectLights
 // entry, written by provoking vertex).
-// TODO(SHADER-REFLECT-HYGIENE-8): new varyings + uniforms drift goldens;
-// regen in fresh worktree.
 in       vec3 v_worldPos;
 flat in  vec3 v_pbrV1SunDir;
 flat in  vec3 v_pbrV1SunColor;

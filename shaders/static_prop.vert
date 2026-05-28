@@ -203,8 +203,6 @@ flat out uint v_drawID;          // plan v3.8 Step 8.2: forwarded to FS as
 //   v_pbrV1SunColor  — sun light color. Flat for same reason.
 //   v_pbrV1SunFound  — 0/1 sentinel: did we find a TG_LIGHT_INFINITE entry
 //                      in ObjectLights[lightDataIndex]? Flat int.
-// TODO(SHADER-REFLECT-HYGIENE-8): new varyings drift reflect goldens; regen
-// in fresh worktree.
 out      vec3 v_worldPos;
 flat out vec3 v_pbrV1SunDir;
 flat out vec3 v_pbrV1SunColor;
