@@ -25,4 +25,10 @@ namespace RenderCore {
     // Returns pointer to registered EngineView for the given id, or nullptr if unknown.
     // kMainSceneViewId always resolves if setCurrentView has been called this frame.
     const EngineView* resolveView(ViewId viewId);
+
+    // View registry: upsert by id, read back by index.
+    // Thread-unsafe — call only from the render thread.
+    void registerOrUpdateView(const EngineView& view);
+    uint32_t getViewCount();
+    const EngineView* getViewByIndex(uint32_t index);
 }

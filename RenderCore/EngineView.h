@@ -5,14 +5,29 @@
 namespace RenderCore {
 
 using ViewId = uint32_t;
-constexpr ViewId kInvalidViewId   = 0;
-constexpr ViewId kMainSceneViewId = 1;
+constexpr ViewId kInvalidViewId            = 0;
+constexpr ViewId kMainSceneViewId          = 1;
+// Reserved for the future shadow R→V lane; not yet registered by any caller.
+constexpr ViewId kShadowDirectional0ViewId = 2;
 
+// NOTE: ViewKind ordinals are NOT required to match ViewId constants.
+// ViewId is a per-frame slot identifier; ViewKind is a classification tag.
+// The numeric overlap (MainScene=1/kMainSceneViewId=1, ShadowStatic=2/kShadowDirectional0ViewId=2)
+// is coincidental — do not rely on it.
 enum class ViewKind : uint32_t {
     MainScene     = 1,
     ShadowStatic  = 2,
     ShadowDynamic = 3,
 };
+
+inline const char* toString(ViewKind k) {
+    switch (k) {
+        case ViewKind::MainScene:     return "MainScene";
+        case ViewKind::ShadowStatic:  return "ShadowStatic";
+        case ViewKind::ShadowDynamic: return "ShadowDynamic";
+    }
+    return "unknown";
+}
 
 // ViewMode: descriptive enum tagging *what kind of output* a view produces.
 // Substrate-only (ENGINEVIEW-VIEWMODE-0); no consumers branch on this field yet.
@@ -47,6 +62,7 @@ struct alignas(16) EngineView {
     uint32_t     renderMask     = 0xFFFFFFFF;
     const char*  debugName      = nullptr;  // must point to a string literal; never heap
     ViewMode     mode           = ViewMode::Visual;  // descriptive; no consumer branches yet
+    ViewKind     kind           = ViewKind::MainScene;
 };
 
 } // namespace RenderCore

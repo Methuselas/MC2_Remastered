@@ -65,6 +65,8 @@ std::filesystem::path outputDir() {
 }
 
 const char* viewKindForId(RenderCore::ViewId id) {
+    if (const auto* v = RenderCore::resolveView(id))
+        return RenderCore::toString(v->kind);
     return id == RenderCore::kMainSceneViewId ? "MainScene" : "unknown";
 }
 
@@ -173,6 +175,25 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
     s << "    \"fxaa\": "; b(s, ps.fxaa); s << ",\n";
     s << "    \"tonemap\": "; b(s, ps.tonemap); s << "\n";
     s << "  },\n";
+    s << "  \"registeredViews\": [\n";
+    {
+        const uint32_t vc = RenderCore::getViewCount();
+        for (uint32_t i = 0; i < vc; ++i) {
+            const auto* v = RenderCore::getViewByIndex(i);
+            if (!v) continue;
+            s << "    {";
+            s << " \"id\": " << v->id << ",";
+            s << " \"name\": \"" << jsonEscape(v->debugName) << "\",";
+            s << " \"kind\": \"" << RenderCore::toString(v->kind) << "\",";
+            s << " \"valid\": " << (v->id != RenderCore::kInvalidViewId ? "true" : "false") << ",";
+            s << " \"viewport\": [" << v->viewport[0] << "," << v->viewport[1]
+              << "," << v->viewport[2] << "," << v->viewport[3] << "]";
+            s << " }";
+            if (i + 1 < vc) s << ",";
+            s << "\n";
+        }
+    }
+    s << "  ],\n";
     s << "  \"staticPropOpaque\": {\n";
     s << "    \"snapshotDispatchDefault\": "; b(s, sp.snapshotDispatchDefault); s << ",\n";
     s << "    \"legacyDispatch\": "; b(s, sp.legacyDispatch); s << ",\n";

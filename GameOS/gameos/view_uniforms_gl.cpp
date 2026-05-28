@@ -14,9 +14,14 @@
 #include <cstdio>
 #include <cstdlib>
 
-// Renderer-lifetime persistent. Pattern: static GLuint, zero == not yet allocated.
-static GLuint            s_viewUniformsUbo = 0;
-static int               s_vuFrame         = 0;
+static GLuint s_viewUniformsUbo = 0;
+static int    s_vuFrame         = 0;
+
+// Registry: fixed-size array of registered EngineViews, upserted by id.
+// s_currentView mirrors the last setCurrentView call for backward-compat callers.
+static constexpr uint32_t kMaxRegisteredViews = 8u;
+static RenderCore::EngineView s_viewRegistry[kMaxRegisteredViews]{};
+static uint32_t               s_viewCount = 0;
 static RenderCore::EngineView s_currentView{};
 
 void RenderCore::initViewUniformsUbo() {
@@ -33,8 +38,7 @@ void RenderCore::initViewUniformsUbo() {
 
 void RenderCore::uploadViewUniforms(const RenderCore::ViewUniforms& vu) {
     if (s_viewUniformsUbo == 0)
-        initViewUniformsUbo();  // lazy init; explicit call site preferred
-    // Conservative rebind: binding 3 could be stolen by future paths.
+        initViewUniformsUbo();
     glBindBufferBase(GL_UNIFORM_BUFFER, RenderCore::kViewUniformsBinding, s_viewUniformsUbo);
     glBindBuffer(GL_UNIFORM_BUFFER, s_viewUniformsUbo);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(RenderCore::ViewUniforms), &vu);
@@ -48,10 +52,24 @@ void RenderCore::uploadViewUniforms(const RenderCore::ViewUniforms& vu) {
     }
 }
 
+void RenderCore::registerOrUpdateView(const RenderCore::EngineView& view) {
+    for (uint32_t i = 0; i < s_viewCount; ++i) {
+        if (s_viewRegistry[i].id == view.id) {
+            s_viewRegistry[i] = view;
+            return;
+        }
+    }
+    if (s_viewCount < kMaxRegisteredViews) {
+        fprintf(stderr, "[ENGINE_VIEW_REGISTRY v1] registered id=%u name=%s count=%u\n",
+                view.id, view.debugName ? view.debugName : "?", s_viewCount + 1u);
+        fflush(stderr);
+        s_viewRegistry[s_viewCount++] = view;
+    }
+}
+
 void RenderCore::setCurrentView(const RenderCore::EngineView& view) {
     s_currentView = view;
-    // Store-only: does NOT call uploadViewUniforms. Upload is the caller's
-    // responsibility (gated by MC2_VIEW_UNIFORMS). F1-4B decoupling.
+    registerOrUpdateView(view);
     static int s_evFrame = 0;
     ++s_evFrame;
     if (s_evFrame == 1 || s_evFrame % 600 == 0) {
@@ -67,7 +85,18 @@ const RenderCore::EngineView& RenderCore::getCurrentView() {
 }
 
 const RenderCore::EngineView* RenderCore::resolveView(RenderCore::ViewId viewId) {
-    if (viewId == kMainSceneViewId && s_currentView.id == kMainSceneViewId)
-        return &s_currentView;
+    for (uint32_t i = 0; i < s_viewCount; ++i) {
+        if (s_viewRegistry[i].id == viewId)
+            return &s_viewRegistry[i];
+    }
     return nullptr;
+}
+
+uint32_t RenderCore::getViewCount() {
+    return s_viewCount;
+}
+
+const RenderCore::EngineView* RenderCore::getViewByIndex(uint32_t index) {
+    if (index >= s_viewCount) return nullptr;
+    return &s_viewRegistry[index];
 }
