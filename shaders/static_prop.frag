@@ -332,7 +332,8 @@ void main() {
     // surface; AFTER highlight add so the specular contribution doesn't
     // get clobbered by highlight clamp semantics (highlight already
     // applied straight, no further compensation needed).
-    if (u_pbrV1Strength > 0.0) {
+    const uint kFlagIsWindow = (1u << 1);
+    if (u_pbrV1Strength > 0.0 && (v_flags & kFlagIsWindow) == 0u) {
         if (v_pbrV1SunFound != 0) {
             if (u_pbrV1DiagSunFound != 0) {
                 // DIAG cyan: sun found at this fragment's provoking vertex.
