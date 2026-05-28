@@ -148,6 +148,7 @@ ALLOWLIST=(
     MC2_MECH_PICK_PIERCE_FOG    # feature -- promote-to-registry
     MC2_MECH_PICK_SELFTEST      # infra -- self-test
     MC2_MECH_RESTORE_TRACE      # trace
+    MC2_MECH_VIEWUNIFORMS       # feature -- promote-to-registry
     MC2_MECH_VIEWUNIFORMS_DIAG  # trace
     MC2_MECH_TEX_READBACK       # trace
     MC2_MENU_CANARY_SKIP_INTRO  # infra -- smoke test

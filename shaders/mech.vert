@@ -16,6 +16,20 @@
 
 #include <include/lighting.hglsl>
 
+// MECH-VIEWUNIFORMS-BLOCKBINDING-1: gated mech ViewUniforms consumer.
+// MC2_USE_VIEW_UNIFORMS is injected by gos_mech_batcher.cpp ONLY when the
+// mech-specific opt-in gate MC2_MECH_VIEWUNIFORMS=1 is set (NOT the global
+// MC2_VIEW_UNIFORMS, and NOT default). When defined, the anonymous
+// ViewUniformsBlock (binding=3) exposes u_worldToClipGL directly, so the use
+// site below is unchanged. The layout(binding=3) qualifier is honored at link
+// (GL 4.2+ core; same as static_prop.vert), so no explicit glUniformBlockBinding
+// is needed. NO-VISUAL-CHANGE on the gated path; legacy path (gate OFF) is
+// byte-identical to today. NOTE: the shader file must be deployed (synced to the
+// deploy dir's shaders/) for the gated path to take effect at runtime.
+#ifdef MC2_USE_VIEW_UNIFORMS
+#include <include/view_uniforms.hglsl>
+#endif
+
 // Vertex attributes — 48-byte skinning-ready ABI, locked for Slice A+.
 // Storage types: see GpuMechVertex in gos_mech_batcher.h.
 layout(location=0) in vec3  a_position;
@@ -58,7 +72,12 @@ uniform int  u_instanceBase;
 uniform int  u_materialFlags;
 // u_worldToClipGL: CPU-composed kAxisSwapMC2toGL * worldToClip (row-major, GL_FALSE).
 // Same upload convention as static_prop.vert / terrain_overlay.vert.
+// When MC2_USE_VIEW_UNIFORMS is defined (gated mech path), u_worldToClipGL
+// comes from the anonymous ViewUniformsBlock UBO above (binding=3); the legacy
+// uniform is suppressed here to avoid a GLSL redeclaration error.
+#ifndef MC2_USE_VIEW_UNIFORMS
 uniform mat4 u_worldToClipGL;
+#endif
 // Slice B1: 0 = Slice A passthrough (baseLight=vec3(1.0)),
 // 1 = VS-side calc_light per-vertex. Driven by MC2_GPU_MECH_LIGHTING.
 // 'uniform uint' crashes the engine's shader compile (see

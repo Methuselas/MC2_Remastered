@@ -80,8 +80,12 @@ SHADER_VARIANTS: dict[str, list[dict]] = {
         _v("objectid", ["MC2_OBJECT_ID_BUFFER=1"]),
     ],
     "shaders/mech.vert": [
-        _v("default",  []),
-        _v("objectid", ["MC2_OBJECT_ID_BUFFER=1"]),
+        _v("default",      []),
+        _v("objectid",     ["MC2_OBJECT_ID_BUFFER=1"]),
+        # MECH-VIEWUNIFORMS-BLOCKBINDING-1: reflect the gated UBO path so
+        # binding=3 (ViewUniformsBlock) is visible in the golden and the legacy
+        # u_worldToClipGL uniform is confirmed absent on this variant.
+        _v("viewuniforms", ["MC2_USE_VIEW_UNIFORMS=1"]),
     ],
     "shaders/shadow_static_prop.vert": [
         _v("default",  []),

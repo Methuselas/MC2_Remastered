@@ -114,6 +114,23 @@ static glsl_program* s_mechProgramObj = nullptr;
 // 0 = Final (normal rendering); env MC2_MECH_FRAG_DEBUG wins when set.
 static int s_mechDebugMode = 0;
 
+// MECH-VIEWUNIFORMS-BLOCKBINDING-1: mech-specific ViewUniforms opt-in gate,
+// DEFAULT OFF (MC2_MECH_VIEWUNIFORMS=1). Independent of the global
+// MC2_VIEW_UNIFORMS. When ON, the mech shader is compiled with the
+// ViewUniformsBlock (binding=3) consumer and the block binding is enforced
+// explicitly after link; the legacy u_worldToClipGL upload is skipped. When
+// OFF (default), the mech path is byte-identical to legacy.
+static const bool s_mechViewUniforms = []() {
+    const char* v = std::getenv("MC2_MECH_VIEWUNIFORMS");
+    return v != nullptr && v[0] == '1';
+}();
+// Shared diag gate (link-time block-binding log + flush-time binding/matrix
+// probe). Default OFF (MC2_MECH_VIEWUNIFORMS_DIAG=1).
+static const bool s_mechViewUniformsDiag = []() {
+    const char* v = std::getenv("MC2_MECH_VIEWUNIFORMS_DIAG");
+    return v != nullptr && v[0] == '1';
+}();
+
 // Cached uniform locations (set at program link time).
 static GLint s_loc_u_instanceBase    = -1;
 static GLint s_loc_u_materialFlags   = -1;
@@ -310,6 +327,13 @@ static void loadProgramsIfNeeded() {
     if (RenderWorld::IsObjectIdBufferEnabled()) {
         mechPrefix += "#define MC2_OBJECT_ID_BUFFER 1\n";
     }
+    // MECH-VIEWUNIFORMS-1: gated opt-in only (default OFF). Pulls the binding=3
+    // ViewUniformsBlock into mech.vert via its #ifdef. The layout(binding=3)
+    // qualifier is honored at link (verified below under diag), so no explicit
+    // glUniformBlockBinding is needed.
+    if (s_mechViewUniforms) {
+        mechPrefix += "#define MC2_USE_VIEW_UNIFORMS 1\n";
+    }
 
     s_mechProgramObj = glsl_program::makeProgram(
         "mech", "shaders/mech.vert", "shaders/mech.frag", mechPrefix.c_str());
@@ -362,6 +386,26 @@ static void loadProgramsIfNeeded() {
     s_loc_u_debugMode       = loc("u_debugMode");
     s_loc_u_lightingMode    = loc("u_lightingMode");
     s_loc_u_skinningMode    = loc("u_skinningMode");
+
+    // MECH-VIEWUNIFORMS-1: on the gated path, verify the ViewUniformsBlock is
+    // present and bound to point 3. The GLSL layout(binding=3) qualifier is
+    // honored at link (GL 4.2+ core; same as static_prop), so NO explicit
+    // glUniformBlockBinding is required — confirmed by the diag below reporting
+    // binding=3 with no intervention. Read-only verification, logged under
+    // MC2_MECH_VIEWUNIFORMS_DIAG. (The original "block missing / bound to 0"
+    // symptom was a deploy gap: the edited shader was never copied to the
+    // deploy dir — see docs/mech-viewuniforms-source-dump.md.)
+    if (s_mechViewUniforms && s_mechViewUniformsDiag) {
+        GLuint vuBlockIdx = glGetUniformBlockIndex(s_mechProgram, "ViewUniformsBlock");
+        GLint vuBind = -1;
+        if (vuBlockIdx != GL_INVALID_INDEX)
+            glGetActiveUniformBlockiv(s_mechProgram, vuBlockIdx,
+                                      GL_UNIFORM_BLOCK_BINDING, &vuBind);
+        std::fprintf(stderr,
+            "[MECH_VU_DIAG v1] event=block_verify prog=%u vu_block_idx=%u "
+            "binding=%d (expect 3) loc_u_worldToClipGL=%d\n",
+            s_mechProgram, vuBlockIdx, vuBind, s_loc_terrainMVP);
+    }
 
     std::fprintf(stderr, "[MECHBATCHER v1] event=shader_ok prog=%u\n", s_mechProgram);
 }
@@ -1440,8 +1484,15 @@ void GpuMechBatcher::flush() {
     // wrong; it skips the axis swap, mech ends up off-screen. Caught
     // 2026-05-08 by operator visual smoke (mechs invisible after PREC fix
     // re-enabled the GPU path).
+    // terrainMVP fetched unconditionally so the DIAG probe below can compare
+    // it against the binding-3 UBO even on the gated ViewUniforms path.
     const float* terrainMVP = gos_GetTerrainMVPMat4();
-    if (s_loc_terrainMVP >= 0 && terrainMVP)
+    // MECH-VIEWUNIFORMS-BLOCKBINDING-1: on the gated path the ViewUniformsBlock
+    // UBO (binding=3) supplies u_worldToClipGL, so s_loc_terrainMVP is -1 (the
+    // legacy uniform is #ifndef'd out) and this upload would be a no-op anyway;
+    // skip it explicitly. Default path (gate OFF) uploads the legacy uniform
+    // exactly as before.
+    if (!s_mechViewUniforms && s_loc_terrainMVP >= 0 && terrainMVP)
         glUniformMatrix4fv(s_loc_terrainMVP, 1, GL_FALSE, terrainMVP);
     const float* mm = gos_GetProj2ScreenMat4();
     if (s_loc_u_mvp >= 0 && mm)
@@ -1459,11 +1510,7 @@ void GpuMechBatcher::flush() {
     // Pure read-back: no render effect. Rate-limited. Saves+restores the
     // generic GL_UNIFORM_BUFFER target binding.
     {
-        static const bool s_vuDiag = []() {
-            const char* v = std::getenv("MC2_MECH_VIEWUNIFORMS_DIAG");
-            return v != nullptr && v[0] == '1';
-        }();
-        if (s_vuDiag) {
+        if (s_mechViewUniformsDiag) {
             static int s_vuDiagFrame = 0;
             ++s_vuDiagFrame;
             if (s_vuDiagFrame <= 5 || (s_vuDiagFrame % 300) == 0) {
