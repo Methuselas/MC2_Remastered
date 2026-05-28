@@ -266,41 +266,56 @@ def get_feature_gates() -> str:
 @mcp.tool()
 def get_visual_settings() -> str:
     """
-    Return StaticPropOpaque visual settings: IBL/SH ambient, PBR specular,
-    material debug mode, dispatch path.
+    Return full StaticPropOpaque visual state: render passes, shader path,
+    dispatch, draw counts, material table sizes, IBL/SH, PBR, debug mode.
 
-    These are the runtime slider values and gate states for the
-    StaticPropOpaque render lane. IBL/PBR strengths may change during
-    the run via ImGui sliders; this reflects the value at the last dump.
+    Covers: what pass? what shader path? what material? what sliders?
+    All fields reflect the value at the last dump (~300 frames / ~5s cadence).
+    IBL/PBR strengths may change during the run via ImGui sliders.
     """
     data = _latest()
     if data is None:
         return _not_available()
 
     sp = data.get("staticPropOpaque", {})
+    rp = data.get("renderPasses", {})
     frame = data.get("frame", "?")
 
     return _stale_banner() + json.dumps({
         "frame": frame,
+        "renderPasses": {
+            "shadow":       rp.get("shadow"),
+            "screenShadow": rp.get("screenShadow"),
+            "bloom":        rp.get("bloom"),
+            "fxaa":         rp.get("fxaa"),
+            "tonemap":      rp.get("tonemap"),
+        },
         "dispatch": {
             "snapshotDefault": sp.get("snapshotDispatchDefault"),
-            "legacy": sp.get("legacyDispatch"),
+            "legacy":          sp.get("legacyDispatch"),
+            "shaderVariant":   sp.get("shaderVariant"),
+        },
+        "drawCounts": {
+            "spV6DrawCalls":    sp.get("spV6DrawCalls"),
+            "spAlphaOffPackets": sp.get("spAlphaOffPackets"),
         },
         "material": {
-            "gpuEnabled": sp.get("materialGpuEnabled"),
-            "gpuSample": sp.get("materialGpuSample"),
-            "debugMode": sp.get("debugMaterialMode"),
+            "gpuEnabled":          sp.get("materialGpuEnabled"),
+            "gpuSample":           sp.get("materialGpuSample"),
+            "gpuTableSize":        sp.get("materialGpuTableSize"),
+            "inventorySize":       sp.get("materialInventorySize"),
+            "debugMode":           sp.get("debugMaterialMode"),
         },
         "iblSh": {
-            "enabled": sp.get("iblShEnabled"),
+            "enabled":  sp.get("iblShEnabled"),
             "strength": sp.get("iblShStrength"),
-            "set": sp.get("iblShSet"),
+            "set":      sp.get("iblShSet"),
         },
         "pbr": {
-            "enabled": sp.get("pbrEnabled"),
-            "strength": sp.get("pbrStrength"),
+            "enabled":                sp.get("pbrEnabled"),
+            "strength":               sp.get("pbrStrength"),
             "roughnessOverrideEnabled": sp.get("pbrRoughnessOverrideEnabled"),
-            "roughnessOverride": sp.get("pbrRoughnessOverride"),
+            "roughnessOverride":      sp.get("pbrRoughnessOverride"),
         },
     }, indent=2)
 
