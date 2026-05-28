@@ -8,6 +8,8 @@
 #include "gameos.hpp"      // gos_InvalidateRenderStateCache (RENDER_STATES v1)
 #include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled
 #include "../../RenderCore/RenderResourceRegistry.h"
+#include "../../RenderCore/EngineView.h"
+#include "view_uniforms_gl.h"
 
 #include <cassert>
 #include <cstdio>
@@ -1308,6 +1310,18 @@ void gosPostProcess::buildStaticLightMatrix(float sunDirX, float sunDirY, float 
         }
     }
 
+    {
+        RenderCore::EngineView sv;
+        sv.id        = RenderCore::kShadowDirectional0ViewId;
+        sv.kind      = RenderCore::ViewKind::ShadowStatic;
+        sv.debugName = "ShadowDirectional0-Static";
+        sv.viewport[2] = shadowMapSize_;
+        sv.viewport[3] = shadowMapSize_;
+        memcpy(sv.viewUniforms.worldToClipGL, staticLightSpaceMatrix_,
+               sizeof(sv.viewUniforms.worldToClipGL));
+        RenderCore::registerOrUpdateView(sv);
+    }
+
     fprintf(stderr, "gosPostProcess: rendering static shadows (map half-extent=%.0f)\n", mapHalfExtent);
 
     // [SHADOWFRUSTUM v1] VPL-#shadow: prove the static-shadow CLIPPER is
@@ -1504,6 +1518,18 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
                 sum += ortho[k * 4 + row] * view[col * 4 + k];
             dynamicLightSpaceMatrix_[col * 4 + row] = sum;
         }
+    }
+
+    {
+        RenderCore::EngineView dv;
+        dv.id        = RenderCore::kShadowDynamicViewId;
+        dv.kind      = RenderCore::ViewKind::ShadowDynamic;
+        dv.debugName = "ShadowDynamic";
+        dv.viewport[2] = dynShadowMapSize_;
+        dv.viewport[3] = dynShadowMapSize_;
+        memcpy(dv.viewUniforms.worldToClipGL, dynamicLightSpaceMatrix_,
+               sizeof(dv.viewUniforms.worldToClipGL));
+        RenderCore::registerOrUpdateView(dv);
     }
 
     // [SHADOWZRANGE v1] VPL-#10: dynamic-path [0,1] verification. Rebuilds

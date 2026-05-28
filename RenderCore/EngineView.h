@@ -7,8 +7,8 @@ namespace RenderCore {
 using ViewId = uint32_t;
 constexpr ViewId kInvalidViewId            = 0;
 constexpr ViewId kMainSceneViewId          = 1;
-// Reserved for the future shadow R→V lane; not yet registered by any caller.
-constexpr ViewId kShadowDirectional0ViewId = 2;
+constexpr ViewId kShadowDirectional0ViewId = 2;  // static directional shadow
+constexpr ViewId kShadowDynamicViewId      = 3;  // per-frame dynamic shadow
 
 // NOTE: ViewKind ordinals are NOT required to match ViewId constants.
 // ViewId is a per-frame slot identifier; ViewKind is a classification tag.
