@@ -98,7 +98,7 @@ Log tag: `[MATERIAL_GPU v4]`
 - `MC2_STATIC_PROP_AMBIENT_V1=1` - enable the gated hemisphere ambient fill in `static_prop.vert`. Default **OFF**; unset or `=0` uploads `u_ambientV1Strength=0.0`, preserving the pre-ambient path. Window-flag nodes skip this term.
 - `MC2_STATIC_PROP_IBL_SH` - gate SH-L2 image-based ambient in `static_prop.vert`. Default **ON**; set `=0` as the explicit kill switch. When disabled, `u_iblShStrength=0.0` and the shader short-circuits before evaluating SH. Coefficients come from `RenderCore/IblShCoeffs.h`; current set selection is shown in ImGui.
 - `MC2_STATIC_PROP_IBL_SH_STRENGTH=<f>` - optional default-strength override for SH-L2 ambient (clamped 0..3). Sets the initial `g_iblShStrength` ImGui slider value. Only contributes when `MC2_STATIC_PROP_IBL_SH` is active. Unset/empty -> default 0.5.
-- `MC2_STATIC_PROP_DEBUG_MATERIAL=N` - per-fragment material debug view in `static_prop.frag`. Default 0 = OFF. Modes: 1 albedo, 2 materialIdx palette, 3 world normal, 4 texArrayLayer palette, 5 roughness grayscale, 6 metallic grayscale. Values outside the implemented range are clamped by CPU to 0..6.
+- `MC2_STATIC_PROP_DEBUG_MATERIAL=N` — static-prop fragment debug view. Default **0 (off)**. Values 1-6 select a debug mode for the StaticPropOpaque lane. ImGui inspector (when active) can override at runtime. Shader branch numbers: 0=Final, 1=Albedo, 2=MaterialIdx, 3=Normal, 4=TexArrayLayer, 5=Roughness, 6=Metallic. Canonical labels from `RenderCore/RenderDebugView.h`. See DEBUG-VIEW-REGISTRY-1.
 
 ## V-MATERIAL-PBR-3 (per-fragment specular)
 

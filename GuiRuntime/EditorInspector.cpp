@@ -7,6 +7,7 @@
 #include "draw_packet_emitter.h"              // g_dpSelectedRecipeIndex
 #include "../RenderCore/RendererFeatureRegistry.h"
 #include "../RenderCore/RenderPassContract.h"  // RENDERPASS-CONTRACT-2.5 (descriptive table)
+#include "RenderDebugView.h"                   // DEBUG-VIEW-REGISTRY-1
 
 // Terrain tunable C-API used to be forward-declared here for an inline
 // Terrain Pass tunables panel; those controls were moved to
@@ -36,6 +37,13 @@ struct StaticPropMaterialInventoryEntry {
 uint32_t batcher_getStaticPropMaterialInventoryCount();
 bool     batcher_getStaticPropMaterialInventoryEntry(
              uint32_t idx, StaticPropMaterialInventoryEntry* out);
+
+// DEBUG-VIEW-REGISTRY-1: runtime debug-mode getter/setter + view<->shaderMode helpers
+// (gos_static_prop_batcher.cpp).
+void batcher_setDebugMaterialMode(int shaderMode);
+int  batcher_getDebugMaterialMode();
+int             StaticPropViewToShaderMode(RenderDebugView view);
+RenderDebugView StaticPropShaderModeToView(int shaderMode);
 
 // MECH-SPINE-1: read-only accessors for mech pass-level state. Defined in
 // gos_mech_batcher.cpp; declared here so the inspector can reference them
@@ -493,32 +501,32 @@ void EditorInspector::drawImGui() {
                                       "Gate: MC2_STATIC_PROP_AMBIENT_V1=1.\n"
                                       "OFF -> u_ambientV1Strength=0.0 (byte-identical).");
 
-                // V-MATERIAL-DEBUG-1: per-fragment material debug view mode.
-                // Inspect env directly (cheap; panel only runs when inspector on).
-                const char* dbgMatEnv = std::getenv("MC2_STATIC_PROP_DEBUG_MATERIAL");
-                int dbgMatMode = 0;
-                if (dbgMatEnv != nullptr && dbgMatEnv[0] != '\0') {
-                    dbgMatMode = atoi(dbgMatEnv);
-                    if (dbgMatMode < 0) dbgMatMode = 0;
-                    if (dbgMatMode > 6) dbgMatMode = 6;  // V-MATERIAL-PBR-1
+                // DEBUG-VIEW-REGISTRY-1: interactive debug view combo for StaticPropOpaque.
+                // Replaces the prior read-only env-text display.
+                {
+                    // Use canonical helpers to avoid duplicating the mapping table.
+                    RenderDebugView curView = StaticPropShaderModeToView(batcher_getDebugMaterialMode());
+                    const char* curName = RenderDebugViewName(curView);
+                    if (ImGui::BeginCombo("Debug View##sp", curName)) {
+                        for (int i = 0; i < int(RenderDebugView::_Count); ++i) {
+                            RenderDebugView v = RenderDebugView(i);
+                            if (!RenderDebugViewSupported(v, kDebugViewMask_StaticPropOpaque))
+                                continue;
+                            bool selected = (v == curView);
+                            if (ImGui::Selectable(RenderDebugViewName(v), selected)) {
+                                batcher_setDebugMaterialMode(StaticPropViewToShaderMode(v));
+                            }
+                            if (selected) ImGui::SetItemDefaultFocus();
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("%s", RenderDebugViewDescription(v));
+                        }
+                        ImGui::EndCombo();
+                    }
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("V-MATERIAL-DEBUG-1 debug view for StaticPropOpaque.\n"
+                                          "Initial value from MC2_STATIC_PROP_DEBUG_MATERIAL env var.\n"
+                                          "ImGui selection overrides at runtime.");
                 }
-                const char* dbgMatLabel =
-                    (dbgMatMode == 0) ? "off" :
-                    (dbgMatMode == 1) ? "albedo" :
-                    (dbgMatMode == 2) ? "materialIdx" :
-                    (dbgMatMode == 3) ? "normal" :
-                    (dbgMatMode == 4) ? "texArrayLayer" :
-                    (dbgMatMode == 5) ? "roughness" :
-                    (dbgMatMode == 6) ? "metallic" : "?";
-                ImGui::Text("  debug view     %s", dbgMatLabel);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("V-MATERIAL-DEBUG-1 / V-MATERIAL-PBR-1 per-fragment material debug view\n"
-                                      "in static_prop.frag. Modes:\n"
-                                      "  0=off (byte-identical)\n"
-                                      "  1=albedo  2=materialIdx\n"
-                                      "  3=normal  4=texArrayLayer\n"
-                                      "  5=roughness (grayscale)  6=metallic (grayscale)\n"
-                                      "Gate: MC2_STATIC_PROP_DEBUG_MATERIAL=N (1..6).");
 
                 // V-IBL-STATIC-1 + V-IBL-DEFAULT-FLIP (2026-05-27):
                 // SH-L2 image-based ambient on the StaticPropOpaque lane.

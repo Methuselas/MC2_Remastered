@@ -7,6 +7,8 @@
 add_library(rendercore STATIC
     KtxLoader.cpp
     PipelineRegistry.cpp
+    RenderDebugView.cpp
+    RenderResourceRegistry.cpp
 )
 target_include_directories(rendercore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

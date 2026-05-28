@@ -7,6 +7,7 @@
 #include "../../RenderCore/IblShRegistry.h"  // V-IBL-STATIC-2: per-mission SH set
 #include "../../RenderCore/StaticPropTypeDesc.h"  // v0: cross-seam immutable type table
 #include "../../RenderCore/KtxLoader.h"    // KTX2 sidecar loading (MC2_MATERIAL_KTX=1)
+#include "../../RenderCore/RenderDebugView.h"  // DEBUG-VIEW-REGISTRY-1
 #include "draw_packet_emitter.h"
 #include "../../RenderCore/PipelineRegistry.h"   // direct include; do not rely on transitive
 #include "pipeline_binder.h"                     // applyPipeline — GL state from PipelineDesc
@@ -542,7 +543,7 @@ static const char* s_iblShSetEnvOverride = []() -> const char* {
 //   6 = metallicFactor as grayscale  (V-MATERIAL-PBR-1)
 // Values outside the implemented range render as hot-pink in the shader.
 // Resolved once at process start (atoi semantics: invalid -> 0).
-static const int s_staticPropDebugMaterialMode = []() {
+static int s_staticPropDebugMaterialMode = []() {
     const char* v = getenv("MC2_STATIC_PROP_DEBUG_MATERIAL");
     if (v == nullptr || v[0] == '\0') return 0;
     int m = atoi(v);
@@ -1390,6 +1391,49 @@ void loadLateRegisterAllowlistOnce() {
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// DEBUG-VIEW-REGISTRY-1: static-prop shader mode <-> RenderDebugView mapping.
+// Defined outside the anonymous namespace so they have external linkage and
+// can be called from gui_runtime (EditorInspector) via the header declarations.
+// Shader branch numbers MUST NOT change (would cause shader_reflect drift).
+// 0=Final, 1=Albedo, 2=MaterialIdx, 3=Normal, 4=TexArrayLayer, 5=Roughness, 6=Metallic
+// ---------------------------------------------------------------------------
+int StaticPropViewToShaderMode(RenderDebugView v) {
+    switch (v) {
+        case RenderDebugView::Final:          return 0;
+        case RenderDebugView::Albedo:         return 1;
+        case RenderDebugView::MaterialIdx:    return 2;
+        case RenderDebugView::Normal:         return 3;
+        case RenderDebugView::TexArrayLayer:  return 4;
+        case RenderDebugView::Roughness:      return 5;
+        case RenderDebugView::Metallic:       return 6;
+        default:                              return 0;  // unsupported -> Final
+    }
+}
+
+RenderDebugView StaticPropShaderModeToView(int m) {
+    switch (m) {
+        case 0: return RenderDebugView::Final;
+        case 1: return RenderDebugView::Albedo;
+        case 2: return RenderDebugView::MaterialIdx;
+        case 3: return RenderDebugView::Normal;
+        case 4: return RenderDebugView::TexArrayLayer;
+        case 5: return RenderDebugView::Roughness;
+        case 6: return RenderDebugView::Metallic;
+        default: return RenderDebugView::Final;
+    }
+}
+
+void batcher_setDebugMaterialMode(int shaderMode) {
+    if (shaderMode < 0) shaderMode = 0;
+    if (shaderMode > 6) shaderMode = 6;
+    s_staticPropDebugMaterialMode = shaderMode;
+}
+
+int batcher_getDebugMaterialMode() {
+    return s_staticPropDebugMaterialMode;
+}
 
 GpuStaticPropBatcher& GpuStaticPropBatcher::instance() {
     static GpuStaticPropBatcher s;

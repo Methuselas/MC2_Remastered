@@ -8,6 +8,7 @@
 #include "Stuff/Stuff.hpp"
 #include "tgl.h"
 #include "msl.h"
+#include "../../RenderCore/RenderDebugView.h"  // DEBUG-VIEW-REGISTRY-1: StaticPropViewToShaderMode / StaticPropShaderModeToView
 
 // MaterialGpu-3: forward declare RenderCore::MaterialGpu so batcher_getMaterialGpuEntry
 // can be declared without pulling in the full MaterialGpu.h into every TU that includes this header.
@@ -578,4 +579,18 @@ const RenderCore::StaticPropTypeDesc* batcher_getStaticPropTypeDescTable(uint32_
 // Does NOT issue GL calls; does NOT modify any state.
 // gate: MC2_TYPE_TABLE_CAND_LOG=1
 void batcher_buildCandidateLog();
+
+// DEBUG-VIEW-REGISTRY-1: runtime getter/setter for the static-prop fragment debug mode.
+// shaderMode maps directly to s_staticPropDebugMaterialMode (shader branch 0..6).
+// 0=Final (off), 1=Albedo, 2=MaterialIdx, 3=Normal, 4=TexArrayLayer, 5=Roughness, 6=Metallic.
+// Setter clamps input to 0..6. Initial value comes from MC2_STATIC_PROP_DEBUG_MATERIAL env var.
+// ImGui can override at runtime via these functions without restarting the process.
+// Canonical label/description strings are in RenderCore/RenderDebugView.h.
+void batcher_setDebugMaterialMode(int shaderMode);
+int  batcher_getDebugMaterialMode();
+
+// Convert between the canonical RenderDebugView enum and the static-prop shader branch
+// integer (0..6). Single authoritative table — avoids duplicate switch statements.
+int             StaticPropViewToShaderMode(RenderDebugView view);
+RenderDebugView StaticPropShaderModeToView(int shaderMode);
 
