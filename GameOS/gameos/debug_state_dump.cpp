@@ -156,6 +156,23 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
     s << "    \"viewport\": [" << view.viewport[0] << ", " << view.viewport[1] << ", "
       << view.viewport[2] << ", " << view.viewport[3] << "]\n";
     s << "  },\n";
+    {
+        const uint32_t viewCount = RenderCore::getViewCount();
+        s << "  \"registeredViews\": [\n";
+        for (uint32_t i = 0; i < viewCount; ++i) {
+            const RenderCore::EngineView* v = RenderCore::getViewByIndex(i);
+            if (!v) continue;
+            s << "    {\n";
+            s << "      \"viewId\": " << v->id << ",\n";
+            s << "      \"viewKind\": \"" << RenderCore::toString(v->kind) << "\",\n";
+            s << "      \"viewMode\": \"" << RenderCore::toString(v->mode) << "\",\n";
+            s << "      \"debugName\": \"" << jsonEscape(v->debugName ? v->debugName : "") << "\",\n";
+            s << "      \"viewport\": [" << v->viewport[0] << ", " << v->viewport[1] << ", "
+              << v->viewport[2] << ", " << v->viewport[3] << "]\n";
+            s << "    }" << (i + 1 < viewCount ? "," : "") << "\n";
+        }
+        s << "  ],\n";
+    }
     s << "  \"renderSnapshot\": {\n";
     s << "    \"ok\": "; b(s, snap.ok != 0u); s << ",\n";
     s << "    \"staticPropValidationFail\": " << snap.staticPropValidationFail << ",\n";

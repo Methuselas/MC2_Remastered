@@ -390,11 +390,15 @@ def get_frame_info() -> str:
     age_str = f"{age:.0f}s" if age is not None else "unknown"
     stale = age is not None and age >= _STALE_THRESHOLD_S
 
+    views = data.get("registeredViews", [])
+    view_names = [f"{v.get('viewKind', '?')}(id={v.get('viewId', '?')})" for v in views]
+
     lines = [
         f"schema:   {schema}",
         f"frame:    {frame}",
         f"mission:  {mission.get('name', '')} (known={mission.get('known', False)})",
         f"build:    config={build.get('config', '?')} commit={build.get('commit', '?')}",
+        f"views:    [{', '.join(view_names)}]" if view_names else "views:    []",
         f"stateDir: {_STATE_DIR}",
         f"file_age: {age_str}" + (" *** STALE — game likely not running" if stale else ""),
     ]
