@@ -52,6 +52,14 @@ extern "C" uint32_t gos_getMechProgramId();
 extern "C" uint32_t gos_getMechShadowProgramId();
 extern "C" const char* gos_getMechTextureNameByNodeIdx(uint32_t nodeIdx);
 
+// MECH-DEBUG-VIEWS-1: debug-mode getter/setter + view<->shaderMode helpers
+// (gos_mech_batcher.cpp). Same pattern as StaticProp decls above.
+// Not declared extern "C": pure C++ functions over RenderDebugView enum.
+int             MechViewToFragDebugMode(RenderDebugView view);
+RenderDebugView MechFragDebugModeToView(int shaderMode);
+extern "C" void batcher_setMechDebugMode(int shaderMode);
+extern "C" int  batcher_getMechDebugMode();
+
 namespace {
 
 static bool isEnabled() {
@@ -814,6 +822,38 @@ void EditorInspector::drawImGui() {
                 ImGui::Text("Armor:     %.0f / %.0f", s_mechData.totalCurArmor, s_mechData.totalMaxArmor);
                 ImGui::Text("Structure: %.0f / %.0f", s_mechData.totalCurStr,   s_mechData.totalMaxStr);
             }
+        }
+
+        // MECH-DEBUG-VIEWS-1: interactive debug view combo for the mech lane.
+        // Shown in the Mech inspector context (a mech is picked), mirroring the
+        // StaticProp combo's pick-context placement. NOT gated on
+        // MC2_SNAPSHOT_MECH_EXTRACT — it is a render control, independent of
+        // snapshot extraction. The selection is global (drives s_mechDebugMode
+        // for all mechs), not per-picked-mech.
+        if (ImGui::CollapsingHeader("Mech Debug View##mdv", ImGuiTreeNodeFlags_DefaultOpen)) {
+            RenderDebugView curView = MechFragDebugModeToView(batcher_getMechDebugMode());
+            const char* curName = RenderDebugViewName(curView);
+            if (ImGui::BeginCombo("Debug View##mech", curName)) {
+                for (int i = 0; i < int(RenderDebugView::_Count); ++i) {
+                    RenderDebugView v = RenderDebugView(i);
+                    if (!RenderDebugViewSupported(v, kDebugViewMask_Mech))
+                        continue;
+                    bool selected = (v == curView);
+                    if (ImGui::Selectable(RenderDebugViewName(v), selected)) {
+                        batcher_setMechDebugMode(MechViewToFragDebugMode(v));
+                    }
+                    if (selected) ImGui::SetItemDefaultFocus();
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", RenderDebugViewDescription(v));
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("MECH-DEBUG-VIEWS-1 debug view for the mech lane.\n"
+                                  "Legacy MC2_MECH_FRAG_DEBUG env var takes precedence\n"
+                                  "when set. ImGui selection drives s_mechDebugMode\n"
+                                  "only when env is unset. Default (mode 0) = Final\n"
+                                  "(byte-identical to unmodified path).");
         }
 
         // MECH-EXTRACTION-2: mech snapshot panel (gate: MC2_SNAPSHOT_MECH_EXTRACT=1).

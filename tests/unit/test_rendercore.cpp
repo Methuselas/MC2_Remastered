@@ -148,9 +148,23 @@ TEST_CASE("RenderDebugView StaticPropOpaque mask excludes lighting-only views") 
 
 TEST_CASE("RenderDebugView placeholder lane masks are zero") {
     CHECK(kDebugViewMask_Terrain == 0u);
-    CHECK(kDebugViewMask_Mech    == 0u);
     CHECK(kDebugViewMask_Shadow  == 0u);
     CHECK(kDebugViewMask_Vfx     == 0u);
+}
+
+TEST_CASE("RenderDebugView Mech mask covers expected views") {
+    // MECH-DEBUG-VIEWS-1: mech.frag has Final/Albedo/Normal/LightingOnly branches.
+    CHECK(RenderDebugViewSupported(RenderDebugView::Final,        kDebugViewMask_Mech));
+    CHECK(RenderDebugViewSupported(RenderDebugView::Albedo,       kDebugViewMask_Mech));
+    CHECK(RenderDebugViewSupported(RenderDebugView::Normal,       kDebugViewMask_Mech));
+    CHECK(RenderDebugViewSupported(RenderDebugView::LightingOnly, kDebugViewMask_Mech));
+    // mech.frag has no roughness/metallic/IBL/specular/materialIdx/texArrayLayer data.
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::Roughness,     kDebugViewMask_Mech));
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::Metallic,      kDebugViewMask_Mech));
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::MaterialIdx,   kDebugViewMask_Mech));
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::TexArrayLayer, kDebugViewMask_Mech));
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::IblOnly,       kDebugViewMask_Mech));
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::SpecularOnly,  kDebugViewMask_Mech));
 }
 
 TEST_CASE("RenderDebugView out-of-range returns false") {

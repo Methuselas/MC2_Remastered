@@ -1,6 +1,7 @@
 // GameOS/gameos/gos_mech_batcher.cpp — GPU mech batcher, Slice A.
 #include "gos_mech_batcher.h"
 #include "render_snapshot.h"  // MECH-EXTRACTION-0: ExtractedMechPacket, RenderSnapshot
+#include "../../RenderCore/RenderDebugView.h"  // MECH-DEBUG-VIEWS-1
 // M2.5: IsObjectIdBufferEnabled() drives the GLSL prefix that gates the
 // mech.frag layout(location=2) write. Mirrors the include shipped by M1.5
 // at gos_static_prop_batcher.cpp:3. GameOS/ is outside the firewall
@@ -108,6 +109,10 @@ static bool   s_programLoadTried  = false;
 static bool   s_programLoadFailed = false;
 static GLuint s_mechProgram       = 0;
 static glsl_program* s_mechProgramObj = nullptr;
+
+// MECH-DEBUG-VIEWS-1: ImGui-settable debug mode (mirrors s_staticPropDebugMaterialMode).
+// 0 = Final (normal rendering); env MC2_MECH_FRAG_DEBUG wins when set.
+static int s_mechDebugMode = 0;
 
 // Cached uniform locations (set at program link time).
 static GLint s_loc_u_instanceBase    = -1;
@@ -1419,9 +1424,11 @@ void GpuMechBatcher::flush() {
         }
     }
     {
-        // MC2_MECH_FRAG_DEBUG=N: 0=normal, 1=magenta, 2=texOnly, 3=lightOnly, 4=normal.
+        // MC2_MECH_FRAG_DEBUG=N: legacy env path; wins over ImGui s_mechDebugMode.
+        // 0=normal, 1=magenta, 2=texOnly, 3=lightOnly, 4=normal-as-color.
+        // When env is unset and s_mechDebugMode=0: dbgMode=0 → byte-identical.
         const char* dbg = std::getenv("MC2_MECH_FRAG_DEBUG");
-        const int dbgMode = dbg ? std::atoi(dbg) : 0;
+        const int dbgMode = dbg ? std::atoi(dbg) : s_mechDebugMode;
         if (s_loc_u_debugMode >= 0)
             glUniform1i(s_loc_u_debugMode, dbgMode);
     }
@@ -1706,4 +1713,39 @@ extern "C" uint32_t gos_getMechShadowInstDrawn() {
 extern "C" const char* gos_getMechTextureNameByNodeIdx(uint32_t nodeIdx) {
     if (nodeIdx == 0xFFFFFFFFu || !mcTextureManager) return nullptr;
     return mcTextureManager->getTextureName((DWORD)nodeIdx);
+}
+
+// MECH-DEBUG-VIEWS-1: RenderDebugView <-> mech.frag u_debugMode mapping.
+// Shader branch numbers: 0=Final, 1=magenta, 2=texOnly(Albedo),
+// 3=lightOnly(LightingOnly), 4=normal-as-color(Normal), 5=UV, 6=alpha, 7..9=diag.
+// Mirror of StaticPropViewToShaderMode/StaticPropShaderModeToView in
+// gos_static_prop_batcher.cpp; co-located here to stay with the flush site
+// and the s_mechDebugMode state it drives.
+int MechViewToFragDebugMode(RenderDebugView v) {
+    switch (v) {
+        case RenderDebugView::Final:        return 0;
+        case RenderDebugView::Albedo:       return 2;
+        case RenderDebugView::Normal:       return 4;
+        case RenderDebugView::LightingOnly: return 3;
+        default:                            return 0;  // unsupported -> Final
+    }
+}
+
+RenderDebugView MechFragDebugModeToView(int m) {
+    switch (m) {
+        case 0: return RenderDebugView::Final;
+        case 2: return RenderDebugView::Albedo;
+        case 4: return RenderDebugView::Normal;
+        case 3: return RenderDebugView::LightingOnly;
+        default: return RenderDebugView::Final;
+    }
+}
+
+extern "C" void batcher_setMechDebugMode(int shaderMode) {
+    if (shaderMode < 0) shaderMode = 0;
+    s_mechDebugMode = shaderMode;
+}
+
+extern "C" int batcher_getMechDebugMode() {
+    return s_mechDebugMode;
 }
