@@ -121,18 +121,16 @@ enum class RendererFeature : int {
     // Default-OFF; 0 = byte-identical to legacy output (shader short-circuit).
     StaticPropDebugMaterial  = 20,  // MC2_STATIC_PROP_DEBUG_MATERIAL
     // V-IBL-STATIC-1: SH-L2 image-based ambient on StaticPropOpaque lane.
-    // Default-OFF; runtime strength uniform = 0.0 when env unset/0 ->
+    // Default-ON; MC2_STATIC_PROP_IBL_SH=0 uploads strength 0.0 so
     // shader `if (u_iblShStrength > 0.0)` short-circuits to byte-identical.
-    // ImGui slider (g_iblShStrength) modulates strength when env=1; the env
-    // var is the authoritative gate.
+    // ImGui slider (g_iblShStrength) modulates strength when env gate is on;
+    // the env var is the authoritative gate.
     StaticPropIblSh          = 21,  // MC2_STATIC_PROP_IBL_SH
-    // V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular
+    // V-MATERIAL-PBR-3: per-fragment Schlick-Fresnel + power-lobe specular
     // on StaticPropOpaque lane. Default-OFF; strength uniform = 0.0 when
-    // env unset/=0 -> shader `if (u_pbrV1Strength > 0.0)` short-circuits
-    // to mathematically byte-identical pre-slice output. Gate-ON adds a
-    // visible broad dielectric sheen because the per-vertex fallback
-    // (roughness=1.0) collapses specPower to 1.0 -- this is expected.
-    // Per-fragment MaterialGpu lookup deferred to V-MATERIAL-PBR-3.
+    // env unset/=0 -> shader `if (u_pbrV1Strength > 0.0)` short-circuits.
+    // Uses MaterialGpu roughness/metallic when sampling is active, else
+    // fallback metallic=0.0 roughness=0.6; F0 is albedo-tinted for metals.
     StaticPropPbrV1          = 22,  // MC2_STATIC_PROP_PBR_V1
     COUNT                    = 23,
 };
@@ -326,7 +324,7 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         "MC2_STATIC_PROP_PBR_V1",
         EnvVarKind::Feature,
         false,
-        "V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular on StaticPropOpaque lane (static_prop.vert, inside `#if defined(MC2_USE_VIEW_UNIFORMS)`). Default-OFF; =1 enables. When OFF, u_pbrV1Strength uploads 0.0 -> shader `if (u_pbrV1Strength > 0.0)` short-circuits BEFORE any u_cameraWorldPos read (mathematical proof of byte-identical OFF: lit += specular * 0 = lit unchanged). Gate-ON adds a visible broad dielectric Fresnel sheen because the per-vertex fallback uses roughness=1.0 (smoothness=0 -> specPower=1.0 -> pow(NdotH,1) wide lobe); this is EXPECTED, not a bug. Per-fragment MaterialGpu lookup (per-instance metallicFactor/roughnessFactor + albedo-tinted F0) deferred to V-MATERIAL-PBR-3. Safety interlock: when MC2_VIEW_UNIFORMS=0, CPU force-zeroes strength (shader's compile-guard already excludes the block; this is belt-and-suspenders). Sun direction sourced via inline iteration over LightsData SSBO for the first TG_LIGHT_INFINITE entry. ImGui slider g_pbrV1Strength modulates per-frame strength (default 1.0, range 0..3); env var is authoritative gate. Optional override MC2_STATIC_PROP_PBR_V1_STRENGTH (clamped 0..3) sets the default."
+        "V-MATERIAL-PBR-3: per-fragment Schlick-Fresnel + power-lobe specular on StaticPropOpaque lane (static_prop.frag, inside `#if defined(MC2_USE_VIEW_UNIFORMS)`). Default-OFF; =1 enables. When OFF, u_pbrV1Strength uploads 0.0 -> shader `if (u_pbrV1Strength > 0.0)` short-circuits before any u_cameraWorldPos read. Uses MaterialGpu roughnessFactor/metallicFactor when MC2_MATERIAL_GPU_SAMPLE is active; otherwise falls back to metallic=0.0 and roughness=0.6. F0 is albedo-tinted for metallic materials. Window/hot-pink nodes bypass the PBR branch. Safety interlock: when MC2_VIEW_UNIFORMS=0, CPU force-zeroes strength and the shader compile-guard excludes the block. Sun direction accepts TG_LIGHT_INFINITE and TG_LIGHT_INFINITEWITHFALLOFF. ImGui slider g_pbrV1Strength modulates per-frame strength (default 1.0, range 0..3); env var is authoritative gate. Optional override MC2_STATIC_PROP_PBR_V1_STRENGTH (clamped 0..3) sets the default."
     },
 };
 
@@ -356,18 +354,25 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "V-IBL-STATIC-2: override the active SH coefficient set by name (e.g. 'default'). Optional dev/debug knob. Unset/empty/unknown -> registry-or-default fallback. Does not gate IBL itself (MC2_STATIC_PROP_IBL_SH remains the authoritative on/off gate)."
     },
     {
+        "MC2_TUNE_STATIC_PROP_IBL_SH_STRENGTH",
+        "MC2_STATIC_PROP_IBL_SH_STRENGTH",
+        EnvVarKind::Trace,
+        false,
+        "V-IBL-STATIC-1: optional default-strength override for SH-L2 ambient (clamped 0..3). ImGui slider g_iblShStrength initial value. Only contributes when MC2_STATIC_PROP_IBL_SH is active; =0 on that gate uploads strength 0.0. Unset/empty -> default 0.5. Resolved once at process start."
+    },
+    {
         "MC2_TUNE_STATIC_PROP_PBR_V1_STRENGTH",
         "MC2_STATIC_PROP_PBR_V1_STRENGTH",
         EnvVarKind::Trace,
         false,
-        "V-MATERIAL-PBR-2: optional default-strength override for the per-vertex Schlick-Fresnel specular (clamped 0..3). ImGui slider g_pbrV1Strength initial value. Only meaningful when MC2_STATIC_PROP_PBR_V1=1 (env var is the authoritative gate). Unset/empty -> default 1.0. Resolved once at process start."
+        "V-MATERIAL-PBR-3: optional default-strength override for per-fragment Schlick-Fresnel specular (clamped 0..3). ImGui slider g_pbrV1Strength initial value. Only meaningful when MC2_STATIC_PROP_PBR_V1=1 (env var is the authoritative gate). Unset/empty -> default 1.0. Resolved once at process start."
     },
     {
         "MC2_DIAG_STATIC_PROP_PBR_V1_SUNFOUND",
         "MC2_STATIC_PROP_PBR_V1_DIAG_SUNFOUND",
         EnvVarKind::Trace,
         false,
-        "V-MATERIAL-PBR-2-DIAG: diagnostic visualizer for the per-vertex sunFound state. When ON together with MC2_STATIC_PROP_PBR_V1=1, the StaticPropOpaque shader replaces lit with cyan (sunFound=true) or magenta (sunFound=false) per vertex, bypassing Schlick math. Diagnostic-only; never affects default-OFF behavior. Unset/'0' -> off."
+        "V-MATERIAL-PBR-3-DIAG: diagnostic visualizer for the forwarded sunFound state. When ON together with MC2_STATIC_PROP_PBR_V1=1, static_prop.frag replaces the PBR result with cyan (sunFound=true) or magenta (sunFound=false), bypassing Schlick math. Diagnostic-only; never affects default-OFF behavior. Unset/'0' -> off."
     },
 };
 

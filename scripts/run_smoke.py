@@ -473,11 +473,12 @@ def main():
                             "MC2_STATIC_PROP_AMBIENT_V1",
                             # V-MATERIAL-DEBUG-1 gated debug material views
                             # (default-OFF). 1=albedo, 2=materialIdx, 3=normal,
-                            # 4=texArrayLayer. Clamped 0..4 by CPU.
+                            # 4=texArrayLayer, 5=roughness, 6=metallic.
+                            # Clamped 0..6 by CPU.
                             "MC2_STATIC_PROP_DEBUG_MATERIAL",
-                            # V-IBL-STATIC-1 SH-L2 image-based ambient (default-OFF).
-                            # MC2_STATIC_PROP_IBL_SH=1 enables; ImGui slider
-                            # tunes u_iblShStrength when on.
+                            # V-IBL-STATIC-1 SH-L2 image-based ambient (default-ON).
+                            # MC2_STATIC_PROP_IBL_SH=0 disables; ImGui slider
+                            # tunes u_iblShStrength when the gate is on.
                             "MC2_STATIC_PROP_IBL_SH",
                             # V-IBL-STATIC-1-SOAK: optional default strength
                             # override (clamped 0..3). Only meaningful when
@@ -488,16 +489,16 @@ def main():
                             # (e.g. "default"). Unset/empty/unknown falls back
                             # to mission registry or default set. Dev knob.
                             "MC2_STATIC_PROP_IBL_SH_SET",
-                            # V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel
+                            # V-MATERIAL-PBR-3: per-fragment Schlick-Fresnel
                             # + power-lobe specular gate (default-OFF).
                             # MC2_STATIC_PROP_PBR_V1=1 enables; ImGui slider
                             # tunes u_pbrV1Strength when on.
                             "MC2_STATIC_PROP_PBR_V1",
-                            # V-MATERIAL-PBR-2: optional default-strength
+                            # V-MATERIAL-PBR-3: optional default-strength
                             # override (clamped 0..3). Only meaningful when
                             # MC2_STATIC_PROP_PBR_V1=1.
                             "MC2_STATIC_PROP_PBR_V1_STRENGTH",
-                            # V-MATERIAL-PBR-2-DIAG: diagnostic sunFound
+                            # V-MATERIAL-PBR-3-DIAG: diagnostic sunFound
                             # visualizer (cyan/magenta). Default-OFF; only
                             # meaningful with MC2_STATIC_PROP_PBR_V1=1.
                             "MC2_STATIC_PROP_PBR_V1_DIAG_SUNFOUND",

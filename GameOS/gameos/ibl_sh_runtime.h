@@ -3,13 +3,14 @@
 // V-IBL-STATIC-1 runtime cross-TU bridge.
 //
 // Defines (in gos_static_prop_batcher.cpp):
-//   float g_iblShStrength;     // ImGui slider value, default 1.0f.
+//   float g_iblShStrength;     // ImGui slider value, default 0.5f.
 //
 // The env var MC2_STATIC_PROP_IBL_SH (read once at process start as
 // s_iblShEnabled inside the batcher TU) is the AUTHORITATIVE GATE -- the
 // slider only modulates strength when the env-gate is on. Per-frame upload
-// computes `s_iblShEnabled ? g_iblShStrength : 0.0f` so env-unset always
-// uploads 0.0 (byte-identical OFF, regardless of slider value).
+// computes `s_iblShEnabled ? g_iblShStrength : 0.0f` so
+// MC2_STATIC_PROP_IBL_SH=0 uploads 0.0 (byte-identical OFF, regardless of
+// slider value). The feature is default-ON when the env var is unset.
 //
 // Consumers: GuiRuntime/EditorInspector.cpp (ImGui slider).
 //
@@ -19,7 +20,7 @@
 
 extern float g_iblShStrength;
 
-// V-MATERIAL-PBR-2 runtime cross-TU bridge. Same idiom as g_iblShStrength:
+// V-MATERIAL-PBR-3 runtime cross-TU bridge. Same idiom as g_iblShStrength:
 // the env var MC2_STATIC_PROP_PBR_V1 (read once at process start as
 // s_pbrV1Enabled inside the batcher TU) is the AUTHORITATIVE GATE; the
 // slider only modulates strength when the env-gate is on. Per-frame upload
@@ -28,12 +29,12 @@ extern float g_iblShStrength;
 // MC2_STATIC_PROP_PBR_V1_STRENGTH override, clamped 0..3).
 extern float g_pbrV1Strength;
 
-// V-MATERIAL-PBR-2-TUNE-UI: ImGui-driven runtime roughness override.
+// V-MATERIAL-PBR-3-TUNE-UI: ImGui-driven runtime roughness override.
 // When _Enabled is false (default), CPU uploads -1.0 sentinel and the
 // shader falls through to its literal 0.6 fallback (byte-identical to
 // V-MATERIAL-PBR-2-TUNE baseline). When true, _Value (clamped 0.05..1.0)
-// is uploaded and replaces the literal. Debug/tuning surface only; per-
-// material consumption deferred to V-MATERIAL-PBR-3.
+// is uploaded and replaces the literal. Debug/tuning surface only; MaterialGpu
+// roughness/metallic consumption lives in the fragment PBR path.
 extern bool  g_pbrV1RoughnessOverrideEnabled;
 extern float g_pbrV1RoughnessOverrideValue;
 

@@ -93,10 +93,18 @@ Requires `MC2_MATERIAL_GPU` also active (sampleOn gate checks both).
 
 Log tag: `[MATERIAL_GPU v4]`
 
-## V-MATERIAL-PBR-2 (per-vertex specular)
+## StaticPropOpaque visual gates
 
-- `MC2_STATIC_PROP_PBR_V1=1` — gate the per-vertex Schlick-Fresnel + power-lobe specular on StaticPropOpaque lane (`static_prop.vert`, inside `#if defined(MC2_USE_VIEW_UNIFORMS)`). Default **OFF**. When OFF, `u_pbrV1Strength` uploads 0.0 → shader `if (u_pbrV1Strength > 0.0)` short-circuits → mathematical byte-identical OFF (`lit += specular * 0 = lit unchanged`). **Gate-ON adds a broad dielectric Fresnel sheen** to default-roughness materials — this is EXPECTED, not a bug. Per-vertex limitation: uses constant F0=vec3(0.04) and fallback `metallic=0.0`, `roughness=1.0` (per-fragment MaterialGpu lookup deferred to V-MATERIAL-PBR-3). Sun direction sourced inline from the first `TG_LIGHT_INFINITE` entry in the LightsData SSBO. Safety interlock: when `MC2_VIEW_UNIFORMS=0`, CPU force-zeroes `u_pbrV1Strength` (shader compile-guard already excludes the block; defense in depth).
+- `MC2_STATIC_PROP_AMBIENT_V1=1` - enable the gated hemisphere ambient fill in `static_prop.vert`. Default **OFF**; unset or `=0` uploads `u_ambientV1Strength=0.0`, preserving the pre-ambient path. Window-flag nodes skip this term.
+- `MC2_STATIC_PROP_IBL_SH` - gate SH-L2 image-based ambient in `static_prop.vert`. Default **ON**; set `=0` as the explicit kill switch. When disabled, `u_iblShStrength=0.0` and the shader short-circuits before evaluating SH. Coefficients come from `RenderCore/IblShCoeffs.h`; current set selection is shown in ImGui.
+- `MC2_STATIC_PROP_IBL_SH_STRENGTH=<f>` - optional default-strength override for SH-L2 ambient (clamped 0..3). Sets the initial `g_iblShStrength` ImGui slider value. Only contributes when `MC2_STATIC_PROP_IBL_SH` is active. Unset/empty -> default 0.5.
+- `MC2_STATIC_PROP_DEBUG_MATERIAL=N` - per-fragment material debug view in `static_prop.frag`. Default 0 = OFF. Modes: 1 albedo, 2 materialIdx palette, 3 world normal, 4 texArrayLayer palette, 5 roughness grayscale, 6 metallic grayscale. Values outside the implemented range are clamped by CPU to 0..6.
+
+## V-MATERIAL-PBR-3 (per-fragment specular)
+
+- `MC2_STATIC_PROP_PBR_V1=1` — gate the per-fragment Schlick-Fresnel + power-lobe specular on StaticPropOpaque lane (`static_prop.frag`, inside `#if defined(MC2_USE_VIEW_UNIFORMS)`). Default **OFF**. When OFF, `u_pbrV1Strength` uploads 0.0 -> shader `if (u_pbrV1Strength > 0.0)` short-circuits before any `u_cameraWorldPos` read. When MaterialGpu sampling is active, PBR reads `roughnessFactor` and `metallicFactor`; otherwise it falls back to `metallic=0.0`, `roughness=0.6`. F0 is albedo-tinted for metallic materials. Sun detection accepts both `TG_LIGHT_INFINITE` and `TG_LIGHT_INFINITEWITHFALLOFF`. Window/hot-pink nodes bypass PBR. **Gate-ON can still add broad or blown highlights on flat legacy roofs**; this is expected while PBR remains experimental and material masks are sparse.
 - `MC2_STATIC_PROP_PBR_V1_STRENGTH=<f>` — optional default-strength override (clamped 0..3). Sets the initial `g_pbrV1Strength` slider value. ImGui slider may still override at runtime. Only meaningful when `MC2_STATIC_PROP_PBR_V1=1`. Unset/empty → default 1.0.
+- `MC2_STATIC_PROP_PBR_V1_DIAG_SUNFOUND=1` — diagnostic visualizer for the forwarded sun-found state. Only meaningful with `MC2_STATIC_PROP_PBR_V1=1`; paints cyan when a supported infinite sun light was found and magenta when not found.
 
 ## Static-prop dispatch hierarchy (v7)
 
