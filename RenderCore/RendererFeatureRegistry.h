@@ -362,6 +362,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "V-MATERIAL-PBR-2: optional default-strength override for the per-vertex Schlick-Fresnel specular (clamped 0..3). ImGui slider g_pbrV1Strength initial value. Only meaningful when MC2_STATIC_PROP_PBR_V1=1 (env var is the authoritative gate). Unset/empty -> default 1.0. Resolved once at process start."
     },
+    {
+        "MC2_DIAG_STATIC_PROP_PBR_V1_SUNFOUND",
+        "MC2_STATIC_PROP_PBR_V1_DIAG_SUNFOUND",
+        EnvVarKind::Trace,
+        false,
+        "V-MATERIAL-PBR-2-DIAG: diagnostic visualizer for the per-vertex sunFound state. When ON together with MC2_STATIC_PROP_PBR_V1=1, the StaticPropOpaque shader replaces lit with cyan (sunFound=true) or magenta (sunFound=false) per vertex, bypassing Schlick math. Diagnostic-only; never affects default-OFF behavior. Unset/'0' -> off."
+    },
 };
 
 // ---------------------------------------------------------------------------

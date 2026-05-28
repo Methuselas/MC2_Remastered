@@ -486,6 +486,16 @@ static const bool s_viewUniformsDisabled = []() {
     const char* v = getenv("MC2_VIEW_UNIFORMS");
     return v != nullptr && v[0] == '0';
 }();
+
+// V-MATERIAL-PBR-2-DIAG: diagnostic visualizer gate. Default-OFF; "=1" / any
+// non-"0" value enables. Mirrors s_pbrV1Enabled parse pattern. When ON AND
+// PBR gate is also ON, shader replaces lit with cyan (sunFound=true) /
+// magenta (false) instead of running Schlick math. Diagnostic-only; never
+// commits a behavior change to the default path.
+static const bool s_pbrV1DiagSunFound = []() {
+    const char* v = getenv("MC2_STATIC_PROP_PBR_V1_DIAG_SUNFOUND");
+    return v != nullptr && v[0] != '0' && v[0] != '\0';
+}();
 // Note: definition of `g_iblShStrength` lives at file scope above the
 // anonymous namespace (line ~191) so it has external linkage. The lambda-
 // initialized s_iblShEnabled stays local here; the slider value is global.
@@ -679,6 +689,7 @@ struct ProgramLocs {
     GLint iblShStrength       = -1;   // V-IBL-STATIC-1: u_iblShStrength
     GLint pbrV1Strength       = -1;   // V-MATERIAL-PBR-2: u_pbrV1Strength
     GLint pbrV1RoughnessOverride = -1; // V-MATERIAL-PBR-2-TUNE-UI: u_pbrV1RoughnessOverride
+    GLint pbrV1DiagSunFound   = -1;   // V-MATERIAL-PBR-2-DIAG: u_pbrV1DiagSunFound
 };
 static ProgramLocs s_locsLegacy;
 static ProgramLocs s_locsCoalesce;
@@ -895,6 +906,7 @@ void loadProgramsIfNeeded() {
     // V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular (default strength 0.0 = OFF).
     s_locsLegacy.pbrV1Strength     = glGetUniformLocation(s_staticPropProgram, "u_pbrV1Strength");
     s_locsLegacy.pbrV1RoughnessOverride = glGetUniformLocation(s_staticPropProgram, "u_pbrV1RoughnessOverride");
+    s_locsLegacy.pbrV1DiagSunFound = glGetUniformLocation(s_staticPropProgram, "u_pbrV1DiagSunFound");
     // s_locsLegacy.drawIDBase / texArr stay -1 (coalesce-only; legacy
     // shader has no such uniforms).
 
@@ -936,6 +948,7 @@ void loadProgramsIfNeeded() {
             // V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular (default strength 0.0 = OFF).
             s_locsCoalesce.pbrV1Strength     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pbrV1Strength");
             s_locsCoalesce.pbrV1RoughnessOverride = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pbrV1RoughnessOverride");
+            s_locsCoalesce.pbrV1DiagSunFound = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pbrV1DiagSunFound");
 
             // M3 fix: if both gates are ON and the uniform is absent, log an error.
             // This can only happen if the shader wasn't recompiled with v3 changes.
@@ -4146,6 +4159,12 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                     ? g_pbrV1RoughnessOverrideValue : -1.0f;
             glUniform1f(s_locsCoalesce.pbrV1RoughnessOverride, pbrRough);
         }
+        // V-MATERIAL-PBR-2-DIAG: diagnostic visualizer upload. Default 0
+        // (off) -> shader runs existing PBR math unchanged.
+        if (s_locsCoalesce.pbrV1DiagSunFound >= 0) {
+            glUniform1i(s_locsCoalesce.pbrV1DiagSunFound,
+                        s_pbrV1DiagSunFound ? 1 : 0);
+        }
 
         // 11.7.e — slot 1 is NOT bound (per v2r18 §3.X.1: colors_.c[]
         // unread in any live shader path; coalesce branch does not bind
@@ -5030,6 +5049,11 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                     (g_pbrV1RoughnessOverrideEnabled && !s_viewUniformsDisabled)
                         ? g_pbrV1RoughnessOverrideValue : -1.0f;
                 glUniform1f(s_locsLegacy.pbrV1RoughnessOverride, pbrRough);
+            }
+            // V-MATERIAL-PBR-2-DIAG: legacy program diag visualizer upload.
+            if (s_locsLegacy.pbrV1DiagSunFound >= 0) {
+                glUniform1i(s_locsLegacy.pbrV1DiagSunFound,
+                            s_pbrV1DiagSunFound ? 1 : 0);
             }
         }
 

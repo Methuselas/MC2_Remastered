@@ -157,6 +157,14 @@ uniform float u_pbrV1Strength;
 // CPU uploads -1.0 sentinel by default and when MC2_VIEW_UNIFORMS=0.
 uniform float u_pbrV1RoughnessOverride;
 
+// V-MATERIAL-PBR-2-DIAG: diagnostic visualizer for sunFound state.
+//   0 (default) -> off; existing PBR math runs unchanged (byte-identical).
+//   non-zero    -> replace lit with cyan (sunFound=true) or magenta (false).
+// Opt-in via env MC2_STATIC_PROP_PBR_V1_DIAG_SUNFOUND=1. Only meaningful when
+// the PBR gate is also ON (u_pbrV1Strength > 0.0).
+// TODO(SHADER-REFLECT-HYGIENE-8): new uniform drifts goldens; regen in fresh worktree.
+uniform int u_pbrV1DiagSunFound;
+
 // SH-L2 evaluator (Ramamoorthi-Hanrahan 2001 named constants).
 // Axis convention: Y-up world (same as V-AMBIENT-STATIC-1 hemi_t at
 // static_prop.vert:281). worldNormal is Stuff-space Y-up (model normal *
@@ -399,7 +407,14 @@ void main() {
                     break;
                 }
             }
-            if (sunFound) {
+            if (u_pbrV1DiagSunFound != 0) {
+                // V-MATERIAL-PBR-2-DIAG: bypass PBR math entirely; force lit
+                // to a bright debug color so the user can see whether
+                // sunFound is true for this vertex. Cyan = found, magenta =
+                // not found. Replacement (not additive) so the result is
+                // unambiguous regardless of ambient/IBL contributions.
+                lit = sunFound ? vec3(0.0, 1.0, 1.0) : vec3(1.0, 0.0, 1.0);
+            } else if (sunFound) {
                 vec3 N = normalize(worldNormal);
                 vec3 V_eye = normalize(u_cameraWorldPos.xyz - worldPos);
                 vec3 L = normalize(-sunDir);

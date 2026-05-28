@@ -497,6 +497,10 @@ def main():
                             # override (clamped 0..3). Only meaningful when
                             # MC2_STATIC_PROP_PBR_V1=1.
                             "MC2_STATIC_PROP_PBR_V1_STRENGTH",
+                            # V-MATERIAL-PBR-2-DIAG: diagnostic sunFound
+                            # visualizer (cyan/magenta). Default-OFF; only
+                            # meaningful with MC2_STATIC_PROP_PBR_V1=1.
+                            "MC2_STATIC_PROP_PBR_V1_DIAG_SUNFOUND",
                             # Render-contract Phase 2 assert mode (default-OFF).
                             # MC2_RENDER_CONTRACT_ASSERT=1 enables runtime GL state
                             # validation against declared render_contract expectations.
