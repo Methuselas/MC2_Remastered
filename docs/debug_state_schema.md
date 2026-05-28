@@ -23,6 +23,7 @@ Validated by `scripts/check-debug-state-json.py`.
 | `engineView` | object | Active EngineView registration. |
 | `renderSnapshot` | object | RenderSnapshot ok gate + mismatch counters. |
 | `staticPropOpaque` | object | StaticPropOpaque visual globals. |
+| `mech` | object | Mech snapshot counters + per-instance packet array. Gate: `MC2_SNAPSHOT_MECH_EXTRACT=1`. |
 
 ---
 
@@ -110,6 +111,41 @@ Runtime visual globals for the StaticPropOpaque render lane. Values reflect the 
 | `pbrRoughnessOverrideEnabled` | bool | Per-material roughness override is active. |
 | `pbrRoughnessOverride` | float | Override roughness value (range 0..1). Only meaningful when `pbrRoughnessOverrideEnabled=true`. |
 | `debugMaterialMode` | int | Material debug view mode. `0` = off (normal rendering). Nonzero = debug visualization active. |
+
+---
+
+## `mech`
+
+Gate: `MC2_SNAPSHOT_MECH_EXTRACT=1` (default OFF). When the gate is OFF or no submits have been recorded, `extractEnabled` is `false` (or `true` but counters are all zero) and `packets` is an empty array. No data is synthesized — this is a read-only projection of already-extracted data.
+
+| Field | Type | Description |
+|---|---|---|
+| `extractEnabled` | bool | `true` if `MC2_SNAPSHOT_MECH_EXTRACT=1` at write time. When `false`, all counters are 0 and `packets` is empty. |
+| `rows` | uint | `mechSnapshotCount` — number of mech submit entries captured this frame. |
+| `mat_valid` | uint | Rows where `materialIdx != 0xFFFFFFFF` (material wired). |
+| `mat_sentinel` | uint | Rows where `materialIdx == 0xFFFFFFFF` (not yet wired — expected in v0). |
+| `countMismatch` | uint | `mechCountMismatch` — `1` if snapshot count diverged from live pending count. |
+| `handleMismatch` | uint | `mechHandleMismatch` — rows where `typeLodIdx` differed from live. |
+| `objectIdMismatch` | uint | `mechObjectIdMismatch` — rows where `objectIdRaw` differed from live. |
+| `texHandleMismatch` | uint | `mechTexHandleMismatch` — rows where `texHandle` differed from live. |
+| `materialIdxMismatch` | uint | `mechMaterialIdxMismatch` — rows where `materialIdx` differed from live. |
+| `truncated` | bool | `true` if `rows > 32`; only the first 32 entries appear in `packets`. |
+| `packets` | array | Up to 32 per-mech packet entries (see below). Empty when `extractEnabled=false` or no submits. |
+
+### `mech.packets[]`
+
+One entry per mech instance submitted to the GPU batcher this frame (capped at 32).
+
+| Field | Type | Description |
+|---|---|---|
+| `objectIdRaw` | uint | `GpuMechSubmitDesc::objectIdRaw` — `RenderObjectHandle.raw()` for this actor. |
+| `instanceIdx` | uint | Index `i` in the frame's `s_pendingSubmits` array. |
+| `texHandle` | uint | `GpuMechSubmitDesc::slot0TexHandle` — mcTextureManager slot index for the paint-scheme texture. |
+| `textureName` | string | Human-readable texture name from `gos_getMechTextureNameByNodeIdx(texHandle)`. Empty string if not available. |
+| `materialIdx` | uint | Index into `s_mechMaterialTable`. `4294967295` (`0xFFFFFFFF`) = sentinel (not wired in v0). |
+| `materialIdxSentinel` | bool | `true` when `materialIdx == 0xFFFFFFFF`. |
+| `typeLodIdx` | uint | PendingSubmit type×LOD record index. |
+| `renderFlags` | uint | Render flags bitmask: bit 0 = `ALPHA_TEST`, bit 1 = `lightsOut`, bit 2 = `isHighlighted`. |
 
 ---
 

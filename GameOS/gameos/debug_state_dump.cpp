@@ -7,6 +7,10 @@
 #include "../../RenderCore/RendererFeatureRegistry.h"
 #include "../../RenderCore/RenderResourceRegistry.h"
 
+// Texture name lookup for mech node indices (mcTextureManager slot → name string).
+// Defined in gos_mech_batcher.cpp; not declared in any header.
+extern "C" const char* gos_getMechTextureNameByNodeIdx(uint32_t nodeIdx);
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -231,6 +235,68 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
     s << "    \"pbrRoughnessOverride\": " << sp.pbrRoughnessOverride << ",\n";
     s << "    \"debugMaterialMode\": " << sp.debugMaterialMode << "\n";
     s << "  },\n";
+    // MECH-MATERIAL-INVENTORY-1: mech snapshot section.
+    // Gate: MC2_SNAPSHOT_MECH_EXTRACT=1 (default OFF). Reads the already-extracted
+    // mech rows/counters directly from the snap parameter — no side effects, does
+    // not force the extract on.
+    {
+        constexpr uint32_t kMechPacketCap = 32u;
+        const bool extractEnabled = featureActive("MC2_SNAPSHOT_MECH_EXTRACT", false);
+        // Determine whether data is present: mirrors EditorInspector.cpp gate check.
+        const bool gateOn = extractEnabled
+            && (snap.mechSnapshotCount > 0u
+                || snap.mechMatValid   > 0u
+                || snap.mechMatSentinel > 0u);
+        s << "  \"mech\": {\n";
+        s << "    \"extractEnabled\": "; b(s, extractEnabled); s << ",\n";
+        if (!gateOn) {
+            // No data this frame — emit zero counters and empty packet array.
+            s << "    \"rows\": 0,\n";
+            s << "    \"mat_valid\": 0,\n";
+            s << "    \"mat_sentinel\": 0,\n";
+            s << "    \"countMismatch\": 0,\n";
+            s << "    \"handleMismatch\": 0,\n";
+            s << "    \"objectIdMismatch\": 0,\n";
+            s << "    \"texHandleMismatch\": 0,\n";
+            s << "    \"materialIdxMismatch\": 0,\n";
+            s << "    \"truncated\": false,\n";
+            s << "    \"packets\": []\n";
+        } else {
+            s << "    \"rows\": "              << snap.mechSnapshotCount       << ",\n";
+            s << "    \"mat_valid\": "         << snap.mechMatValid             << ",\n";
+            s << "    \"mat_sentinel\": "      << snap.mechMatSentinel          << ",\n";
+            s << "    \"countMismatch\": "     << snap.mechCountMismatch        << ",\n";
+            s << "    \"handleMismatch\": "    << snap.mechHandleMismatch       << ",\n";
+            s << "    \"objectIdMismatch\": "  << snap.mechObjectIdMismatch     << ",\n";
+            s << "    \"texHandleMismatch\": " << snap.mechTexHandleMismatch    << ",\n";
+            s << "    \"materialIdxMismatch\": " << snap.mechMaterialIdxMismatch << ",\n";
+            const uint32_t total     = snap.mechPackets.size();
+            const uint32_t emitCount = total < kMechPacketCap ? total : kMechPacketCap;
+            const bool     truncated = (total > kMechPacketCap);
+            s << "    \"truncated\": "; b(s, truncated); s << ",\n";
+            s << "    \"packets\": [\n";
+            for (uint32_t i = 0u; i < emitCount; ++i) {
+                const ExtractedMechPacket& row = snap.mechPackets[i];
+                const bool sentinel = (row.materialIdx == 0xFFFFFFFFu);
+                s << "      {\n";
+                s << "        \"objectIdRaw\": "         << row.objectIdRaw  << ",\n";
+                s << "        \"instanceIdx\": "         << row.instanceIdx  << ",\n";
+                s << "        \"texHandle\": "           << row.texHandle    << ",\n";
+                {
+                    const char* texName = gos_getMechTextureNameByNodeIdx(row.texHandle);
+                    s << "        \"textureName\": \""
+                      << jsonEscape((texName && *texName) ? texName : "") << "\",\n";
+                }
+                s << "        \"materialIdx\": "         << row.materialIdx  << ",\n";
+                s << "        \"materialIdxSentinel\": "; b(s, sentinel); s << ",\n";
+                s << "        \"typeLodIdx\": "          << row.typeLodIdx   << ",\n";
+                s << "        \"renderFlags\": "         << row.renderFlags  << "\n";
+                s << "      }" << (i + 1u < emitCount ? "," : "") << "\n";
+            }
+            s << "    ]\n";
+        }
+        s << "  },\n";
+    }
     {
         const size_t count = RenderCore::getRenderResourceCount();
         s << "  \"renderResources\": [\n";
