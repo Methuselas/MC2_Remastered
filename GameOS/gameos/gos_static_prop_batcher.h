@@ -429,6 +429,10 @@ struct StaticPropMaterialInventoryEntry {
     uint32_t usageCount;          // number of draw slots (PerDrawEntry rows) that reference this material
     char     textureName[64];     // mcTextureManager nodeName; "(unnamed)" / "(absent)" sentinels otherwise
     bool     placeholder;         // true when nodeIdx==0xFFFFFFFF OR name is null/empty OR dims are zero
+    // V-MATERIAL-PBR-1: mirror of MaterialGpu PBR scalars for inspector display.
+    // Static-prop default: metallic=0.0 (dielectric), roughness=1.0 (fully rough).
+    float    metallicFactor;
+    float    roughnessFactor;
 };
 
 // Number of inventory entries. Equals s_materialGpuTable size after finalizeGeometry.

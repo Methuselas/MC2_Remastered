@@ -302,7 +302,7 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         "MC2_STATIC_PROP_DEBUG_MATERIAL",
         EnvVarKind::Feature,
         false,
-        "V-MATERIAL-DEBUG-1: per-fragment material debug view on StaticPropOpaque lane (static_prop.frag). Default 0 = OFF (byte-identical via `if (u_debugMaterialMode != 0) return;` short-circuit). Modes 1=albedo, 2=materialIdx-palette, 3=worldNormal, 4=texArrayLayer-palette. Set MC2_STATIC_PROP_DEBUG_MATERIAL=N (1..4)."
+        "V-MATERIAL-DEBUG-1 / V-MATERIAL-PBR-1: per-fragment material debug view on StaticPropOpaque lane (static_prop.frag). Default 0 = OFF (byte-identical via `if (u_debugMaterialMode != 0) return;` short-circuit). Modes 1=albedo, 2=materialIdx-palette, 3=worldNormal, 4=texArrayLayer-palette, 5=roughnessFactor (grayscale), 6=metallicFactor (grayscale). Set MC2_STATIC_PROP_DEBUG_MATERIAL=N (1..6)."
     },
     // StaticPropIblSh
     {

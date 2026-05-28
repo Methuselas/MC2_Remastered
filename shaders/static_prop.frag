@@ -85,8 +85,12 @@ uniform int   u_debugAddrMode;   // 0 normal, 1 gradient, 2 hash, 3 white, 4 arg
 //   2 materialIdx  (hashed-palette color from materialIdx)
 //   3 normal       (worldNormal mapped to [0,1])
 //   4 texArrayLayer(hashed-palette color from texArrayLayer)
+//   5 roughness    (V-MATERIAL-PBR-1: MaterialGpu.roughnessFactor as grayscale)
+//   6 metallic     (V-MATERIAL-PBR-1: MaterialGpu.metallicFactor  as grayscale)
 // Legacy (non-MC2_COALESCE) lane has no materialIdx / texArrayLayer locals; in
 // those branches materialIdx/texArrayLayer are 0 (visualizes as a single hue).
+// Modes 5/6 likewise collapse to 0.0 (black) in the legacy lane since the
+// MaterialGpu table is only bound under the coalesce path.
 uniform int   u_debugMaterialMode;
 
 layout(location = 0) out vec4 FragColor;
@@ -187,17 +191,31 @@ void main() {
 #ifdef MC2_COALESCE
         uint dbgMaterialIdx   = materialIdx;
         uint dbgTexArrayLayer = uint(texArrayLayer);
+        // V-MATERIAL-PBR-1: read PBR scalars from MaterialGpu (binding=5).
+        // Guarded by u_materialGpuSample to honor the contract that the buffer
+        // may be unbound when sampling is disabled (see binding=5 comment above).
+        float dbgRoughness = 0.0;
+        float dbgMetallic  = 0.0;
+        if (u_materialGpuSample != 0) {
+            dbgRoughness = materialTable_.materials[materialIdx].roughnessFactor;
+            dbgMetallic  = materialTable_.materials[materialIdx].metallicFactor;
+        }
 #else
         // Legacy non-coalesce lane has no per-draw materialIdx / texArrayLayer;
         // collapse to 0 so debug modes 2/4 still produce a deterministic color
         // (single hue), which is enough to confirm the lane is exercised.
         uint dbgMaterialIdx   = 0u;
         uint dbgTexArrayLayer = 0u;
+        // V-MATERIAL-PBR-1: legacy lane has no MaterialGpu binding; report 0.0.
+        float dbgRoughness = 0.0;
+        float dbgMetallic  = 0.0;
 #endif
         if      (u_debugMaterialMode == 1) dbg = tex_color.rgb;
         else if (u_debugMaterialMode == 2) dbg = debug_palette(dbgMaterialIdx);
         else if (u_debugMaterialMode == 3) dbg = normalize(v_normal) * 0.5 + 0.5;
         else if (u_debugMaterialMode == 4) dbg = debug_palette(dbgTexArrayLayer);
+        else if (u_debugMaterialMode == 5) dbg = vec3(dbgRoughness);  // V-MATERIAL-PBR-1
+        else if (u_debugMaterialMode == 6) dbg = vec3(dbgMetallic);   // V-MATERIAL-PBR-1
         else                               dbg = vec3(1.0, 0.0, 1.0);  // unknown mode -> hot pink
         FragColor = vec4(dbg, 1.0);
         GBuffer1  = rc_gbuffer1_legacyDebugSentinelScreenShadowEligible();

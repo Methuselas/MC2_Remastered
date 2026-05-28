@@ -24,6 +24,8 @@ struct StaticPropMaterialInventoryEntry {
     uint32_t usageCount;
     char     textureName[64];
     bool     placeholder;
+    float    metallicFactor;   // V-MATERIAL-PBR-1
+    float    roughnessFactor;  // V-MATERIAL-PBR-1
 };
 uint32_t batcher_getStaticPropMaterialInventoryCount();
 bool     batcher_getStaticPropMaterialInventoryEntry(
@@ -492,22 +494,25 @@ void EditorInspector::drawImGui() {
                 if (dbgMatEnv != nullptr && dbgMatEnv[0] != '\0') {
                     dbgMatMode = atoi(dbgMatEnv);
                     if (dbgMatMode < 0) dbgMatMode = 0;
-                    if (dbgMatMode > 4) dbgMatMode = 4;
+                    if (dbgMatMode > 6) dbgMatMode = 6;  // V-MATERIAL-PBR-1
                 }
                 const char* dbgMatLabel =
                     (dbgMatMode == 0) ? "off" :
                     (dbgMatMode == 1) ? "albedo" :
                     (dbgMatMode == 2) ? "materialIdx" :
                     (dbgMatMode == 3) ? "normal" :
-                    (dbgMatMode == 4) ? "texArrayLayer" : "?";
+                    (dbgMatMode == 4) ? "texArrayLayer" :
+                    (dbgMatMode == 5) ? "roughness" :
+                    (dbgMatMode == 6) ? "metallic" : "?";
                 ImGui::Text("  debug view     %s", dbgMatLabel);
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("V-MATERIAL-DEBUG-1 per-fragment material debug view\n"
+                    ImGui::SetTooltip("V-MATERIAL-DEBUG-1 / V-MATERIAL-PBR-1 per-fragment material debug view\n"
                                       "in static_prop.frag. Modes:\n"
                                       "  0=off (byte-identical)\n"
                                       "  1=albedo  2=materialIdx\n"
                                       "  3=normal  4=texArrayLayer\n"
-                                      "Gate: MC2_STATIC_PROP_DEBUG_MATERIAL=N (1..4).");
+                                      "  5=roughness (grayscale)  6=metallic (grayscale)\n"
+                                      "Gate: MC2_STATIC_PROP_DEBUG_MATERIAL=N (1..6).");
 
                 // V-IBL-STATIC-1: SH-L2 image-based ambient. ENV var is the
                 // authoritative gate (read once at process start by the
@@ -1039,7 +1044,7 @@ void EditorInspector::drawImGui() {
         ImGui::Text("Materials: %u", (unsigned)invCount);
         if (invCount == 0u) {
             ImGui::TextDisabled("(empty -- mission not loaded or MC2_MATERIAL_GPU=0)");
-        } else if (ImGui::BeginTable("matinv_table", 8,
+        } else if (ImGui::BeginTable("matinv_table", 10,
                                      ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                                      ImGuiTableFlags_ScrollY | ImGuiTableFlags_Sortable,
                                      ImVec2(0.f, 240.f))) {
@@ -1051,6 +1056,8 @@ void EditorInspector::drawImGui() {
             ImGui::TableSetupColumn("dims");
             ImGui::TableSetupColumn("uses");
             ImGui::TableSetupColumn("flags");
+            ImGui::TableSetupColumn("rough");   // V-MATERIAL-PBR-1
+            ImGui::TableSetupColumn("metal");   // V-MATERIAL-PBR-1
             ImGui::TableHeadersRow();
             unsigned placeholderCount = 0u;
             for (uint32_t i = 0; i < invCount; ++i) {
@@ -1074,6 +1081,8 @@ void EditorInspector::drawImGui() {
                                                        e.textureWidth, e.textureHeight);
                 ImGui::TableNextColumn(); ImGui::Text("%u", e.usageCount);
                 ImGui::TableNextColumn(); ImGui::Text("0x%08X", e.flags);
+                ImGui::TableNextColumn(); ImGui::Text("%.2f", e.roughnessFactor);  // V-MATERIAL-PBR-1
+                ImGui::TableNextColumn(); ImGui::Text("%.2f", e.metallicFactor);   // V-MATERIAL-PBR-1
             }
             ImGui::EndTable();
             ImGui::Separator();

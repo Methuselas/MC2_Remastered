@@ -449,6 +449,8 @@ static const bool s_iblShEnabled = []() {
 //   2 = materialIdx (hashed palette)
 //   3 = normal (worldNormal as RGB)
 //   4 = texArrayLayer (hashed palette)
+//   5 = roughnessFactor as grayscale (V-MATERIAL-PBR-1)
+//   6 = metallicFactor as grayscale  (V-MATERIAL-PBR-1)
 // Values outside the implemented range render as hot-pink in the shader.
 // Resolved once at process start (atoi semantics: invalid -> 0).
 static const int s_staticPropDebugMaterialMode = []() {
@@ -456,7 +458,7 @@ static const int s_staticPropDebugMaterialMode = []() {
     if (v == nullptr || v[0] == '\0') return 0;
     int m = atoi(v);
     if (m < 0) m = 0;
-    if (m > 4) m = 4;  // clamp to known range; future modes bump this ceiling
+    if (m > 6) m = 6;  // V-MATERIAL-PBR-1: extended to modes 5 (roughness) + 6 (metallic)
     return m;
 }();
 static bool s_materialKtxEnabled = (std::getenv("MC2_MATERIAL_KTX") != nullptr &&
@@ -2410,8 +2412,8 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                     m.emissiveTex          = RenderCore::kMaterialTexAbsent;
                     m.flags                = 0;
                     m.baseColorFactor      = 1.0f;   // neutral: full brightness
-                    m.metallicFactor       = 0.0f;
-                    m.roughnessFactor      = 0.0f;
+                    m.metallicFactor       = 0.0f;  // V-MATERIAL-PBR-1: dielectric default
+                    m.roughnessFactor      = 1.0f;  // V-MATERIAL-PBR-1: fully rough default (was 0.0)
                     s_materialGpuTable.push_back(m);
 
                     // V-MATERIAL-STATIC-0: build a parallel inventory row.
@@ -2426,6 +2428,8 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                     inv.textureWidth   = 0u;
                     inv.textureHeight  = 0u;
                     inv.usageCount     = 0u;  // accumulated below
+                    inv.metallicFactor  = m.metallicFactor;   // V-MATERIAL-PBR-1
+                    inv.roughnessFactor = m.roughnessFactor;  // V-MATERIAL-PBR-1
                     std::snprintf(inv.textureName, sizeof(inv.textureName), "(absent)");
                     if (globalPktIdx < s_packets.size()) {
                         const auto& pkt = s_packets[globalPktIdx];
