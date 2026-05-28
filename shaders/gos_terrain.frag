@@ -120,8 +120,6 @@ uniform int g_terrainMaterialProfile;
 
 // Per-material and global color tuning (set via gos_SetTerrainMatNormalBoost /
 // gos_SetTerrainTintStrengthScale). Defaults match the previous shader constants.
-// TODO(SHADER-REFLECT-HYGIENE-5): goldens deferred; regen in fresh
-// worktree after this commit lands.
 uniform PREC vec4  matNormalBoost;     // [rock, grass, dirt, concrete]; default (0.9, 1.1, 1.1, 2.5)
 uniform PREC float tintStrengthScale;  // 0=colormap passthrough, 1=full material tint; default 1.0
 
