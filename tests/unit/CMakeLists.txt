@@ -34,15 +34,19 @@ add_executable(mc2_tests
     test_projection.cpp     # currently scope-stopped; placeholder skipped case
     test_argb_pack.cpp
     test_screen_pick.cpp
+    test_rendercore.cpp     # RENDERCORE-UNIT-TESTS-1: GL-free substrate invariants
 
     # Leaf-TU engine sources (no transitive engine include drag).
     ${MC2_WORKTREE_ROOT}/mclib/fst_hash.cpp
+    ${MC2_WORKTREE_ROOT}/RenderCore/RenderResourceRegistry.cpp
+    ${MC2_WORKTREE_ROOT}/RenderCore/RenderDebugView.cpp
 )
 
 target_include_directories(mc2_tests PRIVATE
     ${MC2_WORKTREE_ROOT}/mclib
     ${MC2_WORKTREE_ROOT}/GameOS
     ${MC2_WORKTREE_ROOT}/RenderWorld
+    ${MC2_WORKTREE_ROOT}/RenderCore
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -65,4 +69,12 @@ add_custom_target(check
     DEPENDS mc2_tests
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Running mc2 unit tests"
+)
+
+# Convenience target: run only the RenderCore test suite.
+add_custom_target(rendercore_tests
+    COMMAND mc2_tests --ts=RenderCore
+    DEPENDS mc2_tests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "Running RenderCore substrate unit tests"
 )
