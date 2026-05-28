@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mc2-render-state": {
+      "command": "py",
+      "args": ["-3", "scripts/mcp/mc2_render_state_server.py"],
+      "env": {
+        "MC2_DEPLOY_DIR": "A:/Games/mc2-opengl/mc2-win64-v0.4"
+      }
+    }
+  }
+}

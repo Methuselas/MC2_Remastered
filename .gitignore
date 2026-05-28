@@ -131,3 +131,5 @@ ucrt-list.txt
 *.safetensors
 *.pth
 
+!tools/mcp/
+!tools/mcp/**
