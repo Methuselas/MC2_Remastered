@@ -8,38 +8,11 @@
 #include "../RenderCore/RendererFeatureRegistry.h"
 #include "../RenderCore/RenderPassContract.h"  // RENDERPASS-CONTRACT-2.5 (descriptive table)
 
-// TERRAIN-DEBUG-VIEWS-1: file-scope forward declarations for the terrain
-// debug-mode C-API used by the Terrain Pass inspector mini-control below.
-// Declared at global scope (NOT inside the namespace block / function body)
-// so name lookup resolves to the gameos.hpp-declared free functions rather
-// than synthesizing EditorInspector::gos_*TerrainDebugMode members at link
-// time. Authoritative declarations live in GameOS/include/gameos.hpp.
-extern void  __stdcall gos_SetTerrainDebugMode(float mode);
-extern float __stdcall gos_GetTerrainDebugMode();
-// TERRAIN-RESAMPLE-1: read-only accessors for the height-tex resample state.
-// These live in extern "C" in gos_terrain_height_tex.h (C linkage), so the
-// forward decls here must repeat that to mangle correctly (the slice-1
-// gos_*TerrainDebugMode pair above is C++-linkage in gameos.hpp; do NOT
-// confuse the two).
-extern "C" {
-    int  __stdcall gos_terrainHeightSourceSide(void);
-    int  __stdcall gos_terrainHeightTexSide(void);
-    int  __stdcall gos_terrainHeightResampleFactor(void);
-    void __stdcall gos_setTerrainHeightResampleFactor(int factor);
-}
-
-// TERRAIN-TUNING-UI-1: C++-linkage tunable C-API (matches gameos_graphics.cpp
-// definitions — no extern "C" wrapper to match the gos_*Terrain* family
-// convention in gameos.hpp / GraphicsOptionsWindow.cpp).
-extern void  gos_SetTerrainMatNormalBoost(float rock, float grass, float dirt, float concrete);
-extern void  gos_GetTerrainMatNormalBoost(float* rock, float* grass, float* dirt, float* concrete);
-extern void  gos_SetTerrainTintStrengthScale(float s);
-extern float gos_GetTerrainTintStrengthScale();
-extern void  gos_SetTerrainNormalsFromHeightStrength(float s);
-extern float gos_GetTerrainNormalsFromHeightStrength();
-// TERRAIN-LIGHTING-1
-extern void  gos_SetTerrainLightingV1Strength(float s);
-extern float gos_GetTerrainLightingV1Strength();
+// Terrain tunable C-API used to be forward-declared here for an inline
+// Terrain Pass tunables panel; those controls were moved to
+// GuiRuntime/GraphicsOptionsWindow.cpp (the existing terrain tuning home),
+// so the forward decls and the inline panel are gone. EditorInspector's
+// Terrain Pass section is now read-only diagnostic only.
 
 // V-MATERIAL-STATIC-0: forward-declared inventory contract — duplicating the
 // struct keeps gui_runtime independent of gos_static_prop_batcher.h, which
@@ -1006,173 +979,12 @@ void EditorInspector::drawImGui() {
         }
         ImGui::Separator();
         ImGui::Text("Tessellation: %s", ts.tessellationOn ? "ON (always)" : "off");
-
-        // TERRAIN-DEBUG-VIEWS-1: mini debug-mode control. The full picker (with
-        // per-mode channel breakdowns) lives in GraphicsOptionsWindow Surface
-        // Debug Mode; this is a compact -/+/OFF + label readout for the Terrain
-        // Pass panel. Labels mirror GraphicsOptionsWindow.cpp kTerrainModes —
-        // keep in sync if shader modes change. Env var MC2_TERRAIN_DEBUG_MODE
-        // overrides at the GL upload sites (gameos_graphics.cpp), so reading it
-        // back via gos_GetTerrainDebugMode() reflects the in-memory member only.
-        ImGui::Separator();
-        {
-            int mode = (int)::gos_GetTerrainDebugMode();
-            const char* label = "(unknown)";
-            switch (mode) {
-                case -1: label = "Tess Alive Probe";  break;
-                case  0: label = "OFF";               break;
-                case  1: label = "Depth Comparison";  break;
-                case  2: label = "Raw Colormap";      break;
-                case  3: label = "Blurred Colormap";  break;
-                case  4: label = "Material Weights";  break;
-                case  5: label = "Normal Lighting";   break;
-                case  6: label = "Shadow Factor";     break;
-                case  7: label = "Cloud Shadow";      break;
-                case  8: label = "Cement Diagnostic"; break;
-                case  9: label = "Thin-Record";       break;
-                case 10: label = "Height Normal";     break;  // TERRAIN-NORMALS-FROM-HEIGHT-1
-                default: break;
-            }
-            ImGui::Text("Surface Debug Mode: [%d] %s", mode, label);
-            if (ImGui::SmallButton("OFF##tdm_off")) ::gos_SetTerrainDebugMode(0.0f);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("-##tdm_dec")) {
-                int n = (mode > -1) ? (mode - 1) : 10;
-                ::gos_SetTerrainDebugMode((float)n);
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("+##tdm_inc")) {
-                int n = (mode < 10) ? (mode + 1) : -1;
-                ::gos_SetTerrainDebugMode((float)n);
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("env MC2_TERRAIN_DEBUG_MODE overrides");
-        }
-
-        // TERRAIN-NORMALS-FROM-HEIGHT-1: gate-status readout. Env var is
-        // authoritative; the inspector cannot toggle it (the gate is read
-        // once per terrain uniform upload via getenv, so a writable ImGui
-        // checkbox would require its own setter pathway and risks gameplay-
-        // adjacent state drift). Display only.
-        ImGui::Separator();
-        {
-            const char* env = std::getenv("MC2_TERRAIN_NORMALS_FROM_HEIGHT");
-            bool gateOn = (env && env[0] && env[0] != '0');
-            if (gateOn) {
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
-                    "Normals-from-Height: ON  (MC2_TERRAIN_NORMALS_FROM_HEIGHT=%s)",
-                    env);
-            } else {
-                ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
-                    "Normals-from-Height: OFF (set MC2_TERRAIN_NORMALS_FROM_HEIGHT=1 to enable)");
-            }
-            ImGui::TextDisabled("Debug Mode 10 = visualize height-derived normal (independent of gate)");
-
-            // TERRAIN-RESAMPLE-1: source/render readout + live factor combo.
-            // 0 source side means no mission loaded yet.
-            int srcSide = ::gos_terrainHeightSourceSide();
-            int rndSide = ::gos_terrainHeightTexSide();
-            int factor  = ::gos_terrainHeightResampleFactor();
-            if (srcSide > 0) {
-                ImGui::Text("Height tex: source %d^2 -> render %d^2",
-                            srcSide, rndSide);
-            } else {
-                ImGui::TextDisabled("Height tex: not uploaded (no mission loaded)");
-            }
-            // Combo over {1x, 2x, 4x}. Map factor → combo index; on change,
-            // call the setter which re-uploads the resampled texture from
-            // the cached source (no per-frame rebuild). Default startup
-            // value still comes from MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR.
-            const char* factorLabels[3] = { "1x", "2x", "4x" };
-            int currentIdx = (factor == 4) ? 2 : (factor == 2) ? 1 : 0;
-            int newIdx     = currentIdx;
-            if (ImGui::Combo("Resample##trf", &newIdx, factorLabels, 3)) {
-                if (newIdx != currentIdx) {
-                    const int newFactor = (newIdx == 2) ? 4 : (newIdx == 1) ? 2 : 1;
-                    ::gos_setTerrainHeightResampleFactor(newFactor);
-                }
-            }
-            ImGui::SameLine();
-            ImGui::TextDisabled("env MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR = startup default");
-
-            // TERRAIN-TUNING-UI-1: live tunables. Sliders mirror the
-            // existing GraphicsOptionsWindow controls so the inspector
-            // panel can adjust terrain lighting without a second window.
-            // Defaults preserved (boost (0.9,1.1,1.1,2.5), tint 1.0,
-            // nfh-strength 1.0). Ranges are conservative — wider sweeps
-            // belong in the dedicated GraphicsOptionsWindow.
-            ImGui::Separator();
-            ImGui::TextDisabled("Tunables (live)");
-
-            // matNormalBoost — 4-channel slider per [rock, grass, dirt, concrete]
-            float boost[4];
-            ::gos_GetTerrainMatNormalBoost(&boost[0], &boost[1], &boost[2], &boost[3]);
-            if (ImGui::SliderFloat4("normalBoost##tnb", boost, 0.0f, 4.0f, "%.2f")) {
-                ::gos_SetTerrainMatNormalBoost(boost[0], boost[1], boost[2], boost[3]);
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Reset##tnbreset")) {
-                ::gos_SetTerrainMatNormalBoost(0.9f, 1.1f, 1.1f, 2.5f);
-            }
-
-            // tintStrengthScale — single slider 0..2.
-            float tint = ::gos_GetTerrainTintStrengthScale();
-            if (ImGui::SliderFloat("tintStrength##tts", &tint, 0.0f, 2.0f, "%.2f")) {
-                ::gos_SetTerrainTintStrengthScale(tint);
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Reset##ttsreset")) {
-                ::gos_SetTerrainTintStrengthScale(1.0f);
-            }
-
-            // Normals-from-height strength — slider 0..1.5. Only meaningful
-            // when the env gate is enabled (the shader branch is short-
-            // circuited otherwise); inspector still allows pre-arming the
-            // value for the next mission load.
-            float nfh = ::gos_GetTerrainNormalsFromHeightStrength();
-            if (ImGui::SliderFloat("nfhStrength##tnfh", &nfh, 0.0f, 1.5f, "%.2f")) {
-                ::gos_SetTerrainNormalsFromHeightStrength(nfh);
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Reset##tnfhreset")) {
-                ::gos_SetTerrainNormalsFromHeightStrength(1.0f);
-            }
-            {
-                const char* envNfh = std::getenv("MC2_TERRAIN_NORMALS_FROM_HEIGHT");
-                bool nfhOn = (envNfh && envNfh[0] && envNfh[0] != '0');
-                if (!nfhOn) {
-                    ImGui::TextDisabled("(nfhStrength only takes effect when MC2_TERRAIN_NORMALS_FROM_HEIGHT=1)");
-                }
-            }
-
-            // TERRAIN-LIGHTING-1: hemisphere ambient strength slider + gate
-            // status. Member-default is 1.0; CPU upload force-zeroes when
-            // the env gate is off so the slider has no effect in that case.
-            ImGui::Separator();
-            {
-                const char* envLit = std::getenv("MC2_TERRAIN_LIGHTING_V1");
-                bool litOn = (envLit && envLit[0] && envLit[0] != '0');
-                if (litOn) {
-                    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
-                        "Lighting V1 (hemisphere ambient): ON");
-                } else {
-                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
-                        "Lighting V1 (hemisphere ambient): OFF (set MC2_TERRAIN_LIGHTING_V1=1)");
-                }
-                float litStrength = ::gos_GetTerrainLightingV1Strength();
-                if (ImGui::SliderFloat("ambientStrength##tlv1", &litStrength,
-                                       0.0f, 2.0f, "%.2f")) {
-                    ::gos_SetTerrainLightingV1Strength(litStrength);
-                }
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Reset##tlv1reset")) {
-                    ::gos_SetTerrainLightingV1Strength(1.0f);
-                }
-                if (!litOn) {
-                    ImGui::TextDisabled("(slider has no effect until env gate enabled)");
-                }
-            }
-        }
+        // Tuning controls (matNormalBoost, tintStrengthScale, NfH strength,
+        // Lighting V1, resample factor, debug-mode picker) all live in the
+        // GraphicsOptionsWindow Terrain section. This panel stays read-only
+        // diagnostic — no live controls — so the Object Inspector and the
+        // Graphics Options window aren't duplicated views of the same state.
+        ImGui::TextDisabled("(tuning controls: Graphics Options > Terrain)");
     }
 
     // SHADOW-SPINE-0: pass-level (not selection-driven) view of the shadow

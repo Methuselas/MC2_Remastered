@@ -17,6 +17,21 @@ void  gos_SetTerrainMatNormalBoost(float rock, float grass, float dirt, float co
 void  gos_GetTerrainMatNormalBoost(float* rock, float* grass, float* dirt, float* concrete);
 void  gos_SetTerrainTintStrengthScale(float s);
 float gos_GetTerrainTintStrengthScale();
+// TERRAIN-TUNING-UI-1 / TERRAIN-LIGHTING-1 — consolidated tunables (the
+// Object Inspector "Terrain Pass" panel used to mirror these; they live
+// here now alongside the rest of the terrain tuning stack).
+void  gos_SetTerrainNormalsFromHeightStrength(float s);
+float gos_GetTerrainNormalsFromHeightStrength();
+void  gos_SetTerrainLightingV1Strength(float s);
+float gos_GetTerrainLightingV1Strength();
+// TERRAIN-RESAMPLE-1 — height-tex source/render/factor accessors + live
+// factor setter. C-linkage (declared extern "C" in gos_terrain_height_tex.h).
+extern "C" {
+    int  __stdcall gos_terrainHeightSourceSide(void);
+    int  __stdcall gos_terrainHeightTexSide(void);
+    int  __stdcall gos_terrainHeightResampleFactor(void);
+    void __stdcall gos_setTerrainHeightResampleFactor(int factor);
+}
 
 #include <cstdio>
 #include <cmath>
@@ -337,6 +352,98 @@ static void drawTerrainTuningSection() {
         s_cellScale = 8.0f; s_cellJitter = 0.8f; s_cellRotation = 1.0f;
         gos_SetTerrainCellBombParams(8.0f, 0.8f, 1.0f);
     }
+
+    // ── Normals-from-Height + Lighting V1 ────────────────────────────────────
+    // Consolidated home for the TERRAIN-NORMALS-FROM-HEIGHT-1 /
+    // TERRAIN-RESAMPLE-1 / TERRAIN-LIGHTING-1 stack. Originally lived in the
+    // Object Inspector "Terrain Pass" panel; moved here so all terrain
+    // tuning is in one window. Env vars MC2_TERRAIN_NORMALS_FROM_HEIGHT and
+    // MC2_TERRAIN_LIGHTING_V1 are authoritative on/off gates — sliders
+    // tune strength only when the env gate is enabled.
+    ImGui::SeparatorText("Normals-from-Height + Lighting V1");
+
+    // Gate status — read env locally; the slider widgets stay enabled even
+    // when the gate is off so the user can pre-arm a strength for the next
+    // mission load.
+    bool nfhGateOn = false;
+    {
+        const char* env = std::getenv("MC2_TERRAIN_NORMALS_FROM_HEIGHT");
+        nfhGateOn = (env && env[0] && env[0] != '0');
+        if (nfhGateOn) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                "Normals-from-Height: ON  (MC2_TERRAIN_NORMALS_FROM_HEIGHT=%s)", env);
+        } else {
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
+                "Normals-from-Height: OFF (set MC2_TERRAIN_NORMALS_FROM_HEIGHT=1)");
+        }
+    }
+
+    // Height tex source/render readout + live resample combo.
+    int srcSide = ::gos_terrainHeightSourceSide();
+    int rndSide = ::gos_terrainHeightTexSide();
+    int factor  = ::gos_terrainHeightResampleFactor();
+    if (srcSide > 0) {
+        ImGui::Text("Height tex: source %d^2 -> render %d^2", srcSide, rndSide);
+    } else {
+        ImGui::TextDisabled("Height tex: not uploaded (no mission loaded)");
+    }
+    const char* factorLabels[3] = { "1x", "2x", "4x" };
+    int curIdx = (factor == 4) ? 2 : (factor == 2) ? 1 : 0;
+    int newIdx = curIdx;
+    if (ImGui::Combo("Resample##trf", &newIdx, factorLabels, 3)) {
+        if (newIdx != curIdx) {
+            const int f = (newIdx == 2) ? 4 : (newIdx == 1) ? 2 : 1;
+            ::gos_setTerrainHeightResampleFactor(f);
+        }
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("CPU bilinear resample factor for the height tex.\n"
+                          "1x = source grid only; 4x = 4× sub-grid (finer slope normals).\n"
+                          "env MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR sets startup default.");
+
+    // Normals-from-Height strength.
+    float nfh = ::gos_GetTerrainNormalsFromHeightStrength();
+    if (ImGui::SliderFloat("NfH strength##tnfh", &nfh, 0.0f, 1.5f, "%.2f")) {
+        ::gos_SetTerrainNormalsFromHeightStrength(nfh);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Multiplier on the additive height-derived normal term.\n"
+                          "1.0 = full slope tilt (default). 0.0 = no slope contribution.\n"
+                          "Only effective when MC2_TERRAIN_NORMALS_FROM_HEIGHT=1.");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##tnfh")) ::gos_SetTerrainNormalsFromHeightStrength(1.0f);
+    if (!nfhGateOn) {
+        ImGui::TextDisabled("(NfH strength only takes effect when env gate enabled)");
+    }
+
+    // Lighting V1 (hemisphere ambient) gate status + strength.
+    bool litGateOn = false;
+    {
+        const char* env = std::getenv("MC2_TERRAIN_LIGHTING_V1");
+        litGateOn = (env && env[0] && env[0] != '0');
+        if (litGateOn) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                "Lighting V1 (hemi ambient): ON");
+        } else {
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
+                "Lighting V1 (hemi ambient): OFF (set MC2_TERRAIN_LIGHTING_V1=1)");
+        }
+    }
+    float ambient = ::gos_GetTerrainLightingV1Strength();
+    if (ImGui::SliderFloat("Ambient strength##tlv1", &ambient, 0.0f, 2.0f, "%.2f")) {
+        ::gos_SetTerrainLightingV1Strength(ambient);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Hemisphere sky/ground ambient fill on terrain.\n"
+                          "Added AFTER shadow multiplication — shadowed terrain still receives\n"
+                          "sky bounce, which is intentional. Default 1.0; 0.5 for subtler fill.\n"
+                          "Only effective when MC2_TERRAIN_LIGHTING_V1=1.");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##tlv1")) ::gos_SetTerrainLightingV1Strength(1.0f);
+    if (!litGateOn) {
+        ImGui::TextDisabled("(slider has no effect until env gate enabled)");
+    }
+    ImGui::TextDisabled("Debug Mode 10 (Surface Debug Mode above) = height-normal RGB");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
