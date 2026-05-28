@@ -148,7 +148,6 @@ uniform float u_iblShStrength;
 // (NOT a tight highlight). This is EXPECTED and acknowledged in
 // RenderCore/RendererFeatureRegistry.h kFeatureTable doc. Gate-ON is NOT
 // byte-identical to default-OFF; only default-OFF (strength=0.0) is.
-// TODO(SHADER-REFLECT-HYGIENE-6): goldens deferred; regen in fresh worktree.
 uniform float u_pbrV1Strength;
 
 // SH-L2 evaluator (Ramamoorthi-Hanrahan 2001 named constants).
