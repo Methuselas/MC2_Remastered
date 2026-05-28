@@ -77,6 +77,12 @@ TRACKED_FLAGS = (
     # the debug-state mech inventory the sidecar embeds.
     "MC2_MECH_FRAG_DEBUG",
     "MC2_SNAPSHOT_MECH_EXTRACT",
+    # WATER-BASELINE-0: MDI water FS debug-mode selector + the GPU-driven gate
+    # that arms the MDI path the uniform lives on, + the fast-path gate. Without
+    # these a captured water frame is not reproducible if the path/mode changes.
+    "MC2_WATER_DEBUG_MODE",
+    "MC2_GPU_DRIVEN_WATER",
+    "MC2_RENDER_WATER_FASTPATH",
 )
 
 
@@ -193,7 +199,8 @@ def run_capture(exe: Path, preset_name: str, preset: dict,
                 commit_sha: str, out_png: Path,
                 strength: str | None = None,
                 terrain_debug_mode: str | None = None,
-                mech_debug_mode: str | None = None) -> dict:
+                mech_debug_mode: str | None = None,
+                water_debug_mode: str | None = None) -> dict:
     mission = preset["mission"]
     warmup = int(preset["warmup_s"])
     duration = int(preset.get("duration_s", warmup + 2))
@@ -242,6 +249,18 @@ def run_capture(exe: Path, preset_name: str, preset: dict,
         env["MC2_MECH_FRAG_DEBUG"] = str(mech_debug_mode)
         env["MC2_SNAPSHOT_MECH_EXTRACT"] = "1"
         env["MC2_DEBUG_STATE_DUMP"] = "1"
+
+    # WATER-BASELINE-0: MDI water FS debug-mode override. The uniform lives on
+    # the MDI path (gos_terrain_water_mdi.frag), which only renders when the
+    # GPU-driven water gate is armed — so a water debug capture also forces
+    # MC2_GPU_DRIVEN_WATER=1. None = leave both unset (default; mode 0 is
+    # byte-identical to legacy, and the active path is config-default).
+    water_capture = water_debug_mode is not None
+    if water_debug_mode is None:
+        env.pop("MC2_WATER_DEBUG_MODE", None)
+    else:
+        env["MC2_WATER_DEBUG_MODE"] = str(water_debug_mode)
+        env["MC2_GPU_DRIVEN_WATER"] = "1"
 
     proc_args = [str(exe), "--profile", "stock", "--mission", mission,
                  "--duration", str(duration)]
@@ -309,6 +328,11 @@ def run_capture(exe: Path, preset_name: str, preset: dict,
         sidecar["mechInventory"] = inv if inv is not None else {
             "note": "debug-state mech section unavailable (no dump or no mechs)"
         }
+    # WATER-BASELINE-0: record the selected water FS debug mode so a water
+    # capture is self-describing. (Debug-state JSON has no water section yet —
+    # recon gap — so there is no inventory to embed, only the mode + flags.)
+    if water_capture:
+        sidecar["waterDebugMode"] = str(water_debug_mode)
     sidecar_path = out_png.with_suffix(".json")
     sidecar_path.write_text(json.dumps(sidecar, indent=2) + "\n",
                             encoding="utf-8")
@@ -353,6 +377,13 @@ def main() -> int:
                          "Also enables MC2_SNAPSHOT_MECH_EXTRACT + "
                          "MC2_DEBUG_STATE_DUMP so the sidecar embeds the mech "
                          "inventory. Omit for default. Filename suffix: _mdmN.")
+    ap.add_argument("--water-debug-mode", default=None,
+                    help="WATER-BASELINE-0: MDI water FS debug-mode override "
+                         "(MC2_WATER_DEBUG_MODE). Modes: 1 Tint, 2 Alpha, "
+                         "3 Normal, 4 Depth, 5 Shore, 6 Lighting. Also forces "
+                         "MC2_GPU_DRIVEN_WATER=1 so the MDI water path (which "
+                         "owns the uniform) is armed. Omit for default. "
+                         "Filename suffix: _wdmN.")
     args = ap.parse_args()
 
     exe = Path(args.exe)
@@ -410,15 +441,18 @@ def main() -> int:
             tdm_suffix = f"_tdm{tdm}" if tdm is not None else ""
             mdm = args.mech_debug_mode
             mdm_suffix = f"_mdm{mdm}" if mdm is not None else ""
+            wdm = args.water_debug_mode
+            wdm_suffix = f"_wdm{wdm}" if wdm is not None else ""
             if (args.strength_sweep is None and args.strength is None
-                    and tdm is None and mdm is None):
+                    and tdm is None and mdm is None and wdm is None):
                 out_png = out_dir / f"{name}_{commit_sha}.png"
             else:
-                out_png = out_dir / f"{name}_{commit_sha}_{tag}{tdm_suffix}{mdm_suffix}.png"
+                out_png = out_dir / f"{name}_{commit_sha}_{tag}{tdm_suffix}{mdm_suffix}{wdm_suffix}.png"
             r = run_capture(exe, name, preset, commit_sha, out_png,
                             strength=strength,
                             terrain_debug_mode=tdm,
-                            mech_debug_mode=mdm)
+                            mech_debug_mode=mdm,
+                            water_debug_mode=wdm)
             if not r.get("ok"):
                 overall_ok = False
                 print(f"[baseline] FAIL preset={name} strength={tag}: {r}",
@@ -430,7 +464,8 @@ def main() -> int:
         # not bit-comparison anyway.
         if (args.verify and args.strength_sweep is None
                 and args.strength is None and args.terrain_debug_mode is None
-                and args.mech_debug_mode is None):
+                and args.mech_debug_mode is None
+                and args.water_debug_mode is None):
             single_png = out_dir / f"{name}_{commit_sha}.png"
             sha_first = file_sha256(single_png) if single_png.exists() else ""
             verify_png = out_dir / f"{name}_{commit_sha}.verify.png"

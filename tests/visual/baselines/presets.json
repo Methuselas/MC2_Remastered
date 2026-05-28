@@ -51,6 +51,18 @@
       "warmup_s": 28,
       "duration_s": 30,
       "description": "MECH-BASELINE-0: active-mech combined-arms scene (tier1 mc2_17). Complements mech_24 with a different mission's mech roster. Use --mech-debug-mode + the embedded sidecar inventory to confirm which mech textures/materialIdx were on screen."
+    },
+    "water_final_24": {
+      "mission": "mc2_24",
+      "warmup_s": 28,
+      "duration_s": 30,
+      "description": "WATER-BASELINE-0: PRIMARY water preset (tier1 mc2_24). Water is armed on the GPU-driven/MDI path immediately on load (no cinematic gate), so the MDI water FS — the one that owns --water-debug-mode (MC2_WATER_DEBUG_MODE) — renders at this seed/warmup. Pair with --water-debug-mode for the FS material-space debug views (1 Tint, 2 Alpha, 3 Normal, 4 Depth, 5 Shore, 6 Lighting); --water-debug-mode also forces MC2_GPU_DRIVEN_WATER=1."
+    },
+    "water_heavy_01": {
+      "mission": "mc2_01",
+      "warmup_s": 28,
+      "duration_s": 30,
+      "description": "WATER-BASELINE-0: large-water-surface scene (tier1 mc2_01). Heaviest visible water of tier1, but the ~20s cinematic intro must finish first — warmup_s=28 clears it. Secondary/complement to water_final_24. Same --water-debug-mode usage."
     }
   }
 }
