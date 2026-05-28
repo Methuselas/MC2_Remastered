@@ -15,31 +15,21 @@ const float PI = 3.14159265358979323846;
 
 void main()
 {
-    // NDC -> view direction. z=1, w=1 gives a point on the far plane
-    // pre-perspective-divide; after invProj the .xyz direction (before
-    // normalize) is what we want.
+    // NDC -> view direction.
     vec4 clip = vec4(vNdc, 1.0, 1.0);
     vec3 viewDir = (invProj * clip).xyz;
     vec3 worldDir = normalize(invViewRot * viewDir);
 
-    // Equirect mapping IN MC2 WORLD AXES (NOT GL axes).
-    //
-    // Camera::worldToCameraMatrix is in Stuff/MC2 space. The documented
-    // MC2->GL axis swap (camera.cpp:77-89) is:
-    //   GL.x = -MC2.x   GL.y = MC2.z (up)   GL.z = MC2.y (forward)
-    //
-    // Our worldDir = invViewRot * viewDir comes out in MC2 axes, so:
-    //   MC2.x = horizontal axis 1
-    //   MC2.y = ground/forward (horizontal axis 2)
-    //   MC2.z = elevation / UP
-    //
-    // Therefore azimuth = atan(MC2.y, MC2.x), elevation = asin(MC2.z).
-    // First v0 of the shader (commit a2c3ef3f) sampled MC2.y as elevation,
-    // which manifested as "sky upside-down" because the forward axis was
-    // mapping to vertical UV. Confirmed visually 2026-05-25.
+    // Equirect mapping. Output the FLIPPED v to handle EXR top-to-bottom
+    // scanline order vs GL bottom-to-top texture convention.
+    // (All my axis-swap experiments may have been chasing ghosts; isolating
+    // v-flip as the single variable to validate. If still upside-down, the
+    // bug is in T6's matrix extraction — Stuff uses row-vec convention with
+    // column-major memory, which may interact unexpectedly with our explicit
+    // transpose-via-element-permutation.)
     vec2 uv = vec2(
-        atan(worldDir.y, worldDir.x) / (2.0 * PI) + 0.5,
-        asin(clamp(worldDir.z, -1.0, 1.0)) / PI + 0.5
+        atan(worldDir.z, worldDir.x) / (2.0 * PI) + 0.5,
+        1.0 - (asin(clamp(worldDir.y, -1.0, 1.0)) / PI + 0.5)
     );
 
     FragColor = vec4(texture(u_hdri, uv).rgb, 1.0);
