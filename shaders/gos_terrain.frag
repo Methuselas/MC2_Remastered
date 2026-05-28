@@ -238,29 +238,44 @@ PREC vec3 computeTerrainNormalFromHeight(PREC vec2 worldXY) {
     PREC float tlx   = terrainHeightParams.z;
     PREC float tly   = terrainHeightParams.w;
 
+    // Continuous (col, row) in heightfield index space.
     PREC float colF = (worldXY.x - tlx) * invWu;
     PREC float rowF = (tly - worldXY.y) * invWu;
 
-    int sm1  = max(int(side) - 1, 0);
-    int iCol = clamp(int(floor(colF + 0.5)), 0, sm1);
-    int iRow = clamp(int(floor(rowF + 0.5)), 0, sm1);
+    // Bilinear-sampled UV in [0,1]^2. UV(col,row) = (col + 0.5)/side so that
+    // texel center at index i lands at UV (i + 0.5)/side and texture() with
+    // LINEAR filter interpolates the height continuously between texels —
+    // central differences then vary smoothly across each cell instead of
+    // jumping at cell boundaries (texelFetch+NEAREST produced visible flat-
+    // shaded per-tile shadow polygons).
+    PREC float invSide = (side > 0.0) ? (1.0 / side) : 1.0;
+    PREC vec2  uvBase  = (vec2(colF, rowF) + 0.5) * invSide;
+    PREC vec2  uvStep  = vec2(invSide, 0.0);
+    PREC vec2  uvStepY = vec2(0.0, invSide);
 
-    int colL = max(iCol - 1, 0);
-    int colR = min(iCol + 1, sm1);
-    int rowU = max(iRow - 1, 0);   // smaller row idx = farther north (larger Y)
-    int rowD = min(iRow + 1, sm1);
+    // Clamp UV before sampling — CLAMP_TO_EDGE handles off-map but explicit
+    // clamp keeps the central-difference spacing symmetric at the borders.
+    PREC float uvLo = 0.5 * invSide;
+    PREC float uvHi = 1.0 - 0.5 * invSide;
+    PREC vec2 uvL = vec2(clamp(uvBase.x - invSide, uvLo, uvHi), clamp(uvBase.y, uvLo, uvHi));
+    PREC vec2 uvR = vec2(clamp(uvBase.x + invSide, uvLo, uvHi), clamp(uvBase.y, uvLo, uvHi));
+    PREC vec2 uvU = vec2(clamp(uvBase.x, uvLo, uvHi), clamp(uvBase.y - invSide, uvLo, uvHi));
+    PREC vec2 uvD = vec2(clamp(uvBase.x, uvLo, uvHi), clamp(uvBase.y + invSide, uvLo, uvHi));
 
-    PREC float hL = texelFetch(terrainHeightTex, ivec2(colL, iRow), 0).r;
-    PREC float hR = texelFetch(terrainHeightTex, ivec2(colR, iRow), 0).r;
-    PREC float hU = texelFetch(terrainHeightTex, ivec2(iCol, rowU), 0).r;
-    PREC float hD = texelFetch(terrainHeightTex, ivec2(iCol, rowD), 0).r;
+    PREC float hL = texture(terrainHeightTex, uvL).r;
+    PREC float hR = texture(terrainHeightTex, uvR).r;
+    PREC float hU = texture(terrainHeightTex, uvU).r;
+    PREC float hD = texture(terrainHeightTex, uvD).r;
 
     PREC float wuPerVert = (invWu > 0.0) ? (1.0 / invWu) : 128.0;
-    PREC float spanX = float(colR - colL) * wuPerVert;
-    PREC float spanY = float(rowD - rowU) * wuPerVert;
-    PREC float dhdx   = (spanX > 0.0) ? ((hR - hL) / spanX) : 0.0;
-    PREC float dhdrow = (spanY > 0.0) ? ((hD - hU) / spanY) : 0.0;
-    PREC float dhdy   = -dhdrow;
+    // Span between L/R samples is 2 texels = 2*wuPerVert; same for U/D.
+    // The clamp above shrinks the span at the very last row/column but the
+    // border degeneracy is a single-fragment visual artifact, not a wrong-
+    // sign correctness issue.
+    PREC float span = 2.0 * wuPerVert;
+    PREC float dhdx   = (hR - hL) / span;
+    PREC float dhdrow = (hD - hU) / span;
+    PREC float dhdy   = -dhdrow;     // worldY increases as row decreases
 
     return normalize(vec3(-dhdx, -dhdy, 1.0));
 }

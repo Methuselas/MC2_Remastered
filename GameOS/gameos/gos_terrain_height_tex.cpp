@@ -72,11 +72,17 @@ void __stdcall gos_uploadTerrainHeightTex(
     // R32F single-channel float; no mipmaps (per-vertex authority value, no
     // need to filter across LODs). CLAMP_TO_EDGE so off-map fetches mirror
     // the nearest edge sample (matches gameplay clamp semantics on lookup).
+    // LINEAR filter is REQUIRED for normal-from-height: texelFetch + NEAREST
+    // produces a per-tile-constant normal (flat-shaded polygon look across
+    // the cell interior). With LINEAR + texture()-with-UVs in the shader,
+    // the sampled height varies bilinearly across each cell so the central-
+    // difference normal also varies smoothly. R32F linear-filtering requires
+    // GL 3.0+ which the renderer already guarantees.
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F,
                  side, side, 0,
                  GL_RED, GL_FLOAT, elev.data());
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
