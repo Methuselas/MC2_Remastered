@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-MC2 Render-State MCP Server (MC2-MCP-WRAPPER-1)
+MC2 Render-State MCP Server (MC2-MCP-WRAPPER-1 + MC2-MCP-WRAPPER-2)
 
 Read-only bridge between Claude agents and the running MC2 engine.
 Reads JSON snapshots written by MC2_DEBUG_STATE_DUMP=1.
+Also wraps run_smoke.py to capture baselines and read artifact reports.
 
 Configuration (env vars):
   MC2_DEPLOY_DIR  — path to mc2-win64-v0.4 deploy directory
@@ -17,6 +18,8 @@ No gameplay, renderer, or feature-gate mutation. Read-only.
 
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -33,6 +36,13 @@ _STATE_DIR = _DEPLOY_DIR / "debug_state"
 _LATEST = _STATE_DIR / "latest_render_state.json"
 _HISTORY_SLOTS = 8
 _SCHEMA = "MC2_DEBUG_STATE_V1"
+
+# Worktree root — two levels up from scripts/mcp/
+_WORKTREE_DIR = Path(__file__).resolve().parents[2]
+_ARTIFACTS_DIR = _WORKTREE_DIR / "tests" / "smoke" / "artifacts"
+_RUN_SMOKE = _WORKTREE_DIR / "scripts" / "run_smoke.py"
+
+_VALID_MISSION = re.compile(r"^[a-z0-9_]{1,32}$")
 
 mcp = FastMCP(
     "mc2-render-state",
@@ -337,6 +347,184 @@ def get_frame_info() -> str:
         f"build:   config={build.get('config', '?')} commit={build.get('commit', '?')}",
         f"stateDir: {_STATE_DIR}",
     ])
+
+
+# ---------------------------------------------------------------------------
+# Capture / artifact helpers (MC2-MCP-WRAPPER-2)
+# ---------------------------------------------------------------------------
+
+def _latest_artifact_dir() -> Path | None:
+    """Return the newest artifact directory, or None if none exist."""
+    if not _ARTIFACTS_DIR.exists():
+        return None
+    dirs = sorted(
+        (d for d in _ARTIFACTS_DIR.iterdir() if d.is_dir()),
+        key=lambda d: d.name,
+        reverse=True,
+    )
+    return dirs[0] if dirs else None
+
+
+@mcp.tool()
+def run_capture_baseline(mission: str = "mc2_01", duration: int = 30) -> str:
+    """
+    Run a single-mission smoke capture and return the report summary.
+
+    Launches run_smoke.py with --tier adhoc for one mission. Blocks until
+    the run completes (roughly duration + ~15s startup). Returns the parsed
+    report rows as text, or an error message.
+
+    mission: mission stem, e.g. mc2_01, mc2_10, mc2_24 (default: mc2_01)
+    duration: seconds per mission, clamped to 10..120 (default: 30)
+    """
+    if not _VALID_MISSION.match(mission):
+        return f"Invalid mission name {mission!r}. Use alphanumeric + underscore, max 32 chars."
+
+    duration = max(10, min(120, duration))
+
+    cmd = [
+        "py", "-3", str(_RUN_SMOKE),
+        "--tier", "adhoc",
+        "--missions", mission,
+        "--duration", str(duration),
+        "--kill-existing",
+        "--keep-logs",
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=duration + 120,
+            cwd=str(_WORKTREE_DIR),
+        )
+    except subprocess.TimeoutExpired:
+        return f"run_smoke.py timed out after {duration + 120}s."
+    except Exception as e:
+        return f"Failed to launch run_smoke.py: {e}"
+
+    artifact_dir = _latest_artifact_dir()
+    if artifact_dir is None:
+        return (
+            f"run_smoke.py exited {result.returncode} but no artifact dir found.\n"
+            f"stdout: {result.stdout[-1000:]}\nstderr: {result.stderr[-500:]}"
+        )
+
+    report_path = artifact_dir / "report.json"
+    report = _read_json(report_path)
+    if report is None:
+        return (
+            f"run_smoke.py exited {result.returncode}. No report.json in {artifact_dir}.\n"
+            f"stdout: {result.stdout[-1000:]}"
+        )
+
+    lines = [
+        f"exit: {result.returncode}",
+        f"dir:  {artifact_dir.name}",
+        f"tier: {report.get('tier', '?')}  profile: {report.get('profile', '?')}",
+        "",
+    ]
+    for row in report.get("rows", []):
+        r = row.get("result", "?")
+        fps = row.get("avg_fps", "?")
+        ready_ms = row.get("mission_ready_ms", "?")
+        lines.append(f"  {row.get('stem', '?'):12s}  result={r}  fps={fps}  ready_ms={ready_ms}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def list_capture_sets() -> str:
+    """
+    List all smoke artifact sets, newest first.
+
+    Each entry shows the timestamp directory name, tier, and per-mission results.
+    Requires at least one prior run_capture_baseline() or run_smoke.py call.
+    """
+    if not _ARTIFACTS_DIR.exists():
+        return f"Artifact directory not found: {_ARTIFACTS_DIR}"
+
+    dirs = sorted(
+        (d for d in _ARTIFACTS_DIR.iterdir() if d.is_dir()),
+        key=lambda d: d.name,
+        reverse=True,
+    )
+    if not dirs:
+        return f"No artifact sets found in {_ARTIFACTS_DIR}"
+
+    lines = [f"# Capture sets in {_ARTIFACTS_DIR} ({len(dirs)} total)"]
+    for d in dirs:
+        report = _read_json(d / "report.json")
+        if report is None:
+            lines.append(f"  {d.name}  (no report.json)")
+            continue
+        tier = report.get("tier", "?")
+        rows = report.get("rows", [])
+        summary = "  ".join(f"{r.get('stem', '?')}={r.get('result', '?')}" for r in rows)
+        lines.append(f"  {d.name}  tier={tier}  {summary}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def summarize_latest_capture() -> str:
+    """
+    Return a detailed summary of the most recent smoke artifact set.
+
+    Shows tier, profile, fps_note, and per-mission result + FPS + counters.
+    """
+    artifact_dir = _latest_artifact_dir()
+    if artifact_dir is None:
+        return f"No artifact sets found in {_ARTIFACTS_DIR}"
+
+    report = _read_json(artifact_dir / "report.json")
+    if report is None:
+        return f"No report.json in {artifact_dir}"
+
+    lines = [
+        f"dir:      {artifact_dir.name}",
+        f"tier:     {report.get('tier', '?')}",
+        f"profile:  {report.get('profile', '?')}",
+        f"fps_note: {report.get('fps_note', '(none)')}",
+        "",
+    ]
+    for row in report.get("rows", []):
+        lines.append(f"mission: {row.get('stem', '?')}")
+        lines.append(f"  result:      {row.get('result', '?')}")
+        lines.append(f"  avg_fps:     {row.get('avg_fps', '?')}")
+        lines.append(f"  p1low_fps:   {row.get('p1low_fps', '?')}")
+        lines.append(f"  ready_ms:    {row.get('mission_ready_ms', '?')}")
+        lines.append(f"  destroys_d:  {row.get('destroys_delta', '?')}")
+        buckets = row.get("buckets", {})
+        if buckets:
+            lines.append(f"  buckets:     {json.dumps(buckets)}")
+        details = row.get("details", "")
+        if details:
+            lines.append(f"  details:     {details}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def get_latest_artifact_paths() -> str:
+    """
+    List all files in the most recent smoke artifact directory with sizes.
+
+    Useful for locating log files, screenshots, or the report itself after a capture.
+    """
+    artifact_dir = _latest_artifact_dir()
+    if artifact_dir is None:
+        return f"No artifact sets found in {_ARTIFACTS_DIR}"
+
+    files = sorted(artifact_dir.iterdir(), key=lambda f: f.name)
+    lines = [f"# {artifact_dir}"]
+    for f in files:
+        if f.is_file():
+            size_kb = f.stat().st_size / 1024
+            lines.append(f"  {f.name:<40s}  {size_kb:8.1f} KB")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
