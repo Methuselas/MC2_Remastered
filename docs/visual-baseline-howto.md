@@ -59,6 +59,38 @@ B=dirt), `5` normal lighting, `6` shadow factor, `7` cloud shadow, `8`
 cement diag, `9` thin-record diag. Diagnostic-only; never alters the
 default mode-0 final rendering.
 
+### VFX-heavy presets (VFX-BASELINE-0)
+
+```
+# Default (mode 0 — byte-identical) capture of a combat scene
+py -3 scripts/capture_baseline.py --preset vfx_combat_10
+
+# Particle debug-view capture (filename gets a _vdmN suffix)
+py -3 scripts/capture_baseline.py --preset vfx_combat_10 --vfx-debug-mode 4
+```
+
+- `vfx_combat_10` (mc2_10) — primary VFX/particle preset; active weapon fire.
+- `vfx_combat_24` (mc2_24) — dense urban combat; complementary effect roster.
+
+Available particle debug modes (mirror of `particle_billboard.frag`
+`u_debugMode` / `MC2_VFX_DEBUG_MODE`): `0` Final (default — byte-identical
+final frame), `1` Albedo (raw atlas texel), `2` Alpha (final alpha
+grayscale), `3` ParticleKind (hashed color per kind), `4` Overdraw (additive
+proxy). Diagnostic-only; never alters the default mode-0 final rendering.
+`MC2_GPU_PARTICLES` stays default-ON so particles draw.
+
+**Transience caveat (important).** Unlike terrain/static-prop/mech, VFX is
+*not* present in every frame — particles are combat-only and appear
+opportunistically as the AI engages under the passive smoke seed. The
+captured frame at `warmup_s=28` **may or may not** contain on-screen
+particles. The capture sidecar records `vfxDebugMode` + a `vfxNote`, but the
+**authoritative proof of particle activity is the capture `.log`**: grep for
+`GOSFX_GPU` `enabled=1 sprites=N` and `TRAIL_PROBE`. Treat a VFX baseline PNG
+as a *sample*, not a guaranteed particle-populated reference. Staging a
+deterministic particle-dense frame would need a future scripted-fire / camera
+hook — and **gameplay, emission, and lifetime must not be altered** to force
+captures (hard constraint of the VFX lane).
+
 ## Comparing before/after
 
 Workflow for evaluating a candidate change:

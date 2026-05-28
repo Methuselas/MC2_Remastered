@@ -63,6 +63,18 @@
       "warmup_s": 28,
       "duration_s": 30,
       "description": "WATER-BASELINE-0: large-water-surface scene (tier1 mc2_01). Heaviest visible water of tier1, but the ~20s cinematic intro must finish first — warmup_s=28 clears it. Secondary/complement to water_final_24. Same --water-debug-mode usage."
+    },
+    "vfx_combat_10": {
+      "mission": "mc2_10",
+      "warmup_s": 28,
+      "duration_s": 30,
+      "description": "VFX-BASELINE-0: combat scene with active weapon fire / GPU particle effects (tier1 mc2_10). Primary preset for the VFX/particle lane. NOTE: particles are TRANSIENT — under the passive smoke seed, weapon fire / explosions appear opportunistically as AI engages; the captured frame at warmup_s=28 may or may not contain on-screen particles. Confirm activity via the capture .log (GOSFX_GPU 'enabled=1 sprites=N' / TRAIL_PROBE). Pair with --vfx-debug-mode (1 Albedo, 2 Alpha, 3 ParticleKind, 4 Overdraw); MC2_GPU_PARTICLES stays default-ON. To force a particle-dense frame deterministically, a future scripted-fire hook is needed — gameplay/emission must NOT be altered to stage captures."
+    },
+    "vfx_combat_24": {
+      "mission": "mc2_24",
+      "warmup_s": 28,
+      "duration_s": 30,
+      "description": "VFX-BASELINE-0: dense urban combat scene (tier1 mc2_24). Complements vfx_combat_10 with a different mission's effect roster. Same transience caveat: confirm particle presence via the .log rather than assuming the frame is particle-populated."
     }
   }
 }

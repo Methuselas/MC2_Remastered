@@ -83,6 +83,11 @@ TRACKED_FLAGS = (
     "MC2_WATER_DEBUG_MODE",
     "MC2_GPU_DRIVEN_WATER",
     "MC2_RENDER_WATER_FASTPATH",
+    # VFX-BASELINE-0: particle debug-mode selector + the master GPU-particle
+    # gate. A VFX capture is only meaningful with particles enabled; recording
+    # both makes the frame's VFX state reproducible.
+    "MC2_VFX_DEBUG_MODE",
+    "MC2_GPU_PARTICLES",
 )
 
 
@@ -200,7 +205,8 @@ def run_capture(exe: Path, preset_name: str, preset: dict,
                 strength: str | None = None,
                 terrain_debug_mode: str | None = None,
                 mech_debug_mode: str | None = None,
-                water_debug_mode: str | None = None) -> dict:
+                water_debug_mode: str | None = None,
+                vfx_debug_mode: str | None = None) -> dict:
     mission = preset["mission"]
     warmup = int(preset["warmup_s"])
     duration = int(preset.get("duration_s", warmup + 2))
@@ -261,6 +267,17 @@ def run_capture(exe: Path, preset_name: str, preset: dict,
     else:
         env["MC2_WATER_DEBUG_MODE"] = str(water_debug_mode)
         env["MC2_GPU_DRIVEN_WATER"] = "1"
+
+    # VFX-BASELINE-0: particle_billboard.frag debug-mode override
+    # (MC2_VFX_DEBUG_MODE). None = leave unset (default mode 0 / Final,
+    # byte-identical to legacy). Values 1..4 select Albedo/Alpha/ParticleKind/
+    # Overdraw. Does not alter emission/lifetime/sorting; gated default-OFF.
+    # MC2_GPU_PARTICLES is left at its default (ON) so particles actually draw.
+    vfx_capture = vfx_debug_mode is not None
+    if vfx_debug_mode is None:
+        env.pop("MC2_VFX_DEBUG_MODE", None)
+    else:
+        env["MC2_VFX_DEBUG_MODE"] = str(vfx_debug_mode)
 
     proc_args = [str(exe), "--profile", "stock", "--mission", mission,
                  "--duration", str(duration)]
@@ -333,6 +350,14 @@ def run_capture(exe: Path, preset_name: str, preset: dict,
     # recon gap — so there is no inventory to embed, only the mode + flags.)
     if water_capture:
         sidecar["waterDebugMode"] = str(water_debug_mode)
+    # VFX-BASELINE-0: record the selected particle debug mode. VFX is transient
+    # (combat-only); note that visibility at the captured frame is opportunistic.
+    if vfx_capture:
+        sidecar["vfxDebugMode"] = str(vfx_debug_mode)
+        sidecar["vfxNote"] = ("Particles are transient combat effects; the "
+                              "captured frame may or may not contain active "
+                              "particles. Confirm via the .log "
+                              "(GOSFX_GPU 'enabled=1 sprites=N' / TRAIL_PROBE).")
     sidecar_path = out_png.with_suffix(".json")
     sidecar_path.write_text(json.dumps(sidecar, indent=2) + "\n",
                             encoding="utf-8")
@@ -384,6 +409,14 @@ def main() -> int:
                          "MC2_GPU_DRIVEN_WATER=1 so the MDI water path (which "
                          "owns the uniform) is armed. Omit for default. "
                          "Filename suffix: _wdmN.")
+    ap.add_argument("--vfx-debug-mode", default=None,
+                    help="VFX-BASELINE-0: particle_billboard.frag debug-mode "
+                         "override (MC2_VFX_DEBUG_MODE). Modes: 0 Final "
+                         "(default), 1 Albedo, 2 Alpha, 3 ParticleKind, 4 "
+                         "Overdraw. Omit for default (mode 0, byte-identical). "
+                         "MC2_GPU_PARTICLES stays default-ON. VFX is transient "
+                         "(combat) — particle visibility at the frame is "
+                         "opportunistic. Filename suffix: _vdmN.")
     args = ap.parse_args()
 
     exe = Path(args.exe)
@@ -443,16 +476,20 @@ def main() -> int:
             mdm_suffix = f"_mdm{mdm}" if mdm is not None else ""
             wdm = args.water_debug_mode
             wdm_suffix = f"_wdm{wdm}" if wdm is not None else ""
+            vdm = args.vfx_debug_mode
+            vdm_suffix = f"_vdm{vdm}" if vdm is not None else ""
             if (args.strength_sweep is None and args.strength is None
-                    and tdm is None and mdm is None and wdm is None):
+                    and tdm is None and mdm is None and wdm is None
+                    and vdm is None):
                 out_png = out_dir / f"{name}_{commit_sha}.png"
             else:
-                out_png = out_dir / f"{name}_{commit_sha}_{tag}{tdm_suffix}{mdm_suffix}{wdm_suffix}.png"
+                out_png = out_dir / f"{name}_{commit_sha}_{tag}{tdm_suffix}{mdm_suffix}{wdm_suffix}{vdm_suffix}.png"
             r = run_capture(exe, name, preset, commit_sha, out_png,
                             strength=strength,
                             terrain_debug_mode=tdm,
                             mech_debug_mode=mdm,
-                            water_debug_mode=wdm)
+                            water_debug_mode=wdm,
+                            vfx_debug_mode=vdm)
             if not r.get("ok"):
                 overall_ok = False
                 print(f"[baseline] FAIL preset={name} strength={tag}: {r}",
@@ -465,7 +502,8 @@ def main() -> int:
         if (args.verify and args.strength_sweep is None
                 and args.strength is None and args.terrain_debug_mode is None
                 and args.mech_debug_mode is None
-                and args.water_debug_mode is None):
+                and args.water_debug_mode is None
+                and args.vfx_debug_mode is None):
             single_png = out_dir / f"{name}_{commit_sha}.png"
             sha_first = file_sha256(single_png) if single_png.exists() else ""
             verify_png = out_dir / f"{name}_{commit_sha}.verify.png"
