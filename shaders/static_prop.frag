@@ -8,6 +8,14 @@
 
 #include <include/render_contract.hglsl>
 
+#if defined(MC2_USE_VIEW_UNIFORMS)
+// V-MATERIAL-PBR-3: per-fragment PBR specular consumes u_cameraWorldPos to
+// build the view vector. Same compile-guard contract as static_prop.vert —
+// the include is suppressed when MC2_VIEW_UNIFORMS=0 (process-lifetime gate
+// at GLSL prefix injection in gos_static_prop_batcher.cpp).
+#include <include/view_uniforms.hglsl>
+#endif
+
 // [RENDER_CONTRACT]
 //   Pass:           StaticProp
 //   Color0:         RGBA, opaque (alpha-test for ALPHA_TEST_BIT materials)
@@ -28,6 +36,33 @@ flat in uint v_localVertexID;
 flat in uint v_drawID;          // plan v3.8 Step 8.3: forwarded from VS as
                                 // uint(gl_DrawIDARB) under MC2_COALESCE,
                                 // else 0u (vertex shader sets per branch).
+
+#if defined(MC2_USE_VIEW_UNIFORMS)
+// V-MATERIAL-PBR-3: per-fragment PBR varyings (must match static_prop.vert
+// outputs in name, type, and flat qualifier). v_worldPos is interpolated
+// (per-pixel view vector); v_pbrV1Sun* are flat (constant per ObjectLights
+// entry, written by provoking vertex).
+// TODO(SHADER-REFLECT-HYGIENE-8): new varyings + uniforms drift goldens;
+// regen in fresh worktree.
+in       vec3 v_worldPos;
+flat in  vec3 v_pbrV1SunDir;
+flat in  vec3 v_pbrV1SunColor;
+flat in  int  v_pbrV1SunFound;
+
+// V-MATERIAL-PBR-3: PBR uniforms moved from static_prop.vert. Same
+// upload sites (gos_static_prop_batcher.cpp glGetUniformLocation +
+// glUniform*); glUniform is per-program, stage-agnostic, so no CPU edit
+// is required. Default behavior preserved:
+//   u_pbrV1Strength             = 0.0  (PBR block short-circuits)
+//   u_pbrV1RoughnessOverride    = -1.0 (sentinel; use material/literal)
+//   u_pbrV1DiagSunFound         = 0    (DIAG off)
+// Runtime safety interlock (s_viewUniformsDisabled flag in the batcher)
+// force-uploads strength=0 when MC2_VIEW_UNIFORMS=0, complementing this
+// compile-guard.
+uniform float u_pbrV1Strength;
+uniform float u_pbrV1RoughnessOverride;
+uniform int   u_pbrV1DiagSunFound;
+#endif
 
 #ifdef MC2_COALESCE
 // Plan v3.8 Step 8.3 — coalesce-only: per-draw indirection via gl_DrawIDARB.
@@ -277,6 +312,81 @@ void main() {
 
     vec4 c = tex_color * vec4(litRgb, v_argb.a);
     c.rgb += v_highlight.rgb * v_highlight.a;
+
+#if defined(MC2_USE_VIEW_UNIFORMS)
+    // V-MATERIAL-PBR-3: per-fragment Schlick-Fresnel + power-lobe specular.
+    // Math identical to former vert-side block; differences vs PBR-2:
+    //   1. runs per-fragment so pow(NdotH, P) yields a tight localized
+    //      highlight instead of Gouraud-averaged uniform brightening;
+    //   2. albedo-tinted F0 for metallics uses real per-fragment tex_color
+    //      (was constant kF0Dielectric in PBR-2 since albedo wasn't
+    //      available at the vertex stage);
+    //   3. roughness/metallic source from MaterialGpu (binding=5) when
+    //      u_materialGpuSample!=0 — same access pattern as debug modes 5/6
+    //      from V-MATERIAL-PBR-1, guarded so the buffer may be unbound.
+    //
+    // Default-OFF byte-identity: u_pbrV1Strength=0.0 short-circuits the
+    // whole block (matches PBR-2 OFF behavior). Magenta DIAG branch
+    // requires `u_pbrV1Strength > 0.0 && DIAG != 0`, so DIAG OFF state is
+    // also unchanged.
+    //
+    // Added BEFORE fog mix so specular fogs out with the rest of the
+    // surface; AFTER highlight add so the specular contribution doesn't
+    // get clobbered by highlight clamp semantics (highlight already
+    // applied straight, no further compensation needed).
+    if (u_pbrV1Strength > 0.0) {
+        if (v_pbrV1SunFound != 0) {
+            if (u_pbrV1DiagSunFound != 0) {
+                // DIAG cyan: sun found at this fragment's provoking vertex.
+                c.rgb = vec3(0.0, 1.0, 1.0);
+            } else {
+                // Material scalars: prefer MaterialGpu when sampling is on;
+                // fall back to the PBR-2-TUNE literal defaults otherwise
+                // (metallic=0, roughness=0.6) so gate-ON behavior degrades
+                // gracefully when binding=5 is unbound.
+                float metallic  = 0.0;
+                float roughness = 0.6;
+#ifdef MC2_COALESCE
+                if (u_materialGpuSample != 0) {
+                    metallic  = materialTable_.materials[materialIdx].metallicFactor;
+                    roughness = materialTable_.materials[materialIdx].roughnessFactor;
+                }
+#endif
+                // Runtime override (ImGui slider) — sentinel < 0 means use
+                // material/literal; >= 0 replaces roughness post-material.
+                if (u_pbrV1RoughnessOverride >= 0.0) {
+                    roughness = u_pbrV1RoughnessOverride;
+                }
+
+                vec3 N      = normalize(v_normal);
+                vec3 V_eye  = normalize(u_cameraWorldPos.xyz - v_worldPos);
+                vec3 L      = normalize(-v_pbrV1SunDir);   // surface -> sun
+                vec3 H      = normalize(L + V_eye);
+
+                // Albedo-tinted F0 for metallics — real per-fragment albedo
+                // (deferred from PBR-2 because vertex stage had no access).
+                vec3 albedoRgb = tex_color.rgb;
+                const vec3 kF0Dielectric = vec3(0.04);
+                vec3 F0 = mix(kF0Dielectric, albedoRgb, metallic);
+                vec3 F  = F0 + (vec3(1.0) - F0)
+                             * pow(max(0.0, 1.0 - dot(N, V_eye)), 5.0);
+
+                float smoothness = 1.0 - roughness;
+                float specPower  = mix(1.0, 512.0, smoothness * smoothness);
+                float NdotH      = max(0.0, dot(N, H));
+                float NdotL      = max(0.0, dot(N, L));
+                vec3  specular   = v_pbrV1SunColor * F * pow(NdotH, specPower) * NdotL;
+
+                c.rgb += specular * u_pbrV1Strength;
+            }
+        } else if (u_pbrV1DiagSunFound != 0) {
+            // DIAG magenta: PBR gate ON, DIAG ON, but no INFINITE light
+            // found in this fragment's ObjectLights entry.
+            c.rgb = vec3(1.0, 0.0, 1.0);
+        }
+    }
+#endif  // MC2_USE_VIEW_UNIFORMS
+
     c.rgb = mix(v_fog.rgb, c.rgb, u_fogValue);
 
     FragColor = c;

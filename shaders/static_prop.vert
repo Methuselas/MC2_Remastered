@@ -130,40 +130,14 @@ uniform float u_ambientV1Strength;
 uniform vec3  u_iblSh[9];
 uniform float u_iblShStrength;
 
-// V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular on
-// StaticPropOpaque lane. Default strength = 0.0 (mathematical no-op via the
-// `if (u_pbrV1Strength > 0.0)` early-out below). CPU uploads 0.0 when
-// MC2_STATIC_PROP_PBR_V1 unset/=0 OR when MC2_VIEW_UNIFORMS=0 (the safety
-// interlock; the entire PBR block requires u_cameraWorldPos which is only
-// declared inside `#if defined(MC2_USE_VIEW_UNIFORMS)`).
-//
-// Per-vertex limitation: uses constant F0=vec3(0.04) (dielectric default)
-// and fallback material scalars metallic=0.0, roughness=1.0. Per-fragment
-// MaterialGpu lookup (per-instance metallicFactor/roughnessFactor + albedo-
-// tinted F0 for metallics) deferred to V-MATERIAL-PBR-3 -- adding it here
-// would require plumbing perDraw_ into the vertex stage (out of scope).
-//
-// Gate-ON visual: with the fallback roughness=1.0, smoothness=0 collapses
-// the specPower to 1.0, so `pow(NdotH, 1)` yields a broad dielectric sheen
-// (NOT a tight highlight). This is EXPECTED and acknowledged in
-// RenderCore/RendererFeatureRegistry.h kFeatureTable doc. Gate-ON is NOT
-// byte-identical to default-OFF; only default-OFF (strength=0.0) is.
-uniform float u_pbrV1Strength;
-
-// V-MATERIAL-PBR-2-TUNE-UI: runtime roughness override (ImGui-driven).
-//   < 0.0   -> override disabled; use the literal 0.6 fallback below
-//             (byte-identical to V-MATERIAL-PBR-2-TUNE baseline).
-//   [0.05,1.0] -> override active; replaces roughnessFactor literal.
-// CPU uploads -1.0 sentinel by default and when MC2_VIEW_UNIFORMS=0.
-uniform float u_pbrV1RoughnessOverride;
-
-// V-MATERIAL-PBR-2-DIAG: diagnostic visualizer for sunFound state.
-//   0 (default) -> off; existing PBR math runs unchanged (byte-identical).
-//   non-zero    -> replace lit with cyan (sunFound=true) or magenta (false).
-// Opt-in via env MC2_STATIC_PROP_PBR_V1_DIAG_SUNFOUND=1. Only meaningful when
-// the PBR gate is also ON (u_pbrV1Strength > 0.0).
-// TODO(SHADER-REFLECT-HYGIENE-8): new uniform drifts goldens; regen in fresh worktree.
-uniform int u_pbrV1DiagSunFound;
+// V-MATERIAL-PBR-3: PBR uniforms (u_pbrV1Strength, u_pbrV1RoughnessOverride,
+// u_pbrV1DiagSunFound) MOVED to static_prop.frag — the PBR math now runs
+// per-fragment so the localized specular highlight is no longer averaged
+// across the Gouraud-interpolated vertex output. The .vert side now only
+// IDENTIFIES the sun (one INFINITE light per ObjectLights entry) and
+// forwards (sunDir, sunColor, sunFound) as flat varyings to the fragment.
+// CPU upload sites are unchanged: glGetUniformLocation/glUniform* operate
+// per-program, stage-agnostic.
 
 // SH-L2 evaluator (Ramamoorthi-Hanrahan 2001 named constants).
 // Axis convention: Y-up world (same as V-AMBIENT-STATIC-1 hemi_t at
@@ -215,6 +189,27 @@ flat out uint v_drawID;          // plan v3.8 Step 8.2: forwarded to FS as
                                  // uint(gl_DrawIDARB) under MC2_COALESCE,
                                  // else 0u (fragment shader's MC2_COALESCE
                                  // branch indexes perDraw_.entries[] by it).
+
+#if defined(MC2_USE_VIEW_UNIFORMS)
+// V-MATERIAL-PBR-3: varyings for per-fragment PBR specular.
+//   v_worldPos       — world-space fragment position (Stuff-space here, same
+//                      as worldPos in main(); used to form view vector via
+//                      u_cameraWorldPos in the frag).
+//   v_pbrV1SunDir    — sun light direction as stored in ObjectLights
+//                      (surface->sun direction NEGATED, per calc_light
+//                      convention `dot(N, -ld.light_dir.xyz)`). Frag negates
+//                      again to obtain surface->sun L. Flat: constant per
+//                      ObjectLights row; no interpolation needed.
+//   v_pbrV1SunColor  — sun light color. Flat for same reason.
+//   v_pbrV1SunFound  — 0/1 sentinel: did we find a TG_LIGHT_INFINITE entry
+//                      in ObjectLights[lightDataIndex]? Flat int.
+// TODO(SHADER-REFLECT-HYGIENE-8): new varyings drift reflect goldens; regen
+// in fresh worktree.
+out      vec3 v_worldPos;
+flat out vec3 v_pbrV1SunDir;
+flat out vec3 v_pbrV1SunColor;
+flat out int  v_pbrV1SunFound;
+#endif
 
 void main() {
     // Plan v3.8 Step 8.1 — coalesce variant indexes by
@@ -371,84 +366,46 @@ void main() {
             lit += ibl * u_iblShStrength;
         }
 
-        // V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular.
-        // GUARDED by `#if defined(MC2_USE_VIEW_UNIFORMS)` because the math
-        // requires u_cameraWorldPos which is only declared inside that
-        // include block (view_uniforms.hglsl). When MC2_VIEW_UNIFORMS=0,
-        // both the shader-side compile-guard AND the CPU-side runtime
-        // safety interlock (s_viewUniformsDisabled in gos_static_prop_batcher.cpp)
-        // force the path off -- defense in depth.
-        //
-        // Sun direction/color: inline iteration over LightsData SSBO
-        // (Phase 0 Option A). The sun is whichever ObjectLights entry has
-        // light_type==TG_LIGHT_INFINITE (no stable slot guarantee). We take
-        // the FIRST such entry; mclib/tgl.cpp populates exactly one
-        // INFINITE light per ObjectLights entry under stock missions
-        // (the sun), so this is unambiguous. If no INFINITE light is
-        // present we skip the specular contribution.
-        //
-        // Sun direction convention: lighting.hglsl calc_light's INFINITE
-        // branch uses `dot(normal, -ld.light_dir[i].xyz)`, so ld.light_dir
-        // is the surface-to-sun direction negated (i.e. it points
-        // FROM the sun TO the surface). To get L (surface->light) we
-        // negate: L = -ld.light_dir[i].xyz.
+        // V-MATERIAL-PBR-3: per-vertex PBR math REMOVED — moved to
+        // static_prop.frag so Schlick-Fresnel + power-lobe specular runs
+        // per-fragment and produces a tight localized highlight instead of
+        // a Gouraud-averaged uniform per-prop brightening. The .vert side
+        // continues to IDENTIFY the sun light (one TG_LIGHT_INFINITE entry
+        // per ObjectLights row, by convention) and forwards (sunDir,
+        // sunColor, sunFound) via flat varyings — sun state is constant
+        // per ObjectLights entry, so flat-shading is correct (and cheaper
+        // than per-fragment SSBO iteration). View vector is reconstructed
+        // in the frag from u_cameraWorldPos minus v_worldPos.
+    }
 #if defined(MC2_USE_VIEW_UNIFORMS)
-        if (u_pbrV1Strength > 0.0) {
-            ObjectLights ld_pbr = light[int(inst.lightDataIndex)];
-            vec3 sunDir   = vec3(0.0);
-            vec3 sunColor = vec3(0.0);
-            bool sunFound = false;
-            int n_pbr = min(ld_pbr.numLights.x, MAX_LIGHTS_IN_WORLD);
-            for (int i = 0; i < n_pbr; ++i) {
-                if (int(ld_pbr.light_dir[i].w) == TG_LIGHT_INFINITE) {
-                    sunDir   = ld_pbr.light_dir[i].xyz;
-                    sunColor = ld_pbr.light_color[i].xyz;
-                    sunFound = true;
-                    break;
-                }
-            }
-            if (u_pbrV1DiagSunFound != 0) {
-                // V-MATERIAL-PBR-2-DIAG: bypass PBR math entirely; force lit
-                // to a bright debug color so the user can see whether
-                // sunFound is true for this vertex. Cyan = found, magenta =
-                // not found. Replacement (not additive) so the result is
-                // unambiguous regardless of ambient/IBL contributions.
-                lit = sunFound ? vec3(0.0, 1.0, 1.0) : vec3(1.0, 0.0, 1.0);
-            } else if (sunFound) {
-                vec3 N = normalize(worldNormal);
-                vec3 V_eye = normalize(u_cameraWorldPos.xyz - worldPos);
-                vec3 L = normalize(-sunDir);
-                vec3 H = normalize(L + V_eye);
-                // Per-vertex fallbacks: metallic=0, roughness=0.6
-                // (per-fragment MaterialGpu lookup deferred to V-MATERIAL-PBR-3).
-                // roughness=0.6 (V-MATERIAL-PBR-2-TUNE) keeps a moderately tight
-                // specular lobe (specPower~=82 via mix(1,512,smoothness^2)) so the
-                // gate-ON sheen is visibly present, not imperceptibly broad.
-                // Prior value 1.0 produced pow(NdotH, 1) = NdotH which at F0=0.04
-                // added <=4% RGB even at strength=3.0 -- visually undetectable.
-                float metallicFactor  = 0.0;
-                // V-MATERIAL-PBR-2-TUNE-UI: runtime override layer over the
-                // 0.6 literal. Sentinel < 0.0 -> use literal (byte-identical
-                // to PBR-2-TUNE baseline). >= 0.0 -> apply override.
-                float roughnessFactor = 0.6;
-                if (u_pbrV1RoughnessOverride >= 0.0)
-                    roughnessFactor = u_pbrV1RoughnessOverride;
-                const vec3 kF0Dielectric = vec3(0.04);
-                vec3  F0     = mix(kF0Dielectric, vec3(0.04), metallicFactor);
-                // ^ Equivalent to vec3(0.04); albedo-tinted F0 for metallics
-                //   deferred (requires per-fragment access).
-                vec3  F      = F0 + (vec3(1.0) - F0)
-                                 * pow(max(0.0, 1.0 - dot(N, V_eye)), 5.0);
-                float smoothness = 1.0 - roughnessFactor;
-                float specPower  = mix(1.0, 512.0, smoothness * smoothness);
-                float NdotH      = max(0.0, dot(N, H));
-                float NdotL      = max(0.0, dot(N, L));
-                vec3  specular   = sunColor * F * pow(NdotH, specPower) * NdotL;
-                lit += specular * u_pbrV1Strength;
+    // V-MATERIAL-PBR-3: populate sun-light varyings for the frag PBR block.
+    // Runs unconditionally (does NOT depend on u_pbrV1Strength) because
+    // flat varyings must be written by the provoking vertex even when the
+    // frag-side gate is off. Cost is one ObjectLights SSBO read + a short
+    // scan that early-exits at the first INFINITE light.
+    //
+    // Sun direction convention: lighting.hglsl calc_light's INFINITE branch
+    // uses `dot(normal, -ld.light_dir.xyz)`, so light_dir.xyz is the
+    // surface->sun direction NEGATED. Frag re-negates to recover L.
+    // mclib/tgl.cpp populates at most one INFINITE light per ObjectLights
+    // entry under stock missions (the sun); we take the first match.
+    {
+        ObjectLights ld_pbr = light[int(inst.lightDataIndex)];
+        v_pbrV1SunDir   = vec3(0.0);
+        v_pbrV1SunColor = vec3(0.0);
+        v_pbrV1SunFound = 0;
+        int n_pbr = min(ld_pbr.numLights.x, MAX_LIGHTS_IN_WORLD);
+        for (int i = 0; i < n_pbr; ++i) {
+            if (int(ld_pbr.light_dir[i].w) == TG_LIGHT_INFINITE) {
+                v_pbrV1SunDir   = ld_pbr.light_dir[i].xyz;
+                v_pbrV1SunColor = ld_pbr.light_color[i].xyz;
+                v_pbrV1SunFound = 1;
+                break;
             }
         }
-#endif  // MC2_USE_VIEW_UNIFORMS
+        v_worldPos = worldPos;
     }
+#endif
 
     // 6. aRGBHighlight additive contribution — mirrors CPU tgl.cpp:2313-2335.
     //    CPU adds R/G/B channels of aRGBHighlight (objective/selection tint)
