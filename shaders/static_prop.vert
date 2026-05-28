@@ -385,8 +385,9 @@ void main() {
     // Sun direction convention: lighting.hglsl calc_light's INFINITE branch
     // uses `dot(normal, -ld.light_dir.xyz)`, so light_dir.xyz is the
     // surface->sun direction NEGATED. Frag re-negates to recover L.
-    // mclib/tgl.cpp populates at most one INFINITE light per ObjectLights
-    // entry under stock missions (the sun); we take the first match.
+    // Stock MC2 missions use TG_LIGHT_INFINITEWITHFALLOFF (type 2) for the
+    // sun, not TG_LIGHT_INFINITE (type 1); both are directional so the same
+    // direction/color extraction applies. Accept either.
     {
         ObjectLights ld_pbr = light[int(inst.lightDataIndex)];
         v_pbrV1SunDir   = vec3(0.0);
@@ -394,7 +395,8 @@ void main() {
         v_pbrV1SunFound = 0;
         int n_pbr = min(ld_pbr.numLights.x, MAX_LIGHTS_IN_WORLD);
         for (int i = 0; i < n_pbr; ++i) {
-            if (int(ld_pbr.light_dir[i].w) == TG_LIGHT_INFINITE) {
+            int lt = int(ld_pbr.light_dir[i].w);
+            if (lt == TG_LIGHT_INFINITE || lt == TG_LIGHT_INFINITEWITHFALLOFF) {
                 v_pbrV1SunDir   = ld_pbr.light_dir[i].xyz;
                 v_pbrV1SunColor = ld_pbr.light_color[i].xyz;
                 v_pbrV1SunFound = 1;
