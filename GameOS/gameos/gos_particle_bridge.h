@@ -35,3 +35,16 @@ extern "C" void gos_SetActiveCamera(const float right_xyz[3], const float up_xyz
 extern "C" void gos_GetCameraRight(float out_xyz[3]);
 extern "C" void gos_GetCameraUp(float out_xyz[3]);
 extern "C" void gos_ClearActiveCamera(void);
+
+/* VFX-DEBUG-VIEWS-1 / VFX-TUNING-UI-1: read-only debug-mode + runtime
+ * intensity scales for the Graphics Options "VFX Tuning" section. All scales
+ * default 1.0 (byte-identical no-op), clamped 0..8; debug mode 0..4. Look-only:
+ * no emission/lifetime/sorting/timing effect. */
+extern "C" int   gos_vfx_getDebugMode(void);
+extern "C" void  gos_vfx_setDebugMode(int mode);
+extern "C" float gos_vfx_getBrightness(void);
+extern "C" float gos_vfx_getAdditiveBrightness(void);
+extern "C" float gos_vfx_getAlphaScale(void);
+extern "C" void  gos_vfx_setBrightness(float v);
+extern "C" void  gos_vfx_setAdditiveBrightness(float v);
+extern "C" void  gos_vfx_setAlphaScale(float v);

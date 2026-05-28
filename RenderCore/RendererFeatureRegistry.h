@@ -447,7 +447,28 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "MC2_VFX_DEBUG_MODE",
         EnvVarKind::Trace,
         false,
-        "VFX-DEBUG-VIEWS-1: GPU particle billboard fragment-shader debug-mode selector (particle_billboard.frag u_debugMode, uploaded by gos_particle_bridge). Default unset = mode 0 (Final, byte-identical to default output). Modes: 1=Albedo (raw atlas texel rgb, no vertex-color tint), 2=Alpha (final alpha as grayscale), 3=ParticleKind (distinct hashed color per kind_flags kind), 4=Overdraw (constant additive proxy to visualize blend buildup). Seeded once at process start from this env var (clamped 0..4); the VFX Pass Object-Inspector panel shows the active mode read-only (gos_vfx_getDebugMode). Diagnostic-only; no gameplay, emission, lifetime, sorting, or default visual effect; VFX object-IDs remain prohibited. RenderDebugView canonical mapping (kDebugViewMask_Vfx): Final->0, Albedo->1; modes 2-4 are VFX-local (no canonical enum slot)."
+        "VFX-DEBUG-VIEWS-1: GPU particle billboard fragment-shader debug-mode selector (particle_billboard.frag u_debugMode, uploaded by gos_particle_bridge). Default unset = mode 0 (Final, byte-identical to default output). Modes: 1=Albedo (raw atlas texel rgb, no vertex-color tint), 2=Alpha (final alpha as grayscale), 3=ParticleKind (distinct hashed color per kind_flags kind), 4=Overdraw (constant additive proxy to visualize blend buildup). Seeded once at process start from this env var (clamped 0..4); the VFX Pass Object-Inspector panel shows the active mode read-only (gos_vfx_getDebugMode), and the Graphics Options 'VFX Tuning' combo overrides it live (gos_vfx_setDebugMode). Diagnostic-only; no gameplay, emission, lifetime, sorting, or default visual effect; VFX object-IDs remain prohibited. RenderDebugView canonical mapping (kDebugViewMask_Vfx): Final->0, Albedo->1; modes 2-4 are VFX-local (no canonical enum slot)."
+    },
+    {
+        "MC2_TUNE_VFX_BRIGHTNESS",
+        "MC2_TUNE_VFX_BRIGHTNESS",
+        EnvVarKind::Trace,
+        false,
+        "VFX-TUNING-UI-1: startup-default for the global GPU-particle RGB brightness scale (particle_billboard.frag u_vfxBrightness, applied to ALL particles). Clamped 0..8. Unset/empty -> 1.0 (byte-identical no-op). Seeded once at process start; the Graphics Options 'VFX Tuning > Brightness' slider overrides at runtime (gos_vfx_setBrightness). Look-only — no emission/lifetime/sorting/timing change. No effect when MC2_GPU_PARTICLES=0."
+    },
+    {
+        "MC2_TUNE_VFX_ADDITIVE_BRIGHTNESS",
+        "MC2_TUNE_VFX_ADDITIVE_BRIGHTNESS",
+        EnvVarKind::Trace,
+        false,
+        "VFX-TUNING-UI-1: startup-default for the additive-only GPU-particle RGB brightness scale (particle_billboard.frag u_vfxAdditiveBrightness, applied ONLY to additive draw groups via per-group u_vfxIsAdditive). Clamped 0..8. Unset/empty -> 1.0 (byte-identical no-op). Graphics Options 'VFX Tuning > Additive brightness' slider overrides at runtime (gos_vfx_setAdditiveBrightness). Highest-value lever for pre-bloom additive overdraw (see docs/vfx-overdraw-audit.md). Look-only. No effect when MC2_GPU_PARTICLES=0."
+    },
+    {
+        "MC2_TUNE_VFX_ALPHA_SCALE",
+        "MC2_TUNE_VFX_ALPHA_SCALE",
+        EnvVarKind::Trace,
+        false,
+        "VFX-TUNING-UI-1: startup-default for the GPU-particle alpha (opacity) scale (particle_billboard.frag u_vfxAlphaScale, applied to ALL particles). Clamped 0..8. Unset/empty -> 1.0 (byte-identical no-op). Graphics Options 'VFX Tuning > Opacity' slider overrides at runtime (gos_vfx_setAlphaScale). Look-only — no emission/lifetime/timing change. No effect when MC2_GPU_PARTICLES=0."
     },
 };
 

@@ -20,6 +20,34 @@
           "name": "u_debugMode",
           "offset": 0,
           "type": "int"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_vfxBrightness",
+          "offset": 4,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_vfxAdditiveBrightness",
+          "offset": 8,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_vfxAlphaScale",
+          "offset": 12,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_vfxIsAdditive",
+          "offset": 16,
+          "type": "int"
         }
       ],
       "name": "gl_DefaultUniformBlock"

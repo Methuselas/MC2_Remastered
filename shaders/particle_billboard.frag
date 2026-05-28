@@ -27,6 +27,15 @@ uniform sampler2D uAtlas;
 //   4 = Overdraw     (constant additive proxy for blend buildup)
 uniform int u_debugMode;
 
+// VFX-TUNING-UI-1: user intensity scales, uploaded by gos_particle_bridge.
+// Defaults are all 1.0 (set per-flush from runtime state seeded at 1.0) so the
+// default frame is byte-identical (multiply by exactly 1.0 is IEEE identity).
+// These tune look only — no emission/lifetime/sorting/timing effect.
+uniform float u_vfxBrightness;          // global rgb scale (all particles)
+uniform float u_vfxAdditiveBrightness;  // extra rgb scale, additive groups only
+uniform float u_vfxAlphaScale;          // alpha (opacity) scale (all particles)
+uniform int   u_vfxIsAdditive;          // 1 if the current draw group is additive
+
 in vec2 v_uv;
 in vec4 v_color;
 flat in uint v_kind;
@@ -66,4 +75,10 @@ void main() {
         // 0 = Final (default, byte-identical to pre-slice output).
         outColor = finalColor;
     }
+
+    // VFX-TUNING-UI-1: apply user intensity scales last. At defaults
+    // (brightness=additive=alpha=1.0) every multiply is *= 1.0 → byte-identical.
+    outColor.rgb *= u_vfxBrightness;
+    if (u_vfxIsAdditive == 1) outColor.rgb *= u_vfxAdditiveBrightness;
+    outColor.a *= u_vfxAlphaScale;
 }

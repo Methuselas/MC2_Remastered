@@ -59,6 +59,16 @@ extern "C" {
     int  __stdcall gos_terrainHeightResampleFactor(void);
     void __stdcall gos_setTerrainHeightResampleFactor(int factor);
 }
+// VFX-TUNING-UI-1: GPU particle debug-mode + intensity scales (defined in
+// GameOS/gameos/gos_particle_bridge.cpp). All scales default 1.0 = no-op.
+extern "C" int   gos_vfx_getDebugMode(void);
+extern "C" void  gos_vfx_setDebugMode(int mode);
+extern "C" float gos_vfx_getBrightness(void);
+extern "C" float gos_vfx_getAdditiveBrightness(void);
+extern "C" float gos_vfx_getAlphaScale(void);
+extern "C" void  gos_vfx_setBrightness(float v);
+extern "C" void  gos_vfx_setAdditiveBrightness(float v);
+extern "C" void  gos_vfx_setAlphaScale(float v);
 
 #include <cstdio>
 #include <cmath>
@@ -1261,6 +1271,83 @@ static void drawEnvGatesSection() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// VFX-TUNING-UI-1: GPU particle look tuning. All scales default 1.0 (no-op,
+// byte-identical default frame). Look-only — no emission/lifetime/sorting
+// change. Tuning is invisible when MC2_GPU_PARTICLES=0 (legacy CPU FX) or in
+// scenes with no routed (Card/CardCloud/Point/Shard/Tube) particles.
+static void drawVfxTuningSection() {
+    const char* penv = std::getenv("MC2_GPU_PARTICLES");
+    bool particlesOn = !(penv != nullptr && penv[0] == '0');  // default-ON
+    if (particlesOn) {
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+            "GPU particles: ON (MC2_GPU_PARTICLES default ON)");
+    } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.3f, 1.0f),
+            "GPU particles: OFF (MC2_GPU_PARTICLES=0 — sliders have no effect)");
+    }
+
+    ImGui::BeginDisabled(!particlesOn);
+
+    // Debug view selector (also exposed via MC2_VFX_DEBUG_MODE / inspector).
+    ImGui::SeparatorText("Debug view");
+    {
+        static const char* kVfxModes[] = {
+            "0 Final", "1 Albedo", "2 Alpha", "3 ParticleKind", "4 Overdraw" };
+        int mode = gos_vfx_getDebugMode();
+        if (ImGui::Combo("Mode##vfxdbg", &mode, kVfxModes, 5))
+            gos_vfx_setDebugMode(mode);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("particle_billboard.frag u_debugMode. Mode 0 = "
+                              "byte-identical default. Diagnostic only.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##vfxdbg")) gos_vfx_setDebugMode(0);
+    }
+
+    // Intensity scales. Defaults 1.0 = byte-identical.
+    ImGui::SeparatorText("Intensity");
+    {
+        float b = gos_vfx_getBrightness();
+        // Slider range matches the backend clamp (0..8) so an env-seeded
+        // MC2_TUNE_VFX_BRIGHTNESS > 4 is not silently reduced on first touch.
+        if (ImGui::SliderFloat("Brightness##vfx", &b, 0.0f, 8.0f, "%.2f"))
+            gos_vfx_setBrightness(b);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Global RGB scale on all particles. Default 1.0 (no-op).");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##vfxb")) gos_vfx_setBrightness(1.0f);
+
+        float ab = gos_vfx_getAdditiveBrightness();
+        if (ImGui::SliderFloat("Additive brightness##vfx", &ab, 0.0f, 8.0f, "%.2f"))
+            gos_vfx_setAdditiveBrightness(ab);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Extra RGB scale applied ONLY to additive groups\n"
+                              "(flares/explosions). Default 1.0 (no-op). The\n"
+                              "highest-value lever for pre-bloom additive overdraw.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##vfxab")) gos_vfx_setAdditiveBrightness(1.0f);
+
+        float a = gos_vfx_getAlphaScale();
+        if (ImGui::SliderFloat("Opacity##vfx", &a, 0.0f, 2.0f, "%.2f"))
+            gos_vfx_setAlphaScale(a);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Alpha (opacity) scale on all particles. Default 1.0 (no-op).");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##vfxa")) gos_vfx_setAlphaScale(1.0f);
+    }
+
+    if (ImGui::SmallButton("Reset all##vfx")) {
+        gos_vfx_setBrightness(1.0f);
+        gos_vfx_setAdditiveBrightness(1.0f);
+        gos_vfx_setAlphaScale(1.0f);
+    }
+    ImGui::TextDisabled("Defaults (1.0) are byte-identical. Look-only: no "
+                        "emission/lifetime/timing change.");
+
+    ImGui::EndDisabled();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 void draw() {
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_G))
         s_open = !s_open;
@@ -1393,6 +1480,10 @@ void draw() {
     // ── Water ─────────────────────────────────────────────────────────────────
     if (ImGui::CollapsingHeader("Water"))
         drawWaterSection();
+
+    // ── VFX Tuning ────────────────────────────────────────────────────────────
+    if (ImGui::CollapsingHeader("VFX Tuning"))
+        drawVfxTuningSection();
 
     // ── HUD ───────────────────────────────────────────────────────────────────
     if (ImGui::CollapsingHeader("HUD")) {

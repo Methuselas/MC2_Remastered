@@ -92,6 +92,28 @@ int  vfxDebugMode() {
     return s_debugMode_value;
 }
 
+// VFX-TUNING-UI-1: user intensity scales. All default 1.0 (= byte-identical
+// no-op). Seeded once from MC2_TUNE_VFX_* (clamped 0..8); the Graphics Options
+// "VFX Tuning" sliders override at runtime via the setters below. These tune
+// LOOK only — no emission/lifetime/sorting/timing change.
+bool  s_vfxTune_initialized   = false;
+float s_vfxBrightness         = 1.0f;
+float s_vfxAdditiveBrightness = 1.0f;
+float s_vfxAlphaScale         = 1.0f;
+static float clampVfxScale(float v) { return v < 0.0f ? 0.0f : (v > 8.0f ? 8.0f : v); }
+static float envVfxScale(const char* name, float dflt) {
+    const char* v = std::getenv(name);
+    if (!v || v[0] == '\0') return dflt;
+    return clampVfxScale((float)std::atof(v));
+}
+void vfxTuneInitIfNeeded() {
+    if (s_vfxTune_initialized) return;
+    s_vfxBrightness         = envVfxScale("MC2_TUNE_VFX_BRIGHTNESS",          1.0f);
+    s_vfxAdditiveBrightness = envVfxScale("MC2_TUNE_VFX_ADDITIVE_BRIGHTNESS", 1.0f);
+    s_vfxAlphaScale         = envVfxScale("MC2_TUNE_VFX_ALPHA_SCALE",         1.0f);
+    s_vfxTune_initialized   = true;
+}
+
 // P0-4: Cached uniform locations — populated once in ensureInitialized()
 // after the program links. -2 = not yet queried; -1 = not found (GLSL may
 // strip unused uniforms); >= 0 = valid location.
@@ -106,6 +128,11 @@ GLint s_loc_cameraRight   = -2;
 GLint s_loc_cameraUp      = -2;
 // VFX-DEBUG-VIEWS-1: particle debug-mode uniform.
 GLint s_loc_debugMode     = -2;
+// VFX-TUNING-UI-1: user intensity-scale uniforms.
+GLint s_loc_vfxBrightness         = -2;
+GLint s_loc_vfxAdditiveBrightness = -2;
+GLint s_loc_vfxAlphaScale         = -2;
+GLint s_loc_vfxIsAdditive         = -2;
 
 void ensureInitialized() {
     if (s_initFailed) return;
@@ -161,6 +188,11 @@ void ensureInitialized() {
         // VFX-DEBUG-VIEWS-1: debug-mode selector (may be -1 if mode 0 dead-code
         // elim strips it; upload is guarded on >= 0).
         s_loc_debugMode     = glGetUniformLocation(s_prog->shp_, "u_debugMode");
+        // VFX-TUNING-UI-1: intensity-scale uniforms.
+        s_loc_vfxBrightness         = glGetUniformLocation(s_prog->shp_, "u_vfxBrightness");
+        s_loc_vfxAdditiveBrightness = glGetUniformLocation(s_prog->shp_, "u_vfxAdditiveBrightness");
+        s_loc_vfxAlphaScale         = glGetUniformLocation(s_prog->shp_, "u_vfxAlphaScale");
+        s_loc_vfxIsAdditive         = glGetUniformLocation(s_prog->shp_, "u_vfxIsAdditive");
         if (s_loc_cameraRight < 0 || s_loc_cameraUp < 0) {
             if (groupLogEnabled())
                 std::fprintf(stderr, "[B2] gos_particle_bridge: uniform locations missing — right=%d up=%d\n",
@@ -321,6 +353,13 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     if (s_loc_cameraUp    >= 0) glUniform3fv(s_loc_cameraUp,    1, g_cam_up);
     // VFX-DEBUG-VIEWS-1: debug-mode selector (default 0 = byte-identical Final).
     if (s_loc_debugMode   >= 0) glUniform1i(s_loc_debugMode, vfxDebugMode());
+    // VFX-TUNING-UI-1: per-flush intensity scales (defaults 1.0 = no-op).
+    vfxTuneInitIfNeeded();
+    if (s_loc_vfxBrightness         >= 0) glUniform1f(s_loc_vfxBrightness,         s_vfxBrightness);
+    if (s_loc_vfxAdditiveBrightness >= 0) glUniform1f(s_loc_vfxAdditiveBrightness, s_vfxAdditiveBrightness);
+    if (s_loc_vfxAlphaScale         >= 0) glUniform1f(s_loc_vfxAlphaScale,         s_vfxAlphaScale);
+    // u_vfxIsAdditive defaults to alpha (0); set per-group in the draw loop.
+    if (s_loc_vfxIsAdditive         >= 0) glUniform1i(s_loc_vfxIsAdditive, 0);
 
     // ── Sampler on unit 0 (trap #5: sampler inheritance) ─────────────
     glBindSampler(0, s_sampler);
@@ -417,6 +456,10 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
             } else {
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             }
+            // VFX-TUNING-UI-1: tell the FS whether this group is additive so the
+            // additive-brightness scale applies only to additive groups.
+            if (s_loc_vfxIsAdditive >= 0)
+                glUniform1i(s_loc_vfxIsAdditive, grp.blendMode == 1 ? 1 : 0);
 
             // Bind the resolved texture.
             glBindTexture(GL_TEXTURE_2D, glTex);
@@ -467,3 +510,19 @@ extern "C" int gos_vfx_getDebugMode()
 {
     return vfxDebugMode();
 }
+// VFX-TUNING-UI-1: runtime debug-mode override (Graphics Options combo).
+// Clamped 0..4; marks initialized so it wins over a later env read. Look-only.
+extern "C" void gos_vfx_setDebugMode(int m)
+{
+    s_debugMode_initialized = true;
+    s_debugMode_value = (m >= 0 && m <= 4) ? m : 0;
+}
+
+// VFX-TUNING-UI-1: runtime intensity-scale get/set (Graphics Options sliders).
+// Clamped 0..8; default 1.0 = byte-identical no-op. Look-only.
+extern "C" float gos_vfx_getBrightness()         { vfxTuneInitIfNeeded(); return s_vfxBrightness; }
+extern "C" float gos_vfx_getAdditiveBrightness() { vfxTuneInitIfNeeded(); return s_vfxAdditiveBrightness; }
+extern "C" float gos_vfx_getAlphaScale()         { vfxTuneInitIfNeeded(); return s_vfxAlphaScale; }
+extern "C" void  gos_vfx_setBrightness(float v)         { vfxTuneInitIfNeeded(); s_vfxBrightness = clampVfxScale(v); }
+extern "C" void  gos_vfx_setAdditiveBrightness(float v) { vfxTuneInitIfNeeded(); s_vfxAdditiveBrightness = clampVfxScale(v); }
+extern "C" void  gos_vfx_setAlphaScale(float v)         { vfxTuneInitIfNeeded(); s_vfxAlphaScale = clampVfxScale(v); }
