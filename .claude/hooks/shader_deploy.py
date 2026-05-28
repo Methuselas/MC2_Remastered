@@ -6,10 +6,15 @@ ext = f.rsplit('.', 1)[-1] if '.' in f else ''
 
 if 'nifty-mendeleev/shaders/' not in f:
     sys.exit(0)
-if ext not in ('frag', 'vert', 'tesc', 'tese', 'geom'):
+# Include .hglsl: shader includes (e.g. view_uniforms.hglsl) are loaded at
+# runtime and MUST be deployed too — missing them caused the MECH-VIEWUNIFORMS
+# deploy-gap (see docs/mech-viewuniforms-source-dump.md).
+if ext not in ('frag', 'vert', 'tesc', 'tese', 'geom', 'hglsl', 'glsl', 'comp'):
     sys.exit(0)
 
-dst_base = 'A:/Games/mc2-opengl/mc2-win64-v0.1.1/shaders'
+# Deploy target MUST match the live runtime dir (currently v0.4). v0.1.1 was
+# stale — deploying there silently did nothing for the running game.
+dst_base = 'A:/Games/mc2-opengl/mc2-win64-v0.4/shaders'
 dst_dir = dst_base + '/include' if '/shaders/include/' in f else dst_base
 dst = dst_dir + '/' + os.path.basename(f)
 
