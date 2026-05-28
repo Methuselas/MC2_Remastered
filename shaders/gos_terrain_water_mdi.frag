@@ -38,6 +38,8 @@ uniform PREC float alphaDepth;    // MapData::alphaDepth (world-units); shore sm
 uniform int u_waterDebugMode;     // WATER-DEBUG-VIEWS-1: fragment/material-space debug.
                                   // 0=Final 1=Tint 2=Alpha 3=Normal 4=Depth 5=Shore 6=Lighting.
                                   // Distinct from VS geometry-space debugMode (MC2_RENDER_WATER_FASTPATH_DEBUG).
+uniform float u_waterSkyTintStrength;  // WATER-VISUAL-FIRST-SLICE: 0 = exact no-op (default).
+uniform vec3  u_waterSkyTintColor;     // camera-INDEPENDENT sky/horizon tint target (NOT fresnel)
 
 // water-v1 style params. WATER-TUNING-UI-1: the user-tunable subset is promoted
 // from compile-time const to uniform (live ImGui control in Graphics Options >
@@ -131,6 +133,11 @@ void main(void)
         col *= 1.0 + RIPPLE_GAIN * waveLOD * crest;            // brighten only
         PREC float glint = smoothstep(GLINT_THRESH, 0.80, nz); // sharp crest sparkle
         col += glint * GLINT_GAIN * waveLOD * GLINT_TINT;      // camera-INDEPENDENT shimmer
+        // WATER-VISUAL-FIRST-SLICE: gated camera-INDEPENDENT sky/horizon tint.
+        // f(uniform color, strength) only — no view angle, no reflection. At
+        // strength 0 (default) the mix returns col unchanged -> byte-identical.
+        // Applied before fog so atmospheric fog still attenuates by distance.
+        col = mix(col, u_waterSkyTintColor, clamp(u_waterSkyTintStrength, 0.0, 1.0));
         if (fog_color.x > 0.0 || fog_color.y > 0.0 || fog_color.z > 0.0 || fog_color.w > 0.0)
             col = mix(fog_color.rgb, col, FogValue);
 

@@ -2256,6 +2256,25 @@ void  gos_SetWaterDeepColor(float r,float g,float b)    { g_waterDeepColor[0]=r;
 void  gos_GetWaterShallowColor(float* rgb)  { rgb[0]=g_waterShallowColor[0]; rgb[1]=g_waterShallowColor[1]; rgb[2]=g_waterShallowColor[2]; }
 void  gos_SetWaterShallowColor(float r,float g,float b) { g_waterShallowColor[0]=r; g_waterShallowColor[1]=g; g_waterShallowColor[2]=b; }
 
+// WATER-VISUAL-FIRST-SLICE: gated camera-INDEPENDENT sky/horizon tint. Strength
+// default 0.0 = exact no-op (byte-identical). Env MC2_WATER_SKYTINT=1 bumps the
+// default to a small value for quick A/B; the ImGui slider is authoritative once
+// touched. Sentinel -1 on strength = uninit (resolve env once). NOT fresnel /
+// reflection (those stay shelved per the 2026-05-17 camera-independence ruling).
+float g_waterSkyTintStrength = -1.0f;
+float g_waterSkyTintColor[3] = { 0.55f, 0.70f, 0.85f };  // soft sky-blue/horizon
+float gos_GetWaterSkyTintStrength()
+{
+    if (g_waterSkyTintStrength < 0.0f) {
+        const char* v = getenv("MC2_WATER_SKYTINT");
+        g_waterSkyTintStrength = (v && v[0] && v[0] != '0') ? 0.15f : 0.0f;
+    }
+    return g_waterSkyTintStrength;
+}
+void  gos_SetWaterSkyTintStrength(float v) { g_waterSkyTintStrength = (v < 0.0f) ? 0.0f : v; }
+void  gos_GetWaterSkyTintColor(float* rgb) { rgb[0]=g_waterSkyTintColor[0]; rgb[1]=g_waterSkyTintColor[1]; rgb[2]=g_waterSkyTintColor[2]; }
+void  gos_SetWaterSkyTintColor(float r,float g,float b) { g_waterSkyTintColor[0]=r; g_waterSkyTintColor[1]=g; g_waterSkyTintColor[2]=b; }
+
 void gos_terrain_bridge_renderWaterFast(
     unsigned int recordCount,
     unsigned int waterGosHandle,
@@ -2577,6 +2596,9 @@ void gosRenderer::renderWaterFastPath(
         setMF         ("GLINT_GAIN",         g_waterGlintGain);
         setMVec3      ("DEEP_COLOR",         g_waterDeepColor);
         setMVec3      ("SHALLOW_COLOR",      g_waterShallowColor);
+        // WATER-VISUAL-FIRST-SLICE: gated sky tint (strength 0 default = no-op).
+        setMF         ("u_waterSkyTintStrength", gos_GetWaterSkyTintStrength());
+        setMVec3      ("u_waterSkyTintColor",    g_waterSkyTintColor);
         setMF         ("waterElevation",  waterElevation);
         setMF         ("alphaDepth",      alphaDepth);
         setMI         ("alphaEdgeByte",   (int)alphaEdgeByte);

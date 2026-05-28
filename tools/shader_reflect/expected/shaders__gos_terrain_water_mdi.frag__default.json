@@ -85,43 +85,57 @@
         {
           "array_stride": null,
           "matrix_stride": null,
-          "name": "SHALLOW_COLOR",
+          "name": "u_waterSkyTintStrength",
+          "offset": 72,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_waterSkyTintColor",
           "offset": 80,
           "type": "vec3"
         },
         {
           "array_stride": null,
           "matrix_stride": null,
-          "name": "DEEP_COLOR",
+          "name": "SHALLOW_COLOR",
           "offset": 96,
           "type": "vec3"
         },
         {
           "array_stride": null,
           "matrix_stride": null,
+          "name": "DEEP_COLOR",
+          "offset": 112,
+          "type": "vec3"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
           "name": "ABSORPTION_DENSITY",
-          "offset": 108,
+          "offset": 124,
           "type": "float"
         },
         {
           "array_stride": null,
           "matrix_stride": null,
           "name": "WATER_MAX_ALPHA",
-          "offset": 112,
+          "offset": 128,
           "type": "float"
         },
         {
           "array_stride": null,
           "matrix_stride": null,
           "name": "RIPPLE_GAIN",
-          "offset": 116,
+          "offset": 132,
           "type": "float"
         },
         {
           "array_stride": null,
           "matrix_stride": null,
           "name": "GLINT_GAIN",
-          "offset": 120,
+          "offset": 136,
           "type": "float"
         }
       ],

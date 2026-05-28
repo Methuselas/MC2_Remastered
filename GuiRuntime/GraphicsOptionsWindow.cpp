@@ -46,6 +46,11 @@ void  gos_GetWaterDeepColor(float* rgb);
 void  gos_SetWaterDeepColor(float r, float g, float b);
 void  gos_GetWaterShallowColor(float* rgb);
 void  gos_SetWaterShallowColor(float r, float g, float b);
+// WATER-VISUAL-FIRST-SLICE — gated camera-independent sky tint.
+float gos_GetWaterSkyTintStrength();
+void  gos_SetWaterSkyTintStrength(float v);
+void  gos_GetWaterSkyTintColor(float* rgb);
+void  gos_SetWaterSkyTintColor(float r, float g, float b);
 // TERRAIN-RESAMPLE-1 — height-tex source/render/factor accessors + live
 // factor setter. C-linkage (declared extern "C" in gos_terrain_height_tex.h).
 extern "C" {
@@ -677,6 +682,29 @@ static void drawWaterSection() {
         if (ImGui::SmallButton("Reset##watshal")) gos_SetWaterShallowColor(0.22f, 0.45f, 0.38f);
     }
 
+    ImGui::SeparatorText("Sky Tint (gated, camera-independent)");
+    {
+        const char* env = std::getenv("MC2_WATER_SKYTINT");
+        bool gateOn = (env && env[0] && env[0] != '0');
+        if (gateOn) ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "MC2_WATER_SKYTINT: ON (default strength 0.15)");
+        else        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "MC2_WATER_SKYTINT: off (strength 0 = no-op; slider still works)");
+
+        float strength = gos_GetWaterSkyTintStrength();
+        if (ImGui::SliderFloat("Sky tint strength##wat", &strength, 0.0f, 1.0f, "%.3f"))
+            gos_SetWaterSkyTintStrength(strength);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Camera-INDEPENDENT additive pull of water color toward the tint color.\n"
+                              "0 = exact no-op (byte-identical). NOT fresnel/reflection.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##watskystr")) gos_SetWaterSkyTintStrength(0.0f);
+
+        float sky[3]; gos_GetWaterSkyTintColor(sky);
+        if (ImGui::ColorEdit3("Sky tint color##wat", sky))
+            gos_SetWaterSkyTintColor(sky[0], sky[1], sky[2]);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##watskycol")) gos_SetWaterSkyTintColor(0.55f, 0.70f, 0.85f);
+    }
+
     if (ImGui::SmallButton("Reset ALL water defaults##wat")) {
         gos_SetWaterFsDebugMode(0);
         gos_SetWaterAbsorptionDensity(0.022f);
@@ -685,6 +713,8 @@ static void drawWaterSection() {
         gos_SetWaterGlintGain(0.30f);
         gos_SetWaterDeepColor(0.03f, 0.13f, 0.20f);
         gos_SetWaterShallowColor(0.22f, 0.45f, 0.38f);
+        gos_SetWaterSkyTintStrength(0.0f);
+        gos_SetWaterSkyTintColor(0.55f, 0.70f, 0.85f);
     }
     ImGui::TextDisabled("MDI path only (MC2_GPU_DRIVEN_WATER=1). Defaults = byte-identical.");
 }
