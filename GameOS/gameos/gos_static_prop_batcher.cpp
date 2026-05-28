@@ -823,14 +823,17 @@ void loadProgramsIfNeeded() {
     if (RenderWorld::IsObjectIdBufferEnabled()) {
         legacyPrefix += "#define MC2_OBJECT_ID_BUFFER 1\n";
     }
-    // F1-3B: inject MC2_USE_VIEW_UNIFORMS when MC2_VIEW_UNIFORMS=1 so
-    // static_prop.vert consumes the ViewUniforms UBO instead of the legacy
-    // standalone uniform. Gate is process-lifetime: shaders are compiled once
-    // at startup. Changing MC2_VIEW_UNIFORMS requires a process restart.
-    // Only static_prop.vert is affected — do NOT add to shadow or mech prefixes.
-    static const bool s_viewUniformsShaderEnabled =
-        (std::getenv("MC2_VIEW_UNIFORMS") != nullptr &&
-         std::getenv("MC2_VIEW_UNIFORMS")[0] == '1');
+    // F1-3D flip: MC2_USE_VIEW_UNIFORMS injected by default (kill-switch
+    // pattern matching s_viewUniformsDisabled). Disabled only when
+    // MC2_VIEW_UNIFORMS=0. Pre-flip F1-3B required explicit =1; that left the
+    // shader compiled without the define (PBR/ViewUniforms block compiled out)
+    // even though the UBO upload was already default-ON, causing all PBR
+    // uniforms to resolve to -1. Gate is process-lifetime: shaders compiled
+    // once at startup. Only static_prop.{vert,frag} affected.
+    static const bool s_viewUniformsShaderEnabled = []() {
+        const char* v = std::getenv("MC2_VIEW_UNIFORMS");
+        return !(v != nullptr && v[0] == '0');
+    }();
     if (s_viewUniformsShaderEnabled) {
         legacyPrefix += "#define MC2_USE_VIEW_UNIFORMS 1\n";
     }
