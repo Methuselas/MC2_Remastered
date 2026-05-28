@@ -5,6 +5,7 @@
 #include "render_snapshot.h"
 #include "view_uniforms_gl.h"
 #include "../../RenderCore/RendererFeatureRegistry.h"
+#include "../../RenderCore/RenderResourceRegistry.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -229,7 +230,29 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
     s << "    \"pbrRoughnessOverrideEnabled\": "; b(s, sp.pbrRoughnessOverrideEnabled); s << ",\n";
     s << "    \"pbrRoughnessOverride\": " << sp.pbrRoughnessOverride << ",\n";
     s << "    \"debugMaterialMode\": " << sp.debugMaterialMode << "\n";
-    s << "  }\n";
+    s << "  },\n";
+    {
+        const size_t count = RenderCore::getRenderResourceCount();
+        s << "  \"renderResources\": [\n";
+        for (size_t i = 0; i < count; ++i) {
+            const RenderCore::RenderResourceDesc* r = RenderCore::getRenderResourceByIndex(i);
+            if (!r) continue;
+            s << "    {\n";
+            s << "      \"id\": \""       << RenderCore::toString(r->id)     << "\",\n";
+            s << "      \"kind\": \""     << RenderCore::toString(r->kind)   << "\",\n";
+            s << "      \"format\": \""   << RenderCore::toString(r->format) << "\",\n";
+            s << "      \"debugName\": \"" << jsonEscape(r->debugName ? r->debugName : "") << "\",\n";
+            s << "      \"width\": "   << r->width   << ",\n";
+            s << "      \"height\": "  << r->height  << ",\n";
+            s << "      \"layers\": "  << r->layers  << ",\n";
+            s << "      \"samples\": " << r->samples << ",\n";
+            s << "      \"glName\": "  << r->glName  << ",\n";
+            s << "      \"sizeBytes\": " << static_cast<unsigned long long>(r->sizeBytes) << ",\n";
+            s << "      \"valid\": true\n";
+            s << "    }" << (i + 1 < count ? "," : "") << "\n";
+        }
+        s << "  ]\n";
+    }
     s << "}\n";
     return s.str();
 }

@@ -16,6 +16,8 @@
 
 #include <GL/glew.h>
 
+#include "../../RenderCore/RenderResourceRegistry.h"
+
 namespace {
 
 GLuint g_handle              = 0;
@@ -203,6 +205,20 @@ void __stdcall gos_uploadTerrainHeightTex(
         (unsigned)g_handle, g_sourceSide, g_resampleFactor,
         g_side, g_worldUnitsPerVertex, g_mapTopLeftX, g_mapTopLeftY,
         uploadCount * sizeof(float));
+
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::TerrainHeightTexture;
+        d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.format    = RenderCore::RenderResourceFormat::R32F;
+        d.debugName = "TerrainHeightTexture";
+        d.width     = static_cast<uint32_t>(g_side);
+        d.height    = static_cast<uint32_t>(g_side);
+        d.glName    = static_cast<uint32_t>(g_handle);
+        d.sizeBytes = static_cast<uint64_t>(g_side) * static_cast<uint64_t>(g_side) * sizeof(float);
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
 }
 
 void __stdcall gos_resetTerrainHeightTex(void)
@@ -224,6 +240,10 @@ void __stdcall gos_resetTerrainHeightTex(void)
     g_cachedMapTopLeftX       = 0.0f;
     g_cachedMapTopLeftY       = 0.0f;
     g_overrideFactor          = -1;
+
+    RenderCore::RenderResourceDesc invalid;
+    invalid.id = RenderCore::RenderResourceId::TerrainHeightTexture;
+    RenderCore::registerOrUpdateRenderResource(invalid);
 }
 
 void __stdcall gos_setTerrainHeightResampleFactor(int factor)

@@ -7,6 +7,7 @@
 #include "gos_validate.h"  // drainGLErrors (Tier-1 instr §4)
 #include "gameos.hpp"      // gos_InvalidateRenderStateCache (RENDER_STATES v1)
 #include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled
+#include "../../RenderCore/RenderResourceRegistry.h"
 
 #include <cassert>
 #include <cstdio>
@@ -1141,6 +1142,20 @@ void gosPostProcess::initShadows()
     glClear(GL_DEPTH_BUFFER_BIT);
     glClearDepth(0.0f);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::ShadowStaticMap;
+        d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.format    = RenderCore::RenderResourceFormat::Depth24;
+        d.debugName = "ShadowStaticMap";
+        d.width     = static_cast<uint32_t>(shadowMapSize_);
+        d.height    = static_cast<uint32_t>(shadowMapSize_);
+        d.glName    = static_cast<uint32_t>(shadowDepthTex_);
+        d.sizeBytes = static_cast<uint64_t>(shadowMapSize_) * static_cast<uint64_t>(shadowMapSize_) * 4u;
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
 }
 
 void gosPostProcess::beginShadowPass()
@@ -1211,6 +1226,10 @@ void gosPostProcess::destroyShadows()
         glsl_program::deleteProgram("shadow_depth");
         shadowDepthProg_ = nullptr;
     }
+
+    RenderCore::RenderResourceDesc invalid;
+    invalid.id = RenderCore::RenderResourceId::ShadowStaticMap;
+    RenderCore::registerOrUpdateRenderResource(invalid);
 }
 
 // CP-1: per-mission reset of process-scoped static-shadow priming state.
