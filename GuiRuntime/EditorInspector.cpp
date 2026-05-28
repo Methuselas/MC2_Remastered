@@ -514,13 +514,16 @@ void EditorInspector::drawImGui() {
                                       "  5=roughness (grayscale)  6=metallic (grayscale)\n"
                                       "Gate: MC2_STATIC_PROP_DEBUG_MATERIAL=N (1..6).");
 
-                // V-IBL-STATIC-1: SH-L2 image-based ambient. ENV var is the
-                // authoritative gate (read once at process start by the
-                // batcher's s_iblShEnabled). The slider only modulates the
-                // upload magnitude when the env-gate is on; env-unset always
-                // uploads 0.0 (byte-identical OFF, regardless of slider).
+                // V-IBL-STATIC-1 + V-IBL-DEFAULT-FLIP (2026-05-27):
+                // SH-L2 image-based ambient on the StaticPropOpaque lane.
+                // Default-ON: unset env -> gate ON, uploads g_iblShStrength
+                // (default 0.5). Explicit "=0" -> gate OFF -> uploads 0.0
+                // -> shader `if (u_iblShStrength > 0.0)` short-circuits to
+                // byte-identical pre-flip OFF behavior. ImGui slider below
+                // tunes runtime strength when gate is on.
+                // MUST match s_iblShEnabled lambda in gos_static_prop_batcher.cpp.
                 const char* iblEnv = std::getenv("MC2_STATIC_PROP_IBL_SH");
-                bool iblOn = (iblEnv != nullptr && iblEnv[0] != '0' && iblEnv[0] != '\0');
+                bool iblOn = !(iblEnv != nullptr && iblEnv[0] == '0');
                 if (iblOn) {
                     // V-IBL-STATIC-2: surface active per-mission SH set name.
                     const char* shSetName = ibl_sh_runtime_currentSetName();
@@ -553,7 +556,7 @@ void EditorInspector::drawImGui() {
                 { "object-ID buffer",    "MC2_OBJECT_ID_BUFFER",            true  },
                 { "ambient v1",          "MC2_STATIC_PROP_AMBIENT_V1",      false },
                 { "debug material",      "MC2_STATIC_PROP_DEBUG_MATERIAL",  false },
-                { "ibl sh",              "MC2_STATIC_PROP_IBL_SH",          false },
+                { "ibl sh",              "MC2_STATIC_PROP_IBL_SH",          true  },
             };
             for (const auto& fb : kFallbacks) {
                 const char* v = std::getenv(fb.envVar);

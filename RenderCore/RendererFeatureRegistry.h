@@ -309,8 +309,8 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         "MC2_FEATURE_STATIC_PROP_IBL_SH",
         "MC2_STATIC_PROP_IBL_SH",
         EnvVarKind::Feature,
-        false,
-        "V-IBL-STATIC-1: SH-L2 image-based ambient on StaticPropOpaque lane (static_prop.vert). Default-OFF; =1 enables. When OFF, u_iblShStrength uploads 0.0 -> shader short-circuits before evalShL2 (byte-identical). Coefficients from RenderCore/IblShCoeffs.h (projected from data/hdr/DaySkyHDRI063B_4K.exr). ImGui slider g_iblShStrength modulates per-frame strength when env=1; env var is authoritative gate."
+        true,
+        "V-IBL-STATIC-1: SH-L2 image-based ambient on StaticPropOpaque lane (static_prop.vert). Default-ON (flipped 2026-05-27 per V-STATICPROP-VISUAL-REVIEW-AUDIT); =0 is explicit kill-switch (byte-identical to pre-flip OFF). When OFF, u_iblShStrength uploads 0.0 -> shader short-circuits before evalShL2. Coefficients from RenderCore/IblShCoeffs.h (projected from data/hdr/DaySkyHDRI063B_4K.exr). ImGui slider g_iblShStrength modulates per-frame strength (default 0.5); env var is authoritative gate."
     },
 };
 

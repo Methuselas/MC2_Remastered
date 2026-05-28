@@ -434,8 +434,10 @@ static const bool s_staticPropAmbientV1Enabled = []() {
 //        feature flag IS active in the registry (env-only gate).
 //     => env=1 + slider=N -> upload N (range 0.0..3.0 enforced by slider UI).
 static const bool s_iblShEnabled = []() {
+    // V-IBL-DEFAULT-FLIP (2026-05-27): default-ON; explicit "=0" is kill-switch.
+    // env unset -> true; env="0" -> false; env="1"/anything else -> true.
     const char* v = getenv("MC2_STATIC_PROP_IBL_SH");
-    return v != nullptr && v[0] != '0' && v[0] != '\0';
+    return !(v != nullptr && v[0] == '0');
 }();
 // Note: definition of `g_iblShStrength` lives at file scope above the
 // anonymous namespace (line ~191) so it has external linkage. The lambda-
