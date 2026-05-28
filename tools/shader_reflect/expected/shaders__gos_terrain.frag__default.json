@@ -17,7 +17,7 @@
           "matrix_stride": null,
           "name": "thinRecsFrag",
           "offset": 0,
-          "type": "_1349"
+          "type": "_1508"
         }
       ],
       "name": "ThinRecordBufFrag"
@@ -209,6 +209,20 @@
           "name": "tintStrengthScale",
           "offset": 368,
           "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "terrainHeightParams",
+          "offset": 384,
+          "type": "vec4"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "useTerrainNormalsFromHeight",
+          "offset": 400,
+          "type": "int"
         }
       ],
       "name": "gl_DefaultUniformBlock"

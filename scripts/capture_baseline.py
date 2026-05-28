@@ -64,6 +64,8 @@ TRACKED_FLAGS = (
     # these in the sidecar a captured terrain frame is not reproducible if a
     # tuning slider or debug-mode value changes between runs.
     "MC2_TERRAIN_DEBUG_MODE",
+    # TERRAIN-NORMALS-FROM-HEIGHT-1: macroscopic-normal-from-height gate.
+    "MC2_TERRAIN_NORMALS_FROM_HEIGHT",
 )
 
 

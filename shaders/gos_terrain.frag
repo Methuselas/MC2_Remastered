@@ -123,6 +123,17 @@ uniform int g_terrainMaterialProfile;
 uniform PREC vec4  matNormalBoost;     // [rock, grass, dirt, concrete]; default (0.9, 1.1, 1.1, 2.5)
 uniform PREC float tintStrengthScale;  // 0=colormap passthrough, 1=full material tint; default 1.0
 
+// TERRAIN-NORMALS-FROM-HEIGHT-1: macroscopic surface normal derived from a
+// per-mission R32F height texture (uploaded once at mission load from the
+// gameplay heightfield; see GameOS/gameos/gos_terrain_height_tex.cpp).
+// Visual-only: gameplay height (Terrain::getTerrainElevation) is unchanged.
+// terrainHeightParams.x = grid side (0 = texture not uploaded; treat as off).
+// terrainHeightParams.y = 1 / worldUnitsPerVertex (128.0 today → 1/128).
+// terrainHeightParams.zw = mapTopLeft3d.xy in world units.
+uniform sampler2D terrainHeightTex;
+uniform PREC vec4 terrainHeightParams;
+uniform int       useTerrainNormalsFromHeight;
+
 // --- Distance LOD thresholds (tunable, in MC2 world units) ---
 // 1 terrain tile ≈ 128 world units
 const float LOD_NEAR       = 4000.0;   // full quality (covers stock zoom)
@@ -208,6 +219,50 @@ PREC vec4 getColorWeights(PREC vec3 color) {
     PREC float total = w.x + w.y + w.z + w.w;
     w = (total < 0.01) ? vec4(1.0, 0.0, 0.0, 0.0) : w / total;
     return w;
+}
+
+// --- TERRAIN-NORMALS-FROM-HEIGHT-1: macroscopic normal from height texture ---
+// Maps a fragment's worldspace XY back to (col, row) in the per-mission
+// height texture, samples 4 axial neighbours with edge-clamp, and returns
+// the central-difference normal in raw MC2 world space (X=east, Y=north,
+// Z=up). NOT called from gate-OFF path. Caller must check that the texture
+// is uploaded (terrainHeightParams.x > 0) before invoking.
+//
+// Coordinate convention mirrors mclib/terrain.h:370-371 worldToTile:
+//   col = (worldX - mapTopLeftX) / wuPerVertex
+//   row = (mapTopLeftY - worldY) / wuPerVertex   ← row increases as Y decreases
+// so dh/dy(world) = -dh/drow.
+PREC vec3 computeTerrainNormalFromHeight(PREC vec2 worldXY) {
+    PREC float side  = terrainHeightParams.x;
+    PREC float invWu = terrainHeightParams.y;
+    PREC float tlx   = terrainHeightParams.z;
+    PREC float tly   = terrainHeightParams.w;
+
+    PREC float colF = (worldXY.x - tlx) * invWu;
+    PREC float rowF = (tly - worldXY.y) * invWu;
+
+    int sm1  = max(int(side) - 1, 0);
+    int iCol = clamp(int(floor(colF + 0.5)), 0, sm1);
+    int iRow = clamp(int(floor(rowF + 0.5)), 0, sm1);
+
+    int colL = max(iCol - 1, 0);
+    int colR = min(iCol + 1, sm1);
+    int rowU = max(iRow - 1, 0);   // smaller row idx = farther north (larger Y)
+    int rowD = min(iRow + 1, sm1);
+
+    PREC float hL = texelFetch(terrainHeightTex, ivec2(colL, iRow), 0).r;
+    PREC float hR = texelFetch(terrainHeightTex, ivec2(colR, iRow), 0).r;
+    PREC float hU = texelFetch(terrainHeightTex, ivec2(iCol, rowU), 0).r;
+    PREC float hD = texelFetch(terrainHeightTex, ivec2(iCol, rowD), 0).r;
+
+    PREC float wuPerVert = (invWu > 0.0) ? (1.0 / invWu) : 128.0;
+    PREC float spanX = float(colR - colL) * wuPerVert;
+    PREC float spanY = float(rowD - rowU) * wuPerVert;
+    PREC float dhdx   = (spanX > 0.0) ? ((hR - hL) / spanX) : 0.0;
+    PREC float dhdrow = (spanY > 0.0) ? ((hD - hU) / spanY) : 0.0;
+    PREC float dhdy   = -dhdrow;
+
+    return normalize(vec3(-dhdx, -dhdy, 1.0));
 }
 
 // --- Per-material displacement sampling ---
@@ -386,6 +441,25 @@ void main(void)
     int surfaceDebugMode = int(floor(tessDebug.x + 0.5));
     PREC vec4 c = Color.bgra;
     PREC float vertexLum = dot(c.rgb, kLumaWeights);
+
+    // TERRAIN-NORMALS-FROM-HEIGHT-1: debug mode 10 — visualize the
+    // height-derived normal as RGB. terrainHeightParams.x > 0 means the
+    // per-mission R32F height texture has been uploaded; black otherwise.
+    // Independent of the useTerrainNormalsFromHeight gate so the upload
+    // path can be diagnosed even with the lighting gate off.
+    if (surfaceDebugMode == 10) {
+        PREC vec3 vis = vec3(0.0);
+        if (terrainHeightParams.x > 0.5) {
+            PREC vec3 hN = computeTerrainNormalFromHeight(WorldPos.xy);
+            vis = hN * 0.5 + 0.5;
+        }
+        gl_FragDepth = gl_FragCoord.z;
+        FragColor = vec4(vis, 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
+#endif
+        return;
+    }
 
     // Debug mode 1: depth diagnostic — R=actual rasterized, G=UndisplacedDepth
     // Toggle RAlt+0 to compare old screen-space vs new world-space path.
@@ -588,6 +662,21 @@ void main(void)
 
     PREC vec3 N;
     N.xy = detailN.xy * detailNormalStrength.x;
+    // TERRAIN-NORMALS-FROM-HEIGHT-1: when the gate is enabled, add the
+    // macroscopic slope (height-derived) into the local-z-up tangent-plane
+    // parametrization the detail normal map writes into. Detail normals
+    // still contribute high-frequency bumps; the new term restores
+    // macroscopic surface tilt that the legacy flat-up base normal omitted.
+    // Default OFF — when useTerrainNormalsFromHeight == 0 this branch is
+    // skipped and the output is byte-identical to the legacy path.
+    if (useTerrainNormalsFromHeight != 0 && terrainHeightParams.x > 0.5) {
+        PREC vec3 hN = computeTerrainNormalFromHeight(WorldPos.xy);
+        // hN is unit-length in (east, north, up). Translate to local Z=up
+        // parametrization N.xy by projecting onto the same plane the detail
+        // normals already use: N.xy += hN.xy / hN.z. Floor hN.z so a near-
+        // cliff sample cannot blow the perturbation to infinity.
+        N.xy += hN.xy / max(hN.z, 0.05);
+    }
     // Clamp normal deflection to prevent extreme angles that cause black snow
     // Max deflection of 0.7 means the normal can tilt ~35 degrees max
     N.xy = clamp(N.xy, -0.75, 0.75);

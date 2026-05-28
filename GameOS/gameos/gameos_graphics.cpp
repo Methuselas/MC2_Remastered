@@ -38,6 +38,7 @@ namespace gosFX { void DiagFrameTick(); }
 #include "gos_terrain_patch_stream.h"
 #include "gos_terrain_indirect.h"
 #include "gos_terrain_surface.h"                 // [TERRAIN_SURFACE] PR-2 producer
+#include "gos_terrain_height_tex.h"              // TERRAIN-NORMALS-FROM-HEIGHT-1
 #include "../../mclib/terrain_surface_trace.h"   // [TERRAIN_SURFACE v1] channel
 #include "../../mclib/terrain_surface_bands.h"   // [TERRAIN_SURFACE] PR-3 band config (single source)
 #include "gos_terrain_water_stream.h"
@@ -1727,6 +1728,10 @@ class gosRenderer {
             GLint worldToClipGL = -1;            // F1 Task 7b probe uniform
             GLint matNormalBoost = -1;           // per-material normal strength (vec4)
             GLint tintStrengthScale = -1;        // global tint blend scalar
+            // TERRAIN-NORMALS-FROM-HEIGHT-1
+            GLint terrainHeightTex = -1;             // sampler2D, unit 11 (R32F)
+            GLint terrainHeightParams = -1;          // vec4 (gridSide, 1/wuPerVertex, topLeftX, topLeftY)
+            GLint useTerrainNormalsFromHeight = -1;  // 0=off, 1=on
             GLuint program = 0;
         } terrainLocs_;
 
@@ -1745,6 +1750,10 @@ class gosRenderer {
             GLint tessDebug = -1;               // shader debug-viz mode (frag mode 1..8)
             GLint matNormalBoost = -1;          // per-material normal strength (vec4)
             GLint tintStrengthScale = -1;       // global tint blend scalar
+            // TERRAIN-NORMALS-FROM-HEIGHT-1
+            GLint terrainHeightTex = -1;
+            GLint terrainHeightParams = -1;
+            GLint useTerrainNormalsFromHeight = -1;
             GLuint program = 0;
         } thinTerrainLocs_;
 
@@ -1791,6 +1800,10 @@ class gosRenderer {
             terrainLocs_.worldToClipGL    = glGetUniformLocation(shp, "u_worldToClipGL");
             terrainLocs_.matNormalBoost   = glGetUniformLocation(shp, "matNormalBoost");
             terrainLocs_.tintStrengthScale = glGetUniformLocation(shp, "tintStrengthScale");
+            // TERRAIN-NORMALS-FROM-HEIGHT-1
+            terrainLocs_.terrainHeightTex             = glGetUniformLocation(shp, "terrainHeightTex");
+            terrainLocs_.terrainHeightParams          = glGetUniformLocation(shp, "terrainHeightParams");
+            terrainLocs_.useTerrainNormalsFromHeight  = glGetUniformLocation(shp, "useTerrainNormalsFromHeight");
         }
 
         void cacheThinTerrainUniformLocations(GLuint shp) {
@@ -1824,6 +1837,10 @@ class gosRenderer {
             thinTerrainLocs_.tessDebug          = glGetUniformLocation(shp, "tessDebug");
             thinTerrainLocs_.matNormalBoost     = glGetUniformLocation(shp, "matNormalBoost");
             thinTerrainLocs_.tintStrengthScale  = glGetUniformLocation(shp, "tintStrengthScale");
+            // TERRAIN-NORMALS-FROM-HEIGHT-1
+            thinTerrainLocs_.terrainHeightTex             = glGetUniformLocation(shp, "terrainHeightTex");
+            thinTerrainLocs_.terrainHeightParams          = glGetUniformLocation(shp, "terrainHeightParams");
+            thinTerrainLocs_.useTerrainNormalsFromHeight  = glGetUniformLocation(shp, "useTerrainNormalsFromHeight");
         }
 
         void cacheShadowUniformLocations(GLuint shp) {
@@ -5082,6 +5099,44 @@ void gosRenderer::endDynamicShadowPass() {
     drainGLErrors("shadow_dynamic");
 }
 
+// TERRAIN-NORMALS-FROM-HEIGHT-1: shared helper called from each of the three
+// terrain uniform-upload sites below. Binds the per-mission R32F height
+// texture to unit 11, pushes the worldspace mapping params, and reads the
+// MC2_TERRAIN_NORMALS_FROM_HEIGHT env gate every frame so toggling it does
+// not require a restart. When the texture handle is zero (no mission, or
+// pre-upload), the gate is forced OFF so the shader branch stays in its
+// no-op path even if the env var is set. Caller is responsible for restoring
+// the active texture unit afterwards (existing sites already do glActiveTexture
+// (GL_TEXTURE0) immediately after this helper).
+static void bindTerrainHeightTexUniforms(GLint heightTexLoc, GLint paramsLoc,
+                                         GLint gateLoc)
+{
+    const GLuint htex = (GLuint)gos_terrainHeightTexHandle();
+    if (htex != 0 && heightTexLoc >= 0) {
+        glUniform1i(heightTexLoc, 11);
+        glActiveTexture(GL_TEXTURE11);
+        glBindTexture(GL_TEXTURE_2D, htex);
+    }
+    if (htex != 0 && paramsLoc >= 0) {
+        const float wuPerVert = gos_terrainHeightWorldUnitsPerVertex();
+        const float invWu = (wuPerVert > 0.0f) ? (1.0f / wuPerVert) : 0.0f;
+        const float p[4] = {
+            (float)gos_terrainHeightTexSide(),
+            invWu,
+            gos_terrainHeightMapTopLeftX(),
+            gos_terrainHeightMapTopLeftY(),
+        };
+        glUniform4fv(paramsLoc, 1, p);
+    }
+    int gateOn = 0;
+    if (htex != 0) {
+        if (const char* e = getenv("MC2_TERRAIN_NORMALS_FROM_HEIGHT")) {
+            gateOn = (e[0] && e[0] != '0') ? 1 : 0;
+        }
+    }
+    if (gateLoc >= 0) glUniform1i(gateLoc, gateOn);
+}
+
 void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
 {
     if (!material) return;
@@ -5152,6 +5207,9 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
             glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
         }
     }
+    // TERRAIN-NORMALS-FROM-HEIGHT-1
+    bindTerrainHeightTexUniforms(tl.terrainHeightTex, tl.terrainHeightParams,
+                                 tl.useTerrainNormalsFromHeight);
     glActiveTexture(GL_TEXTURE0);
 
     gosPostProcess* pp = getGosPostProcess();
@@ -5265,6 +5323,9 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
             glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
         }
     }
+    // TERRAIN-NORMALS-FROM-HEIGHT-1
+    bindTerrainHeightTexUniforms(tl.terrainHeightTex, tl.terrainHeightParams,
+                                 tl.useTerrainNormalsFromHeight);
     glActiveTexture(GL_TEXTURE0);
 
     gosPostProcess* pp = getGosPostProcess();
@@ -5398,6 +5459,9 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
             glBindTexture(GL_TEXTURE_2D, terrain_mat_normal_[i]);
         }
     }
+    // TERRAIN-NORMALS-FROM-HEIGHT-1
+    bindTerrainHeightTexUniforms(tl.terrainHeightTex, tl.terrainHeightParams,
+                                 tl.useTerrainNormalsFromHeight);
     glActiveTexture(GL_TEXTURE0);
 
     // Shadow map binding (unit 9 = static, unit 10 = dynamic)

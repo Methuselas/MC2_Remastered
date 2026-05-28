@@ -1006,22 +1006,43 @@ void EditorInspector::drawImGui() {
                 case  7: label = "Cloud Shadow";      break;
                 case  8: label = "Cement Diagnostic"; break;
                 case  9: label = "Thin-Record";       break;
+                case 10: label = "Height Normal";     break;  // TERRAIN-NORMALS-FROM-HEIGHT-1
                 default: break;
             }
             ImGui::Text("Surface Debug Mode: [%d] %s", mode, label);
             if (ImGui::SmallButton("OFF##tdm_off")) ::gos_SetTerrainDebugMode(0.0f);
             ImGui::SameLine();
             if (ImGui::SmallButton("-##tdm_dec")) {
-                int n = (mode > -1) ? (mode - 1) : 9;
+                int n = (mode > -1) ? (mode - 1) : 10;
                 ::gos_SetTerrainDebugMode((float)n);
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("+##tdm_inc")) {
-                int n = (mode < 9) ? (mode + 1) : -1;
+                int n = (mode < 10) ? (mode + 1) : -1;
                 ::gos_SetTerrainDebugMode((float)n);
             }
             ImGui::SameLine();
             ImGui::TextDisabled("env MC2_TERRAIN_DEBUG_MODE overrides");
+        }
+
+        // TERRAIN-NORMALS-FROM-HEIGHT-1: gate-status readout. Env var is
+        // authoritative; the inspector cannot toggle it (the gate is read
+        // once per terrain uniform upload via getenv, so a writable ImGui
+        // checkbox would require its own setter pathway and risks gameplay-
+        // adjacent state drift). Display only.
+        ImGui::Separator();
+        {
+            const char* env = std::getenv("MC2_TERRAIN_NORMALS_FROM_HEIGHT");
+            bool gateOn = (env && env[0] && env[0] != '0');
+            if (gateOn) {
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                    "Normals-from-Height: ON  (MC2_TERRAIN_NORMALS_FROM_HEIGHT=%s)",
+                    env);
+            } else {
+                ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
+                    "Normals-from-Height: OFF (set MC2_TERRAIN_NORMALS_FROM_HEIGHT=1 to enable)");
+            }
+            ImGui::TextDisabled("Debug Mode 10 = visualize height-derived normal (independent of gate)");
         }
     }
 

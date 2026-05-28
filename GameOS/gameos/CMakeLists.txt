@@ -24,6 +24,7 @@ set(SOURCES ${SOURCES}
     gos_terrain_surface.cpp
     gos_terrain_mask_dispatch.cpp
     gos_terrain_lighting.cpp
+    gos_terrain_height_tex.cpp
     gos_object_parity.cpp
     gos_validate.cpp
     gos_screenshot.cpp

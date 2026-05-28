@@ -43,6 +43,7 @@
 #include"../GameOS/gameos/gos_terrain_mask_dispatch.h"
 #include"../GameOS/gameos/gos_terrain_bridge.h"
 #include"../GameOS/gameos/gos_terrain_lighting.h"
+#include"../GameOS/gameos/gos_terrain_height_tex.h"  // TERRAIN-NORMALS-FROM-HEIGHT-1
 #include"terrain_admission_mode.h"  // F6 T2: shared isModern() flag for terrain.cpp + quad.cpp
 
 #include <vector>
@@ -523,6 +524,23 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 			mapData->newInit( realVerticesMapSide*realVerticesMapSide );
 
 		mapTopLeft3d.z = mapData->getTopLeftElevation();
+
+		// TERRAIN-NORMALS-FROM-HEIGHT-1: upload an R32F height texture from
+		// the now-resident heightfield so the terrain fragment shader can
+		// derive macroscopic surface normals when MC2_TERRAIN_NORMALS_FROM_HEIGHT
+		// is set. Visual-only; gameplay height (getTerrainElevation) remains
+		// authoritative. sizeof(PostcompVertex) = 32 with float elevation at
+		// byte 12 (mclib/vertex.h:32-60).
+		if (mapData->getBlocks()) {
+			gos_uploadTerrainHeightTex(
+				(int)realVerticesMapSide,
+				mapData->getBlocks(),
+				(int)sizeof(PostcompVertex),
+				/*elevationOffset=*/12,
+				mapTopLeft3d.x,
+				mapTopLeft3d.y,
+				worldUnitsPerVertex);
+		}
 	}
 
 	percent += percentRange/5.f;
