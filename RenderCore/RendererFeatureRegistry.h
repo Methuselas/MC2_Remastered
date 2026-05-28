@@ -138,7 +138,10 @@ enum class RendererFeature : int {
     // TERRAIN-LIGHTING-1: hemisphere ambient fill on tessellated terrain
     // using terrain surface normal. Default-OFF.
     TerrainLightingV1        = 24,  // MC2_TERRAIN_LIGHTING_V1
-    COUNT                    = 25,
+    // TERRAIN-LIGHTING-2: shadow-aware modulation of the V1 hemisphere
+    // fill — prevents over-bright shadows. Default-OFF (V1 unmodulated).
+    TerrainLightingV2        = 25,  // MC2_TERRAIN_LIGHTING_V2
+    COUNT                    = 26,
 };
 
 // ---------------------------------------------------------------------------
@@ -347,6 +350,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "TERRAIN-LIGHTING-1: gated hemisphere ambient fill on the tessellated terrain. Default-OFF; =1 enables. When OFF, terrainLightingV1Strength uploads 0.0 and gos_terrain.frag skips the additive branch → byte-identical legacy output. Adds sky/ground tinted ambient that fills shadowed terrain (added AFTER shadow multiplication so direct sun stays shadowed but bounce light continues). Best paired with MC2_TERRAIN_NORMALS_FROM_HEIGHT=1 — ambient verticality is derived from the final per-fragment normal (sky term scales with N.z). Strength tunable in-engine via Terrain Pass inspector slider (default 1.0); env gate is authoritative on/off. Visual-only; no gameplay, geometry, or collision change."
+    },
+    // TerrainLightingV2
+    {
+        "MC2_FEATURE_TERRAIN_LIGHTING_V2",
+        "MC2_TERRAIN_LIGHTING_V2",
+        EnvVarKind::Feature,
+        false,
+        "TERRAIN-LIGHTING-2: gated shadow-aware modulation of the TERRAIN-LIGHTING-1 hemisphere fill. Default-OFF; =1 enables. When OFF, terrainLightingV2ShadowFillFloor uploads 1.0 → the shader expression mix(floor, 1.0, shadow) collapses to 1.0 → V1 behavior preserved (byte-equivalent to TERRAIN-LIGHTING-1 alone). When ON, the member floor (default 0.3, ImGui-tunable 0..1 via the Graphics Options Terrain section) scales the hemi additive in shadowed terrain so dark areas stay dark: floor=0.3 = 30% hemi in fully shadowed terrain, 100% in fully lit terrain. floor=0.0 makes hemi follow shadow exactly (lifeless shadows); floor=1.0 = V1 unmodulated. Debug mode MC2_TERRAIN_DEBUG_MODE=11 visualizes the hemi additive contribution as RGB (×4 for visibility). Visual-only; no gameplay, geometry, or collision change. Effective only when MC2_TERRAIN_LIGHTING_V1 is also ON (since the floor multiplies the V1 additive)."
     },
 };
 

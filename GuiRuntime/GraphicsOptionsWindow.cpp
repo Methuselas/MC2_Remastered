@@ -24,6 +24,8 @@ void  gos_SetTerrainNormalsFromHeightStrength(float s);
 float gos_GetTerrainNormalsFromHeightStrength();
 void  gos_SetTerrainLightingV1Strength(float s);
 float gos_GetTerrainLightingV1Strength();
+void  gos_SetTerrainLightingV2Floor(float f);
+float gos_GetTerrainLightingV2Floor();
 // TERRAIN-RESAMPLE-1 — height-tex source/render/factor accessors + live
 // factor setter. C-linkage (declared extern "C" in gos_terrain_height_tex.h).
 extern "C" {
@@ -67,6 +69,8 @@ static const TerrainMode kTerrainModes[] = {
     // ── Diagnostic modes ──────────────────────────────────────────────────────
     {  8.0f, "Cement Diagnostic", "R = layer valid  |  G = layer index/255  |  B = useCementAtlas==0" },
     {  9.0f, "Thin-Record",       "R = recipeIdx/255  |  G = flags/255  |  B = terrainHandle/255" },
+    { 10.0f, "Height Normal",     "TERRAIN-NORMALS-FROM-HEIGHT-1: derived normal as RGB (centered around 0.5)" },
+    { 11.0f, "Hemi Additive",     "TERRAIN-LIGHTING-2: V1 hemi contribution after V2 modulation (×4 for visibility)" },
     { -1.0f, "Tess Alive Probe",  "solid red = tessellation frag shader is running" },
 };
 static const int kTerrainModeCount = (int)(sizeof(kTerrainModes) / sizeof(kTerrainModes[0]));
@@ -443,7 +447,44 @@ static void drawTerrainTuningSection() {
     if (!litGateOn) {
         ImGui::TextDisabled("(slider has no effect until env gate enabled)");
     }
-    ImGui::TextDisabled("Debug Mode 10 (Surface Debug Mode above) = height-normal RGB");
+
+    // TERRAIN-LIGHTING-2: shadow-aware fill floor. Effective only when
+    // both V1 and V2 env gates are ON. floor=1.0 → V1 unmodulated;
+    // floor=0.3 = default; floor=0.0 → hemi follows shadow exactly.
+    bool litV2GateOn = false;
+    {
+        const char* env = std::getenv("MC2_TERRAIN_LIGHTING_V2");
+        litV2GateOn = (env && env[0] && env[0] != '0');
+        if (litV2GateOn) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                "Lighting V2 (shadow-aware fill): ON");
+        } else {
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
+                "Lighting V2 (shadow-aware fill): OFF (set MC2_TERRAIN_LIGHTING_V2=1)");
+        }
+    }
+    float v2Floor = ::gos_GetTerrainLightingV2Floor();
+    if (ImGui::SliderFloat("Shadow fill floor##tlv2", &v2Floor, 0.0f, 1.0f, "%.2f")) {
+        ::gos_SetTerrainLightingV2Floor(v2Floor);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Hemi fill multiplier in fully shadowed terrain.\n"
+                          "1.0 = V1 unmodulated (full hemi in shadows — too bright).\n"
+                          "0.3 = default — 30%% hemi in shadows, 100%% in lit terrain.\n"
+                          "0.0 = hemi follows shadow exactly (lifeless shadows).\n"
+                          "Only effective when both MC2_TERRAIN_LIGHTING_V1=1 AND\n"
+                          "MC2_TERRAIN_LIGHTING_V2=1 are set.");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##tlv2")) ::gos_SetTerrainLightingV2Floor(0.3f);
+    if (!litV2GateOn) {
+        ImGui::TextDisabled("(slider has no effect until MC2_TERRAIN_LIGHTING_V2=1)");
+    } else if (!litGateOn) {
+        // Reviewer-flagged UX gap: V2 ON but V1 OFF leaves the slider live
+        // with no visible effect (V2 only modulates the V1 additive). Make
+        // the combined-dependency explicit.
+        ImGui::TextDisabled("(V2 floor only acts on the V1 hemi term — set MC2_TERRAIN_LIGHTING_V1=1 too)");
+    }
+    ImGui::TextDisabled("Debug Mode 10 = height-normal RGB; Mode 11 = hemi additive ×4");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

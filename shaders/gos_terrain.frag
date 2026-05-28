@@ -140,10 +140,20 @@ uniform PREC float terrainNormalsFromHeightStrength;
 // TERRAIN-LIGHTING-1: hemisphere ambient strength. CPU force-zeroes
 // when env MC2_TERRAIN_LIGHTING_V1 is unset, so the shader branch
 // short-circuits to a no-op (byte-equivalent to pre-slice). When > 0
-// and gate is on, adds a sky/ground hemisphere fill that does NOT
-// participate in sun shadow — fills shadowed terrain with ambient
-// sky bounce based on the surface normal's verticality.
+// and gate is on, adds a sky/ground hemisphere fill modulated by the
+// V2 shadow-fill floor (terrainLightingV2ShadowFillFloor below).
 uniform PREC float terrainLightingV1Strength;
+// TERRAIN-LIGHTING-2: shadow-aware fill floor on the V1 hemisphere
+// additive. CPU force-uploads 1.0 when env MC2_TERRAIN_LIGHTING_V2
+// is unset, which makes mix(floor,1.0,shadow) collapse to 1.0 →
+// V1 behavior is preserved (no shadow modulation; byte-equivalent
+// to TERRAIN-LIGHTING-1 alone). When V2 gate is ON and floor < 1,
+// the hemisphere contribution scales down in shadowed terrain so
+// dark areas stay dark instead of getting full sky bounce.
+//   floor = 1.0 → V1 (no shadow influence on hemi)
+//   floor = 0.3 → 30% hemi in fully shadowed, 100% in fully lit (default)
+//   floor = 0.0 → hemi follows shadow exactly (lifeless shadows)
+uniform PREC float terrainLightingV2ShadowFillFloor;
 
 // --- Distance LOD thresholds (tunable, in MC2 world units) ---
 // 1 terrain tile ≈ 128 world units
@@ -807,6 +817,9 @@ void main(void)
     // grey) and the rock/dirt material tints already in this shader.
     // Strength 0 short-circuits to no-op — CPU upload-site force-
     // zeroes the uniform when env gate MC2_TERRAIN_LIGHTING_V1 is OFF.
+    // TERRAIN-LIGHTING-1/2: hemisphere additive (computed once; consumed
+    // by the main render path AND by debug mode 11 below for inspection).
+    PREC vec3 hemiContrib = vec3(0.0);
     if (terrainLightingV1Strength > 0.0) {
         const PREC vec3 hemiSkyTint    = vec3(0.55, 0.62, 0.75);
         const PREC vec3 hemiGroundTint = vec3(0.32, 0.28, 0.22);
@@ -819,7 +832,30 @@ void main(void)
         // Snow areas already have aggressive specular sparkle and bright
         // tint — damp ambient there so we don't blow out snow.
         PREC float hemiAmount = terrainLightingV1Strength * (1.0 - 0.5 * snowWeight);
-        c.rgb += hemiFill * hemiAmount * 0.25;
+        // TERRAIN-LIGHTING-2: shadow-aware fill modulation. floor=1.0 →
+        // mix collapses to 1.0 → V1 behavior (no shadow influence).
+        // floor<1.0 → hemi contribution scales toward `floor` in fully
+        // shadowed terrain, keeping shadows readable instead of getting
+        // full sky bounce. `shadow` is the existing PCF sun shadow term
+        // (staticShadow * dynShadow) computed a few lines above.
+        PREC float hemiShadowMix = mix(terrainLightingV2ShadowFillFloor, 1.0, shadow);
+        hemiContrib = hemiFill * hemiAmount * 0.25 * hemiShadowMix;
+        c.rgb += hemiContrib;
+    }
+
+    // TERRAIN-LIGHTING-2: debug mode 11 — hemi-only contribution. Shows
+    // exactly what the additive term puts on screen for a given fragment
+    // (including the V2 shadow-floor modulation). At V1 strength=0 or
+    // gate=OFF, this returns black. Multiplied ×4 so subtle contributions
+    // remain visible; the cap at 1.0 prevents clamping confusion.
+    if (surfaceDebugMode == 11) {
+        PREC vec3 vis = min(hemiContrib * 4.0, vec3(1.0));
+        gl_FragDepth = gl_FragCoord.z;
+        FragColor = vec4(vis, 1.0);
+#ifdef MRT_ENABLED
+        GBuffer1 = rc_gbuffer1_shadowHandled_flatUp();
+#endif
+        return;
     }
 
     // --- Snow sparkle ---

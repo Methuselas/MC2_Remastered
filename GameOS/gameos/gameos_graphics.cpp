@@ -1471,6 +1471,8 @@ class gosRenderer {
         float getTerrainNormalsFromHeightStrength() const  { return terrain_nfh_strength_; }
         void  setTerrainLightingV1Strength(float s) { terrain_lighting_v1_strength_ = s; }
         float getTerrainLightingV1Strength() const  { return terrain_lighting_v1_strength_; }
+        void  setTerrainLightingV2Floor(float f) { terrain_lighting_v2_floor_ = f; }
+        float getTerrainLightingV2Floor() const  { return terrain_lighting_v2_floor_; }
 
         // Terrain draw killswitch
         void setTerrainDrawEnabled(bool e) { terrain_draw_enabled_ = e; }
@@ -1727,6 +1729,13 @@ class gosRenderer {
         // (byte-equivalent to pre-slice). Member is ImGui-tunable when
         // gate is ON.
         float terrain_lighting_v1_strength_ = 1.0f;
+        // TERRAIN-LIGHTING-2: shadow-aware fill floor for the V1 hemisphere
+        // ambient. Slider 0..1; default 0.3 (member value used when env
+        // gate MC2_TERRAIN_LIGHTING_V2 is ON). 1.0 = pure V1 behavior (no
+        // shadow modulation); 0.0 = hemi follows shadow exactly. When the
+        // V2 gate is OFF the upload site forces the uploaded value to 1.0
+        // so V1 behavior is preserved (byte-equivalent to pre-slice).
+        float terrain_lighting_v2_floor_ = 0.3f;
 
         // Cached uniform locations for terrain shader (avoid per-draw glGetUniformLocation)
         struct TerrainUniformLocs {
@@ -1751,6 +1760,8 @@ class gosRenderer {
             GLint terrainNormalsFromHeightStrength = -1; // float 0..1.5
             // TERRAIN-LIGHTING-1
             GLint terrainLightingV1Strength = -1; // float, 0=off; effective only when env gate ON
+            // TERRAIN-LIGHTING-2
+            GLint terrainLightingV2ShadowFillFloor = -1; // float, 1=V1 (no shadow influence)
             GLuint program = 0;
         } terrainLocs_;
 
@@ -1777,6 +1788,8 @@ class gosRenderer {
             GLint terrainNormalsFromHeightStrength = -1;
             // TERRAIN-LIGHTING-1
             GLint terrainLightingV1Strength = -1;
+            // TERRAIN-LIGHTING-2
+            GLint terrainLightingV2ShadowFillFloor = -1;
             GLuint program = 0;
         } thinTerrainLocs_;
 
@@ -1833,6 +1846,9 @@ class gosRenderer {
             // TERRAIN-LIGHTING-1
             terrainLocs_.terrainLightingV1Strength =
                 glGetUniformLocation(shp, "terrainLightingV1Strength");
+            // TERRAIN-LIGHTING-2
+            terrainLocs_.terrainLightingV2ShadowFillFloor =
+                glGetUniformLocation(shp, "terrainLightingV2ShadowFillFloor");
         }
 
         void cacheThinTerrainUniformLocations(GLuint shp) {
@@ -1876,6 +1892,9 @@ class gosRenderer {
             // TERRAIN-LIGHTING-1
             thinTerrainLocs_.terrainLightingV1Strength =
                 glGetUniformLocation(shp, "terrainLightingV1Strength");
+            // TERRAIN-LIGHTING-2
+            thinTerrainLocs_.terrainLightingV2ShadowFillFloor =
+                glGetUniformLocation(shp, "terrainLightingV2ShadowFillFloor");
         }
 
         void cacheShadowUniformLocations(GLuint shp) {
@@ -5147,7 +5166,9 @@ static void bindTerrainHeightTexUniforms(GLint heightTexLoc, GLint paramsLoc,
                                          GLint gateLoc, GLint strengthLoc,
                                          float strength,
                                          GLint lightingV1StrengthLoc,
-                                         float lightingV1Strength)
+                                         float lightingV1Strength,
+                                         GLint lightingV2FloorLoc,
+                                         float lightingV2Floor)
 {
     const GLuint htex = (GLuint)gos_terrainHeightTexHandle();
     if (htex != 0 && heightTexLoc >= 0) {
@@ -5188,6 +5209,23 @@ static void bindTerrainHeightTexUniforms(GLint heightTexLoc, GLint paramsLoc,
     }
     if (lightingV1StrengthLoc >= 0) {
         glUniform1f(lightingV1StrengthLoc, effectiveLightingStrength);
+    }
+    // TERRAIN-LIGHTING-2: shadow-aware hemisphere fill floor. Env gate
+    // MC2_TERRAIN_LIGHTING_V2 is authoritative. When OFF we force-upload
+    // 1.0 so the shader expression `mix(floor, 1.0, shadow)` collapses to
+    // 1.0 (no shadow modulation) → V1 behavior preserved. When ON we
+    // upload the member value (default 0.3, ImGui-tunable 0..1). Always
+    // bounded so the shader never sees an out-of-range floor.
+    float effectiveV2Floor = 1.0f;
+    if (const char* e = getenv("MC2_TERRAIN_LIGHTING_V2")) {
+        if (e[0] && e[0] != '0') {
+            effectiveV2Floor = lightingV2Floor;
+            if (effectiveV2Floor < 0.0f) effectiveV2Floor = 0.0f;
+            if (effectiveV2Floor > 1.0f) effectiveV2Floor = 1.0f;
+        }
+    }
+    if (lightingV2FloorLoc >= 0) {
+        glUniform1f(lightingV2FloorLoc, effectiveV2Floor);
     }
 }
 
@@ -5267,7 +5305,9 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
                                  tl.terrainNormalsFromHeightStrength,
                                  terrain_nfh_strength_,
                                  tl.terrainLightingV1Strength,
-                                 terrain_lighting_v1_strength_);
+                                 terrain_lighting_v1_strength_,
+                                 tl.terrainLightingV2ShadowFillFloor,
+                                 terrain_lighting_v2_floor_);
     glActiveTexture(GL_TEXTURE0);
 
     gosPostProcess* pp = getGosPostProcess();
@@ -5387,7 +5427,9 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
                                  tl.terrainNormalsFromHeightStrength,
                                  terrain_nfh_strength_,
                                  tl.terrainLightingV1Strength,
-                                 terrain_lighting_v1_strength_);
+                                 terrain_lighting_v1_strength_,
+                                 tl.terrainLightingV2ShadowFillFloor,
+                                 terrain_lighting_v2_floor_);
     glActiveTexture(GL_TEXTURE0);
 
     gosPostProcess* pp = getGosPostProcess();
@@ -5527,7 +5569,9 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
                                  tl.terrainNormalsFromHeightStrength,
                                  terrain_nfh_strength_,
                                  tl.terrainLightingV1Strength,
-                                 terrain_lighting_v1_strength_);
+                                 terrain_lighting_v1_strength_,
+                                 tl.terrainLightingV2ShadowFillFloor,
+                                 terrain_lighting_v2_floor_);
     glActiveTexture(GL_TEXTURE0);
 
     // Shadow map binding (unit 9 = static, unit 10 = dynamic)
@@ -7552,6 +7596,13 @@ void gos_SetTerrainLightingV1Strength(float s) {
 }
 float gos_GetTerrainLightingV1Strength() {
     return g_gos_renderer ? g_gos_renderer->getTerrainLightingV1Strength() : 1.0f;
+}
+// TERRAIN-LIGHTING-2
+void gos_SetTerrainLightingV2Floor(float f) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainLightingV2Floor(f);
+}
+float gos_GetTerrainLightingV2Floor() {
+    return g_gos_renderer ? g_gos_renderer->getTerrainLightingV2Floor() : 0.3f;
 }
 
 void gos_SetTerrainDrawEnabled(bool e) {

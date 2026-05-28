@@ -70,6 +70,8 @@ TRACKED_FLAGS = (
     "MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR",
     # TERRAIN-LIGHTING-1: hemisphere ambient fill gate.
     "MC2_TERRAIN_LIGHTING_V1",
+    # TERRAIN-LIGHTING-2: shadow-aware fill modulation gate.
+    "MC2_TERRAIN_LIGHTING_V2",
 )
 
 

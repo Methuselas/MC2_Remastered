@@ -237,6 +237,13 @@
           "name": "terrainLightingV1Strength",
           "offset": 408,
           "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "terrainLightingV2ShadowFillFloor",
+          "offset": 412,
+          "type": "float"
         }
       ],
       "name": "gl_DefaultUniformBlock"
