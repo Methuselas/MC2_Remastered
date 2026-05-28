@@ -42,15 +42,19 @@ constexpr std::size_t kIblShSetCount = sizeof(kIblShSets) / sizeof(kIblShSets[0]
 
 // Mission -> SH-set name. Empty for V-IBL-STATIC-2; every mission falls
 // back to "default" via lookupShSet(). Future per-mission tuning slices
-// will append entries here as new HDRIs are projected.
+// should append real entries here. Lookup iterates by kMissionShMapCount
+// and ignores null placeholders, so there is no terminator-order trap.
 struct IblShMissionEntry {
     const char* missionName;   // case-insensitive match key
     const char* shSetName;     // must exist in kIblShSets[]
 };
 constexpr IblShMissionEntry kMissionShMap[] = {
-    // intentionally empty -- all missions resolve to "default"
+    // Null placeholder keeps this constexpr table non-empty until the first
+    // real mission mapping lands. Add future mappings before or after it.
     { nullptr, nullptr },
 };
+constexpr std::size_t kMissionShMapCount =
+    sizeof(kMissionShMap) / sizeof(kMissionShMap[0]);
 
 namespace detail {
 
@@ -85,8 +89,8 @@ inline const IblShSet* findShSetByName(const char* setName) {
 // that does not exist (typo), also falls back to default.
 inline const IblShSet& lookupShSet(const char* missionName) {
     if (missionName != nullptr && missionName[0] != '\0') {
-        for (const auto& e : kMissionShMap) {
-            if (e.missionName == nullptr) break;  // sentinel terminator
+        for (std::size_t i = 0; i < kMissionShMapCount; ++i) {
+            const IblShMissionEntry& e = kMissionShMap[i];
             if (detail::nameEqualsCI(e.missionName, missionName)) {
                 if (const IblShSet* s = findShSetByName(e.shSetName)) {
                     return *s;
