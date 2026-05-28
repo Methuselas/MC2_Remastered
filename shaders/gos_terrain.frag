@@ -118,6 +118,13 @@ uniform PREC float mapHalfExtent;  // half side length of playable map (0 = disa
 // only. Disposable; removed when real material-palette architecture lands.
 uniform int g_terrainMaterialProfile;
 
+// Per-material and global color tuning (set via gos_SetTerrainMatNormalBoost /
+// gos_SetTerrainTintStrengthScale). Defaults match the previous shader constants.
+// TODO(SHADER-REFLECT-HYGIENE-5): goldens deferred; regen in fresh
+// worktree after this commit lands.
+uniform PREC vec4  matNormalBoost;     // [rock, grass, dirt, concrete]; default (0.9, 1.1, 1.1, 2.5)
+uniform PREC float tintStrengthScale;  // 0=colormap passthrough, 1=full material tint; default 1.0
+
 // --- Distance LOD thresholds (tunable, in MC2 world units) ---
 // 1 terrain tile ≈ 128 world units
 const float LOD_NEAR       = 4000.0;   // full quality (covers stock zoom)
@@ -533,7 +540,7 @@ void main(void)
     // Dirt 1.1 is the "looks fantastic" reference — do not change it.
     // Concrete 2.5 unchanged — flat surfaces benefit from strong normal definition.
     // Non-const: normalBoost.y is scaled below by the combined grass fade.
-    PREC vec4 normalBoost = vec4(0.9, 1.1, 1.1, 2.5);
+    PREC vec4 normalBoost = matNormalBoost;  // tunable via ImGui / gos_SetTerrainMatNormalBoost
 
     // Screen-space derivative AA — fade normals when detail goes sub-pixel
     PREC float fwRock     = clamp(1.0 - (length(fwidth(uvRock))     - 0.5) * 2.0, 0.0, 1.0);
@@ -610,7 +617,7 @@ void main(void)
     // don't lift to mid-grey. Snow always gets full tint (cool white must pop).
     PREC float colLum = dot(texColor.rgb, kLumaWeights);
     PREC float tintBase = mix(0.18, 0.50, smoothstep(0.1, 0.6, colLum));
-    PREC float tintStrength = mix(tintBase, 0.85, snowWeight);
+    PREC float tintStrength = mix(tintBase, 0.85, snowWeight) * tintStrengthScale;
     PREC vec3 baseColor = mix(texColor.rgb, materialTint, tintStrength);
     {
         // Preserve the authored colormap tone for runway/cement.
