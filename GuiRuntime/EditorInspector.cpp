@@ -522,7 +522,11 @@ void EditorInspector::drawImGui() {
                 const char* iblEnv = std::getenv("MC2_STATIC_PROP_IBL_SH");
                 bool iblOn = (iblEnv != nullptr && iblEnv[0] != '0' && iblEnv[0] != '\0');
                 if (iblOn) {
-                    ImGui::Text("  ibl sh         on (strength=%.2f)", g_iblShStrength);
+                    // V-IBL-STATIC-2: surface active per-mission SH set name.
+                    const char* shSetName = ibl_sh_runtime_currentSetName();
+                    ImGui::Text("  ibl sh         on (set=%s, strength=%.2f)",
+                                shSetName ? shSetName : "default",
+                                g_iblShStrength);
                 } else {
                     ImGui::Text("  ibl sh         off (env-gated)");
                 }

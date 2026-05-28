@@ -18,3 +18,9 @@
 #pragma once
 
 extern float g_iblShStrength;
+
+// V-IBL-STATIC-2: inspector accessor for the active per-mission SH set.
+// Forwarded here (instead of including the batcher header) so GuiRuntime
+// stays independent of Stuff/. Implementation lives in
+// gos_static_prop_batcher.cpp. Never returns nullptr.
+const char* ibl_sh_runtime_currentSetName();

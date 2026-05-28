@@ -4,6 +4,7 @@
 #include "../../RenderWorld/RenderWorld.h"  // M1.5: IsObjectIdBufferEnabled + objectIdRawForStaticPropRecipe
 #include "../../RenderCore/MaterialGpu.h"   // MaterialGpu-2: sidecar upload
 #include "../../RenderCore/IblShCoeffs.h"   // V-IBL-STATIC-1: SH-L2 constants
+#include "../../RenderCore/IblShRegistry.h"  // V-IBL-STATIC-2: per-mission SH set
 #include "../../RenderCore/StaticPropTypeDesc.h"  // v0: cross-seam immutable type table
 #include "../../RenderCore/KtxLoader.h"    // KTX2 sidecar loading (MC2_MATERIAL_KTX=1)
 #include "draw_packet_emitter.h"
@@ -439,6 +440,24 @@ static const bool s_iblShEnabled = []() {
 // Note: definition of `g_iblShStrength` lives at file scope above the
 // anonymous namespace (line ~191) so it has external linkage. The lambda-
 // initialized s_iblShEnabled stays local here; the slider value is global.
+
+// V-IBL-STATIC-2: per-mission SH set selection.
+//   - s_currentShSet points at the active set; initialized to "default"
+//     (kIblShSets[0]) so every code path -- including pre-mission frames
+//     and code paths that never call setMissionForIbl (editor, savegame
+//     load before mission name is plumbed) -- uploads the V-IBL-STATIC-1
+//     baseline coefficients. Never nullptr.
+//   - setMissionForIbl(name) is called from Mission::init right after
+//     onMapLoad(); it consults the compile-time registry (kMissionShMap
+//     in IblShRegistry.h) and falls back to "default" for unknown names.
+//   - Optional env override MC2_STATIC_PROP_IBL_SH_SET=<name> wins over
+//     the registry when set + matches an existing set; unset/empty/typo
+//     -> registry. Resolved once at process start.
+static const RenderCore::IblShSet* s_currentShSet = &RenderCore::kIblShSets[0];
+static const char* s_iblShSetEnvOverride = []() -> const char* {
+    const char* v = getenv("MC2_STATIC_PROP_IBL_SH_SET");
+    return (v != nullptr && v[0] != '\0') ? v : nullptr;
+}();
 
 // V-MATERIAL-DEBUG-1: per-fragment material debug view mode for the
 // StaticPropOpaque lane. Default 0 = OFF (byte-identical to legacy output —
@@ -1328,6 +1347,39 @@ void GpuStaticPropBatcher::onMapLoad() {
     // Stage 2.D.2: re-arm the dual-emit latch for this mission so the first
     // eligible frame after map load triggers the compare.
     gos_object_parity::OnMissionLoad();
+
+    // V-IBL-STATIC-2: re-default to baseline set at every map boundary so a
+    // mission that calls setMissionForIbl(nullptr) (or never calls it -- e.g.
+    // editor / savegame paths) lands on "default" regardless of what the
+    // previous mission resolved to.
+    s_currentShSet = &RenderCore::kIblShSets[0];
+}
+
+// V-IBL-STATIC-2: select per-mission SH coefficient set. Called from
+// Mission::init right after onMapLoad(); safe to call with nullptr/empty
+// (resolves to "default"). Env override MC2_STATIC_PROP_IBL_SH_SET wins
+// when set + names an existing set, else registry, else default.
+void GpuStaticPropBatcher::setMissionForIbl(const char* missionName) {
+    if (s_iblShSetEnvOverride) {
+        if (const RenderCore::IblShSet* s =
+                RenderCore::findShSetByName(s_iblShSetEnvOverride)) {
+            s_currentShSet = s;
+            return;
+        }
+    }
+    s_currentShSet = &RenderCore::lookupShSet(missionName);
+}
+
+// V-IBL-STATIC-2: inspector accessor. Never returns nullptr.
+const char* GpuStaticPropBatcher::getCurrentShSetName() {
+    return s_currentShSet ? s_currentShSet->name : "default";
+}
+
+// V-IBL-STATIC-2: ibl_sh_runtime.h bridge. GuiRuntime/EditorInspector.cpp
+// includes ibl_sh_runtime.h (no Stuff/ dependency) and calls this to
+// surface the active set name without pulling the batcher header.
+const char* ibl_sh_runtime_currentSetName() {
+    return GpuStaticPropBatcher::getCurrentShSetName();
 }
 
 void GpuStaticPropBatcher::onMapUnload() {
@@ -4007,9 +4059,12 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         // var (s_iblShEnabled); when OFF -> upload 0.0 -> shader short-circuits
         // before evalShL2 (byte-identical to pre-slice output). When ON, the
         // ImGui slider g_iblShStrength modulates magnitude (range 0..3).
+        // V-IBL-STATIC-2: source coeffs from the per-mission set (defaults to
+        // "default" == kIblShCoeffs, so byte-identical to V-IBL-STATIC-1 when
+        // no registry entry matches).
         if (s_locsCoalesce.iblSh >= 0)
             glUniform3fv      (s_locsCoalesce.iblSh, 9,
-                               &RenderCore::kIblShCoeffs[0][0]);
+                               &s_currentShSet->coeffs[0][0]);
         if (s_locsCoalesce.iblShStrength >= 0)
             glUniform1f       (s_locsCoalesce.iblShStrength,
                                s_iblShEnabled ? g_iblShStrength : 0.0f);
@@ -4875,9 +4930,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                             s_staticPropDebugMaterialMode);
             // V-IBL-STATIC-1: SH-L2 image-based ambient (legacy program). Same
             // semantics as coalesce site: strength 0.0 default -> byte-identical OFF.
+            // V-IBL-STATIC-2: same per-mission source as coalesce site.
             if (s_locsLegacy.iblSh >= 0)
                 glUniform3fv(s_locsLegacy.iblSh, 9,
-                             &RenderCore::kIblShCoeffs[0][0]);
+                             &s_currentShSet->coeffs[0][0]);
             if (s_locsLegacy.iblShStrength >= 0)
                 glUniform1f(s_locsLegacy.iblShStrength,
                             s_iblShEnabled ? g_iblShStrength : 0.0f);

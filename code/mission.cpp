@@ -1749,6 +1749,10 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// actor registerType() calls happen during actor spawn (Task 6).
 	GpuStaticPropBatcher::instance().onMapLoad();
 	GpuMechBatcher::instance().onMapLoad();
+	// V-IBL-STATIC-2: per-mission SH coefficient selection. Mission name
+	// here is the canonical key the registry consults; nullptr/empty/unknown
+	// falls back to the "default" set so existing missions are unchanged.
+	GpuStaticPropBatcher::setMissionForIbl(missionName);
 	GpuStaticPropRegistry::init();   // Stage 3.C
 	GameAdapters::StaticProp::beginMission();  // M1 Task 13
 	GameAdapters::Mech::beginMission();              // M2: mech lifecycle

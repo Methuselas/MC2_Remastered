@@ -332,6 +332,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "Per-frame [RENDER_WORLD v1] banner + per-event logs (RenderWorld.cpp). Default-off; =1 enables."
     },
+    {
+        "MC2_TUNE_STATIC_PROP_IBL_SH_SET",
+        "MC2_STATIC_PROP_IBL_SH_SET",
+        EnvVarKind::Trace,
+        false,
+        "V-IBL-STATIC-2: override the active SH coefficient set by name (e.g. 'default'). Optional dev/debug knob. Unset/empty/unknown -> registry-or-default fallback. Does not gate IBL itself (MC2_STATIC_PROP_IBL_SH remains the authoritative on/off gate)."
+    },
 };
 
 // ---------------------------------------------------------------------------

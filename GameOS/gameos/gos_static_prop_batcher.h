@@ -147,6 +147,17 @@ public:
     void onMapLoad();
     void onMapUnload();
 
+    // V-IBL-STATIC-2: select the SH coefficient set for the loaded mission.
+    // Called from Mission::init right after onMapLoad(). Safe to call with
+    // nullptr/empty (-> "default"). Env override MC2_STATIC_PROP_IBL_SH_SET
+    // wins when set + matches an existing set. Per-mission registry lives
+    // in RenderCore/IblShRegistry.h (kMissionShMap).
+    static void setMissionForIbl(const char* missionName);
+
+    // V-IBL-STATIC-2: inspector accessor. Returns the active SH set name
+    // (e.g. "default"). Never returns nullptr.
+    static const char* getCurrentShSetName();
+
     // Register one TG_TypeShape (idempotent). Builds packet table entries
     // and appends geometry to the in-progress VBO/IBO staging.
     // Called during onMapLoad for every static-prop type + its damage variants.
