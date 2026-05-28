@@ -26,6 +26,7 @@ extern "C" unsigned int       gos_vfx_getParticleProgramId();
 extern "C" unsigned int       gos_vfx_getSsboCapacity();
 extern "C" int                gos_vfx_getInitFailed();
 extern "C" int                gos_vfx_getCameraSetThisFrame();
+extern "C" int                gos_vfx_getDebugMode();
 extern "C" int                mc2_vfx_isEnabled();
 extern "C" int                mc2_vfx_isLogEnabled();
 extern "C" unsigned int       mc2_vfx_getBudget();
@@ -1499,6 +1500,7 @@ int main(int argc, char** argv)
                 vs.trailHeadTotal             = mc2_vfx_getTrailHeadTotal();
                 // v1: VFX shaders do not consume ViewUniforms (binding=3).
                 vs.viewUniformsBoundForVfx    = false;
+                vs.debugMode                  = gos_vfx_getDebugMode();
                 EditorInspector::setVfxPassSnapshot(vs);
             }
 

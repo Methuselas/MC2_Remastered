@@ -1136,6 +1136,22 @@ void EditorInspector::drawImGui() {
                 "ViewUniforms (binding=3): NOT consumed (legacy gosFX path)");
         }
         ImGui::Separator();
+        // VFX-DEBUG-VIEWS-1: active debug mode (read-only; driven by
+        // MC2_VFX_DEBUG_MODE). Mode 0 is byte-identical default output.
+        {
+            static const char* kVfxModes[] = {
+                "0 Final (default)", "1 Albedo", "2 Alpha",
+                "3 ParticleKind", "4 Overdraw" };
+            int m = vs.debugMode;
+            const char* name = (m >= 0 && m < 5) ? kVfxModes[m] : "?";
+            if (m == 0) {
+                ImGui::Text("Debug view (MC2_VFX_DEBUG_MODE): %s", name);
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f),
+                    "Debug view (MC2_VFX_DEBUG_MODE): %s [ACTIVE]", name);
+            }
+        }
+        ImGui::Separator();
         ImGui::Text("Program:");
         ImGui::BulletText("particle_billboard: %u", vs.particleProgramId);
         ImGui::Separator();

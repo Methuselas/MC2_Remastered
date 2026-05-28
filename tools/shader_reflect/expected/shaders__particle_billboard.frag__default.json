@@ -10,6 +10,20 @@
   "shader": "shaders/particle_billboard.frag",
   "ssbos": [],
   "stage": "frag",
-  "ubos": [],
+  "ubos": [
+    {
+      "binding": 1,
+      "members": [
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_debugMode",
+          "offset": 0,
+          "type": "int"
+        }
+      ],
+      "name": "gl_DefaultUniformBlock"
+    }
+  ],
   "variant": "default"
 }

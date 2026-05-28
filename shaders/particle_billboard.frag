@@ -16,6 +16,17 @@
 
 uniform sampler2D uAtlas;
 
+// VFX-DEBUG-VIEWS-1: particle debug visualization selector. Uploaded by
+// gos_particle_bridge per flush from MC2_VFX_DEBUG_MODE (default 0). Mode 0 is
+// byte-identical to the pre-slice output. All modes preserve the colorkey +
+// alpha discards so debug views show exactly the fragments that actually draw.
+//   0 = Final        (tex * v_color, head-brighten)   — default, unchanged
+//   1 = Albedo       (raw atlas texel rgb, no tint)
+//   2 = Alpha        (final alpha as grayscale)
+//   3 = ParticleKind (distinct color per kind_flags kind)
+//   4 = Overdraw     (constant additive proxy for blend buildup)
+uniform int u_debugMode;
+
 in vec2 v_uv;
 in vec4 v_color;
 flat in uint v_kind;
@@ -27,9 +38,32 @@ void main() {
     vec4 tex = textureLod(uAtlas, v_uv, 0.0);
     // Discard colorkey pixels (MC2 particle textures use magenta 0xFF00FF as transparent)
     if (tex.r > 0.9 && tex.g < 0.1 && tex.b > 0.9) discard;
-    outColor = tex * v_color;
+    vec4 finalColor = tex * v_color;
     // Head-sprite brightening: particles with is_head=1 are rendered 1.5x brighter
-    if (v_is_head == 1u) outColor.rgb *= 1.5;
+    if (v_is_head == 1u) finalColor.rgb *= 1.5;
     // Also discard genuinely transparent pixels
-    if (outColor.a < 0.01) discard;
+    if (finalColor.a < 0.01) discard;
+
+    if (u_debugMode == 1) {
+        // Albedo: raw atlas texel, drop vertex-color tint; keep final alpha so
+        // blend/coverage matches the real draw.
+        outColor = vec4(tex.rgb, finalColor.a);
+    } else if (u_debugMode == 2) {
+        // Alpha: visualize the final alpha as grayscale.
+        outColor = vec4(vec3(finalColor.a), finalColor.a);
+    } else if (u_debugMode == 3) {
+        // ParticleKind: hashed palette from the 4-bit kind id (kind_flags[7:4]).
+        float k  = float(v_kind);
+        vec3  kc = vec3(fract(k * 0.6180339 + 0.10),
+                        fract(k * 0.3000000 + 0.40),
+                        fract(k * 0.1300000 + 0.70));
+        outColor = vec4(kc, finalColor.a);
+    } else if (u_debugMode == 4) {
+        // Overdraw proxy: each fragment contributes a small constant so blend
+        // accumulation reveals overdraw hot-spots.
+        outColor = vec4(0.15, 0.0, 0.0, 0.15);
+    } else {
+        // 0 = Final (default, byte-identical to pre-slice output).
+        outColor = finalColor;
+    }
 }

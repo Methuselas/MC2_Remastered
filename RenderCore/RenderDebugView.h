@@ -39,10 +39,19 @@ constexpr uint32_t kDebugViewMask_Mech =
     (1u << int(RenderDebugView::Normal))       |
     (1u << int(RenderDebugView::LightingOnly));
 
+// VFX lane: particle_billboard.frag u_debugMode. Only Final/Albedo map to the
+// canonical RenderDebugView vocabulary (Final->mode 0, Albedo->mode 1). The
+// shader also implements VFX-LOCAL modes with no canonical enum slot — Alpha(2),
+// ParticleKind(3), Overdraw(4) — reachable via MC2_VFX_DEBUG_MODE; promote to
+// the enum only if they become cross-lane. Particles have no normal/roughness/
+// metallic/IBL/specular/materialIdx data, so those modes are intentionally absent.
+constexpr uint32_t kDebugViewMask_Vfx =
+    (1u << int(RenderDebugView::Final))        |
+    (1u << int(RenderDebugView::Albedo));
+
 // Placeholders -- zero until the lane implements debug views.
 constexpr uint32_t kDebugViewMask_Terrain  = 0u;
 constexpr uint32_t kDebugViewMask_Shadow   = 0u;
-constexpr uint32_t kDebugViewMask_Vfx      = 0u;
 
 inline bool RenderDebugViewSupported(RenderDebugView v, uint32_t mask) {
     int i = int(v);

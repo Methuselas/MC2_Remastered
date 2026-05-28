@@ -149,7 +149,22 @@ TEST_CASE("RenderDebugView StaticPropOpaque mask excludes lighting-only views") 
 TEST_CASE("RenderDebugView placeholder lane masks are zero") {
     CHECK(kDebugViewMask_Terrain == 0u);
     CHECK(kDebugViewMask_Shadow  == 0u);
-    CHECK(kDebugViewMask_Vfx     == 0u);
+}
+
+TEST_CASE("RenderDebugView Vfx mask covers expected views") {
+    // VFX-DEBUG-VIEWS-1: only Final/Albedo map to the canonical enum. The
+    // shader's Alpha/ParticleKind/Overdraw modes are VFX-local (no enum slot).
+    CHECK(RenderDebugViewSupported(RenderDebugView::Final,  kDebugViewMask_Vfx));
+    CHECK(RenderDebugViewSupported(RenderDebugView::Albedo, kDebugViewMask_Vfx));
+    // Particles have no normal/roughness/metallic/IBL/specular/materialIdx data.
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::Normal,        kDebugViewMask_Vfx));
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::Roughness,     kDebugViewMask_Vfx));
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::Metallic,      kDebugViewMask_Vfx));
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::LightingOnly,  kDebugViewMask_Vfx));
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::IblOnly,       kDebugViewMask_Vfx));
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::SpecularOnly,  kDebugViewMask_Vfx));
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::MaterialIdx,   kDebugViewMask_Vfx));
+    CHECK_FALSE(RenderDebugViewSupported(RenderDebugView::TexArrayLayer, kDebugViewMask_Vfx));
 }
 
 TEST_CASE("RenderDebugView Mech mask covers expected views") {

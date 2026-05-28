@@ -19,6 +19,7 @@
 #include "utils/shader_builder.h"
 
 #include <cstdio>
+#include <cstdlib>   // std::getenv, std::atoi (MC2_VFX_DEBUG_MODE)
 #include <unordered_set>
 
 // terrainMVP getter — same accessor used by gos_terrain_bridge_renderWaterFast
@@ -72,6 +73,25 @@ bool groupLogEnabled() {
     return s_groupLog_value;
 }
 
+// VFX-DEBUG-VIEWS-1: particle billboard debug-mode selector.
+// 0=Final (byte-identical default), 1=Albedo, 2=Alpha, 3=ParticleKind,
+// 4=Overdraw proxy. Seeded once from MC2_VFX_DEBUG_MODE (clamped 0..4);
+// diagnostic-only, no gameplay/emission/lifetime effect. Read-only getter
+// gos_vfx_getDebugMode() surfaces the active value in the Object Inspector.
+bool s_debugMode_initialized = false;
+int  s_debugMode_value       = 0;
+int  vfxDebugMode() {
+    if (!s_debugMode_initialized) {
+        const char* v = std::getenv("MC2_VFX_DEBUG_MODE");
+        if (v && v[0] != '\0') {
+            int m = std::atoi(v);
+            if (m >= 0 && m <= 4) s_debugMode_value = m;
+        }
+        s_debugMode_initialized = true;
+    }
+    return s_debugMode_value;
+}
+
 // P0-4: Cached uniform locations — populated once in ensureInitialized()
 // after the program links. -2 = not yet queried; -1 = not found (GLSL may
 // strip unused uniforms); >= 0 = valid location.
@@ -84,6 +104,8 @@ GLint s_loc_uvSize        = -2;
 // B2 P1: camera-basis uniforms — looked up once, bound per flush.
 GLint s_loc_cameraRight   = -2;
 GLint s_loc_cameraUp      = -2;
+// VFX-DEBUG-VIEWS-1: particle debug-mode uniform.
+GLint s_loc_debugMode     = -2;
 
 void ensureInitialized() {
     if (s_initFailed) return;
@@ -136,6 +158,9 @@ void ensureInitialized() {
         // every frame — that hides shader bugs and wastes GL calls.
         s_loc_cameraRight   = glGetUniformLocation(s_prog->shp_, "u_cameraRight");
         s_loc_cameraUp      = glGetUniformLocation(s_prog->shp_, "u_cameraUp");
+        // VFX-DEBUG-VIEWS-1: debug-mode selector (may be -1 if mode 0 dead-code
+        // elim strips it; upload is guarded on >= 0).
+        s_loc_debugMode     = glGetUniformLocation(s_prog->shp_, "u_debugMode");
         if (s_loc_cameraRight < 0 || s_loc_cameraUp < 0) {
             if (groupLogEnabled())
                 std::fprintf(stderr, "[B2] gos_particle_bridge: uniform locations missing — right=%d up=%d\n",
@@ -294,6 +319,8 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     // world space (axis-swapped by gamecam.cpp before calling gos_SetActiveCamera).
     if (s_loc_cameraRight >= 0) glUniform3fv(s_loc_cameraRight, 1, g_cam_right);
     if (s_loc_cameraUp    >= 0) glUniform3fv(s_loc_cameraUp,    1, g_cam_up);
+    // VFX-DEBUG-VIEWS-1: debug-mode selector (default 0 = byte-identical Final).
+    if (s_loc_debugMode   >= 0) glUniform1i(s_loc_debugMode, vfxDebugMode());
 
     // ── Sampler on unit 0 (trap #5: sampler inheritance) ─────────────
     glBindSampler(0, s_sampler);
@@ -433,4 +460,10 @@ extern "C" int gos_vfx_getInitFailed()
 extern "C" int gos_vfx_getCameraSetThisFrame()
 {
     return g_cam_set_this_frame ? 1 : 0;
+}
+// VFX-DEBUG-VIEWS-1: active particle debug mode (0..4), seeded from
+// MC2_VFX_DEBUG_MODE. Read-only; resolves the env lazily on first call.
+extern "C" int gos_vfx_getDebugMode()
+{
+    return vfxDebugMode();
 }

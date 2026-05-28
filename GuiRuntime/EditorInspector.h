@@ -143,6 +143,9 @@ struct VfxPassSnapshot {
     // v1: VFX shaders do NOT consume ViewUniforms (binding=3). Hard-coded so
     // the closure-audit gap is visible in the inspector.
     bool     viewUniformsBoundForVfx    = false;
+    // VFX-DEBUG-VIEWS-1: active particle debug mode (gos_vfx_getDebugMode).
+    // 0=Final, 1=Albedo, 2=Alpha, 3=ParticleKind, 4=Overdraw. Read-only display.
+    int      debugMode                  = 0;
 };
 void setVfxPassSnapshot(const VfxPassSnapshot& vs);  // VFX-SPINE-0
 

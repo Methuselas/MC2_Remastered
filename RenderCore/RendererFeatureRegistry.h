@@ -442,6 +442,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "TERRAIN-RESAMPLE-1: CPU bilinear resample factor for the per-mission terrain height texture used by TERRAIN-NORMALS-FROM-HEIGHT-1. Accepted values 1, 2, 4 (anything else clamps to 1). Default 1 (byte-equivalent to pre-slice). Render texture side becomes (sourceSide-1)*factor + 1, with source samples preserved EXACTLY at corner positions (factor multiples). Bilinear interpolation between source taps fills intermediate render samples. Resample is read at every gos_uploadTerrainHeightTex() call (i.e. per mission load); toggling mid-mission does not re-upload. Only affects the height-derived normal path: gameplay height (Terrain::getTerrainElevation) is unchanged; no displacement, no geometry move. Memory: 4× factor on a 120² source = ~890 KB; bounded by source-grid * 16. Inspector shows source/render/factor."
     },
+    {
+        "MC2_DIAG_VFX_DEBUG_MODE",
+        "MC2_VFX_DEBUG_MODE",
+        EnvVarKind::Trace,
+        false,
+        "VFX-DEBUG-VIEWS-1: GPU particle billboard fragment-shader debug-mode selector (particle_billboard.frag u_debugMode, uploaded by gos_particle_bridge). Default unset = mode 0 (Final, byte-identical to default output). Modes: 1=Albedo (raw atlas texel rgb, no vertex-color tint), 2=Alpha (final alpha as grayscale), 3=ParticleKind (distinct hashed color per kind_flags kind), 4=Overdraw (constant additive proxy to visualize blend buildup). Seeded once at process start from this env var (clamped 0..4); the VFX Pass Object-Inspector panel shows the active mode read-only (gos_vfx_getDebugMode). Diagnostic-only; no gameplay, emission, lifetime, sorting, or default visual effect; VFX object-IDs remain prohibited. RenderDebugView canonical mapping (kDebugViewMask_Vfx): Final->0, Albedo->1; modes 2-4 are VFX-local (no canonical enum slot)."
+    },
 };
 
 // ---------------------------------------------------------------------------
