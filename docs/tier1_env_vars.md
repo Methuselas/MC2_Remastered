@@ -106,6 +106,11 @@ Log tag: `[MATERIAL_GPU v4]`
 - `MC2_STATIC_PROP_PBR_V1_STRENGTH=<f>` — optional default-strength override (clamped 0..3). Sets the initial `g_pbrV1Strength` slider value. ImGui slider may still override at runtime. Only meaningful when `MC2_STATIC_PROP_PBR_V1=1`. Unset/empty → default 1.0.
 - `MC2_STATIC_PROP_PBR_V1_DIAG_SUNFOUND=1` — diagnostic visualizer for the forwarded sun-found state. Only meaningful with `MC2_STATIC_PROP_PBR_V1=1`; paints cyan when a supported infinite sun light was found and magenta when not found.
 
+## Debug state dump (DEBUG-STATE-DUMP-1)
+
+- `MC2_DEBUG_STATE_DUMP=1` — write a JSON render-state snapshot every 300 frames (and at frame 1) to `debug_state/latest_render_state.json` relative to the working directory. Snapshot includes: feature gate states, `RenderSnapshot` ok/mismatch counters, `EngineView` state, and `StaticPropOpaque` visual globals. **Read-only; no renderer or gameplay changes.** Default **OFF**. See `docs/debug_state_dump.md`.
+- `MC2_DEBUG_STATE_DUMP_DIR=<path>` — override the output directory for the JSON snapshot. No effect when `MC2_DEBUG_STATE_DUMP` is unset.
+
 ## Static-prop dispatch hierarchy (v7)
 
 As of v7 the static-prop draw path is:

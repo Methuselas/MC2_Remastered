@@ -524,6 +524,24 @@ void batcher_getSnapshotBuildStats(uint32_t* attempted, uint32_t* countMismatch,
                                    uint32_t* packetMismatch, uint32_t* metaMismatch,
                                    uint32_t* fallback);
 
+// DEBUG-STATE-DUMP-1: read-only StaticPropOpaque visual/debug state.
+struct StaticPropOpaqueDebugState {
+    bool snapshotDispatchDefault = true;
+    bool legacyDispatch = false;
+    bool materialGpuEnabled = false;
+    bool materialGpuSample = false;
+    bool iblShEnabled = false;
+    float iblShStrength = 0.0f;
+    const char* iblShSet = "default";
+    bool pbrEnabled = false;
+    float pbrStrength = 0.0f;
+    bool pbrRoughnessOverrideEnabled = false;
+    float pbrRoughnessOverride = -1.0f;
+    int debugMaterialMode = 0;
+};
+
+void batcher_getStaticPropOpaqueDebugState(StaticPropOpaqueDebugState* out);
+
 // ---------------------------------------------------------------------------
 // Type-desc table accessors (v0: CPU-side only, no SSBO).
 // All functions return safe sentinels (0 / nullptr / false) before

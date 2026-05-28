@@ -505,7 +505,12 @@ def main():
                             # Render-contract Phase 2 assert mode (default-OFF).
                             # MC2_RENDER_CONTRACT_ASSERT=1 enables runtime GL state
                             # validation against declared render_contract expectations.
-                            "MC2_RENDER_CONTRACT_ASSERT")},
+                            "MC2_RENDER_CONTRACT_ASSERT",
+                            # DEBUG-STATE-DUMP-1: JSON render-state snapshots.
+                            # Default-OFF; =1 writes debug_state/latest_render_state.json.
+                            "MC2_DEBUG_STATE_DUMP",
+                            # DEBUG-STATE-DUMP-1: override output directory.
+                            "MC2_DEBUG_STATE_DUMP_DIR")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

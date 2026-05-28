@@ -374,6 +374,20 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "V-MATERIAL-PBR-3-DIAG: diagnostic visualizer for the forwarded sunFound state. When ON together with MC2_STATIC_PROP_PBR_V1=1, static_prop.frag replaces the PBR result with cyan (sunFound=true) or magenta (sunFound=false), bypassing Schlick math. Diagnostic-only; never affects default-OFF behavior. Unset/'0' -> off."
     },
+    {
+        "MC2_DIAG_DEBUG_STATE_DUMP",
+        "MC2_DEBUG_STATE_DUMP",
+        EnvVarKind::Trace,
+        false,
+        "DEBUG-STATE-DUMP-1: write a JSON render-state snapshot to debug_state/latest_render_state.json every 300 frames (and at frame 1). Snapshot includes feature gates, RenderSnapshot counters, EngineView state, and StaticPropOpaque visual globals. Read-only; no gameplay or renderer behavior changes. Default-OFF; =1 enables. Output dir override: MC2_DEBUG_STATE_DUMP_DIR. See docs/debug_state_dump.md."
+    },
+    {
+        "MC2_DIAG_DEBUG_STATE_DUMP_DIR",
+        "MC2_DEBUG_STATE_DUMP_DIR",
+        EnvVarKind::Trace,
+        false,
+        "DEBUG-STATE-DUMP-1: override output directory for MC2_DEBUG_STATE_DUMP. Defaults to debug_state/ relative to working directory. No effect when MC2_DEBUG_STATE_DUMP is not set."
+    },
 };
 
 // ---------------------------------------------------------------------------

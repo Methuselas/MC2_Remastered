@@ -45,6 +45,7 @@ set(SOURCES ${SOURCES}
     draw_packet_emitter.cpp
     pipeline_binder.cpp
     view_uniforms_gl.cpp
+    debug_state_dump.cpp
 
     utils/stream.cpp
     utils/camera.cpp

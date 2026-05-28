@@ -5983,6 +5983,22 @@ bool batcher_isGlobalPoolLegacy() { return s_globalPoolLegacy; }
 uint32_t batcher_getGlobalInstanceCap() { return s_globalInstanceCap; }
 uint32_t batcher_getCoalesceFrameSlot() { return s_coalesceFrameSlot; }  // diagnostic
 
+void batcher_getStaticPropOpaqueDebugState(StaticPropOpaqueDebugState* out) {
+    if (!out) return;
+    out->snapshotDispatchDefault     = s_v6Enabled;
+    out->legacyDispatch              = !s_v6Enabled;
+    out->materialGpuEnabled          = s_materialGpuEnabled;
+    out->materialGpuSample           = s_materialGpuSampleEnabled;
+    out->iblShEnabled                = s_iblShEnabled;
+    out->iblShStrength               = g_iblShStrength;
+    out->iblShSet                    = s_currentShSet ? s_currentShSet->name : "default";
+    out->pbrEnabled                  = s_pbrV1Enabled;
+    out->pbrStrength                 = g_pbrV1Strength;
+    out->pbrRoughnessOverrideEnabled = g_pbrV1RoughnessOverrideEnabled;
+    out->pbrRoughnessOverride        = g_pbrV1RoughnessOverrideValue;
+    out->debugMaterialMode           = s_staticPropDebugMaterialMode;
+}
+
 // ---------------------------------------------------------------------------
 // Type-desc table accessors (v0)
 // ---------------------------------------------------------------------------

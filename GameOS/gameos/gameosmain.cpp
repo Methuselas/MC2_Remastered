@@ -156,11 +156,12 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "gpu_cull_record.h"       // C0-1: GpuActorRecord schema selftest
 #include "gpu_cull_readback.h"    // C2: async readback ring buffer selftest
 #include "object_admission_predicate.h"  // Track A1: init probe + selftest gate
+#include "view_uniforms_gl.h"                     // getCurrentView (unconditional: used by debug_state_dump)
+#include "debug_state_dump.h"                     // DEBUG-STATE-DUMP-1
 #ifdef MC2_IMGUI
 #include "../../GuiRuntime/GuiRuntime.h"
 #include "../../GuiRuntime/EditorInspector.h"     // TERRAIN-SPINE-0
 #include "gos_terrain_patch_stream.h"             // TERRAIN-SPINE-0
-#include "view_uniforms_gl.h"                     // TERRAIN-SPINE-0: RenderCore::getCurrentView
 #include "imgui_impl_sdl2.h"
 #endif
 
@@ -1195,6 +1196,7 @@ int main(int argc, char** argv)
             ZoneScopedN("ExtractRenderSnapshot");
             snap = ExtractRenderSnapshot();
         }
+        mc2_debug_state::maybeWriteRenderState(snap);
         {
             ZoneScopedN("EmitDrawPackets");
 
