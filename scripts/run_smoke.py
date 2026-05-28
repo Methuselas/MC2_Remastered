@@ -488,6 +488,15 @@ def main():
                             # (e.g. "default"). Unset/empty/unknown falls back
                             # to mission registry or default set. Dev knob.
                             "MC2_STATIC_PROP_IBL_SH_SET",
+                            # V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel
+                            # + power-lobe specular gate (default-OFF).
+                            # MC2_STATIC_PROP_PBR_V1=1 enables; ImGui slider
+                            # tunes u_pbrV1Strength when on.
+                            "MC2_STATIC_PROP_PBR_V1",
+                            # V-MATERIAL-PBR-2: optional default-strength
+                            # override (clamped 0..3). Only meaningful when
+                            # MC2_STATIC_PROP_PBR_V1=1.
+                            "MC2_STATIC_PROP_PBR_V1_STRENGTH",
                             # Render-contract Phase 2 assert mode (default-OFF).
                             # MC2_RENDER_CONTRACT_ASSERT=1 enables runtime GL state
                             # validation against declared render_contract expectations.

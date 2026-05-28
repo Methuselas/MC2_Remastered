@@ -19,6 +19,15 @@
 
 extern float g_iblShStrength;
 
+// V-MATERIAL-PBR-2 runtime cross-TU bridge. Same idiom as g_iblShStrength:
+// the env var MC2_STATIC_PROP_PBR_V1 (read once at process start as
+// s_pbrV1Enabled inside the batcher TU) is the AUTHORITATIVE GATE; the
+// slider only modulates strength when the env-gate is on. Per-frame upload
+// computes `(s_pbrV1Enabled && !s_viewUniformsDisabled) ? g_pbrV1Strength
+// : 0.0f`. Default 1.0f at process start (or
+// MC2_STATIC_PROP_PBR_V1_STRENGTH override, clamped 0..3).
+extern float g_pbrV1Strength;
+
 // V-IBL-STATIC-2: inspector accessor for the active per-mission SH set.
 // Forwarded here (instead of including the batcher header) so GuiRuntime
 // stays independent of Stuff/. Implementation lives in

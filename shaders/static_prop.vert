@@ -130,6 +130,27 @@ uniform float u_ambientV1Strength;
 uniform vec3  u_iblSh[9];
 uniform float u_iblShStrength;
 
+// V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular on
+// StaticPropOpaque lane. Default strength = 0.0 (mathematical no-op via the
+// `if (u_pbrV1Strength > 0.0)` early-out below). CPU uploads 0.0 when
+// MC2_STATIC_PROP_PBR_V1 unset/=0 OR when MC2_VIEW_UNIFORMS=0 (the safety
+// interlock; the entire PBR block requires u_cameraWorldPos which is only
+// declared inside `#if defined(MC2_USE_VIEW_UNIFORMS)`).
+//
+// Per-vertex limitation: uses constant F0=vec3(0.04) (dielectric default)
+// and fallback material scalars metallic=0.0, roughness=1.0. Per-fragment
+// MaterialGpu lookup (per-instance metallicFactor/roughnessFactor + albedo-
+// tinted F0 for metallics) deferred to V-MATERIAL-PBR-3 -- adding it here
+// would require plumbing perDraw_ into the vertex stage (out of scope).
+//
+// Gate-ON visual: with the fallback roughness=1.0, smoothness=0 collapses
+// the specPower to 1.0, so `pow(NdotH, 1)` yields a broad dielectric sheen
+// (NOT a tight highlight). This is EXPECTED and acknowledged in
+// RenderCore/RendererFeatureRegistry.h kFeatureTable doc. Gate-ON is NOT
+// byte-identical to default-OFF; only default-OFF (strength=0.0) is.
+// TODO(SHADER-REFLECT-HYGIENE-6): goldens deferred; regen in fresh worktree.
+uniform float u_pbrV1Strength;
+
 // SH-L2 evaluator (Ramamoorthi-Hanrahan 2001 named constants).
 // Axis convention: Y-up world (same as V-AMBIENT-STATIC-1 hemi_t at
 // static_prop.vert:281). worldNormal is Stuff-space Y-up (model normal *
@@ -335,6 +356,67 @@ void main() {
             vec3 ibl = evalShL2(normalize(worldNormal));
             lit += ibl * u_iblShStrength;
         }
+
+        // V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular.
+        // GUARDED by `#if defined(MC2_USE_VIEW_UNIFORMS)` because the math
+        // requires u_cameraWorldPos which is only declared inside that
+        // include block (view_uniforms.hglsl). When MC2_VIEW_UNIFORMS=0,
+        // both the shader-side compile-guard AND the CPU-side runtime
+        // safety interlock (s_viewUniformsDisabled in gos_static_prop_batcher.cpp)
+        // force the path off -- defense in depth.
+        //
+        // Sun direction/color: inline iteration over LightsData SSBO
+        // (Phase 0 Option A). The sun is whichever ObjectLights entry has
+        // light_type==TG_LIGHT_INFINITE (no stable slot guarantee). We take
+        // the FIRST such entry; mclib/tgl.cpp populates exactly one
+        // INFINITE light per ObjectLights entry under stock missions
+        // (the sun), so this is unambiguous. If no INFINITE light is
+        // present we skip the specular contribution.
+        //
+        // Sun direction convention: lighting.hglsl calc_light's INFINITE
+        // branch uses `dot(normal, -ld.light_dir[i].xyz)`, so ld.light_dir
+        // is the surface-to-sun direction negated (i.e. it points
+        // FROM the sun TO the surface). To get L (surface->light) we
+        // negate: L = -ld.light_dir[i].xyz.
+#if defined(MC2_USE_VIEW_UNIFORMS)
+        if (u_pbrV1Strength > 0.0) {
+            ObjectLights ld_pbr = light[int(inst.lightDataIndex)];
+            vec3 sunDir   = vec3(0.0);
+            vec3 sunColor = vec3(0.0);
+            bool sunFound = false;
+            int n_pbr = min(ld_pbr.numLights.x, MAX_LIGHTS_IN_WORLD);
+            for (int i = 0; i < n_pbr; ++i) {
+                if (int(ld_pbr.light_dir[i].w) == TG_LIGHT_INFINITE) {
+                    sunDir   = ld_pbr.light_dir[i].xyz;
+                    sunColor = ld_pbr.light_color[i].xyz;
+                    sunFound = true;
+                    break;
+                }
+            }
+            if (sunFound) {
+                vec3 N = normalize(worldNormal);
+                vec3 V_eye = normalize(u_cameraWorldPos.xyz - worldPos);
+                vec3 L = normalize(-sunDir);
+                vec3 H = normalize(L + V_eye);
+                // Per-vertex fallbacks: metallic=0, roughness=1
+                // (per-fragment MaterialGpu lookup deferred to V-MATERIAL-PBR-3).
+                float metallicFactor  = 0.0;
+                float roughnessFactor = 1.0;
+                const vec3 kF0Dielectric = vec3(0.04);
+                vec3  F0     = mix(kF0Dielectric, vec3(0.04), metallicFactor);
+                // ^ Equivalent to vec3(0.04); albedo-tinted F0 for metallics
+                //   deferred (requires per-fragment access).
+                vec3  F      = F0 + (vec3(1.0) - F0)
+                                 * pow(max(0.0, 1.0 - dot(N, V_eye)), 5.0);
+                float smoothness = 1.0 - roughnessFactor;
+                float specPower  = mix(1.0, 512.0, smoothness * smoothness);
+                float NdotH      = max(0.0, dot(N, H));
+                float NdotL      = max(0.0, dot(N, L));
+                vec3  specular   = sunColor * F * pow(NdotH, specPower) * NdotL;
+                lit += specular * u_pbrV1Strength;
+            }
+        }
+#endif  // MC2_USE_VIEW_UNIFORMS
     }
 
     // 6. aRGBHighlight additive contribution — mirrors CPU tgl.cpp:2313-2335.

@@ -93,6 +93,11 @@ Requires `MC2_MATERIAL_GPU` also active (sampleOn gate checks both).
 
 Log tag: `[MATERIAL_GPU v4]`
 
+## V-MATERIAL-PBR-2 (per-vertex specular)
+
+- `MC2_STATIC_PROP_PBR_V1=1` — gate the per-vertex Schlick-Fresnel + power-lobe specular on StaticPropOpaque lane (`static_prop.vert`, inside `#if defined(MC2_USE_VIEW_UNIFORMS)`). Default **OFF**. When OFF, `u_pbrV1Strength` uploads 0.0 → shader `if (u_pbrV1Strength > 0.0)` short-circuits → mathematical byte-identical OFF (`lit += specular * 0 = lit unchanged`). **Gate-ON adds a broad dielectric Fresnel sheen** to default-roughness materials — this is EXPECTED, not a bug. Per-vertex limitation: uses constant F0=vec3(0.04) and fallback `metallic=0.0`, `roughness=1.0` (per-fragment MaterialGpu lookup deferred to V-MATERIAL-PBR-3). Sun direction sourced inline from the first `TG_LIGHT_INFINITE` entry in the LightsData SSBO. Safety interlock: when `MC2_VIEW_UNIFORMS=0`, CPU force-zeroes `u_pbrV1Strength` (shader compile-guard already excludes the block; defense in depth).
+- `MC2_STATIC_PROP_PBR_V1_STRENGTH=<f>` — optional default-strength override (clamped 0..3). Sets the initial `g_pbrV1Strength` slider value. ImGui slider may still override at runtime. Only meaningful when `MC2_STATIC_PROP_PBR_V1=1`. Unset/empty → default 1.0.
+
 ## Static-prop dispatch hierarchy (v7)
 
 As of v7 the static-prop draw path is:

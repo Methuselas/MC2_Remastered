@@ -126,7 +126,15 @@ enum class RendererFeature : int {
     // ImGui slider (g_iblShStrength) modulates strength when env=1; the env
     // var is the authoritative gate.
     StaticPropIblSh          = 21,  // MC2_STATIC_PROP_IBL_SH
-    COUNT                    = 22,
+    // V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular
+    // on StaticPropOpaque lane. Default-OFF; strength uniform = 0.0 when
+    // env unset/=0 -> shader `if (u_pbrV1Strength > 0.0)` short-circuits
+    // to mathematically byte-identical pre-slice output. Gate-ON adds a
+    // visible broad dielectric sheen because the per-vertex fallback
+    // (roughness=1.0) collapses specPower to 1.0 -- this is expected.
+    // Per-fragment MaterialGpu lookup deferred to V-MATERIAL-PBR-3.
+    StaticPropPbrV1          = 22,  // MC2_STATIC_PROP_PBR_V1
+    COUNT                    = 23,
 };
 
 // ---------------------------------------------------------------------------
@@ -312,6 +320,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         true,
         "V-IBL-STATIC-1: SH-L2 image-based ambient on StaticPropOpaque lane (static_prop.vert). Default-ON (flipped 2026-05-27 per V-STATICPROP-VISUAL-REVIEW-AUDIT); =0 is explicit kill-switch (byte-identical to pre-flip OFF). When OFF, u_iblShStrength uploads 0.0 -> shader short-circuits before evalShL2. Coefficients from RenderCore/IblShCoeffs.h (projected from data/hdr/DaySkyHDRI063B_4K.exr). ImGui slider g_iblShStrength modulates per-frame strength (default 0.5); env var is authoritative gate."
     },
+    // StaticPropPbrV1
+    {
+        "MC2_FEATURE_STATIC_PROP_PBR_V1",
+        "MC2_STATIC_PROP_PBR_V1",
+        EnvVarKind::Feature,
+        false,
+        "V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular on StaticPropOpaque lane (static_prop.vert, inside `#if defined(MC2_USE_VIEW_UNIFORMS)`). Default-OFF; =1 enables. When OFF, u_pbrV1Strength uploads 0.0 -> shader `if (u_pbrV1Strength > 0.0)` short-circuits BEFORE any u_cameraWorldPos read (mathematical proof of byte-identical OFF: lit += specular * 0 = lit unchanged). Gate-ON adds a visible broad dielectric Fresnel sheen because the per-vertex fallback uses roughness=1.0 (smoothness=0 -> specPower=1.0 -> pow(NdotH,1) wide lobe); this is EXPECTED, not a bug. Per-fragment MaterialGpu lookup (per-instance metallicFactor/roughnessFactor + albedo-tinted F0) deferred to V-MATERIAL-PBR-3. Safety interlock: when MC2_VIEW_UNIFORMS=0, CPU force-zeroes strength (shader's compile-guard already excludes the block; this is belt-and-suspenders). Sun direction sourced via inline iteration over LightsData SSBO for the first TG_LIGHT_INFINITE entry. ImGui slider g_pbrV1Strength modulates per-frame strength (default 1.0, range 0..3); env var is authoritative gate. Optional override MC2_STATIC_PROP_PBR_V1_STRENGTH (clamped 0..3) sets the default."
+    },
 };
 
 static_assert(
@@ -338,6 +354,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         EnvVarKind::Trace,
         false,
         "V-IBL-STATIC-2: override the active SH coefficient set by name (e.g. 'default'). Optional dev/debug knob. Unset/empty/unknown -> registry-or-default fallback. Does not gate IBL itself (MC2_STATIC_PROP_IBL_SH remains the authoritative on/off gate)."
+    },
+    {
+        "MC2_TUNE_STATIC_PROP_PBR_V1_STRENGTH",
+        "MC2_STATIC_PROP_PBR_V1_STRENGTH",
+        EnvVarKind::Trace,
+        false,
+        "V-MATERIAL-PBR-2: optional default-strength override for the per-vertex Schlick-Fresnel specular (clamped 0..3). ImGui slider g_pbrV1Strength initial value. Only meaningful when MC2_STATIC_PROP_PBR_V1=1 (env var is the authoritative gate). Unset/empty -> default 1.0. Resolved once at process start."
     },
 };
 

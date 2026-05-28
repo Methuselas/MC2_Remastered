@@ -208,6 +208,21 @@ float g_iblShStrength = []() -> float {
     return f;
 }();
 
+// V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel specular slider value
+// (interactive). Default 1.0f. Only contributes when the env-gate
+// s_pbrV1Enabled is ON (and MC2_VIEW_UNIFORMS is not disabled). Optional env
+// override MC2_STATIC_PROP_PBR_V1_STRENGTH wins over the default; clamped
+// 0..3 to match the slider range. External linkage so EditorInspector.cpp
+// can drive the slider (same pattern as g_iblShStrength).
+float g_pbrV1Strength = []() -> float {
+    const char* v = std::getenv("MC2_STATIC_PROP_PBR_V1_STRENGTH");
+    if (!v || !v[0]) return 1.0f;
+    float f = (float)std::atof(v);
+    if (f < 0.0f) f = 0.0f;
+    if (f > 3.0f) f = 3.0f;
+    return f;
+}();
+
 namespace {
 
 // Per-vertex stride in the shared VBO. Layout:
@@ -439,6 +454,28 @@ static const bool s_iblShEnabled = []() {
     const char* v = getenv("MC2_STATIC_PROP_IBL_SH");
     return !(v != nullptr && v[0] == '0');
 }();
+
+// V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular gate.
+// Default-OFF; "=1" / any non-"0" value enables. Matches V-IBL-STATIC-1
+// pre-flip env-parse pattern. When OFF, the per-frame upload pushes
+// u_pbrV1Strength=0.0f -> shader `if (u_pbrV1Strength > 0.0)` short-circuits
+// before any u_cameraWorldPos access -> mathematically byte-identical
+// (strength=0 -> lit += specular * 0 = lit unchanged).
+static const bool s_pbrV1Enabled = []() {
+    const char* v = getenv("MC2_STATIC_PROP_PBR_V1");
+    return v != nullptr && v[0] != '0' && v[0] != '\0';
+}();
+
+// V-MATERIAL-PBR-2 safety interlock: when MC2_VIEW_UNIFORMS=0 the shader's
+// PBR block is excluded by `#if defined(MC2_USE_VIEW_UNIFORMS)` (compile-
+// time guard). This runtime flag is the belt to the compile-time
+// suspenders: even if a build slips through with the guard misconfigured,
+// strength is force-zeroed here so the path stays dormant. Cached once
+// at process start; mirrors the IBL env-gate idiom.
+static const bool s_viewUniformsDisabled = []() {
+    const char* v = getenv("MC2_VIEW_UNIFORMS");
+    return v != nullptr && v[0] == '0';
+}();
 // Note: definition of `g_iblShStrength` lives at file scope above the
 // anonymous namespace (line ~191) so it has external linkage. The lambda-
 // initialized s_iblShEnabled stays local here; the slider value is global.
@@ -630,6 +667,7 @@ struct ProgramLocs {
     GLint debugMaterialMode   = -1;   // V-MATERIAL-DEBUG-1: u_debugMaterialMode
     GLint iblSh               = -1;   // V-IBL-STATIC-1: u_iblSh[9] (vec3 array)
     GLint iblShStrength       = -1;   // V-IBL-STATIC-1: u_iblShStrength
+    GLint pbrV1Strength       = -1;   // V-MATERIAL-PBR-2: u_pbrV1Strength
 };
 static ProgramLocs s_locsLegacy;
 static ProgramLocs s_locsCoalesce;
@@ -843,6 +881,8 @@ void loadProgramsIfNeeded() {
     // V-IBL-STATIC-1: SH-L2 coeffs + strength (default strength 0.0 = OFF).
     s_locsLegacy.iblSh             = glGetUniformLocation(s_staticPropProgram, "u_iblSh");
     s_locsLegacy.iblShStrength     = glGetUniformLocation(s_staticPropProgram, "u_iblShStrength");
+    // V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular (default strength 0.0 = OFF).
+    s_locsLegacy.pbrV1Strength     = glGetUniformLocation(s_staticPropProgram, "u_pbrV1Strength");
     // s_locsLegacy.drawIDBase / texArr stay -1 (coalesce-only; legacy
     // shader has no such uniforms).
 
@@ -881,6 +921,8 @@ void loadProgramsIfNeeded() {
             // V-IBL-STATIC-1: SH-L2 coeffs + strength (default strength 0.0 = OFF).
             s_locsCoalesce.iblSh             = glGetUniformLocation(s_staticPropProgramCoalesce, "u_iblSh");
             s_locsCoalesce.iblShStrength     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_iblShStrength");
+            // V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular (default strength 0.0 = OFF).
+            s_locsCoalesce.pbrV1Strength     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pbrV1Strength");
 
             // M3 fix: if both gates are ON and the uniform is absent, log an error.
             // This can only happen if the shader wasn't recompiled with v3 changes.
@@ -4070,6 +4112,18 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         if (s_locsCoalesce.iblShStrength >= 0)
             glUniform1f       (s_locsCoalesce.iblShStrength,
                                s_iblShEnabled ? g_iblShStrength : 0.0f);
+        // V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel specular. Default OFF;
+        // strength=0.0 when env unset/=0 -> shader short-circuits (mathematical
+        // proof: lit += specular * 0.0 = lit unchanged). Safety interlock:
+        // if MC2_VIEW_UNIFORMS=0, force-zero regardless of gate/slider
+        // (shader's #if defined(MC2_USE_VIEW_UNIFORMS) excludes the block
+        // and u_cameraWorldPos read; this is belt-and-suspenders).
+        if (s_locsCoalesce.pbrV1Strength >= 0) {
+            const float pbrStrength =
+                (s_pbrV1Enabled && !s_viewUniformsDisabled)
+                    ? g_pbrV1Strength : 0.0f;
+            glUniform1f(s_locsCoalesce.pbrV1Strength, pbrStrength);
+        }
 
         // 11.7.e — slot 1 is NOT bound (per v2r18 §3.X.1: colors_.c[]
         // unread in any live shader path; coalesce branch does not bind
@@ -4939,6 +4993,15 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             if (s_locsLegacy.iblShStrength >= 0)
                 glUniform1f(s_locsLegacy.iblShStrength,
                             s_iblShEnabled ? g_iblShStrength : 0.0f);
+            // V-MATERIAL-PBR-2: legacy program upload. Same gating as coalesce
+            // site (env + ViewUniforms-disabled interlock). Default-OFF is
+            // upload 0.0f -> shader short-circuit.
+            if (s_locsLegacy.pbrV1Strength >= 0) {
+                const float pbrStrength =
+                    (s_pbrV1Enabled && !s_viewUniformsDisabled)
+                        ? g_pbrV1Strength : 0.0f;
+                glUniform1f(s_locsLegacy.pbrV1Strength, pbrStrength);
+            }
         }
 
     for (uint32_t typeID = 0; typeID < s_types.size(); ++typeID) {

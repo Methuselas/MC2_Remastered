@@ -543,6 +543,33 @@ void EditorInspector::drawImGui() {
                 ImGui::SliderFloat("##ibl_sh_strength", &g_iblShStrength,
                                    0.0f, 3.0f, "ibl strength %.2f");
                 ImGui::EndDisabled();
+
+                // V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe
+                // specular. Env-gated (default-OFF). Slider modulates strength
+                // when env=1 AND ViewUniforms not disabled. Env-parse below
+                // MUST match s_pbrV1Enabled lambda in
+                // gos_static_prop_batcher.cpp byte-for-byte.
+                const char* pbrEnv = std::getenv("MC2_STATIC_PROP_PBR_V1");
+                bool pbrOn = pbrEnv != nullptr && pbrEnv[0] != '0'
+                                                && pbrEnv[0] != '\0';
+                if (pbrOn) {
+                    ImGui::Text("  pbr v1         on (strength=%.2f)",
+                                g_pbrV1Strength);
+                } else {
+                    ImGui::Text("  pbr v1         off (env-gated)");
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("V-MATERIAL-PBR-2 per-vertex Schlick-Fresnel\n"
+                                      "+ power-lobe specular in static_prop.vert\n"
+                                      "(inside #if defined(MC2_USE_VIEW_UNIFORMS)).\n"
+                                      "Gate: MC2_STATIC_PROP_PBR_V1=1 (env-authoritative).\n"
+                                      "Gate-ON adds a broad dielectric sheen because\n"
+                                      "per-vertex fallback uses roughness=1.0 (expected).\n"
+                                      "OFF -> u_pbrV1Strength=0.0 (byte-identical).");
+                ImGui::BeginDisabled(!pbrOn);
+                ImGui::SliderFloat("##pbr_v1_strength", &g_pbrV1Strength,
+                                   0.0f, 3.0f, "pbr v1 strength %.2f");
+                ImGui::EndDisabled();
             }
 
             ImGui::Spacing();
@@ -557,6 +584,7 @@ void EditorInspector::drawImGui() {
                 { "ambient v1",          "MC2_STATIC_PROP_AMBIENT_V1",      false },
                 { "debug material",      "MC2_STATIC_PROP_DEBUG_MATERIAL",  false },
                 { "ibl sh",              "MC2_STATIC_PROP_IBL_SH",          true  },
+                { "pbr v1",              "MC2_STATIC_PROP_PBR_V1",          false },
             };
             for (const auto& fb : kFallbacks) {
                 const char* v = std::getenv(fb.envVar);
