@@ -216,10 +216,15 @@ void GameCamera::render (void)
 					RenderCore::setCurrentView(mainView);
 				}
 
-				// Upload UBO and run F1-3C compare only when gated.
+				// F1-3D flip: upload UBO by default; kill-switch MC2_VIEW_UNIFORMS=0.
+				// Original F1-3B/F1-3C gate required explicit =1 (opt-in). That left
+				// the UBO unbound when the env var was absent, so any shader compiled
+				// with MC2_USE_VIEW_UNIFORMS read from an unbound/zero UBO and drew
+				// props off-screen. Matches the s_viewUniformsShaderEnabled flip in
+				// gos_static_prop_batcher.cpp.
 				{
 					static const char* s_vuEnv = std::getenv("MC2_VIEW_UNIFORMS");
-					if (s_vuEnv && s_vuEnv[0] != '0') {
+					if (!(s_vuEnv && s_vuEnv[0] == '0')) {
 						RenderCore::uploadViewUniforms(vu);
 
 						// F1-3C: compare ViewUniforms.worldToClipGL against legacy terrain MVP upload
