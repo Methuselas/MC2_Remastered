@@ -29,6 +29,23 @@ void  gos_SetTerrainLightingV1Strength(float s);
 float gos_GetTerrainLightingV1Strength();
 void  gos_SetTerrainLightingV2Floor(float f);
 float gos_GetTerrainLightingV2Floor();
+// WATER-TUNING-UI-1 / WATER-DEBUG-VIEWS-1 — MDI water FS accessors (defined in
+// gameos_graphics.cpp). Debug-mode selector + runtime material tunables
+// (defaults match the former gos_terrain_water_mdi.frag consts exactly).
+int   gos_GetWaterFsDebugMode();
+void  gos_SetWaterFsDebugMode(int m);
+float gos_GetWaterAbsorptionDensity();
+void  gos_SetWaterAbsorptionDensity(float v);
+float gos_GetWaterMaxAlpha();
+void  gos_SetWaterMaxAlpha(float v);
+float gos_GetWaterRippleGain();
+void  gos_SetWaterRippleGain(float v);
+float gos_GetWaterGlintGain();
+void  gos_SetWaterGlintGain(float v);
+void  gos_GetWaterDeepColor(float* rgb);
+void  gos_SetWaterDeepColor(float r, float g, float b);
+void  gos_GetWaterShallowColor(float* rgb);
+void  gos_SetWaterShallowColor(float r, float g, float b);
 // TERRAIN-RESAMPLE-1 — height-tex source/render/factor accessors + live
 // factor setter. C-linkage (declared extern "C" in gos_terrain_height_tex.h).
 extern "C" {
@@ -586,6 +603,90 @@ static void drawStaticPropTuningSection() {
         ImGui::EndDisabled();
         ImGui::EndDisabled();
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WATER-TUNING-UI-1 / WATER-DEBUG-VIEWS-1: MDI water FS debug view + material
+// tuning. ONLY the GPU-driven/MDI water path (gos_terrain_water_mdi.frag)
+// consumes these — arm it with MC2_GPU_DRIVEN_WATER=1; the legacy sin-wave FS
+// ignores them. Defaults match the former shader consts EXACTLY; Reset buttons
+// restore them (so the default render stays byte-identical).
+static void drawWaterSection() {
+    ImGui::SeparatorText("Debug View (MDI path)");
+    {
+        const char* kWaterModes[] = {
+            "0: Final", "1: Tint", "2: Alpha", "3: Normal",
+            "4: Depth", "5: Shore", "6: Lighting"
+        };
+        int mode = gos_GetWaterFsDebugMode();
+        if (mode < 0 || mode > 6) mode = 0;
+        if (ImGui::Combo("Debug mode##wat", &mode, kWaterModes, IM_ARRAYSIZE(kWaterModes)))
+            gos_SetWaterFsDebugMode(mode);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Fragment/material-space debug for gos_terrain_water_mdi.frag.\n"
+                              "Requires the MDI water path (MC2_GPU_DRIVEN_WATER=1); the legacy\n"
+                              "sin-wave water FS ignores this. Mirrors env MC2_WATER_DEBUG_MODE.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##watdbg")) gos_SetWaterFsDebugMode(0);
+    }
+
+    ImGui::SeparatorText("Material (MDI path)");
+    {
+        float absd = gos_GetWaterAbsorptionDensity();
+        if (ImGui::SliderFloat("Absorption density##wat", &absd, 0.0f, 0.10f, "%.4f"))
+            gos_SetWaterAbsorptionDensity(absd);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Beer-Lambert k (1/world-units). Higher = light absorbed faster -> deep color sooner.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##watabs")) gos_SetWaterAbsorptionDensity(0.022f);
+
+        float maxA = gos_GetWaterMaxAlpha();
+        if (ImGui::SliderFloat("Max alpha##wat", &maxA, 0.0f, 1.0f, "%.3f"))
+            gos_SetWaterMaxAlpha(maxA);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Opacity cap for deep water. 1.0 = opaque slab; lower = lakebed shows through.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##watmaxa")) gos_SetWaterMaxAlpha(0.87f);
+
+        float rip = gos_GetWaterRippleGain();
+        if (ImGui::SliderFloat("Ripple gain##wat", &rip, 0.0f, 1.0f, "%.3f"))
+            gos_SetWaterRippleGain(rip);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("fBm crest BRIGHTEN amount (camera-independent).");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##watrip")) gos_SetWaterRippleGain(0.22f);
+
+        float glint = gos_GetWaterGlintGain();
+        if (ImGui::SliderFloat("Glint gain##wat", &glint, 0.0f, 1.0f, "%.3f"))
+            gos_SetWaterGlintGain(glint);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Additive white crest shimmer (camera-independent).");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##watglint")) gos_SetWaterGlintGain(0.30f);
+
+        float deep[3];    gos_GetWaterDeepColor(deep);
+        if (ImGui::ColorEdit3("Deep color##wat", deep))
+            gos_SetWaterDeepColor(deep[0], deep[1], deep[2]);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##watdeep")) gos_SetWaterDeepColor(0.03f, 0.13f, 0.20f);
+
+        float shallow[3]; gos_GetWaterShallowColor(shallow);
+        if (ImGui::ColorEdit3("Shallow color##wat", shallow))
+            gos_SetWaterShallowColor(shallow[0], shallow[1], shallow[2]);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##watshal")) gos_SetWaterShallowColor(0.22f, 0.45f, 0.38f);
+    }
+
+    if (ImGui::SmallButton("Reset ALL water defaults##wat")) {
+        gos_SetWaterFsDebugMode(0);
+        gos_SetWaterAbsorptionDensity(0.022f);
+        gos_SetWaterMaxAlpha(0.87f);
+        gos_SetWaterRippleGain(0.22f);
+        gos_SetWaterGlintGain(0.30f);
+        gos_SetWaterDeepColor(0.03f, 0.13f, 0.20f);
+        gos_SetWaterShallowColor(0.22f, 0.45f, 0.38f);
+    }
+    ImGui::TextDisabled("MDI path only (MC2_GPU_DRIVEN_WATER=1). Defaults = byte-identical.");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1258,6 +1359,10 @@ void draw() {
     // controls are reachable without picking a prop.
     if (ImGui::CollapsingHeader("Static Prop Tuning"))
         drawStaticPropTuningSection();
+
+    // ── Water ─────────────────────────────────────────────────────────────────
+    if (ImGui::CollapsingHeader("Water"))
+        drawWaterSection();
 
     // ── HUD ───────────────────────────────────────────────────────────────────
     if (ImGui::CollapsingHeader("HUD")) {

@@ -2230,6 +2230,31 @@ int gos_GetWaterFsDebugMode()
     }
     return g_waterFsDebugMode;
 }
+void gos_SetWaterFsDebugMode(int m) { g_waterFsDebugMode = (m < 0) ? 0 : m; }
+
+// WATER-TUNING-UI-1: runtime-tunable MDI water material params. Defaults MUST
+// match the former compile-time consts in gos_terrain_water_mdi.frag EXACTLY
+// (byte-identical default render). Uploaded each frame in the MDI bind block;
+// driven live by Graphics Options > Water. Only the MDI FS consumes these.
+float g_waterAbsorptionDensity = 0.022f;
+float g_waterMaxAlpha          = 0.87f;
+float g_waterRippleGain        = 0.22f;
+float g_waterGlintGain         = 0.30f;
+float g_waterDeepColor[3]      = { 0.03f, 0.13f, 0.20f };
+float g_waterShallowColor[3]   = { 0.22f, 0.45f, 0.38f };
+
+float gos_GetWaterAbsorptionDensity()       { return g_waterAbsorptionDensity; }
+void  gos_SetWaterAbsorptionDensity(float v){ g_waterAbsorptionDensity = v; }
+float gos_GetWaterMaxAlpha()                { return g_waterMaxAlpha; }
+void  gos_SetWaterMaxAlpha(float v)         { g_waterMaxAlpha = v; }
+float gos_GetWaterRippleGain()              { return g_waterRippleGain; }
+void  gos_SetWaterRippleGain(float v)       { g_waterRippleGain = v; }
+float gos_GetWaterGlintGain()               { return g_waterGlintGain; }
+void  gos_SetWaterGlintGain(float v)        { g_waterGlintGain = v; }
+void  gos_GetWaterDeepColor(float* rgb)     { rgb[0]=g_waterDeepColor[0]; rgb[1]=g_waterDeepColor[1]; rgb[2]=g_waterDeepColor[2]; }
+void  gos_SetWaterDeepColor(float r,float g,float b)    { g_waterDeepColor[0]=r; g_waterDeepColor[1]=g; g_waterDeepColor[2]=b; }
+void  gos_GetWaterShallowColor(float* rgb)  { rgb[0]=g_waterShallowColor[0]; rgb[1]=g_waterShallowColor[1]; rgb[2]=g_waterShallowColor[2]; }
+void  gos_SetWaterShallowColor(float r,float g,float b) { g_waterShallowColor[0]=r; g_waterShallowColor[1]=g; g_waterShallowColor[2]=b; }
 
 void gos_terrain_bridge_renderWaterFast(
     unsigned int recordCount,
@@ -2529,6 +2554,10 @@ void gosRenderer::renderWaterFastPath(
             GLint loc = glGetUniformLocation(s_waterMdiProg, name);
             if (loc >= 0) glUniform2f(loc, a, b);
         };
+        auto setMVec3 = [&](const char* name, const float* v) {
+            GLint loc = glGetUniformLocation(s_waterMdiProg, name);
+            if (loc >= 0) glUniform3fv(loc, 1, v);
+        };
 
         const float* wMvpWaterMdi =
             gos_terrain_indirect::IsFrameSolidArmed()
@@ -2539,6 +2568,15 @@ void gosRenderer::renderWaterFastPath(
         setMMat4Std   ("mvp",             (const float*)&projection_);
         setMI         ("debugMode",       s_debugMode);
         setMI         ("u_waterDebugMode", gos_GetWaterFsDebugMode());  // WATER-DEBUG-VIEWS-1 (FS material-space)
+        // WATER-TUNING-UI-1: runtime MDI water material params (default-seeded
+        // to the former consts -> byte-identical default; live via Graphics
+        // Options > Water). loc<0 (uniform optimized out) is silently skipped.
+        setMF         ("ABSORPTION_DENSITY", g_waterAbsorptionDensity);
+        setMF         ("WATER_MAX_ALPHA",    g_waterMaxAlpha);
+        setMF         ("RIPPLE_GAIN",        g_waterRippleGain);
+        setMF         ("GLINT_GAIN",         g_waterGlintGain);
+        setMVec3      ("DEEP_COLOR",         g_waterDeepColor);
+        setMVec3      ("SHALLOW_COLOR",      g_waterShallowColor);
         setMF         ("waterElevation",  waterElevation);
         setMF         ("alphaDepth",      alphaDepth);
         setMI         ("alphaEdgeByte",   (int)alphaEdgeByte);
