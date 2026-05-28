@@ -5437,14 +5437,12 @@ void GpuStaticPropBatcher::flushShadow() {
     // condition; flushShadow() must honor the identical precondition.
     if (!s_geometryFinalized || s_fatalRegistrationFailure) return;
 
-    // DEFAULT-OFF pending the dedicated-VAO redesign. flushShadow sharing
-    // s_sharedVao is architecturally broken: GL_ELEMENT_ARRAY_BUFFER is
-    // VAO state, so any element-binding mutation here corrupts the main
-    // flush() indexed draws (crash signature: firstIndex*4 as a client
-    // pointer, e.g. 0x2A18 / 0x17AC). The correct fix is a private shadow
-    // VAO that never touches s_sharedVao; until that lands this path is
-    // opt-in only via MC2_SHADOW_ENABLE. See the architecture handoff doc.
-    static const bool s_shadowEnabled = (getenv("MC2_SHADOW_ENABLE") != nullptr);
+    // Default ON. The dedicated-VAO redesign concern is resolved: the restore
+    // sequence below now swaps VAO before element-buffer (see comment there),
+    // which keeps s_sharedVao's GL_ELEMENT_ARRAY_BUFFER set to s_sharedIbo so
+    // flush() never sees element-buffer=0. Kill-switch: MC2_SHADOW_ENABLE=0.
+    static const bool s_shadowEnabled =
+        !(getenv("MC2_SHADOW_ENABLE") && getenv("MC2_SHADOW_ENABLE")[0] == '0');
     if (!s_shadowEnabled) return;
 
     if (!uploadAllBucketsIfNeeded()) return;
@@ -5557,10 +5555,16 @@ void GpuStaticPropBatcher::flushShadow() {
     s_shadowInstDrawn  = instDrawn;
 
     // Restore exactly what we changed so compute_dispatch()/flush() see
-    // the GL state they expect (mirrors flush()'s restore bracket).
+    // the GL state they expect. ORDER MATTERS: restore VAO before element-
+    // buffer so that glBindBuffer(ELEMENT_ARRAY_BUFFER, prevElemBuf) writes
+    // into prevVao's state, not into s_sharedVao's. Reversing this order
+    // (element first, then VAO) leaves s_sharedVao.elemBuf=0 — flush() then
+    // binds s_sharedVao expecting s_sharedIbo to be resident and faults
+    // (firstIndex*4 as client ptr, e.g. 0x2A18). flush()'s own restore uses
+    // this same correct order (glBindVertexArray before glBindBuffer(ELEM)).
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf);
-    glBindVertexArray((GLuint)prevVao);
+    glBindVertexArray((GLuint)prevVao);                          // VAO first
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf); // then elem
     glUseProgram((GLuint)prevProgram);
 }
 

@@ -199,8 +199,8 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         "MC2_FEATURE_SHADOW_MAPS",
         "MC2_SHADOW_ENABLE",
         EnvVarKind::Feature,
-        false,
-        "Shadow map pre-pass and PCF sampling in mech/static-prop paths. Default-off; =1 enables."
+        true,
+        "Dynamic object shadow caster pass (GpuStaticPropBatcher + GpuMechBatcher flushShadow). Default-on (SHADOW-DYNAMIC-RESTORE-1); MC2_SHADOW_ENABLE=0 disables."
     },
     // ImGui
     {

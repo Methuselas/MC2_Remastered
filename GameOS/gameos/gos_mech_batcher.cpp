@@ -705,11 +705,12 @@ void GpuMechBatcher::flushShadow() {
     // persist it to s_lastDrawCalls / s_lastTotalInstances / s_lastTotalBones
     // at the end of flush() and consume those statics here.
 
-    // DEFAULT-OFF pending the dedicated-VAO redesign (same reason as
-    // GpuStaticPropBatcher::flushShadow): sharing s_sharedVao corrupts the
-    // main flush() element binding (GL_ELEMENT_ARRAY_BUFFER is VAO state).
-    // Opt-in only via MC2_SHADOW_ENABLE until the private-VAO fix lands.
-    static const bool s_shadowEnabled = (getenv("MC2_SHADOW_ENABLE") != nullptr);
+    // Default ON. The dedicated-VAO redesign concern is resolved: the restore
+    // sequence below now swaps VAO before element-buffer (see comment there),
+    // keeping s_sharedVao's GL_ELEMENT_ARRAY_BUFFER set to s_sharedIbo so
+    // flush() never sees element-buffer=0. Kill-switch: MC2_SHADOW_ENABLE=0.
+    static const bool s_shadowEnabled =
+        !(getenv("MC2_SHADOW_ENABLE") && getenv("MC2_SHADOW_ENABLE")[0] == '0');
     if (!s_shadowEnabled) return;
 
     // Geometry-readiness guard, mirroring the color flush() path (:867).
@@ -795,10 +796,13 @@ void GpuMechBatcher::flushShadow() {
 
     // Restore exactly what we changed (mirrors flush()'s restore bracket)
     // so the cull dispatch + indirect flush() that follow are not poisoned.
+    // ORDER MATTERS: restore VAO before element-buffer so glBindBuffer(ELEM)
+    // writes into prevVao's state, not s_sharedVao's. Wrong order leaves
+    // s_sharedVao.elemBuf=0 and flush() faults on the next indexed draw.
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, (GLuint)prevSsbo1);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf);
-    glBindVertexArray((GLuint)prevVao);
+    glBindVertexArray((GLuint)prevVao);                          // VAO first
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf); // then elem
     glUseProgram((GLuint)prevProgram);
 }
 
