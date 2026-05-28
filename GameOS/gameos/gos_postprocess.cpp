@@ -1423,6 +1423,20 @@ void gosPostProcess::initDynamicShadows()
     glClear(GL_DEPTH_BUFFER_BIT);
     glClearDepth(0.0f);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    {
+        RenderCore::RenderResourceDesc d;
+        d.id        = RenderCore::RenderResourceId::ShadowDynamicMap;
+        d.kind      = RenderCore::RenderResourceKind::Texture2D;
+        d.format    = RenderCore::RenderResourceFormat::Depth24;
+        d.debugName = "ShadowDynamicMap";
+        d.width     = static_cast<uint32_t>(dynShadowMapSize_);
+        d.height    = static_cast<uint32_t>(dynShadowMapSize_);
+        d.glName    = static_cast<uint32_t>(dynShadowDepthTex_);
+        d.sizeBytes = static_cast<uint64_t>(dynShadowMapSize_) * static_cast<uint64_t>(dynShadowMapSize_) * 4u;
+        d.valid     = true;
+        RenderCore::registerOrUpdateRenderResource(d);
+    }
 }
 
 void gosPostProcess::destroyDynamicShadows()
@@ -1430,6 +1444,10 @@ void gosPostProcess::destroyDynamicShadows()
     if (dynShadowFBO_) { glDeleteFramebuffers(1, &dynShadowFBO_); dynShadowFBO_ = 0; }
     if (dynShadowDepthTex_) { glDeleteTextures(1, &dynShadowDepthTex_); dynShadowDepthTex_ = 0; }
     if (dynShadowDummyColorTex_) { glDeleteTextures(1, &dynShadowDummyColorTex_); dynShadowDummyColorTex_ = 0; }
+
+    RenderCore::RenderResourceDesc invalid;
+    invalid.id = RenderCore::RenderResourceId::ShadowDynamicMap;
+    RenderCore::registerOrUpdateRenderResource(invalid);
 }
 
 void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float sunDirZ,

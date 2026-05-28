@@ -48,6 +48,7 @@ const char* toString(RenderResourceId id) {
         case RenderResourceId::ShadowStaticMap:      return "ShadowStaticMap";
         case RenderResourceId::TerrainHeightTexture: return "TerrainHeightTexture";
         case RenderResourceId::MaterialGpuBuffer:    return "MaterialGpuBuffer";
+        case RenderResourceId::ShadowDynamicMap:     return "ShadowDynamicMap";
         case RenderResourceId::Count:                return "Count";
     }
     return "unknown";

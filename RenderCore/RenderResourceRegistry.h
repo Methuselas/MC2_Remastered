@@ -14,6 +14,7 @@ enum class RenderResourceId : uint16_t {
     ShadowStaticMap      = 3,
     TerrainHeightTexture = 4,
     MaterialGpuBuffer    = 5,
+    ShadowDynamicMap     = 6,
     Count
 };
 
