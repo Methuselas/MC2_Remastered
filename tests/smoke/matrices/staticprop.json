@@ -1,0 +1,36 @@
+{
+  "matrix_id": "staticprop",
+  "description": "Static prop rendering variants (IBL SH, PBR specular, material GPU).",
+  "default_missions": ["mc2_01", "mc2_10"],
+  "default_duration": 15,
+  "entries": [
+    {
+      "id": "default",
+      "description": "Default static prop settings (all gates at their shipped defaults).",
+      "env": {}
+    },
+    {
+      "id": "staticprop_ibl_off",
+      "description": "IBL SH ambient disabled (MC2_STATIC_PROP_IBL_SH=0). Kill-switch path.",
+      "env": {
+        "MC2_STATIC_PROP_IBL_SH": "0"
+      }
+    },
+    {
+      "id": "staticprop_pbr_on",
+      "description": "PBR V1 Schlick-Fresnel specular enabled. Requires MC2_VIEW_UNIFORMS=1.",
+      "env": {
+        "MC2_STATIC_PROP_PBR_V1": "1",
+        "MC2_VIEW_UNIFORMS": "1"
+      }
+    },
+    {
+      "id": "staticprop_material_gpu_off",
+      "description": "Material GPU table disabled (legacy texArrayLayer path).",
+      "env": {
+        "MC2_MATERIAL_GPU": "0",
+        "MC2_MATERIAL_GPU_SAMPLE": "0"
+      }
+    }
+  ]
+}
