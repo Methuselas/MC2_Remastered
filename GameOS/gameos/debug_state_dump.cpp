@@ -1,5 +1,6 @@
 #include "debug_state_dump.h"
 
+#include "gos_postprocess.h"
 #include "gos_static_prop_batcher.h"
 #include "render_snapshot.h"
 #include "view_uniforms_gl.h"
@@ -77,11 +78,49 @@ const char* buildConfigString() {
 #endif
 }
 
+struct RenderPassState {
+    bool shadow        = false;
+    bool screenShadow  = false;
+    bool bloom         = false;
+    bool fxaa          = false;
+    bool tonemap       = false;
+};
+
+RenderPassState readPassState() {
+    RenderPassState ps{};
+    if (const gosPostProcess* pp = getGosPostProcess()) {
+        ps.shadow       = pp->shadowsEnabled_;
+        ps.screenShadow = pp->screenShadowEnabled_;
+        ps.bloom        = pp->bloomEnabled_;
+        ps.fxaa         = pp->fxaaEnabled_;
+        ps.tonemap      = pp->tonemapEnabled_;
+    }
+    return ps;
+}
+
+// Derive human-readable shader variant string from runtime flags.
+std::string spShaderVariant(const StaticPropOpaqueDebugState& sp) {
+    std::string v = sp.snapshotDispatchDefault ? "snapshot" : "legacy";
+    if (sp.materialGpuEnabled) {
+        v += "+materialGpu";
+        if (sp.materialGpuSample) v += "+sample";
+    }
+    if (sp.iblShEnabled) v += "+iblSh";
+    if (sp.pbrEnabled)   v += "+pbr";
+    if (sp.debugMaterialMode != 0) {
+        v += "+debug(";
+        v += std::to_string(sp.debugMaterialMode);
+        v += ")";
+    }
+    return v;
+}
+
 static void b(std::ostringstream& s, bool v) { s << (v ? "true" : "false"); }
 
 std::string buildSnapshotJson(const RenderSnapshot& snap,
                               const StaticPropOpaqueDebugState& sp,
-                              const RenderCore::EngineView& view) {
+                              const RenderCore::EngineView& view,
+                              const RenderPassState& ps) {
     const bool viewKnown    = view.id != RenderCore::kInvalidViewId;
     const bool missionKnown = missionName[0] != '\0';
 
@@ -127,11 +166,23 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
     s << "    \"spBuildPacketMismatch\": " << snap.spBuildPacketMismatch << ",\n";
     s << "    \"spBuildMetaMismatch\": " << snap.spBuildMetaMismatch << "\n";
     s << "  },\n";
+    s << "  \"renderPasses\": {\n";
+    s << "    \"shadow\": "; b(s, ps.shadow); s << ",\n";
+    s << "    \"screenShadow\": "; b(s, ps.screenShadow); s << ",\n";
+    s << "    \"bloom\": "; b(s, ps.bloom); s << ",\n";
+    s << "    \"fxaa\": "; b(s, ps.fxaa); s << ",\n";
+    s << "    \"tonemap\": "; b(s, ps.tonemap); s << "\n";
+    s << "  },\n";
     s << "  \"staticPropOpaque\": {\n";
     s << "    \"snapshotDispatchDefault\": "; b(s, sp.snapshotDispatchDefault); s << ",\n";
     s << "    \"legacyDispatch\": "; b(s, sp.legacyDispatch); s << ",\n";
+    s << "    \"shaderVariant\": \"" << spShaderVariant(sp) << "\",\n";
+    s << "    \"spV6DrawCalls\": " << sp.spV6DrawCalls << ",\n";
+    s << "    \"spAlphaOffPackets\": " << sp.spAlphaOffPackets << ",\n";
     s << "    \"materialGpuEnabled\": "; b(s, sp.materialGpuEnabled); s << ",\n";
     s << "    \"materialGpuSample\": "; b(s, sp.materialGpuSample); s << ",\n";
+    s << "    \"materialGpuTableSize\": " << sp.materialGpuTableSize << ",\n";
+    s << "    \"materialInventorySize\": " << sp.materialInventorySize << ",\n";
     s << "    \"iblShEnabled\": "; b(s, sp.iblShEnabled); s << ",\n";
     s << "    \"iblShStrength\": " << sp.iblShStrength << ",\n";
     s << "    \"iblShSet\": \"" << jsonEscape(sp.iblShSet) << "\",\n";
@@ -170,8 +221,9 @@ void maybeWriteRenderState(const RenderSnapshot& snap) {
     StaticPropOpaqueDebugState sp{};
     batcher_getStaticPropOpaqueDebugState(&sp);
     const RenderCore::EngineView& view = RenderCore::getCurrentView();
+    const RenderPassState ps = readPassState();
 
-    const std::string json = buildSnapshotJson(snap, sp, view);
+    const std::string json = buildSnapshotJson(snap, sp, view, ps);
 
     writeFile(dir / "latest_render_state.json", json);
 

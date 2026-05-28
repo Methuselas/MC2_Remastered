@@ -5997,6 +5997,10 @@ void batcher_getStaticPropOpaqueDebugState(StaticPropOpaqueDebugState* out) {
     out->pbrRoughnessOverrideEnabled = g_pbrV1RoughnessOverrideEnabled;
     out->pbrRoughnessOverride        = g_pbrV1RoughnessOverrideValue;
     out->debugMaterialMode           = s_staticPropDebugMaterialMode;
+    out->spV6DrawCalls               = s_v6FrameDrawsIssued;
+    out->spAlphaOffPackets           = s_alphaOffCmdCount;
+    out->materialGpuTableSize        = static_cast<uint32_t>(s_materialGpuTable.size());
+    out->materialInventorySize       = static_cast<uint32_t>(s_materialInventory.size());
 }
 
 // ---------------------------------------------------------------------------

@@ -538,6 +538,12 @@ struct StaticPropOpaqueDebugState {
     bool pbrRoughnessOverrideEnabled = false;
     float pbrRoughnessOverride = -1.0f;
     int debugMaterialMode = 0;
+    // Draw dispatch counts (last completed frame)
+    uint32_t spV6DrawCalls = 0;        // individual draw calls issued in v6 path
+    uint32_t spAlphaOffPackets = 0;    // alpha-off packet count (multi-draw batch size)
+    // Material table sizes
+    uint32_t materialGpuTableSize = 0; // deduplicated GPU material entries
+    uint32_t materialInventorySize = 0;// per-packet material inventory entries
 };
 
 void batcher_getStaticPropOpaqueDebugState(StaticPropOpaqueDebugState* out);

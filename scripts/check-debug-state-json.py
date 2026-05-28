@@ -157,6 +157,14 @@ def validate(data):
             check_int(rs, key, "renderSnapshot")
         check_bool(rs, "arenaOverflow", "renderSnapshot")
 
+    # renderPasses
+    if "renderPasses" not in data:
+        fail("missing section: renderPasses")
+    else:
+        rp = data["renderPasses"]
+        for key in ("shadow", "screenShadow", "bloom", "fxaa", "tonemap"):
+            check_bool(rp, key, "renderPasses")
+
     # staticPropOpaque
     if "staticPropOpaque" not in data:
         fail("missing section: staticPropOpaque")
@@ -169,7 +177,11 @@ def validate(data):
         for key in ("iblShStrength", "pbrStrength", "pbrRoughnessOverride"):
             check_float_or_int(sp, key, "staticPropOpaque")
         check_str(sp, "iblShSet", "staticPropOpaque")
+        check_str(sp, "shaderVariant", "staticPropOpaque")
         check_int(sp, "debugMaterialMode", "staticPropOpaque")
+        for key in ("spV6DrawCalls", "spAlphaOffPackets",
+                    "materialGpuTableSize", "materialInventorySize"):
+            check_int(sp, key, "staticPropOpaque")
 
         # Consistency checks
         if sp.get("snapshotDispatchDefault") is True and sp.get("legacyDispatch") is True:
