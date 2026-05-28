@@ -435,6 +435,22 @@ struct StaticPropMaterialInventoryEntry {
     float    roughnessFactor;
 };
 
+// V-MATERIAL-PBR-1 guardrail: pin the layout the inspector's forward-decl
+// in GuiRuntime/EditorInspector.cpp duplicates. If you add/reorder fields
+// here, also update that dup decl + bump these asserts in lockstep. The
+// material-mirror validator (scripts/check-material-gpu-mirror.sh) covers
+// MaterialGpu's C++/GLSL mirror but NOT this struct; these asserts are the
+// only safety net against silent inspector mis-reads.
+static_assert(sizeof(StaticPropMaterialInventoryEntry) == 108,
+              "StaticPropMaterialInventoryEntry size changed; update "
+              "GuiRuntime/EditorInspector.cpp forward-decl in lockstep.");
+static_assert(offsetof(StaticPropMaterialInventoryEntry, materialIdx) == 0, "materialIdx offset");
+static_assert(offsetof(StaticPropMaterialInventoryEntry, flags) == 12, "flags offset");
+static_assert(offsetof(StaticPropMaterialInventoryEntry, textureName) == 32, "textureName offset");
+static_assert(offsetof(StaticPropMaterialInventoryEntry, placeholder) == 96, "placeholder offset");
+static_assert(offsetof(StaticPropMaterialInventoryEntry, metallicFactor) == 100, "metallicFactor offset");
+static_assert(offsetof(StaticPropMaterialInventoryEntry, roughnessFactor) == 104, "roughnessFactor offset");
+
 // Number of inventory entries. Equals s_materialGpuTable size after finalizeGeometry.
 // Returns 0 before finalize, after onMapUnload, or when MC2_MATERIAL_GPU is disabled.
 uint32_t batcher_getStaticPropMaterialInventoryCount();
