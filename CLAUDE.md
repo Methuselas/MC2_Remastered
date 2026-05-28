@@ -1,9 +1,9 @@
-# MC2 OpenGL — nifty-mendeleev (canonical worktree)
+# MC2 OpenGL — shadow-lane worktree
 
-MechCommander 2 OpenGL port: tessellated terrain, PBR splatting, shadow maps,
-post-processing. Active branch is `claude/nifty-mendeleev` (the 0.4
-gpu-driven-rendering arc merged back here 2026-05-18; split collapsed). Root
-checkout `terrain-pbr-mod` is older — do not work there.
+**Branch:** `claude/shadow-lane` — forked from `claude/nifty-mendeleev` @ `d7ac228c`.
+**Scope:** Shadow debug/tuning arc (SHADOW-VIEW-1 through SHADOW-TUNING-N).
+Isolated from mech R→V work; merge back to nifty-mendeleev when arc is complete.
+Conflict surface on merge: `gos_postprocess.h/cpp`, `GraphicsOptionsWindow.cpp`.
 
 This file is a **router**. Detailed content lives in topic docs under `docs/`,
 memory files under `~/.claude/projects/A--Games-mc2-opengl-src/memory/`, and
@@ -53,9 +53,9 @@ CLAUDE.md (this file)
 
 ## Key paths (inline — every session needs these)
 
-- Source:  `A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/`
-- Build:   `A:/Games/mc2-opengl-src/.claude/worktrees/nifty-mendeleev/build64/` — the root checkout's `build64/` is STALE (terrain-pbr-mod branch); do NOT use it
-- Deploy:  `A:/Games/mc2-opengl/mc2-win64-v0.4/`
+- Source:  `A:/Games/mc2-opengl-src/.claude/worktrees/shadow-lane/`
+- Build:   `A:/Games/mc2-opengl-src/.claude/worktrees/shadow-lane/build64/`
+- Deploy:  `A:/Games/mc2-opengl/mc2-win64-v0.4/` (shared — do NOT deploy from nifty-mendeleev and shadow-lane simultaneously)
 - CMake:   `C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe`
 
 ## Smoke gate (inline — used every session)
@@ -67,7 +67,7 @@ concurrent with another smoke or direct mc2.exe trace.
 **Canonical invocation (copy-paste; subagents must use verbatim):**
 
 ```powershell
-py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --duration 30 --kill-existing --keep-logs
+py -3 A:\Games\mc2-opengl-src\.claude\worktrees\shadow-lane\scripts\run_smoke.py --tier tier1 --duration 30 --kill-existing --keep-logs
 ```
 
 - `tier1` = 5 hand-picked missions (`mc2_01`, `mc2_03`, `mc2_10`, `mc2_17`, `mc2_24`). 30s/mission. Isolated.

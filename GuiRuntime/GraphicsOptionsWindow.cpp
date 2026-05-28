@@ -1415,26 +1415,30 @@ void draw() {
                 }
                 ImGui::Unindent();
             }
-            // Shadow tuning — bias and softness. Always visible in shadow section.
-            ImGui::SeparatorText("Shadow Tuning");
-            ImGui::TextDisabled("Polygon offset (static shadow pass):");
-            ImGui::SliderFloat("Factor##bias", &pp->shadowBiasFactor_, 0.0f, 8.0f);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("lower = shadow acne risk\nhigher = peter-panning risk\ndefault 2.0");
-            ImGui::SliderFloat("Units##bias",  &pp->shadowBiasUnits_,  0.0f, 20.0f);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("offset units\ndefault 4.0");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Reset##bias"))
-                { pp->shadowBiasFactor_ = 2.0f; pp->shadowBiasUnits_ = 4.0f; }
-            {
-                float softness = gos_GetTerrainShadowSoftness();
-                if (ImGui::SliderFloat("Softness##sdtune", &softness, 0.5f, 8.0f))
-                    gos_SetTerrainShadowSoftness(softness);
+            if (ImGui::CollapsingHeader("Shadow Tuning##pp")) {
+                ImGui::Indent();
+                ImGui::TextDisabled("Polygon offset (static shadow pass only):");
+                ImGui::SliderFloat("Factor##bias", &pp->shadowBiasFactor_, 0.0f, 8.0f);
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("higher = blurrier shadows\ndefault 0.9 (also in Terrain Tuning)");
+                    ImGui::SetTooltip("lower = shadow acne risk\nhigher = peter-panning risk\ndefault 2.0");
+                ImGui::SliderFloat("Units##bias",  &pp->shadowBiasUnits_,  0.0f, 20.0f);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("offset units\ndefault 4.0");
                 ImGui::SameLine();
-                if (ImGui::SmallButton("Reset##sdtune")) gos_SetTerrainShadowSoftness(0.9f);
+                if (ImGui::SmallButton("Reset##bias"))
+                    { pp->shadowBiasFactor_ = 2.0f; pp->shadowBiasUnits_ = 4.0f; }
+                ImGui::Spacing();
+                ImGui::TextDisabled("Softness (all shadow receivers):");
+                {
+                    float softness = gos_GetTerrainShadowSoftness();
+                    if (ImGui::SliderFloat("Softness##sdtune", &softness, 0.5f, 8.0f))
+                        gos_SetTerrainShadowSoftness(softness);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("higher = blurrier shadows\ndefault 0.9 (also in Terrain Tuning)");
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Reset##sdtune")) gos_SetTerrainShadowSoftness(0.9f);
+                }
+                ImGui::Unindent();
             }
             ImGui::Separator();
             ImGui::Checkbox("Screen Shadows##pp", &pp->screenShadowEnabled_);
