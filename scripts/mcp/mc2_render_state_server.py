@@ -79,6 +79,28 @@ def _latest() -> dict[str, Any] | None:
     return _read_json(_LATEST)
 
 
+_STALE_THRESHOLD_S = 30  # seconds; dump cadence ~5s at 60fps so 30s = clearly not running
+
+
+def _file_age_s() -> float | None:
+    """Return age of latest snapshot file in seconds, or None if missing."""
+    try:
+        mtime = _LATEST.stat().st_mtime
+        return time.time() - mtime
+    except OSError:
+        return None
+
+
+def _stale_banner() -> str:
+    """Return a STALE warning line if the snapshot is old, else empty string."""
+    age = _file_age_s()
+    if age is None:
+        return ""
+    if age >= _STALE_THRESHOLD_S:
+        return f"*** STALE — file is {age:.0f}s old; game likely not running or MC2_DEBUG_STATE_DUMP=1 not set\n"
+    return ""
+
+
 def _not_available(detail: str = "") -> str:
     msg = (
         f"State file not available: {_LATEST}\n"
@@ -150,7 +172,7 @@ def get_render_state() -> str:
     data = _latest()
     if data is None:
         return _not_available()
-    return json.dumps(data, indent=2)
+    return _stale_banner() + json.dumps(data, indent=2)
 
 
 @mcp.tool()
@@ -209,6 +231,13 @@ def get_render_health() -> str:
     else:
         lines.insert(0, "HEALTH: PASS")
 
+    banner = _stale_banner()
+    if banner:
+        lines.insert(0, banner.rstrip())
+
+    age = _file_age_s()
+    lines.append(f"\nfile_age: {age:.0f}s" if age is not None else "\nfile_age: unknown")
+
     return "\n".join(lines)
 
 
@@ -227,7 +256,8 @@ def get_feature_gates() -> str:
 
     features = data.get("features", {})
     frame = data.get("frame", "?")
-    lines = [f"# Feature gates — snapshot at frame {frame}"]
+    lines = [_stale_banner().rstrip()] if _stale_banner() else []
+    lines.append(f"# Feature gates — snapshot at frame {frame}")
     for k, v in features.items():
         lines.append(f"  {k}: {v}")
     return "\n".join(lines)
@@ -250,7 +280,7 @@ def get_visual_settings() -> str:
     sp = data.get("staticPropOpaque", {})
     frame = data.get("frame", "?")
 
-    return json.dumps({
+    return _stale_banner() + json.dumps({
         "frame": frame,
         "dispatch": {
             "snapshotDefault": sp.get("snapshotDispatchDefault"),
@@ -312,15 +342,16 @@ def validate_state() -> str:
 
     errors = _validate(data)
     frame = data.get("frame", "?")
+    banner = _stale_banner()
 
     if errors:
         lines = [f"FAIL — {len(errors)} error(s) in snapshot at frame {frame}:"]
         for e in errors:
             lines.append(f"  - {e}")
-        return "\n".join(lines)
+        return banner + "\n".join(lines)
 
     ok = data.get("renderSnapshot", {}).get("ok", False)
-    return f"PASS — schema valid, frame={frame}, renderSnapshot.ok={ok}"
+    return banner + f"PASS — schema valid, frame={frame}, renderSnapshot.ok={ok}"
 
 
 @mcp.tool()
@@ -340,13 +371,19 @@ def get_frame_info() -> str:
     build = data.get("build", {})
     schema = data.get("schema", "?")
 
-    return "\n".join([
-        f"schema:  {schema}",
-        f"frame:   {frame}",
-        f"mission: {mission.get('name', '')} (known={mission.get('known', False)})",
-        f"build:   config={build.get('config', '?')} commit={build.get('commit', '?')}",
+    age = _file_age_s()
+    age_str = f"{age:.0f}s" if age is not None else "unknown"
+    stale = age is not None and age >= _STALE_THRESHOLD_S
+
+    lines = [
+        f"schema:   {schema}",
+        f"frame:    {frame}",
+        f"mission:  {mission.get('name', '')} (known={mission.get('known', False)})",
+        f"build:    config={build.get('config', '?')} commit={build.get('commit', '?')}",
         f"stateDir: {_STATE_DIR}",
-    ])
+        f"file_age: {age_str}" + (" *** STALE — game likely not running" if stale else ""),
+    ]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
