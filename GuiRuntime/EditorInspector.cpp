@@ -37,6 +37,11 @@ struct StaticPropMaterialInventoryEntry {
 uint32_t batcher_getStaticPropMaterialInventoryCount();
 bool     batcher_getStaticPropMaterialInventoryEntry(
              uint32_t idx, StaticPropMaterialInventoryEntry* out);
+// WATER-DEBUG-VIEWS-1: MDI water FS debug mode accessor (defined at global
+// scope in GameOS/gameos/gameos_graphics.cpp). Declared here at file scope so
+// the call inside namespace EditorInspector resolves to the global symbol
+// (a block-scope extern would bind to EditorInspector::, causing LNK2019).
+int gos_GetWaterFsDebugMode();
 
 // DEBUG-VIEW-REGISTRY-1: runtime debug-mode getter/setter + view<->shaderMode helpers
 // (gos_static_prop_batcher.cpp).
@@ -1046,6 +1051,11 @@ void EditorInspector::drawImGui() {
         ImGui::BulletText("surface (solid):      %u", ts.surfaceProgramId);
         ImGui::BulletText("thin records:         %u", ts.thinProgramId);
         ImGui::BulletText("water fast:           %u", ts.waterFastProgramId);
+        // WATER-DEBUG-VIEWS-1: read-only readout of the MDI water FS debug mode
+        // (live control is deferred to Graphics Options > Water per panel discipline).
+        // ::-qualified -> global symbol (decl at file top), not EditorInspector::.
+        ImGui::BulletText("water FS debug mode:  %d  (MC2_WATER_DEBUG_MODE; 0=Final)",
+                          ::gos_GetWaterFsDebugMode());
         ImGui::BulletText("overlay:              %u", ts.overlayProgramId);
         ImGui::Separator();
         ImGui::Text("Last flush stats:");

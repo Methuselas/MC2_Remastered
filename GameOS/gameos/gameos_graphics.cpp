@@ -2216,6 +2216,21 @@ struct WaterPerCmd {
 };
 static_assert(sizeof(WaterPerCmd) == 32, "WaterPerCmd must be 32 B");
 
+// WATER-DEBUG-VIEWS-1: fragment/material-space debug mode for the MDI water FS
+// (gos_terrain_water_mdi.frag uniform u_waterDebugMode). Sentinel -1 = uninit:
+// resolve once from MC2_WATER_DEBUG_MODE. ImGui (EditorInspector) may overwrite
+// with a live value (>=0). Distinct from the VS geometry-space debugMode latch
+// (MC2_RENDER_WATER_FASTPATH_DEBUG). 0=Final default.
+int g_waterFsDebugMode = -1;
+int gos_GetWaterFsDebugMode()
+{
+    if (g_waterFsDebugMode < 0) {
+        const char* wdm = getenv("MC2_WATER_DEBUG_MODE");
+        g_waterFsDebugMode = wdm ? atoi(wdm) : 0;
+    }
+    return g_waterFsDebugMode;
+}
+
 void gos_terrain_bridge_renderWaterFast(
     unsigned int recordCount,
     unsigned int waterGosHandle,
@@ -2523,6 +2538,7 @@ void gosRenderer::renderWaterFastPath(
         setMMat4Direct("u_worldToClipGL", wMvpWaterMdi);
         setMMat4Std   ("mvp",             (const float*)&projection_);
         setMI         ("debugMode",       s_debugMode);
+        setMI         ("u_waterDebugMode", gos_GetWaterFsDebugMode());  // WATER-DEBUG-VIEWS-1 (FS material-space)
         setMF         ("waterElevation",  waterElevation);
         setMF         ("alphaDepth",      alphaDepth);
         setMI         ("alphaEdgeByte",   (int)alphaEdgeByte);

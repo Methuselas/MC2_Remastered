@@ -265,6 +265,7 @@ ALLOWLIST=(
     MC2_VSYNC                   # infra
     MC2_WATER_GATE_DIAG         # trace
     MC2_WATER_DEBUG             # trace
+    MC2_WATER_DEBUG_MODE        # trace -- WATER-DEBUG-VIEWS-1 MDI FS material-space debug
     MC2_WATER_DEPTHPROBE        # trace
     MC2_WATER_MATERIAL_PROBE    # trace
     MC2_WATER_RENDERPROBE       # trace

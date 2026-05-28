@@ -35,6 +35,9 @@ uniform PREC vec4 fog_color;
 uniform PREC float time;          // seconds — used for water animation
 uniform PREC vec4 cameraPos;      // water-v1: MC2 world-space camera (Fresnel)
 uniform PREC float alphaDepth;    // MapData::alphaDepth (world-units); shore smoothstep range
+uniform int u_waterDebugMode;     // WATER-DEBUG-VIEWS-1: fragment/material-space debug.
+                                  // 0=Final 1=Tint 2=Alpha 3=Normal 4=Depth 5=Shore 6=Lighting.
+                                  // Distinct from VS geometry-space debugMode (MC2_RENDER_WATER_FASTPATH_DEBUG).
 
 // water-v1 baked style constants (compile-time; tune via shader hot-reload;
 // promote to a UBO only at per-biome per spec Section 8 TODO(water-v2)).
@@ -158,6 +161,25 @@ void main(void)
                          * pow(1.0 - max(vdir.z, 0.0), 5.0);
             col = mix(col, refl,
                       clamp(fres * REFL_STRENGTH * waveLOD, 0.0, REFL_MAX));
+        }
+
+        // WATER-DEBUG-VIEWS-1: fragment/material-space debug visualizations.
+        // mode 0 (Final) leaves the path byte-identical; each non-zero mode is
+        // backed by a real water-v1 term computed above, output opaque so it
+        // reads clearly over terrain. No reflection mode (S3 dead-stripped).
+        if (u_waterDebugMode != 0) {
+            PREC vec3 dbg;
+            if      (u_waterDebugMode == 1) dbg = waterCol;                       // 1 Tint: DEEP<->SHALLOW mix, pre-ripple
+            else if (u_waterDebugMode == 2) dbg = vec3(shore * WATER_MAX_ALPHA);  // 2 Alpha: final alpha as grayscale
+            else if (u_waterDebugMode == 3) dbg = vec3(0.5, 0.5, 1.0);            // 3 Normal: flat-up only (no real surface normal)
+            else if (u_waterDebugMode == 4) dbg = vec3(trans);                    // 4 Depth: Beer-Lambert transmittance (1=shallow,0=deep)
+            else if (u_waterDebugMode == 5) dbg = vec3(shore);                    // 5 Shore: shoreline ramp mask
+            else if (u_waterDebugMode == 6) dbg = vec3(RIPPLE_GAIN * waveLOD * crest)   // 6 Lighting: ripple brighten
+                                                + glint * GLINT_GAIN * waveLOD * GLINT_TINT;  //            + crest glint
+            else                            dbg = vec3(1.0, 0.0, 1.0);            // unknown -> magenta sentinel
+            FragColor = vec4(dbg, 1.0);
+            GBuffer1  = rc_gbuffer1_screenShadowEligible(vec3(0.0, 0.0, 1.0));
+            return;
         }
 
         FragColor = vec4(col, shore * WATER_MAX_ALPHA);  // shore ramp preserved; capped so deep water is mildly transparent

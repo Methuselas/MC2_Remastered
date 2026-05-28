@@ -74,6 +74,13 @@
           "name": "alphaDepth",
           "offset": 64,
           "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_waterDebugMode",
+          "offset": 68,
+          "type": "int"
         }
       ],
       "name": "gl_DefaultUniformBlock"
