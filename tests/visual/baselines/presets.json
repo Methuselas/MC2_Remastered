@@ -15,6 +15,24 @@
       "warmup_s": 28,
       "duration_s": 30,
       "description": "StaticPropOpaque mid-density scene. tier1 mc2_10 standard load, post-stabilize frame. Complements baseline_01 with different terrain + prop distribution."
+    },
+    "terrain_grass_01": {
+      "mission": "mc2_01",
+      "warmup_s": 28,
+      "duration_s": 30,
+      "description": "TERRAIN-BASELINE-0: terrain-heavy grass/desert scene (tier1 mc2_01). Primary preset for terrain visual regression — exercises grass + dirt + rock material classification and POM. Pairs with --terrain-debug-mode for shader-mode captures."
+    },
+    "terrain_salvage_03": {
+      "mission": "mc2_03",
+      "warmup_s": 28,
+      "duration_s": 30,
+      "description": "TERRAIN-BASELINE-0: terrain-heavy salvage scene (tier1 mc2_03). Complements grass_01 with heavier rock + cement-overlay coverage."
+    },
+    "terrain_combined_17": {
+      "mission": "mc2_17",
+      "warmup_s": 28,
+      "duration_s": 30,
+      "description": "TERRAIN-BASELINE-0: terrain-heavy combined-arms scene (tier1 mc2_17). Late-campaign mission with mixed biomes; stresses material-weight blends and shadow PCF across varied slope."
     }
   }
 }

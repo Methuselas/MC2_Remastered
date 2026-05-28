@@ -34,9 +34,30 @@ py -3 scripts/capture_baseline.py --preset staticprop_baseline_01
 # Capture-and-self-verify: re-runs each preset twice and reports whether
 # the two PNGs are byte-identical (see "Reproducibility" below).
 py -3 scripts/capture_baseline.py --verify
+
+# TERRAIN-BASELINE-0: capture a terrain-heavy preset with a fragment debug
+# mode. Filename gets a _tdmN suffix so multiple modes coexist on disk.
+py -3 scripts/capture_baseline.py --preset terrain_grass_01
+py -3 scripts/capture_baseline.py --preset terrain_grass_01 --terrain-debug-mode 2
 ```
 
 Outputs land in `tests/visual/baselines/<preset>_<commit-short>.{png,json,log}`.
+Captures with `--terrain-debug-mode N` land at
+`<preset>_<sha>_<strengthtag>_tdmN.png`.
+
+### Terrain-heavy presets
+
+- `terrain_grass_01` (mc2_01) — grass + dirt + rock material classification + POM.
+- `terrain_salvage_03` (mc2_03) — heavier rock + cement-overlay coverage.
+- `terrain_combined_17` (mc2_17) — mixed biomes + slope + shadow PCF.
+
+Available terrain debug modes (mirror of
+`GuiRuntime/GraphicsOptionsWindow.cpp` `kTerrainModes`): `-1` tess-alive
+probe, `0` OFF (default — byte-identical final frame), `1` depth-comparison,
+`2` raw colormap, `3` blurred colormap, `4` material weights (R=rock G=grass
+B=dirt), `5` normal lighting, `6` shadow factor, `7` cloud shadow, `8`
+cement diag, `9` thin-record diag. Diagnostic-only; never alters the
+default mode-0 final rendering.
 
 ## Comparing before/after
 

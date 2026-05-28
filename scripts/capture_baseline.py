@@ -60,6 +60,10 @@ TRACKED_FLAGS = (
     "MC2_STATIC_PROP_PBR_V1",
     "MC2_STATIC_PROP_PBR_V1_STRENGTH",
     "MC2_STATIC_PROP_PBR_V1_DIAG_SUNFOUND",
+    # TERRAIN-BASELINE-0: terrain-pass tunables + debug-mode selector. Without
+    # these in the sidecar a captured terrain frame is not reproducible if a
+    # tuning slider or debug-mode value changes between runs.
+    "MC2_TERRAIN_DEBUG_MODE",
 )
 
 
@@ -153,7 +157,8 @@ def _strength_tag(strength: str | None) -> str:
 
 def run_capture(exe: Path, preset_name: str, preset: dict,
                 commit_sha: str, out_png: Path,
-                strength: str | None = None) -> dict:
+                strength: str | None = None,
+                terrain_debug_mode: str | None = None) -> dict:
     mission = preset["mission"]
     warmup = int(preset["warmup_s"])
     duration = int(preset.get("duration_s", warmup + 2))
@@ -178,6 +183,15 @@ def run_capture(exe: Path, preset_name: str, preset: dict,
     else:
         env["MC2_STATIC_PROP_IBL_SH"] = "1"
         env["MC2_STATIC_PROP_IBL_SH_STRENGTH"] = str(strength)
+
+    # TERRAIN-BASELINE-0: terrain fragment debug-mode override (env var read
+    # at all three GL upload sites in gameos_graphics.cpp). None = leave the
+    # var unset (default mode 0 / OFF, byte-identical to legacy). "0" is also
+    # valid (explicit OFF). Strings 1..9 / -1 select modes per kTerrainModes.
+    if terrain_debug_mode is None:
+        env.pop("MC2_TERRAIN_DEBUG_MODE", None)
+    else:
+        env["MC2_TERRAIN_DEBUG_MODE"] = str(terrain_debug_mode)
 
     proc_args = [str(exe), "--profile", "stock", "--mission", mission,
                  "--duration", str(duration)]
@@ -263,6 +277,14 @@ def main() -> int:
                     help="V-IBL-STATIC-1-SOAK: comma-separated strengths to "
                          "sweep per preset, e.g. 'off,0.25,0.5,1.0,1.5'. "
                          "'off' = env unset (legacy gate-OFF baseline).")
+    ap.add_argument("--terrain-debug-mode", default=None,
+                    help="TERRAIN-BASELINE-0: terrain fragment debug-mode "
+                         "override (MC2_TERRAIN_DEBUG_MODE). Modes: -1 tess-"
+                         "alive probe, 0 OFF (default), 1 depth-cmp, 2 raw "
+                         "colormap, 3 blurred colormap, 4 material weights, "
+                         "5 normal lighting, 6 shadow, 7 cloud shadow, 8 "
+                         "cement diag, 9 thin-record. Omit for default (mode "
+                         "0). Filename suffix: _tdmN.")
     args = ap.parse_args()
 
     exe = Path(args.exe)
@@ -312,14 +334,19 @@ def main() -> int:
         for strength in sweep:
             tag = _strength_tag(strength)
             # Sweep mode encodes strength in filename; legacy single-shot
-            # mode (sweep == [None] and no --strength) preserves the
-            # original `<name>_<sha>.png` filename for back-compat.
-            if args.strength_sweep is None and args.strength is None:
+            # mode (sweep == [None] and no --strength and no --terrain-debug-mode)
+            # preserves the original `<name>_<sha>.png` filename for back-compat.
+            # terrain-debug-mode appends a _tdmN suffix so multiple debug-mode
+            # captures of the same preset coexist on disk.
+            tdm = args.terrain_debug_mode
+            tdm_suffix = f"_tdm{tdm}" if tdm is not None else ""
+            if args.strength_sweep is None and args.strength is None and tdm is None:
                 out_png = out_dir / f"{name}_{commit_sha}.png"
             else:
-                out_png = out_dir / f"{name}_{commit_sha}_{tag}.png"
+                out_png = out_dir / f"{name}_{commit_sha}_{tag}{tdm_suffix}.png"
             r = run_capture(exe, name, preset, commit_sha, out_png,
-                            strength=strength)
+                            strength=strength,
+                            terrain_debug_mode=tdm)
             if not r.get("ok"):
                 overall_ok = False
                 print(f"[baseline] FAIL preset={name} strength={tag}: {r}",
@@ -329,7 +356,8 @@ def main() -> int:
         # --verify only meaningful for the original single-shot path
         # (one capture per preset). Sweep mode produces N captures and is
         # not bit-comparison anyway.
-        if args.verify and args.strength_sweep is None and args.strength is None:
+        if (args.verify and args.strength_sweep is None
+                and args.strength is None and args.terrain_debug_mode is None):
             single_png = out_dir / f"{name}_{commit_sha}.png"
             sha_first = file_sha256(single_png) if single_png.exists() else ""
             verify_png = out_dir / f"{name}_{commit_sha}.verify.png"
