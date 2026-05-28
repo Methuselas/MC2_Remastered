@@ -388,6 +388,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "DEBUG-STATE-DUMP-1: override output directory for MC2_DEBUG_STATE_DUMP. Defaults to debug_state/ relative to working directory. No effect when MC2_DEBUG_STATE_DUMP is not set."
     },
+    {
+        "MC2_DIAG_DEBUG_STATE_DUMP_HISTORY",
+        "MC2_DEBUG_STATE_DUMP_HISTORY",
+        EnvVarKind::Trace,
+        false,
+        "DEBUG-STATE-DUMP-2: enable rolling 8-slot history ring alongside latest_render_state.json. When set with MC2_DEBUG_STATE_DUMP=1, each write also produces history_0.json..history_7.json in the same output directory (oldest slot overwritten in order). Bounded to 8 files; no unbounded growth. Default-OFF; =1 enables."
+    },
 };
 
 // ---------------------------------------------------------------------------

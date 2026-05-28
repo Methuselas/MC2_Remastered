@@ -1,0 +1,130 @@
+# MC2 Debug State JSON Schema
+
+Schema version: `MC2_DEBUG_STATE_V1`
+
+Written by `GameOS/gameos/debug_state_dump.cpp` when `MC2_DEBUG_STATE_DUMP=1`.
+Default output: `debug_state/latest_render_state.json` (override: `MC2_DEBUG_STATE_DUMP_DIR`).
+Cadence: frame 1, then every 300 frames.
+Optional rolling history: `history_0.json`..`history_7.json` when `MC2_DEBUG_STATE_DUMP_HISTORY=1`.
+
+Validated by `scripts/check-debug-state-json.py`.
+
+---
+
+## Top-level fields
+
+| Field | Type | Description |
+|---|---|---|
+| `schema` | string | Always `"MC2_DEBUG_STATE_V1"`. Bump on breaking change. |
+| `frame` | uint64 | Engine frame index at write time. |
+| `mission` | object | Current mission identity. |
+| `build` | object | Build configuration. |
+| `features` | object | Feature gate states at write time. |
+| `engineView` | object | Active EngineView registration. |
+| `renderSnapshot` | object | RenderSnapshot ok gate + mismatch counters. |
+| `staticPropOpaque` | object | StaticPropOpaque visual globals. |
+
+---
+
+## `mission`
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Mission name string (e.g. `"mc2_24"`). Empty string when `known=false`. |
+| `known` | bool | `true` when `missionName[]` is non-empty at dump time. |
+
+---
+
+## `build`
+
+| Field | Type | Description |
+|---|---|---|
+| `commit` | string | Git commit hash. Currently always `"unknown"` (no compile-time injection). |
+| `config` | string | `"Debug"`, `"Release"`, or `"RelWithDebInfo"`. Derived from `_DEBUG`/`NDEBUG` macros. |
+
+---
+
+## `features`
+
+All fields are bool. `true` = gate active (feature enabled). `false` = gate inactive (kill-switch or default-OFF).
+
+| Field | Default | Env var | Notes |
+|---|---|---|---|
+| `MC2_DEBUG_STATE_DUMP` | `true` | `MC2_DEBUG_STATE_DUMP` | Always `true` in the snapshot (file only exists when dump is on). |
+| `MC2_VIEW_UNIFORMS` | `true` | `MC2_VIEW_UNIFORMS` | ViewUniforms UBO upload. =0 to disable. |
+| `MC2_SNAPSHOT_STATIC_PROP_BUILD` | `true` | `MC2_SNAPSHOT_STATIC_PROP_BUILD` | Snapshot-built static-prop dispatch (v3). =0 reverts to live builder. |
+| `MC2_MATERIAL_GPU` | `true` | `MC2_MATERIAL_GPU` | GPU material table. =0 disables. |
+| `MC2_MATERIAL_GPU_SAMPLE` | `true` | `MC2_MATERIAL_GPU_SAMPLE` | GPU albedo sampling in static_prop.frag. Requires `MC2_MATERIAL_GPU`. =0 falls back to texArrayLayer. |
+| `MC2_STATIC_PROP_IBL_SH` | `true` | `MC2_STATIC_PROP_IBL_SH` | SH-L2 image-based ambient on static props. =0 disables. |
+| `MC2_STATIC_PROP_PBR_V1` | `false` | `MC2_STATIC_PROP_PBR_V1` | Schlick-Fresnel + power-lobe specular. =1 enables. Requires `MC2_VIEW_UNIFORMS`. |
+
+---
+
+## `engineView`
+
+| Field | Type | Description |
+|---|---|---|
+| `known` | bool | `true` if `setCurrentView()` has been called this frame. |
+| `viewId` | int | Active view ID. `0` = invalid/unset, `1` = MainScene. |
+| `viewKind` | string | `"MainScene"` for viewId=1, `"unknown"` otherwise. |
+| `viewMode` | string | `"Visual"`, `"ObjectIdDebug"`, `"TacticalOverlay"`, `"Thermal"`, `"Infrared"`, `"LowLight"`. |
+| `viewUniformsBinding` | int | UBO binding point for ViewUniforms. Always `3`. |
+| `viewport` | int[4] | `[x, y, width, height]` in pixels. All zeros if `known=false`. |
+
+---
+
+## `renderSnapshot`
+
+Counters reset each frame by `ExtractRenderSnapshot()`. Values reflect the most recent completed frame.
+
+| Field | Type | Description |
+|---|---|---|
+| `ok` | bool | `true` = all ok-gate counters are zero. `false` = at least one failure counter is nonzero. |
+| `staticPropValidationFail` | uint | Static-prop type validation failures (type out of range, etc.). |
+| `staticPropPacketRangesFail` | uint | Packet range validation failures. |
+| `staticPropPacketInvalid` | uint | Individual packet validity check failures. |
+| `arenaOverflow` | bool | Frame arena overflowed capacity. |
+| `spBuildAttempted` | uint | `1` if snapshot build gate ran this flush, `0` if not. Informational; not in ok gate. |
+| `spBuildFallback` | uint | `1` if snapshot build fell back to live builder. Informational; not in ok gate. |
+| `spBuildCountMismatch` | uint | Type-count mismatch between snapshot and live builder. In ok gate. |
+| `spBuildPacketMismatch` | uint | Packet-content mismatch. In ok gate. |
+| `spBuildMetaMismatch` | uint | Dispatch-meta mismatch. In ok gate. |
+
+---
+
+## `staticPropOpaque`
+
+Runtime visual globals for the StaticPropOpaque render lane. Values reflect the state at dump time; some are set at process start (env-var gates), some are mutable at runtime via ImGui sliders.
+
+| Field | Type | Description |
+|---|---|---|
+| `snapshotDispatchDefault` | bool | `true` = v6 snapshot-built dispatch is active (default). `false` = legacy multidraw. Complement of `legacyDispatch`. |
+| `legacyDispatch` | bool | `true` = `MC2_STATIC_PROP_LEGACY_DISPATCH=1` kill-switch is active. |
+| `materialGpuEnabled` | bool | GPU material table is active. |
+| `materialGpuSample` | bool | GPU albedo sampling is active (requires `materialGpuEnabled`). |
+| `iblShEnabled` | bool | SH-L2 IBL ambient is active. |
+| `iblShStrength` | float | IBL ambient strength (ImGui slider, range 0..3). Effective value = `iblShEnabled ? iblShStrength : 0.0`. |
+| `iblShSet` | string | Active IBL SH coefficient set name (e.g. `"default"`, `"mc2_24"`). |
+| `pbrEnabled` | bool | PBR specular gate is active. |
+| `pbrStrength` | float | PBR specular strength (ImGui slider, range 0..3). Effective value = `pbrEnabled ? pbrStrength : 0.0`. |
+| `pbrRoughnessOverrideEnabled` | bool | Per-material roughness override is active. |
+| `pbrRoughnessOverride` | float | Override roughness value (range 0..1). Only meaningful when `pbrRoughnessOverrideEnabled=true`. |
+| `debugMaterialMode` | int | Material debug view mode. `0` = off (normal rendering). Nonzero = debug visualization active. |
+
+---
+
+## Versioning
+
+- Breaking schema change (field removed, type changed, semantics changed) → bump `schema` to `MC2_DEBUG_STATE_V2`.
+- Additive change (new field added) → keep `MC2_DEBUG_STATE_V1`; consumers must handle unknown fields gracefully.
+- `check-debug-state-json.py` validates required fields for V1. New fields are optional and ignored by the validator until V2.
+
+## Out of scope for V1
+
+The following are explicitly excluded to keep the dump focused:
+
+- Full object/static-prop instance table
+- Full material table
+- Mission script or save state
+- Network state
+- Any per-object or per-material detail beyond lane-level globals

@@ -510,7 +510,9 @@ def main():
                             # Default-OFF; =1 writes debug_state/latest_render_state.json.
                             "MC2_DEBUG_STATE_DUMP",
                             # DEBUG-STATE-DUMP-1: override output directory.
-                            "MC2_DEBUG_STATE_DUMP_DIR")},
+                            "MC2_DEBUG_STATE_DUMP_DIR",
+                            # DEBUG-STATE-DUMP-2: rolling 8-slot history ring.
+                            "MC2_DEBUG_STATE_DUMP_HISTORY")},
             },
         )
         # Clear the file-sink probe log next to mc2.exe before each mission

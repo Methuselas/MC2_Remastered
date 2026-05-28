@@ -110,6 +110,7 @@ Log tag: `[MATERIAL_GPU v4]`
 
 - `MC2_DEBUG_STATE_DUMP=1` — write a JSON render-state snapshot every 300 frames (and at frame 1) to `debug_state/latest_render_state.json` relative to the working directory. Snapshot includes: feature gate states, `RenderSnapshot` ok/mismatch counters, `EngineView` state, and `StaticPropOpaque` visual globals. **Read-only; no renderer or gameplay changes.** Default **OFF**. See `docs/debug_state_dump.md`.
 - `MC2_DEBUG_STATE_DUMP_DIR=<path>` — override the output directory for the JSON snapshot. No effect when `MC2_DEBUG_STATE_DUMP` is unset.
+- `MC2_DEBUG_STATE_DUMP_HISTORY=1` — enable rolling 8-slot history ring. Requires `MC2_DEBUG_STATE_DUMP=1`. Each write also produces `history_0.json`..`history_7.json` in the output directory (oldest slot overwritten). Bounded to 8 files. Default **OFF**.
 
 ## Static-prop dispatch hierarchy (v7)
 

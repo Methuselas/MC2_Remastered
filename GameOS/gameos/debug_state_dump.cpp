@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 extern char missionName[1024];
@@ -15,6 +16,7 @@ extern char missionName[1024];
 namespace {
 
 constexpr uint64_t kDumpIntervalFrames = 300u;
+constexpr uint32_t kHistorySlots       = 8u;
 
 bool envFlagOn(const char* name) {
     const char* v = std::getenv(name);
@@ -54,11 +56,11 @@ std::string jsonEscape(const char* s) {
     return out;
 }
 
-std::filesystem::path outputPath() {
+std::filesystem::path outputDir() {
     if (const char* dir = std::getenv("MC2_DEBUG_STATE_DUMP_DIR")) {
-        if (dir[0]) return std::filesystem::path(dir) / "latest_render_state.json";
+        if (dir[0]) return std::filesystem::path(dir);
     }
-    return std::filesystem::path("debug_state") / "latest_render_state.json";
+    return std::filesystem::path("debug_state");
 }
 
 const char* viewKindForId(RenderCore::ViewId id) {
@@ -75,8 +77,79 @@ const char* buildConfigString() {
 #endif
 }
 
-void writeBool(std::ofstream& out, bool v) {
-    out << (v ? "true" : "false");
+static void b(std::ostringstream& s, bool v) { s << (v ? "true" : "false"); }
+
+std::string buildSnapshotJson(const RenderSnapshot& snap,
+                              const StaticPropOpaqueDebugState& sp,
+                              const RenderCore::EngineView& view) {
+    const bool viewKnown    = view.id != RenderCore::kInvalidViewId;
+    const bool missionKnown = missionName[0] != '\0';
+
+    std::ostringstream s;
+    s << "{\n";
+    s << "  \"schema\": \"MC2_DEBUG_STATE_V1\",\n";
+    s << "  \"frame\": " << static_cast<unsigned long long>(snap.frameIndex) << ",\n";
+    s << "  \"mission\": {\n";
+    s << "    \"name\": \"" << jsonEscape(missionKnown ? missionName : "") << "\",\n";
+    s << "    \"known\": "; b(s, missionKnown); s << "\n";
+    s << "  },\n";
+    s << "  \"build\": {\n";
+    s << "    \"commit\": \"unknown\",\n";
+    s << "    \"config\": \"" << buildConfigString() << "\"\n";
+    s << "  },\n";
+    s << "  \"features\": {\n";
+    s << "    \"MC2_DEBUG_STATE_DUMP\": true,\n";
+    s << "    \"MC2_VIEW_UNIFORMS\": "; b(s, featureActive("MC2_VIEW_UNIFORMS", true)); s << ",\n";
+    s << "    \"MC2_SNAPSHOT_STATIC_PROP_BUILD\": "; b(s, featureActive("MC2_SNAPSHOT_STATIC_PROP_BUILD", true)); s << ",\n";
+    s << "    \"MC2_MATERIAL_GPU\": "; b(s, featureActive("MC2_MATERIAL_GPU", true)); s << ",\n";
+    s << "    \"MC2_MATERIAL_GPU_SAMPLE\": "; b(s, featureActive("MC2_MATERIAL_GPU_SAMPLE", true)); s << ",\n";
+    s << "    \"MC2_STATIC_PROP_IBL_SH\": "; b(s, featureActive("MC2_STATIC_PROP_IBL_SH", true)); s << ",\n";
+    s << "    \"MC2_STATIC_PROP_PBR_V1\": "; b(s, featureActive("MC2_STATIC_PROP_PBR_V1", false)); s << "\n";
+    s << "  },\n";
+    s << "  \"engineView\": {\n";
+    s << "    \"known\": "; b(s, viewKnown); s << ",\n";
+    s << "    \"viewId\": " << view.id << ",\n";
+    s << "    \"viewKind\": \"" << viewKindForId(view.id) << "\",\n";
+    s << "    \"viewMode\": \"" << RenderCore::toString(view.mode) << "\",\n";
+    s << "    \"viewUniformsBinding\": " << RenderCore::kViewUniformsBinding << ",\n";
+    s << "    \"viewport\": [" << view.viewport[0] << ", " << view.viewport[1] << ", "
+      << view.viewport[2] << ", " << view.viewport[3] << "]\n";
+    s << "  },\n";
+    s << "  \"renderSnapshot\": {\n";
+    s << "    \"ok\": "; b(s, snap.ok != 0u); s << ",\n";
+    s << "    \"staticPropValidationFail\": " << snap.staticPropValidationFail << ",\n";
+    s << "    \"staticPropPacketRangesFail\": " << snap.staticPropPacketRangesFail << ",\n";
+    s << "    \"staticPropPacketInvalid\": " << snap.staticPropPacketInvalid << ",\n";
+    s << "    \"arenaOverflow\": "; b(s, snap.arenaOverflow); s << ",\n";
+    s << "    \"spBuildAttempted\": " << snap.spBuildAttempted << ",\n";
+    s << "    \"spBuildFallback\": " << snap.spBuildFallback << ",\n";
+    s << "    \"spBuildCountMismatch\": " << snap.spBuildCountMismatch << ",\n";
+    s << "    \"spBuildPacketMismatch\": " << snap.spBuildPacketMismatch << ",\n";
+    s << "    \"spBuildMetaMismatch\": " << snap.spBuildMetaMismatch << "\n";
+    s << "  },\n";
+    s << "  \"staticPropOpaque\": {\n";
+    s << "    \"snapshotDispatchDefault\": "; b(s, sp.snapshotDispatchDefault); s << ",\n";
+    s << "    \"legacyDispatch\": "; b(s, sp.legacyDispatch); s << ",\n";
+    s << "    \"materialGpuEnabled\": "; b(s, sp.materialGpuEnabled); s << ",\n";
+    s << "    \"materialGpuSample\": "; b(s, sp.materialGpuSample); s << ",\n";
+    s << "    \"iblShEnabled\": "; b(s, sp.iblShEnabled); s << ",\n";
+    s << "    \"iblShStrength\": " << sp.iblShStrength << ",\n";
+    s << "    \"iblShSet\": \"" << jsonEscape(sp.iblShSet) << "\",\n";
+    s << "    \"pbrEnabled\": "; b(s, sp.pbrEnabled); s << ",\n";
+    s << "    \"pbrStrength\": " << sp.pbrStrength << ",\n";
+    s << "    \"pbrRoughnessOverrideEnabled\": "; b(s, sp.pbrRoughnessOverrideEnabled); s << ",\n";
+    s << "    \"pbrRoughnessOverride\": " << sp.pbrRoughnessOverride << ",\n";
+    s << "    \"debugMaterialMode\": " << sp.debugMaterialMode << "\n";
+    s << "  }\n";
+    s << "}\n";
+    return s.str();
+}
+
+bool writeFile(const std::filesystem::path& path, const std::string& content) {
+    std::ofstream f(path, std::ios::out | std::ios::trunc);
+    if (!f) return false;
+    f << content;
+    return true;
 }
 
 } // namespace
@@ -89,77 +162,27 @@ void maybeWriteRenderState(const RenderSnapshot& snap) {
     if (snap.frameIndex != 1u && (snap.frameIndex % kDumpIntervalFrames) != 0u)
         return;
 
-    const std::filesystem::path path = outputPath();
+    const std::filesystem::path dir = outputDir();
     std::error_code ec;
-    std::filesystem::create_directories(path.parent_path(), ec);
+    std::filesystem::create_directories(dir, ec);
     if (ec) return;
-
-    std::ofstream out(path, std::ios::out | std::ios::trunc);
-    if (!out) return;
 
     StaticPropOpaqueDebugState sp{};
     batcher_getStaticPropOpaqueDebugState(&sp);
-
     const RenderCore::EngineView& view = RenderCore::getCurrentView();
-    const bool viewKnown = view.id != RenderCore::kInvalidViewId;
-    const bool missionKnown = missionName[0] != '\0';
 
-    out << "{\n";
-    out << "  \"schema\": \"MC2_DEBUG_STATE_V1\",\n";
-    out << "  \"frame\": " << static_cast<unsigned long long>(snap.frameIndex) << ",\n";
-    out << "  \"mission\": {\n";
-    out << "    \"name\": \"" << jsonEscape(missionKnown ? missionName : "") << "\",\n";
-    out << "    \"known\": "; writeBool(out, missionKnown); out << "\n";
-    out << "  },\n";
-    out << "  \"build\": {\n";
-    out << "    \"commit\": \"unknown\",\n";
-    out << "    \"config\": \"" << buildConfigString() << "\"\n";
-    out << "  },\n";
-    out << "  \"features\": {\n";
-    out << "    \"MC2_DEBUG_STATE_DUMP\": true,\n";
-    out << "    \"MC2_VIEW_UNIFORMS\": "; writeBool(out, featureActive("MC2_VIEW_UNIFORMS", true)); out << ",\n";
-    out << "    \"MC2_SNAPSHOT_STATIC_PROP_BUILD\": "; writeBool(out, featureActive("MC2_SNAPSHOT_STATIC_PROP_BUILD", true)); out << ",\n";
-    out << "    \"MC2_MATERIAL_GPU\": "; writeBool(out, featureActive("MC2_MATERIAL_GPU", true)); out << ",\n";
-    out << "    \"MC2_MATERIAL_GPU_SAMPLE\": "; writeBool(out, featureActive("MC2_MATERIAL_GPU_SAMPLE", true)); out << ",\n";
-    out << "    \"MC2_STATIC_PROP_IBL_SH\": "; writeBool(out, featureActive("MC2_STATIC_PROP_IBL_SH", true)); out << ",\n";
-    out << "    \"MC2_STATIC_PROP_PBR_V1\": "; writeBool(out, featureActive("MC2_STATIC_PROP_PBR_V1", false)); out << "\n";
-    out << "  },\n";
-    out << "  \"engineView\": {\n";
-    out << "    \"known\": "; writeBool(out, viewKnown); out << ",\n";
-    out << "    \"viewId\": " << view.id << ",\n";
-    out << "    \"viewKind\": \"" << viewKindForId(view.id) << "\",\n";
-    out << "    \"viewMode\": \"" << RenderCore::toString(view.mode) << "\",\n";
-    out << "    \"viewUniformsBinding\": " << RenderCore::kViewUniformsBinding << ",\n";
-    out << "    \"viewport\": [" << view.viewport[0] << ", " << view.viewport[1] << ", "
-        << view.viewport[2] << ", " << view.viewport[3] << "]\n";
-    out << "  },\n";
-    out << "  \"renderSnapshot\": {\n";
-    out << "    \"ok\": "; writeBool(out, snap.ok != 0u); out << ",\n";
-    out << "    \"staticPropValidationFail\": " << snap.staticPropValidationFail << ",\n";
-    out << "    \"staticPropPacketRangesFail\": " << snap.staticPropPacketRangesFail << ",\n";
-    out << "    \"staticPropPacketInvalid\": " << snap.staticPropPacketInvalid << ",\n";
-    out << "    \"arenaOverflow\": "; writeBool(out, snap.arenaOverflow); out << ",\n";
-    out << "    \"spBuildAttempted\": " << snap.spBuildAttempted << ",\n";
-    out << "    \"spBuildFallback\": " << snap.spBuildFallback << ",\n";
-    out << "    \"spBuildCountMismatch\": " << snap.spBuildCountMismatch << ",\n";
-    out << "    \"spBuildPacketMismatch\": " << snap.spBuildPacketMismatch << ",\n";
-    out << "    \"spBuildMetaMismatch\": " << snap.spBuildMetaMismatch << "\n";
-    out << "  },\n";
-    out << "  \"staticPropOpaque\": {\n";
-    out << "    \"snapshotDispatchDefault\": "; writeBool(out, sp.snapshotDispatchDefault); out << ",\n";
-    out << "    \"legacyDispatch\": "; writeBool(out, sp.legacyDispatch); out << ",\n";
-    out << "    \"materialGpuEnabled\": "; writeBool(out, sp.materialGpuEnabled); out << ",\n";
-    out << "    \"materialGpuSample\": "; writeBool(out, sp.materialGpuSample); out << ",\n";
-    out << "    \"iblShEnabled\": "; writeBool(out, sp.iblShEnabled); out << ",\n";
-    out << "    \"iblShStrength\": " << sp.iblShStrength << ",\n";
-    out << "    \"iblShSet\": \"" << jsonEscape(sp.iblShSet) << "\",\n";
-    out << "    \"pbrEnabled\": "; writeBool(out, sp.pbrEnabled); out << ",\n";
-    out << "    \"pbrStrength\": " << sp.pbrStrength << ",\n";
-    out << "    \"pbrRoughnessOverrideEnabled\": "; writeBool(out, sp.pbrRoughnessOverrideEnabled); out << ",\n";
-    out << "    \"pbrRoughnessOverride\": " << sp.pbrRoughnessOverride << ",\n";
-    out << "    \"debugMaterialMode\": " << sp.debugMaterialMode << "\n";
-    out << "  }\n";
-    out << "}\n";
+    const std::string json = buildSnapshotJson(snap, sp, view);
+
+    writeFile(dir / "latest_render_state.json", json);
+
+    static const bool s_historyEnabled = envFlagOn("MC2_DEBUG_STATE_DUMP_HISTORY");
+    if (s_historyEnabled) {
+        static uint32_t s_historySlot = 0u;
+        char name[32];
+        snprintf(name, sizeof(name), "history_%u.json", s_historySlot);
+        writeFile(dir / name, json);
+        s_historySlot = (s_historySlot + 1u) % kHistorySlots;
+    }
 }
 
 } // namespace mc2_debug_state
