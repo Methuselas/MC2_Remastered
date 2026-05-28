@@ -1447,6 +1447,61 @@ void GpuMechBatcher::flush() {
     if (s_loc_u_mvp >= 0 && mm)
         glUniformMatrix4fv(s_loc_u_mvp, 1, GL_TRUE, mm);
 
+    // MECH-VIEWUNIFORMS-BINDING-DIAG-1: gated read-only probe
+    // (MC2_MECH_VIEWUNIFORMS_DIAG=1, default OFF). Diagnoses the reverted
+    // MECH-VIEWUNIFORMS-1-PRE failure (mechs vanished on the UBO path). Recon
+    // proved binding=3 is uploaded once per frame at gamecam top and is never
+    // clobbered, so this confirms empirically AT MECH FLUSH TIME: (a) is the
+    // ViewUniforms UBO still bound at binding point 3, and (b) does its
+    // worldToClipGL match what the mech path actually uploads
+    // (gos_GetTerrainMVPMat4). If max_diff != 0 the once-per-frame UBO capture
+    // is stale/wrong for the mech pass; if binding3==0 the bind is dead here.
+    // Pure read-back: no render effect. Rate-limited. Saves+restores the
+    // generic GL_UNIFORM_BUFFER target binding.
+    {
+        static const bool s_vuDiag = []() {
+            const char* v = std::getenv("MC2_MECH_VIEWUNIFORMS_DIAG");
+            return v != nullptr && v[0] == '1';
+        }();
+        if (s_vuDiag) {
+            static int s_vuDiagFrame = 0;
+            ++s_vuDiagFrame;
+            if (s_vuDiagFrame <= 5 || (s_vuDiagFrame % 300) == 0) {
+                GLint b3 = 0;
+                glGetIntegeri_v(GL_UNIFORM_BUFFER_BINDING, 3, &b3);
+                float ubo[16] = {0.0f};
+                float maxDiff = -1.0f;
+                if (b3 != 0) {
+                    GLint prevBound = 0;
+                    glGetIntegerv(GL_UNIFORM_BUFFER_BINDING, &prevBound);
+                    glBindBuffer(GL_UNIFORM_BUFFER, (GLuint)b3);
+                    glGetBufferSubData(GL_UNIFORM_BUFFER, 0,
+                                       (GLsizeiptr)sizeof(ubo), ubo);
+                    glBindBuffer(GL_UNIFORM_BUFFER, (GLuint)prevBound);
+                    if (terrainMVP) {
+                        maxDiff = 0.0f;
+                        for (int i = 0; i < 16; ++i) {
+                            float d = ubo[i] - terrainMVP[i];
+                            if (d < 0.0f) d = -d;
+                            if (d > maxDiff) maxDiff = d;
+                        }
+                    }
+                }
+                std::fprintf(stderr,
+                    "[MECH_VU_DIAG v1] frame=%d submits=%llu binding3_ubo=%d "
+                    "max_diff_vs_terrainMVP=%.6f ubo_row0=[%.3f %.3f %.3f %.3f] "
+                    "mvp_row0=[%.3f %.3f %.3f %.3f]\n",
+                    s_vuDiagFrame,
+                    (unsigned long long)s_lastFlushSubmitCount, b3, maxDiff,
+                    ubo[0], ubo[1], ubo[2], ubo[3],
+                    terrainMVP ? terrainMVP[0] : 0.0f,
+                    terrainMVP ? terrainMVP[1] : 0.0f,
+                    terrainMVP ? terrainMVP[2] : 0.0f,
+                    terrainMVP ? terrainMVP[3] : 0.0f);
+            }
+        }
+    }
+
     // Step 7: Issue one draw call per bucket.
     uint32_t drawnCalls = 0;
     static int s_texDiagPrinted = 0;
