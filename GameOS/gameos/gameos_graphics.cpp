@@ -1944,6 +1944,17 @@ class gosRenderer {
             GLint surfaceDebugMode = -1;
             GLint terrainLightDir = -1;
             GLint mapHalfExtent  = -1;
+            // TERRAIN-DECAL-LIGHTING-1a: shared terrain-lighting uniforms on
+            // the cement overlay program. Cached for both overlayProg_ and
+            // decalProg_ via the same lambda — decalProg_'s shader doesn't
+            // declare these, so glGetUniformLocation returns -1 there and
+            // the helper skips them (no behavioral change to decal path).
+            GLint terrainHeightTex                   = -1;
+            GLint terrainHeightParams                = -1;
+            GLint useTerrainNormalsFromHeight        = -1;
+            GLint terrainNormalsFromHeightStrength   = -1;
+            GLint terrainLightingV1Strength          = -1;
+            GLint terrainLightingV2ShadowFillFloor   = -1;
         };
         OverlayUniformLocs_ overlayLocs_;
         OverlayUniformLocs_ decalLocs_;
@@ -4142,6 +4153,16 @@ void gosRenderer::init() {
         locs.surfaceDebugMode = glGetUniformLocation(shp, "surfaceDebugMode");
         locs.terrainLightDir = glGetUniformLocation(shp, "terrainLightDir");
         locs.mapHalfExtent   = glGetUniformLocation(shp, "mapHalfExtent");
+        // TERRAIN-DECAL-LIGHTING-1a — populated only on overlayProg_ (the
+        // cement transition shader); decalProg_'s decal.frag does not
+        // declare these uniforms so the locs stay -1 there. The helper at
+        // upload time skips negative locs unconditionally.
+        locs.terrainHeightTex                 = glGetUniformLocation(shp, "terrainHeightTex");
+        locs.terrainHeightParams              = glGetUniformLocation(shp, "terrainHeightParams");
+        locs.useTerrainNormalsFromHeight      = glGetUniformLocation(shp, "useTerrainNormalsFromHeight");
+        locs.terrainNormalsFromHeightStrength = glGetUniformLocation(shp, "terrainNormalsFromHeightStrength");
+        locs.terrainLightingV1Strength        = glGetUniformLocation(shp, "terrainLightingV1Strength");
+        locs.terrainLightingV2ShadowFillFloor = glGetUniformLocation(shp, "terrainLightingV2ShadowFillFloor");
     };
     { ZoneScopedN("gosRenderer::init overlayUniforms"); cacheOverlayLocs(overlayProg_, overlayLocs_); cacheOverlayLocs(decalProg_, decalLocs_); }
     timeStart_ = timing::get_wall_time_ms();
@@ -7752,6 +7773,25 @@ void gosRenderer::uploadOverlayUniforms_(GLuint shp, const OverlayUniformLocs_& 
     }
 
     setupOverlayShadowsForShp(shp);
+
+    // TERRAIN-DECAL-LIGHTING-1a: extend the same terrain lighting stack
+    // (NFH height tex, V1 hemi, V2 shadow-fill floor) to the cement
+    // overlay program so transitions no longer form a lighting seam
+    // against lit terrain. Helper handles env-gate force-zero semantics
+    // identically to the main terrain path; locs that are -1 (decal
+    // program, no uniforms declared) get skipped. After binding we
+    // restore active texture unit 0 because the helper leaves unit 11
+    // bound — overlay per-draw glBindTexture targets unit 0.
+    bindTerrainHeightTexUniforms(L.terrainHeightTex,
+                                 L.terrainHeightParams,
+                                 L.useTerrainNormalsFromHeight,
+                                 L.terrainNormalsFromHeightStrength,
+                                 terrain_nfh_strength_,
+                                 L.terrainLightingV1Strength,
+                                 terrain_lighting_v1_strength_,
+                                 L.terrainLightingV2ShadowFillFloor,
+                                 terrain_lighting_v2_floor_);
+    glActiveTexture(GL_TEXTURE0);
 }
 
 // Draw the terrain overlay batch (alpha cement perimeter tiles).

@@ -52,43 +52,78 @@
         {
           "array_stride": null,
           "matrix_stride": null,
-          "name": "fog_color",
+          "name": "terrainHeightParams",
           "offset": 160,
           "type": "vec4"
         },
         {
           "array_stride": null,
           "matrix_stride": null,
-          "name": "time",
+          "name": "useTerrainNormalsFromHeight",
           "offset": 176,
+          "type": "int"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "terrainNormalsFromHeightStrength",
+          "offset": 180,
           "type": "float"
         },
         {
           "array_stride": null,
           "matrix_stride": null,
-          "name": "cameraPos",
+          "name": "terrainLightingV1Strength",
+          "offset": 184,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "terrainLightingV2ShadowFillFloor",
+          "offset": 188,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "fog_color",
           "offset": 192,
           "type": "vec4"
         },
         {
           "array_stride": null,
           "matrix_stride": null,
-          "name": "terrainLightDir",
+          "name": "time",
           "offset": 208,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "cameraPos",
+          "offset": 224,
+          "type": "vec4"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "terrainLightDir",
+          "offset": 240,
           "type": "vec4"
         },
         {
           "array_stride": null,
           "matrix_stride": null,
           "name": "surfaceDebugMode",
-          "offset": 224,
+          "offset": 256,
           "type": "int"
         },
         {
           "array_stride": null,
           "matrix_stride": null,
           "name": "mapHalfExtent",
-          "offset": 228,
+          "offset": 260,
           "type": "float"
         }
       ],

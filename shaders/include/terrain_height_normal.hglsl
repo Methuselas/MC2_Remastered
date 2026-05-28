@@ -1,0 +1,92 @@
+// shaders/include/terrain_height_normal.hglsl
+//
+// TERRAIN-NORMALS-FROM-HEIGHT-1 / TERRAIN-RESAMPLE-1 / TERRAIN-LIGHTING-1/2
+// shared header for the terrain lighting stack.
+//
+// Used by:
+//   shaders/gos_terrain.frag         (tessellated terrain main path)
+//   shaders/terrain_overlay.frag     (cement/road transition overlay)
+//
+// Owns the 6 uniforms uploaded by gameos_graphics.cpp::bindTerrainHeightTexUniforms
+// and the per-fragment helper computeTerrainNormalFromHeight() so the two
+// fragment shaders cannot drift apart. CPU side guarantees byte-equivalent
+// default-OFF behaviour by force-zeroing useTerrainNormalsFromHeight (and the
+// strength + V1 + V2 uniforms) when the corresponding env gate is unset; all
+// shader branches that read these uniforms short-circuit at 0.
+//
+// PREC must be defined by the including fragment shader (see gos_terrain.frag
+// and terrain_overlay.frag — both use `#define PREC highp`).
+
+#ifndef INCLUDE_TERRAIN_HEIGHT_NORMAL_HGLSL
+#define INCLUDE_TERRAIN_HEIGHT_NORMAL_HGLSL
+
+// TERRAIN-NORMALS-FROM-HEIGHT-1: per-mission R32F height texture (sampler
+// unit 11). bind site: GameOS/gameos/gos_terrain_height_tex.cpp.
+// terrainHeightParams.x = grid side (0 = texture not uploaded; treat as off).
+// terrainHeightParams.y = 1 / worldUnitsPerVertex (effective per-render-sample
+//                         spacing — divided by MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR
+//                         when resampled).
+// terrainHeightParams.zw = mapTopLeft3d.xy in world units.
+uniform sampler2D terrainHeightTex;
+uniform PREC vec4 terrainHeightParams;
+uniform int       useTerrainNormalsFromHeight;
+
+// TERRAIN-TUNING-UI-1: live-tunable multiplier on the additive height-derived
+// normal term. Default 1.0 (full slope tilt; byte-equivalent to pre-slice).
+uniform PREC float terrainNormalsFromHeightStrength;
+
+// TERRAIN-LIGHTING-1: hemisphere ambient strength. CPU force-zeroes when env
+// MC2_TERRAIN_LIGHTING_V1 is unset → shader branch short-circuits.
+uniform PREC float terrainLightingV1Strength;
+
+// TERRAIN-LIGHTING-2: shadow-aware fill floor on the V1 hemisphere additive.
+// CPU force-uploads 1.0 when env MC2_TERRAIN_LIGHTING_V2 is unset →
+// mix(floor, 1.0, shadow) collapses to 1.0 → V1 behavior preserved.
+uniform PREC float terrainLightingV2ShadowFillFloor;
+
+// Maps a fragment's worldspace XY back to (col, row) in the per-mission
+// height texture, samples 4 axial neighbours with edge-clamp, and returns
+// the central-difference normal in raw MC2 world space (X=east, Y=north,
+// Z=up). LINEAR filter on the texture is required (set CPU-side) so the
+// 4 axial samples produce a smooth normal across cell interiors instead of
+// per-tile facets. Caller must check terrainHeightParams.x > 0 before
+// invoking (no texture uploaded → 0 grid side).
+//
+// Coordinate convention mirrors mclib/terrain.h:370-371 worldToTile:
+//   col = (worldX - mapTopLeftX) / wuPerVertex
+//   row = (mapTopLeftY - worldY) / wuPerVertex   ← row increases as Y decreases
+// so dh/dy(world) = -dh/drow.
+PREC vec3 computeTerrainNormalFromHeight(PREC vec2 worldXY) {
+    PREC float side  = terrainHeightParams.x;
+    PREC float invWu = terrainHeightParams.y;
+    PREC float tlx   = terrainHeightParams.z;
+    PREC float tly   = terrainHeightParams.w;
+
+    PREC float colF = (worldXY.x - tlx) * invWu;
+    PREC float rowF = (tly - worldXY.y) * invWu;
+
+    PREC float invSide = (side > 0.0) ? (1.0 / side) : 1.0;
+    PREC vec2  uvBase  = (vec2(colF, rowF) + 0.5) * invSide;
+
+    PREC float uvLo = 0.5 * invSide;
+    PREC float uvHi = 1.0 - 0.5 * invSide;
+    PREC vec2 uvL = vec2(clamp(uvBase.x - invSide, uvLo, uvHi), clamp(uvBase.y, uvLo, uvHi));
+    PREC vec2 uvR = vec2(clamp(uvBase.x + invSide, uvLo, uvHi), clamp(uvBase.y, uvLo, uvHi));
+    PREC vec2 uvU = vec2(clamp(uvBase.x, uvLo, uvHi), clamp(uvBase.y - invSide, uvLo, uvHi));
+    PREC vec2 uvD = vec2(clamp(uvBase.x, uvLo, uvHi), clamp(uvBase.y + invSide, uvLo, uvHi));
+
+    PREC float hL = texture(terrainHeightTex, uvL).r;
+    PREC float hR = texture(terrainHeightTex, uvR).r;
+    PREC float hU = texture(terrainHeightTex, uvU).r;
+    PREC float hD = texture(terrainHeightTex, uvD).r;
+
+    PREC float wuPerVert = (invWu > 0.0) ? (1.0 / invWu) : 128.0;
+    PREC float span = 2.0 * wuPerVert;
+    PREC float dhdx   = (hR - hL) / span;
+    PREC float dhdrow = (hD - hU) / span;
+    PREC float dhdy   = -dhdrow;
+
+    return normalize(vec3(-dhdx, -dhdy, 1.0));
+}
+
+#endif  // INCLUDE_TERRAIN_HEIGHT_NORMAL_HGLSL

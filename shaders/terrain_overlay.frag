@@ -14,6 +14,12 @@
 #include <include/noise.hglsl>
 #include <include/shadow.hglsl>
 #include <include/render_contract.hglsl>
+// TERRAIN-DECAL-LIGHTING-1a: share the terrain lighting stack so cement
+// transition overlays no longer form a lighting seam against lit terrain.
+// Same 6 uniforms + computeTerrainNormalFromHeight() as gos_terrain.frag.
+// Default-OFF (all 3 terrain env gates unset) → uniforms force-zeroed by
+// CPU helper → all branches short-circuit → byte-identical legacy output.
+#include <include/terrain_height_normal.hglsl>
 
 // [RENDER_CONTRACT]
 //   Pass:           TerrainOverlay
@@ -88,8 +94,17 @@ void main()
     }
 
     vec3  lightDir3 = normalize(terrainLightDir.xyz);
-    float staticShadow  = calcShadow(WorldPos, vec3(0.0, 0.0, 1.0), lightDir3, 8);
-    float dynamicShadow = calcDynamicShadow(WorldPos, vec3(0.0, 0.0, 1.0), lightDir3, 4);
+    // TERRAIN-DECAL-LIGHTING-1a: use the height-derived normal for shadow
+    // sampling when the same gate the terrain main path uses is active.
+    // Matches gos_terrain.frag's shadowN convention: pass the flat up-normal
+    // (NOT the height-derived one) to calcShadow so slope-scale bias stays
+    // consistent pixel-to-pixel — this prevents the sprinkle/inverted-shadow
+    // pattern that bumpy normals cause on shadow PCF (see the comment block
+    // at gos_terrain.frag:732). Height-derived normal is only used by the
+    // hemisphere additive below.
+    const PREC vec3 shadowN = vec3(0.0, 0.0, 1.0);
+    float staticShadow  = calcShadow(WorldPos, shadowN, lightDir3, 8);
+    float dynamicShadow = calcDynamicShadow(WorldPos, shadowN, lightDir3, 4);
     float shadow        = staticShadow * dynamicShadow;
     if (surfaceDebugMode == 2) {
         FragColor = vec4(vec3(shadow), 1.0);
@@ -101,6 +116,34 @@ void main()
 
     c.rgb *= mix(0.85, 1.0, cloudMask);
     c.rgb *= shadow;
+
+    // TERRAIN-DECAL-LIGHTING-1a: V1 hemisphere additive (+ V2 shadow-aware
+    // floor). Same expression as gos_terrain.frag:780-846 but with
+    // snowWeight=0 inline (cement doesn't snow). Default-OFF byte-equivalence:
+    // terrainLightingV1Strength uploads 0.0 when the V1 env gate is unset
+    // → entire branch skipped → output identical to pre-slice. When V1 is
+    // ON but V2 is OFF, the CPU helper force-uploads V2 floor=1.0 so the
+    // mix(floor, 1.0, shadow) collapses to 1.0 → V1 unmodulated. N is the
+    // height-derived normal when the NFH gate is on, else flat up.
+    if (terrainLightingV1Strength > 0.0) {
+        PREC vec3 N = vec3(0.0, 0.0, 1.0);
+        if (useTerrainNormalsFromHeight != 0 && terrainHeightParams.x > 0.5) {
+            PREC vec3 hN = computeTerrainNormalFromHeight(WorldPos.xy);
+            // Same additive-perturbation form as gos_terrain.frag. No detail
+            // normal contribution on cement — start from flat up.
+            N.xy += (hN.xy / max(hN.z, 0.05)) * terrainNormalsFromHeightStrength;
+            N.xy = clamp(N.xy, -0.75, 0.75);
+            N = normalize(N);
+        }
+        const PREC vec3 hemiSkyTint    = vec3(0.55, 0.62, 0.75);
+        const PREC vec3 hemiGroundTint = vec3(0.32, 0.28, 0.22);
+        PREC float skyFactor = N.z * 0.5 + 0.5;
+        PREC vec3  hemiFill  = mix(hemiGroundTint, hemiSkyTint, skyFactor);
+        PREC float hemiAmount = terrainLightingV1Strength;  // no snowWeight on cement
+        PREC float hemiShadowMix = mix(terrainLightingV2ShadowFillFloor, 1.0, shadow);
+        c.rgb += hemiFill * hemiAmount * 0.25 * hemiShadowMix;
+    }
+
     PREC float camDist2D = distance(WorldPos.xy, cameraPos.xy);
     PREC float terrainHeight = WorldPos.z;
     PREC float fogDensity = 0.00006;

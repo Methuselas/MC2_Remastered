@@ -123,37 +123,12 @@ uniform int g_terrainMaterialProfile;
 uniform PREC vec4  matNormalBoost;     // [rock, grass, dirt, concrete]; default (0.9, 1.1, 1.1, 2.5)
 uniform PREC float tintStrengthScale;  // 0=colormap passthrough, 1=full material tint; default 1.0
 
-// TERRAIN-NORMALS-FROM-HEIGHT-1: macroscopic surface normal derived from a
-// per-mission R32F height texture (uploaded once at mission load from the
-// gameplay heightfield; see GameOS/gameos/gos_terrain_height_tex.cpp).
-// Visual-only: gameplay height (Terrain::getTerrainElevation) is unchanged.
-// terrainHeightParams.x = grid side (0 = texture not uploaded; treat as off).
-// terrainHeightParams.y = 1 / worldUnitsPerVertex (128.0 today → 1/128).
-// terrainHeightParams.zw = mapTopLeft3d.xy in world units.
-uniform sampler2D terrainHeightTex;
-uniform PREC vec4 terrainHeightParams;
-uniform int       useTerrainNormalsFromHeight;
-// TERRAIN-TUNING-UI-1: live-tunable multiplier on the additive height-
-// derived normal term. Default 1.0 (full slope tilt; byte-equivalent to
-// pre-slice). 0.0 = no slope contribution. Inspector slider 0..1.5.
-uniform PREC float terrainNormalsFromHeightStrength;
-// TERRAIN-LIGHTING-1: hemisphere ambient strength. CPU force-zeroes
-// when env MC2_TERRAIN_LIGHTING_V1 is unset, so the shader branch
-// short-circuits to a no-op (byte-equivalent to pre-slice). When > 0
-// and gate is on, adds a sky/ground hemisphere fill modulated by the
-// V2 shadow-fill floor (terrainLightingV2ShadowFillFloor below).
-uniform PREC float terrainLightingV1Strength;
-// TERRAIN-LIGHTING-2: shadow-aware fill floor on the V1 hemisphere
-// additive. CPU force-uploads 1.0 when env MC2_TERRAIN_LIGHTING_V2
-// is unset, which makes mix(floor,1.0,shadow) collapse to 1.0 →
-// V1 behavior is preserved (no shadow modulation; byte-equivalent
-// to TERRAIN-LIGHTING-1 alone). When V2 gate is ON and floor < 1,
-// the hemisphere contribution scales down in shadowed terrain so
-// dark areas stay dark instead of getting full sky bounce.
-//   floor = 1.0 → V1 (no shadow influence on hemi)
-//   floor = 0.3 → 30% hemi in fully shadowed, 100% in fully lit (default)
-//   floor = 0.0 → hemi follows shadow exactly (lifeless shadows)
-uniform PREC float terrainLightingV2ShadowFillFloor;
+// TERRAIN-NORMALS-FROM-HEIGHT-1 / TERRAIN-LIGHTING-1/2 uniforms +
+// computeTerrainNormalFromHeight() helper. Shared with terrain_overlay.frag
+// (cement transitions) via this include so the two shaders cannot drift.
+// Default-OFF byte-equivalence is enforced CPU-side by force-zeroing the
+// strength/factor uniforms when the matching env gate is unset.
+#include <include/terrain_height_normal.hglsl>
 
 // --- Distance LOD thresholds (tunable, in MC2 world units) ---
 // 1 terrain tile ≈ 128 world units
@@ -240,65 +215,6 @@ PREC vec4 getColorWeights(PREC vec3 color) {
     PREC float total = w.x + w.y + w.z + w.w;
     w = (total < 0.01) ? vec4(1.0, 0.0, 0.0, 0.0) : w / total;
     return w;
-}
-
-// --- TERRAIN-NORMALS-FROM-HEIGHT-1: macroscopic normal from height texture ---
-// Maps a fragment's worldspace XY back to (col, row) in the per-mission
-// height texture, samples 4 axial neighbours with edge-clamp, and returns
-// the central-difference normal in raw MC2 world space (X=east, Y=north,
-// Z=up). NOT called from gate-OFF path. Caller must check that the texture
-// is uploaded (terrainHeightParams.x > 0) before invoking.
-//
-// Coordinate convention mirrors mclib/terrain.h:370-371 worldToTile:
-//   col = (worldX - mapTopLeftX) / wuPerVertex
-//   row = (mapTopLeftY - worldY) / wuPerVertex   ← row increases as Y decreases
-// so dh/dy(world) = -dh/drow.
-PREC vec3 computeTerrainNormalFromHeight(PREC vec2 worldXY) {
-    PREC float side  = terrainHeightParams.x;
-    PREC float invWu = terrainHeightParams.y;
-    PREC float tlx   = terrainHeightParams.z;
-    PREC float tly   = terrainHeightParams.w;
-
-    // Continuous (col, row) in heightfield index space.
-    PREC float colF = (worldXY.x - tlx) * invWu;
-    PREC float rowF = (tly - worldXY.y) * invWu;
-
-    // Bilinear-sampled UV in [0,1]^2. UV(col,row) = (col + 0.5)/side so that
-    // texel center at index i lands at UV (i + 0.5)/side and texture() with
-    // LINEAR filter interpolates the height continuously between texels —
-    // central differences then vary smoothly across each cell instead of
-    // jumping at cell boundaries (texelFetch+NEAREST produced visible flat-
-    // shaded per-tile shadow polygons).
-    PREC float invSide = (side > 0.0) ? (1.0 / side) : 1.0;
-    PREC vec2  uvBase  = (vec2(colF, rowF) + 0.5) * invSide;
-    PREC vec2  uvStep  = vec2(invSide, 0.0);
-    PREC vec2  uvStepY = vec2(0.0, invSide);
-
-    // Clamp UV before sampling — CLAMP_TO_EDGE handles off-map but explicit
-    // clamp keeps the central-difference spacing symmetric at the borders.
-    PREC float uvLo = 0.5 * invSide;
-    PREC float uvHi = 1.0 - 0.5 * invSide;
-    PREC vec2 uvL = vec2(clamp(uvBase.x - invSide, uvLo, uvHi), clamp(uvBase.y, uvLo, uvHi));
-    PREC vec2 uvR = vec2(clamp(uvBase.x + invSide, uvLo, uvHi), clamp(uvBase.y, uvLo, uvHi));
-    PREC vec2 uvU = vec2(clamp(uvBase.x, uvLo, uvHi), clamp(uvBase.y - invSide, uvLo, uvHi));
-    PREC vec2 uvD = vec2(clamp(uvBase.x, uvLo, uvHi), clamp(uvBase.y + invSide, uvLo, uvHi));
-
-    PREC float hL = texture(terrainHeightTex, uvL).r;
-    PREC float hR = texture(terrainHeightTex, uvR).r;
-    PREC float hU = texture(terrainHeightTex, uvU).r;
-    PREC float hD = texture(terrainHeightTex, uvD).r;
-
-    PREC float wuPerVert = (invWu > 0.0) ? (1.0 / invWu) : 128.0;
-    // Span between L/R samples is 2 texels = 2*wuPerVert; same for U/D.
-    // The clamp above shrinks the span at the very last row/column but the
-    // border degeneracy is a single-fragment visual artifact, not a wrong-
-    // sign correctness issue.
-    PREC float span = 2.0 * wuPerVert;
-    PREC float dhdx   = (hR - hL) / span;
-    PREC float dhdrow = (hD - hU) / span;
-    PREC float dhdy   = -dhdrow;     // worldY increases as row decreases
-
-    return normalize(vec3(-dhdx, -dhdy, 1.0));
 }
 
 // --- Per-material displacement sampling ---
