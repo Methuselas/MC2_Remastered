@@ -55,6 +55,7 @@ TRACKED_FLAGS = (
     "MC2_GPU_CULL_SUBSTRATE",
     "MC2_STATIC_PROP_AMBIENT_V1",
     "MC2_STATIC_PROP_IBL_SH",
+    "MC2_STATIC_PROP_IBL_SH_STRENGTH",
 )
 
 
@@ -129,8 +130,21 @@ def file_sha256(p: Path) -> str:
     return h.hexdigest()
 
 
+def _strength_tag(strength: str | None) -> str:
+    """Filename suffix for strength sweep. None -> 'off' (env unset)."""
+    if strength is None:
+        return "ibl_sh_off"
+    # 0.25 -> s0p25, 1.0 -> s1p00, 1.5 -> s1p50
+    try:
+        f = float(strength)
+    except ValueError:
+        return f"ibl_sh_s{strength}"
+    return f"ibl_sh_s{f:.2f}".replace(".", "p")
+
+
 def run_capture(exe: Path, preset_name: str, preset: dict,
-                commit_sha: str, out_png: Path) -> dict:
+                commit_sha: str, out_png: Path,
+                strength: str | None = None) -> dict:
     mission = preset["mission"]
     warmup = int(preset["warmup_s"])
     duration = int(preset.get("duration_s", warmup + 2))
@@ -145,6 +159,16 @@ def run_capture(exe: Path, preset_name: str, preset: dict,
     env["MC2_SMOKE_MODE"] = "1"
     env["MC2_SMOKE_SEED"] = "0xC0FFEE"
     env["MC2_HEARTBEAT"] = "1"
+    # V-IBL-STATIC-1-SOAK: per-capture strength override drives the IBL-SH
+    # gate + default slider value. strength=None means "off" baseline:
+    # explicitly unset both env vars so this subprocess sees the legacy
+    # gate-OFF path (byte-identical to pre-slice).
+    if strength is None:
+        env.pop("MC2_STATIC_PROP_IBL_SH", None)
+        env.pop("MC2_STATIC_PROP_IBL_SH_STRENGTH", None)
+    else:
+        env["MC2_STATIC_PROP_IBL_SH"] = "1"
+        env["MC2_STATIC_PROP_IBL_SH_STRENGTH"] = str(strength)
 
     proc_args = [str(exe), "--profile", "stock", "--mission", mission,
                  "--duration", str(duration)]
@@ -222,6 +246,14 @@ def main() -> int:
     ap.add_argument("--verify", action="store_true",
                     help="Capture each preset TWICE and compare PNG sha256.")
     ap.add_argument("--out-dir", default=str(BASELINE_DIR))
+    ap.add_argument("--strength", default=None,
+                    help="V-IBL-STATIC-1-SOAK: single strength override "
+                         "(sets MC2_STATIC_PROP_IBL_SH=1 + STRENGTH=<f>). "
+                         "Omit for legacy gate-OFF baseline.")
+    ap.add_argument("--strength-sweep", default=None,
+                    help="V-IBL-STATIC-1-SOAK: comma-separated strengths to "
+                         "sweep per preset, e.g. 'off,0.25,0.5,1.0,1.5'. "
+                         "'off' = env unset (legacy gate-OFF baseline).")
     args = ap.parse_args()
 
     exe = Path(args.exe)
@@ -250,34 +282,60 @@ def main() -> int:
     print(f"[baseline] commit={commit_sha} out={out_dir}")
     print(f"[baseline] presets: {selected}")
 
+    # V-IBL-STATIC-1-SOAK: build list of strength values for the sweep.
+    # 'off' / None means env unset (legacy gate-OFF baseline). A numeric
+    # value sets MC2_STATIC_PROP_IBL_SH=1 + STRENGTH=<v>.
+    if args.strength_sweep:
+        sweep: list[str | None] = []
+        for tok in args.strength_sweep.split(","):
+            tok = tok.strip()
+            if not tok:
+                continue
+            sweep.append(None if tok.lower() == "off" else tok)
+    elif args.strength is not None:
+        sweep = [args.strength]
+    else:
+        sweep = [None]
+
     overall_ok = True
     for name in selected:
         preset = all_presets[name]
-        out_png = out_dir / f"{name}_{commit_sha}.png"
-        r = run_capture(exe, name, preset, commit_sha, out_png)
-        if not r.get("ok"):
-            overall_ok = False
-            print(f"[baseline] FAIL preset={name}: {r}", file=sys.stderr)
-            continue
-        if args.verify:
-            # Re-run into a sibling .verify.png and compare hashes.
+        for strength in sweep:
+            tag = _strength_tag(strength)
+            # Sweep mode encodes strength in filename; legacy single-shot
+            # mode (sweep == [None] and no --strength) preserves the
+            # original `<name>_<sha>.png` filename for back-compat.
+            if args.strength_sweep is None and args.strength is None:
+                out_png = out_dir / f"{name}_{commit_sha}.png"
+            else:
+                out_png = out_dir / f"{name}_{commit_sha}_{tag}.png"
+            r = run_capture(exe, name, preset, commit_sha, out_png,
+                            strength=strength)
+            if not r.get("ok"):
+                overall_ok = False
+                print(f"[baseline] FAIL preset={name} strength={tag}: {r}",
+                      file=sys.stderr)
+                continue
+            time.sleep(2)
+        # --verify only meaningful for the original single-shot path
+        # (one capture per preset). Sweep mode produces N captures and is
+        # not bit-comparison anyway.
+        if args.verify and args.strength_sweep is None and args.strength is None:
+            single_png = out_dir / f"{name}_{commit_sha}.png"
+            sha_first = file_sha256(single_png) if single_png.exists() else ""
             verify_png = out_dir / f"{name}_{commit_sha}.verify.png"
             time.sleep(2)
             r2 = run_capture(exe, name, preset, commit_sha, verify_png)
             if not r2.get("ok"):
                 overall_ok = False
                 continue
-            same = (r["sha256"] == r2["sha256"])
+            same = (sha_first == r2["sha256"])
             print(f"[baseline] VERIFY preset={name} "
                   f"identical={'yes' if same else 'NO'} "
-                  f"({r['sha256'][:16]} vs {r2['sha256'][:16]})")
+                  f"({sha_first[:16]} vs {r2['sha256'][:16]})")
             if not same:
-                # OS-level screenshot is rarely byte-identical (cursor,
-                # taskbar clock, async window decoration). This is expected
-                # for pyautogui captures; the diff is in the docs.
                 print("[baseline]   (OS-screenshot path; non-byte-identical "
                       "across runs is expected — see howto doc.)")
-        time.sleep(2)
 
     return 0 if overall_ok else 1
 

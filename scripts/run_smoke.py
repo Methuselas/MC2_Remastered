@@ -479,6 +479,11 @@ def main():
                             # MC2_STATIC_PROP_IBL_SH=1 enables; ImGui slider
                             # tunes u_iblShStrength when on.
                             "MC2_STATIC_PROP_IBL_SH",
+                            # V-IBL-STATIC-1-SOAK: optional default strength
+                            # override (clamped 0..3). Only meaningful when
+                            # MC2_STATIC_PROP_IBL_SH=1. ImGui slider may
+                            # still override at runtime.
+                            "MC2_STATIC_PROP_IBL_SH_STRENGTH",
                             # Render-contract Phase 2 assert mode (default-OFF).
                             # MC2_RENDER_CONTRACT_ASSERT=1 enables runtime GL state
                             # validation against declared render_contract expectations.

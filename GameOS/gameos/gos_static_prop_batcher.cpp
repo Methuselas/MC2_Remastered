@@ -190,7 +190,20 @@ int g_lightProbeSetupPath = 0;
 // Default 1.0 -> nominal projector output strength when env-gate is on.
 // Defined at file scope (NOT in anonymous namespace) for external linkage
 // so GuiRuntime/EditorInspector.cpp can drive the slider.
-float g_iblShStrength = 1.0f;
+//
+// V-IBL-STATIC-1-SOAK: optional MC2_STATIC_PROP_IBL_SH_STRENGTH env override
+// for the default. ImGui slider remains the interactive tuning surface; the
+// env exists so headless capture harnesses can drive strength deterministically
+// from a parent process. Parsed once at process start, clamped 0.0..3.0.
+// Env unset/empty -> default 1.0f (legacy behavior).
+float g_iblShStrength = []() -> float {
+    const char* v = std::getenv("MC2_STATIC_PROP_IBL_SH_STRENGTH");
+    if (!v || !v[0]) return 1.0f;
+    float f = (float)std::atof(v);
+    if (f < 0.0f) f = 0.0f;
+    if (f > 3.0f) f = 3.0f;
+    return f;
+}();
 
 namespace {
 
