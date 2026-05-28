@@ -397,10 +397,15 @@ void main() {
                 vec3 V_eye = normalize(u_cameraWorldPos.xyz - worldPos);
                 vec3 L = normalize(-sunDir);
                 vec3 H = normalize(L + V_eye);
-                // Per-vertex fallbacks: metallic=0, roughness=1
+                // Per-vertex fallbacks: metallic=0, roughness=0.6
                 // (per-fragment MaterialGpu lookup deferred to V-MATERIAL-PBR-3).
+                // roughness=0.6 (V-MATERIAL-PBR-2-TUNE) keeps a moderately tight
+                // specular lobe (specPower~=82 via mix(1,512,smoothness^2)) so the
+                // gate-ON sheen is visibly present, not imperceptibly broad.
+                // Prior value 1.0 produced pow(NdotH, 1) = NdotH which at F0=0.04
+                // added <=4% RGB even at strength=3.0 -- visually undetectable.
                 float metallicFactor  = 0.0;
-                float roughnessFactor = 1.0;
+                float roughnessFactor = 0.6;
                 const vec3 kF0Dielectric = vec3(0.04);
                 vec3  F0     = mix(kF0Dielectric, vec3(0.04), metallicFactor);
                 // ^ Equivalent to vec3(0.04); albedo-tinted F0 for metallics
