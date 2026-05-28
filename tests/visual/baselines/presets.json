@@ -39,6 +39,18 @@
       "warmup_s": 28,
       "duration_s": 30,
       "description": "TERRAIN-LIGHTING-SOAK-2: terrain-heavy final-campaign scene (tier1 mc2_24). Steepest tier1 terrain (slope p99=51°, max range -100..1400 wu per slice-3 audit); the canonical worst-case for V2 shadow-aware fill validation."
+    },
+    "mech_24": {
+      "mission": "mc2_24",
+      "warmup_s": 28,
+      "duration_s": 30,
+      "description": "MECH-BASELINE-0: active-mech scene (tier1 mc2_24). Primary preset for mech-lane visual regression — mech material inventory confirms a Mad Cat (data/tgl/128/madcatrgb.tga) is submitted at this seed/warmup. Pair with --mech-debug-mode for the registry-backed mech debug views (0 Final, 2 Albedo, 3 LightingOnly, 4 Normal); the sidecar embeds the live mech inventory."
+    },
+    "mech_17": {
+      "mission": "mc2_17",
+      "warmup_s": 28,
+      "duration_s": 30,
+      "description": "MECH-BASELINE-0: active-mech combined-arms scene (tier1 mc2_17). Complements mech_24 with a different mission's mech roster. Use --mech-debug-mode + the embedded sidecar inventory to confirm which mech textures/materialIdx were on screen."
     }
   }
 }

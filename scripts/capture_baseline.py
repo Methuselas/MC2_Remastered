@@ -72,6 +72,11 @@ TRACKED_FLAGS = (
     "MC2_TERRAIN_LIGHTING_V1",
     # TERRAIN-LIGHTING-2: shadow-aware fill modulation gate.
     "MC2_TERRAIN_LIGHTING_V2",
+    # MECH-BASELINE-0: mech.frag debug-mode selector (0=Final, 2=Albedo,
+    # 3=LightingOnly, 4=Normal) + the snapshot-extract gate that populates
+    # the debug-state mech inventory the sidecar embeds.
+    "MC2_MECH_FRAG_DEBUG",
+    "MC2_SNAPSHOT_MECH_EXTRACT",
 )
 
 
@@ -163,10 +168,32 @@ def _strength_tag(strength: str | None) -> str:
     return f"ibl_sh_s{f:.2f}".replace(".", "p")
 
 
+def read_mech_inventory(exe: Path) -> dict | None:
+    """MECH-BASELINE-0: pull the engine's debug-state `mech` section.
+
+    The engine writes debug_state/latest_render_state.json next to mc2.exe
+    every 300 frames when MC2_DEBUG_STATE_DUMP=1. This is the read-only mech
+    inventory produced by MECH-MATERIAL-INVENTORY-1 (rows + per-mech
+    textureName/materialIdx/texHandle + mismatch counters). Returns the
+    parsed `mech` object, or None if the file/section is absent. Best-effort:
+    never raises (a capture must not fail because the sidecar enrichment did).
+    """
+    try:
+        p = exe.parent / "debug_state" / "latest_render_state.json"
+        if not p.exists():
+            return None
+        doc = json.loads(p.read_text(encoding="utf-8"))
+        return doc.get("mech")
+    except Exception as e:
+        print(f"[baseline] WARN mech inventory read: {e}", file=sys.stderr)
+        return None
+
+
 def run_capture(exe: Path, preset_name: str, preset: dict,
                 commit_sha: str, out_png: Path,
                 strength: str | None = None,
-                terrain_debug_mode: str | None = None) -> dict:
+                terrain_debug_mode: str | None = None,
+                mech_debug_mode: str | None = None) -> dict:
     mission = preset["mission"]
     warmup = int(preset["warmup_s"])
     duration = int(preset.get("duration_s", warmup + 2))
@@ -200,6 +227,21 @@ def run_capture(exe: Path, preset_name: str, preset: dict,
         env.pop("MC2_TERRAIN_DEBUG_MODE", None)
     else:
         env["MC2_TERRAIN_DEBUG_MODE"] = str(terrain_debug_mode)
+
+    # MECH-BASELINE-0: mech.frag debug-mode override + inventory enablement.
+    # None = leave MC2_MECH_FRAG_DEBUG unset (default mode 0 / Final,
+    # byte-identical to legacy). A value (0/2/3/4) selects a mech debug view.
+    # Whenever a mech capture runs we also enable MC2_SNAPSHOT_MECH_EXTRACT
+    # and MC2_DEBUG_STATE_DUMP so read_mech_inventory() can enrich the sidecar.
+    # Neither alters the rendered pixels (extract is observational; the JSON
+    # dump is a side file) — the captured frame is the same as without them.
+    mech_capture = mech_debug_mode is not None
+    if mech_debug_mode is None:
+        env.pop("MC2_MECH_FRAG_DEBUG", None)
+    else:
+        env["MC2_MECH_FRAG_DEBUG"] = str(mech_debug_mode)
+        env["MC2_SNAPSHOT_MECH_EXTRACT"] = "1"
+        env["MC2_DEBUG_STATE_DUMP"] = "1"
 
     proc_args = [str(exe), "--profile", "stock", "--mission", mission,
                  "--duration", str(duration)]
@@ -258,6 +300,15 @@ def run_capture(exe: Path, preset_name: str, preset: dict,
         },
         "preset_description": preset.get("description", ""),
     }
+    # MECH-BASELINE-0: record the selected mech debug mode and (best-effort)
+    # embed the live mech inventory from the debug-state dump, so a mech
+    # capture is self-describing (which texture/materialIdx was on screen).
+    if mech_capture:
+        sidecar["mechDebugMode"] = str(mech_debug_mode)
+        inv = read_mech_inventory(exe)
+        sidecar["mechInventory"] = inv if inv is not None else {
+            "note": "debug-state mech section unavailable (no dump or no mechs)"
+        }
     sidecar_path = out_png.with_suffix(".json")
     sidecar_path.write_text(json.dumps(sidecar, indent=2) + "\n",
                             encoding="utf-8")
@@ -293,6 +344,15 @@ def main() -> int:
                          "5 normal lighting, 6 shadow, 7 cloud shadow, 8 "
                          "cement diag, 9 thin-record. Omit for default (mode "
                          "0). Filename suffix: _tdmN.")
+    ap.add_argument("--mech-debug-mode", default=None,
+                    help="MECH-BASELINE-0: mech.frag debug-mode override "
+                         "(MC2_MECH_FRAG_DEBUG). Registry-backed modes: 0 "
+                         "Final (default), 2 Albedo (texture-only), 3 "
+                         "LightingOnly, 4 Normal. (mech.frag also has raw "
+                         "diag modes 1/5/6/7/8/9 — not registry views.) "
+                         "Also enables MC2_SNAPSHOT_MECH_EXTRACT + "
+                         "MC2_DEBUG_STATE_DUMP so the sidecar embeds the mech "
+                         "inventory. Omit for default. Filename suffix: _mdmN.")
     args = ap.parse_args()
 
     exe = Path(args.exe)
@@ -348,13 +408,17 @@ def main() -> int:
             # captures of the same preset coexist on disk.
             tdm = args.terrain_debug_mode
             tdm_suffix = f"_tdm{tdm}" if tdm is not None else ""
-            if args.strength_sweep is None and args.strength is None and tdm is None:
+            mdm = args.mech_debug_mode
+            mdm_suffix = f"_mdm{mdm}" if mdm is not None else ""
+            if (args.strength_sweep is None and args.strength is None
+                    and tdm is None and mdm is None):
                 out_png = out_dir / f"{name}_{commit_sha}.png"
             else:
-                out_png = out_dir / f"{name}_{commit_sha}_{tag}{tdm_suffix}.png"
+                out_png = out_dir / f"{name}_{commit_sha}_{tag}{tdm_suffix}{mdm_suffix}.png"
             r = run_capture(exe, name, preset, commit_sha, out_png,
                             strength=strength,
-                            terrain_debug_mode=tdm)
+                            terrain_debug_mode=tdm,
+                            mech_debug_mode=mdm)
             if not r.get("ok"):
                 overall_ok = False
                 print(f"[baseline] FAIL preset={name} strength={tag}: {r}",
@@ -365,7 +429,8 @@ def main() -> int:
         # (one capture per preset). Sweep mode produces N captures and is
         # not bit-comparison anyway.
         if (args.verify and args.strength_sweep is None
-                and args.strength is None and args.terrain_debug_mode is None):
+                and args.strength is None and args.terrain_debug_mode is None
+                and args.mech_debug_mode is None):
             single_png = out_dir / f"{name}_{commit_sha}.png"
             sha_first = file_sha256(single_png) if single_png.exists() else ""
             verify_png = out_dir / f"{name}_{commit_sha}.verify.png"
