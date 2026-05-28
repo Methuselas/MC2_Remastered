@@ -113,11 +113,16 @@ def git_short_sha() -> str:
         return "unknown"
 
 
-def captured_flags() -> dict:
-    """Snapshot the render-affecting env vars at capture time."""
+def captured_flags(env: dict) -> dict:
+    """Snapshot the render-affecting env vars actually seen by the subprocess.
+
+    Reads from the supplied `env` dict (the dict passed to Popen(env=...)),
+    NOT from os.environ — the parent's environment is irrelevant to what the
+    captured mc2.exe process saw.
+    """
     out: dict[str, str] = {}
     for k in TRACKED_FLAGS:
-        v = os.environ.get(k)
+        v = env.get(k)
         out[k] = v if v is not None else "default"
     return out
 
@@ -216,7 +221,7 @@ def run_capture(exe: Path, preset_name: str, preset: dict,
         "mission": mission,
         "cameraPreset": preset_name,
         "resolution": resolution,
-        "flags": captured_flags(),
+        "flags": captured_flags(env),
         "capture": {
             "warmup_s": warmup,
             "duration_s": duration,
