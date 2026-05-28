@@ -33,6 +33,12 @@
       "warmup_s": 28,
       "duration_s": 30,
       "description": "TERRAIN-BASELINE-0: terrain-heavy combined-arms scene (tier1 mc2_17). Late-campaign mission with mixed biomes; stresses material-weight blends and shadow PCF across varied slope."
+    },
+    "terrain_final_24": {
+      "mission": "mc2_24",
+      "warmup_s": 28,
+      "duration_s": 30,
+      "description": "TERRAIN-LIGHTING-SOAK-2: terrain-heavy final-campaign scene (tier1 mc2_24). Steepest tier1 terrain (slope p99=51°, max range -100..1400 wu per slice-3 audit); the canonical worst-case for V2 shadow-aware fill validation."
     }
   }
 }
