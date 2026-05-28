@@ -159,6 +159,13 @@
           "name": "u_pbrV1Strength",
           "offset": 244,
           "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_pbrV1RoughnessOverride",
+          "offset": 248,
+          "type": "float"
         }
       ],
       "name": "gl_DefaultUniformBlock"

@@ -155,8 +155,6 @@ uniform float u_pbrV1Strength;
 //             (byte-identical to V-MATERIAL-PBR-2-TUNE baseline).
 //   [0.05,1.0] -> override active; replaces roughnessFactor literal.
 // CPU uploads -1.0 sentinel by default and when MC2_VIEW_UNIFORMS=0.
-// TODO(SHADER-REFLECT-HYGIENE-7): new uniform drifts shader_reflect
-// goldens; regen in a fresh worktree, not this slice.
 uniform float u_pbrV1RoughnessOverride;
 
 // SH-L2 evaluator (Ramamoorthi-Hanrahan 2001 named constants).
