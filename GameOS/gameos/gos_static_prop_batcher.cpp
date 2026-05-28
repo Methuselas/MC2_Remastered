@@ -223,6 +223,16 @@ float g_pbrV1Strength = []() -> float {
     return f;
 }();
 
+// V-MATERIAL-PBR-2-TUNE-UI: ImGui-driven runtime roughness override layer
+// on top of the static_prop.vert 0.6 literal baseline. Default DISABLED;
+// per-frame upload sends -1.0 sentinel which the shader treats as "use
+// literal" -> byte-identical to V-MATERIAL-PBR-2-TUNE. When the inspector
+// flips _Enabled, the slider value (0.05..1.0) is uploaded and overrides
+// the literal. Debug/tuning surface only -- no MaterialGpu read, no
+// batcher default change, no schema change.
+bool  g_pbrV1RoughnessOverrideEnabled = false;
+float g_pbrV1RoughnessOverrideValue   = 0.6f;  // matches PBR-2-TUNE literal
+
 namespace {
 
 // Per-vertex stride in the shared VBO. Layout:
@@ -668,6 +678,7 @@ struct ProgramLocs {
     GLint iblSh               = -1;   // V-IBL-STATIC-1: u_iblSh[9] (vec3 array)
     GLint iblShStrength       = -1;   // V-IBL-STATIC-1: u_iblShStrength
     GLint pbrV1Strength       = -1;   // V-MATERIAL-PBR-2: u_pbrV1Strength
+    GLint pbrV1RoughnessOverride = -1; // V-MATERIAL-PBR-2-TUNE-UI: u_pbrV1RoughnessOverride
 };
 static ProgramLocs s_locsLegacy;
 static ProgramLocs s_locsCoalesce;
@@ -883,6 +894,7 @@ void loadProgramsIfNeeded() {
     s_locsLegacy.iblShStrength     = glGetUniformLocation(s_staticPropProgram, "u_iblShStrength");
     // V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular (default strength 0.0 = OFF).
     s_locsLegacy.pbrV1Strength     = glGetUniformLocation(s_staticPropProgram, "u_pbrV1Strength");
+    s_locsLegacy.pbrV1RoughnessOverride = glGetUniformLocation(s_staticPropProgram, "u_pbrV1RoughnessOverride");
     // s_locsLegacy.drawIDBase / texArr stay -1 (coalesce-only; legacy
     // shader has no such uniforms).
 
@@ -923,6 +935,7 @@ void loadProgramsIfNeeded() {
             s_locsCoalesce.iblShStrength     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_iblShStrength");
             // V-MATERIAL-PBR-2: per-vertex Schlick-Fresnel + power-lobe specular (default strength 0.0 = OFF).
             s_locsCoalesce.pbrV1Strength     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pbrV1Strength");
+            s_locsCoalesce.pbrV1RoughnessOverride = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pbrV1RoughnessOverride");
 
             // M3 fix: if both gates are ON and the uniform is absent, log an error.
             // This can only happen if the shader wasn't recompiled with v3 changes.
@@ -4124,6 +4137,15 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                     ? g_pbrV1Strength : 0.0f;
             glUniform1f(s_locsCoalesce.pbrV1Strength, pbrStrength);
         }
+        // V-MATERIAL-PBR-2-TUNE-UI: upload roughness override sentinel.
+        // Disabled (default) or MC2_VIEW_UNIFORMS=0 -> -1.0 -> shader falls
+        // through to its literal 0.6 -> byte-identical to PBR-2-TUNE.
+        if (s_locsCoalesce.pbrV1RoughnessOverride >= 0) {
+            const float pbrRough =
+                (g_pbrV1RoughnessOverrideEnabled && !s_viewUniformsDisabled)
+                    ? g_pbrV1RoughnessOverrideValue : -1.0f;
+            glUniform1f(s_locsCoalesce.pbrV1RoughnessOverride, pbrRough);
+        }
 
         // 11.7.e — slot 1 is NOT bound (per v2r18 §3.X.1: colors_.c[]
         // unread in any live shader path; coalesce branch does not bind
@@ -5001,6 +5023,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                     (s_pbrV1Enabled && !s_viewUniformsDisabled)
                         ? g_pbrV1Strength : 0.0f;
                 glUniform1f(s_locsLegacy.pbrV1Strength, pbrStrength);
+            }
+            // V-MATERIAL-PBR-2-TUNE-UI: legacy program override upload (mirror).
+            if (s_locsLegacy.pbrV1RoughnessOverride >= 0) {
+                const float pbrRough =
+                    (g_pbrV1RoughnessOverrideEnabled && !s_viewUniformsDisabled)
+                        ? g_pbrV1RoughnessOverrideValue : -1.0f;
+                glUniform1f(s_locsLegacy.pbrV1RoughnessOverride, pbrRough);
             }
         }
 

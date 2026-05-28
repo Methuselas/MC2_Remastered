@@ -150,6 +150,15 @@ uniform float u_iblShStrength;
 // byte-identical to default-OFF; only default-OFF (strength=0.0) is.
 uniform float u_pbrV1Strength;
 
+// V-MATERIAL-PBR-2-TUNE-UI: runtime roughness override (ImGui-driven).
+//   < 0.0   -> override disabled; use the literal 0.6 fallback below
+//             (byte-identical to V-MATERIAL-PBR-2-TUNE baseline).
+//   [0.05,1.0] -> override active; replaces roughnessFactor literal.
+// CPU uploads -1.0 sentinel by default and when MC2_VIEW_UNIFORMS=0.
+// TODO(SHADER-REFLECT-HYGIENE-7): new uniform drifts shader_reflect
+// goldens; regen in a fresh worktree, not this slice.
+uniform float u_pbrV1RoughnessOverride;
+
 // SH-L2 evaluator (Ramamoorthi-Hanrahan 2001 named constants).
 // Axis convention: Y-up world (same as V-AMBIENT-STATIC-1 hemi_t at
 // static_prop.vert:281). worldNormal is Stuff-space Y-up (model normal *
@@ -405,7 +414,12 @@ void main() {
                 // Prior value 1.0 produced pow(NdotH, 1) = NdotH which at F0=0.04
                 // added <=4% RGB even at strength=3.0 -- visually undetectable.
                 float metallicFactor  = 0.0;
+                // V-MATERIAL-PBR-2-TUNE-UI: runtime override layer over the
+                // 0.6 literal. Sentinel < 0.0 -> use literal (byte-identical
+                // to PBR-2-TUNE baseline). >= 0.0 -> apply override.
                 float roughnessFactor = 0.6;
+                if (u_pbrV1RoughnessOverride >= 0.0)
+                    roughnessFactor = u_pbrV1RoughnessOverride;
                 const vec3 kF0Dielectric = vec3(0.04);
                 vec3  F0     = mix(kF0Dielectric, vec3(0.04), metallicFactor);
                 // ^ Equivalent to vec3(0.04); albedo-tinted F0 for metallics

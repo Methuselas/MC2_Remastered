@@ -570,6 +570,36 @@ void EditorInspector::drawImGui() {
                 ImGui::SliderFloat("##pbr_v1_strength", &g_pbrV1Strength,
                                    0.0f, 3.0f, "pbr v1 strength %.2f");
                 ImGui::EndDisabled();
+
+                // V-MATERIAL-PBR-2-TUNE-UI: roughness-override layer over
+                // the static_prop.vert 0.6 literal. Default DISABLED -> CPU
+                // uploads -1.0 sentinel -> byte-identical to PBR-2-TUNE.
+                // Slider 0.05..1.0; only visible when PBR gate is ON.
+                if (pbrOn) {
+                    ImGui::Text("  pbr rough      %s (override=%.2f)",
+                                g_pbrV1RoughnessOverrideEnabled
+                                    ? "on" : "off",
+                                g_pbrV1RoughnessOverrideValue);
+                } else {
+                    ImGui::Text("  pbr rough      off (env-gated)");
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("V-MATERIAL-PBR-2-TUNE-UI debug knob.\n"
+                                      "Disabled -> shader uses 0.6 literal\n"
+                                      "(byte-identical baseline). Enabled\n"
+                                      "-> slider value overrides literal.\n"
+                                      "No MaterialGpu read in this slice.");
+                ImGui::BeginDisabled(!pbrOn);
+                ImGui::Checkbox("##pbr_rough_override_enabled",
+                                &g_pbrV1RoughnessOverrideEnabled);
+                ImGui::SameLine();
+                ImGui::BeginDisabled(!g_pbrV1RoughnessOverrideEnabled);
+                ImGui::SliderFloat("##pbr_rough_override_value",
+                                   &g_pbrV1RoughnessOverrideValue,
+                                   0.05f, 1.0f,
+                                   "roughness override %.2f");
+                ImGui::EndDisabled();
+                ImGui::EndDisabled();
             }
 
             ImGui::Spacing();

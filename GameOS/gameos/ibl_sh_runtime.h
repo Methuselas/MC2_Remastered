@@ -28,6 +28,15 @@ extern float g_iblShStrength;
 // MC2_STATIC_PROP_PBR_V1_STRENGTH override, clamped 0..3).
 extern float g_pbrV1Strength;
 
+// V-MATERIAL-PBR-2-TUNE-UI: ImGui-driven runtime roughness override.
+// When _Enabled is false (default), CPU uploads -1.0 sentinel and the
+// shader falls through to its literal 0.6 fallback (byte-identical to
+// V-MATERIAL-PBR-2-TUNE baseline). When true, _Value (clamped 0.05..1.0)
+// is uploaded and replaces the literal. Debug/tuning surface only; per-
+// material consumption deferred to V-MATERIAL-PBR-3.
+extern bool  g_pbrV1RoughnessOverrideEnabled;
+extern float g_pbrV1RoughnessOverrideValue;
+
 // V-IBL-STATIC-2: inspector accessor for the active per-mission SH set.
 // Forwarded here (instead of including the batcher header) so GuiRuntime
 // stays independent of Stuff/. Implementation lives in
