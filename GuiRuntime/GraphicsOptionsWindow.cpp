@@ -5,6 +5,7 @@
 #include "gameos.hpp"
 #include "../GameOS/gameos/gos_static_prop_killswitch.h"
 #include "../GameOS/gameos/gos_mech_killswitch.h"
+#include "../GameOS/gameos/ibl_sh_runtime.h"     // g_iblShStrength, g_pbrV1Strength, g_pbrV1RoughnessOverride*
 #include "../mclib/projectz_overlay.h"
 #include "draw_packet_emitter.h"       // DrawPacketsDebugSnapshot g_dpSnapshot
 #include "StaticPropTypeDesc.h"        // RenderCore::StaticPropTypeDesc
@@ -485,6 +486,104 @@ static void drawTerrainTuningSection() {
         ImGui::TextDisabled("(V2 floor only acts on the V1 hemi term — set MC2_TERRAIN_LIGHTING_V1=1 too)");
     }
     ImGui::TextDisabled("Debug Mode 10 = height-normal RGB; Mode 11 = hemi additive ×4");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Static-prop visual tuning. Previously lived in the Object Inspector PBR
+// block (selection-driven); consolidated here so the controls are reachable
+// without picking a prop. Env gates remain authoritative — sliders only
+// modulate strength when the matching env gate is ON.
+static void drawStaticPropTuningSection() {
+    // IBL SH ambient (V-IBL-STATIC-1; default-ON env). Slider modulates
+    // strength when MC2_STATIC_PROP_IBL_SH != 0 (default-on).
+    ImGui::SeparatorText("IBL SH ambient");
+    {
+        const char* env = std::getenv("MC2_STATIC_PROP_IBL_SH");
+        bool iblOn = !(env != nullptr && env[0] == '0');
+        const char* setName = ibl_sh_runtime_currentSetName();
+        if (iblOn) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                "IBL SH: ON (set=%s, strength=%.2f)",
+                setName ? setName : "default", g_iblShStrength);
+        } else {
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
+                "IBL SH: OFF (env-gated; MC2_STATIC_PROP_IBL_SH=0)");
+        }
+        ImGui::BeginDisabled(!iblOn);
+        if (ImGui::SliderFloat("Strength##ibl_sh", &g_iblShStrength, 0.0f, 3.0f, "%.2f")) {}
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("V-IBL-STATIC-1 SH-L2 image-based ambient on the\n"
+                              "StaticPropOpaque lane. Slider modulates strength\n"
+                              "when env gate is on. Default 0.5.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##ibl_sh")) g_iblShStrength = 0.5f;
+        ImGui::EndDisabled();
+    }
+
+    // PBR V1 specular (V-MATERIAL-PBR-3; default-OFF env). When gate ON,
+    // slider controls strength. Default value 0.5 (dialled back from 1.0).
+    ImGui::SeparatorText("PBR V1 specular");
+    {
+        const char* env = std::getenv("MC2_STATIC_PROP_PBR_V1");
+        bool pbrOn = (env && env[0] && env[0] != '0');
+        if (pbrOn) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                "PBR V1: ON (strength=%.2f)", g_pbrV1Strength);
+        } else {
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
+                "PBR V1: OFF (set MC2_STATIC_PROP_PBR_V1=1)");
+        }
+        ImGui::BeginDisabled(!pbrOn);
+        if (ImGui::SliderFloat("Strength##pbr_v1", &g_pbrV1Strength, 0.0f, 3.0f, "%.2f")) {}
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("V-MATERIAL-PBR-3 per-fragment Schlick-Fresnel +\n"
+                              "power-lobe specular in static_prop.frag.\n"
+                              "Default 0.5 (was 1.0 — full strength was too blunt\n"
+                              "on flat-roofed legacy assets without material masks).\n"
+                              "Env MC2_STATIC_PROP_PBR_V1_STRENGTH overrides startup.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbr_v1")) g_pbrV1Strength = 0.5f;
+        ImGui::EndDisabled();
+    }
+
+    // PBR roughness override (V-MATERIAL-PBR-3-TUNE-UI). Forces roughness
+    // to a fixed value across all materials when enabled. Default
+    // enabled=true / value=0.95 (was disabled/0.6) — the 0.6 literal made
+    // legacy assets too glossy.
+    ImGui::SeparatorText("PBR roughness override");
+    {
+        const char* env = std::getenv("MC2_STATIC_PROP_PBR_V1");
+        bool pbrOn = (env && env[0] && env[0] != '0');
+        if (pbrOn) {
+            ImGui::TextColored(g_pbrV1RoughnessOverrideEnabled
+                                   ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f)
+                                   : ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
+                "Override: %s (value=%.2f)",
+                g_pbrV1RoughnessOverrideEnabled ? "ON" : "OFF",
+                g_pbrV1RoughnessOverrideValue);
+        } else {
+            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
+                "Override: inert (PBR V1 env gate OFF)");
+        }
+        ImGui::BeginDisabled(!pbrOn);
+        ImGui::Checkbox("Enable##pbr_rough", &g_pbrV1RoughnessOverrideEnabled);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("When enabled, overrides static_prop.vert's roughness\n"
+                              "literal/MaterialGpu value with the slider value.\n"
+                              "Default-ON at 0.95 (was OFF / 0.6 literal — too glossy).");
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!g_pbrV1RoughnessOverrideEnabled);
+        if (ImGui::SliderFloat("Value##pbr_rough", &g_pbrV1RoughnessOverrideValue,
+                               0.05f, 1.0f, "%.2f")) {}
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##pbr_rough")) {
+            g_pbrV1RoughnessOverrideEnabled = true;
+            g_pbrV1RoughnessOverrideValue   = 0.95f;
+        }
+        ImGui::EndDisabled();
+        ImGui::EndDisabled();
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1096,6 +1195,13 @@ void draw() {
     // sections off-screen on first open.
     if (ImGui::CollapsingHeader("Terrain Tuning"))
         drawTerrainTuningSection();
+
+    // ── Static Prop Tuning ────────────────────────────────────────────────────
+    // IBL SH + PBR V1 strength + roughness override. Previously lived in
+    // the Object Inspector PBR selection block; consolidated here so the
+    // controls are reachable without picking a prop.
+    if (ImGui::CollapsingHeader("Static Prop Tuning"))
+        drawStaticPropTuningSection();
 
     // ── HUD ───────────────────────────────────────────────────────────────────
     if (ImGui::CollapsingHeader("HUD")) {

@@ -216,7 +216,12 @@ float g_iblShStrength = []() -> float {
 // can drive the slider (same pattern as g_iblShStrength).
 float g_pbrV1Strength = []() -> float {
     const char* v = std::getenv("MC2_STATIC_PROP_PBR_V1_STRENGTH");
-    if (!v || !v[0]) return 1.0f;
+    // 2026-05-28: default dialled back from 1.0 → 0.5 per user direction.
+    // Full-strength Schlick specular was too blunt on flat-roofed legacy
+    // assets without material specular masking; 0.5 is the new "looks
+    // sensible without bespoke per-material tuning" baseline. Env override
+    // still wins (clamped 0..3).
+    if (!v || !v[0]) return 0.5f;
     float f = (float)std::atof(v);
     if (f < 0.0f) f = 0.0f;
     if (f > 3.0f) f = 3.0f;
@@ -230,8 +235,14 @@ float g_pbrV1Strength = []() -> float {
 // flips _Enabled, the slider value (0.05..1.0) is uploaded and overrides
 // the literal. Debug/tuning surface only -- no MaterialGpu read, no
 // batcher default change, no schema change.
-bool  g_pbrV1RoughnessOverrideEnabled = false;
-float g_pbrV1RoughnessOverrideValue   = 0.6f;  // matches PBR-2-TUNE literal
+// 2026-05-28: defaults flipped to enabled=true / value=0.95 per user
+// direction. The 0.6 literal in static_prop.vert produced too-glossy
+// highlights on legacy assets; the runtime override at 0.95 makes
+// surfaces visibly rougher (closer to the look the assets were authored
+// for) without touching the shader. Override stays env-disable-able via
+// the Static Prop Tuning ImGui checkbox.
+bool  g_pbrV1RoughnessOverrideEnabled = true;
+float g_pbrV1RoughnessOverrideValue   = 0.95f;
 
 namespace {
 
