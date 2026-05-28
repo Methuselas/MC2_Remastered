@@ -133,6 +133,10 @@ uniform PREC float tintStrengthScale;  // 0=colormap passthrough, 1=full materia
 uniform sampler2D terrainHeightTex;
 uniform PREC vec4 terrainHeightParams;
 uniform int       useTerrainNormalsFromHeight;
+// TERRAIN-TUNING-UI-1: live-tunable multiplier on the additive height-
+// derived normal term. Default 1.0 (full slope tilt; byte-equivalent to
+// pre-slice). 0.0 = no slope contribution. Inspector slider 0..1.5.
+uniform PREC float terrainNormalsFromHeightStrength;
 
 // --- Distance LOD thresholds (tunable, in MC2 world units) ---
 // 1 terrain tile ≈ 128 world units
@@ -690,7 +694,10 @@ void main(void)
         // parametrization N.xy by projecting onto the same plane the detail
         // normals already use: N.xy += hN.xy / hN.z. Floor hN.z so a near-
         // cliff sample cannot blow the perturbation to infinity.
-        N.xy += hN.xy / max(hN.z, 0.05);
+        // TERRAIN-TUNING-UI-1: strength scales the additive term so the
+        // inspector slider can dial macroscopic slope influence 0..1.5
+        // without recompiling. strength=1.0 = pre-slice behavior.
+        N.xy += (hN.xy / max(hN.z, 0.05)) * terrainNormalsFromHeightStrength;
     }
     // Clamp normal deflection to prevent extreme angles that cause black snow
     // Max deflection of 0.7 means the normal can tilt ~35 degrees max

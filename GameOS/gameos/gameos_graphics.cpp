@@ -1467,6 +1467,8 @@ class gosRenderer {
         }
         void  setTerrainTintStrengthScale(float s) { terrain_tint_strength_scale_ = s; }
         float getTerrainTintStrengthScale() const   { return terrain_tint_strength_scale_; }
+        void  setTerrainNormalsFromHeightStrength(float s) { terrain_nfh_strength_ = s; }
+        float getTerrainNormalsFromHeightStrength() const  { return terrain_nfh_strength_; }
 
         // Terrain draw killswitch
         void setTerrainDrawEnabled(bool e) { terrain_draw_enabled_ = e; }
@@ -1712,6 +1714,11 @@ class gosRenderer {
         // Per-material normal boost: [rock, grass, dirt, concrete]; matches shader const default.
         float terrain_mat_normal_boost_[4] = { 0.9f, 1.1f, 1.1f, 2.5f };
         float terrain_tint_strength_scale_ = 1.0f;  // 0=colormap passthrough, 1=full tint
+        // TERRAIN-TUNING-UI-1: per-frame multiplier on the additive height-
+        // derived normal term in gos_terrain.frag. 1.0 = full slope tilt
+        // (current behavior; byte-equivalent to pre-slice). 0.0 = no slope
+        // contribution. Slider range 0..1.5.
+        float terrain_nfh_strength_ = 1.0f;
 
         // Cached uniform locations for terrain shader (avoid per-draw glGetUniformLocation)
         struct TerrainUniformLocs {
@@ -1732,6 +1739,8 @@ class gosRenderer {
             GLint terrainHeightTex = -1;             // sampler2D, unit 11 (R32F)
             GLint terrainHeightParams = -1;          // vec4 (gridSide, 1/wuPerVertex, topLeftX, topLeftY)
             GLint useTerrainNormalsFromHeight = -1;  // 0=off, 1=on
+            // TERRAIN-TUNING-UI-1
+            GLint terrainNormalsFromHeightStrength = -1; // float 0..1.5
             GLuint program = 0;
         } terrainLocs_;
 
@@ -1754,6 +1763,8 @@ class gosRenderer {
             GLint terrainHeightTex = -1;
             GLint terrainHeightParams = -1;
             GLint useTerrainNormalsFromHeight = -1;
+            // TERRAIN-TUNING-UI-1
+            GLint terrainNormalsFromHeightStrength = -1;
             GLuint program = 0;
         } thinTerrainLocs_;
 
@@ -1804,6 +1815,9 @@ class gosRenderer {
             terrainLocs_.terrainHeightTex             = glGetUniformLocation(shp, "terrainHeightTex");
             terrainLocs_.terrainHeightParams          = glGetUniformLocation(shp, "terrainHeightParams");
             terrainLocs_.useTerrainNormalsFromHeight  = glGetUniformLocation(shp, "useTerrainNormalsFromHeight");
+            // TERRAIN-TUNING-UI-1
+            terrainLocs_.terrainNormalsFromHeightStrength =
+                glGetUniformLocation(shp, "terrainNormalsFromHeightStrength");
         }
 
         void cacheThinTerrainUniformLocations(GLuint shp) {
@@ -1841,6 +1855,9 @@ class gosRenderer {
             thinTerrainLocs_.terrainHeightTex             = glGetUniformLocation(shp, "terrainHeightTex");
             thinTerrainLocs_.terrainHeightParams          = glGetUniformLocation(shp, "terrainHeightParams");
             thinTerrainLocs_.useTerrainNormalsFromHeight  = glGetUniformLocation(shp, "useTerrainNormalsFromHeight");
+            // TERRAIN-TUNING-UI-1
+            thinTerrainLocs_.terrainNormalsFromHeightStrength =
+                glGetUniformLocation(shp, "terrainNormalsFromHeightStrength");
         }
 
         void cacheShadowUniformLocations(GLuint shp) {
@@ -5109,7 +5126,8 @@ void gosRenderer::endDynamicShadowPass() {
 // the active texture unit afterwards (existing sites already do glActiveTexture
 // (GL_TEXTURE0) immediately after this helper).
 static void bindTerrainHeightTexUniforms(GLint heightTexLoc, GLint paramsLoc,
-                                         GLint gateLoc)
+                                         GLint gateLoc, GLint strengthLoc,
+                                         float strength)
 {
     const GLuint htex = (GLuint)gos_terrainHeightTexHandle();
     if (htex != 0 && heightTexLoc >= 0) {
@@ -5135,6 +5153,10 @@ static void bindTerrainHeightTexUniforms(GLint heightTexLoc, GLint paramsLoc,
         }
     }
     if (gateLoc >= 0) glUniform1i(gateLoc, gateOn);
+    // TERRAIN-TUNING-UI-1: per-frame strength multiplier on the additive
+    // height-derived normal term. Always uploaded — at strength=1.0 the
+    // shader expression collapses to the pre-slice byte-equivalent path.
+    if (strengthLoc >= 0) glUniform1f(strengthLoc, strength);
 }
 
 void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
@@ -5209,7 +5231,9 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     }
     // TERRAIN-NORMALS-FROM-HEIGHT-1
     bindTerrainHeightTexUniforms(tl.terrainHeightTex, tl.terrainHeightParams,
-                                 tl.useTerrainNormalsFromHeight);
+                                 tl.useTerrainNormalsFromHeight,
+                                 tl.terrainNormalsFromHeightStrength,
+                                 terrain_nfh_strength_);
     glActiveTexture(GL_TEXTURE0);
 
     gosPostProcess* pp = getGosPostProcess();
@@ -5325,7 +5349,9 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
     }
     // TERRAIN-NORMALS-FROM-HEIGHT-1
     bindTerrainHeightTexUniforms(tl.terrainHeightTex, tl.terrainHeightParams,
-                                 tl.useTerrainNormalsFromHeight);
+                                 tl.useTerrainNormalsFromHeight,
+                                 tl.terrainNormalsFromHeightStrength,
+                                 terrain_nfh_strength_);
     glActiveTexture(GL_TEXTURE0);
 
     gosPostProcess* pp = getGosPostProcess();
@@ -5461,7 +5487,9 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
     }
     // TERRAIN-NORMALS-FROM-HEIGHT-1
     bindTerrainHeightTexUniforms(tl.terrainHeightTex, tl.terrainHeightParams,
-                                 tl.useTerrainNormalsFromHeight);
+                                 tl.useTerrainNormalsFromHeight,
+                                 tl.terrainNormalsFromHeightStrength,
+                                 terrain_nfh_strength_);
     glActiveTexture(GL_TEXTURE0);
 
     // Shadow map binding (unit 9 = static, unit 10 = dynamic)
@@ -7472,6 +7500,13 @@ void gos_SetTerrainTintStrengthScale(float s) {
 }
 float gos_GetTerrainTintStrengthScale() {
     return g_gos_renderer ? g_gos_renderer->getTerrainTintStrengthScale() : 1.0f;
+}
+// TERRAIN-TUNING-UI-1
+void gos_SetTerrainNormalsFromHeightStrength(float s) {
+    if (g_gos_renderer) g_gos_renderer->setTerrainNormalsFromHeightStrength(s);
+}
+float gos_GetTerrainNormalsFromHeightStrength() {
+    return g_gos_renderer ? g_gos_renderer->getTerrainNormalsFromHeightStrength() : 1.0f;
 }
 
 void gos_SetTerrainDrawEnabled(bool e) {

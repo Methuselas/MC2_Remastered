@@ -28,6 +28,16 @@ extern "C" {
     void __stdcall gos_setTerrainHeightResampleFactor(int factor);
 }
 
+// TERRAIN-TUNING-UI-1: C++-linkage tunable C-API (matches gameos_graphics.cpp
+// definitions — no extern "C" wrapper to match the gos_*Terrain* family
+// convention in gameos.hpp / GraphicsOptionsWindow.cpp).
+extern void  gos_SetTerrainMatNormalBoost(float rock, float grass, float dirt, float concrete);
+extern void  gos_GetTerrainMatNormalBoost(float* rock, float* grass, float* dirt, float* concrete);
+extern void  gos_SetTerrainTintStrengthScale(float s);
+extern float gos_GetTerrainTintStrengthScale();
+extern void  gos_SetTerrainNormalsFromHeightStrength(float s);
+extern float gos_GetTerrainNormalsFromHeightStrength();
+
 // V-MATERIAL-STATIC-0: forward-declared inventory contract — duplicating the
 // struct keeps gui_runtime independent of gos_static_prop_batcher.h, which
 // transitively pulls Stuff/Stuff.hpp (not visible in this TU). The single
@@ -1081,6 +1091,56 @@ void EditorInspector::drawImGui() {
             }
             ImGui::SameLine();
             ImGui::TextDisabled("env MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR = startup default");
+
+            // TERRAIN-TUNING-UI-1: live tunables. Sliders mirror the
+            // existing GraphicsOptionsWindow controls so the inspector
+            // panel can adjust terrain lighting without a second window.
+            // Defaults preserved (boost (0.9,1.1,1.1,2.5), tint 1.0,
+            // nfh-strength 1.0). Ranges are conservative — wider sweeps
+            // belong in the dedicated GraphicsOptionsWindow.
+            ImGui::Separator();
+            ImGui::TextDisabled("Tunables (live)");
+
+            // matNormalBoost — 4-channel slider per [rock, grass, dirt, concrete]
+            float boost[4];
+            ::gos_GetTerrainMatNormalBoost(&boost[0], &boost[1], &boost[2], &boost[3]);
+            if (ImGui::SliderFloat4("normalBoost##tnb", boost, 0.0f, 4.0f, "%.2f")) {
+                ::gos_SetTerrainMatNormalBoost(boost[0], boost[1], boost[2], boost[3]);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset##tnbreset")) {
+                ::gos_SetTerrainMatNormalBoost(0.9f, 1.1f, 1.1f, 2.5f);
+            }
+
+            // tintStrengthScale — single slider 0..2.
+            float tint = ::gos_GetTerrainTintStrengthScale();
+            if (ImGui::SliderFloat("tintStrength##tts", &tint, 0.0f, 2.0f, "%.2f")) {
+                ::gos_SetTerrainTintStrengthScale(tint);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset##ttsreset")) {
+                ::gos_SetTerrainTintStrengthScale(1.0f);
+            }
+
+            // Normals-from-height strength — slider 0..1.5. Only meaningful
+            // when the env gate is enabled (the shader branch is short-
+            // circuited otherwise); inspector still allows pre-arming the
+            // value for the next mission load.
+            float nfh = ::gos_GetTerrainNormalsFromHeightStrength();
+            if (ImGui::SliderFloat("nfhStrength##tnfh", &nfh, 0.0f, 1.5f, "%.2f")) {
+                ::gos_SetTerrainNormalsFromHeightStrength(nfh);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset##tnfhreset")) {
+                ::gos_SetTerrainNormalsFromHeightStrength(1.0f);
+            }
+            {
+                const char* envNfh = std::getenv("MC2_TERRAIN_NORMALS_FROM_HEIGHT");
+                bool nfhOn = (envNfh && envNfh[0] && envNfh[0] != '0');
+                if (!nfhOn) {
+                    ImGui::TextDisabled("(nfhStrength only takes effect when MC2_TERRAIN_NORMALS_FROM_HEIGHT=1)");
+                }
+            }
         }
     }
 

@@ -223,6 +223,13 @@
           "name": "useTerrainNormalsFromHeight",
           "offset": 400,
           "type": "int"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "terrainNormalsFromHeightStrength",
+          "offset": 404,
+          "type": "float"
         }
       ],
       "name": "gl_DefaultUniformBlock"
