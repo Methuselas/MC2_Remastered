@@ -60,6 +60,15 @@ RenderDebugView MechFragDebugModeToView(int shaderMode);
 extern "C" void batcher_setMechDebugMode(int shaderMode);
 extern "C" int  batcher_getMechDebugMode();
 
+// MECH-NORMALS-FIX-1: live normal recompute API (gos_mech_batcher.cpp).
+// Declared extern "C" to avoid including gos_mech_batcher.h which
+// transitively pulls Stuff/Stuff.hpp (not visible in GuiRuntime TU).
+extern "C" void  batcher_setMechNormalsMode(int mode);
+extern "C" int   batcher_getMechNormalsMode();
+extern "C" void  batcher_setMechNormalsSmoothDeg(float deg);
+extern "C" float batcher_getMechNormalsSmoothDeg();
+extern "C" void  batcher_rebuildMechNormals();
+
 namespace {
 
 static bool isEnabled() {
@@ -854,6 +863,62 @@ void EditorInspector::drawImGui() {
                                   "when set. ImGui selection drives s_mechDebugMode\n"
                                   "only when env is unset. Default (mode 0) = Final\n"
                                   "(byte-identical to unmodified path).");
+        }
+
+        // MECH-NORMALS-FIX-1: live normal recompute controls. Default mode 0
+        // (Cooked) is byte-identical to the unmodified path — no performance
+        // cost, no visual change. Mode 1 (Faceted) and 2 (Smoothed) trigger
+        // batcher_rebuildMechNormals() which re-uploads the geometry VBO from
+        // the pristine staging copy with the current recompute applied.
+        // The rebuild is infrequent (on user interaction only) so the stall is
+        // acceptable.
+        if (ImGui::CollapsingHeader("Mech Normals (experimental)##mn")) {
+            static const char* s_normModeNames[] = {
+                "0  Cooked (default)",
+                "1  Faceted",
+                "2  Smoothed (recompute)",
+            };
+            int curMode = batcher_getMechNormalsMode();
+            if (curMode < 0 || curMode > 2) curMode = 0;
+            if (ImGui::BeginCombo("Normal Mode##mn", s_normModeNames[curMode])) {
+                for (int i = 0; i < 3; ++i) {
+                    bool sel = (i == curMode);
+                    if (ImGui::Selectable(s_normModeNames[i], sel)) {
+                        batcher_setMechNormalsMode(i);
+                        batcher_rebuildMechNormals();
+                    }
+                    if (sel) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Normal source for GPU mech geometry.\n"
+                                  "Cooked: use ASE-loader normals (default, byte-identical).\n"
+                                  "Faceted: geometric face normal per triangle (flat shading).\n"
+                                  "Smoothed: angle-threshold smooth — lower angle = more hard edges.\n"
+                                  "Changing the mode rebuilds the mech VBO (occasional stall).");
+
+            // Smooth Angle slider — only relevant when mode == 2.
+            {
+                float curDeg = batcher_getMechNormalsSmoothDeg();
+                const bool modeIsSmooth = (batcher_getMechNormalsMode() == 2);
+                if (!modeIsSmooth) {
+                    ImGui::BeginDisabled();
+                }
+                if (ImGui::SliderFloat("Smooth Angle##mn", &curDeg, 1.0f, 179.0f, "%.1f deg")) {
+                    batcher_setMechNormalsSmoothDeg(curDeg);
+                    batcher_rebuildMechNormals();
+                }
+                if (!modeIsSmooth) {
+                    ImGui::EndDisabled();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Angle threshold for mode 2 Smoothed.\n"
+                                      "Faces meeting at a shared vertex blend normals only\n"
+                                      "when the angle between them is <= this value.\n"
+                                      "Lower value = more hard edges preserved.\n"
+                                      "Changing the angle rebuilds the mech VBO.");
+            }
         }
 
         // MECH-EXTRACTION-2: mech snapshot panel (gate: MC2_SNAPSHOT_MECH_EXTRACT=1).

@@ -24,6 +24,8 @@
 #include <map>
 #include <algorithm>
 #include <unordered_map>
+#include <array>
+#include <cmath>
 
 // M2.5 (external-review C1): file-scope forward declaration of the
 // MLR-side per-mission counter getter, defined in mclib/mech3d.cpp.
@@ -130,6 +132,39 @@ static const bool s_mechViewUniformsDiag = []() {
     const char* v = std::getenv("MC2_MECH_VIEWUNIFORMS_DIAG");
     return v != nullptr && v[0] == '1';
 }();
+
+// MECH-NORMALS-FIX-1: gated mech-LOCAL normal recompute, applied at
+// registerTypeLod over each node's triangle-soup verts. Does NOT touch the
+// shared TGL ASE loader (mclib/tgl.cpp LoadTGShapeFromASE) — which averages
+// ASE per-corner normals by vertex index and destroys hard-edge splits (see
+// docs/mech-normals-audit.md) but is used by all props/buildings (high blast
+// radius). MC2_MECH_NORMALS_MODE: 0=cooked (default, unchanged), 1=geometric
+// face normals to all corners (faceted; confirm/debug), 2=angle-threshold
+// smoothed (hard-edge preserving). Smoothing angle 60deg.
+// These are mutable so ImGui controls (via batcher_setMechNormalsMode /
+// batcher_setMechNormalsSmoothDeg + batcher_rebuildMechNormals) can dial them
+// at runtime without a restart. Env vars still set the startup default.
+static int s_mechNormalsMode = []() {
+    const char* v = std::getenv("MC2_MECH_NORMALS_MODE");
+    return v ? std::atoi(v) : 0;
+}();
+// Smoothing angle for mode 2 (degrees): faces meeting at a shared vertex blend
+// only when within this angle, so a smaller value preserves MORE hard edges
+// (e.g. lower it to sharpen the cockpit). Env-tunable for dial-in; default 60.
+static float s_mechNormalsSmoothDeg = []() {
+    const char* v = std::getenv("MC2_MECH_NORMALS_SMOOTH_DEG");
+    float d = v ? (float)std::atof(v) : 60.0f;
+    if (d < 1.0f)   d = 1.0f;
+    if (d > 179.0f) d = 179.0f;
+    return d;
+}();
+
+// MECH-NORMALS-FIX-1: per-node VBO byte ranges recorded during registerTypeLod.
+// Each entry is {startByte, endByte} in s_stagingVbo for one node's verts.
+// uploadMechGeometryVbo() iterates these to bound recomputeMechNodeNormals
+// to a single node (it must not blend normals across node boundaries).
+// Cleared at onMapLoad() alongside s_stagingVbo.
+static std::vector<std::pair<size_t,size_t>> s_nodeVboRanges;
 
 // Cached uniform locations (set at program link time).
 static GLint s_loc_u_instanceBase    = -1;
@@ -479,6 +514,7 @@ void GpuMechBatcher::onMapLoad() {
     s_typeLodIndex.clear();
     s_stagingVbo.clear();
     s_stagingIbo.clear();
+    s_nodeVboRanges.clear();   // MECH-NORMALS-FIX-1: per-node ranges are per-mission
     s_geometryFinalized = false;
     // S2.12: DO NOT reset s_programLoadTried / s_programLoadFailed here.
     // The GL program created by loadProgramsIfNeeded() is process-global
@@ -687,6 +723,105 @@ void GpuMechBatcher::flushShadow() {
 // ---------------------------------------------------------------------------
 // Registration (Task 4)
 // ---------------------------------------------------------------------------
+
+// MECH-NORMALS-FIX-1: recompute normals for one node's triangle-soup vertices
+// in-place, mech-locally, over the byte range [startByte, endByte). The verts
+// are a triangle list (corners 3k,3k+1,3k+2 form triangle k), all in mech model
+// space — same space as the cooked normal the shader already consumes, so no
+// axis swap here. mode 1 = geometric face normal to all 3 corners (faceted).
+// mode 2 = exact-position-grouped, angle-threshold accumulation that preserves
+// hard edges (faces meeting at > smoothDeg do not blend). Grouping is exact on
+// source position bits (shared verts have bit-identical TG positions) and stays
+// within this node (separate rigid mech pieces are never blended). Face normals
+// are oriented to the cooked-normal hemisphere to stay winding-agnostic.
+// endByte: exclusive end of this node's data in vbo; use vbo.size() for
+// "rest of buffer". Added for per-node bounding (MECH-NORMALS-FIX-1 rebuild).
+static void recomputeMechNodeNormals(std::vector<uint8_t>& vbo,
+                                     size_t startByte, size_t endByte,
+                                     int mode, float smoothDeg) {
+    if (mode != 1 && mode != 2) return;
+    const size_t stride = sizeof(GpuMechVertex);
+    if (startByte >= endByte || startByte >= vbo.size()) return;
+    const size_t clampedEnd = (endByte < vbo.size()) ? endByte : vbo.size();
+    const size_t n = (clampedEnd - startByte) / stride;   // corners
+    if (n < 3) return;
+    GpuMechVertex* V = reinterpret_cast<GpuMechVertex*>(vbo.data() + startByte);
+    const size_t triCount = n / 3;
+
+    auto dot3 = [](const float* a, const float* b) {
+        return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+    };
+
+    // Per-triangle area-weighted geometric normal (un-normalized cross), plus a
+    // unit copy for the angle test. Oriented to agree with the cooked-normal
+    // hemisphere (sum of the 3 corners' cooked normals) to handle winding.
+    std::vector<std::array<float,3>> faceRaw(triCount), faceUnit(triCount);
+    for (size_t k = 0; k < triCount; ++k) {
+        const float* p0 = V[3*k+0].position;
+        const float* p1 = V[3*k+1].position;
+        const float* p2 = V[3*k+2].position;
+        float e1[3] = { p1[0]-p0[0], p1[1]-p0[1], p1[2]-p0[2] };
+        float e2[3] = { p2[0]-p0[0], p2[1]-p0[1], p2[2]-p0[2] };
+        float fr[3] = { e1[1]*e2[2]-e1[2]*e2[1],
+                        e1[2]*e2[0]-e1[0]*e2[2],
+                        e1[0]*e2[1]-e1[1]*e2[0] };
+        float ref[3] = {
+            V[3*k+0].normal[0] + V[3*k+1].normal[0] + V[3*k+2].normal[0],
+            V[3*k+0].normal[1] + V[3*k+1].normal[1] + V[3*k+2].normal[1],
+            V[3*k+0].normal[2] + V[3*k+1].normal[2] + V[3*k+2].normal[2] };
+        if (dot3(fr, ref) < 0.0f) { fr[0]=-fr[0]; fr[1]=-fr[1]; fr[2]=-fr[2]; }
+        faceRaw[k] = { fr[0], fr[1], fr[2] };
+        float m = std::sqrt(dot3(fr, fr));
+        float inv = (m > 1e-12f) ? 1.0f/m : 0.0f;
+        faceUnit[k] = { fr[0]*inv, fr[1]*inv, fr[2]*inv };
+    }
+
+    if (mode == 1) {
+        for (size_t k = 0; k < triCount; ++k)
+            for (int c = 0; c < 3; ++c) {
+                V[3*k+c].normal[0] = faceUnit[k][0];
+                V[3*k+c].normal[1] = faceUnit[k][1];
+                V[3*k+c].normal[2] = faceUnit[k][2];
+            }
+        return;
+    }
+
+    // mode 2: group corners by exact source position (3 float-bit key), then for
+    // each corner accumulate area-weighted face normals of same-position corners
+    // whose face is within smoothDeg of this corner's face (hard-edge preserving).
+    const float cosT = std::cos(smoothDeg * 3.14159265358979f / 180.0f);
+    std::map<std::array<uint32_t,3>, std::vector<uint32_t>> groups;
+    for (uint32_t i = 0; i < (uint32_t)n; ++i) {
+        std::array<uint32_t,3> kkey{};
+        std::memcpy(kkey.data(), V[i].position, 12);
+        groups[kkey].push_back(i);
+    }
+    std::vector<std::array<float,3>> out(n);
+    for (auto& kv : groups) {
+        const std::vector<uint32_t>& g = kv.second;
+        for (uint32_t i : g) {
+            const size_t ti = i / 3;
+            float acc[3] = {0,0,0};
+            for (uint32_t j : g) {
+                const size_t tj = j / 3;
+                if (dot3(faceUnit[ti].data(), faceUnit[tj].data()) >= cosT) {
+                    acc[0] += faceRaw[tj][0];
+                    acc[1] += faceRaw[tj][1];
+                    acc[2] += faceRaw[tj][2];
+                }
+            }
+            float m = std::sqrt(dot3(acc, acc));
+            if (m > 1e-12f) { out[i] = { acc[0]/m, acc[1]/m, acc[2]/m }; }
+            else            { out[i] = faceUnit[ti]; }  // degenerate fallback
+        }
+    }
+    for (uint32_t i = 0; i < (uint32_t)n; ++i) {
+        V[i].normal[0] = out[i][0];
+        V[i].normal[1] = out[i][1];
+        V[i].normal[2] = out[i][2];
+    }
+}
+
 void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int lod) {
     if (!mechType) return;
     const TypeLodKey key{mechType, lod};
@@ -878,9 +1013,91 @@ void GpuMechBatcher::registerTypeLod(const Mech3DAppearanceType* mechType, int l
 
             runStart = runEnd;
         }
+
+        // MECH-NORMALS-FIX-1: record this node's byte range in s_stagingVbo
+        // so uploadMechGeometryVbo() can apply recomputeMechNodeNormals per-node
+        // on a transient copy (preserving s_stagingVbo as pristine cooked data).
+        // Registration no longer mutates normals; the recompute runs at upload time.
+        {
+            const size_t nodeStart = (size_t)baseVertex * sizeof(GpuMechVertex);
+            const size_t nodeEnd   = s_stagingVbo.size();
+            s_nodeVboRanges.push_back({nodeStart, nodeEnd});
+        }
     }
 
     s_typeLodRecords.push_back(rec);
+}
+
+// MECH-NORMALS-FIX-1: Create (or recreate) the immutable VBO from s_stagingVbo,
+// applying the current s_mechNormalsMode/s_mechNormalsSmoothDeg on a transient
+// copy so s_stagingVbo stays pristine (cooked normals). Also sets up all 7 vertex
+// attribute pointers on the already-bound VAO (s_sharedVao must be bound by caller).
+//
+// VBO recreation:
+//   - If s_sharedVbo already exists (rebuild path): delete it first (glBufferStorage
+//     buffers are immutable — they CANNOT be resized or re-uploaded in place).
+//   - Allocate a new s_sharedVbo with glGenBuffers + glBufferStorage.
+//   - Re-run glVertexAttribPointer for all 7 attribs, which bind to the currently
+//     bound GL_ARRAY_BUFFER. The element-array binding (s_sharedIbo) is VAO state
+//     and is NOT disturbed by rebinding GL_ARRAY_BUFFER or by glVertexAttribPointer
+//     calls — the VAO already has s_sharedIbo bound from finalizeGeometry, and the
+//     standard guarantees that GL_ELEMENT_ARRAY_BUFFER VAO state is only changed by
+//     explicit glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ...) while a VAO is bound.
+//     Therefore the element binding is preserved across VBO replacement and is safe
+//     to skip re-binding here.
+//
+// Called from: finalizeGeometry() (initial) and batcher_rebuildMechNormals() (live).
+static void uploadMechGeometryVbo() {
+    // Build transient work copy of the staging VBO (s_stagingVbo = pristine cooked).
+    // mode 0 means no recompute — work is byte-identical to cooked.
+    std::vector<uint8_t> work = s_stagingVbo;
+
+    if (s_mechNormalsMode != 0) {
+        // Apply recompute per-node using the recorded per-node byte ranges.
+        // Each range is [start, end) in work; recomputeMechNodeNormals modifies
+        // work in place over that range only (bounded by the endByte param added
+        // in MECH-NORMALS-FIX-1 so normals from adjacent nodes are never blended).
+        for (const auto& rng : s_nodeVboRanges) {
+            recomputeMechNodeNormals(work, rng.first, rng.second,
+                                     s_mechNormalsMode, s_mechNormalsSmoothDeg);
+        }
+    }
+
+    // Delete the old VBO if this is a rebuild (immutable buffer must be re-created).
+    if (s_sharedVbo != 0) {
+        glDeleteBuffers(1, &s_sharedVbo);
+        s_sharedVbo = 0;
+    }
+
+    glGenBuffers(1, &s_sharedVbo);
+    glBindBuffer(GL_ARRAY_BUFFER, s_sharedVbo);
+    glBufferStorage(GL_ARRAY_BUFFER,
+                    (GLsizeiptr)work.size(),
+                    work.data(), 0);  // immutable, GPU-only
+
+    // Vertex attribute setup — 48-byte GpuMechVertex, 7 attributes.
+    // glVertexAttribPointer binds each attrib to the currently bound GL_ARRAY_BUFFER
+    // (s_sharedVbo just bound above). The VAO's GL_ELEMENT_ARRAY_BUFFER binding
+    // (s_sharedIbo) is a separate piece of VAO state and is not disturbed here.
+    auto enableF = [](GLuint loc, GLint sz, GLenum type, GLboolean norm,
+                      GLsizei stride, size_t offset) {
+        glEnableVertexAttribArray(loc);
+        glVertexAttribPointer(loc, sz, type, norm, stride, (void*)offset);
+    };
+    auto enableI = [](GLuint loc, GLint sz, GLenum type,
+                      GLsizei stride, size_t offset) {
+        glEnableVertexAttribArray(loc);
+        glVertexAttribIPointer(loc, sz, type, stride, (void*)offset);
+    };
+
+    const GLsizei S = (GLsizei)sizeof(GpuMechVertex);
+    enableF(0, 3, GL_FLOAT,          GL_FALSE, S, offsetof(GpuMechVertex, position));
+    enableF(1, 3, GL_FLOAT,          GL_FALSE, S, offsetof(GpuMechVertex, normal));
+    enableF(2, 2, GL_FLOAT,          GL_FALSE, S, offsetof(GpuMechVertex, uv));
+    enableI(3, 4, GL_UNSIGNED_BYTE,            S, offsetof(GpuMechVertex, boneIndices));
+    enableF(4, 4, GL_UNSIGNED_BYTE,  GL_TRUE,  S, offsetof(GpuMechVertex, boneWeights));
+    enableF(5, 2, GL_SHORT,          GL_TRUE,  S, offsetof(GpuMechVertex, tangentOct));
+    enableI(6, 1, GL_UNSIGNED_INT,             S, offsetof(GpuMechVertex, aRGBLight));
 }
 
 void GpuMechBatcher::finalizeGeometry() {
@@ -903,38 +1120,16 @@ void GpuMechBatcher::finalizeGeometry() {
     glGenVertexArrays(1, &s_sharedVao);
     glBindVertexArray(s_sharedVao);
 
-    glGenBuffers(1, &s_sharedVbo);
-    glBindBuffer(GL_ARRAY_BUFFER, s_sharedVbo);
-    glBufferStorage(GL_ARRAY_BUFFER,
-                    (GLsizeiptr)s_stagingVbo.size(),
-                    s_stagingVbo.data(), 0);  // immutable, GPU-only
+    // VBO creation + vertex attrib setup delegated to uploadMechGeometryVbo()
+    // so batcher_rebuildMechNormals() can re-run just the VBO part without
+    // recreating the VAO, IBO, or sampler.
+    uploadMechGeometryVbo();
 
     glGenBuffers(1, &s_sharedIbo);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
     glBufferStorage(GL_ELEMENT_ARRAY_BUFFER,
                     (GLsizeiptr)(s_stagingIbo.size() * sizeof(uint32_t)),
                     s_stagingIbo.data(), 0);
-
-    // Vertex attribute setup — 48-byte GpuMechVertex, 7 attributes.
-    auto enableF = [](GLuint loc, GLint sz, GLenum type, GLboolean norm,
-                      GLsizei stride, size_t offset) {
-        glEnableVertexAttribArray(loc);
-        glVertexAttribPointer(loc, sz, type, norm, stride, (void*)offset);
-    };
-    auto enableI = [](GLuint loc, GLint sz, GLenum type,
-                      GLsizei stride, size_t offset) {
-        glEnableVertexAttribArray(loc);
-        glVertexAttribIPointer(loc, sz, type, stride, (void*)offset);
-    };
-
-    const GLsizei S = (GLsizei)sizeof(GpuMechVertex);
-    enableF(0, 3, GL_FLOAT,          GL_FALSE, S, offsetof(GpuMechVertex, position));
-    enableF(1, 3, GL_FLOAT,          GL_FALSE, S, offsetof(GpuMechVertex, normal));
-    enableF(2, 2, GL_FLOAT,          GL_FALSE, S, offsetof(GpuMechVertex, uv));
-    enableI(3, 4, GL_UNSIGNED_BYTE,            S, offsetof(GpuMechVertex, boneIndices));
-    enableF(4, 4, GL_UNSIGNED_BYTE,  GL_TRUE,  S, offsetof(GpuMechVertex, boneWeights));
-    enableF(5, 2, GL_SHORT,          GL_TRUE,  S, offsetof(GpuMechVertex, tangentOct));
-    enableI(6, 1, GL_UNSIGNED_INT,             S, offsetof(GpuMechVertex, aRGBLight));
 
     glBindVertexArray(0);
 
@@ -1850,4 +2045,57 @@ extern "C" void batcher_setMechDebugMode(int shaderMode) {
 
 extern "C" int batcher_getMechDebugMode() {
     return s_mechDebugMode;
+}
+
+// MECH-NORMALS-FIX-1: runtime getter/setter API for the normals mode and
+// smoothing angle. These allow ImGui controls to dial settings without a restart.
+// batcher_rebuildMechNormals() applies the current settings by re-uploading the
+// VBO from the pristine s_stagingVbo (mode 0 = byte-identical to cooked).
+
+extern "C" void batcher_setMechNormalsMode(int mode) {
+    if (mode < 0) mode = 0;
+    if (mode > 2) mode = 2;
+    s_mechNormalsMode = mode;
+}
+
+extern "C" int batcher_getMechNormalsMode() {
+    return s_mechNormalsMode;
+}
+
+extern "C" void batcher_setMechNormalsSmoothDeg(float deg) {
+    if (deg < 1.0f)   deg = 1.0f;
+    if (deg > 179.0f) deg = 179.0f;
+    s_mechNormalsSmoothDeg = deg;
+}
+
+extern "C" float batcher_getMechNormalsSmoothDeg() {
+    return s_mechNormalsSmoothDeg;
+}
+
+// batcher_rebuildMechNormals: re-upload the mech geometry VBO with the current
+// s_mechNormalsMode and s_mechNormalsSmoothDeg. No-op if geometry is not yet
+// finalized. Saves and restores the current VAO and ARRAY_BUFFER bindings so
+// it is safe to call from an ImGui callback between frames.
+extern "C" void batcher_rebuildMechNormals() {
+    if (!s_geometryFinalized || s_sharedVao == 0) return;
+
+    // Save current bindings that uploadMechGeometryVbo() will perturb.
+    GLint prevVao = 0, prevArr = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &prevArr);
+
+    // uploadMechGeometryVbo() expects the VAO to be bound (attrib pointers are
+    // VAO state). It also preserves the VAO's existing element-array binding
+    // (s_sharedIbo) — see the comment in uploadMechGeometryVbo().
+    glBindVertexArray(s_sharedVao);
+    uploadMechGeometryVbo();
+    glBindVertexArray(0);
+
+    // Restore bindings so nothing upstream is surprised.
+    glBindVertexArray((GLuint)prevVao);
+    glBindBuffer(GL_ARRAY_BUFFER, (GLuint)prevArr);
+
+    std::fprintf(stderr,
+        "[MECHBATCHER v1] event=normals_rebuild mode=%d smoothDeg=%.1f nodes=%zu vbo_bytes=%zu\n",
+        s_mechNormalsMode, s_mechNormalsSmoothDeg, s_nodeVboRanges.size(), s_stagingVbo.size());
 }

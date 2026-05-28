@@ -142,6 +142,8 @@ ALLOWLIST=(
     MC2_MECH_LIGHT_TRACE        # trace
     MC2_MECH_LOD_TRACE          # trace
     MC2_MECH_NODE_TRACE         # trace
+    MC2_MECH_NORMALS_MODE       # feature -- promote-to-registry
+    MC2_MECH_NORMALS_SMOOTH_DEG # feature -- promote-to-registry
     MC2_MECH_OBJECT_ID_SELFTEST # infra -- self-test
     MC2_MECH_PICK               # feature -- promote-to-registry
     MC2_MECH_PICK_DEBUG         # trace
