@@ -2,6 +2,8 @@
 #include "imgui.h"
 
 #include "../GameOS/gameos/gos_postprocess.h"
+#include "../GameOS/gameos/view_uniforms_gl.h"
+#include "../RenderCore/RenderResourceRegistry.h"
 #include "gameos.hpp"
 #include "../GameOS/gameos/gos_static_prop_killswitch.h"
 #include "../GameOS/gameos/gos_mech_killswitch.h"
@@ -1160,6 +1162,39 @@ void draw() {
                 ImGui::Indent();
                 ImGui::RadioButton("Static##sd",  &pp->shadowDebugMode_, 0); ImGui::SameLine();
                 ImGui::RadioButton("Dynamic##sd", &pp->shadowDebugMode_, 1);
+                if (ImGui::TreeNodeEx("Registries##sd", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::TextDisabled("Views:");
+                    uint32_t nv = RenderCore::getViewCount();
+                    bool foundShadow = false;
+                    for (uint32_t i = 0; i < nv; ++i) {
+                        const RenderCore::EngineView* v = RenderCore::getViewByIndex(i);
+                        if (!v) continue;
+                        if (v->kind == RenderCore::ViewKind::ShadowStatic ||
+                            v->kind == RenderCore::ViewKind::ShadowDynamic) {
+                            ImGui::Text("  id=%u  %s  %dx%d",
+                                v->id, v->debugName ? v->debugName : "?",
+                                v->viewport[2], v->viewport[3]);
+                            foundShadow = true;
+                        }
+                    }
+                    if (!foundShadow)
+                        ImGui::TextDisabled("  (none — load a mission first)");
+                    ImGui::TextDisabled("Resources:");
+                    for (auto rid : { RenderCore::RenderResourceId::ShadowStaticMap,
+                                      RenderCore::RenderResourceId::ShadowDynamicMap }) {
+                        const RenderCore::RenderResourceDesc* r =
+                            RenderCore::getRenderResource(rid);
+                        if (r)
+                            ImGui::Text("  %s  %ux%u  %s",
+                                r->debugName ? r->debugName : "?",
+                                r->width, r->height,
+                                RenderCore::toString(r->format));
+                        else
+                            ImGui::TextDisabled("  %s  (not registered)",
+                                RenderCore::toString(rid));
+                    }
+                    ImGui::TreePop();
+                }
                 ImGui::Unindent();
             }
             ImGui::Separator();
