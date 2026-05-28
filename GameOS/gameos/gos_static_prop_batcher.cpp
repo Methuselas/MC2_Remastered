@@ -195,10 +195,12 @@ int g_lightProbeSetupPath = 0;
 // for the default. ImGui slider remains the interactive tuning surface; the
 // env exists so headless capture harnesses can drive strength deterministically
 // from a parent process. Parsed once at process start, clamped 0.0..3.0.
-// Env unset/empty -> default 1.0f (legacy behavior).
+// Env unset/empty -> default 0.5f (V-IBL-STATIC-1-TUNE: user eyeball pass
+// at e061e44c selected 0.5 as 'looks good' — subtle ambient fill without
+// over-brightening shadowed sides).
 float g_iblShStrength = []() -> float {
     const char* v = std::getenv("MC2_STATIC_PROP_IBL_SH_STRENGTH");
-    if (!v || !v[0]) return 1.0f;
+    if (!v || !v[0]) return 0.5f;
     float f = (float)std::atof(v);
     if (f < 0.0f) f = 0.0f;
     if (f > 3.0f) f = 3.0f;

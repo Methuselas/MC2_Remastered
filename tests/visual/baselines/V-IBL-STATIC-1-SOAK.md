@@ -93,10 +93,13 @@ Smoke artifact directories under `tests/smoke/artifacts/2026-05-27T19-*`.
 
 ## Default-strength recommendation
 
-Recommended default after eyeball pass: ______ (user fills in)
+Recommended default after eyeball pass: 0.5
 
-Current engine default: `g_iblShStrength = 1.0f` (set in
-`GameOS/gameos/gos_static_prop_batcher.cpp:199`).
+User eyeball pass at e061e44c: 0.5 reads as 'looks good' — subtle ambient fill without over-brightening shadowed sides. Lower strengths felt too dark; 1.0+ washed out material colors.
+
+Current engine default: `g_iblShStrength = 0.5f` (set in
+`GameOS/gameos/gos_static_prop_batcher.cpp:203` lambda init; baked by
+V-IBL-STATIC-1-TUNE following this soak).
 
 ## Next-slice options
 
