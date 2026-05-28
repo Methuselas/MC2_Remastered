@@ -19,10 +19,67 @@
 namespace {
 
 GLuint g_handle              = 0;
-int    g_side                = 0;
-float  g_worldUnitsPerVertex = 128.0f;
+int    g_side                = 0;     // render-side (post-resample)
+int    g_sourceSide          = 0;     // pre-resample source grid side
+int    g_resampleFactor      = 1;     // 1, 2, or 4 (TERRAIN-RESAMPLE-1)
+float  g_worldUnitsPerVertex = 128.0f; // per RENDER sample (= source / factor)
 float  g_mapTopLeftX         = 0.0f;
 float  g_mapTopLeftY         = 0.0f;
+
+// TERRAIN-RESAMPLE-1: read the resample-factor env var. Accepted values:
+// 1, 2, 4. Anything else (unset / non-numeric / out-of-set) clamps to 1
+// so the default path is byte-equivalent to pre-slice TERRAIN-NORMALS-
+// FROM-HEIGHT-1. Re-evaluated per upload — toggling the env var across
+// missions takes effect on next mission load.
+int read_resample_factor_env() {
+    const char* v = std::getenv("MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR");
+    if (!v || !v[0]) return 1;
+    int f = std::atoi(v);
+    if (f == 2) return 2;
+    if (f == 4) return 4;
+    return 1;
+}
+
+// Corner-aligned CPU bilinear resample. Source samples at (i, j) land at
+// (i*factor, j*factor) in the render grid with zero error — bilinear
+// weights collapse to a single source tap at those positions. Interior
+// render samples interpolate from the 4 surrounding source taps. Both
+// axes use the same factor. Render side = (sourceSide-1)*factor + 1 so
+// the very last source column/row keeps a representative sample.
+void resample_bilinear(const float* src, int sourceSide,
+                       int factor,
+                       std::vector<float>& dst, int& renderSide)
+{
+    renderSide = (sourceSide - 1) * factor + 1;
+    dst.assign((size_t)renderSide * (size_t)renderSide, 0.0f);
+    const float invFactor = 1.0f / (float)factor;
+    const int   srcMax    = sourceSide - 1;
+    for (int rrow = 0; rrow < renderSide; ++rrow) {
+        const float srcRowF = (float)rrow * invFactor;
+        int srcRow0 = (int)srcRowF;
+        if (srcRow0 > srcMax) srcRow0 = srcMax;
+        int srcRow1 = srcRow0 + 1;
+        if (srcRow1 > srcMax) srcRow1 = srcMax;
+        const float fy = srcRowF - (float)srcRow0;
+        for (int rcol = 0; rcol < renderSide; ++rcol) {
+            const float srcColF = (float)rcol * invFactor;
+            int srcCol0 = (int)srcColF;
+            if (srcCol0 > srcMax) srcCol0 = srcMax;
+            int srcCol1 = srcCol0 + 1;
+            if (srcCol1 > srcMax) srcCol1 = srcMax;
+            const float fx = srcColF - (float)srcCol0;
+
+            const float h00 = src[(size_t)srcRow0 * (size_t)sourceSide + (size_t)srcCol0];
+            const float h10 = src[(size_t)srcRow0 * (size_t)sourceSide + (size_t)srcCol1];
+            const float h01 = src[(size_t)srcRow1 * (size_t)sourceSide + (size_t)srcCol0];
+            const float h11 = src[(size_t)srcRow1 * (size_t)sourceSide + (size_t)srcCol1];
+
+            const float h0 = h00 * (1.0f - fx) + h10 * fx;
+            const float h1 = h01 * (1.0f - fx) + h11 * fx;
+            dst[(size_t)rrow * (size_t)renderSide + (size_t)rcol] = h0 * (1.0f - fy) + h1 * fy;
+        }
+    }
+}
 
 }  // namespace
 
@@ -44,16 +101,29 @@ void __stdcall gos_uploadTerrainHeightTex(
         return;
     }
 
-    // Extract the elevation column into a packed float buffer.
-    const size_t count = (size_t)side * (size_t)side;
-    std::vector<float> elev(count);
+    // Extract the source elevation column into a packed float buffer.
+    const size_t srcCount = (size_t)side * (size_t)side;
+    std::vector<float> srcElev(srcCount);
     const uint8_t* base = static_cast<const uint8_t*>(blocks);
-    for (size_t i = 0; i < count; ++i) {
-        std::memcpy(&elev[i],
+    for (size_t i = 0; i < srcCount; ++i) {
+        std::memcpy(&srcElev[i],
                     base + i * (size_t)postcompVertexStride
                          + (size_t)elevationOffset,
                     sizeof(float));
     }
+
+    // TERRAIN-RESAMPLE-1: optional CPU bilinear resample to a finer render
+    // grid. factor=1 short-circuits (no copy beyond what already happened
+    // above) so the default path is byte-equivalent to pre-slice.
+    const int factor = read_resample_factor_env();
+    std::vector<float> resampled;  // only used when factor > 1
+    int  uploadSide      = side;
+    const float* uploadPtr = srcElev.data();
+    if (factor > 1) {
+        resample_bilinear(srcElev.data(), side, factor, resampled, uploadSide);
+        uploadPtr = resampled.data();
+    }
+    const size_t uploadCount = (size_t)uploadSide * (size_t)uploadSide;
 
     if (g_handle == 0) {
         glGenTextures(1, &g_handle);
@@ -79,8 +149,8 @@ void __stdcall gos_uploadTerrainHeightTex(
     // difference normal also varies smoothly. R32F linear-filtering requires
     // GL 3.0+ which the renderer already guarantees.
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F,
-                 side, side, 0,
-                 GL_RED, GL_FLOAT, elev.data());
+                 uploadSide, uploadSide, 0,
+                 GL_RED, GL_FLOAT, uploadPtr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -89,17 +159,24 @@ void __stdcall gos_uploadTerrainHeightTex(
     glBindTexture(GL_TEXTURE_2D, (GLuint)prev2D);
     glActiveTexture((GLenum)prevActive);
 
-    g_side                = side;
-    g_worldUnitsPerVertex = (worldUnitsPerVertex > 0.0f) ? worldUnitsPerVertex
-                                                         : 128.0f;
+    g_sourceSide          = side;
+    g_resampleFactor      = factor;
+    g_side                = uploadSide;
+    const float wuPerSource = (worldUnitsPerVertex > 0.0f) ? worldUnitsPerVertex
+                                                            : 128.0f;
+    // Per-render-sample world spacing — sourceUnits / factor. Shader uses
+    // (1 / g_worldUnitsPerVertex) for terrainHeightParams.y, so finer
+    // resample → smaller span between samples → more sensitive normal.
+    g_worldUnitsPerVertex = wuPerSource / (float)factor;
     g_mapTopLeftX         = mapTopLeftX;
     g_mapTopLeftY         = mapTopLeftY;
 
     fprintf(stderr,
-        "[TERRAIN_HEIGHT_TEX] uploaded handle=%u side=%d wuPerVert=%.1f "
-        "topLeft=(%.1f,%.1f) sampleBytes=%zu\n",
-        (unsigned)g_handle, g_side, g_worldUnitsPerVertex,
-        g_mapTopLeftX, g_mapTopLeftY, count * sizeof(float));
+        "[TERRAIN_HEIGHT_TEX] uploaded handle=%u sourceSide=%d factor=%dx "
+        "renderSide=%d wuPerSample=%.2f topLeft=(%.1f,%.1f) bytes=%zu\n",
+        (unsigned)g_handle, g_sourceSide, g_resampleFactor,
+        g_side, g_worldUnitsPerVertex, g_mapTopLeftX, g_mapTopLeftY,
+        uploadCount * sizeof(float));
 }
 
 void __stdcall gos_resetTerrainHeightTex(void)
@@ -109,6 +186,8 @@ void __stdcall gos_resetTerrainHeightTex(void)
         g_handle = 0;
     }
     g_side                = 0;
+    g_sourceSide          = 0;
+    g_resampleFactor      = 1;
     g_worldUnitsPerVertex = 128.0f;
     g_mapTopLeftX         = 0.0f;
     g_mapTopLeftY         = 0.0f;
@@ -119,3 +198,5 @@ int      __stdcall gos_terrainHeightTexSide(void)            { return g_side; }
 float    __stdcall gos_terrainHeightWorldUnitsPerVertex(void){ return g_worldUnitsPerVertex; }
 float    __stdcall gos_terrainHeightMapTopLeftX(void)        { return g_mapTopLeftX; }
 float    __stdcall gos_terrainHeightMapTopLeftY(void)        { return g_mapTopLeftY; }
+int      __stdcall gos_terrainHeightSourceSide(void)         { return g_sourceSide; }
+int      __stdcall gos_terrainHeightResampleFactor(void)     { return g_resampleFactor; }

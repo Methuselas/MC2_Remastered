@@ -66,6 +66,8 @@ TRACKED_FLAGS = (
     "MC2_TERRAIN_DEBUG_MODE",
     # TERRAIN-NORMALS-FROM-HEIGHT-1: macroscopic-normal-from-height gate.
     "MC2_TERRAIN_NORMALS_FROM_HEIGHT",
+    # TERRAIN-RESAMPLE-1: render-grid resample factor (1/2/4).
+    "MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR",
 )
 
 

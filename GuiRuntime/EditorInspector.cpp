@@ -16,6 +16,16 @@
 // time. Authoritative declarations live in GameOS/include/gameos.hpp.
 extern void  __stdcall gos_SetTerrainDebugMode(float mode);
 extern float __stdcall gos_GetTerrainDebugMode();
+// TERRAIN-RESAMPLE-1: read-only accessors for the height-tex resample state.
+// These live in extern "C" in gos_terrain_height_tex.h (C linkage), so the
+// forward decls here must repeat that to mangle correctly (the slice-1
+// gos_*TerrainDebugMode pair above is C++-linkage in gameos.hpp; do NOT
+// confuse the two).
+extern "C" {
+    int __stdcall gos_terrainHeightSourceSide(void);
+    int __stdcall gos_terrainHeightTexSide(void);
+    int __stdcall gos_terrainHeightResampleFactor(void);
+}
 
 // V-MATERIAL-STATIC-0: forward-declared inventory contract — duplicating the
 // struct keeps gui_runtime independent of gos_static_prop_batcher.h, which
@@ -1043,6 +1053,19 @@ void EditorInspector::drawImGui() {
                     "Normals-from-Height: OFF (set MC2_TERRAIN_NORMALS_FROM_HEIGHT=1 to enable)");
             }
             ImGui::TextDisabled("Debug Mode 10 = visualize height-derived normal (independent of gate)");
+
+            // TERRAIN-RESAMPLE-1: source/render/factor readout. 0 source side
+            // means no mission loaded yet (texture upload hasn't run).
+            int srcSide = ::gos_terrainHeightSourceSide();
+            int rndSide = ::gos_terrainHeightTexSide();
+            int factor  = ::gos_terrainHeightResampleFactor();
+            if (srcSide > 0) {
+                ImGui::Text("Height tex: source %d^2 → render %d^2 (factor %dx)",
+                            srcSide, rndSide, factor);
+            } else {
+                ImGui::TextDisabled("Height tex: not uploaded (no mission loaded)");
+            }
+            ImGui::TextDisabled("env MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR (1/2/4) controls factor");
         }
     }
 
