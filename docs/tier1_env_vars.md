@@ -112,6 +112,10 @@ Log tag: `[MATERIAL_GPU v4]`
 - `MC2_DEBUG_STATE_DUMP_DIR=<path>` — override the output directory for the JSON snapshot. No effect when `MC2_DEBUG_STATE_DUMP` is unset.
 - `MC2_DEBUG_STATE_DUMP_HISTORY=1` — enable rolling 8-slot history ring. Requires `MC2_DEBUG_STATE_DUMP=1`. Each write also produces `history_0.json`..`history_7.json` in the output directory (oldest slot overwritten). Bounded to 8 files. Default **OFF**.
 
+## Terrain debug views (TERRAIN-DEBUG-VIEWS-1)
+
+- `MC2_TERRAIN_DEBUG_MODE=N` — terrain fragment-shader debug-mode selector for the tessellated terrain path (`gos_terrain.frag` `tessDebug.x`). When set, overrides the runtime `terrain_debug_mode_` member at all three GL upload sites in `gameos_graphics.cpp`. Default unset = mode 0 (off, byte-identical to legacy output). **Visual modes:** 1=DepthComparison, 2=RawColormap, 3=BlurredColormap, 4=MaterialWeights (R=rock,G=grass,B=dirt), 5=NormalLighting, 6=ShadowFactor, 7=CloudShadow. **Diagnostics:** 8=CementDiag, 9=ThinRecordDiag, -1=TessAliveProbe. Diagnostic-only; no gameplay, correctness, or default visual effect. Runtime equivalent: `gos_SetTerrainDebugMode()` C-API, Surface Debug Mode picker in GraphicsOptionsWindow, mini-control in the Terrain Pass inspector panel. Full mode table: `GuiRuntime/GraphicsOptionsWindow.cpp` `kTerrainModes`.
+
 ## Static-prop dispatch hierarchy (v7)
 
 As of v7 the static-prop draw path is:

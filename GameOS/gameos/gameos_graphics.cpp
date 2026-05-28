@@ -1649,7 +1649,7 @@ class gosRenderer {
         float terrain_phong_alpha_ = 0.5f;         // Phong smoothing strength
         float terrain_displace_scale_ = 2.0f;      // displacement amplitude (dirt-only in TES)
         bool terrain_wireframe_ = false;            // wireframe overlay toggle
-        float terrain_debug_mode_ = 0.0f;          // 0=off, 1=normals, 2=worldPos
+        float terrain_debug_mode_ = 0.0f;          // 0=off, 1..9 fragment debug modes (see GraphicsOptionsWindow kTerrainModes), -1 tess-alive probe. Env MC2_TERRAIN_DEBUG_MODE overrides at upload.
 
         // Terrain extra VBO for world pos + normal
         GLuint terrain_extra_vb_ = 0;
@@ -5338,8 +5338,18 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
     if (tl.tessDistanceRange >= 0) glUniform4fv(tl.tessDistanceRange, 1, tessDist);
     if (tl.tessDisplace >= 0) glUniform4fv(tl.tessDisplace, 1, tessDisp);
     if (tl.cameraPos >= 0) glUniform4fv(tl.cameraPos, 1, (const float*)&terrain_camera_pos_);
-    float tessDebugVec[4] = { terrain_debug_mode_, 0.0f, 0.0f, 0.0f };
-    if (tl.tessDebug >= 0) glUniform4fv(tl.tessDebug, 1, tessDebugVec);
+    // TERRAIN-DEBUG-VIEWS-1: match the other two terrain upload sites — env var
+    // MC2_TERRAIN_DEBUG_MODE overrides the runtime member. Keeping the three
+    // sites in lockstep avoids divergence where the env var only affects some
+    // terrain draws (silent debug-mode drift was the historical failure mode).
+    {
+        float debugMode = terrain_debug_mode_;
+        if (const char* envDebug = getenv("MC2_TERRAIN_DEBUG_MODE")) {
+            debugMode = (float)atof(envDebug);
+        }
+        float tessDebugVec[4] = { debugMode, 0.0f, 0.0f, 0.0f };
+        if (tl.tessDebug >= 0) glUniform4fv(tl.tessDebug, 1, tessDebugVec);
+    }
 
     // Map half-extent for off-map edge haze (fades meta-ring terrain to sky).
     if (tl.mapHalfExtent >= 0) {

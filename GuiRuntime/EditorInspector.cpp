@@ -8,6 +8,15 @@
 #include "../RenderCore/RendererFeatureRegistry.h"
 #include "../RenderCore/RenderPassContract.h"  // RENDERPASS-CONTRACT-2.5 (descriptive table)
 
+// TERRAIN-DEBUG-VIEWS-1: file-scope forward declarations for the terrain
+// debug-mode C-API used by the Terrain Pass inspector mini-control below.
+// Declared at global scope (NOT inside the namespace block / function body)
+// so name lookup resolves to the gameos.hpp-declared free functions rather
+// than synthesizing EditorInspector::gos_*TerrainDebugMode members at link
+// time. Authoritative declarations live in GameOS/include/gameos.hpp.
+extern void  __stdcall gos_SetTerrainDebugMode(float mode);
+extern float __stdcall gos_GetTerrainDebugMode();
+
 // V-MATERIAL-STATIC-0: forward-declared inventory contract — duplicating the
 // struct keeps gui_runtime independent of gos_static_prop_batcher.h, which
 // transitively pulls Stuff/Stuff.hpp (not visible in this TU). The single
@@ -973,6 +982,47 @@ void EditorInspector::drawImGui() {
         }
         ImGui::Separator();
         ImGui::Text("Tessellation: %s", ts.tessellationOn ? "ON (always)" : "off");
+
+        // TERRAIN-DEBUG-VIEWS-1: mini debug-mode control. The full picker (with
+        // per-mode channel breakdowns) lives in GraphicsOptionsWindow Surface
+        // Debug Mode; this is a compact -/+/OFF + label readout for the Terrain
+        // Pass panel. Labels mirror GraphicsOptionsWindow.cpp kTerrainModes —
+        // keep in sync if shader modes change. Env var MC2_TERRAIN_DEBUG_MODE
+        // overrides at the GL upload sites (gameos_graphics.cpp), so reading it
+        // back via gos_GetTerrainDebugMode() reflects the in-memory member only.
+        ImGui::Separator();
+        {
+            int mode = (int)::gos_GetTerrainDebugMode();
+            const char* label = "(unknown)";
+            switch (mode) {
+                case -1: label = "Tess Alive Probe";  break;
+                case  0: label = "OFF";               break;
+                case  1: label = "Depth Comparison";  break;
+                case  2: label = "Raw Colormap";      break;
+                case  3: label = "Blurred Colormap";  break;
+                case  4: label = "Material Weights";  break;
+                case  5: label = "Normal Lighting";   break;
+                case  6: label = "Shadow Factor";     break;
+                case  7: label = "Cloud Shadow";      break;
+                case  8: label = "Cement Diagnostic"; break;
+                case  9: label = "Thin-Record";       break;
+                default: break;
+            }
+            ImGui::Text("Surface Debug Mode: [%d] %s", mode, label);
+            if (ImGui::SmallButton("OFF##tdm_off")) ::gos_SetTerrainDebugMode(0.0f);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("-##tdm_dec")) {
+                int n = (mode > -1) ? (mode - 1) : 9;
+                ::gos_SetTerrainDebugMode((float)n);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("+##tdm_inc")) {
+                int n = (mode < 9) ? (mode + 1) : -1;
+                ::gos_SetTerrainDebugMode((float)n);
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("env MC2_TERRAIN_DEBUG_MODE overrides");
+        }
     }
 
     // SHADOW-SPINE-0: pass-level (not selection-driven) view of the shadow
