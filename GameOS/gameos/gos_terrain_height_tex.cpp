@@ -26,6 +26,20 @@ float  g_worldUnitsPerVertex = 128.0f; // per RENDER sample (= source / factor)
 float  g_mapTopLeftX         = 0.0f;
 float  g_mapTopLeftY         = 0.0f;
 
+// TERRAIN-RESAMPLE-1 live-rebuild cache. First upload from real MapData
+// blocks stashes the source elevation grid here (one float per source
+// vertex) so subsequent gos_setTerrainHeightResampleFactor() calls can
+// re-resample + re-upload without touching mclib/MapData. Cleared by
+// gos_resetTerrainHeightTex().
+std::vector<float> g_cachedSourceElev;
+int    g_cachedSourceSide        = 0;
+float  g_cachedSourceWuPerVertex = 128.0f;
+float  g_cachedMapTopLeftX       = 0.0f;
+float  g_cachedMapTopLeftY       = 0.0f;
+// -1 sentinel = no override (env var still authoritative).
+// >0 = ImGui setter has overridden; env is ignored on subsequent uploads.
+int    g_overrideFactor      = -1;
+
 // TERRAIN-RESAMPLE-1: read the resample-factor env var. Accepted values:
 // 1, 2, 4. Anything else (unset / non-numeric / out-of-set) clamps to 1
 // so the default path is byte-equivalent to pre-slice TERRAIN-NORMALS-
@@ -112,10 +126,22 @@ void __stdcall gos_uploadTerrainHeightTex(
                     sizeof(float));
     }
 
+    // TERRAIN-RESAMPLE-1: cache source elevations for live re-resample by
+    // gos_setTerrainHeightResampleFactor() (ImGui Terrain Pass combo). Re-
+    // upload on factor change reuses this cache instead of asking mclib
+    // for the blocks pointer again. Refreshed every mission load.
+    g_cachedSourceElev        = srcElev;
+    g_cachedSourceSide        = side;
+    g_cachedSourceWuPerVertex = (worldUnitsPerVertex > 0.0f) ? worldUnitsPerVertex : 128.0f;
+    g_cachedMapTopLeftX       = mapTopLeftX;
+    g_cachedMapTopLeftY       = mapTopLeftY;
+
     // TERRAIN-RESAMPLE-1: optional CPU bilinear resample to a finer render
     // grid. factor=1 short-circuits (no copy beyond what already happened
-    // above) so the default path is byte-equivalent to pre-slice.
-    const int factor = read_resample_factor_env();
+    // above) so the default path is byte-equivalent to pre-slice. ImGui
+    // setter override (sticky) takes precedence over the env var.
+    const int factor = (g_overrideFactor > 0) ? g_overrideFactor
+                                              : read_resample_factor_env();
     std::vector<float> resampled;  // only used when factor > 1
     int  uploadSide      = side;
     const float* uploadPtr = srcElev.data();
@@ -191,6 +217,43 @@ void __stdcall gos_resetTerrainHeightTex(void)
     g_worldUnitsPerVertex = 128.0f;
     g_mapTopLeftX         = 0.0f;
     g_mapTopLeftY         = 0.0f;
+    g_cachedSourceElev.clear();
+    g_cachedSourceElev.shrink_to_fit();
+    g_cachedSourceSide        = 0;
+    g_cachedSourceWuPerVertex = 128.0f;
+    g_cachedMapTopLeftX       = 0.0f;
+    g_cachedMapTopLeftY       = 0.0f;
+    g_overrideFactor          = -1;
+}
+
+void __stdcall gos_setTerrainHeightResampleFactor(int factor)
+{
+    if (factor != 1 && factor != 2 && factor != 4) factor = 1;
+    // Sticky: even if asked for the current factor, mark override so the
+    // env var stops being authoritative on subsequent uploads.
+    g_overrideFactor = factor;
+    if (factor == g_resampleFactor) {
+        // No re-upload work needed — same factor as already-uploaded grid.
+        return;
+    }
+    if (g_cachedSourceElev.empty() || g_cachedSourceSide <= 0) {
+        // No mission loaded yet — the next gos_uploadTerrainHeightTex()
+        // call (mission load) will pick up g_overrideFactor naturally.
+        return;
+    }
+    // Re-upload from cache. gos_uploadTerrainHeightTex extracts elevations
+    // using the supplied stride/offset, so we feed the cached float array
+    // directly with stride=sizeof(float), offset=0. The re-entrant call
+    // refreshes the cache trivially (cache copies cache; no growth) and
+    // reads g_overrideFactor on the way to the factor decision above.
+    gos_uploadTerrainHeightTex(
+        g_cachedSourceSide,
+        g_cachedSourceElev.data(),
+        (int)sizeof(float),
+        /*elevationOffset=*/0,
+        g_cachedMapTopLeftX,
+        g_cachedMapTopLeftY,
+        g_cachedSourceWuPerVertex);
 }
 
 uint32_t __stdcall gos_terrainHeightTexHandle(void)         { return (uint32_t)g_handle; }

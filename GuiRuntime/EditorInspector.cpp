@@ -22,9 +22,10 @@ extern float __stdcall gos_GetTerrainDebugMode();
 // gos_*TerrainDebugMode pair above is C++-linkage in gameos.hpp; do NOT
 // confuse the two).
 extern "C" {
-    int __stdcall gos_terrainHeightSourceSide(void);
-    int __stdcall gos_terrainHeightTexSide(void);
-    int __stdcall gos_terrainHeightResampleFactor(void);
+    int  __stdcall gos_terrainHeightSourceSide(void);
+    int  __stdcall gos_terrainHeightTexSide(void);
+    int  __stdcall gos_terrainHeightResampleFactor(void);
+    void __stdcall gos_setTerrainHeightResampleFactor(int factor);
 }
 
 // V-MATERIAL-STATIC-0: forward-declared inventory contract — duplicating the
@@ -1054,18 +1055,32 @@ void EditorInspector::drawImGui() {
             }
             ImGui::TextDisabled("Debug Mode 10 = visualize height-derived normal (independent of gate)");
 
-            // TERRAIN-RESAMPLE-1: source/render/factor readout. 0 source side
-            // means no mission loaded yet (texture upload hasn't run).
+            // TERRAIN-RESAMPLE-1: source/render readout + live factor combo.
+            // 0 source side means no mission loaded yet.
             int srcSide = ::gos_terrainHeightSourceSide();
             int rndSide = ::gos_terrainHeightTexSide();
             int factor  = ::gos_terrainHeightResampleFactor();
             if (srcSide > 0) {
-                ImGui::Text("Height tex: source %d^2 → render %d^2 (factor %dx)",
-                            srcSide, rndSide, factor);
+                ImGui::Text("Height tex: source %d^2 -> render %d^2",
+                            srcSide, rndSide);
             } else {
                 ImGui::TextDisabled("Height tex: not uploaded (no mission loaded)");
             }
-            ImGui::TextDisabled("env MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR (1/2/4) controls factor");
+            // Combo over {1x, 2x, 4x}. Map factor → combo index; on change,
+            // call the setter which re-uploads the resampled texture from
+            // the cached source (no per-frame rebuild). Default startup
+            // value still comes from MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR.
+            const char* factorLabels[3] = { "1x", "2x", "4x" };
+            int currentIdx = (factor == 4) ? 2 : (factor == 2) ? 1 : 0;
+            int newIdx     = currentIdx;
+            if (ImGui::Combo("Resample##trf", &newIdx, factorLabels, 3)) {
+                if (newIdx != currentIdx) {
+                    const int newFactor = (newIdx == 2) ? 4 : (newIdx == 1) ? 2 : 1;
+                    ::gos_setTerrainHeightResampleFactor(newFactor);
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("env MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR = startup default");
         }
     }
 

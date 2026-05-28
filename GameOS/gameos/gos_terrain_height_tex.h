@@ -62,6 +62,15 @@ float    __stdcall gos_terrainHeightMapTopLeftY(void);
 int      __stdcall gos_terrainHeightSourceSide(void);
 int      __stdcall gos_terrainHeightResampleFactor(void);
 
+// TERRAIN-RESAMPLE-1 live override (ImGui Terrain Pass combo).
+// Caches the source elevation array on first gos_uploadTerrainHeightTex
+// call; this setter clamps factor to {1,2,4} and immediately re-runs the
+// resample + GL upload using the cached source. Sticky: once called, the
+// MC2_TERRAIN_HEIGHT_RESAMPLE_FACTOR env var is ignored on subsequent
+// re-uploads (env still sets startup default). No-op when no source has
+// been cached yet (no mission loaded).
+void __stdcall gos_setTerrainHeightResampleFactor(int factor);
+
 #ifdef __cplusplus
 }
 #endif
