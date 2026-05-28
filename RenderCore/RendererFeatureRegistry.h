@@ -135,7 +135,10 @@ enum class RendererFeature : int {
     // TERRAIN-NORMALS-FROM-HEIGHT-1: gated macroscopic surface normal derived
     // from per-mission R32F height texture in gos_terrain.frag. Default-OFF.
     TerrainNormalsFromHeight = 23,  // MC2_TERRAIN_NORMALS_FROM_HEIGHT
-    COUNT                    = 24,
+    // TERRAIN-LIGHTING-1: hemisphere ambient fill on tessellated terrain
+    // using terrain surface normal. Default-OFF.
+    TerrainLightingV1        = 24,  // MC2_TERRAIN_LIGHTING_V1
+    COUNT                    = 25,
 };
 
 // ---------------------------------------------------------------------------
@@ -336,6 +339,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "TERRAIN-NORMALS-FROM-HEIGHT-1: gated macroscopic surface normal derived from a per-mission R32F height texture (gos_terrain_height_tex.cpp; uploaded at mission load from MapData heightfield). Default-OFF; =1 enables. When OFF, useTerrainNormalsFromHeight uploads 0 and gos_terrain.frag skips the height-derived perturbation branch entirely → byte-identical legacy output. Visual-only: gameplay height (Terrain::getTerrainElevation) is unchanged; no geometry or vertex position is moved. CPU plumbing: env var read once-per-terrain-uniform-upload (no restart needed). Inspector mini-control in Terrain Pass panel displays current effective state. Debug visualization: MC2_TERRAIN_DEBUG_MODE=10 shows the height-derived normal as RGB (independent of this gate so the upload path can be diagnosed separately). Sampler unit 11. Texture not bound when no mission is loaded."
+    },
+    // TerrainLightingV1
+    {
+        "MC2_FEATURE_TERRAIN_LIGHTING_V1",
+        "MC2_TERRAIN_LIGHTING_V1",
+        EnvVarKind::Feature,
+        false,
+        "TERRAIN-LIGHTING-1: gated hemisphere ambient fill on the tessellated terrain. Default-OFF; =1 enables. When OFF, terrainLightingV1Strength uploads 0.0 and gos_terrain.frag skips the additive branch → byte-identical legacy output. Adds sky/ground tinted ambient that fills shadowed terrain (added AFTER shadow multiplication so direct sun stays shadowed but bounce light continues). Best paired with MC2_TERRAIN_NORMALS_FROM_HEIGHT=1 — ambient verticality is derived from the final per-fragment normal (sky term scales with N.z). Strength tunable in-engine via Terrain Pass inspector slider (default 1.0); env gate is authoritative on/off. Visual-only; no gameplay, geometry, or collision change."
     },
 };
 

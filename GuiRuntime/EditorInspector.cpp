@@ -37,6 +37,9 @@ extern void  gos_SetTerrainTintStrengthScale(float s);
 extern float gos_GetTerrainTintStrengthScale();
 extern void  gos_SetTerrainNormalsFromHeightStrength(float s);
 extern float gos_GetTerrainNormalsFromHeightStrength();
+// TERRAIN-LIGHTING-1
+extern void  gos_SetTerrainLightingV1Strength(float s);
+extern float gos_GetTerrainLightingV1Strength();
 
 // V-MATERIAL-STATIC-0: forward-declared inventory contract — duplicating the
 // struct keeps gui_runtime independent of gos_static_prop_batcher.h, which
@@ -1139,6 +1142,34 @@ void EditorInspector::drawImGui() {
                 bool nfhOn = (envNfh && envNfh[0] && envNfh[0] != '0');
                 if (!nfhOn) {
                     ImGui::TextDisabled("(nfhStrength only takes effect when MC2_TERRAIN_NORMALS_FROM_HEIGHT=1)");
+                }
+            }
+
+            // TERRAIN-LIGHTING-1: hemisphere ambient strength slider + gate
+            // status. Member-default is 1.0; CPU upload force-zeroes when
+            // the env gate is off so the slider has no effect in that case.
+            ImGui::Separator();
+            {
+                const char* envLit = std::getenv("MC2_TERRAIN_LIGHTING_V1");
+                bool litOn = (envLit && envLit[0] && envLit[0] != '0');
+                if (litOn) {
+                    ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                        "Lighting V1 (hemisphere ambient): ON");
+                } else {
+                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
+                        "Lighting V1 (hemisphere ambient): OFF (set MC2_TERRAIN_LIGHTING_V1=1)");
+                }
+                float litStrength = ::gos_GetTerrainLightingV1Strength();
+                if (ImGui::SliderFloat("ambientStrength##tlv1", &litStrength,
+                                       0.0f, 2.0f, "%.2f")) {
+                    ::gos_SetTerrainLightingV1Strength(litStrength);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Reset##tlv1reset")) {
+                    ::gos_SetTerrainLightingV1Strength(1.0f);
+                }
+                if (!litOn) {
+                    ImGui::TextDisabled("(slider has no effect until env gate enabled)");
                 }
             }
         }

@@ -137,6 +137,13 @@ uniform int       useTerrainNormalsFromHeight;
 // derived normal term. Default 1.0 (full slope tilt; byte-equivalent to
 // pre-slice). 0.0 = no slope contribution. Inspector slider 0..1.5.
 uniform PREC float terrainNormalsFromHeightStrength;
+// TERRAIN-LIGHTING-1: hemisphere ambient strength. CPU force-zeroes
+// when env MC2_TERRAIN_LIGHTING_V1 is unset, so the shader branch
+// short-circuits to a no-op (byte-equivalent to pre-slice). When > 0
+// and gate is on, adds a sky/ground hemisphere fill that does NOT
+// participate in sun shadow — fills shadowed terrain with ambient
+// sky bounce based on the surface normal's verticality.
+uniform PREC float terrainLightingV1Strength;
 
 // --- Distance LOD thresholds (tunable, in MC2 world units) ---
 // 1 terrain tile ≈ 128 world units
@@ -792,6 +799,28 @@ void main(void)
     float dynShadow = calcDynamicShadow(WorldPos, shadowN, terrainLightDir.xyz, dynTaps);
     float shadow = staticShadow * dynShadow;
     c.rgb *= shadow;
+
+    // TERRAIN-LIGHTING-1: hemisphere ambient fill. Added AFTER shadow
+    // multiplication so sky/ground bounce continues to light shadowed
+    // terrain (direct sun is shadowed; ambient is not). Sky/ground
+    // tints are picked to match the existing fog colour (cool blue-
+    // grey) and the rock/dirt material tints already in this shader.
+    // Strength 0 short-circuits to no-op — CPU upload-site force-
+    // zeroes the uniform when env gate MC2_TERRAIN_LIGHTING_V1 is OFF.
+    if (terrainLightingV1Strength > 0.0) {
+        const PREC vec3 hemiSkyTint    = vec3(0.55, 0.62, 0.75);
+        const PREC vec3 hemiGroundTint = vec3(0.32, 0.28, 0.22);
+        // N is the final per-fragment normal (after detail + height-derived
+        // perturbation). N.z ≈ 1 on flat ground → full sky; N.z ≈ 0 on
+        // a cliff face → halfway sky/ground; N.z near -1 (overhangs,
+        // not present in terrain meshes) → full ground.
+        PREC float skyFactor = N.z * 0.5 + 0.5;
+        PREC vec3  hemiFill  = mix(hemiGroundTint, hemiSkyTint, skyFactor);
+        // Snow areas already have aggressive specular sparkle and bright
+        // tint — damp ambient there so we don't blow out snow.
+        PREC float hemiAmount = terrainLightingV1Strength * (1.0 - 0.5 * snowWeight);
+        c.rgb += hemiFill * hemiAmount * 0.25;
+    }
 
     // --- Snow sparkle ---
     // High-frequency hashed micro-glints gated by snow weight, light direction, and shadow.

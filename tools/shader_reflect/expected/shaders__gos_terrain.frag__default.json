@@ -230,6 +230,13 @@
           "name": "terrainNormalsFromHeightStrength",
           "offset": 404,
           "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "terrainLightingV1Strength",
+          "offset": 408,
+          "type": "float"
         }
       ],
       "name": "gl_DefaultUniformBlock"
