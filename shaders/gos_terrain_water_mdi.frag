@@ -192,10 +192,15 @@ void main(void)
             PREC vec3  waveNormal = normalize(vec3(nzGrad * REFL_WAVE_SLOPE, 1.0));
             PREC vec3  vdir       = normalize(cameraPos.xyz - WorldPos);  // MC2 Z-up
             PREC vec3  rdir       = reflect(-vdir, waveNormal);           // MC2 Z-up
-            // AXIS SWAP (load-bearing): the reflect vector is MC2 Z-up (pole .z);
-            // the SH basis is Y-up (pole .y). Map (x,y,z)_MC2 -> (x,z,y)_Yup so
-            // an upward reflected ray (rdir.z>0) samples the bright sky hemisphere.
-            PREC vec3  skyDir     = vec3(rdir.x, rdir.z, rdir.y);
+            // AXIS SWAP (load-bearing): rdir is MC2 world (Z-up); the SH coeffs
+            // were projected in the Stuff frame that evalShL2 consumes. The
+            // authoritative Stuff<->MC2 mapping (static_prop.vert) is
+            //   MC2.x = -Stuff.x ; MC2.y = Stuff.z ; MC2.z(up) = Stuff.y
+            // Inverting MC2 dir -> Stuff/SH: Stuff = (-MC2.x, MC2.z, MC2.y).
+            // The X NEGATION is load-bearing: without it the sky is horizontally
+            // mirrored, so the reflected sky pans the WRONG way (correct only
+            // looking straight down where rdir.x~0).
+            PREC vec3  skyDir     = vec3(-rdir.x, rdir.z, rdir.y);
             // evalShL2 returns diffuse IRRADIANCE; this consumer wants directional
             // sky COLOR, so /PI converts irradiance -> sky-radiance-like (the /PI
             // that IblShCoeffs.h forbids for AMBIENT use IS correct here).

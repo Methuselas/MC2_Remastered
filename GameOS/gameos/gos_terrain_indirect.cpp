@@ -3407,6 +3407,15 @@ void RenderWaterReflectionPass() {
     GLint prevVP[4];   glGetIntegerv(GL_VIEWPORT, prevVP);
     GLfloat prevCC[4]; glGetFloatv(GL_COLOR_CLEAR_VALUE, prevCC);
 
+    // LOAD-BEARING: ComputeDispatch() also bakes the MVP into the shared
+    // g_dispatchMvp16 snapshot, which the GPU WATER fast path reads as its
+    // u_worldToClipGL (gameos_graphics.cpp getDispatchMvp16). Restoring only
+    // terrain_mvp_ (gos_SetTerrainMVP) is NOT enough -> water would be drawn with
+    // the MIRROR matrix and vanish/flicker. Save + restore the snapshot too.
+    float    savedDispatchMvp[16]; memcpy(savedDispatchMvp, g_dispatchMvp16, sizeof(savedDispatchMvp));
+    uint32_t savedDispatchFp       = g_dispatchMvpFp;
+    uint64_t savedDispatchFrameIdx = g_dispatchMvpFrameIdx;
+
     gos_SetTerrainMVP(mir);   // install mirror -> compute bakes mirrored clip
     ComputeDispatch();        // fresh ring slot + refills shared cmd buffer
 
@@ -3423,6 +3432,10 @@ void RenderWaterReflectionPass() {
     glClearColor(prevCC[0], prevCC[1], prevCC[2], prevCC[3]);  // restore clear color
 
     gos_SetTerrainMVP(saved);   // RESTORE production MVP (load-bearing)
+    // RESTORE the dispatch snapshot the water fast path consumes (see above).
+    memcpy(g_dispatchMvp16, savedDispatchMvp, sizeof(g_dispatchMvp16));
+    g_dispatchMvpFp       = savedDispatchFp;
+    g_dispatchMvpFrameIdx = savedDispatchFrameIdx;
 
     // Throttled diagnostics + non-clear PROOF. Whole-RT coverage (not just
     // center) so a camera-dependent center sample can't read black when terrain
