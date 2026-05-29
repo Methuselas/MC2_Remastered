@@ -41,6 +41,8 @@
 #include"sounds.h"
 #endif
 
+extern void visualTuning_applyProfile(const char*);  // MISSION-VISUAL-TUNING-1
+
 #ifndef COLLSN_H
 #include"collsn.h"
 #endif
@@ -2400,6 +2402,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	
 	result = missionFile->readIdString("ScenarioScript",missionScriptName,79);
 	gosASSERT(result == NO_ERR);
+	visualTuning_applyProfile(missionScriptName);  // MISSION-VISUAL-TUNING-1
 
 	FullPathFileName brainFileName;
 	brainFileName.init(missionPath, missionScriptName, ".abl");

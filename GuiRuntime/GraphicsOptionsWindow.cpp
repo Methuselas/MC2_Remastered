@@ -69,6 +69,12 @@ extern "C" float gos_vfx_getAlphaScale(void);
 extern "C" void  gos_vfx_setBrightness(float v);
 extern "C" void  gos_vfx_setAdditiveBrightness(float v);
 extern "C" void  gos_vfx_setAlphaScale(float v);
+// MISSION-VISUAL-TUNING-1: profile status accessors (defined in visual_tuning_profile.cpp)
+void        visualTuning_applyProfile(const char* missionName);
+const char* visualTuning_getProfilePath();
+const char* visualTuning_getActiveMission();
+bool        visualTuning_hasProfileFile();
+int         visualTuning_getAppliedKeyCount();
 
 #include <cstdio>
 #include <cmath>
@@ -1512,6 +1518,26 @@ void draw() {
             projectz_overlay_advance();
         ImGui::SameLine();
         ImGui::TextDisabled("(cycles predicates)");
+    }
+
+    // ── Visual Tuning Profile ─────────────────────────────────────────────────
+    if (ImGui::CollapsingHeader("Visual Tuning Profile")) {
+        const char* path    = visualTuning_getProfilePath();
+        const char* mission = visualTuning_getActiveMission();
+        bool        hasFile = visualTuning_hasProfileFile();
+        int         keys    = visualTuning_getAppliedKeyCount();
+        ImGui::TextDisabled("File: %s", path);
+        if (hasFile) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Loaded");
+            ImGui::SameLine();
+            ImGui::Text("mission=%s  keys=%d", mission[0] ? mission : "(none)", keys);
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "No profile file (data/visual_tuning.json)");
+        }
+        if (ImGui::Button("Reset to Profile"))
+            visualTuning_applyProfile(mission[0] ? mission : nullptr);
+        ImGui::SameLine();
+        ImGui::TextDisabled("re-applies profile; ImGui sliders override after");
     }
 
     ImGui::Separator();

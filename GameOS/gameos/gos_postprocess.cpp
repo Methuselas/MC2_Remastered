@@ -69,6 +69,9 @@ gosPostProcess* getGosPostProcess()
     return s_postProcess;
 }
 
+float gos_GetExposure() { return s_postProcess ? s_postProcess->exposure_ : 1.0f; }
+void  gos_SetExposure(float v) { if (s_postProcess) s_postProcess->exposure_ = (v < 0.0f ? 0.0f : v); }
+
 // Fullscreen quad vertices: 2 triangles covering NDC [-1,1]
 // Each vertex: pos.x, pos.y, uv.x, uv.y
 static const float kQuadVerts[] = {

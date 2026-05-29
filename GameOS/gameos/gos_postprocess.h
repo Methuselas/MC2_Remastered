@@ -204,4 +204,8 @@ private:
 
 gosPostProcess* getGosPostProcess();
 
+// MISSION-VISUAL-TUNING-1: free-function accessors for profile system.
+float gos_GetExposure();
+void  gos_SetExposure(float v);
+
 #endif // GOS_POSTPROCESS_H

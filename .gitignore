@@ -27,6 +27,7 @@ CMakeFiles/
 data/*
 !data/defs/
 !data/hdr/
+!data/visual_tuning.json
 unpacked_data
 unpacked_data--
 data-orig
