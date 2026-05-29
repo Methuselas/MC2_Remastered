@@ -12,6 +12,48 @@ For the RenderWorld arc specifically, see also:
 
 ---
 
+## Track V — post + grounding MVP (SHIPPED + MERGED 2026-05-29)
+
+Merged to nifty `d8ccd032` (lane `claude/trackv-post-grounding-mvp`, off
+`e109a7fc`). Clean ort merge; nifty builds mc2 exit 0, `mc2_tests --ts=RenderCore`
+45/45, `check-contracts` 8/8. Full state:
+`memory/trackv_post_grounding_mvp_shipped.md`. Soak/tuning guide:
+`docs/trackv-post-grounding-soak-1.md`. **All gates DEFAULT-OFF** → byte-identical
+shipped default (env default-OFF tier1 5/5 PASS; gate-ON full-stack 2/2 PASS, no
+GL errors).
+
+Key discovery: HDR post infra ALREADY existed (scene FBO `RGBA16F` +
+`postprocess.frag` ACESFilm + `runBloom`, gated by ImGui-only member bools) — so
+the HDR/bloom/tonemap slices were just env-gate wiring + per-mission tunables, no
+new pipeline. SSAO was the only genuinely-new pass.
+
+- **TRACKV-GATE-DEFAULT-OFF-TEST-1** (`500ddc99`): 4 Feature gates registered in
+  RendererFeatureRegistry (COUNT 30→34) + RenderCore unit test asserting each is
+  Feature-kind + default-OFF (promotion to default-ON is now a deliberate 2-file edit).
+- **HDR-POST-SCAFFOLD-1** (`6feb8882`): `MC2_HDR_POST` master gate (`hdrPostEnabled_`);
+  composite force-disables bloom+tonemap + `runBloom` early-returns when OFF.
+- **BLOOM-MVP-1** (`f3463808`): `MC2_BLOOM` + profile keys bloomThreshold/Intensity.
+- **TONEMAP-ACES-MVP-1** (`bf09789d`): `MC2_TONEMAP_ACES`; exposure via profile 'exposure'.
+- **SSAO-GTAO-LITE-MVP-1** (`891954d0`): `MC2_SSAO` (+`MC2_SSAO_DEBUG` trace). New
+  `shaders/ssao.frag` (16-sample world-space hemisphere; occlusion via window-depth
+  ordering sky=1.0 + world-distance range check → NO camera-pos uniform, dodges the
+  Stuff→MC2 axis-swap hazard) + `ssao_apply.frag` (half-res R16F, multiplicative into
+  scene; sky AO=1, UI composites after → untouched). Tunables aoRadius/Strength/Bias/Power.
+- **ImGui tuners** (`3fd0d87e`): Graphics Options → Post-Process → **Track V** live
+  controls (master, exposure, SSAO sliders + AO-buffer debug).
+- **First-soak tune** (`7d2f4d2c`): bloom intensity 0.3→0.15, threshold 0.6→1.2, ACES
+  input ×0.9 (tonemap branch only — default-OFF stays byte-identical).
+
+Deps: BLOOM + TONEMAP inert without `MC2_HDR_POST=1`. SSAO independent.
+
+OUTSTANDING: gate-ON VISUAL quality only spot-tuned on mc2_01 (run the soak across
+mc2_03/17/24); SSAO radius/bias defaults (3.0 wu / 0.0025) are first-pass guesses;
+HDR-master ImGui-toggle-off observed to darken (env default-OFF path is
+smoke-verified non-black — caveat in soak doc). Next: full soak → dial SSAO →
+consider promoting tonemap to default-ON after visual review.
+
+---
+
 ## Shadow lane — dynamic prop shadows working (2026-05-29)
 
 Branch `claude/shadow-lane` (9 commits ahead of nifty, ready to merge).
