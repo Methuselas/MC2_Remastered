@@ -138,15 +138,18 @@ static const bool s_mechViewUniformsDiag = []() {
 // shared TGL ASE loader (mclib/tgl.cpp LoadTGShapeFromASE) — which averages
 // ASE per-corner normals by vertex index and destroys hard-edge splits (see
 // docs/mech-normals-audit.md) but is used by all props/buildings (high blast
-// radius). MC2_MECH_NORMALS_MODE: 0=cooked (default, unchanged), 1=geometric
+// radius). MC2_MECH_NORMALS_MODE: 0=cooked (legacy; kill-switch), 1=geometric
 // face normals to all corners (faceted; confirm/debug), 2=angle-threshold
-// smoothed (hard-edge preserving). Smoothing angle 60deg.
+// smoothed (hard-edge preserving) — DEFAULT. Smoothing angle 60deg.
 // These are mutable so ImGui controls (via batcher_setMechNormalsMode /
 // batcher_setMechNormalsSmoothDeg + batcher_rebuildMechNormals) can dial them
 // at runtime without a restart. Env vars still set the startup default.
+// DEFAULT-ON: mode 2 (smoothed, hard-edge preserving) — the intended look that
+// fixes the corrupted ASE-averaged normals. Kill-switch MC2_MECH_NORMALS_MODE=0
+// restores cooked/legacy normals; =1 = faceted. User-approved 2026-05-28.
 static int s_mechNormalsMode = []() {
     const char* v = std::getenv("MC2_MECH_NORMALS_MODE");
-    return v ? std::atoi(v) : 0;
+    return v ? std::atoi(v) : 2;
 }();
 // Smoothing angle for mode 2 (degrees): faces meeting at a shared vertex blend
 // only when within this angle, so a smaller value preserves MORE hard edges
