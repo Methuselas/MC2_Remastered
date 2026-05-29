@@ -2305,7 +2305,12 @@ void gos_ResetStaticLightMatrix();
 // shot trigger it used to also fire was RETIRED (see note below); coexists
 // idempotently with the Terrain::destroy gos_ResetStaticLightMatrix path.
 void gos_ResetStaticShadowPriming();
-void gos_BeginShadowPrePass(bool clearDepth = true);
+// Returns true if the shadow prepass actually activated (shadows enabled +
+// renderer ready); false = no-op (shadowsEnabled_ toggled off). Casters appended
+// after the terrain build must skip their draws + gos_EndShadowPrePass when
+// false, or they would draw into the wrong (scene) FBO. void-context callers
+// (terrain static build) are unaffected.
+bool gos_BeginShadowPrePass(bool clearDepth = true);
 void gos_DrawShadowBatchTessellated(gos_VERTEX* vertices, int numVerts,
     WORD* indices, int numIndices,
     const gos_TERRAIN_EXTRA* extras, int extraCount);

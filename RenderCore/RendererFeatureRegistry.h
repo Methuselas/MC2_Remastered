@@ -412,6 +412,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "SHADOW-BOUNDED-NEAR-FIT-1 tunable: bounded near-fit radius in world units (default 2500, clamped 512..mapClampR). Only consulted when MC2_SHADOW_BOUNDED_NEAR_FIT=1. Resolved once at process start."
     },
     {
+        "MC2_FEATURE_SHADOW_STATIC_BUILDINGS",
+        "MC2_STATIC_PROP_BUILDING_SHADOW",
+        EnvVarKind::Feature,
+        false,
+        "SHADOW-STATIC-BUILDINGS-2: replay ALL registered rigid-building recipes (full registry, visibility-independent) into the world-fixed static shadow map, once per mission at the static-map build. Trees excluded (population filter). Default-OFF; =1 enables, =2 enables+trace. Independent of MC2_SHADOW_ENABLE. Requires C-pre min-combine. Debt: destroyed buildings keep stale static shadow until mission reload."
+    },
+    {
         "MC2_TUNE_STATIC_PROP_IBL_SH_SET",
         "MC2_STATIC_PROP_IBL_SH_SET",
         EnvVarKind::Trace,

@@ -7556,8 +7556,17 @@ void gos_MarkStaticLightMatrixBuilt() {
     gosPostProcess* pp = getGosPostProcess();
     if (pp) pp->markStaticLightMatrixBuilt();
 }
-void gos_BeginShadowPrePass(bool clearDepth) {
+bool gos_BeginShadowPrePass(bool clearDepth) {
+    // Report whether the prepass actually binds the shadow FBO + sets state.
+    // beginShadowPrePass early-returns when shadows are disabled at runtime
+    // (pp->shadowsEnabled_); shadow_terrain_material_ is non-null post-init.
+    // SHADOW-STATIC-BUILDINGS-2 relies on this so it doesn't append building
+    // casters into the scene FBO when the prepass no-ops.
+    gosPostProcess* pp = getGosPostProcess();
+    const bool willActivate = (g_gos_renderer != nullptr && pp != nullptr &&
+                               pp->shadowsEnabled_);
     if (g_gos_renderer) g_gos_renderer->beginShadowPrePass(clearDepth);
+    return willActivate;
 }
 void gos_EndShadowPrePass() {
     if (g_gos_renderer) g_gos_renderer->endShadowPrePass();

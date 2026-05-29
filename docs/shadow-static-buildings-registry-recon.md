@@ -52,3 +52,17 @@ This belongs in the batcher (owns `s_sharedVao/Ibo` + the shadow program); it pu
 8. **Debt filed:** destroyed-building stale shadow until mission reload; sun-change frozen.
 
 Deferred (unchanged): foliage shadow shape (SHADOW-FOLIAGE-ALPHA-DISCARD-1), CSM (E), self-shadow bias tuning.
+
+---
+
+## Update 2026-05-29 — SHADOW-STATIC-BUILDINGS-2 implemented
+
+Shipped gated (default OFF), registry-driven (NOT per-frame buckets):
+- `RecipeRange.population` (uint8_t, 0xFF=unset); `setRecipePopulation(recipeIndex, pop)` called from `BldgAppearance::registerStatic` (Building) at both register sites. Trees need no tag — untagged recipes are excluded by the Building filter (correct: trees/turrets/gates/generics all excluded).
+- `GpuStaticPropRegistry::getBuildingShadowInstances(out)` — appends all non-tombstoned Building recipe leaves (baked modelMatrix+typeID) from `s_recipes`/`s_recipeRanges`. Visibility-independent.
+- `GpuStaticPropBatcher::drawStaticBuildingShadows(instances)` — sorts by typeID, uploads a one-shot SSBO (`s_staticBldgShadowSsbo`), per-type `glDrawElementsInstancedBaseVertex` into the bound static FBO with `shadow_static_prop` + `pp->getLightSpaceMatrix()` + polygon offset. GpuStaticPropInstance is binary-compatible with the shader Instance block (zero conversion). Mirrors flushShadow's GL save/restore.
+- `gos_BeginShadowPrePass` now returns bool (activated?) so the append skips into the scene FBO when shadows are runtime-disabled.
+- txmmgr: inside the existing one-shot `!gos_StaticLightMatrixBuilt()` block, after the terrain render, `gos_BeginShadowPrePass(false)` (append, no clear) → get instances → draw → end. Gate `MC2_STATIC_PROP_BUILDING_SHADOW`. No per-frame work, no render-order change.
+- Trace `=2`: `[SHADOW_STATIC_BLDG v1] recipes_in types inst draws`. Registered in RendererFeatureRegistry.h.
+
+Why this works where Option B didn't: buckets (`s_typeRanges`) only held camera-visible props (diag typeRanges=5); the registry retains ALL building transforms baked at mission load. Deferred (unchanged): destruction-invalidation, sun re-arm, CSM, foliage shadow shape.

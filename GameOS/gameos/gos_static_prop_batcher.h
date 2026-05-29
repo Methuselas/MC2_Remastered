@@ -233,6 +233,16 @@ public:
     void flush(const RenderSnapshot* snap = nullptr);
     void flushShadow();   // depth-only into dynamic shadow FBO
 
+    // SHADOW-STATIC-BUILDINGS-2: depth-only draw of ALL registered rigid-building
+    // recipe leaves (from GpuStaticPropRegistry::getBuildingShadowInstances — the
+    // full registry, visibility-INDEPENDENT, NOT per-frame buckets) into the
+    // currently-bound (static) shadow FBO using the static world-fixed light
+    // matrix. One-shot (caller latches it to the static-map build). Builds/uploads
+    // a dedicated all-buildings instance SSBO grouped by typeID; reuses the
+    // resident per-type geometry + shadow_static_prop program. Trees excluded
+    // upstream by the Building population filter.
+    void drawStaticBuildingShadows(const std::vector<GpuStaticPropInstance>& instances);
+
     // Debug: color-address validation mode. 0=off, 1=gradient, 2=hash.
     void setDebugAddrMode(int mode);
     int  getDebugAddrMode() const { return debugAddrMode_; }
