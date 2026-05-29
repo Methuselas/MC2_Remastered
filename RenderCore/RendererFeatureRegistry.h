@@ -422,8 +422,8 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "MC2_FEATURE_SHADOW_DYNAMIC_PROP_CASTERS",
         "MC2_SHADOW_DYNAMIC_PROP_CASTERS",
         EnvVarKind::Feature,
-        false,
-        "SHADOW-DYNAMIC-PROP-CASTERS-1: feed the per-frame DYNAMIC sun-shadow caster pass from the full registry (ALL non-building props, visibility-independent) instead of the camera-visible s_typeRanges set, which only admitted props near the camera (so distant trees never cast into the now-correctly-camera-fit dynamic map). Default-OFF; =1 enables, =2 enables+trace. Requires MC2_SHADOW_ENABLE; pairs with MC2_STATIC_PROP_BUILDING_SHADOW (buildings cast via the static map). Debt: no light-box cull yet (draws all map props every frame); HZB planned."
+        true,
+        "SHADOW-DYNAMIC-PROP-CASTERS-1: feed the per-frame DYNAMIC sun-shadow caster pass from the full registry (registered props, visibility-independent) instead of the camera-visible s_typeRanges set, which only admitted props near the camera (so distant trees never cast into the now-correctly-camera-fit dynamic map). DEFAULT-ON; MC2_SHADOW_DYNAMIC_PROP_CASTERS=0 is the kill-switch (reverts to the legacy camera-visible flushShadow feed); =2 adds trace. Only takes effect when MC2_SHADOW_ENABLE is set (dynamic shadow pass). Buildings: excluded from this feed when MC2_STATIC_PROP_BUILDING_SHADOW is active (they cast via the world-fixed static map), else included so they still cast a dynamic shadow. Debt: no light-box cull yet (draws all map props every frame); HZB planned."
     },
     {
         "MC2_TUNE_STATIC_PROP_IBL_SH_SET",
