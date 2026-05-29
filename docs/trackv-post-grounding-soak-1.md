@@ -47,14 +47,27 @@ block — missing keys keep engine defaults):
 | Key | Range | Default | Slice |
 |---|---|---|---|
 | `exposure` | ≥0 | 1.0 | tonemap/HDR |
-| `bloomThreshold` | 0..4 | 0.6 | bloom |
-| `bloomIntensity` | 0..4 | 0.3 | bloom |
+| `bloomThreshold` | 0..4 | 1.2 | bloom (tuned 2026-05-29, was 0.6) |
+| `bloomIntensity` | 0..4 | 0.15 | bloom (tuned 2026-05-29, was 0.3) |
 | `aoRadius` | 0.1..64 (world units) | 3.0 | ssao |
 | `aoStrength` | 0..2 | 0.7 | ssao |
 | `aoBias` | 0..0.1 | 0.0025 | ssao |
 
-These are also live-adjustable via Graphics Options ImGui sliders
-(`Ctrl+Shift+G`) when `MC2_IMGUI=1`.
+These are also live-adjustable via Graphics Options → **Post-Process → Track V**
+ImGui sliders (`Ctrl+Shift+G`) when `MC2_IMGUI=1`.
+
+**Tuned defaults (2026-05-29, first soak):** bloom intensity halved (0.15) and
+threshold doubled (1.2) — stock bloom was a touch strong; the ACES tonemap
+input is trimmed ~10% (`* 0.9` in the tonemap branch of `postprocess.frag`) so
+the filmic result reads slightly less hot. All three are tonemap/bloom-branch
+only, so the default-OFF path stays byte-identical.
+
+**Caveat — HDR-master ImGui toggle:** the shipped default is gated OFF via the
+`MC2_HDR_POST` **env var**, and that path is smoke-verified to render normally
+(not black). Un-checking the "HDR Post (master)" checkbox in ImGui *after* the
+stack has been running has been observed to darken the view; prefer toggling
+the feature via the env var / a fresh launch. The env default-OFF path (what
+ships) is unaffected. (Follow-up: confirm/repro the runtime-toggle asymmetry.)
 
 ---
 

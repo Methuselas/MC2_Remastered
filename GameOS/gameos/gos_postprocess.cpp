@@ -81,8 +81,8 @@ void gos_SetBloomThreshold(float v) {
 void gos_SetBloomIntensity(float v) {
     if (s_postProcess) s_postProcess->bloomIntensity_ = (v < 0.0f ? 0.0f : (v > 4.0f ? 4.0f : v));
 }
-float gos_GetBloomThreshold() { return s_postProcess ? s_postProcess->bloomThreshold_ : 0.6f; }
-float gos_GetBloomIntensity() { return s_postProcess ? s_postProcess->bloomIntensity_ : 0.3f; }
+float gos_GetBloomThreshold() { return s_postProcess ? s_postProcess->bloomThreshold_ : 1.2f; }
+float gos_GetBloomIntensity() { return s_postProcess ? s_postProcess->bloomIntensity_ : 0.15f; }
 
 // SSAO-GTAO-LITE-MVP-1 tunables (clamped to conservative ranges).
 bool  gos_IsSsaoEnabled() { return s_postProcess && s_postProcess->ssaoEnabled_; }
@@ -111,8 +111,8 @@ gosPostProcess::gosPostProcess()
     , bloomEnabled_(false)
     , fxaaEnabled_(false)
     , tonemapEnabled_(false)
-    , bloomIntensity_(0.3f)
-    , bloomThreshold_(0.6f)
+    , bloomIntensity_(0.15f)  // BLOOM-MVP-1 tuned 2026-05-29 (was 0.3; halved)
+    , bloomThreshold_(1.2f)   // BLOOM-MVP-1 tuned 2026-05-29 (was 0.6; doubled)
     , hdrPostEnabled_(false)
     , sceneFBO_(0)
     , sceneColorTex_(0)
