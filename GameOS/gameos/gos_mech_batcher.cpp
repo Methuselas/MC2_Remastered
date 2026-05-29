@@ -166,20 +166,19 @@ static float s_mechNormalsSmoothDeg = []() {
 // Cleared at onMapLoad() alongside s_stagingVbo.
 static std::vector<std::pair<size_t,size_t>> s_nodeVboRanges;
 
-// MECH-AMBIENT-1: gated hemisphere ambient FILL for mechs. Default OFF
-// (MC2_MECH_AMBIENT_V1=1). When off the strength uploaded to the shader is
-// 0.0 -> exact no-op (byte-identical). When on, default strength 0.5. Both
-// mutable so ImGui can dial them live (batcher_setMechAmbient*). The shader
-// term is per-fragment hemisphere using the world normal; no PBR/material/
-// team-mask data involved. Works on legacy and ViewUniforms mech paths
-// (does not need camera data).
+// MECH-AMBIENT-1: hemisphere ambient FILL for mechs. DEFAULT-ON (user-approved
+// 2026-05-28 at strength 0.15) with kill-switch MC2_MECH_AMBIENT_V1=0. When off
+// the strength uploaded to the shader is 0.0 -> exact no-op (legacy look). Both
+// mutable so ImGui can dial them live (batcher_setMechAmbient*). The shader term
+// is a per-fragment hemisphere using the world normal; no PBR/material/team-mask
+// data involved. Works on legacy and ViewUniforms mech paths (no camera data).
 static bool  s_mechAmbientV1 = []() {
     const char* v = std::getenv("MC2_MECH_AMBIENT_V1");
-    return v != nullptr && v[0] == '1';
+    return !(v != nullptr && v[0] == '0');   // default-ON; kill-switch =0
 }();
 static float s_mechAmbientStrength = []() {
     const char* v = std::getenv("MC2_MECH_AMBIENT_V1_STRENGTH");
-    float d = v ? (float)std::atof(v) : 0.5f;   // default-ON strength
+    float d = v ? (float)std::atof(v) : 0.15f;   // user-tuned default
     if (d < 0.0f) d = 0.0f;
     if (d > 2.0f) d = 2.0f;
     return d;
