@@ -28,8 +28,11 @@ vec3 ACESFilm(vec3 x)
 // Tonemap a single sample (used by FXAA neighbor reads)
 vec3 tonemapSample(vec3 color)
 {
+    // TONEMAP-ACES-MVP-1 tuned 2026-05-29: trim the ACES input ~10% so the
+    // filmic result reads slightly less hot. Tonemap branch ONLY -> the
+    // non-tonemap (HDR-off / default) path is unchanged (byte-identical).
     if (enableTonemap == 1)
-        return ACESFilm(color * exposure);
+        return ACESFilm(color * exposure * 0.9);
     return color * exposure;
 }
 

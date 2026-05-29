@@ -195,8 +195,8 @@ TEST_CASE("RenderDebugView out-of-range returns false") {
 // RendererFeatureRegistry
 // ---------------------------------------------------------------------------
 
-TEST_CASE("RendererFeatureRegistry COUNT is 30") {
-    CHECK(static_cast<int>(RendererFeature::COUNT) == 30);
+TEST_CASE("RendererFeatureRegistry COUNT is 34") {
+    CHECK(static_cast<int>(RendererFeature::COUNT) == 34);
 }
 
 TEST_CASE("RendererFeatureRegistry kFeatureTable length matches COUNT") {
@@ -223,6 +223,28 @@ TEST_CASE("RendererFeatureRegistry always-on features have null envVar") {
     // TerrainTessellation and ReverseZ have no env var kill-switch.
     CHECK(kFeatureTable[static_cast<int>(RendererFeature::TerrainTessellation)].envVar == nullptr);
     CHECK(kFeatureTable[static_cast<int>(RendererFeature::ReverseZ)].envVar           == nullptr);
+}
+
+TEST_CASE("RendererFeatureRegistry Track V post/grounding gates are registered default-OFF") {
+    // TRACKV-GATE-DEFAULT-OFF-TEST-1: every experimental Track V visual gate
+    // MUST be a Feature-kind entry that defaults OFF, so a fresh checkout or a
+    // CI run never silently enables a visual feature. Promoting one to
+    // default-ON is a deliberate edit in RendererFeatureRegistry.h AND here --
+    // this guardrail trips on accidental flips and forces explicit review.
+    struct Row { RendererFeature f; const char* env; };
+    const Row trackV[] = {
+        { RendererFeature::HdrPost,     "MC2_HDR_POST" },
+        { RendererFeature::Bloom,       "MC2_BLOOM" },
+        { RendererFeature::TonemapAces, "MC2_TONEMAP_ACES" },
+        { RendererFeature::Ssao,        "MC2_SSAO" },
+    };
+    for (const Row& r : trackV) {
+        const EnvVarDesc& e = kFeatureTable[static_cast<int>(r.f)];
+        CHECK((e.kind == EnvVarKind::Feature));
+        CHECK(e.defaultOn == false);
+        REQUIRE(e.envVar != nullptr);
+        CHECK(std::strcmp(e.envVar, r.env) == 0);
+    }
 }
 
 TEST_CASE("RendererFeatureRegistry Retired entries have Retired kind") {

@@ -1445,15 +1445,55 @@ void draw() {
     if (ImGui::CollapsingHeader("Post-Process")) {
         gosPostProcess* pp = getGosPostProcess();
         if (pp) {
+            // ── Track V: HDR post + grounding (live tuners) ──────────────────
+            // All gates are plain runtime bools read every frame, so toggling
+            // here takes effect immediately (env var seeds the startup state).
+            ImGui::SeparatorText("Track V (HDR / Bloom / Tonemap / SSAO)");
+            ImGui::Checkbox("HDR Post (master)##trackv", &pp->hdrPostEnabled_);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("MC2_HDR_POST. Master gate: Bloom + Tonemap are\nforced OFF in the composite when this is OFF.");
+            ImGui::Indent();
+            ImGui::SliderFloat("Exposure##trackv", &pp->exposure_, 0.0f, 4.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("composite exposure multiplier (default 1.0)");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset##expo")) pp->exposure_ = 1.0f;
+            ImGui::Unindent();
+
+            ImGui::Checkbox("SSAO##trackv", &pp->ssaoEnabled_);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("MC2_SSAO. Half-res grounding AO.\nIndependent of the HDR master gate.");
+            if (pp->ssaoEnabled_) {
+                ImGui::Indent();
+                ImGui::SliderFloat("Radius (wu)##ssao", &pp->aoRadius_,   0.1f, 32.0f);
+                ImGui::SliderFloat("Strength##ssao",    &pp->aoStrength_, 0.0f, 2.0f);
+                ImGui::SliderFloat("Bias##ssao",        &pp->aoBias_,     0.0f, 0.05f, "%.4f");
+                ImGui::SliderFloat("Power##ssao",       &pp->aoPower_,    0.1f, 4.0f);
+                bool ssaoDbg = (pp->ssaoDebug_ != 0);
+                if (ImGui::Checkbox("Debug: show AO buffer##ssao", &ssaoDbg))
+                    pp->ssaoDebug_ = ssaoDbg ? 1 : 0;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Reset##ssao")) {
+                    pp->aoRadius_ = 3.0f; pp->aoStrength_ = 0.7f;
+                    pp->aoBias_ = 0.0025f; pp->aoPower_ = 1.5f;
+                }
+                ImGui::Unindent();
+            }
+            ImGui::SeparatorText("Legacy / shared");
+
             ImGui::Checkbox("Bloom", &pp->bloomEnabled_);
             if (pp->bloomEnabled_) {
                 ImGui::Indent();
+                if (!pp->hdrPostEnabled_)
+                    ImGui::TextDisabled("(needs HDR Post master ON)");
                 ImGui::SliderFloat("Intensity##bloom", &pp->bloomIntensity_, 0.0f, 4.0f);
-                ImGui::SliderFloat("Threshold##bloom", &pp->bloomThreshold_, 0.0f, 2.0f);
+                ImGui::SliderFloat("Threshold##bloom", &pp->bloomThreshold_, 0.0f, 4.0f);
                 ImGui::Unindent();
             }
             ImGui::Checkbox("FXAA",    &pp->fxaaEnabled_);
-            ImGui::Checkbox("Tonemap", &pp->tonemapEnabled_);
+            ImGui::Checkbox("Tonemap (ACES)", &pp->tonemapEnabled_);
+            if (pp->tonemapEnabled_ && !pp->hdrPostEnabled_) {
+                ImGui::Indent(); ImGui::TextDisabled("(needs HDR Post master ON)"); ImGui::Unindent();
+            }
             ImGui::Separator();
             ImGui::Checkbox("Shadows##pp",      &pp->shadowsEnabled_);
             ImGui::Checkbox("Shadow Debug##pp", &pp->showShadowDebug_);

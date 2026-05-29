@@ -154,7 +154,14 @@ enum class RendererFeature : int {
     // logs. Default-OFF. Substrate for the eventual GPU-owned sim.
     VfxGpuSimCardCloud       = 28,  // MC2_VFX_GPU_SIM_CARDCLOUD
     VfxGpuSimCompare         = 29,  // MC2_VFX_GPU_SIM_COMPARE
-    COUNT                    = 30,
+    // TRACKV-POST-GROUNDING-MVP: experimental visual post-process + grounding
+    // gates. ALL default-OFF (enforced by the Track-V guardrail unit test).
+    // Promotion to default-ON is a deliberate edit here AND in that test.
+    HdrPost                  = 30,  // MC2_HDR_POST
+    Bloom                    = 31,  // MC2_BLOOM
+    TonemapAces              = 32,  // MC2_TONEMAP_ACES
+    Ssao                     = 33,  // MC2_SSAO
+    COUNT                    = 34,
 };
 
 // ---------------------------------------------------------------------------
@@ -404,6 +411,38 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         false,
         "VFX-GPU-SIM-CARDCLOUD-BUFFER-1: emit the [VFX_GPU_SIM v1] integrity/compare logs (cpuActive vs submitted-live count, age/alpha ranges, world bounds, SSBO capacity) for the CardCloud GPU sim buffer. Requires MC2_VFX_GPU_SIM_CARDCLOUD=1. Default-OFF. BUFFER-1 is a CPU-side plumbing check (no GPU readback, no stalls); real CPU-vs-GPU parity (maxPosError, age divergence) arrives in COMPUTE-1 once the buffer is integrated on GPU."
     },
+    // HdrPost
+    {
+        "MC2_FEATURE_HDR_POST",
+        "MC2_HDR_POST",
+        EnvVarKind::Feature,
+        false,
+        "HDR-POST-SCAFFOLD-1 (Track V): master gate for the HDR post-process stack on the existing RGBA16F scene FBO (gosPostProcess). Default-OFF; =1 enables. The scene color attachment is ALREADY RGBA16F, so this gate does not change buffer formats; it only enables exposure + ACES tonemap + bloom application from env/profile. When OFF, postprocess members keep their legacy defaults (exposure 1.0, tonemap/bloom off) -> byte-identical to pre-Track-V output (the unconditional sunset grade in postprocess.frag is preserved either way). Visual-only; no geometry/depth/objectId/UI change. Bloom + tonemap are independently gated (MC2_BLOOM / MC2_TONEMAP_ACES) and are inert unless this master gate is ON."
+    },
+    // Bloom
+    {
+        "MC2_FEATURE_BLOOM",
+        "MC2_BLOOM",
+        EnvVarKind::Feature,
+        false,
+        "BLOOM-MVP-1 (Track V): threshold + half-res ping-pong bloom on the HDR scene (gosPostProcess::runBloom, already present). Default-OFF; =1 enables (sets bloomEnabled_). Auto-depends on MC2_HDR_POST (no effect unless the HDR post stack is ON). Conservative defaults threshold 0.6 / intensity 0.3; ImGui-tunable and per-mission profile fields bloomThreshold / bloomIntensity. When OFF, bloomEnabled_ stays false -> composite skips the bloom add -> byte-identical. UI/HUD are composited after endScene, so they never receive bloom."
+    },
+    // TonemapAces
+    {
+        "MC2_FEATURE_TONEMAP_ACES",
+        "MC2_TONEMAP_ACES",
+        EnvVarKind::Feature,
+        false,
+        "TONEMAP-ACES-MVP-1 (Track V): ACES-ish filmic tonemap curve in the composite shader (postprocess.frag ACESFilm, already present). Default-OFF; =1 enables (sets tonemapEnabled_). Auto-depends on MC2_HDR_POST. Exposure tunable via gos_SetExposure / profile 'exposure'. When OFF, the enableTonemap uniform = 0 -> composite passes color*exposure through unchanged -> byte-identical (exposure default 1.0). UI is composited after endScene so there is no double-tonemap of HUD/ImGui."
+    },
+    // Ssao
+    {
+        "MC2_FEATURE_SSAO",
+        "MC2_SSAO",
+        EnvVarKind::Feature,
+        false,
+        "SSAO-GTAO-LITE-MVP-1 (Track V): lightweight half-res screen-space ambient-occlusion grounding pass (gosPostProcess::runSSAO) reusing the scene depth + GBuffer1 world normals + inverseViewProj already produced for the screen-shadow pass. Default-OFF; =1 enables. Multiplicative composite into the scene color (like runScreenShadow) BEFORE the composite/tonemap, with a far-depth (sky) guard so background and UI are untouched. ImGui + per-mission tunables aoRadius / aoStrength / aoBias. When OFF, runSSAO is skipped entirely -> byte-identical. Visual-only; no geometry/objectId/UI change."
+    },
 };
 
 static_assert(
@@ -549,6 +588,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         EnvVarKind::Trace,
         false,
         "VFX-TUNING-UI-1: startup-default for the GPU-particle alpha (opacity) scale (particle_billboard.frag u_vfxAlphaScale, applied to ALL particles). Clamped 0..8. Unset/empty -> 1.0 (byte-identical no-op). Graphics Options 'VFX Tuning > Opacity' slider overrides at runtime (gos_vfx_setAlphaScale). Look-only — no emission/lifetime/timing change. No effect when MC2_GPU_PARTICLES=0."
+    },
+    {
+        "MC2_DIAG_SSAO_DEBUG",
+        "MC2_SSAO_DEBUG",
+        EnvVarKind::Trace,
+        false,
+        "SSAO-GTAO-LITE-MVP-1: when set with MC2_SSAO=1, the SSAO apply pass OVERWRITES the scene with the half-res AO buffer as grayscale (blend disabled) instead of multiplying, so the raw occlusion can be inspected. Diagnostic-only; no effect when MC2_SSAO is off. Default-OFF."
     },
 };
 
