@@ -723,7 +723,13 @@ void main(void)
     float staticShadow = calcShadow(WorldPos, shadowN, terrainLightDir.xyz, shadowTaps);
     int dynTaps = (lodNear > 0.5) ? 8 : 4;
     float dynShadow = calcDynamicShadow(WorldPos, shadowN, terrainLightDir.xyz, dynTaps);
-    float shadow = staticShadow * dynShadow;
+    // SHADOW-TERRAIN-COMBINE-MIN-1: take the darkest of the two shadow maps
+    // instead of multiplying them. min() makes duplicate static+dynamic caster
+    // coverage idempotent and prevents double-darkening when a caster appears in
+    // both maps (e.g. a building in the world-fixed static map AND the
+    // camera-fitted dynamic map): min(0.4,0.4)=0.4 vs the old 0.4*0.4=0.16.
+    // Matches the screen-space/object receiver composition (shadow_screen.frag).
+    float shadow = min(staticShadow, dynShadow);
     c.rgb *= shadow;
 
     // TERRAIN-LIGHTING-1: hemisphere ambient fill. Added AFTER shadow
