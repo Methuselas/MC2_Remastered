@@ -2656,7 +2656,15 @@ void gosRenderer::renderWaterFastPath(
         setMF         ("maxMinUV",        maxMinUV);
         setMF         ("time",  (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
         setMVec4      ("fog_color", (const float*)&fog_color_);
-        setMVec4      ("cameraPos", (const float*)&terrain_camera_pos_);  // water-v1 Fresnel
+        // WATER reflection frame fix: terrain_camera_pos_ is the Stuff/MLR eye
+        // (.x=left, .y=elevation, .z=forward); the water FS consumes cameraPos in
+        // RAW MC2 (matching WorldPos: .x=east, .y=north, .z=up). Apply the
+        // documented Stuff->MC2 swap MC2=(-Stuff.x, Stuff.z, Stuff.y) here so the
+        // reflect vdir + Fresnel + waveLOD respond to camera PITCH/zoom, not just
+        // pan. (Other terrain/lighting consumers swap shader-side; water did not.)
+        const float camMC2[4] = { -terrain_camera_pos_.x, terrain_camera_pos_.z,
+                                   terrain_camera_pos_.y,  1.0f };
+        setMVec4      ("cameraPos", camMC2);  // water-v1 reflection/Fresnel (raw MC2)
         setMI         ("tex1",  0);
         setMI         ("tex2",  1);
 
