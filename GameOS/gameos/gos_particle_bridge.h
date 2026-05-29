@@ -48,3 +48,13 @@ extern "C" float gos_vfx_getAlphaScale(void);
 extern "C" void  gos_vfx_setBrightness(float v);
 extern "C" void  gos_vfx_setAdditiveBrightness(float v);
 extern "C" void  gos_vfx_setAlphaScale(float v);
+// VFX-SOFT-PARTICLES-MVP-1: depth-fade enable + world-unit fade band.
+extern "C" int   gos_vfx_getSoftEnabled(void);
+extern "C" void  gos_vfx_setSoftEnabled(int e);
+extern "C" float gos_vfx_getSoftDistance(void);
+extern "C" void  gos_vfx_setSoftDistance(float v);
+// VFX-LIT-PARTICLES-MVP-1: scene-lighting enable + strength (0..1).
+extern "C" int   gos_vfx_getLitEnabled(void);
+extern "C" void  gos_vfx_setLitEnabled(int e);
+extern "C" float gos_vfx_getLitStrength(void);
+extern "C" void  gos_vfx_setLitStrength(float v);

@@ -36,6 +36,32 @@ uniform float u_vfxAdditiveBrightness;  // extra rgb scale, additive groups only
 uniform float u_vfxAlphaScale;          // alpha (opacity) scale (all particles)
 uniform int   u_vfxIsAdditive;          // 1 if the current draw group is additive
 
+// VFX-SOFT-PARTICLES-MVP-1: depth-fade alpha particles at scene intersections.
+// Disabled (byte-identical) when u_softDistance <= 0. u_invWorldToClip is the
+// exact inverse of u_worldToClipGL (gosPostProcess::inverseViewProj_), so the
+// fragment's own gl_FragCoord.z and the sampled scene depth reconstruct into
+// the same world space the scene was rendered in. Reverse-Z (glClipControl
+// ZERO_TO_ONE): window depth and NDC z share [0,1]; far/sky == 0.0.
+uniform sampler2D u_sceneDepth;     // copy of scene depth (no FBO feedback loop)
+uniform mat4      u_invWorldToClip; // world from (ndc.xy, windowDepth)
+uniform vec2      u_screenSize;     // pixels
+uniform float     u_softDistance;   // world-unit fade band; 0 = disabled
+
+// VFX-LIT-PARTICLES-MVP-1: simple scene lighting for alpha smoke/dust.
+// Disabled (byte-identical) when u_vfxLitStrength <= 0. Direction-independent
+// soft fill from the scene sun + ambient (no per-fragment normal — billboards
+// have none, so a directional N.L would flicker as the camera turns). Additive
+// groups stay self-emissive and are skipped. Sourced from the global camera
+// (eye->light*/ambient*), the same lighting terrain consumes.
+uniform float u_vfxLitStrength;   // 0 = unlit; 1 = full scene-lit
+uniform vec3  u_vfxSunColor;      // scene sun color     (0..1)
+uniform vec3  u_vfxAmbientColor;  // scene ambient color (0..1)
+
+vec3 sp_reconstructWorld(vec2 uv, float depth) {
+    vec4 p = u_invWorldToClip * vec4(uv * 2.0 - 1.0, depth, 1.0);
+    return p.xyz / p.w;
+}
+
 in vec2 v_uv;
 in vec4 v_color;
 flat in uint v_kind;
@@ -81,4 +107,27 @@ void main() {
     outColor.rgb *= u_vfxBrightness;
     if (u_vfxIsAdditive == 1) outColor.rgb *= u_vfxAdditiveBrightness;
     outColor.a *= u_vfxAlphaScale;
+
+    // VFX-LIT-PARTICLES-MVP-1: tint alpha smoke/dust by the scene sun+ambient
+    // so it reads as lit volume rather than a flat decal. strength 0 (default /
+    // gate OFF) -> mix() resolves to vec3(1.0) -> byte-identical. Alpha groups
+    // only; additive flashes/lasers stay emissive. Skipped in debug views.
+    if (u_vfxLitStrength > 0.0 && u_vfxIsAdditive == 0 && u_debugMode == 0) {
+        vec3 fill = u_vfxAmbientColor + u_vfxSunColor * 0.5;
+        outColor.rgb *= mix(vec3(1.0), fill, u_vfxLitStrength);
+    }
+
+    // VFX-SOFT-PARTICLES-MVP-1: soften alpha where the particle approaches the
+    // opaque scene behind it. Alpha groups only (additive flashes unaffected).
+    // u_softDistance == 0 (default / gate OFF) -> skipped -> byte-identical.
+    if (u_softDistance > 0.0 && u_vfxIsAdditive == 0) {
+        vec2 suv = gl_FragCoord.xy / u_screenSize;
+        float sceneDepth = textureLod(u_sceneDepth, suv, 0.0).r;
+        if (sceneDepth > 0.0001) {            // skip sky / far plane (reverse-Z far=0)
+            vec3 wScene = sp_reconstructWorld(suv, sceneDepth);
+            vec3 wFrag  = sp_reconstructWorld(suv, gl_FragCoord.z);
+            float fade  = clamp(distance(wScene, wFrag) / u_softDistance, 0.0, 1.0);
+            outColor.a *= fade;
+        }
+    }
 }

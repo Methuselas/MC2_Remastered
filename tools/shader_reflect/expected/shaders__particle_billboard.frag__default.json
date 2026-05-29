@@ -48,6 +48,48 @@
           "name": "u_vfxIsAdditive",
           "offset": 16,
           "type": "int"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": 16,
+          "name": "u_invWorldToClip",
+          "offset": 32,
+          "type": "mat4"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_screenSize",
+          "offset": 96,
+          "type": "vec2"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_softDistance",
+          "offset": 104,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_vfxLitStrength",
+          "offset": 108,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_vfxSunColor",
+          "offset": 112,
+          "type": "vec3"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_vfxAmbientColor",
+          "offset": 128,
+          "type": "vec3"
         }
       ],
       "name": "gl_DefaultUniformBlock"

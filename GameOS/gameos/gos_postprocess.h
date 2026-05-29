@@ -38,6 +38,15 @@ public:
     GLuint getSceneDepthTexture() const { return sceneDepthTex_; }
     GLuint getSceneColorTexture() const { return sceneColorTex_; }
     GLuint getSceneFBO() const { return sceneFBO_; }
+    // VFX-SOFT-PARTICLES-MVP-1: a copy of the resolved scene depth, taken
+    // before the in-scene particle flush so particle shaders can sample it
+    // WITHOUT a read-from-bound-attachment feedback loop (sceneDepthTex_ is the
+    // active depth attachment during the flush). Lazily allocated on the first
+    // copy (gated by MC2_VFX_SOFT_PARTICLES at the bridge) -> reads 0 and costs
+    // nothing until then. DEPTH24_STENCIL8, full-res, matches sceneDepthTex_ so
+    // glCopyImageSubData is a same-format copy.
+    GLuint getSceneDepthCopyTexture() const { return sceneDepthCopyTex_; }
+    void   copySceneDepthForParticles();
     // M1.5: readback hook for RenderWorld::lookupAtPixel.
     GLuint getSceneObjectIdTex() const { return sceneObjectIdTex_; }
     // WATER-REFLECTION-RESOURCE-1: 1/4-res reflection target (substrate only;
@@ -157,6 +166,7 @@ private:
     GLuint sceneDepthTex_;
     GLuint sceneNormalTex_;
     GLuint sceneObjectIdTex_ = 0;   // M1.5 R32UI MRT attachment-2 (gated on MC2_OBJECT_ID_BUFFER)
+    GLuint sceneDepthCopyTex_ = 0;  // VFX-SOFT-PARTICLES-MVP-1 lazy depth copy (DEPTH24_STENCIL8)
 
     // Bloom ping-pong FBOs (half resolution)
     GLuint bloomFBO_[2];

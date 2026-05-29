@@ -195,8 +195,8 @@ TEST_CASE("RenderDebugView out-of-range returns false") {
 // RendererFeatureRegistry
 // ---------------------------------------------------------------------------
 
-TEST_CASE("RendererFeatureRegistry COUNT is 34") {
-    CHECK(static_cast<int>(RendererFeature::COUNT) == 34);
+TEST_CASE("RendererFeatureRegistry COUNT is 36") {
+    CHECK(static_cast<int>(RendererFeature::COUNT) == 36);
 }
 
 TEST_CASE("RendererFeatureRegistry kFeatureTable length matches COUNT") {
@@ -239,6 +239,25 @@ TEST_CASE("RendererFeatureRegistry Track V post/grounding gates are registered d
         { RendererFeature::Ssao,        "MC2_SSAO" },
     };
     for (const Row& r : trackV) {
+        const EnvVarDesc& e = kFeatureTable[static_cast<int>(r.f)];
+        CHECK((e.kind == EnvVarKind::Feature));
+        CHECK(e.defaultOn == false);
+        REQUIRE(e.envVar != nullptr);
+        CHECK(std::strcmp(e.envVar, r.env) == 0);
+    }
+}
+
+TEST_CASE("RendererFeatureRegistry Track V VFX payoff gates are registered default-OFF") {
+    // TRACKV-VFX-PAYOFF-OPUS-1: VFX visual-payoff gates MUST be Feature-kind
+    // entries that default OFF, so a fresh checkout never silently enables a
+    // VFX visual change. Promoting one to default-ON is a deliberate edit in
+    // RendererFeatureRegistry.h AND here.
+    struct Row { RendererFeature f; const char* env; };
+    const Row vfx[] = {
+        { RendererFeature::VfxSoftParticles, "MC2_VFX_SOFT_PARTICLES" },
+        { RendererFeature::VfxLitParticles,  "MC2_VFX_LIT_PARTICLES" },
+    };
+    for (const Row& r : vfx) {
         const EnvVarDesc& e = kFeatureTable[static_cast<int>(r.f)];
         CHECK((e.kind == EnvVarKind::Feature));
         CHECK(e.defaultOn == false);
