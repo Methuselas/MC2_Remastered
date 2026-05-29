@@ -31,6 +31,19 @@ extern "C" float gos_vfx_getBrightness(void);
 extern "C" float gos_vfx_getAdditiveBrightness(void);
 extern float     gos_GetTerrainLightingV1Strength();
 extern float     gos_GetTerrainLightingV2Floor();
+// Getters for the post-stack keys (reader already had the setters above) so the
+// writer can round-trip the full reader vocabulary (fixes the 8-vs-13 asymmetry).
+extern float gos_GetBloomThreshold();
+extern float gos_GetBloomIntensity();
+extern float gos_GetSsaoRadius();
+extern float gos_GetSsaoStrength();
+extern float gos_GetSsaoBias();
+// MISSION-LIGHTING-PROFILE-FIELDS-1: mech lane ambient + specular. Both gates
+// (MC2_MECH_AMBIENT_V1 / MC2_MECH_SPECULAR_V1) are default-ON, so these are live.
+extern "C" void  batcher_setMechAmbientStrength(float s);
+extern "C" float batcher_getMechAmbientStrength();
+extern "C" void  batcher_setMechSpecularStrength(float s);
+extern "C" float batcher_getMechSpecularStrength();
 
 namespace {
 
@@ -189,6 +202,19 @@ static void applyKey(const char* key, float val, int& count) {
     } else if (strcmp(key, "aoBias") == 0) {
         gos_SetSsaoBias(val);
         count++;
+    } else if (strcmp(key, "mechAmbientStrength") == 0) {
+        // MISSION-LIGHTING-PROFILE-FIELDS-1: env value-var wins over profile,
+        // matching the IBL/water/VFX env-guard convention. Gate
+        // MC2_MECH_AMBIENT_V1 still controls whether the term is applied at all.
+        if (!envIsSet("MC2_MECH_AMBIENT_V1_STRENGTH")) {
+            batcher_setMechAmbientStrength(val);
+            count++;
+        }
+    } else if (strcmp(key, "mechSpecularStrength") == 0) {
+        if (!envIsSet("MC2_MECH_SPECULAR_STRENGTH")) {
+            batcher_setMechSpecularStrength(val);
+            count++;
+        }
     } else {
         static std::map<std::string,bool> s_warned;
         if (!s_warned[key]) {
@@ -290,6 +316,17 @@ bool visualTuning_saveCurrentToMission() {
     current["waterSkyTintStrength"]      = gos_GetWaterSkyTintStrength();
     current["vfxBrightness"]             = gos_vfx_getBrightness();
     current["vfxAdditiveBrightness"]     = gos_vfx_getAdditiveBrightness();
+    // Post-stack keys the reader already accepts but the writer used to drop
+    // (8-vs-13 asymmetry) -- round-trip them so "Set as Mission Defaults" keeps
+    // any live bloom/AO tuning instead of silently losing it.
+    current["bloomThreshold"]            = gos_GetBloomThreshold();
+    current["bloomIntensity"]            = gos_GetBloomIntensity();
+    current["aoRadius"]                  = gos_GetSsaoRadius();
+    current["aoStrength"]                = gos_GetSsaoStrength();
+    current["aoBias"]                    = gos_GetSsaoBias();
+    // MISSION-LIGHTING-PROFILE-FIELDS-1 mech lane.
+    current["mechAmbientStrength"]       = batcher_getMechAmbientStrength();
+    current["mechSpecularStrength"]      = batcher_getMechSpecularStrength();
 
     // Read existing file to preserve other missions and defaults.
     std::map<std::string,float> defs;

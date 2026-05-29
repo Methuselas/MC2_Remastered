@@ -62,8 +62,20 @@ Invalid values: clamped to safe range where applicable.
 | `waterSkyTintStrength` | float | ≥0 | `MC2_WATER_SKYTINT` | Sky horizon tint on water |
 | `vfxBrightness` | float | 0–8 | `MC2_TUNE_VFX_BRIGHTNESS` | Particle overall brightness |
 | `vfxAdditiveBrightness` | float | 0–8 | `MC2_TUNE_VFX_ADDITIVE_BRIGHTNESS` | Additive blend brightness |
+| `bloomThreshold` | float | ≥0 | — | Bloom bright-pass cutoff (visible only with `MC2_HDR_POST`+`MC2_BLOOM`) |
+| `bloomIntensity` | float | ≥0 | — | Bloom composite weight (same gating) |
+| `aoRadius` | float | ≥0 | — | SSAO sample radius (visible only with `MC2_SSAO`) |
+| `aoStrength` | float | ≥0 | — | SSAO darkening strength (same gating) |
+| `aoBias` | float | ≥0 | — | SSAO depth bias (same gating) |
+| `mechAmbientStrength` | float | 0–2 | `MC2_MECH_AMBIENT_V1_STRENGTH` | Mech hemisphere ambient fill (gate `MC2_MECH_AMBIENT_V1`, default-ON) |
+| `mechSpecularStrength` | float | 0–4 | `MC2_MECH_SPECULAR_STRENGTH` | Mech Blinn specular strength (gate `MC2_MECH_SPECULAR_V1`, default-ON) |
 
-Keys not in this list are silently skipped (warn once).
+Keys not in this list are silently skipped (warn once). The shipped
+`data/visual_tuning.json` `defaults` block intentionally lists only a subset;
+any key absent from the file falls back to the engine default (current behavior).
+Both the reader (`applyKey`) and the writer (`visualTuning_saveCurrentToMission`,
+the "Set as Mission Defaults" button) cover this full list, so live edits to any
+of these round-trip.
 
 ## Load timing
 
