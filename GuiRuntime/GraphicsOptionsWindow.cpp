@@ -1525,11 +1525,17 @@ void draw() {
             // the combo is hidden and endScene() forces Visual (byte-identical).
             if (gos_IsViewmodeFrameworkEnabled()) {
                 ImGui::SeparatorText("View Mode");
+                // Index == RenderCore::ViewMode value (0..5) so the combo
+                // selection maps straight to the mode int.
                 const char* kModeNames[] = {
                     "Visual (normal)",
                     "Object ID Debug",
+                    "Tactical Overlay",
+                    "Thermal (placeholder)",
+                    "Infrared (n/a)",
+                    "Low Light",
                 };
-                static const int kModeCount = 2;
+                static const int kModeCount = 6;
                 int curMode = gos_GetSelectedViewMode();
                 if (curMode < 0 || curMode >= kModeCount) curMode = 0;
                 if (ImGui::Combo("##viewmode", &curMode, kModeNames, kModeCount))
@@ -1537,8 +1543,20 @@ void draw() {
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip(
                         "Visual: normal rendered output (default).\n"
-                        "Object ID Debug: per-pixel ID colorization.\n"
-                        "  Requires MC2_OBJECT_ID_BUFFER=1.");
+                        "Object ID Debug: per-pixel ID colorization (needs MC2_OBJECT_ID_BUFFER=1).\n"
+                        "Tactical Overlay: drawn in-scene by the debug renderer\n"
+                        "  (MC2_DEBUG_RENDERER=1 + MC2_TACTICAL_ARC_OVERLAY=1); here it is a passthrough.\n"
+                        "Thermal: luminance->iron-palette PLACEHOLDER (not real IR).\n"
+                        "Infrared: no implementer (passthrough).\n"
+                        "Low Light: night-vision luminance boost + green tint.");
+                // LOWLIGHT-NIGHTVISION-MVP-1: live tuners (only meaningful in Low Light).
+                if (curMode == 5) {
+                    ImGui::Indent();
+                    float gain = gos_GetLowLightGain();
+                    if (ImGui::SliderFloat("Gain##lowlight", &gain, 0.1f, 16.0f))
+                        gos_SetLowLightGain(gain);
+                    ImGui::Unindent();
+                }
             }
 
             ImGui::SeparatorText("Legacy / shared");
