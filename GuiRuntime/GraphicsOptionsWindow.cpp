@@ -1520,6 +1520,27 @@ void draw() {
                 }
                 ImGui::Unindent();
             }
+            // VIEWMODE-POSTPROCESS-PRESENTATION-1: view-mode selector.
+            // Gated on MC2_VIEWMODE_FRAMEWORK (resolved once at init); when OFF
+            // the combo is hidden and endScene() forces Visual (byte-identical).
+            if (gos_IsViewmodeFrameworkEnabled()) {
+                ImGui::SeparatorText("View Mode");
+                const char* kModeNames[] = {
+                    "Visual (normal)",
+                    "Object ID Debug",
+                };
+                static const int kModeCount = 2;
+                int curMode = gos_GetSelectedViewMode();
+                if (curMode < 0 || curMode >= kModeCount) curMode = 0;
+                if (ImGui::Combo("##viewmode", &curMode, kModeNames, kModeCount))
+                    gos_SetSelectedViewMode(curMode);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(
+                        "Visual: normal rendered output (default).\n"
+                        "Object ID Debug: per-pixel ID colorization.\n"
+                        "  Requires MC2_OBJECT_ID_BUFFER=1.");
+            }
+
             ImGui::SeparatorText("Legacy / shared");
 
             ImGui::Checkbox("Bloom", &pp->bloomEnabled_);

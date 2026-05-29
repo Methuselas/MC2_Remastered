@@ -257,6 +257,13 @@ gosPostProcess* getGosPostProcess();
 float gos_GetExposure();
 void  gos_SetExposure(float v);
 
+// VIEWMODE-POSTPROCESS-PRESENTATION-1: view-mode framework accessors.
+// Gate MC2_VIEWMODE_FRAMEWORK resolved once at init(). When OFF, GetSelectedViewMode
+// returns 0 (Visual) regardless of what ImGui has set. Pattern mirrors gos_SetExposure.
+bool gos_IsViewmodeFrameworkEnabled();
+int  gos_GetSelectedViewMode();   // returns 0 when gate OFF
+void gos_SetSelectedViewMode(int m);  // called from ImGui combo; clamped by caller
+
 // TRACK-V post stack accessors (resolved from env at init; see gos_postprocess.cpp).
 bool gos_IsHdrPostEnabled();
 // BLOOM-MVP-1 tunables (profile + ImGui).

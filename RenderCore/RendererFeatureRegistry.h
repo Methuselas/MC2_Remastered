@@ -166,7 +166,9 @@ enum class RendererFeature : int {
     // default-ON is a deliberate edit here AND in that test.
     VfxSoftParticles         = 34,  // MC2_VFX_SOFT_PARTICLES
     VfxLitParticles          = 35,  // MC2_VFX_LIT_PARTICLES
-    COUNT                    = 36,
+    // VIEWMODE-POSTPROCESS-PRESENTATION-1: view-mode presentation framework.
+    ViewmodeFramework        = 36,  // MC2_VIEWMODE_FRAMEWORK
+    COUNT                    = 37,
 };
 
 // ---------------------------------------------------------------------------
@@ -463,6 +465,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "VFX-LIT-PARTICLES-MVP-1 (Track V): simple directional+ambient lighting for alpha-blended smoke/dust particles. When =1, particle_billboard.frag applies a wrapped hemispheric sun+ambient fill sourced from the global camera lighting (eye->lightDirection / lightRGB / ambientRGB, the same source terrain uses) to non-additive groups (u_vfxIsAdditive==0) only; additive flashes/lasers/PPC stay self-emissive/unlit. Strength is the MC2_TUNE_VFX_LIT_STRENGTH startup default / vfxLitStrength per-mission profile key / live ImGui slider. Default-OFF; when OFF the lit term resolves to identity (tex*v_color) -> byte-identical. No new SSBO/struct/ABI; no per-fragment normal (billboard). Visual-only; no geometry/objectId/UI/gameplay change. No effect when MC2_GPU_PARTICLES=0."
+    },
+    // ViewmodeFramework
+    {
+        "MC2_FEATURE_VIEWMODE_FRAMEWORK",
+        "MC2_VIEWMODE_FRAMEWORK",
+        EnvVarKind::Feature,
+        false,
+        "VIEWMODE-POSTPROCESS-PRESENTATION-1: enables the view-mode presentation framework that wires ViewMode::ObjectIdDebug (and future sensor modes) through the postprocess composite pass. Default-OFF; when OFF endScene forces u_viewMode=0 (Visual) and the ImGui combo is not rendered -> byte-identical. When ON, u_viewMode and u_objectIdTex are set on compositeProg_ each frame; ObjectIdDebug also requires MC2_OBJECT_ID_BUFFER=1 (sceneObjectIdTex_ non-zero). No new SSBOs, UBOs, or render targets. No scene-shader changes. Visual-only presentation overlay."
     },
 };
 

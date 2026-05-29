@@ -12,6 +12,14 @@ uniform int enableTonemap;    // 0 = off (passthrough), 1 = on
 uniform float bloomIntensity; // bloom mix strength
 uniform vec2 inverseScreenSize; // 1/width, 1/height
 
+// VIEWMODE-POSTPROCESS-PRESENTATION-1: presentation-mode uniforms.
+// u_viewMode: 0=Visual (default, byte-identical), 1=ObjectIdDebug.
+// u_objectIdTex: GL_R32UI object-ID buffer (usampler2D, not sampler2D).
+// Both are only read when MC2_VIEWMODE_FRAMEWORK is active; u_viewMode
+// defaults to 0 so the Visual path is never disturbed when the gate is OFF.
+uniform int u_viewMode;                // 0=Visual, 1=ObjectIdDebug
+uniform usampler2D u_objectIdTex;     // unit 2: sceneObjectIdTex_ (GL_R32UI)
+
 // ACES Filmic tonemapping (Krzysztof Narkowicz fit)
 // Note: designed for linear HDR input. Our pipeline is sRGB so this acts
 // as a gentle contrast/color curve rather than true HDR compression.
@@ -124,4 +132,22 @@ void main()
     }
 
     FragColor = vec4(color, 1.0);
+
+    // VIEWMODE-POSTPROCESS-PRESENTATION-1: ObjectIdDebug overlay.
+    // Overrides FragColor when u_viewMode == 1. All other values fall through
+    // to the Visual path above (byte-identical). No sampling of u_objectIdTex
+    // occurs in the Visual path — the sampler binding is safe to leave unread.
+    if (u_viewMode == 1) {
+        uint id = texture(u_objectIdTex, TexCoord).r;
+        if (id == 0u) {
+            // No object at this pixel — dark grey background
+            FragColor = vec4(0.1, 0.1, 0.1, 1.0);
+        } else {
+            // Hash id to a stable RGB color per object
+            float r = float((id       ) & 0xFFu) / 255.0;
+            float g = float((id >>  8u) & 0xFFu) / 255.0;
+            float b = float((id >> 16u) & 0xFFu) / 255.0;
+            FragColor = vec4(r, g, b, 1.0);
+        }
+    }
 }

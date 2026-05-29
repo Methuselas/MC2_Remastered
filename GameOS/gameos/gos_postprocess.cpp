@@ -69,6 +69,17 @@ gosPostProcess* getGosPostProcess()
     return s_postProcess;
 }
 
+// VIEWMODE-POSTPROCESS-PRESENTATION-1: module-level selected view mode.
+// 0 = Visual (default, byte-identical), 1 = ObjectIdDebug.
+// Written by ImGui combo (gated MC2_VIEWMODE_FRAMEWORK); read in endScene().
+// Pattern mirrors gos_SetExposure/gos_GetExposure.
+static bool s_viewmodeFrameworkEnabled = false;
+static int  s_selectedViewMode         = 0;  // ViewMode::Visual
+
+bool  gos_IsViewmodeFrameworkEnabled() { return s_viewmodeFrameworkEnabled; }
+int   gos_GetSelectedViewMode()        { return s_viewmodeFrameworkEnabled ? s_selectedViewMode : 0; }
+void  gos_SetSelectedViewMode(int m)   { s_selectedViewMode = m; }
+
 float gos_GetExposure() { return s_postProcess ? s_postProcess->exposure_ : 1.0f; }
 void  gos_SetExposure(float v) { if (s_postProcess) s_postProcess->exposure_ = (v < 0.0f ? 0.0f : v); }
 
@@ -350,6 +361,16 @@ void gosPostProcess::init(int w, int h)
                 std::fprintf(stderr, "[SHADOW_DEBUG] MC2_SHADOW_DEBUG_MODE=%s (unrecognized, using OFF)\n", sdEnv);
             }
         }
+    }
+
+    // VIEWMODE-POSTPROCESS-PRESENTATION-1: resolve MC2_VIEWMODE_FRAMEWORK once.
+    // Default OFF -> u_viewMode forced 0, ImGui combo not rendered,
+    // endScene() output byte-identical to baseline.
+    {
+        const char* vmEnv = getenv("MC2_VIEWMODE_FRAMEWORK");
+        s_viewmodeFrameworkEnabled = (vmEnv && vmEnv[0] && vmEnv[0] != '0');
+        std::fprintf(stderr, "[VIEWMODE v1] framework=%d (MC2_VIEWMODE_FRAMEWORK=%s)\n",
+                     s_viewmodeFrameworkEnabled ? 1 : 0, vmEnv ? vmEnv : "(unset)");
     }
 
     initShadows();
@@ -1200,6 +1221,30 @@ void gosPostProcess::endScene()
 
         float invSize[2] = { 1.0f / (float)width_, 1.0f / (float)height_ };
         compositeProg_->setFloat2("inverseScreenSize", invSize);
+
+        // VIEWMODE-POSTPROCESS-PRESENTATION-1: resolve effective view mode.
+        // Gate OFF -> forced 0 (Visual). ObjectIdDebug requires sceneObjectIdTex_;
+        // if it is 0 (MC2_OBJECT_ID_BUFFER not set) we fall back to Visual and
+        // warn once so the caller knows why the debug view is blank.
+        int effectiveMode = gos_GetSelectedViewMode();
+        if (effectiveMode == 1 && sceneObjectIdTex_ == 0) {
+            static bool s_warnedOidMissing = false;
+            if (!s_warnedOidMissing) {
+                std::fprintf(stderr,
+                    "[VIEWMODE v1] ObjectIdDebug requested but sceneObjectIdTex_=0 "
+                    "(MC2_OBJECT_ID_BUFFER not set); falling back to Visual\n");
+                s_warnedOidMissing = true;
+            }
+            effectiveMode = 0;
+        }
+        compositeProg_->setInt("u_viewMode", effectiveMode);
+
+        // u_objectIdTex is always declared in the shader at unit 2.
+        // The sampler is only read when effectiveMode==1 (and sceneObjectIdTex_ != 0).
+        // In the Visual path the sampler goes unread, so the unit-2 binding
+        // does not matter — but we still set the uniform to keep drivers happy.
+        compositeProg_->setInt("u_objectIdTex", 2);
+
         compositeProg_->apply();
 
         // Bind scene color texture to unit 0
@@ -1209,6 +1254,15 @@ void gosPostProcess::endScene()
         // Bind bloom texture to unit 1 (unused for now, bind first bloom tex)
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, bloomColorTex_[0]);
+
+        // Bind object-ID texture to unit 2 (GL_R32UI; read only in ObjectIdDebug mode).
+        // Only bind when the texture exists — if sceneObjectIdTex_==0 effectiveMode
+        // was already forced back to 0 above so the usampler2D goes unread.
+        // Do NOT bind a mismatched type (float tex to usampler2D) as that causes GL errors.
+        if (sceneObjectIdTex_ != 0) {
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, sceneObjectIdTex_);
+        }
 
         // Draw the fullscreen quad
         glBindVertexArray(quadVAO_);

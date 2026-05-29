@@ -55,6 +55,13 @@
           "name": "inverseScreenSize",
           "offset": 24,
           "type": "vec2"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_viewMode",
+          "offset": 32,
+          "type": "int"
         }
       ],
       "name": "gl_DefaultUniformBlock"
