@@ -247,6 +247,15 @@ public:
     // upstream by the Building population filter.
     void drawStaticBuildingShadows(const std::vector<GpuStaticPropInstance>& instances);
 
+    // SHADOW-DYNAMIC-PROP-CASTERS-1: depth-only draw of registry-supplied
+    // NON-building prop leaves (trees/fences/props, visibility-INDEPENDENT) into
+    // the currently-bound DYNAMIC shadow FBO using the per-frame dynamic light
+    // matrix. Same machinery as drawStaticBuildingShadows but bound to
+    // getDynamicLightSpaceMatrix() and rebuilt every frame; replaces the
+    // camera-visible s_typeRanges feed (flushShadow) which only admitted props
+    // near the camera. Caller must bracket with gos_BeginDynamicShadowPass().
+    void drawDynamicPropShadows(const std::vector<GpuStaticPropInstance>& instances);
+
     // Debug: color-address validation mode. 0=off, 1=gradient, 2=hash.
     void setDebugAddrMode(int mode);
     int  getDebugAddrMode() const { return debugAddrMode_; }

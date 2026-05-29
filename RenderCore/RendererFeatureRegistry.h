@@ -419,6 +419,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "SHADOW-STATIC-BUILDINGS-2: replay ALL registered rigid-building recipes (full registry, visibility-independent) into the world-fixed static shadow map, once per mission at the static-map build. Trees excluded (population filter). Default-OFF; =1 enables, =2 enables+trace. Independent of MC2_SHADOW_ENABLE. Requires C-pre min-combine. Debt: destroyed buildings keep stale static shadow until mission reload."
     },
     {
+        "MC2_FEATURE_SHADOW_DYNAMIC_PROP_CASTERS",
+        "MC2_SHADOW_DYNAMIC_PROP_CASTERS",
+        EnvVarKind::Feature,
+        false,
+        "SHADOW-DYNAMIC-PROP-CASTERS-1: feed the per-frame DYNAMIC sun-shadow caster pass from the full registry (ALL non-building props, visibility-independent) instead of the camera-visible s_typeRanges set, which only admitted props near the camera (so distant trees never cast into the now-correctly-camera-fit dynamic map). Default-OFF; =1 enables, =2 enables+trace. Requires MC2_SHADOW_ENABLE; pairs with MC2_STATIC_PROP_BUILDING_SHADOW (buildings cast via the static map). Debt: no light-box cull yet (draws all map props every frame); HZB planned."
+    },
+    {
         "MC2_TUNE_STATIC_PROP_IBL_SH_SET",
         "MC2_STATIC_PROP_IBL_SH_SET",
         EnvVarKind::Trace,

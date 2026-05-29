@@ -2045,7 +2045,28 @@ void MC_TextureManager::renderLists (void)
 			static const bool s_skipBldgInDynamic =
 				(getenv("MC2_STATIC_PROP_BUILDING_SHADOW") != nullptr &&
 				 getenv("MC2_STATIC_PROP_BUILDING_SHADOW")[0] != '0');
-			GpuStaticPropBatcher::instance().flushShadow(s_skipBldgInDynamic);
+			// SHADOW-DYNAMIC-PROP-CASTERS-1 (gate, default OFF): the camera-visible
+			// flushShadow feed (s_typeRanges) only admits props the camera frustum
+			// cull marked visible this frame, so most trees never cast into the (now
+			// correctly camera-fit) dynamic map -- only the few nearest the camera.
+			// When enabled, replay ALL registered NON-building props from the
+			// registry (visibility-independent) into the dynamic map instead, so
+			// every tree/prop in the light box casts. Buildings keep casting via the
+			// world-fixed static map, so this pairs with MC2_STATIC_PROP_BUILDING_SHADOW
+			// (with that OFF, buildings get no dynamic shadow -- intended for the
+			// combined config). flushShadow is skipped entirely in this mode (it would
+			// only double-draw the camera-visible subset). Mechs still cast via their
+			// own batcher. Gate OFF -> byte-identical to prior behavior.
+			static const bool s_dynPropCasters =
+				(getenv("MC2_SHADOW_DYNAMIC_PROP_CASTERS") != nullptr &&
+				 getenv("MC2_SHADOW_DYNAMIC_PROP_CASTERS")[0] != '0');
+			if (s_dynPropCasters) {
+				static std::vector<GpuStaticPropInstance> s_dynPropInsts; // reused; accessor clears
+				GpuStaticPropRegistry::getDynamicPropShadowInstances(s_dynPropInsts);
+				GpuStaticPropBatcher::instance().drawDynamicPropShadows(s_dynPropInsts);
+			} else {
+				GpuStaticPropBatcher::instance().flushShadow(s_skipBldgInDynamic);
+			}
 			GpuMechBatcher::instance().flushShadow();
 			gos_EndDynamicShadowPass();
 		}

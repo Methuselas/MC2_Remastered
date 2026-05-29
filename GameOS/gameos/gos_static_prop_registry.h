@@ -138,6 +138,14 @@ void setRecipePopulation(int32_t recipeIndex, GpuStaticPropPopulation pop);
 // Reads the full registry, not per-frame buckets. Trees/unset excluded.
 void getBuildingShadowInstances(std::vector<GpuStaticPropInstance>& out);
 
+// SHADOW-DYNAMIC-PROP-CASTERS-1: append all non-tombstoned NON-BUILDING recipe
+// leaves (trees/fences/generic props; baked modelMatrix + typeID) to `out`.
+// Visibility-independent (full registry, NOT per-frame markVisible buckets), so
+// the dynamic shadow pass admits EVERY prop, not just the camera-visible subset
+// that reached s_typeRanges. Buildings are excluded (they cast via the world-
+// fixed static map). Inverse filter of getBuildingShadowInstances.
+void getDynamicPropShadowInstances(std::vector<GpuStaticPropInstance>& out);
+
 // Returns RecipeRange::extentRadius. Value is from the previous frame's markVisible()
 // call; 0.0f if markVisible was never called for this recipe.
 bool staticPropGetExtentRadius(int32_t recipeIndex, float* out);
