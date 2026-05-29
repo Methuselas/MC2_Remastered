@@ -119,6 +119,18 @@ CardCloud specifics vs the (abandoned) PointCloud plan: CardCloud has no
 `m_scale*sqrt(m_halfX²+m_halfY²)`, and dead slots (`m_age>=1`) are filtered.
 Per-particle rotation/aspect/UV-frame are deferred (existing 64B record).
 
+**ShardCloud added (VFX-ORIGINAL-SHARDCLOUD-ABI-1).** Same CPU-oracle render
+bridge under the same `MC2_VFX_ORACLE_RENDER` gate. ShardCloud is also
+SpinningCloud→ParticleCloud (~25 live in tier1): center =
+`GetParticle(i)->m_localTranslation`, color = `m_P_color[i*3]` (per-VERTEX,
+3 per shard triangle, written in `ShardCloud::AnimateParticle`), size =
+`m_scale*m_radius`, dead slots filtered. The shard **triangle shape**
+(`m_angle`), per-particle rotation, and UV frame are DEFERRED — this slice
+renders an approximate billboard (center+color+size). Both CardCloud and
+ShardCloud are now covered by the bridge; the 64B record remains sufficient
+for approximate billboard parity. Triangle/rotation/aspect fidelity needs the
+ABI-extension follow-up.
+
 ### Phase 1 detail (the executable first slice)
 
 - New gate (proposed `MC2_VFX_ORACLE_RENDER`, default OFF): when OFF, the

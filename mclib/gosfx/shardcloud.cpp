@@ -4,6 +4,7 @@
 // B1 Stage 2' C8: subclass-Start routing into the GPU particle pipeline.
 #include"particles/batcher.h"
 #include"particles/spawn.h"
+#include<cstdio>   // VFX-ORACLE diagnostics
 
 //==========================================================================//
 // File:	 gosFX_ShardCloud.cpp											//
@@ -320,7 +321,98 @@ void gosFX::ShardCloud::Draw(DrawInfo *info)
 	// filled the batcher for one frame (until the first Flush()), leaving the
 	// batcher empty for all subsequent frames.
 	if (mc2::particles::Batcher::is_enabled()) {
-		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
+		if (mc2::particles::Batcher::is_oracle_render_enabled()) {
+			// VFX-ORIGINAL-SHARDCLOUD-ABI-1 (Phase 1, ShardCloud): CPU-oracle
+			// render, mirroring the CardCloud bridge. ParticleCloud::Execute
+			// (runs every frame under GPU mode) keeps each live particle current:
+			// m_localTranslation + m_scale are advanced per-frame, m_P_color is
+			// recomputed in ShardCloud::AnimateParticle (per-VERTEX, 3 per shard,
+			// so particle i's color is m_P_color[i*3]), and m_radius/m_angle are
+			// per-particle birth-time values (CreateNewParticle). Emit one GPU
+			// billboard per LIVE shard (m_age<1) from that real data. CPU sim
+			// stays authoritative; legacy MLR draw stays skipped (no dual-draw).
+			// DEFERRED to the ABI-extension follow-up: the shard TRIANGLE shape
+			// (m_angle), per-particle rotation (m_localRotation), and per-particle
+			// UV frame — not representable in the existing 64B GpuParticle record.
+			// This slice renders an approximate billboard (center+color+size).
+			if (m_activeParticleCount > 0 && m_P_color) {
+				Specification *spec = GetSpecification();
+				Check_Object(spec);
+				const uint32_t mlrTex =
+					static_cast<uint32_t>(spec->m_state.GetTextureHandle());
+				int blendMode = 0;
+				{
+					const MidLevelRenderer::MLRState::AlphaMode am =
+						spec->m_state.GetAlphaMode();
+					if (am == MidLevelRenderer::MLRState::OneOneMode ||
+					    am == MidLevelRenderer::MLRState::AlphaOneMode)
+						blendMode = 1;
+				}
+				// Same effect->world transform the legacy ShardCloud::Draw feeds
+				// to MLR as effectToWorld.
+				Stuff::LinearMatrix4D local_to_world;
+				local_to_world.Multiply(m_localToParent, *info->m_parentToWorld);
+
+				mc2::particles::Batcher &batcher = mc2::particles::Batcher::Instance();
+				batcher.BeginGroup(mlrTex, 0.0f, 0.0f, 1.0f, 1.0f, blendMode);
+
+				int harvested = 0;
+				float minA =  3.0e38f, maxA = -3.0e38f;
+				for (int i = 0; i < m_activeParticleCount; ++i) {
+					Particle *p = GetParticle(i);
+					Check_Object(p);
+					if (p->m_age >= 1.0f) continue;   // skip dead slots (legacy filter)
+					Stuff::Point3D wc;
+					wc.Multiply(p->m_localTranslation, local_to_world);
+					// Billboard radius from per-particle scaled shard radius
+					// (triangle shape/angle collapsed — deferred).
+					const Stuff::Scalar radius = p->m_scale * p->m_radius;
+					// Color array is per-VERTEX (3 per shard); particle i -> i*3.
+					const Stuff::RGBAColor &c = m_P_color[i * 3];
+					mc2::particles::GpuParticle gp = {};
+					gp.position[0] = wc.x;
+					gp.position[1] = wc.y;
+					gp.position[2] = wc.z;
+					gp.color[0]    = c.red;
+					gp.color[1]    = c.green;
+					gp.color[2]    = c.blue;
+					gp.color[3]    = c.alpha;
+					gp.size        = static_cast<float>(radius);
+					gp.atlasIndex  = mlrTex;
+					batcher.Emit(gp);
+					++harvested;
+					if (c.alpha < minA) minA = c.alpha;
+					if (c.alpha > maxA) maxA = c.alpha;
+				}
+
+				// [VFX_ORACLE v1] diagnostics (mirror CardCloud). harvested =
+				// LIVE count (active minus dead m_age>=1 slots) == emitted.
+				if (mc2::particles::Batcher::is_log_enabled()) {
+					static bool s_first = false;
+					if (!s_first && harvested > 0) {
+						s_first = true;
+						std::fprintf(stderr,
+							"[VFX_ORACLE v1] class=ShardCloud FIRST_HARVEST active=%d harvested=%d alpha=[%.3f,%.3f]\n",
+							m_activeParticleCount, harvested,
+							static_cast<double>(minA), static_cast<double>(maxA));
+						std::fflush(stderr);
+					}
+					static unsigned long long s_calls = 0, s_harvTotal = 0;
+					s_harvTotal += static_cast<unsigned>(harvested);
+					if ((++s_calls % 240ull) == 0ull) {
+						const double aLo = (harvested > 0) ? static_cast<double>(minA) : 0.0;
+						const double aHi = (harvested > 0) ? static_cast<double>(maxA) : 0.0;
+						std::fprintf(stderr,
+							"[VFX_ORACLE v1] class=ShardCloud calls=%llu active_this_call=%d harvested_this_call=%d emitted_this_call=%d harvestedTotal=%llu fallback=0 alpha_this_call=[%.3f,%.3f]\n",
+							s_calls, m_activeParticleCount, harvested, harvested,
+							s_harvTotal, aLo, aHi);
+						std::fflush(stderr);
+					}
+				}
+			}
+		} else {
+			(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
+		}
 		SpinningCloud::Draw(info);
 		return;
 	}
