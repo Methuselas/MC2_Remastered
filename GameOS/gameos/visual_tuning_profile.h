@@ -12,6 +12,7 @@
 // Override profile path with env var MC2_VISUAL_TUNING_FILE.
 
 void visualTuning_applyProfile(const char* missionName);
+bool visualTuning_saveCurrentToMission();  // write current slider state to JSON for active mission
 
 const char* visualTuning_getProfilePath();
 const char* visualTuning_getActiveMission();

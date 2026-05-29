@@ -20,8 +20,12 @@ extern float gos_GetWaterSkyTintStrength();
 extern void  gos_SetWaterSkyTintStrength(float v);
 extern float gos_GetExposure();
 extern void  gos_SetExposure(float v);
-extern "C" void gos_vfx_setBrightness(float v);
-extern "C" void gos_vfx_setAdditiveBrightness(float v);
+extern "C" void  gos_vfx_setBrightness(float v);
+extern "C" void  gos_vfx_setAdditiveBrightness(float v);
+extern "C" float gos_vfx_getBrightness(void);
+extern "C" float gos_vfx_getAdditiveBrightness(void);
+extern float     gos_GetTerrainLightingV1Strength();
+extern float     gos_GetTerrainLightingV2Floor();
 
 namespace {
 
@@ -170,6 +174,35 @@ static void applyKey(const char* key, float val, int& count) {
     }
 }
 
+static void writeJsonFloatObj(FILE* f, const std::map<std::string,float>& obj, int depth) {
+    const char* inner = (depth == 1) ? "    " : "      ";
+    const char* close = (depth == 1) ? "  "   : "    ";
+    fprintf(f, "{\n");
+    bool first = true;
+    for (auto& kv : obj) {
+        if (!first) fprintf(f, ",\n");
+        first = false;
+        fprintf(f, "%s\"%s\": %g", inner, kv.first.c_str(), kv.second);
+    }
+    fprintf(f, "\n%s}", close);
+}
+
+static void writeJson(FILE* f,
+                      const std::map<std::string,float>& defs,
+                      const std::map<std::string, std::map<std::string,float>>& missions) {
+    fprintf(f, "{\n  \"defaults\": ");
+    writeJsonFloatObj(f, defs, 1);
+    fprintf(f, ",\n  \"missions\": {\n");
+    bool firstM = true;
+    for (auto& mkv : missions) {
+        if (!firstM) fprintf(f, ",\n");
+        firstM = false;
+        fprintf(f, "    \"%s\": ", mkv.first.c_str());
+        writeJsonFloatObj(f, mkv.second, 2);
+    }
+    fprintf(f, "\n  }\n}\n");
+}
+
 } // namespace
 
 void visualTuning_applyProfile(const char* missionName) {
@@ -219,3 +252,51 @@ const char* visualTuning_getProfilePath()     { return s_profilePath; }
 const char* visualTuning_getActiveMission()   { return s_activeMission; }
 bool        visualTuning_hasProfileFile()     { return s_hasFile; }
 int         visualTuning_getAppliedKeyCount() { return s_appliedKeys; }
+
+bool visualTuning_saveCurrentToMission() {
+    if (!s_activeMission[0]) return false;
+
+    // Snapshot all current tunable values.
+    std::map<std::string,float> current;
+    current["exposure"]                  = gos_GetExposure();
+    current["shadowSoftness"]            = gos_GetTerrainShadowSoftness();
+    current["terrainLightingV1Strength"] = gos_GetTerrainLightingV1Strength();
+    current["terrainLightingV2Floor"]    = gos_GetTerrainLightingV2Floor();
+    current["staticPropIblStrength"]     = g_iblShStrength;
+    current["waterSkyTintStrength"]      = gos_GetWaterSkyTintStrength();
+    current["vfxBrightness"]             = gos_vfx_getBrightness();
+    current["vfxAdditiveBrightness"]     = gos_vfx_getAdditiveBrightness();
+
+    // Read existing file to preserve other missions and defaults.
+    std::map<std::string,float> defs;
+    std::map<std::string, std::map<std::string,float>> missions;
+    FILE* f = fopen(s_profilePath, "r");
+    if (f) {
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f); rewind(f);
+        if (sz > 0 && sz <= 512 * 1024) {
+            std::string buf((size_t)sz, '\0');
+            fread(&buf[0], 1, (size_t)sz, f);
+            TinyJson jp{ buf.c_str(), buf.c_str() + buf.size() };
+            jp.root(defs, missions);
+        }
+        fclose(f);
+    }
+
+    missions[s_activeMission] = current;
+
+    FILE* out = fopen(s_profilePath, "w");
+    if (!out) {
+        fprintf(stderr, "[VisualTuning] cannot write '%s'\n", s_profilePath);
+        return false;
+    }
+    writeJson(out, defs, missions);
+    fclose(out);
+
+    // Keep state consistent: next Reset to Profile will re-apply what we just saved.
+    s_hasFile    = true;
+    s_appliedKeys = (int)current.size();
+    fprintf(stderr, "[VisualTuning] saved %d keys for mission '%s' to '%s'\n",
+            (int)current.size(), s_activeMission, s_profilePath);
+    return true;
+}

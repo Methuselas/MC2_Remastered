@@ -71,6 +71,7 @@ extern "C" void  gos_vfx_setAdditiveBrightness(float v);
 extern "C" void  gos_vfx_setAlphaScale(float v);
 // MISSION-VISUAL-TUNING-1: profile status accessors (defined in visual_tuning_profile.cpp)
 void        visualTuning_applyProfile(const char* missionName);
+bool        visualTuning_saveCurrentToMission();
 const char* visualTuning_getProfilePath();
 const char* visualTuning_getActiveMission();
 bool        visualTuning_hasProfileFile();
@@ -1538,6 +1539,22 @@ void draw() {
             visualTuning_applyProfile(mission[0] ? mission : nullptr);
         ImGui::SameLine();
         ImGui::TextDisabled("re-applies profile; ImGui sliders override after");
+
+        static int s_saveFlash = 0;
+        if (mission[0]) {
+            if (ImGui::Button("Set as Mission Defaults")) {
+                s_saveFlash = visualTuning_saveCurrentToMission() ? 120 : -120;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("writes current slider state to JSON for '%s'", mission);
+        }
+        if (s_saveFlash > 0) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Saved!");
+            s_saveFlash--;
+        } else if (s_saveFlash < 0) {
+            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Write failed!");
+            s_saveFlash++;
+        }
     }
 
     ImGui::Separator();
