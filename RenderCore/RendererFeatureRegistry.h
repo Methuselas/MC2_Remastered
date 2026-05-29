@@ -589,6 +589,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "VFX-TUNING-UI-1: startup-default for the GPU-particle alpha (opacity) scale (particle_billboard.frag u_vfxAlphaScale, applied to ALL particles). Clamped 0..8. Unset/empty -> 1.0 (byte-identical no-op). Graphics Options 'VFX Tuning > Opacity' slider overrides at runtime (gos_vfx_setAlphaScale). Look-only — no emission/lifetime/timing change. No effect when MC2_GPU_PARTICLES=0."
     },
+    {
+        "MC2_DIAG_SSAO_DEBUG",
+        "MC2_SSAO_DEBUG",
+        EnvVarKind::Trace,
+        false,
+        "SSAO-GTAO-LITE-MVP-1: when set with MC2_SSAO=1, the SSAO apply pass OVERWRITES the scene with the half-res AO buffer as grayscale (blend disabled) instead of multiplying, so the raw occlusion can be inspected. Diagnostic-only; no effect when MC2_SSAO is off. Default-OFF."
+    },
 };
 
 // ---------------------------------------------------------------------------

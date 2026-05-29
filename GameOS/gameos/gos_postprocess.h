@@ -127,6 +127,17 @@ public:
     bool shorelineEnabled_;
     void runShoreline();
 
+    // SSAO-GTAO-LITE-MVP-1 (Track V, MC2_SSAO). Half-res world-space AO.
+    // Default OFF -> runSSAO() is skipped entirely (byte-identical). Resolved
+    // from env at init; tunables ImGui- and profile-adjustable.
+    bool  ssaoEnabled_;
+    int   ssaoDebug_;       // 0 = multiplicative apply, 1 = show AO grayscale
+    float aoRadius_;        // world-unit sample radius
+    float aoStrength_;      // 0..2 occlusion strength
+    float aoBias_;          // window-depth compare bias
+    float aoPower_;         // contrast curve
+    void runSSAO();
+
     void setInverseViewProj(const float* m) { memcpy(inverseViewProj_, m, 16 * sizeof(float)); }
     void setViewProj(const float* m) { memcpy(viewProj_, m, 16 * sizeof(float)); }
     const float* getInverseViewProj() const { return inverseViewProj_; }
@@ -220,6 +231,14 @@ private:
 
     // Shoreline
     glsl_program* shorelineProg_;
+
+    // SSAO (half resolution)
+    GLuint        ssaoFBO_      = 0;
+    GLuint        ssaoColorTex_ = 0;   // GL_R16F half-res AO
+    int           ssaoW_        = 0;
+    int           ssaoH_        = 0;
+    glsl_program* ssaoProg_      = nullptr;
+    glsl_program* ssaoApplyProg_ = nullptr;
 };
 
 gosPostProcess* getGosPostProcess();
@@ -235,5 +254,13 @@ void  gos_SetBloomThreshold(float v);
 void  gos_SetBloomIntensity(float v);
 float gos_GetBloomThreshold();
 float gos_GetBloomIntensity();
+// SSAO-GTAO-LITE-MVP-1 tunables (profile + ImGui).
+bool  gos_IsSsaoEnabled();
+void  gos_SetSsaoRadius(float v);
+void  gos_SetSsaoStrength(float v);
+void  gos_SetSsaoBias(float v);
+float gos_GetSsaoRadius();
+float gos_GetSsaoStrength();
+float gos_GetSsaoBias();
 
 #endif // GOS_POSTPROCESS_H

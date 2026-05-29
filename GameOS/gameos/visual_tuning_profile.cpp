@@ -22,6 +22,9 @@ extern float gos_GetExposure();
 extern void  gos_SetExposure(float v);
 extern void  gos_SetBloomThreshold(float v);
 extern void  gos_SetBloomIntensity(float v);
+extern void  gos_SetSsaoRadius(float v);
+extern void  gos_SetSsaoStrength(float v);
+extern void  gos_SetSsaoBias(float v);
 extern "C" void  gos_vfx_setBrightness(float v);
 extern "C" void  gos_vfx_setAdditiveBrightness(float v);
 extern "C" float gos_vfx_getBrightness(void);
@@ -174,6 +177,17 @@ static void applyKey(const char* key, float val, int& count) {
         count++;
     } else if (strcmp(key, "bloomIntensity") == 0) {
         gos_SetBloomIntensity(val);
+        count++;
+    } else if (strcmp(key, "aoRadius") == 0) {
+        // SSAO-GTAO-LITE-MVP-1: per-mission AO tunables. Only visible when
+        // MC2_SSAO is on; harmless otherwise (writes member).
+        gos_SetSsaoRadius(val);
+        count++;
+    } else if (strcmp(key, "aoStrength") == 0) {
+        gos_SetSsaoStrength(val);
+        count++;
+    } else if (strcmp(key, "aoBias") == 0) {
+        gos_SetSsaoBias(val);
         count++;
     } else {
         static std::map<std::string,bool> s_warned;

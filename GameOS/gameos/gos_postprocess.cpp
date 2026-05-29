@@ -84,6 +84,15 @@ void gos_SetBloomIntensity(float v) {
 float gos_GetBloomThreshold() { return s_postProcess ? s_postProcess->bloomThreshold_ : 0.6f; }
 float gos_GetBloomIntensity() { return s_postProcess ? s_postProcess->bloomIntensity_ : 0.3f; }
 
+// SSAO-GTAO-LITE-MVP-1 tunables (clamped to conservative ranges).
+bool  gos_IsSsaoEnabled() { return s_postProcess && s_postProcess->ssaoEnabled_; }
+void  gos_SetSsaoRadius(float v)   { if (s_postProcess) s_postProcess->aoRadius_   = (v < 0.1f ? 0.1f : (v > 64.0f ? 64.0f : v)); }
+void  gos_SetSsaoStrength(float v) { if (s_postProcess) s_postProcess->aoStrength_ = (v < 0.0f ? 0.0f : (v > 2.0f  ? 2.0f  : v)); }
+void  gos_SetSsaoBias(float v)     { if (s_postProcess) s_postProcess->aoBias_     = (v < 0.0f ? 0.0f : (v > 0.1f  ? 0.1f  : v)); }
+float gos_GetSsaoRadius()   { return s_postProcess ? s_postProcess->aoRadius_   : 3.0f; }
+float gos_GetSsaoStrength() { return s_postProcess ? s_postProcess->aoStrength_ : 0.7f; }
+float gos_GetSsaoBias()     { return s_postProcess ? s_postProcess->aoBias_     : 0.0025f; }
+
 // Fullscreen quad vertices: 2 triangles covering NDC [-1,1]
 // Each vertex: pos.x, pos.y, uv.x, uv.y
 static const float kQuadVerts[] = {
@@ -142,6 +151,12 @@ gosPostProcess::gosPostProcess()
     , godrayColorTex_(0)
     , shorelineEnabled_(true)
     , shorelineProg_(nullptr)
+    , ssaoEnabled_(false)
+    , ssaoDebug_(0)
+    , aoRadius_(3.0f)
+    , aoStrength_(0.7f)
+    , aoBias_(0.0025f)
+    , aoPower_(1.5f)
 {
     bloomFBO_[0] = bloomFBO_[1] = 0;
     bloomColorTex_[0] = bloomColorTex_[1] = 0;
@@ -293,6 +308,29 @@ void gosPostProcess::init(int w, int h)
     if (!shorelineProg_ || !shorelineProg_->is_valid())
         fprintf(stderr, "gosPostProcess: failed to compile shoreline shader\n");
 
+    // SSAO-GTAO-LITE-MVP-1 (Track V) shaders.
+    ssaoProg_ = glsl_program::makeProgram("ssao",
+        "shaders/postprocess.vert", "shaders/ssao.frag", kShaderPrefix);
+    if (!ssaoProg_ || !ssaoProg_->is_valid())
+        fprintf(stderr, "gosPostProcess: failed to compile ssao shader\n");
+    ssaoApplyProg_ = glsl_program::makeProgram("ssao_apply",
+        "shaders/postprocess.vert", "shaders/ssao_apply.frag", kShaderPrefix);
+    if (!ssaoApplyProg_ || !ssaoApplyProg_->is_valid())
+        fprintf(stderr, "gosPostProcess: failed to compile ssao_apply shader\n");
+
+    // SSAO gate + debug, resolved once from env. Default OFF -> runSSAO()
+    // skipped entirely (byte-identical). aoRadius/strength/bias keep their
+    // member defaults (ImGui + per-mission profile adjustable).
+    {
+        const char* ssaoEnv = getenv("MC2_SSAO");
+        ssaoEnabled_ = (ssaoEnv && ssaoEnv[0] && ssaoEnv[0] != '0');
+        const char* dbgEnv = getenv("MC2_SSAO_DEBUG");
+        ssaoDebug_ = (dbgEnv && dbgEnv[0] && dbgEnv[0] != '0') ? 1 : 0;
+        std::fprintf(stderr, "[SSAO v1] enabled=%d debug=%d (MC2_SSAO=%s) radius=%.2f strength=%.2f bias=%.4f\n",
+                     ssaoEnabled_ ? 1 : 0, ssaoDebug_,
+                     ssaoEnv ? ssaoEnv : "(unset)", aoRadius_, aoStrength_, aoBias_);
+    }
+
     initShadows();
     initDynamicShadows();
 
@@ -360,6 +398,15 @@ void gosPostProcess::destroy()
     if (shorelineProg_) {
         glsl_program::deleteProgram("shoreline");
         shorelineProg_ = nullptr;
+    }
+
+    if (ssaoProg_) {
+        glsl_program::deleteProgram("ssao");
+        ssaoProg_ = nullptr;
+    }
+    if (ssaoApplyProg_) {
+        glsl_program::deleteProgram("ssao_apply");
+        ssaoApplyProg_ = nullptr;
     }
 
     destroyShadows();
@@ -471,6 +518,28 @@ void gosPostProcess::createFBOs(int w, int h)
         if (status != GL_FRAMEBUFFER_COMPLETE) {
             fprintf(stderr, "gosPostProcess: bloom FBO[%d] incomplete (0x%x)\n", i, status);
         }
+    }
+
+    // --- SSAO FBO (half resolution, single-channel R16F) ---
+    {
+        ssaoW_ = w / 2; if (ssaoW_ < 1) ssaoW_ = 1;
+        ssaoH_ = h / 2; if (ssaoH_ < 1) ssaoH_ = 1;
+
+        glGenTextures(1, &ssaoColorTex_);
+        glBindTexture(GL_TEXTURE_2D, ssaoColorTex_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, ssaoW_, ssaoH_, 0, GL_RED, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glGenFramebuffers(1, &ssaoFBO_);
+        glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssaoColorTex_, 0);
+
+        GLenum aoStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (aoStatus != GL_FRAMEBUFFER_COMPLETE)
+            fprintf(stderr, "gosPostProcess: SSAO FBO incomplete (0x%x)\n", aoStatus);
     }
 
     // --- God ray FBO (half resolution) ---
@@ -592,6 +661,11 @@ void gosPostProcess::destroyFBOs()
     }
     if (godrayColorTex_) { glDeleteTextures(1, &godrayColorTex_); godrayColorTex_ = 0; }
     if (godrayFBO_) { glDeleteFramebuffers(1, &godrayFBO_); godrayFBO_ = 0; }
+
+    // SSAO-GTAO-LITE-MVP-1: free half-res AO target.
+    if (ssaoColorTex_) { glDeleteTextures(1, &ssaoColorTex_); ssaoColorTex_ = 0; }
+    if (ssaoFBO_)      { glDeleteFramebuffers(1, &ssaoFBO_);   ssaoFBO_ = 0; }
+    ssaoW_ = ssaoH_ = 0;
 
     // WATER-REFLECTION-RESOURCE-1: free reflection target + mark slots invalid.
     if (waterReflColorTex_) { glDeleteTextures(1, &waterReflColorTex_); waterReflColorTex_ = 0; }
@@ -729,6 +803,83 @@ void gosPostProcess::runBloom()
     glBindVertexArray(0);
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
+}
+
+void gosPostProcess::runSSAO()
+{
+    ZoneScopedN("Render.SSAO");
+    TracyGpuZone("Render.SSAO");
+
+    // SSAO-GTAO-LITE-MVP-1: master gate + in-mission guard (matches screen
+    // shadow: only run when terrain was drawn, i.e. not in menus).
+    if (!ssaoEnabled_) return;
+    if (!sceneHasTerrain_) return;
+    if (!ssaoProg_ || !ssaoProg_->is_valid()) return;
+    if (!ssaoApplyProg_ || !ssaoApplyProg_->is_valid()) return;
+    if (!ssaoFBO_ || !ssaoColorTex_) return;
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_FALSE);
+
+    // --- Pass 1: compute AO at half resolution ---
+    glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO_);
+    glViewport(0, 0, ssaoW_, ssaoH_);
+    glDisable(GL_BLEND);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    ssaoProg_->setInt("sceneDepthTex", 0);
+    ssaoProg_->setInt("sceneNormalTex", 1);
+    float ss[2] = { (float)width_, (float)height_ };
+    ssaoProg_->setFloat2("screenSize", ss);
+    ssaoProg_->setFloat("aoRadius", aoRadius_);
+    ssaoProg_->setFloat("aoBias", aoBias_);
+    ssaoProg_->setFloat("aoStrength", aoStrength_);
+    ssaoProg_->setFloat("aoPower", aoPower_);
+    ssaoProg_->apply();
+    // Matrices via raw upload while bound (GL_FALSE matches the proven
+    // inverseViewProj path in runScreenShadow; viewProj is its forward mate).
+    GLint locInv = glGetUniformLocation(ssaoProg_->shp_, "inverseViewProj");
+    if (locInv >= 0) glUniformMatrix4fv(locInv, 1, GL_FALSE, inverseViewProj_);
+    GLint locVP = glGetUniformLocation(ssaoProg_->shp_, "viewProj");
+    if (locVP >= 0) glUniformMatrix4fv(locVP, 1, GL_FALSE, viewProj_);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, sceneNormalTex_);
+
+    glBindVertexArray(quadVAO_);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    // --- Pass 2: apply AO multiplicatively into the scene color ---
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO_);
+    setSceneDrawBuffers(SceneDrawBufferMode::SingleColor, false);
+    glViewport(0, 0, width_, height_);
+
+    if (ssaoDebug_ == 0) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_DST_COLOR, GL_ZERO);   // scene *= ao
+    } else {
+        glDisable(GL_BLEND);                  // overwrite with AO grayscale
+    }
+
+    ssaoApplyProg_->setInt("ssaoTex", 0);
+    float texel[2] = { 1.0f / (float)ssaoW_, 1.0f / (float)ssaoH_ };
+    ssaoApplyProg_->setFloat2("ssaoTexel", texel);
+    ssaoApplyProg_->setInt("debugMode", ssaoDebug_);
+    ssaoApplyProg_->apply();
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, ssaoColorTex_);
+
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glActiveTexture(GL_TEXTURE0);
 }
 
 void gosPostProcess::clearGBuffer1()
@@ -954,6 +1105,10 @@ void gosPostProcess::endScene()
 
     // God rays pass (radial light scattering, additive)
     runGodRays();
+
+    // SSAO grounding pass (multiplicative darkening into scene color). Before
+    // bloom so bloom extracts from the AO-darkened scene. Default-OFF (gated).
+    runSSAO();
 
     runBloom();
 
