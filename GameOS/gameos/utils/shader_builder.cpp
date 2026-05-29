@@ -521,6 +521,26 @@ void parse_uniforms(GLuint pprogram, glsl_program::UniArr_t* puniforms, glsl_pro
 			psamplers->insert(std::make_pair(psampler->name_, psampler));
 			continue;
 		}
+		// OBJECTIDDEBUG-VIEWMODE-1 additive fix: integer / unsigned-integer
+		// samplers (e.g. `usampler2D` for the GL_R32UI object-ID buffer) live at
+		// GL_INT_SAMPLER_2D (0x8DCA) / GL_UNSIGNED_INT_SAMPLER_2D (0x8DD2),
+		// OUTSIDE the float-sampler range handled above. They previously fell
+		// through to the default constant-uniform path -> garbage type_ ->
+		// constantSizes[]/typeNames[] OOB read -> crash in log_info (EXACTLY the
+		// GL_SAMPLER_2D_ARRAY crash class documented above). Treat them as
+		// samplers; the bind path (glActiveTexture+glBindTexture /
+		// glProgramUniform1i via setInt) is type-agnostic.
+		if(type == GL_INT_SAMPLER_2D || type == GL_UNSIGNED_INT_SAMPLER_2D)
+		{
+			glsl_sampler* psampler = new glsl_sampler;
+			psampler->index_ = glGetUniformLocation(pprogram, buf);
+			psampler->name_ = buf;
+			psampler->type_ = SAMPLER_2D;  // synthetic; integer-sampler 2D bind path
+			log_info("name: %s type: %s\n", buf,
+			         (type == GL_INT_SAMPLER_2D) ? "isampler_2d" : "usampler_2d");
+			psamplers->insert(std::make_pair(psampler->name_, psampler));
+			continue;
+		}
 
         glsl_uniform* puni = new glsl_uniform(); 
         puni->name_ = buf;
