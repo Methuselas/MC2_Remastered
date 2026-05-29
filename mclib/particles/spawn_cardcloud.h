@@ -81,7 +81,8 @@ namespace particles {
 //   spec != nullptr.
 void SpawnCardCloud(const gosFX::CardCloud__Specification* spec,
                     const Stuff::LinearMatrix4D*           parentToWorld,
-                    float                                   spawnSeed);
+                    float                                   spawnSeed,
+                    float                              callerAge = 0.5f);
 
 }  // namespace particles
 }  // namespace mc2

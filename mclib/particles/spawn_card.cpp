@@ -31,6 +31,7 @@
 #include "gosfx/gosfxheaders.hpp"
 #include "gosfx/card.hpp"
 #include "spawn_card.h"
+#include "spawn.h"   // resolveSampleAge (VFX-AGE-SAMPLE-1)
 #include "batcher.h"
 #include "fx_trace/fx_trace.h"
 
@@ -42,7 +43,8 @@ namespace particles {
 
 void SpawnCard(const gosFX::Card__Specification* spec,
                const Stuff::LinearMatrix4D*      parentToWorld,
-               float                              spawnSeed)
+               float                              spawnSeed,
+               float                              callerAge)
 {
     if (!spec) {
         return;
@@ -68,7 +70,7 @@ void SpawnCard(const gosFX::Card__Specification* spec,
     // an invisible/degenerate particle. age=0.5 picks the typical peak of
     // canonical 0->1 normalized envelopes. Stage 2' polish: shader-side
     // age advancement + curve evaluation removes the need for this constant.
-    const Stuff::Scalar age = 0.5f;
+    const Stuff::Scalar age = resolveSampleAge(callerAge);
     const Stuff::Scalar seed = spawnSeed;
 
     // Const_cast because the legacy curve ComputeValue() methods are not

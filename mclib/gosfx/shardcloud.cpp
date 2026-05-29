@@ -312,7 +312,7 @@ void gosFX::ShardCloud::Draw(DrawInfo *info)
 	// GPU render path (Stage 2'): re-emit current cloud to the batcher on
 	// every Draw() call. This matches the legacy path which submits shard
 	// geometry to MLR render lists each frame. SpawnShard samples spec
-	// curves at parent_age=0.5 so positions are consistent frame-to-frame.
+	// curves at resolveSampleAge(m_age) (0.5 unless MC2_VFX_AGE_SAMPLE=1).
 	// SpinningCloud::Draw propagates up the chain for EffectCloud children;
 	// it does not render shard geometry.
 	//
@@ -320,7 +320,7 @@ void gosFX::ShardCloud::Draw(DrawInfo *info)
 	// filled the batcher for one frame (until the first Flush()), leaving the
 	// batcher empty for all subsequent frames.
 	if (mc2::particles::Batcher::is_enabled()) {
-		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed);
+		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
 		SpinningCloud::Draw(info);
 		return;
 	}

@@ -1173,7 +1173,7 @@ void gosFX::Tube::Draw(DrawInfo *info)
 	// filled the batcher for one frame (until the first Flush()), leaving the
 	// batcher empty for all subsequent frames.
 	if (mc2::particles::Batcher::is_enabled()) {
-		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed);
+		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
 		Effect::Draw(info);
 		return;
 	}

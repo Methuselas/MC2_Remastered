@@ -44,6 +44,12 @@ namespace particles {
 //                    only if the underlying SpawnX permits it.
 //   spawnSeed      - per-instance random seed in [0..1]. Producers without
 //                    a seed should pass 0.5f (median).
+//   callerAge      - VFX-AGE-SAMPLE-1: the effect's real normalized age
+//                    (gosFX Effect::m_age, 0..1) at the Draw call. Used to
+//                    sample spec curves only when MC2_VFX_AGE_SAMPLE=1;
+//                    otherwise (and for invalid/out-of-range age) the fixed
+//                    0.5 midpoint is used. Defaults to 0.5f for callers that
+//                    do not supply an age (byte-identical legacy behavior).
 //
 // Returns:
 //   true  - spec was dispatched to a Spawn* entry point (Card / PointCloud /
@@ -52,7 +58,15 @@ namespace particles {
 //           EffectCloud (B2 deferred) OR an unknown subclass.
 bool Spawn(gosFX::Effect::Specification* spec,
            const Stuff::LinearMatrix4D*  parentToWorld,
-           float                          spawnSeed);
+           float                          spawnSeed,
+           float                          callerAge = 0.5f);
+
+// VFX-AGE-SAMPLE-1: resolve the curve-sample age for a spawn. Returns 0.5f
+// when MC2_VFX_AGE_SAMPLE is OFF (default) or when callerAge is invalid
+// (NaN / sentinel -1 / outside [0,1]); otherwise returns callerAge. Single
+// source of truth shared by every Spawn* primitive so gate-OFF is exactly the
+// pre-slice fixed-midpoint behavior. Look-only — no gameplay/timing effect.
+float resolveSampleAge(float callerAge);
 
 }  // namespace particles
 }  // namespace mc2

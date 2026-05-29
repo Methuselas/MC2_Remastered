@@ -38,6 +38,7 @@
 #include "gosfx/gosfxheaders.hpp"
 #include "gosfx/cardcloud.hpp"
 #include "spawn_cardcloud.h"
+#include "spawn.h"   // resolveSampleAge (VFX-AGE-SAMPLE-1)
 #include "batcher.h"
 #include "fx_trace/fx_trace.h"
 
@@ -53,7 +54,8 @@ namespace particles {
 
 void SpawnCardCloud(const gosFX::CardCloud__Specification* spec,
                     const Stuff::LinearMatrix4D*           parentToWorld,
-                    float                                   spawnSeed)
+                    float                                   spawnSeed,
+                    float                                   callerAge)
 {
     if (!spec) {
         return;
@@ -82,7 +84,7 @@ void SpawnCardCloud(const gosFX::CardCloud__Specification* spec,
     // age, so age=0 bakes fade-in invisibility into every particle. 0.5
     // picks the typical peak of normalized 0->1 envelopes. Stage 2' polish
     // (shader-side age advancement) retires this constant.
-    const Stuff::Scalar parent_age  = 0.5f;
+    const Stuff::Scalar parent_age  = resolveSampleAge(callerAge);
     const Stuff::Scalar parent_seed = spawnSeed;
 
     Stuff::Scalar population_f =

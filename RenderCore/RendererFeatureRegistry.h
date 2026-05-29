@@ -141,7 +141,10 @@ enum class RendererFeature : int {
     // TERRAIN-LIGHTING-2: shadow-aware modulation of the V1 hemisphere
     // fill — prevents over-bright shadows. Default-OFF (V1 unmodulated).
     TerrainLightingV2        = 25,  // MC2_TERRAIN_LIGHTING_V2
-    COUNT                    = 26,
+    // VFX-AGE-SAMPLE-1: sample GPU-particle spec curves at the effect's real
+    // CPU-advanced m_age instead of the fixed 0.5 snapshot. Default-OFF.
+    VfxAgeSample             = 26,  // MC2_VFX_AGE_SAMPLE
+    COUNT                    = 27,
 };
 
 // ---------------------------------------------------------------------------
@@ -358,6 +361,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "TERRAIN-LIGHTING-2: gated shadow-aware modulation of the TERRAIN-LIGHTING-1 hemisphere fill. Default-OFF; =1 enables. When OFF, terrainLightingV2ShadowFillFloor uploads 1.0 → the shader expression mix(floor, 1.0, shadow) collapses to 1.0 → V1 behavior preserved (byte-equivalent to TERRAIN-LIGHTING-1 alone). When ON, the member floor (default 0.3, ImGui-tunable 0..1 via the Graphics Options Terrain section) scales the hemi additive in shadowed terrain so dark areas stay dark: floor=0.3 = 30% hemi in fully shadowed terrain, 100% in fully lit terrain. floor=0.0 makes hemi follow shadow exactly (lifeless shadows); floor=1.0 = V1 unmodulated. Debug mode MC2_TERRAIN_DEBUG_MODE=11 visualizes the hemi additive contribution as RGB (×4 for visibility). Visual-only; no gameplay, geometry, or collision change. Effective only when MC2_TERRAIN_LIGHTING_V1 is also ON (since the floor multiplies the V1 additive)."
+    },
+    // VfxAgeSample
+    {
+        "MC2_FEATURE_VFX_AGE_SAMPLE",
+        "MC2_VFX_AGE_SAMPLE",
+        EnvVarKind::Feature,
+        false,
+        "VFX-AGE-SAMPLE-1: sample GPU-particle spec curves (color/alpha/size/UV) at the routed effect's real CPU-advanced normalized age (gosFX Effect::m_age, threaded into mc2::particles::Spawn from each producer Draw) instead of the fixed 0.5 midpoint. Default-OFF; =1 enables. When OFF, resolveSampleAge() returns 0.5 → byte-identical to the pre-slice snapshot. When ON, particles regain fade-in/out + grow/shrink because each per-frame re-emit samples at the effect's current age. Read-only consumption of m_age (already advanced by gameplay) — NO emission/lifetime/spawn-rate/timing change; NO shader or GpuParticle-ABI change (curve eval stays CPU-side in spawn_*.cpp). Invalid/sentinel age (m_age=-1) or out-of-[0,1] falls back to 0.5. Affects only the 5 routed classes (Card/CardCloud/PointCloud/ShardCloud/Tube); unrouted CPU-only classes untouched. Object-ID invariant preserved. Min/max age summary logged under MC2_GPU_PARTICLES_LOG=1."
     },
 };
 

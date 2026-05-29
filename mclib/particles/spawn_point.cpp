@@ -41,6 +41,7 @@
 #include "gosfx/gosfxheaders.hpp"
 #include "gosfx/pointcloud.hpp"
 #include "spawn_point.h"
+#include "spawn.h"   // resolveSampleAge (VFX-AGE-SAMPLE-1)
 #include "batcher.h"
 #include "fx_trace/fx_trace.h"
 
@@ -53,7 +54,8 @@ namespace particles {
 
 void SpawnPoint(const gosFX::PointCloud__Specification* spec,
                 const Stuff::LinearMatrix4D*            parentToWorld,
-                float                                    spawnSeed)
+                float                                    spawnSeed,
+                float                                    callerAge)
 {
     if (!spec) {
         return;
@@ -80,7 +82,7 @@ void SpawnPoint(const gosFX::PointCloud__Specification* spec,
 
     // Sample curves at parent_age=0.5 (mid-life / peak-visibility). See
     // spawn_card.cpp for the rationale.
-    const Stuff::Scalar parent_age  = 0.5f;
+    const Stuff::Scalar parent_age  = resolveSampleAge(callerAge);
     const Stuff::Scalar parent_seed = spawnSeed;
 
     Stuff::Scalar population_f =

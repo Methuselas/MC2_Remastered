@@ -52,6 +52,7 @@
 #include "gosfx/gosfxheaders.hpp"
 #include "gosfx/tube.hpp"
 #include "spawn_tube.h"
+#include "spawn.h"   // resolveSampleAge (VFX-AGE-SAMPLE-1)
 #include "batcher.h"
 #include "fx_trace/fx_trace.h"
 
@@ -63,7 +64,8 @@ namespace particles {
 
 void SpawnTube(const gosFX::Tube__Specification* spec,
                const Stuff::LinearMatrix4D*      parentToWorld,
-               float                              spawnSeed)
+               float                              spawnSeed,
+               float                              callerAge)
 {
     if (!spec) {
         return;
@@ -94,7 +96,7 @@ void SpawnTube(const gosFX::Tube__Specification* spec,
     // Sample at parent_age=0.5 (mid-life / peak-visibility). See spawn_card.cpp
     // for the rationale: GPU shader doesn't advance age so age=0 bakes fade-in
     // invisibility into the marker particle.
-    const Stuff::Scalar parent_age  = 0.5f;
+    const Stuff::Scalar parent_age  = resolveSampleAge(callerAge);
     const Stuff::Scalar parent_seed = spawnSeed;
 
     // World-space spawn position is the parent transform translation

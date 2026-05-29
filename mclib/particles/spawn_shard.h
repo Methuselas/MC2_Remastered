@@ -82,7 +82,8 @@ namespace particles {
 //   producer always supplies one (gosFX always does).
 void SpawnShard(const gosFX::ShardCloud__Specification* spec,
                 const Stuff::LinearMatrix4D*            parentToWorld,
-                float                                    spawnSeed);
+                float                                    spawnSeed,
+                float                              callerAge = 0.5f);
 
 }  // namespace particles
 }  // namespace mc2

@@ -495,7 +495,8 @@ void gosFX::Card::Draw(DrawInfo *info)
 
 	// GPU render path (Stage 2'): re-emit this card to the batcher on every
 	// Draw() call. This matches the legacy path which submits card geometry to
-	// MLR render lists each frame. SpawnCard samples spec curves at age=0.5 so
+	// MLR render lists each frame. SpawnCard samples spec curves at
+	// resolveSampleAge(m_age) — 0.5 when MC2_VFX_AGE_SAMPLE is off (legacy),
 	// size/color are consistent frame-to-frame. Singleton::Draw propagates up
 	// the chain for EffectCloud children; it does not render card geometry.
 	//
@@ -503,7 +504,7 @@ void gosFX::Card::Draw(DrawInfo *info)
 	// filled the batcher for one frame (until the first Flush()), leaving the
 	// batcher empty for all subsequent frames.
 	if (mc2::particles::Batcher::is_enabled()) {
-		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed);
+		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
 		Singleton::Draw(info);
 		return;
 	}
