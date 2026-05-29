@@ -290,7 +290,11 @@ std::string buildSnapshotJson(const RenderSnapshot& snap,
                 s << "        \"materialIdx\": "         << row.materialIdx  << ",\n";
                 s << "        \"materialIdxSentinel\": "; b(s, sentinel); s << ",\n";
                 s << "        \"typeLodIdx\": "          << row.typeLodIdx   << ",\n";
-                s << "        \"renderFlags\": "         << row.renderFlags  << "\n";
+                s << "        \"renderFlags\": "         << row.renderFlags  << ",\n";
+                // GAMEADAPTERS-VISUAL-STATE-BRIDGE-1: per-mech visual state.
+                s << "        \"heat01\": "              << row.heat01       << ",\n";
+                s << "        \"damage01\": "            << row.damage01     << ",\n";
+                s << "        \"visualFlags\": "         << row.visualFlags  << "\n";
                 s << "      }" << (i + 1u < emitCount ? "," : "") << "\n";
             }
             s << "    ]\n";

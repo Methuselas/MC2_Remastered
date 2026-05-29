@@ -10,7 +10,10 @@
 #include "render_contract_pipeline.h"   // PIPELINE-DESC-SCAFFOLD-1: adapter under test
 #include "RenderPassContract.h"        // PIPELINE-DESC-REGISTERED-AUDIT-1: descriptive pass table
 #include "PipelineRegistry.h"          // PIPELINE-DESC-REGISTERED-AUDIT-1: PipelineId coverage
+#include "MechVisualState.h"           // GAMEADAPTERS-VISUAL-STATE-BRIDGE-1: bridge POD
 #include <cstring>
+#include <cmath>                       // NAN / INFINITY for sanitizer test
+#include <type_traits>                 // is_trivially_copyable
 
 using namespace RenderCore;
 
@@ -547,6 +550,48 @@ TEST_CASE("PipelineDesc stays within its hot-path size budget") {
     // Mirrors the static_assert in PipelineDesc.h; a runtime guard so a struct
     // growth shows up as a failing test, not only a compile error elsewhere.
     CHECK(sizeof(PipelineDesc) <= 20u);
+}
+
+// ---------------------------------------------------------------------------
+// MechVisualState — GAMEADAPTERS-VISUAL-STATE-BRIDGE-1
+// ---------------------------------------------------------------------------
+TEST_CASE("MechVisualState defaults to safe-neutral") {
+    MechVisualState s;
+    CHECK(s.heat01 == 0.0f);
+    CHECK(s.damage01 == 0.0f);
+    CHECK(s.flags == 0u);
+}
+
+TEST_CASE("MechVisualState is a 12-byte trivially-copyable POD") {
+    CHECK(sizeof(MechVisualState) == 12u);
+    CHECK(std::is_trivially_copyable<MechVisualState>::value);
+}
+
+TEST_CASE("sanitizeMechVisual01 clamps to [0,1] and rejects non-finite") {
+    CHECK(sanitizeMechVisual01(0.5f)  == doctest::Approx(0.5f));
+    CHECK(sanitizeMechVisual01(-1.0f) == 0.0f);   // below range
+    CHECK(sanitizeMechVisual01(2.0f)  == 1.0f);   // above range
+    CHECK(sanitizeMechVisual01(0.0f)  == 0.0f);
+    CHECK(sanitizeMechVisual01(1.0f)  == 1.0f);
+    // getStatusRating() divides by maxArmor with no zero guard -> NaN/Inf must
+    // map to the safe-neutral 0.0, never propagate into the render path.
+    CHECK(sanitizeMechVisual01(NAN)       == 0.0f);
+    CHECK(sanitizeMechVisual01(INFINITY)  == 1.0f);   // +Inf >= 1 -> clamps to 1
+    CHECK(sanitizeMechVisual01(-INFINITY) == 0.0f);
+}
+
+TEST_CASE("packMechRelation packs relation into bits [4:5] without disturbing others") {
+    uint32_t f = kMechVisualFlag_Selected | kMechVisualFlag_Destroyed;
+    f = packMechRelation(f, 2u);  // enemy
+    // existing flags preserved
+    CHECK((f & kMechVisualFlag_Selected) != 0u);
+    CHECK((f & kMechVisualFlag_Destroyed) != 0u);
+    // relation field reads back as 2
+    CHECK(((f & kMechVisualFlag_RelationMask) >> kMechVisualFlag_RelationShift) == 2u);
+    // re-packing a different relation overwrites cleanly (no accumulation)
+    f = packMechRelation(f, 0u);  // own
+    CHECK(((f & kMechVisualFlag_RelationMask) >> kMechVisualFlag_RelationShift) == 0u);
+    CHECK((f & kMechVisualFlag_Selected) != 0u);  // still preserved
 }
 
 } // TEST_SUITE("RenderCore")

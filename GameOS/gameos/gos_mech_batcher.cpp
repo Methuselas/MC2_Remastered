@@ -1636,6 +1636,10 @@ void GpuMechBatcher::flush() {
             inst.materialIdx = (s_mechMaterialGpuEnabled && dcIdx < s_mechDrawMaterialIdx.size())
                 ? s_mechDrawMaterialIdx[dcIdx]
                 : 0u;
+            // GAMEADAPTERS-VISUAL-STATE-BRIDGE-1: per-mech visual state into the
+            // SSBO record. No shader reads these in Slice 1.
+            inst.visualDamage01     = d.damage01;
+            inst.visualFlags        = d.visualFlags;
             instDst[instHead++]     = inst;
         }
         drawCalls.push_back(dc);
@@ -2051,6 +2055,10 @@ void GpuMechBatcher::flush() {
             pkt.texHandle   = ps.desc.slot0TexHandle;
             pkt.typeLodIdx  = ps.typeLodIdx;
             pkt.renderFlags = ps.desc.renderFlags;
+            // GAMEADAPTERS-VISUAL-STATE-BRIDGE-1: visual state for the debug dump.
+            pkt.heat01      = ps.desc.heat01;
+            pkt.damage01    = ps.desc.damage01;
+            pkt.visualFlags = ps.desc.visualFlags;
             s_mechExtractPersist.push_back(pkt);
         }
     }
