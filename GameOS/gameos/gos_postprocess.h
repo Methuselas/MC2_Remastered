@@ -61,6 +61,11 @@ public:
     int shadowDebugMode_;         // 0=static, 1=dynamic
     void drawShadowDebugOverlay();
 
+    // Shadow tuning — live-adjustable via ImGui; defaults match former hardcoded values.
+    // Applied in beginShadowPass / beginShadowPassNoClear (static shadow pass only).
+    float shadowBiasFactor_ = 2.0f;   // glPolygonOffset factor
+    float shadowBiasUnits_  = 4.0f;   // glPolygonOffset units
+
     // Static world-fixed shadows: accumulate over multiple frames
     void buildStaticLightMatrix(float sunDirX, float sunDirY, float sunDirZ,
                                 float mapHalfExtent);

@@ -1180,7 +1180,7 @@ void gosPostProcess::beginShadowPass()
 
     // Polygon offset to reduce shadow acne
     glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(2.0f, 4.0f);
+    glPolygonOffset(shadowBiasFactor_, shadowBiasUnits_);
 
     // Only need depth — disable color writes
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
@@ -1203,7 +1203,7 @@ void gosPostProcess::beginShadowPassNoClear()
     glDepthMask(GL_TRUE);
 
     glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(2.0f, 4.0f);
+    glPolygonOffset(shadowBiasFactor_, shadowBiasUnits_);
 
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     glDisable(GL_CULL_FACE);
