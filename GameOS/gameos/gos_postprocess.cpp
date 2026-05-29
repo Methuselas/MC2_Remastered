@@ -74,6 +74,16 @@ void  gos_SetExposure(float v) { if (s_postProcess) s_postProcess->exposure_ = (
 
 bool gos_IsHdrPostEnabled() { return s_postProcess && s_postProcess->hdrPostEnabled_; }
 
+// BLOOM-MVP-1 tunables (profile + ImGui). Clamped to safe conservative ranges.
+void gos_SetBloomThreshold(float v) {
+    if (s_postProcess) s_postProcess->bloomThreshold_ = (v < 0.0f ? 0.0f : (v > 4.0f ? 4.0f : v));
+}
+void gos_SetBloomIntensity(float v) {
+    if (s_postProcess) s_postProcess->bloomIntensity_ = (v < 0.0f ? 0.0f : (v > 4.0f ? 4.0f : v));
+}
+float gos_GetBloomThreshold() { return s_postProcess ? s_postProcess->bloomThreshold_ : 0.6f; }
+float gos_GetBloomIntensity() { return s_postProcess ? s_postProcess->bloomIntensity_ : 0.3f; }
+
 // Fullscreen quad vertices: 2 triangles covering NDC [-1,1]
 // Each vertex: pos.x, pos.y, uv.x, uv.y
 static const float kQuadVerts[] = {
@@ -228,6 +238,17 @@ void gosPostProcess::init(int w, int h)
         hdrPostEnabled_ = (hdrEnv && hdrEnv[0] && hdrEnv[0] != '0');
         std::fprintf(stderr, "[HDR_POST v1] enabled=%d (MC2_HDR_POST=%s)\n",
                      hdrPostEnabled_ ? 1 : 0, hdrEnv ? hdrEnv : "(unset)");
+
+        // BLOOM-MVP-1 (Track V, MC2_BLOOM): sub-feature of the HDR post stack.
+        // Sets bloomEnabled_; only takes effect when hdrPostEnabled_ (enforced
+        // in runBloom + composite). Conservative member defaults (threshold
+        // 0.6 / intensity 0.3) are ImGui- and profile-tunable.
+        const char* bloomEnv = getenv("MC2_BLOOM");
+        if (bloomEnv && bloomEnv[0] && bloomEnv[0] != '0')
+            bloomEnabled_ = true;
+        std::fprintf(stderr, "[BLOOM v1] enabled=%d (MC2_BLOOM=%s, requires MC2_HDR_POST)\n",
+                     (hdrPostEnabled_ && bloomEnabled_) ? 1 : 0,
+                     bloomEnv ? bloomEnv : "(unset)");
     }
 
     bloomThresholdProg_ = glsl_program::makeProgram("bloom_threshold",

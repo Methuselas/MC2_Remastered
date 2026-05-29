@@ -230,5 +230,10 @@ void  gos_SetExposure(float v);
 
 // TRACK-V post stack accessors (resolved from env at init; see gos_postprocess.cpp).
 bool gos_IsHdrPostEnabled();
+// BLOOM-MVP-1 tunables (profile + ImGui).
+void  gos_SetBloomThreshold(float v);
+void  gos_SetBloomIntensity(float v);
+float gos_GetBloomThreshold();
+float gos_GetBloomIntensity();
 
 #endif // GOS_POSTPROCESS_H
