@@ -28,6 +28,9 @@ them. Add new findings as new bullets; remove fixed ones outright (don't append
 
 - **Shadow re-render stutter when camera moves >500 units.** Fix: static world-fixed shadow map (design ready).
 - **Shadow banding shifts with camera rotation** (view-dependent terrain geometry).
+- **Dynamic prop shadows: no light-box cull yet** — with MC2_SHADOW_DYNAMIC_PROP_CASTERS=1 the dynamic pass draws ALL registered non-building props every frame (visibility-independent, depth-only) regardless of the light box. Cheap now; **HZB is the planned long-term fix**. Interim: CPU light-box AABB cull (must cull vs the LIGHT box, not the camera frustum). See `memory/shadow_dynamic_projection_and_caster_feed_fixed.md`.
+- **Static building shadow goes stale on destroy** — MC2_STATIC_PROP_BUILDING_SHADOW bakes the world-fixed building shadow map once per mission; destroyed buildings keep their shadow until reload.
+- **Foliage shadow alpha-discard (SHADOW-FOLIAGE-ALPHA-DISCARD-1, deferred)** — tree cards cast solid-quad shadows (the alpha cutout isn't applied in the depth-only shadow program).
 
 ## Water / terrain rendering
 
