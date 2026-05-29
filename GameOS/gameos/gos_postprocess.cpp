@@ -1491,6 +1491,33 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     float camZ = 0.0f;
     float depthDist = 5000.0f;
 
+    // SHADOW-FRUSTUM-AUDIT-1 (2026-05-29): env-gated, read-only coverage probe.
+    // No behavior change. MC2_SHADOW_FRUSTUM_DIAG=1 dumps the per-frame dynamic
+    // sun-shadow ortho coverage so we can see actual texel world size and whether
+    // the box is camera-fit (it is) vs the missing-distant-caster problem (which
+    // is a caster-feed issue, not a matrix issue). Caster counts live in the
+    // debug-state dump (gos_get*ShadowInstDrawn); read those alongside this.
+    {
+        static const bool s_frustDiag = (getenv("MC2_SHADOW_FRUSTUM_DIAG") != nullptr);
+        static int s_frustN = 0;
+        if (s_frustDiag) {
+            ++s_frustN;
+            if (s_frustN <= 3 || (s_frustN % 300) == 0) {
+                fprintf(stderr,
+                    "[SHADOW_FRUSTUM_DIAG] frame=%d sunDir=(%.3f,%.3f,%.3f) "
+                    "frustumXY=[%.0f..%.0f,%.0f..%.0f] center=(%.0f,%.0f) "
+                    "fitRadius=%.0f xyRadius=%.0f mapClampR=%.0f "
+                    "texelWU=%.3f orthoWH=%.0fx%.0f depth=[%.0f..%.0f] mapSize=%d\n",
+                    s_frustN, fx, fy, fz,
+                    minX, maxX, minY, maxY, cx, cy,
+                    fitRadius, xyRadius, r,
+                    worldUnitsPerTexel, 2.0f * xyRadius, 2.0f * xyRadius,
+                    1.0f, 2.0f * depthDist, dynShadowMapSize_);
+                fflush(stderr);
+            }
+        }
+    }
+
     float lightPosX = camX - fx * depthDist;
     float lightPosY = camY - fy * depthDist;
     float lightPosZ = camZ - fz * depthDist;
