@@ -35,6 +35,7 @@ add_executable(mc2_tests
     test_argb_pack.cpp
     test_screen_pick.cpp
     test_rendercore.cpp     # RENDERCORE-UNIT-TESTS-1: GL-free substrate invariants
+    test_frame_arena.cpp    # FRAME-ARENA-1: FrameArena typed L2 allocator invariants
 
     # Leaf-TU engine sources (no transitive engine include drag).
     ${MC2_WORKTREE_ROOT}/mclib/fst_hash.cpp

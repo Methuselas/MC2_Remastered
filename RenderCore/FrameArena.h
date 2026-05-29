@@ -96,7 +96,9 @@ public:
     const FrameArenaStats& stats()     const { return stats_; }
     bool                   overflowed() const { return stats_.overflowCount != 0; }
 
-    size_t bytesUsed() const { return stats_.usedBytes; }
+    size_t bytesUsed()  const { return stats_.usedBytes; }
+    size_t capacity()   const { return capacity_; }
+    size_t remaining()  const { return capacity_ - offset_; }
 
 private:
     uint8_t*        base_     = nullptr;
