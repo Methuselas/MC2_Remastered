@@ -231,7 +231,11 @@ public:
     // (MC2_SNAP_CULL=1). nullptr = no snap-cull (default OFF).
     // snap pointer is not stored; read only during this call.
     void flush(const RenderSnapshot* snap = nullptr);
-    void flushShadow();   // depth-only into dynamic shadow FBO
+    // depth-only into the dynamic shadow FBO. skipStaticBuildingTypes=true (set
+    // when MC2_STATIC_PROP_BUILDING_SHADOW is active) omits building types — they
+    // cast via the world-fixed static map, so the dynamic copy would be a
+    // redundant fuzzy double-shadow. Default false = draw all (back-compat).
+    void flushShadow(bool skipStaticBuildingTypes = false);
 
     // SHADOW-STATIC-BUILDINGS-2: depth-only draw of ALL registered rigid-building
     // recipe leaves (from GpuStaticPropRegistry::getBuildingShadowInstances — the

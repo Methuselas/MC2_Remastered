@@ -285,6 +285,10 @@ GLuint s_perTypeSsbo = 0;
 // SHADOW-STATIC-BUILDINGS-2: one-shot all-buildings static shadow instance SSBO
 // (declared here so onMapUnload can free it; built in drawStaticBuildingShadows).
 static GLuint s_staticBldgShadowSsbo = 0;
+// typeIDs drawn into the static building shadow map. When the static building
+// shadow is active, flushShadow(skipStaticBuildingTypes=true) skips these in the
+// DYNAMIC pass so buildings don't cast a redundant (fuzzy) second shadow.
+static std::unordered_set<uint32_t> s_buildingShadowTypeIDs;
 
 // Per-frame persistent-mapped rings.
 GLuint   s_instanceSsbo = 0;
@@ -5427,7 +5431,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
 static int s_shadowTypesDrawn = 0;
 static int s_shadowInstDrawn  = 0;
 
-void GpuStaticPropBatcher::flushShadow() {
+void GpuStaticPropBatcher::flushShadow(bool skipStaticBuildingTypes) {
     // Non-indirect, full-range, depth-only draw for GPU static props.
     // Uses the shadow_static_prop program (Task 1) and the same per-frame
     // SSBO upload as flush() (shared via uploadAllBucketsIfNeeded /
@@ -5528,6 +5532,11 @@ void GpuStaticPropBatcher::flushShadow() {
         const TypeRangeSsbo& r = rit->second;
         const GpuStaticPropType& type = s_types[typeID];
         if (r.instanceCount == 0 || type.packetCount == 0) continue;
+        // SHADOW-STATIC-BUILDINGS-2: when the static building shadow map is active,
+        // skip building types in the DYNAMIC pass — they already cast a crisp
+        // shadow via the world-fixed static map; the dynamic copy is a redundant,
+        // fuzzy double-shadow. Trees/mechs/other props still cast dynamically.
+        if (skipStaticBuildingTypes && s_buildingShadowTypeIDs.count(typeID)) continue;
 
         // Bind the per-type instance SSBO range (binding 0 = Instances block
         // in shadow_static_prop.vert, indexed by gl_InstanceID).
@@ -5621,6 +5630,10 @@ void GpuStaticPropBatcher::drawStaticBuildingShadows(
     sorted.reserve(instances.size());
     for (uint32_t idx : order) sorted.push_back(instances[idx]);
 
+    // Rebuild the building-typeID set so the dynamic pass can skip these (they
+    // cast via this crisp static map; the dynamic copy is redundant + fuzzy).
+    s_buildingShadowTypeIDs.clear();
+
     // Save the GL state this pass perturbs (mirror flushShadow's bracket) so the
     // subsequent dynamic shadow pass + main flush see the state they expect.
     GLint prevProgram = 0, prevVao = 0, prevElemBuf = 0, prevSsbo0 = 0;
@@ -5672,6 +5685,7 @@ void GpuStaticPropBatcher::drawStaticBuildingShadows(
                 }
                 ++typesDrawn;
                 instDrawn += static_cast<int>(instCount);
+                s_buildingShadowTypeIDs.insert(tid);  // skip in the dynamic pass
             }
         }
         i = j;

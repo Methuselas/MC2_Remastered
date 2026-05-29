@@ -1507,6 +1507,33 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
             if (boundedRadius < 512.0f) boundedRadius = 512.0f;  // safe floor
             if (boundedRadius > r)      boundedRadius = r;        // never exceed map clamp
             if (fitRadius > boundedRadius) fitRadius = boundedRadius;
+
+            // SHADOW-BOUNDED-NEAR-CENTER fix: center the bounded box on the
+            // camera's GROUND FOCUS (screen-center view ray intersect ground),
+            // NOT the clamped full-frustum bbox center (cx,cy). For a tilted RTS
+            // camera the far corners blow past the map and clamp to +/-r, so the
+            // bbox center snapped erratically as the camera rotated (the box
+            // "moved nonsensically"). The screen-center ground point tracks where
+            // the player looks and moves smoothly. nearC/farC = centroids of the
+            // 4 near (z=0) and 4 far (z=1) UNCLAMPED corners (= each plane center);
+            // the line between them is the center ray. Intersect with MC2 ground
+            // (elevation == coord[2] == 0). Falls back to cx,cy for a ~horizontal ray.
+            float nearC[3] = {0,0,0}, farC[3] = {0,0,0};
+            for (int c = 0; c < 4; ++c) {
+                nearC[0]+=camFitCornersMC2[c][0];   nearC[1]+=camFitCornersMC2[c][1];   nearC[2]+=camFitCornersMC2[c][2];
+                farC[0] +=camFitCornersMC2[c+4][0]; farC[1] +=camFitCornersMC2[c+4][1]; farC[2] +=camFitCornersMC2[c+4][2];
+            }
+            for (int k = 0; k < 3; ++k) { nearC[k]*=0.25f; farC[k]*=0.25f; }
+            const float dz = nearC[2] - farC[2];
+            if (fabsf(dz) > 1e-3f) {
+                float t = nearC[2] / dz;             // param where elevation crosses 0
+                if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
+                float fX = nearC[0] + t * (farC[0] - nearC[0]);
+                float fY = nearC[1] + t * (farC[1] - nearC[1]);
+                if (fX < -r) fX = -r; else if (fX > r) fX = r;
+                if (fY < -r) fY = -r; else if (fY > r) fY = r;
+                cx = fX; cy = fY;                    // override the box center
+            }
         }
     }
 
