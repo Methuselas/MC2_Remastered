@@ -78,10 +78,15 @@ static int  s_selectedViewMode         = 0;  // ViewMode::Visual
 
 bool  gos_IsViewmodeFrameworkEnabled() { return s_viewmodeFrameworkEnabled; }
 int   gos_GetSelectedViewMode()        { return s_viewmodeFrameworkEnabled ? s_selectedViewMode : 0; }
-void  gos_SetSelectedViewMode(int m)   { s_selectedViewMode = m; }
+void  gos_SetSelectedViewMode(int m)   { s_selectedViewMode = (m < 0 ? 0 : (m > 5 ? 5 : m)); } // clamp to RenderCore::ViewMode range
 
 float gos_GetExposure() { return s_postProcess ? s_postProcess->exposure_ : 1.0f; }
 void  gos_SetExposure(float v) { if (s_postProcess) s_postProcess->exposure_ = (v < 0.0f ? 0.0f : v); }
+
+// LOWLIGHT-NIGHTVISION-MVP-1 tunables (clamped to conservative ranges).
+void  gos_SetLowLightGain(float v)   { if (s_postProcess) s_postProcess->lowLightGain_ = (v < 0.1f ? 0.1f : (v > 16.0f ? 16.0f : v)); }
+float gos_GetLowLightGain()          { return s_postProcess ? s_postProcess->lowLightGain_ : 2.5f; }
+void  gos_SetLowLightTintG(float v)  { if (s_postProcess) s_postProcess->lowLightTint_[1] = (v < 0.0f ? 0.0f : (v > 2.0f ? 2.0f : v)); }
 
 bool gos_IsHdrPostEnabled() { return s_postProcess && s_postProcess->hdrPostEnabled_; }
 
@@ -369,8 +374,41 @@ void gosPostProcess::init(int w, int h)
     {
         const char* vmEnv = getenv("MC2_VIEWMODE_FRAMEWORK");
         s_viewmodeFrameworkEnabled = (vmEnv && vmEnv[0] && vmEnv[0] != '0');
-        std::fprintf(stderr, "[VIEWMODE v1] framework=%d (MC2_VIEWMODE_FRAMEWORK=%s)\n",
-                     s_viewmodeFrameworkEnabled ? 1 : 0, vmEnv ? vmEnv : "(unset)");
+
+        // MC2_VIEW_MODE seeds the startup mode (numeric 0..5 matching
+        // RenderCore::ViewMode, or a name) so headless capture can request a
+        // mode without ImGui. Only meaningful when the framework gate is ON;
+        // the ImGui combo overrides it live.
+        const char* modeEnv = getenv("MC2_VIEW_MODE");
+        int initialMode = 0;
+        if (modeEnv && modeEnv[0]) {
+            if (modeEnv[0] >= '0' && modeEnv[0] <= '9') initialMode = atoi(modeEnv);
+            else if (!strcmp(modeEnv, "visual"))   initialMode = 0;
+            else if (!strcmp(modeEnv, "objectid")) initialMode = 1;
+            else if (!strcmp(modeEnv, "tactical")) initialMode = 2;
+            else if (!strcmp(modeEnv, "thermal"))  initialMode = 3;
+            else if (!strcmp(modeEnv, "infrared")) initialMode = 4;
+            else if (!strcmp(modeEnv, "lowlight")) initialMode = 5;
+        }
+        gos_SetSelectedViewMode(initialMode);
+        std::fprintf(stderr, "[VIEWMODE v1] framework=%d initialMode=%d (MC2_VIEWMODE_FRAMEWORK=%s MC2_VIEW_MODE=%s)\n",
+                     s_viewmodeFrameworkEnabled ? 1 : 0, s_selectedViewMode,
+                     vmEnv ? vmEnv : "(unset)", modeEnv ? modeEnv : "(unset)");
+
+        // LOWLIGHT-NIGHTVISION-MVP-1: seed night-vision tunables from env.
+        // Inert unless the selected ViewMode is LowLight (5). Direct member
+        // writes — s_postProcess is not yet assigned during init(), so the
+        // gos_SetLowLight* setters would no-op here.
+        const char* gainEnv = getenv("MC2_VIEWMODE_LOWLIGHT_GAIN");
+        if (gainEnv && gainEnv[0]) {
+            float g = (float)atof(gainEnv);
+            lowLightGain_ = (g < 0.1f ? 0.1f : (g > 16.0f ? 16.0f : g));
+        }
+        const char* tintEnv = getenv("MC2_VIEWMODE_LOWLIGHT_TINT");
+        if (tintEnv && tintEnv[0])
+            sscanf(tintEnv, "%f,%f,%f", &lowLightTint_[0], &lowLightTint_[1], &lowLightTint_[2]);
+        std::fprintf(stderr, "[VIEWMODE_LOWLIGHT v1] gain=%.2f tint=(%.2f,%.2f,%.2f)\n",
+                     lowLightGain_, lowLightTint_[0], lowLightTint_[1], lowLightTint_[2]);
     }
 
     initShadows();
@@ -1244,6 +1282,11 @@ void gosPostProcess::endScene()
         // In the Visual path the sampler goes unread, so the unit-2 binding
         // does not matter — but we still set the uniform to keep drivers happy.
         compositeProg_->setInt("u_objectIdTex", 2);
+
+        // LOWLIGHT-NIGHTVISION-MVP-1: night-vision tunables (read only by the
+        // shader when effectiveMode == 5; harmless no-op uniforms otherwise).
+        compositeProg_->setFloat("u_lowLightGain", lowLightGain_);
+        compositeProg_->setFloat3("u_lowLightTint", lowLightTint_);
 
         compositeProg_->apply();
 

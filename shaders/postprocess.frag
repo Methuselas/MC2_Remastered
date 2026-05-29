@@ -17,8 +17,13 @@ uniform vec2 inverseScreenSize; // 1/width, 1/height
 // u_objectIdTex: GL_R32UI object-ID buffer (usampler2D, not sampler2D).
 // Both are only read when MC2_VIEWMODE_FRAMEWORK is active; u_viewMode
 // defaults to 0 so the Visual path is never disturbed when the gate is OFF.
-uniform int u_viewMode;                // 0=Visual, 1=ObjectIdDebug
+uniform int u_viewMode;                // 0=Visual, 1=ObjectIdDebug, 3=Thermal, 5=LowLight
 uniform usampler2D u_objectIdTex;     // unit 2: sceneObjectIdTex_ (GL_R32UI)
+
+// LOWLIGHT-NIGHTVISION-MVP-1: night-vision tunables (read only when
+// u_viewMode == 5). Always set by the composite each frame.
+uniform float u_lowLightGain;  // luminance amplification (default 2.5)
+uniform vec3  u_lowLightTint;  // green-phosphor tint (default 0.7,1.0,0.6)
 
 // ACES Filmic tonemapping (Krzysztof Narkowicz fit)
 // Note: designed for linear HDR input. Our pipeline is sRGB so this acts
@@ -149,5 +154,41 @@ void main()
             float b = float((id >> 16u) & 0xFFu) / 255.0;
             FragColor = vec4(r, g, b, 1.0);
         }
+    }
+    // THERMAL-VIEW-MVP-1: PRESENTATION PLACEHOLDER ONLY — NOT real thermal/IR.
+    // No per-unit heat reaches the renderer (heat stays in mech.cpp; the
+    // object-ID buffer carries no kind/heat). Maps the graded Visual luminance
+    // to an iron palette so emissive/bright regions (fire, exhaust, muzzle
+    // flash, specular) read hot and dark terrain reads cool. See
+    // docs/thermal-ir-design.md for the real heat-channel plan (deferred).
+    else if (u_viewMode == 3) {
+        float t = clamp(dot(color, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
+        vec3 c0 = vec3(0.00, 0.00, 0.10);
+        vec3 c1 = vec3(0.30, 0.00, 0.40);
+        vec3 c2 = vec3(0.85, 0.10, 0.05);
+        vec3 c3 = vec3(1.00, 0.55, 0.00);
+        vec3 c4 = vec3(1.00, 0.95, 0.40);
+        vec3 c5 = vec3(1.00, 1.00, 1.00);
+        vec3 heat;
+        if      (t < 0.2) heat = mix(c0, c1, t / 0.2);
+        else if (t < 0.4) heat = mix(c1, c2, (t - 0.2) / 0.2);
+        else if (t < 0.6) heat = mix(c2, c3, (t - 0.4) / 0.2);
+        else if (t < 0.8) heat = mix(c3, c4, (t - 0.6) / 0.2);
+        else              heat = mix(c4, c5, (t - 0.8) / 0.2);
+        FragColor = vec4(heat, 1.0);
+    }
+    // LOWLIGHT-NIGHTVISION-MVP-1: amplify the dark-adapted Visual luminance and
+    // tint toward green phosphor with a stronger NV-tube vignette. Operates on
+    // the graded Visual color, so it works regardless of HDR/tonemap state.
+    else if (u_viewMode == 5) {
+        float lum = dot(color, vec3(0.299, 0.587, 0.114));
+        float boosted = lum * u_lowLightGain;
+        boosted = boosted / (1.0 + boosted * 0.3); // soft-knee; preserve headroom
+        vec3 nv = boosted * u_lowLightTint;
+        vec2 vd = TexCoord - vec2(0.5);
+        float vdist = length(vd * vec2(1.0, 0.75));
+        float nvVignette = smoothstep(0.70, 0.20, vdist);
+        nv *= mix(0.65, 1.0, nvVignette);
+        FragColor = vec4(nv, 1.0);
     }
 }

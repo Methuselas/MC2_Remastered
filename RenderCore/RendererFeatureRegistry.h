@@ -644,6 +644,38 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "Values: off|0=OFF, static|1=STATIC (world-fixed 2048^2 depth), dynamic|2=DYNAMIC (camera-centered 1024^2 depth). "
         "Resolved once at process start (gos_postprocess init). RAlt+F2 hotkey still overrides at runtime."
     },
+    // TRACKV-TACTICAL-PRESENTATION: ViewMode seed + LowLight tunables + tactical
+    // overlay. All default-OFF/inert; Visual path byte-identical when unset.
+    // (MC2_VIEWMODE_FRAMEWORK itself is the RendererFeature::ViewmodeFramework
+    // enum entry, registered in kFeatureTable above.)
+    {
+        "MC2_TUNE_VIEW_MODE",
+        "MC2_VIEW_MODE",
+        EnvVarKind::Trace,
+        false,
+        "VIEWMODE-POSTPROCESS-PRESENTATION-1: seeds the startup presentation mode (matches RenderCore::ViewMode). Numeric 0..5 or name visual|objectid|tactical|thermal|infrared|lowlight. Only consulted when MC2_VIEWMODE_FRAMEWORK=1; the ImGui combo overrides at runtime. ObjectIdDebug(1) needs MC2_OBJECT_ID_BUFFER; Thermal(3) is a luminance placeholder; TacticalOverlay(2) is drawn in-scene (see MC2_TACTICAL_ARC_OVERLAY), not by the composite."
+    },
+    {
+        "MC2_TUNE_VIEWMODE_LOWLIGHT_GAIN",
+        "MC2_VIEWMODE_LOWLIGHT_GAIN",
+        EnvVarKind::Trace,
+        false,
+        "LOWLIGHT-NIGHTVISION-MVP-1: night-vision luminance amplification (clamped 0.1..16, default 2.5). Only affects the LowLight(5) composite branch. Resolved once at gos_postprocess init; ImGui slider overrides at runtime."
+    },
+    {
+        "MC2_TUNE_VIEWMODE_LOWLIGHT_TINT",
+        "MC2_VIEWMODE_LOWLIGHT_TINT",
+        EnvVarKind::Trace,
+        false,
+        "LOWLIGHT-NIGHTVISION-MVP-1: night-vision tint as 'r,g,b' floats (default 0.7,1.0,0.6 green-phosphor). Only affects the LowLight(5) composite branch. Resolved once at gos_postprocess init."
+    },
+    {
+        "MC2_FEATURE_TACTICAL_ARC_OVERLAY",
+        "MC2_TACTICAL_ARC_OVERLAY",
+        EnvVarKind::Feature,
+        false,
+        "TACTICAL-ARC-OVERLAY-MVP-1: world-space range ring + facing line on each SELECTED mover, drawn in-scene by the debug renderer just before its flush (gamecam.cpp). Default-OFF; byte-identical when unset (no draw calls). Requires MC2_DEBUG_RENDERER=1 (the debug renderer's own gate) AND a selected unit to show anything. Read-only; no gameplay coupling."
+    },
 };
 
 // ---------------------------------------------------------------------------

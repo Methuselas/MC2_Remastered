@@ -1,0 +1,72 @@
+{
+  "matrix_id": "viewmode",
+  "description": "TRACKV-TACTICAL-PRESENTATION-OPUS-1 ViewMode presentation layer. All modes are selected by the postprocess composite via MC2_VIEWMODE_FRAMEWORK (gate, default-OFF) + MC2_VIEW_MODE (seed mode, matches RenderCore::ViewMode). Visual (0) is byte-identical to baseline. ObjectIdDebug needs MC2_OBJECT_ID_BUFFER (default-ON). Thermal is a luminance PLACEHOLDER, not real IR. TacticalOverlay is drawn in-scene by the debug renderer (separate gate), not by the composite.",
+  "default_missions": ["mc2_03", "mc2_17", "mc2_24"],
+  "default_duration": 30,
+  "entries": [
+    {
+      "id": "default",
+      "description": "No ViewMode env. Framework OFF -> u_viewMode forced 0 (Visual). Byte-identical baseline reference.",
+      "env": {}
+    },
+    {
+      "id": "visual_explicit",
+      "description": "Framework ON, mode Visual (0). Must be pixel-identical to 'default' (sanity gate that the framework adds no Visual-path cost).",
+      "env": {
+        "MC2_VIEWMODE_FRAMEWORK": "1",
+        "MC2_VIEW_MODE": "0"
+      }
+    },
+    {
+      "id": "object_id_debug",
+      "description": "OBJECTIDDEBUG-VIEWMODE-1: fullscreen object-ID hash palette (mode 1). Each mech/static gets a distinct stable color; terrain/sky (id==0) is neutral dark grey. Best on mc2_17 (12 mechs).",
+      "env": {
+        "MC2_VIEWMODE_FRAMEWORK": "1",
+        "MC2_VIEW_MODE": "1",
+        "MC2_OBJECT_ID_BUFFER": "1"
+      }
+    },
+    {
+      "id": "object_id_debug_fallback",
+      "description": "ObjectIdDebug requested with the object-ID buffer DISABLED. Exercises the one-time warn + Visual fallback path (no crash, no GL error, output == Visual).",
+      "env": {
+        "MC2_VIEWMODE_FRAMEWORK": "1",
+        "MC2_VIEW_MODE": "1",
+        "MC2_OBJECT_ID_BUFFER": "0"
+      }
+    },
+    {
+      "id": "thermal_placeholder",
+      "description": "THERMAL-VIEW-MVP-1: luminance->iron-palette PLACEHOLDER (mode 3). NOT real heat. Emissive/bright regions (fire, muzzle flash, exhaust, specular) read hot; dark terrain reads cool. See docs/thermal-ir-design.md for the real heat-channel plan.",
+      "env": {
+        "MC2_VIEWMODE_FRAMEWORK": "1",
+        "MC2_VIEW_MODE": "3"
+      }
+    },
+    {
+      "id": "low_light",
+      "description": "LOWLIGHT-NIGHTVISION-MVP-1: luminance gain + green-phosphor tint + NV vignette (mode 5). Dark regions brighten; classic night-vision look. Tunable via MC2_VIEWMODE_LOWLIGHT_GAIN / _TINT.",
+      "env": {
+        "MC2_VIEWMODE_FRAMEWORK": "1",
+        "MC2_VIEW_MODE": "5"
+      }
+    },
+    {
+      "id": "low_light_high_gain",
+      "description": "LowLight with boosted gain (5.0) to verify the soft-knee highlight clamp holds (no blown-white frame).",
+      "env": {
+        "MC2_VIEWMODE_FRAMEWORK": "1",
+        "MC2_VIEW_MODE": "5",
+        "MC2_VIEWMODE_LOWLIGHT_GAIN": "5.0"
+      }
+    },
+    {
+      "id": "tactical_overlay",
+      "description": "TACTICAL-ARC-OVERLAY-MVP-1: world-space range ring + facing line on selected movers. Drawn IN-SCENE by the debug renderer (needs BOTH MC2_DEBUG_RENDERER=1 and MC2_TACTICAL_ARC_OVERLAY=1); NOT a composite mode. Requires a unit to be selected in-game to show anything.",
+      "env": {
+        "MC2_DEBUG_RENDERER": "1",
+        "MC2_TACTICAL_ARC_OVERLAY": "1"
+      }
+    }
+  ]
+}

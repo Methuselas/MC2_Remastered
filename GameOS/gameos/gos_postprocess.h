@@ -147,6 +147,13 @@ public:
     float aoPower_;         // contrast curve
     void runSSAO();
 
+    // LOWLIGHT-NIGHTVISION-MVP-1: pure-postprocess night-vision tunables.
+    // Active only when the selected ViewMode is LowLight (5); the composite
+    // branch is otherwise skipped (Visual byte-identical). Seeded from
+    // MC2_VIEWMODE_LOWLIGHT_GAIN / _TINT at init; ImGui- and profile-adjustable.
+    float lowLightGain_    = 2.5f;                 // luminance amplification
+    float lowLightTint_[3] = { 0.7f, 1.0f, 0.6f }; // green-phosphor NV tint
+
     void setInverseViewProj(const float* m) { memcpy(inverseViewProj_, m, 16 * sizeof(float)); }
     void setViewProj(const float* m) { memcpy(viewProj_, m, 16 * sizeof(float)); }
     const float* getInverseViewProj() const { return inverseViewProj_; }
@@ -262,7 +269,12 @@ void  gos_SetExposure(float v);
 // returns 0 (Visual) regardless of what ImGui has set. Pattern mirrors gos_SetExposure.
 bool gos_IsViewmodeFrameworkEnabled();
 int  gos_GetSelectedViewMode();   // returns 0 when gate OFF
-void gos_SetSelectedViewMode(int m);  // called from ImGui combo; clamped by caller
+void gos_SetSelectedViewMode(int m);  // clamped to RenderCore::ViewMode range
+
+// LOWLIGHT-NIGHTVISION-MVP-1 tunables (profile + ImGui). Clamped to safe ranges.
+void  gos_SetLowLightGain(float v);
+float gos_GetLowLightGain();
+void  gos_SetLowLightTintG(float v); // green channel — the most impactful axis
 
 // TRACK-V post stack accessors (resolved from env at init; see gos_postprocess.cpp).
 bool gos_IsHdrPostEnabled();
