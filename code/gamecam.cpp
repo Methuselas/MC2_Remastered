@@ -417,6 +417,41 @@ void GameCamera::render (void)
 #ifdef MC2_IMGUI
 			EditorInspector::flushDebugHighlight();  // IMG-INSPECT-3: queue highlight prims same-frame
 #endif
+			// TACTICAL-ARC-OVERLAY-MVP-1: world-space range ring + facing line
+			// on each SELECTED mover. Gate MC2_TACTICAL_ARC_OVERLAY (default-OFF,
+			// resolved once) -> no draw calls when unset (byte-identical). The
+			// debug renderer's own MC2_DEBUG_RENDERER gate must also be ON for
+			// these prims to actually flush. Read-only; no gameplay coupling.
+			{
+				static const bool s_tacArcOverlay = [](){
+					const char* v = getenv("MC2_TACTICAL_ARC_OVERLAY");
+					return v && v[0] && v[0] != '0';
+				}();
+				if (s_tacArcOverlay && ObjectManager) {
+					const long nMovers = ObjectManager->getNumMovers();
+					for (long mi = 0; mi < nMovers; ++mi) {
+						MoverPtr mover = ObjectManager->getMover(mi);
+						if (!mover || !mover->getSelected()) continue;
+						Stuff::Vector3D p = mover->getPosition();
+						// Stuff (x=east, y=north, z=elevation) -> debug-renderer
+						// world (x=east, y=up, z=north); matches the
+						// EditorInspector selection crosshair convention.
+						DebugRenderer::Vec3 center{ p.x, p.z, p.y };
+						const float maxR = mover->getMaxFireRange();
+						if (maxR > 0.0f)
+							DebugRenderer::drawRingWorld(center, maxR, 64, 0x4080FFFFu); // blue range ring
+						// Facing heading tick (best-effort: MC2 rotation deg,
+						// 0=north=+z). Capped length so it reads as a tick, not a
+						// full-range spoke. Verify sign visually; ring is the
+						// rotation-independent primary cue.
+						const float th  = mover->getRotation() * 0.01745329252f; // deg->rad
+						const float len = (maxR > 0.0f) ? fminf(maxR, 40.0f) : 20.0f;
+						DebugRenderer::drawLineWorld(center,
+							DebugRenderer::Vec3{ center.x + sinf(th) * len, center.y, center.z + cosf(th) * len },
+							0x80FF80FFu); // green facing line
+					}
+				}
+			}
 			DebugRenderer::flushWorldPrims();
 		}
 	}
