@@ -210,7 +210,7 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         "MC2_SHADOW_ENABLE",
         EnvVarKind::Feature,
         false,
-        "Dynamic object shadow caster pass (GpuStaticPropBatcher + GpuMechBatcher flushShadow). Opt-in MC2_SHADOW_ENABLE=1. VAO restore order fixed (SHADOW-DYNAMIC-RESTORE-1) but default-on causes prop regression; root cause under investigation."
+        "Dynamic object shadow caster pass (GpuStaticPropBatcher + GpuMechBatcher flushShadow). Opt-in MC2_SHADOW_ENABLE=1. VAO restore order fixed (SHADOW-DYNAMIC-RESTORE-1); prop-invisibility-with-shadows-on regression RESOLVED (flush-order bug, commit 2764cb65 — registry flush must precede flushShadow)."
     },
     // ImGui
     {
