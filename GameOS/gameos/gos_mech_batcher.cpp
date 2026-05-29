@@ -124,7 +124,7 @@ static int s_mechDebugMode = 0;
 // OFF (default), the mech path is byte-identical to legacy.
 static const bool s_mechViewUniforms = []() {
     const char* v = std::getenv("MC2_MECH_VIEWUNIFORMS");
-    return v != nullptr && v[0] == '1';
+    return !(v != nullptr && v[0] == '0');   // DEFAULT-ON; kill-switch =0
 }();
 // Shared diag gate (link-time block-binding log + flush-time binding/matrix
 // probe). Default OFF (MC2_MECH_VIEWUNIFORMS_DIAG=1).
@@ -193,7 +193,7 @@ static float s_mechAmbientStrength = []() {
 // C++ side uploads strength 0 → exact no-op. Per-flush uniforms — no VBO rebuild.
 static bool  s_mechSpecularV1 = []() {
     const char* v = std::getenv("MC2_MECH_SPECULAR_V1");
-    return v != nullptr && v[0] == '1';  // default-OFF
+    return !(v != nullptr && v[0] == '0');  // DEFAULT-ON; kill-switch =0
 }();
 static float s_mechSpecularStrength = []() {
     const char* v = std::getenv("MC2_MECH_SPECULAR_STRENGTH");
