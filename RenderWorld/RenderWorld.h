@@ -85,6 +85,13 @@ void frameBannerTick();
 //   - C++ side of static-prop makeProgram() (gates the GLSL #ifdef prefix)
 bool IsObjectIdBufferEnabled();
 
+// GAMEADAPTERS-VISUAL-STATE-BRIDGE: lowest handle index assigned to mechs.
+// Mech records occupy indices >= this value; static props/terrain are below
+// it (INVARIANT enforced in RenderWorld.cpp). A postprocess pass can classify
+// an object-ID-buffer pixel as engine-bearing (mech) by testing
+// (objectId & 0xFFFFF) >= MechHandleIndexBase(). Returns kMechHandleBase.
+uint32_t MechHandleIndexBase();
+
 // M1.6: static-prop pick master enable. When this is OFF, the missiongui
 // Shift+click wiring is dormant even if MC2_OBJECT_ID_BUFFER=1. Three-gate
 // opt-in stack per spec Section 9; defense-in-depth so a dev can enable

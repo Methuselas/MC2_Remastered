@@ -662,6 +662,12 @@ bool IsObjectIdBufferEnabled() {
     return s_enabled;
 }
 
+// GAMEADAPTERS-VISUAL-STATE-BRIDGE: expose the mech handle index base so a
+// postprocess pass can classify object-ID-buffer pixels as engine-bearing.
+uint32_t MechHandleIndexBase() {
+    return kMechHandleBase;
+}
+
 // M1.6 + M2.6: master enable for the static-prop pick wiring (missiongui
 // Shift+click -> lookupAtPixel -> setLastGameplayPick). Default OFF.
 bool IsStaticPropPickEnabled() {
