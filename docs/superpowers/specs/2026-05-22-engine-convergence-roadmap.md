@@ -22,6 +22,81 @@ recommendation.
 
 ## Update log (post-2026-05-22 ships)
 
+**2026-05-29 Infrastructure + Track V visual batch.**
+
+*Infrastructure (Track R substrate):*
+
+- **Engine View Registry** (`61d929c5`) — `RenderCore/EngineView.h` ViewId constants
+  (`kMainSceneViewId=1`, `kShadowDirectional0ViewId=2`, `kShadowDynamicViewId=3`) +
+  ViewKind enum + `view_uniforms_gl.cpp` `registerOrUpdateView()` / `getViewByIndex()`
+  API. First multi-view substrate; advances item 7. `[ENGINE_VIEW_REGISTRY v1]`
+  log confirmed; gate-off via `MC2_VIEW_UNIFORMS=0`.
+- **Render Resource Registry** (`200e9e3d`, RENDER-RESOURCE-REGISTRY-1) —
+  `RenderCore/RenderResourceRegistry.{h,cpp}`. RenderResourceId enum
+  (MainColor/MainDepth/ShadowStaticMap/TerrainHeightTexture/MaterialGpuBuffer/ShadowDynamicMap),
+  28-byte `RenderResourceDesc` POD, `registerOrUpdateRenderResource()` /
+  `getRenderResource()`. Owners retain GL lifetime; registry tracks metadata only.
+  Auto-registered: TerrainHeightTexture + ShadowStaticMap. Always-on; JSON dump
+  `renderResources[]` array. Advances item 18.
+- **Debug View Registry** (`8284dde8`, DEBUG-VIEW-REGISTRY-1) —
+  `RenderCore/RenderDebugView.{h,cpp}`. Canonical `RenderDebugView` enum (10 values:
+  Final/Albedo/Normal/Roughness/Metallic/LightingOnly/IblOnly/SpecularOnly/MaterialIdx/TexArrayLayer).
+  Per-lane support masks: StaticPropOpaque=7 modes, Mech=4 modes, Vfx=2 modes,
+  Terrain/Shadow=0 placeholder. ImGui combo filtered to lane-supported views.
+  `batcher_setDebugMaterialMode()` free function + static-prop + mech wiring.
+  Advances item 16 (DebugRenderer M2+).
+- **Contract check aggregator** (`241f22df`) — `scripts/check-contracts.sh`;
+  orchestrates 8 grep-based checks (env_registry, material_gpu_mirror,
+  visibility_log_schema, include_firewall, no_raw_gl_from_game, vfx_no_objectid,
+  destroy_invariant, render_contract_gbuf1) with aligned PASS/FAIL table; `--quiet`
+  mode for CI. All 8 PASS as of 2026-05-28. Advances item 18 / item 2.
+- **Substrate unit tests** (`46a848dc`) — `tests/unit/test_rendercore.cpp`.
+  23 test cases / 2015 assertions via doctest; GL-free. Covers
+  RenderResourceRegistry, RenderDebugView, RendererFeatureRegistry (COUNT=26),
+  IblShRegistry. Target `rendercore_tests`. Always-on. Advances item 14.
+- **Shadow EngineView records** (`d939de67`, SHADOW-VIEW-1) — shadow passes
+  registered into engine view registry. **Shadow render resource** (`cf7c6bbd`,
+  SHADOW-RESOURCE-1) — shadow map registered into render resource registry.
+  **Shadow debug views** (`f4581822`, SHADOW-DEBUG-VIEWS-1) — shadow cascade
+  visualizers wired through debug view registry.
+- **Per-mission visual tuning profiles** (`a086c259`) — save/restore per-mission
+  defaults for tuning ImGui sliders; "Set as Mission Defaults" button.
+
+*Track V visual advances:*
+
+- **SHADOW-TUNING-1** (`53c26d47`) — live `shadowBiasFactor` / `shadowBiasUnits`
+  ImGui sliders in Graphics Options; byte-identical defaults (2.0/4.0).
+- **SHADOW-DYNAMIC-RESTORE-1** (`7cfc637c`) — fixes VAO element-buffer restore
+  order in `flushShadow()` (wrong order zeroed IBO, causing dynamic objects to
+  vanish). `MC2_SHADOW_ENABLE` default ON.
+- **Flush-order fix — terrain objects with shadows** (`f04e3997`) —
+  `GpuStaticPropRegistry::flush()` now runs BEFORE `flushShadow()`'s
+  `uploadAllBucketsIfNeeded()`. Month-long root cause: registry flush was AFTER the
+  shadow upload locked the per-frame SSBO slot → terrain objects (trees/fences/prop-
+  buildings) had zero instances in s_typeRanges → invisible. Closes the
+  `SHADOW-ENABLE=1 terrain-objects-invisible` bug class.
+- **Mech ViewUniforms consumer** (`64b6d40d`) — opt-in `binding=3` UBO consumer
+  for `mech.vert`; `MC2_MECH_VIEWUNIFORMS` default OFF. Prerequisite for
+  specular V1.
+- **Mech smoothed normals default-ON** (`22a96ffd`) — `MC2_MECH_NORMALS_MODE`
+  default flipped to 2 (angle-threshold 60°, hard-edge preservation). Fixes
+  ASE-loader corrupted normal averaging. Kill-switch `=0`.
+- **Mech ambient lighting** (`74fc057c`, `e0ffffbb`) — gated ambient at 0.15
+  default-ON. Lifts flat-shaded shadow areas.
+- **Mech PBR specular V1 + glass heuristic** (`8fa7da91`) — Blinn specular sheen
+  with dark-pixel cockpit heuristic (luma<0.12 AND maxChannel<0.18). Gate
+  `MC2_MECH_SPECULAR_V1` default OFF; all params live-tunable. Requires
+  `MC2_MECH_VIEWUNIFORMS=1`.
+- **VFX real age sample** (`9f90e167`, VFX-AGE-SAMPLE-1) — GPU-routed particles
+  sample spec curves at real CPU-advanced `m_age` instead of fixed 0.5 midpoint.
+  Restores fade-in/out, grow/shrink. Gate `MC2_VFX_AGE_SAMPLE` default OFF.
+- **Water camera-independent sky tint** (`c098a23f`) — gated sky tint for water;
+  default OFF. Track V polish preceding IBL.
+- **Mech R→V arc recon + debug views** (`00e9b62a`–`ead1b56c`) — docs/mech-rv-arc-recon.md,
+  material inventory exposure, kDebugViewMask_Mech wired to `u_debugMode`.
+
+---
+
 **2026-05-26 Extraction arc v2.1–v3 SHIPPED. HEAD `066b5b9d`.**
 
 Item 3 (world snapshot / extraction phase) advances from NOT STARTED to
@@ -362,19 +437,26 @@ the VisibilityRequest API surface. Driven by a multi-view consumer
 
 ### 7. Multi-view rendering model
 
-**Status: NOT STARTED — F1 is the prerequisite foundation.**
+**Status: SUBSTRATE SHIPPED (2026-05-29) — Engine View Registry live; dispatch not unified.**
 
-Single view today. Shadow pass has its own lightSpaceMatrix but is
-not modeled as a `View` object. F1's `u_worldToClipGL` UBO is the
-View foundation once it lands.
+`RenderCore/EngineView.h` defines `ViewId` constants and `ViewKind` enum:
+- `kMainSceneViewId = 1` (MainScene)
+- `kShadowDirectional0ViewId = 2` (ShadowStatic)
+- `kShadowDynamicViewId = 3` (ShadowDynamic)
 
-Gap: no `EngineView { ViewId, ViewUniforms, Frustum, Viewport, RenderMask }`.
-Shadow, minimap, portrait/mechbay, and reflection views each reinvent
-their own matrix upload.
+`view_uniforms_gl.{h,cpp}` `registerOrUpdateView()` / `getViewCount()` /
+`getViewByIndex()` API is live. Shadow passes registered via SHADOW-VIEW-1
+(`d939de67`). `[ENGINE_VIEW_REGISTRY v1]` log emitted on startup; gate-off
+via `MC2_VIEW_UNIFORMS=0`.
 
-**Sequencing note:** design multi-view AFTER F1 ships and the View
-UBO binding point exists. Multi-view = bind a different UBO slot per
-view, not add more per-program uniforms.
+Gap (residual): no `EngineView { Frustum, Viewport, RenderMask }` beyond
+ViewId+ViewKind+UBO slot. Shadow and main scene each still upload their own
+matrix independently — the registry RECORDS views but does not DISPATCH
+through them. No minimap, portrait, or reflection view registered yet.
+
+**Next step:** wire `setCurrentView(kShadowDirectional0ViewId)` around
+`flushShadow()` so the shadow pass binds through the view registry rather than
+raw uniform upload. That is the first DISPATCH unification slice.
 
 ---
 
@@ -580,13 +662,25 @@ check — just needs the descriptor type.
 
 ### 13. Frame allocator / transient resource system
 
-**Status: PER-SUBSYSTEM RING BUFFERS + PING-PONG ARENA EXISTS. TAXONOMY DOC SHIPPED (2026-05-26). NO GENERAL ALLOCATOR YET.**
+**Status: GENERAL `FrameArena` SHIPPED + UNIT-TESTED (2026-05-29). PRODUCTION MIGRATED. PER-SUBSYSTEM RINGS REMAIN. TAXONOMY DOC SHIPPED (2026-05-26).**
 
 Terrain thin records, water thin records, and GPU particle SSBOs
-all use purpose-built ring buffers. `RenderSnapshot`'s 2×1 MiB
-ping-pong arena (Persistent allocation, per-frame `reset()`)
-is the first general-purpose frame arena — currently used only
-for `ExtractedStaticPropPacket[]` spans.
+all still use purpose-built ring buffers. The `RenderSnapshot`
+ping-pong arena has been generalized into `RenderCore::FrameArena`
+(`FRAMEARENA-L2-1`): a GL-free typed `allocArray<T>(n)` bump allocator
+over an externally-owned 2×1 MiB ping-pong buffer (Persistent
+allocation, per-frame `reset(frameIndex)`, fail-closed overflow,
+high-water tracking). Production already consumes it in
+`render_snapshot.cpp` (`ExtractedStaticPropPacket[]`,
+`ExtractedStaticProp[]`, `ExtractedMechPacket[]` spans) and
+`gos_mech_batcher.cpp`.
+
+`FRAME-ARENA-1` (2026-05-29, `eee18be4`) closed the durability gap:
+8 GL-free doctest cases (101 assertions — capacity/used/remaining,
+reset+high-water persistence, typed span/pointer, alignment incl.
+over-aligned, sequential non-overlap, fail-closed overflow,
+zero-count inert, frame-flip lifecycle) + non-behavioral
+`capacity()`/`remaining()` accessors. No production behavior change.
 
 **ResourceLifetime taxonomy** (P2-1 partial) now documented:
 `docs/observations/2026-05-26-resource-lifetime-taxonomy.md`.
@@ -596,20 +690,26 @@ Four tiers classified with all 7 "classify" resources placed:
 - **L2 Frame:** `ExtractedStaticPropPacket[]` (already arena-backed)
 - **L3 PassTransient:** `v6Packets`, `v6Meta` (static-vector reuse in flush)
 
-Gap: ad-hoc per-subsystem rings; new GPU passes each build their own.
-No `frameAllocator.alloc<T>(n)` API; the ping-pong arena is module-private.
+Gap (remaining): ad-hoc per-subsystem rings; new GPU passes each
+still build their own. The `FrameArena` API now exists but adoption
+beyond `RenderSnapshot` records is unstarted.
 
-**Next step (P2-1 Phase 2):** expose the `RenderSnapshot` ping-pong
-arena as `FrameArena` — a general per-frame typed allocator. Extend to
-cover mech extraction records when the mech extraction arc starts. HZB
-intermediates and sort-key buffers are the compute-pass consumers after Tier 3.
-Retrofit existing per-subsystem rings as they are next touched.
+**Done:** ~~expose the ping-pong arena as a general `FrameArena` typed
+allocator~~ (`FRAMEARENA-L2-1` substrate + production migration;
+`FRAME-ARENA-1` tests/accessors). `FRAME-ARENA-RENDERSNAPSHOT-MIGRATE-1`
+is **obsolete** — that migration shipped inside `FRAMEARENA-L2-1`.
+
+**Next step (P2-1 Phase 2 — adoption, not substrate):** the substrate
+is no longer the work item; future consumers are. HZB intermediates and
+sort-key buffers are the compute-pass consumers to back with `FrameArena`
+after Tier 3. Retrofit existing per-subsystem rings (terrain/water thin
+records, particle SSBOs) as they are next touched.
 
 ---
 
 ### 14. Feature flags as productized renderer modes
 
-**Status: REGISTRY EXISTS (parallel session 2026-05-24).**
+**Status: REGISTRY EXISTS + UNIT-TESTED (2026-05-29). COUNT=26 entries verified.**
 
 `RenderCore/RendererFeatureRegistry.h` (currently untracked in this
 worktree; parallel session) is the registry header that codifies
@@ -651,29 +751,27 @@ until cluster-LOD PoC ships and there are actual LOD levels to manage.
 
 ### 16. Editor / runtime boundary (debug engine API)
 
-**Status: M1 SHIPPED (2026-05-24).**
+**Status: M1 SHIPPED + DEBUG-VIEW-REGISTRY-1 SHIPPED (2026-05-29).**
 
-DebugRenderer M1 landed (commits `c2e877e` + `96b6b3a`).
-`flushWorldPrims()` wired into `gamecam.cpp` after the weather pass.
-The Phase 2 render-contract integration (commit `137dc70`) also
-added a GL error drain after `flushWorldPrims` to prevent stale
-errors from being mis-attributed to subsequent
-`shader_builder::apply()` glGetError checks.
+DebugRenderer M1 (`c2e877e` + `96b6b3a`): `flushWorldPrims()` wired
+into `gamecam.cpp` after the weather pass.
 
-Existing debug surfaces (`MC2_DEBUG_SHADOW_*`, terrain debug modes,
-Tracy zones, parity probes) remain in place. The new DebugRenderer
-is the engine-typed callable surface; M2+ would broaden it.
+**DEBUG-VIEW-REGISTRY-1** (`8284dde8`): Canonical `RenderDebugView` enum
+(10 values) in `RenderCore/RenderDebugView.{h,cpp}` with per-lane support
+masks (`kDebugViewMask_StaticPropOpaque`, `kDebugViewMask_Mech`,
+`kDebugViewMask_Vfx`). ImGui combo now filtered to lane-supported views
+replacing raw env-text. `batcher_setDebugMaterialMode()` free function.
+Mech debug views wired to `mech.frag` `u_debugMode` with no shader changes.
+Substrate unit tests verify enum completeness (23 test cases).
 
-Gap (residual): the API surface is for IN-WORLD primitives
-(`flushWorldPrims`); a richer
-`engine.debug.drawBounds(handle)` / `forceLOD(handle, n)` /
-`overlayText(...)` set is M2+ work. Visual canary pending per
-recent debugrenderer commit notes.
+Gap (residual): Terrain and Shadow debug view masks are placeholder-zero.
+The API surface is for IN-WORLD primitives + debug views; per-handle
+inspection (`drawBounds(handle)`, selection bracket) is M2+ work.
 
-**Next step:** DebugRenderer M2 — add per-handle inspection (consume
-the M2.6 `[GAMEPLAY_PICK v1]` schema; render selection bracket /
-mech name overlay when a pick lands). Naturally fits as a consumer
-of the RenderWorld object-ID substrate.
+**Next step:** DebugRenderer M2 — per-handle inspection consuming
+`[GAMEPLAY_PICK v1]` schema; render selection bracket / mech name overlay
+when a pick lands. Wire Terrain debug views through the registry (currently
+zero mask).
 
 ---
 
@@ -693,7 +791,16 @@ lerp is a straightforward addition.
 
 ### 18. Deterministic render audit logs
 
-**Status: BROADENED — multiple new schemas shipped (2026-05-23 / 2026-05-24).**
+**Status: BROADENED FURTHER — Render Resource Registry + contract aggregator shipped (2026-05-29).**
+
+New since 2026-05-24:
+- `renderResources[]` JSON array in `debug_state_dump.cpp` — per-resource
+  RenderResourceDesc (id, kind, format, width, height, glName, valid).
+  TerrainHeightTexture + ShadowStaticMap auto-registered.
+- `registeredViews[]` JSON array — Engine View Registry entries per-view.
+- `scripts/check-contracts.sh` aggregator — 8 grep checks, aligned PASS/FAIL
+  table, CI-runnable. All 8 PASS as of 2026-05-28. Subsumes scattered
+  per-script invocations.
 
 The `[SUBSYS v1]` banner convention has expanded substantially during
 the RenderWorld arc + render contract Phase 2:
@@ -853,8 +960,9 @@ Sequence D — draw packet path (item 11):
 In progress (items 3, 13):
   Extraction phase     — v2.1–v3 SHIPPED (static props); authority flip next
                          Mechs/terrain/VFX extraction not started
-  Frame allocator      — taxonomy doc SHIPPED (P2-1 Phase 1);
-                         expose ping-pong arena as FrameArena API next
+  Frame allocator      — FrameArena SHIPPED + unit-tested (FRAMEARENA-L2-1,
+                         FRAME-ARENA-1); production migrated. Adoption by
+                         HZB/sort-key/per-subsystem rings next
 
 Deferred (items 7, 15, 17):
   Multi-view model     — after F1 atomic flip + RenderWorld boundary
@@ -1379,14 +1487,18 @@ Execute tiers in order. Do not start Tier 2 before Tier 1 is stable.
 ### Tier 1 — Engine contracts (makes everything else safe)
 
 ```
-RenderWorld boundary spec
-PipelineDesc runtime type
-RenderPassDesc assertions (render_contract Phase 2)
-RendererFeatureRegistry
-Shader interface schema (UBO/SSBO layout source of truth)
-ResourceLifetime taxonomy
-DebugRenderer namespace
-Object-ID buffer
+RenderWorld boundary spec                        ← DONE (renderworld_arc_status.md)
+PipelineDesc runtime type                        ← not started (Phase 3)
+RenderPassDesc assertions (render_contract Phase 2) ← SHIPPED (MC2_RENDER_CONTRACT_ASSERT=1)
+RendererFeatureRegistry                          ← SHIPPED + unit-tested (COUNT=26)
+Shader interface schema (UBO/SSBO layout source of truth) ← not started
+ResourceLifetime taxonomy                        ← PHASE 1 DOC SHIPPED (2026-05-26)
+DebugRenderer namespace                          ← M1 + DEBUG-VIEW-REGISTRY-1 SHIPPED
+Object-ID buffer                                 ← FULLY REALIZED
+Contract check aggregator                        ← SHIPPED (check-contracts.sh, 8 checks)
+Substrate unit tests                             ← SHIPPED (23 test cases / 2015 assertions)
+Engine View Registry                             ← SUBSTRATE SHIPPED (item 7 prerequisite)
+Render Resource Registry                         ← SHIPPED (metadata only; 6 resource IDs)
 ```
 
 Tier 1 does not make screenshots prettier immediately. It prevents pretty
@@ -1395,15 +1507,21 @@ features from becoming spaghetti.
 ### Tier 2 — UE4/MW5 visual baseline
 
 ```
-PBR MaterialGpu contract (static props first)    ← schema shipped; per-pass adoption pending
+PBR MaterialGpu contract (static props first)    ← static props DEFAULT-ON; mech specular V1 gated OFF
+                                                     mech smoothed normals DEFAULT-ON (mode 2)
+                                                     mech ambient 0.15 DEFAULT-ON
 HDR scene color buffer                            ← not started
 Tonemap + bloom post stack                        ← not started
-Stable CSM shadows                               ← terrain wired (af43ab0b); stability WIP
+Stable CSM shadows                               ← TUNING-1 + DYNAMIC-RESTORE-1 SHIPPED (default ON)
+                                                     terrain-object flush-order fix SHIPPED
+                                                     shadow debug views + resource registry wired
 HDRI sky                                          ← SHIPPED (SkyRenderAdapter + tinyexr EXR)
 Clean SSAO/GTAO-lite (new path, not deleted one) ← not started
 Decal system v1                                   ← not started
-GPU particle/VFX substrate                        ← PARTIAL (FX-GPU B3c: default ON; B3a/b blend+schema)
+GPU particle/VFX substrate                        ← PARTIAL: FX-GPU B3c default ON + VFX-AGE-SAMPLE-1
+                                                     (MC2_VFX_AGE_SAMPLE default OFF — real age curves)
 Terrain material modernization                    ← not started
+Water visual modernization                        ← MDI water + sky tint gated (default OFF); recon done
 ```
 
 Full Track V spec: `docs/superpowers/specs/2026-05-22-visual-fidelity-roadmap.md`.
