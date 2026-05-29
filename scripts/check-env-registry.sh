@@ -267,6 +267,7 @@ ALLOWLIST=(
     MC2_VISUAL_DIFF_CAPTURE     # infra -- visual diff tool
     MC2_VISUAL_DIFF_MISSION     # infra -- visual diff tool
     MC2_VISUAL_DIFF_OUT         # infra -- visual diff tool
+    MC2_VISUAL_TUNING_FILE      # infra -- visual tuning profile path override (visual_tuning_profile.cpp)
     MC2_VPL_CULL                # feature -- promote-to-registry
     MC2_VPL_PICK                # feature -- promote-to-registry
     MC2_VPL_REDUCE              # feature -- promote-to-registry
