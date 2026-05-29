@@ -161,7 +161,12 @@ enum class RendererFeature : int {
     Bloom                    = 31,  // MC2_BLOOM
     TonemapAces              = 32,  // MC2_TONEMAP_ACES
     Ssao                     = 33,  // MC2_SSAO
-    COUNT                    = 34,
+    // TRACKV-VFX-PAYOFF-OPUS-1: VFX visual-payoff gates. Both default-OFF
+    // (enforced by the Track-V VFX payoff guardrail unit test). Promotion to
+    // default-ON is a deliberate edit here AND in that test.
+    VfxSoftParticles         = 34,  // MC2_VFX_SOFT_PARTICLES
+    VfxLitParticles          = 35,  // MC2_VFX_LIT_PARTICLES
+    COUNT                    = 36,
 };
 
 // ---------------------------------------------------------------------------
@@ -442,6 +447,22 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "SSAO-GTAO-LITE-MVP-1 (Track V): lightweight half-res screen-space ambient-occlusion grounding pass (gosPostProcess::runSSAO) reusing the scene depth + GBuffer1 world normals + inverseViewProj already produced for the screen-shadow pass. Default-OFF; =1 enables. Multiplicative composite into the scene color (like runScreenShadow) BEFORE the composite/tonemap, with a far-depth (sky) guard so background and UI are untouched. ImGui + per-mission tunables aoRadius / aoStrength / aoBias. When OFF, runSSAO is skipped entirely -> byte-identical. Visual-only; no geometry/objectId/UI change."
+    },
+    // VfxSoftParticles
+    {
+        "MC2_FEATURE_VFX_SOFT_PARTICLES",
+        "MC2_VFX_SOFT_PARTICLES",
+        EnvVarKind::Feature,
+        false,
+        "VFX-SOFT-PARTICLES-MVP-1 (Track V): depth-fade GPU particles at scene intersections. When =1, gosPostProcess copies the resolved scene depth into a dedicated sampleable texture (a blit, avoiding the read-from-bound-attachment feedback loop) before the in-scene particle flush, and particle_billboard.frag fades alpha by the reverse-Z linear depth difference between the fragment and the scene behind it. Applies to alpha-blended groups only (u_vfxIsAdditive==0); additive flashes/lasers are unaffected. Default-OFF; when OFF the depth copy is skipped entirely (zero added cost) and the FS fade is bypassed -> byte-identical. Reverse-Z convention near=1/far=0 (NOT SSAO's stale forward-Z comments). Visual-only; no geometry/objectId/UI/gameplay change. No effect when MC2_GPU_PARTICLES=0."
+    },
+    // VfxLitParticles
+    {
+        "MC2_FEATURE_VFX_LIT_PARTICLES",
+        "MC2_VFX_LIT_PARTICLES",
+        EnvVarKind::Feature,
+        false,
+        "VFX-LIT-PARTICLES-MVP-1 (Track V): simple directional+ambient lighting for alpha-blended smoke/dust particles. When =1, particle_billboard.frag applies a wrapped hemispheric sun+ambient fill sourced from the global camera lighting (eye->lightDirection / lightRGB / ambientRGB, the same source terrain uses) to non-additive groups (u_vfxIsAdditive==0) only; additive flashes/lasers/PPC stay self-emissive/unlit. Strength is the MC2_TUNE_VFX_LIT_STRENGTH startup default / vfxLitStrength per-mission profile key / live ImGui slider. Default-OFF; when OFF the lit term resolves to identity (tex*v_color) -> byte-identical. No new SSBO/struct/ABI; no per-fragment normal (billboard). Visual-only; no geometry/objectId/UI/gameplay change. No effect when MC2_GPU_PARTICLES=0."
     },
 };
 
