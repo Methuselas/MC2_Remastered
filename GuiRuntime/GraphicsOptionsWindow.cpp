@@ -1248,6 +1248,24 @@ static void drawGBufferPreview() {
             ImGui::TextDisabled("Object-ID buffer: not active (set MC2_OBJECT_ID_BUFFER=1)");
         }
     }
+
+    // ── Water Reflection (1/4-res RGBA16F) ────────────────────────────────────
+    // WATER-REFLECTION-RESOURCE-1: substrate target. Renders BLACK until Phase C
+    // (WATER-TERRAIN-REFLECTION-1) renders sky+terrain into it.
+    {
+        unsigned int tex = pp->getWaterReflectionTexture();
+        ImGui::Spacing();
+        if (tex) {
+            ImGui::Text("Water Reflection  (1/4-res RGBA16F, %dx%d)",
+                        pp->getWaterReflectionWidth(), pp->getWaterReflectionHeight());
+            ImGui::Image((ImTextureID)(intptr_t)tex, sz, uv0, uv1);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Quarter-res water reflection target (WATER-REFLECTION-RESOURCE-1).\n"
+                                  "BLACK until Phase C renders sky+terrain into it; substrate only.");
+        } else {
+            ImGui::TextDisabled("Water Reflection: not allocated");
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

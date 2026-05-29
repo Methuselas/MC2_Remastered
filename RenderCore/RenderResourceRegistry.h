@@ -15,6 +15,8 @@ enum class RenderResourceId : uint16_t {
     TerrainHeightTexture = 4,
     MaterialGpuBuffer    = 5,
     ShadowDynamicMap     = 6,
+    WaterReflectionColor = 7,   // WATER-REFLECTION-RESOURCE-1: 1/4-res reflection RT (color)
+    WaterReflectionDepth = 8,   // WATER-REFLECTION-RESOURCE-1: 1/4-res reflection RT (depth)
     Count
 };
 

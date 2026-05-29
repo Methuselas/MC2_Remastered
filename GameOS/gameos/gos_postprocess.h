@@ -40,6 +40,12 @@ public:
     GLuint getSceneFBO() const { return sceneFBO_; }
     // M1.5: readback hook for RenderWorld::lookupAtPixel.
     GLuint getSceneObjectIdTex() const { return sceneObjectIdTex_; }
+    // WATER-REFLECTION-RESOURCE-1: 1/4-res reflection target (substrate only;
+    // no producer renders into it until Phase C -> the texture reads black).
+    GLuint getWaterReflectionTexture() const { return waterReflColorTex_; }
+    GLuint getWaterReflectionFBO()     const { return waterReflFBO_; }
+    int    getWaterReflectionWidth()   const { return waterReflW_; }
+    int    getWaterReflectionHeight()  const { return waterReflH_; }
     // F3: explicit sentinel clear for GBuffer1 (attachment 1).
     // Sets attachment 1 to (0.5, 0.5, 1.0, 0.0) — flat-up encoded normal,
     // alpha = 0.0 (post-shadow eligible). Must be called while MRT is bound
@@ -139,6 +145,15 @@ private:
     // Bloom ping-pong FBOs (half resolution)
     GLuint bloomFBO_[2];
     GLuint bloomColorTex_[2];
+
+    // WATER-REFLECTION-RESOURCE-1: quarter-res reflection target (color + depth).
+    // Allocated in createFBOs, freed in destroyFBOs, registered in
+    // RenderResourceRegistry. No producer until Phase C (reads black).
+    GLuint waterReflFBO_      = 0;
+    GLuint waterReflColorTex_ = 0;
+    GLuint waterReflDepthTex_ = 0;
+    int    waterReflW_        = 0;
+    int    waterReflH_        = 0;
 
     // Fullscreen quad
     GLuint quadVAO_;

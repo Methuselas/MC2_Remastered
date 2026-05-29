@@ -49,6 +49,8 @@ const char* toString(RenderResourceId id) {
         case RenderResourceId::TerrainHeightTexture: return "TerrainHeightTexture";
         case RenderResourceId::MaterialGpuBuffer:    return "MaterialGpuBuffer";
         case RenderResourceId::ShadowDynamicMap:     return "ShadowDynamicMap";
+        case RenderResourceId::WaterReflectionColor: return "WaterReflectionColor";
+        case RenderResourceId::WaterReflectionDepth: return "WaterReflectionDepth";
         case RenderResourceId::Count:                return "Count";
     }
     return "unknown";

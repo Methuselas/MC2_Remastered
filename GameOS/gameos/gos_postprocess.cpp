@@ -445,6 +445,65 @@ void gosPostProcess::createFBOs(int w, int h)
             fprintf(stderr, "gosPostProcess: god ray FBO incomplete (0x%x)\n", grStatus);
     }
 
+    // --- WATER-REFLECTION-RESOURCE-1: quarter-res reflection target ---
+    // Substrate only: allocated + registered, but NO producer renders into it
+    // until Phase C, so the texture reads black. Color (RGBA16F) + depth (D24).
+    {
+        waterReflW_ = w / 4; if (waterReflW_ < 1) waterReflW_ = 1;
+        waterReflH_ = h / 4; if (waterReflH_ < 1) waterReflH_ = 1;
+
+        glGenTextures(1, &waterReflColorTex_);
+        glBindTexture(GL_TEXTURE_2D, waterReflColorTex_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, waterReflW_, waterReflH_, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glGenTextures(1, &waterReflDepthTex_);
+        glBindTexture(GL_TEXTURE_2D, waterReflDepthTex_);
+        // GL_FLOAT type + CLAMP_TO_EDGE wrap: match the project's other depth
+        // textures (shadow maps) to avoid AMD quirks + OOB-sample wrapping traps.
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, waterReflW_, waterReflH_, 0,
+                     GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glGenFramebuffers(1, &waterReflFBO_);
+        glBindFramebuffer(GL_FRAMEBUFFER, waterReflFBO_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, waterReflColorTex_, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,  GL_TEXTURE_2D, waterReflDepthTex_, 0);
+
+        GLenum wrStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (wrStatus != GL_FRAMEBUFFER_COMPLETE)
+            fprintf(stderr, "gosPostProcess: water reflection FBO incomplete (0x%x)\n", wrStatus);
+
+        // Register descriptors (descriptive; this owner keeps the GL lifetime).
+        RenderCore::RenderResourceDesc cdesc;
+        cdesc.id        = RenderCore::RenderResourceId::WaterReflectionColor;
+        cdesc.kind      = RenderCore::RenderResourceKind::Texture2D;
+        cdesc.format    = RenderCore::RenderResourceFormat::RGBA16F;
+        cdesc.debugName = "WaterReflectionColor";
+        cdesc.width     = (uint32_t)waterReflW_;
+        cdesc.height    = (uint32_t)waterReflH_;
+        cdesc.glName    = waterReflColorTex_;
+        cdesc.valid     = (wrStatus == GL_FRAMEBUFFER_COMPLETE);
+        RenderCore::registerOrUpdateRenderResource(cdesc);
+
+        RenderCore::RenderResourceDesc ddesc;
+        ddesc.id        = RenderCore::RenderResourceId::WaterReflectionDepth;
+        ddesc.kind      = RenderCore::RenderResourceKind::Texture2D;
+        ddesc.format    = RenderCore::RenderResourceFormat::Depth24;
+        ddesc.debugName = "WaterReflectionDepth";
+        ddesc.width     = (uint32_t)waterReflW_;
+        ddesc.height    = (uint32_t)waterReflH_;
+        ddesc.glName    = waterReflDepthTex_;
+        ddesc.valid     = (wrStatus == GL_FRAMEBUFFER_COMPLETE);
+        RenderCore::registerOrUpdateRenderResource(ddesc);
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -482,6 +541,19 @@ void gosPostProcess::destroyFBOs()
     }
     if (godrayColorTex_) { glDeleteTextures(1, &godrayColorTex_); godrayColorTex_ = 0; }
     if (godrayFBO_) { glDeleteFramebuffers(1, &godrayFBO_); godrayFBO_ = 0; }
+
+    // WATER-REFLECTION-RESOURCE-1: free reflection target + mark slots invalid.
+    if (waterReflColorTex_) { glDeleteTextures(1, &waterReflColorTex_); waterReflColorTex_ = 0; }
+    if (waterReflDepthTex_) { glDeleteTextures(1, &waterReflDepthTex_); waterReflDepthTex_ = 0; }
+    if (waterReflFBO_)      { glDeleteFramebuffers(1, &waterReflFBO_);   waterReflFBO_ = 0; }
+    waterReflW_ = waterReflH_ = 0;
+    {
+        RenderCore::RenderResourceDesc inv;
+        inv.id = RenderCore::RenderResourceId::WaterReflectionColor; inv.valid = false;
+        RenderCore::registerOrUpdateRenderResource(inv);
+        inv.id = RenderCore::RenderResourceId::WaterReflectionDepth;
+        RenderCore::registerOrUpdateRenderResource(inv);
+    }
 }
 
 void gosPostProcess::createFullscreenQuad()
