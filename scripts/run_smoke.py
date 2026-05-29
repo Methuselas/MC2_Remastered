@@ -310,6 +310,14 @@ def main():
                             "MC2_RING_FORCE_FINISH",
                             # GPU object batcher gate (bisect partner for terrain bug)
                             "MC2_GPU_OBJECTS",
+                            # Shadow-lane gated features (smoke coverage for the
+                            # dynamic sun-shadow caster path + static building map).
+                            "MC2_SHADOW_ENABLE",
+                            "MC2_STATIC_PROP_BUILDING_SHADOW",
+                            "MC2_SHADOW_DYNAMIC_PROP_CASTERS",
+                            "MC2_SHADOW_BOUNDED_NEAR_FIT",
+                            "MC2_SHADOW_BOUNDED_NEAR_RADIUS",
+                            "MC2_SHADOW_FRUSTUM_DIAG",
                             # Mask-dispatch (pre-bake-terrain merge)
                             "MC2_TERRAIN_MASK_DISPATCH",
                             "MC2_TERRAIN_MASK_DISPATCH_PARITY",

@@ -1485,6 +1485,61 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     float fitRadius = (halfX > halfY ? halfX : halfY);
     if (fitRadius < 64.0f) fitRadius = 64.0f;
     if (fitRadius > r)     fitRadius = r;
+    const float origFitRadius = fitRadius;  // pre-cap, for the diag
+
+    // SHADOW-BOUNDED-NEAR-FIT-1 (gate, default OFF): the RTS camera frustum
+    // saturates the full-map clamp every frame (fitRadius==r==~11404 -> ~5.57
+    // WU/texel; see docs/shadow-frustum-audit.md). When MC2_SHADOW_BOUNDED_NEAR_FIT=1,
+    // cap the fit radius to a small camera-centered region so the dynamic shadow
+    // map covers less world at much higher texel density. Applied BEFORE the pow-2
+    // and texel snap below so stabilization is fully preserved. Trades far-map
+    // shadow coverage for crisp near shadows. Gate OFF -> byte-identical to prior.
+    {
+        static const bool s_boundedNear = []() {
+            const char* v = getenv("MC2_SHADOW_BOUNDED_NEAR_FIT");
+            return (v && v[0] == '1');   // default OFF; only "=1" enables
+        }();
+        if (s_boundedNear) {
+            static const float s_boundedRadiusRaw = []() {
+                const char* v = getenv("MC2_SHADOW_BOUNDED_NEAR_RADIUS");
+                float rad = (v ? (float)atof(v) : 2500.0f);
+                if (rad <= 0.0f) rad = 2500.0f;
+                return rad;
+            }();
+            float boundedRadius = s_boundedRadiusRaw;
+            if (boundedRadius < 512.0f) boundedRadius = 512.0f;  // safe floor
+            if (boundedRadius > r)      boundedRadius = r;        // never exceed map clamp
+            if (fitRadius > boundedRadius) fitRadius = boundedRadius;
+
+            // SHADOW-BOUNDED-NEAR-CENTER fix: center the bounded box on the
+            // camera's GROUND FOCUS (screen-center view ray intersect ground),
+            // NOT the clamped full-frustum bbox center (cx,cy). For a tilted RTS
+            // camera the far corners blow past the map and clamp to +/-r, so the
+            // bbox center snapped erratically as the camera rotated (the box
+            // "moved nonsensically"). The screen-center ground point tracks where
+            // the player looks and moves smoothly. nearC/farC = centroids of the
+            // 4 near (z=0) and 4 far (z=1) UNCLAMPED corners (= each plane center);
+            // the line between them is the center ray. Intersect with MC2 ground
+            // (elevation == coord[2] == 0). Falls back to cx,cy for a ~horizontal ray.
+            float nearC[3] = {0,0,0}, farC[3] = {0,0,0};
+            for (int c = 0; c < 4; ++c) {
+                nearC[0]+=camFitCornersMC2[c][0];   nearC[1]+=camFitCornersMC2[c][1];   nearC[2]+=camFitCornersMC2[c][2];
+                farC[0] +=camFitCornersMC2[c+4][0]; farC[1] +=camFitCornersMC2[c+4][1]; farC[2] +=camFitCornersMC2[c+4][2];
+            }
+            for (int k = 0; k < 3; ++k) { nearC[k]*=0.25f; farC[k]*=0.25f; }
+            const float dz = nearC[2] - farC[2];
+            if (fabsf(dz) > 1e-3f) {
+                float t = nearC[2] / dz;             // param where elevation crosses 0
+                if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
+                float fX = nearC[0] + t * (farC[0] - nearC[0]);
+                float fY = nearC[1] + t * (farC[1] - nearC[1]);
+                if (fX < -r) fX = -r; else if (fX > r) fX = r;
+                if (fY < -r) fY = -r; else if (fY > r) fY = r;
+                cx = fX; cy = fY;                    // override the box center
+            }
+        }
+    }
+
     float xyRadius = 64.0f;
     while (xyRadius < fitRadius) xyRadius *= 2.0f;     // pow2 anti-shimmer
     if (xyRadius > r) xyRadius = r;
@@ -1493,6 +1548,33 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     float camY = floorf(cy / worldUnitsPerTexel) * worldUnitsPerTexel;
     float camZ = 0.0f;
     float depthDist = 5000.0f;
+
+    // SHADOW-FRUSTUM-AUDIT-1 (2026-05-29): env-gated, read-only coverage probe.
+    // No behavior change. MC2_SHADOW_FRUSTUM_DIAG=1 dumps the per-frame dynamic
+    // sun-shadow ortho coverage so we can see actual texel world size and whether
+    // the box is camera-fit (it is) vs the missing-distant-caster problem (which
+    // is a caster-feed issue, not a matrix issue). Caster counts live in the
+    // debug-state dump (gos_get*ShadowInstDrawn); read those alongside this.
+    {
+        static const bool s_frustDiag = (getenv("MC2_SHADOW_FRUSTUM_DIAG") != nullptr);
+        static int s_frustN = 0;
+        if (s_frustDiag) {
+            ++s_frustN;
+            if (s_frustN <= 3 || (s_frustN % 300) == 0) {
+                fprintf(stderr,
+                    "[SHADOW_FRUSTUM_DIAG] frame=%d sunDir=(%.3f,%.3f,%.3f) "
+                    "frustumXY=[%.0f..%.0f,%.0f..%.0f] center=(%.0f,%.0f) "
+                    "fitRadius=%.0f(orig=%.0f) xyRadius=%.0f mapClampR=%.0f "
+                    "texelWU=%.3f orthoWH=%.0fx%.0f depth=[%.0f..%.0f] mapSize=%d\n",
+                    s_frustN, fx, fy, fz,
+                    minX, maxX, minY, maxY, cx, cy,
+                    fitRadius, origFitRadius, xyRadius, r,
+                    worldUnitsPerTexel, 2.0f * xyRadius, 2.0f * xyRadius,
+                    1.0f, 2.0f * depthDist, dynShadowMapSize_);
+                fflush(stderr);
+            }
+        }
+    }
 
     float lightPosX = camX - fx * depthDist;
     float lightPosY = camY - fy * depthDist;

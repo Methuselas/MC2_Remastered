@@ -128,6 +128,24 @@ bool staticPropGetModelMatrix(int32_t recipeIndex, float out[16]);
 // Returns the typeID field from the first instance of the recipe.
 bool staticPropGetTypeId(int32_t recipeIndex, uint32_t* out);
 
+// SHADOW-STATIC-BUILDINGS-2: tag a recipe's population (Building/Tree) at
+// registration. Lets the world-fixed static shadow map replay buildings only,
+// visibility-independent (NOT per-frame markVisible buckets).
+void setRecipePopulation(int32_t recipeIndex, GpuStaticPropPopulation pop);
+
+// SHADOW-STATIC-BUILDINGS-2: append all non-tombstoned BUILDING recipe leaves
+// (baked modelMatrix + typeID) to `out` for the static building shadow pass.
+// Reads the full registry, not per-frame buckets. Trees/unset excluded.
+void getBuildingShadowInstances(std::vector<GpuStaticPropInstance>& out);
+
+// SHADOW-DYNAMIC-PROP-CASTERS-1: append all non-tombstoned NON-BUILDING recipe
+// leaves (trees/fences/generic props; baked modelMatrix + typeID) to `out`.
+// Visibility-independent (full registry, NOT per-frame markVisible buckets), so
+// the dynamic shadow pass admits EVERY prop, not just the camera-visible subset
+// that reached s_typeRanges. Buildings are excluded (they cast via the world-
+// fixed static map). Inverse filter of getBuildingShadowInstances.
+void getDynamicPropShadowInstances(std::vector<GpuStaticPropInstance>& out);
+
 // Returns RecipeRange::extentRadius. Value is from the previous frame's markVisible()
 // call; 0.0f if markVisible was never called for this recipe.
 bool staticPropGetExtentRadius(int32_t recipeIndex, float* out);

@@ -12,6 +12,36 @@ For the RenderWorld arc specifically, see also:
 
 ---
 
+## Shadow lane — dynamic prop shadows working (2026-05-29)
+
+Branch `claude/shadow-lane` (9 commits ahead of nifty, ready to merge).
+Full state: `memory/shadow_dynamic_projection_and_caster_feed_fixed.md`.
+
+- **SHADOW-LANE PHANTOM** (SHIPPED `2764cb65`): terrain objects invisible w/
+  MC2_SHADOW_ENABLE=1 was a flush-ORDER bug (registry flush after the SSBO slot
+  lock). Registry flushed before flushShadow. See
+  `memory/shadow_enable_terrain_object_invisibility_resolved.md`.
+- **SHADOW-TERRAIN-COMBINE-MIN-1** (SHIPPED `7ea32b83`): terrain shadow combine
+  is `min(static,dynamic)` not multiply → no double-darken on overlap.
+- **SHADOW-BOUNDED-NEAR-FIT-1** (SHIPPED `d7e95a7f` + center `8428805e`): gate
+  MC2_SHADOW_BOUNDED_NEAR_FIT (default OFF) caps the dynamic fit radius for crisp
+  near shadows; box centered on screen-center ground-focus ray.
+- **SHADOW-STATIC-BUILDINGS-2** (SHIPPED `657d671d`): gate
+  MC2_STATIC_PROP_BUILDING_SHADOW (default OFF) replays ALL buildings (registry,
+  visibility-independent) into the world-fixed static map; dynamic pass skips
+  building types to avoid a fuzzy double-shadow (`8428805e`).
+- **SHADOW-DYNAMIC-PROJECTION-FIX-1** (SHIPPED `a365e6ad`): dynamic frustum-fit
+  unprojected GL-NDC corners through `inverse(getWorldToClip())` (D3D pixel-homog,
+  Y-down) → box MIRRORED, shadows only at certain camera angles. Fixed: invert
+  `worldToClipGL()` (GL-NDC + axis-swap baked); drop manual swizzle + w<0 negate.
+- **SHADOW-DYNAMIC-PROP-CASTERS-1** (SHIPPED `054ca335`): gate
+  MC2_SHADOW_DYNAMIC_PROP_CASTERS (default OFF) feeds the dynamic caster pass from
+  the registry (ALL non-building props, visibility-independent) instead of the
+  camera-visible s_typeRanges → every tree casts, not just near-camera ones.
+  mc2_01 gate-ON 733 props/frame constant, 0 GL err.
+- **DEBT:** no light-box cull yet (draws all map props/frame; **HZB planned**);
+  camZ=0 focus shim; stale building shadow on destroy; foliage alpha-discard.
+
 ## MaterialGpu arc — static-prop complete, Mech-1 substrate done (2026-05-26)
 
 - **MaterialGpu static-prop arc v4–v7** (SHIPPED 2026-05-26): Static props fully

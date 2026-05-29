@@ -282,6 +282,18 @@ GLuint s_sharedVao = 0;
 // binding 2 to feed get_base_light()'s per-type magic-color parameters.
 // 48 bytes per type × ~50 types ≈ 2.4 KB total.
 GLuint s_perTypeSsbo = 0;
+// SHADOW-STATIC-BUILDINGS-2: one-shot all-buildings static shadow instance SSBO
+// (declared here so onMapUnload can free it; built in drawStaticBuildingShadows).
+static GLuint s_staticBldgShadowSsbo = 0;
+// SHADOW-DYNAMIC-PROP-CASTERS-1: one-shot all-non-building-props dynamic shadow
+// instance SSBO (declared here so onMapUnload can free it; built per-frame in
+// drawDynamicPropShadows). Separate from the static building SSBO so the two
+// passes never alias.
+static GLuint s_dynamicPropShadowSsbo = 0;
+// typeIDs drawn into the static building shadow map. When the static building
+// shadow is active, flushShadow(skipStaticBuildingTypes=true) skips these in the
+// DYNAMIC pass so buildings don't cast a redundant (fuzzy) second shadow.
+static std::unordered_set<uint32_t> s_buildingShadowTypeIDs;
 
 // Per-frame persistent-mapped rings.
 GLuint   s_instanceSsbo = 0;
@@ -1521,6 +1533,9 @@ void GpuStaticPropBatcher::onMapUnload() {
     // Slice 2 (object-offload) — Stage 2.C.2: per-type hot-color SSBO is
     // also per-map; rebuild on next finalizeGeometry.
     if (s_perTypeSsbo) { glDeleteBuffers(1, &s_perTypeSsbo); s_perTypeSsbo = 0; }
+    // SHADOW-STATIC-BUILDINGS-2: per-map one-shot building shadow SSBO.
+    if (s_staticBldgShadowSsbo) { glDeleteBuffers(1, &s_staticBldgShadowSsbo); s_staticBldgShadowSsbo = 0; }
+    if (s_dynamicPropShadowSsbo) { glDeleteBuffers(1, &s_dynamicPropShadowSsbo); s_dynamicPropShadowSsbo = 0; }
     // Ring buffers are kept across maps (sized to map's worst case -- grow on demand).
 
     // Substrate-coalesce per-mission cleanup (plan v3.8 Step group 4).
@@ -5422,7 +5437,7 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
 static int s_shadowTypesDrawn = 0;
 static int s_shadowInstDrawn  = 0;
 
-void GpuStaticPropBatcher::flushShadow() {
+void GpuStaticPropBatcher::flushShadow(bool skipStaticBuildingTypes) {
     // Non-indirect, full-range, depth-only draw for GPU static props.
     // Uses the shadow_static_prop program (Task 1) and the same per-frame
     // SSBO upload as flush() (shared via uploadAllBucketsIfNeeded /
@@ -5523,6 +5538,11 @@ void GpuStaticPropBatcher::flushShadow() {
         const TypeRangeSsbo& r = rit->second;
         const GpuStaticPropType& type = s_types[typeID];
         if (r.instanceCount == 0 || type.packetCount == 0) continue;
+        // SHADOW-STATIC-BUILDINGS-2: when the static building shadow map is active,
+        // skip building types in the DYNAMIC pass — they already cast a crisp
+        // shadow via the world-fixed static map; the dynamic copy is a redundant,
+        // fuzzy double-shadow. Trees/mechs/other props still cast dynamically.
+        if (skipStaticBuildingTypes && s_buildingShadowTypeIDs.count(typeID)) continue;
 
         // Bind the per-type instance SSBO range (binding 0 = Instances block
         // in shadow_static_prop.vert, indexed by gl_InstanceID).
@@ -5574,6 +5594,246 @@ void GpuStaticPropBatcher::flushShadow() {
     glBindVertexArray((GLuint)prevVao);                          // VAO first
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf); // then elem
     glUseProgram((GLuint)prevProgram);
+}
+
+// ---------------------------------------------------------------------------
+// SHADOW-STATIC-BUILDINGS-2: world-fixed static building shadow caster pass.
+// `instances` = all registered rigid-building recipe leaves (from the registry,
+// visibility-INDEPENDENT). Depth-only; shadow_static_prop reads only modelMatrix
+// and GpuStaticPropInstance is binary-compatible with its Instance block, so the
+// registry records upload directly. Uses the STATIC world-fixed light matrix.
+// ---------------------------------------------------------------------------
+// s_staticBldgShadowSsbo declared near s_perTypeSsbo (so onMapUnload can free it).
+static int    s_staticBldgShadowTypes = 0;
+static int    s_staticBldgShadowInst  = 0;
+static int    s_staticBldgShadowDraws = 0;
+
+void GpuStaticPropBatcher::drawStaticBuildingShadows(
+        const std::vector<GpuStaticPropInstance>& instances) {
+    if (!s_geometryFinalized || s_fatalRegistrationFailure) return;
+    if (instances.empty()) return;
+
+    auto pit = glsl_program::s_programs.find("shadow_static_prop");
+    if (pit == glsl_program::s_programs.end() || !pit->second || !pit->second->shp_)
+        return;
+    const GLuint shadowProg = pit->second->shp_;
+
+    gosPostProcess* pp = getGosPostProcess();
+    if (!pp) return;
+
+    // Group leaves into contiguous per-typeID runs so each type draws from one
+    // SSBO range with gl_InstanceID 0..n-1. Sort an INDEX array, not the struct
+    // array: GpuStaticPropInstance is alignas(16) (over-aligned), and
+    // std::stable_sort's temp buffer trips MSVC's std::aligned_storage extended-
+    // alignment static_assert (C2338). Index-sort (uint32_t) + gather avoids it.
+    std::vector<uint32_t> order(instances.size());
+    for (uint32_t k = 0; k < static_cast<uint32_t>(order.size()); ++k) order[k] = k;
+    std::sort(order.begin(), order.end(),
+        [&instances](uint32_t a, uint32_t b) {
+            return instances[a].typeID < instances[b].typeID;
+        });
+    std::vector<GpuStaticPropInstance> sorted;
+    sorted.reserve(instances.size());
+    for (uint32_t idx : order) sorted.push_back(instances[idx]);
+
+    // Rebuild the building-typeID set so the dynamic pass can skip these (they
+    // cast via this crisp static map; the dynamic copy is redundant + fuzzy).
+    s_buildingShadowTypeIDs.clear();
+
+    // Save the GL state this pass perturbs (mirror flushShadow's bracket) so the
+    // subsequent dynamic shadow pass + main flush see the state they expect.
+    GLint prevProgram = 0, prevVao = 0, prevElemBuf = 0, prevSsbo0 = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &prevElemBuf);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
+
+    if (s_staticBldgShadowSsbo == 0) glGenBuffers(1, &s_staticBldgShadowSsbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_staticBldgShadowSsbo);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+        static_cast<GLsizeiptr>(sorted.size() * sizeof(GpuStaticPropInstance)),
+        sorted.data(), GL_STATIC_DRAW);
+
+    glUseProgram(shadowProg);
+    const GLint lsLoc = glGetUniformLocation(shadowProg, "lightSpaceMatrix");
+    if (lsLoc >= 0)
+        glUniformMatrix4fv(lsLoc, 1, GL_FALSE, pp->getLightSpaceMatrix()); // static matrix
+
+    glBindVertexArray(s_sharedVao);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
+
+    // Contact-acne bias (the static terrain prepass sets none).
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(pp->shadowBiasFactor_, pp->shadowBiasUnits_);
+
+    int typesDrawn = 0, instDrawn = 0, drawCalls = 0;
+    size_t i = 0;
+    while (i < sorted.size()) {
+        const uint32_t tid = sorted[i].typeID;
+        size_t j = i;
+        while (j < sorted.size() && sorted[j].typeID == tid) ++j;
+        const uint32_t instCount = static_cast<uint32_t>(j - i);
+        if (tid < static_cast<uint32_t>(s_types.size())) {
+            const GpuStaticPropType& type = s_types[tid];
+            if (type.packetCount > 0) {
+                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_staticBldgShadowSsbo,
+                    static_cast<GLintptr>(i * sizeof(GpuStaticPropInstance)),
+                    static_cast<GLsizeiptr>(instCount * sizeof(GpuStaticPropInstance)));
+                for (uint32_t p = 0; p < type.packetCount; ++p) {
+                    const uint32_t pk = type.firstPacket + p;
+                    if (pk >= s_packets.size()) break;
+                    const GpuStaticPropPacket& pkt = s_packets[pk];
+                    glDrawElementsInstancedBaseVertex(
+                        GL_TRIANGLES, static_cast<GLsizei>(pkt.indexCount), GL_UNSIGNED_INT,
+                        reinterpret_cast<void*>(static_cast<uintptr_t>(pkt.firstIndex) * sizeof(uint32_t)),
+                        static_cast<GLsizei>(instCount), pkt.baseVertex);
+                    ++drawCalls;
+                }
+                ++typesDrawn;
+                instDrawn += static_cast<int>(instCount);
+                s_buildingShadowTypeIDs.insert(tid);  // skip in the dynamic pass
+            }
+        }
+        i = j;
+    }
+
+    glPolygonOffset(0.0f, 0.0f);
+    glDisable(GL_POLYGON_OFFSET_FILL);
+
+    // Restore (ssbo0, VAO, elem, program — same order as flushShadow).
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
+    glBindVertexArray((GLuint)prevVao);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf);
+    glUseProgram((GLuint)prevProgram);
+
+    s_staticBldgShadowTypes = typesDrawn;
+    s_staticBldgShadowInst  = instDrawn;
+    s_staticBldgShadowDraws = drawCalls;
+    static const char* s_sbTrace = getenv("MC2_STATIC_PROP_BUILDING_SHADOW");
+    if (s_sbTrace && s_sbTrace[0] == '2') {
+        fprintf(stderr,
+            "[SHADOW_STATIC_BLDG v1] recipes_in=%zu types=%d inst=%d draws=%d "
+            "(buildings only; full registry, NOT per-frame buckets)\n",
+            instances.size(), typesDrawn, instDrawn, drawCalls);
+        fflush(stderr);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SHADOW-DYNAMIC-PROP-CASTERS-1: depth-only draw of registry-supplied NON-building
+// prop leaves into the currently-bound DYNAMIC shadow FBO, using the per-frame
+// dynamic light matrix. Mirror of drawStaticBuildingShadows EXCEPT: (a) binds
+// getDynamicLightSpaceMatrix() not the static matrix; (b) uses its own per-frame
+// SSBO (s_dynamicPropShadowSsbo, GL_DYNAMIC_DRAW — rebuilt every frame); (c) does
+// NOT touch s_buildingShadowTypeIDs. Replaces flushShadow's camera-visible
+// s_typeRanges feed for props so EVERY registered prop casts, fixing "only
+// near-camera trees shadow". Caller brackets with gos_BeginDynamicShadowPass().
+static int s_dynPropShadowTypes = 0;
+static int s_dynPropShadowInst  = 0;
+static int s_dynPropShadowDraws = 0;
+
+void GpuStaticPropBatcher::drawDynamicPropShadows(
+        const std::vector<GpuStaticPropInstance>& instances) {
+    s_dynPropShadowTypes = 0; s_dynPropShadowInst = 0; s_dynPropShadowDraws = 0;
+    if (!s_geometryFinalized || s_fatalRegistrationFailure) return;
+    if (instances.empty()) return;
+
+    auto pit = glsl_program::s_programs.find("shadow_static_prop");
+    if (pit == glsl_program::s_programs.end() || !pit->second || !pit->second->shp_)
+        return;
+    const GLuint shadowProg = pit->second->shp_;
+
+    gosPostProcess* pp = getGosPostProcess();
+    if (!pp) return;
+
+    // Group leaves into contiguous per-typeID runs (index-sort + gather; the
+    // struct is over-aligned alignas(16) so std::stable_sort on it trips MSVC's
+    // aligned_storage static_assert — same constraint as drawStaticBuildingShadows).
+    std::vector<uint32_t> order(instances.size());
+    for (uint32_t k = 0; k < static_cast<uint32_t>(order.size()); ++k) order[k] = k;
+    std::sort(order.begin(), order.end(),
+        [&instances](uint32_t a, uint32_t b) {
+            return instances[a].typeID < instances[b].typeID;
+        });
+    std::vector<GpuStaticPropInstance> sorted;
+    sorted.reserve(instances.size());
+    for (uint32_t idx : order) sorted.push_back(instances[idx]);
+
+    // Save the GL state this pass perturbs (mirror flushShadow's bracket).
+    GLint prevProgram = 0, prevVao = 0, prevElemBuf = 0, prevSsbo0 = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &prevElemBuf);
+    glGetIntegeri_v(GL_SHADER_STORAGE_BUFFER_BINDING, 0, &prevSsbo0);
+
+    if (s_dynamicPropShadowSsbo == 0) glGenBuffers(1, &s_dynamicPropShadowSsbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_dynamicPropShadowSsbo);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+        static_cast<GLsizeiptr>(sorted.size() * sizeof(GpuStaticPropInstance)),
+        sorted.data(), GL_DYNAMIC_DRAW);   // rebuilt every frame
+
+    glUseProgram(shadowProg);
+    const GLint lsLoc = glGetUniformLocation(shadowProg, "lightSpaceMatrix");
+    if (lsLoc >= 0)
+        glUniformMatrix4fv(lsLoc, 1, GL_FALSE, pp->getDynamicLightSpaceMatrix()); // DYNAMIC matrix
+
+    glBindVertexArray(s_sharedVao);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
+
+    // Contact-acne bias (same as the building static pass).
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(pp->shadowBiasFactor_, pp->shadowBiasUnits_);
+
+    int typesDrawn = 0, instDrawn = 0, drawCalls = 0;
+    size_t i = 0;
+    while (i < sorted.size()) {
+        const uint32_t tid = sorted[i].typeID;
+        size_t j = i;
+        while (j < sorted.size() && sorted[j].typeID == tid) ++j;
+        const uint32_t instCount = static_cast<uint32_t>(j - i);
+        if (tid < static_cast<uint32_t>(s_types.size())) {
+            const GpuStaticPropType& type = s_types[tid];
+            if (type.packetCount > 0) {
+                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_dynamicPropShadowSsbo,
+                    static_cast<GLintptr>(i * sizeof(GpuStaticPropInstance)),
+                    static_cast<GLsizeiptr>(instCount * sizeof(GpuStaticPropInstance)));
+                for (uint32_t p = 0; p < type.packetCount; ++p) {
+                    const uint32_t pk = type.firstPacket + p;
+                    if (pk >= s_packets.size()) break;
+                    const GpuStaticPropPacket& pkt = s_packets[pk];
+                    glDrawElementsInstancedBaseVertex(
+                        GL_TRIANGLES, static_cast<GLsizei>(pkt.indexCount), GL_UNSIGNED_INT,
+                        reinterpret_cast<void*>(static_cast<uintptr_t>(pkt.firstIndex) * sizeof(uint32_t)),
+                        static_cast<GLsizei>(instCount), pkt.baseVertex);
+                    ++drawCalls;
+                }
+                ++typesDrawn;
+                instDrawn += static_cast<int>(instCount);
+            }
+        }
+        i = j;
+    }
+
+    glPolygonOffset(0.0f, 0.0f);
+    glDisable(GL_POLYGON_OFFSET_FILL);
+
+    // Restore (ssbo0, VAO, elem, program — same order as flushShadow).
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, (GLuint)prevSsbo0);
+    glBindVertexArray((GLuint)prevVao);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, (GLuint)prevElemBuf);
+    glUseProgram((GLuint)prevProgram);
+
+    s_dynPropShadowTypes = typesDrawn;
+    s_dynPropShadowInst  = instDrawn;
+    s_dynPropShadowDraws = drawCalls;
+    static const char* s_dpTrace = getenv("MC2_SHADOW_DYNAMIC_PROP_CASTERS");
+    if (s_dpTrace && s_dpTrace[0] == '2') {
+        fprintf(stderr,
+            "[SHADOW_DYN_PROP v1] recipes_in=%zu types=%d inst=%d draws=%d "
+            "(non-buildings; full registry, NOT per-frame buckets)\n",
+            instances.size(), typesDrawn, instDrawn, drawCalls);
+        fflush(stderr);
+    }
 }
 
 void GpuStaticPropBatcher::setDebugAddrMode(int mode) { debugAddrMode_ = mode; }

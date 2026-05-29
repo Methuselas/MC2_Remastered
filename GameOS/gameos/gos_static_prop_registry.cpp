@@ -134,6 +134,11 @@ struct RecipeRange {
     // time (late-spawn path only; bulk registerRecipe path has no name available
     // in RelWithDebInfo). Empty string = name not captured.
     char               shapeName[128];
+    // SHADOW-STATIC-BUILDINGS-2: population tag set at registration via
+    // setRecipePopulation() (caller knows Building vs Tree). 0xFF = unset
+    // (excluded from the static building shadow). Visibility-independent — the
+    // static building shadow pass replays from here, NOT per-frame buckets.
+    uint8_t            population;
 };
 
 static std::vector<GpuStaticPropInstance> s_recipes;
@@ -352,6 +357,7 @@ int32_t registerRecipe(TG_MultiShape* multi,
     rng.lightDataIndex    = 0xFFFFFFFFu;  // 2026-05-11 per-instance capture sentinel
     rng.extentRadius      = 0.0f;
     rng.shapeName[0]      = '\0';         // populated by late-spawn path if Appearance* available
+    rng.population        = 0xFFu;        // SHADOW-STATIC-BUILDINGS-2: unset until setRecipePopulation()
     s_recipes.insert(s_recipes.end(), batch.begin(), batch.end());
     const int32_t regIdx = static_cast<int32_t>(s_recipeRanges.size());
     s_recipeRanges.push_back(rng);
@@ -801,6 +807,55 @@ bool staticPropGetTypeId(int32_t recipeIndex, uint32_t* out) {
     const RecipeRange& rng = s_recipeRanges[static_cast<size_t>(recipeIndex)];
     *out = s_recipes[rng.first].typeID;
     return true;
+}
+
+// SHADOW-STATIC-BUILDINGS-2: tag a recipe's population at registration time.
+void setRecipePopulation(int32_t recipeIndex, GpuStaticPropPopulation pop) {
+    if (recipeIndex < 0 ||
+        recipeIndex >= static_cast<int32_t>(s_recipeRanges.size())) return;
+    s_recipeRanges[static_cast<size_t>(recipeIndex)].population =
+        static_cast<uint8_t>(pop);
+}
+
+// SHADOW-STATIC-BUILDINGS-2: append every non-tombstoned BUILDING recipe's leaf
+// instances (baked modelMatrix + typeID) to `out`. Visibility-independent — reads
+// the full registry (s_recipes/s_recipeRanges), NOT the per-frame visible buckets.
+// Trees and unset-population recipes are excluded. Used once at the static
+// shadow-map build to replay all rigid buildings into the world-fixed depth map.
+void getBuildingShadowInstances(std::vector<GpuStaticPropInstance>& out) {
+    out.clear();
+    const uint8_t bldg = static_cast<uint8_t>(GpuStaticPropPopulation::Building);
+    for (const RecipeRange& rng : s_recipeRanges) {
+        if (rng.count == 0) continue;            // tombstone (invalidated/destroyed)
+        if (rng.population != bldg) continue;     // buildings only; trees/unset excluded
+        const size_t end = static_cast<size_t>(rng.first) + rng.count;
+        if (end > s_recipes.size()) continue;     // defense: stale range
+        out.insert(out.end(),
+                   s_recipes.begin() + rng.first,
+                   s_recipes.begin() + end);
+    }
+}
+
+// SHADOW-DYNAMIC-PROP-CASTERS-1: append every non-tombstoned NON-BUILDING recipe's
+// leaf instances (trees/fences/generic props) to `out`. Visibility-independent —
+// reads the full registry (s_recipes/s_recipeRanges), NOT the per-frame visible
+// buckets. Buildings are EXCLUDED (population==Building) because they cast via the
+// world-fixed static map; everything else (Tree/Generic/Legacy and unset recipes,
+// which are non-buildings in practice — buildings are tagged Building at register)
+// is included so the dynamic shadow pass admits ALL props regardless of camera
+// visibility. Mirror of getBuildingShadowInstances with the filter inverted.
+void getDynamicPropShadowInstances(std::vector<GpuStaticPropInstance>& out) {
+    out.clear();
+    const uint8_t bldg = static_cast<uint8_t>(GpuStaticPropPopulation::Building);
+    for (const RecipeRange& rng : s_recipeRanges) {
+        if (rng.count == 0) continue;            // tombstone (invalidated/destroyed)
+        if (rng.population == bldg) continue;     // buildings cast via the static map
+        const size_t end = static_cast<size_t>(rng.first) + rng.count;
+        if (end > s_recipes.size()) continue;     // defense: stale range
+        out.insert(out.end(),
+                   s_recipes.begin() + rng.first,
+                   s_recipes.begin() + end);
+    }
 }
 
 bool staticPropGetExtentRadius(int32_t recipeIndex, float* out) {

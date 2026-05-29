@@ -1316,6 +1316,9 @@ long BldgAppearance::render (long depthFixup)
 					staticReg.registered  = (staticReg.recipeIndex >= 0);
 					staticReg.shape       = bldgShape;
 					if (staticReg.registered) {
+						// SHADOW-STATIC-BUILDINGS-2: tag re-registered building recipe.
+						GpuStaticPropRegistry::setRecipePopulation(
+							staticReg.recipeIndex, GpuStaticPropPopulation::Building);
 						// H4 follow-up (2026-05-07): per-frame re-registration
 						// after damage/shape swap has the same lightData_ gap as
 						// mission-load registerStatic(). Force one full update()
@@ -2619,6 +2622,9 @@ void BldgAppearance::registerStatic() {
 		staticReg.registered  = true;
 		staticReg.shape       = bldgShape;
 		staticReg.recipeIndex = regIdx;
+		// SHADOW-STATIC-BUILDINGS-2: tag this recipe Building so the world-fixed
+		// static shadow map replays it (visibility-independent; not per-frame buckets).
+		GpuStaticPropRegistry::setRecipePopulation(regIdx, GpuStaticPropPopulation::Building);
 		// H4 fix (2026-05-06): registerStatic only ran TransformMultiShape_BuildRecipe
 		// (positions only); leaf TG_Shape::lightData_ is still default/zero. Without
 		// this flag, IsStaticNow() returns true on the very next frame, UPDATE_SKIP
