@@ -1938,6 +1938,26 @@ void MC_TextureManager::renderLists (void)
 		Terrain::mapData->renderStaticTerrainShadowFullMap(indexArray, shTex);
 		gos_EndShadowPrePass();
 	}
+	// STATIC-PROP SHADOW-ORDER FIX (2026-05-29): inject static-registry instances
+	// into batcher buckets BEFORE flushShadow() below. flushShadow() calls
+	// uploadAllBucketsIfNeeded(), which uploads s_bucketsByType and LOCKS the
+	// per-frame SSBO slot (s_lastUploadedSlot=s_frameSlot). If the registry flush
+	// ran only at its old site (after this shadow block, before the main flush()),
+	// terrain-object instances (trees/fences/prop-buildings) arrived AFTER the slot
+	// was locked; the idempotency guard then skipped re-upload, so their typeIDs
+	// were absent from s_typeRanges -> zero instances -> INVISIBLE whenever
+	// MC2_SHADOW_ENABLE=1. (True buildings submit via submitMultiShape during
+	// Render.3DObjects, so they were already in the buckets and unaffected.)
+	// Running the registry flush here makes the single shadow-time upload include
+	// terrain objects (they now also cast static shadows). Gate mirrors the
+	// Render.GpuStaticProps block; runs regardless of tessellation/mech state.
+	{
+		extern bool g_useGpuStaticProps;
+		extern bool g_useGpuObjects;
+		if (g_useGpuStaticProps || g_useGpuObjects) {
+			GpuStaticPropRegistry::flush();
+		}
+	}
 	// GPU-driven dynamic sun shadow (Phase 1): frustum-fit + flushShadow.
 	// Runs BEFORE gpu_cull::compute_dispatch so the static-prop shadow uses the
 	// full camera-visible per-type ranges (not the cull-narrowed indirect).
@@ -2136,12 +2156,13 @@ void MC_TextureManager::renderLists (void)
 		extern bool g_useGpuStaticProps;
 		extern bool g_useGpuObjects;
 		if (g_useGpuStaticProps || g_useGpuObjects) {
-			// Stage 3.C: inject static-registry instances into batcher buckets
-			// BEFORE flush(), so they're drawn in the same combined GPU pass.
-			// C1b GPU authority flip: registry flush ALSO appends static prop
-			// substrate records (category = Cat_StaticProp | typeID<<4) so the
-			// cull shader can scatter them into the correct per-type bucket.
-			GpuStaticPropRegistry::flush();
+			// Stage 3.C registry flush MOVED earlier (before flushShadow, see
+			// STATIC-PROP SHADOW-ORDER FIX 2026-05-29) so terrain-object instances
+			// are in s_bucketsByType before the shadow-time SSBO upload locks the
+			// slot. It injects static-registry instances into batcher buckets AND
+			// appends Cat_StaticProp substrate records for the cull shader; both are
+			// now done above, before this block. Do NOT re-add a flush() call here
+			// (double-flush). compute_dispatch() below still runs after it.
 
 			// Step 4.6 (global-pool slice 1): compute per-cmd baseInstance prefix-sum
 			// and advance the coalesce ring slot BEFORE compute_dispatch() so the
