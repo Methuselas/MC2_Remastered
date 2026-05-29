@@ -81,6 +81,7 @@ TRACKED_FLAGS = (
     # that arms the MDI path the uniform lives on, + the fast-path gate. Without
     # these a captured water frame is not reproducible if the path/mode changes.
     "MC2_WATER_DEBUG_MODE",
+    "MC2_WATER_REFLECTION",
     "MC2_GPU_DRIVEN_WATER",
     "MC2_RENDER_WATER_FASTPATH",
     # VFX-BASELINE-0: particle debug-mode selector + the master GPU-particle

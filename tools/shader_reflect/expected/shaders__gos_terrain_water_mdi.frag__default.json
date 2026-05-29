@@ -17,7 +17,7 @@
   "stage": "frag",
   "ubos": [
     {
-      "binding": 3,
+      "binding": 2,
       "members": [
         {
           "array_stride": null,
@@ -95,6 +95,13 @@
           "name": "u_waterSkyTintColor",
           "offset": 80,
           "type": "vec3"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_waterReflStrength",
+          "offset": 92,
+          "type": "float"
         },
         {
           "array_stride": null,

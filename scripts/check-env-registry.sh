@@ -278,6 +278,7 @@ ALLOWLIST=(
     MC2_WATER_MATERIAL_PROBE    # trace
     MC2_WATER_RENDERPROBE       # trace
     MC2_WATER_REFL_TRACE        # trace
+    MC2_WATER_REFLECTION        # feature -- promote-to-registry; WATER-SKY-REFLECTION-1 gated SH-L2 sky reflection (default OFF)
     MC2_WATER_SKYTINT           # feature -- promote-to-registry; WATER-VISUAL-FIRST-SLICE gated sky tint (default OFF)
     MC2_WATER_STREAM_DEBUG      # trace
     MC2_WATER_UPLOAD_NARROW     # feature -- promote-to-registry

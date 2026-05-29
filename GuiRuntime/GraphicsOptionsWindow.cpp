@@ -51,6 +51,10 @@ float gos_GetWaterSkyTintStrength();
 void  gos_SetWaterSkyTintStrength(float v);
 void  gos_GetWaterSkyTintColor(float* rgb);
 void  gos_SetWaterSkyTintColor(float r, float g, float b);
+// WATER-SKY-REFLECTION-1 — gated camera-dependent SH-L2 sky reflection.
+float gos_GetWaterReflStrength();
+void  gos_SetWaterReflStrength(float v);
+int   gos_GetWaterReflectionGate();
 // TERRAIN-RESAMPLE-1 — height-tex source/render/factor accessors + live
 // factor setter. C-linkage (declared extern "C" in gos_terrain_height_tex.h).
 extern "C" {
@@ -631,10 +635,10 @@ static void drawWaterSection() {
     {
         const char* kWaterModes[] = {
             "0: Final", "1: Tint", "2: Alpha", "3: Normal",
-            "4: Depth", "5: Shore", "6: Lighting"
+            "4: Depth", "5: Shore", "6: Lighting", "7: Reflection"
         };
         int mode = gos_GetWaterFsDebugMode();
-        if (mode < 0 || mode > 6) mode = 0;
+        if (mode < 0 || mode > 7) mode = 0;
         if (ImGui::Combo("Debug mode##wat", &mode, kWaterModes, IM_ARRAYSIZE(kWaterModes)))
             gos_SetWaterFsDebugMode(mode);
         if (ImGui::IsItemHovered())
@@ -715,6 +719,26 @@ static void drawWaterSection() {
         if (ImGui::SmallButton("Reset##watskycol")) gos_SetWaterSkyTintColor(0.55f, 0.70f, 0.85f);
     }
 
+    ImGui::SeparatorText("Sky Reflection (gated, camera-dependent)");
+    {
+        // Env is the HARD gate: when OFF, the slider is disabled so it cannot
+        // bypass the gate (unlike sky tint). Enable MC2_WATER_REFLECTION=1.
+        bool gateOn = (gos_GetWaterReflectionGate() != 0);
+        if (gateOn) ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "MC2_WATER_REFLECTION: ON (default strength 0.15)");
+        else        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "MC2_WATER_REFLECTION: off (set =1 to enable; slider disabled)");
+
+        if (!gateOn) ImGui::BeginDisabled();
+        float refl = gos_GetWaterReflStrength();
+        if (ImGui::SliderFloat("Reflection strength##wat", &refl, 0.0f, 0.5f, "%.3f"))
+            gos_SetWaterReflStrength(refl);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("SH-L2 sky reflection (camera-dependent). Suggested 0.10-0.25.\n"
+                              "Fresnel/grazing-weighted, capped. Debug mode 7 shows the sky term.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##watrefl")) gos_SetWaterReflStrength(gateOn ? 0.15f : 0.0f);
+        if (!gateOn) ImGui::EndDisabled();
+    }
+
     if (ImGui::SmallButton("Reset ALL water defaults##wat")) {
         gos_SetWaterFsDebugMode(0);
         gos_SetWaterAbsorptionDensity(0.022f);
@@ -725,6 +749,8 @@ static void drawWaterSection() {
         gos_SetWaterShallowColor(0.22f, 0.45f, 0.38f);
         gos_SetWaterSkyTintStrength(0.0f);
         gos_SetWaterSkyTintColor(0.55f, 0.70f, 0.85f);
+        // Reflection: reset to the gate-appropriate default (0 when gate OFF).
+        gos_SetWaterReflStrength(gos_GetWaterReflectionGate() ? 0.15f : 0.0f);
     }
     ImGui::TextDisabled("MDI path only (MC2_GPU_DRIVEN_WATER=1). Defaults = byte-identical.");
 }

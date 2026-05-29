@@ -2275,6 +2275,30 @@ void  gos_SetWaterSkyTintStrength(float v) { g_waterSkyTintStrength = (v < 0.0f)
 void  gos_GetWaterSkyTintColor(float* rgb) { rgb[0]=g_waterSkyTintColor[0]; rgb[1]=g_waterSkyTintColor[1]; rgb[2]=g_waterSkyTintColor[2]; }
 void  gos_SetWaterSkyTintColor(float r,float g,float b) { g_waterSkyTintColor[0]=r; g_waterSkyTintColor[1]=g; g_waterSkyTintColor[2]=b; }
 
+// WATER-SKY-REFLECTION-1: gated camera-DEPENDENT SH-L2 sky reflection on the MDI
+// water FS. Strength default 0.0 = exact no-op (byte-identical). Env
+// MC2_WATER_REFLECTION=1 bumps the default to 0.15 for A/B; the ImGui slider is
+// authoritative once touched BUT is disabled in the UI when the env gate is OFF
+// (the env is the hard gate — the slider must not bypass it). Sentinel -1 on
+// strength = uninit (resolve env once). Source = inlined SH-L2 sky in the shader.
+float g_waterReflStrength = -1.0f;
+float gos_GetWaterReflStrength()
+{
+    if (g_waterReflStrength < 0.0f) {
+        const char* v = getenv("MC2_WATER_REFLECTION");
+        g_waterReflStrength = (v && v[0] && v[0] != '0') ? 0.15f : 0.0f;
+    }
+    return g_waterReflStrength;
+}
+void  gos_SetWaterReflStrength(float v) { g_waterReflStrength = (v < 0.0f) ? 0.0f : v; }
+// Whether the env gate is enabled (UI uses this to disable the slider so it
+// cannot bypass the gate). Resolved live each call (cheap).
+int   gos_GetWaterReflectionGate()
+{
+    const char* v = getenv("MC2_WATER_REFLECTION");
+    return (v && v[0] && v[0] != '0') ? 1 : 0;
+}
+
 void gos_terrain_bridge_renderWaterFast(
     unsigned int recordCount,
     unsigned int waterGosHandle,
@@ -2599,6 +2623,8 @@ void gosRenderer::renderWaterFastPath(
         // WATER-VISUAL-FIRST-SLICE: gated sky tint (strength 0 default = no-op).
         setMF         ("u_waterSkyTintStrength", gos_GetWaterSkyTintStrength());
         setMVec3      ("u_waterSkyTintColor",    g_waterSkyTintColor);
+        // WATER-SKY-REFLECTION-1: gated SH-L2 sky reflection (strength 0 = no-op).
+        setMF         ("u_waterReflStrength",    gos_GetWaterReflStrength());
         setMF         ("waterElevation",  waterElevation);
         setMF         ("alphaDepth",      alphaDepth);
         setMI         ("alphaEdgeByte",   (int)alphaEdgeByte);
@@ -2614,6 +2640,11 @@ void gosRenderer::renderWaterFastPath(
         setMI         ("tex1",  0);
         setMI         ("tex2",  1);
 
+        // WATER-SKY-REFLECTION-1: the MDI FS no longer samples the terrain
+        // colormap atlas (the old S3 source was replaced by the inlined SH-L2
+        // sky). This atlas resolve + unit-2 bind below is now DEAD GL work
+        // (uniforms strip to loc=-1; no shader consumer) but is retained
+        // undisturbed per the slice scope; harmless. Retire in a later cleanup.
         // S3: resolve atlas handle once; gate reflectionOn on both solid-armed
         // AND a valid handle (R1: water arms independently of IsFrameSolidArmed).
         GLuint reflTexHandle = gos_terrain_indirect_getAtlasGLTex();
