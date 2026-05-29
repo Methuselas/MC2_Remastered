@@ -611,6 +611,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "VFX-TUNING-UI-1: startup-default for the GPU-particle alpha (opacity) scale (particle_billboard.frag u_vfxAlphaScale, applied to ALL particles). Clamped 0..8. Unset/empty -> 1.0 (byte-identical no-op). Graphics Options 'VFX Tuning > Opacity' slider overrides at runtime (gos_vfx_setAlphaScale). Look-only — no emission/lifetime/timing change. No effect when MC2_GPU_PARTICLES=0."
     },
     {
+        "MC2_TUNE_VFX_LIT_STRENGTH",
+        "MC2_TUNE_VFX_LIT_STRENGTH",
+        EnvVarKind::Trace,
+        false,
+        "VFX-LIT-PARTICLES-MVP-1: startup-default for the scene-lit smoke/dust strength (particle_billboard.frag u_vfxLitStrength), applied ONLY to alpha draw groups (u_vfxIsAdditive==0) and ONLY when the MC2_VFX_LIT_PARTICLES gate is ON. Clamped 0..1. Unset/empty -> 0.7. Mixes the particle color toward the scene sun+ambient fill (eye->light*/ambient*); 0 = unlit (byte-identical). Per-mission profile key 'vfxLitStrength' (env value-var wins) and the Graphics Options 'VFX Tuning' slider override at runtime (gos_vfx_setLitStrength). Look-only; no emission/lifetime/timing change. No effect when MC2_VFX_LIT_PARTICLES is OFF or MC2_GPU_PARTICLES=0."
+    },
+    {
         "MC2_DIAG_SSAO_DEBUG",
         "MC2_SSAO_DEBUG",
         EnvVarKind::Trace,

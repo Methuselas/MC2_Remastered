@@ -29,6 +29,8 @@ extern "C" void  gos_vfx_setBrightness(float v);
 extern "C" void  gos_vfx_setAdditiveBrightness(float v);
 extern "C" float gos_vfx_getBrightness(void);
 extern "C" float gos_vfx_getAdditiveBrightness(void);
+extern "C" void  gos_vfx_setLitStrength(float v);   // VFX-LIT-PARTICLES-MVP-1
+extern "C" float gos_vfx_getLitStrength(void);      // VFX-LIT-PARTICLES-MVP-1
 extern float     gos_GetTerrainLightingV1Strength();
 extern float     gos_GetTerrainLightingV2Floor();
 // Getters for the post-stack keys (reader already had the setters above) so the
@@ -183,6 +185,14 @@ static void applyKey(const char* key, float val, int& count) {
             gos_vfx_setAdditiveBrightness(val);
             count++;
         }
+    } else if (strcmp(key, "vfxLitStrength") == 0) {
+        // VFX-LIT-PARTICLES-MVP-1: per-mission lit-smoke strength (0..1). env
+        // value-var wins over profile (same convention as the mech keys). Gate
+        // MC2_VFX_LIT_PARTICLES still controls whether lighting is applied.
+        if (!envIsSet("MC2_TUNE_VFX_LIT_STRENGTH")) {
+            gos_vfx_setLitStrength(val);
+            count++;
+        }
     } else if (strcmp(key, "bloomThreshold") == 0) {
         // BLOOM-MVP-1: per-mission bloom extract threshold. Only visible when
         // MC2_HDR_POST + MC2_BLOOM are on; harmless otherwise (writes member).
@@ -316,6 +326,7 @@ bool visualTuning_saveCurrentToMission() {
     current["waterSkyTintStrength"]      = gos_GetWaterSkyTintStrength();
     current["vfxBrightness"]             = gos_vfx_getBrightness();
     current["vfxAdditiveBrightness"]     = gos_vfx_getAdditiveBrightness();
+    current["vfxLitStrength"]            = gos_vfx_getLitStrength();  // VFX-LIT-PARTICLES-MVP-1
     // Post-stack keys the reader already accepts but the writer used to drop
     // (8-vs-13 asymmetry) -- round-trip them so "Set as Mission Defaults" keeps
     // any live bloom/AO tuning instead of silently losing it.

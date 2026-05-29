@@ -69,6 +69,27 @@
           "name": "u_softDistance",
           "offset": 104,
           "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_vfxLitStrength",
+          "offset": 108,
+          "type": "float"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_vfxSunColor",
+          "offset": 112,
+          "type": "vec3"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_vfxAmbientColor",
+          "offset": 128,
+          "type": "vec3"
         }
       ],
       "name": "gl_DefaultUniformBlock"

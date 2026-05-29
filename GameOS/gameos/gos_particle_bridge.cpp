@@ -18,6 +18,7 @@
 #include <GL/glew.h>
 #include "utils/shader_builder.h"
 #include "gos_postprocess.h"  // VFX-SOFT-PARTICLES-MVP-1: scene-depth copy + invViewProj
+#include "../../mclib/camera.h"  // VFX-LIT-PARTICLES-MVP-1: eye->light*/ambient* (same source as terrain)
 
 #include <cstdio>
 #include <cstdlib>   // std::getenv, std::atoi (MC2_VFX_DEBUG_MODE)
@@ -132,6 +133,24 @@ void vfxSoftInitIfNeeded() {
     s_soft_initialized   = true;
 }
 
+// VFX-LIT-PARTICLES-MVP-1: scene-lit alpha smoke/dust. Gate MC2_VFX_LIT_PARTICLES
+// (default OFF -> byte-identical). Strength = startup default MC2_TUNE_VFX_LIT_
+// STRENGTH (clamped 0..1) / per-mission "vfxLitStrength" profile key / ImGui
+// slider. When OFF the bridge uploads strength 0 so the FS lit branch is inert.
+// Alpha groups only; additive flashes stay emissive.
+bool  s_lit_initialized = false;
+bool  s_lit_enabled     = false;
+float s_litStrength     = 0.7f;   // applied only while the gate is ON
+static float clampLit(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+void vfxLitInitIfNeeded() {
+    if (s_lit_initialized) return;
+    const char* en = std::getenv("MC2_VFX_LIT_PARTICLES");
+    s_lit_enabled  = (en && en[0] == '1');
+    const char* st = std::getenv("MC2_TUNE_VFX_LIT_STRENGTH");
+    if (st && st[0] != '\0') s_litStrength = clampLit((float)std::atof(st));
+    s_lit_initialized = true;
+}
+
 // P0-4: Cached uniform locations — populated once in ensureInitialized()
 // after the program links. -2 = not yet queried; -1 = not found (GLSL may
 // strip unused uniforms); >= 0 = valid location.
@@ -156,6 +175,10 @@ GLint s_loc_uSceneDepth     = -2;
 GLint s_loc_invWorldToClip  = -2;
 GLint s_loc_screenSize      = -2;
 GLint s_loc_softDistance    = -2;
+// VFX-LIT-PARTICLES-MVP-1: scene-lighting uniforms.
+GLint s_loc_vfxLitStrength  = -2;
+GLint s_loc_vfxSunColor     = -2;
+GLint s_loc_vfxAmbientColor = -2;
 
 void ensureInitialized() {
     if (s_initFailed) return;
@@ -222,6 +245,11 @@ void ensureInitialized() {
         s_loc_invWorldToClip = glGetUniformLocation(s_prog->shp_, "u_invWorldToClip");
         s_loc_screenSize     = glGetUniformLocation(s_prog->shp_, "u_screenSize");
         s_loc_softDistance   = glGetUniformLocation(s_prog->shp_, "u_softDistance");
+        // VFX-LIT-PARTICLES-MVP-1: scene-lighting uniforms (may be -1 when the
+        // gate is OFF and dead-code elim strips them).
+        s_loc_vfxLitStrength  = glGetUniformLocation(s_prog->shp_, "u_vfxLitStrength");
+        s_loc_vfxSunColor     = glGetUniformLocation(s_prog->shp_, "u_vfxSunColor");
+        s_loc_vfxAmbientColor = glGetUniformLocation(s_prog->shp_, "u_vfxAmbientColor");
         if (s_loc_cameraRight < 0 || s_loc_cameraUp < 0) {
             if (groupLogEnabled())
                 std::fprintf(stderr, "[B2] gos_particle_bridge: uniform locations missing — right=%d up=%d\n",
@@ -422,6 +450,29 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     }
     if (s_loc_softDistance >= 0) glUniform1f(s_loc_softDistance, softDist);
 
+    // ── VFX-LIT-PARTICLES-MVP-1: scene lighting for alpha groups ─────
+    // When OFF, upload strength 0 -> FS lit branch inert -> byte-identical.
+    // Sun/ambient come from the global camera (eye), the same source terrain
+    // consumes (gos_terrain_lighting.cpp); 0..255 -> 0..1.
+    vfxLitInitIfNeeded();
+    {
+        float litStrength = (s_lit_enabled && eye) ? s_litStrength : 0.0f;
+        if (s_loc_vfxLitStrength >= 0) glUniform1f(s_loc_vfxLitStrength, litStrength);
+        if (litStrength > 0.0f) {
+            const float inv255 = 1.0f / 255.0f;
+            if (s_loc_vfxSunColor >= 0)
+                glUniform3f(s_loc_vfxSunColor,
+                            (float)eye->lightRed   * inv255,
+                            (float)eye->lightGreen * inv255,
+                            (float)eye->lightBlue  * inv255);
+            if (s_loc_vfxAmbientColor >= 0)
+                glUniform3f(s_loc_vfxAmbientColor,
+                            (float)eye->ambientRed   * inv255,
+                            (float)eye->ambientGreen * inv255,
+                            (float)eye->ambientBlue  * inv255);
+        }
+    }
+
     // ── Sampler on unit 0 (trap #5: sampler inheritance) ─────────────
     glBindSampler(0, s_sampler);
 
@@ -600,3 +651,9 @@ extern "C" int   gos_vfx_getSoftEnabled()         { vfxSoftInitIfNeeded(); retur
 extern "C" void  gos_vfx_setSoftEnabled(int e)    { vfxSoftInitIfNeeded(); s_soft_enabled = (e != 0); }
 extern "C" float gos_vfx_getSoftDistance()        { return s_softDistance; }
 extern "C" void  gos_vfx_setSoftDistance(float v) { s_softDistance = clampSoftDist(v); }
+
+// VFX-LIT-PARTICLES-MVP-1: enable + strength accessors (ImGui + profile + inspector).
+extern "C" int   gos_vfx_getLitEnabled()         { vfxLitInitIfNeeded(); return s_lit_enabled ? 1 : 0; }
+extern "C" void  gos_vfx_setLitEnabled(int e)    { vfxLitInitIfNeeded(); s_lit_enabled = (e != 0); }
+extern "C" float gos_vfx_getLitStrength()        { vfxLitInitIfNeeded(); return s_litStrength; }
+extern "C" void  gos_vfx_setLitStrength(float v) { vfxLitInitIfNeeded(); s_litStrength = clampLit(v); }

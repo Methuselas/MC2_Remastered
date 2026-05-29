@@ -81,6 +81,10 @@ extern "C" int   gos_vfx_getSoftEnabled(void);
 extern "C" void  gos_vfx_setSoftEnabled(int e);
 extern "C" float gos_vfx_getSoftDistance(void);
 extern "C" void  gos_vfx_setSoftDistance(float v);
+extern "C" int   gos_vfx_getLitEnabled(void);
+extern "C" void  gos_vfx_setLitEnabled(int e);
+extern "C" float gos_vfx_getLitStrength(void);
+extern "C" void  gos_vfx_setLitStrength(float v);
 // MISSION-VISUAL-TUNING-1: profile status accessors (defined in visual_tuning_profile.cpp)
 void        visualTuning_applyProfile(const char* missionName);
 bool        visualTuning_saveCurrentToMission();
@@ -1436,6 +1440,22 @@ static void drawVfxTuningSection() {
                               "intersection. Default 30.");
         ImGui::SameLine();
         if (ImGui::SmallButton("Reset##vfxsd")) gos_vfx_setSoftDistance(30.0f);
+
+        // VFX-LIT-PARTICLES-MVP-1: scene-lighting enable + strength.
+        bool litOn = gos_vfx_getLitEnabled() != 0;
+        if (ImGui::Checkbox("Lit particles##vfx", &litOn))
+            gos_vfx_setLitEnabled(litOn ? 1 : 0);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Tint alpha smoke/dust by the scene sun + ambient so it\n"
+                              "reads as lit volume. Default OFF (env MC2_VFX_LIT_PARTICLES).\n"
+                              "Alpha groups only; additive flashes/lasers stay emissive.");
+        float ls = gos_vfx_getLitStrength();
+        if (ImGui::SliderFloat("Lit strength##vfx", &ls, 0.0f, 1.0f, "%.2f"))
+            gos_vfx_setLitStrength(ls);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("0 = unlit (byte-identical), 1 = fully scene-lit. Default 0.7.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##vfxls")) gos_vfx_setLitStrength(0.7f);
     }
 
     if (ImGui::SmallButton("Reset all##vfx")) {
