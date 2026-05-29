@@ -103,6 +103,11 @@ public:
     bool tonemapEnabled_;
     float bloomIntensity_;
     float bloomThreshold_;
+    // HDR-POST-SCAFFOLD-1 (Track V, MC2_HDR_POST): master gate for the HDR
+    // post stack. Resolved once from env at init(). When false (default),
+    // bloom + ACES tonemap are force-disabled in the composite regardless of
+    // their own member flags, so default output is byte-identical to legacy.
+    bool hdrPostEnabled_;
 
     void runScreenShadow();
     bool screenShadowEnabled_;
@@ -222,5 +227,8 @@ gosPostProcess* getGosPostProcess();
 // MISSION-VISUAL-TUNING-1: free-function accessors for profile system.
 float gos_GetExposure();
 void  gos_SetExposure(float v);
+
+// TRACK-V post stack accessors (resolved from env at init; see gos_postprocess.cpp).
+bool gos_IsHdrPostEnabled();
 
 #endif // GOS_POSTPROCESS_H

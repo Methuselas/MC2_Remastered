@@ -72,6 +72,8 @@ gosPostProcess* getGosPostProcess()
 float gos_GetExposure() { return s_postProcess ? s_postProcess->exposure_ : 1.0f; }
 void  gos_SetExposure(float v) { if (s_postProcess) s_postProcess->exposure_ = (v < 0.0f ? 0.0f : v); }
 
+bool gos_IsHdrPostEnabled() { return s_postProcess && s_postProcess->hdrPostEnabled_; }
+
 // Fullscreen quad vertices: 2 triangles covering NDC [-1,1]
 // Each vertex: pos.x, pos.y, uv.x, uv.y
 static const float kQuadVerts[] = {
@@ -92,6 +94,7 @@ gosPostProcess::gosPostProcess()
     , tonemapEnabled_(false)
     , bloomIntensity_(0.3f)
     , bloomThreshold_(0.6f)
+    , hdrPostEnabled_(false)
     , sceneFBO_(0)
     , sceneColorTex_(0)
     , sceneDepthTex_(0)
@@ -213,6 +216,18 @@ void gosPostProcess::init(int w, int h)
             std::fprintf(stderr,
                 "[HDRI_SKY v1] enabled=0 reason=env_gate MC2_HDRI_SKY=0\n");
         }
+    }
+
+    // HDR-POST-SCAFFOLD-1 (Track V) master gate. Resolved once from env.
+    // Default OFF: scene is already RGBA16F, but bloom + ACES tonemap stay
+    // force-disabled so output is byte-identical to legacy. =1 enables the
+    // post stack; the sub-features have their own gates (MC2_BLOOM /
+    // MC2_TONEMAP_ACES) read in beginScene-time wiring elsewhere.
+    {
+        const char* hdrEnv = getenv("MC2_HDR_POST");
+        hdrPostEnabled_ = (hdrEnv && hdrEnv[0] && hdrEnv[0] != '0');
+        std::fprintf(stderr, "[HDR_POST v1] enabled=%d (MC2_HDR_POST=%s)\n",
+                     hdrPostEnabled_ ? 1 : 0, hdrEnv ? hdrEnv : "(unset)");
     }
 
     bloomThresholdProg_ = glsl_program::makeProgram("bloom_threshold",
@@ -630,6 +645,7 @@ void gosPostProcess::beginScene()
 
 void gosPostProcess::runBloom()
 {
+    if (!hdrPostEnabled_) return;  // HDR-POST-SCAFFOLD-1: master gate
     if (!bloomEnabled_ || !bloomThresholdProg_ || !bloomBlurProg_) return;
     if (!bloomThresholdProg_->is_valid() || !bloomBlurProg_->is_valid()) return;
 
@@ -928,10 +944,16 @@ void gosPostProcess::endScene()
         // Set uniforms BEFORE apply() — apply() binds program + flushes dirty uniforms
         compositeProg_->setInt("sceneTex", 0);
         compositeProg_->setInt("bloomTex", 1);
+        // HDR-POST-SCAFFOLD-1: master gate. When the HDR post stack is OFF,
+        // force bloom + ACES tonemap off regardless of their member flags so
+        // the default path is byte-identical to legacy (exposure stays 1.0
+        // no-op; the unconditional sunset grade in postprocess.frag is the
+        // pre-existing default look and is untouched).
+        const bool hdrOn = hdrPostEnabled_;
         compositeProg_->setFloat("exposure", exposure_);
-        compositeProg_->setInt("enableBloom", bloomEnabled_ ? 1 : 0);
+        compositeProg_->setInt("enableBloom", (hdrOn && bloomEnabled_) ? 1 : 0);
         compositeProg_->setInt("enableFXAA", fxaaEnabled_ ? 1 : 0);
-        compositeProg_->setInt("enableTonemap", tonemapEnabled_ ? 1 : 0);
+        compositeProg_->setInt("enableTonemap", (hdrOn && tonemapEnabled_) ? 1 : 0);
         compositeProg_->setFloat("bloomIntensity", bloomIntensity_);
 
         float invSize[2] = { 1.0f / (float)width_, 1.0f / (float)height_ };
