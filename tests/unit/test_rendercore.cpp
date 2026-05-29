@@ -6,6 +6,8 @@
 #include "RenderDebugView.h"
 #include "RendererFeatureRegistry.h"
 #include "IblShRegistry.h"
+#include "PipelineDesc.h"               // PIPELINE-DESC-SCAFFOLD-1: target type
+#include "render_contract_pipeline.h"   // PIPELINE-DESC-SCAFFOLD-1: adapter under test
 #include <cstring>
 
 using namespace RenderCore;
@@ -264,6 +266,173 @@ TEST_CASE("IblShRegistry lookupShSet always returns default fallback") {
 TEST_CASE("IblShRegistry kIblShSetCount is at least 1") {
     CHECK(kIblShSetCount >= 1u);
     CHECK(std::strcmp(kIblShSets[0].name, "default") == 0);
+}
+
+} // TEST_SUITE("RenderCore")
+
+// ---------------------------------------------------------------------------
+// PipelineDesc + render_contract -> PipelineDesc adapter
+// PIPELINE-DESC-SCAFFOLD-1: GL-free conversion substrate (no production caller
+// yet; this proves the adapter lowers a PassStateContract correctly).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Field-by-field equality. PipelineDesc deliberately has NO operator== (the
+// scaffold slice changes the struct by zero bytes); the test owns comparison.
+bool pipelineDescEqual(const PipelineDesc& a, const PipelineDesc& b) {
+    return a.glProgramName        == b.glProgramName
+        && a.blend                == b.blend
+        && a.depthTestEnable      == b.depthTestEnable
+        && a.depthWriteEnable     == b.depthWriteEnable
+        && a.depthFunc            == b.depthFunc
+        && a.cullMode             == b.cullMode
+        && a.colorAttachments.color0 == b.colorAttachments.color0
+        && a.colorAttachments.color1 == b.colorAttachments.color1
+        && a.colorAttachments.color2 == b.colorAttachments.color2
+        && a.objectIdWriteEnabled == b.objectIdWriteEnabled
+        && a.ssboBindingsMask     == b.ssboBindingsMask;
+}
+
+// Representative opaque MRT+objectId contract, mirroring kStaticPropState in
+// render_contract.cpp (which the GL-free test target cannot link).
+render_contract::PassStateContract makeStaticPropContract() {
+    render_contract::PassStateContract c{};
+    c.requiresDepthTest   = true;
+    c.requiresDepthWrite  = true;
+    c.blend               = render_contract::PassStateContract::BlendMode::Opaque;
+    c.requiresMRT         = true;
+    c.attachmentCount     = 3;
+    c.attachments         = render_contract::RequiredAttachments{true, true, true};
+    c.expectedFBO         = "scene HDR FBO (MRT + objectId)";
+    c.restoresStateOnExit = false;
+    return c;
+}
+
+} // namespace
+
+TEST_SUITE("RenderCore") {
+
+TEST_CASE("PipelineDesc value-init zeroes every field") {
+    PipelineDesc d{};
+    CHECK(d.glProgramName == 0u);
+    CHECK((d.blend == BlendMode::Opaque));            // enum value 0
+    CHECK(d.depthTestEnable  == false);
+    CHECK(d.depthWriteEnable == false);
+    CHECK((d.depthFunc == DepthFunc::LessEqual));     // enum value 0
+    CHECK((d.cullMode  == CullMode::None));           // enum value 0
+    CHECK(d.colorAttachments.color0 == false);
+    CHECK(d.colorAttachments.color1 == false);
+    CHECK(d.colorAttachments.color2 == false);
+    CHECK(d.objectIdWriteEnabled == false);
+    CHECK(d.ssboBindingsMask == 0u);
+}
+
+TEST_CASE("PipelineDesc field-equality helper agrees on identical descs") {
+    PipelineDesc a = render_contract::pipelineDescFromPassContract(makeStaticPropContract());
+    PipelineDesc b = render_contract::pipelineDescFromPassContract(makeStaticPropContract());
+    CHECK(pipelineDescEqual(a, b));
+
+    b.depthWriteEnable = !b.depthWriteEnable;          // perturb one field
+    CHECK_FALSE(pipelineDescEqual(a, b));
+}
+
+TEST_CASE("pipelineDescFromPassContract converts a representative pass contract") {
+    render_contract::PassStateContract c = makeStaticPropContract();
+    PipelineDesc d = render_contract::pipelineDescFromPassContract(
+        c,
+        /*glProgramName*/ 42u,
+        /*depthFunc*/     DepthFunc::GreaterEqual,
+        /*cullMode*/      CullMode::Back,
+        /*objectIdWrite*/ true,
+        /*ssboMask*/      (1u << 16));   // BASE_INSTANCE slot
+
+    // Derived from the contract.
+    CHECK(d.depthTestEnable  == true);
+    CHECK(d.depthWriteEnable == true);
+    CHECK((d.blend == BlendMode::Opaque));
+    CHECK(d.colorAttachments.color0 == true);
+    CHECK(d.colorAttachments.color1 == true);
+    CHECK(d.colorAttachments.color2 == true);
+
+    // Passed through explicitly (PassStateContract carries none of these).
+    CHECK(d.glProgramName == 42u);
+    CHECK((d.depthFunc == DepthFunc::GreaterEqual));
+    CHECK((d.cullMode  == CullMode::Back));
+    CHECK(d.objectIdWriteEnabled == true);
+    CHECK(d.ssboBindingsMask == (1u << 16));
+}
+
+TEST_CASE("pipelineDescFromPassContract applies documented MC2 defaults") {
+    // Minimal contract; all explicit args omitted -> defaults must hold.
+    render_contract::PassStateContract c{};
+    c.blend       = render_contract::PassStateContract::BlendMode::Opaque;
+    c.attachments = render_contract::RequiredAttachments{true, false, false};
+
+    PipelineDesc d = render_contract::pipelineDescFromPassContract(c);
+    CHECK(d.glProgramName == 0u);                       // unregistered
+    CHECK((d.depthFunc == DepthFunc::GreaterEqual));     // reverse-Z default
+    CHECK((d.cullMode  == CullMode::Back));              // opaque-geometry default
+    CHECK(d.objectIdWriteEnabled == false);
+    CHECK(d.ssboBindingsMask == 0u);
+}
+
+TEST_CASE("pipelineDescFromPassContract maps every blend mode") {
+    using BM = render_contract::PassStateContract::BlendMode;
+    render_contract::PassStateContract c{};
+    c.attachments = render_contract::RequiredAttachments{true, false, false};
+
+    c.blend = BM::Opaque;
+    CHECK((render_contract::pipelineDescFromPassContract(c).blend == BlendMode::Opaque));
+    c.blend = BM::AlphaBlend;
+    CHECK((render_contract::pipelineDescFromPassContract(c).blend == BlendMode::AlphaBlend));
+    c.blend = BM::AlphaTest;
+    CHECK((render_contract::pipelineDescFromPassContract(c).blend == BlendMode::AlphaTest));
+    c.blend = BM::Additive;
+    CHECK((render_contract::pipelineDescFromPassContract(c).blend == BlendMode::Additive));
+}
+
+TEST_CASE("pipelineDescFromPassContract preserves attachment/draw-buffer contract") {
+    // Each row is an actual contract attachment pattern from render_contract.cpp.
+    struct Row { bool c0, c1, c2; } rows[] = {
+        {false, false, false},   // ShadowCaster: depth-only FBO
+        {true,  false, false},   // PostProcess / UI: single attachment
+        {true,  true,  false},   // TerrainBase / Water: MRT, no objectId
+        {true,  true,  true},    // StaticProp / OpaqueObject: MRT + objectId
+    };
+    for (const Row& r : rows) {
+        render_contract::PassStateContract c{};
+        c.attachments = render_contract::RequiredAttachments{r.c0, r.c1, r.c2};
+        PipelineDesc d = render_contract::pipelineDescFromPassContract(c);
+        CHECK(d.colorAttachments.color0 == r.c0);
+        CHECK(d.colorAttachments.color1 == r.c1);
+        CHECK(d.colorAttachments.color2 == r.c2);
+    }
+}
+
+TEST_CASE("pipelineDescFromPassContract carries depth test/write independently") {
+    render_contract::PassStateContract c{};
+    c.attachments = render_contract::RequiredAttachments{true, true, false};
+
+    // AlphaObject pattern: depth test ON, depth write OFF.
+    c.requiresDepthTest  = true;
+    c.requiresDepthWrite = false;
+    PipelineDesc d = render_contract::pipelineDescFromPassContract(c);
+    CHECK(d.depthTestEnable  == true);
+    CHECK(d.depthWriteEnable == false);
+
+    // PostProcess pattern: both OFF.
+    c.requiresDepthTest  = false;
+    c.requiresDepthWrite = false;
+    d = render_contract::pipelineDescFromPassContract(c);
+    CHECK(d.depthTestEnable  == false);
+    CHECK(d.depthWriteEnable == false);
+}
+
+TEST_CASE("PipelineDesc stays within its hot-path size budget") {
+    // Mirrors the static_assert in PipelineDesc.h; a runtime guard so a struct
+    // growth shows up as a failing test, not only a compile error elsewhere.
+    CHECK(sizeof(PipelineDesc) <= 20u);
 }
 
 } // TEST_SUITE("RenderCore")
