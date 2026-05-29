@@ -844,12 +844,13 @@ void getBuildingShadowInstances(std::vector<GpuStaticPropInstance>& out) {
 // which are non-buildings in practice — buildings are tagged Building at register)
 // is included so the dynamic shadow pass admits ALL props regardless of camera
 // visibility. Mirror of getBuildingShadowInstances with the filter inverted.
-void getDynamicPropShadowInstances(std::vector<GpuStaticPropInstance>& out) {
+void getDynamicPropShadowInstances(std::vector<GpuStaticPropInstance>& out,
+                                   bool includeBuildings) {
     out.clear();
     const uint8_t bldg = static_cast<uint8_t>(GpuStaticPropPopulation::Building);
     for (const RecipeRange& rng : s_recipeRanges) {
         if (rng.count == 0) continue;            // tombstone (invalidated/destroyed)
-        if (rng.population == bldg) continue;     // buildings cast via the static map
+        if (!includeBuildings && rng.population == bldg) continue;  // buildings cast via the static map
         const size_t end = static_cast<size_t>(rng.first) + rng.count;
         if (end > s_recipes.size()) continue;     // defense: stale range
         out.insert(out.end(),

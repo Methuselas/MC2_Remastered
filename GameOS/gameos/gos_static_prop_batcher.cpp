@@ -5830,7 +5830,7 @@ void GpuStaticPropBatcher::drawDynamicPropShadows(
     if (s_dpTrace && s_dpTrace[0] == '2') {
         fprintf(stderr,
             "[SHADOW_DYN_PROP v1] recipes_in=%zu types=%d inst=%d draws=%d "
-            "(non-buildings; full registry, NOT per-frame buckets)\n",
+            "(registry props; full registry, NOT per-frame buckets)\n",
             instances.size(), typesDrawn, instDrawn, drawCalls);
         fflush(stderr);
     }
