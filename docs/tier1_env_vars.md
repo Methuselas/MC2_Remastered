@@ -10,11 +10,19 @@ start. Grep schema versions with `\[SUBSYS v[0-9]+\]`.
 ## Feature gates (registered in RendererFeatureRegistry.h kFeatureTable)
 
 - `MC2_VIEW_UNIFORMS` — ViewUniforms UBO upload + shader consumption (static_prop.vert). Default **ON**. `MC2_VIEW_UNIFORMS=0` — kill-switch, reverts to legacy `uniform mat4 u_worldToClipGL`. **Requires process restart** — shaders are compiled at startup. Upload log `[VIEW_UNIFORMS v1]` appears by default.
-- `MC2_SHADOW_ENABLE=1` — opt-in: enable dynamic object shadow caster pass (GpuStaticPropBatcher + GpuMechBatcher flushShadow). Default **OFF**. VAO restore order fixed (SHADOW-DYNAMIC-RESTORE-1) but default-on causes prop regression; root cause under investigation.
+- `MC2_SHADOW_ENABLE=1` — opt-in: enable dynamic object shadow caster pass (GpuStaticPropBatcher + GpuMechBatcher flushShadow). Default **OFF**. The old "terrain objects invisible with shadows on" regression is FIXED (registry flushed before flushShadow, commit 2764cb65/f04e3997); trees/fences/prop-buildings now render and cast shadows. v0.4 deploy needs a rebuild from current nifty to pick up the fix.
 - `MC2_IMGUI=1` — enable ImGui overlay (GuiRuntime/GuiRuntime.cpp). Default OFF. Editor sets this automatically.
 - `MC2_IMGUI_INSPECTOR=1` — enable ImGui inspector panel (GuiRuntime/EditorInspector.cpp). Default OFF. Requires `MC2_IMGUI`.
 - `MC2_DEBUG_RENDERER=1` — enable debug overlay renderer (GuiRuntime/EditorInspector.cpp). Default OFF. Requires `MC2_IMGUI_INSPECTOR`.
 - `MC2_STATIC_PROP_REGISTRY=1` — GpuStaticPropRegistry enable (default ON; editor sets `=0` via EditorMFC.cpp to bypass registry for edit-time mutations).
+
+## Dynamic shadow tuning (SHADOW-BOUNDED-NEAR-FIT-1 / SHADOW-FRUSTUM-AUDIT-1)
+
+`gosPostProcess::buildDynamicLightMatrix`. The dynamic sun-shadow ortho is already frustum-fit + pow-2 + texel-snapped, but the RTS camera saturates the full-map clamp every frame (~5.57 WU/texel over ~22808²). See `docs/shadow-frustum-audit.md`.
+
+- `MC2_SHADOW_BOUNDED_NEAR_FIT=1` — opt-in: cap the frustum fit radius to a small camera-centered region for higher texel density. Default **OFF** (byte-identical full-frustum fit when off). Trades far-map shadow coverage for crisp near shadows. Applied before the pow-2/texel snap (snap preserved).
+- `MC2_SHADOW_BOUNDED_NEAR_RADIUS=2500` — bounded near-fit radius in world units. Default 2500, clamped 512..mapClampR. Only consulted when `MC2_SHADOW_BOUNDED_NEAR_FIT=1`. Resolved once at process start. (radius 2500 → pow-2 snap to 4096 half-extent → ~2.0 WU/texel; radius ≤2048 → ~1.0 WU/texel.)
+- `MC2_SHADOW_FRUSTUM_DIAG=1` — read-only per-frame coverage probe (sun dir, frustum XY, `fitRadius(orig=...)`, xyRadius, mapClampR, texel WU, ortho WxH, depth). Default OFF; no behavior change.
 
 ## Always-on background / safety
 

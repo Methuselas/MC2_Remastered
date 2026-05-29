@@ -391,6 +391,27 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "Per-frame [RENDER_WORLD v1] banner + per-event logs (RenderWorld.cpp). Default-off; =1 enables."
     },
     {
+        "MC2_TRACE_SHADOW_FRUSTUM",
+        "MC2_SHADOW_FRUSTUM_DIAG",
+        EnvVarKind::Trace,
+        false,
+        "SHADOW-FRUSTUM-AUDIT-1: read-only per-frame dynamic sun-shadow coverage probe in buildDynamicLightMatrix (sun dir, frustum XY, fit/xy radius, map clamp, texel WU, ortho WxH, depth). Default-off; =1 enables. No behavior change."
+    },
+    {
+        "MC2_FEATURE_SHADOW_BOUNDED_NEAR_FIT",
+        "MC2_SHADOW_BOUNDED_NEAR_FIT",
+        EnvVarKind::Feature,
+        false,
+        "SHADOW-BOUNDED-NEAR-FIT-1: cap the dynamic sun-shadow frustum fit radius to a small camera-centered region (radius from MC2_SHADOW_BOUNDED_NEAR_RADIUS) for higher texel density. Default-off; =1 enables. Gate OFF = byte-identical full-frustum fit. Trades far-map coverage for crisp near shadows. Applied before pow-2/texel snap (snap preserved)."
+    },
+    {
+        "MC2_TUNE_SHADOW_BOUNDED_NEAR_RADIUS",
+        "MC2_SHADOW_BOUNDED_NEAR_RADIUS",
+        EnvVarKind::Trace,
+        false,
+        "SHADOW-BOUNDED-NEAR-FIT-1 tunable: bounded near-fit radius in world units (default 2500, clamped 512..mapClampR). Only consulted when MC2_SHADOW_BOUNDED_NEAR_FIT=1. Resolved once at process start."
+    },
+    {
         "MC2_TUNE_STATIC_PROP_IBL_SH_SET",
         "MC2_STATIC_PROP_IBL_SH_SET",
         EnvVarKind::Trace,

@@ -80,3 +80,9 @@ The user's "fit to viewport" instinct is right in spirit but already coded; it f
 - **Resolution bump** (4096→8192 → 2.78 WU/texel) is the cheapest pure-quality lever if VRAM/fillrate allow, but it only halves texel size vs B′'s ~4.6×; mention as a fallback, not primary.
 
 **Sequencing:** B′ (bounded near fit) → C (rigid buildings in static map for far field) → E (CSM) when near+far must both be crisp. All behind a default-off gate per slice; this audit slice changes nothing visual.
+
+---
+
+## Update 2026-05-29 — B′ implemented (SHADOW-BOUNDED-NEAR-FIT-1)
+
+Bounded near-radius cap shipped gated (default OFF). `MC2_SHADOW_BOUNDED_NEAR_FIT=1` caps `fitRadius` to `MC2_SHADOW_BOUNDED_NEAR_RADIUS` (default 2500, clamp 512..mapClampR) before the existing pow-2/texel snap. Measured mc2_24: gate ON `fitRadius=2500(orig=11404)`, `xyRadius=4096` (≠ mapClampR), **texelWU 5.568 → 2.000** (2.78× finer). Gate OFF byte-identical (tier1 5/5). Pow-2 snap rounds 2500→4096 half-extent (2.0 WU/texel); radius ≤2048 → 1.0 WU/texel. Far-map shadow coverage is traded for crisp near shadows (expected). Next: C (rigid buildings → static map for far field), then CSM (E).

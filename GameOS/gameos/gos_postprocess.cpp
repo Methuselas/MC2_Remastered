@@ -1482,6 +1482,34 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     float fitRadius = (halfX > halfY ? halfX : halfY);
     if (fitRadius < 64.0f) fitRadius = 64.0f;
     if (fitRadius > r)     fitRadius = r;
+    const float origFitRadius = fitRadius;  // pre-cap, for the diag
+
+    // SHADOW-BOUNDED-NEAR-FIT-1 (gate, default OFF): the RTS camera frustum
+    // saturates the full-map clamp every frame (fitRadius==r==~11404 -> ~5.57
+    // WU/texel; see docs/shadow-frustum-audit.md). When MC2_SHADOW_BOUNDED_NEAR_FIT=1,
+    // cap the fit radius to a small camera-centered region so the dynamic shadow
+    // map covers less world at much higher texel density. Applied BEFORE the pow-2
+    // and texel snap below so stabilization is fully preserved. Trades far-map
+    // shadow coverage for crisp near shadows. Gate OFF -> byte-identical to prior.
+    {
+        static const bool s_boundedNear = []() {
+            const char* v = getenv("MC2_SHADOW_BOUNDED_NEAR_FIT");
+            return (v && v[0] == '1');   // default OFF; only "=1" enables
+        }();
+        if (s_boundedNear) {
+            static const float s_boundedRadiusRaw = []() {
+                const char* v = getenv("MC2_SHADOW_BOUNDED_NEAR_RADIUS");
+                float rad = (v ? (float)atof(v) : 2500.0f);
+                if (rad <= 0.0f) rad = 2500.0f;
+                return rad;
+            }();
+            float boundedRadius = s_boundedRadiusRaw;
+            if (boundedRadius < 512.0f) boundedRadius = 512.0f;  // safe floor
+            if (boundedRadius > r)      boundedRadius = r;        // never exceed map clamp
+            if (fitRadius > boundedRadius) fitRadius = boundedRadius;
+        }
+    }
+
     float xyRadius = 64.0f;
     while (xyRadius < fitRadius) xyRadius *= 2.0f;     // pow2 anti-shimmer
     if (xyRadius > r) xyRadius = r;
@@ -1506,11 +1534,11 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
                 fprintf(stderr,
                     "[SHADOW_FRUSTUM_DIAG] frame=%d sunDir=(%.3f,%.3f,%.3f) "
                     "frustumXY=[%.0f..%.0f,%.0f..%.0f] center=(%.0f,%.0f) "
-                    "fitRadius=%.0f xyRadius=%.0f mapClampR=%.0f "
+                    "fitRadius=%.0f(orig=%.0f) xyRadius=%.0f mapClampR=%.0f "
                     "texelWU=%.3f orthoWH=%.0fx%.0f depth=[%.0f..%.0f] mapSize=%d\n",
                     s_frustN, fx, fy, fz,
                     minX, maxX, minY, maxY, cx, cy,
-                    fitRadius, xyRadius, r,
+                    fitRadius, origFitRadius, xyRadius, r,
                     worldUnitsPerTexel, 2.0f * xyRadius, 2.0f * xyRadius,
                     1.0f, 2.0f * depthDist, dynShadowMapSize_);
                 fflush(stderr);
