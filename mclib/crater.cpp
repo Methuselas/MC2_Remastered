@@ -35,6 +35,9 @@
 #ifndef TXMMGR_H
 #include"txmmgr.h"
 #endif
+
+#include "dynamic_decal_ring.h"  // MC2_DYNAMIC_DECALS runtime impact decals
+
 //---------------------------------------------------------------------
 // Static Globals
 CraterManagerPtr craterManager = NULL;
@@ -255,14 +258,30 @@ long CraterManager::addCrater (long craterType, Stuff::Vector3D &position, float
 		craterList[currentCrater].position[1].z = land->getTerrainElevation(craterList[currentCrater].position[1]);
 		craterList[currentCrater].position[2].z = land->getTerrainElevation(craterList[currentCrater].position[2]);
 		craterList[currentCrater].position[3].z = land->getTerrainElevation(craterList[currentCrater].position[3]);
-		
+
+		// MC2_DYNAMIC_DECALS: spawn a dynamic impact ring that fades over time.
+		// The existing craterList entry above is permanent (no fade); the dynamic
+		// ring supplements it with a distinct fade-out visual for fresh impacts.
+		// typeIdx 0 = crater (feet0000.tga), typeIdx 1 = footprint.
+		{
+			float ddRadius = size;  // matches the quad half-size computed above
+			bool isCrater = (craterType > TURKINA_FOOTPRINT);
+			int texIdxSlot = isCrater ? 0 : 1;
+			DWORD gosHandle = 0;
+			if (craterTextureIndices)
+				gosHandle = mcTextureManager->get_gosTextureHandle(craterTextureIndices[texIdxSlot]);
+			// cRotation is in degrees; spawn() stores radians for cosf/sinf.
+			const float kDegToRad = 3.14159265f / 180.0f;
+			DynDecal::spawn(position, ddRadius, cRotation * kDegToRad, gosHandle, 0 /*default lifetime*/);
+		}
+
 		currentCrater++;
 		if (currentCrater == maxCraters)
 		{
 			currentCrater = 0;
 		}
 	}
-	
+
 	return(NO_ERR);
 }
 

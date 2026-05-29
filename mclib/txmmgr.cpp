@@ -82,6 +82,7 @@
 #include "../GameOS/gameos/gos_terrain_mask_dispatch.h"  // B4 Stage 1b: mask-SOLID draw
 #include "../GameOS/gameos/gpu_cull_compute.h"  // C1b: compute_dispatch() moved here from mission.cpp
 #include "../GameOS/gameos/gpu_cull_substrate.h"
+#include "dynamic_decal_ring.h"  // MC2_DYNAMIC_DECALS gather before gos_DrawDecals
 
 // NS3 boundary: effectStream belongs to the texture/effect subsystem, not
 // to whatever game/tool main links it. Previously redefined in every main.
@@ -3285,6 +3286,10 @@ void MC_TextureManager::renderLists (void)
 	{
 		ZoneScopedN("Render.Decals");
 		TracyGpuZone("Render.Decals");
+		// MC2_DYNAMIC_DECALS: push dynamic impact decals into the batch before flushing.
+		// Gate-off: gatherToDecalBatch() is a no-op; gate-on: pushes faded quads.
+		// frameLength = duration of last frame in seconds (timing.h).
+		DynDecal::gatherToDecalBatch(frameLength);
 		gos_DrawDecals();
 	}
 	gos_render_pass_timer::End(gos_render_pass_timer::Pass_Overlays);

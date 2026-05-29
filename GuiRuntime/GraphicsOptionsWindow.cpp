@@ -1,5 +1,6 @@
 #include "GraphicsOptionsWindow.h"
 #include "imgui.h"
+#include "../mclib/dynamic_decal_ring.h"  // MC2_DYNAMIC_DECALS live count
 
 #include "../GameOS/gameos/gos_postprocess.h"
 #include "../GameOS/gameos/view_uniforms_gl.h"
@@ -668,6 +669,19 @@ static void drawTerrainTuningSection() {
         ImGui::TextDisabled("(V2 floor only acts on the V1 hemi term — set MC2_TERRAIN_LIGHTING_V1=1 too)");
     }
     ImGui::TextDisabled("Debug Mode 10 = height-normal RGB; Mode 11 = hemi additive ×4");
+
+    // MC2_DYNAMIC_DECALS: live ring-buffer status (gate-off shows 0/64 inactive).
+    {
+        const char* ddEnv = std::getenv("MC2_DYNAMIC_DECALS");
+        bool ddOn = (ddEnv && ddEnv[0] != '0');
+        int live = DynDecal::liveCount();
+        if (ddOn) {
+            ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                "DynDecals: %d/%d active (MC2_DYNAMIC_DECALS=1)", live, DynDecal::kCapacity);
+        } else {
+            ImGui::TextDisabled("DynDecals: off (set MC2_DYNAMIC_DECALS=1 to enable impact rings)");
+        }
+    }
 
     // ── Material color classifier ──────────────────────────────────────────────
     // TERRAIN-CLASSIFY-TUNING-1: tune the HSV thresholds that map colormap pixels

@@ -70,6 +70,7 @@ set(SOURCES ${SOURCES}
     render_contract.cpp
     cpu_proj_cost_split.cpp
     crater.cpp
+    dynamic_decal_ring.cpp
     mapdata.cpp
     quad.cpp
     terrain.cpp
