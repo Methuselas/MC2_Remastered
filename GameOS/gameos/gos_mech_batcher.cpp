@@ -199,7 +199,9 @@ static bool  s_mechSpecularV1 = []() {
 }();
 static float s_mechSpecularStrength = []() {
     const char* v = std::getenv("MC2_MECH_SPECULAR_STRENGTH");
-    float d = v ? (float)std::atof(v) : 1.0f;
+    // Default 0.05: at 1.0 the Blinn highlight read as a near-glow on mech
+    // armor. 0.05 is a subtle metal glint. MC2_MECH_SPECULAR_STRENGTH overrides.
+    float d = v ? (float)std::atof(v) : 0.05f;
     if (d < 0.0f) d = 0.0f;
     if (d > 4.0f) d = 4.0f;
     return d;
