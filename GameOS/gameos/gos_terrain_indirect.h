@@ -442,6 +442,11 @@ bool IsFrameSolidArmed();
 bool WasEverFrameSolidArmed();
 bool DrawIndirect();
 void ForceDisableArmingForProcess();
+// WATER-TERRAIN-REFLECTION-1 (Phase C1): mirrored terrain-only render into the
+// quarter-res water reflection RT. Gate MC2_WATER_REFLECTION_RT default OFF
+// (no-op when unset). Call AFTER renderLists, BEFORE water. Saves/restores the
+// terrain MVP + FBO/viewport internally. Terrain only; no clip plane.
+void RenderWaterReflectionPass();
 // Single-source water fast-path gate: true iff all conditions that allow
 // renderWater() to skip the legacy loop are satisfied. Defined in
 // terrain.cpp (the only TU that sees WaterStream + gpu_driven symbols).

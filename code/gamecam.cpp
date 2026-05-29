@@ -50,6 +50,9 @@
 #include "../GameAdapters/SkyRenderAdapter.h"  // HDRI-SKY-1: firewall-clean sky rendering
 #include "../GameOS/gameos/view_uniforms_gl.h"  // F1-3A: ViewUniforms UBO upload
 #include "../GameOS/gameos/gos_static_prop_killswitch.h"  // F1-3C: gos_GetTerrainMVPMat4 compare probe
+// WATER-TERRAIN-REFLECTION-1: mirrored terrain reflection pass (engine-side;
+// raw GL lives in gos_terrain_indirect.cpp, this is a plain call -> firewall OK).
+namespace gos_terrain_indirect { void RenderWaterReflectionPass(); }
 
 //---------------------------------------------------------------------------
 CameraPtr eye = NULL;
@@ -335,6 +338,12 @@ void GameCamera::render (void)
 			endFrameTexResolve();              // close the per-frame window — clears frameActive,
 			                                   // accumulates resolved-count, emits 600-frame summary
 			                                   // when due. No-op when killswitch OFF or already inactive.
+
+			// WATER-TERRAIN-REFLECTION-1 (Phase C1): fill the quarter-res water
+			// reflection RT with mirrored terrain. After renderLists (main SOLID
+			// draw done, atlases warm) and BEFORE water so C2 can sample it.
+			// No-op unless MC2_WATER_REFLECTION_RT=1. Restores terrain MVP itself.
+			gos_terrain_indirect::RenderWaterReflectionPass();
 
 			// Stage 2 of renderWater architectural slice (CPU→GPU offload).
 			// MUST run after renderLists so terrain has flushed before we

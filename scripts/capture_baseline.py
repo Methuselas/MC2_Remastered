@@ -82,6 +82,7 @@ TRACKED_FLAGS = (
     # these a captured water frame is not reproducible if the path/mode changes.
     "MC2_WATER_DEBUG_MODE",
     "MC2_WATER_REFLECTION",
+    "MC2_WATER_REFLECTION_RT",
     "MC2_GPU_DRIVEN_WATER",
     "MC2_RENDER_WATER_FASTPATH",
     # VFX-BASELINE-0: particle debug-mode selector + the master GPU-particle
