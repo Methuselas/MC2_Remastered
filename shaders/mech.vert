@@ -101,6 +101,19 @@ out vec4 v_highlightColor;
 // alpha byte of desc.fogARGB).
 out vec4 v_fogRGB;
 out vec3 v_normal;   // world-space for GBuffer1
+// MECH-SPECULAR-V1: per-vertex sun direction + world position forwarded to
+// the fragment shader for the specular term. All in GL world space (same
+// Stuff->GL swap applied as for the vertex position and normal). Strictly
+// inside the MC2_USE_VIEW_UNIFORMS guard because the specular term requires
+// the camera position from the ViewUniformsBlock (binding=3). flat varyings
+// must be written by every provoking vertex even when the frag-side gate
+// is off; the vert-side fill is cheap (one SSBO read + short loop that
+// early-exits at the first INFINITE light).
+#ifdef MC2_USE_VIEW_UNIFORMS
+out vec3 v_worldPos;
+flat out vec3 v_mechSunDirGL;
+flat out int  v_mechSunFound;
+#endif
 // M2.5: forward per-instance ObjectID to FS for the
 // layout(location=2) out uint emission under
 // #ifdef MC2_OBJECT_ID_BUFFER. `flat` qualifier MANDATORY: GL spec
@@ -207,6 +220,35 @@ void main() {
     // mech3d.cpp; .rgb of inst.fogRGB is unused for mechs.
     v_fogRGB         = vec4(g_scene.fogColor.rgb, inst.fogRGB.a);
     v_normal         = worldNormal;
+
+#ifdef MC2_USE_VIEW_UNIFORMS
+    // MECH-SPECULAR-V1: forward world position and sun direction for the
+    // per-fragment specular term in mech.frag. Sun direction convention:
+    // lighting.hglsl calc_light INFINITE branch uses dot(normal, -light_dir),
+    // so light_dir.xyz is negated surface->sun. We store it as-is; the frag
+    // negates to recover L. Sun direction is Stuff-space in ObjectLights, so
+    // apply the same Stuff->GL swap used for worldNormal above:
+    //   GL = (-x, z, y) from Stuff = (x, y, z).
+    // Stock MC2 missions use TG_LIGHT_INFINITEWITHFALLOFF (type 2) for the
+    // sun; accept TG_LIGHT_INFINITE (type 1) as well (both are directional).
+    v_worldPos     = worldMC2;
+    v_mechSunDirGL = vec3(0.0);
+    v_mechSunFound = 0;
+    {
+        ObjectLights ld_spec = light[int(inst.lightDataIndex)];
+        int n_spec = min(ld_spec.numLights.x, MAX_LIGHTS_IN_WORLD);
+        for (int i = 0; i < n_spec; ++i) {
+            int lt = int(ld_spec.light_dir[i].w);
+            if (lt == TG_LIGHT_INFINITE || lt == TG_LIGHT_INFINITEWITHFALLOFF) {
+                vec3 sdStuff   = ld_spec.light_dir[i].xyz;
+                // Stuff->GL axis swap (mirrors worldNormal computation above).
+                v_mechSunDirGL = vec3(-sdStuff.x, sdStuff.z, sdStuff.y);
+                v_mechSunFound = 1;
+                break;
+            }
+        }
+    }
+#endif
 #ifdef MC2_OBJECT_ID_BUFFER
     // M2.5: forward per-instance ObjectID through the existing SSBO read;
     // no extra memory traffic. Driver handles `flat` carry-through as one

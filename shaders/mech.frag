@@ -8,6 +8,15 @@
 
 #include <include/render_contract.hglsl>
 
+// MECH-SPECULAR-V1: camera position for view direction. Included only on the
+// ViewUniforms variant (MC2_USE_VIEW_UNIFORMS injected by gos_mech_batcher.cpp
+// when MC2_MECH_VIEWUNIFORMS=1). Without this variant u_cameraWorldPos is
+// unavailable and specular cannot be computed; the default/objectid variants
+// are byte-identical (all 6 specular uniforms are inert at strength 0).
+#ifdef MC2_USE_VIEW_UNIFORMS
+#include <include/view_uniforms.hglsl>
+#endif
+
 // [RENDER_CONTRACT]
 //   Pass:           Mech
 //   Color0:         RGBA, opaque (alpha-test for ALPHA_TEST_BIT materials)
@@ -20,6 +29,14 @@ in vec4 v_litColor;
 in vec4 v_highlightColor;
 in vec4 v_fogRGB;  // .rgb = engine fog color, .a = per-actor haze factor (B2)
 in vec3 v_normal;
+// MECH-SPECULAR-V1: world position + sun direction (GL space) from mech.vert.
+// Declared inside the MC2_USE_VIEW_UNIFORMS guard to match vert declarations;
+// only the viewuniforms shader variant defines these varyings.
+#ifdef MC2_USE_VIEW_UNIFORMS
+in vec3       v_worldPos;
+flat in vec3  v_mechSunDirGL;
+flat in int   v_mechSunFound;
+#endif
 
 uniform sampler2D u_tex;
 uniform int u_materialFlags;  // bit 0: ALPHA_TEST
@@ -38,6 +55,22 @@ uniform int u_debugMode;
 // is off, so the term below vanishes. Sky/ground hemisphere colors are fixed
 // conservative constants (no new uniforms/material data).
 uniform float u_mechAmbientV1Strength;
+// MECH-SPECULAR-V1: conservative Blinn specular sheen, gated by
+// u_mechSpecularV1Strength. 0.0 = OFF (byte-identical). Only effective when
+// MC2_USE_VIEW_UNIFORMS is defined (viewuniforms shader variant); the remaining
+// variants have no camera position so strength is always uploaded as 0 by the
+// C++ side. Glass/cockpit heuristic uses dark-pixel (luminance + maxChannel)
+// classification — no hue/blue detection. Roughness parameters set Blinn
+// exponent via shininess = 2/a^2 - 2 (energy-conserving-ish). Additive white
+// highlight (not albedo-tinted) — reads as a metal glint, conservative.
+#ifdef MC2_USE_VIEW_UNIFORMS
+uniform float u_mechSpecularV1Strength;   // 0 = OFF; C++ uploads 0 when gate off
+uniform float u_mechMetalRoughness;       // base surface roughness (default 0.85)
+uniform float u_mechGlassRoughness;       // glass/cockpit roughness (default 0.25)
+uniform float u_mechGlassLumaThresh;      // glass if luma < this (default 0.12)
+uniform float u_mechGlassMaxChanThresh;   // AND max(rgb) < this (default 0.18)
+uniform int   u_mechSpecDebugMask;        // 1 = visualize cockpit mask in green/grey
+#endif
 
 layout(location=0) out vec4 FragColor;
 layout(location=1) out vec4 GBuffer1;
@@ -87,6 +120,60 @@ void main() {
                           vec3(0.55, 0.60, 0.70), upAmt);     // sky (cool)
         c.rgb += tex_color.rgb * hemi * u_mechAmbientV1Strength;
     }
+    // MECH-SPECULAR-V1 (gated): conservative Blinn specular metal sheen + optional
+    // glass/cockpit heuristic (dark-pixel classification). Added AFTER the ambient
+    // term so the specular contribution is not swallowed by ambient, and BEFORE
+    // the fog mix so specular fogs correctly with the rest of the surface. Placed
+    // BEFORE the debug-mode if-chain so explicit debug modes 1-9 still overwrite c.
+    //
+    // Byte-identical when gate off: u_mechSpecularV1Strength == 0.0 short-circuits
+    // the entire block; all 6 uniforms are inert. Only effective on the
+    // MC2_USE_VIEW_UNIFORMS variant (u_cameraWorldPos available); other variants
+    // have no ViewUniformsBlock and the C++ side always uploads strength 0.
+    //
+    // Space invariant: v_normal, v_mechSunDirGL, and u_cameraWorldPos are all
+    // GL world space. v_mechSunDirGL was Stuff->GL-swapped in mech.vert alongside
+    // the position/normal swap. No in-frag space conversion required or performed.
+#ifdef MC2_USE_VIEW_UNIFORMS
+    if (u_mechSpecularV1Strength > 0.0 && v_mechSunFound != 0) {
+        // Glass/cockpit heuristic: classify DARK pixels only (no hue/blue detection).
+        // A pixel is "glass" if both luminance AND max channel are below threshold.
+        float luma    = dot(tex_color.rgb, vec3(0.299, 0.587, 0.114));
+        float maxChan = max(max(tex_color.r, tex_color.g), tex_color.b);
+        bool  isGlass = (luma < u_mechGlassLumaThresh) && (maxChan < u_mechGlassMaxChanThresh);
+
+        if (u_mechSpecDebugMask != 0) {
+            // Cockpit-mask visualization: green = glass-classified, grey = metal.
+            // Placed inside the strength > 0 block so it has no effect when the
+            // gate is off. Debug modes 1-9 (below) will still override this if
+            // u_debugMode != 0 — the debug-mode chain runs after this block.
+            c = vec4(isGlass ? vec3(0.0, 1.0, 0.0) : vec3(0.15), 1.0);
+        } else {
+            // Blinn specular. N, V, L all in GL world space.
+            // roughness -> Blinn power: shininess = 2/a^2 - 2 (Phong<->GGX mapping).
+            // Clamped to [1, 2048] so extreme roughness gives a broad diffuse-like
+            // lobe rather than a degenerate or negative exponent.
+            float rough     = isGlass ? u_mechGlassRoughness : u_mechMetalRoughness;
+            float specMul   = isGlass ? 1.6 : 1.0;  // glass cockpit slightly hotter (modest)
+            vec3  N = normalize(v_normal);                           // GL space (swapped in vert)
+            vec3  V = normalize(u_cameraWorldPos.xyz - v_worldPos);  // GL space
+            // v_mechSunDirGL is the NEGATED surface->sun direction (lighting.hglsl
+            // convention: light_dir.xyz = -(surface->sun)); negate to recover L.
+            vec3  L = normalize(-v_mechSunDirGL);                    // surface->sun, GL space
+            vec3  H = normalize(L + V);
+            float NdotL     = max(dot(N, L), 0.0);
+            float NdotH     = max(dot(N, H), 0.0);
+            float a         = max(rough, 0.04);
+            float shininess = clamp(2.0 / (a * a) - 2.0, 1.0, 2048.0);
+            // NdotL gate avoids backface specular (physically correct: no highlight
+            // when surface faces away from the light).
+            float spec = pow(NdotH, shininess) * NdotL;
+            // Additive white highlight — not albedo-tinted — reads as a metal glint.
+            c.rgb += spec * u_mechSpecularV1Strength * specMul;
+        }
+    }
+#endif  // MC2_USE_VIEW_UNIFORMS
+
     // Slice B2: per-actor haze. v_fogRGB.a=0 → clear, =1 → fully fogged.
     c.rgb  = mix(c.rgb, v_fogRGB.rgb, v_fogRGB.a);
 

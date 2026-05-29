@@ -78,6 +78,10 @@ SHADER_VARIANTS: dict[str, list[dict]] = {
     "shaders/mech.frag": [
         _v("default",  []),
         _v("objectid", ["MC2_OBJECT_ID_BUFFER=1"]),
+        # MECH-SPECULAR-V1: the ViewUniforms variant compiles the specular block
+        # (u_cameraWorldPos + the spec uniforms) — covers its GLSL validity and
+        # locks the binding=3 ViewUniformsBlock interface in the fragment stage.
+        _v("viewuniforms", ["MC2_USE_VIEW_UNIFORMS=1"]),
     ],
     "shaders/mech.vert": [
         _v("default",      []),

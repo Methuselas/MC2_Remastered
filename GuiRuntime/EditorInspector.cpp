@@ -78,6 +78,22 @@ extern "C" void  batcher_setMechAmbientEnabled(int on);
 extern "C" int   batcher_getMechAmbientEnabled();
 extern "C" void  batcher_setMechAmbientStrength(float s);
 extern "C" float batcher_getMechAmbientStrength();
+// MECH-SPECULAR-V1: gated Blinn specular sheen (per-flush uniforms, no rebuild).
+// Effective only when MC2_MECH_VIEWUNIFORMS=1 (shader has camera position data).
+extern "C" void  batcher_setMechSpecularEnabled(int on);
+extern "C" int   batcher_getMechSpecularEnabled();
+extern "C" void  batcher_setMechSpecularStrength(float s);
+extern "C" float batcher_getMechSpecularStrength();
+extern "C" void  batcher_setMechMetalRoughness(float r);
+extern "C" float batcher_getMechMetalRoughness();
+extern "C" void  batcher_setMechGlassRoughness(float r);
+extern "C" float batcher_getMechGlassRoughness();
+extern "C" void  batcher_setMechGlassLumaThresh(float t);
+extern "C" float batcher_getMechGlassLumaThresh();
+extern "C" void  batcher_setMechGlassMaxChanThresh(float t);
+extern "C" float batcher_getMechGlassMaxChanThresh();
+extern "C" void  batcher_setMechSpecDebugMask(int on);
+extern "C" int   batcher_getMechSpecDebugMask();
 
 namespace {
 
@@ -953,6 +969,61 @@ void EditorInspector::drawImGui() {
                     ImGui::SetTooltip("Hemisphere fill strength (0..2). Default 0.5.\n"
                                       "Multiplies the mech's own albedo, so it tints\n"
                                       "with the paint. 0 = no fill.");
+            }
+
+            // MECH-SPECULAR-V1: Blinn specular sheen + glass/cockpit heuristic.
+            // Per-flush uniforms — no VBO rebuild. Requires MC2_MECH_VIEWUNIFORMS=1
+            // (camera position data); no effect on the default shader variant.
+            ImGui::Separator();
+            bool specOn = batcher_getMechSpecularEnabled() != 0;
+            if (ImGui::Checkbox("Specular (metal sheen)##ml", &specOn))
+                batcher_setMechSpecularEnabled(specOn ? 1 : 0);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Conservative Blinn specular sheen.\n"
+                                  "Requires MC2_MECH_VIEWUNIFORMS=1 (camera data);\n"
+                                  "no effect otherwise. Gate MC2_MECH_SPECULAR_V1=1\n"
+                                  "sets default-ON. OFF = byte-identical default.");
+            {
+                if (!specOn) ImGui::BeginDisabled();
+                float specStr = batcher_getMechSpecularStrength();
+                if (ImGui::SliderFloat("Spec Strength##ml", &specStr, 0.0f, 4.0f, "%.2f"))
+                    batcher_setMechSpecularStrength(specStr);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Overall specular multiplier (0..4).\n"
+                                      "Glass pixels get an additional 1.6x multiplier.");
+                float metalR = batcher_getMechMetalRoughness();
+                if (ImGui::SliderFloat("Metal Roughness##ml", &metalR, 0.04f, 1.0f, "%.2f"))
+                    batcher_setMechMetalRoughness(metalR);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Roughness for non-glass surfaces (0.04..1.0).\n"
+                                      "Lower = tighter glint; default 0.85 (broad, conservative).");
+                float glassR = batcher_getMechGlassRoughness();
+                if (ImGui::SliderFloat("Glass Roughness##ml", &glassR, 0.04f, 1.0f, "%.2f"))
+                    batcher_setMechGlassRoughness(glassR);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Roughness for glass/cockpit pixels (0.04..1.0).\n"
+                                      "Default 0.25 — tighter highlight for cockpit glass.");
+                float lumaT = batcher_getMechGlassLumaThresh();
+                if (ImGui::SliderFloat("Glass Luma <##ml", &lumaT, 0.0f, 1.0f, "%.3f"))
+                    batcher_setMechGlassLumaThresh(lumaT);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Pixel classified as glass if luminance < this.\n"
+                                      "Dark pixels only — no hue/blue detection.\n"
+                                      "Default 0.12.");
+                float maxChanT = batcher_getMechGlassMaxChanThresh();
+                if (ImGui::SliderFloat("Glass MaxChan <##ml", &maxChanT, 0.0f, 1.0f, "%.3f"))
+                    batcher_setMechGlassMaxChanThresh(maxChanT);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Pixel classified as glass if max(R,G,B) < this\n"
+                                      "(AND luma < threshold above). Default 0.18.");
+                bool maskViz = batcher_getMechSpecDebugMask() != 0;
+                if (ImGui::Checkbox("Show Cockpit Mask##ml", &maskViz))
+                    batcher_setMechSpecDebugMask(maskViz ? 1 : 0);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Visualize glass classification:\n"
+                                      "green = glass-classified, grey = metal.\n"
+                                      "Debug modes 1-9 override this when active.");
+                if (!specOn) ImGui::EndDisabled();
             }
         }
 

@@ -187,6 +187,51 @@ static float s_mechAmbientStrength = []() {
     return d;
 }();
 
+// MECH-SPECULAR-V1: conservative Blinn specular sheen. DEFAULT-OFF (gate
+// MC2_MECH_SPECULAR_V1=1 to enable). Only effective when MC2_MECH_VIEWUNIFORMS=1
+// (the shader variant with MC2_USE_VIEW_UNIFORMS defined); on all other paths the
+// C++ side uploads strength 0 → exact no-op. Per-flush uniforms — no VBO rebuild.
+static bool  s_mechSpecularV1 = []() {
+    const char* v = std::getenv("MC2_MECH_SPECULAR_V1");
+    return v != nullptr && v[0] == '1';  // default-OFF
+}();
+static float s_mechSpecularStrength = []() {
+    const char* v = std::getenv("MC2_MECH_SPECULAR_STRENGTH");
+    float d = v ? (float)std::atof(v) : 1.0f;
+    if (d < 0.0f) d = 0.0f;
+    if (d > 4.0f) d = 4.0f;
+    return d;
+}();
+static float s_mechMetalRoughness = []() {
+    const char* v = std::getenv("MC2_MECH_METAL_ROUGHNESS");
+    float d = v ? (float)std::atof(v) : 0.85f;
+    if (d < 0.04f) d = 0.04f;
+    if (d > 1.0f)  d = 1.0f;
+    return d;
+}();
+static float s_mechGlassRoughness = []() {
+    const char* v = std::getenv("MC2_MECH_GLASS_ROUGHNESS");
+    float d = v ? (float)std::atof(v) : 0.25f;
+    if (d < 0.04f) d = 0.04f;
+    if (d > 1.0f)  d = 1.0f;
+    return d;
+}();
+static float s_mechGlassLumaThresh = []() {
+    const char* v = std::getenv("MC2_MECH_GLASS_LUMA_THRESH");
+    float d = v ? (float)std::atof(v) : 0.12f;
+    if (d < 0.0f) d = 0.0f;
+    if (d > 1.0f) d = 1.0f;
+    return d;
+}();
+static float s_mechGlassMaxChanThresh = []() {
+    const char* v = std::getenv("MC2_MECH_GLASS_MAXCHAN_THRESH");
+    float d = v ? (float)std::atof(v) : 0.18f;
+    if (d < 0.0f) d = 0.0f;
+    if (d > 1.0f) d = 1.0f;
+    return d;
+}();
+static bool  s_mechSpecDebugMask = false;  // ImGui only; no env var
+
 // Cached uniform locations (set at program link time).
 static GLint s_loc_u_instanceBase    = -1;
 static GLint s_loc_u_materialFlags   = -1;
@@ -198,6 +243,13 @@ static GLint s_loc_u_debugMode       = -1;
 static GLint s_loc_u_mechAmbientV1Strength = -1;  // MECH-AMBIENT-1
 static GLint s_loc_u_lightingMode    = -1;
 static GLint s_loc_u_skinningMode    = -1;
+// MECH-SPECULAR-V1: cached locations (all -1 on non-viewuniforms variants).
+static GLint s_loc_u_mechSpecularV1Strength  = -1;
+static GLint s_loc_u_mechMetalRoughness      = -1;
+static GLint s_loc_u_mechGlassRoughness      = -1;
+static GLint s_loc_u_mechGlassLumaThresh     = -1;
+static GLint s_loc_u_mechGlassMaxChanThresh  = -1;
+static GLint s_loc_u_mechSpecDebugMask       = -1;
 
 // Geometry (immutable after finalizeGeometry).
 static GLuint s_sharedVao = 0;
@@ -444,6 +496,13 @@ static void loadProgramsIfNeeded() {
     s_loc_u_mechAmbientV1Strength = loc("u_mechAmbientV1Strength");  // MECH-AMBIENT-1
     s_loc_u_lightingMode    = loc("u_lightingMode");
     s_loc_u_skinningMode    = loc("u_skinningMode");
+    // MECH-SPECULAR-V1: all return -1 on non-viewuniforms variants; guarded at upload.
+    s_loc_u_mechSpecularV1Strength  = loc("u_mechSpecularV1Strength");
+    s_loc_u_mechMetalRoughness      = loc("u_mechMetalRoughness");
+    s_loc_u_mechGlassRoughness      = loc("u_mechGlassRoughness");
+    s_loc_u_mechGlassLumaThresh     = loc("u_mechGlassLumaThresh");
+    s_loc_u_mechGlassMaxChanThresh  = loc("u_mechGlassMaxChanThresh");
+    s_loc_u_mechSpecDebugMask       = loc("u_mechSpecDebugMask");
 
     // MECH-VIEWUNIFORMS-1: on the gated path, verify the ViewUniformsBlock is
     // present and bound to point 3. The GLSL layout(binding=3) qualifier is
@@ -1699,6 +1758,25 @@ void GpuMechBatcher::flush() {
     if (s_loc_u_mechAmbientV1Strength >= 0)
         glUniform1f(s_loc_u_mechAmbientV1Strength,
                     s_mechAmbientV1 ? s_mechAmbientStrength : 0.0f);
+    // MECH-SPECULAR-V1: upload all 6 specular uniforms. Strength is 0.0 when
+    // the gate is off -> exact no-op. The roughness/threshold uniforms are
+    // uploaded unconditionally; they are inert when strength is 0. All 6 locs
+    // are -1 on non-viewuniforms variants (glUniform* with loc -1 is a no-op
+    // per GL spec), so the guards are redundant but kept for clarity.
+    if (s_loc_u_mechSpecularV1Strength >= 0)
+        glUniform1f(s_loc_u_mechSpecularV1Strength,
+                    (s_mechSpecularV1 && s_mechViewUniforms)
+                        ? s_mechSpecularStrength : 0.0f);
+    if (s_loc_u_mechMetalRoughness >= 0)
+        glUniform1f(s_loc_u_mechMetalRoughness, s_mechMetalRoughness);
+    if (s_loc_u_mechGlassRoughness >= 0)
+        glUniform1f(s_loc_u_mechGlassRoughness, s_mechGlassRoughness);
+    if (s_loc_u_mechGlassLumaThresh >= 0)
+        glUniform1f(s_loc_u_mechGlassLumaThresh, s_mechGlassLumaThresh);
+    if (s_loc_u_mechGlassMaxChanThresh >= 0)
+        glUniform1f(s_loc_u_mechGlassMaxChanThresh, s_mechGlassMaxChanThresh);
+    if (s_loc_u_mechSpecDebugMask >= 0)
+        glUniform1i(s_loc_u_mechSpecDebugMask, s_mechSpecDebugMask ? 1 : 0);
 
     // Projection uniforms — match static_prop batcher and the
     // terrain_overlay.vert convention: terrainMVP = CPU-composed
@@ -2111,6 +2189,46 @@ extern "C" void batcher_setMechAmbientStrength(float s) {
     s_mechAmbientStrength = s;
 }
 extern "C" float batcher_getMechAmbientStrength() { return s_mechAmbientStrength; }
+
+// MECH-SPECULAR-V1: runtime API for the gated Blinn specular sheen. All per-flush
+// uniforms — no VBO rebuild. Changes take effect the next frame. When the
+// viewuniforms variant is not active (s_mechViewUniforms==false) the C++ flush
+// uploads strength 0 regardless of the gate, so the setter is safe to call but
+// the visual has no effect until MC2_MECH_VIEWUNIFORMS=1 is also set.
+extern "C" void  batcher_setMechSpecularEnabled(int on)      { s_mechSpecularV1 = (on != 0); }
+extern "C" int   batcher_getMechSpecularEnabled()            { return s_mechSpecularV1 ? 1 : 0; }
+extern "C" void  batcher_setMechSpecularStrength(float s) {
+    if (s < 0.0f) s = 0.0f;
+    if (s > 4.0f) s = 4.0f;
+    s_mechSpecularStrength = s;
+}
+extern "C" float batcher_getMechSpecularStrength()           { return s_mechSpecularStrength; }
+extern "C" void  batcher_setMechMetalRoughness(float r) {
+    if (r < 0.04f) r = 0.04f;
+    if (r > 1.0f)  r = 1.0f;
+    s_mechMetalRoughness = r;
+}
+extern "C" float batcher_getMechMetalRoughness()             { return s_mechMetalRoughness; }
+extern "C" void  batcher_setMechGlassRoughness(float r) {
+    if (r < 0.04f) r = 0.04f;
+    if (r > 1.0f)  r = 1.0f;
+    s_mechGlassRoughness = r;
+}
+extern "C" float batcher_getMechGlassRoughness()             { return s_mechGlassRoughness; }
+extern "C" void  batcher_setMechGlassLumaThresh(float t) {
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    s_mechGlassLumaThresh = t;
+}
+extern "C" float batcher_getMechGlassLumaThresh()            { return s_mechGlassLumaThresh; }
+extern "C" void  batcher_setMechGlassMaxChanThresh(float t) {
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    s_mechGlassMaxChanThresh = t;
+}
+extern "C" float batcher_getMechGlassMaxChanThresh()         { return s_mechGlassMaxChanThresh; }
+extern "C" void  batcher_setMechSpecDebugMask(int on)        { s_mechSpecDebugMask = (on != 0); }
+extern "C" int   batcher_getMechSpecDebugMask()              { return s_mechSpecDebugMask ? 1 : 0; }
 
 // batcher_rebuildMechNormals: re-upload the mech geometry VBO with the current
 // s_mechNormalsMode and s_mechNormalsSmoothDeg. No-op if geometry is not yet

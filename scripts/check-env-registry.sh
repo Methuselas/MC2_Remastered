@@ -141,7 +141,13 @@ ALLOWLIST=(
     MC2_MECH_AMBIENT_V1_STRENGTH # feature -- promote-to-registry
     MC2_MECH_BATCHER_STATS      # trace
     MC2_MECH_FRAG_DEBUG         # trace
+    MC2_MECH_GLASS_LUMA_THRESH    # feature -- promote-to-registry
+    MC2_MECH_GLASS_MAXCHAN_THRESH # feature -- promote-to-registry
+    MC2_MECH_GLASS_ROUGHNESS      # feature -- promote-to-registry
     MC2_MECH_LIGHT_TRACE        # trace
+    MC2_MECH_METAL_ROUGHNESS      # feature -- promote-to-registry
+    MC2_MECH_SPECULAR_STRENGTH    # feature -- promote-to-registry
+    MC2_MECH_SPECULAR_V1          # feature -- promote-to-registry
     MC2_MECH_LOD_TRACE          # trace
     MC2_MECH_NODE_TRACE         # trace
     MC2_MECH_NORMALS_MODE       # feature -- promote-to-registry
