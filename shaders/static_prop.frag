@@ -357,9 +357,21 @@ void main() {
                     roughness = u_pbrV1RoughnessOverride;
                 }
 
-                vec3 N      = normalize(v_normal);
-                vec3 V_eye  = normalize(u_cameraWorldPos.xyz - v_worldPos);
-                vec3 L      = normalize(-v_pbrV1SunDir);   // surface -> sun
+                // STATIC-PROP-PBR-SPACE-FIX-1: convert N and L to GL world
+                // space before computing view-dependent specular terms.
+                // v_normal and v_pbrV1SunDir are Stuff world space (from
+                // a_normal*mat3(shapeToWorld) and GatherLightsParameters
+                // lightToWorld.GetLocalForwardInWorld respectively).
+                // v_worldPos and u_cameraWorldPos are GL world space (the
+                // Stuff->GL swap x'=-x,y'=z,z'=y is applied to positions
+                // in the vert shader but NOT to normals/lightDir).
+                // Without this fix H = normalize(L_stuff+V_eye_gl) crosses
+                // spaces; NdotH and Fresnel are geometrically wrong.
+                vec3 N_stuff = normalize(v_normal);
+                vec3 N      = vec3(-N_stuff.x, N_stuff.z, N_stuff.y);  // Stuff->GL
+                vec3 V_eye  = normalize(u_cameraWorldPos.xyz - v_worldPos);  // GL
+                vec3 L_stuff = normalize(-v_pbrV1SunDir);  // surface->sun, Stuff space
+                vec3 L      = vec3(-L_stuff.x, L_stuff.z, L_stuff.y);  // Stuff->GL
                 vec3 H      = normalize(L + V_eye);
 
                 // Albedo-tinted F0 for metallics — real per-fragment albedo
