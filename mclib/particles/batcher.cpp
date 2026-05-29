@@ -137,6 +137,32 @@ bool Batcher::is_oracle_render_enabled() {
     return s_val;
 }
 
+// VFX-GPU-SIM-CARDCLOUD-BUFFER-1: compare-only GPU sim gates. Default OFF.
+// _cardcloud gates the CardCloud GPU-sim buffer handoff (gather + SSBO
+// upload); _compare gates the [VFX_GPU_SIM v1] integrity/compare logs.
+// Neither renders or alters the frame. Read once, process-lifetime.
+bool Batcher::is_gpu_sim_cardcloud_enabled() {
+    static bool s_init = false;
+    static bool s_val  = false;
+    if (!s_init) {
+        const char* v = std::getenv("MC2_VFX_GPU_SIM_CARDCLOUD");
+        s_val  = (v && v[0] == '1');
+        s_init = true;
+    }
+    return s_val;
+}
+
+bool Batcher::is_gpu_sim_compare_enabled() {
+    static bool s_init = false;
+    static bool s_val  = false;
+    if (!s_init) {
+        const char* v = std::getenv("MC2_VFX_GPU_SIM_COMPARE");
+        s_val  = (v && v[0] == '1');
+        s_init = true;
+    }
+    return s_val;
+}
+
 Batcher::Batcher(unsigned int perFrameBudget)
     : impl_(new Impl(perFrameBudget)) {}
 

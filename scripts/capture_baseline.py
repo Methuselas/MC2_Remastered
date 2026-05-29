@@ -92,6 +92,9 @@ TRACKED_FLAGS = (
     # which particle render path produced the frame (placeholder vs oracle).
     "MC2_VFX_ORACLE_RENDER",
     "MC2_VFX_AGE_SAMPLE",
+    # VFX-GPU-SIM-CARDCLOUD-BUFFER-1: compare-only GPU sim gates (observe-only).
+    "MC2_VFX_GPU_SIM_CARDCLOUD",
+    "MC2_VFX_GPU_SIM_COMPARE",
 )
 
 

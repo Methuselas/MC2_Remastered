@@ -226,8 +226,15 @@ compare slice).
    ShardCloud reuses this spec next (sim is the same model).
 5. **Do not bypass the CPU sim** until a separate accepted-parity slice.
 
+### Status
+- **VFX-GPU-SIM-CARDCLOUD-BUFFER-1 IMPLEMENTED** (split from VFX-GPU-SIM-CARDCLOUD-1):
+  persistent GPU sim SSBO (`CardCloudSimParticle` 64B, `gos_cardcloud_sim.cpp`) +
+  CardCloud live-state handoff + gates `MC2_VFX_GPU_SIM_CARDCLOUD` /
+  `MC2_VFX_GPU_SIM_COMPARE` (default OFF) + CPU-side integrity log. OBSERVE-ONLY:
+  no compute, no readback, no render. COMPUTE-1 adds the integration.
+
 ### Next slices
-- VFX-GPU-SIM-CARDCLOUD-1 — implement the hybrid GPU sim, compare-only.
+- VFX-GPU-SIM-CARDCLOUD-COMPUTE-1 — cardcloud_sim.comp integration + readback + parity.
 - VFX-GPU-SIM-PARITY-1 — side-by-side CPU-oracle vs GPU-sim evidence.
 - VFX-GPU-SIM-RENDER-1 — render from GPU-sim records (after parity).
 - VFX-CPU-SIM-BYPASS-CARDCLOUD-1 — bypass CPU sim for CardCloud (kill-switch, soak).

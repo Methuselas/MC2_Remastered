@@ -71,6 +71,13 @@ class Batcher {
     // per-particle arrays into GPU records instead of the placeholder Spawn().
     static bool is_oracle_render_enabled();
 
+    // VFX-GPU-SIM-CARDCLOUD-BUFFER-1: compare-only GPU sim gates (default OFF).
+    // _cardcloud = gather CardCloud live state into the persistent GPU sim SSBO
+    // (observe-only handoff, no integration/readback/render). _compare = emit
+    // the [VFX_GPU_SIM v1] integrity/compare logs.
+    static bool is_gpu_sim_cardcloud_enabled();
+    static bool is_gpu_sim_compare_enabled();
+
     // Open a new texture group before emitting a batch of particles that
     // share the same texture and UV sub-rect. Must be called at least once
     // before the first Emit; closing the previous group is automatic.

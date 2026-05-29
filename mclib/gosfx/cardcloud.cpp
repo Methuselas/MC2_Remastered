@@ -8,7 +8,9 @@
 // B1 Stage 2' C11: subclass-Start routing into the GPU particle pipeline.
 #include"particles/batcher.h"
 #include"particles/spawn.h"
+#include"particles/cardcloud_sim.h"   // VFX-GPU-SIM-CARDCLOUD-BUFFER-1
 #include<cstdio>   // VFX-ORACLE diagnostics
+#include<vector>
 
 //------------------------------------------------------------------------------
 //
@@ -502,6 +504,56 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 	// filled the batcher for one frame (until the first Flush()), leaving the
 	// batcher empty for all subsequent frames.
 	if (mc2::particles::Batcher::is_enabled()) {
+		// VFX-GPU-SIM-CARDCLOUD-BUFFER-1: observe-only handoff of the live CPU
+		// sim state into the persistent GPU sim SSBO. Independent of the oracle
+		// render gate; gathers + submits ONLY (no integration, no readback, no
+		// render). CPU sim stays authoritative; this does not alter the frame.
+		// Nested under is_enabled() (MC2_GPU_PARTICLES, default ON): if particles
+		// are force-disabled this gather is a no-op. Per-instance submit
+		// (last-writer-wins in the SSBO this slice; per-frame accumulation is
+		// COMPUTE-1). COMPUTE-1 adds the compute integration + readback + parity.
+		if (mc2::particles::Batcher::is_gpu_sim_cardcloud_enabled()
+		    && m_activeParticleCount > 0 && m_P_color) {
+			Stuff::LinearMatrix4D local_to_world;
+			local_to_world.Multiply(m_localToParent, *info->m_parentToWorld);
+			// Reused across frames (single-threaded render path) to avoid
+			// per-frame allocation.
+			static std::vector<mc2::particles::CardCloudSimParticle> s_simRecords;
+			s_simRecords.clear();
+			s_simRecords.reserve(static_cast<size_t>(m_activeParticleCount));
+			for (int i = 0; i < m_activeParticleCount; ++i) {
+				Particle *p = GetParticle(i);
+				Check_Object(p);
+				if (p->m_age >= 1.0f) continue;   // skip dead (compacted live list)
+				Stuff::Point3D wc;
+				wc.Multiply(p->m_localTranslation, local_to_world);
+				const Stuff::Scalar radius =
+					p->m_scale * Stuff::Sqrt(p->m_halfX * p->m_halfX + p->m_halfY * p->m_halfY);
+				const Stuff::RGBAColor &c = m_P_color[i];
+				mc2::particles::CardCloudSimParticle r = {};
+				r.position[0] = wc.x;
+				r.position[1] = wc.y;
+				r.position[2] = wc.z;
+				r.ageRate     = static_cast<float>(p->m_ageRate);
+				r.velocity[0] = p->m_worldLinearVelocity.x;
+				r.velocity[1] = p->m_worldLinearVelocity.y;
+				r.velocity[2] = p->m_worldLinearVelocity.z;
+				r.age         = static_cast<float>(p->m_age);
+				r.color[0]    = c.red;
+				r.color[1]    = c.green;
+				r.color[2]    = c.blue;
+				r.color[3]    = c.alpha;
+				r.size        = static_cast<float>(radius);
+				r.lifetime    = (p->m_ageRate > 0.0f)
+				                  ? static_cast<float>(1.0 / p->m_ageRate) : 0.0f;
+				r.flags       = mc2::particles::kCardCloudSimFlagAlive;
+				s_simRecords.push_back(r);
+			}
+			gos_cardcloud_sim_submit(s_simRecords.data(),
+			                         static_cast<unsigned>(s_simRecords.size()),
+			                         static_cast<unsigned>(m_activeParticleCount));
+		}
+
 		if (mc2::particles::Batcher::is_oracle_render_enabled()) {
 			// VFX-ORIGINAL-RECORD-ABI-1 (Phase 1, CardCloud): CPU-oracle render.
 			// ParticleCloud::Execute (which runs every frame under GPU mode)

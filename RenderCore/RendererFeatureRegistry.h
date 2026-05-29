@@ -148,7 +148,13 @@ enum class RendererFeature : int {
     // CPU sim's live per-particle records (CardCloud first; PointCloud births 0
     // in tier1). Default-OFF parity bridge; placeholder byte-identical when off.
     VfxOracleRender          = 27,  // MC2_VFX_ORACLE_RENDER
-    COUNT                    = 28,
+    // VFX-GPU-SIM-CARDCLOUD-BUFFER-1: compare-only GPU sim for CardCloud.
+    // _CARDCLOUD gathers live CPU state into a persistent GPU sim SSBO
+    // (observe-only, no integration/readback/render); _COMPARE emits integrity
+    // logs. Default-OFF. Substrate for the eventual GPU-owned sim.
+    VfxGpuSimCardCloud       = 28,  // MC2_VFX_GPU_SIM_CARDCLOUD
+    VfxGpuSimCompare         = 29,  // MC2_VFX_GPU_SIM_COMPARE
+    COUNT                    = 30,
 };
 
 // ---------------------------------------------------------------------------
@@ -381,6 +387,22 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "VFX-ORIGINAL-RECORD-ABI-1 (Phase 1 of the originals-restoration arc; see docs/vfx-originals-restoration-design.md). Default-OFF; =1 enables. Target classes = CardCloud + ShardCloud (PointCloud was the original pick but births 0 particles in stock tier1; CardCloud ~30 live and ShardCloud ~25 live are the populated classes — confirmed by probe). When OFF, CardCloud::Draw runs the existing placeholder Spawn() path byte-identically. When ON, CardCloud::Draw HARVESTS the CPU gosFX sim's live per-particle data (per-particle m_localTranslation + m_scale + m_halfX/Y and m_P_color[i] — already advanced this frame by ParticleCloud::Execute/CardCloud::AnimateParticle) and emits one GPU billboard per LIVE particle (m_age<1): position = m_localToParent*parentToWorld * m_localTranslation; color = m_P_color[i]; size = scale*sqrt(halfX^2+halfY^2). Reuses the placeholder's texture/blend group. CPU sim stays AUTHORITATIVE (no sim change, no bypass); legacy MLR DrawEffect stays skipped (no dual-draw). ShardCloud (1316) is covered the same way (center=m_localTranslation, color=m_P_color[i*3] per-vertex, size=scale*m_radius). CardCloud + ShardCloud ONLY — PointCloud/Card/Tube/trails untouched. NO GPU-sim, NO emission/lifetime/timing change, NO object-ID write, NO shader/ABI change. Deferred to the ABI-extension follow-up: per-particle rotation (m_localRotation), CardCloud aspect, ShardCloud triangle shape (m_angle), per-particle UV frame. Parity diagnostic [VFX_ORACLE v1] FIRST_HARVEST + 240-call summary under MC2_GPU_PARTICLES_LOG=1. Parity-bridge/oracle stage, NOT the final architecture (end-state = GPU sim + CPU-sim deletion per class)."
+    },
+    // VfxGpuSimCardCloud
+    {
+        "MC2_FEATURE_VFX_GPU_SIM_CARDCLOUD",
+        "MC2_VFX_GPU_SIM_CARDCLOUD",
+        EnvVarKind::Feature,
+        false,
+        "VFX-GPU-SIM-CARDCLOUD-BUFFER-1 (Stage 2 of the originals-restoration arc; docs/vfx-gpu-sim-spec.md). Default-OFF; =1 enables. When ON, CardCloud::Draw gathers the live CPU-sim per-particle state (position, world velocity, age, ageRate, color, size, alive flag) into a CPU-compacted list (dead m_age>=1 filtered) and submits it to the GameOS bridge gos_cardcloud_sim_submit, which uploads it to a PERSISTENT GPU sim SSBO (CardCloudSimParticle, 64B std430). OBSERVE-ONLY substrate: NO compute integration, NO GPU->CPU readback, NO rendering, NO CPU-sim bypass. CPU sim stays authoritative; the frame is unchanged (independent of MC2_VFX_ORACLE_RENDER). CardCloud ONLY. COMPUTE-1 adds the cardcloud_sim.comp integration + readback + parity compare on this buffer layout."
+    },
+    // VfxGpuSimCompare
+    {
+        "MC2_FEATURE_VFX_GPU_SIM_COMPARE",
+        "MC2_VFX_GPU_SIM_COMPARE",
+        EnvVarKind::Feature,
+        false,
+        "VFX-GPU-SIM-CARDCLOUD-BUFFER-1: emit the [VFX_GPU_SIM v1] integrity/compare logs (cpuActive vs submitted-live count, age/alpha ranges, world bounds, SSBO capacity) for the CardCloud GPU sim buffer. Requires MC2_VFX_GPU_SIM_CARDCLOUD=1. Default-OFF. BUFFER-1 is a CPU-side plumbing check (no GPU readback, no stalls); real CPU-vs-GPU parity (maxPosError, age divergence) arrives in COMPUTE-1 once the buffer is integrated on GPU."
     },
 };
 
