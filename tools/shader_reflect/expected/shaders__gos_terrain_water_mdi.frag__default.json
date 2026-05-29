@@ -17,35 +17,21 @@
   "stage": "frag",
   "ubos": [
     {
-      "binding": 2,
+      "binding": 3,
       "members": [
         {
           "array_stride": null,
           "matrix_stride": null,
-          "name": "reflectionOn",
+          "name": "u_waterRtStrength",
           "offset": 0,
-          "type": "int"
-        },
-        {
-          "array_stride": null,
-          "matrix_stride": null,
-          "name": "atlasMapTopLeftX",
-          "offset": 4,
           "type": "float"
         },
         {
           "array_stride": null,
           "matrix_stride": null,
-          "name": "atlasMapTopLeftY",
+          "name": "u_waterScreenSize",
           "offset": 8,
-          "type": "float"
-        },
-        {
-          "array_stride": null,
-          "matrix_stride": null,
-          "name": "atlasOneOverWorldUnits",
-          "offset": 12,
-          "type": "float"
+          "type": "vec2"
         },
         {
           "array_stride": null,
