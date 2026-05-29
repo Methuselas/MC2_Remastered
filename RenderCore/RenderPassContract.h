@@ -118,12 +118,13 @@ static constexpr RenderPassContract kRenderPassContracts[] = {
         RenderPassId::MechOpaque,
         "MechOpaque",
         "GpuMechBatcher",
-        /*viewUniformsBound*/        false,
-        /*pipelineDescRegistered*/   false,
+        /*viewUniformsBound*/        true,
+        /*pipelineDescRegistered*/   true,
         /*snapshotRowAuthoritative*/ true,
         "Mech",
         "MC2_SNAPSHOT_MECH_EXTRACT",
-        "Mech rows extracted to snapshot (MECH-EXTRACTION-0); pipeline still legacy."
+        "Wired through PipelineId::MechOpaque (MECH-PIPELINEDESC-1, applyPipeline) "
+        "+ ViewUniforms UBO consumer default-on (MECH-VIEWUNIFORMS)."
     },
     {
         RenderPassId::Shadow,

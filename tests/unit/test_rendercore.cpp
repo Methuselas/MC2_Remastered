@@ -286,47 +286,57 @@ TEST_CASE("IblShRegistry kIblShSetCount is at least 1") {
 
 TEST_CASE("RenderPassContract pipelineDescRegistered matches current shipped truth") {
     // Per-row expected state from kRenderPassContracts at branch tip:
-    //   StaticPropOpaque = true; Terrain / MechOpaque / Shadow / VFX = false.
+    //   StaticPropOpaque = true; MechOpaque = true (MECH-PIPELINEDESC-1);
+    //   Terrain / Shadow / VFX = false.
     int trueCount = 0;
     for (int i = 0; i < kRenderPassContractCount; ++i) {
         const RenderPassContract& c = kRenderPassContracts[i];
-        const bool expected = (c.id == RenderPassId::StaticPropOpaque);
+        const bool expected = (c.id == RenderPassId::StaticPropOpaque ||
+                               c.id == RenderPassId::MechOpaque);
         CHECK(c.pipelineDescRegistered == expected);
         if (c.pipelineDescRegistered) ++trueCount;
     }
-    // Exactly one pass routes through PipelineDesc today.
-    CHECK(trueCount == 1);
+    // Two passes route through PipelineDesc today: StaticPropOpaque + MechOpaque.
+    CHECK(trueCount == 2);
 }
 
 TEST_CASE("RenderPassContract: only a registered PipelineId family may claim pipelineDescRegistered") {
-    // PipelineRegistry currently registers ONLY the static-prop family:
-    //   PipelineId { Invalid=0, StaticPropOpaque=1, StaticPropAlphaTest=2, Count_=3 }
-    // (Terrain/Water/Mech/... are "Future:" -- no PipelineId enumerator yet.)
+    // PipelineRegistry registers the static-prop family + MechOpaque
+    // (MECH-PIPELINEDESC-1):
+    //   PipelineId { Invalid=0, StaticPropOpaque=1, StaticPropAlphaTest=2,
+    //                MechOpaque=3, Count_=4 }
+    // (Terrain/Water/... remain "Future:" -- no PipelineId enumerator yet.)
     // Lock that coverage so this proof can't silently widen.
-    CHECK(static_cast<uint32_t>(PipelineId::Count_) == 3u);
+    CHECK(static_cast<uint32_t>(PipelineId::Count_) == 4u);
     CHECK(static_cast<uint32_t>(PipelineId::Invalid) == 0u);
 
     // Every pass flagged true must be backed by a real (non-Invalid, in-range)
-    // PipelineId family. The only registered family is StaticProp*, whose
-    // owning RenderPassId is StaticPropOpaque.
+    // PipelineId family. Registered families: StaticProp* (RenderPassId
+    // StaticPropOpaque) and MechOpaque (RenderPassId MechOpaque).
     for (int i = 0; i < kRenderPassContractCount; ++i) {
         const RenderPassContract& c = kRenderPassContracts[i];
         if (!c.pipelineDescRegistered) continue;
 
-        CHECK((c.id == RenderPassId::StaticPropOpaque));
+        CHECK((c.id == RenderPassId::StaticPropOpaque ||
+               c.id == RenderPassId::MechOpaque));
 
-        const uint32_t fam = static_cast<uint32_t>(PipelineId::StaticPropOpaque);
+        const uint32_t fam =
+            (c.id == RenderPassId::MechOpaque)
+                ? static_cast<uint32_t>(PipelineId::MechOpaque)
+                : static_cast<uint32_t>(PipelineId::StaticPropOpaque);
         CHECK(fam > static_cast<uint32_t>(PipelineId::Invalid));
         CHECK(fam < static_cast<uint32_t>(PipelineId::Count_));
     }
 }
 
 TEST_CASE("RenderPassContract: passes with no PipelineId family are not flagged registered") {
-    // Defensive complement -- Terrain/MechOpaque/Shadow/VFX have no PipelineId
-    // enumerator, so none may legitimately report PipelineDesc routing.
+    // Defensive complement -- Terrain/Shadow/VFX have no PipelineId enumerator,
+    // so none may legitimately report PipelineDesc routing. (StaticPropOpaque and
+    // MechOpaque DO have a PipelineId family and are excluded here.)
     for (int i = 0; i < kRenderPassContractCount; ++i) {
         const RenderPassContract& c = kRenderPassContracts[i];
         if (c.id == RenderPassId::StaticPropOpaque) continue;
+        if (c.id == RenderPassId::MechOpaque) continue;
         CHECK_FALSE(c.pipelineDescRegistered);
     }
 }

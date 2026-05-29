@@ -26,8 +26,9 @@ enum class PipelineId : uint32_t {
     Invalid             = 0,
     StaticPropOpaque    = 1,   // opaque geometry, alpha-off group
     StaticPropAlphaTest = 2,   // alpha-tested geometry, alpha-on group (shader discard)
-    // Future: Terrain, Water, Mech, DebugWireframe, ...
-    Count_              = 3,   // sentinel — do not use as an ID
+    MechOpaque          = 3,   // GPU mech batcher opaque pass (reverse-Z, cull back)
+    // Future: Terrain, Water, DebugWireframe, ...
+    Count_              = 4,   // sentinel — do not use as an ID
 };
 
 // Return the static GL-state contract for id.

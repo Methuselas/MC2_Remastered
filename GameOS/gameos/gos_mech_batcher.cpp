@@ -2,6 +2,8 @@
 #include "gos_mech_batcher.h"
 #include "render_snapshot.h"  // MECH-EXTRACTION-0: ExtractedMechPacket, RenderSnapshot
 #include "../../RenderCore/RenderDebugView.h"  // MECH-DEBUG-VIEWS-1
+#include "../../RenderCore/PipelineRegistry.h"  // MECH-PIPELINEDESC-1
+#include "pipeline_binder.h"                     // MECH-PIPELINEDESC-1 applyPipeline
 // M2.5: IsObjectIdBufferEnabled() drives the GLSL prefix that gates the
 // mech.frag layout(location=2) write. Mirrors the include shipped by M1.5
 // at gos_static_prop_batcher.cpp:3. GameOS/ is outside the firewall
@@ -456,6 +458,13 @@ static void loadProgramsIfNeeded() {
         return;
     }
     s_mechProgram = s_mechProgramObj->shp_;
+
+    // MECH-PIPELINEDESC-1: register the linked mech program into PipelineRegistry
+    // so flush() can drive fixed-function state via applyPipeline(MechOpaque)
+    // instead of hand-set GL calls. Mirrors gos_static_prop_batcher.cpp's
+    // bindProgram-at-link. Must run before any mech draw (flush() asserts
+    // geometry finalized, which calls loadProgramsIfNeeded first).
+    RenderCore::bindProgram(RenderCore::PipelineId::MechOpaque, s_mechProgram);
 
     // Slice B1 (2026-05-09): MAJOR-3 from adversarial review.
     // shaders/include/lighting.hglsl declares LightsData[64] (~113 KB
@@ -1702,19 +1711,19 @@ void GpuMechBatcher::flush() {
     glActiveTexture(GL_TEXTURE0);
     GLint     prevTexUnit0; glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexUnit0);
 
-    glUseProgram(s_mechProgram);
+    // MECH-PIPELINEDESC-1: program + fixed-function state (depth test+write+func
+    // GEQUAL, blend Opaque, cull Back) from the registered MechOpaque PipelineDesc,
+    // replacing the prior hand-set glUseProgram/glEnable/glDepthFunc/... block.
+    // applyPipeline also does glUseProgram(desc.glProgramName) (= s_mechProgram via
+    // bindProgram at link). Sampler + VAO/IBO stay manual (not PipelineDesc fields).
+    pipeline_binder::applyPipeline(
+        RenderCore::getPipelineDesc(RenderCore::PipelineId::MechOpaque));
+
     glBindVertexArray(s_sharedVao);
     // Explicit IBO rebind: mirrors flushShadow() pattern. GL_ELEMENT_ARRAY_BUFFER
     // is VAO state; s_sharedVao's slot can be left at 0 by a prior flushShadow()
     // restore-order bug. Belt-and-suspenders self-heal.
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
-
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene mech draw)
-    glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
-    glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);
 
     // Bind our REPEAT/LINEAR sampler. Per
     // memory/sampler_state_inheritance_in_fast_paths.md: when a prior pass

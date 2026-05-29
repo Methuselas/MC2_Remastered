@@ -70,6 +70,29 @@ static std::array<PipelineDesc, static_cast<size_t>(PipelineId::Count_)> s_descs
         /* ssboBindingsMask    */ kStaticPropSsbos,
     },
 
+    // [3] MechOpaque — GPU mech batcher (GpuMechBatcher::flush). Mirrors the
+    // fixed-function state the batcher previously set by hand: full depth
+    // (test+write, reverse-Z GEQUAL), no blend, cull back. Color0 + GBuffer1
+    // (normal/screen-shadow); object-ID (loc=2) is GLSL-macro-gated in mech.frag
+    // (MC2_OBJECT_ID_BUFFER), not an applyPipeline attachment toggle, so
+    // objectIdWriteEnabled stays false here (descriptive; applyPipeline does not
+    // reconfigure draw buffers). ssboBindingsMask = 0: the mech batcher binds its
+    // own SSBOs (instance/bone/material/lights) manually; the mask is metadata
+    // and applyPipeline does not bind SSBOs. glProgramName filled by bindProgram()
+    // at mech shader link (loadProgramsIfNeeded). The mech sampler bind stays
+    // manual (no PipelineDesc sampler field).
+    {
+        /* glProgramName       */ 0u,              // filled by bindProgram()
+        /* blend               */ BlendMode::Opaque,
+        /* depthTestEnable     */ true,
+        /* depthWriteEnable    */ true,
+        /* depthFunc           */ DepthFunc::GreaterEqual, // reverse-Z
+        /* cullMode            */ CullMode::Back,
+        /* colorAttachments    */ { true, true, false },
+        /* objectIdWriteEnabled*/ false,           // macro-gated in shader, not here
+        /* ssboBindingsMask    */ 0u,              // mech binds its own SSBOs
+    },
+
 }};
 
 static_assert(
