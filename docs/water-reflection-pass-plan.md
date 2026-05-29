@@ -232,3 +232,32 @@ resolved by the future WATER-REFLECTION-CLIP-1.
 **Status:** docs/spec only. Recommends C1 (mirrored terrain-only RT fill, gated
 default-OFF, preview-proven) then C2 (water FS sample + blend over Phase-A SH).
 Clip plane deferred to WATER-REFLECTION-CLIP-1.
+
+---
+
+## POSTSCRIPT (2026-05-29) — shipped state + corrected CLIP-1 root cause
+
+C1 (`b09da4be`) and C2 (`1fb8731d`) shipped as planned and the whole reflection
+arc is **merged to nifty** (merge `68343329`), all gates default-OFF. The
+SH-L2 sky reflection is the working primary at all cameras (sun-azimuth +
+cameraPos-frame + dispatch-MVP-restore fixes landed: `615865d6`/`d027d6a9`/`d671343e`).
+
+**Correction to this plan's "marginal payoff / camera-regime" framing:** the
+MC2 gameplay camera is **~20° oblique across cliffs**, NOT steep/top-down, so
+terrain reflection SHOULD be visible there — it is a real bug, not physics.
+Root cause (investigated): the terrain SOLID compute depth gate `pzOk`
+([gpu_driven_terrain_solid.comp:213-215](../shaders/gpu_driven_terrain_solid.comp))
+culls the mirrored quads. Reflecting world-Z and re-projecting through the
+**real** camera shifts each above-water hill's camera-forward depth by
+`Δs ≈ 2·eye_height·sin(pitch)`; the high RTS eye makes `Δs` large even at 20°,
+pushing mirrored corners past the reverse-Z far plane → 0 instances → empty RT.
+The simple world-mirror reusing the real camera's depth gate is the wrong tool.
+
+**WATER-REFLECTION-CLIP-1 (the remaining slice):** build a reflected projection
+with a **Lengyel oblique near-plane** at the water plane so mirrored geometry
+stays in the reverse-Z band at all angles AND below-water geometry is excluded
+without an FS discard. (Interim hack: a `u_reflectionPass` flag relaxing `pzOk`'s
+z-range + `GL_DEPTH_CLAMP` — but RT depth ordering then approximate.) Same
+pixel-homog(`getWorldToClip`)-vs-GL-NDC(`worldToClipGL`) convention class as the
+cameraPos-frame fix and the shadow-lane txmmgr unprojection fix. Memory:
+`water-reflection-clip1-followup`.
