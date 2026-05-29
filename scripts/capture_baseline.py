@@ -88,6 +88,10 @@ TRACKED_FLAGS = (
     # both makes the frame's VFX state reproducible.
     "MC2_VFX_DEBUG_MODE",
     "MC2_GPU_PARTICLES",
+    # VFX-ORIGINAL-RECORD-ABI-1: CPU-oracle render gate (PointCloud). Records
+    # which particle render path produced the frame (placeholder vs oracle).
+    "MC2_VFX_ORACLE_RENDER",
+    "MC2_VFX_AGE_SAMPLE",
 )
 
 

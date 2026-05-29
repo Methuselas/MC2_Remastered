@@ -103,10 +103,21 @@ particle's age, color/position are correct-over-life with zero GPU age logic.
 | 4 | VFX-GPU-SIM-PARITY-1 | Side-by-side CPU-oracle vs GPU-sim evidence | — | `test(vfx): add GPU sim parity evidence` |
 | 5 | VFX-CPU-SIM-BYPASS-1 | Bypass CPU sim for PointCloud, kill-switch, soak | kill-switch | `feat(vfx): bypass CPU sim for migrated particle class` |
 
-**First class = PointCloud** (cleanest `m_P_localTranslation`/`m_P_color`
-arrays, most physics to recover → largest parity win for smallest change).
-CardCloud / ShardCloud / Card / Tube + the trail families follow as their own
-class-by-class arcs after PointCloud completes all 5 phases.
+**First class = CardCloud** (PIVOTED from PointCloud 2026-05-29). Probe finding:
+under `MC2_GPU_PARTICLES=1` the CPU sim DOES run (`Execute` ticks), but
+**PointCloud (classid 1314) reaches active=0 in stock tier1** ("Missile_Flare"
+births nothing) — so a PointCloud harvest had nothing to read. **CardCloud
+(1318, the Dust/flare workhorse) reaches ~30 live particles**; ShardCloud (1316)
+~25. So the harvest premise holds for populated classes; the original target was
+just empty. CardCloud is the executable first target. PointCloud/ShardCloud/
+Card/Tube + trail families follow as their own class-by-class arcs.
+
+CardCloud specifics vs the (abandoned) PointCloud plan: CardCloud has no
+`m_P_localTranslation` array; the live per-particle center is
+`GetParticle(i)->m_localTranslation`, color is `m_P_color[i]` (written in
+`CardCloud::AnimateParticle`, live under GPU mode), size is
+`m_scale*sqrt(m_halfX²+m_halfY²)`, and dead slots (`m_age>=1`) are filtered.
+Per-particle rotation/aspect/UV-frame are deferred (existing 64B record).
 
 ### Phase 1 detail (the executable first slice)
 

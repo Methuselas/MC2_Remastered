@@ -8,6 +8,7 @@
 // B1 Stage 2' C11: subclass-Start routing into the GPU particle pipeline.
 #include"particles/batcher.h"
 #include"particles/spawn.h"
+#include<cstdio>   // VFX-ORACLE diagnostics
 
 //------------------------------------------------------------------------------
 //
@@ -501,7 +502,103 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 	// filled the batcher for one frame (until the first Flush()), leaving the
 	// batcher empty for all subsequent frames.
 	if (mc2::particles::Batcher::is_enabled()) {
-		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
+		if (mc2::particles::Batcher::is_oracle_render_enabled()) {
+			// VFX-ORIGINAL-RECORD-ABI-1 (Phase 1, CardCloud): CPU-oracle render.
+			// ParticleCloud::Execute (which runs every frame under GPU mode)
+			// keeps each live particle current: m_localTranslation and m_scale
+			// are advanced per-frame, m_P_color[i] is recomputed in
+			// CardCloud::AnimateParticle, and m_halfX/Y are per-particle
+			// birth-time extents (set in CreateNewParticle). All are valid at Draw.
+			// Emit one GPU billboard per LIVE particle from that real data. CPU
+			// sim stays authoritative; the legacy MLR draw stays skipped (no
+			// dual-draw). Per-particle rotation (m_localRotation), aspect
+			// (halfX vs halfY) and per-particle UV frame are NOT representable in
+			// the existing 64B GpuParticle record — deferred to the ABI-extension
+			// follow-up (docs/vfx-originals-restoration-design.md).
+			if (m_activeParticleCount > 0 && m_P_color) {
+				Specification *spec = GetSpecification();
+				Check_Object(spec);
+				const uint32_t mlrTex =
+					static_cast<uint32_t>(spec->m_state.GetTextureHandle());
+				int blendMode = 0;
+				{
+					const MidLevelRenderer::MLRState::AlphaMode am =
+						spec->m_state.GetAlphaMode();
+					if (am == MidLevelRenderer::MLRState::OneOneMode ||
+					    am == MidLevelRenderer::MLRState::AlphaOneMode)
+						blendMode = 1;
+				}
+				// Same effect->world transform the legacy CardCloud::Draw feeds
+				// to MLR as effectToWorld.
+				Stuff::LinearMatrix4D local_to_world;
+				local_to_world.Multiply(m_localToParent, *info->m_parentToWorld);
+
+				mc2::particles::Batcher &batcher = mc2::particles::Batcher::Instance();
+				batcher.BeginGroup(mlrTex, 0.0f, 0.0f, 1.0f, 1.0f, blendMode);
+
+				int harvested = 0;
+				float minA =  3.0e38f, maxA = -3.0e38f;
+				for (int i = 0; i < m_activeParticleCount; ++i) {
+					Particle *p = GetParticle(i);
+					Check_Object(p);
+					if (p->m_age >= 1.0f) continue;   // skip dead slots (legacy filter)
+					Stuff::Point3D wc;
+					wc.Multiply(p->m_localTranslation, local_to_world);
+					// Billboard radius from per-particle scaled half-extents.
+					// Aspect (halfX vs halfY) collapsed to a bounding radius —
+					// same idiom as the placeholder; per-particle aspect deferred.
+					const Stuff::Scalar radius =
+						p->m_scale *
+						Stuff::Sqrt(p->m_halfX * p->m_halfX + p->m_halfY * p->m_halfY);
+					const Stuff::RGBAColor &c = m_P_color[i];
+					mc2::particles::GpuParticle gp = {};
+					gp.position[0] = wc.x;
+					gp.position[1] = wc.y;
+					gp.position[2] = wc.z;
+					gp.color[0]    = c.red;
+					gp.color[1]    = c.green;
+					gp.color[2]    = c.blue;
+					gp.color[3]    = c.alpha;
+					gp.size        = static_cast<float>(radius);
+					gp.atlasIndex  = mlrTex;
+					batcher.Emit(gp);
+					++harvested;
+					if (c.alpha < minA) minA = c.alpha;
+					if (c.alpha > maxA) maxA = c.alpha;
+				}
+
+				// [VFX_ORACLE v1] diagnostics. harvested = LIVE particle count
+				// (active minus already-dead m_age>=1 slots) == emitted; no
+				// fabrication, no fallback. One-shot on first harvest so sparse
+				// clouds are provable; 240-call summary thereafter.
+				if (mc2::particles::Batcher::is_log_enabled()) {
+					static bool s_first = false;
+					if (!s_first && harvested > 0) {
+						s_first = true;
+						std::fprintf(stderr,
+							"[VFX_ORACLE v1] class=CardCloud FIRST_HARVEST active=%d harvested=%d alpha=[%.3f,%.3f]\n",
+							m_activeParticleCount, harvested,
+							static_cast<double>(minA), static_cast<double>(maxA));
+						std::fflush(stderr);
+					}
+					static unsigned long long s_calls = 0, s_harvTotal = 0;
+					s_harvTotal += static_cast<unsigned>(harvested);
+					if ((++s_calls % 240ull) == 0ull) {
+						// minA/maxA are sentinels if this call harvested 0 live
+						// particles; report 0 in that case (avoid 3e38 in the log).
+						const double aLo = (harvested > 0) ? static_cast<double>(minA) : 0.0;
+						const double aHi = (harvested > 0) ? static_cast<double>(maxA) : 0.0;
+						std::fprintf(stderr,
+							"[VFX_ORACLE v1] class=CardCloud calls=%llu active_this_call=%d harvested_this_call=%d emitted_this_call=%d harvestedTotal=%llu fallback=0 alpha_this_call=[%.3f,%.3f]\n",
+							s_calls, m_activeParticleCount, harvested, harvested,
+							s_harvTotal, aLo, aHi);
+						std::fflush(stderr);
+					}
+				}
+			}
+		} else {
+			(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
+		}
 		SpinningCloud::Draw(info);
 		return;
 	}

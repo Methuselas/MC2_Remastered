@@ -122,6 +122,21 @@ bool Batcher::is_log_enabled() {
     return g_log_value;
 }
 
+// VFX-ORIGINAL-RECORD-ABI-1 (Phase 1): CPU-oracle render gate. When ON, a
+// migrated class's Draw harvests the CPU sim's live per-particle arrays and
+// renders them via the GPU billboard path instead of the placeholder Spawn().
+// Default OFF (placeholder path byte-identical). Read once, process-lifetime.
+bool Batcher::is_oracle_render_enabled() {
+    static bool s_init = false;
+    static bool s_val  = false;
+    if (!s_init) {
+        const char* v = std::getenv("MC2_VFX_ORACLE_RENDER");
+        s_val  = (v && v[0] == '1');
+        s_init = true;
+    }
+    return s_val;
+}
+
 Batcher::Batcher(unsigned int perFrameBudget)
     : impl_(new Impl(perFrameBudget)) {}
 

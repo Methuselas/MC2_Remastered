@@ -144,7 +144,11 @@ enum class RendererFeature : int {
     // VFX-AGE-SAMPLE-1: sample GPU-particle spec curves at the effect's real
     // CPU-advanced m_age instead of the fixed 0.5 snapshot. Default-OFF.
     VfxAgeSample             = 26,  // MC2_VFX_AGE_SAMPLE
-    COUNT                    = 27,
+    // VFX-ORIGINAL-RECORD-ABI-1 (Phase 1): CPU-oracle render — GPU renders the
+    // CPU sim's live per-particle records (CardCloud first; PointCloud births 0
+    // in tier1). Default-OFF parity bridge; placeholder byte-identical when off.
+    VfxOracleRender          = 27,  // MC2_VFX_ORACLE_RENDER
+    COUNT                    = 28,
 };
 
 // ---------------------------------------------------------------------------
@@ -369,6 +373,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "VFX-AGE-SAMPLE-1: sample GPU-particle spec curves (color/alpha/size/UV) at the routed effect's real CPU-advanced normalized age (gosFX Effect::m_age, threaded into mc2::particles::Spawn from each producer Draw) instead of the fixed 0.5 midpoint. Default-OFF; =1 enables. When OFF, resolveSampleAge() returns 0.5 → byte-identical to the pre-slice snapshot. When ON, particles regain fade-in/out + grow/shrink because each per-frame re-emit samples at the effect's current age. Read-only consumption of m_age (already advanced by gameplay) — NO emission/lifetime/spawn-rate/timing change; NO shader or GpuParticle-ABI change (curve eval stays CPU-side in spawn_*.cpp). Invalid/sentinel age (m_age=-1) or out-of-[0,1] falls back to 0.5. Affects only the 5 routed classes (Card/CardCloud/PointCloud/ShardCloud/Tube); unrouted CPU-only classes untouched. Object-ID invariant preserved. Min/max age summary logged under MC2_GPU_PARTICLES_LOG=1."
+    },
+    // VfxOracleRender
+    {
+        "MC2_FEATURE_VFX_ORACLE_RENDER",
+        "MC2_VFX_ORACLE_RENDER",
+        EnvVarKind::Feature,
+        false,
+        "VFX-ORIGINAL-RECORD-ABI-1 (Phase 1 of the originals-restoration arc; see docs/vfx-originals-restoration-design.md). Default-OFF; =1 enables. Target class = CardCloud (PointCloud was the original pick but births 0 particles in stock tier1; CardCloud is the populated workhorse — both confirmed by probe). When OFF, CardCloud::Draw runs the existing placeholder Spawn() path byte-identically. When ON, CardCloud::Draw HARVESTS the CPU gosFX sim's live per-particle data (per-particle m_localTranslation + m_scale + m_halfX/Y and m_P_color[i] — already advanced this frame by ParticleCloud::Execute/CardCloud::AnimateParticle) and emits one GPU billboard per LIVE particle (m_age<1): position = m_localToParent*parentToWorld * m_localTranslation; color = m_P_color[i]; size = scale*sqrt(halfX^2+halfY^2). Reuses the placeholder's texture/blend group. CPU sim stays AUTHORITATIVE (no sim change, no bypass); legacy MLR DrawEffect stays skipped (no dual-draw). CardCloud ONLY this phase — PointCloud/Shard/Card/Tube/trails untouched. NO GPU-sim, NO emission/lifetime/timing change, NO object-ID write, NO shader/ABI change. Deferred to the ABI-extension follow-up: per-particle rotation (m_localRotation), aspect (halfX vs halfY), per-particle UV frame. Parity diagnostic [VFX_ORACLE v1] FIRST_HARVEST + 240-call summary under MC2_GPU_PARTICLES_LOG=1. Parity-bridge/oracle stage, NOT the final architecture (end-state = GPU sim + CPU-sim deletion per class)."
     },
 };
 
