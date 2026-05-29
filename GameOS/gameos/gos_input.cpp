@@ -92,6 +92,9 @@ void beginUpdateMouseState() {
     mi->wheel_hor_ = mi->wheel_vert_ = 0.0f;
 }
 
+static bool s_imguiWantsMouse = false;
+void setImguiWantsMouse(bool v) { s_imguiWantsMouse = v; }
+
 void updateMouseState() {
     MouseInfo* mi = &g_mouse_info;
 
@@ -116,6 +119,8 @@ void updateMouseState() {
 #else
     Uint32 button_state = SDL_GetMouseState(NULL, NULL);
 #endif
+
+    if (s_imguiWantsMouse) button_state = 0;
 
     int buttons[] = {SDL_BUTTON_LEFT, SDL_BUTTON_MIDDLE, SDL_BUTTON_RIGHT, SDL_BUTTON_X1, SDL_BUTTON_X2 };
 

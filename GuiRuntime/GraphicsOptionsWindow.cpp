@@ -943,7 +943,7 @@ static void drawDrawPacketsSection() {
     // Populated each frame by gameosmain after emitStaticPropDrawPackets.
     // Selection: Ctrl+Shift+Click a static prop in-game (Object Inspector).
     ImGui::Spacing();
-    if (ImGui::CollapsingHeader("Selected Prop##dp", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader("Selected Prop##dp")) {
         const DrawPacketSelectedPropSnapshot& sel = g_dpSelProp;
 
         if (!sel.valid) {
@@ -1368,7 +1368,7 @@ void draw() {
     }
 
     // ── Post-Process ──────────────────────────────────────────────────────────
-    if (ImGui::CollapsingHeader("Post-Process", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader("Post-Process")) {
         gosPostProcess* pp = getGosPostProcess();
         if (pp) {
             ImGui::Checkbox("Bloom", &pp->bloomEnabled_);
@@ -1387,7 +1387,7 @@ void draw() {
                 ImGui::Indent();
                 ImGui::RadioButton("Static##sd",  &pp->shadowDebugMode_, 0); ImGui::SameLine();
                 ImGui::RadioButton("Dynamic##sd", &pp->shadowDebugMode_, 1);
-                if (ImGui::TreeNodeEx("Registries##sd", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::TreeNodeEx("Registries##sd")) {
                     ImGui::TextDisabled("Views:");
                     uint32_t nv = RenderCore::getViewCount();
                     bool foundShadow = false;
@@ -1464,15 +1464,15 @@ void draw() {
     }
 
     // ── Terrain ───────────────────────────────────────────────────────────────
-    if (ImGui::CollapsingHeader("Terrain", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Terrain"))
         drawTerrainSection();
 
     // ── Draw Packets ──────────────────────────────────────────────────────────
-    if (ImGui::CollapsingHeader("Draw Packets", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Draw Packets"))
         drawDrawPacketsSection();
 
     // ── Render Passes ─────────────────────────────────────────────────────────
-    if (ImGui::CollapsingHeader("Render Passes", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Render Passes"))
         drawRenderPassesSection();
 
     // ── Terrain Tuning ────────────────────────────────────────────────────────

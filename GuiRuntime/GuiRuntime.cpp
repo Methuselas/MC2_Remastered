@@ -10,6 +10,7 @@
 #include <GL/glew.h>  // glGetError, glGetIntegerv for Render() diagnostics
 
 #include "../GameOS/gameos/gos_render.h"
+#include "../GameOS/gameos/gos_input.h"
 
 #ifdef PLATFORM_WINDOWS
 #include <windows.h>
@@ -121,6 +122,8 @@ void GuiRuntime::NewFrame() {
 #endif
 
     ImGui::NewFrame();
+    // Tell the game input layer whether ImGui has claimed the mouse this frame.
+    input::setImguiWantsMouse(ImGui::GetIO().WantCaptureMouse);
 }
 
 void GuiRuntime::Render() {

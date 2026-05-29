@@ -53,6 +53,9 @@ void updateKeyboardState();
 
 void resetKeypress();
 
+// Set by the ImGui layer each frame after NewFrame(); gates game mouse input.
+void setImguiWantsMouse(bool v);
+
 }
 
 #endif //GOS_INPUT_H
