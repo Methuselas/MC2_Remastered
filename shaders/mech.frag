@@ -33,6 +33,11 @@ uniform float u_fogValue;
 // 4=normal-as-color. Wired through MC2_MECH_FRAG_DEBUG env var on the C++
 // side via a uniform write at flush time.
 uniform int u_debugMode;
+// MECH-AMBIENT-1: gated hemisphere ambient fill strength. 0.0 = OFF (no-op,
+// byte-identical to legacy). The C++ side uploads 0.0 when MC2_MECH_AMBIENT_V1
+// is off, so the term below vanishes. Sky/ground hemisphere colors are fixed
+// conservative constants (no new uniforms/material data).
+uniform float u_mechAmbientV1Strength;
 
 layout(location=0) out vec4 FragColor;
 layout(location=1) out vec4 GBuffer1;
@@ -69,6 +74,19 @@ void main() {
 
     vec4 c = tex_color * v_litColor;
     c.rgb += v_highlightColor.rgb * v_highlightColor.a;
+    // MECH-AMBIENT-1 (gated): conservative hemisphere ambient FILL. Lifts
+    // shadowed/under-lit surfaces for readability without touching the lit
+    // model, PBR, materials, or team-baked albedo. Keyed on the world normal's
+    // up-component (worldMC2 y = up). Multiplied by albedo so it tints with the
+    // mech's own colour. u_mechAmbientV1Strength == 0.0 -> exact no-op
+    // (byte-identical default path). Added before fog so it hazes consistently.
+    {
+        vec3  Nw    = normalize(v_normal);
+        float upAmt = 0.5 + 0.5 * Nw.y;                       // 0 = down, 1 = up
+        vec3  hemi  = mix(vec3(0.20, 0.18, 0.16),             // ground (warm/dark)
+                          vec3(0.55, 0.60, 0.70), upAmt);     // sky (cool)
+        c.rgb += tex_color.rgb * hemi * u_mechAmbientV1Strength;
+    }
     // Slice B2: per-actor haze. v_fogRGB.a=0 → clear, =1 → fully fogged.
     c.rgb  = mix(c.rgb, v_fogRGB.rgb, v_fogRGB.a);
 

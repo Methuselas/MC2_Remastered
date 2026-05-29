@@ -137,6 +137,8 @@ ALLOWLIST=(
     MC2_LIGHTSSBO_TRACE         # trace
     MC2_LIGHTING_SHADOW_PREDICATE_MODE  # feature -- promote-to-registry
     MC2_LODBUG_TRACE            # trace
+    MC2_MECH_AMBIENT_V1         # feature -- promote-to-registry
+    MC2_MECH_AMBIENT_V1_STRENGTH # feature -- promote-to-registry
     MC2_MECH_BATCHER_STATS      # trace
     MC2_MECH_FRAG_DEBUG         # trace
     MC2_MECH_LIGHT_TRACE        # trace

@@ -73,6 +73,11 @@ extern "C" int   batcher_getMechNormalsMode();
 extern "C" void  batcher_setMechNormalsSmoothDeg(float deg);
 extern "C" float batcher_getMechNormalsSmoothDeg();
 extern "C" void  batcher_rebuildMechNormals();
+// MECH-AMBIENT-1: gated hemisphere ambient fill (per-flush uniform, no rebuild).
+extern "C" void  batcher_setMechAmbientEnabled(int on);
+extern "C" int   batcher_getMechAmbientEnabled();
+extern "C" void  batcher_setMechAmbientStrength(float s);
+extern "C" float batcher_getMechAmbientStrength();
 
 namespace {
 
@@ -923,6 +928,31 @@ void EditorInspector::drawImGui() {
                                       "when the angle between them is <= this value.\n"
                                       "Lower value = more hard edges preserved.\n"
                                       "Changing the angle rebuilds the mech VBO.");
+            }
+        }
+
+        // MECH-AMBIENT-1: gated hemisphere ambient fill. Default OFF = byte-
+        // identical (strength 0 uploaded). Per-flush uniform — changes take
+        // effect next frame, no VBO rebuild. Best paired with Smoothed normals.
+        if (ImGui::CollapsingHeader("Mech Lighting (experimental)##ml")) {
+            bool ambOn = batcher_getMechAmbientEnabled() != 0;
+            if (ImGui::Checkbox("Ambient Fill (hemisphere)##ml", &ambOn))
+                batcher_setMechAmbientEnabled(ambOn ? 1 : 0);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Conservative hemisphere ambient fill keyed on the\n"
+                                  "world normal — lifts shadowed surfaces for readability.\n"
+                                  "No PBR/material/team-mask. OFF = byte-identical default.\n"
+                                  "Looks best with Mech Normals = Smoothed.");
+            {
+                float amt = batcher_getMechAmbientStrength();
+                if (!ambOn) ImGui::BeginDisabled();
+                if (ImGui::SliderFloat("Ambient Strength##ml", &amt, 0.0f, 2.0f, "%.2f"))
+                    batcher_setMechAmbientStrength(amt);
+                if (!ambOn) ImGui::EndDisabled();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Hemisphere fill strength (0..2). Default 0.5.\n"
+                                      "Multiplies the mech's own albedo, so it tints\n"
+                                      "with the paint. 0 = no fill.");
             }
         }
 

@@ -166,6 +166,25 @@ static float s_mechNormalsSmoothDeg = []() {
 // Cleared at onMapLoad() alongside s_stagingVbo.
 static std::vector<std::pair<size_t,size_t>> s_nodeVboRanges;
 
+// MECH-AMBIENT-1: gated hemisphere ambient FILL for mechs. Default OFF
+// (MC2_MECH_AMBIENT_V1=1). When off the strength uploaded to the shader is
+// 0.0 -> exact no-op (byte-identical). When on, default strength 0.5. Both
+// mutable so ImGui can dial them live (batcher_setMechAmbient*). The shader
+// term is per-fragment hemisphere using the world normal; no PBR/material/
+// team-mask data involved. Works on legacy and ViewUniforms mech paths
+// (does not need camera data).
+static bool  s_mechAmbientV1 = []() {
+    const char* v = std::getenv("MC2_MECH_AMBIENT_V1");
+    return v != nullptr && v[0] == '1';
+}();
+static float s_mechAmbientStrength = []() {
+    const char* v = std::getenv("MC2_MECH_AMBIENT_V1_STRENGTH");
+    float d = v ? (float)std::atof(v) : 0.5f;   // default-ON strength
+    if (d < 0.0f) d = 0.0f;
+    if (d > 2.0f) d = 2.0f;
+    return d;
+}();
+
 // Cached uniform locations (set at program link time).
 static GLint s_loc_u_instanceBase    = -1;
 static GLint s_loc_u_materialFlags   = -1;
@@ -174,6 +193,7 @@ static GLint s_loc_u_mvp             = -1;
 static GLint s_loc_u_tex             = -1;
 static GLint s_loc_u_fogValue        = -1;
 static GLint s_loc_u_debugMode       = -1;
+static GLint s_loc_u_mechAmbientV1Strength = -1;  // MECH-AMBIENT-1
 static GLint s_loc_u_lightingMode    = -1;
 static GLint s_loc_u_skinningMode    = -1;
 
@@ -419,6 +439,7 @@ static void loadProgramsIfNeeded() {
     s_loc_u_tex             = loc("u_tex");
     s_loc_u_fogValue        = loc("u_fogValue");
     s_loc_u_debugMode       = loc("u_debugMode");
+    s_loc_u_mechAmbientV1Strength = loc("u_mechAmbientV1Strength");  // MECH-AMBIENT-1
     s_loc_u_lightingMode    = loc("u_lightingMode");
     s_loc_u_skinningMode    = loc("u_skinningMode");
 
@@ -1671,6 +1692,11 @@ void GpuMechBatcher::flush() {
         if (s_loc_u_debugMode >= 0)
             glUniform1i(s_loc_u_debugMode, dbgMode);
     }
+    // MECH-AMBIENT-1: hemisphere ambient fill strength. Uploads 0.0 when the
+    // gate is OFF -> exact no-op (byte-identical default path).
+    if (s_loc_u_mechAmbientV1Strength >= 0)
+        glUniform1f(s_loc_u_mechAmbientV1Strength,
+                    s_mechAmbientV1 ? s_mechAmbientStrength : 0.0f);
 
     // Projection uniforms — match static_prop batcher and the
     // terrain_overlay.vert convention: terrainMVP = CPU-composed
@@ -2071,6 +2097,18 @@ extern "C" void batcher_setMechNormalsSmoothDeg(float deg) {
 extern "C" float batcher_getMechNormalsSmoothDeg() {
     return s_mechNormalsSmoothDeg;
 }
+
+// MECH-AMBIENT-1: runtime API for the gated hemisphere ambient fill. No VBO
+// rebuild needed — strength is a per-flush uniform, so changes take effect the
+// next frame. enabled=false uploads 0.0 (no-op).
+extern "C" void batcher_setMechAmbientEnabled(int on) { s_mechAmbientV1 = (on != 0); }
+extern "C" int  batcher_getMechAmbientEnabled()       { return s_mechAmbientV1 ? 1 : 0; }
+extern "C" void batcher_setMechAmbientStrength(float s) {
+    if (s < 0.0f) s = 0.0f;
+    if (s > 2.0f) s = 2.0f;
+    s_mechAmbientStrength = s;
+}
+extern "C" float batcher_getMechAmbientStrength() { return s_mechAmbientStrength; }
 
 // batcher_rebuildMechNormals: re-upload the mech geometry VBO with the current
 // s_mechNormalsMode and s_mechNormalsSmoothDeg. No-op if geometry is not yet
