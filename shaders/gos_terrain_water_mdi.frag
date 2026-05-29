@@ -26,11 +26,12 @@ layout (location=1) out PREC vec4 GBuffer1;
 
 uniform sampler2D tex1;
 uniform sampler2D tex2;
-uniform sampler2D reflTex;            // unit 2: whole-map colormap atlas
-uniform int   reflectionOn;           // 0 -> skip entire S3 block
-uniform float atlasMapTopLeftX;
-uniform float atlasMapTopLeftY;
-uniform float atlasOneOverWorldUnits;
+uniform sampler2D u_waterReflRT;      // WATER-REFLECTION-SAMPLE-1: 1/4-res terrain
+                                      //   reflection RT (unit 2), filled by Phase C1
+                                      //   (RenderWaterReflectionPass). Replaces the old
+                                      //   dead terrain-colormap atlas sampler.
+uniform float u_waterRtStrength;      //   0 = no RT blend -> fall back to SH sky.
+uniform vec2  u_waterScreenSize;      //   full-res FBO dims for the screen-space RT UV.
 uniform PREC vec4 fog_color;
 uniform PREC float time;          // seconds — used for water animation
 uniform PREC vec4 cameraPos;      // water-v1: MC2 world-space camera (Fresnel)
@@ -40,6 +41,7 @@ uniform int u_waterDebugMode;     // WATER-DEBUG-VIEWS-1: fragment/material-spac
                                   // Distinct from VS geometry-space debugMode (MC2_RENDER_WATER_FASTPATH_DEBUG).
 uniform float u_waterSkyTintStrength;  // WATER-VISUAL-FIRST-SLICE: 0 = exact no-op (default).
 uniform vec3  u_waterSkyTintColor;     // camera-INDEPENDENT sky/horizon tint target (NOT fresnel)
+uniform float u_waterReflStrength;     // WATER-SKY-REFLECTION-1: 0 = exact no-op (gate OFF default).
 
 // water-v1 style params. WATER-TUNING-UI-1: the user-tunable subset is promoted
 // from compile-time const to uniform (live ImGui control in Graphics Options >
@@ -61,19 +63,15 @@ const float GLINT_THRESH = 0.36;   // a bit more crest area shows white caps
 const float WAVE_FADE_NEAR = 9000.0;  // full detail well out (visible at zoom-out now)
 const float WAVE_FADE_FAR  = 40000.0; // only the very furthest extreme calms (no flat-at-zoom)
 
-// S3 reflection DISABLED (user 2026-05-17): any perceptible camera-dependence
-// in the water was rejected. A reflection is inherently camera-dependent, so
-// it cannot satisfy that - shelved. Compile-time false => the whole S3 block
-// below is dead-stripped (water is provably 100% camera-independent again;
-// zero perf). Scaffolding (uniforms / C++ bind / probe) retained dormant for
-// the deferred Option-B path (see spec). Flip to true only to re-experiment.
-const bool  S3_REFLECTION_ENABLED = false;
-const int   REFL_STEPS      = 5;
-const float REFL_STEP_LEN   = 96.0;   // ~one terrain-tile world distance
-const float REFL_F0         = 0.02;
-const float REFL_STRENGTH   = 0.35;
-const float REFL_MAX        = 0.22;   // hard ceiling on the mix factor
-const float REFL_WAVE_SLOPE = 0.05;   // nz-gradient -> perturbation slope (range 0.02-0.10)
+// WATER-SKY-REFLECTION-1: reflection control consts. The OLD S3 path reflected
+// the terrain ground colormap (REFL_STEPS/STEP_LEN ray-march) and was shelved
+// 2026-05-17 because the ground-color source gave a compass hue-swing under
+// orbit ("ugly as shit"). That was a SOURCE problem, not a camera-dependence
+// principle (rule superseded 2026-05-18). The reflect-vector + Fresnel + mix
+// math is reused below; only the SOURCE changed: ground colormap -> SH-L2 sky.
+const float REFL_F0         = 0.02;   // Schlick base reflectance (water ~0.02)
+const float REFL_MAX        = 0.30;   // hard ceiling on the reflection mix factor
+const float REFL_WAVE_SLOPE = 0.05;   // fBm-gradient -> wave-normal slope (0.02-0.10)
 
 // Precision-safe (fract-early) hash -> stable for large MC2 world coords;
 // value-noise + 3-octave fBm. No texture, no seam (continuous WorldPos).
@@ -92,6 +90,41 @@ PREC float fbm3(PREC vec2 uv){
     PREC float s = 0.0, a = 0.5;
     for (int k = 0; k < 3; ++k){ s += a * vnoise(uv); uv = uv * 2.03 + 11.7; a *= 0.5; }
     return s;   // ~0 .. 0.875, mean ~0.4375
+}
+
+// WATER-SKY-REFLECTION-1: SH-L2 sky irradiance, inlined from the canonical
+// "default" set in RenderCore/IblShCoeffs.h (projected from the HDRI
+// data/hdr/DaySkyHDRI063B_4K.exr). Shader-first: no C++ coeff upload, no RT.
+// SOURCE OF TRUTH = IblShCoeffs.h; re-sync these if that file regenerates.
+// Order: [0]=L00 [1]=L1-1 [2]=L10 [3]=L11 [4]=L2-2 [5]=L2-1 [6]=L20 [7]=L21 [8]=L22.
+// Axis: Y-up (pole on .y), same basis as static_prop.vert::evalShL2.
+const vec3 kWaterSkySh[9] = vec3[9](
+    vec3( 1.713250528,   1.773145394,   1.652499519  ),
+    vec3( 0.5869951003,  0.5782034038,  0.5179309118 ),
+    vec3( 0.01179062044, 0.001345766309,-0.008740967483),
+    vec3( 1.966354845,   1.856721003,   1.505876116  ),
+    vec3( 1.334658751,   1.287703421,   1.077505997  ),
+    vec3( 0.01688171049, 0.01641851255, 0.01176750778),
+    vec3(-1.016652552,  -0.9684202893, -0.7816944278 ),
+    vec3( 0.05064675817, 0.04545421310, 0.03281146747),
+    vec3( 1.962057200,   1.850144657,   1.499676879  )
+);
+
+// Mirror of static_prop.vert::evalShL2 (Ramamoorthi-Hanrahan 2001). Returns
+// diffuse sky IRRADIANCE by direction -> smooth, low-frequency, orbit-stable
+// broad sky color (the Phase-A reflection shape). Input n is Y-up.
+PREC vec3 waterEvalSkySh(PREC vec3 n){
+    const float c1 = 0.429043, c2 = 0.511664, c3 = 0.743125, c4 = 0.886227, c5 = 0.247708;
+    return (  c1 * kWaterSkySh[8] * (n.x*n.x - n.z*n.z)
+            + c3 * kWaterSkySh[6] * (n.y*n.y)
+            + c4 * kWaterSkySh[0]
+            - c5 * kWaterSkySh[6]
+            + 2.0*c1 * kWaterSkySh[4] * (n.x*n.y)
+            + 2.0*c1 * kWaterSkySh[5] * (n.y*n.z)
+            + 2.0*c1 * kWaterSkySh[7] * (n.x*n.z)
+            + 2.0*c2 * kWaterSkySh[3] *  n.x
+            + 2.0*c2 * kWaterSkySh[1] *  n.y
+            + 2.0*c2 * kWaterSkySh[2] *  n.z );
 }
 
 void main(void)
@@ -138,44 +171,69 @@ void main(void)
         // strength 0 (default) the mix returns col unchanged -> byte-identical.
         // Applied before fog so atmospheric fog still attenuates by distance.
         col = mix(col, u_waterSkyTintColor, clamp(u_waterSkyTintStrength, 0.0, 1.0));
-        if (fog_color.x > 0.0 || fog_color.y > 0.0 || fog_color.z > 0.0 || fog_color.w > 0.0)
-            col = mix(fog_color.rgb, col, FogValue);
 
-        // S3: pure-FS reflected-ray terrain-colormap reflection.
-        // The ONLY camera-dependent term in the water material (v2 ruling).
-        if (S3_REFLECTION_ENABLED && reflectionOn == 1) {
-            // S1 has no normal in this branch (scalar fBm). Derive the perturbation
-            // from the screen-space gradient of the in-scope scalar fBm nz (~:84,
-            // f(WorldPos,time)). clamp() prevents zoom-out over-distortion. This is
-            // the GROUNDING-authoritative construction (supersedes wave1/wave2).
+        // ---- WATER-SKY-REFLECTION-1: gated camera-DEPENDENT sky reflection ----
+        // Replaces the shelved terrain-colormap S3 (whose ground-color source
+        // gave a compass hue-swing under orbit). Source is now the SH-L2 SKY
+        // (kWaterSkySh) -> orbit-stable broad shape. Camera-dependence is
+        // intentional and permitted (the 2026-05-17 "camera-independent" rule
+        // was superseded 2026-05-18: rejection was QUALITY, not principle).
+        // u_waterReflStrength 0 (gate OFF default) AND debug!=7 -> block skipped
+        // -> byte-identical. (debug==7 evaluates the term for inspection but
+        // reflMix stays 0 at strength 0, so the rendered Final is unchanged.)
+        PREC vec3  skyReflCol = col;   // SH sky term (debug 7) / fallback
+        PREC vec4  rtSample   = vec4(0.0);   // terrain RT sample (debug 8)
+        PREC vec3  reflectCol = col;   // final blended reflection (debug 9)
+        PREC float reflMix    = 0.0;
+        if (u_waterReflStrength > 0.0 || u_waterRtStrength > 0.0 ||
+            u_waterDebugMode == 7 || u_waterDebugMode == 8 || u_waterDebugMode == 9) {
+            // Wave normal from the in-scope fBm gradient (reused S3 scaffold).
             PREC vec2  nzGrad     = clamp(vec2(dFdx(nz), dFdy(nz)), -2.0, 2.0);
             PREC vec3  waveNormal = normalize(vec3(nzGrad * REFL_WAVE_SLOPE, 1.0));
-            PREC vec3  vdir       = normalize(cameraPos.xyz - WorldPos); // sole cam-dep input
-            PREC vec3  rdir       = reflect(-vdir, waveNormal);
-            PREC vec3  acc  = vec3(0.0);
-            PREC float wsum = 0.0;
-            for (int i = 1; i <= REFL_STEPS; ++i) {
-                PREC vec2 wp = WorldPos.xy + rdir.xy * (float(i) * REFL_STEP_LEN);
-                PREC vec2 uv;
-                uv.x = (wp.x - atlasMapTopLeftX) * atlasOneOverWorldUnits;  // X: not flipped
-                uv.y = (atlasMapTopLeftY - wp.y) * atlasOneOverWorldUnits;  // Y: inverted
-                PREC float inb = step(0.0, uv.x) * step(uv.x, 1.0)
-                          * step(0.0, uv.y) * step(uv.y, 1.0);
-                acc  += inb * texture(reflTex, uv).rgb;
-                wsum += inb;
+            PREC vec3  vdir       = normalize(cameraPos.xyz - WorldPos);  // MC2 Z-up
+            PREC vec3  rdir       = reflect(-vdir, waveNormal);           // MC2 Z-up
+            // AXIS SWAP (load-bearing): rdir is MC2 world (Z-up, .x=east .y=north);
+            // the SH coeffs live in the Stuff Y-up frame evalShL2 consumes (pole
+            // on .y). MC2.z(up) -> SH.y. The two HORIZONTAL axes (SH .x/.z) were
+            // empirically 180-deg off in azimuth (user: sun read SW instead of
+            // NE), so both horizontals are negated -> azimuth flipped 180 to put
+            // the baked HDRI sun on the correct side. (Verified visually against
+            // ground truth rather than derived, since the projector basis sign on
+            // the non-up axes was unconfirmed.)
+            PREC vec3  skyDir     = vec3(rdir.x, rdir.z, -rdir.y);
+            // evalShL2 returns diffuse IRRADIANCE; this consumer wants directional
+            // sky COLOR, so /PI converts irradiance -> sky-radiance-like (the /PI
+            // that IblShCoeffs.h forbids for AMBIENT use IS correct here).
+            skyReflCol = clamp(waterEvalSkySh(skyDir) * (1.0 / 3.14159265), 0.0, 2.0);
+            reflectCol = skyReflCol;   // default reflection = SH sky (fallback/base)
+
+            // WATER-REFLECTION-SAMPLE-1: blend the terrain reflection RT (Phase C1)
+            // OVER the SH sky where the RT has valid terrain (alpha>0). The RT was
+            // rendered with the same projection (mirror MVP) -> sample at this
+            // fragment's screen UV, conservatively perturbed by the wave gradient.
+            // rtSample.a 0 (off-frustum / steep camera ~0 coverage) OR
+            // u_waterRtStrength 0 -> reflectCol stays = skyReflCol (graceful sky
+            // fallback; steep-camera water never goes empty).
+            if (u_waterRtStrength > 0.0 || u_waterDebugMode == 8 || u_waterDebugMode == 9) {
+                PREC vec2 ruv = gl_FragCoord.xy / max(u_waterScreenSize, vec2(1.0));
+                ruv += nzGrad * (REFL_WAVE_SLOPE * 0.05);   // conservative wave distortion
+                rtSample   = texture(u_waterReflRT, clamp(ruv, 0.0, 1.0));
+                reflectCol = mix(skyReflCol, rtSample.rgb,
+                                 clamp(rtSample.a * u_waterRtStrength, 0.0, 1.0));
             }
-            PREC vec3  refl = (wsum > 0.0) ? acc / wsum : col;        // all off-map -> no-op
-            // flat-water normal is +Z (matches the GBuffer1 screenShadowEligible(vec3(0,0,1)) below); vdir.z = N.V
-            PREC float fres = REFL_F0 + (1.0 - REFL_F0)
-                         * pow(1.0 - max(vdir.z, 0.0), 5.0);
-            col = mix(col, refl,
-                      clamp(fres * REFL_STRENGTH * waveLOD, 0.0, REFL_MAX));
+            // Schlick Fresnel; flat +Z water normal -> N.V = vdir.z; grazing boosts.
+            PREC float fres = REFL_F0 + (1.0 - REFL_F0) * pow(1.0 - max(vdir.z, 0.0), 5.0);
+            reflMix = clamp(fres * u_waterReflStrength * waveLOD, 0.0, REFL_MAX);
+            col = mix(col, reflectCol, reflMix);   // reflMix==0 at SH strength 0 -> no-op
         }
+
+        if (fog_color.x > 0.0 || fog_color.y > 0.0 || fog_color.z > 0.0 || fog_color.w > 0.0)
+            col = mix(fog_color.rgb, col, FogValue);
 
         // WATER-DEBUG-VIEWS-1: fragment/material-space debug visualizations.
         // mode 0 (Final) leaves the path byte-identical; each non-zero mode is
         // backed by a real water-v1 term computed above, output opaque so it
-        // reads clearly over terrain. No reflection mode (S3 dead-stripped).
+        // reads clearly over terrain. Mode 7 = SH-L2 sky reflection term.
         if (u_waterDebugMode != 0) {
             PREC vec3 dbg;
             if      (u_waterDebugMode == 1) dbg = waterCol;                       // 1 Tint: DEEP<->SHALLOW mix, pre-ripple
@@ -185,6 +243,9 @@ void main(void)
             else if (u_waterDebugMode == 5) dbg = vec3(shore);                    // 5 Shore: shoreline ramp mask
             else if (u_waterDebugMode == 6) dbg = vec3(RIPPLE_GAIN * waveLOD * crest)   // 6 Lighting: ripple brighten
                                                 + glint * GLINT_GAIN * waveLOD * GLINT_TINT;  //            + crest glint
+            else if (u_waterDebugMode == 7) dbg = skyReflCol;                     // 7 Reflection: SH-L2 sky term (pre-Fresnel/strength)
+            else if (u_waterDebugMode == 8) dbg = mix(vec3(0.0), rtSample.rgb, rtSample.a); // 8 RT sample: terrain reflection RT (black where invalid/alpha=0)
+            else if (u_waterDebugMode == 9) dbg = reflectCol;                     // 9 Reflection blend: SH sky <- terrain RT (final reflected color, pre-Fresnel)
             else                            dbg = vec3(1.0, 0.0, 1.0);            // unknown -> magenta sentinel
             FragColor = vec4(dbg, 1.0);
             GBuffer1  = rc_gbuffer1_screenShadowEligible(vec3(0.0, 0.0, 1.0));

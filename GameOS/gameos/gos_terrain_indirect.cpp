@@ -17,6 +17,10 @@
 #include "gpu_driven_common.h"         // gpu_driven::IsTerrainSolidEnabled
 #include "gos_terrain_lighting.h"      // gos_terrain_lighting::GetOutputSsbo()
 #include "gos_static_prop_killswitch.h" // gos_GetTerrainMVPMat4()
+#include "gos_postprocess.h"            // WATER-TERRAIN-REFLECTION-1: reflection FBO
+// WATER-TERRAIN-REFLECTION-1: install a mirror MVP into the terrain_mvp_ cache
+// (defined __stdcall in gameos_graphics.cpp; same cache gos_GetTerrainMVPMat4 reads).
+void __stdcall gos_SetTerrainMVP(const float* matrix16);
 
 #include <vector>
 #include <cstdio>
@@ -3359,6 +3363,107 @@ bool DrawIndirect() {
     g_thinRingFences[g_thinRingSlot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 
     return true;
+}
+
+// WATER-TERRAIN-REFLECTION-1 (Phase C1): render mirrored terrain-only into the
+// quarter-res water reflection RT. Gate MC2_WATER_REFLECTION_RT default OFF ->
+// no-op -> byte-identical. Called from gamecam AFTER renderLists (main SOLID
+// DrawIndirect already consumed its ring slot; atlases warm) and BEFORE water.
+// Installs a mirror MVP, re-dispatches the SOLID compute (advances to a fresh
+// ring slot + refills the shared cmd buffer), draws into the reflection FBO,
+// then RESTORES the production MVP (LOAD-BEARING: ~15 same-frame consumers read
+// gos_GetTerrainMVPMat4 after this — water fast path, decals, overlays, cull).
+// Terrain only: no water/props/mechs. No clip plane (-> WATER-REFLECTION-CLIP-1).
+void RenderWaterReflectionPass() {
+    static const bool s_rtEnabled = [](){
+        const char* v = getenv("MC2_WATER_REFLECTION_RT");
+        return v && v[0] && v[0] != '0';
+    }();
+    if (!s_rtEnabled)          return;   // gate OFF -> byte-identical
+    if (!IsFrameSolidArmed())  return;   // no terrain this frame
+    const float* M = gos_GetTerrainMVPMat4();
+    if (!M)                    return;
+    gosPostProcess* pp = getGosPostProcess();
+    if (!pp)                   return;
+    GLuint fbo = (GLuint)pp->getWaterReflectionFBO();
+    int rw = pp->getWaterReflectionWidth();
+    int rh = pp->getWaterReflectionHeight();
+    if (fbo == 0 || rw < 1 || rh < 1) return;
+
+    // Mirror MVP: clip = G * R * world, where R reflects MC2 world Z across the
+    // water plane (z' = 2*we - z). With G[r][c] = M[c*4+r] (M uploaded GL_FALSE),
+    // R only touches columns 2,3: negate column 2; column3 += 2*we * orig col2.
+    const float we2 = 2.0f * (float)Terrain::waterElevation;
+    float saved[16]; for (int i = 0; i < 16; ++i) saved[i] = M[i];
+    float mir[16];   for (int i = 0; i < 16; ++i) mir[i]   = M[i];
+    for (int r = 0; r < 4; ++r) {
+        mir[12 + r] = saved[12 + r] + we2 * saved[8 + r];  // col3 += 2we*col2(orig)
+        mir[8  + r] = -saved[8 + r];                        // col2 negated
+    }
+
+    // Save all GL state we touch BEFORE any state change (FBO/viewport/clear
+    // color). glClearDepth(0.0) == the engine's reverse-Z default, so no restore.
+    GLint prevFBO = 0; glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFBO);
+    GLint prevVP[4];   glGetIntegerv(GL_VIEWPORT, prevVP);
+    GLfloat prevCC[4]; glGetFloatv(GL_COLOR_CLEAR_VALUE, prevCC);
+
+    // LOAD-BEARING: ComputeDispatch() also bakes the MVP into the shared
+    // g_dispatchMvp16 snapshot, which the GPU WATER fast path reads as its
+    // u_worldToClipGL (gameos_graphics.cpp getDispatchMvp16). Restoring only
+    // terrain_mvp_ (gos_SetTerrainMVP) is NOT enough -> water would be drawn with
+    // the MIRROR matrix and vanish/flicker. Save + restore the snapshot too.
+    float    savedDispatchMvp[16]; memcpy(savedDispatchMvp, g_dispatchMvp16, sizeof(savedDispatchMvp));
+    uint32_t savedDispatchFp       = g_dispatchMvpFp;
+    uint64_t savedDispatchFrameIdx = g_dispatchMvpFrameIdx;
+
+    gos_SetTerrainMVP(mir);   // install mirror -> compute bakes mirrored clip
+    ComputeDispatch();        // fresh ring slot + refills shared cmd buffer
+
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glViewport(0, 0, rw, rh);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);   // alpha=0 = SH-sky fallback marker (C2)
+    glClearDepth(0.0);                        // reverse-Z: far plane = 0 (GEQUAL)
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    const bool drew = DrawIndirect();          // bridge inherits this FBO+viewport
+
+    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFBO);
+    glViewport(prevVP[0], prevVP[1], prevVP[2], prevVP[3]);
+    glClearColor(prevCC[0], prevCC[1], prevCC[2], prevCC[3]);  // restore clear color
+
+    gos_SetTerrainMVP(saved);   // RESTORE production MVP (load-bearing)
+    // RESTORE the dispatch snapshot the water fast path consumes (see above).
+    memcpy(g_dispatchMvp16, savedDispatchMvp, sizeof(g_dispatchMvp16));
+    g_dispatchMvpFp       = savedDispatchFp;
+    g_dispatchMvpFrameIdx = savedDispatchFrameIdx;
+
+    // Throttled diagnostics + non-clear PROOF. Whole-RT coverage (not just
+    // center) so a camera-dependent center sample can't read black when terrain
+    // IS landing elsewhere in the RT. coverage = fraction of pixels with any
+    // non-zero color; alpha_cov = fraction with alpha>0 (terrain-marked).
+    static long s_frame = 0; ++s_frame;
+    if (s_frame == 1 || s_frame == 5 || s_frame == 30 || s_frame == 120 ||
+        (s_frame % 600) == 0) {
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        std::vector<float> px((size_t)rw * rh * 4, 0.0f);
+        glReadPixels(0, 0, rw, rh, GL_RGBA, GL_FLOAT, px.data());
+        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFBO);
+        int n = rw * rh, colorHits = 0, alphaHits = 0; float maxL = 0.0f; double acc = 0.0;
+        for (int i = 0; i < n; ++i) {
+            float L = 0.2126f*px[i*4] + 0.7152f*px[i*4+1] + 0.0722f*px[i*4+2];
+            if (L > 0.001f)        ++colorHits;
+            if (px[i*4+3] > 0.001f) ++alphaHits;
+            if (L > maxL) maxL = L;
+            acc += L;
+        }
+        GLenum err = glGetError();
+        fprintf(stderr, "[WATER_REFL_RT v1] frame=%ld gate=1 fbo=%u dims=%dx%d drew=%d "
+                "coverage=%.1f%% alpha_cov=%.1f%% max_luma=%.4f avg_luma=%.5f gl_err=0x%x\n",
+                s_frame, (unsigned)fbo, rw, rh, (int)drew,
+                100.0*colorHits/(n?n:1), 100.0*alphaHits/(n?n:1), maxL,
+                (n?acc/n:0.0), (unsigned)err);
+        fflush(stderr);
+    }
 }
 
 // VPL parity-infra retirement (cpu-pack-retirement plan §7 OQ-2, full

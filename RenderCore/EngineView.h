@@ -9,22 +9,25 @@ constexpr ViewId kInvalidViewId            = 0;
 constexpr ViewId kMainSceneViewId          = 1;
 constexpr ViewId kShadowDirectional0ViewId = 2;  // static directional shadow
 constexpr ViewId kShadowDynamicViewId      = 3;  // per-frame dynamic shadow
+constexpr ViewId kWaterReflectionViewId    = 4;  // WATER-REFLECTION-RESOURCE-1: mirrored reflection view (substrate; no producer yet)
 
 // NOTE: ViewKind ordinals are NOT required to match ViewId constants.
 // ViewId is a per-frame slot identifier; ViewKind is a classification tag.
 // The numeric overlap (MainScene=1/kMainSceneViewId=1, ShadowStatic=2/kShadowDirectional0ViewId=2)
 // is coincidental — do not rely on it.
 enum class ViewKind : uint32_t {
-    MainScene     = 1,
-    ShadowStatic  = 2,
-    ShadowDynamic = 3,
+    MainScene       = 1,
+    ShadowStatic    = 2,
+    ShadowDynamic   = 3,
+    WaterReflection = 4,  // WATER-REFLECTION-RESOURCE-1: mirrored-across-water-plane view
 };
 
 inline const char* toString(ViewKind k) {
     switch (k) {
-        case ViewKind::MainScene:     return "MainScene";
-        case ViewKind::ShadowStatic:  return "ShadowStatic";
-        case ViewKind::ShadowDynamic: return "ShadowDynamic";
+        case ViewKind::MainScene:       return "MainScene";
+        case ViewKind::ShadowStatic:    return "ShadowStatic";
+        case ViewKind::ShadowDynamic:   return "ShadowDynamic";
+        case ViewKind::WaterReflection: return "WaterReflection";
     }
     return "unknown";
 }

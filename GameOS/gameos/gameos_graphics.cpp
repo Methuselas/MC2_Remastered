@@ -2275,6 +2275,50 @@ void  gos_SetWaterSkyTintStrength(float v) { g_waterSkyTintStrength = (v < 0.0f)
 void  gos_GetWaterSkyTintColor(float* rgb) { rgb[0]=g_waterSkyTintColor[0]; rgb[1]=g_waterSkyTintColor[1]; rgb[2]=g_waterSkyTintColor[2]; }
 void  gos_SetWaterSkyTintColor(float r,float g,float b) { g_waterSkyTintColor[0]=r; g_waterSkyTintColor[1]=g; g_waterSkyTintColor[2]=b; }
 
+// WATER-SKY-REFLECTION-1: gated camera-DEPENDENT SH-L2 sky reflection on the MDI
+// water FS. Strength default 0.0 = exact no-op (byte-identical). Env
+// MC2_WATER_REFLECTION=1 bumps the default to 0.15 for A/B; the ImGui slider is
+// authoritative once touched BUT is disabled in the UI when the env gate is OFF
+// (the env is the hard gate — the slider must not bypass it). Sentinel -1 on
+// strength = uninit (resolve env once). Source = inlined SH-L2 sky in the shader.
+float g_waterReflStrength = -1.0f;
+float gos_GetWaterReflStrength()
+{
+    if (g_waterReflStrength < 0.0f) {
+        const char* v = getenv("MC2_WATER_REFLECTION");
+        g_waterReflStrength = (v && v[0] && v[0] != '0') ? 0.15f : 0.0f;
+    }
+    return g_waterReflStrength;
+}
+void  gos_SetWaterReflStrength(float v) { g_waterReflStrength = (v < 0.0f) ? 0.0f : v; }
+// Whether the env gate is enabled (UI uses this to disable the slider so it
+// cannot bypass the gate). Resolved live each call (cheap).
+int   gos_GetWaterReflectionGate()
+{
+    const char* v = getenv("MC2_WATER_REFLECTION");
+    return (v && v[0] && v[0] != '0') ? 1 : 0;
+}
+
+// WATER-REFLECTION-SAMPLE-1: strength of the terrain reflection RT blended OVER
+// the SH sky in the MDI water FS. Gate MC2_WATER_REFLECTION_RT (same env that
+// drives the C1 RT fill pass). Default 0 = no RT blend -> SH sky only ->
+// byte-identical to Phase A. Sentinel -1 = uninit (resolve env once).
+float g_waterRtStrength = -1.0f;
+float gos_GetWaterRtStrength()
+{
+    if (g_waterRtStrength < 0.0f) {
+        const char* v = getenv("MC2_WATER_REFLECTION_RT");
+        g_waterRtStrength = (v && v[0] && v[0] != '0') ? 0.85f : 0.0f;
+    }
+    return g_waterRtStrength;
+}
+void gos_SetWaterRtStrength(float v) { g_waterRtStrength = (v < 0.0f) ? 0.0f : v; }
+int  gos_GetWaterReflectionRtGate()
+{
+    const char* v = getenv("MC2_WATER_REFLECTION_RT");
+    return (v && v[0] && v[0] != '0') ? 1 : 0;
+}
+
 void gos_terrain_bridge_renderWaterFast(
     unsigned int recordCount,
     unsigned int waterGosHandle,
@@ -2599,6 +2643,8 @@ void gosRenderer::renderWaterFastPath(
         // WATER-VISUAL-FIRST-SLICE: gated sky tint (strength 0 default = no-op).
         setMF         ("u_waterSkyTintStrength", gos_GetWaterSkyTintStrength());
         setMVec3      ("u_waterSkyTintColor",    g_waterSkyTintColor);
+        // WATER-SKY-REFLECTION-1: gated SH-L2 sky reflection (strength 0 = no-op).
+        setMF         ("u_waterReflStrength",    gos_GetWaterReflStrength());
         setMF         ("waterElevation",  waterElevation);
         setMF         ("alphaDepth",      alphaDepth);
         setMI         ("alphaEdgeByte",   (int)alphaEdgeByte);
@@ -2610,32 +2656,31 @@ void gosRenderer::renderWaterFastPath(
         setMF         ("maxMinUV",        maxMinUV);
         setMF         ("time",  (float)((double)(timing::get_wall_time_ms() - timeStart_) / 1000.0));
         setMVec4      ("fog_color", (const float*)&fog_color_);
-        setMVec4      ("cameraPos", (const float*)&terrain_camera_pos_);  // water-v1 Fresnel
+        // WATER reflection frame fix: terrain_camera_pos_ is the Stuff/MLR eye
+        // (.x=left, .y=elevation, .z=forward); the water FS consumes cameraPos in
+        // RAW MC2 (matching WorldPos: .x=east, .y=north, .z=up). Apply the
+        // documented Stuff->MC2 swap MC2=(-Stuff.x, Stuff.z, Stuff.y) here so the
+        // reflect vdir + Fresnel + waveLOD respond to camera PITCH/zoom, not just
+        // pan. (Other terrain/lighting consumers swap shader-side; water did not.)
+        const float camMC2[4] = { -terrain_camera_pos_.x, terrain_camera_pos_.z,
+                                   terrain_camera_pos_.y,  1.0f };
+        setMVec4      ("cameraPos", camMC2);  // water-v1 reflection/Fresnel (raw MC2)
         setMI         ("tex1",  0);
         setMI         ("tex2",  1);
 
-        // S3: resolve atlas handle once; gate reflectionOn on both solid-armed
-        // AND a valid handle (R1: water arms independently of IsFrameSolidArmed).
-        GLuint reflTexHandle = gos_terrain_indirect_getAtlasGLTex();
-        int    reflOn = (gos_terrain_indirect::IsFrameSolidArmed()
-                         && reflTexHandle != 0) ? 1 : 0;
-        { static const bool s_reflTrace = (getenv("MC2_WATER_REFL_TRACE") != nullptr); if (s_reflTrace) {
-            static int s_lastReflOn = -1;            // edge-detect latch (renderWaterFastPath runs every frame)
-            if (reflOn != s_lastReflOn) {
-                const char* reason =
-                    !gos_terrain_indirect::IsFrameSolidArmed() ? "solid0" :
-                    (reflTexHandle == 0)                        ? "atlas0" : "on";
-                printf("[WATER_REFL v1] event=state reflectionOn=%d atlas=%u reason=%s\n",
-                       reflOn, (unsigned)reflTexHandle, reason);
-                fflush(stdout);
-                s_lastReflOn = reflOn;
-            }
-        } }
-        setMI         ("reflectionOn",          reflOn);
-        setMI         ("reflTex",               2);
-        setMF         ("atlasMapTopLeftX",       gos_terrain_indirect_getAtlasMapTopLeftX());
-        setMF         ("atlasMapTopLeftY",       gos_terrain_indirect_getAtlasMapTopLeftY());
-        setMF         ("atlasOneOverWorldUnits", gos_terrain_indirect_getAtlasOneOverWorldUnits());
+        // WATER-REFLECTION-SAMPLE-1: bind the terrain reflection RT (filled by
+        // the Phase C1 RenderWaterReflectionPass) to unit 2 and upload the
+        // sample uniforms. Replaces the old dead terrain-colormap atlas bind.
+        // u_waterRtStrength 0 (gate MC2_WATER_REFLECTION_RT off) -> the FS skips
+        // the RT sample and falls back to the SH sky -> byte-identical to Phase A.
+        gosPostProcess* ppRefl = getGosPostProcess();
+        GLuint reflRtTex = ppRefl ? (GLuint)ppRefl->getWaterReflectionTexture() : 0u;
+        const bool bindRefl = (reflRtTex != 0u);
+        setMI         ("u_waterReflRT",     2);
+        setMF         ("u_waterRtStrength", gos_GetWaterRtStrength());
+        setMVec2      ("u_waterScreenSize",
+                       ppRefl ? (float)ppRefl->getWidth()  : 1.0f,
+                       ppRefl ? (float)ppRefl->getHeight() : 1.0f);
 
         // Bind SSBOs.
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, recipeBuf);
@@ -2661,17 +2706,17 @@ void gosRenderer::renderWaterFastPath(
         glBindTexture(GL_TEXTURE_2D, detailOrBase);
         glActiveTexture(GL_TEXTURE0);
 
-        // S3: conditionally bind atlas on unit 2 (mirrors unit-1 save/restore idiom).
-        // When reflOn == 0: unit 2 is intentionally left untouched (the shader skip
-        // is the sole source of truth; binding 0 would mask a missing-atlas R1 bug).
+        // WATER-REFLECTION-SAMPLE-1: bind the reflection RT on unit 2 (mirrors the
+        // unit-1 save/restore idiom). When the RT is unavailable, unit 2 is left
+        // untouched; the FS only samples it when u_waterRtStrength>0 (gate ON).
         GLuint savedSampler2 = 0;
-        if (reflOn) {
+        if (bindRefl) {
             GLint q = 0;
             glGetIntegeri_v(GL_SAMPLER_BINDING, 2, &q);
             savedSampler2 = (GLuint)q;
-            glBindSampler(2, 0);
+            glBindSampler(2, 0);   // use the RT texture's own LINEAR/CLAMP_TO_EDGE params
             glActiveTexture(GL_TEXTURE0 + 2);
-            glBindTexture(GL_TEXTURE_2D, reflTexHandle);
+            glBindTexture(GL_TEXTURE_2D, reflRtTex);
             glActiveTexture(GL_TEXTURE0);
         }
 
@@ -2682,7 +2727,7 @@ void gosRenderer::renderWaterFastPath(
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
 
         // Restore unit 2 — mirror unit-1 force-clear + sampler restore.
-        if (reflOn) {
+        if (bindRefl) {
             glActiveTexture(GL_TEXTURE0 + 2);
             glBindTexture(GL_TEXTURE_2D, 0);    // force-clear; mirrors unit-1 post-draw
             glActiveTexture(GL_TEXTURE0);

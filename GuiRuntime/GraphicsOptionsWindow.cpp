@@ -51,6 +51,14 @@ float gos_GetWaterSkyTintStrength();
 void  gos_SetWaterSkyTintStrength(float v);
 void  gos_GetWaterSkyTintColor(float* rgb);
 void  gos_SetWaterSkyTintColor(float r, float g, float b);
+// WATER-SKY-REFLECTION-1 — gated camera-dependent SH-L2 sky reflection.
+float gos_GetWaterReflStrength();
+void  gos_SetWaterReflStrength(float v);
+int   gos_GetWaterReflectionGate();
+// WATER-REFLECTION-SAMPLE-1 — terrain reflection RT blend strength.
+float gos_GetWaterRtStrength();
+void  gos_SetWaterRtStrength(float v);
+int   gos_GetWaterReflectionRtGate();
 // TERRAIN-RESAMPLE-1 — height-tex source/render/factor accessors + live
 // factor setter. C-linkage (declared extern "C" in gos_terrain_height_tex.h).
 extern "C" {
@@ -638,10 +646,11 @@ static void drawWaterSection() {
     {
         const char* kWaterModes[] = {
             "0: Final", "1: Tint", "2: Alpha", "3: Normal",
-            "4: Depth", "5: Shore", "6: Lighting"
+            "4: Depth", "5: Shore", "6: Lighting", "7: Refl SH sky",
+            "8: Refl RT sample", "9: Refl blend"
         };
         int mode = gos_GetWaterFsDebugMode();
-        if (mode < 0 || mode > 6) mode = 0;
+        if (mode < 0 || mode > 9) mode = 0;
         if (ImGui::Combo("Debug mode##wat", &mode, kWaterModes, IM_ARRAYSIZE(kWaterModes)))
             gos_SetWaterFsDebugMode(mode);
         if (ImGui::IsItemHovered())
@@ -722,6 +731,50 @@ static void drawWaterSection() {
         if (ImGui::SmallButton("Reset##watskycol")) gos_SetWaterSkyTintColor(0.55f, 0.70f, 0.85f);
     }
 
+    ImGui::SeparatorText("Sky Reflection (gated, camera-dependent)");
+    {
+        // Env is the HARD gate: when OFF, the slider is disabled so it cannot
+        // bypass the gate (unlike sky tint). Enable MC2_WATER_REFLECTION=1.
+        bool gateOn = (gos_GetWaterReflectionGate() != 0);
+        if (gateOn) ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "MC2_WATER_REFLECTION: ON (default strength 0.15)");
+        else        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "MC2_WATER_REFLECTION: off (set =1 to enable; slider disabled)");
+
+        if (!gateOn) ImGui::BeginDisabled();
+        float refl = gos_GetWaterReflStrength();
+        if (ImGui::SliderFloat("Reflection strength##wat", &refl, 0.0f, 0.5f, "%.3f"))
+            gos_SetWaterReflStrength(refl);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("SH-L2 sky reflection (camera-dependent). Suggested 0.10-0.25.\n"
+                              "Fresnel/grazing-weighted, capped. Debug mode 7 shows the sky term.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##watrefl")) gos_SetWaterReflStrength(gateOn ? 0.15f : 0.0f);
+        if (!gateOn) ImGui::EndDisabled();
+    }
+
+    ImGui::SeparatorText("Terrain Reflection RT (gated; blends over sky)");
+    {
+        // Env is the HARD gate (also drives the C1 RT fill pass); slider disabled
+        // when OFF so it cannot bypass it. Needs BOTH this + Sky Reflection ON to
+        // contribute (the RT modulates the reflected COLOR; Sky Reflection drives
+        // the reflection mix factor). ~0% coverage at the steep camera -> falls
+        // back to SH sky (water never goes empty).
+        bool rtGate = (gos_GetWaterReflectionRtGate() != 0);
+        if (rtGate) ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "MC2_WATER_REFLECTION_RT: ON (default 0.85)");
+        else        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "MC2_WATER_REFLECTION_RT: off (set =1; needs Sky Reflection ON too)");
+
+        if (!rtGate) ImGui::BeginDisabled();
+        float rt = gos_GetWaterRtStrength();
+        if (ImGui::SliderFloat("RT blend strength##wat", &rt, 0.0f, 1.0f, "%.3f"))
+            gos_SetWaterRtStrength(rt);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("How strongly valid terrain-RT pixels replace the SH sky in the\n"
+                              "reflection. Debug mode 8 = RT sample, 9 = final reflection blend.\n"
+                              "Marginal at the steep gameplay camera (terrain off-frustum).");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##watrt")) gos_SetWaterRtStrength(rtGate ? 0.85f : 0.0f);
+        if (!rtGate) ImGui::EndDisabled();
+    }
+
     if (ImGui::SmallButton("Reset ALL water defaults##wat")) {
         gos_SetWaterFsDebugMode(0);
         gos_SetWaterAbsorptionDensity(0.022f);
@@ -732,6 +785,9 @@ static void drawWaterSection() {
         gos_SetWaterShallowColor(0.22f, 0.45f, 0.38f);
         gos_SetWaterSkyTintStrength(0.0f);
         gos_SetWaterSkyTintColor(0.55f, 0.70f, 0.85f);
+        // Reflection: reset to the gate-appropriate default (0 when gate OFF).
+        gos_SetWaterReflStrength(gos_GetWaterReflectionGate() ? 0.15f : 0.0f);
+        gos_SetWaterRtStrength(gos_GetWaterReflectionRtGate() ? 0.85f : 0.0f);
     }
     ImGui::TextDisabled("MDI path only (MC2_GPU_DRIVEN_WATER=1). Defaults = byte-identical.");
 }
@@ -1227,6 +1283,24 @@ static void drawGBufferPreview() {
         } else {
             ImGui::Spacing();
             ImGui::TextDisabled("Object-ID buffer: not active (set MC2_OBJECT_ID_BUFFER=1)");
+        }
+    }
+
+    // ── Water Reflection (1/4-res RGBA16F) ────────────────────────────────────
+    // WATER-REFLECTION-RESOURCE-1: substrate target. Renders BLACK until Phase C
+    // (WATER-TERRAIN-REFLECTION-1) renders sky+terrain into it.
+    {
+        unsigned int tex = pp->getWaterReflectionTexture();
+        ImGui::Spacing();
+        if (tex) {
+            ImGui::Text("Water Reflection  (1/4-res RGBA16F, %dx%d)",
+                        pp->getWaterReflectionWidth(), pp->getWaterReflectionHeight());
+            ImGui::Image((ImTextureID)(intptr_t)tex, sz, uv0, uv1);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Quarter-res water reflection target (WATER-REFLECTION-RESOURCE-1).\n"
+                                  "BLACK until Phase C renders sky+terrain into it; substrate only.");
+        } else {
+            ImGui::TextDisabled("Water Reflection: not allocated");
         }
     }
 }
