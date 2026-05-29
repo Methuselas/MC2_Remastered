@@ -51,9 +51,20 @@ recommendation.
   destroy_invariant, render_contract_gbuf1) with aligned PASS/FAIL table; `--quiet`
   mode for CI. All 8 PASS as of 2026-05-28. Advances item 18 / item 2.
 - **Substrate unit tests** (`46a848dc`) — `tests/unit/test_rendercore.cpp`.
-  23 test cases / 2015 assertions via doctest; GL-free. Covers
-  RenderResourceRegistry, RenderDebugView, RendererFeatureRegistry (COUNT=26),
-  IblShRegistry. Target `rendercore_tests`. Always-on. Advances item 14.
+  36 test cases / 269 assertions via doctest (`--ts=RenderCore`); GL-free.
+  Covers RenderResourceRegistry, RenderDebugView, RendererFeatureRegistry
+  (COUNT=30), IblShRegistry, the PassStateContract→PipelineDesc adapter
+  (PIPELINE-DESC-SCAFFOLD-1), and the RenderPassContract.pipelineDescRegistered
+  audit (PIPELINE-DESC-REGISTERED-AUDIT-1). Target `rendercore_tests`.
+  Always-on. Advances items 12 + 14.
+- **Feature registry CI scan** (`FEATURE-REGISTRY-CI-1` — verified no-op 2026-05-29) —
+  `scripts/check-env-registry.sh` already existed + was already wired into
+  `scripts/check-contracts.sh` as `env_registry`. Scans `getenv`/`envFlag`/
+  `selftestEnvFlag` in all source dirs; fails on any `MC2_*` var not in
+  `RendererFeatureRegistry.h` or explicit ALLOWLIST. 247 vars covered
+  (69 registered, 225 allowlisted). PASS. Closes item 14 CI-gate gap.
+  Future optional: `ALLOWLIST-PROMOTE-1` (batch-promote `# feature -- promote-to-registry`
+  entries; no behavior change).
 - **Shadow EngineView records** (`d939de67`, SHADOW-VIEW-1) — shadow passes
   registered into engine view registry. **Shadow render resource** (`cf7c6bbd`,
   SHADOW-RESOURCE-1) — shadow map registered into render resource registry.
@@ -628,7 +639,7 @@ packets, log-tag normalization `[STATIC_PROP_PACKET_DISPATCH v1]`.
 
 ### 12. Pipeline-state objects
 
-**Status: ADVANCED — Phase 2 render-contract runtime asserts (2026-05-24).**
+**Status: PipelineDesc RUNTIME TYPE SHIPPED (v0/v1); PassStateContract→PipelineDesc adapter + audit SHIPPED (2026-05-29). StaticPropOpaque is the reference production consumer.**
 
 `applyRenderStates` state-equality cache (shipped 2026-05-08) avoids
 redundant GL state calls. `render_contract.h PassStateContract`
@@ -647,16 +658,39 @@ The contract now COVERS:
 - Fragment-shader output `layout(location=N)` declarations
   (uniqueness check — must not collide with sibling passes)
 
-Gap (residual): no explicit `PipelineDesc { ShaderProgramHandle,
-BlendMode, DepthMode, CullMode, VertexLayout }` struct that can be
-CREATED + CACHED + BOUND as a unit. The contract DESCRIBES and
-ASSERTS state but doesn't OWN it.
+**Phase 3 SHIPPED.** The explicit descriptor now exists and is OWNED, not
+just asserted:
+- `RenderCore/PipelineDesc.h` — `PipelineDesc { glProgramName, blend,
+  depthTestEnable, depthWriteEnable, depthFunc, cullMode, colorAttachments,
+  objectIdWriteEnabled, ssboBindingsMask }` (GL-free POD, ≤20 bytes).
+- `RenderCore/PipelineRegistry.{h,cpp}` — named `PipelineId` → `PipelineDesc`
+  table; `bindProgram()` wires the live GL program at link time.
+- `GameOS/gameos/pipeline_binder.cpp::applyPipeline()` — the sole TU mapping a
+  `PipelineDesc` to glUseProgram/depth/blend/cull (depthFunc included since v1).
+- **Production consumer:** the StaticPropOpaque flush
+  (`gos_static_prop_batcher.cpp`) calls
+  `applyPipeline(getPipelineDesc(PipelineId::StaticPropOpaque))` as its sole,
+  ungated GL-state setter — the reference path that takes item 12 from
+  "typed contract exists" to "one real path uses it" (shipped at v1;
+  `PIPELINE-DESC-PRODUCTION-WIRE-STATICPROP-1` 2026-05-29 confirmed already done).
+- `PIPELINE-DESC-SCAFFOLD-1` (2026-05-29) — GL-free
+  `render_contract::pipelineDescFromPassContract()` adapter lowers a
+  `PassStateContract` into a `PipelineDesc`, reconciling the two contract
+  surfaces; enum-parity static_asserts; no production caller (substrate).
+- `PIPELINE-DESC-REGISTERED-AUDIT-1` (2026-05-29) — GL-free `rendercore_tests`
+  cases machine-check `RenderPassContract.pipelineDescRegistered` against
+  `PipelineRegistry` coverage (only the registered StaticProp* family may claim
+  `true`), closing the field-value-staleness gap the header flagged.
 
-**Next step:** Phase 3 — extend `PassStateContract` from a
-documentation-and-assertion type
-to a runtime `PipelineDesc` that `applyRenderStates` can take as
-input and validate against. The state cache already does the equality
-check — just needs the descriptor type.
+Gap (residual): only the StaticProp* family is registered + consumed. Other
+passes (Terrain/Mech/Shadow/VFX) still set GL state manually and correctly
+report `pipelineDescRegistered=false`.
+
+**Next step (coverage expansion — separate slice, recon first):**
+`PIPELINE-DESC-PRODUCTION-WIRE-TERRAIN-1` or `-MECH-1` — add a `PipelineId` +
+registry row for that pass and route its flush through `applyPipeline()`,
+byte-identical. Optional companion: `PIPELINE-DESC-VALIDATION-1` (runtime
+glGet-vs-desc compare gate, with registry/check discipline from the start).
 
 ---
 
@@ -709,7 +743,7 @@ records, particle SSBOs) as they are next touched.
 
 ### 14. Feature flags as productized renderer modes
 
-**Status: REGISTRY EXISTS + UNIT-TESTED (2026-05-29). COUNT=26 entries verified.**
+**Status: REGISTRY EXISTS + UNIT-TESTED (2026-05-29). COUNT=30 entries verified.**
 
 `RenderCore/RendererFeatureRegistry.h` (currently untracked in this
 worktree; parallel session) is the registry header that codifies
@@ -723,15 +757,21 @@ Per-feature documentation in this worktree is also tightened:
 groups env-vars by category (always-on / RenderWorld arc / contract
 assert / pre-commit / firewall scripts).
 
-Gap (residual): the registry SCHEMA exists; coverage across all
-~50+ MC2_* flags is incomplete. Pre-commit / CI gate that requires
-new MC2_* env-vars to land with a registry entry is not yet wired.
+**CI gate SHIPPED (verified 2026-05-29):** `scripts/check-env-registry.sh` exists
+and is wired into `scripts/check-contracts.sh` as `env_registry`. It scans
+`getenv`/`envFlag`/`selftestEnvFlag` calls in source and fails on any `MC2_*`
+var not in the registry or explicit ALLOWLIST. 247 vars covered (69 registered,
+225 allowlisted). PASS. The registry is a mechanically-enforced contract, not
+just documentation discipline.
 
-**Next step:** wire a `scripts/check-render-feature-registry.sh`
-that finds new `MC2_*` declarations in source not present in the
-registry header, and fails CI. This converts the registry from
-"documentation discipline" to "mechanically enforced contract" —
-same pattern as M6 firewall script vs. M2.5 reviewer-discipline gap.
+Gap (residual): ALLOWLIST is large (225 entries); many tagged
+`# feature -- promote-to-registry`. New unregistered vars are blocked by CI.
+Allowlist reduction is optional debt.
+
+**Next step (ALLOWLIST-PROMOTE-1 — optional):** batch-promote
+`# feature -- promote-to-registry` entries from ALLOWLIST into
+`kFeatureTable`/`kAuxEnvVars`. Shrink allowlist. No behavior change.
+`check-contracts.sh` must remain 8/8 PASS after.
 
 ---
 
@@ -934,7 +974,7 @@ Already in execution / recently shipped:
 Sequence A — engine API boundary (items 1, 2, 12, 20):
   A1. Write RenderWorld boundary spec (doc only, no code)    ← DONE (renderworld_arc_status.md)
   A2. Extend render_contract.h Phase 2 (debug assertions)   ← SHIPPED (commit 137dc70)
-  A3. Extend PassStateContract → PipelineDesc runtime type  ← NOT STARTED
+  A3. Extend PassStateContract → PipelineDesc runtime type  ← SHIPPED (PipelineDesc v0/v1 + adapter + audit; StaticPropOpaque consumes)
   A4. RendererFeatureRegistry header (existing flags)        ← SHIPPED (RendererFeatureRegistry.h)
 
 Sequence B — mesh geometry tier (items 8, 5, 19, 9):
@@ -952,10 +992,10 @@ Sequence C — visibility + debug tier (items 6, 10, 16, 18):
 
 Sequence D — draw packet path (item 11):
   D1. DrawPacket explicit type             ← SHIPPED (v0→v3)
-  D2. Opaque non-coalesce dispatch         ← SHIPPED (v4A, gated off by default)
-  D3. Coalesce-mode integration            ← NEXT (v4B)
-  D4. Default flip + legacy loop retire    ← v5 (after v4B tier1 PASS)
-  D5. Sort keys + cross-type ordering      ← after v5
+  D2. Opaque non-coalesce dispatch         ← SHIPPED (v4A)
+  D3. Coalesce + all-types coverage        ← SHIPPED (v6 three-guard builder, all opaque types)
+  D4. Default flip + legacy loop retire    ← SHIPPED (v7 default-ON; v7.1 dead-code -291 lines)
+  D5. Shadow-pass packets + sort keys      ← NOT STARTED (v8; shadow path still legacy)
 
 In progress (items 3, 13):
   Extraction phase     — v2.1–v3 SHIPPED (static props); authority flip next
@@ -1488,9 +1528,9 @@ Execute tiers in order. Do not start Tier 2 before Tier 1 is stable.
 
 ```
 RenderWorld boundary spec                        ← DONE (renderworld_arc_status.md)
-PipelineDesc runtime type                        ← not started (Phase 3)
+PipelineDesc runtime type                        ← SHIPPED (v0/v1; StaticPropOpaque reference consumer)
 RenderPassDesc assertions (render_contract Phase 2) ← SHIPPED (MC2_RENDER_CONTRACT_ASSERT=1)
-RendererFeatureRegistry                          ← SHIPPED + unit-tested (COUNT=26)
+RendererFeatureRegistry                          ← SHIPPED + unit-tested (COUNT=30) + CI-enforced (check-env-registry.sh)
 Shader interface schema (UBO/SSBO layout source of truth) ← not started
 ResourceLifetime taxonomy                        ← PHASE 1 DOC SHIPPED (2026-05-26)
 DebugRenderer namespace                          ← M1 + DEBUG-VIEW-REGISTRY-1 SHIPPED
