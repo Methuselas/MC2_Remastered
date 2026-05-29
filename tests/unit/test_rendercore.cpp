@@ -8,6 +8,8 @@
 #include "IblShRegistry.h"
 #include "PipelineDesc.h"               // PIPELINE-DESC-SCAFFOLD-1: target type
 #include "render_contract_pipeline.h"   // PIPELINE-DESC-SCAFFOLD-1: adapter under test
+#include "RenderPassContract.h"        // PIPELINE-DESC-REGISTERED-AUDIT-1: descriptive pass table
+#include "PipelineRegistry.h"          // PIPELINE-DESC-REGISTERED-AUDIT-1: PipelineId coverage
 #include <cstring>
 
 using namespace RenderCore;
@@ -266,6 +268,67 @@ TEST_CASE("IblShRegistry lookupShSet always returns default fallback") {
 TEST_CASE("IblShRegistry kIblShSetCount is at least 1") {
     CHECK(kIblShSetCount >= 1u);
     CHECK(std::strcmp(kIblShSets[0].name, "default") == 0);
+}
+
+// ---------------------------------------------------------------------------
+// RenderPassContract.pipelineDescRegistered audit
+// PIPELINE-DESC-REGISTERED-AUDIT-1: the header's static_assert catches
+// kRenderPassContracts[] array-length drift but explicitly NOT field-value
+// staleness ("that is on you"). These cases machine-check the
+// pipelineDescRegistered booleans against current PipelineRegistry coverage,
+// so an aspirational flip (a pass claiming PipelineDesc routing it doesn't
+// have) fails the build's test gate instead of silently mis-reporting in the
+// editor inspector / closure-audit doc.
+//
+// NOTE: this slice does NOT flip any pipelineDescRegistered value. It locks
+// the current shipped truth: only StaticPropOpaque routes through PipelineDesc.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("RenderPassContract pipelineDescRegistered matches current shipped truth") {
+    // Per-row expected state from kRenderPassContracts at branch tip:
+    //   StaticPropOpaque = true; Terrain / MechOpaque / Shadow / VFX = false.
+    int trueCount = 0;
+    for (int i = 0; i < kRenderPassContractCount; ++i) {
+        const RenderPassContract& c = kRenderPassContracts[i];
+        const bool expected = (c.id == RenderPassId::StaticPropOpaque);
+        CHECK(c.pipelineDescRegistered == expected);
+        if (c.pipelineDescRegistered) ++trueCount;
+    }
+    // Exactly one pass routes through PipelineDesc today.
+    CHECK(trueCount == 1);
+}
+
+TEST_CASE("RenderPassContract: only a registered PipelineId family may claim pipelineDescRegistered") {
+    // PipelineRegistry currently registers ONLY the static-prop family:
+    //   PipelineId { Invalid=0, StaticPropOpaque=1, StaticPropAlphaTest=2, Count_=3 }
+    // (Terrain/Water/Mech/... are "Future:" -- no PipelineId enumerator yet.)
+    // Lock that coverage so this proof can't silently widen.
+    CHECK(static_cast<uint32_t>(PipelineId::Count_) == 3u);
+    CHECK(static_cast<uint32_t>(PipelineId::Invalid) == 0u);
+
+    // Every pass flagged true must be backed by a real (non-Invalid, in-range)
+    // PipelineId family. The only registered family is StaticProp*, whose
+    // owning RenderPassId is StaticPropOpaque.
+    for (int i = 0; i < kRenderPassContractCount; ++i) {
+        const RenderPassContract& c = kRenderPassContracts[i];
+        if (!c.pipelineDescRegistered) continue;
+
+        CHECK((c.id == RenderPassId::StaticPropOpaque));
+
+        const uint32_t fam = static_cast<uint32_t>(PipelineId::StaticPropOpaque);
+        CHECK(fam > static_cast<uint32_t>(PipelineId::Invalid));
+        CHECK(fam < static_cast<uint32_t>(PipelineId::Count_));
+    }
+}
+
+TEST_CASE("RenderPassContract: passes with no PipelineId family are not flagged registered") {
+    // Defensive complement -- Terrain/MechOpaque/Shadow/VFX have no PipelineId
+    // enumerator, so none may legitimately report PipelineDesc routing.
+    for (int i = 0; i < kRenderPassContractCount; ++i) {
+        const RenderPassContract& c = kRenderPassContracts[i];
+        if (c.id == RenderPassId::StaticPropOpaque) continue;
+        CHECK_FALSE(c.pipelineDescRegistered);
+    }
 }
 
 } // TEST_SUITE("RenderCore")
