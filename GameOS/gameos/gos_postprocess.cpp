@@ -331,6 +331,27 @@ void gosPostProcess::init(int w, int h)
                      ssaoEnv ? ssaoEnv : "(unset)", aoRadius_, aoStrength_, aoBias_);
     }
 
+    // SHADOW-ENV-DEBUG-MODE-1: select shadow debug overlay from env var so
+    // automated capture can request it without ImGui interaction.
+    // Default unset/0/off -> showShadowDebug_ stays false (byte-identical).
+    // RAlt+F2 hotkey and ImGui checkbox still override at runtime.
+    {
+        const char* sdEnv = getenv("MC2_SHADOW_DEBUG_MODE");
+        if (sdEnv && sdEnv[0]) {
+            if (sdEnv[0] == '1' || (sdEnv[0] == 's' && sdEnv[1] == 't')) {
+                showShadowDebug_ = true;
+                shadowDebugMode_ = 0;
+                std::fprintf(stderr, "[SHADOW_DEBUG] MC2_SHADOW_DEBUG_MODE=static (mode 0)\n");
+            } else if (sdEnv[0] == '2' || sdEnv[0] == 'd') {
+                showShadowDebug_ = true;
+                shadowDebugMode_ = 1;
+                std::fprintf(stderr, "[SHADOW_DEBUG] MC2_SHADOW_DEBUG_MODE=dynamic (mode 1)\n");
+            } else {
+                std::fprintf(stderr, "[SHADOW_DEBUG] MC2_SHADOW_DEBUG_MODE=%s (unrecognized, using OFF)\n", sdEnv);
+            }
+        }
+    }
+
     initShadows();
     initDynamicShadows();
 

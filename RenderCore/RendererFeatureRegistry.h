@@ -596,6 +596,16 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         false,
         "SSAO-GTAO-LITE-MVP-1: when set with MC2_SSAO=1, the SSAO apply pass OVERWRITES the scene with the half-res AO buffer as grayscale (blend disabled) instead of multiplying, so the raw occlusion can be inspected. Diagnostic-only; no effect when MC2_SSAO is off. Default-OFF."
     },
+    {
+        "MC2_DIAG_SHADOW_DEBUG_MODE",
+        "MC2_SHADOW_DEBUG_MODE",
+        EnvVarKind::Trace,
+        false,
+        "SHADOW-ENV-DEBUG-MODE-1: selects shadow debug map overlay without ImGui. "
+        "Default unset/0/off = overlay OFF (byte-identical). "
+        "Values: off|0=OFF, static|1=STATIC (world-fixed 2048^2 depth), dynamic|2=DYNAMIC (camera-centered 1024^2 depth). "
+        "Resolved once at process start (gos_postprocess init). RAlt+F2 hotkey still overrides at runtime."
+    },
 };
 
 // ---------------------------------------------------------------------------
