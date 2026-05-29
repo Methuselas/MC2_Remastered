@@ -249,6 +249,18 @@ void gosPostProcess::init(int w, int h)
         std::fprintf(stderr, "[BLOOM v1] enabled=%d (MC2_BLOOM=%s, requires MC2_HDR_POST)\n",
                      (hdrPostEnabled_ && bloomEnabled_) ? 1 : 0,
                      bloomEnv ? bloomEnv : "(unset)");
+
+        // TONEMAP-ACES-MVP-1 (Track V, MC2_TONEMAP_ACES): sub-feature of the
+        // HDR post stack. Sets tonemapEnabled_; the composite forces
+        // enableTonemap=0 unless hdrPostEnabled_, so this is inert without the
+        // master gate. ACES curve (postprocess.frag ACESFilm) already present;
+        // exposure is tunable via gos_SetExposure / profile 'exposure'.
+        const char* tonemapEnv = getenv("MC2_TONEMAP_ACES");
+        if (tonemapEnv && tonemapEnv[0] && tonemapEnv[0] != '0')
+            tonemapEnabled_ = true;
+        std::fprintf(stderr, "[TONEMAP_ACES v1] enabled=%d (MC2_TONEMAP_ACES=%s, requires MC2_HDR_POST)\n",
+                     (hdrPostEnabled_ && tonemapEnabled_) ? 1 : 0,
+                     tonemapEnv ? tonemapEnv : "(unset)");
     }
 
     bloomThresholdProg_ = glsl_program::makeProgram("bloom_threshold",
