@@ -199,7 +199,7 @@ static bool  s_mechSpecularV1 = []() {
 }();
 static float s_mechSpecularStrength = []() {
     const char* v = std::getenv("MC2_MECH_SPECULAR_STRENGTH");
-    float d = v ? (float)std::atof(v) : 1.0f;
+    float d = v ? (float)std::atof(v) : 0.05f;  // tuned default (was 1.0 = blown out)
     if (d < 0.0f) d = 0.0f;
     if (d > 4.0f) d = 4.0f;
     return d;

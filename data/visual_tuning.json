@@ -7,7 +7,8 @@
     "staticPropIblStrength": 0.5,
     "waterSkyTintStrength": 0.0,
     "vfxBrightness": 1.0,
-    "vfxAdditiveBrightness": 1.0
+    "vfxAdditiveBrightness": 1.0,
+    "mechSpecularStrength": 0.05
   },
   "missions": {
     "mc2_24": {

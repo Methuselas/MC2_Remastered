@@ -56,7 +56,7 @@ cross-mission consistency. Out of scope for this opus (would be a new feature).
 | Static prop | Ambient V1 | hemisphere ambient | env gate `MC2_STATIC_PROP_AMBIENT_V1` only | `gos_static_prop_batcher.cpp:468-471` | OFF |
 | Static prop | SH coefficients | 9 SH-L2 RGB consts | C++/GLSL const | `RenderCore/IblShCoeffs.h:35` | from DaySkyHDRI063B |
 | Mech | Ambient V1 strength | hemisphere ambient fill | env `MC2_MECH_AMBIENT_V1_STRENGTH` + ImGui, gate `MC2_MECH_AMBIENT_V1` | `gos_mech_batcher.cpp:184-190`; gate `:180`; getter/setter `:2202-2207` | `0.15`, gate **ON** |
-| Mech | Specular V1 strength | Blinn sheen | env `MC2_MECH_SPECULAR_STRENGTH` + ImGui, gate `MC2_MECH_SPECULAR_V1` (needs ViewUniforms) | `gos_mech_batcher.cpp:200-206`; getter/setter `:2216-2221`; shader `mech.frag:138-172` | `1.0`, gate **ON** |
+| Mech | Specular V1 strength | Blinn sheen | **profile** `mechSpecularStrength` + env `MC2_MECH_SPECULAR_STRENGTH` + ImGui, gate `MC2_MECH_SPECULAR_V1` (needs ViewUniforms) | `gos_mech_batcher.cpp:200-206`; getter/setter `:2216-2221`; shader `mech.frag:138-172` | `0.05` (was 1.0; tuned default), gate **ON** |
 | Mech | Metal/glass roughness | spec lobe width | env `MC2_MECH_METAL_ROUGHNESS`/`_GLASS_ROUGHNESS` | `gos_mech_batcher.cpp:207-220` | `0.85`/`0.25` |
 | Water | Sky-tint strength | flat horizon tint | **profile** `waterSkyTintStrength` + ImGui + env `MC2_WATER_SKYTINT` | `gameos_graphics.cpp:2264-2274`; `vtp.cpp:158` | `0.0` (env bumps 0.15) |
 | Water | Reflection strength (SH sky) | SH-L2 sky reflection | env `MC2_WATER_REFLECTION` (HARD GATE + bumps 0.15) + ImGui | `gameos_graphics.cpp:2284-2300` | `0.0` |
@@ -351,6 +351,14 @@ These are hypotheses to confirm/deny with the captures, not confirmed defects:
   applied 6 keys` with NO unknown-key warnings, 2769 frames to clean shutdown,
   zero GL errors. Deployed exe+pdb+DLLs+83 shaders to v0.4 (all diff-verified;
   v0.4 had a non-nifty shader set, normalized to match the exe).
+- FOLLOW-UP (explicit user request, APPROVED default change): mech specular
+  strength default **1.0 -> 0.05** (1.0 was blown out). Applied in BOTH places:
+  engine default `s_mechSpecularStrength` (`gos_mech_batcher.cpp:202`) AND the
+  `data/visual_tuning.json` `defaults` block (`mechSpecularStrength: 0.05`). This
+  is the one intentional default visual change in this branch -- it edits the
+  shipped JSON and changes shipped behavior, by explicit instruction. Validated:
+  rebuilt clean; default-profile mc2_24 launch logged `applied 10 keys` (incl.
+  mechSpecularStrength), no unknown-key, no GL errors, 600 frames clean shutdown.
 - Slices 4 (candidate per-mission values) / 5 (terrain debug-registry promotion):
   deferred per classification above. Slice 4 needs the human eyeball pass on the
   Section 4 captures first; the new mech keys are the lever it will use.
