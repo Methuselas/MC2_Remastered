@@ -648,6 +648,35 @@ void gosPostProcess::createFBOs(int w, int h)
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+void gosPostProcess::copySceneDepthForParticles()
+{
+    // VFX-SOFT-PARTICLES-MVP-1: snapshot the current scene depth into a
+    // dedicated texture so the in-scene particle flush can sample it without a
+    // GL feedback loop (sceneDepthTex_ is the bound FBO's depth attachment).
+    // Same internal format as sceneDepthTex_ (DEPTH24_STENCIL8) -> straight
+    // glCopyImageSubData (no blit/format-match constraints). Lazily allocated;
+    // full-res; freed + re-created on resize (destroyFBOs zeroes it).
+    if (width_ <= 0 || height_ <= 0 || sceneDepthTex_ == 0) return;
+
+    if (sceneDepthCopyTex_ == 0) {
+        glGenTextures(1, &sceneDepthCopyTex_);
+        glBindTexture(GL_TEXTURE_2D, sceneDepthCopyTex_);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH24_STENCIL8, width_, height_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    // Texture-to-texture copy of the whole depth image. Ordered after the
+    // opaque scene's depth writes; particles never write depth so the source
+    // is stable at flush time.
+    glCopyImageSubData(sceneDepthTex_,     GL_TEXTURE_2D, 0, 0, 0, 0,
+                       sceneDepthCopyTex_, GL_TEXTURE_2D, 0, 0, 0, 0,
+                       width_, height_, 1);
+}
+
 void gosPostProcess::destroyFBOs()
 {
     if (sceneFBO_) {
@@ -669,6 +698,10 @@ void gosPostProcess::destroyFBOs()
     if (sceneObjectIdTex_) {
         glDeleteTextures(1, &sceneObjectIdTex_);
         sceneObjectIdTex_ = 0;
+    }
+    if (sceneDepthCopyTex_) {  // VFX-SOFT-PARTICLES-MVP-1
+        glDeleteTextures(1, &sceneDepthCopyTex_);
+        sceneDepthCopyTex_ = 0;
     }
     for (int i = 0; i < 2; ++i) {
         if (bloomFBO_[i]) {

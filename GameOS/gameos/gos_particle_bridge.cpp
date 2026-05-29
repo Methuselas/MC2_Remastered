@@ -17,6 +17,7 @@
 #include <gameos.hpp>
 #include <GL/glew.h>
 #include "utils/shader_builder.h"
+#include "gos_postprocess.h"  // VFX-SOFT-PARTICLES-MVP-1: scene-depth copy + invViewProj
 
 #include <cstdio>
 #include <cstdlib>   // std::getenv, std::atoi (MC2_VFX_DEBUG_MODE)
@@ -114,6 +115,23 @@ void vfxTuneInitIfNeeded() {
     s_vfxTune_initialized   = true;
 }
 
+// VFX-SOFT-PARTICLES-MVP-1: depth-fade enable + world-unit fade band. Gate
+// MC2_VFX_SOFT_PARTICLES (default OFF -> byte-identical). When ON, the flush
+// snapshots scene depth and the FS softens alpha where alpha particles meet
+// opaque geometry. Distance is ImGui-tunable (gos_vfx_setSoftDistance); enable
+// is ImGui-toggleable (gos_vfx_setSoftEnabled). No emission/lifetime/timing
+// effect; alpha groups only.
+bool  s_soft_initialized = false;
+bool  s_soft_enabled     = false;
+float s_softDistance     = 30.0f;   // world-unit fade band
+static float clampSoftDist(float v) { return v < 0.0f ? 0.0f : (v > 500.0f ? 500.0f : v); }
+void vfxSoftInitIfNeeded() {
+    if (s_soft_initialized) return;
+    const char* v = std::getenv("MC2_VFX_SOFT_PARTICLES");
+    s_soft_enabled       = (v && v[0] == '1');
+    s_soft_initialized   = true;
+}
+
 // P0-4: Cached uniform locations — populated once in ensureInitialized()
 // after the program links. -2 = not yet queried; -1 = not found (GLSL may
 // strip unused uniforms); >= 0 = valid location.
@@ -133,6 +151,11 @@ GLint s_loc_vfxBrightness         = -2;
 GLint s_loc_vfxAdditiveBrightness = -2;
 GLint s_loc_vfxAlphaScale         = -2;
 GLint s_loc_vfxIsAdditive         = -2;
+// VFX-SOFT-PARTICLES-MVP-1: soft-particle depth-fade uniforms.
+GLint s_loc_uSceneDepth     = -2;
+GLint s_loc_invWorldToClip  = -2;
+GLint s_loc_screenSize      = -2;
+GLint s_loc_softDistance    = -2;
 
 void ensureInitialized() {
     if (s_initFailed) return;
@@ -193,6 +216,12 @@ void ensureInitialized() {
         s_loc_vfxAdditiveBrightness = glGetUniformLocation(s_prog->shp_, "u_vfxAdditiveBrightness");
         s_loc_vfxAlphaScale         = glGetUniformLocation(s_prog->shp_, "u_vfxAlphaScale");
         s_loc_vfxIsAdditive         = glGetUniformLocation(s_prog->shp_, "u_vfxIsAdditive");
+        // VFX-SOFT-PARTICLES-MVP-1: soft-particle depth-fade uniforms (may be
+        // -1 when MC2_VFX_SOFT_PARTICLES is OFF and dead-code elim strips them).
+        s_loc_uSceneDepth    = glGetUniformLocation(s_prog->shp_, "u_sceneDepth");
+        s_loc_invWorldToClip = glGetUniformLocation(s_prog->shp_, "u_invWorldToClip");
+        s_loc_screenSize     = glGetUniformLocation(s_prog->shp_, "u_screenSize");
+        s_loc_softDistance   = glGetUniformLocation(s_prog->shp_, "u_softDistance");
         if (s_loc_cameraRight < 0 || s_loc_cameraUp < 0) {
             if (groupLogEnabled())
                 std::fprintf(stderr, "[B2] gos_particle_bridge: uniform locations missing — right=%d up=%d\n",
@@ -361,6 +390,38 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     // u_vfxIsAdditive defaults to alpha (0); set per-group in the draw loop.
     if (s_loc_vfxIsAdditive         >= 0) glUniform1i(s_loc_vfxIsAdditive, 0);
 
+    // ── VFX-SOFT-PARTICLES-MVP-1: depth-fade setup ───────────────────
+    // When the gate is OFF we upload u_softDistance=0 so the FS fade branch is
+    // skipped -> byte-identical. When ON, snapshot scene depth (avoids the
+    // FBO feedback loop), bind the copy on unit 1, and upload the inverse of
+    // the SAME matrix the VS projects with (gosPostProcess::inverseViewProj_).
+    GLint savedTex2D1 = 0;
+    bool  softActive  = false;
+    float softDist    = 0.0f;
+    vfxSoftInitIfNeeded();
+    if (s_soft_enabled && s_loc_softDistance >= 0) {
+        gosPostProcess* pp = getGosPostProcess();
+        if (pp) {
+            pp->copySceneDepthForParticles();
+            const GLuint depthCopy = pp->getSceneDepthCopyTexture();
+            if (depthCopy != 0) {
+                softActive = true;
+                softDist   = (s_softDistance > 0.0f) ? s_softDistance : 0.0f;
+                glActiveTexture(GL_TEXTURE1);
+                glGetIntegerv(GL_TEXTURE_BINDING_2D, &savedTex2D1);
+                glBindTexture(GL_TEXTURE_2D, depthCopy);
+                glBindSampler(1, 0);  // use the texture's own NEAREST params
+                glActiveTexture(GL_TEXTURE0);
+                if (s_loc_uSceneDepth    >= 0) glUniform1i(s_loc_uSceneDepth, 1);
+                if (s_loc_invWorldToClip >= 0)
+                    glUniformMatrix4fv(s_loc_invWorldToClip, 1, GL_FALSE, pp->getInverseViewProj());
+                if (s_loc_screenSize     >= 0)
+                    glUniform2f(s_loc_screenSize, (float)pp->getWidth(), (float)pp->getHeight());
+            }
+        }
+    }
+    if (s_loc_softDistance >= 0) glUniform1f(s_loc_softDistance, softDist);
+
     // ── Sampler on unit 0 (trap #5: sampler inheritance) ─────────────
     glBindSampler(0, s_sampler);
 
@@ -473,6 +534,13 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
 
     // ── Restore state ────────────────────────────────────────────────
     if (savedCullFace) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+    // VFX-SOFT-PARTICLES-MVP-1: restore unit-1 binding used for the depth copy
+    // (active texture is GL_TEXTURE0 here — the draw loop binds on unit 0).
+    if (softActive) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex2D1);
+        glActiveTexture(GL_TEXTURE0);
+    }
     glBindTexture(GL_TEXTURE_2D, (GLuint)savedTex2D0);
     glBindSampler(0, (GLuint)savedSampler);
     if (savedActiveTex != GL_TEXTURE0) glActiveTexture((GLenum)savedActiveTex);
@@ -526,3 +594,9 @@ extern "C" float gos_vfx_getAlphaScale()         { vfxTuneInitIfNeeded(); return
 extern "C" void  gos_vfx_setBrightness(float v)         { vfxTuneInitIfNeeded(); s_vfxBrightness = clampVfxScale(v); }
 extern "C" void  gos_vfx_setAdditiveBrightness(float v) { vfxTuneInitIfNeeded(); s_vfxAdditiveBrightness = clampVfxScale(v); }
 extern "C" void  gos_vfx_setAlphaScale(float v)         { vfxTuneInitIfNeeded(); s_vfxAlphaScale = clampVfxScale(v); }
+
+// VFX-SOFT-PARTICLES-MVP-1: enable + fade-band accessors (ImGui + inspector).
+extern "C" int   gos_vfx_getSoftEnabled()         { vfxSoftInitIfNeeded(); return s_soft_enabled ? 1 : 0; }
+extern "C" void  gos_vfx_setSoftEnabled(int e)    { vfxSoftInitIfNeeded(); s_soft_enabled = (e != 0); }
+extern "C" float gos_vfx_getSoftDistance()        { return s_softDistance; }
+extern "C" void  gos_vfx_setSoftDistance(float v) { s_softDistance = clampSoftDist(v); }

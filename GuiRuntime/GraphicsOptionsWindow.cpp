@@ -77,6 +77,10 @@ extern "C" float gos_vfx_getAlphaScale(void);
 extern "C" void  gos_vfx_setBrightness(float v);
 extern "C" void  gos_vfx_setAdditiveBrightness(float v);
 extern "C" void  gos_vfx_setAlphaScale(float v);
+extern "C" int   gos_vfx_getSoftEnabled(void);
+extern "C" void  gos_vfx_setSoftEnabled(int e);
+extern "C" float gos_vfx_getSoftDistance(void);
+extern "C" void  gos_vfx_setSoftDistance(float v);
 // MISSION-VISUAL-TUNING-1: profile status accessors (defined in visual_tuning_profile.cpp)
 void        visualTuning_applyProfile(const char* missionName);
 bool        visualTuning_saveCurrentToMission();
@@ -1414,6 +1418,24 @@ static void drawVfxTuningSection() {
             ImGui::SetTooltip("Alpha (opacity) scale on all particles. Default 1.0 (no-op).");
         ImGui::SameLine();
         if (ImGui::SmallButton("Reset##vfxa")) gos_vfx_setAlphaScale(1.0f);
+
+        // VFX-SOFT-PARTICLES-MVP-1: depth-fade enable + world-unit fade band.
+        ImGui::Separator();
+        bool softOn = gos_vfx_getSoftEnabled() != 0;
+        if (ImGui::Checkbox("Soft particles##vfx", &softOn))
+            gos_vfx_setSoftEnabled(softOn ? 1 : 0);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Depth-fade alpha particles where they meet opaque geometry\n"
+                              "(no hard intersection lines). Default OFF (env MC2_VFX_SOFT_PARTICLES).\n"
+                              "Alpha groups only; additive flashes/lasers unaffected.");
+        float sd = gos_vfx_getSoftDistance();
+        if (ImGui::SliderFloat("Soft fade dist##vfx", &sd, 0.0f, 200.0f, "%.1f"))
+            gos_vfx_setSoftDistance(sd);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("World-unit fade band for soft particles. Larger = softer "
+                              "intersection. Default 30.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##vfxsd")) gos_vfx_setSoftDistance(30.0f);
     }
 
     if (ImGui::SmallButton("Reset all##vfx")) {
