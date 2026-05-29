@@ -705,12 +705,11 @@ void GpuMechBatcher::flushShadow() {
     // persist it to s_lastDrawCalls / s_lastTotalInstances / s_lastTotalBones
     // at the end of flush() and consume those statics here.
 
-    // Default ON. The dedicated-VAO redesign concern is resolved: the restore
-    // sequence below now swaps VAO before element-buffer (see comment there),
-    // keeping s_sharedVao's GL_ELEMENT_ARRAY_BUFFER set to s_sharedIbo so
-    // flush() never sees element-buffer=0. Kill-switch: MC2_SHADOW_ENABLE=0.
-    static const bool s_shadowEnabled =
-        !(getenv("MC2_SHADOW_ENABLE") && getenv("MC2_SHADOW_ENABLE")[0] == '0');
+    // OPT-IN (MC2_SHADOW_ENABLE=1). Mirrors gos_static_prop_batcher — see its
+    // flushShadow comment for the full rationale. VAO restore order is fixed
+    // but default-ON causes prop visibility loss (root cause under investigation).
+    static const bool s_shadowEnabled = (getenv("MC2_SHADOW_ENABLE") != nullptr &&
+                                         getenv("MC2_SHADOW_ENABLE")[0] != '0');
     if (!s_shadowEnabled) return;
 
     // Geometry-readiness guard, mirroring the color flush() path (:867).
@@ -1705,6 +1704,10 @@ void GpuMechBatcher::flush() {
 
     glUseProgram(s_mechProgram);
     glBindVertexArray(s_sharedVao);
+    // Explicit IBO rebind: mirrors flushShadow() pattern. GL_ELEMENT_ARRAY_BUFFER
+    // is VAO state; s_sharedVao's slot can be left at 0 by a prior flushShadow()
+    // restore-order bug. Belt-and-suspenders self-heal.
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
 
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene mech draw)

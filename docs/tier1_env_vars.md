@@ -10,7 +10,7 @@ start. Grep schema versions with `\[SUBSYS v[0-9]+\]`.
 ## Feature gates (registered in RendererFeatureRegistry.h kFeatureTable)
 
 - `MC2_VIEW_UNIFORMS` — ViewUniforms UBO upload + shader consumption (static_prop.vert). Default **ON**. `MC2_VIEW_UNIFORMS=0` — kill-switch, reverts to legacy `uniform mat4 u_worldToClipGL`. **Requires process restart** — shaders are compiled at startup. Upload log `[VIEW_UNIFORMS v1]` appears by default.
-- `MC2_SHADOW_ENABLE=0` — kill-switch: disable dynamic object shadow caster pass (GpuStaticPropBatcher + GpuMechBatcher flushShadow). Default **ON** (SHADOW-DYNAMIC-RESTORE-1).
+- `MC2_SHADOW_ENABLE=1` — opt-in: enable dynamic object shadow caster pass (GpuStaticPropBatcher + GpuMechBatcher flushShadow). Default **OFF**. VAO restore order fixed (SHADOW-DYNAMIC-RESTORE-1) but default-on causes prop regression; root cause under investigation.
 - `MC2_IMGUI=1` — enable ImGui overlay (GuiRuntime/GuiRuntime.cpp). Default OFF. Editor sets this automatically.
 - `MC2_IMGUI_INSPECTOR=1` — enable ImGui inspector panel (GuiRuntime/EditorInspector.cpp). Default OFF. Requires `MC2_IMGUI`.
 - `MC2_DEBUG_RENDERER=1` — enable debug overlay renderer (GuiRuntime/EditorInspector.cpp). Default OFF. Requires `MC2_IMGUI_INSPECTOR`.

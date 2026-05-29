@@ -3818,6 +3818,12 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     pipeline_binder::applyPipeline(
         RenderCore::getPipelineDesc(RenderCore::PipelineId::StaticPropOpaque));
     glBindVertexArray(s_sharedVao);
+    // Explicit IBO rebind: GL_ELEMENT_ARRAY_BUFFER is VAO state and can be
+    // left at 0 if flushShadow() or any other pass clobbers s_sharedVao's
+    // element-buffer slot (e.g. wrong restore order while s_sharedVao was
+    // active). Matching the explicit-bind pattern in flushShadow() makes
+    // flush() self-healing regardless of prior VAO state. Belt-and-suspenders.
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, s_sharedIbo);
 
     // Slice 2 (object-offload) — Stage 2.C.2: bind per-type hot-color SSBO
     // once for the whole flush. The data is per-map immutable so a single
@@ -5437,12 +5443,14 @@ void GpuStaticPropBatcher::flushShadow() {
     // condition; flushShadow() must honor the identical precondition.
     if (!s_geometryFinalized || s_fatalRegistrationFailure) return;
 
-    // Default ON. The dedicated-VAO redesign concern is resolved: the restore
-    // sequence below now swaps VAO before element-buffer (see comment there),
-    // which keeps s_sharedVao's GL_ELEMENT_ARRAY_BUFFER set to s_sharedIbo so
-    // flush() never sees element-buffer=0. Kill-switch: MC2_SHADOW_ENABLE=0.
-    static const bool s_shadowEnabled =
-        !(getenv("MC2_SHADOW_ENABLE") && getenv("MC2_SHADOW_ENABLE")[0] == '0');
+    // OPT-IN (MC2_SHADOW_ENABLE=1). The VAO restore order bug is fixed (see
+    // restore section below), but flush() still loses prop visibility when
+    // this path is default-ON — root cause not yet isolated (interaction with
+    // uploadAllBucketsIfNeeded / coalesce / SSBO state under investigation).
+    // Default-off preserves the pre-restore working state. SHADOW-DYNAMIC-RESTORE-1
+    // tracks the remaining work.
+    static const bool s_shadowEnabled = (getenv("MC2_SHADOW_ENABLE") != nullptr &&
+                                         getenv("MC2_SHADOW_ENABLE")[0] != '0');
     if (!s_shadowEnabled) return;
 
     if (!uploadAllBucketsIfNeeded()) return;
