@@ -41,13 +41,22 @@ enum : uint32_t { kCardCloudSimFlagAlive = 1u };
 
 } } // namespace mc2::particles
 
-// GameOS GL bridge entry (defined in GameOS/gameos/gos_cardcloud_sim.cpp).
-// BUFFER-1: upload the submitted live-particle records to the persistent SSBO
-// and (when MC2_VFX_GPU_SIM_COMPARE=1) emit a rate-limited compare/integrity
-// log. No compute, no readback, no render. cpuActiveCount is the raw
-// m_activeParticleCount (incl. dead slots) for the integrity comparison vs the
-// compacted live `count` actually submitted.
+// GameOS GL bridge entries (defined in GameOS/gameos/gos_cardcloud_sim.cpp).
+//
+// COMPUTE-1: submit() ACCUMULATES each CardCloud instance's compacted live
+// records into a per-frame CPU buffer (fixes BUFFER-1's last-writer-wins).
+// flush() — called once per frame from Batcher::Flush — uploads the whole
+// accumulated array to the persistent SSBO, dispatches cardcloud_sim.comp to
+// integrate one validation step, and (when MC2_VFX_GPU_SIM_COMPARE=1) reads
+// back and compares against a CPU reference applying the SAME step to the same
+// input (maxAgeError/maxPosError ≈ epsilon → validates the compute path).
+// cpuActiveCount is the raw m_activeParticleCount (incl. dead slots) for the
+// integrity comparison vs the compacted live `count`. No render, no CPU bypass.
 extern "C" void gos_cardcloud_sim_submit(
     const mc2::particles::CardCloudSimParticle* records,
     unsigned int                                count,
     unsigned int                                cpuActiveCount);
+
+// Per-frame: upload accumulated records, dispatch compute, (gated) read back +
+// compare, then clear the accumulator. No-op when nothing was accumulated.
+extern "C" void gos_cardcloud_sim_flush(void);

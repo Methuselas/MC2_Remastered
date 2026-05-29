@@ -262,7 +262,18 @@ void Batcher::ResolveTextures()
     }
 }
 
+// VFX-GPU-SIM-CARDCLOUD-COMPUTE-1: per-frame flush of the CardCloud GPU-sim
+// accumulator (GameOS bridge). Declared here to avoid pulling the GL header.
+extern "C" void gos_cardcloud_sim_flush(void);
+
 void Batcher::Flush() {
+    // Flush the CardCloud GPU-sim accumulator once per frame, BEFORE both the
+    // is_enabled() and empty-staging early-returns — the sim accumulates
+    // independently of the particle staging buffer. No-op when nothing was
+    // accumulated. Placed first so the accumulator can never grow unbounded
+    // even if MC2_GPU_PARTICLES is off or a future caller submits without the
+    // particle path enabled.
+    gos_cardcloud_sim_flush();
     if (!is_enabled()) return;
     ++g_flush_total;
     if (impl_->staging.empty()) {

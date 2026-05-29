@@ -233,8 +233,24 @@ compare slice).
   `MC2_VFX_GPU_SIM_COMPARE` (default OFF) + CPU-side integrity log. OBSERVE-ONLY:
   no compute, no readback, no render. COMPUTE-1 adds the integration.
 
+- **VFX-GPU-SIM-CARDCLOUD-COMPUTE-1 IMPLEMENTED.** Per-frame accumulation (all
+  CardCloud instances, fixes BUFFER-1 last-writer-wins) + `cardcloud_sim.comp`
+  (age+=ageRate·dt, pos+=vel·dt, dead-flag) dispatched once/frame from
+  `Batcher::Flush` + SSBO barrier + gated `glGetBufferSubData` readback. The
+  compare diffs GPU output against a **CPU reference applying the identical step
+  to the same accumulated input** (`[VFX_GPU_SIM v2]` maxAgeError/maxPosError
+  ≈ float epsilon) — this **validates the GPU compute path** (shader/SSBO/
+  dispatch/barrier/readback/accumulation). It does **NOT** prove full gosFX
+  lifetime physics: drag/ether/accel and life-long GPU-vs-gosFX parity (which
+  needs stable per-particle IDs for cross-frame index correspondence) are
+  deferred to **VFX-GPU-SIM-CARDCLOUD-PARITY-ID-1**. dt is a fixed validation
+  constant (1/60); real per-frame dt is a parity-slice concern. Compare-only —
+  nothing rendered, CPU sim still authoritative.
+
 ### Next slices
-- VFX-GPU-SIM-CARDCLOUD-COMPUTE-1 — cardcloud_sim.comp integration + readback + parity.
+- VFX-GPU-SIM-CARDCLOUD-PARITY-ID-1 — stable particle IDs + birth tracking +
+  drag/ether/accel in the compute; true GPU-vs-gosFX divergence over a
+  particle's life (cross-frame, by ID).
 - VFX-GPU-SIM-PARITY-1 — side-by-side CPU-oracle vs GPU-sim evidence.
 - VFX-GPU-SIM-RENDER-1 — render from GPU-sim records (after parity).
 - VFX-CPU-SIM-BYPASS-CARDCLOUD-1 — bypass CPU sim for CardCloud (kill-switch, soak).
