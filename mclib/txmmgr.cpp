@@ -2002,13 +2002,20 @@ void MC_TextureManager::renderLists (void)
 		extern bool g_useGpuObjects;
 		extern bool g_useGpuMechs;
 		if (gos_IsTerrainTessellationActive() && (g_useGpuObjects || g_useGpuMechs)) {
-			// Unproject 8 NDC corners through clipToWorld (-> STUFF space), then
-			// swizzle Stuff->MC2 (-x, z, y) EXACTLY as Camera::inverseProjectZ does.
-			// inverseProjectZ convention: Multiply(in, clipToWorld), then if
-			// xformCoords.w < 0 call Negate (negates all 4 components), then
-			// perspective-divide x/y/z by w, then swizzle (-x, z, y).
-			// For raw NDC input (w=1) the perspective divide is required (unlike
-			// inverseProjectZ which pre-bakes 1/screen.w into coords.w).
+			// Unproject 8 GL-NDC corners through the inverse of worldToClipGL().
+			// SHADOW-DYNAMIC-PROJECTION-FIX-1: worldToClipGL() maps MC2 world (Z-up)
+			//   = kAxisSwapMC2toGL * worldToCam * cameraToClipGL
+			// -> GL clip (NDC xy[-1,1], z[0,1], w>0 in front), with the MC2->GL axis
+			// swap (x'=-x, y'=z, z'=y) ALREADY BAKED IN. So inverting it maps a GL-NDC
+			// corner straight back to MC2 world: NO manual (-x,z,y) swizzle and NO w<0
+			// negate (this matrix emits positive-w-in-front).
+			//
+			// PRIOR BUG: the code inverted getWorldToClip() (D3D pixel-homogeneous,
+			// Y-down, w<0 in front) but fed it the GL-NDC cube below. GL-NDC and that
+			// native clip differ by kPixelHomogToGLNDC (Y-flip + x offset + w sign-flip,
+			// camera.cpp:142-156), never applied -> the unprojected box was mirrored/
+			// offset, only ~correct when the frustum was axis-aligned/centered. That is
+			// why trees shadowed only at certain camera angles.
 			static const float ndc[8][3] = {
 				{-1.0f,-1.0f, 0.0f},{ 1.0f,-1.0f, 0.0f},
 				{-1.0f, 1.0f, 0.0f},{ 1.0f, 1.0f, 0.0f},
@@ -2016,29 +2023,29 @@ void MC_TextureManager::renderLists (void)
 				{-1.0f, 1.0f, 1.0f},{ 1.0f, 1.0f, 1.0f}
 			};
 			float cornersMC2[8][3];
-			// clipToWorld is protected; derive it from the public getWorldToClip().
 			// Invert(src) stores the inverse of src into *this (matrix.hpp:584).
-			Stuff::Matrix4D clipToWorld;
-			clipToWorld.Invert(eye->getWorldToClip());
+			Stuff::Matrix4D clipToWorldGL;
+			clipToWorldGL.Invert(eye->worldToClipGL());
 			for (int c = 0; c < 8; ++c) {
 				Stuff::Vector4D in, out;
 				in.x = ndc[c][0]; in.y = ndc[c][1]; in.z = ndc[c][2]; in.w = 1.0f;
-				out.Multiply(in, clipToWorld);        // row-vector * matrix, arg order per camera.cpp:1977
-				if (out.w < 0.0f)
-					out.Negate(out);                  // mirrors inverseProjectZ:1979-1980
+				out.Multiply(in, clipToWorldGL);      // row-vector * matrix; result is MC2-world homogeneous
 				float inv = (fabsf(out.w) > 1e-6f) ? (1.0f / out.w) : 0.0f;
-				float sx = out.x * inv;
-				float sy = out.y * inv;
-				float sz = out.z * inv;
-				cornersMC2[c][0] = -sx;               // Stuff->MC2: (-x, z, y) per camera.cpp:1982-1984
-				cornersMC2[c][1] =  sz;
-				cornersMC2[c][2] =  sy;
+				cornersMC2[c][0] = out.x * inv;       // already MC2 (axis swap baked into worldToClipGL)
+				cornersMC2[c][1] = out.y * inv;
+				cornersMC2[c][2] = out.z * inv;
 			}
 			float lx, ly, lz;
 			gos_GetTerrainLightDir(&lx, &ly, &lz);   // same accessor used by old shim
 			gos_BuildDynamicLightMatrix(-lx, -ly, -lz, cornersMC2);  // sign matches old shim
 			gos_BeginDynamicShadowPass();             // no-op if shadowsEnabled_ false
-			GpuStaticPropBatcher::instance().flushShadow();
+			// SHADOW-STATIC-BUILDINGS-2: when buildings cast via the world-fixed
+			// static map, skip them in the dynamic pass to avoid a redundant fuzzy
+			// double-shadow on buildings (trees/mechs still cast dynamically).
+			static const bool s_skipBldgInDynamic =
+				(getenv("MC2_STATIC_PROP_BUILDING_SHADOW") != nullptr &&
+				 getenv("MC2_STATIC_PROP_BUILDING_SHADOW")[0] != '0');
+			GpuStaticPropBatcher::instance().flushShadow(s_skipBldgInDynamic);
 			GpuMechBatcher::instance().flushShadow();
 			gos_EndDynamicShadowPass();
 		}
