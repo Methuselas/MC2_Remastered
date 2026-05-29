@@ -337,6 +337,20 @@ These are hypotheses to confirm/deny with the captures, not confirmed defects:
 
 ## 7. Status log
 
-- Recon (5 subagents) + this consolidated reference: COMPLETE.
-- Slice 2 (mech profile fields + writer fix): see status appended below when done.
-- Slices 4/5: deferred per classification above.
+- Recon (5 subagents) + this consolidated reference (Slice 1 + 3): COMPLETE
+  (commit `f15bc706`).
+- Slice 2 (mech ambient/specular profile keys + reader/writer asymmetry fix):
+  SHIPPED (commit `93844db8`). `mechAmbientStrength` / `mechSpecularStrength`
+  added to `applyKey` (env-guarded on `MC2_MECH_AMBIENT_V1_STRENGTH` /
+  `MC2_MECH_SPECULAR_STRENGTH`); `saveCurrentToMission` now round-trips the full
+  reader vocabulary (bloom/AO drop-bug fixed + the two mech keys). `visual_tuning.json`
+  untouched -> keys dormant by default (missing-key = engine default).
+  VALIDATION: check-contracts 8/8; clean full build (exe links, key strings
+  present in exe); runtime launch with a temp profile
+  (`MC2_VISUAL_TUNING_FILE`) on mc2_24 logged `[VisualTuning] mission='mc2_24'
+  applied 6 keys` with NO unknown-key warnings, 2769 frames to clean shutdown,
+  zero GL errors. Deployed exe+pdb+DLLs+83 shaders to v0.4 (all diff-verified;
+  v0.4 had a non-nifty shader set, normalized to match the exe).
+- Slices 4 (candidate per-mission values) / 5 (terrain debug-registry promotion):
+  deferred per classification above. Slice 4 needs the human eyeball pass on the
+  Section 4 captures first; the new mech keys are the lever it will use.
