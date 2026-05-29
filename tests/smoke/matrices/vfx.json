@@ -1,0 +1,20 @@
+{
+  "matrix_id": "vfx",
+  "description": "VFX / gosFX rendering variants (GPU particle batcher gate).",
+  "default_missions": ["mc2_10", "mc2_24"],
+  "default_duration": 30,
+  "entries": [
+    {
+      "id": "default",
+      "description": "Default VFX settings (MC2_GPU_PARTICLES default-ON, gosFX CPU sim active).",
+      "env": {}
+    },
+    {
+      "id": "gpu_particles_off",
+      "description": "GPU particle batcher disabled (MC2_GPU_PARTICLES=0). Pure legacy gosFX CPU path.",
+      "env": {
+        "MC2_GPU_PARTICLES": "0"
+      }
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "matrix_id": "water",
+  "description": "Water rendering variants (GPU-driven path, fastpath, kill-switches).",
+  "default_missions": ["mc2_01", "mc2_24"],
+  "default_duration": 30,
+  "entries": [
+    {
+      "id": "default",
+      "description": "Default water settings (all gates at their shipped defaults).",
+      "env": {}
+    },
+    {
+      "id": "gpu_driven_on",
+      "description": "GPU-driven water path explicitly ON (MC2_GPU_DRIVEN_WATER=1).",
+      "env": {
+        "MC2_GPU_DRIVEN_WATER": "1"
+      }
+    },
+    {
+      "id": "gpu_driven_off",
+      "description": "GPU-driven water path kill-switch OFF (MC2_GPU_DRIVEN_WATER=0). Forces legacy path.",
+      "env": {
+        "MC2_GPU_DRIVEN_WATER": "0"
+      }
+    }
+  ]
+}
