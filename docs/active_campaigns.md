@@ -34,11 +34,14 @@ Full state: `memory/shadow_dynamic_projection_and_caster_feed_fixed.md`.
   unprojected GL-NDC corners through `inverse(getWorldToClip())` (D3D pixel-homog,
   Y-down) → box MIRRORED, shadows only at certain camera angles. Fixed: invert
   `worldToClipGL()` (GL-NDC + axis-swap baked); drop manual swizzle + w<0 negate.
-- **SHADOW-DYNAMIC-PROP-CASTERS-1** (SHIPPED `054ca335`): gate
-  MC2_SHADOW_DYNAMIC_PROP_CASTERS (default OFF) feeds the dynamic caster pass from
-  the registry (ALL non-building props, visibility-independent) instead of the
-  camera-visible s_typeRanges → every tree casts, not just near-camera ones.
-  mc2_01 gate-ON 733 props/frame constant, 0 GL err.
+- **SHADOW-DYNAMIC-PROP-CASTERS-1** (SHIPPED `054ca335`; **DEFAULT-ON flip `ef6192ad`**):
+  MC2_SHADOW_DYNAMIC_PROP_CASTERS now **DEFAULT ON** (kill-switch `=0`) feeds the
+  dynamic caster pass from the registry (visibility-independent) instead of the
+  camera-visible s_typeRanges → every prop casts, not just near-camera ones. Takes
+  effect only when MC2_SHADOW_ENABLE is set. Buildings excluded when the static
+  building map is active, else included (no bare-SHADOW_ENABLE regression).
+  Validated mc2_01: default-on inst=1010 incl buildings / 733 when building-static
+  on; kill-switch reverts to flushShadow; 0 GL err.
 - **DEBT:** no light-box cull yet (draws all map props/frame; **HZB planned**);
   camZ=0 focus shim; stale building shadow on destroy; foliage alpha-discard.
 
