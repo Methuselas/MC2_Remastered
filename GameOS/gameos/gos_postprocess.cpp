@@ -575,6 +575,24 @@ void gosPostProcess::createFBOs(int w, int h)
         fprintf(stderr, "gosPostProcess: scene FBO incomplete (0x%x)\n", status);
     }
 
+    // REGISTER-MAIN-DEPTH-RESOURCE: publish the full-res scene depth as the
+    // MainDepth slot (descriptive only; this owner keeps the GL lifetime).
+    // sceneDepthTex_ is a sampleable GL_TEXTURE_2D (GL_DEPTH24_STENCIL8); the
+    // Depth24 enum is the closest descriptive label (no combined D/S enum).
+    // A future HZB build pass reads desc->glName to source the pyramid.
+    {
+        RenderCore::RenderResourceDesc dd;
+        dd.id        = RenderCore::RenderResourceId::MainDepth;
+        dd.kind      = RenderCore::RenderResourceKind::Texture2D;
+        dd.format    = RenderCore::RenderResourceFormat::Depth24;
+        dd.debugName = "MainDepth";
+        dd.width     = (uint32_t)w;
+        dd.height    = (uint32_t)h;
+        dd.glName    = sceneDepthTex_;
+        dd.valid     = (status == GL_FRAMEBUFFER_COMPLETE);
+        RenderCore::registerOrUpdateRenderResource(dd);
+    }
+
     // --- Bloom ping-pong FBOs (half resolution) ---
     int halfW = w / 2;
     int halfH = h / 2;
@@ -749,6 +767,11 @@ void gosPostProcess::destroyFBOs()
     if (sceneDepthTex_) {
         glDeleteTextures(1, &sceneDepthTex_);
         sceneDepthTex_ = 0;
+        // REGISTER-MAIN-DEPTH-RESOURCE: mark the slot unavailable on teardown
+        // (resize destroys+recreates, so this re-validates in createFBOs).
+        RenderCore::RenderResourceDesc inv;
+        inv.id = RenderCore::RenderResourceId::MainDepth; inv.valid = false;
+        RenderCore::registerOrUpdateRenderResource(inv);
     }
     if (sceneNormalTex_) {
         glDeleteTextures(1, &sceneNormalTex_);
