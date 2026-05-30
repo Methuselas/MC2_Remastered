@@ -214,6 +214,22 @@ if(ENABLE_ASSIMP_IMPORTER)
     message(STATUS "ENABLE_ASSIMP_IMPORTER=ON — vendored Assimp at 3rdparty/assimp/ (FBX + GLTF, static)")
 endif()
 
+# ---------------------------------------------------------------------------
+# Offline asset-pipeline probe host tools (ASSIMP-IMPORTER-PHASE-0 +).
+# Isolated subdir so link deps stay minimal — these tools link ONLY
+# assimp::assimp, never mclib / gameos / SDL2 / GLEW. Placed AFTER the assimp
+# add_subdirectory so assimp::assimp is visible. A later slice extends the
+# subdir with meshopt_lod_probe.
+# ---------------------------------------------------------------------------
+option(ENABLE_ASSET_CPP_PROBES "Build offline asset probe host tools (assimp_probe, meshopt_lod_probe)" OFF)
+if(ENABLE_ASSET_CPP_PROBES)
+    if(NOT ENABLE_ASSIMP_IMPORTER)
+        message(FATAL_ERROR "ENABLE_ASSET_CPP_PROBES=ON requires ENABLE_ASSIMP_IMPORTER=ON (assimp_probe links assimp::assimp).")
+    endif()
+    add_subdirectory(tools/cpp_probes "${CMAKE_BINARY_DIR}/out/tools/cpp_probes")
+    message(STATUS "ENABLE_ASSET_CPP_PROBES=ON — building offline host tools in tools/cpp_probes/")
+endif()
+
 add_subdirectory("./mclib/" "./out/mclib")
 add_subdirectory("./RenderCore" "./out/RenderCore")
 add_subdirectory("./RenderWorld" "./out/RenderWorld")
