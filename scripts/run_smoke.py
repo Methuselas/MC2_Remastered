@@ -421,6 +421,12 @@ def main():
                             # B1 Stage 1'+: GPU particle batcher opt-in gate.
                             # (default-OFF; flipped ON for Stage 1' canaries.)
                             "MC2_GPU_PARTICLES",
+                            # VFX oracle render gate (CPU-side harvest path).
+                            # MC2_VFX_ORACLE_RENDER=1 enables the oracle path in
+                            # CardCloud/ShardCloud/Card Draw() (default-OFF).
+                            # MC2_GPU_PARTICLES_LOG=1 enables [VFX_ORACLE v1] stderr.
+                            "MC2_VFX_ORACLE_RENDER",
+                            "MC2_GPU_PARTICLES_LOG",
                             # StaticPropTypeTable v0 Task 5: candidate draw log
                             # proof gate. MC2_TYPE_TABLE_CAND_LOG=1 enables the
                             # [DRAW_CAND v0] summary line every frame.
