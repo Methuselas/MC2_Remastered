@@ -418,12 +418,14 @@ void gosFX::ShardCloud::Draw(DrawInfo *info)
 						s_first = true;
 						// VFX-SHARDCLOUD-UV-RECT-1: log UV rect (always full-page for ShardCloud)
 						// VFX-SHARDCLOUD-SPIN-ASPECT-1: add sizeRange and spinRange
+						// VFX-SHARDCLOUD-ORACLE-POLISH-1: add spec name (matches CardCloud format)
 						const double szLo = (harvested > 0) ? static_cast<double>(minSize) : 0.0;
 						const double szHi = (harvested > 0) ? static_cast<double>(maxSize) : 0.0;
 						const double spLo = (harvested > 0) ? static_cast<double>(minSpin)  : 0.0;
 						const double spHi = (harvested > 0) ? static_cast<double>(maxSpin)  : 0.0;
 						std::fprintf(stderr,
-							"[VFX_ORACLE v1] class=ShardCloud FIRST_HARVEST active=%d harvested=%d alpha=[%.3f,%.3f] uvRect=[0.000,0.000,1.000,1.000] atlasColumns=0 sizeRange=[%.3f,%.3f] spinRange=[%.3f,%.3f]\n",
+							"[VFX_ORACLE v1] class=ShardCloud FIRST_HARVEST spec=\"%s\" active=%d harvested=%d alpha=[%.3f,%.3f] uvRect=[0.000,0.000,1.000,1.000] atlasColumns=0 sizeRange=[%.3f,%.3f] spinRange=[%.3f,%.3f]\n",
+							static_cast<const char*>(spec->m_name),
 							m_activeParticleCount, harvested,
 							static_cast<double>(minA), static_cast<double>(maxA),
 							szLo, szHi, spLo, spHi);
