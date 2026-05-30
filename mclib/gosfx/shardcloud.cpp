@@ -354,7 +354,11 @@ void gosFX::ShardCloud::Draw(DrawInfo *info)
 				local_to_world.Multiply(m_localToParent, *info->m_parentToWorld);
 
 				mc2::particles::Batcher &batcher = mc2::particles::Batcher::Instance();
-				batcher.BeginGroup(mlrTex, 0.0f, 0.0f, 1.0f, 1.0f, blendMode);
+				// VFX-SHARDCLOUD-UV-RECT-1: ShardCloud has no m_UOffset/VOffset/USize/VSize
+				// spec fields (it uses MLRTriangleCloud, not MLRCardCloud). The UV is always
+				// full-page (0,0,1,1) and there is no atlas animation. Pass atlasColumns=0
+				// explicitly to match the 7-arg BeginGroup signature from VFX-FLIPBOOK-ASSET-TABLE-1.
+				batcher.BeginGroup(mlrTex, 0.0f, 0.0f, 1.0f, 1.0f, blendMode, 0u);
 
 				int harvested = 0;
 				float minA =  3.0e38f, maxA = -3.0e38f;
@@ -391,8 +395,10 @@ void gosFX::ShardCloud::Draw(DrawInfo *info)
 					static bool s_first = false;
 					if (!s_first && harvested > 0) {
 						s_first = true;
+						// VFX-SHARDCLOUD-UV-RECT-1: log UV rect (always full-page for ShardCloud)
+						// and atlasColumns (always 0 — no atlas animation on ShardCloud).
 						std::fprintf(stderr,
-							"[VFX_ORACLE v1] class=ShardCloud FIRST_HARVEST active=%d harvested=%d alpha=[%.3f,%.3f]\n",
+							"[VFX_ORACLE v1] class=ShardCloud FIRST_HARVEST active=%d harvested=%d alpha=[%.3f,%.3f] uvRect=[0.000,0.000,1.000,1.000] atlasColumns=0\n",
 							m_activeParticleCount, harvested,
 							static_cast<double>(minA), static_cast<double>(maxA));
 						std::fflush(stderr);
