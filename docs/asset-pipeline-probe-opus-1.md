@@ -8,9 +8,10 @@ Reference doc. Branch: `claude/asset-pipeline-probe-opus-1`.
 
 This opus turned the asset-pipeline validation *scaffold* into a concrete,
 validated, **offline** probe pipeline — with **zero runtime rendering changes**.
-Everything here runs as a deterministic, machine-independent gate (Python +
-repo-relative paths). No asset import, no renderer mutation, no broad CMake
-wiring landed.
+The Python gates are deterministic and machine-independent. A later, explicitly
+scoped extension added two **offline C++ host tools** (`assimp_probe`,
+`meshopt_lod_probe`) under a default-OFF CMake option — no runtime renderer,
+material binding, asset-loading, or `mech3d.cpp` importer wiring changed.
 
 ## 2. What shipped
 
@@ -19,6 +20,11 @@ wiring landed.
 | ASSET-MANIFEST-0-EXTEND | `f5e9e71a` | Optional manifest sections, backward compatible |
 | MATERIAL-AUTHORING-VALIDATION-1 | `d6948f6b` | Material authoring invariants + colorSpace conventions |
 | KTX2-BAKE-PROBE-1 | `3ef71573` | Deterministic offline KTX2 bake+inspect probe |
+| ASSIMP-IMPORTER-PHASE-0 | `5e82583f` | Offline `assimp_probe` C++ host tool → geometry summary |
+| MESHOPT-LOD-PROBE-1 | `a9bb6127` | Offline `meshopt_lod_probe` C++ host tool → LOD stats |
+
+Commits `f5e9e71a`…`f83f81a1` (Python phase) are merged to `claude/nifty-mendeleev`
+via `afede628`. The two C++ slices land on `claude/asset-cpp-probes-1`.
 
 ### ASSET-MANIFEST-0-EXTEND (`f5e9e71a`)
 
@@ -70,31 +76,68 @@ CI wrapper `scripts/check-ktx2-probe.py` skips gracefully (exit 0) when Pillow i
 unavailable. Artifacts land under gitignored `out/asset-pipeline-probe/` and are
 **not** committed.
 
+### ASSIMP-IMPORTER-PHASE-0 (`5e82583f`)
+
+Offline C++ host tool `tools/cpp_probes/assimp_probe.cpp`, linking **only**
+`assimp::assimp` (not mclib/gameos — fully decoupled from the engine-coupled
+runtime importer body on `claude/assimp-testing`, which binds `TG_TypeMultiShape`
+/ `tglHeap`). Reads a model via `Assimp::Importer::ReadFile` with flags
+`Triangulate | GenSmoothNormals | ValidateDataStructure | SortByPType` (no
+`CalcTangentSpace`, so `hasTangents` reflects the source) and emits the
+manifest `geometry` contract: `meshCount`, `vertexCount`, `indexCount`,
+`materialSlotCount`, `hasNormals`, `hasTangents`, `bounds{min,max,radius}`.
+
+Fixture: `tests/fixtures/assets/cube.gltf` (hand-authored 24-vertex / 12-triangle
+ASCII glTF, POSITION+NORMAL, no tangents, embedded base64 buffer). On the cube:
+`meshCount=1, vertexCount=24, indexCount=36, hasNormals=true, hasTangents=false`,
+`radius=√3`. Note `materialSlotCount=2` — Assimp's glTF importer always appends a
+default material; the tool reports the actual `scene->mNumMaterials`.
+
+No runtime call site, no game asset-loading path.
+
+### MESHOPT-LOD-PROBE-1 (`a9bb6127`)
+
+Offline C++ host tool `tools/cpp_probes/meshopt_lod_probe.cpp`, linking the
+vendored `meshoptimizer` static lib (wired ONLY for this tool, gated, never into
+mc2). Generates a deterministic procedural mesh (33×33 grid, 1089 verts / 2048
+tris / 6144 indices, sine/cosine height field — no file input, no randomness),
+runs `meshopt_simplify` at target ratio 0.25, and `meshopt_buildMeshlets` for a
+cluster count. Emits the manifest `lods[]` contract
+`{level, vertexCount, triangleCount, error}` plus a `probe` block
+`{inputVertices, inputIndices, outputVertices, outputIndices, targetRatio,
+resultError, clusterCount}`. Deterministic result: L1 = 452 verts / 868 tris,
+`resultError≈0.00996`, `clusterCount=23`, `outputIndices=2604 < 6144`.
+
+No runtime LOD behavior, no DrawPacket change, no culling/impostor work, no
+runtime cdag/meshpack consumption.
+
 ## 3. Toolchain truth table
 
 From `docs/toolchain-bom.md` + `scripts/check-toolchain-bom.py`.
 
 | Tool | Vendored | Build-integrated | Callable now | Status |
 |---|---|---|---|---|
-| Assimp importer | yes (`3rdparty/assimp/`) | yes — linked into mclib (`ENABLE_ASSIMP_IMPORTER=ON`) | no — see note | REQUIRED_NOW |
+| Assimp importer | yes (`3rdparty/assimp/`) | yes — linked into mclib + offline `assimp_probe` | yes (offline `assimp_probe`) | REQUIRED_NOW |
 | shader_reflect | n/a (Python) | active CI gate + goldens | yes | REQUIRED_NOW |
 | mc2texcook | n/a (Python) | KTX2 producer | yes | REQUIRED_NOW |
 | KTX2 runtime loader | n/a | `KtxLoader.cpp` / sidecar loader | runtime (Phase-0 RGBA8) | REQUIRED_NOW |
 | validate_asset_manifest | n/a (Python) | shape gate | yes | REQUIRED_NOW |
-| meshoptimizer | yes (`3rdparty/meshoptimizer/`) | no — `ENABLE_CDAG_COOKER` declared, no `add_subdirectory` | no | FUTURE |
+| meshoptimizer | yes (`3rdparty/meshoptimizer/`) | yes — offline only, gated by `ENABLE_ASSET_CPP_PROBES` (`EXCLUDE_FROM_ALL`, never into mc2) | yes (offline `meshopt_lod_probe`) | REQUIRED_NOW (offline) |
 | gltfpack | no (dead code inside meshoptimizer) | no | no | FUTURE |
 
 Key facts:
 
 - **Assimp** is vendored and *linked* into mclib (`ENABLE_ASSIMP_IMPORTER=ON`,
-  default ON), but `ImportGeometryFromFile()` is a `return -1;` **stub**. The real
-  body lives on branch `claude/assimp-testing`; wiring it touches runtime
-  `mech3d.cpp`.
+  default ON). The runtime `ImportGeometryFromFile()` is still a `return -1;`
+  **stub** (real body on `claude/assimp-testing`, wiring touches `mech3d.cpp` —
+  still deferred). The offline `assimp_probe` does NOT use that body; it reads
+  Assimp directly.
 - **mc2texcook.py** is a complete pure-Python KTX2 writer — REQUIRED_NOW,
   callable today.
-- **KtxLoader.cpp** runtime loader exists (Phase-0 RGBA8).
-- **meshoptimizer** is vendored but **unwired** (`ENABLE_CDAG_COOKER` option
-  declared, no `add_subdirectory`).
+- **KtxLoader.cpp** runtime loader exists (Phase-0 RGBA8) — runtime load deferred.
+- **meshoptimizer** is now wired **for the offline probe only**
+  (`ENABLE_ASSET_CPP_PROBES`, default OFF, `EXCLUDE_FROM_ALL`). The legacy
+  `ENABLE_CDAG_COOKER` option remains unused; no runtime consumption.
 - **gltfpack** is dead code inside vendored meshoptimizer; not wired.
 
 ## 4. Commands (offline gates)
@@ -108,6 +151,24 @@ sh scripts/check-contracts.sh
 python tools/asset_probe/ktx2_probe.py
 ```
 
+### Offline C++ host tools (default-OFF; build validation)
+
+```sh
+cmake -B build64-probe -G "Visual Studio 17 2022" -A x64 \
+      -DCMAKE_PREFIX_PATH=<repo>/3rdparty/3rdparty -DENABLE_ASSET_CPP_PROBES=ON
+cmake --build build64-probe --target assimp_probe     --config RelWithDebInfo
+cmake --build build64-probe --target meshopt_lod_probe --config RelWithDebInfo
+
+build64-probe/out/tools/cpp_probes/RelWithDebInfo/assimp_probe.exe \
+    tests/fixtures/assets/cube.gltf --out out/asset-pipeline-probe/cube_geometry.json
+build64-probe/out/tools/cpp_probes/RelWithDebInfo/meshopt_lod_probe.exe \
+    --out out/asset-pipeline-probe/meshopt_lod_summary.json
+```
+
+`ENABLE_ASSET_CPP_PROBES` defaults **OFF** — the normal game build is unaffected.
+Both subdirs (`3rdparty/meshoptimizer`, `tools/cpp_probes`) are added only inside
+that gate and `EXCLUDE_FROM_ALL`.
+
 ## 5. Generated-output locations
 
 - Generated artifacts (`.png`, `.ktx2`, JSON summaries) → `out/asset-pipeline-probe/`
@@ -116,19 +177,23 @@ python tools/asset_probe/ktx2_probe.py
 - Note: `tools/` and `tests/fixtures/` are gitignored at repo root, so committed
   files there are **force-added** (`git add -f`).
 
-## 6. Deferred
+## 6. Deferred (still out of scope)
 
-Blocked by this opus's no-runtime / no-broad-CMake constraints.
+The offline probes shipped; what remains deferred is strictly **runtime**
+integration, which stays out of scope.
 
-| Deferred slice | Why blocked | Shipped instead | Concrete next step |
+| Deferred | Why | Offline contract shipped | Concrete next step |
 |---|---|---|---|
-| ASSIMP-IMPORTER-PHASE-0 (running import) | importer is a `return -1;` stub; real body on `claude/assimp-testing`; wiring is runtime (`mech3d.cpp` `[Import] Source=` hook) | the geometry-summary manifest **contract** (`geometry` section) | ASSIMP-MECH-IMPORT-1: cherry-pick the 8-commit sequence + a tiny `.glb` fixture, runtime-gated |
-| MESHOPT-LOD-PROBE-1 (running probe) | meshoptimizer unwired; needs CMake `add_subdirectory` + a new isolated `data_tools` host tool (never linked into mc2) + a C++ compile cycle | the `lods[]` LOD-stat manifest fields + `capabilities.hasLods` | MESHOPT-CLUSTERLOD-PROBE-1: wire the host tool (see `docs/superpowers/specs/2026-05-19-static-prop-cluster-lod-poc-design.md`) |
+| Runtime Assimp mech import | requires `mech3d.cpp` `[Import] Source=` wiring + the engine-coupled importer body on `claude/assimp-testing` | `assimp_probe` + the `geometry` manifest section | ASSIMP-MECH-IMPORT-1: cherry-pick the 8-commit sequence + a tiny `.glb` fixture, runtime-gated |
+| Runtime cluster-LOD | needs DrawPacket/cull/impostor changes + runtime `.cdag` consumption | `meshopt_lod_probe` + the `lods[]` manifest fields | MESHOPT-CLUSTERLOD-PROBE-1 runtime: see `docs/superpowers/specs/2026-05-19-static-prop-cluster-lod-poc-design.md` |
+| KTX2 runtime load | `KtxLoader.cpp` is Phase-0 RGBA8 (mip-0 only); full mip + Basis transcoding not wired | KTX2 bake + inspect probe | KTX2-RUNTIME-LOAD-1 |
 
 ## 7. Next recommended slices (ordered)
 
-1. **ASSIMP-MECH-IMPORT-1** — cherry-pick the importer body + `.glb` fixture,
-   runtime-gated.
-2. **MESHOPT-CLUSTERLOD-PROBE-1** — wire the isolated host tool for LOD stats.
+1. **ASSIMP-MECH-IMPORT-1** — runtime-gated importer body + `.glb` fixture
+   (offline `assimp_probe` already proves the geometry contract).
+2. **MESHOPT-CLUSTERLOD-PROBE-1 (runtime)** — consume LOD/cluster data at runtime
+   (offline `meshopt_lod_probe` already proves the stats contract).
 3. **KTX2-RUNTIME-LOAD-1** — full mip-chain + Basis transcoding in `KtxLoader`.
-4. Wire all four offline gates into CI alongside `check-toolchain-bom.py`.
+4. Wire the offline gates (+ optional gated C++ tool build) into CI alongside
+   `check-toolchain-bom.py`.
