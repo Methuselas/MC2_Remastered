@@ -160,6 +160,10 @@ GLint s_loc_uAtlas        = -2;
 // P2-1: UV sub-rect uniforms — set per draw group.
 GLint s_loc_uvOffset      = -2;
 GLint s_loc_uvSize        = -2;
+// VFX-FLIPBOOK-ASSET-TABLE-1: atlas column count — set per draw group.
+// 0 or 1 = non-animated (shader skips per-particle frame-offset path).
+// >1 = animated; shader computes col=atlasIndex%columns, row=atlasIndex/columns.
+GLint s_loc_atlasColumns  = -2;
 // B2 P1: camera-basis uniforms — looked up once, bound per flush.
 GLint s_loc_cameraRight   = -2;
 GLint s_loc_cameraUp      = -2;
@@ -225,6 +229,8 @@ void ensureInitialized() {
         // P2-1: UV sub-rect uniforms.
         s_loc_uvOffset      = glGetUniformLocation(s_prog->shp_, "u_uvOffset");
         s_loc_uvSize        = glGetUniformLocation(s_prog->shp_, "u_uvSize");
+        // VFX-FLIPBOOK-ASSET-TABLE-1: atlas column count per draw group.
+        s_loc_atlasColumns  = glGetUniformLocation(s_prog->shp_, "u_atlasColumns");
         // B2 P1: camera-basis uniforms.
         // A -1 is a legitimate "not in the program" result (driver stripped a
         // uniform that's unused after dead-code elim). Do NOT retry the lookup
@@ -498,8 +504,9 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
                             (GLsizeiptr)(count * sizeof(mc2::particles::GpuParticle)),
                             records);
             glBindTexture(GL_TEXTURE_2D, glTex);
-            if (s_loc_uvOffset >= 0) glUniform2f(s_loc_uvOffset, 0.0f, 0.0f);
-            if (s_loc_uvSize   >= 0) glUniform2f(s_loc_uvSize,   1.0f, 1.0f);
+            if (s_loc_uvOffset     >= 0) glUniform2f(s_loc_uvOffset,    0.0f, 0.0f);
+            if (s_loc_uvSize       >= 0) glUniform2f(s_loc_uvSize,      1.0f, 1.0f);
+            if (s_loc_atlasColumns >= 0) glUniform1ui(s_loc_atlasColumns, 0u);
             glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(count * 6u));
         } else {
             if (groupLogEnabled()) {
@@ -559,6 +566,9 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
             // P2-1: set UV sub-rect uniforms per group.
             if (s_loc_uvOffset >= 0) glUniform2f(s_loc_uvOffset, grp.u0, grp.v0);
             if (s_loc_uvSize   >= 0) glUniform2f(s_loc_uvSize,   grp.us, grp.vs);
+            // VFX-FLIPBOOK-ASSET-TABLE-1: atlas column count (0 = non-animated).
+            if (s_loc_atlasColumns >= 0)
+                glUniform1ui(s_loc_atlasColumns, grp.atlasColumns);
 
             // Per-group blend mode from MLRState (saved state restored after loop).
             // 0 = standard alpha blend: GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA

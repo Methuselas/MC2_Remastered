@@ -554,13 +554,31 @@ void parse_uniforms(GLuint pprogram, glsl_program::UniArr_t* puniforms, glsl_pro
                 puni->num_el_ = 1;
                 break;
             case GL_INT:
+            case GL_UNSIGNED_INT:  // VFX-FLIPBOOK-ASSET-TABLE-1: uint uniforms (e.g. u_atlasColumns)
+                                   // Treated as CONSTANT_INT — same 4-byte constantSizes entry.
+                                   // Bridge sets these via glUniform1ui/glUniform1i directly;
+                                   // the cached type is not used for uint uniforms.
                 puni->type_ = CONSTANT_INT;
                 puni->num_el_ = 1;
                 break;
             default:
-                puni->type_ = (ConstantType)(CONSTANT_VEC2 + (type - GL_FLOAT_VEC2));
+            {
+                // Map float-vector and matrix GL types to ConstantType by offset from
+                // GL_FLOAT_VEC2. Validate bounds before indexing typeNames[].
+                const ConstantType ct =
+                    (ConstantType)(CONSTANT_VEC2 + (int)(type - GL_FLOAT_VEC2));
+                if (ct < CONSTANT_VEC2 || ct > CONSTANT_MAT4) {
+                    // Unknown type (e.g. uint arrays, double, image units).
+                    // Bridge sets these via direct glUniform calls; skip caching.
+                    log_info("name: %s type: unknown (GL type=0x%x, skipped)\n",
+                             buf, (unsigned)type);
+                    delete puni;
+                    continue;
+                }
+                puni->type_ = ct;
                 puni->num_el_ = size;
                 break;
+            }
         }
 
 

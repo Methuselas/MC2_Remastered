@@ -56,6 +56,13 @@
           "name": "u_uvSize",
           "offset": 104,
           "type": "vec2"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_atlasColumns",
+          "offset": 112,
+          "type": "uint"
         }
       ],
       "name": "gl_DefaultUniformBlock"

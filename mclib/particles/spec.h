@@ -38,7 +38,13 @@ namespace particles {
 //                            Stage 1'; Stage 2' shifts age advance to GPU via
 //                            spawn-frame seed)
 //   56  float     size       world-space radius in meters
-//   60  uint      atlasIndex gos_TextureHandle cast to uint32; resolved to GLuint at flush time
+//   60  uint      atlasIndex per-particle atlas frame index (0 = first frame).
+//                            VFX-FLIPBOOK-ASSET-TABLE-1: oracle render stores the
+//                            integer frame index here; shader applies tile offset
+//                            (col=index%atlasColumns, row=index/atlasColumns) when
+//                            GroupInfo.atlasColumns > 1. Non-oracle/non-animated
+//                            producers may leave this as 0 or the raw MLR handle —
+//                            the shader ignores atlasIndex when atlasColumns <= 1.
 struct GpuParticle {
     float    position[3];
     float    _pad0;          // pad to vec4 alignment
@@ -48,7 +54,7 @@ struct GpuParticle {
     float    lifetime;
     float    age;
     float    size;
-    uint32_t atlasIndex;
+    uint32_t atlasIndex;     // per-particle atlas frame index (see comment above)
 };
 
 // Accessors for kind_flags bit fields.

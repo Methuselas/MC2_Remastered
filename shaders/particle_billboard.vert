@@ -35,13 +35,18 @@ uniform mat4 u_worldToClipGL;  // world -> GL clip (kAxisSwapMC2toGL * worldToCl
 uniform vec3 u_cameraRight;
 uniform vec3 u_cameraUp;
 
-// P2-1 UV sub-rect: atlas origin and size for this draw group.
+// P2-1 UV sub-rect: atlas origin and per-tile size for this draw group.
 // Set per draw call by the bridge (gos_particle_bridge.cpp).
-// Default full-page: u_uvOffset=(0,0), u_uvSize=(1,1).
-// For an atlas sub-rect (animated card): u_uvOffset=(col*uSize, row*vSize),
-// u_uvSize=(uSize, vSize) as read from spec m_UOffset/m_VOffset/m_USize/m_VSize.
+// Default full-page: u_uvOffset=(0,0), u_uvSize=(1,1), u_atlasColumns=0.
+// For a static atlas sub-rect: u_uvOffset=(tileU0,tileV0), u_uvSize=(tileUs,tileVs),
+//   u_atlasColumns=0 — same tile for all particles.
+// VFX-FLIPBOOK-ASSET-TABLE-1: for animated atlases (u_atlasColumns>1), the VS
+//   reads p.atlasIndex as the per-particle frame index and applies a tile offset:
+//   col = atlasIndex % u_atlasColumns; row = atlasIndex / u_atlasColumns.
+//   Final UV = u_uvOffset + (vec2(col,row) + kCornerUv[i]) * u_uvSize.
 uniform vec2 u_uvOffset;
 uniform vec2 u_uvSize;
+uniform uint u_atlasColumns;  // VFX-FLIPBOOK-ASSET-TABLE-1: 0/1=static, >1=animated
 
 // Atlas UVs for the four billboard corners (normalized [0,1] within the sub-rect).
 // The final UV is: u_uvOffset + kCornerUv[i] * u_uvSize.
@@ -94,8 +99,18 @@ void main() {
     // F1 Stage A: direct GL clip emit.
     gl_Position = u_worldToClipGL * vec4(worldPos, 1.0);
 
-    // P2-1: apply UV sub-rect so each billboard samples the correct atlas frame.
-    v_uv      = u_uvOffset + kCornerUv[cornerIdx] * u_uvSize;
+    // VFX-FLIPBOOK-ASSET-TABLE-1: apply per-particle atlas frame offset when
+    // u_atlasColumns > 1.  frame = p.atlasIndex; col = frame % columns;
+    // row = frame / columns.  For non-animated groups (u_atlasColumns <= 1)
+    // frameOffset stays (0,0) and the result is identical to the old path.
+    vec2 frameOffset = vec2(0.0);
+    if (u_atlasColumns > 1u) {
+        uint atlasFrame = p.atlasIndex;
+        uint col = atlasFrame % u_atlasColumns;
+        uint row = atlasFrame / u_atlasColumns;
+        frameOffset = vec2(float(col), float(row));
+    }
+    v_uv      = u_uvOffset + (frameOffset + kCornerUv[cornerIdx]) * u_uvSize;
     v_color   = p.color;
     v_kind    = (p.kind_flags >> 4u) & 0xFu;
     v_is_head = p.kind_flags & 1u;

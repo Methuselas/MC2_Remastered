@@ -38,15 +38,19 @@ namespace particles {
 // and us/vs are the frame size as returned by spec m_UOffset/m_VOffset/
 // m_USize/m_VSize.
 struct GroupInfo {
-    uint32_t handle;    // MLR pool index at spawn; resolved to gos_TextureHandle by ResolveTextures()
-    float    u0;        // UV sub-rect origin X (0..1)
-    float    v0;        // UV sub-rect origin Y (0..1)
-    float    us;        // UV sub-rect width    (0..1)
-    float    vs;        // UV sub-rect height   (0..1)
-    unsigned start;     // index of first record in staging buffer
-    unsigned count;     // number of records in this group
-    int      blendMode; // 0 = standard alpha (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-                        // 1 = additive       (GL_SRC_ALPHA, GL_ONE)
+    uint32_t handle;       // MLR pool index at spawn; resolved to gos_TextureHandle by ResolveTextures()
+    float    u0;           // UV sub-rect origin X (0..1)
+    float    v0;           // UV sub-rect origin Y (0..1)
+    float    us;           // UV sub-rect width    (0..1) — per-tile width for animated atlases
+    float    vs;           // UV sub-rect height   (0..1) — per-tile height for animated atlases
+    unsigned start;        // index of first record in staging buffer
+    unsigned count;        // number of records in this group
+    int      blendMode;    // 0 = standard alpha (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+                           // 1 = additive       (GL_SRC_ALPHA, GL_ONE)
+    uint32_t atlasColumns; // VFX-FLIPBOOK-ASSET-TABLE-1: atlas grid column count.
+                           // 0 or 1 = non-animated (shader ignores GpuParticle.atlasIndex).
+                           // >1 = animated atlas; shader uses atlasIndex as frame index:
+                           //   col = atlasIndex % atlasColumns; row = atlasIndex / atlasColumns.
 };
 
 class Batcher {
@@ -84,14 +88,17 @@ class Batcher {
     //
     // Parameters:
     //   handle         MLR pool index from spec->m_state.GetTextureHandle() (resolved to GOS handle by ResolveTextures)
-    //   u0, v0         atlas sub-rect origin (0..1)
-    //   us, vs         atlas sub-rect size   (0..1)
+    //   u0, v0         atlas sub-rect origin (0..1) — base tile origin for animated; full-page origin for static
+    //   us, vs         atlas sub-rect size   (0..1) — per-tile size for animated; full-page size for static
+    //   atlasColumns   VFX-FLIPBOOK-ASSET-TABLE-1: atlas grid column count (default 0 = non-animated).
+    //                  When >1, the billboard VS uses GpuParticle.atlasIndex as a frame index to
+    //                  compute per-particle tile offsets: col=frame%columns, row=frame/columns.
     //
-    // Use u0=0, v0=0, us=1, vs=1 for full-page textures.
+    // Use u0=0, v0=0, us=1, vs=1, atlasColumns=0 for full-page textures.
     // No-op when is_enabled() is false.
     // blendMode: 0 = standard alpha, 1 = additive (from MLRState AlphaMode).
     void BeginGroup(uint32_t handle, float u0, float v0, float us, float vs,
-                    int blendMode = 0);
+                    int blendMode = 0, uint32_t atlasColumns = 0u);
 
     // Push one particle record into the per-frame staging buffer. Bounds-
     // checked against perFrameBudget; on overflow the record is dropped and

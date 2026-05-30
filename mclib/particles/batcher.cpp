@@ -169,7 +169,7 @@ Batcher::Batcher(unsigned int perFrameBudget)
 Batcher::~Batcher() { delete impl_; }
 
 void Batcher::BeginGroup(uint32_t handle, float u0, float v0, float us, float vs,
-                         int blendMode) {
+                         int blendMode, uint32_t atlasColumns) {
     if (!is_enabled()) return;
     // Close the previous open group by recording its count.
     if (impl_->hasOpenGroup && !impl_->groups.empty()) {
@@ -177,14 +177,15 @@ void Batcher::BeginGroup(uint32_t handle, float u0, float v0, float us, float vs
         prev.count = (unsigned)impl_->staging.size() - prev.start;
     }
     GroupInfo gi;
-    gi.handle    = handle;
-    gi.u0        = u0;
-    gi.v0        = v0;
-    gi.us        = us;
-    gi.vs        = vs;
-    gi.start     = (unsigned)impl_->staging.size();
-    gi.count     = 0;
-    gi.blendMode = blendMode;
+    gi.handle       = handle;
+    gi.u0           = u0;
+    gi.v0           = v0;
+    gi.us           = us;
+    gi.vs           = vs;
+    gi.start        = (unsigned)impl_->staging.size();
+    gi.count        = 0;
+    gi.blendMode    = blendMode;
+    gi.atlasColumns = atlasColumns;
     impl_->groups.push_back(gi);
     impl_->hasOpenGroup = true;
 }
