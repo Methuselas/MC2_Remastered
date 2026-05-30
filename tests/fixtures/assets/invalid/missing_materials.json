@@ -1,0 +1,16 @@
+{
+  "_why_invalid": "ASSET-MANIFEST-NEGATIVE-FIXTURES-1: 'materials' omitted -> 'missing required field materials (use an explicit empty array if none)'. Empty array is the valid 'no materials' form; omission is an error.",
+  "assetId": "prop_crate_01",
+  "source": "mc2srcdata/objects/crate_01.fbx",
+  "kind": "prop",
+  "capabilities": {
+    "hasNormals": true,
+    "hasTangents": false,
+    "hasLods": false,
+    "hasImpostor": false,
+    "castsShadow": true,
+    "supportsObjectId": true
+  },
+  "lods": [],
+  "textureRefs": []
+}

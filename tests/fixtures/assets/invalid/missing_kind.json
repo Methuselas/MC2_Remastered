@@ -1,0 +1,16 @@
+{
+  "_why_invalid": "ASSET-MANIFEST-NEGATIVE-FIXTURES-1: neither 'kind' nor 'type' present -> 'missing/empty required field kind (or type)'.",
+  "assetId": "prop_crate_01",
+  "source": "mc2srcdata/objects/crate_01.fbx",
+  "materials": [],
+  "capabilities": {
+    "hasNormals": true,
+    "hasTangents": false,
+    "hasLods": false,
+    "hasImpostor": false,
+    "castsShadow": true,
+    "supportsObjectId": true
+  },
+  "lods": [],
+  "textureRefs": []
+}

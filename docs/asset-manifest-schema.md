@@ -40,6 +40,23 @@ the manifest vocabulary stays consistent with the engine:
 | `castsShadow` | `ArchetypeFlags.castsShadow` |
 | `supportsObjectId` | `RenderObjectDesc.gameObjectId` / object-ID buffer |
 
+## Negative fixtures (regression guard)
+`ASSET-MANIFEST-NEGATIVE-FIXTURES-1`. `tests/fixtures/assets/invalid/*.json` are
+manifests that MUST be rejected — one per schema rule (missing `assetId` /
+`source` / `kind`, missing `materials`, non-array `textureRefs`, missing /
+wrong-type / unknown-key / incomplete `capabilities`). Each carries a
+`_why_invalid` note (a top-level extra key the validator ignores). They exist so
+a future change that WEAKENS the schema (drops a required-field check) is caught.
+
+`scripts/check-asset-manifest-fixtures.py` drives the validator over the corpus:
+the canonical valid fixture must exit 0; every invalid fixture must exit nonzero.
+Add a fixture here whenever you add a schema rule.
+
+> NOTE: the validator does NOT yet check material semantics (normal-map vs
+> tangents, `colorSpace`, `alphaMode`). When those land, add matching negative
+> fixtures (normal map present but `hasTangents:false`, invalid `colorSpace`,
+> invalid `alphaMode`) alongside the new rules.
+
 ## For the future asset-pipeline lane
 Extend HERE rather than inventing a parallel format: add fields (LOD geometry
 stats, KTX2 sidecar refs, meshopt flags) to the schema + validator + fixture,

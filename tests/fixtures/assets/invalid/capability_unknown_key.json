@@ -1,0 +1,18 @@
+{
+  "_why_invalid": "ASSET-MANIFEST-NEGATIVE-FIXTURES-1: capabilities carries an unknown key 'hasRaytracing' -> 'capabilities has unknown keys'. Guards the closed capability vocabulary (reconciled with RenderObjectDesc.h ArchetypeFlags) against silent drift.",
+  "assetId": "prop_crate_01",
+  "source": "mc2srcdata/objects/crate_01.fbx",
+  "kind": "prop",
+  "materials": [],
+  "capabilities": {
+    "hasNormals": true,
+    "hasTangents": false,
+    "hasLods": false,
+    "hasImpostor": false,
+    "castsShadow": true,
+    "supportsObjectId": true,
+    "hasRaytracing": true
+  },
+  "lods": [],
+  "textureRefs": []
+}

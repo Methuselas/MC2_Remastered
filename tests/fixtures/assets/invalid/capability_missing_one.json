@@ -1,0 +1,16 @@
+{
+  "_why_invalid": "ASSET-MANIFEST-NEGATIVE-FIXTURES-1: capabilities omits 'supportsObjectId' -> 'capabilities.supportsObjectId is required'. All six capability booleans are mandatory and explicit (no defaulting).",
+  "assetId": "prop_crate_01",
+  "source": "mc2srcdata/objects/crate_01.fbx",
+  "kind": "prop",
+  "materials": [],
+  "capabilities": {
+    "hasNormals": true,
+    "hasTangents": false,
+    "hasLods": false,
+    "hasImpostor": false,
+    "castsShadow": true
+  },
+  "lods": [],
+  "textureRefs": []
+}
