@@ -62,11 +62,40 @@ The shape a future offline importer probe writes per imported source mesh:
 | `hasNormals` / `hasTangents` | boolean |
 | `bounds` | `{min:[x,y,z], max:[x,y,z], radius}` |
 
+## Material authoring (`MATERIAL-AUTHORING-VALIDATION-1`)
+When present, material/texture authoring metadata is validated against the
+engine conventions (`RenderCore/MaterialGpu.h`, `tools/mc2texcook/mc2texcook.py`):
+
+| field | rule |
+|---|---|
+| `materials[].name` / `.shader` | required non-empty strings |
+| `materials[].alphaMode` | ∈ {`opaque`,`alphaTest`,`blend`} |
+| `materials[].alphaTestThreshold` | number in [0,1]; only with `alphaMode='alphaTest'` |
+| `materials[].doubleSided` | boolean |
+| `materials[].pbr.baseColorFactor` | [0,1] number, or 3–4 element [0,1] array |
+| `materials[].pbr.metallicFactor` / `.roughnessFactor` | number in [0,1] (cook defaults metallic=0.0, roughness=1.0) |
+| `textureRefs[].colorSpace` | must match the slot convention below |
+
+### Slot → colorSpace convention (mc2texcook presets)
+| slot | colorSpace | vkFormat |
+|---|---|---|
+| `albedo` / `emissive` | `srgb` | 43 (`R8G8B8A8_SRGB`) |
+| `normal` / `orm` / `mask` | `linear` | 37 (`R8G8B8A8_UNORM`) |
+
+`orm` packs R=AO, G=roughness, B=metalness. **Cross-check:** any `normal` slot
+requires `capabilities.hasTangents = true`.
+
+Fixtures: `material_validation_pass.json` (valid); `invalid/material_fail_*.json`
+(rejected — tangent mismatch, colorSpace mismatch, bad alphaMode).
+
+## Running the gate
+`py -3 scripts/check-asset-manifests.py` validates every
+`tests/fixtures/assets/*.json` (must pass) and every `…/invalid/*.json` (must be
+rejected). Deterministic, offline, no asset binaries.
+
 ## For the future asset-pipeline lane
 Extend HERE rather than inventing a parallel format: add fields to the schema +
 validator + fixture, and wire `validate_asset_manifest.py` into CI alongside
 `check-toolchain-bom.py`. Keep file-existence / bake checks OUT of this
-validator — it is the shape gate. Material authoring invariants (colorSpace
-conventions, alphaMode, PBR ranges, normal→tangent) are added by
-`MATERIAL-AUTHORING-VALIDATION-1`; cooked-texture provenance by
+validator — it is the shape gate. Cooked-texture provenance is exercised by
 `KTX2-BAKE-PROBE-1`.
