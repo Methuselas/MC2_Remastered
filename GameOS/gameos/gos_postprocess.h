@@ -291,6 +291,15 @@ private:
     int           hzbMipCount_   = 0;
     unsigned long long hzbBuildCount_ = 0;  // frames the pyramid has been built
     glsl_program* hzbReduceProg_ = nullptr;
+
+    // HZB-CAMERA-DISCONTINUITY-GUARD-1: previous-frame camera pose (derived in
+    // the probe by unprojecting NDC near/far centers via inverseViewProj_) to
+    // detect near-instant camera snaps (e.g. mc2_17 intro 180deg). Diagnostic
+    // only -- flags frames as unsafe-for-cull; affects no rendering.
+    bool   hzbPrevCamValid_ = false;
+    float  hzbPrevCamPos_[3] = { 0.0f, 0.0f, 0.0f };
+    float  hzbPrevCamFwd_[3] = { 0.0f, 0.0f, 0.0f };
+    unsigned long long hzbCamDiscontinuityFrames_ = 0;
 };
 
 gosPostProcess* getGosPostProcess();
