@@ -438,12 +438,14 @@ def run_capture_baseline(mission: str = "mc2_01", duration: int = 30) -> str:
 
     duration = max(10, min(120, duration))
 
+    # run_smoke.py contract: missions are passed as repeated --mission (there is
+    # no --missions flag and no 'adhoc' tier), and --kill-existing is forbidden
+    # (it taskkills concurrent mc2.exe -> false crash_silent; run_smoke already
+    # holds a concurrency-safe lock). See scripts/check-smoke-matrices.py.
     cmd = [
         "py", "-3", str(_RUN_SMOKE),
-        "--tier", "adhoc",
-        "--missions", mission,
+        "--mission", mission,
         "--duration", str(duration),
-        "--kill-existing",
         "--keep-logs",
     ]
 

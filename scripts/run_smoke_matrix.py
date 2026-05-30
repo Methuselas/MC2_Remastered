@@ -83,9 +83,12 @@ def build_smoke_args(entry: dict, matrix: dict, duration_override: int | None) -
     else:
         dur = 15
 
+    # NEVER --kill-existing: it taskkills any concurrent mc2.exe (producing a
+    # false crash_silent). run_smoke.py already holds a concurrency-safe lock
+    # and refuses to run if another instance is live. Enforced by
+    # scripts/check-smoke-matrices.py.
     args = [
         sys.executable, str(RUN_SMOKE),
-        "--kill-existing",
         "--keep-logs",
         "--duration", str(dur),
     ]

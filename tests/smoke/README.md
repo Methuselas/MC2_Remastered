@@ -5,13 +5,19 @@ This is the default "did I break it" regression gate for render/init/cull/asset-
 ## Default command
 
 ```powershell
-py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --with-menu-canary --kill-existing
+py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --with-menu-canary
 ```
+
+> **NEVER `--kill-existing`.** It taskkills any concurrent mc2.exe -> false
+> `crash_silent`. run_smoke holds a concurrency-safe lock and refuses if another
+> instance is live, so the flag is forbidden and unnecessary. Mission lists use
+> repeated `--mission` (there is no `--missions`). Enforced for capture matrices
+> by `scripts/check-smoke-matrices.py`.
 
 Recommended local fast loop:
 
 ```powershell
-py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --with-menu-canary --duration 8 --fail-fast --kill-existing
+py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --with-menu-canary --duration 8 --fail-fast
 ```
 
 Exit `0` means:
@@ -46,9 +52,9 @@ Same mission, same engine, same duration — but ~5.7× sustained-fps difference
 Examples:
 
 ```powershell
-py -3 scripts/run_smoke.py --tier tier1 --with-menu-canary --kill-existing
-py -3 scripts/run_smoke.py --tier tier2 --kill-existing
-py -3 scripts/run_smoke.py --menu-canary --keep-logs --kill-existing
+py -3 scripts/run_smoke.py --tier tier1 --with-menu-canary
+py -3 scripts/run_smoke.py --tier tier2
+py -3 scripts/run_smoke.py --menu-canary --keep-logs
 ```
 
 ## What each path means
@@ -85,7 +91,7 @@ Rules:
 Typical update command:
 
 ```powershell
-py -3 scripts/run_smoke.py --tier tier2 --baseline-update --kill-existing
+py -3 scripts/run_smoke.py --tier tier2 --baseline-update
 ```
 
 If tier2 exposes content-specific quirks:

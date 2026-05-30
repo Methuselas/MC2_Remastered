@@ -67,12 +67,13 @@ concurrent with another smoke or direct mc2.exe trace.
 **Canonical invocation (copy-paste; subagents must use verbatim):**
 
 ```powershell
-py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --duration 30 --kill-existing --keep-logs
+py -3 A:\Games\mc2-opengl-src\.claude\worktrees\nifty-mendeleev\scripts\run_smoke.py --tier tier1 --duration 30 --keep-logs
 ```
 
+- NEVER `--kill-existing`: it taskkills any concurrent mc2.exe (false `crash_silent`). run_smoke holds a concurrency-safe lock and refuses if another instance is live, so the flag is both forbidden and unnecessary. Enforced for matrices by `scripts/check-smoke-matrices.py`.
 - `tier1` = 5 hand-picked missions (`mc2_01`, `mc2_03`, `mc2_10`, `mc2_17`, `mc2_24`). 30s/mission. Isolated.
 - Exit `0` = pass. Nonzero = inspect `tests/smoke/artifacts/<timestamp>/`.
-- Inner-loop dev: 2-mission subset (`--missions mc2_01,mc2_24`); tier1 5/5 for slice coverage gates only.
+- Inner-loop dev: 2-mission subset (`--mission mc2_01 --mission mc2_24`); `--mission` is repeatable (there is no `--missions`). tier1 5/5 for slice coverage gates only.
 - Visual iteration (water/shoreline/foam tuning): `--duration 60` so user has time to drive camera.
 - Faster fail: add `--fail-fast`. Full policy: `memory/feedback_smoke_*.md` cluster.
 
