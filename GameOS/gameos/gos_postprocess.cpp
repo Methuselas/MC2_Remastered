@@ -1226,11 +1226,82 @@ void gosPostProcess::runHzbProbe()
     // genuinely occluded, so objWouldCull > 0 is expected; the safety invariant
     // is only that nothing acts on it. objOnScreen ~ 0 would mean the projection
     // convention is wrong (axis-swap) -- a loud red flag, not a silent failure.
-    unsigned objActive = 0, objScanned = 0, objTested = 0;
-    unsigned objWouldKeep = 0, objWouldCull = 0, objOffscreen = 0, objClipped = 0;
+    // ---- HZB-CAMERA-DISCONTINUITY-GUARD-1 ----------------------------------
+    // Derive the camera pose this frame by unprojecting the NDC near/far centers
+    // through inverseViewProj_ (set every frame alongside viewProj_, BEFORE the
+    // scene depth render -> same-frame coherent with the HZB-source depth). A
+    // near-instant pose change (e.g. mc2_17's intro 180deg snaps) makes a single
+    // frame's screen-space occlusion test unreliable; we FLAG such frames as
+    // unsafe-for-cull and split the raw vs guarded would-cull counts. This is
+    // DIAGNOSTIC: it changes no rendering and suppresses no draw.
+    auto unproject = [&](float nx, float ny, float nz, float out[3]) {
+        const float v[4] = { nx, ny, nz, 1.0f };
+        float w[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+                w[r] += inverseViewProj_[c * 4 + r] * v[c];
+        const float iw = (std::fabs(w[3]) > 1e-12f) ? 1.0f / w[3] : 0.0f;
+        out[0] = w[0] * iw; out[1] = w[1] * iw; out[2] = w[2] * iw;
+    };
+    float camPos[3], camFar[3], camFwd[3] = { 0.0f, 0.0f, 0.0f };
+    unproject(0.0f, 0.0f, 1.0f, camPos);   // reverse-Z near center (z=1)
+    unproject(0.0f, 0.0f, 0.0f, camFar);   // far center (z=0)
     {
-        // viewProj_ is column-major; row-vector multiply (matches the sun-screen
-        // projection in renderSkybox). Input is MC2 world (east, north, elev).
+        float dx = camFar[0] - camPos[0], dy = camFar[1] - camPos[1], dz = camFar[2] - camPos[2];
+        float fl = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (fl > 1e-6f) { camFwd[0] = dx / fl; camFwd[1] = dy / fl; camFwd[2] = dz / fl; }
+    }
+    bool  unsafeForCull = false;
+    float camFwdAngleDeg = 0.0f, camPosDelta = 0.0f;
+    if (hzbPrevCamValid_) {
+        float px = camPos[0] - hzbPrevCamPos_[0], py = camPos[1] - hzbPrevCamPos_[1], pz = camPos[2] - hzbPrevCamPos_[2];
+        camPosDelta = std::sqrt(px * px + py * py + pz * pz);
+        float dot = camFwd[0] * hzbPrevCamFwd_[0] + camFwd[1] * hzbPrevCamFwd_[1] + camFwd[2] * hzbPrevCamFwd_[2];
+        if (dot > 1.0f) dot = 1.0f; if (dot < -1.0f) dot = -1.0f;
+        camFwdAngleDeg = std::acos(dot) * (180.0f / 3.14159265f);
+        // Thresholds: a smooth pan is a few deg/frame; a 180deg snap is unmistakable.
+        // Position guard only when the map extent is known (one-frame teleport).
+        const float kAngleThreshDeg = 30.0f;
+        const float kPosThresh = (mapHalfExtent_ > 0.0f) ? (0.25f * mapHalfExtent_) : 1e30f;
+        unsafeForCull = (camFwdAngleDeg > kAngleThreshDeg) || (camPosDelta > kPosThresh);
+    }
+    if (unsafeForCull) ++hzbCamDiscontinuityFrames_;
+    hzbPrevCamPos_[0] = camPos[0]; hzbPrevCamPos_[1] = camPos[1]; hzbPrevCamPos_[2] = camPos[2];
+    hzbPrevCamFwd_[0] = camFwd[0]; hzbPrevCamFwd_[1] = camFwd[1]; hzbPrevCamFwd_[2] = camFwd[2];
+    hzbPrevCamValid_ = true;
+
+    // ---- Real static-prop occlusion probe (HZB-STATICPROP-CULL-RECON-1 +
+    //      HZB-CULL-READINESS-COUNTERS-1) -- DIAGNOSTIC ONLY, neverAppliedToDraws.
+    // objWouldCullRaw            = raw conservative cull decisions (always counted)
+    // objWouldCullGuarded        = raw culls on SAFE (non-discontinuous) frames
+    // objSkippedCameraDiscont    = raw culls suppressed because the frame is unsafe
+    //   (objWouldCullRaw == objWouldCullGuarded + objSkippedCameraDiscont)
+    unsigned objActive = 0, objScanned = 0, objTested = 0;
+    unsigned objWouldKeep = 0, objWouldCullRaw = 0, objWouldCullGuarded = 0;
+    unsigned objSkippedCameraDiscont = 0, objOffscreen = 0, objNearClippedKeep = 0;
+    unsigned objInvalidRect = 0;
+    unsigned lodHist[kHzbMaxLevels] = { 0 };
+
+    // HZB-CULL-MARGIN-SWEEP-1: how many GUARDED would-cull candidates survive
+    // increasingly conservative depth-gap margins. gap = objClosest - hzbMin
+    // (reverse-Z: gap < 0 == behind the occluder). A real cull path should
+    // require gap < -margin, not just gap < 0; this quantifies the marginal
+    // (near-zero) candidates so we can pick that margin. Accumulated over SAFE
+    // (non-discontinuous) frames only, matching the guarded semantics.
+    static const float kMargins[] = { 0.00000f, 0.00005f, 0.00010f, 0.00025f, 0.00050f, 0.00100f };
+    const int kNumMargins = (int)(sizeof(kMargins) / sizeof(kMargins[0]));
+    unsigned objWouldCullAtMargin[6] = { 0 };   // size matches kMargins
+    float minGap = 1e9f, maxGap = -1e9f, closestToZeroNegGap = -1e9f;
+    unsigned numMarginalCandidates = 0;          // -0.00010 < gap < 0
+
+    // Bounded sample of the GUARDED would-cull candidates CLOSEST to zero (the
+    // most marginal / highest false-positive risk), so a human can verify they
+    // are truly hidden rather than grazing false positives.
+    struct CullCand { int idx; float r0, r1, r2, r3, closest, hmin, gap; int lod; };
+    const int kCandMax = 8;
+    CullCand cand[kCandMax];
+    int candCount = 0;
+    {
         auto projectClip = [&](float wx, float wy, float wz, float out[4]) {
             const float w4[4] = { wx, wy, wz, 1.0f };
             float clip[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -1271,7 +1342,7 @@ void gosPostProcess::runHzbProbe()
                 if (uy < uvMinY) uvMinY = uy; if (uy > uvMaxY) uvMaxY = uy;
                 if (depth > objClosest) objClosest = depth;
             }
-            if (crossesNear) { ++objClipped; continue; }       // conservative: keep
+            if (crossesNear) { ++objNearClippedKeep; continue; }   // conservative: keep
             if (uvMaxX < 0.0f || uvMinX > 1.0f || uvMaxY < 0.0f || uvMinY > 1.0f) {
                 ++objOffscreen; continue;
             }
@@ -1302,17 +1373,55 @@ void gosPostProcess::runHzbProbe()
                     const float d = lvl[(size_t)ty * lw + tx];
                     if (d < hzbMin) hzbMin = d;
                 }
-            if (!std::isfinite(hzbMin) || !std::isfinite(objClosest)) continue;
+            if (!std::isfinite(hzbMin) || !std::isfinite(objClosest)) { ++objInvalidRect; continue; }
 
             ++objTested;
+            if (L >= 0 && L < kHzbMaxLevels) ++lodHist[L];
+            const float gap = objClosest - hzbMin;   // reverse-Z: <0 == behind
+
+            // Margin sweep + gap stats over SAFE frames only (guarded semantics).
+            if (!unsafeForCull) {
+                if (gap < minGap) minGap = gap;
+                if (gap > maxGap) maxGap = gap;
+                if (gap < 0.0f && gap > closestToZeroNegGap) closestToZeroNegGap = gap;
+                if (gap > -0.00010f && gap < 0.0f) ++numMarginalCandidates;
+                for (int mi = 0; mi < kNumMargins; ++mi)
+                    if (gap < -kMargins[mi]) ++objWouldCullAtMargin[mi];
+            }
+
             // Conservative reverse-Z cull: object's nearest point is behind the
             // farthest occluder in its footprint -> fully occluded.
-            if (objClosest < hzbMin - eps) ++objWouldCull; else ++objWouldKeep;
+            if (objClosest < hzbMin - eps) {
+                ++objWouldCullRaw;
+                if (unsafeForCull) {
+                    ++objSkippedCameraDiscont;       // guard suppresses this frame
+                } else {
+                    ++objWouldCullGuarded;
+                    // Keep the kCandMax candidates with gap CLOSEST to zero (most
+                    // marginal). If full, replace the least-marginal (smallest gap).
+                    if (candCount < kCandMax) {
+                        cand[candCount] = { idx, cMinX, cMinY, cMaxX, cMaxY,
+                                            objClosest, hzbMin, gap, L };
+                        ++candCount;
+                    } else {
+                        int worst = 0;
+                        for (int k = 1; k < kCandMax; ++k)
+                            if (cand[k].gap < cand[worst].gap) worst = k;  // most negative
+                        if (gap > cand[worst].gap)
+                            cand[worst] = { idx, cMinX, cMinY, cMaxX, cMaxY,
+                                            objClosest, hzbMin, gap, L };
+                    }
+                }
+            } else {
+                ++objWouldKeep;
+            }
         }
     }
 
     static unsigned long long s_probeFrame = 0;
     ++s_probeFrame;
+    const bool logTick = (s_probeFrame <= 5 || (s_probeFrame % 600) == 0);
+
     if (s_probeFrame <= 3 || (s_probeFrame % 600) == 0 || wouldCull || integrityMismatch) {
         fprintf(stderr,
             "[HZB_PROBE v1] parentL=%d(%dx%d) childL=%d(%dx%d) tested=%u "
@@ -1321,13 +1430,54 @@ void gosPostProcess::runHzbProbe()
             pLevel, pw, ph, cLevel, cw, ch, tested,
             wouldKeep, wouldCull, integrityMismatch, invalidDepth);
     }
-    if (s_probeFrame <= 5 || (s_probeFrame % 600) == 0) {
+    // Log object readiness counters on the tick OR on any unsafe (discontinuity)
+    // frame, so camera snaps are always visible in the trace.
+    if (logTick || unsafeForCull) {
         fprintf(stderr,
-            "[HZB_PROBE_OBJ v1] staticProps active=%u scanned=%u tested=%u "
-            "wouldKeep=%u wouldCull=%u offscreen=%u nearClipped=%u Lmin=%d "
+            "[HZB_PROBE_OBJ v2] staticProps active=%u scanned=%u tested=%u "
+            "wouldKeep=%u wouldCullRaw=%u wouldCullGuarded=%u "
+            "skippedCameraDiscont=%u nearClippedKeep=%u offscreen=%u "
+            "invalidRect=%u Lmin=%d cameraDiscontinuity=%d fwdAngleDeg=%.1f "
+            "posDelta=%.1f discontFramesCumulative=%llu unsafeForCull=%d "
             "neverAppliedToDraws=1\n",
-            objActive, objScanned, objTested, objWouldKeep, objWouldCull,
-            objOffscreen, objClipped, Lmin);
+            objActive, objScanned, objTested, objWouldKeep, objWouldCullRaw,
+            objWouldCullGuarded, objSkippedCameraDiscont, objNearClippedKeep,
+            objOffscreen, objInvalidRect, Lmin, unsafeForCull ? 1 : 0,
+            camFwdAngleDeg, camPosDelta,
+            (unsigned long long)hzbCamDiscontinuityFrames_, unsafeForCull ? 1 : 0);
+    }
+    if (logTick && objTested > 0) {
+        char hist[256]; int n = 0;
+        n += snprintf(hist + n, sizeof(hist) - n, "[HZB_PROBE_LOD v1] selectedLod");
+        for (int L = 0; L < hzbMipCount_ && L < kHzbMaxLevels && n < (int)sizeof(hist) - 16; ++L)
+            if (lodHist[L]) n += snprintf(hist + n, sizeof(hist) - n, " L%d=%u", L, lodHist[L]);
+        fprintf(stderr, "%s\n", hist);
+    }
+    // Depth-gap margin sweep (safe-frame guarded candidates). guard@0.00000
+    // equals wouldCullGuarded by gap<0; higher margins show how many survive a
+    // more conservative gap<-margin requirement.
+    if (logTick && objTested > 0) {
+        fprintf(stderr,
+            "[HZB_PROBE_MARGIN v1] guardCull@{0=%u,5e-5=%u,1e-4=%u,2.5e-4=%u,"
+            "5e-4=%u,1e-3=%u} minGap=%.6f maxGap=%.6f closestToZeroNegGap=%.6f "
+            "numMarginal(-1e-4<gap<0)=%u neverAppliedToDraws=1\n",
+            objWouldCullAtMargin[0], objWouldCullAtMargin[1], objWouldCullAtMargin[2],
+            objWouldCullAtMargin[3], objWouldCullAtMargin[4], objWouldCullAtMargin[5],
+            (minGap <= 1e8f ? minGap : 0.0f),
+            (maxGap >= -1e8f ? maxGap : 0.0f),
+            (closestToZeroNegGap >= -1e8f ? closestToZeroNegGap : 0.0f),
+            numMarginalCandidates);
+    }
+    // Bounded sample of guarded would-cull candidates CLOSEST to zero (safe
+    // frames only) -- the highest false-positive risk to eyeball.
+    if (logTick && candCount > 0) {
+        for (int i = 0; i < candCount; ++i) {
+            const CullCand& c = cand[i];
+            fprintf(stderr,
+                "[HZB_PROBE_CULLCAND v1] idx=%d rectUV=(%.3f,%.3f,%.3f,%.3f) "
+                "objClosest=%.5f hzbMin=%.5f gap=%.6f L=%d neverAppliedToDraws=1\n",
+                c.idx, c.r0, c.r1, c.r2, c.r3, c.closest, c.hmin, c.gap, c.lod);
+        }
     }
 }
 
