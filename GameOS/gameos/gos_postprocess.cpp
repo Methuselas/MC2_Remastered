@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <vector>
 #include <SDL2/SDL.h>
 
 namespace {
@@ -201,6 +202,15 @@ void gosPostProcess::init(int w, int h)
     width_ = w;
     height_ = h;
 
+    // HZB-DEPTH-PYRAMID-MVP-1: resolve the build gate BEFORE createFBOs so the
+    // pyramid texture is allocated in the same pass as the other scene targets.
+    {
+        const char* hzbEnv = getenv("MC2_HZB_BUILD");
+        hzbEnabled_ = (hzbEnv && hzbEnv[0] && hzbEnv[0] != '0');
+        std::fprintf(stderr, "[HZB_BUILD v1] enabled=%d (MC2_HZB_BUILD=%s)\n",
+                     hzbEnabled_ ? 1 : 0, hzbEnv ? hzbEnv : "(unset)");
+    }
+
     createFBOs(w, h);
     createFullscreenQuad();
 
@@ -345,6 +355,21 @@ void gosPostProcess::init(int w, int h)
         std::fprintf(stderr, "[SSAO v1] enabled=%d debug=%d (MC2_SSAO=%s) radius=%.2f strength=%.2f bias=%.4f\n",
                      ssaoEnabled_ ? 1 : 0, ssaoDebug_,
                      ssaoEnv ? ssaoEnv : "(unset)", aoRadius_, aoStrength_, aoBias_);
+    }
+
+    // HZB-DEPTH-PYRAMID-MVP-1: reduction shader. Gate (hzbEnabled_) is resolved
+    // earlier (before createFBOs); default OFF -> no allocation, no-op build.
+    hzbReduceProg_ = glsl_program::makeProgram("hzb_reduce",
+        "shaders/postprocess.vert", "shaders/hzb_reduce.frag", kShaderPrefix);
+    if (!hzbReduceProg_ || !hzbReduceProg_->is_valid())
+        fprintf(stderr, "gosPostProcess: failed to compile hzb_reduce shader\n");
+    {
+        // HZB-OCCLUSION-PROBE-1 gate (diagnostic only; requires the build gate).
+        const char* probeEnv = getenv("MC2_HZB_PROBE");
+        hzbProbeEnabled_ = hzbEnabled_ &&
+                           (probeEnv && probeEnv[0] && probeEnv[0] != '0');
+        std::fprintf(stderr, "[HZB_PROBE v1] enabled=%d (MC2_HZB_PROBE=%s, requires MC2_HZB_BUILD)\n",
+                     hzbProbeEnabled_ ? 1 : 0, probeEnv ? probeEnv : "(unset)");
     }
 
     // SHADOW-ENV-DEBUG-MODE-1: select shadow debug overlay from env var so
@@ -575,6 +600,24 @@ void gosPostProcess::createFBOs(int w, int h)
         fprintf(stderr, "gosPostProcess: scene FBO incomplete (0x%x)\n", status);
     }
 
+    // REGISTER-MAIN-DEPTH-RESOURCE: publish the full-res scene depth as the
+    // MainDepth slot (descriptive only; this owner keeps the GL lifetime).
+    // sceneDepthTex_ is a sampleable GL_TEXTURE_2D (GL_DEPTH24_STENCIL8); the
+    // Depth24 enum is the closest descriptive label (no combined D/S enum).
+    // A future HZB build pass reads desc->glName to source the pyramid.
+    {
+        RenderCore::RenderResourceDesc dd;
+        dd.id        = RenderCore::RenderResourceId::MainDepth;
+        dd.kind      = RenderCore::RenderResourceKind::Texture2D;
+        dd.format    = RenderCore::RenderResourceFormat::Depth24;
+        dd.debugName = "MainDepth";
+        dd.width     = (uint32_t)w;
+        dd.height    = (uint32_t)h;
+        dd.glName    = sceneDepthTex_;
+        dd.valid     = (status == GL_FRAMEBUFFER_COMPLETE);
+        RenderCore::registerOrUpdateRenderResource(dd);
+    }
+
     // --- Bloom ping-pong FBOs (half resolution) ---
     int halfW = w / 2;
     int halfH = h / 2;
@@ -704,6 +747,49 @@ void gosPostProcess::createFBOs(int w, int h)
         RenderCore::registerOrUpdateRenderResource(ddesc);
     }
 
+    // --- HZB-DEPTH-PYRAMID-MVP-1: full-res reverse-Z Hi-Z pyramid (R32F) ---
+    // Allocated ONLY when MC2_HZB_BUILD is on -> zero cost / byte-identical when
+    // off. Immutable mip chain (glTexStorage2D) sized by the ceil ladder down to
+    // 1x1; NEAREST + CLAMP_TO_EDGE (explicit-LOD sampling, clamped 2x2 taps).
+    if (hzbEnabled_) {
+        hzbW_ = w;
+        hzbH_ = h;
+        // ceil mip ladder: each level halves+rounds-up each axis to 1.
+        int maxDim = (w > h) ? w : h;
+        int mips = 1;
+        while (maxDim > 1) { maxDim = (maxDim + 1) / 2; ++mips; }
+        if (mips > kHzbMaxLevels) mips = kHzbMaxLevels;
+        hzbMipCount_ = mips;
+
+        // One ceil-sized R32F texture PER level (NOT a mip chain). A single
+        // mipped texture cannot be used here: AMD rejects attaching mip level >0
+        // unless the texture is mipmap-complete, but the ceil ladder is
+        // deliberately mipmap-incomplete (preserves odd-extent texels per
+        // docs/hzb-depth-convention.md). Separate textures also remove any
+        // read/write feedback (source and dest are distinct objects).
+        int lw = w, lh = h;
+        for (int level = 0; level < hzbMipCount_; ++level) {
+            glGenTextures(1, &hzbLevelTex_[level]);
+            glBindTexture(GL_TEXTURE_2D, hzbLevelTex_[level]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, lw, lh, 0,
+                         GL_RED, GL_FLOAT, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            lw = (lw + 1) / 2; if (lw < 1) lw = 1;
+            lh = (lh + 1) / 2; if (lh < 1) lh = 1;
+        }
+
+        glGenFramebuffers(1, &hzbFBO_);
+        // The destination level texture is bound to COLOR_ATTACHMENT0 per pass
+        // in runHzbReduce(). No dedicated registry slot yet -- surfaced via the
+        // getHzb* accessors.
+
+        std::fprintf(stderr, "[HZB_BUILD v1] allocated %dx%d mips=%d (R32F, per-level textures)\n",
+                     hzbW_, hzbH_, hzbMipCount_);
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -749,6 +835,11 @@ void gosPostProcess::destroyFBOs()
     if (sceneDepthTex_) {
         glDeleteTextures(1, &sceneDepthTex_);
         sceneDepthTex_ = 0;
+        // REGISTER-MAIN-DEPTH-RESOURCE: mark the slot unavailable on teardown
+        // (resize destroys+recreates, so this re-validates in createFBOs).
+        RenderCore::RenderResourceDesc inv;
+        inv.id = RenderCore::RenderResourceId::MainDepth; inv.valid = false;
+        RenderCore::registerOrUpdateRenderResource(inv);
     }
     if (sceneNormalTex_) {
         glDeleteTextures(1, &sceneNormalTex_);
@@ -779,6 +870,14 @@ void gosPostProcess::destroyFBOs()
     if (ssaoColorTex_) { glDeleteTextures(1, &ssaoColorTex_); ssaoColorTex_ = 0; }
     if (ssaoFBO_)      { glDeleteFramebuffers(1, &ssaoFBO_);   ssaoFBO_ = 0; }
     ssaoW_ = ssaoH_ = 0;
+
+    // HZB-DEPTH-PYRAMID-MVP-1: free the per-level pyramid textures + FBO
+    // (resize re-allocates if the gate is on).
+    for (int i = 0; i < kHzbMaxLevels; ++i) {
+        if (hzbLevelTex_[i]) { glDeleteTextures(1, &hzbLevelTex_[i]); hzbLevelTex_[i] = 0; }
+    }
+    if (hzbFBO_) { glDeleteFramebuffers(1, &hzbFBO_); hzbFBO_ = 0; }
+    hzbW_ = hzbH_ = hzbMipCount_ = 0;
 
     // WATER-REFLECTION-RESOURCE-1: free reflection target + mark slots invalid.
     if (waterReflColorTex_) { glDeleteTextures(1, &waterReflColorTex_); waterReflColorTex_ = 0; }
@@ -916,6 +1015,197 @@ void gosPostProcess::runBloom()
     glBindVertexArray(0);
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
+}
+
+void gosPostProcess::runHzbReduce()
+{
+    ZoneScopedN("Render.HZB");
+    TracyGpuZone("Render.HZB");
+
+    // HZB-DEPTH-PYRAMID-MVP-1: gated reverse-Z Hi-Z pyramid build. Diagnostic
+    // substrate ONLY -- builds the pyramid, has no consumers, suppresses no
+    // draws. Runs whenever the gate is on and the pyramid is allocated; on
+    // depth-cleared frames (menus) the pyramid simply fills with the far value
+    // (0.0) -- harmless, and the gate is default-OFF anyway.
+    if (!hzbEnabled_) return;
+    if (!hzbReduceProg_ || !hzbReduceProg_->is_valid()) return;
+    if (!hzbLevelTex_[0] || !hzbFBO_ || hzbMipCount_ < 1) return;
+    if (sceneDepthTex_ == 0) return;
+
+    GLint prevViewport[4];
+    glGetIntegerv(GL_VIEWPORT, prevViewport);
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_BLEND);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, hzbFBO_);
+    glBindVertexArray(quadVAO_);
+    glActiveTexture(GL_TEXTURE0);
+
+    bool ok = true;
+    int dstW = hzbW_, dstH = hzbH_;     // tracks the current destination size
+    for (int level = 0; level < hzbMipCount_; ++level) {
+        // Render into this level's dedicated texture (always level 0 of it).
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, hzbLevelTex_[level], 0);
+        GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (st != GL_FRAMEBUFFER_COMPLETE) {
+            if (hzbBuildCount_ == 0)
+                fprintf(stderr, "[HZB_BUILD v1] FBO incomplete at level %d (0x%x)\n", level, st);
+            ok = false;
+            break;
+        }
+        glViewport(0, 0, dstW, dstH);
+
+        if (level == 0) {
+            // Seed level 0 with the raw reverse-Z scene depth (1:1 pass-through).
+            glBindTexture(GL_TEXTURE_2D, sceneDepthTex_);
+            float texel[2] = { 1.0f / (float)hzbW_, 1.0f / (float)hzbH_ };
+            hzbReduceProg_->setInt("uReduce", 0);
+            hzbReduceProg_->setInt("uSrc", 0);
+            hzbReduceProg_->setFloat2("uSrcTexel", texel);
+            hzbReduceProg_->apply();
+        } else {
+            // 2x2 MIN reduction from the previous level's texture. Source size =
+            // the previous (larger) level; uSrcTexel drives the clamped 2x2 tap.
+            int pW = hzbW_, pH = hzbH_;
+            for (int k = 0; k < level - 1; ++k) { pW = (pW + 1) / 2; pH = (pH + 1) / 2; }
+            if (pW < 1) pW = 1;
+            if (pH < 1) pH = 1;
+
+            glBindTexture(GL_TEXTURE_2D, hzbLevelTex_[level - 1]);
+            float texel[2] = { 1.0f / (float)pW, 1.0f / (float)pH };
+            hzbReduceProg_->setInt("uReduce", 1);
+            hzbReduceProg_->setInt("uSrc", 0);
+            hzbReduceProg_->setFloat2("uSrcTexel", texel);
+            hzbReduceProg_->apply();
+        }
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+
+        // Advance destination size to the next (smaller) ceil level.
+        dstW = (dstW + 1) / 2; if (dstW < 1) dstW = 1;
+        dstH = (dstH + 1) / 2; if (dstH < 1) dstH = 1;
+    }
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glBindVertexArray(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+
+    if (ok) {
+        ++hzbBuildCount_;
+        if (hzbBuildCount_ <= 3 || (hzbBuildCount_ % 600) == 0)
+            fprintf(stderr, "[HZB_BUILD v1] built pyramid %dx%d mips=%d (count=%llu)\n",
+                    hzbW_, hzbH_, hzbMipCount_, (unsigned long long)hzbBuildCount_);
+    }
+}
+
+void gosPostProcess::runHzbProbe()
+{
+    ZoneScopedN("Render.HZBProbe");
+
+    // HZB-OCCLUSION-PROBE-1: DIAGNOSTIC ONLY. Reads back a parent HZB level and
+    // its child level and (a) checks parent == MIN(children) -- the reverse-Z
+    // reduction invariant -- and (b) runs the real conservative cull comparison
+    // childDepth < parentDepth, which must be wouldKeep for every self-point
+    // (a texel inside a tile can never be culled by that tile's min). This
+    // exercises the exact cull math + the pyramid before real object bounds are
+    // wired (next slice), with ZERO effect on rendering: read-only, no draw
+    // suppression. neverAppliedToDraws is always true.
+    if (!hzbProbeEnabled_) return;
+    if (hzbMipCount_ < 2) return;
+    if (hzbBuildCount_ == 0) return;        // need a built pyramid
+
+    // Choose a small parent level (dims <= 64) so the readback is cheap.
+    int pLevel = 1;
+    {
+        int dw = hzbW_, dh = hzbH_, lvl = 0;
+        while (lvl < hzbMipCount_ - 1 && (dw > 64 || dh > 64)) {
+            dw = (dw + 1) / 2; dh = (dh + 1) / 2; ++lvl;
+        }
+        pLevel = (lvl < 1) ? 1 : lvl;        // parent must have a child (>=1)
+    }
+    const int cLevel = pLevel - 1;
+
+    auto dimsAt = [&](int level, int& w, int& h) {
+        w = hzbW_; h = hzbH_;
+        for (int k = 0; k < level; ++k) { w = (w + 1) / 2; h = (h + 1) / 2; }
+        if (w < 1) w = 1; if (h < 1) h = 1;
+    };
+    int pw, ph, cw, ch;
+    dimsAt(pLevel, pw, ph);
+    dimsAt(cLevel, cw, ch);
+
+    std::vector<float> parent((size_t)pw * ph), child((size_t)cw * ch);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glBindTexture(GL_TEXTURE_2D, hzbLevelTex_[pLevel]);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RED, GL_FLOAT, parent.data());
+    glBindTexture(GL_TEXTURE_2D, hzbLevelTex_[cLevel]);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RED, GL_FLOAT, child.data());
+
+    const float eps = 1e-5f;
+    unsigned tested = 0, wouldKeep = 0, wouldCull = 0;
+    unsigned integrityMismatch = 0, invalidDepth = 0;
+
+    // Parent-centric, using the EXACT footprint hzb_reduce.frag samples: for
+    // parent texel (px,py) the shader reads child texels at
+    //   floor( ((px+0.5)/pw)*cw +/- 0.5 ),  floor( ((py+0.5)/ph)*ch +/- 0.5 )
+    // (NEAREST + clamp). On odd child extents these 2x2 windows overlap at the
+    // boundary -- which is why a naive px*2 / cx/2 inverse mapping produces
+    // false mismatches. Replicating the sample positions exactly makes the
+    // integrity + cull self-tests agree with the GPU when the pyramid is sound.
+    auto clampi = [](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+    for (int py = 0; py < ph; ++py) {
+        const float sv = ((py + 0.5f) / (float)ph) * (float)ch;
+        const int cy0 = clampi((int)std::floor(sv - 0.5f), 0, ch - 1);
+        const int cy1 = clampi((int)std::floor(sv + 0.5f), 0, ch - 1);
+        for (int px = 0; px < pw; ++px) {
+            const float su = ((px + 0.5f) / (float)pw) * (float)cw;
+            const int cx0 = clampi((int)std::floor(su - 0.5f), 0, cw - 1);
+            const int cx1 = clampi((int)std::floor(su + 0.5f), 0, cw - 1);
+
+            const float ca = child[(size_t)cy0 * cw + cx0];
+            const float cb = child[(size_t)cy0 * cw + cx1];
+            const float cc = child[(size_t)cy1 * cw + cx0];
+            const float cd = child[(size_t)cy1 * cw + cx1];
+            float m = ca;
+            if (cb < m) m = cb;
+            if (cc < m) m = cc;
+            if (cd < m) m = cd;
+
+            const float pv = parent[(size_t)py * pw + px];
+            if (!std::isfinite(pv) || !std::isfinite(m)) { ++invalidDepth; continue; }
+
+            // (a) reduction integrity: GPU parent must equal the CPU min.
+            if (std::fabs(pv - m) > eps) ++integrityMismatch;
+
+            // (b) conservative cull self-test: each child the parent covers is a
+            // self-point inside the tile, so its depth must be >= parent's MIN
+            // (reverse-Z) -> never culled. wouldCull MUST stay 0.
+            const float kids[4] = { ca, cb, cc, cd };
+            for (float d : kids) {
+                ++tested;
+                if (d < pv - eps) ++wouldCull; else ++wouldKeep;
+            }
+        }
+    }
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    static unsigned long long s_probeFrame = 0;
+    ++s_probeFrame;
+    if (s_probeFrame <= 3 || (s_probeFrame % 600) == 0 || wouldCull || integrityMismatch) {
+        fprintf(stderr,
+            "[HZB_PROBE v1] parentL=%d(%dx%d) childL=%d(%dx%d) tested=%u "
+            "wouldKeep=%u wouldCull=%u integrityMismatch=%u invalidDepth=%u "
+            "neverAppliedToDraws=1\n",
+            pLevel, pw, ph, cLevel, cw, ch, tested,
+            wouldKeep, wouldCull, integrityMismatch, invalidDepth);
+    }
 }
 
 void gosPostProcess::runSSAO()
@@ -1208,6 +1498,12 @@ void gosPostProcess::endScene()
 
     if (!initialized_)
         return;
+
+    // HZB-DEPTH-PYRAMID-MVP-1: build the reverse-Z Hi-Z pyramid from the
+    // resolved scene depth before any post pass. Gated (MC2_HZB_BUILD), no
+    // consumers, no draw suppression -> no-op + byte-identical when OFF.
+    runHzbReduce();
+    runHzbProbe();   // diagnostic-only; reads the pyramid, suppresses no draws
 
     // Post-process shadow pass: covers terrain, objects, and overlays in one
     // pass, with reduced terrain darkening to avoid obvious double-shadowing.

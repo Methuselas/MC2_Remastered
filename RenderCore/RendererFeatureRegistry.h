@@ -168,7 +168,16 @@ enum class RendererFeature : int {
     VfxLitParticles          = 35,  // MC2_VFX_LIT_PARTICLES
     // VIEWMODE-POSTPROCESS-PRESENTATION-1: view-mode presentation framework.
     ViewmodeFramework        = 36,  // MC2_VIEWMODE_FRAMEWORK
-    COUNT                    = 37,
+    // TRACKRV-HZB-VISIBILITY-OPUS-1: gated reverse-Z Hi-Z depth pyramid build
+    // from MainDepth (custom MIN reduction, ceil mip ladder). Default-OFF;
+    // diagnostic substrate only -- NO culling/draw suppression. See
+    // docs/hzb-depth-convention.md + docs/hzb-visibility-mvp.md.
+    HzbBuild                 = 37,  // MC2_HZB_BUILD
+    // TRACKRV-HZB-VISIBILITY-OPUS-1: diagnostic-only HZB occlusion probe.
+    // Default-OFF; requires MC2_HZB_BUILD. Computes would-cull/would-keep +
+    // pyramid-integrity counters from HZB readback. NEVER suppresses a draw.
+    HzbProbe                 = 38,  // MC2_HZB_PROBE
+    COUNT                    = 39,
 };
 
 // ---------------------------------------------------------------------------
@@ -473,6 +482,22 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "VIEWMODE-POSTPROCESS-PRESENTATION-1: enables the view-mode presentation framework that wires ViewMode::ObjectIdDebug (and future sensor modes) through the postprocess composite pass. Default-OFF; when OFF endScene forces u_viewMode=0 (Visual) and the ImGui combo is not rendered -> byte-identical. When ON, u_viewMode and u_objectIdTex are set on compositeProg_ each frame; ObjectIdDebug also requires MC2_OBJECT_ID_BUFFER=1 (sceneObjectIdTex_ non-zero). No new SSBOs, UBOs, or render targets. No scene-shader changes. Visual-only presentation overlay."
+    },
+    // HzbBuild
+    {
+        "MC2_FEATURE_HZB_BUILD",
+        "MC2_HZB_BUILD",
+        EnvVarKind::Feature,
+        false,
+        "TRACKRV-HZB-VISIBILITY-OPUS-1: build a reverse-Z Hi-Z depth pyramid from MainDepth each frame via a custom fragment MIN-reduction pass (hzb_reduce.frag), GL_R32F, ceil mip ladder down to 1x1 (NOT glGenerateMipmap -- it averages+floors). Default-OFF; when OFF the HZB texture/FBO is never allocated and runHzbReduce() is skipped -> zero cost, byte-identical. Diagnostic substrate ONLY: no consumers, no culling, no draw suppression. Matches docs/hzb-depth-convention.md (MIN = farthest occluder = conservative)."
+    },
+    // HzbProbe
+    {
+        "MC2_FEATURE_HZB_PROBE",
+        "MC2_HZB_PROBE",
+        EnvVarKind::Feature,
+        false,
+        "TRACKRV-HZB-VISIBILITY-OPUS-1: diagnostic-only HZB occlusion probe. Default-OFF; requires MC2_HZB_BUILD. After the pyramid is built, reads back a parent HZB level and its child level and (a) verifies parent == MIN(children) (reduction integrity), (b) runs the conservative reverse-Z cull comparison childDepth < parentDepth -- which must be wouldKeep for every self-point (a texel inside a tile can never be culled by that tile's min). Logs tested/wouldKeep/wouldCull(==0)/integrityMismatch/invalidDepth counters. NEVER suppresses any draw (neverAppliedToDraws=true). Validates the cull math + pyramid before real object bounds are wired (HZB-STATICPROP-CULL-RECON-1)."
     },
 };
 
