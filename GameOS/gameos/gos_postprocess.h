@@ -154,7 +154,9 @@ public:
     // output is byte-identical. Diagnostic substrate ONLY -- no consumers, no
     // culling, no draw suppression.
     bool   hzbEnabled_ = false;     // resolved once from env at init()
+    bool   hzbProbeEnabled_ = false; // MC2_HZB_PROBE (requires hzbEnabled_)
     void   runHzbReduce();          // build the pyramid each frame (gated)
+    void   runHzbProbe();           // HZB-OCCLUSION-PROBE-1: diagnostic only
     // Pyramid is stored as one ceil-sized R32F texture PER level (not a mip
     // chain): AMD rejects attaching mip level >0 of a mipmap-incomplete texture,
     // and the ceil ladder is deliberately mipmap-incomplete. Separate textures

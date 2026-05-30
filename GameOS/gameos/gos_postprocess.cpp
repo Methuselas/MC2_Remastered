@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <vector>
 #include <SDL2/SDL.h>
 
 namespace {
@@ -362,6 +363,14 @@ void gosPostProcess::init(int w, int h)
         "shaders/postprocess.vert", "shaders/hzb_reduce.frag", kShaderPrefix);
     if (!hzbReduceProg_ || !hzbReduceProg_->is_valid())
         fprintf(stderr, "gosPostProcess: failed to compile hzb_reduce shader\n");
+    {
+        // HZB-OCCLUSION-PROBE-1 gate (diagnostic only; requires the build gate).
+        const char* probeEnv = getenv("MC2_HZB_PROBE");
+        hzbProbeEnabled_ = hzbEnabled_ &&
+                           (probeEnv && probeEnv[0] && probeEnv[0] != '0');
+        std::fprintf(stderr, "[HZB_PROBE v1] enabled=%d (MC2_HZB_PROBE=%s, requires MC2_HZB_BUILD)\n",
+                     hzbProbeEnabled_ ? 1 : 0, probeEnv ? probeEnv : "(unset)");
+    }
 
     // SHADOW-ENV-DEBUG-MODE-1: select shadow debug overlay from env var so
     // automated capture can request it without ImGui interaction.
@@ -1095,6 +1104,110 @@ void gosPostProcess::runHzbReduce()
     }
 }
 
+void gosPostProcess::runHzbProbe()
+{
+    ZoneScopedN("Render.HZBProbe");
+
+    // HZB-OCCLUSION-PROBE-1: DIAGNOSTIC ONLY. Reads back a parent HZB level and
+    // its child level and (a) checks parent == MIN(children) -- the reverse-Z
+    // reduction invariant -- and (b) runs the real conservative cull comparison
+    // childDepth < parentDepth, which must be wouldKeep for every self-point
+    // (a texel inside a tile can never be culled by that tile's min). This
+    // exercises the exact cull math + the pyramid before real object bounds are
+    // wired (next slice), with ZERO effect on rendering: read-only, no draw
+    // suppression. neverAppliedToDraws is always true.
+    if (!hzbProbeEnabled_) return;
+    if (hzbMipCount_ < 2) return;
+    if (hzbBuildCount_ == 0) return;        // need a built pyramid
+
+    // Choose a small parent level (dims <= 64) so the readback is cheap.
+    int pLevel = 1;
+    {
+        int dw = hzbW_, dh = hzbH_, lvl = 0;
+        while (lvl < hzbMipCount_ - 1 && (dw > 64 || dh > 64)) {
+            dw = (dw + 1) / 2; dh = (dh + 1) / 2; ++lvl;
+        }
+        pLevel = (lvl < 1) ? 1 : lvl;        // parent must have a child (>=1)
+    }
+    const int cLevel = pLevel - 1;
+
+    auto dimsAt = [&](int level, int& w, int& h) {
+        w = hzbW_; h = hzbH_;
+        for (int k = 0; k < level; ++k) { w = (w + 1) / 2; h = (h + 1) / 2; }
+        if (w < 1) w = 1; if (h < 1) h = 1;
+    };
+    int pw, ph, cw, ch;
+    dimsAt(pLevel, pw, ph);
+    dimsAt(cLevel, cw, ch);
+
+    std::vector<float> parent((size_t)pw * ph), child((size_t)cw * ch);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glBindTexture(GL_TEXTURE_2D, hzbLevelTex_[pLevel]);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RED, GL_FLOAT, parent.data());
+    glBindTexture(GL_TEXTURE_2D, hzbLevelTex_[cLevel]);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RED, GL_FLOAT, child.data());
+
+    const float eps = 1e-5f;
+    unsigned tested = 0, wouldKeep = 0, wouldCull = 0;
+    unsigned integrityMismatch = 0, invalidDepth = 0;
+
+    // Parent-centric, using the EXACT footprint hzb_reduce.frag samples: for
+    // parent texel (px,py) the shader reads child texels at
+    //   floor( ((px+0.5)/pw)*cw +/- 0.5 ),  floor( ((py+0.5)/ph)*ch +/- 0.5 )
+    // (NEAREST + clamp). On odd child extents these 2x2 windows overlap at the
+    // boundary -- which is why a naive px*2 / cx/2 inverse mapping produces
+    // false mismatches. Replicating the sample positions exactly makes the
+    // integrity + cull self-tests agree with the GPU when the pyramid is sound.
+    auto clampi = [](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+    for (int py = 0; py < ph; ++py) {
+        const float sv = ((py + 0.5f) / (float)ph) * (float)ch;
+        const int cy0 = clampi((int)std::floor(sv - 0.5f), 0, ch - 1);
+        const int cy1 = clampi((int)std::floor(sv + 0.5f), 0, ch - 1);
+        for (int px = 0; px < pw; ++px) {
+            const float su = ((px + 0.5f) / (float)pw) * (float)cw;
+            const int cx0 = clampi((int)std::floor(su - 0.5f), 0, cw - 1);
+            const int cx1 = clampi((int)std::floor(su + 0.5f), 0, cw - 1);
+
+            const float ca = child[(size_t)cy0 * cw + cx0];
+            const float cb = child[(size_t)cy0 * cw + cx1];
+            const float cc = child[(size_t)cy1 * cw + cx0];
+            const float cd = child[(size_t)cy1 * cw + cx1];
+            float m = ca;
+            if (cb < m) m = cb;
+            if (cc < m) m = cc;
+            if (cd < m) m = cd;
+
+            const float pv = parent[(size_t)py * pw + px];
+            if (!std::isfinite(pv) || !std::isfinite(m)) { ++invalidDepth; continue; }
+
+            // (a) reduction integrity: GPU parent must equal the CPU min.
+            if (std::fabs(pv - m) > eps) ++integrityMismatch;
+
+            // (b) conservative cull self-test: each child the parent covers is a
+            // self-point inside the tile, so its depth must be >= parent's MIN
+            // (reverse-Z) -> never culled. wouldCull MUST stay 0.
+            const float kids[4] = { ca, cb, cc, cd };
+            for (float d : kids) {
+                ++tested;
+                if (d < pv - eps) ++wouldCull; else ++wouldKeep;
+            }
+        }
+    }
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    static unsigned long long s_probeFrame = 0;
+    ++s_probeFrame;
+    if (s_probeFrame <= 3 || (s_probeFrame % 600) == 0 || wouldCull || integrityMismatch) {
+        fprintf(stderr,
+            "[HZB_PROBE v1] parentL=%d(%dx%d) childL=%d(%dx%d) tested=%u "
+            "wouldKeep=%u wouldCull=%u integrityMismatch=%u invalidDepth=%u "
+            "neverAppliedToDraws=1\n",
+            pLevel, pw, ph, cLevel, cw, ch, tested,
+            wouldKeep, wouldCull, integrityMismatch, invalidDepth);
+    }
+}
+
 void gosPostProcess::runSSAO()
 {
     ZoneScopedN("Render.SSAO");
@@ -1390,6 +1503,7 @@ void gosPostProcess::endScene()
     // resolved scene depth before any post pass. Gated (MC2_HZB_BUILD), no
     // consumers, no draw suppression -> no-op + byte-identical when OFF.
     runHzbReduce();
+    runHzbProbe();   // diagnostic-only; reads the pyramid, suppresses no draws
 
     // Post-process shadow pass: covers terrain, objects, and overlays in one
     // pass, with reduced terrain darkening to avoid obvious double-shadowing.

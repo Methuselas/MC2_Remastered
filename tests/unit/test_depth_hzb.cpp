@@ -289,4 +289,29 @@ TEST_CASE("HZB 2D mip count reduces non-square extents to a 1x1 terminal") {
     CHECK(hzbMipCount2D(7, 3) == (uint32_t)hzbMipLadder(7).size());
 }
 
+// --- Occlusion probe decision (HZB-OCCLUSION-PROBE-1) -----------------------
+
+TEST_CASE("HZB probe: a tile min never culls its own child texels") {
+    // The runtime self-consistency probe asserts exactly this: a parent texel
+    // stores MIN over the tile, and every child depth in the tile is >= that
+    // min (reverse-Z), so the conservative cull comparison must KEEP all of
+    // them. wouldCull over self-points must be 0.
+    const double children[4] = { 0.90, 0.55, 0.10, 0.40 };
+    const double parent = hzbReduce2x2(children[0], children[1], children[2], children[3]);
+    for (double d : children) {
+        // hzbCullsObject(objClosest=d, hzbTexel=parent) must be false: d >= min.
+        CHECK_FALSE(hzbCullsObject(d, parent));
+    }
+}
+
+TEST_CASE("HZB probe: an object strictly farther than the tile min is culled") {
+    const double parent = hzbReduce2x2(0.90, 0.55, 0.30, 0.40); // min = 0.30
+    CHECK(parent == doctest::Approx(0.30));
+    // Farther than the farthest occluder (smaller reverse-Z) -> occluded.
+    CHECK(hzbCullsObject(/*objClosest=*/0.20, parent));
+    // Exactly at / nearer than the min -> kept (boundary is conservative-keep).
+    CHECK_FALSE(hzbCullsObject(/*objClosest=*/0.30, parent));
+    CHECK_FALSE(hzbCullsObject(/*objClosest=*/0.95, parent));
+}
+
 } // TEST_SUITE("DepthHZB")
