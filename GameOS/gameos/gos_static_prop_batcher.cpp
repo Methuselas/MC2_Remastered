@@ -2434,6 +2434,10 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         size_t maxBytes = static_cast<size_t>(maxW) *
                           static_cast<size_t>(maxH) * 4u;
         std::vector<uint8_t> pixelBuf(maxBytes);
+        // KTX2 layers that carry a pre-baked mip chain: cache the loaded image
+        // keyed by layer index so we can OVERWRITE the auto-generated mips with
+        // the sharp pre-baked levels after the single glGenerateMipmap pass.
+        std::vector<std::pair<size_t, RenderCore::KtxImage>> s_ktxMipLayers;
         for (size_t k = 0; k < uniques.size(); ++k) {
             const auto& u = uniques[k];
             bool ktxUsed = false;
@@ -2468,6 +2472,10 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                                         u.w, u.h, 1,
                                         GL_RGBA, GL_UNSIGNED_BYTE, ktxImg.pixels.data());
                         ktxUsed = true;
+                        // Stash for post-glGenerateMipmap pre-baked mip overwrite.
+                        if (ktxImg.mipCount > 1) {
+                            s_ktxMipLayers.emplace_back(k, std::move(ktxImg));
+                        }
                         COALESCE_TRACE("ktx_sidecar_hit type=? node=%lu path=%s",
                                        (unsigned long)u.nodeIdx, ktxPath.c_str());
                     }
@@ -2503,6 +2511,43 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 if (h > 1) h >>= 1;
             }
         }
+        // 5.10.f.ktx — OVERWRITE auto-generated mips with the pre-baked KTX2
+        // mip chain for layers that carried one. glGenerateMipmap above filled
+        // mips for ALL layers (KTX + non-KTX) from level 0; here we replace the
+        // blurry auto-gen mips on KTX layers with the sharp baked levels.
+        // Non-KTX layers keep their auto-generated mips. Only overwrite levels
+        // that exist both in the baked chain AND within the array's maxLevel.
+        if (s_materialKtxEnabled && !s_ktxMipLayers.empty()) {
+            glBindTexture(GL_TEXTURE_2D_ARRAY, outArray);
+            int totalMipsUploaded = 0;
+            for (const auto& lm : s_ktxMipLayers) {
+                const size_t layerK = lm.first;
+                const RenderCore::KtxImage& img = lm.second;
+                const int lastLvl = (img.mipCount - 1 < maxLevel)
+                                        ? (img.mipCount - 1) : maxLevel;
+                int uploaded = 0;
+                for (int lvl = 1; lvl <= lastLvl; ++lvl) {
+                    int lw = img.width  >> lvl; if (lw < 1) lw = 1;
+                    int lh = img.height >> lvl; if (lh < 1) lh = 1;
+                    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, lvl,
+                                    0, 0, static_cast<GLint>(layerK),
+                                    lw, lh, 1,
+                                    GL_RGBA, GL_UNSIGNED_BYTE,
+                                    img.pixels.data() +
+                                        img.mipByteOffsets[static_cast<size_t>(lvl)]);
+                    ++uploaded;
+                }
+                totalMipsUploaded += uploaded;
+                std::fprintf(stderr,
+                    "[KTX2_MIP] uploaded %d pre-baked mips for layer %zu (%dx%d)\n",
+                    uploaded, layerK, img.width, img.height);
+            }
+            std::fprintf(stderr,
+                "[KTX2_MIP] summary: %zu KTX layers, %d pre-baked mips overwritten\n",
+                s_ktxMipLayers.size(), totalMipsUploaded);
+            std::fflush(stderr);
+        }
+
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,  maxLevel);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S,     GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T,     GL_CLAMP_TO_EDGE);
