@@ -226,6 +226,15 @@ if(ENABLE_ASSET_CPP_PROBES)
     if(NOT ENABLE_ASSIMP_IMPORTER)
         message(FATAL_ERROR "ENABLE_ASSET_CPP_PROBES=ON requires ENABLE_ASSIMP_IMPORTER=ON (assimp_probe links assimp::assimp).")
     endif()
+    # meshoptimizer (vendored, unwired at runtime) is brought in ONLY for the
+    # offline meshopt_lod_probe tool (MESHOPT-LOD-PROBE-1). Demo + gltfpack are
+    # already OFF by default in its CMakeLists; force them OFF explicitly so the
+    # only target produced is the static `meshoptimizer` lib. EXCLUDE_FROM_ALL:
+    # never built unless the probe exe (or a runtime target) links it.
+    set(MESHOPT_BUILD_DEMO        OFF CACHE BOOL "" FORCE)
+    set(MESHOPT_BUILD_GLTFPACK    OFF CACHE BOOL "" FORCE)
+    set(MESHOPT_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    add_subdirectory(3rdparty/meshoptimizer "${CMAKE_BINARY_DIR}/out/3rdparty/meshoptimizer" EXCLUDE_FROM_ALL)
     add_subdirectory(tools/cpp_probes "${CMAKE_BINARY_DIR}/out/tools/cpp_probes")
     message(STATUS "ENABLE_ASSET_CPP_PROBES=ON — building offline host tools in tools/cpp_probes/")
 endif()

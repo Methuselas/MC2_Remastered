@@ -11,6 +11,10 @@ add_executable(assimp_probe assimp_probe.cpp)
 target_link_libraries(assimp_probe PRIVATE assimp::assimp)
 target_compile_features(assimp_probe PRIVATE cxx_std_17)
 
-# A later slice will add:
-#   add_executable(meshopt_lod_probe meshopt_lod_probe.cpp)
-#   target_link_libraries(meshopt_lod_probe PRIVATE meshoptimizer)
+# meshopt_lod_probe (MESHOPT-LOD-PROBE-1) — procedural mesh, run meshopt_simplify
+# + meshopt_buildMeshlets, emit manifest-compatible LOD-stat JSON. Links ONLY the
+# vendored meshoptimizer static lib (added gated in the root CMakeLists).
+add_executable(meshopt_lod_probe meshopt_lod_probe.cpp)
+target_link_libraries(meshopt_lod_probe PRIVATE meshoptimizer)
+target_include_directories(meshopt_lod_probe PRIVATE "${CMAKE_SOURCE_DIR}/3rdparty/meshoptimizer/src")
+target_compile_features(meshopt_lod_probe PRIVATE cxx_std_17)
