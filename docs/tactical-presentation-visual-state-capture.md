@@ -14,8 +14,12 @@ Deploy target: `A:/Games/mc2-opengl/mc2-win64-v0.4`.
 |-------|----------|---------|---------------|
 | 1 `MECH-VISUAL-STATE-BRIDGE-1` | per-mech `heat01`/`damage01`/`flags` mirrored to renderer SSBO + debug dump | OFF (no shader consumes it) | debug-state JSON, `MC2_SNAPSHOT_MECH_EXTRACT=1` |
 | 3 `TACTICAL-OVERLAY-SELECTED-MECH-DATA-1` | range bands (min/opt/max) + firing-arc spokes on selected mover | OFF | `MC2_DEBUG_RENDERER=1` + `MC2_TACTICAL_ARC_OVERLAY=1`, select a mech |
-| 2 Thermal | DEFERRED (heat compiled out) — placeholder luminance only | n/a | see `thermal-view-mech-heat-mvp-defer.md` |
+| 2 `THERMAL-VIEW-MECH-HOT-1` | Thermal: engine-bearing units (mechs) read HOT, rest = luminance iron palette | ViewMode-only | `MC2_VIEWMODE_FRAMEWORK=1 MC2_VIEW_MODE=thermal MC2_OBJECT_ID_BUFFER=1` |
 | 4 Sensor | DEFERRED (firewall) — recon doc only | n/a | see `sensor-contact-presentation-recon.md` |
+
+Vehicles read cool in Thermal (they render via the static-prop batcher; no
+distinct identity yet). Vehicles-hot is a follow-up — see
+`thermal-view-mech-heat-mvp-defer.md`.
 
 ## Missions
 - **mc2_24** — ~46 mechs; best mech density for the visual-state dump and
@@ -68,6 +72,17 @@ Drive the camera, select a mech. Expect: blue max-range ring, cyan optimal
 ring (inside max), amber min/dead ring (if nonzero), green facing tick, two
 yellow firing-arc edge spokes at facing ± half-arc. Deselect → overlay clears.
 No GL errors. Selecting multiple units draws the overlay on each.
+
+### C2. Slice 2 — Thermal engine-hot
+```powershell
+$env:MC2_VIEWMODE_FRAMEWORK = "1"; $env:MC2_VIEW_MODE = "thermal"; $env:MC2_OBJECT_ID_BUFFER = "1"
+py -3 scripts\run_smoke.py --mission mc2_24 --duration 30 --keep-logs
+```
+Log shows `[VIEWMODE v1] framework=1 initialMode=3`, 0 GL errors. For the pixel
+check, launch non-minimized and confirm mechs render hot (orange/white) against
+cooler terrain/props; switch ViewMode via Graphics Options → Post-Process →
+View Mode. (Smoke launches minimized, so a desktop screenshot won't show the
+game — drive it manually for the visual.) Vehicles read cool (known follow-up).
 
 ### D. Static gates (always)
 ```bash

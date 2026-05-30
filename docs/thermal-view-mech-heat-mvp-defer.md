@@ -1,76 +1,67 @@
-# Thermal ViewMode real-data MVP — DEFER (THERMAL-VIEW-MECH-HEAT-MVP-1)
+# Thermal ViewMode — engine-bearing units read hot (THERMAL-VIEW-MECH-HOT-1)
 
-Status: **DEFERRED.** Slice 2 of `GAMEADAPTERS-VISUAL-STATE-BRIDGE-OPUS-1`.
-No renderer change shipped. This records why, and the exact split a future
-lane should take. The data substrate it needs already shipped in Slice 1
-(`MECH-VISUAL-STATE-BRIDGE-1`).
+Status: **SHIPPED (mechs).** Slice 2 of `GAMEADAPTERS-VISUAL-STATE-BRIDGE-OPUS-1`.
+Vehicles-hot remains a follow-up (see below).
 
-## Why deferred
+## Corrected design: heat is a CLASS, not a value
 
-Two independent blockers, either of which is sufficient:
+Real per-unit heat does **not** exist in this engine — the MechWarrior heat sim
+is compiled out (`#ifdef USEHEAT`, never defined; `code/mech.cpp:238`…). So
+Thermal does NOT try to read a per-mech heat number. Instead:
 
-### 1. There is no heat to show — `USEHEAT` is compiled out
-The MechWarrior heat simulation (`heat`, `heatDissipation`, `updateHeat()`,
-`NumHeatLevels`) lives entirely behind `#ifdef USEHEAT` in `code/mech.cpp`
-(lines 238, 391, 1170, 2792, 3012, 3101, 3312, 3454, 3615, 3634, 6963, …).
-`USEHEAT` is **never defined** anywhere in the repo. `BattleMech::updateHeat()`
-does not run; there is no live runtime heat value to read. Reviving it is a
-**mech-simulation change**, explicitly out of scope for a renderer bridge.
+> **Anything with an engine (mechs) reads HOT; everything else maps scene
+> luminance to the iron palette** (fire/exhaust/muzzle/specular still read warm;
+> dark terrain reads cool).
 
-Consequence: a "real mech heat" Thermal view is impossible without first
-shipping a separate USEHEAT-revival gameplay arc. `MechVisualState::heat01`
-is wired through the bridge but is always `0.0`.
+## How it works (no new GPU buffer)
 
-### 2. The remaining proxy (damage01) needs a broad new GPU resource
-Slice 1 bridges `damage01` (composite health from `getStatusRating()`), which
-*could* drive a "damage = hot" Thermal stylization. But the data lands in the
-per-instance `GpuMechInstance` SSBO, indexed by **draw-instance slot**. The
-Thermal postprocess pass identifies a pixel's object only through the
-object-ID buffer (`sceneObjectIdTex_`, `GL_R32UI`, a `RenderObjectHandle`:
-`[19:0]` index, `[31:20]` generation — `gos_postprocess.cpp:175`, written by
-`mech.frag:85,198`). There is **no handle→instance map** available in the
-composite, so the shader cannot reach `GpuMechInstance.visualDamage01` today.
+The object-ID buffer is already bound at composite unit 2 (`u_objectIdTex`,
+`GL_R32UI`, a `RenderObjectHandle`). Mech handles occupy a **disjoint index
+range** — `>= kMechHandleBase` (`0x10000`); static props/terrain are below it
+(invariant enforced in `RenderWorld.cpp:122-126`). So a pixel is engine-bearing
+iff `(objectId & 0xFFFFF) >= u_engineIdxBase`. No SSBO, no MRT, no per-handle
+table.
 
-Bridging it requires a NEW per-object GPU table keyed by handle index
-(`objectIdRaw & 0xFFFFF`), uploaded each frame, plus a `postprocess.frag`
-change. That is the "broad SSBO/resource addition" the slice's own stop
-condition says to **stop and split** on.
+- `RenderWorld::MechHandleIndexBase()` exposes `kMechHandleBase`.
+- `gos_postprocess.cpp` sets `u_engineIdxBase` to it when the OID buffer is live,
+  else `0` (Thermal degrades to the prior luminance-only placeholder — no read
+  of an unbound texture unit).
+- `shaders/postprocess.frag` Thermal branch (mode 3): forces mech pixels into the
+  hot band (`t = max(t, 0.9)`) before the iron-palette ramp.
 
-## What ships instead
+ViewMode-only (`MC2_VIEWMODE_FRAMEWORK=1`, mode 3). Visual mode and the default
+path are byte-identical.
 
-Nothing in the renderer. Thermal remains the shipped **luminance placeholder**
-(`shaders/postprocess.frag:164-179`, iron palette over scene luma), which is
-honest and already documented as a placeholder in `docs/thermal-ir-design.md`.
-Do **not** relabel it as real thermal.
+## Validation
+- Build mclib+mc2 exit 0; deployed exe + `postprocess.frag` (5× `u_engineIdxBase`
+  refs); shader-reflect golden regenerated.
+- Gate-OFF mc2_01 PASS, +0 destroys (byte-identical).
+- Thermal run (`MC2_VIEWMODE_FRAMEWORK=1 MC2_VIEW_MODE=thermal
+  MC2_OBJECT_ID_BUFFER=1`) mc2_24 PASS — `[VIEWMODE v1] framework=1
+  initialMode=3` active, composite + shader compiled, **0 GL errors**.
+- Pixel-level "mechs render orange" is a manual capture (game runs minimized in
+  smoke; see `docs/tactical-presentation-visual-state-capture.md`). The
+  classification is correct-by-construction from the verified handle ranges.
 
-## Split path for a future `THERMAL-VIEW-MECH-DAMAGE-MVP` lane
+## Follow-up — VEHICLES-HOT (`THERMAL-VIEW-VEHICLE-HOT-1`)
+Vehicles (`GroundVehicle`/`GVAppearance`) render through the **static-prop
+batcher** (`gvactor.cpp:1104` → `GpuStaticPropBatcher::registerMultiShape`) and
+get a **StaticProp-range handle** indistinguishable from buildings. So vehicles
+currently read cool. Making them hot needs object identity:
+1. Add `RenderObjectKind::Vehicle` + a `kVehicleHandleBase` carved out of (or
+   above) the static-prop range, OR a per-handle "engine" bit table.
+2. A `GameAdapters` `registerVehicle` path on `GVAppearance` (mirrors
+   `registerMech`).
+3. Extend the shader test to include the vehicle range/bit.
+This is a separate slice (touches RenderWorld handle allocation + a new adapter)
+— out of scope for the mechs-hot MVP.
 
-1. **Per-handle visual SSBO (renderer-owned).** A compact array sized to the
-   max live RenderObjectHandle index, holding `{ uint8 kind; unorm8 damage01; }`
-   (or just `damage01`). Populated CPU-side each frame from the mech batcher
-   (which knows both the handle and the Slice-1 `damage01`) — and optionally
-   from `RenderObjectRecord::kind` for non-mech classification. Self-contained
-   in the renderer; no firewall crossing (damage01 already arrived via the
-   Slice-1 game→appearance feed).
-2. **Bind + sample in Thermal.** The OID texture is already bound at composite
-   unit 2 and declared (`usampler2D u_objectIdTex`). Thermal frag:
-   `idx = texture(u_objectIdTex, uv).r & 0xFFFFFu; d = ssbo[idx].damage01;`
-   then colorize mech pixels by damage (cool→hot), terrain/statics cooler,
-   emissive/VFX stay luminance-hot.
-3. **Gate.** ViewMode-only (`MC2_VIEWMODE_FRAMEWORK=1`, mode 3 Thermal). Visual
-   mode (0) is untouched → no default behavior change.
-4. **Validate.** Visual mode byte-identical; Thermal shows damaged mechs hotter;
-   0 GL errors.
-
-## Stop conditions for that future lane
-- If the per-handle SSBO upload proves hot-path-expensive at mech-heavy
-  missions, fall back to a coarse object-class (mech/terrain/static) buffer.
-- If `damage01` reads as misleading (it folds weapon-effectiveness + pilot
-  wounds, not pure armor), expose a pure-armor ratio on `MechVisualState`
-  instead — still game-side, sanitized.
+## Optional future upgrades
+- Per-mech damage-driven heat ramp: `MechVisualState.damage01` already bridges
+  (Slice 1), but it lives in the per-instance SSBO, not indexable by handle in
+  postprocess — would need a per-handle damage table. Defer until wanted.
 
 ## Cross-references
-- `RenderCore/MechVisualState.h` — the bridged state (Slice 1).
-- `docs/thermal-ir-design.md` — placeholder + Phase 2 MRT-heat plan.
-- `docs/sensor-contact-presentation-recon.md` — same firewall constraint.
-- `docs/viewmode-capture-matrix.md` — the framework Thermal plugs into.
+- `RenderCore/MechVisualState.h` (Slice 1 bridge).
+- `docs/thermal-ir-design.md` (placeholder history + MRT-heat plan).
+- `docs/tactical-presentation-visual-state-capture.md` (manual capture steps).
