@@ -10,6 +10,7 @@
 #include "../../RenderCore/RenderResourceRegistry.h"
 #include "../../RenderCore/EngineView.h"
 #include "view_uniforms_gl.h"
+#include "gos_static_prop_registry.h"   // HZB-STATICPROP-CULL-RECON-1: real bounds for the probe
 
 #include <cassert>
 #include <cstdio>
@@ -1140,12 +1141,31 @@ void gosPostProcess::runHzbProbe()
     dimsAt(pLevel, pw, ph);
     dimsAt(cLevel, cw, ch);
 
-    std::vector<float> parent((size_t)pw * ph), child((size_t)cw * ch);
+    // Cost-bound readback: only levels at/under 256 px on the long axis (Lmin).
+    // Both self-test levels (cLevel/pLevel) are coarser than Lmin, and object
+    // LOD selection is CLAMPED to >= Lmin (clamping coarser only ever makes the
+    // test MORE conservative -- a bigger tile MIN is smaller, so it keeps more).
+    int Lmin = 0;
+    {
+        int dw = hzbW_, dh = hzbH_, lvl = 0;
+        while (lvl < hzbMipCount_ - 1 && (dw > 256 || dh > 256)) {
+            dw = (dw + 1) / 2; dh = (dh + 1) / 2; ++lvl;
+        }
+        Lmin = lvl;
+    }
+    if (Lmin > cLevel) Lmin = cLevel;   // guarantee the self-test levels are resident
+
+    std::vector<std::vector<float>> hzbCpu(hzbMipCount_);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glBindTexture(GL_TEXTURE_2D, hzbLevelTex_[pLevel]);
-    glGetTexImage(GL_TEXTURE_2D, 0, GL_RED, GL_FLOAT, parent.data());
-    glBindTexture(GL_TEXTURE_2D, hzbLevelTex_[cLevel]);
-    glGetTexImage(GL_TEXTURE_2D, 0, GL_RED, GL_FLOAT, child.data());
+    for (int L = Lmin; L < hzbMipCount_; ++L) {
+        int lw, lh; dimsAt(L, lw, lh);
+        hzbCpu[L].resize((size_t)lw * lh);
+        glBindTexture(GL_TEXTURE_2D, hzbLevelTex_[L]);
+        glGetTexImage(GL_TEXTURE_2D, 0, GL_RED, GL_FLOAT, hzbCpu[L].data());
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    const std::vector<float>& parent = hzbCpu[pLevel];
+    const std::vector<float>& child  = hzbCpu[cLevel];
 
     const float eps = 1e-5f;
     unsigned tested = 0, wouldKeep = 0, wouldCull = 0;
@@ -1194,7 +1214,102 @@ void gosPostProcess::runHzbProbe()
         }
     }
 
-    glBindTexture(GL_TEXTURE_2D, 0);
+    // ---- Real static-prop occlusion probe (HZB-STATICPROP-CULL-RECON-1) ----
+    // For each active static prop: build an AABB from its world center +/- the
+    // extent radius, project the 8 corners through viewProj_ (the GL-NDC
+    // reverse-Z world->clip transform that produced the scene depth, fed by
+    // Camera::worldToClipGL), take the screen rect + the object's CLOSEST
+    // reverse-Z depth (max over corners), pick the HZB LOD matching the rect
+    // size, sample that level's covered texels (MIN = farthest occluder), and
+    // run the conservative cull comparison objClosest < hzbMin. DIAGNOSTIC ONLY
+    // -- counts would-cull/would-keep; NEVER suppresses a draw. Real props can be
+    // genuinely occluded, so objWouldCull > 0 is expected; the safety invariant
+    // is only that nothing acts on it. objOnScreen ~ 0 would mean the projection
+    // convention is wrong (axis-swap) -- a loud red flag, not a silent failure.
+    unsigned objActive = 0, objScanned = 0, objTested = 0;
+    unsigned objWouldKeep = 0, objWouldCull = 0, objOffscreen = 0, objClipped = 0;
+    {
+        // viewProj_ is column-major; row-vector multiply (matches the sun-screen
+        // projection in renderSkybox). Input is MC2 world (east, north, elev).
+        auto projectClip = [&](float wx, float wy, float wz, float out[4]) {
+            const float w4[4] = { wx, wy, wz, 1.0f };
+            float clip[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+            for (int r = 0; r < 4; ++r)
+                for (int c = 0; c < 4; ++c)
+                    clip[r] += viewProj_[c * 4 + r] * w4[c];
+            out[0] = clip[0]; out[1] = clip[1]; out[2] = clip[2]; out[3] = clip[3];
+        };
+
+        objActive = GpuStaticPropRegistry::getActiveCount();
+        const int      kScanCap = 1 << 16;   // backstop vs sparse indices
+        const unsigned kObjCap  = 4096;       // bound per-frame cost
+        for (int idx = 0; idx < kScanCap && objScanned < objActive && objScanned < kObjCap; ++idx) {
+            float mtx[16];
+            if (!GpuStaticPropRegistry::staticPropGetModelMatrix(idx, mtx)) continue; // tombstone/gap
+            ++objScanned;
+
+            float radius = 0.0f;
+            GpuStaticPropRegistry::staticPropGetExtentRadius(idx, &radius);
+            if (!(radius > 0.0f)) radius = 1.0f;
+            const float cx = -mtx[3], cy = mtx[11], cz = mtx[7];  // MC2 east/north/elev
+
+            float uvMinX = 1e9f, uvMaxX = -1e9f, uvMinY = 1e9f, uvMaxY = -1e9f;
+            float objClosest = -1e9f;  // reverse-Z: closest = MAX depth
+            bool crossesNear = false;
+            for (int ci = 0; ci < 8; ++ci) {
+                const float wx = cx + ((ci & 1) ? radius : -radius);
+                const float wy = cy + ((ci & 2) ? radius : -radius);
+                const float wz = cz + ((ci & 4) ? radius : -radius);
+                float clip[4];
+                projectClip(wx, wy, wz, clip);
+                if (clip[3] <= 1e-6f) { crossesNear = true; break; }
+                const float inv = 1.0f / clip[3];
+                const float ndcx = clip[0] * inv, ndcy = clip[1] * inv;
+                const float depth = clip[2] * inv;            // reverse-Z [0,1]
+                const float ux = ndcx * 0.5f + 0.5f, uy = ndcy * 0.5f + 0.5f;
+                if (ux < uvMinX) uvMinX = ux; if (ux > uvMaxX) uvMaxX = ux;
+                if (uy < uvMinY) uvMinY = uy; if (uy > uvMaxY) uvMaxY = uy;
+                if (depth > objClosest) objClosest = depth;
+            }
+            if (crossesNear) { ++objClipped; continue; }       // conservative: keep
+            if (uvMaxX < 0.0f || uvMinX > 1.0f || uvMaxY < 0.0f || uvMinY > 1.0f) {
+                ++objOffscreen; continue;
+            }
+
+            // Clamp rect to screen, pick LOD from its pixel size.
+            const float cMinX = uvMinX < 0.0f ? 0.0f : uvMinX;
+            const float cMaxX = uvMaxX > 1.0f ? 1.0f : uvMaxX;
+            const float cMinY = uvMinY < 0.0f ? 0.0f : uvMinY;
+            const float cMaxY = uvMaxY > 1.0f ? 1.0f : uvMaxY;
+            float rpw = (cMaxX - cMinX) * (float)hzbW_;
+            float rph = (cMaxY - cMinY) * (float)hzbH_;
+            if (rpw < 1.0f) rpw = 1.0f; if (rph < 1.0f) rph = 1.0f;
+            int L = (int)std::ceil(std::log2((rpw > rph ? rpw : rph)));
+            if (L < Lmin) L = Lmin;
+            if (L > hzbMipCount_ - 1) L = hzbMipCount_ - 1;
+
+            int lw, lh; dimsAt(L, lw, lh);
+            const std::vector<float>& lvl = hzbCpu[L];
+            int tx0 = clampi((int)std::floor(cMinX * lw), 0, lw - 1);
+            int tx1 = clampi((int)std::floor(cMaxX * lw), 0, lw - 1);
+            int ty0 = clampi((int)std::floor(cMinY * lh), 0, lh - 1);
+            int ty1 = clampi((int)std::floor(cMaxY * lh), 0, lh - 1);
+            if (tx1 - tx0 > 3) tx1 = tx0 + 3;                  // bound the inner loop
+            if (ty1 - ty0 > 3) ty1 = ty0 + 3;
+            float hzbMin = 1e9f;
+            for (int ty = ty0; ty <= ty1; ++ty)
+                for (int tx = tx0; tx <= tx1; ++tx) {
+                    const float d = lvl[(size_t)ty * lw + tx];
+                    if (d < hzbMin) hzbMin = d;
+                }
+            if (!std::isfinite(hzbMin) || !std::isfinite(objClosest)) continue;
+
+            ++objTested;
+            // Conservative reverse-Z cull: object's nearest point is behind the
+            // farthest occluder in its footprint -> fully occluded.
+            if (objClosest < hzbMin - eps) ++objWouldCull; else ++objWouldKeep;
+        }
+    }
 
     static unsigned long long s_probeFrame = 0;
     ++s_probeFrame;
@@ -1205,6 +1320,14 @@ void gosPostProcess::runHzbProbe()
             "neverAppliedToDraws=1\n",
             pLevel, pw, ph, cLevel, cw, ch, tested,
             wouldKeep, wouldCull, integrityMismatch, invalidDepth);
+    }
+    if (s_probeFrame <= 5 || (s_probeFrame % 600) == 0) {
+        fprintf(stderr,
+            "[HZB_PROBE_OBJ v1] staticProps active=%u scanned=%u tested=%u "
+            "wouldKeep=%u wouldCull=%u offscreen=%u nearClipped=%u Lmin=%d "
+            "neverAppliedToDraws=1\n",
+            objActive, objScanned, objTested, objWouldKeep, objWouldCull,
+            objOffscreen, objClipped, Lmin);
     }
 }
 
