@@ -292,6 +292,23 @@ class TestMipChain(unittest.TestCase):
         mips = mc2texcook._generate_mips(img)
         self.assertEqual(len(mips), 1)
 
+    def test_fully_transparent_rgb_preserved_in_mips(self):
+        """Regression: fully-transparent (alpha=0) source with meaningful RGB
+        must keep its RGB in coarse mips. Pillow's RGBA LANCZOS premultiplies
+        alpha and would zero the RGB -> props (cliffs/fences/markers) turn black
+        at distance. RGB and alpha are resized independently to prevent this."""
+        from PIL import Image  # type: ignore
+        # 16x16 white but fully transparent (alpha=0 everywhere).
+        img  = Image.new("RGBA", (16, 16), (255, 255, 255, 0))
+        mips = mc2texcook._generate_mips(img)
+        self.assertEqual(len(mips), 5)  # 16,8,4,2,1
+        for lvl, m in enumerate(mips):
+            px = m.tobytes()
+            r = sum(px[0::4]) / (len(px) // 4)
+            a = sum(px[3::4]) / (len(px) // 4)
+            self.assertGreater(r, 250, f"mip {lvl}: RGB zeroed (premultiply bug); mean R={r}")
+            self.assertLess(a, 5, f"mip {lvl}: alpha should stay ~0, got {a}")
+
     def test_level_index_offsets_contiguous(self):
         """Level index offsets should describe contiguous non-overlapping regions."""
         img  = _make_rgba_image(4, 4)

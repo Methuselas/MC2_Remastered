@@ -277,6 +277,14 @@ def _generate_mips(base_img):
     """Return list of PIL Images: [mip0 (largest), mip1, ..., mipN (1x1)].
 
     Each level halves both dimensions (floor division), stopping at 1x1.
+
+    RGB and alpha are downsampled INDEPENDENTLY (not as a single RGBA resize).
+    Pillow's LANCZOS resize of an RGBA image premultiplies alpha, which zeroes
+    the RGB of any fully-transparent texel — so source art that is transparent
+    (alpha==0) but carries meaningful RGB (cliffs, fences, markers) would
+    produce BLACK coarse mips and the prop turns black at distance. Resizing the
+    RGB and alpha planes separately matches glGenerateMipmap's non-premultiplied
+    per-channel filter and keeps the albedo correct regardless of alpha.
     """
     try:
         from PIL import Image  # type: ignore
@@ -285,10 +293,22 @@ def _generate_mips(base_img):
 
     mips = [base_img]
     w, h = base_img.size
-    while w > 1 or h > 1:
-        w = max(1, w >> 1)
-        h = max(1, h >> 1)
-        mips.append(base_img.resize((w, h), Image.LANCZOS))
+
+    if base_img.mode == "RGBA":
+        r, g, b, a = base_img.split()
+        rgb = Image.merge("RGB", (r, g, b))
+        while w > 1 or h > 1:
+            w = max(1, w >> 1)
+            h = max(1, h >> 1)
+            rgb_l = rgb.resize((w, h), Image.LANCZOS)
+            a_l = a.resize((w, h), Image.LANCZOS)
+            rr, gg, bb = rgb_l.split()
+            mips.append(Image.merge("RGBA", (rr, gg, bb, a_l)))
+    else:
+        while w > 1 or h > 1:
+            w = max(1, w >> 1)
+            h = max(1, h >> 1)
+            mips.append(base_img.resize((w, h), Image.LANCZOS))
     return mips
 
 
