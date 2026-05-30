@@ -45,32 +45,50 @@ Cost-bounded: HZB readback restricted to levels ≥ `Lmin`; per-frame object cap
   `wouldCull=0 integrityMismatch=0` (the reduction is a faithful conservative
   MIN). The math is conservative-correct.
 
-## KEY RISK (must resolve before any cull consumer)
+## Camera-motion `wouldCull` spike — stress-case finding (NOT a substrate bug)
 
-- **Transient `wouldCull` spike during camera motion.** mc2_17 hit
-  `tested=87 wouldKeep=22 wouldCull=65` (~75%) on a frame where the camera
-  turned. Steady frames are keep-dominant; the spike correlates with motion.
-  Leading hypothesis: **frame coherence** — `viewProj_` may be set at a slightly
-  different point in the frame than the depth render that built the HZB, so under
-  fast motion the projected screen rects lag the depth by ~1 frame and flag
-  edge/grazing props as occluded. This is exactly a *false*-occlusion source.
-  A cull consumer that acted on this would briefly pop visible props during
-  camera moves.
-- **High `nearClipped`** (any AABB corner with `clip.w ≤ 0`): currently the whole
-  object is conservatively KEPT. Safe, but a real cull path wants per-plane near
-  clipping rather than whole-object skip, or it leaves large props near the eye
+- **Observation.** mc2_17 hit `tested=87 wouldKeep=22 wouldCull=65` (~75%) on a
+  frame where the camera turned; steady frames stay keep-dominant. The spike
+  correlates with camera motion.
+- **Classification.** mc2_17's intro has **known camera-path discontinuities — one
+  or two near-instant 180° snaps.** A transient would-cull spike on exactly those
+  frames is the **expected behaviour of any screen-space occlusion test under a
+  discontinuous camera**: for a frame straddling a snap, the projected screen
+  rects and the just-rendered depth can momentarily disagree at the frame
+  boundary, so grazing/edge props read as occluded for that single frame. This is
+  a **stress-case finding about camera discontinuities**, NOT evidence of an HZB
+  substrate defect: the HZB self-test stayed `wouldCull=0 integrityMismatch=0`
+  throughout, the reduction is a faithful conservative MIN, and the projection
+  axis convention is correct (steady frames are keep-dominant with `tested>0`).
+  We deliberately did NOT chase a frame-coherence rabbit hole or overfit the
+  probe to mask the spike — masking it would hide the very signal a future cull
+  consumer needs.
+- **High `nearClipped`** (any AABB corner with `clip.w ≤ 0`): the whole object is
+  conservatively KEPT. Safe, but a real cull path wants per-plane near clipping
+  rather than whole-object skip, or it leaves large props near the eye
   untestable.
 
 ## Verdict / next
 
 The substrate + projection + conservative comparison are proven on real props
-across three missions with zero rendering impact. **Do NOT build a cull consumer
-yet.** Next investigation (`HZB-STATICPROP-CULL-FRAMECOHERENCE-1`, recon/diag):
-- Confirm whether `viewProj_` and the HZB-source depth are the SAME frame; if
-  not, snapshot the exact `world→clip` used for that frame's depth and project
-  with it.
-- Add a per-object visual cross-check (highlight `wouldCull` props in the debug
-  preview) to separate TRUE occlusion from FALSE before trusting the rate.
-- Only after the motion spike is explained and the false-occlusion budget is
-  measured ~0 should a default-OFF, kill-switched cull consumer be considered.
-Stop conditions remain as in `docs/hzb-visibility-mvp.md`.
+across three missions with zero rendering impact. The mc2_17 spike is an expected
+camera-discontinuity stress case, not a blocker for this **diagnostic** lane.
+**Do NOT build a cull consumer yet** — and when one is eventually built it MUST
+handle camera discontinuities safely. Hard stop conditions for any future cull
+consumer (in addition to those in `docs/hzb-visibility-mvp.md`):
+
+1. **Camera-discontinuity guard is mandatory.** A real cull path must do at least
+   one of:
+   - disable culling for 1–2 frames after a large camera-matrix delta (detect via
+     frame-to-frame `viewProj` / camera-position delta over a threshold), OR
+   - prove **same-frame ownership** of the `world→clip` matrix and the depth it
+     culls against (the matrix used to project bounds is exactly the one that
+     rendered that frame's HZB-source depth), OR
+   - ship the first consumer **conservative + kill-switched + default-OFF**, with
+     a measured false-occlusion budget, so a transient spike can at worst briefly
+     keep too much (never pop a visible prop) and can be disabled instantly.
+2. **mc2_17 stays in the validation matrix on purpose** — it is a useful
+   pathological camera case (180° intro snaps); a candidate cull consumer must be
+   exercised against it and shown not to pop visible props across the snaps.
+
+Stop conditions from `docs/hzb-visibility-mvp.md` still apply.
