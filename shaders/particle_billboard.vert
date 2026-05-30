@@ -85,8 +85,16 @@ void main() {
     // This replaces the B1 fixed-axis approach (Stuff-X east + Stuff-Z up
     // with an axis swap) which produced a thin-strip artifact when the camera
     // rotates to face east or west.
-    float effSize     = max(p.size, 8.0);
-    vec2  corner      = (kCornerUv[cornerIdx] - vec2(0.5, 0.5)) * (2.0 * effSize);
+    // VFX-ORIGINAL-RENDER-ANIM-FIELDS-1: aspect-correct billboard + in-plane spin.
+    // velocity.xyz = (sizeX, sizeY, spinAngle) from oracle path; (0,0,0) from placeholder.
+    // Fallback to scalar size when velocity.x == 0 (placeholder path, byte-identical).
+    float sX = (p.velocity.x > 0.0) ? max(p.velocity.x, 4.0) : max(p.size, 8.0);
+    float sY = (p.velocity.y > 0.0) ? max(p.velocity.y, 4.0) : max(p.size, 8.0);
+    vec2 unitCorner = (kCornerUv[cornerIdx] - vec2(0.5, 0.5)) * 2.0;  // range [-1,1]
+    float cs = cos(p.velocity.z);   // velocity.z = spinAngle (0.0 for placeholder)
+    float sn = sin(p.velocity.z);
+    // Rotate the aspect-scaled corner by the spin angle (in billboard plane)
+    vec2  corner      = mat2(cs, sn, -sn, cs) * (unitCorner * vec2(sX, sY));
     // Particle center is in Stuff/MC2 world space; apply the same axis swap
     // (GL_x=-Stuff_x, GL_y=Stuff_z, GL_z=Stuff_y) used pre-B2 so the center
     // lands correctly, then add the view-aligned offsets in GL world space.
