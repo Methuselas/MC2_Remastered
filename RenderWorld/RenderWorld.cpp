@@ -663,7 +663,20 @@ bool IsObjectIdBufferEnabled() {
 }
 
 // GAMEADAPTERS-VISUAL-STATE-BRIDGE: expose the mech handle index base so a
-// postprocess pass can classify object-ID-buffer pixels as engine-bearing.
+// postprocess pass can classify object-ID-buffer pixels as mechs. See the
+// header for the handle-opacity-exception rationale + mech-only scope.
+//
+// Guard the kHandleIndexMask published in the header against Handle.h drift:
+// the mask must be exactly the index-field width, i.e. it round-trips through
+// the index field and (mask+1) overflows out of it. If RenderCore::Handle's
+// [19:0] split ever changes, these fail the build (M1: shader 0xFFFFF literal
+// otherwise diverges silently).
+static_assert(RenderCore::RenderObjectHandle::make(kHandleIndexMask, 0u).index() == kHandleIndexMask,
+              "kHandleIndexMask must equal the RenderObjectHandle index-field width");
+static_assert(RenderCore::RenderObjectHandle::make(kHandleIndexMask + 1u, 0u).index() == 0u,
+              "kHandleIndexMask is not the full index-field width — Handle.h layout drifted");
+static_assert(kMechHandleBase <= kHandleIndexMask,
+              "kMechHandleBase must fit within the handle index field");
 uint32_t MechHandleIndexBase() {
     return kMechHandleBase;
 }

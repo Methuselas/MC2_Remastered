@@ -172,6 +172,12 @@ void main()
     else if (u_viewMode == 3) {
         float t = clamp(dot(color, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
         if (u_engineIdxBase > 0) {
+            // 0xFFFFFu = RenderObjectHandle index-field mask ([19:0]). Mirrors
+            // RenderCore::Handle::index() and RenderWorld::kHandleIndexMask (a
+            // static_assert in RenderWorld.cpp fails the build if that layout
+            // drifts — this GLSL literal can't reference the C++ constant). The
+            // test is the GPU mirror of RenderWorld's mech partition classifier:
+            // (rawId & mask) >= MechHandleIndexBase() == "this pixel is a mech".
             uint idx = texture(u_objectIdTex, TexCoord).r & 0xFFFFFu;
             if (idx >= uint(u_engineIdxBase))
                 t = max(t, 0.9);  // force mech pixels into the hot band

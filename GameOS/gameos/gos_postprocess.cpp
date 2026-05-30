@@ -1290,6 +1290,15 @@ void gosPostProcess::endScene()
         // unavailable -> Thermal falls back to luminance-only (placeholder).
         // Vehicles render via the static-prop batcher and are NOT yet
         // distinguishable; vehicles-hot is a documented follow-up.
+        //
+        // FIREWALL NOTE (manual review — GameOS/ is OUTSIDE the
+        // check-include-firewall.sh SCOPE_DIRS, so the CI script does NOT police
+        // this call): RenderWorld::MechHandleIndexBase() is a deliberate,
+        // RenderWorld-owned classification API (RenderWorld owns the handle
+        // partition; see RenderWorld.h). RenderWorld.h was already included here
+        // (M1.5 IsObjectIdBufferEnabled) — no new engine header crosses a seam.
+        // The numeric threshold must reach the GPU as a uniform; there is no
+        // per-pixel C++ classifier path. Reviewed clean (render-spine advisor M2).
         compositeProg_->setInt("u_engineIdxBase",
             sceneObjectIdTex_ != 0 ? (int)RenderWorld::MechHandleIndexBase() : 0);
 

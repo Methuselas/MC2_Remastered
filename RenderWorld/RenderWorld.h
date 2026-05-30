@@ -85,11 +85,28 @@ void frameBannerTick();
 //   - C++ side of static-prop makeProgram() (gates the GLSL #ifdef prefix)
 bool IsObjectIdBufferEnabled();
 
-// GAMEADAPTERS-VISUAL-STATE-BRIDGE: lowest handle index assigned to mechs.
-// Mech records occupy indices >= this value; static props/terrain are below
-// it (INVARIANT enforced in RenderWorld.cpp). A postprocess pass can classify
-// an object-ID-buffer pixel as engine-bearing (mech) by testing
-// (objectId & 0xFFFFF) >= MechHandleIndexBase(). Returns kMechHandleBase.
+// GAMEADAPTERS-VISUAL-STATE-BRIDGE: handle index mask.
+// RenderObjectHandle packs [19:0]=index, [31:20]=generation. This is the index
+// field width, mirrored from RenderCore::Handle (validated by a static_assert
+// in RenderWorld.cpp). A GPU pass that reads raw handle bits from the object-ID
+// buffer must mask with this before comparing an index. Keep in sync with
+// Handle.h; the static_assert fails the build if the layouts diverge.
+static constexpr uint32_t kHandleIndexMask = 0xFFFFFu;
+
+// GAMEADAPTERS-VISUAL-STATE-BRIDGE: DELIBERATE, RenderWorld-OWNED classification
+// API — the one sanctioned exception to handle opacity. RenderWorld owns the
+// handle index partition (mechs occupy indices >= this base; static props /
+// terrain are below it — INVARIANT in RenderWorld.cpp), so RenderWorld is the
+// correct authority to PUBLISH a classification threshold. Callers do NOT
+// reverse-engineer an opaque handle; they consume a partition fact RenderWorld
+// chooses to expose (precedent: RenderWorld.cpp iterateHandles uses the same
+// base). The object-ID buffer carries raw handle bits, so a postprocess pass
+// classifies a pixel as a MECH via:  (rawId & kHandleIndexMask) >= MechHandleIndexBase().
+// SCOPE: mechs ONLY. Vehicles render through the static-prop batcher and carry
+// static-prop-range handles (below this base) -> they are NOT classified here;
+// making vehicles engine-bearing is THERMAL-VIEW-VEHICLE-HOT-1 (needs a distinct
+// RenderObjectKind::Vehicle + handle base). Do NOT assume ">= base == any future
+// engine kind"; today it means exactly "mech".
 uint32_t MechHandleIndexBase();
 
 // M1.6: static-prop pick master enable. When this is OFF, the missiongui
