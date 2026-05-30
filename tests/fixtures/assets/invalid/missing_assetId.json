@@ -1,0 +1,16 @@
+{
+  "_why_invalid": "ASSET-MANIFEST-NEGATIVE-FIXTURES-1: 'assetId' omitted -> req_str('assetId') fires.",
+  "source": "mc2srcdata/objects/crate_01.fbx",
+  "kind": "prop",
+  "materials": [],
+  "capabilities": {
+    "hasNormals": true,
+    "hasTangents": false,
+    "hasLods": false,
+    "hasImpostor": false,
+    "castsShadow": true,
+    "supportsObjectId": true
+  },
+  "lods": [],
+  "textureRefs": []
+}

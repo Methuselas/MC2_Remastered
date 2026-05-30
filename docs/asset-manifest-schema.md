@@ -86,12 +86,20 @@ engine conventions (`RenderCore/MaterialGpu.h`, `tools/mc2texcook/mc2texcook.py`
 requires `capabilities.hasTangents = true`.
 
 Fixtures: `material_validation_pass.json` (valid); `invalid/material_fail_*.json`
-(rejected — tangent mismatch, colorSpace mismatch, bad alphaMode).
+(rejected — tangent mismatch, colorSpace mismatch, bad alphaMode). These
+`invalid/material_fail_*.json` fixtures are NOT yet written — they will land when
+`MATERIAL-AUTHORING-VALIDATION-1` is implemented in `validate_asset_manifest.py`.
 
 ## Running the gate
 `py -3 scripts/check-asset-manifests.py` validates every
 `tests/fixtures/assets/*.json` (must pass) and every `…/invalid/*.json` (must be
 rejected). Deterministic, offline, no asset binaries.
+
+Also available: `py -3 scripts/check-asset-manifest-fixtures.py` — an earlier
+single-runner (`ASSET-MANIFEST-NEGATIVE-FIXTURES-1`) that drives
+`validate_asset_manifest.py` over the base-capability fixture corpus only (9
+invalid fixtures for the core required-field rules). When `check-asset-manifests.py`
+is fully wired it supersedes this runner; run either or both.
 
 ## For the future asset-pipeline lane
 Extend HERE rather than inventing a parallel format: add fields to the schema +

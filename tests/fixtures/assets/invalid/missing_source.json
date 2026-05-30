@@ -1,0 +1,16 @@
+{
+  "_why_invalid": "ASSET-MANIFEST-NEGATIVE-FIXTURES-1: 'source' omitted -> req_str('source').",
+  "assetId": "prop_crate_01",
+  "kind": "prop",
+  "materials": [],
+  "capabilities": {
+    "hasNormals": true,
+    "hasTangents": false,
+    "hasLods": false,
+    "hasImpostor": false,
+    "castsShadow": true,
+    "supportsObjectId": true
+  },
+  "lods": [],
+  "textureRefs": []
+}

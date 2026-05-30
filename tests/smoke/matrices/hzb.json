@@ -1,0 +1,13 @@
+{
+  "matrix_id": "hzb",
+  "description": "PLACEHOLDER matrix for the future runtime HZB / GPU-occlusion-cull slice (TRACKRV-HZB-VISIBILITY-OPUS-1). No runtime HZB exists yet and there is NO MC2_* gate to toggle, so this matrix has only the empty-env baseline entry. The depth/reduction contract the runtime must honor is locked in docs/hzb-depth-convention.md + tests/unit/test_depth_hzb.cpp (reverse-Z, ZERO_TO_ONE, near=1/far=0, MIN-reduce pyramid). When the runtime gate lands, register it in RendererFeatureRegistry.h and add on/debug entries here.",
+  "default_missions": ["mc2_17"],
+  "default_duration": 20,
+  "entries": [
+    {
+      "id": "default",
+      "description": "Baseline only — no HZB gate exists yet. Placeholder so the matrix slot + naming are reserved for the runtime HZB slice.",
+      "env": {}
+    }
+  ]
+}

@@ -198,8 +198,8 @@ TEST_CASE("RenderDebugView out-of-range returns false") {
 // RendererFeatureRegistry
 // ---------------------------------------------------------------------------
 
-TEST_CASE("RendererFeatureRegistry COUNT is 37") {
-    CHECK(static_cast<int>(RendererFeature::COUNT) == 37);
+TEST_CASE("RendererFeatureRegistry COUNT is 39") {
+    CHECK(static_cast<int>(RendererFeature::COUNT) == 39);
 }
 
 TEST_CASE("RendererFeatureRegistry kFeatureTable length matches COUNT") {
