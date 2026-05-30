@@ -119,6 +119,19 @@ std::vector<uint32_t> hzbMipLadder(uint32_t base) {
     return levels;
 }
 
+// HZB-DEPTH-PYRAMID-MVP-1: number of mip levels in a 2D HZB pyramid for a WxH
+// base (ceil ladder down to 1x1). This is exactly the level count the runtime
+// allocates via glTexStorage2D. It equals the runtime's compact form that
+// halves max(w,h) by ceil until it reaches 1; the test also asserts it equals
+// the LONGER per-axis ladder length.
+uint32_t hzbMipCount2D(uint32_t w, uint32_t h) {
+    uint32_t maxDim = (w > h) ? w : h;
+    if (maxDim == 0u) return 0u;
+    uint32_t mips = 1u;
+    while (maxDim > 1u) { maxDim = hzbNextMipDim(maxDim); ++mips; }
+    return mips;
+}
+
 } // namespace
 
 TEST_SUITE("DepthHZB") {
@@ -246,6 +259,34 @@ TEST_CASE("HZB 1x1 terminal mip is stable") {
     CHECK(hzbMipLadder(1) == std::vector<uint32_t>({1}));
     // Re-reducing the terminal must not grow or oscillate the chain.
     CHECK(hzbNextMipDim(hzbNextMipDim(1)) == 1u);
+}
+
+// --- 2D mip count (the level count the runtime allocates) -------------------
+
+TEST_CASE("HZB 2D mip count equals the longer per-axis ladder") {
+    // Concrete display resolutions (runtime allocates this many R32F levels).
+    CHECK(hzbMipCount2D(1920, 1080) == 12u); // ladder(1920): 1920..1 = 12
+    CHECK(hzbMipCount2D(1280, 720)  == 12u); // ladder(1280): 1280..1 = 12
+    CHECK(hzbMipCount2D(512, 512)   == 10u); // 512..1 = 10
+    CHECK(hzbMipCount2D(1, 1)       == 1u);  // single-texel target
+
+    // The compact max(w,h) form must agree with the longer per-axis ladder.
+    const uint32_t cases[][2] = {
+        {1920, 1080}, {1280, 720}, {7, 3}, {1, 64}, {64, 1}, {5, 5}, {1, 1}
+    };
+    for (const auto& c : cases) {
+        const uint32_t expected =
+            (uint32_t)std::max(hzbMipLadder(c[0]).size(), hzbMipLadder(c[1]).size());
+        CHECK(hzbMipCount2D(c[0], c[1]) == expected);
+    }
+}
+
+TEST_CASE("HZB 2D mip count reduces non-square extents to a 1x1 terminal") {
+    // A 1xN / Nx1 target collapses the long axis; count = long-axis ladder.
+    CHECK(hzbMipCount2D(1, 64) == hzbMipCount2D(64, 1));
+    CHECK(hzbMipCount2D(1, 64) == (uint32_t)hzbMipLadder(64).size());
+    // Odd long axis still terminates (ceil ladder, no dropped texel).
+    CHECK(hzbMipCount2D(7, 3) == (uint32_t)hzbMipLadder(7).size());
 }
 
 } // TEST_SUITE("DepthHZB")

@@ -168,7 +168,12 @@ enum class RendererFeature : int {
     VfxLitParticles          = 35,  // MC2_VFX_LIT_PARTICLES
     // VIEWMODE-POSTPROCESS-PRESENTATION-1: view-mode presentation framework.
     ViewmodeFramework        = 36,  // MC2_VIEWMODE_FRAMEWORK
-    COUNT                    = 37,
+    // TRACKRV-HZB-VISIBILITY-OPUS-1: gated reverse-Z Hi-Z depth pyramid build
+    // from MainDepth (custom MIN reduction, ceil mip ladder). Default-OFF;
+    // diagnostic substrate only -- NO culling/draw suppression. See
+    // docs/hzb-depth-convention.md + docs/hzb-visibility-mvp.md.
+    HzbBuild                 = 37,  // MC2_HZB_BUILD
+    COUNT                    = 38,
 };
 
 // ---------------------------------------------------------------------------
@@ -473,6 +478,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "VIEWMODE-POSTPROCESS-PRESENTATION-1: enables the view-mode presentation framework that wires ViewMode::ObjectIdDebug (and future sensor modes) through the postprocess composite pass. Default-OFF; when OFF endScene forces u_viewMode=0 (Visual) and the ImGui combo is not rendered -> byte-identical. When ON, u_viewMode and u_objectIdTex are set on compositeProg_ each frame; ObjectIdDebug also requires MC2_OBJECT_ID_BUFFER=1 (sceneObjectIdTex_ non-zero). No new SSBOs, UBOs, or render targets. No scene-shader changes. Visual-only presentation overlay."
+    },
+    // HzbBuild
+    {
+        "MC2_FEATURE_HZB_BUILD",
+        "MC2_HZB_BUILD",
+        EnvVarKind::Feature,
+        false,
+        "TRACKRV-HZB-VISIBILITY-OPUS-1: build a reverse-Z Hi-Z depth pyramid from MainDepth each frame via a custom fragment MIN-reduction pass (hzb_reduce.frag), GL_R32F, ceil mip ladder down to 1x1 (NOT glGenerateMipmap -- it averages+floors). Default-OFF; when OFF the HZB texture/FBO is never allocated and runHzbReduce() is skipped -> zero cost, byte-identical. Diagnostic substrate ONLY: no consumers, no culling, no draw suppression. Matches docs/hzb-depth-convention.md (MIN = farthest occluder = conservative)."
     },
 };
 

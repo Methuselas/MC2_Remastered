@@ -147,6 +147,28 @@ public:
     float aoPower_;         // contrast curve
     void runSSAO();
 
+    // HZB-DEPTH-PYRAMID-MVP-1 (TRACKRV-HZB-VISIBILITY-OPUS-1). Gated reverse-Z
+    // Hi-Z depth pyramid built from sceneDepthTex_ via a custom fragment MIN
+    // reduction (shaders/hzb_reduce.frag). Default-OFF (MC2_HZB_BUILD): when OFF
+    // the texture/FBO are never allocated and runHzbReduce() is a no-op, so
+    // output is byte-identical. Diagnostic substrate ONLY -- no consumers, no
+    // culling, no draw suppression.
+    bool   hzbEnabled_ = false;     // resolved once from env at init()
+    void   runHzbReduce();          // build the pyramid each frame (gated)
+    // Pyramid is stored as one ceil-sized R32F texture PER level (not a mip
+    // chain): AMD rejects attaching mip level >0 of a mipmap-incomplete texture,
+    // and the ceil ladder is deliberately mipmap-incomplete. Separate textures
+    // sidestep that and remove any read/write feedback (distinct objects).
+    GLuint getHzbLevelTexture(int level) const {
+        return (level >= 0 && level < hzbMipCount_) ? hzbLevelTex_[level] : 0;
+    }
+    GLuint getHzbTexture()  const { return hzbLevelTex_[0]; } // level 0 (full-res)
+    int    getHzbMipCount() const { return hzbMipCount_; }
+    int    getHzbWidth()    const { return hzbW_; }
+    int    getHzbHeight()   const { return hzbH_; }
+    bool   isHzbEnabled()   const { return hzbEnabled_; }
+    unsigned long long getHzbBuildCount() const { return hzbBuildCount_; }
+
     // LOWLIGHT-NIGHTVISION-MVP-1: pure-postprocess night-vision tunables.
     // Active only when the selected ViewMode is LowLight (5); the composite
     // branch is otherwise skipped (Visual byte-identical). Seeded from
@@ -256,6 +278,17 @@ private:
     int           ssaoH_        = 0;
     glsl_program* ssaoProg_      = nullptr;
     glsl_program* ssaoApplyProg_ = nullptr;
+
+    // HZB depth pyramid (HZB-DEPTH-PYRAMID-MVP-1). Allocated lazily in
+    // createFBOs only when hzbEnabled_. One ceil-sized R32F texture per level.
+    static const int kHzbMaxLevels = 24;     // covers >16M px on the long axis
+    GLuint        hzbLevelTex_[kHzbMaxLevels] = {0};
+    GLuint        hzbFBO_        = 0;         // shared; re-attaches the dst level
+    int           hzbW_          = 0;
+    int           hzbH_          = 0;
+    int           hzbMipCount_   = 0;
+    unsigned long long hzbBuildCount_ = 0;  // frames the pyramid has been built
+    glsl_program* hzbReduceProg_ = nullptr;
 };
 
 gosPostProcess* getGosPostProcess();
