@@ -1,0 +1,20 @@
+{
+  "assetId": "bad_colorspace",
+  "source": "mc2srcdata/objects/bad_02.fbx",
+  "kind": "prop",
+  "materials": [
+    { "name": "m1", "shader": "static_prop" }
+  ],
+  "capabilities": {
+    "hasNormals": true,
+    "hasTangents": true,
+    "hasLods": false,
+    "hasImpostor": false,
+    "castsShadow": true,
+    "supportsObjectId": false
+  },
+  "lods": [],
+  "textureRefs": [
+    { "slot": "normal", "path": "mc2srcdata/textures/bad_n.tga", "colorSpace": "srgb" }
+  ]
+}
