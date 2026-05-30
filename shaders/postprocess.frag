@@ -19,6 +19,10 @@ uniform vec2 inverseScreenSize; // 1/width, 1/height
 // defaults to 0 so the Visual path is never disturbed when the gate is OFF.
 uniform int u_viewMode;                // 0=Visual, 1=ObjectIdDebug, 3=Thermal, 5=LowLight
 uniform usampler2D u_objectIdTex;     // unit 2: sceneObjectIdTex_ (GL_R32UI)
+// GAMEADAPTERS-VISUAL-STATE-BRIDGE: lowest object-ID-buffer index that is a
+// mech (engine-bearing). Pixels with (objectId & 0xFFFFF) >= this value are
+// mechs and read hot in Thermal. 0 = OID buffer unavailable -> luminance only.
+uniform int u_engineIdxBase;
 
 // LOWLIGHT-NIGHTVISION-MVP-1: night-vision tunables (read only when
 // u_viewMode == 5). Always set by the composite each frame.
@@ -155,14 +159,29 @@ void main()
             FragColor = vec4(r, g, b, 1.0);
         }
     }
-    // THERMAL-VIEW-MVP-1: PRESENTATION PLACEHOLDER ONLY — NOT real thermal/IR.
-    // No per-unit heat reaches the renderer (heat stays in mech.cpp; the
-    // object-ID buffer carries no kind/heat). Maps the graded Visual luminance
-    // to an iron palette so emissive/bright regions (fire, exhaust, muzzle
-    // flash, specular) read hot and dark terrain reads cool. See
-    // docs/thermal-ir-design.md for the real heat-channel plan (deferred).
+    // THERMAL-VIEW-MECH-HOT-1: engine-bearing units (mechs) read HOT, the rest
+    // of the scene maps Visual luminance to an iron palette (emissive/bright
+    // regions — fire, exhaust, muzzle flash, specular — still read warm; dark
+    // terrain reads cool). "Engine = hot" classification uses the object-ID
+    // buffer: mech handles occupy index >= u_engineIdxBase (kMechHandleBase),
+    // static props/terrain are below it. Real per-unit heat does not exist
+    // (USEHEAT compiled out); vehicles render via the static-prop batcher and
+    // are not yet distinguishable (vehicles-hot is a documented follow-up).
+    // u_engineIdxBase == 0 means the OID buffer is unavailable -> luminance
+    // only, identical to the prior placeholder.
     else if (u_viewMode == 3) {
         float t = clamp(dot(color, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
+        if (u_engineIdxBase > 0) {
+            // 0xFFFFFu = RenderObjectHandle index-field mask ([19:0]). Mirrors
+            // RenderCore::Handle::index() and RenderWorld::kHandleIndexMask (a
+            // static_assert in RenderWorld.cpp fails the build if that layout
+            // drifts — this GLSL literal can't reference the C++ constant). The
+            // test is the GPU mirror of RenderWorld's mech partition classifier:
+            // (rawId & mask) >= MechHandleIndexBase() == "this pixel is a mech".
+            uint idx = texture(u_objectIdTex, TexCoord).r & 0xFFFFFu;
+            if (idx >= uint(u_engineIdxBase))
+                t = max(t, 0.9);  // force mech pixels into the hot band
+        }
         vec3 c0 = vec3(0.00, 0.00, 0.10);
         vec3 c1 = vec3(0.30, 0.00, 0.40);
         vec3 c2 = vec3(0.85, 0.10, 0.05);

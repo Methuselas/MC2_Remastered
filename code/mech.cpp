@@ -6309,6 +6309,34 @@ long BattleMech::update (void)
 
 	appearance->setVisibility(true,true);
 
+	// GAMEADAPTERS-VISUAL-STATE-BRIDGE-1 (Slice 1): mirror player-visible mech
+	// visual facts into the renderer-owned MechVisualState. Sanitized here on
+	// the game side; the renderer only ever sees the clamped by-value copy.
+	// No GL, no renderer access -- same feed pattern as setObjStatus() above.
+	//
+	// heat01 stays 0: the MechWarrior heat sim is compiled out (USEHEAT never
+	// defined), so there is no live heat to read. See RenderCore/MechVisualState.h.
+	{
+		RenderCore::MechVisualState vs;
+		vs.heat01   = 0.0f;
+		// getStatusRating() returns ~1.0 pristine .. 0.0 wrecked. It divides by
+		// per-location maxArmor with no zero guard, so the result can be NaN/Inf
+		// on edge mechs -- sanitizeMechVisual01() maps any non-finite to 0.
+		vs.damage01 = RenderCore::sanitizeMechVisual01(1.0f - getStatusRating());
+		uint32_t flags = 0u;
+		if (getSelected())  flags |= RenderCore::kMechVisualFlag_Selected;
+		const long st = getStatus();
+		if (st == OBJECT_STATUS_SHUTDOWN)  flags |= RenderCore::kMechVisualFlag_Shutdown;
+		if (st == OBJECT_STATUS_DISABLED)  flags |= RenderCore::kMechVisualFlag_Disabled;
+		if (st == OBJECT_STATUS_DESTROYED) flags |= RenderCore::kMechVisualFlag_Destroyed;
+		flags = RenderCore::packMechRelation(flags, (uint32_t)homeRelations);
+		vs.flags = flags;
+		// static_cast safe: BattleMech::appearance is always Mech3DAppearance*
+		// (mech.cpp:1322 "appearance = new Mech3DAppearance"). setVisualState is
+		// mech-specific so it is not on the Appearance base.
+		static_cast<Mech3DAppearance*>(appearance)->setVisualState(vs);
+	}
+
 	//Start and stop the water wakes here.
 	int watercellR, watercellC;
 	land->worldToCell(position,watercellR, watercellC);

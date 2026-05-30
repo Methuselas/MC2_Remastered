@@ -48,8 +48,12 @@ struct alignas(16) GpuMechInstance {
     // named. Future slices (M3 terrain chunk, M4 VFX) rename in place.
     // Mech-1: _pad1 renamed to materialIdx (byte 52). Stride unchanged.
     uint32_t materialIdx;         // 52  -- index into s_mechMaterialTable; 0 = not assigned
-    uint32_t _pad2;               // 56
-    uint32_t _pad3;               // 60
+    // GAMEADAPTERS-VISUAL-STATE-BRIDGE-1: per-mech visual state for ViewMode
+    // consumers (Thermal etc.). Filled from GpuMechSubmitDesc; no shader reads
+    // these yet (Slice 1), so the 64B layout and mech.vert are unchanged ->
+    // byte-identical output. heat01 has NO slot (USEHEAT compiled out, always 0).
+    float    visualDamage01;      // 56  -- [0,1] composite damage (was _pad2)
+    uint32_t visualFlags;         // 60  -- RenderCore::MechVisualFlagBits (was _pad3)
 };
 // Layout: 16 (4 × uint32) + 16 (vec4) + 16 (vec4) + 16 (uint32 + 3*pad) = 64 bytes.
 static_assert(sizeof(GpuMechInstance) == 64,
@@ -62,6 +66,8 @@ static_assert(offsetof(GpuMechInstance, aRGBHighlight)      == 16);
 static_assert(offsetof(GpuMechInstance, fogRGB)             == 32);
 static_assert(offsetof(GpuMechInstance, objectIdRaw)        == 48);
 static_assert(offsetof(GpuMechInstance, materialIdx)        == 52, "materialIdx offset");
+static_assert(offsetof(GpuMechInstance, visualDamage01)     == 56, "visualDamage01 offset");
+static_assert(offsetof(GpuMechInstance, visualFlags)        == 60, "visualFlags offset");
 
 // Bone matrix: 4 explicit rows to avoid GLSL column-major confusion.
 // Upload rows as row0..row3; GLSL mat4(row0,row1,row2,row3) fills COLUMNS from
@@ -123,6 +129,13 @@ struct GpuMechSubmitDesc {
     // Source: mech3d.cpp submit site reads
     //   appearance.getRenderWorldHandle().raw()  [mech3d.h:487].
     uint32_t                    objectIdRaw;
+    // GAMEADAPTERS-VISUAL-STATE-BRIDGE-1: sanitized per-mech visual state,
+    // sourced from Mech3DAppearance::getVisualState() at the mech3d.cpp submit
+    // site. heat01 carried for the debug dump / forward-compat (always 0,
+    // USEHEAT off); only damage01 + flags reach the GpuMechInstance SSBO.
+    float                       heat01   = 0.0f;
+    float                       damage01 = 0.0f;
+    uint32_t                    visualFlags = 0u;
 };
 
 // Fallback accounting reasons (used in MC2_MECH_BATCHER_STATS output).

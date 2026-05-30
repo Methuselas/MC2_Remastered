@@ -59,7 +59,39 @@ Name the `updateMechContactStatus` API and land the adapter call FIRST (gameplay
 collaborator + small adapter lane). Only then start a renderer visual lane.
 Starting renderer-side now yields a no-op or a firewall breach.
 
+## Re-confirmed under GAMEADAPTERS-VISUAL-STATE-BRIDGE (2026-05-29)
+
+Slice 4 of `GAMEADAPTERS-VISUAL-STATE-BRIDGE-OPUS-1` re-ran this analysis and
+the **DEFER verdict holds**. No contact state shipped. Two facts re-verified
+against `claude/nifty-mendeleev`:
+
+- `Mover::conStat` is already the post-filter, *player-visible* value (the home
+  team's resolved status, refreshed at `mech.cpp:6327` / `gvehicl.cpp:3750`).
+  It never exposes other teams' rows of `ContactInfo::contactStatus[]`. So the
+  single scalar is safe to mirror — but only that scalar, via an adapter.
+- `ShowMovers` (the reveal/debug cheat used in the visibility gates) is an
+  existing intentional reveal; preserve it, don't treat it as a new leak.
+
+**Hard leak stop conditions (any one → STOP):** bridging the full
+`contactStatus[MAX_TEAMS]` array or any non-home `teamId`; calling
+`getContactStatus(teamId,…)` for a non-home team on the renderer path; sending
+ANY enemy transform/position to the renderer when `conStat == CONTACT_NONE`
+(must be filtered gameplay-side before submit, as `mech.cpp:6332` does today);
+exposing `SensorSystem`/`TeamSensorSystem`/`SensorManager` or detection inputs;
+inventing a stale "last-known-position" ghost (no such data exists today).
+
+**Precedent now exists.** Slice 1 (`MECH-VISUAL-STATE-BRIDGE-1`) established the
+sanitized game→renderer pattern: a pure-POD `RenderCore::MechVisualState` filled
+game-side and copied by value, no game-pointer chasing. A future
+`SENSOR-VIEW-MVP-1` should mirror it — a `ContactVisualState`
+(`enum uint8_t { Hidden, Sensor1..4, Visual }`) pushed through
+`RenderWorld::updateMechContactStatus(handle, uint8_t)` from the same sites that
+call `setSensorLevel()`. Renderer owns *how* a tier looks; gameplay owns
+*whether* the player may see it.
+
 ## Cross-references
+- `RenderCore/MechVisualState.h` (the sanitized-bridge precedent — Slice 1)
 - `docs/thermal-ir-design.md` (same firewall constraint for heat data)
+- `docs/thermal-view-mech-heat-mvp-defer.md` (Slice 2 defer + split path)
 - `docs/viewmode-capture-matrix.md` (the presentation framework a future
   sensor mode would plug into as ViewMode::TacticalOverlay / a new mode)

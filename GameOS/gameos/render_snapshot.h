@@ -32,8 +32,12 @@ struct ExtractedMechPacket {
     uint32_t texHandle;      // GpuMechSubmitDesc::slot0TexHandle (mcTextureManager slot index)
     uint32_t typeLodIdx;     // PendingSubmit::typeLodIdx (type x LOD record index)
     uint32_t renderFlags;    // GpuMechSubmitDesc::renderFlags (bit0=ALPHA_TEST, bit1=lightsOut, bit2=highlighted)
+    // GAMEADAPTERS-VISUAL-STATE-BRIDGE-1: per-mech visual state (debug dump).
+    float    heat01;         // GpuMechSubmitDesc::heat01 (always 0; USEHEAT off)
+    float    damage01;       // GpuMechSubmitDesc::damage01 ([0,1] composite damage)
+    uint32_t visualFlags;    // GpuMechSubmitDesc::visualFlags (RenderCore::MechVisualFlagBits)
 };
-static_assert(sizeof(ExtractedMechPacket) == 24,
+static_assert(sizeof(ExtractedMechPacket) == 36,
     "ExtractedMechPacket size changed — update extraction consumers");
 
 // Kept as a zero-size placeholder for code that still references ExtractedMech

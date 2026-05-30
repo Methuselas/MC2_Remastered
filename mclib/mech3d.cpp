@@ -2616,6 +2616,18 @@ long Mech3DAppearance::render (long depthFixup)
 				// classified as "background" by RenderWorld::lookupAtPixel.
 				desc.objectIdRaw    = getRenderWorldHandle().raw();
 
+				// GAMEADAPTERS-VISUAL-STATE-BRIDGE-1: forward the sanitized
+				// per-mech visual state pushed by BattleMech::render(). Slice 1
+				// only carries it to the SSBO/debug dump; no shader consumes it
+				// yet (byte-identical). damage01/flags land in GpuMechInstance;
+				// heat01 rides along for the debug dump (always 0, USEHEAT off).
+				{
+					const RenderCore::MechVisualState& vs = getVisualState();
+					desc.heat01      = vs.heat01;
+					desc.damage01    = vs.damage01;
+					desc.visualFlags = vs.flags;
+				}
+
 				gpuMechSubmitted = GpuMechBatcher::instance().submitActor(desc);
 				// Only count as a fallback if the GPU path was nominally
 				// enabled at this point. submitActor returns false on

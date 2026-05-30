@@ -438,8 +438,19 @@ void GameCamera::render (void)
 						// EditorInspector selection crosshair convention.
 						DebugRenderer::Vec3 center{ p.x, p.z, p.y };
 						const float maxR = mover->getMaxFireRange();
+						// TACTICAL-OVERLAY-SELECTED-MECH-DATA-1: concentric weapon
+						// range bands from the selected mover's cached fire ranges
+						// (Mover::calcFireRanges()). All public getters, real data,
+						// no gameplay coupling. Drawn outer->inner so the inner
+						// rings read on top.
 						if (maxR > 0.0f)
-							DebugRenderer::drawRingWorld(center, maxR, 64, 0x4080FFFFu); // blue range ring
+							DebugRenderer::drawRingWorld(center, maxR, 64, 0x4080FFFFu); // blue  = max range
+						const float optR = mover->getOptimalFireRange();
+						if (optR > 0.0f && optR < maxR)
+							DebugRenderer::drawRingWorld(center, optR, 56, 0x40FFC0FFu); // cyan  = optimal range
+						const float minR = mover->getMinFireRange();
+						if (minR > 0.0f && minR < maxR)
+							DebugRenderer::drawRingWorld(center, minR, 48, 0xFF8040FFu); // amber = min (dead) range
 						// Facing heading tick (best-effort: MC2 rotation deg,
 						// 0=north=+z). Capped length so it reads as a tick, not a
 						// full-range spoke. Verify sign visually; ring is the
@@ -449,6 +460,24 @@ void GameCamera::render (void)
 						DebugRenderer::drawLineWorld(center,
 							DebugRenderer::Vec3{ center.x + sinf(th) * len, center.y, center.z + cosf(th) * len },
 							0x80FF80FFu); // green facing line
+						// Firing-arc wedge: two spokes at facing +/- fireArc, out to
+						// max range. Mover::getFireArc() returns the per-class HALF
+						// angle in degrees (FireArc[]/2), applied relative to facing
+						// exactly as Mover::getWeaponsLocked() tests it. Truthful cue
+						// for where weapons can bear; no arc primitive in DebugRenderer
+						// so the two edge spokes stand in for the wedge.
+						const float arcDeg = mover->getFireArc();
+						if (arcDeg > 0.0f && arcDeg < 180.0f && maxR > 0.0f) {
+							const float arcRad = arcDeg * 0.01745329252f;
+							const float thL = th - arcRad;
+							const float thR = th + arcRad;
+							DebugRenderer::drawLineWorld(center,
+								DebugRenderer::Vec3{ center.x + sinf(thL) * maxR, center.y, center.z + cosf(thL) * maxR },
+								0xFFFF40A0u); // yellow arc edge (left)
+							DebugRenderer::drawLineWorld(center,
+								DebugRenderer::Vec3{ center.x + sinf(thR) * maxR, center.y, center.z + cosf(thR) * maxR },
+								0xFFFF40A0u); // yellow arc edge (right)
+						}
 					}
 				}
 			}

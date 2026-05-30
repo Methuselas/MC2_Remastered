@@ -32,6 +32,9 @@
 #include <vector>  // T1.6: Mech3DAppearance::spotlight{Lights,SlotIds,NodeIds}_
 // M2 RenderWorld handle storage (RenderCore is pure types; no GL, no game headers).
 #include "../RenderCore/Handle.h"
+// GAMEADAPTERS-VISUAL-STATE-BRIDGE-1: renderer-facing per-mech visual state
+// (pure POD; same firewall rationale as Handle.h above).
+#include "../RenderCore/MechVisualState.h"
 //-------------------------------------------------------------------------------
 // Structs used by layer.
 //
@@ -478,6 +481,10 @@ class Mech3DAppearance: public ObjectAppearance
 		RenderCore::RenderObjectHandle mechRenderHandle =
 		    RenderCore::RenderObjectHandle::invalid();
 
+		// GAMEADAPTERS-VISUAL-STATE-BRIDGE-1: last visual state pushed by the
+		// game-side producer. Defaults to safe-neutral (undamaged, unflagged).
+		RenderCore::MechVisualState m_visualState{};
+
 	public:
 		static PaintSchemataPtr		paintSchemata;
 		static DWORD				numPaintSchemata;
@@ -493,6 +500,14 @@ class Mech3DAppearance: public ObjectAppearance
 		void clearRenderWorldHandleForAdapter() {
 		    mechRenderHandle = RenderCore::RenderObjectHandle::invalid();
 		}
+
+		// GAMEADAPTERS-VISUAL-STATE-BRIDGE-1: renderer-facing visual state,
+		// pushed once per frame by BattleMech::render() (game side) and read
+		// at submit time by Mech3DAppearance::render() (engine side). Storage
+		// only -- this class never calls the renderer/adapter. The producer is
+		// responsible for sanitizing values (see RenderCore::sanitizeMechVisual01).
+		void setVisualState(const RenderCore::MechVisualState& s) { m_visualState = s; }
+		const RenderCore::MechVisualState& getVisualState() const { return m_visualState; }
 
 	public:
 

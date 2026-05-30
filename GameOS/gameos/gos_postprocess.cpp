@@ -1283,6 +1283,25 @@ void gosPostProcess::endScene()
         // does not matter — but we still set the uniform to keep drivers happy.
         compositeProg_->setInt("u_objectIdTex", 2);
 
+        // GAMEADAPTERS-VISUAL-STATE-BRIDGE: Thermal (mode 3) reads hot for
+        // engine-bearing units. Mech handles occupy index >= kMechHandleBase;
+        // static props/terrain are below it (RenderWorld invariant). Pass the
+        // base so the shader classifies object-ID pixels. 0 = OID buffer
+        // unavailable -> Thermal falls back to luminance-only (placeholder).
+        // Vehicles render via the static-prop batcher and are NOT yet
+        // distinguishable; vehicles-hot is a documented follow-up.
+        //
+        // FIREWALL NOTE (manual review — GameOS/ is OUTSIDE the
+        // check-include-firewall.sh SCOPE_DIRS, so the CI script does NOT police
+        // this call): RenderWorld::MechHandleIndexBase() is a deliberate,
+        // RenderWorld-owned classification API (RenderWorld owns the handle
+        // partition; see RenderWorld.h). RenderWorld.h was already included here
+        // (M1.5 IsObjectIdBufferEnabled) — no new engine header crosses a seam.
+        // The numeric threshold must reach the GPU as a uniform; there is no
+        // per-pixel C++ classifier path. Reviewed clean (render-spine advisor M2).
+        compositeProg_->setInt("u_engineIdxBase",
+            sceneObjectIdTex_ != 0 ? (int)RenderWorld::MechHandleIndexBase() : 0);
+
         // LOWLIGHT-NIGHTVISION-MVP-1: night-vision tunables (read only by the
         // shader when effectiveMode == 5; harmless no-op uniforms otherwise).
         compositeProg_->setFloat("u_lowLightGain", lowLightGain_);
