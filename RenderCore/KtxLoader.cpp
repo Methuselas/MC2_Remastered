@@ -90,7 +90,7 @@ bool ktxLoadRgba8(const char* path, KtxImage& out)
         return false;
     }
 
-    // ---- 5. Level index: read entry[0] (mip 0, largest level) ----
+    // ---- 5. Level index: read ALL levelCount entries ----
     // Each entry: byteOffset (uint64), byteLength (uint64), uncompressedByteLength (uint64)
     // Spec: level index is ordered largest-mip-first (mip 0 = entry[0]).
     struct LevelEntry {
@@ -98,39 +98,53 @@ bool ktxLoadRgba8(const char* path, KtxImage& out)
         uint64_t byteLength;
         uint64_t uncompressedByteLength;
     };
-    LevelEntry entry0{};
-    if (!readExact(f, &entry0, sizeof(entry0))) {
+    std::vector<LevelEntry> entries(hdr.levelCount);
+    if (!readExact(f, entries.data(),
+                   sizeof(LevelEntry) * static_cast<std::size_t>(hdr.levelCount))) {
         std::fclose(f);
         return false;
     }
 
-    // ---- 6. Seek and read pixel data ----
-    if (std::fseek(f, static_cast<long>(entry0.byteOffset), SEEK_SET) != 0) {
-        std::fclose(f);
-        return false;
+    // ---- 6. Validate each level's byteLength against expected RGBA8 size,
+    //         and accumulate the concatenated buffer size (level 0 first). ----
+    out.mipByteOffsets.clear();
+    out.mipByteOffsets.resize(hdr.levelCount);
+    uint64_t totalBytes = 0;
+    for (uint32_t lvl = 0; lvl < hdr.levelCount; ++lvl) {
+        const uint32_t lw = (hdr.pixelWidth  >> lvl) ? (hdr.pixelWidth  >> lvl) : 1u;
+        const uint32_t lh = (hdr.pixelHeight >> lvl) ? (hdr.pixelHeight >> lvl) : 1u;
+        const uint64_t expected =
+            static_cast<uint64_t>(lw) * static_cast<uint64_t>(lh) * 4u;
+        if (entries[lvl].byteLength != expected) {
+            std::fclose(f);
+            return false;   // pre-baked mip chain mismatch -> fail; caller falls back.
+        }
+        out.mipByteOffsets[lvl] = totalBytes;   // level 0 -> offset 0
+        totalBytes += expected;
     }
 
-    // ---- 7. Validate byte length matches RGBA8 expectation ----
-    const uint64_t expectedBytes =
-        static_cast<uint64_t>(hdr.pixelWidth) *
-        static_cast<uint64_t>(hdr.pixelHeight) * 4u;
-    if (entry0.byteLength != expectedBytes) {
-        std::fclose(f);
-        return false;
-    }
-
-    out.pixels.resize(static_cast<std::size_t>(expectedBytes));
-    if (!readExact(f, out.pixels.data(), static_cast<std::size_t>(expectedBytes))) {
-        std::fclose(f);
-        return false;
+    // ---- 7. Read each level's bytes into the concatenated buffer ----
+    out.pixels.resize(static_cast<std::size_t>(totalBytes));
+    for (uint32_t lvl = 0; lvl < hdr.levelCount; ++lvl) {
+        if (std::fseek(f, static_cast<long>(entries[lvl].byteOffset), SEEK_SET) != 0) {
+            std::fclose(f);
+            return false;
+        }
+        const std::size_t off = static_cast<std::size_t>(out.mipByteOffsets[lvl]);
+        const std::size_t len = static_cast<std::size_t>(entries[lvl].byteLength);
+        if (!readExact(f, out.pixels.data() + off, len)) {
+            std::fclose(f);
+            return false;
+        }
     }
 
     std::fclose(f);
 
     // ---- 8. Fill output ----
-    out.width  = static_cast<int>(hdr.pixelWidth);
-    out.height = static_cast<int>(hdr.pixelHeight);
-    out.isSrgb = (hdr.vkFormat == kVkFormatR8G8B8A8Srgb);
+    out.width    = static_cast<int>(hdr.pixelWidth);
+    out.height   = static_cast<int>(hdr.pixelHeight);
+    out.isSrgb   = (hdr.vkFormat == kVkFormatR8G8B8A8Srgb);
+    out.mipCount = static_cast<int>(hdr.levelCount);
 
     return true;
 }
