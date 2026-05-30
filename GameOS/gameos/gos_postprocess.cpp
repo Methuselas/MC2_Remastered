@@ -1281,9 +1281,23 @@ void gosPostProcess::runHzbProbe()
     unsigned objSkippedCameraDiscont = 0, objOffscreen = 0, objNearClippedKeep = 0;
     unsigned objInvalidRect = 0;
     unsigned lodHist[kHzbMaxLevels] = { 0 };
-    // Bounded sample of GUARDED would-cull candidates (so a human can later
-    // verify they are truly hidden, not visible false positives).
-    struct CullCand { int idx; float r0, r1, r2, r3, closest, hmin; int lod; };
+
+    // HZB-CULL-MARGIN-SWEEP-1: how many GUARDED would-cull candidates survive
+    // increasingly conservative depth-gap margins. gap = objClosest - hzbMin
+    // (reverse-Z: gap < 0 == behind the occluder). A real cull path should
+    // require gap < -margin, not just gap < 0; this quantifies the marginal
+    // (near-zero) candidates so we can pick that margin. Accumulated over SAFE
+    // (non-discontinuous) frames only, matching the guarded semantics.
+    static const float kMargins[] = { 0.00000f, 0.00005f, 0.00010f, 0.00025f, 0.00050f, 0.00100f };
+    const int kNumMargins = (int)(sizeof(kMargins) / sizeof(kMargins[0]));
+    unsigned objWouldCullAtMargin[6] = { 0 };   // size matches kMargins
+    float minGap = 1e9f, maxGap = -1e9f, closestToZeroNegGap = -1e9f;
+    unsigned numMarginalCandidates = 0;          // -0.00010 < gap < 0
+
+    // Bounded sample of the GUARDED would-cull candidates CLOSEST to zero (the
+    // most marginal / highest false-positive risk), so a human can verify they
+    // are truly hidden rather than grazing false positives.
+    struct CullCand { int idx; float r0, r1, r2, r3, closest, hmin, gap; int lod; };
     const int kCandMax = 8;
     CullCand cand[kCandMax];
     int candCount = 0;
@@ -1363,6 +1377,17 @@ void gosPostProcess::runHzbProbe()
 
             ++objTested;
             if (L >= 0 && L < kHzbMaxLevels) ++lodHist[L];
+            const float gap = objClosest - hzbMin;   // reverse-Z: <0 == behind
+
+            // Margin sweep + gap stats over SAFE frames only (guarded semantics).
+            if (!unsafeForCull) {
+                if (gap < minGap) minGap = gap;
+                if (gap > maxGap) maxGap = gap;
+                if (gap < 0.0f && gap > closestToZeroNegGap) closestToZeroNegGap = gap;
+                if (gap > -0.00010f && gap < 0.0f) ++numMarginalCandidates;
+                for (int mi = 0; mi < kNumMargins; ++mi)
+                    if (gap < -kMargins[mi]) ++objWouldCullAtMargin[mi];
+            }
 
             // Conservative reverse-Z cull: object's nearest point is behind the
             // farthest occluder in its footprint -> fully occluded.
@@ -1372,10 +1397,19 @@ void gosPostProcess::runHzbProbe()
                     ++objSkippedCameraDiscont;       // guard suppresses this frame
                 } else {
                     ++objWouldCullGuarded;
+                    // Keep the kCandMax candidates with gap CLOSEST to zero (most
+                    // marginal). If full, replace the least-marginal (smallest gap).
                     if (candCount < kCandMax) {
                         cand[candCount] = { idx, cMinX, cMinY, cMaxX, cMaxY,
-                                            objClosest, hzbMin, L };
+                                            objClosest, hzbMin, gap, L };
                         ++candCount;
+                    } else {
+                        int worst = 0;
+                        for (int k = 1; k < kCandMax; ++k)
+                            if (cand[k].gap < cand[worst].gap) worst = k;  // most negative
+                        if (gap > cand[worst].gap)
+                            cand[worst] = { idx, cMinX, cMinY, cMaxX, cMaxY,
+                                            objClosest, hzbMin, gap, L };
                     }
                 }
             } else {
@@ -1419,15 +1453,30 @@ void gosPostProcess::runHzbProbe()
             if (lodHist[L]) n += snprintf(hist + n, sizeof(hist) - n, " L%d=%u", L, lodHist[L]);
         fprintf(stderr, "%s\n", hist);
     }
-    // Bounded sample of guarded would-cull candidates (safe frames only).
+    // Depth-gap margin sweep (safe-frame guarded candidates). guard@0.00000
+    // equals wouldCullGuarded by gap<0; higher margins show how many survive a
+    // more conservative gap<-margin requirement.
+    if (logTick && objTested > 0) {
+        fprintf(stderr,
+            "[HZB_PROBE_MARGIN v1] guardCull@{0=%u,5e-5=%u,1e-4=%u,2.5e-4=%u,"
+            "5e-4=%u,1e-3=%u} minGap=%.6f maxGap=%.6f closestToZeroNegGap=%.6f "
+            "numMarginal(-1e-4<gap<0)=%u neverAppliedToDraws=1\n",
+            objWouldCullAtMargin[0], objWouldCullAtMargin[1], objWouldCullAtMargin[2],
+            objWouldCullAtMargin[3], objWouldCullAtMargin[4], objWouldCullAtMargin[5],
+            (minGap <= 1e8f ? minGap : 0.0f),
+            (maxGap >= -1e8f ? maxGap : 0.0f),
+            (closestToZeroNegGap >= -1e8f ? closestToZeroNegGap : 0.0f),
+            numMarginalCandidates);
+    }
+    // Bounded sample of guarded would-cull candidates CLOSEST to zero (safe
+    // frames only) -- the highest false-positive risk to eyeball.
     if (logTick && candCount > 0) {
         for (int i = 0; i < candCount; ++i) {
             const CullCand& c = cand[i];
             fprintf(stderr,
                 "[HZB_PROBE_CULLCAND v1] idx=%d rectUV=(%.3f,%.3f,%.3f,%.3f) "
-                "objClosest=%.5f hzbMin=%.5f gap=%.5f L=%d neverAppliedToDraws=1\n",
-                c.idx, c.r0, c.r1, c.r2, c.r3, c.closest, c.hmin,
-                c.closest - c.hmin, c.lod);
+                "objClosest=%.5f hzbMin=%.5f gap=%.6f L=%d neverAppliedToDraws=1\n",
+                c.idx, c.r0, c.r1, c.r2, c.r3, c.closest, c.hmin, c.gap, c.lod);
         }
     }
 }

@@ -67,6 +67,39 @@ would-cull candidates: prop index, screen rect (UV), `objClosest`, `hzbMin`,
 - **Unsafe frames:** ignore `wouldCullRaw`; it is expected to spike. The guard
   has moved it to `skippedCameraDiscont`.
 
+## Depth-gap margin sweep (HZB-CULL-MARGIN-SWEEP-1)
+
+`[HZB_PROBE_MARGIN v1]` counts guarded would-cull candidates (SAFE frames) that
+survive `gap < -margin` for a fixed margin ladder, plus `minGap` / `maxGap` /
+`closestToZeroNegGap` / `numMarginal (-1e-4 < gap < 0)`. Representative
+steady-frame results (mc2_03/17/24, gate-ON):
+
+| margin   | mc2_03 busy | mc2_17 busy | mc2_17 light | mc2_24 |
+|----------|-------------|-------------|--------------|--------|
+| 0.00000  | 38          | 68          | 20           | 7      |
+| 0.00005  | 38          | 68          | 19           | 7      |
+| 0.00010  | 37          | 68          | 19           | 7      |
+| 0.00025  | 37          | 68          | 18           | 6      |
+| 0.00050  | 34          | 68          | 16           | 6      |
+| 0.00100  | 26          | 64          | 16           | 6      |
+
+- The **bulk of guarded culls are DEEP true occlusions**: minGap ≈ −0.016
+  (mc2_03) to −0.043…−0.065 (mc2_17); mc2_17's busy frame keeps all 68 culls
+  through a 1e-3 margin → stable across camera movement, not knife-edge.
+- **Marginal candidates are rare** — `numMarginal` was 0–1 per frame. The
+  closest-to-zero guarded candidates were `-0.000052` (mc2_03), `-0.000011`
+  (mc2_17), `-0.000122` (mc2_24).
+- A **1e-4 (0.00010) margin** removes the near-zero grazing candidates (≤1 per
+  busy frame) while sparing essentially all confident culls. 2.5e-4 begins to
+  shave confident culls (mc2_03 37→37, mc2_24 7→6); 1e-3 is clearly too
+  aggressive (mc2_03 38→26).
+
+**Recommended minimum margin for any future cull consumer: `gap < -1.0e-4`**
+(reverse-Z window-depth units), i.e. cull only when the object's nearest point is
+behind the footprint occluder by more than 1e-4. This is the knee of the sweep:
+it eliminates the marginal/grazing false-positive risk surfaced by the readiness
+slice while retaining the deep true occlusions.
+
 ## Acceptance bar for a future real cull consumer (`HZB-STATICPROP-CULL-CONSUMER-0`)
 
 Do NOT build a consumer until ALL hold, measured across `mc2_03`, `mc2_17`,
@@ -79,6 +112,24 @@ Do NOT build a consumer until ALL hold, measured across `mc2_03`, `mc2_17`,
 3. The consumer is default-OFF, kill-switched, and conservative (a failure can at
    worst keep too much, never pop a visible prop).
 4. HZB self-test stays `wouldCull=0 integrityMismatch=0`; 0 GL errors; +0 destroys.
+
+## Readiness verdict (post margin sweep)
+
+**The first consumer is READY to be PLANNED with a mandatory margin + the
+discontinuity guard — not yet to ship culling.** The margin sweep shows the
+marginal candidates are few, near zero, and removed by a 1e-4 margin, while the
+bulk of guarded culls are deep, stable true occlusions. A
+`HZB-STATICPROP-CULL-CONSUMER-0` may therefore be designed, provided it:
+- culls only on `gap < -1.0e-4` (recommended margin above),
+- consumes `unsafeForCull` to skip camera-discontinuity frames,
+- is **default-OFF, kill-switched, conservative** (worst case keeps too much),
+- and, during bring-up behind the gate, is visually spot-checked against the
+  `[HZB_PROBE_CULLCAND]` candidates to confirm no visible prop is culled (the
+  overlay was skipped here; visual confirmation moves to consumer bring-up).
+
+Not a blanket green light to suppress draws: culling stays blocked until that
+consumer exists, is gated OFF by default, and its on-screen false-occlusion is
+measured ~0 across mc2_03/17/24 (mc2_17 retained as the pathological camera case).
 
 ## Stop conditions
 
