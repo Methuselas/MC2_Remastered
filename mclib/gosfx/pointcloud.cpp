@@ -582,12 +582,14 @@ void gosFX::PointCloud::Draw(DrawInfo *info)
 				}
 			}
 
-			ParticleCloud::Draw(info);
+			// VFX-WEAPON-FX-RESTORE-OPUS-1: Effect::Draw only; skip MLR re-submission.
+			Effect::Draw(info);
 			return;
 		}
 
 		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
-		ParticleCloud::Draw(info);
+		// VFX-WEAPON-FX-RESTORE-OPUS-1: Effect::Draw only; skip MLR re-submission.
+		Effect::Draw(info);
 		return;
 	}
 

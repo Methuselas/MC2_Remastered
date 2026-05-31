@@ -605,7 +605,9 @@ void gosFX::Card::Draw(DrawInfo *info)
 		} else {
 			(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
 		}
-		Singleton::Draw(info);
+		// VFX-WEAPON-FX-RESTORE-OPUS-1: Effect::Draw propagates to children only;
+		// avoids re-submitting to MLR now that the gate is re-enabled.
+		Effect::Draw(info);
 		return;
 	}
 
