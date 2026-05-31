@@ -35,6 +35,7 @@ them. Add new findings as new bullets; remove fixed ones outright (don't append
 ## Water / terrain rendering
 
 - **Water shoreline z-fight on zoom/elevation-change (NOT pan); water sits slightly low** (pre-existing). Interim fast-path fixes shipped 2026-05-17. Full state: `memory/water_fastpath_interim_fixes_and_residuals.md`.
+- **Terrain transparency / flicker during fast pan** (pre-existing ring-buffer coherency race, NOT a regression). When the camera pans quickly, brief transparent patches appear on the terrain. Root cause documented at `GameOS/gameos/gos_terrain_indirect.cpp` ~line 2660-2668: the thin-record ring-buffer fence wait can expire, producing a RAW hazard where the CPU overwrites a slot the GPU may still be reading. Effect is masked when the camera is stationary (thin-record content is frame-to-frame identical under no-motion). To confirm this is NOT caused by tile-retirement (COLORMAP-TILES-RETIRE-1): launch with `MC2_SETUPTEXTURES_LEGACY_FORCE=1` and pan at the same speed — the artifact reproduces identically with the 400-tile path active. Diagnostic gate: `MC2_RING_TRACE=1` writes `ring_trace.log` with per-frame fence wait timings and MVP fingerprints.
 
 ## First-launch / startup
 
