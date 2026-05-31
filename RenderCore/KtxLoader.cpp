@@ -19,6 +19,9 @@ static constexpr uint8_t kKtx2Magic[12] = {
 // VK_FORMAT constants for uncompressed RGBA8
 static constexpr uint32_t kVkFormatR8G8B8A8Unorm = 37;
 static constexpr uint32_t kVkFormatR8G8B8A8Srgb  = 43;
+// VK_FORMAT constants for stored BC7 (BPTC) blocks
+static constexpr uint32_t kVkFormatBc7UnormBlock = 145;
+static constexpr uint32_t kVkFormatBc7SrgbBlock  = 146;
 
 // KTX2 header fields we need (all uint32, little-endian, file offsets 12-44).
 // We do NOT use the struct approach for the full header because mixing
@@ -68,16 +71,21 @@ bool ktxLoadRgba8(const char* path, KtxImage& out)
     }
 
     // ---- 3. Validate ----
-    if (hdr.vkFormat != kVkFormatR8G8B8A8Unorm &&
-        hdr.vkFormat != kVkFormatR8G8B8A8Srgb) {
+    const bool isRgba8 = (hdr.vkFormat == kVkFormatR8G8B8A8Unorm ||
+                          hdr.vkFormat == kVkFormatR8G8B8A8Srgb);
+    const bool isBc7   = (hdr.vkFormat == kVkFormatBc7UnormBlock ||
+                          hdr.vkFormat == kVkFormatBc7SrgbBlock);
+    if (!isRgba8 && !isBc7) {
         std::fclose(f);
         return false;
     }
+    // typeSize for block-compressed formats is 1 by KTX2 spec; for RGBA8 it is
+    // the size of the channel type (1 byte). Either way we require 1.
     if (hdr.typeSize != 1 ||
         hdr.pixelDepth != 0 ||
         hdr.faceCount  != 1 ||
         hdr.levelCount  < 1 ||
-        hdr.supercompressionScheme != 0) {
+        hdr.supercompressionScheme != 0) {   // stored only -- no transcoding
         std::fclose(f);
         return false;
     }
@@ -113,8 +121,15 @@ bool ktxLoadRgba8(const char* path, KtxImage& out)
     for (uint32_t lvl = 0; lvl < hdr.levelCount; ++lvl) {
         const uint32_t lw = (hdr.pixelWidth  >> lvl) ? (hdr.pixelWidth  >> lvl) : 1u;
         const uint32_t lh = (hdr.pixelHeight >> lvl) ? (hdr.pixelHeight >> lvl) : 1u;
-        const uint64_t expected =
-            static_cast<uint64_t>(lw) * static_cast<uint64_t>(lh) * 4u;
+        uint64_t expected;
+        if (isBc7) {
+            // BC7: 4x4 blocks, 16 bytes/block. ceil(lw/4)*ceil(lh/4)*16.
+            const uint64_t bw = (static_cast<uint64_t>(lw) + 3u) / 4u;
+            const uint64_t bh = (static_cast<uint64_t>(lh) + 3u) / 4u;
+            expected = bw * bh * 16u;
+        } else {
+            expected = static_cast<uint64_t>(lw) * static_cast<uint64_t>(lh) * 4u;
+        }
         if (entries[lvl].byteLength != expected) {
             std::fclose(f);
             return false;   // pre-baked mip chain mismatch -> fail; caller falls back.
@@ -141,10 +156,14 @@ bool ktxLoadRgba8(const char* path, KtxImage& out)
     std::fclose(f);
 
     // ---- 8. Fill output ----
-    out.width    = static_cast<int>(hdr.pixelWidth);
-    out.height   = static_cast<int>(hdr.pixelHeight);
-    out.isSrgb   = (hdr.vkFormat == kVkFormatR8G8B8A8Srgb);
-    out.mipCount = static_cast<int>(hdr.levelCount);
+    out.width          = static_cast<int>(hdr.pixelWidth);
+    out.height         = static_cast<int>(hdr.pixelHeight);
+    out.isSrgb         = (hdr.vkFormat == kVkFormatR8G8B8A8Srgb ||
+                          hdr.vkFormat == kVkFormatBc7SrgbBlock);
+    out.mipCount       = static_cast<int>(hdr.levelCount);
+    out.vkFormat       = hdr.vkFormat;
+    out.isCompressed   = isBc7;
+    out.blockSizeBytes = isBc7 ? 16u : 0u;
 
     return true;
 }

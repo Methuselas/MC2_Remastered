@@ -565,6 +565,12 @@ static int s_staticPropDebugMaterialMode = []() {
 }();
 static bool s_materialKtxEnabled = (std::getenv("MC2_MATERIAL_KTX") != nullptr &&
                                      std::getenv("MC2_MATERIAL_KTX")[0] != '0');   // MC2_MATERIAL_KTX=1
+// COMPRESSION-BC7-STATICPROP-1: gate for BC7-compressed KTX2 static-prop arrays.
+// Default-OFF; effective only when s_materialKtxEnabled is also true. When the
+// per-group BC7 conditions (all-or-nothing + uniform-dim) are not met, the group
+// falls back to the existing RGBA8 path → byte-identical to gate-OFF.
+static bool s_staticPropBc7Enabled = (std::getenv("MC2_STATICPROP_BC7") != nullptr &&
+                                      std::getenv("MC2_STATICPROP_BC7")[0] != '0'); // MC2_STATICPROP_BC7=1
 // Tracks whether finalizeGeometry() produced a correctly-sized sidecar.
 // Reset to false at the start of every finalizeGeometry() call; set to true
 // only after the sidecar loop completes with size == emitted count.
@@ -2417,6 +2423,140 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             s_coalesceEnabled     = false;
             s_coalesceArmed       = false;
             return;
+        }
+
+        // -------------------------------------------------------------------
+        // COMPRESSION-BC7-STATICPROP-1 — BC7-compressed array fast path.
+        // Gate: MC2_MATERIAL_KTX=1 AND MC2_STATICPROP_BC7=1.
+        // A GL array has ONE internalformat, so BC7 is ALL-OR-NOTHING per
+        // array. Additionally we require the group to be UNIFORM-DIM (every
+        // layer fills the whole level) so compressed sub-region uploads never
+        // violate 4x4 block alignment at small mips. If any condition fails we
+        // fall through to the existing RGBA8 path below, byte-identical.
+        // -------------------------------------------------------------------
+        if (s_materialKtxEnabled && s_staticPropBc7Enabled && mcTextureManager) {
+            // Probe ALL uniques: load each sidecar, require all load && all BC7
+            // && all dims match && uniform-dim.
+            std::vector<RenderCore::KtxImage> bc7Imgs(uniques.size());
+            bool bc7Ok      = true;
+            const char* failReason = nullptr;
+            uint32_t bc7VkFormat = 0;   // shared format across the array
+            int      bc7MipCount = 0;   // shared mip count across the array
+
+            // Uniform-dim check first (cheap, no file IO).
+            for (const auto& u : uniques) {
+                if (u.w != maxW || u.h != maxH) { bc7Ok = false; failReason = "mixed_dims"; break; }
+            }
+
+            for (size_t k = 0; bc7Ok && k < uniques.size(); ++k) {
+                const auto& u = uniques[k];
+                if (u.nodeIdx == 0xFFFFFFFFu) { bc7Ok = false; failReason = "load_fail"; break; }
+                const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
+                if (!srcName || !*srcName) { bc7Ok = false; failReason = "load_fail"; break; }
+                std::string ktxPath(srcName);
+                const auto dot = ktxPath.rfind('.');
+                if (dot != std::string::npos) ktxPath.replace(dot, std::string::npos, ".ktx2");
+                else                          ktxPath += ".ktx2";
+                if (!RenderCore::ktxLoadRgba8(ktxPath.c_str(), bc7Imgs[k])) {
+                    bc7Ok = false; failReason = "load_fail"; break;
+                }
+                const RenderCore::KtxImage& img = bc7Imgs[k];
+                if (!img.isCompressed ||
+                    (img.vkFormat != 145u && img.vkFormat != 146u)) {
+                    bc7Ok = false; failReason = "not_all_bc7"; break;
+                }
+                if (img.width != u.w || img.height != u.h) {
+                    bc7Ok = false; failReason = "dim_mismatch"; break;
+                }
+                if (k == 0) { bc7VkFormat = img.vkFormat; bc7MipCount = img.mipCount; }
+                // Require a consistent mip count so glTexStorage3D's level count
+                // is valid for every layer.
+                if (img.mipCount != bc7MipCount) { bc7Ok = false; failReason = "dim_mismatch"; break; }
+            }
+
+            // Capability check: BPTC (GL 4.3 / ARB_texture_compression_bptc).
+            if (bc7Ok && !GLEW_ARB_texture_compression_bptc) {
+                bc7Ok = false; failReason = "no_bptc_support";
+            }
+
+            if (bc7Ok) {
+                // Static-prop albedo is always sRGB → use the SRGB BPTC
+                // internalformat for both 145 (UNORM) and 146 (SRGB) so the
+                // GPU performs sRGB→linear on sample, matching the existing
+                // RGBA8_SRGB path. (Documented: 145 sources are still treated
+                // as sRGB albedo here.)
+                const GLenum internalformat = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
+                const int levels = (bc7MipCount > 0) ? bc7MipCount : 1;
+
+                glGenTextures(1, &outArray);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, outArray);
+                glTexStorage3D(GL_TEXTURE_2D_ARRAY, levels, internalformat,
+                               maxW, maxH, static_cast<GLsizei>(uniques.size()));
+
+                size_t bc7TotalBytes = 0;
+                for (size_t k = 0; k < uniques.size(); ++k) {
+                    const RenderCore::KtxImage& img = bc7Imgs[k];
+                    for (int lvl = 0; lvl < levels; ++lvl) {
+                        const int lw = (maxW >> lvl) ? (maxW >> lvl) : 1;
+                        const int lh = (maxH >> lvl) ? (maxH >> lvl) : 1;
+                        const GLsizei imageSize =
+                            static_cast<GLsizei>(((lw + 3) / 4) * ((lh + 3) / 4) * 16);
+                        glCompressedTexSubImage3D(
+                            GL_TEXTURE_2D_ARRAY, lvl,
+                            0, 0, static_cast<GLint>(k),
+                            lw, lh, 1,
+                            internalformat, imageSize,
+                            img.pixels.data() +
+                                img.mipByteOffsets[static_cast<size_t>(lvl)]);
+                        bc7TotalBytes += static_cast<size_t>(imageSize);
+                    }
+                }
+
+                // Sampler: match the RGBA8 path. NO glGenerateMipmap (compressed
+                // mips come straight from the cooked KTX). MAX_LEVEL = levels-1.
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,  levels - 1);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S,     GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T,     GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+
+                // uvScale bookkeeping: uniform-dim → uvScale = 1.0 (full level).
+                for (const auto& kv : packetsInGroup) {
+                    const uint32_t globalPktIdx = kv.first;
+                    if (kv.second < 0) continue;
+                    uvScaleXByPacket[globalPktIdx] = 1.0f;
+                    uvScaleYByPacket[globalPktIdx] = 1.0f;
+                }
+
+                std::fprintf(stderr,
+                    "[STATICPROP_BC7] group=%u layers=%zu dims=%dx%d levels=%d "
+                    "internalformat=0x%x bytes=%zu\n",
+                    (unsigned)group, uniques.size(), maxW, maxH, levels,
+                    (unsigned)internalformat, bc7TotalBytes);
+                std::fprintf(stderr,
+                    "[STATICPROP_BC7] summary group=%u built BC7 array "
+                    "(srcVkFormat=%u, %zu layers)\n",
+                    (unsigned)group, bc7VkFormat, uniques.size());
+                std::fflush(stderr);
+
+                COALESCE_TRACE("group_built_bc7 group=%s uniques=%zu maxDims=%dx%d levels=%d",
+                               group == 0u ? "off" : "on",
+                               uniques.size(), maxW, maxH, levels);
+
+                // Promote temp pins (same as the RGBA8 path) and skip the
+                // remaining RGBA8 array-build for this group.
+                s_coalescePinnedNodes.insert(s_coalescePinnedNodes.end(),
+                                              newlyPinnedThisBuild.begin(),
+                                              newlyPinnedThisBuild.end());
+                continue;
+            } else {
+                std::fprintf(stderr,
+                    "[STATICPROP_BC7] fallback group=%u reason=%s\n",
+                    (unsigned)group, failReason ? failReason : "unknown");
+                std::fflush(stderr);
+                // Fall through to the existing RGBA8 path unchanged.
+            }
         }
 
         // 5.10.d — allocate the array at max dims.

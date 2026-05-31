@@ -177,7 +177,11 @@ enum class RendererFeature : int {
     // Default-OFF; requires MC2_HZB_BUILD. Computes would-cull/would-keep +
     // pyramid-integrity counters from HZB readback. NEVER suppresses a draw.
     HzbProbe                 = 38,  // MC2_HZB_PROBE
-    COUNT                    = 39,
+    // COMPRESSION-BC7-STATICPROP-1: BC7-compressed KTX2 static-prop texture
+    // arrays through the existing static-prop KTX path. Default-OFF; requires
+    // MC2_MATERIAL_KTX. All-or-nothing + uniform-dim per array (see batcher).
+    StaticPropBc7            = 39,  // MC2_STATICPROP_BC7
+    COUNT                    = 40,
 };
 
 // ---------------------------------------------------------------------------
@@ -498,6 +502,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "TRACKRV-HZB-VISIBILITY-OPUS-1: diagnostic-only HZB occlusion probe. Default-OFF; requires MC2_HZB_BUILD. After the pyramid is built, reads back a parent HZB level and its child level and (a) verifies parent == MIN(children) (reduction integrity), (b) runs the conservative reverse-Z cull comparison childDepth < parentDepth -- which must be wouldKeep for every self-point (a texel inside a tile can never be culled by that tile's min). Logs tested/wouldKeep/wouldCull(==0)/integrityMismatch/invalidDepth counters. NEVER suppresses any draw (neverAppliedToDraws=true). Validates the cull math + pyramid before real object bounds are wired (HZB-STATICPROP-CULL-RECON-1)."
+    },
+    // StaticPropBc7
+    {
+        "MC2_FEATURE_STATICPROP_BC7",
+        "MC2_STATICPROP_BC7",
+        EnvVarKind::Feature,
+        false,
+        "COMPRESSION-BC7-STATICPROP-1: upload BC7-compressed KTX2 static-prop texture arrays through the existing static-prop KTX path (gos_static_prop_batcher.cpp), using immutable glTexStorage3D + glCompressedTexSubImage3D. Default-OFF; =1 enables. Requires MC2_MATERIAL_KTX=1. ALL-OR-NOTHING per GL array (one internalformat): a BC7 array is built only when EVERY unique's .ktx2 sidecar loads, is stored BC7 (vkFormat 145/146), matches its GL dims, AND the group is uniform-dim (all layers == maxW x maxH) -- otherwise the group falls back to the existing RGBA8 path unchanged. Uniform-dim is required because compressed sub-region uploads at small mips would violate 4x4 block alignment. All mip levels come from the cooked KTX (no glGenerateMipmap for compressed). Static-prop albedo is always sRGB, so the SRGB BPTC internalformat is used for both 145 and 146. When OFF (or any condition unmet), behavior is byte-identical to the RGBA8 KTX/legacy path. Static props ONLY; does not touch terrain/mech/vehicle/UI/burnin or MC_TextureManager."
     },
 };
 
