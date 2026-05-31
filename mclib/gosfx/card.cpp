@@ -577,6 +577,10 @@ void gosFX::Card::Draw(DrawInfo *info)
 			gp.velocity[0] = static_cast<float>(m_scale * m_halfX);
 			gp.velocity[1] = static_cast<float>(m_scale * m_halfY);
 			gp.velocity[2] = 0.0f;
+			// VFX-AGE-LIFETIME-UPLOAD-1: upload normalized age and lifetime sentinel.
+			// Card is a Singleton; m_age lives on the Effect base class, normalized [0,1].
+			gp.age         = static_cast<float>(m_age);   // normalized [0,1]
+			gp.lifetime    = 1.0f;                         // normalized sentinel (real seconds = 1.0f/m_ageRate)
 			batcher.Emit(gp);
 
 			// [VFX_ORACLE v1] diagnostics — one card per effect, so log on first emit.
@@ -585,7 +589,7 @@ void gosFX::Card::Draw(DrawInfo *info)
 				if (!s_first) {
 					s_first = true;
 					std::fprintf(stderr,
-						"[VFX_ORACLE v1] class=Card FIRST_HARVEST spec=\"%s\" animated=%d atlasColumns=%u sizeRange=[%.2f,%.2f] uvRect=[%.3f,%.3f,%.3f,%.3f] alpha=%.3f\n",
+						"[VFX_ORACLE v1] class=Card FIRST_HARVEST spec=\"%s\" animated=%d atlasColumns=%u sizeRange=[%.2f,%.2f] uvRect=[%.3f,%.3f,%.3f,%.3f] alpha=%.3f ageRange=[%.3f,%.3f]\n",
 						static_cast<const char*>(spec->m_name),
 						static_cast<int>(spec->m_animated),
 						atlasColumns,
@@ -593,7 +597,8 @@ void gosFX::Card::Draw(DrawInfo *info)
 						static_cast<double>(gp.velocity[1]),
 						static_cast<double>(tileU0), static_cast<double>(tileV0),
 						static_cast<double>(tileUs), static_cast<double>(tileVs),
-						static_cast<double>(m_color.alpha));
+						static_cast<double>(m_color.alpha),
+						static_cast<double>(gp.age), static_cast<double>(gp.age));
 					std::fflush(stderr);
 				}
 			}

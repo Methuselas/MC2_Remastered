@@ -621,6 +621,8 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 				// VFX-ORIGINAL-RENDER-ANIM-FIELDS-1: sizeX and spin range trackers.
 				float minSizeX = 3.0e38f, maxSizeX = -3.0e38f;
 				float minSpin  = 3.0e38f, maxSpin  = -3.0e38f;
+				// VFX-AGE-LIFETIME-UPLOAD-1: age range tracker for FIRST_HARVEST log.
+				float minAge = 1.0f, maxAge = 0.0f;
 				for (int i = 0; i < m_activeParticleCount; ++i) {
 					Particle *p = GetParticle(i);
 					Check_Object(p);
@@ -661,6 +663,9 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 					gp.color[2]    = c.blue;
 					gp.color[3]    = c.alpha;
 					gp.size        = static_cast<float>(radius);
+					// VFX-AGE-LIFETIME-UPLOAD-1: upload normalized age and lifetime sentinel.
+					gp.age         = static_cast<float>(p->m_age);  // normalized [0,1]
+					gp.lifetime    = 1.0f;                           // normalized sentinel (real seconds = 1.0f/p->m_ageRate)
 					// atlasIndex carries per-particle frame index (not texture handle).
 					// Texture binding happens via GroupInfo.handle (set in BeginGroup above).
 					gp.atlasIndex  = atlasFrame;
@@ -682,6 +687,9 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 					++harvested;
 					if (c.alpha < minA) minA = c.alpha;
 					if (c.alpha > maxA) maxA = c.alpha;
+					// VFX-AGE-LIFETIME-UPLOAD-1: track age range
+					if (gp.age < minAge) minAge = gp.age;
+					if (gp.age > maxAge) maxAge = gp.age;
 					// VFX-ORIGINAL-RENDER-ANIM-FIELDS-1: track sizeX and spin ranges
 					if (gp.velocity[0] < minSizeX) minSizeX = gp.velocity[0];
 					if (gp.velocity[0] > maxSizeX) maxSizeX = gp.velocity[0];
@@ -707,8 +715,11 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 						const double sizeXHi = (harvested > 0) ? static_cast<double>(maxSizeX) : 0.0;
 						const double spinLo  = (harvested > 0) ? static_cast<double>(minSpin)  : 0.0;
 						const double spinHi  = (harvested > 0) ? static_cast<double>(maxSpin)  : 0.0;
+						// VFX-AGE-LIFETIME-UPLOAD-1: age range (min/max after dead-slot skip)
+						const double ageLo = static_cast<double>(minAge);
+						const double ageHi = static_cast<double>(maxAge);
 						std::fprintf(stderr,
-							"[VFX_ORACLE v1] class=CardCloud FIRST_HARVEST spec=\"%s\" animated=%d active=%d harvested=%d alpha=[%.3f,%.3f] atlasColumns=%u frameRange=[%u,%u] sizeRange=[%.2f,%.2f] spinRange=[%.3f,%.3f]\n",
+							"[VFX_ORACLE v1] class=CardCloud FIRST_HARVEST spec=\"%s\" animated=%d active=%d harvested=%d alpha=[%.3f,%.3f] atlasColumns=%u frameRange=[%u,%u] sizeRange=[%.2f,%.2f] spinRange=[%.3f,%.3f] ageRange=[%.3f,%.3f]\n",
 							static_cast<const char*>(spec->m_name),
 							static_cast<int>(spec->m_animated),
 							m_activeParticleCount, harvested,
@@ -717,7 +728,8 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 							(atlasColumns > 1u && minFrame <= maxFrame) ? minFrame : 0u,
 							frameHi,
 							sizeXLo, sizeXHi,
-							spinLo, spinHi);
+							spinLo, spinHi,
+							ageLo, ageHi);
 						std::fflush(stderr);
 					}
 					static unsigned long long s_calls = 0, s_harvTotal = 0;
@@ -725,12 +737,14 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 					if ((++s_calls % 240ull) == 0ull) {
 						// minA/maxA are sentinels if this call harvested 0 live
 						// particles; report 0 in that case (avoid 3e38 in the log).
-						const double aLo = (harvested > 0) ? static_cast<double>(minA) : 0.0;
-						const double aHi = (harvested > 0) ? static_cast<double>(maxA) : 0.0;
+						const double aLo   = (harvested > 0) ? static_cast<double>(minA)   : 0.0;
+						const double aHi   = (harvested > 0) ? static_cast<double>(maxA)   : 0.0;
+						const double ageLo = (harvested > 0) ? static_cast<double>(minAge) : 0.0;
+						const double ageHi = (harvested > 0) ? static_cast<double>(maxAge) : 0.0;
 						std::fprintf(stderr,
-							"[VFX_ORACLE v1] class=CardCloud calls=%llu active_this_call=%d harvested_this_call=%d emitted_this_call=%d harvestedTotal=%llu fallback=0 alpha_this_call=[%.3f,%.3f]\n",
+							"[VFX_ORACLE v1] class=CardCloud calls=%llu active_this_call=%d harvested_this_call=%d emitted_this_call=%d harvestedTotal=%llu fallback=0 alpha_this_call=[%.3f,%.3f] age_this_call=[%.3f,%.3f]\n",
 							s_calls, m_activeParticleCount, harvested, harvested,
-							s_harvTotal, aLo, aHi);
+							s_harvTotal, aLo, aHi, ageLo, ageHi);
 						std::fflush(stderr);
 					}
 				}

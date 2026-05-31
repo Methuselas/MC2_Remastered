@@ -510,6 +510,8 @@ void gosFX::PointCloud::Draw(DrawInfo *info)
 
 			int harvested = 0;
 			float minAlpha =  3.0e38f, maxAlpha = -3.0e38f;
+			// VFX-AGE-LIFETIME-UPLOAD-1: age range tracker for FIRST_HARVEST log.
+			float minAge = 1.0f, maxAge = 0.0f;
 
 			for (int i = 0; i < m_activeParticleCount; ++i) {
 				Particle *p = GetParticle(i);
@@ -535,6 +537,9 @@ void gosFX::PointCloud::Draw(DrawInfo *info)
 				// billboard path (velocity=(0,0,0)) floors size at max(size,8.0) in
 				// the shader, so this results in ~8 wu dot — acceptable.
 				gp.size        = 4.0f;
+				// VFX-AGE-LIFETIME-UPLOAD-1: upload normalized age and lifetime sentinel.
+				gp.age         = static_cast<float>(p->m_age);  // normalized [0,1]
+				gp.lifetime    = 1.0f;                           // normalized sentinel (real seconds = 1.0f/p->m_ageRate)
 				// velocity stays zero-initialized: no spin, no aspect for PointCloud.
 				// atlasIndex stays 0: no animated atlas.
 
@@ -542,6 +547,9 @@ void gosFX::PointCloud::Draw(DrawInfo *info)
 				++harvested;
 				if (c.alpha < minAlpha) minAlpha = c.alpha;
 				if (c.alpha > maxAlpha) maxAlpha = c.alpha;
+				// VFX-AGE-LIFETIME-UPLOAD-1: track age range
+				if (gp.age < minAge) minAge = gp.age;
+				if (gp.age > maxAge) maxAge = gp.age;
 			}
 
 			// [VFX_ORACLE v1] diagnostics: one-shot on first harvest, then 240-call
@@ -550,11 +558,15 @@ void gosFX::PointCloud::Draw(DrawInfo *info)
 				static bool s_first = false;
 				if (!s_first && harvested > 0) {
 					s_first = true;
+					// VFX-AGE-LIFETIME-UPLOAD-1: age range
+					const double ageLo = static_cast<double>(minAge);
+					const double ageHi = static_cast<double>(maxAge);
 					std::fprintf(stderr,
-						"[VFX_ORACLE v1] class=PointCloud FIRST_HARVEST spec=\"%s\" active=%d harvested=%d alpha=[%.3f,%.3f] size=4.0 spin=none atlas=none\n",
+						"[VFX_ORACLE v1] class=PointCloud FIRST_HARVEST spec=\"%s\" active=%d harvested=%d alpha=[%.3f,%.3f] size=4.0 spin=none atlas=none ageRange=[%.3f,%.3f]\n",
 						static_cast<const char*>(spec->m_name),
 						m_activeParticleCount, harvested,
-						static_cast<double>(minAlpha), static_cast<double>(maxAlpha));
+						static_cast<double>(minAlpha), static_cast<double>(maxAlpha),
+						ageLo, ageHi);
 					std::fflush(stderr);
 				}
 				static unsigned long long s_calls = 0, s_harvTotal = 0;
