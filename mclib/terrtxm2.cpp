@@ -185,7 +185,19 @@ static MemoryPtr tryLoadBurninJpg(const char* texturePath, const char* fileName,
 	return colorMap;
 }
 
-DWORD			TerrainColorMap::terrainTypeIDs[ TOTAL_COLORMAP_TYPES ] = 
+static bool skipColormapTiles() {
+    static const bool s = []() {
+        if (getenv("MC2_SETUPTEXTURES_LEGACY_FORCE")) return false;
+        const char* ti = getenv("MC2_TERRAIN_INDIRECT");
+        if (ti && ti[0] == '0' && ti[1] == '\0') return false;
+        const char* ov = getenv("MC2_TERRAIN_INDIRECT_OVERLAY");
+        if (ov && ov[0] == '0' && ov[1] == '\0') return false;
+        return true;
+    }();
+    return s;
+}
+
+DWORD			TerrainColorMap::terrainTypeIDs[ TOTAL_COLORMAP_TYPES ] =
 {
 	20000,
 	20001,
@@ -1341,55 +1353,62 @@ void TerrainColorMap::recalcLight(const char *fileName)
 		if (checkNum != float(numTextures))
 			STOP(("Color Map is %d pixels wide which is not even divisible by %d",colorMapInfo.width,COLOR_MAP_TEXTURE_SIZE));
 				
-		numTextures *= numTextures;
-			
-		txmRAM = (ColorMapRAM *)colorMapRAMHeap->Malloc(sizeof(ColorMapRAM) * numTextures);
-		gosASSERT(txmRAM != NULL);
-			
 		//------------------------------------------------------------------------
 		// Must check image_descriptor to see if we need to un upside down image.
 		//bool left = (colorMapInfo.iimage_descriptor & 16) != 0;
 		bool top = (colorMapInfo.image_descriptor & 32) != 0;
-	
+
 		if (!top)
 		{
 			flipTopToBottom(ColorMap,32,colorMapInfo.width,colorMapInfo.height);
 		}
-	
+
 		//Apply shadow map.  calc every time for now.  Save as in editor, eventually.
 		burnInShadows(true,fileName);
 		saveTGAFile(ColorMap,fileName,colorMapInfo.width);
-						
-		//Now, divide up the color map into separate COLOR_MAP_TEXTURE_SIZE textures.
-		// and hand the data to the textureManager.
-			
-		for (unsigned long i=0;i<numTextures;i++)
-		{
-			mcTextureManager->removeTextureNode(textures[i].mcTextureNodeIndex);
-			
-			txmRAM[i].ourRAM = (MemoryPtr)colorMapRAMHeap->Malloc(sizeof(DWORD) * COLOR_MAP_TEXTURE_SIZE * COLOR_MAP_TEXTURE_SIZE);
-			gosASSERT(txmRAM[i].ourRAM != NULL);
-				
-			getColorMapData(txmRAM[i].ourRAM,i, colorMapInfo.width);
-			
-			textures[i].mcTextureNodeIndex = mcTextureManager->textureFromMemory((DWORD *)txmRAM[i].ourRAM,gos_Texture_Solid,gosHint_DontShrink,COLOR_MAP_TEXTURE_SIZE);
+
+		if (skipColormapTiles()) {
+			printf("[COLORMAP] skip %ld^2 tile GL upload (%dx%d) [COLORMAP-TILES-RETIRE-1]\n",
+			       (long)numTexturesAcross, colorMapInfo.width, colorMapInfo.width);
+			numTextures = 0;
+		} else {
+			numTextures *= numTextures;
+
+			txmRAM = (ColorMapRAM *)colorMapRAMHeap->Malloc(sizeof(ColorMapRAM) * numTextures);
+			gosASSERT(txmRAM != NULL);
+
+			//Now, divide up the color map into separate COLOR_MAP_TEXTURE_SIZE textures.
+			// and hand the data to the textureManager.
+
+			for (unsigned long i=0;i<numTextures;i++)
+			{
+				mcTextureManager->removeTextureNode(textures[i].mcTextureNodeIndex);
+
+				txmRAM[i].ourRAM = (MemoryPtr)colorMapRAMHeap->Malloc(sizeof(DWORD) * COLOR_MAP_TEXTURE_SIZE * COLOR_MAP_TEXTURE_SIZE);
+				gosASSERT(txmRAM[i].ourRAM != NULL);
+
+				getColorMapData(txmRAM[i].ourRAM,i, colorMapInfo.width);
+
+				textures[i].mcTextureNodeIndex = mcTextureManager->textureFromMemory((DWORD *)txmRAM[i].ourRAM,gos_Texture_Solid,gosHint_DontShrink,COLOR_MAP_TEXTURE_SIZE);
+			}
 		}
 	}
 
 	//At this point, the color Map DATA should be freeable!!
 	// All of the textures have been passed to the mcTextureManager!
-	{ ZoneScopedN("TerrainColorMap::init colorMap cleanup"); for (unsigned long i=0;i<numTextures;i++)
+	{ ZoneScopedN("TerrainColorMap::init colorMap cleanup"); if (txmRAM) { for (unsigned long i=0;i<numTextures;i++)
 	{
 		colorMapRAMHeap->Free(txmRAM[i].ourRAM);
 		txmRAM[i].ourRAM = NULL;
 	}
-	
+
 	colorMapRAMHeap->Free(txmRAM);
 	txmRAM = NULL;
-	
+	}
+
 	colorMapRAMHeap->Free(ColorMap);
 	ColorMap = NULL;
-	
+
 	if (colorMapRAMHeap)
 	{
 		delete colorMapRAMHeap;
@@ -1524,13 +1543,6 @@ void TerrainColorMap::resetBaseTexture (const char *fileName)
 		if (checkNum != float(numTextures))
 			STOP(("Color Map is %d pixels wide which is not even divisible by %d",colorMapInfo.width,COLOR_MAP_TEXTURE_SIZE));
 			
-		numTextures *= numTextures;
-		textures = (ColorMapTextures *)colorMapHeap->Malloc(sizeof(ColorMapTextures) * numTextures);
-		gosASSERT(textures != NULL);
-		
-		txmRAM = (ColorMapRAM *)colorMapRAMHeap->Malloc(sizeof(ColorMapRAM) * numTextures);
-		gosASSERT(txmRAM != NULL);
-		
 		//------------------------------------------------------------------------
 		// Must check image_descriptor to see if we need to un upside down image.
 		//bool left = (colorMapInfo.iimage_descriptor & 16) != 0;
@@ -1547,18 +1559,31 @@ void TerrainColorMap::resetBaseTexture (const char *fileName)
 			burnInShadows(true,fileName);
 			saveTGAFile(ColorMap,fileName,colorMapInfo.width);
 		}
-					
-		//Now, divide up the color map into separate COLOR_MAP_TEXTURE_SIZE textures.
-		// and hand the data to the textureManager.
-		
-		for (unsigned long i=0;i<numTextures;i++)
-		{
-			txmRAM[i].ourRAM = (MemoryPtr)colorMapRAMHeap->Malloc(sizeof(DWORD) * COLOR_MAP_TEXTURE_SIZE * COLOR_MAP_TEXTURE_SIZE);
-			gosASSERT(txmRAM[i].ourRAM != NULL);
-			
-			getColorMapData(txmRAM[i].ourRAM,i, colorMapInfo.width);
-			
-			textures[i].mcTextureNodeIndex = mcTextureManager->textureFromMemory((DWORD *)txmRAM[i].ourRAM,gos_Texture_Solid,gosHint_DontShrink,COLOR_MAP_TEXTURE_SIZE);
+
+		if (skipColormapTiles()) {
+			printf("[COLORMAP] skip %ld^2 tile GL upload (reset, %dx%d) [COLORMAP-TILES-RETIRE-1]\n",
+			       (long)numTexturesAcross, colorMapInfo.width, colorMapInfo.width);
+			numTextures = 0;
+		} else {
+			numTextures *= numTextures;
+			textures = (ColorMapTextures *)colorMapHeap->Malloc(sizeof(ColorMapTextures) * numTextures);
+			gosASSERT(textures != NULL);
+
+			txmRAM = (ColorMapRAM *)colorMapRAMHeap->Malloc(sizeof(ColorMapRAM) * numTextures);
+			gosASSERT(txmRAM != NULL);
+
+			//Now, divide up the color map into separate COLOR_MAP_TEXTURE_SIZE textures.
+			// and hand the data to the textureManager.
+
+			for (unsigned long i=0;i<numTextures;i++)
+			{
+				txmRAM[i].ourRAM = (MemoryPtr)colorMapRAMHeap->Malloc(sizeof(DWORD) * COLOR_MAP_TEXTURE_SIZE * COLOR_MAP_TEXTURE_SIZE);
+				gosASSERT(txmRAM[i].ourRAM != NULL);
+
+				getColorMapData(txmRAM[i].ourRAM,i, colorMapInfo.width);
+
+				textures[i].mcTextureNodeIndex = mcTextureManager->textureFromMemory((DWORD *)txmRAM[i].ourRAM,gos_Texture_Solid,gosHint_DontShrink,COLOR_MAP_TEXTURE_SIZE);
+			}
 		}
 	}
 
@@ -1575,18 +1600,20 @@ void TerrainColorMap::resetBaseTexture (const char *fileName)
 
 	//At this point, the color Map DATA should be freeable!!
 	// All of the textures have been passed to the mcTextureManager!
+	if (txmRAM) {
 	for (int i=0;i<numTextures;i++)
 	{
 		colorMapRAMHeap->Free(txmRAM[i].ourRAM);
 		txmRAM[i].ourRAM = NULL;
 	}
-	
+
 	colorMapRAMHeap->Free(txmRAM);
 	txmRAM = NULL;
-	
+	}
+
 	colorMapRAMHeap->Free(ColorMap);
 	ColorMap = NULL;
-	
+
 	if (colorMapRAMHeap)
 	{
 		delete colorMapRAMHeap;
@@ -1881,32 +1908,38 @@ long TerrainColorMap::init (char *fileName)
 			if (checkNum != float(numTextures))
 				STOP(("Color Map is %d pixels wide which is not even divisible by %d",jpgColorMapWidth,COLOR_MAP_TEXTURE_SIZE));
 
-			numTextures *= numTextures;
-			textures = (ColorMapTextures *)colorMapHeap->Malloc(sizeof(ColorMapTextures) * numTextures);
-			gosASSERT(textures != NULL);
+			if (skipColormapTiles()) {
+				printf("[COLORMAP] skip %ld^2 tile GL upload (%ldx%ld) [COLORMAP-TILES-RETIRE-1]\n",
+				       (long)numTexturesAcross, jpgColorMapWidth, jpgColorMapWidth);
+				numTextures = 0;
+			} else {
+				numTextures *= numTextures;
+				textures = (ColorMapTextures *)colorMapHeap->Malloc(sizeof(ColorMapTextures) * numTextures);
+				gosASSERT(textures != NULL);
 
-			txmRAM = (ColorMapRAM *)colorMapRAMHeap->Malloc(sizeof(ColorMapRAM) * numTextures);
-			gosASSERT(txmRAM != NULL);
+				txmRAM = (ColorMapRAM *)colorMapRAMHeap->Malloc(sizeof(ColorMapRAM) * numTextures);
+				gosASSERT(txmRAM != NULL);
 
-			//Now, divide up the color map into separate COLOR_MAP_TEXTURE_SIZE textures.
-			// and hand the data to the textureManager.
-			{
-				ZoneScopedN("TerrainColorMap::init jpgColorMap tileLoop");
-				for (unsigned long i=0;i<numTextures;i++)
+				//Now, divide up the color map into separate COLOR_MAP_TEXTURE_SIZE textures.
+				// and hand the data to the textureManager.
 				{
+					ZoneScopedN("TerrainColorMap::init jpgColorMap tileLoop");
+					for (unsigned long i=0;i<numTextures;i++)
 					{
-						ZoneScopedN("TerrainColorMap::init jpgColorMap tileAlloc");
-						txmRAM[i].ourRAM = (MemoryPtr)colorMapRAMHeap->Malloc(sizeof(DWORD) * COLOR_MAP_TEXTURE_SIZE * COLOR_MAP_TEXTURE_SIZE);
-						gosASSERT(txmRAM[i].ourRAM != NULL);
-					}
-					{
-						ZoneScopedN("TerrainColorMap::init jpgColorMap tileExtract");
-						getColorMapData(txmRAM[i].ourRAM,i, jpgColorMapWidth);
-					}
-					{
-						ZoneScopedN("TerrainColorMap::init jpgColorMap tileCache");
-						textures[i].mcTextureNodeIndex = mcTextureManager->textureFromMemoryRaw((DWORD *)txmRAM[i].ourRAM,gos_Texture_Solid,gosHint_DontShrink,COLOR_MAP_TEXTURE_SIZE);
-						mcTextureManager->setTextureNeverFlush(textures[i].mcTextureNodeIndex, 0x1);
+						{
+							ZoneScopedN("TerrainColorMap::init jpgColorMap tileAlloc");
+							txmRAM[i].ourRAM = (MemoryPtr)colorMapRAMHeap->Malloc(sizeof(DWORD) * COLOR_MAP_TEXTURE_SIZE * COLOR_MAP_TEXTURE_SIZE);
+							gosASSERT(txmRAM[i].ourRAM != NULL);
+						}
+						{
+							ZoneScopedN("TerrainColorMap::init jpgColorMap tileExtract");
+							getColorMapData(txmRAM[i].ourRAM,i, jpgColorMapWidth);
+						}
+						{
+							ZoneScopedN("TerrainColorMap::init jpgColorMap tileCache");
+							textures[i].mcTextureNodeIndex = mcTextureManager->textureFromMemoryRaw((DWORD *)txmRAM[i].ourRAM,gos_Texture_Solid,gosHint_DontShrink,COLOR_MAP_TEXTURE_SIZE);
+							mcTextureManager->setTextureNeverFlush(textures[i].mcTextureNodeIndex, 0x1);
+						}
 					}
 				}
 			}
@@ -2010,13 +2043,6 @@ long TerrainColorMap::init (char *fileName)
 				if (checkNum != float(numTextures))
 					STOP(("Color Map is %d pixels wide which is not even divisible by %d",colorMapInfo.width,COLOR_MAP_TEXTURE_SIZE));
 
-				numTextures *= numTextures;
-				textures = (ColorMapTextures *)colorMapHeap->Malloc(sizeof(ColorMapTextures) * numTextures);
-				gosASSERT(textures != NULL);
-
-				txmRAM = (ColorMapRAM *)colorMapRAMHeap->Malloc(sizeof(ColorMapRAM) * numTextures);
-				gosASSERT(txmRAM != NULL);
-
 				//------------------------------------------------------------------------
 				// Must check image_descriptor to see if we need to un upside down image.
 				//bool left = (colorMapInfo.iimage_descriptor & 16) != 0;
@@ -2034,29 +2060,42 @@ long TerrainColorMap::init (char *fileName)
 					saveTGAFile(ColorMap,fileName,colorMapInfo.width);
 				}
 
-				//Now, divide up the color map into separate COLOR_MAP_TEXTURE_SIZE textures.
-				// and hand the data to the textureManager.
+				if (skipColormapTiles()) {
+					printf("[COLORMAP] skip %ld^2 tile GL upload (%dx%d) [COLORMAP-TILES-RETIRE-1]\n",
+					       (long)numTexturesAcross, colorMapInfo.width, colorMapInfo.width);
+					numTextures = 0;
+				} else {
+					numTextures *= numTextures;
+					textures = (ColorMapTextures *)colorMapHeap->Malloc(sizeof(ColorMapTextures) * numTextures);
+					gosASSERT(textures != NULL);
 
-				{
-					ZoneScopedN("TerrainColorMap::init colorMap tileLoop");
-					for (unsigned long i=0;i<numTextures;i++)
+					txmRAM = (ColorMapRAM *)colorMapRAMHeap->Malloc(sizeof(ColorMapRAM) * numTextures);
+					gosASSERT(txmRAM != NULL);
+
+					//Now, divide up the color map into separate COLOR_MAP_TEXTURE_SIZE textures.
+					// and hand the data to the textureManager.
+
 					{
+						ZoneScopedN("TerrainColorMap::init colorMap tileLoop");
+						for (unsigned long i=0;i<numTextures;i++)
 						{
-							ZoneScopedN("TerrainColorMap::init colorMap tileAlloc");
-							txmRAM[i].ourRAM = (MemoryPtr)colorMapRAMHeap->Malloc(sizeof(DWORD) * COLOR_MAP_TEXTURE_SIZE * COLOR_MAP_TEXTURE_SIZE);
-							gosASSERT(txmRAM[i].ourRAM != NULL);
-						}
-						{
-							ZoneScopedN("TerrainColorMap::init colorMap tileExtract");
-							getColorMapData(txmRAM[i].ourRAM,i, colorMapInfo.width);
-						}
-						{
-							ZoneScopedN("TerrainColorMap::init colorMap tileCache");
-							textures[i].mcTextureNodeIndex = mcTextureManager->textureFromMemoryRaw((DWORD *)txmRAM[i].ourRAM,gos_Texture_Solid,gosHint_DontShrink,COLOR_MAP_TEXTURE_SIZE);
-							mcTextureManager->setTextureNeverFlush(textures[i].mcTextureNodeIndex, 0x1);
-						}
-						if (i % 50 == 0)
-						{
+							{
+								ZoneScopedN("TerrainColorMap::init colorMap tileAlloc");
+								txmRAM[i].ourRAM = (MemoryPtr)colorMapRAMHeap->Malloc(sizeof(DWORD) * COLOR_MAP_TEXTURE_SIZE * COLOR_MAP_TEXTURE_SIZE);
+								gosASSERT(txmRAM[i].ourRAM != NULL);
+							}
+							{
+								ZoneScopedN("TerrainColorMap::init colorMap tileExtract");
+								getColorMapData(txmRAM[i].ourRAM,i, colorMapInfo.width);
+							}
+							{
+								ZoneScopedN("TerrainColorMap::init colorMap tileCache");
+								textures[i].mcTextureNodeIndex = mcTextureManager->textureFromMemoryRaw((DWORD *)txmRAM[i].ourRAM,gos_Texture_Solid,gosHint_DontShrink,COLOR_MAP_TEXTURE_SIZE);
+								mcTextureManager->setTextureNeverFlush(textures[i].mcTextureNodeIndex, 0x1);
+							}
+							if (i % 50 == 0)
+							{
+							}
 						}
 					}
 				}
@@ -2085,14 +2124,16 @@ long TerrainColorMap::init (char *fileName)
 	// All of the textures have been passed to the mcTextureManager!
 	{
 		ZoneScopedN("TerrainColorMap::init colorMap cleanup");
+		if (txmRAM) {
 		for (unsigned long i=0;i<numTextures;i++)
 		{
 			colorMapRAMHeap->Free(txmRAM[i].ourRAM);
 			txmRAM[i].ourRAM = NULL;
 		}
-		
+
 		colorMapRAMHeap->Free(txmRAM);
 		txmRAM = NULL;
+		}
 		
 		if (usedJPG)
 		{
@@ -2549,6 +2590,10 @@ DWORD TerrainColorMap::resolveTextureHandle (VertexPtr vMin, VertexPtr vMax, Ter
 		lastResultTexture = resultTexture;
 		if (resultTextureOut)
 			*resultTextureOut = resultTexture;
+		if (!textures) {
+			uvData->minU = uvData->minV = uvData->maxU = uvData->maxV = 0.0f;
+			return 0xFFFFFFFFu;
+		}
 		if (realizeTexture)
 		{
 			ZoneScopedN("TerrainColorMap::getTextureHandle realizeTexture");

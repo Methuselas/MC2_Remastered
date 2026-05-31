@@ -272,14 +272,17 @@ void main() {
     bool cementQuad = (cementWord & 0x80000000u) != 0u;
 
     // Resolve terrain handle via LUT: nodeId baked into recipe._wp2 at mission load.
-    // Non-cement quads: skip when nodeId is invalid or unresolved (no colormap tile).
-    // Cement quads: allow through even with invalid/evicted nodeId — atlas rendering
-    // uses cementWord + WorldPos, not thSlot.
+    // nodeId == 0: genuine edge/invalid quad — skip non-cement.
+    // nodeId >= LUT.length(): atlas-only sentinel (0xFFFFFFFE) when colormap tiles were
+    //   skipped at mission load (COLORMAP-TILES-RETIRE-1); frag uses atlas, thSlot ignored.
+    // Cement quads: allow through regardless — atlas rendering uses cementWord + WorldPos.
     uint nodeId = floatBitsToUint(r.pos2.w);
     uint thSlot;
-    if (nodeId == 0u || nodeId >= uint(terrainHandleLut.length())) {
+    if (nodeId == 0u) {
         if (!cementQuad) return;
         thSlot = 1u;  // dummy: frag shader ignores thSlot for cement-atlas quads
+    } else if (nodeId >= uint(terrainHandleLut.length())) {
+        thSlot = 1u;  // atlas-only: no tile, frag samples atlas by WorldPos
     } else {
         thSlot = terrainHandleLut[nodeId];
         if ((thSlot == 0u || thSlot == 0xFFFFFFFFu) && !cementQuad) return;
