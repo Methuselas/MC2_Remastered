@@ -1222,12 +1222,19 @@ bool gos_terrain_indirect::WaterFastPathOwnsArmedDraw()
 	static const bool s_fastPath =
 	    (getenv("MC2_RENDER_WATER_FASTPATH") != nullptr) ||
 	    gpu_driven::IsWaterEnabled();
-	// IsFrameSolidArmed() is load-bearing: the un-armed cinematic/intro-pan
-	// MUST keep running the legacy loop (the GPU water path is not armed
-	// there) - gating it off un-armed reintroduces the stale-data regression
-	// (see memory/water_fastpath_interim_fixes_and_residuals.md fix #2).
+	// PERF-MISSION-INTRO-ARMED-RENDER-1: water fast path now arms independently
+	// of terrain solid. Water resources (WaterStream recipes, terrainTextures2)
+	// are built during primeMissionTerrainCache() — fully ready on frame 1.
+	// Removing the IsFrameSolidArmed() dependency lets water render on intro pans
+	// where solid may not yet be armed (e.g. first few frames before LUT resolves).
+	// MVP fallback: gameos_graphics.cpp uses gos_GetTerrainMVPMat4() when
+	// !IsFrameSolidArmed(), already handled (fix #3, water_fastpath_interim_fixes).
+	// Kill-switch: MC2_MISSION_INTRO_LEGACY_RENDER=1 restores solid-arm dependency.
+	static const bool s_introLegacy =
+	    (getenv("MC2_MISSION_INTRO_LEGACY_RENDER") != nullptr);
 	const bool g1 = s_fastPath;
-	const bool g2 = gos_terrain_indirect::IsFrameSolidArmed();
+	// g2: solid-arm dependency — removed by default, restored by kill-switch.
+	const bool g2 = s_introLegacy ? gos_terrain_indirect::IsFrameSolidArmed() : true;
 	const bool g3 = WaterStream::IsReady();
 	const bool g4 = (WaterStream::GetRecipeCount() > 0);
 	const bool g5 = (Terrain::terrainTextures2 != nullptr);
@@ -1236,14 +1243,15 @@ bool gos_terrain_indirect::WaterFastPathOwnsArmedDraw()
 	static const bool s_gateDiag = (getenv("MC2_WATER_GATE_DIAG") != nullptr);
 	if (s_gateDiag)
 	{
-		uint32_t sig = (g1?1:0) | (g2?2:0) | (g3?4:0) | (g4?8:0) | (g5?16:0);
+		const bool solidArmed = gos_terrain_indirect::IsFrameSolidArmed();
+		uint32_t sig = (g1?1:0) | (solidArmed?2:0) | (g3?4:0) | (g4?8:0) | (g5?16:0);
 		static uint32_t s_lastSig = 0xffffffff;
 		if (sig != s_lastSig)
 		{
-			printf("[WATER_GATE] fastPath=%d armed=%d streamReady=%d recipes=%u tex2=%d (sig=0x%x)\n",
-			    g1?1:0, g2?1:0, g3?1:0,
+			printf("[WATER_GATE] fastPath=%d armed=%d streamReady=%d recipes=%u tex2=%d introLegacy=%d (sig=0x%x)\n",
+			    g1?1:0, solidArmed?1:0, g3?1:0,
 			    (unsigned)WaterStream::GetRecipeCount(),
-			    g5?1:0, sig);
+			    g5?1:0, s_introLegacy?1:0, sig);
 			fflush(stdout);
 			s_lastSig = sig;
 		}
@@ -2068,11 +2076,10 @@ void Terrain::geometry (void)
 				    q.vertices[2]->vertexNum >= 0 &&
 				    q.vertices[3]->vertexNum >= 0) {
 					bool append;
-					if (gos_terrain_indirect::IsFrameSolidArmed()) {
-						// Armed (reframe-B): draw-side (ii) is skipped in setupTextures(), but
-						// (i) projection+reduction+clipInfo AND the 0xffffffff sentinel still run,
-						// so waterHandle IS set (to 0xffffffff) on armed frames; use the water-tile
-						// predicate here instead of waterHandle to avoid stale-sentinel false negatives.
+					if (gos_terrain_indirect::WaterFastPathOwnsArmedDraw()) {
+						// Water fast path owns this frame (solid+water armed, or water-only intro).
+						// draw-side (ii) is skipped in setupTextures() so waterHandle IS 0xffffffff;
+						// use the vertex water-tile predicate to avoid stale-sentinel false negatives.
 						// Fix A (staircase): also include submerged tiles that lack water&1.
 						// UploadAndBindThinRecords mirrors this predicate exactly.
 						const bool waterFlagged =
