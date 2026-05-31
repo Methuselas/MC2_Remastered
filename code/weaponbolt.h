@@ -237,7 +237,7 @@ class WeaponBolt : public GameObject
 			// without persistent particles, a per-frame segment vanishes instantly.
 			// K=64 ≈ 0.47s of history at 137 fps; enough to read as a smoke ribbon
 			// behind a moving missile. Tune up if trails look short, down if too long.
-			static constexpr int kTrailHistoryMax = 24;   // was 64; 24 frames @ 137 fps ≈ 0.18s of history
+			static constexpr int kTrailHistoryMax = 6;    // VFX-WEAPON-FX-RESTORE-OPUS-1: 6 positions = 5 segments; user-tuned ~0.1s trail
 			Stuff::Vector3D trail_history[kTrailHistoryMax];
 			uint8_t trail_head     = 0;   // index of next slot to write
 			uint8_t trail_count    = 0;   // how many slots are populated (clamped to kTrailHistoryMax)

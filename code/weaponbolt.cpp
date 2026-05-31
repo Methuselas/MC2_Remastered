@@ -621,7 +621,17 @@ long WeaponBolt::update (void)
 			{
 				hitTarget = TRUE;
 				hitLeft = ((WeaponBoltTypePtr)getObjectType())->afterHitTime;
-			
+
+				// VFX-WEAPON-FX-RESTORE-OPUS-1: kill trail gosEffect immediately on impact.
+				// The oracle renders gosEffect particles at the hit position; without this
+				// kill the lozenge/bolt-head card floats at the target for several seconds.
+				// hitEffect provides the actual impact visual.
+				if (gosEffect) {
+					gosEffect->Kill();
+					delete gosEffect;
+					gosEffect = NULL;
+				}
+
 				if (target)
 				{
 					Stuff::Vector3D hotSpot = target->getPositionFromHS(targetHotSpot);
@@ -2444,8 +2454,14 @@ static mc2::particles::GpuTrailKind gpuTrailKindFromEffectId(int32_t eid)
 // GPU trail visual parity is proven against original.
 static bool gpuTrailKindProven(mc2::particles::GpuTrailKind k)
 {
-    (void)k;
-    return false;
+    switch (k) {
+        // VFX-WEAPON-FX-RESTORE-OPUS-1: PpcBolt re-promoted — GPU ring-buffer trail
+        // provides the visible trail behind the bolt. gosEffect oracle (CardCloud ball)
+        // suppressed for PPC; hitEffect handles the impact visual.
+        case mc2::particles::GpuTrailKind::PpcBolt: return true;
+        // MissileSmoke stays demoted — oracle provides the original gosFX smoke cloud.
+        default: return false;
+    }
 }
 
 //---------------------------------------------------------------------------
