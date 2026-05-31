@@ -1207,6 +1207,8 @@ void gosFX::Tube::Draw(DrawInfo *info)
 
 			int harvested = 0;
 			float minAlpha =  3.0e38f, maxAlpha = -3.0e38f;
+			// VFX-AGE-LIFETIME-UPLOAD-1: age range tracker for FIRST_HARVEST log.
+			float minAge = 1.0f, maxAge = 0.0f;
 
 			int i = m_headProfile;
 			Verify(i >= 0);
@@ -1243,6 +1245,10 @@ void gosFX::Tube::Draw(DrawInfo *info)
 				gp.color[2]    = b;
 				gp.color[3]    = a;
 				gp.size        = sz;
+				// VFX-AGE-LIFETIME-UPLOAD-1: upload normalized age and lifetime sentinel.
+				// Tube__Profile has m_age (normalized [0,1]) and m_ageRate (already read as age above).
+				gp.age         = static_cast<float>(profile->m_age);  // normalized [0,1]
+				gp.lifetime    = 1.0f;                                  // normalized sentinel (real seconds = 1.0f/profile->m_ageRate)
 				// velocity=(0,0,0): no spin/aspect for tube profile billboards.
 				// atlasIndex=0: no animated atlas for tube.
 
@@ -1250,6 +1256,9 @@ void gosFX::Tube::Draw(DrawInfo *info)
 				++harvested;
 				if (a < minAlpha) minAlpha = a;
 				if (a > maxAlpha) maxAlpha = a;
+				// VFX-AGE-LIFETIME-UPLOAD-1: track age range
+				if (gp.age < minAge) minAge = gp.age;
+				if (gp.age > maxAge) maxAge = gp.age;
 
 				if (--i < 0)
 					i = spec->m_maxProfileCount - 1;
@@ -1260,11 +1269,15 @@ void gosFX::Tube::Draw(DrawInfo *info)
 				static bool s_first = false;
 				if (!s_first && harvested > 0) {
 					s_first = true;
+					// VFX-AGE-LIFETIME-UPLOAD-1: age range
+					const double ageLo = static_cast<double>(minAge);
+					const double ageHi = static_cast<double>(maxAge);
 					std::fprintf(stderr,
-						"[VFX_ORACLE v1] class=Tube FIRST_HARVEST spec=\"%s\" activeProfiles=%d harvested=%d alpha=[%.3f,%.3f]\n",
+						"[VFX_ORACLE v1] class=Tube FIRST_HARVEST spec=\"%s\" activeProfiles=%d harvested=%d alpha=[%.3f,%.3f] ageRange=[%.3f,%.3f]\n",
 						static_cast<const char*>(spec->m_name),
 						m_activeProfileCount, harvested,
-						static_cast<double>(minAlpha), static_cast<double>(maxAlpha));
+						static_cast<double>(minAlpha), static_cast<double>(maxAlpha),
+						ageLo, ageHi);
 					std::fflush(stderr);
 				}
 				static unsigned long long s_calls = 0, s_harvTotal = 0;
