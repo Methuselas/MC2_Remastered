@@ -1597,6 +1597,39 @@ long TG_TypeShape::SetTextureAlpha (DWORD textureNum, bool alphaFlag)
 }
 
 //-------------------------------------------------------------------------------
+// Track D — populate this shape from a format-agnostic importer (FBX/GLB).
+// Caller pre-allocates vertexBuf/triangleBuf from TG_Shape::tglHeap and transfers
+// ownership; we just store pointers + counts and copy node identity. The shape's
+// init() defaults (alphaTestOn=false, filterOn=true, hot* sentinels) remain
+// in place; callers that need different values use the existing setters.
+void TG_TypeShape::InitFromImportedMesh(const char* nodeIdIn, const char* parentIdIn,
+                                        const Stuff::Point3D& center,
+                                        DWORD numVerts, DWORD numTris,
+                                        TG_TypeVertexPtr vertexBuf,
+                                        TG_TypeTrianglePtr triangleBuf)
+{
+	// Node identity. Truncation here would silently break animation binding
+	// (which matches by name) — the importer must already have rejected
+	// names exceeding TG_NODE_ID-1; assert as a defence-in-depth check.
+	gosASSERT(nodeIdIn != NULL && strlen(nodeIdIn) < TG_NODE_ID);
+	strncpy(nodeId, nodeIdIn ? nodeIdIn : "", TG_NODE_ID - 1);
+	nodeId[TG_NODE_ID - 1] = '\0';
+	strncpy(parentId, parentIdIn ? parentIdIn : "None", TG_NODE_ID - 1);
+	parentId[TG_NODE_ID - 1] = '\0';
+
+	// Node transform pivot in MC2 coordinate space (importer applies the
+	// 3DS-Max → MC2 axis flip before calling us).
+	nodeCenter = center;
+	relativeNodeCenter = center;
+
+	// Take ownership of caller-allocated geometry buffers.
+	numTypeVertices    = numVerts;
+	numTypeTriangles   = numTris;
+	listOfTypeVertices  = vertexBuf;
+	listOfTypeTriangles = triangleBuf;
+}
+
+//-------------------------------------------------------------------------------
 // TG_Shape
 void *TG_Shape::operator new (size_t mySize)
 {

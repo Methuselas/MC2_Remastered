@@ -292,7 +292,23 @@ void Mech3DAppearanceType::init (const char * fileName)
 		result = mechFile.readIdLong("LeftFootDown1",gestures[i].leftFootDownFrame1);
 		if (result != NO_ERR)
 			gestures[i].leftFootDownFrame1 = 99999;
- 	} 
+ 	}
+
+	// ASSIMP-MECH-IMPORT-1 — STRICT OPT-IN. An optional [Import] section with
+	// Source=<base> opts a mech into the modern-format (.glb/.fbx) importer for
+	// its LOD0 shape. Stock mechs (no [Import] block) leave importSourceBase
+	// empty and take the EXACT original LoadTGMultiShapeFromASE path below —
+	// byte-identical, no probe. Only [Import] Source= mechs call LoadFromFile.
+	char importSourceBase[256] = "";
+	if (mechFile.seekBlock("Import") == NO_ERR &&
+	    mechFile.readIdString("Source", importSourceBase, 255) == NO_ERR &&
+	    importSourceBase[0])
+	{
+		// Strip extension so LoadFromFile gets a bare base name and probes
+		// for the right format itself. "madcat.glb" -> "madcat".
+		char* dot = strrchr(importSourceBase, '.');
+		if (dot) *dot = '\0';
+	}
 
 	result = mechFile.seekBlock("TGLData");
 	if (result != NO_ERR)
@@ -326,10 +342,17 @@ void Mech3DAppearanceType::init (const char * fileName)
 				mechShape[i] = new TG_TypeMultiShape;
 				gosASSERT(mechShape[i] != NULL);
 			
-				FullPathFileName mechName;
-				mechName.init(tglPath,aseFileName,".ase");
-			
-				mechShape[i]->LoadTGMultiShapeFromASE(mechName);
+				// ASSIMP-MECH-IMPORT-1 — strict opt-in: only LOD0 of a mech with
+				// an [Import] Source= override uses the modern importer; every
+				// other slot (incl. all stock mechs) takes the original path.
+				if (i == 0 && importSourceBase[0]) {
+					mechShape[i]->LoadFromFile(importSourceBase);   // opt-in: modern import
+				} else {
+					FullPathFileName mechName;
+					mechName.init(tglPath,aseFileName,".ase");
+
+					mechShape[i]->LoadTGMultiShapeFromASE(mechName); // stock: EXACT original call, unchanged
+				}
 			}
 			else if (!i)
 			{
@@ -339,15 +362,20 @@ void Mech3DAppearanceType::init (const char * fileName)
 	}
 	else
 	{
-		FullPathFileName mechName;
-		mechName.init(tglPath,aseFileName,".ase");
-	
 		//----------------------------------------------
 		// Base shape.  In stand Pose by default.
 		mechShape[0] = new TG_TypeMultiShape;
 		gosASSERT(mechShape[0] != NULL);
 
-		mechShape[0]->LoadTGMultiShapeFromASE(mechName);
+		// ASSIMP-MECH-IMPORT-1 — strict opt-in single-LOD case.
+		if (importSourceBase[0]) {
+			mechShape[0]->LoadFromFile(importSourceBase);   // opt-in: modern import
+		} else {
+			FullPathFileName mechName;
+			mechName.init(tglPath,aseFileName,".ase");
+
+			mechShape[0]->LoadTGMultiShapeFromASE(mechName); // stock: EXACT original call, unchanged
+		}
 	}
 
 	// Register all loaded LODs with the GPU mech batcher (idempotent).

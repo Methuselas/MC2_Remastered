@@ -231,6 +231,41 @@ class TG_TypeMultiShape
 
 		long LoadBinaryCopy (const char *fileName);
 		void SaveBinaryCopy (const char *fileName);
+
+		// Track D — narrow construction API for format-agnostic importers
+		// (FBX/GLB via Assimp). Each method is the import-side analog of a
+		// portion of LoadTGMultiShapeFromASE / LoadBinaryCopy:
+		//
+		//   AllocateImportedShapes — allocates listOfTypeShapes[] and
+		//     constructs `numShapes` empty TG_TypeShape instances at slots
+		//     0..numShapes-1. Caller populates each via
+		//     listOfTypeShapes[i]->InitFromImportedMesh(...).
+		//
+		//   SetImportedTextures — populates the multi-shape's TG_Texture
+		//     array (names + alpha + sentinel handles 0xffffffff per
+		//     mc2_texture_handle_is_live.md), then walks listOfTypeShapes
+		//     calling CreateListOfTextures on each TG_TypeShape so the
+		//     per-shape TG_TinyTexture index linkage is wired identically
+		//     to the ASE path.
+		//
+		// Both methods leave maxBox/minBox/extentRadius for the caller to
+		// compute (importer has the vertex iteration anyway). No Assimp
+		// types in either signature.
+		void AllocateImportedShapes(int numShapes);
+		void SetImportedTextures(DWORD count, const char* const* names,
+		                         const bool* alphas);
+
+		// Track D — format-probe entry point. Replaces direct
+		// LoadTGMultiShapeFromASE call sites. Probes for {tglPath}{baseName}.glb
+		// (preferred new format); on hit, calls ImportGeometryFromFile and
+		// returns. On miss or failure, falls through to the legacy
+		// LoadTGMultiShapeFromASE({tglPath}{baseName}.ase) — stock install
+		// must remain playable per memory:stock_install_must_remain_playable.
+		//
+		// `baseName` is the asset name without extension (e.g. "madcat").
+		// MVP scope: .glb probe only. .fbx supported by Assimp but
+		// scope-restricted to M2 per advisor verdict D3.
+		long LoadFromFile(const char* baseName);
 };
 
 typedef TG_TypeMultiShape* TG_TypeMultiShapePtr;
