@@ -138,19 +138,19 @@ Full state: `memory/shadow_dynamic_projection_and_caster_feed_fixed.md`.
 
 ---
 
-## Terrain colormap modernization arc (STEPS 1+2 SHIPPED 2026-05-31)
+## Terrain colormap modernization arc (ALL STEPS SHIPPED 2026-05-31)
 
-Steps 1+2 merged to nifty (merge commit 90c1c4c8; deploy mc2-win64-v0.3/v0.4):
-- **Step 1 (0b2b3a95)**: COLORMAP-TILES-RETIRE-1 — skip 400-tile GL upload when
-  indirect path is default-ON. Kill-switch: MC2_SETUPTEXTURES_LEGACY_FORCE.
-- **Step 2 (f9c12b53)**: COLORMAP-CPU-RETIRE-1 — free cpuColorMap+cpuDispAlpha
-  in BuildColormapAtlas after GPU atlas upload. CPU grounding now matches visual
-  (both undisplaced in default indirect path). Kill-switch: MC2_COLORMAP_CPU_RETIRE=0.
+All 4 steps merged to nifty (deploy mc2-win64-v0.3/v0.4):
+- **Step 1 (0b2b3a95)**: COLORMAP-TILES-RETIRE-1 — skip 400-tile GL upload
+- **Step 2 (f9c12b53)**: COLORMAP-CPU-RETIRE-1 — free cpuColorMap after atlas upload
+- **Steps 3+4 (3a21fba0)**: COLORMAP-BC7-KTX2-1 — BC7 KTX2 atlas sidecar
+  (~81 MB VRAM savings/mission; Pillow handles BGRA→RGBA; cook: `bake_colormap_ktx2.py`)
 
-Steps 3+4 (BC7 atlas + KTX2 bake) planned as one slice. Risk: burnInShadows
-reproduction, BGRA swizzle through BC7 encoder, toktx pipeline. Requires
-greybeard + adversarial + render-spine-advisor review before implementation.
-Design doc: `docs/terrain-colormap-modernization-debt.md`.
+Remaining open debt:
+- Delete dead helpers in mapdata.cpp (cpu_sampleColormap + 4 others)
+- Soak .burnin.ktx2 then delete .burnin.tga/.burnin.jpg from game data (3.6 GB)
+
+Full design rationale: `docs/terrain-colormap-modernization-debt.md`.
 
 ---
 

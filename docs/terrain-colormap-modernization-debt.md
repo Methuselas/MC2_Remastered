@@ -48,24 +48,34 @@ the GPU). Disk AND VRAM both drop; the whole bug class becomes impossible.
    `MC2_COLORMAP_DISPLACE_PROBE`. Static helpers cpu_sampleColormap/cpu_getDirtWeight/
    cpu_rgb2hsv/cpu_smoothstep/cpu_sampleAlpha remain as dead code — cleanup deferred.
    Tier1 5/5 PASS. Merged to nifty (90c1c4c8).
-3. **[NEXT] Atlas → BC7 + KTX2 bake**: True BC7 requires offline pre-bake
-   (toktx at A:/Games/mc2-tools/ktx/) + KtxLoader load + glCompressedTexImage2D.
-   Steps 3 and 4 should be done together (they share the KTX2 pipeline). Risk:
-   BGRA channel order at gos_terrain_indirect.cpp:868 must survive BC7 encode
-   (upload uses GL_BGRA → RGBA8 storage; BC7 encoder must see the right channel
-   mapping). Requires greybeard + adversarial + render-spine-advisor review.
-4. **[NEXT, same slice as 3] Bake as KTX2/BC7**; delete `.burnin.tga` +
-   `.burnin.jpg` + `saveTGAFile`. RISKIEST: GPU burn-in must reproduce legacy
-   `burnInShadows` or every mission's ground shading shifts. This retires 3.6 GB.
+3. **[DONE — 3a21fba0] Atlas → BC7 KTX2 (combined with step 4)**. Pre-bake
+   `.burnin.tga` -> `.burnin.ktx2` via `scripts/bake_colormap_ktx2.py` (Pillow
+   BGRA->RGBA + ktx create uastc + ktx transcode bc7, `--levels 1`). Runtime:
+   BuildColormapAtlas probes ktx2ColormapPath; if present + BPTC cap: uploads
+   via glCompressedTexImage2D(GL_COMPRESSED_RGBA_BPTC_UNORM). VRAM 108 MB → ~27 MB.
+   BGRA handled by Pillow (automatic BGRA→RGBA on TGA load). Fallback to RGBA8
+   when sidecar absent or cap missing. Gate `MC2_COLORMAP_KTX2` default ON.
+4. **[PARTIALLY DONE — same commit] KTX2 as authority**. Sidecar exists and works.
+   NOT YET: `.burnin.tga` + `.burnin.jpg` not deleted from game data (soak period).
+   `saveTGAFile` preserved in editor path. JPEG fallback path intact. Deletion of
+   bake files is a future soak slice after validation period.
+
+## Remaining debt (open)
+- Delete dead CPU helper functions in mapdata.cpp: `cpu_sampleColormap`,
+  `cpu_getDirtWeight`, `cpu_rgb2hsv`, `cpu_smoothstep`, `cpu_sampleAlpha`.
+  All unreachable when `MC2_COLORMAP_CPU_RETIRE=1` (default). Low risk cleanup.
+- Delete `.burnin.tga` + `.burnin.jpg` from shipped game data package after
+  `.burnin.ktx2` soak period validates. Also delete `MC2_BURNIN_NO_JPG` gate
+  and JPEG load path in terrtxm2.cpp. Ships 3.6 GB → 27 MB total.
 
 ## Interim discipline
-Keep the JPEG interim (gated `MC2_BURNIN_NO_JPG`, clean `.tga` fallback,
-render-neutral modulo q90). When the BC7/KTX2 bake lands, delete the JPEG AND
-TGA paths together — do NOT let q90 JPEG become the permanent colormap source of
-truth.
+`MC2_BURNIN_NO_JPG` gate and JPEG path remain until `.burnin.ktx2` is the
+validated primary source. Do NOT add new consumers of `.burnin.jpg` or `.burnin.tga`.
+When soak period passes, delete both together.
 
 ## Current state (2026-05-31)
-Steps 1+2 shipped and merged to nifty (deploy mc2-win64-v0.3/v0.4). cpuColorMap
-is freed after each mission's atlas upload; cpu_sampleColormap dead code but not
-yet deleted. Steps 3+4 pending — planned as one slice with greybeard/adversarial/
-render-spine-advisor prior to implementation.
+All 4 steps shipped and merged to nifty (deploy mc2-win64-v0.3/v0.4):
+- 400-tile GL upload retired (COLORMAP-TILES-RETIRE-1)
+- cpuColorMap freed after atlas upload (COLORMAP-CPU-RETIRE-1)
+- BC7 KTX2 atlas upload active when sidecar present (COLORMAP-BC7-KTX2-1)
+Remaining: cleanup dead helpers + delete bake files after soak.
