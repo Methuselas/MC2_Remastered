@@ -2594,7 +2594,14 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                     }
                     RenderCore::KtxImage ktxImg;
                     const bool ktxOk = RenderCore::ktxLoadRgba8(ktxPath.c_str(), ktxImg);
-                    const bool dimOk = ktxOk && ktxImg.width == u.w && ktxImg.height == u.h;
+                    // This RGBA8 upload path cannot consume compressed (BC7) KTX2:
+                    // its bytes are block data, not RGBA8 texels. If a BC7 sidecar
+                    // is present but this group fell back to the RGBA8 path (e.g.
+                    // mixed-dim, so the BC7 array path was declined), reject it here
+                    // (dimOk=false) so we fall through to the original GL texture
+                    // upload below instead of mis-uploading block data as RGBA8.
+                    const bool dimOk = ktxOk && !ktxImg.isCompressed &&
+                                       ktxImg.width == u.w && ktxImg.height == u.h;
                     // Always-on debug: log attempt result so we can diagnose path/dim issues.
                     std::fprintf(stderr,
                         "[KTX_SIDECAR] node=%lu srcName=%s path=%s "
