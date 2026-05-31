@@ -1606,8 +1606,9 @@ long WeaponBolt::update (void)
 	// B2 P2 fix: ring-buffer trail. Push current position into the ring, then
 	// re-stamp the entire trail between every consecutive pair. Required because
 	// Batcher::Flush() clears each frame — per-frame segments alone are invisible.
-	// CPU trailEffect (gosEffect) still runs in parallel — suppression is P4.
-	if (gpu_trail_kind != mc2::particles::GpuTrailKind::None) {
+	// VFX-WEAPON-FX-RESTORE-OPUS-1: skip GPU trail when gosEffect is active —
+	// gosEffect oracle provides the original animation; dual-trail suppressed here.
+	if (gpu_trail_kind != mc2::particles::GpuTrailKind::None && !gosEffect) {
 		// Push current position into ring buffer.
 		// B2 P2 fix: use laserPosition (the integrated in-flight world position),
 		// NOT position (which tracks the launcher hotspot via getPositionFromHS).
@@ -2436,13 +2437,15 @@ static mc2::particles::GpuTrailKind gpuTrailKindFromEffectId(int32_t eid)
 // B3c-1: allowlist of GPU trail kinds that are fully proven and may suppress
 // the CPU gosFX trail. Only kinds that have passed visual + smoke validation
 // are listed here. All others fall through to the CPU path unchanged.
+// VFX-WEAPON-FX-RESTORE-OPUS-1: MissileSmoke and PpcBolt demoted — original
+// gosFX trail restored via oracle (gosEffect creates, oracle harvests particles,
+// GPU billboard renders original animation). GPU trail suppressed when gosEffect
+// is non-null (see trail emit block in update()). Re-promote here only after
+// GPU trail visual parity is proven against original.
 static bool gpuTrailKindProven(mc2::particles::GpuTrailKind k)
 {
-    switch (k) {
-        case mc2::particles::GpuTrailKind::MissileSmoke: return true;
-        case mc2::particles::GpuTrailKind::PpcBolt:      return true;
-        default:                                          return false;
-    }
+    (void)k;
+    return false;
 }
 
 //---------------------------------------------------------------------------
