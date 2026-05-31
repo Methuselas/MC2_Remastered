@@ -138,6 +138,22 @@ Full state: `memory/shadow_dynamic_projection_and_caster_feed_fixed.md`.
 
 ---
 
+## Terrain colormap modernization arc (STEPS 1+2 SHIPPED 2026-05-31)
+
+Steps 1+2 merged to nifty (merge commit 90c1c4c8; deploy mc2-win64-v0.3/v0.4):
+- **Step 1 (0b2b3a95)**: COLORMAP-TILES-RETIRE-1 — skip 400-tile GL upload when
+  indirect path is default-ON. Kill-switch: MC2_SETUPTEXTURES_LEGACY_FORCE.
+- **Step 2 (f9c12b53)**: COLORMAP-CPU-RETIRE-1 — free cpuColorMap+cpuDispAlpha
+  in BuildColormapAtlas after GPU atlas upload. CPU grounding now matches visual
+  (both undisplaced in default indirect path). Kill-switch: MC2_COLORMAP_CPU_RETIRE=0.
+
+Steps 3+4 (BC7 atlas + KTX2 bake) planned as one slice. Risk: burnInShadows
+reproduction, BGRA swizzle through BC7 encoder, toktx pipeline. Requires
+greybeard + adversarial + render-spine-advisor review before implementation.
+Design doc: `docs/terrain-colormap-modernization-debt.md`.
+
+---
+
 ## In flight / ready to execute
 
 - **Unified-projection F1** (design + plan complete; ready for execution):
@@ -310,6 +326,133 @@ substrate.
   emerges, ship as a NEW NAMED slice (HoverKindIndicator /
   RenderWorldDebugOverlay / M5-perf overlay-decal GPU port — NOT as
   "M5 Overlay").
+
+---
+
+## Track S — Substance Painter Terrain Integration (ROADMAP — HIGH PRIORITY)
+
+Shortest path from Substance Painter to visible MC2 terrain: export bitmaps → validate manifest →
+wire one gated terrain slot. No `.sbsar` runtime, no Blender/plugin flow, no Substance graph
+support in the terrain system.
+
+**First slice: `TERRAIN-SUBSTANCE-BITMAP-PROBE-1`**
+
+Scope:
+- Export one known terrain material from Substance Painter as loose bitmaps
+- Add a fixture asset manifest (`kind: terrainMaterial`, `shader: terrainPBR`)
+- Validate manifest through existing asset-manifest validator
+- Wire one terrain material slot under gate `MC2_TERRAIN_SUBSTANCE_PROBE=1`
+- No runtime terrain architecture changes, no `.sbsar`, no cook pipeline dependency, no default behavior change
+
+Export naming convention (loose bitmaps first, KTX2 after first visual proof):
+```
+terrain_substance_test_basecolor.png   (sRGB)
+terrain_substance_test_normal.png      (linear)
+terrain_substance_test_mra.png         (metallic/roughness/AO packed, linear)
+```
+
+Acceptance:
+- Gate OFF: terrain byte-identical
+- Gate ON: one terrain layer visibly uses the Substance material
+- Normal map orientation verified (watch OpenGL vs DirectX Y-flip — "inside out" lighting = flip green)
+- Roughness/metallic/AO not obviously inverted
+- No GL errors, screenshot captured
+
+**Sequence after bitmap probe works:**
+
+| Slice | Description |
+|---|---|
+| `TERRAIN-SUBSTANCE-BITMAP-PROBE-1` | First visual proof (loose PNGs, one slot, gated) |
+| `TERRAIN-SUBSTANCE-KTX2-BAKE-1` | Run KTX2 bake probe after bitmap path is proven |
+| `TERRAIN-MATERIAL-MANIFEST-1` | Generalise manifest to cover multiple terrain material slots |
+| `TERRAIN-MATERIAL-BROWSER-0` | Browse/validate terrain material manifests |
+| `BLENDER-SUBSTANCE-MC2-EXPORT-PRESET-1` | Export preset / output template for MC2 terrain |
+| `.sbsar` offline bake support | Optional, later |
+
+**Key watch item:** Normal map convention. Substance exports are configurable; verify with a simple
+known pattern before judging material quality.
+
+---
+
+## Track G/E — Authoring Loop (ROADMAP, not yet started)
+
+Blender authoring plugin + standalone MC2 asset viewer.
+
+**Architecture decision:** Blender = authoring/export/sync client. MC2 = rendering authority.
+Do NOT embed MC2 renderer inside Blender viewport — it would fight Blender's draw manager
+and drift from engine parity.
+
+Agreed sequence:
+
+| Slice | Name | Description |
+|---|---|---|
+| 1 | `MC2-ASSET-VIEWER-0` | Standalone exe: load asset manifest + mesh (glTF/GLB or native), cook texture refs, render with MC2 material/pipeline conventions; show Visual / ObjectIdDebug / Thermal / normal/albedo/material debug; validation summary + optional screenshot |
+| 2 | `BLENDER-MC2-EXPORTER-0` | Blender add-on: select object → export .glb + MC2 manifest; map Blender material nodes to MC2 material fields; validate manifest; "Open in MC2 Viewer" button |
+| 3 | `BLENDER-MC2-MATERIAL-MAPPER-1` | Deeper material node graph translation |
+| 4 | `BLENDER-MC2-LIVE-SYNC-1` | Plugin watches changes, pushes deltas; viewer hot-reloads |
+| 5 | `MC2-ASSET-VIEWER-VIEWMODES-1` | Full ViewMode preview (thermal/class/damage) |
+| 6 | `BLENDER-MC2-LOD-AUTHORING-1` | LOD naming convention + assignment UI |
+| 7 | `BLENDER-MC2-IMPOSTOR-PREVIEW-1` | Impostor billboard preview in viewer |
+
+Interchange format: glTF/GLB (Blender's built-in glTF 2.0 add-on is enabled by default).
+
+What viewer/exporter validates:
+- **Mesh:** triangle count, bounds, normals, tangents if normal map present, UV0/UV1, LOD naming
+- **Materials:** baseColor sRGB, normal linear, metallic/roughness/AO packing, alpha mode, KTX2/cook status, MC2 shader model compat
+- **Capability flags:** castsShadow, supportsObjectId, supportsThermal, supportsDecalReceiver, hasLods, hasImpostor
+
+Explicitly deferred (not MVP): bidirectional sync, editing missions inside Blender, MC2 renderer
+inside Blender viewport, full material node graph translation, live hot-reload into full game runtime.
+
+Longer-term vision: viewer answers "what material/pipeline/viewmode would this asset use?" —
+RenderWorld as query engine for asset authoring, not just debugging.
+
+---
+
+## Track H — Mod Tools Suite (ROADMAP, not yet started)
+
+UE-inspired modder/editor tooling, translated into MC2-shaped tools. NOT cloning Unreal Editor —
+borrowing the *concepts* (content browser, material instances, packaging, tags, data tables) and
+building BattleTech-RTS-semantics-aware versions.
+
+**Priority order:**
+
+| # | Slice | Description |
+|---|---|---|
+| 1 | `MC2-ASSET-VIEWER-0` | (shared with Track G/E) Standalone truth preview |
+| 2 | `MC2-MOD-PACKAGER-0` | CLI: `mc2mod validate/cook/pack/smoke MyMod` → `.mc2mod` + manifest + cooked/ + reports/ + screenshots/ |
+| 3 | `MC2-ASSET-BROWSER-0` | Browse manifests, dependencies, validation state, cook status, "what uses this?", open in viewer |
+| 4 | `MC2-MATERIAL-INSTANCE-EDITOR-0` | Constrained PBR editor: texture slots, baseColor/normal/metallic-roughness-AO/emissive/alpha/shadow/objectId/thermal flags + preview + validator |
+| 5 | `BLENDER-MC2-EXPORTER-0` | (shared with Track G/E) |
+| 6 | `MC2-TAGS-AND-DATA-EDITOR-0` | Hierarchical tag editor (`unit.mech.assault`, `weapon.lrm`, `sensor.ecm`, `terrain.forest`, etc.) + CSV/JSON-backed UnitDef/WeaponDef/MaterialDef/SensorDef with schema validation |
+| 7 | `MC2-VFX-PRESET-EDITOR-0` | Preset-based particle authoring: flipbook, color/alpha/size over lifetime, additive/alpha mode, soft/lit/bloom toggles, test-scene preview |
+| 8 | `MC2-MISSION-TUNING-EDITOR-0` | Per-mission visual/tactical profile editor: lighting, post stack, VFX intensity, water/terrain tuning, tactical overlay defaults |
+
+**Mod validation dashboard** (part of Packager or standalone): asset errors, texture color-space
+errors, missing tangents, invalid tags, broken dependencies, unsupported shaders, stale generated
+outputs, smoke/capture failures. HTML report or simple GUI.
+
+**Tactical overlay authoring** (MC2-specific advantage over UE): weapon range rings, firing arcs,
+sensor ranges, ECM fields, heat danger overlays, command mode preview, threat field visualization.
+UE has generic tools; MC2 should have BattleTech RTS authoring tools.
+
+**UE concepts borrowed and their MC2 equivalents:**
+- Content Browser / Asset Manager → MC2 Asset Browser + manifest index + dependency graph
+- Material Editor / Material Instances → MC2 Material Instance Editor (no node graph yet)
+- Editor Utility Widgets → MC2 Tool Panels (Python/JSON-driven validators, batch importers)
+- Gameplay Tags → MC2 Tags (hierarchical, semantic, RTS-battlefield-aware)
+- Data Tables / Data Assets → CSV/JSON-backed defs with schema validation
+- Niagara → VFX Preset Editor (preset-based, not node graph)
+- Packaging / cook / publish → `mc2mod` CLI
+
+**Explicitly deferred:** full Blueprint clone, full node material editor, full Niagara clone,
+full level editor, marketplace backend, live multi-user editor, visual gameplay scripting,
+in-editor terrain sculpting.
+
+**The MC2 modding advantage:** tooling that understands BattleTech RTS semantics — not just
+"is this mesh valid" but "does this mech have valid thermal/sensor metadata?", "does this weapon
+show correct range bands?", "does this material work across all ViewModes?", "what will this look
+like in mc2_24 with the real post stack?"
 
 ---
 
