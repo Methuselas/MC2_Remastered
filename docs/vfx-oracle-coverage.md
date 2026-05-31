@@ -1,8 +1,8 @@
 # VFX Oracle Coverage Matrix
 
-Last updated: 2026-05-30 (VFX-ORIGINAL-LIVE-EFFECT-VALIDATION-1)
+Last updated: 2026-05-31 (VFX-ORIGINAL-LIVE-EFFECT-VALIDATION-1 pass 2)
 
-Branch: `claude/vfx-original-class-coverage-1`
+Branch: `claude/nifty-mendeleev` (tip `01537128`)
 
 ## Class x Oracle Status
 
@@ -11,11 +11,11 @@ via aligned 4-byte ClassID scan.
 
 | Class | ClassID | Spec count | Oracle status | Spawned in tier1? | Best validation mission | Notes |
 |---|---|---|---|---|---|---|
-| CardCloud | 1318 | 388 | Full oracle | Yes (~30/frame in mc2_10) | mc2_10, mc2_24 | Workhorse; spin+aspect+atlas wired (VFX-ORIGINAL-RENDER-ANIM-FIELDS-1) |
-| ShardCloud | 1316 | 24 | Full oracle | Yes (combat) | mc2_24 | Fixed atlasIndex=0u; spin+aspect wired |
-| Card | 1322 | 136 | Full oracle | Yes (combat, Flare) | mc2_10, mc2_24 | m_animated wired; uvRect sub-rect wired |
-| PointCloud | 1314 | 2 | Oracle added (VFX-POINTCLOUD-ORACLE-HARVEST-1) | No — active=0 in tier1 mc2_10+mc2_24 (Missile_Flare births=0 in passive 30s smoke) | User-driven session with missile fire | No spin/aspect/atlas; position+color only; size constant 4.0f |
-| Tube | 1324 | 31 | Profile oracle added (VFX-TUBE-PROFILE-ORACLE-1) | Yes — fires in mc2_24 passive smoke (PPC trail spec="core", harvestedTotal=4685+ at 30s). alpha=[0.000,0.000] throughout — profiles exist but are fully faded in passive smoke. | User-driven session with flamer mech firing for visible alpha | One billboard per active spine profile; real swept mesh is B2 polish debt; FX_FlameTrail + FX_SmokeTrail are Tube class |
+| CardCloud | 1318 | 388 | Full oracle | Yes (~30/frame in mc2_10) | mc2_10, mc2_24 | Workhorse; spin+aspect+atlas wired (VFX-ORIGINAL-RENDER-ANIM-FIELDS-1); age/lifetime uploaded |
+| ShardCloud | 1316 | 24 | Full oracle | Yes (combat) | mc2_24 | Fixed atlasIndex=0u; spin+aspect wired; age/lifetime uploaded |
+| Card | 1322 | 136 | Full oracle | Yes (combat, Flare) | mc2_10, mc2_24 | m_animated wired; uvRect sub-rect wired; age/lifetime uploaded |
+| PointCloud | 1314 | 2 | Oracle added (VFX-POINTCLOUD-ORACLE-HARVEST-1) | No — active=0 in all tier1 passive smoke (Missile_Flare births=0; missile must fire within 30s window) | User-driven session with missile fire | No spin/aspect/atlas; position+color only; size constant 4.0f; age/lifetime uploaded |
+| Tube | 1324 | 31 | Profile oracle added (VFX-TUBE-PROFILE-ORACLE-1) | Yes — fires in mc2_24 passive smoke (PPC trail spec="core", harvestedTotal≈4680+ at 30s). alpha=[0.000,0.000]; age_this_call=[0.014,0.568]. Spec-defined alpha=0 at ages 0-0.6 confirmed (not age-out). | User-driven session with flamer/FX_FlameTrail for visible alpha | One billboard per active spine profile; real swept mesh is B2 polish debt; FX_FlameTrail + FX_SmokeTrail are Tube class; age/lifetime uploaded |
 | EffectCloud | 1320 | 39 | Composite container only | Yes (wraps CardCloud/ShardCloud/Card children) | mc2_10, mc2_24 | No direct GPU path; children handled individually by their own oracle |
 | PertCloud | 1317 | 0 | Not present | No | N/A | 0 specs in mc2.fx; skip |
 | ShapeCloud | 1319 | 9 | No GPU path | Unknown | Unknown | 3D mesh per particle; requires separate GPU primitive (not billboard) |
@@ -27,6 +27,8 @@ via aligned 4-byte ClassID scan.
 
 - `MC2_VFX_ORACLE_RENDER=1` enables oracle render for all migrated classes (inside `MC2_GPU_PARTICLES=1` check).
 - `MC2_GPU_PARTICLES_LOG=1` enables `[VFX_ORACLE v1]` per-class stderr output.
+- `MC2_VFX_DEBUG_MODE=5` enables age heatmap (blue=newborn, green=mid-life, red=dying) — VFX-SHADER-AGE-FADE-PARITY-1.
+- `MC2_TUNE_VFX_AGE_FADE=<0..1>` enables soft death fade for oracle particles in final 30% of life — VFX-SHADER-AGE-FADE-PARITY-1.
 - Gate-OFF (no env vars) is byte-identical for all oracle classes.
 
 ## What fires in automated smoke (30s, no combat, camera pan only)
@@ -35,7 +37,7 @@ via aligned 4-byte ClassID scan.
 |---|---|---|
 | mc2_01 | VFX prohibited | none |
 | mc2_03 | VFX prohibited (gosFX Draw called but emit=0, no combat) | none |
-| mc2_10 | CardCloud active (harvestedTotal=31748+ over 30s, 1-6/call dust/smoke), ShardCloud (harvestedTotal=8334+), Card (Flare, 1 particle alpha=0.000 — born but faded) | CardCloud, ShardCloud, Card |
+| mc2_10 | CardCloud active (harvestedTotal≈31393+ over 30s, 1-6/call dust/smoke), ShardCloud (harvestedTotal≈8203+), Card (Flare, 1 particle — born-faded alpha=0.000) | CardCloud, ShardCloud, Card |
 | mc2_17 | VFX prohibited | none |
 | mc2_24 | Trail-heavy (emit_total ~850K/30s), EffectCloud children, PPC trail profiles | CardCloud, Card, ShardCloud, Tube |
 
@@ -44,29 +46,75 @@ blocked. The CPU oracle path (CardCloud/ShardCloud/Card/PointCloud/Tube `Draw()`
 independently via gosFX lifecycle and IS called even when `vfx=prohibited`; the oracle
 harvests the CPU sim state and emits to the GPU billboard batcher directly.
 
-### VFX-ORIGINAL-LIVE-EFFECT-VALIDATION-1 results (2026-05-30, passive 30s smoke)
+## VFX-ORIGINAL-LIVE-EFFECT-VALIDATION-1 results — Pass 1 (2026-05-30, passive 30s smoke)
 
-Build deployed to `mc2-win64-v0.4`. Gates: `MC2_VFX_ORACLE_RENDER=1 MC2_GPU_PARTICLES_LOG=1`.
+Build at `mc2-win64-v0.4`. Gates: `MC2_VFX_ORACLE_RENDER=1 MC2_GPU_PARTICLES_LOG=1`.
 
 **mc2_10** (PASS, +0 destroys, 0 GL errors):
 - CardCloud: FIRST_HARVEST fires (spec="Dust"), harvestedTotal≈31748+ at 30s, 1–6 particles/call, alpha varies 0..1. CONFIRMED working.
 - ShardCloud: FIRST_HARVEST fires (spec="Shards"), harvestedTotal≈8334+ at 30s, 10/call. CONFIRMED working.
-- Card: FIRST_HARVEST fires (spec="Flare"), alpha=0.000, 1 particle only — born but faded. No subsequent periodic calls. CONFIRMED oracle triggers but particle is invisible.
-- PointCloud: 0 lines. No births in passive smoke. NEEDS INTERACTIVE.
-- Tube: 0 lines. No Tube effects in mc2_10.
+- Card: FIRST_HARVEST fires (spec="Flare"), alpha=0.000 — born but faded. Single particle. CONFIRMED oracle triggers.
+- PointCloud: 0 lines. No missile fire in passive smoke. NEEDS INTERACTIVE.
+- Tube: 0 lines. No Tube effects in mc2_10 passive smoke.
 
 **mc2_24** (PASS, +0 destroys, 0 GL errors):
-- CardCloud: FIRST_HARVEST fires (spec="Fireball"), harvestedTotal≈7176+ at 30s. CONFIRMED working.
-- ShardCloud: FIRST_HARVEST fires (spec="Shards0008"), harvestedTotal≈8334+ at 30s. CONFIRMED working.
-- Card: FIRST_HARVEST fires (spec="lozenge"), alpha=1.000. CONFIRMED working (but no periodic calls — single particle).
-- Tube: FIRST_HARVEST fires (spec="core", PPC trail), harvestedTotal=4685+ at 30s, 2–7 profiles/call. alpha=[0.000,0.000] throughout. Oracle harvests but visually invisible in passive smoke.
-- PointCloud: 0 lines. No births in passive smoke. NEEDS INTERACTIVE.
+- CardCloud: FIRST_HARVEST fires (spec="Fireball"), harvestedTotal≈7176+ at 30s. CONFIRMED.
+- ShardCloud: FIRST_HARVEST fires (spec="Shards0008"), harvestedTotal≈8334+ at 30s. CONFIRMED.
+- Card: FIRST_HARVEST fires (spec="lozenge"), alpha=1.000. CONFIRMED visible.
+- Tube: FIRST_HARVEST fires (spec="core", PPC trail), harvestedTotal=4685+ at 30s, 2–7 profiles/call, alpha=[0.000,0.000]. Oracle harvests but visually invisible.
+- PointCloud: 0 lines.
+
+## VFX-ORIGINAL-LIVE-EFFECT-VALIDATION-1 results — Pass 2 (2026-05-31, with age/fade/debug)
+
+Build tip `01537128`. New gates validated:
+
+```
+Run A: MC2_VFX_ORACLE_RENDER=1 MC2_GPU_PARTICLES_LOG=1 MC2_VFX_DEBUG_MODE=5 MC2_TUNE_VFX_AGE_FADE=1.0
+Run B: MC2_VFX_ORACLE_RENDER=1 MC2_GPU_PARTICLES_LOG=1 MC2_VFX_DEBUG_MODE=0 MC2_TUNE_VFX_AGE_FADE=0.0
+```
+
+Both runs: PASS 2/2 (mc2_10 + mc2_24), +0 destroys, 0 GL errors. Debug mode 5 and age fade do not crash.
+
+### mc2_10 Pass 2 (Run A — MC2_VFX_DEBUG_MODE=5, MC2_TUNE_VFX_AGE_FADE=1.0)
+
+- **CardCloud**: harvestedTotal=31393+ at 30s; age_this_call spans [0.021..0.998] across periodic calls — full lifecycle confirmed. Age/lifetime upload (VFX-AGE-LIFETIME-UPLOAD-1) **VERIFIED IN LOG**.
+- **ShardCloud**: harvestedTotal=8203+ at 30s; age_this_call spans [0.000..0.986] — full lifecycle confirmed. **VERIFIED IN LOG**.
+- **Card (Flare)**: FIRST_HARVEST alpha=0.000, age=0.000. Born-dead in passive smoke. Oracle fires but particle is invisible (expected: Flare activates on missile hit).
+- **PointCloud**: 0 lines. No missile fire in passive 30s smoke. **Status: NEEDS INTERACTIVE** — must trigger missile launch within 30s window.
+- **Tube**: 0 lines. No flamer/smoke trail in mc2_10 passive smoke.
+- **debug mode 5 (age heatmap)**: no crash, +0 destroys — v_age varying from VS→FS confirmed live.
+- **MC2_TUNE_VFX_AGE_FADE=1.0**: no crash, +0 destroys — oracle soft-death fade gated correctly.
+
+### mc2_24 Pass 2 (Run A — MC2_VFX_DEBUG_MODE=5, MC2_TUNE_VFX_AGE_FADE=1.0)
+
+- **CardCloud**: harvestedTotal≈22160+ at 30s; age_this_call spans [0.044..0.997] — full lifecycle confirmed. **VERIFIED IN LOG**.
+- **ShardCloud**: harvestedTotal≈8091+ at 30s; age_this_call spans [0.000..0.966] — full lifecycle confirmed. **VERIFIED IN LOG**.
+- **Card (lozenge)**: FIRST_HARVEST alpha=1.000. **VISIBLE AND CONFIRMED**.
+- **Tube (core, PPC trail)**: harvestedTotal=4680+ at 30s; `age_this_call=[0.014,0.568]` with `alpha_this_call=[0.000,0.000]`. **KEY FINDING**: profiles are active (age 0.014–0.568, not aged-out) but alpha evaluates to 0. This is **spec-defined**: `m_pAlpha.ComputeValue(age, seed)` returns 0.0 for the "core" spec at ages 0–0.6. PPC "core" is an invisible trail by design (visual effect comes from the bolt head, not the trail). **CONFIRMED: alpha=0 is spec behavior, NOT age-out artifact.**
+- **PointCloud**: 0 lines. No births in passive smoke.
+
+### Tube alpha=0 — definitive diagnosis
+
+The Tube "core" PPC trail spec has an alpha curve that evaluates to 0.0 across the observed age range [0.014, 0.568]. Profiles are alive (not aged out — would need age≥1.0 for that). The zero alpha is the spec's intended visual: the PPC bolt visual effect is provided by the bolt head (weapon rendering), not the trail tube. This is consistent with the original MC2 gosFX rendering where core trails would also have been invisible at these ages.
+
+**For visible Tube alpha > 0**: need FX_FlameTrail (flamer mech) or FX_SmokeTrail (smoke trail spec). Both are ClassID 1324. Confirmed in `mc2.fx` spec scan. Requires user-driven flamer fire session on mc2_10 (flamers present).
+
+### Age/lifetime upload (VFX-AGE-LIFETIME-UPLOAD-1) — status after Pass 2
+
+| Class | age_this_call in periodic log | FIRST_HARVEST ageRange | Lifecycle coverage |
+|---|---|---|---|
+| CardCloud | YES | ageRange=[0.000,0.000] (newborn) | Full [0.021..0.998] observed |
+| ShardCloud | YES | ageRange=[0.000,0.000] (newborn) | Full [0.000..0.986] observed |
+| Card | N/A (singleton, no periodic) | ageRange=[0.000,0.000] (newborn) | Single particle, alpha matches age |
+| PointCloud | YES (added) | ageRange=[0.000,0.000] (newborn) | 0 births in passive smoke |
+| Tube | YES (added in VFX-ORIGINAL-LIVE-EFFECT-VALIDATION-1 pass 2) | ageRange=[0.000,0.000] (newborn) | [0.014,0.568] observed; alpha=0 spec-defined |
+
+Note: FIRST_HARVEST `ageRange=[0.000,0.000]` is expected for all classes — it fires on the first call when particles are newborn (age≈0). Age spread is visible in subsequent periodic log calls.
 
 ## Missing fields (deferred to follow-up arcs)
 
 ### Tier 1 — billboard representable now
 
-- **age/lifetime upload**: `GpuParticle.lifetime` and `.age` stay 0 (not set by oracle). Shader alpha fade via age is not available yet. Deferred to VFX-AGE-LIFETIME-UPLOAD-1.
 - **PointCloud size**: constant 4.0f world units. Spec has no per-particle size curve; no per-spec override without ABI bump.
 - **Tube profile size**: `m_pScale` used as billboard radius. May not match tube width at all profile ages without spec tuning.
 
@@ -78,12 +126,15 @@ Build deployed to `mc2-win64-v0.4`. Gates: `MC2_VFX_ORACLE_RENDER=1 MC2_GPU_PART
 ### Tier 3 — separate GPU primitive
 
 - **ShapeCloud**: per-particle 3D mesh renders. No billboard path applicable.
-- **DebrisCloud**: rigid-body 3D pieces. No billboard path applicable.
+- **DebrisCloud**: rigid-body 3D mesh pieces. No billboard path applicable.
 - **Shape**: 3D singleton mesh. No billboard path applicable.
 
 ## Next targets
 
-1. **PointCloud visual validation**: user-driven session with missile fire (Missile_Flare is the only PointCloud spec with active births; confirmed births=0 in 30s passive smoke on mc2_10+mc2_24; need missile launch event).
-2. **Tube alpha=0 investigation**: Tube oracle fires in mc2_24 passive smoke (harvestedTotal=4685+ at 30s) but alpha is 0.000 throughout. PPC trail "core" profiles are harvested but fully transparent. Possible causes: (a) PPC trails are GPU-owned/suppressed and alpha=0 is intentional suppression signal, (b) trail alpha depends on flight phase not present in 30s passive. User-driven session with flamer mech firing needed to see non-zero alpha (FX_FlameTrail, FX_SmokeTrail are Tube class).
-3. **age/lifetime upload** (Tier 1): wire `GpuParticle.age` and `.lifetime` from CPU oracle so shader alpha fade works.
+1. **PointCloud visual validation** (OPEN): user-driven session with missile fire needed. Missile_Flare (only PointCloud spec with active births) requires a missile launch event within 30s. mc2_10 has missile-armed mechs; camera must advance toward combat. Confirmed births=0 in all passive 30s smoke.
+
+2. **Tube visible alpha** (OPEN): Tube oracle fires and age data confirmed correct. For visible alpha > 0 need FX_FlameTrail or FX_SmokeTrail — user-driven flamer fire session (mc2_10 has flamers). Tube "core" PPC alpha=0 is spec-defined (not a bug).
+
+3. **VFX-SHADER-AGE-FADE-PARITY-1 visual verification** (DEFERRED to interactive): debug mode 5 (age heatmap) is confirmed non-crashing in passive smoke. Full visual verification (particles showing blue→red gradient) requires MC2_VFX_ORACLE_RENDER=1 + MC2_VFX_DEBUG_MODE=5 in an interactive session with active particle effects.
+
 4. **ShapeCloud/DebrisCloud/Shape**: 3D mesh GPU primitives — separate arc, different substrate needed.

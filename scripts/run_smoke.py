@@ -427,6 +427,22 @@ def main():
                             # MC2_GPU_PARTICLES_LOG=1 enables [VFX_ORACLE v1] stderr.
                             "MC2_VFX_ORACLE_RENDER",
                             "MC2_GPU_PARTICLES_LOG",
+                            # VFX-DEBUG-VIEWS-1: particle billboard debug mode.
+                            # 0=Final (default/byte-identical), 1=Albedo, 2=Alpha,
+                            # 3=ParticleKind, 4=Overdraw, 5=Age (VFX-SHADER-AGE-FADE-PARITY-1).
+                            "MC2_VFX_DEBUG_MODE",
+                            # VFX-TUNING-UI-1: look-only VFX intensity scales.
+                            # All default 1.0 or 0.0 (byte-identical no-ops).
+                            "MC2_TUNE_VFX_BRIGHTNESS",
+                            "MC2_TUNE_VFX_ADDITIVE_BRIGHTNESS",
+                            "MC2_TUNE_VFX_ALPHA_SCALE",
+                            # VFX-SHADER-AGE-FADE-PARITY-1: age-driven soft death
+                            # fade for oracle particles. Default 0.0 = byte-identical.
+                            "MC2_TUNE_VFX_AGE_FADE",
+                            # VFX-SOFT-PARTICLES-MVP-1 / VFX-LIT-PARTICLES-MVP-1
+                            "MC2_VFX_SOFT_PARTICLES",
+                            "MC2_VFX_LIT_PARTICLES",
+                            "MC2_TUNE_VFX_LIT_STRENGTH",
                             # StaticPropTypeTable v0 Task 5: candidate draw log
                             # proof gate. MC2_TYPE_TABLE_CAND_LOG=1 enables the
                             # [DRAW_CAND v0] summary line every frame.
