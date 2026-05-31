@@ -5,6 +5,9 @@
 #include"particles/batcher.h"
 #include"particles/spawn.h"
 
+#include<cstdio>   // VFX-POINTCLOUD-ORACLE diagnostics
+#include<cmath>    // std::min / std::max fallback (also in gosfxheaders)
+
 //==========================================================================//
 // File:	 gosFX_PointCloud.cpp											//
 // Contents: Base gosFX::PointCloud Component								//
@@ -476,6 +479,101 @@ void gosFX::PointCloud::Draw(DrawInfo *info)
 	// filled the batcher for one frame (until the first Flush()), leaving the
 	// batcher empty for all subsequent frames.
 	if (mc2::particles::Batcher::is_enabled()) {
+		if (mc2::particles::Batcher::is_oracle_render_enabled() && m_activeParticleCount > 0) {
+			// VFX-POINTCLOUD-ORACLE-HARVEST-1: harvest live CPU PointCloud particles.
+			// PointCloud has no per-particle spin, no aspect ratio, no UV sub-rect —
+			// simpler than CardCloud. Position from m_P_localTranslation[i] (LOCAL
+			// space) transformed to world via local_to_world. Color from per-particle
+			// animated array m_P_color[i]. No per-particle size — spec has no size
+			// curve; use a 4.0f world-unit constant (kept below the shader's oracle
+			// size floor of max(size,8) for velocity=0 path — acceptable for muzzle
+			// flare dots). velocity stays (0,0,0): no spin, no aspect. atlasIndex=0.
+			Specification *spec = GetSpecification();
+			Check_Object(spec);
+			const uint32_t mlrTex =
+				static_cast<uint32_t>(spec->m_state.GetTextureHandle());
+			int blendMode = 0;
+			{
+				const MidLevelRenderer::MLRState::AlphaMode am =
+					spec->m_state.GetAlphaMode();
+				if (am == MidLevelRenderer::MLRState::OneOneMode ||
+				    am == MidLevelRenderer::MLRState::AlphaOneMode)
+					blendMode = 1;
+			}
+			// Same effect->world transform as the legacy Draw() path.
+			Stuff::LinearMatrix4D local_to_world;
+			local_to_world.Multiply(m_localToParent, *info->m_parentToWorld);
+
+			mc2::particles::Batcher &batcher = mc2::particles::Batcher::Instance();
+			// Full-page UV; PointCloud has no atlas sub-rect.
+			batcher.BeginGroup(mlrTex, 0.0f, 0.0f, 1.0f, 1.0f, blendMode, 0u);
+
+			int harvested = 0;
+			float minAlpha =  3.0e38f, maxAlpha = -3.0e38f;
+
+			for (int i = 0; i < m_activeParticleCount; ++i) {
+				Particle *p = GetParticle(i);
+				Check_Object(p);
+				if (p->m_age >= 1.0f) continue;   // skip dead slots
+
+				// Transform local-space position to world space.
+				Stuff::Point3D wc;
+				wc.Multiply(m_P_localTranslation[i], local_to_world);
+
+				const Stuff::RGBAColor &c = m_P_color[i];
+
+				mc2::particles::GpuParticle gp = {};
+				gp.position[0] = wc.x;
+				gp.position[1] = wc.y;
+				gp.position[2] = wc.z;
+				gp.color[0]    = c.red;
+				gp.color[1]    = c.green;
+				gp.color[2]    = c.blue;
+				gp.color[3]    = c.alpha;
+				// PointCloud has no per-particle size curve; 4.0f world units is a
+				// reasonable visible constant for muzzle-flash dots. The oracle
+				// billboard path (velocity=(0,0,0)) floors size at max(size,8.0) in
+				// the shader, so this results in ~8 wu dot — acceptable.
+				gp.size        = 4.0f;
+				// velocity stays zero-initialized: no spin, no aspect for PointCloud.
+				// atlasIndex stays 0: no animated atlas.
+
+				batcher.Emit(gp);
+				++harvested;
+				if (c.alpha < minAlpha) minAlpha = c.alpha;
+				if (c.alpha > maxAlpha) maxAlpha = c.alpha;
+			}
+
+			// [VFX_ORACLE v1] diagnostics: one-shot on first harvest, then 240-call
+			// summary — same cadence as CardCloud oracle to stay consistent.
+			if (mc2::particles::Batcher::is_log_enabled()) {
+				static bool s_first = false;
+				if (!s_first && harvested > 0) {
+					s_first = true;
+					std::fprintf(stderr,
+						"[VFX_ORACLE v1] class=PointCloud FIRST_HARVEST spec=\"%s\" active=%d harvested=%d alpha=[%.3f,%.3f] size=4.0 spin=none atlas=none\n",
+						static_cast<const char*>(spec->m_name),
+						m_activeParticleCount, harvested,
+						static_cast<double>(minAlpha), static_cast<double>(maxAlpha));
+					std::fflush(stderr);
+				}
+				static unsigned long long s_calls = 0, s_harvTotal = 0;
+				s_harvTotal += static_cast<unsigned>(harvested);
+				if ((++s_calls % 240ull) == 0ull) {
+					const double aLo = (harvested > 0) ? static_cast<double>(minAlpha) : 0.0;
+					const double aHi = (harvested > 0) ? static_cast<double>(maxAlpha) : 0.0;
+					std::fprintf(stderr,
+						"[VFX_ORACLE v1] class=PointCloud calls=%llu active_this_call=%d harvested_this_call=%d emitted_this_call=%d harvestedTotal=%llu fallback=0 alpha_this_call=[%.3f,%.3f]\n",
+						s_calls, m_activeParticleCount, harvested, harvested,
+						s_harvTotal, aLo, aHi);
+					std::fflush(stderr);
+				}
+			}
+
+			ParticleCloud::Draw(info);
+			return;
+		}
+
 		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
 		ParticleCloud::Draw(info);
 		return;
