@@ -59,7 +59,11 @@ bool readback_isEnabled() {
     static bool s_enabled = false;
     if (!s_checked) {
         s_checked = true;
-        s_enabled = (getenv("MC2_GPU_CULL_READBACK") != nullptr);
+        // PERF-OBJECT-ITER-GPU-PORT-1: default-ON now that substrate+coalesce are
+        // stable. Kill-switch: MC2_GPU_CULL_READBACK=0 opts out.
+        // Conservative-OR + dilation (89e35ac) are default-on so lag is motion-safe.
+        const char* v = getenv("MC2_GPU_CULL_READBACK");
+        s_enabled = !(v && v[0] == '0');
     }
     return s_enabled;
 }

@@ -790,15 +790,21 @@ long TerrainObject::update (void) {
 		}
 		bool inView = false;
 		{
-			inView = appearance->recalcBounds();
+			if (gpu_cull::readback_isEnabled()) {
+				// PERF-OBJECT-ITER-GPU-PORT-1: GPU readback is the visibility authority.
+				// Skip coarse-angular sphereclip — readback conservative-OR+dilation
+				// (89e35ac) is already over-inclusive under camera motion.
+				// setVisibilityGatesFromLegacy mirrors what recalcBounds would have done.
+				inView = gpu_cull::readback_isActorVisibleLagged(
+				    static_cast<uint32_t>(getHandle()));
+				if (appearance) appearance->setVisibilityGatesFromLegacy(inView);
+			} else {
+				inView = appearance->recalcBounds();
+			}
 		}
-		// Extend update() to fire when GPU readback says visible but coarse angular
-		// does not — prevents split-gate stale cachedGpuLightIndex_ when render()
-		// fires via readback but update() was skipped (1-frame lag edge case).
-		// windowsVisible stamp below is still guarded by inView (pick-path contract).
-		const bool gpuVisible = gpu_cull::readback_isEnabled()
-			? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
-			: false;
+		// gpuVisible extension for when readback is off (legacy fallback only).
+		// When readback is on, inView already IS the readback result.
+		const bool gpuVisible = !gpu_cull::readback_isEnabled() && false;
 		if (inView || gpuVisible)
 		{
 			// MOUSE-PICK PATH DEPENDENCY (objmgr consumer). This
