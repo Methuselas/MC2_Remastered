@@ -97,8 +97,12 @@ void main() {
     // VFX-ORIGINAL-RENDER-ANIM-FIELDS-1: aspect-correct billboard + in-plane spin.
     // velocity.xyz = (sizeX, sizeY, spinAngle) from oracle path; (0,0,0) from placeholder.
     // Fallback to scalar size when velocity.x == 0 (placeholder path, byte-identical).
-    float sX = (p.velocity.x > 0.0) ? max(p.velocity.x, 4.0) : max(p.size, 8.0);
-    float sY = (p.velocity.y > 0.0) ? max(p.velocity.y, 4.0) : max(p.size, 8.0);
+    // VFX-WEAPON-FX-RESTORE-OPUS-1: oracle particles (p.lifetime > 0.5 sentinel)
+    // have spec-driven sizes and use a 1.0wu floor; placeholder particles keep
+    // 8.0wu floor since placeholder Spawn may set size=0 for unrouted classes.
+    float sizeFloor = (p.lifetime > 0.5) ? 1.0 : 8.0;
+    float sX = (p.velocity.x > 0.0) ? max(p.velocity.x, 4.0) : max(p.size, sizeFloor);
+    float sY = (p.velocity.y > 0.0) ? max(p.velocity.y, 4.0) : max(p.size, sizeFloor);
     vec2 unitCorner = (kCornerUv[cornerIdx] - vec2(0.5, 0.5)) * 2.0;  // range [-1,1]
     float cs = cos(p.velocity.z);   // velocity.z = spinAngle (0.0 for placeholder)
     float sn = sin(p.velocity.z);

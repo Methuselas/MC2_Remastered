@@ -1,8 +1,40 @@
 # VFX Oracle Coverage Matrix
 
-Last updated: 2026-05-31 (VFX-ORIGINAL-LIVE-EFFECT-VALIDATION-1 pass 2)
+Last updated: 2026-05-31 (VFX-WEAPON-FX-RESTORE-OPUS-1 — oracle default-ON flip)
 
-Branch: `claude/nifty-mendeleev` (tip `01537128`)
+Branch: `claude/nifty-mendeleev` (tip post-VFX-WEAPON-FX-RESTORE-OPUS-1)
+
+## Release Routing Table (VFX-WEAPON-FX-RESTORE-OPUS-1)
+
+| Class / Effect family | Final route | Gate / default | Reason | Validation status |
+|---|---|---|---|---|
+| CardCloud (388 specs) — dust, smoke, fireball, AC/Gauss trails, foot-poofs, mech-smoke, VTOL | **GPU_ORACLE** | `MC2_VFX_ORACLE_RENDER` default-ON | Full oracle validated mc2_10+mc2_24; spin+aspect+atlas+age wired | CONFIRMED: tier1 5/5 + pass 2 |
+| ShardCloud (24 specs) — sparks, debris fragments | **GPU_ORACLE** | `MC2_VFX_ORACLE_RENDER` default-ON | Full oracle validated; circular billboard approx accepted for release | CONFIRMED: tier1 5/5 + pass 2 |
+| Card (136 specs) — muzzle flares, hit flashes, bolt lozenge | **GPU_ORACLE** | `MC2_VFX_ORACLE_RENDER` default-ON | Full oracle validated; lozenge alpha=1 confirmed visible | CONFIRMED: tier1 5/5 + pass 2 |
+| Tube (31 specs) — PPC core trail, FX_FlameTrail, FX_SmokeTrail | **GPU_ORACLE** | `MC2_VFX_ORACLE_RENDER` default-ON | PPC "core" alpha=0 is spec-correct; flamer/smoke trail needs interactive validation | PARTIAL: mc2_24 oracle fires; visible alpha needs interactive flamer session |
+| PointCloud (2 specs) — MG muzzle dot | **GPU_ORACLE** | `MC2_VFX_ORACLE_RENDER` default-ON | Oracle path wired; 0 births in passive smoke (births only on active missile/MG fire) | PARTIAL: oracle fires; visual needs interactive missile/MG session |
+| EffectCloud (39 specs) — composite container | **GPU_ORACLE** | N/A (delegates to children) | Container only; children handle their own routes | CONFIRMED: children validated |
+| ShapeCloud (9 specs) — explosion mesh swarms | **DEFERRED** | Currently invisible (DrawScalableShape gated OFF) | 3D mesh substrate (VFX-3D-MESH-GPU-SUBSTRATE-1) needed; not a release-blocking weapon FX | DEFERRED |
+| Shape (10 specs) — singleton explosion meshes | **DEFERRED** | Currently invisible | Same substrate dependency | DEFERRED |
+| DebrisCloud (34 specs) — rigid-body debris chunks | **DEFERRED** | Currently invisible | Same substrate dependency | DEFERRED |
+| GPU missile/SRM/LRM trails | **GPU_ORACLE** | `MC2_GPU_PARTICLES` default-ON (GpuTrailKind) | GpuTrailKind::MissileSmoke proven + default-ON | CONFIRMED |
+| GPU PPC bolt trail | **GPU_ORACLE** | `MC2_GPU_PARTICLES` default-ON (GpuTrailKind::PpcBolt) | PpcBolt trail proven + default-ON | CONFIRMED |
+
+**Why CPU legacy restoration is NOT needed for this release:**
+- Billboard classes (CardCloud/ShardCloud/Card/Tube/PointCloud) have complete oracle paths that render from live CPU sim data — this IS the original CPU sim output, just composited via GPU billboard shader.
+- The CPU/MLR draw suppression (MC2_DISABLE_GOSFX default-disabled) is safe to leave in place — the oracle path is a better route to the same visual data.
+- Shape/ShapeCloud/DebrisCloud are currently invisible regardless (both CPU and GPU paths dark). Enabling DrawScalableShape for these requires VFX-3D-MESH-GPU-SUBSTRATE-1 which is a separate arc.
+
+**Kill-switches for this release:**
+- `MC2_VFX_ORACLE_RENDER=0` — disables all oracle renders, falls back to placeholder Spawn (near-invisible placeholders)
+- `MC2_GPU_PARTICLES=0` — disables entire GPU particle batcher including trails; falls back to MLR (which is also disabled by default)
+- Both gates together restore pre-GPU state (fully invisible VFX)
+
+**Future GPU work (post-release):**
+- VFX-3D-MESH-GPU-SUBSTRATE-1 → GpuMeshCache → Shape/ShapeCloud/DebrisCloud oracle
+- VFX-GPU-SIM-CARDCLOUD-PARITY-ID-1 → stable particle IDs + full gosFX physics parity
+- Tube swept-mesh ribbon oracle (replace billboard-per-profile approximation)
+- CPU gosFX sim retirement (after GPU sim parity proven)
 
 ## Class x Oracle Status
 
@@ -25,11 +57,11 @@ via aligned 4-byte ClassID scan.
 
 ## Gate summary
 
-- `MC2_VFX_ORACLE_RENDER=1` enables oracle render for all migrated classes (inside `MC2_GPU_PARTICLES=1` check).
+- `MC2_VFX_ORACLE_RENDER` — **default-ON** since VFX-WEAPON-FX-RESTORE-OPUS-1. Kill-switch: `MC2_VFX_ORACLE_RENDER=0`. Enables oracle render for all migrated classes (inside `MC2_GPU_PARTICLES=1` check). Logs `[VFX_ROUTE v1] oracle_render=on reason=default_on` on startup.
 - `MC2_GPU_PARTICLES_LOG=1` enables `[VFX_ORACLE v1]` per-class stderr output.
 - `MC2_VFX_DEBUG_MODE=5` enables age heatmap (blue=newborn, green=mid-life, red=dying) — VFX-SHADER-AGE-FADE-PARITY-1.
 - `MC2_TUNE_VFX_AGE_FADE=<0..1>` enables soft death fade for oracle particles in final 30% of life — VFX-SHADER-AGE-FADE-PARITY-1.
-- Gate-OFF (no env vars) is byte-identical for all oracle classes.
+- Gate-OFF (`MC2_VFX_ORACLE_RENDER=0`) is byte-identical — oracle path skipped, placeholder Spawn path runs.
 
 ## What fires in automated smoke (30s, no combat, camera pan only)
 
