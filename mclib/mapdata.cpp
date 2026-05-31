@@ -2432,6 +2432,11 @@ float MapData::terrainElevation (const Stuff::Vector3D &position)
 		}
 
 		// --- Dirt texture displacement (matching TES lines 87-99) ---
+		// COLORMAP-CPU-RETIRE-1: cpuColorMap is freed in BuildColormapAtlas after
+		// GPU atlas upload (gos_terrain_indirect.cpp), so this block is dead in
+		// the default indirect path. Kill-switch MC2_COLORMAP_CPU_RETIRE=0 keeps
+		// cpuColorMap alive and restores this path. MC2_COLORMAP_DISPLACE_PROBE=1
+		// (requires kill-switch) logs displacement magnitude to validate +-1 wu bound.
 		if (displaceScale > 0.0f && tcm->cpuColorMap && tcm->cpuDispAlpha) {
 			float cr, cg, cb;
 			cpu_sampleColormap(tcm->cpuColorMap, tcm->cpuColorMapSize, cmapU, cmapV, cr, cg, cb);
@@ -2449,7 +2454,21 @@ float MapData::terrainElevation (const Stuff::Vector3D &position)
 				                 perpendicularVec.z*perpendicularVec.z);
 				float nz = (len > 1e-6f) ? fabsf(perpendicularVec.z) / len : 1.0f;
 
-				result += nz * (disp - 0.5f) * displaceScale * dirtWeight;
+				float dispContrib = nz * (disp - 0.5f) * displaceScale * dirtWeight;
+				result += dispContrib;
+
+				// Probe: MC2_COLORMAP_DISPLACE_PROBE=1 logs displacement magnitude.
+				// Requires MC2_COLORMAP_CPU_RETIRE=0 so cpuColorMap is still alive.
+				static const bool s_probe = getenv("MC2_COLORMAP_DISPLACE_PROBE") != nullptr;
+				if (s_probe) {
+					static float s_maxAbs = 0.0f;
+					static long  s_count  = 0;
+					float a = fabsf(dispContrib);
+					if (a > s_maxAbs) s_maxAbs = a;
+					s_count++;
+					if (s_count % 50000 == 0)
+						printf("[COLORMAP_PROBE] samples=%ld maxDispMag=%.4f wu\n", s_count, s_maxAbs);
+				}
 			}
 		}
 	}
