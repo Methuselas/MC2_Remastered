@@ -685,6 +685,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         "VFX-LIT-PARTICLES-MVP-1: startup-default for the scene-lit smoke/dust strength (particle_billboard.frag u_vfxLitStrength), applied ONLY to alpha draw groups (u_vfxIsAdditive==0) and ONLY when the MC2_VFX_LIT_PARTICLES gate is ON. Clamped 0..1. Unset/empty -> 0.7. Mixes the particle color toward the scene sun+ambient fill (eye->light*/ambient*); 0 = unlit (byte-identical). Per-mission profile key 'vfxLitStrength' (env value-var wins) and the Graphics Options 'VFX Tuning' slider override at runtime (gos_vfx_setLitStrength). Look-only; no emission/lifetime/timing change. No effect when MC2_VFX_LIT_PARTICLES is OFF or MC2_GPU_PARTICLES=0."
     },
     {
+        "MC2_TUNE_VFX_AGE_FADE",
+        "MC2_TUNE_VFX_AGE_FADE",
+        EnvVarKind::Trace,
+        false,
+        "VFX-SHADER-AGE-FADE-PARITY-1: soft death fade for oracle-harvested particles (p.lifetime==1.0f sentinel) in the final 30% of normalized age. Applied in particle_billboard.vert as v_color.a *= mix(1.0, ageFade, u_vfxAgeFade). Clamped 0..1. Unset/empty -> 0.0 (byte-identical no-op). Oracle-only: non-oracle particles have p.lifetime==0.0 and are unaffected. Look-only; no emission/lifetime/sim change. Env wins; gos_vfx_setAgeFade() overrides at runtime for ImGui slider."
+    },
+    {
         "MC2_DIAG_SSAO_DEBUG",
         "MC2_SSAO_DEBUG",
         EnvVarKind::Trace,
