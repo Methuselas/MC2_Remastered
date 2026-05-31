@@ -51,8 +51,8 @@
 
 #include"platform_io.h"
 #include<sys/stat.h>
-#include<zlib.h>		// BURNIN-DISK-COMPRESS: uncompress() for .burnin.z sidecar
 #include<cstdio>
+#include<cstdint>		// BURNIN-DISK-JPEG: uint8_t for stb_image pixel buffer
 
 #define COLOR_MAP_HEAP_SIZE				419430400
 #define COLOR_TXM_HEAP_SIZE				16384
@@ -64,110 +64,125 @@ bool forceShadowBurnIn = false;
 void* DecodeJPG( const char* FileName, BYTE* Data, DWORD DataSize, DWORD* TextureWidth, DWORD* TextureHeight, bool TextureLoad, void *pDestSurf );
 
 //---------------------------------------------------------------------------
-// BURNIN-DISK-COMPRESS
+// BURNIN-DISK-JPEG
 //
-// The 35 terrain burn-in colormaps (<name>.burnin.tga, 5120x5120 RGBA,
-// ~108MB each) can be stored zlib-compressed as a <name>.burnin.z sidecar:
-//   bytes [0..7]  : little-endian uint64 uncompressedSize (== original .tga size)
-//   bytes [8..]   : zlib.compress(raw .tga file bytes, level 9)
-// On load we inflate back to the EXACT original .tga file bytes and feed them
-// into the existing TGA parser, so the resulting ColorMap is byte-identical to
-// loading the .tga directly (fully lossless). If the .z sidecar is absent, the
-// inflate fails, the size mismatches, or MC2_BURNIN_NO_Z is set in the
-// environment, the caller falls through to the unchanged File::open(.tga) path.
+// The 35 terrain burn-in colormaps (<name>.burnin.tga, 5120x5120, 24-bit BGR,
+// ~75MB each) are stored as a lossy JPEG <name>.burnin.jpg (quality 90,
+// ~5-9MB) by tools/mc2texcook/burnin_jpeg.py. On load we decode the JPEG with
+// stb_image (mclib/burnin_jpeg_decode.cpp) and pack the RGB pixels straight
+// into a freshly-allocated ColorMap (RGBA DWORD) buffer in the SAME byte order
+// the .burnin.tga path produces: ColorMap[i*4+0]=B, +1=G, +2=R, +3=0xFF.
 //
-// Returns a malloc'd buffer of the inflated TGA bytes (caller frees with
-// free()) on success and sets *outSize; returns NULL on any miss/error.
+//   Why B,G,R,A:  the 24-bit .burnin.tga path copies the raw TGA file bytes
+//   (which are stored BGR) straight into ColorMap[0..2] then sets alpha=0xFF,
+//   so ColorMap byte 0 is Blue. stb decodes JPEG to logical RGB, so we swap
+//   R<->B on the way in. Verified against the live .burnin.tga.
+//
+//   Orientation: the 24-bit TGA (descriptor bit5 clear) is bottom-up, and the
+//   engine applies flipTopToBottom -> the final ColorMap is TOP-DOWN. The cook
+//   reads the TGA via Pillow (which yields top-down logical pixels) and saves
+//   the JPEG from that, and stb_image likewise yields top-down pixels, so NO
+//   extra flip is needed here.
+//
+// On absence, decode error, or MC2_BURNIN_NO_JPG set, the caller falls through
+// to the unchanged File::open(.burnin.tga / .tga) path.
+//
+// Returns a colorMapRAMHeap-allocated RGBA ColorMap buffer (caller owns it,
+// frees via the normal colorMapRAMHeap path) on success and sets *outWidth;
+// returns NULL on any miss/error.
 //---------------------------------------------------------------------------
-static MemoryPtr tryLoadBurninZ(const char* texturePath, const char* fileName, long* outSize)
+extern "C" unsigned char* BurninJpeg_DecodeRGB(const unsigned char* data, int dataLen, int* outW, int* outH);
+extern "C" void BurninJpeg_FreePixels(unsigned char* px);
+
+static MemoryPtr tryLoadBurninJpg(const char* texturePath, const char* fileName,
+                                  UserHeap* ramHeap, long* outWidth)
 {
-	if (outSize) *outSize = 0;
+	if (outWidth) *outWidth = 0;
 
 	// Kill-switch: prefer the .tga path entirely.
-	if (getenv("MC2_BURNIN_NO_Z") != NULL)
+	if (getenv("MC2_BURNIN_NO_JPG") != NULL)
 		return NULL;
 
-	char zName[1024];
-	sprintf(zName, "%s.burnin", fileName);
-	FullPathFileName burnInZ;
-	burnInZ.init(texturePath, zName, ".z");
+	char jName[1024];
+	sprintf(jName, "%s.burnin", fileName);
+	FullPathFileName burnInJpg;
+	burnInJpg.init(texturePath, jName, ".jpg");
 
-	FILE* fp = std::fopen((const char*)burnInZ, "rb");
+	FILE* fp = std::fopen((const char*)burnInJpg, "rb");
 	if (!fp)
 		return NULL; // sidecar absent -> caller uses .tga
 
-	// Determine on-disk size of the .z sidecar.
 	std::fseek(fp, 0, SEEK_END);
-	long zFileSize = std::ftell(fp);
+	long jFileSize = std::ftell(fp);
 	std::fseek(fp, 0, SEEK_SET);
-	if (zFileSize <= 8)
+	if (jFileSize <= 0)
 	{
 		std::fclose(fp);
-		printf("[BURNIN_Z] fallback name=%s reason=truncated-sidecar (%ld bytes)\n", fileName, zFileSize);
+		printf("[BURNIN_JPG] fallback name=%s reason=empty-file\n", fileName);
 		return NULL;
 	}
 
-	// 8-byte little-endian uint64 header = original uncompressed .tga size.
-	unsigned char hdr[8];
-	if (std::fread(hdr, 1, 8, fp) != 8)
+	unsigned char* jpgBytes = (unsigned char*)malloc((size_t)jFileSize);
+	if (!jpgBytes)
 	{
 		std::fclose(fp);
-		printf("[BURNIN_Z] fallback name=%s reason=header-read-failed\n", fileName);
+		printf("[BURNIN_JPG] fallback name=%s reason=read-alloc-failed (%ld bytes)\n", fileName, jFileSize);
 		return NULL;
 	}
-	unsigned long long uncompressedSize = 0;
-	for (int i = 0; i < 8; ++i)
-		uncompressedSize |= (unsigned long long)hdr[i] << (8 * i);
-
-	if (uncompressedSize == 0 || uncompressedSize > 0x40000000ULL) // >1GB sanity cap
+	if (std::fread(jpgBytes, 1, (size_t)jFileSize, fp) != (size_t)jFileSize)
 	{
+		free(jpgBytes);
 		std::fclose(fp);
-		printf("[BURNIN_Z] fallback name=%s reason=bad-uncompressed-size=%llu\n", fileName, uncompressedSize);
-		return NULL;
-	}
-
-	long compressedSize = zFileSize - 8;
-	unsigned char* compBuf = (unsigned char*)malloc((size_t)compressedSize);
-	if (!compBuf)
-	{
-		std::fclose(fp);
-		printf("[BURNIN_Z] fallback name=%s reason=comp-alloc-failed\n", fileName);
-		return NULL;
-	}
-	if (std::fread(compBuf, 1, (size_t)compressedSize, fp) != (size_t)compressedSize)
-	{
-		free(compBuf);
-		std::fclose(fp);
-		printf("[BURNIN_Z] fallback name=%s reason=comp-read-failed\n", fileName);
+		printf("[BURNIN_JPG] fallback name=%s reason=read-failed\n", fileName);
 		return NULL;
 	}
 	std::fclose(fp);
 
-	MemoryPtr tgaBytes = (MemoryPtr)malloc((size_t)uncompressedSize);
-	if (!tgaBytes)
+	int w = 0, h = 0;
+	unsigned char* rgb = BurninJpeg_DecodeRGB(jpgBytes, (int)jFileSize, &w, &h);
+	free(jpgBytes);
+	if (!rgb)
 	{
-		free(compBuf);
-		printf("[BURNIN_Z] fallback name=%s reason=inflate-alloc-failed (%llu bytes)\n", fileName, uncompressedSize);
+		printf("[BURNIN_JPG] fallback name=%s reason=jpeg-decode-failed\n", fileName);
+		return NULL;
+	}
+	if (w <= 0 || h <= 0 || w != h)
+	{
+		BurninJpeg_FreePixels(rgb);
+		printf("[BURNIN_JPG] fallback name=%s reason=bad-dims (%dx%d)\n", fileName, w, h);
 		return NULL;
 	}
 
-	uLongf destLen = (uLongf)uncompressedSize;
-	int zr = uncompress((Bytef*)tgaBytes, &destLen, (const Bytef*)compBuf, (uLong)compressedSize);
-	free(compBuf);
-
-	if (zr != Z_OK || destLen != (uLongf)uncompressedSize)
+	long cmapBytes = (long)w * (long)h * (long)sizeof(DWORD);
+	MemoryPtr colorMap = (MemoryPtr)ramHeap->Malloc(cmapBytes);
+	if (!colorMap)
 	{
-		free(tgaBytes);
-		printf("[BURNIN_Z] fallback name=%s reason=inflate-failed (zr=%d destLen=%lu expected=%llu)\n",
-			fileName, zr, (unsigned long)destLen, uncompressedSize);
+		BurninJpeg_FreePixels(rgb);
+		printf("[BURNIN_JPG] fallback name=%s reason=colormap-alloc-failed (%ld bytes)\n", fileName, cmapBytes);
 		return NULL;
 	}
 
-	printf("[BURNIN_Z] loaded name=%s inflated=%zu bytes (from %zu compressed)\n",
-		fileName, (size_t)uncompressedSize, (size_t)compressedSize);
+	// Pack stb RGB -> ColorMap B,G,R,A (matches the 24-bit .burnin.tga path).
+	const long pixels = (long)w * (long)h;
+	const unsigned char* src = rgb;
+	unsigned char* dst = (unsigned char*)colorMap;
+	for (long i = 0; i < pixels; ++i)
+	{
+		dst[0] = src[2]; // Blue
+		dst[1] = src[1]; // Green
+		dst[2] = src[0]; // Red
+		dst[3] = 0xFF;   // Alpha
+		dst += 4;
+		src += 3;
+	}
 
-	if (outSize) *outSize = (long)uncompressedSize;
-	return tgaBytes;
+	BurninJpeg_FreePixels(rgb);
+
+	printf("[BURNIN_JPG] loaded name=%s %dx%d (from %zu jpg bytes)\n",
+		fileName, w, h, (size_t)jFileSize);
+
+	if (outWidth) *outWidth = (long)w;
+	return colorMap;
 }
 
 DWORD			TerrainColorMap::terrainTypeIDs[ TOTAL_COLORMAP_TYPES ] = 
@@ -1408,19 +1423,30 @@ void TerrainColorMap::resetBaseTexture (const char *fileName)
 	bool burnedIn = false;
 	MemoryPtr tgaFileImage = NULL;
 
-	// BURNIN-DISK-COMPRESS: try the compressed .burnin.z sidecar first
-	// (lossless; inflated bytes == original .burnin.tga).
+	TGAFileHeader colorMapInfo;
+
+	// BURNIN-DISK-JPEG: try the <name>.burnin.jpg sidecar first. On success it
+	// decodes (stb_image) straight into a B,G,R,A ColorMap, and we synthesize a
+	// 32-bit/top-down colorMapInfo so the downstream tiling code runs unchanged.
+	bool jpgLoaded = false;
 	{
-		long zTgaSize = 0;
-		MemoryPtr zTga = tryLoadBurninZ(texturePath, fileName, &zTgaSize);
-		if (zTga != NULL)
+		long jpgW = 0;
+		MemoryPtr jpgColorMap = tryLoadBurninJpg(texturePath, fileName, colorMapRAMHeap, &jpgW);
+		if (jpgColorMap != NULL)
 		{
-			tgaFileImage = zTga;
+			ColorMap = jpgColorMap;
+			memset(&colorMapInfo, 0, sizeof(colorMapInfo));
+			colorMapInfo.image_type = UNC_TRUE;
+			colorMapInfo.width = (short)jpgW;
+			colorMapInfo.height = (short)jpgW;
+			colorMapInfo.pixel_depth = 32;
+			colorMapInfo.image_descriptor = 32; // top-down: no flip (decode already top-down)
 			burnedIn = true;
+			jpgLoaded = true;
 		}
 	}
 
-	if (tgaFileImage == NULL)
+	if (!jpgLoaded)
 	{
 		File colorMapFile;
 		long result = colorMapFile.open(burnInName);
@@ -1439,53 +1465,56 @@ void TerrainColorMap::resetBaseTexture (const char *fileName)
 		gosASSERT(tgaFileImage != NULL);
 
 		colorMapFile.read(tgaFileImage,colorMapFile.fileSize());
-	}
 
-	TGAFileHeader colorMapInfo;
-	memcpy(&colorMapInfo,tgaFileImage,sizeof(TGAFileHeader));
+		memcpy(&colorMapInfo,tgaFileImage,sizeof(TGAFileHeader));
+	}
 
 	if (colorMapInfo.image_type == UNC_TRUE)
 	{
-		MemoryPtr loadBuffer = tgaFileImage + sizeof(TGAFileHeader);
 		if (colorMapInfo.width != colorMapInfo.height)
 			STOP(("Color Map is not a perfect Square"));
 
-		//-----------------------------------------------------------------
-		// Check if 24 or 32 bit.  If 24, do the necessary stuff to it.
-		ColorMap = (MemoryPtr)colorMapRAMHeap->Malloc(colorMapInfo.width * colorMapInfo.width * sizeof(DWORD));
-		gosASSERT(ColorMap != NULL);
-
-		if (colorMapInfo.pixel_depth == 24)
+		if (!jpgLoaded)
 		{
-			//24-Bit color means we must add in an opaque alpha to each 24 bits of color data.
-			MemoryPtr cMap = ColorMap;
-			MemoryPtr lMap = loadBuffer;
-			for (long i = 0;i<(colorMapInfo.width * colorMapInfo.width);i++)
+			MemoryPtr loadBuffer = tgaFileImage + sizeof(TGAFileHeader);
+
+			//-----------------------------------------------------------------
+			// Check if 24 or 32 bit.  If 24, do the necessary stuff to it.
+			ColorMap = (MemoryPtr)colorMapRAMHeap->Malloc(colorMapInfo.width * colorMapInfo.width * sizeof(DWORD));
+			gosASSERT(ColorMap != NULL);
+
+			if (colorMapInfo.pixel_depth == 24)
 			{
-				*cMap = *lMap;		//Red
-				cMap++;
-				lMap++;
+				//24-Bit color means we must add in an opaque alpha to each 24 bits of color data.
+				MemoryPtr cMap = ColorMap;
+				MemoryPtr lMap = loadBuffer;
+				for (long i = 0;i<(colorMapInfo.width * colorMapInfo.width);i++)
+				{
+					*cMap = *lMap;		//Red
+					cMap++;
+					lMap++;
 
-				*cMap = *lMap;		//Green
-				cMap++;
-				lMap++;
+					*cMap = *lMap;		//Green
+					cMap++;
+					lMap++;
 
-				*cMap = *lMap;		//Blue
-				cMap++;
-				lMap++;
+					*cMap = *lMap;		//Blue
+					cMap++;
+					lMap++;
 
-				*cMap = 0xff;		 //Alpha
-				cMap++;
+					*cMap = 0xff;		 //Alpha
+					cMap++;
+				}
 			}
-		}
-		else
-		{
-			//32-bit color means all we have to do is copy the buffer.
-			memcpy(ColorMap,loadBuffer,colorMapInfo.width * colorMapInfo.width * sizeof(DWORD));
-		}
+			else
+			{
+				//32-bit color means all we have to do is copy the buffer.
+				memcpy(ColorMap,loadBuffer,colorMapInfo.width * colorMapInfo.width * sizeof(DWORD));
+			}
 
-		free(tgaFileImage);
-		tgaFileImage = NULL;
+			free(tgaFileImage);
+			tgaFileImage = NULL;
+		}
 
 		numTextures = colorMapInfo.width / COLOR_MAP_TEXTURE_SIZE;
 		numTexturesAcross = numTextures;
@@ -1833,45 +1862,32 @@ long TerrainColorMap::init (char *fileName)
 		FullPathFileName burnInJpg;
 		burnInJpg.init(texturePath,newName,".jpg");
 
-		//NEW!!
-		// Look for the JPG first.
-		// If its there, read it in, pass it to the Decoder and bypass the rest of this!!
-		DWORD jpgColorMapWidth = 0;
-		DWORD jpgColorMapHeight = 0;
+		long result = NO_ERR;
 
-		File colorMapFile;
-		long result = colorMapFile.open(burnInJpg);
-		// sebi :-)
-		if (result == NO_ERR && false)
+		// BURNIN-DISK-JPEG: probe <name>.burnin.jpg first. On success it
+		// decodes (stb_image) straight into a B,G,R,A ColorMap matching the
+		// .burnin.tga path, so we can skip the TGA read/parse/flip entirely.
+		long jpgColorMapWidth = 0;
+		MemoryPtr jpgColorMap = tryLoadBurninJpg(texturePath, fileName, colorMapRAMHeap, &jpgColorMapWidth);
+		if (jpgColorMap != NULL)
 		{
-			long fileSize = colorMapFile.fileSize();
-			MemoryPtr jpgData;
-			{
-				ZoneScopedN("TerrainColorMap::init jpgColorMap read");
-				jpgData = (MemoryPtr)malloc(fileSize);
-				colorMapFile.read(jpgData,fileSize);
-			}
-
-			{
-				ZoneScopedN("TerrainColorMap::init jpgColorMap decode");
-				ColorMap = (MemoryPtr)DecodeJPG(burnInJpg, jpgData, fileSize, &jpgColorMapWidth, &jpgColorMapHeight, false, NULL);
-			}
+			ColorMap = jpgColorMap;
 
 			numTextures = jpgColorMapWidth / COLOR_MAP_TEXTURE_SIZE;
 			numTexturesAcross = numTextures;
 			fractionPerTexture = 1.0f / numTextures;
-			
+
 			float checkNum = float(jpgColorMapWidth) / float(COLOR_MAP_TEXTURE_SIZE);
 			if (checkNum != float(numTextures))
 				STOP(("Color Map is %d pixels wide which is not even divisible by %d",jpgColorMapWidth,COLOR_MAP_TEXTURE_SIZE));
-				
+
 			numTextures *= numTextures;
 			textures = (ColorMapTextures *)colorMapHeap->Malloc(sizeof(ColorMapTextures) * numTextures);
 			gosASSERT(textures != NULL);
-			
+
 			txmRAM = (ColorMapRAM *)colorMapRAMHeap->Malloc(sizeof(ColorMapRAM) * numTextures);
 			gosASSERT(txmRAM != NULL);
-			
+
 			//Now, divide up the color map into separate COLOR_MAP_TEXTURE_SIZE textures.
 			// and hand the data to the textureManager.
 			{
@@ -1894,29 +1910,27 @@ long TerrainColorMap::init (char *fileName)
 					}
 				}
 			}
-		
-			free(jpgData);
-			jpgData = NULL;
+
 			colorMapStarted = true;
-			usedJPG = true;
+
+			// Retain full-atlas CPU copy for the indirect terrain draw bridge
+			// (same as the TGA path below — required for terrain displacement
+			// HSV classification + colormap atlas upload).
+			if (ColorMap) {
+				if (cpuColorMap) { free(cpuColorMap); cpuColorMap = NULL; }
+				long pixels = jpgColorMapWidth * jpgColorMapWidth;
+				cpuColorMap = (unsigned char*)malloc(pixels * 4);
+				gosASSERT(cpuColorMap != NULL);
+				cpuColorMapSize = jpgColorMapWidth;
+				memcpy(cpuColorMap, ColorMap, pixels * 4);
+				printf("[COLORMAP] retained colormap on CPU (%ldx%ld) [jpg]\n", jpgColorMapWidth, jpgColorMapWidth);
+			}
+			// ColorMap is colorMapRAMHeap-allocated -> normal cleanup path (usedJPG stays false).
 		}
 		else
 		{
 			bool burnedIn = false;
 			MemoryPtr tgaFileImage = NULL;
-
-			// BURNIN-DISK-COMPRESS: try the compressed .burnin.z sidecar first.
-			// On success the inflated bytes ARE the original .burnin.tga file,
-			// so the downstream TGA parse produces a byte-identical ColorMap.
-			{
-				long zTgaSize = 0;
-				MemoryPtr zTga = tryLoadBurninZ(texturePath, fileName, &zTgaSize);
-				if (zTga != NULL)
-				{
-					tgaFileImage = zTga;
-					burnedIn = true;
-				}
-			}
 
 			if (tgaFileImage == NULL)
 			{

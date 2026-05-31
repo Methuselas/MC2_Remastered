@@ -74,6 +74,7 @@ set(SOURCES ${SOURCES}
     terrain.cpp
     terrtxm.cpp
     terrtxm2.cpp
+    burnin_jpeg_decode.cpp
     txmconv.cpp
     appear.cpp
     apprtype.cpp

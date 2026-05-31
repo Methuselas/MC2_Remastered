@@ -525,6 +525,13 @@ static_assert(
 
 static constexpr EnvVarDesc kAuxEnvVars[] = {
     {
+        "MC2_FEATURE_BURNIN_NO_JPG",
+        "MC2_BURNIN_NO_JPG",
+        EnvVarKind::Feature,
+        false,
+        "BURNIN-DISK-JPEG kill-switch: when set, skip the <name>.burnin.jpg sidecar probe in TerrainColorMap::init and load the full <name>.burnin.tga (or .tga) instead. Default-unset = JPEG sidecar preferred when present (stb_image decode, ~9:1 disk; lossy but the burn-in colormap is a low-visibility tiled/minified ground texture). On JPEG absence/decode-error the runtime falls through to the .tga path regardless of this var. No gameplay/geometry change; visual delta is JPEG quantization only."
+    },
+    {
         "MC2_TRACE_RENDER_WORLD",
         "MC2_RENDER_WORLD_TRACE",
         EnvVarKind::Trace,
