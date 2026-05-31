@@ -759,7 +759,10 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 		} else {
 			(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
 		}
-		SpinningCloud::Draw(info);
+		// VFX-WEAPON-FX-RESTORE-OPUS-1: call Effect::Draw (not SpinningCloud::Draw) to
+		// propagate to EffectCloud children without re-submitting this cloud to MLR.
+		// SpinningCloud::Draw → MLR submission would double-draw now that MLR is re-enabled.
+		Effect::Draw(info);
 		return;
 	}
 

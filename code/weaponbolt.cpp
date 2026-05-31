@@ -2312,10 +2312,14 @@ void WeaponBolt::render (void)
 			
 			drawInfo.m_parentToWorld = &shapeOrigin;
 	 
-			if (!MLRVertexLimitReached)
+			// VFX-WEAPON-FX-RESTORE-OPUS-1: suppress hitEffect Draw when oracle is ON.
+			// hitEffect was always invisible in original MC2 (MLR-gated). Oracle renders
+			// it as oversized bright cards. The game's createExplosion() provides impact
+			// visual. Re-enable when hitEffect visuals are tuned for GPU billboard path.
+			if (!MLRVertexLimitReached && !mc2::particles::Batcher::is_oracle_render_enabled())
 				hitEffect->Draw(&drawInfo);
 		}
-		
+
 		if (missEffect && hitTarget && missEffect->IsExecuted())
 		{
 			Stuff::Vector3D hotSpot = *targetPosition;

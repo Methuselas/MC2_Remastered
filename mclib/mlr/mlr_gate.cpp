@@ -14,10 +14,12 @@ namespace mc2 {
 namespace mlr_gate {
 
 namespace {
-// A2 default: ON (disabled = true). Particles disappear in stock play.
-// Plan v6 §3 — transitional regression state acknowledged in (A) §3 / §5 Q1.
-// MC2_DISABLE_GOSFX=0 restores legacy gosFX path.
-constexpr bool kDefaultDisabled = true;
+// VFX-WEAPON-FX-RESTORE-OPUS-1: restored to default-ENABLED so classes without
+// a working GPU oracle (Tube/missile smoke, Shape, ShapeCloud, DebrisCloud) render
+// via original CPU MLR path. Oracle classes (CardCloud, ShardCloud, Card, PointCloud)
+// skip MLR in their own Draw() by calling Effect::Draw instead of their base class.
+// MC2_DISABLE_GOSFX=1 can re-disable for regression testing.
+constexpr bool kDefaultDisabled = false;
 
 bool g_initialized = false;
 bool g_disabled = false;
