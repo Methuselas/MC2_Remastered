@@ -122,17 +122,26 @@ bool Batcher::is_log_enabled() {
     return g_log_value;
 }
 
-// VFX-ORIGINAL-RECORD-ABI-1 (Phase 1): CPU-oracle render gate. When ON, a
-// migrated class's Draw harvests the CPU sim's live per-particle arrays and
-// renders them via the GPU billboard path instead of the placeholder Spawn().
-// Default OFF (placeholder path byte-identical). Read once, process-lifetime.
+// VFX-ORIGINAL-RECORD-ABI-1 (Phase 1): CPU-oracle render gate.
+// VFX-WEAPON-FX-RESTORE-OPUS-1: flipped to default-ON for release.
+// When ON, a migrated class's Draw harvests the CPU sim's live per-particle
+// arrays and renders them via the GPU billboard path.
+// Kill-switch: MC2_VFX_ORACLE_RENDER=0  (logs reason=kill_switch)
+// Force-ON:   MC2_VFX_ORACLE_RENDER=1  (explicit opt-in, same as default)
+// Read once, process-lifetime.
 bool Batcher::is_oracle_render_enabled() {
     static bool s_init = false;
     static bool s_val  = false;
     if (!s_init) {
         const char* v = std::getenv("MC2_VFX_ORACLE_RENDER");
-        s_val  = (v && v[0] == '1');
+        // Default-ON pattern (same as MC2_GPU_PARTICLES B3c-2).
+        // Absent or any value except "0" = enabled.
+        s_val  = !(v && v[0] == '0');
         s_init = true;
+        std::fprintf(stderr, "[VFX_ROUTE v1] oracle_render=%s reason=%s\n",
+            s_val ? "on" : "off",
+            (v && v[0] == '0') ? "kill_switch" : "default_on");
+        std::fflush(stderr);
     }
     return s_val;
 }
