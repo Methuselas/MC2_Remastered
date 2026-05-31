@@ -9,6 +9,7 @@
 #include"particles/batcher.h"
 #include"particles/spawn.h"
 #include"particles/cardcloud_sim.h"   // VFX-GPU-SIM-CARDCLOUD-BUFFER-1
+#include<cmath>    // VFX-ORIGINAL-RENDER-ANIM-FIELDS-1: std::atan2
 #include<cstdio>   // VFX-ORACLE diagnostics
 #include<vector>
 
@@ -617,6 +618,9 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 				int harvested = 0;
 				uint32_t minFrame = 0xFFFFFFFFu, maxFrame = 0u;
 				float minA =  3.0e38f, maxA = -3.0e38f;
+				// VFX-ORIGINAL-RENDER-ANIM-FIELDS-1: sizeX and spin range trackers.
+				float minSizeX = 3.0e38f, maxSizeX = -3.0e38f;
+				float minSpin  = 3.0e38f, maxSpin  = -3.0e38f;
 				for (int i = 0; i < m_activeParticleCount; ++i) {
 					Particle *p = GetParticle(i);
 					Check_Object(p);
@@ -660,10 +664,29 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 					// atlasIndex carries per-particle frame index (not texture handle).
 					// Texture binding happens via GroupInfo.handle (set in BeginGroup above).
 					gp.atlasIndex  = atlasFrame;
+					// VFX-ORIGINAL-RENDER-ANIM-FIELDS-1: pack (sizeX, sizeY, spinAngle)
+					// into velocity. velocity is zero-initialized by gp={} above; the
+					// oracle path fills it here. The placeholder path (Spawn) never sets
+					// velocity, so the shader fallback (velocity.x==0) applies there.
+					// velocity[0] = scale * halfX  (half-width in world units)
+					// velocity[1] = scale * halfY  (half-height in world units)
+					// velocity[2] = 2*atan2(q.z, q.w)  (in-plane spin from UnitQuaternion)
+					// For screen-aligned billboards the in-plane rotation is the component
+					// around world-up (Stuff Z axis). q=(x,y,z,w): angle ≈ 2*atan2(q.z, q.w).
+					gp.velocity[0] = static_cast<float>(p->m_scale * p->m_halfX);
+					gp.velocity[1] = static_cast<float>(p->m_scale * p->m_halfY);
+					gp.velocity[2] = 2.0f * std::atan2(
+					    static_cast<float>(p->m_localRotation.z),
+					    static_cast<float>(p->m_localRotation.w));
 					batcher.Emit(gp);
 					++harvested;
 					if (c.alpha < minA) minA = c.alpha;
 					if (c.alpha > maxA) maxA = c.alpha;
+					// VFX-ORIGINAL-RENDER-ANIM-FIELDS-1: track sizeX and spin ranges
+					if (gp.velocity[0] < minSizeX) minSizeX = gp.velocity[0];
+					if (gp.velocity[0] > maxSizeX) maxSizeX = gp.velocity[0];
+					if (gp.velocity[2] < minSpin)  minSpin  = gp.velocity[2];
+					if (gp.velocity[2] > maxSpin)  maxSpin  = gp.velocity[2];
 				}
 
 				// [VFX_ORACLE v1] diagnostics. harvested = LIVE particle count
@@ -676,15 +699,25 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 						s_first = true;
 						// VFX-FLIPBOOK-ASSET-TABLE-1: log atlasColumns + frame range
 						// on first harvest to confirm animated flipbook is active.
+						// VFX-ORIGINAL-RENDER-ANIM-FIELDS-1: also log spec name,
+						// m_animated, sizeRange, and spinRange.
 						const uint32_t frameHi =
 							(atlasColumns > 1u && minFrame <= maxFrame) ? maxFrame : 0u;
+						const double sizeXLo = (harvested > 0) ? static_cast<double>(minSizeX) : 0.0;
+						const double sizeXHi = (harvested > 0) ? static_cast<double>(maxSizeX) : 0.0;
+						const double spinLo  = (harvested > 0) ? static_cast<double>(minSpin)  : 0.0;
+						const double spinHi  = (harvested > 0) ? static_cast<double>(maxSpin)  : 0.0;
 						std::fprintf(stderr,
-							"[VFX_ORACLE v1] class=CardCloud FIRST_HARVEST active=%d harvested=%d alpha=[%.3f,%.3f] atlasColumns=%u frameRange=[%u,%u]\n",
+							"[VFX_ORACLE v1] class=CardCloud FIRST_HARVEST spec=\"%s\" animated=%d active=%d harvested=%d alpha=[%.3f,%.3f] atlasColumns=%u frameRange=[%u,%u] sizeRange=[%.2f,%.2f] spinRange=[%.3f,%.3f]\n",
+							static_cast<const char*>(spec->m_name),
+							static_cast<int>(spec->m_animated),
 							m_activeParticleCount, harvested,
 							static_cast<double>(minA), static_cast<double>(maxA),
 							atlasColumns,
 							(atlasColumns > 1u && minFrame <= maxFrame) ? minFrame : 0u,
-							frameHi);
+							frameHi,
+							sizeXLo, sizeXHi,
+							spinLo, spinHi);
 						std::fflush(stderr);
 					}
 					static unsigned long long s_calls = 0, s_harvTotal = 0;

@@ -10,6 +10,7 @@
 // MakeEffect returns and missed composite-children spawned by EffectCloud).
 #include"particles/batcher.h"
 #include"particles/spawn.h"
+#include<cstdio>   // VFX-ORACLE diagnostics (VFX-CARD-ORACLE-HARVEST-1)
 
 //############################################################################
 //########################  gosFX::Card__Specification  #############################
@@ -504,7 +505,101 @@ void gosFX::Card::Draw(DrawInfo *info)
 	// filled the batcher for one frame (until the first Flush()), leaving the
 	// batcher empty for all subsequent frames.
 	if (mc2::particles::Batcher::is_enabled()) {
-		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
+		if (mc2::particles::Batcher::is_oracle_render_enabled()) {
+			// VFX-CARD-ORACLE-HARVEST-1: CPU-oracle render for Card, mirroring
+			// the CardCloud bridge. Card is a single-particle singleton per effect
+			// instance. Execute() (runs every frame) keeps m_halfX/Y, m_scale,
+			// m_color current. Position is the effect world origin from m_localToWorld.
+			// Card has no rotation field (not a SpinningCloud subclass), so spin=0.
+			Specification *spec = GetSpecification();
+			Check_Object(spec);
+			const uint32_t mlrTex =
+				static_cast<uint32_t>(spec->m_state.GetTextureHandle());
+			int blendMode = 0;
+			{
+				const MidLevelRenderer::MLRState::AlphaMode am =
+					spec->m_state.GetAlphaMode();
+				if (am == MidLevelRenderer::MLRState::OneOneMode ||
+				    am == MidLevelRenderer::MLRState::AlphaOneMode)
+					blendMode = 1;
+			}
+
+			// VFX-CARD-ORACLE-HARVEST-1: read spec UV rect from ConstantCurve fields.
+			// ConstantCurve.ComputeValue(age, seed) returns the constant value.
+			// For animated atlases, pass atlasColumns = m_width (if m_animated && m_width>1).
+			const float tileU0 = static_cast<float>(
+				spec->m_UOffset.ComputeValue(0.0f, 0.0f));
+			const float tileV0 = static_cast<float>(
+				spec->m_VOffset.ComputeValue(0.0f, 0.0f));
+			float tileUs = static_cast<float>(
+				spec->m_USize.ComputeValue(0.0f, 0.0f));
+			float tileVs = static_cast<float>(
+				spec->m_VSize.ComputeValue(0.0f, 0.0f));
+			if (tileUs <= 0.0f) tileUs = 1.0f;
+			if (tileVs <= 0.0f) tileVs = 1.0f;
+			const uint32_t atlasColumns =
+				(spec->m_animated && spec->m_width > 1u)
+				? static_cast<uint32_t>(spec->m_width) : 0u;
+
+			mc2::particles::Batcher &batcher = mc2::particles::Batcher::Instance();
+			batcher.BeginGroup(mlrTex, tileU0, tileV0, tileUs, tileVs,
+			                   blendMode, atlasColumns);
+
+			// Card world position: translation column of m_localToWorld.
+			const Stuff::Point3D wc(m_localToWorld);
+
+			// Per-particle atlas frame from m_index curve (matches Card::Execute logic).
+			uint32_t atlasFrame = 0u;
+			if (atlasColumns > 1u) {
+				const float fIdx = static_cast<float>(
+					spec->m_index.ComputeValue(
+						static_cast<Stuff::Scalar>(m_age),
+						static_cast<Stuff::Scalar>(m_seed)));
+				const int fi = static_cast<int>(fIdx);
+				atlasFrame = (fi > 0) ? static_cast<uint32_t>(fi) : 0u;
+			}
+
+			mc2::particles::GpuParticle gp = {};
+			gp.position[0] = wc.x;
+			gp.position[1] = wc.y;
+			gp.position[2] = wc.z;
+			gp.color[0]    = m_color.red;
+			gp.color[1]    = m_color.green;
+			gp.color[2]    = m_color.blue;
+			gp.color[3]    = m_color.alpha;
+			// Billboard radius from bounding half-diagonal of the card.
+			const Stuff::Scalar radius =
+				Stuff::Sqrt(m_halfX * m_halfX + m_halfY * m_halfY);
+			gp.size        = static_cast<float>(m_scale * radius);
+			gp.atlasIndex  = atlasFrame;
+			// VFX-CARD-ORACLE-HARVEST-1: pack (sizeX, sizeY, spinAngle) into velocity.
+			// Card has no rotation field (Singleton, not SpinningCloud), so spin=0.
+			gp.velocity[0] = static_cast<float>(m_scale * m_halfX);
+			gp.velocity[1] = static_cast<float>(m_scale * m_halfY);
+			gp.velocity[2] = 0.0f;
+			batcher.Emit(gp);
+
+			// [VFX_ORACLE v1] diagnostics — one card per effect, so log on first emit.
+			if (mc2::particles::Batcher::is_log_enabled()) {
+				static bool s_first = false;
+				if (!s_first) {
+					s_first = true;
+					std::fprintf(stderr,
+						"[VFX_ORACLE v1] class=Card FIRST_HARVEST spec=\"%s\" animated=%d atlasColumns=%u sizeRange=[%.2f,%.2f] uvRect=[%.3f,%.3f,%.3f,%.3f] alpha=%.3f\n",
+						static_cast<const char*>(spec->m_name),
+						static_cast<int>(spec->m_animated),
+						atlasColumns,
+						static_cast<double>(gp.velocity[0]),
+						static_cast<double>(gp.velocity[1]),
+						static_cast<double>(tileU0), static_cast<double>(tileV0),
+						static_cast<double>(tileUs), static_cast<double>(tileVs),
+						static_cast<double>(m_color.alpha));
+					std::fflush(stderr);
+				}
+			}
+		} else {
+			(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
+		}
 		Singleton::Draw(info);
 		return;
 	}

@@ -5,6 +5,7 @@
 #include"particles/batcher.h"
 #include"particles/spawn.h"
 #include<cstdio>   // VFX-ORACLE diagnostics
+#include<cmath>    // std::atan2 for spin extraction (VFX-SHARDCLOUD-SPIN-ASPECT-1)
 
 //==========================================================================//
 // File:	 gosFX_ShardCloud.cpp											//
@@ -354,18 +355,27 @@ void gosFX::ShardCloud::Draw(DrawInfo *info)
 				local_to_world.Multiply(m_localToParent, *info->m_parentToWorld);
 
 				mc2::particles::Batcher &batcher = mc2::particles::Batcher::Instance();
-				batcher.BeginGroup(mlrTex, 0.0f, 0.0f, 1.0f, 1.0f, blendMode);
+				// VFX-SHARDCLOUD-UV-RECT-1: ShardCloud has no m_UOffset/VOffset/USize/VSize
+				// spec fields (it uses MLRTriangleCloud, not MLRCardCloud). The UV is always
+				// full-page (0,0,1,1) and there is no atlas animation. Pass atlasColumns=0
+				// explicitly to match the 7-arg BeginGroup signature from VFX-FLIPBOOK-ASSET-TABLE-1.
+				batcher.BeginGroup(mlrTex, 0.0f, 0.0f, 1.0f, 1.0f, blendMode, 0u);
 
 				int harvested = 0;
-				float minA =  3.0e38f, maxA = -3.0e38f;
+				float minA    =  3.0e38f, maxA    = -3.0e38f;
+				// VFX-SHARDCLOUD-SPIN-ASPECT-1: track size and spin ranges for FIRST_HARVEST log.
+				float minSize =  3.0e38f, maxSize = -3.0e38f;
+				float minSpin =  3.0e38f, maxSpin = -3.0e38f;
 				for (int i = 0; i < m_activeParticleCount; ++i) {
 					Particle *p = GetParticle(i);
 					Check_Object(p);
 					if (p->m_age >= 1.0f) continue;   // skip dead slots (legacy filter)
 					Stuff::Point3D wc;
 					wc.Multiply(p->m_localTranslation, local_to_world);
-					// Billboard radius from per-particle scaled shard radius
-					// (triangle shape/angle collapsed — deferred).
+					// Billboard radius from per-particle scaled shard radius.
+					// ShardCloud particles are triangles (m_angle is the angularity),
+					// not quads; there is no separate halfX/halfY. Treat as a square
+					// billboard of side = scale*radius (same bounding radius both axes).
 					const Stuff::Scalar radius = p->m_scale * p->m_radius;
 					// Color array is per-VERTEX (3 per shard); particle i -> i*3.
 					const Stuff::RGBAColor &c = m_P_color[i * 3];
@@ -378,11 +388,26 @@ void gosFX::ShardCloud::Draw(DrawInfo *info)
 					gp.color[2]    = c.blue;
 					gp.color[3]    = c.alpha;
 					gp.size        = static_cast<float>(radius);
-					gp.atlasIndex  = mlrTex;
+					// atlasIndex carries per-particle frame index; 0 for non-animated ShardCloud.
+					gp.atlasIndex  = 0u;
+					// VFX-SHARDCLOUD-SPIN-ASPECT-1: pack (sizeX, sizeY, spinAngle) into velocity.
+					// SpinningCloud__Particle has m_localRotation (UnitQuaternion q=(x,y,z,w)).
+					// ShardCloud particles are treated as circular billboards (no halfX/halfY),
+					// so sizeX == sizeY == scale*radius.  Spin = 2*atan2(q.z, q.w) — the in-plane
+					// rotation component around the world-up axis, matching the CardCloud convention.
+					gp.velocity[0] = static_cast<float>(radius);
+					gp.velocity[1] = static_cast<float>(radius);
+					gp.velocity[2] = 2.0f * std::atan2(
+					    static_cast<float>(p->m_localRotation.z),
+					    static_cast<float>(p->m_localRotation.w));
 					batcher.Emit(gp);
 					++harvested;
-					if (c.alpha < minA) minA = c.alpha;
-					if (c.alpha > maxA) maxA = c.alpha;
+					if (c.alpha < minA)           minA     = c.alpha;
+					if (c.alpha > maxA)           maxA     = c.alpha;
+					if (gp.velocity[0] < minSize) minSize  = gp.velocity[0];
+					if (gp.velocity[0] > maxSize) maxSize  = gp.velocity[0];
+					if (gp.velocity[2] < minSpin) minSpin  = gp.velocity[2];
+					if (gp.velocity[2] > maxSpin) maxSpin  = gp.velocity[2];
 				}
 
 				// [VFX_ORACLE v1] diagnostics (mirror CardCloud). harvested =
@@ -391,10 +416,19 @@ void gosFX::ShardCloud::Draw(DrawInfo *info)
 					static bool s_first = false;
 					if (!s_first && harvested > 0) {
 						s_first = true;
+						// VFX-SHARDCLOUD-UV-RECT-1: log UV rect (always full-page for ShardCloud)
+						// VFX-SHARDCLOUD-SPIN-ASPECT-1: add sizeRange and spinRange
+						// VFX-SHARDCLOUD-ORACLE-POLISH-1: add spec name (matches CardCloud format)
+						const double szLo = (harvested > 0) ? static_cast<double>(minSize) : 0.0;
+						const double szHi = (harvested > 0) ? static_cast<double>(maxSize) : 0.0;
+						const double spLo = (harvested > 0) ? static_cast<double>(minSpin)  : 0.0;
+						const double spHi = (harvested > 0) ? static_cast<double>(maxSpin)  : 0.0;
 						std::fprintf(stderr,
-							"[VFX_ORACLE v1] class=ShardCloud FIRST_HARVEST active=%d harvested=%d alpha=[%.3f,%.3f]\n",
+							"[VFX_ORACLE v1] class=ShardCloud FIRST_HARVEST spec=\"%s\" active=%d harvested=%d alpha=[%.3f,%.3f] uvRect=[0.000,0.000,1.000,1.000] atlasColumns=0 sizeRange=[%.3f,%.3f] spinRange=[%.3f,%.3f]\n",
+							static_cast<const char*>(spec->m_name),
 							m_activeParticleCount, harvested,
-							static_cast<double>(minA), static_cast<double>(maxA));
+							static_cast<double>(minA), static_cast<double>(maxA),
+							szLo, szHi, spLo, spHi);
 						std::fflush(stderr);
 					}
 					static unsigned long long s_calls = 0, s_harvTotal = 0;
