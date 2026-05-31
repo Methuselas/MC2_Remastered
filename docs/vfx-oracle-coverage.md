@@ -125,9 +125,13 @@ Note: FIRST_HARVEST `ageRange=[0.000,0.000]` is expected for all classes — it 
 
 ### Tier 3 — separate GPU primitive
 
-- **ShapeCloud**: per-particle 3D mesh renders. No billboard path applicable.
-- **DebrisCloud**: rigid-body 3D mesh pieces. No billboard path applicable.
-- **Shape**: 3D singleton mesh. No billboard path applicable.
+- **ShapeCloud**: per-particle 3D mesh renders. No billboard path applicable. **Recon complete (2026-05-31) — see `docs/vfx-3d-mesh-substrate-recon.md`.**
+- **DebrisCloud**: rigid-body 3D mesh pieces. No billboard path applicable. **Recon complete (2026-05-31) — see `docs/vfx-3d-mesh-substrate-recon.md`.**
+- **Shape**: 3D singleton mesh. No billboard path applicable. **Recon complete (2026-05-31) — see `docs/vfx-3d-mesh-substrate-recon.md`.**
+
+Key finding from recon: `DrawScalableShape()` is gated OFF by default (`kDefaultDisabled=true`
+in `mlr_gate.cpp`), so all three classes currently render **nothing**. Gate-OFF for any new
+oracle path is byte-identical by construction. See recon doc for full substrate design.
 
 ## Next targets
 
@@ -137,4 +141,4 @@ Note: FIRST_HARVEST `ageRange=[0.000,0.000]` is expected for all classes — it 
 
 3. **VFX-SHADER-AGE-FADE-PARITY-1 visual verification** (DEFERRED to interactive): debug mode 5 (age heatmap) is confirmed non-crashing in passive smoke. Full visual verification (particles showing blue→red gradient) requires MC2_VFX_ORACLE_RENDER=1 + MC2_VFX_DEBUG_MODE=5 in an interactive session with active particle effects.
 
-4. **ShapeCloud/DebrisCloud/Shape**: 3D mesh GPU primitives — separate arc, different substrate needed.
+4. **VFX-3D-MESH-GPU-SUBSTRATE-1** (DESIGNED, ready to implement): GpuMeshCache (MLRShape→VAO extractor) + `vfx_mesh.vert/frag` shader pair + bridge GL setup. Blocker for all 3 mesh-class oracle paths. ~900 lines total. See `docs/vfx-3d-mesh-substrate-recon.md` for full design. Recommended arc: SUBSTRATE-1 → SHAPE-ORACLE-1 (Shape + ShapeCloud) → DEBRISCLOUD-ORACLE-1.
