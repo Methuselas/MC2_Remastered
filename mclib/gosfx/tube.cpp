@@ -5,6 +5,8 @@
 #include"particles/batcher.h"
 #include"particles/spawn.h"
 
+#include<cstdio>   // VFX-TUBE-PROFILE-ORACLE-1 diagnostics
+
 //==========================================================================//
 // File:	 gosFX_Tube.cpp										            //
 // Contents: Base gosFX::Tube Component									    //
@@ -1173,6 +1175,115 @@ void gosFX::Tube::Draw(DrawInfo *info)
 	// filled the batcher for one frame (until the first Flush()), leaving the
 	// batcher empty for all subsequent frames.
 	if (mc2::particles::Batcher::is_enabled()) {
+		if (mc2::particles::Batcher::is_oracle_render_enabled() && m_activeProfileCount > 1) {
+			// VFX-TUBE-PROFILE-ORACLE-1: emit one billboard per active profile along
+			// the tube spine as a render approximation. The real Tube geometry is a
+			// swept mesh; this is a visual placeholder that shows WHERE the trail is
+			// without the correct mesh ribbon. One billboard per live profile suffices
+			// for validation. Full swept-mesh oracle is B2 polish debt.
+			//
+			// Ring buffer: start at m_headProfile, decrement with wrap around
+			// m_maxProfileCount, stop BEFORE reaching m_tailProfile (the tail slot
+			// itself is the oldest live profile — the do-while in Execute visits it
+			// last; Draw's non-oracle loop also stops at m_tailProfile). We match
+			// Draw()'s loop structure: do { ... --i with wrap; } while (i != m_tailProfile).
+			Specification *spec = GetSpecification();
+			Check_Object(spec);
+			const uint32_t mlrTex =
+				static_cast<uint32_t>(spec->m_state.GetTextureHandle());
+			int blendMode = 0;
+			{
+				const MidLevelRenderer::MLRState::AlphaMode am =
+					spec->m_state.GetAlphaMode();
+				if (am == MidLevelRenderer::MLRState::OneOneMode ||
+				    am == MidLevelRenderer::MLRState::AlphaOneMode)
+					blendMode = 1;
+			}
+
+			mc2::particles::Batcher &batcher = mc2::particles::Batcher::Instance();
+			// Full-page UV; Tube has no per-profile atlas sub-rect in the billboard
+			// representation (the real ribbon UV is handled by m_P_uvs in the mesh).
+			batcher.BeginGroup(mlrTex, 0.0f, 0.0f, 1.0f, 1.0f, blendMode, 0u);
+
+			int harvested = 0;
+			float minAlpha =  3.0e38f, maxAlpha = -3.0e38f;
+
+			int i = m_headProfile;
+			Verify(i >= 0);
+			do {
+				Profile *profile = GetProfile(i);
+				Check_Object(profile);
+
+				Stuff::Scalar age  = profile->m_age;
+				Stuff::Scalar seed = profile->m_seed;
+
+				// Profile world-position: extract translation row from profileToWorld.
+				// LinearMatrix4D inherits AffineMatrix4D; Point3D=AffineMatrix4D
+				// extracts the (W_Axis,X/Y/Z) translation row.
+				Stuff::Point3D worldPos;
+				worldPos = profile->m_profileToWorld;
+
+				// Color from spec curves at this profile's age/seed.
+				const float r = static_cast<float>(spec->m_pRed.ComputeValue(age, seed));
+				const float g = static_cast<float>(spec->m_pGreen.ComputeValue(age, seed));
+				const float b = static_cast<float>(spec->m_pBlue.ComputeValue(age, seed));
+				const float a = static_cast<float>(spec->m_pAlpha.ComputeValue(age, seed));
+
+				// Size from scale curve at this profile's age/seed.
+				const float scale = static_cast<float>(spec->m_pScale.ComputeValue(age, seed));
+				// clamp: negative scale is degenerate (e.g. collapsing trail)
+				const float sz = (scale > 0.0f) ? scale : 0.0f;
+
+				mc2::particles::GpuParticle gp = {};
+				gp.position[0] = worldPos.x;
+				gp.position[1] = worldPos.y;
+				gp.position[2] = worldPos.z;
+				gp.color[0]    = r;
+				gp.color[1]    = g;
+				gp.color[2]    = b;
+				gp.color[3]    = a;
+				gp.size        = sz;
+				// velocity=(0,0,0): no spin/aspect for tube profile billboards.
+				// atlasIndex=0: no animated atlas for tube.
+
+				batcher.Emit(gp);
+				++harvested;
+				if (a < minAlpha) minAlpha = a;
+				if (a > maxAlpha) maxAlpha = a;
+
+				if (--i < 0)
+					i = spec->m_maxProfileCount - 1;
+			} while (i != m_tailProfile);
+
+			// [VFX_ORACLE v1] diagnostics — one-shot on first harvest, 240-call summary.
+			if (mc2::particles::Batcher::is_log_enabled()) {
+				static bool s_first = false;
+				if (!s_first && harvested > 0) {
+					s_first = true;
+					std::fprintf(stderr,
+						"[VFX_ORACLE v1] class=Tube FIRST_HARVEST spec=\"%s\" activeProfiles=%d harvested=%d alpha=[%.3f,%.3f]\n",
+						static_cast<const char*>(spec->m_name),
+						m_activeProfileCount, harvested,
+						static_cast<double>(minAlpha), static_cast<double>(maxAlpha));
+					std::fflush(stderr);
+				}
+				static unsigned long long s_calls = 0, s_harvTotal = 0;
+				s_harvTotal += static_cast<unsigned>(harvested);
+				if ((++s_calls % 240ull) == 0ull) {
+					const double aLo = (harvested > 0) ? static_cast<double>(minAlpha) : 0.0;
+					const double aHi = (harvested > 0) ? static_cast<double>(maxAlpha) : 0.0;
+					std::fprintf(stderr,
+						"[VFX_ORACLE v1] class=Tube calls=%llu activeProfiles_this_call=%d harvested_this_call=%d emitted_this_call=%d harvestedTotal=%llu fallback=0 alpha_this_call=[%.3f,%.3f]\n",
+						s_calls, m_activeProfileCount, harvested, harvested,
+						s_harvTotal, aLo, aHi);
+					std::fflush(stderr);
+				}
+			}
+
+			Effect::Draw(info);
+			return;
+		}
+
 		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
 		Effect::Draw(info);
 		return;
