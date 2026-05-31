@@ -826,6 +826,17 @@ static void CollectUniqueNodeIds() {
     }
 }
 
+// COLORMAP-CPU-RETIRE-1: free cpuColorMap + cpuDispAlpha after atlas upload.
+// Default ON. Kill-switch MC2_COLORMAP_CPU_RETIRE=0 reverts (keeps CPU copy alive
+// for legacy displacement; needed when MC2_COLORMAP_DISPLACE_PROBE=1).
+static bool retireCpuColorMap() {
+    static const bool s = []() {
+        const char* v = getenv("MC2_COLORMAP_CPU_RETIRE");
+        return !v || v[0] != '0';
+    }();
+    return s;
+}
+
 // Per-frame counter — incremented when the packer sees a quad whose
 // q.terrainHandle is non-zero AND maps to no cement layer.  A non-zero count
 // after Stage A.4 is wired indicates an enumeration miss (debug discipline).
@@ -863,7 +874,24 @@ void BuildColormapAtlas() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    g_atlasSize              = tcm->cpuColorMapSize;
+    int atlasSizeCapture = tcm->cpuColorMapSize;  // capture before potential free
+
+    if (retireCpuColorMap()) {
+        // Atlas is on GPU — release the CPU copies. terrainElevation's guard
+        // (mapdata.cpp:2435) already short-circuits on cpuColorMap==nullptr,
+        // so the CPU displacement block is dead. The indirect path has no geometry
+        // displacement anyway (thin vert, no TES); this aligns CPU grounding with
+        // the visual surface. Kill-switch MC2_COLORMAP_CPU_RETIRE=0 restores both.
+        free(tcm->cpuColorMap);   tcm->cpuColorMap    = nullptr;
+        tcm->cpuColorMapSize = 0;
+        free(tcm->cpuDispAlpha);  tcm->cpuDispAlpha   = nullptr;
+        tcm->cpuDispAlphaSize = 0;
+        if (traceOn())
+            printf("[COLORMAP] COLORMAP-CPU-RETIRE-1: released cpuColorMap+cpuDispAlpha "
+                   "(%dx%d BGRA) after atlas upload\n", atlasSizeCapture, atlasSizeCapture);
+    }
+
+    g_atlasSize              = atlasSizeCapture;
     g_atlasNumTexturesAcross = tcm->getNumTexturesAcross();
     g_atlasMapTopLeftX       = Terrain::mapTopLeft3d.x;
     g_atlasMapTopLeftY       = Terrain::mapTopLeft3d.y;

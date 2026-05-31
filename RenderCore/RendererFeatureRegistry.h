@@ -186,7 +186,12 @@ enum class RendererFeature : int {
     // upload it with glCompressedTexImage2D, single-level. Default-OFF; requires
     // GLEW_ARB_texture_compression_bptc. NOT static-prop arrays / terrain splat.
     TexmgrCompressedUpload   = 40,  // MC2_TEXMGR_COMPRESSED_UPLOAD
-    COUNT                    = 41,
+    // COLORMAP-CPU-RETIRE-1: free cpuColorMap + cpuDispAlpha immediately after
+    // BuildColormapAtlas uploads to GPU. The indirect path (default-ON) has no
+    // geometry displacement (thin vert, no TES), so the CPU elevation's null-guard
+    // at mapdata.cpp:2435 becomes the correct state. Default-ON; kill-switch =0.
+    ColormapCpuRetire        = 41,  // MC2_COLORMAP_CPU_RETIRE
+    COUNT                    = 42,
 };
 
 // ---------------------------------------------------------------------------
@@ -524,6 +529,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         false,
         "TEXMGR-COMPRESSED-UPLOAD-1: teach MC_TextureManager to load a BC7 .ktx2 sidecar (same path/stem as the source data/textures texture, extension -> .ktx2) and upload it via glCompressedTexImage2D in MC_TextureNode::get_gosTextureHandle (mclib/txmmgr.cpp), through the new gos_NewCompressedTexture2D GameOS creator. Default-OFF; =1 enables. Requires GLEW_ARB_texture_compression_bptc (falls through + logs once if absent). This is the path for mech/vehicle/building/prop/UI/decal albedo textures — NOT static-prop texture arrays (MC2_STATICPROP_BC7) and NOT terrain splatting. All such textures are albedo/color (key in {Solid,Alpha,Keyed}) so vkFormat 146->GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM and 145->GL_COMPRESSED_RGBA_BPTC_UNORM. These loads use gosHint_DisableMipmap (single-level, GL_LINEAR/no-mip), so the sidecar is uploaded MIP 0 ONLY (byteLen = mipByteOffsets[1] if >1 mip, else pixels.size()); no glGenerateMipmap. Disk-only probe (std::fopen, not File/FastFile). On any failure (no sidecar, not BC7, load/upload fail, no BPTC support) the hook falls through to gos_NewTextureFromMemory unchanged. When OFF, the hook is fully gated (the env check short-circuits before any sidecar probe) -> byte-identical to the legacy RGBA8 path. The new gos_NewCompressedTexture2D mirrors gos_NewTextureFromMemory's gosTexture+addTexture lifecycle (handle integrates with textureList_/bind/destroy)."
     },
+    // ColormapCpuRetire
+    {
+        "MC2_FEATURE_COLORMAP_CPU_RETIRE",
+        "MC2_COLORMAP_CPU_RETIRE",
+        EnvVarKind::Feature,
+        true,
+        "COLORMAP-CPU-RETIRE-1: free cpuColorMap + cpuDispAlpha in BuildColormapAtlas immediately after GPU atlas upload. The default indirect terrain path (thin vert, no TES) does no geometry displacement, so terrainElevation's existing null-guard (mapdata.cpp:2435) skips the CPU displacement block, aligning grounding with the visual surface (both undisplaced). Kill-switch MC2_COLORMAP_CPU_RETIRE=0 keeps the CPU copy alive and restores legacy displacement (up to +-1 wu vs visual surface). MC2_COLORMAP_DISPLACE_PROBE=1 logs displacement magnitude when kill-switch is active."
+    },
 };
 
 static_assert(
@@ -739,6 +752,13 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         EnvVarKind::Feature,
         false,
         "TACTICAL-ARC-OVERLAY-MVP-1: world-space range ring + facing line on each SELECTED mover, drawn in-scene by the debug renderer just before its flush (gamecam.cpp). Default-OFF; byte-identical when unset (no draw calls). Requires MC2_DEBUG_RENDERER=1 (the debug renderer's own gate) AND a selected unit to show anything. Read-only; no gameplay coupling."
+    },
+    {
+        "MC2_TRACE_COLORMAP_DISPLACE_PROBE",
+        "MC2_COLORMAP_DISPLACE_PROBE",
+        EnvVarKind::Trace,
+        false,
+        "COLORMAP-CPU-RETIRE-1 parity probe: logs displacement magnitude (maxDispMag in wu) from the CPU colormap displacement path. Requires MC2_COLORMAP_CPU_RETIRE=0 (kill-switch) so cpuColorMap is still alive. Default-OFF; set to any non-null value to enable. Every 50000 calls: prints [COLORMAP_PROBE] samples=N maxDispMag=X wu."
     },
 };
 
