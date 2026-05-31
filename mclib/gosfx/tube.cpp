@@ -1283,12 +1283,16 @@ void gosFX::Tube::Draw(DrawInfo *info)
 				static unsigned long long s_calls = 0, s_harvTotal = 0;
 				s_harvTotal += static_cast<unsigned>(harvested);
 				if ((++s_calls % 240ull) == 0ull) {
-					const double aLo = (harvested > 0) ? static_cast<double>(minAlpha) : 0.0;
-					const double aHi = (harvested > 0) ? static_cast<double>(maxAlpha) : 0.0;
+					const double aLo  = (harvested > 0) ? static_cast<double>(minAlpha) : 0.0;
+					const double aHi  = (harvested > 0) ? static_cast<double>(maxAlpha) : 0.0;
+					// VFX-ORIGINAL-LIVE-EFFECT-VALIDATION-1: add age_this_call to
+					// match CardCloud/ShardCloud periodic log format.
+					const double agLo = (harvested > 0) ? static_cast<double>(minAge) : 0.0;
+					const double agHi = (harvested > 0) ? static_cast<double>(maxAge) : 0.0;
 					std::fprintf(stderr,
-						"[VFX_ORACLE v1] class=Tube calls=%llu activeProfiles_this_call=%d harvested_this_call=%d emitted_this_call=%d harvestedTotal=%llu fallback=0 alpha_this_call=[%.3f,%.3f]\n",
+						"[VFX_ORACLE v1] class=Tube calls=%llu activeProfiles_this_call=%d harvested_this_call=%d emitted_this_call=%d harvestedTotal=%llu fallback=0 alpha_this_call=[%.3f,%.3f] age_this_call=[%.3f,%.3f]\n",
 						s_calls, m_activeProfileCount, harvested, harvested,
-						s_harvTotal, aLo, aHi);
+						s_harvTotal, aLo, aHi, agLo, agHi);
 					std::fflush(stderr);
 				}
 			}
