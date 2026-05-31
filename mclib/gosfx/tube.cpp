@@ -1305,9 +1305,9 @@ void gosFX::Tube::Draw(DrawInfo *info)
 			return;
 		}
 
-		(void)mc2::particles::Spawn(GetSpecification(), &m_localToWorld, (float)m_seed, (float)m_age);
-		Effect::Draw(info);
-		return;
+		// VFX-WEAPON-FX-RESTORE-OPUS-1: oracle disabled — fall through to MLR swept-mesh.
+		// Spawn placeholder suppressed: MLR renders the tube mesh directly.
+		// Do NOT return here; execution falls through to the MLR path below.
 	}
 
 	//
