@@ -43,6 +43,7 @@ void __stdcall gos_SetTerrainMVP(const float* matrix16);
 #include "../../mclib/terrtxm.h"    // TERRAIN_TXM_SIZE (extern int)
 #include "../../mclib/txmmgr.h"     // MC_MAXTEXTURES (cement node-index space)
 #include "gos_terrain_bridge.h"     // gos_terrain_bridge_glTextureForGosHandle (cement readback)
+#include "../../RenderCore/KtxLoader.h"  // COLORMAP-BC7-KTX2-1: ktxLoadRgba8 for BC7 atlas upload
 
 #include "../gameos/gos_profiler.h"
 
@@ -855,40 +856,100 @@ void BuildColormapAtlas() {
         return;
     }
     auto* tcm = Terrain::terrainTextures2;
-    if (!tcm->cpuColorMap || tcm->cpuColorMapSize <= 0) {
-        if (traceOn()) printf("[TERRAIN_INDIRECT v1] event=atlas_skip reason=no_cpuColorMap\n");
-        return;
+
+    int atlasSizeCapture = 0;
+    bool atlasBuilt = false;
+
+    // --- KTX2 / BC7 path (COLORMAP-BC7-KTX2-1) ---
+    // Precedes the cpuColorMap early-return so the KTX2 path fires even when
+    // cpuColorMap was never allocated (e.g. future "skip-cpu-alloc" optimization).
+    // cpuColorMap is always populated as RGBA8 fallback (in case BPTC cap absent).
+    if (tcm->ktx2ColormapPath[0] != '\0' && GLEW_ARB_texture_compression_bptc) {
+        RenderCore::KtxImage img;
+        if (RenderCore::ktxLoadRgba8(tcm->ktx2ColormapPath, img) &&
+            img.isCompressed && (img.vkFormat == 145 || img.vkFormat == 146)) {
+
+            GLenum glIF = (img.vkFormat == 146) ? GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM
+                                                 : GL_COMPRESSED_RGBA_BPTC_UNORM;
+            // Mip 0 only: colormap is sampled at a fixed world-space scale, no LOD.
+            size_t mip0Bytes = (img.mipCount > 1 && img.mipByteOffsets.size() > 1)
+                ? (size_t)img.mipByteOffsets[1]
+                : img.pixels.size();
+
+            if (g_atlasGLTex == 0) glGenTextures(1, &g_atlasGLTex);
+            glBindTexture(GL_TEXTURE_2D, g_atlasGLTex);
+            glCompressedTexImage2D(GL_TEXTURE_2D, 0, glIF,
+                                   img.width, img.height, 0,
+                                   (GLsizei)mip0Bytes, img.pixels.data());
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glBindTexture(GL_TEXTURE_2D, 0);
+
+            atlasSizeCapture = img.width;
+            atlasBuilt = true;
+
+            printf("[COLORMAP] COLORMAP-BC7-KTX2-1: uploaded %dx%d BC7 fmt=0x%x "
+                   "bytes=%zu gltex=%u\n",
+                   img.width, img.height, (unsigned)glIF, mip0Bytes,
+                   (unsigned)g_atlasGLTex);
+
+            // KTX2 path succeeded — retire CPU copies (same as RETIRE-1, but
+            // also clear the path so we don't attempt a second upload).
+            tcm->ktx2ColormapPath[0] = '\0';
+            if (retireCpuColorMap()) {
+                free(tcm->cpuColorMap);   tcm->cpuColorMap    = nullptr;
+                tcm->cpuColorMapSize = 0;
+                free(tcm->cpuDispAlpha);  tcm->cpuDispAlpha   = nullptr;
+                tcm->cpuDispAlphaSize = 0;
+            }
+        } else {
+            // KTX2 load/format check failed — clear path, fall through to RGBA8.
+            printf("[COLORMAP] COLORMAP-BC7-KTX2-1: KTX2 load failed or wrong format "
+                   "(%s), falling back to RGBA8\n", tcm->ktx2ColormapPath);
+            tcm->ktx2ColormapPath[0] = '\0';
+        }
+    } else if (tcm->ktx2ColormapPath[0] != '\0' && !GLEW_ARB_texture_compression_bptc) {
+        // BPTC cap absent — log once and fall through to RGBA8.
+        printf("[COLORMAP] COLORMAP-BC7-KTX2-1: BPTC unsupported, using RGBA8 fallback\n");
+        tcm->ktx2ColormapPath[0] = '\0';
     }
 
-    if (g_atlasGLTex == 0) glGenTextures(1, &g_atlasGLTex);
-    glBindTexture(GL_TEXTURE_2D, g_atlasGLTex);
-    // cpuColorMap is BGRA-in-memory (mc2_argb_packing memory note: MC2's textures
-    // are BGRA). Upload format param = GL_BGRA so the driver swizzles to RGBA8
-    // storage at upload time.
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
-                 tcm->cpuColorMapSize, tcm->cpuColorMapSize,
-                 0, GL_BGRA, GL_UNSIGNED_BYTE, tcm->cpuColorMap);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    // --- RGBA8 fallback (pre-existing path) ---
+    if (!atlasBuilt) {
+        if (!tcm->cpuColorMap || tcm->cpuColorMapSize <= 0) {
+            if (traceOn()) printf("[TERRAIN_INDIRECT v1] event=atlas_skip reason=no_cpuColorMap\n");
+            return;
+        }
 
-    int atlasSizeCapture = tcm->cpuColorMapSize;  // capture before potential free
+        if (g_atlasGLTex == 0) glGenTextures(1, &g_atlasGLTex);
+        glBindTexture(GL_TEXTURE_2D, g_atlasGLTex);
+        // cpuColorMap is BGRA-in-memory (mc2_argb_packing memory note: MC2's
+        // textures are BGRA). Upload format param = GL_BGRA so the driver swizzles
+        // to RGBA8 storage at upload time.
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
+                     tcm->cpuColorMapSize, tcm->cpuColorMapSize,
+                     0, GL_BGRA, GL_UNSIGNED_BYTE, tcm->cpuColorMap);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
 
-    if (retireCpuColorMap()) {
-        // Atlas is on GPU — release the CPU copies. terrainElevation's guard
-        // (mapdata.cpp:2435) already short-circuits on cpuColorMap==nullptr,
-        // so the CPU displacement block is dead. The indirect path has no geometry
-        // displacement anyway (thin vert, no TES); this aligns CPU grounding with
-        // the visual surface. Kill-switch MC2_COLORMAP_CPU_RETIRE=0 restores both.
-        free(tcm->cpuColorMap);   tcm->cpuColorMap    = nullptr;
-        tcm->cpuColorMapSize = 0;
-        free(tcm->cpuDispAlpha);  tcm->cpuDispAlpha   = nullptr;
-        tcm->cpuDispAlphaSize = 0;
-        if (traceOn())
-            printf("[COLORMAP] COLORMAP-CPU-RETIRE-1: released cpuColorMap+cpuDispAlpha "
-                   "(%dx%d BGRA) after atlas upload\n", atlasSizeCapture, atlasSizeCapture);
+        atlasSizeCapture = tcm->cpuColorMapSize;
+
+        if (retireCpuColorMap()) {
+            // Atlas is on GPU — release the CPU copies (COLORMAP-CPU-RETIRE-1).
+            free(tcm->cpuColorMap);   tcm->cpuColorMap    = nullptr;
+            tcm->cpuColorMapSize = 0;
+            free(tcm->cpuDispAlpha);  tcm->cpuDispAlpha   = nullptr;
+            tcm->cpuDispAlphaSize = 0;
+            if (traceOn())
+                printf("[COLORMAP] COLORMAP-CPU-RETIRE-1: released cpuColorMap+cpuDispAlpha "
+                       "(%dx%d BGRA) after RGBA8 atlas upload\n",
+                       atlasSizeCapture, atlasSizeCapture);
+        }
     }
 
     g_atlasSize              = atlasSizeCapture;
@@ -899,10 +960,11 @@ void BuildColormapAtlas() {
 
     if (traceOn()) {
         printf("[TERRAIN_INDIRECT v1] event=atlas_built size=%d numTilesAcross=%.4f "
-               "mapTopLeftX=%.3f mapTopLeftY=%.3f oneOverWorldUnits=%.9f gltex=%u\n",
+               "mapTopLeftX=%.3f mapTopLeftY=%.3f oneOverWorldUnits=%.9f gltex=%u "
+               "bc7=%s\n",
                g_atlasSize, g_atlasNumTexturesAcross,
                g_atlasMapTopLeftX, g_atlasMapTopLeftY, g_atlasOneOverWorldUnits,
-               (unsigned)g_atlasGLTex);
+               (unsigned)g_atlasGLTex, atlasBuilt ? "yes" : "no");
         fflush(stdout);
     }
 }

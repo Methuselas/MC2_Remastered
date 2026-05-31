@@ -191,7 +191,10 @@ enum class RendererFeature : int {
     // geometry displacement (thin vert, no TES), so the CPU elevation's null-guard
     // at mapdata.cpp:2435 becomes the correct state. Default-ON; kill-switch =0.
     ColormapCpuRetire        = 41,  // MC2_COLORMAP_CPU_RETIRE
-    COUNT                    = 42,
+    // COLORMAP-BC7-KTX2-1: prefer .burnin.ktx2 BC7 sidecar in BuildColormapAtlas.
+    // Falls back to RGBA8 when sidecar absent or BPTC cap missing. Default-ON.
+    ColormapKtx2             = 42,  // MC2_COLORMAP_KTX2
+    COUNT                    = 43,
 };
 
 // ---------------------------------------------------------------------------
@@ -536,6 +539,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         true,
         "COLORMAP-CPU-RETIRE-1: free cpuColorMap + cpuDispAlpha in BuildColormapAtlas immediately after GPU atlas upload. The default indirect terrain path (thin vert, no TES) does no geometry displacement, so terrainElevation's existing null-guard (mapdata.cpp:2435) skips the CPU displacement block, aligning grounding with the visual surface (both undisplaced). Kill-switch MC2_COLORMAP_CPU_RETIRE=0 keeps the CPU copy alive and restores legacy displacement (up to +-1 wu vs visual surface). MC2_COLORMAP_DISPLACE_PROBE=1 logs displacement magnitude when kill-switch is active."
+    },
+    // ColormapKtx2
+    {
+        "MC2_FEATURE_COLORMAP_KTX2",
+        "MC2_COLORMAP_KTX2",
+        EnvVarKind::Feature,
+        true,
+        "COLORMAP-BC7-KTX2-1: prefer .burnin.ktx2 BC7 sidecar in BuildColormapAtlas (gos_terrain_indirect.cpp). When the sidecar is found on disk and GLEW_ARB_texture_compression_bptc is present, uploads via glCompressedTexImage2D(GL_COMPRESSED_RGBA_BPTC_UNORM) instead of glTexImage2D RGBA8. Saves ~81 MB VRAM per mission (108 MB -> ~27 MB). Falls back silently to RGBA8 when sidecar absent, BPTC cap missing, or load fails. KTX2 sidecar baked offline by scripts/bake_colormap_ktx2.py (Pillow BGRA->RGBA, ktx create uastc, ktx transcode bc7, --levels 1). Default-ON; kill-switch =0 forces RGBA8 path even when sidecar present."
     },
 };
 

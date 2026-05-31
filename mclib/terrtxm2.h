@@ -92,7 +92,15 @@ class TerrainColorMap
 		int             cpuDispAlphaSize;   // width=height of the square texture
 		unsigned char*  cpuColorMap;        // full colormap RGBA for HSV classification
 		int             cpuColorMapSize;    // width=height of the full colormap
-	
+
+		// COLORMAP-BC7-KTX2-1: path to pre-baked .burnin.ktx2 sidecar (BC7/BPTC).
+		// Set in init()/resetBaseTexture() when the sidecar exists and
+		// MC2_COLORMAP_KTX2 is ON. BuildColormapAtlas reads this and uploads
+		// via glCompressedTexImage2D instead of the RGBA8 cpuColorMap path.
+		// Cleared after upload. char array (not std::string) to match manual
+		// zero-fill in init(). 512 bytes covers any realistic path.
+		char            ktx2ColormapPath[512];
+
 		bool					colorMapStarted;
 		
 		float					hGauss;

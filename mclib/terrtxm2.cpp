@@ -197,6 +197,16 @@ static bool skipColormapTiles() {
     return s;
 }
 
+// COLORMAP-BC7-KTX2-1: default ON; kill-switch MC2_COLORMAP_KTX2=0 disables.
+// When ON, BuildColormapAtlas will prefer the .burnin.ktx2 sidecar over cpuColorMap.
+static bool useKtx2Colormap() {
+    static const bool s = []() {
+        const char* v = getenv("MC2_COLORMAP_KTX2");
+        return !v || v[0] != '0';
+    }();
+    return s;
+}
+
 DWORD			TerrainColorMap::terrainTypeIDs[ TOTAL_COLORMAP_TYPES ] =
 {
 	20000,
@@ -252,6 +262,7 @@ void TerrainColorMap::init (void)
 	cpuDispAlphaSize = 0;
 	cpuColorMap = NULL;
 	cpuColorMapSize = 0;
+	ktx2ColormapPath[0] = '\0';
 }
 
 void TerrainColorMap::destroy (void)
@@ -1588,6 +1599,7 @@ void TerrainColorMap::resetBaseTexture (const char *fileName)
 	}
 
 	// Retain CPU copy of colormap for terrain displacement HSV classification
+	// and as RGBA8 fallback for BuildColormapAtlas (required when BPTC absent).
 	{
 		if (cpuColorMap) { free(cpuColorMap); cpuColorMap = NULL; }
 		long pixels = (long)colorMapInfo.width * (long)colorMapInfo.width;
@@ -1596,6 +1608,23 @@ void TerrainColorMap::resetBaseTexture (const char *fileName)
 		cpuColorMapSize = colorMapInfo.width;
 		memcpy(cpuColorMap, ColorMap, pixels * 4);
 		printf("[COLORMAP] retained colormap on CPU (%dx%d)\n", colorMapInfo.width, colorMapInfo.width);
+	}
+
+	// COLORMAP-BC7-KTX2-1: probe for .burnin.ktx2 sidecar. When present and gate ON,
+	// BuildColormapAtlas uploads compressed BC7 instead of RGBA8 cpuColorMap.
+	// cpuColorMap is always kept as RGBA8 fallback (needed if BPTC cap is absent).
+	ktx2ColormapPath[0] = '\0';
+	if (useKtx2Colormap()) {
+		char ktx2Name[1024];
+		snprintf(ktx2Name, sizeof(ktx2Name), "%s.burnin", fileName);
+		FullPathFileName ktx2Path;
+		ktx2Path.init(texturePath, ktx2Name, ".ktx2");
+		FILE* probe = std::fopen((const char*)ktx2Path, "rb");
+		if (probe) {
+			fclose(probe);
+			snprintf(ktx2ColormapPath, sizeof(ktx2ColormapPath), "%s", (const char*)ktx2Path);
+			printf("[COLORMAP] COLORMAP-BC7-KTX2-1: found sidecar %s\n", ktx2ColormapPath);
+		}
 	}
 
 	//At this point, the color Map DATA should be freeable!!
@@ -2117,6 +2146,21 @@ long TerrainColorMap::init (char *fileName)
 				memcpy(cpuColorMap, ColorMap, pixels * 4);
 				printf("[COLORMAP] retained colormap on CPU (%dx%d)\n", colorMapInfo.width, colorMapInfo.width);
 			}
+		}
+	}
+
+	// COLORMAP-BC7-KTX2-1: probe for .burnin.ktx2 sidecar (same as recalcLight path).
+	ktx2ColormapPath[0] = '\0';
+	if (cpuColorMap && useKtx2Colormap()) {
+		char ktx2Name[1024];
+		snprintf(ktx2Name, sizeof(ktx2Name), "%s.burnin", fileName);
+		FullPathFileName ktx2Path;
+		ktx2Path.init(texturePath, ktx2Name, ".ktx2");
+		FILE* probe = std::fopen((const char*)ktx2Path, "rb");
+		if (probe) {
+			fclose(probe);
+			snprintf(ktx2ColormapPath, sizeof(ktx2ColormapPath), "%s", (const char*)ktx2Path);
+			printf("[COLORMAP] COLORMAP-BC7-KTX2-1: found sidecar %s\n", ktx2ColormapPath);
 		}
 	}
 
