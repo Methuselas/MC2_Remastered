@@ -801,6 +801,30 @@ class gosTexture {
             is_from_memory_ = true;
         }
 
+        // TEXMGR-COMPRESSED-UPLOAD-1: wrap a pre-built (already GL-uploaded)
+        // Texture so the handle integrates with textureList_/bind/destroy
+        // exactly like the other gosTexture flavors. No createHardwareTexture()
+        // call — the GL object is supplied ready. Used by
+        // gos_NewCompressedTexture2D for BC7 .ktx2 sidecar uploads.
+        gosTexture(const Texture& prebuilt, gos_TextureFormat fmt, const char* name)
+        {
+            format_ = fmt;
+            if(name) {
+                texname_ = new char[strlen(name)+1];
+                strcpy(texname_, name);
+            } else {
+                texname_ = 0;
+            }
+            filename_ = NULL;
+            hints_ = 0;
+            plocked_area_ = NULL;
+            size_ = 0;
+            pcompdata_ = NULL;
+            tex_ = prebuilt;
+            is_locked_ = false;
+            is_from_memory_ = true;
+        }
+
         bool createHardwareTexture();
 
         ~gosTexture() {
@@ -6705,6 +6729,63 @@ DWORD __stdcall gos_NewTextureFromMemory( gos_TextureFormat Format, const char* 
         return INVALID_TEXTURE_ID;
     }
 
+    return g_gos_renderer->addTexture(ptex);
+}
+
+// TEXMGR-COMPRESSED-UPLOAD-1: upload a single-level BC7 (or other block-
+// compressed) 2D texture from a pre-loaded block stream and register it as a
+// gosTexture handle. Mirrors gos_NewTextureFromMemory's lifecycle (gosTexture
+// + addTexture), but uploads via glCompressedTexImage2D instead of decoding a
+// TGA. Single level only (MC_TextureManager data/textures load with
+// gosHint_DisableMipmap), so GL_TEXTURE_MAX_LEVEL=0 and GL_LINEAR filtering.
+// Returns INVALID_TEXTURE_ID on GL failure (caller falls through to the RGBA8
+// path). The internal format is passed in by the caller (sRGB BPTC for albedo).
+DWORD __stdcall gos_NewCompressedTexture2D( uint32_t glInternalFormat, int w, int h,
+                                            const uint8_t* blockData, size_t byteLen,
+                                            const char* name )
+{
+    if(!blockData || byteLen == 0 || w <= 0 || h <= 0)
+        return INVALID_TEXTURE_ID;
+
+    while(glGetError() != GL_NO_ERROR) { /* drain */ }
+
+    GLuint texID = 0;
+    glGenTextures(1, &texID);
+    if(texID == 0)
+        return INVALID_TEXTURE_ID;
+    glBindTexture(GL_TEXTURE_2D, texID);
+
+    // data/textures BC7 sidecars are single-level (DisableMipmap); match the
+    // RGBA8 path's filtering (GL_LINEAR/no-mip) and cap the mip ladder.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+
+    glCompressedTexImage2D(GL_TEXTURE_2D, 0, (GLenum)glInternalFormat,
+                           w, h, 0, (GLsizei)byteLen, blockData);
+
+    GLenum err = glGetError();
+    glBindTexture(GL_TEXTURE_2D, 0);
+    if(err != GL_NO_ERROR) {
+        printf("[TEXMGR_BC7] glCompressedTexImage2D failed name=%s %dx%d fmt=0x%x err=%s\n",
+               name ? name : "<null>", w, h, glInternalFormat, ogl_get_error_code_str(err));
+        glDeleteTextures(1, &texID);
+        return INVALID_TEXTURE_ID;
+    }
+
+    Texture tex;
+    tex.id = texID;
+    tex.w = w;
+    tex.h = h;
+    tex.fmt_ = TF_NONE;          // block-compressed; not one of the RGBA8 TexFormats
+    tex.type_ = TT_2D;
+    tex.format = (GLenum)glInternalFormat;
+    tex.has_mipmaps = false;
+
+    gosTexture* ptex = new gosTexture(tex, gos_Texture_Solid, name);
     return g_gos_renderer->addTexture(ptex);
 }
 

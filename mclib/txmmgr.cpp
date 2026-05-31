@@ -60,6 +60,8 @@
 #include <unordered_set>
 #include <chrono>   // [LIGHTBRIDGE v1] coarse per-frame populate sizing
 #include <utils/gl_utils.h>
+#include <GL/glew.h>                 // TEXMGR-COMPRESSED-UPLOAD-1: BPTC cap + GL_COMPRESSED_* enums
+#include "../RenderCore/KtxLoader.h" // TEXMGR-COMPRESSED-UPLOAD-1: BC7 .ktx2 sidecar loader
 #include "gos_postprocess.h"
 #include "gos_profiler.h"
 #include "../GameOS/gameos/gos_static_prop_batcher.h"
@@ -3368,6 +3370,98 @@ DWORD MC_TextureNode::get_gosTextureHandle (void)	//If texture is not in VidRAM,
 			}
 			else
 			{
+				// TEXMGR-COMPRESSED-UPLOAD-1: gated BC7 .ktx2 sidecar upload.
+				// Default-OFF; when the gate is set AND a same-stem .ktx2 sidecar
+				// exists on disk AND it is a stored BC7 (vkFormat 145/146) image,
+				// upload mip 0 via glCompressedTexImage2D and skip the normal
+				// gos_NewTextureFromMemory call. Any failure (no sidecar, not BC7,
+				// load fail, no BPTC support) falls through unchanged.
+				static const bool s_texmgrCompressedUpload =
+					(getenv("MC2_TEXMGR_COMPRESSED_UPLOAD") && getenv("MC2_TEXMGR_COMPRESSED_UPLOAD")[0] != '0');
+				bool uploadedCompressed = false;
+
+				if (s_texmgrCompressedUpload && nodeName && *nodeName)
+				{
+					if (!GLEW_ARB_texture_compression_bptc)
+					{
+						static bool s_warnedNoBptc = false;
+						if (!s_warnedNoBptc)
+						{
+							s_warnedNoBptc = true;
+							printf("[TEXMGR_BC7] skip: GLEW_ARB_texture_compression_bptc unsupported; compressed upload disabled\n");
+						}
+					}
+					else
+					{
+						// Derive sidecar path: replace extension with .ktx2.
+						char sidecar[1024];
+						strncpy(sidecar, nodeName, sizeof(sidecar) - 1);
+						sidecar[sizeof(sidecar) - 1] = '\0';
+						char* dot = strrchr(sidecar, '.');
+						char* slash = strrchr(sidecar, '/');
+						char* bslash = strrchr(sidecar, '\\');
+						char* lastSep = slash > bslash ? slash : bslash;
+						bool haveRoom = false;
+						if (dot && dot > lastSep)
+						{
+							// truncate at the extension dot, then append .ktx2
+							size_t base = (size_t)(dot - sidecar);
+							if (base + 6 < sizeof(sidecar)) { strcpy(sidecar + base, ".ktx2"); haveRoom = true; }
+						}
+						else
+						{
+							size_t len = strlen(sidecar);
+							if (len + 6 < sizeof(sidecar)) { strcpy(sidecar + len, ".ktx2"); haveRoom = true; }
+						}
+
+						if (haveRoom)
+						{
+							// Disk-only probe (std::fopen, NOT File/FastFile).
+							FILE* probe = std::fopen(sidecar, "rb");
+							if (!probe)
+							{
+								// No sidecar — common; quiet fall-through.
+							}
+							else
+							{
+								std::fclose(probe);
+								RenderCore::KtxImage img;
+								if (RenderCore::ktxLoadRgba8(sidecar, img) &&
+									img.isCompressed &&
+									(img.vkFormat == 145 || img.vkFormat == 146))
+								{
+									GLenum glIF = (img.vkFormat == 146)
+										? GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM
+										: GL_COMPRESSED_RGBA_BPTC_UNORM;
+									// Upload MIP 0 only (single level).
+									size_t mip0Bytes = (img.mipCount > 1 && img.mipByteOffsets.size() > 1)
+										? (size_t)img.mipByteOffsets[1]
+										: img.pixels.size();
+									DWORD h = gos_NewCompressedTexture2D(
+										(uint32_t)glIF, img.width, img.height,
+										img.pixels.data(), mip0Bytes, nodeName);
+									if (h != 0 /*INVALID_TEXTURE_ID*/ && h != 0xffffffff)
+									{
+										gosTextureHandle = h;
+										uploadedCompressed = true;
+										printf("[TEXMGR_BC7] loaded name=%s %dx%d fmt=0x%x bytes=%zu\n",
+											nodeName, img.width, img.height, (unsigned)glIF, mip0Bytes);
+									}
+									else
+									{
+										printf("[TEXMGR_BC7] upload failed name=%s; fallthrough RGBA8\n", nodeName);
+									}
+								}
+								else
+								{
+									printf("[TEXMGR_BC7] sidecar not BC7/loadable name=%s; fallthrough RGBA8\n", sidecar);
+								}
+							}
+						}
+					}
+				}
+
+				if (!uploadedCompressed)
 				{
 					gosTextureHandle = gos_NewTextureFromMemory(key,nodeName,textureBytes,originalSize,hints);
 				}
