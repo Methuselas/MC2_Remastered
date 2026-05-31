@@ -707,21 +707,22 @@ void TerrainQuad::setupTextures (void)
 	// if (legacyWaterDraw) braces).
 	const bool legacyWaterDraw = !gos_terrain_indirect::WaterFastPathOwnsArmedDraw();
 
-	// HISTORICAL NOTE: an earlier commit (9964d5a "perf: skip solid/recipe CPU work
-	// when GPU SOLID is armed") wrapped this body in
-	//   if (!gos_terrain_indirect::IsFrameSolidArmed()) { ... }
-	// on the rationale that solid triangles + recipe build are wasted when GPU SOLID
-	// handles drawing. The author noted "detail-overlay triangles are thrown away in
-	// txmmgr" — true of the OLD addTerrainTriangles overlay path, but NOT of the NEW
-	// world-space `gos_PushTerrainOverlay` → `gos_DrawTerrainOverlays` batch path,
-	// which is the live producer of cement-transition tiles, runway/road decals, and
-	// other on-terrain overlays. The gate caused those decals to vanish silently
-	// (gos_push_overlay_calls dropped to 0 on the indirect path).
-	//
-	// Reverted to unconditional execution. A future perf slice can split the body
-	// surgically: keep the recipe-cache lookup + member field assignments (which
-	// populate overlayHandle / isCement for TerrainQuad::draw to consume), gate only
-	// addTerrainTriangles + pz_emit_terrain_tris.
+	// PERF-SETUPTEXTURES-GPU-GATE-1: gate the recipe-cache lookup + member-field
+	// assignments when both GPU SOLID and GPU OVERLAY own this frame. In that state
+	// terrain.cpp skips draw() entirely, so terrainHandle/terrainDetailHandle/
+	// overlayHandle/uvData/isCement have no live consumers. addTerrainTriangles is
+	// already internally no-op via BeginLegacySolidCluster() when solid is armed;
+	// pz_emit_terrain_tris is diagnostic-only (no-op unless g_pzTrace set). The
+	// prior failed attempt (9964d5a) gated on !IsFrameSolidArmed() alone, which
+	// broke when IsFrameSolidArmed=true but IsFrameOverlayArmed=false (draw() still
+	// ran and needed overlayHandle). Correct guard requires BOTH armed.
+	// Kill-switch: MC2_SETUPTEXTURES_LEGACY_FORCE=1 restores full legacy execution.
+	static const bool s_legacyForce =
+	    (getenv("MC2_SETUPTEXTURES_LEGACY_FORCE") != nullptr);
+	const bool legacyTerrainNeeded =
+	    s_legacyForce ||
+	    !(gos_terrain_indirect::IsFrameSolidArmed() &&
+	      gos_terrain_indirect::IsFrameOverlayArmed());
 
  	if (!Terrain::terrainTextures2)
 	{
@@ -902,6 +903,7 @@ void TerrainQuad::setupTextures (void)
 		}
 		else
 		{
+			if (legacyTerrainNeeded) {
 			// 1A-alt Slice 0 follow-up — bracket the cache-fetch + residency
 			// check. Prime suspect for the missing ~8ms between Tracy outer
 			// zone and sum of (recipe + water + lighting) buckets.
@@ -951,6 +953,7 @@ void TerrainQuad::setupTextures (void)
 						(uvMode == BOTTOMRIGHT) ? "terrain_quad_cluster_a" : "terrain_quad_cluster_c",
 						__FILE__, __LINE__);
 			}
+			} // legacyTerrainNeeded
 
 			{
 				// PR2c Stage 2c — gate off legacy enqueueTerrainMineState when
