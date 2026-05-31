@@ -892,7 +892,18 @@ long WeaponBolt::update (void)
 			if (timeLeft < 0.0)
 			{
 				hitTarget = TRUE;
-				
+
+					// VFX-WEAPON-FX-RESTORE-OPUS-1: kill gosEffect here too.
+					// The primary hit path (line 622) kills gosEffect, but this
+					// timeout/secondary path did not — leaving gosEffect alive with
+					// hitTarget=TRUE causes oracle to keep emitting cards at laserPosition
+					// for the full afterHitTime duration.
+					if (gosEffect) {
+						gosEffect->Kill();
+						delete gosEffect;
+						gosEffect = NULL;
+					}
+
 				if (target)
 				{
 					Stuff::Vector3D hotSpot = target->getPositionFromHS(targetHotSpot);
@@ -901,7 +912,7 @@ long WeaponBolt::update (void)
 						if (targetHotSpot)
 							hotSpot = target->appearance->getHitNodeLeft();
 						else
-							hotSpot = target->appearance->getHitNodeRight(); 
+							hotSpot = target->appearance->getHitNodeRight();
 					}
 
 					if (hitEffect && hitEffect->IsExecuted())
@@ -1618,7 +1629,11 @@ long WeaponBolt::update (void)
 	// Batcher::Flush() clears each frame — per-frame segments alone are invisible.
 	// VFX-WEAPON-FX-RESTORE-OPUS-1: skip GPU trail when gosEffect is active —
 	// gosEffect oracle provides the original animation; dual-trail suppressed here.
-	if (gpu_trail_kind != mc2::particles::GpuTrailKind::None && !gosEffect) {
+	// VFX-WEAPON-FX-RESTORE-OPUS-1: also gate on !hitTarget — after impact gosEffect
+	// is killed (NULL) so the !gosEffect check passes, causing the GPU trail to emit
+	// a static particle at laserPosition (target mech) every frame for the bolt's
+	// afterHitTime duration, producing the persistent blue card at the impact site.
+	if (gpu_trail_kind != mc2::particles::GpuTrailKind::None && !gosEffect && !hitTarget) {
 		// Push current position into ring buffer.
 		// B2 P2 fix: use laserPosition (the integrated in-flight world position),
 		// NOT position (which tracks the launcher hotspot via getPositionFromHS).
@@ -2276,10 +2291,13 @@ void WeaponBolt::render (void)
 		
  			drawInfo.m_parentToWorld = &localResult;
 	 
-			if (!MLRVertexLimitReached)
+			// VFX-WEAPON-FX-RESTORE-OPUS-1: suppress muzzleEffect Draw when oracle ON + hitTarget.
+			// muzzleEffect renders at bolt position (= target after impact); with oracle ON
+			// it creates persistent bright cards at the impact site for the full afterHitTime.
+			if (!MLRVertexLimitReached && !(hitTarget && mc2::particles::Batcher::is_oracle_render_enabled()))
 				muzzleEffect->Draw(&drawInfo);
 		}
-		
+
 		if (hitEffect && hitTarget && hitEffect->IsExecuted())
 		{
 			Stuff::Vector3D hotSpot = *targetPosition;
@@ -2337,10 +2355,13 @@ void WeaponBolt::render (void)
 			
 			drawInfo.m_parentToWorld = &shapeOrigin;
 	 
-			if (!MLRVertexLimitReached)
+			// VFX-WEAPON-FX-RESTORE-OPUS-1: suppress missEffect Draw when oracle ON.
+			// Was invisible pre-MLR-restore (gated); now renders as persistent card.
+			// Re-enable when tuned for GPU billboard path.
+			if (!MLRVertexLimitReached && !mc2::particles::Batcher::is_oracle_render_enabled())
 				missEffect->Draw(&drawInfo);
 		}
-		
+
 		if (waterMissEffect && hitTarget && waterMissEffect->IsExecuted())
 		{
 			Stuff::Vector3D hotSpot = *targetPosition;
@@ -2358,7 +2379,8 @@ void WeaponBolt::render (void)
 			
 			drawInfo.m_parentToWorld = &shapeOrigin;
 	 
-			if (!MLRVertexLimitReached)
+			// VFX-WEAPON-FX-RESTORE-OPUS-1: suppress waterMissEffect Draw when oracle ON.
+			if (!MLRVertexLimitReached && !mc2::particles::Batcher::is_oracle_render_enabled())
 				waterMissEffect->Draw(&drawInfo);
 		}
 	}
@@ -2458,14 +2480,12 @@ static mc2::particles::GpuTrailKind gpuTrailKindFromEffectId(int32_t eid)
 // GPU trail visual parity is proven against original.
 static bool gpuTrailKindProven(mc2::particles::GpuTrailKind k)
 {
-    switch (k) {
-        // VFX-WEAPON-FX-RESTORE-OPUS-1: PpcBolt re-promoted — GPU ring-buffer trail
-        // provides the visible trail behind the bolt. gosEffect oracle (CardCloud ball)
-        // suppressed for PPC; hitEffect handles the impact visual.
-        case mc2::particles::GpuTrailKind::PpcBolt: return true;
-        // MissileSmoke stays demoted — oracle provides the original gosFX smoke cloud.
-        default: return false;
-    }
+    // VFX-WEAPON-FX-RESTORE-OPUS-1: all GPU trails demoted — original gosFX Tube
+    // effects restored via MLR swept-mesh path (same fix as missile smoke).
+    // GPU ring-buffer billboard trail produces "white square card" artifact.
+    // Re-promote only after GPU trail parity is proven visually.
+    (void)k;
+    return false;
 }
 
 //---------------------------------------------------------------------------
