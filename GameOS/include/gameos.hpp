@@ -2994,6 +2994,16 @@ DWORD __stdcall gos_NewTextureFromFile( gos_TextureFormat Format, const char* Fi
 //
 DWORD __stdcall gos_NewTextureFromMemory( gos_TextureFormat Format, const char* FileName, BYTE* pBitmap, DWORD Size, DWORD Hints=0, gos_RebuildFunction pFunc=0, void *pInstance=0 );
 
+//
+// TEXMGR-COMPRESSED-UPLOAD-1: create a single-level block-compressed (BC7) 2D
+// texture from a pre-loaded compressed block stream and return a texture handle.
+// glInternalFormat is a GL compressed internal format (e.g.
+// GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM). Uploaded via glCompressedTexImage2D,
+// single level, GL_LINEAR filtering (no mips). Returns INVALID_TEXTURE_ID on
+// failure so callers can fall back to the uncompressed path.
+//
+DWORD __stdcall gos_NewCompressedTexture2D( uint32_t glInternalFormat, int Width, int Height, const uint8_t* BlockData, size_t ByteLen, const char* Name );
+
 #define RECT_TEX(width,height) (((height)<<16)|(width))
 
 //

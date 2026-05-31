@@ -50,16 +50,21 @@ def _cook_one(src_path: Path, dst_path: Path, preset: str, txm_size: int) -> tup
 
 
 def _cook_one_bc7(src_path: Path, dst_path: Path, ktx_tool: str,
-                  txm_size: int) -> tuple[int, int]:
+                  txm_size: int, gen_mips: bool = True) -> tuple[int, int]:
     """Cook a single file to stored BC7 KTX2 via the KTX-Software CLI.
 
-    Two-step pipeline (produces supercompression=0, full BC7 mip chain):
+    Two-step pipeline (produces supercompression=0, BC7 mip chain):
       1. ktx create --encode uastc --format R8G8B8A8_SRGB --assign-tf srgb
-                    --generate-mipmap  <png>  <tmp_uastc.ktx2>
+                    [--generate-mipmap]  <png>  <tmp_uastc.ktx2>
       2. ktx transcode --target bc7  <tmp_uastc.ktx2>  <out.ktx2>
 
     Source is decoded by Pillow (handles .tga/.txm via mc2texcook) to a temp PNG
     so the CLI always sees a plain RGBA PNG. Returns (src_w, src_h).
+
+    gen_mips=False (--no-mips) cooks a SINGLE-LEVEL BC7 image: the texmgr
+    data/textures path (MC2_TEXMGR_COMPRESSED_UPLOAD) loads these with
+    gosHint_DisableMipmap and uploads MIP 0 only, so a mip chain is wasted.
+    The static-prop array path keeps mips (default), so leave gen_mips=True there.
     """
     img = mc2texcook._load_image(src_path, txm_size=txm_size)
     src_w, src_h = img.size
@@ -72,10 +77,14 @@ def _cook_one_bc7(src_path: Path, dst_path: Path, ktx_tool: str,
         # Force RGBA so BC7 always has an alpha channel (matches the RGBA8 path).
         img.convert("RGBA").save(png_path, format="PNG")
 
+        create_step = [ktx_tool, "create", "--encode", "uastc",
+                       "--format", "R8G8B8A8_SRGB", "--assign-tf", "srgb"]
+        if gen_mips:
+            create_step.append("--generate-mipmap")
+        create_step += [str(png_path), str(uastc_path)]
+
         for step in (
-            [ktx_tool, "create", "--encode", "uastc",
-             "--format", "R8G8B8A8_SRGB", "--assign-tf", "srgb",
-             "--generate-mipmap", str(png_path), str(uastc_path)],
+            create_step,
             [ktx_tool, "transcode", "--target", "bc7",
              str(uastc_path), str(dst_path)],
         ):
@@ -116,6 +125,11 @@ def main() -> int:
                     help="Cook to stored BC7 KTX2 via the KTX-Software CLI "
                          "(2-step uastc encode -> bc7 transcode) instead of "
                          "uncompressed RGBA8. albedo/sRGB pipeline.")
+    ap.add_argument("--no-mips", action="store_true",
+                    help="With --bc7: omit --generate-mipmap so the BC7 cook is "
+                         "SINGLE-LEVEL (mip 0 only). Use for texmgr data/textures "
+                         "sidecars (MC2_TEXMGR_COMPRESSED_UPLOAD) which load with "
+                         "DisableMipmap. Default --bc7 keeps mips (static-prop set).")
     ap.add_argument("--ktx-tool", default=_DEFAULT_KTX_TOOL,
                     help=f"Path to the KTX-Software ktx CLI (default: {_DEFAULT_KTX_TOOL}). "
                          "Only used with --bc7.")
@@ -171,7 +185,8 @@ def main() -> int:
         else:
             try:
                 if args.bc7:
-                    w, h = _cook_one_bc7(src_path, dst_path, args.ktx_tool, args.size)
+                    w, h = _cook_one_bc7(src_path, dst_path, args.ktx_tool, args.size,
+                                         gen_mips=not args.no_mips)
                 else:
                     w, h = _cook_one(src_path, dst_path, args.preset, args.size)
                 key = f"{w}x{h}"

@@ -181,7 +181,12 @@ enum class RendererFeature : int {
     // arrays through the existing static-prop KTX path. Default-OFF; requires
     // MC2_MATERIAL_KTX. All-or-nothing + uniform-dim per array (see batcher).
     StaticPropBc7            = 39,  // MC2_STATICPROP_BC7
-    COUNT                    = 40,
+    // TEXMGR-COMPRESSED-UPLOAD-1: load a BC7 .ktx2 sidecar for a data/textures
+    // texture (mech/vehicle/building/prop/UI/decal — via MC_TextureManager) and
+    // upload it with glCompressedTexImage2D, single-level. Default-OFF; requires
+    // GLEW_ARB_texture_compression_bptc. NOT static-prop arrays / terrain splat.
+    TexmgrCompressedUpload   = 40,  // MC2_TEXMGR_COMPRESSED_UPLOAD
+    COUNT                    = 41,
 };
 
 // ---------------------------------------------------------------------------
@@ -510,6 +515,14 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         EnvVarKind::Feature,
         false,
         "COMPRESSION-BC7-STATICPROP-1: upload BC7-compressed KTX2 static-prop texture arrays through the existing static-prop KTX path (gos_static_prop_batcher.cpp), using immutable glTexStorage3D + glCompressedTexSubImage3D. Default-OFF; =1 enables. Requires MC2_MATERIAL_KTX=1. ALL-OR-NOTHING per GL array (one internalformat): a BC7 array is built only when EVERY unique's .ktx2 sidecar loads, is stored BC7 (vkFormat 145/146), matches its GL dims, AND the group is uniform-dim (all layers == maxW x maxH) -- otherwise the group falls back to the existing RGBA8 path unchanged. Uniform-dim is required because compressed sub-region uploads at small mips would violate 4x4 block alignment. All mip levels come from the cooked KTX (no glGenerateMipmap for compressed). Static-prop albedo is always sRGB, so the SRGB BPTC internalformat is used for both 145 and 146. When OFF (or any condition unmet), behavior is byte-identical to the RGBA8 KTX/legacy path. Static props ONLY; does not touch terrain/mech/vehicle/UI/burnin or MC_TextureManager."
+    },
+    // TexmgrCompressedUpload
+    {
+        "MC2_FEATURE_TEXMGR_COMPRESSED_UPLOAD",
+        "MC2_TEXMGR_COMPRESSED_UPLOAD",
+        EnvVarKind::Feature,
+        false,
+        "TEXMGR-COMPRESSED-UPLOAD-1: teach MC_TextureManager to load a BC7 .ktx2 sidecar (same path/stem as the source data/textures texture, extension -> .ktx2) and upload it via glCompressedTexImage2D in MC_TextureNode::get_gosTextureHandle (mclib/txmmgr.cpp), through the new gos_NewCompressedTexture2D GameOS creator. Default-OFF; =1 enables. Requires GLEW_ARB_texture_compression_bptc (falls through + logs once if absent). This is the path for mech/vehicle/building/prop/UI/decal albedo textures — NOT static-prop texture arrays (MC2_STATICPROP_BC7) and NOT terrain splatting. All such textures are albedo/color (key in {Solid,Alpha,Keyed}) so vkFormat 146->GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM and 145->GL_COMPRESSED_RGBA_BPTC_UNORM. These loads use gosHint_DisableMipmap (single-level, GL_LINEAR/no-mip), so the sidecar is uploaded MIP 0 ONLY (byteLen = mipByteOffsets[1] if >1 mip, else pixels.size()); no glGenerateMipmap. Disk-only probe (std::fopen, not File/FastFile). On any failure (no sidecar, not BC7, load/upload fail, no BPTC support) the hook falls through to gos_NewTextureFromMemory unchanged. When OFF, the hook is fully gated (the env check short-circuits before any sidecar probe) -> byte-identical to the legacy RGBA8 path. The new gos_NewCompressedTexture2D mirrors gos_NewTextureFromMemory's gosTexture+addTexture lifecycle (handle integrates with textureList_/bind/destroy)."
     },
 };
 
