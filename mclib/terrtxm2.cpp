@@ -51,6 +51,8 @@
 
 #include"platform_io.h"
 #include<sys/stat.h>
+#include<zlib.h>		// BURNIN-DISK-COMPRESS: uncompress() for .burnin.z sidecar
+#include<cstdio>
 
 #define COLOR_MAP_HEAP_SIZE				419430400
 #define COLOR_TXM_HEAP_SIZE				16384
@@ -60,6 +62,113 @@
 bool forceShadowBurnIn = false;
 
 void* DecodeJPG( const char* FileName, BYTE* Data, DWORD DataSize, DWORD* TextureWidth, DWORD* TextureHeight, bool TextureLoad, void *pDestSurf );
+
+//---------------------------------------------------------------------------
+// BURNIN-DISK-COMPRESS
+//
+// The 35 terrain burn-in colormaps (<name>.burnin.tga, 5120x5120 RGBA,
+// ~108MB each) can be stored zlib-compressed as a <name>.burnin.z sidecar:
+//   bytes [0..7]  : little-endian uint64 uncompressedSize (== original .tga size)
+//   bytes [8..]   : zlib.compress(raw .tga file bytes, level 9)
+// On load we inflate back to the EXACT original .tga file bytes and feed them
+// into the existing TGA parser, so the resulting ColorMap is byte-identical to
+// loading the .tga directly (fully lossless). If the .z sidecar is absent, the
+// inflate fails, the size mismatches, or MC2_BURNIN_NO_Z is set in the
+// environment, the caller falls through to the unchanged File::open(.tga) path.
+//
+// Returns a malloc'd buffer of the inflated TGA bytes (caller frees with
+// free()) on success and sets *outSize; returns NULL on any miss/error.
+//---------------------------------------------------------------------------
+static MemoryPtr tryLoadBurninZ(const char* texturePath, const char* fileName, long* outSize)
+{
+	if (outSize) *outSize = 0;
+
+	// Kill-switch: prefer the .tga path entirely.
+	if (getenv("MC2_BURNIN_NO_Z") != NULL)
+		return NULL;
+
+	char zName[1024];
+	sprintf(zName, "%s.burnin", fileName);
+	FullPathFileName burnInZ;
+	burnInZ.init(texturePath, zName, ".z");
+
+	FILE* fp = std::fopen((const char*)burnInZ, "rb");
+	if (!fp)
+		return NULL; // sidecar absent -> caller uses .tga
+
+	// Determine on-disk size of the .z sidecar.
+	std::fseek(fp, 0, SEEK_END);
+	long zFileSize = std::ftell(fp);
+	std::fseek(fp, 0, SEEK_SET);
+	if (zFileSize <= 8)
+	{
+		std::fclose(fp);
+		printf("[BURNIN_Z] fallback name=%s reason=truncated-sidecar (%ld bytes)\n", fileName, zFileSize);
+		return NULL;
+	}
+
+	// 8-byte little-endian uint64 header = original uncompressed .tga size.
+	unsigned char hdr[8];
+	if (std::fread(hdr, 1, 8, fp) != 8)
+	{
+		std::fclose(fp);
+		printf("[BURNIN_Z] fallback name=%s reason=header-read-failed\n", fileName);
+		return NULL;
+	}
+	unsigned long long uncompressedSize = 0;
+	for (int i = 0; i < 8; ++i)
+		uncompressedSize |= (unsigned long long)hdr[i] << (8 * i);
+
+	if (uncompressedSize == 0 || uncompressedSize > 0x40000000ULL) // >1GB sanity cap
+	{
+		std::fclose(fp);
+		printf("[BURNIN_Z] fallback name=%s reason=bad-uncompressed-size=%llu\n", fileName, uncompressedSize);
+		return NULL;
+	}
+
+	long compressedSize = zFileSize - 8;
+	unsigned char* compBuf = (unsigned char*)malloc((size_t)compressedSize);
+	if (!compBuf)
+	{
+		std::fclose(fp);
+		printf("[BURNIN_Z] fallback name=%s reason=comp-alloc-failed\n", fileName);
+		return NULL;
+	}
+	if (std::fread(compBuf, 1, (size_t)compressedSize, fp) != (size_t)compressedSize)
+	{
+		free(compBuf);
+		std::fclose(fp);
+		printf("[BURNIN_Z] fallback name=%s reason=comp-read-failed\n", fileName);
+		return NULL;
+	}
+	std::fclose(fp);
+
+	MemoryPtr tgaBytes = (MemoryPtr)malloc((size_t)uncompressedSize);
+	if (!tgaBytes)
+	{
+		free(compBuf);
+		printf("[BURNIN_Z] fallback name=%s reason=inflate-alloc-failed (%llu bytes)\n", fileName, uncompressedSize);
+		return NULL;
+	}
+
+	uLongf destLen = (uLongf)uncompressedSize;
+	int zr = uncompress((Bytef*)tgaBytes, &destLen, (const Bytef*)compBuf, (uLong)compressedSize);
+	free(compBuf);
+
+	if (zr != Z_OK || destLen != (uLongf)uncompressedSize)
+	{
+		free(tgaBytes);
+		printf("[BURNIN_Z] fallback name=%s reason=inflate-failed (zr=%d destLen=%lu expected=%llu)\n",
+			fileName, zr, (unsigned long)destLen, uncompressedSize);
+		return NULL;
+	}
+
+	printf("[BURNIN_Z] loaded name=%s inflated=%zu bytes (from %zu compressed)\n",
+		fileName, (size_t)uncompressedSize, (size_t)compressedSize);
+
+	if (outSize) *outSize = (long)uncompressedSize;
+	return tgaBytes;
+}
 
 DWORD			TerrainColorMap::terrainTypeIDs[ TOTAL_COLORMAP_TYPES ] = 
 {
@@ -1297,38 +1406,55 @@ void TerrainColorMap::resetBaseTexture (const char *fileName)
 	burnInName.init(texturePath,newName,".tga");
 
 	bool burnedIn = false;
-	File colorMapFile;
-	long result = colorMapFile.open(burnInName);
-	if (result != NO_ERR)
+	MemoryPtr tgaFileImage = NULL;
+
+	// BURNIN-DISK-COMPRESS: try the compressed .burnin.z sidecar first
+	// (lossless; inflated bytes == original .burnin.tga).
 	{
-		result = colorMapFile.open(colorMapName);
+		long zTgaSize = 0;
+		MemoryPtr zTga = tryLoadBurninZ(texturePath, fileName, &zTgaSize);
+		if (zTga != NULL)
+		{
+			tgaFileImage = zTga;
+			burnedIn = true;
+		}
+	}
+
+	if (tgaFileImage == NULL)
+	{
+		File colorMapFile;
+		long result = colorMapFile.open(burnInName);
 		if (result != NO_ERR)
-			STOP(("Unable to open Terrain Color Map %s",(const char*)colorMapName));
+		{
+			result = colorMapFile.open(colorMapName);
+			if (result != NO_ERR)
+				STOP(("Unable to open Terrain Color Map %s",(const char*)colorMapName));
+		}
+		else
+		{
+			burnedIn = true;
+		}
+
+		tgaFileImage = (MemoryPtr)malloc(colorMapFile.fileSize());
+		gosASSERT(tgaFileImage != NULL);
+
+		colorMapFile.read(tgaFileImage,colorMapFile.fileSize());
 	}
-	else
-	{
-		burnedIn = true;
-	}
-			
-	MemoryPtr tgaFileImage = (MemoryPtr)malloc(colorMapFile.fileSize());
-	gosASSERT(tgaFileImage != NULL);
-		
-	colorMapFile.read(tgaFileImage,colorMapFile.fileSize());
-		
+
 	TGAFileHeader colorMapInfo;
 	memcpy(&colorMapInfo,tgaFileImage,sizeof(TGAFileHeader));
-		
+
 	if (colorMapInfo.image_type == UNC_TRUE)
 	{
 		MemoryPtr loadBuffer = tgaFileImage + sizeof(TGAFileHeader);
 		if (colorMapInfo.width != colorMapInfo.height)
 			STOP(("Color Map is not a perfect Square"));
-			
+
 		//-----------------------------------------------------------------
 		// Check if 24 or 32 bit.  If 24, do the necessary stuff to it.
 		ColorMap = (MemoryPtr)colorMapRAMHeap->Malloc(colorMapInfo.width * colorMapInfo.width * sizeof(DWORD));
 		gosASSERT(ColorMap != NULL);
-			
+
 		if (colorMapInfo.pixel_depth == 24)
 		{
 			//24-Bit color means we must add in an opaque alpha to each 24 bits of color data.
@@ -1339,15 +1465,15 @@ void TerrainColorMap::resetBaseTexture (const char *fileName)
 				*cMap = *lMap;		//Red
 				cMap++;
 				lMap++;
-				
+
 				*cMap = *lMap;		//Green
 				cMap++;
 				lMap++;
-				
+
 				*cMap = *lMap;		//Blue
 				cMap++;
 				lMap++;
-				
+
 				*cMap = 0xff;		 //Alpha
 				cMap++;
 			}
@@ -1357,14 +1483,14 @@ void TerrainColorMap::resetBaseTexture (const char *fileName)
 			//32-bit color means all we have to do is copy the buffer.
 			memcpy(ColorMap,loadBuffer,colorMapInfo.width * colorMapInfo.width * sizeof(DWORD));
 		}
-		
+
 		free(tgaFileImage);
 		tgaFileImage = NULL;
-		
+
 		numTextures = colorMapInfo.width / COLOR_MAP_TEXTURE_SIZE;
 		numTexturesAcross = numTextures;
 		fractionPerTexture = 1.0f / numTextures;
-		
+
 		float checkNum = float(colorMapInfo.width) / float(COLOR_MAP_TEXTURE_SIZE);
 		if (checkNum != float(numTextures))
 			STOP(("Color Map is %d pixels wide which is not even divisible by %d",colorMapInfo.width,COLOR_MAP_TEXTURE_SIZE));
@@ -1777,21 +1903,36 @@ long TerrainColorMap::init (char *fileName)
 		else
 		{
 			bool burnedIn = false;
-			File colorMapFile;
-			result = colorMapFile.open(burnInName);
-			if (result != NO_ERR)
+			MemoryPtr tgaFileImage = NULL;
+
+			// BURNIN-DISK-COMPRESS: try the compressed .burnin.z sidecar first.
+			// On success the inflated bytes ARE the original .burnin.tga file,
+			// so the downstream TGA parse produces a byte-identical ColorMap.
 			{
-				result = colorMapFile.open(colorMapName);
-				if (result != NO_ERR)
-					STOP(("Unable to open Terrain Color Map %s", (const char*)colorMapName));
-			}
-			else
-			{
-				burnedIn = true;
+				long zTgaSize = 0;
+				MemoryPtr zTga = tryLoadBurninZ(texturePath, fileName, &zTgaSize);
+				if (zTga != NULL)
+				{
+					tgaFileImage = zTga;
+					burnedIn = true;
+				}
 			}
 
-			MemoryPtr tgaFileImage;
+			if (tgaFileImage == NULL)
 			{
+				File colorMapFile;
+				result = colorMapFile.open(burnInName);
+				if (result != NO_ERR)
+				{
+					result = colorMapFile.open(colorMapName);
+					if (result != NO_ERR)
+						STOP(("Unable to open Terrain Color Map %s", (const char*)colorMapName));
+				}
+				else
+				{
+					burnedIn = true;
+				}
+
 				ZoneScopedN("TerrainColorMap::init colorMap read");
 				tgaFileImage = (MemoryPtr)malloc(colorMapFile.fileSize());
 				gosASSERT(tgaFileImage != NULL);
