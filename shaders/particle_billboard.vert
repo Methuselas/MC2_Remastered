@@ -48,6 +48,14 @@ uniform vec2 u_uvOffset;
 uniform vec2 u_uvSize;
 uniform uint u_atlasColumns;  // VFX-FLIPBOOK-ASSET-TABLE-1: 0/1=static, >1=animated
 
+// VFX-SHADER-AGE-FADE-PARITY-1: per-particle soft death fade from normalized age.
+// Oracle particles have p.lifetime > 0.5 (normalized sentinel 1.0f, set by the
+// oracle harvest path in VFX-AGE-LIFETIME-UPLOAD-1). Non-oracle: p.lifetime==0.0.
+// u_vfxAgeFade=0.0 (default) → mix factor 0 → v_color.a unchanged → byte-identical.
+// u_vfxAgeFade=1.0 → full age-driven fade: the final 30% of life smoothly fades to 0.
+// Blend control (0..1) lets the user dial between CPU-uploaded alpha and GPU age fade.
+uniform float u_vfxAgeFade;
+
 // Atlas UVs for the four billboard corners (normalized [0,1] within the sub-rect).
 // The final UV is: u_uvOffset + kCornerUv[i] * u_uvSize.
 const vec2 kCornerUv[4] = vec2[](
@@ -68,6 +76,7 @@ out vec2 v_uv;
 out vec4 v_color;
 flat out uint v_kind;
 flat out uint v_is_head;
+flat out float v_age;  // VFX-SHADER-AGE-FADE-PARITY-1: normalized [0,1] age for FS debug view
 
 void main() {
     uint particleId = uint(gl_VertexID) / 6u;
@@ -122,4 +131,13 @@ void main() {
     v_color   = p.color;
     v_kind    = (p.kind_flags >> 4u) & 0xFu;
     v_is_head = p.kind_flags & 1u;
+    v_age     = p.age;
+    // VFX-SHADER-AGE-FADE-PARITY-1: soft death fade from normalized age.
+    // p.lifetime > 0.5 detects oracle particles (normalized sentinel = 1.0f).
+    // Non-oracle particles have p.lifetime == 0.0 → condition false → byte-identical.
+    // u_vfxAgeFade=0 (default) → mix resolves to 1.0 → v_color.a unchanged.
+    if (u_vfxAgeFade > 0.0 && p.lifetime > 0.5) {
+        float ageFade = clamp(1.0 - smoothstep(0.7, 1.0, p.age), 0.0, 1.0);
+        v_color.a *= mix(1.0, ageFade, u_vfxAgeFade);
+    }
 }

@@ -25,6 +25,9 @@ uniform sampler2D uAtlas;
 //   2 = Alpha        (final alpha as grayscale)
 //   3 = ParticleKind (distinct color per kind_flags kind)
 //   4 = Overdraw     (constant additive proxy for blend buildup)
+//   5 = Age          (heat-map: blue=newborn, green=mid-life, red=dying)
+//                    VFX-SHADER-AGE-FADE-PARITY-1: confirms oracle age upload
+//                    flows through VS→FS normalized [0,1]. Set MC2_VFX_DEBUG_MODE=5.
 uniform int u_debugMode;
 
 // VFX-TUNING-UI-1: user intensity scales, uploaded by gos_particle_bridge.
@@ -66,6 +69,7 @@ in vec2 v_uv;
 in vec4 v_color;
 flat in uint v_kind;
 flat in uint v_is_head;
+flat in float v_age;  // VFX-SHADER-AGE-FADE-PARITY-1: normalized [0,1] age from VS
 
 out vec4 outColor;
 
@@ -97,6 +101,12 @@ void main() {
         // Overdraw proxy: each fragment contributes a small constant so blend
         // accumulation reveals overdraw hot-spots.
         outColor = vec4(0.15, 0.0, 0.0, 0.15);
+    } else if (u_debugMode == 5) {
+        // Age heat-map: blue=newborn (age~0.0), green=mid-life, red=dying (age~1.0).
+        // VFX-SHADER-AGE-FADE-PARITY-1: confirms oracle age upload flows through
+        // VS->FS correctly normalized [0,1]. Oracle particles show a gradient;
+        // non-oracle particles (age==0) show solid blue. Set MC2_VFX_DEBUG_MODE=5.
+        outColor = vec4(v_age, 1.0 - abs(v_age * 2.0 - 1.0), 1.0 - v_age, finalColor.a);
     } else {
         // 0 = Final (default, byte-identical to pre-slice output).
         outColor = finalColor;

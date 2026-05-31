@@ -63,6 +63,13 @@
           "name": "u_atlasColumns",
           "offset": 112,
           "type": "uint"
+        },
+        {
+          "array_stride": null,
+          "matrix_stride": null,
+          "name": "u_vfxAgeFade",
+          "offset": 116,
+          "type": "float"
         }
       ],
       "name": "gl_DefaultUniformBlock"

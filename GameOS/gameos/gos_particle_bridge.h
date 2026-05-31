@@ -38,7 +38,8 @@ extern "C" void gos_ClearActiveCamera(void);
 
 /* VFX-DEBUG-VIEWS-1 / VFX-TUNING-UI-1: read-only debug-mode + runtime
  * intensity scales for the Graphics Options "VFX Tuning" section. All scales
- * default 1.0 (byte-identical no-op), clamped 0..8; debug mode 0..4. Look-only:
+ * default 1.0 (byte-identical no-op), clamped 0..8; debug mode 0..5
+ * (5=Age heatmap, added by VFX-SHADER-AGE-FADE-PARITY-1). Look-only:
  * no emission/lifetime/sorting/timing effect. */
 extern "C" int   gos_vfx_getDebugMode(void);
 extern "C" void  gos_vfx_setDebugMode(int mode);
@@ -48,6 +49,10 @@ extern "C" float gos_vfx_getAlphaScale(void);
 extern "C" void  gos_vfx_setBrightness(float v);
 extern "C" void  gos_vfx_setAdditiveBrightness(float v);
 extern "C" void  gos_vfx_setAlphaScale(float v);
+// VFX-SHADER-AGE-FADE-PARITY-1: age-driven soft death fade (0.0=OFF, 1.0=full).
+// Oracle-only (p.lifetime sentinel). Default 0.0 = byte-identical.
+extern "C" float gos_vfx_getAgeFade(void);
+extern "C" void  gos_vfx_setAgeFade(float v);
 // VFX-SOFT-PARTICLES-MVP-1: depth-fade enable + world-unit fade band.
 extern "C" int   gos_vfx_getSoftEnabled(void);
 extern "C" void  gos_vfx_setSoftEnabled(int e);
