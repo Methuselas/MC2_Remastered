@@ -21,10 +21,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
+import tempfile
 import time
 import traceback
 from pathlib import Path
+
+# Default portable KTX-Software CLI (KTX-Software 4.4.2) for the --bc7 path.
+_DEFAULT_KTX_TOOL = r"A:/Games/mc2-tools/ktx/ktx.exe"
 
 # --- Wire in the single-file cook tool (sibling module) ---------------------
 _HERE = Path(__file__).resolve().parent
@@ -41,6 +46,45 @@ def _cook_one(src_path: Path, dst_path: Path, preset: str, txm_size: int) -> tup
     mips = mc2texcook._generate_mips(rgba)
     dst_path.parent.mkdir(parents=True, exist_ok=True)
     mc2texcook.write_ktx2(dst_path, mips, vk_format, dfd)
+    return src_w, src_h
+
+
+def _cook_one_bc7(src_path: Path, dst_path: Path, ktx_tool: str,
+                  txm_size: int) -> tuple[int, int]:
+    """Cook a single file to stored BC7 KTX2 via the KTX-Software CLI.
+
+    Two-step pipeline (produces supercompression=0, full BC7 mip chain):
+      1. ktx create --encode uastc --format R8G8B8A8_SRGB --assign-tf srgb
+                    --generate-mipmap  <png>  <tmp_uastc.ktx2>
+      2. ktx transcode --target bc7  <tmp_uastc.ktx2>  <out.ktx2>
+
+    Source is decoded by Pillow (handles .tga/.txm via mc2texcook) to a temp PNG
+    so the CLI always sees a plain RGBA PNG. Returns (src_w, src_h).
+    """
+    img = mc2texcook._load_image(src_path, txm_size=txm_size)
+    src_w, src_h = img.size
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        png_path = tdp / "src.png"
+        uastc_path = tdp / "uastc.ktx2"
+        # Force RGBA so BC7 always has an alpha channel (matches the RGBA8 path).
+        img.convert("RGBA").save(png_path, format="PNG")
+
+        for step in (
+            [ktx_tool, "create", "--encode", "uastc",
+             "--format", "R8G8B8A8_SRGB", "--assign-tf", "srgb",
+             "--generate-mipmap", str(png_path), str(uastc_path)],
+            [ktx_tool, "transcode", "--target", "bc7",
+             str(uastc_path), str(dst_path)],
+        ):
+            r = subprocess.run(step, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise RuntimeError(
+                    f"ktx step failed ({step[1]}): rc={r.returncode} "
+                    f"{(r.stderr or r.stdout).strip()[:300]}")
+
     return src_w, src_h
 
 
@@ -68,7 +112,19 @@ def main() -> int:
                     help="For .txm input: resize decoded 64x64 to NxN before cooking (0=native)")
     ap.add_argument("--manifest", type=Path, default=None,
                     help="Optional JSON summary output path")
+    ap.add_argument("--bc7", action="store_true",
+                    help="Cook to stored BC7 KTX2 via the KTX-Software CLI "
+                         "(2-step uastc encode -> bc7 transcode) instead of "
+                         "uncompressed RGBA8. albedo/sRGB pipeline.")
+    ap.add_argument("--ktx-tool", default=_DEFAULT_KTX_TOOL,
+                    help=f"Path to the KTX-Software ktx CLI (default: {_DEFAULT_KTX_TOOL}). "
+                         "Only used with --bc7.")
     args = ap.parse_args()
+
+    if args.bc7 and not Path(args.ktx_tool).is_file():
+        print(f"ERROR: --bc7 requires the ktx CLI; not found: {args.ktx_tool}",
+              file=sys.stderr)
+        return 1
 
     src_dir: Path = args.src.resolve()
     dst_dir: Path = args.dst.resolve()
@@ -96,7 +152,8 @@ def main() -> int:
     print(f"batch_cook: src={src_dir}")
     print(f"            dst={dst_dir}")
     print(f"            preset={args.preset} ext={ext} recursive={args.recursive} "
-          f"skip_existing={args.skip_existing} total_matched={total}")
+          f"skip_existing={args.skip_existing} total_matched={total} "
+          f"mode={'bc7' if args.bc7 else 'rgba8'}")
 
     cooked = 0
     skipped = 0
@@ -113,7 +170,10 @@ def main() -> int:
             skipped += 1
         else:
             try:
-                w, h = _cook_one(src_path, dst_path, args.preset, args.size)
+                if args.bc7:
+                    w, h = _cook_one_bc7(src_path, dst_path, args.ktx_tool, args.size)
+                else:
+                    w, h = _cook_one(src_path, dst_path, args.preset, args.size)
                 key = f"{w}x{h}"
                 dim_hist[key] = dim_hist.get(key, 0) + 1
                 cooked += 1

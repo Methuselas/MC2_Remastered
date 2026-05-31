@@ -565,6 +565,12 @@ static int s_staticPropDebugMaterialMode = []() {
 }();
 static bool s_materialKtxEnabled = (std::getenv("MC2_MATERIAL_KTX") != nullptr &&
                                      std::getenv("MC2_MATERIAL_KTX")[0] != '0');   // MC2_MATERIAL_KTX=1
+// COMPRESSION-BC7-STATICPROP-1: gate for BC7-compressed KTX2 static-prop arrays.
+// Default-OFF; effective only when s_materialKtxEnabled is also true. When the
+// per-group BC7 conditions (all-or-nothing + uniform-dim) are not met, the group
+// falls back to the existing RGBA8 path → byte-identical to gate-OFF.
+static bool s_staticPropBc7Enabled = (std::getenv("MC2_STATICPROP_BC7") != nullptr &&
+                                      std::getenv("MC2_STATICPROP_BC7")[0] != '0'); // MC2_STATICPROP_BC7=1
 // Tracks whether finalizeGeometry() produced a correctly-sized sidecar.
 // Reset to false at the start of every finalizeGeometry() call; set to true
 // only after the sidecar loop completes with size == emitted count.
@@ -588,6 +594,35 @@ static GLuint                               s_materialGpuSsbo = 0;
 
 GLuint s_texArrayOff               = 0;  // alpha-OFF group GL_TEXTURE_2D_ARRAY
 GLuint s_texArrayOn                = 0;  // alpha-ON  group GL_TEXTURE_2D_ARRAY
+
+// COMPRESSION-BC7-STATICPROP-2 — bucketed static-prop arrays (gate ON only).
+// When MC2_STATICPROP_BC7=1 the build splits each alpha group into one
+// GL_TEXTURE_2D_ARRAY per (group,width,height) "bucket": uniform-dim by
+// construction so a bucket can be BC7-compressed (all layers BC7) or RGBA8
+// independently. The gate-OFF path is UNTOUCHED and continues to use the two
+// named handles above. These vectors stay empty when the gate is OFF.
+//
+//   s_bucketArrays[b]      = GL_TEXTURE_2D_ARRAY handle for bucket b
+//   s_bucketInfo[b]        = {group,w,h,layerCount,isBc7} for logging/inspection
+//   s_packetBucketIndex[g] = global bucket index for global packet g (-1 = none)
+//   s_slotBucketIndex[s]   = bucket index for sorted draw slot s (gate ON only)
+//   s_bucketCmdCount[b]    = number of contiguous draw cmds (sorted slots) in b
+//
+// texArrayLayer remains BUCKET-RELATIVE (layer within the bound bucket array) —
+// identical semantics to the old group-relative layer, so NO shader/ABI change.
+struct StaticPropBucketInfo {
+    uint8_t  group;       // 0=alpha-OFF, 1=alpha-ON (alpha render order preserved)
+    uint16_t w;
+    uint16_t h;
+    uint32_t layerCount;
+    bool     isBc7;
+    GLuint   glArray;
+};
+std::vector<GLuint>               s_bucketArrays;       // owns GL handles (delete all on teardown)
+std::vector<StaticPropBucketInfo> s_bucketInfo;
+std::vector<int32_t>              s_packetBucketIndex;  // per global packet; -1 if unassigned
+std::vector<uint8_t>              s_slotBucketIndex;    // per sorted draw slot
+std::vector<uint32_t>             s_bucketCmdCount;     // per bucket, in sorted-slot order
 GLuint s_permutationSsbo           = 0;  // sortedSlot[typeID] mapping (binding 15)
 GLuint s_staticPropProgramCoalesce = 0;  // coalesce variant (Step 7.5)
 
@@ -784,9 +819,24 @@ static void allocPermutationSsboAsIdentity(uint32_t typeCount) {
 // logs a different "(forced)" reason string before invoking the
 // rollback) keeps logging-vs-state-change ordering symmetric with the
 // natural failure path.
+// COMPRESSION-BC7-STATICPROP-2 — release all bucketed arrays + reset the
+// bucket bookkeeping vectors. No-op (vectors empty) when the gate is OFF, so
+// gate-OFF teardown is byte-identical.
+static void staticPropReleaseBuckets() {
+    for (GLuint a : s_bucketArrays) {
+        if (a) glDeleteTextures(1, &a);
+    }
+    s_bucketArrays.clear();
+    s_bucketInfo.clear();
+    s_packetBucketIndex.clear();
+    s_slotBucketIndex.clear();
+    s_bucketCmdCount.clear();
+}
+
 static void coalesceRollbackTexBuild(std::vector<DWORD>& tempPins) {
     if (s_texArrayOff) { glDeleteTextures(1, &s_texArrayOff); s_texArrayOff = 0; }
     if (s_texArrayOn)  { glDeleteTextures(1, &s_texArrayOn);  s_texArrayOn  = 0; }
+    staticPropReleaseBuckets();
     if (mcTextureManager) {
         for (DWORD nodeIdx : tempPins) {
             mcTextureManager->unpinNode(nodeIdx);
@@ -1590,6 +1640,7 @@ void GpuStaticPropBatcher::onMapUnload() {
     // 4.4 — delete remaining coalesce GL resources (only if non-zero).
     if (s_texArrayOff)     { glDeleteTextures(1, &s_texArrayOff);     s_texArrayOff     = 0; }
     if (s_texArrayOn)      { glDeleteTextures(1, &s_texArrayOn);      s_texArrayOn      = 0; }
+    staticPropReleaseBuckets();  // COMPRESSION-BC7-STATICPROP-2 (no-op when gate OFF)
     if (s_perDrawSsbo)      { glDeleteBuffers(1,  &s_perDrawSsbo);      s_perDrawSsbo      = 0; }
     if (s_permutationSsbo)  { glDeleteBuffers(1,  &s_permutationSsbo);  s_permutationSsbo  = 0; }
     if (s_cmdToBucketSsbo)  { glDeleteBuffers(1,  &s_cmdToBucketSsbo);  s_cmdToBucketSsbo  = 0; }
@@ -2267,6 +2318,181 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         DWORD  nodeIdx;   // MC_TextureManager node index for KTX2 sidecar lookup
     };
 
+    // COMPRESSION-BC7-STATICPROP-2 — bucket bookkeeping is rebuilt every
+    // finalizeGeometry() under the gate. Release any prior arrays + size the
+    // per-packet bucket index now (parallel to layerForPacket). Gate-OFF leaves
+    // all of this empty (and untouched below), preserving byte-identical output.
+    staticPropReleaseBuckets();
+    if (s_staticPropBc7Enabled) {
+        s_packetBucketIndex.assign(s_packets.size(), -1);
+    }
+
+    // COMPRESSION-BC7-STATICPROP-2 — build ONE uniform-dim GL_TEXTURE_2D_ARRAY
+    // from a list of same-dimension uniques. Tries BC7 first (all-or-nothing per
+    // array — a GL array has a single internalformat); falls back to the RGBA8
+    // upload path on any condition miss. Returns the GL handle (0 on hard
+    // failure) and sets outIsBc7. This is the per-bucket equivalent of the
+    // group-level BC7/RGBA8 logic below; bucketDims == every layer's dims so
+    // uvScale is always 1.0 and no sub-region blits occur.
+    auto buildBucketArray =
+        [&](const std::vector<UniqueTex>& bUniques, GLint bw, GLint bh,
+            uint8_t group, bool& outIsBc7, size_t& outBytes) -> GLuint {
+        outIsBc7 = false;
+        outBytes = 0;
+        GLuint arr = 0;
+
+        // ---- BC7 attempt (mirrors the group-level fast path) ----
+        if (s_materialKtxEnabled && mcTextureManager &&
+            GLEW_ARB_texture_compression_bptc) {
+            std::vector<RenderCore::KtxImage> bc7Imgs(bUniques.size());
+            bool bc7Ok = true;
+            const char* failReason = nullptr;
+            int bc7MipCount = 0;
+            uint32_t bc7VkFormat = 0;
+            for (size_t k = 0; bc7Ok && k < bUniques.size(); ++k) {
+                const auto& u = bUniques[k];
+                if (u.nodeIdx == 0xFFFFFFFFu) { bc7Ok = false; failReason = "load_fail"; break; }
+                const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
+                if (!srcName || !*srcName) { bc7Ok = false; failReason = "load_fail"; break; }
+                std::string ktxPath(srcName);
+                const auto dot = ktxPath.rfind('.');
+                if (dot != std::string::npos) ktxPath.replace(dot, std::string::npos, ".ktx2");
+                else                          ktxPath += ".ktx2";
+                if (!RenderCore::ktxLoadRgba8(ktxPath.c_str(), bc7Imgs[k])) {
+                    bc7Ok = false; failReason = "load_fail"; break;
+                }
+                const RenderCore::KtxImage& img = bc7Imgs[k];
+                if (!img.isCompressed ||
+                    (img.vkFormat != 145u && img.vkFormat != 146u)) {
+                    bc7Ok = false; failReason = "not_all_bc7"; break;
+                }
+                if (img.width != bw || img.height != bh) {
+                    bc7Ok = false; failReason = "dim_mismatch"; break;
+                }
+                if (k == 0) { bc7VkFormat = img.vkFormat; bc7MipCount = img.mipCount; }
+                if (img.mipCount != bc7MipCount) { bc7Ok = false; failReason = "dim_mismatch"; break; }
+            }
+            if (bc7Ok) {
+                const GLenum internalformat = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
+                const int levels = (bc7MipCount > 0) ? bc7MipCount : 1;
+                glGenTextures(1, &arr);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, arr);
+                glTexStorage3D(GL_TEXTURE_2D_ARRAY, levels, internalformat,
+                               bw, bh, static_cast<GLsizei>(bUniques.size()));
+                for (size_t k = 0; k < bUniques.size(); ++k) {
+                    const RenderCore::KtxImage& img = bc7Imgs[k];
+                    for (int lvl = 0; lvl < levels; ++lvl) {
+                        const int lw = (bw >> lvl) ? (bw >> lvl) : 1;
+                        const int lh = (bh >> lvl) ? (bh >> lvl) : 1;
+                        const GLsizei imageSize =
+                            static_cast<GLsizei>(((lw + 3) / 4) * ((lh + 3) / 4) * 16);
+                        glCompressedTexSubImage3D(
+                            GL_TEXTURE_2D_ARRAY, lvl, 0, 0, static_cast<GLint>(k),
+                            lw, lh, 1, internalformat, imageSize,
+                            img.pixels.data() +
+                                img.mipByteOffsets[static_cast<size_t>(lvl)]);
+                        outBytes += static_cast<size_t>(imageSize);
+                    }
+                }
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,  levels - 1);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S,     GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T,     GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+                outIsBc7 = true;
+                std::fprintf(stderr,
+                    "[STATICPROP_BC7] bucket group=%u dims=%dx%d layers=%zu format=BC7 "
+                    "levels=%d srcVkFormat=%u bytes=%zu\n",
+                    (unsigned)group, bw, bh, bUniques.size(), levels,
+                    bc7VkFormat, outBytes);
+                std::fflush(stderr);
+                return arr;
+            } else {
+                std::fprintf(stderr,
+                    "[STATICPROP_BC7] bucket fallback group=%u dims=%dx%d reason=%s\n",
+                    (unsigned)group, bw, bh, failReason ? failReason : "unknown");
+                std::fflush(stderr);
+            }
+        }
+
+        // ---- RGBA8 fallback (mirrors the group-level RGBA8 path; uniform-dim
+        //      so every layer fills the whole level → no sub-region blits) ----
+        glGenTextures(1, &arr);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, arr);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, bw, bh,
+                     static_cast<GLsizei>(bUniques.size()),
+                     0, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
+        std::vector<uint8_t> pixelBuf(static_cast<size_t>(bw) * bh * 4u);
+        std::vector<std::pair<size_t, RenderCore::KtxImage>> ktxMipLayers;
+        for (size_t k = 0; k < bUniques.size(); ++k) {
+            const auto& u = bUniques[k];
+            bool ktxUsed = false;
+            if (s_materialKtxEnabled && u.nodeIdx != 0xFFFFFFFFu && mcTextureManager) {
+                const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
+                if (srcName && *srcName) {
+                    std::string ktxPath(srcName);
+                    const auto dot = ktxPath.rfind('.');
+                    if (dot != std::string::npos) ktxPath.replace(dot, std::string::npos, ".ktx2");
+                    else                          ktxPath += ".ktx2";
+                    RenderCore::KtxImage ktxImg;
+                    const bool ktxOk = RenderCore::ktxLoadRgba8(ktxPath.c_str(), ktxImg);
+                    // Reject compressed sidecars here — block bytes are not RGBA8.
+                    const bool dimOk = ktxOk && !ktxImg.isCompressed &&
+                                       ktxImg.width == u.w && ktxImg.height == u.h;
+                    if (dimOk) {
+                        glBindTexture(GL_TEXTURE_2D_ARRAY, arr);
+                        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, static_cast<GLint>(k),
+                                        u.w, u.h, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                                        ktxImg.pixels.data());
+                        ktxUsed = true;
+                        outBytes += ktxImg.pixels.size();
+                        if (ktxImg.mipCount > 1) ktxMipLayers.emplace_back(k, std::move(ktxImg));
+                    }
+                }
+            }
+            if (!ktxUsed) {
+                glBindTexture(GL_TEXTURE_2D, u.glTexId);
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_BGRA, GL_UNSIGNED_BYTE, pixelBuf.data());
+                glBindTexture(GL_TEXTURE_2D_ARRAY, arr);
+                glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, static_cast<GLint>(k),
+                                u.w, u.h, 1, GL_BGRA, GL_UNSIGNED_BYTE, pixelBuf.data());
+                outBytes += static_cast<size_t>(bw) * bh * 4u;
+            }
+        }
+        glBindTexture(GL_TEXTURE_2D_ARRAY, arr);
+        glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+        GLint maxLevel = 0;
+        { GLint w = bw, h = bh; while (w > 1 || h > 1) { ++maxLevel; if (w>1) w>>=1; if (h>1) h>>=1; } }
+        if (s_materialKtxEnabled && !ktxMipLayers.empty()) {
+            for (const auto& lm : ktxMipLayers) {
+                const size_t layerK = lm.first;
+                const RenderCore::KtxImage& img = lm.second;
+                const int lastLvl = (img.mipCount - 1 < maxLevel) ? (img.mipCount - 1) : maxLevel;
+                for (int lvl = 1; lvl <= lastLvl; ++lvl) {
+                    int lw = img.width  >> lvl; if (lw < 1) lw = 1;
+                    int lh = img.height >> lvl; if (lh < 1) lh = 1;
+                    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, lvl, 0, 0, static_cast<GLint>(layerK),
+                                    lw, lh, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                                    img.pixels.data() +
+                                        img.mipByteOffsets[static_cast<size_t>(lvl)]);
+                }
+            }
+        }
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,  maxLevel);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S,     GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T,     GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        std::fprintf(stderr,
+            "[STATICPROP_BC7] bucket group=%u dims=%dx%d layers=%zu format=RGBA8 bytes=%zu\n",
+            (unsigned)group, bw, bh, bUniques.size(), outBytes);
+        std::fflush(stderr);
+        return arr;
+    };
+
     for (uint8_t group = 0; group <= 1; ++group) {
         std::vector<DWORD> newlyPinnedThisBuild;
         GLuint& outArray = (group == 0u) ? s_texArrayOff : s_texArrayOn;
@@ -2398,6 +2624,93 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             continue;
         }
 
+        // ====================================================================
+        // COMPRESSION-BC7-STATICPROP-2 — bucketed build (gate ON only).
+        // Partition this group's uniques by (w,h). Each bucket is uniform-dim
+        // by construction → eligible for an independent BC7 or RGBA8 array.
+        // layerForPacket becomes BUCKET-RELATIVE (layer within the bucket
+        // array, same semantics the shader already consumes). uvScale = 1.0.
+        // The gate-OFF group-build below is left UNTOUCHED and never runs here.
+        // ====================================================================
+        if (s_staticPropBc7Enabled) {
+            // Group uniques (by group-relative layer index) into dim buckets.
+            struct DimKey { GLint w, h; };
+            std::vector<DimKey>               dimKeys;       // unique dims, stable order of first appearance
+            std::vector<std::vector<int32_t>> bucketLayers;  // per dim: list of group-relative layer indices
+            std::vector<int32_t>              layerToBucketLocal(uniques.size(), -1);   // group-rel layer -> local bucket
+            std::vector<int32_t>              layerToBucketRelLayer(uniques.size(), -1); // group-rel layer -> bucket-relative layer
+
+            for (size_t lyr = 0; lyr < uniques.size(); ++lyr) {
+                const GLint w = uniques[lyr].w, h = uniques[lyr].h;
+                int found = -1;
+                for (size_t b = 0; b < dimKeys.size(); ++b) {
+                    if (dimKeys[b].w == w && dimKeys[b].h == h) { found = static_cast<int>(b); break; }
+                }
+                if (found < 0) {
+                    found = static_cast<int>(dimKeys.size());
+                    dimKeys.push_back({w, h});
+                    bucketLayers.emplace_back();
+                }
+                layerToBucketLocal[lyr]    = found;
+                layerToBucketRelLayer[lyr] = static_cast<int32_t>(bucketLayers[found].size());
+                bucketLayers[found].push_back(static_cast<int32_t>(lyr));
+            }
+
+            // Build one GL array per dim bucket; record into the global vectors.
+            // localBucketToGlobal maps this group's local bucket index -> global
+            // s_bucketArrays index (used to tag packets).
+            std::vector<int32_t> localBucketToGlobal(dimKeys.size(), -1);
+            size_t groupTotalBytes = 0;
+            for (size_t b = 0; b < dimKeys.size(); ++b) {
+                std::vector<UniqueTex> sub;
+                sub.reserve(bucketLayers[b].size());
+                for (int32_t lyr : bucketLayers[b]) sub.push_back(uniques[static_cast<size_t>(lyr)]);
+
+                bool isBc7 = false; size_t bytes = 0;
+                const GLuint arr = buildBucketArray(sub, dimKeys[b].w, dimKeys[b].h,
+                                                    group, isBc7, bytes);
+                groupTotalBytes += bytes;
+
+                const int32_t globalBucket = static_cast<int32_t>(s_bucketArrays.size());
+                localBucketToGlobal[b] = globalBucket;
+                s_bucketArrays.push_back(arr);
+                StaticPropBucketInfo info{};
+                info.group      = group;
+                info.w          = static_cast<uint16_t>(dimKeys[b].w);
+                info.h          = static_cast<uint16_t>(dimKeys[b].h);
+                info.layerCount = static_cast<uint32_t>(sub.size());
+                info.isBc7      = isBc7;
+                info.glArray    = arr;
+                s_bucketInfo.push_back(info);
+            }
+
+            // Reassign layerForPacket -> bucket-relative layer, tag each packet
+            // with its global bucket index, and set uvScale = 1.0 (uniform-dim).
+            for (const auto& kv : packetsInGroup) {
+                const uint32_t globalPktIdx = kv.first;
+                const int32_t  grpLayer     = kv.second;   // group-relative layer
+                if (grpLayer < 0) continue;
+                const int32_t localB   = layerToBucketLocal[static_cast<size_t>(grpLayer)];
+                const int32_t relLayer = layerToBucketRelLayer[static_cast<size_t>(grpLayer)];
+                layerForPacket[globalPktIdx]      = relLayer;            // bucket-relative
+                s_packetBucketIndex[globalPktIdx] = localBucketToGlobal[static_cast<size_t>(localB)];
+                uvScaleXByPacket[globalPktIdx]    = 1.0f;
+                uvScaleYByPacket[globalPktIdx]    = 1.0f;
+            }
+
+            std::fprintf(stderr,
+                "[STATICPROP_BC7] group=%u buckets=%zu total_bytes=%zu\n",
+                (unsigned)group, dimKeys.size(), groupTotalBytes);
+            std::fflush(stderr);
+
+            // Promote temp pins (same as both group-level paths) and skip the
+            // original 2-group build for this group.
+            s_coalescePinnedNodes.insert(s_coalescePinnedNodes.end(),
+                                          newlyPinnedThisBuild.begin(),
+                                          newlyPinnedThisBuild.end());
+            continue;
+        }
+
         // 5.10.d — find max dimensions across the group's uniques.
         // The texture array is allocated at maxW × maxH; smaller
         // textures get blitted into upper-left sub-region of their
@@ -2417,6 +2730,140 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             s_coalesceEnabled     = false;
             s_coalesceArmed       = false;
             return;
+        }
+
+        // -------------------------------------------------------------------
+        // COMPRESSION-BC7-STATICPROP-1 — BC7-compressed array fast path.
+        // Gate: MC2_MATERIAL_KTX=1 AND MC2_STATICPROP_BC7=1.
+        // A GL array has ONE internalformat, so BC7 is ALL-OR-NOTHING per
+        // array. Additionally we require the group to be UNIFORM-DIM (every
+        // layer fills the whole level) so compressed sub-region uploads never
+        // violate 4x4 block alignment at small mips. If any condition fails we
+        // fall through to the existing RGBA8 path below, byte-identical.
+        // -------------------------------------------------------------------
+        if (s_materialKtxEnabled && s_staticPropBc7Enabled && mcTextureManager) {
+            // Probe ALL uniques: load each sidecar, require all load && all BC7
+            // && all dims match && uniform-dim.
+            std::vector<RenderCore::KtxImage> bc7Imgs(uniques.size());
+            bool bc7Ok      = true;
+            const char* failReason = nullptr;
+            uint32_t bc7VkFormat = 0;   // shared format across the array
+            int      bc7MipCount = 0;   // shared mip count across the array
+
+            // Uniform-dim check first (cheap, no file IO).
+            for (const auto& u : uniques) {
+                if (u.w != maxW || u.h != maxH) { bc7Ok = false; failReason = "mixed_dims"; break; }
+            }
+
+            for (size_t k = 0; bc7Ok && k < uniques.size(); ++k) {
+                const auto& u = uniques[k];
+                if (u.nodeIdx == 0xFFFFFFFFu) { bc7Ok = false; failReason = "load_fail"; break; }
+                const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
+                if (!srcName || !*srcName) { bc7Ok = false; failReason = "load_fail"; break; }
+                std::string ktxPath(srcName);
+                const auto dot = ktxPath.rfind('.');
+                if (dot != std::string::npos) ktxPath.replace(dot, std::string::npos, ".ktx2");
+                else                          ktxPath += ".ktx2";
+                if (!RenderCore::ktxLoadRgba8(ktxPath.c_str(), bc7Imgs[k])) {
+                    bc7Ok = false; failReason = "load_fail"; break;
+                }
+                const RenderCore::KtxImage& img = bc7Imgs[k];
+                if (!img.isCompressed ||
+                    (img.vkFormat != 145u && img.vkFormat != 146u)) {
+                    bc7Ok = false; failReason = "not_all_bc7"; break;
+                }
+                if (img.width != u.w || img.height != u.h) {
+                    bc7Ok = false; failReason = "dim_mismatch"; break;
+                }
+                if (k == 0) { bc7VkFormat = img.vkFormat; bc7MipCount = img.mipCount; }
+                // Require a consistent mip count so glTexStorage3D's level count
+                // is valid for every layer.
+                if (img.mipCount != bc7MipCount) { bc7Ok = false; failReason = "dim_mismatch"; break; }
+            }
+
+            // Capability check: BPTC (GL 4.3 / ARB_texture_compression_bptc).
+            if (bc7Ok && !GLEW_ARB_texture_compression_bptc) {
+                bc7Ok = false; failReason = "no_bptc_support";
+            }
+
+            if (bc7Ok) {
+                // Static-prop albedo is always sRGB → use the SRGB BPTC
+                // internalformat for both 145 (UNORM) and 146 (SRGB) so the
+                // GPU performs sRGB→linear on sample, matching the existing
+                // RGBA8_SRGB path. (Documented: 145 sources are still treated
+                // as sRGB albedo here.)
+                const GLenum internalformat = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
+                const int levels = (bc7MipCount > 0) ? bc7MipCount : 1;
+
+                glGenTextures(1, &outArray);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, outArray);
+                glTexStorage3D(GL_TEXTURE_2D_ARRAY, levels, internalformat,
+                               maxW, maxH, static_cast<GLsizei>(uniques.size()));
+
+                size_t bc7TotalBytes = 0;
+                for (size_t k = 0; k < uniques.size(); ++k) {
+                    const RenderCore::KtxImage& img = bc7Imgs[k];
+                    for (int lvl = 0; lvl < levels; ++lvl) {
+                        const int lw = (maxW >> lvl) ? (maxW >> lvl) : 1;
+                        const int lh = (maxH >> lvl) ? (maxH >> lvl) : 1;
+                        const GLsizei imageSize =
+                            static_cast<GLsizei>(((lw + 3) / 4) * ((lh + 3) / 4) * 16);
+                        glCompressedTexSubImage3D(
+                            GL_TEXTURE_2D_ARRAY, lvl,
+                            0, 0, static_cast<GLint>(k),
+                            lw, lh, 1,
+                            internalformat, imageSize,
+                            img.pixels.data() +
+                                img.mipByteOffsets[static_cast<size_t>(lvl)]);
+                        bc7TotalBytes += static_cast<size_t>(imageSize);
+                    }
+                }
+
+                // Sampler: match the RGBA8 path. NO glGenerateMipmap (compressed
+                // mips come straight from the cooked KTX). MAX_LEVEL = levels-1.
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,  levels - 1);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S,     GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T,     GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+
+                // uvScale bookkeeping: uniform-dim → uvScale = 1.0 (full level).
+                for (const auto& kv : packetsInGroup) {
+                    const uint32_t globalPktIdx = kv.first;
+                    if (kv.second < 0) continue;
+                    uvScaleXByPacket[globalPktIdx] = 1.0f;
+                    uvScaleYByPacket[globalPktIdx] = 1.0f;
+                }
+
+                std::fprintf(stderr,
+                    "[STATICPROP_BC7] group=%u layers=%zu dims=%dx%d levels=%d "
+                    "internalformat=0x%x bytes=%zu\n",
+                    (unsigned)group, uniques.size(), maxW, maxH, levels,
+                    (unsigned)internalformat, bc7TotalBytes);
+                std::fprintf(stderr,
+                    "[STATICPROP_BC7] summary group=%u built BC7 array "
+                    "(srcVkFormat=%u, %zu layers)\n",
+                    (unsigned)group, bc7VkFormat, uniques.size());
+                std::fflush(stderr);
+
+                COALESCE_TRACE("group_built_bc7 group=%s uniques=%zu maxDims=%dx%d levels=%d",
+                               group == 0u ? "off" : "on",
+                               uniques.size(), maxW, maxH, levels);
+
+                // Promote temp pins (same as the RGBA8 path) and skip the
+                // remaining RGBA8 array-build for this group.
+                s_coalescePinnedNodes.insert(s_coalescePinnedNodes.end(),
+                                              newlyPinnedThisBuild.begin(),
+                                              newlyPinnedThisBuild.end());
+                continue;
+            } else {
+                std::fprintf(stderr,
+                    "[STATICPROP_BC7] fallback group=%u reason=%s\n",
+                    (unsigned)group, failReason ? failReason : "unknown");
+                std::fflush(stderr);
+                // Fall through to the existing RGBA8 path unchanged.
+            }
         }
 
         // 5.10.d — allocate the array at max dims.
@@ -2454,7 +2901,14 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                     }
                     RenderCore::KtxImage ktxImg;
                     const bool ktxOk = RenderCore::ktxLoadRgba8(ktxPath.c_str(), ktxImg);
-                    const bool dimOk = ktxOk && ktxImg.width == u.w && ktxImg.height == u.h;
+                    // This RGBA8 upload path cannot consume compressed (BC7) KTX2:
+                    // its bytes are block data, not RGBA8 texels. If a BC7 sidecar
+                    // is present but this group fell back to the RGBA8 path (e.g.
+                    // mixed-dim, so the BC7 array path was declined), reject it here
+                    // (dimOk=false) so we fall through to the original GL texture
+                    // upload below instead of mis-uploading block data as RGBA8.
+                    const bool dimOk = ktxOk && !ktxImg.isCompressed &&
+                                       ktxImg.width == u.w && ktxImg.height == u.h;
                     // Always-on debug: log attempt result so we can diagnose path/dim issues.
                     std::fprintf(stderr,
                         "[KTX_SIDECAR] node=%lu srcName=%s path=%s "
@@ -2602,15 +3056,46 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         // the array, and a wrong-texture (orange-rectangle) ghost renders
         // at the prop's location. Skipping leaves their geometry out of
         // the multidraw entirely.
+        // COMPRESSION-BC7-STATICPROP-2: when the gate is ON, sorted slots must
+        // be grouped into contiguous per-bucket RUNS so each dispatch can bind
+        // one bucket array and draw its run. We order buckets ascending by
+        // GLOBAL bucket index — and group buckets carry the alpha group in
+        // s_bucketInfo, with all alpha-OFF buckets built before alpha-ON ones
+        // (the build walks group 0 then group 1) → bucket index order already
+        // respects alpha order (OFF runs precede ON runs). s_slotBucketIndex /
+        // s_bucketCmdCount are populated in lockstep. Gate-OFF leaves both
+        // empty and uses the original 2-group emission below (byte-identical).
+        s_slotBucketIndex.clear();
+        s_bucketCmdCount.assign(s_bucketArrays.size(), 0u);
         for (uint8_t group = 0; group <= 1; ++group) {
-            for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
-                const uint32_t typeID = s_sortedTypeOrder[i];
-                const auto& type = s_types[typeID];
-                if (type.alphaClass != group) continue;
-                for (uint32_t pIdx = 0; pIdx < type.packetCount; ++pIdx) {
-                    const uint32_t globalPktIdx = type.firstPacket + pIdx;
-                    if (layerForPacket[globalPktIdx] < 0) continue; // texture unavailable; skip
-                    s_sortedPacketOrder.push_back(globalPktIdx);
+            if (s_staticPropBc7Enabled) {
+                // Emit this group's packets bucket-by-bucket (global bucket order).
+                for (uint32_t b = 0; b < s_bucketInfo.size(); ++b) {
+                    if (s_bucketInfo[b].group != group) continue;
+                    for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
+                        const uint32_t typeID = s_sortedTypeOrder[i];
+                        const auto& type = s_types[typeID];
+                        if (type.alphaClass != group) continue;
+                        for (uint32_t pIdx = 0; pIdx < type.packetCount; ++pIdx) {
+                            const uint32_t globalPktIdx = type.firstPacket + pIdx;
+                            if (layerForPacket[globalPktIdx] < 0) continue;
+                            if (s_packetBucketIndex[globalPktIdx] != static_cast<int32_t>(b)) continue;
+                            s_sortedPacketOrder.push_back(globalPktIdx);
+                            s_slotBucketIndex.push_back(static_cast<uint8_t>(b));
+                            ++s_bucketCmdCount[b];
+                        }
+                    }
+                }
+            } else {
+                for (uint32_t i = 0; i < s_sortedTypeOrder.size(); ++i) {
+                    const uint32_t typeID = s_sortedTypeOrder[i];
+                    const auto& type = s_types[typeID];
+                    if (type.alphaClass != group) continue;
+                    for (uint32_t pIdx = 0; pIdx < type.packetCount; ++pIdx) {
+                        const uint32_t globalPktIdx = type.firstPacket + pIdx;
+                        if (layerForPacket[globalPktIdx] < 0) continue; // texture unavailable; skip
+                        s_sortedPacketOrder.push_back(globalPktIdx);
+                    }
                 }
             }
             if (group == 0u) {
@@ -2632,7 +3117,7 @@ void GpuStaticPropBatcher::finalizeGeometry() {
             s_materialGpuTable.clear();
             s_materialInventory.clear();  // V-MATERIAL-STATIC-0: rebuild in lockstep
 
-            std::unordered_map<int32_t, uint32_t> layerToMaterialIdx;
+            std::unordered_map<int64_t, uint32_t> layerToMaterialIdx;
             const uint32_t emittedCount =
                 static_cast<uint32_t>(s_sortedPacketOrder.size());
 
@@ -2642,8 +3127,19 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 const uint32_t globalPktIdx = s_sortedPacketOrder[i];
                 const int32_t  layer        = layerForPacket[globalPktIdx]; // >= 0 guaranteed
 
+                // COMPRESSION-BC7-STATICPROP-2: layer is BUCKET-relative when the
+                // gate is ON, so the same layer index can recur across buckets.
+                // Dedup material rows by (bucket,layer) to keep distinct textures
+                // distinct. albedoTex still stores `layer` (bucket-relative) so the
+                // texArrayLayer==albedoTex compare below stays valid. Gate-OFF
+                // (bucketIdx 0) → key == layer → byte-identical dedup.
+                const int32_t bucketIdx = s_staticPropBc7Enabled
+                    ? s_packetBucketIndex[globalPktIdx] : 0;
+                const int64_t matKey =
+                    (static_cast<int64_t>(bucketIdx) << 32) | static_cast<uint32_t>(layer);
+
                 auto [it, inserted] = layerToMaterialIdx.try_emplace(
-                    layer, static_cast<uint32_t>(s_materialGpuTable.size()));
+                    matKey, static_cast<uint32_t>(s_materialGpuTable.size()));
                 if (inserted) {
                     RenderCore::MaterialGpu m = {};
                     m.albedoTex            = static_cast<uint32_t>(layer);
@@ -4619,7 +5115,12 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             }
 
             glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
+            // COMPRESSION-BC7-STATICPROP-2: gate ON binds per-bucket inside the
+            // loop (init to an invalid bucket so the first drawn slot binds).
+            // Gate OFF: original OFF→ON flip, byte-identical.
+            const bool bc7Buckets = s_staticPropBc7Enabled && !s_slotBucketIndex.empty();
+            int32_t curBucket = -1;  // gate-ON tracker
+            if (!bc7Buckets) glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
             bool enteredOnGroup = false;
 
             // v2.3 snap-cull: determine whether to use prev-frame snapshot for slot skipping.
@@ -4824,7 +5325,19 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                     continue;
                 }
 
-                if (m.group == 1u && !enteredOnGroup) {
+                if (bc7Buckets) {
+                    // Bind this slot's bucket array (contiguous runs → at most
+                    // one bind per bucket). s_slotBucketIndex is in sorted-slot
+                    // order, same as the dispatch loop index i.
+                    if (i < s_slotBucketIndex.size()) {
+                        const int32_t b = static_cast<int32_t>(s_slotBucketIndex[i]);
+                        if (b != curBucket &&
+                            b >= 0 && b < static_cast<int32_t>(s_bucketArrays.size())) {
+                            glBindTexture(GL_TEXTURE_2D_ARRAY, s_bucketArrays[b]);
+                            curBucket = b;
+                        }
+                    }
+                } else if (m.group == 1u && !enteredOnGroup) {
                     glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn);
                     enteredOnGroup = true;
                 }
@@ -4933,7 +5446,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
 
             // Bind alpha-OFF texture array before loop.
             glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
+            // COMPRESSION-BC7-STATICPROP-2: gate ON binds per-bucket in-loop.
+            const bool bc7Buckets = s_staticPropBc7Enabled && !s_slotBucketIndex.empty();
+            int32_t curBucket = -1;
+            if (!bc7Buckets) glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOff);
 
             bool enteredOnGroup = false;
 
@@ -4976,7 +5492,16 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 const GLuint baseInstance = baseInstanceMap[i];
 
                 // Group boundary: switch texture array when entering alpha-ON group.
-                if (i == s_alphaOffCmdCount) {
+                if (bc7Buckets) {
+                    if (i < s_slotBucketIndex.size()) {
+                        const int32_t b = static_cast<int32_t>(s_slotBucketIndex[i]);
+                        if (b != curBucket &&
+                            b >= 0 && b < static_cast<int32_t>(s_bucketArrays.size())) {
+                            glBindTexture(GL_TEXTURE_2D_ARRAY, s_bucketArrays[b]);
+                            curBucket = b;
+                        }
+                    }
+                } else if (i == s_alphaOffCmdCount) {
                     glBindTexture(GL_TEXTURE_2D_ARRAY, s_texArrayOn);
                     enteredOnGroup = true;
                 }
@@ -5046,6 +5571,50 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                     ok);
             }
 
+        } else if (s_staticPropBc7Enabled && !s_slotBucketIndex.empty() &&
+                   !s_bucketCmdCount.empty()) {
+            // ---- COMPRESSION-BC7-STATICPROP-2 bucketed multidraw path ----
+            // One glMultiDrawElementsIndirect per contiguous bucket run. Bucket
+            // runs are ordered alpha-OFF buckets first, then alpha-ON (build
+            // order), so alpha render ordering is preserved. drawIDBase = the
+            // run's first global cmd index; the indirect-cmd buffer is indexed
+            // by global sorted slot so per-run offset = cmdBase * cmdSize.
+            // SSBO bind: legacy mode needs the group's sub-range; non-legacy
+            // binds the full used range once. A bucket is wholly within one
+            // group, so we select by the bucket's alpha group.
+            glActiveTexture(GL_TEXTURE0);
+            glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpu_cull::compute_getIndirectCmdBuf());
+            if (!s_globalPoolLegacy) {
+                const size_t totalUsed = s_totalUsedBytesThisFrame;
+                glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
+                                  static_cast<GLintptr>(fr_off_bytes_d),
+                                  static_cast<GLsizeiptr>(totalUsed > 0 ? totalUsed : sizeof(GpuStaticPropInstance)));
+            }
+            uint32_t cmdBase = 0u;
+            for (uint32_t b = 0u; b < s_bucketCmdCount.size(); ++b) {
+                const uint32_t count = s_bucketCmdCount[b];
+                if (count == 0u) continue;
+                if (b < s_bucketArrays.size() && s_bucketArrays[b] != 0u)
+                    glBindTexture(GL_TEXTURE_2D_ARRAY, s_bucketArrays[b]);
+                if (s_globalPoolLegacy) {
+                    const bool isOnGroup = (b < s_bucketInfo.size() && s_bucketInfo[b].group == 1u);
+                    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
+                                      static_cast<GLintptr>(fr_off_bytes_d +
+                                          (isOnGroup ? off_total_bytes : 0u)),
+                                      static_cast<GLsizeiptr>(isOnGroup ? on_total_bytes
+                                                                        : off_total_bytes));
+                }
+                if (s_locsCoalesce.drawIDBase >= 0)
+                    glUniform1i(s_locsCoalesce.drawIDBase, static_cast<GLint>(cmdBase));
+                const uintptr_t runOffset =
+                    static_cast<uintptr_t>(cmdBase) *
+                    static_cast<uintptr_t>(gpu_cull::kDrawElementsIndirectCommandSize);
+                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT,
+                    reinterpret_cast<const void*>(runOffset),
+                    static_cast<GLsizei>(count),
+                    0);
+                cmdBase += count;
+            }
         } else {
             // ---- Existing multidraw path (unchanged) ----
             // 11.7.g — alpha-OFF group draw.
@@ -6156,8 +6725,22 @@ uint32_t batcher_getInstanceCap(uint32_t typeID) {
 
 GLuint batcher_getCoalesceInstanceSsbo() { return s_coalesceInstanceSsbo; }
 GLuint batcher_getPerDrawSsbo()          { return s_perDrawSsbo;          }
-GLuint batcher_getTexArrayOff()          { return s_texArrayOff;          }
-GLuint batcher_getTexArrayOn()           { return s_texArrayOn;           }
+// COMPRESSION-BC7-STATICPROP-2: under the gate the two named handles are 0
+// (the build produced per-bucket arrays instead). Fall back to the first
+// alpha-OFF / first alpha-ON bucket array so the ImGui GBuffer preview still
+// shows a representative array. Gate OFF: returns the original handles.
+GLuint batcher_getTexArrayOff() {
+    if (s_texArrayOff) return s_texArrayOff;
+    for (size_t b = 0; b < s_bucketInfo.size(); ++b)
+        if (s_bucketInfo[b].group == 0u) return s_bucketInfo[b].glArray;
+    return 0;
+}
+GLuint batcher_getTexArrayOn() {
+    if (s_texArrayOn) return s_texArrayOn;
+    for (size_t b = 0; b < s_bucketInfo.size(); ++b)
+        if (s_bucketInfo[b].group == 1u) return s_bucketInfo[b].glArray;
+    return 0;
+}
 GLuint batcher_getPermutationSsbo()      { return s_permutationSsbo;      }
 
 size_t batcher_getCoalescePerFrameInstanceBytes() {
