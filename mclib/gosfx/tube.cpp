@@ -1175,8 +1175,12 @@ void gosFX::Tube::Draw(DrawInfo *info)
 	// filled the batcher for one frame (until the first Flush()), leaving the
 	// batcher empty for all subsequent frames.
 	if (mc2::particles::Batcher::is_enabled()) {
-		if (mc2::particles::Batcher::is_oracle_render_enabled() && m_activeProfileCount > 1) {
-			// VFX-TUBE-PROFILE-ORACLE-1: emit one billboard per active profile along
+		// VFX-WEAPON-FX-RESTORE-OPUS-1: billboard-per-profile oracle disabled for
+		// release. Produces "ladder/fence" artifact (one square card per spine profile)
+		// instead of correct swept-mesh ribbon. Future: swept-mesh oracle replaces this.
+		// Oracle body preserved below (unreachable) for reference.
+		if (false && mc2::particles::Batcher::is_oracle_render_enabled() && m_activeProfileCount > 1) {
+			// VFX-TUBE-PROFILE-ORACLE-1: (disabled) emit one billboard per active profile along
 			// the tube spine as a render approximation. The real Tube geometry is a
 			// swept mesh; this is a visual placeholder that shows WHERE the trail is
 			// without the correct mesh ribbon. One billboard per live profile suffices

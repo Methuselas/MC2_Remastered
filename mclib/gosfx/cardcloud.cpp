@@ -675,14 +675,21 @@ void gosFX::CardCloud::Draw(DrawInfo *info)
 					// velocity, so the shader fallback (velocity.x==0) applies there.
 					// velocity[0] = scale * halfX  (half-width in world units)
 					// velocity[1] = scale * halfY  (half-height in world units)
-					// velocity[2] = 2*atan2(q.z, q.w)  (in-plane spin from UnitQuaternion)
-					// For screen-aligned billboards the in-plane rotation is the component
-					// around world-up (Stuff Z axis). q=(x,y,z,w): angle ≈ 2*atan2(q.z, q.w).
+					// velocity[2] = world-space spin angle for the view-aligned billboard.
+					// m_localRotation is in the effect's local frame; when the effect has a
+					// rotation applied (e.g. Effect_Against_Motion for missiles), we must
+					// compose with the parent's world rotation to get the correct screen-space
+					// spin. Use UnitQuaternion::operator=(LinearMatrix4D) + Multiply(q1,q2).
 					gp.velocity[0] = static_cast<float>(p->m_scale * p->m_halfX);
 					gp.velocity[1] = static_cast<float>(p->m_scale * p->m_halfY);
-					gp.velocity[2] = 2.0f * std::atan2(
-					    static_cast<float>(p->m_localRotation.z),
-					    static_cast<float>(p->m_localRotation.w));
+					{
+						Stuff::UnitQuaternion parentRot, worldRot;
+						parentRot = *info->m_parentToWorld;
+						worldRot.Multiply(p->m_localRotation, parentRot);
+						gp.velocity[2] = 2.0f * std::atan2(
+						    static_cast<float>(worldRot.z),
+						    static_cast<float>(worldRot.w));
+					}
 					batcher.Emit(gp);
 					++harvested;
 					if (c.alpha < minA) minA = c.alpha;
