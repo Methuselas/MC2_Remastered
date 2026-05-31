@@ -2635,7 +2635,12 @@ DWORD TerrainColorMap::resolveTextureHandle (VertexPtr vMin, VertexPtr vMax, Ter
 		if (resultTextureOut)
 			*resultTextureOut = resultTexture;
 		if (!textures) {
-			uvData->minU = uvData->minV = uvData->maxU = uvData->maxV = 0.0f;
+			// COLORMAP-TILES-RETIRE-1: tile textures retired — uvData was already
+			// computed correctly above from numTexturesAcross/fractionPerTexture.
+			// Do NOT zero uvData: it carries per-tile UV [0,1] that the indirect
+			// vertex shader forwards as Texcoord for detail/normal tiling.
+			// Zeroing it would set Texcoord=(0,0) for all quads → all detail
+			// normals sample the same corner pixel → flat terrain (regression).
 			return 0xFFFFFFFFu;
 		}
 		if (realizeTexture)

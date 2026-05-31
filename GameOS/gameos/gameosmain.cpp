@@ -159,10 +159,13 @@ static LONG WINAPI mc2_unhandled_exception_filter(EXCEPTION_POINTERS* ep)
 #include "object_admission_predicate.h"  // Track A1: init probe + selftest gate
 #include "view_uniforms_gl.h"                     // getCurrentView (unconditional: used by debug_state_dump)
 #include "debug_state_dump.h"                     // DEBUG-STATE-DUMP-1
+// TerrainPatchStream accessors feed the unconditional RenderSnapshot terrain-
+// pass fill (TERRAIN-PASS-PACKET-0) below, so this header must NOT be gated on
+// MC2_IMGUI — otherwise a non-IMGUI build fails to compile gameosmain.cpp.
+#include "gos_terrain_patch_stream.h"             // TERRAIN-SPINE-0
 #ifdef MC2_IMGUI
 #include "../../GuiRuntime/GuiRuntime.h"
 #include "../../GuiRuntime/EditorInspector.h"     // TERRAIN-SPINE-0
-#include "gos_terrain_patch_stream.h"             // TERRAIN-SPINE-0
 #include "imgui_impl_sdl2.h"
 #endif
 
@@ -1424,6 +1427,7 @@ int main(int argc, char** argv)
                 snap.terrainPass.flags = flags;
             }
 
+            #ifdef MC2_IMGUI
             // TERRAIN-SPINE-0: inspector filler. Now a downstream consumer of
             // snap.terrainPass for the pass-level fields promoted in
             // TERRAIN-PASS-PACKET-0. Per-program ids + per-flush detail fields
@@ -1503,6 +1507,7 @@ int main(int argc, char** argv)
                 vs.debugMode                  = gos_vfx_getDebugMode();
                 EditorInspector::setVfxPassSnapshot(vs);
             }
+            #endif // MC2_IMGUI
 
         }
 
