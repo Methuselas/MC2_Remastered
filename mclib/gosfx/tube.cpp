@@ -1175,10 +1175,15 @@ void gosFX::Tube::Draw(DrawInfo *info)
 	// filled the batcher for one frame (until the first Flush()), leaving the
 	// batcher empty for all subsequent frames.
 	if (mc2::particles::Batcher::is_enabled()) {
-		// VFX-WEAPON-FX-RESTORE-OPUS-1: billboard-per-profile oracle disabled for
-		// release. Produces "ladder/fence" artifact (one square card per spine profile)
-		// instead of correct swept-mesh ribbon. Future: swept-mesh oracle replaces this.
-		// Oracle body preserved below (unreachable) for reference.
+		// VFX-ORIGINALS-LOCKDOWN-1: Tube owner = CPU MLR swept-mesh. Do NOT enable this
+		// oracle block without a full swept-mesh ribbon implementation — the billboard-per-
+		// profile approach produces a "ladder/fence" artifact (one square card per spine
+		// profile instead of a continuous ribbon) that was visually wrong for missile smoke
+		// and PPC trails. Enabling it must be paired with:
+		//   1. A ribbon oracle that emits one oriented quad per consecutive profile pair.
+		//   2. An interactive combat validation pass (mc2_10 missiles + mc2_24 PPC).
+		//   3. Updating gpuTrailKindProven() to re-promote PpcBolt and MissileSmoke.
+		// See docs/vfx-originals-lockdown.md.
 		if (false && mc2::particles::Batcher::is_oracle_render_enabled() && m_activeProfileCount > 1) {
 			// VFX-TUBE-PROFILE-ORACLE-1: (disabled) emit one billboard per active profile along
 			// the tube spine as a render approximation. The real Tube geometry is a

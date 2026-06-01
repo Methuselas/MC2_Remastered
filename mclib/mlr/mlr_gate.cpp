@@ -14,11 +14,18 @@ namespace mc2 {
 namespace mlr_gate {
 
 namespace {
-// VFX-WEAPON-FX-RESTORE-OPUS-1: restored to default-ENABLED so classes without
-// a working GPU oracle (Tube/missile smoke, Shape, ShapeCloud, DebrisCloud) render
-// via original CPU MLR path. Oracle classes (CardCloud, ShardCloud, Card, PointCloud)
-// skip MLR in their own Draw() by calling Effect::Draw instead of their base class.
-// MC2_DISABLE_GOSFX=1 can re-disable for regression testing.
+// VFX-ORIGINALS-LOCKDOWN-1: kDefaultDisabled = false — MLR enabled.
+// Tube/Shape/ShapeCloud/DebrisCloud render via original CPU MLR swept-mesh path.
+// Oracle classes (CardCloud/ShardCloud/Card/PointCloud) bypass MLR via Effect::Draw
+// in their gpu-path exit and are unaffected by this gate.
+//
+// Do NOT set kDefaultDisabled = true again unless ALL four non-oracle classes above
+// have GPU oracle replacements with proven visual parity (interactive combat validated).
+// Setting true makes Tube/Shape/ShapeCloud/DebrisCloud invisible — that was the
+// regression this flag was introduced to fix in VFX-WEAPON-FX-RESTORE-OPUS-1.
+//
+// Kill-switch: MC2_DISABLE_GOSFX=1  (runtime override, no recompile needed).
+// Migration plan: docs/vfx-originals-lockdown.md.
 constexpr bool kDefaultDisabled = false;
 
 bool g_initialized = false;

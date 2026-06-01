@@ -2470,20 +2470,19 @@ static mc2::particles::GpuTrailKind gpuTrailKindFromEffectId(int32_t eid)
     return GpuTrailKind::None;
 }
 
-// B3c-1: allowlist of GPU trail kinds that are fully proven and may suppress
-// the CPU gosFX trail. Only kinds that have passed visual + smoke validation
-// are listed here. All others fall through to the CPU path unchanged.
-// VFX-WEAPON-FX-RESTORE-OPUS-1: MissileSmoke and PpcBolt demoted — original
-// gosFX trail restored via oracle (gosEffect creates, oracle harvests particles,
-// GPU billboard renders original animation). GPU trail suppressed when gosEffect
-// is non-null (see trail emit block in update()). Re-promote here only after
-// GPU trail visual parity is proven against original.
+// VFX-ORIGINALS-LOCKDOWN-1: allowlist of GPU trail kinds proven to match original visuals.
+// Both PpcBolt and MissileSmoke are currently demoted (return false). The GPU ring-buffer
+// billboard trail produced "white square card" artifacts. Original gosFX Tube via CPU MLR
+// is the active path for both.
+//
+// To re-promote a kind:
+//   1. Implement a proper swept-mesh ribbon GPU oracle for Tube (VFX-TUBE-SWEPT-MESH-ORACLE-1).
+//   2. Run an interactive combat session (mc2_10 missiles + mc2_24 PPC) and confirm visual parity.
+//   3. Update this function and docs/vfx-originals-lockdown.md in the same commit.
+//   NEVER re-promote based on smoke-only (passive 30s) results — weapon-hit effects are not
+//   exercised in passive smoke. See docs/vfx-originals-lockdown.md for full policy.
 static bool gpuTrailKindProven(mc2::particles::GpuTrailKind k)
 {
-    // VFX-WEAPON-FX-RESTORE-OPUS-1: all GPU trails demoted — original gosFX Tube
-    // effects restored via MLR swept-mesh path (same fix as missile smoke).
-    // GPU ring-buffer billboard trail produces "white square card" artifact.
-    // Re-promote only after GPU trail parity is proven visually.
     (void)k;
     return false;
 }
