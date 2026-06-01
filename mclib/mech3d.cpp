@@ -2673,11 +2673,16 @@ long Mech3DAppearance::render (long depthFixup)
 				}
 			}
 
-			// Slice C1: if GPU mech cull says invisible, skip BOTH the GPU
-			// submit AND the CPU fallback. This is the whole point of the
-			// cull — render nothing for this actor this frame. CPU update
-			// (AI, position, animation, damage) has already run.
-			if (!gpuMechSubmitted && !mechGpuCullSkip && g_drawMechs) {
+			// MECH-CULL-CPU-FIX: mechGpuCullSkip gates GPU submit (correct), but must
+			// NOT gate the CPU fallback. readback_isActorVisibleLagged() uses lagged
+			// GPU cull results; on camera-move frames the lagged readback shows some
+			// center-screen mechs as invisible (frustum shifted between readback frame
+			// and now), causing them to skip BOTH GPU and CPU render → visual pop.
+			// CPU fallback is always safe — it renders via the established CPU path and
+			// the mech is properly depth-tested / frustum-clipped by the rasterizer.
+			// The GPU cull DOES still gate GpuMechBatcher submission (line above) so
+			// off-screen mechs are still excluded from the GPU batcher workload.
+			if (!gpuMechSubmitted && g_drawMechs) {
 				// M2.5 (Q6 amendment 2): count MLR/CPU-fallback draws so
 				// the always-on per-mission mlr_mech_summary line reflects
 				// Path-B incidence. M2.6 readiness decision consults this

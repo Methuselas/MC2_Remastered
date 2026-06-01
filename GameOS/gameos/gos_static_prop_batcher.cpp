@@ -4432,7 +4432,19 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
     //   2. Depth state:   glEnable(GL_DEPTH_TEST) + GL_GEQUAL (reverse-Z) — set by applyPipeline() above.
     //   3. Blend state:   glDisable(GL_BLEND) — set by applyPipeline() above.
     // Verified: depth and blend are set unconditionally by applyPipeline() regardless of C1b path.
-    const bool useC1bIndirect = gpu_cull::compute_isEnabled() &&
+    // C1B-DRAW-FIX: glDrawElementsIndirect uses GPU bucket count (how many visible by
+    // count) but draws the FIRST N instances in SSBO registration order — NOT the
+    // actually-visible N instances identified by visibleIds[]. When the camera moves,
+    // the GPU cull count changes and instances at high SSBO indices (e.g. center-screen
+    // props registered late) get cut off even though they ARE visible. The visibleIds
+    // compaction path (vertex shader reading visibleIds[gl_BaseInstance+gl_InstanceID])
+    // is not wired to the per-type legacy draw loop, so the C1b indirect count is
+    // architecturally incorrect here. Use CPU instance count (r.instanceCount) always.
+    // The GPU cull still runs (bucket counts → readback/lifecycle), just not for draw.
+    // Kill-switch: MC2_STATIC_C1B_DRAW=1 re-enables the (buggy) GPU indirect count.
+    static const bool s_c1bDrawOverride = (getenv("MC2_STATIC_C1B_DRAW") != nullptr);
+    const bool useC1bIndirect = s_c1bDrawOverride &&
+                                gpu_cull::compute_isEnabled() &&
                                 (gpu_cull::compute_getIndirectCmdBuf() != 0) &&
                                 (gpu_cull::compute_getBucketCount() == s_types.size());
 
