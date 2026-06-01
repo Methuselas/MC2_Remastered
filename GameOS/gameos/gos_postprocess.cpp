@@ -2485,124 +2485,26 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     if (len < 0.001f) return;
     float fx = sunDirX/len, fy = sunDirY/len, fz = sunDirZ/len;
 
-    // --- Frustum-fit XY extent in raw-MC2 (corners supplied by caller).
-    // The map-bounds clamp below (r, mirrors the static path) is the
-    // footprint safety net that bounds the low-sun "frustum misses ground"
-    // case; no separate elevation slab is needed for an XY ortho fit.
-    float minX =  1e30f, maxX = -1e30f, minY = 1e30f, maxY = -1e30f;
-    for (int c = 0; c < 8; ++c) {
-        float x = camFitCornersMC2[c][0];
-        float y = camFitCornersMC2[c][1];
-        if (x < minX) minX = x; if (x > maxX) maxX = x;
-        if (y < minY) minY = y; if (y > maxY) maxY = y;
-    }
-    float r = mapHalfExtent_ * sqrtf(2.0f) * 1.05f;   // mirror static path's r
-    if (minX < -r) minX = -r; if (maxX > r) maxX = r;
-    if (minY < -r) minY = -r; if (maxY > r) maxY = r;
-    float cx = 0.5f * (minX + maxX);
-    float cy = 0.5f * (minY + maxY);
-    float halfX = 0.5f * (maxX - minX);
-    float halfY = 0.5f * (maxY - minY);
-    float fitRadius = (halfX > halfY ? halfX : halfY);
-    if (fitRadius < 64.0f) fitRadius = 64.0f;
-    if (fitRadius > r)     fitRadius = r;
-    const float origFitRadius = fitRadius;  // pre-cap, for the diag
+    // SHADOW-UNIFIED-PROJECTION-1: fit shadow ortho in LIGHT SPACE.
+    //
+    // Prior XY-world-bbox approach: MC2 far clip = 61,555 WU, map r~12,184 WU,
+    // so far-frustum corners ALWAYS blow past +-r and clamp. maxX was frozen at
+    // r every frame; cx trailed halfway between camera and map edge, not where
+    // the player looks. Near map edges cx oscillated (corners toggle clamp) ->
+    // shadow "reflected off" the map edge on the minimap.
+    //
+    // Fix: compute the light-space basis first, project corners to light XY,
+    // take the AABB in light space. Filter underground corners (MC2 Z < -200)
+    // so deep far-plane corners don't blow out coverage. Center is now the
+    // frustum centroid in light space -> tracks camera look-at stably.
+    // camZ is back-projected from light-space centroid (removes camZ=0 hardcode).
+    // BOUNDED_NEAR_CENTER block removed -- was a broken workaround for this bug.
 
-    // SHADOW-BOUNDED-NEAR-FIT-1 (gate, default OFF): the RTS camera frustum
-    // saturates the full-map clamp every frame (fitRadius==r==~11404 -> ~5.57
-    // WU/texel; see docs/shadow-frustum-audit.md). When MC2_SHADOW_BOUNDED_NEAR_FIT=1,
-    // cap the fit radius to a small camera-centered region so the dynamic shadow
-    // map covers less world at much higher texel density. Applied BEFORE the pow-2
-    // and texel snap below so stabilization is fully preserved. Trades far-map
-    // shadow coverage for crisp near shadows. Gate OFF -> byte-identical to prior.
-    {
-        static const bool s_boundedNear = []() {
-            const char* v = getenv("MC2_SHADOW_BOUNDED_NEAR_FIT");
-            return (v && v[0] == '1');   // default OFF; only "=1" enables
-        }();
-        if (s_boundedNear) {
-            static const float s_boundedRadiusRaw = []() {
-                const char* v = getenv("MC2_SHADOW_BOUNDED_NEAR_RADIUS");
-                float rad = (v ? (float)atof(v) : 2500.0f);
-                if (rad <= 0.0f) rad = 2500.0f;
-                return rad;
-            }();
-            float boundedRadius = s_boundedRadiusRaw;
-            if (boundedRadius < 512.0f) boundedRadius = 512.0f;  // safe floor
-            if (boundedRadius > r)      boundedRadius = r;        // never exceed map clamp
-            if (fitRadius > boundedRadius) fitRadius = boundedRadius;
-
-            // SHADOW-BOUNDED-NEAR-CENTER fix: center the bounded box on the
-            // camera's GROUND FOCUS (screen-center view ray intersect ground),
-            // NOT the clamped full-frustum bbox center (cx,cy). For a tilted RTS
-            // camera the far corners blow past the map and clamp to +/-r, so the
-            // bbox center snapped erratically as the camera rotated (the box
-            // "moved nonsensically"). The screen-center ground point tracks where
-            // the player looks and moves smoothly. nearC/farC = centroids of the
-            // 4 near (z=0) and 4 far (z=1) UNCLAMPED corners (= each plane center);
-            // the line between them is the center ray. Intersect with MC2 ground
-            // (elevation == coord[2] == 0). Falls back to cx,cy for a ~horizontal ray.
-            float nearC[3] = {0,0,0}, farC[3] = {0,0,0};
-            for (int c = 0; c < 4; ++c) {
-                nearC[0]+=camFitCornersMC2[c][0];   nearC[1]+=camFitCornersMC2[c][1];   nearC[2]+=camFitCornersMC2[c][2];
-                farC[0] +=camFitCornersMC2[c+4][0]; farC[1] +=camFitCornersMC2[c+4][1]; farC[2] +=camFitCornersMC2[c+4][2];
-            }
-            for (int k = 0; k < 3; ++k) { nearC[k]*=0.25f; farC[k]*=0.25f; }
-            const float dz = nearC[2] - farC[2];
-            if (fabsf(dz) > 1e-3f) {
-                float t = nearC[2] / dz;             // param where elevation crosses 0
-                if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
-                float fX = nearC[0] + t * (farC[0] - nearC[0]);
-                float fY = nearC[1] + t * (farC[1] - nearC[1]);
-                if (fX < -r) fX = -r; else if (fX > r) fX = r;
-                if (fY < -r) fY = -r; else if (fY > r) fY = r;
-                cx = fX; cy = fY;                    // override the box center
-            }
-        }
-    }
-
-    float xyRadius = 64.0f;
-    while (xyRadius < fitRadius) xyRadius *= 2.0f;     // pow2 anti-shimmer
-    if (xyRadius > r) xyRadius = r;
-    float worldUnitsPerTexel = (2.0f * xyRadius) / (float)dynShadowMapSize_;
-    float camX = floorf(cx / worldUnitsPerTexel) * worldUnitsPerTexel;
-    float camY = floorf(cy / worldUnitsPerTexel) * worldUnitsPerTexel;
-    float camZ = 0.0f;
-    float depthDist = 5000.0f;
-
-    // SHADOW-FRUSTUM-AUDIT-1 (2026-05-29): env-gated, read-only coverage probe.
-    // No behavior change. MC2_SHADOW_FRUSTUM_DIAG=1 dumps the per-frame dynamic
-    // sun-shadow ortho coverage so we can see actual texel world size and whether
-    // the box is camera-fit (it is) vs the missing-distant-caster problem (which
-    // is a caster-feed issue, not a matrix issue). Caster counts live in the
-    // debug-state dump (gos_get*ShadowInstDrawn); read those alongside this.
-    {
-        static const bool s_frustDiag = (getenv("MC2_SHADOW_FRUSTUM_DIAG") != nullptr);
-        static int s_frustN = 0;
-        if (s_frustDiag) {
-            ++s_frustN;
-            if (s_frustN <= 3 || (s_frustN % 300) == 0) {
-                fprintf(stderr,
-                    "[SHADOW_FRUSTUM_DIAG] frame=%d sunDir=(%.3f,%.3f,%.3f) "
-                    "frustumXY=[%.0f..%.0f,%.0f..%.0f] center=(%.0f,%.0f) "
-                    "fitRadius=%.0f(orig=%.0f) xyRadius=%.0f mapClampR=%.0f "
-                    "texelWU=%.3f orthoWH=%.0fx%.0f depth=[%.0f..%.0f] mapSize=%d\n",
-                    s_frustN, fx, fy, fz,
-                    minX, maxX, minY, maxY, cx, cy,
-                    fitRadius, origFitRadius, xyRadius, r,
-                    worldUnitsPerTexel, 2.0f * xyRadius, 2.0f * xyRadius,
-                    1.0f, 2.0f * depthDist, dynShadowMapSize_);
-                fflush(stderr);
-            }
-        }
-    }
-
-    float lightPosX = camX - fx * depthDist;
-    float lightPosY = camY - fy * depthDist;
-    float lightPosZ = camZ - fz * depthDist;
-
-    float ux = 0, uy = 0, uz = 1;
-    if (fabsf(fz) > 0.9f) { ux = 0; uy = 1; uz = 0; }
+    // Light basis (Gram-Schmidt on sun direction, Z-up world).
+    // Identical to the view matrix construction below; computed here first
+    // so we can project corners before building the matrix.
+    float ux = 0.0f, uy = 0.0f, uz = 1.0f;
+    if (fabsf(fz) > 0.9f) { ux = 0.0f; uy = 1.0f; uz = 0.0f; }
 
     float rx = fy * uz - fz * uy;
     float ry = fz * ux - fx * uz;
@@ -2613,6 +2515,108 @@ void gosPostProcess::buildDynamicLightMatrix(float sunDirX, float sunDirY, float
     ux = ry * fz - rz * fy;
     uy = rz * fx - rx * fz;
     uz = rx * fy - ry * fx;
+
+    // Project each frustum corner to light space (light-X = dot(world,right),
+    // light-Y = dot(world,up)). Filter corners deeper than -200 WU below sea
+    // level -- those are underground far-plane artifacts in the 61k WU frustum.
+    const float kSceneZFloor = -200.0f;
+    float minLX = 1e30f, maxLX = -1e30f;
+    float minLY = 1e30f, maxLY = -1e30f;
+    int validCorners = 0;
+    for (int c = 0; c < 8; ++c) {
+        const float wx = camFitCornersMC2[c][0];
+        const float wy = camFitCornersMC2[c][1];
+        const float wz = camFitCornersMC2[c][2];
+        if (wz < kSceneZFloor) continue;
+        const float lx = rx*wx + ry*wy + rz*wz;
+        const float ly = ux*wx + uy*wy + uz*wz;
+        if (lx < minLX) minLX = lx;  if (lx > maxLX) maxLX = lx;
+        if (ly < minLY) minLY = ly;  if (ly > maxLY) maxLY = ly;
+        ++validCorners;
+    }
+    if (validCorners == 0) {
+        // All corners underground (shouldn't happen in gameplay) -- include all.
+        for (int c = 0; c < 8; ++c) {
+            const float lx = rx*camFitCornersMC2[c][0] + ry*camFitCornersMC2[c][1] + rz*camFitCornersMC2[c][2];
+            const float ly = ux*camFitCornersMC2[c][0] + uy*camFitCornersMC2[c][1] + uz*camFitCornersMC2[c][2];
+            if (lx < minLX) minLX = lx;  if (lx > maxLX) maxLX = lx;
+            if (ly < minLY) minLY = ly;  if (ly > maxLY) maxLY = ly;
+        }
+    }
+
+    // AABB center in light space -> back-project to world for the shadow origin.
+    float cxL = 0.5f * (minLX + maxLX);
+    float cyL = 0.5f * (minLY + maxLY);
+    const float halfLX = 0.5f * (maxLX - minLX);
+    const float halfLY = 0.5f * (maxLY - minLY);
+    float fitRadius = (halfLX > halfLY ? halfLX : halfLY);
+    if (fitRadius < 64.0f) fitRadius = 64.0f;
+    float r = mapHalfExtent_ * sqrtf(2.0f) * 1.05f;   // full-map safety cap
+    if (fitRadius > r) fitRadius = r;
+    const float origFitRadius = fitRadius;
+
+    // SHADOW-BOUNDED-NEAR-FIT-1 (gate, default OFF): cap fit radius for higher
+    // near-shadow texel density. Center is now correct by construction (light-
+    // space AABB); no separate center-override needed.
+    {
+        static const bool s_boundedNear = []() {
+            const char* v = getenv("MC2_SHADOW_BOUNDED_NEAR_FIT");
+            return (v && v[0] == '1');
+        }();
+        if (s_boundedNear) {
+            static const float s_boundedRadiusRaw = []() {
+                const char* v = getenv("MC2_SHADOW_BOUNDED_NEAR_RADIUS");
+                float rad = (v ? (float)atof(v) : 2500.0f);
+                if (rad <= 0.0f) rad = 2500.0f;
+                return rad;
+            }();
+            float boundedRadius = s_boundedRadiusRaw;
+            if (boundedRadius < 512.0f) boundedRadius = 512.0f;
+            if (boundedRadius > r)      boundedRadius = r;
+            if (fitRadius > boundedRadius) fitRadius = boundedRadius;
+        }
+    }
+
+    // Anti-shimmer: snap fit radius to power-of-2, snap center to texel grid
+    // in light space (prevents shadow swimming on smooth camera motion).
+    float xyRadius = 64.0f;
+    while (xyRadius < fitRadius) xyRadius *= 2.0f;
+    if (xyRadius > r) xyRadius = r;
+    float worldUnitsPerTexel = (2.0f * xyRadius) / (float)dynShadowMapSize_;
+    cxL = floorf(cxL / worldUnitsPerTexel) * worldUnitsPerTexel;
+    cyL = floorf(cyL / worldUnitsPerTexel) * worldUnitsPerTexel;
+    // Back-project snapped light-space center to world (replaces camZ=0 hardcode).
+    float camX = cxL * rx + cyL * ux;
+    float camY = cxL * ry + cyL * uy;
+    float camZ = cxL * rz + cyL * uz;
+
+    float depthDist = 5000.0f;
+
+    // SHADOW-FRUSTUM-AUDIT-1: MC2_SHADOW_FRUSTUM_DIAG=1 logs per-frame coverage.
+    {
+        static const bool s_frustDiag = (getenv("MC2_SHADOW_FRUSTUM_DIAG") != nullptr);
+        static int s_frustN = 0;
+        if (s_frustDiag) {
+            ++s_frustN;
+            if (s_frustN <= 3 || (s_frustN % 300) == 0) {
+                fprintf(stderr,
+                    "[SHADOW_FRUSTUM_DIAG] frame=%d sunDir=(%.3f,%.3f,%.3f) "
+                    "lightAABB=[%.0f..%.0f,%.0f..%.0f] worldCenter=(%.0f,%.0f,%.0f) "
+                    "fitRadius=%.0f(orig=%.0f) xyRadius=%.0f mapClampR=%.0f "
+                    "texelWU=%.3f orthoWH=%.0fx%.0f validCorners=%d mapSize=%d\n",
+                    s_frustN, fx, fy, fz,
+                    minLX, maxLX, minLY, maxLY, camX, camY, camZ,
+                    fitRadius, origFitRadius, xyRadius, r,
+                    worldUnitsPerTexel, 2.0f * xyRadius, 2.0f * xyRadius,
+                    validCorners, dynShadowMapSize_);
+                fflush(stderr);
+            }
+        }
+    }
+
+    float lightPosX = camX - fx * depthDist;
+    float lightPosY = camY - fy * depthDist;
+    float lightPosZ = camZ - fz * depthDist;
 
     float view[16] = {
          rx,  ux, -fx, 0,
