@@ -81,4 +81,12 @@ uint32_t substrate_getCurrentRecordCount();
 // Returns nullptr if substrate is not initialized.
 const GpuActorRecord* substrate_getSlotRecords(uint32_t slot, uint32_t* outCount);
 
+// PERF-GPU-CULL-READBACK-ID-CACHE-1: CPU-side actor ID cache.
+// Returns a pointer to the CPU-side actorId array for the given ring slot.
+// Parallel to substrate_getSlotRecords — same index ordering, same record count.
+// Reading from this array avoids PCIe/BAR reads from the persistent-mapped SSBO.
+// outCount is populated with the record count for the slot (may be 0).
+// Returns nullptr if substrate is not initialized.
+const uint32_t* substrate_getCpuActorIds(uint32_t slot, uint32_t* outCount);
+
 } // namespace gpu_cull
