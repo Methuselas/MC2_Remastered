@@ -2575,7 +2575,23 @@ long Mech3DAppearance::render (long depthFixup)
 			// missing render, recovered next frame at 60Hz.
 			bool mechGpuCullSkip = false;
 			if (g_useGpuMechs && g_useGpuMechCull) {
-				if (!gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(actorHandle_))) {
+				// CONSERVATIVE-OR (mirrors terrobj.cpp / static-prop fix):
+				// the lagged GPU readback may CONFIRM invisibility but must
+				// NOT DENY visibility. Only skip the GPU submit when BOTH the
+				// lagged readback AND the CPU inView test agree the mech is
+				// offscreen. The lagged readback is unstable frame-to-frame
+				// (d65552ab made readback default-ON; slot rotation + camera
+				// motion flip it even for a dead-center actor). When it flipped
+				// to "invisible" we skipped the GPU submit and fell back to the
+				// CPU mechShape->Render() path, which does not actually draw
+				// while GPU mech batching owns rendering -> the mech vanished
+				// for that frame -> center-screen flicker. Requiring CPU
+				// inView agreement means an in-view mech is never skipped, so
+				// it is always GPU-drawn; only genuinely-offscreen mechs (both
+				// signals agree) still skip, preserving the cull perf win.
+				const bool lagVis = gpu_cull::readback_isActorVisibleLagged(
+				    static_cast<uint32_t>(actorHandle_));
+				if (!lagVis && !inView) {
 					mechGpuCullSkip = true;
 				}
 			}

@@ -353,6 +353,8 @@ def main():
                             "MC2_GPU_CULL_SUBSTRATE_TRACE",
                             "MC2_GPU_CULL",
                             "MC2_GPU_CULL_COMPUTE_TRACE",
+                            "MC2_CAMERA_MOVE_DIAG",
+                            "MC2_STATIC_FORCE_ADMIT",
                             # Track C2 — async readback ring buffer
                             "MC2_GPU_CULL_READBACK",
                             "MC2_GPU_CULL_FORCE_FENCE_NOT_READY",

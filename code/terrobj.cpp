@@ -791,19 +791,32 @@ long TerrainObject::update (void) {
 		bool inView = false;
 		{
 			if (gpu_cull::readback_isEnabled()) {
-				// PERF-OBJECT-ITER-GPU-PORT-1: GPU readback is the visibility authority.
-				// Skip coarse-angular sphereclip — readback conservative-OR+dilation
-				// (89e35ac) is already over-inclusive under camera motion.
-				// setVisibilityGatesFromLegacy mirrors what recalcBounds would have done.
-				inView = gpu_cull::readback_isActorVisibleLagged(
+				// PERF-OBJECT-ITER-GPU-PORT-1 (CORRECTED): readback is used as a
+				// fast-confirm for VISIBLE objects only — skip recalcBounds when
+				// the readback confirms the object IS visible (the common case in
+				// a dense scene). When readback says invisible (lagged, 1-frame old),
+				// fall through to recalcBounds() so objects entering the view via
+				// camera pan don't produce a 1-frame transparent pop.
+				// BUG: original used readback as sole authority (set renderVisible=false
+				// when lagged-invisible), causing center-screen objects to flicker
+				// during camera pans (they were off-screen last frame → readback=0 →
+				// invisible this frame). This fix restores the correct conservative
+				// direction: readback can confirm visibility but NOT deny it.
+				const bool lagVis = gpu_cull::readback_isActorVisibleLagged(
 				    static_cast<uint32_t>(getHandle()));
-				if (appearance) appearance->setVisibilityGatesFromLegacy(inView);
+				if (lagVis) {
+					// Readback confirms visible: skip expensive coarse sphereclip.
+					if (appearance) appearance->setVisibilityGatesFromLegacy(true);
+					inView = true;
+				} else {
+					// Readback uncertain: CPU recalcBounds is authoritative.
+					inView = appearance->recalcBounds();
+				}
 			} else {
 				inView = appearance->recalcBounds();
 			}
 		}
-		// gpuVisible extension for when readback is off (legacy fallback only).
-		// When readback is on, inView already IS the readback result.
+		// gpuVisible extension: unused when readback is on (inView IS the result).
 		const bool gpuVisible = !gpu_cull::readback_isEnabled() && false;
 		if (inView || gpuVisible)
 		{
@@ -941,13 +954,25 @@ void TerrainObject::render (void) {
 	{
 	}
 
-	// Item 3 gate repoint: GPU readback is authoritative when enabled (projScale +
-	// getRadius() fixes make readback a reliable superset); fallback to canBeSeen()
-	// keeps behaviour identical when readback is off.
-	const bool readbackVisible = gpu_cull::readback_isEnabled()
-		? gpu_cull::readback_isActorVisibleLagged(static_cast<uint32_t>(getHandle()))
-		: appearance->canBeSeen();
-	if (readbackVisible || g_useGpuStaticProps)
+	// RENDER-GATE-FIX (mirrors the "CORRECTED" logic in update() line 794-817):
+	// Readback can CONFIRM visibility but must NOT DENY it. The readback is lagged
+	// (~2 frames); on camera-move frames a center-screen terrain object may have been
+	// outside the previous camera frustum, making its lagged result false-invisible.
+	// Using readback as sole authority (the pre-fix code above) caused the 1-frame
+	// render-skip → visual pop that d65552ab introduced when readback was made default-ON.
+	// Fix: OR-merge with canBeSeen() so readback false-invisible never blocks render.
+	// If readback says visible → skip canBeSeen (fast path). If readback says invisible
+	// → fall through to canBeSeen() (conservative: may over-render, never under-renders).
+	bool renderGate;
+	if (!gpu_cull::readback_isEnabled()) {
+		renderGate = appearance->canBeSeen();
+	} else {
+		const bool lagVis = gpu_cull::readback_isActorVisibleLagged(
+		    static_cast<uint32_t>(getHandle()));
+		// Conservative-OR: render if readback OR CPU test says visible.
+		renderGate = lagVis || appearance->canBeSeen();
+	}
+	if (renderGate || g_useGpuStaticProps)
 	{
 		if (getSelected())
 		{

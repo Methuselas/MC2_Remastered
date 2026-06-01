@@ -844,6 +844,8 @@ void compute_dispatch() {
     COMPUTE_TRACE("mvp row3=(%.4f,%.4f,%.4f,%.4f)",
                   mvp[3],mvp[7],mvp[11],mvp[15]);
 
+    static const bool s_camMoveDiag = (getenv("MC2_CAMERA_MOVE_DIAG") != nullptr);
+
     // Copy active ring slot to staging SSBO (offset 0).
     GLuint substrateSsbo = substrate_getInstanceSsboName();
     if (!substrateSsbo || !s_stagingSsbo) {
@@ -878,6 +880,39 @@ void compute_dispatch() {
     if (recordCount == 0) {
         COMPUTE_TRACE("event=dispatch_skip reason=record_count_zero");
         return;
+    }
+
+    // CAMERA-MOVE-DIAG: log full MVP + first actor worldCenter (no GPU stall).
+    if (s_camMoveDiag) {
+        static float s_lastMvpCull[16] = {};
+        bool changed = (memcmp(mvp, s_lastMvpCull, 64) != 0);
+        if (changed) {
+            memcpy(s_lastMvpCull, mvp, 64);
+            printf("[CULL_DIAG] MVP rows: [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f]\n",
+                   mvp[0],mvp[1],mvp[2],mvp[3], mvp[4],mvp[5],mvp[6],mvp[7],
+                   mvp[8],mvp[9],mvp[10],mvp[11], mvp[12],mvp[13],mvp[14],mvp[15]);
+            // Derive current slot index from byte offset/size.
+            const uint32_t currSlot = (slotBytes > 0)
+                ? static_cast<uint32_t>(slotOffset / slotBytes) : 0u;
+            uint32_t cnt = 0;
+            const GpuActorRecord* recs = substrate_getSlotRecords(currSlot, &cnt);
+            if (recs && cnt > 0) {
+                const float wx=recs[0].worldCenter[0], wy=recs[0].worldCenter[1], wz=recs[0].worldCenter[2];
+                float cx=mvp[0]*wx+mvp[1]*wy+mvp[2]*wz+mvp[3];
+                float cy=mvp[4]*wx+mvp[5]*wy+mvp[6]*wz+mvp[7];
+                float cz=mvp[8]*wx+mvp[9]*wy+mvp[10]*wz+mvp[11];
+                float cw=mvp[12]*wx+mvp[13]*wy+mvp[14]*wz+mvp[15];
+                // Frustum test: visible if |cx|<=|cw| && |cy|<=|cw| && 0<=cz<=cw (D3D conv, cw>0)
+                float s = (cw<0.f)?-1.f:1.f; cx*=s; cy*=s; cz*=s; cw*=s;
+                const float d = compute_getFrustumDilation();
+                const float bound = cw*(1.f+d);
+                bool pass = (cw>=1e-5f) && (cx>=-bound&&cx<=bound) && (cy>=-bound&&cy<=bound)
+                         && (cz>=-d*cw&&cz<=bound);
+                printf("[CULL_DIAG] rec[0] world=(%.1f,%.1f,%.1f) r=%.1f clip=(%.2f,%.2f,%.2f,%.2f) norm=(%.2f,%.2f,%.2f,%.2f) frustum=%s\n",
+                       wx,wy,wz, recs[0].boundingRadius, cx/s,cy/s,cz/s,cw/s, cx,cy,cz,cw, pass?"PASS":"FAIL");
+            }
+            fflush(stdout);
+        }
     }
 
     // Bind staging SSBO at binding 8.
@@ -1136,6 +1171,24 @@ void compute_dispatch() {
             // Barrier: blockVisBits[] ready for C3 consumers.
             glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         }
+
+        // C1B-SSBO-CLEANUP: unbind all SSBO slots set during the C1b dispatch block.
+        // Slots 9..14 are bound to GPU-cull-internal buffers; leaving them active leaks
+        // into subsequent rendering passes (water GPU compute, terrain, post-process)
+        // that use the same binding indices for their own data. This was the root cause
+        // of water disappearing on camera-move frames after d65552ab made GPU cull active.
+        // Unbind unconditionally — cost is 6 GL calls, negligible vs dispatch overhead.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, DEBUG_SSBO_BINDING,      0u); // slot 9
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BUCKET_COUNTS_BINDING,   0u); // slot 10
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, INDIRECT_CMD_BINDING,    0u); // slot 11
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, ACTOR_VIS_BINDING,       0u); // slot 12
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BLOCK_VIS_BINDING,       0u); // slot 13
+        // Slot 14 (READBACK_SSBO_BINDING) was bound via glBindBufferRange — unbind via base.
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, READBACK_SSBO_BINDING,   0u); // slot 14
+        // Slot 11 also used as GL_DRAW_INDIRECT_BUFFER: ensure that is unbound too.
+        // (The C1b draw in flush() rebinds it explicitly; this prevents stale binding
+        //  from bleeding into any pass between compute_dispatch() and flush().)
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0u);
 
         // 7. Overflow check (async — read overflow counter without stalling).
         // Non-blocking: will be checked next frame. Flag checked in emitParitySummary.

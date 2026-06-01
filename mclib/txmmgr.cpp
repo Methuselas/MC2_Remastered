@@ -58,6 +58,7 @@
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 #include <chrono>   // [LIGHTBRIDGE v1] coarse per-frame populate sizing
 #include <utils/gl_utils.h>
 #include <GL/glew.h>                 // TEXMGR-COMPRESSED-UPLOAD-1: BPTC cap + GL_COMPRESSED_* enums
@@ -1992,6 +1993,14 @@ void MC_TextureManager::renderLists (void)
 		extern bool g_useGpuStaticProps;
 		extern bool g_useGpuObjects;
 		if (g_useGpuStaticProps || g_useGpuObjects) {
+			// GPU-ORDERING-PROBE-1: glFinish() before static-prop flush to confirm
+			// whether the flash is a pipeline ordering / missing-barrier issue.
+			// If glFinish() here stops the flash → cause is a GPU sync gap introduced
+			// by d65552ab's new GL_SHADER_STORAGE_BARRIER_BIT calls changing AMD
+			// pipeline scheduling for s_indirectCmdBuf visibility on camera-move frames.
+			// Kill this probe once root cause is identified.
+			static const bool s_finishProbe = (getenv("MC2_FLUSH_PROBE") != nullptr);
+			if (s_finishProbe) glFinish();
 			GpuStaticPropRegistry::flush();
 		}
 	}
@@ -2250,6 +2259,50 @@ void MC_TextureManager::renderLists (void)
 #endif
 			if (gpu_cull::compute_isEnabled()) {
 				gpu_cull::compute_dispatch();
+			}
+
+			// CAMERA-MOVE-DIAG: log substrate record count + cull output before/after
+			// dispatch to distinguish compute early-return vs frustum-all-fail.
+			// Gate: MC2_CAMERA_MOVE_DIAG=1. Causes GL stalls — diagnostic only.
+			{
+				static const bool s_diagEnabled = (getenv("MC2_CAMERA_MOVE_DIAG") != nullptr);
+				if (s_diagEnabled) {
+					static float s_lastMvp[16] = {};
+					static uint32_t s_frameN = 0;
+					extern const float* gos_GetTerrainMVPMat4();
+					const float* mvp = gos_GetTerrainMVPMat4();
+					bool mvpChanged = mvp && (memcmp(mvp, s_lastMvp, 16 * sizeof(float)) != 0);
+					if (mvp && mvpChanged) memcpy(s_lastMvp, mvp, 16 * sizeof(float));
+					++s_frameN;
+					// Log every camera-move frame; stationary every 120 frames
+					bool doLog = mvpChanged || (s_frameN % 120 == 0);
+					if (doLog) {
+						const uint32_t subRec = gpu_cull::substrate_getCurrentRecordCount();
+						const GLintptr  subOff = gpu_cull::substrate_getCurrentSlotOffset();
+						glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+						const GLuint bktBuf = gpu_cull::compute_getBucketCountsBuf();
+						const GLuint cmdBuf = gpu_cull::compute_getIndirectCmdBuf();
+						uint32_t bkt[4] = {};
+						if (bktBuf) glGetNamedBufferSubData(bktBuf, 0, sizeof(bkt), bkt);
+						uint32_t inst0 = 0;
+						if (cmdBuf) glGetNamedBufferSubData(cmdBuf, 4, sizeof(inst0), &inst0); // struct[0].instanceCount
+						// Sum ALL bucket counts across all 221+ buckets.
+						uint32_t bktTotal = 0;
+						const uint32_t nBkts = gpu_cull::compute_getBucketCount();
+						if (bktBuf && nBkts > 0) {
+							std::vector<uint32_t> allBkt(nBkts + 1u);
+							glGetNamedBufferSubData(bktBuf, 0, (nBkts + 1u) * sizeof(uint32_t), allBkt.data());
+							for (uint32_t b = 0; b < nBkts; ++b) bktTotal += allBkt[b];
+						}
+						printf("[DIAG] %s subRec=%u | bkt0=%u bkt1=%u bkt2=%u bkt3=%u bktTOTAL=%u | inst0=%u | mvp[0..3]=[%.3f %.3f %.3f %.3f]\n",
+							mvpChanged ? "MOVE  " : "STATIC",
+							subRec,
+							bkt[0], bkt[1], bkt[2], bkt[3], bktTotal, inst0,
+							mvp ? mvp[0] : 0.f, mvp ? mvp[1] : 0.f,
+							mvp ? mvp[2] : 0.f, mvp ? mvp[3] : 0.f);
+						fflush(stdout);
+					}
+				}
 			}
 
 			GpuStaticPropBatcher::instance().flush(getLastRenderSnapshot());

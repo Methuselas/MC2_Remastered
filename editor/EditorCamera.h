@@ -34,6 +34,7 @@ EditorCamera.h			: Interface for the EditorCamera component.
 #endif
 
 #include "../GameOS/gameos/gos_static_prop_registry.h"
+#include "../GameOS/gameos/view_uniforms_gl.h"  // setCurrentView + uploadViewUniforms
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -192,6 +193,49 @@ public:
 			// path is through mcTextureManager->renderLists() (txmmgr.cpp:2164).
 
 			gos_SetWorldToClipGL(eye->worldToClipGL());        // step 1 — game line 176
+
+			// EDITOR-VIEWUNIFORMS-1: fill ViewUniforms + register MainScene EngineView,
+			// mirroring code/gamecam.cpp:185-255. Without this, VIEW_UNIFORMS UBO
+			// binding=3 holds stale/zero data → static_prop.vert transforms all props
+			// with identity matrix → everything off-screen. Added post-S2 when
+			// kMainSceneViewId/setCurrentView were introduced (commit 434c923e,
+			// 2026-05-27); the editor missed the update.
+			{
+				RenderCore::ViewUniforms vu{};
+				auto stuffToRowMajor = [](const Stuff::Matrix4D& m, float out[16]) {
+					const float* col = m.entries;
+					for (int r = 0; r < 4; ++r)
+						for (int c = 0; c < 4; ++c)
+							out[r * 4 + c] = col[c * 4 + r];
+				};
+				stuffToRowMajor(eye->worldToClipGL(), vu.worldToClipGL);
+				stuffToRowMajor(eye->worldToViewGL(), vu.worldToViewGL);
+				const Stuff::Vector3D orig = eye->cameraOriginGL();
+				vu.cameraWorldPos[0] = orig.x;
+				vu.cameraWorldPos[1] = orig.y;
+				vu.cameraWorldPos[2] = orig.z;
+				vu.cameraWorldPos[3] = 1.0f;
+
+				{
+					RenderCore::EngineView mainView{};
+					mainView.id = RenderCore::kMainSceneViewId;
+					mainView.viewUniforms = vu;
+					mainView.viewport[0] = 0;
+					mainView.viewport[1] = 0;
+					mainView.viewport[2] = Environment.drawableWidth;
+					mainView.viewport[3] = Environment.drawableHeight;
+					mainView.renderMask = 0xFFFFFFFF;
+					mainView.debugName = "MainScene";
+					mainView.mode = RenderCore::ViewMode::Visual;
+					mainView.kind = RenderCore::ViewKind::MainScene;
+					RenderCore::setCurrentView(mainView);
+				}
+
+				static const char* s_vuEnv = std::getenv("MC2_VIEW_UNIFORMS");
+				if (!(s_vuEnv && s_vuEnv[0] == '0')) {
+					RenderCore::uploadViewUniforms(vu);
+				}
+			}
 
 			// S2.10: terrain shader needs camera position (distance LOD in TCS)
 			// and light direction (PBR lighting in FS). Without these the

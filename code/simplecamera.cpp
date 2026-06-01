@@ -206,8 +206,15 @@ void SimpleCamera::render(long xOffset, long yOffset)
 
 			
 			pObject->render();
-			if ( !drawOldWay )
+			if ( !drawOldWay ) {
+				// GPU-CULL-SIMPLECAM-1: update terrain MVP before renderLists() so
+				// compute_dispatch() uses THIS camera's world-to-clip, not the stale
+				// matrix left by the last GameCamera::render(). Without this, the GPU
+				// cull frustum test runs with last frame's GameCamera MVP, mis-culling
+				// visible actors on every camera-move frame of the intro pan.
+				gos_SetWorldToClipGL(worldToClipGL());
 				mcTextureManager->renderLists();
+			}
 			endFrameTexResolve();              // defensive — see plan Task 2 Step 3a.
 			eye = oldCam;
 			gos_PopRenderStates();
