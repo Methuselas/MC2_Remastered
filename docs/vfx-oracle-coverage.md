@@ -1,40 +1,47 @@
 # VFX Oracle Coverage Matrix
 
-Last updated: 2026-05-31 (VFX-WEAPON-FX-RESTORE-OPUS-1 — oracle default-ON flip)
+Last updated: 2026-05-31 (VFX-WEAPON-FX-RESTORE-OPUS-1 complete — MLR re-enabled, Tube→MLR, weapon FX restored)
 
-Branch: `claude/nifty-mendeleev` (tip post-VFX-WEAPON-FX-RESTORE-OPUS-1)
+Branch: `claude/nifty-mendeleev` HEAD `9dfff4a9`
 
-## Release Routing Table (VFX-WEAPON-FX-RESTORE-OPUS-1)
+## Release Routing Table (VFX-WEAPON-FX-RESTORE-OPUS-1 — updated 2026-05-31)
 
 | Class / Effect family | Final route | Gate / default | Reason | Validation status |
 |---|---|---|---|---|
-| CardCloud (388 specs) — dust, smoke, fireball, AC/Gauss trails, foot-poofs, mech-smoke, VTOL | **GPU_ORACLE** | `MC2_VFX_ORACLE_RENDER` default-ON | Full oracle validated mc2_10+mc2_24; spin+aspect+atlas+age wired | CONFIRMED: tier1 5/5 + pass 2 |
-| ShardCloud (24 specs) — sparks, debris fragments | **GPU_ORACLE** | `MC2_VFX_ORACLE_RENDER` default-ON | Full oracle validated; circular billboard approx accepted for release | CONFIRMED: tier1 5/5 + pass 2 |
-| Card (136 specs) — muzzle flares, hit flashes, bolt lozenge | **GPU_ORACLE** | `MC2_VFX_ORACLE_RENDER` default-ON | Full oracle validated; lozenge alpha=1 confirmed visible | CONFIRMED: tier1 5/5 + pass 2 |
-| Tube (31 specs) — PPC core trail, FX_FlameTrail, FX_SmokeTrail | **GPU_ORACLE** | `MC2_VFX_ORACLE_RENDER` default-ON | PPC "core" alpha=0 is spec-correct; flamer/smoke trail needs interactive validation | PARTIAL: mc2_24 oracle fires; visible alpha needs interactive flamer session |
-| PointCloud (2 specs) — MG muzzle dot | **GPU_ORACLE** | `MC2_VFX_ORACLE_RENDER` default-ON | Oracle path wired; 0 births in passive smoke (births only on active missile/MG fire) | PARTIAL: oracle fires; visual needs interactive missile/MG session |
-| EffectCloud (39 specs) — composite container | **GPU_ORACLE** | N/A (delegates to children) | Container only; children handle their own routes | CONFIRMED: children validated |
-| ShapeCloud (9 specs) — explosion mesh swarms | **DEFERRED** | Currently invisible (DrawScalableShape gated OFF) | 3D mesh substrate (VFX-3D-MESH-GPU-SUBSTRATE-1) needed; not a release-blocking weapon FX | DEFERRED |
-| Shape (10 specs) — singleton explosion meshes | **DEFERRED** | Currently invisible | Same substrate dependency | DEFERRED |
-| DebrisCloud (34 specs) — rigid-body debris chunks | **DEFERRED** | Currently invisible | Same substrate dependency | DEFERRED |
-| GPU missile/SRM/LRM trails | **GPU_ORACLE** | `MC2_GPU_PARTICLES` default-ON (GpuTrailKind) | GpuTrailKind::MissileSmoke proven + default-ON | CONFIRMED |
-| GPU PPC bolt trail | **GPU_ORACLE** | `MC2_GPU_PARTICLES` default-ON (GpuTrailKind::PpcBolt) | PpcBolt trail proven + default-ON | CONFIRMED |
+| CardCloud (388 specs) — dust, smoke, fireball, AC/Gauss trails, foot-poofs, mech-smoke, VTOL | **GPU_ORACLE** (oracle → GPU batcher; MLR suppressed at oracle exit via Effect::Draw) | `MC2_VFX_ORACLE_RENDER` default-ON | Full oracle validated; oracle exit uses Effect::Draw to prevent MLR double-draw | CONFIRMED: tier1 5/5 + interactive |
+| ShardCloud (24 specs) — sparks, debris fragments | **GPU_ORACLE** (same pattern as CardCloud) | `MC2_VFX_ORACLE_RENDER` default-ON | Full oracle validated | CONFIRMED: tier1 5/5 |
+| Card (136 specs) — muzzle flares, hit flashes, bolt lozenge | **GPU_ORACLE** (same pattern) | `MC2_VFX_ORACLE_RENDER` default-ON | Full oracle validated; lozenge alpha=1 visible | CONFIRMED: tier1 5/5 |
+| PointCloud (2 specs) — MG muzzle dot | **GPU_ORACLE** (same pattern) | `MC2_VFX_ORACLE_RENDER` default-ON | Oracle path wired; 0 births in passive smoke | PARTIAL: oracle fires; visual needs interactive MG session |
+| EffectCloud (39 specs) — composite container | **GPU_ORACLE** (delegates to children) | N/A | Container only; children handle their own routes | CONFIRMED: children validated |
+| Tube (31 specs) — missile smoke, PPC trail, FX_FlameTrail, FX_SmokeTrail | **CPU_MLR** (oracle disabled `if(false&&...)`; falls through to MLR swept-mesh) | `MC2_DISABLE_GOSFX=0` default (MLR enabled) | Billboard-per-profile oracle caused "ladder/fence" artifact. MLR swept-mesh is the original correct visual. | CONFIRMED: missile smoke + PPC trail visible and correct |
+| ShapeCloud (9 specs) — explosion mesh swarms | **CPU_MLR** (DrawScalableShape now enabled via `kDefaultDisabled=false`) | `MC2_DISABLE_GOSFX=0` default | MLR gate re-enabled 2026-05-31; no longer invisible | NEWLY VISIBLE: visual quality not yet interactively validated |
+| Shape (10 specs) — singleton explosion meshes | **CPU_MLR** (same as ShapeCloud) | `MC2_DISABLE_GOSFX=0` default | MLR gate re-enabled | NEWLY VISIBLE |
+| DebrisCloud (34 specs) — rigid-body debris chunks | **CPU_MLR** (same) | `MC2_DISABLE_GOSFX=0` default | MLR gate re-enabled | NEWLY VISIBLE |
+| GPU weapon trails (MissileSmoke / PpcBolt) | **DISABLED** (`gpuTrailKindProven` returns false for all) | — | GPU ring-buffer billboard trail produced "white square" artifact; gosFX Tube via MLR is the correct path | gosFX Tube via MLR is active instead |
 
-**Why CPU legacy restoration is NOT needed for this release:**
-- Billboard classes (CardCloud/ShardCloud/Card/Tube/PointCloud) have complete oracle paths that render from live CPU sim data — this IS the original CPU sim output, just composited via GPU billboard shader.
-- The CPU/MLR draw suppression (MC2_DISABLE_GOSFX default-disabled) is safe to leave in place — the oracle path is a better route to the same visual data.
-- Shape/ShapeCloud/DebrisCloud are currently invisible regardless (both CPU and GPU paths dark). Enabling DrawScalableShape for these requires VFX-3D-MESH-GPU-SUBSTRATE-1 which is a separate arc.
+**MLR gate state (post-2026-05-31):**
+- `mclib/mlr/mlr_gate.cpp` `kDefaultDisabled = false` (was `true`)
+- All gosFX Draw calls route through MLR normally
+- Oracle classes prevent double-draw by calling `Effect::Draw` (children only) instead of their base-class Draw at the GPU-path exit
+- Kill-switch: `MC2_DISABLE_GOSFX=1` suppresses all gosFX via the 4 MLR work-leaves (DrawEffect, DrawScalableShape, etc.)
+
+**WeaponBolt hit-site suppression (post-2026-05-31):**
+- `hitEffect->Draw` — suppressed when oracle ON (`!is_oracle_render_enabled()`)
+- `missEffect->Draw` — suppressed when oracle ON
+- `waterMissEffect->Draw` — suppressed when oracle ON
+- `muzzleEffect->Draw` — suppressed when `hitTarget && oracle ON` (muzzle flash at bolt's frozen position = target after impact)
+- GPU trail emit — gated on `!hitTarget` (was re-emitting static head particle at target position each frame)
 
 **Kill-switches for this release:**
-- `MC2_VFX_ORACLE_RENDER=0` — disables all oracle renders, falls back to placeholder Spawn (near-invisible placeholders)
-- `MC2_GPU_PARTICLES=0` — disables entire GPU particle batcher including trails; falls back to MLR (which is also disabled by default)
-- Both gates together restore pre-GPU state (fully invisible VFX)
+- `MC2_DISABLE_GOSFX=1` — disables all gosFX MLR draws (Tube/Shape/ShapeCloud/DebrisCloud invisible)
+- `MC2_VFX_ORACLE_RENDER=0` — disables oracle for CardCloud/ShardCloud/Card/PointCloud (falls back to placeholder Spawn)
+- `MC2_GPU_PARTICLES=0` — disables entire GPU particle batcher
 
 **Future GPU work (post-release):**
-- VFX-3D-MESH-GPU-SUBSTRATE-1 → GpuMeshCache → Shape/ShapeCloud/DebrisCloud oracle
+- VFX-3D-MESH-GPU-SUBSTRATE-1 → GpuMeshCache → Shape/ShapeCloud/DebrisCloud GPU oracle (currently visible via MLR)
+- Tube swept-mesh ribbon oracle (replace billboard-per-profile `if(false&&...)` stub)
 - VFX-GPU-SIM-CARDCLOUD-PARITY-ID-1 → stable particle IDs + full gosFX physics parity
-- Tube swept-mesh ribbon oracle (replace billboard-per-profile approximation)
-- CPU gosFX sim retirement (after GPU sim parity proven)
+- GPU trail quality improvement → re-promote `gpuTrailKindProven` after proof
 
 ## Class x Oracle Status
 
