@@ -6084,14 +6084,9 @@ void GpuStaticPropBatcher::flushShadow(bool skipStaticBuildingTypes) {
     // condition; flushShadow() must honor the identical precondition.
     if (!s_geometryFinalized || s_fatalRegistrationFailure) return;
 
-    // OPT-IN (MC2_SHADOW_ENABLE=1). The VAO restore order bug is fixed (see
-    // restore section below), but flush() still loses prop visibility when
-    // this path is default-ON — root cause not yet isolated (interaction with
-    // uploadAllBucketsIfNeeded / coalesce / SSBO state under investigation).
-    // Default-off preserves the pre-restore working state. SHADOW-DYNAMIC-RESTORE-1
-    // tracks the remaining work.
-    static const bool s_shadowEnabled = (getenv("MC2_SHADOW_ENABLE") != nullptr &&
-                                         getenv("MC2_SHADOW_ENABLE")[0] != '0');
+    // DEFAULT ON. Kill-switch: MC2_SHADOW_ENABLE=0.
+    static const bool s_shadowEnabled = !(getenv("MC2_SHADOW_ENABLE") != nullptr &&
+                                          getenv("MC2_SHADOW_ENABLE")[0] == '0');
     if (!s_shadowEnabled) return;
 
     if (!uploadAllBucketsIfNeeded()) return;

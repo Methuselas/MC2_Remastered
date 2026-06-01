@@ -717,11 +717,9 @@ void GpuMechBatcher::flushShadow() {
     // persist it to s_lastDrawCalls / s_lastTotalInstances / s_lastTotalBones
     // at the end of flush() and consume those statics here.
 
-    // OPT-IN (MC2_SHADOW_ENABLE=1). Mirrors gos_static_prop_batcher — see its
-    // flushShadow comment for the full rationale. VAO restore order is fixed
-    // but default-ON causes prop visibility loss (root cause under investigation).
-    static const bool s_shadowEnabled = (getenv("MC2_SHADOW_ENABLE") != nullptr &&
-                                         getenv("MC2_SHADOW_ENABLE")[0] != '0');
+    // DEFAULT ON. Kill-switch: MC2_SHADOW_ENABLE=0.
+    static const bool s_shadowEnabled = !(getenv("MC2_SHADOW_ENABLE") != nullptr &&
+                                          getenv("MC2_SHADOW_ENABLE")[0] == '0');
     if (!s_shadowEnabled) return;
 
     // Geometry-readiness guard, mirroring the color flush() path (:867).
