@@ -214,6 +214,17 @@ void SimpleCamera::render(long xOffset, long yOffset)
 				// visible actors on every camera-move frame of the intro pan.
 				gos_SetWorldToClipGL(worldToClipGL());
 				mcTextureManager->renderLists();
+				// CINEMATIC-WATER-1: mirror GameCamera::render (gamecam.cpp:354).
+				// Draw the GPU water fast path after renderLists() so water appears
+				// on the SimpleCamera intro/deployment pan. The cinematic path only
+				// ran renderLists() (terrain + objects); when water moved out of the
+				// legacy renderLists drain into the separate renderWaterFastPath()
+				// call, the intro lost water (regressed the MISSION-INTRO-ARMED-RENDER-1
+				// fix). renderWaterFastPath() self-guards: no-op unless gpu_driven
+				// water is enabled AND WaterStream is ready AND terrainTextures2 exists
+				// (so it is harmless on the component/mech-bay SimpleCamera).
+				if (land)
+					land->renderWaterFastPath();
 			}
 			endFrameTexResolve();              // defensive — see plan Task 2 Step 3a.
 			eye = oldCam;

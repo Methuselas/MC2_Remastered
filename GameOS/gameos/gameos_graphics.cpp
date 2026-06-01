@@ -2573,6 +2573,18 @@ void gosRenderer::renderWaterFastPath(
     // result where the shore looks effortlessly smooth.
     GLboolean savedDepthTest = glIsEnabled(GL_DEPTH_TEST);
     GLint savedDepthFunc = 0; glGetIntegerv(GL_DEPTH_FUNC, &savedDepthFunc);
+    // CINEMATIC-WATER-CULL-1: the water fast path is a flat overlay mesh and
+    // must NOT be subject to the caller's backface-cull state. The SimpleCamera
+    // intro/cinematic path runs default_state.SetBackFaceOn() (simplecamera.cpp),
+    // leaving GL_CULL_FACE enabled with a winding that culls EVERY water
+    // triangle -> water silently vanishes on the cinematic pan. (RenderDoc pixel
+    // history: water frags PASSED=no FLAGS=backfaceCulled.) GameCamera gameplay
+    // leaves a cull state that lets water through, which is why this only bit the
+    // cinematic. Neutralize cull for the water draw and restore after — same
+    // discipline as the blend / depth-mask / depth-func state this path already
+    // saves+restores below.
+    GLboolean savedCullFace = glIsEnabled(GL_CULL_FACE);
+    glDisable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_GEQUAL);   // reverse-Z (U2): was GL_LEQUAL (scene water)
     glEnable(GL_BLEND);
@@ -2798,6 +2810,7 @@ void gosRenderer::renderWaterFastPath(
         glDepthMask(savedDepthMask);
         glDepthFunc((GLenum)savedDepthFunc);
         if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
+        if (savedCullFace) glEnable(GL_CULL_FACE);
         if (!savedBlend) glDisable(GL_BLEND);
         glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
         glUseProgram((GLuint)savedProgram);
@@ -2813,6 +2826,7 @@ void gosRenderer::renderWaterFastPath(
             glDepthMask(savedDepthMask);
             glDepthFunc((GLenum)savedDepthFunc);
             if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
+            if (savedCullFace) glEnable(GL_CULL_FACE);
             if (!savedBlend) glDisable(GL_BLEND);
             glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
             glUseProgram((GLuint)savedProgram);
@@ -2893,6 +2907,7 @@ void gosRenderer::renderWaterFastPath(
         glDepthMask(savedDepthMask);
         glDepthFunc((GLenum)savedDepthFunc);
         if (!savedDepthTest) glDisable(GL_DEPTH_TEST);
+        if (savedCullFace) glEnable(GL_CULL_FACE);
         if (!savedBlend) glDisable(GL_BLEND);
         glBlendFunc((GLenum)savedSrcRGB, (GLenum)savedDstRGB);
         glUseProgram((GLuint)savedProgram);
