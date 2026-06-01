@@ -121,6 +121,13 @@ uniform int g_terrainMaterialProfile;
 // Per-material and global color tuning (set via gos_SetTerrainMatNormalBoost /
 // gos_SetTerrainTintStrengthScale). Defaults match the previous shader constants.
 uniform PREC vec4  matNormalBoost;     // [rock, grass, dirt, concrete]; default (0.9, 1.1, 1.1, 2.5)
+// TERRAIN-CLASSIFY-TUNING-1: colormap HSV classifier thresholds. Defaults match
+// the pre-ImGui hardcoded values; Sand_M24 profile writes dirt sat via
+// gos_SetTerrainClassDirt at mission start, then visual_tuning can override.
+//   grass = (hLo, hHi, sLo, sHi): smoothstep(x,y,h)*smoothstep(z,w,s)
+//   dirt  = (hHi, hLo, satLo, satHi): reversed-hue smoothstep (higher H = less dirt)
+uniform PREC vec4  terrainClassGrass;  // default (0.10, 0.20, 0.10, 0.32)
+uniform PREC vec4  terrainClassDirt;   // default (0.17, 0.11, 0.10, 0.32)
 uniform PREC float tintStrengthScale;  // 0=colormap passthrough, 1=full material tint; default 1.0
 
 // TERRAIN-NORMALS-FROM-HEIGHT-1 / TERRAIN-LIGHTING-1/2 uniforms +
@@ -189,21 +196,16 @@ PREC vec4 getColorWeights(PREC vec3 color) {
 
     PREC vec4 w = vec4(0.0);
 
-    // Per-profile dirt-saturation window. Legacy ramps 1.0 above s≥0.32.
-    // SAND_M24 ramps to 1.0 by s≥0.20 so washed-out mc2_24 sand pixels
-    // also classify as dirt instead of rock-leftover.
-    PREC float dirtSatLo = 0.10;
-    PREC float dirtSatHi = 0.32;
-    if (g_terrainMaterialProfile == 1) {  // TERRAIN_MAT_PROFILE_SAND_M24
-        dirtSatLo = 0.04;
-        dirtSatHi = 0.20;
-    }
-
     // Green → grass, brown → dirt, everything else → rock.
     // Concrete weight comes only from TerrainType (cement vertices) later in main();
     // never from colormap, so snow/overlay-whitened tiles fall through to rock.
-    w.y = smoothstep(0.10, 0.20, h) * smoothstep(0.10, 0.32, s);          // green (grass) — unchanged
-    w.z = smoothstep(0.17, 0.11, h) * smoothstep(dirtSatLo, dirtSatHi, s); // brown (dirt) — profile-aware
+    // Thresholds come from terrainClassGrass/Dirt uniforms (tunable via ImGui +
+    // visual_tuning.json). Sand_M24 profile resets dirt sat to (0.04, 0.20) at
+    // mission start via gos_SetTerrainClassDirt (replaces the old profile branch).
+    w.y = smoothstep(terrainClassGrass.x, terrainClassGrass.y, h)
+        * smoothstep(terrainClassGrass.z, terrainClassGrass.w, s);  // grass
+    w.z = smoothstep(terrainClassDirt.x,  terrainClassDirt.y,  h)
+        * smoothstep(terrainClassDirt.z,  terrainClassDirt.w,  s);  // dirt
     w.x = 1.0 - max(w.y, w.z);                                             // everything else → rock
     w.w = 0.0;
 

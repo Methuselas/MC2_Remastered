@@ -46,6 +46,11 @@ extern "C" void  batcher_setMechAmbientStrength(float s);
 extern "C" float batcher_getMechAmbientStrength();
 extern "C" void  batcher_setMechSpecularStrength(float s);
 extern "C" float batcher_getMechSpecularStrength();
+// TERRAIN-CLASSIFY-TUNING-1: HSV classifier thresholds (defined in gameos_graphics.cpp).
+extern void gos_SetTerrainClassGrass(float hLo, float hHi, float sLo, float sHi);
+extern void gos_GetTerrainClassGrass(float* hLo, float* hHi, float* sLo, float* sHi);
+extern void gos_SetTerrainClassDirt(float hHi, float hLo, float satLo, float satHi);
+extern void gos_GetTerrainClassDirt(float* hHi, float* hLo, float* satLo, float* satHi);
 
 namespace {
 
@@ -225,6 +230,39 @@ static void applyKey(const char* key, float val, int& count) {
             batcher_setMechSpecularStrength(val);
             count++;
         }
+    // TERRAIN-CLASSIFY-TUNING-1: per-mission HSV classifier thresholds.
+    } else if (strcmp(key, "terrainClassGrassHLo") == 0) {
+        float hLo, hHi, sLo, sHi;
+        gos_GetTerrainClassGrass(&hLo, &hHi, &sLo, &sHi);
+        gos_SetTerrainClassGrass(val, hHi, sLo, sHi); count++;
+    } else if (strcmp(key, "terrainClassGrassHHi") == 0) {
+        float hLo, hHi, sLo, sHi;
+        gos_GetTerrainClassGrass(&hLo, &hHi, &sLo, &sHi);
+        gos_SetTerrainClassGrass(hLo, val, sLo, sHi); count++;
+    } else if (strcmp(key, "terrainClassGrassSLo") == 0) {
+        float hLo, hHi, sLo, sHi;
+        gos_GetTerrainClassGrass(&hLo, &hHi, &sLo, &sHi);
+        gos_SetTerrainClassGrass(hLo, hHi, val, sHi); count++;
+    } else if (strcmp(key, "terrainClassGrassSHi") == 0) {
+        float hLo, hHi, sLo, sHi;
+        gos_GetTerrainClassGrass(&hLo, &hHi, &sLo, &sHi);
+        gos_SetTerrainClassGrass(hLo, hHi, sLo, val); count++;
+    } else if (strcmp(key, "terrainClassDirtHHi") == 0) {
+        float hHi, hLo, satLo, satHi;
+        gos_GetTerrainClassDirt(&hHi, &hLo, &satLo, &satHi);
+        gos_SetTerrainClassDirt(val, hLo, satLo, satHi); count++;
+    } else if (strcmp(key, "terrainClassDirtHLo") == 0) {
+        float hHi, hLo, satLo, satHi;
+        gos_GetTerrainClassDirt(&hHi, &hLo, &satLo, &satHi);
+        gos_SetTerrainClassDirt(hHi, val, satLo, satHi); count++;
+    } else if (strcmp(key, "terrainClassDirtSatLo") == 0) {
+        float hHi, hLo, satLo, satHi;
+        gos_GetTerrainClassDirt(&hHi, &hLo, &satLo, &satHi);
+        gos_SetTerrainClassDirt(hHi, hLo, val, satHi); count++;
+    } else if (strcmp(key, "terrainClassDirtSatHi") == 0) {
+        float hHi, hLo, satLo, satHi;
+        gos_GetTerrainClassDirt(&hHi, &hLo, &satLo, &satHi);
+        gos_SetTerrainClassDirt(hHi, hLo, satLo, val); count++;
     } else {
         static std::map<std::string,bool> s_warned;
         if (!s_warned[key]) {
@@ -338,6 +376,23 @@ bool visualTuning_saveCurrentToMission() {
     // MISSION-LIGHTING-PROFILE-FIELDS-1 mech lane.
     current["mechAmbientStrength"]       = batcher_getMechAmbientStrength();
     current["mechSpecularStrength"]      = batcher_getMechSpecularStrength();
+    // TERRAIN-CLASSIFY-TUNING-1: HSV classifier thresholds.
+    {
+        float hLo, hHi, sLo, sHi;
+        gos_GetTerrainClassGrass(&hLo, &hHi, &sLo, &sHi);
+        current["terrainClassGrassHLo"] = hLo;
+        current["terrainClassGrassHHi"] = hHi;
+        current["terrainClassGrassSLo"] = sLo;
+        current["terrainClassGrassSHi"] = sHi;
+    }
+    {
+        float hHi, hLo, satLo, satHi;
+        gos_GetTerrainClassDirt(&hHi, &hLo, &satLo, &satHi);
+        current["terrainClassDirtHHi"]   = hHi;
+        current["terrainClassDirtHLo"]   = hLo;
+        current["terrainClassDirtSatLo"] = satLo;
+        current["terrainClassDirtSatHi"] = satHi;
+    }
 
     // Read existing file to preserve other missions and defaults.
     std::map<std::string,float> defs;

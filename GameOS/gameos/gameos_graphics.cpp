@@ -1489,6 +1489,11 @@ class gosRenderer {
             *d = terrain_mat_normal_boost_[2];
             *c = terrain_mat_normal_boost_[3];
         }
+        // TERRAIN-CLASSIFY-TUNING-1
+        void setTerrainClassGrass(const float* v) { memcpy(terrain_class_grass_, v, 4 * sizeof(float)); }
+        void getTerrainClassGrass(float* v) const  { memcpy(v, terrain_class_grass_, 4 * sizeof(float)); }
+        void setTerrainClassDirt(const float* v)   { memcpy(terrain_class_dirt_,  v, 4 * sizeof(float)); }
+        void getTerrainClassDirt(float* v) const   { memcpy(v, terrain_class_dirt_,  4 * sizeof(float)); }
         void  setTerrainTintStrengthScale(float s) { terrain_tint_strength_scale_ = s; }
         float getTerrainTintStrengthScale() const   { return terrain_tint_strength_scale_; }
         void  setTerrainNormalsFromHeightStrength(float s) { terrain_nfh_strength_ = s; }
@@ -1741,6 +1746,11 @@ class gosRenderer {
         float terrain_world_scale_ = 15360.0f;
         // Per-material normal boost: [rock, grass, dirt, concrete]; matches shader const default.
         float terrain_mat_normal_boost_[4] = { 0.9f, 1.1f, 1.1f, 2.5f };
+        // TERRAIN-CLASSIFY-TUNING-1: colormap HSV classifier thresholds.
+        //   grass = (hLo, hHi, sLo, sHi); dirt = (hHi, hLo, satLo, satHi) — hHi/hLo reversed
+        // Sand_M24 profile resets dirt sat at mission start (see mclib/terrain.cpp).
+        float terrain_class_grass_[4] = { 0.10f, 0.20f, 0.10f, 0.32f };
+        float terrain_class_dirt_[4]  = { 0.17f, 0.11f, 0.10f, 0.32f };
         float terrain_tint_strength_scale_ = 1.0f;  // 0=colormap passthrough, 1=full tint
         // TERRAIN-TUNING-UI-1: per-frame multiplier on the additive height-
         // derived normal term in gos_terrain.frag. 1.0 = full slope tilt
@@ -1776,6 +1786,9 @@ class gosRenderer {
             GLint worldToClipGL = -1;            // F1 Task 7b probe uniform
             GLint matNormalBoost = -1;           // per-material normal strength (vec4)
             GLint tintStrengthScale = -1;        // global tint blend scalar
+            // TERRAIN-CLASSIFY-TUNING-1
+            GLint terrainClassGrass = -1;        // colormap HSV grass thresholds (vec4)
+            GLint terrainClassDirt  = -1;        // colormap HSV dirt thresholds (vec4)
             // TERRAIN-NORMALS-FROM-HEIGHT-1
             GLint terrainHeightTex = -1;             // sampler2D, unit 11 (R32F)
             GLint terrainHeightParams = -1;          // vec4 (gridSide, 1/wuPerVertex, topLeftX, topLeftY)
@@ -1804,6 +1817,9 @@ class gosRenderer {
             GLint tessDebug = -1;               // shader debug-viz mode (frag mode 1..8)
             GLint matNormalBoost = -1;          // per-material normal strength (vec4)
             GLint tintStrengthScale = -1;       // global tint blend scalar
+            // TERRAIN-CLASSIFY-TUNING-1
+            GLint terrainClassGrass = -1;       // colormap HSV grass thresholds (vec4)
+            GLint terrainClassDirt  = -1;       // colormap HSV dirt thresholds (vec4)
             // TERRAIN-NORMALS-FROM-HEIGHT-1
             GLint terrainHeightTex = -1;
             GLint terrainHeightParams = -1;
@@ -1860,6 +1876,9 @@ class gosRenderer {
             terrainLocs_.worldToClipGL    = glGetUniformLocation(shp, "u_worldToClipGL");
             terrainLocs_.matNormalBoost   = glGetUniformLocation(shp, "matNormalBoost");
             terrainLocs_.tintStrengthScale = glGetUniformLocation(shp, "tintStrengthScale");
+            // TERRAIN-CLASSIFY-TUNING-1
+            terrainLocs_.terrainClassGrass = glGetUniformLocation(shp, "terrainClassGrass");
+            terrainLocs_.terrainClassDirt  = glGetUniformLocation(shp, "terrainClassDirt");
             // TERRAIN-NORMALS-FROM-HEIGHT-1
             terrainLocs_.terrainHeightTex             = glGetUniformLocation(shp, "terrainHeightTex");
             terrainLocs_.terrainHeightParams          = glGetUniformLocation(shp, "terrainHeightParams");
@@ -1906,6 +1925,9 @@ class gosRenderer {
             thinTerrainLocs_.tessDebug          = glGetUniformLocation(shp, "tessDebug");
             thinTerrainLocs_.matNormalBoost     = glGetUniformLocation(shp, "matNormalBoost");
             thinTerrainLocs_.tintStrengthScale  = glGetUniformLocation(shp, "tintStrengthScale");
+            // TERRAIN-CLASSIFY-TUNING-1
+            thinTerrainLocs_.terrainClassGrass = glGetUniformLocation(shp, "terrainClassGrass");
+            thinTerrainLocs_.terrainClassDirt  = glGetUniformLocation(shp, "terrainClassDirt");
             // TERRAIN-NORMALS-FROM-HEIGHT-1
             thinTerrainLocs_.terrainHeightTex             = glGetUniformLocation(shp, "terrainHeightTex");
             thinTerrainLocs_.terrainHeightParams          = glGetUniformLocation(shp, "terrainHeightParams");
@@ -5453,6 +5475,8 @@ void gosRenderer::terrainBindUniformsForPatchStream(gosRenderMaterial* material)
     if (tl.cellBombParams >= 0)       glUniform4fv(tl.cellBombParams, 1, cellP);
     if (tl.matNormalBoost >= 0)       glUniform4fv(tl.matNormalBoost, 1, terrain_mat_normal_boost_);
     if (tl.tintStrengthScale >= 0)    glUniform1f(tl.tintStrengthScale, terrain_tint_strength_scale_);
+    if (tl.terrainClassGrass >= 0)    glUniform4fv(tl.terrainClassGrass, 1, terrain_class_grass_);
+    if (tl.terrainClassDirt  >= 0)    glUniform4fv(tl.terrainClassDirt,  1, terrain_class_dirt_);
     if (tl.time >= 0) {
         float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
         glUniform1f(tl.time, elapsed);
@@ -5575,6 +5599,8 @@ int gosRenderer::terrainBindThinUniformsForPatchStream(glsl_program* overridePro
     if (tl.cellBombParams >= 0)       glUniform4fv(tl.cellBombParams, 1, cellP);
     if (tl.matNormalBoost >= 0)       glUniform4fv(tl.matNormalBoost, 1, terrain_mat_normal_boost_);
     if (tl.tintStrengthScale >= 0)    glUniform1f(tl.tintStrengthScale, terrain_tint_strength_scale_);
+    if (tl.terrainClassGrass >= 0)    glUniform4fv(tl.terrainClassGrass, 1, terrain_class_grass_);
+    if (tl.terrainClassDirt  >= 0)    glUniform4fv(tl.terrainClassDirt,  1, terrain_class_dirt_);
     if (tl.time >= 0) {
         float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
         glUniform1f(tl.time, elapsed);
@@ -5716,6 +5742,8 @@ void gosRenderer::terrainDrawIndexedPatches(gosRenderMaterial* material, gosMesh
     if (tl.cellBombParams >= 0) glUniform4fv(tl.cellBombParams, 1, cellP);
     if (tl.matNormalBoost >= 0)       glUniform4fv(tl.matNormalBoost, 1, terrain_mat_normal_boost_);
     if (tl.tintStrengthScale >= 0)    glUniform1f(tl.tintStrengthScale, terrain_tint_strength_scale_);
+    if (tl.terrainClassGrass >= 0)    glUniform4fv(tl.terrainClassGrass, 1, terrain_class_grass_);
+    if (tl.terrainClassDirt  >= 0)    glUniform4fv(tl.terrainClassDirt,  1, terrain_class_dirt_);
     if (tl.time >= 0) {
         float elapsed = (float)(timing::get_wall_time_ms() - timeStart_) / 1000.0f;
         glUniform1f(tl.time, elapsed);
@@ -7808,6 +7836,29 @@ void gos_SetTerrainMatNormalBoost(float rock, float grass, float dirt, float con
 void gos_GetTerrainMatNormalBoost(float* rock, float* grass, float* dirt, float* concrete) {
     if (g_gos_renderer) g_gos_renderer->getTerrainMatNormalBoost(rock, grass, dirt, concrete);
     else { *rock = 0.9f; *grass = 1.1f; *dirt = 1.1f; *concrete = 2.5f; }
+}
+// TERRAIN-CLASSIFY-TUNING-1
+void gos_SetTerrainClassGrass(float hLo, float hHi, float sLo, float sHi) {
+    if (!g_gos_renderer) return;
+    const float v[4] = { hLo, hHi, sLo, sHi };
+    g_gos_renderer->setTerrainClassGrass(v);
+}
+void gos_GetTerrainClassGrass(float* hLo, float* hHi, float* sLo, float* sHi) {
+    if (g_gos_renderer) {
+        float v[4]; g_gos_renderer->getTerrainClassGrass(v);
+        *hLo = v[0]; *hHi = v[1]; *sLo = v[2]; *sHi = v[3];
+    } else { *hLo = 0.10f; *hHi = 0.20f; *sLo = 0.10f; *sHi = 0.32f; }
+}
+void gos_SetTerrainClassDirt(float hHi, float hLo, float satLo, float satHi) {
+    if (!g_gos_renderer) return;
+    const float v[4] = { hHi, hLo, satLo, satHi };
+    g_gos_renderer->setTerrainClassDirt(v);
+}
+void gos_GetTerrainClassDirt(float* hHi, float* hLo, float* satLo, float* satHi) {
+    if (g_gos_renderer) {
+        float v[4]; g_gos_renderer->getTerrainClassDirt(v);
+        *hHi = v[0]; *hLo = v[1]; *satLo = v[2]; *satHi = v[3];
+    } else { *hHi = 0.17f; *hLo = 0.11f; *satLo = 0.10f; *satHi = 0.32f; }
 }
 void gos_SetTerrainTintStrengthScale(float s) {
     if (g_gos_renderer) g_gos_renderer->setTerrainTintStrengthScale(s);

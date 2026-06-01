@@ -583,8 +583,16 @@ long Terrain::init( unsigned long verticesPerMapSide, PacketFile* pakFile, unsig
 		                       : terrainName  ? terrainName
 		                                      : "";
 		g_terrainMaterialProfile = TERRAIN_MAT_PROFILE_LEGACY;
-		if (profileKey[0] != '\0' && _stricmp(profileKey, "mc2_24") == 0)
+		// TERRAIN-CLASSIFY-TUNING-1: sync dirt sat window with profile so the
+		// ImGui-tunable uniforms start at the right defaults for this mission.
+		// Sand_M24 washes out to low-saturation sand; widen the dirt sat gate.
+		extern void gos_SetTerrainClassDirt(float hHi, float hLo, float satLo, float satHi);
+		if (profileKey[0] != '\0' && _stricmp(profileKey, "mc2_24") == 0) {
 			g_terrainMaterialProfile = TERRAIN_MAT_PROFILE_SAND_M24;
+			gos_SetTerrainClassDirt(0.17f, 0.11f, 0.04f, 0.20f);
+		} else {
+			gos_SetTerrainClassDirt(0.17f, 0.11f, 0.10f, 0.32f);
+		}
 	}
 
 	return NO_ERR;

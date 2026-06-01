@@ -67,6 +67,24 @@ extern "C" {
     int  __stdcall gos_terrainHeightResampleFactor(void);
     void __stdcall gos_setTerrainHeightResampleFactor(int factor);
 }
+// TERRAIN-CLASSIFY-TUNING-1: colormap HSV classifier thresholds (gameos_graphics.cpp).
+void gos_SetTerrainClassGrass(float hLo, float hHi, float sLo, float sHi);
+void gos_GetTerrainClassGrass(float* hLo, float* hHi, float* sLo, float* sHi);
+void gos_SetTerrainClassDirt(float hHi, float hLo, float satLo, float satHi);
+void gos_GetTerrainClassDirt(float* hHi, float* hLo, float* satLo, float* satHi);
+// MECH-LIGHTING-UI-1: mech ambient + specular + PBR roughness (gos_mech_batcher.cpp).
+extern "C" int   batcher_getMechAmbientEnabled(void);
+extern "C" void  batcher_setMechAmbientEnabled(int on);
+extern "C" float batcher_getMechAmbientStrength(void);
+extern "C" void  batcher_setMechAmbientStrength(float s);
+extern "C" int   batcher_getMechSpecularEnabled(void);
+extern "C" void  batcher_setMechSpecularEnabled(int on);
+extern "C" float batcher_getMechSpecularStrength(void);
+extern "C" void  batcher_setMechSpecularStrength(float s);
+extern "C" float batcher_getMechMetalRoughness(void);
+extern "C" void  batcher_setMechMetalRoughness(float r);
+extern "C" float batcher_getMechGlassRoughness(void);
+extern "C" void  batcher_setMechGlassRoughness(float r);
 // VFX-TUNING-UI-1: GPU particle debug-mode + intensity scales (defined in
 // GameOS/gameos/gos_particle_bridge.cpp). All scales default 1.0 = no-op.
 extern "C" int   gos_vfx_getDebugMode(void);
@@ -543,6 +561,78 @@ static void drawTerrainTuningSection() {
         ImGui::TextDisabled("(V2 floor only acts on the V1 hemi term — set MC2_TERRAIN_LIGHTING_V1=1 too)");
     }
     ImGui::TextDisabled("Debug Mode 10 = height-normal RGB; Mode 11 = hemi additive ×4");
+
+    // ── Material color classifier ──────────────────────────────────────────────
+    // TERRAIN-CLASSIFY-TUNING-1: tune the HSV thresholds that map colormap pixels
+    // to rock / grass / dirt. Saved to visual_tuning.json via "Set as Mission Defaults".
+    // Debug Mode 4 = Material Weights (R=rock  G=grass  B=dirt) to visualise effect.
+    ImGui::SeparatorText("Material Color Classifier");
+    ImGui::TextDisabled("HSV thresholds: colormap pixel → rock / grass / dirt");
+
+    static float s_grassHLo = 0.10f, s_grassHHi = 0.20f;
+    static float s_grassSLo = 0.10f, s_grassSHi = 0.32f;
+    static float s_dirtHHi  = 0.17f, s_dirtHLo  = 0.11f;
+    static float s_dirtSLo  = 0.10f, s_dirtSHi  = 0.32f;
+    static bool  s_classInited = false;
+    if (!s_classInited) {
+        gos_GetTerrainClassGrass(&s_grassHLo, &s_grassHHi, &s_grassSLo, &s_grassSHi);
+        gos_GetTerrainClassDirt(&s_dirtHHi, &s_dirtHLo, &s_dirtSLo, &s_dirtSHi);
+        s_classInited = true;
+    }
+
+    // Grass — show a representative swatch for the target hue/sat center
+    {
+        float r, g, b;
+        float hc = (s_grassHLo + s_grassHHi) * 0.5f;
+        float sc = (s_grassSLo + s_grassSHi) * 0.5f;
+        ImGui::ColorConvertHSVtoRGB(hc, sc, 0.55f, r, g, b);
+        ImGui::ColorButton("##gc", ImVec4(r, g, b, 1.0f), ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
+        ImGui::SameLine();
+        ImGui::TextUnformatted("Grass");
+    }
+    bool grassChanged = false;
+    grassChanged |= ImGui::SliderFloat("H lo##gc", &s_grassHLo, 0.0f, 0.5f, "%.3f");
+    grassChanged |= ImGui::SliderFloat("H hi##gc", &s_grassHHi, 0.0f, 0.5f, "%.3f");
+    grassChanged |= ImGui::SliderFloat("S lo##gc", &s_grassSLo, 0.0f, 1.0f, "%.3f");
+    grassChanged |= ImGui::SliderFloat("S hi##gc", &s_grassSHi, 0.0f, 1.0f, "%.3f");
+    if (grassChanged)
+        gos_SetTerrainClassGrass(s_grassHLo, s_grassHHi, s_grassSLo, s_grassSHi);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##gc")) {
+        s_grassHLo = 0.10f; s_grassHHi = 0.20f; s_grassSLo = 0.10f; s_grassSHi = 0.32f;
+        gos_SetTerrainClassGrass(0.10f, 0.20f, 0.10f, 0.32f);
+    }
+
+    ImGui::Spacing();
+
+    // Dirt — hHi/hLo are REVERSED: smoothstep(hHi→hLo, h) decreases with rising h
+    {
+        float r, g, b;
+        float hc = (s_dirtHLo + s_dirtHHi) * 0.5f;
+        float sc = (s_dirtSLo + s_dirtSHi) * 0.5f;
+        ImGui::ColorConvertHSVtoRGB(hc, sc, 0.45f, r, g, b);
+        ImGui::ColorButton("##dc", ImVec4(r, g, b, 1.0f), ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
+        ImGui::SameLine();
+        ImGui::TextUnformatted("Dirt  (H hi→lo reversed: higher hue = less dirt)");
+    }
+    bool dirtChanged = false;
+    dirtChanged |= ImGui::SliderFloat("H hi##dc", &s_dirtHHi, 0.0f, 0.5f, "%.3f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Upper hue bound (smoothstep is reversed)");
+    dirtChanged |= ImGui::SliderFloat("H lo##dc", &s_dirtHLo, 0.0f, 0.5f, "%.3f");
+    dirtChanged |= ImGui::SliderFloat("Sat lo##dc", &s_dirtSLo, 0.0f, 1.0f, "%.3f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sand_M24 default: 0.04 (wider for washed-out sand)");
+    dirtChanged |= ImGui::SliderFloat("Sat hi##dc", &s_dirtSHi, 0.0f, 1.0f, "%.3f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sand_M24 default: 0.20");
+    if (dirtChanged)
+        gos_SetTerrainClassDirt(s_dirtHHi, s_dirtHLo, s_dirtSLo, s_dirtSHi);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##dc")) {
+        s_dirtHHi = 0.17f; s_dirtHLo = 0.11f; s_dirtSLo = 0.10f; s_dirtSHi = 0.32f;
+        gos_SetTerrainClassDirt(0.17f, 0.11f, 0.10f, 0.32f);
+    }
+
+    ImGui::TextDisabled("Save via Visual Tuning Profile > Set as Mission Defaults");
+    ImGui::TextDisabled("Debug Mode 4 = Material Weights (R=rock  G=grass  B=dirt)");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1400,6 +1490,61 @@ static void drawEnvGatesSection() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// MECH-LIGHTING-UI-1: mech ambient/specular/PBR roughness controls.
+static void drawMechSection() {
+    // Ambient
+    bool ambOn = batcher_getMechAmbientEnabled() != 0;
+    if (ImGui::Checkbox("Ambient##mech", &ambOn))
+        batcher_setMechAmbientEnabled(ambOn ? 1 : 0);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Hemisphere ambient fill on mech hull. Default ON.\n"
+                          "Gate MC2_MECH_AMBIENT_V1=0 to kill-switch.");
+    ImGui::SameLine();
+    float as = batcher_getMechAmbientStrength();
+    if (ImGui::SliderFloat("Strength##mechamb", &as, 0.0f, 2.0f, "%.2f"))
+        batcher_setMechAmbientStrength(as);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##mechamb")) batcher_setMechAmbientStrength(0.15f);
+
+    // Specular
+    bool specOn = batcher_getMechSpecularEnabled() != 0;
+    if (ImGui::Checkbox("Specular##mech", &specOn))
+        batcher_setMechSpecularEnabled(specOn ? 1 : 0);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Blinn specular sheen on mech hull. Default ON.\n"
+                          "Only visible when MC2_MECH_VIEWUNIFORMS=1.\n"
+                          "Gate MC2_MECH_SPECULAR_V1=0 to kill-switch.");
+    ImGui::SameLine();
+    float ss = batcher_getMechSpecularStrength();
+    if (ImGui::SliderFloat("Strength##mechspec", &ss, 0.0f, 2.0f, "%.2f"))
+        batcher_setMechSpecularStrength(ss);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##mechspec")) batcher_setMechSpecularStrength(0.05f);
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("PBR Material");
+
+    float mr = batcher_getMechMetalRoughness();
+    if (ImGui::SliderFloat("Metal roughness##mech", &mr, 0.04f, 1.0f, "%.2f"))
+        batcher_setMechMetalRoughness(mr);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("PBR roughness for armour. 0.04=mirror, 1.0=matte. Default: 0.85");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##mechmr")) batcher_setMechMetalRoughness(0.85f);
+
+    float gr = batcher_getMechGlassRoughness();
+    if (ImGui::SliderFloat("Glass roughness##mech", &gr, 0.04f, 1.0f, "%.2f"))
+        batcher_setMechGlassRoughness(gr);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("PBR roughness for cockpit glass. Default: 0.25");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##mechgr")) batcher_setMechGlassRoughness(0.25f);
+
+    ImGui::TextDisabled("ambient/specular strength also settable via visual_tuning.json");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // VFX-TUNING-UI-1: GPU particle look tuning. All scales default 1.0 (no-op,
 // byte-identical default frame). Look-only — no emission/lifetime/sorting
 // change. Tuning is invisible when MC2_GPU_PARTICLES=0 (legacy CPU FX) or in
@@ -1722,6 +1867,10 @@ void draw() {
     // controls are reachable without picking a prop.
     if (ImGui::CollapsingHeader("Static Prop Tuning"))
         drawStaticPropTuningSection();
+
+    // ── Mech ──────────────────────────────────────────────────────────────────
+    if (ImGui::CollapsingHeader("Mech"))
+        drawMechSection();
 
     // ── Water ─────────────────────────────────────────────────────────────────
     if (ImGui::CollapsingHeader("Water"))
