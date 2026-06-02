@@ -50,13 +50,17 @@ def _cook_one(src_path: Path, dst_path: Path, preset: str, txm_size: int) -> tup
 
 
 def _cook_one_bc7(src_path: Path, dst_path: Path, ktx_tool: str,
-                  txm_size: int, gen_mips: bool = True) -> tuple[int, int]:
+                  txm_size: int, gen_mips: bool = True,
+                  preset: str = "albedo") -> tuple[int, int]:
     """Cook a single file to stored BC7 KTX2 via the KTX-Software CLI.
 
     Two-step pipeline (produces supercompression=0, BC7 mip chain):
-      1. ktx create --encode uastc --format R8G8B8A8_SRGB --assign-tf srgb
+      1. ktx create --encode uastc --format <FMT> --assign-tf <TF>
                     [--generate-mipmap]  <png>  <tmp_uastc.ktx2>
       2. ktx transcode --target bc7  <tmp_uastc.ktx2>  <out.ktx2>
+
+    Slot-aware color space: normal/orm/mask carry LINEAR data and must be cooked
+    R8G8B8A8_UNORM (-> BC7_UNORM); albedo/emissive stay R8G8B8A8_SRGB (-> BC7_SRGB).
 
     Source is decoded by Pillow (handles .tga/.txm via mc2texcook) to a temp PNG
     so the CLI always sees a plain RGBA PNG. Returns (src_w, src_h).
@@ -77,8 +81,11 @@ def _cook_one_bc7(src_path: Path, dst_path: Path, ktx_tool: str,
         # Force RGBA so BC7 always has an alpha channel (matches the RGBA8 path).
         img.convert("RGBA").save(png_path, format="PNG")
 
+        linear = preset in ("normal", "orm", "mask")
+        create_fmt = "R8G8B8A8_UNORM" if linear else "R8G8B8A8_SRGB"
+        assign_tf = "linear" if linear else "srgb"
         create_step = [ktx_tool, "create", "--encode", "uastc",
-                       "--format", "R8G8B8A8_SRGB", "--assign-tf", "srgb"]
+                       "--format", create_fmt, "--assign-tf", assign_tf]
         if gen_mips:
             create_step.append("--generate-mipmap")
         create_step += [str(png_path), str(uastc_path)]
@@ -186,7 +193,7 @@ def main() -> int:
             try:
                 if args.bc7:
                     w, h = _cook_one_bc7(src_path, dst_path, args.ktx_tool, args.size,
-                                         gen_mips=not args.no_mips)
+                                         gen_mips=not args.no_mips, preset=args.preset)
                 else:
                     w, h = _cook_one(src_path, dst_path, args.preset, args.size)
                 key = f"{w}x{h}"
