@@ -2754,14 +2754,24 @@ void ComputeDispatch() {
         // Read all 16 bytes of GpuDrivenBucketHeader:
         //   [0]=visibleCount, [1]=pad0_ (unused), [2]=pad1_ (near-zero clip.w count,
         //   probe 4), [3]=pad2_ (recipe-spread corruption count, probe 5).
-        uint32_t hdr4[4] = { 0, 0, 0, 0 };
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                           (GLsizeiptr)sizeof(hdr4), hdr4);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        const uint32_t prevVisible = hdr4[0];
-        const uint32_t prevNearW   = hdr4[2];
-        const uint32_t prevSpread  = hdr4[3];
+        //
+        // C-04 (non-blocking): only issue glGetBufferSubData when the fence for
+        // probedSlot already signaled (GPU-done confirmed by the timeout=0 wait
+        // above).  If the fence was absent / still in-flight, reuse the last
+        // cached header values — a 1-frame-stale overshoot LOG is harmless.
+        // This prevents a per-frame CPU stall on the default-ON GPU-driven path.
+        static uint32_t s_hdr4Cached[4] = { 0, 0, 0, 0 };
+        const bool gpuDone = (waitResult == GL_ALREADY_SIGNALED ||
+                              waitResult == GL_CONDITION_SATISFIED);
+        if (gpuDone) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                               (GLsizeiptr)sizeof(s_hdr4Cached), s_hdr4Cached);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        }
+        const uint32_t prevVisible = s_hdr4Cached[0];
+        const uint32_t prevNearW   = s_hdr4Cached[2];
+        const uint32_t prevSpread  = s_hdr4Cached[3];
 
         static uint32_t s_peakVisible    = 0;
         static uint32_t s_overshootCount = 0;
