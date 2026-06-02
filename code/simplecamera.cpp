@@ -225,6 +225,9 @@ void SimpleCamera::render(long xOffset, long yOffset)
 				// (so it is harmless on the component/mech-bay SimpleCamera).
 				if (land)
 					land->renderWaterFastPath();
+				// VFX-CACHE-SYNC-1: re-sync the gos render-state cache after the
+				// raw-GL water pass (mirrors GameCamera + mech batcher).
+				gos_InvalidateRenderStateCache();
 			}
 			endFrameTexResolve();              // defensive — see plan Task 2 Step 3a.
 			eye = oldCam;

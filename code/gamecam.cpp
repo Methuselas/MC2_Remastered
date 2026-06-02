@@ -352,6 +352,10 @@ void GameCamera::render (void)
 			if (land) {
 				ZoneScopedN("GameCamera::render waterFastPath");
 				land->renderWaterFastPath();
+				// VFX-CACHE-SYNC-1: the water fast path sets blend/cull/depth via
+				// raw GL that bypasses the gos render-state cache; re-sync so the
+				// next gos_SetRenderState isn't a stale no-op (mirrors mech batcher).
+				gos_InvalidateRenderStateCache();
 			}
 
 			// GPU particle batcher flush — Stage 2' and beyond.

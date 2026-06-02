@@ -505,6 +505,17 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     glDepthMask(GL_FALSE);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // VFX-CARD-CULL-1: re-assert cull-off HERE, not just at the top of the
+    // flush. The glDisable(GL_CULL_FACE) above runs BEFORE the soft-particle
+    // depth-copy (copySceneDepthForParticles, ~L455), which runs a fullscreen
+    // pass that re-enables GL_CULL_FACE as a side effect. With soft particles
+    // active that left the per-group billboard draws below subject to face
+    // culling: spinning fire/smoke cards (per-particle spin angle) flip winding
+    // as they rotate and get backface-culled on some frames -> explosion cards
+    // flicker in and out. (RenderDoc pixel history: PASSED=no FLAGS=backfaceCulled
+    // on the spinning explosion card draws.) Billboards are double-sided; the
+    // cull-disable must be the LAST state set before the draw loop.
+    glDisable(GL_CULL_FACE);
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_ssbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, /*binding=*/14, s_ssbo);
@@ -628,6 +639,19 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     if (!savedBlend) glDisable(GL_BLEND);
     glUseProgram((GLuint)savedProgram);
     glBindVertexArray((GLuint)savedVAO);
+
+    // VFX-CACHE-SYNC-1: this pass set blend/cull/depth/program/sampler via raw
+    // GL calls that bypass the gos render-state CACHE. Even though we restore
+    // actual GL state above, the cache may now disagree with GL (incomplete
+    // restore of separate-alpha blend, or a sub-pass like
+    // copySceneDepthForParticles mutating cached state), so the next
+    // gos_SetRenderState(sameValue) would be a skipped no-op and leave the wrong
+    // blend/cull on subsequent legacy/MLR draws (e.g. explosion DebrisCloud/Shape
+    // cards drawn after this bridge) -> intermittent state-driven flicker.
+    // Force the cache to re-sync. Cost: a few extra state calls on the next
+    // draw, once per frame — same guard the mech batcher uses (gos_mech_batcher.cpp).
+    extern void __stdcall gos_InvalidateRenderStateCache();
+    gos_InvalidateRenderStateCache();
 }
 
 // VFX-SPINE-0: read-only accessors for the Object Inspector. Pure getters
