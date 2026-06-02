@@ -54,9 +54,12 @@ void TexturePreview2D::draw(const ImVec2& availableSize)
         ImGui::TextDisabled("No texture selected.");
         return;
     }
-    ImGui::SliderFloat("Zoom", &zoom_, 0.1f, 8.0f, "%.1fx");
-    ImVec2 imageSize((float)meta_.width * zoom_, (float)meta_.height * zoom_);
+    // Zoom is now a multiple of the fit-to-region size, so source resolution
+    // (128/256/512) no longer changes the on-screen size. 1.00x == fit.
+    ImGui::SliderFloat("Zoom", &zoom_, 0.25f, 8.0f, "%.2fx (fit)");
     ImGui::BeginChild("tex_scroll", availableSize, true, ImGuiWindowFlags_HorizontalScrollbar);
-    ImGui::Image((ImTextureID)(intptr_t)current_.glTexture, imageSize);
+    ImVec2 region = ImGui::GetContentRegionAvail();
+    FitSize fs = FitTextureDisplaySize(meta_.width, meta_.height, region.x, region.y, zoom_);
+    ImGui::Image((ImTextureID)(intptr_t)current_.glTexture, ImVec2(fs.w, fs.h));
     ImGui::EndChild();
 }
