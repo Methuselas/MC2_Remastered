@@ -2694,13 +2694,23 @@ void ComputeDispatch() {
     GLenum waitResult = GL_ALREADY_SIGNALED;
     uint64_t waitUs   = 0;
     if (g_thinRingFences[probedSlot]) {
+        // C-02: use timeout=0 (non-blocking) instead of 10ms so the CPU never
+        // stalls waiting for the GPU.  If the fence is not yet signaled the slot
+        // is still in use by the GPU; skip this dispatch entirely (return below)
+        // so we never overwrite an in-flight ring slot.  Ring-overwrite safety is
+        // preserved: the fence is only deleted when it has signaled.
         const auto t0 = std::chrono::steady_clock::now();
         waitResult = glClientWaitSync(g_thinRingFences[probedSlot],
-                         GL_SYNC_FLUSH_COMMANDS_BIT, 10000000u /*10ms*/);
+                         GL_SYNC_FLUSH_COMMANDS_BIT, 0u /*non-blocking*/);
         const auto t1 = std::chrono::steady_clock::now();
         waitUs = (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-        glDeleteSync(g_thinRingFences[probedSlot]);
-        g_thinRingFences[probedSlot] = 0;
+        if (waitResult != GL_TIMEOUT_EXPIRED && waitResult != GL_WAIT_FAILED) {
+            // Fence signaled (GL_ALREADY_SIGNALED or GL_CONDITION_SATISFIED).
+            glDeleteSync(g_thinRingFences[probedSlot]);
+            g_thinRingFences[probedSlot] = 0;
+        }
+        // If GL_TIMEOUT_EXPIRED: fence NOT deleted; slot still in-flight.
+        // The tripwire block below will log it, then we return early.
     }
 
     // Tripwire #1: missing fence past warmup OR fence timeout.
@@ -2744,14 +2754,24 @@ void ComputeDispatch() {
         // Read all 16 bytes of GpuDrivenBucketHeader:
         //   [0]=visibleCount, [1]=pad0_ (unused), [2]=pad1_ (near-zero clip.w count,
         //   probe 4), [3]=pad2_ (recipe-spread corruption count, probe 5).
-        uint32_t hdr4[4] = { 0, 0, 0, 0 };
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                           (GLsizeiptr)sizeof(hdr4), hdr4);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        const uint32_t prevVisible = hdr4[0];
-        const uint32_t prevNearW   = hdr4[2];
-        const uint32_t prevSpread  = hdr4[3];
+        //
+        // C-04 (non-blocking): only issue glGetBufferSubData when the fence for
+        // probedSlot already signaled (GPU-done confirmed by the timeout=0 wait
+        // above).  If the fence was absent / still in-flight, reuse the last
+        // cached header values — a 1-frame-stale overshoot LOG is harmless.
+        // This prevents a per-frame CPU stall on the default-ON GPU-driven path.
+        static uint32_t s_hdr4Cached[4] = { 0, 0, 0, 0 };
+        const bool gpuDone = (waitResult == GL_ALREADY_SIGNALED ||
+                              waitResult == GL_CONDITION_SATISFIED);
+        if (gpuDone) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, g_solidBucketHeaderSsbo);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                               (GLsizeiptr)sizeof(s_hdr4Cached), s_hdr4Cached);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        }
+        const uint32_t prevVisible = s_hdr4Cached[0];
+        const uint32_t prevNearW   = s_hdr4Cached[2];
+        const uint32_t prevSpread  = s_hdr4Cached[3];
 
         static uint32_t s_peakVisible    = 0;
         static uint32_t s_overshootCount = 0;
@@ -2954,6 +2974,18 @@ void ComputeDispatch() {
         fflush(stdout);
     }
     // ── end probe ─────────────────────────────────────────────────────────
+
+    // C-02: if the fence for this slot was not signaled (timeout=0 above), the
+    // prior GPU consumer is still reading it.  Skip the dispatch to preserve ring
+    // safety; the slot fence is left intact so the next frame can retry.
+    if (waitResult == GL_TIMEOUT_EXPIRED || waitResult == GL_WAIT_FAILED) {
+        static uint32_t s_ringSkipCount = 0;
+        ++s_ringSkipCount;
+        PROBE_LOG("[RING_SKIP v1] frame=%llu slot=%d wait=0x%x skip_total=%u\n",
+            (unsigned long long)ringFrameIdx, probedSlot,
+            (unsigned)waitResult, (unsigned)s_ringSkipCount);
+        return;
+    }
 
     const GLintptr thinSlotOffset = (GLintptr)(g_thinRingSlot * kThinRecordBytes);
 

@@ -42,7 +42,7 @@
 #include<mlr/mlr.hpp>
 #include <tracy/Tracy.hpp>
 #include "cpu_proj_cost_split.h"  // F3 CPU projection cost-baseline (RAII scope)
-#include "../GameOS/gameos/gos_static_prop_registry.h"  // Stage 3.C: frameBegin()
+#include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 CI-gate: firewall bridge for frameBegin()
 #include "particles/batcher.h"  // GPU particle batcher flush (Stage 2' and beyond)
 #include "../GameOS/gameos/gos_particle_bridge.h"  // B2 P1: camera basis bridge
 #include "../GameOS/gameos/debug_renderer.h"
@@ -286,7 +286,7 @@ void GameCamera::render (void)
 
 		{
 			ZoneScopedN("GameCamera::render terrain");
-			GpuStaticPropRegistry::frameBegin();  // Stage 3.C: reset live-instance list
+			GameAdapters::StaticProp::frameBegin();  // Stage 3.C: reset live-instance list
 			land->render();								//render the Terrain
 		}
 
@@ -362,7 +362,7 @@ void GameCamera::render (void)
 			// MUST run after renderLists() so the scene depth buffer is
 			// populated before alpha-blended billboards composite on top
 			// (memory/gpu_direct_renderer_bringup_checklist.md trap #6).
-			// No-op when MC2_GPU_PARTICLES is unset (default OFF).
+			// No-op when MC2_GPU_PARTICLES=0 (default ON since B3c-2; absent env var → enabled).
 			// Stage 1' canary (hardcoded orange billboard) removed now
 			// that real gosFX producers call BeginGroup+Emit via the
 			// SpawnCard*/SpawnCardCloud paths.

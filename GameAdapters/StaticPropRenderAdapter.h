@@ -31,12 +31,53 @@ struct GpuStaticPropInstance;  // adapter .cpp translates via the POD mirror
 namespace GameAdapters {
 namespace StaticProp {
 
-// M1 fix (adversarial review pass 2): spec D3 entry-point names.
+// M1 fix (adversarial review pass 2 + order-correct split): spec D3 entry-points.
 //
-// Per-mission lifecycle. Wired at code/mission.cpp:1693 and :3279
-// alongside GpuStaticPropRegistry::init/destroy (m1 fix).
-void beginMission();
-void endMission();
+// Per-mission lifecycle — split so GpuMechBatcher::onMapLoad/Unload can be
+// interleaved at the call-site (call order is fragile; this must be pure
+// indirection, zero behavior change vs the original Mission::init/destroy).
+//
+// init call order (byte-identical to original):
+//   1. beginMissionEarly()            → GpuStaticPropBatcher::onMapLoad()
+//   2. GpuMechBatcher::onMapLoad()    → (caller, NOT this adapter)
+//   3. beginMissionLate(missionName)  → setMissionForIbl() + Registry::init()
+//                                        + RenderWorld::init()
+//   4. Mech::beginMission()           → (caller)
+//
+// destroy call order (byte-identical to original):
+//   1. endMissionEarly()              → GpuStaticPropBatcher::onMapUnload()
+//   2. GpuMechBatcher::onMapUnload()  → (caller, NOT this adapter)
+//   3. endMissionLate()               → GpuStaticPropRegistry::destroy()
+//                                        + RenderWorld::destroy()
+//   4. Mech::endMission()             → (caller)
+//
+// missionName may be nullptr/empty — resolves to "default" IBL set.
+void beginMissionEarly();
+void beginMissionLate(const char* missionName);
+void endMissionEarly();
+void endMissionLate();
+
+// Post-spawn geometry finalisation. Absorbs the direct
+// GpuStaticPropBatcher::instance().finalizeGeometry() call previously
+// made in code/mission.cpp and code/saveload.cpp.
+void finalizeGeometry();
+
+// Per-frame reset of the live-instance list. Absorbs the direct
+// GpuStaticPropRegistry::frameBegin() call previously made in
+// code/gamecam.cpp.
+void frameBegin();
+
+// Number of registered static-prop types post-finalize (== batcher_getTypeCount()).
+// Narrow read-only accessor so code/mission.cpp and code/saveload.cpp can size
+// gpu_cull::compute_buildIndirectBuffer() without including the batcher header.
+uint32_t typeCount();
+
+// Save-game restore path: mirrors the pre-spawn batcher reset from
+// Mission::init without the IBL selection or registry init (those are
+// already live — destroy() ran endMission() first, which called
+// GpuStaticPropRegistry::destroy(); the registry is re-init'd on the
+// next real beginMission call). Used by code/saveload.cpp only.
+void resetForRestore();
 
 // M1 surface: building / tree first-render and bulk-register sites.
 // Returns invalid() on failure (registry disabled, OOM, or batch empty).

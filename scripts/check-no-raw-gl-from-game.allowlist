@@ -6,3 +6,9 @@
 # Diagnostic-only TU: gated by MC2_RENDER_CONTRACT_ASSERT=1; never executes rendering.
 # Calls: glGetIntegerv:437, glGetBooleanv:493, glGetBooleanv:502 (per M6 recon)
 mclib/render_contract.cpp
+
+# MC2_CAMERA_MOVE_DIAG / MC2_FLUSH_PROBE diagnostic readback probe, default-OFF (TRACKV-CI-GATE-RESTORE-1)
+# Calls: glFinish (~2003, gated by s_finishProbe/MC2_FLUSH_PROBE),
+#        glMemoryBarrier (~2282), glGetNamedBufferSubData (~2286, ~2288, ~2294)
+#        (all gated by MC2_CAMERA_MOVE_DIAG, diagnostic-only, default-OFF)
+mclib/txmmgr.cpp

@@ -19,6 +19,7 @@
 #include "utils/shader_builder.h"
 #include "gos_postprocess.h"  // VFX-SOFT-PARTICLES-MVP-1: scene-depth copy + invViewProj
 #include "../../mclib/camera.h"  // VFX-LIT-PARTICLES-MVP-1: eye->light*/ambient* (same source as terrain)
+#include "gpu_cull_readback.h"  // READBACK_SSBO_BINDING (slot 14) — single source of truth
 
 #include <cstdio>
 #include <cstdlib>   // std::getenv, std::atoi (MC2_VFX_DEBUG_MODE)
@@ -619,6 +620,11 @@ extern "C" void gos_particle_bridge_flush(const mc2::particles::GpuParticle* rec
     }
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    // D-01: symmetrically unbind indexed slot 14 (mirrors gpu_cull_compute.cpp:1187).
+    // Without this the slot stays bound to s_ssbo across frame boundaries, creating
+    // a latent hazard if frame ordering shifts (gpu_cull or any future SSBO consumer
+    // at slot 14 would alias the particle buffer).
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, gpu_cull::READBACK_SSBO_BINDING, 0u);
 
     // ── Restore state ────────────────────────────────────────────────
     if (savedCullFace) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);

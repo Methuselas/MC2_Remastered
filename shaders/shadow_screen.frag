@@ -133,7 +133,8 @@ void main()
     bool pixelHandlesOwnShadow = rc_pixelHandlesOwnShadow(normalData);
     // Debug mode: visualize what the shader classifies each pixel as
     if (debugMode == 1) {
-        if (depth >= 1.0) {
+        // reverse-Z: far=0, near=1, larger=closer; sky/cleared depth ~0.0.
+        if (depth <= 0.0001) {
             FragColor = vec4(0.0, 0.0, 0.0, 1.0);  // black = sky/no depth
         } else if (pixelHandlesOwnShadow) {
             FragColor = vec4(0.4, 0.2, 0.0, 1.0);  // brown = self-shadow-handled (skipped by this pass)
@@ -156,7 +157,8 @@ void main()
         return;
     }
 
-    if (depth >= 1.0) {
+    // reverse-Z: far=0, near=1, larger=closer; sky ~0.0 (matches particle_billboard.frag idiom).
+    if (depth <= 0.0001) {
         FragColor = vec4(1.0);
         return;
     }

@@ -194,7 +194,13 @@ enum class RendererFeature : int {
     // COLORMAP-BC7-KTX2-1: prefer .burnin.ktx2 BC7 sidecar in BuildColormapAtlas.
     // Falls back to RGBA8 when sidecar absent or BPTC cap missing. Default-ON.
     ColormapKtx2             = 42,  // MC2_COLORMAP_KTX2
-    COUNT                    = 43,
+    // TRACKV-CI-GATE-RESTORE-1: mission intro render path kill-switch.
+    // Default-OFF = new/optimized intro render path active; ON = legacy path forced.
+    MissionIntroLegacyRender = 43,  // MC2_MISSION_INTRO_LEGACY_RENDER
+    // TRACKV-CI-GATE-RESTORE-1: setupTextures legacy path kill-switch.
+    // Default-OFF = new/optimized setupTextures path active; ON = legacy path forced.
+    SetupTexturesLegacyForce = 44,  // MC2_SETUPTEXTURES_LEGACY_FORCE
+    COUNT                    = 45,
 };
 
 // ---------------------------------------------------------------------------
@@ -548,6 +554,22 @@ static constexpr EnvVarDesc kFeatureTable[] = {
         true,
         "COLORMAP-BC7-KTX2-1: prefer .burnin.ktx2 BC7 sidecar in BuildColormapAtlas (gos_terrain_indirect.cpp). When the sidecar is found on disk and GLEW_ARB_texture_compression_bptc is present, uploads via glCompressedTexImage2D(GL_COMPRESSED_RGBA_BPTC_UNORM) instead of glTexImage2D RGBA8. Saves ~81 MB VRAM per mission (108 MB -> ~27 MB). Falls back silently to RGBA8 when sidecar absent, BPTC cap missing, or load fails. KTX2 sidecar baked offline by scripts/bake_colormap_ktx2.py (Pillow BGRA->RGBA, ktx create uastc, ktx transcode bc7, --levels 1). Default-ON; kill-switch =0 forces RGBA8 path even when sidecar present."
     },
+    // MissionIntroLegacyRender (TRACKV-CI-GATE-RESTORE-1)
+    {
+        "MC2_FEATURE_MISSION_INTRO_LEGACY_RENDER",
+        "MC2_MISSION_INTRO_LEGACY_RENDER",
+        EnvVarKind::Feature,
+        false,
+        "TRACKV-CI-GATE-RESTORE-1: mission intro render path kill-switch. Default-OFF = new/optimized intro render path active; ON (=1) forces legacy path. Diagnostic default-OFF; no behavioral change when unset."
+    },
+    // SetupTexturesLegacyForce (TRACKV-CI-GATE-RESTORE-1)
+    {
+        "MC2_FEATURE_SETUPTEXTURES_LEGACY_FORCE",
+        "MC2_SETUPTEXTURES_LEGACY_FORCE",
+        EnvVarKind::Feature,
+        false,
+        "TRACKV-CI-GATE-RESTORE-1: setupTextures legacy path kill-switch. Default-OFF = new/optimized setupTextures path active; ON (=1) forces legacy path. Diagnostic default-OFF; no behavioral change when unset."
+    },
 };
 
 static_assert(
@@ -770,6 +792,28 @@ static constexpr EnvVarDesc kAuxEnvVars[] = {
         EnvVarKind::Trace,
         false,
         "COLORMAP-CPU-RETIRE-1 parity probe: logs displacement magnitude (maxDispMag in wu) from the CPU colormap displacement path. Requires MC2_COLORMAP_CPU_RETIRE=0 (kill-switch) so cpuColorMap is still alive. Default-OFF; set to any non-null value to enable. Every 50000 calls: prints [COLORMAP_PROBE] samples=N maxDispMag=X wu."
+    },
+    // TRACKV-CI-GATE-RESTORE-1 diagnostic trace vars
+    {
+        "MC2_TRACE_ASSIMP_TRACE",
+        "MC2_ASSIMP_TRACE",
+        EnvVarKind::Trace,
+        false,
+        "TRACKV-CI-GATE-RESTORE-1: verbose Assimp loader trace. Default-OFF; =1 enables per-mesh import log. Diagnostic output only; no correctness effect."
+    },
+    {
+        "MC2_TRACE_CAMERA_MOVE_DIAG",
+        "MC2_CAMERA_MOVE_DIAG",
+        EnvVarKind::Trace,
+        false,
+        "TRACKV-CI-GATE-RESTORE-1: camera movement diagnostic readback probe. WARNING: triggers GPU pipeline stall + glGetNamedBufferSubData readback — diagnostic default-OFF only. =1 enables per-frame camera-move diagnostic logs."
+    },
+    {
+        "MC2_TRACE_FLUSH_PROBE",
+        "MC2_FLUSH_PROBE",
+        EnvVarKind::Trace,
+        false,
+        "TRACKV-CI-GATE-RESTORE-1: GPU pipeline flush probe via glFinish. WARNING: triggers GPU pipeline stall — diagnostic default-OFF only. =1 enables glFinish at the probe site to measure GPU-complete latency."
     },
 };
 
