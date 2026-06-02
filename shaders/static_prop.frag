@@ -94,6 +94,10 @@ layout(std430, binding = 5) readonly buffer MaterialTable {
     MaterialGpu materials[];
 } materialTable_;
 uniform int u_materialGpuSample;  // 0 = legacy texArrayLayer, 1 = material table
+#ifdef MC2_STATICPROP_PBR_SLOTS
+uniform sampler2DArray u_ormTexArr;     // R=AO G=roughness B=metallic (linear)
+uniform int            u_ormSampleEnable; // int (uniform-uint crash trap); 0 = no ORM
+#endif
 
 #else
 uniform sampler2D u_tex;
@@ -233,6 +237,16 @@ void main() {
             dbgRoughness = materialTable_.materials[materialIdx].roughnessFactor;
             dbgMetallic  = materialTable_.materials[materialIdx].metallicFactor;
         }
+#if defined(MC2_STATICPROP_PBR_SLOTS) && defined(MC2_COALESCE)
+        if (u_ormSampleEnable != 0) {
+            uint ormTex = materialTable_.materials[materialIdx].metallicRoughnessTex;
+            if (ormTex != kMatTexAbsent) {
+                vec3 orm = texture(u_ormTexArr, vec3(uvSampled, float(ormTex))).rgb;
+                dbgRoughness *= orm.g;
+                dbgMetallic  *= orm.b;
+            }
+        }
+#endif
 #else
         // Legacy non-coalesce lane has no per-draw materialIdx / texArrayLayer;
         // collapse to 0 so debug modes 2/4 still produce a deterministic color
@@ -349,6 +363,16 @@ void main() {
                 if (u_materialGpuSample != 0) {
                     metallic  = materialTable_.materials[materialIdx].metallicFactor;
                     roughness = materialTable_.materials[materialIdx].roughnessFactor;
+                }
+#endif
+#if defined(MC2_STATICPROP_PBR_SLOTS) && defined(MC2_COALESCE)
+                if (u_ormSampleEnable != 0) {
+                    uint ormTex = materialTable_.materials[materialIdx].metallicRoughnessTex;
+                    if (ormTex != kMatTexAbsent) {
+                        vec3 orm = texture(u_ormTexArr, vec3(uvSampled, float(ormTex))).rgb;
+                        roughness *= orm.g;
+                        metallic  *= orm.b;
+                    }
                 }
 #endif
                 // Runtime override (ImGui slider) — sentinel < 0 means use

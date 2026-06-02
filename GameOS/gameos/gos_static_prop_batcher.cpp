@@ -977,6 +977,14 @@ void loadProgramsIfNeeded() {
     if (s_viewUniformsShaderEnabled) {
         coalescePrefix += "#define MC2_USE_VIEW_UNIFORMS 1\n";
     }
+    // STATICPROP-PBR-SLOTS: gate ORM (roughness/metallic) sampling in the
+    // fragment shader. Appended to BOTH prefixes; the legacy lane has no
+    // MC2_COALESCE / materialTable_, so its compile-guard is false → no effect
+    // there (intended). Gate-OFF (s_ormSlotsEnabled == false) is byte-identical.
+    if (s_ormSlotsEnabled) {
+        legacyPrefix   += "#define MC2_STATICPROP_PBR_SLOTS 1\n";
+        coalescePrefix += "#define MC2_STATICPROP_PBR_SLOTS 1\n";
+    }
 
     // Step 7.3 — legacy program (unchanged identity / no rename).
     s_staticPropProgramObj = glsl_program::makeProgram(
