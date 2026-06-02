@@ -38,6 +38,17 @@ Ktx2DecodedImage loadKtx2Image(const std::string& path)
         return r;
     }
 
+    // Reject KTX2 variants the viewer/loader does not support, with an accurate
+    // message (otherwise these would fall through and be mislabeled "corrupt").
+    const uint32_t typeSize    = fields[1];
+    const uint32_t pixelDepth  = fields[4];
+    const uint32_t faceCount   = fields[6];
+    const uint32_t levelCount  = fields[7];
+    if (faceCount != 1 || pixelDepth != 0 || typeSize != 1 || levelCount < 1) {
+        r.error = "Unsupported KTX2 variant (cubemap, 3D, array, or non-byte channel type) not supported.";
+        return r;
+    }
+
     // Real load via the engine parser (also handles BC7 despite the name).
     if (!RenderCore::ktxLoadRgba8(path.c_str(), r.img)) {
         r.error = "Corrupt KTX2: mip level size/offset out of range.";
