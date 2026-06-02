@@ -5,6 +5,7 @@
 #include "AssetViewerApp.h"
 #include "SphereMesh.h"
 #include "LocalPbrMaterialBackend.h"
+#include "MaterialTextureLoader.h"
 #include "UiEditorImageCache.h"
 #include "imgui.h"
 #include "TextureExtensions.h"
@@ -378,4 +379,72 @@ int AssetViewerApp::runSmokeFit()
 
     std::printf("[smoke] PASS fit (size@1=%.1fx%.1f)\n", a.w, a.h);
     return 0;
+}
+
+int AssetViewerApp::runSmokeTexLoad(const char* fixtureDir)
+{
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return smokeFail("SDL_Init");
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-texload", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) { SDL_Quit(); return smokeFail("hidden window"); }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) { SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("gl context (need GL 3.3)"); }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("glewInit");
+    }
+    glGetError(); // consume glew's spurious error
+
+    int rc = 0;
+    {
+        std::string base = std::string(fixtureDir) + "/mat_base.png";
+        std::string orm  = std::string(fixtureDir) + "/mat_orm.png";
+        std::string err;
+
+        uint32_t tb = MaterialTextureLoader_Load(base, MaterialSlotKind::BaseColor, &err);
+        if (!tb) {
+            std::printf("[smoke] FAIL: baseColor load: %s\n", err.c_str());
+            rc = 1;
+        } else {
+            GLint fmt = 0;
+            glBindTexture(GL_TEXTURE_2D, tb);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &fmt);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            if (fmt != GL_SRGB8_ALPHA8) {
+                std::printf("[smoke] FAIL: baseColor not sRGB (0x%x)\n", (unsigned)fmt);
+                rc = 1;
+            }
+            glDeleteTextures(1, &tb);
+        }
+
+        if (rc == 0) {
+            uint32_t to = MaterialTextureLoader_Load(orm, MaterialSlotKind::Orm, &err);
+            if (!to) {
+                std::printf("[smoke] FAIL: orm load: %s\n", err.c_str());
+                rc = 1;
+            } else {
+                GLint fmt = 0;
+                glBindTexture(GL_TEXTURE_2D, to);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &fmt);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                if (fmt != GL_RGBA8) {
+                    std::printf("[smoke] FAIL: orm not linear RGBA8 (0x%x)\n", (unsigned)fmt);
+                    rc = 1;
+                }
+                glDeleteTextures(1, &to);
+            }
+        }
+    }
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    if (rc == 0)
+        std::printf("[smoke] PASS texload sRGB/linear internalformats correct\n");
+    return rc;
 }

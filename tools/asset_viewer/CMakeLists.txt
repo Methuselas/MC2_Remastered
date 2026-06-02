@@ -9,6 +9,7 @@ set(ASSET_VIEWER_SOURCES
     AssetViewerApp.cpp
     SphereMesh.cpp
     LocalPbrMaterialBackend.cpp
+    MaterialTextureLoader.cpp
     # remaining sources added in later tasks
     TextureExtensions.cpp
     TextureMetadata.cpp
@@ -98,6 +99,7 @@ endif()
 target_include_directories(mc2_asset_viewer PRIVATE
     "${CMAKE_SOURCE_DIR}/3rdparty/imgui"
     "${CMAKE_SOURCE_DIR}/3rdparty/imgui/backends"
+    "${CMAKE_SOURCE_DIR}/3rdparty/stb"
     "${CMAKE_SOURCE_DIR}/GameOS/gameos"
     "${CMAKE_SOURCE_DIR}/ui_editor"
     "${CMAKE_SOURCE_DIR}/RenderCore"
