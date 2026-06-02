@@ -14,6 +14,7 @@ public:
     ~AssetViewerApp();
     void drawUi();
     static int runSmoke(const char* fixtureDir);
+    static int runSmokeDecoder();
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;

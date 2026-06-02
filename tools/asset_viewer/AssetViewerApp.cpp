@@ -6,6 +6,7 @@
 #include "UiEditorImageCache.h"
 #include "imgui.h"
 #include "TextureExtensions.h"
+#include "TextureDecoderRegistry.h"
 #include "TextureMetadata.h"
 #include "TexturePreview2D.h"
 #include <SDL.h>
@@ -90,4 +91,19 @@ int AssetViewerApp::runSmoke(const char* fixtureDir)
     SDL_Quit();
     if (rc == 0) std::printf("[smoke] PASS\n");
     return rc;
+}
+
+int AssetViewerApp::runSmokeDecoder()
+{
+    auto& reg = textureDecoderRegistry();
+    if (!reg.isSupported("a.PNG"))      return smokeFail("png should be supported via registry");
+    if (!reg.isSupported("a.tga"))      return smokeFail("tga should be supported via registry");
+    if ( reg.isSupported("a.dds"))      return smokeFail("dds should NOT be supported");
+    if ( reg.isSupported("noext"))      return smokeFail("extensionless should NOT be supported");
+    // IsSupportedTextureFile must now agree with the registry.
+    if (!IsSupportedTextureFile("a.png")) return smokeFail("IsSupportedTextureFile png");
+    if ( IsSupportedTextureFile("a.dds")) return smokeFail("IsSupportedTextureFile dds");
+    if (TextureExtLower("X/Y.KTX2") != "ktx2") return smokeFail("TextureExtLower");
+    std::printf("[smoke] PASS decoder registry\n");
+    return 0;
 }

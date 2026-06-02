@@ -14,6 +14,8 @@ set(ASSET_VIEWER_SOURCES
     FileBrowser.cpp
     AssetTypeSidebar.cpp
     TextureInspectorPanel.cpp
+    TextureDecoderRegistry.cpp
+    LegacyImageDecoder.cpp
     "${CMAKE_SOURCE_DIR}/ui_editor/UiEditorImageCache.cpp"
     "${CMAKE_SOURCE_DIR}/GameOS/gameos/utils/Image.cpp"
 )
