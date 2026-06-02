@@ -84,9 +84,24 @@ Deploy manifest restored to `{"overrides":[]}` (install not left modded). Trace 
 
 Limitation: unit-cube box is tiny at MC2 world scale, so the override reads as "prop disappeared" rather than "prop is a visible box". The render-replacement is nonetheless proven by the hangar's disappearance + the applied logs. A larger box asset would make it visually obvious (deferred; not needed for proof).
 
-## Slice 4 — TREE-MODEL-OVERRIDE-PROOF — RENDERS ✅ (override trees draw in-game)
+## Slice 4 — TREE-MODEL-OVERRIDE-PROOF — DOES NOT RENDER (corrected 2026-06-02)
 
-**RESOLVED 2026-06-02.** Override trees render in-game via the GPU static-prop batcher, collision stays stock (dual-shape), exit 0, 0 GL errors. Confirmed on v0.4 / mc2_01 with the real PBR `tree_small.glb` (42k-tri, 20×): `registry loaded: 6`, all 6 tree types `render override applied`, pools 78% of 16M (fits), trees visible across the map (`.claude/slice4_forest_final.png`).
+**RETRACTION:** an earlier revision of this section claimed trees render. That was WRONG — those were stock trees; I misread dark pixels. A definitive test (override the on-screen **hangar** with a bright **magenta 12-unit box**) proves the override geometry is **NOT drawn** on EITHER v0.4 or v0.3: the hangar vanishes (stock shape displaced by the override) and **no magenta box appears**. Screenshots `.claude/magenta_hangar_test.png` (v0.4), `.claude/v3_magenta_hangar.png` (v0.3).
+
+### What actually happens
+- `[MODOVERRIDE] render override applied` only means the glTF IMPORTED into the render shape — NOT that it draws.
+- Batcher summary: `submit_buildings=56 … gpu_drawn_instances=0`; the override type appears in `[GPUPROPS] late registerType … CPU-fallback`.
+- The `BldgAppearance::registerStatic` trace (gated on `bldgRenderShape != null`) did NOT fire, while the resolve-site trace DID → **`registerStatic` runs while `bldgRenderShape` is still null**, i.e. the override is imported into the render shape AFTER the mission-load registration pre-pass + the one-shot immutable `finalizeGeometry`. So the override geometry never enters the drawable VBO; meanwhile the per-instance render shape (CreateFrom'd from the override once it loads) displaces the stock shape in the legacy path → the prop disappears.
+
+### Real root cause / what's still needed
+The override must be RESOLVED + IMPORTED into the render shape **before** the GPU batcher's mission-load registration (so `registerStatic` sees it and `registerMultiShape` stages it pre-`finalizeGeometry`). Current Task-B import timing (appearance-type load) is evidently too late relative to the pre-pass/finalize for these appearances. Options: (a) resolve+import overrides during appearance-type construction guaranteed before `registerStaticPropsForMissionLoad`; (b) a batcher geometry rebuild (`resetForRestore` path) after overrides load; (c) verify appearance-type load order vs the pre-pass. NOT yet solved.
+
+### Honest status of the whole effort
+- PROVEN: registry (Slice 1), dual-shape collision authority (Task 0/Slice 2 — collision reads stock, diff-verified), resolve + glTF import, stock fallback, no-mod identity, builds clean.
+- NOT working: actual override RASTERIZATION (render). The render integration is incomplete.
+- Caps 16M/8M + gltfpack build are real/useful but did not fix render.
+
+### (earlier "what made it work" notes below are INVALID — kept struck-through for history only)
 
 ### What made it work
 1. **Register the override RENDER shape into the batcher BEFORE `finalizeGeometry`** — added `registerMultiShape(getBldg/TreeRenderShape(i))` at the TOP of `BldgAppearance::registerStatic` / `TreeAppearance::registerStatic` (`bdactor.cpp`). The mission-load pre-pass (`registerStaticPropsForMissionLoad`, default-on) runs before `StaticProp::finalizeGeometry` (mission.cpp:3198), so the override type-shapes enter the immutable VBO (`s_typeIndex`) and `buildRecipeFromShape` succeeds → GPU-instanced draw. (The 2 `[GPUPROPS] late registerType` lines are unrelated pre-existing stock types — verified: their pointers don't match any override leaf.)

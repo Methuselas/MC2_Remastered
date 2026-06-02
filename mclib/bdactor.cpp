@@ -2645,6 +2645,15 @@ void BldgAppearance::registerStatic() {
 	for (int i = 0; i < MAX_LODS; ++i)
 		GpuStaticPropBatcher::instance().registerMultiShape(appearType->getBldgRenderShape(i));
 
+	if (getenv("MC2_MODOVERRIDE_TRACE") && appearType->bldgRenderShape) {
+		TG_TypeMultiShape* rs = appearType->bldgRenderShape;
+		fprintf(stderr, "[MODOVERRIDE_TRACE] bldg registerStatic name=%s renderShape=%p numShapes=%ld leaf0=%p leaf1=%p finalized_guess(typeNodes_above)\n",
+		        appearType->name, (void*)rs, rs->GetNumShapes(),
+		        rs->GetNumShapes() > 0 ? (void*)rs->GetTypeNode(0) : nullptr,
+		        rs->GetNumShapes() > 1 ? (void*)rs->GetTypeNode(1) : nullptr);
+		fflush(stderr);
+	}
+
 	// Compute transform — same coordinate convention as BldgAppearance::update().
 	// At mission-load time position.z may not yet hold terrain elevation (set by
 	// bldng.cpp:810 on first update), so use getTerrainElevation() directly.
