@@ -161,23 +161,33 @@ static bool fb_isAllDigits(const std::string& s) {
     return true;
 }
 
+// folderPath_ may carry a trailing separator (e.g. user types "…/128\" in the
+// InputText box). Strip it so filename()/parent_path() behave (review fix:
+// otherwise CurrentTier() returns "" and SwitchTier() targets the wrong dir).
+static fs::path fb_normFolder(const char* raw) {
+    std::string s = raw ? raw : "";
+    while (!s.empty() && (s.back() == '/' || s.back() == '\\')) s.pop_back();
+    return fs::path(s);
+}
+
 void FileBrowser::setFolder(const std::string& path) {
     std::snprintf(folderPath_, sizeof(folderPath_), "%s", path.c_str());
     refresh();
 }
 
 std::string FileBrowser::CurrentTier() const {
-    std::string leaf = fs::path(folderPath_).filename().string();
+    std::string leaf = fb_normFolder(folderPath_).filename().string();
     return fb_isAllDigits(leaf) ? leaf : std::string();
 }
 
 std::vector<std::string> FileBrowser::SiblingTiers() const {
     std::vector<std::string> tiers;
-    fs::path parent = fs::path(folderPath_).parent_path();
+    fs::path parent = fb_normFolder(folderPath_).parent_path();
     std::error_code ec;
     if (parent.empty() || !fs::is_directory(parent, ec)) return tiers;
-    for (auto it = fs::directory_iterator(parent, ec);
-         it != fs::directory_iterator(); it.increment(ec)) {
+    auto it = fs::directory_iterator(parent, ec);
+    if (ec) return tiers;                           // open failed (perms etc.) -> no tiers (review m2)
+    for (; it != fs::directory_iterator(); it.increment(ec)) {
         if (ec) break;                              // stop on iteration error (review m2)
         std::error_code dec;                        // separate ec so an entry error
         if (!it->is_directory(dec) || dec) continue; // doesn't abort the whole scan
@@ -196,7 +206,7 @@ std::vector<std::string> FileBrowser::SiblingTiers() const {
 }
 
 void FileBrowser::SwitchTier(const std::string& tier) {
-    fs::path dst = fs::path(folderPath_).parent_path() / tier;
+    fs::path dst = fb_normFolder(folderPath_).parent_path() / tier;
     std::error_code ec;
     if (!fs::is_directory(dst, ec)) return;   // missing tier -> no-op
 
