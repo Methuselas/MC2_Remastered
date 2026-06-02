@@ -1,3 +1,7 @@
+/***************************************************************
+ * FILENAME: AssetViewerApp.h
+ * DESCRIPTION: Top-level application class for mc2_asset_viewer (stage 1).
+ ***************************************************************/
 #pragma once
 
 // STUB: replaced in Task 7

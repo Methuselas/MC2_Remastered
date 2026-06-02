@@ -55,6 +55,36 @@ foreach(_mc2r_prefix IN LISTS CMAKE_PREFIX_PATH)
     endif()
 endforeach()
 
+if(DEFINED VCPKG_TARGET_TRIPLET)
+    foreach(_mc2r_av_vcpkg_root
+        "${CMAKE_BINARY_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}"
+        "${CMAKE_SOURCE_DIR}/vcpkg_installed/${VCPKG_TARGET_TRIPLET}"
+    )
+        if(EXISTS "${_mc2r_av_vcpkg_root}/include/SDL2/SDL.h")
+            list(APPEND MC2R_AV_SDL_INCLUDE_DIRS "${_mc2r_av_vcpkg_root}/include/SDL2")
+        endif()
+
+        if(EXISTS "${_mc2r_av_vcpkg_root}/include/SDL.h")
+            list(APPEND MC2R_AV_SDL_INCLUDE_DIRS "${_mc2r_av_vcpkg_root}/include")
+        endif()
+    endforeach()
+endif()
+
+# Common vcpkg layout for this repo's build64 tree.
+foreach(_mc2r_av_vcpkg_root
+    "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows"
+    "${CMAKE_BINARY_DIR}/vcpkg_installed/x86-windows"
+    "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-linux"
+)
+    if(EXISTS "${_mc2r_av_vcpkg_root}/include/SDL2/SDL.h")
+        list(APPEND MC2R_AV_SDL_INCLUDE_DIRS "${_mc2r_av_vcpkg_root}/include/SDL2")
+    endif()
+
+    if(EXISTS "${_mc2r_av_vcpkg_root}/include/SDL.h")
+        list(APPEND MC2R_AV_SDL_INCLUDE_DIRS "${_mc2r_av_vcpkg_root}/include")
+    endif()
+endforeach()
+
 if(MC2R_AV_SDL_INCLUDE_DIRS)
     list(REMOVE_DUPLICATES MC2R_AV_SDL_INCLUDE_DIRS)
 endif()

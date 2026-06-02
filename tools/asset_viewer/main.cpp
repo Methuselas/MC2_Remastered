@@ -1,3 +1,7 @@
+/***************************************************************
+ * FILENAME: main.cpp
+ * DESCRIPTION: Entry point for mc2_asset_viewer (stage 1).
+ ***************************************************************/
 #include <cstdio>
 #include <cstring>
 #include <SDL.h>
@@ -102,7 +106,7 @@ int main(int argc, char* argv[])
         ImGui::Render();
 
         int display_w, display_h;
-        SDL_GetWindowSize(window, &display_w, &display_h);
+        SDL_GL_GetDrawableSize(window, &display_w, &display_h);
         glViewport(0, 0, display_w, display_h);
         glClearColor(0.06f, 0.065f, 0.075f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
