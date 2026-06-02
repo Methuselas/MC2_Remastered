@@ -52,6 +52,12 @@ static uint32_t  s_cpuVisibleCount = 0;
 // Byte size of one ring slot: header + record array.
 static size_t    s_slotBytes      = 0;
 
+// PERF-GPU-CULL-READBACK-ID-CACHE-1: CPU-side actor ID cache.
+// Parallel to GPU SSBO records: cpuActorIds[slot][i] == records[slot][i].actorId.
+// Avoids PCIe/BAR cache misses in readback_buildActorVisSnapshot.
+static uint32_t* s_cpuActorIds[RING_FRAMES]  = {nullptr, nullptr, nullptr};
+static uint32_t  s_cpuSlotCount[RING_FRAMES] = {0u, 0u, 0u};
+
 // ---------------------------------------------------------------------------
 // Env probe (lazy, cached)
 // ---------------------------------------------------------------------------
@@ -132,6 +138,12 @@ void substrate_init(uint32_t maxActors) {
     // Zero the entire buffer so unwritten records read as zero.
     memset(s_mappedPtr, 0, static_cast<size_t>(totalBytes));
 
+    // Allocate CPU actor ID cache — plain system memory, one slot per ring frame.
+    for (uint32_t i = 0u; i < RING_FRAMES; ++i) {
+        s_cpuActorIds[i]  = new uint32_t[maxActors]();
+        s_cpuSlotCount[i] = 0u;
+    }
+
     s_initialized = true;
 
     printf("[GPU_CULL v1] event=substrate_init maxActors=%u slotBytes=%zu totalBytes=%lld binding=%u\n",
@@ -165,6 +177,13 @@ void substrate_shutdown() {
         glDeleteBuffers(1, &s_instanceSsbo);
         s_instanceSsbo = 0;
     }
+    // Free CPU actor ID cache.
+    for (uint32_t i = 0u; i < RING_FRAMES; ++i) {
+        delete[] s_cpuActorIds[i];
+        s_cpuActorIds[i]  = nullptr;
+        s_cpuSlotCount[i] = 0u;
+    }
+
     s_mappedPtr      = nullptr;
     s_maxActors      = 0;
     s_perFrameCount  = 0;
@@ -201,6 +220,7 @@ void substrate_frameBegin() {
     s_perFrameCount = 0;
     s_cpuVisibleCount = 0;
     s_overflowLoggedThisFrame = false;  // 2026-05-11 reset overflow log latch
+    s_cpuSlotCount[s_frameSlot] = 0u;
 
     SUBSTRATE_TRACE("event=frame_begin slot=%u", s_frameSlot);
 }
@@ -227,6 +247,9 @@ static inline void substrate_writeRecord(const GpuActorRecord& rec) {
                  + sizeof(GpuActorRecordHeader)
                  + s_perFrameCount * sizeof(GpuActorRecord);
     memcpy(dest, &rec, sizeof(GpuActorRecord));
+    // Cache actor ID in CPU memory so readback_buildActorVisSnapshot avoids
+    // reading recs[i].actorId from GPU-mapped (BAR/PCIe) memory.
+    s_cpuActorIds[s_frameSlot][s_perFrameCount] = rec.actorId;
     if (rec.prevVisibilityBit) ++s_cpuVisibleCount;
     ++s_perFrameCount;
 }
@@ -276,6 +299,8 @@ void substrate_flushUpload() {
         hdr->visibleCount   = 0;   // written by compute (C1+); CPU sets 0
         hdr->_pad0          = 0;
     }
+    // Snapshot CPU slot count to match hdr->recordCount.
+    s_cpuSlotCount[s_frameSlot] = s_perFrameCount;
 
     // Buffer is coherent (GL_MAP_COHERENT_BIT) — no explicit glFlushMappedBufferRange needed.
 
@@ -341,6 +366,8 @@ void substrate_appendStaticPropRecord(const GpuActorRecord& rec) {
         reinterpret_cast<GpuActorRecordHeader*>(
             static_cast<char*>(s_mappedPtr) + slotOffset);
     hdr->recordCount = s_perFrameCount;
+    // Keep CPU slot count in sync with hdr->recordCount after each static-prop append.
+    s_cpuSlotCount[s_frameSlot] = s_perFrameCount;
 
     SUBSTRATE_TRACE("event=append_static type=%u count=%u",
                     (rec.category >> 4), s_perFrameCount);
@@ -409,6 +436,26 @@ const GpuActorRecord* substrate_getSlotRecords(uint32_t slot, uint32_t* outCount
     if (outCount) *outCount = hdr->recordCount;
 
     return reinterpret_cast<const GpuActorRecord*>(slotBase + sizeof(GpuActorRecordHeader));
+}
+
+// ---------------------------------------------------------------------------
+// substrate_getCpuActorIds (PERF-GPU-CULL-READBACK-ID-CACHE-1)
+// ---------------------------------------------------------------------------
+//
+// Returns the CPU-side actor ID array for the given ring slot.
+// Parallel to substrate_getSlotRecords: cpuIds[i] == records[i].actorId for
+// every valid index i < *outCount. Reading from this array avoids the ~4000
+// PCIe/BAR cache misses that reading GpuActorRecord.actorId from the
+// persistent-mapped SSBO incurs in readback_buildActorVisSnapshot.
+// outCount mirrors s_cpuSlotCount[slot], kept in sync with hdr->recordCount.
+
+const uint32_t* substrate_getCpuActorIds(uint32_t slot, uint32_t* outCount) {
+    if (!s_initialized || slot >= RING_FRAMES || !s_cpuActorIds[slot]) {
+        if (outCount) *outCount = 0u;
+        return nullptr;
+    }
+    if (outCount) *outCount = s_cpuSlotCount[slot];
+    return s_cpuActorIds[slot];
 }
 
 } // namespace gpu_cull

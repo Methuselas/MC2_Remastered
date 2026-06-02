@@ -17,7 +17,7 @@
 // glClientWaitSync timeout is ALWAYS 0 (zero) — never GL_TIMEOUT_IGNORED on hot path.
 
 #include "gpu_cull_readback.h"
-#include "gpu_cull_substrate.h"  // substrate_getCpuVisibleCount(), substrate_getSlotRecords()
+#include "gpu_cull_substrate.h"  // substrate_getCpuVisibleCount(), substrate_getSlotRecords(), substrate_getCpuActorIds()
 #include "gpu_cull_record.h"     // GpuActorRecord
 #include "gos_profiler.h"        // Tracy.hpp + TracyPlot
 #include <gameos.hpp>            // STOP()
@@ -678,15 +678,18 @@ void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
                          uint32_t* outFlippedOnAlone, uint32_t* outFlippedByOr) {
         const uint32_t substrateSlotForReadback = (readbackSlot + 1u) % 3u;
         uint32_t recCount = 0u;
-        const GpuActorRecord* recs = substrate_getSlotRecords(substrateSlotForReadback, &recCount);
-        if (!recs || recCount == 0u) return false;
+        // PERF-GPU-CULL-READBACK-ID-CACHE-1: read actor IDs from CPU-side cache
+        // instead of from the persistently-mapped GPU SSBO. Avoids ~2000 PCIe/BAR
+        // cache misses per frame that were causing the 3.6 ms GOM.readbackSnapshot stall.
+        const uint32_t* cpuIds = substrate_getCpuActorIds(substrateSlotForReadback, &recCount);
+        if (!cpuIds || recCount == 0u) return false;
 
         const char* slotBase = static_cast<const char*>(s_stagingMapped)
                              + readbackSlot * s_slotBytes;
         const uint32_t* rbVis = reinterpret_cast<const uint32_t*>(slotBase + sizeof(ReadbackHeader));
 
         for (uint32_t i = 0u; i < recCount; ++i) {
-            const uint32_t id = recs[i].actorId;
+            const uint32_t id = cpuIds[i];
             if (id == 0u) continue;
             if (id >= MAX_ACTOR_HANDLE) {
                 STOP(("[GPU_CULL] readback actor overflow: id=%u cap=%u; raise MAX_ACTOR_HANDLE", id, MAX_ACTOR_HANDLE));
