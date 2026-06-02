@@ -96,3 +96,12 @@ _orm_pixels = [
     (255, 128, 0, 255), (255, 128, 0, 255), (255, 128, 0, 255), (255, 128, 0, 255),
 ]
 write_png_rgba("mat_orm.png", 4, 4, _orm_pixels)
+
+# ---- tangent validation fixtures (for --smoke-tangent) ----
+# nrm_flat.png: 128x128 flat tangent-space normal (+Z, encodes as (128,128,255)).
+_flat_pixels = [(128, 128, 255, 255)] * (128 * 128)
+write_png_rgba("nrm_flat.png", 128, 128, _flat_pixels)
+
+# nrm_tilt_u.png: 128x128 normal tilted toward +U (192,128,255 -> slight +X tilt).
+_tilt_pixels = [(192, 128, 255, 255)] * (128 * 128)
+write_png_rgba("nrm_tilt_u.png", 128, 128, _tilt_pixels)

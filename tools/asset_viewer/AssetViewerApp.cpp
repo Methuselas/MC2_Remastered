@@ -543,3 +543,133 @@ int AssetViewerApp::runSmokeRender(const char* fixtureDir)
     std::printf("[smoke] PASS render: sphere distinct (c=%ld bg=%ld), glGetError clean\n", center, corner);
     return 0;
 }
+
+// helper: mean absolute per-channel diff over the whole image
+static double meanDiff(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    double s = 0;
+    size_t n = std::min(a.size(), b.size());
+    for (size_t i = 0; i < n; i++) s += std::abs((int)a[i] - (int)b[i]);
+    return n ? s / n : 1e9;
+}
+
+int AssetViewerApp::runSmokeTangent(const char* fixtureDir)
+{
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return smokeFail("SDL_Init");
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-tangent", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) { SDL_Quit(); return smokeFail("hidden window"); }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) { SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("gl context (need GL 3.3)"); }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("glewInit");
+    }
+    glGetError(); // consume glew's spurious error
+
+    const int W = 256, H = 256;
+    auto load = [&](const char* f, MaterialSlotKind k) -> uint32_t {
+        std::string err;
+        return MaterialTextureLoader_Load(std::string(fixtureDir) + "/" + f, k, &err);
+    };
+
+    // Render 1: base color only (no normal map)
+    MaterialPreviewPBR p1;
+    p1.orbitYaw()   = 0.0f;
+    p1.orbitPitch() = 0.0f;
+    p1.zoom()       = 3.0f;
+    p1.lightDir()[0] = -0.5f; p1.lightDir()[1] = 0.0f; p1.lightDir()[2] = -0.5f;
+
+    uint32_t base1 = load("mat_base.png", MaterialSlotKind::BaseColor);
+    if (!base1) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("mat_base.png load failed");
+    }
+    p1.setSlotTexture(MaterialSlotKind::BaseColor, base1);
+
+    std::vector<uint8_t> noNormal;
+    if (!p1.renderToPixels(W, H, noNormal)) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("renderToPixels (no-normal) init/FBO failed");
+    }
+
+    // Render 2: base + flat-blue normal (should be ~= no normal)
+    // Use a fresh preview to avoid sharing GL state across renders.
+    MaterialPreviewPBR p2;
+    p2.orbitYaw()   = 0.0f;
+    p2.orbitPitch() = 0.0f;
+    p2.zoom()       = 3.0f;
+    p2.lightDir()[0] = -0.5f; p2.lightDir()[1] = 0.0f; p2.lightDir()[2] = -0.5f;
+
+    uint32_t base2 = load("mat_base.png", MaterialSlotKind::BaseColor);
+    uint32_t nrmFlat = load("nrm_flat.png", MaterialSlotKind::Normal);
+    if (!base2 || !nrmFlat) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("nrm_flat.png load failed");
+    }
+    p2.setSlotTexture(MaterialSlotKind::BaseColor, base2);
+    p2.setSlotTexture(MaterialSlotKind::Normal, nrmFlat);
+
+    std::vector<uint8_t> flatNormal;
+    if (!p2.renderToPixels(W, H, flatNormal)) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("renderToPixels (flat-normal) init/FBO failed");
+    }
+
+    // Render 3: same base + tilted normal (should perturb MORE than flat)
+    MaterialPreviewPBR p3;
+    p3.orbitYaw()   = 0.0f;
+    p3.orbitPitch() = 0.0f;
+    p3.zoom()       = 3.0f;
+    p3.lightDir()[0] = -0.5f; p3.lightDir()[1] = 0.0f; p3.lightDir()[2] = -0.5f;
+
+    uint32_t base3 = load("mat_base.png", MaterialSlotKind::BaseColor);
+    uint32_t nrmTilt = load("nrm_tilt_u.png", MaterialSlotKind::Normal);
+    if (!base3 || !nrmTilt) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("nrm_tilt_u.png load failed");
+    }
+    p3.setSlotTexture(MaterialSlotKind::BaseColor, base3);
+    p3.setSlotTexture(MaterialSlotKind::Normal, nrmTilt);
+
+    std::vector<uint8_t> tiltNormal;
+    if (!p3.renderToPixels(W, H, tiltNormal)) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("renderToPixels (tilt-normal) init/FBO failed");
+    }
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+
+    double dFlat = meanDiff(noNormal, flatNormal);   // expect SMALL
+    double dTilt = meanDiff(noNormal, tiltNormal);   // expect LARGER than dFlat
+
+    if (dFlat > 6.0) {
+        std::printf("[smoke] FAIL: flat-blue normal differs from no-normal (mean=%.2f, threshold=6.0)\n", dFlat);
+        return 1;
+    }
+    if (dTilt < dFlat + 2.0) {
+        std::printf("[smoke] FAIL: tilted normal did not perturb shading (flat=%.2f tilt=%.2f)\n", dFlat, dTilt);
+        return 1;
+    }
+
+    // Seam check: the rightmost column (u-wrap, x=W-1) centre rows must not be all-black.
+    // A tangent discontinuity at the seam would produce a dark spike.
+    long seamSum = 0;
+    for (int y = H/4; y < 3*H/4; y++) {
+        const uint8_t* px = &flatNormal[(y*W + (W-1))*4];
+        seamSum += px[0] + px[1] + px[2];
+    }
+    if (seamSum == 0) {
+        std::printf("[smoke] FAIL: seam column all black (tangent discontinuity)\n");
+        return 1;
+    }
+
+    std::printf("[smoke] PASS tangent flat=%.2f tilt=%.2f seam-ok\n", dFlat, dTilt);
+    return 0;
+}
