@@ -70,7 +70,7 @@ static bool PickTextureFileWin32(std::string&) { return false; }
 #endif
 
 FileBrowser::FileBrowser() {
-    const char* rels[] = { "data/art/gui/test", "data/art/gui", "data/art", "data" };
+    const char* rels[] = { "data/tgl/128", "data/tgl", "data/art/gui/test", "data/art/gui", "data/art", "data" };
     fs::path roots[] = { ExeDir(), fs::current_path() };
     for (const auto& root : roots) {
         for (const char* rel : rels) {
