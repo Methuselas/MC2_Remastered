@@ -1,6 +1,7 @@
 // tools/asset_viewer/TextureDecoderRegistry.cpp
 #include "TextureDecoderRegistry.h"
 #include "LegacyImageDecoder.h"
+#include "Ktx2Decoder.h"
 #include <algorithm>
 #include <cctype>
 
@@ -56,10 +57,11 @@ std::vector<std::string> TextureDecoderRegistry::supportedExtensions() const
     return out;
 }
 
-// Default decoder set. Task 3 appends the Ktx2Decoder registration here.
+// Default decoder set.
 static void buildDefaultRegistry(TextureDecoderRegistry& reg)
 {
     reg.add(std::make_unique<LegacyImageDecoder>());
+    reg.add(std::make_unique<Ktx2Decoder>());
 }
 
 TextureDecoderRegistry& textureDecoderRegistry()

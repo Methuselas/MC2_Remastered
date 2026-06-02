@@ -1,5 +1,6 @@
 // tools/asset_viewer/Ktx2Decoder.cpp
 #include "Ktx2Decoder.h"
+#include <GL/glew.h>
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
@@ -68,12 +69,69 @@ std::vector<std::string> Ktx2Decoder::extensions() const
     return {"ktx2"};
 }
 
-// GL upload implemented in Task 3. This stub keeps the file compiling for the
-// parse smoke; it is replaced in Task 3.
 DecodedTexture Ktx2Decoder::load(const std::string& path) const
 {
     DecodedTexture d;
-    d.error = "KTX2 GL upload not yet implemented.";
-    (void)path;
+    Ktx2DecodedImage k = loadKtx2Image(path);
+    if (!k.ok) { d.error = k.error; return d; }
+    const RenderCore::KtxImage& img = k.img;
+
+    d.width         = img.width;
+    d.height        = img.height;
+    d.mipCount      = img.mipCount;
+    d.isCompressed  = img.isCompressed;
+    d.ownsGlTexture = true;
+
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+    if (!img.isCompressed) {
+        const GLenum internal = img.isSrgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;     // color-space per metadata
+        glTexImage2D(GL_TEXTURE_2D, 0, internal, img.width, img.height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE,
+                     img.pixels.data() + img.mipByteOffsets[0]);
+        d.formatLabel = img.isSrgb ? "RGBA8 (sRGB)" : "RGBA8";
+    } else {
+        if (!GLEW_ARB_texture_compression_bptc) {
+            glDeleteTextures(1, &tex);
+            d.error = "BC7 preview requires GL_ARB_texture_compression_bptc, "
+                      "unavailable on this GPU/context.";
+            return d;
+        }
+        const GLenum internal = img.isSrgb ? GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM
+                                           : GL_COMPRESSED_RGBA_BPTC_UNORM;
+        for (int lvl = 0; lvl < img.mipCount; ++lvl) {
+            const int lw = (img.width  >> lvl) ? (img.width  >> lvl) : 1;
+            const int lh = (img.height >> lvl) ? (img.height >> lvl) : 1;
+            const uint64_t off  = img.mipByteOffsets[lvl];
+            const uint64_t next = (lvl + 1 < img.mipCount) ? img.mipByteOffsets[lvl + 1]
+                                                           : (uint64_t)img.pixels.size();
+            const GLsizei size  = (GLsizei)(next - off);
+            glCompressedTexImage2D(GL_TEXTURE_2D, lvl, internal, lw, lh, 0,
+                                   size, img.pixels.data() + off);
+        }
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, img.mipCount - 1);
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "BC7%s, %d mip%s",
+                      img.isSrgb ? " (sRGB)" : "", img.mipCount, img.mipCount > 1 ? "s" : "");
+        d.formatLabel = buf;
+    }
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                    img.mipCount > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    const GLenum e = glGetError();
+    if (e != GL_NO_ERROR) {
+        glDeleteTextures(1, &tex);
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "GL upload failed (0x%x) for %s", e, path.c_str());
+        d.error = buf;
+        return d;
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    d.glTexture = tex;
     return d;
 }

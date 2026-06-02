@@ -139,6 +139,64 @@ int AssetViewerApp::runSmokeDecoder()
     if (!IsSupportedTextureFile("a.png")) return smokeFail("IsSupportedTextureFile png");
     if ( IsSupportedTextureFile("a.dds")) return smokeFail("IsSupportedTextureFile dds");
     if (TextureExtLower("X/Y.KTX2") != "ktx2") return smokeFail("TextureExtLower");
+    if (!reg.isSupported("a.ktx2"))     return smokeFail("ktx2 should be supported now");
+    {
+        auto exts = reg.supportedExtensions();
+        bool hasKtx2 = false; for (auto& e : exts) if (e == "ktx2") hasKtx2 = true;
+        if (!hasKtx2) return smokeFail("supportedExtensions missing ktx2");
+    }
     std::printf("[smoke] PASS decoder registry\n");
     return 0;
+}
+
+int AssetViewerApp::runSmokeKtx(const char* dir)
+{
+    namespace fs = std::filesystem;
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return smokeFail("SDL_Init");
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_Window* win = SDL_CreateWindow("smoke-ktx", 0, 0, 64, 64, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) { SDL_Quit(); return smokeFail("hidden window"); }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) { SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("gl context"); }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) { SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("glewInit"); }
+    glGetError(); // consume glew's spurious error
+
+    int rc = 0;
+    auto& reg = textureDecoderRegistry();
+
+    // RGBA8 path
+    {
+        DecodedTexture d = reg.load((fs::path(dir) / "tex_rgba8.ktx2").string());
+        if (!d.error.empty())           rc = smokeFail("rgba8 ktx upload error");
+        else if (d.glTexture == 0)      rc = smokeFail("rgba8 ktx no texture");
+        else if (d.width != 4 || d.height != 2) rc = smokeFail("rgba8 ktx dims");
+        else if (d.formatLabel.rfind("RGBA8", 0) != 0) rc = smokeFail("rgba8 label");
+        else if (!d.ownsGlTexture)      rc = smokeFail("rgba8 should be owned");
+        else if (glGetError() != GL_NO_ERROR) rc = smokeFail("rgba8 glGetError");
+        if (d.ownsGlTexture && d.glTexture) { GLuint t = d.glTexture; glDeleteTextures(1, &t); }
+    }
+
+    // BC7 path (skip cleanly if no BPTC)
+    if (rc == 0) {
+        if (!GLEW_ARB_texture_compression_bptc) {
+            std::printf("[smoke] SKIP bc7: no BPTC\n");
+        } else {
+            DecodedTexture d = reg.load((fs::path(dir) / "tex_bc7.ktx2").string());
+            if (!d.error.empty())       rc = smokeFail("bc7 upload error");
+            else if (d.glTexture == 0)  rc = smokeFail("bc7 no texture");
+            else if (!d.isCompressed)   rc = smokeFail("bc7 should be compressed");
+            else if (glGetError() != GL_NO_ERROR) rc = smokeFail("bc7 glGetError");
+            if (d.ownsGlTexture && d.glTexture) { GLuint t = d.glTexture; glDeleteTextures(1, &t); }
+        }
+    }
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    if (rc == 0) std::printf("[smoke] PASS ktx upload\n");
+    return rc;
 }
