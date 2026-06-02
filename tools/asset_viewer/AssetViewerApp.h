@@ -7,6 +7,8 @@
 #include "AssetTypeSidebar.h"
 #include "TextureInspectorPanel.h"
 #include "TexturePreview2D.h"
+#include "MaterialPreviewPBR.h"
+#include "MaterialSlots.h"
 
 class AssetViewerApp {
 public:
@@ -29,4 +31,6 @@ private:
     AssetTypeSidebar sidebar_;
     TextureInspectorPanel inspector_;
     TexturePreview2D surface_;
+    MaterialPreviewPBR materialSurface_;
+    MaterialSlots      materialSlots_;
 };

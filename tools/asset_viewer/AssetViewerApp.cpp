@@ -42,15 +42,28 @@ void AssetViewerApp::drawUi()
     ImGui::EndChild();
     ImGui::SameLine();
 
+    // browser child: only feed the texture surface in Textures mode.
     ImGui::BeginChild("browser", ImVec2(browserW, 0), true);
     browser_.draw();
-    if (browser_.hasSelection())
-        surface_.setSource(browser_.takeSelection());
+    if (browser_.hasSelection()) {
+        std::string sel = browser_.takeSelection();
+        if (sidebar_.active() == AssetType::Textures) surface_.setSource(sel);
+        // Materials mode: slots are assigned via MaterialSlots' own picker, not the browser.
+    }
     ImGui::EndChild();
     ImGui::SameLine();
 
+    // inspector child: dispatch on the active asset type.
     ImGui::BeginChild("inspector", ImVec2(0, 0), true);
-    inspector_.draw(surface_);
+    switch (sidebar_.active()) {
+      case AssetType::Textures:
+        inspector_.draw(surface_);                                  // calls surface_.draw(GetContentRegionAvail())
+        break;
+      case AssetType::Materials:
+        materialSlots_.draw(materialSurface_);                      // slot pickers + light/camera
+        materialSurface_.draw(ImGui::GetContentRegionAvail());      // lit sphere + approximate label
+        break;
+    }
     ImGui::EndChild();
 
     ImGui::End();
