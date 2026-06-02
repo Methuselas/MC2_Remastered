@@ -10,7 +10,7 @@ set(ASSET_VIEWER_SOURCES
     # remaining sources added in later tasks
     TextureExtensions.cpp
     TextureMetadata.cpp
-    # TexturePreview2D.cpp
+    TexturePreview2D.cpp
     # FileBrowser.cpp
     # AssetTypeSidebar.cpp
     # TextureInspectorPanel.cpp
