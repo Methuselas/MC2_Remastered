@@ -54,16 +54,62 @@ inline RenderCore::StaticPropInstanceDesc toMirror(
 namespace GameAdapters {
 namespace StaticProp {
 
-// Per-mission lifecycle. m1 fix: wired at mission.cpp:1693 / :3279.
-// Sibling of GpuStaticPropRegistry::init/destroy (per-mission, NOT
-// per-process). Currently a thin pair around RenderWorld::init/destroy;
-// promoted to real boundary calls in M2+ (see spec section 4).
-void beginMission() {
+// Pre-mech-batcher static-prop reset. Called BEFORE GpuMechBatcher::onMapLoad().
+// Original position: Mission::init line 1752 (GpuStaticPropBatcher::onMapLoad).
+void beginMissionEarly() {
+    GpuStaticPropBatcher::instance().onMapLoad();
+}
+
+// Post-mech-batcher static-prop init. Called AFTER GpuMechBatcher::onMapLoad().
+// Absorbs (in order):
+//   GpuStaticPropBatcher::setMissionForIbl(missionName)  ← V-IBL-STATIC-2
+//   GpuStaticPropRegistry::init()                         ← Stage 3.C
+//   RenderWorld::init()                                   ← old thin beginMission()
+// missionName may be nullptr/empty — falls back to "default" IBL set.
+void beginMissionLate(const char* missionName) {
+    GpuStaticPropBatcher::setMissionForIbl(missionName);
+    GpuStaticPropRegistry::init();
     RenderWorld::init();
 }
 
-void endMission() {
+// Pre-mech-batcher static-prop teardown. Called BEFORE GpuMechBatcher::onMapUnload().
+// Original position: Mission::destroy line 3345 (GpuStaticPropBatcher::onMapUnload).
+void endMissionEarly() {
+    GpuStaticPropBatcher::instance().onMapUnload();
+}
+
+// Post-mech-batcher static-prop teardown. Called AFTER GpuMechBatcher::onMapUnload().
+// Absorbs (in order):
+//   GpuStaticPropRegistry::destroy()   ← Stage 3.C
+//   RenderWorld::destroy()             ← old thin endMission()
+void endMissionLate() {
+    GpuStaticPropRegistry::destroy();
     RenderWorld::destroy();
+}
+
+// Post-spawn geometry finalisation bridge. Wraps
+// GpuStaticPropBatcher::instance().finalizeGeometry().
+// Called from code/mission.cpp and code/saveload.cpp.
+void finalizeGeometry() {
+    GpuStaticPropBatcher::instance().finalizeGeometry();
+}
+
+// Per-frame live-instance list reset. Wraps
+// GpuStaticPropRegistry::frameBegin().
+// Called from code/gamecam.cpp.
+void frameBegin() {
+    GpuStaticPropRegistry::frameBegin();
+}
+
+// Save-game restore path: batcher-only pre-spawn reset. Does NOT
+// call setMissionForIbl (IBL set is already correct from the
+// previous beginMission call; this is a within-mission save restore),
+// does NOT call GpuStaticPropRegistry::init() (destroy() was called
+// via endMission() already and registry is dormant until next
+// beginMission), does NOT call RenderWorld::init() (same reason).
+// Mirrors code/saveload.cpp's pre-spawn reset at Mission::load.
+void resetForRestore() {
+    GpuStaticPropBatcher::instance().onMapLoad();
 }
 
 RenderCore::RenderObjectHandle syncStaticProp(

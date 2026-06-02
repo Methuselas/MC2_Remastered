@@ -118,7 +118,7 @@
 // bypasses Mission::init and must mirror its finalizeGeometry() tail, or
 // every mech of any type re-registered on restore stays invisible
 // (submitActor fast-rejects while !s_geometryFinalized).
-#include "gos_static_prop_batcher.h"
+#include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 CI-gate: resetForRestore() + finalizeGeometry()
 #include "gos_mech_batcher.h"
 #include "../GameOS/gameos/gpu_cull_compute.h"   // Stage 0.5 §0: mirror Init's compute_buildIndirectBuffer tail
 #include "../GameOS/gameos/gpu_cull_substrate.h"   // Stage 0.5 §0 (cont'd): mirror Init's per-mission substrate re-init (mission.cpp:2807)
@@ -732,7 +732,7 @@ void Mission::load (const char *loadFileName)
 	// (after destroy(), before any ::Load respawn) so registration
 	// rebuilds into a clean index; the finalizeGeometry() tail below is
 	// Init's matching post-spawn half.
-	GpuStaticPropBatcher::instance().onMapLoad();
+	GameAdapters::StaticProp::resetForRestore();
 	GpuMechBatcher::instance().onMapLoad();
 
 	loadProgress = 1.0f;
@@ -1636,7 +1636,7 @@ void Mission::load (const char *loadFileName)
 	// already finalized). GL context is live here (camera + mission
 	// interface already initialized above), same precondition as
 	// mission.cpp:3112-3115.
-	GpuStaticPropBatcher::instance().finalizeGeometry();
+	GameAdapters::StaticProp::finalizeGeometry();
 	GpuMechBatcher::instance().finalizeGeometry();
 
 	// Stage 0.5 §0 prerequisite: mirror Mission::init's compute_buildIndirectBuffer

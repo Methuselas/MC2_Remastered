@@ -297,9 +297,7 @@ extern float OneOverProcessorSpeed;
 extern PriorityQueuePtr	openList;
 
 #include "gos_profiler.h"
-#include "gos_static_prop_batcher.h"
-#include "gos_static_prop_registry.h"  // Stage 3.C: init()/destroy()
-#include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 Task 13
+#include "../GameAdapters/StaticPropRenderAdapter.h"  // M1 Task 13: firewall bridge (was: gos_static_prop_batcher.h + gos_static_prop_registry.h)
 #include "../GameAdapters/MechRenderAdapter.h"          // M2: mech lifecycle adapter
 #include "gos_mech_batcher.h"
 
@@ -1749,14 +1747,14 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 
 	// Reset GPU static-prop batcher state at every map boundary, before any
 	// actor registerType() calls happen during actor spawn (Task 6).
-	GpuStaticPropBatcher::instance().onMapLoad();
+	// M1 Task 13 (order-correct split): call order is byte-identical to original:
+	//   1. GpuStaticPropBatcher::onMapLoad()   ← beginMissionEarly()
+	//   2. GpuMechBatcher::onMapLoad()
+	//   3. setMissionForIbl() + Registry::init() + RenderWorld::init() ← beginMissionLate()
+	//   4. Mech::beginMission()
+	GameAdapters::StaticProp::beginMissionEarly();         // M1 Task 13
 	GpuMechBatcher::instance().onMapLoad();
-	// V-IBL-STATIC-2: per-mission SH coefficient selection. Mission name
-	// here is the canonical key the registry consults; nullptr/empty/unknown
-	// falls back to the "default" set so existing missions are unchanged.
-	GpuStaticPropBatcher::setMissionForIbl(missionName);
-	GpuStaticPropRegistry::init();   // Stage 3.C
-	GameAdapters::StaticProp::beginMission();  // M1 Task 13
+	GameAdapters::StaticProp::beginMissionLate(missionName); // M1 Task 13
 	GameAdapters::Mech::beginMission();              // M2: mech lifecycle
 
 	neverEndingStory = false;
@@ -3197,7 +3195,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// submit()/flush() can reference immutable geometry for the rest of the
 	// mission. Safe here: GL context is live (textures/shadow FBOs already
 	// exist by this point) and this is the unconditional tail of map-load.
-	GpuStaticPropBatcher::instance().finalizeGeometry();
+	GameAdapters::StaticProp::finalizeGeometry();
 	GpuMechBatcher::instance().finalizeGeometry();
 
 	// C1b: build the DrawElementsIndirectCommand buffer now that all static prop
@@ -3340,12 +3338,15 @@ void Mission::destroy (bool initLogistics)
 	// substrate_init() handles re-init on next mission load (calls shutdown internally).
 	gpu_cull::substrate_shutdown();
 
-	// Release GPU static-prop batcher resources (VBO/IBO/VAO) at mission
-	// shutdown. Safe to call when nothing was registered.
-	GpuStaticPropBatcher::instance().onMapUnload();
+	// Release GPU resources at mission shutdown.
+	// M1 Task 13 (order-correct split): call order is byte-identical to original:
+	//   1. GpuStaticPropBatcher::onMapUnload()  ← endMissionEarly()
+	//   2. GpuMechBatcher::onMapUnload()
+	//   3. GpuStaticPropRegistry::destroy() + RenderWorld::destroy() ← endMissionLate()
+	//   4. Mech::endMission()
+	GameAdapters::StaticProp::endMissionEarly();   // M1 Task 13
 	GpuMechBatcher::instance().onMapUnload();
-	GpuStaticPropRegistry::destroy(); // Stage 3.C
-	GameAdapters::StaticProp::endMission();    // M1 Task 13
+	GameAdapters::StaticProp::endMissionLate();    // M1 Task 13
 	GameAdapters::Mech::endMission();               // M2: mech lifecycle
 
 	//---------------------------------------------------------------
