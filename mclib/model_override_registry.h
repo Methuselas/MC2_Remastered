@@ -28,5 +28,5 @@ public:
     static ModelOverrideRegistry& instance();
 private:
     std::vector<ModelOverrideRecord> records_;
-    std::string manifestDir_;
+    std::string manifestDir_;   // retained for Slice 2 relative source-path resolution
 };

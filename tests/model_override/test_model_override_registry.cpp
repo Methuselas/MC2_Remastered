@@ -44,6 +44,7 @@ int main(int argc, char** argv) {
     }
     {   ModelOverrideRegistry r; CHECK(r.loadFromFile(fx("malformed.json"), dir) == 0); }
     {   ModelOverrideRegistry r; CHECK(r.loadFromFile(fx("does_not_exist.json"), dir) == 0); }
+    {   ModelOverrideRegistry r; CHECK(r.loadFromFile(fx("type_mismatch.json"), dir) == 0); }
     printf(failures ? "TESTS FAILED (%d)\n" : "ALL TESTS PASSED\n", failures);
     return failures ? 1 : 0;
 }

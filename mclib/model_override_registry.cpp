@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstdio>
 #include <fstream>
+#include <mutex>
 #include <utility>
 
 using nlohmann::json;
@@ -27,6 +28,7 @@ static bool isSafeSource(const std::string& s) {
     if (s.empty()) return false;
     if (s[0] == '/' || s[0] == '\\') return false;
     if (s.size() >= 2 && s[1] == ':') return false;
+    // conservative: rejects any "..", including the rare literal "a..b.glb"; traversal safety > that edge case.
     if (s.find("..") != std::string::npos) return false;
     std::string low = s; for (char& c : low) c = (char)std::tolower((unsigned char)c);
     const bool glb  = low.size() >= 4 && low.compare(low.size() - 4, 4, ".glb")  == 0;
@@ -53,6 +55,7 @@ int ModelOverrideRegistry::loadFromFile(const std::string& manifestPath,
     }
 
     for (const auto& e : root["overrides"]) {
+        try {
         if (!e.is_object()) { logDrop("entry is not an object", "<non-object>"); continue; }
         std::string replaces = e.value("replaces", std::string());
         const std::string key = replaces.empty() ? "<no-replaces>" : replaces;
@@ -64,6 +67,7 @@ int ModelOverrideRegistry::loadFromFile(const std::string& manifestPath,
         const float scale = e.value("scale", 1.0f);
         if (scale != 1.0f) { logDrop("scale!=1.0 (MVP requires 1.0)", key); continue; }
 
+        // split on FIRST ':'; MC2 appearance names contain no ':' so a trailing ':' in name is not expected.
         size_t colon = replaces.find(':');
         if (colon == std::string::npos) { logDrop("replaces not '<class>:<name>'", key); continue; }
         std::string cls  = normalizeKey(replaces.substr(0, colon));
@@ -76,7 +80,14 @@ int ModelOverrideRegistry::loadFromFile(const std::string& manifestPath,
             if (clsField != cls) { logDrop("class field disagrees with replaces", key); continue; }
         }
 
+        // Trim leading/trailing ASCII whitespace before safety check (case-preserving).
         std::string source = e.value("source", std::string());
+        {
+            size_t b = 0, en = source.size();
+            while (b < en && std::isspace((unsigned char)source[b])) ++b;
+            while (en > b && std::isspace((unsigned char)source[en - 1])) --en;
+            source = source.substr(b, en - b);
+        }
         if (!isSafeSource(source)) { logDrop("unsafe/non-glTF source path", key); continue; }
 
         bool dup = false;
@@ -91,6 +102,9 @@ int ModelOverrideRegistry::loadFromFile(const std::string& manifestPath,
         rec.sourceRelPath  = source;
         rec.scale          = scale;
         records_.push_back(std::move(rec));
+        } catch (const std::exception& ex) {
+            logDrop(ex.what(), "<entry>"); continue;
+        }
     }
     return (int)records_.size();
 }
@@ -108,12 +122,11 @@ const ModelOverrideRecord* ModelOverrideRegistry::resolve(
 
 ModelOverrideRegistry& ModelOverrideRegistry::instance() {
     static ModelOverrideRegistry g;
-    static bool loaded = false;
-    if (!loaded) {
-        loaded = true;
+    static std::once_flag once;
+    std::call_once(once, []{
         g.loadFromFile("data/model_overrides/models.json", "data/model_overrides");
         fprintf(stderr, "[MODOVERRIDE] registry loaded: %d override(s)\n", g.count());
         fflush(stderr);
-    }
+    });
     return g;
 }
