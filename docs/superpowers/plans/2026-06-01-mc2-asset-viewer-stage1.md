@@ -30,7 +30,7 @@ const UiEditorImageTexture* UiEditorImageCache_Get(const char* path);  // primar
 const char* UiEditorImageCache_GetStatus();
 ```
 
-`UiEditorImageCache_Get` decodes (stb_image: PNG/JPG/BMP/TGA) **and** uploads to GL — it requires a live GL context. Returns a pointer whose `loaded`/`unavailable` flags drive our error display.
+`UiEditorImageCache_Get` decodes **and** uploads to GL — it requires a live GL context. Returns a pointer whose `loaded`/`unavailable` flags drive our error display. **Decode path is Windows-only:** `UiEditorImageCache.cpp` → `GameOS/gameos/utils/Image.cpp`, which decodes PNG/JPG via **WIC** (`<wincodec.h>`, `#ifdef _WIN32`) and TGA/BMP via hand-rolled parsers — *not* stb_image. This is why the target links `ole32 windowscodecs uuid` on WIN32. Stage 1 is Windows-only; non-Windows PNG/JPG would silently fail to load (acceptable — this is a Windows game tool).
 
 SDL/GL/ImGui bring-up is copied/trimmed from `ui_editor/UiEditorMain.cpp:6570-6676` (GL 3.0 core, `#version 130`, SDL2+OpenGL3 ImGui backends).
 
@@ -183,6 +183,7 @@ int main(int argc, char** argv)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);   // match ui_editor bring-up exactly
 
     SDL_Window* window = SDL_CreateWindow(
         "MC2 Asset Viewer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -193,8 +194,10 @@ int main(int argc, char** argv)
     if (!gl) { std::fprintf(stderr, "GL context failed: %s\n", SDL_GetError()); SDL_DestroyWindow(window); SDL_Quit(); return 1; }
     SDL_GL_MakeCurrent(window, gl);
     SDL_GL_SetSwapInterval(1);
-    glewExperimental = GL_TRUE;
-    glewInit();
+    // NOTE: no glewInit() — ui_editor does not call it. The ImGui OpenGL3 backend
+    // self-loads via its internal gl3w loader, and UiEditorImageCache uses core GL
+    // through <SDL_opengl.h>. main.cpp uses only core GL 1.1 (glViewport/glClear*),
+    // exported directly by opengl32 — no loader needed. (Matches ui_editor exactly.)
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -240,6 +243,11 @@ int main(int argc, char** argv)
 This references `AssetViewerApp` (Task 7). To build Task 1 in isolation, create a temporary stub `AssetViewerApp.h/.cpp` with an empty `drawUi()` and `static int runSmoke(const char*) { return 0; }`; Task 7 replaces them. (If executing in order with subagents, build verification for Task 1 happens after the stub exists.)
 
 - [ ] **Step 4: Configure + build**
+
+> Cross-repo dep note: this worktree's own `3rdparty/` has no `lib/`. The vendored
+> SDL2/GLEW/ZLIB binaries live in the **root checkout** at
+> `A:/Games/mc2-opengl-src/3rdparty/3rdparty` and are shared across worktrees —
+> hence `D=` points there below. Both checkouts must exist at those paths.
 
 Run (from worktree root):
 ```bash
@@ -805,14 +813,7 @@ Co-Authored-By: Methuselas <16720094+Methuselas@users.noreply.github.com>"
 - Create: `tests/fixtures/asset_viewer/test_rgba.png` (4×2 RGBA)
 - Modify: `tools/asset_viewer/AssetViewerApp.cpp` (`runSmoke` body)
 
-- [ ] **Step 1: Create the fixture** (4×2 RGBA PNG) — generate with Python:
-
-Run:
-```bash
-python -c "import struct,zlib,os; os.makedirs('tests/fixtures/asset_viewer',exist_ok=True); \
-w,h=4,2; raw=b''.join(b'\x00'+bytes([(x*60)%256,(y*120)%256,128,255])*1 for y in range(h) for x in range(w) if False)"
-```
-If that one-liner is awkward, instead write `tests/fixtures/asset_viewer/make_fixture.py`:
+- [ ] **Step 1: Create the fixture** (4×2 RGBA PNG) — write `tests/fixtures/asset_viewer/make_fixture.py` and run it (do NOT inline a `python -c` one-liner; an earlier draft's one-liner had an `if False` guard that silently produced zero bytes):
 ```python
 import struct, zlib, os
 os.makedirs(os.path.dirname(__file__), exist_ok=True)
@@ -972,3 +973,11 @@ git commit -m "docs(asset-viewer): stage-1 build/smoke/deferred README"
 **Type consistency:** `PreviewSurface{setSource,draw,label}` used identically in Task 4 and Task 7. `UiEditorImageTexture{loaded,unavailable,width,height,textureId}` matches the real header. `TextureMetadata{width,height,channels,fileBytes}` consistent across Tasks 3/4/7/8. `IsSupportedTextureFile`, `FormatDimensions/FormatChannels/FormatFileSize`, `FileBrowser::{hasSelection,takeSelection}`, `AssetViewerApp::{drawUi,runSmoke}` consistent across all referencing tasks.
 
 **Known stage-1 limitation (intentional):** `meta_.channels` is always 0/"unknown" because `UiEditorImageCache` exposes no channel count. Documented in Task 4; surfacing it would require a cache API change (deferred).
+
+## Review outcomes applied (adversarial + greybeard, 2026-06-01)
+
+**Greybeard verdict: PATCH (justified) — proceed as planned.** New exe is the right delivery form; the only load-bearing shared component (the image cache) is correctly reused as shared source, not copied. Named meta-fix filed as debt below.
+
+**Stage-1.5 debt (greybeard meta-fix):** extract the ~60-line SDL/GL/ImGui bring-up into a shared `tools/common/MC2AppShell.{h,cpp}` consumed by BOTH `ui_editor` and `mc2_asset_viewer`, retiring the "SDL attribute / ImGui-backend skew between tools" bug class (already latent: stencil size differed). Not a stage-1 blocker; the shell duplication is bounded and understood.
+
+**Adversarial fixes folded in:** (1) removed the broken `python -c` fixture one-liner — `make_fixture.py` is the only path; (2) corrected the decode-path claim from "stb_image" to "WIC + hand-rolled TGA/BMP, Windows-only"; (3) removed `glewInit()`/`glewExperimental` from `main.cpp` (ui_editor has neither; imgui self-loads) and added `SDL_GL_STENCIL_SIZE, 8` to truly mirror `ui_editor`; (4) added the cross-repo vendored-dep note. Note: `ImGui::Image`'s second param is `const ImVec2&` (not by value) — the Task-4 call passes an lvalue, which binds fine; no code change needed.

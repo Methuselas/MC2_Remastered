@@ -38,8 +38,8 @@ New executable target **`mc2_asset_viewer`**.
 - **Links (stage 1):** `imgui`, `SDL2`/`SDL2main`, `OpenGL::GL`, `GLEW::GLEW`.
   (Reserved for later, not added now: `rendercore`, `renderworld`, `gameadapters`, `mclib`.)
 - **Reused source (compiled in, not copied):**
-  - `ui_editor/UiEditorImageCache.cpp` — decode (stb_image: PNG/JPG/BMP/TGA) → GL texture.
-  - `GameOS/gameos/utils/Image.cpp` — image helper used by the cache.
+  - `ui_editor/UiEditorImageCache.cpp` — public API `UiEditorImageCache_Get(path)` → `UiEditorImageTexture{loaded,unavailable,width,height,textureId}`; decode + GL upload.
+  - `GameOS/gameos/utils/Image.cpp` — decode backend: PNG/JPG via WIC (`<wincodec.h>`, Windows-only), TGA/BMP via hand-rolled parsers. (Not stb_image. Stage 1 is Windows-only.)
 - **New sources** under `tools/asset_viewer/`:
   - `main.cpp` — SDL window + GL context + ImGui init + frame loop (trimmed mirror
     of `UiEditorMain.cpp`'s bring-up).
@@ -54,7 +54,7 @@ New executable target **`mc2_asset_viewer`**.
 
 | Unit | Does | Uses | Depends on |
 |---|---|---|---|
-| `ImageCache` *(reused)* | `path → {glTexture, w, h, channels}`; false on fail | `LoadTextureFromPath` | stb_image, Image.cpp, GL |
+| `ImageCache` *(reused)* | `path → UiEditorImageTexture{loaded,unavailable,width,height,textureId}` | `UiEditorImageCache_Get` | Image.cpp (WIC/TGA/BMP), GL |
 | `FileBrowser` | open file/folder; enumerate + filter texture files; emit selected path | ImGui file dialog / dir scan | std::filesystem, ImGui |
 | `PreviewSurface` (interface) | `setSource(path)` / `draw(rect)` | — | nothing (pure interface) |
 | `TexturePreview2D` | hold a cached GL texture; `draw` = `ImGui::Image` with zoom/pan | ImageCache | ImageCache, ImGui |
@@ -93,7 +93,7 @@ Visible but disabled/deferred:
 folder/file path
   → FileBrowser enumerates texture files (.png/.jpg/.bmp/.tga)
   → user selects one
-  → ImageCache.LoadTextureFromPath → {glTexture, w, h, channels}
+  → UiEditorImageCache_Get(path) → UiEditorImageTexture{loaded, width, height, textureId}
   → TexturePreview2D holds it
   → TextureInspectorPanel: ImGui::Image(glTexture) + metadata readout
 ```
@@ -108,7 +108,7 @@ returns a bool; the panel renders the failure state instead of an image.
 
 ## Testing
 
-- **Smoke (offscreen GL):** `UiEditorImageCache.LoadTextureFromPath` decodes AND
+- **Smoke (offscreen GL):** `UiEditorImageCache_Get` decodes AND
   uploads (`glTexImage2D`), so it needs a live GL context. The smoke creates a
   hidden SDL window + GL context, loads a known fixture texture, asserts
   dimensions + channel count, then tears down. Keep one small fixture under
