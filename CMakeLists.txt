@@ -282,6 +282,9 @@ add_subdirectory("GuiRuntime")
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ui_editor/CMakeLists.txt")
     add_subdirectory("./ui_editor" "./out/ui_editor")
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/asset_viewer/CMakeLists.txt")
+    add_subdirectory("./tools/asset_viewer" "./out/tools/asset_viewer")
+endif()
 
 
 set(SOURCES 
