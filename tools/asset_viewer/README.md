@@ -61,3 +61,21 @@ bring-up) consumed by both `ui_editor` and `mc2_asset_viewer` (greybeard meta-fi
 retires the SDL-attribute / ImGui-backend skew bug class).
 
 Reuses @Methuselas's `ui_editor/UiEditorImageCache.cpp` + `GameOS/gameos/utils/Image.cpp`.
+
+## KTX2 textures (RGBA8 + BC7)
+
+The browser now lists and previews `.ktx2` files alongside PNG/JPG/TGA/BMP.
+Supported KTX2 formats: uncompressed RGBA8 (unorm/sRGB) and stored BC7
+(unorm/sRGB). The preview follows the file's KTX color-space metadata
+(sRGB vs linear).
+
+> BC7 preview requires the `GL_ARB_texture_compression_bptc` OpenGL extension.
+> On GPUs/drivers without it, BC7 files show a friendly "unsupported" message
+> instead of a preview. RGBA8 KTX2 always previews.
+
+> The asset viewer follows KTX color-space metadata for preview only. This does
+> not change the in-game static-prop BC7 runtime policy, which is audited
+> separately.
+
+Not yet supported (deferred): DDS, Basis/supercompressed KTX2, CPU BC7
+transcoding, asset cooking.

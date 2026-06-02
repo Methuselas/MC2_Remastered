@@ -14,6 +14,10 @@ set(ASSET_VIEWER_SOURCES
     FileBrowser.cpp
     AssetTypeSidebar.cpp
     TextureInspectorPanel.cpp
+    TextureDecoderRegistry.cpp
+    LegacyImageDecoder.cpp
+    Ktx2Decoder.cpp
+    "${CMAKE_SOURCE_DIR}/RenderCore/KtxLoader.cpp"
     "${CMAKE_SOURCE_DIR}/ui_editor/UiEditorImageCache.cpp"
     "${CMAKE_SOURCE_DIR}/GameOS/gameos/utils/Image.cpp"
 )
@@ -94,6 +98,7 @@ target_include_directories(mc2_asset_viewer PRIVATE
     "${CMAKE_SOURCE_DIR}/3rdparty/imgui/backends"
     "${CMAKE_SOURCE_DIR}/GameOS/gameos"
     "${CMAKE_SOURCE_DIR}/ui_editor"
+    "${CMAKE_SOURCE_DIR}/RenderCore"
     ${MC2R_AV_SDL_INCLUDE_DIRS}
 )
 

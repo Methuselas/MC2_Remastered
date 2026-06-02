@@ -1,9 +1,12 @@
 #pragma once
 #include "PreviewSurface.h"
 #include "TextureMetadata.h"
+#include "TextureDecoder.h"
 #include <string>
+
 class TexturePreview2D : public PreviewSurface {
 public:
+    ~TexturePreview2D() override;
     void setSource(const std::string& path) override;
     void draw(const ImVec2& availableSize) override;
     const char* label() const override { return "Texture"; }
@@ -12,11 +15,12 @@ public:
     const TextureMetadata& metadata() const { return meta_; }
     const std::string& sourcePath() const { return path_; }
 private:
-    std::string path_;
+    void releaseOwned();   // delete the held GL texture iff owned
+
+    std::string     path_;
     TextureMetadata meta_;
-    ImTextureID textureId_ = (ImTextureID)0;
-    bool hasTexture_ = false;
-    bool hasError_ = false;
-    std::string errorText_;
-    float zoom_ = 1.0f;
+    DecodedTexture  current_;     // holds glTexture + ownsGlTexture
+    bool            hasError_ = false;
+    std::string     errorText_;
+    float           zoom_ = 1.0f;
 };

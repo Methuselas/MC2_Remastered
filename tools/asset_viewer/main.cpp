@@ -20,6 +20,18 @@ int main(int argc, char* argv[])
         return AssetViewerApp::runSmoke(fixtureDir);
     }
 
+    if (argc >= 2 && strcmp(argv[1], "--smoke-decoder") == 0)
+        return AssetViewerApp::runSmokeDecoder();
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-ktx-parse") == 0)
+        return AssetViewerApp::runSmokeKtxParse(argc >= 3 ? argv[2] : ".");
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-ktx") == 0)
+        return AssetViewerApp::runSmokeKtx(argc >= 3 ? argv[2] : ".");
+
+    if (argc >= 2 && strcmp(argv[1], "--smoke-preview") == 0)
+        return AssetViewerApp::runSmokePreview(argc >= 3 ? argv[2] : ".");
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
     {
         printf("SDL_Init error: %s\n", SDL_GetError());
@@ -80,41 +92,43 @@ int main(int argc, char* argv[])
     ImGui_ImplSDL2_InitForOpenGL(window, gl_context);
     ImGui_ImplOpenGL3_Init("#version 130");
 
-    AssetViewerApp app;
-
-    bool running = true;
-    while (running)
     {
-        SDL_Event event;
-        while (SDL_PollEvent(&event))
+        AssetViewerApp app;
+
+        bool running = true;
+        while (running)
         {
-            ImGui_ImplSDL2_ProcessEvent(&event);
-            if (event.type == SDL_QUIT)
-                running = false;
-            if (event.type == SDL_WINDOWEVENT &&
-                event.window.event == SDL_WINDOWEVENT_CLOSE &&
-                event.window.windowID == SDL_GetWindowID(window))
-                running = false;
+            SDL_Event event;
+            while (SDL_PollEvent(&event))
+            {
+                ImGui_ImplSDL2_ProcessEvent(&event);
+                if (event.type == SDL_QUIT)
+                    running = false;
+                if (event.type == SDL_WINDOWEVENT &&
+                    event.window.event == SDL_WINDOWEVENT_CLOSE &&
+                    event.window.windowID == SDL_GetWindowID(window))
+                    running = false;
+            }
+
+            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplSDL2_NewFrame();
+            ImGui::NewFrame();
+
+            app.drawUi();
+
+            ImGui::Render();
+
+            int display_w, display_h;
+            SDL_GL_GetDrawableSize(window, &display_w, &display_h);
+            glViewport(0, 0, display_w, display_h);
+            glClearColor(0.06f, 0.065f, 0.075f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+            SDL_GL_SwapWindow(window);
         }
-
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
-        ImGui::NewFrame();
-
-        app.drawUi();
-
-        ImGui::Render();
-
-        int display_w, display_h;
-        SDL_GL_GetDrawableSize(window, &display_w, &display_h);
-        glViewport(0, 0, display_w, display_h);
-        glClearColor(0.06f, 0.065f, 0.075f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-        SDL_GL_SwapWindow(window);
-    }
+    }   // app destroyed here — GL context still current, glDeleteTextures is valid
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL2_Shutdown();

@@ -15,6 +15,8 @@ void TextureInspectorPanel::draw(TexturePreview2D& surface)
         ImGui::Text("Dimensions: %s", FormatDimensions(m).c_str());
         ImGui::Text("Channels:   %s", FormatChannels(m).c_str());
         ImGui::Text("File size:  %s", FormatFileSize(m).c_str());
+        ImGui::Text("Format:     %s", FormatTextureFormat(m).c_str());
+        if (m.mipCount > 1) ImGui::Text("Mips:       %d", m.mipCount);
     }
     ImGui::Separator();
     surface.draw(ImGui::GetContentRegionAvail());
