@@ -257,6 +257,11 @@ void BldgAppearanceType::init (const char * fileName)
 	bldgBaseName[sizeof(bldgBaseName) - 1] = 0;
 	if (bldgBaseName[0])
 	{
+		// Env-gated discovery trace (matches MC2_ASSIMP_TRACE convention): logs every
+		// static-prop appearance name seen, so a manifest can target props actually
+		// present in a mission. No behavior change. MODEL-OVERRIDE Slice 3.
+		if (getenv("MC2_MODOVERRIDE_TRACE"))
+			fprintf(stderr, "[MODOVERRIDE_TRACE] staticProp '%s'\n", bldgBaseName);
 		const ModelOverrideRecord* ov =
 			ModelOverrideRegistry::instance().resolve("staticProp", bldgBaseName);
 		if (ov)
@@ -3514,6 +3519,9 @@ void TreeAppearanceType::init (const char * fileName)
 	treeBaseName[sizeof(treeBaseName) - 1] = 0;
 	if (treeBaseName[0])
 	{
+		// Env-gated discovery trace (see staticProp site). MODEL-OVERRIDE Slice 3.
+		if (getenv("MC2_MODOVERRIDE_TRACE"))
+			fprintf(stderr, "[MODOVERRIDE_TRACE] tree '%s'\n", treeBaseName);
 		const ModelOverrideRecord* ov =
 			ModelOverrideRegistry::instance().resolve("tree", treeBaseName);
 		if (ov)

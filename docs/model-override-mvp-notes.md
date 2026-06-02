@@ -62,4 +62,25 @@ Reader audit table written (gate cleared). Key refinement vs raw audit: two `bld
 ### Open for Slice 3 (flagged by quality review)
 - GPU static-prop batcher registers the stock TYPE shape at setObjStatus, not `bldgRenderShape`. The per-instance render shape (CreateFrom result) is what draws, so likely fine — but confirm the override actually renders in the Slice 3 applied-override smoke (render-completeness, not collision).
 
-## Slice 3 / 4 — PENDING — need a chosen stock prop/tree + author a test GLB + run the engine with the mod (runtime proof + smoke gates).
+## Slice 3 — STATICPROP-MODEL-OVERRIDE-PROOF — PROVEN (runtime)
+
+Runtime validated on the canonical runtime **`A:/Games/mc2-opengl/mc2-win64-v0.4`**, mission **`mc2_01`** (the validate-skill default `mis0101` does not exist in any deploy dir; the project smoke harness `scripts/run_smoke.py` uses `mc2_01` on v0.4 — that is the real target). Built full `mc2` (0 errors) and deployed exe+pdb+dlls+63 shaders + `data/model_overrides/`.
+
+Asset: reused `tests/fixtures/assets/cube.gltf` (self-contained base64 GLB-equivalent) as `data/model_overrides/source/props/box.gltf` (unit cube).
+
+Discovery: added env-gated `MC2_MODOVERRIDE_TRACE` log of every staticProp/tree appearance name at the resolve site (bdactor.cpp, matches `MC2_ASSIMP_TRACE` convention). One trace run on `mc2_01` listed 56 static props + 11 trees actually loaded.
+
+Proof run (manifest overriding 14 real props → box, `MC2_MODOVERRIDE_TRACE` off):
+- **All 14 `[MODOVERRIDE] staticProp 'X': render override applied`** (crateswithtarp, dumpster, geodesicdome, hangar, hqtent, junkpile, lookouttower, Quonset, quonset2, sandbagbunker, sandbagwall, tent, wirefence, woodencrates).
+- `--validate --frames 30 -mission mc2_01` → **exit 0, gl_errors=[], shader_errors=[]**, avg 11.4ms. No destroys, no crash.
+- **Visual (render-completeness CONFIRMED):** stock screenshot `.claude/slice3_stock.png` shows the large hangar/quonset complex right of the runway; override screenshot `.claude/slice3_override.png` shows it GONE (replaced by the unit-cube box, invisible at world scale). Terrain, trees, runway, non-overridden center vehicle props identical. → **the per-instance override render shape DOES reach the GPU batcher** — resolves the Slice-2 quality-review render-completeness flag (batcher draws the per-instance shape, not the stock type shape).
+- **Fallback:** manifest pointing `hangar` at a missing `.glb` → `[MODOVERRIDE] staticProp 'hangar': import failed … using stock`, exit 0, gl_errors=[]. Stock renders, no crash.
+- **No-mod identity:** discovery run with empty manifest = stock baseline (`registry loaded: 0 override(s)`, byte-equivalent to v0.4 stock validate `vcheck.json`).
+- **Collision:** code-guaranteed (dual-shape; collision reads stock type array, diff-proven Slice 2) + stable run (+0 destroys). Visual gameplay-collision probe is out of `--validate` scope.
+
+Deploy manifest restored to `{"overrides":[]}` (install not left modded). Trace code is permanent (env-gated, zero-cost when unset).
+
+Limitation: unit-cube box is tiny at MC2 world scale, so the override reads as "prop disappeared" rather than "prop is a visible box". The render-replacement is nonetheless proven by the hangar's disappearance + the applied logs. A larger box asset would make it visually obvious (deferred; not needed for proof).
+
+## Slice 4 — TREE-MODEL-OVERRIDE-PROOF — PENDING
+Same path applies (tree class already routes; discovery saw palms/oak/maple/tc1_* in mc2_01). Needs a leaf asset with `alphaMode=MASK` @ 0.5 to exercise the alpha-cutout leaf rule (the box has no alpha). Optional next step.
