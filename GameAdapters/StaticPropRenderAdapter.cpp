@@ -87,6 +87,17 @@ void endMissionLate() {
     RenderWorld::destroy();
 }
 
+// Thin RenderWorld seam for the EDITOR (see header). The editor drives the
+// batcher/registry lifecycle directly and only needs RenderWorld init/destroy
+// here. Equivalent to the pre-refactor thin beginMission()/endMission(); the
+// game path now uses the Early/Late split instead.
+void beginMission() {
+    RenderWorld::init();
+}
+void endMission() {
+    RenderWorld::destroy();
+}
+
 // Post-spawn geometry finalisation bridge. Wraps
 // GpuStaticPropBatcher::instance().finalizeGeometry().
 // Called from code/mission.cpp and code/saveload.cpp.
