@@ -3202,7 +3202,7 @@ void Mission::init (const char *missionName, long loadType, long dropZoneID, Stu
 	// types are registered and geometry is finalized. No-op if MC2_GPU_CULL is
 	// not set or if there are no static prop types in this mission.
 	if (gpu_cull::compute_isEnabled()) {
-		gpu_cull::compute_buildIndirectBuffer(batcher_getTypeCount());
+		gpu_cull::compute_buildIndirectBuffer(GameAdapters::StaticProp::typeCount());
 	}
 }
 

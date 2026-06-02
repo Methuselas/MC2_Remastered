@@ -1645,7 +1645,7 @@ void Mission::load (const char *loadFileName)
 	// future readback consumer that depends on block-vis correctness post-restore.
 	// Logistics::beginMission inherits this transitively via mission->init().
 	if (gpu_cull::compute_isEnabled()) {
-		gpu_cull::compute_buildIndirectBuffer(batcher_getTypeCount());
+		gpu_cull::compute_buildIndirectBuffer(GameAdapters::StaticProp::typeCount());
 	}
 	{
 		static const bool s_mechRestoreTrace =

@@ -101,6 +101,14 @@ void frameBegin() {
     GpuStaticPropRegistry::frameBegin();
 }
 
+// Registered static-prop type count post-finalize. Wraps the free
+// function batcher_getTypeCount() so game TUs need not include the
+// batcher header. Called from code/mission.cpp + code/saveload.cpp to
+// size gpu_cull::compute_buildIndirectBuffer().
+uint32_t typeCount() {
+    return batcher_getTypeCount();
+}
+
 // Save-game restore path: batcher-only pre-spawn reset. Does NOT
 // call setMissionForIbl (IBL set is already correct from the
 // previous beginMission call; this is a within-mission save restore),

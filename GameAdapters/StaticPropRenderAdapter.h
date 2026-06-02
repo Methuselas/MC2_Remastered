@@ -67,6 +67,11 @@ void finalizeGeometry();
 // code/gamecam.cpp.
 void frameBegin();
 
+// Number of registered static-prop types post-finalize (== batcher_getTypeCount()).
+// Narrow read-only accessor so code/mission.cpp and code/saveload.cpp can size
+// gpu_cull::compute_buildIndirectBuffer() without including the batcher header.
+uint32_t typeCount();
+
 // Save-game restore path: mirrors the pre-spawn batcher reset from
 // Mission::init without the IBL selection or registry init (those are
 // already live — destroy() ran endMission() first, which called
