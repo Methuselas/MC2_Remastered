@@ -500,6 +500,16 @@ static const bool s_pbrV1Enabled = []() {
     return v != nullptr && v[0] != '0' && v[0] != '\0';
 }();
 
+// STATICPROP-MATERIAL-ORM-1: gate for per-bucket linear ORM (occlusion-
+// roughness-metallic) texture-array slots + sidecar feed. Default-OFF; "=1"
+// / any non-"0", non-empty value enables. Mirrors the s_pbrV1Enabled env-parse
+// idiom. When OFF, zero ORM arrays are built and zero extra sidecar I/O occurs
+// so the gate-OFF path is byte-identical.
+static const bool s_ormSlotsEnabled = []() {
+    const char* v = getenv("MC2_STATICPROP_MATERIAL_PBR_SLOTS");
+    return v != nullptr && v[0] != '0' && v[0] != '\0';
+}();
+
 // V-MATERIAL-PBR-2 safety interlock: when MC2_VIEW_UNIFORMS=0 the shader's
 // PBR block is excluded by `#if defined(MC2_USE_VIEW_UNIFORMS)` (compile-
 // time guard). This runtime flag is the belt to the compile-time
