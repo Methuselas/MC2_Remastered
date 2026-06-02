@@ -1,0 +1,1 @@
+{ "overrides": [ { "type":"model","class":"staticProp","replaces":"staticProp:example_name","source":"source/props/example.glb","renderOnly":true,"scale":1.0,"fallback":"stock" } ] }

@@ -1,0 +1,1 @@
+{ "overrides": [ { "type":"model","class":"staticProp","replaces":"staticProp:Dup_Name","source":"first.glb","renderOnly":true,"fallback":"stock" }, { "type":"model","class":"staticProp","replaces":"  staticProp : dup_name ","source":"second.glb","renderOnly":true,"fallback":"stock" } ] }
