@@ -5097,11 +5097,19 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         // If loc == -1: M3 error already logged at loadProgramsIfNeeded(); no-op here.
 
         // STATICPROP-MATERIAL-ORM-1: per-frame baseline for u_ormSampleEnable.
-        // Set to the gate state here; draw paths that do NOT bind an ORM array
-        // (the non-bucketed multidraw path) force it back to 0 just before their
-        // draw. loc-guarded → no-op until the shader declares the uniform.
+        // S5-B hardening: the ORM texture arrays (s_ormBucketArrays) are ONLY built
+        // and bound inside the BC7-bucketed paths (guarded by s_staticPropBc7Enabled).
+        // The legacy group-array paths (s_texArrayOff/On) bind albedo only and leave
+        // the ORM unit holding whatever was last bound. So sampling must be enabled
+        // ONLY when BOTH gates are on — gate the baseline on s_staticPropBc7Enabled
+        // so every draw branch (incl. the v5 snap-cull multidraw path, which falls
+        // back to legacy arrays when bc7Buckets is false) is covered at the source,
+        // not just the non-bucketed else branch below. s_staticPropBc7Enabled is set
+        // once at startup and never mutated, so build-time array existence and this
+        // draw-time decision agree. loc-guarded → no-op until the shader declares it.
         if (s_locsCoalesce.ormSampleEnable >= 0)
-            glUniform1i(s_locsCoalesce.ormSampleEnable, s_ormSlotsEnabled ? 1 : 0);
+            glUniform1i(s_locsCoalesce.ormSampleEnable,
+                        (s_ormSlotsEnabled && s_staticPropBc7Enabled) ? 1 : 0);
 
         // M2: diagnostic log — first frame + every 600 frames (mirrors accumulateMonotonicAndMaybeEmit cadence).
         // C1: guard fires on every run now that s_materialGpuEnabled is default-ON (v5).
@@ -5915,7 +5923,10 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             // STATICPROP-MATERIAL-ORM-1: this path binds NO ORM array (it uses the
             // legacy s_texArrayOff/On group arrays, not the per-bucket siblings), so
             // force u_ormSampleEnable=0 to keep the shader from sampling a stale /
-            // unbound ORM unit. loc-guarded → no-op until the shader declares it.
+            // unbound ORM unit. S5-B: the per-frame baseline above already drives this
+            // to 0 whenever !s_staticPropBc7Enabled (this branch only runs in that
+            // case), so this is now defensive belt-and-suspenders. loc-guarded → no-op
+            // until the shader declares it.
             if (s_locsCoalesce.ormSampleEnable >= 0)
                 glUniform1i(s_locsCoalesce.ormSampleEnable, 0);
             // 11.7.g — alpha-OFF group draw.
