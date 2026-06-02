@@ -770,7 +770,13 @@ struct ProgramLocs {
     GLint pbrV1Strength       = -1;   // V-MATERIAL-PBR-2: u_pbrV1Strength
     GLint pbrV1RoughnessOverride = -1; // V-MATERIAL-PBR-2-TUNE-UI: u_pbrV1RoughnessOverride
     GLint pbrV1DiagSunFound   = -1;   // V-MATERIAL-PBR-2-DIAG: u_pbrV1DiagSunFound
+    GLint ormTexArr           = -1;   // STATICPROP-MATERIAL-ORM-1: u_ormTexArr (sampler2DArray)
+    GLint ormSampleEnable     = -1;   // STATICPROP-MATERIAL-ORM-1: u_ormSampleEnable (int)
 };
+
+// STATICPROP-MATERIAL-ORM-1 — texture unit reserved for the per-bucket ORM
+// sibling array. Unit 0 stays the albedo array (u_texArr); unit 1 is ORM.
+static constexpr GLuint kOrmTexUnit = 1;
 static ProgramLocs s_locsLegacy;
 static ProgramLocs s_locsCoalesce;
 
@@ -1075,6 +1081,12 @@ void loadProgramsIfNeeded() {
             s_locsCoalesce.pbrV1Strength     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pbrV1Strength");
             s_locsCoalesce.pbrV1RoughnessOverride = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pbrV1RoughnessOverride");
             s_locsCoalesce.pbrV1DiagSunFound = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pbrV1DiagSunFound");
+            // STATICPROP-MATERIAL-ORM-1: ORM sampler + sample-enable. The shader
+            // does not declare these yet (separate later task) so both resolve to
+            // -1 here; the ProgramLocs default-init keeps them -1 and every upload
+            // site below is `if (loc >= 0)`-guarded → no-op until the shader lands.
+            s_locsCoalesce.ormTexArr       = glGetUniformLocation(s_staticPropProgramCoalesce, "u_ormTexArr");
+            s_locsCoalesce.ormSampleEnable = glGetUniformLocation(s_staticPropProgramCoalesce, "u_ormSampleEnable");
 
             // M3 fix: if both gates are ON and the uniform is absent, log an error.
             // This can only happen if the shader wasn't recompiled with v3 changes.
@@ -1098,6 +1110,13 @@ void loadProgramsIfNeeded() {
                 // only needs to bind the texture handle. Not a flush-path state switch.
                 glUseProgram(s_staticPropProgramCoalesce);
                 glUniform1i(s_locsCoalesce.texArr, 0);
+                glUseProgram(0);
+            }
+            // STATICPROP-MATERIAL-ORM-1: bind the ORM sampler uniform to kOrmTexUnit
+            // once (loc-guarded; -1 until the shader declares u_ormTexArr).
+            if (s_locsCoalesce.ormTexArr >= 0) {
+                glUseProgram(s_staticPropProgramCoalesce);
+                glUniform1i(s_locsCoalesce.ormTexArr, static_cast<GLint>(kOrmTexUnit));
                 glUseProgram(0);
             }
             std::fprintf(stderr, "[GPUPROPS-DIAG] static_prop_coalesce program=%u "
@@ -5069,6 +5088,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         }
         // If loc == -1: M3 error already logged at loadProgramsIfNeeded(); no-op here.
 
+        // STATICPROP-MATERIAL-ORM-1: per-frame baseline for u_ormSampleEnable.
+        // Set to the gate state here; draw paths that do NOT bind an ORM array
+        // (the non-bucketed multidraw path) force it back to 0 just before their
+        // draw. loc-guarded → no-op until the shader declares the uniform.
+        if (s_locsCoalesce.ormSampleEnable >= 0)
+            glUniform1i(s_locsCoalesce.ormSampleEnable, s_ormSlotsEnabled ? 1 : 0);
+
         // M2: diagnostic log — first frame + every 600 frames (mirrors accumulateMonotonicAndMaybeEmit cadence).
         // C1: guard fires on every run now that s_materialGpuEnabled is default-ON (v5).
         // Set MC2_MATERIAL_GPU=0 to silence. reason cascade mirrors sampleOn condition order.
@@ -5572,6 +5598,14 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                         if (b != curBucket &&
                             b >= 0 && b < static_cast<int32_t>(s_bucketArrays.size())) {
                             glBindTexture(GL_TEXTURE_2D_ARRAY, s_bucketArrays[b]);
+                            // STATICPROP-MATERIAL-ORM-1: bind the layer-aligned ORM
+                            // sibling to kOrmTexUnit, then restore active unit 0.
+                            if (s_ormSlotsEnabled &&
+                                static_cast<size_t>(b) < s_ormBucketArrays.size()) {
+                                glActiveTexture(GL_TEXTURE0 + kOrmTexUnit);
+                                glBindTexture(GL_TEXTURE_2D_ARRAY, s_ormBucketArrays[b]);
+                                glActiveTexture(GL_TEXTURE0);
+                            }
                             curBucket = b;
                         }
                     }
@@ -5736,6 +5770,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                         if (b != curBucket &&
                             b >= 0 && b < static_cast<int32_t>(s_bucketArrays.size())) {
                             glBindTexture(GL_TEXTURE_2D_ARRAY, s_bucketArrays[b]);
+                            // STATICPROP-MATERIAL-ORM-1: bind layer-aligned ORM sibling.
+                            if (s_ormSlotsEnabled &&
+                                static_cast<size_t>(b) < s_ormBucketArrays.size()) {
+                                glActiveTexture(GL_TEXTURE0 + kOrmTexUnit);
+                                glBindTexture(GL_TEXTURE_2D_ARRAY, s_ormBucketArrays[b]);
+                                glActiveTexture(GL_TEXTURE0);
+                            }
                             curBucket = b;
                         }
                     }
@@ -5834,6 +5875,14 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 if (count == 0u) continue;
                 if (b < s_bucketArrays.size() && s_bucketArrays[b] != 0u)
                     glBindTexture(GL_TEXTURE_2D_ARRAY, s_bucketArrays[b]);
+                // STATICPROP-MATERIAL-ORM-1: bind the layer-aligned ORM sibling to
+                // kOrmTexUnit, then restore active unit 0 for the next albedo bind.
+                if (s_ormSlotsEnabled && b < s_ormBucketArrays.size() &&
+                    s_ormBucketArrays[b] != 0u) {
+                    glActiveTexture(GL_TEXTURE0 + kOrmTexUnit);
+                    glBindTexture(GL_TEXTURE_2D_ARRAY, s_ormBucketArrays[b]);
+                    glActiveTexture(GL_TEXTURE0);
+                }
                 if (s_globalPoolLegacy) {
                     const bool isOnGroup = (b < s_bucketInfo.size() && s_bucketInfo[b].group == 1u);
                     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
@@ -5855,6 +5904,12 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             }
         } else {
             // ---- Existing multidraw path (unchanged) ----
+            // STATICPROP-MATERIAL-ORM-1: this path binds NO ORM array (it uses the
+            // legacy s_texArrayOff/On group arrays, not the per-bucket siblings), so
+            // force u_ormSampleEnable=0 to keep the shader from sampling a stale /
+            // unbound ORM unit. loc-guarded → no-op until the shader declares it.
+            if (s_locsCoalesce.ormSampleEnable >= 0)
+                glUniform1i(s_locsCoalesce.ormSampleEnable, 0);
             // 11.7.g — alpha-OFF group draw.
             // Step 4.8: under global-pool mode bind once covering both groups; under legacy bind per-group.
             if (s_alphaOffCmdCount > 0u) {
@@ -5903,6 +5958,15 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
 
         // 11.7.i — restore indirect-buffer binding.
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+
+        // STATICPROP-MATERIAL-ORM-1: unbind the ORM unit and restore active unit 0
+        // so we leave GL state exactly as the gate-OFF path does. Only touch the
+        // ORM unit when the gate is ON (no extra state churn when OFF).
+        if (s_ormSlotsEnabled) {
+            glActiveTexture(GL_TEXTURE0 + kOrmTexUnit);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+            glActiveTexture(GL_TEXTURE0);
+        }
 
         // 11.7.j — restore slot 4 + unit-0 GL_TEXTURE_BINDING_2D_ARRAY.
         // Active texture stays GL_TEXTURE0 (epilogue restores). Slot 15
