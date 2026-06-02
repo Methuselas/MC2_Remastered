@@ -108,6 +108,19 @@ static uint32_t   s_maxActors                 = 0;
 static size_t     s_slotBytes                 = 0;
 static bool       s_initialized               = false;
 
+// PERF-GPU-CULL-READBACK-SHADOW-COPY-1: CPU system-RAM shadow of the per-slot
+// visibility bits. The persistent-mapped staging buffer (s_stagingMapped) lives
+// in BAR/PCIe memory on AMD RDNA3; reading 2000 vis bits from it inside
+// readback_buildActorVisSnapshot cost 10+ ms/frame. Instead, at fence-signal time
+// in readback_tryConsume (the one moment the data is guaranteed complete), we
+// memcpy the slot's vis bits into this system-RAM array. applySlot then reads
+// from here and touches ZERO GPU-mapped memory.
+//   Layout: s_cpuVisBits[slot * s_maxActors + i] mirrors the uint32 vis word for
+//   record i of readback slot `slot`. s_cpuDilatedAdmits[slot] mirrors the
+//   ReadbackHeader.dilatedAdmits field consumed by the motion_tolerance summary.
+static uint32_t*  s_cpuVisBits                = nullptr;            // [RING_FRAMES * maxActors]
+static uint32_t   s_cpuDilatedAdmits[RING_FRAMES] = {0u, 0u, 0u};
+
 // 600-frame summary counter.
 static uint32_t   s_consumeCount              = 0;
 static bool       s_firstConsumeDone          = false;
@@ -253,6 +266,13 @@ bool readback_init(uint32_t maxActors) {
     // Zero staging so unread slots return zero.
     memset(s_stagingMapped, 0, static_cast<size_t>(totalBytes));
 
+    // SHADOW-COPY-1: allocate the system-RAM vis-bit shadow (RING_FRAMES × maxActors
+    // uint32). Zeroed so any slot read before its first fence-signal copy is fail-safe
+    // (same as unread staging). Freed in readback_shutdown.
+    s_cpuVisBits = new uint32_t[static_cast<size_t>(RING_FRAMES) * maxActors];
+    memset(s_cpuVisBits, 0, static_cast<size_t>(RING_FRAMES) * maxActors * sizeof(uint32_t));
+    for (uint32_t i = 0; i < RING_FRAMES; ++i) s_cpuDilatedAdmits[i] = 0u;
+
     // Clear fences.
     for (uint32_t i = 0; i < RING_FRAMES; ++i)
         s_readbackFence[i] = nullptr;
@@ -302,6 +322,13 @@ void readback_shutdown() {
         s_gpuSsbo = 0;
     }
 
+    // SHADOW-COPY-1: release the system-RAM vis-bit shadow.
+    if (s_cpuVisBits) {
+        delete[] s_cpuVisBits;
+        s_cpuVisBits = nullptr;
+    }
+    for (uint32_t i = 0; i < RING_FRAMES; ++i) s_cpuDilatedAdmits[i] = 0u;
+
     s_maxActors    = 0;
     s_slotBytes    = 0;
     s_currentSlot  = 0;
@@ -315,6 +342,22 @@ void readback_shutdown() {
 
     printf("[GPU_CULL v1] event=readback_shutdown\n");
     fflush(stdout);
+}
+
+// ---------------------------------------------------------------------------
+// PERF-GPU-CULL-READBACK-SHADOW-COPY-1: copy one slot's vis bits from the
+// GPU-mapped staging buffer into the system-RAM shadow. Called only at
+// fence-signal time (slot acceptance) when the staging data is complete.
+// ~8 KB sequential copy (2000 × 4 B) — negligible at fence-signal time.
+// ---------------------------------------------------------------------------
+static void readback_shadowCopySlot(uint32_t slot) {
+    if (!s_cpuVisBits || slot >= RING_FRAMES || s_maxActors == 0u) return;
+    const char* slotBase = static_cast<const char*>(s_stagingMapped) + slot * s_slotBytes;
+    const ReadbackHeader* hdr = reinterpret_cast<const ReadbackHeader*>(slotBase);
+    s_cpuDilatedAdmits[slot] = hdr->dilatedAdmits;
+    memcpy(s_cpuVisBits + static_cast<size_t>(slot) * s_maxActors,
+           slotBase + sizeof(ReadbackHeader),
+           static_cast<size_t>(s_maxActors) * sizeof(uint32_t));
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +393,12 @@ ReadbackTier readback_tryConsume() {
         const ReadbackHeader* hdr = reinterpret_cast<const ReadbackHeader*>(
             static_cast<const char*>(s_stagingMapped) + n1Slot * s_slotBytes);
         s_lastGoodVisibleCount = hdr->visibleCount;
+
+        // SHADOW-COPY-1: snapshot this slot + the conservative-OR prev slot into
+        // system RAM now (fence signaled → staging data complete). After this,
+        // readback_buildActorVisSnapshot reads zero GPU-mapped memory.
+        readback_shadowCopySlot(n1Slot);
+        readback_shadowCopySlot((n1Slot + RING_FRAMES - 1u) % RING_FRAMES);
 
         if (s_readbackTrace) {
             printf("[GPU_CULL v1] DEBUG tier1 slot=%u visCount_staged=%u\n",
@@ -391,6 +440,10 @@ ReadbackTier readback_tryConsume() {
         const ReadbackHeader* hdr = reinterpret_cast<const ReadbackHeader*>(
             static_cast<const char*>(s_stagingMapped) + n2Slot * s_slotBytes);
         s_lastGoodVisibleCount = hdr->visibleCount;
+
+        // SHADOW-COPY-1: snapshot this slot + the conservative-OR prev slot.
+        readback_shadowCopySlot(n2Slot);
+        readback_shadowCopySlot((n2Slot + RING_FRAMES - 1u) % RING_FRAMES);
 
         // Tracy plots (T2 — 2 frames stale, still useful).
         {
@@ -684,9 +737,13 @@ void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
         const uint32_t* cpuIds = substrate_getCpuActorIds(substrateSlotForReadback, &recCount);
         if (!cpuIds || recCount == 0u) return false;
 
-        const char* slotBase = static_cast<const char*>(s_stagingMapped)
-                             + readbackSlot * s_slotBytes;
-        const uint32_t* rbVis = reinterpret_cast<const uint32_t*>(slotBase + sizeof(ReadbackHeader));
+        // SHADOW-COPY-1: read vis bits from the system-RAM shadow populated at
+        // fence-signal time in readback_tryConsume — not from s_stagingMapped
+        // (BAR/PCIe). Zero GPU-mapped reads here.
+        const uint32_t* rbVis = s_cpuVisBits
+                              ? (s_cpuVisBits + static_cast<size_t>(readbackSlot) * s_maxActors)
+                              : nullptr;
+        if (!rbVis) return false;
 
         for (uint32_t i = 0u; i < recCount; ++i) {
             const uint32_t id = cpuIds[i];
@@ -731,11 +788,8 @@ void readback_buildActorVisSnapshot(uint32_t maxActorHandle) {
 
     // Counters for the motion_tolerance summary.
     s_accConservativeOrAdmits += orFlips;
-    {
-        const ReadbackHeader* hdr = reinterpret_cast<const ReadbackHeader*>(
-            static_cast<const char*>(s_stagingMapped) + s_lastGoodSlot * s_slotBytes);
-        s_accDilatedAdmits += hdr->dilatedAdmits;
-    }
+    // SHADOW-COPY-1: dilatedAdmits comes from the system-RAM shadow, not staging.
+    s_accDilatedAdmits += s_cpuDilatedAdmits[s_lastGoodSlot];
     ++s_motionTolFrames;
     ++s_motionTolSummaryCount;
     const bool doMotionLog = !s_motionTolFirstDone || ((s_motionTolSummaryCount % 600u) == 0u);
