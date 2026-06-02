@@ -16,6 +16,7 @@
 #include "gos_static_prop_registry.h"
 #include "gos_static_prop_batcher.h"
 #include "gos_mech_batcher.h"  // MECH-EXTRACTION-0: batcher_getMechPendingCount/Entry/compareMechSnapshot
+#include "gos_profiler.h"      // EXTRACT-SNAPSHOT-INSTRUMENT-1: ZoneScopedN (Tracy shim)
 
 #include <cstdio>
 #include <cstdint>
@@ -131,16 +132,21 @@ RenderSnapshot ExtractRenderSnapshot()
         std::vector<RenderWorld::StaticPropRecordView> views;
         views.resize(slotCount);
 
-        const uint32_t total = RenderWorld::fillStaticPropSlots(views.data(), slotCount);
+        {
+            // PERF-INSTRUMENT (EXTRACT-SNAPSHOT-INSTRUMENT-1): block-granularity zone.
+            // Times the per-frame static-prop slot gather (RenderWorld -> views).
+            ZoneScopedN("Extract.SP.Fill");
+            const uint32_t total = RenderWorld::fillStaticPropSlots(views.data(), slotCount);
 
-        // Handle growth between getStaticPropSlotCount() and fill (rare race).
-        if (total > slotCount) {
-            views.resize(total);
-            const uint32_t total2 = RenderWorld::fillStaticPropSlots(views.data(), total);
-            if (total2 > total) {
-                // Slot count grew again between retries (extremely unlikely, not worth looping).
-                // Process what we have; sp_fail will reflect any misses from the shortened view.
-                // The mismatch will appear as sp_vis_delta in the log.
+            // Handle growth between getStaticPropSlotCount() and fill (rare race).
+            if (total > slotCount) {
+                views.resize(total);
+                const uint32_t total2 = RenderWorld::fillStaticPropSlots(views.data(), total);
+                if (total2 > total) {
+                    // Slot count grew again between retries (extremely unlikely, not worth looping).
+                    // Process what we have; sp_fail will reflect any misses from the shortened view.
+                    // The mismatch will appear as sp_vis_delta in the log.
+                }
             }
         }
 
@@ -180,6 +186,11 @@ RenderSnapshot ExtractRenderSnapshot()
             uint32_t packetRangesOk   = 0;
             uint32_t packetRangeFail  = 0;
 
+            {
+            // PERF-INSTRUMENT (EXTRACT-SNAPSHOT-INSTRUMENT-1): block-granularity zone.
+            // Times the per-alive-prop registry-gather write loop (~9 registry calls
+            // + shapeName snprintf per prop). Suspected dominant ExtractRenderSnapshot cost.
+            ZoneScopedN("Extract.SP.WriteLoop");
             for (uint32_t i = 0; i < static_cast<uint32_t>(views.size()); ++i) {
                 const RenderWorld::StaticPropRecordView& v = views[i];
                 if (!v.alive)           continue;
@@ -292,6 +303,7 @@ RenderSnapshot ExtractRenderSnapshot()
                     }
                 }
             }
+            }  // end Extract.SP.WriteLoop scope
 
             snap.staticProps              = Span<ExtractedStaticProp>(propBuf, writeIdx);
             snap.staticPropValidationFail = validationFail;
@@ -326,6 +338,10 @@ RenderSnapshot ExtractRenderSnapshot()
         } else {
             uint32_t pktWrite   = 0u;
             uint32_t pktInvalid = 0u;
+            {
+            // PERF-INSTRUMENT (EXTRACT-SNAPSHOT-INSTRUMENT-1): block-granularity zone.
+            // Times the per-draw-slot packet gather (batcher_getDrawSlotEntry per slot).
+            ZoneScopedN("Extract.SP.Packets");
             for (uint32_t slot = 0u; slot < slotCount; ++slot) {
                 ExtractedStaticPropPacket pkt{};
                 if (!batcher_getDrawSlotEntry(slot, &pkt)) {
@@ -334,6 +350,7 @@ RenderSnapshot ExtractRenderSnapshot()
                 }
                 pktBuf[pktWrite++] = pkt;
             }
+            }  // end Extract.SP.Packets scope
             snap.staticPropPackets       = Span<ExtractedStaticPropPacket>(pktBuf, pktWrite);
             snap.staticPropPacketCount   = pktWrite;
             snap.staticPropPacketInvalid = pktInvalid;
