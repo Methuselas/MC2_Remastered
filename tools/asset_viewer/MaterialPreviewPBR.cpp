@@ -104,6 +104,10 @@ static void renderContained(MaterialRenderBackend* backend, SphereMesh* mesh,
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
     glGetIntegerv(GL_VIEWPORT, prevVp);
     GLboolean wasDepth = glIsEnabled(GL_DEPTH_TEST), wasCull = glIsEnabled(GL_CULL_FACE), wasBlend = glIsEnabled(GL_BLEND);
+    GLint prevDepthFunc = GL_LESS, prevCullMode = GL_BACK; GLfloat prevClear[4];
+    glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
+    glGetIntegerv(GL_CULL_FACE_MODE, &prevCullMode);
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClear);
 
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glViewport(0, 0, w, h);
@@ -132,9 +136,13 @@ static void renderContained(MaterialRenderBackend* backend, SphereMesh* mesh,
     glUseProgram(0);
     glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
     glViewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
-    if (!wasDepth) glDisable(GL_DEPTH_TEST); else glDepthFunc(GL_LESS);
-    if (!wasCull)  glDisable(GL_CULL_FACE); else glCullFace(GL_BACK);
-    if (wasBlend)  glEnable(GL_BLEND);
+    // Restore enable bits AND the exact prior func/mode/clear (true containment).
+    if (wasDepth) { glEnable(GL_DEPTH_TEST); } else { glDisable(GL_DEPTH_TEST); }
+    glDepthFunc(prevDepthFunc);
+    if (wasCull) { glEnable(GL_CULL_FACE); } else { glDisable(GL_CULL_FACE); }
+    glCullFace(prevCullMode);
+    if (wasBlend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    glClearColor(prevClear[0], prevClear[1], prevClear[2], prevClear[3]);
 }
 
 void MaterialPreviewPBR::draw(const ImVec2& availableSize) {
@@ -158,6 +166,7 @@ void MaterialPreviewPBR::draw(const ImVec2& availableSize) {
 }
 
 bool MaterialPreviewPBR::renderToPixels(int w, int h, std::vector<uint8_t>& rgbaOut) {
+    if (w < 1) w = 1; if (h < 1) h = 1;   // guard buildViewProj div-by-zero (review fix)
     ensureGL(w, h);
     if (!backendOk_ || !fboComplete_) return false;   // review fix MAJOR 6
     backend_->setMaterial(slots_);
