@@ -2,7 +2,9 @@
 #include "MaterialSlots.h"
 #include "MaterialPreviewPBR.h"
 #include "FileBrowser.h"     // for FileBrowser::PickFile()
+#include "FitMaterialLoader.h"
 #include "imgui.h"
+#include <filesystem>
 
 void MaterialSlots::slotRow(const char* label, MaterialSlotKind kind, MaterialPreviewPBR& preview) {
     int i = (int)kind;
@@ -25,6 +27,27 @@ void MaterialSlots::slotRow(const char* label, MaterialSlotKind kind, MaterialPr
 }
 
 void MaterialSlots::draw(MaterialPreviewPBR& preview) {
+    if (ImGui::Button("Load .fit material")) {
+        std::string fit = FileBrowser::PickFile();
+        if (!fit.empty()) {
+            std::string err;
+            FitMaterial fm = FitMaterialLoader_Parse(fit, &err);
+            if (fm.found) {
+                std::filesystem::path base = std::filesystem::path(fit).parent_path();
+                auto loadInto = [&](const std::string& rel, MaterialSlotKind k, int idx) {
+                    if (rel.empty()) return;
+                    std::string full = (base / rel).string();
+                    std::string e; uint32_t t = MaterialTextureLoader_Load(full, k, &e);
+                    if (t) { paths_[idx] = full; errors_[idx].clear(); preview.setSlotTexture(k, t); }
+                    else   { errors_[idx] = e; }
+                };
+                loadInto(fm.baseColor, MaterialSlotKind::BaseColor, 0);
+                loadInto(fm.normal,    MaterialSlotKind::Normal,    1);
+                loadInto(fm.orm,       MaterialSlotKind::Orm,       2);
+                loadInto(fm.emissive,  MaterialSlotKind::Emissive,  3);
+            }
+        }
+    }
     ImGui::SeparatorText("Material slots");
     slotRow("Base Color", MaterialSlotKind::BaseColor, preview);
     slotRow("Normal",     MaterialSlotKind::Normal,    preview);

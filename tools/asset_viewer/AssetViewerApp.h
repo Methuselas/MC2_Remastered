@@ -27,6 +27,7 @@ public:
     static int runSmokeTexLoad(const char* fixtureDir); // slot-aware sRGB/linear upload check
     static int runSmokeRender(const char* fixtureDir);  // offscreen FBO render: sphere distinct from background
     static int runSmokeTangent(const char* fixtureDir); // tangent correctness: flat==no-normal, tilt perturbs, no seam blow-up
+    static int runSmokeFitMaterial(const char* fixtureDir); // minimal FIT parser: Material{} block -> slot paths
 private:
     FileBrowser browser_;
     AssetTypeSidebar sidebar_;

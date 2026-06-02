@@ -12,6 +12,7 @@ set(ASSET_VIEWER_SOURCES
     MaterialTextureLoader.cpp
     MaterialPreviewPBR.cpp
     MaterialSlots.cpp
+    FitMaterialLoader.cpp
     # remaining sources added in later tasks
     TextureExtensions.cpp
     TextureMetadata.cpp

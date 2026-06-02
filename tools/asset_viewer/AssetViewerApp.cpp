@@ -7,6 +7,7 @@
 #include "LocalPbrMaterialBackend.h"
 #include "MaterialTextureLoader.h"
 #include "MaterialPreviewPBR.h"
+#include "FitMaterialLoader.h"
 #include "UiEditorImageCache.h"
 #include "imgui.h"
 #include "TextureExtensions.h"
@@ -671,5 +672,34 @@ int AssetViewerApp::runSmokeTangent(const char* fixtureDir)
     }
 
     std::printf("[smoke] PASS tangent flat=%.2f tilt=%.2f seam-ok\n", dFlat, dTilt);
+    return 0;
+}
+
+int AssetViewerApp::runSmokeFitMaterial(const char* dir)
+{
+    // No GL context needed — pure file parsing.
+    std::string err;
+    FitMaterial m = FitMaterialLoader_Parse(std::string(dir) + "/sample.fit", &err);
+    if (!m.found) {
+        std::printf("[smoke] FAIL: no Material block (%s)\n", err.c_str());
+        return 1;
+    }
+    if (m.baseColor != "mat_base.png") {
+        std::printf("[smoke] FAIL: baseColor='%s'\n", m.baseColor.c_str());
+        return 1;
+    }
+    if (m.normal != "nrm_flat.png") {
+        std::printf("[smoke] FAIL: normal='%s'\n", m.normal.c_str());
+        return 1;
+    }
+    if (m.orm != "mat_orm.png") {
+        std::printf("[smoke] FAIL: orm='%s'\n", m.orm.c_str());
+        return 1;
+    }
+    if (m.ormPacking != "RAO_GRough_BMetal") {
+        std::printf("[smoke] FAIL: ormPacking='%s'\n", m.ormPacking.c_str());
+        return 1;
+    }
+    std::printf("[smoke] PASS fit parse base/normal/orm/packing\n");
     return 0;
 }
