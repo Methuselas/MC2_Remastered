@@ -362,7 +362,7 @@ void GameCamera::render (void)
 			// MUST run after renderLists() so the scene depth buffer is
 			// populated before alpha-blended billboards composite on top
 			// (memory/gpu_direct_renderer_bringup_checklist.md trap #6).
-			// No-op when MC2_GPU_PARTICLES is unset (default OFF).
+			// No-op when MC2_GPU_PARTICLES=0 (default ON since B3c-2; absent env var → enabled).
 			// Stage 1' canary (hardcoded orange billboard) removed now
 			// that real gosFX producers call BeginGroup+Emit via the
 			// SpawnCard*/SpawnCardCloud paths.

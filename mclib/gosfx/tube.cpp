@@ -1184,6 +1184,12 @@ void gosFX::Tube::Draw(DrawInfo *info)
 		//   2. An interactive combat validation pass (mc2_10 missiles + mc2_24 PPC).
 		//   3. Updating gpuTrailKindProven() to re-promote PpcBolt and MissileSmoke.
 		// See docs/vfx-originals-lockdown.md.
+		// VFX-ORIGINALS-LOCKDOWN: Tube oracle billboard path produced a "ladder/fence"
+		// artifact (one square card per spine profile instead of a continuous ribbon)
+		// for missile smoke and PPC trails. Kept dead/present for history. Do NOT
+		// re-enable without a full swept-mesh ribbon implementation + combat validation.
+		// See docs/vfx-originals-lockdown.md and TRACKV audit E-05.
+#if 0
 		if (false && mc2::particles::Batcher::is_oracle_render_enabled() && m_activeProfileCount > 1) {
 			// VFX-TUBE-PROFILE-ORACLE-1: (disabled) emit one billboard per active profile along
 			// the tube spine as a render approximation. The real Tube geometry is a
@@ -1309,6 +1315,7 @@ void gosFX::Tube::Draw(DrawInfo *info)
 			Effect::Draw(info);
 			return;
 		}
+#endif // VFX-ORIGINALS-LOCKDOWN (E-05)
 
 		// VFX-WEAPON-FX-RESTORE-OPUS-1: oracle disabled — fall through to MLR swept-mesh.
 		// Spawn placeholder suppressed: MLR renders the tube mesh directly.
