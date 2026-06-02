@@ -101,6 +101,21 @@ SHADER_VARIANTS: dict[str, list[dict]] = {
     "shaders/fixtures/view_uniforms_contract.frag": [
         _v("default", []),
     ],
+    # TRACKV D-04: gpu_cull compute variants.
+    # C1b mode adds VisibleIds/perBucketCount/actorVisBits/StickyBits SSBOs.
+    # C2_READBACK adds ReadbackBuf at binding=READBACK_SSBO_BINDING (14).
+    # READBACK_SSBO_BINDING is normally injected by build_cull_program at
+    # runtime; we pin it to 14 here to match gpu_cull_readback.h.
+    "shaders/gpu_cull.comp": [
+        _v("default",    []),
+        _v("c1b",        ["GPU_CULL_C1B_INDIRECT"]),
+        _v("c2_readback", ["GPU_CULL_C2_READBACK", "READBACK_SSBO_BINDING=14"]),
+    ],
+    # TRACKV D-04: cardcloud_sim.comp ABI golden.
+    # Single SSBO (CardCloudSimBuf, binding=0) containing Particle array (64 B).
+    "shaders/cardcloud_sim.comp": [
+        _v("default", []),
+    ],
 }
 
 # Macros that gate variant-specific bindings. Used for coverage audit.
