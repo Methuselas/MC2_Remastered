@@ -137,9 +137,14 @@ target_link_libraries(mc2_asset_viewer PRIVATE OpenGL::GL)
 if(WIN32)
     target_link_libraries(mc2_asset_viewer PRIVATE ole32 windowscodecs uuid)
 endif()
-if(TARGET GLEW::GLEW)
-    target_link_libraries(mc2_asset_viewer PRIVATE GLEW::GLEW)
+
+# GLEW is REQUIRED, not optional: main.cpp includes <GL/glew.h> unconditionally
+# and calls glewInit(). Fail configure loudly if it is missing rather than
+# producing a link/runtime error later.
+if(NOT TARGET GLEW::GLEW)
+    find_package(GLEW REQUIRED)
 endif()
+target_link_libraries(mc2_asset_viewer PRIVATE GLEW::GLEW)
 ```
 
 - [ ] **Step 2: Register the target** — in root `CMakeLists.txt`, immediately after the existing guarded `ui_editor` block (the `if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ui_editor/CMakeLists.txt")` ... `endif()` around line 282-284), add:
@@ -194,10 +199,21 @@ int main(int argc, char** argv)
     if (!gl) { std::fprintf(stderr, "GL context failed: %s\n", SDL_GetError()); SDL_DestroyWindow(window); SDL_Quit(); return 1; }
     SDL_GL_MakeCurrent(window, gl);
     SDL_GL_SetSwapInterval(1);
-    // NOTE: no glewInit() — ui_editor does not call it. The ImGui OpenGL3 backend
-    // self-loads via its internal gl3w loader, and UiEditorImageCache uses core GL
-    // through <SDL_opengl.h>. main.cpp uses only core GL 1.1 (glViewport/glClear*),
-    // exported directly by opengl32 — no loader needed. (Matches ui_editor exactly.)
+
+    // This target declares GLEW as its loader (IMGUI_IMPL_OPENGL_LOADER_GLEW +
+    // <GL/glew.h>), so GLEW must be initialized after the context is current.
+    // (ui_editor happens not to call this; we do it correctly rather than rely on
+    // the imgui backend's internal loader being the only one active.)
+    glewExperimental = GL_TRUE;
+    const GLenum glewErr = glewInit();
+    if (glewErr != GLEW_OK) {
+        std::fprintf(stderr, "glewInit failed: %s\n", glewGetErrorString(glewErr));
+        SDL_GL_DeleteContext(gl);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
+    glGetError(); // swallow the benign GL_INVALID_ENUM glewExperimental can leave set
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -301,6 +317,7 @@ Run: attempt compile of `_t.cpp`. Expected: link error "unresolved external IsSu
 #include "TextureExtensions.h"
 #include <algorithm>
 #include <array>
+#include <cctype>   // std::tolower
 
 bool IsSupportedTextureFile(const std::string& path)
 {
@@ -409,6 +426,7 @@ git commit -m "feat(asset-viewer): texture metadata formatting helpers"
 ```cpp
 #pragma once
 #include <string>
+#include "imgui.h"   // ImVec2
 // The render-backend-agnostic preview seam. Stage 1 has one impl (TexturePreview2D).
 // Stage 2 adds MaterialPreviewPBR; stage 3 adds ModelPreviewRenderCore. The app and
 // inspector panel depend ONLY on this interface.
@@ -417,8 +435,10 @@ public:
     virtual ~PreviewSurface() = default;
     // Point the surface at a source asset (a file path in stage 1).
     virtual void setSource(const std::string& path) = 0;
-    // Draw the preview into the current ImGui window/region.
-    virtual void draw() = 0;
+    // Draw the preview into a region of the given size. Stage 1 ignores size beyond
+    // scrolling; stage 2/3 (RenderCore) need it for the viewport/FBO — locked in now
+    // so adding a 3D backend does NOT require a seam rewrite.
+    virtual void draw(const ImVec2& availableSize) = 0;
     // Short human label of what this surface previews (e.g. "Texture").
     virtual const char* label() const = 0;
 };
@@ -435,7 +455,7 @@ public:
 class TexturePreview2D : public PreviewSurface {
 public:
     void setSource(const std::string& path) override;
-    void draw() override;
+    void draw(const ImVec2& availableSize) override;
     const char* label() const override { return "Texture"; }
 
     bool hasError() const { return hasError_; }
@@ -446,7 +466,8 @@ public:
 private:
     std::string path_;
     TextureMetadata meta_;
-    void* textureId_ = nullptr;   // ImTextureID for the loaded image, null if none
+    ImTextureID textureId_ = (ImTextureID)0;  // do NOT assume ImTextureID is void*
+    bool hasTexture_ = false;                 // explicit presence flag (no sentinel compare)
     bool hasError_ = false;
     std::string errorText_;
     float zoom_ = 1.0f;
@@ -466,7 +487,8 @@ void TexturePreview2D::setSource(const std::string& path)
 {
     path_ = path;
     meta_ = TextureMetadata{};
-    textureId_ = nullptr;
+    textureId_ = (ImTextureID)0;
+    hasTexture_ = false;
     hasError_ = false;
     errorText_.clear();
 
@@ -484,26 +506,28 @@ void TexturePreview2D::setSource(const std::string& path)
     }
     meta_.width = tex->width;
     meta_.height = tex->height;
-    meta_.channels = 0; // cache does not expose channel count; left unknown in stage 1
-    textureId_ = (void*)tex->textureId;
+    meta_.channels = 0; // cache does not expose channel count; unknown in stage 1
+    textureId_ = tex->textureId;   // ImTextureID -> ImTextureID, no cast
+    hasTexture_ = true;
 }
 
-void TexturePreview2D::draw()
+void TexturePreview2D::draw(const ImVec2& availableSize)
 {
     if (hasError_) {
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f), "%s", errorText_.c_str());
         ImGui::TextWrapped("Path: %s", path_.c_str());
         return;
     }
-    if (!textureId_) {
+    if (!hasTexture_) {
         ImGui::TextDisabled("No texture selected.");
         return;
     }
     ImGui::SliderFloat("Zoom", &zoom_, 0.1f, 8.0f, "%.1fx");
-    ImVec2 size((float)meta_.width * zoom_, (float)meta_.height * zoom_);
-    ImGui::BeginChild("tex_scroll", ImVec2(0, 0), true,
+    ImVec2 imageSize((float)meta_.width * zoom_, (float)meta_.height * zoom_);
+    // availableSize bounds the scroll region; stage 2/3 backends will render into it.
+    ImGui::BeginChild("tex_scroll", availableSize, true,
                       ImGuiWindowFlags_HorizontalScrollbar);
-    ImGui::Image((ImTextureID)textureId_, size);
+    ImGui::Image(textureId_, imageSize);
     ImGui::EndChild();
 }
 ```
@@ -720,7 +744,7 @@ void TextureInspectorPanel::draw(TexturePreview2D& surface)
         ImGui::Text("File size:  %s", FormatFileSize(m).c_str());
     }
     ImGui::Separator();
-    surface.draw();   // image (or error text)
+    surface.draw(ImGui::GetContentRegionAvail());   // image (or error text), bounded to region
 }
 ```
 
@@ -923,8 +947,13 @@ git commit -m "test(asset-viewer): offscreen-GL smoke + pure-util asserts"
 ```markdown
 # mc2_asset_viewer (stage 1: texture/asset shell)
 
-Standalone modder tool. Stage 1 = app shell + folder browser + texture preview +
+Standalone modder tool. Stage 1 = app shell + folder-path browser + texture preview +
 PreviewSurface seam + asset-type sidebar (Textures live; rest deferred).
+
+**Not a mission editor.** This tool is for assets/modding only (textures,
+materials, meshes, VFX, manifests, validation, cooking, packaging). Mission
+layout, triggers, objectives, camera paths, and unit placement stay with MC2's
+existing mission editor.
 
 ## Build
 Configure the worktree (vendored deps; note lib/x64):
@@ -980,4 +1009,13 @@ git commit -m "docs(asset-viewer): stage-1 build/smoke/deferred README"
 
 **Stage-1.5 debt (greybeard meta-fix):** extract the ~60-line SDL/GL/ImGui bring-up into a shared `tools/common/MC2AppShell.{h,cpp}` consumed by BOTH `ui_editor` and `mc2_asset_viewer`, retiring the "SDL attribute / ImGui-backend skew between tools" bug class (already latent: stencil size differed). Not a stage-1 blocker; the shell duplication is bounded and understood.
 
-**Adversarial fixes folded in:** (1) removed the broken `python -c` fixture one-liner — `make_fixture.py` is the only path; (2) corrected the decode-path claim from "stb_image" to "WIC + hand-rolled TGA/BMP, Windows-only"; (3) removed `glewInit()`/`glewExperimental` from `main.cpp` (ui_editor has neither; imgui self-loads) and added `SDL_GL_STENCIL_SIZE, 8` to truly mirror `ui_editor`; (4) added the cross-repo vendored-dep note. Note: `ImGui::Image`'s second param is `const ImVec2&` (not by value) — the Task-4 call passes an lvalue, which binds fine; no code change needed.
+**Adversarial fixes folded in:** (1) removed the broken `python -c` fixture one-liner — `make_fixture.py` is the only path; (2) corrected the decode-path claim from "stb_image" to "WIC + hand-rolled TGA/BMP, Windows-only"; (3) added `SDL_GL_STENCIL_SIZE, 8` to mirror `ui_editor`; (4) added the cross-repo vendored-dep note. Note: `ImGui::Image`'s second param is `const ImVec2&` — the Task-4 call passes an lvalue, which binds fine.
+
+**Second review (user, 2026-06-01) — must-fixes folded in:**
+1. **GLEW done properly, not removed.** The target declares GLEW as its loader (`IMGUI_IMPL_OPENGL_LOADER_GLEW` + `<GL/glew.h>`), so `main.cpp` now calls `glewExperimental=GL_TRUE; glewInit()` with an error check + `glGetError()` cleanup after context creation; CMake makes GLEW **REQUIRED** (no longer optional). (Supersedes round-1's "remove glewInit".)
+2. **`PreviewSurface::draw(const ImVec2& availableSize)`** — surface size threaded through the seam now so the Stage-3 RenderCore backend needs no seam rewrite. Inspector passes `ImGui::GetContentRegionAvail()`.
+3. **`TexturePreview2D` stores `ImTextureID`** (not `void*`) + an explicit `hasTexture_` flag; assigns `tex->textureId` directly, `ImGui::Image(textureId_, ...)`. No assumption that `ImTextureID == void*`.
+4. **Smoke asserts load + width/height only** — channel count is formatting-only (cache exposes none); spec text corrected.
+5. **"Relationship to mission editor" section** added to spec + README: asset/modding scope only; mission layout/triggers/objectives/camera/units stay with the existing mission editor.
+
+Polish: `<cctype>` added for `std::tolower`; GLEW REQUIRED in CMake; docs say "folder path field" (no native dialog); README states not-a-mission-editor. `MC2AppShell` stays Stage-1.5 debt — not done in Stage 1.

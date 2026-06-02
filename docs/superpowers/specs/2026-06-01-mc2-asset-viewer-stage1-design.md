@@ -19,6 +19,13 @@ tool. This is explicitly **not** a complete viewer. The stage-1 deliverable is:
 It must feel like the front of an asset tool, not "just a PNG viewer" — achieved
 by the sidebar vocabulary, with zero extra logic.
 
+## Relationship to existing mission editor
+
+MC2 already has a mission editor. `mc2_asset_viewer` is for **assets/modding only**:
+textures, materials, meshes, VFX, manifests, validation, cooking, and packaging.
+Mission layout, triggers, objectives, camera paths, and unit placement stay with
+the existing mission editor — this tool never touches them.
+
 ## Design stance: "A's footprint, B's architecture"
 
 Approach **A** (thin) for dependencies and scope: link only imgui + SDL2 +
@@ -46,7 +53,7 @@ New executable target **`mc2_asset_viewer`**.
   - `AssetViewerApp.{h,cpp}` — app lifecycle, current selection, panel wiring.
   - `PreviewSurface.h` — the seam (interface).
   - `TexturePreview2D.{h,cpp}` — stage-1 `PreviewSurface` impl (ImGui image).
-  - `FileBrowser.{h,cpp}` — open file/folder, scan + filter texture extensions.
+  - `FileBrowser.{h,cpp}` — folder path field, scan + filter texture extensions (no native file dialog in stage 1).
   - `TextureInspectorPanel.{h,cpp}` — draws active surface + metadata.
   - `AssetTypeSidebar.{h,cpp}` — the asset-type vocabulary list (see below).
 
@@ -55,7 +62,7 @@ New executable target **`mc2_asset_viewer`**.
 | Unit | Does | Uses | Depends on |
 |---|---|---|---|
 | `ImageCache` *(reused)* | `path → UiEditorImageTexture{loaded,unavailable,width,height,textureId}` | `UiEditorImageCache_Get` | Image.cpp (WIC/TGA/BMP), GL |
-| `FileBrowser` | open file/folder; enumerate + filter texture files; emit selected path | ImGui file dialog / dir scan | std::filesystem, ImGui |
+| `FileBrowser` | folder path field; enumerate + filter texture files; emit selected path | ImGui InputText + dir scan | std::filesystem, ImGui |
 | `PreviewSurface` (interface) | `setSource(path)` / `draw(rect)` | — | nothing (pure interface) |
 | `TexturePreview2D` | hold a cached GL texture; `draw` = `ImGui::Image` with zoom/pan | ImageCache | ImageCache, ImGui |
 | `TextureInspectorPanel` | render active surface + metadata (path, dims, channels, GL fmt, file size) | PreviewSurface | PreviewSurface, ImGui |
@@ -111,7 +118,9 @@ returns a bool; the panel renders the failure state instead of an image.
 - **Smoke (offscreen GL):** `UiEditorImageCache_Get` decodes AND
   uploads (`glTexImage2D`), so it needs a live GL context. The smoke creates a
   hidden SDL window + GL context, loads a known fixture texture, asserts
-  dimensions + channel count, then tears down. Keep one small fixture under
+  load success + dimensions (width/height) only — channel count is
+  formatting-only metadata in stage 1 (the cache does not expose decoded
+  channels), so the smoke does NOT assert it — then tears down. Keep one fixture under
   `tests/fixtures/`. (A pure-decode unit test would require splitting decode from
   upload in his file — deferred; not worth touching `UiEditorImageCache` yet.)
 - **Manual:** run `mc2_asset_viewer`, open
