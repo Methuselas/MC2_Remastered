@@ -74,6 +74,7 @@ int AssetViewerApp::runSmoke(const char* fixtureDir)
     SDL_GL_MakeCurrent(win, gl);
     glewExperimental = GL_TRUE;
     if (glewInit() != GLEW_OK) { SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("glewInit"); }
+    glGetError(); // consume glew's spurious error
 
     int rc = 0;
     {

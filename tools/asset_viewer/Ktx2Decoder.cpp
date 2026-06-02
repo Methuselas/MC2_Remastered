@@ -83,16 +83,20 @@ DecodedTexture Ktx2Decoder::load(const std::string& path) const
     d.ownsGlTexture = true;
 
     GLuint tex = 0;
+    while (glGetError() != GL_NO_ERROR) {}   // drain stale errors so our check only sees OUR upload
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
     if (!img.isCompressed) {
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         const GLenum internal = img.isSrgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;     // color-space per metadata
         glTexImage2D(GL_TEXTURE_2D, 0, internal, img.width, img.height, 0,
                      GL_RGBA, GL_UNSIGNED_BYTE,
                      img.pixels.data() + img.mipByteOffsets[0]);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);   // restore default
         d.formatLabel = img.isSrgb ? "RGBA8 (sRGB)" : "RGBA8";
+        // mip-0 only — must NOT use a mipmap min-filter or the texture is mip-incomplete
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     } else {
         if (!GLEW_ARB_texture_compression_bptc) {
             glDeleteTextures(1, &tex);
@@ -113,14 +117,15 @@ DecodedTexture Ktx2Decoder::load(const std::string& path) const
                                    size, img.pixels.data() + off);
         }
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, img.mipCount - 1);
+        // Full mip chain uploaded + MAX_LEVEL set — mip-complete, use mip-aware filter
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                        img.mipCount > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
         char buf[64];
         std::snprintf(buf, sizeof(buf), "BC7%s, %d mip%s",
                       img.isSrgb ? " (sRGB)" : "", img.mipCount, img.mipCount > 1 ? "s" : "");
         d.formatLabel = buf;
     }
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                    img.mipCount > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     const GLenum e = glGetError();
