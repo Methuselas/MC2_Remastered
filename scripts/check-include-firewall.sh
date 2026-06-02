@@ -19,7 +19,7 @@ cd "$ROOT"
 # the script forward-compatible without per-slice script edits.
 # GameAdapters is the carve-out module: it MAY include both sides.
 # Do NOT add it to SCOPE_DIRS.
-SCOPE_DIRS="RenderCore RenderWorld Visibility MeshRenderer MaterialSystem DebugRenderer RenderDeviceGL EditorBridge"
+SCOPE_DIRS="RenderCore RenderWorld Visibility MeshRenderer MaterialSystem DebugRenderer RenderDeviceGL EditorBridge HostServices"
 
 # Forbidden headers (any include of these from SCOPE_DIRS is a violation).
 # C1 fix: RenderCore must stay pure -- gos_static_prop_batcher.h pulls
