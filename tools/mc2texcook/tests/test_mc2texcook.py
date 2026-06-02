@@ -10,6 +10,7 @@ No external files required.  All test images are created in-memory.
 from __future__ import annotations
 
 import io
+import shutil
 import struct
 import sys
 import tempfile
@@ -240,6 +241,23 @@ class TestOrmPreset(unittest.TestCase):
         entries = _parse_level_index(self.data, self.hdr["level_count"])
         expected = 4 * 4 * 4  # width*height*4 bytes
         self.assertEqual(entries[0]["byte_length"], expected)
+
+
+class TestBc7SlotAware(unittest.TestCase):
+    """SLOT-AWARE-BC7: ORM/normal/mask must be cooked LINEAR BC7_UNORM, not SRGB."""
+
+    @unittest.skipUnless(shutil.which("ktx"), "KTX-Software CLI not on PATH")
+    def test_bc7_orm_is_linear_unorm(self):
+        import batch_cook, tempfile, subprocess
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "thing.orm.png"
+            _make_rgb_image((64, 64)).save(src)
+            out = Path(td) / "thing.orm.ktx2"
+            batch_cook._cook_one_bc7(src, out, ktx_tool="ktx", txm_size=0, preset="orm")
+            info = subprocess.run(["ktx", "info", str(out)], capture_output=True, text=True).stdout
+            self.assertIn("BC7_UNORM", info)
+            self.assertNotIn("BC7_SRGB", info)
 
 
 class TestMaskPreset(unittest.TestCase):

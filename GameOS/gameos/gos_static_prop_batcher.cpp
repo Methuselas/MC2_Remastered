@@ -500,6 +500,16 @@ static const bool s_pbrV1Enabled = []() {
     return v != nullptr && v[0] != '0' && v[0] != '\0';
 }();
 
+// STATICPROP-MATERIAL-ORM-1: gate for per-bucket linear ORM (occlusion-
+// roughness-metallic) texture-array slots + sidecar feed. Default-OFF; "=1"
+// / any non-"0", non-empty value enables. Mirrors the s_pbrV1Enabled env-parse
+// idiom. When OFF, zero ORM arrays are built and zero extra sidecar I/O occurs
+// so the gate-OFF path is byte-identical.
+static const bool s_ormSlotsEnabled = []() {
+    const char* v = getenv("MC2_STATICPROP_MATERIAL_PBR_SLOTS");
+    return v != nullptr && v[0] != '0' && v[0] != '\0';
+}();
+
 // V-MATERIAL-PBR-2 safety interlock: when MC2_VIEW_UNIFORMS=0 the shader's
 // PBR block is excluded by `#if defined(MC2_USE_VIEW_UNIFORMS)` (compile-
 // time guard). This runtime flag is the belt to the compile-time
@@ -623,6 +633,17 @@ std::vector<StaticPropBucketInfo> s_bucketInfo;
 std::vector<int32_t>              s_packetBucketIndex;  // per global packet; -1 if unassigned
 std::vector<uint8_t>              s_slotBucketIndex;    // per sorted draw slot
 std::vector<uint32_t>             s_bucketCmdCount;     // per bucket, in sorted-slot order
+
+// STATICPROP-MATERIAL-ORM-1 — per-bucket LINEAR ORM (occlusion-roughness-
+// metallic) sibling arrays. INVARIANT: s_ormBucketArrays.size() ==
+// s_bucketArrays.size(), and ORM layer k in bucket b corresponds to the SAME
+// unique as albedo layer k in bucket b (metallicRoughnessTex == albedoTex).
+// Each ORM array is DENSE/bindable: layers without a real sidecar get a 1x1-
+// replicated neutral (255,255,255,255) texel. s_ormLayerHasMap[b][k] records
+// whether bucket b layer k had a REAL ORM map (drives the material flag).
+// All three vectors stay empty when the gate (s_ormSlotsEnabled) is OFF.
+std::vector<GLuint>               s_ormBucketArrays;    // owns GL handles (delete all on teardown)
+std::vector<std::vector<bool>>    s_ormLayerHasMap;     // per bucket, per bucket-relative layer
 GLuint s_permutationSsbo           = 0;  // sortedSlot[typeID] mapping (binding 15)
 GLuint s_staticPropProgramCoalesce = 0;  // coalesce variant (Step 7.5)
 
@@ -749,7 +770,13 @@ struct ProgramLocs {
     GLint pbrV1Strength       = -1;   // V-MATERIAL-PBR-2: u_pbrV1Strength
     GLint pbrV1RoughnessOverride = -1; // V-MATERIAL-PBR-2-TUNE-UI: u_pbrV1RoughnessOverride
     GLint pbrV1DiagSunFound   = -1;   // V-MATERIAL-PBR-2-DIAG: u_pbrV1DiagSunFound
+    GLint ormTexArr           = -1;   // STATICPROP-MATERIAL-ORM-1: u_ormTexArr (sampler2DArray)
+    GLint ormSampleEnable     = -1;   // STATICPROP-MATERIAL-ORM-1: u_ormSampleEnable (int)
 };
+
+// STATICPROP-MATERIAL-ORM-1 — texture unit reserved for the per-bucket ORM
+// sibling array. Unit 0 stays the albedo array (u_texArr); unit 1 is ORM.
+static constexpr GLuint kOrmTexUnit = 1;
 static ProgramLocs s_locsLegacy;
 static ProgramLocs s_locsCoalesce;
 
@@ -819,6 +846,27 @@ static void allocPermutationSsboAsIdentity(uint32_t typeCount) {
 // logs a different "(forced)" reason string before invoking the
 // rollback) keeps logging-vs-state-change ordering symmetric with the
 // natural failure path.
+// STATICPROP-MATERIAL-ORM-1 — pick the BPTC internalformat. Albedo arrays are
+// sRGB; ORM arrays are LINEAR data (occlusion/roughness/metallic are not color)
+// so they MUST use the non-sRGB variant or the values would be gamma-decoded.
+static GLenum bptcInternalFormatFor(bool isSrgb) {
+    return isSrgb ? GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM
+                  : GL_COMPRESSED_RGBA_BPTC_UNORM;
+}
+
+// STATICPROP-MATERIAL-ORM-1 — derive the ORM sidecar path from a SOURCE texture
+// name (getTextureName returns the .tga/.txm source path, never .ktx2). Strip
+// the last extension that appears AFTER the last path separator (so a dot in a
+// directory name is never mistaken for an extension), then append ".orm.ktx2".
+static std::string deriveOrmSidecar(const char* srcName) {
+    std::string s(srcName ? srcName : "");
+    size_t sep = s.find_last_of("/\\");
+    size_t dot = s.find_last_of('.');
+    if (dot != std::string::npos && (sep == std::string::npos || dot > sep))
+        s.erase(dot);
+    return s + ".orm.ktx2";
+}
+
 // COMPRESSION-BC7-STATICPROP-2 — release all bucketed arrays + reset the
 // bucket bookkeeping vectors. No-op (vectors empty) when the gate is OFF, so
 // gate-OFF teardown is byte-identical.
@@ -831,6 +879,13 @@ static void staticPropReleaseBuckets() {
     s_packetBucketIndex.clear();
     s_slotBucketIndex.clear();
     s_bucketCmdCount.clear();
+    // STATICPROP-MATERIAL-ORM-1 — release the per-bucket ORM sibling arrays.
+    // Empty (no-op) when the gate is OFF.
+    for (GLuint a : s_ormBucketArrays) {
+        if (a) glDeleteTextures(1, &a);
+    }
+    s_ormBucketArrays.clear();
+    s_ormLayerHasMap.clear();
 }
 
 static void coalesceRollbackTexBuild(std::vector<DWORD>& tempPins) {
@@ -921,6 +976,14 @@ void loadProgramsIfNeeded() {
     }
     if (s_viewUniformsShaderEnabled) {
         coalescePrefix += "#define MC2_USE_VIEW_UNIFORMS 1\n";
+    }
+    // STATICPROP-PBR-SLOTS: gate ORM (roughness/metallic) sampling in the
+    // fragment shader. Appended to BOTH prefixes; the legacy lane has no
+    // MC2_COALESCE / materialTable_, so its compile-guard is false → no effect
+    // there (intended). Gate-OFF (s_ormSlotsEnabled == false) is byte-identical.
+    if (s_ormSlotsEnabled) {
+        legacyPrefix   += "#define MC2_STATICPROP_PBR_SLOTS 1\n";
+        coalescePrefix += "#define MC2_STATICPROP_PBR_SLOTS 1\n";
     }
 
     // Step 7.3 — legacy program (unchanged identity / no rename).
@@ -1026,6 +1089,12 @@ void loadProgramsIfNeeded() {
             s_locsCoalesce.pbrV1Strength     = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pbrV1Strength");
             s_locsCoalesce.pbrV1RoughnessOverride = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pbrV1RoughnessOverride");
             s_locsCoalesce.pbrV1DiagSunFound = glGetUniformLocation(s_staticPropProgramCoalesce, "u_pbrV1DiagSunFound");
+            // STATICPROP-MATERIAL-ORM-1: ORM sampler + sample-enable. The shader
+            // does not declare these yet (separate later task) so both resolve to
+            // -1 here; the ProgramLocs default-init keeps them -1 and every upload
+            // site below is `if (loc >= 0)`-guarded → no-op until the shader lands.
+            s_locsCoalesce.ormTexArr       = glGetUniformLocation(s_staticPropProgramCoalesce, "u_ormTexArr");
+            s_locsCoalesce.ormSampleEnable = glGetUniformLocation(s_staticPropProgramCoalesce, "u_ormSampleEnable");
 
             // M3 fix: if both gates are ON and the uniform is absent, log an error.
             // This can only happen if the shader wasn't recompiled with v3 changes.
@@ -1049,6 +1118,13 @@ void loadProgramsIfNeeded() {
                 // only needs to bind the texture handle. Not a flush-path state switch.
                 glUseProgram(s_staticPropProgramCoalesce);
                 glUniform1i(s_locsCoalesce.texArr, 0);
+                glUseProgram(0);
+            }
+            // STATICPROP-MATERIAL-ORM-1: bind the ORM sampler uniform to kOrmTexUnit
+            // once (loc-guarded; -1 until the shader declares u_ormTexArr).
+            if (s_locsCoalesce.ormTexArr >= 0) {
+                glUseProgram(s_staticPropProgramCoalesce);
+                glUniform1i(s_locsCoalesce.ormTexArr, static_cast<GLint>(kOrmTexUnit));
                 glUseProgram(0);
             }
             std::fprintf(stderr, "[GPUPROPS-DIAG] static_prop_coalesce program=%u "
@@ -2494,6 +2570,166 @@ void GpuStaticPropBatcher::finalizeGeometry() {
         return arr;
     };
 
+    // STATICPROP-MATERIAL-ORM-1 — build the per-bucket LINEAR ORM sibling array.
+    // bUniques / bw / bh are the SAME inputs the albedo buildBucketArray got, so
+    // ORM layer k corresponds to albedo layer k (the layer-alignment invariant).
+    // Tries a BC7-linear fast path (all-or-nothing per array — a GL array has a
+    // single internalformat) when every layer has a compressed sidecar matching
+    // bw x bh with identical mipCount; otherwise an RGBA8 array where each layer
+    // is either the loaded uncompressed sidecar (dims must equal bw x bh) or a
+    // 1x1-replicated neutral (255,255,255,255) texel so the array stays DENSE/
+    // bindable. outHasMap[k] = true only where layer k got a REAL ORM map.
+    // ORM is LINEAR: bptcInternalFormatFor(false) for BC7, GL_RGBA8 otherwise.
+    auto buildOrmBucketArray =
+        [&](const std::vector<UniqueTex>& bUniques, GLint bw, GLint bh,
+            uint8_t group, std::vector<bool>& outHasMap) -> GLuint {
+        outHasMap.assign(bUniques.size(), false);
+        GLuint arr = 0;
+        const size_t layerCount = bUniques.size();
+
+        // ---- BC7-linear attempt (all-or-nothing, mirrors albedo fast path) ----
+        if (mcTextureManager && GLEW_ARB_texture_compression_bptc) {
+            std::vector<RenderCore::KtxImage> imgs(layerCount);
+            bool ok = true;
+            int  mipCount = 0;
+            for (size_t k = 0; ok && k < layerCount; ++k) {
+                const auto& u = bUniques[k];
+                if (u.nodeIdx == 0xFFFFFFFFu) { ok = false; break; }
+                const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
+                if (!srcName || !*srcName) { ok = false; break; }
+                const std::string ormPath = deriveOrmSidecar(srcName);
+                if (!RenderCore::ktxLoadRgba8(ormPath.c_str(), imgs[k])) { ok = false; break; }
+                const RenderCore::KtxImage& img = imgs[k];
+                if (!img.isCompressed ||
+                    (img.vkFormat != 145u && img.vkFormat != 146u)) { ok = false; break; }
+                if (img.width != bw || img.height != bh) { ok = false; break; }
+                if (k == 0) mipCount = img.mipCount;
+                if (img.mipCount != mipCount) { ok = false; break; }
+            }
+            if (ok) {
+                const GLenum internalformat = bptcInternalFormatFor(false); // LINEAR
+                const int levels = (mipCount > 0) ? mipCount : 1;
+                glGenTextures(1, &arr);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, arr);
+                glTexStorage3D(GL_TEXTURE_2D_ARRAY, levels, internalformat,
+                               bw, bh, static_cast<GLsizei>(layerCount));
+                for (size_t k = 0; k < layerCount; ++k) {
+                    const RenderCore::KtxImage& img = imgs[k];
+                    for (int lvl = 0; lvl < levels; ++lvl) {
+                        const int lw = (bw >> lvl) ? (bw >> lvl) : 1;
+                        const int lh = (bh >> lvl) ? (bh >> lvl) : 1;
+                        const GLsizei imageSize =
+                            static_cast<GLsizei>(((lw + 3) / 4) * ((lh + 3) / 4) * 16);
+                        glCompressedTexSubImage3D(
+                            GL_TEXTURE_2D_ARRAY, lvl, 0, 0, static_cast<GLint>(k),
+                            lw, lh, 1, internalformat, imageSize,
+                            img.pixels.data() +
+                                img.mipByteOffsets[static_cast<size_t>(lvl)]);
+                    }
+                    outHasMap[k] = true;
+                }
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,  levels - 1);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S,     GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T,     GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+                std::fprintf(stderr,
+                    "[STATICPROP_ORM] bucket group=%u dims=%dx%d layers=%zu format=BC7-linear "
+                    "levels=%d realMaps=%zu\n",
+                    (unsigned)group, bw, bh, layerCount, levels, layerCount);
+                std::fflush(stderr);
+                return arr;
+            }
+        }
+
+        // ---- RGBA8 fallback (per-layer: real sidecar or neutral fill) ----
+        glGenTextures(1, &arr);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, arr);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, bw, bh,
+                     static_cast<GLsizei>(layerCount),
+                     0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        std::vector<uint8_t> neutral(static_cast<size_t>(bw) * bh * 4u, 255u);
+        size_t realMaps = 0;
+        std::vector<std::pair<size_t, RenderCore::KtxImage>> ormMipLayers;
+        for (size_t k = 0; k < layerCount; ++k) {
+            const auto& u = bUniques[k];
+            bool used = false;
+            if (u.nodeIdx != 0xFFFFFFFFu && mcTextureManager) {
+                const char* srcName = mcTextureManager->getTextureName(u.nodeIdx);
+                if (srcName && *srcName) {
+                    const std::string ormPath = deriveOrmSidecar(srcName);
+                    // STATICPROP-ORM-VISUAL-CHECK-1: observability — log every ORM
+                    // unique probed (src path + expected sidecar + dims) so an
+                    // operator can author/place a matching .orm.ktx2. Gated; off by default.
+                    static const bool s_ormProbeTrace =
+                        (getenv("MC2_STATICPROP_ORM_TRACE") != nullptr);
+                    if (s_ormProbeTrace) {
+                        std::fprintf(stderr,
+                            "[STATICPROP_ORM_PROBE] group=%u layer=%zu dims=%dx%d src=%s sidecar=%s\n",
+                            (unsigned)group, k, bw, bh, srcName, ormPath.c_str());
+                        std::fflush(stderr);
+                    }
+                    RenderCore::KtxImage img;
+                    const bool loadOk = RenderCore::ktxLoadRgba8(ormPath.c_str(), img);
+                    // Reject compressed sidecars (block bytes are not RGBA8) and
+                    // dim mismatches (must equal the albedo unique's dims).
+                    const bool dimOk = loadOk && !img.isCompressed &&
+                                       img.width == bw && img.height == bh;
+                    if (loadOk && !dimOk) {
+                        std::fprintf(stderr,
+                            "[STATICPROP_ORM] reject layer=%zu group=%u sidecar=%s "
+                            "reason=%s got=%dx%d want=%dx%d\n",
+                            k, (unsigned)group, ormPath.c_str(),
+                            img.isCompressed ? "compressed_in_rgba8_path" : "dim_mismatch",
+                            img.width, img.height, bw, bh);
+                        std::fflush(stderr);
+                    }
+                    if (dimOk) {
+                        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, static_cast<GLint>(k),
+                                        bw, bh, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                                        img.pixels.data());
+                        used = true;
+                        outHasMap[k] = true;
+                        ++realMaps;
+                        if (img.mipCount > 1) ormMipLayers.emplace_back(k, std::move(img));
+                    }
+                }
+            }
+            if (!used) {
+                glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, static_cast<GLint>(k),
+                                bw, bh, 1, GL_RGBA, GL_UNSIGNED_BYTE, neutral.data());
+            }
+        }
+        glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+        GLint maxLevel = 0;
+        { GLint w = bw, h = bh; while (w > 1 || h > 1) { ++maxLevel; if (w>1) w>>=1; if (h>1) h>>=1; } }
+        for (const auto& lm : ormMipLayers) {
+            const size_t layerK = lm.first;
+            const RenderCore::KtxImage& img = lm.second;
+            const int lastLvl = (img.mipCount - 1 < maxLevel) ? (img.mipCount - 1) : maxLevel;
+            for (int lvl = 1; lvl <= lastLvl; ++lvl) {
+                int lw = img.width  >> lvl; if (lw < 1) lw = 1;
+                int lh = img.height >> lvl; if (lh < 1) lh = 1;
+                glTexSubImage3D(GL_TEXTURE_2D_ARRAY, lvl, 0, 0, static_cast<GLint>(layerK),
+                                lw, lh, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                                img.pixels.data() +
+                                    img.mipByteOffsets[static_cast<size_t>(lvl)]);
+            }
+        }
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL,  maxLevel);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S,     GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T,     GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+        std::fprintf(stderr,
+            "[STATICPROP_ORM] bucket group=%u dims=%dx%d layers=%zu format=RGBA8 realMaps=%zu\n",
+            (unsigned)group, bw, bh, layerCount, realMaps);
+        std::fflush(stderr);
+        return arr;
+    };
+
     for (uint8_t group = 0; group <= 1; ++group) {
         std::vector<DWORD> newlyPinnedThisBuild;
         GLuint& outArray = (group == 0u) ? s_texArrayOff : s_texArrayOn;
@@ -2683,6 +2919,19 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                 info.isBc7      = isBc7;
                 info.glArray    = arr;
                 s_bucketInfo.push_back(info);
+
+                // STATICPROP-MATERIAL-ORM-1 — build the layer-aligned ORM sibling
+                // for THIS bucket from the SAME `sub` uniques, so ORM array index
+                // == albedo array index (globalBucket) and ORM layer k == albedo
+                // layer k. Gate-OFF builds nothing (vectors stay empty); gate-ON
+                // keeps s_ormBucketArrays.size() == s_bucketArrays.size().
+                if (s_ormSlotsEnabled) {
+                    std::vector<bool> ormHasMap;
+                    const GLuint ormArr = buildOrmBucketArray(sub, dimKeys[b].w, dimKeys[b].h,
+                                                              group, ormHasMap);
+                    s_ormBucketArrays.push_back(ormArr);
+                    s_ormLayerHasMap.push_back(std::move(ormHasMap));
+                }
             }
 
             // Reassign layerForPacket -> bucket-relative layer, tag each packet
@@ -3147,6 +3396,21 @@ void GpuStaticPropBatcher::finalizeGeometry() {
                     m.baseColorFactor      = 1.0f;   // neutral: full brightness
                     m.metallicFactor       = 0.0f;  // V-MATERIAL-PBR-1: dielectric default
                     m.roughnessFactor      = 1.0f;  // V-MATERIAL-PBR-1: fully rough default (was 0.0)
+
+                    // STATICPROP-MATERIAL-ORM-1 — keep metallicRoughnessTex ==
+                    // albedoTex (the SAME bucket-relative layer in the SAME bucket;
+                    // the ORM array is a layer-aligned sibling of the albedo array).
+                    // Set the kMetallicRoughness flag ONLY when this (bucket,layer)
+                    // had a REAL ORM map; otherwise leave it kMaterialTexAbsent so
+                    // the shader uses the metallic/roughness factor defaults.
+                    if (s_ormSlotsEnabled && layer >= 0 &&
+                        bucketIdx >= 0 &&
+                        static_cast<size_t>(bucketIdx) < s_ormLayerHasMap.size() &&
+                        static_cast<size_t>(layer) < s_ormLayerHasMap[static_cast<size_t>(bucketIdx)].size() &&
+                        s_ormLayerHasMap[static_cast<size_t>(bucketIdx)][static_cast<size_t>(layer)]) {
+                        m.metallicRoughnessTex = static_cast<uint32_t>(layer);
+                        m.flags |= RenderCore::MaterialFlags::kMetallicRoughness;
+                    }
                     s_materialGpuTable.push_back(m);
 
                     // V-MATERIAL-STATIC-0: build a parallel inventory row.
@@ -4840,6 +5104,21 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
         }
         // If loc == -1: M3 error already logged at loadProgramsIfNeeded(); no-op here.
 
+        // STATICPROP-MATERIAL-ORM-1: per-frame baseline for u_ormSampleEnable.
+        // S5-B hardening: the ORM texture arrays (s_ormBucketArrays) are ONLY built
+        // and bound inside the BC7-bucketed paths (guarded by s_staticPropBc7Enabled).
+        // The legacy group-array paths (s_texArrayOff/On) bind albedo only and leave
+        // the ORM unit holding whatever was last bound. So sampling must be enabled
+        // ONLY when BOTH gates are on — gate the baseline on s_staticPropBc7Enabled
+        // so every draw branch (incl. the v5 snap-cull multidraw path, which falls
+        // back to legacy arrays when bc7Buckets is false) is covered at the source,
+        // not just the non-bucketed else branch below. s_staticPropBc7Enabled is set
+        // once at startup and never mutated, so build-time array existence and this
+        // draw-time decision agree. loc-guarded → no-op until the shader declares it.
+        if (s_locsCoalesce.ormSampleEnable >= 0)
+            glUniform1i(s_locsCoalesce.ormSampleEnable,
+                        (s_ormSlotsEnabled && s_staticPropBc7Enabled) ? 1 : 0);
+
         // M2: diagnostic log — first frame + every 600 frames (mirrors accumulateMonotonicAndMaybeEmit cadence).
         // C1: guard fires on every run now that s_materialGpuEnabled is default-ON (v5).
         // Set MC2_MATERIAL_GPU=0 to silence. reason cascade mirrors sampleOn condition order.
@@ -5343,6 +5622,14 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                         if (b != curBucket &&
                             b >= 0 && b < static_cast<int32_t>(s_bucketArrays.size())) {
                             glBindTexture(GL_TEXTURE_2D_ARRAY, s_bucketArrays[b]);
+                            // STATICPROP-MATERIAL-ORM-1: bind the layer-aligned ORM
+                            // sibling to kOrmTexUnit, then restore active unit 0.
+                            if (s_ormSlotsEnabled &&
+                                static_cast<size_t>(b) < s_ormBucketArrays.size()) {
+                                glActiveTexture(GL_TEXTURE0 + kOrmTexUnit);
+                                glBindTexture(GL_TEXTURE_2D_ARRAY, s_ormBucketArrays[b]);
+                                glActiveTexture(GL_TEXTURE0);
+                            }
                             curBucket = b;
                         }
                     }
@@ -5507,6 +5794,13 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                         if (b != curBucket &&
                             b >= 0 && b < static_cast<int32_t>(s_bucketArrays.size())) {
                             glBindTexture(GL_TEXTURE_2D_ARRAY, s_bucketArrays[b]);
+                            // STATICPROP-MATERIAL-ORM-1: bind layer-aligned ORM sibling.
+                            if (s_ormSlotsEnabled &&
+                                static_cast<size_t>(b) < s_ormBucketArrays.size()) {
+                                glActiveTexture(GL_TEXTURE0 + kOrmTexUnit);
+                                glBindTexture(GL_TEXTURE_2D_ARRAY, s_ormBucketArrays[b]);
+                                glActiveTexture(GL_TEXTURE0);
+                            }
                             curBucket = b;
                         }
                     }
@@ -5605,6 +5899,14 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
                 if (count == 0u) continue;
                 if (b < s_bucketArrays.size() && s_bucketArrays[b] != 0u)
                     glBindTexture(GL_TEXTURE_2D_ARRAY, s_bucketArrays[b]);
+                // STATICPROP-MATERIAL-ORM-1: bind the layer-aligned ORM sibling to
+                // kOrmTexUnit, then restore active unit 0 for the next albedo bind.
+                if (s_ormSlotsEnabled && b < s_ormBucketArrays.size() &&
+                    s_ormBucketArrays[b] != 0u) {
+                    glActiveTexture(GL_TEXTURE0 + kOrmTexUnit);
+                    glBindTexture(GL_TEXTURE_2D_ARRAY, s_ormBucketArrays[b]);
+                    glActiveTexture(GL_TEXTURE0);
+                }
                 if (s_globalPoolLegacy) {
                     const bool isOnGroup = (b < s_bucketInfo.size() && s_bucketInfo[b].group == 1u);
                     glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 0, s_coalesceInstanceSsbo,
@@ -5626,6 +5928,15 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
             }
         } else {
             // ---- Existing multidraw path (unchanged) ----
+            // STATICPROP-MATERIAL-ORM-1: this path binds NO ORM array (it uses the
+            // legacy s_texArrayOff/On group arrays, not the per-bucket siblings), so
+            // force u_ormSampleEnable=0 to keep the shader from sampling a stale /
+            // unbound ORM unit. S5-B: the per-frame baseline above already drives this
+            // to 0 whenever !s_staticPropBc7Enabled (this branch only runs in that
+            // case), so this is now defensive belt-and-suspenders. loc-guarded → no-op
+            // until the shader declares it.
+            if (s_locsCoalesce.ormSampleEnable >= 0)
+                glUniform1i(s_locsCoalesce.ormSampleEnable, 0);
             // 11.7.g — alpha-OFF group draw.
             // Step 4.8: under global-pool mode bind once covering both groups; under legacy bind per-group.
             if (s_alphaOffCmdCount > 0u) {
@@ -5674,6 +5985,15 @@ void GpuStaticPropBatcher::flush(const RenderSnapshot* snap) {
 
         // 11.7.i — restore indirect-buffer binding.
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+
+        // STATICPROP-MATERIAL-ORM-1: unbind the ORM unit and restore active unit 0
+        // so we leave GL state exactly as the gate-OFF path does. Only touch the
+        // ORM unit when the gate is ON (no extra state churn when OFF).
+        if (s_ormSlotsEnabled) {
+            glActiveTexture(GL_TEXTURE0 + kOrmTexUnit);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+            glActiveTexture(GL_TEXTURE0);
+        }
 
         // 11.7.j — restore slot 4 + unit-0 GL_TEXTURE_BINDING_2D_ARRAY.
         // Active texture stays GL_TEXTURE0 (epilogue restores). Slot 15

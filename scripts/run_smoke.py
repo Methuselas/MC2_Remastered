@@ -536,6 +536,13 @@ def main():
                             # visualizer (cyan/magenta). Default-OFF; only
                             # meaningful with MC2_STATIC_PROP_PBR_V1=1.
                             "MC2_STATIC_PROP_PBR_V1_DIAG_SUNFOUND",
+                            # STATICPROP-MATERIAL-ORM-1: per-bucket linear ORM
+                            # (occlusion-roughness-metallic) texture slots +
+                            # sidecar feed (default-OFF). =1 enables.
+                            "MC2_STATICPROP_MATERIAL_PBR_SLOTS",
+                            # STATICPROP-MATERIAL-ORM-1: ORM strength tuning
+                            # (only meaningful with MC2_STATICPROP_MATERIAL_PBR_SLOTS=1).
+                            "MC2_STATICPROP_ORM_STRENGTH",
                             # Render-contract Phase 2 assert mode (default-OFF).
                             # MC2_RENDER_CONTRACT_ASSERT=1 enables runtime GL state
                             # validation against declared render_contract expectations.
