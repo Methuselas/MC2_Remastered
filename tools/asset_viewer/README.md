@@ -79,3 +79,15 @@ Supported KTX2 formats: uncompressed RGBA8 (unorm/sRGB) and stored BC7
 
 Not yet supported (deferred): DDS, Basis/supercompressed KTX2, CPU BC7
 transcoding, asset cooking.
+
+## Resolution tiers + display sizing
+
+When the current folder sits in a set of numeric sibling folders (e.g.
+`data/tgl/{128,256,512}` or `data/textures/{64,128,256}`), a **Resolution** row
+appears with a button per available tier. Switching tiers keeps the selected
+texture (same filename) and reloads it at the new resolution. Only tiers that
+exist on disk are shown.
+
+The preview now fits each texture to the view area (1.00× = fit); the zoom slider
+multiplies that. Switching resolution tiers — or opening a higher-resolution
+texture — no longer changes the on-screen size, only the detail.

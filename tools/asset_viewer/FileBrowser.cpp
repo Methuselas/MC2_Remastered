@@ -124,6 +124,19 @@ void FileBrowser::refresh()
 
 void FileBrowser::draw()
 {
+    std::vector<std::string> tiers = SiblingTiers();
+    if (tiers.size() > 1) {
+        std::string cur = CurrentTier();
+        ImGui::TextUnformatted("Resolution:");
+        for (const auto& t : tiers) {
+            ImGui::SameLine();
+            bool active = (t == cur);
+            if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.50f, 0.80f, 1.0f));
+            if (ImGui::Button(t.c_str())) SwitchTier(t);
+            if (active) ImGui::PopStyleColor();
+        }
+        ImGui::Separator();
+    }
     ImGui::TextUnformatted("Folder");
     ImGui::SetNextItemWidth(-150.0f);
     ImGui::InputText("##folder", folderPath_, sizeof(folderPath_));
