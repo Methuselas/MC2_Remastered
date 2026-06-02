@@ -285,9 +285,10 @@ A tiny exe/test that, with **no Mission**: creates a GL context (reuse SDL path)
 `initViewUniformsUbo()`, fills a `ViewUniforms` + `EngineView`, `setCurrentView`,
 binds a `PipelineDesc`, clears + draws a pass marker, reads back center pixel, shuts
 down clean (`glGetError()==0`). This is the **Stage-2 Task 0 spike** — it answers
-"can the real pipeline come up without a Mission?" and decides Backend A vs B.
+"can the real RenderCore init/link/bind come up without a Mission?" (NOT "which backend
+renders the material ball" — see the scope boundary below).
 *Exit:* non-black readback + clean GL error, zero Mission/ObjectManager symbols linked.
-**DONE — Backend A confirmed viable** (`claude/rendercore-standalone-init-0`):
+**DONE — RenderCore init/link standalone confirmed** (`claude/rendercore-standalone-init-0`):
 `tools/rendercore_standalone_spike/` links against ONLY SDL2 + GLEW + opengl32 + three
 game-free engine TUs (`view_uniforms_gl.cpp`, `pipeline_binder.cpp`,
 `RenderCore/PipelineRegistry.cpp`) + the Slice-1 host seam — no Mission/game libs. Runs
@@ -296,12 +297,36 @@ green on GL 4.4 (7900 XTX): init UBO → `ViewUniforms`/`EngineView` upload+regi
 `glGetError()==0`, exit 0. The view+pipeline substrate has zero Mission/game *link*
 dependency, empirically confirming the static-closure recon.
 
+> **Scope boundary — what the spike does and does NOT prove.**
+> PROVES: RenderCore **init + link + pipeline-bind** are standalone — clean link with no
+> Mission/game, view-as-data path works, `applyPipeline` raises no GL error, FBO
+> clear→readback is exact. This de-risks "the asset viewer can link real RenderCore."
+> Does NOT prove: a **mesh drawn through `static_prop` producing material output**. The
+> chain stops at clear-color readback; it never drew geometry, bound a material/light SSBO,
+> or sampled a texture. `applyPipeline` binding clean ≠ a material ball renders.
+>
+> **Reconciliation with the Stage-2 Backend B decision (still stands).** Stage-2 chose
+> Backend B for the generic ORM **material ball** — and that choice was *never* about init
+> feasibility (Stage-2 also found init = not-a-swamp). It was about a different fact this
+> spike does not touch: `static_prop` is **not a material-preview shader** — sun-only
+> Schlick spec on baked vertex light, no normal-map sampling, no tangent attribute,
+> ORM maps `kMaterialTexAbsent` (roughness/metallic are scalars). So:
+> - **Backend A** is now de-risked and is the right backend for a **real prop/mesh
+>   preview** ("how MC2 actually draws this `.fit` prop") — real RenderCore + real
+>   view/pipeline + real pass shader.
+> - **Backend B** still delivers the **generic normal-mapped ORM material sphere**; Backend
+>   A there would render baked-vertex-light props, not a material ball. This spike does not
+>   change that — it clears the init risk, not the shader-is-not-a-material-shader risk.
+
 ### Slice 3 — `ASSET-VIEWER-PREVIEW-SCENE-0`
 Give `mc2_asset_viewer` a real preview runtime behind `PreviewSurface`:
 orbit camera + one directional light + ambient, offscreen FBO → `ImGui::Image`,
-a generated UV sphere with tangents, a `MaterialPreviewPBR`. Backend choice from Slice 2:
-**A** = link RenderCore + real PBR program; **B** = viewer-local Cook-Torrance GLSL
-(MUST be UI/README-labeled "Local PBR approximation, not exact MC2 shader"). New
+a generated UV sphere with tangents, a `MaterialPreviewPBR`. **Backend = B** for the
+generic material ball — **not** because of init (Slice 2 cleared that) but because
+`static_prop` is not a material-preview shader (no normal sampling, no tangent, ORM scalar-
+only). Backend B = viewer-local Cook-Torrance GLSL, MUST be UI/README-labeled "Local PBR
+approximation, not exact MC2 shader". Backend A (real RenderCore + real pass shader) is the
+right choice for the *real prop/mesh* preview path — Slice 4/5, not the material ball. New
 `MaterialTextureLoader` owns per-slot colorspace.
 *Exit:* sphere renders lit; tangent validation (flat-blue == no-normal; known normal
 perturbs; UV seam stable); smoke asserts center non-black + clean GL.
