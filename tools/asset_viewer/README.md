@@ -91,3 +91,15 @@ exist on disk are shown.
 The preview now fits each texture to the view area (1.00× = fit); the zoom slider
 multiplies that. Switching resolution tiers — or opening a higher-resolution
 texture — no longer changes the on-screen size, only the detail.
+
+## Materials (Stage 2)
+
+Select **Materials** in the sidebar to preview a PBR material on a lit sphere.
+Assign up to four slots via **Browse...**: Base Color (sRGB), Normal (linear),
+ORM (linear; R=AO, G=Roughness, B=Metallic), Emissive (sRGB). Use the View and
+Light controls to orbit, zoom, and rotate the directional light.
+
+> **Preview mode: Local PBR approximation, not exact MC2 shader.** The viewer
+> renders with a self-contained Cook-Torrance shader (Backend B). MC2 has no
+> standalone ORM material shader to mirror, so this preview is approximate and
+> must not be treated as pixel-exact to in-game rendering.

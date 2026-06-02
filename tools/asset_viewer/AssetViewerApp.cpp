@@ -3,6 +3,11 @@
  * DESCRIPTION: Top-level application class for mc2_asset_viewer.
  ***************************************************************/
 #include "AssetViewerApp.h"
+#include "SphereMesh.h"
+#include "LocalPbrMaterialBackend.h"
+#include "MaterialTextureLoader.h"
+#include "MaterialPreviewPBR.h"
+#include "FitMaterialLoader.h"
 #include "UiEditorImageCache.h"
 #include "imgui.h"
 #include "TextureExtensions.h"
@@ -38,15 +43,28 @@ void AssetViewerApp::drawUi()
     ImGui::EndChild();
     ImGui::SameLine();
 
+    // browser child: only feed the texture surface in Textures mode.
     ImGui::BeginChild("browser", ImVec2(browserW, 0), true);
     browser_.draw();
-    if (browser_.hasSelection())
-        surface_.setSource(browser_.takeSelection());
+    if (browser_.hasSelection()) {
+        std::string sel = browser_.takeSelection();
+        if (sidebar_.active() == AssetType::Textures) surface_.setSource(sel);
+        // Materials mode: slots are assigned via MaterialSlots' own picker, not the browser.
+    }
     ImGui::EndChild();
     ImGui::SameLine();
 
+    // inspector child: dispatch on the active asset type.
     ImGui::BeginChild("inspector", ImVec2(0, 0), true);
-    inspector_.draw(surface_);
+    switch (sidebar_.active()) {
+      case AssetType::Textures:
+        inspector_.draw(surface_);                                  // calls surface_.draw(GetContentRegionAvail())
+        break;
+      case AssetType::Materials:
+        materialSlots_.draw(materialSurface_);                      // slot pickers + light/camera
+        materialSurface_.draw(ImGui::GetContentRegionAvail());      // lit sphere + approximate label
+        break;
+    }
     ImGui::EndChild();
 
     ImGui::End();
@@ -282,6 +300,67 @@ int AssetViewerApp::runSmokeTiers(const char* dir)
     return 0;
 }
 
+int AssetViewerApp::runSmokeSphere()
+{
+    // CPU-only: no GL context required.
+    SphereMesh m;
+    m.generate(1.0f, 32, 64);
+    const auto& v = m.vertices();
+    const auto& idx = m.indices();
+    if (v.empty() || idx.empty()) { printf("[smoke] FAIL: empty mesh\n"); return 1; }
+    if (idx.size() % 3 != 0)      { printf("[smoke] FAIL: index count not triangulated\n"); return 1; }
+
+    for (const auto& sv : v) {
+        // position is on the unit sphere
+        float pr = std::sqrt(sv.px*sv.px + sv.py*sv.py + sv.pz*sv.pz);
+        if (std::fabs(pr - 1.0f) > 1e-3f) { printf("[smoke] FAIL: vertex off sphere (r=%f)\n", pr); return 1; }
+        // normal is unit length and equals the position direction (unit sphere)
+        float nl = std::sqrt(sv.nx*sv.nx + sv.ny*sv.ny + sv.nz*sv.nz);
+        if (std::fabs(nl - 1.0f) > 1e-3f) { printf("[smoke] FAIL: non-unit normal\n"); return 1; }
+        // tangent is unit length, perpendicular to the normal, handedness is +/-1
+        float tl = std::sqrt(sv.tx*sv.tx + sv.ty*sv.ty + sv.tz*sv.tz);
+        if (std::fabs(tl - 1.0f) > 1e-3f) { printf("[smoke] FAIL: non-unit tangent\n"); return 1; }
+        float ndott = sv.nx*sv.tx + sv.ny*sv.ty + sv.nz*sv.tz;
+        if (std::fabs(ndott) > 1e-2f) { printf("[smoke] FAIL: tangent not perpendicular to normal (%f)\n", ndott); return 1; }
+        if (std::fabs(std::fabs(sv.tw) - 1.0f) > 1e-3f) { printf("[smoke] FAIL: handedness not +/-1\n"); return 1; }
+    }
+    printf("[smoke] PASS sphere verts=%zu tris=%zu\n", v.size(), idx.size()/3);
+    return 0;
+}
+
+int AssetViewerApp::runSmokeBackend()
+{
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return smokeFail("SDL_Init");
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-backend", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) { SDL_Quit(); return smokeFail("hidden window"); }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) { SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("gl context (need GL 3.3)"); }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) { SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("glewInit"); }
+    glGetError(); // consume glew's spurious error
+
+    LocalPbrMaterialBackend b;
+    bool ok = b.init();
+    GLenum e = glGetError();
+    int rc = 0;
+    if (!ok)             rc = smokeFail("backend init/compile failed");
+    else if (e != GL_NO_ERROR) rc = smokeFail("glGetError non-zero after init");
+    else {
+        b.shutdown();
+        std::printf("[smoke] PASS backend=%s approximate=%d\n", b.name(), (int)b.isApproximate());
+    }
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    return rc;
+}
+
 int AssetViewerApp::runSmokeFit()
 {
     auto approx = [](float a, float b){ return std::fabs(a - b) < 0.01f; };
@@ -314,5 +393,313 @@ int AssetViewerApp::runSmokeFit()
     if (!std::isfinite(d2.w) || d2.w <= 0.0f) return smokeFail("zero-zoom not handled");
 
     std::printf("[smoke] PASS fit (size@1=%.1fx%.1f)\n", a.w, a.h);
+    return 0;
+}
+
+int AssetViewerApp::runSmokeTexLoad(const char* fixtureDir)
+{
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return smokeFail("SDL_Init");
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-texload", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) { SDL_Quit(); return smokeFail("hidden window"); }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) { SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("gl context (need GL 3.3)"); }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("glewInit");
+    }
+    glGetError(); // consume glew's spurious error
+
+    int rc = 0;
+    {
+        std::string base = std::string(fixtureDir) + "/mat_base.png";
+        std::string orm  = std::string(fixtureDir) + "/mat_orm.png";
+        std::string err;
+
+        uint32_t tb = MaterialTextureLoader_Load(base, MaterialSlotKind::BaseColor, &err);
+        if (!tb) {
+            std::printf("[smoke] FAIL: baseColor load: %s\n", err.c_str());
+            rc = 1;
+        } else {
+            GLint fmt = 0;
+            glBindTexture(GL_TEXTURE_2D, tb);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &fmt);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            if (fmt != GL_SRGB8_ALPHA8) {
+                std::printf("[smoke] FAIL: baseColor not sRGB (0x%x)\n", (unsigned)fmt);
+                rc = 1;
+            }
+            glDeleteTextures(1, &tb);
+        }
+
+        if (rc == 0) {
+            uint32_t to = MaterialTextureLoader_Load(orm, MaterialSlotKind::Orm, &err);
+            if (!to) {
+                std::printf("[smoke] FAIL: orm load: %s\n", err.c_str());
+                rc = 1;
+            } else {
+                GLint fmt = 0;
+                glBindTexture(GL_TEXTURE_2D, to);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &fmt);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                if (fmt != GL_RGBA8) {
+                    std::printf("[smoke] FAIL: orm not linear RGBA8 (0x%x)\n", (unsigned)fmt);
+                    rc = 1;
+                }
+                glDeleteTextures(1, &to);
+            }
+        }
+    }
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+    if (rc == 0)
+        std::printf("[smoke] PASS texload sRGB/linear internalformats correct\n");
+    return rc;
+}
+
+int AssetViewerApp::runSmokeRender(const char* fixtureDir)
+{
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return smokeFail("SDL_Init");
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-render", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) { SDL_Quit(); return smokeFail("hidden window"); }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) { SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("gl context (need GL 3.3)"); }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("glewInit");
+    }
+    glGetError(); // consume glew's spurious error
+
+    const int W = 256, H = 256;
+    MaterialPreviewPBR preview;
+    std::string err;
+    uint32_t base = MaterialTextureLoader_Load(std::string(fixtureDir) + "/mat_base.png",
+                                               MaterialSlotKind::BaseColor, &err);
+    if (!base) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        std::printf("[smoke] FAIL: base load %s\n", err.c_str());
+        return 1;
+    }
+    preview.setSlotTexture(MaterialSlotKind::BaseColor, base);
+
+    // Review fix MAJOR 5: do NOT call preview.draw() here — draw() ends with
+    // ImGui::Image/TextColored and this smoke has no ImGui context/frame, so it
+    // would dereference an uninitialized GImGui and crash. renderToPixels() is
+    // ImGui-free: it lazily builds the FBO + renders + reads back.
+    // The renderToPixels test hook returns false if backend init or FBO completeness
+    // failed (review fix MAJOR 6), so a failed shader compile is caught here rather
+    // than passing on a non-black clear.
+    std::vector<uint8_t> rgba;
+    if (!preview.renderToPixels(W, H, rgba)) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        std::printf("[smoke] FAIL: renderToPixels (init/FBO)\n");
+        return 1;
+    }
+    GLenum e = glGetError();
+    if (e != GL_NO_ERROR) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        std::printf("[smoke] FAIL: glGetError 0x%x\n", (unsigned)e);
+        return 1;
+    }
+    // Review fix MAJOR 6: the FBO clears to (0.10,0.11,0.13) -> a broken shader
+    // would still be non-black. Assert the sphere actually drew: the center
+    // region must be meaningfully BRIGHTER than the corner (background) region.
+    auto regionAvg = [&](int x0, int y0) -> long {
+        long s = 0;
+        for (int y = y0; y < y0+16; ++y)
+            for (int x = x0; x < x0+16; ++x) {
+                const uint8_t* p = &rgba[(y*W + x)*4];
+                s += p[0]+p[1]+p[2];
+            }
+        return s / 256;
+    };
+    long center = regionAvg(W/2 - 8, H/2 - 8);
+    long corner = regionAvg(2, 2);
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+
+    if (center == 0) {
+        std::printf("[smoke] FAIL: center all black\n");
+        return 1;
+    }
+    if (center <= corner + 24) {
+        std::printf("[smoke] FAIL: sphere not distinct from background (c=%ld bg=%ld)\n", center, corner);
+        return 1;
+    }
+    std::printf("[smoke] PASS render: sphere distinct (c=%ld bg=%ld), glGetError clean\n", center, corner);
+    return 0;
+}
+
+// helper: mean absolute per-channel diff over the whole image
+static double meanDiff(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    double s = 0;
+    size_t n = std::min(a.size(), b.size());
+    for (size_t i = 0; i < n; i++) s += std::abs((int)a[i] - (int)b[i]);
+    return n ? s / n : 1e9;
+}
+
+int AssetViewerApp::runSmokeTangent(const char* fixtureDir)
+{
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return smokeFail("SDL_Init");
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_Window* win = SDL_CreateWindow("smoke-tangent", 0, 0, 64, 64,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+    if (!win) { SDL_Quit(); return smokeFail("hidden window"); }
+    SDL_GLContext gl = SDL_GL_CreateContext(win);
+    if (!gl) { SDL_DestroyWindow(win); SDL_Quit(); return smokeFail("gl context (need GL 3.3)"); }
+    SDL_GL_MakeCurrent(win, gl);
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("glewInit");
+    }
+    glGetError(); // consume glew's spurious error
+
+    const int W = 256, H = 256;
+    auto load = [&](const char* f, MaterialSlotKind k) -> uint32_t {
+        std::string err;
+        return MaterialTextureLoader_Load(std::string(fixtureDir) + "/" + f, k, &err);
+    };
+
+    // Render 1: base color only (no normal map)
+    MaterialPreviewPBR p1;
+    p1.orbitYaw()   = 0.0f;
+    p1.orbitPitch() = 0.0f;
+    p1.zoom()       = 3.0f;
+    p1.lightDir()[0] = -0.5f; p1.lightDir()[1] = 0.0f; p1.lightDir()[2] = -0.5f;
+
+    uint32_t base1 = load("mat_base.png", MaterialSlotKind::BaseColor);
+    if (!base1) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("mat_base.png load failed");
+    }
+    p1.setSlotTexture(MaterialSlotKind::BaseColor, base1);
+
+    std::vector<uint8_t> noNormal;
+    if (!p1.renderToPixels(W, H, noNormal)) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("renderToPixels (no-normal) init/FBO failed");
+    }
+
+    // Render 2: base + flat-blue normal (should be ~= no normal)
+    // Use a fresh preview to avoid sharing GL state across renders.
+    MaterialPreviewPBR p2;
+    p2.orbitYaw()   = 0.0f;
+    p2.orbitPitch() = 0.0f;
+    p2.zoom()       = 3.0f;
+    p2.lightDir()[0] = -0.5f; p2.lightDir()[1] = 0.0f; p2.lightDir()[2] = -0.5f;
+
+    uint32_t base2 = load("mat_base.png", MaterialSlotKind::BaseColor);
+    uint32_t nrmFlat = load("nrm_flat.png", MaterialSlotKind::Normal);
+    if (!base2 || !nrmFlat) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("nrm_flat.png load failed");
+    }
+    p2.setSlotTexture(MaterialSlotKind::BaseColor, base2);
+    p2.setSlotTexture(MaterialSlotKind::Normal, nrmFlat);
+
+    std::vector<uint8_t> flatNormal;
+    if (!p2.renderToPixels(W, H, flatNormal)) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("renderToPixels (flat-normal) init/FBO failed");
+    }
+
+    // Render 3: same base + tilted normal (should perturb MORE than flat)
+    MaterialPreviewPBR p3;
+    p3.orbitYaw()   = 0.0f;
+    p3.orbitPitch() = 0.0f;
+    p3.zoom()       = 3.0f;
+    p3.lightDir()[0] = -0.5f; p3.lightDir()[1] = 0.0f; p3.lightDir()[2] = -0.5f;
+
+    uint32_t base3 = load("mat_base.png", MaterialSlotKind::BaseColor);
+    uint32_t nrmTilt = load("nrm_tilt_u.png", MaterialSlotKind::Normal);
+    if (!base3 || !nrmTilt) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("nrm_tilt_u.png load failed");
+    }
+    p3.setSlotTexture(MaterialSlotKind::BaseColor, base3);
+    p3.setSlotTexture(MaterialSlotKind::Normal, nrmTilt);
+
+    std::vector<uint8_t> tiltNormal;
+    if (!p3.renderToPixels(W, H, tiltNormal)) {
+        SDL_GL_DeleteContext(gl); SDL_DestroyWindow(win); SDL_Quit();
+        return smokeFail("renderToPixels (tilt-normal) init/FBO failed");
+    }
+
+    SDL_GL_DeleteContext(gl);
+    SDL_DestroyWindow(win);
+    SDL_Quit();
+
+    double dFlat = meanDiff(noNormal, flatNormal);   // expect SMALL
+    double dTilt = meanDiff(noNormal, tiltNormal);   // expect LARGER than dFlat
+
+    if (dFlat > 6.0) {
+        std::printf("[smoke] FAIL: flat-blue normal differs from no-normal (mean=%.2f, threshold=6.0)\n", dFlat);
+        return 1;
+    }
+    if (dTilt < dFlat + 2.0) {
+        std::printf("[smoke] FAIL: tilted normal did not perturb shading (flat=%.2f tilt=%.2f)\n", dFlat, dTilt);
+        return 1;
+    }
+
+    // Seam check: the rightmost column (u-wrap, x=W-1) centre rows must not be all-black.
+    // A tangent discontinuity at the seam would produce a dark spike.
+    long seamSum = 0;
+    for (int y = H/4; y < 3*H/4; y++) {
+        const uint8_t* px = &flatNormal[(y*W + (W-1))*4];
+        seamSum += px[0] + px[1] + px[2];
+    }
+    if (seamSum == 0) {
+        std::printf("[smoke] FAIL: seam column all black (tangent discontinuity)\n");
+        return 1;
+    }
+
+    std::printf("[smoke] PASS tangent flat=%.2f tilt=%.2f seam-ok\n", dFlat, dTilt);
+    return 0;
+}
+
+int AssetViewerApp::runSmokeFitMaterial(const char* dir)
+{
+    // No GL context needed — pure file parsing.
+    std::string err;
+    FitMaterial m = FitMaterialLoader_Parse(std::string(dir) + "/sample.fit", &err);
+    if (!m.found) {
+        std::printf("[smoke] FAIL: no Material block (%s)\n", err.c_str());
+        return 1;
+    }
+    if (m.baseColor != "mat_base.png") {
+        std::printf("[smoke] FAIL: baseColor='%s'\n", m.baseColor.c_str());
+        return 1;
+    }
+    if (m.normal != "nrm_flat.png") {
+        std::printf("[smoke] FAIL: normal='%s'\n", m.normal.c_str());
+        return 1;
+    }
+    if (m.orm != "mat_orm.png") {
+        std::printf("[smoke] FAIL: orm='%s'\n", m.orm.c_str());
+        return 1;
+    }
+    if (m.ormPacking != "RAO_GRough_BMetal") {
+        std::printf("[smoke] FAIL: ormPacking='%s'\n", m.ormPacking.c_str());
+        return 1;
+    }
+    std::printf("[smoke] PASS fit parse base/normal/orm/packing\n");
     return 0;
 }

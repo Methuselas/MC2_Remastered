@@ -60,3 +60,48 @@ for _tier in ("128", "256"):
     shutil.copyfile(_src, os.path.join(_d, "sample.ktx2"))
 shutil.copyfile(_src, os.path.join(_here, "tiers", "128", "only128.ktx2"))
 print("wrote tiers/{128,256}/sample.ktx2 + tiers/128/only128.ktx2")
+
+# ---- PBR material slot fixtures (for --smoke-texload) ----
+def write_png_rgba(filename, w, h, pixels):
+    """Write a minimal RGBA8 PNG. pixels: flat list of (r,g,b,a) tuples."""
+    rows = bytearray()
+    for y in range(h):
+        rows.append(0)  # filter byte
+        for x in range(w):
+            r, g, b, a = pixels[y * w + x]
+            rows += bytes([r, g, b, a])
+    data = png + b""  # reset
+    _png = b"\x89PNG\r\n\x1a\n"
+    _png += chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+    _png += chunk(b"IDAT", zlib.compress(bytes(rows)))
+    _png += chunk(b"IEND", b"")
+    open(os.path.join(_here, filename), "wb").write(_png)
+    print("wrote", filename, w, h)
+
+# mat_base.png: 4x4 sRGB-ish color (warm orange tones)
+_here = os.path.dirname(__file__)
+_base_pixels = [
+    (200, 100,  50, 255), (210, 110,  55, 255), (190,  95,  45, 255), (205, 105,  52, 255),
+    (195,  98,  48, 255), (208, 108,  53, 255), (202, 102,  50, 255), (198, 100,  49, 255),
+    (207, 107,  54, 255), (193,  97,  47, 255), (203, 103,  51, 255), (199, 101,  49, 255),
+    (204, 104,  52, 255), (196,  99,  48, 255), (206, 106,  53, 255), (201, 101,  50, 255),
+]
+write_png_rgba("mat_base.png", 4, 4, _base_pixels)
+
+# mat_orm.png: 4x4 linear gray (AO=1, Roughness=0.5, Metallic=0 -> ~255, 128, 0)
+_orm_pixels = [
+    (255, 128, 0, 255), (255, 128, 0, 255), (255, 128, 0, 255), (255, 128, 0, 255),
+    (255, 128, 0, 255), (255, 128, 0, 255), (255, 128, 0, 255), (255, 128, 0, 255),
+    (255, 128, 0, 255), (255, 128, 0, 255), (255, 128, 0, 255), (255, 128, 0, 255),
+    (255, 128, 0, 255), (255, 128, 0, 255), (255, 128, 0, 255), (255, 128, 0, 255),
+]
+write_png_rgba("mat_orm.png", 4, 4, _orm_pixels)
+
+# ---- tangent validation fixtures (for --smoke-tangent) ----
+# nrm_flat.png: 128x128 flat tangent-space normal (+Z, encodes as (128,128,255)).
+_flat_pixels = [(128, 128, 255, 255)] * (128 * 128)
+write_png_rgba("nrm_flat.png", 128, 128, _flat_pixels)
+
+# nrm_tilt_u.png: 128x128 normal tilted toward +U (192,128,255 -> slight +X tilt).
+_tilt_pixels = [(192, 128, 255, 255)] * (128 * 128)
+write_png_rgba("nrm_tilt_u.png", 128, 128, _tilt_pixels)

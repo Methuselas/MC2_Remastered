@@ -17,6 +17,9 @@ public:
     std::vector<std::string> SiblingTiers() const { return tiers_; }  // cached; recomputed on folder change
     std::string CurrentTier() const;                        // current folder leaf if numeric, else ""
     void SwitchTier(const std::string& tier);               // repoint to <parent>/<tier>, keep same filename if present
+
+    // Opens the native file picker; returns the chosen path, or "" if cancelled.
+    static std::string PickFile();
 private:
     void refresh();                    // re-scan folderPath_ into entries_ (and tiers_)
     void rescanTiers();                // recompute tiers_ from numeric sibling folders (folder-change only, not per-frame)

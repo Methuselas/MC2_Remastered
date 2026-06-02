@@ -218,6 +218,11 @@ void FileBrowser::rescanTiers() {
               });
 }
 
+std::string FileBrowser::PickFile() {
+    std::string out;
+    return PickTextureFileWin32(out) ? out : std::string();
+}
+
 void FileBrowser::SwitchTier(const std::string& tier) {
     fs::path dst = fb_normFolder(folderPath_).parent_path() / tier;
     std::error_code ec;
