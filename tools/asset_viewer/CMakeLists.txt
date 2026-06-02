@@ -8,8 +8,8 @@ set(ASSET_VIEWER_SOURCES
     main.cpp
     AssetViewerApp.cpp
     # remaining sources added in later tasks
-    # TextureExtensions.cpp
-    # TextureMetadata.cpp
+    TextureExtensions.cpp
+    TextureMetadata.cpp
     # TexturePreview2D.cpp
     # FileBrowser.cpp
     # AssetTypeSidebar.cpp
